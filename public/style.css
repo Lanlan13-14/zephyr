@@ -3459,6 +3459,72 @@ html.keyboard-open .terminal-page {
 .fm-editor-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 700; min-width: 0; }
 .fm-editor-header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fm-editor-header-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.fm-editor-fullscreen-btn {
+    position: relative;
+    width: 34px;
+    min-width: 34px;
+    height: 30px;
+    padding: 0;
+}
+.fm-editor-fullscreen-icon {
+    position: relative;
+    display: block;
+    width: 15px;
+    height: 15px;
+    margin: 0 auto;
+}
+.fm-editor-fullscreen-icon::before,
+.fm-editor-fullscreen-icon::after {
+    content: '';
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    border-color: currentColor;
+    border-style: solid;
+    transition: transform 0.34s var(--ios-open), inset 0.34s var(--ios-open);
+}
+.fm-editor-fullscreen-icon::before {
+    top: 0;
+    left: 0;
+    border-width: 2px 0 0 2px;
+}
+.fm-editor-fullscreen-icon::after {
+    right: 0;
+    bottom: 0;
+    border-width: 0 2px 2px 0;
+}
+.fm-editor-fullscreen-btn.active .fm-editor-fullscreen-icon::before {
+    top: 2px;
+    left: 2px;
+    transform: rotate(180deg);
+}
+.fm-editor-fullscreen-btn.active .fm-editor-fullscreen-icon::after {
+    right: 2px;
+    bottom: 2px;
+    transform: rotate(180deg);
+}
+.file-manager.editor-fullscreen-active { overflow: visible; }
+.file-manager.editor-fullscreen-active .fm-toolbar,
+.file-manager.editor-fullscreen-active .fm-list,
+.file-manager.editor-fullscreen-active .fm-drop-overlay,
+.file-manager.editor-fullscreen-active > .panel-resize-handle { pointer-events: none; }
+.fm-editor-modal.fullscreen {
+    position: fixed;
+    inset: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    z-index: 90;
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    box-shadow: 0 30px 100px rgba(0,0,0,0.46);
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: blur(0);
+}
+.fm-editor-modal.fullscreen-animating {
+    transition:
+        opacity 0.24s ease,
+        filter 0.26s ease;
+    will-change: inset, border-radius, transform, opacity, filter;
+}
+.fm-editor-modal.fullscreen .fm-editor-code-shell { padding: 12px; }
 #fmCloseBtn,
 #infoCloseBtn,
 #dockerCloseBtn {
@@ -4137,7 +4203,8 @@ html.keyboard-open .terminal-page {
     .info-modal.front-switching,
     .docker-panel.front-switching,
     .fm-editor-modal.open,
-    .fm-editor-modal.closing {
+    .fm-editor-modal.closing,
+    .fm-editor-modal.fullscreen-animating {
         animation: none;
         transform: none;
         filter: none;
@@ -4207,6 +4274,8 @@ html.keyboard-open .terminal-page {
     .toast { width: 100%; max-width: none; }
     .panel-resize-handle { width: 26px; height: 26px; }
     .fm-editor-minimap { width: 112px; flex-basis: 112px; }
+    .fm-editor-fullscreen-btn { width: 30px; min-width: 30px; height: 28px; }
+    .fm-editor-modal.fullscreen { inset: 0; border-radius: 0; border-width: 0; }
     .fm-editor-actions { flex-wrap: wrap; }
     .fm-editor-actions .btn { min-width: 90px; }
     #view-settings .settings-content {
@@ -4320,6 +4389,7 @@ html.keyboard-open .terminal-page {
     .docker-log-actions { width: 100%; overflow-x: auto; gap: 4px; }
     .panel-resize-handle { width: 26px; height: 26px; }
     .fm-editor-code-shell { gap: 6px; padding: 6px; }
+    .fm-editor-modal.fullscreen .fm-editor-code-shell { padding: 8px; }
     .fm-editor-minimap { width: 98px; flex-basis: 98px; }
 }
 

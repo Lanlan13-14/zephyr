@@ -98,6 +98,7 @@ let fmEditorIndentGuides = $('#fmEditorIndentGuides');
 const fmEditorMinimap = $('#fmEditorMinimap');
 const fmEditorMinimapCode = $('#fmEditorMinimapCode');
 const fmEditorMinimapToggle = $('#fmEditorMinimapToggle');
+const fmEditorFullscreenBtn = $('#fmEditorFullscreenBtn');
 const fmEditorSaveBtn = $('#fmEditorSaveBtn');
 const fmEditorCancelBtn = $('#fmEditorCancelBtn');
 const fmEditorCloseBtn = $('#fmEditorCloseBtn');
@@ -2716,7 +2717,81 @@ function setEditorScrollFromMinimap(clientY) {
     syncEditorCodeScroll();
 }
 
+function updateEditorFullscreenButton() {
+    const isFullscreen = fmEditorModal?.classList.contains('fullscreen');
+    if (!fmEditorFullscreenBtn) return;
+    fmEditorFullscreenBtn.classList.toggle('active', !!isFullscreen);
+    fmEditorFullscreenBtn.setAttribute('aria-pressed', isFullscreen ? 'true' : 'false');
+    fmEditorFullscreenBtn.setAttribute('title', isFullscreen ? '退出全屏编辑' : '全屏编辑');
+    fmEditorFullscreenBtn.setAttribute('aria-label', isFullscreen ? '退出全屏编辑' : '全屏编辑');
+}
+
+function animateEditorFullscreenTransition(firstRect, shouldFullscreen) {
+    if (!fmEditorModal || !firstRect || !fmEditorModal.animate) return;
+    const lastRect = fmEditorModal.getBoundingClientRect();
+    if (!lastRect.width || !lastRect.height) return;
+    const dx = firstRect.left - lastRect.left;
+    const dy = firstRect.top - lastRect.top;
+    const sx = firstRect.width / lastRect.width;
+    const sy = firstRect.height / lastRect.height;
+    const fromRadius = shouldFullscreen ? 'var(--radius-lg)' : '22px';
+    const toRadius = shouldFullscreen ? '22px' : 'var(--radius-lg)';
+    fmEditorModal.getAnimations?.().forEach((animation) => {
+        if (animation.effect?.target === fmEditorModal) animation.cancel();
+    });
+    fmEditorModal.style.transformOrigin = 'top left';
+    const animation = fmEditorModal.animate([
+        {
+            transform: `translate3d(${dx}px, ${dy}px, 0) scale(${sx}, ${sy})`,
+            borderRadius: fromRadius,
+            boxShadow: shouldFullscreen ? '0 18px 54px rgba(0,0,0,0.32)' : '0 30px 100px rgba(0,0,0,0.46)'
+        },
+        {
+            transform: 'translate3d(0, 0, 0) scale(1, 1)',
+            borderRadius: toRadius,
+            boxShadow: shouldFullscreen ? '0 30px 100px rgba(0,0,0,0.46)' : '0 18px 54px rgba(0,0,0,0.32)'
+        }
+    ], {
+        duration: 620,
+        easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        fill: 'both'
+    });
+    animation.finished
+        .catch(() => {})
+        .then(() => {
+            fmEditorModal.style.transformOrigin = '';
+        });
+}
+
+function toggleEditorFullscreen(force) {
+    if (!fmEditorModal || !fileManager) return;
+    const isFullscreen = fmEditorModal.classList.contains('fullscreen');
+    const shouldFullscreen = typeof force === 'boolean' ? force : !isFullscreen;
+    if (shouldFullscreen === isFullscreen) {
+        updateEditorFullscreenButton();
+        return;
+    }
+    const firstRect = fmEditorModal.getBoundingClientRect();
+    fmEditorModal.classList.add('fullscreen-animating');
+    fmEditorModal.classList.toggle('fullscreen', shouldFullscreen);
+    fileManager.classList.toggle('editor-fullscreen-active', shouldFullscreen);
+    animateEditorFullscreenTransition(firstRect, shouldFullscreen);
+    updateEditorFullscreenButton();
+    window.clearTimeout(toggleEditorFullscreen._timer);
+    toggleEditorFullscreen._timer = window.setTimeout(() => {
+        fmEditorModal.classList.remove('fullscreen-animating');
+        renderEditorCodeLayers();
+        updateEditorMinimapViewport();
+    }, 680);
+    requestAnimationFrame(() => {
+        renderEditorCodeLayers();
+        updateEditorMinimapViewport();
+        if (shouldFullscreen) fmEditorTextarea?.focus();
+    });
+}
+
 function closeEditor({ animated = true } = {}) {
+    toggleEditorFullscreen(false);
     if (!animated) {
         fmEditorModal.style.display = 'none';
         fmEditorModal.classList.remove('open', 'closing');
@@ -2753,6 +2828,7 @@ function loadEditorFromBytes(bytes, encoding = fmEditorEncoding.value) {
 function openEditor(filePath) {
     editorFilePath = filePath;
     editorLanguage = detectEditorLanguage(filePath);
+    toggleEditorFullscreen(false);
     fmEditorModal.style.display = 'flex';
     fmEditorModal.classList.remove('closing');
     requestAnimationFrame(() => fmEditorModal.classList.add('open'));
@@ -2774,6 +2850,7 @@ fmEditorRedoBtn.addEventListener('click', () => {
     document.execCommand('redo');
     updateEditorStatus();
 });
+fmEditorFullscreenBtn?.addEventListener('click', () => toggleEditorFullscreen());
 fmEditorSaveBtn.addEventListener('click', () => {
     if (!editorFilePath) return;
     const text = normalizeLineEnding(fmEditorTextarea.value, fmEditorLineEnding.value);
