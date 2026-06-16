@@ -851,10 +851,15 @@ function getPreferredWtermTheme() {
     return saved === 'light' ? 'light' : 'default';
 }
 
-function applyWtermTheme(theme) {
+function hasCustomTerminalAppearance() {
     const bg = terminalAppearance?.terminalBackground || {};
-    const customTerm = ((bg.type === 'upload' || bg.type === 'url') && bg.url) || terminalAppearance?.terminalFontColor;
-    const normalized = customTerm ? 'custom' : (theme === 'light' ? 'light' : 'default');
+    return !!(((bg.type === 'upload' || bg.type === 'url') && bg.url) || terminalAppearance?.terminalFontColor);
+}
+
+function applyWtermTheme(theme) {
+    const customTerm = hasCustomTerminalAppearance();
+    const requested = theme === 'light' ? 'light' : 'default';
+    const normalized = customTerm ? `custom-${requested}` : requested;
     const changed = document.documentElement.getAttribute('data-wterm-theme') !== normalized;
     if (changed) {
         document.documentElement.classList.add('wterm-theme-transitioning');
@@ -871,26 +876,24 @@ function applyWtermTheme(theme) {
         }, 460);
     }
     document.documentElement.setAttribute('data-wterm-theme', normalized);
-    localStorage.setItem('zephyr-wterm-theme', normalized);
+    localStorage.setItem('zephyr-wterm-theme', requested);
     if (wtermThemeToggle) {
-        wtermThemeToggle.textContent = normalized === 'custom' ? '终端: 自定义' : normalized === 'light' ? '终端: Light' : '终端: 默认';
-        wtermThemeToggle.classList.toggle('active', normalized === 'light' || normalized === 'custom');
-        wtermThemeToggle.setAttribute('aria-pressed', normalized === 'light' || normalized === 'custom' ? 'true' : 'false');
+        wtermThemeToggle.textContent = customTerm
+            ? (requested === 'light' ? '终端: 自定义 Light' : '终端: 自定义')
+            : (requested === 'light' ? '终端: Light' : '终端: 默认');
+        wtermThemeToggle.classList.toggle('active', requested === 'light' || customTerm);
+        wtermThemeToggle.setAttribute('aria-pressed', requested === 'light' || customTerm ? 'true' : 'false');
     }
-    try { term?.setOption?.('theme', normalized === 'light' ? 'light' : 'default'); } catch (_) {}
+    try { term?.setOption?.('theme', requested === 'light' ? 'light' : 'default'); } catch (_) {}
     applyTerminalAppearance(terminalAppearance || {});
     scheduleTerminalScrollbarUpdate();
 }
 
 applyWtermTheme(getPreferredWtermTheme());
 wtermThemeToggle?.addEventListener('click', () => {
-    const bg = terminalAppearance?.terminalBackground || {};
-    if (((bg.type === 'upload' || bg.type === 'url') && bg.url) || terminalAppearance?.terminalFontColor) {
-        applyWtermTheme('custom');
-        return;
-    }
     const current = document.documentElement.getAttribute('data-wterm-theme');
-    applyWtermTheme(current === 'light' ? 'default' : 'light');
+    const currentMode = current === 'light' || current === 'custom-light' ? 'light' : 'default';
+    applyWtermTheme(currentMode === 'light' ? 'default' : 'light');
 });
 
 themeToggle.addEventListener('click', () => {
