@@ -158,11 +158,48 @@ function postTerminalLayoutStabilize(reason = 'layout-stabilize', { focus = fals
         keyboardInset: Math.round(keyboardInset || 0),
     }, '*'));
 }
+function forceCompactTerminalWorkspaceFill(reason = 'compact-terminal-fill') {
+    const workspace = $('#terminalWorkspace');
+    if (!workspace || !isCompactTerminalWorkspace()) return;
+    const view = document.querySelector('.terminal-view.active');
+    if (!view) return;
+    const viewRect = view.getBoundingClientRect?.();
+    const viewHeight = Math.round(viewRect?.height || 0);
+    if (!appKeyboardOpen && viewHeight > 0) {
+        workspace.style.flex = '1 1 auto';
+        workspace.style.height = 'auto';
+        workspace.style.maxHeight = 'none';
+        workspace.style.minHeight = '0px';
+        workspace.style.marginBottom = '0px';
+        document.documentElement.style.setProperty('--app-visual-vh', '100vh');
+        document.documentElement.style.setProperty('--app-keyboard-top', '100vh');
+    }
+    workspace.querySelectorAll('.terminal-window:not(.minimized-keepalive)').forEach((win) => {
+        win.style.minHeight = '0px';
+        win.style.height = '';
+        win.style.maxHeight = '100%';
+        const body = win.querySelector('.terminal-window-body');
+        if (body) {
+            body.style.minHeight = '0px';
+            body.style.height = '';
+            body.style.maxHeight = '100%';
+        }
+        win.querySelectorAll('.terminal-frame, .terminal-placeholder').forEach((frame) => {
+            frame.style.height = '100%';
+            frame.style.maxHeight = '100%';
+            frame.style.minHeight = '0px';
+        });
+    });
+    console.info('[TerminalLayoutDiagnostics]', { event: 'parent:compact-fill', reason, viewHeight, appKeyboardOpen });
+}
 function scheduleTerminalLayoutStabilize(reason = 'layout-stabilize', options = {}) {
     window.clearTimeout(scheduleTerminalLayoutStabilize._timer);
     scheduleTerminalLayoutStabilize._timer = window.setTimeout(() => {
         [0, 80, 220, 520].forEach((delay, index) => {
-            window.setTimeout(() => postTerminalLayoutStabilize(`${reason}:phase-${index}`, options), delay);
+            window.setTimeout(() => {
+                forceCompactTerminalWorkspaceFill(`${reason}:phase-${index}`);
+                postTerminalLayoutStabilize(`${reason}:phase-${index}`, options);
+            }, delay);
         });
     }, 24);
 }
@@ -2593,16 +2630,24 @@ function activateTerminalFromDock(tabId, sourceEl = null) {
     const sourceRect = sourceEl?.getBoundingClientRect?.();
     const t = getTerminalSession(tabId);
     if (!t) return;
+    const mobileSwitch = isCompactTerminalWorkspace();
+    if (mobileSwitch) resetTerminalWorkspaceKeyboard({ force: true });
     dockLaunchAnimatingWindows.add(tabId);
-    const mobileFullscreen = isCompactTerminalWorkspace() && document.body.classList.contains('terminal-custom-fullscreen-open');
+    const mobileFullscreen = mobileSwitch && document.body.classList.contains('terminal-custom-fullscreen-open');
     if (!mobileFullscreen && t && !t.minimized && activeTerminalTab === tabId) minimizeTerminalSession(tabId);
     else showTerminalSessionInWorkspace(tabId);
     if (!mobileFullscreen) scheduleTerminalSmartbarAutoClose();
     renderTerminalTabs();
+    if (mobileSwitch) {
+        forceCompactTerminalWorkspaceFill('dock-activate');
+        scheduleTerminalLayoutStabilize('dock-activate-mobile', { focus: true, tabId });
+        window.setTimeout(() => scheduleTerminalLayoutStabilize('dock-activate-mobile-settled', { focus: true, tabId }), 180);
+    }
     animateWindowFromDock(tabId, sourceRect, { swap: false });
     window.setTimeout(() => {
         dockLaunchAnimatingWindows.delete(tabId);
         renderTerminalTabs({ rebuildWorkspace: false });
+        if (mobileSwitch) scheduleTerminalLayoutStabilize('dock-activate-animation-settled', { focus: true, tabId });
     }, 620);
 }
 function replaceWindowWithDockTab(targetWindowId, draggedTabId) {
@@ -5600,6 +5645,7 @@ function bindEvents() {
         if (e.data.type === 'keyboard-metrics') {
             const tabId = String(e.data.tabId || '');
             if (tabId && tabId !== activeTerminalTab) return;
+            if (e.data.fallback && e.data.stableInput) return;
             applyTerminalWorkspaceKeyboard(e.data);
             return;
         }

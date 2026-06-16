@@ -605,6 +605,7 @@ function notifyParentKeyboardMetrics(metrics) {
             viewportHeight: metrics.viewportHeight || 0,
             layoutHeight: metrics.layoutHeight || 0,
             offsetTop: metrics.offsetTop || 0,
+            fallback: !!metrics.fallback,
             stableInput: isMobileStableInputMode(),
         }, '*');
     }
@@ -7209,6 +7210,7 @@ function applyKeyboardFallbackAvoidance() {
 function scheduleKeyboardFallbackAvoidance() {
     if (!keyboardFocusLikely || !isTouchKeyboardDevice()) return;
     window.clearTimeout(keyboardFallbackTimer);
+    if (isMobileStableInputMode()) return;
     keyboardFallbackTimer = window.setTimeout(() => {
         const metrics = getViewportKeyboardMetrics();
         if (!keyboardFocusLikely || metrics.keyboardInset >= 100 || mobileKeyboardOpen) return;
@@ -7219,6 +7221,11 @@ function scheduleKeyboardFallbackAvoidance() {
 function markKeyboardFocusActive() {
     keyboardFocusLikely = isTouchKeyboardDevice();
     keyboardViewportBaseline = Math.max(getKeyboardBaselineHeight(), keyboardViewportBaseline || 0);
+    if (isMobileStableInputMode()) {
+        keyboardFallbackActive = false;
+        keyboardFallbackAppliedAt = 0;
+        window.clearTimeout(keyboardFallbackTimer);
+    }
     updateViewportInsets();
     scheduleKeyboardFallbackAvoidance();
 }
