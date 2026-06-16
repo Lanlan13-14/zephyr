@@ -10500,11 +10500,9 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 
 @media (max-width: 700px) and (hover: none) and (pointer: coarse) {
     html.mobile-stable-input,
-    body.mobile-stable-input {
-        background: var(--wterm-bg, #05070a) !important;
-    }
+    body.mobile-stable-input,
     html.mobile-stable-input .terminal-page {
-        background: var(--wterm-bg, #05070a) !important;
+        background: var(--bg) !important;
     }
     html.mobile-stable-input .terminal-container {
         min-height: 160px !important;
