@@ -158,11 +158,43 @@ function postTerminalLayoutStabilize(reason = 'layout-stabilize', { focus = fals
         keyboardInset: Math.round(keyboardInset || 0),
     }, '*'));
 }
+function maybeApplyCompactKeyboardFromViewport(reason = 'compact-keyboard-viewport') {
+    const workspace = $('#terminalWorkspace');
+    if (!workspace || !isCompactTerminalWorkspace() || !document.body.classList.contains('terminal-mode') || !window.visualViewport) return false;
+    const baseline = Math.max(appKeyboardBaseline || 0, window.innerHeight || 0, document.documentElement.clientHeight || 0);
+    const viewportHeight = Math.round(window.visualViewport.height || 0);
+    const offsetTop = Math.round(window.visualViewport.offsetTop || 0);
+    const inset = Math.max(0, Math.round(baseline - viewportHeight - offsetTop));
+    if (inset < 80 && !workspace.classList.contains('keyboard-open')) return false;
+    applyTerminalWorkspaceKeyboard({ keyboardOpen: inset >= 80 || appKeyboardOpen, keyboardInset: inset, viewportHeight, layoutHeight: baseline, offsetTop, stableInput: true, reason });
+    return true;
+}
+function scheduleCompactKeyboardViewportCheck(reason = 'compact-keyboard-check') {
+    [0, 60, 140, 260, 420, 700].forEach((delay) => {
+        window.setTimeout(() => maybeApplyCompactKeyboardFromViewport(`${reason}:phase-${delay}`), delay);
+    });
+}
+function rememberCompactTerminalKeyboardBaseline(reason = 'compact-keyboard-baseline') {
+    const workspace = $('#terminalWorkspace');
+    if (!workspace || !isCompactTerminalWorkspace() || appKeyboardOpen || workspace.classList.contains('keyboard-open')) return;
+    const viewport = window.visualViewport;
+    const candidates = [
+        window.innerHeight || 0,
+        document.documentElement.clientHeight || 0,
+        viewport ? (viewport.height || 0) + (viewport.offsetTop || 0) : 0,
+        document.querySelector('.terminal-view.active')?.getBoundingClientRect?.().bottom || 0,
+    ].map((value) => Math.round(Number(value) || 0)).filter((value) => value > 0);
+    if (!candidates.length) return;
+    const nextBaseline = Math.max(...candidates);
+    if (nextBaseline > appKeyboardBaseline) appKeyboardBaseline = nextBaseline;
+    console.info('[TerminalLayoutDiagnostics]', { event: 'parent:compact-keyboard-baseline', reason, appKeyboardBaseline });
+}
 function forceCompactTerminalWorkspaceFill(reason = 'compact-terminal-fill') {
     const workspace = $('#terminalWorkspace');
     if (!workspace || !isCompactTerminalWorkspace()) return;
     const view = document.querySelector('.terminal-view.active');
     if (!view) return;
+    rememberCompactTerminalKeyboardBaseline(reason);
     const viewRect = view.getBoundingClientRect?.();
     const viewHeight = Math.round(viewRect?.height || 0);
     if (!appKeyboardOpen && viewHeight > 0) {
@@ -198,6 +230,7 @@ function scheduleTerminalLayoutStabilize(reason = 'layout-stabilize', options = 
         [0, 80, 220, 520].forEach((delay, index) => {
             window.setTimeout(() => {
                 forceCompactTerminalWorkspaceFill(`${reason}:phase-${index}`);
+                if (appKeyboardOpen || $('#terminalWorkspace')?.classList.contains('keyboard-open')) maybeApplyCompactKeyboardFromViewport(`${reason}:phase-${index}`);
                 postTerminalLayoutStabilize(`${reason}:phase-${index}`, options);
             }, delay);
         });
@@ -745,6 +778,7 @@ function switchView(name) {
             syncTerminalSmartbarTop();
             syncTerminalShelfLineState();
         }, 680);
+        rememberCompactTerminalKeyboardBaseline('switch-view-terminal');
         scheduleTerminalLayoutStabilize('switch-view-terminal', { focus: true });
     } else {
         document.body.classList.remove('terminal-mode-entering');
@@ -1990,6 +2024,7 @@ function renderTerminalWorkspace() {
         splitterY.dataset.splitter = 'y';
         workspace.appendChild(splitterY);
     }
+    rememberCompactTerminalKeyboardBaseline('render-terminal-workspace');
     scheduleTerminalLayoutStabilize('render-terminal-workspace', { focus: true });
 }
 function renderTerminalTabs({ rebuildWorkspace = true } = {}) {
@@ -2267,10 +2302,12 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
     // 单独相信任意一侧都会出错：parent visualViewport 有时偏小，iframe visualViewport
     // 又可能保持全高。这里综合多个“键盘顶部”候选值，取一个合理的最大可见底边。
     const parentViewport = window.visualViewport;
-    const parentLayoutHeight = Math.round(window.innerHeight || document.documentElement.clientHeight || 0);
-    const parentVvHeight = Math.round(parentViewport?.height || parentLayoutHeight || 0);
+    const parentInnerHeight = Math.round(window.innerHeight || 0);
+    const parentClientHeight = Math.round(document.documentElement.clientHeight || 0);
+    const parentVvHeight = Math.round(parentViewport?.height || parentInnerHeight || parentClientHeight || 0);
     const parentOffsetTop = Math.round(parentViewport?.offsetTop || 0);
     const parentKeyboardTop = Math.max(0, parentOffsetTop + parentVvHeight);
+    const parentLayoutHeight = Math.max(parentInnerHeight, parentClientHeight, appKeyboardBaseline || 0, parentKeyboardTop);
     const metricsViewportHeight = Math.round(Number(metrics.viewportHeight) || 0);
     const metricsLayoutHeight = Math.round(Number(metrics.layoutHeight) || 0);
     const metricsOffsetTop = Math.round(Number(metrics.offsetTop) || 0);
@@ -2303,10 +2340,12 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         const wsRect = workspace.getBoundingClientRect();
         const viewRect = document.querySelector('.terminal-view.active')?.getBoundingClientRect?.();
 
-        // Normal bottom: workspace bottom when no keyboard
+        // Normal bottom: workspace bottom when no keyboard. In non-fullscreen Android WebView,
+        // window.innerHeight may already be shrunk by IME, so use the remembered pre-keyboard
+        // baseline to avoid keeping the auxiliary bar under the system keyboard.
         const normalBottom = isFullscreenTerminalSurface
-            ? Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0)
-            : Math.min(viewRect?.bottom || window.innerHeight || 0, window.innerHeight || 0);
+            ? Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, appKeyboardBaseline || 0)
+            : Math.min(viewRect?.bottom || appKeyboardBaseline || window.innerHeight || 0, appKeyboardBaseline || window.innerHeight || 0);
 
         // Keyboard top: use the most credible bottom boundary from parent/iframe
         // metrics. Android WebView sometimes reports a transient visualViewport
@@ -5646,7 +5685,8 @@ function bindEvents() {
             const tabId = String(e.data.tabId || '');
             if (tabId && tabId !== activeTerminalTab) return;
             if (e.data.fallback && e.data.stableInput) return;
-            applyTerminalWorkspaceKeyboard(e.data);
+            if (e.data.keyboardOpen || Number(e.data.keyboardInset) >= 80) applyTerminalWorkspaceKeyboard(e.data);
+            else scheduleCompactKeyboardViewportCheck('iframe-keyboard-metrics-closed');
             return;
         }
         if (e.data.type === 'activity') {
@@ -5694,12 +5734,12 @@ function bindEvents() {
             renderTerminalTabs({ rebuildWorkspace: false });
         }
     });
-    window.visualViewport?.addEventListener('resize', updateFullscreenKeyboardFromViewport, { passive: true });
+    window.visualViewport?.addEventListener('resize', () => { updateFullscreenKeyboardFromViewport(); scheduleCompactKeyboardViewportCheck('visualViewport-resize'); }, { passive: true });
     window.addEventListener('resize', () => {
         document.querySelectorAll('.terminal-window-titlebar.menu-open').forEach(positionTerminalWindowMenu);
     }, { passive: true });
-    window.addEventListener('resize', updateFullscreenKeyboardFromViewport, { passive: true });
-    window.visualViewport?.addEventListener('scroll', updateFullscreenKeyboardFromViewport, { passive: true });
+    window.addEventListener('resize', () => { updateFullscreenKeyboardFromViewport(); scheduleCompactKeyboardViewportCheck('window-resize'); }, { passive: true });
+    window.visualViewport?.addEventListener('scroll', () => { updateFullscreenKeyboardFromViewport(); scheduleCompactKeyboardViewportCheck('visualViewport-scroll'); }, { passive: true });
     window.addEventListener('resize', () => {
         if (!terminalTabs.length) return;
         if (isCompactTerminalWorkspace()) {
