@@ -7015,6 +7015,14 @@ body.smartbar-trash-hover .smartbar-trash-target {
         user-select: none !important;
         -webkit-user-select: none !important;
     }
+    html.terminal-selection-mode .terminal-container .wterm-wrapper,
+    html.terminal-selection-mode .terminal-container .wterm-wrapper .term-grid,
+    html.terminal-selection-mode .terminal-container .wterm-wrapper .term-row,
+    html.terminal-selection-mode .terminal-container .wterm-wrapper .term-scrollback-row {
+        user-select: text !important;
+        -webkit-user-select: text !important;
+        -webkit-touch-callout: default !important;
+    }
     html.mobile-stable-input .mobile-terminal-ime-proxy {
         position: fixed;
         left: max(8px, env(safe-area-inset-left));

@@ -318,6 +318,7 @@ let terminalTouchFocusTimer = 0;
 let terminalTouchStartX = 0;
 let terminalTouchStartY = 0;
 let terminalTouchMoved = false;
+let mobileTerminalLastTap = { at: 0, x: 0, y: 0, target: null };
 const TERMINAL_COPY_DIAGNOSTICS = false;
 const MOBILE_STABLE_INPUT_MODE = isMobileStableInputCandidate();
 const MOBILE_KEYBOARD_RESIZE_REASONS = /keyboard|viewport|visual|ime|focus|input|fallback/i;
@@ -425,6 +426,102 @@ function scheduleMobileLongPressSelectionGuard(reason = 'touchstart') {
     mobileTerminalSelectionTimer = window.setTimeout(() => {
         enterMobileTerminalSelectionMode(reason);
     }, delay);
+}
+
+function getTerminalTextNodeAtPoint(x, y) {
+    if (!wtermWrapper || !document.caretRangeFromPoint && !document.caretPositionFromPoint) return null;
+    let node = null;
+    let offset = 0;
+    try {
+        if (document.caretRangeFromPoint) {
+            const range = document.caretRangeFromPoint(x, y);
+            node = range?.startContainer || null;
+            offset = range?.startOffset || 0;
+        } else if (document.caretPositionFromPoint) {
+            const pos = document.caretPositionFromPoint(x, y);
+            node = pos?.offsetNode || null;
+            offset = pos?.offset || 0;
+        }
+    } catch (_) {
+        return null;
+    }
+    if (!node || !wtermWrapper.contains(node)) return null;
+    if (node.nodeType !== Node.TEXT_NODE) {
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        const first = walker.nextNode();
+        if (!first) return null;
+        node = first;
+        offset = 0;
+    }
+    return { node, offset: Math.max(0, Math.min(offset, node.textContent?.length || 0)) };
+}
+
+function getSmartTerminalSelectionBounds(text = '', offset = 0) {
+    const value = String(text || '');
+    if (!value) return null;
+    const clamp = (n) => Math.max(0, Math.min(value.length, n));
+    let pos = clamp(offset);
+    if (pos >= value.length && value.length) pos = value.length - 1;
+    if (/\s/.test(value[pos] || '') && pos > 0) pos -= 1;
+    const char = value[pos] || '';
+    const wordRe = /[\p{L}\p{N}_@#$%+~:/.-]/u;
+    const cjkRe = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+    let start = pos;
+    let end = pos + 1;
+    if (wordRe.test(char) || cjkRe.test(char)) {
+        while (start > 0 && (wordRe.test(value[start - 1]) || cjkRe.test(value[start - 1]))) start -= 1;
+        while (end < value.length && (wordRe.test(value[end]) || cjkRe.test(value[end]))) end += 1;
+    } else {
+        const sentenceBreak = /[\n\r。！？!?；;，,、]/;
+        while (start > 0 && !sentenceBreak.test(value[start - 1])) start -= 1;
+        while (end < value.length && !sentenceBreak.test(value[end])) end += 1;
+        while (start < end && /\s/.test(value[start])) start += 1;
+        while (end > start && /\s/.test(value[end - 1])) end -= 1;
+    }
+    if (end <= start) return null;
+    return { start, end };
+}
+
+function showNativeSelectionMenu() {
+    try { document.execCommand?.('copy', false, null); } catch (_) {}
+}
+
+function selectTerminalTextAtPoint(x, y, reason = 'double-tap') {
+    if (!isTouchKeyboardDevice() || !wtermWrapper) return false;
+    const hit = getTerminalTextNodeAtPoint(x, y);
+    const text = hit?.node?.textContent || '';
+    const bounds = getSmartTerminalSelectionBounds(text, hit?.offset || 0);
+    if (!hit || !bounds) return false;
+    const range = document.createRange();
+    range.setStart(hit.node, bounds.start);
+    range.setEnd(hit.node, bounds.end);
+    const selection = window.getSelection?.();
+    if (!selection) return false;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    enterMobileTerminalSelectionMode(reason);
+    cachedSelectionText = normalizeCopiedTerminalText(getTerminalSelectionTextFromDom(selection) || selection.toString?.() || '');
+    if (navigator.clipboard?.writeText && cachedSelectionText) {
+        navigator.clipboard.writeText(cachedSelectionText).catch(() => {});
+    }
+    window.setTimeout(showNativeSelectionMenu, 30);
+    logTerminalCopyDiagnostics('mobile-double-tap-selection', { textLength: cachedSelectionText.length });
+    return true;
+}
+
+function handleMobileTerminalDoubleTap(e) {
+    if (!isTouchKeyboardDevice()) return false;
+    const x = e.clientX ?? e.changedTouches?.[0]?.clientX ?? e.touches?.[0]?.clientX ?? 0;
+    const y = e.clientY ?? e.changedTouches?.[0]?.clientY ?? e.touches?.[0]?.clientY ?? 0;
+    const now = performance.now();
+    const previous = mobileTerminalLastTap;
+    mobileTerminalLastTap = { at: now, x, y, target: e.target };
+    if (!previous.at || now - previous.at > 360 || Math.hypot(x - previous.x, y - previous.y) > 24) return false;
+    e.preventDefault?.();
+    e.stopPropagation?.();
+    window.clearTimeout(mobileTerminalSelectionTimer);
+    window.clearTimeout(terminalTouchFocusTimer);
+    return selectTerminalTextAtPoint(x, y, 'double-tap');
 }
 
 const viewportAnimationState = {
@@ -8824,6 +8921,15 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
             pointerType: e.pointerType || '',
             touches: e.touches?.length || 0,
         });
+
+        const shouldHandleTap = eventName === 'pointerdown'
+            ? e.pointerType === 'touch'
+            : !window.PointerEvent;
+        if (shouldHandleTap && handleMobileTerminalDoubleTap(e)) {
+            e.preventDefault?.();
+            e.stopPropagation?.();
+            return;
+        }
 
         window.clearTimeout(terminalTouchFocusTimer);
         if (eventName === 'pointerdown' && e.pointerType !== 'touch' && !hasLiveTerminalSelection() && sendTerminalMouseEvent(e, 'press')) {
