@@ -2380,7 +2380,6 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         const shiftY = keyboardOpen && !isFullscreenTerminalSurface
             ? Math.max(0, Math.round(normalBottom - kbTop))
             : 0;
-        if (isFullscreenTerminalSurface) document.body.classList.remove('terminal-keyboard-lift');
         workspace.style.flex = '';
         workspace.style.height = '';
         workspace.style.maxHeight = '';

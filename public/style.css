@@ -10534,7 +10534,7 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 
 /* Mobile non-fullscreen keyboard: lift the whole app instead of shrinking SSH window. */
 @media (max-width: 760px) and (hover: none) and (pointer: coarse) {
-    body.app-body.terminal-mode.terminal-keyboard-lift:not(.terminal-custom-fullscreen-open) .app-shell {
+    body.app-body.terminal-mode.terminal-keyboard-lift .app-shell {
         transform: translate3d(0, calc(-1 * var(--app-keyboard-shift, 0px)), 0) !important;
         transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
         will-change: transform;
