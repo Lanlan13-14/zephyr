@@ -6,8 +6,15 @@ const { browserService, SHOT_DIR } = require('./ai-browser-service');
 const { DEFAULT_ZEPHYR_SYSTEM_PROMPT, DEFAULT_ZEPHYR_SKILLS } = require('./ai-defaults');
 
 const DEFAULT_TOOL_CALL_LIMIT = 0;
-const DEFAULT_AI_CONTEXT = { windowTokens: 64000, maxInputChars: 90000, keepMessages: 18, toolResultChars: 30000, memoryItems: 16, maxToolRounds: 0 };
+const DEFAULT_AI_CONTEXT = { windowTokens: 64000, maxInputChars: 90000, keepMessages: 18, toolResultChars: 30000, memoryItems: 16, maxToolRounds: 0, summaryChars: 18000, recentChars: 42000 };
 const MAX_TOOL_TEXT = 60 * 1024;
+const AI_TOOL_CACHE = new Map();
+const AI_OPENAI_TOOL_CACHE = new WeakMap();
+const AI_ANTHROPIC_TOOL_CACHE = new WeakMap();
+const AI_GEMINI_TOOL_CACHE = new WeakMap();
+const AI_PERF_SAMPLES = [];
+const MAX_AI_PERF_SAMPLES = 200;
+const AI_CONVERSATION_SUMMARY_PREFIX = '高轮次对话压缩摘要';
 const MAX_REMOTE_READ = 512 * 1024;
 const MAX_REMOTE_WRITE = 1024 * 1024;
 const pendingActions = new Map();
@@ -176,7 +183,61 @@ function normalizeContextLimits(ai = {}, provider = {}) {
         perMessageChars: clampNumber(raw.perMessageChars || Math.floor(windowTokens * 0.85), 1000, 300000, 36000),
         toolResultChars: clampNumber(raw.toolResultChars, 1000, 240000, DEFAULT_AI_CONTEXT.toolResultChars),
         memoryItems: clampNumber(raw.memoryItems, 0, 80, DEFAULT_AI_CONTEXT.memoryItems),
+        summaryChars: clampNumber(raw.summaryChars, 2000, 120000, DEFAULT_AI_CONTEXT.summaryChars),
+        recentChars: clampNumber(raw.recentChars, 8000, 240000, DEFAULT_AI_CONTEXT.recentChars),
     };
+}
+function contentTextLength(content) {
+    if (Array.isArray(content)) return content.reduce((sum, part) => sum + String(part?.text || part?.content || '').length + (part?.image_url || part?.inlineData ? 1200 : 0), 0);
+    return String(content || '').length;
+}
+function messageContentText(content) {
+    if (Array.isArray(content)) return content.map((part) => part?.text || part?.content || (part?.image_url ? '[图片]' : part?.inlineData ? '[图片]' : '')).filter(Boolean).join('\n');
+    return String(content || '');
+}
+function normalizeConversationMessage(item = {}, limits = {}) {
+    return { role: normalizeRole(item.role), content: normalizeMultimodalContent(item.content || '', limits), response_id: item.response_id || item._response_id || '' };
+}
+function compactConversationHistory(messages = [], limits = {}) {
+    const perMessageChars = clampNumber(limits.perMessageChars, 1000, 300000, 60000);
+    const maxInputChars = clampNumber(limits.maxInputChars, 8000, 1200000, 180000);
+    const summaryChars = clampNumber(limits.summaryChars, 2000, 120000, DEFAULT_AI_CONTEXT.summaryChars);
+    const recentChars = clampNumber(limits.recentChars, 8000, 240000, DEFAULT_AI_CONTEXT.recentChars);
+    const items = (Array.isArray(messages) ? messages : [])
+        .filter((item) => !['trace', 'system'].includes(String(item?.role || '').toLowerCase()))
+        .map((item) => normalizeConversationMessage(item, { ...limits, perMessageChars }))
+        .filter((item) => item.content || item.role === 'assistant');
+    let total = items.reduce((sum, item) => sum + contentTextLength(item.content), 0);
+    if (total <= maxInputChars && items.length <= clampNumber(limits.keepMessages, 4, 160, 40)) return { messages: items, summary: '', originalCount: items.length, compactedCount: 0, totalChars: total };
+    const recent = [];
+    let recentTotal = 0;
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+        const len = contentTextLength(items[i].content);
+        const minimumTail = recent.length < 8;
+        if (!minimumTail && recentTotal + len > recentChars) break;
+        recent.unshift(items[i]);
+        recentTotal += len;
+    }
+    const older = items.slice(0, Math.max(0, items.length - recent.length));
+    const lines = [];
+    let omitted = 0;
+    for (const item of older) {
+        const role = item.role === 'assistant' ? 'AI' : item.role === 'tool' ? '工具' : '用户';
+        let text = messageContentText(item.content).replace(/\s+/g, ' ').trim();
+        if (!text) continue;
+        const room = summaryChars - lines.join('\n').length;
+        if (room <= 120) { omitted += 1; continue; }
+        text = text.slice(0, Math.min(700, room));
+        lines.push(`- ${role}: ${text}`);
+    }
+    const summary = older.length ? `${AI_CONVERSATION_SUMMARY_PREFIX}（自动生成，保留早期目标/约束/决定；最近 ${recent.length} 条保持原文）：\n${lines.join('\n')}${omitted ? `\n- ……另有 ${omitted} 条早期消息已合并进摘要窗口。` : ''}` : '';
+    let compacted = recent.slice();
+    let compactedTotal = compacted.reduce((sum, item) => sum + contentTextLength(item.content), 0);
+    while (compacted.length > 2 && compactedTotal + summary.length > maxInputChars) {
+        const removed = compacted.shift();
+        compactedTotal -= contentTextLength(removed.content);
+    }
+    return { messages: compacted, summary: clipText(summary, summaryChars), originalCount: items.length, compactedCount: older.length, totalChars: total };
 }
 
 function normalizeMultimodalContent(content, limits = {}) {
@@ -212,20 +273,7 @@ function normalizeMultimodalContent(content, limits = {}) {
 }
 
 function sanitizeMessages(messages = [], limits = {}) {
-    const keepMessages = clampNumber(limits.keepMessages, 4, 160, 40);
-    const perMessageChars = clampNumber(limits.perMessageChars, 1000, 300000, 60000);
-    const maxInputChars = clampNumber(limits.maxInputChars, 8000, 1200000, 180000);
-    const raw = (Array.isArray(messages) ? messages : [])
-        .filter((item) => !['trace', 'system'].includes(String(item?.role || '').toLowerCase()))
-        .slice(-keepMessages)
-        .map((item) => ({ role: normalizeRole(item.role), content: normalizeMultimodalContent(item.content || '', { ...limits, perMessageChars }) }))
-        .filter((item) => item.content || item.role === 'assistant');
-    let total = raw.reduce((sum, item) => sum + (Array.isArray(item.content) ? item.content.reduce((n, p) => n + String(p.text || '').length + (p.image_url || p.inlineData ? 1200 : 0), 0) : String(item.content || '').length), 0);
-    while (raw.length > 2 && total > maxInputChars) {
-        const removed = raw.shift();
-        total -= Array.isArray(removed?.content) ? removed.content.reduce((n, p) => n + String(p.text || '').length + (p.image_url || p.inlineData ? 1200 : 0), 0) : String(removed?.content || '').length;
-    }
-    return raw;
+    return compactConversationHistory(messages, limits).messages;
 }
 function dataUrlPayload(dataUrl = '') {
     const match = /^data:([^;,]+);base64,(.*)$/i.exec(String(dataUrl || ''));
@@ -542,8 +590,11 @@ function toolDefinitions(ai = {}) {
     return tools;
 }
 function convertMessagesForProvider(messages = [], systemPrompt = '', limits = {}) {
-    const sanitized = sanitizeMessages(messages, limits);
-    return [{ role: 'system', content: systemPrompt }, ...sanitized];
+    const compacted = compactConversationHistory(messages, limits);
+    const prompt = compacted.summary ? `${systemPrompt}\n\n${compacted.summary}` : systemPrompt;
+    const out = [{ role: 'system', content: prompt }, ...compacted.messages];
+    out._contextStats = { originalMessages: compacted.originalCount, compactedMessages: compacted.compactedCount, inputCharsBeforeCompact: compacted.totalChars, promptChars: prompt.length };
+    return out;
 }
 function normalizeOpenAiMessage(message = {}) {
     return {
@@ -581,13 +632,16 @@ function closeJsonSchema(schema = {}) {
     return out;
 }
 function openAiChatTools(tools = []) {
-    return tools.map((tool) => ({
+    if (AI_OPENAI_TOOL_CACHE.has(tools)) return AI_OPENAI_TOOL_CACHE.get(tools);
+    const converted = tools.map((tool) => ({
         ...tool,
         function: {
             ...(tool.function || {}),
             parameters: closeJsonSchema(tool.function?.parameters || { type: 'object', properties: {} }),
         },
     })).filter((tool) => tool.function?.name);
+    AI_OPENAI_TOOL_CACHE.set(tools, converted);
+    return converted;
 }
 function anthropicSchema(schema = {}) {
     if (!schema || typeof schema !== 'object') return schema;
@@ -601,12 +655,15 @@ function anthropicSchema(schema = {}) {
     return out;
 }
 function toAnthropicTools(tools = []) {
-    return tools.map((tool) => ({
+    if (AI_ANTHROPIC_TOOL_CACHE.has(tools)) return AI_ANTHROPIC_TOOL_CACHE.get(tools);
+    const converted = tools.map((tool) => ({
         name: tool.function?.name,
         description: tool.function?.description || '',
         input_schema: anthropicSchema(tool.function?.parameters || { type: 'object', properties: {} }),
         strict: true,
     })).filter((tool) => tool.name);
+    AI_ANTHROPIC_TOOL_CACHE.set(tools, converted);
+    return converted;
 }
 function anthropicEffort(value = '') {
     const v = String(value || '').toLowerCase();
@@ -660,12 +717,15 @@ function geminiSchema(schema = {}) {
     return out;
 }
 function toGeminiTools(tools = []) {
+    if (AI_GEMINI_TOOL_CACHE.has(tools)) return AI_GEMINI_TOOL_CACHE.get(tools);
     const functionDeclarations = tools.map((tool) => ({
         name: tool.function?.name,
         description: tool.function?.description || '',
         parameters: geminiSchema(tool.function?.parameters || { type: 'object', properties: {} }),
     })).filter((tool) => tool.name);
-    return functionDeclarations.length ? [{ functionDeclarations }] : [];
+    const converted = functionDeclarations.length ? [{ functionDeclarations }] : [];
+    AI_GEMINI_TOOL_CACHE.set(tools, converted);
+    return converted;
 }
 function geminiThinkingConfig(model = '', effort = '') {
     const v = String(effort || '').toLowerCase();
@@ -1175,6 +1235,21 @@ function publicRemoteDesktopScreenshot(r = {}, maxWidth = 960) {
         error: String(r.error || (dataUrl && !dataUrlOk ? `截图数据过大（${dataUrl.length} chars），前端需降低 maxWidth 后重试` : '')),
         at: Number(r.at || Date.now()),
     };
+}
+function cachedToolDefinitions(ai = {}) {
+    const p = ai.permissions || {};
+    const key = JSON.stringify({ webSearch: p.webSearch !== false, webFetch: p.webFetch !== false, browser: p.browser !== false, memory: p.memory !== false, env: p.env !== false, remoteExecute: p.remoteExecute !== false, fileRead: p.fileRead !== false, fileWrite: p.fileWrite !== false });
+    if (!AI_TOOL_CACHE.has(key)) AI_TOOL_CACHE.set(key, toolDefinitions(ai));
+    return AI_TOOL_CACHE.get(key);
+}
+function recordAiPerf(sample = {}) {
+    AI_PERF_SAMPLES.unshift({ at: Date.now(), ...sample });
+    if (AI_PERF_SAMPLES.length > MAX_AI_PERF_SAMPLES) AI_PERF_SAMPLES.length = MAX_AI_PERF_SAMPLES;
+}
+function aiPerfSnapshot() {
+    const list = AI_PERF_SAMPLES.slice();
+    const avg = (field) => list.length ? Math.round(list.reduce((sum, x) => sum + Number(x[field] || 0), 0) / list.length) : 0;
+    return { count: list.length, avgDurationMs: avg('durationMs'), avgProviderMs: avg('providerMs'), avgToolMs: avg('toolMs'), samples: list.slice(0, 50) };
 }
 function toolRoundLimit(ai = {}, provider = {}) {
     const raw = provider.options?.context?.maxToolRounds ?? ai.context?.maxToolRounds ?? DEFAULT_TOOL_CALL_LIMIT;
@@ -1889,19 +1964,29 @@ function registerAiRoutes(app, deps) {
             const { provider, model } = selectProvider(ai, req.body || {});
             const context = normalizeAiContext(req.body?.context || {});
             const limits = normalizeContextLimits(ai, provider);
+            const requestStartedAt = Date.now();
+            let providerMs = 0;
+            let toolMs = 0;
+            let providerCalls = 0;
             const baseMessages = convertMessagesForProvider(req.body?.messages || [], buildSystemPrompt(ai, context, limits), limits);
-            const tools = providerSupportsTools(provider) ? toolDefinitions(ai) : [];
+            const contextStats = baseMessages._contextStats || {};
+            const tools = providerSupportsTools(provider) ? cachedToolDefinitions(ai) : [];
             let messages = baseMessages;
             const toolResults = [];
             const maxToolRounds = toolRoundLimit(ai, provider);
             for (let step = 0; step < maxToolRounds; step += 1) {
                 throwIfAborted(abortController.signal);
+                const providerStartedAt = Date.now();
                 const message = await callProvider(provider, model, messages, req.body?.options || {}, tools, abortController.signal);
+                providerMs += Date.now() - providerStartedAt;
+                providerCalls += 1;
                 throwIfAborted(abortController.signal);
                 const calls = Array.isArray(message.tool_calls) ? message.tool_calls.map(parseToolCall).filter((c) => c.name) : [];
                 if (!calls.length) {
                     deps.addActivity?.(`AI 助理对话：${provider.name || provider.type}/${model}`);
-                    return res.json({ ok: true, message: { role: 'assistant', content: message.content || '' }, toolResults, provider: { id: provider.id, name: provider.name, type: provider.type }, model });
+                    const durationMs = Date.now() - requestStartedAt;
+                    recordAiPerf({ status: 'ok', durationMs, providerMs, toolMs, providerCalls, toolResults: toolResults.length, model, provider: provider.name || provider.type, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0, inputCharsBeforeCompact: contextStats.inputCharsBeforeCompact || 0 });
+                    return res.json({ ok: true, message: { role: 'assistant', content: message.content || '' }, toolResults, provider: { id: provider.id, name: provider.name, type: provider.type }, model, metrics: { durationMs, providerMs, toolMs, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0 } });
                 }
                 messages = [...messages, { role: 'assistant', content: message.content || '', tool_calls: message.tool_calls, response_id: message.response_id || '', parts: Array.isArray(message.parts) ? message.parts : undefined }];
                 const followupToolMessages = [];
@@ -1919,6 +2004,7 @@ function registerAiRoutes(app, deps) {
                     }
                     throwIfAborted(abortController.signal);
                     const endedAt = Date.now();
+                    toolMs += endedAt - startedAt;
                     if (result?.confirmationRequired) {
                         return res.json({ ok: true, message: { role: 'assistant', content: message.content || '需要用户确认后继续执行。' }, confirmationRequired: true, confirmation: result.confirmation, toolResults });
                     }
@@ -1936,7 +2022,9 @@ function registerAiRoutes(app, deps) {
                 }
                 if (followupToolMessages.length) messages.push(...followupToolMessages);
             }
-            res.json({ ok: true, message: { role: 'assistant', content: '已达到工具调用轮次上限，请根据上方工具结果继续。' }, toolResults });
+            const durationMs = Date.now() - requestStartedAt;
+            recordAiPerf({ status: 'tool_limit', durationMs, providerMs, toolMs, providerCalls, toolResults: toolResults.length, model, provider: provider.name || provider.type, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0, inputCharsBeforeCompact: contextStats.inputCharsBeforeCompact || 0 });
+            res.json({ ok: true, message: { role: 'assistant', content: '已达到工具调用轮次上限，请根据上方工具结果继续。' }, toolResults, metrics: { durationMs, providerMs, toolMs, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0 } });
         } catch (err) {
             if (err?.name === 'AbortError' || abortController.signal.aborted) {
                 console.info('[ai-agent] chat aborted by client');
@@ -1945,11 +2033,16 @@ function registerAiRoutes(app, deps) {
             }
             console.error('[ai-agent] chat failed:', err);
             const status = isTransientAiFetchError(err) ? 502 : 400;
+            recordAiPerf({ status: 'error', durationMs: 0, error: publicError(err).slice(0, 240) });
             res.status(status).json({ error: publicError(err), transient: status === 502 });
         } finally {
             req.off?.('aborted', abortRequest);
             res.off?.('close', abortRequest);
         }
+    });
+
+    app.get('/api/ai/metrics', deps.requireAuth, (req, res) => {
+        res.json({ ok: true, metrics: aiPerfSnapshot() });
     });
 
     app.post('/api/ai/providers/:id/open', deps.requireAuth, async (req, res) => {

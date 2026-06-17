@@ -191,7 +191,7 @@ PORT=3000
 
 Zephyr 内置可选 AI Agent 能力，默认关闭。登录后台后进入 **设置 → AI 助理** 可启用：
 
-- **多模型供应商**：支持 OpenAI 兼容接口、Anthropic Claude、Google Gemini；可配置自定义 API Base URL、API Key、模型列表、默认模型、上下文窗口/最大输入长度、额外请求头和常见模型参数（temperature、top_p、max_tokens/max_output_tokens、presence/frequency penalty、reasoning_effort、额外 JSON 参数等）。`auto` 默认按 Chat Completions 兼容路径发送，只有明确选择 Responses API 或 Base URL 以 `/responses` 结尾时才使用 Responses；`previous_response_id` 默认关闭，避免兼容网关报错。Zephyr 内置默认系统提示词，约束 AI 按当前连接、标签、备注、Memory、计划器和敏感确认流程工作。
+- **多模型供应商**：支持 OpenAI 兼容接口、Anthropic Claude、Google Gemini；可配置自定义 API Base URL、API Key、模型列表、默认模型、上下文窗口/最大输入长度、额外请求头和常见模型参数（temperature、top_p、max_tokens/max_output_tokens、presence/frequency penalty、reasoning_effort、额外 JSON 参数等）。`auto` 默认按 Chat Completions 兼容路径发送，只有明确选择 Responses API 或 Base URL 以 `/responses` 结尾时才使用 Responses；`previous_response_id` 默认关闭，避免兼容网关报错。高轮次对话会自动做上下文压缩：早期轮次合并为摘要注入系统提示，最近消息保持原文，避免请求体随轮次线性膨胀导致响应变慢、超时或上游模型报错；这不是限制对话轮次。Zephyr 内置默认系统提示词，约束 AI 按当前连接、标签、备注、Memory、计划器和敏感确认流程工作。
 - **独立入口与浮窗**：启用后顶部 AI 按钮会打开类似 SSH 文件/监控面板的浮窗；桌面端支持拖拽、缩放和布局，移动端优化为稳定的全屏/近全屏面板，保留顶部整条标题栏拖动、横向对话切换和内部滚动，避免浮窗导致页面无法滑动或画面消失。
 - **工具权限与透明过程**：可单独开关网页搜索、网页正文读取、内置 Chromium 浏览器自动化、远程执行、远程文件读取、远程文件写入、代码编辑/补全、长期 Memory 和 AI 环境变量。AI 还能列出/新增/修改/删除连接、代理、SSH 密钥库、跳板机和代码片段，测试 SSH/RDP/VNC 连通性，读取当前 SSH 终端屏幕/scrollback 输出，读取 RDP/VNC 远程桌面画面快照，并通过 `ui_action` 在当前 Zephyr 页面可见地切换视图、打开连接弹窗、排列终端窗口、点击 SSH 终端工具栏，或直接调整 RDP/VNC 工具栏（画质、视图/适应、缩放、剪贴板、软键盘、快捷键、视区/拖拽、Ctrl+Alt+Del、重连/断开、发送文本/快捷键/坐标点击）。AI 每次工具调用会在聊天中生成独立过程卡片，展示工具、参数摘要、耗时、结果摘要和可展开的完整参数/结果；敏感字段仍会打码。RDP/VNC 画面截图在支持视觉输入的模型供应商上会以多模态图片传给模型（Anthropic/Gemini/OpenAI 均支持）。
 - **内置 Chromium 浏览器自动化**：Docker 运行镜像内置 `chromium`，AI 可通过 CDP 执行页面导航、截图、点击、输入、滚动和正文读取；每次浏览器工具调用会返回 `/api/ai/browser/screenshots/...` 预览，AI 浮窗会把截图直接嵌入聊天流和顶部浏览器预览区。
@@ -201,6 +201,7 @@ Zephyr 内置可选 AI Agent 能力，默认关闭。登录后台后进入 **设
 - **敏感操作确认**：远程执行、远程写文件、读取 AI 环境变量默认需要用户在 AI 浮窗内手动确认；也可在设置中开启自动确认并设置延迟。
 - **Skills**：可在设置页添加/启用多个 Skill，把工作流、角色设定、工具使用规则和专用提示词注入 AI 上下文；Zephyr 会默认内置一个本地运维 Skill，让模型优先理解连接资产、当前终端上下文、远程文件/命令、Memory 和敏感确认流程。
 - **编辑器 AI 补全**：SSH 文件管理器的代码编辑器支持 `Ctrl/⌘ + Shift + Space`、命令面板“AI 代码补全”、顶部“AI补全”按钮和移动端工具栏 `AI` 按钮。
+- **性能监控基线**：服务端会记录最近 AI 请求的总耗时、模型供应商耗时、工具耗时、工具调用数量、上下文压缩条数等内存样本，可通过登录后的 `GET /api/ai/metrics` 查看。该接口用于压测和线上排障，不返回 API Key、环境变量值、密码、私钥等敏感内容。
 
 API Key、AI 环境变量等密钥会作为设置敏感字段使用 ML-KEM-768 + AES-256-GCM 混合加密后保存；前端读取设置时只返回 `******` 占位。需要再次查看 AI Provider API Key 时，可在模型供应商列表点击“查看 Key”，流程复用已保存密码查看逻辑：开启 TOTP 时输入动态验证码，否则输入当前登录密码。
 

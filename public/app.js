@@ -4493,16 +4493,41 @@ async function resolveAiConfirmation(id, approve) {
     }
 }
 function autoResizeAiInput(textarea) { textarea.style.height = 'auto'; textarea.style.height = `${Math.min(140, textarea.scrollHeight)}px`; }
+function estimateAiMessageChars(message) {
+    const text = String(message?.content || '');
+    return text.length + (text.includes('data:image/') ? 1200 : 0);
+}
+function compressAiMessagesForRequest(messages = [], latest = '') {
+    const clean = (Array.isArray(messages) ? messages : [])
+        .filter((m) => ['user', 'assistant', 'confirmation'].includes(String(m.role || '')) && !/^请求失败[:：]/.test(String(m.content || '')))
+        .map((m) => ({ role: m.role === 'confirmation' ? 'assistant' : m.role, content: String(m.content || '') }));
+    const last = clean[clean.length - 1];
+    if (latest && (!last || last.role !== 'user' || String(last.content || '') !== latest)) clean.push({ role: 'user', content: latest });
+    const total = clean.reduce((sum, m) => sum + estimateAiMessageChars(m), 0);
+    if (clean.length <= 18 && total <= 72000) return clean;
+    const recent = [];
+    let recentChars = 0;
+    for (let i = clean.length - 1; i >= 0; i -= 1) {
+        const len = estimateAiMessageChars(clean[i]);
+        if (recent.length >= 12 && recentChars + len > 42000) break;
+        recent.unshift(clean[i]);
+        recentChars += len;
+    }
+    const older = clean.slice(0, Math.max(0, clean.length - recent.length));
+    if (!older.length) return recent;
+    let summary = `高轮次对话压缩摘要（前端自动生成；不是限制轮次，最近 ${recent.length} 条仍保留原文）：\n`;
+    for (const m of older) {
+        if (summary.length > 18000) break;
+        const role = m.role === 'assistant' ? 'AI' : '用户';
+        const text = m.content.replace(/data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+/g, '[图片]').replace(/\s+/g, ' ').trim().slice(0, 700);
+        if (text) summary += `- ${role}: ${text}\n`;
+    }
+    return [{ role: 'user', content: summary.slice(0, 20000) }, ...recent];
+}
 function aiMessagesForRequest(session, latestText = '') {
     const messages = Array.isArray(session?.messages) ? session.messages : [];
     const latest = String(latestText || messages[messages.length - 1]?.content || '');
-    const keep = messages
-        .filter((m) => ['user', 'assistant', 'confirmation'].includes(String(m.role || '')) && !/^请求失败[:：]/.test(String(m.content || '')))
-        .slice(-12);
-    const normalized = keep.map((m) => ({ ...m, role: m.role === 'confirmation' ? 'assistant' : m.role }));
-    const last = normalized[normalized.length - 1];
-    if (latest && (!last || last.role !== 'user' || String(last.content || '') !== latest)) normalized.push({ role: 'user', content: latest });
-    return normalized;
+    return compressAiMessagesForRequest(messages, latest);
 }
 function startAiPanelWatchdog() {
     window.clearInterval(aiPanelWatchdogTimer);
