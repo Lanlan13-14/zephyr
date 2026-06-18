@@ -7,12 +7,31 @@ const WebSocket = require('ws');
 
 const BROWSER_DIR = path.join(__dirname, 'data', 'ai-browser');
 const SHOT_DIR = path.join(BROWSER_DIR, 'screenshots');
-const PROFILE_DIR = process.env.AI_CHROMIUM_USER_DATA_DIR || path.join(BROWSER_DIR, 'profile');
+const PROFILE_ROOT = process.env.AI_CHROMIUM_USER_DATA_DIR || path.join(BROWSER_DIR, 'profile');
+const PROFILE_SHARED = /^(1|true|yes)$/i.test(String(process.env.AI_CHROMIUM_PROFILE_SHARED || ''));
+const PROFILE_DIR = PROFILE_SHARED ? PROFILE_ROOT : path.join(PROFILE_ROOT, `runtime-${os.hostname()}-${process.pid}`);
 const DEFAULT_TIMEOUT = 12000;
 const DESKTOP_UA = process.env.AI_CHROMIUM_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0))); }
 function ensureDirs() { fs.mkdirSync(SHOT_DIR, { recursive: true }); fs.mkdirSync(PROFILE_DIR, { recursive: true }); }
+function cleanupRuntimeProfiles() {
+    if (PROFILE_SHARED) return;
+    try {
+        fs.mkdirSync(PROFILE_ROOT, { recursive: true });
+        const prefix = `runtime-${os.hostname()}-`;
+        for (const name of fs.readdirSync(PROFILE_ROOT)) {
+            if (!name.startsWith(prefix)) continue;
+            const pid = Number(name.slice(prefix.length));
+            if (pid === process.pid) continue;
+            let alive = false;
+            if (Number.isInteger(pid) && pid > 0) {
+                try { process.kill(pid, 0); alive = true; } catch { alive = false; }
+            }
+            if (!alive) fs.rmSync(path.join(PROFILE_ROOT, name), { recursive: true, force: true });
+        }
+    } catch {}
+}
 function clipText(text, max = 60000) { const s = String(text || ''); return s.length > max ? `${s.slice(0, max)}\n...[已截断 ${s.length - max} 字符]` : s; }
 function findChromium() {
     const candidates = [process.env.CHROMIUM_BIN, process.env.CHROME_BIN, '/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'].filter(Boolean);
@@ -110,6 +129,7 @@ class AiBrowserService {
     async launch() {
         if (this.proc && !this.proc.killed) return;
         const bin = findChromium();
+        cleanupRuntimeProfiles();
         ensureDirs();
         const args = [
             `--remote-debugging-port=${this.port}`,
@@ -120,7 +140,7 @@ class AiBrowserService {
             '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--disable-extensions',
             '--disable-background-networking', '--disable-sync', '--metrics-recording-only', '--mute-audio',
             '--disable-blink-features=AutomationControlled',
-            '--no-first-run', '--no-default-browser-check',
+            '--no-first-run', '--no-default-browser-check', '--no-process-singleton-dialog',
             'about:blank',
         ];
         this.proc = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'], env: process.env });
