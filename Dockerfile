@@ -90,6 +90,9 @@ RUN apk add --no-cache \
         nss \
         harfbuzz \
         ttf-freefont \
+        font-noto \
+        font-noto-cjk \
+        font-noto-emoji \
     && echo "=== runtime deps installed ==="
 
 COPY --from=freerdp-build /opt/freerdp-zephyr /opt/freerdp-zephyr

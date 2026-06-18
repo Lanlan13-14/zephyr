@@ -8728,7 +8728,7 @@ body.app-body:not(.terminal-mode) .app-main {
 }
 .ai-message .ai-md-image { max-width: 100%; border-radius: 12px; border: 1px solid var(--border); display: block; margin: 8px 0; }
 .ai-md-table-wrap { max-width: 100%; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); border-radius: 13px; background: color-mix(in srgb, var(--surface) 78%, var(--bg)); }
-.ai-md-table-wrap table { width: 100%; border-collapse: collapse; min-width: 360px; white-space: normal; }
+.ai-md-table-wrap table { width: 100%; border-collapse: collapse; min-width: min(360px, 100%); white-space: normal; }
 .ai-md-table-wrap th, .ai-md-table-wrap td { padding: 9px 11px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
 .ai-md-table-wrap th { color: var(--text); background: color-mix(in srgb, var(--accent) 9%, transparent); font-weight: 760; }
 .ai-md-table-wrap tr:last-child td { border-bottom: 0; }

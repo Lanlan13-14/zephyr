@@ -1727,6 +1727,7 @@ registerAiRoutes(app, {
     },
     addActivity,
     verifySensitiveAccess,
+    upload,
 });
 
 app.get('/api/public/settings', (req, res) => {

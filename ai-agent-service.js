@@ -2087,6 +2087,27 @@ function registerAiRoutes(app, deps) {
         res.json({ ok: true, metrics: aiPerfSnapshot() });
     });
 
+    app.post('/api/ai/voice/transcribe', deps.requireAuth, deps.upload.single('audio'), async (req, res) => {
+        try {
+            const ai = deps.storage.getSettings().ai || {};
+            if (!ai.enabled) return res.status(403).json({ error: 'AI 助理未启用' });
+            const provider = (Array.isArray(ai.providers) ? ai.providers : []).find((p) => p.enabled !== false && (p.type === 'openai' || p.type === 'openai-compatible') && (p.apiKey || p.envKey));
+            if (!provider) return res.status(400).json({ error: '语音转文字需要一个 OpenAI/OpenAI-compatible Provider' });
+            if (!req.file?.buffer?.length) return res.status(400).json({ error: '未收到语音数据' });
+            const apiKey = provider.apiKey || process.env[provider.envKey] || '';
+            if (!apiKey) return res.status(400).json({ error: 'Provider API Key 未配置' });
+            const baseUrl = String(provider.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+            const form = new FormData();
+            form.append('file', new Blob([req.file.buffer], { type: req.file.mimetype || 'audio/webm' }), req.file.originalname || 'voice.webm');
+            form.append('model', ai.voice?.transcribeModel || provider.options?.transcribeModel || 'whisper-1');
+            form.append('language', req.body?.language || 'zh');
+            const response = await fetch(`${baseUrl}/audio/transcriptions`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error?.message || data.message || `语音转文字失败（HTTP ${response.status}）`);
+            res.json({ ok: true, text: data.text || '' });
+        } catch (err) { res.status(400).json({ error: publicError(err) }); }
+    });
+
     app.post('/api/ai/providers/:id/open', deps.requireAuth, async (req, res) => {
         try {
             if (typeof deps.verifySensitiveAccess !== 'function') return res.status(403).json({ error: '敏感信息验证不可用' });

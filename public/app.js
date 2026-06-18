@@ -9,6 +9,8 @@ let aiChatSessions = [];
 let aiCurrentSessionId = null;
 let aiSpeechRecognition = null;
 let aiRecording = false;
+let aiMediaRecorder = null;
+let aiVoiceChunks = [];
 let aiPanelLayoutMenu = null;
 let aiPanelLayoutMenuButton = null;
 let aiPanelSuppressLayoutClick = false;
@@ -680,7 +682,7 @@ function renderCodeBlockHtml(code = '', info = '', enhanced = false) {
 function renderMarkdownBlocks(text = '', codeBlocks = []) {
     const lines = String(text || '').split('\n'), out = [];
     const token = (line) => /^§§CODE(\d+)§§$/.exec(String(line || '').trim());
-    const tableSep = (line) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line || '');
+    const tableSep = (line) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(line || '');
     const splitTable = (line) => String(line || '').trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((x) => x.trim());
     const special = (i) => { const line = lines[i] || ''; return !line.trim() || token(line) || /^#{1,6}\s+/.test(line) || /^\s*>\s?/.test(line) || /^\s*[-*+]\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line) || /^\s*---+\s*$/.test(line) || (line.includes('|') && tableSep(lines[i + 1] || '')); };
     for (let i = 0; i < lines.length;) {
@@ -5215,54 +5217,58 @@ function setupAiPanelChrome() {
     });
     window.addEventListener('resize', () => closeAiPanelLayoutMenu({ instant: true }));
 }
-function toggleAiVoice() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return toast('当前浏览器不支持语音识别（需 Chrome 或 Edge）');
-
-    if (aiRecording) { aiSpeechRecognition?.stop?.(); return; }
-
-    // Pre-check: secure context required
-    if (!window.isSecureContext && location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-        return toast('语音识别需要 HTTPS 或 localhost 安全环境');
-    }
-
-    // Visual feedback immediately
+async function transcribeAiVoiceBlob(blob) {
+    const form = new FormData();
+    form.append('audio', blob, `voice.${blob.type.includes('mp4') ? 'm4a' : 'webm'}`);
+    form.append('language', 'zh');
+    return apiMaybeForm('/api/ai/voice/transcribe', { method: 'POST', body: form });
+}
+async function toggleAiVoice() {
+    const input = $('#aiUserInput');
     const btn = $('#aiVoiceBtn');
-    btn?.classList.add('active');
-
-    aiSpeechRecognition = new SpeechRecognition();
-    aiSpeechRecognition.lang = 'zh-CN';
-    aiSpeechRecognition.interimResults = true;
-    aiSpeechRecognition.maxAlternatives = 1;
-
-    aiSpeechRecognition.onstart = () => { aiRecording = true; };
-    aiSpeechRecognition.onend = () => { aiRecording = false; btn?.classList.remove('active'); $('#aiUserInput').value = $('#aiUserInput').value.replace(/\[识别中...\]$/, ''); };
-    aiSpeechRecognition.onerror = (event) => {
-        aiRecording = false;
-        btn?.classList.remove('active');
-        $('#aiUserInput').value = $('#aiUserInput').value.replace(/\[识别中...\]$/, '');
-        const msg = event.error === 'not-allowed' ? '麦克风权限未授予，请在浏览器设置中允许麦克风访问'
-            : event.error === 'no-speech' ? '未检测到语音，请重试'
-            : event.error === 'audio-capture' ? '未找到麦克风设备'
-            : event.error === 'network' ? '语音识别网络连接失败（需要 HTTPS 或 localhost）'
-            : event.error === 'aborted' ? ''  // user stopped, don't show error
-            : '语音识别失败：' + (event.error || '未知错误');
-        if (msg) toast(msg);
-    };
-    aiSpeechRecognition.onresult = (event) => {
-        let text = '';
-        for (let i = event.resultIndex; i < event.results.length; i += 1) text += event.results[i][0].transcript;
-        $('#aiUserInput').value = $('#aiUserInput').value.replace(/\[识别中...\]$/, '') + (event.results[event.results.length - 1].isFinal ? text : '[识别中...]');
-        autoResizeAiInput($('#aiUserInput'));
-    };
-    try {
-        aiSpeechRecognition.start();
-    } catch (err) {
-        aiRecording = false;
-        btn?.classList.remove('active');
-        console.warn('[ai-voice] recognition start failed:', err);
-        toast('语音识别启动失败：' + (err.message || '请检查麦克风权限和网络'));
+    if (aiRecording) { aiSpeechRecognition?.stop?.(); aiMediaRecorder?.stop?.(); return; }
+    if (!window.isSecureContext && location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return toast('语音输入需要 HTTPS 或 localhost 安全环境');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+        let finalText = '';
+        let lastInterim = '';
+        aiSpeechRecognition = new SpeechRecognition();
+        aiSpeechRecognition.lang = 'zh-CN';
+        aiSpeechRecognition.interimResults = true;
+        aiSpeechRecognition.continuous = false;
+        aiSpeechRecognition.maxAlternatives = 1;
+        btn?.classList.add('active');
+        aiSpeechRecognition.onstart = () => { aiRecording = true; };
+        aiSpeechRecognition.onend = () => { aiRecording = false; btn?.classList.remove('active'); input.placeholder = '在此输入命令，Enter 发送，Shift+Enter 换行...'; const text = (finalText || lastInterim).trim(); if (text) { input.value = `${input.value || ''}${input.value ? '\n' : ''}${text}`; autoResizeAiInput(input); input.focus?.(); } };
+        aiSpeechRecognition.onerror = (event) => { aiRecording = false; btn?.classList.remove('active'); input.placeholder = '在此输入命令，Enter 发送，Shift+Enter 换行...'; if (event.error !== 'aborted') toast(event.error === 'not-allowed' ? '麦克风权限未授予' : `语音识别失败：${event.error || '未知错误'}`); };
+        aiSpeechRecognition.onresult = (event) => {
+            let interim = '';
+            for (let i = event.resultIndex; i < event.results.length; i += 1) {
+                const text = event.results[i][0].transcript || '';
+                if (event.results[i].isFinal) finalText += text;
+                else interim += text;
+            }
+            lastInterim = interim;
+            input.placeholder = interim ? `识别中：${interim}` : '在此输入命令，Enter 发送，Shift+Enter 换行...';
+        };
+        try { aiSpeechRecognition.start(); return; } catch (err) { console.warn('[ai-voice] web speech start failed:', err); btn?.classList.remove('active'); aiRecording = false; }
     }
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast('当前浏览器不支持语音输入');
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        aiVoiceChunks = [];
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
+        aiMediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        aiMediaRecorder.ondataavailable = (e) => { if (e.data?.size) aiVoiceChunks.push(e.data); };
+        aiMediaRecorder.onstop = async () => {
+            aiRecording = false; btn?.classList.remove('active'); stream.getTracks().forEach((t) => t.stop());
+            const blob = new Blob(aiVoiceChunks, { type: aiMediaRecorder.mimeType || 'audio/webm' });
+            if (!blob.size) return toast('未录到语音');
+            try { const data = await transcribeAiVoiceBlob(blob); const text = String(data.text || '').trim(); if (text) { input.value = `${input.value || ''}${input.value ? '\n' : ''}${text}`; autoResizeAiInput(input); input.focus?.(); } else toast('未识别到文字'); }
+            catch (err) { toast(err.message || '语音转文字失败'); }
+        };
+        aiMediaRecorder.start(); aiRecording = true; btn?.classList.add('active'); toast('正在录音，再点一次结束并转文字');
+    } catch (err) { aiRecording = false; btn?.classList.remove('active'); toast(err.name === 'NotAllowedError' ? '麦克风权限未授予' : `语音输入启动失败：${err.message || err}`); }
 }
 function updateAiProviderModalHints() {
     const type = $('#aiProviderType')?.value || 'openai-compatible';

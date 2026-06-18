@@ -116,6 +116,7 @@ class AiBrowserService {
             `--user-data-dir=${PROFILE_DIR}`,
             `--user-agent=${DESKTOP_UA}`,
             '--window-size=1365,900', '--lang=zh-CN,zh,en-US,en',
+            '--font-render-hinting=medium',
             '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--disable-extensions',
             '--disable-background-networking', '--disable-sync', '--metrics-recording-only', '--mute-audio',
             '--disable-blink-features=AutomationControlled',
