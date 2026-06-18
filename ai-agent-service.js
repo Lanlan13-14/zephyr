@@ -919,7 +919,7 @@ async function callOpenAiResponses(provider, model, messages, options = {}, tool
             const retryPayload = { ...payload, input: toResponsesInput(messages) };
             delete retryPayload.previous_response_id;
             data = await run(retryPayload);
-        } else if (/Invalid value: [`'\"]?input_(audio|image|file)|unknown variant|expected [`'\"]?text|deserialize/i.test(String(err.message || ''))) {
+        } else if (/Invalid value: [`'\"]?input_(audio|image|file)|Invalid file data|unsupported MIME type|unknown variant|expected [`'\"]?text|deserialize/i.test(String(err.message || ''))) {
             data = await run(flattenMultimodalPayloadForTextOnly(payload));
         } else {
             throw err;
