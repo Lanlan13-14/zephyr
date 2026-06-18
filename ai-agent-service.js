@@ -581,6 +581,7 @@ function toolDefinitions(ai = {}) {
         tools.push({ type: 'function', function: { name: 'browser_text', description: '读取当前浏览器页面可见/正文文本。', parameters: { type: 'object', properties: { session: { type: 'string' }, maxChars: { type: 'number' } } } } });
         tools.push({ type: 'function', function: { name: 'browser_key', description: '向当前页面发送键盘按键（Enter/Tab/Escape/方向键等），用于像用户一样操作页面。', parameters: { type: 'object', properties: { session: { type: 'string' }, key: { type: 'string' } }, required: ['key'] } } });
         tools.push({ type: 'function', function: { name: 'browser_wait', description: '等待页面加载或交互完成，然后返回页面状态和截图预览。', parameters: { type: 'object', properties: { session: { type: 'string' }, ms: { type: 'number' } } } } });
+        tools.push({ type: 'function', function: { name: 'browser_close', description: '关闭当前 AI 对话对应的内置浏览器页面。通常由前端关闭/删除对话时自动调用。', parameters: { type: 'object', properties: { session: { type: 'string' } } } } });
     }
     if (p.memory !== false) {
         tools.push({ type: 'function', function: { name: 'memory_search', description: '搜索长期 Memory / 项目记忆；会结合当前连接、项目、标签进行自动关联排序。', parameters: { type: 'object', properties: { query: { type: 'string' }, scope: { type: 'string' }, project: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, connectionIds: { type: 'array', items: { type: 'string' } }, maxResults: { type: 'number' } } } } });
@@ -1604,6 +1605,11 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             if (p.browser === false) throw new Error('浏览器自动化权限未开启');
             const session = aiBrowserSession(args, ctx);
             return browserResultWithPreview('wait', await browserService.wait({ session, ms: args.ms || 1000 }), session);
+        }
+        case 'browser_close': {
+            if (p.browser === false) throw new Error('浏览器自动化权限未开启');
+            const session = aiBrowserSession(args, ctx);
+            return browserService.closeSession(session);
         }
         case 'open_connection': {
             const requested = String(args.connectionId || args.name || args.host || '').trim();

@@ -3881,6 +3881,15 @@ function handleAiChatAreaClick(event) {
     if (approve) resolveAiConfirmation(approve, true);
     if (deny) resolveAiConfirmation(deny, false);
 }
+function closeAiBrowserForSession(id) {
+    const sessionId = String(id || '').trim();
+    if (!sessionId) return;
+    const state = aiBrowserPreviewStates.get(sessionId) || aiBrowserPreviewStateForSession(sessionId);
+    const session = state?.session || `chat-${sessionId.replace(/[^A-Za-z0-9_.:-]/g, '_').slice(0, 80)}`;
+    api('/api/ai/tools/run', { method: 'POST', body: JSON.stringify({ tool: 'browser_close', args: { session }, context: collectAiContext({ sessionId }) }) }).catch(() => {});
+    aiBrowserPreviewStates.delete(sessionId);
+    if (sessionId === aiCurrentSessionId) renderAiBrowserPreview();
+}
 function deleteAiChat(id) {
     if (!id || !confirm('删除这个对话？')) return;
     const controller = aiRunForSession(id);
@@ -3890,6 +3899,7 @@ function deleteAiChat(id) {
         clearAiSessionRun(id, controller);
     }
     aiPendingConfirmations.forEach((pending, confirmationId) => { if (pending?.sessionId === id) aiPendingConfirmations.delete(confirmationId); });
+    closeAiBrowserForSession(id);
     aiChatSessions = aiChatSessions.filter((s) => s.id !== id);
     aiCurrentSessionId = aiChatSessions[0]?.id || null;
     if (!aiChatSessions.length) createAiChat({ silent: true });
@@ -4762,6 +4772,7 @@ function closeAiAssistantPanel() {
     aiPanelState = 'closing';
     p.classList.remove('panel-opening', 'ai-morph-open', 'ai-morph-settled');
     p.setAttribute('aria-hidden', 'true');
+    closeAiBrowserForSession(aiCurrentSessionId);
     $('#aiFloatingBtn')?.classList.remove('active');
     const finishClose = () => {
         if (aiPanelState !== 'closing') return;

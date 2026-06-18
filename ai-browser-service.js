@@ -7,10 +7,12 @@ const WebSocket = require('ws');
 
 const BROWSER_DIR = path.join(__dirname, 'data', 'ai-browser');
 const SHOT_DIR = path.join(BROWSER_DIR, 'screenshots');
+const PROFILE_DIR = process.env.AI_CHROMIUM_USER_DATA_DIR || path.join(BROWSER_DIR, 'profile');
 const DEFAULT_TIMEOUT = 12000;
+const DESKTOP_UA = process.env.AI_CHROMIUM_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0))); }
-function ensureDirs() { fs.mkdirSync(SHOT_DIR, { recursive: true }); }
+function ensureDirs() { fs.mkdirSync(SHOT_DIR, { recursive: true }); fs.mkdirSync(PROFILE_DIR, { recursive: true }); }
 function clipText(text, max = 60000) { const s = String(text || ''); return s.length > max ? `${s.slice(0, max)}\n...[已截断 ${s.length - max} 字符]` : s; }
 function findChromium() {
     const candidates = [process.env.CHROMIUM_BIN, process.env.CHROME_BIN, '/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'].filter(Boolean);
@@ -108,12 +110,16 @@ class AiBrowserService {
     async launch() {
         if (this.proc && !this.proc.killed) return;
         const bin = findChromium();
-        const userDataDir = path.join(os.tmpdir(), `zephyr-ai-chromium-${process.pid}`);
+        ensureDirs();
         const args = [
             `--remote-debugging-port=${this.port}`,
-            `--user-data-dir=${userDataDir}`,
+            `--user-data-dir=${PROFILE_DIR}`,
+            `--user-agent=${DESKTOP_UA}`,
+            '--window-size=1365,900', '--lang=zh-CN,zh,en-US,en',
             '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--disable-extensions',
             '--disable-background-networking', '--disable-sync', '--metrics-recording-only', '--mute-audio',
+            '--disable-blink-features=AutomationControlled',
+            '--no-first-run', '--no-default-browser-check',
             'about:blank',
         ];
         this.proc = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'], env: process.env });
@@ -140,6 +146,13 @@ class AiBrowserService {
         await this.client.send('Page.enable', {}, page.sessionId);
         await this.client.send('Runtime.enable', {}, page.sessionId);
         await this.client.send('DOM.enable', {}, page.sessionId);
+        await this.client.send('Emulation.setUserAgentOverride', { userAgent: DESKTOP_UA, acceptLanguage: 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7', platform: 'Win32' }, page.sessionId).catch(() => {});
+        await this.client.send('Page.addScriptToEvaluateOnNewDocument', { source: `
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
+            Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+            window.chrome = window.chrome || { runtime: {} };
+        ` }, page.sessionId).catch(() => {});
         this.pages.set(key, page);
         return page;
     }
@@ -291,6 +304,9 @@ class AiBrowserService {
         if (page?.targetId) await this.client?.send('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
         this.pages.delete(key);
         return { ok: true, session: key };
+    }
+    async closeSession(session = 'default') {
+        return this.reset(session);
     }
 }
 function clamp(value, min, max, fallback) { const n = Number(value); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback; }
