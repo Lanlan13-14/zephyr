@@ -5182,14 +5182,25 @@ function setupAiAssistant() {
     $('#aiChatArea')?.addEventListener('touchstart', handleAiMessageTouchStart, { passive: true });
     $('#aiChatArea')?.addEventListener('touchend', clearAiMessageTouchTimer);
     $('#aiChatArea')?.addEventListener('touchcancel', clearAiMessageTouchTimer);
-    document.addEventListener('click', (e) => {
+    const handleAiMessageMenuClick = (e) => {
         const menu = $('#aiMessageContextMenu');
-        if (menu && !menu.classList.contains('hidden')) {
-            const action = e.target.closest?.('[data-ai-msg-action]')?.dataset.aiMsgAction;
-            if (action) handleAiMessageMenuAction(action);
-            else if (!menu.contains(e.target) && !e.target.closest?.('.ai-message')) hideAiMessageMenu();
-        }
-    });
+        if (!menu || menu.classList.contains('hidden')) return;
+        const action = e.target.closest?.('[data-ai-msg-action]')?.dataset.aiMsgAction;
+        if (action) { handleAiMessageMenuAction(action); return; }
+        if (!menu.contains(e.target)) hideAiMessageMenu();
+    };
+    const handleAiMessageMenuPointerDown = (e) => {
+        const menu = $('#aiMessageContextMenu');
+        if (!menu || menu.classList.contains('hidden')) return;
+        if (!menu.contains(e.target)) hideAiMessageMenu();
+    };
+    document.addEventListener('pointerdown', handleAiMessageMenuPointerDown, { capture: true });
+    document.addEventListener('click', handleAiMessageMenuClick, { capture: true });
+    document.addEventListener('contextmenu', (e) => {
+        const menu = $('#aiMessageContextMenu');
+        if (!menu || menu.classList.contains('hidden')) return;
+        if (!menu.contains(e.target) && !e.target.closest?.('.ai-message')) hideAiMessageMenu();
+    }, { capture: true });
     $('#aiUploadBtn')?.addEventListener('click', () => $('#aiFileUpload').click());
     $('#aiFileUpload')?.addEventListener('change', (e) => { const files = Array.from(e.target.files || []); if (!files.length) return; appendAiFiles(files).catch((err) => toast(err.message || '附件读取失败')).finally(() => { e.target.value = ''; }); });
     $('#aiVoiceBtn')?.addEventListener('click', toggleAiVoice);

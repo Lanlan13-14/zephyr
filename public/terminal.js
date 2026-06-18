@@ -3339,6 +3339,7 @@ function showFileManager() {
 }
 function hideFileManager() {
     if (typeof closePanelLayoutMenu === 'function') closePanelLayoutMenu({ instant: true });
+    if (typeof closeEditorCommandPalette === 'function') closeEditorCommandPalette(fileManager);
     animatePanelFromButton(fileManager, fileBtn, false);
     fileManager.classList.remove('open');
     updateFileButtonActiveState();
@@ -5096,6 +5097,7 @@ function refreshCodeMirrorLayout() {
 
 async function closeEditor({ animated = true, force = false } = {}) {
     const panel = fmEditorModal;
+    if (typeof closeEditorCommandPalette === 'function') closeEditorCommandPalette(panel);
     if (!force && window.ZephyrCodeEditor?.dirty?.(panel?._codeEditor)) {
         const choice = await requestEditorCloseChoice();
         if (choice === 'save') { saveActiveEditor({ closeAfterSave: true, forceClose: true }); return; }
@@ -5584,6 +5586,22 @@ function saveActiveEditor({ closeAfterSave = true, forceClose = false } = {}) {
     }
     if (closeAfterSave) closeEditor({ force: forceClose });
 }
+
+function closeEditorCommandPalette(panel = null) {
+    const root = panel || document;
+    root.querySelectorAll?.('[data-editor-role="commandPalette"].open').forEach((palette) => palette.classList.remove('open'));
+    document.querySelectorAll('.fm-editor-palette-btn.active, [data-editor-action="palette"].active').forEach((btn) => {
+        if (!panel || panel.contains(btn)) btn.classList.remove('active');
+    });
+}
+function handleEditorCommandPaletteOutside(e) {
+    const palette = e.target.closest?.('[data-editor-role="commandPalette"]');
+    const paletteButton = e.target.closest?.('.fm-editor-palette-btn, [data-editor-action="palette"]');
+    if (palette || paletteButton) return;
+    closeEditorCommandPalette();
+}
+document.addEventListener('pointerdown', handleEditorCommandPaletteOutside, { capture: true });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeEditorCommandPalette(); });
 
 fmEditorCloseBtn?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); updateActiveEditorRefs(fmEditorCloseBtn.closest('.fm-editor-modal')); closeEditor(); });
 fmEditorUndoBtn?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); updateActiveEditorRefs(fmEditorUndoBtn.closest('.fm-editor-modal')); window.ZephyrCodeEditor?.undo?.(getEditorInstance()); });
