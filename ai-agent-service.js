@@ -667,6 +667,19 @@ function closeJsonSchema(schema = {}) {
     if ((out.type === 'object' || out.properties) && out.additionalProperties === undefined) out.additionalProperties = false;
     return out;
 }
+function flattenMultimodalPayloadForTextOnly(payload = {}) {
+    const clone = JSON.parse(JSON.stringify(payload || {}));
+    const summarizePart = (part) => {
+        if (!part || typeof part !== 'object') return String(part || '');
+        if (part.type === 'text' || part.type === 'input_text') return String(part.text || '');
+        if (part.type === 'image_url' || part.type === 'input_image' || part.image_url || part.inlineData) return '[图片附件：当前模型/接口不支持直接图片输入，请换用支持视觉的模型]';
+        if (part.type === 'input_audio' || part.type === 'input_file' || part.input_audio || part.audioData || part.file_data) return '[音频附件：当前模型/接口不支持直接音频输入，请换用支持音频的模型]';
+        return String(part.text || part.content || '');
+    };
+    if (Array.isArray(clone.messages)) clone.messages.forEach((m) => { if (Array.isArray(m.content)) m.content = m.content.map(summarizePart).filter(Boolean).join('\n'); });
+    if (Array.isArray(clone.input)) clone.input.forEach((m) => { if (Array.isArray(m.content)) m.content = m.content.map(summarizePart).filter(Boolean).map((text) => ({ type: 'input_text', text })); });
+    return clone;
+}
 function openAiChatTools(tools = []) {
     if (AI_OPENAI_TOOL_CACHE.has(tools)) return AI_OPENAI_TOOL_CACHE.get(tools);
     const converted = tools.map((tool) => ({
@@ -906,6 +919,8 @@ async function callOpenAiResponses(provider, model, messages, options = {}, tool
             const retryPayload = { ...payload, input: toResponsesInput(messages) };
             delete retryPayload.previous_response_id;
             data = await run(retryPayload);
+        } else if (/Invalid value: [`'\"]?input_(audio|image|file)|unknown variant|expected [`'\"]?text|deserialize/i.test(String(err.message || ''))) {
+            data = await run(flattenMultimodalPayloadForTextOnly(payload));
         } else {
             throw err;
         }
@@ -918,7 +933,14 @@ async function callOpenAiCompatible(provider, model, messages, options = {}, too
     const opts = normalizeOptions(provider, options, 'chat');
     const payload = { model, messages: openAiChatMessages(messages), stream: false, ...opts };
     if (tools.length) { payload.tools = openAiChatTools(tools); payload.tool_choice = 'auto'; }
-    const data = await fetchJsonWithUnsupportedParamRetry(url, { method: 'POST', headers: providerHeaders(provider), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, payload, `${provider.name || provider.type || 'OpenAI Chat'}/${model}`);
+    let data;
+    try {
+        data = await fetchJsonWithUnsupportedParamRetry(url, { method: 'POST', headers: providerHeaders(provider), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, payload, `${provider.name || provider.type || 'OpenAI Chat'}/${model}`);
+    } catch (err) {
+        if (/unknown variant [`'\"]?image_url|expected [`'\"]?text|deserialize.*messages/i.test(String(err.message || ''))) {
+            data = await fetchJsonWithUnsupportedParamRetry(url, { method: 'POST', headers: providerHeaders(provider), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: 0 }, flattenMultimodalPayloadForTextOnly(payload), `${provider.name || provider.type || 'OpenAI Chat text-only'}/${model}`);
+        } else throw err;
+    }
     if (openAiApiMode(provider) === 'responses' && Array.isArray(data.output)) {
         return { role: 'assistant', content: responseOutputText(data), tool_calls: responseToolCalls(data), response_id: data.id || '' };
     }
