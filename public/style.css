@@ -10540,8 +10540,9 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         will-change: transform;
     }
     body.app-body.terminal-mode:not(.terminal-keyboard-lift) .app-shell {
-        transform: translate3d(0, 0, 0);
-        transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+        transform: translate3d(0, 0, 0) !important;
+        transition: none !important;
+        will-change: auto;
     }
     body.app-body.terminal-mode.terminal-keyboard-lift:not(.terminal-custom-fullscreen-open) .terminal-view.active {
         overflow: visible !important;

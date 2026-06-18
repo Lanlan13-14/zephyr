@@ -2351,7 +2351,14 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         // baseline to avoid keeping the auxiliary bar under the system keyboard.
         const normalBottom = isFullscreenTerminalSurface
             ? Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, appKeyboardBaseline || 0)
-            : Math.min(viewRect?.bottom || appKeyboardBaseline || window.innerHeight || 0, appKeyboardBaseline || window.innerHeight || 0);
+            : Math.max(
+                viewRect?.bottom || 0,
+                appKeyboardBaseline || 0,
+                parentKeyboardTop + (effectiveInset || 0),
+                layoutHeight || 0,
+                window.innerHeight || 0,
+                document.documentElement.clientHeight || 0,
+            );
 
         // Keyboard top: use the most credible bottom boundary from parent/iframe
         // metrics. Android WebView sometimes reports a transient visualViewport
@@ -2377,8 +2384,17 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             : null;
         workspace.classList.toggle('keyboard-open', keyboardOpen);
         appKeyboardOpen = keyboardOpen;
+        const rawShift = keyboardOpen && !isFullscreenTerminalSurface
+            ? Math.max(
+                normalBottom - kbTop,
+                effectiveInset || 0,
+                parentInset || 0,
+                inset || 0,
+                metricsViewportHeight > 0 && metricsLayoutHeight > metricsViewportHeight ? metricsLayoutHeight - metricsViewportHeight - metricsOffsetTop : 0,
+            )
+            : 0;
         const shiftY = keyboardOpen && !isFullscreenTerminalSurface
-            ? Math.max(0, Math.round(normalBottom - kbTop))
+            ? Math.min(Math.max(0, Math.round(rawShift)), Math.max(0, Math.round(normalBottom - 180)))
             : 0;
         if (isFullscreenTerminalSurface) document.body.classList.remove('terminal-keyboard-lift');
         workspace.style.flex = isFullscreenTerminalSurface ? '0 0 auto' : '';
