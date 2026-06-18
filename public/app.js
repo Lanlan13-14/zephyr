@@ -203,6 +203,8 @@ function forceCompactTerminalWorkspaceFill(reason = 'compact-terminal-fill') {
         workspace.style.maxHeight = 'none';
         workspace.style.minHeight = '0px';
         workspace.style.marginBottom = '0px';
+        document.body.classList.remove('terminal-keyboard-lift');
+        document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
         document.documentElement.style.setProperty('--app-visual-vh', '100vh');
         document.documentElement.style.setProperty('--app-keyboard-top', '100vh');
     }
@@ -2213,6 +2215,8 @@ function resetTerminalWorkspaceKeyboard({ force = false } = {}) {
     window.clearTimeout(appKeyboardSettleTimer);
     workspace.classList.remove('keyboard-open', 'keyboard-settling');
     document.documentElement.style.setProperty('--app-keyboard-inset', '0px');
+    document.body.classList.remove('terminal-keyboard-lift');
+    document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
     document.documentElement.style.setProperty('--app-visual-vh', '100vh');
     document.documentElement.style.setProperty('--app-visual-offset-top', '0px');
     document.documentElement.style.setProperty('--app-keyboard-top', '100vh');
@@ -2238,6 +2242,8 @@ function resetTerminalWorkspaceKeyboard({ force = false } = {}) {
             appKeyboardLastSignature = '';
             workspace.classList.remove('keyboard-open', 'keyboard-settling');
             document.documentElement.style.setProperty('--app-keyboard-inset', '0px');
+            document.body.classList.remove('terminal-keyboard-lift');
+            document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
             document.documentElement.style.setProperty('--app-visual-vh', '100vh');
             document.documentElement.style.setProperty('--app-visual-offset-top', '0px');
             document.documentElement.style.setProperty('--app-keyboard-top', '100vh');
@@ -2371,9 +2377,13 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             : null;
         workspace.classList.toggle('keyboard-open', keyboardOpen);
         appKeyboardOpen = keyboardOpen;
-        workspace.style.flex = '0 0 auto';
-        workspace.style.height = `${usableHeight}px`;
-        workspace.style.maxHeight = `${usableHeight}px`;
+        const shiftY = keyboardOpen && !isFullscreenTerminalSurface
+            ? Math.max(0, Math.round(normalBottom - kbTop))
+            : 0;
+        if (isFullscreenTerminalSurface) document.body.classList.remove('terminal-keyboard-lift');
+        workspace.style.flex = isFullscreenTerminalSurface ? '0 0 auto' : '';
+        workspace.style.height = isFullscreenTerminalSurface ? `${usableHeight}px` : '';
+        workspace.style.maxHeight = isFullscreenTerminalSurface ? `${usableHeight}px` : '';
         workspace.style.minHeight = '0px';
         workspace.style.marginBottom = '0px';
         workspace.querySelectorAll('.terminal-frame').forEach((frame) => {
@@ -2381,11 +2391,13 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             frame.style.maxHeight = '100%';
             frame.style.minHeight = '0px';
         });
+        document.body.classList.toggle('terminal-keyboard-lift', keyboardOpen && !isFullscreenTerminalSurface && shiftY > 0);
         document.documentElement.style.setProperty('--app-keyboard-inset', `${keyboardOpen ? effectiveInset : 0}px`);
-        document.documentElement.style.setProperty('--app-visual-vh', `${usableHeight}px`);
+        document.documentElement.style.setProperty('--app-keyboard-shift', `${shiftY}px`);
+        document.documentElement.style.setProperty('--app-visual-vh', `${isFullscreenTerminalSurface ? usableHeight : normalBottom}px`);
         document.documentElement.style.setProperty('--app-visual-offset-top', `${parentOffsetTop}px`);
         document.documentElement.style.setProperty('--app-keyboard-top', keyboardOpen ? `${Math.round(kbTop)}px` : '100vh');
-        scheduleTerminalLayoutStabilize(keyboardOpen ? 'parent-keyboard-compact-open' : 'parent-keyboard-compact-close', { focus: false });
+        scheduleTerminalLayoutStabilize(keyboardOpen ? (isFullscreenTerminalSurface ? 'parent-keyboard-compact-open' : 'parent-keyboard-compact-lift') : 'parent-keyboard-compact-close', { focus: false });
         return;
     }
     if (!keyboardOpen || !isFullscreenTerminalSurface) {
