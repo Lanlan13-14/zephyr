@@ -3762,22 +3762,16 @@ function aiPreviewCode(item) {
 }
 function renderAiAttachmentChips() {
     if (!aiPendingInputAttachments.length) return '';
-    return `<div class="ai-attachment-strip">${aiPendingInputAttachments.map((a, idx) => `<span class="ai-attachment-chip" title="${escapeAttr(a.name || '')}">${a.kind === 'image' ? '🖼️' : a.kind === 'text' ? '📄' : '📎'} ${escapeHtml(a.name || '附件')}<button type="button" data-ai-remove-attachment="${idx}" aria-label="移除附件">×</button></span>`).join('')}</div>`;
-}
-function renderAiInputDraftPreview() {
-    const text = $('#aiUserInput')?.value || '';
-    const body = renderMarkdown(text || (aiPendingInputAttachments.length ? '' : '（空）'), { enhancedCode: true });
-    return `${renderAiAttachmentChips()}${body}`;
+    return `<div class="ai-attachment-strip">${aiPendingInputAttachments.map((a, idx) => `<span class="ai-attachment-chip" title="${escapeAttr(a.name || '')}"><span class="ai-attachment-icon fm-button-icon" data-glyph="file" aria-hidden="true"></span><span class="ai-attachment-name">${escapeHtml(a.name || '附件')}</span><button type="button" data-ai-remove-attachment="${idx}" aria-label="移除附件">×</button></span>`).join('')}</div>`;
 }
 function updateAiInputPreview() {
     const preview = $('#aiInputPreview');
-    if (!preview || preview.hidden) return;
-    preview.innerHTML = renderAiInputDraftPreview();
+    if (!preview) return;
+    if (!aiPendingInputAttachments.length) { preview.hidden = true; preview.innerHTML = ''; return; }
+    preview.hidden = false;
+    preview.innerHTML = renderAiAttachmentChips();
 }
 function updateAiAttachmentDraftUi() {
-    const preview = $('#aiInputPreview');
-    if (!preview) return;
-    if (aiPendingInputAttachments.length) preview.hidden = false;
     updateAiInputPreview();
 }
 function toggleAiMarkdownPreview() {
