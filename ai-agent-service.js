@@ -377,11 +377,21 @@ function normalizeOptions(provider = {}, requestOptions = {}, mode = 'chat') {
         if (merged.reasoning_effort && !merged.reasoning) merged.reasoning = { effort: merged.reasoning_effort };
         delete merged.reasoning_effort;
         delete merged.response_format;
+    } else if (apiMode === 'anthropic' || apiMode === 'gemini') {
+        if (merged.max_output_tokens && !merged.max_tokens) merged.max_tokens = merged.max_output_tokens;
+        delete merged.max_output_tokens;
+        delete merged.text;
+        delete merged.response_format;
+        delete merged.use_previous_response_id;
     } else {
         if (merged.max_output_tokens && !merged.max_tokens) merged.max_tokens = merged.max_output_tokens;
         delete merged.max_output_tokens;
         delete merged.text;
         delete merged.reasoning;
+        delete merged.thinking;
+        delete merged.output_config;
+        delete merged.thinkingConfig;
+        delete merged.thinking_config;
         delete merged.use_previous_response_id;
     }
     return merged;
@@ -667,9 +677,32 @@ function toAnthropicTools(tools = []) {
 }
 function anthropicEffort(value = '') {
     const v = String(value || '').toLowerCase();
-    if (['low', 'medium', 'high', 'xhigh', 'max'].includes(v)) return v;
-    if (v === 'minimal' || v === 'none') return 'low';
+    if (['low', 'medium', 'high', 'xhigh'].includes(v)) return v;
+    if (v === 'max') return 'xhigh';
+    if (v === 'minimal') return 'low';
     return '';
+}
+function anthropicAdaptiveThinkingModel(model = '') {
+    const name = String(model || '').toLowerCase();
+    return /claude-(fable|mythos)-5|claude-opus-4-(7|8)|claude-(opus|sonnet)-4-6/.test(name);
+}
+function anthropicBudgetForEffort(effort = '', maxTokens = 4096) {
+    const v = String(effort || '').toLowerCase();
+    if (!v || v === 'none') return 0;
+    const target = v === 'minimal' || v === 'low' ? 1024 : v === 'medium' ? 2048 : v === 'xhigh' ? 16000 : 8192;
+    const limit = Math.max(0, Number(maxTokens) - 1024);
+    return limit >= 1024 ? Math.max(1024, Math.min(target, limit)) : 0;
+}
+function anthropicThinkingForModel(model = '', opts = {}, maxTokens = 4096) {
+    if (opts.thinking && typeof opts.thinking === 'object') return opts.thinking;
+    const effort = anthropicEffort(opts.reasoning_effort || opts.effort || opts.output_config?.effort);
+    if (!effort) return null;
+    if (anthropicAdaptiveThinkingModel(model)) return { type: 'adaptive', display: opts.thinking_display || 'omitted' };
+    const budget = Math.max(
+        Number(opts.thinking_budget_tokens || opts.budget_tokens) || 0,
+        anthropicBudgetForEffort(effort, maxTokens),
+    );
+    return budget ? { type: 'enabled', budget_tokens: budget } : null;
 }
 function anthropicMessages(messages = []) {
     const out = [];
@@ -869,14 +902,15 @@ async function callAnthropic(provider, model, messages, options = {}, tools = []
     const base = provider.baseUrl || 'https://api.anthropic.com/v1';
     const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
     const normal = anthropicMessages(messages);
-    const opts = normalizeOptions(provider, options, 'chat');
+    const opts = normalizeOptions(provider, options, 'anthropic');
     const payload = { model, messages: normal.length ? normal : [{ role: 'user', content: '你好' }], max_tokens: opts.max_tokens || 4096 };
     if (system) payload.system = system;
     if (opts.temperature !== undefined) payload.temperature = opts.temperature;
     if (opts.top_p !== undefined) payload.top_p = opts.top_p;
-    const effort = anthropicEffort(opts.reasoning_effort || opts.effort);
-    if (effort) payload.output_config = { ...(opts.output_config || {}), effort };
-    if (opts.thinking && typeof opts.thinking === 'object') payload.thinking = opts.thinking;
+    const effort = anthropicEffort(opts.reasoning_effort || opts.effort || opts.output_config?.effort);
+    const thinking = anthropicThinkingForModel(model, opts, payload.max_tokens);
+    if (thinking) payload.thinking = thinking;
+    if (effort && (thinking?.type === 'adaptive' || opts.output_config)) payload.output_config = { ...(opts.output_config || {}), effort };
     const anthropicTools = toAnthropicTools(tools);
     if (anthropicTools.length) payload.tools = anthropicTools;
     const data = await fetchJsonWithUnsupportedParamRetry(joinApiUrl(base, '/messages'), { method: 'POST', headers: providerHeaders(provider), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, payload, `${provider.name || provider.type || 'Anthropic'}/${model}`);
@@ -890,7 +924,7 @@ async function callGemini(provider, model, messages, options = {}, tools = [], s
     const keyParam = provider.apiKey ? `?key=${encodeURIComponent(provider.apiKey)}` : '';
     const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
     const contents = geminiContents(messages);
-    const opts = normalizeOptions(provider, options, 'chat');
+    const opts = normalizeOptions(provider, options, 'gemini');
     const generationConfig = { maxOutputTokens: opts.max_tokens };
     if (opts.temperature !== undefined) generationConfig.temperature = opts.temperature;
     if (opts.top_p !== undefined) generationConfig.topP = opts.top_p;
@@ -1818,7 +1852,9 @@ function normalizeAiSettingsInput(currentAi = {}, ai = {}) {
                 type: ['openai-compatible', 'anthropic', 'gemini'].includes(providerType(p)) ? providerType(p) : 'openai-compatible',
                 enabled: p.enabled !== false,
                 baseUrl: String(p.baseUrl || '').slice(0, 500),
-                apiMode: ['auto', 'chat', 'responses'].includes(String(p.apiMode || old.apiMode || '').toLowerCase()) ? String(p.apiMode || old.apiMode || 'auto').toLowerCase() : 'auto',
+                apiMode: ['openai-compatible', 'openai'].includes(providerType(p))
+                    ? (['auto', 'chat', 'responses'].includes(String(p.apiMode || old.apiMode || '').toLowerCase()) ? String(p.apiMode || old.apiMode || 'auto').toLowerCase() : 'auto')
+                    : 'native',
                 apiKey: p.apiKey === '******' ? (old.apiKey || '') : String(p.apiKey || ''),
                 organization: String(p.organization || old.organization || '').slice(0, 200),
                 extraHeaders: String(p.extraHeaders || old.extraHeaders || '').slice(0, 4000),

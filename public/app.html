@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260618-nonfullscreen-keyboard-lift-v2">
+    <link rel="stylesheet" href="style.css?v=20260618-ai-provider-params-fix">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -241,7 +241,7 @@
                         <div class="settings-panel" id="settings-ai">
                             <div class="panel-title-row"><h2>AI 助理总开关</h2><button class="btn btn-primary" type="button" id="aiAddProviderBtn">添加模型供应商</button></div>
                             <form id="aiSettingsForm" class="settings-form ai-settings-form">
-                                <label class="check-line"><input type="checkbox" id="aiEnabled"> 启用 AI 助理（顶部显示 AI 按钮）</label>
+                                <label class="check-line"><input type="checkbox" id="aiEnabled"> 启用 AI 助理</label>
                                 <label>助理名称</label><input id="aiAssistantName" maxlength="40" placeholder="Zephyr AI">
                                 <label>默认模型供应商</label><select id="aiDefaultProvider"><option value="">自动选择第一个可用供应商</option></select>
                                 <label>默认模型</label><input id="aiDefaultModel" placeholder="留空自动使用供应商默认/第一个模型">
@@ -342,7 +342,7 @@
                     <div class="ai-header-actions">
                         <select id="aiProviderSelect" class="ui-select"></select>
                         <select id="aiModelSelect" class="ui-select"></select>
-                        <select id="aiThinkIntensity" class="ui-select"><option value="fast">快速响应</option><option value="balanced" selected>标准思考</option><option value="deep">深度推理</option></select>
+                        <span class="ai-think-intensity-removed" hidden></span>
                         <button class="ui-btn" type="button" id="aiBrowserPreviewToggleBtn">浏览器预览</button>
                         <button class="ui-btn" type="button" id="aiCompressChatBtn">压缩摘要</button>
                         <button class="ui-btn danger" type="button" id="aiClearChatBtn">清空</button>
@@ -376,15 +376,15 @@
             <input type="hidden" id="aiProviderId">
             <div class="form-row"><div class="form-group"><label>名称</label><input id="aiProviderName" required placeholder="OpenAI / DeepSeek / Claude / Gemini"></div><div class="form-group"><label>类型</label><select id="aiProviderType"><option value="openai-compatible">OpenAI 兼容</option><option value="anthropic">Anthropic Claude</option><option value="gemini">Google Gemini</option></select></div></div>
             <div class="form-row"><div class="form-group"><label>API Base URL</label><input id="aiProviderBaseUrl" placeholder="https://api.openai.com/v1 / https://api.openai.com/v1/responses / https://api.deepseek.com/v1"></div><div class="form-group"><label>API Key</label><input id="aiProviderApiKey" type="password" placeholder="留 ****** 表示不修改"></div></div>
-            <div class="form-row"><div class="form-group"><label>接口模式</label><select id="aiProviderApiMode"><option value="auto">自动识别</option><option value="chat">Chat Completions</option><option value="responses">Responses API</option></select></div><div class="form-group ai-model-actions"><label>模型列表</label><button class="btn" type="button" id="aiFetchModelsBtn">获取模型</button></div></div>
+            <div class="form-row"><div class="form-group"><label>接口模式（仅 OpenAI / OpenAI 兼容）</label><select id="aiProviderApiMode"><option value="auto">自动识别</option><option value="chat">OpenAI Chat Completions</option><option value="responses">OpenAI Responses API</option></select><p class="field-hint">Claude 固定使用 Anthropic Messages API；Gemini 固定使用 generateContent，不使用此项。</p></div><div class="form-group ai-model-actions"><label>模型列表</label><button class="btn" type="button" id="aiFetchModelsBtn">获取模型</button></div></div>
             <div class="form-row"><div class="form-group"><label>模型列表</label><textarea id="aiProviderModels" rows="3" placeholder="保存 API Key/Base URL 后可点获取模型；也可手动填写，逗号或换行分隔"></textarea></div><div class="form-group"><label>默认模型</label><input id="aiProviderDefaultModel" placeholder="留空自动选择第一个可用模型"></div></div>
             <div class="form-row"><div class="form-group"><label>Organization / Project（可选）</label><input id="aiProviderOrganization" placeholder="org... 或 proj..."></div><div class="form-group"><label>额外请求头 JSON（可选）</label><textarea id="aiProviderExtraHeaders" rows="3" placeholder='{"X-Request-From":"Zephyr"}'></textarea></div></div>
             <h3>模型参数</h3>
             <div class="form-row"><div class="form-group"><label>temperature（-1 不发送）</label><input id="aiProviderTemperature" type="number" step="0.1" min="-1" max="2" value="-1"></div><div class="form-group"><label>top_p（-1 不发送）</label><input id="aiProviderTopP" type="number" step="0.05" min="-1" max="1" value="-1"></div></div>
             <div class="form-row"><div class="form-group"><label>max_tokens / max_output_tokens</label><input id="aiProviderMaxTokens" type="number" min="1" value="4096"></div><div class="form-group"><label>上下文窗口 Tokens（可选）</label><input id="aiProviderContextWindow" type="number" min="1024" step="1024" placeholder="留空使用全局"></div></div>
-            <div class="form-row"><div class="form-group"><label>reasoning_effort</label><select id="aiProviderReasoningEffort"><option value="">默认</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div><div class="form-group"><label class="check-line"><input type="checkbox" id="aiProviderUsePreviousResponse"> Responses API 使用 previous_response_id（兼容接口慎开）</label></div></div>
+            <div class="form-row"><div class="form-group"><label>推理强度（按供应商映射）</label><select id="aiProviderReasoningEffort"><option value="">默认 / 不发送</option><option value="none">none / 关闭（仅部分模型）</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh（仅部分模型）</option></select><p class="field-hint">OpenAI Responses: reasoning.effort；Claude: thinking/output_config；Gemini: thinkingLevel/thinkingBudget。各模型支持值不同，默认不发送。</p></div><div class="form-group"><label class="check-line"><input type="checkbox" id="aiProviderUsePreviousResponse"> OpenAI Responses 使用 previous_response_id（兼容接口慎开）</label></div></div>
             <div class="form-row"><div class="form-group"><label>presence_penalty</label><input id="aiProviderPresencePenalty" type="number" step="0.1" value="0"></div><div class="form-group"><label>frequency_penalty</label><input id="aiProviderFrequencyPenalty" type="number" step="0.1" value="0"></div></div>
-            <div class="form-group"><label>response_format / text / reasoning / 其他参数 JSON</label><textarea id="aiProviderExtraJson" rows="4" placeholder='{"response_format":{"type":"json_object"},"text":{"format":{"type":"json_object"}}}'></textarea></div>
+            <div class="form-group"><label>供应商原生额外参数 JSON</label><textarea id="aiProviderExtraJson" rows="4" placeholder='OpenAI: {"response_format":{"type":"json_object"}}；Claude: {"thinking":{"type":"adaptive","display":"omitted"}}；Gemini: {"thinkingConfig":{"thinkingLevel":"low"}}'></textarea></div>
             <label class="check-line"><input type="checkbox" id="aiProviderEnabled" checked> 启用此供应商</label>
             <div class="modal-actions"><button type="button" class="btn" id="aiProviderCancelBtn">取消</button><button class="btn btn-primary" type="submit">保存供应商</button></div>
         </form>
@@ -429,6 +429,6 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260618-nonfullscreen-keyboard-lift-v2" type="module"></script>
+    <script src="app.js?v=20260618-ai-provider-params-fix" type="module"></script>
 </body>
 </html>

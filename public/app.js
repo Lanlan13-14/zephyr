@@ -3256,13 +3256,14 @@ async function saveAiProvider(e) {
     e.preventDefault();
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     const id = $('#aiProviderId').value || `provider-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const providerTypeValue = $('#aiProviderType').value;
     const provider = {
         id,
         name: $('#aiProviderName').value.trim() || '未命名供应商',
-        type: $('#aiProviderType').value,
+        type: providerTypeValue,
         enabled: $('#aiProviderEnabled').checked,
         baseUrl: $('#aiProviderBaseUrl').value.trim(),
-        apiMode: $('#aiProviderApiMode').value || 'auto',
+        apiMode: ['openai-compatible', 'openai'].includes(providerTypeValue) ? ($('#aiProviderApiMode').value || 'auto') : 'native',
         apiKey: $('#aiProviderApiKey').value,
         organization: $('#aiProviderOrganization').value.trim(),
         extraHeaders: $('#aiProviderExtraHeaders').value.trim(),
@@ -3823,11 +3824,9 @@ function stopAiResponse(sessionId = aiCurrentSessionId) {
 }
 
 function aiIntensityOptions() {
-    const v = $('#aiThinkIntensity')?.value || 'balanced';
-    // Keep model sampling params under Provider settings. Some OpenAI reasoning
-    // models (and compatible gateways) reject temperature/top_p entirely.
-    if (v === 'deep') return { reasoning_effort: 'high' };
-    if (v === 'fast') return { reasoning_effort: 'minimal' };
+    // Per-provider reasoning/thinking controls live in the model provider settings.
+    // Do not apply a universal chat-level preset: OpenAI, Claude and Gemini use
+    // different parameter names and model-specific supported values.
     return {};
 }
 function uniq(list = []) { return Array.from(new Set(list.map((x) => String(x || '').trim()).filter(Boolean))); }
@@ -5137,7 +5136,13 @@ function toggleAiVoice() {
 }
 function updateAiProviderModalHints() {
     const type = $('#aiProviderType')?.value || 'openai-compatible';
-    const mode = $('#aiProviderApiMode')?.value || 'auto';
+    const modeSelect = $('#aiProviderApiMode');
+    const mode = modeSelect?.value || 'auto';
+    const isOpenAiLike = type === 'openai-compatible' || type === 'openai';
+    if (modeSelect) {
+        modeSelect.disabled = !isOpenAiLike;
+        if (!isOpenAiLike) modeSelect.value = 'auto';
+    }
     const base = $('#aiProviderBaseUrl');
     const extra = $('#aiProviderExtraJson');
     if (base) {
@@ -5150,12 +5155,12 @@ function updateAiProviderModalHints() {
                     : 'https://api.openai.com/v1 / https://api.deepseek.com/v1';
     }
     if (extra) {
-        extra.placeholder = mode === 'responses'
-            ? '{"text":{"format":{"type":"json_object"}},"reasoning":{"effort":"medium"}}'
+        extra.placeholder = type === 'anthropic'
+            ? '{"thinking":{"type":"adaptive","display":"omitted"},"output_config":{"effort":"medium"}}'
             : type === 'gemini'
-                ? '{"thinkingConfig":{"thinkingBudget":1024}}'
-                : type === 'anthropic'
-                    ? '{"thinking":{"type":"enabled","budget_tokens":1024}}'
+                ? '{"thinkingConfig":{"thinkingLevel":"low"}} 或 {"thinkingConfig":{"thinkingBudget":1024}}'
+                : mode === 'responses'
+                    ? '{"text":{"format":{"type":"json_object"}},"reasoning":{"effort":"medium"}}'
                     : '{"response_format":{"type":"json_object"}}';
     }
 }
