@@ -10013,8 +10013,8 @@ textarea,
 .novnc-page .novnc-panel.rdp-floating-panel.front { box-shadow: 0 20px 48px -26px rgba(0,0,0,.46); }
 .rdp-page .topbar-actions .btn-sm[data-rdp-icon]::before,
 .novnc-page .novnc-toolbar .btn-sm[data-vnc-icon]::before {
-    background: currentColor;
-    opacity: .82;
+    background: var(--rdp-toolbar-icon-color, var(--vnc-toolbar-icon-color, currentColor));
+    opacity: 1;
 }
 .rdp-page .topbar-actions .btn-sm[data-rdp-icon],
 .novnc-page .novnc-toolbar .btn-sm[data-vnc-icon] { color: var(--text-secondary); }
