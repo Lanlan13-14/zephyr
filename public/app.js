@@ -3199,8 +3199,8 @@ function formatTokenValue(n) {
     if (v >= 1000) return `${(v / 1000).toFixed(1)}K`;
     return String(Math.round(v));
 }
-async function openAiUsageSheet(messageMetrics = null) {
-    document.querySelector('.ai-usage-sheet')?.remove();
+async function openAiUsageSheet(messageMetrics = null, anchor = null) {
+    document.querySelector('.ai-usage-popover')?.remove();
     let metrics = {};
     try { metrics = (await api('/api/ai/metrics')).metrics || {}; } catch (_) {}
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
@@ -3212,27 +3212,35 @@ async function openAiUsageSheet(messageMetrics = null) {
     const samples = metrics.samples || [];
     const msg = messageMetrics && typeof messageMetrics === 'object' ? messageMetrics : {};
     const totals = samples.reduce((acc, s) => { acc.inputChars += Number(s.inputCharsBeforeCompact || 0); acc.rounds += Number(s.providerCalls || 0); return acc; }, { inputChars: 0, rounds: 0 });
-    const sheet = document.createElement('div');
-    sheet.className = 'ai-usage-sheet';
-    sheet.innerHTML = `<div class="ai-usage-grabber"></div><div class="ai-usage-head"><h2>会话 Token 用量</h2><button class="ai-usage-close" type="button">×</button></div>
-        <div class="ai-usage-section">上下文</div>
-        <div class="ai-usage-row"><span>已用上下文</span><b>${formatTokenValue(Math.round((samples[0]?.inputCharsBeforeCompact || totals.inputChars || 0) / 2.4))}</b></div>
-        <div class="ai-usage-row"><span>上下文窗口</span><b>${formatTokenValue(opts.context?.windowTokens || context.windowTokens || 0)}</b></div>
-        <div class="ai-usage-row"><span>最大输出</span><b>${formatTokenValue(opts.max_output_tokens || opts.max_tokens || 0)}</b></div>
-        <div class="ai-usage-row"><span>本轮耗时</span><b>${msg.durationMs ? (Number(msg.durationMs) / 1000).toFixed(1) + 's' : '—'}</b></div>
-        <div class="ai-usage-section">思考</div>
-        <div class="ai-usage-row"><span>思考</span><b>${thinking ? '开' : '默认'}</b></div>
-        <div class="ai-usage-row"><span>级别</span><b>${escapeHtml(thinking || '默认')}</b></div>
-        <div class="ai-usage-row"><span>已支持</span><b>${escapeHtml(aiProviderKind(provider) === 'openai' ? '视模型而定' : '是')}</b></div>
-        <div class="ai-usage-section">TOKEN（近期总计）</div>
-        <div class="ai-usage-row"><span>输入（估算）</span><b>${formatTokenValue(Math.round(totals.inputChars / 2.4))}</b></div>
-        <div class="ai-usage-row"><span>输出</span><b>—</b></div>
-        <div class="ai-usage-section">AGENT 循环</div>
-        <div class="ai-usage-row"><span>本轮循环次数</span><b>${formatTokenValue(msg.providerCalls || 0)}</b></div>
-        <div class="ai-usage-row"><span>总循环次数</span><b>${formatTokenValue(totals.rounds)}</b></div>
-        <div class="ai-usage-row"><span>近期请求数</span><b>${formatTokenValue(metrics.count || samples.length || 0)}</b></div>`;
-    document.body.appendChild(sheet);
-    sheet.querySelector('.ai-usage-close')?.addEventListener('click', () => sheet.remove());
+    const pop = document.createElement('div');
+    pop.className = 'ai-usage-popover';
+    pop.innerHTML = `<div class="ai-usage-head"><h2>会话 Token 用量</h2><button class="ai-usage-close" type="button" aria-label="关闭">×</button></div>
+        <div class="ai-usage-body">
+            <div class="ai-usage-section">上下文</div>
+            <div class="ai-usage-row"><span>已用上下文</span><b>${formatTokenValue(Math.round((samples[0]?.inputCharsBeforeCompact || totals.inputChars || 0) / 2.4))}</b></div>
+            <div class="ai-usage-row"><span>上下文窗口</span><b>${formatTokenValue(opts.context?.windowTokens || context.windowTokens || 0)}</b></div>
+            <div class="ai-usage-row"><span>最大输出</span><b>${formatTokenValue(opts.max_output_tokens || opts.max_tokens || 0)}</b></div>
+            <div class="ai-usage-row"><span>本轮耗时</span><b>${msg.durationMs ? (Number(msg.durationMs) / 1000).toFixed(1) + 's' : '—'}</b></div>
+            <div class="ai-usage-section">思考</div>
+            <div class="ai-usage-row"><span>思考</span><b>${thinking ? '开' : '默认'}</b></div>
+            <div class="ai-usage-row"><span>级别</span><b>${escapeHtml(thinking || '默认')}</b></div>
+            <div class="ai-usage-row"><span>已支持</span><b>${escapeHtml(aiProviderKind(provider) === 'openai' ? '视模型而定' : '是')}</b></div>
+            <div class="ai-usage-section">TOKEN（近期总计）</div>
+            <div class="ai-usage-row"><span>输入（估算）</span><b>${formatTokenValue(Math.round(totals.inputChars / 2.4))}</b></div>
+            <div class="ai-usage-row"><span>输出</span><b>—</b></div>
+            <div class="ai-usage-section">AGENT 循环</div>
+            <div class="ai-usage-row"><span>本轮循环次数</span><b>${formatTokenValue(msg.providerCalls || 0)}</b></div>
+            <div class="ai-usage-row"><span>总循环次数</span><b>${formatTokenValue(totals.rounds)}</b></div>
+            <div class="ai-usage-row"><span>近期请求数</span><b>${formatTokenValue(metrics.count || samples.length || 0)}</b></div>
+        </div>`;
+    document.body.appendChild(pop);
+    const rect = anchor?.getBoundingClientRect?.() || document.querySelector('#aiUsageBtn')?.getBoundingClientRect?.() || null;
+    const pr = pop.getBoundingClientRect();
+    if (rect) {
+        pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pr.width - 8, rect.right - pr.width))}px`;
+        pop.style.top = `${Math.max(8, Math.min(window.innerHeight - pr.height - 8, rect.bottom + 8))}px`;
+    }
+    pop.querySelector('.ai-usage-close')?.addEventListener('click', () => pop.remove());
 }
 function renderAiCapabilityStrip() {
     const strip = $('#aiCapabilityStrip');
@@ -5320,11 +5328,12 @@ function setupAiAssistant() {
     $('#aiProviderPickerBtn')?.addEventListener('click', (e) => openAiPicker('provider', e.currentTarget));
     $('#aiModelPickerBtn')?.addEventListener('click', (e) => openAiPicker('model', e.currentTarget));
     $('#aiThinkPickerBtn')?.addEventListener('click', (e) => openAiPicker('thinking', e.currentTarget));
-    $('#aiUsageBtn')?.addEventListener('click', () => openAiUsageSheet());
+    $('#aiUsageBtn')?.addEventListener('click', (e) => { e.stopPropagation(); openAiUsageSheet(null, e.currentTarget); });
     document.addEventListener('click', (e) => {
         const option = e.target.closest?.('.ai-picker-option');
         if (option) { applyAiPickerChoice(option.dataset.kind, option.dataset.value || ''); return; }
         if (!e.target.closest?.('.ai-picker-popover,.ai-picker-btn')) closeAiPickerPopover();
+        if (!e.target.closest?.('.ai-usage-popover,#aiUsageBtn')) document.querySelector('.ai-usage-popover')?.remove();
     }, true);
     $('#aiBrowserPreviewToggleBtn')?.addEventListener('click', () => { const state = aiBrowserPreviewStateForSession(aiCurrentSessionId); state.visible = !state.visible; renderAiBrowserPreview(); });
     $('#aiBrowserPreviewRefreshBtn')?.addEventListener('click', refreshAiBrowserPreview);

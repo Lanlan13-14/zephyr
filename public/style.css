@@ -10589,24 +10589,23 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 }
 .ai-picker-option:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .ai-picker-option.active { background: var(--accent); color: #fff; }
-.ai-usage-sheet {
+.ai-usage-popover {
     position: fixed;
     z-index: 10130;
-    inset: auto 0 0 0;
-    max-height: min(86vh, 760px);
-    padding: 10px max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
-    border-radius: 28px 28px 0 0;
-    background: color-mix(in srgb, var(--surface) 98%, var(--bg));
-    box-shadow: 0 -18px 60px rgba(0,0,0,.28);
-    overflow: auto;
+    width: min(360px, calc(100vw - 16px));
+    max-height: min(560px, calc(100vh - 16px));
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--surface) 97%, var(--bg));
+    box-shadow: var(--shadow-lift);
+    overflow: hidden;
+    backdrop-filter: blur(18px) saturate(1.12);
+    -webkit-backdrop-filter: blur(18px) saturate(1.12);
 }
-.ai-usage-grabber { width: 54px; height: 5px; border-radius: 999px; margin: 0 auto 14px; background: color-mix(in srgb, var(--text-secondary) 45%, transparent); }
-.ai-usage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 2px 12px; border-bottom: 1px solid var(--border); }
-.ai-usage-head h2 { margin: 0; font-size: 20px; }
-.ai-usage-close { border: 0; background: transparent; color: var(--text-secondary); font-size: 32px; line-height: 1; cursor: pointer; }
-.ai-usage-section { padding: 18px 0 4px; color: var(--text-secondary); font-weight: 700; letter-spacing: .04em; }
-.ai-usage-row { display: flex; justify-content: space-between; gap: 16px; padding: 13px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent); color: var(--text); }
+.ai-usage-body { max-height: min(488px, calc(100vh - 84px)); overflow: auto; padding: 4px 14px 12px; }
+.ai-usage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }
+.ai-usage-head h2 { margin: 0; font-size: 16px; }
+.ai-usage-close { border: 0; background: transparent; color: var(--text-secondary); font-size: 24px; line-height: 1; cursor: pointer; }
+.ai-usage-section { padding: 14px 0 4px; color: var(--text-secondary); font-size: 12px; font-weight: 800; letter-spacing: .04em; }
+.ai-usage-row { display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent); color: var(--text); }
 .ai-usage-row b { font-family: var(--font-mono); font-weight: 500; color: var(--text-secondary); }
-@media (min-width: 760px) {
-    .ai-usage-sheet { left: 50%; right: auto; bottom: 24px; width: min(560px, calc(100vw - 32px)); border-radius: 24px; transform: translateX(-50%); }
-}
