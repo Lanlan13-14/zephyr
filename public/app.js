@@ -7,10 +7,6 @@ let connections = [], activities = [], proxies = [], jumpHosts = [], sshKeys = [
 let aiSettingsState = null;
 let aiChatSessions = [];
 let aiCurrentSessionId = null;
-let aiSpeechRecognition = null;
-let aiRecording = false;
-let aiMediaRecorder = null;
-let aiVoiceChunks = [];
 let aiPanelLayoutMenu = null;
 let aiPanelLayoutMenuButton = null;
 let aiPanelSuppressLayoutClick = false;
@@ -3669,9 +3665,7 @@ function renderAiChat() {
 function summarizeAiUserMessageForDisplay(text = '') {
     return String(text || '')
         .replace(/附件图片：([^\n]+)\n\s*data:image\/[^;\s]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '附件图片：$1\n[图片已发送]')
-        .replace(/附件音频：([^\n]+)\n\s*data:audio\/[^;\s]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '附件音频：$1\n[音频已发送]')
-        .replace(/data:image\/[A-Za-z0-9.+-]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '[图片已发送]')
-        .replace(/data:audio\/[A-Za-z0-9.+-]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '[音频已发送]');
+        .replace(/data:image\/[A-Za-z0-9.+-]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '[图片已发送]');
 }
 function renderAiMessageContent(text = '', role = 'assistant', rawHtml = false) {
     if (rawHtml) return String(text || '');
@@ -5245,46 +5239,6 @@ function setupAiPanelChrome() {
     });
     window.addEventListener('resize', () => closeAiPanelLayoutMenu({ instant: true }));
 }
-async function transcribeAiVoiceBlob(blob) {
-    const form = new FormData();
-    form.append('audio', blob, `voice.${blob.type.includes('mp4') ? 'm4a' : 'webm'}`);
-    form.append('language', 'zh');
-    return apiMaybeForm('/api/ai/voice/transcribe', { method: 'POST', body: form });
-}
-async function toggleAiVoice() {
-    const input = $('#aiUserInput');
-    const btn = $('#aiVoiceBtn');
-    if (aiRecording) { aiSpeechRecognition?.stop?.(); aiMediaRecorder?.stop?.(); return; }
-    if (!window.isSecureContext && location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return toast('语音输入需要 HTTPS 或 localhost 安全环境');
-    const resetVoiceUi = () => { aiRecording = false; btn?.classList.remove('active'); if (input) input.placeholder = '在此输入命令，Enter 发送，Shift+Enter 换行...'; };
-    const startRecorder = async () => {
-        if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw new Error('当前浏览器不支持录音');
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        aiVoiceChunks = [];
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
-        aiMediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-        aiMediaRecorder.ondataavailable = (e) => { if (e.data?.size) aiVoiceChunks.push(e.data); };
-        aiMediaRecorder.onstop = async () => {
-            resetVoiceUi(); stream.getTracks().forEach((t) => t.stop());
-            const blob = new Blob(aiVoiceChunks, { type: aiMediaRecorder.mimeType || 'audio/webm' });
-            if (!blob.size) return toast('未录到语音');
-            try {
-                const dataUrl = await readFileAsDataUrl(blob);
-                const ext = blob.type.includes('mp4') ? 'm4a' : blob.type.includes('wav') ? 'wav' : 'webm';
-                const name = `语音-${new Date().toLocaleTimeString().replace(/[:：]/g, '-')}.${ext}`;
-                aiPendingInputAttachments = aiPendingInputAttachments.concat([{ kind: 'audio', name, content: `附件音频：${name}\n${dataUrl}` }]).slice(0, 6);
-                updateAiAttachmentDraftUi();
-                input?.focus?.();
-                toast('语音已作为音频发送给 AI');
-                await sendAiMessage();
-            } catch (err) { toast(err.message || '录音读取失败'); }
-        };
-        aiMediaRecorder.start(); aiRecording = true; btn?.classList.add('active'); toast('正在录音，再点一次结束并直接发给 AI');
-    };
-    aiSpeechRecognition = null;
-    try { await startRecorder(); }
-    catch (err) { resetVoiceUi(); toast(err.name === 'NotAllowedError' ? '麦克风权限未授予或被浏览器阻止，请检查地址栏站点权限' : `语音输入启动失败：${err.message || err}`); }
-}
 function updateAiProviderModalHints() {
     const type = $('#aiProviderType')?.value || 'openai-compatible';
     const modeSelect = $('#aiProviderApiMode');
@@ -5397,7 +5351,6 @@ function setupAiAssistant() {
     $('#aiUploadBtn')?.addEventListener('click', () => $('#aiFileUpload').click());
     $('#aiFileUpload')?.addEventListener('change', (e) => { const files = Array.from(e.target.files || []); if (!files.length) return; appendAiFiles(files).catch((err) => toast(err.message || '附件读取失败')).finally(() => { e.target.value = ''; }); });
     $('#aiInputPreview')?.addEventListener('click', (e) => { const btn = e.target.closest?.('[data-ai-remove-attachment]'); if (!btn) return; aiPendingInputAttachments.splice(Number(btn.dataset.aiRemoveAttachment || -1), 1); updateAiAttachmentDraftUi(); });
-    $('#aiVoiceBtn')?.addEventListener('click', toggleAiVoice);
     window.addEventListener('resize', () => { updateAiPanelResponsiveState(); if (aiPanelState === 'open') startAiPanelWatchdog(); });
     window.visualViewport?.addEventListener('resize', () => { updateAiPanelResponsiveState(); });
     document.addEventListener('visibilitychange', () => { if (!document.hidden && aiPanelState === 'open') startAiPanelWatchdog(); });
