@@ -33,6 +33,7 @@ let aiCodePreviewObjectUrl = '';
 let aiMessageMenuState = { index: -1, text: '', element: null, touchTimer: 0 };
 let aiEditingMessageIndex = -1;
 let aiEditingSessionId = '';
+let aiPendingInputAttachments = [];
 const AI_CHAT_STORAGE_KEY = 'zephyr-ai-chat-sessions';
 let editingId = null;
 let editingSecretLoaded = false;
@@ -3665,6 +3666,14 @@ function renderAiChat() {
     renderAiChatList();
     scrollAiChat();
 }
+function summarizeAiUserMessageForDisplay(text = '') {
+    return String(text || '').replace(/附件图片：([^\n]+)\n\s*data:image\/[^;\s]+;base64,[A-Za-z0-9+/=\r\n]+/g, '附件图片：$1\n[图片已发送]').replace(/data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+/g, '[图片已发送]');
+}
+function renderAiMessageContent(text = '', role = 'assistant', rawHtml = false) {
+    if (rawHtml) return String(text || '');
+    const source = role === 'user' ? summarizeAiUserMessageForDisplay(text) : String(text || '');
+    return renderMarkdown(source, { enhancedCode: role !== 'trace' });
+}
 function appendAiMessage(text, role = 'assistant', { store = true, meta = '', rawHtml = false, messageIndex = -1, sessionId = '', metrics = null } = {}) {
     const targetSessionId = String(sessionId || aiCurrentSessionId || '');
     const session = targetSessionId
@@ -3695,7 +3704,7 @@ function appendAiMessage(text, role = 'assistant', { store = true, meta = '', ra
     if (storedIndex >= 0) div.dataset.aiMessageIndex = String(storedIndex);
     div.dataset.aiMessageText = String(text || '');
     if (metrics && typeof metrics === 'object') div.dataset.aiMetrics = JSON.stringify(metrics).slice(0, 6000);
-    div.innerHTML = `${meta ? `<small>${escapeHtml(meta)}</small>` : ''}${rawHtml ? String(text || '') : renderMarkdown(String(text || ''), { enhancedCode: role !== 'trace' })}`;
+    div.innerHTML = `${meta ? `<small>${escapeHtml(meta)}</small>` : ''}${renderAiMessageContent(text, role, rawHtml)}`;
     area.insertBefore(div, typing);
     if ((role === 'system' || role === 'trace') && div.querySelector('.ai-tool-trace')) {
         div.classList.add('ai-trace-message');
@@ -3751,11 +3760,25 @@ function aiPreviewCode(item) {
     if (body) body.innerHTML = `<iframe class="ai-code-preview-frame" sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock" src="${escapeAttr(aiCodePreviewObjectUrl)}"></iframe><small>${escapeHtml(item.filename || '')} · 本地 Blob 沙箱预览</small>`;
     toast('已打开代码预览');
 }
+function renderAiAttachmentChips() {
+    if (!aiPendingInputAttachments.length) return '';
+    return `<div class="ai-attachment-strip">${aiPendingInputAttachments.map((a, idx) => `<span class="ai-attachment-chip" title="${escapeAttr(a.name || '')}">${a.kind === 'image' ? '🖼️' : a.kind === 'text' ? '📄' : '📎'} ${escapeHtml(a.name || '附件')}<button type="button" data-ai-remove-attachment="${idx}" aria-label="移除附件">×</button></span>`).join('')}</div>`;
+}
+function renderAiInputDraftPreview() {
+    const text = $('#aiUserInput')?.value || '';
+    const body = renderMarkdown(text || (aiPendingInputAttachments.length ? '' : '（空）'), { enhancedCode: true });
+    return `${renderAiAttachmentChips()}${body}`;
+}
 function updateAiInputPreview() {
     const preview = $('#aiInputPreview');
     if (!preview || preview.hidden) return;
-    const value = $('#aiUserInput')?.value || '';
-    preview.innerHTML = renderMarkdown(value || '（空）', { enhancedCode: true });
+    preview.innerHTML = renderAiInputDraftPreview();
+}
+function updateAiAttachmentDraftUi() {
+    const preview = $('#aiInputPreview');
+    if (!preview) return;
+    if (aiPendingInputAttachments.length) preview.hidden = false;
+    updateAiInputPreview();
 }
 function toggleAiMarkdownPreview() {
     const preview = $('#aiInputPreview'), btn = $('#aiMarkdownPreviewBtn');
@@ -4492,7 +4515,9 @@ async function sendAiMessage() {
     if (!sessionId) return;
     if (aiIsSessionRunning(sessionId)) { stopAiResponse(sessionId); return; }
     const input = $('#aiUserInput');
-    const text = input.value.trim();
+    const typedText = input.value.trim();
+    const attachmentText = aiPendingInputAttachments.map((a) => a.content || '').filter(Boolean).join('\n\n');
+    const text = [typedText, attachmentText].filter(Boolean).join('\n\n');
     if (!text) return;
     const editingIndex = aiEditingSessionId && aiEditingSessionId !== sessionId ? -1 : aiEditingMessageIndex;
     aiEditingMessageIndex = -1;
@@ -4502,6 +4527,7 @@ async function sendAiMessage() {
         renderAiChat();
     }
     input.value = '';
+    aiPendingInputAttachments = [];
     autoResizeAiInput(input);
     updateAiInputPreview();
     input.focus?.();
@@ -4546,21 +4572,25 @@ function readFileAsDataUrl(file) {
     });
 }
 async function appendAiFiles(files = []) {
-    const parts = [];
-    for (const file of files.slice(0, 6)) {
-        if (file.size > 8 * 1024 * 1024) { parts.push(`[附件过大已跳过] ${file.name} (${file.size} bytes)`); continue; }
+    const next = [];
+    for (const file of files.slice(0, Math.max(0, 6 - aiPendingInputAttachments.length))) {
+        if (file.size > 8 * 1024 * 1024) { next.push({ kind: 'skipped', name: file.name, content: `[附件过大已跳过] ${file.name} (${file.size} bytes)` }); continue; }
         const isText = /^text\//i.test(file.type) || /\.(txt|md|json|yaml|yml|csv|log|conf|ini|js|ts|jsx|tsx|py|sh|css|html|xml)$/i.test(file.name);
         if (isText) {
             const text = await file.text();
-            parts.push(`附件：${file.name}\n\`\`\`\n${text.slice(0, 24000)}${text.length > 24000 ? '\n...[已截断]' : ''}\n\`\`\``);
+            next.push({ kind: 'text', name: file.name, content: `附件：${file.name}\n\`\`\`\n${text.slice(0, 24000)}${text.length > 24000 ? '\n...[已截断]' : ''}\n\`\`\`` });
         } else if (/^image\//i.test(file.type)) {
             const dataUrl = await readFileAsDataUrl(file);
-            parts.push(`附件图片：${file.name}\n${dataUrl}`);
+            next.push({ kind: 'image', name: file.name, content: `附件图片：${file.name}\n${dataUrl}` });
         } else {
-            parts.push(`附件：${file.name} (${file.type || 'unknown'}, ${file.size} bytes)；当前仅文本和图片会发送给 AI。`);
+            next.push({ kind: 'file', name: file.name, content: `附件：${file.name} (${file.type || 'unknown'}, ${file.size} bytes)；当前仅文本和图片会发送给 AI。` });
         }
     }
-    if (parts.length) appendAiMessage(parts.join('\n\n'), 'user', { sessionId: aiCurrentSessionId });
+    if (!next.length) return;
+    aiPendingInputAttachments = aiPendingInputAttachments.concat(next).slice(0, 6);
+    updateAiAttachmentDraftUi();
+    $('#aiUserInput')?.focus?.();
+    toast(`已添加 ${next.length} 个附件，可继续输入文字后发送`);
 }
 async function continueAiAfterConfirmation(id, approve, data) {
     const pending = aiPendingConfirmations.get(id);
@@ -5381,6 +5411,7 @@ function setupAiAssistant() {
     }, { capture: true });
     $('#aiUploadBtn')?.addEventListener('click', () => $('#aiFileUpload').click());
     $('#aiFileUpload')?.addEventListener('change', (e) => { const files = Array.from(e.target.files || []); if (!files.length) return; appendAiFiles(files).catch((err) => toast(err.message || '附件读取失败')).finally(() => { e.target.value = ''; }); });
+    $('#aiInputPreview')?.addEventListener('click', (e) => { const btn = e.target.closest?.('[data-ai-remove-attachment]'); if (!btn) return; aiPendingInputAttachments.splice(Number(btn.dataset.aiRemoveAttachment || -1), 1); updateAiAttachmentDraftUi(); });
     $('#aiVoiceBtn')?.addEventListener('click', toggleAiVoice);
     window.addEventListener('resize', () => { updateAiPanelResponsiveState(); if (aiPanelState === 'open') startAiPanelWatchdog(); });
     window.visualViewport?.addEventListener('resize', () => { updateAiPanelResponsiveState(); });

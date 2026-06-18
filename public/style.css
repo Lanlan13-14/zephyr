@@ -8765,6 +8765,9 @@ body.app-body:not(.terminal-mode) .app-main {
     background: color-mix(in srgb, var(--bg) 72%, transparent); color: var(--text); font-size: 13px; line-height: 1.48;
 }
 .ai-input-preview:empty::before { content: '（空）'; color: var(--text-secondary); }
+.ai-attachment-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.ai-attachment-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 5px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); font-size: 12px; color: var(--text); }
+.ai-attachment-chip button { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--text) 10%, transparent); color: inherit; cursor: pointer; font: inherit; line-height: 1; }
 .ai-input-preview .ai-code-toolbar { padding: 6px 8px; }
 .ai-input-preview .ai-code-actions { display: none; }
 .ai-message-menu {
