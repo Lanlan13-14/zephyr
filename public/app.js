@@ -3668,10 +3668,10 @@ function renderAiChat() {
 }
 function summarizeAiUserMessageForDisplay(text = '') {
     return String(text || '')
-        .replace(/附件图片：([^\n]+)\n\s*data:image\/[^;\s]+;base64,[A-Za-z0-9+/=\r\n]+/g, '附件图片：$1\n[图片已发送]')
-        .replace(/附件音频：([^\n]+)\n\s*data:audio\/[^;\s]+;base64,[A-Za-z0-9+/=\r\n]+/g, '附件音频：$1\n[音频已发送]')
-        .replace(/data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+/g, '[图片已发送]')
-        .replace(/data:audio\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+/g, '[音频已发送]');
+        .replace(/附件图片：([^\n]+)\n\s*data:image\/[^;\s]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '附件图片：$1\n[图片已发送]')
+        .replace(/附件音频：([^\n]+)\n\s*data:audio\/[^;\s]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '附件音频：$1\n[音频已发送]')
+        .replace(/data:image\/[A-Za-z0-9.+-]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '[图片已发送]')
+        .replace(/data:audio\/[A-Za-z0-9.+-]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g, '[音频已发送]');
 }
 function renderAiMessageContent(text = '', role = 'assistant', rawHtml = false) {
     if (rawHtml) return String(text || '');

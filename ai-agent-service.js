@@ -253,7 +253,7 @@ function normalizeMultimodalContent(content, limits = {}) {
     }
     const text = String(content || '');
     const parts = [];
-    const re = /data:(image|audio)\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+/g;
+    const re = /data:(image|audio)\/[a-zA-Z0-9.+-]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=\r\n]+/g;
     let last = 0;
     let idx = 0;
     let hasImage = false;
@@ -279,8 +279,8 @@ function sanitizeMessages(messages = [], limits = {}) {
     return compactConversationHistory(messages, limits).messages;
 }
 function dataUrlPayload(dataUrl = '') {
-    const match = /^data:([^;,]+);base64,(.*)$/i.exec(String(dataUrl || ''));
-    return match ? { mimeType: match[1] || 'image/jpeg', data: match[2] || '' } : { mimeType: 'image/jpeg', data: String(dataUrl || '').replace(/^data:image\/\w+;base64,/, '') };
+    const match = /^data:([^;,]+)(?:;[^,]*)*;base64,(.*)$/i.exec(String(dataUrl || ''));
+    return match ? { mimeType: match[1] || 'image/jpeg', data: match[2] || '' } : { mimeType: 'image/jpeg', data: String(dataUrl || '').replace(/^data:image\/\w+(?:;[^,]*)*;base64,/, '') };
 }
 function audioFormatFromMime(mimeType = '') {
     const value = String(mimeType || '').toLowerCase();
