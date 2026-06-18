@@ -5258,19 +5258,51 @@ async function toggleAiVoice() {
     const btn = $('#aiVoiceBtn');
     if (aiRecording) { aiSpeechRecognition?.stop?.(); aiMediaRecorder?.stop?.(); return; }
     if (!window.isSecureContext && location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return toast('语音输入需要 HTTPS 或 localhost 安全环境');
+    const resetVoiceUi = () => { aiRecording = false; btn?.classList.remove('active'); if (input) input.placeholder = '在此输入命令，Enter 发送，Shift+Enter 换行...'; };
+    const appendVoiceText = (text = '') => { const clean = String(text || '').trim(); if (!clean || !input) return; input.value = `${input.value || ''}${input.value ? '\n' : ''}${clean}`; autoResizeAiInput(input); updateAiInputPreview(); input.focus?.(); };
+    const startRecorder = async () => {
+        if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw new Error('当前浏览器不支持录音转文字');
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        aiVoiceChunks = [];
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
+        aiMediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        aiMediaRecorder.ondataavailable = (e) => { if (e.data?.size) aiVoiceChunks.push(e.data); };
+        aiMediaRecorder.onstop = async () => {
+            resetVoiceUi(); stream.getTracks().forEach((t) => t.stop());
+            const blob = new Blob(aiVoiceChunks, { type: aiMediaRecorder.mimeType || 'audio/webm' });
+            if (!blob.size) return toast('未录到语音');
+            try { const data = await transcribeAiVoiceBlob(blob); appendVoiceText(data.text || ''); if (!String(data.text || '').trim()) toast('未识别到文字'); }
+            catch (err) { toast(err.message || '语音转文字失败'); }
+        };
+        aiMediaRecorder.start(); aiRecording = true; btn?.classList.add('active'); toast('正在录音，再点一次结束并转文字');
+    };
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
         let finalText = '';
         let lastInterim = '';
+        let speechStarted = false;
+        let fellBackToRecorder = false;
         aiSpeechRecognition = new SpeechRecognition();
         aiSpeechRecognition.lang = 'zh-CN';
         aiSpeechRecognition.interimResults = true;
         aiSpeechRecognition.continuous = false;
         aiSpeechRecognition.maxAlternatives = 1;
         btn?.classList.add('active');
-        aiSpeechRecognition.onstart = () => { aiRecording = true; };
-        aiSpeechRecognition.onend = () => { aiRecording = false; btn?.classList.remove('active'); input.placeholder = '在此输入命令，Enter 发送，Shift+Enter 换行...'; const text = (finalText || lastInterim).trim(); if (text) { input.value = `${input.value || ''}${input.value ? '\n' : ''}${text}`; autoResizeAiInput(input); input.focus?.(); } };
-        aiSpeechRecognition.onerror = (event) => { aiRecording = false; btn?.classList.remove('active'); input.placeholder = '在此输入命令，Enter 发送，Shift+Enter 换行...'; if (event.error !== 'aborted') toast(event.error === 'not-allowed' ? '麦克风权限未授予' : `语音识别失败：${event.error || '未知错误'}`); };
+        aiSpeechRecognition.onstart = () => { speechStarted = true; aiRecording = true; };
+        aiSpeechRecognition.onend = () => { if (fellBackToRecorder) return; resetVoiceUi(); appendVoiceText(finalText || lastInterim); };
+        aiSpeechRecognition.onerror = async (event) => {
+            const code = event.error || '';
+            resetVoiceUi();
+            if (code === 'aborted') return;
+            if (code === 'not-allowed' || code === 'service-not-allowed') {
+                fellBackToRecorder = true;
+                console.warn('[ai-voice] Web Speech denied/unavailable, fallback to MediaRecorder:', code);
+                try { await startRecorder(); }
+                catch (err) { resetVoiceUi(); toast(err.name === 'NotAllowedError' ? '麦克风权限未授予或被浏览器阻止，请检查地址栏站点权限' : `语音输入启动失败：${err.message || err}`); }
+                return;
+            }
+            toast(`语音识别失败：${code || '未知错误'}`);
+        };
         aiSpeechRecognition.onresult = (event) => {
             let interim = '';
             for (let i = event.resultIndex; i < event.results.length; i += 1) {
@@ -5279,26 +5311,12 @@ async function toggleAiVoice() {
                 else interim += text;
             }
             lastInterim = interim;
-            input.placeholder = interim ? `识别中：${interim}` : '在此输入命令，Enter 发送，Shift+Enter 换行...';
+            if (input) input.placeholder = interim ? `识别中：${interim}` : '在此输入命令，Enter 发送，Shift+Enter 换行...';
         };
-        try { aiSpeechRecognition.start(); return; } catch (err) { console.warn('[ai-voice] web speech start failed:', err); btn?.classList.remove('active'); aiRecording = false; }
+        try { aiSpeechRecognition.start(); return; } catch (err) { console.warn('[ai-voice] web speech start failed:', err); if (speechStarted) return; resetVoiceUi(); }
     }
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast('当前浏览器不支持语音输入');
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        aiVoiceChunks = [];
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
-        aiMediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-        aiMediaRecorder.ondataavailable = (e) => { if (e.data?.size) aiVoiceChunks.push(e.data); };
-        aiMediaRecorder.onstop = async () => {
-            aiRecording = false; btn?.classList.remove('active'); stream.getTracks().forEach((t) => t.stop());
-            const blob = new Blob(aiVoiceChunks, { type: aiMediaRecorder.mimeType || 'audio/webm' });
-            if (!blob.size) return toast('未录到语音');
-            try { const data = await transcribeAiVoiceBlob(blob); const text = String(data.text || '').trim(); if (text) { input.value = `${input.value || ''}${input.value ? '\n' : ''}${text}`; autoResizeAiInput(input); input.focus?.(); } else toast('未识别到文字'); }
-            catch (err) { toast(err.message || '语音转文字失败'); }
-        };
-        aiMediaRecorder.start(); aiRecording = true; btn?.classList.add('active'); toast('正在录音，再点一次结束并转文字');
-    } catch (err) { aiRecording = false; btn?.classList.remove('active'); toast(err.name === 'NotAllowedError' ? '麦克风权限未授予' : `语音输入启动失败：${err.message || err}`); }
+    try { await startRecorder(); }
+    catch (err) { resetVoiceUi(); toast(err.name === 'NotAllowedError' ? '麦克风权限未授予或被浏览器阻止，请检查地址栏站点权限' : `语音输入启动失败：${err.message || err}`); }
 }
 function updateAiProviderModalHints() {
     const type = $('#aiProviderType')?.value || 'openai-compatible';
