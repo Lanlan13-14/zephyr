@@ -3144,15 +3144,13 @@ function renderAiHeaderSelectors() {
     if (!providerSelect || !modelSelect) return;
     const providers = (ai.providers || []).filter((p) => p.enabled !== false);
     const previousProviderId = providerSelect.value;
-    providerSelect.innerHTML = providers.length ? providers.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name || p.type || '供应商')}</option>`).join('') : '<option value="">未配置模型</option>';
     providerSelect.value = providers.some((p) => p.id === previousProviderId) ? previousProviderId : (ai.defaultProviderId || providers[0]?.id || '');
     const p = providers.find((x) => x.id === providerSelect.value) || providers[0];
     const models = aiModelNames(p);
     const chosen = ((p?.id === ai.defaultProviderId ? ai.defaultModel : '') || p?.defaultModel || models[0] || ai.defaultModel || '').trim();
-    modelSelect.innerHTML = models.length
-        ? models.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')
-        : `<option value="${escapeHtml(chosen)}">${escapeHtml(chosen || '自动选择模型')}</option>`;
     modelSelect.value = chosen;
+    $('#aiProviderPickerBtn') && ($('#aiProviderPickerBtn').textContent = p ? (p.name || p.type || '供应商') : '未配置模型');
+    $('#aiModelPickerBtn') && ($('#aiModelPickerBtn').textContent = chosen || '自动选择模型');
     renderAiThinkingSelector(p, modelSelect.value || chosen);
     renderAiCapabilityStrip();
 }
@@ -3161,8 +3159,80 @@ function renderAiThinkingSelector(provider = null, model = '') {
     if (!select) return;
     const previous = select.value;
     const options = aiThinkingOptionsForProvider(provider || {}, model);
-    select.innerHTML = options.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('');
     select.value = options.some(([value]) => value === previous) ? previous : '';
+    const label = options.find(([value]) => value === select.value)?.[1] || '默认';
+    $('#aiThinkPickerBtn') && ($('#aiThinkPickerBtn').textContent = `推理：${label}`);
+}
+function aiHeaderChoices(kind = '') {
+    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+    const providers = (ai.providers || []).filter((p) => p.enabled !== false);
+    const provider = providers.find((p) => p.id === $('#aiProviderSelect')?.value) || providers[0] || {};
+    if (kind === 'provider') return providers.map((p) => ({ value: p.id, label: p.name || p.type || '供应商' }));
+    if (kind === 'model') return (aiModelNames(provider).length ? aiModelNames(provider) : [$('#aiModelSelect')?.value || provider.defaultModel || ai.defaultModel || '']).filter(Boolean).map((m) => ({ value: m, label: m }));
+    if (kind === 'thinking') return aiThinkingOptionsForProvider(provider, $('#aiModelSelect')?.value || provider.defaultModel || '').map(([value, label]) => ({ value, label }));
+    return [];
+}
+function closeAiPickerPopover() { document.querySelector('.ai-picker-popover')?.remove(); }
+function openAiPicker(kind = '', anchor = null) {
+    closeAiPickerPopover();
+    const choices = aiHeaderChoices(kind);
+    if (!choices.length || !anchor) return;
+    const current = kind === 'provider' ? $('#aiProviderSelect')?.value : kind === 'model' ? $('#aiModelSelect')?.value : $('#aiThinkIntensity')?.value;
+    const pop = document.createElement('div');
+    pop.className = 'ai-picker-popover';
+    pop.innerHTML = choices.map((item) => `<button type="button" class="ai-picker-option${item.value === current ? ' active' : ''}" data-kind="${escapeHtml(kind)}" data-value="${escapeHtml(item.value)}"><span>${escapeHtml(item.label)}</span>${item.value === current ? '<b>✓</b>' : ''}</button>`).join('');
+    document.body.appendChild(pop);
+    const rect = anchor.getBoundingClientRect();
+    const pr = pop.getBoundingClientRect();
+    pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pr.width - 8, rect.left))}px`;
+    pop.style.top = `${Math.max(8, Math.min(window.innerHeight - pr.height - 8, rect.bottom + 8))}px`;
+}
+function applyAiPickerChoice(kind = '', value = '') {
+    if (kind === 'provider') { $('#aiProviderSelect').value = value; renderAiHeaderSelectors(); }
+    if (kind === 'model') { $('#aiModelSelect').value = value; const ai = normalizeAiSettings(settings.ai || aiSettingsState || {}); const p = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {}; $('#aiModelPickerBtn').textContent = value || '自动选择模型'; renderAiThinkingSelector(p, value); }
+    if (kind === 'thinking') { $('#aiThinkIntensity').value = value; const ai = normalizeAiSettings(settings.ai || aiSettingsState || {}); const p = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {}; renderAiThinkingSelector(p, $('#aiModelSelect')?.value || ''); }
+    closeAiPickerPopover();
+}
+function formatTokenValue(n) {
+    const v = Number(n) || 0;
+    if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
+    if (v >= 1000) return `${(v / 1000).toFixed(1)}K`;
+    return String(Math.round(v));
+}
+async function openAiUsageSheet(messageMetrics = null) {
+    document.querySelector('.ai-usage-sheet')?.remove();
+    let metrics = {};
+    try { metrics = (await api('/api/ai/metrics')).metrics || {}; } catch (_) {}
+    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+    const provider = (ai.providers || []).find((p) => p.id === $('#aiProviderSelect')?.value) || {};
+    const model = $('#aiModelSelect')?.value || provider.defaultModel || '';
+    const context = ai.context || {};
+    const opts = provider.options || {};
+    const thinking = $('#aiThinkIntensity')?.value || '';
+    const samples = metrics.samples || [];
+    const msg = messageMetrics && typeof messageMetrics === 'object' ? messageMetrics : {};
+    const totals = samples.reduce((acc, s) => { acc.inputChars += Number(s.inputCharsBeforeCompact || 0); acc.rounds += Number(s.providerCalls || 0); return acc; }, { inputChars: 0, rounds: 0 });
+    const sheet = document.createElement('div');
+    sheet.className = 'ai-usage-sheet';
+    sheet.innerHTML = `<div class="ai-usage-grabber"></div><div class="ai-usage-head"><h2>会话 Token 用量</h2><button class="ai-usage-close" type="button">×</button></div>
+        <div class="ai-usage-section">上下文</div>
+        <div class="ai-usage-row"><span>已用上下文</span><b>${formatTokenValue(Math.round((samples[0]?.inputCharsBeforeCompact || totals.inputChars || 0) / 2.4))}</b></div>
+        <div class="ai-usage-row"><span>上下文窗口</span><b>${formatTokenValue(opts.context?.windowTokens || context.windowTokens || 0)}</b></div>
+        <div class="ai-usage-row"><span>最大输出</span><b>${formatTokenValue(opts.max_output_tokens || opts.max_tokens || 0)}</b></div>
+        <div class="ai-usage-row"><span>本轮耗时</span><b>${msg.durationMs ? (Number(msg.durationMs) / 1000).toFixed(1) + 's' : '—'}</b></div>
+        <div class="ai-usage-section">思考</div>
+        <div class="ai-usage-row"><span>思考</span><b>${thinking ? '开' : '默认'}</b></div>
+        <div class="ai-usage-row"><span>级别</span><b>${escapeHtml(thinking || '默认')}</b></div>
+        <div class="ai-usage-row"><span>已支持</span><b>${escapeHtml(aiProviderKind(provider) === 'openai' ? '视模型而定' : '是')}</b></div>
+        <div class="ai-usage-section">TOKEN（近期总计）</div>
+        <div class="ai-usage-row"><span>输入（估算）</span><b>${formatTokenValue(Math.round(totals.inputChars / 2.4))}</b></div>
+        <div class="ai-usage-row"><span>输出</span><b>—</b></div>
+        <div class="ai-usage-section">AGENT 循环</div>
+        <div class="ai-usage-row"><span>本轮循环次数</span><b>${formatTokenValue(msg.providerCalls || 0)}</b></div>
+        <div class="ai-usage-row"><span>总循环次数</span><b>${formatTokenValue(totals.rounds)}</b></div>
+        <div class="ai-usage-row"><span>近期请求数</span><b>${formatTokenValue(metrics.count || samples.length || 0)}</b></div>`;
+    document.body.appendChild(sheet);
+    sheet.querySelector('.ai-usage-close')?.addEventListener('click', () => sheet.remove());
 }
 function renderAiCapabilityStrip() {
     const strip = $('#aiCapabilityStrip');
@@ -3578,14 +3648,14 @@ function renderAiChat() {
             else appendAiMessage(m.content, 'assistant', { store: false, messageIndex: index, sessionId: session.id });
             return;
         }
-        appendAiMessage(m.content, m.role, { store: false, rawHtml: m.role === 'trace', messageIndex: index, sessionId: session.id });
+        appendAiMessage(m.content, m.role, { store: false, rawHtml: m.role === 'trace', messageIndex: index, sessionId: session.id, metrics: m.metrics || null });
     });
     area.appendChild(typing);
     updateAiRunUiForCurrentSession();
     renderAiChatList();
     scrollAiChat();
 }
-function appendAiMessage(text, role = 'assistant', { store = true, meta = '', rawHtml = false, messageIndex = -1, sessionId = '' } = {}) {
+function appendAiMessage(text, role = 'assistant', { store = true, meta = '', rawHtml = false, messageIndex = -1, sessionId = '', metrics = null } = {}) {
     const targetSessionId = String(sessionId || aiCurrentSessionId || '');
     const session = targetSessionId
         ? aiChatSessions.find((s) => s.id === targetSessionId)
@@ -3594,7 +3664,9 @@ function appendAiMessage(text, role = 'assistant', { store = true, meta = '', ra
     const normalizedRole = rawHtml ? 'trace' : (role === 'ai' ? 'assistant' : role);
     let storedIndex = messageIndex;
     if (store) {
-        session.messages.push({ role: normalizedRole, content: String(text || '') });
+        const record = { role: normalizedRole, content: String(text || '') };
+        if (metrics && typeof metrics === 'object') record.metrics = metrics;
+        session.messages.push(record);
         storedIndex = session.messages.length - 1;
         if (role === 'user' && (!session.title || session.title === '新对话' || session.title === '新沙箱')) {
             session.title = String(text || '').slice(0, 14) + (String(text || '').length > 14 ? '...' : '');
@@ -3612,6 +3684,7 @@ function appendAiMessage(text, role = 'assistant', { store = true, meta = '', ra
     div.dataset.aiMessageRole = normalizedRole;
     if (storedIndex >= 0) div.dataset.aiMessageIndex = String(storedIndex);
     div.dataset.aiMessageText = String(text || '');
+    if (metrics && typeof metrics === 'object') div.dataset.aiMetrics = JSON.stringify(metrics).slice(0, 6000);
     div.innerHTML = `${meta ? `<small>${escapeHtml(meta)}</small>` : ''}${rawHtml ? String(text || '') : renderMarkdown(String(text || ''), { enhancedCode: role !== 'trace' })}`;
     area.insertBefore(div, typing);
     if ((role === 'system' || role === 'trace') && div.querySelector('.ai-tool-trace')) {
@@ -3687,7 +3760,7 @@ function ensureAiMessageMenu() {
     menu = document.createElement('div');
     menu.id = 'aiMessageContextMenu';
     menu.className = 'ai-message-menu hidden';
-    menu.innerHTML = `<button type="button" data-ai-msg-action="copy"><span>⧉</span>复制文本</button><button type="button" data-ai-msg-action="edit"><span>✎</span>编辑消息</button><button type="button" data-ai-msg-action="regen"><span>↻</span>重新回答</button><button type="button" data-ai-msg-action="select"><span>T</span>选择文本</button>`;
+    menu.innerHTML = `<button type="button" data-ai-msg-action="copy"><span>⧉</span>复制文本</button><button type="button" data-ai-msg-action="edit"><span>✎</span>编辑消息</button><button type="button" data-ai-msg-action="regen"><span>↻</span>重新回答</button><button type="button" data-ai-msg-action="select"><span>T</span>选择文本</button><button type="button" data-ai-msg-action="usage"><span>◷</span>查看用量</button>`;
     document.body.appendChild(menu);
     return menu;
 }
@@ -3710,6 +3783,7 @@ function showAiMessageMenu(messageEl, x, y) {
     aiMessageMenuState.text = messageEl.dataset.aiMessageText || '';
     aiMessageMenuState.selectedText = selectedText;
     aiMessageMenuState.element = messageEl;
+    aiMessageMenuState.metrics = safeJsonParseClient(messageEl.dataset.aiMetrics || '{}', {});
     menu.querySelectorAll('[data-ai-msg-action="edit"],[data-ai-msg-action="regen"]').forEach((btn) => { btn.hidden = role !== 'user'; });
     menu.classList.remove('hidden', 'closing');
     const vw = window.innerWidth || document.documentElement.clientWidth || 360;
@@ -3760,6 +3834,7 @@ function handleAiMessageMenuAction(action = '') {
     if (a === 'edit') editAiMessageFromMenu();
     if (a === 'regen') regenerateAiMessageFromMenu();
     if (a === 'select') selectAiMessageText(aiMessageMenuState.element);
+    if (a === 'usage') openAiUsageSheet(aiMessageMenuState.metrics || {});
     hideAiMessageMenu();
 }
 function aiMessageFromEvent(event) { return event.target?.closest?.('.ai-message'); }
@@ -4232,7 +4307,7 @@ async function handleAiClientCapture(data = {}, { providerId = '', model = '', o
     if (next.toolResults?.length) { await syncAiToolSideEffects(next.toolResults, { sessionId: targetSessionId }); appendAiMessage(next.toolResults.map(formatAiToolResult).join(''), 'trace', { rawHtml: true, sessionId: targetSessionId }); }
     if (next.clientCaptureRequired) return handleAiClientCapture(next, { providerId, model, options, signal, original, depth: depth + 1, sessionId: targetSessionId });
     if (next.confirmationRequired) appendAiConfirmation(next.confirmation, { messages: [{ role: 'user', content: followup }], providerId, model, options, context: collectAiContext({ sessionId: targetSessionId }), sessionId: targetSessionId });
-    else appendAiMessage(next.message?.content || '执行完成。', 'assistant', { meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId: targetSessionId });
+    else appendAiMessage(next.message?.content || '执行完成。', 'assistant', { meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId: targetSessionId, metrics: { ...(next.metrics || {}), provider: next.provider, model: next.model } });
     return true;
 }
 async function syncAiToolSideEffects(toolResults = [], { sessionId = '' } = {}) {
@@ -4293,7 +4368,7 @@ async function continueAiAfterRemoteDesktopClientActions({ original = '', provid
     }
     if (next.clientCaptureRequired) return handleAiClientCapture(next, { providerId, model, options, signal, original, sessionId: targetSessionId });
     if (next.confirmationRequired) appendAiConfirmation(next.confirmation, { messages: [{ role: 'user', content: followup }], providerId, model, options, context: collectAiContext({ sessionId: targetSessionId }), sessionId: targetSessionId });
-    else appendAiMessage(next.message?.content || '执行完成。', 'assistant', { meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId: targetSessionId });
+    else appendAiMessage(next.message?.content || '执行完成。', 'assistant', { meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId: targetSessionId, metrics: { ...(next.metrics || {}), provider: next.provider, model: next.model } });
     return true;
 }
 function maskAiSensitive(value, tool = '') {
@@ -4431,7 +4506,7 @@ async function sendAiMessage() {
         } else if (needsRemoteDesktopClientFollowup(data.toolResults || [])) {
             await continueAiAfterRemoteDesktopClientActions({ original: text, providerId, model, options, signal: abortController.signal, toolResults: data.toolResults || [], sessionId });
         } else {
-            appendAiMessage(data.message?.content || '执行完成。', 'assistant', { meta: [data.provider?.name, data.model].filter(Boolean).join(' / '), sessionId });
+            appendAiMessage(data.message?.content || '执行完成。', 'assistant', { meta: [data.provider?.name, data.model].filter(Boolean).join(' / '), sessionId, metrics: { ...(data.metrics || {}), provider: data.provider, model: data.model } });
         }
     } catch (err) {
         if (err.name === 'AbortError' || /aborted|abort|已停止/i.test(String(err.message || ''))) {
@@ -4488,7 +4563,7 @@ async function continueAiAfterConfirmation(id, approve, data) {
         if (next.toolResults?.length) { await syncAiToolSideEffects(next.toolResults, { sessionId }); appendAiMessage(next.toolResults.map(formatAiToolResult).join(''), 'trace', { rawHtml: true, sessionId }); }
         if (next.clientCaptureRequired) await handleAiClientCapture(next, { providerId: pending.providerId, model: pending.model, options: pending.options || aiIntensityOptions(), signal: abortController.signal, original, sessionId });
         else if (next.confirmationRequired) appendAiConfirmation(next.confirmation, { messages: [{ role: 'user', content: followup }], providerId: pending.providerId, model: pending.model, options: pending.options, context: pending.context, sessionId });
-        else appendAiMessage(next.message?.content || '执行完成。', 'assistant', { meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId });
+        else appendAiMessage(next.message?.content || '执行完成。', 'assistant', { meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId, metrics: { ...(next.metrics || {}), provider: next.provider, model: next.model } });
     } catch (err) {
         if (err.name === 'AbortError' || /aborted|abort|已停止/i.test(String(err.message || ''))) {
             if (!aiStoppedControllers.has(abortController)) appendAiMessage('AI 后续处理已中断。', 'system', { sessionId });
@@ -5242,12 +5317,15 @@ function setupAiAssistant() {
     // Markdown preview toggle removed; messages are rendered as Markdown directly.
     $('#aiClearChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast('请先停止当前对话的 AI 回复'); s.messages = []; renderAiChat(); });
     $('#aiCompressChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast('请先停止当前对话的 AI 回复'); if (s.messages.length > 2) s.messages = [{ role: 'system', content: `历史已压缩：此前共有 ${s.messages.length} 条消息。` }, s.messages[s.messages.length - 1]]; renderAiChat(); });
-    $('#aiProviderSelect')?.addEventListener('change', renderAiHeaderSelectors);
-    $('#aiModelSelect')?.addEventListener('change', () => {
-        const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-        const provider = (ai.providers || []).find((p) => p.id === $('#aiProviderSelect')?.value) || {};
-        renderAiThinkingSelector(provider, $('#aiModelSelect')?.value || '');
-    });
+    $('#aiProviderPickerBtn')?.addEventListener('click', (e) => openAiPicker('provider', e.currentTarget));
+    $('#aiModelPickerBtn')?.addEventListener('click', (e) => openAiPicker('model', e.currentTarget));
+    $('#aiThinkPickerBtn')?.addEventListener('click', (e) => openAiPicker('thinking', e.currentTarget));
+    $('#aiUsageBtn')?.addEventListener('click', () => openAiUsageSheet());
+    document.addEventListener('click', (e) => {
+        const option = e.target.closest?.('.ai-picker-option');
+        if (option) { applyAiPickerChoice(option.dataset.kind, option.dataset.value || ''); return; }
+        if (!e.target.closest?.('.ai-picker-popover,.ai-picker-btn')) closeAiPickerPopover();
+    }, true);
     $('#aiBrowserPreviewToggleBtn')?.addEventListener('click', () => { const state = aiBrowserPreviewStateForSession(aiCurrentSessionId); state.visible = !state.visible; renderAiBrowserPreview(); });
     $('#aiBrowserPreviewRefreshBtn')?.addEventListener('click', refreshAiBrowserPreview);
     $('#aiRefreshStatusBtn')?.addEventListener('click', async () => { const r = await api('/api/ai/status'); settings.ai = normalizeAiSettings(r.ai || {}); renderAiSettingsForm(); toast('AI 配置已刷新'); });
