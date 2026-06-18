@@ -188,11 +188,11 @@ function normalizeContextLimits(ai = {}, provider = {}) {
     };
 }
 function contentTextLength(content) {
-    if (Array.isArray(content)) return content.reduce((sum, part) => sum + String(part?.text || part?.content || '').length + (part?.image_url || part?.inlineData ? 1200 : 0), 0);
+    if (Array.isArray(content)) return content.reduce((sum, part) => sum + String(part?.text || part?.content || '').length + (part?.image_url || part?.inlineData || part?.input_audio || part?.audioData ? 1200 : 0), 0);
     return String(content || '').length;
 }
 function messageContentText(content) {
-    if (Array.isArray(content)) return content.map((part) => part?.text || part?.content || (part?.image_url ? '[图片]' : part?.inlineData ? '[图片]' : '')).filter(Boolean).join('\n');
+    if (Array.isArray(content)) return content.map((part) => part?.text || part?.content || (part?.image_url ? '[图片]' : part?.inlineData ? (String(part.inlineData.mimeType || '').startsWith('audio/') ? '[音频]' : '[图片]') : part?.input_audio || part?.audioData ? '[音频]' : '')).filter(Boolean).join('\n');
     return String(content || '');
 }
 function normalizeConversationMessage(item = {}, limits = {}) {
@@ -253,22 +253,25 @@ function normalizeMultimodalContent(content, limits = {}) {
     }
     const text = String(content || '');
     const parts = [];
-    const re = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+/g;
+    const re = /data:(image|audio)\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+/g;
     let last = 0;
     let idx = 0;
+    let hasImage = false;
+    let hasAudio = false;
     let m;
     while ((m = re.exec(text)) && idx < 6) {
         const before = text.slice(last, m.index).trim();
         if (before) parts.push({ type: 'text', text: clipText(before, perMessageChars) });
         const payload = dataUrlPayload(m[0].replace(/\s+/g, ''));
-        if (payload.data) parts.push({ type: 'image_url', image_url: { url: `data:${payload.mimeType};base64,${payload.data}`, detail: 'auto' } });
+        if (payload.data && String(payload.mimeType || '').startsWith('image/')) { parts.push({ type: 'image_url', image_url: { url: `data:${payload.mimeType};base64,${payload.data}`, detail: 'auto' } }); hasImage = true; }
+        else if (payload.data && String(payload.mimeType || '').startsWith('audio/')) { parts.push({ type: 'input_audio', input_audio: { data: payload.data, format: audioFormatFromMime(payload.mimeType) }, audioData: { mimeType: payload.mimeType, data: payload.data } }); hasAudio = true; }
         last = re.lastIndex;
         idx += 1;
     }
     const rest = text.slice(last).trim();
     if (rest) parts.push({ type: 'text', text: clipText(rest, perMessageChars) });
     if (!parts.length) return clipText(text, perMessageChars);
-    parts.unshift({ type: 'text', text: '用户消息包含图片附件。请直接观察图片内容；不要把 data URL 当作普通文本，也不要声称看不到图片。' });
+    parts.unshift({ type: 'text', text: `${hasImage ? '用户消息包含图片附件。请直接观察图片内容；不要把 data URL 当作普通文本。' : ''}${hasAudio ? '用户消息包含音频附件。请直接听取/理解音频内容；不要要求用户另行转文字。' : ''}`.trim() });
     return parts;
 }
 
@@ -278,6 +281,15 @@ function sanitizeMessages(messages = [], limits = {}) {
 function dataUrlPayload(dataUrl = '') {
     const match = /^data:([^;,]+);base64,(.*)$/i.exec(String(dataUrl || ''));
     return match ? { mimeType: match[1] || 'image/jpeg', data: match[2] || '' } : { mimeType: 'image/jpeg', data: String(dataUrl || '').replace(/^data:image\/\w+;base64,/, '') };
+}
+function audioFormatFromMime(mimeType = '') {
+    const value = String(mimeType || '').toLowerCase();
+    if (value.includes('wav')) return 'wav';
+    if (value.includes('mpeg') || value.includes('mp3')) return 'mp3';
+    if (value.includes('mp4') || value.includes('m4a') || value.includes('aac')) return 'mp4';
+    if (value.includes('webm')) return 'webm';
+    if (value.includes('ogg') || value.includes('opus')) return 'ogg';
+    return 'webm';
 }
 function normalizeAnthropicUserContent(content) {
     if (!Array.isArray(content)) return String(content || '');
@@ -290,6 +302,7 @@ function normalizeAnthropicUserContent(content) {
             const payload = dataUrlPayload(part.image_url.url);
             return { type: 'image', source: { type: 'base64', media_type: payload.mimeType || 'image/jpeg', data: payload.data } };
         }
+        if (part.type === 'input_audio' || part.audioData || (part.inlineData && String(part.inlineData.mimeType || '').startsWith('audio/'))) return { type: 'text', text: '[用户发送了一段音频，但当前 Anthropic 接口不支持直接音频输入；请提示用户切换支持音频输入的 OpenAI Responses/Gemini 模型。]' };
         return { type: 'text', text: String(part.text || part.content || '') };
     }).filter((part) => part.type === 'image' || part.type === 'tool_result' || part.text);
     return parts.length ? parts : '';
@@ -302,6 +315,8 @@ function normalizeGeminiUserParts(message = {}) {
         if (!part || typeof part !== 'object') return { text: String(part || '') };
         if (part.text !== undefined) return { text: String(part.text || '') };
         if (part.inlineData) return part;
+        if (part.input_audio?.data) return { inlineData: { mimeType: `audio/${part.input_audio.format || 'webm'}`, data: part.input_audio.data } };
+        if (part.audioData?.data) return { inlineData: { mimeType: part.audioData.mimeType || 'audio/webm', data: part.audioData.data } };
         if (part.type === 'image_url' && part.image_url?.url) {
             const payload = dataUrlPayload(part.image_url.url);
             return { inlineData: { mimeType: payload.mimeType || 'image/jpeg', data: payload.data } };
@@ -315,10 +330,13 @@ function normalizeResponsesContent(content) {
     return content.map((part) => {
         if (!part || typeof part !== 'object') return { type: 'input_text', text: String(part || '') };
         if (part.type === 'text') return { type: 'input_text', text: String(part.text || '') };
-        if (part.type === 'input_text' || part.type === 'input_image') return part;
+        if (part.type === 'input_text' || part.type === 'input_image' || part.type === 'input_audio') return part;
         if (part.type === 'image_url' && part.image_url?.url) return { type: 'input_image', image_url: part.image_url.url, detail: part.image_url.detail || 'auto' };
+        if (part.input_audio?.data) return { type: 'input_audio', input_audio: { data: part.input_audio.data, format: part.input_audio.format || 'webm' } };
+        if (part.audioData?.data) return { type: 'input_audio', input_audio: { data: part.audioData.data, format: audioFormatFromMime(part.audioData.mimeType) } };
+        if (part.inlineData?.data && String(part.inlineData.mimeType || '').startsWith('audio/')) return { type: 'input_audio', input_audio: { data: part.inlineData.data, format: audioFormatFromMime(part.inlineData.mimeType) } };
         return { type: 'input_text', text: String(part.text || part.content || '') };
-    }).filter((part) => part.image_url || part.text);
+    }).filter((part) => part.image_url || part.text || part.input_audio?.data);
 }
 function openAiScreenshotParts(screenshots = []) {
     const parts = [{ type: 'text', text: '下面是 remote_desktop_screenshot 工具返回的远程桌面截图。请直接观察图片内容，不要只根据 JSON 元数据回答。' }];
@@ -621,9 +639,11 @@ function openAiChatMessages(messages = []) {
             ? m.content.map((part) => {
                 if (part?.type === 'text') return { type: 'text', text: String(part.text || '') };
                 if (part?.type === 'image_url') return { type: 'image_url', image_url: part.image_url || {} };
-                if (part?.inlineData) return { type: 'image_url', image_url: { url: `data:${part.inlineData.mimeType || 'image/jpeg'};base64,${part.inlineData.data || ''}`, detail: 'auto' } };
+                if (part?.type === 'input_audio' && part.input_audio?.data) return { type: 'input_audio', input_audio: { data: part.input_audio.data, format: part.input_audio.format || 'webm' } };
+                if (part?.inlineData) return String(part.inlineData.mimeType || '').startsWith('audio/') ? { type: 'input_audio', input_audio: { data: part.inlineData.data || '', format: audioFormatFromMime(part.inlineData.mimeType) } } : { type: 'image_url', image_url: { url: `data:${part.inlineData.mimeType || 'image/jpeg'};base64,${part.inlineData.data || ''}`, detail: 'auto' } };
+                if (part?.audioData?.data) return { type: 'input_audio', input_audio: { data: part.audioData.data, format: audioFormatFromMime(part.audioData.mimeType) } };
                 return { type: 'text', text: String(part?.text || part?.content || '') };
-            }).filter((part) => part.text || part.image_url?.url)
+            }).filter((part) => part.text || part.image_url?.url || part.input_audio?.data)
             : String(m.content || '');
         const out = { role, content };
         if (role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) out.tool_calls = m.tool_calls;
