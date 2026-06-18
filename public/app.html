@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260618-ai-provider-params-fix">
+    <link rel="stylesheet" href="style.css?v=20260618-ai-provider-thinking-select">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -342,7 +342,7 @@
                     <div class="ai-header-actions">
                         <select id="aiProviderSelect" class="ui-select"></select>
                         <select id="aiModelSelect" class="ui-select"></select>
-                        <span class="ai-think-intensity-removed" hidden></span>
+                        <select id="aiThinkIntensity" class="ui-select" title="推理强度"></select>
                         <button class="ui-btn" type="button" id="aiBrowserPreviewToggleBtn">浏览器预览</button>
                         <button class="ui-btn" type="button" id="aiCompressChatBtn">压缩摘要</button>
                         <button class="ui-btn danger" type="button" id="aiClearChatBtn">清空</button>
@@ -429,6 +429,6 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260618-ai-provider-params-fix" type="module"></script>
+    <script src="app.js?v=20260618-ai-provider-thinking-select" type="module"></script>
 </body>
 </html>

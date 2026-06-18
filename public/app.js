@@ -3098,6 +3098,25 @@ function normalizeAiSettings(ai = {}) {
 function aiModelNames(provider = {}) {
     return String(provider.models || '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
 }
+function aiProviderKind(provider = {}) {
+    const type = String(provider?.type || '').toLowerCase();
+    const base = String(provider?.baseUrl || '').toLowerCase();
+    if (type === 'anthropic' || type === 'claude' || base.includes('anthropic.com')) return 'anthropic';
+    if (type === 'gemini' || type === 'google' || base.includes('generativelanguage.googleapis.com')) return 'gemini';
+    return 'openai';
+}
+function aiThinkingOptionsForProvider(provider = {}, model = '') {
+    const kind = aiProviderKind(provider);
+    const m = String(model || provider.defaultModel || '').toLowerCase();
+    if (kind === 'gemini') {
+        if (/gemini-2\.5/i.test(m)) return [
+            ['', '默认'], ['0', '关闭思考'], ['-1', '动态思考'], ['1024', '浅度思考'], ['8192', '深度思考'],
+        ];
+        return [['', '默认'], ['minimal', 'minimal'], ['low', 'low'], ['medium', 'medium'], ['high', 'high']];
+    }
+    if (kind === 'anthropic') return [['', '默认'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']];
+    return [['', '默认'], ['none', 'none'], ['minimal', 'minimal'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']];
+}
 function aiCurrentSession() {
     if (!aiChatSessions.length) createAiChat({ silent: true });
     return aiChatSessions.find((s) => s.id === aiCurrentSessionId) || aiChatSessions[0];
@@ -3134,7 +3153,16 @@ function renderAiHeaderSelectors() {
         ? models.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')
         : `<option value="${escapeHtml(chosen)}">${escapeHtml(chosen || '自动选择模型')}</option>`;
     modelSelect.value = chosen;
+    renderAiThinkingSelector(p, modelSelect.value || chosen);
     renderAiCapabilityStrip();
+}
+function renderAiThinkingSelector(provider = null, model = '') {
+    const select = $('#aiThinkIntensity');
+    if (!select) return;
+    const previous = select.value;
+    const options = aiThinkingOptionsForProvider(provider || {}, model);
+    select.innerHTML = options.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('');
+    select.value = options.some(([value]) => value === previous) ? previous : '';
 }
 function renderAiCapabilityStrip() {
     const strip = $('#aiCapabilityStrip');
@@ -3824,10 +3852,18 @@ function stopAiResponse(sessionId = aiCurrentSessionId) {
 }
 
 function aiIntensityOptions() {
-    // Per-provider reasoning/thinking controls live in the model provider settings.
-    // Do not apply a universal chat-level preset: OpenAI, Claude and Gemini use
-    // different parameter names and model-specific supported values.
-    return {};
+    const value = $('#aiThinkIntensity')?.value || '';
+    if (!value) return {};
+    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+    const provider = (ai.providers || []).find((p) => p.id === $('#aiProviderSelect')?.value) || {};
+    const model = $('#aiModelSelect')?.value || provider.defaultModel || '';
+    const kind = aiProviderKind(provider);
+    if (kind === 'gemini') {
+        if (/^-?\d+$/.test(value)) return { thinkingConfig: { thinkingBudget: Number(value) } };
+        return { thinkingConfig: { thinkingLevel: value } };
+    }
+    if (kind === 'anthropic') return { effort: value };
+    return { reasoning_effort: value };
 }
 function uniq(list = []) { return Array.from(new Set(list.map((x) => String(x || '').trim()).filter(Boolean))); }
 function collectAiContext(options = {}) {
@@ -5207,6 +5243,11 @@ function setupAiAssistant() {
     $('#aiClearChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast('请先停止当前对话的 AI 回复'); s.messages = []; renderAiChat(); });
     $('#aiCompressChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast('请先停止当前对话的 AI 回复'); if (s.messages.length > 2) s.messages = [{ role: 'system', content: `历史已压缩：此前共有 ${s.messages.length} 条消息。` }, s.messages[s.messages.length - 1]]; renderAiChat(); });
     $('#aiProviderSelect')?.addEventListener('change', renderAiHeaderSelectors);
+    $('#aiModelSelect')?.addEventListener('change', () => {
+        const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+        const provider = (ai.providers || []).find((p) => p.id === $('#aiProviderSelect')?.value) || {};
+        renderAiThinkingSelector(provider, $('#aiModelSelect')?.value || '');
+    });
     $('#aiBrowserPreviewToggleBtn')?.addEventListener('click', () => { const state = aiBrowserPreviewStateForSession(aiCurrentSessionId); state.visible = !state.visible; renderAiBrowserPreview(); });
     $('#aiBrowserPreviewRefreshBtn')?.addEventListener('click', refreshAiBrowserPreview);
     $('#aiRefreshStatusBtn')?.addEventListener('click', async () => { const r = await api('/api/ai/status'); settings.ai = normalizeAiSettings(r.ai || {}); renderAiSettingsForm(); toast('AI 配置已刷新'); });
