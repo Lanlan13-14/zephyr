@@ -325,18 +325,23 @@ function normalizeGeminiUserParts(message = {}) {
     }).filter((part) => part.inlineData || part.text);
     return parts.length ? parts : [{ text: '' }];
 }
+function responsesAudioInputFile(data = '', mimeType = 'audio/webm', filename = '') {
+    const cleanMime = String(mimeType || 'audio/webm');
+    const ext = audioFormatFromMime(cleanMime) || 'webm';
+    return { type: 'input_file', filename: filename || `voice.${ext === 'mp4' ? 'm4a' : ext}`, file_data: `data:${cleanMime};base64,${data || ''}` };
+}
 function normalizeResponsesContent(content) {
     if (!Array.isArray(content)) return String(content || '');
     return content.map((part) => {
         if (!part || typeof part !== 'object') return { type: 'input_text', text: String(part || '') };
         if (part.type === 'text') return { type: 'input_text', text: String(part.text || '') };
-        if (part.type === 'input_text' || part.type === 'input_image' || part.type === 'input_audio') return part;
+        if (part.type === 'input_text' || part.type === 'input_image' || part.type === 'input_file') return part;
         if (part.type === 'image_url' && part.image_url?.url) return { type: 'input_image', image_url: part.image_url.url, detail: part.image_url.detail || 'auto' };
-        if (part.input_audio?.data) return { type: 'input_audio', input_audio: { data: part.input_audio.data, format: part.input_audio.format || 'webm' } };
-        if (part.audioData?.data) return { type: 'input_audio', input_audio: { data: part.audioData.data, format: audioFormatFromMime(part.audioData.mimeType) } };
-        if (part.inlineData?.data && String(part.inlineData.mimeType || '').startsWith('audio/')) return { type: 'input_audio', input_audio: { data: part.inlineData.data, format: audioFormatFromMime(part.inlineData.mimeType) } };
+        if (part.input_audio?.data) return responsesAudioInputFile(part.input_audio.data, `audio/${part.input_audio.format || 'webm'}`);
+        if (part.audioData?.data) return responsesAudioInputFile(part.audioData.data, part.audioData.mimeType || 'audio/webm');
+        if (part.inlineData?.data && String(part.inlineData.mimeType || '').startsWith('audio/')) return responsesAudioInputFile(part.inlineData.data, part.inlineData.mimeType);
         return { type: 'input_text', text: String(part.text || part.content || '') };
-    }).filter((part) => part.image_url || part.text || part.input_audio?.data);
+    }).filter((part) => part.image_url || part.text || part.file_data);
 }
 function openAiScreenshotParts(screenshots = []) {
     const parts = [{ type: 'text', text: '下面是 remote_desktop_screenshot 工具返回的远程桌面截图。请直接观察图片内容，不要只根据 JSON 元数据回答。' }];
