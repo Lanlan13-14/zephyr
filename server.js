@@ -253,9 +253,21 @@ function parseCookies(req) {
     }, {});
 }
 
+const SESSION_TTL_MS = Math.max(5 * 60000, Number(process.env.SESSION_TTL_SECONDS || 24 * 60 * 60) * 1000);
+const REMEMBER_SESSION_TTL_MS = Math.max(SESSION_TTL_MS, Number(process.env.REMEMBER_SESSION_TTL_SECONDS || 30 * 24 * 60 * 60) * 1000);
+
 function currentSession(req) {
     const sid = parseCookies(req).zephyr_sid;
-    return sid ? sessions.get(sid) : null;
+    if (!sid) return null;
+    const session = sessions.get(sid);
+    if (!session) return null;
+    const ttl = session.remember ? REMEMBER_SESSION_TTL_MS : SESSION_TTL_MS;
+    if (Date.now() - Number(session.createdAt || 0) > ttl) {
+        sessions.delete(sid);
+        return null;
+    }
+    session.lastSeenAt = Date.now();
+    return session;
 }
 
 function isPasswordChangeAllowedPath(req) {
@@ -1039,12 +1051,47 @@ function addActivity(message) {
     storage.addActivity({ id: crypto.randomUUID(), time: Date.now(), message, type: 'info' });
 }
 
-function clientIp(req) {
-    return String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim().replace(/^::ffff:/, '') || 'unknown';
+function trustProxyEnabled() {
+    return process.env.TRUST_PROXY === 'true' || process.env.ZEPHYR_TRUST_PROXY === 'true';
 }
 
-function publicOrigin(req) { return req.headers.origin || (process.env.PUBLIC_ORIGIN && process.env.PUBLIC_ORIGIN !== 'http://localhost:3000' ? process.env.PUBLIC_ORIGIN : `${req.protocol}://${req.get('host')}`); }
+function requestProto(req) {
+    if (trustProxyEnabled()) return String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim() || 'http';
+    return req.socket?.encrypted ? 'https' : (req.protocol || 'http');
+}
+
+function clientIp(req) {
+    const source = trustProxyEnabled() ? (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '') : (req.socket.remoteAddress || '');
+    return String(source).split(',')[0].trim().replace(/^::ffff:/, '') || 'unknown';
+}
+
+function configuredPublicOrigin(req) {
+    const configured = String(process.env.PUBLIC_ORIGIN || '').trim().replace(/\/+$/, '');
+    if (configured && configured !== 'http://localhost:3000') return configured;
+    return `${requestProto(req)}://${req.get('host')}`;
+}
+
+function publicOrigin(req) { return configuredPublicOrigin(req); }
 function rpIdFromOrigin(origin) { try { return new URL(origin).hostname; } catch { return 'localhost'; } }
+function sameOriginAllowed(req) {
+    const expected = configuredPublicOrigin(req);
+    const values = [req.headers.origin, req.headers.referer].filter(Boolean);
+    if (!values.length) return true;
+    return values.every((value) => {
+        try {
+            const got = new URL(String(value));
+            const want = new URL(expected);
+            return got.protocol === want.protocol && got.host === want.host;
+        } catch {
+            return false;
+        }
+    });
+}
+function requireSameOrigin(req, res, next) {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+    if (!sameOriginAllowed(req)) return res.status(403).json({ error: '请求来源不可信' });
+    next();
+}
 function safeSettings(s = storage.getSettings()) {
     const copy = JSON.parse(JSON.stringify(s || {}));
     copy.version = APP_VERSION;
@@ -1145,11 +1192,21 @@ function normalizeSettingsInput(body) {
     return next;
 }
 
-function createSession(res, user, { remember = false } = {}) {
+function secureCookieFlag(req) {
+    const origin = configuredPublicOrigin(req);
+    return origin.startsWith('https://') || requestProto(req) === 'https' ? '; Secure' : '';
+}
+
+function sessionClearCookie(req) {
+    return `zephyr_sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secureCookieFlag(req)}`;
+}
+
+function createSession(req, res, user, { remember = false } = {}) {
     const sid = crypto.randomUUID();
-    sessions.set(sid, { username: user.username, createdAt: Date.now(), mustChangePassword: !!user.defaultPassword });
-    const maxAge = remember ? '; Max-Age=2592000' : '';
-    res.setHeader('Set-Cookie', `zephyr_sid=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax${maxAge}`);
+    sessions.set(sid, { username: user.username, createdAt: Date.now(), lastSeenAt: Date.now(), remember: !!remember, mustChangePassword: !!user.defaultPassword });
+    const maxAgeSeconds = remember ? Math.floor(REMEMBER_SESSION_TTL_MS / 1000) : '';
+    const maxAge = maxAgeSeconds ? `; Max-Age=${maxAgeSeconds}` : '';
+    res.setHeader('Set-Cookie', `zephyr_sid=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax${secureCookieFlag(req)}${maxAge}`);
     return sid;
 }
 
@@ -1427,6 +1484,12 @@ function recordLoginFailure(ip) {
 }
 function recordLoginSuccess(ip) { if (ip && ip !== 'unknown') storage.clearIpBan(ip); }
 
+function defaultPasswordRemoteLoginAllowed(req, user) {
+    if (!user?.defaultPassword) return true;
+    if (process.env.ALLOW_DEFAULT_PASSWORD_REMOTE_LOGIN === 'true') return true;
+    return isPrivateOrLocalIp(clientIp(req));
+}
+
 function sha256(v) { return crypto.createHash('sha256').update(String(v)).digest('hex'); }
 function encryptionKey(password = process.env.ENCRYPTION_KEY || 'please-change-this-key') { return crypto.createHash('sha256').update(String(password)).digest(); }
 function encryptBuffer(buffer, password) { const iv = crypto.randomBytes(12); const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey(password), iv); const enc = Buffer.concat([cipher.update(buffer), cipher.final()]); return Buffer.concat([Buffer.from('ZEPHYR3'), iv, cipher.getAuthTag(), enc]); }
@@ -1441,6 +1504,7 @@ async function zipBuffer(files) {
 
 initData();
 app.use(express.json({ limit: '24mb' }));
+app.use(requireSameOrigin);
 
 app.post('/api/auth/login', async (req, res) => {
     const { username, password, captchaToken, remember } = req.body || {};
@@ -1455,13 +1519,18 @@ app.post('/api/auth/login', async (req, res) => {
         await notifyLogin({ username, ip: guard.ip, userAgent: ua, success: false, reason: '密码错误' });
         return res.status(401).json({ error: '账号或密码错误' });
     }
+    if (!defaultPasswordRemoteLoginAllowed(req, user)) {
+        recordLoginFailure(guard.ip);
+        await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: false, reason: '默认密码禁止公网登录' });
+        return res.status(403).json({ error: '默认密码只允许从本机或内网登录，请先在安全环境修改默认密码' });
+    }
     if (user.totpEnabled) {
         const tempToken = crypto.randomUUID();
         tempTotpTokens.set(tempToken, { username: user.username, createdAt: Date.now(), ip: guard.ip, userAgent: ua, remember: !!remember });
         return res.json({ ok: true, requireTotp: true, tempToken });
     }
     recordLoginSuccess(guard.ip);
-    createSession(res, user, { remember: !!remember });
+    createSession(req, res, user, { remember: !!remember });
     addActivity(`用户登录：${user.username}`);
     await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: true, reason: '' });
     res.json({ ok: true, user: { username: user.username }, mustChangePassword: !!user.defaultPassword });
@@ -1473,7 +1542,7 @@ app.post('/api/auth/totp/verify', async (req, res) => {
     if (!tmp || Date.now() - tmp.createdAt > 5 * 60000) return res.status(400).json({ error: '验证会话已过期' });
     const user = storage.getUser(tmp.username);
     if (!user?.totpSecret || !verifySync({ secret: user.totpSecret, token: String(code || '') }).valid) { recordLoginFailure(tmp.ip); await notifyLogin({ username: tmp.username, ip: tmp.ip, userAgent: tmp.userAgent, success: false, reason: 'TOTP 错误' }); return res.status(401).json({ error: '动态验证码错误' }); }
-    tempTotpTokens.delete(tempToken); recordLoginSuccess(tmp.ip); createSession(res, user, { remember: !!tmp.remember }); addActivity(`用户登录：${user.username}`); await notifyLogin({ username: user.username, ip: tmp.ip, userAgent: tmp.userAgent, success: true, reason: '' });
+    tempTotpTokens.delete(tempToken); recordLoginSuccess(tmp.ip); createSession(req, res, user, { remember: !!tmp.remember }); addActivity(`用户登录：${user.username}`); await notifyLogin({ username: user.username, ip: tmp.ip, userAgent: tmp.userAgent, success: true, reason: '' });
     res.json({ ok: true, user: { username: user.username }, mustChangePassword: !!user.defaultPassword });
 });
 
@@ -1506,7 +1575,7 @@ app.post('/api/auth/forgot-password/reset', (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
     const sid = parseCookies(req).zephyr_sid;
     if (sid) sessions.delete(sid);
-    res.setHeader('Set-Cookie', 'zephyr_sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax');
+    res.setHeader('Set-Cookie', sessionClearCookie(req));
     res.json({ ok: true });
 });
 
@@ -1795,7 +1864,7 @@ app.post('/api/passkeys/login/verify', async (req, res) => {
     try {
         const result = await verifyAuthenticationResponse({ response: req.body, expectedChallenge: state?.challenge || req.body?.challenge, expectedOrigin: state?.origin || origin, expectedRPID: state?.rpID || rpID, credential: { id: passkey.credentialId, publicKey: Buffer.from(passkey.publicKey, 'base64'), counter: passkey.counter || 0, transports: passkey.transports } });
         if (!result.verified) return res.status(400).json({ error: 'Passkey 登录失败' });
-        webauthnChallenges.delete('login'); storage.updatePasskeyCounter(passkey.id, result.authenticationInfo.newCounter); const user = storage.getUser(passkey.username); createSession(res, user); addActivity(`Passkey 登录：${user.username}`); res.json({ ok: true, mustChangePassword: !!user.defaultPassword });
+        webauthnChallenges.delete('login'); storage.updatePasskeyCounter(passkey.id, result.authenticationInfo.newCounter); const user = storage.getUser(passkey.username); createSession(req, res, user); addActivity(`Passkey 登录：${user.username}`); res.json({ ok: true, mustChangePassword: !!user.defaultPassword });
     } catch (err) { res.status(400).json({ error: err.message || 'Passkey 登录失败' }); }
 });
 

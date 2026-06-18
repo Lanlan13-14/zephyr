@@ -175,12 +175,17 @@ PORT=3000
 | `ENCRYPTION_KEY` | 备份导出/导入加密密钥，生产环境必须改为强随机字符串 | `please-change-this-key` |
 | `ZEPHYR_DATA_MLKEM768_PUBLIC_KEY_B64` / `ZEPHYR_DATA_MLKEM768_SECRET_KEY_B64` | 可选：外部注入 ML-KEM-768 数据字段加密密钥对；未设置时会自动生成到 `data/crypto/ml-kem-768-keypair.json` | 自动生成 |
 | `ZEPHYR_DATA_MLKEM768_KEY_FILE` | 可选：自动生成/读取 ML-KEM-768 数据字段加密密钥文件路径 | `data/crypto/ml-kem-768-keypair.json` |
-| `PUBLIC_ORIGIN` | Passkey / WebAuthn 使用的站点来源，应与浏览器访问地址一致 | `http://localhost:3000` |
+| `PUBLIC_ORIGIN` | Passkey / WebAuthn 使用的固定站点来源，也用于同源校验和 HTTPS Cookie 判断；应与浏览器访问地址一致 | `http://localhost:3000` |
+| `TRUST_PROXY` / `ZEPHYR_TRUST_PROXY` | 是否信任反向代理传入的 `X-Forwarded-For` / `X-Forwarded-Proto`；只有 Zephyr 仅暴露在可信 Nginx/Caddy 后方时才设为 `true` | `false` |
+| `SESSION_TTL_SECONDS` | 普通登录会话服务端有效期 | `86400` |
+| `REMEMBER_SESSION_TTL_SECONDS` | “记住我”会话服务端有效期 | `2592000` |
+| `ALLOW_DEFAULT_PASSWORD_REMOTE_LOGIN` | 是否允许默认密码账号从公网 IP 登录；生产环境不要开启 | `false` |
 
 注意：
 
 - 使用 Passkey / WebAuthn 时，生产环境建议启用 HTTPS。
-- `PUBLIC_ORIGIN` 必须与实际访问地址一致，例如 `https://ssh.example.com`。
+- `PUBLIC_ORIGIN` 必须与实际访问地址一致，例如 `https://ssh.example.com`。生产环境配置为 HTTPS 后，登录 Cookie 会自动带 `Secure`。
+- Zephyr 会校验非 GET 请求的 `Origin` / `Referer` 与 `PUBLIC_ORIGIN` 同源，反代后的公开域名、协议配置不一致会导致写操作返回 403。
 - `ENCRYPTION_KEY` 用于加密备份文件。旧备份需要使用导出时的旧密钥才能解密导入。
 - Zephyr 首次启动会生成 ML-KEM-768 数据字段加密密钥对，默认保存在 `data/crypto/ml-kem-768-keypair.json`。数据库内的敏感字段会使用该密钥派生的混合加密方案落盘；迁移、备份或恢复时必须同时保留该密钥文件，或通过 `ZEPHYR_DATA_MLKEM768_PUBLIC_KEY_B64` / `ZEPHYR_DATA_MLKEM768_SECRET_KEY_B64` 外部注入同一密钥对。使用默认文件密钥时，后台导出的 `.zip.enc` 备份会把该密钥文件一起放入 `ENCRYPTION_KEY` 加密包中，便于跨机器恢复。
 - 程序首次启动如果发现 `data/.env` 不存在，会生成默认占位文件；生产环境不要长期使用默认密钥。
