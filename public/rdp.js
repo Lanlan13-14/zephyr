@@ -51,6 +51,7 @@ const qualityModes = ['performance', 'balanced', 'quality'];
 let qualityIdx = qualityModes.indexOf(params.quality || 'performance');
 if (qualityIdx < 0) qualityIdx = 0;
 let rdpSocket = null;
+let rdpStreamPreference = 'h264';
 let rdpInputSender = null;
 let rdpAudioSocket = null;
 let rdpAudioMediaSource = null;
@@ -361,7 +362,7 @@ function wsUrl() {
         mode: target.mode,
         quality: qualityModes[qualityIdx],
         fps: String(params.rdpFps || 60),
-        stream: 'h264',
+        stream: rdpStreamPreference,
     });
     return `${proto}//${location.host}/rdp-h264?${query.toString()}`;
 }
@@ -1283,7 +1284,7 @@ async function connect() {
         const initialTarget = computeRdpTargetSize(fitModes[fitModeIdx]);
         requestedRdpWidth = initialTarget.width;
         requestedRdpHeight = initialTarget.height;
-        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 60), stream: 'h264' });
+        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 60), stream: rdpStreamPreference });
         const connectionSeq = rdpReconnectSeq;
         rdpSocket = new WebSocket(`${wsBase}?${wsQuery.toString()}`);
         rdpSocket.binaryType = 'arraybuffer';
@@ -1298,6 +1299,15 @@ async function connect() {
         let avVideo = null;
         let avMediaSource = null;
         let avSourceBuffer = null;
+        const noFrameWatchSocket = rdpSocket;
+        window.setTimeout(() => {
+            if (!firstFrameDrawn && noFrameWatchSocket === rdpSocket && rdpSocket?.readyState === WebSocket.OPEN && rdpStreamPreference === 'h264') {
+                console.warn('[rdp-client]', 'native h264 produced no first frame, falling back to fMP4 AV');
+                setStatus('connecting', '原生 H.264 首帧超时，正在回退兼容模式...');
+                rdpStreamPreference = 'av';
+                try { rdpSocket.close(1012, 'native h264 first frame timeout'); } catch {}
+            }
+        }, 7000);
         const avQueue = [];
         let avStaging = new Uint8Array(0);
         const mp4BoxSize = (buf, off) => {
@@ -1477,7 +1487,7 @@ async function connect() {
                             remotePath: f.path,
                         }));
                         renderRemoteFileList();
-                        setClipboardHint(`远程 Windows 复制了 ${msg.files.length} 个文件，点"文件"按钮查看和下载`, 'success');
+                        setClipboardHint(`远程 Windows 复制了 ${msg.files.length} 个文件，可在剪贴板面板查看和下载`, 'success');
                         setTransientStatus(`远程剪贴板有 ${msg.files.length} 个文件`);
                         // Notify parent with metadata only (no dataUrl, no auto-transfer)
                         notifyParentSharedFileClipboard(rdpRemoteFileClipboard.map((f) => ({

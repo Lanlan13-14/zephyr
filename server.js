@@ -4115,7 +4115,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     try { fs.mkdirSync(shareDir, { recursive: true }); } catch {}
     const pulseDir = `/tmp/zephyr-pulse-${connId}`;
     const pulseRuntimeDir = `${pulseDir}/runtime`;
-    const env = { ...process.env, DISPLAY: xvfbDisp, ZEPHYR_RDP_H264_PIPE: fifoPath, ZEPHYR_RDP_H264_SKIP_GDI: process.env.ZEPHYR_RDP_H264_SKIP_GDI || '1', PULSE_SERVER: `unix:${pulseDir}/native`, PULSE_RUNTIME_PATH: pulseRuntimeDir, XDG_RUNTIME_DIR: pulseRuntimeDir };
+    const env = { ...process.env, DISPLAY: xvfbDisp, ZEPHYR_RDP_H264_PIPE: fifoPath, ZEPHYR_RDP_H264_SKIP_GDI: process.env.ZEPHYR_RDP_H264_SKIP_GDI || '0', PULSE_SERVER: `unix:${pulseDir}/native`, PULSE_RUNTIME_PATH: pulseRuntimeDir, XDG_RUNTIME_DIR: pulseRuntimeDir };
 
     let pulseaudio = null;
     const rdpAudioBackend = (() => {
