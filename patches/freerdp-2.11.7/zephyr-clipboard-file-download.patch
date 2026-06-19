@@ -1,0 +1,319 @@
+diff --git a/client/X11/xf_cliprdr.c b/client/X11/xf_cliprdr.c
+index 37ed538..ed79a30 100644
+--- a/client/X11/xf_cliprdr.c
++++ b/client/X11/xf_cliprdr.c
+@@ -26,6 +26,12 @@
+ #include <stdlib.h>
+ #include <X11/Xlib.h>
+ #include <X11/Xatom.h>
++#include <stdio.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <sys/stat.h>
++#include <sys/types.h>
+ 
+ #ifdef WITH_XFIXES
+ #include <X11/extensions/Xfixes.h>
+@@ -112,6 +118,12 @@ struct xf_clipboard
+ 	BOOL streams_supported;
+ 	BOOL file_formats_registered;
+ 	UINT32 file_capability_flags;
++
++	/* Zephyr: remote file download */
++	HANDLE fileDownloadEvent;
++	BYTE* fileContentsData;
++	UINT32 fileContentsSize;
++	BOOL fileContentsSuccess;
+ 	/* last sent data */
+ 	CLIPRDR_FORMAT* lastSentFormats;
+ 	UINT32 lastSentNumFormats;
+@@ -1566,6 +1578,11 @@ xf_cliprdr_server_format_data_response(CliprdrClientContext* context,
+ 	SrcSize = (UINT32)size;
+ 	bSuccess = ClipboardSetData(clipboard->system, srcFormatId, data, SrcSize);
+ 
++	if (bSuccess && clipboard->data_format_name && strcmp(clipboard->data_format_name, "FileGroupDescriptorW") == 0)
++	{
++		zephyr_download_clipboard_files(clipboard, data, SrcSize);
++	}
++
+ 	if (bSuccess)
+ 	{
+ 		if (SrcSize == 0)
+@@ -1631,6 +1648,257 @@ xf_cliprdr_server_format_data_response(CliprdrClientContext* context,
+ 	return CHANNEL_RC_OK;
+ }
+ 
++
++/* ═══ Zephyr: Remote→Local clipboard file download ═══ */
++
++static UINT zephyr_cliprdr_server_file_contents_response(CliprdrClientContext* context,
++                                                          const CLIPRDR_FILE_CONTENTS_RESPONSE* resp)
++{
++	xfClipboard* clipboard;
++	if (!context || !resp || !context->custom)
++		return ERROR_INTERNAL_ERROR;
++	clipboard = (xfClipboard*)context->custom;
++
++	if (resp->msgFlags != CB_RESPONSE_OK)
++	{
++		clipboard->fileContentsSuccess = FALSE;
++		if (clipboard->fileDownloadEvent)
++			SetEvent(clipboard->fileDownloadEvent);
++		return CHANNEL_RC_OK;
++	}
++
++	if (clipboard->fileContentsData)
++	{
++		free(clipboard->fileContentsData);
++		clipboard->fileContentsData = NULL;
++	}
++	clipboard->fileContentsSize = resp->cbRequested;
++	clipboard->fileContentsData = (BYTE*)malloc(resp->cbRequested);
++	if (!clipboard->fileContentsData)
++	{
++		clipboard->fileContentsSuccess = FALSE;
++		if (clipboard->fileDownloadEvent)
++			SetEvent(clipboard->fileDownloadEvent);
++		return ERROR_NOT_ENOUGH_MEMORY;
++	}
++	CopyMemory(clipboard->fileContentsData, resp->requestedData, resp->cbRequested);
++	clipboard->fileContentsSuccess = TRUE;
++
++	if (clipboard->fileDownloadEvent)
++		SetEvent(clipboard->fileDownloadEvent);
++	return CHANNEL_RC_OK;
++}
++
++static UINT zephyr_download_remote_file(CliprdrClientContext* context, UINT32 listIndex,
++                                         UINT64* fileSize, const char* dirPath,
++                                         const WCHAR* wFileName)
++{
++	xfClipboard* clipboard;
++	CLIPRDR_FILE_CONTENTS_REQUEST req;
++	UINT rc;
++	char fileName[520];
++	char filePath[600];
++	FILE* fp;
++	UINT64 remaining, offset;
++	UINT32 chunkSize;
++
++	if (!context || !fileSize || !dirPath || !wFileName)
++		return ERROR_BAD_ARGUMENTS;
++	clipboard = (xfClipboard*)context->custom;
++	if (!clipboard)
++		return ERROR_INTERNAL_ERROR;
++
++	{
++		int len = ConvertFromUnicode(CP_UTF8, 0, wFileName, -1, fileName, sizeof(fileName), NULL, NULL);
++		if (len <= 0)
++			return ERROR_INTERNAL_ERROR;
++	}
++
++	{
++		char* base = fileName;
++		char* p;
++		for (p = fileName; *p; p++)
++		{
++			if (*p == '/' || *p == '\\')
++				base = p + 1;
++		}
++		if (base != fileName)
++			memmove(fileName, base, strlen(base) + 1);
++	}
++
++	ZeroMemory(&req, sizeof(req));
++	req.streamId = 1;
++	req.listIndex = listIndex;
++	req.dwFlags = FILECONTENTS_SIZE;
++	req.cbRequested = sizeof(UINT64);
++
++	clipboard->fileContentsData = NULL;
++	clipboard->fileContentsSuccess = FALSE;
++	if (clipboard->fileDownloadEvent)
++		ResetEvent(clipboard->fileDownloadEvent);
++
++	rc = context->ClientFileContentsRequest(context, &req);
++	if (rc != CHANNEL_RC_OK)
++		return rc;
++
++	if (clipboard->fileDownloadEvent)
++	{
++		if (WaitForSingleObject(clipboard->fileDownloadEvent, 5000) != WAIT_OBJECT_0)
++			return ERROR_TIMEOUT;
++	}
++
++	if (!clipboard->fileContentsSuccess || !clipboard->fileContentsData ||
++	    clipboard->fileContentsSize < sizeof(UINT64))
++	{
++		free(clipboard->fileContentsData);
++		clipboard->fileContentsData = NULL;
++		return ERROR_INTERNAL_ERROR;
++	}
++
++	CopyMemory(fileSize, clipboard->fileContentsData, sizeof(UINT64));
++	free(clipboard->fileContentsData);
++	clipboard->fileContentsData = NULL;
++
++	if (*fileSize == 0)
++	{
++		snprintf(filePath, sizeof(filePath), "%s/%s", dirPath, fileName);
++		fp = fopen(filePath, "wb");
++		if (fp)
++			fclose(fp);
++		return CHANNEL_RC_OK;
++	}
++
++	snprintf(filePath, sizeof(filePath), "%s/%s", dirPath, fileName);
++	fp = fopen(filePath, "wb");
++	if (!fp)
++		return ERROR_OPEN_FAILED;
++
++	remaining = *fileSize;
++	offset = 0;
++	chunkSize = 4 * 1024 * 1024;
++
++	while (remaining > 0)
++	{
++		UINT32 requestSize = (remaining < chunkSize) ? (UINT32)remaining : chunkSize;
++
++		ZeroMemory(&req, sizeof(req));
++		req.streamId = 1;
++		req.listIndex = listIndex;
++		req.dwFlags = FILECONTENTS_RANGE;
++		req.nPositionLow = (UINT32)(offset & 0xFFFFFFFF);
++		req.nPositionHigh = (UINT32)(offset >> 32);
++		req.cbRequested = requestSize;
++
++		clipboard->fileContentsData = NULL;
++		clipboard->fileContentsSuccess = FALSE;
++		if (clipboard->fileDownloadEvent)
++			ResetEvent(clipboard->fileDownloadEvent);
++
++		rc = context->ClientFileContentsRequest(context, &req);
++		if (rc != CHANNEL_RC_OK)
++		{
++			fclose(fp);
++			return rc;
++		}
++
++		if (clipboard->fileDownloadEvent)
++		{
++			if (WaitForSingleObject(clipboard->fileDownloadEvent, 10000) != WAIT_OBJECT_0)
++			{
++				fclose(fp);
++				return ERROR_TIMEOUT;
++			}
++		}
++
++		if (!clipboard->fileContentsSuccess || !clipboard->fileContentsData)
++		{
++			fclose(fp);
++			return ERROR_INTERNAL_ERROR;
++		}
++
++		if (fwrite(clipboard->fileContentsData, 1, clipboard->fileContentsSize, fp) != clipboard->fileContentsSize)
++		{
++			free(clipboard->fileContentsData);
++			clipboard->fileContentsData = NULL;
++			fclose(fp);
++			return ERROR_WRITE_FAULT;
++		}
++
++		free(clipboard->fileContentsData);
++		clipboard->fileContentsData = NULL;
++
++		offset += clipboard->fileContentsSize;
++		remaining -= clipboard->fileContentsSize;
++	}
++
++	fclose(fp);
++	WLog_INFO(TAG, "Zephyr: downloaded clipboard file '%s' (%llu bytes)", fileName,
++	          (unsigned long long)*fileSize);
++	return CHANNEL_RC_OK;
++}
++
++static UINT zephyr_download_clipboard_files(xfClipboard* clipboard, const BYTE* data, UINT32 size)
++{
++	FILEDESCRIPTORW* fileArray = NULL;
++	UINT32 fileCount = 0;
++	UINT32 i;
++	UINT rc;
++	UINT64 totalSize = 0;
++	const char* dir;
++	char dirPath[512];
++
++	if (!clipboard || !clipboard->context || !data || size < 4)
++		return ERROR_BAD_ARGUMENTS;
++
++	rc = cliprdr_parse_file_list(data, size, &fileArray, &fileCount);
++	if (rc != 0)
++	{
++		WLog_ERR(TAG, "Zephyr: failed to parse clipboard file list: 0x%08X", rc);
++		return rc;
++	}
++
++	WLog_INFO(TAG, "Zephyr: clipboard has %u remote files", fileCount);
++
++	dir = getenv("ZEPHYR_RDP_CLIPBOARD_DOWNLOAD_DIR");
++	if (!dir || !*dir)
++		dir = "/tmp";
++
++	snprintf(dirPath, sizeof(dirPath), "%s/zephyr-clip-%d", dir, (int)getpid());
++	mkdir(dirPath, 0755);
++
++	for (i = 0; i < fileCount; i++)
++	{
++		UINT64 fileSize = 0;
++
++		if (fileArray[i].dwFileAttributes & 0x10)
++		{
++			WLog_INFO(TAG, "Zephyr: skipping directory in clipboard");
++			continue;
++		}
++
++		rc = zephyr_download_remote_file(clipboard->context, i, &fileSize, dirPath,
++		                                   fileArray[i].cFileName);
++		if (rc != CHANNEL_RC_OK)
++			WLog_WARN(TAG, "Zephyr: failed to download clipboard file %u: 0x%08X", i, rc);
++		else
++			totalSize += fileSize;
++	}
++
++	if (clipboard->delegate->basePath)
++		free(clipboard->delegate->basePath);
++
++	{
++		char basePath[600];
++		snprintf(basePath, sizeof(basePath), "file://%s", dirPath);
++		clipboard->delegate->basePath = _strdup(basePath);
++	}
++
++	free(fileArray);
++	WLog_INFO(TAG, "Zephyr: clipboard file download complete, total %llu bytes",
++	          (unsigned long long)totalSize);
++	return CHANNEL_RC_OK;
++}
++
+ static UINT
+ xf_cliprdr_server_file_size_request(xfClipboard* clipboard,
+                                     const CLIPRDR_FILE_CONTENTS_REQUEST* fileContentsRequest)
+@@ -1899,6 +2167,10 @@ xfClipboard* xf_clipboard_new(xfContext* xfc, BOOL relieveFilenameRestriction)
+ 	clipboard->incr_atom = XInternAtom(xfc->display, "INCR", FALSE);
+ 	clipboard->delegate = ClipboardGetDelegate(clipboard->system);
+ 	clipboard->delegate->custom = clipboard;
++	clipboard->fileDownloadEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
++	clipboard->fileContentsData = NULL;
++	clipboard->fileContentsSize = 0;
++	clipboard->fileContentsSuccess = FALSE;
+ 	/* TODO: set up a filesystem base path for local URI */
+ 	/* clipboard->delegate->basePath = "file:///tmp/foo/bar/gaga"; */
+ 	clipboard->delegate->ClipboardFileSizeSuccess = xf_cliprdr_clipboard_file_size_success;
+@@ -1966,6 +2238,7 @@ void xf_cliprdr_init(xfContext* xfc, CliprdrClientContext* cliprdr)
+ 	cliprdr->ServerFormatDataRequest = xf_cliprdr_server_format_data_request;
+ 	cliprdr->ServerFormatDataResponse = xf_cliprdr_server_format_data_response;
+ 	cliprdr->ServerFileContentsRequest = xf_cliprdr_server_file_contents_request;
++	cliprdr->ServerFileContentsResponse = zephyr_cliprdr_server_file_contents_response;
+ }
+ 
+ void xf_cliprdr_uninit(xfContext* xfc, CliprdrClientContext* cliprdr)

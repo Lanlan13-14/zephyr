@@ -4258,6 +4258,14 @@ function handleSharedFileClipboardAvailable(files = [], sourceTabId = '') {
         }
         return;
     }
+    // RDP remote files with remotePath (downloaded by xfreerdp to server temp dir)
+    const remoteFiles = list.filter((file) => file?.remotePath);
+    if (remoteFiles.length) {
+        if (!sftpReady) { showFileManager(); initSFTP(); }
+        // Upload remote files from server temp dir to current SFTP dir
+        uploadRemotePathFiles(remoteFiles);
+        return;
+    }
     // RDP local files with dataUrl → receive and upload
     const localFiles = list.filter((file) => file?.dataUrl);
     if (localFiles.length) {
@@ -4273,6 +4281,22 @@ function handleSharedFileClipboardAvailable(files = [], sourceTabId = '') {
     showToast(`收到跨窗口文件剪贴板：${names}，正在粘贴到 ${currentPath}`, 'info');
     if (!sftpReady) { showFileManager(); initSFTP(); }
     consumeParentSharedFileClipboard(pathFiles, sourceTabId);
+}
+async function uploadRemotePathFiles(files = []) {
+    const list = Array.from(files || []).filter((file) => file?.remotePath);
+    if (!list.length) return;
+    showToast(`正在从 RDP 远程下载 ${list.length} 个文件并上传到 ${currentPath}`, 'info');
+    for (const file of list) {
+        try {
+            const res = await fetch('/api/rdp/clipboard-file?' + new URLSearchParams({ path: file.remotePath, name: file.name || '' }));
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            const localFile = new File([blob], file.name || 'remote-file', { type: 'application/octet-stream' });
+            await new Promise((resolve) => { uploadFile(localFile); setTimeout(resolve, 200); });
+        } catch (err) {
+            showToast(`下载远程文件失败：${file.name || ''} ${err.message || err}`, 'error');
+        }
+    }
 }
 async function uploadSharedClipboardFiles(files = []) {
     const list = Array.from(files || []).filter((file) => file?.name && file?.dataUrl);

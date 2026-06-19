@@ -3774,6 +3774,27 @@ app.use('/vendor/@wterm', express.static(path.join(__dirname, 'node_modules', '@
 app.get('/app.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
 app.get('/terminal.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'terminal.html')));
 app.get('/rdp.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'rdp.html')));
+// Serve files from RDP clipboard download temp dir (for SSH→RDP file transfer)
+app.get('/api/rdp/clipboard-file', requireAuth, (req, res) => {
+    const filePath = String(req.query.path || '');
+    const name = String(req.query.name || '');
+    if (!filePath || !filePath.startsWith('/tmp/zephyr-clip-')) {
+        return res.status(400).json({ error: 'invalid path' });
+    }
+    try {
+        if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'file not found' });
+        const stat = fs.statSync(filePath);
+        if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Length', stat.size);
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || path.basename(filePath))}"`);
+        const stream = fs.createReadStream(filePath);
+        stream.on('error', (err) => res.status(500).json({ error: err.message }));
+        stream.pipe(res);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 app.get('/novnc.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'novnc.html')));
 app.get('/player.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'player.html')));
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
@@ -4135,9 +4156,40 @@ function readTextFromRdpClipboard(pipe, callback) {
     child.on('error', () => callback(''));
 }
 
+function readRdpClipboardFileList(pipe, callback) {
+    if (!pipe || !callback) return;
+    // Read text/uri-list from X selection (populated by our patched xfreerdp)
+    const cmd = 'xclip -selection clipboard -t text/uri-list -o 2>/dev/null || true';
+    const child = spawn('sh', ['-c', cmd], { env: pipe.env, stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d.toString('utf8'); if (out.length > 1024 * 1024) child.kill('SIGTERM'); });
+    child.on('close', () => {
+        const files = [];
+        for (const line of out.split('\n')) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('file://')) {
+                const filePath = decodeURIComponent(trimed.slice(7));
+                try {
+                    const stat = fs.statSync(filePath);
+                    if (stat.isFile()) {
+                        files.push({
+                            name: path.basename(filePath),
+                            path: filePath,
+                            size: stat.size,
+                        });
+                    }
+                } catch {}
+            }
+        }
+        callback(files);
+    });
+    child.on('error', () => callback([]));
+}
+
 function startRdpClipboardWatch(pipe) {
     if (!pipe || pipe.clipboardTimer || process.env.RDP_CLIPBOARD_SYNC === 'false') return;
     pipe.lastRemoteClipboardText = '';
+    pipe.lastRemoteClipboardFiles = [];
     const tick = () => {
         if (!rdpPipes.has(pipe.connId) || pipe.clients.size === 0) return;
         readTextFromRdpClipboard(pipe, (text) => {
@@ -4149,6 +4201,19 @@ function startRdpClipboardWatch(pipe) {
                 try { client.send(payload); } catch {}
             }
             console.info('[rdp-h264]', 'remote clipboard synced to browser', { connId: pipe.connId, length: text.length });
+        });
+        // Also check for file clipboard (text/uri-list)
+        readRdpClipboardFileList(pipe, (files) => {
+            if (!files.length) return;
+            const sig = files.map((f) => `${f.name}:${f.size}`).join(',');
+            if (sig === pipe.lastRemoteClipboardFiles) return;
+            pipe.lastRemoteClipboardFiles = sig;
+            const payload = JSON.stringify({ type: 'rdp-remote-files', files });
+            for (const client of pipe.clients) {
+                if (client.readyState !== client.OPEN) continue;
+                try { client.send(payload); } catch {}
+            }
+            console.info('[rdp-h264]', 'remote clipboard files detected', { connId: pipe.connId, count: files.length });
         });
     };
     pipe.clipboardTimer = setInterval(tick, 1200);
