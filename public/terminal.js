@@ -1071,8 +1071,10 @@ window.addEventListener('message', (e) => {
         return;
     }
     if (e.data.type === 'shared-file-clipboard-read') {
+        // Another SSH window requests file data from our SFTP clipboard.
+        // The SFTP clipboard is per-user server-side — target can paste directly.
         const requestId = String(e.data.requestId || '');
-        window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard-data', tabId: params?.tabId, requestId, files: [], error: 'SSH 文件剪贴板请通过服务端 SFTP 复制，当前源不提供浏览器文件数据' }, '*');
+        window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard-data', tabId: params?.tabId, requestId, files: [], error: '' }, '*');
         return;
     }
     if (e.data.type === 'reset-mobile-keyboard') {
@@ -4244,17 +4246,33 @@ function uploadFile(file) {
 }
 
 function handleSharedFileClipboardAvailable(files = [], sourceTabId = '') {
-    const list = Array.from(files || []).filter((file) => file?.path || file?.dataUrl);
-    if (!list.length) return;
+    const list = Array.from(files || []);
+    // SFTP clipboard (server-side) → trigger paste directly via WS
+    const isSftpClipboard = list.some((file) => file?.path === 'sftp-clipboard');
+    if (isSftpClipboard) {
+        if (!sftpReady) { showFileManager(); initSFTP(); }
+        if (sftpReady && wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+            wsConnection.send(JSON.stringify({ type: 'sftp-clipboard-paste', targetDir: currentPath, conflict: 'compatible' }));
+            const count = list.find((f) => f.path === 'sftp-clipboard')?.count || 0;
+            showToast(`正在从剪贴板粘贴 ${count || ''} 项到 ${currentPath}`, 'info');
+        }
+        return;
+    }
+    // RDP local files with dataUrl → receive and upload
+    const localFiles = list.filter((file) => file?.dataUrl);
+    if (localFiles.length) {
+        uploadSharedClipboardFiles(localFiles);
+        return;
+    }
+    // Other SSH file metadata → relay via parent
+    const pathFiles = list.filter((file) => file?.path && !file?.dataUrl);
+    if (!pathFiles.length) return;
     sftpClipboardAvailable = true;
     updateMobileFileActions();
-    const names = list.map((file) => file.name || String(file.path).split('/').pop() || 'file').join('、');
+    const names = pathFiles.map((file) => file.name || String(file.path).split('/').pop() || 'file').join('、');
     showToast(`收到跨窗口文件剪贴板：${names}，正在粘贴到 ${currentPath}`, 'info');
-    if (!sftpReady) {
-        showFileManager();
-        initSFTP();
-    }
-    consumeParentSharedFileClipboard(list, sourceTabId);
+    if (!sftpReady) { showFileManager(); initSFTP(); }
+    consumeParentSharedFileClipboard(pathFiles, sourceTabId);
 }
 async function uploadSharedClipboardFiles(files = []) {
     const list = Array.from(files || []).filter((file) => file?.name && file?.dataUrl);
@@ -4402,7 +4420,31 @@ fmList.addEventListener('drop', (e) => {
     setFileDragActive(false);
     uploadFiles(e.dataTransfer?.files);
 }, { passive: false });
-// 编辑器
+// ── 本地文件粘贴上传（Local → SSH）──
+let termPasteFileHandlerInstalled = false;
+function installTerminalPasteFileHandler() {
+    if (termPasteFileHandlerInstalled) return;
+    termPasteFileHandlerInstalled = true;
+    document.addEventListener('paste', (e) => {
+        const files = Array.from(e.clipboardData?.files || []);
+        if (!files.length) return;
+        // Only capture on terminal page (not inside inputs/textareas)
+        if (e.target.closest?.('input, textarea, [contenteditable]')) return;
+        e.preventDefault();
+        uploadFiles(files);
+        showToast(`正在上传 ${files.length} 个文件到 ${currentPath}`, 'info');
+    });
+}
+installTerminalPasteFileHandler();
+
+// ── 通知父页 SSH 文件剪贴板 ──
+function notifyParentSftpClipboardSet(mode = 'copy', count = 0) {
+    if (embeddedMode && window.parent && window.parent !== window && count > 0) {
+        window.parent.postMessage({ source: 'zephyr-terminal', type: 'shared-file-clipboard-remote', tabId: params?.tabId, files: [{ path: 'sftp-clipboard', count, mode }] }, '*');
+    }
+}
+
+// // 编辑器
 function base64ToBytes(base64) {
     const binary = atob(base64 || '');
     const bytes = new Uint8Array(binary.length);
@@ -5838,7 +5880,8 @@ function handleSFTPMessage(msg) {
                 const count = msg.count || 0;
                 sftpClipboardAvailable = true;
                 updateMobileFileActions();
-                showToast(`${mode} ${count} 项，可在任意 SSH 文件管理器粘贴`, 'success');
+                showToast(`${mode} ${count} 项，可到任意 SSH 文件管理器或 RDP 远程桌面粘贴`, 'success');
+                notifyParentSftpClipboardSet(msg.mode, count);
             } else {
                 sftpClipboardAvailable = false;
                 updateMobileFileActions();

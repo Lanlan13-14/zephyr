@@ -2194,9 +2194,26 @@ async function sendRdpFilesClipboard(files) {
     if (!list.length || protocolLabel() !== 'RDP') return false;
     try {
         const sharedFiles = await readRdpClipboardFilesForSharing(list);
+        // 1. Upload to server → shared drive → remote Windows
+        if (rdpSocket && rdpSocket.readyState === WebSocket.OPEN) {
+            let uploaded = 0;
+            for (const f of sharedFiles) {
+                const bin = atob(String(f.dataUrl || '').replace(/^data:[^;]+;base64,/, ''));
+                rdpSocket.send(JSON.stringify({ type: 'rdp-file-upload', name: f.name, data: bin }));
+                uploaded++;
+            }
+            if (uploaded) {
+                setClipboardHint(`已上传 ${uploaded} 个文件到远程共享盘，正在打开...`, 'success');
+                window.setTimeout(() => {
+                    if (rdpSocket && rdpSocket.readyState === WebSocket.OPEN) {
+                        rdpSocket.send(JSON.stringify({ type: 'rdp-file-open-share' }));
+                    }
+                }, 1200);
+                setTransientStatus(`文件已写入 \\\\tsclient\\zephyr-share，请在 Windows 资源管理器查看`);
+            }
+        }
+        // 2. Also relay to parent for SSH targets
         notifyParentSharedFileClipboard(sharedFiles);
-        setClipboardHint(`已捕获 ${sharedFiles.length} 个文件，可到 SSH 文件管理器粘贴`, 'success');
-        setTransientStatus(`文件已同步到 Zephyr 剪贴板：${sharedFiles.map((f) => f.name).join('、')}`);
         return true;
     } catch (err) {
         setClipboardHint(err.message || '文件剪贴板读取失败', 'warning');
@@ -2790,8 +2807,28 @@ window.addEventListener('message', (event) => {
         return;
     }
     if (event.data.type === 'shared-file-clipboard-read') {
+        // SSH→RDP: use server-side SFTP clipboard relay
         const requestId = String(event.data.requestId || '');
-        window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard-data', tabId: params?.tabId || tabId, requestId, files: [], error: 'RDP 文件剪贴板只能接收本机粘贴/拖拽文件，不能反向读取远程 Windows 文件内容' }, '*');
+        if (rdpSocket && rdpSocket.readyState === WebSocket.OPEN) {
+            rdpSocket.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste', requestId }));
+            setClipboardHint('正在从 SSH 粘贴文件到远程共享盘...', 'info');
+        }
+        window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard-data', tabId: params?.tabId || tabId, requestId, files: [], error: '' }, '*');
+        return;
+    }
+    if (event.data.type === 'rdp-sftp-clipboard-paste-ack') {
+        if (event.data.ok) {
+            setClipboardHint(`已从 SSH 粘贴 ${event.data.count || 0} 个文件到 \\\\tsclient\\zephyr-share`, 'success');
+            setTransientStatus('文件已写入远程共享盘，请在 Windows 资源管理器查看');
+        } else {
+            setClipboardHint(event.data.error || 'SSH 文件粘贴失败', 'warning');
+        }
+        return;
+    }
+    if (event.data.type === 'shared-file-clipboard-available' && rdpSocket && rdpSocket.readyState === WebSocket.OPEN) {
+        // Parent notified us that files are available — trigger paste to RDP
+        rdpSocket.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste' }));
+        setClipboardHint('正在从其他终端粘贴文件到远程共享盘...', 'info');
         return;
     }
     if (event.data.type === 'ai-remote-desktop-action') {
