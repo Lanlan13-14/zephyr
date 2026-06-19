@@ -62,6 +62,19 @@ RUN /bin/sh /tmp/zephyr-freerdp-patches/apply.sh && \
 # ============================================================
 # Stage 3: runtime — 精简运行镜像
 # ============================================================
+FROM node:20-alpine3.20 AS native-build
+
+USER root
+RUN apk add --no-cache gcc musl-dev libx11-dev libxtst-dev libx11 libxtst
+WORKDIR /build
+COPY native/ /build/native/
+RUN cc -O2 -o /usr/local/bin/zephyr-xinput /build/native/zephyr-xinput.c \
+        -lX11 -lXtst -lpthread && \
+    /usr/local/bin/zephyr-xinput 2>&1 || true
+
+# ============================================================
+# Stage 3: runtime — 精简运行镜像
+# ============================================================
 FROM node:20-alpine3.20
 
 ARG ZEPHYR_VERSION=3.0.0
@@ -94,15 +107,21 @@ RUN apk add --no-cache \
         font-noto \
         font-noto-cjk \
         font-noto-emoji \
+        libx11 \
+        libxtst \
     && echo "=== runtime deps installed ==="
 
 COPY --from=freerdp-build /opt/freerdp-zephyr /opt/freerdp-zephyr
 COPY --from=freerdp-build /tmp/build-freerdp-version.txt /tmp/
+COPY --from=native-build /usr/local/bin/zephyr-xinput /usr/local/bin/zephyr-xinput
 COPY --from=app-build /app /app
 
 ENV PATH="/opt/freerdp-zephyr/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/freerdp-zephyr/lib:/usr/lib/freerdp2"
 ENV ZEPHYR_VERSION=${ZEPHYR_VERSION}
+# Enable native H.264 passthrough by default for maximum performance
+ENV RDP_NATIVE_H264=true
+ENV RDP_ALLOW_GFX_FALLBACK=true
 
 # 运行时诊断
 RUN echo "=== runtime diagnostics ===" && \

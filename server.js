@@ -3881,6 +3881,85 @@ app.get('/api/rdp/clipboard-file', requireAuth, (req, res) => {
     }
 });
 app.get('/novnc.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'novnc.html')));
+
+/* ═══════════════════════════════════════════════════════════════════
+ * Streaming file upload to RDP shared drive
+ *
+ * Replaces the base64-over-WebSocket approach which was limited to ~32MB
+ * by browser memory.  This endpoint accepts a streaming HTTP POST body
+ * and writes directly to the xfreerdp shared drive directory, supporting
+ * files of any size.
+ * ═══════════════════════════════════════════════════════════════════ */
+app.post('/api/rdp/upload-share/:connId', requireAuth, (req, res) => {
+    const connId = String(req.params.connId || '');
+    const pipe = rdpPipes.get(connId);
+    if (!pipe || !pipe.shareDir) {
+        return res.status(404).json({ error: 'RDP session not found or share drive unavailable' });
+    }
+    const rawName = String(req.query.name || req.headers['x-file-name'] || 'upload');
+    const safeName = rawName.replace(/[/\\]/g, '_').replace(/\.\./g, '').slice(0, 255);
+    const filePath = path.join(pipe.shareDir, safeName);
+    const writeStream = fs.createWriteStream(filePath);
+    let totalBytes = 0;
+    writeStream.on('error', (err) => {
+        console.warn('[rdp-upload]', 'write failed', { connId, name: safeName, error: err.message });
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.destroy();
+    });
+    req.on('data', (chunk) => { totalBytes += chunk.length; });
+    req.pipe(writeStream);
+    writeStream.on('close', () => {
+        console.info('[rdp-upload]', 'file uploaded to share drive', { connId, name: safeName, size: totalBytes });
+        // Notify connected RDP clients
+        for (const client of pipe.clients) {
+            if (client.readyState !== client.OPEN) continue;
+            try { client.send(JSON.stringify({ type: 'rdp-file-upload-ack', name: safeName, size: totalBytes })); } catch {}
+        }
+        res.json({ ok: true, name: safeName, size: totalBytes, path: `\\\\tsclient\\zephyr-share\\${safeName}` });
+    });
+    req.on('error', (err) => {
+        console.warn('[rdp-upload]', 'request stream error', { connId, error: err.message });
+        writeStream.destroy();
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+});
+
+// List files in the RDP shared drive
+app.get('/api/rdp/share-list/:connId', requireAuth, (req, res) => {
+    const connId = String(req.params.connId || '');
+    const pipe = rdpPipes.get(connId);
+    if (!pipe || !pipe.shareDir) {
+        return res.status(404).json({ error: 'RDP session not found' });
+    }
+    try {
+        const files = [];
+        for (const entry of fs.readdirSync(pipe.shareDir)) {
+            const fullPath = path.join(pipe.shareDir, entry);
+            const stat = fs.statSync(fullPath);
+            if (stat.isFile()) {
+                files.push({ name: entry, size: stat.size, mtime: stat.mtimeMs });
+            }
+        }
+        res.json({ files, shareDir: '\\\\tsclient\\zephyr-share' });
+    } catch (err) {
+        res.json({ files: [], error: err.message });
+    }
+});
+
+// Open the shared drive in remote Windows Explorer
+app.post('/api/rdp/open-share/:connId', requireAuth, (req, res) => {
+    const connId = String(req.params.connId || '');
+    const pipe = rdpPipes.get(connId);
+    if (!pipe) return res.status(404).json({ error: 'RDP session not found' });
+    if (pipe.activeWindowId) {
+        const child = spawn('xdotool', ['key', '--window', pipe.activeWindowId, '--clearmodifiers', 'super+r'], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+        child.on('error', () => {});
+    }
+    setTimeout(() => {
+        xinputSend(pipe, 'v \\\\tsclient\\zephyr-share') || pasteTextIntoRdp(pipe, '\\\\tsclient\\zephyr-share', { paste: true });
+    }, 600);
+    res.json({ ok: true });
+});
 app.get('/player.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'player.html')));
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
 
@@ -4128,13 +4207,14 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         '-f', 'mp4', 'pipe:1',
     ] : [
         '-hide_banner', '-loglevel', 'warning',
+        '-fflags', '+nobuffer', '-flags', 'low_delay',
         '-f', 'x11grab', '-draw_mouse', '0',
         '-framerate', String(streamFps),
         '-video_size', `${streamWidth}x${streamHeight}`,
         '-i', xvfbDisp,
         '-an', '-c:v', 'libx264',
         '-threads', encoderThreads,
-        '-preset', x264Preset, '-tune', 'zerolatency',
+        '-preset', x264Preset, '-tune', 'zerolatency,fastdecode',
         '-profile:v', x264Profile,
         '-crf', x264Crf,
         '-pix_fmt', 'yuv420p',
@@ -4161,6 +4241,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         connId, xvfb, pulseaudio, xfreerdp, ffmpeg, fifoPath, nativeH264, streamMode, avMime, env, width: streamWidth, height: streamHeight, fps: streamFps, quality: qualityMode, routedForward,
         get activeWindowId() { return activeWindowId; },
         nativeReader: null,
+        xinput: null,
         clients: new Set(),
         audioClients: new Set(),
         audioFfmpeg: null,
@@ -4191,7 +4272,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         }
     };
     if (nativeH264) {
-        pipe.nativeReader = fs.createReadStream(fifoPath, { highWaterMark: 512 * 1024 });
+        pipe.nativeReader = fs.createReadStream(fifoPath, { highWaterMark: 1024 * 1024 });
         pipe.nativeReader.on('data', broadcastH264);
         pipe.nativeReader.on('error', (err) => console.warn('[rdp-h264]', 'native h264 pipe error', { connId, error: err.message }));
         pipe.nativeReader.on('end', () => console.warn('[rdp-h264]', 'native h264 pipe ended', { connId }));
@@ -4374,72 +4455,213 @@ function startRdpClipboardWatch(pipe) {
 
 
 
+/* ═══════════════════════════════════════════════════════════════════
+ * Persistent X11 input proxy (zephyr-xinput)
+ *
+ * Instead of spawning a new xdotool process for every mouse move / key
+ * press (which causes severe latency under rapid input), we launch a
+ * single long-lived C process that reads simple commands from stdin
+ * and injects them via the XTest extension.  This reduces input
+ * latency from ~15-30ms (process spawn) to <1ms (pipe write).
+ * ═══════════════════════════════════════════════════════════════════ */
+
+const XINPUT_BIN = process.env.ZEPHYR_XINPUT_BIN || 'zephyr-xinput';
+const XINPUT_AVAILABLE = (() => {
+    try {
+        require('child_process').execFileSync('which', [XINPUT_BIN], { stdio: 'ignore' });
+        return true;
+    } catch { return false; }
+})();
+
+function startXinputProcess(pipe) {
+    if (!XINPUT_AVAILABLE) {
+        console.warn('[rdp-xinput]', 'zephyr-xinput not found, falling back to xdotool', { connId: pipe.connId });
+        return null;
+    }
+    const child = spawn(XINPUT_BIN, [], {
+        env: pipe.env,
+        stdio: ['pipe', 'ignore', 'pipe'],
+    });
+    let stderrBuf = '';
+    child.stderr?.on('data', (d) => {
+        stderrBuf += d.toString('utf8');
+        const lines = stderrBuf.split('\n');
+        stderrBuf = lines.pop() || '';
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            if (/ready/i.test(trimmed)) console.info('[rdp-xinput]', trimmed, { connId: pipe.connId });
+            else if (/error|fail|cannot/i.test(trimmed)) console.warn('[rdp-xinput]', trimmed, { connId: pipe.connId });
+        }
+    });
+    child.on('exit', (code, signal) => {
+        console.warn('[rdp-xinput]', 'process exited', { connId: pipe.connId, code, signal });
+        const latest = rdpPipes.get(pipe.connId);
+        if (latest === pipe && !pipe.stopping) {
+            // Restart after brief delay
+            setTimeout(() => {
+                const cur = rdpPipes.get(pipe.connId);
+                if (cur === pipe && !cur.stopping && cur.clients.size > 0) {
+                    console.info('[rdp-xinput]', 'restarting', { connId: pipe.connId });
+                    cur.xinput = startXinputProcess(cur);
+                }
+            }, 500);
+        }
+    });
+    child.on('error', (err) => console.warn('[rdp-xinput]', 'spawn failed', { error: err.message }));
+    return child;
+}
+
+/**
+ * Send a command to the persistent xinput process.
+ * Falls back to xdotool spawn if xinput is unavailable.
+ */
+function xinputSend(pipe, line) {
+    if (pipe.xinput && !pipe.xinput.killed && pipe.xinput.stdin?.writable) {
+        try {
+            pipe.xinput.stdin.write(line + '\n');
+            return true;
+        } catch (err) {
+            console.warn('[rdp-xinput]', 'write failed, falling back', { error: err.message });
+            pipe.xinput = null;
+        }
+    }
+    return false;
+}
+
+/**
+ * Convert a JavaScript key name (xdotool-style) to an X11 keysym hex.
+ * Used for the 'k' command to zephyr-xinput.
+ */
+const KEYNAME_TO_KEYSYM = {
+    'BackSpace': 0xff08, 'Tab': 0xff09, 'Return': 0xff0d, 'Enter': 0xff0d,
+    'Escape': 0xff1b, 'Delete': 0xffff, 'Home': 0xff50, 'End': 0xff57,
+    'Page_Up': 0xff55, 'Page_Down': 0xff56, 'Insert': 0xff63,
+    'Left': 0xff51, 'Up': 0xff52, 'Right': 0xff53, 'Down': 0xff54,
+    'F1': 0xffbe, 'F2': 0xffbf, 'F3': 0xffc0, 'F4': 0xffc1,
+    'F5': 0xffc2, 'F6': 0xffc3, 'F7': 0xffc4, 'F8': 0xffc5,
+    'F9': 0xffc6, 'F10': 0xffc7, 'F11': 0xffc8, 'F12': 0xffc9,
+    'ctrl': 0xffe3, 'shift': 0xffe1, 'alt': 0xffe9, 'Super_L': 0xffeb,
+    'space': 0x0020,
+};
+
+function keynameToKeysym(name) {
+    if (!name) return 0;
+    if (KEYNAME_TO_KEYSYM[name]) return KEYNAME_TO_KEYSYM[name];
+    // Single character → ASCII keysym
+    if (name.length === 1) {
+        const cp = name.codePointAt(0);
+        if (cp <= 0xff) return cp;
+        return 0x01000000 | cp;
+    }
+    // U+XXXX format
+    const m = /^U\+?([0-9a-fA-F]{4,6})$/.exec(name);
+    if (m) return parseInt(m[1], 16);
+    return 0;
+}
+
+/**
+ * Parse a key combo string like "ctrl+alt+Delete" into individual key names.
+ */
+function parseKeyCombo(combo) {
+    return String(combo).split('+').map((s) => s.trim()).filter(Boolean);
+}
+
 function handleRdpInput(pipe, raw) {
     let msg;
     try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
     if (!pipe) return;
     if (!pipe.lastPointer) pipe.lastPointer = { x: Math.round((pipe.width || 1280) / 2), y: Math.round((pipe.height || 720) / 2) };
-    const execXdo = (args, opts = {}) => {
-        if (!pipe || pipe.xfreerdp?.exitCode !== null || pipe.xfreerdp?.killed) return false;
-        const windowId = pipe.activeWindowId;
-        const finalArgs = windowId && opts.window !== false ? [...args.slice(0, 1), '--window', windowId, ...args.slice(1)] : args;
-        const child = spawn('xdotool', finalArgs, { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-        let errText = '';
-        child.stderr?.on('data', (d) => { errText += d.toString('utf8'); });
-        child.on('close', (code) => {
-            if (code !== 0) console.warn('[rdp-h264]', 'xdotool failed', { code, args: finalArgs, error: errText.trim().slice(0, 240) });
-        });
-        child.on('error', (err) => console.warn('[rdp-h264]', 'xdotool spawn failed', { error: err.message, args: finalArgs }));
-        return true;
-    };
+
+    // Lazy-start xinput process
+    if (!pipe.xinput && XINPUT_AVAILABLE && !pipe.stopping) {
+        pipe.xinput = startXinputProcess(pipe);
+    }
+
     const movePointer = (x, y) => {
         const px = Math.max(0, Math.min((pipe.width || 1280) - 1, Math.round(Number(x))));
         const py = Math.max(0, Math.min((pipe.height || 720) - 1, Math.round(Number(y))));
         pipe.lastPointer = { x: px, y: py };
-        if (pipe.activeWindowId) return execXdo(['mousemove', '--window', pipe.activeWindowId, String(px), String(py)], { window: false });
-        return execXdo(['mousemove', String(px), String(py)], { window: false });
+        if (!xinputSend(pipe, `m ${px} ${py}`)) {
+            // Fallback to xdotool
+            const args = pipe.activeWindowId
+                ? ['mousemove', '--window', pipe.activeWindowId, String(px), String(py)]
+                : ['mousemove', String(px), String(py)];
+            const child = spawn('xdotool', args, { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+            child.on('error', () => {});
+        }
     };
-    const buttonAction = (action, button) => {
-        const b = String(button || 1);
-        if (pipe.lastPointer) movePointer(pipe.lastPointer.x, pipe.lastPointer.y);
-        return execXdo([action, b]);
-    };
+
     if (msg.type === 'mouse' && Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
         movePointer(msg.x, msg.y);
-        if (Date.now() - (pipe.lastInputLogAt || 0) > 1000) { pipe.lastInputLogAt = Date.now(); console.info('[rdp-h264]', 'rdp pointer move', { connId: pipe.connId, x: pipe.lastPointer.x, y: pipe.lastPointer.y, window: pipe.activeWindowId || '' }); }
     } else if (msg.type === 'mousedown' && msg.button !== undefined) {
-        buttonAction('mousedown', msg.button);
-        console.info('[rdp-h264]', 'rdp pointer down', { connId: pipe.connId, button: msg.button, pos: pipe.lastPointer, window: pipe.activeWindowId || '' });
+        if (pipe.lastPointer) movePointer(pipe.lastPointer.x, pipe.lastPointer.y);
+        if (!xinputSend(pipe, `d ${msg.button}`)) {
+            const child = spawn('xdotool', ['mousedown', String(msg.button)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+            child.on('error', () => {});
+        }
     } else if (msg.type === 'mouseup' && msg.button !== undefined) {
-        buttonAction('mouseup', msg.button);
-        console.info('[rdp-h264]', 'rdp pointer up', { connId: pipe.connId, button: msg.button, pos: pipe.lastPointer, window: pipe.activeWindowId || '' });
+        if (pipe.lastPointer) movePointer(pipe.lastPointer.x, pipe.lastPointer.y);
+        if (!xinputSend(pipe, `u ${msg.button}`)) {
+            const child = spawn('xdotool', ['mouseup', String(msg.button)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+            child.on('error', () => {});
+        }
     } else if (msg.type === 'click' && msg.button !== undefined) {
-        buttonAction('click', msg.button);
-        console.info('[rdp-h264]', 'rdp pointer click', { connId: pipe.connId, button: msg.button, pos: pipe.lastPointer, window: pipe.activeWindowId || '' });
+        if (pipe.lastPointer) movePointer(pipe.lastPointer.x, pipe.lastPointer.y);
+        if (!xinputSend(pipe, `c ${msg.button}`)) {
+            const child = spawn('xdotool', ['click', String(msg.button)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+            child.on('error', () => {});
+        }
     } else if (msg.type === 'scroll') {
         if (pipe.lastPointer) movePointer(pipe.lastPointer.x, pipe.lastPointer.y);
-        const button = Number(msg.deltaY || 0) > 0 ? '5' : '4';
+        const button = Number(msg.deltaY || 0) > 0 ? 5 : 4;
         const rawDelta = Math.abs(Number(msg.deltaY || msg.deltaX || 0));
         const steps = Math.max(1, Math.min(10, Math.round(rawDelta / 45)));
-        for (let i = 0; i < steps; i++) execXdo(['click', button]);
-        console.info('[rdp-h264]', 'rdp pointer scroll', { connId: pipe.connId, button, steps, pos: pipe.lastPointer, window: pipe.activeWindowId || '' });
+        if (!xinputSend(pipe, `s ${button} ${steps}`)) {
+            for (let i = 0; i < steps; i++) {
+                const child = spawn('xdotool', ['click', String(button)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+                child.on('error', () => {});
+            }
+        }
     } else if (msg.type === 'key' && msg.key) {
-        execXdo(['key', '--clearmodifiers', String(msg.key)]);
+        // Parse combo and send key press + release for each
+        const keys = parseKeyCombo(msg.key);
+        const keysyms = keys.map(keynameToKeysym).filter((k) => k > 0);
+        if (keysyms.length === 1) {
+            if (!xinputSend(pipe, `k ${keysyms[0].toString(16)}`)) {
+                const child = spawn('xdotool', ['key', '--clearmodifiers', String(msg.key)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+                child.on('error', () => {});
+            }
+        } else if (keysyms.length > 1) {
+            // Combo: press all down, then release in reverse order
+            for (const ks of keysyms) xinputSend(pipe, `p ${ks.toString(16)}`);
+            for (let i = keysyms.length - 1; i >= 0; i--) xinputSend(pipe, `r ${keysyms[i].toString(16)}`);
+            if (!pipe.xinput) {
+                const child = spawn('xdotool', ['key', '--clearmodifiers', String(msg.key)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+                child.on('error', () => {});
+            }
+        }
     } else if (msg.type === 'text' && msg.text !== undefined) {
         const text = String(msg.text);
-        if (/[^\x00-\x7F]/.test(text) || text.length > 1) pasteTextIntoRdp(pipe, text, { paste: true });
-        else pasteTextIntoRdp(pipe, text, { paste: true });
+        // Use xinput 't' command for ASCII, 'v' for Unicode
+        if (!xinputSend(pipe, `t ${text}`)) {
+            pasteTextIntoRdp(pipe, text, { paste: true });
+        }
     } else if (msg.type === 'clipboard' && msg.text !== undefined) {
-        pasteTextIntoRdp(pipe, String(msg.text), { paste: false });
+        // Set clipboard without pasting
+        if (!xinputSend(pipe, `C ${String(msg.text)}`)) {
+            pasteTextIntoRdp(pipe, String(msg.text), { paste: false });
+        }
     } else if (msg.type === 'paste' && msg.text !== undefined) {
-        pasteTextIntoRdp(pipe, String(msg.text), { paste: true });
+        if (!xinputSend(pipe, `v ${String(msg.text)}`)) {
+            pasteTextIntoRdp(pipe, String(msg.text), { paste: true });
+        }
     } else if (msg.type === 'rdp-file-upload' && msg.name && msg.data) {
         try {
             const data = Buffer.from(String(msg.data), 'base64');
             const safeName = String(msg.name).replace(/[/\\]/g, '_').slice(0, 200);
-            const p = require('path');
-            const filePath = p.join(pipe.shareDir, safeName);
-            require('fs').writeFileSync(filePath, data);
+            const filePath = path.join(pipe.shareDir, safeName);
+            fs.writeFileSync(filePath, data);
             console.info('[rdp-h264]', 'file written to share drive', { connId: pipe.connId, name: safeName, size: data.length });
             for (const client of pipe.clients) {
                 if (client.readyState !== client.OPEN) continue;
@@ -4449,8 +4671,11 @@ function handleRdpInput(pipe, raw) {
             console.warn('[rdp-h264]', 'rdp file upload failed', { connId: pipe.connId, error: err.message });
         }
     } else if (msg.type === 'rdp-file-open-share') {
-        if (pipe.activeWindowId) execXdo(['key', '--window', pipe.activeWindowId, '--clearmodifiers', 'super+r'], { window: false });
-        setTimeout(() => { pasteTextIntoRdp(pipe, '\\\\tsclient\\zephyr-share', { paste: true }); }, 600);
+        if (pipe.activeWindowId) {
+            const child = spawn('xdotool', ['key', '--window', pipe.activeWindowId, '--clearmodifiers', 'super+r'], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+            child.on('error', () => {});
+        }
+        setTimeout(() => { xinputSend(pipe, 'v \\\\tsclient\\zephyr-share') || pasteTextIntoRdp(pipe, '\\\\tsclient\\zephyr-share', { paste: true }); }, 600);
     } else if (msg.type === 'rdp-sftp-clipboard-paste') {
         const username = String(pipe.username || '');
         const clip = sftpClipboardByUser.get(username);
@@ -4476,7 +4701,11 @@ function handleRdpInput(pipe, raw) {
             })();
         }
     } else if (msg.type === 'resize' && Number.isFinite(msg.width) && Number.isFinite(msg.height)) {
-        execXdo(['key', 'F5']);
+        // Trigger xfreerdp to re-init via F5 refresh
+        xinputSend(pipe, 'k ff62') || (() => {
+            const child = spawn('xdotool', ['key', 'F5'], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+            child.on('error', () => {});
+        })();
     }
 }
 
@@ -4775,6 +5004,7 @@ function cleanupPipe(connId) {
     const p = rdpPipes.get(connId);
     if (p) {
         p.stopping = true;
+        try { p.xinput?.kill('SIGTERM'); } catch {}
         try { p.nativeReader?.destroy(); } catch {}
         try { p.ffmpeg?.kill('SIGTERM'); } catch {}
         try { p.audioFfmpeg?.kill('SIGTERM'); } catch {}

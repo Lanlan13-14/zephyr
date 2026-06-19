@@ -709,9 +709,23 @@ function setupMobilePointerMouse() {
         return !!(rdpInputSender && ((navigator.maxTouchPoints || 0) > 0 || window.matchMedia?.('(pointer: coarse)')?.matches || isCompactScreen()));
     };
     function cancelLP() { if (rdpLongPress) { clearTimeout(rdpLongPress); rdpLongPress = null; } }
+    let touchMovePending = null;
+    let touchMoveRaf = false;
     function sendMove(pos) {
         if (!pos || !connected) return false;
-        return sendRdpPointer({ type: 'mouse', x: pos.x, y: pos.y });
+        // Throttle touch moves to one per animation frame
+        touchMovePending = pos;
+        if (!touchMoveRaf) {
+            touchMoveRaf = true;
+            requestAnimationFrame(() => {
+                touchMoveRaf = false;
+                if (touchMovePending) {
+                    sendRdpPointer({ type: 'mouse', x: touchMovePending.x, y: touchMovePending.y });
+                    touchMovePending = null;
+                }
+            });
+        }
+        return true;
     }
     function sendButton(pos, button, down) {
         if (!pos || !connected) return false;
@@ -927,13 +941,26 @@ function bindCanvasTouch(canvas) {
     const down = (b=1) => snd({type:'mousedown',button:b});
     const up = (b=1) => snd({type:'mouseup',button:b});
     let pointerTouchTs = 0;
+    let pendingMouseMove = null;
+    let mouseRafPending = false;
     const isDesktopMousePointer = (e) => (e.pointerType || 'mouse') === 'mouse';
     const mouseButton = (e) => e.button === 2 ? 3 : e.button === 1 ? 2 : 1;
     const desktopMouseMove = (e) => {
         if (!isDesktopMousePointer(e)) return false;
         const pt = p(e.clientX, e.clientY);
         if (!pt) return false;
-        snd({ type: 'mouse', x: pt.x, y: pt.y });
+        // Throttle mouse moves to one per animation frame (~60fps max)
+        pendingMouseMove = pt;
+        if (!mouseRafPending) {
+            mouseRafPending = true;
+            requestAnimationFrame(() => {
+                mouseRafPending = false;
+                if (pendingMouseMove) {
+                    snd({ type: 'mouse', x: pendingMouseMove.x, y: pendingMouseMove.y });
+                    pendingMouseMove = null;
+                }
+            });
+        }
         return true;
     };
     canvas.addEventListener('pointermove', (e) => {
@@ -1496,11 +1523,15 @@ async function connect() {
             notifyParentActivity();
             return true;
         };
-        canvas.addEventListener('keydown', sendKeyboardEventToRdp);
+        // Use a single capture-phase listener on document to avoid double-firing
+        // (canvas keydown + document capture both fired for the same event before).
+        // The capture listener fires first; we stopPropagation after handling.
         document.addEventListener('keydown', (e) => {
             if (!connected || !rdpInputSender) return;
             if (isTextInputTarget(e.target)) return;
-            sendKeyboardEventToRdp(e);
+            if (sendKeyboardEventToRdp(e)) {
+                e.stopPropagation();
+            }
         }, true);
     } catch (err) {
         console.error('[rdp-client]', 'connect failed', err);
@@ -2463,28 +2494,37 @@ async function sendRdpFilesClipboard(files) {
     const list = Array.from(files || []).filter(Boolean);
     if (!list.length || protocolLabel() !== 'RDP') return false;
     try {
-        const sharedFiles = await readRdpClipboardFilesForSharing(list);
-        // 1. Upload to server → shared drive → remote Windows
-        if (rdpSocket && rdpSocket.readyState === WebSocket.OPEN) {
-            let uploaded = 0;
-            for (const f of sharedFiles) {
-                const bin = atob(String(f.dataUrl || '').replace(/^data:[^;]+;base64,/, ''));
-                rdpSocket.send(JSON.stringify({ type: 'rdp-file-upload', name: f.name, data: bin }));
-                uploaded++;
+        // Get connectionId from URL params
+        const urlParams = new URLSearchParams(window.location.search);
+        const connId = urlParams.get('connectionId') || '';
+        if (!connId) throw new Error('无法确定 RDP 连接 ID');
+
+        // Upload files via streaming HTTP POST (no base64, no size limit)
+        let uploaded = 0;
+        for (const file of list) {
+            const safeName = encodeURIComponent(file.name || `file-${uploaded + 1}`);
+            const resp = await fetch(`/api/rdp/upload-share/${encodeURIComponent(connId)}?name=${safeName}`, {
+                method: 'POST',
+                body: file,  // Stream the raw file directly
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ error: resp.statusText }));
+                throw new Error(`上传失败: ${err.error || resp.statusText}`);
             }
-            if (uploaded) {
-                setClipboardHint(`已上传 ${uploaded} 个文件到远程共享盘，正在打开...`, 'success');
-                window.setTimeout(() => {
-                    if (rdpSocket && rdpSocket.readyState === WebSocket.OPEN) {
-                        rdpSocket.send(JSON.stringify({ type: 'rdp-file-open-share' }));
-                    }
-                }, 1200);
-                setTransientStatus(`文件已写入 \\\\tsclient\\zephyr-share，请在 Windows 资源管理器查看`);
-            }
+            uploaded++;
         }
-        // 2. Also notify parent with metadata only (no auto-transfer to SSH)
-        notifyParentSharedFileClipboard(sharedFiles.map((f) => ({
-            id: f.id, name: f.name, size: f.size, dataUrl: f.dataUrl, mime: f.mime,
+
+        if (uploaded) {
+            setClipboardHint(`已上传 ${uploaded} 个文件到远程共享盘，正在打开...`, 'success');
+            // Open the shared drive in Windows Explorer
+            await fetch(`/api/rdp/open-share/${encodeURIComponent(connId)}`, { method: 'POST' }).catch(() => {});
+            setTransientStatus(`文件已写入 \\\\tsclient\\zephyr-share，请在 Windows 资源管理器查看`);
+        }
+
+        // Also notify parent with metadata only (no auto-transfer to SSH)
+        notifyParentSharedFileClipboard(list.map((f) => ({
+            id: `rdp-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            name: f.name, size: f.size, mime: f.type || 'application/octet-stream',
         })));
         return true;
     } catch (err) {
