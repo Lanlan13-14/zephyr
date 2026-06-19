@@ -187,6 +187,29 @@ function notifyParentSharedFileClipboard(files = []) {
         window.parent.postMessage({ source: 'zephyr-terminal', type: 'shared-file-clipboard', tabId: params?.tabId || tabId, files }, '*');
     }
 }
+async function downloadRemoteFilesToLocal(files = []) {
+    const list = Array.from(files || []).filter((f) => f?.remotePath);
+    if (!list.length) return;
+    for (const file of list) {
+        try {
+            const params = new URLSearchParams({ path: file.remotePath, name: file.name || '' });
+            const res = await fetch('/api/rdp/clipboard-file?' + params.toString());
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name || 'remote-file';
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            window.setTimeout(() => { try { a.remove(); URL.revokeObjectURL(url); } catch {} }, 2000);
+        } catch (err) {
+            console.warn('[rdp-client]', 'download remote file to local failed', { name: file.name, error: err.message });
+            setClipboardHint(`下载到本机失败：${file.name || ''} ${err.message || ''}`, 'warning');
+        }
+    }
+}
 function fileToDataUrl(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -1234,14 +1257,17 @@ async function connect() {
                             setClipboardHint(ok ? '远程剪贴板已自动同步到本机' : '已收到远程剪贴板；浏览器阻止自动写入，请点“复制到本机”', ok ? 'success' : 'warning');
                         });
                     } else if (msg.type === 'rdp-remote-files' && Array.isArray(msg.files)) {
-                        notifyParentSharedFileClipboard(msg.files.map((f) => ({
+                        const fileMeta = msg.files.map((f) => ({
                             id: f.path,
                             name: f.name,
                             size: f.size,
                             path: f.path,
                             remotePath: f.path,
-                        })));
-                        setClipboardHint(`远程 Windows 复制了 ${msg.files.length} 个文件，可到 SSH 文件管理器粘贴`, 'success');
+                        }));
+                        notifyParentSharedFileClipboard(fileMeta);
+                        // Also trigger browser download so files land on user's local machine
+                        downloadRemoteFilesToLocal(fileMeta);
+                        setClipboardHint(`远程 Windows 复制了 ${msg.files.length} 个文件，已下载到本机，也可到 SSH 文件管理器粘贴`, 'success');
                         setTransientStatus(`远程文件已下载：${msg.files.map((f) => f.name).join('、')}`);
                     }
                 } catch {}
