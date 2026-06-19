@@ -1,8 +1,8 @@
 diff --git a/client/X11/xf_cliprdr.c b/client/X11/xf_cliprdr.c
-index 37ed538..ed79a30 100644
+index 37ed538..7d8f211 100644
 --- a/client/X11/xf_cliprdr.c
 +++ b/client/X11/xf_cliprdr.c
-@@ -26,6 +26,12 @@
+@@ -26,6 +26,16 @@
  #include <stdlib.h>
  #include <X11/Xlib.h>
  #include <X11/Xatom.h>
@@ -12,10 +12,14 @@ index 37ed538..ed79a30 100644
 +#include <unistd.h>
 +#include <sys/stat.h>
 +#include <sys/types.h>
++
++/* Zephyr: forward declarations */
++static UINT zephyr_download_clipboard_files(xfClipboard* clipboard, const BYTE* data, UINT32 size);
++static UINT zephyr_cliprdr_server_file_contents_response(CliprdrClientContext* context, const CLIPRDR_FILE_CONTENTS_RESPONSE* resp);
  
  #ifdef WITH_XFIXES
  #include <X11/extensions/Xfixes.h>
-@@ -112,6 +118,12 @@ struct xf_clipboard
+@@ -112,6 +122,12 @@ struct xf_clipboard
  	BOOL streams_supported;
  	BOOL file_formats_registered;
  	UINT32 file_capability_flags;
@@ -28,7 +32,19 @@ index 37ed538..ed79a30 100644
  	/* last sent data */
  	CLIPRDR_FORMAT* lastSentFormats;
  	UINT32 lastSentNumFormats;
-@@ -1566,6 +1578,11 @@ xf_cliprdr_server_format_data_response(CliprdrClientContext* context,
+@@ -682,6 +698,11 @@ static void xf_cliprdr_process_requested_data(xfClipboard* clipboard, BOOL hasDa
+ 	SrcSize = (UINT32)size;
+ 	bSuccess = ClipboardSetData(clipboard->system, srcFormatId, data, SrcSize);
+ 
++	if (bSuccess && clipboard->data_format_name && strcmp(clipboard->data_format_name, "FileGroupDescriptorW") == 0)
++	{
++		zephyr_download_clipboard_files(clipboard, data, SrcSize);
++	}
++
+ 	if (format->formatName)
+ 		dstFormatId = ClipboardGetFormatId(clipboard->system, format->formatName);
+ 	else
+@@ -1566,6 +1587,11 @@ xf_cliprdr_server_format_data_response(CliprdrClientContext* context,
  	SrcSize = (UINT32)size;
  	bSuccess = ClipboardSetData(clipboard->system, srcFormatId, data, SrcSize);
  
@@ -40,12 +56,14 @@ index 37ed538..ed79a30 100644
  	if (bSuccess)
  	{
  		if (SrcSize == 0)
-@@ -1631,6 +1648,257 @@ xf_cliprdr_server_format_data_response(CliprdrClientContext* context,
+@@ -1631,6 +1657,259 @@ xf_cliprdr_server_format_data_response(CliprdrClientContext* context,
  	return CHANNEL_RC_OK;
  }
  
 +
-+/* ═══ Zephyr: Remote→Local clipboard file download ═══ */
++/* ═══════════════════════════════════════════════════════════════════
++ * Zephyr: Remote→Local clipboard file download support
++ * ═══════════════════════════════════════════════════════════════════ */
 +
 +static UINT zephyr_cliprdr_server_file_contents_response(CliprdrClientContext* context,
 +                                                          const CLIPRDR_FILE_CONTENTS_RESPONSE* resp)
@@ -298,7 +316,7 @@ index 37ed538..ed79a30 100644
  static UINT
  xf_cliprdr_server_file_size_request(xfClipboard* clipboard,
                                      const CLIPRDR_FILE_CONTENTS_REQUEST* fileContentsRequest)
-@@ -1899,6 +2167,10 @@ xfClipboard* xf_clipboard_new(xfContext* xfc, BOOL relieveFilenameRestriction)
+@@ -1899,6 +2178,10 @@ xfClipboard* xf_clipboard_new(xfContext* xfc, BOOL relieveFilenameRestriction)
  	clipboard->incr_atom = XInternAtom(xfc->display, "INCR", FALSE);
  	clipboard->delegate = ClipboardGetDelegate(clipboard->system);
  	clipboard->delegate->custom = clipboard;
@@ -309,7 +327,7 @@ index 37ed538..ed79a30 100644
  	/* TODO: set up a filesystem base path for local URI */
  	/* clipboard->delegate->basePath = "file:///tmp/foo/bar/gaga"; */
  	clipboard->delegate->ClipboardFileSizeSuccess = xf_cliprdr_clipboard_file_size_success;
-@@ -1966,6 +2238,7 @@ void xf_cliprdr_init(xfContext* xfc, CliprdrClientContext* cliprdr)
+@@ -1966,6 +2249,7 @@ void xf_cliprdr_init(xfContext* xfc, CliprdrClientContext* cliprdr)
  	cliprdr->ServerFormatDataRequest = xf_cliprdr_server_format_data_request;
  	cliprdr->ServerFormatDataResponse = xf_cliprdr_server_format_data_response;
  	cliprdr->ServerFileContentsRequest = xf_cliprdr_server_file_contents_request;
