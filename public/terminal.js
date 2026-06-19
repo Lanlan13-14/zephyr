@@ -4247,77 +4247,21 @@ function uploadFile(file) {
 }
 
 function handleSharedFileClipboardAvailable(files = [], sourceTabId = '') {
+    // Just notify the user — actual transfer happens on paste via server
     const list = Array.from(files || []);
-    // SFTP clipboard (server-side) → just mark available, transfer on user paste
-    const isSftpClipboard = list.some((file) => file?.path === 'sftp-clipboard');
-    if (isSftpClipboard) {
-        sftpClipboardAvailable = true;
-        updateMobileFileActions();
-        const count = list.find((f) => f.path === 'sftp-clipboard')?.count || 0;
-        pendingSharedFileSource = sourceTabId;
-        pendingSharedFileMeta = list;
-        showToast(`剪贴板有 ${count} 个文件，右键粘贴或 Ctrl+V 传输到 ${currentPath}`, 'info');
-        return;
-    }
-    // RDP remote files with remotePath → mark available, transfer on user paste
-    const remoteFiles = list.filter((file) => file?.remotePath);
-    if (remoteFiles.length) {
-        sftpClipboardAvailable = true;
-        updateMobileFileActions();
-        pendingSharedFileSource = sourceTabId;
-        pendingSharedFileMeta = remoteFiles;
-        showToast(`剪贴板有 ${remoteFiles.length} 个远程文件，右键粘贴或 Ctrl+V 传输到 ${currentPath}`, 'info');
-        return;
-    }
-    // RDP local files with dataUrl → mark available, transfer on user paste
-    const localFiles = list.filter((file) => file?.dataUrl);
-    if (localFiles.length) {
-        sftpClipboardAvailable = true;
-        updateMobileFileActions();
-        pendingSharedFileSource = sourceTabId;
-        pendingSharedFileMeta = localFiles;
-        showToast(`剪贴板有 ${localFiles.length} 个文件，右键粘贴或 Ctrl+V 传输到 ${currentPath}`, 'info');
-        return;
-    }
-    // Other SSH file metadata → mark available
-    const pathFiles = list.filter((file) => file?.path && !file?.dataUrl);
-    if (!pathFiles.length) return;
+    if (!list.length) return;
     sftpClipboardAvailable = true;
     updateMobileFileActions();
-    pendingSharedFileSource = sourceTabId;
-    pendingSharedFileMeta = pathFiles;
-    showToast(`剪贴板有 ${pathFiles.length} 个文件，右键粘贴或 Ctrl+V 传输到 ${currentPath}`, 'info');
+    const names = list.map((f) => f.name || String(f.path || '').split('/').pop() || 'file').slice(0, 3).join('、');
+    showToast(`剪贴板有 ${list.length} 个文件（${names}），右键粘贴或 Ctrl+V 传输到 ${currentPath}`, 'info');
 }
 let pendingSharedFileSource = '';
 let pendingSharedFileMeta = [];
 function consumePendingSharedFiles() {
-    if (!pendingSharedFileMeta.length) return false;
-    const files = pendingSharedFileMeta;
-    const sourceTabId = pendingSharedFileSource;
-    pendingSharedFileMeta = [];
-    pendingSharedFileSource = '';
-    const isSftpClipboard = files.some((file) => file?.path === 'sftp-clipboard');
-    if (isSftpClipboard) {
-        if (sftpReady && wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-            wsConnection.send(JSON.stringify({ type: 'sftp-clipboard-paste', targetDir: currentPath, conflict: 'compatible' }));
-            showToast(`正在从剪贴板粘贴到 ${currentPath}`, 'info');
-        }
-        return true;
-    }
-    const remoteFiles = files.filter((file) => file?.remotePath);
-    if (remoteFiles.length) {
-        uploadRemotePathFiles(remoteFiles);
-        return true;
-    }
-    const localFiles = files.filter((file) => file?.dataUrl);
-    if (localFiles.length) {
-        uploadSharedClipboardFiles(localFiles);
-        return true;
-    }
-    const pathFiles = files.filter((file) => file?.path && !file?.dataUrl);
-    if (pathFiles.length) {
-        if (!sftpReady) { showFileManager(); initSFTP(); }
-        consumeParentSharedFileClipboard(pathFiles, sourceTabId);
+    // Always try server-side paste first — server knows the clipboard source
+    if (sftpReady && wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+        wsConnection.send(JSON.stringify({ type: 'sftp-clipboard-paste', targetDir: currentPath, conflict: 'compatible' }));
+        showToast(`正在粘贴到 ${currentPath}`, 'info');
         return true;
     }
     return false;

@@ -282,27 +282,10 @@ function renderIncomingFileList() {
     });
 }
 function consumeIncomingFileClipboard() {
-    if (!rdpIncomingFileClipboard.length) return false;
-    const files = rdpIncomingFileClipboard;
-    rdpIncomingFileClipboard = [];
-    renderIncomingFileList();
     if (!connected || !rdpSocket || rdpSocket.readyState !== WebSocket.OPEN) return false;
-    // Check if it's SFTP clipboard (from SSH)
-    const isSftpClipboard = files.some((f) => f?.path === 'sftp-clipboard');
-    if (isSftpClipboard) {
-        rdpSocket.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste' }));
-        setClipboardHint('正在从 SSH 粘贴文件到远程共享盘...', 'info');
-        return true;
-    }
-    // Check if it's local files with dataUrl
-    const localFiles = files.filter((f) => f?.dataUrl);
-    if (localFiles.length) {
-        sendRdpFilesClipboard(localFiles);
-        return true;
-    }
-    // Default: treat as SFTP clipboard
+    // Always send paste request to server — server knows the clipboard source
     rdpSocket.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste' }));
-    setClipboardHint('正在粘贴文件到远程共享盘...', 'info');
+    setClipboardHint('正在粘贴文件到远程...', 'info');
     return true;
 }
 function fileToDataUrl(file) {
@@ -2979,10 +2962,11 @@ window.addEventListener('message', (event) => {
         return;
     }
     if (event.data.type === 'shared-file-clipboard-available') {
-        // Parent notified us that files are available — store metadata, don't transfer yet
-        rdpIncomingFileClipboard = Array.from(event.data.files || []);
-        renderIncomingFileList();
-        setClipboardHint(`收到 ${rdpIncomingFileClipboard.length} 个文件，Ctrl+V 粘贴到远程`, 'info');
+        // Just show a hint — actual paste goes through server
+        const files = Array.from(event.data.files || []);
+        if (files.length) {
+            setClipboardHint(`剪贴板有 ${files.length} 个文件，Ctrl+V 粘贴到远程`, 'info');
+        }
         return;
     }
     if (event.data.type === 'ai-remote-desktop-action') {

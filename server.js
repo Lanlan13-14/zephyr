@@ -2805,7 +2805,8 @@ async function pasteSftpClipboard({ username, targetSession, targetDir, mode, co
     if (!clip || !Array.isArray(clip.items) || !clip.items.length) throw new Error('剪贴板为空');
     const targetConnectionConfig = targetSession?.connectionConfig;
     if (!targetConnectionConfig) throw new Error('目标 SSH 连接已失效');
-    const sameConnection = String(clip.sourceConnectionId || '') && String(clip.sourceConnectionId) === String(targetSession.connectionId || '');
+    const isRdpSource = String(clip.sourceType || '') === 'rdp';
+    const sameConnection = !isRdpSource && String(clip.sourceConnectionId || '') && String(clip.sourceConnectionId) === String(targetSession.connectionId || '');
     const conflictMode = normalizeClipboardConflictMode(conflict);
     if (conflictMode === 'ask') throw new Error('目标存在同名项目，请选择覆盖、跳过或兼容');
     const opId = crypto.randomUUID();
@@ -2824,7 +2825,27 @@ async function pasteSftpClipboard({ username, targetSession, targetDir, mode, co
         sendStatus('active', currentPath || targetDir);
     };
     try {
-        if (sameConnection) {
+        if (isRdpSource) {
+            // RDP source: files are local on server (downloaded by xfreerdp), upload to SSH target
+            console.info('[sftp-clipboard-paste]', 'rdp source paste', { count: clip.items.length, targetDir });
+            await withRoutedSftp(targetConnectionConfig, async ({ sftp: targetSftp }) => {
+                for (const item of clip.items) {
+                    throwIfClipboardTransferCancelled(transfer);
+                    const safeName = String(item.name || basenameRemote(item.path)).replace(/[/\\]/g, '_').slice(0, 200);
+                    let targetPath = remoteJoin(targetDir, safeName);
+                    if (conflictMode === 'skip') {
+                        try { await sftpStat(targetSftp, targetPath); continue; } catch {}
+                    } else if (conflictMode === 'compatible') {
+                        targetPath = await resolveCompatibleRemotePath(targetSftp, targetPath);
+                    } else if (conflictMode === 'overwrite') {
+                        try { await removeRemotePath(targetConnectionConfig, targetPath); } catch {}
+                    }
+                    await uploadLocalPathToRemote(targetSftp, item.path, targetPath, (n) => bump(n, item.path), transfer);
+                }
+            }, transfer);
+            loaded = Math.max(total, loaded);
+            sendStatus('done', targetDir);
+        } else if (sameConnection) {
             const commands = [];
             for (const item of clip.items) {
                 const targetPath = remoteJoin(targetDir, basenameRemote(item.path));
@@ -4158,7 +4179,6 @@ function readTextFromRdpClipboard(pipe, callback) {
 
 function readRdpClipboardFileList(pipe, callback) {
     if (!pipe || !callback) return;
-    // Read text/uri-list from X selection (populated by our patched xfreerdp)
     const cmd = 'xclip -selection clipboard -t text/uri-list -o 2>/dev/null || true';
     const child = spawn('sh', ['-c', cmd], { env: pipe.env, stdio: ['ignore', 'pipe', 'ignore'] });
     let out = '';
@@ -4186,6 +4206,31 @@ function readRdpClipboardFileList(pipe, callback) {
     child.on('error', () => callback([]));
 }
 
+// Store RDP remote files into the unified per-user clipboard
+function storeRdpFilesInUnifiedClipboard(pipe, files) {
+    if (!pipe || !files || !files.length) return;
+    const username = String(pipe.username || '');
+    if (!username) return;
+    const items = files.map((f) => ({
+        path: String(f.path || ''),
+        name: String(f.name || path.basename(f.path || '')).slice(0, 255),
+        type: '-',
+        size: Number(f.size) || 0,
+        modifyTime: 0,
+    }));
+    sftpClipboardByUser.set(username, {
+        mode: 'copy',
+        username,
+        sourceSessionId: '',
+        sourceConnectionId: pipe.connId || '',
+        sourceConnectionConfig: null,
+        sourceType: 'rdp',
+        items,
+        createdAt: Date.now(),
+    });
+    console.info('[rdp-h264]', 'stored remote files in unified clipboard', { connId: pipe.connId, username, count: items.length });
+}
+
 function startRdpClipboardWatch(pipe) {
     if (!pipe || pipe.clipboardTimer || process.env.RDP_CLIPBOARD_SYNC === 'false') return;
     pipe.lastRemoteClipboardText = '';
@@ -4208,6 +4253,8 @@ function startRdpClipboardWatch(pipe) {
             const sig = files.map((f) => `${f.name}:${f.size}`).join(',');
             if (sig === pipe.lastRemoteClipboardFiles) return;
             pipe.lastRemoteClipboardFiles = sig;
+            // Store in unified clipboard so SSH can paste directly
+            storeRdpFilesInUnifiedClipboard(pipe, files);
             const payload = JSON.stringify({ type: 'rdp-remote-files', files });
             for (const client of pipe.clients) {
                 if (client.readyState !== client.OPEN) continue;
