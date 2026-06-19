@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Zephyr - 远程桌面</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260619-rdp-perf-overhaul">
+    <link rel="stylesheet" href="style.css?v=20260619-rdp-native-h264-default">
 </head>
 <body>
     <div class="rdp-page">
@@ -16,13 +16,13 @@
             </div>
             <span class="info" id="connInfo"></span>
             <div class="topbar-actions">
-                <button class="btn-sm" id="qualityBtn" data-rdp-icon="quality" title="切换性能/画质模式">平衡</button>
+                <button class="btn-sm" id="qualityBtn" data-rdp-icon="quality" title="切换性能/画质模式">性能</button>
                 <button class="btn-sm" id="resolutionBtn" data-rdp-icon="quality" title="切换远程桌面分辨率：1080p / 2K / 4K / 自动">1080p</button>
-                <button class="btn-sm" id="fpsBtn" data-rdp-icon="quality" title="切换远程桌面帧率：30 / 45 / 60 FPS">30FPS</button>
+                <button class="btn-sm" id="fpsBtn" data-rdp-icon="quality" title="切换远程桌面帧率：30 / 45 / 60 FPS">60FPS</button>
                 <button class="btn-sm" id="fitBtn" data-rdp-icon="fit" title="适应窗口">适应</button>
                 <button class="btn-sm zoom-control" id="zoomBtn" data-rdp-icon="zoom" title="拖动无极缩放远程画面"><input id="zoomSlider" type="range" min="50" max="250" step="1" value="100" aria-label="远程画面无极缩放"><em id="zoomValue">100%</em></button>
                 <button class="btn-sm" id="clipboardBtn" data-rdp-icon="clipboard" title="打开跨设备剪贴板面板">剪贴板</button>
-                <button class="btn-sm" id="rdpFilesBtn" data-rdp-icon="file" title="打开 RDP 文件剪贴板/下载面板">文件</button>
+                <!-- 文件按钮已移除：文件拖拽/粘贴仍由剪贴板和拖放事件处理 -->
                 <button class="btn-sm" id="keyboardBtn" data-rdp-icon="keyboard" title="手机软键盘输入">键盘</button>
                 <button class="btn-sm" id="shortcutsBtn" data-rdp-icon="shortcuts" title="打开常用快捷键">快捷键</button>
                 <button class="btn-sm" id="joystickBtn" data-rdp-icon="joystick" title="视区">视区</button>
@@ -174,6 +174,6 @@
             </div>
         </div>
     </div>
-    <script src="rdp.js?v=20260619-rdp-perf-overhaul" type="module"></script>
+    <script src="rdp.js?v=20260619-rdp-native-h264-default" type="module"></script>
 </body>
 </html>

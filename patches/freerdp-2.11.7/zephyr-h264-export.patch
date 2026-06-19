@@ -1,5 +1,5 @@
 diff --git a/libfreerdp/gdi/gfx.c b/libfreerdp/gdi/gfx.c
-index 3970715..c3f4085 100644
+index 3970715..4b8c9ab 100644
 --- a/libfreerdp/gdi/gfx.c
 +++ b/libfreerdp/gdi/gfx.c
 @@ -26,6 +26,9 @@
@@ -12,10 +12,43 @@ index 3970715..c3f4085 100644
  #include <freerdp/gdi/gfx.h>
  #include <freerdp/gdi/region.h>
  
-@@ -472,6 +475,36 @@ fail:
+@@ -472,6 +475,62 @@ fail:
   *
   * @return 0 on success, otherwise a Win32 error code
   */
++static BOOL zephyr_h264_export_enabled(void)
++{
++	static BOOL initialized = FALSE;
++	static BOOL enabled = FALSE;
++	char target[MAX_PATH];
++	DWORD size;
++
++	if (!initialized)
++	{
++		initialized = TRUE;
++		size = GetEnvironmentVariableA("ZEPHYR_RDP_H264_PIPE", target, sizeof(target));
++		enabled = (size > 0) && (size < sizeof(target));
++	}
++	return enabled;
++}
++
++static BOOL zephyr_skip_gdi_decode(void)
++{
++	static BOOL initialized = FALSE;
++	static BOOL skip = FALSE;
++	char value[16];
++	DWORD size;
++
++	if (!initialized)
++	{
++		initialized = TRUE;
++		size = GetEnvironmentVariableA("ZEPHYR_RDP_H264_SKIP_GDI", value, sizeof(value));
++		skip = (size > 0) && (strcmp(value, "0") != 0) &&
++		       (strcmp(value, "false") != 0) && (strcmp(value, "FALSE") != 0);
++	}
++	return skip;
++}
++
 +static void zephyr_write_h264(const BYTE* data, UINT32 length)
 +{
 +	static HANDLE pipe = INVALID_HANDLE_VALUE;
@@ -49,20 +82,25 @@ index 3970715..c3f4085 100644
  static UINT gdi_SurfaceCommand_AVC420(rdpGdi* gdi, RdpgfxClientContext* context,
                                        const RDPGFX_SURFACE_COMMAND* cmd)
  {
-@@ -515,6 +548,7 @@ static UINT gdi_SurfaceCommand_AVC420(rdpGdi* gdi, RdpgfxClientContext* context,
+@@ -515,6 +574,9 @@ static UINT gdi_SurfaceCommand_AVC420(rdpGdi* gdi, RdpgfxClientContext* context,
  		return ERROR_INTERNAL_ERROR;
  
  	meta = &(bs->meta);
 +	zephyr_write_h264(bs->data, bs->length);
++	if (zephyr_h264_export_enabled() && zephyr_skip_gdi_decode())
++		return 0;
  	rc = avc420_decompress(surface->h264, bs->data, bs->length, surface->data, surface->format,
  	                       surface->scanline, surface->width, surface->height, meta->regionRects,
  	                       meta->numRegionRects);
-@@ -601,6 +635,8 @@ static UINT gdi_SurfaceCommand_AVC444(rdpGdi* gdi, RdpgfxClientContext* context,
+@@ -601,6 +663,11 @@ static UINT gdi_SurfaceCommand_AVC444(rdpGdi* gdi, RdpgfxClientContext* context,
  
  	avc1 = &bs->bitstream[0];
  	avc2 = &bs->bitstream[1];
 +	zephyr_write_h264(avc1->data, avc1->length);
 +	zephyr_write_h264(avc2->data, avc2->length);
++	if (zephyr_h264_export_enabled() && zephyr_skip_gdi_decode())
++		return 0;
++
  	meta1 = &avc1->meta;
  	meta2 = &avc2->meta;
  	rc = avc444_decompress(surface->h264, bs->LC, meta1->regionRects, meta1->numRegionRects,

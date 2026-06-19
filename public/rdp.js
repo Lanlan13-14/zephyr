@@ -47,8 +47,8 @@ const tabId = urlParams.get('tabId') || '';
 const embeddedMode = urlParams.get('embed') === '1';
 
 let params = loadParams();
-const qualityModes = ['balanced', 'performance', 'quality'];
-let qualityIdx = qualityModes.indexOf(params.quality || 'balanced');
+const qualityModes = ['performance', 'balanced', 'quality'];
+let qualityIdx = qualityModes.indexOf(params.quality || 'performance');
 if (qualityIdx < 0) qualityIdx = 0;
 let rdpSocket = null;
 let rdpInputSender = null;
@@ -360,7 +360,8 @@ function wsUrl() {
         height: String(target.height),
         mode: target.mode,
         quality: qualityModes[qualityIdx],
-        fps: String(params.rdpFps || 30),
+        fps: String(params.rdpFps || 60),
+        stream: 'h264',
     });
     return `${proto}//${location.host}/rdp-h264?${query.toString()}`;
 }
@@ -1282,7 +1283,7 @@ async function connect() {
         const initialTarget = computeRdpTargetSize(fitModes[fitModeIdx]);
         requestedRdpWidth = initialTarget.width;
         requestedRdpHeight = initialTarget.height;
-        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 30), stream: 'av' });
+        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 60), stream: 'h264' });
         const connectionSeq = rdpReconnectSeq;
         rdpSocket = new WebSocket(`${wsBase}?${wsQuery.toString()}`);
         rdpSocket.binaryType = 'arraybuffer';
@@ -2898,7 +2899,7 @@ function rememberRdpQuality(mode) {
     const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';
     try { sessionStorage.setItem(key, JSON.stringify(params)); } catch {}
 }
-function rdpFpsValue() { return Math.max(15, Math.min(60, Number(params.rdpFps || 30))); }
+function rdpFpsValue() { return Math.max(15, Math.min(60, Number(params.rdpFps || 60))); }
 function rdpResolutionText(value = params.rdpResolution || '1920x1080') {
     return value === 'auto' ? '自动' : value === '2560x1440' ? '2K' : value === '3840x2160' ? '4K' : '1080p';
 }
@@ -2921,7 +2922,7 @@ function activateRdpResolutionMode(value = '') {
 }
 function activateRdpFpsMode(value = '') {
     const modes = [30, 45, 60];
-    const current = modes.includes(Number(params.rdpFps)) ? Number(params.rdpFps) : 30;
+    const current = modes.includes(Number(params.rdpFps)) ? Number(params.rdpFps) : 60;
     const next = modes.includes(Number(value)) ? Number(value) : modes[(modes.indexOf(current) + 1) % modes.length];
     params.rdpFps = next;
     const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';
