@@ -4168,7 +4168,7 @@ function readRdpClipboardFileList(pipe, callback) {
         for (const line of out.split('\n')) {
             const trimmed = line.trim();
             if (trimmed.startsWith('file://')) {
-                const filePath = decodeURIComponent(trimed.slice(7));
+                const filePath = decodeURIComponent(trimmed.slice(7));
                 try {
                     const stat = fs.statSync(filePath);
                     if (stat.isFile()) {

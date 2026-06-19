@@ -17,6 +17,7 @@ const zoomBtn = $('#zoomBtn');
 const zoomSlider = $('#zoomSlider');
 const zoomValue = $('#zoomValue');
 const clipboardBtn = $('#clipboardBtn');
+const rdpFilesBtn = $('#rdpFilesBtn');
 const keyboardBtn = $('#keyboardBtn');
 const shortcutsBtn = $('#shortcutsBtn');
 const joystickBtn = $('#joystickBtn');
@@ -187,6 +188,11 @@ function notifyParentSharedClipboardText(text = '') {
 function notifyParentSharedFileClipboard(files = []) {
     if (embeddedMode && window.parent && window.parent !== window && files?.length) {
         window.parent.postMessage({ source: 'zephyr-terminal', type: 'shared-file-clipboard', tabId: params?.tabId || tabId, files }, '*');
+    }
+}
+function requestParentSharedFileClipboard() {
+    if (embeddedMode && window.parent && window.parent !== window) {
+        window.parent.postMessage({ source: 'zephyr-terminal', type: 'request-shared-file-clipboard', tabId: params?.tabId || tabId }, '*');
     }
 }
 async function downloadRemoteFilesToLocal(files = []) {
@@ -2010,10 +2016,13 @@ function togglePanel(panel, force, sourceButton = null) {
     const shouldShow = force ?? panel.hidden;
     panel.hidden = !shouldShow;
     panel.classList.toggle('open', shouldShow);
-    if (panel === clipboardPanel) clipboardBtn?.classList.toggle('active', shouldShow);
+    if (panel === clipboardPanel) {
+        clipboardBtn?.classList.toggle('active', shouldShow);
+        rdpFilesBtn?.classList.toggle('active', shouldShow);
+    }
     if (panel === shortcutsPanel) shortcutsBtn?.classList.toggle('active', shouldShow);
     if (panel === joystickPanel) joystickBtn?.classList.toggle('active', shouldShow);
-    const button = sourceButton || (panel === clipboardPanel ? clipboardBtn : panel === shortcutsPanel ? shortcutsBtn : panel === joystickPanel ? joystickBtn : null);
+    const button = sourceButton || (panel === clipboardPanel ? (rdpFilesBtn || clipboardBtn) : panel === shortcutsPanel ? shortcutsBtn : panel === joystickPanel ? joystickBtn : null);
     requestAnimationFrame(() => animateRdpPanelFromButton(panel, button, shouldShow));
     if (shouldShow) bringPanelToFront(panel);
     else {
@@ -2834,6 +2843,11 @@ clipboardBtn.addEventListener('click', () => {
     togglePanel(clipboardPanel);
     if (!clipboardPanel.hidden) clipboardText?.focus?.();
 });
+rdpFilesBtn?.addEventListener('click', () => {
+    togglePanel(clipboardPanel, true, rdpFilesBtn);
+    renderIncomingFileList();
+    document.getElementById('rdpRemoteFileList')?.scrollIntoView?.({ block: 'nearest' });
+});
 clipboardReadLocalBtn?.addEventListener('click', () => readLocalClipboardIntoPanel());
 clipboardSendBtn?.addEventListener('click', async () => {
     const text = clipboardText?.value || '';
@@ -2989,3 +3003,4 @@ installLocalClipboardBridge();
 fitBtn.classList.add('active');
 setStatus('connecting');
 connect();
+requestParentSharedFileClipboard();

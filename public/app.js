@@ -117,7 +117,8 @@ function normalizeSharedClipboardFiles(files = []) {
         path: String(file.path || ''),
         mime: String(file.mime || ''),
         dataUrl: String(file.dataUrl || ''),
-    })).filter((file) => file.path || file.dataUrl);
+        remotePath: String(file.remotePath || ''),
+    })).filter((file) => file.path || file.dataUrl || file.remotePath);
 }
 function updateZephyrSharedClipboard(next = {}) {
     zephyrSharedClipboard = {
