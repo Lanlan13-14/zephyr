@@ -13,6 +13,8 @@ const stage = $('#rdpStage');
 const displayRoot = $('#display');
 const displayShell = $('#displayShell');
 const fitBtn = $('#fitBtn');
+const resolutionBtn = $('#resolutionBtn');
+const fpsBtn = $('#fpsBtn');
 const zoomBtn = $('#zoomBtn');
 const zoomSlider = $('#zoomSlider');
 const zoomValue = $('#zoomValue');
@@ -62,6 +64,11 @@ let mouse = null;
 let connected = false;
 let fitModes = ['fit', '1:1', '16:9', '4:3'];
 let fitModeIdx = 0;
+function parseRdpResolutionPreset(value = '') {
+    const m = String(value || '').match(/^(\d{3,5})x(\d{3,5})$/i);
+    if (!m) return null;
+    return { width: Number(m[1]), height: Number(m[2]) };
+}
 let displayWidth = 0;
 let displayHeight = 0;
 let resizeTimer = 0;
@@ -352,6 +359,7 @@ function wsUrl() {
         height: String(target.height),
         mode: target.mode,
         quality: qualityModes[qualityIdx],
+        fps: String(params.rdpFps || 30),
     });
     return `${proto}//${location.host}/rdp-h264?${query.toString()}`;
 }
@@ -366,10 +374,12 @@ function updateInfo() {
 }
 
 function computeRdpTargetSize(mode = fitModes[fitModeIdx]) {
+    const preset = parseRdpResolutionPreset(params.rdpResolution || '');
+    if (preset && mode === 'fit') return { width: preset.width, height: preset.height, mode: params.rdpResolution };
     const bounds = stage?.getBoundingClientRect?.() || { width: innerWidth || 1280, height: innerHeight || 720 };
     const effDpr = Math.min(window.devicePixelRatio || 1, 2);
-    const maxW = 2560;
-    const maxH = 1600;
+    const maxW = preset ? Math.max(preset.width, 3840) : 3840;
+    const maxH = preset ? Math.max(preset.height, 2160) : 2160;
     const minW = 800;
     const minH = 600;
     const even = (v) => Math.max(2, Math.round(v / 2) * 2);
@@ -407,7 +417,7 @@ function requestRdpCanvasSize(mode = fitModes[fitModeIdx], force = false) {
     if (!force && !changed) return false;
     requestedRdpWidth = target.width;
     requestedRdpHeight = target.height;
-    rdpInputSender({ type: 'resize', width: target.width, height: target.height, mode: target.mode, quality: qualityModes[qualityIdx] });
+    rdpInputSender({ type: 'resize', width: target.width, height: target.height, mode: target.mode, quality: qualityModes[qualityIdx], fps: rdpFpsValue() });
     console.info('[rdp-client]', 'rdp canvas remote resize requested', target);
     return true;
 }
@@ -1210,7 +1220,7 @@ async function connect() {
         const initialTarget = computeRdpTargetSize(fitModes[fitModeIdx]);
         requestedRdpWidth = initialTarget.width;
         requestedRdpHeight = initialTarget.height;
-        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx] });
+        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 30) });
         const connectionSeq = rdpReconnectSeq;
         rdpSocket = new WebSocket(`${wsBase}?${wsQuery.toString()}`);
         rdpSocket.binaryType = 'arraybuffer';
@@ -2710,6 +2720,44 @@ function rememberRdpQuality(mode) {
     const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';
     try { sessionStorage.setItem(key, JSON.stringify(params)); } catch {}
 }
+function rdpFpsValue() { return Math.max(15, Math.min(60, Number(params.rdpFps || 30))); }
+function rdpResolutionText(value = params.rdpResolution || '1920x1080') {
+    return value === 'auto' ? '自动' : value === '2560x1440' ? '2K' : value === '3840x2160' ? '4K' : '1080p';
+}
+function activateRdpResolutionMode(value = '') {
+    const modes = ['1920x1080', '2560x1440', '3840x2160', 'auto'];
+    const current = modes.includes(params.rdpResolution) ? params.rdpResolution : '1920x1080';
+    const next = modes.includes(String(value || '')) ? String(value) : modes[(modes.indexOf(current) + 1) % modes.length];
+    params.rdpResolution = next;
+    const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';
+    try { sessionStorage.setItem(key, JSON.stringify(params)); } catch {}
+    if (resolutionBtn) resolutionBtn.textContent = rdpResolutionText(next);
+    if (rdpInputSender && connected) {
+        const target = computeRdpTargetSize('fit');
+        rdpReconnectPending = true;
+        rdpLastReconnectAt = Date.now();
+        rdpInputSender({ type: 'reconnect', width: target.width, height: target.height, mode: target.mode, quality: qualityModes[qualityIdx], fps: rdpFpsValue() });
+        setTransientStatus(`正在切换到 ${rdpResolutionText(next)} ${target.width}×${target.height}`);
+    }
+    return next;
+}
+function activateRdpFpsMode(value = '') {
+    const modes = [30, 45, 60];
+    const current = modes.includes(Number(params.rdpFps)) ? Number(params.rdpFps) : 30;
+    const next = modes.includes(Number(value)) ? Number(value) : modes[(modes.indexOf(current) + 1) % modes.length];
+    params.rdpFps = next;
+    const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';
+    try { sessionStorage.setItem(key, JSON.stringify(params)); } catch {}
+    if (fpsBtn) fpsBtn.textContent = `${next}FPS`;
+    if (rdpInputSender && connected) {
+        const target = computeRdpTargetSize(fitModes[fitModeIdx]);
+        rdpReconnectPending = true;
+        rdpLastReconnectAt = Date.now();
+        rdpInputSender({ type: 'reconnect', width: target.width, height: target.height, mode: target.mode, quality: qualityModes[qualityIdx], fps: next });
+        setTransientStatus(`正在切换到 ${next} FPS`);
+    }
+    return next;
+}
 
 function activateRdpFitMode(mode = '') {
     const normalized = String(mode || '').toLowerCase() === 'original' ? '1:1' : String(mode || '');
@@ -2731,7 +2779,7 @@ function activateRdpFitMode(mode = '') {
             if (now - rdpLastReconnectAt < 1200) return;
             rdpReconnectPending = true;
             rdpLastReconnectAt = now;
-            rdpInputSender({ type: 'reconnect', width: target.width, height: target.height, mode: target.mode, quality: qualityModes[qualityIdx] });
+            rdpInputSender({ type: 'reconnect', width: target.width, height: target.height, mode: target.mode, quality: qualityModes[qualityIdx], fps: rdpFpsValue() });
             setTransientStatus(`正在切换 ${target.width}×${target.height}`);
         }, 360);
     } else {
@@ -2750,7 +2798,7 @@ function activateRdpQualityMode(mode = '') {
         const target = computeRdpTargetSize(fitModes[fitModeIdx]);
         rdpReconnectPending = true;
         rdpLastReconnectAt = Date.now();
-        rdpInputSender({ type: 'reconnect', width: target.width, height: target.height, mode: target.mode, quality: nextMode });
+        rdpInputSender({ type: 'reconnect', width: target.width, height: target.height, mode: target.mode, quality: nextMode, fps: rdpFpsValue() });
         setTransientStatus(`正在切换到${rdpQualityText(nextMode)}模式`);
         return nextMode;
     }
@@ -2910,6 +2958,14 @@ const qualityBtn = document.getElementById('qualityBtn');
 if (qualityBtn) {
     qualityBtn.textContent = rdpQualityText();
     qualityBtn.addEventListener('click', () => activateRdpQualityMode());
+}
+if (resolutionBtn) {
+    resolutionBtn.textContent = rdpResolutionText();
+    resolutionBtn.addEventListener('click', () => activateRdpResolutionMode());
+}
+if (fpsBtn) {
+    fpsBtn.textContent = `${rdpFpsValue()}FPS`;
+    fpsBtn.addEventListener('click', () => activateRdpFpsMode());
 }
 reconnectBtn.addEventListener('click', reconnect);
 disconnectBtn.addEventListener('click', () => {

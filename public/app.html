@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260619-unified-clipboard">
+    <link rel="stylesheet" href="style.css?v=20260619-rdp-resolution-quality">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -161,6 +161,12 @@
                                 <label class="check-line"><input type="checkbox" id="terminalFontColorEnabled"> 启用自定义 SSH 终端字体颜色</label>
                                 <div class="zephyr-color-picker terminal-font-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#f4f4f6" aria-label="选择 SSH 终端字体颜色"></button><input id="terminalFontColor" class="color-hex-input" value="#f4f4f6" maxlength="7" spellcheck="false" inputmode="text"></div>
                                 <p class="field-hint">上传图片最高 12MB；URL 适合使用 CDN/对象存储图片。</p>
+                                <div class="form-row">
+                                    <div class="form-group"><label>RDP 默认分辨率</label><select id="rdpDefaultResolution"><option value="auto">自动（跟随窗口）</option><option value="1920x1080">1080p (1920×1080)</option><option value="2560x1440">2K (2560×1440)</option><option value="3840x2160">4K (3840×2160)</option></select></div>
+                                    <div class="form-group"><label>RDP 默认画质</label><select id="rdpDefaultQuality"><option value="balanced">平衡</option><option value="performance">性能</option><option value="quality">画质</option></select></div>
+                                    <div class="form-group"><label>RDP 帧率</label><select id="rdpDefaultFps"><option value="30">30 FPS</option><option value="45">45 FPS</option><option value="60">60 FPS</option></select></div>
+                                </div>
+                                <p class="field-hint">2K/4K 需要较高带宽和服务器 CPU；画质模式更吃 CPU 但画面更清晰。</p>
                                 <div class="form-actions">
                                     <button class="btn btn-primary" type="submit">保存外观</button>
                                     <button class="btn" type="button" id="settingsThemeToggle">切换深色/浅色模式</button>
@@ -433,6 +439,6 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260619-unified-clipboard" type="module"></script>
+    <script src="app.js?v=20260619-rdp-resolution-quality" type="module"></script>
 </body>
 </html>

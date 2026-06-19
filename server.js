@@ -3932,10 +3932,11 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     const targetPort = Number(effectiveConn.port) || 3389;
     const username = effectiveConn.username || 'Administrator';
     const password = effectiveConn.password || '';
-    let streamWidth = evenClampRdpSize(options.width || RDP_STREAM_WIDTH, 800, 2560);
-    let streamHeight = evenClampRdpSize(options.height || RDP_STREAM_HEIGHT, 600, 1600);
+    let streamWidth = evenClampRdpSize(options.width || RDP_STREAM_WIDTH, 800, 3840);
+    let streamHeight = evenClampRdpSize(options.height || RDP_STREAM_HEIGHT, 600, 2160);
     const aspectMode = String(options.mode || '').toLowerCase();
     const qualityMode = ['performance', 'balanced', 'quality'].includes(String(options.quality || '').toLowerCase()) ? String(options.quality).toLowerCase() : 'balanced';
+    const streamFps = Math.max(15, Math.min(60, Number(options.fps) || RDP_STREAM_FPS));
     const isPerf = qualityMode === 'performance';
     const isQual = qualityMode === 'quality';
     const forceAspect = (num, den) => {
@@ -3944,18 +3945,18 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         streamWidth = longSide;
         streamHeight = shortSide;
         let unit = Math.max(1, Math.min(Math.floor(streamWidth / num), Math.floor(streamHeight / den)));
-        streamWidth = evenRdpSize(num * unit, 800, 2560);
-        streamHeight = evenRdpSize(den * unit, 600, 1600);
-        if (streamWidth > 2560 || streamHeight > 1600) {
-            unit = Math.max(1, Math.min(Math.floor(2560 / num), Math.floor(1600 / den)));
-            streamWidth = evenRdpSize(num * unit, 800, 2560);
-            streamHeight = evenRdpSize(den * unit, 600, 1600);
+        streamWidth = evenRdpSize(num * unit, 800, 3840);
+        streamHeight = evenRdpSize(den * unit, 600, 2160);
+        if (streamWidth > 3840 || streamHeight > 2160) {
+            unit = Math.max(1, Math.min(Math.floor(3840 / num), Math.floor(2160 / den)));
+            streamWidth = evenRdpSize(num * unit, 800, 3840);
+            streamHeight = evenRdpSize(den * unit, 600, 2160);
         }
     };
     if (aspectMode === '16:9') forceAspect(16, 9);
     else if (aspectMode === '4:3') forceAspect(4, 3);
-    streamWidth = evenRdpSize(streamWidth, 800, 2560);
-    streamHeight = evenRdpSize(streamHeight, 600, 1600);
+    streamWidth = evenRdpSize(streamWidth, 800, 3840);
+    streamHeight = evenRdpSize(streamHeight, 600, 2160);
     const displayNo = allocateRdpDisplayNumber();
     const xvfbDisp = `:${displayNo}`;
     const fifoPath = `/tmp/zephyr-rdp-h264-${connId}.h264`;
@@ -4016,22 +4017,27 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     const xfreerdp = rdpSpawn(xfreerdpBin, xfreerdpArgs, { env });
     rdpAttachLog(xfreerdp, 'xfreerdp', 'warn');
 
-    const x264Preset = isPerf ? 'superfast' : isQual ? 'medium' : 'veryfast';
-    const x264Crf = isPerf ? '24' : isQual ? '16' : '20';
+    const x264Preset = isPerf ? 'superfast' : isQual ? 'faster' : 'veryfast';
+    const x264Crf = isPerf ? '23' : isQual ? '16' : '19';
     const x264Profile = isQual ? 'high' : 'main';
-    const x264Params = `repeat-headers=1:scenecut=0:open-gop=0:ref=${isQual ? '3' : '2'}:bframes=2:subme=${isQual ? '9' : '7'}:trellis=2`;
+    const x264Params = isPerf
+        ? 'repeat-headers=1:scenecut=0:open-gop=0:ref=1:bframes=0:subme=4:trellis=0:sliced-threads=1'
+        : isQual
+            ? 'repeat-headers=1:scenecut=0:open-gop=0:ref=3:bframes=0:subme=7:trellis=1:sliced-threads=1'
+            : 'repeat-headers=1:scenecut=0:open-gop=0:ref=2:bframes=0:subme=6:trellis=1:sliced-threads=1';
     const ffmpegArgs = [
         '-hide_banner', '-loglevel', 'warning',
         '-f', 'x11grab', '-draw_mouse', '0',
-        '-framerate', String(RDP_STREAM_FPS),
+        '-framerate', String(streamFps),
         '-video_size', `${streamWidth}x${streamHeight}`,
         '-i', xvfbDisp,
         '-an', '-c:v', 'libx264',
+        '-threads', '0',
         '-preset', x264Preset, '-tune', 'zerolatency',
         '-profile:v', x264Profile,
         '-crf', x264Crf,
         '-pix_fmt', 'yuv420p',
-        '-g', String(RDP_STREAM_FPS), '-keyint_min', String(RDP_STREAM_FPS),
+        '-g', String(streamFps), '-keyint_min', String(streamFps),
         '-x264-params', x264Params,
         '-bsf:v', 'h264_mp4toannexb',
         '-f', 'h264', 'pipe:1',
@@ -4051,7 +4057,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     }, 2200);
 
     const pipe = {
-        connId, xvfb, pulseaudio, xfreerdp, ffmpeg, fifoPath, nativeH264, env, width: streamWidth, height: streamHeight, quality: qualityMode, routedForward,
+        connId, xvfb, pulseaudio, xfreerdp, ffmpeg, fifoPath, nativeH264, env, width: streamWidth, height: streamHeight, fps: streamFps, quality: qualityMode, routedForward,
         get activeWindowId() { return activeWindowId; },
         nativeReader: null,
         clients: new Set(),
@@ -4067,7 +4073,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     rdpPipes.set(connId, pipe);
 
     const markReady = () => {
-        if (!pipe.ready) console.info('[rdp-h264]', 'pipeline ready', { connId, target: `${targetHost}:${targetPort}`, width: streamWidth, height: streamHeight, quality: qualityMode });
+        if (!pipe.ready) console.info('[rdp-h264]', 'pipeline ready', { connId, target: `${targetHost}:${targetPort}`, width: streamWidth, height: streamHeight, fps: streamFps, quality: qualityMode });
         pipe.ready = true;
     };
     const readyTimer = setTimeout(markReady, 1800);
@@ -4111,7 +4117,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         cleanupPipe(connId);
     });
 
-    console.info('[rdp-h264]', 'pipeline started', { connId, target: `${targetHost}:${targetPort}`, originalTarget: `${originalTargetHost}:${originalTargetPort}`, route: routedForward?.route || 'direct', mode: nativeH264 ? 'freerdp-avc-export' : 'x11grab-fallback', quality: qualityMode, encoder: nativeH264 ? 'native' : { preset: x264Preset, crf: x264Crf, profile: x264Profile }, xfreerdpArgs: xfreerdpArgs.filter((a) => !a.startsWith('/p:')) });
+    console.info('[rdp-h264]', 'pipeline started', { connId, target: `${targetHost}:${targetPort}`, originalTarget: `${originalTargetHost}:${originalTargetPort}`, route: routedForward?.route || 'direct', mode: nativeH264 ? 'freerdp-avc-export' : 'x11grab-fallback', fps: streamFps, quality: qualityMode, encoder: nativeH264 ? 'native' : { preset: x264Preset, crf: x264Crf, profile: x264Profile }, xfreerdpArgs: xfreerdpArgs.filter((a) => !a.startsWith('/p:')) });
     return pipe;
 }
 
@@ -4579,11 +4585,12 @@ rdpH264Wss.on('connection', async (ws, req) => {
         const requestedHeight = Number(url.searchParams.get('height')) || RDP_STREAM_HEIGHT;
         const requestedMode = url.searchParams.get('mode') || '';
         const requestedQuality = ['performance', 'balanced', 'quality'].includes(String(url.searchParams.get('quality') || '').toLowerCase()) ? String(url.searchParams.get('quality')).toLowerCase() : 'balanced';
-        if (!pipe) pipe = await startRdpH264Pipeline(connId, conn, { width: requestedWidth, height: requestedHeight, mode: requestedMode, quality: requestedQuality });
+        const requestedFps = Math.max(15, Math.min(60, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
+        if (!pipe) pipe = await startRdpH264Pipeline(connId, conn, { width: requestedWidth, height: requestedHeight, mode: requestedMode, quality: requestedQuality, fps: requestedFps });
         pipe.username = sessionUser?.username || '';
         pipe.clients.add(ws);
         startRdpClipboardWatch(pipe);
-        ws.send(JSON.stringify({ type: 'hello', codec: 'avc1.42001f', width: pipe.width || RDP_STREAM_WIDTH, height: pipe.height || RDP_STREAM_HEIGHT, fps: RDP_STREAM_FPS, quality: pipe.quality || requestedQuality }));
+        ws.send(JSON.stringify({ type: 'hello', codec: 'avc1.42001f', width: pipe.width || RDP_STREAM_WIDTH, height: pipe.height || RDP_STREAM_HEIGHT, fps: pipe.fps || RDP_STREAM_FPS, quality: pipe.quality || requestedQuality }));
         console.info('[rdp-h264]', 'browser attached', { connId, clients: pipe.clients.size });
 
         ws.on('message', async (raw, isBinary) => {
@@ -4593,11 +4600,12 @@ rdpH264Wss.on('connection', async (ws, req) => {
             if (msg?.type === 'reconnect' && Number.isFinite(msg.width) && Number.isFinite(msg.height)) {
                 const oldPipe = pipe;
                 oldPipe.clients.delete(ws);
-                const width = evenClampRdpSize(Number(msg.width) || RDP_STREAM_WIDTH, 800, 2560);
-                const height = evenClampRdpSize(Number(msg.height) || RDP_STREAM_HEIGHT, 600, 1600);
+                const width = evenClampRdpSize(Number(msg.width) || RDP_STREAM_WIDTH, 800, 3840);
+                const height = evenClampRdpSize(Number(msg.height) || RDP_STREAM_HEIGHT, 600, 2160);
                 const mode = String(msg.mode || '');
                 const quality = ['performance', 'balanced', 'quality'].includes(String(msg.quality || '').toLowerCase()) ? String(msg.quality).toLowerCase() : (pipe.quality || requestedQuality);
-                try { if (ws.readyState === ws.OPEN) ws.close(1012, `rdp reconnect:${mode}:${width}x${height}:${quality}`); } catch {}
+                const fps = Math.max(15, Math.min(60, Number(msg.fps) || pipe.fps || requestedFps || RDP_STREAM_FPS));
+                try { if (ws.readyState === ws.OPEN) ws.close(1012, `rdp reconnect:${mode}:${width}x${height}:${quality}:${fps}`); } catch {}
                 cleanupPipe(connId);
                 return;
             }

@@ -469,6 +469,12 @@ async function saveAppearance(e) {
             opacity: Number($('#terminalBgOpacity')?.value || 0.35),
         },
         terminalFontColor: $('#terminalFontColorEnabled')?.checked ? ($('#terminalFontColor')?.value || '') : '',
+        rdp: {
+            ...(previous.rdp || {}),
+            defaultResolution: $('#rdpDefaultResolution')?.value || previous.rdp?.defaultResolution || '1920x1080',
+            defaultQuality: $('#rdpDefaultQuality')?.value || previous.rdp?.defaultQuality || 'balanced',
+            defaultFps: Number($('#rdpDefaultFps')?.value || previous.rdp?.defaultFps || 30),
+        },
     };
     settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ appearance }) });
     localStorage.removeItem('zephyr-theme');
@@ -479,7 +485,7 @@ async function saveAppearance(e) {
     toast('外观设置已保存');
 }
 async function resetAppearance() {
-    const appearance = { ...getAppearance(), brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35 }, terminalFontColor: '' };
+    const appearance = { ...getAppearance(), brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35 }, terminalFontColor: '', rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 30 } };
     settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ appearance }) });
     $('#brandIconFile').value = '';
     applyAppearance(settings.appearance || appearance);
@@ -522,6 +528,10 @@ function syncAppearanceSchemeControls(appearance = getAppearance()) {
         $('#terminalFontColor').disabled = !appearance.terminalFontColor;
         $('#terminalFontColor')?.closest('[data-color-picker]')?.classList.toggle('disabled', !appearance.terminalFontColor);
     }
+    const rdp = appearance.rdp || {};
+    if ($('#rdpDefaultResolution')) $('#rdpDefaultResolution').value = rdp.defaultResolution || '1920x1080';
+    if ($('#rdpDefaultQuality')) $('#rdpDefaultQuality').value = rdp.defaultQuality || 'balanced';
+    if ($('#rdpDefaultFps')) $('#rdpDefaultFps').value = String(rdp.defaultFps || 30);
     if ($('#terminalBgPreview')) {
         const url = bg.type === 'url' ? ($('#terminalBgUrl')?.value.trim() || bg.url || '') : (bg.url || '');
         const hasBg = (bg.type === 'upload' || bg.type === 'url') && url;
@@ -1510,7 +1520,8 @@ async function openConnection(id) {
     const protocol = String(c.protocol || 'SSH').toUpperCase();
     const tabId = `tab_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     if (protocol === 'RDP' || protocol === 'VNC') {
-        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, embedded: true, timestamp: Date.now() }));
+        const rdpDefaults = getAppearance().rdp || {};
+        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, embedded: true, timestamp: Date.now(), rdpResolution: rdpDefaults.defaultResolution || '1920x1080', quality: rdpDefaults.defaultQuality || 'balanced', rdpFps: Number(rdpDefaults.defaultFps || 30) }));
         terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: protocol === 'VNC' ? 'novnc' : 'rdp', connectionId: c.id, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
         console.debug(protocol === 'VNC' ? '[novnc-client]' : '[rdp-client]', 'open remote desktop tab', { protocol, tabId, connectionId: c.id, host: c.host, port: c.port });
     } else {
