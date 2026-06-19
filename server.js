@@ -4022,7 +4022,6 @@ const RDP_STREAM_FPS = Number(process.env.RDP_H264_FPS || 60);
 const RDP_NATIVE_H264 = process.env.RDP_NATIVE_H264 === 'true';
 const RDP_ALLOW_GFX_FALLBACK = process.env.RDP_ALLOW_GFX_FALLBACK === 'true';
 const rdpPipes = new Map();
-const rdpPipeStarts = new Map(); // connectionId → Promise<pipe>, prevents duplicate xfreerdp sessions
 const rdpAudioWorkers = new Map(); // connectionId → pipeline state
 
 function evenClampRdpSize(value, min, max) {
@@ -4133,7 +4132,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
             fs.writeFileSync(asoundrcPath, 'pcm.!default { type pulse }\nctl.!default { type pulse }\n');
             env.ALSA_CONFIG_PATH = asoundrcPath;
         } catch {}
-        pulseaudio = rdpSpawn('pulseaudio', ['--daemonize=no', '-n', '--exit-idle-time=-1', '--disallow-exit=true', '--log-target=stderr', `--load=module-native-protocol-unix socket=${pulseDir}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
+        pulseaudio = rdpSpawn('pulseaudio', ['--daemonize=no', '--exit-idle-time=-1', '--disallow-exit=true', '--log-target=stderr', `--load=module-native-protocol-unix socket=${pulseDir}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
         rdpAttachLog(pulseaudio, 'pulseaudio', 'warn');
         await new Promise((resolve) => setTimeout(resolve, 900));
         console.info('[rdp-audio]', 'audio backend enabled', { connId, backend: rdpAudioBackend });
@@ -4741,7 +4740,7 @@ function startIsolatedRdpAudioWorker(connId, conn) {
     } catch {}
     const worker = { connId, clients: new Set(), pulseaudio: null, xvfb: null, xfreerdp: null, ffmpeg: null, stopping: false, startedAt: Date.now() };
     rdpAudioWorkers.set(connId, worker);
-    worker.pulseaudio = rdpSpawn('pulseaudio', ['--daemonize=no', '-n', '--exit-idle-time=-1', '--disallow-exit=true', `--load=module-native-protocol-unix socket=${pulseDir}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
+    worker.pulseaudio = rdpSpawn('pulseaudio', ['--daemonize=no', '--exit-idle-time=-1', '--disallow-exit=true', `--load=module-native-protocol-unix socket=${pulseDir}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
     rdpAttachLog(worker.pulseaudio, 'rdp-audio-pulse', 'warn');
     worker.xvfb = rdpSpawn('Xvfb', [xvfbDisp, '-screen', '0', '800x600x24', '-ac']);
     rdpAttachLog(worker.xvfb, 'rdp-audio-xvfb', 'warn');
@@ -4946,24 +4945,7 @@ rdpH264Wss.on('connection', async (ws, req) => {
             cleanupPipe(connId);
             pipe = null;
         } else if (pipe && pipe.streamMode && pipe.streamMode !== requestedStream) { cleanupPipe(connId); pipe = null; }
-        if (!pipe) {
-            let startPromise = rdpPipeStarts.get(connId);
-            if (!startPromise) {
-                startPromise = startRdpH264Pipeline(connId, conn, { width: requestedWidth, height: requestedHeight, mode: requestedMode, quality: requestedQuality, fps: requestedFps, stream: requestedStream })
-                    .finally(() => rdpPipeStarts.delete(connId));
-                rdpPipeStarts.set(connId, startPromise);
-            } else {
-                console.info('[rdp-h264]', 'waiting for existing pipeline startup', { connId });
-            }
-            pipe = await startPromise;
-        }
-        if (ws.readyState !== ws.OPEN) {
-            setTimeout(() => {
-                const latest = rdpPipes.get(connId);
-                if (latest && latest.clients.size === 0) cleanupPipe(connId);
-            }, 5000);
-            return;
-        }
+        if (!pipe) pipe = await startRdpH264Pipeline(connId, conn, { width: requestedWidth, height: requestedHeight, mode: requestedMode, quality: requestedQuality, fps: requestedFps, stream: requestedStream });
         pipe.username = sessionUser?.username || '';
         pipe.clients.add(ws);
         startRdpClipboardWatch(pipe);
@@ -5028,7 +5010,6 @@ rdpAudioWss.on('connection', async (ws, req) => {
 });
 
 function cleanupPipe(connId) {
-    rdpPipeStarts.delete(connId);
     const p = rdpPipes.get(connId);
     if (p) {
         p.stopping = true;
