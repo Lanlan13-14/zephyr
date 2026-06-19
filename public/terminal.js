@@ -3279,7 +3279,7 @@ function createFileManagerWindow({ path = currentPath } = {}) {
     newFolderBtn?.addEventListener('click', newFolder);
     newFileBtn?.addEventListener('click', newFile);
     selectBtn?.addEventListener('click', (e) => { e.preventDefault(); state.mobileSelectMode = !state.mobileSelectMode; if (!state.mobileSelectMode) clearSelection(); updateMobileActions(); });
-    pasteBtn?.addEventListener('click', (e) => { e.preventDefault(); syncGlobalFileContext(); handleFileMenuAction('paste'); });
+    pasteBtn?.addEventListener('click', (e) => { e.preventDefault(); syncGlobalFileContext(); if (consumePendingSharedFiles()) return; handleFileMenuAction('paste'); });
     transferBtn?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (transferPopover?.classList.contains('open')) hideTransferPopover(true); else showTransferPopover(); });
     uploadInput?.addEventListener('change', (e) => { uploadLocalFiles(e.target.files); uploadInput.value = ''; });
     listEl?.addEventListener('click', (e) => { if (e.target.closest('.fm-item-actions') || fileContextMenu?.classList.contains('show')) return; const item = e.target.closest('.fm-item'); if (!item) { clearSelection(); return; } const filePath = item.dataset.filePath; if (!filePath) return; if (!isTouchLikeDevice() && (e.ctrlKey || e.metaKey)) toggleSelection(filePath); else if (isTouchLikeDevice() && state.mobileSelectMode) toggleSelection(filePath); else selectSingle(filePath); });
@@ -3601,6 +3601,7 @@ fmSelectBtn?.addEventListener('click', (e) => {
 });
 fmPasteBtn?.addEventListener('click', (e) => {
     e.preventDefault();
+    if (consumePendingSharedFiles()) return;
     handleFileMenuAction('paste');
 });
 window.addEventListener('resize', updateMobileFileActions);
@@ -4019,7 +4020,7 @@ document.addEventListener('keydown', (e) => {
     const mod = mac ? e.metaKey : e.ctrlKey;
     if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); handleFileMenuAction('copy'); }
     else if (mod && e.key.toLowerCase() === 'x') { e.preventDefault(); handleFileMenuAction('cut'); }
-    else if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); handleFileMenuAction('paste'); }
+    else if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); if (consumePendingSharedFiles()) return; handleFileMenuAction('paste'); }
     else if (e.key === 'F2') { e.preventDefault(); handleFileMenuAction('rename'); }
     else if (e.key === 'Delete' || e.key === 'Backspace') { if (selectedFilePaths.size) { e.preventDefault(); handleFileMenuAction('delete'); } }
     else if (mod && e.key.toLowerCase() === 'i') { e.preventDefault(); handleFileMenuAction('properties'); }
@@ -4247,40 +4248,79 @@ function uploadFile(file) {
 
 function handleSharedFileClipboardAvailable(files = [], sourceTabId = '') {
     const list = Array.from(files || []);
-    // SFTP clipboard (server-side) → trigger paste directly via WS
+    // SFTP clipboard (server-side) → just mark available, transfer on user paste
     const isSftpClipboard = list.some((file) => file?.path === 'sftp-clipboard');
     if (isSftpClipboard) {
-        if (!sftpReady) { showFileManager(); initSFTP(); }
-        if (sftpReady && wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-            wsConnection.send(JSON.stringify({ type: 'sftp-clipboard-paste', targetDir: currentPath, conflict: 'compatible' }));
-            const count = list.find((f) => f.path === 'sftp-clipboard')?.count || 0;
-            showToast(`正在从剪贴板粘贴 ${count || ''} 项到 ${currentPath}`, 'info');
-        }
+        sftpClipboardAvailable = true;
+        updateMobileFileActions();
+        const count = list.find((f) => f.path === 'sftp-clipboard')?.count || 0;
+        pendingSharedFileSource = sourceTabId;
+        pendingSharedFileMeta = list;
+        showToast(`剪贴板有 ${count} 个文件，右键粘贴或 Ctrl+V 传输到 ${currentPath}`, 'info');
         return;
     }
-    // RDP remote files with remotePath (downloaded by xfreerdp to server temp dir)
+    // RDP remote files with remotePath → mark available, transfer on user paste
     const remoteFiles = list.filter((file) => file?.remotePath);
     if (remoteFiles.length) {
-        if (!sftpReady) { showFileManager(); initSFTP(); }
-        // Upload remote files from server temp dir to current SFTP dir
-        uploadRemotePathFiles(remoteFiles);
+        sftpClipboardAvailable = true;
+        updateMobileFileActions();
+        pendingSharedFileSource = sourceTabId;
+        pendingSharedFileMeta = remoteFiles;
+        showToast(`剪贴板有 ${remoteFiles.length} 个远程文件，右键粘贴或 Ctrl+V 传输到 ${currentPath}`, 'info');
         return;
     }
-    // RDP local files with dataUrl → receive and upload
+    // RDP local files with dataUrl → mark available, transfer on user paste
     const localFiles = list.filter((file) => file?.dataUrl);
     if (localFiles.length) {
-        uploadSharedClipboardFiles(localFiles);
+        sftpClipboardAvailable = true;
+        updateMobileFileActions();
+        pendingSharedFileSource = sourceTabId;
+        pendingSharedFileMeta = localFiles;
+        showToast(`剪贴板有 ${localFiles.length} 个文件，右键粘贴或 Ctrl+V 传输到 ${currentPath}`, 'info');
         return;
     }
-    // Other SSH file metadata → relay via parent
+    // Other SSH file metadata → mark available
     const pathFiles = list.filter((file) => file?.path && !file?.dataUrl);
     if (!pathFiles.length) return;
     sftpClipboardAvailable = true;
     updateMobileFileActions();
-    const names = pathFiles.map((file) => file.name || String(file.path).split('/').pop() || 'file').join('、');
-    showToast(`收到跨窗口文件剪贴板：${names}，正在粘贴到 ${currentPath}`, 'info');
-    if (!sftpReady) { showFileManager(); initSFTP(); }
-    consumeParentSharedFileClipboard(pathFiles, sourceTabId);
+    pendingSharedFileSource = sourceTabId;
+    pendingSharedFileMeta = pathFiles;
+    showToast(`剪贴板有 ${pathFiles.length} 个文件，右键粘贴或 Ctrl+V 传输到 ${currentPath}`, 'info');
+}
+let pendingSharedFileSource = '';
+let pendingSharedFileMeta = [];
+function consumePendingSharedFiles() {
+    if (!pendingSharedFileMeta.length) return false;
+    const files = pendingSharedFileMeta;
+    const sourceTabId = pendingSharedFileSource;
+    pendingSharedFileMeta = [];
+    pendingSharedFileSource = '';
+    const isSftpClipboard = files.some((file) => file?.path === 'sftp-clipboard');
+    if (isSftpClipboard) {
+        if (sftpReady && wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+            wsConnection.send(JSON.stringify({ type: 'sftp-clipboard-paste', targetDir: currentPath, conflict: 'compatible' }));
+            showToast(`正在从剪贴板粘贴到 ${currentPath}`, 'info');
+        }
+        return true;
+    }
+    const remoteFiles = files.filter((file) => file?.remotePath);
+    if (remoteFiles.length) {
+        uploadRemotePathFiles(remoteFiles);
+        return true;
+    }
+    const localFiles = files.filter((file) => file?.dataUrl);
+    if (localFiles.length) {
+        uploadSharedClipboardFiles(localFiles);
+        return true;
+    }
+    const pathFiles = files.filter((file) => file?.path && !file?.dataUrl);
+    if (pathFiles.length) {
+        if (!sftpReady) { showFileManager(); initSFTP(); }
+        consumeParentSharedFileClipboard(pathFiles, sourceTabId);
+        return true;
+    }
+    return false;
 }
 async function uploadRemotePathFiles(files = []) {
     const list = Array.from(files || []).filter((file) => file?.remotePath);

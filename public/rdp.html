@@ -53,6 +53,14 @@
                         <button class="btn-sm" id="clipboardCopyRemoteBtn">复制到本机</button>
                         <span class="rdp-panel-hint" id="clipboardHint">等待远程剪贴板...</span>
                     </div>
+                    <label class="rdp-panel-label">远程文件剪贴板</label>
+                    <div class="rdp-remote-file-list" id="rdpRemoteFileList">
+                        <div class="rdp-file-empty">远程剪贴板暂无文件</div>
+                    </div>
+                    <div class="rdp-panel-actions">
+                        <button class="btn-sm" id="rdpFilePasteToRemoteBtn">粘贴到远程</button>
+                        <button class="btn-sm" id="rdpFileDownloadAllBtn">全部下载到本机</button>
+                    </div>
                 </div>
                 <div class="panel-resize-handle left" data-resize-panel="clipboardPanel" data-resize-edge="left" title="拖动调整大小"></div>
                 <div class="panel-resize-handle right" data-resize-panel="clipboardPanel" data-resize-edge="right" title="拖动调整大小"></div>
@@ -163,6 +171,6 @@
             </div>
         </div>
     </div>
-    <script src="rdp.js?v=20260619-rdp-file-clipboard-v2" type="module"></script>
+    <script src="rdp.js?v=20260619-lazy-file-clipboard" type="module"></script>
 </body>
 </html>

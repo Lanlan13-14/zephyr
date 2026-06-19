@@ -91,6 +91,8 @@ const rdpFileClipboardFiles = new Map();
 
 const RDP_FILE_CLIPBOARD_MIMETYPE = 'application/vnd.zephyr.rdp.file-clipboard';
 const RDP_SHARED_FILE_MAX_BYTES = 32 * 1024 * 1024;
+let rdpRemoteFileClipboard = [];
+let rdpIncomingFileClipboard = [];
 
 const KEY = {
     BACKSPACE: 0xff08,
@@ -190,10 +192,12 @@ function notifyParentSharedFileClipboard(files = []) {
 async function downloadRemoteFilesToLocal(files = []) {
     const list = Array.from(files || []).filter((f) => f?.remotePath);
     if (!list.length) return;
+    setClipboardHint(`正在下载 ${list.length} 个文件到本机...`, 'info');
+    let ok = 0;
     for (const file of list) {
         try {
-            const params = new URLSearchParams({ path: file.remotePath, name: file.name || '' });
-            const res = await fetch('/api/rdp/clipboard-file?' + params.toString());
+            const qs = new URLSearchParams({ path: file.remotePath, name: file.name || '' });
+            const res = await fetch('/api/rdp/clipboard-file?' + qs.toString());
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const blob = await res.blob();
             const url = URL.createObjectURL(blob);
@@ -204,11 +208,96 @@ async function downloadRemoteFilesToLocal(files = []) {
             document.body.appendChild(a);
             a.click();
             window.setTimeout(() => { try { a.remove(); URL.revokeObjectURL(url); } catch {} }, 2000);
+            ok++;
         } catch (err) {
             console.warn('[rdp-client]', 'download remote file to local failed', { name: file.name, error: err.message });
-            setClipboardHint(`下载到本机失败：${file.name || ''} ${err.message || ''}`, 'warning');
         }
     }
+    setClipboardHint(ok ? `已下载 ${ok}/${list.length} 个文件到本机` : '下载失败', ok ? 'success' : 'warning');
+}
+function formatFileSize(bytes) {
+    if (!bytes) return '0 B';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+function renderRemoteFileList() {
+    const container = document.getElementById('rdpRemoteFileList');
+    if (!container) return;
+    if (!rdpRemoteFileClipboard.length) {
+        container.innerHTML = '<div class="rdp-file-empty">远程剪贴板暂无文件</div>';
+        return;
+    }
+    container.innerHTML = rdpRemoteFileClipboard.map((file, i) => {
+        return `<div class="rdp-file-item" data-file-idx="${i}">
+            <span class="rdp-file-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+            <span class="rdp-file-size">${formatFileSize(file.size)}</span>
+            <button class="btn-sm rdp-file-download-btn" data-download-idx="${i}">下载</button>
+        </div>`;
+    }).join('');
+    container.querySelectorAll('[data-download-idx]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = Number(e.target.dataset.downloadIdx);
+            const file = rdpRemoteFileClipboard[idx];
+            if (file) downloadRemoteFilesToLocal([file]);
+        });
+    });
+}
+function escapeHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function renderIncomingFileList() {
+    const container = document.getElementById('rdpRemoteFileList');
+    if (!container) return;
+    if (!rdpIncomingFileClipboard.length) {
+        if (rdpRemoteFileClipboard.length) renderRemoteFileList();
+        else container.innerHTML = '<div class="rdp-file-empty">远程剪贴板暂无文件</div>';
+        return;
+    }
+    container.innerHTML = '<div class="rdp-file-section-label">待粘贴到远程</div>' + rdpIncomingFileClipboard.map((file, i) => {
+        return `<div class="rdp-file-item" data-incoming-idx="${i}">
+            <span class="rdp-file-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+            <span class="rdp-file-size">${formatFileSize(file.size)}</span>
+        </div>`;
+    }).join('') + (rdpRemoteFileClipboard.length ? '<div class="rdp-file-section-label">远程复制文件</div>' + rdpRemoteFileClipboard.map((file, i) => {
+        return `<div class="rdp-file-item" data-file-idx="${i}">
+            <span class="rdp-file-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+            <span class="rdp-file-size">${formatFileSize(file.size)}</span>
+            <button class="btn-sm rdp-file-download-btn" data-download-idx="${i}">下载</button>
+        </div>`;
+    }).join('') : '');
+    container.querySelectorAll('[data-download-idx]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = Number(e.target.dataset.downloadIdx);
+            const file = rdpRemoteFileClipboard[idx];
+            if (file) downloadRemoteFilesToLocal([file]);
+        });
+    });
+}
+function consumeIncomingFileClipboard() {
+    if (!rdpIncomingFileClipboard.length) return false;
+    const files = rdpIncomingFileClipboard;
+    rdpIncomingFileClipboard = [];
+    renderIncomingFileList();
+    if (!connected || !rdpSocket || rdpSocket.readyState !== WebSocket.OPEN) return false;
+    // Check if it's SFTP clipboard (from SSH)
+    const isSftpClipboard = files.some((f) => f?.path === 'sftp-clipboard');
+    if (isSftpClipboard) {
+        rdpSocket.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste' }));
+        setClipboardHint('正在从 SSH 粘贴文件到远程共享盘...', 'info');
+        return true;
+    }
+    // Check if it's local files with dataUrl
+    const localFiles = files.filter((f) => f?.dataUrl);
+    if (localFiles.length) {
+        sendRdpFilesClipboard(localFiles);
+        return true;
+    }
+    // Default: treat as SFTP clipboard
+    rdpSocket.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste' }));
+    setClipboardHint('正在粘贴文件到远程共享盘...', 'info');
+    return true;
 }
 function fileToDataUrl(file) {
     return new Promise((resolve, reject) => {
@@ -1257,18 +1346,21 @@ async function connect() {
                             setClipboardHint(ok ? '远程剪贴板已自动同步到本机' : '已收到远程剪贴板；浏览器阻止自动写入，请点“复制到本机”', ok ? 'success' : 'warning');
                         });
                     } else if (msg.type === 'rdp-remote-files' && Array.isArray(msg.files)) {
-                        const fileMeta = msg.files.map((f) => ({
+                        // Remote Windows files were copied → xfreerdp downloaded them to server temp dir
+                        // Only store metadata, don't transfer until user acts
+                        rdpRemoteFileClipboard = msg.files.map((f) => ({
                             id: f.path,
                             name: f.name,
                             size: f.size,
-                            path: f.path,
                             remotePath: f.path,
                         }));
-                        notifyParentSharedFileClipboard(fileMeta);
-                        // Also trigger browser download so files land on user's local machine
-                        downloadRemoteFilesToLocal(fileMeta);
-                        setClipboardHint(`远程 Windows 复制了 ${msg.files.length} 个文件，已下载到本机，也可到 SSH 文件管理器粘贴`, 'success');
-                        setTransientStatus(`远程文件已下载：${msg.files.map((f) => f.name).join('、')}`);
+                        renderRemoteFileList();
+                        setClipboardHint(`远程 Windows 复制了 ${msg.files.length} 个文件，点"文件"按钮查看和下载`, 'success');
+                        setTransientStatus(`远程剪贴板有 ${msg.files.length} 个文件`);
+                        // Notify parent with metadata only (no dataUrl, no auto-transfer)
+                        notifyParentSharedFileClipboard(rdpRemoteFileClipboard.map((f) => ({
+                            id: f.id, name: f.name, size: f.size, remotePath: f.remotePath,
+                        })));
                     }
                 } catch {}
                 return;
@@ -2162,6 +2254,8 @@ function installLocalClipboardBridge() {
         event.preventDefault();
         const files = [];
         if (protocolLabel() === 'RDP') {
+            // First check if there are incoming shared files (from SSH) waiting to be pasted
+            if (consumeIncomingFileClipboard()) return;
             try {
                 const items = await navigator.clipboard?.read?.();
                 for (const item of items || []) {
@@ -2248,8 +2342,10 @@ async function sendRdpFilesClipboard(files) {
                 setTransientStatus(`文件已写入 \\\\tsclient\\zephyr-share，请在 Windows 资源管理器查看`);
             }
         }
-        // 2. Also relay to parent for SSH targets
-        notifyParentSharedFileClipboard(sharedFiles);
+        // 2. Also notify parent with metadata only (no auto-transfer to SSH)
+        notifyParentSharedFileClipboard(sharedFiles.map((f) => ({
+            id: f.id, name: f.name, size: f.size, dataUrl: f.dataUrl, mime: f.mime,
+        })));
         return true;
     } catch (err) {
         setClipboardHint(err.message || '文件剪贴板读取失败', 'warning');
@@ -2751,6 +2847,13 @@ clipboardSendBtn?.addEventListener('click', async () => {
     }
 });
 clipboardCopyRemoteBtn?.addEventListener('click', () => copyRemoteClipboardToLocal());
+document.getElementById('rdpFileDownloadAllBtn')?.addEventListener('click', () => {
+    if (rdpRemoteFileClipboard.length) downloadRemoteFilesToLocal(rdpRemoteFileClipboard);
+});
+document.getElementById('rdpFilePasteToRemoteBtn')?.addEventListener('click', () => {
+    if (consumeIncomingFileClipboard()) return;
+    setClipboardHint('没有待粘贴的文件', 'info');
+});
 stage?.addEventListener('focus', () => {
     if (connected && (rdpInputSender)) syncLocalClipboardToRemote({ paste: false, source: 'stage-focus', silent: true }).catch(() => {});
 });
@@ -2861,10 +2964,11 @@ window.addEventListener('message', (event) => {
         }
         return;
     }
-    if (event.data.type === 'shared-file-clipboard-available' && rdpSocket && rdpSocket.readyState === WebSocket.OPEN) {
-        // Parent notified us that files are available — trigger paste to RDP
-        rdpSocket.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste' }));
-        setClipboardHint('正在从其他终端粘贴文件到远程共享盘...', 'info');
+    if (event.data.type === 'shared-file-clipboard-available') {
+        // Parent notified us that files are available — store metadata, don't transfer yet
+        rdpIncomingFileClipboard = Array.from(event.data.files || []);
+        renderIncomingFileList();
+        setClipboardHint(`收到 ${rdpIncomingFileClipboard.length} 个文件，Ctrl+V 粘贴到远程`, 'info');
         return;
     }
     if (event.data.type === 'ai-remote-desktop-action') {
