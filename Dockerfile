@@ -42,6 +42,7 @@ COPY patches/freerdp-2.11.7 /tmp/zephyr-freerdp-patches
 RUN /bin/sh /tmp/zephyr-freerdp-patches/apply.sh && \
     cmake -S . -B build \
       -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_FLAGS="-Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion" \
       -DCMAKE_INSTALL_PREFIX=/opt/freerdp-zephyr \
       -DWITH_SERVER=OFF \
       -DWITH_CLIENT=ON \
