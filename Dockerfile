@@ -122,7 +122,6 @@ ENV ZEPHYR_VERSION=${ZEPHYR_VERSION}
 # Enable native H.264 passthrough by default for maximum performance
 ENV RDP_NATIVE_H264=true
 ENV RDP_ALLOW_GFX_FALLBACK=true
-ENV RDP_H264_FPS=60
 
 # 运行时诊断
 RUN echo "=== runtime diagnostics ===" && \

@@ -321,7 +321,7 @@ RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zeph
 | `RDP_ALLOW_GFX_FALLBACK` | `true` | 允许在原生 H.264 不可用时回退到 x11grab+ffmpeg |
 | `RDP_H264_WIDTH` | `1920` | 流宽度 |
 | `RDP_H264_HEIGHT` | `1080` | 流高度 |
-| `RDP_H264_FPS` | `60` | 帧率（15-60） |
+| `RDP_H264_FPS` | `30` | 帧率（15-60） |
 | `RDP_H264_THREADS` | `2` | x264 编码线程数 |
 | `RDP_FREERDP_BIN` | `xfreerdp` | 原生 H.264 模式使用的 FreeRDP 二进制路径 |
 | `RDP_FALLBACK_FREERDP_BIN` | `/usr/bin/xfreerdp` | 回退模式使用的 FreeRDP 二进制路径 |

@@ -4018,7 +4018,7 @@ editorLspWss.on('connection', handleEditorLspConnection);
 
 const RDP_STREAM_WIDTH = Number(process.env.RDP_H264_WIDTH || 1920);
 const RDP_STREAM_HEIGHT = Number(process.env.RDP_H264_HEIGHT || 1080);
-const RDP_STREAM_FPS = Number(process.env.RDP_H264_FPS || 60);
+const RDP_STREAM_FPS = Number(process.env.RDP_H264_FPS || 30);
 const RDP_NATIVE_H264 = process.env.RDP_NATIVE_H264 === 'true';
 const RDP_ALLOW_GFX_FALLBACK = process.env.RDP_ALLOW_GFX_FALLBACK === 'true';
 const rdpPipes = new Map();
@@ -4081,8 +4081,8 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     let streamWidth = evenClampRdpSize(options.width || RDP_STREAM_WIDTH, 800, 3840);
     let streamHeight = evenClampRdpSize(options.height || RDP_STREAM_HEIGHT, 600, 2160);
     const aspectMode = String(options.mode || '').toLowerCase();
-    const qualityMode = ['performance', 'balanced', 'quality'].includes(String(options.quality || '').toLowerCase()) ? String(options.quality).toLowerCase() : 'performance';
-    const streamMode = String(options.stream || 'h264').toLowerCase() === 'av' ? 'av' : 'h264';
+    const qualityMode = ['performance', 'balanced', 'quality'].includes(String(options.quality || '').toLowerCase()) ? String(options.quality).toLowerCase() : 'balanced';
+    const streamMode = String(options.stream || '').toLowerCase() === 'av' ? 'av' : 'h264';
     const streamFps = Math.max(15, Math.min(60, Number(options.fps) || RDP_STREAM_FPS));
     const isPerf = qualityMode === 'performance';
     const isQual = qualityMode === 'quality';
@@ -4114,7 +4114,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     try { fs.mkdirSync(shareDir, { recursive: true }); } catch {}
     const pulseDir = `/tmp/zephyr-pulse-${connId}`;
     const pulseRuntimeDir = `${pulseDir}/runtime`;
-    const env = { ...process.env, DISPLAY: xvfbDisp, ZEPHYR_RDP_H264_PIPE: fifoPath, ZEPHYR_RDP_H264_SKIP_GDI: process.env.ZEPHYR_RDP_H264_SKIP_GDI || '1', PULSE_SERVER: `unix:${pulseDir}/native`, PULSE_RUNTIME_PATH: pulseRuntimeDir, XDG_RUNTIME_DIR: pulseRuntimeDir };
+    const env = { ...process.env, DISPLAY: xvfbDisp, ZEPHYR_RDP_H264_PIPE: fifoPath, PULSE_SERVER: `unix:${pulseDir}/native`, PULSE_RUNTIME_PATH: pulseRuntimeDir, XDG_RUNTIME_DIR: pulseRuntimeDir };
 
     let pulseaudio = null;
     const rdpAudioBackend = (() => {
@@ -4159,7 +4159,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
             ? ['-wallpaper', '-themes', '-aero', '-window-drag', '-menu-anims']
             : ['+wallpaper', '+themes', '+aero', '+window-drag', '+menu-anims']),
         '+fast-path',
-        '+mouse-motion',
+        '-mouse-motion',
         '/log-level:ERROR',
     ];
     const nativeH264 = streamMode !== 'av' && RDP_NATIVE_H264 && fs.existsSync(fifoPath);
@@ -4233,11 +4233,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         finder.stdout.on('data', (d) => { out += d.toString('utf8'); });
         finder.on('close', () => {
             activeWindowId = out.trim().split(/\s+/).find(Boolean) || null;
-            if (activeWindowId) {
-                console.info('[rdp-h264]', 'xfreerdp window detected', { connId, window: activeWindowId });
-                const focuser = spawn('xdotool', ['windowactivate', '--sync', activeWindowId, 'windowfocus', activeWindowId], { env, stdio: ['ignore', 'ignore', 'ignore'] });
-                focuser.on('error', () => {});
-            }
+            if (activeWindowId) console.info('[rdp-h264]', 'xfreerdp window detected', { connId, window: activeWindowId });
         });
     }, 2200);
 
@@ -4257,11 +4253,6 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         stopping: false,
     };
     rdpPipes.set(connId, pipe);
-    // Start the persistent native input injector immediately so the first
-    // click/key does not pay a process-start penalty.
-    if (XINPUT_AVAILABLE) {
-        pipe.xinput = startXinputProcess(pipe);
-    }
 
     const markReady = () => {
         if (!pipe.ready) console.info('[rdp-h264]', 'pipeline ready', { connId, target: `${targetHost}:${targetPort}`, width: streamWidth, height: streamHeight, fps: streamFps, quality: qualityMode });
@@ -4937,9 +4928,9 @@ rdpH264Wss.on('connection', async (ws, req) => {
         const requestedWidth = Number(url.searchParams.get('width')) || RDP_STREAM_WIDTH;
         const requestedHeight = Number(url.searchParams.get('height')) || RDP_STREAM_HEIGHT;
         const requestedMode = url.searchParams.get('mode') || '';
-        const requestedQuality = ['performance', 'balanced', 'quality'].includes(String(url.searchParams.get('quality') || '').toLowerCase()) ? String(url.searchParams.get('quality')).toLowerCase() : 'performance';
+        const requestedQuality = ['performance', 'balanced', 'quality'].includes(String(url.searchParams.get('quality') || '').toLowerCase()) ? String(url.searchParams.get('quality')).toLowerCase() : 'balanced';
         const requestedFps = Math.max(15, Math.min(60, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
-        const requestedStream = String(url.searchParams.get('stream') || 'h264').toLowerCase() === 'av' ? 'av' : 'h264';
+        const requestedStream = String(url.searchParams.get('stream') || 'av').toLowerCase() === 'h264' ? 'h264' : 'av';
         if (pipe && requestedStream === 'av') {
             // fMP4 clients must receive ftyp/moov from the beginning; mid-stream attach causes MSE demux errors.
             cleanupPipe(connId);
