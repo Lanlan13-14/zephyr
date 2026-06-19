@@ -3870,8 +3870,8 @@ server.on('upgrade', (req, socket, head) => {
 
 editorLspWss.on('connection', handleEditorLspConnection);
 
-const RDP_STREAM_WIDTH = Number(process.env.RDP_H264_WIDTH || 1280);
-const RDP_STREAM_HEIGHT = Number(process.env.RDP_H264_HEIGHT || 720);
+const RDP_STREAM_WIDTH = Number(process.env.RDP_H264_WIDTH || 1920);
+const RDP_STREAM_HEIGHT = Number(process.env.RDP_H264_HEIGHT || 1080);
 const RDP_STREAM_FPS = Number(process.env.RDP_H264_FPS || 30);
 const RDP_NATIVE_H264 = process.env.RDP_NATIVE_H264 === 'true';
 const RDP_ALLOW_GFX_FALLBACK = process.env.RDP_ALLOW_GFX_FALLBACK === 'true';
@@ -3997,8 +3997,8 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         `/p:${password}`,
         '/cert:ignore',
         `/size:${streamWidth}x${streamHeight}`,
-        isPerf ? '/bpp:24' : '/bpp:32',
-        isPerf ? '/network:broadband' : isQual ? '/network:lan' : '/network:wan',
+        '/bpp:32',
+        '/network:lan',
         ...(RDP_NATIVE_H264 && !RDP_ALLOW_GFX_FALLBACK ? ['/gfx:AVC444'] : ['+gfx']),
         '+fonts',
         '+clipboard',
@@ -4006,11 +4006,9 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         ...(process.env.RDP_AUDIO === 'false' ? [] : (rdpAudioBackend === 'pulse' ? ['/sound:sys:pulse,format:1,rate:44100,channel:2', '+async-channels'] : rdpAudioBackend === 'alsa-pulse' ? ['/audio-mode:0', '/sound:sys:alsa,format:1,rate:44100,channel:2', '+async-channels'] : [])),
         ...(isPerf
             ? ['-wallpaper', '-themes', '-aero', '-window-drag', '-menu-anims']
-            : isQual
-                ? ['+wallpaper', '+themes', '+aero', '+window-drag', '+menu-anims']
-                : ['+wallpaper', '+themes', '+aero', '-window-drag', '-menu-anims']),
+            : ['+wallpaper', '+themes', '+aero', '+window-drag', '+menu-anims']),
         '-fast-path',
-        ...(isQual ? [] : ['-mouse-motion']),
+        '+mouse-motion',
         '/log-level:WARN',
     ];
     const nativeH264 = RDP_NATIVE_H264 && fs.existsSync(fifoPath);
@@ -4018,10 +4016,10 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     const xfreerdp = rdpSpawn(xfreerdpBin, xfreerdpArgs, { env });
     rdpAttachLog(xfreerdp, 'xfreerdp', 'warn');
 
-    const x264Preset = isPerf ? 'ultrafast' : isQual ? 'veryfast' : 'superfast';
-    const x264Crf = isPerf ? '32' : isQual ? '20' : '26';
-    const x264Profile = isQual ? 'main' : 'baseline';
-    const x264Params = `repeat-headers=1:scenecut=0:open-gop=0${isQual ? ':ref=2' : ''}`;
+    const x264Preset = isPerf ? 'superfast' : isQual ? 'medium' : 'veryfast';
+    const x264Crf = isPerf ? '24' : isQual ? '16' : '20';
+    const x264Profile = isQual ? 'high' : 'main';
+    const x264Params = `repeat-headers=1:scenecut=0:open-gop=0:ref=${isQual ? '3' : '2'}:bframes=2:subme=${isQual ? '9' : '7'}:trellis=2`;
     const ffmpegArgs = [
         '-hide_banner', '-loglevel', 'warning',
         '-f', 'x11grab', '-draw_mouse', '0',
