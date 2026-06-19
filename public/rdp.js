@@ -90,6 +90,7 @@ let rdpFileClipboardSeq = 0;
 const rdpFileClipboardFiles = new Map();
 
 const RDP_FILE_CLIPBOARD_MIMETYPE = 'application/vnd.zephyr.rdp.file-clipboard';
+const RDP_SHARED_FILE_MAX_BYTES = 32 * 1024 * 1024;
 
 const KEY = {
     BACKSPACE: 0xff08,
@@ -175,6 +176,40 @@ function notifyParentCloseRequest(reason = 'remote-desktop-closed') {
         });
         window.parent.postMessage({ source: 'zephyr-terminal', type: 'close-request', tabId: params?.tabId || tabId, reason }, '*');
     }
+}
+function notifyParentSharedClipboardText(text = '') {
+    if (embeddedMode && window.parent && window.parent !== window && text) {
+        window.parent.postMessage({ source: 'zephyr-terminal', type: 'shared-clipboard-text', tabId: params?.tabId || tabId, text: String(text) }, '*');
+    }
+}
+function notifyParentSharedFileClipboard(files = []) {
+    if (embeddedMode && window.parent && window.parent !== window && files?.length) {
+        window.parent.postMessage({ source: 'zephyr-terminal', type: 'shared-file-clipboard', tabId: params?.tabId || tabId, files }, '*');
+    }
+}
+function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+        reader.readAsDataURL(file);
+    });
+}
+async function readRdpClipboardFilesForSharing(files = []) {
+    const list = Array.from(files || []).filter(Boolean);
+    const total = list.reduce((sum, file) => sum + (Number(file.size) || 0), 0);
+    if (total > RDP_SHARED_FILE_MAX_BYTES) throw new Error(`跨窗口文件剪贴板暂限 ${Math.round(RDP_SHARED_FILE_MAX_BYTES / 1024 / 1024)}MB，本次 ${Math.round(total / 1024 / 1024)}MB`);
+    const result = [];
+    for (const file of list) {
+        result.push({
+            id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+            name: file.name || 'clipboard-file',
+            size: Number(file.size) || 0,
+            mime: file.type || 'application/octet-stream',
+            dataUrl: await fileToDataUrl(file),
+        });
+    }
+    return result;
 }
 
 function setStatus(state, message = '') {
@@ -1191,6 +1226,7 @@ async function connect() {
                     } else if (msg.type === 'clipboard' && typeof msg.text === 'string') {
                         lastRemoteClipboard = msg.text;
                         if (remoteClipboardText) remoteClipboardText.value = msg.text;
+                        notifyParentSharedClipboardText(msg.text);
                         setClipboardHint(`收到远程剪贴板 ${msg.text.length} 字符，正在同步到本机...`, 'info');
                         writeHostClipboard(msg.text).then((ok) => {
                             clipboardAutoWriteOk = ok;
@@ -2103,8 +2139,8 @@ function installLocalClipboardBridge() {
                 console.debug('[rdp-client]', 'clipboard file read unavailable', { error: err.message });
             }
             if (files.length) {
-                await sendRdpFilesClipboard(files, { paste: true, source: 'keyboard-paste-shortcut' });
-                return;
+                const ok = await sendRdpFilesClipboard(files, { paste: true, source: 'keyboard-paste-shortcut' });
+                if (ok) return;
             }
         }
         await syncLocalClipboardToRemote({ paste: true, source: 'keyboard-paste-shortcut', force: true });
@@ -2156,9 +2192,17 @@ async function handleZephyrRdpInstruction() {}
 async function sendRdpFilesClipboard(files) {
     const list = Array.from(files || []).filter(Boolean);
     if (!list.length || protocolLabel() !== 'RDP') return false;
-    setClipboardHint('当前自有 RDP 管线支持文本剪贴板，文件剪贴板已禁用', 'warning');
-    setTransientStatus('RDP 文件剪贴板暂不可用');
-    return false;
+    try {
+        const sharedFiles = await readRdpClipboardFilesForSharing(list);
+        notifyParentSharedFileClipboard(sharedFiles);
+        setClipboardHint(`已捕获 ${sharedFiles.length} 个文件，可到 SSH 文件管理器粘贴`, 'success');
+        setTransientStatus(`文件已同步到 Zephyr 剪贴板：${sharedFiles.map((f) => f.name).join('、')}`);
+        return true;
+    } catch (err) {
+        setClipboardHint(err.message || '文件剪贴板读取失败', 'warning');
+        setTransientStatus(err.message || '文件剪贴板读取失败');
+        return false;
+    }
 }
 
 function clipboardEventFiles(event) {
@@ -2734,6 +2778,22 @@ window.addEventListener('message', (event) => {
         focusMobileKeyboard();
     }
     if (event.data.type === 'reconnect-terminal') reconnect();
+    if (event.data.type === 'shared-clipboard-text') {
+        const text = String(event.data.text || '');
+        if (text && connected && rdpInputSender) {
+            lastLocalClipboardText = text;
+            lastLocalClipboardSentAt = Date.now();
+            if (clipboardText) clipboardText.value = text;
+            sendRdpClipboardPaste(text, { paste: false });
+            setClipboardHint(`已同步 SSH 文本到远程剪贴板 ${text.length} 字符`, 'success');
+        }
+        return;
+    }
+    if (event.data.type === 'shared-file-clipboard-read') {
+        const requestId = String(event.data.requestId || '');
+        window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard-data', tabId: params?.tabId || tabId, requestId, files: [], error: 'RDP 文件剪贴板只能接收本机粘贴/拖拽文件，不能反向读取远程 Windows 文件内容' }, '*');
+        return;
+    }
     if (event.data.type === 'ai-remote-desktop-action') {
         const actionId = String(event.data.actionId || '');
         performAiRemoteDesktopAction(event.data).then((result = {}) => {
@@ -2748,6 +2808,7 @@ window.addEventListener('message', (event) => {
 
 setupFloatingPanels();
 setupMobilePointerMouse();
+installLocalClipboardBridge();
 fitBtn.classList.add('active');
 setStatus('connecting');
 connect();

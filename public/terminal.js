@@ -37,6 +37,21 @@ function notifyParentActivity() {
         window.parent.postMessage({ source: 'zephyr-terminal', type: 'activity', tabId: params?.tabId }, '*');
     }
 }
+function notifyParentSharedClipboardText(text = '') {
+    if (embeddedMode && window.parent && window.parent !== window && text) {
+        window.parent.postMessage({ source: 'zephyr-terminal', type: 'shared-clipboard-text', tabId: params?.tabId, text: String(text) }, '*');
+    }
+}
+function requestParentSharedFileClipboard() {
+    if (embeddedMode && window.parent && window.parent !== window) {
+        window.parent.postMessage({ source: 'zephyr-terminal', type: 'request-shared-file-clipboard', tabId: params?.tabId }, '*');
+    }
+}
+function consumeParentSharedFileClipboard(files = [], sourceTabId = '') {
+    if (embeddedMode && window.parent && window.parent !== window) {
+        window.parent.postMessage({ source: 'zephyr-terminal', type: 'shared-file-clipboard-consume', tabId: params?.tabId, sourceTabId, files }, '*');
+    }
+}
 ['keydown', 'pointerdown', 'mousedown', 'touchstart'].forEach((eventName) => {
     document.addEventListener(eventName, notifyParentActivity, { passive: true, capture: true });
 });
@@ -1036,6 +1051,28 @@ window.addEventListener('message', (e) => {
         resizeCommandInput();
         cmdInput.focus?.();
         if (e.data.run !== false) sendCommand();
+        return;
+    }
+    if (e.data.type === 'shared-clipboard-text') {
+        const text = String(e.data.text || '');
+        if (text) {
+            sendData(prepareTerminalPastePayload(text), { source: 'shared-clipboard-text', forceFollow: true, applyModifiers: false });
+            showToast(`已粘贴跨窗口文本 ${text.length} 字符`, 'success');
+        }
+        return;
+    }
+    if (e.data.type === 'shared-file-clipboard-available') {
+        handleSharedFileClipboardAvailable(e.data.files || [], String(e.data.sourceTabId || ''));
+        return;
+    }
+    if (e.data.type === 'shared-file-clipboard-data') {
+        if (e.data.error) showToast(`跨窗口文件读取失败：${e.data.error}`, 'error');
+        else uploadSharedClipboardFiles(e.data.files || []);
+        return;
+    }
+    if (e.data.type === 'shared-file-clipboard-read') {
+        const requestId = String(e.data.requestId || '');
+        window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard-data', tabId: params?.tabId, requestId, files: [], error: 'SSH 文件剪贴板请通过服务端 SFTP 复制，当前源不提供浏览器文件数据' }, '*');
         return;
     }
     if (e.data.type === 'reset-mobile-keyboard') {
@@ -2065,6 +2102,7 @@ copyBtn.addEventListener('click', async () => {
     const originalText = copyBtn.textContent;
     try {
         await navigator.clipboard.writeText(text);
+        notifyParentSharedClipboardText(text);
         copyBtn.textContent = '已复制';
     } catch {
         const ta = document.createElement('textarea');
@@ -2109,6 +2147,7 @@ document.addEventListener('copy', (e) => {
     e.preventDefault();
     e.clipboardData?.setData('text/plain', text);
     cachedSelectionText = text;
+    notifyParentSharedClipboardText(text);
     console.debug('[TerminalCopy]', 'native copy overridden', {
         length: text.length,
         newlines: (text.match(/\n/g) || []).length,
@@ -4204,6 +4243,35 @@ function uploadFile(file) {
     });
 }
 
+function handleSharedFileClipboardAvailable(files = [], sourceTabId = '') {
+    const list = Array.from(files || []).filter((file) => file?.path || file?.dataUrl);
+    if (!list.length) return;
+    sftpClipboardAvailable = true;
+    updateMobileFileActions();
+    const names = list.map((file) => file.name || String(file.path).split('/').pop() || 'file').join('、');
+    showToast(`收到跨窗口文件剪贴板：${names}，正在粘贴到 ${currentPath}`, 'info');
+    if (!sftpReady) {
+        showFileManager();
+        initSFTP();
+    }
+    consumeParentSharedFileClipboard(list, sourceTabId);
+}
+async function uploadSharedClipboardFiles(files = []) {
+    const list = Array.from(files || []).filter((file) => file?.name && file?.dataUrl);
+    if (!list.length) return;
+    const converted = [];
+    for (const file of list) {
+        try {
+            const res = await fetch(file.dataUrl);
+            const blob = await res.blob();
+            converted.push(new File([blob], file.name, { type: file.mime || blob.type || 'application/octet-stream' }));
+        } catch (err) {
+            showToast(`读取跨窗口文件失败：${file.name || ''} ${err.message || err}`, 'error');
+        }
+    }
+    if (converted.length) uploadFiles(converted);
+}
+
 function uploadFiles(fileList) {
     const files = Array.from(fileList || []);
     if (!files.length) return;
@@ -5766,9 +5834,11 @@ function handleSFTPMessage(msg) {
         }
         case 'sftp-clipboard-set':
             if (msg.success) {
+                const mode = msg.mode === 'cut' ? '剪切' : '复制';
+                const count = msg.count || 0;
                 sftpClipboardAvailable = true;
                 updateMobileFileActions();
-                showToast(`${msg.mode === 'cut' ? '已剪切' : '已复制'} ${msg.count || 0} 项`, 'success');
+                showToast(`${mode} ${count} 项，可在任意 SSH 文件管理器粘贴`, 'success');
             } else {
                 sftpClipboardAvailable = false;
                 updateMobileFileActions();
@@ -9503,3 +9573,4 @@ window.addEventListener('beforeunload', () => {
 });
 
 main();
+requestParentSharedFileClipboard();

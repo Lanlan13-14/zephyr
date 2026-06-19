@@ -4,6 +4,7 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 let connections = [], activities = [], proxies = [], jumpHosts = [], sshKeys = [], settings = {};
+let zephyrSharedClipboard = { type: '', text: '', files: [], sourceTabId: '', sourcePage: '', updatedAt: 0 };
 let aiSettingsState = null;
 let aiChatSessions = [];
 let aiCurrentSessionId = null;
@@ -93,6 +94,104 @@ function apiMaybeForm(path, options = {}) {
         .then(async (res) => { const data = await res.json().catch(() => ({})); if (!res.ok) throw apiErrorFromResponse(res, data); return data; });
 }
 function toast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2600); }
+function terminalFrameById(tabId = '') {
+    const id = String(tabId || '').trim();
+    return id ? document.querySelector(`#terminalWorkspace iframe.terminal-frame[data-frame="${CSS.escape(id)}"]`) : null;
+}
+function terminalPageForTab(tabId = '') {
+    return String(terminalTabs.find((t) => t.id === tabId)?.page || 'terminal').toLowerCase();
+}
+function isRemoteDesktopPage(page = '') { return page === 'rdp' || page === 'novnc'; }
+function postToTerminalTab(tabId = '', message = {}) {
+    const frame = terminalFrameById(tabId);
+    if (!frame?.contentWindow) return false;
+    frame.contentWindow.postMessage({ source: 'zephyr-app', ...message }, '*');
+    return true;
+}
+function normalizeSharedClipboardFiles(files = []) {
+    return Array.from(files || []).map((file) => ({
+        id: String(file.id || ''),
+        name: String(file.name || (file.path ? file.path.split('/').pop() : '') || 'clipboard-file').slice(0, 255),
+        size: Number(file.size) || 0,
+        type: file.type === 'd' ? 'd' : '-',
+        path: String(file.path || ''),
+        mime: String(file.mime || ''),
+        dataUrl: String(file.dataUrl || ''),
+    })).filter((file) => file.path || file.dataUrl);
+}
+function updateZephyrSharedClipboard(next = {}) {
+    zephyrSharedClipboard = {
+        type: String(next.type || ''),
+        text: String(next.text || ''),
+        files: normalizeSharedClipboardFiles(next.files || []),
+        sourceTabId: String(next.sourceTabId || ''),
+        sourcePage: String(next.sourcePage || terminalPageForTab(String(next.sourceTabId || '')) || ''),
+        updatedAt: Date.now(),
+    };
+}
+function fileClipboardNames(files = []) {
+    return normalizeSharedClipboardFiles(files).map((f) => f.name || f.path.split('/').pop() || 'file').join('、');
+}
+function offerSharedClipboardToSshTargets(sourceTabId = '', files = []) {
+    const names = fileClipboardNames(files);
+    const targets = terminalTabs.filter((t) => !closingTerminalTabs.has(t.id) && t.id !== sourceTabId && t.page !== 'rdp' && t.page !== 'novnc' && t.iframe);
+    if (!targets.length) {
+        toast(names ? `已复制远程文件：${names}；打开 SSH 文件管理器后可粘贴` : '已复制远程文件');
+        return;
+    }
+    targets.forEach((target) => postToTerminalTab(target.id, { type: 'shared-file-clipboard-available', files, sourceTabId }));
+    toast(names ? `已复制 RDP 文件：${names}，可到 SSH 文件管理器粘贴` : '已复制 RDP 文件，可到 SSH 文件管理器粘贴');
+}
+function handleSharedClipboardMessage(data = {}) {
+    const sourceTabId = String(data.tabId || '');
+    if (data.type === 'shared-clipboard-text') {
+        const text = String(data.text || '');
+        updateZephyrSharedClipboard({ type: 'text', text, sourceTabId });
+        terminalTabs.filter((t) => t.id !== sourceTabId && t.iframe).forEach((target) => {
+            const page = terminalPageForTab(target.id);
+            if (isRemoteDesktopPage(page)) postToTerminalTab(target.id, { type: 'shared-clipboard-text', text, sourceTabId });
+        });
+        return true;
+    }
+    if (data.type === 'shared-file-clipboard') {
+        const files = normalizeSharedClipboardFiles(data.files || []);
+        if (!files.length) return true;
+        updateZephyrSharedClipboard({ type: 'files', files, sourceTabId });
+        offerSharedClipboardToSshTargets(sourceTabId, files);
+        return true;
+    }
+    if (data.type === 'request-shared-file-clipboard') {
+        if (zephyrSharedClipboard.type === 'files' && zephyrSharedClipboard.files.length) {
+            postToTerminalTab(sourceTabId, { type: 'shared-file-clipboard-available', files: zephyrSharedClipboard.files, sourceTabId: zephyrSharedClipboard.sourceTabId });
+            return true;
+        }
+        return true;
+    }
+    if (data.type === 'shared-file-clipboard-consume') {
+        const files = normalizeSharedClipboardFiles(data.files || zephyrSharedClipboard.files || []);
+        if (!files.length) return true;
+        const sourceTabIdForFiles = String(data.sourceTabId || zephyrSharedClipboard.sourceTabId || '');
+        const sourceFrame = terminalFrameById(sourceTabIdForFiles);
+        const targetFrame = terminalFrameById(sourceTabId);
+        if (sourceFrame?.contentWindow && targetFrame?.contentWindow) {
+            if (files.some((file) => file.dataUrl)) {
+                targetFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-data', requestId: '', files }, '*');
+                return true;
+            }
+            const requestId = `shared-file-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+            const relay = (event) => {
+                if (event.source !== sourceFrame.contentWindow || event.data?.source !== 'zephyr-terminal' || event.data?.type !== 'shared-file-clipboard-data' || event.data?.requestId !== requestId) return;
+                window.removeEventListener('message', relay, true);
+                targetFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-data', requestId, files: event.data.files || [], error: event.data.error || '' }, '*');
+            };
+            window.addEventListener('message', relay, true);
+            sourceFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-read', requestId, files }, '*');
+            window.setTimeout(() => window.removeEventListener('message', relay, true), 60000);
+        }
+        return true;
+    }
+    return false;
+}
 const systemThemeQuery = matchMedia('(prefers-color-scheme: dark)');
 function getSystemTheme() { return systemThemeQuery.matches ? 'dark' : 'light'; }
 function getAppearance() { return settings?.appearance || {}; }
@@ -5858,6 +5957,7 @@ function bindEvents() {
     });
     window.addEventListener('message', (e) => {
         if (e.data?.source !== 'zephyr-terminal') return;
+        if (handleSharedClipboardMessage(e.data)) return;
         if (e.data.type === 'ai-remote-desktop-action-result') {
             const actionId = String(e.data.actionId || '');
             const resolve = aiRemoteDesktopActionWaiters.get(actionId);
