@@ -167,11 +167,21 @@ Zephyr 会读取 `data/.env`，也可以通过 Docker `--env-file` 注入环境�
 ENCRYPTION_KEY=请替换为足够长的随机密钥
 PUBLIC_ORIGIN=https://ssh.example.com
 PORT=3000
+HTTPS_PORT=3443
+# 可选：挂载自有证书；未设置时 Zephyr 会自动生成 data/https/zephyr.{key,crt}
+# HTTPS_CERT_FILE=/app/data/https/fullchain.pem
+# HTTPS_KEY_FILE=/app/data/https/privkey.pem
 ```
 
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
-| `PORT` | Web 服务监听端口；Docker 内通常保持 `3000` | `3000` |
+| `HTTP_ENABLED` | 是否启用明文 HTTP 服务；默认禁用，建议仅调试或可信内网临时开启 | `false` |
+| `PORT` | HTTP Web 服务监听端口；仅 `HTTP_ENABLED=true` 时生效 | `3000` |
+| `HTTPS_ENABLED` | 是否启用内置 HTTPS 服务；RDP/WebCodecs 建议保持开启 | `true` |
+| `HTTPS_PORT` / `ZEPHYR_HTTPS_PORT` | 内置 HTTPS 服务监听端口；Docker 默认暴露 `3443` | `3443` |
+| `HTTPS_CERT_FILE` / `SSL_CERT_FILE` | 可选：自有 TLS 证书路径；未设置时自动生成自签证书到 `data/https/zephyr.crt` | `data/https/zephyr.crt` |
+| `HTTPS_KEY_FILE` / `SSL_KEY_FILE` | 可选：自有 TLS 私钥路径；未设置时自动生成自签私钥到 `data/https/zephyr.key` | `data/https/zephyr.key` |
+| `HTTPS_CERT_CN` / `PUBLIC_HOST` | 自动自签证书的 CN；SAN 会自动包含本机局域网 IPv4、`localhost`、`127.0.0.1`，也可用 `HTTPS_CERT_ALT_NAMES` 追加 | `localhost` |
 | `ENCRYPTION_KEY` | 备份导出/导入加密密钥，生产环境必须改为强随机字符串 | `please-change-this-key` |
 | `ZEPHYR_DATA_MLKEM768_PUBLIC_KEY_B64` / `ZEPHYR_DATA_MLKEM768_SECRET_KEY_B64` | 可选：外部注入 ML-KEM-768 数据字段加密密钥对；未设置时会自动生成到 `data/crypto/ml-kem-768-keypair.json` | 自动生成 |
 | `ZEPHYR_DATA_MLKEM768_KEY_FILE` | 可选：自动生成/读取 ML-KEM-768 数据字段加密密钥文件路径 | `data/crypto/ml-kem-768-keypair.json` |
@@ -183,6 +193,7 @@ PORT=3000
 
 注意：
 
+- RDP 使用浏览器 WebCodecs H.264 实时解码，建议通过 HTTPS 访问（内置 HTTPS 默认开启）；HTTP 或未被浏览器信任的自签证书环境可能导致 WebCodecs 不可用。
 - 使用 Passkey / WebAuthn 时，生产环境建议启用 HTTPS。
 - `PUBLIC_ORIGIN` 必须与实际访问地址一致，例如 `https://ssh.example.com`。生产环境配置为 HTTPS 后，登录 Cookie 会自动带 `Secure`。
 - Zephyr 会校验非 GET 请求的 `Origin` / `Referer` 与 `PUBLIC_ORIGIN` 同源，反代后的公开域名、协议配置不一致会导致写操作返回 403。

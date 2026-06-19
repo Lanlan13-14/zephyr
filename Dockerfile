@@ -113,6 +113,6 @@ RUN echo "=== runtime diagnostics ===" && \
     npm --version && \
     node -e "require('better-sqlite3'); console.log('better-sqlite3 loaded')"
 
-EXPOSE 3000
+EXPOSE 3443
 
 CMD ["node", "server.js"]

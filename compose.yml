@@ -1,0 +1,16 @@
+services:
+  zephyr-ssh:
+    image: ghcr.io/lanlan13-14/zephyr-ssh:latest
+    container_name: zephyr-ssh
+    restart: unless-stopped
+    env_file:
+      - ./zephyr-data/.env
+    ports:
+      - "3443:3443"
+    volumes:
+      - ./zephyr-data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

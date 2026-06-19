@@ -1,5 +1,7 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
+const { execFileSync } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { Client } = require('ssh2');
 const net = require('net');
@@ -56,12 +58,19 @@ const {
     cleanupMediaProbeCache,
 } = require('./preview/media/media-service');
 
+const HTTP_ENABLED = process.env.HTTP_ENABLED === 'true';
 const PORT = process.env.PORT || 3000;
+const HTTPS_ENABLED = process.env.HTTPS_ENABLED !== 'false';
+const HTTPS_PORT = Number(process.env.HTTPS_PORT || process.env.ZEPHYR_HTTPS_PORT || 3443);
 const SSH_STATS_ENABLED = process.env.SSH_STATS_ENABLED !== 'false';
 const APP_VERSION = getAppVersion();
 const app = express();
 
 const DATA_DIR = path.join(__dirname, 'data');
+const HTTPS_DIR = path.join(DATA_DIR, 'https');
+const HTTPS_KEY_FILE = process.env.HTTPS_KEY_FILE || process.env.SSL_KEY_FILE || path.join(HTTPS_DIR, 'zephyr.key');
+const HTTPS_CERT_FILE = process.env.HTTPS_CERT_FILE || process.env.SSL_CERT_FILE || path.join(HTTPS_DIR, 'zephyr.crt');
+const HTTPS_CERT_CN = process.env.HTTPS_CERT_CN || process.env.PUBLIC_HOST || 'localhost';
 const DB_FILE = path.join(DATA_DIR, 'zephyr.db');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
@@ -289,6 +298,61 @@ function requirePageAuth(req, res, next) {
     if (!session || session.mustChangePassword) return res.redirect('/');
     req.session = session;
     next();
+}
+
+function certificateAltNames() {
+    const names = new Set(['DNS:localhost', 'IP:127.0.0.1']);
+    const addHost = (value) => {
+        const host = String(value || '').trim();
+        if (!host) return;
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) names.add(`IP:${host}`);
+        else names.add(`DNS:${host}`);
+    };
+    addHost(HTTPS_CERT_CN);
+    try {
+        for (const iface of Object.values(os.networkInterfaces() || {})) {
+            for (const addr of iface || []) {
+                if (addr && addr.family === 'IPv4' && !addr.internal) addHost(addr.address);
+            }
+        }
+    } catch {}
+    for (const item of String(process.env.HTTPS_CERT_ALT_NAMES || '').split(',')) {
+        const v = item.trim();
+        if (!v) continue;
+        if (/^(DNS|IP):/i.test(v)) names.add(v);
+        else addHost(v);
+    }
+    return Array.from(names).join(',');
+}
+
+function ensureHttpsCertificate() {
+    if (!HTTPS_ENABLED) return null;
+    try { fs.mkdirSync(path.dirname(HTTPS_KEY_FILE), { recursive: true }); } catch {}
+    try { fs.mkdirSync(path.dirname(HTTPS_CERT_FILE), { recursive: true }); } catch {}
+    const hasMountedCert = fs.existsSync(HTTPS_KEY_FILE) && fs.existsSync(HTTPS_CERT_FILE);
+    if (!hasMountedCert) {
+        try {
+            const altNames = certificateAltNames();
+            execFileSync('openssl', [
+                'req', '-x509', '-nodes', '-newkey', 'rsa:2048', '-days', String(process.env.HTTPS_CERT_DAYS || 3650),
+                '-keyout', HTTPS_KEY_FILE, '-out', HTTPS_CERT_FILE,
+                '-subj', `/CN=${HTTPS_CERT_CN}`,
+                '-addext', `subjectAltName=${altNames}`,
+            ], { stdio: 'ignore' });
+            console.info('[https] generated self-signed certificate', { key: HTTPS_KEY_FILE, cert: HTTPS_CERT_FILE, altNames });
+        } catch (err) {
+            console.warn('[https] failed to generate self-signed certificate', { error: err.message, key: HTTPS_KEY_FILE, cert: HTTPS_CERT_FILE });
+            return null;
+        }
+    } else {
+        console.info('[https] using HTTPS certificate', { key: HTTPS_KEY_FILE, cert: HTTPS_CERT_FILE, mounted: true });
+    }
+    try {
+        return { key: fs.readFileSync(HTTPS_KEY_FILE), cert: fs.readFileSync(HTTPS_CERT_FILE) };
+    } catch (err) {
+        console.warn('[https] failed to read HTTPS certificate', { error: err.message, key: HTTPS_KEY_FILE, cert: HTTPS_CERT_FILE });
+        return null;
+    }
 }
 
 function rejectSocket(socket, statusCode = 401, statusText = 'Unauthorized') {
@@ -937,7 +1001,7 @@ async function testRDPConnection(conn, timeout = 10000) {
                 `/p:${conn.password || ''}`,
                 '/cert:ignore',
                 '/auth-only',
-                '/log-level:WARN',
+                '/log-level:ERROR',
             ];
             const timer = setTimeout(() => {
                 try { child?.kill('SIGTERM'); } catch {}
@@ -3832,6 +3896,8 @@ app.get('*', (req, res) => {
 });
 
 const server = http.createServer(app);
+const httpsOptions = ensureHttpsCertificate();
+const httpsServer = httpsOptions ? https.createServer(httpsOptions, app) : null;
 const wsServerOptions = {
     noServer: true,
     perMessageDeflate: false,
@@ -3843,7 +3909,7 @@ const editorLspWss = new WebSocketServer(wsServerOptions);
 const rdpH264Wss = new WebSocketServer(wsServerOptions);
 const rdpAudioWss = new WebSocketServer(wsServerOptions);
 
-server.on('upgrade', (req, socket, head) => {
+function handleHttpUpgrade(req, socket, head) {
     let pathname = '';
     try {
         pathname = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`).pathname;
@@ -3866,8 +3932,9 @@ server.on('upgrade', (req, socket, head) => {
     targetWss.handleUpgrade(req, socket, head, (ws) => {
         targetWss.emit('connection', ws, req);
     });
-});
-
+}
+server.on('upgrade', handleHttpUpgrade);
+if (httpsServer) httpsServer.on('upgrade', handleHttpUpgrade);
 editorLspWss.on('connection', handleEditorLspConnection);
 
 const RDP_STREAM_WIDTH = Number(process.env.RDP_H264_WIDTH || 1920);
@@ -3936,6 +4003,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     let streamHeight = evenClampRdpSize(options.height || RDP_STREAM_HEIGHT, 600, 2160);
     const aspectMode = String(options.mode || '').toLowerCase();
     const qualityMode = ['performance', 'balanced', 'quality'].includes(String(options.quality || '').toLowerCase()) ? String(options.quality).toLowerCase() : 'balanced';
+    const streamMode = String(options.stream || '').toLowerCase() === 'av' ? 'av' : 'h264';
     const streamFps = Math.max(15, Math.min(60, Number(options.fps) || RDP_STREAM_FPS));
     const isPerf = qualityMode === 'performance';
     const isQual = qualityMode === 'quality';
@@ -3965,7 +4033,9 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     const shareDir = `/tmp/zephyr-rdp-share-${connId}`;
     try { fs.rmSync(shareDir, { recursive: true, force: true }); } catch {}
     try { fs.mkdirSync(shareDir, { recursive: true }); } catch {}
-    const env = { ...process.env, DISPLAY: xvfbDisp, ZEPHYR_RDP_H264_PIPE: fifoPath, PULSE_SERVER: `unix:/tmp/zephyr-pulse-${connId}/native` };
+    const pulseDir = `/tmp/zephyr-pulse-${connId}`;
+    const pulseRuntimeDir = `${pulseDir}/runtime`;
+    const env = { ...process.env, DISPLAY: xvfbDisp, ZEPHYR_RDP_H264_PIPE: fifoPath, PULSE_SERVER: `unix:${pulseDir}/native`, PULSE_RUNTIME_PATH: pulseRuntimeDir, XDG_RUNTIME_DIR: pulseRuntimeDir };
 
     let pulseaudio = null;
     const rdpAudioBackend = (() => {
@@ -3975,14 +4045,15 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         return '';
     })();
     if (process.env.RDP_AUDIO !== 'false' && rdpAudioBackend) {
-        try { fs.rmSync(`/tmp/zephyr-pulse-${connId}`, { recursive: true, force: true }); } catch {}
-        try { fs.mkdirSync(`/tmp/zephyr-pulse-${connId}`, { recursive: true }); } catch {}
-        const asoundrcPath = `/tmp/zephyr-pulse-${connId}/asoundrc`;
+        try { fs.rmSync(pulseDir, { recursive: true, force: true }); } catch {}
+        try { fs.mkdirSync(pulseRuntimeDir, { recursive: true, mode: 0o700 }); } catch {}
+        try { fs.chmodSync(pulseRuntimeDir, 0o700); } catch {}
+        const asoundrcPath = `${pulseDir}/asoundrc`;
         try {
             fs.writeFileSync(asoundrcPath, 'pcm.!default { type pulse }\nctl.!default { type pulse }\n');
             env.ALSA_CONFIG_PATH = asoundrcPath;
         } catch {}
-        pulseaudio = rdpSpawn('pulseaudio', ['--daemonize=no', '--exit-idle-time=-1', '--disallow-exit=true', `--load=module-native-protocol-unix socket=/tmp/zephyr-pulse-${connId}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
+        pulseaudio = rdpSpawn('pulseaudio', ['--daemonize=no', '--exit-idle-time=-1', '--disallow-exit=true', '--log-target=stderr', `--load=module-native-protocol-unix socket=${pulseDir}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
         rdpAttachLog(pulseaudio, 'pulseaudio', 'warn');
         await new Promise((resolve) => setTimeout(resolve, 900));
         console.info('[rdp-audio]', 'audio backend enabled', { connId, backend: rdpAudioBackend });
@@ -4000,39 +4071,69 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         `/size:${streamWidth}x${streamHeight}`,
         '/bpp:32',
         '/network:lan',
-        ...(RDP_NATIVE_H264 && !RDP_ALLOW_GFX_FALLBACK ? ['/gfx:AVC444'] : ['+gfx']),
+        ...(RDP_NATIVE_H264 && !RDP_ALLOW_GFX_FALLBACK ? ['/gfx:AVC444'] : ['/gfx:AVC444']),
         '+fonts',
         '+clipboard',
         `/drive:zephyr-share,${shareDir}`,
-        ...(process.env.RDP_AUDIO === 'false' ? [] : (rdpAudioBackend === 'pulse' ? ['/sound:sys:pulse,format:1,rate:44100,channel:2', '+async-channels'] : rdpAudioBackend === 'alsa-pulse' ? ['/audio-mode:0', '/sound:sys:alsa,format:1,rate:44100,channel:2', '+async-channels'] : [])),
+        ...(process.env.RDP_AUDIO === 'false' ? [] : (rdpAudioBackend === 'pulse' ? ['/sound:sys:pulse,format:1,rate:44100,channel:2', '-async-channels'] : rdpAudioBackend === 'alsa-pulse' ? ['/audio-mode:0', '/sound:sys:alsa,format:1,rate:44100,channel:2', '+async-channels'] : [])),
         ...(isPerf
             ? ['-wallpaper', '-themes', '-aero', '-window-drag', '-menu-anims']
             : ['+wallpaper', '+themes', '+aero', '+window-drag', '+menu-anims']),
-        '-fast-path',
-        '+mouse-motion',
-        '/log-level:WARN',
+        '+fast-path',
+        '-mouse-motion',
+        '/log-level:ERROR',
     ];
-    const nativeH264 = RDP_NATIVE_H264 && fs.existsSync(fifoPath);
+    const nativeH264 = streamMode !== 'av' && RDP_NATIVE_H264 && fs.existsSync(fifoPath);
     const xfreerdpBin = nativeH264 ? (process.env.RDP_FREERDP_BIN || 'xfreerdp') : (process.env.RDP_FALLBACK_FREERDP_BIN || '/usr/bin/xfreerdp');
     const xfreerdp = rdpSpawn(xfreerdpBin, xfreerdpArgs, { env });
     rdpAttachLog(xfreerdp, 'xfreerdp', 'warn');
 
-    const x264Preset = isPerf ? 'superfast' : isQual ? 'faster' : 'veryfast';
-    const x264Crf = isPerf ? '23' : isQual ? '16' : '19';
-    const x264Profile = isQual ? 'high' : 'main';
-    const x264Params = isPerf
-        ? 'repeat-headers=1:scenecut=0:open-gop=0:ref=1:bframes=0:subme=4:trellis=0:sliced-threads=1'
-        : isQual
-            ? 'repeat-headers=1:scenecut=0:open-gop=0:ref=3:bframes=0:subme=7:trellis=1:sliced-threads=1'
-            : 'repeat-headers=1:scenecut=0:open-gop=0:ref=2:bframes=0:subme=6:trellis=1:sliced-threads=1';
-    const ffmpegArgs = [
+    const heavyStream = streamWidth * streamHeight * streamFps >= 1920 * 1080 * 60;
+    const avMode = streamMode === 'av';
+    const x264Preset = avMode ? (isQual ? 'superfast' : 'ultrafast') : (isPerf ? 'superfast' : heavyStream ? 'veryfast' : isQual ? 'faster' : 'veryfast');
+    const x264Crf = isPerf ? '23' : heavyStream ? '20' : isQual ? '16' : '19';
+    const x264Profile = avMode ? 'high' : (heavyStream ? 'main' : (isQual ? 'high' : 'main'));
+    const x264Params = avMode
+        ? 'repeat-headers=1:scenecut=0:open-gop=0:keyint=15:min-keyint=15:sliced-threads=1'
+        : isPerf
+            ? 'repeat-headers=1:scenecut=0:open-gop=0:ref=1:bframes=0:subme=4:trellis=0:sliced-threads=1'
+            : isQual
+                ? 'repeat-headers=1:scenecut=0:open-gop=0:ref=3:bframes=0:subme=7:trellis=1:sliced-threads=1'
+                : 'repeat-headers=1:scenecut=0:open-gop=0:ref=2:bframes=0:subme=6:trellis=1:sliced-threads=1';
+    const encoderThreads = String(Math.max(1, Math.min(Number(process.env.RDP_H264_THREADS || 2), os.cpus()?.length || 2)));
+    const pixelsPerSecond = streamWidth * streamHeight * streamFps;
+    const bitrateScale = pixelsPerSecond / (3840 * 2160 * 60);
+    const avCrf = qualityMode === 'quality' ? 12 : qualityMode === 'performance' ? 22 : 16;
+    const avMaxrateKbps = Math.max(80000, Math.round((qualityMode === 'quality' ? 500000 : qualityMode === 'performance' ? 200000 : 350000) * Math.max(0.05, (streamWidth * streamHeight * streamFps) / (3840 * 2160 * 60))));
+    const avLevel = pixelsPerSecond >= 3840 * 2160 * 50 ? '5.2' : pixelsPerSecond >= 3840 * 2160 * 25 || pixelsPerSecond >= 2560 * 1440 * 50 ? '5.1' : pixelsPerSecond >= 1920 * 1080 * 50 ? '4.2' : '4.1';
+    const avCodec = avLevel === '5.2' ? 'avc1.640034' : avLevel === '5.1' ? 'avc1.640033' : avLevel === '4.2' ? 'avc1.64002a' : 'avc1.640029';
+    const avMime = `video/mp4; codecs="${avCodec},mp4a.40.2"`;
+    const avAudioInput = (streamMode === 'av' && process.env.RDP_AUDIO !== 'false' && pulseaudio) ? ['-f', 'pulse', '-thread_queue_size', '256', '-i', 'zephyr_rdp_audio.monitor'] : [];
+    const ffmpegArgs = streamMode === 'av' ? [
+        '-hide_banner', '-loglevel', 'warning',
+        '-fflags', '+genpts+nobuffer', '-flags', 'low_delay',
+        '-f', 'x11grab', '-draw_mouse', '0',
+        '-framerate', String(streamFps),
+        '-video_size', `${streamWidth}x${streamHeight}`,
+        '-i', xvfbDisp,
+        ...avAudioInput,
+        '-map', '0:v:0', ...(avAudioInput.length ? ['-map', '1:a:0'] : []),
+        '-c:v', 'libx264', '-threads', encoderThreads,
+        '-preset', x264Preset, '-tune', 'zerolatency,fastdecode', '-profile:v', x264Profile, '-level:v', avLevel,
+        '-crf', String(avCrf), '-maxrate', `${avMaxrateKbps}k`, '-bufsize', `${Math.max(avMaxrateKbps, 200000)}k`,
+        '-pix_fmt', 'yuv420p', '-g', String(streamFps), '-keyint_min', '1', '-sc_threshold', '0', '-x264-params', x264Params,
+        ...(avAudioInput.length ? ['-af', 'aresample=async=1000:min_hard_comp=0.100:first_pts=0', '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2'] : ['-an']),
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof+separate_moof+omit_tfhd_offset',
+        '-frag_duration', '33000', '-min_frag_duration', '16000', '-flush_packets', '1',
+        '-f', 'mp4', 'pipe:1',
+    ] : [
         '-hide_banner', '-loglevel', 'warning',
         '-f', 'x11grab', '-draw_mouse', '0',
         '-framerate', String(streamFps),
         '-video_size', `${streamWidth}x${streamHeight}`,
         '-i', xvfbDisp,
         '-an', '-c:v', 'libx264',
-        '-threads', '0',
+        '-threads', encoderThreads,
         '-preset', x264Preset, '-tune', 'zerolatency',
         '-profile:v', x264Profile,
         '-crf', x264Crf,
@@ -4057,7 +4158,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     }, 2200);
 
     const pipe = {
-        connId, xvfb, pulseaudio, xfreerdp, ffmpeg, fifoPath, nativeH264, env, width: streamWidth, height: streamHeight, fps: streamFps, quality: qualityMode, routedForward,
+        connId, xvfb, pulseaudio, xfreerdp, ffmpeg, fifoPath, nativeH264, streamMode, avMime, env, width: streamWidth, height: streamHeight, fps: streamFps, quality: qualityMode, routedForward,
         get activeWindowId() { return activeWindowId; },
         nativeReader: null,
         clients: new Set(),
@@ -4085,7 +4186,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         if (chunk.length > 0) markReady();
         for (const client of pipe.clients) {
             if (client.readyState !== client.OPEN) continue;
-            if (client.bufferedAmount > 8 * 1024 * 1024) continue;
+            if (client.bufferedAmount > 256 * 1024 * 1024) continue;
             try { client.send(chunk, { binary: true }); } catch {}
         }
     };
@@ -4117,7 +4218,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         cleanupPipe(connId);
     });
 
-    console.info('[rdp-h264]', 'pipeline started', { connId, target: `${targetHost}:${targetPort}`, originalTarget: `${originalTargetHost}:${originalTargetPort}`, route: routedForward?.route || 'direct', mode: nativeH264 ? 'freerdp-avc-export' : 'x11grab-fallback', fps: streamFps, quality: qualityMode, encoder: nativeH264 ? 'native' : { preset: x264Preset, crf: x264Crf, profile: x264Profile }, xfreerdpArgs: xfreerdpArgs.filter((a) => !a.startsWith('/p:')) });
+    console.info('[rdp-h264]', 'pipeline started', { connId, target: `${targetHost}:${targetPort}`, originalTarget: `${originalTargetHost}:${originalTargetPort}`, route: routedForward?.route || 'direct', mode: streamMode === 'av' ? 'fmp4-av' : (nativeH264 ? 'freerdp-avc-export' : 'x11grab-fallback'), fps: streamFps, quality: qualityMode, encoder: nativeH264 ? 'native' : { preset: x264Preset, crf: streamMode === 'av' ? avCrf : undefined, profile: x264Profile, level: streamMode === 'av' ? avLevel : undefined, codec: streamMode === 'av' ? avCodec : undefined, threads: encoderThreads, heavyStream, maxrateKbps: streamMode === 'av' ? avMaxrateKbps : undefined, audio: !!avAudioInput.length }, xfreerdpArgs: xfreerdpArgs.filter((a) => !a.startsWith('/p:')) });
     return pipe;
 }
 
@@ -4409,8 +4510,8 @@ function startIsolatedRdpAudioWorker(connId, conn) {
         if (worker.stopping) return;
         const args = [
             `/v:${targetHost}:${targetPort}`, `/u:${username}`, `/p:${password}`, '/cert:ignore', '/size:800x600', '/bpp:16', '/network:lan',
-            '-clipboard', '-wallpaper', '-themes', '-aero', '-window-drag', '-menu-anims', '-fonts', '-fast-path', '-mouse-motion',
-            '/audio-mode:0', '/sound:sys:alsa,format:1,rate:44100,channel:2', '/log-level:WARN'
+            "-clipboard", "-wallpaper", "-themes", "-aero", "-window-drag", "-menu-anims", "-fonts", "+fast-path", "-mouse-motion",
+            '/audio-mode:0', '/sound:sys:alsa,format:1,rate:44100,channel:2', '/log-level:ERROR'
         ];
         worker.xfreerdp = rdpSpawn('xfreerdp', args, { env });
         rdpAttachLog(worker.xfreerdp, 'rdp-audio-xfreerdp', 'warn');
@@ -4453,13 +4554,19 @@ function cleanupIsolatedRdpAudioWorker(connId) {
 
 function startRdpAudioCapture(pipe) {
     if (!pipe || pipe.audioFfmpeg || process.env.RDP_AUDIO === 'false' || !pipe.pulseaudio) return;
-    console.info('[rdp-audio]', 'starting audio capture', { connId: pipe.connId });
+    if (pipe.pulseaudio.exitCode !== null || pipe.pulseaudio.killed) {
+        console.warn('[rdp-audio]', 'capture skipped because pulseaudio is not running', { connId: pipe.connId, code: pipe.pulseaudio.exitCode });
+        return;
+    }
+    console.info('[rdp-audio]', 'starting audio capture', { connId: pipe.connId, pulseServer: pipe.env?.PULSE_SERVER || '' });
     const args = [
         '-hide_banner', '-loglevel', 'warning',
-        '-f', 'pulse', '-i', 'zephyr_rdp_audio.monitor',
+        '-fflags', '+genpts+nobuffer', '-flags', 'low_delay', '-avoid_negative_ts', 'make_zero',
+        '-f', 'pulse', '-thread_queue_size', '64', '-i', 'zephyr_rdp_audio.monitor',
         '-vn', '-ac', '2', '-ar', '48000',
-        '-c:a', 'libopus', '-b:a', '96k', '-application', 'lowdelay',
-        '-f', 'webm', 'pipe:1',
+        '-af', 'aresample=async=1000:min_hard_comp=0.100:first_pts=0',
+        '-c:a', 'libopus', '-b:a', '96k', '-application', 'lowdelay', '-frame_duration', '20',
+        '-flush_packets', '1', '-cluster_time_limit', '100', '-cluster_size_limit', '16k', '-f', 'webm', 'pipe:1',
     ];
     const ff = rdpSpawn('ffmpeg', args, { env: pipe.env });
     pipe.audioFfmpeg = ff;
@@ -4471,7 +4578,15 @@ function startRdpAudioCapture(pipe) {
             try { client.send(chunk, { binary: true }); } catch {}
         }
     });
-    ff.on('exit', (code, signal) => { console.info('[rdp-audio]', 'capture exited', { connId: pipe.connId, code, signal }); if (pipe.audioFfmpeg === ff) pipe.audioFfmpeg = null; });
+    ff.on('exit', (code, signal) => {
+        console.info('[rdp-audio]', 'capture exited', { connId: pipe.connId, code, signal });
+        if (pipe.audioFfmpeg === ff) pipe.audioFfmpeg = null;
+        if (!pipe.stopping && pipe.audioClients?.size > 0 && code !== 0) {
+            pipe.audioRetryCount = (pipe.audioRetryCount || 0) + 1;
+            const delay = Math.min(3000, 400 * pipe.audioRetryCount);
+            setTimeout(() => { if (!pipe.stopping && pipe.audioClients?.size > 0 && !pipe.audioFfmpeg) startRdpAudioCapture(pipe); }, delay);
+        }
+    });
 }
 
 noVncWss.on('connection', async (ws, req) => {
@@ -4586,11 +4701,17 @@ rdpH264Wss.on('connection', async (ws, req) => {
         const requestedMode = url.searchParams.get('mode') || '';
         const requestedQuality = ['performance', 'balanced', 'quality'].includes(String(url.searchParams.get('quality') || '').toLowerCase()) ? String(url.searchParams.get('quality')).toLowerCase() : 'balanced';
         const requestedFps = Math.max(15, Math.min(60, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
-        if (!pipe) pipe = await startRdpH264Pipeline(connId, conn, { width: requestedWidth, height: requestedHeight, mode: requestedMode, quality: requestedQuality, fps: requestedFps });
+        const requestedStream = String(url.searchParams.get('stream') || 'av').toLowerCase() === 'h264' ? 'h264' : 'av';
+        if (pipe && requestedStream === 'av') {
+            // fMP4 clients must receive ftyp/moov from the beginning; mid-stream attach causes MSE demux errors.
+            cleanupPipe(connId);
+            pipe = null;
+        } else if (pipe && pipe.streamMode && pipe.streamMode !== requestedStream) { cleanupPipe(connId); pipe = null; }
+        if (!pipe) pipe = await startRdpH264Pipeline(connId, conn, { width: requestedWidth, height: requestedHeight, mode: requestedMode, quality: requestedQuality, fps: requestedFps, stream: requestedStream });
         pipe.username = sessionUser?.username || '';
         pipe.clients.add(ws);
         startRdpClipboardWatch(pipe);
-        ws.send(JSON.stringify({ type: 'hello', codec: 'avc1.42001f', width: pipe.width || RDP_STREAM_WIDTH, height: pipe.height || RDP_STREAM_HEIGHT, fps: pipe.fps || RDP_STREAM_FPS, quality: pipe.quality || requestedQuality }));
+        ws.send(JSON.stringify({ type: 'hello', codec: pipe.streamMode === 'av' ? 'fmp4-av' : 'avc1.42001f', mime: pipe.streamMode === 'av' ? pipe.avMime : undefined, width: pipe.width || RDP_STREAM_WIDTH, height: pipe.height || RDP_STREAM_HEIGHT, fps: pipe.fps || RDP_STREAM_FPS, quality: pipe.quality || requestedQuality }));
         console.info('[rdp-h264]', 'browser attached', { connId, clients: pipe.clients.size });
 
         ws.on('message', async (raw, isBinary) => {
@@ -5971,22 +6092,27 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 });
 
 async function startServer() {
-    server.listen(PORT, () => {
-        let dataDirEntries = [];
-        try { dataDirEntries = fs.readdirSync(DATA_DIR).sort(); } catch {}
-        console.info('[DATA-DIAG] runtime data directory', {
-            dataDir: DATA_DIR,
-            dbFile: DB_FILE,
-            dbExists: fs.existsSync(DB_FILE),
-            envFileExists: fs.existsSync(path.join(DATA_DIR, '.env')),
-            entries: dataDirEntries,
-            dockerHint: 'Docker 部署请确认宿主机数据卷已挂载到 /app/data，否则连接数据会随容器重建而丢失。',
-        });
-        console.log(`🌬️  Zephyr 服务运行在 http://localhost:${PORT}`);
-        console.log(`   WebSocket 路径: /ssh`);
-        console.log(`   RDP/H.264 路径: /rdp-h264 -> xfreerdp/ffmpeg`);
-        console.log(`   VNC/noVNC 路径: /novnc -> VNC Server`);
+    let dataDirEntries = [];
+    try { dataDirEntries = fs.readdirSync(DATA_DIR).sort(); } catch {}
+    console.info('[DATA-DIAG] runtime data directory', {
+        dataDir: DATA_DIR,
+        dbFile: DB_FILE,
+        dbExists: fs.existsSync(DB_FILE),
+        envFileExists: fs.existsSync(path.join(DATA_DIR, '.env')),
+        entries: dataDirEntries,
+        dockerHint: 'Docker 部署请确认宿主机数据卷已挂载到 /app/data，否则连接数据会随容器重建而丢失。',
     });
+    await Promise.all([
+        HTTP_ENABLED ? new Promise((resolve) => server.listen(PORT, resolve)) : Promise.resolve(),
+        httpsServer ? new Promise((resolve) => httpsServer.listen(HTTPS_PORT, resolve)) : Promise.resolve(),
+    ]);
+    if (HTTP_ENABLED) console.log(`🌬️  Zephyr HTTP 服务运行在 http://localhost:${PORT}`);
+    else console.log('🔒 Zephyr HTTP 服务已禁用（设置 HTTP_ENABLED=true 可重新启用）');
+    if (httpsServer) console.log(`🔐 Zephyr HTTPS 服务运行在 https://localhost:${HTTPS_PORT}`);
+    else if (HTTPS_ENABLED) console.warn('[https] HTTPS requested but disabled because certificate setup failed');
+    console.log(`   WebSocket 路径: /ssh`);
+    console.log(`   RDP/H.264 路径: /rdp-h264 -> xfreerdp/ffmpeg`);
+    console.log(`   VNC/noVNC 路径: /novnc -> VNC Server`);
 }
 
 startServer().catch((err) => {

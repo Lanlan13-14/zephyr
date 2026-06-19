@@ -58,6 +58,7 @@ let rdpAudioSourceBuffer = null;
 let rdpAudioElement = null;
 let rdpAudioQueue = [];
 let rdpAudioUnlocked = false;
+let rdpAutoDisconnectedHidden = false;
 let canvasTouchAbort = null;
 let keyboard = null;
 let mouse = null;
@@ -375,22 +376,43 @@ function updateInfo() {
 
 function computeRdpTargetSize(mode = fitModes[fitModeIdx]) {
     const preset = parseRdpResolutionPreset(params.rdpResolution || '');
-    if (preset && mode === 'fit') return { width: preset.width, height: preset.height, mode: params.rdpResolution };
     const bounds = stage?.getBoundingClientRect?.() || { width: innerWidth || 1280, height: innerHeight || 720 };
     const effDpr = Math.min(window.devicePixelRatio || 1, 2);
-    const maxW = preset ? Math.max(preset.width, 3840) : 3840;
-    const maxH = preset ? Math.max(preset.height, 2160) : 2160;
     const minW = 800;
     const minH = 600;
-    const even = (v) => Math.max(2, Math.round(v / 2) * 2);
-    const clampEven = (v, min, max) => even(Math.max(min, Math.min(max, v)));
+    const even = (v) => Math.max(2, Math.round(Number(v || 0) / 2) * 2);
+    const clampEven = (v, min, max) => even(Math.max(min, Math.min(max, Number(v) || min)));
+    const boundW = Math.max(1, bounds.width || innerWidth || 1280);
+    const boundH = Math.max(1, bounds.height || innerHeight || 720);
+
+    if (preset && mode === 'fit') {
+        // “适应”=远端分辨率匹配当前显示区域比例，避免横屏桌面被编码进上下黑边。
+        // 像素预算保持所选档位（1080p/2K/4K），但宽高比跟随容器。
+        const aspect = Math.max(0.2, Math.min(5, boundW / boundH));
+        const pixelBudget = Math.max(minW * minH, preset.width * preset.height);
+        const maxSide = Math.max(preset.width, preset.height);
+        let width = even(Math.sqrt(pixelBudget * aspect));
+        let height = even(width / aspect);
+        const longSide = Math.max(width, height);
+        if (longSide > maxSide) {
+            const scale = maxSide / longSide;
+            width = even(width * scale);
+            height = even(height * scale);
+        }
+        width = clampEven(width, minW, maxSide);
+        height = clampEven(height, minH, maxSide);
+        return { width, height, mode: params.rdpResolution };
+    }
+
+    const maxW = preset ? Math.max(preset.width, 3840) : 3840;
+    const maxH = preset ? Math.max(preset.height, 2160) : 2160;
     const fitBounds = () => {
-        const w = clampEven((bounds.width || innerWidth || 1280) * effDpr, minW, maxW);
-        const h = clampEven((bounds.height || innerHeight || 720) * effDpr, minH, maxH);
+        const w = clampEven(boundW * effDpr, minW, maxW);
+        const h = clampEven(boundH * effDpr, minH, maxH);
         return { width: w, height: h, mode };
     };
     const byAspect = (num, den) => {
-        const longCss = Math.max(bounds.width || innerWidth || 1280, bounds.height || innerHeight || 720);
+        const longCss = Math.max(boundW, boundH);
         let w = clampEven(longCss * effDpr, minW, maxW);
         let h = even(w * den / num);
         if (h < minH) { h = clampEven(minH, minH, maxH); w = even(h * num / den); }
@@ -407,8 +429,6 @@ function computeRdpTargetSize(mode = fitModes[fitModeIdx]) {
     if (mode === '4:3') return byAspect(4, 3);
     return fitBounds();
 }
-
-
 
 function requestRdpCanvasSize(mode = fitModes[fitModeIdx], force = false) {
     if (!rdpInputSender || !connected) return false;
@@ -483,52 +503,67 @@ window.__zephyrGetRemoteDesktopSnapshot = getRemoteDesktopSnapshotForAi;
 function applyDisplayScale() {
     if (!displayShell) return;
     const rdpCanvas = displayRoot?.querySelector?.('#rdp-canvas');
-    if (rdpCanvas) {
-        const bounds = stage.getBoundingClientRect();
-        const curW = displayWidth || rdpCanvas.width || 1280;
-        const curH = displayHeight || rdpCanvas.height || 720;
-        if (!curW || !curH) return;
-        const mode = fitModes[fitModeIdx];
-        const centerOversizedDisplay = () => {
-            requestAnimationFrame(() => {
-                if (!displayShell) return;
-                const maxX = Math.max(0, displayShell.scrollWidth - displayShell.clientWidth);
-                const maxY = Math.max(0, displayShell.scrollHeight - displayShell.clientHeight);
-                displayShell.scrollLeft = Math.max(0, Math.min(maxX, maxX / 2 + rdpViewportOffsetX));
-                displayShell.scrollTop = Math.max(0, Math.min(maxY, maxY / 2 + rdpViewportOffsetY));
-                updateJoystickHint();
-            });
-        };
-        const setCanvasCss = (w, h) => {
-            const cssW = Math.ceil(w * rdpScaleZoom);
-            const cssH = Math.ceil(h * rdpScaleZoom);
-            displayRoot.style.width = `${cssW}px`;
-            displayRoot.style.height = `${cssH}px`;
-            rdpCanvas.style.width = `${cssW}px`;
-            rdpCanvas.style.height = `${cssH}px`;
-            centerOversizedDisplay();
-        };
-        if (mode === '1:1') {
-            setCanvasCss(curW, curH);
-            return;
-        }
-        let scale = 1;
-        if (mode === 'fit') scale = Math.max(bounds.width / curW, bounds.height / curH);
-        else scale = Math.min(bounds.width / curW, bounds.height / curH);
-        if (mode === '16:9' || mode === '4:3') {
-            const [num, den] = mode === '16:9' ? [16, 9] : [4, 3];
-            const targetW = Math.max(curW, curH * num / den);
-            const targetH = targetW * den / num;
-            scale = Math.min(bounds.width / targetW, bounds.height / targetH);
-            setCanvasCss(targetW * scale, targetH * scale);
-            rdpCanvas.style.objectFit = 'contain';
-            return;
-        }
-        setCanvasCss(curW * scale, curH * scale);
-        rdpCanvas.style.objectFit = 'contain';
+    const rdpDisplay = displayRoot?.querySelector?.('#rdp-video') || rdpCanvas;
+    if (!rdpDisplay) return;
+    const mode = fitModes[fitModeIdx];
+    const shellRect = displayShell.getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+    const bounds = {
+        width: shellRect.width || stageRect.width || innerWidth || 1280,
+        height: shellRect.height || stageRect.height || innerHeight || 720,
+    };
+    const curW = displayWidth || rdpCanvas?.width || rdpDisplay.videoWidth || 1280;
+    const curH = displayHeight || rdpCanvas?.height || rdpDisplay.videoHeight || 720;
+    if (!curW || !curH || !bounds.width || !bounds.height) return;
+
+    const centerOversizedDisplay = () => {
+        requestAnimationFrame(() => {
+            if (!displayShell) return;
+            const maxX = Math.max(0, displayShell.scrollWidth - displayShell.clientWidth);
+            const maxY = Math.max(0, displayShell.scrollHeight - displayShell.clientHeight);
+            displayShell.scrollLeft = Math.max(0, Math.min(maxX, maxX / 2 + rdpViewportOffsetX));
+            displayShell.scrollTop = Math.max(0, Math.min(maxY, maxY / 2 + rdpViewportOffsetY));
+            updateJoystickHint();
+        });
+    };
+
+    const setDisplayCss = (cssW, cssH, objectFit) => {
+        const finalW = Math.max(1, Math.ceil(cssW * rdpScaleZoom));
+        const finalH = Math.max(1, Math.ceil(cssH * rdpScaleZoom));
+        displayRoot.style.width = finalW + 'px';
+        displayRoot.style.height = finalH + 'px';
+        rdpDisplay.style.width = finalW + 'px';
+        rdpDisplay.style.height = finalH + 'px';
+        rdpDisplay.style.objectFit = objectFit;
+        rdpDisplay.style.display = 'block';
+        rdpDisplay.style.maxWidth = 'none';
+        rdpDisplay.style.maxHeight = 'none';
+        displayShell.style.position = 'absolute';
+        displayShell.style.inset = '0';
+        displayShell.style.overflow = rdpScaleZoom > 1.01 ? 'auto' : 'hidden';
+        stage.style.overflow = 'hidden';
+        centerOversizedDisplay();
+    };
+
+    if (mode === 'fit') {
+        // 适应=充满整个显示区域；缩放滑块继续按 rdpScaleZoom 放大/缩小。
+        setDisplayCss(bounds.width, bounds.height, 'fill');
         return;
     }
-    return;
+    if (mode === '1:1') {
+        setDisplayCss(curW, curH, 'contain');
+        return;
+    }
+    if (mode === '16:9' || mode === '4:3') {
+        const targetAspect = mode === '16:9' ? 16 / 9 : 4 / 3;
+        let cssW = bounds.width;
+        let cssH = cssW / targetAspect;
+        if (cssH > bounds.height) { cssH = bounds.height; cssW = cssH * targetAspect; }
+        setDisplayCss(cssW, cssH, 'contain');
+        return;
+    }
+    const scale = Math.min(bounds.width / curW, bounds.height / curH);
+    setDisplayCss(curW * scale, curH * scale, 'contain');
 }
 
 function switchFitMode(mode) {
@@ -1220,7 +1255,7 @@ async function connect() {
         const initialTarget = computeRdpTargetSize(fitModes[fitModeIdx]);
         requestedRdpWidth = initialTarget.width;
         requestedRdpHeight = initialTarget.height;
-        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 30) });
+        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 30), stream: 'av' });
         const connectionSeq = rdpReconnectSeq;
         rdpSocket = new WebSocket(`${wsBase}?${wsQuery.toString()}`);
         rdpSocket.binaryType = 'arraybuffer';
@@ -1231,6 +1266,65 @@ async function connect() {
         let configured = false;
         let pendingFrames = [];
         let firstFrameDrawn = false;
+        let avMode = false;
+        let avVideo = null;
+        let avMediaSource = null;
+        let avSourceBuffer = null;
+        const avQueue = [];
+        let avStaging = new Uint8Array(0);
+        const mp4BoxSize = (buf, off) => {
+            if (off + 8 > buf.length) return 0;
+            const size = ((buf[off] << 24) | (buf[off + 1] << 16) | (buf[off + 2] << 8) | buf[off + 3]) >>> 0;
+            return size >= 8 ? size : 0;
+        };
+        const mp4BoxType = (buf, off) => String.fromCharCode(buf[off + 4] || 0, buf[off + 5] || 0, buf[off + 6] || 0, buf[off + 7] || 0);
+        const pumpAvQueue = () => {
+            if (!avSourceBuffer || avSourceBuffer.updating || !avQueue.length) return;
+            try { avSourceBuffer.appendBuffer(avQueue.shift()); } catch (err) { console.warn('[rdp-av]', 'append failed', err); avQueue.length = 0; }
+        };
+        const feedAvMp4 = (buf) => {
+            const incoming = new Uint8Array(buf);
+            const joined = new Uint8Array(avStaging.length + incoming.length); joined.set(avStaging); joined.set(incoming, avStaging.length); avStaging = joined;
+            let off = 0, segStart = 0, inFrag = false;
+            while (off + 8 <= avStaging.length) {
+                const size = mp4BoxSize(avStaging, off);
+                if (!size || off + size > avStaging.length) break;
+                const type = mp4BoxType(avStaging, off);
+                if (type === 'ftyp') segStart = off;
+                if (type === 'moof') { segStart = off; inFrag = true; }
+                off += size;
+                if (type === 'moov' || (type === 'mdat' && inFrag)) {
+                    const seg = avStaging.slice(segStart, off);
+                    avQueue.push(seg.buffer.slice(seg.byteOffset, seg.byteOffset + seg.byteLength));
+                    inFrag = false; segStart = off; pumpAvQueue();
+                }
+            }
+            avStaging = avStaging.slice(segStart);
+            if (avStaging.length > 16 * 1024 * 1024) avStaging = new Uint8Array(0);
+        };
+        const startAvPlayback = (mime) => {
+            avMode = true;
+            canvas.style.display = 'none';
+            avVideo = document.createElement('video');
+            avVideo.id = 'rdp-video';
+            avVideo.autoplay = true; avVideo.playsInline = true; avVideo.controls = false; avVideo.tabIndex = 0;
+            avVideo.style.cssText = 'display:block;width:100%;height:100%;object-fit:fill;background:#000;touch-action:none;outline:none;max-width:none;max-height:none;min-width:100%;min-height:100%';
+            displayRoot.appendChild(avVideo);
+            bindCanvasTouch(avVideo);
+            avMediaSource = new MediaSource();
+            avVideo.src = URL.createObjectURL(avMediaSource);
+            avMediaSource.addEventListener('sourceopen', () => {
+                try { avSourceBuffer = avMediaSource.addSourceBuffer(mime || 'video/mp4; codecs="avc1.4d401f,mp4a.40.2"'); avSourceBuffer.mode = 'segments'; avSourceBuffer.addEventListener('updateend', pumpAvQueue); pumpAvQueue(); avVideo.play().catch(()=>{}); }
+                catch (err) { setStatus('error', `RDP A/V 初始化失败：${err.message || err}`); }
+            }, { once: true });
+            avVideo.addEventListener('loadedmetadata', () => { displayWidth = avVideo.videoWidth || requestedRdpWidth || 1280; displayHeight = avVideo.videoHeight || requestedRdpHeight || 720; applyDisplayScale(); });
+            avVideo.addEventListener('loadeddata', () => {
+                if (!firstFrameDrawn) { firstFrameDrawn = true; setStatus('connected', `${label} 已连接 [H.264/AAC]`); connected = true; startClipboardAutoSync(); requestRdpCanvasSize(fitModes[fitModeIdx], true); notifyParentStatus('connected'); }
+            });
+            avVideo.addEventListener('error', () => { const err = avVideo.error; setStatus('error', `RDP A/V 播放失败：code=${err?.code || 'unknown'} ${err?.message || ''}`); });
+            avMediaSource.addEventListener('sourceended', () => console.warn('[rdp-av]', 'media source ended'));
+            avMediaSource.addEventListener('sourceclose', () => console.warn('[rdp-av]', 'media source closed'));
+        };
         const wsInput = (message) => {
             if (!rdpSocket || rdpSocket.readyState !== WebSocket.OPEN) return false;
             try { rdpSocket.send(JSON.stringify(message)); return true; } catch { return false; }
@@ -1263,8 +1357,7 @@ async function connect() {
                             setStatus('connected', `${label} 已连接 [WebCodecs H.264]`);
                             connected = true;
                             startClipboardAutoSync();
-                            ensureRdpAudioUnlocked();
-                            startRdpAudio();
+                            // audio is muxed into the main H.264/AAC video stream
                             requestRdpCanvasSize(fitModes[fitModeIdx], true);
                             notifyParentStatus('connected');
                         }
@@ -1301,11 +1394,12 @@ async function connect() {
             notifyParentStatus('connecting');
         };
         rdpSocket.onclose = (event) => {
-            parser.flush();
+            if (!avMode) parser.flush();
             if (connectionSeq !== rdpReconnectSeq) return;
             connected = false;
             notifyParentStatus('disconnected');
             if (decoder) { try { decoder.close(); } catch {} decoder = null; }
+            if (avVideo) { try { avVideo.pause(); URL.revokeObjectURL(avVideo.src); avVideo.remove(); } catch {} avVideo = null; }
             if (event.code === 1012) {
                 rdpTouches.clear();
                 updateRdpPointer(0, 0, false);
@@ -1327,6 +1421,7 @@ async function connect() {
                 try {
                     const msg = JSON.parse(ev.data);
                     if (msg.type === 'hello') {
+                        if (msg.codec === 'fmp4-av' && !avMediaSource) { configured = true; startAvPlayback(msg.mime); }
                         if (msg.width && msg.height) {
                             display.setSize(Number(msg.width), Number(msg.height));
                             requestedRdpWidth = Number(msg.width) || requestedRdpWidth;
@@ -1366,7 +1461,8 @@ async function connect() {
             }
             const buf = ev.data instanceof ArrayBuffer ? ev.data : ev.data instanceof Blob ? await ev.data.arrayBuffer() : null;
             if (!buf || buf.byteLength < 5) return;
-            parser.push(new Uint8Array(buf));
+            if (avMode) feedAvMp4(buf);
+            else parser.push(new Uint8Array(buf));
         };
         const sendKeyboardEventToRdp = (e) => {
             if (!rdpInputSender || !connected) return false;
@@ -2055,7 +2151,9 @@ function stopRdpAudio() {
         try { URL.revokeObjectURL(rdpAudioElement.src); } catch {}
         rdpAudioElement.remove();
     }
+    try { if (rdpAudioElement) rdpAudioElement.playbackRate = 1; } catch {}
     rdpAudioElement = null;
+    rdpAudioUnlocked = false;
     rdpAudioMediaSource = null;
     rdpAudioSourceBuffer = null;
     rdpAudioQueue = [];
@@ -2073,11 +2171,35 @@ function ensureRdpAudioUnlocked() {
 }
 
 
+function trimRdpAudioLatency() {
+    if (!rdpAudioElement || !rdpAudioElement.buffered || !rdpAudioElement.buffered.length) return;
+    try {
+        const end = rdpAudioElement.buffered.end(rdpAudioElement.buffered.length - 1);
+        const lag = end - rdpAudioElement.currentTime;
+        if (lag > 2.0) {
+            // Large backlog: jump once, but keep a small buffer to avoid underrun.
+            rdpAudioElement.currentTime = Math.max(0, end - 0.25);
+            rdpAudioElement.playbackRate = 1;
+        } else if (lag > 0.75) {
+            // Small drift: gently catch up; hard-seeking here causes pops.
+            rdpAudioElement.playbackRate = 1.06;
+        } else if (lag < 0.18) {
+            rdpAudioElement.playbackRate = 0.98;
+        } else {
+            rdpAudioElement.playbackRate = 1;
+        }
+    } catch {}
+}
+
 function pumpRdpAudioQueue() {
     if (!rdpAudioSourceBuffer || rdpAudioSourceBuffer.updating || !rdpAudioQueue.length) return;
+    if (rdpAudioQueue.length > 8) rdpAudioQueue.splice(0, rdpAudioQueue.length - 8);
     const chunk = rdpAudioQueue.shift();
-    try { rdpAudioSourceBuffer.appendBuffer(chunk); }
-    catch (err) { console.warn('[rdp-audio]', 'append failed', { error: err.message }); rdpAudioQueue.length = 0; }
+    try {
+        trimRdpAudioLatency();
+        rdpAudioSourceBuffer.appendBuffer(chunk);
+    }
+    catch (err) { console.warn('[rdp-audio]', 'append failed', { error: err.message }); rdpAudioQueue.length = 0; try { rdpAudioElement.playbackRate = 1; } catch {} }
 }
 
 function startRdpAudio() {
@@ -2097,6 +2219,7 @@ function startRdpAudio() {
         try {
             rdpAudioSourceBuffer = rdpAudioMediaSource.addSourceBuffer('audio/webm; codecs="opus"');
             rdpAudioSourceBuffer.mode = 'sequence';
+            
             rdpAudioSourceBuffer.addEventListener('updateend', pumpRdpAudioQueue);
             pumpRdpAudioQueue();
         } catch (err) { console.warn('[rdp-audio]', 'sourcebuffer failed', { error: err.message }); }
@@ -2110,7 +2233,7 @@ function startRdpAudio() {
         if (!buf || !buf.byteLength) return;
         if (rdpAudioElement?.paused) rdpAudioElement.play().then(() => { rdpAudioUnlocked = true; }).catch(() => {});
         rdpAudioQueue.push(buf);
-        if (rdpAudioQueue.length > 60) rdpAudioQueue.splice(0, rdpAudioQueue.length - 60);
+        if (rdpAudioQueue.length > 8) rdpAudioQueue.splice(0, rdpAudioQueue.length - 8);
         pumpRdpAudioQueue();
     };
     rdpAudioSocket.onclose = () => { rdpAudioSocket = null; };
@@ -2295,9 +2418,24 @@ function installLocalClipboardBridge() {
         if (rdpAudioElement) rdpAudioElement.play().catch(() => {});
     }, { passive: true });
     document.addEventListener('visibilitychange', () => {
-        if (connected) startClipboardAutoSync();
-        if (document.visibilityState === 'visible' && connected) {
-            syncLocalClipboardToRemote({ paste: false, source: 'visibility-visible', silent: true }).catch(() => {});
+        if (document.visibilityState === 'hidden' && connected) {
+            rdpAutoDisconnectedHidden = true;
+            disconnect(false);
+            stopClipboardAutoSync();
+            stopRdpAudio();
+            setStatus('disconnected', `${protocolLabel()} 已暂停（页面不可见，已停止视频/音频以降低 CPU）`);
+            return;
+        }
+        if (document.visibilityState === 'visible') {
+            if (rdpAutoDisconnectedHidden) {
+                rdpAutoDisconnectedHidden = false;
+                reconnect();
+                return;
+            }
+            if (connected) {
+                startClipboardAutoSync();
+                syncLocalClipboardToRemote({ paste: false, source: 'visibility-visible', silent: true }).catch(() => {});
+            }
         }
     });
     window.addEventListener('focus', () => {
