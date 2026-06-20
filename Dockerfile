@@ -146,9 +146,11 @@ RUN apk add --no-cache \
         cjson \
         krb5 \
         pcsc-lite \
+        pcsc-lite-libs \
         fuse3 \
         cairo \
         libx11 \
+        libxkbfile \
         libxext \
         libxinerama \
         libxcursor \
@@ -158,6 +160,12 @@ RUN apk add --no-cache \
         libxrandr \
         libxrender \
         libxfixes \
+        libxml2 \
+        eudev-libs \
+        dbus-glib \
+        alsa-lib \
+        sdl2 \
+        sdl2_ttf \
         libusb \
         cups-libs \
         openssl \
@@ -193,6 +201,7 @@ RUN echo "=== runtime diagnostics ===" && \
     cat /etc/alpine-release && \
     node --version && \
     npm --version && \
+    for lib in /usr/local/lib/librdp_bridge.so /opt/freerdp3/lib/libfreerdp3.so.3 /opt/freerdp3/lib/libwinpr3.so.3 /opt/freerdp3/lib/freerdp3/librdpsnd-client-bridge.so; do ldd "$lib"; done && \
     python -c "import ctypes; ctypes.CDLL('/usr/local/lib/librdp_bridge.so'); print('librdp_bridge loaded')" && \
     test -f /app/public/vendor/freerdp-web/progressive/progressive_decoder.wasm && \
     test -f /app/public/vendor/freerdp-web/clearcodec/clearcodec_decoder.wasm && \
