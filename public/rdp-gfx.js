@@ -1,4 +1,5 @@
 import { RDPClient } from './vendor/freerdp-web/rdp-client.js';
+import { parseMessage, buildFrameAck } from './vendor/freerdp-web/wire-format.js';
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 
 const $ = (sel) => document.querySelector(sel);
@@ -116,7 +117,13 @@ applyFrameTheme();
 
 function loadParams() {
     const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';
-    try { return JSON.parse(sessionStorage.getItem(key) || '{}'); } catch { return {}; }
+    let stored = {};
+    try { stored = JSON.parse(sessionStorage.getItem(key) || '{}') || {}; } catch { stored = {}; }
+    const query = Object.fromEntries(new URLSearchParams(location.search));
+    /* Direct links/reloads only have URL parameters. The embedded app stores a
+     * richer object in sessionStorage, but URL values must override/fill it so
+     * /rdp.html?connectionId=... never becomes a false "missing connectionId". */
+    return { ...stored, ...Object.fromEntries(Object.entries(query).filter(([, v]) => v !== undefined && v !== null && String(v) !== '')) };
 }
 function notifyParentStatus(status) {
     if (embeddedMode && window.parent && window.parent !== window) window.parent.postMessage({ source: 'zephyr-terminal', tabId: params?.tabId || tabId, status }, '*');
@@ -182,10 +189,8 @@ function requireModernRdpBrowser() {
     if (missing.length) throw new Error(`当前浏览器不满足 RDPEGFX 客户端要求：${missing.join('、')}`);
 }
 function hideLegacyControls() {
-    for (const id of ['fitBtn', 'zoomBtn', 'joystickBtn']) {
-        const el = document.getElementById(id);
-        if (el) el.style.display = 'none';
-    }
+    const joy = document.getElementById('joystickBtn');
+    if (joy) joy.style.display = 'none';
 }
 function availableSize() {
     const rect = displayRoot?.getBoundingClientRect?.();
@@ -346,6 +351,134 @@ function handleClientMessage(msg) {
         setFilesHint(msg.message || '远程文件下载失败', 'warning');
     }
 }
+
+async function connectDirectCanvasRdp() {
+    if (!displayRoot) throw new Error('RDP display root missing');
+    const size = availableSize();
+    const canvas = document.createElement('canvas');
+    canvas.className = 'rdp-direct-canvas';
+    canvas.width = size.width;
+    canvas.height = size.height;
+    canvas.style.cssText = 'display:block;width:100%;height:100%;background:#000;object-fit:fill;';
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+    displayRoot.innerHTML = '';
+    displayRoot.style.cssText += ';display:block;width:100%;height:100%;background:#000;';
+    displayRoot.appendChild(canvas);
+
+    const surfaces = new Map();
+    const mapped = new Map();
+    let primarySurfaceId = null;
+    let totalFrames = 0;
+    const ws = new WebSocket(wsUrl());
+    ws.binaryType = 'arraybuffer';
+    client = {
+        _ws: ws,
+        _sendMessage(msg) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); },
+        async disconnect() { try { ws.close(1000, 'client disconnect'); } catch {} },
+        destroy() { try { ws.close(1000, 'client destroy'); } catch {}; return Promise.resolve(); },
+        sendKeyCombo(combo) { this._sendMessage({ type: 'keycombo', combo }); },
+        sendCtrlAltDel() { this._sendMessage({ type: 'keycombo', combo: 'Ctrl+Alt+Delete' }); },
+        sendKeys(keys) { for (const key of keys || []) this._sendMessage({ type: 'text', text: key }); return Promise.resolve(); },
+        sendBackspace(count = 1) { this._sendMessage({ type: 'backspace', count }); },
+    };
+    ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'connect', host: 'zephyr-rdp-gfx-proxy', port: 3389, user: 'zephyr', pass: 'server-side-secret', width: size.width, height: size.height }));
+    };
+    ws.onmessage = async (event) => {
+        if (typeof event.data === 'string') {
+            let msg = null;
+            try { msg = JSON.parse(event.data); } catch { return; }
+            if (msg.type === 'connected') {
+                connected = true;
+                canvas.width = msg.width || canvas.width;
+                canvas.height = msg.height || canvas.height;
+                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`);
+                notifyParentStatus('connected');
+                applyDisplayScale();
+            } else if (msg.type === 'resize') {
+                canvas.width = msg.width || canvas.width;
+                canvas.height = msg.height || canvas.height;
+                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
+                applyDisplayScale();
+            } else if (msg.type === 'disconnected') {
+                connected = false;
+                setStatus('disconnected', msg.reason || 'RDP 已断开');
+                notifyParentStatus('disconnected');
+            } else if (msg.type === 'error') {
+                connected = false;
+                setStatus('error', msg.message || 'RDP 错误');
+                notifyParentStatus('disconnected');
+            } else {
+                handleClientMessage(msg);
+            }
+            return;
+        }
+        const bytes = new Uint8Array(event.data);
+        const msg = parseMessage(bytes);
+        if (!msg) return;
+        if (msg.type === 'createSurface') {
+            const s = document.createElement('canvas');
+            s.width = msg.width;
+            s.height = msg.height;
+            surfaces.set(msg.surfaceId, { canvas: s, ctx: s.getContext('2d', { alpha: false }), width: msg.width, height: msg.height });
+            if (primarySurfaceId === null) primarySurfaceId = msg.surfaceId;
+        } else if (msg.type === 'deleteSurface') {
+            surfaces.delete(msg.surfaceId);
+            mapped.delete(msg.surfaceId);
+        } else if (msg.type === 'mapSurface') {
+            primarySurfaceId = msg.surfaceId;
+            mapped.set(msg.surfaceId, { x: msg.outputX || 0, y: msg.outputY || 0 });
+        } else if (msg.type === 'tile' && msg.codec === 'webp') {
+            let surface = surfaces.get(msg.surfaceId);
+            if (!surface) {
+                const s = document.createElement('canvas');
+                s.width = Math.max(canvas.width, msg.x + msg.w);
+                s.height = Math.max(canvas.height, msg.y + msg.h);
+                surface = { canvas: s, ctx: s.getContext('2d', { alpha: false }), width: s.width, height: s.height };
+                surfaces.set(msg.surfaceId, surface);
+                if (primarySurfaceId === null) primarySurfaceId = msg.surfaceId;
+            }
+            const bitmap = await createImageBitmap(new Blob([msg.payload], { type: 'image/webp' }));
+            surface.ctx.drawImage(bitmap, msg.x, msg.y, msg.w, msg.h);
+            bitmap.close();
+            const m = mapped.get(msg.surfaceId) || { x: 0, y: 0 };
+            ctx.drawImage(surface.canvas, m.x, m.y);
+            applyDisplayScale();
+        } else if (msg.type === 'solidFill') {
+            const surface = surfaces.get(msg.surfaceId);
+            if (surface) {
+                surface.ctx.fillStyle = `rgba(${msg.color & 255},${(msg.color >> 8) & 255},${(msg.color >> 16) & 255},1)`;
+                surface.ctx.fillRect(msg.x, msg.y, msg.w, msg.h);
+                const m = mapped.get(msg.surfaceId) || { x: 0, y: 0 };
+                ctx.drawImage(surface.canvas, m.x, m.y);
+            }
+        } else if (msg.type === 'endFrame') {
+            totalFrames += 1;
+            if (primarySurfaceId !== null && surfaces.has(primarySurfaceId)) {
+                const m = mapped.get(primarySurfaceId) || { x: 0, y: 0 };
+                ctx.drawImage(surfaces.get(primarySurfaceId).canvas, m.x, m.y);
+            }
+            if (ws.readyState === WebSocket.OPEN) ws.send(buildFrameAck(msg.frameId, totalFrames, 0));
+        }
+    };
+    const sendMouse = (action, event, extra = {}) => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.max(0, Math.min(canvas.width - 1, Math.round((event.clientX - rect.left) * canvas.width / Math.max(1, rect.width))));
+        const y = Math.max(0, Math.min(canvas.height - 1, Math.round((event.clientY - rect.top) * canvas.height / Math.max(1, rect.height))));
+        ws.send(JSON.stringify({ type: 'mouse', action, x, y, ...extra }));
+    };
+    canvas.tabIndex = 0;
+    canvas.addEventListener('pointermove', (event) => sendMouse('move', event));
+    canvas.addEventListener('pointerdown', (event) => { canvas.focus(); canvas.setPointerCapture?.(event.pointerId); sendMouse('down', event, { button: event.button || 0 }); event.preventDefault(); });
+    canvas.addEventListener('pointerup', (event) => { sendMouse('up', event, { button: event.button || 0 }); event.preventDefault(); });
+    canvas.addEventListener('wheel', (event) => { sendMouse('wheel', event, { deltaY: event.deltaY || 0, deltaX: event.deltaX || 0 }); event.preventDefault(); }, { passive: false });
+    canvas.addEventListener('keydown', (event) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', action: 'down', key: event.key, code: event.code, keyCode: event.keyCode || event.which || 0, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey })); event.preventDefault(); });
+    canvas.addEventListener('keyup', (event) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', action: 'up', key: event.key, code: event.code, keyCode: event.keyCode || event.which || 0, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey })); event.preventDefault(); });
+    ws.onerror = () => { connected = false; setStatus('error', 'RDP WebSocket 错误'); notifyParentStatus('disconnected'); };
+    ws.onclose = () => { if (connected) { connected = false; setStatus('disconnected', 'RDP 已断开'); notifyParentStatus('disconnected'); } };
+}
+
 async function connect() {
     params = loadParams();
     if (!params.connectionId) { setStatus('error', '缺少 RDP connectionId'); notifyParentStatus('disconnected'); return; }
@@ -353,6 +486,10 @@ async function connect() {
     updateInfo(); hideLegacyControls(); renderRemoteFiles();
     setStatus('connecting', '正在启动 RDPEGFX/FreeRDP3 bridge...'); notifyParentStatus('connecting');
     try {
+        if (client) await client.destroy?.().catch?.(() => {});
+        client = null;
+        await connectDirectCanvasRdp();
+        return;
         requireModernRdpBrowser();
         if (client) await client.destroy().catch(() => {});
         client = null;
@@ -482,11 +619,41 @@ function setupMobileKeyboard() {
     });
 }
 
+
+let displayScaleMode = 'fit';
+let displayZoom = 100;
+function applyDisplayScale() {
+    const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
+    if (!canvas) return;
+    if (displayScaleMode === 'fill') {
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        canvas.style.objectFit = 'fill';
+        displayRoot.style.overflow = 'hidden';
+    } else if (displayScaleMode === 'actual') {
+        canvas.style.width = `${Math.max(1, canvas.width * displayZoom / 100)}px`;
+        canvas.style.height = `${Math.max(1, canvas.height * displayZoom / 100)}px`;
+        canvas.style.objectFit = 'contain';
+        displayRoot.style.overflow = 'auto';
+    } else {
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        canvas.style.objectFit = 'contain';
+        displayRoot.style.overflow = 'hidden';
+    }
+    const fitBtn = $('#fitBtn');
+    if (fitBtn) fitBtn.textContent = displayScaleMode === 'fill' ? '填充' : displayScaleMode === 'actual' ? '原始' : '适应';
+    const zoomValue = $('#zoomValue');
+    if (zoomValue) zoomValue.textContent = `${displayZoom}%`;
+}
+
 function bindControls() {
     updateQualityFpsButtons();
     $('#qualityBtn')?.addEventListener('click', () => cycleQuality());
     $('#fpsBtn')?.addEventListener('click', () => cycleFps());
     $('#resolutionBtn')?.addEventListener('click', () => { currentResolutionIdx = (currentResolutionIdx + 1) % resolutions.length; const res = resolutions[currentResolutionIdx]; $('#resolutionBtn').textContent = res.label; requestResolution(res); });
+    $('#fitBtn')?.addEventListener('click', () => { displayScaleMode = displayScaleMode === 'fit' ? 'fill' : displayScaleMode === 'fill' ? 'actual' : 'fit'; applyDisplayScale(); });
+    $('#zoomSlider')?.addEventListener('input', (event) => { displayScaleMode = 'actual'; displayZoom = Number(event.target.value) || 100; applyDisplayScale(); });
     $('#keyboardBtn')?.addEventListener('click', () => toggleMobileKeyboard());
     $('#ctrlAltDelBtn')?.addEventListener('click', () => { try { client?.sendCtrlAltDel?.(); } catch (err) { setStatus('error', err.message || String(err)); } });
     $('#reconnectBtn')?.addEventListener('click', () => connect().catch(() => {}));

@@ -690,6 +690,18 @@ async function decodeWebPTile(msg) {
         
         surface.ctx.drawImage(bitmap, msg.x, msg.y, msg.w, msg.h);
         bitmap.close();
+
+        /* Zephyr GDI compositor fallback sends full-surface WebP frames. Present
+         * the updated surface immediately as well as at EndFrame so a missed or
+         * delayed frame-boundary message cannot leave the visible canvas white. */
+        if (primaryCanvas && primaryCtx) {
+            const mapping = mappedSurfaces.get(msg.surfaceId);
+            if (mapping) {
+                primaryCtx.drawImage(surface.canvas, mapping.outputX || 0, mapping.outputY || 0);
+            } else if (primarySurfaceId === msg.surfaceId || primarySurfaceId === null) {
+                primaryCtx.drawImage(surface.canvas, 0, 0);
+            }
+        }
         
     } catch (err) {
         console.warn('[GFX Worker] WebP decode failed:', err);
