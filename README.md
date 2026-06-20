@@ -320,6 +320,7 @@ RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zeph
 | --- | --- | --- |
 | `RDP_NATIVE_H264` | `true` | 启用 FreeRDP 原生 H.264 码流导出，跳过解码→X11→重编码流程 |
 | `RDP_ALLOW_GFX_FALLBACK` | `true` | 允许在原生 H.264 不可用时回退到 x11grab+ffmpeg |
+| `RDP_FALLBACK_GFX_MODE` | `AVC444` | 非原生直通回退模式的 FreeRDP GFX 编码；原生 H.264 直通固定使用 `AVC420`，避免 AVC444 双流无法被浏览器直接等价解码 |
 | `RDP_H264_WIDTH` | `1920` | 流宽度 |
 | `RDP_H264_HEIGHT` | `1080` | 流高度 |
 | `RDP_H264_FPS` | `30` | 帧率（15-60） |

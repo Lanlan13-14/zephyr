@@ -4145,6 +4145,8 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     rdpAttachLog(xvfb, 'Xvfb');
     await new Promise((resolve) => setTimeout(resolve, 700));
 
+    const wantsNativeH264 = streamMode !== 'av' && RDP_NATIVE_H264 && fs.existsSync(fifoPath);
+    const gfxMode = wantsNativeH264 ? 'AVC420' : String(process.env.RDP_FALLBACK_GFX_MODE || 'AVC444').toUpperCase();
     const xfreerdpArgs = [
         `/v:${targetHost}:${targetPort}`,
         `/u:${username}`,
@@ -4153,7 +4155,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         `/size:${streamWidth}x${streamHeight}`,
         '/bpp:32',
         '/network:lan',
-        ...(RDP_NATIVE_H264 && !RDP_ALLOW_GFX_FALLBACK ? ['/gfx:AVC444'] : ['/gfx:AVC444']),
+        `/gfx:${gfxMode}`,
         '+fonts',
         '+clipboard',
         `/drive:zephyr-share,${shareDir}`,
@@ -4165,7 +4167,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         '+mouse-motion',
         '/log-level:ERROR',
     ];
-    const nativeH264 = streamMode !== 'av' && RDP_NATIVE_H264 && fs.existsSync(fifoPath);
+    const nativeH264 = wantsNativeH264;
     const xfreerdpBin = nativeH264 ? (process.env.RDP_FREERDP_BIN || 'xfreerdp') : (process.env.RDP_FALLBACK_FREERDP_BIN || '/usr/bin/xfreerdp');
     const xfreerdp = rdpSpawn(xfreerdpBin, xfreerdpArgs, { env });
     rdpAttachLog(xfreerdp, 'xfreerdp', 'warn');
