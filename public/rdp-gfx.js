@@ -47,6 +47,9 @@ let rdpManualDisconnect = false;
 let rdpReconnectTimer = null;
 let rdpReconnectAttempts = 0;
 let rdpReplacingConnection = false;
+let desiredRdpSize = null;
+let lastSyncedLocalClipboardText = '';
+let clipboardSyncTimer = null;
 const fileDownloads = new Map();
 const resolutions = [
     { label: '自动', width: 0, height: 0 },
@@ -237,14 +240,16 @@ function cycleFps() {
 function requestResolution(res) {
     if (!client || !connected) return false;
     const size = res?.width && res?.height ? adaptPresetResolutionToViewport(res) : availableSize();
+    desiredRdpSize = size;
     displayScaleMode = 'fit';
     displayZoom = 100;
     applyDisplayScale();
-    setStatus('connecting', `正在切换 RDPEGFX 分辨率 ${size.width}×${size.height}...`);
+    setStatus('connecting', `正在以 ${size.width}×${size.height} 重新连接 RDP...`);
     try {
-        client._lastRequestedWidth = size.width;
-        client._lastRequestedHeight = size.height;
-        client._sendMessage({ type: 'resize', width: size.width, height: size.height });
+        // FreeRDP dynamic desktop resize is unreliable with the current native
+        // RDPEGFX bridge on some Windows servers. Reconnect with the requested
+        // DesktopWidth/DesktopHeight so the resolution actually changes.
+        connect().catch(() => {});
     } catch (err) {
         setStatus('error', `切换分辨率失败：${err.message || err}`);
         return false;
@@ -494,7 +499,7 @@ function handleDirectPcm(bytes) {
 
 async function connectDirectCanvasRdp() {
     if (!displayRoot) throw new Error('RDP display root missing');
-    const size = availableSize();
+    const size = desiredRdpSize || availableSize();
     const canvas = document.createElement('canvas');
     canvas.className = 'rdp-direct-canvas';
     canvas.width = size.width;
@@ -548,7 +553,8 @@ async function connectDirectCanvasRdp() {
             const text = Array.isArray(keys) ? keys.join('') : String(keys || '');
             for (const key of Array.from(text)) {
                 const code = key === '
-' || key === '' ? 'Enter' : key === '	' ? 'Tab' : key === ' ' ? 'Space' : '';
+' || key === '
+' ? 'Enter' : key === '	' ? 'Tab' : key === ' ' ? 'Space' : '';
                 const label = code === 'Enter' ? 'Enter' : code === 'Tab' ? 'Tab' : code === 'Space' ? ' ' : key;
                 const keyCode = code === 'Enter' ? 13 : code === 'Tab' ? 9 : code === 'Space' ? 32 : 0;
                 this._sendMessage({ type: 'key', action: 'down', key: label, code, keyCode });
@@ -578,6 +584,8 @@ async function connectDirectCanvasRdp() {
                 canvas.height = msg.height || canvas.height;
                 setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`);
                 notifyParentStatus('connected');
+                startClipboardSyncLoop();
+                syncLocalClipboardTextToRdp('连接');
                 applyDisplayScale();
             } else if (msg.type === 'resize') {
                 resetSurfacesForResize();
@@ -587,10 +595,12 @@ async function connectDirectCanvasRdp() {
                 applyDisplayScale();
             } else if (msg.type === 'disconnected') {
                 connected = false;
+                stopClipboardSyncLoop();
                 setStatus('disconnected', msg.reason || 'RDP 已断开');
                 notifyParentStatus('disconnected');
             } else if (msg.type === 'error') {
                 connected = false;
+                stopClipboardSyncLoop();
                 setStatus('error', msg.message || 'RDP 错误');
                 notifyParentStatus('disconnected');
             } else {
@@ -805,6 +815,7 @@ async function connectDirectCanvasRdp() {
     ws.onclose = () => {
         const wasConnected = connected;
         connected = false;
+        stopClipboardSyncLoop();
         if (rdpManualDisconnect || rdpReplacingConnection) {
             if (rdpManualDisconnect && wasConnected) { setStatus('disconnected', 'RDP 已断开'); notifyParentStatus('disconnected'); }
             return;
@@ -1187,6 +1198,33 @@ function bindControls() {
     document.addEventListener('drop', async (event) => { const files = Array.from(event.dataTransfer?.files || []); if (files.length) { event.preventDefault(); const target = remotePointFromClient(event.clientX, event.clientY); await sendClipboardFiles(files, true, target); } }, { passive: false });
 }
 
+
+
+function startClipboardSyncLoop() {
+    if (clipboardSyncTimer) return;
+    clipboardSyncTimer = setInterval(() => {
+        if (connected && !document.hidden) syncLocalClipboardTextToRdp('轮询');
+    }, 1800);
+}
+function stopClipboardSyncLoop() {
+    if (clipboardSyncTimer) clearInterval(clipboardSyncTimer);
+    clipboardSyncTimer = null;
+}
+async function syncLocalClipboardTextToRdp(reason = 'auto') {
+    if (!connected || !client || !navigator.clipboard?.readText) return false;
+    try {
+        const text = await navigator.clipboard.readText();
+        if (!text || text === lastSyncedLocalClipboardText) return false;
+        lastSyncedLocalClipboardText = text;
+        if (clipboardText) clipboardText.value = text;
+        sendClipboardText(text, false);
+        setClipboardHint(`本机剪贴板已同步到 RDP（${reason}）`, 'success');
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 function handleRdpToolbarDelegatedClick(event) {
     const btn = event.target?.closest?.('#clipboardBtn,#rdpFilesBtn,#shortcutsBtn,#joystickBtn');
     if (!btn) return;
@@ -1208,6 +1246,13 @@ function consumeIncomingSshFiles(files) {
 window.addEventListener('message', (event) => {
     if (event.source !== window.parent) return;
     const data = event.data || {};
+    if (data.type === 'shared-clipboard-text' && data.text) {
+        lastSyncedLocalClipboardText = String(data.text || '');
+        if (clipboardText) clipboardText.value = lastSyncedLocalClipboardText;
+        sendClipboardText(lastSyncedLocalClipboardText, false);
+        setClipboardHint('共享剪贴板文本已同步到 RDP', 'success');
+        return;
+    }
     if (data.source === 'zephyr-app' && data.type === 'shared-file-clipboard-available' && Array.isArray(data.files) && data.files.length) {
         setFilesHint(`SSH 终端已复制 ${data.files.length} 个文件，正在转发到 RDP...`, 'info');
         consumeIncomingSshFiles(data.files);
@@ -1216,6 +1261,10 @@ window.addEventListener('message', (event) => {
     if (data.type === 'theme-change') applyFrameTheme(data.theme, data.appearance || {});
 });
 
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncLocalClipboardTextToRdp('页面激活'); });
+window.addEventListener('focus', () => syncLocalClipboardTextToRdp('窗口聚焦'));
+document.addEventListener('copy', () => setTimeout(() => syncLocalClipboardTextToRdp('复制'), 80));
+document.addEventListener('pointerdown', () => syncLocalClipboardTextToRdp('点击'), { passive: true });
 window.addEventListener('beforeunload', () => { try { client?.disconnect?.(); } catch {} });
 window.addEventListener('DOMContentLoaded', () => {
     bindControls();
