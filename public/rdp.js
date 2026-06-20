@@ -1282,8 +1282,8 @@ async function connect() {
         const initialTarget = computeRdpTargetSize(fitModes[fitModeIdx]);
         requestedRdpWidth = initialTarget.width;
         requestedRdpHeight = initialTarget.height;
-        const requestedStreamMode = String(params.rdpStream || urlParams.get('stream') || 'h264').toLowerCase() === 'av' ? 'av' : 'h264';
-        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 60), stream: requestedStreamMode });
+        const requestedStreamMode = (urlParams.get('stream') || '').toLowerCase() === 'h264' || params.rdpNativeH264 === true ? 'h264' : 'av';
+        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 30), stream: requestedStreamMode });
         const connectionSeq = rdpReconnectSeq;
         rdpSocket = new WebSocket(`${wsBase}?${wsQuery.toString()}`);
         rdpSocket.binaryType = 'arraybuffer';
@@ -1426,7 +1426,7 @@ async function connect() {
                 firstFrameWatchdog = window.setTimeout(() => {
                     if (firstFrameDrawn || !rdpSocket || rdpSocket.readyState !== WebSocket.OPEN) return;
                     console.warn('[rdp-client]', 'native H.264 first frame timeout, falling back to A/V stream');
-                    params.rdpStream = 'av';
+                    params.rdpNativeH264 = false;
                     try { rdpSocket.close(1012, '原生 H.264 首帧超时，切换兼容 A/V 模式...'); } catch {}
                 }, 7000);
             }

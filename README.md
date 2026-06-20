@@ -298,7 +298,7 @@ RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zeph
 
 - **RDP**：使用 Zephyr 自有 **FreeRDP + Xvfb + ffmpeg/WebCodecs H.264** 管线。浏览器通过 `/rdp-h264` WebSocket 接收 H.264 视频帧，并通过同一连接发送鼠标、键盘、剪贴板和重连/分辨率切换指令。
   - **高性能输入注入**：使用原生 C 编写的 `zephyr-xinput` 进程通过 XTest 扩展直接注入输入事件，替代每次事件 spawn xdotool 的方式，输入延迟从 ~15-30ms 降至 <1ms。
-  - **原生 H.264 直通**：默认启用 `RDP_NATIVE_H264=true`，FreeRDP 直接导出远程 Windows 发送的 H.264 码流到命名管道，跳过解码→X11→重编码的完整流程，大幅降低 CPU 占用和延迟。
+  - **稳定视频通道**：默认使用 FreeRDP 官方客户端渲染链路（xfreerdp → Xvfb → ffmpeg fMP4 → 浏览器 MSE），保证首帧和兼容性；RDPGFX/H.264 wire-through 是后续正确重构方向，旧的 GDI 层 H.264 截流只保留为实验开关，不再默认。
   - **原生文件剪贴板**：浏览器/SSH SFTP 文件先暂存在 RDP 客户端侧，并通过 X11 `text/uri-list` 触发 FreeRDP/WinPR 转换为 Windows `FileGroupDescriptorW`；远端在任意目录 Ctrl+V 时通过 CLIPRDR `FileContentsRequest` 按需拉取内容，不再用共享盘路径冒充粘贴。
 - **VNC**：使用内置 **noVNC** 前端，浏览器通过 `/novnc` WebSocket 连接 Zephyr；Zephyr 在服务端直连/代理/SSH 跳板到目标 VNC Server，并在服务端使用保存的 VNC 密码完成 VNCAuth，密码不会下发到浏览器。
 
@@ -318,7 +318,7 @@ RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zeph
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `RDP_NATIVE_H264` | `true` | 启用 FreeRDP 原生 H.264 码流导出，跳过解码→X11→重编码流程 |
+| `RDP_NATIVE_H264` | `false` | 实验性旧 GDI 层 H.264 导出；默认关闭。正确的原生级方向是 RDPGFX/EGFX wire-through + WebCodecs，而不是 GDI 截流 |
 | `RDP_ALLOW_GFX_FALLBACK` | `true` | 允许在原生 H.264 不可用时回退到 x11grab+ffmpeg |
 | `RDP_FALLBACK_GFX_MODE` | `AVC444` | 非原生直通回退模式的 FreeRDP GFX 编码；原生 H.264 直通固定使用 `AVC420`，避免 AVC444 双流无法被浏览器直接等价解码 |
 | `RDP_H264_WIDTH` | `1920` | 流宽度 |

@@ -4135,7 +4135,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
             fs.writeFileSync(asoundrcPath, 'pcm.!default { type pulse }\nctl.!default { type pulse }\n');
             env.ALSA_CONFIG_PATH = asoundrcPath;
         } catch {}
-        pulseaudio = rdpSpawn('pulseaudio', ['--daemonize=no', '--exit-idle-time=-1', '--disallow-exit=true', '--log-target=stderr', `--load=module-native-protocol-unix socket=${pulseDir}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
+        pulseaudio = rdpSpawn('pulseaudio', ['-n', '--daemonize=no', '--exit-idle-time=-1', '--disallow-exit=true', '--log-target=stderr', `--load=module-native-protocol-unix socket=${pulseDir}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
         rdpAttachLog(pulseaudio, 'pulseaudio', 'warn');
         await new Promise((resolve) => setTimeout(resolve, 900));
         console.info('[rdp-audio]', 'audio backend enabled', { connId, backend: rdpAudioBackend });
@@ -4842,7 +4842,7 @@ function startIsolatedRdpAudioWorker(connId, conn) {
     } catch {}
     const worker = { connId, clients: new Set(), pulseaudio: null, xvfb: null, xfreerdp: null, ffmpeg: null, stopping: false, startedAt: Date.now() };
     rdpAudioWorkers.set(connId, worker);
-    worker.pulseaudio = rdpSpawn('pulseaudio', ['--daemonize=no', '--exit-idle-time=-1', '--disallow-exit=true', `--load=module-native-protocol-unix socket=${pulseDir}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
+    worker.pulseaudio = rdpSpawn('pulseaudio', ['-n', '--daemonize=no', '--exit-idle-time=-1', '--disallow-exit=true', `--load=module-native-protocol-unix socket=${pulseDir}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
     rdpAttachLog(worker.pulseaudio, 'rdp-audio-pulse', 'warn');
     worker.xvfb = rdpSpawn('Xvfb', [xvfbDisp, '-screen', '0', '800x600x24', '-ac']);
     rdpAttachLog(worker.xvfb, 'rdp-audio-xvfb', 'warn');
@@ -5041,7 +5041,7 @@ rdpH264Wss.on('connection', async (ws, req) => {
         const requestedMode = url.searchParams.get('mode') || '';
         const requestedQuality = ['performance', 'balanced', 'quality'].includes(String(url.searchParams.get('quality') || '').toLowerCase()) ? String(url.searchParams.get('quality')).toLowerCase() : 'balanced';
         const requestedFps = Math.max(15, Math.min(60, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
-        const requestedStream = String(url.searchParams.get('stream') || 'h264').toLowerCase() === 'av' ? 'av' : 'h264';
+        const requestedStream = String(url.searchParams.get('stream') || 'av').toLowerCase() === 'h264' ? 'h264' : 'av';
         if (pipe && requestedStream === 'av') {
             // fMP4 clients must receive ftyp/moov from the beginning; mid-stream attach causes MSE demux errors.
             cleanupPipe(connId);

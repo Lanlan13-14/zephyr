@@ -122,8 +122,8 @@ COPY --from=app-build /app /app
 ENV PATH="/opt/freerdp-zephyr/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/freerdp-zephyr/lib:/usr/lib/freerdp2"
 ENV ZEPHYR_VERSION=${ZEPHYR_VERSION}
-# Enable native H.264 passthrough by default for maximum performance
-ENV RDP_NATIVE_H264=true
+# Keep experimental GDI-layer H.264 export disabled by default; stable path uses xfreerdp/Xvfb/ffmpeg.
+ENV RDP_NATIVE_H264=false
 ENV RDP_ALLOW_GFX_FALLBACK=true
 
 # 运行时诊断
