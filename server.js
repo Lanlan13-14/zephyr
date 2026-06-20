@@ -2,7 +2,8 @@ const express = require('express');
 const http = require('http');
 const https = require('https');
 const { execFileSync } = require('child_process');
-const { WebSocketServer } = require('ws');
+const WebSocket = require('ws');
+const { WebSocketServer } = WebSocket;
 const { Client } = require('ssh2');
 const net = require('net');
 const path = require('path');
@@ -63,8 +64,17 @@ const PORT = process.env.PORT || 3000;
 const HTTPS_ENABLED = process.env.HTTPS_ENABLED !== 'false';
 const HTTPS_PORT = Number(process.env.HTTPS_PORT || process.env.ZEPHYR_HTTPS_PORT || 3443);
 const SSH_STATS_ENABLED = process.env.SSH_STATS_ENABLED !== 'false';
-const APP_VERSION = getAppVersion();
 const app = express();
+
+function applyCrossOriginIsolationHeaders(req, res, next) {
+    // freerdp-web's GFX worker uses OffscreenCanvas/WebCodecs and its audio path uses
+    // SharedArrayBuffer.  These headers are required for crossOriginIsolated pages.
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    next();
+}
+app.use(applyCrossOriginIsolationHeaders);
 
 const DATA_DIR = path.join(__dirname, 'data');
 const HTTPS_DIR = path.join(DATA_DIR, 'https');
@@ -3859,109 +3869,7 @@ app.use('/vendor/@wterm', express.static(path.join(__dirname, 'node_modules', '@
 app.get('/app.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
 app.get('/terminal.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'terminal.html')));
 app.get('/rdp.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'rdp.html')));
-// Serve files from RDP clipboard download temp dir (for SSH→RDP file transfer)
-app.get('/api/rdp/clipboard-file', requireAuth, (req, res) => {
-    const filePath = String(req.query.path || '');
-    const name = String(req.query.name || '');
-    if (!filePath || !filePath.startsWith('/tmp/zephyr-clip-')) {
-        return res.status(400).json({ error: 'invalid path' });
-    }
-    try {
-        if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'file not found' });
-        const stat = fs.statSync(filePath);
-        if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
-        res.setHeader('Content-Type', 'application/octet-stream');
-        res.setHeader('Content-Length', stat.size);
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || path.basename(filePath))}"`);
-        const stream = fs.createReadStream(filePath);
-        stream.on('error', (err) => res.status(500).json({ error: err.message }));
-        stream.pipe(res);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
 app.get('/novnc.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'novnc.html')));
-
-/* ═══════════════════════════════════════════════════════════════════
- * Streaming file upload to RDP shared drive
- *
- * Replaces the base64-over-WebSocket approach which was limited to ~32MB
- * by browser memory.  This endpoint accepts a streaming HTTP POST body
- * and writes directly to the xfreerdp shared drive directory, supporting
- * files of any size.
- * ═══════════════════════════════════════════════════════════════════ */
-app.post('/api/rdp/upload-share/:connId', requireAuth, async (req, res) => {
-    const connId = String(req.params.connId || '');
-    const pipe = rdpPipes.get(connId);
-    if (!pipe) {
-        return res.status(404).json({ error: 'RDP session not found' });
-    }
-    try {
-        const batchId = String(req.query.batch || req.headers['x-rdp-clipboard-batch'] || '');
-        const reset = String(req.query.reset || '') === '1';
-        await ensureRdpFileClipboardBatch(pipe, { batchId, reset });
-        const rawName = String(req.query.name || req.headers['x-file-name'] || 'upload');
-        const safeName = safeLocalClipboardName(rawName);
-        const filePath = uniqueLocalPath(pipe.fileClipRoot, safeName);
-        const writeStream = fs.createWriteStream(filePath);
-        let totalBytes = 0;
-        req.on('data', (chunk) => { totalBytes += chunk.length; });
-        req.on('error', (err) => {
-            console.warn('[rdp-file-clip]', 'request stream error', { connId, error: err.message });
-            writeStream.destroy(err);
-        });
-        writeStream.on('error', (err) => {
-            console.warn('[rdp-file-clip]', 'write failed', { connId, name: safeName, error: err.message });
-            if (!res.headersSent) res.status(500).json({ error: err.message });
-        });
-        writeStream.on('close', async () => {
-            try {
-                pipe.fileClipPaths.push(filePath);
-                await publishRdpFileClipboard(pipe);
-                console.info('[rdp-file-clip]', 'browser file staged for native RDP clipboard', { connId, name: safeName, size: totalBytes, count: pipe.fileClipPaths.length });
-                sendRdpFileClipboardReady(pipe, { source: 'browser-upload' });
-                res.json({ ok: true, nativeClipboard: true, name: path.basename(filePath), size: totalBytes, count: pipe.fileClipPaths.length });
-            } catch (err) {
-                if (!res.headersSent) res.status(500).json({ error: err.message });
-            }
-        });
-        req.pipe(writeStream);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// List files in the RDP shared drive
-app.get('/api/rdp/share-list/:connId', requireAuth, (req, res) => {
-    const connId = String(req.params.connId || '');
-    const pipe = rdpPipes.get(connId);
-    if (!pipe || !pipe.shareDir) {
-        return res.status(404).json({ error: 'RDP session not found' });
-    }
-    try {
-        const files = [];
-        for (const entry of fs.readdirSync(pipe.shareDir)) {
-            const fullPath = path.join(pipe.shareDir, entry);
-            const stat = fs.statSync(fullPath);
-            if (stat.isFile()) {
-                files.push({ name: entry, size: stat.size, mtime: stat.mtimeMs });
-            }
-        }
-        res.json({ files, shareDir: '\\\\tsclient\\zephyr-share' });
-    } catch (err) {
-        res.json({ files: [], error: err.message });
-    }
-});
-
-// Trigger Ctrl+V in the remote Windows session for the current native RDP file clipboard.
-app.post('/api/rdp/paste-file-clipboard/:connId', requireAuth, (req, res) => {
-    const connId = String(req.params.connId || '');
-    const pipe = rdpPipes.get(connId);
-    if (!pipe) return res.status(404).json({ error: 'RDP session not found' });
-    if (!pipe.fileClipPaths?.length) return res.status(400).json({ error: 'RDP 文件剪贴板为空' });
-    pasteRdpNativeFileClipboard(pipe);
-    res.json({ ok: true, nativeClipboard: true, count: pipe.fileClipPaths.length });
-});
 app.get('/player.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'player.html')));
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
 
@@ -3987,6 +3895,7 @@ const wsServerOptions = {
 const wss = new WebSocketServer(wsServerOptions);
 const noVncWss = new WebSocketServer(wsServerOptions);
 const editorLspWss = new WebSocketServer(wsServerOptions);
+const rdpGfxWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 64 * 1024 * 1024 });
 const rdpH264Wss = new WebSocketServer(wsServerOptions);
 const rdpAudioWss = new WebSocketServer(wsServerOptions);
 
@@ -3998,7 +3907,15 @@ function handleHttpUpgrade(req, socket, head) {
         pathname = req.url || '';
     }
 
-    const targetWss = pathname === '/ssh' ? wss : pathname === '/rdp-h264' ? rdpH264Wss : pathname === '/rdp-audio' ? rdpAudioWss : pathname === '/novnc' ? noVncWss : pathname === '/editor-lsp' ? editorLspWss : null;
+    const targetWss = pathname === '/ssh'
+        ? wss
+        : pathname === '/rdp-gfx'
+            ? rdpGfxWss
+            : pathname === '/novnc'
+                ? noVncWss
+                : pathname === '/editor-lsp'
+                    ? editorLspWss
+                    : null;
     if (!targetWss) {
         console.warn('[WS-DIAG] rejected websocket upgrade for unknown path', { url: req.url || '' });
         rejectSocket(socket, 404, 'Not Found');
@@ -4017,6 +3934,64 @@ function handleHttpUpgrade(req, socket, head) {
 server.on('upgrade', handleHttpUpgrade);
 if (httpsServer) httpsServer.on('upgrade', handleHttpUpgrade);
 editorLspWss.on('connection', handleEditorLspConnection);
+
+const RDP_GFX_BACKEND_HOST = process.env.RDP_GFX_BACKEND_HOST || '127.0.0.1';
+const RDP_GFX_BACKEND_PORT = Number(process.env.RDP_GFX_BACKEND_PORT || 8765);
+const RDP_GFX_BACKEND_SCRIPT = process.env.RDP_GFX_BACKEND_SCRIPT || path.join(__dirname, 'rdp-gfx-backend', 'server.py');
+let rdpGfxBackendProcess = null;
+let rdpGfxBackendStarting = null;
+
+function rdpGfxHealthCheck(timeout = 800) {
+    return new Promise((resolve) => {
+        const req = http.get({ hostname: RDP_GFX_BACKEND_HOST, port: RDP_GFX_BACKEND_PORT, path: '/health', timeout }, (res) => {
+            res.resume();
+            resolve(res.statusCode === 200);
+        });
+        req.on('timeout', () => { try { req.destroy(); } catch {} resolve(false); });
+        req.on('error', () => resolve(false));
+    });
+}
+
+async function ensureRdpGfxBackend() {
+    if (await rdpGfxHealthCheck()) return;
+    if (rdpGfxBackendStarting) return rdpGfxBackendStarting;
+    rdpGfxBackendStarting = (async () => {
+        if (!fs.existsSync(RDP_GFX_BACKEND_SCRIPT)) throw new Error(`RDP GFX backend missing: ${RDP_GFX_BACKEND_SCRIPT}`);
+        if (!rdpGfxBackendProcess) {
+            const python = process.env.RDP_GFX_PYTHON || 'python3';
+            const env = { ...process.env, WS_HOST: RDP_GFX_BACKEND_HOST, WS_PORT: String(RDP_GFX_BACKEND_PORT), PYTHONUNBUFFERED: '1', PYTHONPATH: path.dirname(RDP_GFX_BACKEND_SCRIPT) };
+            rdpGfxBackendProcess = spawn(python, ['-u', RDP_GFX_BACKEND_SCRIPT], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+            rdpGfxBackendProcess.stdout?.on('data', (d) => { const text = d.toString('utf8').trim(); if (text) console.info('[rdp-gfx-backend]', text); });
+            rdpGfxBackendProcess.stderr?.on('data', (d) => { const text = d.toString('utf8').trim(); if (text) console.warn('[rdp-gfx-backend]', text); });
+            rdpGfxBackendProcess.on('error', (err) => console.error('[rdp-gfx-backend]', 'spawn failed', { error: err.message }));
+            rdpGfxBackendProcess.on('exit', (code, signal) => { console.warn('[rdp-gfx-backend]', 'exited', { code, signal }); rdpGfxBackendProcess = null; });
+        }
+        for (let i = 0; i < 50; i += 1) {
+            if (await rdpGfxHealthCheck(1000)) return;
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        throw new Error('RDP GFX backend failed to become healthy; FreeRDP3 bridge/librdp_bridge.so is unavailable');
+    })().finally(() => { rdpGfxBackendStarting = null; });
+    return rdpGfxBackendStarting;
+}
+
+function splitRdpIdentity(conn) {
+    let username = String(conn?.username || 'Administrator');
+    let domain = String(conn?.domain || conn?.rdpDomain || '');
+    const domainMatch = username.match(/^([^\\]+)\\(.+)$/);
+    if (!domain && domainMatch) {
+        domain = domainMatch[1];
+        username = domainMatch[2];
+    }
+    return { username, domain };
+}
+
+function closeWebSocketSafe(ws, code = 1000, reason = '') {
+    try {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.close(code, String(reason || '').slice(0, 120));
+        else if (ws && ws.readyState === WebSocket.CONNECTING) ws.terminate();
+    } catch {}
+}
 
 const RDP_STREAM_WIDTH = Number(process.env.RDP_H264_WIDTH || 1920);
 const RDP_STREAM_HEIGHT = Number(process.env.RDP_H264_HEIGHT || 1080);
@@ -5023,6 +4998,142 @@ noVncWss.on('connection', async (ws, req) => {
         console.warn('[novnc-ws]', 'failed to open proxy', { connectionId: connId, error: message });
         cleanup(message, true);
     }
+});
+
+rdpGfxWss.on('connection', (ws, req) => {
+    const url = new URL(req.url || '/rdp-gfx', `http://${req.headers.host || 'localhost'}`);
+    const connId = url.searchParams.get('connectionId') || 'default';
+    const pendingClientMessages = [];
+    let backendWs = null;
+    let backendReady = false;
+    let injectedConnect = false;
+    let routedForward = null;
+    let closed = false;
+    let effectiveConn = null;
+
+    const cleanup = (reason = 'cleanup') => {
+        if (closed) return;
+        closed = true;
+        try { routedForward?.close?.(); } catch {}
+        try { backendWs?.terminate?.(); } catch {}
+        console.info('[rdp-gfx]', 'proxy closed', { connId, reason });
+    };
+
+    const sendClientError = (message) => {
+        try { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'error', message: String(message || 'RDP GFX error') })); } catch {}
+    };
+
+    const forwardToBackend = (raw, isBinary) => {
+        if (!backendWs || backendWs.readyState !== WebSocket.OPEN) return;
+        if (isBinary) {
+            if (!injectedConnect) throw new Error('RDP GFX binary message before connect');
+            backendWs.send(raw, { binary: true });
+            return;
+        }
+        const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw || '');
+        let msg = null;
+        try { msg = JSON.parse(text); } catch {
+            if (!injectedConnect) throw new Error('RDP GFX invalid JSON before connect');
+            backendWs.send(text);
+            return;
+        }
+        if (msg?.type === 'connect') {
+            if (injectedConnect) return;
+            const { username, domain } = splitRdpIdentity(effectiveConn);
+            const width = evenClampRdpSize(msg.width || url.searchParams.get('width') || RDP_STREAM_WIDTH, 640, 4096);
+            const height = evenClampRdpSize(msg.height || url.searchParams.get('height') || RDP_STREAM_HEIGHT, 480, 2304);
+            injectedConnect = true;
+            backendWs.send(JSON.stringify({
+                type: 'connect',
+                host: effectiveConn.host,
+                port: Number(effectiveConn.port) || 3389,
+                username,
+                password: effectiveConn.password || '',
+                domain,
+                width,
+                height,
+            }));
+            console.info('[rdp-gfx]', 'connect injected', { connId, target: `${effectiveConn.host}:${Number(effectiveConn.port) || 3389}`, width, height, routed: !!routedForward });
+            return;
+        }
+        if (!injectedConnect) throw new Error(`RDP GFX message before connect: ${msg?.type || 'unknown'}`);
+        if (msg?.type === 'resize') {
+            msg.width = evenClampRdpSize(msg.width || RDP_STREAM_WIDTH, 640, 4096);
+            msg.height = evenClampRdpSize(msg.height || RDP_STREAM_HEIGHT, 480, 2304);
+            backendWs.send(JSON.stringify(msg));
+            return;
+        }
+        backendWs.send(JSON.stringify(msg));
+    };
+
+    ws.on('message', (raw, isBinary) => {
+        try {
+            if (!backendReady) {
+                if (pendingClientMessages.length > 200) throw new Error('RDP GFX pending client queue overflow');
+                pendingClientMessages.push({ raw: Buffer.from(raw), isBinary });
+                return;
+            }
+            forwardToBackend(raw, isBinary);
+        } catch (err) {
+            console.warn('[rdp-gfx]', 'client message rejected', { connId, error: err.message });
+            sendClientError(err.message);
+            closeWebSocketSafe(ws, 1008, err.message);
+        }
+    });
+    ws.on('close', () => cleanup('browser-close'));
+    ws.on('error', (err) => { console.warn('[rdp-gfx]', 'browser websocket error', { connId, error: err.message }); cleanup('browser-error'); });
+
+    (async () => {
+        try {
+            const sessionUser = currentSession(req);
+            if (!sessionUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
+            const store = readJSON(CONNECTIONS_FILE, { connections: [] });
+            const conn = (store.connections || []).find((c) => c.id === connId);
+            if (!conn) { closeWebSocketSafe(ws, 1008, 'connection not found'); return; }
+            if (String(conn.protocol || 'RDP').toUpperCase() !== 'RDP') { closeWebSocketSafe(ws, 1008, 'not an RDP connection'); return; }
+
+            const targetPort = Number(conn.port) || 3389;
+            routedForward = await createRoutedTcpForward(conn, targetPort, 15000);
+            effectiveConn = routedForward ? { ...conn, host: routedForward.host, port: routedForward.port } : conn;
+
+            await ensureRdpGfxBackend();
+            if (closed || ws.readyState !== ws.OPEN) return;
+
+            backendWs = new WebSocket(`ws://${RDP_GFX_BACKEND_HOST}:${RDP_GFX_BACKEND_PORT}/`, { perMessageDeflate: false, maxPayload: 64 * 1024 * 1024 });
+            backendWs.binaryType = 'arraybuffer';
+            backendWs.on('open', () => {
+                try {
+                    backendReady = true;
+                    console.info('[rdp-gfx]', 'backend attached', { connId, route: routedForward?.route || 'direct' });
+                    for (const item of pendingClientMessages.splice(0)) forwardToBackend(item.raw, item.isBinary);
+                } catch (err) {
+                    console.warn('[rdp-gfx]', 'queued client message rejected', { connId, error: err.message });
+                    sendClientError(err.message);
+                    closeWebSocketSafe(ws, 1008, err.message);
+                    cleanup('queued-message-error');
+                }
+            });
+            backendWs.on('message', (data, isBinary) => {
+                if (ws.readyState !== ws.OPEN) return;
+                try { ws.send(data, { binary: isBinary }); } catch (err) { console.warn('[rdp-gfx]', 'backend->browser send failed', { connId, error: err.message }); }
+            });
+            backendWs.on('close', (code, reason) => {
+                if (ws.readyState === ws.OPEN) closeWebSocketSafe(ws, code || 1011, reason?.toString?.() || 'RDP GFX backend closed');
+                cleanup('backend-close');
+            });
+            backendWs.on('error', (err) => {
+                console.warn('[rdp-gfx]', 'backend websocket error', { connId, error: err.message });
+                sendClientError(`RDP GFX backend error: ${err.message}`);
+                closeWebSocketSafe(ws, 1011, err.message);
+                cleanup('backend-error');
+            });
+        } catch (err) {
+            console.error('[rdp-gfx]', 'connection error', { connId, error: err.message });
+            sendClientError(err.message);
+            closeWebSocketSafe(ws, 1011, err.message);
+            cleanup('connect-error');
+        }
+    })();
 });
 
 rdpH264Wss.on('connection', async (ws, req) => {
@@ -6464,7 +6575,7 @@ async function startServer() {
     if (httpsServer) console.log(`🔐 Zephyr HTTPS 服务运行在 https://localhost:${HTTPS_PORT}`);
     else if (HTTPS_ENABLED) console.warn('[https] HTTPS requested but disabled because certificate setup failed');
     console.log(`   WebSocket 路径: /ssh`);
-    console.log(`   RDP/H.264 路径: /rdp-h264 -> xfreerdp/ffmpeg`);
+    console.log(`   RDP/GFX 路径: /rdp-gfx -> FreeRDP3 RDPEGFX native bridge`);
     console.log(`   VNC/noVNC 路径: /novnc -> VNC Server`);
 }
 
