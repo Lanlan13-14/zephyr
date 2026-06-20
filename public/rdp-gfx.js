@@ -232,7 +232,10 @@ function cycleFps() {
 }
 function requestResolution(res) {
     if (!client || !connected) return false;
-    const size = res?.width && res?.height ? res : availableSize();
+    const size = res?.width && res?.height ? adaptPresetResolutionToViewport(res) : availableSize();
+    displayScaleMode = 'fit';
+    displayZoom = 100;
+    applyDisplayScale();
     setStatus('connecting', `正在切换 RDPEGFX 分辨率 ${size.width}×${size.height}...`);
     try {
         client._lastRequestedWidth = size.width;
@@ -505,6 +508,27 @@ async function connectDirectCanvasRdp() {
     const mapped = new Map();
     let primarySurfaceId = null;
     let totalFrames = 0;
+    const ensureSurfaceSize = (surface, minWidth, minHeight) => {
+        const width = Math.max(1, Math.ceil(minWidth));
+        const height = Math.max(1, Math.ceil(minHeight));
+        if (!surface || (surface.canvas.width >= width && surface.canvas.height >= height)) return surface;
+        const oldCanvas = surface.canvas;
+        const next = document.createElement('canvas');
+        next.width = Math.max(width, oldCanvas.width);
+        next.height = Math.max(height, oldCanvas.height);
+        const nextCtx = next.getContext('2d', { alpha: false });
+        nextCtx.drawImage(oldCanvas, 0, 0);
+        surface.canvas = next;
+        surface.ctx = nextCtx;
+        surface.width = next.width;
+        surface.height = next.height;
+        return surface;
+    };
+    const resetSurfacesForResize = () => {
+        surfaces.clear();
+        mapped.clear();
+        primarySurfaceId = null;
+    };
     const ws = new WebSocket(wsUrl());
     ws.binaryType = 'arraybuffer';
     client = {
@@ -526,12 +550,14 @@ async function connectDirectCanvasRdp() {
             try { msg = JSON.parse(event.data); } catch { return; }
             if (msg.type === 'connected') {
                 connected = true;
+                resetSurfacesForResize();
                 canvas.width = msg.width || canvas.width;
                 canvas.height = msg.height || canvas.height;
                 setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`);
                 notifyParentStatus('connected');
                 applyDisplayScale();
             } else if (msg.type === 'resize') {
+                resetSurfacesForResize();
                 canvas.width = msg.width || canvas.width;
                 canvas.height = msg.height || canvas.height;
                 setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
@@ -557,9 +583,9 @@ async function connectDirectCanvasRdp() {
         if (!msg) return;
         if (msg.type === 'createSurface') {
             const s = document.createElement('canvas');
-            s.width = msg.width;
-            s.height = msg.height;
-            surfaces.set(msg.surfaceId, { canvas: s, ctx: s.getContext('2d', { alpha: false }), width: msg.width, height: msg.height });
+            s.width = Math.max(1, msg.width);
+            s.height = Math.max(1, msg.height);
+            surfaces.set(msg.surfaceId, { canvas: s, ctx: s.getContext('2d', { alpha: false }), width: s.width, height: s.height });
             if (primarySurfaceId === null) primarySurfaceId = msg.surfaceId;
         } else if (msg.type === 'deleteSurface') {
             surfaces.delete(msg.surfaceId);
@@ -567,6 +593,14 @@ async function connectDirectCanvasRdp() {
         } else if (msg.type === 'mapSurface') {
             primarySurfaceId = msg.surfaceId;
             mapped.set(msg.surfaceId, { x: msg.outputX || 0, y: msg.outputY || 0 });
+        } else if (msg.type === 'resetGraphics') {
+            resetSurfacesForResize();
+            if (msg.width && msg.height) {
+                canvas.width = msg.width;
+                canvas.height = msg.height;
+                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
+                applyDisplayScale();
+            }
         } else if (msg.type === 'tile' && msg.codec === 'webp') {
             let surface = surfaces.get(msg.surfaceId);
             if (!surface) {
@@ -576,6 +610,8 @@ async function connectDirectCanvasRdp() {
                 surface = { canvas: s, ctx: s.getContext('2d', { alpha: false }), width: s.width, height: s.height };
                 surfaces.set(msg.surfaceId, surface);
                 if (primarySurfaceId === null) primarySurfaceId = msg.surfaceId;
+            } else {
+                ensureSurfaceSize(surface, Math.max(canvas.width, msg.x + msg.w), Math.max(canvas.height, msg.y + msg.h));
             }
             const bitmap = await createImageBitmap(new Blob([msg.payload], { type: 'image/webp' }));
             surface.ctx.drawImage(bitmap, msg.x, msg.y, msg.w, msg.h);
