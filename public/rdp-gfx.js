@@ -126,6 +126,11 @@ function buildEmbeddedRdpTheme() {
     };
 }
 applyFrameTheme();
+window.addEventListener('storage', (event) => {
+    if (event.key === 'zephyr-theme') applyFrameTheme(initialTheme());
+});
+function refreshFrameThemeFromStorage() { applyFrameTheme(initialTheme()); }
+
 
 function loadParams() {
     const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';
@@ -552,9 +557,7 @@ async function connectDirectCanvasRdp() {
         sendKeys(keys) {
             const text = Array.isArray(keys) ? keys.join('') : String(keys || '');
             for (const key of Array.from(text)) {
-                const code = key === '
-' || key === '
-' ? 'Enter' : key === '	' ? 'Tab' : key === ' ' ? 'Space' : '';
+                const code = key === '\n' || key === '\r' ? 'Enter' : key === '\t' ? 'Tab' : key === ' ' ? 'Space' : '';
                 const label = code === 'Enter' ? 'Enter' : code === 'Tab' ? 'Tab' : code === 'Space' ? ' ' : key;
                 const keyCode = code === 'Enter' ? 13 : code === 'Tab' ? 9 : code === 'Space' ? 32 : 0;
                 this._sendMessage({ type: 'key', action: 'down', key: label, code, keyCode });
@@ -1261,16 +1264,21 @@ window.addEventListener('message', (event) => {
     if (data.type === 'theme-change') applyFrameTheme(data.theme, data.appearance || {});
 });
 
-document.addEventListener('visibilitychange', () => { if (!document.hidden) syncLocalClipboardTextToRdp('页面激活'); });
-window.addEventListener('focus', () => syncLocalClipboardTextToRdp('窗口聚焦'));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshFrameThemeFromStorage(); syncLocalClipboardTextToRdp('页面激活'); } });
+window.addEventListener('focus', () => { refreshFrameThemeFromStorage(); syncLocalClipboardTextToRdp('窗口聚焦'); });
 document.addEventListener('copy', () => setTimeout(() => syncLocalClipboardTextToRdp('复制'), 80));
 document.addEventListener('pointerdown', () => syncLocalClipboardTextToRdp('点击'), { passive: true });
 window.addEventListener('beforeunload', () => { try { client?.disconnect?.(); } catch {} });
-window.addEventListener('DOMContentLoaded', () => {
+let rdpBooted = false;
+function bootRdpPage() {
+    if (rdpBooted) return;
+    rdpBooted = true;
     bindControls();
     setupFloatingPanels();
     setupJoystickPanel();
     setupMobileKeyboard();
-    connect().catch(() => {});
+    connect().catch((err) => setStatus('error', err?.message || String(err || 'RDP 启动失败')));
     requestParentSharedFileClipboard();
-});
+}
+if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', bootRdpPage, { once: true });
+else bootRdpPage();
