@@ -2289,14 +2289,22 @@ export class RDPClient {
         
         return matchMagic(bytes, Magic.SURF) ||
                matchMagic(bytes, Magic.DELS) ||
+               matchMagic(bytes, Magic.MAPS) ||
                matchMagic(bytes, Magic.STFR) ||
                matchMagic(bytes, Magic.ENFR) ||
                matchMagic(bytes, Magic.PROG) ||
                matchMagic(bytes, Magic.WEBP) ||
                matchMagic(bytes, Magic.TILE) ||
+               matchMagic(bytes, Magic.CLRC) ||
                matchMagic(bytes, Magic.SFIL) ||
                matchMagic(bytes, Magic.S2SF) ||
-               matchMagic(bytes, Magic.C2SF);
+               matchMagic(bytes, Magic.C2SF) ||
+               matchMagic(bytes, Magic.S2CH) ||
+               matchMagic(bytes, Magic.EVCT) ||
+               matchMagic(bytes, Magic.RSGR) ||
+               matchMagic(bytes, Magic.CAPS) ||
+               matchMagic(bytes, Magic.INIT) ||
+               matchMagic(bytes, Magic.H264);
     }
 
     _handleConnected(msg) {

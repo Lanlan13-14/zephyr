@@ -2025,12 +2025,14 @@ int rdp_poll(RdpSession* session, int timeout_ms)
     int has_gfx_events = ctx->gfx_event_count > 0;
     pthread_mutex_unlock(&ctx->gfx_event_mutex);
 
-    if (!has_gfx_events) {
-        maybe_queue_gdi_fallback_frame(ctx);
-        pthread_mutex_lock(&ctx->gfx_event_mutex);
-        has_gfx_events = ctx->gfx_event_count > 0;
-        pthread_mutex_unlock(&ctx->gfx_event_mutex);
-    }
+    /* Always give the native FreeRDP GDI compositor a chance to publish the
+     * currently decoded framebuffer. Direct wire-through events may be partial
+     * for some RDPEGFX command mixes; the GDI-composited WebP frame is the
+     * reliable display path and is rate-limited inside maybe_queue_gdi_fallback_frame(). */
+    maybe_queue_gdi_fallback_frame(ctx);
+    pthread_mutex_lock(&ctx->gfx_event_mutex);
+    has_gfx_events = ctx->gfx_event_count > 0;
+    pthread_mutex_unlock(&ctx->gfx_event_mutex);
     
     return has_gfx_events ? 1 : 0;
 }
@@ -4018,11 +4020,21 @@ static void maybe_queue_gdi_fallback_frame(BridgeContext* ctx)
     const uint32_t surface_h = surface_ok ? ctx->surfaces[surface_id].height : (uint32_t)gdi->height;
     const uint32_t real_frames = ctx->last_completed_frame_id;
     const uint64_t last_ms = ctx->last_fallback_ms;
+    const bool mapped_to_output = surface_ok && ctx->surfaces[surface_id].mapped_to_output;
     pthread_mutex_unlock(&ctx->gfx_mutex);
 
-    if (real_frames > 0) return;
+    /* Always publish the native FreeRDP GDI-composited framebuffer at a modest
+     * cadence. This is the documented FreeRDP client rendering path:
+     * rdpgfx callbacks are decoded by gdi_graphics_pipeline_init() into the
+     * primary GDI surface, then Zephyr transports that surface over /rdp-gfx.
+     * The older condition `real_frames > 0` was wrong: servers may send valid
+     * RDPEGFX frames using commands/codecs our partial browser wire-through
+     * implementation does not fully render, which left the frontend black while
+     * ACKs kept flowing. */
+    (void)real_frames;
+    (void)mapped_to_output;
     uint64_t now = monotonic_ms();
-    if (last_ms && now - last_ms < 250) return;
+    if (last_ms && now - last_ms < 100) return;
 
     uint32_t w = (uint32_t)gdi->width;
     uint32_t h = (uint32_t)gdi->height;
@@ -4057,23 +4069,32 @@ static void maybe_queue_gdi_fallback_frame(BridgeContext* ctx)
     pthread_mutex_unlock(&ctx->gfx_mutex);
 
     const uint16_t target_surface_id = surface_ok ? surface_id : 0;
-    if (!surface_ok) {
-        pthread_mutex_lock(&ctx->gfx_mutex);
-        ctx->primary_surface_id = target_surface_id;
-        ctx->surfaces[target_surface_id].surface_id = target_surface_id;
-        ctx->surfaces[target_surface_id].width = w;
-        ctx->surfaces[target_surface_id].height = h;
-        ctx->surfaces[target_surface_id].pixel_format = GFX_PIXEL_FORMAT_ARGB_8888;
-        ctx->surfaces[target_surface_id].active = true;
-        ctx->surfaces[target_surface_id].mapped_to_output = true;
-        pthread_mutex_unlock(&ctx->gfx_mutex);
-        RdpGfxEvent create = {0};
-        create.type = RDP_GFX_EVENT_CREATE_SURFACE;
-        create.surface_id = target_surface_id;
-        create.width = w;
-        create.height = h;
-        create.pixel_format = GFX_PIXEL_FORMAT_ARGB_8888;
-        gfx_queue_event(ctx, &create);
+    if (!surface_ok || !mapped_to_output) {
+        if (!surface_ok) {
+            pthread_mutex_lock(&ctx->gfx_mutex);
+            ctx->primary_surface_id = target_surface_id;
+            ctx->surfaces[target_surface_id].surface_id = target_surface_id;
+            ctx->surfaces[target_surface_id].width = w;
+            ctx->surfaces[target_surface_id].height = h;
+            ctx->surfaces[target_surface_id].pixel_format = GFX_PIXEL_FORMAT_ARGB_8888;
+            ctx->surfaces[target_surface_id].active = true;
+            ctx->surfaces[target_surface_id].mapped_to_output = true;
+            pthread_mutex_unlock(&ctx->gfx_mutex);
+            RdpGfxEvent create = {0};
+            create.type = RDP_GFX_EVENT_CREATE_SURFACE;
+            create.surface_id = target_surface_id;
+            create.width = w;
+            create.height = h;
+            create.pixel_format = GFX_PIXEL_FORMAT_ARGB_8888;
+            gfx_queue_event(ctx, &create);
+        } else {
+            pthread_mutex_lock(&ctx->gfx_mutex);
+            ctx->surfaces[target_surface_id].mapped_to_output = true;
+            ctx->surfaces[target_surface_id].output_x = 0;
+            ctx->surfaces[target_surface_id].output_y = 0;
+            ctx->primary_surface_id = target_surface_id;
+            pthread_mutex_unlock(&ctx->gfx_mutex);
+        }
         RdpGfxEvent map = {0};
         map.type = RDP_GFX_EVENT_MAP_SURFACE;
         map.surface_id = target_surface_id;
