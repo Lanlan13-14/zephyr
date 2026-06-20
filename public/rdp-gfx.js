@@ -440,9 +440,18 @@ function playDirectAudioData(audioData) {
         const channels = audioData.numberOfChannels;
         const rate = audioData.sampleRate || audio.ctx.sampleRate;
         const buffer = audio.ctx.createBuffer(channels, frames, rate);
-        for (let ch = 0; ch < channels; ch++) {
-            const dst = buffer.getChannelData(ch);
-            audioData.copyTo(dst, { planeIndex: ch });
+        if (String(audioData.format || '').includes('planar')) {
+            for (let ch = 0; ch < channels; ch++) {
+                const dst = buffer.getChannelData(ch);
+                audioData.copyTo(dst, { planeIndex: ch });
+            }
+        } else {
+            const interleaved = new Float32Array(frames * channels);
+            audioData.copyTo(interleaved, { planeIndex: 0 });
+            for (let ch = 0; ch < channels; ch++) {
+                const dst = buffer.getChannelData(ch);
+                for (let i = 0; i < frames; i++) dst[i] = interleaved[i * channels + ch] || 0;
+            }
         }
         const src = audio.ctx.createBufferSource();
         src.buffer = buffer;
@@ -488,6 +497,9 @@ async function connectDirectCanvasRdp() {
     displayRoot.innerHTML = '';
     displayRoot.style.cssText += ';display:block;width:100%;height:100%;background:#000;';
     displayRoot.appendChild(canvas);
+    const unlockAudio = () => { const audio = ensureDirectAudio(); audio?.ctx?.resume?.().catch?.(() => {}); };
+    canvas.addEventListener('pointerdown', unlockAudio, { passive: true });
+    document.addEventListener('click', unlockAudio, { passive: true, once: true });
 
     const surfaces = new Map();
     const mapped = new Map();
@@ -1072,6 +1084,20 @@ function bindControls() {
     document.addEventListener('dragover', (event) => { if (event.dataTransfer?.types?.includes?.('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }, { passive: false });
     document.addEventListener('drop', async (event) => { const files = Array.from(event.dataTransfer?.files || []); if (files.length) { event.preventDefault(); const target = remotePointFromClient(event.clientX, event.clientY); await sendClipboardFiles(files, true, target); } }, { passive: false });
 }
+
+function handleRdpToolbarDelegatedClick(event) {
+    const btn = event.target?.closest?.('#clipboardBtn,#rdpFilesBtn,#shortcutsBtn,#joystickBtn');
+    if (!btn) return;
+    const map = { clipboardBtn: clipboardPanel, rdpFilesBtn: filesPanel, shortcutsBtn: $('#shortcutsPanel'), joystickBtn: $('#joystickPanel') };
+    const panel = map[btn.id];
+    if (panel) {
+        event.preventDefault();
+        event.stopPropagation();
+        panel.hidden = !panel.hidden;
+    }
+}
+document.addEventListener('click', handleRdpToolbarDelegatedClick, true);
+
 function consumeIncomingSshFiles(files) {
     // SSH terminal sends files via parent postMessage; forward to RDP as native clipboard files
     return stageRdpClipboardFiles(files, 'SSH 文件');
