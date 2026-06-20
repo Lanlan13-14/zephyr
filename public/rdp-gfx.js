@@ -41,6 +41,7 @@ let remoteFiles = [];
 let directAudio = null;
 let lastRemotePointer = null;
 let pendingFilePasteTarget = null;
+let pendingRdpClipboardFiles = [];
 const fileDownloads = new Map();
 const resolutions = [
     { label: '自动', width: 0, height: 0 },
@@ -360,7 +361,7 @@ function handleClientMessage(msg) {
         if (msg.ok && msg.paste) setTimeout(() => client?.sendKeyCombo?.('Ctrl+V'), 80);
     } else if (msg.type === 'clipboard-set-files-result') {
         setFilesHint(msg.ok ? `文件已进入 RDP 原生文件剪贴板（${msg.count || 0} 个）` : '文件剪贴板发布失败', msg.ok ? 'success' : 'warning');
-        if (msg.ok && msg.paste) setTimeout(() => pasteFilesAtRemoteTarget(pendingFilePasteTarget), 120);
+        if (msg.ok && msg.paste) setTimeout(() => completeNativePasteAtRemoteTarget(pendingFilePasteTarget), 120);
         pendingFilePasteTarget = null;
     } else if (msg.type === 'clipboard-file-start') {
         const item = fileDownloads.get(msg.requestId);
@@ -684,7 +685,15 @@ async function connectDirectCanvasRdp() {
         pinchScroll = null;
     });
     canvas.addEventListener('wheel', (event) => { sendMouse('wheel', event, { deltaY: event.deltaY || 0, deltaX: event.deltaX || 0 }); event.preventDefault(); }, { passive: false });
-    canvas.addEventListener('keydown', (event) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', action: 'down', key: event.key, code: event.code, keyCode: event.keyCode || event.which || 0, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey })); event.preventDefault(); });
+    canvas.addEventListener('keydown', (event) => {
+        if ((event.ctrlKey || event.metaKey) && String(event.key || '').toLowerCase() === 'v' && pendingRdpClipboardFiles.length) {
+            event.preventDefault();
+            pasteFilesAtRemoteTarget(lastRemotePointer);
+            return;
+        }
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', action: 'down', key: event.key, code: event.code, keyCode: event.keyCode || event.which || 0, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey }));
+        event.preventDefault();
+    });
     canvas.addEventListener('keyup', (event) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', action: 'up', key: event.key, code: event.code, keyCode: event.keyCode || event.which || 0, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey })); event.preventDefault(); });
     ws.onerror = () => { connected = false; setStatus('error', 'RDP WebSocket 错误'); notifyParentStatus('disconnected'); };
     ws.onclose = () => { if (connected) { connected = false; setStatus('disconnected', 'RDP 已断开'); notifyParentStatus('disconnected'); } };
@@ -753,10 +762,26 @@ function clickRemotePoint(point) {
     client._sendMessage({ type: 'mouse', action: 'down', x: point.x, y: point.y, button: 0 });
     setTimeout(() => client?._sendMessage?.({ type: 'mouse', action: 'up', x: point.x, y: point.y, button: 0 }), 30);
 }
-function pasteFilesAtRemoteTarget(target = null) {
+function stageRdpClipboardFiles(files, source = '本地') {
+    pendingRdpClipboardFiles = Array.from(files || []).filter(Boolean);
+    if (pendingRdpClipboardFiles.length) {
+        setFilesHint(`${source}已复制 ${pendingRdpClipboardFiles.length} 个文件；真正粘贴到 RDP 时才会上传`, 'info');
+    }
+    return pendingRdpClipboardFiles.length > 0;
+}
+function completeNativePasteAtRemoteTarget(target = null) {
     const point = target || lastRemotePointer;
     if (point) clickRemotePoint(point);
     setTimeout(() => client?.sendKeyCombo?.('Ctrl+V'), point ? 110 : 0);
+}
+async function pasteFilesAtRemoteTarget(target = null) {
+    if (pendingRdpClipboardFiles.length) {
+        const files = pendingRdpClipboardFiles;
+        pendingRdpClipboardFiles = [];
+        return sendClipboardFiles(files, true, target || lastRemotePointer);
+    }
+    completeNativePasteAtRemoteTarget(target || lastRemotePointer);
+    return true;
 }
 function sendTextToRemote(text) {
     if (!text || !client || !connected) return false;
@@ -1006,7 +1031,7 @@ function bindControls() {
         const files = Array.from(rdpFileInput.files || []);
         if (files.length) {
             rdpFileInput.value = '';
-            await sendClipboardFiles(files, true, lastRemotePointer);
+            stageRdpClipboardFiles(files, '本地文件');
         }
     });
     $('#rdpFileDownloadAllBtn')?.addEventListener('click', () => remoteFiles.forEach((_, i) => requestRemoteFileDownload(i)));
@@ -1026,7 +1051,7 @@ function bindControls() {
 }
 function consumeIncomingSshFiles(files) {
     // SSH terminal sends files via parent postMessage; forward to RDP as native clipboard files
-    return sendClipboardFiles(files, true, lastRemotePointer);
+    return stageRdpClipboardFiles(files, 'SSH 文件');
 }
 
 window.addEventListener('message', (event) => {
