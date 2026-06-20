@@ -38,6 +38,7 @@ let params = loadParams();
 let currentResolutionIdx = 0;
 let textInputQueue = Promise.resolve();
 let remoteFiles = [];
+let directAudio = null;
 const fileDownloads = new Map();
 const resolutions = [
     { label: '自动', width: 0, height: 0 },
@@ -189,8 +190,7 @@ function requireModernRdpBrowser() {
     if (missing.length) throw new Error(`当前浏览器不满足 RDPEGFX 客户端要求：${missing.join('、')}`);
 }
 function hideLegacyControls() {
-    const joy = document.getElementById('joystickBtn');
-    if (joy) joy.style.display = 'none';
+    // Keep view/joystick controls visible in direct-canvas mode.
 }
 function availableSize() {
     const rect = displayRoot?.getBoundingClientRect?.();
@@ -352,6 +352,86 @@ function handleClientMessage(msg) {
     }
 }
 
+
+function ensureDirectAudio() {
+    if (directAudio) return directAudio;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+    const ctx = new AudioCtx();
+    const gain = ctx.createGain();
+    gain.gain.value = 1;
+    gain.connect(ctx.destination);
+    directAudio = { ctx, gain, nextTime: 0, opusDecoder: null, opusRate: 0, opusChannels: 0 };
+    return directAudio;
+}
+async function handleDirectOpus(bytes) {
+    if (typeof AudioDecoder === 'undefined') return;
+    const audio = ensureDirectAudio();
+    if (!audio) return;
+    if (audio.ctx.state === 'suspended') await audio.ctx.resume().catch(() => {});
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const sampleRate = view.getUint32(4, true);
+    const channels = view.getUint16(8, true);
+    const frameSize = view.getUint16(10, true);
+    if (!frameSize || bytes.byteLength < 12 + frameSize) return;
+    if (!audio.opusDecoder || audio.opusRate !== sampleRate || audio.opusChannels !== channels) {
+        try { audio.opusDecoder?.close?.(); } catch {}
+        audio.opusRate = sampleRate;
+        audio.opusChannels = channels;
+        audio.opusDecoder = new AudioDecoder({
+            output: (audioData) => playDirectAudioData(audioData),
+            error: () => {},
+        });
+        await audio.opusDecoder.configure({ codec: 'opus', sampleRate, numberOfChannels: channels }).catch(() => { audio.opusDecoder = null; });
+    }
+    if (!audio.opusDecoder) return;
+    const opus = bytes.slice(12, 12 + frameSize);
+    audio.opusDecoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: performance.now() * 1000, data: opus }));
+}
+function playDirectAudioData(audioData) {
+    const audio = ensureDirectAudio();
+    if (!audio) { audioData.close(); return; }
+    try {
+        const frames = audioData.numberOfFrames;
+        const channels = audioData.numberOfChannels;
+        const rate = audioData.sampleRate || audio.ctx.sampleRate;
+        const buffer = audio.ctx.createBuffer(channels, frames, rate);
+        for (let ch = 0; ch < channels; ch++) {
+            const dst = buffer.getChannelData(ch);
+            audioData.copyTo(dst, { planeIndex: ch });
+        }
+        const src = audio.ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(audio.gain);
+        const now = audio.ctx.currentTime;
+        audio.nextTime = Math.max(now + 0.02, audio.nextTime || 0);
+        src.start(audio.nextTime);
+        audio.nextTime += buffer.duration;
+    } catch {} finally { audioData.close(); }
+}
+function handleDirectPcm(bytes) {
+    const audio = ensureDirectAudio();
+    if (!audio) return;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const sampleRate = view.getUint32(4, true);
+    const channels = view.getUint16(8, true);
+    const bits = view.getUint16(10, true);
+    if (bits !== 16 || bytes.byteLength <= 12) return;
+    const pcm = new DataView(bytes.buffer, bytes.byteOffset + 12, bytes.byteLength - 12);
+    const frames = Math.floor(pcm.byteLength / (channels * 2));
+    const buffer = audio.ctx.createBuffer(channels, frames, sampleRate);
+    for (let i = 0; i < frames; i++) {
+        for (let ch = 0; ch < channels; ch++) buffer.getChannelData(ch)[i] = pcm.getInt16((i * channels + ch) * 2, true) / 32768;
+    }
+    const src = audio.ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(audio.gain);
+    const now = audio.ctx.currentTime;
+    audio.nextTime = Math.max(now + 0.02, audio.nextTime || 0);
+    src.start(audio.nextTime);
+    audio.nextTime += buffer.duration;
+}
+
 async function connectDirectCanvasRdp() {
     if (!displayRoot) throw new Error('RDP display root missing');
     const size = availableSize();
@@ -414,6 +494,9 @@ async function connectDirectCanvasRdp() {
             return;
         }
         const bytes = new Uint8Array(event.data);
+        const magic = String.fromCharCode(bytes[0] || 0, bytes[1] || 0, bytes[2] || 0, bytes[3] || 0);
+        if (magic === 'OPUS') { handleDirectOpus(bytes); return; }
+        if (magic === 'AUDI') { handleDirectPcm(bytes); return; }
         const msg = parseMessage(bytes);
         if (!msg) return;
         if (msg.type === 'createSurface') {
@@ -749,6 +832,111 @@ function applyDisplayScale() {
     if (zoomValue) zoomValue.textContent = `${displayZoom}%`;
 }
 
+
+function setupFloatingPanels() {
+    document.querySelectorAll('[data-drag-panel]').forEach((handle) => {
+        if (handle.dataset.boundDrag) return;
+        handle.dataset.boundDrag = '1';
+        handle.addEventListener('pointerdown', (event) => {
+            const panel = document.getElementById(handle.dataset.dragPanel || '');
+            if (!panel) return;
+            event.preventDefault();
+            handle.setPointerCapture?.(event.pointerId);
+            const start = { x: event.clientX, y: event.clientY };
+            const rect = panel.getBoundingClientRect();
+            const move = (ev) => {
+                const nx = Math.max(4, Math.min(window.innerWidth - 40, rect.left + ev.clientX - start.x));
+                const ny = Math.max(4, Math.min(window.innerHeight - 40, rect.top + ev.clientY - start.y));
+                panel.style.left = `${nx}px`; panel.style.top = `${ny}px`; panel.style.right = 'auto'; panel.style.bottom = 'auto';
+            };
+            const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up, { once: true });
+        });
+    });
+
+    document.querySelectorAll('[data-resize-panel]').forEach((handle) => {
+        if (handle.dataset.boundResize) return;
+        handle.dataset.boundResize = '1';
+        handle.addEventListener('pointerdown', (event) => {
+            const panel = document.getElementById(handle.dataset.resizePanel || '');
+            if (!panel) return;
+            event.preventDefault();
+            handle.setPointerCapture?.(event.pointerId);
+            const edge = handle.dataset.resizeEdge || 'right';
+            const start = { x: event.clientX, y: event.clientY };
+            const rect = panel.getBoundingClientRect();
+            const move = (ev) => {
+                let w = rect.width;
+                let h = rect.height;
+                let left = rect.left;
+                if (edge.includes('right')) w = rect.width + ev.clientX - start.x;
+                if (edge.includes('left')) { w = rect.width - (ev.clientX - start.x); left = rect.left + (ev.clientX - start.x); }
+                if (edge.includes('bottom')) h = rect.height + ev.clientY - start.y;
+                w = Math.max(220, Math.min(window.innerWidth - 12, w));
+                h = Math.max(180, Math.min(window.innerHeight - 12, h));
+                panel.style.width = `${w}px`;
+                panel.style.height = `${h}px`;
+                if (edge.includes('left')) { panel.style.left = `${Math.max(4, left)}px`; panel.style.right = 'auto'; }
+            };
+            const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up, { once: true });
+        });
+    });
+
+    document.querySelectorAll('[data-layout-panel]').forEach((btn) => {
+        if (btn.dataset.boundLayout) return;
+        btn.dataset.boundLayout = '1';
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const panel = document.getElementById(btn.dataset.layoutPanel || '');
+            if (!panel) return;
+            panel.classList.toggle('compact-panel');
+        });
+    });
+}
+function setupJoystickPanel() {
+    const panel = $('#joystickPanel');
+    const knob = $('#joystickKnob');
+    const container = $('#joystickContainer');
+    if (!panel || !knob || !container || container.dataset.boundJoystick) return;
+    container.dataset.boundJoystick = '1';
+    let timer = null;
+    let vector = { x: 0, y: 0 };
+    const stop = () => { if (timer) clearInterval(timer); timer = null; vector = { x: 0, y: 0 }; knob.classList.add('smooth-back'); knob.style.transform = 'translate(0,0)'; setTimeout(() => knob.classList.remove('smooth-back'), 220); };
+    const tick = () => {
+        const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
+        if (!canvas || !client?._sendMessage) return;
+        if (displayRoot && (displayRoot.scrollWidth > displayRoot.clientWidth || displayRoot.scrollHeight > displayRoot.clientHeight)) {
+            displayRoot.scrollLeft += vector.x * 18;
+            displayRoot.scrollTop += vector.y * 18;
+        } else {
+            client._sendMessage({ type: 'mouse', action: 'wheel', x: Math.floor(canvas.width / 2), y: Math.floor(canvas.height / 2), deltaX: vector.x * 20, deltaY: vector.y * 20 });
+        }
+    };
+    container.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        container.setPointerCapture?.(event.pointerId);
+        const rect = container.getBoundingClientRect();
+        const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        const move = (ev) => {
+            const dx = ev.clientX - center.x;
+            const dy = ev.clientY - center.y;
+            const len = Math.max(1, Math.hypot(dx, dy));
+            const max = 46;
+            const k = Math.min(max, len) / len;
+            knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
+            vector = { x: Math.max(-1, Math.min(1, dx / max)), y: Math.max(-1, Math.min(1, dy / max)) };
+            if (!timer) timer = setInterval(tick, 35);
+        };
+        const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); stop(); };
+        move(event);
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up, { once: true });
+    });
+}
+
 function bindControls() {
     updateQualityFpsButtons();
     $('#qualityBtn')?.addEventListener('click', () => cycleQuality());
@@ -776,6 +964,7 @@ function bindControls() {
     $('#rdpFileDownloadAllBtn')?.addEventListener('click', () => remoteFiles.forEach((_, i) => requestRemoteFileDownload(i)));
     $('#rdpFilePasteToRemoteBtn')?.addEventListener('click', () => client?.sendKeyCombo?.('Ctrl+V'));
     $('#shortcutsBtn')?.addEventListener('click', () => { const panel = $('#shortcutsPanel'); if (panel) panel.hidden = !panel.hidden; });
+    $('#joystickBtn')?.addEventListener('click', () => { const panel = $('#joystickPanel'); if (panel) panel.hidden = !panel.hidden; });
     $('#shortcutsPanel')?.addEventListener('click', (event) => { const btn = event.target.closest('[data-keyseq]'); if (!btn) return; const combo = comboForKeyseq(btn.dataset.keyseq || ''); if (combo) { try { client?.sendKeyCombo?.(combo); } catch (err) { setStatus('error', err.message || String(err)); } } });
     document.addEventListener('paste', async (event) => {
         if (!connected) return;
@@ -806,6 +995,8 @@ window.addEventListener('message', (event) => {
 window.addEventListener('beforeunload', () => { try { client?.disconnect?.(); } catch {} });
 window.addEventListener('DOMContentLoaded', () => {
     bindControls();
+    setupFloatingPanels();
+    setupJoystickPanel();
     setupMobileKeyboard();
     connect().catch(() => {});
     requestParentSharedFileClipboard();
