@@ -293,10 +293,29 @@ function sendClipboardText(text, paste = false) {
 async function sendClipboardFiles(files, paste = true, target = null) {
     const list = Array.from(files || []).filter(Boolean);
     if (!client || !connected || !list.length) return false;
-    setFilesHint(`正在读取 ${list.length} 个文件并发布到 RDP 原生文件剪贴板...`, 'info');
-    const payload = [];
-    for (const file of list) payload.push(await fileToPayload(file));
     if (target) pendingFilePasteTarget = target;
+    const nativeFiles = list.filter((f) => typeof File !== 'undefined' && f instanceof File);
+    const otherFiles = list.filter((f) => !(typeof File !== 'undefined' && f instanceof File));
+    const payload = [];
+    if (nativeFiles.length) {
+        setFilesHint(`正在通过浏览器原生上传通道上传 ${nativeFiles.length} 个文件...`, 'info');
+        const form = new FormData();
+        for (const file of nativeFiles) form.append('files', file, file.name || 'file');
+        const resp = await fetch('/api/rdp-gfx/upload-clipboard-files', { method: 'POST', body: form });
+        if (!resp.ok) {
+            const text = await resp.text().catch(() => '');
+            setFilesHint(`文件上传失败：${text || resp.status}`, 'warning');
+            return false;
+        }
+        const data = await resp.json();
+        payload.push(...(data.files || []));
+    }
+    if (otherFiles.length) {
+        setFilesHint(`正在准备 ${otherFiles.length} 个跨会话文件...`, 'info');
+        for (const file of otherFiles) payload.push(await fileToPayload(file));
+    }
+    if (!payload.length) return false;
+    setFilesHint(`正在发布 ${payload.length} 个文件到 RDP 原生文件剪贴板...`, 'info');
     client._sendMessage({ type: 'clipboard-set-files', files: payload, paste: !!paste });
     return true;
 }

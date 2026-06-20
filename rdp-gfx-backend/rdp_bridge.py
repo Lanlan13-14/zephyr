@@ -1125,6 +1125,15 @@ class RDPBridge:
         batch = self._clipboard_tmp / f"local-{uuid.uuid4().hex}"
         batch.mkdir(parents=True, exist_ok=True)
         for item in files or []:
+            server_path = str(item.get('path') or '')
+            if server_path:
+                p = Path(server_path)
+                try:
+                    if p.is_file():
+                        staged.append(str(p))
+                        continue
+                except Exception:
+                    pass
             name = Path(str(item.get('name') or 'clipboard-file')).name or 'clipboard-file'
             b64 = str(item.get('data') or '')
             if ',' in b64 and b64.startswith('data:'):

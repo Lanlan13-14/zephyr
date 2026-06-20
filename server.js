@@ -123,6 +123,25 @@ const tempTotpTokens = new Map();
 const webauthnChallenges = new Map();
 const resetRequestHits = new Map();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const rdpClipUploadRoot = process.env.RDP_CLIP_UPLOAD_DIR || path.join(os.tmpdir(), 'zephyr-rdp-clip-uploads');
+fs.mkdirSync(rdpClipUploadRoot, { recursive: true });
+function safeRdpUploadName(name = 'file') {
+    const cleaned = String(name || 'file').replace(/[\/]/g, '_').replace(/\0/g, '').replace(/\.\./g, '.').trim();
+    return (cleaned || 'file').slice(0, 220);
+}
+const rdpClipUpload = multer({
+    storage: multer.diskStorage({
+        destination(req, file, cb) {
+            const dir = path.join(rdpClipUploadRoot, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`);
+            fs.mkdirSync(dir, { recursive: true });
+            cb(null, dir);
+        },
+        filename(req, file, cb) {
+            cb(null, `${crypto.randomBytes(6).toString('hex')}-${safeRdpUploadName(file.originalname || 'file')}`);
+        }
+    }),
+    limits: { fileSize: Number(process.env.RDP_CLIP_UPLOAD_MAX_BYTES || 0) || Infinity, files: 256 }
+});
 
 function wsSendJSON(targetWs, obj) {
     if (targetWs?.readyState === targetWs?.OPEN) {
@@ -1787,6 +1806,18 @@ app.post('/api/connections/:id/open', requireAuth, (req, res) => {
     } catch (err) {
         res.status(403).json({ error: err.message || '验证失败' });
     }
+});
+
+
+app.post('/api/rdp-gfx/upload-clipboard-files', requireAuth, rdpClipUpload.array('files', 256), (req, res) => {
+    const files = (req.files || []).map((f) => ({
+        name: safeRdpUploadName(f.originalname || path.basename(f.path)),
+        size: Number(f.size) || 0,
+        mime: f.mimetype || 'application/octet-stream',
+        path: f.path,
+    }));
+    if (!files.length) return res.status(400).json({ error: '没有收到文件' });
+    res.json({ files });
 });
 
 app.get('/api/settings', requireAuth, (req, res) => res.json(safeSettings(storage.getSettings())));
