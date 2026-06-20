@@ -214,7 +214,7 @@ const STYLES = `
     display: flex;
     justify-content: center;
     align-items: stretch;
-    padding: 8px;
+    padding: 0;
     min-height: 0;
     /* Scrolling controlled via CSS custom properties - only scroll when needed */
     overflow-x: var(--rdp-overflow-x, hidden);
@@ -222,27 +222,38 @@ const STYLES = `
 }
 
 .rdp-screen {
-    background: #000;
-    border: 2px solid var(--rdp-border);
-    border-radius: var(--rdp-border-radius);
+    background: transparent;
+    border: 0;
+    border-radius: 0;
     overflow: hidden;
     position: relative;
     flex: 1;
-    min-height: 200px;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
     display: flex;
     justify-content: center;
-    align-items: center;
+    align-items: stretch;
     /* Minimum dimensions from options (0 = auto) */
     min-width: var(--rdp-screen-min-width, 0);
 }
 
 .rdp-screen canvas {
     display: block;
+    width: 100%;
+    height: 100%;
     /* When min dimensions are set, canvas respects them; otherwise scales to fit */
     min-width: var(--rdp-canvas-min-width, 0);
     min-height: var(--rdp-canvas-min-height, 0);
     max-width: 100%;
     max-height: 100%;
+    object-fit: fill;
+    background: #000;
+    outline: none;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
 }
 
 /* API Cursor Overlay - shown when using programmatic mouse API */
@@ -1408,6 +1419,11 @@ export class RDPClient {
                     }
                 }
                 break;
+
+            case 'fatal':
+                this._handleError(msg.message || 'RDP graphics worker failed');
+                this.disconnect();
+                break;
         }
     }
     
@@ -1586,6 +1602,9 @@ export class RDPClient {
                 return;
             }
 
+            // Reinitialize if this client object is reused after a previous disconnect.
+            if (!this._gfxWorker) this._initGfxWorker();
+
             // Hide modal if it's open (e.g., when connect() is called via API)
             if (this._el.modal.classList.contains('active')) {
                 this._el.modal.classList.remove('active');
@@ -1597,6 +1616,11 @@ export class RDPClient {
 
             this._ws = new WebSocket(this.options.wsUrl);
             this._ws.binaryType = 'arraybuffer';
+
+            // Show the canvas before measuring. Android WebView reports 0×0 for display:none,
+            // which previously forced the session to the 640×480 minimum and made the
+            // desktop appear as a broken black/white letterboxed strip.
+            this._el.canvas.style.display = 'block';
 
             this._ws.onopen = () => {
                 const { width, height } = this._getAvailableDimensions();
@@ -1640,6 +1664,8 @@ export class RDPClient {
             if (!this._ws || this._ws.readyState === WebSocket.CLOSED) {
                 if (this._isConnected) {
                     this._handleDisconnect();
+                } else if (this._el?.canvas) {
+                    this._el.canvas.style.display = 'none';
                 }
                 resolve();
                 return;
@@ -1689,7 +1715,7 @@ export class RDPClient {
             }
 
             const keyArray = Array.isArray(keys) ? keys : keys.split('');
-            const delay = options.delay || 50;
+            const delay = options.delay ?? 50;
             let index = 0;
 
             const sendNext = () => {
@@ -1708,6 +1734,7 @@ export class RDPClient {
                     metaKey: options.meta || false
                 });
 
+                const releaseDelay = options.releaseDelay ?? 20;
                 setTimeout(() => {
                     this._sendMessage({
                         type: 'key', action: 'up', key,
@@ -1719,7 +1746,7 @@ export class RDPClient {
                     });
                     index++;
                     setTimeout(sendNext, delay);
-                }, 20);
+                }, releaseDelay);
             };
 
             sendNext();
@@ -2227,7 +2254,11 @@ export class RDPClient {
             const msg = JSON.parse(event.data);
             switch (msg.type) {
                 case 'connected':
-                    this._handleConnected(msg);
+                    if (this._pendingConnect) {
+                        this._handleConnected(msg);
+                    } else {
+                        console.warn('[RDPClient] Ignoring duplicate connected message');
+                    }
                     break;
                 case 'resize':
                     this._handleServerResize(msg.width, msg.height);
@@ -2801,8 +2832,10 @@ export class RDPClient {
         
         // Convert remote desktop coordinates to screen coordinates
         const rect = this._canvas.getBoundingClientRect();
-        const scaleX = rect.width / this._canvas.width;
-        const scaleY = rect.height / this._canvas.height;
+        const width = Math.max(2, Math.floor((rect.width || this._canvas.clientWidth || this._canvas.width || 1) / 2) * 2);
+        const height = Math.max(2, Math.floor((rect.height || this._canvas.clientHeight || this._canvas.height || 1) / 2) * 2);
+        const scaleX = width / this._canvas.width;
+        const scaleY = height / this._canvas.height;
         
         // Calculate position relative to the screen container
         const screenX = x * scaleX;
@@ -2826,8 +2859,10 @@ export class RDPClient {
 
     _getMousePos(e) {
         const rect = this._canvas.getBoundingClientRect();
-        const scaleX = this._canvas.width / rect.width;
-        const scaleY = this._canvas.height / rect.height;
+        const width = Math.max(2, Math.floor((rect.width || this._canvas.clientWidth || this._canvas.width || 1) / 2) * 2);
+        const height = Math.max(2, Math.floor((rect.height || this._canvas.clientHeight || this._canvas.height || 1) / 2) * 2);
+        const scaleX = this._canvas.width / width;
+        const scaleY = this._canvas.height / height;
         return {
             x: Math.round((e.clientX - rect.left) * scaleX),
             y: Math.round((e.clientY - rect.top) * scaleY)
@@ -3538,8 +3573,9 @@ export class RDPClient {
 
     _getAvailableDimensions() {
         const rect = this._el.screen.getBoundingClientRect();
-        let width = Math.floor(rect.width - 4);
-        let height = Math.floor(rect.height - 4);
+        const fallbackRect = this._container?.getBoundingClientRect?.() || rect;
+        let width = Math.floor((rect.width || fallbackRect.width || window.innerWidth || 1280) - 4);
+        let height = Math.floor((rect.height || fallbackRect.height || window.innerHeight || 720) - 4);
 
         // do never send resize below RDP server minimums or above maximums
         const minRdpServerDimensions = { width: 640, height: 480 };

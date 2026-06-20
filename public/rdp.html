@@ -5,17 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Zephyr - 远程桌面</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260620-rdpegfx-freerdp3">
+    <link rel="stylesheet" href="style.css?v=20260620-rdpegfx-fill-theme-fix2">
 </head>
 <body>
-    <div class="rdp-page">
-        <div class="terminal-topbar rdp-topbar">
+    <div class="novnc-page rdp-page">
+        <div class="terminal-topbar rdp-topbar novnc-topbar">
             <div class="status">
                 <span class="status-dot" id="statusDot"></span>
                 <span id="statusText">连接中...</span>
             </div>
             <span class="info" id="connInfo"></span>
-            <div class="topbar-actions">
+            <div class="topbar-actions novnc-toolbar">
                 <button class="btn-sm" id="qualityBtn" data-rdp-icon="quality" title="切换性能/画质模式">平衡</button>
                 <button class="btn-sm" id="resolutionBtn" data-rdp-icon="quality" title="切换远程桌面分辨率：1080p / 2K / 4K / 自动">1080p</button>
                 <button class="btn-sm" id="fpsBtn" data-rdp-icon="quality" title="切换远程桌面帧率：30 / 45 / 60 FPS">30FPS</button>
@@ -31,7 +31,7 @@
                 <button class="btn-sm danger" id="disconnectBtn" data-rdp-icon="disconnect" title="断开连接">断开</button>
             </div>
         </div>
-        <div class="rdp-stage" id="rdpStage" tabindex="0">
+        <div class="rdp-stage novnc-stage" id="rdpStage" tabindex="0">
             <textarea id="mobileKeyboardInput" class="rdp-mobile-keyboard-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" enterkeyhint="done" aria-label="远程桌面软键盘输入"></textarea>
             <div id="rdpTouchHud" class="rdp-touch-hud" hidden></div>
             <div id="rdpPointer" class="rdp-pointer" hidden></div>
@@ -188,11 +188,11 @@
                 <div class="spinner"></div>
                 <span class="msg" id="overlayMsg">正在建立 RDP 连接...</span>
             </div>
-            <div class="rdp-display-shell" id="displayShell">
-                <div class="rdp-display" id="display"></div>
+            <div class="rdp-display-shell novnc-screen-shell" id="displayShell">
+                <div class="rdp-display novnc-screen" id="display"></div>
             </div>
         </div>
     </div>
-    <script src="rdp-gfx.js?v=20260620-rdpegfx-freerdp3" type="module"></script>
+    <script src="rdp-gfx.js?v=20260620-rdpegfx-fill-theme-fix2" type="module"></script>
 </body>
 </html>

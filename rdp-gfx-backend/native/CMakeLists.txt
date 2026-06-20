@@ -11,6 +11,11 @@ set(BUILD_SHARED_LIBS ON)
 # Option to enable verbose settings/caps logging (disabled by default)
 option(ENABLE_VERBOSE_SETTINGS_LOG "Enable verbose logging of RDP settings and capabilities" OFF)
 
+# Option to enable browser-safe H.264/AVC wire-through. Keep this ON for the
+# current RDPEGFX/WebCodecs path; when disabled, FreeRDP may negotiate AVC444
+# streams that require server-side transcoding and are harder to debug.
+option(ENABLE_BROWSER_H264 "Prefer browser-decodable AVC420 over AVC444" ON)
+
 # Find FreeRDP3 packages
 find_package(PkgConfig REQUIRED)
 
@@ -93,6 +98,9 @@ target_compile_options(rdp_bridge PRIVATE
 # Compile definitions
 if(ENABLE_VERBOSE_SETTINGS_LOG)
     target_compile_definitions(rdp_bridge PRIVATE ENABLE_VERBOSE_SETTINGS_LOG=1)
+endif()
+if(ENABLE_BROWSER_H264)
+    target_compile_definitions(rdp_bridge PRIVATE ZEPHYR_BROWSER_H264=1)
 endif()
 
 # Set library properties

@@ -156,6 +156,7 @@ let h264DecodeQueue = [];
 
 /** @type {boolean} Whether there was a decoder error */
 let h264DecoderError = false;
+let h264ErrorCount = 0;
 
 /** @type {boolean} Whether we need a keyframe (after init/reset/error) */
 let h264NeedsKeyframe = true;
@@ -720,6 +721,31 @@ function drawRawTile(msg) {
 // H.264 decoding
 // ============================================================================
 
+function buildH264DecoderConfigs(width, height) {
+    const codedWidth = Math.max(0, Math.floor(Number(width) || 0));
+    const codedHeight = Math.max(0, Math.floor(Number(height) || 0));
+    const size = codedWidth > 0 && codedHeight > 0 ? { codedWidth, codedHeight } : {};
+    const common = {
+        optimizeForLatency: true,
+        hardwareAcceleration: 'prefer-hardware',
+    };
+    const codecs = ['avc1.64001f', 'avc1.4d401f', 'avc1.42001f'];
+    const configs = [];
+    for (const codec of codecs) {
+        // RDPGFX AVC420/AVC444 payloads are Annex-B byte streams from FreeRDP.
+        // Try dimensionless configs first so WebCodecs can read the SPS when
+        // the server sends partial-surface AVC rectangles; fall back to explicit
+        // dimensions for implementations that require them.
+        configs.push({ ...common, codec, avc: { format: 'annexb' } });
+        configs.push({ ...common, codec });
+        if (size.codedWidth && size.codedHeight) {
+            configs.push({ ...common, ...size, codec, avc: { format: 'annexb' } });
+            configs.push({ ...common, ...size, codec });
+        }
+    }
+    return configs;
+}
+
 /**
  * Initialize H.264 VideoDecoder
  */
@@ -730,17 +756,21 @@ async function initH264(width, height) {
     }
     
     try {
-        const config = {
-            codec: 'avc1.64001f',
-            codedWidth: width,
-            codedHeight: height,
-            optimizeForLatency: true,
-            hardwareAcceleration: 'prefer-hardware',
-        };
-        
-        const support = await VideoDecoder.isConfigSupported(config);
-        if (!support.supported) {
-            console.warn('[GFX Worker] H.264 config not supported');
+        let selectedConfig = null;
+        let lastSupportError = null;
+        for (const config of buildH264DecoderConfigs(width, height)) {
+            try {
+                const support = await VideoDecoder.isConfigSupported(config);
+                if (support.supported) {
+                    selectedConfig = support.config || config;
+                    break;
+                }
+            } catch (err) {
+                lastSupportError = err;
+            }
+        }
+        if (!selectedConfig) {
+            console.warn('[GFX Worker] H.264 config not supported', lastSupportError || 'no supported codec string');
             return false;
         }
         
@@ -748,13 +778,39 @@ async function initH264(width, height) {
             output: (frame) => {
                 const meta = h264DecodeQueue.shift();
                 if (meta) {
+                    const configuredWidth = Math.max(0, Number(meta.configuredWidth) || 0);
+                    const configuredHeight = Math.max(0, Number(meta.configuredHeight) || 0);
+                    const decodedW = Math.max(1, frame.displayWidth || frame.codedWidth || meta.destW || configuredWidth || 1);
+                    const decodedH = Math.max(1, frame.displayHeight || frame.codedHeight || meta.destH || configuredHeight || 1);
+                    if (configuredWidth > 0 && configuredHeight > 0 &&
+                        (decodedW < Math.max(2, configuredWidth / 2) || decodedH < Math.max(2, configuredHeight / 2))) {
+                        console.warn(`[GFX Worker] H.264 suspicious decoded size ${decodedW}x${decodedH} for configured ${configuredWidth}x${configuredHeight}; retrying dimensionless decoder`);
+                        try { videoDecoder?.close?.(); } catch {}
+                        videoDecoder = null;
+                        h264Initialized = false;
+                        h264ConfiguredWidth = 0;
+                        h264ConfiguredHeight = 0;
+                        h264NeedsKeyframe = true;
+                        h264DecoderError = false;
+                    }
                     // Look up the target surface
                     const surface = surfaces.get(meta.surfaceId);
                     if (surface) {
-                        // Draw to the surface's OffscreenCanvas
-                        surface.ctx.drawImage(frame, 
-                            meta.destX, meta.destY, meta.destW, meta.destH,
-                            meta.destX, meta.destY, meta.destW, meta.destH);
+                        const visible = frame.visibleRect || { x: 0, y: 0, width: frame.displayWidth || frame.codedWidth || meta.destW, height: frame.displayHeight || frame.codedHeight || meta.destH };
+                        const srcX = Math.max(0, Number(visible.x) || 0);
+                        const srcY = Math.max(0, Number(visible.y) || 0);
+                        const srcW = Math.max(1, Number(visible.width) || frame.displayWidth || frame.codedWidth || meta.destW || surface.width);
+                        const srcH = Math.max(1, Number(visible.height) || frame.displayHeight || frame.codedHeight || meta.destH || surface.height);
+                        const dstX = Math.max(0, Number(meta.destX) || 0);
+                        const dstY = Math.max(0, Number(meta.destY) || 0);
+                        const dstW = Math.max(1, Number(meta.destW) || srcW);
+                        const dstH = Math.max(1, Number(meta.destH) || srcH);
+                        // RDPGFX SurfaceCommand coordinates are destination coordinates on
+                        // the target surface. The decoded VideoFrame itself starts at (0,0)
+                        // (or visibleRect.x/y for coded padding). Cropping from destX/destY
+                        // corrupts partial updates and produces the black/white bands seen
+                        // on mobile, so always copy the decoded bitmap to the destination rect.
+                        surface.ctx.drawImage(frame, srcX, srcY, srcW, srcH, dstX, dstY, dstW, dstH);
                         // Track that this surface was updated
                         frameUpdatedSurfaces.add(meta.surfaceId);
                     } else {
@@ -771,6 +827,10 @@ async function initH264(width, height) {
                 console.error('[GFX Worker] H.264 decoder error callback:', e);
                 h264DecoderError = true;
                 h264NeedsKeyframe = true;  // Need keyframe after error
+                h264ErrorCount++;
+                if (h264ErrorCount >= 3) {
+                    self.postMessage({ type: 'fatal', message: 'RDP H.264/WebCodecs 解码连续失败' });
+                }
                 // Reject all pending decodes
                 while (h264DecodeQueue.length > 0) {
                     const meta = h264DecodeQueue.shift();
@@ -780,12 +840,13 @@ async function initH264(width, height) {
             }
         });
         
-        await videoDecoder.configure(config);
+        await videoDecoder.configure(selectedConfig);
         h264Initialized = true;
         h264NeedsKeyframe = true;  // Must receive keyframe after configure
-        h264ConfiguredWidth = width;
-        h264ConfiguredHeight = height;
-        console.log(`[GFX Worker] H.264 decoder initialized: ${width}x${height}`);
+        h264ErrorCount = 0;
+        h264ConfiguredWidth = selectedConfig.codedWidth || 0;
+        h264ConfiguredHeight = selectedConfig.codedHeight || 0;
+        console.log(`[GFX Worker] H.264 decoder initialized: ${h264ConfiguredWidth || 'auto'}x${h264ConfiguredHeight || 'auto'} codec=${selectedConfig.codec}`);
         return true;
     } catch (e) {
         console.warn('[GFX Worker] H.264 init failed:', e);
@@ -804,38 +865,38 @@ async function decodeH264Frame(msg) {
         return;
     }
     
-    const width = surface.canvas.width;
-    const height = surface.canvas.height;
+    const width = Math.max(1, Math.floor(Number(msg.destW) || surface.canvas.width || 1));
+    const height = Math.max(1, Math.floor(Number(msg.destH) || surface.canvas.height || 1));
+    const decoderWidth = h264ConfiguredWidth > 0 ? h264ConfiguredWidth : Math.max(1, surface.canvas.width || width);
+    const decoderHeight = h264ConfiguredHeight > 0 ? h264ConfiguredHeight : Math.max(1, surface.canvas.height || height);
     
     // Initialize decoder if needed
     if (!h264Initialized) {
-        const success = await initH264(width, height);
+        const success = await initH264(decoderWidth, decoderHeight);
         if (!success) return;
     }
     
     // Reinitialize if dimensions changed
-    if (h264ConfiguredWidth !== width || h264ConfiguredHeight !== height) {
+    if (h264ConfiguredWidth > 0 && (h264ConfiguredWidth !== decoderWidth || h264ConfiguredHeight !== decoderHeight)) {
         if (videoDecoder) {
-            videoDecoder.close();
+            try { videoDecoder.close(); } catch {}
+            videoDecoder = null;
             h264Initialized = false;
         }
-        const success = await initH264(width, height);
+        const success = await initH264(decoderWidth, decoderHeight);
         if (!success) return;
     }
     
     if (h264DecoderError) {
         // Reset decoder on next keyframe
         if (msg.frameType === 0) {
-            videoDecoder.reset();
-            await videoDecoder.configure({
-                codec: 'avc1.64001f',
-                codedWidth: width,
-                codedHeight: height,
-                optimizeForLatency: true,
-                hardwareAcceleration: 'prefer-hardware',
-            });
+            try { videoDecoder?.close?.(); } catch {}
+            videoDecoder = null;
+            h264Initialized = false;
+            const success = await initH264(decoderWidth, decoderHeight);
+            if (!success) return;
             h264DecoderError = false;
-            h264NeedsKeyframe = true;  // Need keyframe after reset
+            h264NeedsKeyframe = false;
         } else {
             return; // Wait for keyframe
         }
@@ -861,6 +922,8 @@ async function decodeH264Frame(msg) {
             destY: msg.destY,
             destW: msg.destW,
             destH: msg.destH,
+            configuredWidth: h264ConfiguredWidth,
+            configuredHeight: h264ConfiguredHeight,
             resolve,
             reject,
         });
@@ -1036,10 +1099,13 @@ function applyResetGraphics(msg) {
             videoDecoder.reset();
             h264NeedsKeyframe = true;
         } catch (e) {
-            // Ignore reset errors
+            try { videoDecoder.close(); } catch {}
+            videoDecoder = null;
+            h264Initialized = false;
         }
     }
     h264DecoderError = false;
+    h264ErrorCount = 0;
     h264DecodeQueue = [];
     
     // Reset ClearCodec sequence number (caches are NOT reset per MS-RDPEGFX)

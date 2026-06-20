@@ -886,6 +886,8 @@ class RDPBridge:
                         RDP_GFX_CODEC_AVC444: "AVC444", 
                         RDP_GFX_CODEC_AVC444v2: "AVC444v2",
                         RDP_GFX_CODEC_PROGRESSIVE: "Progressive",
+                        RDP_GFX_CODEC_PROGRESSIVE_V2: "ProgressiveV2",
+                        RDP_GFX_CODEC_CLEARCODEC: "ClearCodec",
                     }.get(codec, f"Unknown({codec})")
                     logger.info(f"GFX pipeline active with codec: {codec_name}")
                     gfx_mode_logged = True

@@ -504,8 +504,11 @@ export function parsePointerSet(data) {
  */
 export function parseH264Frame(data) {
     if (data.length < 29) return null;
+    const destW = readU16LE(data, 17);
+    const destH = readU16LE(data, 19);
     const nalSize = readU32LE(data, 21);
     const chromaNalSize = readU32LE(data, 25);
+    if (!destW || !destH) return null;
     if (data.length < 29 + nalSize + chromaNalSize) return null;
     
     return {
@@ -516,8 +519,8 @@ export function parseH264Frame(data) {
         frameType: data[12],
         destX: readI16LE(data, 13),
         destY: readI16LE(data, 15),
-        destW: readU16LE(data, 17),
-        destH: readU16LE(data, 19),
+        destW,
+        destH,
         nalSize: nalSize,
         chromaNalSize: chromaNalSize,
         nalData: data.subarray(29, 29 + nalSize),

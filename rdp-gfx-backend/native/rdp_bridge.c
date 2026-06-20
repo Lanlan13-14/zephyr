@@ -388,7 +388,7 @@ static void clip_queue_json(BridgeContext* ctx, char* json)
 
 static void clip_queue_text_event(BridgeContext* ctx, const char* text)
 {
-    char* esc = clip_json_escape(text || "");
+    char* esc = clip_json_escape(text ? text : "");
     if (!esc) return;
     size_t len = strlen(esc) + 64;
     char* json = (char*)calloc(1, len);
@@ -404,7 +404,7 @@ static void clip_queue_files_event_locked(BridgeContext* ctx)
     if (!json) return;
     size_t p = snprintf(json, cap, "{\"type\":\"clipboard-files\",\"files\":[");
     for (uint32_t i = 0; i < ctx->clip_remote_file_count; i++) {
-        char* esc = clip_json_escape(ctx->clip_remote_files[i].name || "file");
+        char* esc = clip_json_escape(ctx->clip_remote_files[i].name ? ctx->clip_remote_files[i].name : "file");
         if (!esc) esc = strdup("file");
         size_t need = p + strlen(esc) + 128;
         if (need >= cap) {
@@ -442,7 +442,7 @@ static bool clip_utf8_to_utf16le(const char* text, uint8_t** out, uint32_t* out_
 {
     if (!out || !out_len) return false;
     *out = NULL; *out_len = 0;
-    const unsigned char* p = (const unsigned char*)(text || "");
+    const unsigned char* p = (const unsigned char*)(text ? text : "");
     size_t cap = strlen((const char*)p) * 4 + 4;
     uint8_t* buf = (uint8_t*)calloc(1, cap);
     if (!buf) return false;
@@ -510,7 +510,7 @@ static char* clip_wchar_to_utf8(const WCHAR* text, size_t max)
 static void clip_utf8_to_wchar_name(const char* name, WCHAR out[260])
 {
     memset(out, 0, sizeof(WCHAR) * 260);
-    const unsigned char* p = (const unsigned char*)(name || "file");
+    const unsigned char* p = (const unsigned char*)(name ? name : "file");
     size_t n = 0;
     while (*p && n < 259) {
         uint32_t cp = clip_decode_utf8_char(&p);
@@ -1175,15 +1175,21 @@ RdpSession* rdp_create(
      * Without this, drdynvc static channel won't load and no DVCs will connect. */
     if (!freerdp_settings_set_bool(settings, FreeRDP_SupportDynamicChannels, TRUE)) goto fail;
     
-    /* Enable GFX pipeline with H.264/AVC444 for modern, low-latency graphics.
-     * This enables the RDPEGFX channel which carries H.264-encoded frames.
-     * Server must have "Prioritize H.264/AVC 444" policy enabled for best results.
-     * TODO: Right now AVC420 and not AVC444 because transcoding causes worse quality in docker.
-     */
+    /* Enable GFX pipeline with browser-decodable H.264/AVC420 for modern,
+     * low-latency graphics.  AVC444 is deliberately disabled on this web path:
+     * Windows may send two AVC streams (luma/chroma) that are not a normal
+     * browser H.264 picture, and the server-side transcode path was the source
+     * of blank/striped frames.  Keep RDPEGFX wire-through, but prefer AVC420 so
+     * VideoDecoder receives a standard 4:2:0 Annex-B stream. */
     if (!freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, TRUE)) goto fail;
     if (!freerdp_settings_set_bool(settings, FreeRDP_GfxH264, TRUE)) goto fail;
+#ifdef ZEPHYR_BROWSER_H264
+    if (!freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444, FALSE)) goto fail;
+    if (!freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444v2, FALSE)) goto fail;
+#else
     if (!freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444, TRUE)) goto fail;
     if (!freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444v2, TRUE)) goto fail;
+#endif
     
     /* Progressive codec: Enabled by default for optimal quality.
      * RemoteFX progressive tiles are passed through to browser for WASM decoding. */
@@ -1532,7 +1538,7 @@ static void bridge_pointer_free(rdpContext* context, rdpPointer* pointer)
 }
 
 /* Pointer::Set - Queue cursor bitmap for frontend */
-static BOOL bridge_pointer_set(rdpContext* context, const rdpPointer* pointer)
+static BOOL bridge_pointer_set(rdpContext* context, rdpPointer* pointer)
 {
     BridgeContext* bctx = (BridgeContext*)context;
     const BridgePointer* bp = (const BridgePointer*)pointer;
@@ -2267,7 +2273,7 @@ static UINT clip_on_server_file_contents_request(CliprdrClientContext* context, 
         pthread_mutex_unlock(&ctx->clip_mutex);
         return clip_send_file_contents_response(ctx, req, NULL, 0, FALSE);
     }
-    char* path_copy = strdup(ctx->clip_local_files[req->listIndex].path || "");
+    char* path_copy = strdup(ctx->clip_local_files[req->listIndex].path ? ctx->clip_local_files[req->listIndex].path : "");
     uint64_t size = ctx->clip_local_files[req->listIndex].size;
     pthread_mutex_unlock(&ctx->clip_mutex);
     if (!path_copy || !*path_copy) { free(path_copy); return clip_send_file_contents_response(ctx, req, NULL, 0, FALSE); }
@@ -4263,7 +4269,7 @@ int rdp_clipboard_set_text(RdpSession* session, const char* utf8_text)
     BridgeContext* ctx = (BridgeContext*)session;
     pthread_mutex_lock(&ctx->clip_mutex);
     free(ctx->clip_local_text);
-    ctx->clip_local_text = strdup(utf8_text || "");
+    ctx->clip_local_text = strdup(utf8_text ? utf8_text : "");
     clip_free_local_files(ctx);
     pthread_mutex_unlock(&ctx->clip_mutex);
     return (int)clip_send_client_format_list(ctx);

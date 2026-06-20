@@ -1,4 +1,5 @@
 import { RDPClient } from './vendor/freerdp-web/rdp-client.js';
+import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 
 const $ = (sel) => document.querySelector(sel);
 const urlParams = new URLSearchParams(location.search);
@@ -16,6 +17,7 @@ const clipboardText = $('#clipboardText');
 const remoteClipboardText = $('#remoteClipboardText');
 const clipboardHint = $('#clipboardHint');
 const remoteFileList = $('#rdpRemoteFileList');
+const mobileKeyboardInput = $('#mobileKeyboardInput');
 
 const filesPanel = $('#filesPanel');
 const filesHint = $('#filesHint');
@@ -33,6 +35,7 @@ let clientHost = null;
 let connected = false;
 let params = loadParams();
 let currentResolutionIdx = 0;
+let textInputQueue = Promise.resolve();
 let remoteFiles = [];
 const fileDownloads = new Map();
 const resolutions = [
@@ -41,6 +44,50 @@ const resolutions = [
     { label: '2K', width: 2560, height: 1440 },
     { label: '4K', width: 3840, height: 2160 },
 ];
+let statusSequence = 0;
+
+function initialTheme() {
+    const saved = localStorage.getItem('zephyr-theme');
+    if (saved === 'light' || saved === 'dark') return saved;
+    return window.matchMedia?.('(prefers-color-scheme: dark)')?.matches ? 'dark' : 'light';
+}
+function applyFrameTheme(theme = initialTheme(), appearance = {}) {
+    const normalized = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', normalized);
+    applyZephyrColorScheme(appearance || {}, { theme: normalized, page: 'rdp' });
+    try { client?.setTheme?.(buildEmbeddedRdpTheme()); } catch {}
+}
+function cssVar(name, fallback = '') {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
+}
+function buildEmbeddedRdpTheme() {
+    const rootTheme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    return {
+        preset: rootTheme,
+        colors: {
+            background: 'transparent',
+            surface: cssVar('--surface', rootTheme === 'light' ? '#ffffff' : '#1b1c20'),
+            border: cssVar('--border', rootTheme === 'light' ? '#dedee3' : '#303237'),
+            text: cssVar('--text', rootTheme === 'light' ? '#1d1d1f' : '#f4f4f6'),
+            textMuted: cssVar('--text-secondary', rootTheme === 'light' ? '#6e6e73' : '#9a9ca3'),
+            accent: cssVar('--accent', rootTheme === 'light' ? '#007aff' : '#0a84ff'),
+            accentText: rootTheme === 'light' ? '#ffffff' : '#000000',
+            error: cssVar('--danger', rootTheme === 'light' ? '#d70015' : '#ff453a'),
+            success: cssVar('--success', rootTheme === 'light' ? '#248a3d' : '#32d74b'),
+            buttonBg: 'transparent',
+            buttonHover: 'rgba(10,132,255,.12)',
+            buttonText: cssVar('--text', rootTheme === 'light' ? '#1d1d1f' : '#f4f4f6'),
+            buttonActiveBg: 'rgba(10,132,255,.18)',
+            buttonActiveText: cssVar('--accent', rootTheme === 'light' ? '#007aff' : '#0a84ff'),
+            inputBg: cssVar('--bg', rootTheme === 'light' ? '#f5f5f7' : '#101114'),
+            inputBorder: cssVar('--border', rootTheme === 'light' ? '#dedee3' : '#303237'),
+            inputFocusBorder: cssVar('--accent', rootTheme === 'light' ? '#007aff' : '#0a84ff'),
+        },
+        shape: { borderRadius: '0px', borderRadiusLarge: '0px' },
+    };
+}
+applyFrameTheme();
 
 function loadParams() {
     const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';
@@ -69,12 +116,21 @@ function requestParentSharedFileClipboard() {
         window.parent.postMessage({ source: 'zephyr-terminal', type: 'request-shared-file-clipboard', tabId: params?.tabId || tabId }, '*');
     }
 }
-function setStatus(state, text) {
+function setStatus(state, text, options = {}) {
+    const seq = ++statusSequence;
     statusDot?.classList.remove('connected', 'connecting', 'error', 'disconnected');
     if (state) statusDot?.classList.add(state);
     if (statusText) statusText.textContent = text || '';
     if (overlayMsg) overlayMsg.textContent = text || '';
-    if (overlay) overlay.classList.toggle('hidden', state === 'connected');
+    const holdMs = Number(options.holdOverlayMs) || 0;
+    if (overlay) {
+        if (state === 'connected' && holdMs > 0) {
+            overlay.classList.remove('hidden');
+            setTimeout(() => { if (statusSequence === seq) overlay.classList.add('hidden'); }, holdMs);
+        } else {
+            overlay.classList.toggle('hidden', state === 'connected');
+        }
+    }
 }
 function setClipboardHint(text, level = 'info') {
     if (!clipboardHint) return;
@@ -113,14 +169,18 @@ function availableSize() {
     return { width: Math.min(w, 4096), height: Math.min(h, 2304) };
 }
 function requestResolution(res) {
-    if (!client || !connected) return;
+    if (!client || !connected) return false;
     const size = res?.width && res?.height ? res : availableSize();
+    setStatus('connecting', `正在切换 RDPEGFX 分辨率 ${size.width}×${size.height}...`);
     try {
         client._lastRequestedWidth = size.width;
         client._lastRequestedHeight = size.height;
         client._sendMessage({ type: 'resize', width: size.width, height: size.height });
-        setStatus('connecting', `正在切换 RDPEGFX 分辨率 ${size.width}×${size.height}...`);
-    } catch (err) { setStatus('error', `切换分辨率失败：${err.message || err}`); }
+    } catch (err) {
+        setStatus('error', `切换分辨率失败：${err.message || err}`);
+        return false;
+    }
+    return true;
 }
 function escapeHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function formatFileSize(bytes) {
@@ -252,15 +312,15 @@ async function connect() {
             wsUrl: wsUrl(), showTopBar: false, showBottomBar: false,
             keepConnectionModalOpen: false, loadingSpinnerOpensModal: false, resizeDebounceMs: 800,
             visibleTopBarButtons: { connect: false, disconnect: false, keyboard: false, mute: false, screenshot: false, fullscreen: false },
-            theme: { preset: document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark' },
+            theme: buildEmbeddedRdpTheme(),
         });
         client.on('connected', ({ width, height } = {}) => { connected = true; setStatus('connected', `RDP 已连接 [RDPEGFX/WebCodecs]${width && height ? ` ${width}×${height}` : ''}`); notifyParentStatus('connected'); });
-        client.on('resize', ({ width, height } = {}) => { if (connected) setStatus('connected', `RDP 已连接 [RDPEGFX/WebCodecs] ${width}×${height}`); });
+        client.on('resize', ({ width, height } = {}) => { if (connected) setStatus('connected', `RDP 已连接 [RDPEGFX/WebCodecs] ${width}×${height}`, { holdOverlayMs: 700 }); });
         client.on('error', ({ message } = {}) => { connected = false; setStatus('error', message || 'RDPEGFX 客户端错误'); notifyParentStatus('disconnected'); });
         client.on('disconnected', () => { connected = false; setStatus('disconnected', 'RDP 已断开'); notifyParentStatus('disconnected'); });
         client.on('message', handleClientMessage);
         await client.connect({ host: 'zephyr-rdp-gfx-proxy', port: 3389, user: 'zephyr', pass: 'server-side-secret' });
-    } catch (err) { connected = false; setStatus('error', err.message || String(err)); notifyParentStatus('disconnected'); }
+    } catch (err) { connected = false; setStatus('error', err.message || String(err)); notifyParentStatus('disconnected'); throw err; }
 }
 async function disconnect(closeParent = false) {
     try { await client?.disconnect?.(); } catch {}
@@ -274,11 +334,105 @@ function comboForKeyseq(seq) {
     const f = String(seq || '').match(/^f(\d{1,2})$/); if (f) return `F${f[1]}`;
     return '';
 }
+function sendTextToRemote(text) {
+    if (!text || !client || !connected) return false;
+    const parts = Array.from(String(text));
+    textInputQueue = textInputQueue.then(async () => {
+        for (const ch of parts) {
+            if (!connected || !client) break;
+            if (ch === '\n' || ch === '\r') client.sendKeyCombo?.('Enter');
+            else if (ch === '\t') client.sendKeyCombo?.('Tab');
+            else await client.sendKeys?.([ch], { delay: 0, releaseDelay: 12 }).catch(() => {});
+            await new Promise((resolve) => setTimeout(resolve, 4));
+        }
+    }).catch(() => {});
+    return true;
+}
+function focusMobileKeyboard() {
+    if (!mobileKeyboardInput) return;
+    mobileKeyboardInput.value = '';
+    mobileKeyboardInput.style.pointerEvents = 'auto';
+    try { mobileKeyboardInput.focus({ preventScroll: true }); } catch { mobileKeyboardInput.focus(); }
+    $('#rdpStage')?.classList.add('keyboard-open');
+    $('#keyboardBtn')?.classList.add('active');
+    setTimeout(() => { try { mobileKeyboardInput.focus({ preventScroll: true }); } catch {} }, 80);
+}
+function blurMobileKeyboard() {
+    if (!mobileKeyboardInput) return;
+    mobileKeyboardInput.blur();
+    mobileKeyboardInput.value = '';
+    mobileKeyboardInput.style.pointerEvents = 'none';
+    $('#rdpStage')?.classList.remove('keyboard-open');
+    $('#keyboardBtn')?.classList.remove('active');
+}
+function toggleMobileKeyboard() {
+    const keyboardOpen = document.activeElement === mobileKeyboardInput || $('#keyboardBtn')?.classList.contains('active');
+    if (keyboardOpen) blurMobileKeyboard();
+    else focusMobileKeyboard();
+}
+function setupMobileKeyboard() {
+    if (!mobileKeyboardInput) return;
+    let composing = false;
+    let suppressInputUntil = 0;
+    let lastSentText = '';
+    let lastSentAt = 0;
+    const reset = () => { mobileKeyboardInput.value = ''; };
+    const sendOnce = (text) => {
+        if (!text) return false;
+        const now = Date.now();
+        if (text === lastSentText && now - lastSentAt < 250) return false;
+        lastSentText = text;
+        lastSentAt = now;
+        suppressInputUntil = now + 250;
+        sendTextToRemote(text);
+        reset();
+        return true;
+    };
+    const sendBackspace = () => { try { client?.sendBackspace?.(1); } catch {} };
+    const sendEnter = () => { try { client?.sendKeyCombo?.('Enter'); } catch {} };
+    mobileKeyboardInput.addEventListener('compositionstart', () => { composing = true; });
+    mobileKeyboardInput.addEventListener('compositionend', (event) => {
+        composing = false;
+        sendOnce(event.data || mobileKeyboardInput.value || '');
+        reset();
+    });
+    mobileKeyboardInput.addEventListener('beforeinput', (event) => {
+        if (!connected) return;
+        const inputType = event.inputType || '';
+        if (inputType === 'insertCompositionText' || composing) return;
+        event.preventDefault();
+        if (inputType.startsWith('deleteContent') || inputType === 'deleteByCut') { sendBackspace(); reset(); return; }
+        if (inputType === 'insertLineBreak' || inputType === 'insertParagraph') { sendEnter(); reset(); return; }
+        if (inputType.startsWith('insert')) sendOnce(event.data || mobileKeyboardInput.value || '');
+    });
+    mobileKeyboardInput.addEventListener('input', () => {
+        if (composing) return;
+        if (Date.now() < suppressInputUntil) { reset(); return; }
+        sendOnce(mobileKeyboardInput.value || '');
+    });
+    mobileKeyboardInput.addEventListener('keydown', (event) => {
+        if (!connected) return;
+        if (event.key === 'Backspace') { event.preventDefault(); sendBackspace(); reset(); }
+        else if (event.key === 'Enter') { event.preventDefault(); sendEnter(); reset(); }
+    });
+    mobileKeyboardInput.addEventListener('paste', (event) => {
+        const text = event.clipboardData?.getData('text/plain') || '';
+        if (!text) return;
+        event.preventDefault();
+        sendOnce(text);
+    });
+    mobileKeyboardInput.addEventListener('blur', () => {
+        $('#keyboardBtn')?.classList.remove('active');
+        $('#rdpStage')?.classList.remove('keyboard-open');
+        mobileKeyboardInput.style.pointerEvents = 'none';
+    });
+}
+
 function bindControls() {
     $('#resolutionBtn')?.addEventListener('click', () => { currentResolutionIdx = (currentResolutionIdx + 1) % resolutions.length; const res = resolutions[currentResolutionIdx]; $('#resolutionBtn').textContent = res.label; requestResolution(res); });
-    $('#keyboardBtn')?.addEventListener('click', () => { try { client?.showKeyboard?.(); } catch (err) { setStatus('error', err.message || String(err)); } });
+    $('#keyboardBtn')?.addEventListener('click', () => toggleMobileKeyboard());
     $('#ctrlAltDelBtn')?.addEventListener('click', () => { try { client?.sendCtrlAltDel?.(); } catch (err) { setStatus('error', err.message || String(err)); } });
-    $('#reconnectBtn')?.addEventListener('click', () => connect());
+    $('#reconnectBtn')?.addEventListener('click', () => connect().catch(() => {}));
     $('#disconnectBtn')?.addEventListener('click', () => disconnect(true));
     $('#clipboardBtn')?.addEventListener('click', () => { if (clipboardPanel) clipboardPanel.hidden = !clipboardPanel.hidden; });
     $('#rdpFilesBtn')?.addEventListener('click', () => { if (filesPanel) filesPanel.hidden = !filesPanel.hidden; });
@@ -315,16 +469,18 @@ function consumeIncomingSshFiles(files) {
 window.addEventListener('message', (event) => {
     if (event.source !== window.parent) return;
     const data = event.data || {};
-    if (data.source !== 'zephyr-app') return;
-    if (data.type === 'shared-file-clipboard-available' && Array.isArray(data.files) && data.files.length) {
+    if (data.source === 'zephyr-app' && data.type === 'shared-file-clipboard-available' && Array.isArray(data.files) && data.files.length) {
         setFilesHint(`SSH 终端已复制 ${data.files.length} 个文件，正在转发到 RDP...`, 'info');
         consumeIncomingSshFiles(data.files);
+        return;
     }
+    if (data.type === 'theme-change') applyFrameTheme(data.theme, data.appearance || {});
 });
 
 window.addEventListener('beforeunload', () => { try { client?.disconnect?.(); } catch {} });
 window.addEventListener('DOMContentLoaded', () => {
     bindControls();
-    connect();
+    setupMobileKeyboard();
+    connect().catch(() => {});
     requestParentSharedFileClipboard();
 });
