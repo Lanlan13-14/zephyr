@@ -148,6 +148,8 @@ typedef struct {
     uint32_t last_completed_frame_id; /* Last frame ID that completed (EndFrame called) */
     uint32_t frame_cmd_count;       /* Commands received in current frame */
     bool gfx_frame_in_progress;     /* True between StartFrame and EndFrame */
+    uint32_t fallback_frame_id;     /* Synthetic GDI fallback frame counter */
+    uint64_t last_fallback_ms;      /* Last fallback capture time */
     pthread_mutex_t gfx_mutex;
     
     /* Audio playback */
@@ -274,6 +276,7 @@ static void gfx_free_event_data(RdpGfxEvent* event);
 static void queue_webp_tile(BridgeContext* ctx, uint16_t surface_id,
                             int32_t x, int32_t y, uint32_t width, uint32_t height,
                             const uint8_t* bgra_data, int stride);
+static void maybe_queue_gdi_fallback_frame(BridgeContext* ctx);
 
 /* Transcoder forward declarations */
 static bool init_transcoder(BridgeContext* ctx, int width, int height);
@@ -1169,7 +1172,12 @@ RdpSession* rdp_create(
      * codec operations are skipped. We handle graphics via GFX callbacks and
      * pass raw frames to the frontend for browser-side decoding. */
     if (!freerdp_settings_set_bool(settings, FreeRDP_SoftwareGdi, TRUE)) goto fail;
-    if (!freerdp_settings_set_bool(settings, FreeRDP_DeactivateClientDecoding, TRUE)) goto fail;
+    /* Keep FreeRDP's client-side decode state active so RDPEGFX negotiations keep
+     * producing SurfaceCommand/StartFrame events. Rendering is still handled by
+     * Zephyr's RDPEGFX wire-through callbacks and browser WebCodecs; this only
+     * prevents servers from stalling after CreateSurface when decoding is marked
+     * deactivated. */
+    if (!freerdp_settings_set_bool(settings, FreeRDP_DeactivateClientDecoding, FALSE)) goto fail;
     
     /* Enable Dynamic Virtual Channels (DVCs) - REQUIRED for GFX pipeline.
      * Without this, drdynvc static channel won't load and no DVCs will connect. */
@@ -1191,10 +1199,13 @@ RdpSession* rdp_create(
     if (!freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444v2, TRUE)) goto fail;
 #endif
     
-    /* Progressive codec: Enabled by default for optimal quality.
-     * RemoteFX progressive tiles are passed through to browser for WASM decoding. */
-    if (!freerdp_settings_set_bool(settings, FreeRDP_GfxProgressive, TRUE)) goto fail;
-    if (!freerdp_settings_set_bool(settings, FreeRDP_GfxProgressiveV2, TRUE)) goto fail;
+    /* Browser path must not negotiate Progressive unless the WASM decoder is
+     * actually shipped. The source checkout does not contain progressive_decoder.wasm;
+     * if Windows chooses Progressive, the browser receives a valid RDPEGFX session
+     * but has no pixels to draw, which appears as a white/black canvas. Keep the
+     * RDPEGFX/WebCodecs architecture and prefer browser-decodable AVC420 H.264. */
+    if (!freerdp_settings_set_bool(settings, FreeRDP_GfxProgressive, FALSE)) goto fail;
+    if (!freerdp_settings_set_bool(settings, FreeRDP_GfxProgressiveV2, FALSE)) goto fail;
     
     /* Disable legacy codecs */
     if (!freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, FALSE)) goto fail;
@@ -1888,18 +1899,20 @@ static void maybe_init_gfx_pipeline(BridgeContext* bctx)
         fprintf(stderr, "[rdp_bridge] WARNING: FrameAcknowledge callback is NULL - acks won't be sent!\n");
     }
     
-    /* PURE GFX MODE: Do NOT call gdi_graphics_pipeline_init()!
-     * 
-     * Per RDPEGFX spec, when GFX is active we handle graphics ONLY via GFX callbacks.
-     * gdi_graphics_pipeline_init registers GDI handlers that expect to run on the
-     * main thread and call gdi_OutputUpdate(), causing crashes on the GFX thread.
-     * 
-     * In wire-through mode, we:
-     * 1. Queue GFX events (tiles, fills, copies) for Python to stream to frontend
-     * 2. Frontend renders directly - no backend pixel buffers needed
-     * 3. Send FrameAcknowledge ourselves
-     */
-    
+    /* Initialize FreeRDP's GFX helper so RDPEGFX frames are decoded into the
+     * native GDI framebuffer. Zephyr still serves the browser via /rdp-gfx from
+     * this native bridge; this is not the old xfreerdp/Xvfb/ffmpeg pipeline.
+     * If direct wire-through events are not produced by a server, the GDI
+     * fallback below captures this framebuffer and sends WebP tiles. */
+    rdpContext* rctx = (rdpContext*)bctx;
+    if (rctx && rctx->gdi) {
+        if (!gdi_graphics_pipeline_init(rctx->gdi, gfx)) {
+            fprintf(stderr, "[rdp_bridge] WARNING: gdi_graphics_pipeline_init failed; GDI fallback may be unavailable\n");
+        } else {
+            fprintf(stderr, "[rdp_bridge] gdi_graphics_pipeline_init enabled for native fallback rendering\n");
+        }
+    }
+
     pthread_mutex_lock(&bctx->gfx_mutex);
     bctx->gfx_pipeline_needs_init = false;
     bctx->gfx_pipeline_ready = true;
@@ -2011,6 +2024,13 @@ int rdp_poll(RdpSession* session, int timeout_ms)
     pthread_mutex_lock(&ctx->gfx_event_mutex);
     int has_gfx_events = ctx->gfx_event_count > 0;
     pthread_mutex_unlock(&ctx->gfx_event_mutex);
+
+    if (!has_gfx_events) {
+        maybe_queue_gdi_fallback_frame(ctx);
+        pthread_mutex_lock(&ctx->gfx_event_mutex);
+        has_gfx_events = ctx->gfx_event_count > 0;
+        pthread_mutex_unlock(&ctx->gfx_event_mutex);
+    }
     
     return has_gfx_events ? 1 : 0;
 }
@@ -3971,6 +3991,113 @@ int rdp_gfx_send_frame_ack(RdpSession* session, uint32_t frame_id, uint32_t tota
     }
     
     return 0;
+}
+
+/* =========================================================================
+ * GDI fallback frame capture
+ * ========================================================================= */
+
+static uint64_t monotonic_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+}
+
+static void maybe_queue_gdi_fallback_frame(BridgeContext* ctx)
+{
+    if (!ctx) return;
+    rdpContext* rctx = (rdpContext*)ctx;
+    rdpGdi* gdi = rctx ? rctx->gdi : NULL;
+    if (!gdi || !gdi->primary_buffer || gdi->width <= 0 || gdi->height <= 0) return;
+
+    pthread_mutex_lock(&ctx->gfx_mutex);
+    const uint16_t surface_id = ctx->primary_surface_id;
+    const bool surface_ok = surface_id < RDP_MAX_GFX_SURFACES && ctx->surfaces[surface_id].active;
+    const uint32_t surface_w = surface_ok ? ctx->surfaces[surface_id].width : (uint32_t)gdi->width;
+    const uint32_t surface_h = surface_ok ? ctx->surfaces[surface_id].height : (uint32_t)gdi->height;
+    const uint32_t real_frames = ctx->last_completed_frame_id;
+    const uint64_t last_ms = ctx->last_fallback_ms;
+    pthread_mutex_unlock(&ctx->gfx_mutex);
+
+    if (real_frames > 0) return;
+    uint64_t now = monotonic_ms();
+    if (last_ms && now - last_ms < 250) return;
+
+    uint32_t w = (uint32_t)gdi->width;
+    uint32_t h = (uint32_t)gdi->height;
+    if (surface_w > 0 && w > surface_w) w = surface_w;
+    if (surface_h > 0 && h > surface_h) h = surface_h;
+    if (w == 0 || h == 0) return;
+
+    const uint32_t src_stride = gdi->stride ? gdi->stride : gdi->bitmap_stride;
+    if (src_stride < w * 4) return;
+    uint8_t* rgba = (uint8_t*)malloc((size_t)w * h * 4);
+    if (!rgba) return;
+
+    const uint8_t* src = gdi->primary_buffer;
+    for (uint32_t y = 0; y < h; y++) {
+        const uint8_t* row = src + (size_t)y * src_stride;
+        uint8_t* out = rgba + (size_t)y * w * 4;
+        for (uint32_t x = 0; x < w; x++) {
+            const uint8_t b = row[x * 4 + 0];
+            const uint8_t g = row[x * 4 + 1];
+            const uint8_t r = row[x * 4 + 2];
+            const uint8_t a = row[x * 4 + 3] ? row[x * 4 + 3] : 0xFF;
+            out[x * 4 + 0] = r;
+            out[x * 4 + 1] = g;
+            out[x * 4 + 2] = b;
+            out[x * 4 + 3] = a;
+        }
+    }
+
+    pthread_mutex_lock(&ctx->gfx_mutex);
+    const uint32_t frame_id = ++ctx->fallback_frame_id;
+    ctx->last_fallback_ms = now;
+    pthread_mutex_unlock(&ctx->gfx_mutex);
+
+    const uint16_t target_surface_id = surface_ok ? surface_id : 0;
+    if (!surface_ok) {
+        pthread_mutex_lock(&ctx->gfx_mutex);
+        ctx->primary_surface_id = target_surface_id;
+        ctx->surfaces[target_surface_id].surface_id = target_surface_id;
+        ctx->surfaces[target_surface_id].width = w;
+        ctx->surfaces[target_surface_id].height = h;
+        ctx->surfaces[target_surface_id].pixel_format = GFX_PIXEL_FORMAT_ARGB_8888;
+        ctx->surfaces[target_surface_id].active = true;
+        ctx->surfaces[target_surface_id].mapped_to_output = true;
+        pthread_mutex_unlock(&ctx->gfx_mutex);
+        RdpGfxEvent create = {0};
+        create.type = RDP_GFX_EVENT_CREATE_SURFACE;
+        create.surface_id = target_surface_id;
+        create.width = w;
+        create.height = h;
+        create.pixel_format = GFX_PIXEL_FORMAT_ARGB_8888;
+        gfx_queue_event(ctx, &create);
+        RdpGfxEvent map = {0};
+        map.type = RDP_GFX_EVENT_MAP_SURFACE;
+        map.surface_id = target_surface_id;
+        map.x = 0;
+        map.y = 0;
+        gfx_queue_event(ctx, &map);
+    }
+
+    RdpGfxEvent start = {0};
+    start.type = RDP_GFX_EVENT_START_FRAME;
+    start.frame_id = frame_id;
+    gfx_queue_event(ctx, &start);
+    queue_webp_tile(ctx, target_surface_id, 0, 0, w, h, rgba, (int)(w * 4));
+    RdpGfxEvent end = {0};
+    end.type = RDP_GFX_EVENT_END_FRAME;
+    end.frame_id = frame_id;
+    gfx_queue_event(ctx, &end);
+
+    free(rgba);
+    static int logged = 0;
+    if (logged < 3) {
+        fprintf(stderr, "[GFX] queued GDI fallback frame %u (%ux%u) because RDPEGFX produced no frame events\n", frame_id, w, h);
+        logged++;
+    }
 }
 
 /* ============================================================================

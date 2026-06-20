@@ -54,6 +54,8 @@ class RDPConfig:
     width: int = 1280
     height: int = 720
     color_depth: int = 32
+    fps: int = 60
+    quality: str = 'balanced'
 
 
 # Mouse button flags (matching native library)
@@ -255,11 +257,14 @@ class NativeLibrary:
     
     def _load_library(self):
         """Load the native library and set up function signatures"""
-        lib_paths = [
-            'librdp_bridge.so',
-            '/usr/local/lib/librdp_bridge.so',
+        env_path = os.getenv('RDP_BRIDGE_LIBRARY')
+        lib_paths = [p for p in [
+            env_path,
+            str(Path(__file__).parent / 'native' / 'build' / 'librdp_bridge.so'),
             str(Path(__file__).parent / 'libs' / 'librdp_bridge.so'),
-        ]
+            '/usr/local/lib/librdp_bridge.so',
+            'librdp_bridge.so',
+        ] if p]
         
         for path in lib_paths:
             try:
@@ -507,8 +512,11 @@ class RDPBridge:
         self._frame_count = 0
         
         # Frame rate control
-        self._target_fps = 60
+        self._target_fps = max(15, min(60, int(getattr(config, 'fps', 60) or 60)))
         self._frame_interval = 1.0 / self._target_fps
+        self._quality = str(getattr(config, 'quality', 'balanced') or 'balanced').lower()
+        if self._quality not in ('performance', 'balanced', 'quality'):
+            self._quality = 'balanced'
         
         # Audio settings
         self._audio_enabled = True

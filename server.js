@@ -5040,6 +5040,8 @@ rdpGfxWss.on('connection', (ws, req) => {
         }
         if (msg?.type === 'connect') {
             if (injectedConnect) return;
+            const requestedQuality = ['performance', 'balanced', 'quality'].includes(String(url.searchParams.get('quality') || '').toLowerCase()) ? String(url.searchParams.get('quality')).toLowerCase() : 'balanced';
+            const requestedFps = Math.max(15, Math.min(60, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
             const { username, domain } = splitRdpIdentity(effectiveConn);
             const width = evenClampRdpSize(msg.width || url.searchParams.get('width') || RDP_STREAM_WIDTH, 640, 4096);
             const height = evenClampRdpSize(msg.height || url.searchParams.get('height') || RDP_STREAM_HEIGHT, 480, 2304);
@@ -5053,14 +5055,22 @@ rdpGfxWss.on('connection', (ws, req) => {
                 domain,
                 width,
                 height,
+                quality: requestedQuality,
+                fps: requestedFps,
             }));
-            console.info('[rdp-gfx]', 'connect injected', { connId, target: `${effectiveConn.host}:${Number(effectiveConn.port) || 3389}`, width, height, routed: !!routedForward });
+            console.info('[rdp-gfx]', 'connect injected', { connId, target: `${effectiveConn.host}:${Number(effectiveConn.port) || 3389}`, width, height, quality: requestedQuality, fps: requestedFps, routed: !!routedForward });
             return;
         }
         if (!injectedConnect) throw new Error(`RDP GFX message before connect: ${msg?.type || 'unknown'}`);
         if (msg?.type === 'resize') {
             msg.width = evenClampRdpSize(msg.width || RDP_STREAM_WIDTH, 640, 4096);
             msg.height = evenClampRdpSize(msg.height || RDP_STREAM_HEIGHT, 480, 2304);
+            backendWs.send(JSON.stringify(msg));
+            return;
+        }
+        if (msg?.type === 'settings' || msg?.type === 'reconnect') {
+            msg.quality = ['performance', 'balanced', 'quality'].includes(String(msg.quality || '').toLowerCase()) ? String(msg.quality).toLowerCase() : 'balanced';
+            msg.fps = Math.max(15, Math.min(60, Number(msg.fps) || RDP_STREAM_FPS));
             backendWs.send(JSON.stringify(msg));
             return;
         }

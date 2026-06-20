@@ -45,6 +45,31 @@ const resolutions = [
     { label: '4K', width: 3840, height: 2160 },
 ];
 let statusSequence = 0;
+const qualityModes = ['balanced', 'performance', 'quality'];
+const fpsModes = [30, 45, 60];
+let qualityMode = qualityModes.includes(String(params.quality || '').toLowerCase()) ? String(params.quality).toLowerCase() : (localStorage.getItem('zephyr-rdp-gfx-quality') || 'balanced');
+if (!qualityModes.includes(qualityMode)) qualityMode = 'balanced';
+let fpsValue = Math.max(15, Math.min(60, Number(params.rdpFps || localStorage.getItem('zephyr-rdp-gfx-fps') || 60) || 60));
+if (!fpsModes.includes(fpsValue)) fpsValue = 60;
+function qualityLabel(mode = qualityMode) {
+    if (mode === 'performance') return '性能';
+    if (mode === 'quality') return '画质';
+    return '平衡';
+}
+function updateQualityFpsButtons() {
+    const q = $('#qualityBtn');
+    if (q) {
+        q.textContent = qualityLabel();
+        q.title = `当前：${qualityLabel()}模式，点击切换性能/画质模式`;
+        q.classList.toggle('active', qualityMode !== 'balanced');
+    }
+    const f = $('#fpsBtn');
+    if (f) {
+        f.textContent = `${fpsValue}FPS`;
+        f.title = `当前：${fpsValue} FPS，点击切换 30 / 45 / 60 FPS`;
+        f.classList.toggle('active', fpsValue !== 30);
+    }
+}
 
 function initialTheme() {
     const saved = localStorage.getItem('zephyr-theme');
@@ -144,7 +169,7 @@ function updateInfo() {
 }
 function wsUrl() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const query = new URLSearchParams({ connectionId: params.connectionId || '', tabId: params.tabId || tabId });
+    const query = new URLSearchParams({ connectionId: params.connectionId || '', tabId: params.tabId || tabId, quality: qualityMode, fps: String(fpsValue) });
     return `${proto}//${location.host}/rdp-gfx?${query.toString()}`;
 }
 function requireModernRdpBrowser() {
@@ -157,7 +182,7 @@ function requireModernRdpBrowser() {
     if (missing.length) throw new Error(`当前浏览器不满足 RDPEGFX 客户端要求：${missing.join('、')}`);
 }
 function hideLegacyControls() {
-    for (const id of ['qualityBtn', 'fpsBtn', 'fitBtn', 'zoomBtn', 'joystickBtn']) {
+    for (const id of ['fitBtn', 'zoomBtn', 'joystickBtn']) {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
     }
@@ -167,6 +192,34 @@ function availableSize() {
     const w = Math.max(640, Math.floor((rect?.width || window.innerWidth || 1280) / 2) * 2);
     const h = Math.max(480, Math.floor((rect?.height || window.innerHeight || 720) / 2) * 2);
     return { width: Math.min(w, 4096), height: Math.min(h, 2304) };
+}
+function requestRuntimeConfig(reconnect = true) {
+    if (!client || !connected) return false;
+    try {
+        client._sendMessage({ type: reconnect ? 'reconnect' : 'settings', quality: qualityMode, fps: fpsValue });
+        return true;
+    } catch (err) {
+        setStatus('error', `更新 RDP 参数失败：${err.message || err}`);
+        return false;
+    }
+}
+function cycleQuality() {
+    const next = qualityModes[(qualityModes.indexOf(qualityMode) + 1) % qualityModes.length];
+    qualityMode = next;
+    localStorage.setItem('zephyr-rdp-gfx-quality', qualityMode);
+    updateQualityFpsButtons();
+    setStatus(connected ? 'connected' : 'connecting', `RDP ${qualityLabel()}模式 / ${fpsValue}FPS`, { holdOverlayMs: 900 });
+    requestRuntimeConfig(false);
+    return qualityMode;
+}
+function cycleFps() {
+    const next = fpsModes[(fpsModes.indexOf(fpsValue) + 1) % fpsModes.length];
+    fpsValue = next;
+    localStorage.setItem('zephyr-rdp-gfx-fps', String(fpsValue));
+    updateQualityFpsButtons();
+    setStatus(connected ? 'connected' : 'connecting', `RDP ${qualityLabel()}模式 / ${fpsValue}FPS`, { holdOverlayMs: 900 });
+    requestRuntimeConfig(false);
+    return fpsValue;
 }
 function requestResolution(res) {
     if (!client || !connected) return false;
@@ -296,6 +349,7 @@ function handleClientMessage(msg) {
 async function connect() {
     params = loadParams();
     if (!params.connectionId) { setStatus('error', '缺少 RDP connectionId'); notifyParentStatus('disconnected'); return; }
+    updateQualityFpsButtons();
     updateInfo(); hideLegacyControls(); renderRemoteFiles();
     setStatus('connecting', '正在启动 RDPEGFX/FreeRDP3 bridge...'); notifyParentStatus('connecting');
     try {
@@ -429,6 +483,9 @@ function setupMobileKeyboard() {
 }
 
 function bindControls() {
+    updateQualityFpsButtons();
+    $('#qualityBtn')?.addEventListener('click', () => cycleQuality());
+    $('#fpsBtn')?.addEventListener('click', () => cycleFps());
     $('#resolutionBtn')?.addEventListener('click', () => { currentResolutionIdx = (currentResolutionIdx + 1) % resolutions.length; const res = resolutions[currentResolutionIdx]; $('#resolutionBtn').textContent = res.label; requestResolution(res); });
     $('#keyboardBtn')?.addEventListener('click', () => toggleMobileKeyboard());
     $('#ctrlAltDelBtn')?.addEventListener('click', () => { try { client?.sendCtrlAltDel?.(); } catch (err) { setStatus('error', err.message || String(err)); } });

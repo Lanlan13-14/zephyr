@@ -249,7 +249,9 @@ async def handle_client(websocket: ServerConnection):
                         password=data['password'],
                         domain=data.get('domain', ''),
                         width=data.get('width', 1280),
-                        height=data.get('height', 720)
+                        height=data.get('height', 720),
+                        fps=max(15, min(60, int(data.get('fps', 60) or 60))),
+                        quality=str(data.get('quality', 'balanced') or 'balanced').lower(),
                     )
                     
                     rdp_bridge = RDPBridge(config, websocket)
@@ -348,6 +350,18 @@ async def handle_client(websocket: ServerConnection):
                                 'type': 'error',
                                 'message': 'Failed to resize session'
                             }))
+
+                elif msg_type in ('settings', 'reconnect'):
+                    if rdp_bridge:
+                        fps = max(15, min(60, int(data.get('fps', rdp_bridge._target_fps) or rdp_bridge._target_fps)))
+                        quality = str(data.get('quality', rdp_bridge._quality) or rdp_bridge._quality).lower()
+                        if quality not in ('performance', 'balanced', 'quality'):
+                            quality = 'balanced'
+                        rdp_bridge._target_fps = fps
+                        rdp_bridge._frame_interval = 1.0 / fps
+                        rdp_bridge._quality = quality
+                        logger.info(f"Client {client_id} updated runtime settings: quality={quality}, fps={fps}")
+                        await websocket.send(json.dumps({'type': 'settings', 'quality': quality, 'fps': fps}))
                 
                 elif msg_type == 'ping':
                     await websocket.send(json.dumps({'type': 'pong'}))
