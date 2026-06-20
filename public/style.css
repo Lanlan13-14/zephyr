@@ -10686,3 +10686,70 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 .ai-usage-section { padding: 14px 0 4px; color: var(--text-secondary); font-size: 12px; font-weight: 800; letter-spacing: .04em; }
 .ai-usage-row { display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent); color: var(--text); }
 .ai-usage-row b { font-family: var(--font-mono); font-weight: 500; color: var(--text-secondary); }
+
+/* SSH terminal display fixes: TUI reverse blocks, split toolbar wrapping, custom background readability */
+:root[data-wterm-theme^="custom-"] .terminal-container .wterm-wrapper,
+:root[data-wterm-theme^="custom-"] .terminal-container .wterm-wrapper.wterm {
+    background: color-mix(in srgb, var(--wterm-bg) 84%, transparent) !important;
+}
+:root[data-wterm-theme="custom-light"] .terminal-container .wterm-wrapper,
+:root[data-wterm-theme="custom-light"] .terminal-container .wterm-wrapper.wterm {
+    background: color-mix(in srgb, var(--wterm-bg) 88%, transparent) !important;
+}
+:root[data-wterm-theme^="custom-"] .terminal-container::before {
+    opacity: min(var(--wterm-custom-bg-opacity, .35), .24);
+}
+.terminal-container .wterm-wrapper .term-row,
+.terminal-container .wterm-wrapper .term-scrollback-row {
+    line-height: var(--term-row-height, 1.35em);
+    min-height: var(--term-row-height, 1.35em);
+}
+.terminal-container .wterm-wrapper [style*="background-color: rgb(255, 255, 255)"],
+.terminal-container .wterm-wrapper [style*="background: rgb(255, 255, 255)"],
+.terminal-container .wterm-wrapper [style*="background-color:#fff"],
+.terminal-container .wterm-wrapper [style*="background:#fff"] {
+    background-color: color-mix(in srgb, var(--wterm-fg) 78%, var(--wterm-bg)) !important;
+    color: var(--wterm-bg) !important;
+}
+.terminal-container .wterm-wrapper [style*="background-color: white"],
+.terminal-container .wterm-wrapper [style*="background: white"] {
+    background-color: color-mix(in srgb, var(--wterm-fg) 78%, var(--wterm-bg)) !important;
+    color: var(--wterm-bg) !important;
+}
+.terminal-window .terminal-topbar,
+.terminal-window .toolbar {
+    min-width: 0;
+}
+.terminal-window .topbar-actions {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    scrollbar-gutter: stable;
+}
+.terminal-window .topbar-actions .btn-sm {
+    flex: 0 0 auto;
+}
+.terminal-window .cmd-row {
+    min-width: 0;
+}
+.terminal-window .command-input {
+    min-width: 120px;
+}
+.terminal-workspace.split-active .terminal-window .terminal-topbar {
+    align-items: stretch;
+}
+.terminal-workspace.split-active .terminal-window .toolbar {
+    gap: 4px;
+}
+.terminal-workspace.split-active .terminal-window .topbar-actions .btn-sm {
+    padding-inline: 7px;
+    max-width: 92px;
+}
+.terminal-workspace.split-active .terminal-window .topbar-actions .btn-sm .btn-label,
+.terminal-workspace.split-active .terminal-window .topbar-actions .btn-sm span:not(.fm-button-icon) {
+    max-width: 58px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
