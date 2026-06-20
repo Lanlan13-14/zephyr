@@ -129,7 +129,9 @@ ENV RDP_ALLOW_GFX_FALLBACK=true
 # 运行时诊断
 RUN echo "=== runtime diagnostics ===" && \
     cat /etc/alpine-release && \
-    xfreerdp /version || true && \
+    command -v xfreerdp && \
+    command -v zephyr-xinput && \
+    command -v zephyr-file-clip && \
     find /usr/lib/freerdp2 -maxdepth 1 \( -type f -o -type l \) 2>/dev/null | sort | head -20 && \
     node --version && \
     npm --version && \
