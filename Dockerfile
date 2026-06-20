@@ -37,7 +37,7 @@ RUN apk add --no-cache \
         libxrandr-dev libxrender-dev libxfixes-dev \
         fuse3-dev alsa-lib-dev cups-dev pulseaudio-dev \
         eudev-dev dbus-glib-dev util-linux-dev libxml2-dev \
-        krb5-dev pkcs11-helper-dev libusb-dev cjson-dev \
+        krb5-dev libusb-dev cjson-dev \
         sdl2-dev sdl2_ttf-dev pcsc-lite-dev \
         ffmpeg-dev opus-dev libwebp-dev cairo-dev \
         zlib-dev
@@ -58,6 +58,7 @@ RUN cmake -B build -G Ninja \
       -DWITH_VIDEO_FFMPEG=ON \
       -DWITH_OPUS=ON \
       -DWITH_WEBVIEW=OFF \
+      -DWITH_PKCS11=OFF \
       -DWITH_CLIENT_SDL=OFF \
       -DWITH_PROXY=OFF \
       -DWITH_SHADOW=OFF \
