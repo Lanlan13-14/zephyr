@@ -64,6 +64,7 @@ const PORT = process.env.PORT || 3000;
 const HTTPS_ENABLED = process.env.HTTPS_ENABLED !== 'false';
 const HTTPS_PORT = Number(process.env.HTTPS_PORT || process.env.ZEPHYR_HTTPS_PORT || 3443);
 const SSH_STATS_ENABLED = process.env.SSH_STATS_ENABLED !== 'false';
+const APP_VERSION = getAppVersion();
 const app = express();
 
 function applyCrossOriginIsolationHeaders(req, res, next) {

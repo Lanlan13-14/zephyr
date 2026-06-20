@@ -205,7 +205,8 @@ RUN echo "=== runtime diagnostics ===" && \
     python -c "import ctypes; ctypes.CDLL('/usr/local/lib/librdp_bridge.so'); print('librdp_bridge loaded')" && \
     test -f /app/public/vendor/freerdp-web/progressive/progressive_decoder.wasm && \
     test -f /app/public/vendor/freerdp-web/clearcodec/clearcodec_decoder.wasm && \
-    node -e "require('better-sqlite3'); console.log('better-sqlite3 loaded')"
+    node -e "require('better-sqlite3'); console.log('better-sqlite3 loaded')" && \
+    (HTTP_ENABLED=true HTTPS_ENABLED=false PORT=39080 node server.js > /tmp/zephyr-startup.log 2>&1 & pid=$!; ok=0; for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:39080/ >/dev/null 2>&1 && ok=1 && break; kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done; cat /tmp/zephyr-startup.log; kill "$pid" 2>/dev/null || true; rm -rf /app/data /tmp/zephyr-startup.log; test "$ok" = 1; echo "server startup smoke loaded")
 
 EXPOSE 3443
 
