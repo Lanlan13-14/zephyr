@@ -43,6 +43,10 @@ let directAudio = null;
 let lastRemotePointer = null;
 let pendingFilePasteTarget = null;
 let pendingRdpClipboardFiles = [];
+let rdpManualDisconnect = false;
+let rdpReconnectTimer = null;
+let rdpReconnectAttempts = 0;
+let rdpReplacingConnection = false;
 const fileDownloads = new Map();
 const resolutions = [
     { label: '自动', width: 0, height: 0 },
@@ -529,17 +533,35 @@ async function connectDirectCanvasRdp() {
         mapped.clear();
         primarySurfaceId = null;
     };
+    rdpManualDisconnect = false;
+    if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     const ws = new WebSocket(wsUrl());
     ws.binaryType = 'arraybuffer';
     client = {
         _ws: ws,
         _sendMessage(msg) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); },
-        async disconnect() { try { ws.close(1000, 'client disconnect'); } catch {} },
+        async disconnect() { rdpManualDisconnect = true; try { ws.close(1000, 'client disconnect'); } catch {} },
         destroy() { try { ws.close(1000, 'client destroy'); } catch {}; return Promise.resolve(); },
         sendKeyCombo(combo) { this._sendMessage({ type: 'keycombo', combo }); },
         sendCtrlAltDel() { this._sendMessage({ type: 'keycombo', combo: 'Ctrl+Alt+Delete' }); },
-        sendKeys(keys) { for (const key of keys || []) this._sendMessage({ type: 'text', text: key }); return Promise.resolve(); },
-        sendBackspace(count = 1) { this._sendMessage({ type: 'backspace', count }); },
+        sendKeys(keys) {
+            const text = Array.isArray(keys) ? keys.join('') : String(keys || '');
+            for (const key of Array.from(text)) {
+                const code = key === '
+' || key === '' ? 'Enter' : key === '	' ? 'Tab' : key === ' ' ? 'Space' : '';
+                const label = code === 'Enter' ? 'Enter' : code === 'Tab' ? 'Tab' : code === 'Space' ? ' ' : key;
+                const keyCode = code === 'Enter' ? 13 : code === 'Tab' ? 9 : code === 'Space' ? 32 : 0;
+                this._sendMessage({ type: 'key', action: 'down', key: label, code, keyCode });
+                this._sendMessage({ type: 'key', action: 'up', key: label, code, keyCode });
+            }
+            return Promise.resolve();
+        },
+        sendBackspace(count = 1) {
+            for (let i = 0; i < count; i += 1) {
+                this._sendMessage({ type: 'key', action: 'down', key: 'Backspace', code: 'Backspace', keyCode: 8 });
+                this._sendMessage({ type: 'key', action: 'up', key: 'Backspace', code: 'Backspace', keyCode: 8 });
+            }
+        },
     };
     ws.onopen = () => {
         ws.send(JSON.stringify({ type: 'connect', host: 'zephyr-rdp-gfx-proxy', port: 3389, user: 'zephyr', pass: 'server-side-secret', width: size.width, height: size.height }));
@@ -550,6 +572,7 @@ async function connectDirectCanvasRdp() {
             try { msg = JSON.parse(event.data); } catch { return; }
             if (msg.type === 'connected') {
                 connected = true;
+                rdpReconnectAttempts = 0;
                 resetSurfacesForResize();
                 canvas.width = msg.width || canvas.width;
                 canvas.height = msg.height || canvas.height;
@@ -779,7 +802,18 @@ async function connectDirectCanvasRdp() {
     });
     canvas.addEventListener('keyup', (event) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', action: 'up', key: event.key, code: event.code, keyCode: event.keyCode || event.which || 0, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey })); event.preventDefault(); });
     ws.onerror = () => { connected = false; setStatus('error', 'RDP WebSocket 错误'); notifyParentStatus('disconnected'); };
-    ws.onclose = () => { if (connected) { connected = false; setStatus('disconnected', 'RDP 已断开'); notifyParentStatus('disconnected'); } };
+    ws.onclose = () => {
+        const wasConnected = connected;
+        connected = false;
+        if (rdpManualDisconnect || rdpReplacingConnection) {
+            if (rdpManualDisconnect && wasConnected) { setStatus('disconnected', 'RDP 已断开'); notifyParentStatus('disconnected'); }
+            return;
+        }
+        const delay = Math.min(10000, 800 * Math.pow(1.7, rdpReconnectAttempts++));
+        setStatus('connecting', `RDP 已断开，${Math.round(delay / 1000)} 秒后自动重连...`);
+        notifyParentStatus('connecting');
+        rdpReconnectTimer = setTimeout(() => connect().catch(() => {}), delay);
+    };
 }
 
 async function connect() {
@@ -789,7 +823,11 @@ async function connect() {
     updateInfo(); hideLegacyControls(); renderRemoteFiles();
     setStatus('connecting', '正在启动 RDPEGFX/FreeRDP3 bridge...'); notifyParentStatus('connecting');
     try {
-        if (client) await client.destroy?.().catch?.(() => {});
+        if (client) {
+            rdpReplacingConnection = true;
+            await client.destroy?.().catch?.(() => {});
+            setTimeout(() => { rdpReplacingConnection = false; }, 250);
+        }
         client = null;
         await connectDirectCanvasRdp();
         return;

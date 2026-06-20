@@ -307,6 +307,23 @@ async def handle_client(websocket: ServerConnection):
                     if rdp_bridge:
                         await rdp_bridge.send_key_combo(data['combo'])
 
+                elif msg_type == 'text':
+                    if rdp_bridge:
+                        for ch in str(data.get('text', '')):
+                            if ch in ('\n', '\r'):
+                                await rdp_bridge.send_key_combo('Enter')
+                            elif ch == '\t':
+                                await rdp_bridge.send_key_combo('Tab')
+                            else:
+                                await rdp_bridge.send_key_event('down', ch, '', 0, False, False, False, False)
+                                await rdp_bridge.send_key_event('up', ch, '', 0, False, False, False, False)
+
+                elif msg_type == 'backspace':
+                    if rdp_bridge:
+                        for _ in range(max(1, min(100, int(data.get('count', 1) or 1)))):
+                            await rdp_bridge.send_key_event('down', 'Backspace', 'Backspace', 8, False, False, False, False)
+                            await rdp_bridge.send_key_event('up', 'Backspace', 'Backspace', 8, False, False, False, False)
+
                 elif msg_type == 'clipboard-set-text':
                     if rdp_bridge:
                         ok = await rdp_bridge.set_clipboard_text(data.get('text', ''))
