@@ -3890,38 +3890,45 @@ app.get('/novnc.html', requirePageAuth, (req, res) => res.sendFile(path.join(__d
  * and writes directly to the xfreerdp shared drive directory, supporting
  * files of any size.
  * ═══════════════════════════════════════════════════════════════════ */
-app.post('/api/rdp/upload-share/:connId', requireAuth, (req, res) => {
+app.post('/api/rdp/upload-share/:connId', requireAuth, async (req, res) => {
     const connId = String(req.params.connId || '');
     const pipe = rdpPipes.get(connId);
-    if (!pipe || !pipe.shareDir) {
-        return res.status(404).json({ error: 'RDP session not found or share drive unavailable' });
+    if (!pipe) {
+        return res.status(404).json({ error: 'RDP session not found' });
     }
-    const rawName = String(req.query.name || req.headers['x-file-name'] || 'upload');
-    const safeName = rawName.replace(/[/\\]/g, '_').replace(/\.\./g, '').slice(0, 255);
-    const filePath = path.join(pipe.shareDir, safeName);
-    const writeStream = fs.createWriteStream(filePath);
-    let totalBytes = 0;
-    writeStream.on('error', (err) => {
-        console.warn('[rdp-upload]', 'write failed', { connId, name: safeName, error: err.message });
-        if (!res.headersSent) res.status(500).json({ error: err.message });
-        else res.destroy();
-    });
-    req.on('data', (chunk) => { totalBytes += chunk.length; });
-    req.pipe(writeStream);
-    writeStream.on('close', () => {
-        console.info('[rdp-upload]', 'file uploaded to share drive', { connId, name: safeName, size: totalBytes });
-        // Notify connected RDP clients
-        for (const client of pipe.clients) {
-            if (client.readyState !== client.OPEN) continue;
-            try { client.send(JSON.stringify({ type: 'rdp-file-upload-ack', name: safeName, size: totalBytes })); } catch {}
-        }
-        res.json({ ok: true, name: safeName, size: totalBytes, path: `\\\\tsclient\\zephyr-share\\${safeName}` });
-    });
-    req.on('error', (err) => {
-        console.warn('[rdp-upload]', 'request stream error', { connId, error: err.message });
-        writeStream.destroy();
-        if (!res.headersSent) res.status(500).json({ error: err.message });
-    });
+    try {
+        const batchId = String(req.query.batch || req.headers['x-rdp-clipboard-batch'] || '');
+        const reset = String(req.query.reset || '') === '1';
+        await ensureRdpFileClipboardBatch(pipe, { batchId, reset });
+        const rawName = String(req.query.name || req.headers['x-file-name'] || 'upload');
+        const safeName = safeLocalClipboardName(rawName);
+        const filePath = uniqueLocalPath(pipe.fileClipRoot, safeName);
+        const writeStream = fs.createWriteStream(filePath);
+        let totalBytes = 0;
+        req.on('data', (chunk) => { totalBytes += chunk.length; });
+        req.on('error', (err) => {
+            console.warn('[rdp-file-clip]', 'request stream error', { connId, error: err.message });
+            writeStream.destroy(err);
+        });
+        writeStream.on('error', (err) => {
+            console.warn('[rdp-file-clip]', 'write failed', { connId, name: safeName, error: err.message });
+            if (!res.headersSent) res.status(500).json({ error: err.message });
+        });
+        writeStream.on('close', async () => {
+            try {
+                pipe.fileClipPaths.push(filePath);
+                await publishRdpFileClipboard(pipe);
+                console.info('[rdp-file-clip]', 'browser file staged for native RDP clipboard', { connId, name: safeName, size: totalBytes, count: pipe.fileClipPaths.length });
+                sendRdpFileClipboardReady(pipe, { source: 'browser-upload' });
+                res.json({ ok: true, nativeClipboard: true, name: path.basename(filePath), size: totalBytes, count: pipe.fileClipPaths.length });
+            } catch (err) {
+                if (!res.headersSent) res.status(500).json({ error: err.message });
+            }
+        });
+        req.pipe(writeStream);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // List files in the RDP shared drive
@@ -3946,19 +3953,14 @@ app.get('/api/rdp/share-list/:connId', requireAuth, (req, res) => {
     }
 });
 
-// Open the shared drive in remote Windows Explorer
-app.post('/api/rdp/open-share/:connId', requireAuth, (req, res) => {
+// Trigger Ctrl+V in the remote Windows session for the current native RDP file clipboard.
+app.post('/api/rdp/paste-file-clipboard/:connId', requireAuth, (req, res) => {
     const connId = String(req.params.connId || '');
     const pipe = rdpPipes.get(connId);
     if (!pipe) return res.status(404).json({ error: 'RDP session not found' });
-    if (pipe.activeWindowId) {
-        const child = spawn('xdotool', ['key', '--window', pipe.activeWindowId, '--clearmodifiers', 'super+r'], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-        child.on('error', () => {});
-    }
-    setTimeout(() => {
-        xinputSend(pipe, 'v \\\\tsclient\\zephyr-share') || pasteTextIntoRdp(pipe, '\\\\tsclient\\zephyr-share', { paste: true });
-    }, 600);
-    res.json({ ok: true });
+    if (!pipe.fileClipPaths?.length) return res.status(400).json({ error: 'RDP 文件剪贴板为空' });
+    pasteRdpNativeFileClipboard(pipe);
+    res.json({ ok: true, nativeClipboard: true, count: pipe.fileClipPaths.length });
 });
 app.get('/player.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'player.html')));
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
@@ -4022,6 +4024,7 @@ const RDP_STREAM_FPS = Number(process.env.RDP_H264_FPS || 30);
 const RDP_NATIVE_H264 = process.env.RDP_NATIVE_H264 === 'true';
 const RDP_ALLOW_GFX_FALLBACK = process.env.RDP_ALLOW_GFX_FALLBACK === 'true';
 const rdpPipes = new Map();
+const rdpPipeStarts = new Map();
 const rdpAudioWorkers = new Map(); // connectionId → pipeline state
 
 function evenClampRdpSize(value, min, max) {
@@ -4159,7 +4162,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
             ? ['-wallpaper', '-themes', '-aero', '-window-drag', '-menu-anims']
             : ['+wallpaper', '+themes', '+aero', '+window-drag', '+menu-anims']),
         '+fast-path',
-        '-mouse-motion',
+        '+mouse-motion',
         '/log-level:ERROR',
     ];
     const nativeH264 = streamMode !== 'av' && RDP_NATIVE_H264 && fs.existsSync(fifoPath);
@@ -4246,6 +4249,11 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         audioClients: new Set(),
         audioFfmpeg: null,
         shareDir,
+        fileClipRoot: null,
+        fileClipBatchId: '',
+        fileClipPaths: [],
+        fileClipOwner: null,
+        fileClipCleanupTimers: [],
         clipboardTimer: null,
         lastRemoteClipboardText: '',
         startedAt: Date.now(),
@@ -4253,6 +4261,8 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
         stopping: false,
     };
     rdpPipes.set(connId, pipe);
+    // Pre-warm native input proxy so the first click/key does not pay spawn cost.
+    if (XINPUT_AVAILABLE && !pipe.xinput) pipe.xinput = startXinputProcess(pipe);
 
     const markReady = () => {
         if (!pipe.ready) console.info('[rdp-h264]', 'pipeline ready', { connId, target: `${targetHost}:${targetPort}`, width: streamWidth, height: streamHeight, fps: streamFps, quality: qualityMode });
@@ -4323,34 +4333,128 @@ function pasteTextIntoRdp(pipe, text, { paste = true } = {}) {
     child.on('error', (err) => console.warn('[rdp-h264]', 'rdp clipboard operation spawn failed', { error: err.message, paste }));
 }
 
-async function copySftpClipboardToRdpShare(username, shareDir, pipe, clip) {
-    if (!clip || !clip.sourceConnectionConfig) throw new Error('SSH 剪贴板来源无效');
-    const routed = await createRoutedSSHConnection(clip.sourceConnectionConfig, 10000);
-    let sftp = null;
-    try {
-        sftp = await new Promise((resolve, reject) => routed.client.sftp((err, nextSftp) => err ? reject(err) : resolve(nextSftp)));
-        for (const item of clip.items) {
-            const safeName = String(item.name || item.path.split('/').pop() || 'file').replace(/[\\\\/]/g, '_').slice(0, 200);
-            const target = path.join(shareDir, safeName);
-            await new Promise((resolve, reject) => {
-                const readStream = sftp.createReadStream(item.path);
-                const writeStream = fs.createWriteStream(target);
-                readStream.on('error', reject);
-                writeStream.on('error', reject);
-                writeStream.on('close', resolve);
-                readStream.pipe(writeStream);
-            });
-            console.info('[rdp-h264]', 'sftp clipboard file copied to share drive', { connId: pipe.connId, name: safeName, size: item.size });
-        }
-        // Open Explorer to the shared drive
-        if (pipe.activeWindowId) {
-            const quoted = shQuote('\\\\tsclient\\zephyr-share');
-            pasteTextIntoRdp(pipe, quoted, { paste: true });
-        }
-    } finally {
-        try { sftp?.end?.(); } catch {}
-        [...(routed?.clients || [])].reverse().forEach((client) => { try { client.end?.(); } catch {} });
+const RDP_FILE_CLIP_BIN = process.env.ZEPHYR_FILE_CLIP_BIN || 'zephyr-file-clip';
+
+function safeLocalClipboardName(name = 'file') {
+    const cleaned = String(name || 'file').replace(/[\\/]/g, '_').replace(/\0/g, '').replace(/\.\./g, '.').trim();
+    return (cleaned || 'file').slice(0, 220);
+}
+
+function uniqueLocalPath(dir, name) {
+    const safe = safeLocalClipboardName(name);
+    const ext = path.extname(safe);
+    const stem = path.basename(safe, ext) || 'file';
+    let candidate = path.join(dir, safe);
+    for (let i = 1; fs.existsSync(candidate); i++) {
+        candidate = path.join(dir, `${stem} (${i})${ext}`);
     }
+    return candidate;
+}
+
+function scheduleRdpClipRootCleanup(pipe, dir, ttlMs = 15 * 60 * 1000) {
+    if (!dir) return;
+    const timer = setTimeout(() => {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }, ttlMs);
+    timer.unref?.();
+    pipe?.fileClipCleanupTimers?.push?.(timer);
+}
+
+async function resetRdpFileClipboardBatch(pipe, batchId = '') {
+    if (!pipe) throw new Error('RDP 会话无效');
+    try { pipe.fileClipOwner?.kill('SIGTERM'); } catch {}
+    pipe.fileClipOwner = null;
+    if (pipe.fileClipRoot) scheduleRdpClipRootCleanup(pipe, pipe.fileClipRoot);
+    const safeConn = String(pipe.connId || 'default').replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 80);
+    pipe.fileClipRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), `zephyr-rdp-fileclip-${safeConn}-`));
+    pipe.fileClipBatchId = String(batchId || crypto.randomUUID());
+    pipe.fileClipPaths = [];
+    return pipe.fileClipRoot;
+}
+
+async function ensureRdpFileClipboardBatch(pipe, { batchId = '', reset = false } = {}) {
+    const wanted = String(batchId || pipe.fileClipBatchId || crypto.randomUUID());
+    if (reset || !pipe.fileClipRoot || pipe.fileClipBatchId !== wanted) {
+        await resetRdpFileClipboardBatch(pipe, wanted);
+    }
+    return pipe.fileClipRoot;
+}
+
+function publishRdpFileClipboard(pipe) {
+    return new Promise((resolve, reject) => {
+        if (!pipe || !Array.isArray(pipe.fileClipPaths) || !pipe.fileClipPaths.length) {
+            reject(new Error('文件剪贴板为空'));
+            return;
+        }
+        try { pipe.fileClipOwner?.kill('SIGTERM'); } catch {}
+        const child = spawn(RDP_FILE_CLIP_BIN, pipe.fileClipPaths, { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+        pipe.fileClipOwner = child;
+        let settled = false;
+        let stderrText = '';
+        const settle = (ok, err) => {
+            if (settled) return;
+            settled = true;
+            if (ok) resolve(child);
+            else reject(err || new Error(stderrText.trim() || 'RDP 文件剪贴板发布失败'));
+        };
+        child.stderr?.on('data', (d) => {
+            const text = d.toString('utf8');
+            stderrText += text;
+            if (/serving \d+ file/i.test(text)) {
+                console.info('[rdp-file-clip]', 'published native CLIPRDR file clipboard', { connId: pipe.connId, count: pipe.fileClipPaths.length });
+                settle(true);
+            } else if (/failed|cannot|no valid|usage:/i.test(text)) {
+                console.warn('[rdp-file-clip]', 'helper warning', { connId: pipe.connId, text: text.trim().slice(0, 500) });
+            }
+        });
+        child.on('error', (err) => settle(false, err));
+        child.on('exit', (code, signal) => {
+            if (!settled) settle(false, new Error(`zephyr-file-clip exited: code=${code} signal=${signal || ''}`));
+            if (pipe.fileClipOwner === child) pipe.fileClipOwner = null;
+        });
+        setTimeout(() => settle(true), 350).unref?.();
+    });
+}
+
+function sendRdpFileClipboardReady(pipe, extra = {}) {
+    for (const client of pipe?.clients || []) {
+        if (client.readyState !== client.OPEN) continue;
+        try { client.send(JSON.stringify({ type: 'rdp-file-clipboard-ready', count: pipe.fileClipPaths?.length || 0, native: true, ...extra })); } catch {}
+    }
+}
+
+function pasteRdpNativeFileClipboard(pipe) {
+    if (!pipe) return false;
+    // This sends Ctrl+V to the currently focused remote window. Windows decides
+    // the destination folder, exactly like native RDP file clipboard paste.
+    if (pipe.xinput && !pipe.xinput.killed && pipe.xinput.stdin?.writable) {
+        const ok1 = xinputSend(pipe, 'p ffe3');
+        const ok2 = xinputSend(pipe, 'k 0076');
+        const ok3 = xinputSend(pipe, 'r ffe3');
+        if (ok1 && ok2 && ok3) return true;
+        try { xinputSend(pipe, 'r ffe3'); } catch {}
+    }
+    const args = pipe.activeWindowId ? ['key', '--window', pipe.activeWindowId, '--clearmodifiers', 'ctrl+v'] : ['key', '--clearmodifiers', 'ctrl+v'];
+    const child = spawn('xdotool', args, { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
+    child.on('error', () => {});
+    return true;
+}
+
+async function copySftpClipboardToRdpNativeClipboard(username, pipe, clip, { paste = true } = {}) {
+    if (!clip || !clip.sourceConnectionConfig) throw new Error('SSH 剪贴板来源无效');
+    await resetRdpFileClipboardBatch(pipe, `sftp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`);
+    await withRoutedSftp(clip.sourceConnectionConfig, async ({ sftp }) => {
+        for (const item of clip.items) {
+            const safeName = safeLocalClipboardName(item.name || path.posix.basename(String(item.path || 'file')) || 'file');
+            const target = uniqueLocalPath(pipe.fileClipRoot, safeName);
+            await downloadRemotePathToLocal(sftp, item.path, target, null, null);
+            pipe.fileClipPaths.push(target);
+            console.info('[rdp-file-clip]', 'sftp item staged for native RDP clipboard', { connId: pipe.connId, name: safeName, size: item.size });
+        }
+    });
+    await publishRdpFileClipboard(pipe);
+    sendRdpFileClipboardReady(pipe, { source: 'sftp', paste });
+    if (paste) setTimeout(() => pasteRdpNativeFileClipboard(pipe), 180);
 }
 
 function readTextFromRdpClipboard(pipe, callback) {
@@ -4417,6 +4521,11 @@ function storeRdpFilesInUnifiedClipboard(pipe, files) {
     console.info('[rdp-h264]', 'stored remote files in unified clipboard', { connId: pipe.connId, username, count: items.length });
 }
 
+function isUriListClipboardText(text = '') {
+    const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return lines.length > 0 && lines.every((line) => line.startsWith('#') || line.startsWith('file://'));
+}
+
 function startRdpClipboardWatch(pipe) {
     if (!pipe || pipe.clipboardTimer || process.env.RDP_CLIPBOARD_SYNC === 'false') return;
     pipe.lastRemoteClipboardText = '';
@@ -4424,7 +4533,7 @@ function startRdpClipboardWatch(pipe) {
     const tick = () => {
         if (!rdpPipes.has(pipe.connId) || pipe.clients.size === 0) return;
         readTextFromRdpClipboard(pipe, (text) => {
-            if (!text || text === pipe.lastRemoteClipboardText) return;
+            if (!text || isUriListClipboardText(text) || text === pipe.lastRemoteClipboardText) return;
             pipe.lastRemoteClipboardText = text;
             const payload = JSON.stringify({ type: 'clipboard', text });
             for (const client of pipe.clients) {
@@ -4436,6 +4545,9 @@ function startRdpClipboardWatch(pipe) {
         // Also check for file clipboard (text/uri-list)
         readRdpClipboardFileList(pipe, (files) => {
             if (!files.length) return;
+            const localClipPaths = new Set((pipe.fileClipPaths || []).map((p) => path.resolve(String(p))));
+            const fromLocalPublishedClipboard = files.every((f) => localClipPaths.has(path.resolve(String(f.path || ''))));
+            if (fromLocalPublishedClipboard) return;
             const sig = files.map((f) => `${f.name}:${f.size}`).join(',');
             if (sig === pipe.lastRemoteClipboardFiles) return;
             pipe.lastRemoteClipboardFiles = sig;
@@ -4567,7 +4679,7 @@ function parseKeyCombo(combo) {
     return String(combo).split('+').map((s) => s.trim()).filter(Boolean);
 }
 
-function handleRdpInput(pipe, raw) {
+async function handleRdpInput(pipe, raw) {
     let msg;
     try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
     if (!pipe) return;
@@ -4657,25 +4769,22 @@ function handleRdpInput(pipe, raw) {
             pasteTextIntoRdp(pipe, String(msg.text), { paste: true });
         }
     } else if (msg.type === 'rdp-file-upload' && msg.name && msg.data) {
+        // Legacy WebSocket upload fallback: still publish as native CLIPRDR file clipboard,
+        // not as a shared-drive shortcut.
         try {
             const data = Buffer.from(String(msg.data), 'base64');
-            const safeName = String(msg.name).replace(/[/\\]/g, '_').slice(0, 200);
-            const filePath = path.join(pipe.shareDir, safeName);
+            await ensureRdpFileClipboardBatch(pipe, { batchId: `ws-${Date.now()}`, reset: true });
+            const safeName = safeLocalClipboardName(msg.name);
+            const filePath = uniqueLocalPath(pipe.fileClipRoot, safeName);
             fs.writeFileSync(filePath, data);
-            console.info('[rdp-h264]', 'file written to share drive', { connId: pipe.connId, name: safeName, size: data.length });
-            for (const client of pipe.clients) {
-                if (client.readyState !== client.OPEN) continue;
-                try { client.send(JSON.stringify({ type: 'rdp-file-upload-ack', name: safeName, size: data.length })); } catch {}
-            }
+            pipe.fileClipPaths.push(filePath);
+            await publishRdpFileClipboard(pipe);
+            sendRdpFileClipboardReady(pipe, { source: 'legacy-ws-upload' });
         } catch (err) {
-            console.warn('[rdp-h264]', 'rdp file upload failed', { connId: pipe.connId, error: err.message });
+            console.warn('[rdp-file-clip]', 'legacy ws upload failed', { connId: pipe.connId, error: err.message });
         }
-    } else if (msg.type === 'rdp-file-open-share') {
-        if (pipe.activeWindowId) {
-            const child = spawn('xdotool', ['key', '--window', pipe.activeWindowId, '--clearmodifiers', 'super+r'], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-            child.on('error', () => {});
-        }
-        setTimeout(() => { xinputSend(pipe, 'v \\\\tsclient\\zephyr-share') || pasteTextIntoRdp(pipe, '\\\\tsclient\\zephyr-share', { paste: true }); }, 600);
+    } else if (msg.type === 'rdp-file-open-share' || msg.type === 'rdp-file-paste') {
+        pasteRdpNativeFileClipboard(pipe);
     } else if (msg.type === 'rdp-sftp-clipboard-paste') {
         const username = String(pipe.username || '');
         const clip = sftpClipboardByUser.get(username);
@@ -4687,7 +4796,7 @@ function handleRdpInput(pipe, raw) {
         } else {
             (async () => {
                 try {
-                    await copySftpClipboardToRdpShare(username, pipe.shareDir, pipe, clip);
+                    await copySftpClipboardToRdpNativeClipboard(username, pipe, clip, { paste: true });
                     for (const client of pipe.clients) {
                         if (client.readyState !== client.OPEN) continue;
                         try { client.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste-ack', ok: true, count: clip.items.length })); } catch {}
@@ -4930,13 +5039,21 @@ rdpH264Wss.on('connection', async (ws, req) => {
         const requestedMode = url.searchParams.get('mode') || '';
         const requestedQuality = ['performance', 'balanced', 'quality'].includes(String(url.searchParams.get('quality') || '').toLowerCase()) ? String(url.searchParams.get('quality')).toLowerCase() : 'balanced';
         const requestedFps = Math.max(15, Math.min(60, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
-        const requestedStream = String(url.searchParams.get('stream') || 'av').toLowerCase() === 'h264' ? 'h264' : 'av';
+        const requestedStream = String(url.searchParams.get('stream') || 'h264').toLowerCase() === 'av' ? 'av' : 'h264';
         if (pipe && requestedStream === 'av') {
             // fMP4 clients must receive ftyp/moov from the beginning; mid-stream attach causes MSE demux errors.
             cleanupPipe(connId);
             pipe = null;
         } else if (pipe && pipe.streamMode && pipe.streamMode !== requestedStream) { cleanupPipe(connId); pipe = null; }
-        if (!pipe) pipe = await startRdpH264Pipeline(connId, conn, { width: requestedWidth, height: requestedHeight, mode: requestedMode, quality: requestedQuality, fps: requestedFps, stream: requestedStream });
+        if (!pipe) {
+            let starter = rdpPipeStarts.get(connId);
+            if (!starter) {
+                starter = startRdpH264Pipeline(connId, conn, { width: requestedWidth, height: requestedHeight, mode: requestedMode, quality: requestedQuality, fps: requestedFps, stream: requestedStream })
+                    .finally(() => rdpPipeStarts.delete(connId));
+                rdpPipeStarts.set(connId, starter);
+            }
+            pipe = await starter;
+        }
         pipe.username = sessionUser?.username || '';
         pipe.clients.add(ws);
         startRdpClipboardWatch(pipe);
@@ -4959,7 +5076,7 @@ rdpH264Wss.on('connection', async (ws, req) => {
                 cleanupPipe(connId);
                 return;
             }
-            handleRdpInput(pipe, raw);
+            handleRdpInput(pipe, raw).catch((err) => console.warn('[rdp-h264]', 'input handler failed', { connId, error: err.message }));
         });
         ws.on('close', () => {
             pipe.clients.delete(ws);
@@ -5005,6 +5122,9 @@ function cleanupPipe(connId) {
     if (p) {
         p.stopping = true;
         try { p.xinput?.kill('SIGTERM'); } catch {}
+        try { p.fileClipOwner?.kill('SIGTERM'); } catch {}
+        try { for (const t of p.fileClipCleanupTimers || []) clearTimeout(t); } catch {}
+        try { if (p.fileClipRoot) fs.rmSync(p.fileClipRoot, { recursive: true, force: true }); } catch {}
         try { p.nativeReader?.destroy(); } catch {}
         try { p.ffmpeg?.kill('SIGTERM'); } catch {}
         try { p.audioFfmpeg?.kill('SIGTERM'); } catch {}
@@ -5016,6 +5136,7 @@ function cleanupPipe(connId) {
         try { if (p.fifoPath) fs.rmSync(p.fifoPath, { force: true }); } catch {}
         try { if (p.shareDir) fs.rmSync(p.shareDir, { recursive: true, force: true }); } catch {}
         cleanupIsolatedRdpAudioWorker(connId);
+        rdpPipeStarts.delete(connId);
         rdpPipes.delete(connId);
         console.info('[rdp-h264]', 'pipeline cleaned', { connId });
     }

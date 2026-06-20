@@ -1,7 +1,7 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 
 const $ = (sel) => document.querySelector(sel);
-const RDP_CLIENT_VERSION = '2026-06-14-theme-palettes';
+const RDP_CLIENT_VERSION = '2026-06-20-native-rdp-cliprdr';
 console.info('[rdp-client]', 'script loaded', { version: RDP_CLIENT_VERSION });
 
 const statusDot = $('#statusDot');
@@ -293,7 +293,7 @@ function consumeIncomingFileClipboard() {
     if (!connected || !rdpSocket || rdpSocket.readyState !== WebSocket.OPEN) return false;
     // Always send paste request to server — server knows the clipboard source
     rdpSocket.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste' }));
-    setClipboardHint('正在粘贴文件到远程...', 'info');
+    setClipboardHint('正在通过 RDP 原生文件剪贴板粘贴到远端当前目录...', 'info');
     return true;
 }
 function fileToDataUrl(file) {
@@ -1282,7 +1282,8 @@ async function connect() {
         const initialTarget = computeRdpTargetSize(fitModes[fitModeIdx]);
         requestedRdpWidth = initialTarget.width;
         requestedRdpHeight = initialTarget.height;
-        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 30), stream: 'av' });
+        const requestedStreamMode = String(params.rdpStream || urlParams.get('stream') || 'h264').toLowerCase() === 'av' ? 'av' : 'h264';
+        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 60), stream: requestedStreamMode });
         const connectionSeq = rdpReconnectSeq;
         rdpSocket = new WebSocket(`${wsBase}?${wsQuery.toString()}`);
         rdpSocket.binaryType = 'arraybuffer';
@@ -1293,6 +1294,7 @@ async function connect() {
         let configured = false;
         let pendingFrames = [];
         let firstFrameDrawn = false;
+        let firstFrameWatchdog = 0;
         let avMode = false;
         let avVideo = null;
         let avMediaSource = null;
@@ -1346,7 +1348,7 @@ async function connect() {
             }, { once: true });
             avVideo.addEventListener('loadedmetadata', () => { displayWidth = avVideo.videoWidth || requestedRdpWidth || 1280; displayHeight = avVideo.videoHeight || requestedRdpHeight || 720; applyDisplayScale(); });
             avVideo.addEventListener('loadeddata', () => {
-                if (!firstFrameDrawn) { firstFrameDrawn = true; setStatus('connected', `${label} 已连接 [H.264/AAC]`); connected = true; startClipboardAutoSync(); requestRdpCanvasSize(fitModes[fitModeIdx], true); notifyParentStatus('connected'); }
+                if (!firstFrameDrawn) { firstFrameDrawn = true; if (firstFrameWatchdog) { clearTimeout(firstFrameWatchdog); firstFrameWatchdog = 0; } setStatus('connected', `${label} 已连接 [H.264/AAC]`); connected = true; startClipboardAutoSync(); requestRdpCanvasSize(fitModes[fitModeIdx], true); notifyParentStatus('connected'); }
             });
             avVideo.addEventListener('error', () => { const err = avVideo.error; setStatus('error', `RDP A/V 播放失败：code=${err?.code || 'unknown'} ${err?.message || ''}`); });
             avMediaSource.addEventListener('sourceended', () => console.warn('[rdp-av]', 'media source ended'));
@@ -1381,6 +1383,7 @@ async function connect() {
                         display.draw(frame);
                         if (!firstFrameDrawn) {
                             firstFrameDrawn = true;
+                            if (firstFrameWatchdog) { clearTimeout(firstFrameWatchdog); firstFrameWatchdog = 0; }
                             setStatus('connected', `${label} 已连接 [WebCodecs H.264]`);
                             connected = true;
                             startClipboardAutoSync();
@@ -1419,8 +1422,17 @@ async function connect() {
             connected = true;
             canvas.focus({ preventScroll: true });
             notifyParentStatus('connecting');
+            if (requestedStreamMode === 'h264') {
+                firstFrameWatchdog = window.setTimeout(() => {
+                    if (firstFrameDrawn || !rdpSocket || rdpSocket.readyState !== WebSocket.OPEN) return;
+                    console.warn('[rdp-client]', 'native H.264 first frame timeout, falling back to A/V stream');
+                    params.rdpStream = 'av';
+                    try { rdpSocket.close(1012, '原生 H.264 首帧超时，切换兼容 A/V 模式...'); } catch {}
+                }, 7000);
+            }
         };
         rdpSocket.onclose = (event) => {
+            if (firstFrameWatchdog) { clearTimeout(firstFrameWatchdog); firstFrameWatchdog = 0; }
             if (!avMode) parser.flush();
             if (connectionSeq !== rdpReconnectSeq) return;
             connected = false;
@@ -1466,6 +1478,16 @@ async function connect() {
                             clipboardAutoWriteFailed = !ok;
                             setClipboardHint(ok ? '远程剪贴板已自动同步到本机' : '已收到远程剪贴板；浏览器阻止自动写入，请点“复制到本机”', ok ? 'success' : 'warning');
                         });
+                    } else if (msg.type === 'rdp-file-clipboard-ready') {
+                        setClipboardHint(`RDP 原生文件剪贴板已就绪：${msg.count || 0} 个文件，可在远端任意目录 Ctrl+V 粘贴`, 'success');
+                        setTransientStatus(`文件剪贴板已就绪（原生 CLIPRDR）`);
+                    } else if (msg.type === 'rdp-sftp-clipboard-paste-ack') {
+                        if (msg.ok) {
+                            setClipboardHint(`已从 SSH 发布 ${msg.count || 0} 个文件到 RDP 原生文件剪贴板，并已发送 Ctrl+V`, 'success');
+                            setTransientStatus('文件将粘贴到远端当前目录（Windows RDP CLIPRDR）');
+                        } else {
+                            setClipboardHint(msg.error || 'SSH 文件粘贴失败', 'warning');
+                        }
                     } else if (msg.type === 'rdp-remote-files' && Array.isArray(msg.files)) {
                         // Remote Windows files were copied → xfreerdp downloaded them to server temp dir
                         // Only store metadata, don't transfer until user acts
@@ -2490,22 +2512,22 @@ function encodeRdpFileClipboardMimetype(file, reset = false, extra = {}) {
 function sendRdpFileClipboardMetadata() { return false; }
 async function handleRdpFileRangeRequest() {}
 async function handleZephyrRdpInstruction() {}
-async function sendRdpFilesClipboard(files) {
+async function sendRdpFilesClipboard(files, { paste = true, source = 'file-clipboard' } = {}) {
     const list = Array.from(files || []).filter(Boolean);
     if (!list.length || protocolLabel() !== 'RDP') return false;
     try {
-        // Get connectionId from URL params
         const urlParams = new URLSearchParams(window.location.search);
         const connId = urlParams.get('connectionId') || '';
         if (!connId) throw new Error('无法确定 RDP 连接 ID');
 
-        // Upload files via streaming HTTP POST (no base64, no size limit)
+        const batch = `browser-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         let uploaded = 0;
         for (const file of list) {
             const safeName = encodeURIComponent(file.name || `file-${uploaded + 1}`);
-            const resp = await fetch(`/api/rdp/upload-share/${encodeURIComponent(connId)}?name=${safeName}`, {
+            const qs = new URLSearchParams({ name: file.name || `file-${uploaded + 1}`, batch, reset: uploaded === 0 ? '1' : '0' });
+            const resp = await fetch(`/api/rdp/upload-share/${encodeURIComponent(connId)}?${qs.toString()}`, {
                 method: 'POST',
-                body: file,  // Stream the raw file directly
+                body: file,
             });
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({ error: resp.statusText }));
@@ -2515,13 +2537,15 @@ async function sendRdpFilesClipboard(files) {
         }
 
         if (uploaded) {
-            setClipboardHint(`已上传 ${uploaded} 个文件到远程共享盘，正在打开...`, 'success');
-            // Open the shared drive in Windows Explorer
-            await fetch(`/api/rdp/open-share/${encodeURIComponent(connId)}`, { method: 'POST' }).catch(() => {});
-            setTransientStatus(`文件已写入 \\\\tsclient\\zephyr-share，请在 Windows 资源管理器查看`);
+            setClipboardHint(`已发布 ${uploaded} 个文件到 RDP 原生文件剪贴板${paste ? '，正在远端当前目录粘贴...' : '，可在远端任意目录 Ctrl+V'}`, 'success');
+            if (paste) {
+                await fetch(`/api/rdp/paste-file-clipboard/${encodeURIComponent(connId)}`, { method: 'POST' }).catch(() => {});
+                setTransientStatus('已按 Windows RDP 文件剪贴板逻辑发送 Ctrl+V');
+            } else {
+                setTransientStatus('文件已进入 RDP 原生剪贴板，可在远端任意目录 Ctrl+V');
+            }
         }
 
-        // Also notify parent with metadata only (no auto-transfer to SSH)
         notifyParentSharedFileClipboard(list.map((f) => ({
             id: `rdp-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             name: f.name, size: f.size, mime: f.type || 'application/octet-stream',
@@ -3181,15 +3205,15 @@ window.addEventListener('message', (event) => {
         const requestId = String(event.data.requestId || '');
         if (rdpSocket && rdpSocket.readyState === WebSocket.OPEN) {
             rdpSocket.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste', requestId }));
-            setClipboardHint('正在从 SSH 粘贴文件到远程共享盘...', 'info');
+            setClipboardHint('正在通过 RDP 原生文件剪贴板从 SSH 粘贴到远端当前目录...', 'info');
         }
         window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard-data', tabId: params?.tabId || tabId, requestId, files: [], error: '' }, '*');
         return;
     }
     if (event.data.type === 'rdp-sftp-clipboard-paste-ack') {
         if (event.data.ok) {
-            setClipboardHint(`已从 SSH 粘贴 ${event.data.count || 0} 个文件到 \\\\tsclient\\zephyr-share`, 'success');
-            setTransientStatus('文件已写入远程共享盘，请在 Windows 资源管理器查看');
+            setClipboardHint(`已从 SSH 发布 ${event.data.count || 0} 个文件到 RDP 原生文件剪贴板，并已发送 Ctrl+V`, 'success');
+            setTransientStatus('文件将粘贴到远端当前目录（Windows RDP CLIPRDR）');
         } else {
             setClipboardHint(event.data.error || 'SSH 文件粘贴失败', 'warning');
         }

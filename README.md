@@ -299,7 +299,7 @@ RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zeph
 - **RDP**：使用 Zephyr 自有 **FreeRDP + Xvfb + ffmpeg/WebCodecs H.264** 管线。浏览器通过 `/rdp-h264` WebSocket 接收 H.264 视频帧，并通过同一连接发送鼠标、键盘、剪贴板和重连/分辨率切换指令。
   - **高性能输入注入**：使用原生 C 编写的 `zephyr-xinput` 进程通过 XTest 扩展直接注入输入事件，替代每次事件 spawn xdotool 的方式，输入延迟从 ~15-30ms 降至 <1ms。
   - **原生 H.264 直通**：默认启用 `RDP_NATIVE_H264=true`，FreeRDP 直接导出远程 Windows 发送的 H.264 码流到命名管道，跳过解码→X11→重编码的完整流程，大幅降低 CPU 占用和延迟。
-  - **流式文件传输**：文件通过 HTTP POST 流式上传到 FreeRDP 共享盘 (`/drive:zephyr-share`)，不再受 base64 WebSocket 的 32MB 内存限制。
+  - **原生文件剪贴板**：浏览器/SSH SFTP 文件先暂存在 RDP 客户端侧，并通过 X11 `text/uri-list` 触发 FreeRDP/WinPR 转换为 Windows `FileGroupDescriptorW`；远端在任意目录 Ctrl+V 时通过 CLIPRDR `FileContentsRequest` 按需拉取内容，不再用共享盘路径冒充粘贴。
 - **VNC**：使用内置 **noVNC** 前端，浏览器通过 `/novnc` WebSocket 连接 Zephyr；Zephyr 在服务端直连/代理/SSH 跳板到目标 VNC Server，并在服务端使用保存的 VNC 密码完成 VNCAuth，密码不会下发到浏览器。
 
 ### Docker 镜像内置 RDP/VNC 运行依赖
@@ -308,6 +308,7 @@ RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zeph
 
 - FreeRDP / `xfreerdp`（含 Zephyr H.264 导出版 FreeRDP）
 - `zephyr-xinput`（原生 C XTest 输入注入代理，替代 xdotool 逐事件 spawn）
+- `zephyr-file-clip`（原生 RDP 文件剪贴板 X11 owner，提供 `text/uri-list` 给 FreeRDP 转成 `FileGroupDescriptorW`）
 - `Xvfb`、`ffmpeg`、`xdotool`、`xclip`、PulseAudio 等 RDP 管线运行依赖
 - noVNC 前端依赖
 
@@ -328,6 +329,7 @@ RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zeph
 | `RDP_AUDIO` | 自动 | `false` 禁用音频，`force` 使用独立音频管线 |
 | `RDP_CLIPBOARD_SYNC` | 启用 | `false` 禁用 RDP 剪贴板双向同步 |
 | `ZEPHYR_XINPUT_BIN` | `zephyr-xinput` | 原生输入注入代理二进制路径 |
+| `ZEPHYR_FILE_CLIP_BIN` | `zephyr-file-clip` | 原生 RDP 文件剪贴板 X11 owner 工具路径 |
 | `ZEPHYR_RDP_CLIPBOARD_DOWNLOAD_DIR` | `/tmp` | RDP 远程文件剪贴板下载目录 |
 
 ### 默认端口

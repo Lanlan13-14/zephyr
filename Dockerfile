@@ -70,6 +70,8 @@ WORKDIR /build
 COPY native/ /build/native/
 RUN cc -O2 -o /usr/local/bin/zephyr-xinput /build/native/zephyr-xinput.c \
         -lX11 -lXtst -lpthread && \
+    cc -O2 -o /usr/local/bin/zephyr-file-clip /build/native/zephyr-file-clip.c \
+        -lX11 && \
     /usr/local/bin/zephyr-xinput 2>&1 || true
 
 # ============================================================
@@ -114,6 +116,7 @@ RUN apk add --no-cache \
 COPY --from=freerdp-build /opt/freerdp-zephyr /opt/freerdp-zephyr
 COPY --from=freerdp-build /tmp/build-freerdp-version.txt /tmp/
 COPY --from=native-build /usr/local/bin/zephyr-xinput /usr/local/bin/zephyr-xinput
+COPY --from=native-build /usr/local/bin/zephyr-file-clip /usr/local/bin/zephyr-file-clip
 COPY --from=app-build /app /app
 
 ENV PATH="/opt/freerdp-zephyr/bin:${PATH}"
