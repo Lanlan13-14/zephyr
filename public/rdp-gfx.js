@@ -602,10 +602,25 @@ async function connectDirectCanvasRdp() {
     };
     const canvasPoint = (clientX, clientY) => {
         const rect = canvas.getBoundingClientRect();
+        const style = getComputedStyle(canvas);
+        const objectFit = style.objectFit || 'fill';
+        let contentLeft = rect.left;
+        let contentTop = rect.top;
+        let contentWidth = Math.max(1, rect.width);
+        let contentHeight = Math.max(1, rect.height);
+        if (objectFit === 'contain' || displayScaleMode === 'fit') {
+            const scale = Math.min(rect.width / Math.max(1, canvas.width), rect.height / Math.max(1, canvas.height));
+            contentWidth = Math.max(1, canvas.width * scale);
+            contentHeight = Math.max(1, canvas.height * scale);
+            contentLeft = rect.left + (rect.width - contentWidth) / 2;
+            contentTop = rect.top + (rect.height - contentHeight) / 2;
+        }
+        const nx = (clientX - contentLeft) / contentWidth;
+        const ny = (clientY - contentTop) / contentHeight;
         const pt = {
             clientX, clientY,
-            x: Math.max(0, Math.min(canvas.width - 1, Math.round((clientX - rect.left) * canvas.width / Math.max(1, rect.width)))),
-            y: Math.max(0, Math.min(canvas.height - 1, Math.round((clientY - rect.top) * canvas.height / Math.max(1, rect.height))))
+            x: Math.max(0, Math.min(canvas.width - 1, Math.round(nx * canvas.width))),
+            y: Math.max(0, Math.min(canvas.height - 1, Math.round(ny * canvas.height)))
         };
         lastRemotePointer = pt;
         return pt;
@@ -782,10 +797,23 @@ function remotePointFromClient(clientX, clientY) {
     const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
     if (!canvas) return lastRemotePointer;
     const rect = canvas.getBoundingClientRect();
+    const style = getComputedStyle(canvas);
+    const objectFit = style.objectFit || 'fill';
+    let contentLeft = rect.left;
+    let contentTop = rect.top;
+    let contentWidth = Math.max(1, rect.width);
+    let contentHeight = Math.max(1, rect.height);
+    if (objectFit === 'contain' || displayScaleMode === 'fit') {
+        const scale = Math.min(rect.width / Math.max(1, canvas.width), rect.height / Math.max(1, canvas.height));
+        contentWidth = Math.max(1, canvas.width * scale);
+        contentHeight = Math.max(1, canvas.height * scale);
+        contentLeft = rect.left + (rect.width - contentWidth) / 2;
+        contentTop = rect.top + (rect.height - contentHeight) / 2;
+    }
     return {
         clientX, clientY,
-        x: Math.max(0, Math.min(canvas.width - 1, Math.round((clientX - rect.left) * canvas.width / Math.max(1, rect.width)))),
-        y: Math.max(0, Math.min(canvas.height - 1, Math.round((clientY - rect.top) * canvas.height / Math.max(1, rect.height)))),
+        x: Math.max(0, Math.min(canvas.width - 1, Math.round(((clientX - contentLeft) / contentWidth) * canvas.width))),
+        y: Math.max(0, Math.min(canvas.height - 1, Math.round(((clientY - contentTop) / contentHeight) * canvas.height))),
     };
 }
 function clickRemotePoint(point) {
