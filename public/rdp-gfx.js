@@ -39,6 +39,8 @@ let currentResolutionIdx = 0;
 let textInputQueue = Promise.resolve();
 let remoteFiles = [];
 let directAudio = null;
+let lastRemotePointer = null;
+let pendingFilePasteTarget = null;
 const fileDownloads = new Map();
 const resolutions = [
     { label: '自动', width: 0, height: 0 },
@@ -288,12 +290,13 @@ function sendClipboardText(text, paste = false) {
     setClipboardHint(paste ? '已发布文本到 RDP 原生剪贴板，等待远端粘贴...' : '已发布文本到 RDP 原生剪贴板', 'info');
     return true;
 }
-async function sendClipboardFiles(files, paste = true) {
+async function sendClipboardFiles(files, paste = true, target = null) {
     const list = Array.from(files || []).filter(Boolean);
     if (!client || !connected || !list.length) return false;
     setFilesHint(`正在读取 ${list.length} 个文件并发布到 RDP 原生文件剪贴板...`, 'info');
     const payload = [];
     for (const file of list) payload.push(await fileToPayload(file));
+    if (target) pendingFilePasteTarget = target;
     client._sendMessage({ type: 'clipboard-set-files', files: payload, paste: !!paste });
     return true;
 }
@@ -338,7 +341,8 @@ function handleClientMessage(msg) {
         if (msg.ok && msg.paste) setTimeout(() => client?.sendKeyCombo?.('Ctrl+V'), 80);
     } else if (msg.type === 'clipboard-set-files-result') {
         setFilesHint(msg.ok ? `文件已进入 RDP 原生文件剪贴板（${msg.count || 0} 个）` : '文件剪贴板发布失败', msg.ok ? 'success' : 'warning');
-        if (msg.ok && msg.paste) setTimeout(() => client?.sendKeyCombo?.('Ctrl+V'), 120);
+        if (msg.ok && msg.paste) setTimeout(() => pasteFilesAtRemoteTarget(pendingFilePasteTarget), 120);
+        pendingFilePasteTarget = null;
     } else if (msg.type === 'clipboard-file-start') {
         const item = fileDownloads.get(msg.requestId);
         if (item) item.chunks = [];
@@ -546,10 +550,13 @@ async function connectDirectCanvasRdp() {
     };
     const canvasPoint = (clientX, clientY) => {
         const rect = canvas.getBoundingClientRect();
-        return {
+        const pt = {
+            clientX, clientY,
             x: Math.max(0, Math.min(canvas.width - 1, Math.round((clientX - rect.left) * canvas.width / Math.max(1, rect.width)))),
             y: Math.max(0, Math.min(canvas.height - 1, Math.round((clientY - rect.top) * canvas.height / Math.max(1, rect.height))))
         };
+        lastRemotePointer = pt;
+        return pt;
     };
     const sendMouseAt = (action, clientX, clientY, extra = {}) => {
         if (ws.readyState !== WebSocket.OPEN) return;
@@ -709,6 +716,28 @@ function comboForKeyseq(seq) {
     const ctrl = String(seq || '').match(/^ctrl-([a-z])$/); if (ctrl) return `Ctrl+${ctrl[1].toUpperCase()}`;
     const f = String(seq || '').match(/^f(\d{1,2})$/); if (f) return `F${f[1]}`;
     return '';
+}
+
+function remotePointFromClient(clientX, clientY) {
+    const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
+    if (!canvas) return lastRemotePointer;
+    const rect = canvas.getBoundingClientRect();
+    return {
+        clientX, clientY,
+        x: Math.max(0, Math.min(canvas.width - 1, Math.round((clientX - rect.left) * canvas.width / Math.max(1, rect.width)))),
+        y: Math.max(0, Math.min(canvas.height - 1, Math.round((clientY - rect.top) * canvas.height / Math.max(1, rect.height)))),
+    };
+}
+function clickRemotePoint(point) {
+    if (!point || !client?._sendMessage) return;
+    client._sendMessage({ type: 'mouse', action: 'move', x: point.x, y: point.y });
+    client._sendMessage({ type: 'mouse', action: 'down', x: point.x, y: point.y, button: 0 });
+    setTimeout(() => client?._sendMessage?.({ type: 'mouse', action: 'up', x: point.x, y: point.y, button: 0 }), 30);
+}
+function pasteFilesAtRemoteTarget(target = null) {
+    const point = target || lastRemotePointer;
+    if (point) clickRemotePoint(point);
+    setTimeout(() => client?.sendKeyCombo?.('Ctrl+V'), point ? 110 : 0);
 }
 function sendTextToRemote(text) {
     if (!text || !client || !connected) return false;
@@ -958,11 +987,11 @@ function bindControls() {
         const files = Array.from(rdpFileInput.files || []);
         if (files.length) {
             rdpFileInput.value = '';
-            await sendClipboardFiles(files, true);
+            await sendClipboardFiles(files, true, lastRemotePointer);
         }
     });
     $('#rdpFileDownloadAllBtn')?.addEventListener('click', () => remoteFiles.forEach((_, i) => requestRemoteFileDownload(i)));
-    $('#rdpFilePasteToRemoteBtn')?.addEventListener('click', () => client?.sendKeyCombo?.('Ctrl+V'));
+    $('#rdpFilePasteToRemoteBtn')?.addEventListener('click', () => pasteFilesAtRemoteTarget(lastRemotePointer));
     $('#shortcutsBtn')?.addEventListener('click', () => { const panel = $('#shortcutsPanel'); if (panel) panel.hidden = !panel.hidden; });
     $('#joystickBtn')?.addEventListener('click', () => { const panel = $('#joystickPanel'); if (panel) panel.hidden = !panel.hidden; });
     $('#shortcutsPanel')?.addEventListener('click', (event) => { const btn = event.target.closest('[data-keyseq]'); if (!btn) return; const combo = comboForKeyseq(btn.dataset.keyseq || ''); if (combo) { try { client?.sendKeyCombo?.(combo); } catch (err) { setStatus('error', err.message || String(err)); } } });
@@ -970,15 +999,15 @@ function bindControls() {
         if (!connected) return;
         const files = Array.from(event.clipboardData?.files || []);
         const text = event.clipboardData?.getData?.('text/plain') || '';
-        if (files.length) { event.preventDefault(); await sendClipboardFiles(files, true); }
+        if (files.length) { event.preventDefault(); await sendClipboardFiles(files, true, lastRemotePointer); }
         else if (text && !/^(INPUT|TEXTAREA)$/i.test(event.target?.tagName || '')) { event.preventDefault(); if (clipboardText) clipboardText.value = text; sendClipboardText(text, true); }
     });
     document.addEventListener('dragover', (event) => { if (event.dataTransfer?.types?.includes?.('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }, { passive: false });
-    document.addEventListener('drop', async (event) => { const files = Array.from(event.dataTransfer?.files || []); if (files.length) { event.preventDefault(); await sendClipboardFiles(files, false); } }, { passive: false });
+    document.addEventListener('drop', async (event) => { const files = Array.from(event.dataTransfer?.files || []); if (files.length) { event.preventDefault(); const target = remotePointFromClient(event.clientX, event.clientY); await sendClipboardFiles(files, true, target); } }, { passive: false });
 }
 function consumeIncomingSshFiles(files) {
     // SSH terminal sends files via parent postMessage; forward to RDP as native clipboard files
-    return sendClipboardFiles(files, true);
+    return sendClipboardFiles(files, true, lastRemotePointer);
 }
 
 window.addEventListener('message', (event) => {
