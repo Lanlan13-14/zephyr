@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Zephyr - 远程桌面</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260620-rdp-direct-canvas-panels-lazy-upload">
+    <link rel="stylesheet" href="style.css?v=20260620-rdp-file-upload-pending-list">
 </head>
 <body>
     <div class="novnc-page rdp-page">
@@ -78,11 +78,15 @@
                         <button class="btn-sm" id="rdpFileDownloadAllBtn">全部下载到本机</button>
                     </div>
                     <label class="rdp-panel-label">发送到 Windows</label>
+                    <div class="rdp-remote-file-list" id="rdpPendingFileList">
+                        <div class="rdp-file-empty">暂无待粘贴文件</div>
+                    </div>
                     <div class="rdp-panel-actions">
-                        <button class="btn-sm" id="rdpFileSelectBtn">选择本地文件</button>
+                        <button class="btn-sm active" id="rdpFileSelectBtn">上传文件</button>
+                        <button class="btn-sm" id="rdpFilePasteToRemoteBtn">粘贴到远程</button>
                         <input type="file" id="rdpFileInput" multiple hidden>
                     </div>
-                    <span class="rdp-panel-hint" id="filesHint">拖拽或选择文件发送到 Windows 剪贴板</span>
+                    <span class="rdp-panel-hint" id="filesHint">点击“上传文件”只会加入待粘贴列表；真正粘贴时才上传到主端</span>
                 </div>
                 <div class="panel-resize-handle left" data-resize-panel="filesPanel" data-resize-edge="left" title="拖动调整大小"></div>
                 <div class="panel-resize-handle right" data-resize-panel="filesPanel" data-resize-edge="right" title="拖动调整大小"></div>
@@ -193,6 +197,6 @@
             </div>
         </div>
     </div>
-    <script src="rdp-gfx.js?v=20260620-rdp-direct-canvas-panels-lazy-upload" type="module"></script>
+    <script src="rdp-gfx.js?v=20260620-rdp-file-upload-pending-list" type="module"></script>
 </body>
 </html>

@@ -18,6 +18,7 @@ const clipboardText = $('#clipboardText');
 const remoteClipboardText = $('#remoteClipboardText');
 const clipboardHint = $('#clipboardHint');
 const remoteFileList = $('#rdpRemoteFileList');
+const pendingFileList = $('#rdpPendingFileList');
 const mobileKeyboardInput = $('#mobileKeyboardInput');
 
 const filesPanel = $('#filesPanel');
@@ -271,6 +272,25 @@ function base64ToUint8(b64) {
     const out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
+}
+
+function renderPendingFiles() {
+    if (!pendingFileList) return;
+    if (!pendingRdpClipboardFiles.length) {
+        pendingFileList.innerHTML = '<div class="rdp-file-empty">暂无待粘贴文件</div>';
+        return;
+    }
+    pendingFileList.innerHTML = pendingRdpClipboardFiles.map((f, i) => {
+        const name = escapeHtml(f.name || 'clipboard-file');
+        const size = formatFileSize(f.size || 0);
+        return `<div class="rdp-file-item"><span class="rdp-file-name" title="${name}">${name}</span><span class="rdp-file-size">${size}</span><button class="btn-sm rdp-file-remove-btn" data-remove-pending-file="${i}" title="移除">❌</button></div>`;
+    }).join('');
+    pendingFileList.querySelectorAll('[data-remove-pending-file]').forEach((btn) => btn.addEventListener('click', () => {
+        const idx = Number(btn.dataset.removePendingFile);
+        if (Number.isFinite(idx)) pendingRdpClipboardFiles.splice(idx, 1);
+        renderPendingFiles();
+        setFilesHint(pendingRdpClipboardFiles.length ? `待粘贴 ${pendingRdpClipboardFiles.length} 个文件` : '已清空待粘贴文件', pendingRdpClipboardFiles.length ? 'info' : 'success');
+    }));
 }
 async function fileToPayload(file) {
     // Handle both File objects (from paste/drop) and plain objects with dataUrl (from SSH)
@@ -767,6 +787,7 @@ function stageRdpClipboardFiles(files, source = '本地') {
     if (pendingRdpClipboardFiles.length) {
         setFilesHint(`${source}已复制 ${pendingRdpClipboardFiles.length} 个文件；真正粘贴到 RDP 时才会上传`, 'info');
     }
+    renderPendingFiles();
     return pendingRdpClipboardFiles.length > 0;
 }
 function completeNativePasteAtRemoteTarget(target = null) {
@@ -778,6 +799,7 @@ async function pasteFilesAtRemoteTarget(target = null) {
     if (pendingRdpClipboardFiles.length) {
         const files = pendingRdpClipboardFiles;
         pendingRdpClipboardFiles = [];
+        renderPendingFiles();
         return sendClipboardFiles(files, true, target || lastRemotePointer);
     }
     completeNativePasteAtRemoteTarget(target || lastRemotePointer);
@@ -1012,6 +1034,7 @@ function setupJoystickPanel() {
 
 function bindControls() {
     updateQualityFpsButtons();
+    renderPendingFiles();
     $('#qualityBtn')?.addEventListener('click', () => cycleQuality());
     $('#fpsBtn')?.addEventListener('click', () => cycleFps());
     $('#resolutionBtn')?.addEventListener('click', () => { currentResolutionIdx = (currentResolutionIdx + 1) % resolutions.length; const res = resolutions[currentResolutionIdx]; $('#resolutionBtn').textContent = res.label; requestResolution(res); });
