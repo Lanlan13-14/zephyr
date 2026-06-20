@@ -461,17 +461,119 @@ async function connectDirectCanvasRdp() {
             if (ws.readyState === WebSocket.OPEN) ws.send(buildFrameAck(msg.frameId, totalFrames, 0));
         }
     };
-    const sendMouse = (action, event, extra = {}) => {
-        if (ws.readyState !== WebSocket.OPEN) return;
+    const canvasPoint = (clientX, clientY) => {
         const rect = canvas.getBoundingClientRect();
-        const x = Math.max(0, Math.min(canvas.width - 1, Math.round((event.clientX - rect.left) * canvas.width / Math.max(1, rect.width))));
-        const y = Math.max(0, Math.min(canvas.height - 1, Math.round((event.clientY - rect.top) * canvas.height / Math.max(1, rect.height))));
-        ws.send(JSON.stringify({ type: 'mouse', action, x, y, ...extra }));
+        return {
+            x: Math.max(0, Math.min(canvas.width - 1, Math.round((clientX - rect.left) * canvas.width / Math.max(1, rect.width)))),
+            y: Math.max(0, Math.min(canvas.height - 1, Math.round((clientY - rect.top) * canvas.height / Math.max(1, rect.height))))
+        };
     };
+    const sendMouseAt = (action, clientX, clientY, extra = {}) => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({ type: 'mouse', action, ...canvasPoint(clientX, clientY), ...extra }));
+    };
+    const sendMouse = (action, event, extra = {}) => sendMouseAt(action, event.clientX, event.clientY, extra);
+    const sendLeftClick = (x, y) => { sendMouseAt('down', x, y, { button: 0 }); setTimeout(() => sendMouseAt('up', x, y, { button: 0 }), 24); };
+    const sendRightClick = (x, y) => { sendMouseAt('down', x, y, { button: 2 }); setTimeout(() => sendMouseAt('up', x, y, { button: 2 }), 35); };
     canvas.tabIndex = 0;
-    canvas.addEventListener('pointermove', (event) => sendMouse('move', event));
-    canvas.addEventListener('pointerdown', (event) => { canvas.focus(); canvas.setPointerCapture?.(event.pointerId); sendMouse('down', event, { button: event.button || 0 }); event.preventDefault(); });
-    canvas.addEventListener('pointerup', (event) => { sendMouse('up', event, { button: event.button || 0 }); event.preventDefault(); });
+    canvas.style.touchAction = 'none';
+    canvas.style.webkitUserSelect = 'none';
+    canvas.style.userSelect = 'none';
+    canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+
+    const activePointers = new Map();
+    let touchDrag = null;
+    let longPressTimer = null;
+    let lastTapAt = 0;
+    let lastTap = null;
+    let pinchScroll = null;
+    const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
+    const dist = (a, b) => Math.hypot((a?.x || 0) - (b?.x || 0), (a?.y || 0) - (b?.y || 0));
+
+    canvas.addEventListener('pointerdown', (event) => {
+        canvas.focus({ preventScroll: true });
+        canvas.setPointerCapture?.(event.pointerId);
+        const p = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, time: Date.now(), type: event.pointerType || 'mouse' };
+        activePointers.set(event.pointerId, p);
+        if (p.type === 'touch') {
+            event.preventDefault();
+            if (activePointers.size === 1) {
+                touchDrag = { active: false, pointerId: event.pointerId, startX: p.x, startY: p.y };
+                clearLongPress();
+                longPressTimer = setTimeout(() => {
+                    const cur = activePointers.get(event.pointerId);
+                    if (cur && touchDrag && !touchDrag.active && dist({ x: cur.x, y: cur.y }, { x: p.startX, y: p.startY }) < 12) {
+                        touchDrag.cancelTap = true;
+                        sendRightClick(cur.x, cur.y);
+                    }
+                }, 560);
+            } else if (activePointers.size === 2) {
+                clearLongPress();
+                const pts = [...activePointers.values()];
+                pinchScroll = { lastY: (pts[0].y + pts[1].y) / 2 };
+            }
+            return;
+        }
+        sendMouse('down', event, { button: event.button || 0 });
+        event.preventDefault();
+    });
+    canvas.addEventListener('pointermove', (event) => {
+        const p = activePointers.get(event.pointerId);
+        if (p) { p.x = event.clientX; p.y = event.clientY; }
+        if ((event.pointerType || 'mouse') === 'touch') {
+            event.preventDefault();
+            if (activePointers.size >= 2 && pinchScroll) {
+                const pts = [...activePointers.values()].slice(0, 2);
+                const midY = (pts[0].y + pts[1].y) / 2;
+                const deltaY = pinchScroll.lastY - midY;
+                if (Math.abs(deltaY) > 2) {
+                    sendMouseAt('wheel', (pts[0].x + pts[1].x) / 2, midY, { deltaY, deltaX: 0 });
+                    pinchScroll.lastY = midY;
+                }
+                return;
+            }
+            if (touchDrag && touchDrag.pointerId === event.pointerId) {
+                const moved = Math.hypot(event.clientX - touchDrag.startX, event.clientY - touchDrag.startY);
+                if (!touchDrag.active && moved > 10) {
+                    clearLongPress();
+                    touchDrag.active = true;
+                    sendMouseAt('down', touchDrag.startX, touchDrag.startY, { button: 0 });
+                }
+                if (touchDrag.active) sendMouse('move', event);
+            }
+            return;
+        }
+        sendMouse('move', event);
+    });
+    canvas.addEventListener('pointerup', (event) => {
+        const p = activePointers.get(event.pointerId) || { startX: event.clientX, startY: event.clientY, time: Date.now(), type: event.pointerType || 'mouse' };
+        activePointers.delete(event.pointerId);
+        if ((event.pointerType || 'mouse') === 'touch') {
+            event.preventDefault();
+            clearLongPress();
+            if (touchDrag?.active) {
+                sendMouse('up', event, { button: 0 });
+            } else if (!touchDrag?.cancelTap) {
+                const now = Date.now();
+                const isDouble = lastTap && now - lastTapAt < 330 && dist(lastTap, { x: event.clientX, y: event.clientY }) < 28;
+                sendLeftClick(event.clientX, event.clientY);
+                if (isDouble) setTimeout(() => sendLeftClick(event.clientX, event.clientY), 55);
+                lastTapAt = now;
+                lastTap = { x: event.clientX, y: event.clientY };
+            }
+            if (!activePointers.size) { touchDrag = null; pinchScroll = null; }
+            return;
+        }
+        sendMouse('up', event, { button: event.button || 0 });
+        event.preventDefault();
+    });
+    canvas.addEventListener('pointercancel', (event) => {
+        clearLongPress();
+        if (touchDrag?.active) sendMouse('up', event, { button: 0 });
+        activePointers.delete(event.pointerId);
+        touchDrag = null;
+        pinchScroll = null;
+    });
     canvas.addEventListener('wheel', (event) => { sendMouse('wheel', event, { deltaY: event.deltaY || 0, deltaX: event.deltaX || 0 }); event.preventDefault(); }, { passive: false });
     canvas.addEventListener('keydown', (event) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', action: 'down', key: event.key, code: event.code, keyCode: event.keyCode || event.which || 0, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey })); event.preventDefault(); });
     canvas.addEventListener('keyup', (event) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', action: 'up', key: event.key, code: event.code, keyCode: event.keyCode || event.which || 0, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey })); event.preventDefault(); });
