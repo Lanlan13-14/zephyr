@@ -2603,53 +2603,17 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
         bctx->gfx = gfx;
         
         if (gfx) {
-            /* Store our context for callbacks */
-            gfx->custom = bctx;
-            
-            /* NOTE: Frame ACK control in FreeRDP3 is handled via the OnOpen callback.
-             * The OnOpen callback receives a BOOL* do_frame_acks parameter that controls
-             * whether FreeRDP automatically sends frame ACKs after EndFrame.
-             * 
-             * We set gfx->OnOpen = gfx_on_open which sets *do_frame_acks = FALSE,
-             * meaning we must manually call gfx->FrameAcknowledge() when the browser
-             * sends its FACK message back through the WebSocket.
-             * 
-             * This provides proper backpressure - if the browser is slow to decode,
-             * ACKs will be delayed and the server will throttle its frame rate. */
-            
+            /* Let FreeRDP's GDI graphics pipeline own RdpgfxClientContext.
+             * Per libfreerdp/gdi/gfx.c, gdi_graphics_pipeline_init() installs
+             * the full CreateSurface/SurfaceCommand/UpdateSurfaces callback
+             * chain and sets gfx->custom to rdpGdi*. Replacing those callbacks
+             * with Zephyr's partial wire-through handlers violates that contract
+             * and crashes/black-screens on real servers. Zephyr now captures the
+             * compositor output from the GDI primary framebuffer instead. */
             pthread_mutex_lock(&bctx->gfx_mutex);
             bctx->gfx_active = true;
             bctx->gfx_pipeline_needs_init = true;  /* Deferred init in main thread */
             pthread_mutex_unlock(&bctx->gfx_mutex);
-            
-            /* Set up ALL GFX callbacks for proper protocol handling.
-             * Missing callbacks can cause the server to abort the connection.
-             * 
-             * PURE GFX MODE: We handle graphics via RDPEGFX callbacks only.
-             * H.264/AVC frames are captured and passed to WebSocket clients.
-             * Non-H.264 codecs are decoded to the primary buffer.
-             */
-            gfx->CapsConfirm = gfx_on_caps_confirm;
-            gfx->ResetGraphics = gfx_on_reset_graphics;
-            gfx->StartFrame = gfx_on_start_frame;
-            gfx->EndFrame = gfx_on_end_frame;
-            gfx->SurfaceCommand = gfx_on_surface_command;
-            gfx->CreateSurface = gfx_on_create_surface;
-            gfx->DeleteSurface = gfx_on_delete_surface;
-            gfx->MapSurfaceToOutput = gfx_on_map_surface;
-            gfx->MapSurfaceToScaledOutput = gfx_on_map_surface_scaled;
-            gfx->MapSurfaceToWindow = gfx_on_map_surface_window;
-            gfx->MapSurfaceToScaledWindow = gfx_on_map_surface_scaled_window;
-            gfx->SolidFill = gfx_on_solid_fill;
-            gfx->SurfaceToSurface = gfx_on_surface_to_surface;
-            gfx->SurfaceToCache = gfx_on_surface_to_cache;
-            gfx->CacheToSurface = gfx_on_cache_to_surface;
-            gfx->EvictCacheEntry = gfx_on_evict_cache;
-            gfx->DeleteEncodingContext = gfx_on_delete_encoding_context;
-            gfx->CacheImportReply = gfx_on_cache_import_reply;
-            
-            /* OnOpen: disable automatic frame ACKs - browser controls flow */
-            gfx->OnOpen = gfx_on_open;
         }
     }
 }
@@ -3953,6 +3917,19 @@ int rdp_gfx_send_frame_ack(RdpSession* session, uint32_t frame_id, uint32_t tota
     if (!session) return -1;
     
     BridgeContext* ctx = (BridgeContext*)session;
+
+    pthread_mutex_lock(&ctx->gfx_mutex);
+    const uint32_t synthetic_max = ctx->fallback_frame_id;
+    pthread_mutex_unlock(&ctx->gfx_mutex);
+
+    /* Zephyr's WebP frames are synthetic frames generated from FreeRDP's GDI
+     * compositor, not server RDPEGFX frame IDs. FreeRDP's own gdi_EndFrame path
+     * handles protocol frame acknowledgements when do_frame_acks is enabled.
+     * Forwarding browser FACK for synthetic frame IDs back to RDPEGFX violates
+     * MS-RDPEGFX frame-id semantics and can make servers disconnect. */
+    if (frame_id > 0 && frame_id <= synthetic_max) {
+        return 0;
+    }
     
     pthread_mutex_lock(&ctx->gfx_mutex);
     RdpgfxClientContext* gfx = ctx->gfx;
