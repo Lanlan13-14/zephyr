@@ -4290,14 +4290,10 @@ html.keyboard-open .terminal-page {
     width: 480px; height: min(620px, 72vh); max-width: 95vw;
     min-width: 430px;
     min-height: 340px;
-    background:
-        linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.035)),
-        color-mix(in srgb, var(--surface) 82%, transparent);
-    border: 1px solid color-mix(in srgb, var(--border) 70%, rgba(255,255,255,.22));
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    box-shadow: 0 28px 90px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,.13);
-    backdrop-filter: blur(30px) saturate(1.55);
-    -webkit-backdrop-filter: blur(30px) saturate(1.55);
+    box-shadow: 0 28px 90px rgba(0,0,0,0.38);
     z-index: 30;
     display: none;
     flex-direction: column;
@@ -4322,15 +4318,7 @@ html.keyboard-open .terminal-page {
 }
 .info-modal-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 14px;
-    background:
-        linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.04)),
-        color-mix(in srgb, var(--bg) 70%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, rgba(255,255,255,.20));
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.12);
-    backdrop-filter: blur(22px) saturate(1.45);
-    -webkit-backdrop-filter: blur(22px) saturate(1.45);
-    font-weight: 600;
+    padding: 10px 14px; background: var(--bg); border-bottom: 1px solid var(--border); font-weight: 600;
     position: sticky; top: 0; z-index: 2;
 }
 .info-modal-body {
@@ -4370,14 +4358,7 @@ html.keyboard-open .terminal-page {
 .doughnut-row.two-col .doughnut-item { flex: 1 1 calc(50% - 10px); min-width: 140px; }
 .doughnut-item.full-width { min-width: 100%; }
 .doughnut-item {
-    background:
-        linear-gradient(180deg, rgba(255,255,255,.11), rgba(255,255,255,.035)),
-        color-mix(in srgb, var(--bg) 72%, transparent);
-    border: 1px solid color-mix(in srgb, var(--border) 70%, rgba(255,255,255,.16));
-    border-radius: var(--radius);
-    box-shadow: 0 10px 24px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.10);
-    backdrop-filter: blur(16px) saturate(1.28);
-    -webkit-backdrop-filter: blur(16px) saturate(1.28);
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
     padding: 12px 10px; flex: 1;
     display: flex; flex-direction: column; align-items: center;
 }
@@ -4398,13 +4379,8 @@ html.keyboard-open .terminal-page {
 /* IP 信息区块 */
 .ip-section { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .ip-box {
-    display: flex; align-items: center;
-    background: color-mix(in srgb, var(--bg) 76%, transparent);
-    border: 1px solid color-mix(in srgb, var(--border) 72%, rgba(255,255,255,.16));
+    display: flex; align-items: center; background: var(--bg); border: 1px solid var(--border);
     border-radius: var(--radius-sm); padding: 8px 10px; font-family: var(--font-mono); font-size: 12px; gap: 8px;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
-    backdrop-filter: blur(14px) saturate(1.22);
-    -webkit-backdrop-filter: blur(14px) saturate(1.22);
 }
 .ip-box span { font-weight: 600; color: var(--text-secondary); min-width: 40px; }
 .ip-box code { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
@@ -10889,38 +10865,19 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0;
     padding: 3px;
-    margin: 0 0 12px;
+    margin: 0 0 10px;
     position: sticky;
     top: 0;
     z-index: 3;
     isolation: isolate;
-    border: 1px solid color-mix(in srgb, var(--border) 58%, rgba(255,255,255,.36));
-    border-radius: 16px;
-    background:
-        linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,.055)),
-        color-mix(in srgb, var(--surface) 64%, transparent);
-    box-shadow:
-        0 16px 38px rgba(0,0,0,.16),
-        0 2px 8px rgba(0,0,0,.10),
-        inset 0 1px 0 rgba(255,255,255,.22),
-        inset 0 -1px 0 rgba(0,0,0,.08);
-    backdrop-filter: blur(26px) saturate(1.72) contrast(1.03);
-    -webkit-backdrop-filter: blur(26px) saturate(1.72) contrast(1.03);
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    box-shadow: 0 6px 16px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.10);
+    backdrop-filter: blur(14px) saturate(1.18);
+    -webkit-backdrop-filter: blur(14px) saturate(1.18);
     overflow: hidden;
     transform: translateZ(0);
-}
-.monitor-tabs::after {
-    content: '';
-    position: absolute;
-    inset: 1px;
-    border-radius: 15px;
-    pointer-events: none;
-    z-index: 0;
-    background:
-        radial-gradient(circle at 22% 0%, rgba(255,255,255,.24), transparent 32%),
-        linear-gradient(90deg, rgba(255,255,255,.08), transparent 35%, rgba(255,255,255,.06));
-    mix-blend-mode: screen;
-    opacity: .72;
 }
 .monitor-tab-thumb {
     position: absolute;
@@ -10928,51 +10885,31 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     bottom: 3px;
     left: 0;
     width: var(--monitor-tab-thumb-width);
-    border-radius: 13px;
-    background:
-        linear-gradient(180deg, rgba(255,255,255,.34), rgba(255,255,255,.13)),
-        linear-gradient(135deg,
-            color-mix(in srgb, var(--accent) 82%, rgba(255,255,255,.32)),
-            color-mix(in srgb, var(--accent) 60%, rgba(40,145,255,.46))
-        );
-    box-shadow:
-        0 12px 26px color-mix(in srgb, var(--accent) 24%, transparent),
-        0 4px 10px rgba(0,0,0,.18),
-        inset 0 1px 0 rgba(255,255,255,.44),
-        inset 0 -1px 0 rgba(0,0,0,.12);
+    border-radius: calc(var(--radius-sm) - 3px);
+    background: color-mix(in srgb, var(--accent) 82%, #1f7fb8);
+    box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 20%, transparent), inset 0 1px 0 rgba(255,255,255,.22);
     transform: translate3d(var(--monitor-tab-thumb-x), 0, 0);
-    transition:
-        transform .46s cubic-bezier(.20, 1.10, .22, 1),
-        width .46s cubic-bezier(.20, 1.10, .22, 1),
-        box-shadow .28s ease,
-        background .28s ease,
-        filter .28s ease;
+    transition: transform .34s cubic-bezier(.22, 1, .36, 1), width .34s cubic-bezier(.22, 1, .36, 1), box-shadow .22s ease, background .22s ease;
     pointer-events: none;
-    z-index: 1;
+    z-index: 0;
     will-change: transform, width;
 }
 .monitor-tabs.switching .monitor-tab-thumb {
-    filter: saturate(1.12) brightness(1.04);
-    box-shadow:
-        0 18px 34px color-mix(in srgb, var(--accent) 30%, transparent),
-        0 7px 16px rgba(0,0,0,.20),
-        inset 0 1px 0 rgba(255,255,255,.48),
-        inset 0 -1px 0 rgba(0,0,0,.13);
+    box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 24%, transparent), inset 0 1px 0 rgba(255,255,255,.26);
 }
 .monitor-tab {
     position: relative;
-    z-index: 2;
+    z-index: 1;
     border: 0;
-    border-radius: 12px;
+    border-radius: calc(var(--radius-sm) - 4px);
     min-height: 40px;
     padding: 8px 10px;
     background: transparent;
     color: var(--text-secondary);
     font-weight: 800;
     font-family: var(--font-sans);
-    letter-spacing: .01em;
     cursor: pointer;
-    transition: color .22s ease, transform .18s cubic-bezier(.2, 1, .22, 1), background .18s ease, text-shadow .22s ease;
+    transition: color .18s ease, transform .16s ease, background .16s ease;
     -webkit-tap-highlight-color: transparent;
 }
 .monitor-tab + .monitor-tab::before {
@@ -10982,31 +10919,29 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     top: 9px;
     bottom: 9px;
     width: 1px;
-    background: color-mix(in srgb, var(--border) 62%, transparent);
-    opacity: .72;
-    transition: opacity .24s ease;
+    background: color-mix(in srgb, var(--border) 72%, transparent);
+    opacity: .7;
+    transition: opacity .18s ease;
 }
 .monitor-tab:hover:not(.active) {
     color: var(--text);
-    background: rgba(255,255,255,.055);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
-.monitor-tab:active { transform: scale(.982); }
+.monitor-tab:active { transform: scale(.985); }
 .monitor-tab.active {
     color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,.22);
+    text-shadow: 0 1px 1px rgba(0,0,0,.16);
 }
 .monitor-tab.active::before,
 .monitor-tab.active + .monitor-tab::before { opacity: 0; }
 .monitor-pages-viewport {
-    --monitor-page-distance: min(54px, 12vw);
+    --monitor-page-distance: min(36px, 9vw);
     position: relative;
     display: grid;
     overflow: hidden;
     margin: 0;
     touch-action: pan-y;
     contain: layout paint;
-    perspective: 1100px;
-    transform-style: preserve-3d;
 }
 .monitor-page {
     grid-area: 1 / 1;
@@ -11016,34 +10951,22 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     min-width: 0;
     opacity: 0;
     pointer-events: none;
-    transform: translate3d(var(--monitor-page-enter, var(--monitor-page-distance)), 0, 0) scale(.985) rotateY(-1.8deg);
-    transform-origin: 50% 50%;
-    transition:
-        opacity .30s ease,
-        transform .44s cubic-bezier(.20, 1, .22, 1),
-        filter .34s ease;
-    filter: blur(7px) saturate(.96);
-    will-change: transform, opacity, filter;
+    transform: translate3d(var(--monitor-page-enter, var(--monitor-page-distance)), 0, 0);
+    transition: opacity .22s ease, transform .32s cubic-bezier(.22, 1, .36, 1);
+    will-change: transform, opacity;
 }
-.monitor-pages-viewport[data-monitor-dir="-1"] .monitor-page {
-    --monitor-page-enter: calc(-1 * var(--monitor-page-distance));
-    transform: translate3d(var(--monitor-page-enter), 0, 0) scale(.985) rotateY(1.8deg);
-}
+.monitor-pages-viewport[data-monitor-dir="-1"] .monitor-page { --monitor-page-enter: calc(-1 * var(--monitor-page-distance)); }
 .monitor-page.active {
     opacity: 1;
     pointer-events: auto;
-    transform: translate3d(0, 0, 0) scale(1) rotateY(0);
-    filter: blur(0) saturate(1);
+    transform: translate3d(0, 0, 0);
 }
 .monitor-page.leaving {
     opacity: 0;
     pointer-events: none;
-    transform: translate3d(calc(-1 * var(--monitor-page-distance)), 0, 0) scale(.985) rotateY(1.8deg);
-    filter: blur(7px) saturate(.96);
+    transform: translate3d(calc(-1 * var(--monitor-page-distance)), 0, 0);
 }
-.monitor-pages-viewport[data-monitor-dir="-1"] .monitor-page.leaving {
-    transform: translate3d(var(--monitor-page-distance), 0, 0) scale(.985) rotateY(-1.8deg);
-}
+.monitor-pages-viewport[data-monitor-dir="-1"] .monitor-page.leaving { transform: translate3d(var(--monitor-page-distance), 0, 0); }
 .monitor-page[hidden] { display: none !important; }
 .monitor-process-toolbar {
     display: grid;
@@ -11056,13 +10979,11 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 .process-sort {
     width: 100%;
     min-width: 0;
-    border: 1px solid color-mix(in srgb, var(--border) 72%, rgba(255,255,255,.16));
+    border: 1px solid var(--border);
     border-radius: 12px;
-    background: color-mix(in srgb, var(--bg) 76%, transparent);
+    background: var(--bg);
     color: var(--text);
     padding: 8px 10px;
-    backdrop-filter: blur(14px) saturate(1.25);
-    -webkit-backdrop-filter: blur(14px) saturate(1.25);
 }
 .process-summary {
     display: flex;
@@ -11079,14 +11000,10 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     gap: 10px;
     align-items: center;
     padding: 10px;
-    border: 1px solid color-mix(in srgb, var(--border) 72%, rgba(255,255,255,.15));
+    border: 1px solid var(--border);
     border-radius: 16px;
-    background:
-        linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.035)),
-        color-mix(in srgb, var(--surface) 72%, transparent);
-    box-shadow: 0 8px 22px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.10);
-    backdrop-filter: blur(16px) saturate(1.25);
-    -webkit-backdrop-filter: blur(16px) saturate(1.25);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
 }
 .process-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .process-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

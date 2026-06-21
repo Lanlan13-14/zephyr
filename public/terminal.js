@@ -7822,11 +7822,11 @@ function updateMonitorTabThumb({ immediate = false } = {}) {
     if (!active || !thumb) return;
     const wrapRect = tabsWrap.getBoundingClientRect();
     const activeRect = active.getBoundingClientRect();
-    const x = Math.max(3, activeRect.left - wrapRect.left);
-    const width = Math.max(0, activeRect.width);
+    const x = Math.round(Math.max(3, activeRect.left - wrapRect.left));
+    const width = Math.round(Math.max(0, activeRect.width));
     if (immediate) thumb.style.transition = 'none';
-    tabsWrap.style.setProperty('--monitor-tab-thumb-x', `${x.toFixed(2)}px`);
-    tabsWrap.style.setProperty('--monitor-tab-thumb-width', `${width.toFixed(2)}px`);
+    tabsWrap.style.setProperty('--monitor-tab-thumb-x', `${x}px`);
+    tabsWrap.style.setProperty('--monitor-tab-thumb-width', `${width}px`);
     tabsWrap.dataset.monitorPage = String(monitorPage);
     if (immediate) {
         void thumb.offsetWidth;
@@ -7847,12 +7847,10 @@ function finishMonitorPageSwitch({ render = false } = {}) {
             pageEl.classList.remove('leaving');
             pageEl.toggleAttribute('hidden', !isActive);
             pageEl.style.removeProperty('display');
-            pageEl.style.removeProperty('transition');
         });
     }
-    updateMonitorTabThumb({ immediate: false });
+    updateMonitorTabThumb({ immediate: true });
     if (render && latestStatsData) renderStats(latestStatsData);
-    else if (latestStatsData && infoModal?.classList?.contains('open')) renderStatsSoon(latestStatsData);
 }
 function setMonitorPage(page, { render = true } = {}) {
     const next = Math.max(0, Math.min(1, Number(page) || 0));
@@ -7899,7 +7897,7 @@ function setMonitorPage(page, { render = true } = {}) {
         }
         window.clearTimeout(renderStats._monitorSwitchTimer);
         window.clearTimeout(renderStats._monitorSwitchCleanup);
-        renderStats._monitorSwitchTimer = window.setTimeout(() => finishMonitorPageSwitch({ render: false }), 500);
+        renderStats._monitorSwitchTimer = window.setTimeout(() => finishMonitorPageSwitch({ render: false }), 360);
         return;
     }
     monitorPageSwitching = false;
@@ -8064,7 +8062,7 @@ function renderStats(d) {
         renderStats._monitorSwitchCleanup = window.setTimeout(() => {
             if (!monitorPageSwitching) return;
             finishMonitorPageSwitch({ render: false });
-        }, 520);
+        }, 380);
     }
     requestAnimationFrame(() => {
         updateMonitorTabThumb({ immediate: !monitorPageSwitching });
