@@ -3515,6 +3515,7 @@ function openAiProviderModal(provider = null) {
     $('#aiProviderApiMode').value = provider?.apiMode || 'auto';
     $('#aiProviderModels').value = provider?.models || '';
     $('#aiProviderDefaultModel').value = provider?.defaultModel || '';
+    if ($('#aiProviderModelUserAgents')) $('#aiProviderModelUserAgents').value = provider?.modelUserAgents || '';
     $('#aiProviderOrganization').value = provider?.organization || '';
     $('#aiProviderExtraHeaders').value = provider?.extraHeaders || '';
     $('#aiProviderTemperature').value = provider?.options?.temperature ?? -1;
@@ -3552,6 +3553,7 @@ async function saveAiProvider(e) {
         organization: $('#aiProviderOrganization').value.trim(),
         extraHeaders: $('#aiProviderExtraHeaders').value.trim(),
         models: $('#aiProviderModels').value,
+        modelUserAgents: $('#aiProviderModelUserAgents')?.value.trim() || '',
         defaultModel: $('#aiProviderDefaultModel').value.trim(),
         options: {
             temperature: Number($('#aiProviderTemperature').value),  // -1 means omit
@@ -3608,6 +3610,7 @@ async function fetchAiModelsForProvider(id = '') {
             apiKey: $('#aiProviderApiKey').value,
             organization: $('#aiProviderOrganization').value.trim(),
             extraHeaders: $('#aiProviderExtraHeaders').value.trim(),
+            modelUserAgents: $('#aiProviderModelUserAgents')?.value.trim() || '',
         };
     if (!provider) return toast('供应商不存在');
     if (!id && (!provider.apiKey || provider.apiKey === '******')) return toast('请先填写 API Key，或保存后再获取模型');
@@ -5326,6 +5329,7 @@ function normalizeAiProviderModalLayout() {
         aiProviderApiMode: '接口模式',
         aiProviderModels: '模型列表',
         aiProviderDefaultModel: '默认模型',
+        aiProviderModelUserAgents: '模型请求 User-Agent（可选，逐模型）',
         aiProviderOrganization: 'Organization / Project（可选）',
         aiProviderExtraHeaders: '额外请求头 JSON（可选）',
         aiProviderExtraJson: 'response_format / 其他参数 JSON',

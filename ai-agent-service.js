@@ -399,6 +399,24 @@ function normalizeOptions(provider = {}, requestOptions = {}, mode = 'chat') {
 function aiModelNames(provider = {}) {
     return String(provider.models || '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
 }
+function parseModelUserAgents(value = '') {
+    const out = new Map();
+    String(value || '').split(/\n+/).forEach((line) => {
+        const text = line.trim();
+        if (!text || text.startsWith('#')) return;
+        const idx = text.indexOf('=') >= 0 ? text.indexOf('=') : text.indexOf(':');
+        if (idx <= 0) return;
+        const model = text.slice(0, idx).trim();
+        const ua = text.slice(idx + 1).trim();
+        if (model && ua) out.set(model, ua.slice(0, 500));
+    });
+    return out;
+}
+function modelUserAgent(provider = {}, model = '') {
+    const selected = String(model || provider._selectedModel || '').trim();
+    if (!selected) return '';
+    return parseModelUserAgents(provider.modelUserAgents || provider.modelUserAgent || '').get(selected) || '';
+}
 function openAiApiMode(provider = {}) {
     const mode = String(provider.apiMode || provider.api || provider.endpointMode || 'auto').toLowerCase();
     const base = String(provider.baseUrl || '').toLowerCase();
@@ -432,10 +450,12 @@ function selectProvider(ai = {}, body = {}) {
     if (!model) throw new Error('请选择模型；可在供应商设置中点击“获取模型”自动填充');
     return { provider, model };
 }
-function providerHeaders(provider = {}, contentType = 'application/json') {
+function providerHeaders(provider = {}, contentType = 'application/json', model = '') {
     const type = providerType(provider);
     const extraHeaders = parseExtraObject(provider.extraHeaders || provider.headers);
     const headers = { 'Content-Type': contentType, ...extraHeaders };
+    const ua = modelUserAgent(provider, model);
+    if (ua && !Object.keys(headers).some((k) => k.toLowerCase() === 'user-agent')) headers['User-Agent'] = ua;
     if (type === 'anthropic') {
         if (provider.apiKey) headers['x-api-key'] = provider.apiKey;
         headers['anthropic-version'] = provider.anthropicVersion || '2023-06-01';
@@ -884,7 +904,7 @@ async function callOpenAiResponses(provider, model, messages, options = {}, tool
     if (system) payload.instructions = system;
     const responseTools = toResponsesTools(tools);
     if (responseTools.length) { payload.tools = responseTools; payload.tool_choice = 'auto'; }
-    const run = async (body) => fetchJsonWithUnsupportedParamRetry(url, { method: 'POST', headers: providerHeaders(provider), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, body, `${provider.name || provider.type || 'OpenAI Responses'}/${model}`);
+    const run = async (body) => fetchJsonWithUnsupportedParamRetry(url, { method: 'POST', headers: providerHeaders(provider, 'application/json', model), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, body, `${provider.name || provider.type || 'OpenAI Responses'}/${model}`);
     let data;
     try {
         data = await run(payload);
@@ -909,10 +929,10 @@ async function callOpenAiCompatible(provider, model, messages, options = {}, too
     if (tools.length) { payload.tools = openAiChatTools(tools); payload.tool_choice = 'auto'; }
     let data;
     try {
-        data = await fetchJsonWithUnsupportedParamRetry(url, { method: 'POST', headers: providerHeaders(provider), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, payload, `${provider.name || provider.type || 'OpenAI Chat'}/${model}`);
+        data = await fetchJsonWithUnsupportedParamRetry(url, { method: 'POST', headers: providerHeaders(provider, 'application/json', model), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, payload, `${provider.name || provider.type || 'OpenAI Chat'}/${model}`);
     } catch (err) {
         if (/unknown variant [`'\"]?image_url|expected [`'\"]?text|deserialize.*messages/i.test(String(err.message || ''))) {
-            data = await fetchJsonWithUnsupportedParamRetry(url, { method: 'POST', headers: providerHeaders(provider), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: 0 }, flattenMultimodalPayloadForTextOnly(payload), `${provider.name || provider.type || 'OpenAI Chat text-only'}/${model}`);
+            data = await fetchJsonWithUnsupportedParamRetry(url, { method: 'POST', headers: providerHeaders(provider, 'application/json', model), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: 0 }, flattenMultimodalPayloadForTextOnly(payload), `${provider.name || provider.type || 'OpenAI Chat text-only'}/${model}`);
         } else throw err;
     }
     if (openAiApiMode(provider) === 'responses' && Array.isArray(data.output)) {
@@ -935,7 +955,7 @@ async function callAnthropic(provider, model, messages, options = {}, tools = []
     if (effort && (thinking?.type === 'adaptive' || opts.output_config)) payload.output_config = { ...(opts.output_config || {}), effort };
     const anthropicTools = toAnthropicTools(tools);
     if (anthropicTools.length) payload.tools = anthropicTools;
-    const data = await fetchJsonWithUnsupportedParamRetry(joinApiUrl(base, '/messages'), { method: 'POST', headers: providerHeaders(provider), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, payload, `${provider.name || provider.type || 'Anthropic'}/${model}`);
+    const data = await fetchJsonWithUnsupportedParamRetry(joinApiUrl(base, '/messages'), { method: 'POST', headers: providerHeaders(provider, 'application/json', model), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, payload, `${provider.name || provider.type || 'Anthropic'}/${model}`);
     const blocks = Array.isArray(data.content) ? data.content : [];
     const content = blocks.filter((b) => b.type === 'text').map((b) => b.text || '').join('\n');
     const toolCalls = blocks.filter((b) => b.type === 'tool_use' && b.name).map((b) => ({ id: b.id || crypto.randomUUID(), type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input || {}) } }));
@@ -962,7 +982,7 @@ async function callGemini(provider, model, messages, options = {}, tools = [], s
         body.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
     }
     const modelPath = String(model || '').startsWith('models/') ? String(model) : `models/${encodeURIComponent(model)}`;
-    const data = await fetchJsonWithUnsupportedParamRetry(`${base}/${modelPath}:generateContent${keyParam}`, { method: 'POST', headers: providerHeaders({ ...provider, apiKey: '' }), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, body, `${provider.name || provider.type || 'Gemini'}/${model}`);
+    const data = await fetchJsonWithUnsupportedParamRetry(`${base}/${modelPath}:generateContent${keyParam}`, { method: 'POST', headers: providerHeaders({ ...provider, apiKey: '' }, 'application/json', model), signal, timeoutMs: aiProviderTimeoutMs(provider, options), retries: aiProviderRetryCount(provider, options) }, body, `${provider.name || provider.type || 'Gemini'}/${model}`);
     const parts = (data.candidates || []).flatMap((c) => c.content?.parts || []);
     const content = parts.filter((p) => p.text).map((p) => p.text || '').join('\n');
     const toolCalls = parts.filter((p) => p.functionCall?.name).map((p) => ({ id: p.functionCall.id || crypto.randomUUID(), type: 'function', function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) } }));
@@ -1885,6 +1905,7 @@ function normalizeAiSettingsInput(currentAi = {}, ai = {}) {
                 apiKey: p.apiKey === '******' ? (old.apiKey || '') : String(p.apiKey || ''),
                 organization: String(p.organization || old.organization || '').slice(0, 200),
                 extraHeaders: String(p.extraHeaders || old.extraHeaders || '').slice(0, 4000),
+                modelUserAgents: String(p.modelUserAgents || old.modelUserAgents || '').slice(0, 8000),
                 models: rawModels,
                 modelsPending: !modelList.length,
                 defaultModel: String(p.defaultModel || old.defaultModel || modelList[0] || '').slice(0, 160),
