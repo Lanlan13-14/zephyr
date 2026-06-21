@@ -1237,8 +1237,22 @@ function normalizeSettingsInput(body) {
             fit: ['cover', 'contain', 'auto'].includes(terminalBg.fit) ? terminalBg.fit : 'cover',
             opacity: Math.max(0, Math.min(1, Number(terminalBg.opacity ?? 0.35))),
         };
-        const rawTerminalFontColor = body.appearance.terminalFontColor !== undefined ? body.appearance.terminalFontColor : (currentAppearance.terminalFontColor ?? '');
-        const terminalFontColor = /^#[0-9a-f]{6}$/i.test(String(rawTerminalFontColor || '')) ? String(rawTerminalFontColor) : '';
+        const normalizeHexServer = (value) => /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value) : '';
+        const invertHexServer = (value) => {
+            const hex = normalizeHexServer(value);
+            if (!hex) return '';
+            const n = parseInt(hex.slice(1), 16);
+            const r = 255 - ((n >> 16) & 255);
+            const g = 255 - ((n >> 8) & 255);
+            const b = 255 - (n & 255);
+            return `#${[r, g, b].map((x) => x.toString(16).padStart(2, '0')).join('')}`;
+        };
+        const rawTerminalFontColors = body.appearance.terminalFontColors || currentAppearance.terminalFontColors || {};
+        const legacyRawTerminalFontColor = body.appearance.terminalFontColor !== undefined ? body.appearance.terminalFontColor : (currentAppearance.terminalFontColor ?? '');
+        const terminalFontDark = normalizeHexServer(rawTerminalFontColors.dark || legacyRawTerminalFontColor);
+        const terminalFontLightRaw = normalizeHexServer(rawTerminalFontColors.light || '');
+        const terminalFontColors = terminalFontDark ? { dark: terminalFontDark, light: terminalFontLightRaw || invertHexServer(terminalFontDark) } : { dark: '', light: '' };
+        const terminalFontColor = terminalFontColors.dark;
         next.appearance = {
             ...currentAppearance,
             ...body.appearance,
@@ -1252,6 +1266,7 @@ function normalizeSettingsInput(body) {
             customJs: String(body.appearance.customJs ?? currentAppearance.customJs ?? '').slice(0, 200000),
             terminalBackground,
             terminalFontColor,
+            terminalFontColors,
             autoThemeEnabled: body.appearance.autoThemeEnabled !== false,
         };
         console.info('[appearance-settings]', 'normalized appearance settings', {

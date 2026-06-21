@@ -932,6 +932,30 @@ function applyTheme(theme, { persist = false, terminalOverride = false } = {}) {
 }
 applyTheme(getPreferredTheme());
 
+function normalizeTerminalHexColor(value = '') {
+    return /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value).toLowerCase() : '';
+}
+function invertTerminalHexColor(value = '') {
+    const hex = normalizeTerminalHexColor(value);
+    if (!hex) return '';
+    const n = parseInt(hex.slice(1), 16);
+    const r = 255 - ((n >> 16) & 255);
+    const g = 255 - ((n >> 8) & 255);
+    const b = 255 - (n & 255);
+    return `#${[r, g, b].map((x) => x.toString(16).padStart(2, '0')).join('')}`;
+}
+function resolveTerminalFontColors(appearance = {}) {
+    const colors = appearance.terminalFontColors || {};
+    const dark = normalizeTerminalHexColor(colors.dark || appearance.terminalFontColor || '');
+    const light = normalizeTerminalHexColor(colors.light || '') || (dark ? invertTerminalHexColor(dark) : '');
+    return { dark, light };
+}
+function currentTerminalFontColor(appearance = terminalAppearance) {
+    const colors = resolveTerminalFontColors(appearance || {});
+    const theme = document.documentElement.getAttribute('data-wterm-theme') || getPreferredWtermTheme();
+    const isLight = theme === 'light' || theme === 'custom-light';
+    return isLight ? (colors.light || colors.dark) : colors.dark;
+}
 function applyTerminalAppearance(appearance = {}) {
     terminalAppearance = appearance || {};
     const root = document.documentElement;
@@ -947,9 +971,10 @@ function applyTerminalAppearance(appearance = {}) {
         root.style.removeProperty('--wterm-custom-bg-size');
         root.style.removeProperty('--wterm-custom-bg-opacity');
     }
-    if (terminalAppearance.terminalFontColor) {
-        root.style.setProperty('--wterm-custom-fg', terminalAppearance.terminalFontColor);
-        root.style.setProperty('--wterm-fg', terminalAppearance.terminalFontColor);
+    const fontColor = currentTerminalFontColor(terminalAppearance);
+    if (fontColor) {
+        root.style.setProperty('--wterm-custom-fg', fontColor);
+        root.style.setProperty('--wterm-fg', fontColor);
         root.setAttribute('data-wterm-font-custom', '1');
     } else {
         root.style.removeProperty('--wterm-custom-fg');
@@ -965,7 +990,8 @@ function getPreferredWtermTheme() {
 
 function hasCustomTerminalAppearance() {
     const bg = terminalAppearance?.terminalBackground || {};
-    return !!(((bg.type === 'upload' || bg.type === 'url') && bg.url) || terminalAppearance?.terminalFontColor);
+    const colors = resolveTerminalFontColors(terminalAppearance || {});
+    return !!(((bg.type === 'upload' || bg.type === 'url') && bg.url) || colors.dark || colors.light);
 }
 
 function applyWtermTheme(theme) {

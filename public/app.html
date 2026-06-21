@@ -159,7 +159,17 @@
                                     <div class="form-group"><label>背景强度 <span id="terminalBgOpacityValue">35%</span></label><input id="terminalBgOpacity" type="range" min="0" max="1" step="any" value="0.35"></div>
                                 </div>
                                 <label class="check-line"><input type="checkbox" id="terminalFontColorEnabled"> 启用自定义 SSH 终端字体颜色</label>
-                                <div class="zephyr-color-picker terminal-font-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#f4f4f6" aria-label="选择 SSH 终端字体颜色"></button><input id="terminalFontColor" class="color-hex-input" value="#f4f4f6" maxlength="7" spellcheck="false" inputmode="text"></div>
+                                <div class="form-row terminal-font-color-row">
+                                    <div class="form-group">
+                                        <label>深色终端字体颜色</label>
+                                        <div class="zephyr-color-picker terminal-font-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#f4f4f6" aria-label="选择深色终端字体颜色"></button><input id="terminalFontColor" class="color-hex-input" value="#f4f4f6" maxlength="7" spellcheck="false" inputmode="text" placeholder="#f4f4f6"></div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>浅色终端字体颜色</label>
+                                        <div class="zephyr-color-picker terminal-font-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#1d1d1f" aria-label="选择浅色终端字体颜色"></button><input id="terminalFontColorLight" class="color-hex-input" value="" maxlength="7" spellcheck="false" inputmode="text" placeholder="留空自动取反色"></div>
+                                        <p class="field-hint">留空时会自动使用深色终端字体的反色，例如白色 → 黑色。</p>
+                                    </div>
+                                </div>
                                 <p class="field-hint">上传图片最高 12MB；URL 适合使用 CDN/对象存储图片。</p>
                                 <div class="form-row">
                                     <div class="form-group"><label>RDP 默认分辨率</label><select id="rdpDefaultResolution"><option value="auto">自动（跟随窗口）</option><option value="1920x1080">1080p (1920×1080)</option><option value="2560x1440">2K (2560×1440)</option><option value="3840x2160">4K (3840×2160)</option><option value="7680x4320">8K (7680×4320)</option></select></div>
