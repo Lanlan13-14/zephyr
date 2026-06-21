@@ -47,7 +47,7 @@ const tabId = urlParams.get('tabId') || '';
 const embeddedMode = urlParams.get('embed') === '1';
 
 let params = loadParams();
-const qualityModes = ['balanced', 'performance', 'quality'];
+const qualityModes = ['balanced', 'performance', 'quality', '8k'];
 let qualityIdx = qualityModes.indexOf(params.quality || 'balanced');
 if (qualityIdx < 0) qualityIdx = 0;
 let rdpSocket = null;
@@ -360,7 +360,7 @@ function wsUrl() {
         height: String(target.height),
         mode: target.mode,
         quality: qualityModes[qualityIdx],
-        fps: String(params.rdpFps || 30),
+        fps: String(params.rdpFps || 60),
     });
     return `${proto}//${location.host}/rdp-h264?${query.toString()}`;
 }
@@ -404,8 +404,8 @@ function computeRdpTargetSize(mode = fitModes[fitModeIdx]) {
         return { width, height, mode: params.rdpResolution };
     }
 
-    const maxW = preset ? Math.max(preset.width, 3840) : 3840;
-    const maxH = preset ? Math.max(preset.height, 2160) : 2160;
+    const maxW = preset ? Math.max(preset.width, 7680) : 7680;
+    const maxH = preset ? Math.max(preset.height, 4320) : 4320;
     const fitBounds = () => {
         const w = clampEven(boundW * effDpr, minW, maxW);
         const h = clampEven(boundH * effDpr, minH, maxH);
@@ -1283,7 +1283,7 @@ async function connect() {
         requestedRdpWidth = initialTarget.width;
         requestedRdpHeight = initialTarget.height;
         const requestedStreamMode = (urlParams.get('stream') || '').toLowerCase() === 'h264' || params.rdpNativeH264 === true ? 'h264' : 'av';
-        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 30), stream: requestedStreamMode });
+        const wsQuery = new URLSearchParams({ connectionId: params.connectionId, tabId: params.tabId || tabId, width: String(initialTarget.width), height: String(initialTarget.height), mode: initialTarget.mode, quality: qualityModes[qualityIdx], fps: String(params.rdpFps || 60), stream: requestedStreamMode });
         const connectionSeq = rdpReconnectSeq;
         rdpSocket = new WebSocket(`${wsBase}?${wsQuery.toString()}`);
         rdpSocket.binaryType = 'arraybuffer';
@@ -2914,7 +2914,7 @@ function sendCtrlAltDel() {
 }
 
 function rdpQualityText(mode = qualityModes[qualityIdx]) {
-    return mode === 'balanced' ? '平衡' : mode === 'performance' ? '性能' : '画质';
+    return mode === 'balanced' ? '平衡' : mode === 'performance' ? '性能' : mode === '8k' ? '8K' : '画质';
 }
 
 function rememberRdpQuality(mode) {
@@ -2922,12 +2922,12 @@ function rememberRdpQuality(mode) {
     const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';
     try { sessionStorage.setItem(key, JSON.stringify(params)); } catch {}
 }
-function rdpFpsValue() { return Math.max(15, Math.min(60, Number(params.rdpFps || 30))); }
+function rdpFpsValue() { return Math.max(15, Math.min(144, Number(params.rdpFps || 60))); }
 function rdpResolutionText(value = params.rdpResolution || '1920x1080') {
-    return value === 'auto' ? '自动' : value === '2560x1440' ? '2K' : value === '3840x2160' ? '4K' : '1080p';
+    return value === 'auto' ? '自动' : value === '2560x1440' ? '2K' : value === '3840x2160' ? '4K' : value === '7680x4320' ? '8K' : '1080p';
 }
 function activateRdpResolutionMode(value = '') {
-    const modes = ['1920x1080', '2560x1440', '3840x2160', 'auto'];
+    const modes = ['1920x1080', '2560x1440', '3840x2160', '7680x4320', 'auto'];
     const current = modes.includes(params.rdpResolution) ? params.rdpResolution : '1920x1080';
     const next = modes.includes(String(value || '')) ? String(value) : modes[(modes.indexOf(current) + 1) % modes.length];
     params.rdpResolution = next;
@@ -2944,8 +2944,8 @@ function activateRdpResolutionMode(value = '') {
     return next;
 }
 function activateRdpFpsMode(value = '') {
-    const modes = [30, 45, 60];
-    const current = modes.includes(Number(params.rdpFps)) ? Number(params.rdpFps) : 30;
+    const modes = [30, 45, 60, 120, 144];
+    const current = modes.includes(Number(params.rdpFps)) ? Number(params.rdpFps) : 60;
     const next = modes.includes(Number(value)) ? Number(value) : modes[(modes.indexOf(current) + 1) % modes.length];
     params.rdpFps = next;
     const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';

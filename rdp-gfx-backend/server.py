@@ -63,6 +63,16 @@ class WebSocketErrorFilter(logging.Filter):
 websockets_logger = logging.getLogger('websockets.server')
 websockets_logger.addFilter(WebSocketErrorFilter())
 
+RDP_MAX_DIMENSION = int(os.getenv('RDP_MAX_DIMENSION', '7680'))
+RDP_MAX_WIDTH = int(os.getenv('RDP_MAX_WIDTH', str(RDP_MAX_DIMENSION)))
+RDP_MAX_HEIGHT = int(os.getenv('RDP_MAX_HEIGHT', '4320'))
+RDP_MAX_FPS = int(os.getenv('RDP_MAX_FPS', '144'))
+RDP_QUALITY_MODES = {'performance', 'balanced', 'quality', '8k'}
+
+def normalize_quality(value: object) -> str:
+    quality = str(value or 'balanced').lower()
+    return quality if quality in RDP_QUALITY_MODES else 'balanced'
+
 # Active sessions: websocket -> RDPBridge
 sessions: Dict[ServerConnection, RDPBridge] = {}
 
@@ -248,10 +258,10 @@ async def handle_client(websocket: ServerConnection):
                         username=data['username'],
                         password=data['password'],
                         domain=data.get('domain', ''),
-                        width=data.get('width', 1280),
-                        height=data.get('height', 720),
-                        fps=max(15, min(60, int(data.get('fps', 60) or 60))),
-                        quality=str(data.get('quality', 'balanced') or 'balanced').lower(),
+                        width=max(640, min(RDP_MAX_WIDTH, int(data.get('width', 1280) or 1280))),
+                        height=max(480, min(RDP_MAX_HEIGHT, int(data.get('height', 720) or 720))),
+                        fps=max(15, min(RDP_MAX_FPS, int(data.get('fps', 60) or 60))),
+                        quality=normalize_quality(data.get('quality', 'balanced')),
                     )
                     
                     rdp_bridge = RDPBridge(config, websocket)
@@ -370,10 +380,8 @@ async def handle_client(websocket: ServerConnection):
 
                 elif msg_type in ('settings', 'reconnect'):
                     if rdp_bridge:
-                        fps = max(15, min(60, int(data.get('fps', rdp_bridge._target_fps) or rdp_bridge._target_fps)))
-                        quality = str(data.get('quality', rdp_bridge._quality) or rdp_bridge._quality).lower()
-                        if quality not in ('performance', 'balanced', 'quality'):
-                            quality = 'balanced'
+                        fps = max(15, min(RDP_MAX_FPS, int(data.get('fps', rdp_bridge._target_fps) or rdp_bridge._target_fps)))
+                        quality = normalize_quality(data.get('quality', rdp_bridge._quality))
                         rdp_bridge._target_fps = fps
                         rdp_bridge._frame_interval = 1.0 / fps
                         rdp_bridge._quality = quality

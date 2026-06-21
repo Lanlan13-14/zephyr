@@ -3983,6 +3983,18 @@ static uint64_t monotonic_ms(void)
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
 }
 
+/* RDP fallback capture cadence. 144 FPS is an exposed upper bound, but the
+ * full-frame WebP fallback is CPU-heavy, so deployments can lower it with
+ * RDP_MAX_FPS. */
+static uint32_t zephyr_target_frame_interval_ms(void)
+{
+    const char* env = getenv("RDP_MAX_FPS");
+    long fps = env ? strtol(env, NULL, 10) : 144;
+    if (fps < 15) fps = 15;
+    if (fps > 144) fps = 144;
+    return (uint32_t)((1000 + fps - 1) / fps);
+}
+
 static void maybe_queue_gdi_fallback_frame(BridgeContext* ctx)
 {
     if (!ctx) return;
@@ -4011,7 +4023,8 @@ static void maybe_queue_gdi_fallback_frame(BridgeContext* ctx)
     (void)real_frames;
     (void)mapped_to_output;
     uint64_t now = monotonic_ms();
-    if (last_ms && now - last_ms < 100) return;
+    const uint32_t min_frame_interval_ms = zephyr_target_frame_interval_ms();
+    if (last_ms && now - last_ms < min_frame_interval_ms) return;
 
     uint32_t w = (uint32_t)gdi->width;
     uint32_t h = (uint32_t)gdi->height;

@@ -485,7 +485,7 @@ async function saveAppearance(e) {
     toast('外观设置已保存');
 }
 async function resetAppearance() {
-    const appearance = { ...getAppearance(), brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35 }, terminalFontColor: '', rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 30 } };
+    const appearance = { ...getAppearance(), brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35 }, terminalFontColor: '', rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
     settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ appearance }) });
     $('#brandIconFile').value = '';
     applyAppearance(settings.appearance || appearance);
@@ -531,7 +531,7 @@ function syncAppearanceSchemeControls(appearance = getAppearance()) {
     const rdp = appearance.rdp || {};
     if ($('#rdpDefaultResolution')) $('#rdpDefaultResolution').value = rdp.defaultResolution || '1920x1080';
     if ($('#rdpDefaultQuality')) $('#rdpDefaultQuality').value = rdp.defaultQuality || 'balanced';
-    if ($('#rdpDefaultFps')) $('#rdpDefaultFps').value = String(rdp.defaultFps || 30);
+    if ($('#rdpDefaultFps')) $('#rdpDefaultFps').value = String(rdp.defaultFps || 60);
     if ($('#terminalBgPreview')) {
         const url = bg.type === 'url' ? ($('#terminalBgUrl')?.value.trim() || bg.url || '') : (bg.url || '');
         const hasBg = (bg.type === 'upload' || bg.type === 'url') && url;

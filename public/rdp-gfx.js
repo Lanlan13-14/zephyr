@@ -56,30 +56,32 @@ const resolutions = [
     { label: '1080p', width: 1920, height: 1080 },
     { label: '2K', width: 2560, height: 1440 },
     { label: '4K', width: 3840, height: 2160 },
+    { label: '8K', width: 7680, height: 4320 },
 ];
 let statusSequence = 0;
-const qualityModes = ['balanced', 'performance', 'quality'];
-const fpsModes = [30, 45, 60];
+const qualityModes = ['balanced', 'performance', 'quality', '8k'];
+const fpsModes = [30, 45, 60, 120, 144];
 let qualityMode = qualityModes.includes(String(params.quality || '').toLowerCase()) ? String(params.quality).toLowerCase() : (localStorage.getItem('zephyr-rdp-gfx-quality') || 'balanced');
 if (!qualityModes.includes(qualityMode)) qualityMode = 'balanced';
-let fpsValue = Math.max(15, Math.min(60, Number(params.rdpFps || localStorage.getItem('zephyr-rdp-gfx-fps') || 60) || 60));
+let fpsValue = Math.max(15, Math.min(144, Number(params.rdpFps || localStorage.getItem('zephyr-rdp-gfx-fps') || 60) || 60));
 if (!fpsModes.includes(fpsValue)) fpsValue = 60;
 function qualityLabel(mode = qualityMode) {
     if (mode === 'performance') return '性能';
     if (mode === 'quality') return '画质';
+    if (mode === '8k') return '8K';
     return '平衡';
 }
 function updateQualityFpsButtons() {
     const q = $('#qualityBtn');
     if (q) {
         q.textContent = qualityLabel();
-        q.title = `当前：${qualityLabel()}模式，点击切换性能/画质模式`;
+        q.title = `当前：${qualityLabel()}模式，点击切换性能/画质/8K 模式`;
         q.classList.toggle('active', qualityMode !== 'balanced');
     }
     const f = $('#fpsBtn');
     if (f) {
         f.textContent = `${fpsValue}FPS`;
-        f.title = `当前：${fpsValue} FPS，点击切换 30 / 45 / 60 FPS`;
+        f.title = `当前：${fpsValue} FPS，点击切换 30 / 45 / 60 / 120 / 144 FPS`;
         f.classList.toggle('active', fpsValue !== 30);
     }
 }
@@ -212,7 +214,30 @@ function availableSize() {
     const rect = displayRoot?.getBoundingClientRect?.();
     const w = Math.max(640, Math.floor((rect?.width || window.innerWidth || 1280) / 2) * 2);
     const h = Math.max(480, Math.floor((rect?.height || window.innerHeight || 720) / 2) * 2);
-    return { width: Math.min(w, 4096), height: Math.min(h, 2304) };
+    return { width: Math.min(w, 7680), height: Math.min(h, 4320) };
+}
+function adaptPresetResolutionToViewport(res = {}) {
+    const width = Math.max(640, Math.floor((Number(res.width) || 0) / 2) * 2);
+    const height = Math.max(480, Math.floor((Number(res.height) || 0) / 2) * 2);
+    return { width: Math.min(width, 7680), height: Math.min(height, 4320) };
+}
+function resolutionFromParams() {
+    const value = String(params.rdpResolution || '').toLowerCase();
+    const idx = resolutions.findIndex((r) => r.width && r.height && value === `${r.width}x${r.height}`);
+    if (idx >= 0) {
+        currentResolutionIdx = idx;
+        return adaptPresetResolutionToViewport(resolutions[idx]);
+    }
+    if (value === 'auto') {
+        currentResolutionIdx = 0;
+        return null;
+    }
+    return null;
+}
+function applyInitialResolutionChoice() {
+    desiredRdpSize = resolutionFromParams();
+    const btn = $('#resolutionBtn');
+    if (btn) btn.textContent = resolutions[currentResolutionIdx]?.label || '自动';
 }
 function requestRuntimeConfig(reconnect = true) {
     if (!client || !connected) return false;
@@ -243,7 +268,6 @@ function cycleFps() {
     return fpsValue;
 }
 function requestResolution(res) {
-    if (!client || !connected) return false;
     const size = res?.width && res?.height ? adaptPresetResolutionToViewport(res) : availableSize();
     desiredRdpSize = size;
     displayScaleMode = 'fit';
@@ -1056,13 +1080,51 @@ function applyDisplayScale() {
 }
 
 
+function placePanel(panel, anchor = null) {
+    if (!panel) return;
+    const stageRect = $('#rdpStage')?.getBoundingClientRect?.() || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight };
+    const width = Math.min(Math.max(panel.offsetWidth || 320, 260), Math.max(260, stageRect.width - 16));
+    const height = Math.min(Math.max(panel.offsetHeight || 260, 220), Math.max(220, stageRect.height - 16));
+    const anchorRect = anchor?.getBoundingClientRect?.();
+    const preferredLeft = anchorRect ? anchorRect.left + anchorRect.width / 2 - width / 2 : stageRect.left + 12;
+    const preferredTop = anchorRect ? anchorRect.bottom + 10 : stageRect.top + 12;
+    const left = Math.max(stageRect.left + 8, Math.min(stageRect.right - width - 8, preferredLeft));
+    const top = Math.max(stageRect.top + 8, Math.min(stageRect.bottom - height - 8, preferredTop));
+    panel.style.left = `${Math.round(left - stageRect.left)}px`;
+    panel.style.top = `${Math.round(top - stageRect.top)}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+}
+function showPanel(panel, anchor = null) {
+    if (!panel) return;
+    const opening = panel.hidden || !panel.classList.contains('open');
+    panel.hidden = false;
+    panel.classList.add('open', 'front');
+    if (opening) placePanel(panel, anchor);
+}
+function hidePanel(panel) {
+    if (!panel) return;
+    panel.classList.remove('open', 'front');
+    panel.hidden = true;
+}
+function togglePanel(panel, anchor = null) {
+    if (!panel) return;
+    const isOpen = !panel.hidden && panel.classList.contains('open');
+    if (isOpen) hidePanel(panel);
+    else showPanel(panel, anchor);
+}
 function setupFloatingPanels() {
+    document.querySelectorAll('.rdp-floating-panel').forEach((panel) => {
+        if (!panel.hidden) panel.classList.add('open');
+        else panel.classList.remove('open', 'front');
+    });
     document.querySelectorAll('[data-drag-panel]').forEach((handle) => {
         if (handle.dataset.boundDrag) return;
         handle.dataset.boundDrag = '1';
         handle.addEventListener('pointerdown', (event) => {
             const panel = document.getElementById(handle.dataset.dragPanel || '');
             if (!panel) return;
+            showPanel(panel);
             event.preventDefault();
             handle.setPointerCapture?.(event.pointerId);
             const start = { x: event.clientX, y: event.clientY };
@@ -1084,6 +1146,7 @@ function setupFloatingPanels() {
         handle.addEventListener('pointerdown', (event) => {
             const panel = document.getElementById(handle.dataset.resizePanel || '');
             if (!panel) return;
+            showPanel(panel);
             event.preventDefault();
             handle.setPointerCapture?.(event.pointerId);
             const edge = handle.dataset.resizeEdge || 'right';
@@ -1115,6 +1178,7 @@ function setupFloatingPanels() {
             event.stopPropagation();
             const panel = document.getElementById(btn.dataset.layoutPanel || '');
             if (!panel) return;
+            showPanel(panel);
             panel.classList.toggle('compact-panel');
         });
     });
@@ -1162,6 +1226,7 @@ function setupJoystickPanel() {
 
 function bindControls() {
     updateQualityFpsButtons();
+    applyInitialResolutionChoice();
     renderPendingFiles();
     $('#qualityBtn')?.addEventListener('click', () => cycleQuality());
     $('#fpsBtn')?.addEventListener('click', () => cycleFps());
@@ -1172,8 +1237,10 @@ function bindControls() {
     $('#ctrlAltDelBtn')?.addEventListener('click', () => { try { client?.sendCtrlAltDel?.(); } catch (err) { setStatus('error', err.message || String(err)); } });
     $('#reconnectBtn')?.addEventListener('click', () => connect().catch(() => {}));
     $('#disconnectBtn')?.addEventListener('click', () => disconnect(true));
-    $('#clipboardBtn')?.addEventListener('click', () => { if (clipboardPanel) clipboardPanel.hidden = !clipboardPanel.hidden; });
-    $('#rdpFilesBtn')?.addEventListener('click', () => { if (filesPanel) filesPanel.hidden = !filesPanel.hidden; });
+    $('#clipboardBtn')?.addEventListener('click', (event) => togglePanel(clipboardPanel, event.currentTarget));
+    if ($('#clipboardBtn')) $('#clipboardBtn').dataset.boundDirectToggle = '1';
+    $('#rdpFilesBtn')?.addEventListener('click', (event) => togglePanel(filesPanel, event.currentTarget));
+    if ($('#rdpFilesBtn')) $('#rdpFilesBtn').dataset.boundDirectToggle = '1';
     $('#clipboardReadLocalBtn')?.addEventListener('click', async () => { const text = await navigator.clipboard?.readText?.().catch(() => ''); if (clipboardText) clipboardText.value = text || ''; });
     $('#clipboardSendBtn')?.addEventListener('click', () => sendClipboardText(clipboardText?.value || '', false));
     $('#clipboardCopyRemoteBtn')?.addEventListener('click', () => navigator.clipboard?.writeText?.(remoteClipboardText?.value || '').catch(() => {}));
@@ -1187,8 +1254,10 @@ function bindControls() {
     });
     $('#rdpFileDownloadAllBtn')?.addEventListener('click', () => remoteFiles.forEach((_, i) => requestRemoteFileDownload(i)));
     $('#rdpFilePasteToRemoteBtn')?.addEventListener('click', () => pasteFilesAtRemoteTarget(lastRemotePointer));
-    $('#shortcutsBtn')?.addEventListener('click', () => { const panel = $('#shortcutsPanel'); if (panel) panel.hidden = !panel.hidden; });
-    $('#joystickBtn')?.addEventListener('click', () => { const panel = $('#joystickPanel'); if (panel) panel.hidden = !panel.hidden; });
+    $('#shortcutsBtn')?.addEventListener('click', (event) => togglePanel($('#shortcutsPanel'), event.currentTarget));
+    if ($('#shortcutsBtn')) $('#shortcutsBtn').dataset.boundDirectToggle = '1';
+    $('#joystickBtn')?.addEventListener('click', (event) => togglePanel($('#joystickPanel'), event.currentTarget));
+    if ($('#joystickBtn')) $('#joystickBtn').dataset.boundDirectToggle = '1';
     $('#shortcutsPanel')?.addEventListener('click', (event) => { const btn = event.target.closest('[data-keyseq]'); if (!btn) return; const combo = comboForKeyseq(btn.dataset.keyseq || ''); if (combo) { try { client?.sendKeyCombo?.(combo); } catch (err) { setStatus('error', err.message || String(err)); } } });
     document.addEventListener('paste', async (event) => {
         if (!connected) return;
@@ -1230,13 +1299,13 @@ async function syncLocalClipboardTextToRdp(reason = 'auto') {
 
 function handleRdpToolbarDelegatedClick(event) {
     const btn = event.target?.closest?.('#clipboardBtn,#rdpFilesBtn,#shortcutsBtn,#joystickBtn');
-    if (!btn) return;
+    if (!btn || btn.dataset.boundDirectToggle === '1') return;
     const map = { clipboardBtn: clipboardPanel, rdpFilesBtn: filesPanel, shortcutsBtn: $('#shortcutsPanel'), joystickBtn: $('#joystickPanel') };
     const panel = map[btn.id];
     if (panel) {
         event.preventDefault();
         event.stopPropagation();
-        panel.hidden = !panel.hidden;
+        togglePanel(panel, btn);
     }
 }
 document.addEventListener('click', handleRdpToolbarDelegatedClick, true);

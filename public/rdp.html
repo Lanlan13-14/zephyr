@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Zephyr - 远程桌面</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260620-rdp-syntax-theme-res-fix">
+    <link rel="stylesheet" href="style.css?v=20260621-rdp-toolbar-fps-8k-fix">
 </head>
 <body>
     <div class="novnc-page rdp-page">
@@ -16,9 +16,9 @@
             </div>
             <span class="info" id="connInfo"></span>
             <div class="topbar-actions novnc-toolbar">
-                <button class="btn-sm" id="qualityBtn" data-rdp-icon="quality" title="切换性能/画质模式">平衡</button>
-                <button class="btn-sm" id="resolutionBtn" data-rdp-icon="quality" title="切换远程桌面分辨率：1080p / 2K / 4K / 自动">1080p</button>
-                <button class="btn-sm" id="fpsBtn" data-rdp-icon="quality" title="切换远程桌面帧率：30 / 45 / 60 FPS">30FPS</button>
+                <button class="btn-sm" id="qualityBtn" data-rdp-icon="quality" title="切换性能/画质/8K 模式">平衡</button>
+                <button class="btn-sm" id="resolutionBtn" data-rdp-icon="quality" title="切换远程桌面分辨率：1080p / 2K / 4K / 8K / 自动">1080p</button>
+                <button class="btn-sm" id="fpsBtn" data-rdp-icon="quality" title="切换远程桌面帧率：30 / 45 / 60 / 120 / 144 FPS">30FPS</button>
                 <button class="btn-sm" id="fitBtn" data-rdp-icon="fit" title="适应窗口">适应</button>
                 <button class="btn-sm zoom-control" id="zoomBtn" data-rdp-icon="zoom" title="拖动无极缩放远程画面"><input id="zoomSlider" type="range" min="50" max="250" step="1" value="100" aria-label="远程画面无极缩放"><em id="zoomValue">100%</em></button>
                 <button class="btn-sm" id="clipboardBtn" data-rdp-icon="clipboard" title="打开跨设备剪贴板面板">剪贴板</button>
@@ -197,6 +197,6 @@
             </div>
         </div>
     </div>
-    <script src="rdp-gfx.js?v=20260620-rdp-syntax-theme-res-fix" type="module"></script>
+    <script src="rdp-gfx.js?v=20260621-rdp-toolbar-fps-8k-fix" type="module"></script>
 </body>
 </html>

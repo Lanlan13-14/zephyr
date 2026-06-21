@@ -4025,9 +4025,21 @@ function closeWebSocketSafe(ws, code = 1000, reason = '') {
     } catch {}
 }
 
+const RDP_QUALITY_MODES = new Set(['performance', 'balanced', 'quality', '8k']);
+const RDP_MAX_DIMENSION = Number(process.env.RDP_MAX_DIMENSION || 7680);
+const RDP_MAX_WIDTH = Number(process.env.RDP_MAX_WIDTH || RDP_MAX_DIMENSION);
+const RDP_MAX_HEIGHT = Number(process.env.RDP_MAX_HEIGHT || 4320);
+const RDP_MAX_FPS = Number(process.env.RDP_MAX_FPS || 144);
 const RDP_STREAM_WIDTH = Number(process.env.RDP_H264_WIDTH || 1920);
 const RDP_STREAM_HEIGHT = Number(process.env.RDP_H264_HEIGHT || 1080);
-const RDP_STREAM_FPS = Number(process.env.RDP_H264_FPS || 30);
+const RDP_STREAM_FPS = Number(process.env.RDP_H264_FPS || 60);
+function normalizeQualityMode(value, fallback = 'balanced') {
+    const q = String(value || '').toLowerCase();
+    if (RDP_QUALITY_MODES.has(q)) return q;
+    const fb = String(fallback || '').toLowerCase();
+    return RDP_QUALITY_MODES.has(fb) ? fb : 'balanced';
+}
+
 const RDP_NATIVE_H264 = process.env.RDP_NATIVE_H264 === 'true';
 const RDP_ALLOW_GFX_FALLBACK = process.env.RDP_ALLOW_GFX_FALLBACK === 'true';
 const rdpPipes = new Map();
@@ -4088,32 +4100,33 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     const targetPort = Number(effectiveConn.port) || 3389;
     const username = effectiveConn.username || 'Administrator';
     const password = effectiveConn.password || '';
-    let streamWidth = evenClampRdpSize(options.width || RDP_STREAM_WIDTH, 800, 3840);
-    let streamHeight = evenClampRdpSize(options.height || RDP_STREAM_HEIGHT, 600, 2160);
+    let streamWidth = evenClampRdpSize(options.width || RDP_STREAM_WIDTH, 800, RDP_MAX_WIDTH);
+    let streamHeight = evenClampRdpSize(options.height || RDP_STREAM_HEIGHT, 600, RDP_MAX_HEIGHT);
     const aspectMode = String(options.mode || '').toLowerCase();
-    const qualityMode = ['performance', 'balanced', 'quality'].includes(String(options.quality || '').toLowerCase()) ? String(options.quality).toLowerCase() : 'balanced';
+    const qualityMode = normalizeQualityMode(options.quality, 'balanced');
     const streamMode = String(options.stream || '').toLowerCase() === 'av' ? 'av' : 'h264';
-    const streamFps = Math.max(15, Math.min(60, Number(options.fps) || RDP_STREAM_FPS));
+    const streamFps = Math.max(15, Math.min(RDP_MAX_FPS, Number(options.fps) || RDP_STREAM_FPS));
     const isPerf = qualityMode === 'performance';
-    const isQual = qualityMode === 'quality';
+    const isQual = qualityMode === 'quality' || qualityMode === '8k';
+    const is8kQuality = qualityMode === '8k';
     const forceAspect = (num, den) => {
         const longSide = Math.max(streamWidth, streamHeight);
         const shortSide = Math.min(streamWidth, streamHeight);
         streamWidth = longSide;
         streamHeight = shortSide;
         let unit = Math.max(1, Math.min(Math.floor(streamWidth / num), Math.floor(streamHeight / den)));
-        streamWidth = evenRdpSize(num * unit, 800, 3840);
-        streamHeight = evenRdpSize(den * unit, 600, 2160);
-        if (streamWidth > 3840 || streamHeight > 2160) {
-            unit = Math.max(1, Math.min(Math.floor(3840 / num), Math.floor(2160 / den)));
-            streamWidth = evenRdpSize(num * unit, 800, 3840);
-            streamHeight = evenRdpSize(den * unit, 600, 2160);
+        streamWidth = evenRdpSize(num * unit, 800, RDP_MAX_WIDTH);
+        streamHeight = evenRdpSize(den * unit, 600, RDP_MAX_HEIGHT);
+        if (streamWidth > RDP_MAX_WIDTH || streamHeight > RDP_MAX_HEIGHT) {
+            unit = Math.max(1, Math.min(Math.floor(RDP_MAX_WIDTH / num), Math.floor(RDP_MAX_HEIGHT / den)));
+            streamWidth = evenRdpSize(num * unit, 800, RDP_MAX_WIDTH);
+            streamHeight = evenRdpSize(den * unit, 600, RDP_MAX_HEIGHT);
         }
     };
     if (aspectMode === '16:9') forceAspect(16, 9);
     else if (aspectMode === '4:3') forceAspect(4, 3);
-    streamWidth = evenRdpSize(streamWidth, 800, 3840);
-    streamHeight = evenRdpSize(streamHeight, 600, 2160);
+    streamWidth = evenRdpSize(streamWidth, 800, RDP_MAX_WIDTH);
+    streamHeight = evenRdpSize(streamHeight, 600, RDP_MAX_HEIGHT);
     const displayNo = allocateRdpDisplayNumber();
     const xvfbDisp = `:${displayNo}`;
     const fifoPath = `/tmp/zephyr-rdp-h264-${connId}.h264`;
@@ -4194,8 +4207,8 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     const encoderThreads = String(Math.max(1, Math.min(Number(process.env.RDP_H264_THREADS || 2), os.cpus()?.length || 2)));
     const pixelsPerSecond = streamWidth * streamHeight * streamFps;
     const bitrateScale = pixelsPerSecond / (3840 * 2160 * 60);
-    const avCrf = qualityMode === 'quality' ? 12 : qualityMode === 'performance' ? 22 : 16;
-    const avMaxrateKbps = Math.max(80000, Math.round((qualityMode === 'quality' ? 500000 : qualityMode === 'performance' ? 200000 : 350000) * Math.max(0.05, (streamWidth * streamHeight * streamFps) / (3840 * 2160 * 60))));
+    const avCrf = is8kQuality ? 10 : qualityMode === 'quality' ? 12 : qualityMode === 'performance' ? 22 : 16;
+    const avMaxrateKbps = Math.max(80000, Math.round((is8kQuality ? 900000 : qualityMode === 'quality' ? 500000 : qualityMode === 'performance' ? 200000 : 350000) * Math.max(0.05, (streamWidth * streamHeight * streamFps) / (3840 * 2160 * 60))));
     const avLevel = pixelsPerSecond >= 3840 * 2160 * 50 ? '5.2' : pixelsPerSecond >= 3840 * 2160 * 25 || pixelsPerSecond >= 2560 * 1440 * 50 ? '5.1' : pixelsPerSecond >= 1920 * 1080 * 50 ? '4.2' : '4.1';
     const avCodec = avLevel === '5.2' ? 'avc1.640034' : avLevel === '5.1' ? 'avc1.640033' : avLevel === '4.2' ? 'avc1.64002a' : 'avc1.640029';
     const avMime = `video/mp4; codecs="${avCodec},mp4a.40.2"`;
@@ -5071,11 +5084,11 @@ rdpGfxWss.on('connection', (ws, req) => {
         }
         if (msg?.type === 'connect') {
             if (injectedConnect) return;
-            const requestedQuality = ['performance', 'balanced', 'quality'].includes(String(url.searchParams.get('quality') || '').toLowerCase()) ? String(url.searchParams.get('quality')).toLowerCase() : 'balanced';
-            const requestedFps = Math.max(15, Math.min(60, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
+            const requestedQuality = normalizeQualityMode(url.searchParams.get('quality'), 'balanced');
+            const requestedFps = Math.max(15, Math.min(RDP_MAX_FPS, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
             const { username, domain } = splitRdpIdentity(effectiveConn);
-            const width = evenClampRdpSize(msg.width || url.searchParams.get('width') || RDP_STREAM_WIDTH, 640, 4096);
-            const height = evenClampRdpSize(msg.height || url.searchParams.get('height') || RDP_STREAM_HEIGHT, 480, 2304);
+            const width = evenClampRdpSize(msg.width || url.searchParams.get('width') || RDP_STREAM_WIDTH, 640, RDP_MAX_WIDTH);
+            const height = evenClampRdpSize(msg.height || url.searchParams.get('height') || RDP_STREAM_HEIGHT, 480, RDP_MAX_HEIGHT);
             injectedConnect = true;
             backendWs.send(JSON.stringify({
                 type: 'connect',
@@ -5094,14 +5107,14 @@ rdpGfxWss.on('connection', (ws, req) => {
         }
         if (!injectedConnect) throw new Error(`RDP GFX message before connect: ${msg?.type || 'unknown'}`);
         if (msg?.type === 'resize') {
-            msg.width = evenClampRdpSize(msg.width || RDP_STREAM_WIDTH, 640, 4096);
-            msg.height = evenClampRdpSize(msg.height || RDP_STREAM_HEIGHT, 480, 2304);
+            msg.width = evenClampRdpSize(msg.width || RDP_STREAM_WIDTH, 640, RDP_MAX_WIDTH);
+            msg.height = evenClampRdpSize(msg.height || RDP_STREAM_HEIGHT, 480, RDP_MAX_HEIGHT);
             backendWs.send(JSON.stringify(msg));
             return;
         }
         if (msg?.type === 'settings' || msg?.type === 'reconnect') {
-            msg.quality = ['performance', 'balanced', 'quality'].includes(String(msg.quality || '').toLowerCase()) ? String(msg.quality).toLowerCase() : 'balanced';
-            msg.fps = Math.max(15, Math.min(60, Number(msg.fps) || RDP_STREAM_FPS));
+            msg.quality = normalizeQualityMode(msg.quality, 'balanced');
+            msg.fps = Math.max(15, Math.min(RDP_MAX_FPS, Number(msg.fps) || RDP_STREAM_FPS));
             backendWs.send(JSON.stringify(msg));
             return;
         }
@@ -5192,8 +5205,8 @@ rdpH264Wss.on('connection', async (ws, req) => {
         const requestedWidth = Number(url.searchParams.get('width')) || RDP_STREAM_WIDTH;
         const requestedHeight = Number(url.searchParams.get('height')) || RDP_STREAM_HEIGHT;
         const requestedMode = url.searchParams.get('mode') || '';
-        const requestedQuality = ['performance', 'balanced', 'quality'].includes(String(url.searchParams.get('quality') || '').toLowerCase()) ? String(url.searchParams.get('quality')).toLowerCase() : 'balanced';
-        const requestedFps = Math.max(15, Math.min(60, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
+        const requestedQuality = normalizeQualityMode(url.searchParams.get('quality'), 'balanced');
+        const requestedFps = Math.max(15, Math.min(RDP_MAX_FPS, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
         const requestedStream = String(url.searchParams.get('stream') || 'av').toLowerCase() === 'h264' ? 'h264' : 'av';
         if (pipe && requestedStream === 'av') {
             // fMP4 clients must receive ftyp/moov from the beginning; mid-stream attach causes MSE demux errors.
@@ -5222,11 +5235,11 @@ rdpH264Wss.on('connection', async (ws, req) => {
             if (msg?.type === 'reconnect' && Number.isFinite(msg.width) && Number.isFinite(msg.height)) {
                 const oldPipe = pipe;
                 oldPipe.clients.delete(ws);
-                const width = evenClampRdpSize(Number(msg.width) || RDP_STREAM_WIDTH, 800, 3840);
-                const height = evenClampRdpSize(Number(msg.height) || RDP_STREAM_HEIGHT, 600, 2160);
+                const width = evenClampRdpSize(Number(msg.width) || RDP_STREAM_WIDTH, 800, RDP_MAX_WIDTH);
+                const height = evenClampRdpSize(Number(msg.height) || RDP_STREAM_HEIGHT, 600, RDP_MAX_HEIGHT);
                 const mode = String(msg.mode || '');
-                const quality = ['performance', 'balanced', 'quality'].includes(String(msg.quality || '').toLowerCase()) ? String(msg.quality).toLowerCase() : (pipe.quality || requestedQuality);
-                const fps = Math.max(15, Math.min(60, Number(msg.fps) || pipe.fps || requestedFps || RDP_STREAM_FPS));
+                const quality = normalizeQualityMode(msg.quality, pipe.quality || requestedQuality);
+                const fps = Math.max(15, Math.min(RDP_MAX_FPS, Number(msg.fps) || pipe.fps || requestedFps || RDP_STREAM_FPS));
                 try { if (ws.readyState === ws.OPEN) ws.close(1012, `rdp reconnect:${mode}:${width}x${height}:${quality}:${fps}`); } catch {}
                 cleanupPipe(connId);
                 return;

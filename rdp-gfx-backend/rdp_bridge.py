@@ -104,9 +104,11 @@ RDP_GFX_CODEC_PROGRESSIVE_V2 = 0x000D
 
 # Resolution limits - minimum and maximum allowed screen dimensions
 RDP_MIN_WIDTH = 640
-RDP_MAX_WIDTH = 4096
+RDP_MAX_DIMENSION = int(os.getenv('RDP_MAX_DIMENSION', '7680'))
+RDP_MAX_WIDTH = int(os.getenv('RDP_MAX_WIDTH', str(RDP_MAX_DIMENSION)))
 RDP_MIN_HEIGHT = 480
-RDP_MAX_HEIGHT = 2304
+RDP_MAX_HEIGHT = int(os.getenv('RDP_MAX_HEIGHT', '4320'))
+RDP_MAX_FPS = int(os.getenv('RDP_MAX_FPS', '144'))
 
 
 class RdpRect(Structure):
@@ -512,10 +514,10 @@ class RDPBridge:
         self._frame_count = 0
         
         # Frame rate control
-        self._target_fps = max(15, min(60, int(getattr(config, 'fps', 60) or 60)))
+        self._target_fps = max(15, min(RDP_MAX_FPS, int(getattr(config, 'fps', 60) or 60)))
         self._frame_interval = 1.0 / self._target_fps
         self._quality = str(getattr(config, 'quality', 'balanced') or 'balanced').lower()
-        if self._quality not in ('performance', 'balanced', 'quality'):
+        if self._quality not in ('performance', 'balanced', 'quality', '8k'):
             self._quality = 'balanced'
         
         # Audio settings

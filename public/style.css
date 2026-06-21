@@ -6822,8 +6822,15 @@ body.smartbar-trash-hover .smartbar-trash-target {
     align-items: center;
     justify-content: center;
     gap: 6px;
+    pointer-events: auto;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+.rdp-page .topbar-actions .btn-sm[data-rdp-icon] > * {
+    pointer-events: auto;
 }
 .rdp-page .topbar-actions .btn-sm[data-rdp-icon]::before {
+    pointer-events: none;
     content: '';
     display: inline-block;
     width: 15px;
@@ -6845,7 +6852,7 @@ body.smartbar-trash-hover .smartbar-trash-target {
 .rdp-page .topbar-actions .btn-sm[data-rdp-icon="reconnect"] { --rdp-toolbar-icon-color: #0a84ff; --rdp-toolbar-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.76-4.24L13 11h8V3l-3.3 3.3z'/%3E%3C/svg%3E"); }
 .rdp-page .topbar-actions .btn-sm[data-rdp-icon="disconnect"] { --rdp-toolbar-icon-color: #f85149; --rdp-toolbar-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 3h10v2H7V3zm4 4h2v7h-2V7zm-5.6 3.2 1.5 1.3A6 6 0 1 0 17.1 11.5l1.5-1.3a8 8 0 1 1-13.2 0z'/%3E%3C/svg%3E"); }
 @media (max-width: 700px) and (hover: none) and (pointer: coarse) {
-    .rdp-page .topbar-actions .btn-sm[data-rdp-icon] { gap: 0; }
+    .rdp-page .topbar-actions .btn-sm[data-rdp-icon] { gap: 0; min-width: 64px; min-height: 34px; }
     .rdp-page .topbar-actions .btn-sm[data-rdp-icon]::before {
         width: 21px;
         height: 21px;
