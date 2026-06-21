@@ -302,6 +302,9 @@ let dockerLogBuffer = '';
 let chartInstances = {};
 let latestStatsData = null;
 let monitorPage = 0;
+let monitorPrevPage = 0;
+let monitorSwitchDirection = 1;
+let monitorPageSwitching = false;
 let monitorRenderRaf = 0;
 let processSearch = '';
 let processSort = 'cpu';
@@ -7817,6 +7820,9 @@ function setMonitorPage(page, { render = true } = {}) {
         $$('.monitor-tab').forEach((btn) => btn.classList.toggle('active', Number(btn.dataset.monitorPage) === monitorPage));
         return;
     }
+    monitorPrevPage = monitorPage;
+    monitorSwitchDirection = next > monitorPage ? 1 : -1;
+    monitorPageSwitching = true;
     monitorPage = next;
     if (render && latestStatsData) renderStats(latestStatsData);
 }
@@ -7880,14 +7886,23 @@ function renderStats(d) {
     const activeSelection = activeElementId && typeof activeElement.selectionStart === 'number'
         ? { start: activeElement.selectionStart, end: activeElement.selectionEnd }
         : null;
+    const isMonitorSwitching = monitorPageSwitching && monitorPrevPage !== monitorPage;
+    const monitorDir = monitorSwitchDirection >= 0 ? 1 : -1;
+    const monitorPageClass = (page, base) => [
+        'monitor-page',
+        base,
+        monitorPage === page ? 'active' : '',
+        isMonitorSwitching && monitorPrevPage === page ? 'leaving' : '',
+    ].filter(Boolean).join(' ');
+    const monitorPageHidden = (page) => (monitorPage === page || (isMonitorSwitching && monitorPrevPage === page)) ? '' : 'hidden';
 
     infoBody.innerHTML = `
-        <div class="monitor-tabs" role="tablist" aria-label="监控分页">
+        <div class="monitor-tabs" role="tablist" aria-label="监控分页" style="--monitor-tab-index:${monitorPage}">
             <button class="monitor-tab ${monitorPage === 0 ? 'active' : ''}" data-monitor-page="0" type="button">概览</button>
             <button class="monitor-tab ${monitorPage === 1 ? 'active' : ''}" data-monitor-page="1" type="button">进程</button>
         </div>
-        <div class="monitor-pages-viewport" data-monitor-page="${monitorPage}">
-            <section class="monitor-page monitor-overview-page ${monitorPage === 0 ? 'active' : ''}" ${monitorPage === 0 ? '' : 'hidden'}>
+        <div class="monitor-pages-viewport ${isMonitorSwitching ? 'switching' : ''}" data-monitor-page="${monitorPage}" data-monitor-prev-page="${monitorPrevPage}" data-monitor-dir="${monitorDir}">
+            <section class="${monitorPageClass(0, 'monitor-overview-page')}" ${monitorPageHidden(0)}>
         <div class="doughnut-row">
             <div class="doughnut-item disk-card full-width">
                 <div class="disk-card-meta">
@@ -7944,7 +7959,7 @@ function renderStats(d) {
             <div class="ip-box"><span>IPv6</span><code>${ipv6}</code><button class="copy-ip-btn" aria-label="复制 IPv6" onclick="navigator.clipboard.writeText('${ipv6}')">${zephyrButtonGlyph('copy', '复制')}</button></div>
         </div>
             </section>
-            <section class="monitor-page monitor-process-page ${monitorPage === 1 ? 'active' : ''}" ${monitorPage === 1 ? '' : 'hidden'}>
+            <section class="${monitorPageClass(1, 'monitor-process-page')}" ${monitorPageHidden(1)}>
                 ${renderProcessesPage(d)}
             </section>
         </div>
@@ -7952,6 +7967,14 @@ function renderStats(d) {
 
     bindMonitorPager();
     bindProcessPageEvents();
+    if (isMonitorSwitching) {
+        window.clearTimeout(renderStats._monitorSwitchTimer);
+        renderStats._monitorSwitchTimer = window.setTimeout(() => {
+            monitorPageSwitching = false;
+            monitorPrevPage = monitorPage;
+            if (latestStatsData) renderStats(latestStatsData);
+        }, 260);
+    }
     requestAnimationFrame(() => {
         if (previousBodyScrollTop && monitorPage === 0) infoBody.scrollTop = previousBodyScrollTop;
         if (activeElementId) {
