@@ -50,6 +50,8 @@ let rdpReplacingConnection = false;
 let desiredRdpSize = null;
 let lastSyncedLocalClipboardText = '';
 let clipboardSyncTimer = null;
+let rdpInputSuppressed = false;
+let rdpInputSuppressedUntil = 0;
 const fileDownloads = new Map();
 const resolutions = [
     { label: '自动', width: 0, height: 0 },
@@ -402,6 +404,14 @@ function finishRemoteFileDownload(requestId) {
     setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 2000);
     setFilesHint(`已下载 ${item.name}`, 'success');
 }
+function setRdpInputSuppressed(value, holdMs = 180) {
+    rdpInputSuppressed = !!value;
+    rdpInputSuppressedUntil = value ? Number.POSITIVE_INFINITY : Date.now() + Math.max(0, Number(holdMs) || 0);
+    $('#rdpStage')?.classList.toggle('joystick-active', !!value);
+}
+function isRdpInputSuppressed() {
+    return rdpInputSuppressed || Date.now() < rdpInputSuppressedUntil;
+}
 function handleClientMessage(msg) {
     if (msg.type === 'clipboard-text') {
         const text = String(msg.text || '');
@@ -744,6 +754,7 @@ async function connectDirectCanvasRdp() {
     const dist = (a, b) => Math.hypot((a?.x || 0) - (b?.x || 0), (a?.y || 0) - (b?.y || 0));
 
     canvas.addEventListener('pointerdown', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         canvas.focus({ preventScroll: true });
         canvas.setPointerCapture?.(event.pointerId);
         const p = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, time: Date.now(), type: event.pointerType || 'mouse' };
@@ -771,6 +782,7 @@ async function connectDirectCanvasRdp() {
         event.preventDefault();
     });
     canvas.addEventListener('pointermove', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         const p = activePointers.get(event.pointerId);
         if (p) { p.x = event.clientX; p.y = event.clientY; }
         if ((event.pointerType || 'mouse') === 'touch') {
@@ -799,6 +811,7 @@ async function connectDirectCanvasRdp() {
         sendMouse('move', event);
     });
     canvas.addEventListener('pointerup', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); activePointers.delete(event.pointerId); return; }
         const p = activePointers.get(event.pointerId) || { startX: event.clientX, startY: event.clientY, time: Date.now(), type: event.pointerType || 'mouse' };
         activePointers.delete(event.pointerId);
         if ((event.pointerType || 'mouse') === 'touch') {
@@ -821,13 +834,14 @@ async function connectDirectCanvasRdp() {
         event.preventDefault();
     });
     canvas.addEventListener('pointercancel', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); activePointers.delete(event.pointerId); return; }
         clearLongPress();
         if (touchDrag?.active) sendMouse('up', event, { button: 0 });
         activePointers.delete(event.pointerId);
         touchDrag = null;
         pinchScroll = null;
     });
-    canvas.addEventListener('wheel', (event) => { sendMouse('wheel', event, { deltaY: event.deltaY || 0, deltaX: event.deltaX || 0 }); event.preventDefault(); }, { passive: false });
+    canvas.addEventListener('wheel', (event) => { if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; } sendMouse('wheel', event, { deltaY: event.deltaY || 0, deltaX: event.deltaX || 0 }); event.preventDefault(); }, { passive: false });
     canvas.addEventListener('keydown', (event) => {
         if ((event.ctrlKey || event.metaKey) && String(event.key || '').toLowerCase() === 'v' && pendingRdpClipboardFiles.length) {
             event.preventDefault();
@@ -1080,11 +1094,37 @@ function applyDisplayScale() {
 }
 
 
+function updateJoystickPanelScale(panel = $('#joystickPanel')) {
+    const container = $('#joystickContainer');
+    if (!panel || !container) return;
+    const rect = panel.getBoundingClientRect?.() || { width: 248, height: 220 };
+    const contentW = Math.max(1, rect.width - 34);
+    const contentH = Math.max(1, rect.height - 58);
+    const size = Math.max(112, Math.min(260, Math.floor(Math.min(contentW, contentH))));
+    panel.style.setProperty('--rdp-joystick-size', `${size}px`);
+}
+function sizeJoystickPanel(panel, targetWidth, targetHeight = null, anchorLeft = null) {
+    if (!panel) return;
+    const aspect = 248 / 220;
+    let w = Math.max(150, Math.min(window.innerWidth - 12, Number(targetWidth) || 248));
+    let h = targetHeight == null ? Math.round(w / aspect) : Number(targetHeight);
+    h = Math.max(140, Math.min(window.innerHeight - 12, h || 220));
+    w = Math.max(150, Math.min(window.innerWidth - 12, Math.round(h * aspect)));
+    panel.style.width = `${w}px`;
+    panel.style.height = `${h}px`;
+    if (anchorLeft !== null && Number.isFinite(anchorLeft)) panel.style.left = `${Math.max(4, Math.min(window.innerWidth - w - 4, anchorLeft))}px`;
+    updateJoystickPanelScale(panel);
+}
 function placePanel(panel, anchor = null) {
     if (!panel) return;
     const stageRect = $('#rdpStage')?.getBoundingClientRect?.() || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight };
-    const width = Math.min(Math.max(panel.offsetWidth || 320, 260), Math.max(260, stageRect.width - 16));
-    const height = Math.min(Math.max(panel.offsetHeight || 260, 220), Math.max(220, stageRect.height - 16));
+    const isJoystick = panel.id === 'joystickPanel';
+    const defaultW = isJoystick ? 248 : 320;
+    const defaultH = isJoystick ? 220 : 260;
+    const minW = isJoystick ? 150 : 260;
+    const minH = isJoystick ? 140 : 220;
+    const width = Math.min(Math.max(panel.offsetWidth || defaultW, minW), Math.max(minW, stageRect.width - 16));
+    const height = Math.min(Math.max(panel.offsetHeight || defaultH, minH), Math.max(minH, stageRect.height - 16));
     const anchorRect = anchor?.getBoundingClientRect?.();
     const preferredLeft = anchorRect ? anchorRect.left + anchorRect.width / 2 - width / 2 : stageRect.left + 12;
     const preferredTop = anchorRect ? anchorRect.bottom + 10 : stageRect.top + 12;
@@ -1094,6 +1134,11 @@ function placePanel(panel, anchor = null) {
     panel.style.top = `${Math.round(top - stageRect.top)}px`;
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
+    if (isJoystick) {
+        sizeJoystickPanel(panel, width, height);
+        panel.style.left = `${Math.round(left - stageRect.left)}px`;
+        panel.style.top = `${Math.round(top - stageRect.top)}px`;
+    }
 }
 function showPanel(panel, anchor = null) {
     if (!panel) return;
@@ -1153,6 +1198,16 @@ function setupFloatingPanels() {
             const start = { x: event.clientX, y: event.clientY };
             const rect = panel.getBoundingClientRect();
             const move = (ev) => {
+                if (panel.id === 'joystickPanel') {
+                    const dx = ev.clientX - start.x;
+                    const dy = ev.clientY - start.y;
+                    const edgeSign = edge.includes('left') ? -1 : 1;
+                    const delta = Math.abs(dx) > Math.abs(dy) ? dx * edgeSign : dy;
+                    const targetW = rect.width + delta;
+                    const anchorLeft = edge.includes('left') ? rect.right - Math.max(150, targetW) : rect.left;
+                    sizeJoystickPanel(panel, targetW, null, anchorLeft);
+                    return;
+                }
                 let w = rect.width;
                 let h = rect.height;
                 let left = rect.left;
@@ -1191,7 +1246,7 @@ function setupJoystickPanel() {
     container.dataset.boundJoystick = '1';
     let timer = null;
     let vector = { x: 0, y: 0 };
-    const stop = () => { if (timer) clearInterval(timer); timer = null; vector = { x: 0, y: 0 }; knob.classList.add('smooth-back'); knob.style.transform = 'translate(0,0)'; setTimeout(() => knob.classList.remove('smooth-back'), 220); };
+    const stop = () => { if (timer) clearInterval(timer); timer = null; vector = { x: 0, y: 0 }; setRdpInputSuppressed(false, 220); knob.classList.add('smooth-back'); knob.style.transform = 'translate(0,0)'; setTimeout(() => knob.classList.remove('smooth-back'), 220); };
     const tick = () => {
         const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
         if (!canvas || !client?._sendMessage) return;
@@ -1204,24 +1259,35 @@ function setupJoystickPanel() {
     };
     container.addEventListener('pointerdown', (event) => {
         event.preventDefault();
-        container.setPointerCapture?.(event.pointerId);
+        event.stopPropagation();
+        setRdpInputSuppressed(true);
+        showPanel(panel);
+        try { container.setPointerCapture?.(event.pointerId); } catch {}
         const rect = container.getBoundingClientRect();
         const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
         const move = (ev) => {
             const dx = ev.clientX - center.x;
             const dy = ev.clientY - center.y;
             const len = Math.max(1, Math.hypot(dx, dy));
-            const max = 46;
+            const max = Math.max(24, rect.width * 0.23);
             const k = Math.min(max, len) / len;
             knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
             vector = { x: Math.max(-1, Math.min(1, dx / max)), y: Math.max(-1, Math.min(1, dy / max)) };
             if (!timer) timer = setInterval(tick, 35);
         };
-        const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); stop(); };
+        const up = () => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            window.removeEventListener('pointercancel', up);
+            stop();
+        };
         move(event);
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up, { once: true });
+        window.addEventListener('pointercancel', up, { once: true });
+        container.addEventListener('pointerup', up, { once: true });
     });
+    container.addEventListener('pointercancel', () => stop());
 }
 
 function bindControls() {

@@ -79,6 +79,8 @@ let rdpScaleZoom = 1;
 let rdpViewportOffsetX = 0;
 let rdpViewportOffsetY = 0;
 let rdpJoystickState = null;
+let rdpInputSuppressed = false;
+let rdpInputSuppressedUntil = 0;
 let rdpReconnectTimer = 0;
 let rdpReconnectPending = false;
 let rdpReconnectSeq = 0;
@@ -738,6 +740,7 @@ function setupMobilePointerMouse() {
         notifyParentActivity();
     }
     stage.addEventListener('pointerdown', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         if (!isTouchLikePointer(event)) return;
         lastPointerTouchAt = Date.now();
         if (isUI(event.target)) return;
@@ -759,6 +762,7 @@ function setupMobilePointerMouse() {
         } else cancelLP();
     }, { passive: false });
     stage.addEventListener('pointermove', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         if (!isTouchLikePointer(event)) return;
         lastPointerTouchAt = Date.now();
         const t = rdpTouches.get(event.pointerId);
@@ -786,6 +790,7 @@ function setupMobilePointerMouse() {
         else if (t.downSent) sendMove(pos);
     }, { passive: false });
     stage.addEventListener('pointerup', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); rdpTouches.delete(event.pointerId); return; }
         if (!isTouchLikePointer(event)) return;
         lastPointerTouchAt = Date.now();
         const t = rdpTouches.get(event.pointerId);
@@ -807,6 +812,7 @@ function setupMobilePointerMouse() {
         updateRdpPointer(event.clientX, event.clientY, false);
     }, { passive: false });
     stage.addEventListener('pointercancel', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); rdpTouches.delete(event.pointerId); return; }
         const t = rdpTouches.get(event.pointerId);
         if (t?.downSent) sendButton(t.lastPos || t.pos, 1, false);
         rdpTouches.delete(event.pointerId);
@@ -817,6 +823,7 @@ function setupMobilePointerMouse() {
     const touchId = (touch) => `t${touch.identifier}`;
     const eventFromTouch = (touch) => ({ clientX: touch.clientX, clientY: touch.clientY, target: touch.target || stage });
     stage.addEventListener('touchstart', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         if (Date.now() - lastPointerTouchAt < 450) return;
         if (isUI(event.target)) return;
         const touches = Array.from(event.changedTouches || []);
@@ -843,6 +850,7 @@ function setupMobilePointerMouse() {
         } else cancelLP();
     }, { passive: false });
     stage.addEventListener('touchmove', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         if (Date.now() - lastPointerTouchAt < 450) return;
         const touches = Array.from(event.changedTouches || []);
         if (!touches.length) return;
@@ -876,6 +884,7 @@ function setupMobilePointerMouse() {
         else if (t.downSent) sendMove(pos);
     }, { passive: false });
     stage.addEventListener('touchend', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         if (Date.now() - lastPointerTouchAt < 450) return;
         const touches = Array.from(event.changedTouches || []);
         if (!touches.length) return;
@@ -901,6 +910,7 @@ function setupMobilePointerMouse() {
         if (rdpTouches.size === 0) cancelLP();
     }, { passive: false });
     stage.addEventListener('touchcancel', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         if (Date.now() - lastPointerTouchAt < 450) return;
         for (const touch of Array.from(event.changedTouches || [])) {
             const id = touchId(touch);
@@ -911,6 +921,7 @@ function setupMobilePointerMouse() {
         if (rdpTouches.size === 0) { cancelLP(); twoFingerState = null; }
     }, { passive: true });
     stage.addEventListener('wheel', (event) => {
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         if (isUI(event.target)) return;
         const pos = getRemotePointerPosition(event);
         if (!pos || !connected) return;
@@ -1641,6 +1652,9 @@ function floatingPanels() {
 
 function getDefaultPanelOptions(panel) {
     const parentRect = panel?.parentElement?.getBoundingClientRect?.() || { width: window.innerWidth, height: window.innerHeight };
+    if (panel === joystickPanel) {
+        return { left: 10, top: Math.max(48, parentRect.height - 228), width: Math.min(248, parentRect.width - 20), height: 220 };
+    }
     if (isCompactScreen()) {
         if (panel === joystickPanel) {
             return { left: 10, top: Math.max(48, parentRect.height - 274), width: Math.min(300, parentRect.width - 20), height: 248 };
@@ -1677,6 +1691,7 @@ function ensureFloatingPanel(panel, defaults = {}) {
         width: `${width}px`,
         height: `${height}px`,
     });
+    if (panel === joystickPanel) sizeJoystickPanel(panel, width, height, left);
     panel.dataset.floatingReady = '1';
     console.info('[rdp-client]', 'floating panel initialized', { id: panel.id, left, top, width, height });
 }
@@ -1987,6 +2002,16 @@ function setupPanelResize() {
 
             const onMove = (ev) => {
                 ev.preventDefault();
+                if (panel === joystickPanel) {
+                    const dx = ev.clientX - startX;
+                    const dy = ev.clientY - startY;
+                    const edgeSign = edge === 'left' ? -1 : 1;
+                    const delta = Math.abs(dx) > Math.abs(dy) ? dx * edgeSign : dy;
+                    const targetW = startWidth + delta;
+                    const anchorLeft = edge === 'left' ? startLeft + startWidth - Math.max(150, targetW) : startLeft;
+                    sizeJoystickPanel(panel, targetW, null, anchorLeft);
+                    return;
+                }
                 let nextLeft = startLeft;
                 let nextWidth = startWidth + ev.clientX - startX;
                 if (edge === 'left') {
@@ -2029,7 +2054,6 @@ function setupViewportJoystick() {
     if (!joystickContainer || !joystickKnob || joystickContainer.dataset.ready === '1') return;
     joystickContainer.dataset.ready = '1';
     const icons = joystickContainer.querySelectorAll('.rdp-joystick-icon');
-    const maxRadius = 24;
     const deadzone = 4;
     const maxTilt = 14;
     let active = false;
@@ -2040,6 +2064,7 @@ function setupViewportJoystick() {
 
     const clearHighlights = () => icons.forEach((icon) => icon.classList.remove('active'));
     const applyVisual = (x, y) => {
+        const maxRadius = Math.max(24, joystickContainer.getBoundingClientRect().width * 0.23);
         const clampedX = Math.min(Math.max(x, -maxRadius), maxRadius);
         const clampedY = Math.min(Math.max(y, -maxRadius), maxRadius);
         const distance = Math.hypot(clampedX, clampedY);
@@ -2058,6 +2083,7 @@ function setupViewportJoystick() {
     const reset = (smooth = true) => {
         if (raf) cancelAnimationFrame(raf);
         raf = 0;
+        setRdpInputSuppressed(false, 220);
         if (smooth) joystickKnob.classList.add('smooth-back');
         joystickKnob.style.transform = 'translate(0px, 0px) rotateX(0deg) rotateY(0deg)';
         clearHighlights();
@@ -2100,6 +2126,7 @@ function setupViewportJoystick() {
     joystickKnob.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         event.stopPropagation();
+        setRdpInputSuppressed(true);
         bringPanelToFront(joystickPanel);
         active = true;
         startX = event.clientX;
@@ -2172,6 +2199,35 @@ function togglePanel(panel, force, sourceButton = null) {
         window.setTimeout(() => clearRdpPanelMotion(panel), 320);
     }
     console.info('[rdp-client]', 'floating panel toggled', { id: panel.id, open: shouldShow });
+}
+
+function updateJoystickPanelScale(panel = joystickPanel) {
+    if (!panel || !joystickContainer) return;
+    const rect = panel.getBoundingClientRect?.() || { width: 248, height: 220 };
+    const contentW = Math.max(1, rect.width - 34);
+    const contentH = Math.max(1, rect.height - 58);
+    const size = Math.max(112, Math.min(260, Math.floor(Math.min(contentW, contentH))));
+    panel.style.setProperty('--rdp-joystick-size', `${size}px`);
+}
+function sizeJoystickPanel(panel, targetWidth, targetHeight = null, anchorLeft = null) {
+    if (!panel) return;
+    const aspect = 248 / 220;
+    let w = Math.max(150, Math.min(window.innerWidth - 12, Number(targetWidth) || 248));
+    let h = targetHeight == null ? Math.round(w / aspect) : Number(targetHeight);
+    h = Math.max(140, Math.min(window.innerHeight - 12, h || 220));
+    w = Math.max(150, Math.min(window.innerWidth - 12, Math.round(h * aspect)));
+    panel.style.width = `${w}px`;
+    panel.style.height = `${h}px`;
+    if (anchorLeft !== null && Number.isFinite(anchorLeft)) panel.style.left = `${Math.max(4, Math.min(window.innerWidth - w - 4, anchorLeft))}px`;
+    updateJoystickPanelScale(panel);
+}
+function setRdpInputSuppressed(value, holdMs = 180) {
+    rdpInputSuppressed = !!value;
+    rdpInputSuppressedUntil = value ? Number.POSITIVE_INFINITY : Date.now() + Math.max(0, Number(holdMs) || 0);
+    stage?.classList.toggle('joystick-active', !!value);
+}
+function isRdpInputSuppressed() {
+    return rdpInputSuppressed || Date.now() < rdpInputSuppressedUntil;
 }
 
 function setClipboardHint(message, level = 'info') {
