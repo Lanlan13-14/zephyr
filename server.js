@@ -1009,51 +1009,161 @@ async function testNoVncConnection(conn, timeout = 10000) {
 function classifyRdpError(err) {
     const msg = String(err?.message || err || '连接失败');
     if (/timed out|timeout|超时/i.test(msg)) return { code: 'timeout', message: 'RDP 连接超时' };
-    if (/authentication|auth|logon|password|denied|认证|密码/i.test(msg)) return { code: 'auth_failed', message: 'RDP 认证失败' };
+    if (/authentication|auth|logon|password|denied|credentials|ERRCONNECT_LOGON_FAILURE|0x00020009|认证|密码/i.test(msg)) return { code: 'auth_failed', message: 'RDP 认证失败' };
     if (/ECONNREFUSED|refused/i.test(msg)) return { code: 'refused', message: 'RDP 端口被拒绝' };
     if (/ENOTFOUND|EHOSTUNREACH|ENETUNREACH|unreachable|No route/i.test(msg)) return { code: 'unreachable', message: '网络不可达或主机不存在' };
+    if (/librdp_bridge|native bridge|FreeRDP3 bridge|Failed to load/i.test(msg)) return { code: 'dependency_missing', message: 'RDP native bridge 不可用' };
     return { code: 'unknown', message: msg };
+}
+
+function commandExists(command) {
+    const cmd = String(command || '').trim();
+    if (!cmd) return false;
+    if (cmd.includes('/') || path.isAbsolute(cmd)) {
+        try { return fs.existsSync(cmd) && fs.statSync(cmd).isFile(); } catch { return false; }
+    }
+    return String(process.env.PATH || '').split(path.delimiter).some((dir) => {
+        try { return fs.existsSync(path.join(dir, cmd)); } catch { return false; }
+    });
+}
+
+function testRdpWithNativeBridge({ host, port, username, password, domain }, timeout = 10000) {
+    return new Promise((resolve, reject) => {
+        const script = `
+import os, sys
+from rdp_bridge import NativeLibrary
+
+def b(value):
+    return (value or '').encode('utf-8')
+
+session = None
+try:
+    lib = NativeLibrary()
+    session = lib.rdp_create(
+        b(os.environ.get('ZEPHYR_RDP_TEST_HOST')),
+        int(os.environ.get('ZEPHYR_RDP_TEST_PORT') or '3389'),
+        b(os.environ.get('ZEPHYR_RDP_TEST_USERNAME')),
+        b(os.environ.get('ZEPHYR_RDP_TEST_PASSWORD')),
+        b(os.environ.get('ZEPHYR_RDP_TEST_DOMAIN')),
+        1280,
+        720,
+        32,
+    )
+    if not session:
+        raise RuntimeError('Failed to create native RDP session')
+    result = lib.rdp_connect(session)
+    if result != 0:
+        error = lib.rdp_get_error(session)
+        raise RuntimeError(error.decode('utf-8', errors='replace') if error else 'Native RDP connect failed')
+    print('OK', flush=True)
+    sys.exit(0)
+except Exception as exc:
+    print(str(exc), file=sys.stderr, flush=True)
+    sys.exit(1)
+finally:
+    if session is not None:
+        try:
+            lib.rdp_disconnect(session)
+        except Exception:
+            pass
+        try:
+            lib.rdp_destroy(session)
+        except Exception:
+            pass
+`;
+        const python = process.env.RDP_GFX_PYTHON || 'python3';
+        const env = {
+            ...process.env,
+            PYTHONUNBUFFERED: '1',
+            PYTHONPATH: path.dirname(RDP_GFX_BACKEND_SCRIPT),
+            ZEPHYR_RDP_TEST_HOST: String(host || ''),
+            ZEPHYR_RDP_TEST_PORT: String(Number(port) || 3389),
+            ZEPHYR_RDP_TEST_USERNAME: String(username || ''),
+            ZEPHYR_RDP_TEST_PASSWORD: String(password || ''),
+            ZEPHYR_RDP_TEST_DOMAIN: String(domain || ''),
+        };
+        const child = spawn(python, ['-c', script], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+        let output = '';
+        const timer = setTimeout(() => {
+            try { child.kill('SIGTERM'); } catch {}
+            reject(new Error('RDP native bridge 测试超时'));
+        }, timeout);
+        child.stdout?.on('data', (d) => { output += d.toString('utf8'); });
+        child.stderr?.on('data', (d) => { output += d.toString('utf8'); });
+        child.on('error', (err) => {
+            clearTimeout(timer);
+            reject(err);
+        });
+        child.on('close', (code) => {
+            clearTimeout(timer);
+            if (code === 0) resolve(output.trim());
+            else reject(new Error(output.trim().split('\n').filter(Boolean).slice(-6).join('\n') || `native bridge test exited ${code}`));
+        });
+    });
+}
+
+function testRdpWithXfreerdp({ host, port, username, password }, timeout = 10000) {
+    return new Promise((resolve, reject) => {
+        let child = null;
+        const args = [
+            `/v:${host}:${port}`,
+            `/u:${username || 'Administrator'}`,
+            `/p:${password || ''}`,
+            '/cert:ignore',
+            '/auth-only',
+            '/log-level:ERROR',
+        ];
+        const timer = setTimeout(() => {
+            try { child?.kill('SIGTERM'); } catch {}
+            reject(new Error('RDP 认证测试超时'));
+        }, timeout);
+        child = spawn(process.env.RDP_FREERDP_BIN || 'xfreerdp', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+        let errText = '';
+        child.stderr?.on('data', (d) => { errText += d.toString('utf8'); });
+        child.on('error', (err) => {
+            clearTimeout(timer);
+            reject(err);
+        });
+        child.on('close', (code) => {
+            clearTimeout(timer);
+            if (code === 0) resolve();
+            else reject(new Error(errText.trim().slice(0, 300) || `xfreerdp auth-only exited ${code}`));
+        });
+    });
 }
 
 async function testRDPConnection(conn, timeout = 10000) {
     const started = Date.now();
     const targetPort = Number(conn.port) || 3389;
     let routedForward = null;
-    let child = null;
     try {
         routedForward = await createRoutedTcpForward(conn, targetPort, timeout);
         const effectiveHost = routedForward?.host || conn.host;
         const effectivePort = routedForward?.port || targetPort;
-        await new Promise((resolve, reject) => {
-            const args = [
-                `/v:${effectiveHost}:${effectivePort}`,
-                `/u:${conn.username || 'Administrator'}`,
-                `/p:${conn.password || ''}`,
-                '/cert:ignore',
-                '/auth-only',
-                '/log-level:ERROR',
-            ];
-            const timer = setTimeout(() => {
-                try { child?.kill('SIGTERM'); } catch {}
-                reject(new Error('RDP 认证测试超时'));
-            }, timeout);
-            child = spawn(process.env.RDP_FREERDP_BIN || 'xfreerdp', args, { stdio: ['ignore', 'ignore', 'pipe'] });
-            let errText = '';
-            child.stderr?.on('data', (d) => { errText += d.toString('utf8'); });
-            child.on('error', reject);
-            child.on('close', (code) => {
-                clearTimeout(timer);
-                if (code === 0) resolve();
-                else reject(new Error(errText.trim().slice(0, 300) || `xfreerdp auth-only exited ${code}`));
-            });
-        });
+        const identity = splitRdpIdentity(conn);
+        const testTarget = {
+            host: effectiveHost,
+            port: effectivePort,
+            username: identity.username || conn.username || 'Administrator',
+            password: conn.password || '',
+            domain: identity.domain || '',
+        };
+        try {
+            await testRdpWithNativeBridge(testTarget, timeout);
+        } catch (nativeErr) {
+            const nativeClassified = classifyRdpError(nativeErr);
+            const xfreerdpBin = process.env.RDP_FREERDP_BIN || 'xfreerdp';
+            const xfreerdpAvailable = commandExists(xfreerdpBin);
+            if (nativeClassified.code !== 'dependency_missing' || !xfreerdpAvailable) throw nativeErr;
+            console.warn('[rdp-test]', 'native bridge unavailable, falling back to xfreerdp auth-only', { target: conn.host, error: nativeClassified.message });
+            await testRdpWithXfreerdp(testTarget, timeout);
+        }
         return { ok: true, code: 'success', message: `RDP 连接成功（${conn.host}:${targetPort}）`, durationMs: Date.now() - started };
     } catch (err) {
         const classified = classifyRdpError(err);
         console.warn('[rdp-test]', 'connection failed', { target: conn.host, code: classified.code, error: classified.message });
         return { ok: false, ...classified, durationMs: Date.now() - started };
     } finally {
-        try { child?.kill('SIGTERM'); } catch {}
         try { routedForward?.close?.(); } catch {}
     }
 }
