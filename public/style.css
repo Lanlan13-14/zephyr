@@ -10840,3 +10840,102 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 :root[data-wterm-theme="custom-light"] .terminal-container .wterm-wrapper.wterm {
     background-color: var(--wterm-custom-bg-overlay-light, rgba(245, 245, 247, .72)) !important;
 }
+
+/* Monitor panel horizontal pages + process list */
+.monitor-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 0 0 10px;
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    backdrop-filter: blur(18px) saturate(1.12);
+    -webkit-backdrop-filter: blur(18px) saturate(1.12);
+}
+.monitor-tab {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    color: var(--text-secondary);
+    font-weight: 700;
+    cursor: pointer;
+}
+.monitor-tab.active {
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+    background: color-mix(in srgb, var(--accent) 16%, var(--bg));
+    box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.monitor-pages-viewport {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+    margin: 0 -10px;
+}
+.monitor-pages-viewport::-webkit-scrollbar { display: none; }
+.monitor-page {
+    flex: 0 0 100%;
+    min-width: 100%;
+    scroll-snap-align: start;
+    padding: 0 10px 8px;
+    box-sizing: border-box;
+}
+.monitor-process-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.process-search,
+.process-sort {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg);
+    color: var(--text);
+    padding: 8px 10px;
+}
+.process-summary {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin: 2px 0 10px;
+}
+.process-list { display: grid; gap: 8px; }
+.process-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+}
+.process-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.process-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.process-name span,
+.process-meta,
+.process-args { color: var(--text-secondary); font-size: 11px; }
+.process-args { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 4px; max-width: 100%; }
+.process-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; }
+.process-actions { display: flex; flex-direction: column; gap: 6px; }
+.process-actions .tool-btn { min-height: 30px; padding: 5px 9px; }
+.process-empty { padding: 20px 10px; text-align: center; color: var(--text-secondary); border: 1px dashed var(--border); border-radius: 16px; }
+@media (max-width: 700px) {
+    .monitor-process-toolbar { grid-template-columns: minmax(0, 1fr) auto; }
+    .monitor-process-toolbar #processRefreshBtn { grid-column: 1 / -1; }
+    .process-row { grid-template-columns: minmax(0, 1fr); }
+    .process-actions { flex-direction: row; justify-content: flex-end; }
+}

@@ -300,6 +300,10 @@ let dockerLogBuffer = '';
 // 图表实例管理
 let chartInstances = {};
 let latestStatsData = null;
+let monitorPage = 0;
+let processSearch = '';
+let processSort = 'cpu';
+let processBusyPid = 0;
 let terminalScrollRaf = 0;
 let terminalScrollbarRaf = 0;
 let isProgrammaticTerminalScroll = false;
@@ -7750,6 +7754,70 @@ function setupMobileKeyboardAvoidance() {
     updateViewportInsets();
 }
 
+function renderProcessRows(processes = []) {
+    const q = processSearch.trim().toLowerCase();
+    const sorted = Array.from(processes || []).filter((p) => {
+        if (!q) return true;
+        return String(p.pid).includes(q) || String(p.user || '').toLowerCase().includes(q) || String(p.command || '').toLowerCase().includes(q) || String(p.args || '').toLowerCase().includes(q);
+    }).sort((a, b) => {
+        if (processSort === 'mem') return safeVal(b.mem) - safeVal(a.mem);
+        if (processSort === 'pid') return safeVal(a.pid) - safeVal(b.pid);
+        return safeVal(b.cpu) - safeVal(a.cpu);
+    }).slice(0, 60);
+    if (!sorted.length) return '<div class="process-empty">暂无进程数据</div>';
+    return sorted.map((p) => `
+        <div class="process-row" data-pid="${p.pid}">
+            <div class="process-main">
+                <div class="process-name"><b>${escapeHtml(p.command || 'process')}</b><span>PID ${p.pid}</span></div>
+                <div class="process-args">${escapeHtml(p.args || '')}</div>
+                <div class="process-meta"><span>${escapeHtml(p.user || '-')}</span><span>${escapeHtml(p.stat || '-')}</span><span>CPU ${safeVal(p.cpu).toFixed(1)}%</span><span>MEM ${safeVal(p.mem).toFixed(1)}%</span></div>
+            </div>
+            <div class="process-actions">
+                <button class="tool-btn" data-process-signal="TERM" data-pid="${p.pid}" ${processBusyPid === p.pid ? 'disabled' : ''}>结束</button>
+                <button class="tool-btn danger" data-process-signal="KILL" data-pid="${p.pid}" ${processBusyPid === p.pid ? 'disabled' : ''}>强制</button>
+            </div>
+        </div>
+    `).join('');
+}
+function renderProcessesPage(d = latestStatsData) {
+    const processes = Array.isArray(d?.processes) ? d.processes : [];
+    return `
+        <div class="monitor-process-toolbar">
+            <input id="processSearch" class="snippet-search process-search" placeholder="搜索 PID / 用户 / 命令" value="${escapeHtml(processSearch)}">
+            <select id="processSort" class="process-sort">
+                <option value="cpu" ${processSort === 'cpu' ? 'selected' : ''}>CPU 优先</option>
+                <option value="mem" ${processSort === 'mem' ? 'selected' : ''}>内存优先</option>
+                <option value="pid" ${processSort === 'pid' ? 'selected' : ''}>PID</option>
+            </select>
+            <button class="tool-btn" id="processRefreshBtn">刷新</button>
+        </div>
+        <div class="process-summary"><span>${processes.length} 个进程</span><span>右滑返回实时监控</span></div>
+        <div class="process-list">${renderProcessRows(processes)}</div>
+    `;
+}
+function bindProcessPageEvents() {
+    $('#processSearch')?.addEventListener('input', (event) => { processSearch = event.target.value || ''; renderStats(latestStatsData); });
+    $('#processSort')?.addEventListener('change', (event) => { processSort = event.target.value || 'cpu'; renderStats(latestStatsData); });
+    $('#processRefreshBtn')?.addEventListener('click', () => wsConnection?.send?.(JSON.stringify({ type: 'stats-request' })));
+    $$('.process-row [data-process-signal]').forEach((btn) => btn.addEventListener('click', () => {
+        const pid = Number(btn.dataset.pid);
+        const signal = btn.dataset.processSignal || 'TERM';
+        if (!pid) return;
+        if (signal === 'KILL' && !confirm(`确定强制结束进程 ${pid}？`)) return;
+        processBusyPid = pid;
+        renderStats(latestStatsData);
+        wsConnection?.send?.(JSON.stringify({ type: 'process-signal', pid, signal }));
+    }));
+}
+function bindMonitorPager() {
+    $$('.monitor-tab').forEach((btn) => btn.addEventListener('click', () => { monitorPage = Number(btn.dataset.monitorPage) || 0; renderStats(latestStatsData); }));
+    const viewport = $('.monitor-pages-viewport');
+    viewport?.addEventListener('scroll', () => {
+        const next = viewport.scrollLeft > viewport.clientWidth * 0.45 ? 1 : 0;
+        if (next !== monitorPage) { monitorPage = next; $$('.monitor-tab').forEach((btn) => btn.classList.toggle('active', Number(btn.dataset.monitorPage) === monitorPage)); }
+    }, { passive: true });
+}
+
 function renderStats(d) {
     if (!infoBody || !d) return;
     latestStatsData = d;
@@ -7779,6 +7847,12 @@ function renderStats(d) {
     `).join('');
 
     infoBody.innerHTML = `
+        <div class="monitor-tabs" role="tablist" aria-label="监控分页">
+            <button class="monitor-tab ${monitorPage === 0 ? 'active' : ''}" data-monitor-page="0" type="button">概览</button>
+            <button class="monitor-tab ${monitorPage === 1 ? 'active' : ''}" data-monitor-page="1" type="button">进程</button>
+        </div>
+        <div class="monitor-pages-viewport" style="--monitor-page:${monitorPage}">
+            <section class="monitor-page monitor-overview-page">
         <div class="doughnut-row">
             <div class="doughnut-item disk-card full-width">
                 <div class="disk-card-meta">
@@ -7834,7 +7908,19 @@ function renderStats(d) {
             <div class="ip-box"><span>IPv4</span><code>${ipv4}</code><button class="copy-ip-btn" aria-label="复制 IPv4" onclick="navigator.clipboard.writeText('${ipv4}')">${zephyrButtonGlyph('copy', '复制')}</button></div>
             <div class="ip-box"><span>IPv6</span><code>${ipv6}</code><button class="copy-ip-btn" aria-label="复制 IPv6" onclick="navigator.clipboard.writeText('${ipv6}')">${zephyrButtonGlyph('copy', '复制')}</button></div>
         </div>
+            </section>
+            <section class="monitor-page monitor-process-page">
+                ${renderProcessesPage(d)}
+            </section>
+        </div>
     `;
+
+    bindMonitorPager();
+    bindProcessPageEvents();
+    requestAnimationFrame(() => {
+        const viewport = $('.monitor-pages-viewport');
+        if (viewport) viewport.scrollTo({ left: monitorPage * viewport.clientWidth, behavior: 'auto' });
+    });
 
     try {
         initCharts();
@@ -9483,6 +9569,12 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                     if (infoBody && (!latestStatsData || infoBody.querySelector('.info-loading'))) {
                         infoBody.innerHTML = `<div class="info-loading error">实时监控数据加载失败：${escapeHtml(msg.message || '未知错误')}</div>`;
                     }
+                    return;
+                }
+                if (msg.type === 'process-action-result') {
+                    processBusyPid = 0;
+                    showToast(msg.message || (msg.ok ? '进程操作已发送' : '进程操作失败'), msg.ok ? 'success' : 'error');
+                    wsConnection?.send?.(JSON.stringify({ type: 'stats-request' }));
                     return;
                 }
                 if (msg.type?.startsWith('sftp-')) {

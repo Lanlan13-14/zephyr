@@ -17,6 +17,8 @@ const STAT_COMMAND = [
   "printf '\n__END_CPUINFO__\n'",
   'uname -srmo 2>/dev/null || true',
   "printf '\n__END_UNAME__\n'",
+  'ps -eo pid=,user=,pcpu=,pmem=,stat=,comm=,args= --sort=-pcpu 2>/dev/null | head -n 61 || true',
+  "printf '\n__END_PROC__\n'",
   'hostname 2>/dev/null || true'
 ].join(' && ');
 
@@ -65,8 +67,9 @@ function splitSections(raw) {
   const [ip4, rest6] = (rest5 || '').split('\n__END_IP4__\n');
   const [ip6, rest7] = (rest6 || '').split('\n__END_IP6__\n');
   const [cpuinfo, rest8] = (rest7 || '').split('\n__END_CPUINFO__\n');
-  const [unameInfo, hostname] = (rest8 || '').split('\n__END_UNAME__\n');
-  return { cpu, mem, disk, diskstats, net, ip4, ip6, cpuinfo, unameInfo, hostname };
+  const [unameInfo, rest9] = (rest8 || '').split('\n__END_UNAME__\n');
+  const [processes, hostname] = (rest9 || '').split('\n__END_PROC__\n');
+  return { cpu, mem, disk, diskstats, net, ip4, ip6, cpuinfo, unameInfo, processes, hostname };
 }
 
 function parseCpuStat(raw) {
@@ -234,6 +237,25 @@ function parseCPUInfo(raw) {
   return { model, freq, cores };
 }
 
+function parseProcesses(raw) {
+  return raw.split('\n').map((line) => {
+    const text = line.trim();
+    if (!text) return null;
+    const match = text.match(/^(\d+)\s+(\S+)\s+([\d.]+)\s+([\d.]+)\s+(\S+)\s+(\S+)\s*(.*)$/);
+    if (!match) return null;
+    const [, pid, user, cpu, mem, stat, command, args] = match;
+    return {
+      pid: Number(pid) || 0,
+      user,
+      cpu: Number(Number(cpu).toFixed(1)) || 0,
+      mem: Number(Number(mem).toFixed(1)) || 0,
+      stat,
+      command,
+      args: String(args || command).slice(0, 500)
+    };
+  }).filter((p) => p && p.pid > 0);
+}
+
 function parseUname(raw) {
   return raw.trim() || 'N/A';
 }
@@ -265,6 +287,7 @@ async function getRemoteStats(sshClient, previous = {}) {
   const ipv4 = parseIp(sections.ip4);
   const ipv6 = parseIp(sections.ip6);
   const cpuInfo = parseCPUInfo(sections.cpuinfo);
+  const processes = parseProcesses(sections.processes || '');
   const osInfo = parseUname(sections.unameInfo);
   const hostname = sections.hostname.trim() || 'N/A';
   const now = Date.now();
@@ -284,6 +307,7 @@ async function getRemoteStats(sshClient, previous = {}) {
       ...mem,
       disk,
       net,
+      processes,
       ip: { ipv4, ipv6 },
       host: { hostname, os: osInfo }
     },

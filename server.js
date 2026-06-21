@@ -5953,6 +5953,26 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
             return;
         }
 
+        if (msg.type === 'process-signal') {
+            if (!sshClient) {
+                sendJSON({ type: 'process-action-result', ok: false, message: 'SSH 未连接' });
+                return;
+            }
+            const pid = Math.floor(Number(msg.pid));
+            const signal = String(msg.signal || 'TERM').toUpperCase() === 'KILL' ? 'KILL' : 'TERM';
+            if (!Number.isFinite(pid) || pid <= 1) {
+                sendJSON({ type: 'process-action-result', ok: false, message: 'PID 无效或不允许操作系统关键进程' });
+                return;
+            }
+            try {
+                await execRemoteCommand(sshClient, `kill -s ${signal} ${pid}`);
+                sendJSON({ type: 'process-action-result', ok: true, pid, signal, message: `${signal === 'KILL' ? '强制结束' : '结束'}进程 ${pid} 的信号已发送` });
+            } catch (err) {
+                sendJSON({ type: 'process-action-result', ok: false, pid, signal, message: err.message || '进程操作失败' });
+            }
+            return;
+        }
+
         // ------------------------- Docker 操作 -------------------------
         if (typeof msg.type === 'string' && msg.type.startsWith('docker-')) {
             await handleDockerMessage(msg);
