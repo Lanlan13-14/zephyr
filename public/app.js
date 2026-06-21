@@ -191,9 +191,10 @@ function handleSharedClipboardMessage(data = {}) {
         const files = normalizeSharedClipboardFiles(data.files || []);
         if (!files.length) return true;
         updateZephyrSharedClipboard({ type: 'files', files, sourceTabId, sourcePage: terminalPageForTab(sourceTabId) });
-        // If source is RDP/VNC, offer to SSH targets
+        // If source is RDP/VNC, offer to both SSH targets and other RDP/VNC targets.
         if (isRemoteDesktopPage(terminalPageForTab(sourceTabId))) {
             offerSharedClipboardToSshTargets(sourceTabId, files);
+            offerSharedClipboardToRdpTargets(sourceTabId, files);
         }
         // If source is SSH, offer to RDP targets
         else {
