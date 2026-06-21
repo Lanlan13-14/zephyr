@@ -965,11 +965,20 @@ function applyTerminalAppearance(appearance = {}) {
     if (hasBg) {
         root.style.setProperty('--wterm-custom-bg-image', `url("${safeUrl}")`);
         root.style.setProperty('--wterm-custom-bg-size', bg.fit || 'cover');
-        root.style.setProperty('--wterm-custom-bg-opacity', String(Math.max(0, Math.min(1, Number(bg.opacity ?? 0.35)))));
+        const bgOpacity = Math.max(0, Math.min(1, Number(bg.opacity ?? 0.35)));
+        root.style.setProperty('--wterm-custom-bg-opacity', String(bgOpacity));
+        root.style.setProperty('--wterm-custom-bg-overlay', String(1 - bgOpacity));
+        root.style.setProperty('--wterm-custom-bg-overlay-percent', `${Math.round((1 - bgOpacity) * 100)}%`);
+        root.style.setProperty('--wterm-custom-bg-overlay-dark', `rgba(10, 10, 10, ${1 - bgOpacity})`);
+        root.style.setProperty('--wterm-custom-bg-overlay-light', `rgba(245, 245, 247, ${1 - bgOpacity})`);
     } else {
         root.style.removeProperty('--wterm-custom-bg-image');
         root.style.removeProperty('--wterm-custom-bg-size');
         root.style.removeProperty('--wterm-custom-bg-opacity');
+        root.style.removeProperty('--wterm-custom-bg-overlay');
+        root.style.removeProperty('--wterm-custom-bg-overlay-percent');
+        root.style.removeProperty('--wterm-custom-bg-overlay-dark');
+        root.style.removeProperty('--wterm-custom-bg-overlay-light');
     }
     const fontColor = currentTerminalFontColor(terminalAppearance);
     if (fontColor) {

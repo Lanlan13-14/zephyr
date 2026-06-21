@@ -9821,12 +9821,12 @@ textarea,
 :root[data-wterm-theme^="custom-"] .terminal-container .wterm-wrapper.wterm {
     position: relative;
     z-index: 2;
-    background: color-mix(in srgb, var(--wterm-bg) 68%, transparent) !important;
+    background: var(--wterm-custom-bg-overlay-dark, rgba(10, 10, 10, .65)) !important;
     color: var(--wterm-custom-fg, var(--wterm-fg)) !important;
 }
 :root[data-wterm-theme="custom-light"] .terminal-container .wterm-wrapper,
 :root[data-wterm-theme="custom-light"] .terminal-container .wterm-wrapper.wterm {
-    background: color-mix(in srgb, var(--wterm-bg) 76%, transparent) !important;
+    background: var(--wterm-custom-bg-overlay-light, rgba(245, 245, 247, .72)) !important;
 }
 :root[data-wterm-theme^="custom-"][data-wterm-font-custom="1"] .terminal-container .wterm-wrapper * { color: var(--wterm-custom-fg, var(--wterm-fg)); }
 
@@ -10708,14 +10708,14 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 /* SSH terminal display fixes: TUI reverse blocks, split toolbar wrapping, custom background readability */
 :root[data-wterm-theme^="custom-"] .terminal-container .wterm-wrapper,
 :root[data-wterm-theme^="custom-"] .terminal-container .wterm-wrapper.wterm {
-    background: color-mix(in srgb, var(--wterm-bg) 84%, transparent) !important;
+    background: var(--wterm-custom-bg-overlay-dark, rgba(10, 10, 10, .65)) !important;
 }
 :root[data-wterm-theme="custom-light"] .terminal-container .wterm-wrapper,
 :root[data-wterm-theme="custom-light"] .terminal-container .wterm-wrapper.wterm {
-    background: color-mix(in srgb, var(--wterm-bg) 88%, transparent) !important;
+    background: var(--wterm-custom-bg-overlay-light, rgba(245, 245, 247, .72)) !important;
 }
 :root[data-wterm-theme^="custom-"] .terminal-container::before {
-    opacity: min(var(--wterm-custom-bg-opacity, .35), .24);
+    opacity: var(--wterm-custom-bg-opacity, .35);
 }
 .terminal-container .wterm-wrapper .term-row,
 .terminal-container .wterm-wrapper .term-scrollback-row {
@@ -10770,4 +10770,73 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     max-width: 58px;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* Terminal background intensity slider: make visual track reach both edges. */
+.terminal-bg-opacity-range.edge-range {
+    --range-thumb-size: 24px;
+    width: calc(100% + var(--range-thumb-size));
+    margin: 6px calc(var(--range-thumb-size) / -2) 8px;
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    accent-color: var(--accent);
+}
+.terminal-bg-opacity-range.edge-range::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 34%, transparent), var(--accent));
+}
+.terminal-bg-opacity-range.edge-range::-webkit-slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+    width: var(--range-thumb-size);
+    height: var(--range-thumb-size);
+    margin-top: calc((6px - var(--range-thumb-size)) / 2);
+    border: 2px solid var(--bg);
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+.terminal-bg-opacity-range.edge-range::-moz-range-track {
+    height: 6px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 34%, transparent), var(--accent));
+}
+.terminal-bg-opacity-range.edge-range::-moz-range-thumb {
+    width: var(--range-thumb-size);
+    height: var(--range-thumb-size);
+    border: 2px solid var(--bg);
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+/* Final override: terminal custom background strength must map 0%-100% visibly. */
+:root[data-wterm-theme^="custom-"] .terminal-container {
+    background: transparent !important;
+}
+:root[data-wterm-theme^="custom-"] .terminal-container::before {
+    opacity: var(--wterm-custom-bg-opacity, .35) !important;
+}
+:root[data-wterm-theme^="custom-"] .terminal-container .wterm-wrapper,
+:root[data-wterm-theme^="custom-"] .terminal-container .wterm-wrapper.wterm {
+    background: var(--wterm-custom-bg-overlay-dark, rgba(10, 10, 10, .65)) !important;
+}
+:root[data-wterm-theme="custom-light"] .terminal-container .wterm-wrapper,
+:root[data-wterm-theme="custom-light"] .terminal-container .wterm-wrapper.wterm {
+    background: var(--wterm-custom-bg-overlay-light, rgba(245, 245, 247, .72)) !important;
+}
+
+/* Hard override background-color too; some mobile WebViews keep background-color from earlier rules. */
+:root[data-wterm-theme^="custom-"] .terminal-container {
+    background-color: transparent !important;
+}
+:root[data-wterm-theme^="custom-"] .terminal-container .wterm-wrapper,
+:root[data-wterm-theme^="custom-"] .terminal-container .wterm-wrapper.wterm {
+    background-color: var(--wterm-custom-bg-overlay-dark, rgba(10, 10, 10, .65)) !important;
+}
+:root[data-wterm-theme="custom-light"] .terminal-container .wterm-wrapper,
+:root[data-wterm-theme="custom-light"] .terminal-container .wterm-wrapper.wterm {
+    background-color: var(--wterm-custom-bg-overlay-light, rgba(245, 245, 247, .72)) !important;
 }
