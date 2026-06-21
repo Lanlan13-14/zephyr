@@ -7796,7 +7796,7 @@ function renderProcessesPage(d = latestStatsData) {
             </select>
             <button class="tool-btn" id="processRefreshBtn">刷新</button>
         </div>
-        <div class="process-summary"><span>${processes.length} 个进程</span><span>建议点上方分页切换</span></div>
+        <div class="process-summary"><span>${processes.length} 个进程</span></div>
         <div class="process-list">${renderProcessRows(processes)}</div>
     `;
 }
@@ -7816,14 +7816,45 @@ function bindProcessPageEvents() {
 }
 function setMonitorPage(page, { render = true } = {}) {
     const next = Math.max(0, Math.min(1, Number(page) || 0));
-    if (next === monitorPage) {
-        $$('.monitor-tab').forEach((btn) => btn.classList.toggle('active', Number(btn.dataset.monitorPage) === monitorPage));
-        return;
-    }
+    if (next === monitorPage) return;
     monitorPrevPage = monitorPage;
     monitorSwitchDirection = next > monitorPage ? 1 : -1;
-    monitorPageSwitching = true;
     monitorPage = next;
+    monitorPageSwitching = true;
+    // Animate existing DOM without rebuilding
+    const viewport = $('.monitor-pages-viewport');
+    const tabs = $$('.monitor-tab');
+    if (viewport && tabs.length) {
+        viewport.setAttribute('data-monitor-dir', String(monitorSwitchDirection));
+        viewport.setAttribute('data-monitor-page', String(monitorPage));
+        viewport.setAttribute('data-monitor-prev-page', String(monitorPrevPage));
+        viewport.classList.add('switching');
+        const oldPage = viewport.querySelector(`.monitor-page-${monitorPrevPage}`);
+        const newPage = viewport.querySelector(`.monitor-page-${monitorPage}`);
+        tabs.forEach((btn) => btn.classList.toggle('active', Number(btn.dataset.monitorPage) === monitorPage));
+        // Show both pages during animation
+        [oldPage, newPage].forEach((p) => { if (p) { p.removeAttribute('hidden'); p.style.display = 'block'; } });
+        // Old page leaves (CSS transition)
+        if (oldPage) { oldPage.classList.remove('active'); oldPage.classList.add('leaving'); }
+        // New page enters — force reflow so CSS transition picks up
+        if (newPage) {
+            newPage.style.transition = 'none';
+            newPage.classList.remove('active', 'leaving');
+            void newPage.offsetWidth;
+            newPage.style.removeProperty('transition');
+            newPage.classList.add('active');
+        }
+        // After animation: rebuild DOM cleanly
+        window.clearTimeout(renderStats._monitorSwitchTimer);
+        renderStats._monitorSwitchTimer = window.setTimeout(() => {
+            monitorPageSwitching = false;
+            monitorPrevPage = monitorPage;
+            if (render && latestStatsData) renderStats(latestStatsData);
+        }, 300);
+        return;
+    }
+    // Fallback: viewport not in DOM, rebuild directly
+    monitorPageSwitching = false;
     if (render && latestStatsData) renderStats(latestStatsData);
 }
 function bindMonitorPager() {
@@ -7888,11 +7919,11 @@ function renderStats(d) {
         : null;
     const isMonitorSwitching = monitorPageSwitching && monitorPrevPage !== monitorPage;
     const monitorDir = monitorSwitchDirection >= 0 ? 1 : -1;
-    const monitorPageClass = (page, base) => [
+    const monitorPageClass = (page) => [
         'monitor-page',
-        base,
+        `monitor-page-${page}`,
+        page === 0 ? 'monitor-overview-page' : 'monitor-process-page',
         monitorPage === page ? 'active' : '',
-        isMonitorSwitching && monitorPrevPage === page ? 'leaving' : '',
     ].filter(Boolean).join(' ');
     const monitorPageHidden = (page) => (monitorPage === page || (isMonitorSwitching && monitorPrevPage === page)) ? '' : 'hidden';
 
@@ -7902,7 +7933,7 @@ function renderStats(d) {
             <button class="monitor-tab ${monitorPage === 1 ? 'active' : ''}" data-monitor-page="1" type="button">进程</button>
         </div>
         <div class="monitor-pages-viewport ${isMonitorSwitching ? 'switching' : ''}" data-monitor-page="${monitorPage}" data-monitor-prev-page="${monitorPrevPage}" data-monitor-dir="${monitorDir}">
-            <section class="${monitorPageClass(0, 'monitor-overview-page')}" ${monitorPageHidden(0)}>
+            <section class="${monitorPageClass(0)}" ${monitorPageHidden(0)}>
         <div class="doughnut-row">
             <div class="doughnut-item disk-card full-width">
                 <div class="disk-card-meta">
@@ -7959,7 +7990,7 @@ function renderStats(d) {
             <div class="ip-box"><span>IPv6</span><code>${ipv6}</code><button class="copy-ip-btn" aria-label="复制 IPv6" onclick="navigator.clipboard.writeText('${ipv6}')">${zephyrButtonGlyph('copy', '复制')}</button></div>
         </div>
             </section>
-            <section class="${monitorPageClass(1, 'monitor-process-page')}" ${monitorPageHidden(1)}>
+            <section class="${monitorPageClass(1)}" ${monitorPageHidden(1)}>
                 ${renderProcessesPage(d)}
             </section>
         </div>
@@ -7968,12 +7999,13 @@ function renderStats(d) {
     bindMonitorPager();
     bindProcessPageEvents();
     if (isMonitorSwitching) {
-        window.clearTimeout(renderStats._monitorSwitchTimer);
-        renderStats._monitorSwitchTimer = window.setTimeout(() => {
+        window.clearTimeout(renderStats._monitorSwitchCleanup);
+        renderStats._monitorSwitchCleanup = window.setTimeout(() => {
+            if (!monitorPageSwitching) return;
             monitorPageSwitching = false;
             monitorPrevPage = monitorPage;
             if (latestStatsData) renderStats(latestStatsData);
-        }, 260);
+        }, 300);
     }
     requestAnimationFrame(() => {
         if (previousBodyScrollTop && monitorPage === 0) infoBody.scrollTop = previousBodyScrollTop;
