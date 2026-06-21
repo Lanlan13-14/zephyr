@@ -4293,22 +4293,25 @@ html.keyboard-open .terminal-page {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    box-shadow: 0 28px 90px rgba(0,0,0,0.38);
     z-index: 30;
     display: none;
     flex-direction: column;
     overflow: hidden;
     opacity: 0;
+    visibility: hidden;
     transform: perspective(1200px) scale(0.78) translate3d(0, -26px, 0);
     transform-origin: top right;
     filter: blur(8px);
     transition:
         transform 0.42s cubic-bezier(0.16, 1, 0.3, 1),
         opacity 0.28s ease,
-        filter 0.32s ease;
+        filter 0.32s ease,
+        visibility 0.36s;
     will-change: transform, opacity, filter;
 }
 .info-modal.open {
+    visibility: visible;
     opacity: 1;
     transform: scale(1) translateY(0);
     filter: blur(0);
@@ -4318,7 +4321,14 @@ html.keyboard-open .terminal-page {
     padding: 10px 14px; background: var(--bg); border-bottom: 1px solid var(--border); font-weight: 600;
     position: sticky; top: 0; z-index: 2;
 }
-.info-modal-body { padding: 10px; overflow-y: auto; }
+.info-modal-body {
+    padding: 10px;
+    overflow-y: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
 .info-modal-body,
 .info-modal-body > :last-child,
 .info-modal-body .doughnut-row:last-child,
@@ -10938,4 +10948,16 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     .monitor-process-toolbar #processRefreshBtn { grid-column: 1 / -1; }
     .process-row { grid-template-columns: minmax(0, 1fr); }
     .process-actions { flex-direction: row; justify-content: flex-end; }
+}
+
+@media (max-width: 700px) {
+    .info-modal {
+        left: 8px;
+        top: 44px;
+        width: calc(100vw - 16px);
+        height: calc(100dvh - 58px);
+        min-width: 0;
+        max-width: none;
+        max-height: none;
+    }
 }

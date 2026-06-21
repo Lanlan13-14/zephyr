@@ -47,7 +47,7 @@ const tabId = urlParams.get('tabId') || '';
 const embeddedMode = urlParams.get('embed') === '1';
 
 let params = loadParams();
-const qualityModes = ['balanced', 'performance', 'quality', '8k'];
+const qualityModes = ['balanced', 'performance', 'quality'];
 let qualityIdx = qualityModes.indexOf(params.quality || 'balanced');
 if (qualityIdx < 0) qualityIdx = 0;
 let rdpSocket = null;
@@ -2970,7 +2970,7 @@ function sendCtrlAltDel() {
 }
 
 function rdpQualityText(mode = qualityModes[qualityIdx]) {
-    return mode === 'balanced' ? '平衡' : mode === 'performance' ? '性能' : mode === '8k' ? '8K' : '画质';
+    return mode === 'balanced' ? '平衡' : mode === 'performance' ? '性能' : '画质';
 }
 
 function rememberRdpQuality(mode) {

@@ -482,6 +482,10 @@ function setColorPickerEnabled(input, enabled) {
     input.disabled = !enabled;
     input.closest('[data-color-picker]')?.classList.toggle('disabled', !enabled);
 }
+function normalizeRdpDefaultQuality(value) {
+    const mode = String(value || '').toLowerCase();
+    return ['balanced', 'performance', 'quality'].includes(mode) ? mode : 'balanced';
+}
 async function saveAppearance(e) {
     e.preventDefault();
     const previous = getAppearance();
@@ -516,7 +520,7 @@ async function saveAppearance(e) {
         rdp: {
             ...(previous.rdp || {}),
             defaultResolution: $('#rdpDefaultResolution')?.value || previous.rdp?.defaultResolution || '1920x1080',
-            defaultQuality: $('#rdpDefaultQuality')?.value || previous.rdp?.defaultQuality || 'balanced',
+            defaultQuality: normalizeRdpDefaultQuality($('#rdpDefaultQuality')?.value || previous.rdp?.defaultQuality || 'balanced'),
             defaultFps: Number($('#rdpDefaultFps')?.value || previous.rdp?.defaultFps || 30),
         },
     };
@@ -581,7 +585,7 @@ function syncAppearanceSchemeControls(appearance = getAppearance()) {
     }
     const rdp = appearance.rdp || {};
     if ($('#rdpDefaultResolution')) $('#rdpDefaultResolution').value = rdp.defaultResolution || '1920x1080';
-    if ($('#rdpDefaultQuality')) $('#rdpDefaultQuality').value = rdp.defaultQuality || 'balanced';
+    if ($('#rdpDefaultQuality')) $('#rdpDefaultQuality').value = normalizeRdpDefaultQuality(rdp.defaultQuality || 'balanced');
     if ($('#rdpDefaultFps')) $('#rdpDefaultFps').value = String(rdp.defaultFps || 60);
     if ($('#terminalBgPreview')) {
         const url = bg.type === 'url' ? ($('#terminalBgUrl')?.value.trim() || bg.url || '') : (bg.url || '');

@@ -61,7 +61,7 @@ const resolutions = [
     { label: '8K', width: 7680, height: 4320 },
 ];
 let statusSequence = 0;
-const qualityModes = ['balanced', 'performance', 'quality', '8k'];
+const qualityModes = ['balanced', 'performance', 'quality'];
 const fpsModes = [30, 45, 60, 120, 144];
 let qualityMode = qualityModes.includes(String(params.quality || '').toLowerCase()) ? String(params.quality).toLowerCase() : (localStorage.getItem('zephyr-rdp-gfx-quality') || 'balanced');
 if (!qualityModes.includes(qualityMode)) qualityMode = 'balanced';
@@ -70,14 +70,13 @@ if (!fpsModes.includes(fpsValue)) fpsValue = 60;
 function qualityLabel(mode = qualityMode) {
     if (mode === 'performance') return '性能';
     if (mode === 'quality') return '画质';
-    if (mode === '8k') return '8K';
     return '平衡';
 }
 function updateQualityFpsButtons() {
     const q = $('#qualityBtn');
     if (q) {
         q.textContent = qualityLabel();
-        q.title = `当前：${qualityLabel()}模式，点击切换性能/画质/8K 模式`;
+        q.title = `当前：${qualityLabel()}模式，点击切换性能/画质模式`;
         q.classList.toggle('active', qualityMode !== 'balanced');
     }
     const f = $('#fpsBtn');

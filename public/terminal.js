@@ -1,6 +1,7 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 
 const $ = (sel) => document.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 function getParams() {
     try {
@@ -301,6 +302,7 @@ let dockerLogBuffer = '';
 let chartInstances = {};
 let latestStatsData = null;
 let monitorPage = 0;
+let monitorRenderRaf = 0;
 let processSearch = '';
 let processSort = 'cpu';
 let processBusyPid = 0;
@@ -7791,7 +7793,7 @@ function renderProcessesPage(d = latestStatsData) {
             </select>
             <button class="tool-btn" id="processRefreshBtn">刷新</button>
         </div>
-        <div class="process-summary"><span>${processes.length} 个进程</span><span>右滑返回实时监控</span></div>
+        <div class="process-summary"><span>${processes.length} 个进程</span><span>横向滑动切换概览/进程</span></div>
         <div class="process-list">${renderProcessRows(processes)}</div>
     `;
 }
@@ -7845,6 +7847,13 @@ function renderStats(d) {
             <div class="doughnut-wrap"><canvas id="${device.id}"></canvas></div>
         </div>
     `).join('');
+
+    const previousBodyScrollTop = infoBody.scrollTop || 0;
+    const activeElement = document.activeElement;
+    const activeElementId = infoBody.contains(activeElement) ? activeElement?.id || '' : '';
+    const activeSelection = activeElementId && typeof activeElement.selectionStart === 'number'
+        ? { start: activeElement.selectionStart, end: activeElement.selectionEnd }
+        : null;
 
     infoBody.innerHTML = `
         <div class="monitor-tabs" role="tablist" aria-label="监控分页">
@@ -7920,6 +7929,14 @@ function renderStats(d) {
     requestAnimationFrame(() => {
         const viewport = $('.monitor-pages-viewport');
         if (viewport) viewport.scrollTo({ left: monitorPage * viewport.clientWidth, behavior: 'auto' });
+        if (previousBodyScrollTop && monitorPage === 0) infoBody.scrollTop = previousBodyScrollTop;
+        if (activeElementId) {
+            const nextActive = document.getElementById(activeElementId);
+            nextActive?.focus?.({ preventScroll: true });
+            if (activeSelection && typeof nextActive?.setSelectionRange === 'function') {
+                try { nextActive.setSelectionRange(activeSelection.start, activeSelection.end); } catch (_) {}
+            }
+        }
     });
 
     try {
@@ -7935,25 +7952,66 @@ function renderStats(d) {
     }
 }
 
+function setInfoButtonActive(active = infoModal?.classList?.contains('open')) {
+    infoBtn?.classList?.toggle('active', !!active);
+    infoBtn?.setAttribute?.('aria-expanded', active ? 'true' : 'false');
+}
+
+function positionMonitorPanel() {
+    if (!infoModal) return;
+    const defaults = getDefaultPanelOptions(infoModal);
+    const rect = infoModal.parentElement?.getBoundingClientRect?.() || { width: window.innerWidth, height: window.innerHeight };
+    const wasInitialized = panelState.has(infoModal);
+    if (!wasInitialized) ensureFloatingPanel(infoModal, defaults);
+    const width = Math.min(Number(infoModal.offsetWidth) || defaults.width, Math.max(260, rect.width - 16));
+    const height = Math.min(Number(infoModal.offsetHeight) || defaults.height, Math.max(260, rect.height - 52));
+    if (!wasInitialized || isCompactScreen()) {
+        Object.assign(infoModal.style, {
+            width: `${defaults.width}px`,
+            height: `${defaults.height}px`,
+            left: `${defaults.left ?? Math.max(8, rect.width - defaults.width - 12)}px`,
+            top: `${defaults.top ?? 52}px`,
+            right: 'auto',
+            bottom: 'auto',
+        });
+    } else if (width !== infoModal.offsetWidth || height !== infoModal.offsetHeight) {
+        infoModal.style.width = `${width}px`;
+        infoModal.style.height = `${height}px`;
+    }
+    clampPanel(infoModal);
+}
+
+function renderStatsSoon(data) {
+    latestStatsData = data || latestStatsData;
+    if (!infoModal?.classList?.contains('open') || !latestStatsData) return;
+    if (monitorRenderRaf) return;
+    monitorRenderRaf = requestAnimationFrame(() => {
+        monitorRenderRaf = 0;
+        renderStats(latestStatsData);
+    });
+}
+
 function showInfoModal() {
     if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN || !isConnected) {
-        alert('请先连接 SSH');
+        showToast('请先连接 SSH', 'error');
         return;
     }
-    ensureFloatingPanel(infoModal, getDefaultPanelOptions(infoModal));
+    if (!infoModal) return;
+    infoModal.style.display = 'flex';
+    infoModal.classList.remove('panel-closing');
+    positionMonitorPanel();
     if (latestStatsData) {
         renderStats(latestStatsData);
-    } else if (infoBody && !infoBody.children.length) {
+    } else if (infoBody) {
         infoBody.innerHTML = '<div class="info-loading">正在加载服务器实时监控数据...</div>';
     }
     if (wsConnection?.readyState === WebSocket.OPEN) {
         wsConnection.send(JSON.stringify({ type: 'stats-request' }));
     }
-    infoModal.style.display = 'flex';
     // display 从 none 切换为 flex 后，下一帧再加 open，确保浏览器能播放开启动画。
     requestAnimationFrame(() => {
         infoModal.classList.add('open');
-        infoBtn.classList.add('active');
+        setInfoButtonActive(true);
         bringPanelToFront(infoModal);
         animatePanelFromButton(infoModal, infoBtn, true);
     });
@@ -8160,9 +8218,11 @@ function writeTerminalData(data = '') {
 
 function hideInfoModal() {
     if (typeof closePanelLayoutMenu === 'function') closePanelLayoutMenu({ instant: true });
+    window.cancelAnimationFrame(monitorRenderRaf);
+    monitorRenderRaf = 0;
     animatePanelFromButton(infoModal, infoBtn, false);
     infoModal.classList.remove('open');
-    infoBtn.classList.remove('active');
+    setInfoButtonActive(false);
     window.setTimeout(() => {
         clearPanelMotion(infoModal);
         if (!infoModal.classList.contains('open')) {
@@ -9564,9 +9624,9 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
             if (connectionToken !== activeConnectionToken) return;
             try {
                 const msg = JSON.parse(event.data);
-                if (msg.type === 'stats') { renderStats(msg.data); return; }
+                if (msg.type === 'stats') { renderStatsSoon(msg.data); return; }
                 if (msg.type === 'stats-error') {
-                    if (infoBody && (!latestStatsData || infoBody.querySelector('.info-loading'))) {
+                    if (infoModal?.classList?.contains('open') && infoBody && (!latestStatsData || infoBody.querySelector('.info-loading'))) {
                         infoBody.innerHTML = `<div class="info-loading error">实时监控数据加载失败：${escapeHtml(msg.message || '未知错误')}</div>`;
                     }
                     return;

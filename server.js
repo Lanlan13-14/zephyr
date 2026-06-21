@@ -1253,6 +1253,14 @@ function normalizeSettingsInput(body) {
         const terminalFontLightRaw = normalizeHexServer(rawTerminalFontColors.light || '');
         const terminalFontColors = terminalFontDark ? { dark: terminalFontDark, light: terminalFontLightRaw || invertHexServer(terminalFontDark) } : { dark: '', light: '' };
         const terminalFontColor = terminalFontColors.dark;
+        const rawRdp = body.appearance.rdp || currentAppearance.rdp || {};
+        const rdp = {
+            ...(currentAppearance.rdp || {}),
+            ...rawRdp,
+            defaultResolution: ['auto', '1920x1080', '2560x1440', '3840x2160', '7680x4320'].includes(rawRdp.defaultResolution) ? rawRdp.defaultResolution : (currentAppearance.rdp?.defaultResolution || '1920x1080'),
+            defaultQuality: ['balanced', 'performance', 'quality'].includes(String(rawRdp.defaultQuality || '').toLowerCase()) ? String(rawRdp.defaultQuality).toLowerCase() : 'balanced',
+            defaultFps: [30, 45, 60, 120, 144].includes(Number(rawRdp.defaultFps)) ? Number(rawRdp.defaultFps) : (Number(currentAppearance.rdp?.defaultFps) || 60),
+        };
         next.appearance = {
             ...currentAppearance,
             ...body.appearance,
@@ -1267,6 +1275,7 @@ function normalizeSettingsInput(body) {
             terminalBackground,
             terminalFontColor,
             terminalFontColors,
+            rdp,
             autoThemeEnabled: body.appearance.autoThemeEnabled !== false,
         };
         console.info('[appearance-settings]', 'normalized appearance settings', {
@@ -4051,7 +4060,7 @@ function closeWebSocketSafe(ws, code = 1000, reason = '') {
     } catch {}
 }
 
-const RDP_QUALITY_MODES = new Set(['performance', 'balanced', 'quality', '8k']);
+const RDP_QUALITY_MODES = new Set(['performance', 'balanced', 'quality']);
 const RDP_MAX_DIMENSION = Number(process.env.RDP_MAX_DIMENSION || 7680);
 const RDP_MAX_WIDTH = Number(process.env.RDP_MAX_WIDTH || RDP_MAX_DIMENSION);
 const RDP_MAX_HEIGHT = Number(process.env.RDP_MAX_HEIGHT || 4320);
@@ -4133,8 +4142,7 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     const streamMode = String(options.stream || '').toLowerCase() === 'av' ? 'av' : 'h264';
     const streamFps = Math.max(15, Math.min(RDP_MAX_FPS, Number(options.fps) || RDP_STREAM_FPS));
     const isPerf = qualityMode === 'performance';
-    const isQual = qualityMode === 'quality' || qualityMode === '8k';
-    const is8kQuality = qualityMode === '8k';
+    const isQual = qualityMode === 'quality';
     const forceAspect = (num, den) => {
         const longSide = Math.max(streamWidth, streamHeight);
         const shortSide = Math.min(streamWidth, streamHeight);
@@ -4233,8 +4241,8 @@ async function startRdpH264Pipeline(connId, conn, options = {}) {
     const encoderThreads = String(Math.max(1, Math.min(Number(process.env.RDP_H264_THREADS || 2), os.cpus()?.length || 2)));
     const pixelsPerSecond = streamWidth * streamHeight * streamFps;
     const bitrateScale = pixelsPerSecond / (3840 * 2160 * 60);
-    const avCrf = is8kQuality ? 10 : qualityMode === 'quality' ? 12 : qualityMode === 'performance' ? 22 : 16;
-    const avMaxrateKbps = Math.max(80000, Math.round((is8kQuality ? 900000 : qualityMode === 'quality' ? 500000 : qualityMode === 'performance' ? 200000 : 350000) * Math.max(0.05, (streamWidth * streamHeight * streamFps) / (3840 * 2160 * 60))));
+    const avCrf = qualityMode === 'quality' ? 12 : qualityMode === 'performance' ? 22 : 16;
+    const avMaxrateKbps = Math.max(80000, Math.round((qualityMode === 'quality' ? 500000 : qualityMode === 'performance' ? 200000 : 350000) * Math.max(0.05, (streamWidth * streamHeight * streamFps) / (3840 * 2160 * 60))));
     const avLevel = pixelsPerSecond >= 3840 * 2160 * 50 ? '5.2' : pixelsPerSecond >= 3840 * 2160 * 25 || pixelsPerSecond >= 2560 * 1440 * 50 ? '5.1' : pixelsPerSecond >= 1920 * 1080 * 50 ? '4.2' : '4.1';
     const avCodec = avLevel === '5.2' ? 'avc1.640034' : avLevel === '5.1' ? 'avc1.640033' : avLevel === '4.2' ? 'avc1.64002a' : 'avc1.640029';
     const avMime = `video/mp4; codecs="${avCodec},mp4a.40.2"`;
