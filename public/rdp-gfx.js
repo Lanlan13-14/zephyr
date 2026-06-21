@@ -1123,19 +1123,19 @@ function applyDisplayScale() {
 function updateJoystickPanelScale(panel = $('#joystickPanel')) {
     const container = $('#joystickContainer');
     if (!panel || !container) return;
-    const rect = panel.getBoundingClientRect?.() || { width: 280, height: 250 };
-    const contentW = Math.max(1, rect.width - 72);
-    const contentH = Math.max(1, rect.height - 104);
-    const size = Math.max(96, Math.min(260, Math.floor(Math.min(contentW, contentH))));
+    const rect = panel.getBoundingClientRect?.() || { width: 260, height: 240 };
+    const contentW = Math.max(1, rect.width - 52);
+    const contentH = Math.max(1, rect.height - 72);
+    const size = Math.max(150, Math.min(240, Math.floor(Math.min(contentW, contentH))));
     panel.style.setProperty('--rdp-joystick-size', `${size}px`);
 }
 function sizeJoystickPanel(panel, targetWidth, targetHeight = null, anchorLeft = null) {
     if (!panel) return;
-    const aspect = 280 / 250;
-    let w = Math.max(180, Math.min(window.innerWidth - 12, Number(targetWidth) || 280));
+    const aspect = 1;
+    let w = Math.max(240, Math.min(window.innerWidth - 12, Number(targetWidth) || 260));
     let h = targetHeight == null ? Math.round(w / aspect) : Number(targetHeight);
-    h = Math.max(170, Math.min(window.innerHeight - 12, h || 250));
-    w = Math.max(180, Math.min(window.innerWidth - 12, Math.round(h * aspect)));
+    h = Math.max(220, Math.min(window.innerHeight - 12, h || 240));
+    w = Math.max(240, Math.min(window.innerWidth - 12, Math.round(h * aspect)));
     panel.style.width = `${w}px`;
     panel.style.height = `${h}px`;
     if (anchorLeft !== null && Number.isFinite(anchorLeft)) panel.style.left = `${Math.max(4, Math.min(window.innerWidth - w - 4, anchorLeft))}px`;
@@ -1145,10 +1145,10 @@ function placePanel(panel, anchor = null) {
     if (!panel) return;
     const stageRect = $('#rdpStage')?.getBoundingClientRect?.() || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight };
     const isJoystick = panel.id === 'joystickPanel';
-    const defaultW = isJoystick ? 280 : 320;
-    const defaultH = isJoystick ? 250 : 260;
-    const minW = isJoystick ? 180 : 260;
-    const minH = isJoystick ? 170 : 220;
+    const defaultW = isJoystick ? 260 : 320;
+    const defaultH = isJoystick ? 240 : 260;
+    const minW = isJoystick ? 240 : 260;
+    const minH = isJoystick ? 220 : 220;
     const width = Math.min(Math.max(panel.offsetWidth || defaultW, minW), Math.max(minW, stageRect.width - 16));
     const height = Math.min(Math.max(panel.offsetHeight || defaultH, minH), Math.max(minH, stageRect.height - 16));
     const anchorRect = anchor?.getBoundingClientRect?.();
@@ -1211,16 +1211,16 @@ function applyPanelLayout(panel, layout) {
     let height = parentRect.height - topbar - margin;
     if (layout === 'half') {
         width = parentRect.width;
-        height = Math.max(panel.id === 'joystickPanel' ? 170 : 260, parentRect.height / 2);
+        height = Math.max(panel.id === 'joystickPanel' ? 220 : 260, parentRect.height / 2);
         left = 0;
         top = parentRect.height - height;
     } else if (layout === 'left-quarter') {
-        width = Math.max(panel.id === 'joystickPanel' ? 180 : 260, parentRect.width / 4);
+        width = Math.max(panel.id === 'joystickPanel' ? 240 : 260, parentRect.width / 4);
         height = parentRect.height - topbar;
         left = 0;
         top = topbar;
     } else if (layout === 'right-quarter') {
-        width = Math.max(panel.id === 'joystickPanel' ? 180 : 260, parentRect.width / 4);
+        width = Math.max(panel.id === 'joystickPanel' ? 240 : 260, parentRect.width / 4);
         height = parentRect.height - topbar;
         left = parentRect.width - width;
         top = topbar;
@@ -1450,74 +1450,101 @@ function setupJoystickPanel() {
     const container = $('#joystickContainer');
     if (!panel || !knob || !container || container.dataset.boundJoystick) return;
     container.dataset.boundJoystick = '1';
-    const shell = panel.querySelector('.rdp-joystick-mac-shell') || container.parentElement;
     let timer = null;
     let vector = { x: 0, y: 0 };
+    let startPointerX = 0;
+    let startPointerY = 0;
+    let resetTimer = 0;
     const icons = Array.from(container.querySelectorAll('.rdp-joystick-icon'));
     const clearHighlights = () => icons.forEach((icon) => icon.classList.remove('active'));
+    const baseLightShadow = '0 9px 14px rgba(0,0,0,.5), 0 19px 8px -2px rgba(0,0,0,.2), 0 33px 8px rgba(0,0,0,.4), 0 -12px 10px rgba(255,255,255,.5), inset 0 3px 3px rgba(255,255,255,.6), inset 0 -3px 3px rgba(89,91,92,.6)';
+    const baseDarkShadow = '0 9px 14px rgba(0,0,0,.75), 0 19px 8px -2px rgba(0,0,0,.45), 0 33px 8px rgba(0,0,0,.65), 0 -12px 10px rgba(255,255,255,.18), inset 0 3px 3px rgba(255,255,255,.28), inset 0 -3px 3px rgba(0,0,0,.45)';
+    const isDarkJoystick = () => document.documentElement.dataset.theme === 'dark' || (document.documentElement.dataset.theme !== 'light' && window.matchMedia?.('(prefers-color-scheme: dark)')?.matches);
+    const baseShadow = () => isDarkJoystick() ? baseDarkShadow : baseLightShadow;
+    const joystickMaxRadius = () => Math.max(12, Math.round((container.getBoundingClientRect().width || 200) * 0.12));
+    const applyVisual = (offsetX, offsetY) => {
+        const max = joystickMaxRadius();
+        let clampedX = Math.min(Math.max(offsetX, -max), max);
+        let clampedY = Math.min(Math.max(offsetY, -max), max);
+        const distance = Math.hypot(clampedX, clampedY);
+        const normX = distance > 0.01 ? clampedX / max : 0;
+        const normY = distance > 0.01 ? clampedY / max : 0;
+        const intensity = Math.min(distance / max, 1);
+        const rotY = normX * 14;
+        const rotX = normY * -14;
+        const shadowShiftX = normX * 5;
+        const shadowShiftY = normY * 3;
+        const lightShadow = `0 ${shadowShiftY + 9}px 14px rgba(0,0,0,.5), ${shadowShiftX}px ${shadowShiftY + 19}px 8px -2px rgba(0,0,0,.2), ${shadowShiftX}px ${shadowShiftY + 30}px 8px rgba(0,0,0,.3), ${-shadowShiftX}px ${-shadowShiftY - 12}px 10px rgba(255,255,255,.6), inset 0 3px 3px rgba(255,255,255,.6), inset 0 -3px 3px rgba(89,91,92,.6)`;
+        const darkShadow = `0 ${shadowShiftY + 9}px 14px rgba(0,0,0,.75), ${shadowShiftX}px ${shadowShiftY + 19}px 8px -2px rgba(0,0,0,.45), ${shadowShiftX}px ${shadowShiftY + 30}px 8px rgba(0,0,0,.55), ${-shadowShiftX}px ${-shadowShiftY - 12}px 10px rgba(255,255,255,.2), inset 0 3px 3px rgba(255,255,255,.28), inset 0 -3px 3px rgba(0,0,0,.45)`;
+        knob.style.transform = `translate(${clampedX}px, ${clampedY}px) rotateX(${rotX}deg) rotateY(${rotY}deg)`;
+        knob.style.boxShadow = intensity > 0.05 ? (isDarkJoystick() ? darkShadow : lightShadow) : baseShadow();
+        vector = { x: normX, y: normY, intensity };
+        clearHighlights();
+        if (distance < 4) return;
+        const angleDeg = (Math.atan2(normY, normX) * 180 / Math.PI + 360) % 360;
+        const activeIndex = angleDeg >= 45 && angleDeg < 135 ? 2 : angleDeg >= 135 && angleDeg < 225 ? 3 : angleDeg >= 225 && angleDeg < 315 ? 0 : 1;
+        icons[activeIndex]?.classList.add('active');
+    };
     const stop = () => {
         if (timer) clearInterval(timer);
         timer = null;
         vector = { x: 0, y: 0 };
-        shell?.classList?.remove('joystick-pressed');
         setRdpInputSuppressed(false, 220);
         knob.classList.add('smooth-back');
-        knob.style.transform = 'translate(0,0) rotateX(0deg) rotateY(0deg)';
+        knob.style.transform = 'translate(0px, 0px) rotateX(0deg) rotateY(0deg)';
+        knob.style.boxShadow = baseShadow();
         clearHighlights();
-        setTimeout(() => knob.classList.remove('smooth-back'), 220);
+        window.clearTimeout(resetTimer);
+        resetTimer = window.setTimeout(() => knob.classList.remove('smooth-back'), 220);
     };
     const tick = () => {
         const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
         if (!canvas || !client?._sendMessage) return;
+        const speed = 4 + 24 * (vector.intensity || Math.max(Math.abs(vector.x || 0), Math.abs(vector.y || 0)));
         if (displayRoot && (displayRoot.scrollWidth > displayRoot.clientWidth || displayRoot.scrollHeight > displayRoot.clientHeight)) {
-            displayRoot.scrollLeft += vector.x * 18;
-            displayRoot.scrollTop += vector.y * 18;
+            displayRoot.scrollLeft += vector.x * speed;
+            displayRoot.scrollTop += vector.y * speed;
         } else {
             client._sendMessage({ type: 'mouse', action: 'wheel', x: Math.floor(canvas.width / 2), y: Math.floor(canvas.height / 2), deltaX: vector.x * 20, deltaY: vector.y * 20 });
         }
     };
-    container.addEventListener('pointerdown', (event) => {
+    const move = (ev) => {
+        ev.preventDefault();
+        const dx = ev.clientX - startPointerX;
+        const dy = ev.clientY - startPointerY;
+        const max = joystickMaxRadius();
+        const distance = Math.hypot(dx, dy);
+        const limitedX = distance > max ? dx / distance * max : dx;
+        const limitedY = distance > max ? dy / distance * max : dy;
+        applyVisual(limitedX, limitedY);
+        if (!timer) timer = setInterval(tick, 35);
+    };
+    const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+        stop();
+    };
+    knob.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         event.stopPropagation();
         setRdpInputSuppressed(true);
-        shell?.classList?.add('joystick-pressed');
         showPanel(panel);
-        try { container.setPointerCapture?.(event.pointerId); } catch {}
-        const rect = container.getBoundingClientRect();
-        const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-        const move = (ev) => {
-            const dx = ev.clientX - center.x;
-            const dy = ev.clientY - center.y;
-            const len = Math.max(1, Math.hypot(dx, dy));
-            const max = Math.max(24, rect.width * 0.23);
-            const k = Math.min(max, len) / len;
-            const clampedX = dx * k;
-            const clampedY = dy * k;
-            const normX = Math.max(-1, Math.min(1, dx / max));
-            const normY = Math.max(-1, Math.min(1, dy / max));
-            knob.style.transform = `translate(${clampedX}px, ${clampedY}px) rotateX(${-normY * 14}deg) rotateY(${normX * 14}deg)`;
-            vector = { x: normX, y: normY };
-            clearHighlights();
-            if (Math.hypot(clampedX, clampedY) > 4) {
-                const angleDeg = (Math.atan2(normY, normX) * 180 / Math.PI + 360) % 360;
-                const activeIndex = angleDeg >= 45 && angleDeg < 135 ? 2 : angleDeg >= 135 && angleDeg < 225 ? 3 : angleDeg >= 225 && angleDeg < 315 ? 0 : 1;
-                icons[activeIndex]?.classList.add('active');
-            }
-            if (!timer) timer = setInterval(tick, 35);
-        };
-        const up = () => {
-            window.removeEventListener('pointermove', move);
-            window.removeEventListener('pointerup', up);
-            window.removeEventListener('pointercancel', up);
-            stop();
-        };
-        move(event);
-        window.addEventListener('pointermove', move);
+        try { knob.setPointerCapture?.(event.pointerId); } catch {}
+        window.clearTimeout(resetTimer);
+        knob.classList.remove('smooth-back');
+        knob.style.transition = 'none';
+        startPointerX = event.clientX;
+        startPointerY = event.clientY;
+        applyVisual(0, 0);
+        requestAnimationFrame(() => { knob.style.transition = ''; });
+        window.addEventListener('pointermove', move, { passive: false });
         window.addEventListener('pointerup', up, { once: true });
         window.addEventListener('pointercancel', up, { once: true });
-        container.addEventListener('pointerup', up, { once: true });
     });
-    container.addEventListener('pointercancel', () => stop());
+    container.addEventListener('dragstart', (event) => event.preventDefault());
+    window.addEventListener('blur', () => stop());
+    stop();
 }
 
 function bindControls() {

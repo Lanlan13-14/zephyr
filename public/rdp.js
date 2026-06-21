@@ -1653,11 +1653,11 @@ function floatingPanels() {
 function getDefaultPanelOptions(panel) {
     const parentRect = panel?.parentElement?.getBoundingClientRect?.() || { width: window.innerWidth, height: window.innerHeight };
     if (panel === joystickPanel) {
-        return { left: 10, top: Math.max(48, parentRect.height - 260), width: Math.min(300, parentRect.width - 20), height: 250 };
+        return { left: 10, top: Math.max(48, parentRect.height - 250), width: Math.min(260, parentRect.width - 20), height: 240 };
     }
     if (isCompactScreen()) {
         if (panel === joystickPanel) {
-            return { left: 10, top: Math.max(48, parentRect.height - 286), width: Math.min(320, parentRect.width - 20), height: 266 };
+            return { left: 10, top: Math.max(48, parentRect.height - 270), width: Math.min(280, parentRect.width - 20), height: 260 };
         }
         return {
             left: 8,
@@ -1670,7 +1670,7 @@ function getDefaultPanelOptions(panel) {
         return { width: Math.min(460, parentRect.width - 24), height: Math.min(360, parentRect.height - 80), left: 18, top: 54 };
     }
     if (panel === joystickPanel) {
-        return { width: 300, height: 268, left: 18, top: Math.max(60, parentRect.height - 292) };
+        return { width: 270, height: 250, left: 18, top: Math.max(60, parentRect.height - 274) };
     }
     return { width: Math.min(440, parentRect.width - 24), height: Math.min(500, parentRect.height - 80), left: Math.max(18, parentRect.width - 460), top: 54 };
 }
@@ -2053,41 +2053,48 @@ function updateJoystickHint() {
 function setupViewportJoystick() {
     if (!joystickContainer || !joystickKnob || joystickContainer.dataset.ready === '1') return;
     joystickContainer.dataset.ready = '1';
-    const icons = joystickContainer.querySelectorAll('.rdp-joystick-icon');
-    const shell = joystickPanel?.querySelector('.rdp-joystick-mac-shell') || joystickContainer.parentElement;
-    const deadzone = 4;
-    const maxTilt = 14;
+    const icons = Array.from(joystickContainer.querySelectorAll('.rdp-joystick-icon'));
     let active = false;
     let startX = 0;
     let startY = 0;
     let raf = 0;
     let resetTimer = 0;
-
     const clearHighlights = () => icons.forEach((icon) => icon.classList.remove('active'));
-    const applyVisual = (x, y) => {
-        const maxRadius = Math.max(24, joystickContainer.getBoundingClientRect().width * 0.23);
-        const clampedX = Math.min(Math.max(x, -maxRadius), maxRadius);
-        const clampedY = Math.min(Math.max(y, -maxRadius), maxRadius);
+    const baseLightShadow = '0 9px 14px rgba(0,0,0,.5), 0 19px 8px -2px rgba(0,0,0,.2), 0 33px 8px rgba(0,0,0,.4), 0 -12px 10px rgba(255,255,255,.5), inset 0 3px 3px rgba(255,255,255,.6), inset 0 -3px 3px rgba(89,91,92,.6)';
+    const baseDarkShadow = '0 9px 14px rgba(0,0,0,.75), 0 19px 8px -2px rgba(0,0,0,.45), 0 33px 8px rgba(0,0,0,.65), 0 -12px 10px rgba(255,255,255,.18), inset 0 3px 3px rgba(255,255,255,.28), inset 0 -3px 3px rgba(0,0,0,.45)';
+    const isDarkJoystick = () => document.documentElement.dataset.theme === 'dark' || (document.documentElement.dataset.theme !== 'light' && window.matchMedia?.('(prefers-color-scheme: dark)')?.matches);
+    const baseShadow = () => isDarkJoystick() ? baseDarkShadow : baseLightShadow;
+    const maxRadius = () => Math.max(12, Math.round((joystickContainer.getBoundingClientRect().width || 200) * 0.12));
+    const applyVisual = (offsetX, offsetY) => {
+        const max = maxRadius();
+        const clampedX = Math.min(Math.max(offsetX, -max), max);
+        const clampedY = Math.min(Math.max(offsetY, -max), max);
         const distance = Math.hypot(clampedX, clampedY);
-        const normX = distance > 0.01 ? clampedX / maxRadius : 0;
-        const normY = distance > 0.01 ? clampedY / maxRadius : 0;
-        const rotY = normX * maxTilt;
-        const rotX = normY * -maxTilt;
+        const normX = distance > 0.01 ? clampedX / max : 0;
+        const normY = distance > 0.01 ? clampedY / max : 0;
+        const intensity = Math.min(distance / max, 1);
+        const rotY = normX * 14;
+        const rotX = normY * -14;
+        const shiftX = normX * 5;
+        const shiftY = normY * 3;
+        const lightShadow = `0 ${shiftY + 9}px 14px rgba(0,0,0,.5), ${shiftX}px ${shiftY + 19}px 8px -2px rgba(0,0,0,.2), ${shiftX}px ${shiftY + 30}px 8px rgba(0,0,0,.3), ${-shiftX}px ${-shiftY - 12}px 10px rgba(255,255,255,.6), inset 0 3px 3px rgba(255,255,255,.6), inset 0 -3px 3px rgba(89,91,92,.6)`;
+        const darkShadow = `0 ${shiftY + 9}px 14px rgba(0,0,0,.75), ${shiftX}px ${shiftY + 19}px 8px -2px rgba(0,0,0,.45), ${shiftX}px ${shiftY + 30}px 8px rgba(0,0,0,.55), ${-shiftX}px ${-shiftY - 12}px 10px rgba(255,255,255,.2), inset 0 3px 3px rgba(255,255,255,.28), inset 0 -3px 3px rgba(0,0,0,.45)`;
         joystickKnob.style.transform = `translate(${clampedX}px, ${clampedY}px) rotateX(${rotX}deg) rotateY(${rotY}deg)`;
-        if (distance < deadzone) { clearHighlights(); return { x: 0, y: 0, intensity: 0 }; }
+        joystickKnob.style.boxShadow = intensity > 0.05 ? (isDarkJoystick() ? darkShadow : lightShadow) : baseShadow();
+        if (distance < 4) { clearHighlights(); return { x: 0, y: 0, intensity: 0 }; }
         const angleDeg = (Math.atan2(normY, normX) * 180 / Math.PI + 360) % 360;
-        let activeIndex = angleDeg >= 45 && angleDeg < 135 ? 2 : angleDeg >= 135 && angleDeg < 225 ? 3 : angleDeg >= 225 && angleDeg < 315 ? 0 : 1;
+        const activeIndex = angleDeg >= 45 && angleDeg < 135 ? 2 : angleDeg >= 135 && angleDeg < 225 ? 3 : angleDeg >= 225 && angleDeg < 315 ? 0 : 1;
         clearHighlights();
         icons[activeIndex]?.classList.add('active');
-        return { x: normX, y: normY, intensity: Math.min(distance / maxRadius, 1) };
+        return { x: normX, y: normY, intensity };
     };
     const reset = (smooth = true) => {
         if (raf) cancelAnimationFrame(raf);
         raf = 0;
         setRdpInputSuppressed(false, 220);
-        shell?.classList?.remove('joystick-pressed');
         if (smooth) joystickKnob.classList.add('smooth-back');
         joystickKnob.style.transform = 'translate(0px, 0px) rotateX(0deg) rotateY(0deg)';
+        joystickKnob.style.boxShadow = baseShadow();
         clearHighlights();
         window.clearTimeout(resetTimer);
         resetTimer = window.setTimeout(() => joystickKnob.classList.remove('smooth-back'), 220);
@@ -2111,9 +2118,10 @@ function setupViewportJoystick() {
         event.preventDefault();
         const dx = event.clientX - startX;
         const dy = event.clientY - startY;
+        const max = maxRadius();
         const dist = Math.hypot(dx, dy);
-        const limitedX = dist > maxRadius ? dx / dist * maxRadius : dx;
-        const limitedY = dist > maxRadius ? dy / dist * maxRadius : dy;
+        const limitedX = dist > max ? dx / dist * max : dx;
+        const limitedY = dist > max ? dy / dist * max : dy;
         rdpJoystickState = applyVisual(limitedX, limitedY);
         if (!raf) raf = requestAnimationFrame(pumpScroll);
     };
@@ -2129,14 +2137,15 @@ function setupViewportJoystick() {
         event.preventDefault();
         event.stopPropagation();
         setRdpInputSuppressed(true);
-        shell?.classList?.add('joystick-pressed');
         bringPanelToFront(joystickPanel);
         active = true;
         startX = event.clientX;
         startY = event.clientY;
         window.clearTimeout(resetTimer);
         joystickKnob.classList.remove('smooth-back');
+        joystickKnob.style.transition = 'none';
         rdpJoystickState = applyVisual(0, 0);
+        requestAnimationFrame(() => { joystickKnob.style.transition = ''; });
         window.addEventListener('pointermove', onMove, { passive: false });
         window.addEventListener('pointerup', onEnd, { once: true });
         window.addEventListener('pointercancel', onEnd, { once: true });
@@ -2206,19 +2215,19 @@ function togglePanel(panel, force, sourceButton = null) {
 
 function updateJoystickPanelScale(panel = joystickPanel) {
     if (!panel || !joystickContainer) return;
-    const rect = panel.getBoundingClientRect?.() || { width: 280, height: 250 };
-    const contentW = Math.max(1, rect.width - 72);
-    const contentH = Math.max(1, rect.height - 104);
-    const size = Math.max(96, Math.min(260, Math.floor(Math.min(contentW, contentH))));
+    const rect = panel.getBoundingClientRect?.() || { width: 260, height: 240 };
+    const contentW = Math.max(1, rect.width - 52);
+    const contentH = Math.max(1, rect.height - 72);
+    const size = Math.max(150, Math.min(240, Math.floor(Math.min(contentW, contentH))));
     panel.style.setProperty('--rdp-joystick-size', `${size}px`);
 }
 function sizeJoystickPanel(panel, targetWidth, targetHeight = null, anchorLeft = null) {
     if (!panel) return;
-    const aspect = 280 / 250;
-    let w = Math.max(180, Math.min(window.innerWidth - 12, Number(targetWidth) || 280));
+    const aspect = 1;
+    let w = Math.max(240, Math.min(window.innerWidth - 12, Number(targetWidth) || 260));
     let h = targetHeight == null ? Math.round(w / aspect) : Number(targetHeight);
-    h = Math.max(170, Math.min(window.innerHeight - 12, h || 250));
-    w = Math.max(180, Math.min(window.innerWidth - 12, Math.round(h * aspect)));
+    h = Math.max(220, Math.min(window.innerHeight - 12, h || 240));
+    w = Math.max(240, Math.min(window.innerWidth - 12, Math.round(h * aspect)));
     panel.style.width = `${w}px`;
     panel.style.height = `${h}px`;
     if (anchorLeft !== null && Number.isFinite(anchorLeft)) panel.style.left = `${Math.max(4, Math.min(window.innerWidth - w - 4, anchorLeft))}px`;

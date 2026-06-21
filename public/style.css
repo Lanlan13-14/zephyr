@@ -6679,16 +6679,18 @@ body.smartbar-trash-hover .smartbar-trash-target {
 
 .joystick-panel {
     --rdp-joystick-size: 200px;
-    min-width: 150px;
-    min-height: 140px;
-    aspect-ratio: 248 / 220;
+    min-width: 260px;
+    min-height: 240px;
+    aspect-ratio: 1 / 1;
+    overflow: visible;
 }
 
 .joystick-panel-content {
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    overflow: hidden;
+    gap: 0;
+    overflow: visible;
+    padding: 20px;
 }
 
 .joystick-panel .panel-titlebar {
@@ -6711,6 +6713,7 @@ body.smartbar-trash-hover .smartbar-trash-target {
 }
 
 .rdp-joystick:active { cursor: grabbing; }
+.rdp-joystick:active .rdp-joystick-knob { cursor: grabbing; }
 
 .rdp-joystick-around {
     width: 100%;
@@ -6719,8 +6722,8 @@ body.smartbar-trash-hover .smartbar-trash-target {
     justify-content: center;
     align-items: center;
     border-radius: 50%;
-    background-image: linear-gradient(0deg, #44484d, #8d9499);
-    box-shadow: 0 4px 12px rgba(0,0,0,.65);
+    background-image: linear-gradient(0, #f5f8fa, #9da4a8);
+    box-shadow: 0 4px 12px rgba(0,0,0,.2);
 }
 
 .rdp-joystick-handle {
@@ -6730,37 +6733,32 @@ body.smartbar-trash-hover .smartbar-trash-target {
     justify-content: center;
     align-items: center;
     border-radius: 50%;
-    background: #30363b;
+    background: #c5d1da;
     box-shadow:
-        0 0 10px rgba(0,0,0,.75),
-        0 10px 10px rgba(0,0,0,.45),
-        inset 0 0 16px rgba(0,0,0,.95),
-        inset 0 0 24px rgba(0,0,0,.85),
-        inset 0 0 48px rgba(0,0,0,.45),
-        inset 0 2px 2px rgba(255,255,255,.05);
+        0 0 10px rgba(0,0,0,.5),
+        0 10px 10px rgba(0,0,0,.2),
+        inset 0 0 16px rgba(0,0,0,.85),
+        inset 0 0 24px rgba(0,0,0,.75),
+        inset 0 0 48px rgba(0,0,0,.2);
     perspective: 300px;
     overflow: visible;
 }
 
 .rdp-joystick-knob {
-    width: 65.8%;
-    height: 65.8%;
+    width: 51%;
+    height: 51%;
     display: flex;
     justify-content: center;
     align-items: center;
     border-radius: 50%;
-    background-image: linear-gradient(0deg, #4d555a, #c3c8cc);
-    box-shadow:
-        0 9px 14px rgba(0,0,0,.75),
-        0 19px 8px -2px rgba(0,0,0,.45),
-        0 33px 8px rgba(0,0,0,.65),
-        0 -12px 10px rgba(255,255,255,.18),
-        inset 0 3px 3px rgba(255,255,255,.28),
-        inset 0 -3px 3px rgba(0,0,0,.45);
+    background-image: linear-gradient(0, #86969c, #eff1f1);
+    box-shadow: var(--rdp-joystick-knob-shadow-light);
     transition: transform .08s linear, box-shadow .1s ease;
     will-change: transform;
     cursor: grab;
     position: relative;
+    --rdp-joystick-knob-shadow-light: 0 9px 14px rgba(0,0,0,.5), 0 19px 8px -2px rgba(0,0,0,.2), 0 33px 8px rgba(0,0,0,.4), 0 -12px 10px rgba(255,255,255,.5), inset 0 3px 3px rgba(255,255,255,.6), inset 0 -3px 3px rgba(89,91,92,.6);
+    --rdp-joystick-knob-shadow-dark: 0 9px 14px rgba(0,0,0,.75), 0 19px 8px -2px rgba(0,0,0,.45), 0 33px 8px rgba(0,0,0,.65), 0 -12px 10px rgba(255,255,255,.18), inset 0 3px 3px rgba(255,255,255,.28), inset 0 -3px 3px rgba(0,0,0,.45);
 }
 
 .rdp-joystick-knob.smooth-back {
@@ -6772,8 +6770,8 @@ body.smartbar-trash-hover .smartbar-trash-target {
     width: 83.3%;
     height: 83.3%;
     border-radius: 50%;
-    background-image: linear-gradient(180deg, #5d666c, #a2abb0);
-    box-shadow: inset 0 3px 6px rgba(0,0,0,.35), inset 0 -3px 6px rgba(255,255,255,.12);
+    background-image: linear-gradient(180deg, #adb9bf, #d4dbdd);
+    box-shadow: inset 0 3px 6px rgba(152,160,163,.4), inset 0 -3px 6px rgba(238,244,246,.4);
 }
 
 .rdp-joystick-dot {
@@ -6782,8 +6780,8 @@ body.smartbar-trash-hover .smartbar-trash-target {
     width: 9.4%;
     height: 9.4%;
     border-radius: 50%;
-    background: #c8ced2;
-    box-shadow: 0 2px 2px rgba(0,0,0,.55), inset 0 -2px 2px rgba(0,0,0,.35);
+    background: #e7ecef;
+    box-shadow: 0 2px 2px rgba(0,0,0,.3), inset 0 -2px 2px rgba(0,0,0,.2);
 }
 .rdp-joystick-dot:nth-child(1) { left: 50%; top: 10%; }
 .rdp-joystick-dot:nth-child(2) { left: 90%; top: 50%; }
@@ -6794,8 +6792,8 @@ body.smartbar-trash-hover .smartbar-trash-target {
     position: absolute;
     transform: translate(-50%, -50%);
     width: 15%;
-    fill: #8d9499;
-    filter: drop-shadow(1px 1px 1px rgba(0,0,0,.9));
+    fill: #b4b9bd;
+    filter: drop-shadow(1px 1px 1px #f4f4f4);
     transition: fill .15s, filter .2s;
     pointer-events: none;
     z-index: 5;
@@ -6805,8 +6803,8 @@ body.smartbar-trash-hover .smartbar-trash-target {
 .rdp-joystick-icon:nth-of-type(3) { top: 112%; left: 50%; }
 .rdp-joystick-icon:nth-of-type(4) { top: 50%; left: -12%; }
 .rdp-joystick-icon.active {
-    fill: #ffb14f;
-    filter: brightness(1.05) drop-shadow(0 0 4px rgba(255,177,79,.8)) drop-shadow(0 0 2px rgba(255,255,255,.5));
+    fill: #e3a560;
+    filter: brightness(.9) drop-shadow(0 0 2px #e3a15b) drop-shadow(0 0 1px #fff);
 }
 
 .joystick-hint {
@@ -6816,20 +6814,27 @@ body.smartbar-trash-hover .smartbar-trash-target {
     font-family: var(--font-mono);
 }
 
-@media (prefers-color-scheme: light) {
-    .rdp-joystick-around { background-image: linear-gradient(0, #f5f8fa, #9da4a8); box-shadow: 0 4px 12px rgba(0,0,0,.2); }
-    .rdp-joystick-handle { background: #c5d1da; box-shadow: 0 0 10px rgba(0,0,0,.5), 0 10px 10px rgba(0,0,0,.2), inset 0 0 16px rgba(0,0,0,.85), inset 0 0 24px rgba(0,0,0,.75), inset 0 0 48px rgba(0,0,0,.2); }
-    .rdp-joystick-knob { background-image: linear-gradient(0, #86969c, #eff1f1); box-shadow: 0 9px 14px rgba(0,0,0,.5), 0 19px 8px -2px rgba(0,0,0,.2), 0 33px 8px rgba(0,0,0,.4), 0 -12px 10px rgba(255,255,255,.5), inset 0 3px 3px rgba(255,255,255,.6), inset 0 -3px 3px rgba(89,91,92,.6); }
-    .rdp-joystick-inside { background-image: linear-gradient(180deg, #adb9bf, #d4dbdd); box-shadow: inset 0 3px 6px rgba(152,160,163,.4), inset 0 -3px 6px rgba(238,244,246,.4); }
-    .rdp-joystick-dot { background: #e7ecef; box-shadow: 0 2px 2px rgba(0,0,0,.3), inset 0 -2px 2px rgba(0,0,0,.2); }
-    .rdp-joystick-icon { fill: #b4b9bd; filter: drop-shadow(1px 1px 1px #f4f4f4); }
-    .rdp-joystick-icon.active { fill: #e3a560; filter: brightness(.9) drop-shadow(0 0 2px #e3a15b) drop-shadow(0 0 1px #fff); }
+html[data-theme="dark"] .rdp-joystick-around { background-image: linear-gradient(0deg, #44484d, #8d9499); box-shadow: 0 4px 12px rgba(0,0,0,.65); }
+html[data-theme="dark"] .rdp-joystick-handle { background: #30363b; box-shadow: 0 0 10px rgba(0,0,0,.75), 0 10px 10px rgba(0,0,0,.45), inset 0 0 16px rgba(0,0,0,.95), inset 0 0 24px rgba(0,0,0,.85), inset 0 0 48px rgba(0,0,0,.45), inset 0 2px 2px rgba(255,255,255,.05); }
+html[data-theme="dark"] .rdp-joystick-knob { background-image: linear-gradient(0deg, #4d555a, #c3c8cc); box-shadow: var(--rdp-joystick-knob-shadow-dark); }
+html[data-theme="dark"] .rdp-joystick-inside { background-image: linear-gradient(180deg, #5d666c, #a2abb0); box-shadow: inset 0 3px 6px rgba(0,0,0,.35), inset 0 -3px 6px rgba(255,255,255,.12); }
+html[data-theme="dark"] .rdp-joystick-dot { background: #c8ced2; box-shadow: 0 2px 2px rgba(0,0,0,.55), inset 0 -2px 2px rgba(0,0,0,.35); }
+html[data-theme="dark"] .rdp-joystick-icon { fill: #8d9499; filter: drop-shadow(1px 1px 1px rgba(0,0,0,.9)); }
+html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brightness(1.05) drop-shadow(0 0 4px rgba(255,177,79,.8)) drop-shadow(0 0 2px rgba(255,255,255,.5)); }
+
+@media (prefers-color-scheme: dark) {
+    html:not([data-theme="light"]) .rdp-joystick-around { background-image: linear-gradient(0deg, #44484d, #8d9499); box-shadow: 0 4px 12px rgba(0,0,0,.65); }
+    html:not([data-theme="light"]) .rdp-joystick-handle { background: #30363b; box-shadow: 0 0 10px rgba(0,0,0,.75), 0 10px 10px rgba(0,0,0,.45), inset 0 0 16px rgba(0,0,0,.95), inset 0 0 24px rgba(0,0,0,.85), inset 0 0 48px rgba(0,0,0,.45), inset 0 2px 2px rgba(255,255,255,.05); }
+    html:not([data-theme="light"]) .rdp-joystick-knob { background-image: linear-gradient(0deg, #4d555a, #c3c8cc); box-shadow: var(--rdp-joystick-knob-shadow-dark); }
+    html:not([data-theme="light"]) .rdp-joystick-inside { background-image: linear-gradient(180deg, #5d666c, #a2abb0); box-shadow: inset 0 3px 6px rgba(0,0,0,.35), inset 0 -3px 6px rgba(255,255,255,.12); }
+    html:not([data-theme="light"]) .rdp-joystick-dot { background: #c8ced2; box-shadow: 0 2px 2px rgba(0,0,0,.55), inset 0 -2px 2px rgba(0,0,0,.35); }
+    html:not([data-theme="light"]) .rdp-joystick-icon { fill: #8d9499; filter: drop-shadow(1px 1px 1px rgba(0,0,0,.9)); }
+    html:not([data-theme="light"]) .rdp-joystick-icon.active { fill: #ffb14f; filter: brightness(1.05) drop-shadow(0 0 4px rgba(255,177,79,.8)) drop-shadow(0 0 2px rgba(255,255,255,.5)); }
 }
 
 @media (max-width: 560px) {
-    .rdp-joystick { transform: none; }
-    .joystick-panel-content { gap: 2px; }
-    .rdp-joystick-icon { width: 14%; }
+    .rdp-joystick-around { transform: scale(.92); }
+    .rdp-joystick-icon { width: 13%; }
     .rdp-joystick-icon:nth-of-type(1) { top: -10%; }
     .rdp-joystick-icon:nth-of-type(2) { left: 110%; }
     .rdp-joystick-icon:nth-of-type(3) { top: 110%; }
@@ -9236,17 +9241,17 @@ body.app-body:not(.terminal-mode) .app-main {
     background: var(--bg);
 }
 .novnc-page .joystick-panel.rdp-floating-panel {
-    min-width: 180px;
-    min-height: 170px;
-    aspect-ratio: 280 / 250;
+    min-width: 240px;
+    min-height: 220px;
+    aspect-ratio: 1 / 1;
     overflow: visible;
 }
 .novnc-page .joystick-panel .joystick-panel-content {
     align-items: center;
     justify-content: center;
-    gap: 10px;
+    gap: 0;
     overflow: visible;
-    padding: 18px 22px 22px;
+    padding: 20px;
 }
 @media (max-width: 700px) and (hover: none) and (pointer: coarse) {
     .novnc-page .novnc-topbar.terminal-topbar { padding: 6px 10px; }
@@ -11010,104 +11015,5 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         min-width: 0;
         max-width: none;
         max-height: none;
-    }
-}
-
-/* RDP viewport joystick: Mac glass feedback aligned with reference control HTML */
-.joystick-panel .rdp-panel-content.joystick-panel-content {
-    padding: 18px 22px 22px;
-}
-.rdp-joystick-mac-shell {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: calc(var(--rdp-joystick-size, 200px) + 48px);
-    height: calc(var(--rdp-joystick-size, 200px) + 48px);
-    max-width: 100%;
-    max-height: 100%;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.75);
-    backdrop-filter: blur(20px) saturate(1.12);
-    -webkit-backdrop-filter: blur(20px) saturate(1.12);
-    box-shadow:
-        0 20px 35px -12px rgba(0, 0, 0, 0.28),
-        0 0 0 1px rgba(255, 255, 255, 0.6) inset,
-        0 0 0 2px rgba(0, 0, 0, 0.02) inset;
-    transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.4, 1.1), box-shadow 0.2s, background 0.2s;
-    will-change: transform;
-    user-select: none;
-    -webkit-user-select: none;
-}
-.rdp-joystick-mac-shell:hover {
-    transform: translateY(-5px) scale(1.03);
-    background: rgba(255,255,255,0.9);
-    box-shadow:
-        0 18px 28px -10px rgba(0, 0, 0, 0.24),
-        0 0 0 1px rgba(255, 255, 255, 0.82) inset;
-}
-.rdp-joystick-mac-shell.joystick-pressed,
-.rdp-joystick-mac-shell:active {
-    transform: translateY(2px) scale(0.97);
-    transition: transform 0.05s, box-shadow 0.1s;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(255,255,255,.58) inset;
-}
-.rdp-joystick-mac-shell::after {
-    content: attr(data-tooltip);
-    position: absolute;
-    bottom: -42px;
-    left: 50%;
-    transform: translateX(-50%) translateY(8px);
-    background: rgba(0, 0, 0, 0.75);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    color: #fff;
-    font-size: 13px;
-    font-weight: 500;
-    padding: 6px 14px;
-    border-radius: 30px;
-    white-space: nowrap;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.2s, transform 0.2s;
-    letter-spacing: 0.3px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-    z-index: 100;
-}
-.rdp-joystick-mac-shell:hover::after,
-.rdp-joystick-mac-shell.joystick-pressed::after {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-}
-.rdp-joystick-mac-shell .rdp-joystick {
-    filter: drop-shadow(0 10px 18px rgba(0,0,0,.16));
-    transition: filter .2s ease;
-}
-.rdp-joystick-mac-shell.joystick-pressed .rdp-joystick {
-    filter: drop-shadow(0 5px 10px rgba(0,0,0,.2));
-}
-html[data-theme="dark"] .rdp-page .rdp-joystick-mac-shell,
-.rdp-page[data-theme="dark"] .rdp-joystick-mac-shell {
-    background: rgba(255, 255, 255, 0.16);
-    box-shadow:
-        0 20px 35px -12px rgba(0, 0, 0, 0.46),
-        0 0 0 1px rgba(255, 255, 255, 0.18) inset,
-        0 0 0 2px rgba(0, 0, 0, 0.08) inset;
-}
-@media (prefers-color-scheme: light) {
-    .rdp-page .rdp-joystick-mac-shell {
-        background: rgba(255, 255, 255, 0.75);
-    }
-}
-@media (max-width: 500px) {
-    .joystick-panel .rdp-panel-content.joystick-panel-content { padding: 12px 14px 16px; }
-    .rdp-joystick-mac-shell {
-        width: calc(var(--rdp-joystick-size, 200px) + 28px);
-        height: calc(var(--rdp-joystick-size, 200px) + 28px);
-    }
-    .rdp-joystick-mac-shell::after {
-        font-size: 11px;
-        padding: 4px 12px;
-        bottom: -38px;
     }
 }
