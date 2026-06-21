@@ -6685,6 +6685,15 @@ body.smartbar-trash-hover .smartbar-trash-target {
     overflow: visible;
 }
 
+.joystick-panel > .panel-drag-handle {
+    border-top-left-radius: inherit;
+    border-top-right-radius: inherit;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    overflow: hidden;
+    background-clip: padding-box;
+}
+
 .joystick-panel-content {
     align-items: center;
     justify-content: center;
@@ -9245,6 +9254,14 @@ body.app-body:not(.terminal-mode) .app-main {
     min-height: 220px;
     aspect-ratio: 1 / 1;
     overflow: visible;
+}
+.novnc-page .joystick-panel > .panel-drag-handle {
+    border-top-left-radius: inherit;
+    border-top-right-radius: inherit;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    overflow: hidden;
+    background-clip: padding-box;
 }
 .novnc-page .joystick-panel .joystick-panel-content {
     align-items: center;
