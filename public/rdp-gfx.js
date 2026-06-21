@@ -1123,19 +1123,19 @@ function applyDisplayScale() {
 function updateJoystickPanelScale(panel = $('#joystickPanel')) {
     const container = $('#joystickContainer');
     if (!panel || !container) return;
-    const rect = panel.getBoundingClientRect?.() || { width: 248, height: 220 };
-    const contentW = Math.max(1, rect.width - 34);
-    const contentH = Math.max(1, rect.height - 58);
-    const size = Math.max(112, Math.min(260, Math.floor(Math.min(contentW, contentH))));
+    const rect = panel.getBoundingClientRect?.() || { width: 280, height: 250 };
+    const contentW = Math.max(1, rect.width - 72);
+    const contentH = Math.max(1, rect.height - 104);
+    const size = Math.max(96, Math.min(260, Math.floor(Math.min(contentW, contentH))));
     panel.style.setProperty('--rdp-joystick-size', `${size}px`);
 }
 function sizeJoystickPanel(panel, targetWidth, targetHeight = null, anchorLeft = null) {
     if (!panel) return;
-    const aspect = 248 / 220;
-    let w = Math.max(150, Math.min(window.innerWidth - 12, Number(targetWidth) || 248));
+    const aspect = 280 / 250;
+    let w = Math.max(180, Math.min(window.innerWidth - 12, Number(targetWidth) || 280));
     let h = targetHeight == null ? Math.round(w / aspect) : Number(targetHeight);
-    h = Math.max(140, Math.min(window.innerHeight - 12, h || 220));
-    w = Math.max(150, Math.min(window.innerWidth - 12, Math.round(h * aspect)));
+    h = Math.max(170, Math.min(window.innerHeight - 12, h || 250));
+    w = Math.max(180, Math.min(window.innerWidth - 12, Math.round(h * aspect)));
     panel.style.width = `${w}px`;
     panel.style.height = `${h}px`;
     if (anchorLeft !== null && Number.isFinite(anchorLeft)) panel.style.left = `${Math.max(4, Math.min(window.innerWidth - w - 4, anchorLeft))}px`;
@@ -1145,10 +1145,10 @@ function placePanel(panel, anchor = null) {
     if (!panel) return;
     const stageRect = $('#rdpStage')?.getBoundingClientRect?.() || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight };
     const isJoystick = panel.id === 'joystickPanel';
-    const defaultW = isJoystick ? 248 : 320;
-    const defaultH = isJoystick ? 220 : 260;
-    const minW = isJoystick ? 150 : 260;
-    const minH = isJoystick ? 140 : 220;
+    const defaultW = isJoystick ? 280 : 320;
+    const defaultH = isJoystick ? 250 : 260;
+    const minW = isJoystick ? 180 : 260;
+    const minH = isJoystick ? 170 : 220;
     const width = Math.min(Math.max(panel.offsetWidth || defaultW, minW), Math.max(minW, stageRect.width - 16));
     const height = Math.min(Math.max(panel.offsetHeight || defaultH, minH), Math.max(minH, stageRect.height - 16));
     const anchorRect = anchor?.getBoundingClientRect?.();
@@ -1211,16 +1211,16 @@ function applyPanelLayout(panel, layout) {
     let height = parentRect.height - topbar - margin;
     if (layout === 'half') {
         width = parentRect.width;
-        height = Math.max(panel.id === 'joystickPanel' ? 140 : 260, parentRect.height / 2);
+        height = Math.max(panel.id === 'joystickPanel' ? 170 : 260, parentRect.height / 2);
         left = 0;
         top = parentRect.height - height;
     } else if (layout === 'left-quarter') {
-        width = Math.max(panel.id === 'joystickPanel' ? 150 : 260, parentRect.width / 4);
+        width = Math.max(panel.id === 'joystickPanel' ? 180 : 260, parentRect.width / 4);
         height = parentRect.height - topbar;
         left = 0;
         top = topbar;
     } else if (layout === 'right-quarter') {
-        width = Math.max(panel.id === 'joystickPanel' ? 150 : 260, parentRect.width / 4);
+        width = Math.max(panel.id === 'joystickPanel' ? 180 : 260, parentRect.width / 4);
         height = parentRect.height - topbar;
         left = parentRect.width - width;
         top = topbar;
@@ -1444,15 +1444,51 @@ function setupFloatingPanels() {
     });
     window.addEventListener('resize', () => closePanelLayoutMenu({ instant: true }));
 }
+let rdpJoystickToastEl = null;
+function showRdpJoystickToast(message = '🕹️ 视区摇杆已激活 · 拖动调整画面') {
+    if (rdpJoystickToastEl) {
+        rdpJoystickToastEl.remove();
+        rdpJoystickToastEl = null;
+    }
+    const div = document.createElement('div');
+    div.className = 'rdp-joystick-toast';
+    div.textContent = message;
+    document.body.appendChild(div);
+    rdpJoystickToastEl = div;
+    setTimeout(() => div.classList.add('show'), 10);
+    setTimeout(() => {
+        div.classList.remove('show');
+        setTimeout(() => {
+            if (rdpJoystickToastEl === div) rdpJoystickToastEl = null;
+            div.remove();
+        }, 220);
+    }, 1800);
+}
+
 function setupJoystickPanel() {
     const panel = $('#joystickPanel');
     const knob = $('#joystickKnob');
     const container = $('#joystickContainer');
     if (!panel || !knob || !container || container.dataset.boundJoystick) return;
     container.dataset.boundJoystick = '1';
+    const shell = panel.querySelector('.rdp-joystick-mac-shell') || container.parentElement;
     let timer = null;
+    let toastShown = false;
     let vector = { x: 0, y: 0 };
-    const stop = () => { if (timer) clearInterval(timer); timer = null; vector = { x: 0, y: 0 }; setRdpInputSuppressed(false, 220); knob.classList.add('smooth-back'); knob.style.transform = 'translate(0,0)'; setTimeout(() => knob.classList.remove('smooth-back'), 220); };
+    const icons = Array.from(container.querySelectorAll('.rdp-joystick-icon'));
+    const clearHighlights = () => icons.forEach((icon) => icon.classList.remove('active'));
+    const stop = () => {
+        if (timer) clearInterval(timer);
+        timer = null;
+        vector = { x: 0, y: 0 };
+        toastShown = false;
+        shell?.classList?.remove('joystick-pressed');
+        setRdpInputSuppressed(false, 220);
+        knob.classList.add('smooth-back');
+        knob.style.transform = 'translate(0,0) rotateX(0deg) rotateY(0deg)';
+        clearHighlights();
+        setTimeout(() => knob.classList.remove('smooth-back'), 220);
+    };
     const tick = () => {
         const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
         if (!canvas || !client?._sendMessage) return;
@@ -1467,6 +1503,7 @@ function setupJoystickPanel() {
         event.preventDefault();
         event.stopPropagation();
         setRdpInputSuppressed(true);
+        shell?.classList?.add('joystick-pressed');
         showPanel(panel);
         try { container.setPointerCapture?.(event.pointerId); } catch {}
         const rect = container.getBoundingClientRect();
@@ -1477,8 +1514,19 @@ function setupJoystickPanel() {
             const len = Math.max(1, Math.hypot(dx, dy));
             const max = Math.max(24, rect.width * 0.23);
             const k = Math.min(max, len) / len;
-            knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
-            vector = { x: Math.max(-1, Math.min(1, dx / max)), y: Math.max(-1, Math.min(1, dy / max)) };
+            const clampedX = dx * k;
+            const clampedY = dy * k;
+            const normX = Math.max(-1, Math.min(1, dx / max));
+            const normY = Math.max(-1, Math.min(1, dy / max));
+            knob.style.transform = `translate(${clampedX}px, ${clampedY}px) rotateX(${-normY * 14}deg) rotateY(${normX * 14}deg)`;
+            vector = { x: normX, y: normY };
+            clearHighlights();
+            if (Math.hypot(clampedX, clampedY) > 4) {
+                const angleDeg = (Math.atan2(normY, normX) * 180 / Math.PI + 360) % 360;
+                const activeIndex = angleDeg >= 45 && angleDeg < 135 ? 2 : angleDeg >= 135 && angleDeg < 225 ? 3 : angleDeg >= 225 && angleDeg < 315 ? 0 : 1;
+                icons[activeIndex]?.classList.add('active');
+                if (!toastShown) { toastShown = true; showRdpJoystickToast('🕹️ 视区摇杆已激活 · 拖动调整画面'); }
+            }
             if (!timer) timer = setInterval(tick, 35);
         };
         const up = () => {

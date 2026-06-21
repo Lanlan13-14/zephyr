@@ -1653,11 +1653,11 @@ function floatingPanels() {
 function getDefaultPanelOptions(panel) {
     const parentRect = panel?.parentElement?.getBoundingClientRect?.() || { width: window.innerWidth, height: window.innerHeight };
     if (panel === joystickPanel) {
-        return { left: 10, top: Math.max(48, parentRect.height - 228), width: Math.min(248, parentRect.width - 20), height: 220 };
+        return { left: 10, top: Math.max(48, parentRect.height - 260), width: Math.min(300, parentRect.width - 20), height: 250 };
     }
     if (isCompactScreen()) {
         if (panel === joystickPanel) {
-            return { left: 10, top: Math.max(48, parentRect.height - 274), width: Math.min(300, parentRect.width - 20), height: 248 };
+            return { left: 10, top: Math.max(48, parentRect.height - 286), width: Math.min(320, parentRect.width - 20), height: 266 };
         }
         return {
             left: 8,
@@ -1670,7 +1670,7 @@ function getDefaultPanelOptions(panel) {
         return { width: Math.min(460, parentRect.width - 24), height: Math.min(360, parentRect.height - 80), left: 18, top: 54 };
     }
     if (panel === joystickPanel) {
-        return { width: 286, height: 244, left: 18, top: Math.max(60, parentRect.height - 270) };
+        return { width: 300, height: 268, left: 18, top: Math.max(60, parentRect.height - 292) };
     }
     return { width: Math.min(440, parentRect.width - 24), height: Math.min(500, parentRect.height - 80), left: Math.max(18, parentRect.width - 460), top: 54 };
 }
@@ -2050,10 +2050,32 @@ function updateJoystickHint() {
     // 摇杆浮窗不显示文字提示；保留空函数给滚动/缩放流程调用。
 }
 
+let rdpJoystickToastEl = null;
+function showRdpJoystickToast(message = '🕹️ 视区摇杆已激活 · 拖动调整画面') {
+    if (rdpJoystickToastEl) {
+        rdpJoystickToastEl.remove();
+        rdpJoystickToastEl = null;
+    }
+    const div = document.createElement('div');
+    div.className = 'rdp-joystick-toast';
+    div.textContent = message;
+    document.body.appendChild(div);
+    rdpJoystickToastEl = div;
+    setTimeout(() => div.classList.add('show'), 10);
+    setTimeout(() => {
+        div.classList.remove('show');
+        setTimeout(() => {
+            if (rdpJoystickToastEl === div) rdpJoystickToastEl = null;
+            div.remove();
+        }, 220);
+    }, 1800);
+}
+
 function setupViewportJoystick() {
     if (!joystickContainer || !joystickKnob || joystickContainer.dataset.ready === '1') return;
     joystickContainer.dataset.ready = '1';
     const icons = joystickContainer.querySelectorAll('.rdp-joystick-icon');
+    const shell = joystickPanel?.querySelector('.rdp-joystick-mac-shell') || joystickContainer.parentElement;
     const deadzone = 4;
     const maxTilt = 14;
     let active = false;
@@ -2061,6 +2083,7 @@ function setupViewportJoystick() {
     let startY = 0;
     let raf = 0;
     let resetTimer = 0;
+    let toastShown = false;
 
     const clearHighlights = () => icons.forEach((icon) => icon.classList.remove('active'));
     const applyVisual = (x, y) => {
@@ -2074,6 +2097,7 @@ function setupViewportJoystick() {
         const rotX = normY * -maxTilt;
         joystickKnob.style.transform = `translate(${clampedX}px, ${clampedY}px) rotateX(${rotX}deg) rotateY(${rotY}deg)`;
         if (distance < deadzone) { clearHighlights(); return { x: 0, y: 0, intensity: 0 }; }
+        if (!toastShown) { toastShown = true; showRdpJoystickToast('🕹️ 视区摇杆已激活 · 拖动调整画面'); }
         const angleDeg = (Math.atan2(normY, normX) * 180 / Math.PI + 360) % 360;
         let activeIndex = angleDeg >= 45 && angleDeg < 135 ? 2 : angleDeg >= 135 && angleDeg < 225 ? 3 : angleDeg >= 225 && angleDeg < 315 ? 0 : 1;
         clearHighlights();
@@ -2084,12 +2108,14 @@ function setupViewportJoystick() {
         if (raf) cancelAnimationFrame(raf);
         raf = 0;
         setRdpInputSuppressed(false, 220);
+        shell?.classList?.remove('joystick-pressed');
         if (smooth) joystickKnob.classList.add('smooth-back');
         joystickKnob.style.transform = 'translate(0px, 0px) rotateX(0deg) rotateY(0deg)';
         clearHighlights();
         window.clearTimeout(resetTimer);
         resetTimer = window.setTimeout(() => joystickKnob.classList.remove('smooth-back'), 220);
         rdpJoystickState = null;
+        toastShown = false;
         updateJoystickHint();
     };
     const pumpScroll = () => {
@@ -2127,6 +2153,7 @@ function setupViewportJoystick() {
         event.preventDefault();
         event.stopPropagation();
         setRdpInputSuppressed(true);
+        shell?.classList?.add('joystick-pressed');
         bringPanelToFront(joystickPanel);
         active = true;
         startX = event.clientX;
@@ -2203,19 +2230,19 @@ function togglePanel(panel, force, sourceButton = null) {
 
 function updateJoystickPanelScale(panel = joystickPanel) {
     if (!panel || !joystickContainer) return;
-    const rect = panel.getBoundingClientRect?.() || { width: 248, height: 220 };
-    const contentW = Math.max(1, rect.width - 34);
-    const contentH = Math.max(1, rect.height - 58);
-    const size = Math.max(112, Math.min(260, Math.floor(Math.min(contentW, contentH))));
+    const rect = panel.getBoundingClientRect?.() || { width: 280, height: 250 };
+    const contentW = Math.max(1, rect.width - 72);
+    const contentH = Math.max(1, rect.height - 104);
+    const size = Math.max(96, Math.min(260, Math.floor(Math.min(contentW, contentH))));
     panel.style.setProperty('--rdp-joystick-size', `${size}px`);
 }
 function sizeJoystickPanel(panel, targetWidth, targetHeight = null, anchorLeft = null) {
     if (!panel) return;
-    const aspect = 248 / 220;
-    let w = Math.max(150, Math.min(window.innerWidth - 12, Number(targetWidth) || 248));
+    const aspect = 280 / 250;
+    let w = Math.max(180, Math.min(window.innerWidth - 12, Number(targetWidth) || 280));
     let h = targetHeight == null ? Math.round(w / aspect) : Number(targetHeight);
-    h = Math.max(140, Math.min(window.innerHeight - 12, h || 220));
-    w = Math.max(150, Math.min(window.innerWidth - 12, Math.round(h * aspect)));
+    h = Math.max(170, Math.min(window.innerHeight - 12, h || 250));
+    w = Math.max(180, Math.min(window.innerWidth - 12, Math.round(h * aspect)));
     panel.style.width = `${w}px`;
     panel.style.height = `${h}px`;
     if (anchorLeft !== null && Number.isFinite(anchorLeft)) panel.style.left = `${Math.max(4, Math.min(window.innerWidth - w - 4, anchorLeft))}px`;

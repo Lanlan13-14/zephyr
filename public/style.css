@@ -9236,17 +9236,17 @@ body.app-body:not(.terminal-mode) .app-main {
     background: var(--bg);
 }
 .novnc-page .joystick-panel.rdp-floating-panel {
-    min-width: 150px;
-    min-height: 140px;
-    aspect-ratio: 248 / 220;
-    overflow: hidden;
+    min-width: 180px;
+    min-height: 170px;
+    aspect-ratio: 280 / 250;
+    overflow: visible;
 }
 .novnc-page .joystick-panel .joystick-panel-content {
     align-items: center;
     justify-content: center;
     gap: 10px;
-    overflow: hidden;
-    padding: 12px;
+    overflow: visible;
+    padding: 18px 22px 22px;
 }
 @media (max-width: 700px) and (hover: none) and (pointer: coarse) {
     .novnc-page .novnc-topbar.terminal-topbar { padding: 6px 10px; }
@@ -10956,5 +10956,129 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         min-width: 0;
         max-width: none;
         max-height: none;
+    }
+}
+
+/* RDP viewport joystick: Mac glass feedback aligned with reference control HTML */
+.joystick-panel .rdp-panel-content.joystick-panel-content {
+    padding: 18px 22px 22px;
+}
+.rdp-joystick-mac-shell {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: calc(var(--rdp-joystick-size, 200px) + 48px);
+    height: calc(var(--rdp-joystick-size, 200px) + 48px);
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(20px) saturate(1.12);
+    -webkit-backdrop-filter: blur(20px) saturate(1.12);
+    box-shadow:
+        0 20px 35px -12px rgba(0, 0, 0, 0.28),
+        0 0 0 1px rgba(255, 255, 255, 0.6) inset,
+        0 0 0 2px rgba(0, 0, 0, 0.02) inset;
+    transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.4, 1.1), box-shadow 0.2s, background 0.2s;
+    will-change: transform;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.rdp-joystick-mac-shell:hover {
+    transform: translateY(-5px) scale(1.03);
+    background: rgba(255,255,255,0.9);
+    box-shadow:
+        0 18px 28px -10px rgba(0, 0, 0, 0.24),
+        0 0 0 1px rgba(255, 255, 255, 0.82) inset;
+}
+.rdp-joystick-mac-shell.joystick-pressed,
+.rdp-joystick-mac-shell:active {
+    transform: translateY(2px) scale(0.97);
+    transition: transform 0.05s, box-shadow 0.1s;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(255,255,255,.58) inset;
+}
+.rdp-joystick-mac-shell::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: -42px;
+    left: 50%;
+    transform: translateX(-50%) translateY(8px);
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 30px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s;
+    letter-spacing: 0.3px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    z-index: 100;
+}
+.rdp-joystick-mac-shell:hover::after,
+.rdp-joystick-mac-shell.joystick-pressed::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+.rdp-joystick-mac-shell .rdp-joystick {
+    filter: drop-shadow(0 10px 18px rgba(0,0,0,.16));
+    transition: filter .2s ease;
+}
+.rdp-joystick-mac-shell.joystick-pressed .rdp-joystick {
+    filter: drop-shadow(0 5px 10px rgba(0,0,0,.2));
+}
+.rdp-joystick-toast {
+    position: fixed;
+    left: 50%;
+    bottom: max(30px, env(safe-area-inset-bottom));
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(30, 30, 35, 0.9);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: #fff;
+    padding: 10px 20px;
+    border-radius: 40px;
+    font-size: 14px;
+    font-weight: 500;
+    font-family: 'Segoe UI', 'SF Pro Text', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+    z-index: 9999;
+    pointer-events: none;
+    transition: opacity 0.25s, transform 0.25s;
+    opacity: 0;
+    white-space: nowrap;
+}
+.rdp-joystick-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+html[data-theme="dark"] .rdp-page .rdp-joystick-mac-shell,
+.rdp-page[data-theme="dark"] .rdp-joystick-mac-shell {
+    background: rgba(255, 255, 255, 0.16);
+    box-shadow:
+        0 20px 35px -12px rgba(0, 0, 0, 0.46),
+        0 0 0 1px rgba(255, 255, 255, 0.18) inset,
+        0 0 0 2px rgba(0, 0, 0, 0.08) inset;
+}
+@media (prefers-color-scheme: light) {
+    .rdp-page .rdp-joystick-mac-shell {
+        background: rgba(255, 255, 255, 0.75);
+    }
+}
+@media (max-width: 500px) {
+    .joystick-panel .rdp-panel-content.joystick-panel-content { padding: 12px 14px 16px; }
+    .rdp-joystick-mac-shell {
+        width: calc(var(--rdp-joystick-size, 200px) + 28px);
+        height: calc(var(--rdp-joystick-size, 200px) + 28px);
+    }
+    .rdp-joystick-mac-shell::after {
+        font-size: 11px;
+        padding: 4px 12px;
+        bottom: -38px;
     }
 }
