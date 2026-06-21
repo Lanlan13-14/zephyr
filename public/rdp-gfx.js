@@ -1158,6 +1158,141 @@ function togglePanel(panel, anchor = null) {
     if (isOpen) hidePanel(panel);
     else showPanel(panel, anchor);
 }
+function clampPanel(panel) {
+    if (!panel) return;
+    const parentRect = panel.parentElement?.getBoundingClientRect?.() || $('#rdpStage')?.getBoundingClientRect?.() || { width: window.innerWidth, height: window.innerHeight };
+    const rect = panel.getBoundingClientRect();
+    const minVisible = window.innerWidth <= 700 ? 140 : 80;
+    const left = Math.min(Math.max(rect.left - parentRect.left, -rect.width + minVisible), parentRect.width - minVisible);
+    const top = Math.min(Math.max(rect.top - parentRect.top, 8), parentRect.height - minVisible);
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+}
+function frontPanel(panel) {
+    if (!panel) return;
+    document.querySelectorAll('.rdp-floating-panel').forEach((item) => item.classList.toggle('front', item === panel));
+    panel.classList.add('front');
+}
+function applyPanelLayout(panel, layout) {
+    if (!panel) return;
+    const parentRect = panel.parentElement?.getBoundingClientRect?.() || $('#rdpStage')?.getBoundingClientRect?.() || { width: window.innerWidth, height: window.innerHeight };
+    const compact = window.innerWidth <= 700;
+    const margin = compact ? 6 : 12;
+    const topbar = compact ? 38 : 52;
+    let left = margin;
+    let top = topbar;
+    let width = parentRect.width - margin * 2;
+    let height = parentRect.height - topbar - margin;
+    if (layout === 'half') {
+        width = parentRect.width;
+        height = Math.max(panel.id === 'joystickPanel' ? 140 : 260, parentRect.height / 2);
+        left = 0;
+        top = parentRect.height - height;
+    } else if (layout === 'left-quarter') {
+        width = Math.max(panel.id === 'joystickPanel' ? 150 : 260, parentRect.width / 4);
+        height = parentRect.height - topbar;
+        left = 0;
+        top = topbar;
+    } else if (layout === 'right-quarter') {
+        width = Math.max(panel.id === 'joystickPanel' ? 150 : 260, parentRect.width / 4);
+        height = parentRect.height - topbar;
+        left = parentRect.width - width;
+        top = topbar;
+    }
+    panel.classList.add('layout-animating');
+    window.clearTimeout(panel._layoutAnimationTimer);
+    Object.assign(panel.style, { left: `${left}px`, top: `${top}px`, right: 'auto', bottom: 'auto', width: `${width}px`, height: `${height}px` });
+    if (panel.id === 'joystickPanel') updateJoystickPanelScale(panel);
+    frontPanel(panel);
+    panel._layoutAnimationTimer = window.setTimeout(() => { panel.classList.remove('layout-animating'); clampPanel(panel); }, 480);
+}
+let panelLayoutMenu = null;
+let panelLayoutButton = null;
+let suppressNextLayoutClick = false;
+function positionPanelLayoutMenu(menu, button, { collapsed = false } = {}) {
+    if (!menu || !button) return;
+    const rect = button.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const vvLeft = viewport?.offsetLeft || 0;
+    const vvTop = viewport?.offsetTop || 0;
+    const vvWidth = viewport?.width || window.innerWidth;
+    const anchorX = rect.left + rect.width / 2;
+    const finalWidth = Math.min(284, Math.max(160, vvWidth - 16));
+    const finalHeight = 50;
+    const finalLeft = Math.max(vvLeft + 8, Math.min(vvLeft + vvWidth - finalWidth - 8, anchorX - finalWidth / 2));
+    const finalTop = Math.max(vvTop + 8, rect.top);
+    menu.style.left = `${collapsed ? rect.left : finalLeft}px`;
+    menu.style.top = `${finalTop}px`;
+    menu.style.setProperty('--panel-island-menu-width', `${collapsed ? rect.width : finalWidth}px`);
+    menu.style.setProperty('--panel-island-menu-height', `${collapsed ? rect.height : finalHeight}px`);
+    menu.style.setProperty('--panel-island-radius', `${Math.round((collapsed ? rect.height : 36) / 2)}px`);
+    menu.dataset.placement = 'inline';
+}
+function closePanelLayoutMenu({ instant = false } = {}) {
+    const menu = panelLayoutMenu;
+    const button = panelLayoutButton;
+    if (!menu) { button?.classList.remove('active-layout'); panelLayoutButton = null; return; }
+    window.clearTimeout(menu._closeTimer);
+    if (instant || !button?.isConnected) {
+        button?.classList.remove('active-layout'); button?.style.removeProperty('opacity'); menu.remove(); panelLayoutMenu = null; panelLayoutButton = null; return;
+    }
+    menu.style.transition = 'none';
+    positionPanelLayoutMenu(menu, button, { collapsed: false });
+    menu.style.opacity = '1';
+    void menu.offsetWidth;
+    menu.classList.remove('island-open');
+    menu.classList.add('island-closing', 'island-animating');
+    button.classList.remove('active-layout');
+    button.style.opacity = '0';
+    requestAnimationFrame(() => {
+        menu.style.removeProperty('transition');
+        positionPanelLayoutMenu(menu, button, { collapsed: true });
+    });
+    menu._closeTimer = window.setTimeout(() => {
+        button.classList.remove('active-layout'); button.style.opacity = '1'; requestAnimationFrame(() => button.style.removeProperty('opacity')); menu.remove();
+        if (panelLayoutMenu === menu) panelLayoutMenu = null;
+        if (panelLayoutButton === button) panelLayoutButton = null;
+    }, 460);
+}
+function openPanelLayoutMenu(button, panel) {
+    closePanelLayoutMenu({ instant: true });
+    panelLayoutButton = button;
+    button?.classList.remove('active-layout');
+    const menu = document.createElement('div');
+    menu.className = 'panel-layout-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', '窗口布局');
+    menu.innerHTML = `
+        <button data-layout="full" title="全屏" aria-label="全屏"><span class="panel-layout-icon full"></span></button>
+        <button data-layout="half" title="半屏" aria-label="半屏"><span class="panel-layout-icon half"></span></button>
+        <button data-layout="left-quarter" title="左侧四分之一" aria-label="左侧四分之一"><span class="panel-layout-icon left"></span></button>
+        <button data-layout="right-quarter" title="右侧四分之一" aria-label="右侧四分之一"><span class="panel-layout-icon right"></span></button>
+        <button data-layout="close" class="panel-layout-close" title="关闭窗口" aria-label="关闭窗口"><span class="panel-layout-icon close"></span></button>
+    `;
+    menu.style.transition = 'none';
+    document.body.appendChild(menu);
+    panelLayoutMenu = menu;
+    positionPanelLayoutMenu(menu, button, { collapsed: true });
+    button.style.opacity = '0';
+    menu.style.opacity = '1';
+    menu.classList.add('island-animating');
+    void menu.offsetWidth;
+    requestAnimationFrame(() => {
+        menu.style.removeProperty('transition');
+        menu.classList.add('island-open');
+        positionPanelLayoutMenu(menu, button, { collapsed: false });
+        window.setTimeout(() => { menu.classList.remove('island-animating'); menu.style.removeProperty('opacity'); }, 540);
+    });
+    menu.addEventListener('click', (event) => {
+        const item = event.target.closest?.('[data-layout]');
+        if (!item) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (item.dataset.layout === 'close') { hidePanel(panel); closePanelLayoutMenu({ instant: true }); return; }
+        applyPanelLayout(panel, item.dataset.layout);
+        closePanelLayoutMenu();
+    });
+}
 function setupFloatingPanels() {
     document.querySelectorAll('.rdp-floating-panel').forEach((panel) => {
         if (!panel.hidden) panel.classList.add('open');
@@ -1229,14 +1364,59 @@ function setupFloatingPanels() {
     document.querySelectorAll('[data-layout-panel]').forEach((btn) => {
         if (btn.dataset.boundLayout) return;
         btn.dataset.boundLayout = '1';
-        btn.addEventListener('click', (event) => {
+        const panel = document.getElementById(btn.dataset.layoutPanel || '');
+        if (!panel) return;
+        btn.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
             event.stopPropagation();
-            const panel = document.getElementById(btn.dataset.layoutPanel || '');
-            if (!panel) return;
             showPanel(panel);
-            panel.classList.toggle('compact-panel');
+            frontPanel(panel);
+            btn.classList.add('pressing');
+            try { btn.setPointerCapture?.(event.pointerId); } catch {}
+            const startX = event.clientX;
+            const startY = event.clientY;
+            const startLeft = panel.offsetLeft;
+            const startTop = panel.offsetTop;
+            let moved = false;
+            const onMove = (ev) => {
+                ev.preventDefault();
+                const dx = ev.clientX - startX;
+                const dy = ev.clientY - startY;
+                if (!moved && Math.hypot(dx, dy) > 7) { moved = true; closePanelLayoutMenu({ instant: true }); panel.classList.add('dragging'); }
+                if (!moved) return;
+                panel.style.left = `${startLeft + dx}px`;
+                panel.style.top = `${startTop + dy}px`;
+                panel.style.right = 'auto';
+                panel.style.bottom = 'auto';
+                clampPanel(panel);
+            };
+            const onUp = () => {
+                panel.classList.remove('dragging');
+                btn.classList.remove('pressing');
+                suppressNextLayoutClick = moved;
+                window.removeEventListener('pointermove', onMove);
+                window.removeEventListener('pointerup', onUp);
+                window.removeEventListener('pointercancel', onUp);
+            };
+            window.addEventListener('pointermove', onMove, { passive: false });
+            window.addEventListener('pointerup', onUp, { once: true });
+            window.addEventListener('pointercancel', onUp, { once: true });
+        });
+        btn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (suppressNextLayoutClick) { suppressNextLayoutClick = false; return; }
+            showPanel(panel);
+            frontPanel(panel);
+            if (navigator.vibrate) navigator.vibrate(8);
+            if (panelLayoutMenu && panelLayoutButton === btn) closePanelLayoutMenu();
+            else openPanelLayoutMenu(btn, panel);
         });
     });
+    document.addEventListener('pointerdown', (event) => {
+        if (panelLayoutMenu && !event.target.closest?.('.panel-layout-menu') && !event.target.closest?.('[data-layout-panel]')) closePanelLayoutMenu();
+    });
+    window.addEventListener('resize', () => closePanelLayoutMenu({ instant: true }));
 }
 function setupJoystickPanel() {
     const panel = $('#joystickPanel');
