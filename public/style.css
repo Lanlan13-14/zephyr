@@ -11032,31 +11032,6 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 .rdp-joystick-mac-shell.joystick-pressed .rdp-joystick {
     filter: drop-shadow(0 5px 10px rgba(0,0,0,.2));
 }
-.rdp-joystick-toast {
-    position: fixed;
-    left: 50%;
-    bottom: max(30px, env(safe-area-inset-bottom));
-    transform: translateX(-50%) translateY(20px);
-    background: rgba(30, 30, 35, 0.9);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    color: #fff;
-    padding: 10px 20px;
-    border-radius: 40px;
-    font-size: 14px;
-    font-weight: 500;
-    font-family: 'Segoe UI', 'SF Pro Text', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
-    box-shadow: 0 8px 20px rgba(0,0,0,0.2);
-    z-index: 9999;
-    pointer-events: none;
-    transition: opacity 0.25s, transform 0.25s;
-    opacity: 0;
-    white-space: nowrap;
-}
-.rdp-joystick-toast.show {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-}
 html[data-theme="dark"] .rdp-page .rdp-joystick-mac-shell,
 .rdp-page[data-theme="dark"] .rdp-joystick-mac-shell {
     background: rgba(255, 255, 255, 0.16);

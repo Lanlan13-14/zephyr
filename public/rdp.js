@@ -2050,27 +2050,6 @@ function updateJoystickHint() {
     // 摇杆浮窗不显示文字提示；保留空函数给滚动/缩放流程调用。
 }
 
-let rdpJoystickToastEl = null;
-function showRdpJoystickToast(message = '🕹️ 视区摇杆已激活 · 拖动调整画面') {
-    if (rdpJoystickToastEl) {
-        rdpJoystickToastEl.remove();
-        rdpJoystickToastEl = null;
-    }
-    const div = document.createElement('div');
-    div.className = 'rdp-joystick-toast';
-    div.textContent = message;
-    document.body.appendChild(div);
-    rdpJoystickToastEl = div;
-    setTimeout(() => div.classList.add('show'), 10);
-    setTimeout(() => {
-        div.classList.remove('show');
-        setTimeout(() => {
-            if (rdpJoystickToastEl === div) rdpJoystickToastEl = null;
-            div.remove();
-        }, 220);
-    }, 1800);
-}
-
 function setupViewportJoystick() {
     if (!joystickContainer || !joystickKnob || joystickContainer.dataset.ready === '1') return;
     joystickContainer.dataset.ready = '1';
@@ -2083,7 +2062,6 @@ function setupViewportJoystick() {
     let startY = 0;
     let raf = 0;
     let resetTimer = 0;
-    let toastShown = false;
 
     const clearHighlights = () => icons.forEach((icon) => icon.classList.remove('active'));
     const applyVisual = (x, y) => {
@@ -2097,7 +2075,6 @@ function setupViewportJoystick() {
         const rotX = normY * -maxTilt;
         joystickKnob.style.transform = `translate(${clampedX}px, ${clampedY}px) rotateX(${rotX}deg) rotateY(${rotY}deg)`;
         if (distance < deadzone) { clearHighlights(); return { x: 0, y: 0, intensity: 0 }; }
-        if (!toastShown) { toastShown = true; showRdpJoystickToast('🕹️ 视区摇杆已激活 · 拖动调整画面'); }
         const angleDeg = (Math.atan2(normY, normX) * 180 / Math.PI + 360) % 360;
         let activeIndex = angleDeg >= 45 && angleDeg < 135 ? 2 : angleDeg >= 135 && angleDeg < 225 ? 3 : angleDeg >= 225 && angleDeg < 315 ? 0 : 1;
         clearHighlights();
@@ -2115,7 +2092,6 @@ function setupViewportJoystick() {
         window.clearTimeout(resetTimer);
         resetTimer = window.setTimeout(() => joystickKnob.classList.remove('smooth-back'), 220);
         rdpJoystickState = null;
-        toastShown = false;
         updateJoystickHint();
     };
     const pumpScroll = () => {

@@ -1444,27 +1444,6 @@ function setupFloatingPanels() {
     });
     window.addEventListener('resize', () => closePanelLayoutMenu({ instant: true }));
 }
-let rdpJoystickToastEl = null;
-function showRdpJoystickToast(message = '🕹️ 视区摇杆已激活 · 拖动调整画面') {
-    if (rdpJoystickToastEl) {
-        rdpJoystickToastEl.remove();
-        rdpJoystickToastEl = null;
-    }
-    const div = document.createElement('div');
-    div.className = 'rdp-joystick-toast';
-    div.textContent = message;
-    document.body.appendChild(div);
-    rdpJoystickToastEl = div;
-    setTimeout(() => div.classList.add('show'), 10);
-    setTimeout(() => {
-        div.classList.remove('show');
-        setTimeout(() => {
-            if (rdpJoystickToastEl === div) rdpJoystickToastEl = null;
-            div.remove();
-        }, 220);
-    }, 1800);
-}
-
 function setupJoystickPanel() {
     const panel = $('#joystickPanel');
     const knob = $('#joystickKnob');
@@ -1473,7 +1452,6 @@ function setupJoystickPanel() {
     container.dataset.boundJoystick = '1';
     const shell = panel.querySelector('.rdp-joystick-mac-shell') || container.parentElement;
     let timer = null;
-    let toastShown = false;
     let vector = { x: 0, y: 0 };
     const icons = Array.from(container.querySelectorAll('.rdp-joystick-icon'));
     const clearHighlights = () => icons.forEach((icon) => icon.classList.remove('active'));
@@ -1481,7 +1459,6 @@ function setupJoystickPanel() {
         if (timer) clearInterval(timer);
         timer = null;
         vector = { x: 0, y: 0 };
-        toastShown = false;
         shell?.classList?.remove('joystick-pressed');
         setRdpInputSuppressed(false, 220);
         knob.classList.add('smooth-back');
@@ -1525,7 +1502,6 @@ function setupJoystickPanel() {
                 const angleDeg = (Math.atan2(normY, normX) * 180 / Math.PI + 360) % 360;
                 const activeIndex = angleDeg >= 45 && angleDeg < 135 ? 2 : angleDeg >= 135 && angleDeg < 225 ? 3 : angleDeg >= 225 && angleDeg < 315 ? 0 : 1;
                 icons[activeIndex]?.classList.add('active');
-                if (!toastShown) { toastShown = true; showRdpJoystickToast('🕹️ 视区摇杆已激活 · 拖动调整画面'); }
             }
             if (!timer) timer = setInterval(tick, 35);
         };
