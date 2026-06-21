@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Zephyr - 远程桌面</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260621-rdp-joystick-reference-match">
+    <link rel="stylesheet" href="style.css?v=20260621-rdp-joystick-reference-ratio">
 </head>
 <body>
     <div class="novnc-page rdp-page">
@@ -25,7 +25,7 @@
                 <button class="btn-sm" id="rdpFilesBtn" data-rdp-icon="file" title="打开 RDP 文件剪贴板/下载面板">文件</button>
                 <button class="btn-sm" id="keyboardBtn" data-rdp-icon="keyboard" title="手机软键盘输入">键盘</button>
                 <button class="btn-sm" id="shortcutsBtn" data-rdp-icon="shortcuts" title="打开常用快捷键">快捷键</button>
-                <button class="btn-sm" id="joystickBtn" data-rdp-icon="joystick" title="视区">视区</button>
+                <button class="btn-sm" id="joystickBtn" data-rdp-icon="joystick" aria-label="视区">视区</button>
                 <button class="btn-sm" id="ctrlAltDelBtn" data-rdp-icon="security" title="发送 Ctrl+Alt+Del">Ctrl+Alt+Del</button>
                 <button class="btn-sm" id="reconnectBtn" data-rdp-icon="reconnect" title="重新连接">重连</button>
                 <button class="btn-sm danger" id="disconnectBtn" data-rdp-icon="disconnect" title="断开连接">断开</button>
@@ -161,11 +161,11 @@
             </div>
 
             <div class="rdp-floating-panel joystick-panel" id="joystickPanel" hidden>
-                <div class="panel-drag-handle" data-drag-panel="joystickPanel" title="拖动移动窗口">
-                    <button class="panel-traffic-btn" data-layout-panel="joystickPanel" title="窗口布局"><span></span></button>
+                <div class="panel-drag-handle" data-drag-panel="joystickPanel">
+                    <button class="panel-traffic-btn" data-layout-panel="joystickPanel" aria-label="窗口布局"><span></span></button>
                 </div>
                 <div class="rdp-panel-content joystick-panel-content">
-                    <div class="rdp-joystick" id="joystickContainer" aria-label="拖动画面区域摇杆">
+                    <div class="rdp-joystick" id="joystickContainer" aria-hidden="true">
                         <div class="rdp-joystick-around">
                             <div class="rdp-joystick-handle">
                                 <div class="rdp-joystick-knob" id="joystickKnob">
@@ -178,14 +178,14 @@
                                 </div>
                             </div>
                         </div>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 1024 1024" aria-label="向上图标"><path d="M512 330.666667c14.933333 0 29.866667 4.266667 40.533333 14.933333l277.33333399 234.666667c27.733333 23.466667 29.866667 64 8.53333301 89.6-23.466667 27.733333-64 29.866667-89.6 8.53333299L512 477.866667l-236.8 200.53333299c-27.733333 23.466667-68.266667 19.19999999-89.6-8.53333299-23.466667-27.733333-19.19999999-68.266667 8.53333301-89.6l277.33333399-234.666667c10.666667-10.666667 25.6-14.933333 40.533333-14.933333z"/></svg>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-label="向右图标"><path d="M135.417 100C135.417 102.917 134.583 105.833 132.5 107.917L86.6667 162.083C82.0833 167.5 74.1667 167.917 69.1667 163.75C63.75 159.167 63.3333 151.25 67.5 146.25L106.667 100L67.5 53.75C62.9167 48.3333 63.75 40.4167 69.1667 36.25C74.5833 31.6667 82.5 32.5 86.6667 37.9167L132.5 92.0833C134.583 94.1667 135.417 97.0833 135.417 100Z"/></svg>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-label="向下图标"><path d="M100 135.417C97.0833 135.417 94.1667 134.583 92.0833 132.5L37.9167 86.6667C32.5 82.0833 32.0833 74.1667 36.25 69.1667C40.8333 63.75 48.75 63.3333 53.75 67.5L100 106.667L146.25 67.5C151.667 62.9167 159.583 63.75 163.75 69.1667C168.333 74.5833 167.5 82.5 162.083 86.6667L107.917 132.5C105.833 134.583 102.917 135.417 100 135.417Z"/></svg>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-label="向左图标"><path d="M64.5833 100C64.5833 97.0833 65.4167 94.1667 67.5 92.0833L113.333 37.9167C117.917 32.5 125.833 32.0833 130.833 36.25C136.25 40.8333 136.667 48.75 132.5 53.75L93.3333 100L132.5 146.25C137.083 151.667 136.25 159.583 130.833 163.75C125.417 168.333 117.5 167.5 113.333 162.083L67.5 107.917C65.4167 105.833 64.5833 102.917 64.5833 100Z"/></svg>
+                        <svg class="rdp-joystick-icon" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false"><path d="M512 330.666667c14.933333 0 29.866667 4.266667 40.533333 14.933333l277.33333399 234.666667c27.733333 23.466667 29.866667 64 8.53333301 89.6-23.466667 27.733333-64 29.866667-89.6 8.53333299L512 477.866667l-236.8 200.53333299c-27.733333 23.466667-68.266667 19.19999999-89.6-8.53333299-23.466667-27.733333-19.19999999-68.266667 8.53333301-89.6l277.33333399-234.666667c10.666667-10.666667 25.6-14.933333 40.533333-14.933333z"/></svg>
+                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-hidden="true" focusable="false"><path d="M135.417 100C135.417 102.917 134.583 105.833 132.5 107.917L86.6667 162.083C82.0833 167.5 74.1667 167.917 69.1667 163.75C63.75 159.167 63.3333 151.25 67.5 146.25L106.667 100L67.5 53.75C62.9167 48.3333 63.75 40.4167 69.1667 36.25C74.5833 31.6667 82.5 32.5 86.6667 37.9167L132.5 92.0833C134.583 94.1667 135.417 97.0833 135.417 100Z"/></svg>
+                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-hidden="true" focusable="false"><path d="M100 135.417C97.0833 135.417 94.1667 134.583 92.0833 132.5L37.9167 86.6667C32.5 82.0833 32.0833 74.1667 36.25 69.1667C40.8333 63.75 48.75 63.3333 53.75 67.5L100 106.667L146.25 67.5C151.667 62.9167 159.583 63.75 163.75 69.1667C168.333 74.5833 167.5 82.5 162.083 86.6667L107.917 132.5C105.833 134.583 102.917 135.417 100 135.417Z"/></svg>
+                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-hidden="true" focusable="false"><path d="M64.5833 100C64.5833 97.0833 65.4167 94.1667 67.5 92.0833L113.333 37.9167C117.917 32.5 125.833 32.0833 130.833 36.25C136.25 40.8333 136.667 48.75 132.5 53.75L93.3333 100L132.5 146.25C137.083 151.667 136.25 159.583 130.833 163.75C125.417 168.333 117.5 167.5 113.333 162.083L67.5 107.917C65.4167 105.833 64.5833 102.917 64.5833 100Z"/></svg>
                     </div>
                 </div>
-                <div class="panel-resize-handle left" data-resize-panel="joystickPanel" data-resize-edge="left" title="拖动调整大小"></div>
-                <div class="panel-resize-handle right" data-resize-panel="joystickPanel" data-resize-edge="right" title="拖动调整大小"></div>
+                <div class="panel-resize-handle left" data-resize-panel="joystickPanel" data-resize-edge="left"></div>
+                <div class="panel-resize-handle right" data-resize-panel="joystickPanel" data-resize-edge="right"></div>
             </div>
 
             <div class="terminal-overlay" id="rdpOverlay">
@@ -197,6 +197,6 @@
             </div>
         </div>
     </div>
-    <script src="rdp-gfx.js?v=20260621-rdp-joystick-reference-match" type="module"></script>
+    <script src="rdp-gfx.js?v=20260621-rdp-joystick-reference-ratio" type="module"></script>
 </body>
 </html>
