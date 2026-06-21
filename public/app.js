@@ -93,7 +93,15 @@ function apiMaybeForm(path, options = {}) {
     return fetch(path, { credentials: 'same-origin', headers, ...options })
         .then(async (res) => { const data = await res.json().catch(() => ({})); if (!res.ok) throw apiErrorFromResponse(res, data); return data; });
 }
-function toast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2600); }
+function toast(message) { const el = $('#toast'); if (!el) { console.warn('[toast]', message); return; } el.textContent = message; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2600); }
+window.addEventListener('error', (event) => {
+    console.error('[app-runtime]', event.error || event.message);
+    if (document.readyState === 'complete') toast(`前端错误：${event.message || '未知错误'}`);
+});
+window.addEventListener('unhandledrejection', (event) => {
+    console.error('[app-runtime]', event.reason);
+    if (document.readyState === 'complete') toast(`前端异步错误：${event.reason?.message || event.reason || '未知错误'}`);
+});
 function terminalFrameById(tabId = '') {
     const id = String(tabId || '').trim();
     return id ? document.querySelector(`#terminalWorkspace iframe.terminal-frame[data-frame="${CSS.escape(id)}"]`) : null;
