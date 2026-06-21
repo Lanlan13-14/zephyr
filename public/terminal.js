@@ -7793,7 +7793,7 @@ function renderProcessesPage(d = latestStatsData) {
             </select>
             <button class="tool-btn" id="processRefreshBtn">刷新</button>
         </div>
-        <div class="process-summary"><span>${processes.length} 个进程</span><span>横向滑动切换概览/进程</span></div>
+        <div class="process-summary"><span>${processes.length} 个进程</span><span>建议点上方分页切换</span></div>
         <div class="process-list">${renderProcessRows(processes)}</div>
     `;
 }
@@ -7811,13 +7811,39 @@ function bindProcessPageEvents() {
         wsConnection?.send?.(JSON.stringify({ type: 'process-signal', pid, signal }));
     }));
 }
+function setMonitorPage(page, { render = true } = {}) {
+    const next = Math.max(0, Math.min(1, Number(page) || 0));
+    if (next === monitorPage) {
+        $$('.monitor-tab').forEach((btn) => btn.classList.toggle('active', Number(btn.dataset.monitorPage) === monitorPage));
+        return;
+    }
+    monitorPage = next;
+    if (render && latestStatsData) renderStats(latestStatsData);
+}
 function bindMonitorPager() {
-    $$('.monitor-tab').forEach((btn) => btn.addEventListener('click', () => { monitorPage = Number(btn.dataset.monitorPage) || 0; renderStats(latestStatsData); }));
+    $$('.monitor-tab').forEach((btn) => btn.addEventListener('click', () => setMonitorPage(Number(btn.dataset.monitorPage) || 0)));
     const viewport = $('.monitor-pages-viewport');
-    viewport?.addEventListener('scroll', () => {
-        const next = viewport.scrollLeft > viewport.clientWidth * 0.45 ? 1 : 0;
-        if (next !== monitorPage) { monitorPage = next; $$('.monitor-tab').forEach((btn) => btn.classList.toggle('active', Number(btn.dataset.monitorPage) === monitorPage)); }
+    if (!viewport) return;
+    let startX = 0;
+    let startY = 0;
+    let tracking = false;
+    viewport.addEventListener('pointerdown', (event) => {
+        if (event.pointerType === 'mouse' || event.target.closest('button,input,select,textarea,label')) return;
+        startX = event.clientX;
+        startY = event.clientY;
+        tracking = true;
+        viewport.setPointerCapture?.(event.pointerId);
     }, { passive: true });
+    viewport.addEventListener('pointerup', (event) => {
+        if (!tracking) return;
+        tracking = false;
+        const dx = event.clientX - startX;
+        const dy = event.clientY - startY;
+        const threshold = Math.max(90, Math.min(150, viewport.clientWidth * 0.28));
+        if (Math.abs(dx) < threshold || Math.abs(dx) < Math.abs(dy) * 1.6) return;
+        setMonitorPage(dx < 0 ? monitorPage + 1 : monitorPage - 1);
+    }, { passive: true });
+    viewport.addEventListener('pointercancel', () => { tracking = false; }, { passive: true });
 }
 
 function renderStats(d) {
@@ -7860,8 +7886,8 @@ function renderStats(d) {
             <button class="monitor-tab ${monitorPage === 0 ? 'active' : ''}" data-monitor-page="0" type="button">概览</button>
             <button class="monitor-tab ${monitorPage === 1 ? 'active' : ''}" data-monitor-page="1" type="button">进程</button>
         </div>
-        <div class="monitor-pages-viewport" style="--monitor-page:${monitorPage}">
-            <section class="monitor-page monitor-overview-page">
+        <div class="monitor-pages-viewport" data-monitor-page="${monitorPage}">
+            <section class="monitor-page monitor-overview-page ${monitorPage === 0 ? 'active' : ''}" ${monitorPage === 0 ? '' : 'hidden'}>
         <div class="doughnut-row">
             <div class="doughnut-item disk-card full-width">
                 <div class="disk-card-meta">
@@ -7918,7 +7944,7 @@ function renderStats(d) {
             <div class="ip-box"><span>IPv6</span><code>${ipv6}</code><button class="copy-ip-btn" aria-label="复制 IPv6" onclick="navigator.clipboard.writeText('${ipv6}')">${zephyrButtonGlyph('copy', '复制')}</button></div>
         </div>
             </section>
-            <section class="monitor-page monitor-process-page">
+            <section class="monitor-page monitor-process-page ${monitorPage === 1 ? 'active' : ''}" ${monitorPage === 1 ? '' : 'hidden'}>
                 ${renderProcessesPage(d)}
             </section>
         </div>
@@ -7927,8 +7953,6 @@ function renderStats(d) {
     bindMonitorPager();
     bindProcessPageEvents();
     requestAnimationFrame(() => {
-        const viewport = $('.monitor-pages-viewport');
-        if (viewport) viewport.scrollTo({ left: monitorPage * viewport.clientWidth, behavior: 'auto' });
         if (previousBodyScrollTop && monitorPage === 0) infoBody.scrollTop = previousBodyScrollTop;
         if (activeElementId) {
             const nextActive = document.getElementById(activeElementId);
