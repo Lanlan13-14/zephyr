@@ -85,7 +85,7 @@
                         <button class="settings-tab" data-settings="snippets">代码片段</button>
                         <button class="settings-tab" data-settings="ai">AI 助理</button>
                         <button class="settings-tab" data-settings="data">数据管理</button>
-                        <button class="settings-tab" data-settings="appearance">外观设置</button>
+                        <button class="settings-tab" data-settings="appearance">个性化设置</button>
                         <button class="settings-tab" data-settings="mail">邮件通知</button>
                         <button class="settings-tab" data-settings="about">关于</button>
                     </div>
@@ -105,7 +105,7 @@
                             <h2>CAPTCHA</h2><form id="captchaForm" class="settings-form"><label class="check-line"><input type="checkbox" id="captchaEnabled"> 启用 CAPTCHA</label><select id="captchaProvider"><option value="turnstile">Cloudflare Turnstile</option><option value="hcaptcha">hCaptcha</option><option value="google">Google reCAPTCHA v2</option><option value="tencent">腾讯云验证码</option><option value="aliyun">阿里云验证码 2.0</option></select><input id="captchaSiteKey" placeholder="Site Key / AppId / CaptchaId"><div class="form-group password-field"><input id="captchaSecretKey" type="password" placeholder="Secret Key / AppSecretKey"><button type="button" id="toggleCaptchaSecret" title="显示/隐藏 CAPTCHA 密钥">👁️</button></div><button type="button" class="link-btn" id="revealCaptchaSecret">查看已保存 CAPTCHA 密钥</button><p class="field-hint">默认隐藏已保存 CAPTCHA 密钥；留空或保持星号不会覆盖已保存密钥。查看时如已开启 TOTP 需输入动态验证码，否则输入当前登录密码。</p><button class="btn btn-primary">保存 CAPTCHA</button></form>
                         </div>
                         <div class="settings-panel" id="settings-appearance">
-                            <h2>外观设置</h2>
+                            <h2>个性化设置</h2>
                             <form id="appearanceForm" class="settings-form">
                                 <label>左上角标题</label>
                                 <input id="brandNameInput" maxlength="40" placeholder="Zephyr">
