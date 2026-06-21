@@ -2,6 +2,16 @@ import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThe
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+function installClosestFallback() {
+    const define = (proto, fn) => {
+        if (!proto || proto.closest) return;
+        try { Object.defineProperty(proto, 'closest', { value: fn, configurable: true }); } catch {}
+    };
+    define(window.Text?.prototype, function closestFromText(selector) { return this.parentElement?.closest?.(selector) || null; });
+    define(window.Document?.prototype, function closestFromDocument() { return null; });
+    define(window.Window?.prototype, function closestFromWindow() { return null; });
+}
+installClosestFallback();
 document.documentElement.dataset.appModule = 'loaded';
 
 let connections = [], activities = [], proxies = [], jumpHosts = [], sshKeys = [], settings = {};
@@ -693,22 +703,22 @@ function ensureColorPickerPanel() {
         <div class="color-panel-actions"><button type="button" data-color-close>关闭</button></div>`;
     document.body.appendChild(panel);
     panel.addEventListener('click', (event) => {
-        const preset = event.target.closest('[data-color-preset]')?.dataset.colorPreset;
+        const preset = event.target.closest?.('[data-color-preset]')?.dataset.colorPreset;
         if (preset && activeColorPickerInput) {
             setColorPickerValue(activeColorPickerInput, preset, { dispatch: true });
             syncColorPickerPanel(preset);
             return;
         }
-        if (event.target.closest('[data-color-close]')) closeColorPickerPanel();
+        if (event.target.closest?.('[data-color-close]')) closeColorPickerPanel();
     });
     panel.addEventListener('input', (event) => {
-        const hue = event.target.closest('[data-color-hue]');
+        const hue = event.target.closest?.('[data-color-hue]');
         if (!hue || !activeColorPickerInput) return;
         activeColorPickerHsv = { ...activeColorPickerHsv, h: Math.max(0, Math.min(360, Number(hue.value) || 0)) };
         commitActiveColorPickerHsv();
     });
     panel.addEventListener('pointerdown', (event) => {
-        const surface = event.target.closest('[data-color-sv]');
+        const surface = event.target.closest?.('[data-color-sv]');
         if (!surface || !activeColorPickerInput) return;
         event.preventDefault();
         updateActiveColorFromSvPointer(event, surface);
@@ -762,14 +772,14 @@ function setupColorPickers() {
         });
     });
     document.addEventListener('click', (event) => {
-        const swatch = event.target.closest('[data-color-swatch]');
+        const swatch = event.target.closest?.('[data-color-swatch]');
         if (swatch) {
             const input = swatch.closest('[data-color-picker]')?.querySelector('.color-hex-input');
             openColorPickerPanel(input, swatch);
             return;
         }
-        if (activeColorPickerInput && event.target.closest('[data-color-picker]')?.querySelector('.color-hex-input') === activeColorPickerInput) return;
-        if (!event.target.closest('#zephyrColorPickerPanel')) closeColorPickerPanel();
+        if (activeColorPickerInput && event.target.closest?.('[data-color-picker]')?.querySelector('.color-hex-input') === activeColorPickerInput) return;
+        if (!event.target.closest?.('#zephyrColorPickerPanel')) closeColorPickerPanel();
     });
     document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeColorPickerPanel(); });
 }
@@ -2947,7 +2957,7 @@ function isPointInRect(x, y, rect, pad = 0) {
     return x >= rect.left - pad && x <= rect.right + pad && y >= rect.top - pad && y <= rect.bottom + pad;
 }
 function startSmartbarIconDrag(e, tabId) {
-    const btn = e.target.closest('[data-smartbar-tab]');
+    const btn = e.target.closest?.('[data-smartbar-tab]');
     if (!btn || e.button === 2) return;
     e.preventDefault();
     suppressSmartbarClick = false;
@@ -3167,8 +3177,8 @@ function startSmartbarPress(e, tabBtn) {
 }
 
 function startTerminalWindowDrag(e, tabId) {
-    if (isCompactTerminalWorkspace() || (e.target.closest('button') && !e.target.closest('.terminal-grip'))) return;
-    const win = e.target.closest('.terminal-window');
+    if (isCompactTerminalWorkspace() || (e.target.closest?.('button') && !e.target.closest?.('.terminal-grip'))) return;
+    const win = e.target.closest?.('.terminal-window');
     if (!win) return;
     e.preventDefault();
     activeTerminalTab = tabId;
@@ -3202,7 +3212,7 @@ function startWorkspaceSplitterDrag(e, axis) {
     const workspace = $('#terminalWorkspace');
     if (!workspace) return;
     e.preventDefault();
-    const splitter = e.target.closest('[data-splitter]');
+    const splitter = e.target.closest?.('[data-splitter]');
     const rect = workspace.getBoundingClientRect();
 
     const splitterGapHalf = 6;
@@ -5315,7 +5325,7 @@ function openAiPanelLayoutMenu(button, panel) {
         window.setTimeout(() => { menu.classList.remove('island-animating'); menu.style.removeProperty('opacity'); }, 540);
     });
     menu.addEventListener('click', (ev) => {
-        const item = ev.target.closest('[data-layout]');
+        const item = ev.target.closest?.('[data-layout]');
         if (!item) return;
         if (item.dataset.layout === 'close') { closeAiAssistantPanel(); closeAiPanelLayoutMenu({ instant: true }); return; }
         applyAiPanelLayout(item.dataset.layout);
@@ -5360,11 +5370,11 @@ function setupAiPanelChrome() {
     });
     const startAiPanelDrag = (e, { allowButtons = false, suppressLayoutClick = false } = {}) => {
         if (e.button !== undefined && e.button !== 0) return;
-        const interactive = e.target.closest('input,select,textarea,label,a');
+        const interactive = e.target.closest?.('input,select,textarea,label,a');
         if (interactive) return;
-        if (!allowButtons && e.target.closest('button')) return;
+        if (!allowButtons && e.target.closest?.('button')) return;
         bringAiPanelToFront();
-        const startedOnTopGrip = !!e.target.closest('.panel-drag-handle');
+        const startedOnTopGrip = !!e.target.closest?.('.panel-drag-handle');
         const dragThreshold = startedOnTopGrip ? 4 : (window.innerWidth <= 760 ? 12 : 6);
         const sx = e.clientX, sy = e.clientY, sl = panel.offsetLeft, st = panel.offsetTop;
         let dragging = false, raf = 0, lastX = sx, lastY = sy;
@@ -5428,7 +5438,7 @@ function setupAiPanelChrome() {
         if (aiPanelLayoutMenu && aiPanelLayoutMenuButton === layoutBtn) closeAiPanelLayoutMenu(); else openAiPanelLayoutMenu(layoutBtn, panel);
     });
     document.addEventListener('pointerdown', (e) => {
-        if (aiPanelLayoutMenu && !e.target.closest('.panel-layout-menu') && !e.target.closest('[data-ai-agent-layout]')) closeAiPanelLayoutMenu();
+        if (aiPanelLayoutMenu && !e.target.closest?.('.panel-layout-menu') && !e.target.closest?.('[data-ai-agent-layout]')) closeAiPanelLayoutMenu();
     });
     window.addEventListener('resize', () => closeAiPanelLayoutMenu({ instant: true }));
 }
@@ -5497,7 +5507,7 @@ function setupAiAssistant() {
     $('#aiFloatingBtn')?.addEventListener('click', (e) => toggleAiAssistantPanel(e.currentTarget));
     $('#aiJumpSettingsBtn')?.addEventListener('click', () => { switchView('settings'); document.querySelector('.settings-tab[data-settings="ai"]')?.click(); });
     $('#aiClosePanelBtn')?.addEventListener('click', closeAiAssistantPanel); $('#aiNewChatBtn')?.addEventListener('click', () => createAiChat());
-    $('#aiChatList')?.addEventListener('click', (e) => { const del = e.target.closest('[data-ai-delete-chat]')?.dataset.aiDeleteChat; if (del) { e.preventDefault(); e.stopPropagation(); deleteAiChat(del); return; } const id = e.target.closest('[data-ai-chat]')?.dataset.aiChat || e.target.closest('[data-ai-chat-row]')?.dataset.aiChatRow; if (id) { aiCurrentSessionId = id; aiEditingMessageIndex = -1; aiEditingSessionId = ''; saveAiChats(); renderAiChat(); } });
+    $('#aiChatList')?.addEventListener('click', (e) => { const del = e.target.closest?.('[data-ai-delete-chat]')?.dataset.aiDeleteChat; if (del) { e.preventDefault(); e.stopPropagation(); deleteAiChat(del); return; } const id = e.target.closest?.('[data-ai-chat]')?.dataset.aiChat || e.target.closest?.('[data-ai-chat-row]')?.dataset.aiChatRow; if (id) { aiCurrentSessionId = id; aiEditingMessageIndex = -1; aiEditingSessionId = ''; saveAiChats(); renderAiChat(); } });
     $('#aiSendBtn')?.addEventListener('click', () => { if (aiIsSessionRunning(aiCurrentSessionId)) stopAiResponse(aiCurrentSessionId); else sendAiMessage(); });
     $('#aiUserInput')?.addEventListener('input', (e) => { autoResizeAiInput(e.target); updateAiInputPreview(); });
     $('#aiUserInput')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendAiMessage(); } });
@@ -5721,8 +5731,8 @@ function setupSnippetSettings() {
     $('#snippetForm')?.addEventListener('submit', saveSnippet);
     $('#cancelSnippetEditBtn')?.addEventListener('click', resetSnippetForm);
     $('#snippetSettingsList')?.addEventListener('click', (e) => {
-        const editId = e.target.closest('[data-edit-snippet]')?.dataset.editSnippet;
-        const deleteId = e.target.closest('[data-delete-snippet]')?.dataset.deleteSnippet;
+        const editId = e.target.closest?.('[data-edit-snippet]')?.dataset.editSnippet;
+        const deleteId = e.target.closest?.('[data-delete-snippet]')?.dataset.deleteSnippet;
         const snippets = getSnippets();
         if (editId) {
             const item = snippets.find((x) => x.id === editId); if (!item) return;
@@ -5798,15 +5808,15 @@ function bindConnectionPressFeedback(root = document) {
     const pressableSelector = '#addConnectionBtn, [data-edit]';
     const clearPress = (el) => el?.classList?.remove('connection-pressing');
     root.addEventListener('pointerdown', (e) => {
-        const target = e.target.closest(pressableSelector);
+        const target = e.target.closest?.(pressableSelector);
         if (!target || target.disabled) return;
         target.classList.add('connection-pressing');
     }, { passive: true });
-    root.addEventListener('pointerup', (e) => clearPress(e.target.closest(pressableSelector)), { passive: true });
-    root.addEventListener('pointercancel', (e) => clearPress(e.target.closest(pressableSelector)), { passive: true });
-    root.addEventListener('pointerleave', (e) => clearPress(e.target.closest(pressableSelector)), { passive: true });
+    root.addEventListener('pointerup', (e) => clearPress(e.target.closest?.(pressableSelector)), { passive: true });
+    root.addEventListener('pointercancel', (e) => clearPress(e.target.closest?.(pressableSelector)), { passive: true });
+    root.addEventListener('pointerleave', (e) => clearPress(e.target.closest?.(pressableSelector)), { passive: true });
     root.addEventListener('click', (e) => {
-        const target = e.target.closest(pressableSelector);
+        const target = e.target.closest?.(pressableSelector);
         if (!target) return;
         window.setTimeout(() => clearPress(target), 120);
     }, true);
@@ -5818,14 +5828,14 @@ function bindEvents() {
     $$('.nav-tab').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view)));
     $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => { $$('.settings-tab').forEach((b) => b.classList.remove('active')); btn.classList.add('active'); $$('.settings-panel').forEach((p) => p.classList.remove('active')); $(`#settings-${btn.dataset.settings}`).classList.add('active'); }));
     $('#appThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#settingsThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#logoutBtn').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/'; });
-    $('#addConnectionBtn').addEventListener('click', (e) => openModal(null, e.currentTarget)); $('#closeModalBtn').addEventListener('click', closeModal); $('#cancelModalBtn').addEventListener('click', closeModal); $('#toggleConnPassword').addEventListener('click', () => { const el = $('#connPassword'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleConnPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; }); $('#revealConnSecrets').addEventListener('click', () => revealConnectionSecrets().catch((err) => toast(err.message))); $$('.route-type-tab').forEach((btn) => btn.addEventListener('click', () => setRouteMode($('#connMode').value === btn.dataset.routeMode ? 'direct' : btn.dataset.routeMode))); $('#addJumpRouteBtn').addEventListener('click', addJumpRouteRow); $('#jumpRouteList').addEventListener('click', (e) => { if (!e.target.closest('[data-remove-jump-route]')) return; const ids = $$('#jumpRouteList [data-jump-route-select]').filter((el) => !el.closest('[data-jump-route-row]').contains(e.target)).map((el) => el.value).filter(Boolean); renderJumpRouteRows(ids); }); $('#testConnectionBtn').addEventListener('click', testConnection);
+    $('#addConnectionBtn').addEventListener('click', (e) => openModal(null, e.currentTarget)); $('#closeModalBtn').addEventListener('click', closeModal); $('#cancelModalBtn').addEventListener('click', closeModal); $('#toggleConnPassword').addEventListener('click', () => { const el = $('#connPassword'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleConnPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; }); $('#revealConnSecrets').addEventListener('click', () => revealConnectionSecrets().catch((err) => toast(err.message))); $$('.route-type-tab').forEach((btn) => btn.addEventListener('click', () => setRouteMode($('#connMode').value === btn.dataset.routeMode ? 'direct' : btn.dataset.routeMode))); $('#addJumpRouteBtn').addEventListener('click', addJumpRouteRow); $('#jumpRouteList').addEventListener('click', (e) => { if (!e.target.closest?.('[data-remove-jump-route]')) return; const ids = $$('#jumpRouteList [data-jump-route-select]').filter((el) => !el.closest('[data-jump-route-row]').contains(e.target)).map((el) => el.value).filter(Boolean); renderJumpRouteRows(ids); }); $('#testConnectionBtn').addEventListener('click', testConnection);
     $('#connProtocol').addEventListener('change', () => updateProtocolFields({ preservePort: false }));
     $('#connectionForm').addEventListener('submit', saveConnection); ['searchInput', 'protocolFilter', 'tagFilter', 'sortSelect'].forEach((id) => $(`#${id}`).addEventListener('input', renderConnections));
     $('#connectionGrid').addEventListener('click', async (e) => {
-        const edit = e.target.closest('[data-edit]')?.dataset.edit, del = e.target.closest('[data-delete]')?.dataset.delete, connect = e.target.closest('[data-connect]')?.dataset.connect;
-        if (edit) openModal(connections.find((c) => c.id === edit), e.target.closest('[data-edit]'));
+        const edit = e.target.closest?.('[data-edit]')?.dataset.edit, del = e.target.closest?.('[data-delete]')?.dataset.delete, connect = e.target.closest?.('[data-connect]')?.dataset.connect;
+        if (edit) openModal(connections.find((c) => c.id === edit), e.target.closest?.('[data-edit]'));
         if (del && confirm('确定删除该连接？')) {
-            const card = e.target.closest('.connection-card');
+            const card = e.target.closest?.('.connection-card');
             try {
                 await waitForConnectionCardExit(card, del);
                 await api(`/api/connections/${del}`, { method: 'DELETE' });
@@ -5842,21 +5852,21 @@ function bindEvents() {
     });
     $('#sessionTabs').addEventListener('click', (e) => {
         if (suppressSmartbarClick) { suppressSmartbarClick = false; return; }
-        const toggle = e.target.closest('[data-smartbar-toggle]');
+        const toggle = e.target.closest?.('[data-smartbar-toggle]');
         if (toggle) { setTerminalSmartbarOpen(!terminalSmartbarOpen); return; }
-        if (e.target.closest('[data-mobile-exit-fullscreen]')) { exitTerminalFullscreen(); setTerminalSmartbarOpen(false); return; }
-        if (e.target.closest('[data-smartbar-add]')) {
+        if (e.target.closest?.('[data-mobile-exit-fullscreen]')) { exitTerminalFullscreen(); setTerminalSmartbarOpen(false); return; }
+        if (e.target.closest?.('[data-smartbar-add]')) {
             terminalSmartbarPickerOpen = !terminalSmartbarPickerOpen;
             setTerminalSmartbarOpen(true);
             requestAnimationFrame(positionSmartbarPicker);
             return;
         }
-        const tabButton = e.target.closest('[data-smartbar-tab]');
+        const tabButton = e.target.closest?.('[data-smartbar-tab]');
         const tab = tabButton?.dataset.smartbarTab;
         if (tab) activateTerminalFromDock(tab, tabButton);
     });
     document.addEventListener('pointerdown', (e) => {
-        const toggle = e.target.closest('.mobile-fullscreen-dock-toggle');
+        const toggle = e.target.closest?.('.mobile-fullscreen-dock-toggle');
         if (!toggle) return;
         e.preventDefault();
         e.stopPropagation();
@@ -5901,7 +5911,7 @@ function bindEvents() {
         if (!terminalSmartbarOpen) document.querySelectorAll('#terminalWorkspace .terminal-frame').forEach((frame) => frame.style.pointerEvents = '');
     }, true);
     document.addEventListener('click', (e) => {
-        if (e.target.closest('.smartbar-handle')) {
+        if (e.target.closest?.('.smartbar-handle')) {
             e.preventDefault();
             e.stopPropagation();
             if (Date.now() - mobileDockToggleLastToggleAt > 180) {
@@ -5910,7 +5920,7 @@ function bindEvents() {
             }
             return;
         }
-        if (e.target.closest('.mobile-fullscreen-dock-toggle')) {
+        if (e.target.closest?.('.mobile-fullscreen-dock-toggle')) {
             e.preventDefault();
             e.stopPropagation();
             if (Date.now() - mobileDockToggleLastToggleAt > 450) {
@@ -5919,19 +5929,19 @@ function bindEvents() {
             }
             return;
         }
-        if (e.target.closest('[data-smartbar-picker-close]')) { terminalSmartbarPickerOpen = false; renderTerminalSmartbar(); return; }
-        const connect = e.target.closest('[data-smartbar-connect]')?.dataset.smartbarConnect;
+        if (e.target.closest?.('[data-smartbar-picker-close]')) { terminalSmartbarPickerOpen = false; renderTerminalSmartbar(); return; }
+        const connect = e.target.closest?.('[data-smartbar-connect]')?.dataset.smartbarConnect;
         if (connect) { terminalSmartbarPickerOpen = false; setTerminalSmartbarOpen(false); openConnection(connect).catch((err) => toast(err.message)); }
     }, true);
     $('#sessionTabs').addEventListener('pointerdown', (e) => {
-        const tabBtn = e.target.closest('[data-smartbar-tab]');
+        const tabBtn = e.target.closest?.('[data-smartbar-tab]');
         if (!tabBtn) return;
         startSmartbarPress(e, tabBtn);
     });
     $('#sessionTabs').addEventListener('pointermove', (e) => {
-        const dock = e.target.closest('.smartbar-dock');
+        const dock = e.target.closest?.('.smartbar-dock');
         if (dock) {
-            if (e.target.closest('[data-smartbar-tab]')) e.preventDefault?.();
+            if (e.target.closest?.('[data-smartbar-tab]')) e.preventDefault?.();
             updateDockMagnification(e.clientX, dock, e.clientY);
         }
     }, { passive: false });
@@ -5951,7 +5961,7 @@ function bindEvents() {
         document.querySelectorAll('#terminalWorkspace .terminal-frame').forEach((frame) => frame.style.pointerEvents = '');
     }, true);
     $('#terminalWorkspace').addEventListener('click', (e) => {
-        const action = e.target.closest('[data-window-action]');
+        const action = e.target.closest?.('[data-window-action]');
         if (!action) return;
         noteTerminalWorkspaceActivity();
         e.preventDefault();
@@ -5961,7 +5971,7 @@ function bindEvents() {
     }, true);
     $('#terminalWorkspace').addEventListener('click', (e) => {
         noteTerminalWorkspaceActivity();
-        const menuBtn = e.target.closest('[data-window-control]');
+        const menuBtn = e.target.closest?.('[data-window-control]');
         closeOtherTerminalWindowMenus(menuBtn);
         if (menuBtn) {
             e.stopPropagation();
@@ -5983,7 +5993,7 @@ function bindEvents() {
             });
             return;
         }
-        const action = e.target.closest('[data-window-action]');
+        const action = e.target.closest?.('[data-window-action]');
         if (action) {
             e.preventDefault();
             e.stopPropagation();
@@ -5991,17 +6001,17 @@ function bindEvents() {
             delete action.dataset.windowActionHandled;
             return;
         }
-        const win = e.target.closest('[data-window]');
+        const win = e.target.closest?.('[data-window]');
         if (win) { activeTerminalTab = win.dataset.window; touchTerminalSession(activeTerminalTab); renderTerminalTabs({ rebuildWorkspace: false }); }
     });
     $('#terminalWorkspace').addEventListener('pointerdown', (e) => {
-        if (e.target.closest('[data-window-action]')) {
+        if (e.target.closest?.('[data-window-action]')) {
             e.stopPropagation();
             return;
         }
-        const splitter = e.target.closest('[data-splitter]');
+        const splitter = e.target.closest?.('[data-splitter]');
         if (splitter) { startWorkspaceSplitterDrag(e, splitter.dataset.splitter); return; }
-        const control = e.target.closest('[data-window-control]');
+        const control = e.target.closest?.('[data-window-control]');
         if (control) {
             const tabId = control.dataset.windowControl;
             terminalControlLongPress = false;
