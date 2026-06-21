@@ -3913,12 +3913,23 @@ app.get('/vendor/@wterm/dom/terminal.css', (req, res) => {
     res.type('text/css').sendFile(path.join(__dirname, 'node_modules', '@wterm', 'dom', 'src', 'terminal.css'));
 });
 app.use('/vendor/@wterm', express.static(path.join(__dirname, 'node_modules', '@wterm')));
-app.get('/app.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
-app.get('/terminal.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'terminal.html')));
-app.get('/rdp.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'rdp.html')));
-app.get('/novnc.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'novnc.html')));
-app.get('/player.html', requirePageAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'player.html')));
-app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
+function sendNoStorePage(res, file) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    return res.sendFile(path.join(__dirname, 'public', file));
+}
+app.get('/app.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'app.html'));
+app.get('/terminal.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'terminal.html'));
+app.get('/rdp.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'rdp.html'));
+app.get('/novnc.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'novnc.html'));
+app.get('/player.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'player.html'));
+app.use(express.static(path.join(__dirname, 'public'), {
+    index: 'index.html',
+    setHeaders: (res, filePath) => {
+        if (/\.(?:js|css)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    },
+}));
 
 // 健康检查
 app.get('/healthz', (req, res) => res.status(200).send('OK'));

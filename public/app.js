@@ -2,6 +2,7 @@ import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThe
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+document.documentElement.dataset.appModule = 'loaded';
 
 let connections = [], activities = [], proxies = [], jumpHosts = [], sshKeys = [], settings = {};
 let zephyrSharedClipboard = { type: '', text: '', files: [], sourceTabId: '', sourcePage: '', updatedAt: 0 };
@@ -75,6 +76,7 @@ const TERMINAL_EDGE_SNAP_PX = 56;
 const DEFAULT_BRAND_NAME = 'Zephyr';
 const DEFAULT_BRAND_ICON = '🌬️';
 let pendingBrandIcon = DEFAULT_BRAND_ICON;
+const SMARTBAR_TEXT_IMAGE_CACHE = new Map();
 
 function apiErrorFromResponse(res, data = {}) {
     const err = new Error(data.error || data.message || `请求失败（HTTP ${res.status}）`);
@@ -451,7 +453,7 @@ function readImageAsDataUrl(file) {
         reader.readAsDataURL(file);
     });
 }
-async function invertHexColorClient(value, fallback = '#1d1d1f') {
+function invertHexColorClient(value, fallback = '#1d1d1f') {
     const hex = normalizeHexInputClient(value, '');
     if (!hex) return fallback;
     const rgb = hexToRgbClient(hex);
@@ -469,7 +471,7 @@ function setColorPickerEnabled(input, enabled) {
     input.disabled = !enabled;
     input.closest('[data-color-picker]')?.classList.toggle('disabled', !enabled);
 }
-function saveAppearance(e) {
+async function saveAppearance(e) {
     e.preventDefault();
     const previous = getAppearance();
     const colorScheme = $('#colorSchemeSelect')?.value || previous.colorScheme || 'frost';
@@ -1664,7 +1666,7 @@ function terminalInitials(name = '') {
     return raw.toUpperCase();
 }
 function escapeSvgText(str) { return String(str || '').replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m])); }
-const SMARTBAR_TEXT_IMAGE_CACHE = new Map();
+// SMARTBAR_TEXT_IMAGE_CACHE is initialized near the top of the module because applyTheme() runs during init.
 function smartbarTextThemeColor(kind = 'label') {
     if (kind === 'plus') return '#0969da';
     const theme = document.documentElement.getAttribute('data-theme') || getPreferredTheme();
@@ -5811,6 +5813,7 @@ function bindConnectionPressFeedback(root = document) {
 }
 
 function bindEvents() {
+    document.documentElement.dataset.appBindEvents = 'start';
     bindConnectionPressFeedback();
     $$('.nav-tab').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view)));
     $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => { $$('.settings-tab').forEach((b) => b.classList.remove('active')); btn.classList.add('active'); $$('.settings-panel').forEach((p) => p.classList.remove('active')); $(`#settings-${btn.dataset.settings}`).classList.add('active'); }));
@@ -6158,5 +6161,29 @@ function bindEvents() {
     $('#clearLoginEventsBtn').addEventListener('click', async () => { if (!confirm('确定清理登录事件日志？')) return; await api('/api/security/login-events', { method: 'DELETE' }); await loadSecurityLists(); toast('登录事件已清理'); });
     $('#importDataForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm('导入会覆盖当前数据库，系统会先生成本地备份。继续？')) return; const fd = new FormData(); fd.append('backup', $('#backupFile').files[0]); fd.append('loginPassword', $('#importLoginPassword').value); fd.append('backupPassword', $('#backupPassword').value); const res = await fetch('/api/data/import', { method: 'POST', body: fd, credentials: 'same-origin' }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || '导入失败'); toast(data.message || '导入完成'); });
 }
-async function init() { applyTheme(getPreferredTheme()); try { const me = await api('/api/auth/me'); if (me.mustChangePassword) location.href = '/'; bindEvents(); await loadSettings(); await migrateLocalSnippetsToServer(); renderSnippetSettings(); await loadConnections(); await loadNetwork(); } catch { location.href = '/'; } }
+async function init() {
+    document.documentElement.dataset.appInit = 'start';
+    try {
+        applyTheme(getPreferredTheme());
+        document.documentElement.dataset.appInitTheme = 'ok';
+        const me = await api('/api/auth/me');
+        document.documentElement.dataset.appInitAuth = 'ok';
+        if (me.mustChangePassword) { location.href = '/'; return; }
+        bindEvents();
+        document.documentElement.dataset.appBindEvents = 'done';
+        await loadSettings();
+        document.documentElement.dataset.appLoadSettings = 'ok';
+        await migrateLocalSnippetsToServer();
+        renderSnippetSettings();
+        await loadConnections();
+        document.documentElement.dataset.appLoadConnections = 'ok';
+        await loadNetwork();
+        document.documentElement.dataset.appReady = '1';
+        window.__zephyrAppReady = true;
+    } catch (err) {
+        console.error('[app-init]', err);
+        document.documentElement.dataset.appInitError = err?.message || String(err || 'unknown');
+        toast(`初始化失败：${err?.message || err || '未知错误'}`);
+    }
+}
 init();
