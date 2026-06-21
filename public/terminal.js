@@ -7814,51 +7814,111 @@ function bindProcessPageEvents() {
         wsConnection?.send?.(JSON.stringify({ type: 'process-signal', pid, signal }));
     }));
 }
+function updateMonitorTabThumb({ immediate = false } = {}) {
+    const tabsWrap = $('.monitor-tabs');
+    if (!tabsWrap) return;
+    const active = tabsWrap.querySelector('.monitor-tab.active') || tabsWrap.querySelector(`[data-monitor-page="${monitorPage}"]`);
+    const thumb = tabsWrap.querySelector('.monitor-tab-thumb');
+    if (!active || !thumb) return;
+    const wrapRect = tabsWrap.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    const x = Math.max(3, activeRect.left - wrapRect.left);
+    const width = Math.max(0, activeRect.width);
+    if (immediate) thumb.style.transition = 'none';
+    tabsWrap.style.setProperty('--monitor-tab-thumb-x', `${x.toFixed(2)}px`);
+    tabsWrap.style.setProperty('--monitor-tab-thumb-width', `${width.toFixed(2)}px`);
+    tabsWrap.dataset.monitorPage = String(monitorPage);
+    if (immediate) {
+        void thumb.offsetWidth;
+        requestAnimationFrame(() => thumb.style.removeProperty('transition'));
+    }
+}
+function finishMonitorPageSwitch({ render = false } = {}) {
+    const viewport = $('.monitor-pages-viewport');
+    const tabsWrap = $('.monitor-tabs');
+    monitorPageSwitching = false;
+    monitorPrevPage = monitorPage;
+    tabsWrap?.classList.remove('switching');
+    if (viewport) {
+        viewport.classList.remove('switching');
+        viewport.querySelectorAll('.monitor-page').forEach((pageEl) => {
+            const isActive = pageEl.classList.contains(`monitor-page-${monitorPage}`);
+            pageEl.classList.toggle('active', isActive);
+            pageEl.classList.remove('leaving');
+            pageEl.toggleAttribute('hidden', !isActive);
+            pageEl.style.removeProperty('display');
+            pageEl.style.removeProperty('transition');
+        });
+    }
+    updateMonitorTabThumb({ immediate: false });
+    if (render && latestStatsData) renderStats(latestStatsData);
+    else if (latestStatsData && infoModal?.classList?.contains('open')) renderStatsSoon(latestStatsData);
+}
 function setMonitorPage(page, { render = true } = {}) {
     const next = Math.max(0, Math.min(1, Number(page) || 0));
-    if (next === monitorPage) return;
+    if (next === monitorPage) {
+        updateMonitorTabThumb({ immediate: false });
+        return;
+    }
     monitorPrevPage = monitorPage;
     monitorSwitchDirection = next > monitorPage ? 1 : -1;
     monitorPage = next;
     monitorPageSwitching = true;
-    // Animate existing DOM without rebuilding
     const viewport = $('.monitor-pages-viewport');
+    const tabsWrap = $('.monitor-tabs');
     const tabs = $$('.monitor-tab');
-    if (viewport && tabs.length) {
+    if (viewport && tabsWrap && tabs.length) {
         viewport.setAttribute('data-monitor-dir', String(monitorSwitchDirection));
         viewport.setAttribute('data-monitor-page', String(monitorPage));
         viewport.setAttribute('data-monitor-prev-page', String(monitorPrevPage));
         viewport.classList.add('switching');
+        tabsWrap.classList.add('switching');
+        tabsWrap.style.setProperty('--monitor-tab-index', String(monitorPage));
         const oldPage = viewport.querySelector(`.monitor-page-${monitorPrevPage}`);
         const newPage = viewport.querySelector(`.monitor-page-${monitorPage}`);
-        tabs.forEach((btn) => btn.classList.toggle('active', Number(btn.dataset.monitorPage) === monitorPage));
-        // Show both pages during animation
-        [oldPage, newPage].forEach((p) => { if (p) { p.removeAttribute('hidden'); p.style.display = 'block'; } });
-        // Old page leaves (CSS transition)
-        if (oldPage) { oldPage.classList.remove('active'); oldPage.classList.add('leaving'); }
-        // New page enters — force reflow so CSS transition picks up
+        tabs.forEach((btn) => {
+            const active = Number(btn.dataset.monitorPage) === monitorPage;
+            btn.classList.toggle('active', active);
+            btn.setAttribute('aria-selected', active ? 'true' : 'false');
+            btn.tabIndex = active ? 0 : -1;
+        });
+        updateMonitorTabThumb({ immediate: false });
+        [oldPage, newPage].forEach((p) => {
+            if (!p) return;
+            p.removeAttribute('hidden');
+            p.style.display = 'block';
+        });
+        if (oldPage) {
+            oldPage.classList.remove('active');
+            oldPage.classList.add('leaving');
+        }
         if (newPage) {
-            newPage.style.transition = 'none';
             newPage.classList.remove('active', 'leaving');
             void newPage.offsetWidth;
-            newPage.style.removeProperty('transition');
             newPage.classList.add('active');
         }
-        // After animation: rebuild DOM cleanly
         window.clearTimeout(renderStats._monitorSwitchTimer);
-        renderStats._monitorSwitchTimer = window.setTimeout(() => {
-            monitorPageSwitching = false;
-            monitorPrevPage = monitorPage;
-            if (render && latestStatsData) renderStats(latestStatsData);
-        }, 300);
+        window.clearTimeout(renderStats._monitorSwitchCleanup);
+        renderStats._monitorSwitchTimer = window.setTimeout(() => finishMonitorPageSwitch({ render: false }), 500);
         return;
     }
-    // Fallback: viewport not in DOM, rebuild directly
     monitorPageSwitching = false;
     if (render && latestStatsData) renderStats(latestStatsData);
 }
 function bindMonitorPager() {
-    $$('.monitor-tab').forEach((btn) => btn.addEventListener('click', () => setMonitorPage(Number(btn.dataset.monitorPage) || 0)));
+    $$('.monitor-tab').forEach((btn) => {
+        btn.addEventListener('click', () => setMonitorPage(Number(btn.dataset.monitorPage) || 0));
+        btn.addEventListener('keydown', (event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            setMonitorPage(event.key === 'ArrowRight' ? monitorPage + 1 : monitorPage - 1);
+        });
+    });
+    updateMonitorTabThumb({ immediate: !monitorPageSwitching });
+    if (!bindMonitorPager._resizeBound) {
+        bindMonitorPager._resizeBound = true;
+        window.addEventListener('resize', () => updateMonitorTabThumb({ immediate: true }), { passive: true });
+    }
     const viewport = $('.monitor-pages-viewport');
     if (!viewport) return;
     let startX = 0;
@@ -7928,9 +7988,10 @@ function renderStats(d) {
     const monitorPageHidden = (page) => (monitorPage === page || (isMonitorSwitching && monitorPrevPage === page)) ? '' : 'hidden';
 
     infoBody.innerHTML = `
-        <div class="monitor-tabs" role="tablist" aria-label="监控分页" style="--monitor-tab-index:${monitorPage}">
-            <button class="monitor-tab ${monitorPage === 0 ? 'active' : ''}" data-monitor-page="0" type="button">概览</button>
-            <button class="monitor-tab ${monitorPage === 1 ? 'active' : ''}" data-monitor-page="1" type="button">进程</button>
+        <div class="monitor-tabs ${isMonitorSwitching ? 'switching' : ''}" role="tablist" aria-label="监控分页" style="--monitor-tab-index:${monitorPage}">
+            <span class="monitor-tab-thumb" aria-hidden="true"></span>
+            <button class="monitor-tab ${monitorPage === 0 ? 'active' : ''}" data-monitor-page="0" type="button" role="tab" aria-selected="${monitorPage === 0 ? 'true' : 'false'}" tabindex="${monitorPage === 0 ? '0' : '-1'}">概览</button>
+            <button class="monitor-tab ${monitorPage === 1 ? 'active' : ''}" data-monitor-page="1" type="button" role="tab" aria-selected="${monitorPage === 1 ? 'true' : 'false'}" tabindex="${monitorPage === 1 ? '0' : '-1'}">进程</button>
         </div>
         <div class="monitor-pages-viewport ${isMonitorSwitching ? 'switching' : ''}" data-monitor-page="${monitorPage}" data-monitor-prev-page="${monitorPrevPage}" data-monitor-dir="${monitorDir}">
             <section class="${monitorPageClass(0)}" ${monitorPageHidden(0)}>
@@ -8002,12 +8063,11 @@ function renderStats(d) {
         window.clearTimeout(renderStats._monitorSwitchCleanup);
         renderStats._monitorSwitchCleanup = window.setTimeout(() => {
             if (!monitorPageSwitching) return;
-            monitorPageSwitching = false;
-            monitorPrevPage = monitorPage;
-            if (latestStatsData) renderStats(latestStatsData);
-        }, 300);
+            finishMonitorPageSwitch({ render: false });
+        }, 520);
     }
     requestAnimationFrame(() => {
+        updateMonitorTabThumb({ immediate: !monitorPageSwitching });
         if (previousBodyScrollTop && monitorPage === 0) infoBody.scrollTop = previousBodyScrollTop;
         if (activeElementId) {
             const nextActive = document.getElementById(activeElementId);
@@ -8063,6 +8123,7 @@ function positionMonitorPanel() {
 function renderStatsSoon(data) {
     latestStatsData = data || latestStatsData;
     if (!infoModal?.classList?.contains('open') || !latestStatsData) return;
+    if (monitorPageSwitching) return;
     if (monitorRenderRaf) return;
     monitorRenderRaf = requestAnimationFrame(() => {
         monitorRenderRaf = 0;
