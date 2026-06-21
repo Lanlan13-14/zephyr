@@ -3,7 +3,7 @@
 > Zephyr-SSH 是一个基于 Node.js 的浏览器服务器管理平台，提供 WebSSH 终端、SSH / RDP / VNC 连接管理、SSH 跳板与代理路由、安全登录、多因素认证、远程批量执行、数据备份导入导出等能力。
 
 
-**出于作者自身原因，开发将暂停一段时间，目前不接受不处理issue，开发重启后会统一回复，同时本项目仍处于开发初始阶段，请不要用于生产环境，目前rdp不可用**
+**项目仍处于快速迭代阶段，请谨慎用于生产环境；生产部署务必持久化 `/app/data` 并自行做好访问控制、备份与回滚。RDP 已切换到 FreeRDP3 RDPEGFX native bridge 路线，但不同 Windows 版本、浏览器 WebCodecs 能力、网络质量和显卡/CPU 条件会影响体验，建议先在测试环境验证。**
 ---
 
 ## 目录
@@ -33,12 +33,14 @@
 - 🌊 **DOM 终端渲染**：基于 `@wterm/dom`，终端文本可像普通网页一样拖选复制。
 - 📱 **移动端友好**：支持移动端长按、拖拽选择和系统复制菜单。
 - 🗂️ **连接资产管理**：支持 SSH / RDP / VNC 连接管理、搜索、排序、标签和备注。
-- 🖥️ **RDP / VNC 远程桌面**：RDP 使用 Zephyr 自有 FreeRDP + H.264 WebSocket 管线，VNC 使用内置 noVNC 页面和 Zephyr WebSocket 代理，在浏览器内打开远程桌面。
+- 🖥️ **RDP / VNC 远程桌面**：RDP 使用 `/rdp-gfx` → FreeRDP3 RDPEGFX native bridge → 浏览器 WebCodecs/Canvas 的原生链路，支持画质/FPS/分辨率切换（最高 8K、144FPS 选项）、移动端软键盘、快捷键、视区摇杆、浮窗布局菜单；VNC 使用内置 noVNC 页面和 Zephyr WebSocket 代理。
 - 🧭 **代理与跳板路由**：支持 SOCKS5 / HTTP CONNECT 代理、SSH 跳板机和多级 SSH 跳板链路。
 - ⚡ **远程批量执行**：可对多个 SSH 连接批量执行命令并查看结果。
 - 🧰 **远程运维能力**：支持远程状态监控、Docker 容器/镜像查看、日志查看、镜像拉取等 SSH 运维操作。
-- 🤖 **AI 助理智能体**：可在设置中启用独立 AI 助理入口，支持多模型供应商、自定义 API Base URL、模型参数、Skills、内置 Chromium 浏览器自动化与截图嵌入预览、按连接/项目/标签关联的长期 Memory、可暂停/继续/重试的任务规划器、AI 专用加密环境变量、远程命令执行、远程文件读写、敏感操作确认和编辑器 AI 代码补全。
+- 🤖 **AI 助理智能体**：可在设置中启用独立 AI 助理入口，支持多模型供应商、自定义 API Base URL、模型参数、逐模型请求 User-Agent、Skills、内置 Chromium 浏览器自动化与截图嵌入预览、按连接/项目/标签关联的长期 Memory、可暂停/继续/重试的任务规划器、AI 专用加密环境变量、远程命令执行、远程文件读写、敏感操作确认和编辑器 AI 代码补全。
 - 🖼️ **图片类文件预览**：文件管理器支持图片预览，前端使用 Viewer.js 负责缩放/拖动/全屏，后端 Preview API 对浏览器不支持的 HEIC/TIFF/PSD/RAW/DDS/HDR 等格式通过 Sharp 优先、ImageMagick 兜底转为 WebP。
+- 🎨 **个性化终端**：设置页支持品牌名/图标、主题、自定义 CSS/JS、SSH 终端背景图与背景强度、自定义深色/浅色终端字体颜色；浅色字体未填写时会自动使用深色字体的反色。
+- 📋 **跨会话文件剪贴板**：支持本机 ↔ RDP、SSH ↔ RDP、RDP ↔ SSH、RDP ↔ RDP 的文件剪贴板桥接；RDP 侧使用 Windows 原生 CLIPRDR 文件剪贴板语义，远端 Ctrl+V 时按需拉取文件内容。
 
 ### 安全与账号
 
@@ -70,14 +72,15 @@
 - **SSH** 既可以作为目标连接，也可以作为跳板机。
 - **RDP / VNC** 可以作为目标连接，并且可以通过 SSH 跳板链路访问。
 - **RDP / VNC 不能作为跳板机**。跳板机只能选择 SSH 连接。
-- RDP / VNC 通过跳板访问时，Zephyr 会在服务端建立临时链路：RDP 由 Zephyr 自有 RDP H.264 管线连接目标端口，VNC 由 Zephyr 的 noVNC WebSocket 代理直接完成 VNC 握手与转发。
+- RDP / VNC 通过跳板访问时，Zephyr 会在服务端建立临时链路：RDP 由 `/rdp-gfx` FreeRDP3 RDPEGFX native bridge 连接目标端口并把图形/输入/剪贴板事件转发到浏览器，VNC 由 Zephyr 的 noVNC WebSocket 代理直接完成 VNC 握手与转发。
 
 RDP 经 SSH 跳板访问链路：
 
 ```text
 浏览器
-  -> Zephyr /rdp-h264 WebSocket
-  -> FreeRDP/Xvfb/ffmpeg H.264 管线
+  -> Zephyr /rdp-gfx WebSocket
+  -> Python RDP GFX backend
+  -> FreeRDP3 RDPEGFX native bridge
   -> 127.0.0.1:临时端口（如使用代理/跳板）
   -> SSH 跳板链路
   -> 目标 RDP 主机
@@ -153,7 +156,7 @@ npm start
 http://localhost:3000
 ```
 
-本地开发运行 RDP 时，需要本机可用的 `xfreerdp`、`Xvfb`、`ffmpeg`、`xdotool` 等运行依赖；Docker 镜像已内置这些依赖。
+本地开发运行 RDP 时，需要本机可用的 FreeRDP3 开发/运行库、Python 依赖、`librdp_bridge.so` native bridge、WebP/FFmpeg/Opus 等依赖；Docker 镜像会在构建阶段编译并内置这些依赖。旧的 `xfreerdp -> Xvfb -> ffmpeg` 路径仅作为 fallback/兼容遗留说明，不是当前默认 RDP 页面。
 
 ---
 
@@ -193,7 +196,7 @@ HTTPS_PORT=3443
 
 注意：
 
-- RDP 使用浏览器 WebCodecs H.264 实时解码，建议通过 HTTPS 访问（内置 HTTPS 默认开启）；HTTP 或未被浏览器信任的自签证书环境可能导致 WebCodecs 不可用。
+- RDP GFX 的 H.264/WebCodecs、Canvas、音频播放等能力在现代浏览器中体验最好，建议通过 HTTPS 访问（内置 HTTPS 默认开启）；HTTP 或未被浏览器信任的自签证书环境可能影响 WebCodecs、剪贴板、音频自动播放等浏览器能力。
 - 使用 Passkey / WebAuthn 时，生产环境建议启用 HTTPS。
 - `PUBLIC_ORIGIN` 必须与实际访问地址一致，例如 `https://ssh.example.com`。生产环境配置为 HTTPS 后，登录 Cookie 会自动带 `Secure`。
 - Zephyr 会校验非 GET 请求的 `Origin` / `Referer` 与 `PUBLIC_ORIGIN` 同源，反代后的公开域名、协议配置不一致会导致写操作返回 403。
@@ -207,7 +210,7 @@ HTTPS_PORT=3443
 
 Zephyr 内置可选 AI Agent 能力，默认关闭。登录后台后进入 **设置 → AI 助理** 可启用：
 
-- **多模型供应商**：支持 OpenAI 兼容接口、Anthropic Claude、Google Gemini；可配置自定义 API Base URL、API Key、模型列表、默认模型、上下文窗口/最大输入长度、额外请求头和常见模型参数（temperature、top_p、max_tokens/max_output_tokens、presence/frequency penalty、reasoning_effort、额外 JSON 参数等）。`auto` 默认按 Chat Completions 兼容路径发送，只有明确选择 Responses API 或 Base URL 以 `/responses` 结尾时才使用 Responses；`previous_response_id` 默认关闭，避免兼容网关报错。高轮次对话会自动做上下文压缩：早期轮次合并为摘要注入系统提示，最近消息保持原文，避免请求体随轮次线性膨胀导致响应变慢、超时或上游模型报错；这不是限制对话轮次。Zephyr 内置默认系统提示词，约束 AI 按当前连接、标签、备注、Memory、计划器和敏感确认流程工作。
+- **多模型供应商**：支持 OpenAI 兼容接口、Anthropic Claude、Google Gemini；可配置自定义 API Base URL、API Key、模型列表、默认模型、上下文窗口/最大输入长度、逐模型请求 User-Agent、额外请求头和常见模型参数（temperature、top_p、max_tokens/max_output_tokens、presence/frequency penalty、reasoning_effort、额外 JSON 参数等）。逐模型 User-Agent 以 `模型名=User-Agent` 形式配置，只对聊天/生成请求中精确匹配的模型生效；未配置的模型保持默认请求头。`auto` 默认按 Chat Completions 兼容路径发送，只有明确选择 Responses API 或 Base URL 以 `/responses` 结尾时才使用 Responses；`previous_response_id` 默认关闭，避免兼容网关报错。高轮次对话会自动做上下文压缩：早期轮次合并为摘要注入系统提示，最近消息保持原文，避免请求体随轮次线性膨胀导致响应变慢、超时或上游模型报错；这不是限制对话轮次。Zephyr 内置默认系统提示词，约束 AI 按当前连接、标签、备注、Memory、计划器和敏感确认流程工作。
 - **独立入口与浮窗**：启用后顶部 AI 按钮会打开类似 SSH 文件/监控面板的浮窗；桌面端支持拖拽、缩放和布局，移动端优化为稳定的全屏/近全屏面板，保留顶部整条标题栏拖动、横向对话切换和内部滚动，避免浮窗导致页面无法滑动或画面消失。
 - **工具权限与透明过程**：可单独开关网页搜索、网页正文读取、内置 Chromium 浏览器自动化、远程执行、远程文件读取、远程文件写入、代码编辑/补全、长期 Memory 和 AI 环境变量。AI 还能列出/新增/修改/删除连接、代理、SSH 密钥库、跳板机和代码片段，测试 SSH/RDP/VNC 连通性，读取当前 SSH 终端屏幕/scrollback 输出，读取 RDP/VNC 远程桌面画面快照，并通过 `ui_action` 在当前 Zephyr 页面可见地切换视图、打开连接弹窗、排列终端窗口、点击 SSH 终端工具栏，或直接调整 RDP/VNC 工具栏（画质、视图/适应、缩放、剪贴板、软键盘、快捷键、视区/拖拽、Ctrl+Alt+Del、重连/断开、发送文本/快捷键/坐标点击）。AI 每次工具调用会在聊天中生成独立过程卡片，展示工具、参数摘要、耗时、结果摘要和可展开的完整参数/结果；敏感字段仍会打码。RDP/VNC 画面截图在支持视觉输入的模型供应商上会以多模态图片传给模型（Anthropic/Gemini/OpenAI 均支持）。
 - **内置 Chromium 浏览器自动化**：Docker 运行镜像内置 `chromium`，AI 可通过 CDP 执行页面导航、截图、点击、输入、滚动和正文读取；每次浏览器工具调用会返回 `/api/ai/browser/screenshots/...` 预览，AI 浮窗会把截图直接嵌入聊天流和顶部浏览器预览区。默认每个 Zephyr 进程使用独立运行 profile（`data/ai-browser/profile/runtime-<host>-<pid>`），避免容器重启、滚动更新或旧 Chromium 残留时触发 `profile appears to be in use` 锁冲突；如确实要多个进程共用同一个 profile，可设置 `AI_CHROMIUM_PROFILE_SHARED=true`，但不推荐。
@@ -296,49 +299,44 @@ Zephyr 自带的默认 Skill 已经写入了本地运维常用规则，重点包
 
 RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zephyr：
 
-- **RDP**：使用 Zephyr 自有 **FreeRDP + Xvfb + ffmpeg/WebCodecs H.264** 管线。浏览器通过 `/rdp-h264` WebSocket 接收 H.264 视频帧，并通过同一连接发送鼠标、键盘、剪贴板和重连/分辨率切换指令。
-  - **高性能输入注入**：使用原生 C 编写的 `zephyr-xinput` 进程通过 XTest 扩展直接注入输入事件，替代每次事件 spawn xdotool 的方式，输入延迟从 ~15-30ms 降至 <1ms。
-  - **稳定视频通道**：默认使用 FreeRDP 官方客户端渲染链路（xfreerdp → Xvfb → ffmpeg fMP4 → 浏览器 MSE），保证首帧和兼容性；RDPGFX/H.264 wire-through 是后续正确重构方向，旧的 GDI 层 H.264 截流只保留为实验开关，不再默认。
-  - **原生文件剪贴板**：浏览器/SSH SFTP 文件先暂存在 RDP 客户端侧，并通过 X11 `text/uri-list` 触发 FreeRDP/WinPR 转换为 Windows `FileGroupDescriptorW`；远端在任意目录 Ctrl+V 时通过 CLIPRDR `FileContentsRequest` 按需拉取内容，不再用共享盘路径冒充粘贴。
+- **RDP**：默认使用 Zephyr 自有 **FreeRDP3 RDPEGFX native bridge**。浏览器通过 `/rdp-gfx` WebSocket 连接 Zephyr，后端由 Python bridge 调用 `librdp_bridge.so`，让 FreeRDP3 负责 RDPGFX/GDI 合成、CLIPRDR、音频等底层协议，再把 RDPEGFX / WebP tile / 音频 / 剪贴板事件转成浏览器可处理的 wire format。
+  - **原生 RDPEGFX 路线**：当前默认页面是 `rdp.html -> rdp-gfx.js -> /rdp-gfx -> rdp-gfx-backend -> FreeRDP3 native bridge`；旧的 `xfreerdp -> Xvfb -> ffmpeg` 路径只作为历史 fallback/兼容说明，不是默认体验。
+  - **工具栏与移动端控制**：支持画质模式、分辨率（1080p/2K/4K/8K/自动）、FPS（30/45/60/120/144）、适应/填充/原始、缩放滑块、剪贴板、文件、软键盘、快捷键、视区摇杆、Ctrl+Alt+Del、重连/断开。RDP 浮窗复用 SSH 文件管理器的三点布局菜单（全屏/半屏/左右四分之一/关闭），视区摇杆可等比缩放，操作摇杆时会临时抑制远程 RDP 输入以避免误触。
+  - **原生文件剪贴板**：浏览器/SSH/RDP 文件会发布为 RDP 原生文件剪贴板；Windows 远端在当前目录 Ctrl+V 时通过 CLIPRDR `FileContentsRequest` 按需拉取内容，不再用共享盘路径冒充粘贴。
+  - **跨会话文件桥接**：支持本机 ↔ RDP、SSH ↔ RDP、RDP ↔ SSH、RDP ↔ RDP。RDP ↔ RDP 会通过 Zephyr 父页面共享文件剪贴板中转；如果源 RDP 是远端 Windows 复制文件，目标 RDP 会向源 RDP 请求真实文件内容，再发布到自己的 RDP 原生剪贴板。
 - **VNC**：使用内置 **noVNC** 前端，浏览器通过 `/novnc` WebSocket 连接 Zephyr；Zephyr 在服务端直连/代理/SSH 跳板到目标 VNC Server，并在服务端使用保存的 VNC 密码完成 VNCAuth，密码不会下发到浏览器。
 
 ### Docker 镜像内置 RDP/VNC 运行依赖
 
 项目 Docker 镜像运行层基于 Alpine，已包含：
 
-- FreeRDP / `xfreerdp`（含 Zephyr H.264 导出版 FreeRDP）
-- `zephyr-xinput`（原生 C XTest 输入注入代理，替代 xdotool 逐事件 spawn）
-- `zephyr-file-clip`（原生 RDP 文件剪贴板 X11 owner，提供 `text/uri-list` 给 FreeRDP 转成 `FileGroupDescriptorW`）
-- `Xvfb`、`ffmpeg`、`xdotool`、`xclip`、PulseAudio 等 RDP 管线运行依赖
+- FreeRDP3 运行库与 Zephyr 编译的 `librdp_bridge.so` native bridge
+- `rdp-gfx-backend` Python bridge（WebSocket / wire format / CLIPRDR / 音频事件桥接）
+- libwebp、FFmpeg/libav、Opus 等 native bridge 依赖
+- `zephyr-xinput`、`zephyr-file-clip` 等旧 fallback/兼容工具
 - noVNC 前端依赖
 
 项目不再包含旧的远程桌面网关组件，也不再依赖浏览器侧第三方 RDP 客户端库。
 
-### RDP 性能优化环境变量
+### RDP 相关环境变量
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `RDP_NATIVE_H264` | `false` | 实验性旧 GDI 层 H.264 导出；默认关闭。正确的原生级方向是 RDPGFX/EGFX wire-through + WebCodecs，而不是 GDI 截流 |
-| `RDP_ALLOW_GFX_FALLBACK` | `true` | 允许在原生 H.264 不可用时回退到 x11grab+ffmpeg |
-| `RDP_FALLBACK_GFX_MODE` | `AVC444` | 非原生直通回退模式的 FreeRDP GFX 编码；原生 H.264 直通固定使用 `AVC420`，避免 AVC444 双流无法被浏览器直接等价解码 |
-| `RDP_H264_WIDTH` | `1920` | 流宽度 |
-| `RDP_H264_HEIGHT` | `1080` | 流高度 |
-| `RDP_H264_FPS` | `30` | 帧率（15-60） |
-| `RDP_H264_THREADS` | `2` | x264 编码线程数 |
-| `RDP_FREERDP_BIN` | `xfreerdp` | 原生 H.264 模式使用的 FreeRDP 二进制路径 |
-| `RDP_FALLBACK_FREERDP_BIN` | `/usr/bin/xfreerdp` | 回退模式使用的 FreeRDP 二进制路径 |
-| `RDP_AUDIO` | 自动 | `false` 禁用音频，`force` 使用独立音频管线 |
+| `RDP_GFX_BACKEND_PORT` / `RDP_GFX_BACKEND_HOST` | 自动 / `127.0.0.1` | `/rdp-gfx` 后端服务监听地址；通常无需手动设置 |
+| `RDP_BRIDGE_LIBRARY` | 自动查找 | 指定 `librdp_bridge.so` 路径，用于排查多版本 native bridge 污染 |
+| `RDP_MAX_WIDTH` / `RDP_MAX_HEIGHT` | `7680` / `4320` | RDP GFX 允许的最大分辨率；前端提供 8K 选项 |
+| `RDP_MAX_FPS` | `144` | RDP GFX / fallback 捕获允许的最高帧率；前端提供 120/144 FPS 选项 |
+| `RDP_H264_WIDTH` / `RDP_H264_HEIGHT` | `1920` / `1080` | 旧 `/rdp-h264` fallback 的默认分辨率 |
+| `RDP_H264_FPS` | `60` | 旧 `/rdp-h264` fallback 的默认帧率 |
 | `RDP_CLIPBOARD_SYNC` | 启用 | `false` 禁用 RDP 剪贴板双向同步 |
-| `ZEPHYR_XINPUT_BIN` | `zephyr-xinput` | 原生输入注入代理二进制路径 |
-| `ZEPHYR_FILE_CLIP_BIN` | `zephyr-file-clip` | 原生 RDP 文件剪贴板 X11 owner 工具路径 |
-| `ZEPHYR_RDP_CLIPBOARD_DOWNLOAD_DIR` | `/tmp` | RDP 远程文件剪贴板下载目录 |
+| `ZEPHYR_RDP_CLIPBOARD_DOWNLOAD_DIR` | `/tmp` | RDP 远程文件剪贴板下载/暂存目录 |
 
 ### 默认端口
 
 | 协议 | 默认端口 | 说明 |
 | --- | --- | --- |
 | `SSH` | `22` | WebSSH 终端 |
-| `RDP` | `3389` | Windows 远程桌面，经 Zephyr `/rdp-h264` 自有管线 |
+| `RDP` | `3389` | Windows 远程桌面，经 Zephyr `/rdp-gfx` FreeRDP3 RDPEGFX native bridge |
 | `VNC` | `5900` | VNC Server，经 noVNC + Zephyr `/novnc` 代理 |
 
 ### RDP/VNC 使用跳板
@@ -380,8 +378,10 @@ VNC：
 服务端日志关键字：
 
 ```text
-[rdp-h264]
-[rdp-audio]
+[rdp-gfx]
+[rdp_bridge]
+[GFX]
+[rdpsnd]
 [rdp-test]
 [novnc-ws]
 [novnc-test]
@@ -436,7 +436,7 @@ services:
         max-file: "3"
 ```
 
-> Docker 镜像已内置 FreeRDP/Xvfb/ffmpeg/xdotool/xclip/PulseAudio 等 RDP 管线依赖；VNC 走 noVNC + Zephyr `/novnc` 代理，不需要额外启动远程桌面网关容器。
+> Docker 镜像已内置 FreeRDP3 native bridge、Python RDP GFX backend、libwebp/FFmpeg/Opus 等 RDP GFX 运行依赖；VNC 走 noVNC + Zephyr `/novnc` 代理，不需要额外启动远程桌面网关容器。
 
 ### 3. 启动服务
 
@@ -599,8 +599,8 @@ Dockerfile 说明：
 - 构建阶段使用 `node:20-alpine3.20` 与 `alpine:3.20`。
 - 运行阶段基于 `node:20-alpine3.20`。
 - 镜像内复制应用代码和生产依赖。
-- 镜像内置 FreeRDP/Xvfb/ffmpeg/xdotool/xclip/PulseAudio 等 RDP 管线依赖；VNC 使用 noVNC + Zephyr `/novnc` 代理。
-- 构建时会验证 `xfreerdp`、`node`、`npm` 是否可执行。
+- 镜像内置 FreeRDP3 native bridge、RDP GFX Python backend、libwebp/FFmpeg/Opus 等 RDP GFX 依赖；VNC 使用 noVNC + Zephyr `/novnc` 代理。
+- 构建时会验证 native bridge、`node`、`npm` 是否可执行。
 
 ---
 
