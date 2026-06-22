@@ -210,32 +210,26 @@ function handleSharedClipboardMessage(data = {}) {
         }
         return true;
     }
-    // ── Target consumes clipboard (SSH→RDP or RDP→SSH) ──
+    // ── Request clipboard from parent (SSH/RDP startup) ──
+    if (data.type === 'request-shared-file-clipboard') {
+        if (zephyrSharedClipboard.type === 'files' && zephyrSharedClipboard.files.length) {
+            postToTerminalTab(sourceTabId, { type: 'shared-file-clipboard-available', files: zephyrSharedClipboard.files, sourceTabId: zephyrSharedClipboard.sourceTabId });
+            return true;
+        }
+        return true;
+    }
+    // ── Target consumes clipboard (RDP→SSH only; SSH→RDP uses server-side staging) ──
     if (data.type === 'shared-file-clipboard-consume') {
         const files = normalizeSharedClipboardFiles(data.files || zephyrSharedClipboard.files || []);
         if (!files.length) return true;
         const sourceTabIdForFiles = String(data.sourceTabId || zephyrSharedClipboard.sourceTabId || '');
         const targetFrame = terminalFrameById(sourceTabId);
         const sourcePage = String(data.sourcePage || zephyrSharedClipboard.sourcePage || '');
-        const targetPage = terminalPageForTab(sourceTabId);
-        // Source is RDP (local files with dataUrl) → target is SSH: forward file data directly
+        // RDP source (local files with dataUrl) → target is SSH: forward file data directly
         if (isRemoteDesktopPage(sourcePage) && files.some((f) => f.dataUrl) && targetFrame?.contentWindow) {
             targetFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-data', requestId: '', files, sourceTabId: sourceTabIdForFiles }, '*');
-            return true;
         }
-        // Source is SSH (server-side SFTP clipboard) → target is RDP: relay via iframe-to-parent messages
-        const sourceFrame = terminalFrameById(sourceTabIdForFiles);
-        if (sourceFrame?.contentWindow && targetFrame?.contentWindow) {
-            const requestId = `shared-file-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-            const relay = (event) => {
-                if (event.source !== sourceFrame.contentWindow || event.data?.source !== 'zephyr-terminal' || event.data?.type !== 'shared-file-clipboard-data' || event.data?.requestId !== requestId) return;
-                window.removeEventListener('message', relay, true);
-                targetFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-data', requestId, files: event.data.files || [], error: event.data.error || '', sourceTabId: sourceTabIdForFiles }, '*');
-            };
-            window.addEventListener('message', relay, true);
-            sourceFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-read', requestId, files, sourceTabId: sourceTabIdForFiles }, '*');
-            window.setTimeout(() => window.removeEventListener('message', relay, true), 60000);
-        }
+        // SSH→RDP is handled server-side via /api/shared-clipboard/stage-for-rdp — no relay needed
         return true;
     }
     // ── SSH notifies file copy to parent (metadata only, actual data on server) ──

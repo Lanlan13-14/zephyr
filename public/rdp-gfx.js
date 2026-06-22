@@ -637,6 +637,60 @@ async function connectDirectCanvasRdp() {
     let primarySurfaceId = null;
     let totalFrames = 0;
     let pendingRafFrame = false;
+
+    // ── Adaptive quality: auto-adjust based on actual frame intervals ──
+    let frameTimestamps = [];       // last N frame arrival times (ms)
+    let lastQualityChangeAt = 0;    // cooldown timer
+    const ADAPTIVE_WINDOW = 30;
+    const ADAPTIVE_COOLDOWN = 3000; // ms between quality changes
+    const qualityRank = (q) => q === 'performance' ? 0 : q === 'balanced' ? 1 : 2;
+    const qualityFromRank = (r) => r <= 0 ? 'performance' : r >= 2 ? 'quality' : 'balanced';
+
+    const adaptiveQualityTick = () => {
+        if (frameTimestamps.length < ADAPTIVE_WINDOW) return;
+        const now = Date.now();
+        if (now - lastQualityChangeAt < ADAPTIVE_COOLDOWN) return;
+        const targetInterval = 1000 / fpsValue;
+        // Remove frames older than 3 seconds
+        while (frameTimestamps.length && now - frameTimestamps[0] > 3000) frameTimestamps.shift();
+        if (frameTimestamps.length < 10) return;
+        const intervals = [];
+        for (let i = 1; i < frameTimestamps.length; i++) intervals.push(frameTimestamps[i] - frameTimestamps[i - 1]);
+        const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+        const currentRank = qualityRank(qualityMode);
+        if (avgInterval > targetInterval * 1.6 && currentRank > 0) {
+            // Frame rate is too slow — drop quality to reduce bandwidth
+            const next = qualityFromRank(currentRank - 1);
+            qualityMode = next;
+            localStorage.setItem('zephyr-rdp-gfx-quality', qualityMode);
+            updateQualityFpsButtons();
+            client?._sendMessage({ type: 'settings', quality: qualityMode, fps: fpsValue });
+            setStatus('connected', `自动降为 ${qualityLabel()} 模式 (帧间隔 ${Math.round(avgInterval)}ms)`, { holdOverlayMs: 2000 });
+            lastQualityChangeAt = now;
+            frameTimestamps = [];
+        } else if (avgInterval < targetInterval * 0.6 && currentRank < 2) {
+            // Frame rate is good — try higher quality
+            const next = qualityFromRank(currentRank + 1);
+            qualityMode = next;
+            localStorage.setItem('zephyr-rdp-gfx-quality', qualityMode);
+            updateQualityFpsButtons();
+            client?._sendMessage({ type: 'settings', quality: qualityMode, fps: fpsValue });
+            setStatus('connected', `自动升为 ${qualityLabel()} 模式`, { holdOverlayMs: 2000 });
+            lastQualityChangeAt = now;
+            frameTimestamps = [];
+        }
+    };
+
+    let adaptiveQualityTimer = null;
+    const startAdaptiveQuality = () => {
+        frameTimestamps = [];
+        if (adaptiveQualityTimer) clearInterval(adaptiveQualityTimer);
+        adaptiveQualityTimer = setInterval(adaptiveQualityTick, 1000);
+    };
+    const stopAdaptiveQuality = () => {
+        if (adaptiveQualityTimer) { clearInterval(adaptiveQualityTimer); adaptiveQualityTimer = null; }
+        frameTimestamps = [];
+    };
     const ensureSurfaceSize = (surface, minWidth, minHeight) => {
         const width = Math.max(1, Math.ceil(minWidth));
         const height = Math.max(1, Math.ceil(minHeight));
@@ -718,6 +772,7 @@ async function connectDirectCanvasRdp() {
                 setStatus('connected', `RDP 已连接 [RDPEGFX/WebP${useWebGL ? '/GL' : ''}] ${w}×${h}`);
                 notifyParentStatus('connected');
                 startClipboardSyncLoop();
+                startAdaptiveQuality();
                 syncLocalClipboardTextToRdp('连接');
                 applyDisplayScale();
             } else if (msg.type === 'resize') {
@@ -736,11 +791,13 @@ async function connectDirectCanvasRdp() {
             } else if (msg.type === 'disconnected') {
                 connected = false;
                 stopClipboardSyncLoop();
+                stopAdaptiveQuality();
                 setStatus('disconnected', msg.reason || 'RDP 已断开');
                 notifyParentStatus('disconnected');
             } else if (msg.type === 'error') {
                 connected = false;
                 stopClipboardSyncLoop();
+                stopAdaptiveQuality();
                 setStatus('error', msg.message || 'RDP 错误');
                 notifyParentStatus('disconnected');
             } else {
@@ -803,6 +860,8 @@ async function connectDirectCanvasRdp() {
             totalFrames += 1;
             const frameTotal = totalFrames;
             const frameId = msg.frameId;
+            // Adaptive quality: record frame arrival time
+            frameTimestamps.push(Date.now());
             if (!pendingRafFrame) {
                 pendingRafFrame = true;
                 requestAnimationFrame(() => {
