@@ -569,10 +569,65 @@ async function connectDirectCanvasRdp() {
     canvas.width = 7680;
     canvas.height = 4320;
     canvas.style.cssText = 'display:block;width:100%;height:100%;background:#000;object-fit:fill;';
-    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     displayRoot.innerHTML = '';
     displayRoot.style.cssText += ';display:block;width:100%;height:100%;background:#000;';
     displayRoot.appendChild(canvas);
+
+    // ── WebGL2 renderer (falls back to 2D on unsupported browsers) ──
+    const gl = canvas.getContext('webgl2', { alpha: false, desynchronized: true, preserveDrawingBuffer: false })
+        || canvas.getContext('webgl', { alpha: false, desynchronized: true, preserveDrawingBuffer: false });
+    const useWebGL = !!gl;
+    let surfaceTex = null, glProgram = null, glVAO = null;
+    let uCanvasSizeLoc = null;
+
+    if (useWebGL) {
+        const vs = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vs, `attribute vec2 a_pos; varying vec2 v_uv; uniform vec2 u_canvasSize;
+            void main(){vec2 p=a_pos*2.0-1.0;gl_Position=vec4(p.x,-p.y,0.0,1.0);v_uv=a_pos;}`);
+        gl.compileShader(vs);
+        const fs = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fs, `precision mediump float; varying vec2 v_uv; uniform sampler2D u_tex;
+            void main(){gl_FragColor=texture2D(u_tex,v_uv);}`);
+        gl.compileShader(fs);
+        glProgram = gl.createProgram();
+        gl.attachShader(glProgram, vs); gl.attachShader(glProgram, fs); gl.linkProgram(glProgram);
+        gl.useProgram(glProgram);
+        uCanvasSizeLoc = gl.getUniformLocation(glProgram, 'u_canvasSize');
+        gl.uniform2f(uCanvasSizeLoc, canvas.width, canvas.height);
+
+        // Fullscreen quad
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0, 1,0, 0,1, 0,1, 1,0, 1,1]), gl.STATIC_DRAW);
+        const aPos = gl.getAttribLocation(glProgram, 'a_pos');
+        gl.enableVertexAttribArray(aPos);
+        gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+        surfaceTex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, surfaceTex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        // Pre-allocate at 8K
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+
+    const glDrawSurface = (surfCanvas, offsetX, offsetY) => {
+        if (!useWebGL || !surfCanvas) return;
+        const w = surfCanvas.width, h = surfCanvas.height;
+        gl.bindTexture(gl.TEXTURE_2D, surfaceTex);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, surfCanvas);
+        gl.viewport(offsetX, canvas.height - offsetY - h, w, h);
+        gl.uniform2f(uCanvasSizeLoc, w, h);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        gl.uniform2f(uCanvasSizeLoc, canvas.width, canvas.height);
+    };
+
+    // 2D fallback context (used for surface canvases, and main if no WebGL)
+    const ctx2d = useWebGL ? null : canvas.getContext('2d', { alpha: false, desynchronized: true });
+
     const unlockAudio = () => { const audio = ensureDirectAudio(); audio?.ctx?.resume?.().catch?.(() => {}); };
     canvas.addEventListener('pointerdown', unlockAudio, { passive: true });
     document.addEventListener('click', unlockAudio, { passive: true, once: true });
@@ -603,6 +658,12 @@ async function connectDirectCanvasRdp() {
         mapped.clear();
         primarySurfaceId = null;
     };
+
+    const drawSurfaceToMain = (surfCanvas, offX, offY) => {
+        if (useWebGL) { glDrawSurface(surfCanvas, offX, offY); }
+        else { ctx2d.drawImage(surfCanvas, offX, offY); }
+    };
+
     rdpManualDisconnect = false;
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     const ws = new WebSocket(wsUrl());
@@ -643,18 +704,34 @@ async function connectDirectCanvasRdp() {
                 connected = true;
                 rdpReconnectAttempts = 0;
                 resetSurfacesForResize();
-                canvas.width = msg.width || canvas.width;
-                canvas.height = msg.height || canvas.height;
-                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`);
+                const w = msg.width || canvas.width;
+                const h = msg.height || canvas.height;
+                canvas.width = w; canvas.height = h;
+                if (useWebGL) {
+                    gl.viewport(0, 0, w, h);
+                    gl.uniform2f(uCanvasSizeLoc, w, h);
+                    // Re-allocate texture at connected resolution
+                    gl.bindTexture(gl.TEXTURE_2D, surfaceTex);
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                    gl.clear(gl.COLOR_BUFFER_BIT);
+                }
+                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP${useWebGL ? '/GL' : ''}] ${w}×${h}`);
                 notifyParentStatus('connected');
                 startClipboardSyncLoop();
                 syncLocalClipboardTextToRdp('连接');
                 applyDisplayScale();
             } else if (msg.type === 'resize') {
                 resetSurfacesForResize();
-                canvas.width = msg.width || canvas.width;
-                canvas.height = msg.height || canvas.height;
-                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
+                const w = msg.width || canvas.width;
+                const h = msg.height || canvas.height;
+                canvas.width = w; canvas.height = h;
+                if (useWebGL) {
+                    gl.viewport(0, 0, w, h);
+                    gl.uniform2f(uCanvasSizeLoc, w, h);
+                    gl.bindTexture(gl.TEXTURE_2D, surfaceTex);
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                }
+                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP${useWebGL ? '/GL' : ''}] ${w}×${h}`, { holdOverlayMs: 700 });
                 applyDisplayScale();
             } else if (msg.type === 'disconnected') {
                 connected = false;
@@ -692,9 +769,9 @@ async function connectDirectCanvasRdp() {
         } else if (msg.type === 'resetGraphics') {
             resetSurfacesForResize();
             if (msg.width && msg.height) {
-                canvas.width = msg.width;
-                canvas.height = msg.height;
-                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
+                canvas.width = msg.width; canvas.height = msg.height;
+                if (useWebGL) { gl.viewport(0, 0, msg.width, msg.height); gl.uniform2f(uCanvasSizeLoc, msg.width, msg.height); }
+                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP${useWebGL ? '/GL' : ''}] ${msg.width}×${msg.height}`, { holdOverlayMs: 700 });
                 applyDisplayScale();
             }
         } else if (msg.type === 'tile' && msg.codec === 'webp') {
@@ -713,14 +790,14 @@ async function connectDirectCanvasRdp() {
             surface.ctx.drawImage(bitmap, msg.x, msg.y, msg.w, msg.h);
             bitmap.close();
             const m = mapped.get(msg.surfaceId) || { x: 0, y: 0 };
-            ctx.drawImage(surface.canvas, m.x, m.y);
+            drawSurfaceToMain(surface.canvas, m.x, m.y);
         } else if (msg.type === 'solidFill') {
             const surface = surfaces.get(msg.surfaceId);
             if (surface) {
                 surface.ctx.fillStyle = `rgba(${msg.color & 255},${(msg.color >> 8) & 255},${(msg.color >> 16) & 255},1)`;
                 surface.ctx.fillRect(msg.x, msg.y, msg.w, msg.h);
                 const m = mapped.get(msg.surfaceId) || { x: 0, y: 0 };
-                ctx.drawImage(surface.canvas, m.x, m.y);
+                drawSurfaceToMain(surface.canvas, m.x, m.y);
             }
         } else if (msg.type === 'endFrame') {
             totalFrames += 1;
@@ -732,7 +809,7 @@ async function connectDirectCanvasRdp() {
                     pendingRafFrame = false;
                     if (connected && primarySurfaceId !== null && surfaces.has(primarySurfaceId)) {
                         const m = mapped.get(primarySurfaceId) || { x: 0, y: 0 };
-                        ctx.drawImage(surfaces.get(primarySurfaceId).canvas, m.x, m.y);
+                        drawSurfaceToMain(surfaces.get(primarySurfaceId).canvas, m.x, m.y);
                     }
                     applyDisplayScale();
                     if (ws.readyState === WebSocket.OPEN) ws.send(buildFrameAck(frameId, frameTotal, 0));
