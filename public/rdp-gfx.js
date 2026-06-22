@@ -269,21 +269,20 @@ function cycleFps() {
     return fpsValue;
 }
 function requestResolution(res) {
-    const size = res?.width && res?.height ? adaptPresetResolutionToViewport(res) : availableSize();
+    const size = res?.width && res?.height ? adaptPresetResolutionToViewport(res) : { width: 7680, height: 4320 };
     desiredRdpSize = size;
-    displayScaleMode = 'fit';
-    displayZoom = 100;
-    applyDisplayScale();
-    setStatus('connecting', `正在以 ${size.width}×${size.height} 重新连接 RDP...`);
-    try {
-        // FreeRDP dynamic desktop resize is unreliable with the current native
-        // RDPEGFX bridge on some Windows servers. Reconnect with the requested
-        // DesktopWidth/DesktopHeight so the resolution actually changes.
-        connect().catch(() => {});
-    } catch (err) {
-        setStatus('error', `切换分辨率失败：${err.message || err}`);
-        return false;
+    // Fixed 8K canvas — scale visually without reconnecting
+    if (res?.width && res?.height && (res.width < 7680 || res.height < 4320)) {
+        displayScaleMode = 'actual';
+        const sw = Math.max(1, (res.width || 1920) / 7680);
+        const sh = Math.max(1, (res.height || 1080) / 4320);
+        displayZoom = Math.round(Math.min(sw, sh) * 100);
+    } else {
+        displayScaleMode = 'fit';
+        displayZoom = 100;
     }
+    applyDisplayScale();
+    setStatus(connected ? 'connected' : 'connecting', `RDP ${desiredRdpSize.width}×${desiredRdpSize.height}（缩放预览）`, { holdOverlayMs: 900 });
     return true;
 }
 function escapeHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -564,11 +563,11 @@ function handleDirectPcm(bytes) {
 
 async function connectDirectCanvasRdp() {
     if (!displayRoot) throw new Error('RDP display root missing');
-    const size = desiredRdpSize || availableSize();
+    // Fixed 8K canvas — never rebuild. All resolution/zoom changes are CSS-only.
     const canvas = document.createElement('canvas');
     canvas.className = 'rdp-direct-canvas';
-    canvas.width = size.width;
-    canvas.height = size.height;
+    canvas.width = 7680;
+    canvas.height = 4320;
     canvas.style.cssText = 'display:block;width:100%;height:100%;background:#000;object-fit:fill;';
     const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     displayRoot.innerHTML = '';
@@ -582,6 +581,7 @@ async function connectDirectCanvasRdp() {
     const mapped = new Map();
     let primarySurfaceId = null;
     let totalFrames = 0;
+    let pendingRafFrame = false;
     const ensureSurfaceSize = (surface, minWidth, minHeight) => {
         const width = Math.max(1, Math.ceil(minWidth));
         const height = Math.max(1, Math.ceil(minHeight));
@@ -633,7 +633,7 @@ async function connectDirectCanvasRdp() {
         },
     };
     ws.onopen = () => {
-        ws.send(JSON.stringify({ type: 'connect', host: 'zephyr-rdp-gfx-proxy', port: 3389, user: 'zephyr', pass: 'server-side-secret', width: size.width, height: size.height }));
+        ws.send(JSON.stringify({ type: 'connect', host: 'zephyr-rdp-gfx-proxy', port: 3389, user: 'zephyr', pass: 'server-side-secret', width: 7680, height: 4320 }));
     };
     ws.onmessage = async (event) => {
         if (typeof event.data === 'string') {
@@ -714,7 +714,6 @@ async function connectDirectCanvasRdp() {
             bitmap.close();
             const m = mapped.get(msg.surfaceId) || { x: 0, y: 0 };
             ctx.drawImage(surface.canvas, m.x, m.y);
-            applyDisplayScale();
         } else if (msg.type === 'solidFill') {
             const surface = surfaces.get(msg.surfaceId);
             if (surface) {
@@ -725,11 +724,20 @@ async function connectDirectCanvasRdp() {
             }
         } else if (msg.type === 'endFrame') {
             totalFrames += 1;
-            if (primarySurfaceId !== null && surfaces.has(primarySurfaceId)) {
-                const m = mapped.get(primarySurfaceId) || { x: 0, y: 0 };
-                ctx.drawImage(surfaces.get(primarySurfaceId).canvas, m.x, m.y);
+            const frameTotal = totalFrames;
+            const frameId = msg.frameId;
+            if (!pendingRafFrame) {
+                pendingRafFrame = true;
+                requestAnimationFrame(() => {
+                    pendingRafFrame = false;
+                    if (connected && primarySurfaceId !== null && surfaces.has(primarySurfaceId)) {
+                        const m = mapped.get(primarySurfaceId) || { x: 0, y: 0 };
+                        ctx.drawImage(surfaces.get(primarySurfaceId).canvas, m.x, m.y);
+                    }
+                    applyDisplayScale();
+                    if (ws.readyState === WebSocket.OPEN) ws.send(buildFrameAck(frameId, frameTotal, 0));
+                });
             }
-            if (ws.readyState === WebSocket.OPEN) ws.send(buildFrameAck(msg.frameId, totalFrames, 0));
         }
     };
     const canvasPoint = (clientX, clientY) => {
@@ -1693,6 +1701,17 @@ window.addEventListener('focus', () => { refreshFrameThemeFromStorage(); syncLoc
 document.addEventListener('copy', () => setTimeout(() => syncLocalClipboardTextToRdp('复制'), 80));
 document.addEventListener('pointerdown', () => syncLocalClipboardTextToRdp('点击'), { passive: true });
 window.addEventListener('beforeunload', () => { try { client?.disconnect?.(); } catch {} });
+// Keyboard inset — translate the RDP display instead of reflow
+if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+        const inset = Math.max(0, window.innerHeight - (window.visualViewport?.height || window.innerHeight));
+        document.documentElement.style.setProperty('--rdp-keyboard-inset', `${inset}px`);
+    });
+    window.visualViewport.addEventListener('scroll', () => {
+        const inset = Math.max(0, window.innerHeight - (window.visualViewport?.height || window.innerHeight));
+        document.documentElement.style.setProperty('--rdp-keyboard-inset', `${inset}px`);
+    });
+}
 let rdpBooted = false;
 function bootRdpPage() {
     if (rdpBooted) return;

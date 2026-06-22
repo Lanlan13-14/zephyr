@@ -6673,8 +6673,9 @@ body.smartbar-trash-hover .smartbar-trash-target {
 }
 
 .rdp-stage.keyboard-open .rdp-display-shell {
-    padding-bottom: min(34vh, 260px);
-    scroll-padding-bottom: min(34vh, 260px);
+    transform: translateY(calc(-1 * var(--rdp-keyboard-inset, 0px)));
+    transition: transform .22s cubic-bezier(.4, 0, .2, 1);
+    will-change: transform;
 }
 
 .joystick-panel {
