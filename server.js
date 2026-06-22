@@ -1954,6 +1954,45 @@ app.post('/api/rdp-gfx/upload-clipboard-files', requireAuth, rdpClipUpload.array
     res.json({ files });
 });
 
+// 跨协议共享剪贴板：SSH SFTP 文件 → RDP 原生剪贴板
+app.post('/api/shared-clipboard/stage-for-rdp', requireAuth, async (req, res) => {
+    try {
+        const username = currentSession(req)?.username || '';
+        const clip = sftpClipboardByUser.get(username);
+        if (!clip || !clip.items?.length) {
+            return res.json({ files: [], source: 'none', hint: 'SSH 剪贴板中没有文件' });
+        }
+        if (clip.sourceType !== 'sftp' && !clip.sourceConnectionConfig) {
+            return res.json({ files: [], source: clip.sourceType || 'unknown', hint: '剪贴板来源不支持直接转发到 RDP' });
+        }
+        // RDP native file clipboard: downloaded from the bridge side, not from SFTP
+        if (clip.sourceType === 'rdp') {
+            return res.json({ files: [], source: 'rdp', hint: 'RDP 文件剪贴板由远端直接管理' });
+        }
+        // SFTP source: download files to local temp, ready for RDP native clipboard
+        const stageDir = `/tmp/zephyr-shared-clipboard/${username}/${Date.now().toString(36)}`;
+        fs.mkdirSync(stageDir, { recursive: true });
+        const staged = [];
+        await withRoutedSftp(clip.sourceConnectionConfig, async ({ sftp }) => {
+            for (const item of clip.items) {
+                const safeName = safeLocalClipboardName(item.name || path.posix.basename(String(item.path || 'file')) || 'file');
+                const target = path.join(stageDir, safeName);
+                try {
+                    await downloadRemotePathToLocal(sftp, item.path, target, null, null);
+                    staged.push({ name: safeName, path: target, size: Number(item.size) || 0, mime: 'application/octet-stream' });
+                } catch (err) {
+                    console.warn('[shared-clipboard]', 'skip file', { name: safeName, error: err.message });
+                }
+            }
+        });
+        console.info('[shared-clipboard]', 'staged files for RDP', { username, count: staged.length, dir: stageDir });
+        res.json({ files: staged, source: 'sftp', count: staged.length, stageDir });
+    } catch (err) {
+        console.error('[shared-clipboard]', 'stage failed', { error: err.message });
+        res.status(500).json({ error: err.message, files: [] });
+    }
+});
+
 app.get('/api/settings', requireAuth, (req, res) => res.json(safeSettings(storage.getSettings())));
 
 app.put('/api/settings', requireAuth, (req, res) => {

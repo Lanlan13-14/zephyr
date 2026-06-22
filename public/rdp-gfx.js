@@ -1678,6 +1678,38 @@ window.addEventListener('message', (event) => {
         setClipboardHint('共享剪贴板文本已同步到 RDP', 'success');
         return;
     }
+    // Cross-protocol file clipboard.
+    // SFTP source (metadata-only): pull from server-side staging.
+    // RDP/VNC source (has dataUrl/remotePath): fall back to postMessage relay.
+    if (data.source === 'zephyr-app' && data.type === 'shared-file-clipboard-available' && Array.isArray(data.files) && data.files.length) {
+        const hasSftpMetadata = data.files.some((f) => f.path && !f.dataUrl && !f.remotePath && !f.index);
+        if (hasSftpMetadata) {
+            // SSH SFTP clipboard — go through server-side staging (no dataUrl in postMessage)
+            setFilesHint(`SSH 剪贴板有 ${data.files.length} 个文件，正在从服务器加载...`, 'info');
+            (async () => {
+                try {
+                    const resp = await fetch('/api/shared-clipboard/stage-for-rdp', { method: 'POST' });
+                    const body = await resp.json();
+                    if (!body.files?.length) {
+                        setFilesHint(body.hint || '服务器剪贴板没有可用的文件', 'warning');
+                        return;
+                    }
+                    setFilesHint(`已从服务器加载 ${body.files.length} 个文件，正在发布到 RDP...`, 'info');
+                    // Python backend accepts local file paths directly
+                    client?._sendMessage({ type: 'clipboard-set-files', files: body.files.map((f) => ({ name: f.name || 'file', size: f.size || 0, path: f.path, mime: f.mime || 'application/octet-stream' })), paste: true });
+                    setTimeout(() => setFilesHint(`已发布 ${body.files.length} 个文件到 RDP 原生剪贴板`, 'success'), 500);
+                } catch (err) {
+                    setFilesHint(`服务器文件加载失败：${err.message || String(err)}`, 'warning');
+                }
+            })();
+            return;
+        }
+        // RDP/VNC source — use existing postMessage relay
+        const sameRemoteSource = data.sourceTabId && data.sourceTabId !== tabId ? '其它远程桌面' : '共享剪贴板';
+        setFilesHint(`${sameRemoteSource}已复制 ${data.files.length} 个文件，正在转发到 RDP...`, 'info');
+        consumeSharedFileClipboardAvailable(data.files, data.sourceTabId || '');
+        return;
+    }
     if (data.source === 'zephyr-app' && data.type === 'shared-file-clipboard-data') {
         if (data.error) { setFilesHint(data.error, 'warning'); return; }
         if (Array.isArray(data.files) && data.files.length) consumeIncomingSshFiles(data.files);
@@ -1685,12 +1717,6 @@ window.addEventListener('message', (event) => {
     }
     if (data.source === 'zephyr-app' && data.type === 'shared-file-clipboard-read') {
         provideSharedFileClipboardData(data.requestId || '', data.files || []);
-        return;
-    }
-    if (data.source === 'zephyr-app' && data.type === 'shared-file-clipboard-available' && Array.isArray(data.files) && data.files.length) {
-        const sameRemoteSource = data.sourceTabId && data.sourceTabId !== tabId ? '其它远程桌面' : '共享剪贴板';
-        setFilesHint(`${sameRemoteSource}已复制 ${data.files.length} 个文件，正在转发到 RDP...`, 'info');
-        consumeSharedFileClipboardAvailable(data.files, data.sourceTabId || '');
         return;
     }
     if (data.type === 'theme-change') applyFrameTheme(data.theme, data.appearance || {});
