@@ -61,22 +61,71 @@ const resolutions = [
     { label: '8K', width: 7680, height: 4320 },
 ];
 let statusSequence = 0;
-const qualityModes = ['balanced', 'performance', 'quality'];
+const adaptiveRdp = {
+    enabled: false,
+    baseSize: null,
+    currentScale: 1,
+    samples: [],
+    lastAdjustAt: 0,
+    lastFrameAt: 0,
+    fps: 0,
+};
+const qualityModes = ['auto', 'balanced', 'performance', 'quality'];
 const fpsModes = [30, 45, 60, 120, 144];
 let qualityMode = qualityModes.includes(String(params.quality || '').toLowerCase()) ? String(params.quality).toLowerCase() : (localStorage.getItem('zephyr-rdp-gfx-quality') || 'balanced');
 if (!qualityModes.includes(qualityMode)) qualityMode = 'balanced';
 let fpsValue = Math.max(15, Math.min(144, Number(params.rdpFps || localStorage.getItem('zephyr-rdp-gfx-fps') || 60) || 60));
 if (!fpsModes.includes(fpsValue)) fpsValue = 60;
 function qualityLabel(mode = qualityMode) {
+    if (mode === 'auto') return '自动';
     if (mode === 'performance') return '性能';
     if (mode === 'quality') return '画质';
     return '平衡';
 }
+function resetAdaptiveRdp(size = null, scale = 1) {
+    adaptiveRdp.enabled = qualityMode === 'auto';
+    adaptiveRdp.baseSize = size ? { width: size.width, height: size.height, baseWidth: size.baseWidth || size.width, baseHeight: size.baseHeight || size.height } : null;
+    adaptiveRdp.currentScale = Math.max(0.75, Math.min(1, Number(scale || size?.adaptiveScale || 1) || 1));
+    adaptiveRdp.samples = [];
+    adaptiveRdp.lastAdjustAt = performance.now();
+    adaptiveRdp.lastFrameAt = 0;
+    adaptiveRdp.fps = 0;
+}
+function noteRdpFrame() {
+    if (!adaptiveRdp.enabled || !connected) return;
+    const now = performance.now();
+    if (adaptiveRdp.lastFrameAt) {
+        const inst = 1000 / Math.max(1, now - adaptiveRdp.lastFrameAt);
+        adaptiveRdp.fps = adaptiveRdp.fps ? adaptiveRdp.fps * 0.82 + inst * 0.18 : inst;
+    }
+    adaptiveRdp.lastFrameAt = now;
+    adaptiveRdp.samples.push({ t: now, fps: adaptiveRdp.fps || 0 });
+    while (adaptiveRdp.samples.length && now - adaptiveRdp.samples[0].t > 3200) adaptiveRdp.samples.shift();
+    maybeAdjustAdaptiveRdp(now);
+}
+function maybeAdjustAdaptiveRdp(now = performance.now()) {
+    if (!adaptiveRdp.enabled || qualityMode !== 'auto' || !adaptiveRdp.baseSize || !connected) return;
+    if (now - adaptiveRdp.lastAdjustAt < 4500 || adaptiveRdp.samples.length < 18) return;
+    const avgFps = adaptiveRdp.samples.reduce((sum, s) => sum + s.fps, 0) / adaptiveRdp.samples.length;
+    const target = Math.max(15, fpsValue || 60);
+    let nextScale = adaptiveRdp.currentScale;
+    if (avgFps < target * 0.82 && adaptiveRdp.currentScale > 0.75) nextScale = Math.max(0.75, adaptiveRdp.currentScale - 0.08);
+    else if (avgFps > target * 0.96 && adaptiveRdp.currentScale < 1) nextScale = Math.min(1, adaptiveRdp.currentScale + 0.05);
+    if (Math.abs(nextScale - adaptiveRdp.currentScale) < 0.01) { adaptiveRdp.lastAdjustAt = now; return; }
+    adaptiveRdp.currentScale = nextScale;
+    adaptiveRdp.lastAdjustAt = now;
+    adaptiveRdp.samples = [];
+    const size = scaleRdpSize(adaptiveRdp.baseSize, nextScale);
+    desiredRdpSize = { ...size, baseWidth: adaptiveRdp.baseSize.baseWidth, baseHeight: adaptiveRdp.baseSize.baseHeight, adaptiveScale: nextScale };
+    setStatus('connecting', `自动画质：${Math.round(nextScale * 100)}% 分辨率 ${size.width}×${size.height}，正在重连...`, { holdOverlayMs: 1200 });
+    connect().catch(() => {});
+}
+
 function updateQualityFpsButtons() {
     const q = $('#qualityBtn');
     if (q) {
         q.textContent = qualityLabel();
-        q.title = `当前：${qualityLabel()}模式，点击切换性能/画质模式`;
+        q.title = `当前：${qualityLabel()}模式，点击切换自动/平衡/性能/画质模式`;
         q.classList.toggle('active', qualityMode !== 'balanced');
     }
     const f = $('#fpsBtn');
@@ -211,16 +260,41 @@ function requireModernRdpBrowser() {
 function hideLegacyControls() {
     // Keep view/joystick controls visible in direct-canvas mode.
 }
+function evenRdp(n, min, max) { return Math.max(min, Math.min(max, Math.floor((Number(n) || min) / 2) * 2)); }
+function isPortraitTouchViewport() {
+    const coarse = window.matchMedia?.('(pointer: coarse)')?.matches || navigator.maxTouchPoints > 0;
+    return !!coarse && (window.innerHeight || 0) >= (window.innerWidth || 0);
+}
+function preferredRdpAspect() { return isPortraitTouchViewport() ? 9 / 16 : 16 / 9; }
+function orientPresetSize(res = {}) {
+    let w = Number(res.width) || 0;
+    let h = Number(res.height) || 0;
+    if (!w || !h) return null;
+    if (isPortraitTouchViewport() && w > h) [w, h] = [h, w];
+    if (!isPortraitTouchViewport() && h > w) [w, h] = [h, w];
+    return { width: w, height: h, baseWidth: w, baseHeight: h };
+}
+function normalizeRdpSize(width, height, minWidth = 640, minHeight = 480) {
+    return { width: evenRdp(width, minWidth, 7680), height: evenRdp(height, minHeight, 4320) };
+}
 function availableSize() {
     const rect = displayRoot?.getBoundingClientRect?.();
-    const w = Math.max(640, Math.floor((rect?.width || window.innerWidth || 1280) / 2) * 2);
-    const h = Math.max(480, Math.floor((rect?.height || window.innerHeight || 720) / 2) * 2);
-    return { width: Math.min(w, 7680), height: Math.min(h, 4320) };
+    const stageW = Math.max(640, rect?.width || window.innerWidth || 1280);
+    const stageH = Math.max(480, rect?.height || window.innerHeight || 720);
+    const aspect = preferredRdpAspect();
+    let w = stageW;
+    let h = w / aspect;
+    if (h < stageH) { h = stageH; w = h * aspect; }
+    return normalizeRdpSize(w, h);
 }
 function adaptPresetResolutionToViewport(res = {}) {
-    const width = Math.max(640, Math.floor((Number(res.width) || 0) / 2) * 2);
-    const height = Math.max(480, Math.floor((Number(res.height) || 0) / 2) * 2);
-    return { width: Math.min(width, 7680), height: Math.min(height, 4320) };
+    const oriented = orientPresetSize(res);
+    if (!oriented) return availableSize();
+    return normalizeRdpSize(oriented.width, oriented.height);
+}
+function scaleRdpSize(size, scale = 1) {
+    const s = Math.max(0.75, Math.min(1, Number(scale) || 1));
+    return normalizeRdpSize((size?.baseWidth || size?.width || 1920) * s, (size?.baseHeight || size?.height || 1080) * s);
 }
 function resolutionFromParams() {
     const value = String(params.rdpResolution || '').toLowerCase();
@@ -255,6 +329,7 @@ function cycleQuality() {
     qualityMode = next;
     localStorage.setItem('zephyr-rdp-gfx-quality', qualityMode);
     updateQualityFpsButtons();
+    resetAdaptiveRdp(desiredRdpSize);
     setStatus(connected ? 'connected' : 'connecting', `RDP ${qualityLabel()}模式 / ${fpsValue}FPS`, { holdOverlayMs: 900 });
     requestRuntimeConfig(false);
     return qualityMode;
@@ -270,8 +345,10 @@ function cycleFps() {
 }
 function requestResolution(res) {
     const size = res?.width && res?.height ? adaptPresetResolutionToViewport(res) : availableSize();
-    desiredRdpSize = size;
+    desiredRdpSize = { ...size, baseWidth: size.baseWidth || size.width, baseHeight: size.baseHeight || size.height };
+    resetAdaptiveRdp(desiredRdpSize, 1);
     displayScaleMode = 'fit';
+    localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode);
     displayZoom = 100;
     applyDisplayScale();
     setStatus('connecting', `正在以 ${size.width}×${size.height} 重新连接 RDP...`);
@@ -565,11 +642,13 @@ function handleDirectPcm(bytes) {
 async function connectDirectCanvasRdp() {
     if (!displayRoot) throw new Error('RDP display root missing');
     const size = desiredRdpSize || availableSize();
+    if (!desiredRdpSize) desiredRdpSize = { ...size, baseWidth: size.baseWidth || size.width, baseHeight: size.baseHeight || size.height };
+    resetAdaptiveRdp(desiredRdpSize, desiredRdpSize.adaptiveScale || 1);
     const canvas = document.createElement('canvas');
     canvas.className = 'rdp-direct-canvas';
     canvas.width = size.width;
     canvas.height = size.height;
-    canvas.style.cssText = 'display:block;width:100%;height:100%;background:#000;object-fit:fill;';
+    canvas.style.cssText = 'display:block;width:100%;height:100%;background:#000;object-fit:fill;object-position:center center;';
     const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     displayRoot.innerHTML = '';
     displayRoot.style.cssText += ';display:block;width:100%;height:100%;background:#000;';
@@ -633,7 +712,7 @@ async function connectDirectCanvasRdp() {
         },
     };
     ws.onopen = () => {
-        ws.send(JSON.stringify({ type: 'connect', host: 'zephyr-rdp-gfx-proxy', port: 3389, user: 'zephyr', pass: 'server-side-secret', width: size.width, height: size.height }));
+        ws.send(JSON.stringify({ type: 'connect', host: 'zephyr-rdp-gfx-proxy', port: 3389, user: 'zephyr', pass: 'server-side-secret', width: size.width, height: size.height, quality: qualityMode, fps: fpsValue }));
     };
     ws.onmessage = async (event) => {
         if (typeof event.data === 'string') {
@@ -725,6 +804,7 @@ async function connectDirectCanvasRdp() {
             }
         } else if (msg.type === 'endFrame') {
             totalFrames += 1;
+            noteRdpFrame();
             if (primarySurfaceId !== null && surfaces.has(primarySurfaceId)) {
                 const m = mapped.get(primarySurfaceId) || { x: 0, y: 0 };
                 ctx.drawImage(surfaces.get(primarySurfaceId).canvas, m.x, m.y);
@@ -733,20 +813,7 @@ async function connectDirectCanvasRdp() {
         }
     };
     const canvasPoint = (clientX, clientY) => {
-        const rect = canvas.getBoundingClientRect();
-        const style = getComputedStyle(canvas);
-        const objectFit = style.objectFit || 'fill';
-        let contentLeft = rect.left;
-        let contentTop = rect.top;
-        let contentWidth = Math.max(1, rect.width);
-        let contentHeight = Math.max(1, rect.height);
-        if (objectFit === 'contain' || displayScaleMode === 'fit') {
-            const scale = Math.min(rect.width / Math.max(1, canvas.width), rect.height / Math.max(1, canvas.height));
-            contentWidth = Math.max(1, canvas.width * scale);
-            contentHeight = Math.max(1, canvas.height * scale);
-            contentLeft = rect.left + (rect.width - contentWidth) / 2;
-            contentTop = rect.top + (rect.height - contentHeight) / 2;
-        }
+        const { contentLeft, contentTop, contentWidth, contentHeight } = contentRectForCanvas(canvas);
         const nx = (clientX - contentLeft) / contentWidth;
         const ny = (clientY - contentTop) / contentHeight;
         const pt = {
@@ -771,36 +838,48 @@ async function connectDirectCanvasRdp() {
     canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
     const activePointers = new Map();
-    let touchDrag = null;
+    let touchState = null;
     let longPressTimer = null;
     let lastTapAt = 0;
     let lastTap = null;
-    let pinchScroll = null;
+    let lastSentMoveAt = 0;
     const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
     const dist = (a, b) => Math.hypot((a?.x || 0) - (b?.x || 0), (a?.y || 0) - (b?.y || 0));
+    const isTouch = (event) => (event.pointerType || 'mouse') === 'touch';
+    const touchPoint = (event) => ({ id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, time: performance.now(), type: event.pointerType || 'mouse' });
+    const sendThrottledMove = (event) => {
+        const now = performance.now();
+        if (now - lastSentMoveAt < 7) return;
+        lastSentMoveAt = now;
+        sendMouse('move', event);
+    };
+    const resetTouchState = () => { clearLongPress(); touchState = null; };
 
     canvas.addEventListener('pointerdown', (event) => {
         if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         canvas.focus({ preventScroll: true });
         canvas.setPointerCapture?.(event.pointerId);
-        const p = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, time: Date.now(), type: event.pointerType || 'mouse' };
+        const p = touchPoint(event);
         activePointers.set(event.pointerId, p);
-        if (p.type === 'touch') {
+        if (isTouch(event)) {
             event.preventDefault();
             if (activePointers.size === 1) {
-                touchDrag = { active: false, pointerId: event.pointerId, startX: p.x, startY: p.y };
+                touchState = { mode: 'tap-pending', primaryId: event.pointerId, startX: p.x, startY: p.y, lastX: p.x, lastY: p.y, downSent: false, cancelledTap: false };
                 clearLongPress();
                 longPressTimer = setTimeout(() => {
                     const cur = activePointers.get(event.pointerId);
-                    if (cur && touchDrag && !touchDrag.active && dist({ x: cur.x, y: cur.y }, { x: p.startX, y: p.startY }) < 12) {
-                        touchDrag.cancelTap = true;
+                    if (!cur || !touchState || touchState.mode !== 'tap-pending') return;
+                    if (dist(cur, { x: touchState.startX, y: touchState.startY }) <= 14) {
+                        touchState.cancelledTap = true;
                         sendRightClick(cur.x, cur.y);
                     }
-                }, 560);
+                }, 520);
             } else if (activePointers.size === 2) {
                 clearLongPress();
-                const pts = [...activePointers.values()];
-                pinchScroll = { lastY: (pts[0].y + pts[1].y) / 2 };
+                const pts = [...activePointers.values()].slice(0, 2);
+                const midX = (pts[0].x + pts[1].x) / 2;
+                const midY = (pts[0].y + pts[1].y) / 2;
+                touchState = { mode: 'two-finger-scroll', lastX: midX, lastY: midY };
             }
             return;
         }
@@ -811,26 +890,32 @@ async function connectDirectCanvasRdp() {
         if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         const p = activePointers.get(event.pointerId);
         if (p) { p.x = event.clientX; p.y = event.clientY; }
-        if ((event.pointerType || 'mouse') === 'touch') {
+        if (isTouch(event)) {
             event.preventDefault();
-            if (activePointers.size >= 2 && pinchScroll) {
+            if (activePointers.size >= 2 && touchState?.mode === 'two-finger-scroll') {
                 const pts = [...activePointers.values()].slice(0, 2);
+                const midX = (pts[0].x + pts[1].x) / 2;
                 const midY = (pts[0].y + pts[1].y) / 2;
-                const deltaY = pinchScroll.lastY - midY;
-                if (Math.abs(deltaY) > 2) {
-                    sendMouseAt('wheel', (pts[0].x + pts[1].x) / 2, midY, { deltaY, deltaX: 0 });
-                    pinchScroll.lastY = midY;
+                const deltaX = touchState.lastX - midX;
+                const deltaY = touchState.lastY - midY;
+                if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+                    sendMouseAt('wheel', midX, midY, { deltaX: deltaX * 2.6, deltaY: deltaY * 2.6 });
+                    touchState.lastX = midX;
+                    touchState.lastY = midY;
                 }
                 return;
             }
-            if (touchDrag && touchDrag.pointerId === event.pointerId) {
-                const moved = Math.hypot(event.clientX - touchDrag.startX, event.clientY - touchDrag.startY);
-                if (!touchDrag.active && moved > 10) {
+            if (touchState?.primaryId === event.pointerId) {
+                const moved = Math.hypot(event.clientX - touchState.startX, event.clientY - touchState.startY);
+                if (!touchState.downSent && moved > 8 && !touchState.cancelledTap) {
                     clearLongPress();
-                    touchDrag.active = true;
-                    sendMouseAt('down', touchDrag.startX, touchDrag.startY, { button: 0 });
+                    touchState.mode = 'drag';
+                    touchState.downSent = true;
+                    sendMouseAt('down', touchState.startX, touchState.startY, { button: 0 });
                 }
-                if (touchDrag.active) sendMouse('move', event);
+                if (touchState.downSent) sendThrottledMove(event);
+                touchState.lastX = event.clientX;
+                touchState.lastY = event.clientY;
             }
             return;
         }
@@ -838,22 +923,21 @@ async function connectDirectCanvasRdp() {
     });
     canvas.addEventListener('pointerup', (event) => {
         if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); activePointers.delete(event.pointerId); return; }
-        const p = activePointers.get(event.pointerId) || { startX: event.clientX, startY: event.clientY, time: Date.now(), type: event.pointerType || 'mouse' };
         activePointers.delete(event.pointerId);
-        if ((event.pointerType || 'mouse') === 'touch') {
+        if (isTouch(event)) {
             event.preventDefault();
             clearLongPress();
-            if (touchDrag?.active) {
+            if (touchState?.downSent) {
                 sendMouse('up', event, { button: 0 });
-            } else if (!touchDrag?.cancelTap) {
+            } else if (!touchState?.cancelledTap && activePointers.size === 0) {
                 const now = Date.now();
-                const isDouble = lastTap && now - lastTapAt < 330 && dist(lastTap, { x: event.clientX, y: event.clientY }) < 28;
+                const isDouble = lastTap && now - lastTapAt < 330 && dist(lastTap, { x: event.clientX, y: event.clientY }) < 30;
                 sendLeftClick(event.clientX, event.clientY);
-                if (isDouble) setTimeout(() => sendLeftClick(event.clientX, event.clientY), 55);
+                if (isDouble) setTimeout(() => sendLeftClick(event.clientX, event.clientY), 48);
                 lastTapAt = now;
                 lastTap = { x: event.clientX, y: event.clientY };
             }
-            if (!activePointers.size) { touchDrag = null; pinchScroll = null; }
+            if (!activePointers.size) resetTouchState();
             return;
         }
         sendMouse('up', event, { button: event.button || 0 });
@@ -862,10 +946,9 @@ async function connectDirectCanvasRdp() {
     canvas.addEventListener('pointercancel', (event) => {
         if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); activePointers.delete(event.pointerId); return; }
         clearLongPress();
-        if (touchDrag?.active) sendMouse('up', event, { button: 0 });
+        if (isTouch(event) && touchState?.downSent) sendMouse('up', event, { button: 0 });
         activePointers.delete(event.pointerId);
-        touchDrag = null;
-        pinchScroll = null;
+        if (!activePointers.size) resetTouchState();
     });
     canvas.addEventListener('wheel', (event) => { if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; } sendMouse('wheel', event, { deltaY: event.deltaY || 0, deltaX: event.deltaX || 0 }); event.preventDefault(); }, { passive: false });
     canvas.addEventListener('keydown', (event) => {
@@ -945,23 +1028,32 @@ function comboForKeyseq(seq) {
     return '';
 }
 
-function remotePointFromClient(clientX, clientY) {
-    const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
-    if (!canvas) return lastRemotePointer;
+function contentRectForCanvas(canvas) {
     const rect = canvas.getBoundingClientRect();
-    const style = getComputedStyle(canvas);
-    const objectFit = style.objectFit || 'fill';
+    const objectFit = getComputedStyle(canvas).objectFit || 'fill';
     let contentLeft = rect.left;
     let contentTop = rect.top;
     let contentWidth = Math.max(1, rect.width);
     let contentHeight = Math.max(1, rect.height);
-    if (objectFit === 'contain' || displayScaleMode === 'fit') {
+    if (objectFit === 'contain' || displayScaleMode === 'actual') {
         const scale = Math.min(rect.width / Math.max(1, canvas.width), rect.height / Math.max(1, canvas.height));
         contentWidth = Math.max(1, canvas.width * scale);
         contentHeight = Math.max(1, canvas.height * scale);
         contentLeft = rect.left + (rect.width - contentWidth) / 2;
         contentTop = rect.top + (rect.height - contentHeight) / 2;
+    } else if (objectFit === 'cover' || displayScaleMode === 'fit' || displayScaleMode === 'fill') {
+        const scale = Math.max(rect.width / Math.max(1, canvas.width), rect.height / Math.max(1, canvas.height));
+        contentWidth = Math.max(1, canvas.width * scale);
+        contentHeight = Math.max(1, canvas.height * scale);
+        contentLeft = rect.left + (rect.width - contentWidth) / 2;
+        contentTop = rect.top + (rect.height - contentHeight) / 2;
     }
+    return { contentLeft, contentTop, contentWidth, contentHeight };
+}
+function remotePointFromClient(clientX, clientY) {
+    const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
+    if (!canvas) return lastRemotePointer;
+    const { contentLeft, contentTop, contentWidth, contentHeight } = contentRectForCanvas(canvas);
     return {
         clientX, clientY,
         x: Math.max(0, Math.min(canvas.width - 1, Math.round(((clientX - contentLeft) / contentWidth) * canvas.width))),
@@ -1015,9 +1107,10 @@ function focusMobileKeyboard() {
     if (!mobileKeyboardInput) return;
     mobileKeyboardInput.value = '';
     mobileKeyboardInput.style.pointerEvents = 'auto';
-    try { mobileKeyboardInput.focus({ preventScroll: true }); } catch { mobileKeyboardInput.focus(); }
+    document.documentElement.classList.add('keyboard-open');
     $('#rdpStage')?.classList.add('keyboard-open');
     $('#keyboardBtn')?.classList.add('active');
+    try { mobileKeyboardInput.focus({ preventScroll: true }); } catch { mobileKeyboardInput.focus(); }
     setTimeout(() => { try { mobileKeyboardInput.focus({ preventScroll: true }); } catch {} }, 80);
 }
 function blurMobileKeyboard() {
@@ -1025,6 +1118,7 @@ function blurMobileKeyboard() {
     mobileKeyboardInput.blur();
     mobileKeyboardInput.value = '';
     mobileKeyboardInput.style.pointerEvents = 'none';
+    document.documentElement.classList.remove('keyboard-open');
     $('#rdpStage')?.classList.remove('keyboard-open');
     $('#keyboardBtn')?.classList.remove('active');
 }
@@ -1033,6 +1127,25 @@ function toggleMobileKeyboard() {
     if (keyboardOpen) blurMobileKeyboard();
     else focusMobileKeyboard();
 }
+function setupRdpKeyboardViewportGuard() {
+    const viewport = window.visualViewport;
+    let baseline = Math.max(window.innerHeight || 0, viewport?.height || 0);
+    const update = () => {
+        const vvHeight = viewport?.height || window.innerHeight || baseline;
+        if (!document.documentElement.classList.contains('keyboard-open') && vvHeight > baseline) baseline = vvHeight;
+        const inset = Math.max(0, Math.round(baseline - vvHeight - (viewport?.offsetTop || 0)));
+        document.documentElement.style.setProperty('--keyboard-inset', `${inset}px`);
+        document.documentElement.style.setProperty('--app-keyboard-inset', `${inset}px`);
+        const open = document.activeElement === mobileKeyboardInput || inset > 80;
+        document.documentElement.classList.toggle('keyboard-open', open);
+        $('#rdpStage')?.classList.toggle('keyboard-open', open);
+    };
+    viewport?.addEventListener('resize', update, { passive: true });
+    viewport?.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update, { passive: true });
+    update();
+}
+
 function setupMobileKeyboard() {
     if (!mobileKeyboardInput) return;
     let composing = false;
@@ -1087,32 +1200,40 @@ function setupMobileKeyboard() {
     mobileKeyboardInput.addEventListener('blur', () => {
         $('#keyboardBtn')?.classList.remove('active');
         $('#rdpStage')?.classList.remove('keyboard-open');
+        document.documentElement.classList.remove('keyboard-open');
         mobileKeyboardInput.style.pointerEvents = 'none';
     });
 }
 
 
-let displayScaleMode = 'fit';
+let displayScaleMode = localStorage.getItem('zephyr-rdp-display-scale-mode') || 'fit';
+if (!['actual', 'fit', 'fill'].includes(displayScaleMode)) displayScaleMode = 'fit';
 let displayZoom = 100;
 function applyDisplayScale() {
     const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
     if (!canvas) return;
+    canvas.style.objectPosition = 'center center';
     if (displayScaleMode === 'fill') {
+        // Fill: preserve the configured 16:9 / mobile 9:16 desktop and crop via the viewport.
         canvas.style.width = '100%';
         canvas.style.height = '100%';
-        canvas.style.objectFit = 'fill';
+        canvas.style.objectFit = 'cover';
         displayRoot.style.overflow = 'hidden';
     } else if (displayScaleMode === 'actual') {
+        // Original: render at the negotiated desktop pixels; the viewport scrolls over it.
         canvas.style.width = `${Math.max(1, canvas.width * displayZoom / 100)}px`;
         canvas.style.height = `${Math.max(1, canvas.height * displayZoom / 100)}px`;
         canvas.style.objectFit = 'contain';
         displayRoot.style.overflow = 'auto';
     } else {
+        // Fit: fill the visible region without distortion. The negotiated desktop is
+        // already sized so the centered 16:9 / 9:16 region is never below target size.
         canvas.style.width = '100%';
         canvas.style.height = '100%';
-        canvas.style.objectFit = 'contain';
+        canvas.style.objectFit = 'cover';
         displayRoot.style.overflow = 'hidden';
     }
+    localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode);
     const fitBtn = $('#fitBtn');
     if (fitBtn) fitBtn.textContent = displayScaleMode === 'fill' ? '填充' : displayScaleMode === 'actual' ? '原始' : '适应';
     const zoomValue = $('#zoomValue');
@@ -1554,8 +1675,8 @@ function bindControls() {
     $('#qualityBtn')?.addEventListener('click', () => cycleQuality());
     $('#fpsBtn')?.addEventListener('click', () => cycleFps());
     $('#resolutionBtn')?.addEventListener('click', () => { currentResolutionIdx = (currentResolutionIdx + 1) % resolutions.length; const res = resolutions[currentResolutionIdx]; $('#resolutionBtn').textContent = res.label; requestResolution(res); });
-    $('#fitBtn')?.addEventListener('click', () => { displayScaleMode = displayScaleMode === 'fit' ? 'fill' : displayScaleMode === 'fill' ? 'actual' : 'fit'; applyDisplayScale(); });
-    $('#zoomSlider')?.addEventListener('input', (event) => { displayScaleMode = 'actual'; displayZoom = Number(event.target.value) || 100; applyDisplayScale(); });
+    $('#fitBtn')?.addEventListener('click', () => { displayScaleMode = displayScaleMode === 'fit' ? 'fill' : displayScaleMode === 'fill' ? 'actual' : 'fit'; localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode); applyDisplayScale(); });
+    $('#zoomSlider')?.addEventListener('input', (event) => { displayScaleMode = 'actual'; localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode); displayZoom = Number(event.target.value) || 100; applyDisplayScale(); });
     $('#keyboardBtn')?.addEventListener('click', () => toggleMobileKeyboard());
     $('#ctrlAltDelBtn')?.addEventListener('click', () => { try { client?.sendCtrlAltDel?.(); } catch (err) { setStatus('error', err.message || String(err)); } });
     $('#reconnectBtn')?.addEventListener('click', () => connect().catch(() => {}));
@@ -1701,6 +1822,7 @@ function bootRdpPage() {
     setupFloatingPanels();
     setupJoystickPanel();
     setupMobileKeyboard();
+    setupRdpKeyboardViewportGuard();
     connect().catch((err) => setStatus('error', err?.message || String(err || 'RDP 启动失败')));
     requestParentSharedFileClipboard();
 }

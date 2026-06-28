@@ -3573,16 +3573,16 @@ html.keyboard-open .terminal-page {
     z-index: 10020;
     opacity: 0;
     pointer-events: none;
-    background: color-mix(in srgb, var(--surface) 3%, transparent);
-    backdrop-filter: blur(0px);
-    -webkit-backdrop-filter: blur(0px);
-    transition: opacity .28s cubic-bezier(.2,.8,.2,1), backdrop-filter .35s cubic-bezier(.2,.8,.2,1);
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    transition: opacity .18s cubic-bezier(.2,.8,.2,1);
 }
 .fm-context-overlay.show {
     opacity: 1;
     pointer-events: auto;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
 }
 .fm-context-menu {
     position: fixed;
@@ -6673,8 +6673,8 @@ body.smartbar-trash-hover .smartbar-trash-target {
 }
 
 .rdp-stage.keyboard-open .rdp-display-shell {
-    padding-bottom: min(34vh, 260px);
-    scroll-padding-bottom: min(34vh, 260px);
+    padding-bottom: 0;
+    scroll-padding-bottom: 0;
 }
 
 .joystick-panel {

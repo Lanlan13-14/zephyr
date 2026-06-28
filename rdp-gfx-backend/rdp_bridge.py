@@ -517,7 +517,7 @@ class RDPBridge:
         self._target_fps = max(15, min(RDP_MAX_FPS, int(getattr(config, 'fps', 60) or 60)))
         self._frame_interval = 1.0 / self._target_fps
         self._quality = str(getattr(config, 'quality', 'balanced') or 'balanced').lower()
-        if self._quality not in ('performance', 'balanced', 'quality', '8k'):
+        if self._quality not in ('auto', 'performance', 'balanced', 'quality'):
             self._quality = 'balanced'
         
         # Audio settings

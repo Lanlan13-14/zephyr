@@ -4170,7 +4170,7 @@ function closeWebSocketSafe(ws, code = 1000, reason = '') {
     } catch {}
 }
 
-const RDP_QUALITY_MODES = new Set(['performance', 'balanced', 'quality']);
+const RDP_QUALITY_MODES = new Set(['auto', 'performance', 'balanced', 'quality']);
 const RDP_MAX_DIMENSION = Number(process.env.RDP_MAX_DIMENSION || 7680);
 const RDP_MAX_WIDTH = Number(process.env.RDP_MAX_WIDTH || RDP_MAX_DIMENSION);
 const RDP_MAX_HEIGHT = Number(process.env.RDP_MAX_HEIGHT || 4320);

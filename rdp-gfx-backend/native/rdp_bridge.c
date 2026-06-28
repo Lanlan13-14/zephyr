@@ -4159,9 +4159,21 @@ static void queue_webp_tile(BridgeContext* ctx, uint16_t surface_id,
             return;
         }
         
-        /* CRITICAL: Set lossless mode with exact=1 */
-        config.lossless = 1;
-        config.exact = 1;  /* Preserve RGB values even where alpha=0 */
+        /* Performance path: allow opt-in lossy WebP for high-FPS interactive/video workloads.
+         * Lossless remains the default because RDPEGFX cache operations need exact pixels. */
+        const char* qenv = getenv("RDP_GFX_WEBP_QUALITY");
+        float lossy_q = qenv ? (float)atof(qenv) : 100.0f;
+        if (lossy_q < 35.0f) lossy_q = 35.0f;
+        if (lossy_q > 100.0f) lossy_q = 100.0f;
+        if (lossy_q >= 99.5f) {
+            config.lossless = 1;
+            config.exact = 1;  /* Preserve RGB values even where alpha=0 */
+            config.quality = 100.0f;
+        } else {
+            config.lossless = 0;
+            config.exact = 0;
+            config.quality = lossy_q;
+        }
         config.method = 0; /* Fast encoding (0=fastest, 6=slowest) */
         
         if (!WebPValidateConfig(&config)) {

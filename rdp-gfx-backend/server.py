@@ -67,7 +67,7 @@ RDP_MAX_DIMENSION = int(os.getenv('RDP_MAX_DIMENSION', '7680'))
 RDP_MAX_WIDTH = int(os.getenv('RDP_MAX_WIDTH', str(RDP_MAX_DIMENSION)))
 RDP_MAX_HEIGHT = int(os.getenv('RDP_MAX_HEIGHT', '4320'))
 RDP_MAX_FPS = int(os.getenv('RDP_MAX_FPS', '144'))
-RDP_QUALITY_MODES = {'performance', 'balanced', 'quality', '8k'}
+RDP_QUALITY_MODES = {'auto', 'performance', 'balanced', 'quality'}
 
 def normalize_quality(value: object) -> str:
     quality = str(value or 'balanced').lower()
@@ -252,6 +252,8 @@ async def handle_client(websocket: ServerConnection):
 
 
                     # Start RDP session
+                    quality = normalize_quality(data.get('quality', 'balanced'))
+                    os.environ['RDP_GFX_WEBP_QUALITY'] = {'performance': '58', 'balanced': '82', 'quality': '100', 'auto': '82'}.get(quality, '82')
                     config = RDPConfig(
                         host=data['host'],
                         port=data.get('port', 3389),
@@ -261,7 +263,7 @@ async def handle_client(websocket: ServerConnection):
                         width=max(640, min(RDP_MAX_WIDTH, int(data.get('width', 1280) or 1280))),
                         height=max(480, min(RDP_MAX_HEIGHT, int(data.get('height', 720) or 720))),
                         fps=max(15, min(RDP_MAX_FPS, int(data.get('fps', 60) or 60))),
-                        quality=normalize_quality(data.get('quality', 'balanced')),
+                        quality=quality,
                     )
                     
                     rdp_bridge = RDPBridge(config, websocket)
@@ -382,6 +384,7 @@ async def handle_client(websocket: ServerConnection):
                     if rdp_bridge:
                         fps = max(15, min(RDP_MAX_FPS, int(data.get('fps', rdp_bridge._target_fps) or rdp_bridge._target_fps)))
                         quality = normalize_quality(data.get('quality', rdp_bridge._quality))
+                        os.environ['RDP_GFX_WEBP_QUALITY'] = {'performance': '58', 'balanced': '82', 'quality': '100', 'auto': '82'}.get(quality, '82')
                         rdp_bridge._target_fps = fps
                         rdp_bridge._frame_interval = 1.0 / fps
                         rdp_bridge._quality = quality
