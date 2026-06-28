@@ -38,6 +38,7 @@ RUN curl -fsSL "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" -o 
     && mv "ffmpeg-${FFMPEG_VERSION}" ffmpeg
 
 WORKDIR /build/ffmpeg
+ENV LD_LIBRARY_PATH=/opt/ffmpeg/lib
 RUN ./configure \
       --prefix=/opt/ffmpeg \
       --pkg-config-flags=--static \
