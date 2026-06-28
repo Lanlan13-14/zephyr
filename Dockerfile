@@ -42,6 +42,8 @@ ENV LD_LIBRARY_PATH=/opt/ffmpeg/lib
 RUN ./configure \
       --prefix=/opt/ffmpeg \
       --pkg-config-flags=--static \
+      --extra-ldflags='-Wl,-rpath,/opt/ffmpeg/lib' \
+      --enable-rpath \
       --enable-shared \
       --disable-static \
       --disable-debug \
@@ -54,8 +56,8 @@ RUN ./configure \
       --enable-protocol=file,pipe,tcp,tls,http,https,udp,rtmp \
     && make -j$(nproc) \
     && make install \
-    && /opt/ffmpeg/bin/ffmpeg -version \
-    && /opt/ffmpeg/bin/ffprobe -version
+    && LD_LIBRARY_PATH=/opt/ffmpeg/lib /opt/ffmpeg/bin/ffmpeg -version \
+    && LD_LIBRARY_PATH=/opt/ffmpeg/lib /opt/ffmpeg/bin/ffprobe -version
 
 # ============================================================
 # Stage 3: freerdp3-builder — 编译 FreeRDP3 RDPEGFX/H.264 (musl)
