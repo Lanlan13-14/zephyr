@@ -21,7 +21,43 @@ COPY . .
 RUN npm run build:editor 2>&1 || echo "[WARN] editor build skipped"
 
 # ============================================================
-# Stage 2: freerdp3-builder — 编译 FreeRDP3 RDPEGFX/H.264 (musl)
+# Stage 2: ffmpeg-builder — 编译 FFmpeg 8.1.2 (musl)
+# ============================================================
+FROM alpine:3.20 AS ffmpeg-builder
+
+ARG FFMPEG_VERSION=8.1.2
+ARG FFMPEG_SHA256=464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c
+WORKDIR /build
+
+RUN apk add --no-cache \
+        build-base pkgconf curl tar xz nasm zlib-dev openssl-dev opus-dev
+
+RUN curl -fsSL "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" -o ffmpeg.tar.xz \
+    && echo "${FFMPEG_SHA256}  ffmpeg.tar.xz" | sha256sum -c - \
+    && tar -xf ffmpeg.tar.xz \
+    && mv "ffmpeg-${FFMPEG_VERSION}" ffmpeg
+
+WORKDIR /build/ffmpeg
+RUN ./configure \
+      --prefix=/opt/ffmpeg \
+      --pkg-config-flags=--static \
+      --enable-shared \
+      --disable-static \
+      --disable-debug \
+      --disable-doc \
+      --disable-programs \
+      --enable-ffmpeg \
+      --enable-ffprobe \
+      --enable-openssl \
+      --enable-libopus \
+      --enable-protocol=file,pipe,tcp,tls,http,https,udp,rtmp \
+    && make -j$(nproc) \
+    && make install \
+    && /opt/ffmpeg/bin/ffmpeg -version \
+    && /opt/ffmpeg/bin/ffprobe -version
+
+# ============================================================
+# Stage 3: freerdp3-builder — 编译 FreeRDP3 RDPEGFX/H.264 (musl)
 # ============================================================
 FROM alpine:3.20 AS freerdp3-builder
 
@@ -39,8 +75,12 @@ RUN apk add --no-cache \
         eudev-dev dbus-glib-dev util-linux-dev libxml2-dev \
         krb5-dev libusb-dev cjson-dev \
         sdl2-dev sdl2_ttf-dev pcsc-lite-dev \
-        ffmpeg-dev opus-dev libwebp-dev cairo-dev \
+        opus-dev libwebp-dev cairo-dev \
         zlib-dev
+
+COPY --from=ffmpeg-builder /opt/ffmpeg /opt/ffmpeg
+ENV PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig
+ENV LD_LIBRARY_PATH=/opt/ffmpeg/lib
 
 RUN git clone --depth 1 --branch ${FREERDP_VERSION} https://github.com/FreeRDP/FreeRDP.git freerdp
 
@@ -74,7 +114,7 @@ RUN cmake -B build -G Ninja \
     && ls /opt/freerdp3/lib/libfreerdp3* 2>/dev/null | head -5
 
 # ============================================================
-# Stage 3: rdp-bridge-builder — 编译 freerdp-web native bridge (musl)
+# Stage 4: rdp-bridge-builder — 编译 freerdp-web native bridge (musl)
 # ============================================================
 FROM alpine:3.20 AS rdp-bridge-builder
 
@@ -82,12 +122,13 @@ WORKDIR /build
 
 RUN apk add --no-cache \
         build-base cmake pkgconf \
-        openssl-dev opus-dev ffmpeg-dev cjson-dev \
+        openssl-dev opus-dev cjson-dev \
         krb5-dev pcsc-lite-dev fuse3-dev libwebp-dev cairo-dev
 
 COPY --from=freerdp3-builder /opt/freerdp3 /opt/freerdp3
-ENV PKG_CONFIG_PATH=/opt/freerdp3/lib/pkgconfig
-ENV LD_LIBRARY_PATH=/opt/freerdp3/lib
+COPY --from=ffmpeg-builder /opt/ffmpeg /opt/ffmpeg
+ENV PKG_CONFIG_PATH=/opt/freerdp3/lib/pkgconfig:/opt/ffmpeg/lib/pkgconfig
+ENV LD_LIBRARY_PATH=/opt/freerdp3/lib:/opt/ffmpeg/lib
 
 COPY rdp-gfx-backend/native/ ./native/
 WORKDIR /build/native
@@ -102,7 +143,7 @@ RUN cmake -B build \
     && ls -la /usr/local/lib/freerdp3/librdpsnd-client-bridge.so
 
 # ============================================================
-# Stage 4: rdp-wasm-builder — 编译 Progressive/ClearCodec WASM
+# Stage 5: rdp-wasm-builder — 编译 Progressive/ClearCodec WASM
 # ============================================================
 FROM emscripten/emsdk:3.1.51 AS rdp-wasm-builder
 
@@ -117,7 +158,7 @@ WORKDIR /build/clearcodec
 RUN mkdir -p build && cd build && emcmake cmake .. && emmake make
 
 # ============================================================
-# Stage 5: runtime — Zephyr + RDPEGFX/FreeRDP3 bridge (Alpine)
+# Stage 6: runtime — Zephyr + RDPEGFX/FreeRDP3 bridge (Alpine)
 # ============================================================
 FROM node:20-alpine3.20
 
@@ -128,7 +169,6 @@ WORKDIR /app
 
 RUN apk add --no-cache \
         imagemagick \
-        ffmpeg \
         p7zip \
         xz \
         bzip2 \
@@ -173,6 +213,7 @@ RUN apk add --no-cache \
     && echo "=== runtime deps installed ==="
 
 COPY --from=app-build /app /app
+COPY --from=ffmpeg-builder /opt/ffmpeg /opt/ffmpeg
 COPY --from=freerdp3-builder /opt/freerdp3 /opt/freerdp3
 COPY --from=rdp-bridge-builder /usr/local/lib/librdp_bridge.so* /usr/local/lib/
 COPY --from=rdp-bridge-builder /usr/local/include/rdp_bridge.h /usr/local/include/
@@ -186,10 +227,10 @@ COPY --from=rdp-wasm-builder /build/clearcodec/build/clearcodec_decoder.js /app/
 COPY --from=rdp-wasm-builder /build/clearcodec/build/clearcodec_decoder.wasm /app/public/vendor/freerdp-web/clearcodec/
 
 RUN python3 -m venv /app/venv
-ENV PATH="/app/venv/bin:${PATH}"
+ENV PATH="/opt/ffmpeg/bin:/app/venv/bin:${PATH}"
 RUN pip install --no-cache-dir -r /app/rdp-gfx-backend/requirements.txt
 
-ENV LD_LIBRARY_PATH="/opt/freerdp3/lib:/usr/local/lib"
+ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib:/opt/freerdp3/lib:/usr/local/lib"
 ENV FREERDP_LIBRARY_PATH="/opt/freerdp3/lib/freerdp3"
 ENV RDP_GFX_BACKEND_HOST="127.0.0.1"
 ENV RDP_GFX_BACKEND_PORT="8765"
@@ -201,7 +242,12 @@ RUN echo "=== runtime diagnostics ===" && \
     cat /etc/alpine-release && \
     node --version && \
     npm --version && \
+    ffmpeg -version | head -1 && \
+    ffprobe -version | head -1 && \
+    ffmpeg -version | grep -F "ffmpeg version 8.1.2" && \
+    ffprobe -version | grep -F "ffprobe version 8.1.2" && \
     for lib in /usr/local/lib/librdp_bridge.so /opt/freerdp3/lib/libfreerdp3.so.3 /opt/freerdp3/lib/libwinpr3.so.3 /opt/freerdp3/lib/freerdp3/librdpsnd-client-bridge.so; do ldd "$lib"; done && \
+    ldd /usr/local/lib/librdp_bridge.so | grep -F "/opt/ffmpeg/lib/libavcodec.so" && \
     python -c "import ctypes; ctypes.CDLL('/usr/local/lib/librdp_bridge.so'); print('librdp_bridge loaded')" && \
     test -f /app/public/vendor/freerdp-web/progressive/progressive_decoder.wasm && \
     test -f /app/public/vendor/freerdp-web/clearcodec/clearcodec_decoder.wasm && \
