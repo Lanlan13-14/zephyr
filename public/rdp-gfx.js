@@ -1069,36 +1069,19 @@ async function connect() {
             setTimeout(() => { rdpReplacingConnection = false; }, 250);
         }
         client = null;
-        try {
-            requireModernRdpBrowser();
-            await connectWorkerRdp();
-            return;
-        } catch (workerErr) {
-            console.warn('[RDP] WebCodecs/worker path unavailable, falling back to direct canvas:', workerErr);
-            setStatus('connecting', `高性能 RDPEGFX 不可用，降级 WebP：${workerErr?.message || workerErr}`, { holdOverlayMs: 1600 });
-            await connectDirectCanvasRdp();
-            return;
+        const preferWorker = /^(1|true|yes)$/i.test(String(localStorage.getItem('zephyr-rdp-worker-renderer') || params.rdpWorkerRenderer || ''));
+        if (preferWorker) {
+            try {
+                requireModernRdpBrowser();
+                await connectWorkerRdp();
+                return;
+            } catch (workerErr) {
+                console.warn('[RDP] WebCodecs/worker path unavailable, falling back to direct canvas:', workerErr);
+                setStatus('connecting', `高性能 RDPEGFX 不可用，降级稳定渲染：${workerErr?.message || workerErr}`, { holdOverlayMs: 1600 });
+            }
         }
-        if (client) await client.destroy().catch(() => {});
-        client = null;
-        try { clientHost?.remove?.(); } catch {}
-        clientHost = document.createElement('div');
-        clientHost.className = 'rdp-gfx-client-host';
-        clientHost.style.cssText = 'display:block;width:100%;height:100%;min-width:0;min-height:0;';
-        displayShell && (displayShell.style.placeItems = 'stretch');
-        if (displayRoot) { displayRoot.innerHTML = ''; Object.assign(displayRoot.style, { width: '100%', height: '100%', display: 'block' }); displayRoot.appendChild(clientHost); }
-        client = new RDPClient(clientHost, {
-            wsUrl: wsUrl(), showTopBar: false, showBottomBar: false,
-            keepConnectionModalOpen: false, loadingSpinnerOpensModal: false, resizeDebounceMs: 800,
-            visibleTopBarButtons: { connect: false, disconnect: false, keyboard: false, mute: false, screenshot: false, fullscreen: false },
-            theme: buildEmbeddedRdpTheme(),
-        });
-        client.on('connected', ({ width, height } = {}) => { connected = true; setStatus('connected', `RDP 已连接 [RDPEGFX/WebCodecs]${width && height ? ` ${width}×${height}` : ''}`); notifyParentStatus('connected'); });
-        client.on('resize', ({ width, height } = {}) => { if (connected) setStatus('connected', `RDP 已连接 [RDPEGFX/WebCodecs] ${width}×${height}`, { holdOverlayMs: 700 }); });
-        client.on('error', ({ message } = {}) => { connected = false; setStatus('error', message || 'RDPEGFX 客户端错误'); notifyParentStatus('disconnected'); });
-        client.on('disconnected', () => { connected = false; setStatus('disconnected', 'RDP 已断开'); notifyParentStatus('disconnected'); });
-        client.on('message', handleClientMessage);
-        await client.connect({ host: 'zephyr-rdp-gfx-proxy', port: 3389, user: 'zephyr', pass: 'server-side-secret' });
+        await connectDirectCanvasRdp();
+        return;
     } catch (err) { connected = false; setStatus('error', err.message || String(err)); notifyParentStatus('disconnected'); throw err; }
 }
 async function disconnect(closeParent = false) {
