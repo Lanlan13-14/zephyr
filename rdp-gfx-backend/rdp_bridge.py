@@ -874,7 +874,7 @@ class RDPBridge:
             try:
                 # Poll for events (non-blocking)
                 result = await asyncio.get_event_loop().run_in_executor(
-                    None, self._lib.rdp_poll, self._session, 16  # 16ms timeout
+                    None, self._lib.rdp_poll, self._session, 2  # low-latency poll; do not add a full frame of input lag
                 )
                 
                 poll_count += 1                
@@ -907,6 +907,11 @@ class RDPBridge:
                 # for strict ordering with other GFX commands.
                 events_sent = 0
                 frame_completed = False  # Stop after completing one frame
+                transport = getattr(self.websocket, 'transport', None)
+                write_backlog = transport.get_write_buffer_size() if transport else 0
+                drop_visual_payload = write_backlog > 24 * 1024 * 1024
+                if drop_visual_payload:
+                    logger.warning(f"Browser websocket backlog {write_backlog} bytes; dropping visual payload until next frame boundary")
                 
                 while self._lib.rdp_gfx_has_events(self._session) > 0 and not frame_completed:
                     ret = self._lib.rdp_gfx_get_event(
@@ -915,11 +920,30 @@ class RDPBridge:
                     if ret != 0:
                         break
                     
-                    # Send event (all types including VIDEO_FRAME are handled by _build_gfx_event_message)
-                    msg = self._build_gfx_event_message(gfx_event)
-                    if msg:
-                        await self.websocket.send(msg)
-                        events_sent += 1
+                    # Send event (all types including VIDEO_FRAME are handled by _build_gfx_event_message).
+                    # If the browser/network is already far behind, skip heavy visual payloads rather than
+                    # building seconds of stale frames that make clicks look frozen. Keep control/reset/pointer
+                    # events flowing so the next clean frame can recover.
+                    should_drop = drop_visual_payload and gfx_event.type in (
+                        RDP_GFX_EVENT_WEBP_TILE,
+                        RDP_GFX_EVENT_VIDEO_FRAME,
+                        RDP_GFX_EVENT_SOLID_FILL,
+                        RDP_GFX_EVENT_SURFACE_TO_SURFACE,
+                        RDP_GFX_EVENT_SURFACE_TO_CACHE,
+                        RDP_GFX_EVENT_CACHE_TO_SURFACE,
+                    )
+                    if should_drop:
+                        if getattr(gfx_event, 'bitmap_data', None):
+                            self._lib.rdp_free_gfx_event_data(gfx_event.bitmap_data)
+                        if getattr(gfx_event, 'nal_data', None):
+                            self._lib.rdp_free_gfx_event_data(gfx_event.nal_data)
+                        if getattr(gfx_event, 'chroma_nal_data', None):
+                            self._lib.rdp_free_gfx_event_data(gfx_event.chroma_nal_data)
+                    else:
+                        msg = self._build_gfx_event_message(gfx_event)
+                        if msg:
+                            await self.websocket.send(msg)
+                            events_sent += 1
                     
                     # Track frame boundaries
                     if gfx_event.type == RDP_GFX_EVENT_START_FRAME:

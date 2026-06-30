@@ -52,6 +52,8 @@ let lastSyncedLocalClipboardText = '';
 let clipboardSyncTimer = null;
 let rdpInputSuppressed = false;
 let rdpInputSuppressedUntil = 0;
+let lastUserInputAt = 0;
+function markRdpUserInput() { lastUserInputAt = performance.now(); }
 const fileDownloads = new Map();
 const resolutions = [
     { label: '自动', width: 0, height: 0 },
@@ -105,7 +107,8 @@ function noteRdpFrame() {
 }
 function maybeAdjustAdaptiveRdp(now = performance.now()) {
     if (!adaptiveRdp.enabled || qualityMode !== 'auto' || !adaptiveRdp.baseSize || !connected) return;
-    if (now - adaptiveRdp.lastAdjustAt < 4500 || adaptiveRdp.samples.length < 18) return;
+    if (now - lastUserInputAt < 2500) return;
+    if (now - adaptiveRdp.lastAdjustAt < 9000 || adaptiveRdp.samples.length < 60) return;
     const avgFps = adaptiveRdp.samples.reduce((sum, s) => sum + s.fps, 0) / adaptiveRdp.samples.length;
     const target = Math.max(15, fpsValue || 60);
     let nextScale = adaptiveRdp.currentScale;
@@ -661,6 +664,20 @@ async function connectDirectCanvasRdp() {
     const mapped = new Map();
     let primarySurfaceId = null;
     let totalFrames = 0;
+    let pendingTileDecodes = 0;
+    let presentScheduled = false;
+    const presentPrimarySurface = () => {
+        presentScheduled = false;
+        if (primarySurfaceId !== null && surfaces.has(primarySurfaceId)) {
+            const m = mapped.get(primarySurfaceId) || { x: 0, y: 0 };
+            ctx.drawImage(surfaces.get(primarySurfaceId).canvas, m.x, m.y);
+        }
+    };
+    const schedulePresent = () => {
+        if (presentScheduled) return;
+        presentScheduled = true;
+        requestAnimationFrame(presentPrimarySurface);
+    };
     const ensureSurfaceSize = (surface, minWidth, minHeight) => {
         const width = Math.max(1, Math.ceil(minWidth));
         const height = Math.max(1, Math.ceil(minHeight));
@@ -788,28 +805,28 @@ async function connectDirectCanvasRdp() {
             } else {
                 ensureSurfaceSize(surface, Math.max(canvas.width, msg.x + msg.w), Math.max(canvas.height, msg.y + msg.h));
             }
-            const bitmap = await createImageBitmap(new Blob([msg.payload], { type: 'image/webp' }));
-            surface.ctx.drawImage(bitmap, msg.x, msg.y, msg.w, msg.h);
-            bitmap.close();
-            const m = mapped.get(msg.surfaceId) || { x: 0, y: 0 };
-            ctx.drawImage(surface.canvas, m.x, m.y);
-            applyDisplayScale();
+            if (pendingTileDecodes > 6) return;
+            pendingTileDecodes += 1;
+            try {
+                const bitmap = await createImageBitmap(new Blob([msg.payload], { type: 'image/webp' }));
+                surface.ctx.drawImage(bitmap, msg.x, msg.y, msg.w, msg.h);
+                bitmap.close();
+                schedulePresent();
+            } finally {
+                pendingTileDecodes = Math.max(0, pendingTileDecodes - 1);
+            }
         } else if (msg.type === 'solidFill') {
             const surface = surfaces.get(msg.surfaceId);
             if (surface) {
                 surface.ctx.fillStyle = `rgba(${msg.color & 255},${(msg.color >> 8) & 255},${(msg.color >> 16) & 255},1)`;
                 surface.ctx.fillRect(msg.x, msg.y, msg.w, msg.h);
-                const m = mapped.get(msg.surfaceId) || { x: 0, y: 0 };
-                ctx.drawImage(surface.canvas, m.x, m.y);
+                schedulePresent();
             }
         } else if (msg.type === 'endFrame') {
             totalFrames += 1;
             noteRdpFrame();
-            if (primarySurfaceId !== null && surfaces.has(primarySurfaceId)) {
-                const m = mapped.get(primarySurfaceId) || { x: 0, y: 0 };
-                ctx.drawImage(surfaces.get(primarySurfaceId).canvas, m.x, m.y);
-            }
-            if (ws.readyState === WebSocket.OPEN) ws.send(buildFrameAck(msg.frameId, totalFrames, 0));
+            schedulePresent();
+            if (ws.readyState === WebSocket.OPEN) ws.send(buildFrameAck(msg.frameId, totalFrames, Math.min(32, pendingTileDecodes)));
         }
     };
     const canvasPoint = (clientX, clientY) => {
@@ -856,6 +873,7 @@ async function connectDirectCanvasRdp() {
     const resetTouchState = () => { clearLongPress(); touchState = null; };
 
     canvas.addEventListener('pointerdown', (event) => {
+        markRdpUserInput();
         if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         canvas.focus({ preventScroll: true });
         canvas.setPointerCapture?.(event.pointerId);
@@ -950,8 +968,9 @@ async function connectDirectCanvasRdp() {
         activePointers.delete(event.pointerId);
         if (!activePointers.size) resetTouchState();
     });
-    canvas.addEventListener('wheel', (event) => { if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; } sendMouse('wheel', event, { deltaY: event.deltaY || 0, deltaX: event.deltaX || 0 }); event.preventDefault(); }, { passive: false });
+    canvas.addEventListener('wheel', (event) => { markRdpUserInput(); if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; } sendMouse('wheel', event, { deltaY: event.deltaY || 0, deltaX: event.deltaX || 0 }); event.preventDefault(); }, { passive: false });
     canvas.addEventListener('keydown', (event) => {
+        markRdpUserInput();
         if ((event.ctrlKey || event.metaKey) && String(event.key || '').toLowerCase() === 'v' && pendingRdpClipboardFiles.length) {
             event.preventDefault();
             pasteFilesAtRemoteTarget(lastRemotePointer);
@@ -960,7 +979,7 @@ async function connectDirectCanvasRdp() {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', action: 'down', key: event.key, code: event.code, keyCode: event.keyCode || event.which || 0, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey }));
         event.preventDefault();
     });
-    canvas.addEventListener('keyup', (event) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', action: 'up', key: event.key, code: event.code, keyCode: event.keyCode || event.which || 0, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey })); event.preventDefault(); });
+    canvas.addEventListener('keyup', (event) => { markRdpUserInput(); if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', action: 'up', key: event.key, code: event.code, keyCode: event.keyCode || event.which || 0, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey })); event.preventDefault(); });
     ws.onerror = () => { connected = false; setStatus('error', 'RDP WebSocket 错误'); notifyParentStatus('disconnected'); };
     ws.onclose = () => {
         const wasConnected = connected;
@@ -1720,7 +1739,7 @@ function startClipboardSyncLoop() {
     if (clipboardSyncTimer) return;
     clipboardSyncTimer = setInterval(() => {
         if (connected && !document.hidden) syncLocalClipboardTextToRdp('轮询');
-    }, 1800);
+    }, 5000);
 }
 function stopClipboardSyncLoop() {
     if (clipboardSyncTimer) clearInterval(clipboardSyncTimer);
@@ -1809,10 +1828,16 @@ window.addEventListener('message', (event) => {
     if (data.type === 'theme-change') applyFrameTheme(data.theme, data.appearance || {});
 });
 
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshFrameThemeFromStorage(); syncLocalClipboardTextToRdp('页面激活'); } });
-window.addEventListener('focus', () => { refreshFrameThemeFromStorage(); syncLocalClipboardTextToRdp('窗口聚焦'); });
+let lastForegroundClipboardSyncAt = 0;
+function syncClipboardOnForeground(reason) {
+    const now = Date.now();
+    if (now - lastForegroundClipboardSyncAt < 5000) return;
+    lastForegroundClipboardSyncAt = now;
+    syncLocalClipboardTextToRdp(reason);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshFrameThemeFromStorage(); syncClipboardOnForeground('页面激活'); } });
+window.addEventListener('focus', () => { refreshFrameThemeFromStorage(); syncClipboardOnForeground('窗口聚焦'); });
 document.addEventListener('copy', () => setTimeout(() => syncLocalClipboardTextToRdp('复制'), 80));
-document.addEventListener('pointerdown', () => syncLocalClipboardTextToRdp('点击'), { passive: true });
 window.addEventListener('beforeunload', () => { try { client?.disconnect?.(); } catch {} });
 let rdpBooted = false;
 function bootRdpPage() {
