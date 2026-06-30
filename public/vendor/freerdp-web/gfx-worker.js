@@ -118,6 +118,25 @@ const MAX_PENDING_OPS = 64;
 
 /** @type {number} Total frames decoded - sent in FACK for MS-RDPEGFX compliance */
 let totalFramesDecoded = 0;
+let firstFrameReported = false;
+let lastPresentedAt = 0;
+let lastCodec = 'unknown';
+function reportPresentedFrame(codec = lastCodec, frameId = currentFrameId) {
+    lastCodec = codec || lastCodec || 'unknown';
+    const now = performance.now();
+    const first = !firstFrameReported;
+    firstFrameReported = true;
+    lastPresentedAt = now;
+    self.postMessage({
+        type: first ? 'firstFrame' : 'framePresented',
+        codec: lastCodec,
+        frameId: frameId ?? 0,
+        queueDepth: pendingOps + messageQueue.length,
+        pendingOps,
+        queuedMessages: messageQueue.length,
+        timestamp: now,
+    });
+}
 
 // ============================================================================
 // Codec IDs (matching rdp_bridge.h RdpGfxCodecId enum)
@@ -701,6 +720,7 @@ async function decodeWebPTile(msg) {
             } else if (primarySurfaceId === msg.surfaceId || primarySurfaceId === null) {
                 primaryCtx.drawImage(surface.canvas, 0, 0);
             }
+            reportPresentedFrame('webp', msg.frameId);
         }
         
     } catch (err) {
@@ -825,6 +845,8 @@ async function initH264(width, height) {
                         surface.ctx.drawImage(frame, srcX, srcY, srcW, srcH, dstX, dstY, dstW, dstH);
                         // Track that this surface was updated
                         frameUpdatedSurfaces.add(meta.surfaceId);
+                        compositeSurfaceToPrimary(meta.surfaceId);
+                        reportPresentedFrame('h264', meta.frameId);
                     } else {
                         console.warn(`[GFX Worker] H.264: Unknown surface ${meta.surfaceId}`);
                     }
@@ -929,6 +951,7 @@ async function decodeH264Frame(msg) {
     // Create a promise that resolves when this specific frame is decoded
     const decodePromise = new Promise((resolve, reject) => {
         h264DecodeQueue.push({
+            frameId: msg.frameId,
             surfaceId: msg.surfaceId,
             destX: msg.destX,
             destY: msg.destY,
@@ -1291,12 +1314,10 @@ function applyInitSettings(msg) {
  */
 function compositeSurfaceToPrimary(surfaceId) {
     if (!primaryCanvas || !primaryCtx) return;
-    
     const surface = surfaces.get(surfaceId);
     if (!surface) return;
-    
-    // Draw the surface to the primary canvas
-    primaryCtx.drawImage(surface.canvas, 0, 0);
+    const mapping = mappedSurfaces.get(surfaceId);
+    primaryCtx.drawImage(surface.canvas, mapping?.outputX || 0, mapping?.outputY || 0);
 }
 
 /**
@@ -1361,6 +1382,8 @@ async function endFrame(frameId) {
         console.warn(`[GFX Worker] EndFrame: No primary canvas! primaryCanvas=${!!primaryCanvas} primaryCtx=${!!primaryCtx}`);
     }
     
+    if (frameUpdatedSurfaces.size > 0) reportPresentedFrame(lastCodec || 'gfx', frameId);
+
     // Track last completed frame for skip detection
     lastCompletedFrameId = frameId;
     
@@ -1475,6 +1498,8 @@ async function handleBinaryMessage(data) {
                 });
                 frameUpdatedSurfaces.add(msg.surfaceId);
                 currentFrameId = msg.frameId;
+                compositeSurfaceToPrimary(msg.surfaceId);
+                reportPresentedFrame('progressive', msg.frameId);
             } else {
                 await decodeH264Frame(msg);
             }
@@ -1515,6 +1540,9 @@ async function processMessage(event) {
             // Fill with black initially
             primaryCtx.fillStyle = '#000000';
             primaryCtx.fillRect(0, 0, primaryCanvas.width, primaryCanvas.height);
+            firstFrameReported = false;
+            lastPresentedAt = 0;
+            lastCodec = 'unknown';
             
             // Don't pre-create surface 0 here - let the server create surfaces
             // via CreateSurface messages. Pre-creating causes conflicts when 

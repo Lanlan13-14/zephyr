@@ -1408,6 +1408,12 @@ export class RDPClient {
                 if (this._ws && this._ws.readyState === WebSocket.OPEN && msg.data) {
                     this._ws.send(msg.data);
                 }
+                this._emit('frameAck', { frameId: msg.frameId, totalFramesDecoded: msg.totalFramesDecoded, queueDepth: msg.queueDepth });
+                break;
+
+            case 'firstFrame':
+            case 'framePresented':
+                this._emit(msg.type, msg);
                 break;
                 
             case 'unhandled':
@@ -1435,6 +1441,7 @@ export class RDPClient {
                 break;
 
             case 'fatal':
+                this._emit('workerFatal', { message: msg.message || 'RDP graphics worker failed' });
                 this._handleError(msg.message || 'RDP graphics worker failed');
                 this.disconnect();
                 break;
@@ -1560,18 +1567,7 @@ export class RDPClient {
         });
 
         // Canvas interactions
-        this._canvas.setAttribute('tabindex', '0');
-        this._canvas.addEventListener('click', () => this._canvas.focus());
-        this._canvas.style.touchAction = 'none';
-        this._canvas.addEventListener('mousemove', (e) => this._handleMouseMove(e));
-        this._canvas.addEventListener('mousedown', (e) => this._handleMouseDown(e));
-        this._canvas.addEventListener('mouseup', (e) => this._handleMouseUp(e));
-        this._canvas.addEventListener('pointerdown', (e) => this._handlePointerDown(e), { passive: false });
-        this._canvas.addEventListener('pointermove', (e) => this._handlePointerMove(e), { passive: false });
-        this._canvas.addEventListener('pointerup', (e) => this._handlePointerUp(e), { passive: false });
-        this._canvas.addEventListener('pointercancel', (e) => this._handlePointerCancel(e), { passive: false });
-        this._canvas.addEventListener('wheel', (e) => this._handleMouseWheel(e));
-        this._canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+        this._bindCanvasInteractions();
 
         // Keyboard - scoped to shadow root
         this._shadow.addEventListener('keydown', (e) => this._handleKeyDown(e));
@@ -1585,6 +1581,25 @@ export class RDPClient {
             this._resizeObserver = new ResizeObserver(() => this._handleResize());
             this._resizeObserver.observe(this._el.screen);
         }
+    }
+
+    _bindCanvasInteractions() {
+        if (!this._canvas || this._canvas.dataset.rdpInputBound === '1') return;
+        this._canvas.dataset.rdpInputBound = '1';
+        this._canvas.setAttribute('tabindex', '0');
+        this._canvas.style.touchAction = 'none';
+        this._canvas.style.webkitUserSelect = 'none';
+        this._canvas.style.userSelect = 'none';
+        this._canvas.addEventListener('click', () => this._canvas.focus());
+        this._canvas.addEventListener('mousemove', (e) => this._handleMouseMove(e));
+        this._canvas.addEventListener('mousedown', (e) => this._handleMouseDown(e));
+        this._canvas.addEventListener('mouseup', (e) => this._handleMouseUp(e));
+        this._canvas.addEventListener('pointerdown', (e) => this._handlePointerDown(e), { passive: false });
+        this._canvas.addEventListener('pointermove', (e) => this._handlePointerMove(e), { passive: false });
+        this._canvas.addEventListener('pointerup', (e) => this._handlePointerUp(e), { passive: false });
+        this._canvas.addEventListener('pointercancel', (e) => this._handlePointerCancel(e), { passive: false });
+        this._canvas.addEventListener('wheel', (e) => this._handleMouseWheel(e), { passive: false });
+        this._canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     }
 
     // --------------------------------------------------
@@ -2367,6 +2382,11 @@ export class RDPClient {
         this._ws = null;
         this._lastRequestedWidth = 0;
         this._lastRequestedHeight = 0;
+        this._activePointers?.clear?.();
+        this._touchState = null;
+        if (this._touchLongPressTimer) clearTimeout(this._touchLongPressTimer);
+        this._touchLongPressTimer = 0;
+        this._suppressMouseUntil = 0;
         this._updateStatus('disconnected', 'Disconnected');
         this._el.canvas.style.display = 'none';
         this._el.loading.style.display = 'block';
@@ -2432,12 +2452,7 @@ export class RDPClient {
             // or _initGfxWorkerCanvas will acquire context if transfer fails
             
             // Re-attach event listeners to new canvas
-            this._canvas.addEventListener('click', () => this._canvas.focus());
-            this._canvas.addEventListener('mousemove', (e) => this._handleMouseMove(e));
-            this._canvas.addEventListener('mousedown', (e) => this._handleMouseDown(e));
-            this._canvas.addEventListener('mouseup', (e) => this._handleMouseUp(e));
-            this._canvas.addEventListener('wheel', (e) => this._handleMouseWheel(e));
-            this._canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+            this._bindCanvasInteractions();
             
             // Re-initialize worker for next connection
             this._initGfxWorker();

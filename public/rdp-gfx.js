@@ -54,6 +54,41 @@ let rdpInputSuppressed = false;
 let rdpInputSuppressedUntil = 0;
 let lastUserInputAt = 0;
 function markRdpUserInput() { lastUserInputAt = performance.now(); }
+const rdpDiag = {
+    renderer: 'starting',
+    codec: 'unknown',
+    fps: 0,
+    frames: 0,
+    lastFrameAt: 0,
+    queueDepth: 0,
+    pendingOps: 0,
+    firstFrameMs: 0,
+    fallbackReason: '',
+};
+let rdpDiagTimer = 0;
+let rdpDiagLastPaintAt = 0;
+function updateRdpDiagnostics(partial = {}, options = {}) {
+    Object.assign(rdpDiag, partial || {});
+    const hud = $('#rdpTouchHud');
+    if (!hud) return;
+    const now = performance.now();
+    if (!options.force && now - rdpDiagLastPaintAt < 500) return;
+    rdpDiagLastPaintAt = now;
+    const text = `${rdpDiag.renderer} · ${rdpDiag.codec || 'unknown'} · ${Math.round(rdpDiag.fps || 0)}fps · q${rdpDiag.queueDepth || 0}${rdpDiag.firstFrameMs ? ` · first ${Math.round(rdpDiag.firstFrameMs)}ms` : ''}${rdpDiag.fallbackReason ? ` · ${rdpDiag.fallbackReason}` : ''}`;
+    hud.textContent = text;
+    hud.hidden = false;
+    clearTimeout(rdpDiagTimer);
+    rdpDiagTimer = setTimeout(() => { if (hud && connected) hud.hidden = true; }, 6500);
+}
+function notePresentedFrame(renderer = rdpDiag.renderer, codec = rdpDiag.codec, queueDepth = rdpDiag.queueDepth) {
+    const now = performance.now();
+    const dt = rdpDiag.lastFrameAt ? now - rdpDiag.lastFrameAt : 0;
+    const inst = dt > 0 ? 1000 / dt : 0;
+    rdpDiag.fps = rdpDiag.fps ? rdpDiag.fps * 0.85 + inst * 0.15 : inst;
+    rdpDiag.frames += 1;
+    rdpDiag.lastFrameAt = now;
+    updateRdpDiagnostics({ renderer, codec, queueDepth, fps: rdpDiag.fps });
+}
 const fileDownloads = new Map();
 const resolutions = [
     { label: '自动', width: 0, height: 0 },
@@ -257,7 +292,6 @@ function requireModernRdpBrowser() {
     if (typeof OffscreenCanvas === 'undefined') missing.push('OffscreenCanvas');
     if (typeof VideoDecoder === 'undefined' || typeof EncodedVideoChunk === 'undefined') missing.push('WebCodecs VideoDecoder');
     if (typeof Worker === 'undefined') missing.push('Web Worker');
-    if (typeof AudioWorkletNode === 'undefined') missing.push('AudioWorklet');
     if (missing.length) throw new Error(`当前浏览器不满足 RDPEGFX 客户端要求：${missing.join('、')}`);
 }
 function hideLegacyControls() {
@@ -649,6 +683,7 @@ function handleDirectPcm(bytes) {
 
 async function connectDirectCanvasRdp() {
     if (!displayRoot) throw new Error('RDP display root missing');
+    updateRdpDiagnostics({ renderer: 'direct', codec: 'webp', fallbackReason: '' }, { force: true });
     const size = desiredRdpSize || availableSize();
     if (!desiredRdpSize) desiredRdpSize = { ...size, baseWidth: size.baseWidth || size.width, baseHeight: size.baseHeight || size.height };
     resetAdaptiveRdp(desiredRdpSize, desiredRdpSize.adaptiveScale || 1);
@@ -746,7 +781,8 @@ async function connectDirectCanvasRdp() {
                 resetSurfacesForResize();
                 canvas.width = msg.width || canvas.width;
                 canvas.height = msg.height || canvas.height;
-                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`);
+                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP fallback] ${canvas.width}×${canvas.height}`);
+                updateRdpDiagnostics({ renderer: 'direct', codec: 'webp', firstFrameMs: 0 }, { force: true });
                 notifyParentStatus('connected');
                 startClipboardSyncLoop();
                 syncLocalClipboardTextToRdp('连接');
@@ -755,7 +791,8 @@ async function connectDirectCanvasRdp() {
                 resetSurfacesForResize();
                 canvas.width = msg.width || canvas.width;
                 canvas.height = msg.height || canvas.height;
-                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
+                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP fallback] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
+                updateRdpDiagnostics({ renderer: 'direct', codec: 'webp' }, { force: true });
                 applyDisplayScale();
             } else if (msg.type === 'disconnected') {
                 connected = false;
@@ -795,7 +832,8 @@ async function connectDirectCanvasRdp() {
             if (msg.width && msg.height) {
                 canvas.width = msg.width;
                 canvas.height = msg.height;
-                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
+                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP fallback] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
+                updateRdpDiagnostics({ renderer: 'direct', codec: 'webp' }, { force: true });
                 applyDisplayScale();
             }
         } else if (msg.type === 'tile' && msg.codec === 'webp') {
@@ -817,6 +855,7 @@ async function connectDirectCanvasRdp() {
                 surface.ctx.drawImage(bitmap, msg.x, msg.y, msg.w, msg.h);
                 bitmap.close();
                 schedulePresent();
+                notePresentedFrame('direct', 'webp', pendingTileDecodes);
             } finally {
                 pendingTileDecodes = Math.max(0, pendingTileDecodes - 1);
             }
@@ -826,6 +865,7 @@ async function connectDirectCanvasRdp() {
                 surface.ctx.fillStyle = `rgba(${msg.color & 255},${(msg.color >> 8) & 255},${(msg.color >> 16) & 255},1)`;
                 surface.ctx.fillRect(msg.x, msg.y, msg.w, msg.h);
                 schedulePresent();
+                notePresentedFrame('direct', 'solid', pendingTileDecodes);
             }
         } else if (msg.type === 'endFrame') {
             totalFrames += 1;
@@ -1002,7 +1042,7 @@ async function connectDirectCanvasRdp() {
 }
 
 
-async function connectWorkerRdp() {
+async function connectWorkerRdp({ firstFrameTimeoutMs = 4500 } = {}) {
     if (client) await client.destroy?.().catch?.(() => {});
     try { clientHost?.remove?.(); } catch {}
     clientHost = document.createElement('div');
@@ -1017,6 +1057,8 @@ async function connectWorkerRdp() {
     const size = desiredRdpSize || availableSize();
     if (!desiredRdpSize) desiredRdpSize = { ...size, baseWidth: size.baseWidth || size.width, baseHeight: size.baseHeight || size.height };
     resetAdaptiveRdp(desiredRdpSize, desiredRdpSize.adaptiveScale || 1);
+    updateRdpDiagnostics({ renderer: 'worker', codec: 'probing', fallbackReason: '' }, { force: true });
+    const workerStartAt = performance.now();
     client = new RDPClient(clientHost, {
         wsUrl: wsUrl(),
         showTopBar: false,
@@ -1038,8 +1080,8 @@ async function connectWorkerRdp() {
     client.on('connected', ({ width, height } = {}) => {
         connected = true;
         rdpReconnectAttempts = 0;
-        setStatus('connected', `RDP 已连接 [RDPEGFX/WebCodecs]${width && height ? ` ${width}×${height}` : ''}`);
-        notifyParentStatus('connected');
+        setStatus('connecting', `RDP 已连接，等待 WebCodecs 首帧${width && height ? ` ${width}×${height}` : ''}...`);
+        notifyParentStatus('connecting');
         startClipboardSyncLoop();
         syncLocalClipboardTextToRdp('连接');
         applyDisplayScale();
@@ -1050,10 +1092,51 @@ async function connectWorkerRdp() {
             applyDisplayScale();
         }
     });
-    client.on('error', ({ message } = {}) => { connected = false; stopClipboardSyncLoop(); setStatus('error', message || 'RDPEGFX 客户端错误'); notifyParentStatus('disconnected'); });
-    client.on('disconnected', () => { connected = false; stopClipboardSyncLoop(); setStatus('disconnected', 'RDP 已断开'); notifyParentStatus('disconnected'); });
+    let workerFirstFrameOk = false;
+    let runtimeFallbackStarted = false;
+    client.on('error', ({ message } = {}) => { if (runtimeFallbackStarted) return; connected = false; stopClipboardSyncLoop(); setStatus('error', message || 'RDPEGFX 客户端错误'); notifyParentStatus('disconnected'); });
+    client.on('disconnected', () => { if (runtimeFallbackStarted) return; connected = false; stopClipboardSyncLoop(); setStatus('disconnected', 'RDP 已断开'); notifyParentStatus('disconnected'); });
     client.on('message', handleClientMessage);
+    client.on('workerFatal', (msg = {}) => {
+        if (!workerFirstFrameOk || runtimeFallbackStarted || rdpManualDisconnect) return;
+        runtimeFallbackStarted = true;
+        updateRdpDiagnostics({ renderer: 'direct', codec: 'webp', fallbackReason: msg.message || 'worker fatal' }, { force: true });
+        setStatus('connecting', `WebCodecs 运行异常，切换稳定渲染：${msg.message || 'worker fatal'}`, { holdOverlayMs: 1800 });
+        try { client?.destroy?.(); } catch {}
+        client = null;
+        connectDirectCanvasRdp().catch((err) => setStatus('error', err?.message || String(err || 'RDP fallback failed')));
+    });
+    let armFirstFrameWatchdog = () => {};
+    const firstFramePromise = new Promise((resolve, reject) => {
+        let done = false;
+        let timer = 0;
+        const finish = (ok, payload) => { if (done) return; done = true; clearTimeout(timer); ok ? resolve(payload) : reject(payload); };
+        armFirstFrameWatchdog = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => finish(false, new Error(`WebCodecs 首帧超时 ${firstFrameTimeoutMs}ms`)), firstFrameTimeoutMs);
+        };
+        client.on('firstFrame', (msg = {}) => {
+            const firstFrameMs = performance.now() - workerStartAt;
+            workerFirstFrameOk = true;
+            notePresentedFrame('worker', msg.codec || 'webcodecs', msg.queueDepth || 0);
+            updateRdpDiagnostics({ renderer: 'worker', codec: msg.codec || 'webcodecs', firstFrameMs, queueDepth: msg.queueDepth || 0, fallbackReason: '' }, { force: true });
+            const codec = String(msg.codec || 'gfx').toLowerCase();
+            const rendererLabel = codec === 'h264' ? 'WebCodecs/H264' : codec === 'webp' ? 'Worker/WebP fallback' : `Worker/${codec}`;
+            setStatus('connected', `RDP 已连接 [RDPEGFX/${rendererLabel}] ${size.width}×${size.height}`);
+            notifyParentStatus('connected');
+            finish(true, msg);
+        });
+        client.on('framePresented', (msg = {}) => {
+            notePresentedFrame('worker', msg.codec || rdpDiag.codec || 'webcodecs', msg.queueDepth || 0);
+        });
+        client.on('frameAck', (msg = {}) => updateRdpDiagnostics({ queueDepth: msg.queueDepth || 0 }));
+        client.on('workerFatal', (msg = {}) => finish(false, new Error(msg.message || 'RDP worker fatal')));
+    });
+    // Prevent an early watchdog rejection from becoming an unhandled Promise before connect() resolves.
+    firstFramePromise.catch(() => {});
     await client.connect({ host: 'zephyr-rdp-gfx-proxy', port: 3389, user: 'zephyr', pass: 'server-side-secret', quality: qualityMode, fps: fpsValue });
+    armFirstFrameWatchdog();
+    await firstFramePromise;
 }
 
 async function connect() {
@@ -1069,15 +1152,19 @@ async function connect() {
             setTimeout(() => { rdpReplacingConnection = false; }, 250);
         }
         client = null;
-        const preferWorker = /^(1|true|yes)$/i.test(String(localStorage.getItem('zephyr-rdp-worker-renderer') || params.rdpWorkerRenderer || ''));
-        if (preferWorker) {
+        const rendererPref = String(localStorage.getItem('zephyr-rdp-renderer') || params.rdpRenderer || 'auto').toLowerCase();
+        const disableWorker = /^(0|false|no|direct|webp)$/i.test(rendererPref);
+        if (!disableWorker) {
             try {
                 requireModernRdpBrowser();
-                await connectWorkerRdp();
+                await connectWorkerRdp({ firstFrameTimeoutMs: 4800 });
                 return;
             } catch (workerErr) {
-                console.warn('[RDP] WebCodecs/worker path unavailable, falling back to direct canvas:', workerErr);
-                setStatus('connecting', `高性能 RDPEGFX 不可用，降级稳定渲染：${workerErr?.message || workerErr}`, { holdOverlayMs: 1600 });
+                console.warn('[RDP] WebCodecs/worker path failed, falling back to direct canvas:', workerErr);
+                updateRdpDiagnostics({ renderer: 'direct', codec: 'webp', fallbackReason: workerErr?.message || String(workerErr || 'worker failed') }, { force: true });
+                setStatus('connecting', `WebCodecs 首帧失败，降级稳定渲染：${workerErr?.message || workerErr}`, { holdOverlayMs: 1800 });
+                try { await client?.destroy?.(); } catch {}
+                client = null;
             }
         }
         await connectDirectCanvasRdp();
