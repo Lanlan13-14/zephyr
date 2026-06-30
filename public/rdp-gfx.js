@@ -351,6 +351,11 @@ function requestResolution(res) {
     desiredRdpSize = { ...size, baseWidth: size.baseWidth || size.width, baseHeight: size.baseHeight || size.height };
     resetAdaptiveRdp(desiredRdpSize, 1);
     displayScaleMode = 'fit';
+    if (clientHost?.style) {
+        clientHost.style.width = '100%';
+        clientHost.style.height = '100%';
+        clientHost.style.overflow = displayScaleMode === 'actual' ? 'auto' : 'hidden';
+    }
     localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode);
     displayZoom = 100;
     applyDisplayScale();
@@ -996,6 +1001,61 @@ async function connectDirectCanvasRdp() {
     };
 }
 
+
+async function connectWorkerRdp() {
+    if (client) await client.destroy?.().catch?.(() => {});
+    try { clientHost?.remove?.(); } catch {}
+    clientHost = document.createElement('div');
+    clientHost.className = 'rdp-gfx-client-host';
+    clientHost.style.cssText = 'display:block;width:100%;height:100%;min-width:0;min-height:0;background:#000;';
+    displayShell && (displayShell.style.placeItems = 'stretch');
+    if (displayRoot) {
+        displayRoot.innerHTML = '';
+        Object.assign(displayRoot.style, { width: '100%', height: '100%', display: 'block', overflow: 'hidden', background: '#000' });
+        displayRoot.appendChild(clientHost);
+    }
+    const size = desiredRdpSize || availableSize();
+    if (!desiredRdpSize) desiredRdpSize = { ...size, baseWidth: size.baseWidth || size.width, baseHeight: size.baseHeight || size.height };
+    resetAdaptiveRdp(desiredRdpSize, desiredRdpSize.adaptiveScale || 1);
+    client = new RDPClient(clientHost, {
+        wsUrl: wsUrl(),
+        showTopBar: false,
+        showBottomBar: false,
+        keepConnectionModalOpen: false,
+        loadingSpinnerOpensModal: false,
+        resizeDebounceMs: 1200,
+        fixedWidth: size.width,
+        fixedHeight: size.height,
+        maxWidth: 7680,
+        maxHeight: 4320,
+        minWidth: 0,
+        minHeight: 0,
+        quality: qualityMode,
+        fps: fpsValue,
+        visibleTopBarButtons: { connect: false, disconnect: false, keyboard: false, mute: false, screenshot: false, fullscreen: false },
+        theme: buildEmbeddedRdpTheme(),
+    });
+    client.on('connected', ({ width, height } = {}) => {
+        connected = true;
+        rdpReconnectAttempts = 0;
+        setStatus('connected', `RDP 已连接 [RDPEGFX/WebCodecs]${width && height ? ` ${width}×${height}` : ''}`);
+        notifyParentStatus('connected');
+        startClipboardSyncLoop();
+        syncLocalClipboardTextToRdp('连接');
+        applyDisplayScale();
+    });
+    client.on('resize', ({ width, height } = {}) => {
+        if (connected) {
+            setStatus('connected', `RDP 已连接 [RDPEGFX/WebCodecs] ${width}×${height}`, { holdOverlayMs: 700 });
+            applyDisplayScale();
+        }
+    });
+    client.on('error', ({ message } = {}) => { connected = false; stopClipboardSyncLoop(); setStatus('error', message || 'RDPEGFX 客户端错误'); notifyParentStatus('disconnected'); });
+    client.on('disconnected', () => { connected = false; stopClipboardSyncLoop(); setStatus('disconnected', 'RDP 已断开'); notifyParentStatus('disconnected'); });
+    client.on('message', handleClientMessage);
+    await client.connect({ host: 'zephyr-rdp-gfx-proxy', port: 3389, user: 'zephyr', pass: 'server-side-secret', quality: qualityMode, fps: fpsValue });
+}
+
 async function connect() {
     params = loadParams();
     if (!params.connectionId) { setStatus('error', '缺少 RDP connectionId'); notifyParentStatus('disconnected'); return; }
@@ -1009,9 +1069,16 @@ async function connect() {
             setTimeout(() => { rdpReplacingConnection = false; }, 250);
         }
         client = null;
-        await connectDirectCanvasRdp();
-        return;
-        requireModernRdpBrowser();
+        try {
+            requireModernRdpBrowser();
+            await connectWorkerRdp();
+            return;
+        } catch (workerErr) {
+            console.warn('[RDP] WebCodecs/worker path unavailable, falling back to direct canvas:', workerErr);
+            setStatus('connecting', `高性能 RDPEGFX 不可用，降级 WebP：${workerErr?.message || workerErr}`, { holdOverlayMs: 1600 });
+            await connectDirectCanvasRdp();
+            return;
+        }
         if (client) await client.destroy().catch(() => {});
         client = null;
         try { clientHost?.remove?.(); } catch {}
@@ -1069,8 +1136,14 @@ function contentRectForCanvas(canvas) {
     }
     return { contentLeft, contentTop, contentWidth, contentHeight };
 }
+function currentRdpCanvas() {
+    return displayRoot?.querySelector?.('canvas.rdp-direct-canvas')
+        || clientHost?.shadowRoot?.querySelector?.('canvas.rdp-canvas')
+        || displayRoot?.querySelector?.('canvas.rdp-canvas')
+        || displayRoot?.querySelector?.('canvas');
+}
 function remotePointFromClient(clientX, clientY) {
-    const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
+    const canvas = currentRdpCanvas();
     if (!canvas) return lastRemotePointer;
     const { contentLeft, contentTop, contentWidth, contentHeight } = contentRectForCanvas(canvas);
     return {
@@ -1229,19 +1302,27 @@ let displayScaleMode = localStorage.getItem('zephyr-rdp-display-scale-mode') || 
 if (!['actual', 'fit', 'fill'].includes(displayScaleMode)) displayScaleMode = 'fit';
 let displayZoom = 100;
 function applyDisplayScale() {
-    const canvas = displayRoot?.querySelector?.('canvas.rdp-direct-canvas');
+    const canvas = currentRdpCanvas();
     if (!canvas) return;
     canvas.style.objectPosition = 'center center';
+    const shadowScreen = clientHost?.shadowRoot?.querySelector?.('.rdp-screen');
+    const shadowDisplay = clientHost?.shadowRoot?.querySelector?.('.rdp-display');
+    if (shadowScreen) { shadowScreen.style.overflow = displayScaleMode === 'actual' ? 'auto' : 'hidden'; shadowScreen.style.placeItems = 'center'; }
+    if (shadowDisplay) { shadowDisplay.style.width = '100%'; shadowDisplay.style.height = '100%'; }
     if (displayScaleMode === 'fill') {
         // Fill: preserve the configured 16:9 / mobile 9:16 desktop and crop via the viewport.
         canvas.style.width = '100%';
         canvas.style.height = '100%';
+        canvas.style.maxWidth = 'none';
+        canvas.style.maxHeight = 'none';
         canvas.style.objectFit = 'cover';
         displayRoot.style.overflow = 'hidden';
     } else if (displayScaleMode === 'actual') {
         // Original: render at the negotiated desktop pixels; the viewport scrolls over it.
         canvas.style.width = `${Math.max(1, canvas.width * displayZoom / 100)}px`;
         canvas.style.height = `${Math.max(1, canvas.height * displayZoom / 100)}px`;
+        canvas.style.maxWidth = 'none';
+        canvas.style.maxHeight = 'none';
         canvas.style.objectFit = 'contain';
         displayRoot.style.overflow = 'auto';
     } else {
@@ -1249,8 +1330,15 @@ function applyDisplayScale() {
         // already sized so the centered 16:9 / 9:16 region is never below target size.
         canvas.style.width = '100%';
         canvas.style.height = '100%';
+        canvas.style.maxWidth = 'none';
+        canvas.style.maxHeight = 'none';
         canvas.style.objectFit = 'cover';
         displayRoot.style.overflow = 'hidden';
+    }
+    if (clientHost?.style) {
+        clientHost.style.width = '100%';
+        clientHost.style.height = '100%';
+        clientHost.style.overflow = displayScaleMode === 'actual' ? 'auto' : 'hidden';
     }
     localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode);
     const fitBtn = $('#fitBtn');

@@ -726,6 +726,10 @@ export class RDPClient {
      * @param {boolean} [options.loadingSpinnerOpensModal=true] - Whether clicking the loading area opens the connection modal
      * @param {number} [options.minWidth=0] - Minimum canvas width in pixels (0 = no minimum, scrollbar appears if container is smaller)
      * @param {number} [options.minHeight=0] - Minimum canvas height in pixels (0 = no minimum, scrollbar appears if container is smaller)
+     * @param {number} [options.fixedWidth=0] - Fixed negotiated RDP desktop width; bypasses element measurement when >0
+     * @param {number} [options.fixedHeight=0] - Fixed negotiated RDP desktop height; bypasses element measurement when >0
+     * @param {number} [options.maxWidth=7680] - Maximum negotiated RDP desktop width
+     * @param {number} [options.maxHeight=4320] - Maximum negotiated RDP desktop height
      * @param {import('./rdp-themes.js').RDPTheme} [options.theme] - Theme configuration
      * @param {import('./rdp-security.js').SecurityPolicy} [options.securityPolicy] - Security policy for connection restrictions
      * @param {Object} [options.visibleTopBarButtons] - Control visibility of top bar buttons
@@ -752,6 +756,10 @@ export class RDPClient {
             loadingSpinnerOpensModal: true,
             minWidth: 0,    // Minimum canvas width (0 = no minimum, scrollbar appears if container is smaller)
             minHeight: 0,   // Minimum canvas height (0 = no minimum, scrollbar appears if container is smaller)
+            fixedWidth: 0,
+            fixedHeight: 0,
+            maxWidth: 7680,
+            maxHeight: 4320,
             theme: null,
             visibleTopBarButtons: {
                 connect: true,
@@ -889,6 +897,12 @@ export class RDPClient {
         this._canvas = null;
         this._ctx = null;
         this._lastMouseSend = 0;
+        this._activePointers = new Map();
+        this._touchState = null;
+        this._touchLongPressTimer = 0;
+        this._lastTapAt = 0;
+        this._lastTapPoint = null;
+        this._suppressMouseUntil = 0;
         this._pingStart = 0;
         this._lastLatency = null;
         this._resizeTimeout = null;
@@ -1548,9 +1562,14 @@ export class RDPClient {
         // Canvas interactions
         this._canvas.setAttribute('tabindex', '0');
         this._canvas.addEventListener('click', () => this._canvas.focus());
+        this._canvas.style.touchAction = 'none';
         this._canvas.addEventListener('mousemove', (e) => this._handleMouseMove(e));
         this._canvas.addEventListener('mousedown', (e) => this._handleMouseDown(e));
         this._canvas.addEventListener('mouseup', (e) => this._handleMouseUp(e));
+        this._canvas.addEventListener('pointerdown', (e) => this._handlePointerDown(e), { passive: false });
+        this._canvas.addEventListener('pointermove', (e) => this._handlePointerMove(e), { passive: false });
+        this._canvas.addEventListener('pointerup', (e) => this._handlePointerUp(e), { passive: false });
+        this._canvas.addEventListener('pointercancel', (e) => this._handlePointerCancel(e), { passive: false });
         this._canvas.addEventListener('wheel', (e) => this._handleMouseWheel(e));
         this._canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -1636,7 +1655,9 @@ export class RDPClient {
                     username: credentials.user,
                     password: credentials.pass,
                     width,
-                    height
+                    height,
+                    quality: credentials.quality || this.options.quality || 'balanced',
+                    fps: credentials.fps || this.options.fps || 60
                 });
                 
                 console.log('[RDPClient] Connect request to', credentials.host + ':' + (credentials.port || 3389));
@@ -2866,18 +2887,151 @@ export class RDPClient {
     }
 
     _getMousePos(e) {
+        return this._getMousePosFromClient(e.clientX, e.clientY);
+    }
+
+    _getMousePosFromClient(clientX, clientY) {
         const rect = this._canvas.getBoundingClientRect();
-        const width = Math.max(2, Math.floor((rect.width || this._canvas.clientWidth || this._canvas.width || 1) / 2) * 2);
-        const height = Math.max(2, Math.floor((rect.height || this._canvas.clientHeight || this._canvas.height || 1) / 2) * 2);
-        const scaleX = this._canvas.width / width;
-        const scaleY = this._canvas.height / height;
+        const objectFit = getComputedStyle(this._canvas).objectFit || 'fill';
+        let contentLeft = rect.left;
+        let contentTop = rect.top;
+        let contentWidth = Math.max(1, rect.width || this._canvas.clientWidth || this._canvas.width || 1);
+        let contentHeight = Math.max(1, rect.height || this._canvas.clientHeight || this._canvas.height || 1);
+        if (objectFit === 'contain') {
+            const scale = Math.min(contentWidth / Math.max(1, this._canvas.width), contentHeight / Math.max(1, this._canvas.height));
+            const w = Math.max(1, this._canvas.width * scale);
+            const h = Math.max(1, this._canvas.height * scale);
+            contentLeft += (contentWidth - w) / 2;
+            contentTop += (contentHeight - h) / 2;
+            contentWidth = w;
+            contentHeight = h;
+        } else if (objectFit === 'cover') {
+            const scale = Math.max(contentWidth / Math.max(1, this._canvas.width), contentHeight / Math.max(1, this._canvas.height));
+            const w = Math.max(1, this._canvas.width * scale);
+            const h = Math.max(1, this._canvas.height * scale);
+            contentLeft += (contentWidth - w) / 2;
+            contentTop += (contentHeight - h) / 2;
+            contentWidth = w;
+            contentHeight = h;
+        }
         return {
-            x: Math.round((e.clientX - rect.left) * scaleX),
-            y: Math.round((e.clientY - rect.top) * scaleY)
+            x: Math.max(0, Math.min(this._canvas.width - 1, Math.round(((clientX - contentLeft) / contentWidth) * this._canvas.width))),
+            y: Math.max(0, Math.min(this._canvas.height - 1, Math.round(((clientY - contentTop) / contentHeight) * this._canvas.height)))
         };
     }
 
+    _clearTouchLongPress() {
+        if (this._touchLongPressTimer) clearTimeout(this._touchLongPressTimer);
+        this._touchLongPressTimer = 0;
+    }
+
+    _sendMouseAtClient(action, clientX, clientY, extra = {}) {
+        const pos = this._getMousePosFromClient(clientX, clientY);
+        this._sendMessage({ type: 'mouse', action, x: pos.x, y: pos.y, ...extra });
+    }
+
+    _sendLeftClickAt(clientX, clientY) {
+        this._sendMouseAtClient('down', clientX, clientY, { button: 0 });
+        setTimeout(() => this._sendMouseAtClient('up', clientX, clientY, { button: 0 }), 24);
+    }
+
+    _sendRightClickAt(clientX, clientY) {
+        this._sendMouseAtClient('down', clientX, clientY, { button: 2 });
+        setTimeout(() => this._sendMouseAtClient('up', clientX, clientY, { button: 2 }), 35);
+    }
+
+    _handlePointerDown(e) {
+        if (!this._isConnected || e.pointerType !== 'touch') return;
+        this._suppressMouseUntil = Date.now() + 900;
+        e.preventDefault();
+        this._canvas.focus();
+        this._canvas.setPointerCapture?.(e.pointerId);
+        const p = { id: e.pointerId, x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY };
+        this._activePointers.set(e.pointerId, p);
+        if (this._activePointers.size === 1) {
+            this._touchState = { mode: 'tap', primaryId: e.pointerId, startX: e.clientX, startY: e.clientY, downSent: false, cancelledTap: false };
+            this._clearTouchLongPress();
+            this._touchLongPressTimer = setTimeout(() => {
+                const cur = this._activePointers.get(e.pointerId);
+                if (!cur || !this._touchState || this._touchState.mode !== 'tap') return;
+                if (Math.hypot(cur.x - this._touchState.startX, cur.y - this._touchState.startY) <= 14) {
+                    this._touchState.cancelledTap = true;
+                    this._sendRightClickAt(cur.x, cur.y);
+                }
+            }, 520);
+        } else if (this._activePointers.size === 2) {
+            this._clearTouchLongPress();
+            const pts = [...this._activePointers.values()].slice(0, 2);
+            this._touchState = { mode: 'scroll', lastX: (pts[0].x + pts[1].x) / 2, lastY: (pts[0].y + pts[1].y) / 2 };
+        }
+    }
+
+    _handlePointerMove(e) {
+        if (!this._isConnected || e.pointerType !== 'touch') return;
+        this._suppressMouseUntil = Date.now() + 900;
+        e.preventDefault();
+        const p = this._activePointers.get(e.pointerId);
+        if (p) { p.x = e.clientX; p.y = e.clientY; }
+        if (this._activePointers.size >= 2 && this._touchState?.mode === 'scroll') {
+            const pts = [...this._activePointers.values()].slice(0, 2);
+            const midX = (pts[0].x + pts[1].x) / 2;
+            const midY = (pts[0].y + pts[1].y) / 2;
+            const deltaX = this._touchState.lastX - midX;
+            const deltaY = this._touchState.lastY - midY;
+            if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+                this._sendMouseAtClient('wheel', midX, midY, { deltaX: deltaX * 2.6, deltaY: deltaY * 2.6 });
+                this._touchState.lastX = midX;
+                this._touchState.lastY = midY;
+            }
+            return;
+        }
+        if (this._touchState?.primaryId === e.pointerId) {
+            const moved = Math.hypot(e.clientX - this._touchState.startX, e.clientY - this._touchState.startY);
+            if (!this._touchState.downSent && moved > 8 && !this._touchState.cancelledTap) {
+                this._clearTouchLongPress();
+                this._touchState.mode = 'drag';
+                this._touchState.downSent = true;
+                this._sendMouseAtClient('down', this._touchState.startX, this._touchState.startY, { button: 0 });
+            }
+            if (this._touchState.downSent) {
+                const now = Date.now();
+                if (now - this._lastMouseSend >= Math.min(8, this.options.mouseThrottleMs || 8)) {
+                    this._lastMouseSend = now;
+                    this._sendMouseAtClient('move', e.clientX, e.clientY);
+                }
+            }
+        }
+    }
+
+    _handlePointerUp(e) {
+        if (!this._isConnected || e.pointerType !== 'touch') return;
+        this._suppressMouseUntil = Date.now() + 900;
+        e.preventDefault();
+        this._clearTouchLongPress();
+        this._activePointers.delete(e.pointerId);
+        if (this._touchState?.downSent) {
+            this._sendMouseAtClient('up', e.clientX, e.clientY, { button: 0 });
+        } else if (!this._touchState?.cancelledTap && this._activePointers.size === 0) {
+            const now = Date.now();
+            const isDouble = this._lastTapPoint && now - this._lastTapAt < 330 && Math.hypot(this._lastTapPoint.x - e.clientX, this._lastTapPoint.y - e.clientY) < 30;
+            this._sendLeftClickAt(e.clientX, e.clientY);
+            if (isDouble) setTimeout(() => this._sendLeftClickAt(e.clientX, e.clientY), 48);
+            this._lastTapAt = now;
+            this._lastTapPoint = { x: e.clientX, y: e.clientY };
+        }
+        if (!this._activePointers.size) this._touchState = null;
+    }
+
+    _handlePointerCancel(e) {
+        if (e.pointerType !== 'touch') return;
+        this._clearTouchLongPress();
+        if (this._touchState?.downSent) this._sendMouseAtClient('up', e.clientX, e.clientY, { button: 0 });
+        this._activePointers.delete(e.pointerId);
+        if (!this._activePointers.size) this._touchState = null;
+    }
+
     _handleMouseMove(e) {
+        if (Date.now() < this._suppressMouseUntil) return;
         if (!this._isConnected) return;
         
         // Hide API cursor when real mouse moves
@@ -2892,6 +3046,7 @@ export class RDPClient {
     }
 
     _handleMouseDown(e) {
+        if (Date.now() < this._suppressMouseUntil) { e.preventDefault(); return; }
         if (!this._isConnected) return;
         e.preventDefault();
         this._canvas.focus();
@@ -2901,6 +3056,7 @@ export class RDPClient {
     }
 
     _handleMouseUp(e) {
+        if (Date.now() < this._suppressMouseUntil) { e.preventDefault(); return; }
         if (!this._isConnected) return;
         e.preventDefault();
         
@@ -2909,6 +3065,7 @@ export class RDPClient {
     }
 
     _handleMouseWheel(e) {
+        if (Date.now() < this._suppressMouseUntil) { e.preventDefault(); return; }
         if (!this._isConnected) return;
         e.preventDefault();
         
@@ -3580,25 +3737,27 @@ export class RDPClient {
     // --------------------------------------------------
 
     _getAvailableDimensions() {
-        const rect = this._el.screen.getBoundingClientRect();
-        const fallbackRect = this._container?.getBoundingClientRect?.() || rect;
-        let width = Math.floor((rect.width || fallbackRect.width || window.innerWidth || 1280) - 4);
-        let height = Math.floor((rect.height || fallbackRect.height || window.innerHeight || 720) - 4);
-
-        // do never send resize below RDP server minimums or above maximums
         const minRdpServerDimensions = { width: 640, height: 480 };
-        const maxRdpServerDimensions = { width: 4096, height: 2304 };
-        
-        // Respect user-defined minWidth/minHeight (never send resize below these values)
-        // But still honor minimums of rdp server
+        const maxRdpServerDimensions = {
+            width: Math.max(640, Number(this.options.maxWidth) || 7680),
+            height: Math.max(480, Number(this.options.maxHeight) || 4320),
+        };
         const minW = Math.max(minRdpServerDimensions.width, this.options.minWidth || 0);
         const minH = Math.max(minRdpServerDimensions.height, this.options.minHeight || 0);
-        // But still honor maximumof rdp server
+
+        let width = Number(this.options.fixedWidth) || 0;
+        let height = Number(this.options.fixedHeight) || 0;
+        if (!(width > 0 && height > 0)) {
+            const rect = this._el.screen.getBoundingClientRect();
+            const fallbackRect = this._container?.getBoundingClientRect?.() || rect;
+            width = Math.floor((rect.width || fallbackRect.width || window.innerWidth || 1280) - 4);
+            height = Math.floor((rect.height || fallbackRect.height || window.innerHeight || 720) - 4);
+        }
+
         width = Math.max(minW, Math.min(width, maxRdpServerDimensions.width));
         height = Math.max(minH, Math.min(height, maxRdpServerDimensions.height));
         width = Math.floor(width / 2) * 2;
         height = Math.floor(height / 2) * 2;
-        
         return { width, height };
     }
 
