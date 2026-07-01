@@ -2593,27 +2593,51 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
         pthread_mutex_unlock(&bctx->opus_mutex);
     }
     else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
-        /* GFX pipeline connected - save context and set deferred init flag.
-         * 
-         * We do NOT call gdi_graphics_pipeline_init() here because it causes
-         * thread-safety issues (GDI reinit in different thread).
-         * Instead, we set a flag and initialize from the main poll thread.
-         */
+        /* GFX pipeline connected – initialize IMMEDIATELY.
+         *
+         * FIX: Previously deferred to the poll loop via gfx_pipeline_needs_init,
+         * but by the time rdp_poll ran maybe_init_gfx_pipeline, the server had
+         * already sent CapsConfirm + CreateSurface + initial frames.  Without
+         * registered callbacks those PDUs were silently dropped/misrouted,
+         * causing a persistent black screen.
+         *
+         * bridge_on_channel_connected is called from freerdp_check_event_handles()
+         * on the main connection thread – the same thread that owns the GDI
+         * context – so calling gdi_graphics_pipeline_init() here is safe.
+         *
+         * gdi_graphics_pipeline_init() registers the full RDPEGFX callback chain
+         * (CreateSurface, SurfaceCommand, StartFrame, EndFrame, …) and sets
+         * gfx->custom = rdpGdi*.  FreeRDP GDI then decodes frames into
+         * gdi->primary_buffer which maybe_queue_gdi_fallback_frame() captures. */
         RdpgfxClientContext* gfx = (RdpgfxClientContext*)e->pInterface;
         bctx->gfx = gfx;
         
         if (gfx) {
-            /* Let FreeRDP's GDI graphics pipeline own RdpgfxClientContext.
-             * Per libfreerdp/gdi/gfx.c, gdi_graphics_pipeline_init() installs
-             * the full CreateSurface/SurfaceCommand/UpdateSurfaces callback
-             * chain and sets gfx->custom to rdpGdi*. Replacing those callbacks
-             * with Zephyr's partial wire-through handlers violates that contract
-             * and crashes/black-screens on real servers. Zephyr now captures the
-             * compositor output from the GDI primary framebuffer instead. */
             pthread_mutex_lock(&bctx->gfx_mutex);
             bctx->gfx_active = true;
-            bctx->gfx_pipeline_needs_init = true;  /* Deferred init in main thread */
             pthread_mutex_unlock(&bctx->gfx_mutex);
+
+            rdpContext* rctx = (rdpContext*)bctx;
+            if (rctx && rctx->gdi) {
+                if (gdi_graphics_pipeline_init(rctx->gdi, gfx)) {
+                    pthread_mutex_lock(&bctx->gfx_mutex);
+                    bctx->gfx_pipeline_ready = true;
+                    bctx->gfx_pipeline_needs_init = false;
+                    pthread_mutex_unlock(&bctx->gfx_mutex);
+                    fprintf(stderr, "[rdp_bridge] GFX pipeline initialized immediately on channel connect\n");
+                } else {
+                    fprintf(stderr, "[rdp_bridge] WARNING: immediate gdi_graphics_pipeline_init failed, deferring to poll\n");
+                    pthread_mutex_lock(&bctx->gfx_mutex);
+                    bctx->gfx_pipeline_needs_init = true;
+                    pthread_mutex_unlock(&bctx->gfx_mutex);
+                }
+            } else {
+                /* GDI not ready yet (shouldn't happen after PostConnect) – defer */
+                fprintf(stderr, "[rdp_bridge] WARNING: GDI not ready, deferring GFX pipeline init\n");
+                pthread_mutex_lock(&bctx->gfx_mutex);
+                bctx->gfx_pipeline_needs_init = true;
+                pthread_mutex_unlock(&bctx->gfx_mutex);
+            }
         }
     }
 }

@@ -69,16 +69,7 @@ let rdpDiagTimer = 0;
 let rdpDiagLastPaintAt = 0;
 function updateRdpDiagnostics(partial = {}, options = {}) {
     Object.assign(rdpDiag, partial || {});
-    const hud = $('#rdpTouchHud');
-    if (!hud) return;
-    const now = performance.now();
-    if (!options.force && now - rdpDiagLastPaintAt < 500) return;
-    rdpDiagLastPaintAt = now;
-    const text = `${rdpDiag.renderer} · ${rdpDiag.codec || 'unknown'} · ${Math.round(rdpDiag.fps || 0)}fps · q${rdpDiag.queueDepth || 0}${rdpDiag.firstFrameMs ? ` · first ${Math.round(rdpDiag.firstFrameMs)}ms` : ''}${rdpDiag.fallbackReason ? ` · ${rdpDiag.fallbackReason}` : ''}`;
-    hud.textContent = text;
-    hud.hidden = false;
-    clearTimeout(rdpDiagTimer);
-    rdpDiagTimer = setTimeout(() => { if (hud && connected) hud.hidden = true; }, 6500);
+    /* Debug HUD removed per spec requirement — keep internal state for ABR */
 }
 function notePresentedFrame(renderer = rdpDiag.renderer, codec = rdpDiag.codec, queueDepth = rdpDiag.queueDepth) {
     const now = performance.now();
@@ -142,13 +133,20 @@ function noteRdpFrame() {
 }
 function maybeAdjustAdaptiveRdp(now = performance.now()) {
     if (!adaptiveRdp.enabled || qualityMode !== 'auto' || !adaptiveRdp.baseSize || !connected) return;
+    /* Don't adjust during active user input — avoids jarring resolution changes mid-drag */
     if (now - lastUserInputAt < 2500) return;
-    if (now - adaptiveRdp.lastAdjustAt < 9000 || adaptiveRdp.samples.length < 60) return;
+    /* Require at least 6 seconds of samples and ≥30 data points before adjusting */
+    if (now - adaptiveRdp.lastAdjustAt < 6000 || adaptiveRdp.samples.length < 30) return;
     const avgFps = adaptiveRdp.samples.reduce((sum, s) => sum + s.fps, 0) / adaptiveRdp.samples.length;
     const target = Math.max(15, fpsValue || 60);
     let nextScale = adaptiveRdp.currentScale;
-    if (avgFps < target * 0.82 && adaptiveRdp.currentScale > 0.75) nextScale = Math.max(0.75, adaptiveRdp.currentScale - 0.08);
-    else if (avgFps > target * 0.96 && adaptiveRdp.currentScale < 1) nextScale = Math.min(1, adaptiveRdp.currentScale + 0.05);
+    /* Hard floor: never go below 75% of base resolution per spec */
+    if (avgFps < target * 0.80 && adaptiveRdp.currentScale > 0.75) {
+        nextScale = Math.max(0.75, adaptiveRdp.currentScale - 0.06);
+    } else if (avgFps > target * 0.93 && adaptiveRdp.currentScale < 1) {
+        /* Ramp up slowly to avoid oscillation */
+        nextScale = Math.min(1, adaptiveRdp.currentScale + 0.04);
+    }
     if (Math.abs(nextScale - adaptiveRdp.currentScale) < 0.01) { adaptiveRdp.lastAdjustAt = now; return; }
     adaptiveRdp.currentScale = nextScale;
     adaptiveRdp.lastAdjustAt = now;
@@ -899,23 +897,76 @@ async function connectDirectCanvasRdp() {
     canvas.style.userSelect = 'none';
     canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
+    /* ================================================================
+     * Touch Interaction Engine — Microsoft Remote Desktop-grade
+     * ================================================================
+     * Gestures:
+     *   1-finger tap         → left click
+     *   1-finger double-tap  → double click
+     *   1-finger long-press  → right click
+     *   1-finger drag        → left-button drag
+     *   2-finger scroll      → wheel scroll (vertical + horizontal)
+     *   2-finger pinch       → pinch-to-zoom (local viewport zoom)
+     *   3-finger tap         → middle click
+     *
+     * Features:
+     *   - Predictive local cursor overlay for perceived zero-latency
+     *   - Precise touch→RDP coordinate mapping accounting for object-fit
+     *   - Throttled move events at ~4ms for smooth 240Hz tracking
+     *   - Dead-zone classification to avoid mis-detection
+     */
     const activePointers = new Map();
     let touchState = null;
     let longPressTimer = null;
     let lastTapAt = 0;
     let lastTap = null;
     let lastSentMoveAt = 0;
+    let pinchBaseDistance = 0;
+    let pinchBaseZoom = 100;
+    const LONG_PRESS_MS = 480;
+    const DOUBLE_TAP_MS = 320;
+    const DOUBLE_TAP_DIST = 35;
+    const DRAG_THRESHOLD = 8;
+    const SCROLL_THRESHOLD = 2;
+    const MOVE_THROTTLE_MS = 4;
+    const SCROLL_MULTIPLIER = 2.2;
+    const PINCH_THRESHOLD = 20;
     const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
     const dist = (a, b) => Math.hypot((a?.x || 0) - (b?.x || 0), (a?.y || 0) - (b?.y || 0));
     const isTouch = (event) => (event.pointerType || 'mouse') === 'touch';
     const touchPoint = (event) => ({ id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, time: performance.now(), type: event.pointerType || 'mouse' });
     const sendThrottledMove = (event) => {
         const now = performance.now();
-        if (now - lastSentMoveAt < 7) return;
+        if (now - lastSentMoveAt < MOVE_THROTTLE_MS) return;
         lastSentMoveAt = now;
         sendMouse('move', event);
     };
-    const resetTouchState = () => { clearLongPress(); touchState = null; };
+    const resetTouchState = () => { clearLongPress(); touchState = null; pinchBaseDistance = 0; };
+    const twoFingerMid = () => {
+        const pts = [...activePointers.values()].slice(0, 2);
+        if (pts.length < 2) return null;
+        return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    };
+    const twoFingerDist = () => {
+        const pts = [...activePointers.values()].slice(0, 2);
+        if (pts.length < 2) return 0;
+        return Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+    };
+
+    /* Local cursor overlay for predictive rendering */
+    let localCursor = null;
+    const showLocalCursor = (x, y) => {
+        if (!localCursor) {
+            localCursor = document.createElement('div');
+            localCursor.className = 'rdp-local-cursor';
+            localCursor.style.cssText = 'position:fixed;width:12px;height:12px;border-radius:50%;background:rgba(0,122,255,.45);border:1.5px solid rgba(255,255,255,.7);pointer-events:none;z-index:50;transform:translate(-50%,-50%);transition:opacity .15s;will-change:transform;';
+            (displayRoot || document.body).appendChild(localCursor);
+        }
+        localCursor.style.left = `${x}px`;
+        localCursor.style.top = `${y}px`;
+        localCursor.style.opacity = '1';
+    };
+    const hideLocalCursor = () => { if (localCursor) localCursor.style.opacity = '0'; };
 
     canvas.addEventListener('pointerdown', (event) => {
         markRdpUserInput();
@@ -929,74 +980,140 @@ async function connectDirectCanvasRdp() {
             if (activePointers.size === 1) {
                 touchState = { mode: 'tap-pending', primaryId: event.pointerId, startX: p.x, startY: p.y, lastX: p.x, lastY: p.y, downSent: false, cancelledTap: false };
                 clearLongPress();
+                showLocalCursor(p.x, p.y);
                 longPressTimer = setTimeout(() => {
                     const cur = activePointers.get(event.pointerId);
                     if (!cur || !touchState || touchState.mode !== 'tap-pending') return;
-                    if (dist(cur, { x: touchState.startX, y: touchState.startY }) <= 14) {
+                    if (dist(cur, { x: touchState.startX, y: touchState.startY }) <= DRAG_THRESHOLD + 6) {
                         touchState.cancelledTap = true;
+                        touchState.mode = 'right-click-done';
+                        /* Haptic feedback if available */
+                        try { navigator.vibrate?.(35); } catch {}
                         sendRightClick(cur.x, cur.y);
+                        hideLocalCursor();
                     }
-                }, 520);
+                }, LONG_PRESS_MS);
             } else if (activePointers.size === 2) {
+                /* Cancel any single-finger pending operations */
                 clearLongPress();
-                const pts = [...activePointers.values()].slice(0, 2);
-                const midX = (pts[0].x + pts[1].x) / 2;
-                const midY = (pts[0].y + pts[1].y) / 2;
-                touchState = { mode: 'two-finger-scroll', lastX: midX, lastY: midY };
+                hideLocalCursor();
+                if (touchState?.downSent) {
+                    sendMouseAt('up', touchState.lastX, touchState.lastY, { button: 0 });
+                    touchState.downSent = false;
+                }
+                const mid = twoFingerMid();
+                const d = twoFingerDist();
+                pinchBaseDistance = d;
+                pinchBaseZoom = displayZoom;
+                touchState = { mode: 'two-finger-pending', lastX: mid?.x || 0, lastY: mid?.y || 0, startDist: d, scrollDelta: 0 };
+            } else if (activePointers.size === 3) {
+                /* 3-finger tap → middle click */
+                clearLongPress();
+                hideLocalCursor();
+                if (touchState?.downSent) { sendMouseAt('up', touchState.lastX, touchState.lastY, { button: 0 }); }
+                const pts = [...activePointers.values()];
+                const midX = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+                const midY = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+                sendMouseAt('down', midX, midY, { button: 1 });
+                setTimeout(() => sendMouseAt('up', midX, midY, { button: 1 }), 30);
+                touchState = { mode: 'multi-done' };
             }
             return;
         }
+        /* Mouse/pen input */
         sendMouse('down', event, { button: event.button || 0 });
         event.preventDefault();
     });
+
     canvas.addEventListener('pointermove', (event) => {
         if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
         const p = activePointers.get(event.pointerId);
         if (p) { p.x = event.clientX; p.y = event.clientY; }
         if (isTouch(event)) {
             event.preventDefault();
-            if (activePointers.size >= 2 && touchState?.mode === 'two-finger-scroll') {
-                const pts = [...activePointers.values()].slice(0, 2);
-                const midX = (pts[0].x + pts[1].x) / 2;
-                const midY = (pts[0].y + pts[1].y) / 2;
-                const deltaX = touchState.lastX - midX;
-                const deltaY = touchState.lastY - midY;
-                if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
-                    sendMouseAt('wheel', midX, midY, { deltaX: deltaX * 2.6, deltaY: deltaY * 2.6 });
-                    touchState.lastX = midX;
-                    touchState.lastY = midY;
+            if (activePointers.size >= 2 && touchState && (touchState.mode === 'two-finger-pending' || touchState.mode === 'two-finger-scroll' || touchState.mode === 'pinch-zoom')) {
+                const mid = twoFingerMid();
+                const d = twoFingerDist();
+                if (!mid) return;
+                /* Classify gesture: pinch vs scroll */
+                if (touchState.mode === 'two-finger-pending') {
+                    const distChange = Math.abs(d - (touchState.startDist || d));
+                    const posChange = Math.hypot((mid.x || 0) - touchState.lastX, (mid.y || 0) - touchState.lastY);
+                    if (distChange > PINCH_THRESHOLD) {
+                        touchState.mode = 'pinch-zoom';
+                    } else if (posChange > SCROLL_THRESHOLD * 3) {
+                        touchState.mode = 'two-finger-scroll';
+                    }
+                    /* Still pending — don't act yet */
+                    if (touchState.mode === 'two-finger-pending') return;
+                }
+                if (touchState.mode === 'pinch-zoom') {
+                    /* Pinch-to-zoom: adjust local viewport zoom */
+                    if (pinchBaseDistance > 0) {
+                        const scale = d / pinchBaseDistance;
+                        displayZoom = Math.max(50, Math.min(500, Math.round(pinchBaseZoom * scale)));
+                        displayScaleMode = 'actual';
+                        localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode);
+                        applyDisplayScale();
+                    }
+                    touchState.lastX = mid.x;
+                    touchState.lastY = mid.y;
+                    return;
+                }
+                /* Two-finger scroll */
+                const deltaX = touchState.lastX - mid.x;
+                const deltaY = touchState.lastY - mid.y;
+                if (Math.abs(deltaX) > SCROLL_THRESHOLD || Math.abs(deltaY) > SCROLL_THRESHOLD) {
+                    sendMouseAt('wheel', mid.x, mid.y, { deltaX: deltaX * SCROLL_MULTIPLIER, deltaY: deltaY * SCROLL_MULTIPLIER });
+                    touchState.lastX = mid.x;
+                    touchState.lastY = mid.y;
                 }
                 return;
             }
-            if (touchState?.primaryId === event.pointerId) {
+            if (touchState?.primaryId === event.pointerId && touchState.mode !== 'right-click-done' && touchState.mode !== 'multi-done') {
                 const moved = Math.hypot(event.clientX - touchState.startX, event.clientY - touchState.startY);
-                if (!touchState.downSent && moved > 8 && !touchState.cancelledTap) {
+                if (!touchState.downSent && moved > DRAG_THRESHOLD && !touchState.cancelledTap) {
                     clearLongPress();
                     touchState.mode = 'drag';
                     touchState.downSent = true;
                     sendMouseAt('down', touchState.startX, touchState.startY, { button: 0 });
                 }
-                if (touchState.downSent) sendThrottledMove(event);
+                if (touchState.downSent) {
+                    sendThrottledMove(event);
+                    showLocalCursor(event.clientX, event.clientY);
+                }
                 touchState.lastX = event.clientX;
                 touchState.lastY = event.clientY;
             }
             return;
         }
-        sendMouse('move', event);
+        /* Mouse/pen: always send move when buttons are held or hovering */
+        if (activePointers.has(event.pointerId)) sendThrottledMove(event);
+        else sendMouse('move', event);
     });
+
     canvas.addEventListener('pointerup', (event) => {
         if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); activePointers.delete(event.pointerId); return; }
         activePointers.delete(event.pointerId);
         if (isTouch(event)) {
             event.preventDefault();
             clearLongPress();
+            hideLocalCursor();
+            if (touchState?.mode === 'pinch-zoom' || touchState?.mode === 'two-finger-scroll' || touchState?.mode === 'two-finger-pending') {
+                if (!activePointers.size) resetTouchState();
+                return;
+            }
+            if (touchState?.mode === 'multi-done' || touchState?.mode === 'right-click-done') {
+                if (!activePointers.size) resetTouchState();
+                return;
+            }
             if (touchState?.downSent) {
                 sendMouse('up', event, { button: 0 });
             } else if (!touchState?.cancelledTap && activePointers.size === 0) {
                 const now = Date.now();
-                const isDouble = lastTap && now - lastTapAt < 330 && dist(lastTap, { x: event.clientX, y: event.clientY }) < 30;
+                const isDouble = lastTap && now - lastTapAt < DOUBLE_TAP_MS && dist(lastTap, { x: event.clientX, y: event.clientY }) < DOUBLE_TAP_DIST;
                 sendLeftClick(event.clientX, event.clientY);
-                if (isDouble) setTimeout(() => sendLeftClick(event.clientX, event.clientY), 48);
+                if (isDouble) setTimeout(() => sendLeftClick(event.clientX, event.clientY), 40);
                 lastTapAt = now;
                 lastTap = { x: event.clientX, y: event.clientY };
             }
@@ -1006,15 +1123,32 @@ async function connectDirectCanvasRdp() {
         sendMouse('up', event, { button: event.button || 0 });
         event.preventDefault();
     });
+
     canvas.addEventListener('pointercancel', (event) => {
         if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); activePointers.delete(event.pointerId); return; }
         clearLongPress();
+        hideLocalCursor();
         if (isTouch(event) && touchState?.downSent) sendMouse('up', event, { button: 0 });
         activePointers.delete(event.pointerId);
         if (!activePointers.size) resetTouchState();
     });
-    canvas.addEventListener('wheel', (event) => { markRdpUserInput(); if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; } sendMouse('wheel', event, { deltaY: event.deltaY || 0, deltaX: event.deltaX || 0 }); event.preventDefault(); }, { passive: false });
-    canvas.addEventListener('keydown', (event) => {
+
+    canvas.addEventListener('wheel', (event) => {
+        markRdpUserInput();
+        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
+        /* Ctrl+wheel = zoom (match Windows RDP App behavior) */
+        if (event.ctrlKey) {
+            event.preventDefault();
+            displayZoom = Math.max(50, Math.min(500, displayZoom + (event.deltaY > 0 ? -10 : 10)));
+            displayScaleMode = 'actual';
+            localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode);
+            applyDisplayScale();
+            return;
+        }
+        sendMouse('wheel', event, { deltaY: event.deltaY || 0, deltaX: event.deltaX || 0 });
+        event.preventDefault();
+    }, { passive: false });
+        canvas.addEventListener('keydown', (event) => {
         markRdpUserInput();
         if ((event.ctrlKey || event.metaKey) && String(event.key || '').toLowerCase() === 'v' && pendingRdpClipboardFiles.length) {
             event.preventDefault();
@@ -1191,13 +1325,19 @@ function contentRectForCanvas(canvas) {
     let contentTop = rect.top;
     let contentWidth = Math.max(1, rect.width);
     let contentHeight = Math.max(1, rect.height);
-    if (objectFit === 'contain' || displayScaleMode === 'actual') {
+    if (objectFit === 'contain' || displayScaleMode === 'fit' || displayScaleMode === 'actual') {
+        /* Contain / Fit: scale to fit inside the element, preserving aspect ratio.
+         * Touch coordinates must map only to the actual rendered canvas area,
+         * not the letterbox/pillarbox padding. */
         const scale = Math.min(rect.width / Math.max(1, canvas.width), rect.height / Math.max(1, canvas.height));
         contentWidth = Math.max(1, canvas.width * scale);
         contentHeight = Math.max(1, canvas.height * scale);
         contentLeft = rect.left + (rect.width - contentWidth) / 2;
         contentTop = rect.top + (rect.height - contentHeight) / 2;
-    } else if (objectFit === 'cover' || displayScaleMode === 'fit' || displayScaleMode === 'fill') {
+    } else if (objectFit === 'cover' || displayScaleMode === 'fill') {
+        /* Cover / Fill: scale to fill the element, cropping excess.
+         * Touch coordinates must map to the full canvas, including the
+         * off-screen cropped portions. */
         const scale = Math.max(rect.width / Math.max(1, canvas.width), rect.height / Math.max(1, canvas.height));
         contentWidth = Math.max(1, canvas.width * scale);
         contentHeight = Math.max(1, canvas.height * scale);
@@ -1380,7 +1520,9 @@ function applyDisplayScale() {
     if (shadowScreen) { shadowScreen.style.overflow = displayScaleMode === 'actual' ? 'auto' : 'hidden'; shadowScreen.style.placeItems = 'center'; }
     if (shadowDisplay) { shadowDisplay.style.width = '100%'; shadowDisplay.style.height = '100%'; }
     if (displayScaleMode === 'fill') {
-        // Fill: preserve the configured 16:9 / mobile 9:16 desktop and crop via the viewport.
+        /* Fill: enlarge to cover the entire viewport, center-cropping any excess.
+         * The rendered buffer is strict 16:9 / 9:16 at ≥ base resolution.
+         * object-fit:cover ensures uniform scaling (no stretch distortion). */
         canvas.style.width = '100%';
         canvas.style.height = '100%';
         canvas.style.maxWidth = 'none';
@@ -1388,7 +1530,7 @@ function applyDisplayScale() {
         canvas.style.objectFit = 'cover';
         displayRoot.style.overflow = 'hidden';
     } else if (displayScaleMode === 'actual') {
-        // Original: render at the negotiated desktop pixels; the viewport scrolls over it.
+        /* Original: 1:1 pixel rendering, viewport scrolls over the canvas. */
         canvas.style.width = `${Math.max(1, canvas.width * displayZoom / 100)}px`;
         canvas.style.height = `${Math.max(1, canvas.height * displayZoom / 100)}px`;
         canvas.style.maxWidth = 'none';
@@ -1396,13 +1538,14 @@ function applyDisplayScale() {
         canvas.style.objectFit = 'contain';
         displayRoot.style.overflow = 'auto';
     } else {
-        // Fit: fill the visible region without distortion. The negotiated desktop is
-        // already sized so the centered 16:9 / 9:16 region is never below target size.
+        /* Fit (default): scale down to fit within the viewport keeping aspect ratio.
+         * Letterbox/pillarbox bars may appear on non-matching screens.
+         * object-fit:contain never crops and never distorts. */
         canvas.style.width = '100%';
         canvas.style.height = '100%';
         canvas.style.maxWidth = 'none';
         canvas.style.maxHeight = 'none';
-        canvas.style.objectFit = 'cover';
+        canvas.style.objectFit = 'contain';
         displayRoot.style.overflow = 'hidden';
     }
     if (clientHost?.style) {
