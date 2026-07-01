@@ -898,22 +898,20 @@ async function connectDirectCanvasRdp() {
     canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
     /* ================================================================
-     * Touch Interaction Engine — Microsoft Remote Desktop-grade
+     * Touch input — Windows Remote Desktop App behavior
      * ================================================================
-     * Gestures:
-     *   1-finger tap         → left click
-     *   1-finger double-tap  → double click
-     *   1-finger long-press  → right click
-     *   1-finger drag        → left-button drag
-     *   2-finger scroll      → wheel scroll (vertical + horizontal)
-     *   2-finger pinch       → pinch-to-zoom (local viewport zoom)
-     *   3-finger tap         → middle click
+     * Microsoft Remote Desktop on iOS/Android uses a simple model:
+     *   - Touch = absolute pointer positioning (move cursor to touch point)
+     *   - Tap = left click at touch point
+     *   - Double-tap = double click
+     *   - Tap-and-drag = left-button drag
+     *   - Long-press = right click
+     *   - Two-finger drag = scroll (wheel events)
+     *   - Two-finger pinch = zoom (local viewport, not sent to server)
+     *   - Three-finger tap = middle click
      *
-     * Features:
-     *   - Predictive local cursor overlay for perceived zero-latency
-     *   - Precise touch→RDP coordinate mapping accounting for object-fit
-     *   - Throttled move events at ~4ms for smooth 240Hz tracking
-     *   - Dead-zone classification to avoid mis-detection
+     * NO local cursor overlay. NO gesture prediction. The remote cursor
+     * follows the touch point as relayed by the server's pointer updates.
      */
     const activePointers = new Map();
     let touchState = null;
@@ -921,234 +919,141 @@ async function connectDirectCanvasRdp() {
     let lastTapAt = 0;
     let lastTap = null;
     let lastSentMoveAt = 0;
-    let pinchBaseDistance = 0;
+    let pinchBaseDist = 0;
     let pinchBaseZoom = 100;
-    const LONG_PRESS_MS = 480;
-    const DOUBLE_TAP_MS = 320;
-    const DOUBLE_TAP_DIST = 35;
-    const DRAG_THRESHOLD = 8;
-    const SCROLL_THRESHOLD = 2;
-    const MOVE_THROTTLE_MS = 4;
-    const SCROLL_MULTIPLIER = 2.2;
-    const PINCH_THRESHOLD = 20;
-    const clearLongPress = () => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; };
+    const clearLongPress = () => { if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; } };
     const dist = (a, b) => Math.hypot((a?.x || 0) - (b?.x || 0), (a?.y || 0) - (b?.y || 0));
-    const isTouch = (event) => (event.pointerType || 'mouse') === 'touch';
-    const touchPoint = (event) => ({ id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, time: performance.now(), type: event.pointerType || 'mouse' });
-    const sendThrottledMove = (event) => {
-        const now = performance.now();
-        if (now - lastSentMoveAt < MOVE_THROTTLE_MS) return;
-        lastSentMoveAt = now;
-        sendMouse('move', event);
-    };
-    const resetTouchState = () => { clearLongPress(); touchState = null; pinchBaseDistance = 0; };
-    const twoFingerMid = () => {
-        const pts = [...activePointers.values()].slice(0, 2);
-        if (pts.length < 2) return null;
-        return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
-    };
-    const twoFingerDist = () => {
-        const pts = [...activePointers.values()].slice(0, 2);
-        if (pts.length < 2) return 0;
-        return Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
-    };
+    const isTouch = (e) => (e.pointerType || 'mouse') === 'touch';
+    const twoFingerMid = () => { const p = [...activePointers.values()]; return p.length < 2 ? null : { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 }; };
+    const twoFingerDist = () => { const p = [...activePointers.values()]; return p.length < 2 ? 0 : Math.hypot(p[1].x - p[0].x, p[1].y - p[0].y); };
+    const resetTouch = () => { clearLongPress(); touchState = null; };
 
-    /* Local cursor overlay for predictive rendering */
-    let localCursor = null;
-    const showLocalCursor = (x, y) => {
-        if (!localCursor) {
-            localCursor = document.createElement('div');
-            localCursor.className = 'rdp-local-cursor';
-            localCursor.style.cssText = 'position:fixed;width:12px;height:12px;border-radius:50%;background:rgba(0,122,255,.45);border:1.5px solid rgba(255,255,255,.7);pointer-events:none;z-index:50;transform:translate(-50%,-50%);transition:opacity .15s;will-change:transform;';
-            (displayRoot || document.body).appendChild(localCursor);
-        }
-        localCursor.style.left = `${x}px`;
-        localCursor.style.top = `${y}px`;
-        localCursor.style.opacity = '1';
-    };
-    const hideLocalCursor = () => { if (localCursor) localCursor.style.opacity = '0'; };
-
-    canvas.addEventListener('pointerdown', (event) => {
+    canvas.addEventListener('pointerdown', (e) => {
         markRdpUserInput();
-        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
+        if (isRdpInputSuppressed()) { e.preventDefault(); return; }
         canvas.focus({ preventScroll: true });
-        canvas.setPointerCapture?.(event.pointerId);
-        const p = touchPoint(event);
-        activePointers.set(event.pointerId, p);
-        if (isTouch(event)) {
-            event.preventDefault();
-            if (activePointers.size === 1) {
-                touchState = { mode: 'tap-pending', primaryId: event.pointerId, startX: p.x, startY: p.y, lastX: p.x, lastY: p.y, downSent: false, cancelledTap: false };
-                clearLongPress();
-                showLocalCursor(p.x, p.y);
-                longPressTimer = setTimeout(() => {
-                    const cur = activePointers.get(event.pointerId);
-                    if (!cur || !touchState || touchState.mode !== 'tap-pending') return;
-                    if (dist(cur, { x: touchState.startX, y: touchState.startY }) <= DRAG_THRESHOLD + 6) {
-                        touchState.cancelledTap = true;
-                        touchState.mode = 'right-click-done';
-                        /* Haptic feedback if available */
-                        try { navigator.vibrate?.(35); } catch {}
-                        sendRightClick(cur.x, cur.y);
-                        hideLocalCursor();
-                    }
-                }, LONG_PRESS_MS);
-            } else if (activePointers.size === 2) {
-                /* Cancel any single-finger pending operations */
-                clearLongPress();
-                hideLocalCursor();
-                if (touchState?.downSent) {
-                    sendMouseAt('up', touchState.lastX, touchState.lastY, { button: 0 });
-                    touchState.downSent = false;
-                }
-                const mid = twoFingerMid();
-                const d = twoFingerDist();
-                pinchBaseDistance = d;
-                pinchBaseZoom = displayZoom;
-                touchState = { mode: 'two-finger-pending', lastX: mid?.x || 0, lastY: mid?.y || 0, startDist: d, scrollDelta: 0 };
-            } else if (activePointers.size === 3) {
-                /* 3-finger tap → middle click */
-                clearLongPress();
-                hideLocalCursor();
-                if (touchState?.downSent) { sendMouseAt('up', touchState.lastX, touchState.lastY, { button: 0 }); }
-                const pts = [...activePointers.values()];
-                const midX = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-                const midY = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-                sendMouseAt('down', midX, midY, { button: 1 });
-                setTimeout(() => sendMouseAt('up', midX, midY, { button: 1 }), 30);
-                touchState = { mode: 'multi-done' };
-            }
-            return;
-        }
-        /* Mouse/pen input */
-        sendMouse('down', event, { button: event.button || 0 });
-        event.preventDefault();
-    });
+        canvas.setPointerCapture?.(e.pointerId);
+        activePointers.set(e.pointerId, { id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() });
 
-    canvas.addEventListener('pointermove', (event) => {
-        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
-        const p = activePointers.get(event.pointerId);
-        if (p) { p.x = event.clientX; p.y = event.clientY; }
-        if (isTouch(event)) {
-            event.preventDefault();
-            if (activePointers.size >= 2 && touchState && (touchState.mode === 'two-finger-pending' || touchState.mode === 'two-finger-scroll' || touchState.mode === 'pinch-zoom')) {
-                const mid = twoFingerMid();
-                const d = twoFingerDist();
-                if (!mid) return;
-                /* Classify gesture: pinch vs scroll */
-                if (touchState.mode === 'two-finger-pending') {
-                    const distChange = Math.abs(d - (touchState.startDist || d));
-                    const posChange = Math.hypot((mid.x || 0) - touchState.lastX, (mid.y || 0) - touchState.lastY);
-                    if (distChange > PINCH_THRESHOLD) {
-                        touchState.mode = 'pinch-zoom';
-                    } else if (posChange > SCROLL_THRESHOLD * 3) {
-                        touchState.mode = 'two-finger-scroll';
-                    }
-                    /* Still pending — don't act yet */
-                    if (touchState.mode === 'two-finger-pending') return;
-                }
-                if (touchState.mode === 'pinch-zoom') {
-                    /* Pinch-to-zoom: adjust local viewport zoom */
-                    if (pinchBaseDistance > 0) {
-                        const scale = d / pinchBaseDistance;
-                        displayZoom = Math.max(50, Math.min(500, Math.round(pinchBaseZoom * scale)));
-                        displayScaleMode = 'actual';
-                        localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode);
-                        applyDisplayScale();
-                    }
-                    touchState.lastX = mid.x;
-                    touchState.lastY = mid.y;
-                    return;
-                }
-                /* Two-finger scroll */
-                const deltaX = touchState.lastX - mid.x;
-                const deltaY = touchState.lastY - mid.y;
-                if (Math.abs(deltaX) > SCROLL_THRESHOLD || Math.abs(deltaY) > SCROLL_THRESHOLD) {
-                    sendMouseAt('wheel', mid.x, mid.y, { deltaX: deltaX * SCROLL_MULTIPLIER, deltaY: deltaY * SCROLL_MULTIPLIER });
-                    touchState.lastX = mid.x;
-                    touchState.lastY = mid.y;
-                }
-                return;
-            }
-            if (touchState?.primaryId === event.pointerId && touchState.mode !== 'right-click-done' && touchState.mode !== 'multi-done') {
-                const moved = Math.hypot(event.clientX - touchState.startX, event.clientY - touchState.startY);
-                if (!touchState.downSent && moved > DRAG_THRESHOLD && !touchState.cancelledTap) {
-                    clearLongPress();
-                    touchState.mode = 'drag';
-                    touchState.downSent = true;
-                    sendMouseAt('down', touchState.startX, touchState.startY, { button: 0 });
-                }
-                if (touchState.downSent) {
-                    sendThrottledMove(event);
-                    showLocalCursor(event.clientX, event.clientY);
-                }
-                touchState.lastX = event.clientX;
-                touchState.lastY = event.clientY;
-            }
-            return;
-        }
-        /* Mouse/pen: always send move when buttons are held or hovering */
-        if (activePointers.has(event.pointerId)) sendThrottledMove(event);
-        else sendMouse('move', event);
-    });
+        if (!isTouch(e)) { sendMouse('down', e, { button: e.button || 0 }); e.preventDefault(); return; }
+        e.preventDefault();
 
-    canvas.addEventListener('pointerup', (event) => {
-        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); activePointers.delete(event.pointerId); return; }
-        activePointers.delete(event.pointerId);
-        if (isTouch(event)) {
-            event.preventDefault();
+        if (activePointers.size === 1) {
+            /* Move cursor to touch point immediately */
+            sendMouseAt('move', e.clientX, e.clientY);
+            touchState = { mode: 'pending', id: e.pointerId, sx: e.clientX, sy: e.clientY, dragging: false };
             clearLongPress();
-            hideLocalCursor();
-            if (touchState?.mode === 'pinch-zoom' || touchState?.mode === 'two-finger-scroll' || touchState?.mode === 'two-finger-pending') {
-                if (!activePointers.size) resetTouchState();
-                return;
-            }
-            if (touchState?.mode === 'multi-done' || touchState?.mode === 'right-click-done') {
-                if (!activePointers.size) resetTouchState();
-                return;
-            }
-            if (touchState?.downSent) {
-                sendMouse('up', event, { button: 0 });
-            } else if (!touchState?.cancelledTap && activePointers.size === 0) {
-                const now = Date.now();
-                const isDouble = lastTap && now - lastTapAt < DOUBLE_TAP_MS && dist(lastTap, { x: event.clientX, y: event.clientY }) < DOUBLE_TAP_DIST;
-                sendLeftClick(event.clientX, event.clientY);
-                if (isDouble) setTimeout(() => sendLeftClick(event.clientX, event.clientY), 40);
-                lastTapAt = now;
-                lastTap = { x: event.clientX, y: event.clientY };
-            }
-            if (!activePointers.size) resetTouchState();
-            return;
+            longPressTimer = setTimeout(() => {
+                if (!touchState || touchState.mode !== 'pending') return;
+                const cur = activePointers.get(e.pointerId);
+                if (cur && dist(cur, { x: touchState.sx, y: touchState.sy }) < 15) {
+                    touchState.mode = 'long-press';
+                    sendRightClick(cur.x, cur.y);
+                }
+            }, 500);
+        } else if (activePointers.size === 2) {
+            clearLongPress();
+            if (touchState?.dragging) { sendMouseAt('up', e.clientX, e.clientY, { button: 0 }); }
+            const mid = twoFingerMid();
+            pinchBaseDist = twoFingerDist();
+            pinchBaseZoom = displayZoom;
+            touchState = { mode: '2f-pending', lx: mid?.x || 0, ly: mid?.y || 0, startDist: pinchBaseDist };
+        } else if (activePointers.size === 3) {
+            clearLongPress();
+            if (touchState?.dragging) { sendMouseAt('up', e.clientX, e.clientY, { button: 0 }); }
+            const pts = [...activePointers.values()];
+            const mx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+            const my = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+            sendMouseAt('down', mx, my, { button: 1 });
+            setTimeout(() => sendMouseAt('up', mx, my, { button: 1 }), 30);
+            touchState = { mode: 'done' };
         }
-        sendMouse('up', event, { button: event.button || 0 });
-        event.preventDefault();
     });
 
-    canvas.addEventListener('pointercancel', (event) => {
-        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); activePointers.delete(event.pointerId); return; }
+    canvas.addEventListener('pointermove', (e) => {
+        if (isRdpInputSuppressed()) { e.preventDefault(); return; }
+        const p = activePointers.get(e.pointerId);
+        if (p) { p.x = e.clientX; p.y = e.clientY; }
+
+        if (!isTouch(e)) { if (activePointers.has(e.pointerId)) { const now = performance.now(); if (now - lastSentMoveAt >= 4) { lastSentMoveAt = now; sendMouse('move', e); } } else { sendMouse('move', e); } return; }
+        e.preventDefault();
+
+        /* Two-finger gesture */
+        if (activePointers.size >= 2 && touchState && /^2f/.test(touchState.mode)) {
+            const mid = twoFingerMid();
+            const d = twoFingerDist();
+            if (!mid) return;
+            if (touchState.mode === '2f-pending') {
+                if (Math.abs(d - touchState.startDist) > 20) touchState.mode = '2f-pinch';
+                else if (Math.hypot(mid.x - touchState.lx, mid.y - touchState.ly) > 6) touchState.mode = '2f-scroll';
+                else return;
+            }
+            if (touchState.mode === '2f-pinch') {
+                if (pinchBaseDist > 0) { displayZoom = Math.max(50, Math.min(500, Math.round(pinchBaseZoom * d / pinchBaseDist))); displayScaleMode = 'actual'; localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode); applyDisplayScale(); }
+                touchState.lx = mid.x; touchState.ly = mid.y;
+            } else if (touchState.mode === '2f-scroll') {
+                const dx = touchState.lx - mid.x, dy = touchState.ly - mid.y;
+                if (Math.abs(dx) > 1 || Math.abs(dy) > 1) { sendMouseAt('wheel', mid.x, mid.y, { deltaX: dx * 2, deltaY: dy * 2 }); touchState.lx = mid.x; touchState.ly = mid.y; }
+            }
+            return;
+        }
+
+        /* Single-finger */
+        if (touchState?.id === e.pointerId && touchState.mode === 'pending') {
+            const moved = Math.hypot(e.clientX - touchState.sx, e.clientY - touchState.sy);
+            if (moved > 8) {
+                clearLongPress();
+                touchState.mode = 'drag';
+                touchState.dragging = true;
+                sendMouseAt('down', touchState.sx, touchState.sy, { button: 0 });
+            }
+        }
+        if (touchState?.dragging) {
+            const now = performance.now();
+            if (now - lastSentMoveAt >= 4) { lastSentMoveAt = now; sendMouse('move', e); }
+        }
+    });
+
+    canvas.addEventListener('pointerup', (e) => {
+        if (isRdpInputSuppressed()) { e.preventDefault(); activePointers.delete(e.pointerId); return; }
+        activePointers.delete(e.pointerId);
+
+        if (!isTouch(e)) { sendMouse('up', e, { button: e.button || 0 }); e.preventDefault(); return; }
+        e.preventDefault();
         clearLongPress();
-        hideLocalCursor();
-        if (isTouch(event) && touchState?.downSent) sendMouse('up', event, { button: 0 });
-        activePointers.delete(event.pointerId);
-        if (!activePointers.size) resetTouchState();
-    });
 
-    canvas.addEventListener('wheel', (event) => {
-        markRdpUserInput();
-        if (isRdpInputSuppressed()) { event.preventDefault(); event.stopPropagation(); return; }
-        /* Ctrl+wheel = zoom (match Windows RDP App behavior) */
-        if (event.ctrlKey) {
-            event.preventDefault();
-            displayZoom = Math.max(50, Math.min(500, displayZoom + (event.deltaY > 0 ? -10 : 10)));
-            displayScaleMode = 'actual';
-            localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode);
-            applyDisplayScale();
+        if (touchState?.mode === 'done' || touchState?.mode === 'long-press' || /^2f/.test(touchState?.mode || '')) {
+            if (!activePointers.size) resetTouch();
             return;
         }
-        sendMouse('wheel', event, { deltaY: event.deltaY || 0, deltaX: event.deltaX || 0 });
-        event.preventDefault();
+        if (touchState?.dragging) {
+            sendMouse('up', e, { button: 0 });
+        } else if (touchState?.mode === 'pending' && !activePointers.size) {
+            const now = Date.now();
+            const dbl = lastTap && now - lastTapAt < 300 && dist(lastTap, { x: e.clientX, y: e.clientY }) < 30;
+            sendLeftClick(e.clientX, e.clientY);
+            if (dbl) setTimeout(() => sendLeftClick(e.clientX, e.clientY), 40);
+            lastTapAt = now;
+            lastTap = { x: e.clientX, y: e.clientY };
+        }
+        if (!activePointers.size) resetTouch();
+    });
+
+    canvas.addEventListener('pointercancel', (e) => {
+        clearLongPress();
+        if (isTouch(e) && touchState?.dragging) sendMouse('up', e, { button: 0 });
+        activePointers.delete(e.pointerId);
+        if (!activePointers.size) resetTouch();
+    });
+
+    canvas.addEventListener('wheel', (e) => {
+        markRdpUserInput();
+        if (isRdpInputSuppressed()) { e.preventDefault(); return; }
+        if (e.ctrlKey) { e.preventDefault(); displayZoom = Math.max(50, Math.min(500, displayZoom + (e.deltaY > 0 ? -10 : 10))); displayScaleMode = 'actual'; localStorage.setItem('zephyr-rdp-display-scale-mode', displayScaleMode); applyDisplayScale(); return; }
+        sendMouse('wheel', e, { deltaY: e.deltaY || 0, deltaX: e.deltaX || 0 });
+        e.preventDefault();
     }, { passive: false });
-        canvas.addEventListener('keydown', (event) => {
+            canvas.addEventListener('keydown', (event) => {
         markRdpUserInput();
         if ((event.ctrlKey || event.metaKey) && String(event.key || '').toLowerCase() === 'v' && pendingRdpClipboardFiles.length) {
             event.preventDefault();
