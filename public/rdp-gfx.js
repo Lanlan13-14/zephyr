@@ -1258,20 +1258,10 @@ async function connect() {
             setTimeout(() => { rdpReplacingConnection = false; }, 250);
         }
         client = null;
-        const rendererPref = String(localStorage.getItem('zephyr-rdp-renderer') || params.rdpRenderer || 'auto').toLowerCase();
-        const disableWorker = /^(0|false|no|direct|webp)$/i.test(rendererPref);
-        if (!disableWorker) {
-            try {
-                requireModernRdpBrowser();
-                await connectWorkerRdp({ firstFrameTimeoutMs: 4800 });
-                return;
-            } catch (workerErr) {
-                console.warn('[RDP] WebCodecs/worker path failed, falling back to direct canvas:', workerErr);
-                updateRdpDiagnostics({ renderer: 'direct', codec: 'webp', fallbackReason: workerErr?.message || String(workerErr || 'worker failed') }, { force: true });
-                setStatus('connecting', `WebCodecs 首帧失败，降级稳定渲染：${workerErr?.message || workerErr}`, { holdOverlayMs: 1800 });
-                try { await client?.destroy?.(); } catch {}
-                client = null;
-            }
+        /* Single renderer: direct canvas with WebCodecs H.264 VideoDecoder.
+         * No fallback, no worker path. If WebCodecs is unavailable, fail explicitly. */
+        if (typeof VideoDecoder === 'undefined') {
+            throw new Error('此浏览器不支持 WebCodecs VideoDecoder，无法使用 RDP');
         }
         await connectDirectCanvasRdp();
         return;
