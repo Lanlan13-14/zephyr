@@ -1915,14 +1915,8 @@ static void maybe_init_gfx_pipeline(BridgeContext* bctx)
 
     rdpContext* rctx = (rdpContext*)bctx;
     if (rctx && rctx->gdi) {
-        gdi_graphics_pipeline_init(rctx->gdi, gfx);
-        /* Intercept after GDI init */
-        bctx->gdi_surface_command = gfx->SurfaceCommand;
-        bctx->gdi_start_frame = gfx->StartFrame;
-        bctx->gdi_end_frame = gfx->EndFrame;
-        gfx->SurfaceCommand = bridge_intercept_surface_command;
-        gfx->StartFrame = bridge_intercept_start_frame;
-        gfx->EndFrame = bridge_intercept_end_frame;
+        gdi_graphics_pipeline_init_ex(rctx->gdi, gfx, NULL, NULL,
+                                       bridge_gfx_update_surface_area);
     }
 
     pthread_mutex_lock(&bctx->gfx_mutex);
@@ -2612,42 +2606,21 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
     }
     else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
         /* GFX pipeline connected.
-         *
-         * Strategy:
-         * 1. gdi_graphics_pipeline_init() — sets up codec state AND registers
-         *    GDI callbacks for surface lifecycle + frame decode
-         * 2. Save GDI's SurfaceCommand callback
-         * 3. Replace ONLY SurfaceCommand with our interceptor
-         * 4. Our interceptor grabs raw H.264 NAL from cmd->extra,
-         *    sends it to browser, then calls original GDI SurfaceCommand
-         *    so GDI surface state stays consistent
-         *
-         * All other callbacks (CreateSurface, StartFrame, etc.) stay as
-         * GDI's originals — they manage internal surface hashtables and
-         * rely on gfx->custom == rdpGdi*.
-         */
+         * Use gdi_graphics_pipeline_init_ex with UpdateSurfaceArea callback
+         * for dirty-rect based frame capture. This is the only working path
+         * in FreeRDP 3.x — the plugin does not dispatch SurfaceCommand
+         * through the function pointer on RdpgfxClientContext. */
         RdpgfxClientContext* gfx = (RdpgfxClientContext*)e->pInterface;
         bctx->gfx = gfx;
 
         if (gfx) {
             rdpContext* rctx = (rdpContext*)bctx;
             if (rctx && rctx->gdi) {
-                if (!gdi_graphics_pipeline_init(rctx->gdi, gfx)) {
-                    fprintf(stderr, "[rdp_bridge] WARNING: gdi_graphics_pipeline_init failed\n");
+                if (!gdi_graphics_pipeline_init_ex(rctx->gdi, gfx, NULL, NULL,
+                                                    bridge_gfx_update_surface_area)) {
+                    fprintf(stderr, "[rdp_bridge] WARNING: gdi_graphics_pipeline_init_ex failed\n");
                 }
             }
-
-            /* Save GDI's SurfaceCommand for chaining, replace with ours.
-             * gfx->custom stays as rdpGdi* — our interceptor recovers
-             * BridgeContext from gdi->context. */
-            bctx->gdi_surface_command = gfx->SurfaceCommand;
-            gfx->SurfaceCommand = bridge_intercept_surface_command;
-
-            /* Also save+replace StartFrame/EndFrame for frame boundary tracking */
-            bctx->gdi_start_frame = gfx->StartFrame;
-            bctx->gdi_end_frame = gfx->EndFrame;
-            gfx->StartFrame = bridge_intercept_start_frame;
-            gfx->EndFrame = bridge_intercept_end_frame;
 
             pthread_mutex_lock(&bctx->gfx_mutex);
             bctx->gfx_active = true;
@@ -2655,7 +2628,7 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
             bctx->gfx_pipeline_needs_init = false;
             pthread_mutex_unlock(&bctx->gfx_mutex);
 
-            fprintf(stderr, "[rdp_bridge] GFX: gdi_init + SurfaceCommand intercept installed\n");
+            fprintf(stderr, "[rdp_bridge] GFX: gdi_init_ex with dirty-rect capture\n");
         }
     }
 }
@@ -4054,6 +4027,15 @@ static UINT bridge_intercept_surface_command(RdpgfxClientContext* context,
     rdpGdi* gdi = (rdpGdi*)context->custom;
     BridgeContext* bctx = gdi ? (BridgeContext*)gdi->context : NULL;
 
+    static int sc_logged = 0;
+    if (sc_logged < 5) {
+        fprintf(stderr, "[INTERCEPT] SurfaceCommand called: codec=0x%04X surface=%u rect=(%d,%d,%d,%d) bctx=%p\n",
+                cmd ? cmd->codecId : 0, cmd ? cmd->surfaceId : 0,
+                cmd ? cmd->left : 0, cmd ? cmd->top : 0, cmd ? cmd->right : 0, cmd ? cmd->bottom : 0,
+                (void*)bctx);
+        sc_logged++;
+    }
+
     if (bctx && cmd) {
         /* Extract raw H.264 NAL BEFORE GDI decodes it */
         RdpRect rect = { .x = cmd->left, .y = cmd->top,
@@ -4104,6 +4086,13 @@ static UINT bridge_intercept_start_frame(RdpgfxClientContext* context,
 {
     rdpGdi* gdi = (rdpGdi*)context->custom;
     BridgeContext* bctx = gdi ? (BridgeContext*)gdi->context : NULL;
+
+    static int sf_logged = 0;
+    if (sf_logged < 3) {
+        fprintf(stderr, "[INTERCEPT] StartFrame called: frameId=%u bctx=%p\n",
+                start ? start->frameId : 0, (void*)bctx);
+        sf_logged++;
+    }
 
     if (bctx && start) {
         bctx->current_frame_id = start->frameId;
