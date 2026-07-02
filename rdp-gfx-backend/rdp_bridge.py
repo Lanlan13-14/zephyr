@@ -782,24 +782,18 @@ class RDPBridge:
             if event.bitmap_data and event.bitmap_size > 0:
                 tile_data = ctypes.string_at(event.bitmap_data, event.bitmap_size)
                 self._lib.rdp_free_gfx_event_data(event.bitmap_data)
-                
-                # codec_id == 0xFFFF means raw RGBA tile (no WebP encoding)
+                # codec_id 0xFFFF = raw RGBA (from flush_dirty_rects)
                 if event.codec_id == 0xFFFF:
                     return build_raw_tile(
-                        event.frame_id,
-                        event.surface_id,
-                        event.x, event.y,
-                        event.width, event.height,
+                        event.frame_id, event.surface_id,
+                        event.x, event.y, event.width, event.height,
                         tile_data
                     )
-                else:
-                    return build_webp_tile(
-                        event.frame_id,
-                        event.surface_id,
-                        event.x, event.y,
-                        event.width, event.height,
-                        tile_data
-                    )
+                return build_webp_tile(
+                    event.frame_id, event.surface_id,
+                    event.x, event.y, event.width, event.height,
+                    tile_data
+                )
             return None
         elif event.type == RDP_GFX_EVENT_VIDEO_FRAME:
             # Video frame (H.264/Progressive/ClearCodec) - route by codec ID

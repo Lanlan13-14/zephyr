@@ -159,11 +159,6 @@ typedef struct {
     uint32_t dirty_rect_count;
     bool dirty_rects_pending;
     uint16_t dirty_surface_id;
-
-    /* Saved GDI callbacks for chaining in SurfaceCommand intercept */
-    pcRdpgfxSurfaceCommand gdi_surface_command;
-    pcRdpgfxStartFrame gdi_start_frame;
-    pcRdpgfxEndFrame gdi_end_frame;
     pthread_mutex_t gfx_mutex;
     
     /* Audio playback */
@@ -292,9 +287,6 @@ static void queue_webp_tile(BridgeContext* ctx, uint16_t surface_id,
                             const uint8_t* bgra_data, int stride);
 static void maybe_queue_gdi_fallback_frame(BridgeContext* ctx);
 static void flush_dirty_rects(BridgeContext* ctx);
-static UINT bridge_intercept_surface_command(RdpgfxClientContext* context, const RDPGFX_SURFACE_COMMAND* cmd);
-static UINT bridge_intercept_start_frame(RdpgfxClientContext* context, const RDPGFX_START_FRAME_PDU* start);
-static UINT bridge_intercept_end_frame(RdpgfxClientContext* context, const RDPGFX_END_FRAME_PDU* end);
 static UINT bridge_gfx_update_surface_area(RdpgfxClientContext* context,
                                             UINT16 surfaceId,
                                             UINT32 nrRects,
@@ -1199,7 +1191,7 @@ RdpSession* rdp_create(
      * Zephyr's RDPEGFX wire-through callbacks and browser WebCodecs; this only
      * prevents servers from stalling after CreateSurface when decoding is marked
      * deactivated. */
-    if (!freerdp_settings_set_bool(settings, FreeRDP_DeactivateClientDecoding, FALSE)) goto fail;
+    if (!freerdp_settings_set_bool(settings, FreeRDP_DeactivateClientDecoding, TRUE)) goto fail;
     
     /* Enable Dynamic Virtual Channels (DVCs) - REQUIRED for GFX pipeline.
      * Without this, drdynvc static channel won't load and no DVCs will connect. */
@@ -1240,12 +1232,6 @@ RdpSession* rdp_create(
      * GfxThinClient = FALSE: Keep full AVC444/H.264 quality (ThinClient would reduce it). */
     if (!freerdp_settings_set_bool(settings, FreeRDP_GfxSmallCache, FALSE)) goto fail;
     if (!freerdp_settings_set_bool(settings, FreeRDP_GfxThinClient, FALSE)) goto fail;
-
-    /* Force H.264/AVC420: filter out GFX caps 10.x+ so server must use 8.1 with AVC420.
-     * GfxCapsFilter bitmask: bit N=1 means capList[N] is filtered OUT.
-     * capList = [8, 81, 10, 101, 102, 103, 104, 105, 106, 106err, 107, ...]
-     * We keep bits 0,1 (8 and 81) clear, set bits 2+ to filter out 10.x+. */
-    if (!freerdp_settings_set_uint32(settings, FreeRDP_GfxCapsFilter, 0xFFFFFFFC)) goto fail;
     
     /* Audio playback - configure rdpsnd with our bridge device plugin.
      * We add rdpsnd to BOTH static and dynamic channel collections with sys:bridge
@@ -1921,18 +1907,19 @@ static void maybe_init_gfx_pipeline(BridgeContext* bctx)
 
     rdpContext* rctx = (rdpContext*)bctx;
     if (rctx && rctx->gdi) {
-        gdi_graphics_pipeline_init_ex(rctx->gdi, gfx, NULL, NULL,
-                                       bridge_gfx_update_surface_area);
-        bctx->gdi_surface_command = gfx->SurfaceCommand;
-        gfx->SurfaceCommand = bridge_intercept_surface_command;
+        gdi_graphics_pipeline_init(rctx->gdi, gfx);
     }
+    /* Same override as channel_connected */
+    gfx->SurfaceCommand = gfx_on_surface_command;
+    gfx->StartFrame = gfx_on_start_frame;
+    gfx->EndFrame = gfx_on_end_frame;
 
     pthread_mutex_lock(&bctx->gfx_mutex);
     bctx->gfx_pipeline_needs_init = false;
     bctx->gfx_pipeline_ready = true;
     pthread_mutex_unlock(&bctx->gfx_mutex);
 
-    fprintf(stderr, "[rdp_bridge] Deferred GFX: gdi_init + wire-through override\n");
+    fprintf(stderr, "[rdp_bridge] Deferred GFX: zero-decode passthrough\n");
 }
 
 /* ============================================================================
@@ -2039,18 +2026,11 @@ int rdp_poll(RdpSession* session, int timeout_ms)
     int has_gfx_events = ctx->gfx_event_count > 0;
     pthread_mutex_unlock(&ctx->gfx_event_mutex);
 
-    /* When GFX is active, flush dirty rects accumulated by UpdateSurfaceArea.
-     * When GFX is not active (legacy RDP), use full-frame GDI fallback. */
+    /* Wire-through: gfx_on_surface_command/start_frame/end_frame queue events
+     * directly. Only use GDI fallback for legacy RDP without RDPGFX. */
     pthread_mutex_lock(&ctx->gfx_mutex);
     bool wire_through_active = ctx->gfx_pipeline_ready && ctx->gfx_active;
     pthread_mutex_unlock(&ctx->gfx_mutex);
-    /* Flush dirty rects from UpdateSurfaceArea callback (handles all codecs
-     * after GDI decode: ClearCodec, Progressive, Uncompressed, etc.)
-     * For H.264, the interceptor sends NAL directly; GDI also decodes it
-     * but we prefer the browser-decoded result. dirty rects from H.264
-     * are harmless (browser ignores duplicate WebP tiles over H.264 canvas). */
-    flush_dirty_rects(ctx);
-    /* GDI fallback for legacy RDP without RDPGFX */
     if (!wire_through_active) {
         maybe_queue_gdi_fallback_frame(ctx);
     }
@@ -2618,37 +2598,42 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
         pthread_mutex_unlock(&bctx->opus_mutex);
     }
     else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
-        /* GFX pipeline: gdi_init for codec + replace SurfaceCommand only.
+        /* GFX pipeline: zero-decode H.264 passthrough.
          *
-         * Source verified: FreeRDP calls context->SurfaceCommand via
-         * IFCALLRESULT in logSurfaceCommand (rdpgfx_codec.c).
-         * cmd->extra contains raw H.264 NAL data BEFORE decode.
+         * With DeactivateClientDecoding=TRUE:
+         *   gdi_graphics_pipeline_init() registers surface lifecycle callbacks
+         *   (CreateSurface, MapSurface, StartFrame, EndFrame, etc.) but:
+         *   - Skips codec init (gfx->codecs = NULL) — no H.264 decoder created
+         *   - Nulls out SurfaceCommand — we replace it with our interceptor
          *
-         * gfx->custom MUST stay rdpGdi* (other GDI callbacks need it).
-         * Our SurfaceCommand recovers BridgeContext via gdi->context. */
+         * FreeRDP's rdpgfx transport still calls rdpgfx_decode() which parses
+         * the H.264 metablock and sets cmd->extra->data = raw NAL bytes.
+         * Then logSurfaceCommand() calls our interceptor with the raw NAL.
+         * We send it to the browser. Server-side decode = zero.
+         *
+         * GfxH264=TRUE + GfxAVC444=FALSE means only GFX 8.x caps are
+         * advertised, forcing the server to use H.264/AVC420.
+         */
         RdpgfxClientContext* gfx = (RdpgfxClientContext*)e->pInterface;
         bctx->gfx = gfx;
-        fprintf(stderr, "[rdp_bridge] RDPGFX channel connected, gfx=%p, gdi=%p\n",
-                (void*)gfx, (void*)(((rdpContext*)bctx)->gdi));
 
         if (gfx) {
             rdpContext* rctx = (rdpContext*)bctx;
             if (rctx && rctx->gdi) {
-                /* Use init_ex with UpdateSurfaceArea for dirty-rect capture.
-                 * This handles non-H.264 codecs (ClearCodec, Progressive)
-                 * that GDI decodes but we need to capture the result. */
-                if (!gdi_graphics_pipeline_init_ex(rctx->gdi, gfx, NULL, NULL,
-                                                    bridge_gfx_update_surface_area)) {
-                    fprintf(stderr, "[rdp_bridge] WARNING: gdi_graphics_pipeline_init_ex failed\n");
+                if (!gdi_graphics_pipeline_init(rctx->gdi, gfx)) {
+                    fprintf(stderr, "[rdp_bridge] WARNING: gdi_graphics_pipeline_init failed\n");
                 }
             }
 
-            /* Save GDI's SurfaceCommand, replace with our interceptor.
-             * For H.264: intercepts raw NAL and sends to browser directly.
-             * For other codecs: falls through to GDI decode, dirty-rect captures result.
-             * DO NOT touch gfx->custom — must remain rdpGdi*. */
-            bctx->gdi_surface_command = gfx->SurfaceCommand;
-            gfx->SurfaceCommand = bridge_intercept_surface_command;
+            /* DeactivateClientDecoding=TRUE nulled SurfaceCommand.
+             * Install our zero-decode interceptor. DO NOT touch gfx->custom
+             * (must remain rdpGdi* for surface lifecycle callbacks). */
+            gfx->SurfaceCommand = gfx_on_surface_command;
+            /* Recover BridgeContext in callbacks via ((rdpGdi*)gfx->custom)->context */
+
+            /* Also register our StartFrame/EndFrame for event queue */
+            gfx->StartFrame = gfx_on_start_frame;
+            gfx->EndFrame = gfx_on_end_frame;
 
             pthread_mutex_lock(&bctx->gfx_mutex);
             bctx->gfx_active = true;
@@ -2656,7 +2641,7 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
             bctx->gfx_pipeline_needs_init = false;
             pthread_mutex_unlock(&bctx->gfx_mutex);
 
-            fprintf(stderr, "[rdp_bridge] GFX: codec init + SurfaceCommand intercept\n");
+            fprintf(stderr, "[rdp_bridge] GFX: zero-decode passthrough (DeactivateClientDecoding=TRUE)\n");
         }
     }
 }
@@ -2684,11 +2669,8 @@ static void bridge_on_channel_disconnected(void* ctx, const ChannelDisconnectedE
     }
     else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
         pthread_mutex_lock(&bctx->gfx_mutex);
-        /* Restore GDI's original SurfaceCommand before cleanup */
-        if (bctx->gfx && bctx->gdi_surface_command) {
-            bctx->gfx->SurfaceCommand = bctx->gdi_surface_command;
-            bctx->gdi_surface_command = NULL;
-        }
+        /* gdi_graphics_pipeline_uninit is called by gdi_free() in PostDisconnect.
+         * Calling it here causes double-free / SIGSEGV. */
         bctx->gfx = NULL;
         bctx->gfx_active = false;
         bctx->gfx_pipeline_ready = false;
@@ -3587,7 +3569,10 @@ static bool queue_video_frame_event(BridgeContext* bctx, uint32_t frame_id, uint
 
 static UINT gfx_on_surface_command(RdpgfxClientContext* context, const RDPGFX_SURFACE_COMMAND* cmd)
 {
-    BridgeContext* bctx = (BridgeContext*)context->custom;
+    /* gfx->custom = rdpGdi* (set by gdi_graphics_pipeline_init).
+     * Recover BridgeContext via gdi->context (which is rdpContext* = BridgeContext*). */
+    rdpGdi* gdi = (rdpGdi*)context->custom;
+    BridgeContext* bctx = gdi ? (BridgeContext*)gdi->context : NULL;
     if (!bctx) return ERROR_INVALID_PARAMETER;
     
     /* Track commands in this frame */
@@ -3821,8 +3806,8 @@ static UINT gfx_on_surface_command(RdpgfxClientContext* context, const RDPGFX_SU
 
 static UINT gfx_on_start_frame(RdpgfxClientContext* context, const RDPGFX_START_FRAME_PDU* start)
 {
-    /* PURE GFX MODE: Just track frame ID, no GDI chaining needed */
-    BridgeContext* bctx = (BridgeContext*)context->custom;
+    rdpGdi* gdi = (rdpGdi*)context->custom;
+    BridgeContext* bctx = gdi ? (BridgeContext*)gdi->context : NULL;
     if (!bctx || !start) return ERROR_INVALID_PARAMETER;
     
     /* Mark frame as in progress - Python should not send frames while this is true */
@@ -3853,7 +3838,8 @@ static UINT gfx_on_end_frame(RdpgfxClientContext* context, const RDPGFX_END_FRAM
      * This ensures proper backpressure - the server won't flood us with frames
      * faster than the browser can decode them.
      */
-    BridgeContext* bctx = (BridgeContext*)context->custom;
+    rdpGdi* gdi = (rdpGdi*)context->custom;
+    BridgeContext* bctx = gdi ? (BridgeContext*)gdi->context : NULL;
     if (!bctx || !end) return ERROR_INVALID_PARAMETER;
     
     pthread_mutex_lock(&bctx->gfx_mutex);
@@ -4043,135 +4029,6 @@ static uint32_t zephyr_target_frame_interval_ms(void)
 }
 
 /* ============================================================================
- * SurfaceCommand / StartFrame / EndFrame interceptors
- *
- * These replace GDI's callbacks AFTER gdi_graphics_pipeline_init().
- * They extract raw H.264 NAL data from cmd->extra and queue it for the
- * browser, then chain to GDI's original callback so surface state stays
- * consistent. gfx->custom is still rdpGdi* — we recover BridgeContext
- * from gdi->context.
- * ============================================================================ */
-
-static UINT bridge_intercept_surface_command(RdpgfxClientContext* context,
-                                              const RDPGFX_SURFACE_COMMAND* cmd)
-{
-    rdpGdi* gdi = (rdpGdi*)context->custom;
-    BridgeContext* bctx = gdi ? (BridgeContext*)gdi->context : NULL;
-
-    static int sc_logged = 0;
-    if (sc_logged < 5) {
-        fprintf(stderr, "[INTERCEPT] SurfaceCommand called: codec=0x%04X surface=%u rect=(%d,%d,%d,%d) bctx=%p\n",
-                cmd ? cmd->codecId : 0, cmd ? cmd->surfaceId : 0,
-                cmd ? cmd->left : 0, cmd ? cmd->top : 0, cmd ? cmd->right : 0, cmd ? cmd->bottom : 0,
-                (void*)bctx);
-        sc_logged++;
-    }
-
-    if (bctx && cmd) {
-        /* Extract raw H.264 NAL BEFORE GDI decodes it */
-        RdpRect rect = { .x = cmd->left, .y = cmd->top,
-                         .width = cmd->right - cmd->left,
-                         .height = cmd->bottom - cmd->top };
-
-        /* AVC420/AVC444: rect may be (0,0,0,0) for full-surface frames.
-         * Use surface dimensions so browser VideoDecoder knows the size. */
-        if (rect.width == 0 || rect.height == 0) {
-            uint16_t sid = cmd->surfaceId;
-            if (sid < RDP_MAX_GFX_SURFACES && bctx->surfaces[sid].active) {
-                rect.width = bctx->surfaces[sid].width;
-                rect.height = bctx->surfaces[sid].height;
-            } else {
-                rect.width = bctx->frame_width;
-                rect.height = bctx->frame_height;
-            }
-        }
-
-        switch (cmd->codecId) {
-            case RDPGFX_CODECID_AVC420: {
-                const RDPGFX_AVC420_BITMAP_STREAM* avc = cmd->extra;
-                if (avc && avc->data && avc->length > 0) {
-                    queue_video_frame_event(bctx, bctx->current_frame_id,
-                        cmd->surfaceId, RDP_GFX_CODEC_AVC420, &rect,
-                        avc->data, avc->length, NULL, 0);
-                }
-                break;
-            }
-            case RDPGFX_CODECID_AVC444:
-            case RDPGFX_CODECID_AVC444v2: {
-                const RDPGFX_AVC444_BITMAP_STREAM* avc = cmd->extra;
-                if (avc) {
-                    const uint8_t* luma = avc->bitstream[0].data;
-                    uint32_t luma_sz = avc->bitstream[0].length;
-                    const uint8_t* chroma = avc->bitstream[1].data;
-                    uint32_t chroma_sz = avc->bitstream[1].length;
-                    RdpGfxCodecId c = (cmd->codecId == RDPGFX_CODECID_AVC444v2)
-                                       ? RDP_GFX_CODEC_AVC444v2 : RDP_GFX_CODEC_AVC444;
-                    if (luma && luma_sz > 0)
-                        queue_video_frame_event(bctx, bctx->current_frame_id,
-                            cmd->surfaceId, c, &rect, luma, luma_sz, chroma, chroma_sz);
-                }
-                break;
-            }
-            default:
-                /* Non-H.264 codecs (ClearCodec, Planar, Uncompressed) —
-                 * let GDI handle them, dirty-rect capture will pick up the result */
-                break;
-        }
-    }
-
-    /* Chain to GDI's original SurfaceCommand so it decodes and manages surfaces */
-    if (bctx && bctx->gdi_surface_command)
-        return bctx->gdi_surface_command(context, cmd);
-    return CHANNEL_RC_OK;
-}
-
-static UINT bridge_intercept_start_frame(RdpgfxClientContext* context,
-                                          const RDPGFX_START_FRAME_PDU* start)
-{
-    rdpGdi* gdi = (rdpGdi*)context->custom;
-    BridgeContext* bctx = gdi ? (BridgeContext*)gdi->context : NULL;
-
-    static int sf_logged = 0;
-    if (sf_logged < 3) {
-        fprintf(stderr, "[INTERCEPT] StartFrame called: frameId=%u bctx=%p\n",
-                start ? start->frameId : 0, (void*)bctx);
-        sf_logged++;
-    }
-
-    if (bctx && start) {
-        bctx->current_frame_id = start->frameId;
-        /* Queue StartFrame event for browser */
-        RdpGfxEvent ev = {0};
-        ev.type = RDP_GFX_EVENT_START_FRAME;
-        ev.frame_id = start->frameId;
-        gfx_queue_event(bctx, &ev);
-    }
-
-    if (bctx && bctx->gdi_start_frame)
-        return bctx->gdi_start_frame(context, start);
-    return CHANNEL_RC_OK;
-}
-
-static UINT bridge_intercept_end_frame(RdpgfxClientContext* context,
-                                        const RDPGFX_END_FRAME_PDU* end)
-{
-    rdpGdi* gdi = (rdpGdi*)context->custom;
-    BridgeContext* bctx = gdi ? (BridgeContext*)gdi->context : NULL;
-
-    if (bctx && end) {
-        /* Queue EndFrame event for browser */
-        RdpGfxEvent ev = {0};
-        ev.type = RDP_GFX_EVENT_END_FRAME;
-        ev.frame_id = end->frameId;
-        gfx_queue_event(bctx, &ev);
-    }
-
-    if (bctx && bctx->gdi_end_frame)
-        return bctx->gdi_end_frame(context, end);
-    return CHANNEL_RC_OK;
-}
-
-/* ============================================================================
  * Dirty-rect capture via gdi_graphics_pipeline_init_ex UpdateSurfaceArea
  * ============================================================================ */
 static UINT bridge_gfx_update_surface_area(RdpgfxClientContext* context,
@@ -4288,34 +4145,35 @@ static void flush_dirty_rects(BridgeContext* ctx)
             const uint8_t* row = fb + (size_t)(ry + y) * fb_stride + (size_t)rx * 4;
             uint8_t* out = rgba + (size_t)y * rw * 4;
             for (uint32_t x = 0; x < rw; x++) {
-                out[x * 4 + 0] = row[x * 4 + 2]; /* R */
-                out[x * 4 + 1] = row[x * 4 + 1]; /* G */
-                out[x * 4 + 2] = row[x * 4 + 0]; /* B */
-                out[x * 4 + 3] = 0xFF;            /* A */
+                out[x * 4 + 0] = row[x * 4 + 2];
+                out[x * 4 + 1] = row[x * 4 + 1];
+                out[x * 4 + 2] = row[x * 4 + 0];
+                out[x * 4 + 3] = 0xFF;
             }
         }
-
-        /* Send raw RGBA tile — no WebP encode overhead.
-         * TILE magic: TILE(4) + frameId(4) + surfaceId(2) + x(2) + y(2) + w(2) + h(2) + rgba_data
-         * Total header: 18 bytes */
+        /* Send raw RGBA tile — skip WebP encode/decode overhead.
+         * Use WEBP_TILE event type but mark codec_id=0xFFFF for Python
+         * to use TILE magic instead of WEBP magic. */
         {
-            size_t data_size = (size_t)rw * rh * 4;
-            RdpGfxEvent ev = {0};
-            ev.type = RDP_GFX_EVENT_WEBP_TILE; /* Reuse WEBP_TILE event type — Python sends it with TILE magic instead */
-            ev.frame_id = frame_id;
-            ev.surface_id = sid;
-            ev.x = rx;
-            ev.y = ry;
-            ev.width = rw;
-            ev.height = rh;
-            ev.bitmap_data = rgba; /* Transfer ownership — Python frees after send */
-            ev.bitmap_size = (uint32_t)data_size;
-            ev.codec_id = 0xFFFF; /* Marker: raw RGBA, not WebP */
-            gfx_queue_event(ctx, &ev);
-            rgba = NULL; /* Ownership transferred */
+            size_t data_sz = (size_t)rw * rh * 4;
+            uint8_t* copy = (uint8_t*)malloc(data_sz);
+            if (copy) {
+                memcpy(copy, rgba, data_sz);
+                RdpGfxEvent te = {0};
+                te.type = RDP_GFX_EVENT_WEBP_TILE;
+                te.frame_id = frame_id;
+                te.surface_id = sid;
+                te.x = rx;
+                te.y = ry;
+                te.width = rw;
+                te.height = rh;
+                te.bitmap_data = copy;
+                te.bitmap_size = (uint32_t)data_sz;
+                te.codec_id = 0xFFFF; /* raw RGBA marker */
+                gfx_queue_event(ctx, &te);
+            }
         }
-
-        if (rgba) free(rgba);
+        free(rgba);
     }
 
     RdpGfxEvent ef = {0};
