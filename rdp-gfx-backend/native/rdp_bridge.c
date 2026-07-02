@@ -2616,6 +2616,8 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
          * Our SurfaceCommand recovers BridgeContext via gdi->context. */
         RdpgfxClientContext* gfx = (RdpgfxClientContext*)e->pInterface;
         bctx->gfx = gfx;
+        fprintf(stderr, "[rdp_bridge] RDPGFX channel connected, gfx=%p, gdi=%p\n",
+                (void*)gfx, (void*)(((rdpContext*)bctx)->gdi));
 
         if (gfx) {
             rdpContext* rctx = (rdpContext*)bctx;
@@ -4049,6 +4051,19 @@ static UINT bridge_intercept_surface_command(RdpgfxClientContext* context,
         RdpRect rect = { .x = cmd->left, .y = cmd->top,
                          .width = cmd->right - cmd->left,
                          .height = cmd->bottom - cmd->top };
+
+        /* AVC420/AVC444: rect may be (0,0,0,0) for full-surface frames.
+         * Use surface dimensions so browser VideoDecoder knows the size. */
+        if (rect.width == 0 || rect.height == 0) {
+            uint16_t sid = cmd->surfaceId;
+            if (sid < RDP_MAX_GFX_SURFACES && bctx->surfaces[sid].active) {
+                rect.width = bctx->surfaces[sid].width;
+                rect.height = bctx->surfaces[sid].height;
+            } else {
+                rect.width = bctx->frame_width;
+                rect.height = bctx->frame_height;
+            }
+        }
 
         switch (cmd->codecId) {
             case RDPGFX_CODECID_AVC420: {

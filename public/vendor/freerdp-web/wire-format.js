@@ -508,7 +508,7 @@ export function parseH264Frame(data) {
     const destH = readU16LE(data, 19);
     const nalSize = readU32LE(data, 21);
     const chromaNalSize = readU32LE(data, 25);
-    if (!destW || !destH) return null;
+    /* destW/destH may be 0 for AVC420 full-surface frames */
     if (data.length < 29 + nalSize + chromaNalSize) return null;
     
     return {

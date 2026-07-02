@@ -876,11 +876,13 @@ async function connectDirectCanvasRdp() {
         } else if (msg.type === 'videoFrame') {
             /* H.264 AVC420/AVC444 → WebCodecs VideoDecoder */
             if (typeof VideoDecoder === 'undefined') return;
+            const fw = msg.destW || canvas.width;
+            const fh = msg.destH || canvas.height;
             let surface = surfaces.get(msg.surfaceId);
             if (!surface) {
                 const s = document.createElement('canvas');
-                s.width = Math.max(canvas.width, msg.destX + msg.destW);
-                s.height = Math.max(canvas.height, msg.destY + msg.destH);
+                s.width = Math.max(canvas.width, msg.destX + fw);
+                s.height = Math.max(canvas.height, msg.destY + fh);
                 surface = { canvas: s, ctx: s.getContext('2d', { alpha: false }), width: s.width, height: s.height };
                 surfaces.set(msg.surfaceId, surface);
                 if (primarySurfaceId === null) primarySurfaceId = msg.surfaceId;
@@ -897,7 +899,8 @@ async function connectDirectCanvasRdp() {
                     },
                     error: (e) => { console.error('[H.264 decode]', e); },
                 });
-                directH264Decoder.configure({ codec: 'avc1.42001f', optimizeForLatency: true });
+                /* Use High profile for broad compatibility with RDP servers */
+                directH264Decoder.configure({ codec: 'avc1.640028', optimizeForLatency: true });
             }
             h264DecodeSurface = surface;
             h264DecodeX = msg.destX;
