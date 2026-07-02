@@ -1915,8 +1915,9 @@ static void maybe_init_gfx_pipeline(BridgeContext* bctx)
 
     rdpContext* rctx = (rdpContext*)bctx;
     if (rctx && rctx->gdi) {
-        gdi_graphics_pipeline_init_ex(rctx->gdi, gfx, NULL, NULL,
-                                       bridge_gfx_update_surface_area);
+        gdi_graphics_pipeline_init(rctx->gdi, gfx);
+        bctx->gdi_surface_command = gfx->SurfaceCommand;
+        gfx->SurfaceCommand = bridge_intercept_surface_command;
     }
 
     pthread_mutex_lock(&bctx->gfx_mutex);
@@ -2605,22 +2606,29 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
         pthread_mutex_unlock(&bctx->opus_mutex);
     }
     else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
-        /* GFX pipeline connected.
-         * Use gdi_graphics_pipeline_init_ex with UpdateSurfaceArea callback
-         * for dirty-rect based frame capture. This is the only working path
-         * in FreeRDP 3.x — the plugin does not dispatch SurfaceCommand
-         * through the function pointer on RdpgfxClientContext. */
+        /* GFX pipeline: gdi_init for codec + replace SurfaceCommand only.
+         *
+         * Source verified: FreeRDP calls context->SurfaceCommand via
+         * IFCALLRESULT in logSurfaceCommand (rdpgfx_codec.c).
+         * cmd->extra contains raw H.264 NAL data BEFORE decode.
+         *
+         * gfx->custom MUST stay rdpGdi* (other GDI callbacks need it).
+         * Our SurfaceCommand recovers BridgeContext via gdi->context. */
         RdpgfxClientContext* gfx = (RdpgfxClientContext*)e->pInterface;
         bctx->gfx = gfx;
 
         if (gfx) {
             rdpContext* rctx = (rdpContext*)bctx;
             if (rctx && rctx->gdi) {
-                if (!gdi_graphics_pipeline_init_ex(rctx->gdi, gfx, NULL, NULL,
-                                                    bridge_gfx_update_surface_area)) {
-                    fprintf(stderr, "[rdp_bridge] WARNING: gdi_graphics_pipeline_init_ex failed\n");
+                if (!gdi_graphics_pipeline_init(rctx->gdi, gfx)) {
+                    fprintf(stderr, "[rdp_bridge] WARNING: gdi_graphics_pipeline_init failed\n");
                 }
             }
+
+            /* Save GDI's SurfaceCommand, replace with our interceptor.
+             * DO NOT touch gfx->custom — must remain rdpGdi*. */
+            bctx->gdi_surface_command = gfx->SurfaceCommand;
+            gfx->SurfaceCommand = bridge_intercept_surface_command;
 
             pthread_mutex_lock(&bctx->gfx_mutex);
             bctx->gfx_active = true;
@@ -2628,7 +2636,7 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
             bctx->gfx_pipeline_needs_init = false;
             pthread_mutex_unlock(&bctx->gfx_mutex);
 
-            fprintf(stderr, "[rdp_bridge] GFX: gdi_init_ex with dirty-rect capture\n");
+            fprintf(stderr, "[rdp_bridge] GFX: codec init + SurfaceCommand intercept\n");
         }
     }
 }
