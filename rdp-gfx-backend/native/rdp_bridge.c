@@ -1240,6 +1240,12 @@ RdpSession* rdp_create(
      * GfxThinClient = FALSE: Keep full AVC444/H.264 quality (ThinClient would reduce it). */
     if (!freerdp_settings_set_bool(settings, FreeRDP_GfxSmallCache, FALSE)) goto fail;
     if (!freerdp_settings_set_bool(settings, FreeRDP_GfxThinClient, FALSE)) goto fail;
+
+    /* Force H.264/AVC420: filter out GFX caps 10.x+ so server must use 8.1 with AVC420.
+     * GfxCapsFilter bitmask: bit N=1 means capList[N] is filtered OUT.
+     * capList = [8, 81, 10, 101, 102, 103, 104, 105, 106, 106err, 107, ...]
+     * We keep bits 0,1 (8 and 81) clear, set bits 2+ to filter out 10.x+. */
+    if (!freerdp_settings_set_uint32(settings, FreeRDP_GfxCapsFilter, 0xFFFFFFFC)) goto fail;
     
     /* Audio playback - configure rdpsnd with our bridge device plugin.
      * We add rdpsnd to BOTH static and dynamic channel collections with sys:bridge
