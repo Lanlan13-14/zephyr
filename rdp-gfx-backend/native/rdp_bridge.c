@@ -1921,7 +1921,8 @@ static void maybe_init_gfx_pipeline(BridgeContext* bctx)
 
     rdpContext* rctx = (rdpContext*)bctx;
     if (rctx && rctx->gdi) {
-        gdi_graphics_pipeline_init(rctx->gdi, gfx);
+        gdi_graphics_pipeline_init_ex(rctx->gdi, gfx, NULL, NULL,
+                                       bridge_gfx_update_surface_area);
         bctx->gdi_surface_command = gfx->SurfaceCommand;
         gfx->SurfaceCommand = bridge_intercept_surface_command;
     }
@@ -2043,9 +2044,14 @@ int rdp_poll(RdpSession* session, int timeout_ms)
     pthread_mutex_lock(&ctx->gfx_mutex);
     bool wire_through_active = ctx->gfx_pipeline_ready && ctx->gfx_active;
     pthread_mutex_unlock(&ctx->gfx_mutex);
-    if (wire_through_active) {
-        flush_dirty_rects(ctx);
-    } else {
+    /* Flush dirty rects from UpdateSurfaceArea callback (handles all codecs
+     * after GDI decode: ClearCodec, Progressive, Uncompressed, etc.)
+     * For H.264, the interceptor sends NAL directly; GDI also decodes it
+     * but we prefer the browser-decoded result. dirty rects from H.264
+     * are harmless (browser ignores duplicate WebP tiles over H.264 canvas). */
+    flush_dirty_rects(ctx);
+    /* GDI fallback for legacy RDP without RDPGFX */
+    if (!wire_through_active) {
         maybe_queue_gdi_fallback_frame(ctx);
     }
 
@@ -2628,12 +2634,18 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
         if (gfx) {
             rdpContext* rctx = (rdpContext*)bctx;
             if (rctx && rctx->gdi) {
-                if (!gdi_graphics_pipeline_init(rctx->gdi, gfx)) {
-                    fprintf(stderr, "[rdp_bridge] WARNING: gdi_graphics_pipeline_init failed\n");
+                /* Use init_ex with UpdateSurfaceArea for dirty-rect capture.
+                 * This handles non-H.264 codecs (ClearCodec, Progressive)
+                 * that GDI decodes but we need to capture the result. */
+                if (!gdi_graphics_pipeline_init_ex(rctx->gdi, gfx, NULL, NULL,
+                                                    bridge_gfx_update_surface_area)) {
+                    fprintf(stderr, "[rdp_bridge] WARNING: gdi_graphics_pipeline_init_ex failed\n");
                 }
             }
 
             /* Save GDI's SurfaceCommand, replace with our interceptor.
+             * For H.264: intercepts raw NAL and sends to browser directly.
+             * For other codecs: falls through to GDI decode, dirty-rect captures result.
              * DO NOT touch gfx->custom — must remain rdpGdi*. */
             bctx->gdi_surface_command = gfx->SurfaceCommand;
             gfx->SurfaceCommand = bridge_intercept_surface_command;
