@@ -2634,12 +2634,8 @@ static void bridge_on_channel_disconnected(void* ctx, const ChannelDisconnectedE
     }
     else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
         pthread_mutex_lock(&bctx->gfx_mutex);
-        if (bctx->gfx && bctx->gfx_pipeline_ready) {
-            rdpContext* rctx = (rdpContext*)bctx;
-            if (rctx && rctx->gdi) {
-                gdi_graphics_pipeline_uninit(rctx->gdi, bctx->gfx);
-            }
-        }
+        /* gdi_graphics_pipeline_uninit is called by gdi_free() in PostDisconnect.
+         * Calling it here causes double-free / SIGSEGV. */
         bctx->gfx = NULL;
         bctx->gfx_active = false;
         bctx->gfx_pipeline_ready = false;
