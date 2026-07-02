@@ -4285,14 +4285,34 @@ static void flush_dirty_rects(BridgeContext* ctx)
             const uint8_t* row = fb + (size_t)(ry + y) * fb_stride + (size_t)rx * 4;
             uint8_t* out = rgba + (size_t)y * rw * 4;
             for (uint32_t x = 0; x < rw; x++) {
-                out[x * 4 + 0] = row[x * 4 + 2];
-                out[x * 4 + 1] = row[x * 4 + 1];
-                out[x * 4 + 2] = row[x * 4 + 0];
-                out[x * 4 + 3] = 0xFF;
+                out[x * 4 + 0] = row[x * 4 + 2]; /* R */
+                out[x * 4 + 1] = row[x * 4 + 1]; /* G */
+                out[x * 4 + 2] = row[x * 4 + 0]; /* B */
+                out[x * 4 + 3] = 0xFF;            /* A */
             }
         }
-        queue_webp_tile(ctx, sid, rx, ry, rw, rh, rgba, (int)(rw * 4));
-        free(rgba);
+
+        /* Send raw RGBA tile — no WebP encode overhead.
+         * TILE magic: TILE(4) + frameId(4) + surfaceId(2) + x(2) + y(2) + w(2) + h(2) + rgba_data
+         * Total header: 18 bytes */
+        {
+            size_t data_size = (size_t)rw * rh * 4;
+            RdpGfxEvent ev = {0};
+            ev.type = RDP_GFX_EVENT_WEBP_TILE; /* Reuse WEBP_TILE event type — Python sends it with TILE magic instead */
+            ev.frame_id = frame_id;
+            ev.surface_id = sid;
+            ev.x = rx;
+            ev.y = ry;
+            ev.width = rw;
+            ev.height = rh;
+            ev.bitmap_data = rgba; /* Transfer ownership — Python frees after send */
+            ev.bitmap_size = (uint32_t)data_size;
+            ev.codec_id = 0xFFFF; /* Marker: raw RGBA, not WebP */
+            gfx_queue_event(ctx, &ev);
+            rgba = NULL; /* Ownership transferred */
+        }
+
+        if (rgba) free(rgba);
     }
 
     RdpGfxEvent ef = {0};

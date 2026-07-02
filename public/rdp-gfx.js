@@ -862,7 +862,27 @@ async function connectDirectCanvasRdp() {
                 surface.ctx.drawImage(bitmap, msg.x, msg.y, msg.w, msg.h);
                 bitmap.close();
                 schedulePresent();
-                notePresentedFrame('direct', 'webp', pendingTileDecodes);
+            } finally {
+                pendingTileDecodes = Math.max(0, pendingTileDecodes - 1);
+            }
+        } else if (msg.type === 'tile' && msg.codec === 'raw') {
+            /* Raw RGBA tile — zero-copy putImageData, no decode overhead */
+            let surface = surfaces.get(msg.surfaceId);
+            if (!surface) {
+                const s = document.createElement('canvas');
+                s.width = Math.max(canvas.width, msg.x + msg.w);
+                s.height = Math.max(canvas.height, msg.y + msg.h);
+                surface = { canvas: s, ctx: s.getContext('2d', { alpha: false }), width: s.width, height: s.height };
+                surfaces.set(msg.surfaceId, surface);
+                if (primarySurfaceId === null) primarySurfaceId = msg.surfaceId;
+            } else {
+                ensureSurfaceSize(surface, Math.max(canvas.width, msg.x + msg.w), Math.max(canvas.height, msg.y + msg.h));
+            }
+            try {
+                const imgData = new ImageData(new Uint8ClampedArray(msg.payload.buffer, msg.payload.byteOffset, msg.w * msg.h * 4), msg.w, msg.h);
+                surface.ctx.putImageData(imgData, msg.x, msg.y);
+                schedulePresent();
+            } catch (e) { /* payload size mismatch — skip */ }
             } finally {
                 pendingTileDecodes = Math.max(0, pendingTileDecodes - 1);
             }

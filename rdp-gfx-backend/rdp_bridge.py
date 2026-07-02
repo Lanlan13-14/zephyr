@@ -30,7 +30,7 @@ from wire_format import (
     Magic, build_create_surface, build_delete_surface, build_start_frame,
     build_end_frame, build_solid_fill, build_surface_to_surface,
     build_surface_to_cache, build_cache_to_surface, build_evict_cache,
-    build_map_surface_to_output, build_webp_tile, build_h264_frame,
+    build_map_surface_to_output, build_webp_tile, build_raw_tile, build_h264_frame,
     build_reset_graphics, parse_frame_ack, get_message_type,
     build_caps_confirm, build_init_settings,
     build_clearcodec_tile,
@@ -779,18 +779,27 @@ class RDPBridge:
             }
             return build_init_settings(settings)
         elif event.type == RDP_GFX_EVENT_WEBP_TILE:
-            # WebP tile with pre-encoded data from C
             if event.bitmap_data and event.bitmap_size > 0:
-                webp_data = ctypes.string_at(event.bitmap_data, event.bitmap_size)
-                # Free the C-allocated buffer now that we've copied it
+                tile_data = ctypes.string_at(event.bitmap_data, event.bitmap_size)
                 self._lib.rdp_free_gfx_event_data(event.bitmap_data)
-                return build_webp_tile(
-                    event.frame_id,
-                    event.surface_id,
-                    event.x, event.y,
-                    event.width, event.height,
-                    webp_data
-                )
+                
+                # codec_id == 0xFFFF means raw RGBA tile (no WebP encoding)
+                if event.codec_id == 0xFFFF:
+                    return build_raw_tile(
+                        event.frame_id,
+                        event.surface_id,
+                        event.x, event.y,
+                        event.width, event.height,
+                        tile_data
+                    )
+                else:
+                    return build_webp_tile(
+                        event.frame_id,
+                        event.surface_id,
+                        event.x, event.y,
+                        event.width, event.height,
+                        tile_data
+                    )
             return None
         elif event.type == RDP_GFX_EVENT_VIDEO_FRAME:
             # Video frame (H.264/Progressive/ClearCodec) - route by codec ID

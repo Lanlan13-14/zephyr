@@ -235,11 +235,11 @@ export function parseWebPTile(data) {
  * Header: 18 bytes, data = w * h * 4 bytes
  */
 export function parseRawTile(data) {
-    if (data.length < 18) return null;
+    if (data.length < 22) return null;
     const w = readU16LE(data, 14);
     const h = readU16LE(data, 16);
-    const expectedSize = 18 + w * h * 4;
-    if (data.length < expectedSize) return null;
+    const dataSize = readU32LE(data, 18);
+    if (data.length < 22 + dataSize) return null;
     
     return {
         type: 'tile',
@@ -250,6 +250,9 @@ export function parseRawTile(data) {
         y: readU16LE(data, 12),
         w: w,
         h: h,
+        payload: data.subarray(22, 22 + dataSize),
+    };
+}
         payload: data.subarray(18, expectedSize),
     };
 }
