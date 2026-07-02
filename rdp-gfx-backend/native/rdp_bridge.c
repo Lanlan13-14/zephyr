@@ -150,6 +150,15 @@ typedef struct {
     bool gfx_frame_in_progress;     /* True between StartFrame and EndFrame */
     uint32_t fallback_frame_id;     /* Synthetic GDI fallback frame counter */
     uint64_t last_fallback_ms;      /* Last fallback capture time */
+
+    /* Dirty rect accumulator — written by UpdateSurfaceArea callback
+     * (potentially from FreeRDP's GFX thread), consumed by rdp_poll
+     * in the main thread. Protected by gfx_mutex. */
+    #define RDP_MAX_DIRTY_RECTS 128
+    RECTANGLE_16 dirty_rects[RDP_MAX_DIRTY_RECTS];
+    uint32_t dirty_rect_count;
+    bool dirty_rects_pending;
+    uint16_t dirty_surface_id;
     pthread_mutex_t gfx_mutex;
     
     /* Audio playback */
@@ -277,6 +286,7 @@ static void queue_webp_tile(BridgeContext* ctx, uint16_t surface_id,
                             int32_t x, int32_t y, uint32_t width, uint32_t height,
                             const uint8_t* bgra_data, int stride);
 static void maybe_queue_gdi_fallback_frame(BridgeContext* ctx);
+static void flush_dirty_rects(BridgeContext* ctx);
 static UINT bridge_gfx_update_surface_area(RdpgfxClientContext* context,
                                             UINT16 surfaceId,
                                             UINT32 nrRects,
@@ -2013,12 +2023,14 @@ int rdp_poll(RdpSession* session, int timeout_ms)
     int has_gfx_events = ctx->gfx_event_count > 0;
     pthread_mutex_unlock(&ctx->gfx_event_mutex);
 
-    /* Wire-through callbacks queue events directly when GFX is active.
-     * GDI fallback (WebP re-encode) only for legacy RDP without RDPGFX. */
+    /* When GFX is active, flush dirty rects accumulated by UpdateSurfaceArea.
+     * When GFX is not active (legacy RDP), use full-frame GDI fallback. */
     pthread_mutex_lock(&ctx->gfx_mutex);
     bool wire_through_active = ctx->gfx_pipeline_ready && ctx->gfx_active;
     pthread_mutex_unlock(&ctx->gfx_mutex);
-    if (!wire_through_active) {
+    if (wire_through_active) {
+        flush_dirty_rects(ctx);
+    } else {
         maybe_queue_gdi_fallback_frame(ctx);
     }
 
@@ -4012,56 +4024,93 @@ static UINT bridge_gfx_update_surface_area(RdpgfxClientContext* context,
     if (!gdi || !gdi->context) return CHANNEL_RC_OK;
     BridgeContext* bctx = (BridgeContext*)gdi->context;
 
-    if (!gdi->primary_buffer || gdi->width <= 0 || gdi->height <= 0)
-        return CHANNEL_RC_OK;
+    /* Just accumulate dirty rects — NO encoding here.
+     * Encoding happens in rdp_poll on the main thread. */
+    pthread_mutex_lock(&bctx->gfx_mutex);
+    for (UINT32 i = 0; i < nrRects && bctx->dirty_rect_count < RDP_MAX_DIRTY_RECTS; i++) {
+        bctx->dirty_rects[bctx->dirty_rect_count++] = rects[i];
+    }
+    bctx->dirty_rects_pending = true;
+    bctx->dirty_surface_id = surfaceId;
+    pthread_mutex_unlock(&bctx->gfx_mutex);
+
+    return CHANNEL_RC_OK;
+}
+
+/* ============================================================================
+ * GDI fallback for legacy RDP without RDPGFX
+ * ============================================================================ */
+/* Flush accumulated dirty rects from UpdateSurfaceArea callback.
+ * Called from rdp_poll on the main thread — safe to do WebP encoding here. */
+static void flush_dirty_rects(BridgeContext* ctx)
+{
+    if (!ctx) return;
+
+    pthread_mutex_lock(&ctx->gfx_mutex);
+    if (!ctx->dirty_rects_pending || ctx->dirty_rect_count == 0) {
+        pthread_mutex_unlock(&ctx->gfx_mutex);
+        return;
+    }
+    /* Snapshot and clear */
+    uint32_t nr = ctx->dirty_rect_count;
+    RECTANGLE_16 rects[RDP_MAX_DIRTY_RECTS];
+    memcpy(rects, ctx->dirty_rects, nr * sizeof(RECTANGLE_16));
+    ctx->dirty_rect_count = 0;
+    ctx->dirty_rects_pending = false;
+    pthread_mutex_unlock(&ctx->gfx_mutex);
+
+    rdpContext* rctx = (rdpContext*)ctx;
+    rdpGdi* gdi = rctx ? rctx->gdi : NULL;
+    if (!gdi || !gdi->primary_buffer || gdi->width <= 0 || gdi->height <= 0) return;
 
     uint32_t fb_w = (uint32_t)gdi->width;
     uint32_t fb_h = (uint32_t)gdi->height;
     uint32_t fb_stride = gdi->stride ? gdi->stride : (fb_w * 4);
 
-    pthread_mutex_lock(&bctx->gfx_mutex);
-    bool surface_ok = bctx->primary_surface_id < RDP_MAX_GFX_SURFACES &&
-                      bctx->surfaces[bctx->primary_surface_id].active;
-    uint16_t target_sid = bctx->primary_surface_id;
-    pthread_mutex_unlock(&bctx->gfx_mutex);
+    /* Ensure surface exists */
+    pthread_mutex_lock(&ctx->gfx_mutex);
+    bool surface_ok = ctx->primary_surface_id < RDP_MAX_GFX_SURFACES &&
+                      ctx->surfaces[ctx->primary_surface_id].active;
+    uint16_t sid = ctx->primary_surface_id;
+    pthread_mutex_unlock(&ctx->gfx_mutex);
 
     if (!surface_ok) {
-        target_sid = 0;
-        pthread_mutex_lock(&bctx->gfx_mutex);
-        bctx->primary_surface_id = 0;
-        bctx->surfaces[0].surface_id = 0;
-        bctx->surfaces[0].width = fb_w;
-        bctx->surfaces[0].height = fb_h;
-        bctx->surfaces[0].pixel_format = GFX_PIXEL_FORMAT_ARGB_8888;
-        bctx->surfaces[0].active = true;
-        bctx->surfaces[0].mapped_to_output = true;
-        pthread_mutex_unlock(&bctx->gfx_mutex);
+        sid = 0;
+        pthread_mutex_lock(&ctx->gfx_mutex);
+        ctx->primary_surface_id = 0;
+        ctx->surfaces[0].surface_id = 0;
+        ctx->surfaces[0].width = fb_w;
+        ctx->surfaces[0].height = fb_h;
+        ctx->surfaces[0].pixel_format = GFX_PIXEL_FORMAT_ARGB_8888;
+        ctx->surfaces[0].active = true;
+        ctx->surfaces[0].mapped_to_output = true;
+        pthread_mutex_unlock(&ctx->gfx_mutex);
 
-        RdpGfxEvent create = {0};
-        create.type = RDP_GFX_EVENT_CREATE_SURFACE;
-        create.surface_id = 0;
-        create.width = fb_w;
-        create.height = fb_h;
-        create.pixel_format = GFX_PIXEL_FORMAT_ARGB_8888;
-        gfx_queue_event(bctx, &create);
+        RdpGfxEvent ce = {0};
+        ce.type = RDP_GFX_EVENT_CREATE_SURFACE;
+        ce.surface_id = 0;
+        ce.width = fb_w;
+        ce.height = fb_h;
+        ce.pixel_format = GFX_PIXEL_FORMAT_ARGB_8888;
+        gfx_queue_event(ctx, &ce);
 
-        RdpGfxEvent map = {0};
-        map.type = RDP_GFX_EVENT_MAP_SURFACE;
-        map.surface_id = 0;
-        gfx_queue_event(bctx, &map);
+        RdpGfxEvent me = {0};
+        me.type = RDP_GFX_EVENT_MAP_SURFACE;
+        me.surface_id = 0;
+        gfx_queue_event(ctx, &me);
     }
 
-    pthread_mutex_lock(&bctx->gfx_mutex);
-    uint32_t frame_id = ++bctx->fallback_frame_id;
-    pthread_mutex_unlock(&bctx->gfx_mutex);
+    pthread_mutex_lock(&ctx->gfx_mutex);
+    uint32_t frame_id = ++ctx->fallback_frame_id;
+    pthread_mutex_unlock(&ctx->gfx_mutex);
 
-    RdpGfxEvent start_ev = {0};
-    start_ev.type = RDP_GFX_EVENT_START_FRAME;
-    start_ev.frame_id = frame_id;
-    gfx_queue_event(bctx, &start_ev);
+    RdpGfxEvent sf = {0};
+    sf.type = RDP_GFX_EVENT_START_FRAME;
+    sf.frame_id = frame_id;
+    gfx_queue_event(ctx, &sf);
 
     const uint8_t* fb = gdi->primary_buffer;
-    for (UINT32 i = 0; i < nrRects; i++) {
+    for (uint32_t i = 0; i < nr; i++) {
         int32_t rx = rects[i].left;
         int32_t ry = rects[i].top;
         uint32_t rw = rects[i].right > rects[i].left ? rects[i].right - rects[i].left : 0;
@@ -4083,27 +4132,16 @@ static UINT bridge_gfx_update_surface_area(RdpgfxClientContext* context,
                 out[x * 4 + 3] = 0xFF;
             }
         }
-        queue_webp_tile(bctx, target_sid, rx, ry, rw, rh, rgba, (int)(rw * 4));
+        queue_webp_tile(ctx, sid, rx, ry, rw, rh, rgba, (int)(rw * 4));
         free(rgba);
     }
 
-    RdpGfxEvent end_ev = {0};
-    end_ev.type = RDP_GFX_EVENT_END_FRAME;
-    end_ev.frame_id = frame_id;
-    gfx_queue_event(bctx, &end_ev);
-
-    static int dr_logged = 0;
-    if (dr_logged < 3) {
-        fprintf(stderr, "[GFX] dirty-rect frame %u: %u rects\n", frame_id, nrRects);
-        dr_logged++;
-    }
-
-    return CHANNEL_RC_OK;
+    RdpGfxEvent ef = {0};
+    ef.type = RDP_GFX_EVENT_END_FRAME;
+    ef.frame_id = frame_id;
+    gfx_queue_event(ctx, &ef);
 }
 
-/* ============================================================================
- * GDI fallback for legacy RDP without RDPGFX
- * ============================================================================ */
 static void maybe_queue_gdi_fallback_frame(BridgeContext* ctx)
 {
     if (!ctx) return;
