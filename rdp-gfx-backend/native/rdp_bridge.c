@@ -1884,46 +1884,26 @@ static BOOL bridge_update_pointer_cached(rdpContext* context,
 
 static void maybe_init_gfx_pipeline(BridgeContext* bctx)
 {
-    /* Deferred initialization fallback – should rarely be needed since
-     * bridge_on_channel_connected now registers callbacks immediately.
-     * Only runs if gfx_pipeline_needs_init is still set (e.g. gfx was NULL). */
     pthread_mutex_lock(&bctx->gfx_mutex);
     bool needs_init = bctx->gfx_pipeline_needs_init && !bctx->gfx_pipeline_ready;
     RdpgfxClientContext* gfx = bctx->gfx;
     pthread_mutex_unlock(&bctx->gfx_mutex);
 
-    if (!needs_init || !gfx) {
-        return;
-    }
+    if (!needs_init || !gfx) return;
 
-    /* Register Zephyr wire-through callbacks (same as channel_connected path) */
-    gfx->custom = bctx;
-    gfx->OnOpen = gfx_on_open;
-    gfx->CapsConfirm = gfx_on_caps_confirm;
-    gfx->ResetGraphics = gfx_on_reset_graphics;
-    gfx->CreateSurface = gfx_on_create_surface;
-    gfx->DeleteSurface = gfx_on_delete_surface;
-    gfx->MapSurfaceToOutput = gfx_on_map_surface;
-    gfx->MapSurfaceToScaledOutput = gfx_on_map_surface_scaled;
-    gfx->MapSurfaceToWindow = gfx_on_map_surface_window;
-    gfx->MapSurfaceToScaledWindow = gfx_on_map_surface_scaled_window;
-    gfx->SurfaceCommand = gfx_on_surface_command;
-    gfx->StartFrame = gfx_on_start_frame;
-    gfx->EndFrame = gfx_on_end_frame;
-    gfx->SolidFill = gfx_on_solid_fill;
-    gfx->SurfaceToSurface = gfx_on_surface_to_surface;
-    gfx->SurfaceToCache = gfx_on_surface_to_cache;
-    gfx->CacheToSurface = gfx_on_cache_to_surface;
-    gfx->EvictCacheEntry = gfx_on_evict_cache;
-    gfx->DeleteEncodingContext = gfx_on_delete_encoding_context;
-    gfx->CacheImportReply = gfx_on_cache_import_reply;
+    rdpContext* rctx = (rdpContext*)bctx;
+    if (rctx && rctx->gdi) {
+        if (gdi_graphics_pipeline_init(rctx->gdi, gfx)) {
+            fprintf(stderr, "[rdp_bridge] Deferred GFX pipeline init via GDI succeeded\n");
+        } else {
+            fprintf(stderr, "[rdp_bridge] WARNING: deferred gdi_graphics_pipeline_init failed\n");
+        }
+    }
 
     pthread_mutex_lock(&bctx->gfx_mutex);
     bctx->gfx_pipeline_needs_init = false;
     bctx->gfx_pipeline_ready = true;
     pthread_mutex_unlock(&bctx->gfx_mutex);
-
-    fprintf(stderr, "[rdp_bridge] Deferred RDPGFX wire-through callbacks registered\n");
 }
 
 /* ============================================================================
@@ -2030,15 +2010,9 @@ int rdp_poll(RdpSession* session, int timeout_ms)
     int has_gfx_events = ctx->gfx_event_count > 0;
     pthread_mutex_unlock(&ctx->gfx_event_mutex);
 
-    /* Wire-through mode: GFX callbacks queue events directly.
-     * GDI fallback is only needed when GFX pipeline is not active (legacy RDP). */
-    pthread_mutex_lock(&ctx->gfx_mutex);
-    bool gfx_ready = ctx->gfx_pipeline_ready && ctx->gfx_active;
-    pthread_mutex_unlock(&ctx->gfx_mutex);
-
-    if (!gfx_ready) {
-        maybe_queue_gdi_fallback_frame(ctx);
-    }
+    /* GDI decode path: FreeRDP decodes RDPEGFX frames into the GDI
+     * framebuffer. Capture it as WebP tiles and send to browser. */
+    maybe_queue_gdi_fallback_frame(ctx);
 
     pthread_mutex_lock(&ctx->gfx_event_mutex);
     has_gfx_events = ctx->gfx_event_count > 0;
@@ -2603,68 +2577,36 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
         pthread_mutex_unlock(&bctx->opus_mutex);
     }
     else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
-        /* GFX pipeline connected – register Zephyr wire-through callbacks.
+        /* GFX pipeline connected – let FreeRDP's GDI handle decoding.
          *
-         * CRITICAL: Do NOT call gdi_graphics_pipeline_init(). That function
-         * overwrites all RDPGFX callbacks with GDI's internal decode-to-framebuffer
-         * handlers, forcing every frame through GDI→BGRA→WebP reencoding.
+         * FreeRDP 3.x RDPGFX plugin owns the callback dispatch internally.
+         * Manual registration of SurfaceCommand/StartFrame/EndFrame has no
+         * effect because the plugin's DVC transport calls its own internal
+         * functions, not the callback pointers on RdpgfxClientContext.
+         * Only gdi_graphics_pipeline_init() correctly hooks into FreeRDP's
+         * internal RDPEGFX processing chain.
          *
-         * Instead, register Zephyr's own callbacks that pass H.264/AVC420/AVC444
-         * NAL data, surface commands, and frame boundaries directly through the
-         * WebSocket wire format to the browser. The browser decodes H.264 via
-         * WebCodecs VideoDecoder at native speed.
-         *
-         * Per MS-RDPEGFX and FreeRDP's rdpgfx_client_context:
-         * - OnOpen controls caps_advertise and frame_acks behavior
-         * - SurfaceCommand receives decoded codec payloads (H.264, ClearCodec, etc.)
-         * - StartFrame/EndFrame bracket frame boundaries
-         * - Other callbacks handle surface lifecycle and composition
+         * Flow: Server → RDPGFX DVC → FreeRDP decode → GDI framebuffer
+         *       → Zephyr captures dirty regions → WebP tiles → browser
          */
         RdpgfxClientContext* gfx = (RdpgfxClientContext*)e->pInterface;
         bctx->gfx = gfx;
 
         if (gfx) {
-            /* Set custom context to BridgeContext for all callbacks */
-            gfx->custom = bctx;
-
-            /* Channel open/close behavior */
-            gfx->OnOpen = gfx_on_open;
-
-            /* Capability and reset */
-            gfx->CapsConfirm = gfx_on_caps_confirm;
-            gfx->ResetGraphics = gfx_on_reset_graphics;
-
-            /* Surface lifecycle */
-            gfx->CreateSurface = gfx_on_create_surface;
-            gfx->DeleteSurface = gfx_on_delete_surface;
-            gfx->MapSurfaceToOutput = gfx_on_map_surface;
-            gfx->MapSurfaceToScaledOutput = gfx_on_map_surface_scaled;
-            gfx->MapSurfaceToWindow = gfx_on_map_surface_window;
-            gfx->MapSurfaceToScaledWindow = gfx_on_map_surface_scaled_window;
-
-            /* Frame and rendering – the core wire-through path */
-            gfx->SurfaceCommand = gfx_on_surface_command;
-            gfx->StartFrame = gfx_on_start_frame;
-            gfx->EndFrame = gfx_on_end_frame;
-
-            /* Composition operations */
-            gfx->SolidFill = gfx_on_solid_fill;
-            gfx->SurfaceToSurface = gfx_on_surface_to_surface;
-            gfx->SurfaceToCache = gfx_on_surface_to_cache;
-            gfx->CacheToSurface = gfx_on_cache_to_surface;
-            gfx->EvictCacheEntry = gfx_on_evict_cache;
-
-            /* Misc */
-            gfx->DeleteEncodingContext = gfx_on_delete_encoding_context;
-            gfx->CacheImportReply = gfx_on_cache_import_reply;
+            rdpContext* rctx = (rdpContext*)bctx;
+            if (rctx && rctx->gdi) {
+                if (gdi_graphics_pipeline_init(rctx->gdi, gfx)) {
+                    fprintf(stderr, "[rdp_bridge] GFX pipeline initialized via GDI (immediate)\n");
+                } else {
+                    fprintf(stderr, "[rdp_bridge] WARNING: gdi_graphics_pipeline_init failed\n");
+                }
+            }
 
             pthread_mutex_lock(&bctx->gfx_mutex);
             bctx->gfx_active = true;
             bctx->gfx_pipeline_ready = true;
             bctx->gfx_pipeline_needs_init = false;
             pthread_mutex_unlock(&bctx->gfx_mutex);
-
-            fprintf(stderr, "[rdp_bridge] RDPGFX wire-through callbacks registered (no GDI decode)\n");
         }
     }
 }
@@ -2692,6 +2634,12 @@ static void bridge_on_channel_disconnected(void* ctx, const ChannelDisconnectedE
     }
     else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
         pthread_mutex_lock(&bctx->gfx_mutex);
+        if (bctx->gfx && bctx->gfx_pipeline_ready) {
+            rdpContext* rctx = (rdpContext*)bctx;
+            if (rctx && rctx->gdi) {
+                gdi_graphics_pipeline_uninit(rctx->gdi, bctx->gfx);
+            }
+        }
         bctx->gfx = NULL;
         bctx->gfx_active = false;
         bctx->gfx_pipeline_ready = false;
