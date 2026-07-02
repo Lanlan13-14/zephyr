@@ -703,6 +703,12 @@ async function connectDirectCanvasRdp() {
     let primarySurfaceId = null;
     let totalFrames = 0;
     let pendingTileDecodes = 0;
+    let directH264Decoder = null;
+    let h264DecodeSurface = null;
+    let h264DecodeX = 0;
+    let h264DecodeY = 0;
+    let firstFrameReported = false;
+    const surfaceCache = new Map();
     let presentScheduled = false;
     const presentPrimarySurface = () => {
         presentScheduled = false;
@@ -735,7 +741,10 @@ async function connectDirectCanvasRdp() {
     const resetSurfacesForResize = () => {
         surfaces.clear();
         mapped.clear();
+        surfaceCache.clear();
         primarySurfaceId = null;
+        if (directH264Decoder) { try { directH264Decoder.close(); } catch {} directH264Decoder = null; }
+        firstFrameReported = false;
     };
     rdpManualDisconnect = false;
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
@@ -779,7 +788,7 @@ async function connectDirectCanvasRdp() {
                 resetSurfacesForResize();
                 canvas.width = msg.width || canvas.width;
                 canvas.height = msg.height || canvas.height;
-                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP fallback] ${canvas.width}×${canvas.height}`);
+                setStatus('connected', `RDP 已连接 [RDPEGFX] ${canvas.width}×${canvas.height}`);
                 updateRdpDiagnostics({ renderer: 'direct', codec: 'webp', firstFrameMs: 0 }, { force: true });
                 notifyParentStatus('connected');
                 startClipboardSyncLoop();
@@ -789,7 +798,7 @@ async function connectDirectCanvasRdp() {
                 resetSurfacesForResize();
                 canvas.width = msg.width || canvas.width;
                 canvas.height = msg.height || canvas.height;
-                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP fallback] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
+                setStatus('connected', `RDP 已连接 [RDPEGFX] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
                 updateRdpDiagnostics({ renderer: 'direct', codec: 'webp' }, { force: true });
                 applyDisplayScale();
             } else if (msg.type === 'disconnected') {
@@ -830,7 +839,7 @@ async function connectDirectCanvasRdp() {
             if (msg.width && msg.height) {
                 canvas.width = msg.width;
                 canvas.height = msg.height;
-                setStatus('connected', `RDP 已连接 [RDPEGFX/WebP fallback] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
+                setStatus('connected', `RDP 已连接 [RDPEGFX] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
                 updateRdpDiagnostics({ renderer: 'direct', codec: 'webp' }, { force: true });
                 applyDisplayScale();
             }
@@ -863,8 +872,66 @@ async function connectDirectCanvasRdp() {
                 surface.ctx.fillStyle = `rgba(${msg.color & 255},${(msg.color >> 8) & 255},${(msg.color >> 16) & 255},1)`;
                 surface.ctx.fillRect(msg.x, msg.y, msg.w, msg.h);
                 schedulePresent();
-                notePresentedFrame('direct', 'solid', pendingTileDecodes);
             }
+        } else if (msg.type === 'videoFrame') {
+            /* H.264 AVC420/AVC444 → WebCodecs VideoDecoder */
+            if (typeof VideoDecoder === 'undefined') return;
+            let surface = surfaces.get(msg.surfaceId);
+            if (!surface) {
+                const s = document.createElement('canvas');
+                s.width = Math.max(canvas.width, msg.destX + msg.destW);
+                s.height = Math.max(canvas.height, msg.destY + msg.destH);
+                surface = { canvas: s, ctx: s.getContext('2d', { alpha: false }), width: s.width, height: s.height };
+                surfaces.set(msg.surfaceId, surface);
+                if (primarySurfaceId === null) primarySurfaceId = msg.surfaceId;
+            }
+            if (!directH264Decoder) {
+                directH264Decoder = new VideoDecoder({
+                    output: (frame) => {
+                        const tgt = h264DecodeSurface || surface;
+                        tgt.ctx.drawImage(frame, h264DecodeX, h264DecodeY);
+                        frame.close();
+                        schedulePresent();
+                        notePresentedFrame('direct', 'h264', pendingTileDecodes);
+                        if (!firstFrameReported) { firstFrameReported = true; setStatus('connected', `RDP 已连接 [RDPEGFX/H.264] ${canvas.width}×${canvas.height}`); }
+                    },
+                    error: (e) => { console.error('[H.264 decode]', e); },
+                });
+                directH264Decoder.configure({ codec: 'avc1.42001f', optimizeForLatency: true });
+            }
+            h264DecodeSurface = surface;
+            h264DecodeX = msg.destX;
+            h264DecodeY = msg.destY;
+            try {
+                directH264Decoder.decode(new EncodedVideoChunk({
+                    type: msg.frameType === 0 ? 'key' : 'delta',
+                    timestamp: performance.now() * 1000,
+                    data: msg.nalData,
+                }));
+            } catch (e) { console.error('[H.264 chunk]', e); }
+        } else if (msg.type === 'surfaceToSurface') {
+            const src = surfaces.get(msg.srcSurfaceId);
+            const dst = surfaces.get(msg.dstSurfaceId);
+            if (src && dst) {
+                dst.ctx.drawImage(src.canvas, msg.srcX, msg.srcY, msg.srcW, msg.srcH, msg.dstX, msg.dstY, msg.srcW, msg.srcH);
+                schedulePresent();
+            }
+        } else if (msg.type === 'surfaceToCache') {
+            const src = surfaces.get(msg.surfaceId);
+            if (src && msg.w > 0 && msg.h > 0) {
+                const c = document.createElement('canvas'); c.width = msg.w; c.height = msg.h;
+                c.getContext('2d', { alpha: false }).drawImage(src.canvas, msg.x, msg.y, msg.w, msg.h, 0, 0, msg.w, msg.h);
+                surfaceCache.set(msg.cacheSlot, c);
+            }
+        } else if (msg.type === 'cacheToSurface') {
+            const dst = surfaces.get(msg.surfaceId);
+            const cached = surfaceCache.get(msg.cacheSlot);
+            if (dst && cached) {
+                dst.ctx.drawImage(cached, msg.dstX, msg.dstY);
+                schedulePresent();
+            }
+        } else if (msg.type === 'evictCache') {
+            surfaceCache.delete(msg.cacheSlot);
         } else if (msg.type === 'endFrame') {
             totalFrames += 1;
             noteRdpFrame();
