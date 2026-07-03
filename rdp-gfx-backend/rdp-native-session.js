@@ -166,6 +166,9 @@ class NativeRdpSession {
 
         addon.setAudioContext(this.session);
 
+        /* connect() blocks the event loop during TLS/NLA handshake.
+         * This is acceptable for the initial connection (~100-500ms).
+         * After it returns, FreeRDP may already have queued GFX events. */
         const result = addon.connect(this.session);
         if (result !== 0) {
             const error = addon.getError(this.session);
@@ -202,7 +205,11 @@ class NativeRdpSession {
         const poll = () => {
             if (!this.running || !this.session) return;
 
-            const result = addon.poll(this.session, 2);
+            /* Non-blocking poll (timeout=0). We MUST NOT block the event loop
+             * because incoming FACK messages from the browser arrive via the
+             * same thread. Blocking here delays frame ACKs → server disconnects.
+             * Python uses run_in_executor() for this; we use setTimeout(0). */
+            const result = addon.poll(this.session, 0);
             if (result < 0) {
                 const error = addon.getError(this.session);
                 this.running = false;
@@ -217,16 +224,13 @@ class NativeRdpSession {
                 this._sendBinary(events[i]);
             }
 
-            /* Schedule next poll — use setImmediate for low latency when events
-             * are flowing, setTimeout(0) when idle to avoid busy-spinning */
-            if (events.length > 0) {
-                setImmediate(poll);
-            } else {
-                this.pollTimer = setTimeout(poll, 1);
-            }
+            /* Use setImmediate to yield to the event loop between polls.
+             * This ensures WebSocket FACK messages are processed promptly. */
+            this.pollTimer = setImmediate(poll);
         };
 
-        setImmediate(poll);
+        /* Start polling immediately after connect */
+        this.pollTimer = setImmediate(poll);
     }
 
     _startAudioLoop() {
@@ -396,7 +400,7 @@ class NativeRdpSession {
 
     cleanup() {
         this.running = false;
-        if (this.pollTimer) { clearTimeout(this.pollTimer); this.pollTimer = null; }
+        if (this.pollTimer) { clearImmediate(this.pollTimer); clearTimeout(this.pollTimer); this.pollTimer = null; }
         if (this.audioTimer) { clearTimeout(this.audioTimer); this.audioTimer = null; }
         if (this.clipTimer) { clearTimeout(this.clipTimer); this.clipTimer = null; }
 
