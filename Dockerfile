@@ -146,6 +146,25 @@ RUN cmake -B build \
     && ls -la /usr/local/lib/freerdp3/librdpsnd-client-bridge.so
 
 # ============================================================
+# Stage 4b: rdp-addon-builder — 编译 Node.js N-API addon
+# ============================================================
+FROM node:20-alpine3.20 AS rdp-addon-builder
+
+WORKDIR /build
+
+RUN apk add --no-cache build-base python3 pkgconf
+
+COPY --from=rdp-bridge-builder /usr/local/lib/librdp_bridge.so* /usr/local/lib/
+COPY --from=rdp-bridge-builder /usr/local/include/rdp_bridge.h /usr/local/include/
+
+COPY rdp-gfx-backend/addon/ ./addon/
+WORKDIR /build/addon
+RUN npm install -g node-gyp \
+    && node-gyp configure \
+    && node-gyp build \
+    && ls -la build/Release/rdp_addon.node
+
+# ============================================================
 # Stage 5: rdp-wasm-builder — 编译 Progressive/ClearCodec WASM
 # ============================================================
 FROM emscripten/emsdk:3.1.51 AS rdp-wasm-builder
@@ -222,6 +241,10 @@ COPY --from=rdp-bridge-builder /usr/local/lib/librdp_bridge.so* /usr/local/lib/
 COPY --from=rdp-bridge-builder /usr/local/include/rdp_bridge.h /usr/local/include/
 RUN mkdir -p /opt/freerdp3/lib/freerdp3
 COPY --from=rdp-bridge-builder /usr/local/lib/freerdp3/librdpsnd-client-bridge.so /opt/freerdp3/lib/freerdp3/
+
+# N-API addon for direct FreeRDP binding (Python-free)
+RUN mkdir -p /app/rdp-gfx-backend/addon/build/Release
+COPY --from=rdp-addon-builder /build/addon/build/Release/rdp_addon.node /app/rdp-gfx-backend/addon/build/Release/
 
 COPY --from=rdp-wasm-builder /build/progressive/build/progressive_decoder.js /app/public/vendor/freerdp-web/progressive/
 COPY --from=rdp-wasm-builder /build/progressive/build/progressive_decoder.wasm /app/public/vendor/freerdp-web/progressive/

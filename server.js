@@ -4115,6 +4115,20 @@ editorLspWss.on('connection', handleEditorLspConnection);
 const RDP_GFX_BACKEND_HOST = process.env.RDP_GFX_BACKEND_HOST || '127.0.0.1';
 const RDP_GFX_BACKEND_PORT = Number(process.env.RDP_GFX_BACKEND_PORT || 8765);
 const RDP_GFX_BACKEND_SCRIPT = process.env.RDP_GFX_BACKEND_SCRIPT || path.join(__dirname, 'rdp-gfx-backend', 'server.py');
+
+/* Native RDP addon — try to load at startup for Python-free operation */
+const rdpNative = (() => {
+    try {
+        const mod = require('./rdp-gfx-backend/rdp-native-session.js');
+        if (mod.tryLoadAddon()) {
+            console.info('[rdp-gfx] Native N-API addon loaded — Python backend bypassed');
+            return mod;
+        }
+    } catch (e) {
+        console.info('[rdp-gfx] Native addon not available:', e.message);
+    }
+    return null;
+})();
 let rdpGfxBackendProcess = null;
 let rdpGfxBackendStarting = null;
 
@@ -5192,6 +5206,92 @@ noVncWss.on('connection', async (ws, req) => {
 rdpGfxWss.on('connection', (ws, req) => {
     const url = new URL(req.url || '/rdp-gfx', `http://${req.headers.host || 'localhost'}`);
     const connId = url.searchParams.get('connectionId') || 'default';
+
+    /* ====================================================================
+     * NATIVE PATH — use N-API addon to call FreeRDP directly (no Python)
+     * ==================================================================== */
+    if (rdpNative && rdpNative.isAvailable()) {
+        let nativeSession = null;
+        let routedForward = null;
+        let closed = false;
+
+        const cleanup = (reason = 'cleanup') => {
+            if (closed) return;
+            closed = true;
+            if (nativeSession) { nativeSession.cleanup(); nativeSession = null; }
+            try { routedForward?.close?.(); } catch {}
+            console.info('[rdp-gfx-native]', 'closed', { connId, reason });
+        };
+
+        ws.on('message', (raw, isBinary) => {
+            if (nativeSession) {
+                nativeSession.handleMessage(raw, isBinary);
+                return;
+            }
+            /* Before native session starts, handle connect message */
+            if (!isBinary) {
+                let msg;
+                try { msg = JSON.parse(Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw)); } catch { return; }
+                if (msg?.type === 'connect') {
+                    /* connect is handled in the async init below */
+                }
+            }
+        });
+        ws.on('close', () => cleanup('browser-close'));
+        ws.on('error', (err) => { console.warn('[rdp-gfx-native]', 'ws error', err.message); cleanup('browser-error'); });
+
+        (async () => {
+            try {
+                const sessionUser = currentSession(req);
+                if (!sessionUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
+                const store = readJSON(CONNECTIONS_FILE, { connections: [] });
+                const conn = (store.connections || []).find((c) => c.id === connId);
+                if (!conn) { closeWebSocketSafe(ws, 1008, 'connection not found'); return; }
+                if (String(conn.protocol || 'RDP').toUpperCase() !== 'RDP') { closeWebSocketSafe(ws, 1008, 'not an RDP connection'); return; }
+
+                const targetPort = Number(conn.port) || 3389;
+                routedForward = await createRoutedTcpForward(conn, targetPort, 15000);
+                const effectiveConn = routedForward ? { ...conn, host: routedForward.host, port: routedForward.port } : conn;
+
+                if (closed || ws.readyState !== ws.OPEN) return;
+
+                const requestedWidth = evenClampRdpSize(
+                    Number(url.searchParams.get('width')) || RDP_STREAM_WIDTH, 640, RDP_MAX_WIDTH);
+                const requestedHeight = evenClampRdpSize(
+                    Number(url.searchParams.get('height')) || RDP_STREAM_HEIGHT, 480, RDP_MAX_HEIGHT);
+
+                const { username, domain } = splitRdpIdentity(effectiveConn);
+
+                nativeSession = new rdpNative.NativeRdpSession(ws, {
+                    host: effectiveConn.host,
+                    port: Number(effectiveConn.port) || 3389,
+                    username,
+                    password: effectiveConn.password || '',
+                    domain,
+                }, { width: requestedWidth, height: requestedHeight });
+
+                const ok = await nativeSession.start();
+                if (!ok) {
+                    cleanup('connect-failed');
+                    closeWebSocketSafe(ws, 1011, 'RDP connection failed');
+                }
+                console.info('[rdp-gfx-native]', 'connected', {
+                    connId, target: `${effectiveConn.host}:${Number(effectiveConn.port) || 3389}`,
+                    width: requestedWidth, height: requestedHeight,
+                });
+            } catch (err) {
+                console.error('[rdp-gfx-native]', 'error', { connId, error: err.message });
+                try { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'error', message: err.message })); } catch {}
+                closeWebSocketSafe(ws, 1011, err.message);
+                cleanup('connect-error');
+            }
+        })();
+        return;
+    }
+
+    /* ====================================================================
+     * FALLBACK — Python WebSocket proxy (existing behavior)
+     * ==================================================================== */
     const pendingClientMessages = [];
     let backendWs = null;
     let backendReady = false;
