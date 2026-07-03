@@ -1197,12 +1197,10 @@ RdpSession* rdp_create(
      * Without this, drdynvc static channel won't load and no DVCs will connect. */
     if (!freerdp_settings_set_bool(settings, FreeRDP_SupportDynamicChannels, TRUE)) goto fail;
     
-    /* Enable GFX pipeline with browser-decodable H.264/AVC420 for modern,
-     * low-latency graphics.  AVC444 is deliberately disabled on this web path:
-     * Windows may send two AVC streams (luma/chroma) that are not a normal
-     * browser H.264 picture, and the server-side transcode path was the source
-     * of blank/striped frames.  Keep RDPEGFX wire-through, but prefer AVC420 so
-     * VideoDecoder receives a standard 4:2:0 Annex-B stream. */
+    /* Enable GFX pipeline. Negotiate codecs in preference order:
+     * 1. H.264/AVC420 (if server supports) — browser VideoDecoder handles it
+     * 2. ClearCodec/Planar/Uncompressed — raw BGRA tiles
+     * Disable AVC444 (requires FFmpeg transcode) and Progressive (needs WASM). */
     if (!freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, TRUE)) goto fail;
     if (!freerdp_settings_set_bool(settings, FreeRDP_GfxH264, TRUE)) goto fail;
 #ifdef ZEPHYR_BROWSER_H264
@@ -1212,14 +1210,11 @@ RdpSession* rdp_create(
     if (!freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444, TRUE)) goto fail;
     if (!freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444v2, TRUE)) goto fail;
 #endif
-    
-    /* Browser path must not negotiate Progressive unless the WASM decoder is
-     * actually shipped. The source checkout does not contain progressive_decoder.wasm;
-     * if Windows chooses Progressive, the browser receives a valid RDPEGFX session
-     * but has no pixels to draw, which appears as a white/black canvas. Keep the
-     * RDPEGFX/WebCodecs architecture and prefer browser-decodable AVC420 H.264. */
-    if (!freerdp_settings_set_bool(settings, FreeRDP_GfxProgressive, FALSE)) goto fail;
-    if (!freerdp_settings_set_bool(settings, FreeRDP_GfxProgressiveV2, FALSE)) goto fail;
+
+    /* Allow Progressive as fallback — many Windows 10/11 servers use it
+     * when H.264 is not available (Home editions, VMs without GPU). */
+    if (!freerdp_settings_set_bool(settings, FreeRDP_GfxProgressive, TRUE)) goto fail;
+    if (!freerdp_settings_set_bool(settings, FreeRDP_GfxProgressiveV2, TRUE)) goto fail;
     
     /* Disable legacy codecs */
     if (!freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, FALSE)) goto fail;
@@ -2635,6 +2630,12 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
             gfx->StartFrame = gfx_on_start_frame;
             gfx->EndFrame = gfx_on_end_frame;
 
+            /* Register Open callback — controls caps advertisement and frame ACKs.
+             * gdi_graphics_pipeline_init sets its own Open that enables auto-ACKs,
+             * but we need do_frame_acks=FALSE for browser-driven backpressure.
+             * However, do_caps_advertise MUST be TRUE or the server never sends frames. */
+            gfx->OnOpen = gfx_on_open;
+
             pthread_mutex_lock(&bctx->gfx_mutex);
             bctx->gfx_active = true;
             bctx->gfx_pipeline_ready = true;
@@ -3453,18 +3454,20 @@ static UINT gfx_on_cache_import_reply(RdpgfxClientContext* context,
  * We use this to disable automatic frame ACKs - the browser controls flow! */
 static UINT gfx_on_open(RdpgfxClientContext* context, BOOL* do_caps_advertise, BOOL* do_frame_acks)
 {
+    (void)context;
     /* Let FreeRDP handle capability negotiation automatically */
     if (do_caps_advertise) {
         *do_caps_advertise = TRUE;
     }
-    
-    /* CRITICAL: Disable automatic frame ACKs!
-     * The browser must send FACK after it has actually rendered each frame.
-     * This enables proper backpressure from browser to RDP server. */
+
+    /* Let FreeRDP auto-ACK frames for maximum stability.
+     * This ensures the server never times out waiting for frame acknowledgements.
+     * Browser-driven backpressure (FACK) is a future optimization that requires
+     * the poll loop to run in a worker thread to avoid event loop blocking. */
     if (do_frame_acks) {
-        *do_frame_acks = FALSE;
+        *do_frame_acks = TRUE;
     }
-    
+
     return CHANNEL_RC_OK;
 }
 
