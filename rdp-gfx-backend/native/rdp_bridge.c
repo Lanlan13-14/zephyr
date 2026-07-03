@@ -1177,21 +1177,15 @@ RdpSession* rdp_create(
     if (!freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, height)) goto fail;
     if (!freerdp_settings_set_uint32(settings, FreeRDP_ColorDepth, bpp)) goto fail;
     
-    /* WIRE-THROUGH MODE: Enable SoftwareGdi but with DeactivateClientDecoding.
-     * 
-     * SoftwareGdi=TRUE: FreeRDP expects this for proper internal state management.
-     * DeactivateClientDecoding=TRUE: Skips actual codec decoding in GDI layer.
-     * 
-     * The GDI layer still gets initialized (context->gdi exists), but the heavy
-     * codec operations are skipped. We handle graphics via GFX callbacks and
-     * pass raw frames to the frontend for browser-side decoding. */
+    /* SoftwareGdi=TRUE: FreeRDP decodes graphics into an internal framebuffer.
+     * We read this framebuffer via GDI dirty rect tracking and send raw BGRA
+     * pixels to the browser. This is the most compatible mode — works with
+     * all Windows versions and all GFX codecs.
+     *
+     * DeactivateClientDecoding is intentionally NOT set — FreeRDP handles
+     * all codec decoding (H.264, ClearCodec, Progressive, Planar, etc.)
+     * internally. We just read the final composited framebuffer. */
     if (!freerdp_settings_set_bool(settings, FreeRDP_SoftwareGdi, TRUE)) goto fail;
-    /* Keep FreeRDP's client-side decode state active so RDPEGFX negotiations keep
-     * producing SurfaceCommand/StartFrame events. Rendering is still handled by
-     * Zephyr's RDPEGFX wire-through callbacks and browser WebCodecs; this only
-     * prevents servers from stalling after CreateSurface when decoding is marked
-     * deactivated. */
-    if (!freerdp_settings_set_bool(settings, FreeRDP_DeactivateClientDecoding, TRUE)) goto fail;
     
     /* Enable Dynamic Virtual Channels (DVCs) - REQUIRED for GFX pipeline.
      * Without this, drdynvc static channel won't load and no DVCs will connect. */
@@ -1904,8 +1898,7 @@ static void maybe_init_gfx_pipeline(BridgeContext* bctx)
     if (rctx && rctx->gdi) {
         gdi_graphics_pipeline_init(rctx->gdi, gfx);
     }
-    /* Same override as channel_connected */
-    gfx->SurfaceCommand = gfx_on_surface_command;
+    /* Override Start/EndFrame only — let GDI handle SurfaceCommand decode */
     gfx->StartFrame = gfx_on_start_frame;
     gfx->EndFrame = gfx_on_end_frame;
 
@@ -1914,7 +1907,7 @@ static void maybe_init_gfx_pipeline(BridgeContext* bctx)
     bctx->gfx_pipeline_ready = true;
     pthread_mutex_unlock(&bctx->gfx_mutex);
 
-    fprintf(stderr, "[rdp_bridge] Deferred GFX: zero-decode passthrough\n");
+    fprintf(stderr, "[rdp_bridge] Deferred GFX pipeline initialized\n");
 }
 
 /* ============================================================================
@@ -2021,14 +2014,14 @@ int rdp_poll(RdpSession* session, int timeout_ms)
     int has_gfx_events = ctx->gfx_event_count > 0;
     pthread_mutex_unlock(&ctx->gfx_event_mutex);
 
-    /* Wire-through: gfx_on_surface_command/start_frame/end_frame queue events
-     * directly. Only use GDI fallback for legacy RDP without RDPGFX. */
-    pthread_mutex_lock(&ctx->gfx_mutex);
-    bool wire_through_active = ctx->gfx_pipeline_ready && ctx->gfx_active;
-    pthread_mutex_unlock(&ctx->gfx_mutex);
-    if (!wire_through_active) {
-        maybe_queue_gdi_fallback_frame(ctx);
-    }
+    /* GDI framebuffer capture — always run.
+     * FreeRDP decodes all GFX codecs into the GDI framebuffer.
+     * We capture dirty regions as raw BGRA tiles for the browser.
+     * flush_dirty_rects handles incremental updates when RDPGFX
+     * UpdateSurfaceArea fires; maybe_queue_gdi_fallback_frame handles
+     * the full-frame fallback when no dirty rects are available. */
+    flush_dirty_rects(ctx);
+    maybe_queue_gdi_fallback_frame(ctx);
 
     pthread_mutex_lock(&ctx->gfx_event_mutex);
     has_gfx_events = ctx->gfx_event_count > 0;
@@ -2412,7 +2405,7 @@ static BOOL bridge_post_connect(freerdp* instance)
         pointer_proto.SetDefault = bridge_pointer_set_default;
         pointer_proto.SetPosition = bridge_pointer_set_position;
         graphics_register_pointer(context->graphics, &pointer_proto);
-        fprintf(stderr, "[rdp_bridge] Pointer callbacks registered (no-GDI mode)\n");
+        fprintf(stderr, "[rdp_bridge] Pointer callbacks registered\n");
     }
     
     /* Register pointer UPDATE callbacks.
@@ -2593,22 +2586,16 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
         pthread_mutex_unlock(&bctx->opus_mutex);
     }
     else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
-        /* GFX pipeline: zero-decode H.264 passthrough.
+        /* GFX pipeline connected.
          *
-         * With DeactivateClientDecoding=TRUE:
-         *   gdi_graphics_pipeline_init() registers surface lifecycle callbacks
-         *   (CreateSurface, MapSurface, StartFrame, EndFrame, etc.) but:
-         *   - Skips codec init (gfx->codecs = NULL) — no H.264 decoder created
-         *   - Nulls out SurfaceCommand — we replace it with our interceptor
+         * FreeRDP handles all codec decoding internally (H.264, ClearCodec,
+         * Progressive, Planar, etc.) via gdi_graphics_pipeline_init().
+         * The decoded pixels are composited into the GDI framebuffer.
+         * We read dirty rects from the framebuffer and send raw BGRA to browser.
          *
-         * FreeRDP's rdpgfx transport still calls rdpgfx_decode() which parses
-         * the H.264 metablock and sets cmd->extra->data = raw NAL bytes.
-         * Then logSurfaceCommand() calls our interceptor with the raw NAL.
-         * We send it to the browser. Server-side decode = zero.
-         *
-         * GfxH264=TRUE + GfxAVC444=FALSE means only GFX 8.x caps are
-         * advertised, forcing the server to use H.264/AVC420.
-         */
+         * We also intercept SurfaceCommand/StartFrame/EndFrame to get direct
+         * wire-through events for codecs the browser can decode natively
+         * (H.264 via VideoDecoder). */
         RdpgfxClientContext* gfx = (RdpgfxClientContext*)e->pInterface;
         bctx->gfx = gfx;
 
@@ -2620,20 +2607,22 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
                 }
             }
 
-            /* DeactivateClientDecoding=TRUE nulled SurfaceCommand.
-             * Install our zero-decode interceptor. DO NOT touch gfx->custom
-             * (must remain rdpGdi* for surface lifecycle callbacks). */
-            gfx->SurfaceCommand = gfx_on_surface_command;
-            /* Recover BridgeContext in callbacks via ((rdpGdi*)gfx->custom)->context */
-
-            /* Also register our StartFrame/EndFrame for event queue */
+            /* Let FreeRDP's GDI pipeline handle all SurfaceCommand decoding.
+             * DO NOT override gfx->SurfaceCommand — the GDI handler decodes
+             * all codecs (H.264, ClearCodec, Progressive, Planar) into the
+             * framebuffer. We read the framebuffer via GDI dirty rect tracking.
+             *
+             * Override Start/EndFrame for event queue framing. */
             gfx->StartFrame = gfx_on_start_frame;
             gfx->EndFrame = gfx_on_end_frame;
 
-            /* Register Open callback — controls caps advertisement and frame ACKs.
-             * gdi_graphics_pipeline_init sets its own Open that enables auto-ACKs,
-             * but we need do_frame_acks=FALSE for browser-driven backpressure.
-             * However, do_caps_advertise MUST be TRUE or the server never sends frames. */
+            /* Register UpdateSurfaceArea to capture dirty rects from GDI decode.
+             * This fires whenever FreeRDP's GDI handler writes decoded pixels
+             * to the framebuffer surface. We accumulate the rects and flush
+             * them as raw BGRA tiles in rdp_poll(). */
+            gfx->UpdateSurfaceArea = bridge_gfx_update_surface_area;
+
+            /* Register OnOpen for caps advertisement and frame ACK control */
             gfx->OnOpen = gfx_on_open;
 
             pthread_mutex_lock(&bctx->gfx_mutex);
@@ -2642,7 +2631,7 @@ static void bridge_on_channel_connected(void* ctx, const ChannelConnectedEventAr
             bctx->gfx_pipeline_needs_init = false;
             pthread_mutex_unlock(&bctx->gfx_mutex);
 
-            fprintf(stderr, "[rdp_bridge] GFX: zero-decode passthrough (DeactivateClientDecoding=TRUE)\n");
+            fprintf(stderr, "[rdp_bridge] GFX pipeline initialized (FreeRDP codec decode + wire-through)\n");
         }
     }
 }
