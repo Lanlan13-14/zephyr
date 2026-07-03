@@ -3660,59 +3660,53 @@ static UINT gfx_on_surface_command(RdpgfxClientContext* context, const RDPGFX_SU
             break;
         }
         
-        /* UNCOMPRESSED: Raw BGRA pixels - convert to RGBA and encode to WebP tile */
+        /* UNCOMPRESSED: Raw BGRA pixels — send directly as raw tile.
+         * No WebP encoding — browser renders via putImageData/WebGL.
+         * cmd->data is BGRX32 (per MS-RDPEGFX surface pixel format). */
         case RDPGFX_CODECID_UNCOMPRESSED: {
             if (!cmd->data) {
                 break;
             }
-            
+
             UINT32 surfId = cmd->surfaceId;
             UINT32 surfX = cmd->left;
             UINT32 surfY = cmd->top;
             UINT32 nWidth = cmd->right - cmd->left;
             UINT32 nHeight = cmd->bottom - cmd->top;
-            
+
             /* Get surface info */
             if (surfId >= RDP_MAX_GFX_SURFACES || !bctx->surfaces[surfId].active) {
                 break;
             }
-            
+
             UINT32 surfW = bctx->surfaces[surfId].width;
             UINT32 surfH = bctx->surfaces[surfId].height;
-            
+
             /* Bounds check */
             if (surfX + nWidth > surfW || surfY + nHeight > surfH ||
                 nWidth == 0 || nHeight == 0) {
                 break;
             }
-            
-            /* Allocate buffer for RGBA conversion */
-            size_t rgba_size = (size_t)nWidth * nHeight * 4;
-            uint8_t* rgba_buf = (uint8_t*)malloc(rgba_size);
-            if (!rgba_buf) {
-                break;
-            }
-            
-            /* Convert BGRX → RGBA
-             * cmd->data is BGRX32 (not BGRA32) - the X byte is unused padding.
-             * Per MS-RDPEGFX, UNCOMPRESSED uses the surface pixel format which
-             * is typically GFX_PIXEL_FORMAT_XRGB_8888 (no alpha channel).
-             * We set alpha to 0xFF (fully opaque) for WebP encoding. */
-            const uint8_t* src = cmd->data;
-            uint8_t* dst = rgba_buf;
-            size_t pixel_count = (size_t)nWidth * nHeight;
-            for (size_t i = 0; i < pixel_count; i++) {
-                dst[0] = src[2];  /* R (from offset 2 in BGRX) */
-                dst[1] = src[1];  /* G (from offset 1 in BGRX) */
-                dst[2] = src[0];  /* B (from offset 0 in BGRX) */
-                dst[3] = 0xFF;    /* A = opaque (X byte is padding, not alpha) */
-                src += 4;
-                dst += 4;
-            }
-            
-            queue_webp_tile(bctx, surfId, surfX, surfY, nWidth, nHeight,
-                           rgba_buf, nWidth * 4);
-            free(rgba_buf);
+
+            /* Send raw BGRA pixels directly — no intermediate encode.
+             * Browser handles BGRA→RGBA swizzle in Uint32Array bitops. */
+            size_t data_sz = (size_t)nWidth * nHeight * 4;
+            uint8_t* copy = (uint8_t*)malloc(data_sz);
+            if (!copy) break;
+            memcpy(copy, cmd->data, data_sz);
+
+            RdpGfxEvent te = {0};
+            te.type = RDP_GFX_EVENT_WEBP_TILE;
+            te.frame_id = bctx->current_frame_id;
+            te.surface_id = surfId;
+            te.x = surfX;
+            te.y = surfY;
+            te.width = nWidth;
+            te.height = nHeight;
+            te.bitmap_data = copy;
+            te.bitmap_size = (uint32_t)data_sz;
+            te.codec_id = 0xFFFF; /* raw BGRA marker — Python sends TILE magic */
+            gfx_queue_event(bctx, &te);
             break;
         }
         
@@ -3731,60 +3725,65 @@ static UINT gfx_on_surface_command(RdpgfxClientContext* context, const RDPGFX_SU
             break;
         }
         
-        /* Planar codec - decode to RGBA and encode to WebP tile */
+        /* Planar codec — decode to BGRA and send as raw tile (no WebP) */
         case RDPGFX_CODECID_PLANAR: {
             if (!bctx->planar_decoder) {
                 break;
             }
-            
+
             UINT32 surfId = cmd->surfaceId;
             UINT32 surfX = cmd->left;
             UINT32 surfY = cmd->top;
             UINT32 nWidth = cmd->right - cmd->left;
             UINT32 nHeight = cmd->bottom - cmd->top;
-            
-            /* Get surface info */
+
             if (surfId >= RDP_MAX_GFX_SURFACES || !bctx->surfaces[surfId].active) {
                 break;
             }
-            
+
             UINT32 surfW = bctx->surfaces[surfId].width;
             UINT32 surfH = bctx->surfaces[surfId].height;
-            
-            /* Bounds check */
+
             if (surfX + nWidth > surfW || surfY + nHeight > surfH ||
                 nWidth == 0 || nHeight == 0) {
                 break;
             }
-            
-            /* Allocate temporary buffer for decoded pixels */
+
             size_t buf_size = (size_t)nWidth * nHeight * 4;
-            uint8_t* temp_buf = (uint8_t*)calloc(1, buf_size);  /* Zero-init = transparent (0,0,0,0) */
+            uint8_t* temp_buf = (uint8_t*)calloc(1, buf_size);
             if (!temp_buf) {
                 break;
             }
-            
-            /* Decode Planar directly to RGBA */
+
+            /* Decode Planar directly to BGRA32 */
             if (freerdp_bitmap_decompress_planar(bctx->planar_decoder,
                     cmd->data, cmd->length,
                     nWidth, nHeight,
-                    temp_buf, PIXEL_FORMAT_RGBA32,
-                    nWidth * 4,  /* stride */
-                    0, 0,        /* decode at origin of temp buffer */
+                    temp_buf, PIXEL_FORMAT_BGRA32,
+                    nWidth * 4, 0, 0,
                     nWidth, nHeight, FALSE)) {
-                
-                /* Encode to WebP and queue */
-                queue_webp_tile(bctx, surfId, surfX, surfY, nWidth, nHeight,
-                               temp_buf, nWidth * 4);
+
+                RdpGfxEvent te = {0};
+                te.type = RDP_GFX_EVENT_WEBP_TILE;
+                te.frame_id = bctx->current_frame_id;
+                te.surface_id = surfId;
+                te.x = surfX;
+                te.y = surfY;
+                te.width = nWidth;
+                te.height = nHeight;
+                te.bitmap_data = temp_buf; /* transfer ownership */
+                te.bitmap_size = (uint32_t)buf_size;
+                te.codec_id = 0xFFFF;
+                gfx_queue_event(bctx, &te);
             } else {
                 static int planar_err = 0;
                 if (planar_err < 5) {
                     fprintf(stderr, "[rdp_bridge] Planar decode failed\n");
                     planar_err++;
                 }
+                free(temp_buf);
             }
-            
-            free(temp_buf);
+
             break;
         }
         
@@ -4139,41 +4138,27 @@ static void flush_dirty_rects(BridgeContext* ctx)
         if ((uint32_t)(ry + rh) > fb_h) rh = fb_h - ry;
         if (rw == 0 || rh == 0) continue;
 
-        uint8_t* rgba = (uint8_t*)malloc((size_t)rw * rh * 4);
-        if (!rgba) continue;
+        /* Raw BGRA — copy row-by-row (stride may differ from width) */
+        size_t data_sz = (size_t)rw * rh * 4;
+        uint8_t* copy = (uint8_t*)malloc(data_sz);
+        if (!copy) continue;
         for (uint32_t y = 0; y < rh; y++) {
             const uint8_t* row = fb + (size_t)(ry + y) * fb_stride + (size_t)rx * 4;
-            uint8_t* out = rgba + (size_t)y * rw * 4;
-            for (uint32_t x = 0; x < rw; x++) {
-                out[x * 4 + 0] = row[x * 4 + 2];
-                out[x * 4 + 1] = row[x * 4 + 1];
-                out[x * 4 + 2] = row[x * 4 + 0];
-                out[x * 4 + 3] = 0xFF;
-            }
+            memcpy(copy + (size_t)y * rw * 4, row, (size_t)rw * 4);
         }
-        /* Send raw RGBA tile — skip WebP encode/decode overhead.
-         * Use WEBP_TILE event type but mark codec_id=0xFFFF for Python
-         * to use TILE magic instead of WEBP magic. */
-        {
-            size_t data_sz = (size_t)rw * rh * 4;
-            uint8_t* copy = (uint8_t*)malloc(data_sz);
-            if (copy) {
-                memcpy(copy, rgba, data_sz);
-                RdpGfxEvent te = {0};
-                te.type = RDP_GFX_EVENT_WEBP_TILE;
-                te.frame_id = frame_id;
-                te.surface_id = sid;
-                te.x = rx;
-                te.y = ry;
-                te.width = rw;
-                te.height = rh;
-                te.bitmap_data = copy;
-                te.bitmap_size = (uint32_t)data_sz;
-                te.codec_id = 0xFFFF; /* raw RGBA marker */
-                gfx_queue_event(ctx, &te);
-            }
-        }
-        free(rgba);
+
+        RdpGfxEvent te = {0};
+        te.type = RDP_GFX_EVENT_WEBP_TILE;
+        te.frame_id = frame_id;
+        te.surface_id = sid;
+        te.x = rx;
+        te.y = ry;
+        te.width = rw;
+        te.height = rh;
+        te.bitmap_data = copy;
+        te.bitmap_size = (uint32_t)data_sz;
+        te.codec_id = 0xFFFF;
+        gfx_queue_event(ctx, &te);
     }
 
     RdpGfxEvent ef = {0};
@@ -4221,22 +4206,15 @@ static void maybe_queue_gdi_fallback_frame(BridgeContext* ctx)
 
     const uint32_t src_stride = gdi->stride ? gdi->stride : gdi->bitmap_stride;
     if (src_stride < w * 4) return;
-    uint8_t* rgba = (uint8_t*)malloc((size_t)w * h * 4);
-    if (!rgba) return;
+
+    /* Raw BGRA — no conversion, no WebP encode */
+    size_t data_sz = (size_t)w * h * 4;
+    uint8_t* bgra = (uint8_t*)malloc(data_sz);
+    if (!bgra) return;
 
     const uint8_t* src = gdi->primary_buffer;
-
-    /* Fast BGRA→RGBA conversion using 4-byte word swap (no alpha fixup needed
-     * for lossy WebP — browser ignores alpha on opaque canvas anyway). */
     for (uint32_t y = 0; y < h; y++) {
-        const uint8_t* row = src + (size_t)y * src_stride;
-        uint8_t* out = rgba + (size_t)y * w * 4;
-        for (uint32_t x = 0; x < w; x++) {
-            out[x * 4 + 0] = row[x * 4 + 2]; /* R */
-            out[x * 4 + 1] = row[x * 4 + 1]; /* G */
-            out[x * 4 + 2] = row[x * 4 + 0]; /* B */
-            out[x * 4 + 3] = 0xFF;            /* A */
-        }
+        memcpy(bgra + (size_t)y * w * 4, src + (size_t)y * src_stride, (size_t)w * 4);
     }
 
     pthread_mutex_lock(&ctx->gfx_mutex);
@@ -4283,13 +4261,27 @@ static void maybe_queue_gdi_fallback_frame(BridgeContext* ctx)
     start.type = RDP_GFX_EVENT_START_FRAME;
     start.frame_id = frame_id;
     gfx_queue_event(ctx, &start);
-    queue_webp_tile(ctx, target_surface_id, 0, 0, w, h, rgba, (int)(w * 4));
+
+    /* Raw BGRA tile — ownership transfers to event queue */
+    RdpGfxEvent te = {0};
+    te.type = RDP_GFX_EVENT_WEBP_TILE;
+    te.frame_id = frame_id;
+    te.surface_id = target_surface_id;
+    te.x = 0;
+    te.y = 0;
+    te.width = w;
+    te.height = h;
+    te.bitmap_data = bgra;
+    te.bitmap_size = (uint32_t)data_sz;
+    te.codec_id = 0xFFFF;
+    gfx_queue_event(ctx, &te);
+
     RdpGfxEvent end = {0};
     end.type = RDP_GFX_EVENT_END_FRAME;
     end.frame_id = frame_id;
     gfx_queue_event(ctx, &end);
 
-    free(rgba);
+    /* bgra ownership transferred — do NOT free */
     static int logged = 0;
     if (logged < 3) {
         fprintf(stderr, "[GFX] queued GDI fallback frame %u (%ux%u) because RDPEGFX produced no frame events\n", frame_id, w, h);

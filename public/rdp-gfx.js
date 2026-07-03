@@ -840,9 +840,18 @@ async function connectDirectCanvasRdp() {
                 canvas.width = msg.width;
                 canvas.height = msg.height;
                 setStatus('connected', `RDP 已连接 [RDPEGFX] ${canvas.width}×${canvas.height}`, { holdOverlayMs: 700 });
-                updateRdpDiagnostics({ renderer: 'direct', codec: 'webp' }, { force: true });
+                updateRdpDiagnostics({ renderer: 'direct', codec: 'raw' }, { force: true });
                 applyDisplayScale();
             }
+        } else if (msg.type === 'capsConfirm') {
+            /* Server GFX capability confirmation */
+            const ver = msg.version;
+            const h264ok = ver >= 0x000A0000 && !(msg.flags & 0x40);
+            updateRdpDiagnostics({ codec: h264ok ? 'h264' : 'software' });
+        } else if (msg.type === 'initSettings') {
+            /* RDP session settings from backend */
+            const codecName = msg.GfxH264 ? 'h264' : msg.GfxProgressive ? 'progressive' : 'software';
+            updateRdpDiagnostics({ codec: codecName });
         } else if (msg.type === 'tile' && msg.codec === 'webp') {
             let surface = surfaces.get(msg.surfaceId);
             if (!surface) {
@@ -866,6 +875,43 @@ async function connectDirectCanvasRdp() {
             } finally {
                 pendingTileDecodes = Math.max(0, pendingTileDecodes - 1);
             }
+        } else if (msg.type === 'tile' && msg.codec === 'raw') {
+            /* Raw BGRA tile — synchronous putImageData, zero async decode overhead.
+             * BGRA from FreeRDP → Uint32Array B↔R swap → Canvas RGBA putImageData.
+             * Eliminates: BGRA→RGBA(C) → WebP encode(C) → Blob→createImageBitmap(JS). */
+            let surface = surfaces.get(msg.surfaceId);
+            if (!surface) {
+                const s = document.createElement('canvas');
+                s.width = Math.max(canvas.width, msg.x + msg.w);
+                s.height = Math.max(canvas.height, msg.y + msg.h);
+                surface = { canvas: s, ctx: s.getContext('2d', { alpha: false }), width: s.width, height: s.height };
+                surfaces.set(msg.surfaceId, surface);
+                if (primarySurfaceId === null) primarySurfaceId = msg.surfaceId;
+            } else {
+                ensureSurfaceSize(surface, Math.max(canvas.width, msg.x + msg.w), Math.max(canvas.height, msg.y + msg.h));
+            }
+            const tw = msg.w;
+            const th = msg.h;
+            const npixels = tw * th;
+            const byteLen = npixels * 4;
+            const src = msg.payload;
+            /* Copy to aligned buffer (wire header is 22 bytes = not 4-byte aligned) */
+            const aligned = new ArrayBuffer(byteLen);
+            const rgba = new Uint8Array(aligned);
+            rgba.set(src.subarray(0, byteLen));
+            /* BGRA→RGBA swap via Uint32Array bitops (~4x faster than per-byte):
+             * LE u32: B=bits[7:0] G=bits[15:8] R=bits[23:16] A=bits[31:24]
+             * Target: R=bits[7:0] G=bits[15:8] B=bits[23:16] A=bits[31:24]
+             * → swap bits[7:0] ↔ bits[23:16] */
+            const u32 = new Uint32Array(aligned);
+            for (let i = 0; i < npixels; i++) {
+                const v = u32[i];
+                u32[i] = (v & 0xFF00FF00) | ((v & 0xFF) << 16) | ((v >>> 16) & 0xFF);
+            }
+            const imgData = new ImageData(new Uint8ClampedArray(aligned), tw, th);
+            surface.ctx.putImageData(imgData, msg.x, msg.y);
+            schedulePresent();
+            notePresentedFrame('direct', 'raw', 0);
         } else if (msg.type === 'solidFill') {
             const surface = surfaces.get(msg.surfaceId);
             if (surface) {
@@ -933,6 +979,35 @@ async function connectDirectCanvasRdp() {
             }
         } else if (msg.type === 'evictCache') {
             surfaceCache.delete(msg.cacheSlot);
+        } else if (msg.type === 'pointerPosition') {
+            /* Server cursor position — hide local cursor */
+            if (canvas.style) canvas.style.cursor = 'none';
+        } else if (msg.type === 'pointerSystem') {
+            if (canvas.style) canvas.style.cursor = msg.ptrType === 0 ? 'none' : 'default';
+        } else if (msg.type === 'pointerSet') {
+            /* Custom cursor bitmap (BGRA) → CSS cursor via canvas.toDataURL */
+            if (msg.width > 0 && msg.height > 0 && msg.bgraData) {
+                try {
+                    const cw = msg.width;
+                    const ch = msg.height;
+                    const byteLen = cw * ch * 4;
+                    const aligned = new ArrayBuffer(byteLen);
+                    const cursorRgba = new Uint8Array(aligned);
+                    cursorRgba.set(msg.bgraData.subarray(0, byteLen));
+                    const cu32 = new Uint32Array(aligned);
+                    for (let ci = 0; ci < cu32.length; ci++) {
+                        const cv = cu32[ci];
+                        cu32[ci] = (cv & 0xFF00FF00) | ((cv & 0xFF) << 16) | ((cv >>> 16) & 0xFF);
+                    }
+                    const cursorCanvas = document.createElement('canvas');
+                    cursorCanvas.width = cw;
+                    cursorCanvas.height = ch;
+                    cursorCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(aligned), cw, ch), 0, 0);
+                    if (canvas.style) canvas.style.cursor = `url(${cursorCanvas.toDataURL('image/png')}) ${msg.hotspotX} ${msg.hotspotY}, auto`;
+                } catch (e) {
+                    if (canvas.style) canvas.style.cursor = 'default';
+                }
+            }
         } else if (msg.type === 'endFrame') {
             totalFrames += 1;
             noteRdpFrame();

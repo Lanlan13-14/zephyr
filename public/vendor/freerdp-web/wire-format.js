@@ -230,17 +230,17 @@ export function parseWebPTile(data) {
 }
 
 /**
- * Parse raw RGBA tile message
- * Layout: TILE(4) + frameId(4) + surfaceId(2) + x(2) + y(2) + w(2) + h(2) + data
- * Header: 18 bytes, data = w * h * 4 bytes
+ * Parse raw BGRA tile message
+ * Layout: TILE(4) + frameId(4) + surfaceId(2) + x(2) + y(2) + w(2) + h(2) + dataSize(4) + data
+ * Header: 22 bytes (matches WEBP/CLRC/PROG layout)
  */
 export function parseRawTile(data) {
-    if (data.length < 18) return null;
+    if (data.length < 22) return null;
     const w = readU16LE(data, 14);
     const h = readU16LE(data, 16);
-    const expectedSize = 18 + w * h * 4;
-    if (data.length < expectedSize) return null;
-    
+    const dataSize = readU32LE(data, 18);
+    if (data.length < 22 + dataSize) return null;
+
     return {
         type: 'tile',
         codec: 'raw',
@@ -250,7 +250,7 @@ export function parseRawTile(data) {
         y: readU16LE(data, 12),
         w: w,
         h: h,
-        payload: data.subarray(18, expectedSize),
+        payload: data.subarray(22, 22 + dataSize),
     };
 }
 
