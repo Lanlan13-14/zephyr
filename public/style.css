@@ -2353,10 +2353,11 @@ body.connection-transition-closing .app-shell {
     box-shadow: 0 8px 32px rgba(0,0,0,0.3);
 }
 .rdp-cert-dialog h2 {
-    font-size: 18px;
-    font-weight: 600;
-    margin-bottom: 16px;
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 18px;
     line-height: 1.4;
+    color: #000;
 }
 .rdp-cert-field {
     font-size: 14px;
@@ -2366,14 +2367,15 @@ body.connection-transition-closing .app-shell {
 }
 .rdp-cert-field strong {
     display: inline-block;
-    margin-top: 2px;
-    padding: 4px 8px;
-    background: rgba(0,0,0,0.06);
-    border-radius: 4px;
-    font-size: 14px;
-    color: #111;
+    margin-top: 4px;
+    padding: 6px 10px;
+    background: #e8e8ed;
+    border-radius: 6px;
+    font-size: 15px;
+    color: #000;
     word-break: break-all;
     font-weight: 600;
+    min-height: 20px;
 }
 .rdp-cert-reasons-label {
     font-size: 14px;
@@ -2381,13 +2383,13 @@ body.connection-transition-closing .app-shell {
     margin-bottom: 6px;
 }
 .rdp-cert-reasons {
-    background: rgba(0,0,0,0.06);
+    background: #e8e8ed;
     border-radius: 8px;
     padding: 12px 12px 12px 32px;
     margin: 0 0 16px;
     font-size: 14px;
     line-height: 1.8;
-    color: #111;
+    color: #000;
 }
 .rdp-cert-reasons li {
     margin-bottom: 2px;
@@ -2403,7 +2405,7 @@ body.connection-transition-closing .app-shell {
     gap: 10px;
     font-size: 14px;
     cursor: pointer;
-    color: var(--text, #222);
+    color: #000;
 }
 .rdp-cert-remember input[type="checkbox"] {
     width: 20px;
@@ -2412,26 +2414,27 @@ body.connection-transition-closing .app-shell {
     accent-color: var(--accent, #007aff);
 }
 .rdp-cert-actions {
-    display: flex;
-    justify-content: flex-end;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 12px;
 }
 .rdp-cert-actions .btn {
-    flex: 1;
-    padding: 12px 20px;
-    font-size: 15px;
-    border-radius: 8px;
+    padding: 14px 0;
+    font-size: 16px;
+    border-radius: 10px;
     border: none;
     cursor: pointer;
     font-weight: 500;
     text-align: center;
+    width: 100%;
 }
 .rdp-cert-actions .btn:first-child {
-    background: var(--bg, #f0f0f0);
-    color: var(--accent, #007aff);
+    background: #e8e8ed;
+    color: #007aff;
 }
-.rdp-cert-actions .btn-primary {
-    background: var(--accent, #007aff);
+.rdp-cert-actions .btn-primary,
+.rdp-cert-actions .btn:last-child {
+    background: #007aff;
     color: #fff;
     font-weight: 600;
 }

@@ -611,45 +611,44 @@ function trustCert(connectionId) {
 function showCertDialog(certInfo, connectionId) {
     return new Promise((resolve) => {
         const dialog = document.getElementById('rdpCertDialog');
+        if (!dialog) { resolve(true); return; }
+
+        /* Populate content */
         const hostEl = document.getElementById('certHost');
         const subjectEl = document.getElementById('certSubject');
         const reasonsEl = document.getElementById('certReasons');
         const rememberEl = document.getElementById('certRemember');
-        const connectBtn = document.getElementById('certConnectBtn');
-        const cancelBtn = document.getElementById('certCancelBtn');
-        if (!dialog || !connectBtn || !cancelBtn) { resolve(true); return; }
 
-        hostEl.textContent = `${certInfo.host}:${certInfo.port}`;
-        subjectEl.textContent = certInfo.subject || '(unknown)';
-        reasonsEl.innerHTML = (certInfo.reasons || []).map((r) => `<li>${escapeHtml(r)}</li>`).join('') || '<li>不是来自受信任的认证机构</li>';
+        if (hostEl) hostEl.textContent = (certInfo.host || '') + ':' + (certInfo.port || 3389);
+        if (subjectEl) subjectEl.textContent = certInfo.subject || certInfo.host || '(未知)';
+        if (reasonsEl) {
+            const reasons = (certInfo.reasons && certInfo.reasons.length) ? certInfo.reasons : ['不是来自受信任的认证机构'];
+            reasonsEl.innerHTML = reasons.map((r) => '<li>' + escapeHtml(r) + '</li>').join('');
+        }
         if (rememberEl) rememberEl.checked = false;
+
+        /* Show dialog */
         dialog.hidden = false;
 
-        let settled = false;
-        const cleanup = () => {
-            dialog.hidden = true;
-            newConnectBtn.removeEventListener('click', onConnect);
-            newCancelBtn.removeEventListener('click', onCancel);
-        };
-        /* Clone buttons to remove all old event listeners */
-        const newConnectBtn = connectBtn.cloneNode(true);
-        connectBtn.parentNode.replaceChild(newConnectBtn, connectBtn);
-        const newCancelBtn = cancelBtn.cloneNode(true);
-        cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+        /* Create fresh buttons to guarantee no stale listeners */
+        const actionsDiv = dialog.querySelector('.rdp-cert-actions');
+        if (!actionsDiv) { resolve(true); return; }
+        actionsDiv.innerHTML = '<button class="btn" id="certCancelBtn">取消</button><button class="btn btn-primary" id="certConnectBtn">连接</button>';
+        const cancelBtn = document.getElementById('certCancelBtn');
+        const connectBtn = document.getElementById('certConnectBtn');
 
-        const onConnect = () => {
+        let settled = false;
+        cancelBtn.onclick = () => {
             if (settled) return; settled = true;
-            if (rememberEl?.checked) trustCert(connectionId);
-            cleanup();
-            resolve(true);
-        };
-        const onCancel = () => {
-            if (settled) return; settled = true;
-            cleanup();
+            dialog.hidden = true;
             resolve(false);
         };
-        newConnectBtn.addEventListener('click', onConnect);
-        newCancelBtn.addEventListener('click', onCancel);
+        connectBtn.onclick = () => {
+            if (settled) return; settled = true;
+            if (rememberEl?.checked) trustCert(connectionId);
+            dialog.hidden = true;
+            resolve(true);
+        };
     });
 }
 
@@ -822,55 +821,43 @@ function applyFitMode() {
     if (!rdpCanvas) return;
     const mode = fitModes[fitModeIdx];
 
-    /* Reset transform */
+    /* Reset all positioning styles */
     rdpCanvas.style.transform = '';
-    rdpCanvas.style.transformOrigin = '0 0';
+    rdpCanvas.style.transformOrigin = '';
+    rdpCanvas.style.position = '';
+    rdpCanvas.style.left = '';
+    rdpCanvas.style.top = '';
+    rdpCanvas.style.objectPosition = '';
 
     if (mode === 'original') {
-        /* Original: strict preset resolution at 16:9 (9:16 portrait).
-         * Canvas pixel size = remote resolution. CSS size = same.
-         * Centered in container, no scaling, black bars around. */
+        /* Original: pixel-perfect, no CSS scaling, centered */
         rdpCanvas.style.width = rdpWidth + 'px';
         rdpCanvas.style.height = rdpHeight + 'px';
         rdpCanvas.style.objectFit = 'none';
         rdpCanvas.style.maxWidth = 'none';
         rdpCanvas.style.maxHeight = 'none';
-        rdpCanvas.style.position = 'absolute';
-        rdpCanvas.style.left = '50%';
-        rdpCanvas.style.top = '50%';
-        rdpCanvas.style.transform = 'translate(-50%, -50%)';
-        rdpCanvas.style.transformOrigin = 'center center';
     } else if (mode === 'adapt') {
-        /* Adapt: fill the entire display area. The RDP session resolution
-         * is expanded so the center 16:9 (9:16) region >= base resolution,
-         * and edge regions are rendered at the same resolution (no stretch).
-         * Canvas pixel size = screen-covering resolution.
-         * CSS: 100% width/height, no object-fit needed since aspect matches. */
+        /* Adapt: scale to fit container, keep aspect ratio, no black bars.
+         * Uses object-fit:contain which is correct because computeRdpSize
+         * already expanded the RDP resolution to match the screen aspect. */
         rdpCanvas.style.width = '100%';
         rdpCanvas.style.height = '100%';
-        rdpCanvas.style.objectFit = 'fill';
+        rdpCanvas.style.objectFit = 'contain';
         rdpCanvas.style.maxWidth = '100%';
         rdpCanvas.style.maxHeight = '100%';
-        rdpCanvas.style.position = '';
-        rdpCanvas.style.left = '';
-        rdpCanvas.style.top = '';
     } else if (mode === 'fill') {
-        /* Fill: 16:9 (9:16) rendering, scaled up to cover the display.
-         * The viewport can be panned via joystick handle to see clipped edges.
-         * CSS: object-fit cover to scale up, position adjustable. */
+        /* Fill: scale up to cover entire display, crop excess.
+         * Joystick pans the visible region via object-position. */
         rdpCanvas.style.width = '100%';
         rdpCanvas.style.height = '100%';
         rdpCanvas.style.objectFit = 'cover';
         rdpCanvas.style.objectPosition = fillPanX + '% ' + fillPanY + '%';
         rdpCanvas.style.maxWidth = '100%';
         rdpCanvas.style.maxHeight = '100%';
-        rdpCanvas.style.position = '';
-        rdpCanvas.style.left = '';
-        rdpCanvas.style.top = '';
     }
 
     if (displayShell) {
-        displayShell.style.overflow = mode === 'original' ? 'hidden' : 'hidden';
+        displayShell.style.overflow = 'hidden';
     }
 }
 
@@ -888,14 +875,7 @@ function canvasCoords(e) {
 
     const mode = fitModes[fitModeIdx];
     if (mode === 'original') {
-        /* Original mode: canvas CSS size = pixel size, no scaling needed */
-        return {
-            x: Math.max(0, Math.min(rdpWidth - 1, Math.floor(e.clientX - r.left))),
-            y: Math.max(0, Math.min(rdpHeight - 1, Math.floor(e.clientY - r.top))),
-        };
-    } else if (mode === 'adapt') {
-        /* Adapt mode: canvas resolution matches screen, object-fit: fill.
-         * Direct mapping, canvas fills the entire rect exactly. */
+        /* Original: canvas CSS size = pixel size, direct mapping */
         const scaleX = rdpWidth / r.width;
         const scaleY = rdpHeight / r.height;
         return {
