@@ -32,7 +32,7 @@ RUN apk add --no-cache make
 COPY rdp-wasm/ ./
 
 # Build Go WASM binary
-RUN GOOS=js GOARCH=wasm go build -o main.wasm .
+RUN go mod tidy && GOOS=js GOARCH=wasm go build -o main.wasm .
 
 # Copy wasm_exec.js from Go SDK
 RUN cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" wasm_exec.js 2>/dev/null || \
