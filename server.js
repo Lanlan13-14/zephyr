@@ -1804,6 +1804,24 @@ app.post('/api/connections/:id/open', requireAuth, (req, res) => {
     }
 });
 
+/* RDP WASM credential endpoint — returns credentials for browser-side RDP connections.
+ * Only accessible to authenticated users.  Credentials are never cached on the client. */
+app.post('/api/rdp/credentials', requireAuth, (req, res) => {
+    const connectionId = String(req.body?.connectionId || '').trim();
+    if (!connectionId) return res.status(400).json({ error: 'connectionId required' });
+    const store = readJSON(CONNECTIONS_FILE, { connections: [] });
+    const conn = (store.connections || []).find((c) => c.id === connectionId);
+    if (!conn) return res.status(404).json({ error: '连接不存在' });
+    if (String(conn.protocol || 'SSH').toUpperCase() !== 'RDP') return res.status(400).json({ error: '非 RDP 连接' });
+    const resolved = resolveSshKeyForConnection(conn);
+    let username = String(resolved.username || 'Administrator');
+    let domain = String(resolved.domain || resolved.rdpDomain || '');
+    const domainMatch = username.match(/^([^\\]+)\\(.+)$/);
+    if (!domain && domainMatch) { domain = domainMatch[1]; username = domainMatch[2]; }
+    console.info('[rdp-credentials]', 'issued', { connectionId, host: conn.host, user: username, sessionUser: req.session?.username });
+    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain });
+});
+
 
 app.get('/api/settings', requireAuth, (req, res) => res.json(safeSettings(storage.getSettings())));
 

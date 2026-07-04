@@ -367,13 +367,42 @@ async function connect() {
     /* Init H.264 */
     if (h264Supported()) h264Dec = createH264Decoder(width, height);
 
-    setStatus('connecting', '正在连接 RDP...');
+    setStatus('connecting', '正在获取 RDP 凭据...');
 
-    const host = params.host || 'localhost';
-    const port = String(params.port || 3389);
-    const domain = params.domain || '';
-    const user = params.username || 'Administrator';
-    const password = params.password || '';
+    /* Fetch credentials from server (password never stored on client) */
+    const connectionId = params.connectionId || urlParams.get('connectionId') || '';
+    let host, port, domain, user, password;
+
+    if (connectionId) {
+        try {
+            const resp = await fetch('/api/rdp/credentials', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ connectionId }),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.error || `HTTP ${resp.status}`);
+            }
+            const cred = await resp.json();
+            host = cred.host || params.host || 'localhost';
+            port = String(cred.port || params.port || 3389);
+            domain = cred.domain || params.domain || '';
+            user = cred.username || params.username || 'Administrator';
+            password = cred.password || '';
+        } catch (err) {
+            setStatus('error', `获取 RDP 凭据失败: ${err.message}`);
+            return;
+        }
+    } else {
+        host = params.host || 'localhost';
+        port = String(params.port || 3389);
+        domain = params.domain || '';
+        user = params.username || 'Administrator';
+        password = params.password || '';
+    }
+
+    setStatus('connecting', '正在连接 RDP...');
 
     /* rdpConnect is exposed by Go WASM */
     rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false);
