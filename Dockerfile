@@ -31,7 +31,7 @@ RUN apk add --no-cache make
 
 COPY rdp-wasm/ ./
 
-# Build Go WASM binary
+# Build Go WASM binary (uses local grdp-patch with custom DVC handler support)
 RUN go mod tidy && GOOS=js GOARCH=wasm go build -o main.wasm .
 
 # Copy wasm_exec.js from Go SDK

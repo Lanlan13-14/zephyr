@@ -21,6 +21,7 @@ var (
 	localClipboard string
 	clipMu         sync.Mutex
 	swapAltMeta    bool
+	audinHandler   *AudinHandler
 )
 
 func main() {
@@ -33,15 +34,17 @@ func main() {
 	js.Global().Set("rdpKeyDown", js.FuncOf(jsKeyDown))
 	js.Global().Set("rdpKeyUp", js.FuncOf(jsKeyUp))
 	js.Global().Set("rdpClipboardChanged", js.FuncOf(jsClipboardChanged))
+	js.Global().Set("rdpAudinData", js.FuncOf(jsAudinData))
 
 	// Block forever — JS callbacks keep things alive.
 	select {}
 }
 
 // jsConnect is called from JS: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta)
+// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled)
 func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) < 8 {
-		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, swapAltMeta])")
+		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, swapAltMeta, micEnabled])")
 	}
 	proxyWsURL := args[0].String()
 	host := args[1].String()
@@ -56,9 +59,13 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	} else {
 		swapAltMeta = false
 	}
+	micEnabled := false
+	if len(args) >= 10 {
+		micEnabled = args[9].Bool()
+	}
 
 	go func() {
-		if err := connect(proxyWsURL, host, port, domain, user, password, width, height); err != nil {
+		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled); err != nil {
 			slog.Error("connect", "err", err)
 			js.Global().Call("rdpOnError", err.Error())
 		}
@@ -66,7 +73,7 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	return nil
 }
 
-func connect(proxyWsURL, host, port, domain, user, password string, width, height int) error {
+func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled bool) error {
 	clientMu.Lock()
 	if rdpClient != nil {
 		rdpClient.Close()
@@ -152,6 +159,10 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 			return localClipboard
 		},
 	)
+
+	// Register AUDIN (microphone) DVC handler if enabled
+	audinHandler = NewAudinHandler(micEnabled)
+	g.RegisterDvcHandler("AUDIO_INPUT", audinHandler)
 
 	if err := g.Login(domain, user, password); err != nil {
 		return err
@@ -321,5 +332,19 @@ func jsClipboardChanged(_ js.Value, args []js.Value) any {
 	if c != nil {
 		c.NotifyClipboardChanged()
 	}
+	return nil
+}
+
+
+// jsAudinData is called from JS with PCM audio data from the microphone.
+// JS: rdpAudinData(uint8Array)
+func jsAudinData(_ js.Value, args []js.Value) any {
+	if len(args) < 1 || audinHandler == nil {
+		return nil
+	}
+	jsArr := args[0]
+	buf := make([]byte, jsArr.Length())
+	js.CopyBytesToGo(buf, jsArr)
+	audinHandler.SendAudioData(buf)
 	return nil
 }

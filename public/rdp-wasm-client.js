@@ -342,6 +342,56 @@ function cleanupAudio() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * MICROPHONE INPUT (AUDIN) — browser getUserMedia → Go WASM → RDP server
+ * ═══════════════════════════════════════════════════════════════════════ */
+let audinStream = null;
+let audinProcessor = null;
+let audinContext = null;
+
+/* Called from Go WASM when the server requests microphone capture */
+window.rdpAudinStart = function (sampleRate, channels, bitsPerSample, framesPerPacket) {
+    console.info('[rdp-audin] start', { sampleRate, channels, bitsPerSample, framesPerPacket });
+    rdpAudinStopInternal();
+    const bufferSize = Math.max(256, Math.min(16384, framesPerPacket || 4096));
+    navigator.mediaDevices.getUserMedia({ audio: { sampleRate, channelCount: channels, echoCancellation: true, noiseSuppression: true } })
+        .then((stream) => {
+            audinStream = stream;
+            audinContext = new AudioContext({ sampleRate });
+            const source = audinContext.createMediaStreamSource(stream);
+            audinProcessor = audinContext.createScriptProcessor(bufferSize, channels, channels);
+            audinProcessor.onaudioprocess = (e) => {
+                if (typeof rdpAudinData === 'undefined') return;
+                /* Convert Float32 → Int16 PCM */
+                const ch0 = e.inputBuffer.getChannelData(0);
+                const pcm = new Int16Array(ch0.length);
+                for (let i = 0; i < ch0.length; i++) {
+                    const s = Math.max(-1, Math.min(1, ch0[i]));
+                    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                }
+                const uint8 = new Uint8Array(pcm.buffer);
+                rdpAudinData(uint8);
+            };
+            source.connect(audinProcessor);
+            audinProcessor.connect(audinContext.destination);
+            console.info('[rdp-audin] capture started', { sampleRate: audinContext.sampleRate, bufferSize });
+        })
+        .catch((err) => {
+            console.warn('[rdp-audin] getUserMedia failed:', err.message);
+        });
+};
+
+/* Called from Go WASM when microphone should stop */
+window.rdpAudinStop = function () {
+    rdpAudinStopInternal();
+};
+
+function rdpAudinStopInternal() {
+    if (audinProcessor) { try { audinProcessor.disconnect(); } catch {} audinProcessor = null; }
+    if (audinContext) { try { audinContext.close(); } catch {} audinContext = null; }
+    if (audinStream) { audinStream.getTracks().forEach((t) => t.stop()); audinStream = null; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  * CERTIFICATE VERIFICATION DIALOG
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -502,7 +552,7 @@ async function connect() {
     setStatus('connecting', '正在连接 RDP...');
 
     /* rdpConnect is exposed by Go WASM */
-    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false);
+    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone);
 }
 
 function disconnect() {
