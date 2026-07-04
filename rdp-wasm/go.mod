@@ -1,6 +1,6 @@
 module github.com/Lanlan13-14/zephyr-ssh/rdp-wasm
 
-go 1.24
+go 1.26
 
 require (
 	github.com/nakagami/grdp v0.9.2

@@ -23,7 +23,7 @@ RUN npm run build:editor 2>&1 || echo "[WARN] editor build skipped"
 # ============================================================
 # Stage 2: rdp-wasm-builder — 编译 grdp Go WASM (RDP 协议栈)
 # ============================================================
-FROM golang:1.24-alpine3.20 AS rdp-wasm-builder
+FROM golang:1.26-alpine AS rdp-wasm-builder
 
 WORKDIR /build
 
