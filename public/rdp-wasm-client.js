@@ -794,6 +794,7 @@ function ensureCanvas(w, h) {
         rdpCanvas = document.createElement('canvas');
         rdpCanvas.id = 'rdpCanvas';
         rdpCanvas.tabIndex = 0;
+        rdpCanvas.style.display = 'block';
         rdpCanvas.style.outline = 'none';
         rdpCanvas.style.touchAction = 'none';
         rdpCanvas.style.userSelect = 'none';
@@ -848,11 +849,49 @@ let clipboardSyncPromise = Promise.resolve();
 
 function canvasCoords(e) {
     const r = rdpCanvas.getBoundingClientRect();
-    const scaleX = rdpWidth / r.width;
-    const scaleY = rdpHeight / r.height;
+    const canvasAspect = rdpWidth / rdpHeight;
+    const rectAspect = r.width / r.height;
+    let renderW, renderH, offsetX, offsetY;
+
+    const mode = fitModes[fitModeIdx];
+    if (mode === '1:1') {
+        /* 1:1 mode: canvas CSS size = pixel size, no scaling needed */
+        return {
+            x: Math.max(0, Math.min(rdpWidth - 1, Math.floor(e.clientX - r.left))),
+            y: Math.max(0, Math.min(rdpHeight - 1, Math.floor(e.clientY - r.top))),
+        };
+    } else if (mode === 'fill') {
+        /* object-fit: cover — image is cropped, fills entire rect */
+        if (rectAspect > canvasAspect) {
+            renderW = r.width;
+            renderH = r.width / canvasAspect;
+            offsetX = 0;
+            offsetY = (r.height - renderH) / 2;
+        } else {
+            renderH = r.height;
+            renderW = r.height * canvasAspect;
+            offsetX = (r.width - renderW) / 2;
+            offsetY = 0;
+        }
+    } else {
+        /* object-fit: contain — image letterboxed/pillarboxed */
+        if (rectAspect > canvasAspect) {
+            renderH = r.height;
+            renderW = r.height * canvasAspect;
+            offsetX = (r.width - renderW) / 2;
+            offsetY = 0;
+        } else {
+            renderW = r.width;
+            renderH = r.width / canvasAspect;
+            offsetX = 0;
+            offsetY = (r.height - renderH) / 2;
+        }
+    }
+    const x = Math.floor(((e.clientX - r.left - offsetX) / renderW) * rdpWidth);
+    const y = Math.floor(((e.clientY - r.top - offsetY) / renderH) * rdpHeight);
     return {
-        x: Math.floor((e.clientX - r.left) * scaleX),
-        y: Math.floor((e.clientY - r.top) * scaleY),
+        x: Math.max(0, Math.min(rdpWidth - 1, x)),
+        y: Math.max(0, Math.min(rdpHeight - 1, y)),
     };
 }
 
