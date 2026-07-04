@@ -24,6 +24,8 @@ var (
 	audinHandler   *AudinHandler
 	rdpelHandler   *RdpelHandler
 	rdpefsHandler  *RdpefsHandler
+	camEnumHandler *CamEnumeratorHandler
+	camStreamHandler *CamStreamHandler
 )
 
 func main() {
@@ -38,16 +40,17 @@ func main() {
 	js.Global().Set("rdpClipboardChanged", js.FuncOf(jsClipboardChanged))
 	js.Global().Set("rdpAudinData", js.FuncOf(jsAudinData))
 	js.Global().Set("rdpLocationData", js.FuncOf(jsLocationData))
+	js.Global().Set("rdpCameraFrame", js.FuncOf(jsCameraFrame))
 
 	// Block forever — JS callbacks keep things alive.
 	select {}
 }
 
 // jsConnect is called from JS: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta)
-// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled, storageEnabled)
+// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled, storageEnabled, cameraEnabled)
 func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) < 8 {
-		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, swapAltMeta, micEnabled, locationEnabled, storageEnabled])")
+		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, swapAltMeta, micEnabled, locationEnabled, storageEnabled, cameraEnabled])")
 	}
 	proxyWsURL := args[0].String()
 	host := args[1].String()
@@ -74,9 +77,13 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) >= 12 {
 		storageEnabled = args[11].Bool()
 	}
+	cameraEnabled := false
+	if len(args) >= 13 {
+		cameraEnabled = args[12].Bool()
+	}
 
 	go func() {
-		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled); err != nil {
+		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled); err != nil {
 			slog.Error("connect", "err", err)
 			js.Global().Call("rdpOnError", err.Error())
 		}
@@ -84,7 +91,7 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	return nil
 }
 
-func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled bool) error {
+func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled bool) error {
 	clientMu.Lock()
 	if rdpClient != nil {
 		rdpClient.Close()
@@ -184,6 +191,13 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	if storageEnabled {
 		g.SetRdpdrHandler(rdpefsHandler)
 	}
+
+	// Register MS-RDPECAM (camera redirection) if enabled
+	camEnumHandler = NewCamEnumeratorHandler(cameraEnabled)
+	camStreamHandler = NewCamStreamHandler(cameraEnabled)
+	g.RegisterDvcHandler("RDCamera_Device_Enumerator", camEnumHandler)
+	g.RegisterDvcHandler("RDCamera_Device_WebCam0_0", camStreamHandler)
+	camEnumHandler.streamHandler = camStreamHandler
 
 	if err := g.Login(domain, user, password); err != nil {
 		return err
@@ -392,5 +406,19 @@ func jsLocationData(_ js.Value, args []js.Value) any {
 		hdg = args[5].Float()
 	}
 	rdpelHandler.SendLocation(lat, lon, alt, acc, spd, hdg)
+	return nil
+}
+
+// jsCameraFrame is called from JS with H.264 encoded camera frame data.
+// JS: rdpCameraFrame(uint8Array, isKeyFrame)
+func jsCameraFrame(_ js.Value, args []js.Value) any {
+	if len(args) < 2 || camStreamHandler == nil {
+		return nil
+	}
+	jsArr := args[0]
+	isKey := args[1].Bool()
+	buf := make([]byte, jsArr.Length())
+	js.CopyBytesToGo(buf, jsArr)
+	camStreamHandler.SendSample(buf, isKey)
 	return nil
 }

@@ -485,6 +485,107 @@ async function rdpStoragePickFiles() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * CAMERA REDIRECTION (MS-RDPECAM) — browser getUserMedia → H.264 → RDP
+ * ═══════════════════════════════════════════════════════════════════════ */
+let camStream = null;
+let camEncoder = null;
+let camFrameReader = null;
+let camAnimFrame = null;
+let camVideo = null;
+let camCanvas = null;
+let camCanvasCtx = null;
+
+/* Called from Go WASM when the server requests camera streaming */
+window.rdpCameraStart = function (width, height, fps) {
+    console.info('[rdp-camera] start', { width, height, fps });
+    rdpCameraStopInternal();
+
+    navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: width }, height: { ideal: height }, frameRate: { ideal: fps } }
+    }).then((stream) => {
+        camStream = stream;
+        const track = stream.getVideoTracks()[0];
+        const settings = track.getSettings();
+        const w = settings.width || width;
+        const h = settings.height || height;
+
+        /* Check WebCodecs VideoEncoder availability */
+        if (typeof VideoEncoder !== 'undefined') {
+            /* Use WebCodecs H.264 encoder */
+            let frameCount = 0;
+            camEncoder = new VideoEncoder({
+                output(chunk, metadata) {
+                    const buf = new Uint8Array(chunk.byteLength);
+                    chunk.copyTo(buf);
+                    const isKey = chunk.type === 'key';
+                    if (typeof rdpCameraFrame !== 'undefined') {
+                        rdpCameraFrame(buf, isKey);
+                    }
+                },
+                error(e) { console.warn('[rdp-camera] encoder error:', e); },
+            });
+            camEncoder.configure({
+                codec: 'avc1.42E01E', // H.264 Baseline
+                width: w,
+                height: h,
+                bitrate: 2_000_000,
+                framerate: fps || 30,
+                latencyMode: 'realtime',
+                avc: { format: 'annexb' },
+            });
+
+            /* Create hidden video element + canvas for frame extraction */
+            camVideo = document.createElement('video');
+            camVideo.srcObject = stream;
+            camVideo.muted = true;
+            camVideo.playsInline = true;
+            camVideo.play();
+
+            camCanvas = new OffscreenCanvas(w, h);
+            camCanvasCtx = camCanvas.getContext('2d');
+
+            const interval = 1000 / (fps || 30);
+            let lastFrameTime = 0;
+            const captureFrame = (now) => {
+                if (!camStream || !camEncoder || camEncoder.state === 'closed') return;
+                camAnimFrame = requestAnimationFrame(captureFrame);
+                if (now - lastFrameTime < interval * 0.9) return;
+                lastFrameTime = now;
+
+                camCanvasCtx.drawImage(camVideo, 0, 0, w, h);
+                const frame = new VideoFrame(camCanvas, { timestamp: frameCount * interval * 1000 });
+                frameCount++;
+                const keyFrame = frameCount % (fps * 2 || 60) === 1; // keyframe every 2 seconds
+                try {
+                    camEncoder.encode(frame, { keyFrame });
+                } catch (e) {
+                    console.warn('[rdp-camera] encode error:', e);
+                }
+                frame.close();
+            };
+            camAnimFrame = requestAnimationFrame(captureFrame);
+            console.info('[rdp-camera] WebCodecs H.264 encoding started', { w, h, fps });
+        } else {
+            console.warn('[rdp-camera] WebCodecs VideoEncoder not available');
+        }
+    }).catch((err) => {
+        console.warn('[rdp-camera] getUserMedia failed:', err.message);
+    });
+};
+
+/* Called from Go WASM when camera should stop */
+window.rdpCameraStop = function () { rdpCameraStopInternal(); };
+
+function rdpCameraStopInternal() {
+    if (camAnimFrame) { cancelAnimationFrame(camAnimFrame); camAnimFrame = null; }
+    if (camEncoder) { try { camEncoder.close(); } catch {} camEncoder = null; }
+    if (camVideo) { camVideo.pause(); camVideo.srcObject = null; camVideo = null; }
+    if (camStream) { camStream.getTracks().forEach((t) => t.stop()); camStream = null; }
+    camCanvas = null;
+    camCanvasCtx = null;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  * CERTIFICATE VERIFICATION DIALOG
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -651,7 +752,7 @@ async function connect() {
     setStatus('connecting', '正在连接 RDP...');
 
     /* rdpConnect is exposed by Go WASM */
-    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, !!params.rdpStorage);
+    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, !!params.rdpStorage, !!params.rdpCamera);
 }
 
 function disconnect() {
@@ -663,6 +764,7 @@ function disconnect() {
     cleanupAudio();
     rdpAudinStopInternal();
     rdpLocationStopInternal();
+    rdpCameraStopInternal();
     setStatus('disconnected', '已断开 RDP 连接');
     notifyParentStatus('closed');
 }
