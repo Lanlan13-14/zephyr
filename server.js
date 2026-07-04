@@ -1837,6 +1837,51 @@ app.post('/api/rdp/credentials', requireAuth, (req, res) => {
 });
 
 
+/* RDP TLS certificate probe — connects to the target RDP port via TLS,
+ * grabs the server certificate details, and returns them so the frontend
+ * can show a Windows-style "unable to verify certificate" dialog. */
+app.post('/api/rdp/probe-cert', requireAuth, async (req, res) => {
+    const connectionId = String(req.body?.connectionId || '').trim();
+    if (!connectionId) return res.status(400).json({ error: 'connectionId required' });
+    const store = readJSON(CONNECTIONS_FILE, { connections: [] });
+    const conn = (store.connections || []).find((c) => c.id === connectionId);
+    if (!conn) return res.status(404).json({ error: '连接不存在' });
+    if (String(conn.protocol || 'SSH').toUpperCase() !== 'RDP') return res.status(400).json({ error: '非 RDP 连接' });
+    const targetPort = Number(conn.port) || 3389;
+    let routedForward = null;
+    try {
+        routedForward = await createRoutedTcpForward(conn, targetPort, 10000);
+        const effectiveHost = routedForward?.host || conn.host;
+        const effectivePort = routedForward?.port || targetPort;
+        const tls = require('tls');
+        const certInfo = await new Promise((resolve) => {
+            const socket = tls.connect({ host: effectiveHost, port: effectivePort, rejectUnauthorized: false, timeout: 8000 }, () => {
+                const cert = socket.getPeerCertificate();
+                const authorized = socket.authorized;
+                const authError = socket.authorizationError || '';
+                socket.destroy();
+                if (!cert || !cert.subject) { resolve({ hasCert: false, host: conn.host, port: targetPort }); return; }
+                const reasons = [];
+                if (!authorized) {
+                    if (/SELF_SIGNED|DEPTH_ZERO/i.test(authError)) reasons.push('不是来自受信任的认证机构');
+                    else if (/ERR_TLS_CERT_ALTNAME_INVALID|Hostname|hostname/i.test(authError)) reasons.push('电脑名称不匹配');
+                    else if (/EXPIRED|CERT_HAS_EXPIRED/i.test(authError)) reasons.push('证书已过期');
+                    else if (authError) reasons.push(authError);
+                    if (!reasons.length) reasons.push('不是来自受信任的认证机构');
+                }
+                resolve({ hasCert: true, host: conn.host, port: targetPort, subject: cert.subject?.CN || cert.subject?.O || '', issuer: cert.issuer?.CN || cert.issuer?.O || '', validFrom: cert.valid_from || '', validTo: cert.valid_to || '', fingerprint: cert.fingerprint || '', authorized, reasons });
+            });
+            socket.on('error', (err) => { socket.destroy(); resolve({ hasCert: false, host: conn.host, port: targetPort, error: err.message }); });
+            socket.setTimeout(8000, () => { socket.destroy(); resolve({ hasCert: false, host: conn.host, port: targetPort, error: 'timeout' }); });
+        });
+        res.json(certInfo);
+    } catch (err) {
+        res.json({ hasCert: false, host: conn.host, port: targetPort, error: err.message });
+    } finally {
+        try { routedForward?.close?.(); } catch {}
+    }
+});
+
 app.get('/api/settings', requireAuth, (req, res) => res.json(safeSettings(storage.getSettings())));
 
 app.put('/api/settings', requireAuth, (req, res) => {

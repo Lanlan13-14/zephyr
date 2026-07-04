@@ -192,6 +192,24 @@
                 <div class="spinner"></div>
                 <span class="msg" id="overlayMsg">正在建立 RDP 连接...</span>
             </div>
+
+            <!-- Certificate verification dialog -->
+            <div class="rdp-cert-dialog-backdrop" id="rdpCertDialog" hidden>
+                <div class="rdp-cert-dialog">
+                    <h2>无法验证证书。是否仍要连接？</h2>
+                    <p class="rdp-cert-field">你将连接到：<br><strong id="certHost"></strong></p>
+                    <p class="rdp-cert-field">来自远程电脑的证书中的名称：<br><strong id="certSubject"></strong></p>
+                    <p class="rdp-cert-reasons-label">由于以下原因，连接到这台电脑可能不安全：</p>
+                    <ul class="rdp-cert-reasons" id="certReasons"></ul>
+                    <div class="rdp-cert-remember">
+                        <label><input type="checkbox" id="certRemember"> 不再要求连接到这台电脑</label>
+                    </div>
+                    <div class="rdp-cert-actions">
+                        <button class="btn" id="certCancelBtn">取消</button>
+                        <button class="btn btn-primary" id="certConnectBtn">连接</button>
+                    </div>
+                </div>
+            </div>
             <div class="rdp-display-shell novnc-screen-shell" id="displayShell">
                 <div class="rdp-display novnc-screen" id="display"></div>
             </div>

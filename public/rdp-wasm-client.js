@@ -342,6 +342,64 @@ function cleanupAudio() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * CERTIFICATE VERIFICATION DIALOG
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+function isCertTrusted(connectionId) {
+    try {
+        const trusted = JSON.parse(localStorage.getItem('zephyr-rdp-trusted-certs') || '{}');
+        return !!trusted[connectionId];
+    } catch { return false; }
+}
+
+function trustCert(connectionId) {
+    try {
+        const trusted = JSON.parse(localStorage.getItem('zephyr-rdp-trusted-certs') || '{}');
+        trusted[connectionId] = Date.now();
+        localStorage.setItem('zephyr-rdp-trusted-certs', JSON.stringify(trusted));
+    } catch {}
+}
+
+function showCertDialog(certInfo, connectionId) {
+    return new Promise((resolve) => {
+        const dialog = document.getElementById('rdpCertDialog');
+        const hostEl = document.getElementById('certHost');
+        const subjectEl = document.getElementById('certSubject');
+        const reasonsEl = document.getElementById('certReasons');
+        const rememberEl = document.getElementById('certRemember');
+        const connectBtn = document.getElementById('certConnectBtn');
+        const cancelBtn = document.getElementById('certCancelBtn');
+        if (!dialog) { resolve(true); return; }
+
+        hostEl.textContent = `${certInfo.host}:${certInfo.port}`;
+        subjectEl.textContent = certInfo.subject || '(unknown)';
+        reasonsEl.innerHTML = (certInfo.reasons || []).map((r) => `<li>${escapeHtml(r)}</li>`).join('') || '<li>不是来自受信任的认证机构</li>';
+        if (rememberEl) rememberEl.checked = false;
+        dialog.hidden = false;
+
+        let settled = false;
+        const cleanup = () => {
+            dialog.hidden = true;
+            connectBtn.removeEventListener('click', onConnect);
+            cancelBtn.removeEventListener('click', onCancel);
+        };
+        const onConnect = () => {
+            if (settled) return; settled = true;
+            if (rememberEl?.checked) trustCert(connectionId);
+            cleanup();
+            resolve(true);
+        };
+        const onCancel = () => {
+            if (settled) return; settled = true;
+            cleanup();
+            resolve(false);
+        };
+        connectBtn.addEventListener('click', onConnect);
+        cancelBtn.addEventListener('click', onCancel);
+    });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  * CONNECT / DISCONNECT
  * ═══════════════════════════════════════════════════════════════════════ */
 function proxyWsUrl() {
@@ -415,6 +473,30 @@ async function connect() {
     if (rdpSoundMode === 'off') {
         cleanupAudio();
         audioCtx = null;
+    }
+
+    /* ── Certificate verification dialog ── */
+    if (connectionId && !isCertTrusted(connectionId)) {
+        setStatus('connecting', '正在验证远程证书...');
+        try {
+            const certResp = await fetch('/api/rdp/probe-cert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ connectionId }),
+            });
+            const certInfo = await certResp.json().catch(() => ({}));
+            if (certInfo.hasCert && !certInfo.authorized) {
+                const accepted = await showCertDialog(certInfo, connectionId);
+                if (!accepted) {
+                    setStatus('disconnected', '已取消连接');
+                    cleanupAudio();
+                    cleanupH264();
+                    return;
+                }
+            }
+        } catch (err) {
+            console.warn('[rdp-wasm] cert probe failed, continuing anyway:', err.message);
+        }
     }
 
     setStatus('connecting', '正在连接 RDP...');

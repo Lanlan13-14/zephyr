@@ -2337,6 +2337,108 @@ body.connection-transition-closing .app-shell {
     opacity: 0.5;
 }
 
+/* ── RDP Certificate Verification Dialog ── */
+.rdp-cert-dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+.rdp-cert-dialog {
+    background: var(--surface, #fff);
+    color: var(--text, #222);
+    border-radius: 12px;
+    max-width: 440px;
+    width: 100%;
+    padding: 24px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+.rdp-cert-dialog h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    line-height: 1.4;
+}
+.rdp-cert-field {
+    font-size: 14px;
+    margin-bottom: 10px;
+    color: var(--text-secondary, #666);
+    line-height: 1.5;
+}
+.rdp-cert-field strong {
+    display: inline-block;
+    margin-top: 2px;
+    padding: 4px 8px;
+    background: var(--bg, #f5f5f5);
+    border-radius: 4px;
+    font-size: 14px;
+    color: var(--text, #222);
+    word-break: break-all;
+}
+.rdp-cert-reasons-label {
+    font-size: 14px;
+    color: var(--text-secondary, #666);
+    margin-bottom: 6px;
+}
+.rdp-cert-reasons {
+    background: var(--bg, #f5f5f5);
+    border-radius: 8px;
+    padding: 12px 12px 12px 32px;
+    margin: 0 0 16px;
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--text, #222);
+}
+.rdp-cert-reasons li {
+    margin-bottom: 2px;
+}
+.rdp-cert-remember {
+    padding: 14px 0;
+    border-top: 1px solid var(--border, #e0e0e0);
+    margin-bottom: 16px;
+}
+.rdp-cert-remember label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    cursor: pointer;
+    color: var(--text, #222);
+}
+.rdp-cert-remember input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    accent-color: var(--accent, #007aff);
+}
+.rdp-cert-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+.rdp-cert-actions .btn {
+    min-width: 80px;
+    padding: 8px 20px;
+    font-size: 15px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-weight: 500;
+}
+.rdp-cert-actions .btn:first-child {
+    background: var(--bg, #f0f0f0);
+    color: var(--accent, #007aff);
+}
+.rdp-cert-actions .btn-primary {
+    background: transparent;
+    color: var(--accent, #007aff);
+    font-weight: 600;
+}
+
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
 .modal-actions .btn { width: auto; min-width: 110px; margin-top: 0; }
 .connection-test-latency {
