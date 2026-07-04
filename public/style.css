@@ -2289,8 +2289,22 @@ body.connection-transition-closing .app-shell {
     opacity: 0.45;
     cursor: not-allowed;
 }
+.rdp-feature-tag {
+    display: inline-block;
+    font-style: normal;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--accent, #007aff);
+    color: #fff;
+    vertical-align: middle;
+    margin-left: 6px;
+    opacity: 1;
+    letter-spacing: 0.3px;
+}
 .rdp-toggle-row.rdp-toggle-disabled span:first-child::after {
-    content: ' (暂不支持)';
+    content: '';
     font-size: 11px;
     color: var(--text-secondary);
 }
