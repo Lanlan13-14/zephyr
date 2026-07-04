@@ -925,16 +925,15 @@ func (g *GfxHandler) Process(data []byte) {
 	// decompressSegment / decompressMultipart already return owned
 	// buffers (freshly allocated or copied from input) so we can hand
 	// the slice directly to the async decode goroutine.
-	pkt := decodePkt{data: decompressed, pooled: decompPooled}
-	select {
-	case g.decodeCh <- pkt:
-	default:
-		// Channel full — video decode is dropped, but we must still
-		// ACK any EndFrame PDUs so the server's outstanding-frame
-		// count stays accurate and it keeps sending.
-		slog.Warn("RDPGFX: decodeCh full, dropping frame (ACKs preserved)", "queueCap", cap(g.decodeCh))
-		g.ackDroppedFrames(pkt)
-	}
+	//
+	// Do not drop RDPGFX payloads here. Unlike disposable video frames,
+	// RDPGFX WireToSurface/CaVideo/progressive updates mutate persistent
+	// surfaces with dirty rectangles. Dropping them while still ACKing
+	// EndFrame leaves holes/stale pixels in the surface, producing the black
+	// screen with scattered decoded tiles. Backpressure the network reader
+	// instead; queued EndFrame ACKs report queueDepth so the server can slow
+	// down without losing correctness.
+	g.decodeCh <- decodePkt{data: decompressed, pooled: decompPooled}
 }
 
 // ackDroppedFrames scans decompressed PDU data for EndFrame commands
@@ -1108,19 +1107,13 @@ func (g *GfxHandler) decodeLoop() {
 	}
 }
 
-// skipHeavyThreshold controls when CaVideo/progressive decode is skipped.
-// When the queue has more items than this, heavy decode is skipped to drain
-// the backlog quickly.  A small threshold means we decode almost every frame
-// during normal playback, only skipping under severe backpressure.
-const skipHeavyThreshold = 16
-
 // decodePDUs processes all PDUs in decompressed data.
-// Frame ACKs (EndFrame) are ALWAYS processed so the server gets timely
-// acknowledgements.  Heavy CaVideo/progressive decode is skipped when
-// the queue is significantly backed up.
+// Frame ACKs (EndFrame) are processed after the corresponding drawing PDUs.
+// RDPGFX updates are ordered surface mutations; skipping a WireToSurface tile
+// while still ACKing the frame corrupts the persistent surface. If decoding is
+// slower than the server, queueDepth in FRAME_ACKNOWLEDGE provides backpressure
+// instead of client-side frame dropping.
 func (g *GfxHandler) decodePDUs(data []byte) {
-	skipHeavy := len(g.decodeCh) > skipHeavyThreshold
-
 	for offset := 0; offset+headerSize <= len(data); {
 		cmdId := binary.LittleEndian.Uint16(data[offset:])
 		pduLength := binary.LittleEndian.Uint32(data[offset+4:])
@@ -1128,15 +1121,13 @@ func (g *GfxHandler) decodePDUs(data []byte) {
 			break
 		}
 		pduData := data[offset+headerSize : offset+int(pduLength)]
-		g.dispatchDecode(cmdId, pduData, skipHeavy)
+		g.dispatchDecode(cmdId, pduData)
 		offset += int(pduLength)
 	}
 }
 
-// dispatchDecode routes a single PDU.  When skipHeavy is true, CaVideo
-// and progressive decode are skipped to drain the queue quickly.
-// EndFrame (frame ACK) is always processed regardless of skipHeavy.
-func (g *GfxHandler) dispatchDecode(cmdId uint16, data []byte, skipHeavy bool) {
+// dispatchDecode routes a single PDU.
+func (g *GfxHandler) dispatchDecode(cmdId uint16, data []byte) {
 	switch cmdId {
 	case cmdidCapsConfirm:
 		g.onCapsConfirm(data)
@@ -1153,11 +1144,11 @@ func (g *GfxHandler) dispatchDecode(cmdId uint16, data []byte, skipHeavy bool) {
 	case cmdidSurfaceToSurface:
 		g.onSurfaceToSurface(data)
 	case cmdidEndFrame:
-		g.onEndFrame(data) // always ACK, even when skipHeavy
+		g.onEndFrame(data)
 	case cmdidWireToSurface1:
-		g.onWireToSurface1Decode(data, skipHeavy)
+		g.onWireToSurface1Decode(data)
 	case cmdidWireToSurface2:
-		g.onWireToSurface2Decode(data, skipHeavy)
+		g.onWireToSurface2Decode(data)
 	case cmdidSolidFill:
 		g.onSolidFill(data)
 	case cmdidCacheToSurface:
@@ -1400,7 +1391,7 @@ func (g *GfxHandler) SetQueueDepthHint(depth uint32) {
 }
 
 // onWireToSurface1Decode handles RDPGFX_WIRE_TO_SURFACE_PDU_1 (MS-RDPEGFX 2.2.2.1).
-func (g *GfxHandler) onWireToSurface1Decode(data []byte, skipHeavy bool) {
+func (g *GfxHandler) onWireToSurface1Decode(data []byte) {
 	if len(data) < 17 {
 		return
 	}
@@ -1438,9 +1429,6 @@ func (g *GfxHandler) onWireToSurface1Decode(data []byte, skipHeavy bool) {
 	// CaVideo (0x0003) carries RFX tile-encoded data; decode onto the
 	// persistent surface buffer like the progressive codec in WTS2.
 	if codecId == codecCaVideo {
-		if skipHeavy {
-			return
-		}
 		rects := g.rfx.Decode(bmpData, int(left), int(top), s.data, int(s.width), int(s.height))
 		g.emitCaVideoRects(s, rects)
 		return
@@ -1574,7 +1562,7 @@ func (g *GfxHandler) onWireToSurface1Decode(data []byte, skipHeavy bool) {
 }
 
 // onWireToSurface2Decode handles RDPGFX_WIRE_TO_SURFACE_PDU_2 (MS-RDPEGFX 2.2.2.2).
-func (g *GfxHandler) onWireToSurface2Decode(data []byte, skipHeavy bool) {
+func (g *GfxHandler) onWireToSurface2Decode(data []byte) {
 	if len(data) < 13 {
 		return
 	}
@@ -1614,9 +1602,6 @@ func (g *GfxHandler) onWireToSurface2Decode(data []byte, skipHeavy bool) {
 		blitToSurface(s, 0, 0, w, h, decoded)
 		g.emitBitmapPooled(s, 0, 0, w, h, decoded)
 	case codecCaVideo:
-		if skipHeavy {
-			break // frame drop
-		}
 		rects := g.rfx.Decode(bmpData, 0, 0, s.data, w, h)
 		g.emitCaVideoRects(s, rects)
 	case codecAVC420:
@@ -1766,9 +1751,6 @@ func (g *GfxHandler) onWireToSurface2Decode(data []byte, skipHeavy bool) {
 			}
 		}
 	case codecProgressive:
-		if skipHeavy {
-			break // frame drop
-		}
 		// Decode tiles directly onto the persistent surface buffer.
 		rects := g.progressive.Decode(bmpData, s.data, w, h)
 		for _, rc := range rects {
