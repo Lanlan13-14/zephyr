@@ -1748,6 +1748,13 @@ app.post('/api/connections', requireAuth, (req, res) => {
         updatedAt: Date.now(),
         lastConnectedAt: null,
     };
+    /* RDP-specific settings */
+    if (protocol === 'RDP') {
+        conn.rdpSoundMode = ['local', 'remote', 'off'].includes(body.rdpSoundMode) ? body.rdpSoundMode : 'local';
+        conn.rdpClipboard = body.rdpClipboard !== false;
+        conn.rdpResolution = ['auto', '1920x1080', '2560x1440', '3840x2160', '7680x4320'].includes(body.rdpResolution) ? body.rdpResolution : 'auto';
+        conn.rdpDomain = String(body.rdpDomain || '').trim();
+    }
     applyConnectionRouteFields(conn, body);
     store.connections.unshift(conn);
     store.activities = [{ id: crypto.randomUUID(), time: Date.now(), message: `新增连接：${conn.name}` }, ...(store.activities || [])].slice(0, 20);
@@ -1768,6 +1775,13 @@ app.put('/api/connections/:id', requireAuth, (req, res) => {
     applyConnectionRouteFields(conn, body);
     if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
     if (body.privateKey !== undefined && body.privateKey !== '******') conn.privateKey = String(body.privateKey || '');
+    /* RDP-specific settings */
+    if (String(conn.protocol || '').toUpperCase() === 'RDP') {
+        if (body.rdpSoundMode !== undefined) conn.rdpSoundMode = ['local', 'remote', 'off'].includes(body.rdpSoundMode) ? body.rdpSoundMode : 'local';
+        if (body.rdpClipboard !== undefined) conn.rdpClipboard = body.rdpClipboard !== false;
+        if (body.rdpResolution !== undefined) conn.rdpResolution = ['auto', '1920x1080', '2560x1440', '3840x2160', '7680x4320'].includes(body.rdpResolution) ? body.rdpResolution : 'auto';
+        if (body.rdpDomain !== undefined) conn.rdpDomain = String(body.rdpDomain || '').trim();
+    }
     conn.updatedAt = Date.now();
     store.activities = [{ id: crypto.randomUUID(), time: Date.now(), message: `编辑连接：${conn.name}` }, ...(store.activities || [])].slice(0, 20);
     writeJSON(CONNECTIONS_FILE, store);
@@ -1819,7 +1833,7 @@ app.post('/api/rdp/credentials', requireAuth, (req, res) => {
     const domainMatch = username.match(/^([^\\]+)\\(.+)$/);
     if (!domain && domainMatch) { domain = domainMatch[1]; username = domainMatch[2]; }
     console.info('[rdp-credentials]', 'issued', { connectionId, host: conn.host, user: username, sessionUser: req.session?.username });
-    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain });
+    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false, rdpResolution: conn.rdpResolution || 'auto' });
 });
 
 

@@ -1119,6 +1119,7 @@ function updateProtocolFields({ preservePort = true } = {}) {
     }
     $('#connSshKey')?.closest('.form-group')?.classList.toggle('force-hidden', protocol !== 'SSH');
     $('#connPrivateKey')?.closest('.form-group')?.classList.toggle('force-hidden', protocol !== 'SSH');
+    $('#rdpSettingsPanel')?.classList.toggle('force-hidden', protocol !== 'RDP');
     updateConnectionSecretRevealChrome(protocol);
     $('.advanced-route-panel')?.classList.remove('force-hidden');
     console.debug('[rdp-client]', 'protocol fields updated', { protocol, defaultPort, usernameRequired: protocol === 'SSH', routePanelEnabled: true });
@@ -1320,7 +1321,13 @@ function prepareConnectionModalForm(conn = null) {
     $('#connName').value = conn?.name || ''; $('#connProtocol').value = conn?.protocol || 'SSH'; $('#connHost').value = conn?.host || ''; $('#connPort').value = conn?.port || ($('#connProtocol').value === 'RDP' ? 3389 : $('#connProtocol').value === 'VNC' ? 5900 : 22); $('#connUsername').value = conn?.username || '';
     renderSshKeyOptions(conn?.sshKeyId || '');
     $('#connTags').value = (conn?.tags || []).join(', '); setRouteMode(conn?.connectionMode || 'direct', conn?.connectionMode === 'jump' ? (conn?.jumpHostIds || (conn?.jumpHostId ? [conn.jumpHostId] : [])) : (conn?.proxyId || ''));
-    $('#connPassword').type = 'password'; $('#toggleConnPassword').textContent = '👁️'; $('#connPassword').value = conn?.hasPassword ? '******' : ''; $('#connPrivateKey').value = conn?.hasPrivateKey ? '******' : ''; $('#connRemark').value = conn?.remark || ''; updateProtocolFields({ preservePort: !!conn });
+    $('#connPassword').type = 'password'; $('#toggleConnPassword').textContent = '👁️'; $('#connPassword').value = conn?.hasPassword ? '******' : ''; $('#connPrivateKey').value = conn?.hasPrivateKey ? '******' : ''; $('#connRemark').value = conn?.remark || '';
+    /* RDP settings */
+    if ($('#rdpSoundMode')) $('#rdpSoundMode').value = conn?.rdpSoundMode || 'local';
+    if ($('#rdpClipboard')) $('#rdpClipboard').checked = conn?.rdpClipboard !== false;
+    if ($('#rdpResolution')) $('#rdpResolution').value = conn?.rdpResolution || 'auto';
+    if ($('#rdpDomain')) $('#rdpDomain').value = conn?.rdpDomain || '';
+    updateProtocolFields({ preservePort: !!conn });
 }
 function openModal(conn = null, trigger = null) {
     const modal = $('#connectionModal');
@@ -1534,6 +1541,12 @@ function connectionPayload({ forTest = false } = {}) {
     const protocol = $('#connProtocol').value;
     const defaultPort = protocol === 'RDP' ? 3389 : protocol === 'VNC' ? 5900 : 22;
     const payload = { name: $('#connName').value.trim(), protocol, host: $('#connHost').value.trim(), port: Number($('#connPort').value) || defaultPort, username: $('#connUsername').value.trim(), sshKeyId: protocol === 'SSH' ? ($('#connSshKey')?.value || '') : '', password: $('#connPassword').value, privateKey: protocol === 'SSH' ? $('#connPrivateKey').value : '', remark: $('#connRemark').value, tags: parseTags($('#connTags').value), connectionMode: mode, proxyId: mode === 'proxy' ? proxyId : '', jumpHostId: mode === 'jump' ? (jumpHostIds[0] || '') : '', jumpHostIds };
+    if (protocol === 'RDP') {
+        payload.rdpSoundMode = $('#rdpSoundMode')?.value || 'local';
+        payload.rdpClipboard = $('#rdpClipboard')?.checked !== false;
+        payload.rdpResolution = $('#rdpResolution')?.value || 'auto';
+        payload.rdpDomain = ($('#rdpDomain')?.value || '').trim();
+    }
     console.debug('[route-ui]', 'connection payload route', { mode, proxyId: payload.proxyId, jumpHostIds, sshKeyId: payload.sshKeyId });
     if (!forTest && editingId) { if (payload.password === '******') delete payload.password; if (payload.privateKey === '******') delete payload.privateKey; }
     return payload;
@@ -1580,7 +1593,7 @@ async function openConnection(id) {
     const tabId = `tab_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     if (protocol === 'RDP' || protocol === 'VNC') {
         const rdpDefaults = getAppearance().rdp || {};
-        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, embedded: true, timestamp: Date.now(), rdpResolution: rdpDefaults.defaultResolution || '1920x1080', quality: rdpDefaults.defaultQuality || 'balanced', rdpFps: Number(rdpDefaults.defaultFps || 30) }));
+        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, embedded: true, timestamp: Date.now(), rdpResolution: c.rdpResolution || rdpDefaults.defaultResolution || '1920x1080', quality: rdpDefaults.defaultQuality || 'balanced', rdpFps: Number(rdpDefaults.defaultFps || 30), rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false, rdpDomain: c.rdpDomain || '' }));
         terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: protocol === 'VNC' ? 'novnc' : 'rdp', connectionId: c.id, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
         console.debug(protocol === 'VNC' ? '[novnc-client]' : '[rdp-client]', 'open remote desktop tab', { protocol, tabId, connectionId: c.id, host: c.host, port: c.port });
     } else {

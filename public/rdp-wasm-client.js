@@ -49,6 +49,7 @@ let statusSequence = 0;
 let rdpInputSuppressed = false;
 let rdpInputSuppressedUntil = 0;
 let lastUserInputAt = 0;
+let rdpClipboardEnabled = true;
 
 /* Canvas & scaling */
 let rdpCanvas = null;
@@ -149,6 +150,7 @@ window.rdpOnClose = function () {
 
 /* Called by Go with clipboard text from remote */
 window.rdpOnClipboard = function (text) {
+    if (!rdpClipboardEnabled) return;
     lastRemoteClipboard = text || '';
     if (remoteClipboardText) remoteClipboardText.value = text || '';
     if (clipboardHint) {
@@ -372,6 +374,8 @@ async function connect() {
     /* Fetch credentials from server (password never stored on client) */
     const connectionId = params.connectionId || urlParams.get('connectionId') || '';
     let host, port, domain, user, password;
+    let rdpSoundMode = 'local';
+    let rdpClipboardEnabled = true;
 
     if (connectionId) {
         try {
@@ -390,6 +394,9 @@ async function connect() {
             domain = cred.domain || params.domain || '';
             user = cred.username || params.username || 'Administrator';
             password = cred.password || '';
+            /* Apply RDP settings from server */
+            rdpSoundMode = cred.rdpSoundMode || params.rdpSoundMode || 'local';
+            rdpClipboardEnabled = cred.rdpClipboard !== false && params.rdpClipboard !== false;
         } catch (err) {
             setStatus('error', `获取 RDP 凭据失败: ${err.message}`);
             return;
@@ -400,6 +407,14 @@ async function connect() {
         domain = params.domain || '';
         user = params.username || 'Administrator';
         password = params.password || '';
+        rdpSoundMode = params.rdpSoundMode || 'local';
+        rdpClipboardEnabled = params.rdpClipboard !== false;
+    }
+
+    /* Apply sound mode setting */
+    if (rdpSoundMode === 'off') {
+        cleanupAudio();
+        audioCtx = null;
     }
 
     setStatus('connecting', '正在连接 RDP...');
