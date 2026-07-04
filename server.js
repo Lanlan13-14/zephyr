@@ -1754,6 +1754,7 @@ app.post('/api/connections', requireAuth, (req, res) => {
         conn.rdpClipboard = body.rdpClipboard !== false;
         conn.rdpMicrophone = !!body.rdpMicrophone;
         conn.rdpLocation = !!body.rdpLocation;
+        conn.rdpStorage = !!body.rdpStorage;
         conn.rdpResolution = ['auto', '1920x1080', '2560x1440', '3840x2160', '7680x4320'].includes(body.rdpResolution) ? body.rdpResolution : 'auto';
         conn.rdpDomain = String(body.rdpDomain || '').trim();
     }
@@ -1783,6 +1784,7 @@ app.put('/api/connections/:id', requireAuth, (req, res) => {
         if (body.rdpClipboard !== undefined) conn.rdpClipboard = body.rdpClipboard !== false;
         if (body.rdpMicrophone !== undefined) conn.rdpMicrophone = !!body.rdpMicrophone;
         if (body.rdpLocation !== undefined) conn.rdpLocation = !!body.rdpLocation;
+        if (body.rdpStorage !== undefined) conn.rdpStorage = !!body.rdpStorage;
         if (body.rdpResolution !== undefined) conn.rdpResolution = ['auto', '1920x1080', '2560x1440', '3840x2160', '7680x4320'].includes(body.rdpResolution) ? body.rdpResolution : 'auto';
         if (body.rdpDomain !== undefined) conn.rdpDomain = String(body.rdpDomain || '').trim();
     }
@@ -1837,7 +1839,7 @@ app.post('/api/rdp/credentials', requireAuth, (req, res) => {
     const domainMatch = username.match(/^([^\\]+)\\(.+)$/);
     if (!domain && domainMatch) { domain = domainMatch[1]; username = domainMatch[2]; }
     console.info('[rdp-credentials]', 'issued', { connectionId, host: conn.host, user: username, sessionUser: req.session?.username });
-    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false, rdpResolution: conn.rdpResolution || 'auto', rdpMicrophone: !!conn.rdpMicrophone, rdpLocation: !!conn.rdpLocation });
+    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false, rdpResolution: conn.rdpResolution || 'auto', rdpMicrophone: !!conn.rdpMicrophone, rdpLocation: !!conn.rdpLocation, rdpStorage: !!conn.rdpStorage });
 });
 
 

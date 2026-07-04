@@ -138,6 +138,10 @@ type RdpClient struct {
 	// customDvcHandlers are registered by the caller via RegisterDvcHandler
 	// and applied to the dvcClient during doLogin().
 	customDvcHandlers map[string]drdynvc.DvcChannelHandler
+
+	// customRdpdrHandler replaces the default rdpdr stub channel when set
+	// via SetRdpdrHandler(). Used for MS-RDPEFS file system redirection.
+	customRdpdrHandler plugin.ChannelTransport
 }
 
 const mouseCoalesceInterval = 16 * time.Millisecond
@@ -385,6 +389,14 @@ func (g *RdpClient) RegisterDvcHandler(channelName string, handler drdynvc.DvcCh
 	return g
 }
 
+// SetRdpdrHandler replaces the default no-op rdpdr stub with a real
+// device redirection handler (e.g. MS-RDPEFS file system).
+// Must be called before Login().
+func (g *RdpClient) SetRdpdrHandler(handler plugin.ChannelTransport) *RdpClient {
+	g.customRdpdrHandler = handler
+	return g
+}
+
 func bpp(BitsPerPixel uint16) int {
 	switch BitsPerPixel {
 	case 15, 16:
@@ -453,9 +465,13 @@ func (g *RdpClient) doLogin(routingToken []byte) error {
 	// Register channels in order: rdpdr, rdpsnd, cliprdr, drdynvc
 	// (matching the channel order that Windows servers expect)
 
-	// rdpdr (Device Redirection) — stub, required for server to enable audio
-	g.channels.Register(&stubChannel{name: "rdpdr",
-		option: plugin.CHANNEL_OPTION_INITIALIZED | plugin.CHANNEL_OPTION_ENCRYPT_RDP | plugin.CHANNEL_OPTION_COMPRESS_RDP})
+	// rdpdr (Device Redirection) — use custom handler if set, otherwise stub
+	if g.customRdpdrHandler != nil {
+		g.channels.Register(g.customRdpdrHandler)
+	} else {
+		g.channels.Register(&stubChannel{name: "rdpdr",
+			option: plugin.CHANNEL_OPTION_INITIALIZED | plugin.CHANNEL_OPTION_ENCRYPT_RDP | plugin.CHANNEL_OPTION_COMPRESS_RDP})
+	}
 	g.mcs.SetClientDeviceRedirection()
 
 	// RDPSND (Audio Output) handler — static virtual channel + DVC paths

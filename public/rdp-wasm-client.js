@@ -433,6 +433,58 @@ function rdpLocationStopInternal() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * STORAGE REDIRECTION (RDPEFS) — browser File System Access → RDP drive
+ * ═══════════════════════════════════════════════════════════════════════ */
+let rdpStorageFiles = []; // { name, size, isDir, handle }
+
+/* Called from Go WASM to get the list of shared files */
+window.rdpStorageGetFiles = function () {
+    return rdpStorageFiles.map((f) => ({ name: f.name, size: f.size, isDir: f.isDir }));
+};
+
+/* Called from Go WASM to read a file's contents by name */
+window.rdpStorageReadFile = function (name) {
+    const entry = rdpStorageFiles.find((f) => f.name === name);
+    if (!entry || !entry.data) return null;
+    return new Uint8Array(entry.data);
+};
+
+/* Allow user to pick files to share with the remote desktop */
+async function rdpStoragePickFiles() {
+    try {
+        if (window.showOpenFilePicker) {
+            const handles = await window.showOpenFilePicker({ multiple: true });
+            for (const handle of handles) {
+                const file = await handle.getFile();
+                const data = new Uint8Array(await file.arrayBuffer());
+                rdpStorageFiles.push({ name: file.name, size: file.size, isDir: false, data, handle });
+            }
+        } else {
+            /* Fallback: use <input type="file"> */
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.multiple = true;
+            input.style.display = 'none';
+            document.body.appendChild(input);
+            await new Promise((resolve) => {
+                input.onchange = async () => {
+                    for (const file of input.files) {
+                        const data = new Uint8Array(await file.arrayBuffer());
+                        rdpStorageFiles.push({ name: file.name, size: file.size, isDir: false, data });
+                    }
+                    resolve();
+                };
+                input.click();
+            });
+            input.remove();
+        }
+        console.info('[rdp-storage] files shared:', rdpStorageFiles.length);
+    } catch (err) {
+        console.warn('[rdp-storage] file pick cancelled or failed:', err.message);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  * CERTIFICATE VERIFICATION DIALOG
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -599,7 +651,7 @@ async function connect() {
     setStatus('connecting', '正在连接 RDP...');
 
     /* rdpConnect is exposed by Go WASM */
-    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation);
+    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, !!params.rdpStorage);
 }
 
 function disconnect() {

@@ -23,6 +23,7 @@ var (
 	swapAltMeta    bool
 	audinHandler   *AudinHandler
 	rdpelHandler   *RdpelHandler
+	rdpefsHandler  *RdpefsHandler
 )
 
 func main() {
@@ -43,10 +44,10 @@ func main() {
 }
 
 // jsConnect is called from JS: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta)
-// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled)
+// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled, storageEnabled)
 func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) < 8 {
-		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, swapAltMeta, micEnabled, locationEnabled])")
+		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, swapAltMeta, micEnabled, locationEnabled, storageEnabled])")
 	}
 	proxyWsURL := args[0].String()
 	host := args[1].String()
@@ -69,9 +70,13 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) >= 11 {
 		locationEnabled = args[10].Bool()
 	}
+	storageEnabled := false
+	if len(args) >= 12 {
+		storageEnabled = args[11].Bool()
+	}
 
 	go func() {
-		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled); err != nil {
+		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled); err != nil {
 			slog.Error("connect", "err", err)
 			js.Global().Call("rdpOnError", err.Error())
 		}
@@ -79,7 +84,7 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	return nil
 }
 
-func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled bool) error {
+func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled bool) error {
 	clientMu.Lock()
 	if rdpClient != nil {
 		rdpClient.Close()
@@ -173,6 +178,12 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	// Register RDPEL (location) DVC handler if enabled
 	rdpelHandler = NewRdpelHandler(locationEnabled)
 	g.RegisterDvcHandler("Microsoft::Windows::RDS::Location", rdpelHandler)
+
+	// Register RDPEFS (storage/drive redirection) if enabled
+	rdpefsHandler = NewRdpefsHandler(storageEnabled)
+	if storageEnabled {
+		g.SetRdpdrHandler(rdpefsHandler)
+	}
 
 	if err := g.Login(domain, user, password); err != nil {
 		return err
