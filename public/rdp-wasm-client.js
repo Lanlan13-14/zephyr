@@ -10,6 +10,7 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
+import { RdpTouchController } from './rdp-touch.js?v=20260704';
 
 const $ = (sel) => document.querySelector(sel);
 const urlParams = new URLSearchParams(location.search);
@@ -50,6 +51,8 @@ let rdpInputSuppressed = false;
 let rdpInputSuppressedUntil = 0;
 let lastUserInputAt = 0;
 let rdpClipboardEnabled = true;
+let rdpTouchController = null;
+let rdpLocationWatchId = null;
 
 /* Canvas & scaling */
 let rdpCanvas = null;
@@ -392,6 +395,44 @@ function rdpAudinStopInternal() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * LOCATION REDIRECTION (RDPEL) — browser Geolocation → Go WASM → RDP server
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Called from Go WASM when the server requests location data */
+window.rdpLocationStart = function () {
+    console.info('[rdp-location] start');
+    rdpLocationStopInternal();
+    if (!navigator.geolocation) {
+        console.warn('[rdp-location] Geolocation API not available');
+        return;
+    }
+    rdpLocationWatchId = navigator.geolocation.watchPosition(
+        (pos) => {
+            if (typeof rdpLocationData === 'undefined') return;
+            const c = pos.coords;
+            rdpLocationData(
+                c.latitude, c.longitude,
+                c.altitude != null ? c.altitude : null,
+                c.accuracy || 0,
+                c.speed != null ? c.speed : null,
+                c.heading != null ? c.heading : null,
+            );
+        },
+        (err) => { console.warn('[rdp-location] error:', err.message); },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 },
+    );
+};
+
+window.rdpLocationStop = function () { rdpLocationStopInternal(); };
+
+function rdpLocationStopInternal() {
+    if (rdpLocationWatchId != null) {
+        navigator.geolocation?.clearWatch(rdpLocationWatchId);
+        rdpLocationWatchId = null;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  * CERTIFICATE VERIFICATION DIALOG
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -558,7 +599,7 @@ async function connect() {
     setStatus('connecting', '正在连接 RDP...');
 
     /* rdpConnect is exposed by Go WASM */
-    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone);
+    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation);
 }
 
 function disconnect() {
@@ -568,6 +609,8 @@ function disconnect() {
     try { rdpDisconnect(); } catch {}
     cleanupH264();
     cleanupAudio();
+    rdpAudinStopInternal();
+    rdpLocationStopInternal();
     setStatus('disconnected', '已断开 RDP 连接');
     notifyParentStatus('closed');
 }
@@ -724,72 +767,28 @@ function attachInputEvents() {
         rdpKeyUp(e.code);
     });
 
-    /* ─── Touch input (single-finger tap/drag, two-finger scroll) ──── */
-    let touchState = null;
-
-    rdpCanvas.addEventListener('touchstart', (e) => {
-        if (!connected) return;
-        e.preventDefault();
-        const t = e.touches[0];
-        if (!t) return;
-        const { x, y } = canvasCoords(t);
-        touchState = { startX: x, startY: y, startTime: performance.now(), moved: false, fingers: e.touches.length };
-        if (e.touches.length === 1) {
-            rdpMouseMove(x, y);
-        }
-    }, { passive: false });
-
-    rdpCanvas.addEventListener('touchmove', (e) => {
-        if (!connected || !touchState) return;
-        e.preventDefault();
-        if (e.touches.length === 2) {
-            /* Two-finger scroll */
-            const t = e.touches[0];
-            const { x, y } = canvasCoords(t);
-            const dx = x - touchState.startX;
-            const dy = y - touchState.startY;
-            if (Math.abs(dy) > 2) {
-                rdpMouseWheel(dy > 0 ? -0.5 : 0.5);
-                touchState.startX = x;
-                touchState.startY = y;
-            }
-            touchState.moved = true;
-            return;
-        }
-        const t = e.touches[0];
-        if (!t) return;
-        const { x, y } = canvasCoords(t);
-        if (!touchState.moved && (Math.abs(x - touchState.startX) > 3 || Math.abs(y - touchState.startY) > 3)) {
-            touchState.moved = true;
-            rdpMouseDown(0, touchState.startX, touchState.startY);
-        }
-        if (touchState.moved) rdpMouseMove(x, y);
-    }, { passive: false });
-
-    rdpCanvas.addEventListener('touchend', (e) => {
-        if (!connected || !touchState) return;
-        e.preventDefault();
-        if (touchState.fingers === 1 && !touchState.moved) {
-            const dt = performance.now() - touchState.startTime;
-            const { x, y } = { x: touchState.startX, y: touchState.startY };
-            if (dt > 500) {
-                /* Long press → right click */
-                rdpMouseDown(2, x, y);
-                setTimeout(() => rdpMouseUp(2, x, y), 50);
-            } else {
-                /* Tap → left click */
-                rdpMouseDown(0, x, y);
-                setTimeout(() => rdpMouseUp(0, x, y), 50);
-            }
-        } else if (touchState.moved && touchState.fingers === 1) {
-            const t = e.changedTouches[0];
-            if (t) {
-                const { x, y } = canvasCoords(t);
-                rdpMouseUp(0, x, y);
-            }
-        }
-        touchState = null;
-    }, { passive: false });
+    /* ─── Touch input — uses RdpTouchController module ──── */
+    if (!rdpTouchController) {
+        const pointerEl = document.getElementById('rdpPointer');
+        rdpTouchController = new RdpTouchController({
+            canvas: rdpCanvas,
+            getConnected: () => connected,
+            canvasCoords,
+            sendMouseMove: (x, y) => rdpMouseMove(x, y),
+            sendMouseDown: (btn, x, y) => rdpMouseDown(btn, x, y),
+            sendMouseUp: (btn, x, y) => rdpMouseUp(btn, x, y),
+            sendMouseWheel: (delta) => rdpMouseWheel(delta),
+            onZoomChange: (zoom) => {
+                rdpScaleZoom = zoom;
+                if (rdpCanvas) rdpCanvas.style.transform = `scale(${zoom})`;
+                const zs = document.getElementById('zoomSlider');
+                const zv = document.getElementById('zoomValue');
+                if (zs) zs.value = Math.round(zoom * 100);
+                if (zv) zv.textContent = Math.round(zoom * 100) + '%';
+            },
+            pointerOverlay: pointerEl,
+        });
+    }
 
     /* ─── Mobile keyboard input (textarea mirror) ──── */
     if (mobileKeyboardInput) {

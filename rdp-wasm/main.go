@@ -22,6 +22,7 @@ var (
 	clipMu         sync.Mutex
 	swapAltMeta    bool
 	audinHandler   *AudinHandler
+	rdpelHandler   *RdpelHandler
 )
 
 func main() {
@@ -35,16 +36,17 @@ func main() {
 	js.Global().Set("rdpKeyUp", js.FuncOf(jsKeyUp))
 	js.Global().Set("rdpClipboardChanged", js.FuncOf(jsClipboardChanged))
 	js.Global().Set("rdpAudinData", js.FuncOf(jsAudinData))
+	js.Global().Set("rdpLocationData", js.FuncOf(jsLocationData))
 
 	// Block forever — JS callbacks keep things alive.
 	select {}
 }
 
 // jsConnect is called from JS: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta)
-// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled)
+// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled)
 func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) < 8 {
-		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, swapAltMeta, micEnabled])")
+		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, swapAltMeta, micEnabled, locationEnabled])")
 	}
 	proxyWsURL := args[0].String()
 	host := args[1].String()
@@ -63,9 +65,13 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) >= 10 {
 		micEnabled = args[9].Bool()
 	}
+	locationEnabled := false
+	if len(args) >= 11 {
+		locationEnabled = args[10].Bool()
+	}
 
 	go func() {
-		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled); err != nil {
+		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled); err != nil {
 			slog.Error("connect", "err", err)
 			js.Global().Call("rdpOnError", err.Error())
 		}
@@ -73,7 +79,7 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	return nil
 }
 
-func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled bool) error {
+func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled bool) error {
 	clientMu.Lock()
 	if rdpClient != nil {
 		rdpClient.Close()
@@ -163,6 +169,10 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	// Register AUDIN (microphone) DVC handler if enabled
 	audinHandler = NewAudinHandler(micEnabled)
 	g.RegisterDvcHandler("AUDIO_INPUT", audinHandler)
+
+	// Register RDPEL (location) DVC handler if enabled
+	rdpelHandler = NewRdpelHandler(locationEnabled)
+	g.RegisterDvcHandler("Microsoft::Windows::RDS::Location", rdpelHandler)
 
 	if err := g.Login(domain, user, password); err != nil {
 		return err
@@ -346,5 +356,30 @@ func jsAudinData(_ js.Value, args []js.Value) any {
 	buf := make([]byte, jsArr.Length())
 	js.CopyBytesToGo(buf, jsArr)
 	audinHandler.SendAudioData(buf)
+	return nil
+}
+
+// jsLocationData is called from JS with geolocation data.
+// JS: rdpLocationData(latitude, longitude, altitude, accuracy, speed, heading)
+func jsLocationData(_ js.Value, args []js.Value) any {
+	if len(args) < 4 || rdpelHandler == nil {
+		return nil
+	}
+	lat := args[0].Float()
+	lon := args[1].Float()
+	alt := 0.0
+	if len(args) > 2 && !args[2].IsNull() && !args[2].IsUndefined() {
+		alt = args[2].Float()
+	}
+	acc := args[3].Float()
+	spd := -1.0
+	if len(args) > 4 && !args[4].IsNull() && !args[4].IsUndefined() {
+		spd = args[4].Float()
+	}
+	hdg := -1.0
+	if len(args) > 5 && !args[5].IsNull() && !args[5].IsUndefined() {
+		hdg = args[5].Float()
+	}
+	rdpelHandler.SendLocation(lat, lon, alt, acc, spd, hdg)
 	return nil
 }

@@ -1327,6 +1327,7 @@ function prepareConnectionModalForm(conn = null) {
     if ($('#rdpSoundMode')) $('#rdpSoundMode').value = conn?.rdpSoundMode || 'local';
     if ($('#rdpClipboard')) $('#rdpClipboard').checked = conn?.rdpClipboard !== false;
     if ($('#rdpMicrophone')) $('#rdpMicrophone').checked = !!conn?.rdpMicrophone;
+    if ($('#rdpLocation')) $('#rdpLocation').checked = !!conn?.rdpLocation;
     if ($('#rdpResolution')) $('#rdpResolution').value = conn?.rdpResolution || 'auto';
     if ($('#rdpDomain')) $('#rdpDomain').value = conn?.rdpDomain || '';
     updateProtocolFields({ preservePort: !!conn });
@@ -1547,6 +1548,7 @@ function connectionPayload({ forTest = false } = {}) {
         payload.rdpSoundMode = $('#rdpSoundMode')?.value || 'local';
         payload.rdpClipboard = $('#rdpClipboard')?.checked !== false;
         payload.rdpMicrophone = !!$('#rdpMicrophone')?.checked;
+        payload.rdpLocation = !!$('#rdpLocation')?.checked;
         payload.rdpResolution = $('#rdpResolution')?.value || 'auto';
         payload.rdpDomain = ($('#rdpDomain')?.value || '').trim();
     }
@@ -1596,7 +1598,7 @@ async function openConnection(id) {
     const tabId = `tab_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     if (protocol === 'RDP' || protocol === 'VNC') {
         const rdpDefaults = getAppearance().rdp || {};
-        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, embedded: true, timestamp: Date.now(), rdpResolution: c.rdpResolution || rdpDefaults.defaultResolution || '1920x1080', quality: rdpDefaults.defaultQuality || 'balanced', rdpFps: Number(rdpDefaults.defaultFps || 30), rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false, rdpDomain: c.rdpDomain || '', rdpMicrophone: !!c.rdpMicrophone }));
+        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, embedded: true, timestamp: Date.now(), rdpResolution: c.rdpResolution || rdpDefaults.defaultResolution || '1920x1080', quality: rdpDefaults.defaultQuality || 'balanced', rdpFps: Number(rdpDefaults.defaultFps || 30), rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false, rdpDomain: c.rdpDomain || '', rdpMicrophone: !!c.rdpMicrophone, rdpLocation: !!c.rdpLocation }));
         terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: protocol === 'VNC' ? 'novnc' : 'rdp', connectionId: c.id, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
         console.debug(protocol === 'VNC' ? '[novnc-client]' : '[rdp-client]', 'open remote desktop tab', { protocol, tabId, connectionId: c.id, host: c.host, port: c.port });
     } else {
