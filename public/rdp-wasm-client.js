@@ -61,9 +61,13 @@ let rdpWidth = 0;
 let rdpHeight = 0;
 
 /* fit/zoom */
-const fitModes = ['fit', '1:1', 'fill'];
+const fitModes = ['original', 'adapt', 'fill'];
 let fitModeIdx = 0;
 let rdpScaleZoom = 1;
+
+/* Fill mode viewport panning (0-100%) */
+let fillPanX = 50; /* center */
+let fillPanY = 50;
 
 /* Quality/FPS — kept for UI compat; WASM grdp doesn't need these */
 const qualityModes = ['balanced', 'performance', 'quality'];
@@ -817,27 +821,56 @@ function ensureCanvas(w, h) {
 function applyFitMode() {
     if (!rdpCanvas) return;
     const mode = fitModes[fitModeIdx];
-    if (mode === 'fit') {
-        rdpCanvas.style.width = '100%';
-        rdpCanvas.style.height = '100%';
-        rdpCanvas.style.objectFit = 'contain';
-        rdpCanvas.style.maxWidth = '100%';
-        rdpCanvas.style.maxHeight = '100%';
-    } else if (mode === '1:1') {
+
+    /* Reset transform */
+    rdpCanvas.style.transform = '';
+    rdpCanvas.style.transformOrigin = '0 0';
+
+    if (mode === 'original') {
+        /* Original: strict preset resolution at 16:9 (9:16 portrait).
+         * Canvas pixel size = remote resolution. CSS size = same.
+         * Centered in container, no scaling, black bars around. */
         rdpCanvas.style.width = rdpWidth + 'px';
         rdpCanvas.style.height = rdpHeight + 'px';
         rdpCanvas.style.objectFit = 'none';
         rdpCanvas.style.maxWidth = 'none';
         rdpCanvas.style.maxHeight = 'none';
+        rdpCanvas.style.position = 'absolute';
+        rdpCanvas.style.left = '50%';
+        rdpCanvas.style.top = '50%';
+        rdpCanvas.style.transform = 'translate(-50%, -50%)';
+        rdpCanvas.style.transformOrigin = 'center center';
+    } else if (mode === 'adapt') {
+        /* Adapt: fill the entire display area. The RDP session resolution
+         * is expanded so the center 16:9 (9:16) region >= base resolution,
+         * and edge regions are rendered at the same resolution (no stretch).
+         * Canvas pixel size = screen-covering resolution.
+         * CSS: 100% width/height, no object-fit needed since aspect matches. */
+        rdpCanvas.style.width = '100%';
+        rdpCanvas.style.height = '100%';
+        rdpCanvas.style.objectFit = 'fill';
+        rdpCanvas.style.maxWidth = '100%';
+        rdpCanvas.style.maxHeight = '100%';
+        rdpCanvas.style.position = '';
+        rdpCanvas.style.left = '';
+        rdpCanvas.style.top = '';
     } else if (mode === 'fill') {
+        /* Fill: 16:9 (9:16) rendering, scaled up to cover the display.
+         * The viewport can be panned via joystick handle to see clipped edges.
+         * CSS: object-fit cover to scale up, position adjustable. */
         rdpCanvas.style.width = '100%';
         rdpCanvas.style.height = '100%';
         rdpCanvas.style.objectFit = 'cover';
+        rdpCanvas.style.objectPosition = fillPanX + '% ' + fillPanY + '%';
         rdpCanvas.style.maxWidth = '100%';
         rdpCanvas.style.maxHeight = '100%';
+        rdpCanvas.style.position = '';
+        rdpCanvas.style.left = '';
+        rdpCanvas.style.top = '';
     }
+
     if (displayShell) {
-        displayShell.style.overflow = mode === '1:1' ? 'auto' : 'hidden';
+        displayShell.style.overflow = mode === 'original' ? 'hidden' : 'hidden';
     }
 }
 
@@ -854,23 +887,35 @@ function canvasCoords(e) {
     let renderW, renderH, offsetX, offsetY;
 
     const mode = fitModes[fitModeIdx];
-    if (mode === '1:1') {
-        /* 1:1 mode: canvas CSS size = pixel size, no scaling needed */
+    if (mode === 'original') {
+        /* Original mode: canvas CSS size = pixel size, no scaling needed */
         return {
             x: Math.max(0, Math.min(rdpWidth - 1, Math.floor(e.clientX - r.left))),
             y: Math.max(0, Math.min(rdpHeight - 1, Math.floor(e.clientY - r.top))),
         };
+    } else if (mode === 'adapt') {
+        /* Adapt mode: canvas resolution matches screen, object-fit: fill.
+         * Direct mapping, canvas fills the entire rect exactly. */
+        const scaleX = rdpWidth / r.width;
+        const scaleY = rdpHeight / r.height;
+        return {
+            x: Math.max(0, Math.min(rdpWidth - 1, Math.floor((e.clientX - r.left) * scaleX))),
+            y: Math.max(0, Math.min(rdpHeight - 1, Math.floor((e.clientY - r.top) * scaleY))),
+        };
     } else if (mode === 'fill') {
-        /* object-fit: cover — image is cropped, fills entire rect */
+        /* Fill mode: object-fit cover with pannable viewport.
+         * Must account for objectPosition offset from joystick panning. */
         if (rectAspect > canvasAspect) {
             renderW = r.width;
             renderH = r.width / canvasAspect;
             offsetX = 0;
-            offsetY = (r.height - renderH) / 2;
+            /* objectPosition Y controls vertical shift */
+            offsetY = -(renderH - r.height) * (fillPanY / 100);
         } else {
             renderH = r.height;
             renderW = r.height * canvasAspect;
-            offsetX = (r.width - renderW) / 2;
+            /* objectPosition X controls horizontal shift */
+            offsetX = -(renderW - r.width) * (fillPanX / 100);
             offsetY = 0;
         }
     } else {
@@ -1099,13 +1144,53 @@ function isPortraitTouch() {
 function computeRdpSize() {
     const res = params.rdpResolution || '1920x1080';
     const m = res.match(/^(\d+)x(\d+)$/);
-    let w = m ? Number(m[1]) : 1920;
-    let h = m ? Number(m[2]) : 1080;
+    let baseW = m ? Number(m[1]) : 1920;
+    let baseH = m ? Number(m[2]) : 1080;
     if (res === 'auto' || !m) {
-        w = Math.min(window.screen.width * (window.devicePixelRatio || 1), 3840);
-        h = Math.min(window.screen.height * (window.devicePixelRatio || 1), 2160);
+        baseW = Math.min(window.screen.width * (window.devicePixelRatio || 1), 3840);
+        baseH = Math.min(window.screen.height * (window.devicePixelRatio || 1), 2160);
     }
-    if (isPortraitTouch() && w > h) [w, h] = [h, w];
+    const portrait = isPortraitTouch();
+
+    /* Enforce 16:9 (landscape) or 9:16 (portrait) for base resolution */
+    if (portrait) {
+        /* 9:16 portrait */
+        baseH = Math.max(baseW, baseH);
+        baseW = Math.round(baseH * 9 / 16);
+    } else {
+        /* 16:9 landscape */
+        baseW = Math.max(baseW, baseH);
+        baseH = Math.round(baseW * 9 / 16);
+    }
+
+    const mode = fitModes[fitModeIdx];
+    let w = baseW, h = baseH;
+
+    if (mode === 'adapt') {
+        /* Adapt mode: expand resolution to fill the entire physical screen.
+         * The center 16:9 (9:16) area must be >= base resolution.
+         * Calculate the smallest resolution that covers the screen at native pixel density. */
+        const screenW = (window.innerWidth || window.screen.width) * (window.devicePixelRatio || 1);
+        const screenH = (window.innerHeight || window.screen.height) * (window.devicePixelRatio || 1);
+        const screenAspect = screenW / screenH;
+        const baseAspect = baseW / baseH;
+
+        if (Math.abs(screenAspect - baseAspect) < 0.01) {
+            /* Screen matches 16:9, use base resolution directly */
+            w = baseW;
+            h = baseH;
+        } else if (screenAspect > baseAspect) {
+            /* Screen is wider than 16:9 — expand width, keep height >= base */
+            w = Math.round(baseH * screenAspect);
+            h = baseH;
+        } else {
+            /* Screen is taller than 16:9 — expand height, keep width >= base */
+            w = baseW;
+            h = Math.round(baseW / screenAspect);
+        }
+    }
+    /* original and fill modes use base 16:9 resolution as-is */
+
     w = Math.max(640, Math.min(7680, Math.floor(w / 2) * 2));
     h = Math.max(480, Math.min(4320, Math.floor(h / 2) * 2));
     return { width: w, height: h };
@@ -1177,9 +1262,20 @@ function initToolbar() {
 
     if (fitBtn) {
         fitBtn.addEventListener('click', () => {
+            const prevMode = fitModes[fitModeIdx];
             fitModeIdx = (fitModeIdx + 1) % fitModes.length;
-            fitBtn.textContent = fitModes[fitModeIdx] === 'fit' ? '适应' : fitModes[fitModeIdx] === '1:1' ? '原始' : '填充';
+            const newMode = fitModes[fitModeIdx];
+            fitBtn.textContent = newMode === 'original' ? '原始' : newMode === 'adapt' ? '适应' : '填充';
             applyFitMode();
+            /* Adapt mode changes the RDP session resolution — reconnect if switching to/from it */
+            if ((prevMode === 'adapt' || newMode === 'adapt') && prevMode !== newMode && connected) {
+                const size = computeRdpSize();
+                if (size.width !== rdpWidth || size.height !== rdpHeight) {
+                    rdpWidth = size.width;
+                    rdpHeight = size.height;
+                    connect().catch(() => {});
+                }
+            }
         });
     }
 
@@ -1214,6 +1310,41 @@ function initToolbar() {
 
     if (joystickBtn && joystickPanel) {
         joystickBtn.addEventListener('click', () => { joystickPanel.hidden = !joystickPanel.hidden; });
+    }
+
+    /* Joystick knob — controls viewport pan in fill mode */
+    const joystickKnob = document.getElementById('joystickKnob');
+    const joystickContainer = document.getElementById('joystickContainer');
+    if (joystickKnob && joystickContainer) {
+        let joyDrag = null;
+        const joyRadius = 50; /* max drag distance in px */
+        joystickKnob.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            joystickKnob.setPointerCapture(e.pointerId);
+            const rect = joystickContainer.getBoundingClientRect();
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            joyDrag = { cx, cy };
+        });
+        joystickKnob.addEventListener('pointermove', (e) => {
+            if (!joyDrag) return;
+            const dx = Math.max(-joyRadius, Math.min(joyRadius, e.clientX - joyDrag.cx));
+            const dy = Math.max(-joyRadius, Math.min(joyRadius, e.clientY - joyDrag.cy));
+            joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+            /* Map knob position to viewport pan (0-100%) */
+            fillPanX = Math.max(0, Math.min(100, 50 + (dx / joyRadius) * 50));
+            fillPanY = Math.max(0, Math.min(100, 50 + (dy / joyRadius) * 50));
+            if (fitModes[fitModeIdx] === 'fill' && rdpCanvas) {
+                rdpCanvas.style.objectPosition = fillPanX + '% ' + fillPanY + '%';
+            }
+        });
+        const joyEnd = () => {
+            if (!joyDrag) return;
+            joyDrag = null;
+            joystickKnob.style.transform = '';
+        };
+        joystickKnob.addEventListener('pointerup', joyEnd);
+        joystickKnob.addEventListener('pointercancel', joyEnd);
     }
 
     if (ctrlAltDelBtn) {
