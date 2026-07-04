@@ -1120,6 +1120,7 @@ function updateProtocolFields({ preservePort = true } = {}) {
     $('#connSshKey')?.closest('.form-group')?.classList.toggle('force-hidden', protocol !== 'SSH');
     $('#connPrivateKey')?.closest('.form-group')?.classList.toggle('force-hidden', protocol !== 'SSH');
     $('#rdpSettingsPanel')?.classList.toggle('force-hidden', protocol !== 'RDP');
+    $('#rdpDomainGroup')?.classList.toggle('force-hidden', protocol !== 'RDP');
     updateConnectionSecretRevealChrome(protocol);
     $('.advanced-route-panel')?.classList.remove('force-hidden');
     console.debug('[rdp-client]', 'protocol fields updated', { protocol, defaultPort, usernameRequired: protocol === 'SSH', routePanelEnabled: true });

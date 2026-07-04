@@ -418,6 +418,7 @@
             <div class="form-row"><div class="form-group"><label>名称</label><input id="connName" required></div><div class="form-group port-group"><label>协议</label><select id="connProtocol"><option>SSH</option><option>RDP</option><option>VNC</option></select></div></div>
             <div class="form-row"><div class="form-group"><label>IP / 主机</label><input id="connHost" required></div><div class="form-group port-group"><label>端口</label><input id="connPort" type="number" value="22" min="1" max="65535"></div></div>
             <div class="form-group"><label>用户名</label><input id="connUsername" required></div>
+            <div class="form-group force-hidden" id="rdpDomainGroup"><label>Windows 域（可选）</label><input id="rdpDomain" placeholder="例如 CORP 或 WORKGROUP"><p class="field-hint">Active Directory 域名。家庭/工作组环境可留空。等同于 DOMAIN\username 中的 DOMAIN。</p></div>
             <div class="form-group"><label>选择已保存 SSH 密钥</label><select id="connSshKey"><option value="">不使用密钥库</option></select><p class="field-hint">选择后连接时会自动使用该私钥；下方手动填写的密码/私钥会优先生效或作为私钥口令。</p></div>
             <div class="form-group"><label>标签（逗号分隔）</label><input id="connTags" placeholder="生产, 数据库, 海外"></div>
             <section class="advanced-route-panel" aria-label="高级选项">
@@ -455,7 +456,6 @@
                 <h3 style="margin-top:16px">显示</h3>
                 <div class="advanced-route-divider"></div>
                 <div class="form-group rdp-select-group"><label for="rdpResolution">自定义显示器分辨率</label><select id="rdpResolution"><option value="auto">匹配此设备</option><option value="1920x1080">1920×1080 (1080p)</option><option value="2560x1440">2560×1440 (2K)</option><option value="3840x2160">3840×2160 (4K)</option><option value="7680x4320">7680×4320 (8K)</option></select></div>
-                <div class="form-group"><label for="rdpDomain">域名（可选）</label><input id="rdpDomain" placeholder="WORKGROUP"></div>
             </section>
             <div class="form-group connection-secret-reveal" id="connSecretRevealGroup"><button type="button" class="link-btn" id="revealConnSecrets">查看已保存密码/私钥</button><p class="field-hint" id="connSecretRevealHint">编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。</p></div>
             <div class="form-group"><label>备注（支持 Markdown）</label><textarea id="connRemark" placeholder="例如：**生产环境**\n`docker ps`"></textarea></div>
