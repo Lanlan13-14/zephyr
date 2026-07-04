@@ -68,8 +68,7 @@ const APP_VERSION = getAppVersion();
 const app = express();
 
 function applyCrossOriginIsolationHeaders(req, res, next) {
-    // freerdp-web's GFX worker uses OffscreenCanvas/WebCodecs and its audio path uses
-    // SharedArrayBuffer.  These headers are required for crossOriginIsolated pages.
+    // rdp-wasm WASM client uses SharedArrayBuffer for Go runtime.
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
     res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
@@ -123,25 +122,6 @@ const tempTotpTokens = new Map();
 const webauthnChallenges = new Map();
 const resetRequestHits = new Map();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-const rdpClipUploadRoot = process.env.RDP_CLIP_UPLOAD_DIR || path.join(os.tmpdir(), 'zephyr-rdp-clip-uploads');
-fs.mkdirSync(rdpClipUploadRoot, { recursive: true });
-function safeRdpUploadName(name = 'file') {
-    const cleaned = String(name || 'file').replace(/[\/]/g, '_').replace(/\0/g, '').replace(/\.\./g, '.').trim();
-    return (cleaned || 'file').slice(0, 220);
-}
-const rdpClipUpload = multer({
-    storage: multer.diskStorage({
-        destination(req, file, cb) {
-            const dir = path.join(rdpClipUploadRoot, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`);
-            fs.mkdirSync(dir, { recursive: true });
-            cb(null, dir);
-        },
-        filename(req, file, cb) {
-            cb(null, `${crypto.randomBytes(6).toString('hex')}-${safeRdpUploadName(file.originalname || 'file')}`);
-        }
-    }),
-    limits: { fileSize: Number(process.env.RDP_CLIP_UPLOAD_MAX_BYTES || 0) || Infinity, files: 256 }
-});
 
 function wsSendJSON(targetWs, obj) {
     if (targetWs?.readyState === targetWs?.OPEN) {
@@ -1009,127 +989,9 @@ async function testNoVncConnection(conn, timeout = 10000) {
 function classifyRdpError(err) {
     const msg = String(err?.message || err || '连接失败');
     if (/timed out|timeout|超时/i.test(msg)) return { code: 'timeout', message: 'RDP 连接超时' };
-    if (/authentication|auth|logon|password|denied|credentials|ERRCONNECT_LOGON_FAILURE|0x00020009|认证|密码/i.test(msg)) return { code: 'auth_failed', message: 'RDP 认证失败' };
     if (/ECONNREFUSED|refused/i.test(msg)) return { code: 'refused', message: 'RDP 端口被拒绝' };
     if (/ENOTFOUND|EHOSTUNREACH|ENETUNREACH|unreachable|No route/i.test(msg)) return { code: 'unreachable', message: '网络不可达或主机不存在' };
-    if (/librdp_bridge|native bridge|FreeRDP3 bridge|Failed to load/i.test(msg)) return { code: 'dependency_missing', message: 'RDP native bridge 不可用' };
     return { code: 'unknown', message: msg };
-}
-
-function commandExists(command) {
-    const cmd = String(command || '').trim();
-    if (!cmd) return false;
-    if (cmd.includes('/') || path.isAbsolute(cmd)) {
-        try { return fs.existsSync(cmd) && fs.statSync(cmd).isFile(); } catch { return false; }
-    }
-    return String(process.env.PATH || '').split(path.delimiter).some((dir) => {
-        try { return fs.existsSync(path.join(dir, cmd)); } catch { return false; }
-    });
-}
-
-function testRdpWithNativeBridge({ host, port, username, password, domain }, timeout = 10000) {
-    return new Promise((resolve, reject) => {
-        const script = `
-import os, sys
-from rdp_bridge import NativeLibrary
-
-def b(value):
-    return (value or '').encode('utf-8')
-
-session = None
-try:
-    lib = NativeLibrary()
-    session = lib.rdp_create(
-        b(os.environ.get('ZEPHYR_RDP_TEST_HOST')),
-        int(os.environ.get('ZEPHYR_RDP_TEST_PORT') or '3389'),
-        b(os.environ.get('ZEPHYR_RDP_TEST_USERNAME')),
-        b(os.environ.get('ZEPHYR_RDP_TEST_PASSWORD')),
-        b(os.environ.get('ZEPHYR_RDP_TEST_DOMAIN')),
-        1280,
-        720,
-        32,
-    )
-    if not session:
-        raise RuntimeError('Failed to create native RDP session')
-    result = lib.rdp_connect(session)
-    if result != 0:
-        error = lib.rdp_get_error(session)
-        raise RuntimeError(error.decode('utf-8', errors='replace') if error else 'Native RDP connect failed')
-    print('OK', flush=True)
-    sys.exit(0)
-except Exception as exc:
-    print(str(exc), file=sys.stderr, flush=True)
-    sys.exit(1)
-finally:
-    if session is not None:
-        try:
-            lib.rdp_disconnect(session)
-        except Exception:
-            pass
-        try:
-            lib.rdp_destroy(session)
-        except Exception:
-            pass
-`;
-        const python = process.env.RDP_GFX_PYTHON || 'python3';
-        const env = {
-            ...process.env,
-            PYTHONUNBUFFERED: '1',
-            PYTHONPATH: path.dirname(RDP_GFX_BACKEND_SCRIPT),
-            ZEPHYR_RDP_TEST_HOST: String(host || ''),
-            ZEPHYR_RDP_TEST_PORT: String(Number(port) || 3389),
-            ZEPHYR_RDP_TEST_USERNAME: String(username || ''),
-            ZEPHYR_RDP_TEST_PASSWORD: String(password || ''),
-            ZEPHYR_RDP_TEST_DOMAIN: String(domain || ''),
-        };
-        const child = spawn(python, ['-c', script], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-        let output = '';
-        const timer = setTimeout(() => {
-            try { child.kill('SIGTERM'); } catch {}
-            reject(new Error('RDP native bridge 测试超时'));
-        }, timeout);
-        child.stdout?.on('data', (d) => { output += d.toString('utf8'); });
-        child.stderr?.on('data', (d) => { output += d.toString('utf8'); });
-        child.on('error', (err) => {
-            clearTimeout(timer);
-            reject(err);
-        });
-        child.on('close', (code) => {
-            clearTimeout(timer);
-            if (code === 0) resolve(output.trim());
-            else reject(new Error(output.trim().split('\n').filter(Boolean).slice(-6).join('\n') || `native bridge test exited ${code}`));
-        });
-    });
-}
-
-function testRdpWithXfreerdp({ host, port, username, password }, timeout = 10000) {
-    return new Promise((resolve, reject) => {
-        let child = null;
-        const args = [
-            `/v:${host}:${port}`,
-            `/u:${username || 'Administrator'}`,
-            `/p:${password || ''}`,
-            '/cert:ignore',
-            '/auth-only',
-            '/log-level:ERROR',
-        ];
-        const timer = setTimeout(() => {
-            try { child?.kill('SIGTERM'); } catch {}
-            reject(new Error('RDP 认证测试超时'));
-        }, timeout);
-        child = spawn(process.env.RDP_FREERDP_BIN || 'xfreerdp', args, { stdio: ['ignore', 'ignore', 'pipe'] });
-        let errText = '';
-        child.stderr?.on('data', (d) => { errText += d.toString('utf8'); });
-        child.on('error', (err) => {
-            clearTimeout(timer);
-            reject(err);
-        });
-        child.on('close', (code) => {
-            clearTimeout(timer);
-            if (code === 0) resolve();
-            else reject(new Error(errText.trim().slice(0, 300) || `xfreerdp auth-only exited ${code}`));
-        });
-    });
 }
 
 async function testRDPConnection(conn, timeout = 10000) {
@@ -1140,25 +1002,25 @@ async function testRDPConnection(conn, timeout = 10000) {
         routedForward = await createRoutedTcpForward(conn, targetPort, timeout);
         const effectiveHost = routedForward?.host || conn.host;
         const effectivePort = routedForward?.port || targetPort;
-        const identity = splitRdpIdentity(conn);
-        const testTarget = {
-            host: effectiveHost,
-            port: effectivePort,
-            username: identity.username || conn.username || 'Administrator',
-            password: conn.password || '',
-            domain: identity.domain || '',
-        };
-        try {
-            await testRdpWithNativeBridge(testTarget, timeout);
-        } catch (nativeErr) {
-            const nativeClassified = classifyRdpError(nativeErr);
-            const xfreerdpBin = process.env.RDP_FREERDP_BIN || 'xfreerdp';
-            const xfreerdpAvailable = commandExists(xfreerdpBin);
-            if (nativeClassified.code !== 'dependency_missing' || !xfreerdpAvailable) throw nativeErr;
-            console.warn('[rdp-test]', 'native bridge unavailable, falling back to xfreerdp auth-only', { target: conn.host, error: nativeClassified.message });
-            await testRdpWithXfreerdp(testTarget, timeout);
-        }
-        return { ok: true, code: 'success', message: `RDP 连接成功（${conn.host}:${targetPort}）`, durationMs: Date.now() - started };
+        /* TCP connectivity test — the WASM client handles full RDP auth in-browser */
+        await new Promise((resolve, reject) => {
+            const socket = new net.Socket();
+            const timer = setTimeout(() => {
+                socket.destroy();
+                reject(new Error('RDP 连接超时'));
+            }, timeout);
+            socket.once('connect', () => {
+                clearTimeout(timer);
+                socket.destroy();
+                resolve();
+            });
+            socket.once('error', (err) => {
+                clearTimeout(timer);
+                reject(err);
+            });
+            socket.connect(effectivePort, effectiveHost);
+        });
+        return { ok: true, code: 'success', message: `RDP 端口可达（${conn.host}:${targetPort}）`, durationMs: Date.now() - started };
     } catch (err) {
         const classified = classifyRdpError(err);
         console.warn('[rdp-test]', 'connection failed', { target: conn.host, code: classified.code, error: classified.message });
@@ -1942,17 +1804,6 @@ app.post('/api/connections/:id/open', requireAuth, (req, res) => {
     }
 });
 
-
-app.post('/api/rdp-gfx/upload-clipboard-files', requireAuth, rdpClipUpload.array('files', 256), (req, res) => {
-    const files = (req.files || []).map((f) => ({
-        name: safeRdpUploadName(f.originalname || path.basename(f.path)),
-        size: Number(f.size) || 0,
-        mime: f.mimetype || 'application/octet-stream',
-        path: f.path,
-    }));
-    if (!files.length) return res.status(400).json({ error: '没有收到文件' });
-    res.json({ files });
-});
 
 app.get('/api/settings', requireAuth, (req, res) => res.json(safeSettings(storage.getSettings())));
 
@@ -3066,7 +2917,7 @@ async function pasteSftpClipboard({ username, targetSession, targetDir, mode, co
     };
     try {
         if (isRdpSource) {
-            // RDP source: files are local on server (downloaded by xfreerdp), upload to SSH target
+            // RDP source: files are local on server, upload to SSH target
             console.info('[sftp-clipboard-paste]', 'rdp source paste', { count: clip.items.length, targetDir });
             await withRoutedSftp(targetConnectionConfig, async ({ sftp: targetSftp }) => {
                 for (const item of clip.items) {
@@ -4072,9 +3923,7 @@ const wsServerOptions = {
 const wss = new WebSocketServer(wsServerOptions);
 const noVncWss = new WebSocketServer(wsServerOptions);
 const editorLspWss = new WebSocketServer(wsServerOptions);
-const rdpGfxWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 64 * 1024 * 1024 });
-const rdpH264Wss = new WebSocketServer(wsServerOptions);
-const rdpAudioWss = new WebSocketServer(wsServerOptions);
+const rdpProxyWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 64 * 1024 * 1024 });
 
 function handleHttpUpgrade(req, socket, head) {
     let pathname = '';
@@ -4086,8 +3935,8 @@ function handleHttpUpgrade(req, socket, head) {
 
     const targetWss = pathname === '/ssh'
         ? wss
-        : pathname === '/rdp-gfx'
-            ? rdpGfxWss
+        : pathname === '/rdp-proxy'
+            ? rdpProxyWss
             : pathname === '/novnc'
                 ? noVncWss
                 : pathname === '/editor-lsp'
@@ -4112,71 +3961,6 @@ server.on('upgrade', handleHttpUpgrade);
 if (httpsServer) httpsServer.on('upgrade', handleHttpUpgrade);
 editorLspWss.on('connection', handleEditorLspConnection);
 
-const RDP_GFX_BACKEND_HOST = process.env.RDP_GFX_BACKEND_HOST || '127.0.0.1';
-const RDP_GFX_BACKEND_PORT = Number(process.env.RDP_GFX_BACKEND_PORT || 8765);
-const RDP_GFX_BACKEND_SCRIPT = process.env.RDP_GFX_BACKEND_SCRIPT || path.join(__dirname, 'rdp-gfx-backend', 'server.py');
-
-/* Native RDP addon — try to load at startup for Python-free operation */
-const rdpNative = (() => {
-    try {
-        const mod = require('./rdp-gfx-backend/rdp-native-session.js');
-        if (mod.tryLoadAddon()) {
-            console.info('[rdp-gfx] Native N-API addon loaded — Python backend bypassed');
-            return mod;
-        }
-    } catch (e) {
-        console.info('[rdp-gfx] Native addon not available:', e.message);
-    }
-    return null;
-})();
-let rdpGfxBackendProcess = null;
-let rdpGfxBackendStarting = null;
-
-function rdpGfxHealthCheck(timeout = 800) {
-    return new Promise((resolve) => {
-        const req = http.get({ hostname: RDP_GFX_BACKEND_HOST, port: RDP_GFX_BACKEND_PORT, path: '/health', timeout }, (res) => {
-            res.resume();
-            resolve(res.statusCode === 200);
-        });
-        req.on('timeout', () => { try { req.destroy(); } catch {} resolve(false); });
-        req.on('error', () => resolve(false));
-    });
-}
-
-async function ensureRdpGfxBackend() {
-    if (await rdpGfxHealthCheck()) return;
-    if (rdpGfxBackendStarting) return rdpGfxBackendStarting;
-    rdpGfxBackendStarting = (async () => {
-        if (!fs.existsSync(RDP_GFX_BACKEND_SCRIPT)) throw new Error(`RDP GFX backend missing: ${RDP_GFX_BACKEND_SCRIPT}`);
-        if (!rdpGfxBackendProcess) {
-            const python = process.env.RDP_GFX_PYTHON || 'python3';
-            const env = { ...process.env, WS_HOST: RDP_GFX_BACKEND_HOST, WS_PORT: String(RDP_GFX_BACKEND_PORT), PYTHONUNBUFFERED: '1', PYTHONPATH: path.dirname(RDP_GFX_BACKEND_SCRIPT) };
-            rdpGfxBackendProcess = spawn(python, ['-u', RDP_GFX_BACKEND_SCRIPT], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-            rdpGfxBackendProcess.stdout?.on('data', (d) => { const text = d.toString('utf8').trim(); if (text) console.info('[rdp-gfx-backend]', text); });
-            rdpGfxBackendProcess.stderr?.on('data', (d) => { const text = d.toString('utf8').trim(); if (text) console.warn('[rdp-gfx-backend]', text); });
-            rdpGfxBackendProcess.on('error', (err) => console.error('[rdp-gfx-backend]', 'spawn failed', { error: err.message }));
-            rdpGfxBackendProcess.on('exit', (code, signal) => { console.warn('[rdp-gfx-backend]', 'exited', { code, signal }); rdpGfxBackendProcess = null; });
-        }
-        for (let i = 0; i < 50; i += 1) {
-            if (await rdpGfxHealthCheck(1000)) return;
-            await new Promise((resolve) => setTimeout(resolve, 250));
-        }
-        throw new Error('RDP GFX backend failed to become healthy; FreeRDP3 bridge/librdp_bridge.so is unavailable');
-    })().finally(() => { rdpGfxBackendStarting = null; });
-    return rdpGfxBackendStarting;
-}
-
-function splitRdpIdentity(conn) {
-    let username = String(conn?.username || 'Administrator');
-    let domain = String(conn?.domain || conn?.rdpDomain || '');
-    const domainMatch = username.match(/^([^\\]+)\\(.+)$/);
-    if (!domain && domainMatch) {
-        domain = domainMatch[1];
-        username = domainMatch[2];
-    }
-    return { username, domain };
-}
-
 function closeWebSocketSafe(ws, code = 1000, reason = '') {
     try {
         if (ws && ws.readyState === WebSocket.OPEN) ws.close(code, String(reason || '').slice(0, 120));
@@ -4184,1376 +3968,153 @@ function closeWebSocketSafe(ws, code = 1000, reason = '') {
     } catch {}
 }
 
-const RDP_QUALITY_MODES = new Set(['auto', 'performance', 'balanced', 'quality']);
-const RDP_MAX_DIMENSION = Number(process.env.RDP_MAX_DIMENSION || 7680);
-const RDP_MAX_WIDTH = Number(process.env.RDP_MAX_WIDTH || RDP_MAX_DIMENSION);
-const RDP_MAX_HEIGHT = Number(process.env.RDP_MAX_HEIGHT || 4320);
-const RDP_MAX_FPS = Number(process.env.RDP_MAX_FPS || 144);
-const RDP_STREAM_WIDTH = Number(process.env.RDP_H264_WIDTH || 1920);
-const RDP_STREAM_HEIGHT = Number(process.env.RDP_H264_HEIGHT || 1080);
-const RDP_STREAM_FPS = Number(process.env.RDP_H264_FPS || 60);
-function normalizeQualityMode(value, fallback = 'balanced') {
-    const q = String(value || '').toLowerCase();
-    if (RDP_QUALITY_MODES.has(q)) return q;
-    const fb = String(fallback || '').toLowerCase();
-    return RDP_QUALITY_MODES.has(fb) ? fb : 'balanced';
-}
-
-const RDP_NATIVE_H264 = process.env.RDP_NATIVE_H264 === 'true';
-const RDP_ALLOW_GFX_FALLBACK = process.env.RDP_ALLOW_GFX_FALLBACK === 'true';
-const rdpPipes = new Map();
-const rdpPipeStarts = new Map();
-const rdpAudioWorkers = new Map(); // connectionId → pipeline state
-
-function evenClampRdpSize(value, min, max) {
-    const n = Math.max(min, Math.min(max, Number(value) || min));
-    return Math.max(2, Math.floor(n / 2) * 2);
-}
-function evenRdpSize(value, min = 2, max = 4096) {
-    const n = Math.max(min, Math.min(max, Number(value) || min));
-    return Math.max(2, Math.floor(n / 2) * 2);
-}
-
-function allocateRdpDisplayNumber() {
-    for (let i = 0; i < 80; i++) {
-        const n = 100 + ((Date.now() + process.pid + i) % 500);
-        if (!fs.existsSync(`/tmp/.X${n}-lock`) && !fs.existsSync(`/tmp/.X11-unix/X${n}`)) return n;
-    }
-    return 600 + Math.floor(Math.random() * 300);
-}
-
-function rdpSpawn(name, args, options = {}) {
-    const child = spawn(name, args, { stdio: ['ignore', 'pipe', 'pipe'], ...options });
-    child.on('error', (err) => console.error('[rdp-h264]', `${name} spawn failed`, { error: err.message }));
-    return child;
-}
-
-function rdpAttachLog(child, label, level = 'info') {
-    if (label !== 'ffmpeg' && label !== 'rdp-audio') child.stdout?.on('data', (d) => console.debug('[rdp-h264]', `${label} stdout`, d.toString('utf8').trim()));
-    child.stderr?.on('data', (d) => {
-        const text = d.toString('utf8').trim();
-        if (!text) return;
-        if (level === 'warn' || /error|failed|unable|denied/i.test(text)) console.warn('[rdp-h264]', `${label} stderr`, text);
-        else console.info('[rdp-h264]', `${label} stderr`, text);
-    });
-    child.on('exit', (code, signal) => console.warn('[rdp-h264]', `${label} exited`, { code, signal }));
-}
-
-async function startRdpH264Pipeline(connId, conn, options = {}) {
-    cleanupPipe(connId);
-    const originalTargetHost = conn.host;
-    const originalTargetPort = Number(conn.port) || 3389;
-    let routedForward = null;
-    let effectiveConn = conn;
-    try {
-        routedForward = await createRoutedTcpForward(conn, originalTargetPort, 15000);
-        if (routedForward) {
-            effectiveConn = { ...conn, host: routedForward.host, port: routedForward.port };
-            console.info('[rdp-h264]', 'using routed local forward', { connId, route: routedForward.route, originalTarget: `${originalTargetHost}:${originalTargetPort}`, localTarget: `${routedForward.host}:${routedForward.port}` });
-        }
-    } catch (err) {
-        try { routedForward?.close?.(); } catch {}
-        throw err;
-    }
-    const targetHost = effectiveConn.host;
-    const targetPort = Number(effectiveConn.port) || 3389;
-    const username = effectiveConn.username || 'Administrator';
-    const password = effectiveConn.password || '';
-    let streamWidth = evenClampRdpSize(options.width || RDP_STREAM_WIDTH, 800, RDP_MAX_WIDTH);
-    let streamHeight = evenClampRdpSize(options.height || RDP_STREAM_HEIGHT, 600, RDP_MAX_HEIGHT);
-    const aspectMode = String(options.mode || '').toLowerCase();
-    const qualityMode = normalizeQualityMode(options.quality, 'balanced');
-    const streamMode = String(options.stream || '').toLowerCase() === 'av' ? 'av' : 'h264';
-    const streamFps = Math.max(15, Math.min(RDP_MAX_FPS, Number(options.fps) || RDP_STREAM_FPS));
-    const isPerf = qualityMode === 'performance';
-    const isQual = qualityMode === 'quality';
-    const forceAspect = (num, den) => {
-        const longSide = Math.max(streamWidth, streamHeight);
-        const shortSide = Math.min(streamWidth, streamHeight);
-        streamWidth = longSide;
-        streamHeight = shortSide;
-        let unit = Math.max(1, Math.min(Math.floor(streamWidth / num), Math.floor(streamHeight / den)));
-        streamWidth = evenRdpSize(num * unit, 800, RDP_MAX_WIDTH);
-        streamHeight = evenRdpSize(den * unit, 600, RDP_MAX_HEIGHT);
-        if (streamWidth > RDP_MAX_WIDTH || streamHeight > RDP_MAX_HEIGHT) {
-            unit = Math.max(1, Math.min(Math.floor(RDP_MAX_WIDTH / num), Math.floor(RDP_MAX_HEIGHT / den)));
-            streamWidth = evenRdpSize(num * unit, 800, RDP_MAX_WIDTH);
-            streamHeight = evenRdpSize(den * unit, 600, RDP_MAX_HEIGHT);
-        }
-    };
-    if (aspectMode === '16:9') forceAspect(16, 9);
-    else if (aspectMode === '4:3') forceAspect(4, 3);
-    streamWidth = evenRdpSize(streamWidth, 800, RDP_MAX_WIDTH);
-    streamHeight = evenRdpSize(streamHeight, 600, RDP_MAX_HEIGHT);
-    const displayNo = allocateRdpDisplayNumber();
-    const xvfbDisp = `:${displayNo}`;
-    const fifoPath = `/tmp/zephyr-rdp-h264-${connId}.h264`;
-    try { fs.rmSync(fifoPath, { force: true }); } catch {}
-    try { require('child_process').execFileSync('mkfifo', [fifoPath]); } catch (err) { console.warn('[rdp-h264]', 'mkfifo failed, native export disabled', { error: err.message }); }
-    const shareDir = `/tmp/zephyr-rdp-share-${connId}`;
-    try { fs.rmSync(shareDir, { recursive: true, force: true }); } catch {}
-    try { fs.mkdirSync(shareDir, { recursive: true }); } catch {}
-    const pulseDir = `/tmp/zephyr-pulse-${connId}`;
-    const pulseRuntimeDir = `${pulseDir}/runtime`;
-    const env = { ...process.env, DISPLAY: xvfbDisp, ZEPHYR_RDP_H264_PIPE: fifoPath, PULSE_SERVER: `unix:${pulseDir}/native`, PULSE_RUNTIME_PATH: pulseRuntimeDir, XDG_RUNTIME_DIR: pulseRuntimeDir };
-
-    let pulseaudio = null;
-    const rdpAudioBackend = (() => {
-        const pulsePaths = ['/usr/lib/freerdp2/librdpsnd-client-pulse.so', '/usr/lib/freerdp2/rdpsnd-client-pulse.so', '/opt/freerdp-zephyr/lib/freerdp2/librdpsnd-client-pulse.so'];
-        if (pulsePaths.some((p) => fs.existsSync(p))) return 'pulse';
-        if (fs.existsSync('/usr/lib/freerdp2/librdpsnd-client-alsa.so')) return 'alsa-pulse';
-        return '';
-    })();
-    if (process.env.RDP_AUDIO !== 'false' && rdpAudioBackend) {
-        try { fs.rmSync(pulseDir, { recursive: true, force: true }); } catch {}
-        try { fs.mkdirSync(pulseRuntimeDir, { recursive: true, mode: 0o700 }); } catch {}
-        try { fs.chmodSync(pulseRuntimeDir, 0o700); } catch {}
-        const asoundrcPath = `${pulseDir}/asoundrc`;
-        try {
-            fs.writeFileSync(asoundrcPath, 'pcm.!default { type pulse }\nctl.!default { type pulse }\n');
-            env.ALSA_CONFIG_PATH = asoundrcPath;
-        } catch {}
-        pulseaudio = rdpSpawn('pulseaudio', ['-n', '--daemonize=no', '--exit-idle-time=-1', '--disallow-exit=true', '--log-target=stderr', `--load=module-native-protocol-unix socket=${pulseDir}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
-        rdpAttachLog(pulseaudio, 'pulseaudio', 'warn');
-        await new Promise((resolve) => setTimeout(resolve, 900));
-        console.info('[rdp-audio]', 'audio backend enabled', { connId, backend: rdpAudioBackend });
-    }
-
-    const xvfb = rdpSpawn('Xvfb', [xvfbDisp, '-screen', '0', `${streamWidth}x${streamHeight}x24`, '-ac', '+extension', 'RANDR']);
-    rdpAttachLog(xvfb, 'Xvfb');
-    await new Promise((resolve) => setTimeout(resolve, 700));
-
-    const wantsNativeH264 = streamMode !== 'av' && RDP_NATIVE_H264 && fs.existsSync(fifoPath);
-    const gfxMode = wantsNativeH264 ? 'AVC420' : String(process.env.RDP_FALLBACK_GFX_MODE || 'AVC444').toUpperCase();
-    const xfreerdpArgs = [
-        `/v:${targetHost}:${targetPort}`,
-        `/u:${username}`,
-        `/p:${password}`,
-        '/cert:ignore',
-        `/size:${streamWidth}x${streamHeight}`,
-        '/bpp:32',
-        '/network:lan',
-        `/gfx:${gfxMode}`,
-        '+fonts',
-        '+clipboard',
-        `/drive:zephyr-share,${shareDir}`,
-        ...(process.env.RDP_AUDIO === 'false' ? [] : (rdpAudioBackend === 'pulse' ? ['/sound:sys:pulse,format:1,rate:44100,channel:2', '-async-channels'] : rdpAudioBackend === 'alsa-pulse' ? ['/audio-mode:0', '/sound:sys:alsa,format:1,rate:44100,channel:2', '+async-channels'] : [])),
-        ...(isPerf
-            ? ['-wallpaper', '-themes', '-aero', '-window-drag', '-menu-anims']
-            : ['+wallpaper', '+themes', '+aero', '+window-drag', '+menu-anims']),
-        '+fast-path',
-        '+mouse-motion',
-        '/log-level:ERROR',
-    ];
-    const nativeH264 = wantsNativeH264;
-    const xfreerdpBin = nativeH264 ? (process.env.RDP_FREERDP_BIN || 'xfreerdp') : (process.env.RDP_FALLBACK_FREERDP_BIN || '/usr/bin/xfreerdp');
-    const xfreerdp = rdpSpawn(xfreerdpBin, xfreerdpArgs, { env });
-    rdpAttachLog(xfreerdp, 'xfreerdp', 'warn');
-
-    const heavyStream = streamWidth * streamHeight * streamFps >= 1920 * 1080 * 60;
-    const avMode = streamMode === 'av';
-    const x264Preset = avMode ? (isQual ? 'superfast' : 'ultrafast') : (isPerf ? 'superfast' : heavyStream ? 'veryfast' : isQual ? 'faster' : 'veryfast');
-    const x264Crf = isPerf ? '23' : heavyStream ? '20' : isQual ? '16' : '19';
-    const x264Profile = avMode ? 'high' : (heavyStream ? 'main' : (isQual ? 'high' : 'main'));
-    const x264Params = avMode
-        ? 'repeat-headers=1:scenecut=0:open-gop=0:keyint=15:min-keyint=15:sliced-threads=1'
-        : isPerf
-            ? 'repeat-headers=1:scenecut=0:open-gop=0:ref=1:bframes=0:subme=4:trellis=0:sliced-threads=1'
-            : isQual
-                ? 'repeat-headers=1:scenecut=0:open-gop=0:ref=3:bframes=0:subme=7:trellis=1:sliced-threads=1'
-                : 'repeat-headers=1:scenecut=0:open-gop=0:ref=2:bframes=0:subme=6:trellis=1:sliced-threads=1';
-    const encoderThreads = String(Math.max(1, Math.min(Number(process.env.RDP_H264_THREADS || 2), os.cpus()?.length || 2)));
-    const pixelsPerSecond = streamWidth * streamHeight * streamFps;
-    const bitrateScale = pixelsPerSecond / (3840 * 2160 * 60);
-    const avCrf = qualityMode === 'quality' ? 12 : qualityMode === 'performance' ? 22 : 16;
-    const avMaxrateKbps = Math.max(80000, Math.round((qualityMode === 'quality' ? 500000 : qualityMode === 'performance' ? 200000 : 350000) * Math.max(0.05, (streamWidth * streamHeight * streamFps) / (3840 * 2160 * 60))));
-    const avLevel = pixelsPerSecond >= 3840 * 2160 * 50 ? '5.2' : pixelsPerSecond >= 3840 * 2160 * 25 || pixelsPerSecond >= 2560 * 1440 * 50 ? '5.1' : pixelsPerSecond >= 1920 * 1080 * 50 ? '4.2' : '4.1';
-    const avCodec = avLevel === '5.2' ? 'avc1.640034' : avLevel === '5.1' ? 'avc1.640033' : avLevel === '4.2' ? 'avc1.64002a' : 'avc1.640029';
-    const avMime = `video/mp4; codecs="${avCodec},mp4a.40.2"`;
-    const avAudioInput = (streamMode === 'av' && process.env.RDP_AUDIO !== 'false' && pulseaudio) ? ['-f', 'pulse', '-thread_queue_size', '256', '-i', 'zephyr_rdp_audio.monitor'] : [];
-    const ffmpegArgs = streamMode === 'av' ? [
-        '-hide_banner', '-loglevel', 'warning',
-        '-fflags', '+genpts+nobuffer', '-flags', 'low_delay',
-        '-f', 'x11grab', '-draw_mouse', '0',
-        '-framerate', String(streamFps),
-        '-video_size', `${streamWidth}x${streamHeight}`,
-        '-i', xvfbDisp,
-        ...avAudioInput,
-        '-map', '0:v:0', ...(avAudioInput.length ? ['-map', '1:a:0'] : []),
-        '-c:v', 'libx264', '-threads', encoderThreads,
-        '-preset', x264Preset, '-tune', 'zerolatency,fastdecode', '-profile:v', x264Profile, '-level:v', avLevel,
-        '-crf', String(avCrf), '-maxrate', `${avMaxrateKbps}k`, '-bufsize', `${Math.max(avMaxrateKbps, 200000)}k`,
-        '-pix_fmt', 'yuv420p', '-g', String(streamFps), '-keyint_min', '1', '-sc_threshold', '0', '-x264-params', x264Params,
-        ...(avAudioInput.length ? ['-af', 'aresample=async=1000:min_hard_comp=0.100:first_pts=0', '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2'] : ['-an']),
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof+separate_moof+omit_tfhd_offset',
-        '-frag_duration', '33000', '-min_frag_duration', '16000', '-flush_packets', '1',
-        '-f', 'mp4', 'pipe:1',
-    ] : [
-        '-hide_banner', '-loglevel', 'warning',
-        '-fflags', '+nobuffer', '-flags', 'low_delay',
-        '-f', 'x11grab', '-draw_mouse', '0',
-        '-framerate', String(streamFps),
-        '-video_size', `${streamWidth}x${streamHeight}`,
-        '-i', xvfbDisp,
-        '-an', '-c:v', 'libx264',
-        '-threads', encoderThreads,
-        '-preset', x264Preset, '-tune', 'zerolatency,fastdecode',
-        '-profile:v', x264Profile,
-        '-crf', x264Crf,
-        '-pix_fmt', 'yuv420p',
-        '-g', String(streamFps), '-keyint_min', String(streamFps),
-        '-x264-params', x264Params,
-        '-bsf:v', 'h264_mp4toannexb',
-        '-f', 'h264', 'pipe:1',
-    ];
-    const ffmpeg = nativeH264 ? null : rdpSpawn('ffmpeg', ffmpegArgs, { env });
-    if (ffmpeg) rdpAttachLog(ffmpeg, 'ffmpeg', 'warn');
-
-    let activeWindowId = null;
-    setTimeout(() => {
-        const finder = spawn('xdotool', ['search', '--class', 'xfreerdp'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
-        let out = '';
-        finder.stdout.on('data', (d) => { out += d.toString('utf8'); });
-        finder.on('close', () => {
-            activeWindowId = out.trim().split(/\s+/).find(Boolean) || null;
-            if (activeWindowId) console.info('[rdp-h264]', 'xfreerdp window detected', { connId, window: activeWindowId });
-        });
-    }, 2200);
-
-    const pipe = {
-        connId, xvfb, pulseaudio, xfreerdp, ffmpeg, fifoPath, nativeH264, streamMode, avMime, env, width: streamWidth, height: streamHeight, fps: streamFps, quality: qualityMode, routedForward,
-        get activeWindowId() { return activeWindowId; },
-        nativeReader: null,
-        xinput: null,
-        clients: new Set(),
-        audioClients: new Set(),
-        audioFfmpeg: null,
-        shareDir,
-        fileClipRoot: null,
-        fileClipBatchId: '',
-        fileClipPaths: [],
-        fileClipOwner: null,
-        fileClipCleanupTimers: [],
-        clipboardTimer: null,
-        lastRemoteClipboardText: '',
-        startedAt: Date.now(),
-        ready: false,
-        stopping: false,
-    };
-    rdpPipes.set(connId, pipe);
-    // Pre-warm native input proxy so the first click/key does not pay spawn cost.
-    if (XINPUT_AVAILABLE && !pipe.xinput) pipe.xinput = startXinputProcess(pipe);
-
-    const markReady = () => {
-        if (!pipe.ready) console.info('[rdp-h264]', 'pipeline ready', { connId, target: `${targetHost}:${targetPort}`, width: streamWidth, height: streamHeight, fps: streamFps, quality: qualityMode });
-        pipe.ready = true;
-    };
-    const readyTimer = setTimeout(markReady, 1800);
-    xfreerdp.stderr?.on('data', (d) => {
-        if (/connected|Logon|GFX|AVC|framebuffer|Desktop/i.test(d.toString('utf8'))) markReady();
-    });
-
-    const broadcastH264 = (chunk) => {
-        if (chunk.length > 0) markReady();
-        for (const client of pipe.clients) {
-            if (client.readyState !== client.OPEN) continue;
-            if (client.bufferedAmount > 256 * 1024 * 1024) continue;
-            try { client.send(chunk, { binary: true }); } catch {}
-        }
-    };
-    if (nativeH264) {
-        pipe.nativeReader = fs.createReadStream(fifoPath, { highWaterMark: 1024 * 1024 });
-        pipe.nativeReader.on('data', broadcastH264);
-        pipe.nativeReader.on('error', (err) => console.warn('[rdp-h264]', 'native h264 pipe error', { connId, error: err.message }));
-        pipe.nativeReader.on('end', () => console.warn('[rdp-h264]', 'native h264 pipe ended', { connId }));
-    } else if (ffmpeg) {
-        ffmpeg.stdout.on('data', broadcastH264);
-        ffmpeg.on('exit', (code, signal) => {
-            clearTimeout(readyTimer);
-            const latest = rdpPipes.get(connId);
-            if (pipe.stopping || latest !== pipe) return;
-            console.warn('[rdp-h264]', 'encoder exited unexpectedly, requesting reconnect', { connId, code, signal });
-            for (const client of pipe.clients) {
-                try { if (client.readyState === client.OPEN) client.close(1012, 'rdp encoder restarting'); } catch {}
-            }
-            cleanupPipe(connId);
-        });
-    }
-    xfreerdp.on('exit', (code, signal) => {
-        const latest = rdpPipes.get(connId);
-        if (pipe.stopping || latest !== pipe) return;
-        console.warn('[rdp-h264]', 'xfreerdp exited unexpectedly', { connId, code, signal });
-        for (const client of pipe.clients) {
-            try { if (client.readyState === client.OPEN) client.close(1011, 'xfreerdp exited'); } catch {}
-        }
-        cleanupPipe(connId);
-    });
-
-    console.info('[rdp-h264]', 'pipeline started', { connId, target: `${targetHost}:${targetPort}`, originalTarget: `${originalTargetHost}:${originalTargetPort}`, route: routedForward?.route || 'direct', mode: streamMode === 'av' ? 'fmp4-av' : (nativeH264 ? 'freerdp-avc-export' : 'x11grab-fallback'), fps: streamFps, quality: qualityMode, encoder: nativeH264 ? 'native' : { preset: x264Preset, crf: streamMode === 'av' ? avCrf : undefined, profile: x264Profile, level: streamMode === 'av' ? avLevel : undefined, codec: streamMode === 'av' ? avCodec : undefined, threads: encoderThreads, heavyStream, maxrateKbps: streamMode === 'av' ? avMaxrateKbps : undefined, audio: !!avAudioInput.length }, xfreerdpArgs: xfreerdpArgs.filter((a) => !a.startsWith('/p:')) });
-    return pipe;
-}
-
-function shQuote(value) {
-    return `'${String(value ?? '').replace(/'/g, `'"'"'`)}'`;
-}
-
-function pasteTextIntoRdp(pipe, text, { paste = true } = {}) {
-    if (!text || !pipe) return;
-    const quoted = shQuote(text);
-    const pasteCmd = pipe?.activeWindowId ? `xdotool key --window ${pipe.activeWindowId} --clearmodifiers ctrl+v` : `xdotool key --clearmodifiers ctrl+v`;
-    const xclipSet = `printf %s ${quoted} | xclip -selection clipboard -i && printf %s ${quoted} | xclip -selection primary -i`;
-    const script = paste ? `(${xclipSet} && ${pasteCmd})` : `(${xclipSet})`;
-    const child = spawn('sh', ['-c', script], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-    let errText = '';
-    child.stderr.on('data', (d) => { errText += d.toString('utf8'); });
-    child.on('close', (code) => {
-        if (code !== 0) console.warn('[rdp-h264]', 'rdp clipboard operation failed', { paste, code, window: pipe.activeWindowId || '', error: errText.trim().slice(0, 240) });
-        else console.info('[rdp-h264]', 'rdp clipboard operation ok', { paste, length: String(text).length, window: pipe.activeWindowId || '' });
-    });
-    child.on('error', (err) => console.warn('[rdp-h264]', 'rdp clipboard operation spawn failed', { error: err.message, paste }));
-}
-
-const RDP_FILE_CLIP_BIN = process.env.ZEPHYR_FILE_CLIP_BIN || 'zephyr-file-clip';
-
-function safeLocalClipboardName(name = 'file') {
-    const cleaned = String(name || 'file').replace(/[\\/]/g, '_').replace(/\0/g, '').replace(/\.\./g, '.').trim();
-    return (cleaned || 'file').slice(0, 220);
-}
-
-function uniqueLocalPath(dir, name) {
-    const safe = safeLocalClipboardName(name);
-    const ext = path.extname(safe);
-    const stem = path.basename(safe, ext) || 'file';
-    let candidate = path.join(dir, safe);
-    for (let i = 1; fs.existsSync(candidate); i++) {
-        candidate = path.join(dir, `${stem} (${i})${ext}`);
-    }
-    return candidate;
-}
-
-function scheduleRdpClipRootCleanup(pipe, dir, ttlMs = 15 * 60 * 1000) {
-    if (!dir) return;
-    const timer = setTimeout(() => {
-        try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-    }, ttlMs);
-    timer.unref?.();
-    pipe?.fileClipCleanupTimers?.push?.(timer);
-}
-
-async function resetRdpFileClipboardBatch(pipe, batchId = '') {
-    if (!pipe) throw new Error('RDP 会话无效');
-    try { pipe.fileClipOwner?.kill('SIGTERM'); } catch {}
-    pipe.fileClipOwner = null;
-    if (pipe.fileClipRoot) scheduleRdpClipRootCleanup(pipe, pipe.fileClipRoot);
-    const safeConn = String(pipe.connId || 'default').replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 80);
-    pipe.fileClipRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), `zephyr-rdp-fileclip-${safeConn}-`));
-    pipe.fileClipBatchId = String(batchId || crypto.randomUUID());
-    pipe.fileClipPaths = [];
-    return pipe.fileClipRoot;
-}
-
-async function ensureRdpFileClipboardBatch(pipe, { batchId = '', reset = false } = {}) {
-    const wanted = String(batchId || pipe.fileClipBatchId || crypto.randomUUID());
-    if (reset || !pipe.fileClipRoot || pipe.fileClipBatchId !== wanted) {
-        await resetRdpFileClipboardBatch(pipe, wanted);
-    }
-    return pipe.fileClipRoot;
-}
-
-function publishRdpFileClipboard(pipe) {
-    return new Promise((resolve, reject) => {
-        if (!pipe || !Array.isArray(pipe.fileClipPaths) || !pipe.fileClipPaths.length) {
-            reject(new Error('文件剪贴板为空'));
-            return;
-        }
-        try { pipe.fileClipOwner?.kill('SIGTERM'); } catch {}
-        const child = spawn(RDP_FILE_CLIP_BIN, pipe.fileClipPaths, { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-        pipe.fileClipOwner = child;
-        let settled = false;
-        let stderrText = '';
-        const settle = (ok, err) => {
-            if (settled) return;
-            settled = true;
-            if (ok) resolve(child);
-            else reject(err || new Error(stderrText.trim() || 'RDP 文件剪贴板发布失败'));
-        };
-        child.stderr?.on('data', (d) => {
-            const text = d.toString('utf8');
-            stderrText += text;
-            if (/serving \d+ file/i.test(text)) {
-                console.info('[rdp-file-clip]', 'published native CLIPRDR file clipboard', { connId: pipe.connId, count: pipe.fileClipPaths.length });
-                settle(true);
-            } else if (/failed|cannot|no valid|usage:/i.test(text)) {
-                console.warn('[rdp-file-clip]', 'helper warning', { connId: pipe.connId, text: text.trim().slice(0, 500) });
-            }
-        });
-        child.on('error', (err) => settle(false, err));
-        child.on('exit', (code, signal) => {
-            if (!settled) settle(false, new Error(`zephyr-file-clip exited: code=${code} signal=${signal || ''}`));
-            if (pipe.fileClipOwner === child) pipe.fileClipOwner = null;
-        });
-        setTimeout(() => settle(true), 350).unref?.();
-    });
-}
-
-function sendRdpFileClipboardReady(pipe, extra = {}) {
-    for (const client of pipe?.clients || []) {
-        if (client.readyState !== client.OPEN) continue;
-        try { client.send(JSON.stringify({ type: 'rdp-file-clipboard-ready', count: pipe.fileClipPaths?.length || 0, native: true, ...extra })); } catch {}
-    }
-}
-
-function pasteRdpNativeFileClipboard(pipe) {
-    if (!pipe) return false;
-    // This sends Ctrl+V to the currently focused remote window. Windows decides
-    // the destination folder, exactly like native RDP file clipboard paste.
-    if (pipe.xinput && !pipe.xinput.killed && pipe.xinput.stdin?.writable) {
-        const ok1 = xinputSend(pipe, 'p ffe3');
-        const ok2 = xinputSend(pipe, 'k 0076');
-        const ok3 = xinputSend(pipe, 'r ffe3');
-        if (ok1 && ok2 && ok3) return true;
-        try { xinputSend(pipe, 'r ffe3'); } catch {}
-    }
-    const args = pipe.activeWindowId ? ['key', '--window', pipe.activeWindowId, '--clearmodifiers', 'ctrl+v'] : ['key', '--clearmodifiers', 'ctrl+v'];
-    const child = spawn('xdotool', args, { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-    child.on('error', () => {});
-    return true;
-}
-
-async function copySftpClipboardToRdpNativeClipboard(username, pipe, clip, { paste = true } = {}) {
-    if (!clip || !clip.sourceConnectionConfig) throw new Error('SSH 剪贴板来源无效');
-    await resetRdpFileClipboardBatch(pipe, `sftp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`);
-    await withRoutedSftp(clip.sourceConnectionConfig, async ({ sftp }) => {
-        for (const item of clip.items) {
-            const safeName = safeLocalClipboardName(item.name || path.posix.basename(String(item.path || 'file')) || 'file');
-            const target = uniqueLocalPath(pipe.fileClipRoot, safeName);
-            await downloadRemotePathToLocal(sftp, item.path, target, null, null);
-            pipe.fileClipPaths.push(target);
-            console.info('[rdp-file-clip]', 'sftp item staged for native RDP clipboard', { connId: pipe.connId, name: safeName, size: item.size });
-        }
-    });
-    await publishRdpFileClipboard(pipe);
-    sendRdpFileClipboardReady(pipe, { source: 'sftp', paste });
-    if (paste) setTimeout(() => pasteRdpNativeFileClipboard(pipe), 180);
-}
-
-function readTextFromRdpClipboard(pipe, callback) {
-    if (!pipe || !callback) return;
-    const cmd = 'xclip -selection clipboard -o 2>/dev/null || xclip -selection primary -o 2>/dev/null || true';
-    const child = spawn('sh', ['-c', cmd], { env: pipe.env, stdio: ['ignore', 'pipe', 'ignore'] });
-    let out = '';
-    child.stdout.on('data', (d) => { out += d.toString('utf8'); if (out.length > 1024 * 1024) child.kill('SIGTERM'); });
-    child.on('close', () => callback(out));
-    child.on('error', () => callback(''));
-}
-
-function readRdpClipboardFileList(pipe, callback) {
-    if (!pipe || !callback) return;
-    const cmd = 'xclip -selection clipboard -t text/uri-list -o 2>/dev/null || true';
-    const child = spawn('sh', ['-c', cmd], { env: pipe.env, stdio: ['ignore', 'pipe', 'ignore'] });
-    let out = '';
-    child.stdout.on('data', (d) => { out += d.toString('utf8'); if (out.length > 1024 * 1024) child.kill('SIGTERM'); });
-    child.on('close', () => {
-        const files = [];
-        for (const line of out.split('\n')) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith('file://')) {
-                const filePath = decodeURIComponent(trimmed.slice(7));
-                try {
-                    const stat = fs.statSync(filePath);
-                    if (stat.isFile()) {
-                        files.push({
-                            name: path.basename(filePath),
-                            path: filePath,
-                            size: stat.size,
-                        });
-                    }
-                } catch {}
-            }
-        }
-        callback(files);
-    });
-    child.on('error', () => callback([]));
-}
-
-// Store RDP remote files into the unified per-user clipboard
-function storeRdpFilesInUnifiedClipboard(pipe, files) {
-    if (!pipe || !files || !files.length) return;
-    const username = String(pipe.username || '');
-    if (!username) return;
-    const items = files.map((f) => ({
-        path: String(f.path || ''),
-        name: String(f.name || path.basename(f.path || '')).slice(0, 255),
-        type: '-',
-        size: Number(f.size) || 0,
-        modifyTime: 0,
-    }));
-    sftpClipboardByUser.set(username, {
-        mode: 'copy',
-        username,
-        sourceSessionId: '',
-        sourceConnectionId: pipe.connId || '',
-        sourceConnectionConfig: null,
-        sourceType: 'rdp',
-        items,
-        createdAt: Date.now(),
-    });
-    console.info('[rdp-h264]', 'stored remote files in unified clipboard', { connId: pipe.connId, username, count: items.length });
-}
-
-function isUriListClipboardText(text = '') {
-    const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    return lines.length > 0 && lines.every((line) => line.startsWith('#') || line.startsWith('file://'));
-}
-
-function startRdpClipboardWatch(pipe) {
-    if (!pipe || pipe.clipboardTimer || process.env.RDP_CLIPBOARD_SYNC === 'false') return;
-    pipe.lastRemoteClipboardText = '';
-    pipe.lastRemoteClipboardFiles = [];
-    const tick = () => {
-        if (!rdpPipes.has(pipe.connId) || pipe.clients.size === 0) return;
-        readTextFromRdpClipboard(pipe, (text) => {
-            if (!text || isUriListClipboardText(text) || text === pipe.lastRemoteClipboardText) return;
-            pipe.lastRemoteClipboardText = text;
-            const payload = JSON.stringify({ type: 'clipboard', text });
-            for (const client of pipe.clients) {
-                if (client.readyState !== client.OPEN) continue;
-                try { client.send(payload); } catch {}
-            }
-            console.info('[rdp-h264]', 'remote clipboard synced to browser', { connId: pipe.connId, length: text.length });
-        });
-        // Also check for file clipboard (text/uri-list)
-        readRdpClipboardFileList(pipe, (files) => {
-            if (!files.length) return;
-            const localClipPaths = new Set((pipe.fileClipPaths || []).map((p) => path.resolve(String(p))));
-            const fromLocalPublishedClipboard = files.every((f) => localClipPaths.has(path.resolve(String(f.path || ''))));
-            if (fromLocalPublishedClipboard) return;
-            const sig = files.map((f) => `${f.name}:${f.size}`).join(',');
-            if (sig === pipe.lastRemoteClipboardFiles) return;
-            pipe.lastRemoteClipboardFiles = sig;
-            // Store in unified clipboard so SSH can paste directly
-            storeRdpFilesInUnifiedClipboard(pipe, files);
-            const payload = JSON.stringify({ type: 'rdp-remote-files', files });
-            for (const client of pipe.clients) {
-                if (client.readyState !== client.OPEN) continue;
-                try { client.send(payload); } catch {}
-            }
-            console.info('[rdp-h264]', 'remote clipboard files detected', { connId: pipe.connId, count: files.length });
-        });
-    };
-    pipe.clipboardTimer = setInterval(tick, 1200);
-    setTimeout(tick, 600);
-}
-
-
-
-/* ═══════════════════════════════════════════════════════════════════
- * Persistent X11 input proxy (zephyr-xinput)
+/* ====================================================================
+ * RDP WASM PROXY — WebSocket ↔ TCP bridge for browser-side grdp WASM
  *
- * Instead of spawning a new xdotool process for every mouse move / key
- * press (which causes severe latency under rapid input), we launch a
- * single long-lived C process that reads simple commands from stdin
- * and injects them via the XTest extension.  This reduces input
- * latency from ~15-30ms (process spawn) to <1ms (pipe write).
- * ═══════════════════════════════════════════════════════════════════ */
+ * The browser runs the full RDP protocol stack (Go compiled to WASM).
+ * This proxy simply bridges the browser's WebSocket to the target's TCP
+ * port 3389.  Zero decoding, zero encoding — pure byte pass-through.
+ *
+ * URL: /rdp-proxy?target=host:port
+ *
+ * Authentication is handled by the existing session cookie check in the
+ * upgrade handler above.  The target parameter is validated against the
+ * user's saved connections for security.
+ * ==================================================================== */
 
-const XINPUT_BIN = process.env.ZEPHYR_XINPUT_BIN || 'zephyr-xinput';
-const XINPUT_AVAILABLE = (() => {
-    try {
-        require('child_process').execFileSync('which', [XINPUT_BIN], { stdio: 'ignore' });
-        return true;
-    } catch { return false; }
-})();
+rdpProxyWss.on('connection', async (ws, req) => {
+    const url = new URL(req.url || '/rdp-proxy', `http://${req.headers.host || 'localhost'}`);
+    const target = url.searchParams.get('target') || '';
 
-function startXinputProcess(pipe) {
-    if (!XINPUT_AVAILABLE) {
-        console.warn('[rdp-xinput]', 'zephyr-xinput not found, falling back to xdotool', { connId: pipe.connId });
-        return null;
-    }
-    const child = spawn(XINPUT_BIN, [], {
-        env: pipe.env,
-        stdio: ['pipe', 'ignore', 'pipe'],
-    });
-    let stderrBuf = '';
-    child.stderr?.on('data', (d) => {
-        stderrBuf += d.toString('utf8');
-        const lines = stderrBuf.split('\n');
-        stderrBuf = lines.pop() || '';
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            if (/ready/i.test(trimmed)) console.info('[rdp-xinput]', trimmed, { connId: pipe.connId });
-            else if (/error|fail|cannot/i.test(trimmed)) console.warn('[rdp-xinput]', trimmed, { connId: pipe.connId });
-        }
-    });
-    child.on('exit', (code, signal) => {
-        console.warn('[rdp-xinput]', 'process exited', { connId: pipe.connId, code, signal });
-        const latest = rdpPipes.get(pipe.connId);
-        if (latest === pipe && !pipe.stopping) {
-            // Restart after brief delay
-            setTimeout(() => {
-                const cur = rdpPipes.get(pipe.connId);
-                if (cur === pipe && !cur.stopping && cur.clients.size > 0) {
-                    console.info('[rdp-xinput]', 'restarting', { connId: pipe.connId });
-                    cur.xinput = startXinputProcess(cur);
-                }
-            }, 500);
-        }
-    });
-    child.on('error', (err) => console.warn('[rdp-xinput]', 'spawn failed', { error: err.message }));
-    return child;
-}
-
-/**
- * Send a command to the persistent xinput process.
- * Falls back to xdotool spawn if xinput is unavailable.
- */
-function xinputSend(pipe, line) {
-    if (pipe.xinput && !pipe.xinput.killed && pipe.xinput.stdin?.writable) {
-        try {
-            pipe.xinput.stdin.write(line + '\n');
-            return true;
-        } catch (err) {
-            console.warn('[rdp-xinput]', 'write failed, falling back', { error: err.message });
-            pipe.xinput = null;
-        }
-    }
-    return false;
-}
-
-/**
- * Convert a JavaScript key name (xdotool-style) to an X11 keysym hex.
- * Used for the 'k' command to zephyr-xinput.
- */
-const KEYNAME_TO_KEYSYM = {
-    'BackSpace': 0xff08, 'Tab': 0xff09, 'Return': 0xff0d, 'Enter': 0xff0d,
-    'Escape': 0xff1b, 'Delete': 0xffff, 'Home': 0xff50, 'End': 0xff57,
-    'Page_Up': 0xff55, 'Page_Down': 0xff56, 'Insert': 0xff63,
-    'Left': 0xff51, 'Up': 0xff52, 'Right': 0xff53, 'Down': 0xff54,
-    'F1': 0xffbe, 'F2': 0xffbf, 'F3': 0xffc0, 'F4': 0xffc1,
-    'F5': 0xffc2, 'F6': 0xffc3, 'F7': 0xffc4, 'F8': 0xffc5,
-    'F9': 0xffc6, 'F10': 0xffc7, 'F11': 0xffc8, 'F12': 0xffc9,
-    'ctrl': 0xffe3, 'shift': 0xffe1, 'alt': 0xffe9, 'Super_L': 0xffeb,
-    'space': 0x0020,
-};
-
-function keynameToKeysym(name) {
-    if (!name) return 0;
-    if (KEYNAME_TO_KEYSYM[name]) return KEYNAME_TO_KEYSYM[name];
-    // Single character → ASCII keysym
-    if (name.length === 1) {
-        const cp = name.codePointAt(0);
-        if (cp <= 0xff) return cp;
-        return 0x01000000 | cp;
-    }
-    // U+XXXX format
-    const m = /^U\+?([0-9a-fA-F]{4,6})$/.exec(name);
-    if (m) return parseInt(m[1], 16);
-    return 0;
-}
-
-/**
- * Parse a key combo string like "ctrl+alt+Delete" into individual key names.
- */
-function parseKeyCombo(combo) {
-    return String(combo).split('+').map((s) => s.trim()).filter(Boolean);
-}
-
-async function handleRdpInput(pipe, raw) {
-    let msg;
-    try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
-    if (!pipe) return;
-    if (!pipe.lastPointer) pipe.lastPointer = { x: Math.round((pipe.width || 1280) / 2), y: Math.round((pipe.height || 720) / 2) };
-
-    // Lazy-start xinput process
-    if (!pipe.xinput && XINPUT_AVAILABLE && !pipe.stopping) {
-        pipe.xinput = startXinputProcess(pipe);
-    }
-
-    const movePointer = (x, y) => {
-        const px = Math.max(0, Math.min((pipe.width || 1280) - 1, Math.round(Number(x))));
-        const py = Math.max(0, Math.min((pipe.height || 720) - 1, Math.round(Number(y))));
-        pipe.lastPointer = { x: px, y: py };
-        if (!xinputSend(pipe, `m ${px} ${py}`)) {
-            // Fallback to xdotool
-            const args = pipe.activeWindowId
-                ? ['mousemove', '--window', pipe.activeWindowId, String(px), String(py)]
-                : ['mousemove', String(px), String(py)];
-            const child = spawn('xdotool', args, { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-            child.on('error', () => {});
-        }
-    };
-
-    if (msg.type === 'mouse' && Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
-        movePointer(msg.x, msg.y);
-    } else if (msg.type === 'mousedown' && msg.button !== undefined) {
-        if (pipe.lastPointer) movePointer(pipe.lastPointer.x, pipe.lastPointer.y);
-        if (!xinputSend(pipe, `d ${msg.button}`)) {
-            const child = spawn('xdotool', ['mousedown', String(msg.button)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-            child.on('error', () => {});
-        }
-    } else if (msg.type === 'mouseup' && msg.button !== undefined) {
-        if (pipe.lastPointer) movePointer(pipe.lastPointer.x, pipe.lastPointer.y);
-        if (!xinputSend(pipe, `u ${msg.button}`)) {
-            const child = spawn('xdotool', ['mouseup', String(msg.button)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-            child.on('error', () => {});
-        }
-    } else if (msg.type === 'click' && msg.button !== undefined) {
-        if (pipe.lastPointer) movePointer(pipe.lastPointer.x, pipe.lastPointer.y);
-        if (!xinputSend(pipe, `c ${msg.button}`)) {
-            const child = spawn('xdotool', ['click', String(msg.button)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-            child.on('error', () => {});
-        }
-    } else if (msg.type === 'scroll') {
-        if (pipe.lastPointer) movePointer(pipe.lastPointer.x, pipe.lastPointer.y);
-        const button = Number(msg.deltaY || 0) > 0 ? 5 : 4;
-        const rawDelta = Math.abs(Number(msg.deltaY || msg.deltaX || 0));
-        const steps = Math.max(1, Math.min(10, Math.round(rawDelta / 45)));
-        if (!xinputSend(pipe, `s ${button} ${steps}`)) {
-            for (let i = 0; i < steps; i++) {
-                const child = spawn('xdotool', ['click', String(button)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-                child.on('error', () => {});
-            }
-        }
-    } else if (msg.type === 'key' && msg.key) {
-        // Parse combo and send key press + release for each
-        const keys = parseKeyCombo(msg.key);
-        const keysyms = keys.map(keynameToKeysym).filter((k) => k > 0);
-        if (keysyms.length === 1) {
-            if (!xinputSend(pipe, `k ${keysyms[0].toString(16)}`)) {
-                const child = spawn('xdotool', ['key', '--clearmodifiers', String(msg.key)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-                child.on('error', () => {});
-            }
-        } else if (keysyms.length > 1) {
-            // Combo: press all down, then release in reverse order
-            for (const ks of keysyms) xinputSend(pipe, `p ${ks.toString(16)}`);
-            for (let i = keysyms.length - 1; i >= 0; i--) xinputSend(pipe, `r ${keysyms[i].toString(16)}`);
-            if (!pipe.xinput) {
-                const child = spawn('xdotool', ['key', '--clearmodifiers', String(msg.key)], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-                child.on('error', () => {});
-            }
-        }
-    } else if (msg.type === 'text' && msg.text !== undefined) {
-        const text = String(msg.text);
-        // Use xinput 't' command for ASCII, 'v' for Unicode
-        if (!xinputSend(pipe, `t ${text}`)) {
-            pasteTextIntoRdp(pipe, text, { paste: true });
-        }
-    } else if (msg.type === 'clipboard' && msg.text !== undefined) {
-        // Set clipboard without pasting
-        if (!xinputSend(pipe, `C ${String(msg.text)}`)) {
-            pasteTextIntoRdp(pipe, String(msg.text), { paste: false });
-        }
-    } else if (msg.type === 'paste' && msg.text !== undefined) {
-        if (!xinputSend(pipe, `v ${String(msg.text)}`)) {
-            pasteTextIntoRdp(pipe, String(msg.text), { paste: true });
-        }
-    } else if (msg.type === 'rdp-file-upload' && msg.name && msg.data) {
-        // Legacy WebSocket upload fallback: still publish as native CLIPRDR file clipboard,
-        // not as a shared-drive shortcut.
-        try {
-            const data = Buffer.from(String(msg.data), 'base64');
-            await ensureRdpFileClipboardBatch(pipe, { batchId: `ws-${Date.now()}`, reset: true });
-            const safeName = safeLocalClipboardName(msg.name);
-            const filePath = uniqueLocalPath(pipe.fileClipRoot, safeName);
-            fs.writeFileSync(filePath, data);
-            pipe.fileClipPaths.push(filePath);
-            await publishRdpFileClipboard(pipe);
-            sendRdpFileClipboardReady(pipe, { source: 'legacy-ws-upload' });
-        } catch (err) {
-            console.warn('[rdp-file-clip]', 'legacy ws upload failed', { connId: pipe.connId, error: err.message });
-        }
-    } else if (msg.type === 'rdp-file-open-share' || msg.type === 'rdp-file-paste') {
-        pasteRdpNativeFileClipboard(pipe);
-    } else if (msg.type === 'rdp-sftp-clipboard-paste') {
-        const username = String(pipe.username || '');
-        const clip = sftpClipboardByUser.get(username);
-        if (!clip || !Array.isArray(clip.items) || !clip.items.length) {
-            for (const client of pipe.clients) {
-                if (client.readyState !== client.OPEN) continue;
-                try { client.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste-ack', ok: false, error: 'SSH 剪贴板为空' })); } catch {}
-            }
-        } else {
-            (async () => {
-                try {
-                    await copySftpClipboardToRdpNativeClipboard(username, pipe, clip, { paste: true });
-                    for (const client of pipe.clients) {
-                        if (client.readyState !== client.OPEN) continue;
-                        try { client.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste-ack', ok: true, count: clip.items.length })); } catch {}
-                    }
-                } catch (err) {
-                    for (const client of pipe.clients) {
-                        if (client.readyState !== client.OPEN) continue;
-                        try { client.send(JSON.stringify({ type: 'rdp-sftp-clipboard-paste-ack', ok: false, error: err.message })); } catch {}
-                    }
-                }
-            })();
-        }
-    } else if (msg.type === 'resize' && Number.isFinite(msg.width) && Number.isFinite(msg.height)) {
-        // Trigger xfreerdp to re-init via F5 refresh
-        xinputSend(pipe, 'k ff62') || (() => {
-            const child = spawn('xdotool', ['key', 'F5'], { env: pipe.env, stdio: ['ignore', 'ignore', 'pipe'] });
-            child.on('error', () => {});
-        })();
-    }
-}
-
-
-function startIsolatedRdpAudioWorker(connId, conn) {
-    if (process.env.RDP_AUDIO !== 'force') return null;
-    const existing = rdpAudioWorkers.get(connId);
-    if (existing && !existing.stopping) return existing;
-    const targetHost = conn.host;
-    const targetPort = Number(conn.port) || 3389;
-    const username = conn.username || 'Administrator';
-    const password = conn.password || '';
-    const displayNo = allocateRdpDisplayNumber();
-    const xvfbDisp = `:${displayNo}`;
-    const pulseDir = `/tmp/zephyr-rdp-audio-${connId}`;
-    try { fs.rmSync(pulseDir, { recursive: true, force: true }); } catch {}
-    try { fs.mkdirSync(pulseDir, { recursive: true }); } catch {}
-    const env = { ...process.env, DISPLAY: xvfbDisp, PULSE_SERVER: `unix:${pulseDir}/native` };
-    try {
-        const asoundrcPath = `${pulseDir}/asoundrc`;
-        fs.writeFileSync(asoundrcPath, 'pcm.!default { type pulse }\nctl.!default { type pulse }\n');
-        env.ALSA_CONFIG_PATH = asoundrcPath;
-    } catch {}
-    const worker = { connId, clients: new Set(), pulseaudio: null, xvfb: null, xfreerdp: null, ffmpeg: null, stopping: false, startedAt: Date.now() };
-    rdpAudioWorkers.set(connId, worker);
-    worker.pulseaudio = rdpSpawn('pulseaudio', ['-n', '--daemonize=no', '--exit-idle-time=-1', '--disallow-exit=true', `--load=module-native-protocol-unix socket=${pulseDir}/native auth-anonymous=1`, '--load=module-null-sink sink_name=zephyr_rdp_audio sink_properties=device.description=ZephyrRdpAudio'], { env });
-    rdpAttachLog(worker.pulseaudio, 'rdp-audio-pulse', 'warn');
-    worker.xvfb = rdpSpawn('Xvfb', [xvfbDisp, '-screen', '0', '800x600x24', '-ac']);
-    rdpAttachLog(worker.xvfb, 'rdp-audio-xvfb', 'warn');
-    setTimeout(() => {
-        if (worker.stopping) return;
-        const args = [
-            `/v:${targetHost}:${targetPort}`, `/u:${username}`, `/p:${password}`, '/cert:ignore', '/size:800x600', '/bpp:16', '/network:lan',
-            "-clipboard", "-wallpaper", "-themes", "-aero", "-window-drag", "-menu-anims", "-fonts", "+fast-path", "-mouse-motion",
-            '/audio-mode:0', '/sound:sys:alsa,format:1,rate:44100,channel:2', '/log-level:ERROR'
-        ];
-        worker.xfreerdp = rdpSpawn('xfreerdp', args, { env });
-        rdpAttachLog(worker.xfreerdp, 'rdp-audio-xfreerdp', 'warn');
-        worker.xfreerdp.on('exit', () => cleanupIsolatedRdpAudioWorker(connId));
-        console.info('[rdp-audio]', 'isolated audio rdp started', { connId, target: `${targetHost}:${targetPort}`, args: args.filter((a) => !a.startsWith('/p:')) });
-    }, 1000);
-    setTimeout(() => startIsolatedRdpAudioCapture(worker), 1800);
-    return worker;
-}
-
-function startIsolatedRdpAudioCapture(worker) {
-    if (!worker || worker.stopping || worker.ffmpeg) return;
-    const args = ['-hide_banner', '-loglevel', 'warning', '-f', 'pulse', '-i', 'zephyr_rdp_audio.monitor', '-vn', '-ac', '2', '-ar', '48000', '-c:a', 'libopus', '-b:a', '96k', '-application', 'lowdelay', '-f', 'webm', 'pipe:1'];
-    const ff = rdpSpawn('ffmpeg', args, { env: { ...process.env, PULSE_SERVER: `unix:/tmp/zephyr-rdp-audio-${worker.connId}/native` } });
-    worker.ffmpeg = ff;
-    rdpAttachLog(ff, 'rdp-audio', 'warn');
-    ff.stdout.on('data', (chunk) => {
-        for (const client of worker.clients || []) {
-            if (client.readyState !== client.OPEN) continue;
-            if (client.bufferedAmount > 2 * 1024 * 1024) continue;
-            try { client.send(chunk, { binary: true }); } catch {}
-        }
-    });
-    ff.on('exit', (code, signal) => { console.info('[rdp-audio]', 'isolated capture exited', { connId: worker.connId, code, signal }); if (worker.ffmpeg === ff) worker.ffmpeg = null; });
-    console.info('[rdp-audio]', 'isolated capture started', { connId: worker.connId });
-}
-
-function cleanupIsolatedRdpAudioWorker(connId) {
-    const w = rdpAudioWorkers.get(connId);
-    if (!w) return;
-    w.stopping = true;
-    try { w.ffmpeg?.kill('SIGTERM'); } catch {}
-    try { w.xfreerdp?.kill('SIGTERM'); } catch {}
-    try { w.xvfb?.kill('SIGTERM'); } catch {}
-    try { w.pulseaudio?.kill('SIGTERM'); } catch {}
-    try { fs.rmSync(`/tmp/zephyr-rdp-audio-${connId}`, { recursive: true, force: true }); } catch {}
-    rdpAudioWorkers.delete(connId);
-    console.info('[rdp-audio]', 'isolated worker cleaned', { connId });
-}
-
-function startRdpAudioCapture(pipe) {
-    if (!pipe || pipe.audioFfmpeg || process.env.RDP_AUDIO === 'false' || !pipe.pulseaudio) return;
-    if (pipe.pulseaudio.exitCode !== null || pipe.pulseaudio.killed) {
-        console.warn('[rdp-audio]', 'capture skipped because pulseaudio is not running', { connId: pipe.connId, code: pipe.pulseaudio.exitCode });
-        return;
-    }
-    console.info('[rdp-audio]', 'starting audio capture', { connId: pipe.connId, pulseServer: pipe.env?.PULSE_SERVER || '' });
-    const args = [
-        '-hide_banner', '-loglevel', 'warning',
-        '-fflags', '+genpts+nobuffer', '-flags', 'low_delay', '-avoid_negative_ts', 'make_zero',
-        '-f', 'pulse', '-thread_queue_size', '64', '-i', 'zephyr_rdp_audio.monitor',
-        '-vn', '-ac', '2', '-ar', '48000',
-        '-af', 'aresample=async=1000:min_hard_comp=0.100:first_pts=0',
-        '-c:a', 'libopus', '-b:a', '96k', '-application', 'lowdelay', '-frame_duration', '20',
-        '-flush_packets', '1', '-cluster_time_limit', '100', '-cluster_size_limit', '16k', '-f', 'webm', 'pipe:1',
-    ];
-    const ff = rdpSpawn('ffmpeg', args, { env: pipe.env });
-    pipe.audioFfmpeg = ff;
-    rdpAttachLog(ff, 'rdp-audio', 'warn');
-    ff.stdout.on('data', (chunk) => {
-        for (const client of pipe.audioClients || []) {
-            if (client.readyState !== client.OPEN) continue;
-            if (client.bufferedAmount > 2 * 1024 * 1024) continue;
-            try { client.send(chunk, { binary: true }); } catch {}
-        }
-    });
-    ff.on('exit', (code, signal) => {
-        console.info('[rdp-audio]', 'capture exited', { connId: pipe.connId, code, signal });
-        if (pipe.audioFfmpeg === ff) pipe.audioFfmpeg = null;
-        if (!pipe.stopping && pipe.audioClients?.size > 0 && code !== 0) {
-            pipe.audioRetryCount = (pipe.audioRetryCount || 0) + 1;
-            const delay = Math.min(3000, 400 * pipe.audioRetryCount);
-            setTimeout(() => { if (!pipe.stopping && pipe.audioClients?.size > 0 && !pipe.audioFfmpeg) startRdpAudioCapture(pipe); }, delay);
-        }
-    });
-}
-
-noVncWss.on('connection', async (ws, req) => {
-    const url = new URL(req.url || '/novnc', `http://${req.headers.host || 'localhost'}`);
-    const connId = url.searchParams.get('connectionId') || '';
-    const started = Date.now();
-    let routed = null;
-    let remoteSocket = null;
-    let proxying = false;
-    let cleaned = false;
-    const serverReader = new ByteQueue('VNC 服务端');
-    const browserReader = new ByteQueue('noVNC 浏览器');
-    const sendBrowser = (chunk) => {
-        if (ws.readyState !== ws.OPEN) return false;
-        try { ws.send(Buffer.from(chunk), { binary: true }); return true; } catch { return false; }
-    };
-    const cleanup = (reason = 'cleanup', closeBrowser = false) => {
-        if (cleaned) return;
-        cleaned = true;
-        console.info('[novnc-ws]', 'closing proxy', { connectionId: connId, reason, durationMs: Date.now() - started });
-        try { serverReader.close(new Error(reason)); } catch {}
-        try { browserReader.close(new Error(reason)); } catch {}
-        try { remoteSocket?.destroy?.(); } catch {}
-        (routed?.clients || []).reverse().forEach((client) => { try { client.end(); } catch {} });
-        if (closeBrowser && ws.readyState === ws.OPEN) {
-            const code = /unauthorized|connection not found|not a VNC/i.test(String(reason)) ? 1008 : 1011;
-            try { ws.close(code, String(reason).slice(0, 120)); } catch {}
-        }
-    };
-
-    ws.on('message', (raw) => {
-        const chunk = Buffer.from(raw || []);
-        if (!chunk.length) return;
-        if (proxying) {
-            try { remoteSocket?.write?.(chunk); } catch (err) { cleanup(err.message || 'browser-write-failed', true); }
-        } else browserReader.push(chunk);
-    });
-    ws.on('close', () => cleanup('browser-close', false));
-    ws.on('error', (err) => cleanup(err.message || 'browser-error', false));
-
-    try {
-        const sessionUser = currentSession(req);
-        if (!sessionUser) { ws.close(1008, 'unauthorized'); return; }
-        const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-        const conn = (store.connections || []).find((c) => c.id === connId);
-        if (!conn) { ws.close(1008, 'connection not found'); return; }
-        if (String(conn.protocol || '').toUpperCase() !== 'VNC') { ws.close(1008, 'not a VNC connection'); return; }
-
-        const timeout = 15000;
-        const targetPort = Number(conn.port) || 5900;
-        routed = await openRoutedTcpConnection(conn, targetPort, timeout);
-        remoteSocket = routed.socket;
-        try { remoteSocket.setNoDelay?.(true); } catch {}
-        remoteSocket.on('data', (chunk) => { if (proxying) sendBrowser(chunk); else serverReader.push(chunk); });
-        remoteSocket.once('close', () => {
-            serverReader.close(new Error('VNC 服务端已关闭连接'));
-            if (!cleaned && ws.readyState === ws.OPEN) ws.close(proxying ? 1000 : 1011, 'vnc server closed');
-            cleanup('vnc-server-close', false);
-        });
-        remoteSocket.once('error', (err) => {
-            serverReader.close(err);
-            if (!cleaned && ws.readyState === ws.OPEN) ws.close(1011, err.message || 'vnc server error');
-            cleanup(err.message || 'vnc-server-error', false);
-        });
-
-        const serverVersion = parseRfbVersion(await serverReader.read(12, timeout, 'VNC 协议版本'));
-        const minor = Math.min(serverVersion.minor || 8, 8);
-        remoteSocket.write(rfbVersionBytes(minor));
-        const auth = await authenticateVncServer(remoteSocket, serverReader, conn, serverVersion, timeout);
-
-        sendBrowser(rfbVersionBytes(minor));
-        parseRfbVersion(await browserReader.read(12, timeout, 'noVNC 协议版本'));
-        if (minor >= 7) {
-            sendBrowser(Buffer.from([1, 1]));
-            const selected = (await browserReader.read(1, timeout, 'noVNC 安全类型选择'))[0];
-            if (selected !== 1) throw new Error(`noVNC 未选择代理提供的 None 安全类型：${selected}`);
-        } else {
-            const security = Buffer.alloc(4);
-            security.writeUInt32BE(1, 0);
-            sendBrowser(security);
-        }
-        if (minor >= 8) sendBrowser(Buffer.alloc(4));
-
-        const clientInit = await browserReader.read(1, timeout, 'noVNC ClientInit');
-        proxying = true;
-        remoteSocket.write(clientInit);
-        const pendingBrowser = browserReader.takeBuffered();
-        if (pendingBrowser.length) remoteSocket.write(pendingBrowser);
-        const pendingServer = serverReader.takeBuffered();
-        if (pendingServer.length) sendBrowser(pendingServer);
-        console.info('[novnc-ws]', 'proxy ready', { connectionId: connId, name: conn.name, target: `${conn.host}:${targetPort}`, route: routed.route || 'direct', rfbVersion: `3.${String(minor).padStart(3, '0')}`, securityType: auth.securityType === 2 ? 'VNCAuth' : 'None' });
-    } catch (err) {
-        const message = String(err?.message || err || 'noVNC 连接失败');
-        console.warn('[novnc-ws]', 'failed to open proxy', { connectionId: connId, error: message });
-        cleanup(message, true);
-    }
-});
-
-rdpGfxWss.on('connection', (ws, req) => {
-    const url = new URL(req.url || '/rdp-gfx', `http://${req.headers.host || 'localhost'}`);
-    const connId = url.searchParams.get('connectionId') || 'default';
-
-    /* ====================================================================
-     * NATIVE PATH — use N-API addon to call FreeRDP directly (no Python)
-     * ==================================================================== */
-    if (rdpNative && rdpNative.isAvailable()) {
-        let nativeSession = null;
-        let routedForward = null;
-        let closed = false;
-
-        const cleanup = (reason = 'cleanup') => {
-            if (closed) return;
-            closed = true;
-            if (nativeSession) { nativeSession.cleanup(); nativeSession = null; }
-            try { routedForward?.close?.(); } catch {}
-            console.info('[rdp-gfx-native]', 'closed', { connId, reason });
-        };
-
-        ws.on('message', (raw, isBinary) => {
-            if (nativeSession) {
-                nativeSession.handleMessage(raw, isBinary);
-                return;
-            }
-            /* Before native session starts, handle connect message */
-            if (!isBinary) {
-                let msg;
-                try { msg = JSON.parse(Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw)); } catch { return; }
-                if (msg?.type === 'connect') {
-                    /* connect is handled in the async init below */
-                }
-            }
-        });
-        ws.on('close', () => cleanup('browser-close'));
-        ws.on('error', (err) => { console.warn('[rdp-gfx-native]', 'ws error', err.message); cleanup('browser-error'); });
-
-        (async () => {
-            try {
-                const sessionUser = currentSession(req);
-                if (!sessionUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
-                const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-                const conn = (store.connections || []).find((c) => c.id === connId);
-                if (!conn) { closeWebSocketSafe(ws, 1008, 'connection not found'); return; }
-                if (String(conn.protocol || 'RDP').toUpperCase() !== 'RDP') { closeWebSocketSafe(ws, 1008, 'not an RDP connection'); return; }
-
-                const targetPort = Number(conn.port) || 3389;
-                routedForward = await createRoutedTcpForward(conn, targetPort, 15000);
-                const effectiveConn = routedForward ? { ...conn, host: routedForward.host, port: routedForward.port } : conn;
-
-                if (closed || ws.readyState !== ws.OPEN) return;
-
-                const requestedWidth = evenClampRdpSize(
-                    Number(url.searchParams.get('width')) || RDP_STREAM_WIDTH, 640, RDP_MAX_WIDTH);
-                const requestedHeight = evenClampRdpSize(
-                    Number(url.searchParams.get('height')) || RDP_STREAM_HEIGHT, 480, RDP_MAX_HEIGHT);
-
-                const { username, domain } = splitRdpIdentity(effectiveConn);
-
-                nativeSession = new rdpNative.NativeRdpSession(ws, {
-                    host: effectiveConn.host,
-                    port: Number(effectiveConn.port) || 3389,
-                    username,
-                    password: effectiveConn.password || '',
-                    domain,
-                }, { width: requestedWidth, height: requestedHeight });
-
-                const ok = await nativeSession.start();
-                if (!ok) {
-                    cleanup('connect-failed');
-                    closeWebSocketSafe(ws, 1011, 'RDP connection failed');
-                }
-                console.info('[rdp-gfx-native]', 'connected', {
-                    connId, target: `${effectiveConn.host}:${Number(effectiveConn.port) || 3389}`,
-                    width: requestedWidth, height: requestedHeight,
-                });
-            } catch (err) {
-                console.error('[rdp-gfx-native]', 'error', { connId, error: err.message });
-                try { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'error', message: err.message })); } catch {}
-                closeWebSocketSafe(ws, 1011, err.message);
-                cleanup('connect-error');
-            }
-        })();
+    if (!target || !target.includes(':')) {
+        console.warn('[rdp-proxy] rejected: missing or invalid target', { target });
+        closeWebSocketSafe(ws, 1008, 'missing target');
         return;
     }
 
-    /* ====================================================================
-     * FALLBACK — Python WebSocket proxy (existing behavior)
-     * ==================================================================== */
-    const pendingClientMessages = [];
-    let backendWs = null;
-    let backendReady = false;
-    let injectedConnect = false;
+    const [targetHost, targetPortStr] = target.split(':');
+    const targetPort = Number(targetPortStr) || 3389;
+    let tcpConn = null;
     let routedForward = null;
     let closed = false;
-    let effectiveConn = null;
 
     const cleanup = (reason = 'cleanup') => {
         if (closed) return;
         closed = true;
+        try { tcpConn?.destroy?.(); } catch {}
         try { routedForward?.close?.(); } catch {}
-        try { backendWs?.terminate?.(); } catch {}
-        console.info('[rdp-gfx]', 'proxy closed', { connId, reason });
+        console.info('[rdp-proxy] closed', { target, reason });
     };
 
-    const sendClientError = (message) => {
-        try { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'error', message: String(message || 'RDP GFX error') })); } catch {}
-    };
-
-    const forwardToBackend = (raw, isBinary) => {
-        if (!backendWs || backendWs.readyState !== WebSocket.OPEN) return;
-        if (isBinary) {
-            if (!injectedConnect) throw new Error('RDP GFX binary message before connect');
-            backendWs.send(raw, { binary: true });
-            return;
-        }
-        const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw || '');
-        let msg = null;
-        try { msg = JSON.parse(text); } catch {
-            if (!injectedConnect) throw new Error('RDP GFX invalid JSON before connect');
-            backendWs.send(text);
-            return;
-        }
-        if (msg?.type === 'connect') {
-            if (injectedConnect) return;
-            const requestedQuality = normalizeQualityMode(url.searchParams.get('quality'), 'balanced');
-            const requestedFps = Math.max(15, Math.min(RDP_MAX_FPS, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
-            const { username, domain } = splitRdpIdentity(effectiveConn);
-            const width = evenClampRdpSize(msg.width || url.searchParams.get('width') || RDP_STREAM_WIDTH, 640, RDP_MAX_WIDTH);
-            const height = evenClampRdpSize(msg.height || url.searchParams.get('height') || RDP_STREAM_HEIGHT, 480, RDP_MAX_HEIGHT);
-            injectedConnect = true;
-            backendWs.send(JSON.stringify({
-                type: 'connect',
-                host: effectiveConn.host,
-                port: Number(effectiveConn.port) || 3389,
-                username,
-                password: effectiveConn.password || '',
-                domain,
-                width,
-                height,
-                quality: requestedQuality,
-                fps: requestedFps,
-            }));
-            console.info('[rdp-gfx]', 'connect injected', { connId, target: `${effectiveConn.host}:${Number(effectiveConn.port) || 3389}`, width, height, quality: requestedQuality, fps: requestedFps, routed: !!routedForward });
-            return;
-        }
-        if (!injectedConnect) throw new Error(`RDP GFX message before connect: ${msg?.type || 'unknown'}`);
-        if (msg?.type === 'resize') {
-            msg.width = evenClampRdpSize(msg.width || RDP_STREAM_WIDTH, 640, RDP_MAX_WIDTH);
-            msg.height = evenClampRdpSize(msg.height || RDP_STREAM_HEIGHT, 480, RDP_MAX_HEIGHT);
-            backendWs.send(JSON.stringify(msg));
-            return;
-        }
-        if (msg?.type === 'settings' || msg?.type === 'reconnect') {
-            msg.quality = normalizeQualityMode(msg.quality, 'balanced');
-            msg.fps = Math.max(15, Math.min(RDP_MAX_FPS, Number(msg.fps) || RDP_STREAM_FPS));
-            backendWs.send(JSON.stringify(msg));
-            return;
-        }
-        backendWs.send(JSON.stringify(msg));
-    };
-
-    ws.on('message', (raw, isBinary) => {
-        try {
-            if (!backendReady) {
-                if (pendingClientMessages.length > 200) throw new Error('RDP GFX pending client queue overflow');
-                pendingClientMessages.push({ raw: Buffer.from(raw), isBinary });
-                return;
-            }
-            forwardToBackend(raw, isBinary);
-        } catch (err) {
-            console.warn('[rdp-gfx]', 'client message rejected', { connId, error: err.message });
-            sendClientError(err.message);
-            closeWebSocketSafe(ws, 1008, err.message);
-        }
-    });
     ws.on('close', () => cleanup('browser-close'));
-    ws.on('error', (err) => { console.warn('[rdp-gfx]', 'browser websocket error', { connId, error: err.message }); cleanup('browser-error'); });
+    ws.on('error', (err) => { console.warn('[rdp-proxy] ws error', err.message); cleanup('ws-error'); });
 
-    (async () => {
-        try {
-            const sessionUser = currentSession(req);
-            if (!sessionUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
-            const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-            const conn = (store.connections || []).find((c) => c.id === connId);
-            if (!conn) { closeWebSocketSafe(ws, 1008, 'connection not found'); return; }
-            if (String(conn.protocol || 'RDP').toUpperCase() !== 'RDP') { closeWebSocketSafe(ws, 1008, 'not an RDP connection'); return; }
-
-            const targetPort = Number(conn.port) || 3389;
-            routedForward = await createRoutedTcpForward(conn, targetPort, 15000);
-            effectiveConn = routedForward ? { ...conn, host: routedForward.host, port: routedForward.port } : conn;
-
-            await ensureRdpGfxBackend();
-            if (closed || ws.readyState !== ws.OPEN) return;
-
-            backendWs = new WebSocket(`ws://${RDP_GFX_BACKEND_HOST}:${RDP_GFX_BACKEND_PORT}/`, { perMessageDeflate: false, maxPayload: 64 * 1024 * 1024 });
-            backendWs.binaryType = 'arraybuffer';
-            backendWs.on('open', () => {
-                try {
-                    backendReady = true;
-                    console.info('[rdp-gfx]', 'backend attached', { connId, route: routedForward?.route || 'direct' });
-                    for (const item of pendingClientMessages.splice(0)) forwardToBackend(item.raw, item.isBinary);
-                } catch (err) {
-                    console.warn('[rdp-gfx]', 'queued client message rejected', { connId, error: err.message });
-                    sendClientError(err.message);
-                    closeWebSocketSafe(ws, 1008, err.message);
-                    cleanup('queued-message-error');
-                }
-            });
-            backendWs.on('message', (data, isBinary) => {
-                if (ws.readyState !== ws.OPEN) return;
-                try { ws.send(data, { binary: isBinary }); } catch (err) { console.warn('[rdp-gfx]', 'backend->browser send failed', { connId, error: err.message }); }
-            });
-            backendWs.on('close', (code, reason) => {
-                if (ws.readyState === ws.OPEN) closeWebSocketSafe(ws, code || 1011, reason?.toString?.() || 'RDP GFX backend closed');
-                cleanup('backend-close');
-            });
-            backendWs.on('error', (err) => {
-                console.warn('[rdp-gfx]', 'backend websocket error', { connId, error: err.message });
-                sendClientError(`RDP GFX backend error: ${err.message}`);
-                closeWebSocketSafe(ws, 1011, err.message);
-                cleanup('backend-error');
-            });
-        } catch (err) {
-            console.error('[rdp-gfx]', 'connection error', { connId, error: err.message });
-            sendClientError(err.message);
-            closeWebSocketSafe(ws, 1011, err.message);
-            cleanup('connect-error');
-        }
-    })();
-});
-
-rdpH264Wss.on('connection', async (ws, req) => {
-    const url = new URL(req.url || '/rdp-h264', `http://${req.headers.host || 'localhost'}`);
-    const connId = url.searchParams.get('connectionId') || 'default';
     try {
+        /* Validate target against saved connections for the authenticated user */
         const sessionUser = currentSession(req);
-        if (!sessionUser) { ws.close(1008, 'unauthorized'); return; }
+        if (!sessionUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
+
         const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-        const conn = (store.connections || []).find((c) => c.id === connId);
-        if (!conn) { ws.close(1008, 'connection not found'); return; }
+        const conn = (store.connections || []).find((c) => {
+            if (String(c.protocol || 'SSH').toUpperCase() !== 'RDP') return false;
+            const cHost = String(c.host || '').toLowerCase();
+            const cPort = Number(c.port) || 3389;
+            return cHost === targetHost.toLowerCase() && cPort === targetPort;
+        });
 
-        let pipe = rdpPipes.get(connId);
-        const requestedWidth = Number(url.searchParams.get('width')) || RDP_STREAM_WIDTH;
-        const requestedHeight = Number(url.searchParams.get('height')) || RDP_STREAM_HEIGHT;
-        const requestedMode = url.searchParams.get('mode') || '';
-        const requestedQuality = normalizeQualityMode(url.searchParams.get('quality'), 'balanced');
-        const requestedFps = Math.max(15, Math.min(RDP_MAX_FPS, Number(url.searchParams.get('fps')) || RDP_STREAM_FPS));
-        const requestedStream = String(url.searchParams.get('stream') || 'av').toLowerCase() === 'h264' ? 'h264' : 'av';
-        if (pipe && requestedStream === 'av') {
-            // fMP4 clients must receive ftyp/moov from the beginning; mid-stream attach causes MSE demux errors.
-            cleanupPipe(connId);
-            pipe = null;
-        } else if (pipe && pipe.streamMode && pipe.streamMode !== requestedStream) { cleanupPipe(connId); pipe = null; }
-        if (!pipe) {
-            let starter = rdpPipeStarts.get(connId);
-            if (!starter) {
-                starter = startRdpH264Pipeline(connId, conn, { width: requestedWidth, height: requestedHeight, mode: requestedMode, quality: requestedQuality, fps: requestedFps, stream: requestedStream })
-                    .finally(() => rdpPipeStarts.delete(connId));
-                rdpPipeStarts.set(connId, starter);
-            }
-            pipe = await starter;
+        if (!conn) {
+            console.warn('[rdp-proxy] target not found in saved connections', { target, user: sessionUser.username });
+            closeWebSocketSafe(ws, 1008, 'target not found in saved connections');
+            return;
         }
-        pipe.username = sessionUser?.username || '';
-        pipe.clients.add(ws);
-        startRdpClipboardWatch(pipe);
-        ws.send(JSON.stringify({ type: 'hello', codec: pipe.streamMode === 'av' ? 'fmp4-av' : 'avc1.42001f', mime: pipe.streamMode === 'av' ? pipe.avMime : undefined, width: pipe.width || RDP_STREAM_WIDTH, height: pipe.height || RDP_STREAM_HEIGHT, fps: pipe.fps || RDP_STREAM_FPS, quality: pipe.quality || requestedQuality }));
-        console.info('[rdp-h264]', 'browser attached', { connId, clients: pipe.clients.size });
 
-        ws.on('message', async (raw, isBinary) => {
-            if (isBinary) return;
-            let msg = null;
-            try { msg = JSON.parse(raw.toString('utf8')); } catch {}
-            if (msg?.type === 'reconnect' && Number.isFinite(msg.width) && Number.isFinite(msg.height)) {
-                const oldPipe = pipe;
-                oldPipe.clients.delete(ws);
-                const width = evenClampRdpSize(Number(msg.width) || RDP_STREAM_WIDTH, 800, RDP_MAX_WIDTH);
-                const height = evenClampRdpSize(Number(msg.height) || RDP_STREAM_HEIGHT, 600, RDP_MAX_HEIGHT);
-                const mode = String(msg.mode || '');
-                const quality = normalizeQualityMode(msg.quality, pipe.quality || requestedQuality);
-                const fps = Math.max(15, Math.min(RDP_MAX_FPS, Number(msg.fps) || pipe.fps || requestedFps || RDP_STREAM_FPS));
-                try { if (ws.readyState === ws.OPEN) ws.close(1012, `rdp reconnect:${mode}:${width}x${height}:${quality}:${fps}`); } catch {}
-                cleanupPipe(connId);
-                return;
+        /* Resolve routing (jump hosts, proxies) */
+        routedForward = await createRoutedTcpForward(conn, targetPort, 15000);
+        const effectiveHost = routedForward ? routedForward.host : targetHost;
+        const effectivePort = routedForward ? routedForward.port : targetPort;
+
+        if (closed || ws.readyState !== ws.OPEN) return;
+
+        /* Open TCP connection to RDP server */
+        tcpConn = new net.Socket();
+        tcpConn.setKeepAlive(true, 30000);
+        tcpConn.setNoDelay(true);
+
+        await new Promise((resolve, reject) => {
+            let settled = false;
+            const finish = (err) => {
+                if (settled) return;
+                settled = true;
+                if (err) reject(err); else resolve();
+            };
+            tcpConn.once('connect', () => finish());
+            tcpConn.once('error', (err) => finish(err));
+            setTimeout(() => {
+                if (!settled) { tcpConn.destroy(); finish(new Error('TCP connect timeout')); }
+            }, 15000);
+            tcpConn.connect(effectivePort, effectiveHost);
+        });
+
+        if (closed || ws.readyState !== ws.OPEN) { tcpConn.destroy(); cleanup('closed-before-ready'); return; }
+
+        console.info('[rdp-proxy] connected', {
+            target,
+            effective: `${effectiveHost}:${effectivePort}`,
+            route: routedForward?.route || 'direct',
+            user: sessionUser.username,
+        });
+
+        /* ── Bidirectional pipe ────────────────────────────────────── */
+
+        /* WebSocket → TCP */
+        ws.on('message', (data, isBinary) => {
+            if (closed || tcpConn.destroyed) return;
+            try {
+                const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+                tcpConn.write(buf);
+            } catch (err) {
+                console.warn('[rdp-proxy] ws→tcp write error', err.message);
             }
-            handleRdpInput(pipe, raw).catch((err) => console.warn('[rdp-h264]', 'input handler failed', { connId, error: err.message }));
         });
-        ws.on('close', () => {
-            pipe.clients.delete(ws);
-            console.info('[rdp-h264]', 'browser detached', { connId, clients: pipe.clients.size });
-            if (pipe.clients.size === 0) setTimeout(() => {
-                const latest = rdpPipes.get(connId);
-                if (latest && latest.clients.size === 0) cleanupPipe(connId);
-            }, 5000);
+
+        /* TCP → WebSocket */
+        tcpConn.on('data', (chunk) => {
+            if (closed || ws.readyState !== ws.OPEN) return;
+            try {
+                ws.send(chunk, { binary: true });
+            } catch (err) {
+                console.warn('[rdp-proxy] tcp→ws send error', err.message);
+            }
         });
-        ws.on('error', (err) => console.warn('[rdp-h264]', 'browser websocket error', { connId, error: err.message }));
+
+        tcpConn.on('end', () => {
+            if (!closed) {
+                closeWebSocketSafe(ws, 1000, 'TCP connection ended');
+                cleanup('tcp-end');
+            }
+        });
+
+        tcpConn.on('error', (err) => {
+            if (!closed) {
+                console.warn('[rdp-proxy] tcp error', err.message);
+                closeWebSocketSafe(ws, 1011, 'TCP error');
+                cleanup('tcp-error');
+            }
+        });
+
+        tcpConn.on('close', () => {
+            if (!closed) {
+                closeWebSocketSafe(ws, 1000, 'TCP closed');
+                cleanup('tcp-close');
+            }
+        });
+
     } catch (err) {
-        console.error('[rdp-h264]', 'connection error', { connId, error: err.message });
-        try { ws.close(1011, err.message.slice(0, 120)); } catch {}
+        console.error('[rdp-proxy] connection error', { target, error: err.message });
+        closeWebSocketSafe(ws, 1011, err.message);
+        cleanup('connect-error');
     }
 });
-
-rdpAudioWss.on('connection', async (ws, req) => {
-    const url = new URL(req.url || '/rdp-audio', `http://${req.headers.host || 'localhost'}`);
-    const connId = url.searchParams.get('connectionId') || 'default';
-    try {
-        const sessionUser = currentSession(req);
-        if (!sessionUser) { ws.close(1008, 'unauthorized'); return; }
-        const pipe = rdpPipes.get(connId);
-        if (!pipe) { ws.close(1011, 'rdp pipeline not ready'); return; }
-        pipe.audioClients.add(ws);
-        ws.send(JSON.stringify({ type: 'hello', container: 'webm', codec: 'opus', sampleRate: 48000, channels: 2, mode: 'inline' }));
-        startRdpAudioCapture(pipe);
-        console.info('[rdp-audio]', 'browser attached', { connId, clients: pipe.audioClients.size, mode: 'inline' });
-        ws.on('close', () => {
-            pipe.audioClients.delete(ws);
-            console.info('[rdp-audio]', 'browser detached', { connId, clients: pipe.audioClients.size, mode: 'inline' });
-            if (pipe.audioClients.size === 0 && pipe.audioFfmpeg) { try { pipe.audioFfmpeg.kill('SIGTERM'); } catch {} pipe.audioFfmpeg = null; }
-        });
-        ws.on('error', (err) => console.warn('[rdp-audio]', 'browser websocket error', { connId, error: err.message }));
-    } catch (err) {
-        console.error('[rdp-audio]', 'connection error', { connId, error: err.message });
-        try { ws.close(1011, err.message.slice(0, 120)); } catch {}
-    }
-});
-
-function cleanupPipe(connId) {
-    const p = rdpPipes.get(connId);
-    if (p) {
-        p.stopping = true;
-        try { p.xinput?.kill('SIGTERM'); } catch {}
-        try { p.fileClipOwner?.kill('SIGTERM'); } catch {}
-        try { for (const t of p.fileClipCleanupTimers || []) clearTimeout(t); } catch {}
-        try { if (p.fileClipRoot) fs.rmSync(p.fileClipRoot, { recursive: true, force: true }); } catch {}
-        try { p.nativeReader?.destroy(); } catch {}
-        try { p.ffmpeg?.kill('SIGTERM'); } catch {}
-        try { p.audioFfmpeg?.kill('SIGTERM'); } catch {}
-        try { if (p.clipboardTimer) clearInterval(p.clipboardTimer); } catch {}
-        try { p.pulseaudio?.kill('SIGTERM'); } catch {}
-        try { p.xfreerdp?.kill('SIGTERM'); } catch {}
-        try { p.xvfb?.kill('SIGTERM'); } catch {}
-        try { p.routedForward?.close?.(); } catch {}
-        try { if (p.fifoPath) fs.rmSync(p.fifoPath, { force: true }); } catch {}
-        try { if (p.shareDir) fs.rmSync(p.shareDir, { recursive: true, force: true }); } catch {}
-        cleanupIsolatedRdpAudioWorker(connId);
-        rdpPipeStarts.delete(connId);
-        rdpPipes.delete(connId);
-        console.info('[rdp-h264]', 'pipeline cleaned', { connId });
-    }
-}
-
 wss.on('connection', (ws, req) => {
     console.log(`[WS] 客户端连接 ${req.socket.remoteAddress}`);
     let sshClient = null;
@@ -6894,7 +5455,7 @@ async function startServer() {
     if (httpsServer) console.log(`🔐 Zephyr HTTPS 服务运行在 https://localhost:${HTTPS_PORT}`);
     else if (HTTPS_ENABLED) console.warn('[https] HTTPS requested but disabled because certificate setup failed');
     console.log(`   WebSocket 路径: /ssh`);
-    console.log(`   RDP/GFX 路径: /rdp-gfx -> FreeRDP3 RDPEGFX native bridge`);
+    console.log(`   RDP 路径: /rdp-proxy -> WASM grdp (browser-side RDP)`);
     console.log(`   VNC/noVNC 路径: /novnc -> VNC Server`);
 }
 

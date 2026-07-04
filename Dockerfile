@@ -21,166 +21,25 @@ COPY . .
 RUN npm run build:editor 2>&1 || echo "[WARN] editor build skipped"
 
 # ============================================================
-# Stage 2: ffmpeg-builder — 编译 FFmpeg 8.1.2 (musl)
+# Stage 2: rdp-wasm-builder — 编译 grdp Go WASM (RDP 协议栈)
 # ============================================================
-FROM alpine:3.20 AS ffmpeg-builder
-
-ARG FFMPEG_VERSION=8.1.2
-ARG FFMPEG_SHA256=464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c
-WORKDIR /build
-
-RUN apk add --no-cache \
-        build-base pkgconf curl tar xz nasm zlib-dev openssl-dev opus-dev
-
-RUN curl -fsSL "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" -o ffmpeg.tar.xz \
-    && echo "${FFMPEG_SHA256}  ffmpeg.tar.xz" | sha256sum -c - \
-    && tar -xf ffmpeg.tar.xz \
-    && mv "ffmpeg-${FFMPEG_VERSION}" ffmpeg
-
-WORKDIR /build/ffmpeg
-ENV LD_LIBRARY_PATH=/opt/ffmpeg/lib
-RUN ./configure \
-      --prefix=/opt/ffmpeg \
-      --pkg-config-flags=--static \
-      --extra-ldflags='-Wl,-rpath,/opt/ffmpeg/lib' \
-      --enable-rpath \
-      --enable-shared \
-      --disable-static \
-      --disable-debug \
-      --disable-doc \
-      --disable-programs \
-      --enable-ffmpeg \
-      --enable-ffprobe \
-      --enable-openssl \
-      --enable-libopus \
-      --enable-protocol=file,pipe,tcp,tls,http,https,udp,rtmp \
-    && make -j$(nproc) \
-    && make install \
-    && LD_LIBRARY_PATH=/opt/ffmpeg/lib /opt/ffmpeg/bin/ffmpeg -version \
-    && LD_LIBRARY_PATH=/opt/ffmpeg/lib /opt/ffmpeg/bin/ffprobe -version
-
-# ============================================================
-# Stage 3: freerdp3-builder — 编译 FreeRDP3 RDPEGFX/H.264 (musl)
-# ============================================================
-FROM alpine:3.20 AS freerdp3-builder
-
-ARG FREERDP_VERSION=3.20.0
-WORKDIR /build
-
-RUN apk add --no-cache \
-        build-base cmake ninja git pkgconf \
-        linux-headers \
-        openssl-dev \
-        libx11-dev libxext-dev libxinerama-dev libxcursor-dev \
-        libxkbfile-dev libxv-dev libxi-dev libxdamage-dev \
-        libxrandr-dev libxrender-dev libxfixes-dev \
-        fuse3-dev alsa-lib-dev cups-dev pulseaudio-dev \
-        eudev-dev dbus-glib-dev util-linux-dev libxml2-dev \
-        krb5-dev libusb-dev cjson-dev \
-        sdl2-dev sdl2_ttf-dev pcsc-lite-dev \
-        opus-dev libwebp-dev cairo-dev \
-        zlib-dev
-
-COPY --from=ffmpeg-builder /opt/ffmpeg /opt/ffmpeg
-ENV PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig
-ENV LD_LIBRARY_PATH=/opt/ffmpeg/lib
-
-RUN git clone --depth 1 --branch ${FREERDP_VERSION} https://github.com/FreeRDP/FreeRDP.git freerdp
-
-WORKDIR /build/freerdp
-RUN cmake -B build -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=/opt/freerdp3 \
-      -DWITH_VERBOSE_WINPR_ASSERT=OFF \
-      -DWITH_SERVER=OFF \
-      -DWITH_SAMPLE=OFF \
-      -DWITH_MANPAGES=OFF \
-      -DWITH_FFMPEG=ON \
-      -DWITH_SWSCALE=ON \
-      -DWITH_DSP_FFMPEG=ON \
-      -DWITH_VIDEO_FFMPEG=ON \
-      -DWITH_OPUS=ON \
-      -DWITH_WEBVIEW=OFF \
-      -DWITH_PKCS11=OFF \
-      -DWITH_CLIENT_SDL=OFF \
-      -DWITH_PROXY=OFF \
-      -DWITH_SHADOW=OFF \
-      -DCHANNEL_RDPGFX=ON \
-      -DCHANNEL_RDPSND=ON \
-      -DCHANNEL_DISP=ON \
-      -DCHANNEL_CLIPRDR=ON \
-      -DWITH_PULSE=OFF \
-      -DWITH_ALSA=OFF \
-    && cmake --build build --parallel $(nproc) \
-    && cmake --install build \
-    && echo "FreeRDP3 musl build done" \
-    && ls /opt/freerdp3/lib/libfreerdp3* 2>/dev/null | head -5
-
-# ============================================================
-# Stage 4: rdp-bridge-builder — 编译 freerdp-web native bridge (musl)
-# ============================================================
-FROM alpine:3.20 AS rdp-bridge-builder
+FROM golang:1.24-alpine3.20 AS rdp-wasm-builder
 
 WORKDIR /build
 
-RUN apk add --no-cache \
-        build-base cmake pkgconf \
-        openssl-dev opus-dev cjson-dev \
-        krb5-dev pcsc-lite-dev fuse3-dev libwebp-dev cairo-dev
+RUN apk add --no-cache make
 
-COPY --from=freerdp3-builder /opt/freerdp3 /opt/freerdp3
-COPY --from=ffmpeg-builder /opt/ffmpeg /opt/ffmpeg
-ENV PKG_CONFIG_PATH=/opt/freerdp3/lib/pkgconfig:/opt/ffmpeg/lib/pkgconfig
-ENV LD_LIBRARY_PATH=/opt/freerdp3/lib:/opt/ffmpeg/lib
+COPY rdp-wasm/ ./
 
-COPY rdp-gfx-backend/native/ ./native/
-WORKDIR /build/native
-RUN cmake -B build \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=/usr/local \
-      -DCMAKE_PREFIX_PATH=/opt/freerdp3 \
-      -DFREERDP3_DIR=/opt/freerdp3 \
-    && cmake --build build --parallel $(nproc) \
-    && cmake --install build \
-    && ls -la /usr/local/lib/librdp_bridge.so* \
-    && ls -la /usr/local/lib/freerdp3/librdpsnd-client-bridge.so
+# Build Go WASM binary
+RUN GOOS=js GOARCH=wasm go build -o main.wasm .
+
+# Copy wasm_exec.js from Go SDK
+RUN cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" wasm_exec.js 2>/dev/null || \
+    cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" wasm_exec.js
 
 # ============================================================
-# Stage 4b: rdp-addon-builder — 编译 Node.js N-API addon
-# ============================================================
-FROM node:20-alpine3.20 AS rdp-addon-builder
-
-WORKDIR /build
-
-RUN apk add --no-cache build-base python3 pkgconf
-
-COPY --from=rdp-bridge-builder /usr/local/lib/librdp_bridge.so* /usr/local/lib/
-COPY --from=rdp-bridge-builder /usr/local/include/rdp_bridge.h /usr/local/include/
-
-COPY rdp-gfx-backend/addon/ ./addon/
-WORKDIR /build/addon
-RUN npm install -g node-gyp \
-    && node-gyp configure \
-    && node-gyp build \
-    && ls -la build/Release/rdp_addon.node
-
-# ============================================================
-# Stage 5: rdp-wasm-builder — 编译 Progressive/ClearCodec WASM
-# ============================================================
-FROM emscripten/emsdk:3.1.51 AS rdp-wasm-builder
-
-WORKDIR /build
-COPY public/vendor/freerdp-web/progressive/ ./progressive/
-COPY public/vendor/freerdp-web/clearcodec/ ./clearcodec/
-
-WORKDIR /build/progressive
-RUN mkdir -p build && cd build && emcmake cmake .. && emmake make
-
-WORKDIR /build/clearcodec
-RUN mkdir -p build && cd build && emcmake cmake .. && emmake make
-
-# ============================================================
-# Stage 6: runtime — Zephyr + RDPEGFX/FreeRDP3 bridge (Alpine)
+# Stage 3: runtime — Zephyr + WASM RDP client (Alpine)
 # ============================================================
 FROM node:20-alpine3.20
 
@@ -201,65 +60,17 @@ RUN apk add --no-cache \
         font-noto \
         font-noto-cjk \
         font-noto-emoji \
-        python3 \
-        py3-pip \
-        opus \
-        libwebp \
-        cjson \
-        krb5 \
-        pcsc-lite \
-        pcsc-lite-libs \
-        fuse3 \
-        cairo \
-        libx11 \
-        libxkbfile \
-        libxext \
-        libxinerama \
-        libxcursor \
-        libxv \
-        libxi \
-        libxdamage \
-        libxrandr \
-        libxrender \
-        libxfixes \
-        libxml2 \
-        eudev-libs \
-        dbus-glib \
-        alsa-lib \
-        sdl2 \
-        sdl2_ttf \
-        libusb \
-        cups-libs \
         openssl \
         curl \
     && echo "=== runtime deps installed ==="
 
 COPY --from=app-build /app /app
-COPY --from=ffmpeg-builder /opt/ffmpeg /opt/ffmpeg
-COPY --from=freerdp3-builder /opt/freerdp3 /opt/freerdp3
-COPY --from=rdp-bridge-builder /usr/local/lib/librdp_bridge.so* /usr/local/lib/
-COPY --from=rdp-bridge-builder /usr/local/include/rdp_bridge.h /usr/local/include/
-RUN mkdir -p /opt/freerdp3/lib/freerdp3
-COPY --from=rdp-bridge-builder /usr/local/lib/freerdp3/librdpsnd-client-bridge.so /opt/freerdp3/lib/freerdp3/
 
-# N-API addon for direct FreeRDP binding (Python-free)
-RUN mkdir -p /app/rdp-gfx-backend/addon/build/Release
-COPY --from=rdp-addon-builder /build/addon/build/Release/rdp_addon.node /app/rdp-gfx-backend/addon/build/Release/
+# RDP WASM artifacts → public/vendor/rdp-wasm/
+RUN mkdir -p /app/public/vendor/rdp-wasm
+COPY --from=rdp-wasm-builder /build/main.wasm /app/public/vendor/rdp-wasm/
+COPY --from=rdp-wasm-builder /build/wasm_exec.js /app/public/vendor/rdp-wasm/
 
-COPY --from=rdp-wasm-builder /build/progressive/build/progressive_decoder.js /app/public/vendor/freerdp-web/progressive/
-COPY --from=rdp-wasm-builder /build/progressive/build/progressive_decoder.wasm /app/public/vendor/freerdp-web/progressive/
-COPY --from=rdp-wasm-builder /build/progressive/build/progressive_decoder.worker.js /app/public/vendor/freerdp-web/progressive/
-COPY --from=rdp-wasm-builder /build/clearcodec/build/clearcodec_decoder.js /app/public/vendor/freerdp-web/clearcodec/
-COPY --from=rdp-wasm-builder /build/clearcodec/build/clearcodec_decoder.wasm /app/public/vendor/freerdp-web/clearcodec/
-
-RUN python3 -m venv /app/venv
-ENV PATH="/opt/ffmpeg/bin:/app/venv/bin:${PATH}"
-RUN pip install --no-cache-dir -r /app/rdp-gfx-backend/requirements.txt
-
-ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib:/opt/freerdp3/lib:/usr/local/lib"
-ENV FREERDP_LIBRARY_PATH="/opt/freerdp3/lib/freerdp3"
-ENV RDP_GFX_BACKEND_HOST="127.0.0.1"
-ENV RDP_GFX_BACKEND_PORT="8765"
 ENV ZEPHYR_VERSION=${ZEPHYR_VERSION}
 ENV MALLOC_TRIM_THRESHOLD_=32768
 ENV MALLOC_MMAP_THRESHOLD_=65536
@@ -268,15 +79,9 @@ RUN echo "=== runtime diagnostics ===" && \
     cat /etc/alpine-release && \
     node --version && \
     npm --version && \
-    ffmpeg -version | head -1 && \
-    ffprobe -version | head -1 && \
-    ffmpeg -version | grep -F "ffmpeg version 8.1.2" && \
-    ffprobe -version | grep -F "ffprobe version 8.1.2" && \
-    for lib in /usr/local/lib/librdp_bridge.so /opt/freerdp3/lib/libfreerdp3.so.3 /opt/freerdp3/lib/libwinpr3.so.3 /opt/freerdp3/lib/freerdp3/librdpsnd-client-bridge.so; do ldd "$lib"; done && \
-    ldd /usr/local/lib/librdp_bridge.so | grep -F "/opt/ffmpeg/lib/libavcodec.so" && \
-    python -c "import ctypes; ctypes.CDLL('/usr/local/lib/librdp_bridge.so'); print('librdp_bridge loaded')" && \
-    test -f /app/public/vendor/freerdp-web/progressive/progressive_decoder.wasm && \
-    test -f /app/public/vendor/freerdp-web/clearcodec/clearcodec_decoder.wasm && \
+    test -f /app/public/vendor/rdp-wasm/main.wasm && \
+    test -f /app/public/vendor/rdp-wasm/wasm_exec.js && \
+    wc -c /app/public/vendor/rdp-wasm/main.wasm && \
     node -e "require('better-sqlite3'); console.log('better-sqlite3 loaded')" && \
     (HTTP_ENABLED=true HTTPS_ENABLED=false PORT=39080 node server.js > /tmp/zephyr-startup.log 2>&1 & pid=$!; ok=0; for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:39080/ >/dev/null 2>&1 && ok=1 && break; kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done; cat /tmp/zephyr-startup.log; kill "$pid" 2>/dev/null || true; rm -rf /app/data /tmp/zephyr-startup.log; test "$ok" = 1; echo "server startup smoke loaded")
 
