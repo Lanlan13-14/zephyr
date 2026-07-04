@@ -61,7 +61,7 @@ let rdpWidth = 0;
 let rdpHeight = 0;
 
 /* fit/zoom */
-const fitModes = ['original', 'adapt', 'fill'];
+const fitModes = ['adapt', 'original', 'fill'];
 let fitModeIdx = 0;
 let rdpScaleZoom = 1;
 
@@ -1124,55 +1124,21 @@ function isPortraitTouch() {
 function computeRdpSize() {
     const res = params.rdpResolution || '1920x1080';
     const m = res.match(/^(\d+)x(\d+)$/);
-    let baseW = m ? Number(m[1]) : 1920;
-    let baseH = m ? Number(m[2]) : 1080;
+    let w = m ? Number(m[1]) : 1920;
+    let h = m ? Number(m[2]) : 1080;
     if (res === 'auto' || !m) {
-        baseW = Math.min(window.screen.width * (window.devicePixelRatio || 1), 3840);
-        baseH = Math.min(window.screen.height * (window.devicePixelRatio || 1), 2160);
+        /* Auto: use screen dimensions but cap at 4K */
+        const dpr = window.devicePixelRatio || 1;
+        const sw = window.screen.width * dpr;
+        const sh = window.screen.height * dpr;
+        /* Always use landscape orientation for RDP (wider >= taller) */
+        w = Math.min(Math.max(sw, sh), 3840);
+        h = Math.min(Math.min(sw, sh), 2160);
     }
-    const portrait = isPortraitTouch();
-
-    /* Enforce 16:9 (landscape) or 9:16 (portrait) for base resolution */
-    if (portrait) {
-        /* 9:16 portrait */
-        baseH = Math.max(baseW, baseH);
-        baseW = Math.round(baseH * 9 / 16);
-    } else {
-        /* 16:9 landscape */
-        baseW = Math.max(baseW, baseH);
-        baseH = Math.round(baseW * 9 / 16);
-    }
-
-    const mode = fitModes[fitModeIdx];
-    let w = baseW, h = baseH;
-
-    if (mode === 'adapt') {
-        /* Adapt mode: expand resolution to fill the entire physical screen.
-         * The center 16:9 (9:16) area must be >= base resolution.
-         * Calculate the smallest resolution that covers the screen at native pixel density. */
-        const screenW = (window.innerWidth || window.screen.width) * (window.devicePixelRatio || 1);
-        const screenH = (window.innerHeight || window.screen.height) * (window.devicePixelRatio || 1);
-        const screenAspect = screenW / screenH;
-        const baseAspect = baseW / baseH;
-
-        if (Math.abs(screenAspect - baseAspect) < 0.01) {
-            /* Screen matches 16:9, use base resolution directly */
-            w = baseW;
-            h = baseH;
-        } else if (screenAspect > baseAspect) {
-            /* Screen is wider than 16:9 — expand width, keep height >= base */
-            w = Math.round(baseH * screenAspect);
-            h = baseH;
-        } else {
-            /* Screen is taller than 16:9 — expand height, keep width >= base */
-            w = baseW;
-            h = Math.round(baseW / screenAspect);
-        }
-    }
-    /* original and fill modes use base 16:9 resolution as-is */
-
-    w = Math.max(640, Math.min(7680, Math.floor(w / 2) * 2));
-    h = Math.max(480, Math.min(4320, Math.floor(h / 2) * 2));
+    /* Ensure width >= height (landscape) — RDP servers expect landscape */
+    if (h > w) { const tmp = w; w = h; h = tmp; }
+    w = Math.max(800, Math.min(7680, Math.floor(w / 2) * 2));
+    h = Math.max(600, Math.min(4320, Math.floor(h / 2) * 2));
     return { width: w, height: h };
 }
 
@@ -1242,20 +1208,10 @@ function initToolbar() {
 
     if (fitBtn) {
         fitBtn.addEventListener('click', () => {
-            const prevMode = fitModes[fitModeIdx];
             fitModeIdx = (fitModeIdx + 1) % fitModes.length;
             const newMode = fitModes[fitModeIdx];
             fitBtn.textContent = newMode === 'original' ? '原始' : newMode === 'adapt' ? '适应' : '填充';
             applyFitMode();
-            /* Adapt mode changes the RDP session resolution — reconnect if switching to/from it */
-            if ((prevMode === 'adapt' || newMode === 'adapt') && prevMode !== newMode && connected) {
-                const size = computeRdpSize();
-                if (size.width !== rdpWidth || size.height !== rdpHeight) {
-                    rdpWidth = size.width;
-                    rdpHeight = size.height;
-                    connect().catch(() => {});
-                }
-            }
         });
     }
 
