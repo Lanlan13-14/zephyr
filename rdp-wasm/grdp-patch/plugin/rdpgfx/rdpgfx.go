@@ -1318,6 +1318,7 @@ func (g *GfxHandler) onMapSurfaceToOutput(data []byte) {
 		s.outputX = ox
 		s.outputY = oy
 		s.mapped = true
+		g.emitBitmap(s, 0, 0, int(s.width), int(s.height), s.data)
 	}
 }
 
@@ -1335,6 +1336,7 @@ func (g *GfxHandler) onMapSurfaceToScaledOutput(data []byte) {
 		s.outputX = ox
 		s.outputY = oy
 		s.mapped = true
+		g.emitBitmap(s, 0, 0, int(s.width), int(s.height), s.data)
 	}
 }
 

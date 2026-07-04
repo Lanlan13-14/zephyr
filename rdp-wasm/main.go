@@ -15,6 +15,7 @@ import (
 
 var (
 	rdpClient        *grdp.RdpClient
+	connectGen       uint64
 	clientMu         sync.Mutex
 	canvas           js.Value
 	ctx2d            js.Value
@@ -27,6 +28,18 @@ var (
 	camEnumHandler   *CamEnumeratorHandler
 	camStreamHandler *CamStreamHandler
 )
+
+func isCurrentClient(gen uint64, c *grdp.RdpClient) bool {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+	return connectGen == gen && rdpClient == c
+}
+
+func currentClient() *grdp.RdpClient {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+	return rdpClient
+}
 
 func main() {
 	js.Global().Set("rdpConnect", js.FuncOf(jsConnect))
@@ -96,13 +109,6 @@ func jsConnect(_ js.Value, args []js.Value) any {
 }
 
 func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264OK bool) error {
-	clientMu.Lock()
-	if rdpClient != nil {
-		rdpClient.Close()
-		rdpClient = nil
-	}
-	clientMu.Unlock()
-
 	hostPort := host + ":" + port
 
 	// Build WebSocket URL for the proxy: ws://host:port/rdp-proxy?target=rdphost:3389
@@ -112,6 +118,16 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 		return dialWebSocket(wsURL)
 	})
 
+	clientMu.Lock()
+	connectGen++
+	myGen := connectGen
+	oldClient := rdpClient
+	rdpClient = g
+	clientMu.Unlock()
+	if oldClient != nil {
+		oldClient.Close()
+	}
+
 	// Get canvas from DOM
 	canvas = js.Global().Get("document").Call("getElementById", "rdpCanvas")
 	ctx2d = canvas.Call("getContext", "2d")
@@ -119,6 +135,9 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	canvas.Set("height", height)
 
 	g.OnAudio(func(af rdpsnd.AudioFormat, data []byte) {
+		if !isCurrentClient(myGen, g) {
+			return
+		}
 		cp := make([]byte, len(data))
 		copy(cp, data)
 		playAudio(int(af.SamplesPerSec), int(af.Channels), int(af.BitsPerSample), cp)
@@ -129,6 +148,9 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	// and deliver via OnBitmap instead — slower but universally compatible.
 	if h264OK {
 		g.OnH264Raw(func(destX, destY, w, h int, isKey bool, data []byte) {
+			if !isCurrentClient(myGen, g) {
+				return
+			}
 			jsArr := js.Global().Get("Uint8Array").New(len(data))
 			js.CopyBytesToJS(jsArr, data)
 			js.Global().Call("rdpOnH264", destX, destY, w, h, isKey, jsArr)
@@ -154,24 +176,41 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	})
 
 	g.OnError(func(e error) {
+		if !isCurrentClient(myGen, g) {
+			return
+		}
 		slog.Debug("rdp error", "err", e)
 		js.Global().Call("rdpOnError", e.Error())
 	}).OnClose(func() {
+		if !isCurrentClient(myGen, g) {
+			return
+		}
 		slog.Debug("rdp close")
 		js.Global().Call("rdpOnClose")
 	}).OnSuccess(func() {
 		slog.Debug("rdp success")
 	}).OnReady(func() {
+		if !isCurrentClient(myGen, g) {
+			return
+		}
 		slog.Debug("rdp ready")
 		js.Global().Call("rdpOnReady")
 	}).OnBitmap(func(bs []grdp.Bitmap) {
+		if !isCurrentClient(myGen, g) {
+			return
+		}
 		// Copy bitmap data before rendering (data is borrowed from pool)
 		for i := range bs {
 			d := make([]byte, len(bs[i].Data))
 			copy(d, bs[i].Data)
 			bs[i].Data = d
 		}
-		go renderBitmaps(bs)
+		go func() {
+			if !isCurrentClient(myGen, g) {
+				return
+			}
+			renderBitmaps(bs)
+		}()
 	})
 
 	g.OnClipboard(
@@ -209,12 +248,15 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	camEnumHandler.streamHandler = camStreamHandler
 
 	if err := g.Login(domain, user, password); err != nil {
+		clientMu.Lock()
+		if rdpClient == g {
+			rdpClient = nil
+		}
+		clientMu.Unlock()
+		g.Close()
 		return err
 	}
 
-	clientMu.Lock()
-	rdpClient = g
-	clientMu.Unlock()
 	return nil
 }
 
@@ -285,10 +327,12 @@ func renderBitmaps(bs []grdp.Bitmap) {
 
 func jsDisconnect(_ js.Value, _ []js.Value) any {
 	clientMu.Lock()
-	defer clientMu.Unlock()
-	if rdpClient != nil {
-		rdpClient.Close()
-		rdpClient = nil
+	c := rdpClient
+	rdpClient = nil
+	connectGen++
+	clientMu.Unlock()
+	if c != nil {
+		c.Close()
 	}
 	return nil
 }
