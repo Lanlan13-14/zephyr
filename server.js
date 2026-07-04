@@ -3987,6 +3987,16 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 
 // 健康检查
+let _h264DebugLog = null;
+app.post('/api/rdp/h264-debug', (req, res) => {
+    _h264DebugLog = req.body;
+    console.info('[h264-debug]', JSON.stringify(req.body, null, 2));
+    res.json({ ok: true });
+});
+app.get('/api/rdp/h264-debug', (req, res) => {
+    res.json(_h264DebugLog || { empty: true });
+});
+
 app.get('/healthz', (req, res) => res.status(200).send('OK'));
 
 // 兜底路由

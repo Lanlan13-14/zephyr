@@ -14,17 +14,17 @@ import (
 )
 
 var (
-	rdpClient      *grdp.RdpClient
-	clientMu       sync.Mutex
-	canvas         js.Value
-	ctx2d          js.Value
-	localClipboard string
-	clipMu         sync.Mutex
-	swapAltMeta    bool
-	audinHandler   *AudinHandler
-	rdpelHandler   *RdpelHandler
-	rdpefsHandler  *RdpefsHandler
-	camEnumHandler *CamEnumeratorHandler
+	rdpClient        *grdp.RdpClient
+	clientMu         sync.Mutex
+	canvas           js.Value
+	ctx2d            js.Value
+	localClipboard   string
+	clipMu           sync.Mutex
+	swapAltMeta      bool
+	audinHandler     *AudinHandler
+	rdpelHandler     *RdpelHandler
+	rdpefsHandler    *RdpefsHandler
+	camEnumHandler   *CamEnumeratorHandler
 	camStreamHandler *CamStreamHandler
 )
 
@@ -47,10 +47,10 @@ func main() {
 }
 
 // jsConnect is called from JS: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta)
-// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled, storageEnabled, cameraEnabled)
+// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264Supported)
 func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) < 8 {
-		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, swapAltMeta, micEnabled, locationEnabled, storageEnabled, cameraEnabled])")
+		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, ...])")
 	}
 	proxyWsURL := args[0].String()
 	host := args[1].String()
@@ -81,9 +81,13 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) >= 13 {
 		cameraEnabled = args[12].Bool()
 	}
+	h264OK := true
+	if len(args) >= 14 {
+		h264OK = args[13].Bool()
+	}
 
 	go func() {
-		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled); err != nil {
+		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264OK); err != nil {
 			slog.Error("connect", "err", err)
 			js.Global().Call("rdpOnError", err.Error())
 		}
@@ -91,7 +95,7 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	return nil
 }
 
-func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled bool) error {
+func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264OK bool) error {
 	clientMu.Lock()
 	if rdpClient != nil {
 		rdpClient.Close()
@@ -120,11 +124,16 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 		playAudio(int(af.SamplesPerSec), int(af.Channels), int(af.BitsPerSample), cp)
 	})
 
-	g.OnH264Raw(func(destX, destY, w, h int, isKey bool, data []byte) {
-		jsArr := js.Global().Get("Uint8Array").New(len(data))
-		js.CopyBytesToJS(jsArr, data)
-		js.Global().Call("rdpOnH264", destX, destY, w, h, isKey, jsArr)
-	})
+	// Only register H.264 raw callback if browser supports WebCodecs VideoDecoder.
+	// When not registered, grdp's internal GFX handler will decode H.264 to bitmap
+	// and deliver via OnBitmap instead — slower but universally compatible.
+	if h264OK {
+		g.OnH264Raw(func(destX, destY, w, h int, isKey bool, data []byte) {
+			jsArr := js.Global().Get("Uint8Array").New(len(data))
+			js.CopyBytesToJS(jsArr, data)
+			js.Global().Call("rdpOnH264", destX, destY, w, h, isKey, jsArr)
+		})
+	}
 
 	uint8Ctor := js.Global().Get("Uint8Array")
 	g.OnPointerHide(func() {
@@ -161,6 +170,12 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 			d := make([]byte, len(bs[i].Data))
 			copy(d, bs[i].Data)
 			bs[i].Data = d
+		}
+		// Report bitmap stats to JS for debugging
+		if len(bs) > 0 {
+			bm := bs[0]
+			js.Global().Call("rdpBitmapDebug", len(bs), bm.DestLeft, bm.DestTop,
+				bm.DestRight, bm.DestBottom, bm.Width, bm.Height, bm.BitsPerPixel, len(bm.Data))
 		}
 		go renderBitmaps(bs)
 	})
@@ -226,19 +241,36 @@ func renderBitmaps(bs []grdp.Bitmap) {
 			continue
 		}
 
+		expectedBytes := bm.Width * bm.Height * bm.BitsPerPixel
+		if len(bm.Data) < expectedBytes {
+			slog.Warn("bitmap data too short", "expected", expectedBytes, "got", len(bm.Data),
+				"w", bm.Width, "h", bm.Height, "bpp", bm.BitsPerPixel,
+				"dest", fmt.Sprintf("(%d,%d)-(%d,%d)", bm.DestLeft, bm.DestTop, bm.DestRight, bm.DestBottom))
+			continue
+		}
+
 		rgba := make([]byte, w*h*4)
 		if bm.BitsPerPixel == 4 {
-			// Fast path: bm.Data is BGRA32; swap R↔B to produce RGBA.
+			// Fast path: bm.Data is BGRX/BGRA32. RDPGFX surfaces are commonly
+			// XRGB8888/BGRX8888, where the fourth byte is reserved rather than
+			// meaningful alpha. Canvas ImageData treats alpha literally, so copying
+			// that byte makes most pixels transparent (black background with random
+			// visible fragments). Always force opacity for remote desktop pixels.
 			srcStride := bm.Width * 4
 			dstStride := w * 4
 			for row := 0; row < h; row++ {
-				src := bm.Data[row*srcStride:]
-				dst := rgba[row*dstStride:]
+				srcOff := row * srcStride
+				dstOff := row * dstStride
+				if srcOff+dstStride > len(bm.Data) || dstOff+dstStride > len(rgba) {
+					break
+				}
+				src := bm.Data[srcOff:]
+				dst := rgba[dstOff:]
 				for col := 0; col < w; col++ {
-					dst[col*4+0] = src[col*4+2] // R ← BGRA[2]
+					dst[col*4+0] = src[col*4+2] // R ← BGRX[2]
 					dst[col*4+1] = src[col*4+1] // G
-					dst[col*4+2] = src[col*4+0] // B ← BGRA[0]
-					dst[col*4+3] = src[col*4+3] // A
+					dst[col*4+2] = src[col*4+0] // B ← BGRX[0]
+					dst[col*4+3] = 0xFF         // A: force opaque; source byte is often X
 				}
 			}
 		} else {
@@ -369,7 +401,6 @@ func jsClipboardChanged(_ js.Value, args []js.Value) any {
 	}
 	return nil
 }
-
 
 // jsAudinData is called from JS with PCM audio data from the microphone.
 // JS: rdpAudinData(uint8Array)

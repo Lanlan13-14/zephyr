@@ -108,7 +108,7 @@ async function loadWasm() {
     setStatus('connecting', '加载 RDP WASM 引擎...');
     const go = new Go();
     const result = await WebAssembly.instantiateStreaming(
-        fetch('vendor/rdp-wasm/main.wasm'),
+        fetch('vendor/rdp-wasm/main.wasm?v=' + Date.now()),
         go.importObject,
     );
     go.run(result.instance);
@@ -204,9 +204,18 @@ window.rdpAudioPlay = function (sampleRate, channels, bitsPerSample, uint8Data) 
     audioNextAt += audioBuf.duration;
 };
 
-/* Called by Go with raw H.264 NAL data */
+/* Called by Go with raw H.264 NAL data — each call may be a different tile */
+let h264CallCount = 0;
+let h264ErrorLog = [];
+let h264InfoLog = [];
 window.rdpOnH264 = function (destX, destY, w, h, isKey, uint8Data) {
     if (!h264Dec || h264Dec.state === 'closed') return;
+    h264CallCount++;
+    if (h264CallCount <= 10) {
+        const firstBytes = Array.from(uint8Data.slice(0, 12)).map(b => b.toString(16).padStart(2,'0')).join(' ');
+        h264InfoLog.push('onH264 #' + h264CallCount + ' dest=(' + destX + ',' + destY + ') size=' + w + 'x' + h + ' isKey=' + isKey + ' len=' + uint8Data.length + ' first12=' + firstBytes + ' state=' + h264Dec.state);
+    }
+
     h264Timestamp += 1000;
     h264FramePos.set(h264Timestamp, { x: destX, y: destY });
     try {
@@ -311,30 +320,48 @@ function buildCursorCss(xorBpp, hotX, hotY, w, h, andMask, xorData) {
 /* ═══════════════════════════════════════════════════════════════════════
  * H.264 WEBCODECS
  * ═══════════════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════════
+ * H.264 WEBCODECS — per-tile decoder that handles varying dimensions
+ * ═══════════════════════════════════════════════════════════════════════ */
 function h264Supported() {
     return typeof VideoDecoder !== 'undefined' && typeof EncodedVideoChunk !== 'undefined';
 }
 
-function createH264Decoder(width, height) {
+/* RDP AVC420 sends H.264 tiles. Configure the decoder WITHOUT fixed
+ * codedWidth/codedHeight so it reads dimensions from the H.264 SPS NAL
+ * in each bitstream. This handles tiles of any size without reconfiguring. */
+
+function createH264Decoder() {
     if (!h264Supported()) return null;
+    let frameCount = 0;
+    let errorCount = 0;
+    h264InfoLog = [];
+    h264ErrorLog = [];
+    h264CallCount = 0;
     const decoder = new VideoDecoder({
         output(frame) {
+            frameCount++;
             const pos = h264FramePos.get(frame.timestamp);
             h264FramePos.delete(frame.timestamp);
             const x = pos ? pos.x : 0;
             const y = pos ? pos.y : 0;
             if (rdpCtx2d) rdpCtx2d.drawImage(frame, x, y);
+            if (frameCount <= 5) h264InfoLog.push('decoded #' + frameCount + ' pos=(' + x + ',' + y + ') coded=' + frame.codedWidth + 'x' + frame.codedHeight + ' display=' + frame.displayWidth + 'x' + frame.displayHeight);
             frame.close();
             notePresentedFrame();
         },
-        error(e) { console.warn('[rdp-wasm] H.264 decoder error:', e); },
+        error(e) {
+            errorCount++;
+            if (errorCount <= 20) h264ErrorLog.push('ERROR #' + errorCount + ': ' + (e.message || e));
+        },
     });
     decoder.configure({
         codec: 'avc1.42E01E',
-        codedWidth: width,
-        codedHeight: height,
         optimizeForLatency: true,
     });
+    h264InfoLog.push('decoder created, state=' + decoder.state);
+    /* Expose logs for remote retrieval */
+    window._h264Logs = () => JSON.stringify({ info: h264InfoLog, errors: h264ErrorLog, calls: h264CallCount, frames: frameCount });
     return decoder;
 }
 
@@ -628,25 +655,25 @@ function showCertDialog(certInfo, connectionId) {
         if (rememberEl) rememberEl.checked = false;
 
         /* Show dialog */
-        dialog.hidden = false;
+        dialog.classList.add('visible');
 
         /* Create fresh buttons to guarantee no stale listeners */
         const actionsDiv = dialog.querySelector('.rdp-cert-actions');
         if (!actionsDiv) { resolve(true); return; }
-        actionsDiv.innerHTML = '<button class="btn" id="certCancelBtn">取消</button><button class="btn btn-primary" id="certConnectBtn">连接</button>';
+        actionsDiv.innerHTML = '<button class="rdp-cert-btn rdp-cert-btn-cancel" id="certCancelBtn">取消</button><button class="rdp-cert-btn rdp-cert-btn-connect" id="certConnectBtn">连接</button>';
         const cancelBtn = document.getElementById('certCancelBtn');
         const connectBtn = document.getElementById('certConnectBtn');
 
         let settled = false;
         cancelBtn.onclick = () => {
             if (settled) return; settled = true;
-            dialog.hidden = true;
+            dialog.classList.remove('visible');
             resolve(false);
         };
         connectBtn.onclick = () => {
             if (settled) return; settled = true;
             if (rememberEl?.checked) trustCert(connectionId);
-            dialog.hidden = true;
+            dialog.classList.remove('visible');
             resolve(true);
         };
     });
@@ -662,10 +689,16 @@ function proxyWsUrl() {
 async function connect() {
     if (!wasmReady) await loadWasm();
 
+    /* Clean up any existing connection first */
+    try { rdpDisconnect(); } catch {}
     rdpManualDisconnect = false;
     cleanupH264();
     cleanupAudio();
+    rdpAudinStopInternal();
+    rdpLocationStopInternal();
+    rdpCameraStopInternal();
     pointerCache.clear();
+    connected = false;
 
     const width = rdpWidth || 1920;
     const height = rdpHeight || 1080;
@@ -678,7 +711,7 @@ async function connect() {
     audioNextAt = 0;
 
     /* Init H.264 */
-    if (h264Supported()) h264Dec = createH264Decoder(width, height);
+    if (h264Supported()) h264Dec = createH264Decoder();
 
     setStatus('connecting', '正在获取 RDP 凭据...');
 
@@ -744,6 +777,7 @@ async function connect() {
                     setStatus('disconnected', '已取消连接');
                     cleanupAudio();
                     cleanupH264();
+                    notifyParentCloseRequest('cert-rejected');
                     return;
                 }
             }
@@ -755,7 +789,8 @@ async function connect() {
     setStatus('connecting', '正在连接 RDP...');
 
     /* rdpConnect is exposed by Go WASM */
-    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, !!params.rdpStorage, !!params.rdpCamera);
+    const hasWebCodecs = h264Supported();
+    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, !!params.rdpStorage, !!params.rdpCamera, hasWebCodecs);
 }
 
 function disconnect() {
@@ -1225,12 +1260,12 @@ function initToolbar() {
 
     if (clipboardBtn) {
         clipboardBtn.addEventListener('click', () => {
-            if (clipboardPanel) clipboardPanel.hidden = !clipboardPanel.hidden;
+            if (clipboardPanel) clipboardPanel.classList.toggle('open');
         });
     }
 
     if (rdpFilesBtn && filesPanel) {
-        rdpFilesBtn.addEventListener('click', () => { filesPanel.hidden = !filesPanel.hidden; });
+        rdpFilesBtn.addEventListener('click', () => { filesPanel.classList.toggle('open'); });
     }
 
     if (keyboardBtn && mobileKeyboardInput) {
@@ -1241,11 +1276,11 @@ function initToolbar() {
     }
 
     if (shortcutsBtn && shortcutsPanel) {
-        shortcutsBtn.addEventListener('click', () => { shortcutsPanel.hidden = !shortcutsPanel.hidden; });
+        shortcutsBtn.addEventListener('click', () => { shortcutsPanel.classList.toggle('open'); });
     }
 
     if (joystickBtn && joystickPanel) {
-        joystickBtn.addEventListener('click', () => { joystickPanel.hidden = !joystickPanel.hidden; });
+        joystickBtn.addEventListener('click', () => { joystickPanel.classList.toggle('open'); });
     }
 
     /* Joystick knob — controls viewport pan in fill mode */

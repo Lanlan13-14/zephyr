@@ -2338,10 +2338,13 @@ body.connection-transition-closing .app-shell {
     inset: 0;
     z-index: 9999;
     background: rgba(0,0,0,0.6);
-    display: flex;
+    display: none;
     justify-content: center;
     align-items: center;
     padding: 20px;
+}
+.rdp-cert-dialog-backdrop.visible {
+    display: flex;
 }
 .rdp-cert-dialog {
     background: #fff;
@@ -2418,22 +2421,30 @@ body.connection-transition-closing .app-shell {
     grid-template-columns: 1fr 1fr;
     gap: 12px;
 }
-.rdp-cert-actions .btn {
+.rdp-cert-btn {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
     padding: 14px 0;
+    margin: 0;
     font-size: 16px;
+    font-weight: 500;
+    font-family: inherit;
     border-radius: 10px;
     border: none;
     cursor: pointer;
-    font-weight: 500;
     text-align: center;
-    width: 100%;
+    line-height: 1.2;
+    -webkit-appearance: none;
+    appearance: none;
+    transition: opacity 0.15s;
 }
-.rdp-cert-actions .btn:first-child {
+.rdp-cert-btn:active { opacity: 0.7; }
+.rdp-cert-btn-cancel {
     background: #e8e8ed;
     color: #007aff;
 }
-.rdp-cert-actions .btn-primary,
-.rdp-cert-actions .btn:last-child {
+.rdp-cert-btn-connect {
     background: #007aff;
     color: #fff;
     font-weight: 600;
