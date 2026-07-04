@@ -443,6 +443,7 @@
                 </div>
             </section>
             <div class="form-group password-field"><label>密码</label><input id="connPassword" type="password"><button type="button" id="toggleConnPassword">👁️</button></div>
+            <div class="form-group connection-secret-reveal" id="connSecretRevealGroup"><button type="button" class="link-btn" id="revealConnSecrets">查看已保存密码/私钥</button><p class="field-hint" id="connSecretRevealHint">编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。</p></div>
             <div class="form-group"><label>私钥</label><textarea id="connPrivateKey" placeholder="-----BEGIN RSA PRIVATE KEY-----"></textarea></div>
             <section class="rdp-settings-panel force-hidden" id="rdpSettingsPanel" aria-label="RDP 设置">
                 <h3>设备和音频重定向</h3>
@@ -450,14 +451,13 @@
                 <div class="form-group rdp-select-group"><label for="rdpSoundMode">音频播放</label><select id="rdpSoundMode"><option value="local">在此设备上播放声音</option><option value="remote">在远程计算机上播放</option><option value="off">不播放</option></select></div>
                 <div class="rdp-toggle-row"><span>剪贴板</span><label class="rdp-toggle"><input type="checkbox" id="rdpClipboard" checked><span class="rdp-toggle-slider"></span></label></div>
                 <div class="rdp-toggle-row"><span>麦克风</span><label class="rdp-toggle"><input type="checkbox" id="rdpMicrophone"><span class="rdp-toggle-slider"></span></label></div>
-                <div class="rdp-toggle-row rdp-toggle-disabled" title="需要 MS-RDPECAM 协议实现（计划中）"><span>摄像头 <em class="rdp-feature-tag">计划中</em></span><label class="rdp-toggle"><input type="checkbox" id="rdpCamera" disabled><span class="rdp-toggle-slider"></span></label></div>
-                <div class="rdp-toggle-row rdp-toggle-disabled" title="需要 MS-RDPEFS 文件系统虚拟通道（计划中）"><span>存储 <em class="rdp-feature-tag">计划中</em></span><label class="rdp-toggle"><input type="checkbox" id="rdpStorage" disabled><span class="rdp-toggle-slider"></span></label></div>
-                <div class="rdp-toggle-row rdp-toggle-disabled" title="需要 MS-RDPEL 协议（计划中）"><span>位置 <em class="rdp-feature-tag">计划中</em></span><label class="rdp-toggle"><input type="checkbox" id="rdpLocation" disabled><span class="rdp-toggle-slider"></span></label></div>
+                <div class="rdp-toggle-row rdp-toggle-disabled"><span>摄像头</span><label class="rdp-toggle"><input type="checkbox" id="rdpCamera" disabled><span class="rdp-toggle-slider"></span></label></div>
+                <div class="rdp-toggle-row rdp-toggle-disabled"><span>存储</span><label class="rdp-toggle"><input type="checkbox" id="rdpStorage" disabled><span class="rdp-toggle-slider"></span></label></div>
+                <div class="rdp-toggle-row rdp-toggle-disabled"><span>位置</span><label class="rdp-toggle"><input type="checkbox" id="rdpLocation" disabled><span class="rdp-toggle-slider"></span></label></div>
                 <h3 style="margin-top:16px">显示</h3>
                 <div class="advanced-route-divider"></div>
                 <div class="form-group rdp-select-group"><label for="rdpResolution">自定义显示器分辨率</label><select id="rdpResolution"><option value="auto">匹配此设备</option><option value="1920x1080">1920×1080 (1080p)</option><option value="2560x1440">2560×1440 (2K)</option><option value="3840x2160">3840×2160 (4K)</option><option value="7680x4320">7680×4320 (8K)</option></select></div>
             </section>
-            <div class="form-group connection-secret-reveal" id="connSecretRevealGroup"><button type="button" class="link-btn" id="revealConnSecrets">查看已保存密码/私钥</button><p class="field-hint" id="connSecretRevealHint">编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。</p></div>
             <div class="form-group"><label>备注（支持 Markdown）</label><textarea id="connRemark" placeholder="例如：**生产环境**\n`docker ps`"></textarea></div>
             <div class="modal-actions"><button type="button" class="btn" id="testConnectionBtn">测试连接</button><span class="connection-test-latency" id="connectionTestLatency" aria-live="polite"></span><button type="button" class="btn" id="cancelModalBtn">取消</button><button class="btn btn-primary" type="submit">保存</button></div>
         </form>

@@ -419,7 +419,7 @@ function showCertDialog(certInfo, connectionId) {
         const rememberEl = document.getElementById('certRemember');
         const connectBtn = document.getElementById('certConnectBtn');
         const cancelBtn = document.getElementById('certCancelBtn');
-        if (!dialog) { resolve(true); return; }
+        if (!dialog || !connectBtn || !cancelBtn) { resolve(true); return; }
 
         hostEl.textContent = `${certInfo.host}:${certInfo.port}`;
         subjectEl.textContent = certInfo.subject || '(unknown)';
@@ -430,9 +430,15 @@ function showCertDialog(certInfo, connectionId) {
         let settled = false;
         const cleanup = () => {
             dialog.hidden = true;
-            connectBtn.removeEventListener('click', onConnect);
-            cancelBtn.removeEventListener('click', onCancel);
+            newConnectBtn.removeEventListener('click', onConnect);
+            newCancelBtn.removeEventListener('click', onCancel);
         };
+        /* Clone buttons to remove all old event listeners */
+        const newConnectBtn = connectBtn.cloneNode(true);
+        connectBtn.parentNode.replaceChild(newConnectBtn, connectBtn);
+        const newCancelBtn = cancelBtn.cloneNode(true);
+        cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+
         const onConnect = () => {
             if (settled) return; settled = true;
             if (rememberEl?.checked) trustCert(connectionId);
@@ -444,8 +450,8 @@ function showCertDialog(certInfo, connectionId) {
             cleanup();
             resolve(false);
         };
-        connectBtn.addEventListener('click', onConnect);
-        cancelBtn.addEventListener('click', onCancel);
+        newConnectBtn.addEventListener('click', onConnect);
+        newCancelBtn.addEventListener('click', onCancel);
     });
 }
 
