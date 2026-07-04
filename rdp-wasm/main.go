@@ -171,12 +171,6 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 			copy(d, bs[i].Data)
 			bs[i].Data = d
 		}
-		// Report bitmap stats to JS for debugging
-		if len(bs) > 0 {
-			bm := bs[0]
-			js.Global().Call("rdpBitmapDebug", len(bs), bm.DestLeft, bm.DestTop,
-				bm.DestRight, bm.DestBottom, bm.Width, bm.Height, bm.BitsPerPixel, len(bm.Data))
-		}
 		go renderBitmaps(bs)
 	})
 
