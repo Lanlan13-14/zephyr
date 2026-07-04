@@ -98,9 +98,13 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) >= 14 {
 		h264OK = args[13].Bool()
 	}
+	wallpaper := false
+	if len(args) >= 15 {
+		wallpaper = args[14].Bool()
+	}
 
 	go func() {
-		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264OK); err != nil {
+		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264OK, wallpaper); err != nil {
 			slog.Error("connect", "err", err)
 			js.Global().Call("rdpOnError", err.Error())
 		}
@@ -108,7 +112,7 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	return nil
 }
 
-func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264OK bool) error {
+func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264OK, wallpaper bool) error {
 	hostPort := host + ":" + port
 
 	// Build WebSocket URL for the proxy: ws://host:port/rdp-proxy?target=rdphost:3389
@@ -117,6 +121,9 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	g := grdp.NewRdpClient(hostPort, width, height, func(hp string) (net.Conn, error) {
 		return dialWebSocket(wsURL)
 	})
+	// Quality mode: when wallpaper is requested, clear PERF_DISABLE_WALLPAPER
+	// so the server streams the desktop background.
+	g.SetWallpaperEnabled(wallpaper)
 
 	clientMu.Lock()
 	connectGen++

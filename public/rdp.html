@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
     <title>Zephyr - 远程桌面</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260704-cert-fix">
+    <link rel="stylesheet" href="style.css?v=20260705-uifix">
 </head>
 <body>
     <div class="novnc-page rdp-page">
@@ -17,7 +17,7 @@
             <span class="info" id="connInfo"></span>
             <div class="topbar-actions novnc-toolbar">
                 <button class="btn-sm" id="qualityBtn" data-rdp-icon="quality" title="切换性能/画质模式">平衡</button>
-                <button class="btn-sm" id="resolutionBtn" data-rdp-icon="quality" title="切换远程桌面分辨率：1080p / 2K / 4K / 8K / 自动">1080p</button>
+                <button class="btn-sm" id="resolutionBtn" data-rdp-icon="quality" title="切换远程桌面分辨率：自动 / 1080p / 2K / 4K">自动</button>
                 <button class="btn-sm" id="fpsBtn" data-rdp-icon="quality" title="切换远程桌面帧率：30 / 45 / 60 / 120 / 144 FPS">30FPS</button>
                 <button class="btn-sm" id="fitBtn" data-rdp-icon="fit" title="适应窗口">适应</button>
                 <button class="btn-sm zoom-control" id="zoomBtn" data-rdp-icon="zoom" title="拖动无极缩放远程画面"><input id="zoomSlider" type="range" min="50" max="250" step="1" value="100" aria-label="远程画面无极缩放"><em id="zoomValue">100%</em></button>
@@ -34,7 +34,6 @@
         <div class="rdp-stage novnc-stage" id="rdpStage" tabindex="0">
             <textarea id="mobileKeyboardInput" class="rdp-mobile-keyboard-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" enterkeyhint="done" aria-label="远程桌面软键盘输入"></textarea>
             <!-- debug HUD removed -->
-            <div id="rdpPointer" class="rdp-pointer" hidden></div>
 
             <div class="rdp-floating-panel clipboard-panel" id="clipboardPanel" hidden>
                 <div class="panel-drag-handle" data-drag-panel="clipboardPanel" title="拖动移动窗口">
@@ -83,7 +82,7 @@
                     </div>
                     <div class="rdp-panel-actions">
                         <button class="btn-sm active" id="rdpFileSelectBtn">上传文件</button>
-                        <button class="btn-sm" id="rdpFilePasteToRemoteBtn">粘贴到远程</button>
+                        <button class="btn-sm" id="rdpPendingPasteBtn">粘贴到远程</button>
                         <input type="file" id="rdpFileInput" multiple hidden>
                     </div>
                     <span class="rdp-panel-hint" id="filesHint">点击“上传文件”只会加入待粘贴列表；真正粘贴时才上传到主端</span>
@@ -165,7 +164,7 @@
                     <button class="panel-traffic-btn" data-layout-panel="joystickPanel" aria-label="窗口布局"><span></span></button>
                 </div>
                 <div class="rdp-panel-content joystick-panel-content">
-                    <div class="rdp-joystick" id="joystickContainer" aria-hidden="true">
+                    <div class="rdp-joystick" id="joystickContainer">
                         <div class="rdp-joystick-around">
                             <div class="rdp-joystick-handle">
                                 <div class="rdp-joystick-knob" id="joystickKnob">
@@ -178,10 +177,10 @@
                                 </div>
                             </div>
                         </div>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false"><path d="M512 330.666667c14.933333 0 29.866667 4.266667 40.533333 14.933333l277.33333399 234.666667c27.733333 23.466667 29.866667 64 8.53333301 89.6-23.466667 27.733333-64 29.866667-89.6 8.53333299L512 477.866667l-236.8 200.53333299c-27.733333 23.466667-68.266667 19.19999999-89.6-8.53333299-23.466667-27.733333-19.19999999-68.266667 8.53333301-89.6l277.33333399-234.666667c10.666667-10.666667 25.6-14.933333 40.533333-14.933333z"/></svg>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-hidden="true" focusable="false"><path d="M135.417 100C135.417 102.917 134.583 105.833 132.5 107.917L86.6667 162.083C82.0833 167.5 74.1667 167.917 69.1667 163.75C63.75 159.167 63.3333 151.25 67.5 146.25L106.667 100L67.5 53.75C62.9167 48.3333 63.75 40.4167 69.1667 36.25C74.5833 31.6667 82.5 32.5 86.6667 37.9167L132.5 92.0833C134.583 94.1667 135.417 97.0833 135.417 100Z"/></svg>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-hidden="true" focusable="false"><path d="M100 135.417C97.0833 135.417 94.1667 134.583 92.0833 132.5L37.9167 86.6667C32.5 82.0833 32.0833 74.1667 36.25 69.1667C40.8333 63.75 48.75 63.3333 53.75 67.5L100 106.667L146.25 67.5C151.667 62.9167 159.583 63.75 163.75 69.1667C168.333 74.5833 167.5 82.5 162.083 86.6667L107.917 132.5C105.833 134.583 102.917 135.417 100 135.417Z"/></svg>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-hidden="true" focusable="false"><path d="M64.5833 100C64.5833 97.0833 65.4167 94.1667 67.5 92.0833L113.333 37.9167C117.917 32.5 125.833 32.0833 130.833 36.25C136.25 40.8333 136.667 48.75 132.5 53.75L93.3333 100L132.5 146.25C137.083 151.667 136.25 159.583 130.833 163.75C125.417 168.333 117.5 167.5 113.333 162.083L67.5 107.917C65.4167 105.833 64.5833 102.917 64.5833 100Z"/></svg>
+                        <svg class="rdp-joystick-icon" data-joydir="up" role="button" tabindex="0" aria-label="视区上移" viewBox="0 0 1024 1024" focusable="false"><path d="M512 330.666667c14.933333 0 29.866667 4.266667 40.533333 14.933333l277.33333399 234.666667c27.733333 23.466667 29.866667 64 8.53333301 89.6-23.466667 27.733333-64 29.866667-89.6 8.53333299L512 477.866667l-236.8 200.53333299c-27.733333 23.466667-68.266667 19.19999999-89.6-8.53333299-23.466667-27.733333-19.19999999-68.266667 8.53333301-89.6l277.33333399-234.666667c10.666667-10.666667 25.6-14.933333 40.533333-14.933333z"/></svg>
+                        <svg class="rdp-joystick-icon" data-joydir="right" role="button" tabindex="0" aria-label="视区右移" viewBox="0 0 200 200" focusable="false"><path d="M135.417 100C135.417 102.917 134.583 105.833 132.5 107.917L86.6667 162.083C82.0833 167.5 74.1667 167.917 69.1667 163.75C63.75 159.167 63.3333 151.25 67.5 146.25L106.667 100L67.5 53.75C62.9167 48.3333 63.75 40.4167 69.1667 36.25C74.5833 31.6667 82.5 32.5 86.6667 37.9167L132.5 92.0833C134.583 94.1667 135.417 97.0833 135.417 100Z"/></svg>
+                        <svg class="rdp-joystick-icon" data-joydir="down" role="button" tabindex="0" aria-label="视区下移" viewBox="0 0 200 200" focusable="false"><path d="M100 135.417C97.0833 135.417 94.1667 134.583 92.0833 132.5L37.9167 86.6667C32.5 82.0833 32.0833 74.1667 36.25 69.1667C40.8333 63.75 48.75 63.3333 53.75 67.5L100 106.667L146.25 67.5C151.667 62.9167 159.583 63.75 163.75 69.1667C168.333 74.5833 167.5 82.5 162.083 86.6667L107.917 132.5C105.833 134.583 102.917 135.417 100 135.417Z"/></svg>
+                        <svg class="rdp-joystick-icon" data-joydir="left" role="button" tabindex="0" aria-label="视区左移" viewBox="0 0 200 200" focusable="false"><path d="M64.5833 100C64.5833 97.0833 65.4167 94.1667 67.5 92.0833L113.333 37.9167C117.917 32.5 125.833 32.0833 130.833 36.25C136.25 40.8333 136.667 48.75 132.5 53.75L93.3333 100L132.5 146.25C137.083 151.667 136.25 159.583 130.833 163.75C125.417 168.333 117.5 167.5 113.333 162.083L67.5 107.917C65.4167 105.833 64.5833 102.917 64.5833 100Z"/></svg>
                     </div>
                 </div>
                 <div class="panel-resize-handle left" data-resize-panel="joystickPanel" data-resize-edge="left"></div>
@@ -215,7 +214,7 @@
             </div>
         </div>
     </div>
-    <script src="rdp-wasm-client.js?v=20260704-cert-fix" type="module"></script>
+    <script src="rdp-wasm-client.js?v=20260705-uifix" type="module"></script>
     <script>
     /* Auto-report H264 debug logs to server after 8 seconds */
     setTimeout(async () => {

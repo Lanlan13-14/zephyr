@@ -129,6 +129,12 @@ type RdpClient struct {
 	// across reconnects.
 	avc444Disabled bool
 
+	// wallpaperEnabled, when true, clears PERF_DISABLE_WALLPAPER in the
+	// Client Info PDU so the server streams the desktop wallpaper. Set via
+	// SetWallpaperEnabled() before Login; preserved across reconnects and
+	// re-applied to the freshly-created sec.Client in doLogin().
+	wallpaperEnabled bool
+
 	// dispHandler is the active MS-RDPEDISP handler; nil when not connected.
 	// Used by SetResolution to send MONITOR_LAYOUT PDUs.
 	dispHandler *rdpedisp.Handler
@@ -378,6 +384,20 @@ func (g *RdpClient) DisableAVC444() *RdpClient {
 	return g
 }
 
+// SetWallpaperEnabled controls whether the server streams the desktop
+// wallpaper. By default (false) the client sends PERF_DISABLE_WALLPAPER to
+// save bandwidth, matching classic RDP behaviour. Pass true (e.g. in a
+// "quality" mode) to clear that bit so the real wallpaper is shown. Must be
+// called before Login; the setting is preserved across automatic reconnects
+// and re-applied to the sec.Client created in doLogin().
+func (g *RdpClient) SetWallpaperEnabled(enabled bool) *RdpClient {
+	g.wallpaperEnabled = enabled
+	if g.sec != nil {
+		g.sec.SetWallpaperEnabled(enabled)
+	}
+	return g
+}
+
 // RegisterDvcHandler registers a custom Dynamic Virtual Channel handler
 // that will be attached to the DVC client during connection setup.
 // Must be called before Login(). The handler implements drdynvc.DvcChannelHandler.
@@ -449,6 +469,9 @@ func (g *RdpClient) doLogin(routingToken []byte) error {
 	g.x224 = x224.New(g.tpkt)
 	g.mcs = t125.NewMCSClient(g.x224, g.kbdLayout, g.keyboardType, g.keyboardSubType)
 	g.sec = sec.NewClient(g.mcs)
+	// Re-apply the wallpaper preference to the freshly-created sec client so
+	// it survives reconnects (doLogin runs on every connect attempt).
+	g.sec.SetWallpaperEnabled(g.wallpaperEnabled)
 	g.pdu = pdu.NewClient(g.sec)
 	g.channels = plugin.NewChannels(g.sec)
 

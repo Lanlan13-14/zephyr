@@ -4929,7 +4929,7 @@ html.keyboard-open .terminal-page {
 .rdp-floating-panel {
     position: absolute;
     z-index: 30;
-    min-width: 300px;
+    min-width: 240px;
     min-height: 240px;
     display: flex;
     flex-direction: column;
@@ -6859,21 +6859,6 @@ body.smartbar-trash-hover .smartbar-trash-target {
     -webkit-backdrop-filter: blur(18px) saturate(1.4);
 }
 
-.rdp-pointer {
-    position: absolute;
-    z-index: 41;
-    width: 22px;
-    height: 22px;
-    margin-left: -11px;
-    margin-top: -11px;
-    border: 2px solid rgba(10,132,255,.95);
-    border-radius: 50%;
-    background: rgba(10,132,255,.18);
-    box-shadow: 0 0 0 5px rgba(10,132,255,.16), 0 8px 18px rgba(0,0,0,.35);
-    pointer-events: none;
-    transform: translate3d(0,0,0);
-}
-
 .rdp-stage.joystick-active .rdp-display-shell {
     touch-action: none;
     pointer-events: none;
@@ -6888,10 +6873,9 @@ body.smartbar-trash-hover .smartbar-trash-target {
 }
 
 .joystick-panel {
-    --rdp-joystick-size: 200px;
-    min-width: 260px;
-    min-height: 240px;
-    aspect-ratio: 1 / 1;
+    --rdp-joystick-size: 150px;
+    min-width: 240px;
+    min-height: 264px;
     overflow: visible;
 }
 
@@ -7010,20 +6994,26 @@ body.smartbar-trash-hover .smartbar-trash-target {
 .rdp-joystick-icon {
     position: absolute;
     transform: translate(-50%, -50%);
-    width: 15%;
+    width: 18%;
+    padding: 2%;
     fill: #b4b9bd;
     filter: drop-shadow(1px 1px 1px #f4f4f4);
-    transition: fill .15s, filter .2s;
-    pointer-events: none;
-    z-index: 5;
+    transition: fill .15s, filter .2s, transform .08s;
+    pointer-events: auto;
+    cursor: pointer;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    z-index: 6;
+    box-sizing: content-box;
 }
-.rdp-joystick-icon:nth-of-type(1) { top: -12%; left: 50%; }
-.rdp-joystick-icon:nth-of-type(2) { top: 50%; left: 112%; }
-.rdp-joystick-icon:nth-of-type(3) { top: 112%; left: 50%; }
-.rdp-joystick-icon:nth-of-type(4) { top: 50%; left: -12%; }
+.rdp-joystick-icon:nth-of-type(1) { top: 6%; left: 50%; }
+.rdp-joystick-icon:nth-of-type(2) { top: 50%; left: 94%; }
+.rdp-joystick-icon:nth-of-type(3) { top: 94%; left: 50%; }
+.rdp-joystick-icon:nth-of-type(4) { top: 50%; left: 6%; }
 .rdp-joystick-icon.active {
     fill: #e3a560;
     filter: brightness(.9) drop-shadow(0 0 2px #e3a15b) drop-shadow(0 0 1px #fff);
+    transform: translate(-50%, -50%) scale(1.18);
 }
 
 .joystick-hint {

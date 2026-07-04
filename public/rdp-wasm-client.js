@@ -78,8 +78,12 @@ let fpsValue = 60;
 /* Audio */
 let audioCtx = null;
 let audioNextAt = 0;
-const AUDIO_LOOKAHEAD = 0.15;
-const AUDIO_MAX_QUEUE = 2.0;
+/* Live-stream audio scheduling. Video is drawn immediately on H.264 decode
+ * (zero buffer), so audio latency directly determines lip-sync offset. Keep a
+ * small jitter buffer to avoid underruns on LAN, and a tight ceiling so audio
+ * can never drift more than a few hundred ms behind the picture. */
+const AUDIO_MIN_LATENCY = 0.08; /* target buffer ahead of playhead (80ms) */
+const AUDIO_MAX_QUEUE = 0.30;   /* hard resync ceiling — bounds A/V desync */
 
 /* H.264 WebCodecs */
 let h264Dec = null;
@@ -198,8 +202,12 @@ window.rdpAudioPlay = function (sampleRate, channels, bitsPerSample, uint8Data) 
     src.buffer = audioBuf;
     src.connect(audioCtx.destination);
     const now = audioCtx.currentTime;
-    if (audioNextAt < now + AUDIO_LOOKAHEAD) audioNextAt = now + AUDIO_LOOKAHEAD;
-    if (audioNextAt > now + AUDIO_MAX_QUEUE) audioNextAt = now + AUDIO_LOOKAHEAD;
+    /* If we've fallen behind (underrun) or drifted too far ahead of the video,
+     * resync to a small fixed latency. This bounds lip-sync error to at most
+     * AUDIO_MAX_QUEUE seconds regardless of how the server bursts audio. */
+    if (audioNextAt < now + AUDIO_MIN_LATENCY || audioNextAt > now + AUDIO_MAX_QUEUE) {
+        audioNextAt = now + AUDIO_MIN_LATENCY;
+    }
     src.start(audioNextAt);
     audioNextAt += audioBuf.duration;
 };
@@ -790,7 +798,10 @@ async function connect() {
 
     /* rdpConnect is exposed by Go WASM */
     const hasWebCodecs = h264Supported();
-    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, !!params.rdpStorage, !!params.rdpCamera, hasWebCodecs);
+    /* Wallpaper follows quality mode: only "quality" streams the desktop
+     * background; balanced/performance keep it off to save bandwidth. */
+    const wallpaperOn = qualityMode === 'quality';
+    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, !!params.rdpStorage, !!params.rdpCamera, hasWebCodecs, wallpaperOn);
 }
 
 function disconnect() {
@@ -1022,7 +1033,6 @@ function attachInputEvents() {
 
     /* ─── Touch input — uses RdpTouchController module ──── */
     if (!rdpTouchController) {
-        const pointerEl = document.getElementById('rdpPointer');
         rdpTouchController = new RdpTouchController({
             canvas: rdpCanvas,
             getConnected: () => connected,
@@ -1039,7 +1049,6 @@ function attachInputEvents() {
                 if (zs) zs.value = Math.round(zoom * 100);
                 if (zv) zv.textContent = Math.round(zoom * 100) + '%';
             },
-            pointerOverlay: pointerEl,
         });
     }
 
@@ -1157,23 +1166,46 @@ function isPortraitTouch() {
     return !!coarse && (window.innerHeight || 0) >= (window.innerWidth || 0);
 }
 function computeRdpSize() {
-    const res = params.rdpResolution || '1920x1080';
+    const res = params.rdpResolution || 'auto';
     const m = res.match(/^(\d+)x(\d+)$/);
-    let w = m ? Number(m[1]) : 1920;
-    let h = m ? Number(m[2]) : 1080;
-    if (res === 'auto' || !m) {
-        /* Auto: use screen dimensions but cap at 4K */
-        const dpr = window.devicePixelRatio || 1;
-        const sw = window.screen.width * dpr;
-        const sh = window.screen.height * dpr;
-        /* Always use landscape orientation for RDP (wider >= taller) */
-        w = Math.min(Math.max(sw, sh), 3840);
-        h = Math.min(Math.min(sw, sh), 2160);
+
+    /* Explicit resolution (e.g. 1920x1080): honour it verbatim. The user
+     * picked a fixed aspect on purpose; any letterboxing is their choice. */
+    if (m && res !== 'auto') {
+        let w = Number(m[1]);
+        let h = Number(m[2]);
+        w = Math.max(800, Math.min(7680, Math.floor(w / 2) * 2));
+        h = Math.max(600, Math.min(4320, Math.floor(h / 2) * 2));
+        return { width: w, height: h };
     }
-    /* Ensure width >= height (landscape) — RDP servers expect landscape */
-    if (h > w) { const tmp = w; w = h; h = tmp; }
-    w = Math.max(800, Math.min(7680, Math.floor(w / 2) * 2));
-    h = Math.max(600, Math.min(4320, Math.floor(h / 2) * 2));
+
+    /* Auto: match the display container's real aspect ratio so that
+     * object-fit:contain in "adapt" mode leaves NO black bars. We do NOT
+     * force landscape — a portrait phone gets a portrait remote desktop. */
+    const dpr = window.devicePixelRatio || 1;
+    const stage = document.getElementById('rdpStage');
+    let cw = 0, ch = 0;
+    if (stage) {
+        const r = stage.getBoundingClientRect();
+        cw = r.width; ch = r.height;
+    }
+    if (!cw || !ch) { cw = window.innerWidth; ch = window.innerHeight; }
+
+    /* Target physical pixels for crispness, capped so we never exceed 4K
+     * along the longer edge (bandwidth + server limits). */
+    let w = Math.round(cw * dpr);
+    let h = Math.round(ch * dpr);
+    const longEdge = Math.max(w, h);
+    const CAP = 3840;
+    if (longEdge > CAP) {
+        const s = CAP / longEdge;
+        w = Math.round(w * s);
+        h = Math.round(h * s);
+    }
+
+    /* RDP requires even dimensions and sane minimums. */
+    w = Math.max(640, Math.min(7680, Math.floor(w / 2) * 2));
+    h = Math.max(480, Math.min(4320, Math.floor(h / 2) * 2));
     return { width: w, height: h };
 }
 
@@ -1227,8 +1259,16 @@ function initToolbar() {
         qualityBtn.textContent = qualityMode === 'performance' ? '性能' : qualityMode === 'quality' ? '画质' : '平衡';
         qualityBtn.addEventListener('click', () => {
             const idx = qualityModes.indexOf(qualityMode);
+            const prevWallpaper = qualityMode === 'quality';
             qualityMode = qualityModes[(idx + 1) % qualityModes.length];
             qualityBtn.textContent = qualityMode === 'performance' ? '性能' : qualityMode === 'quality' ? '画质' : '平衡';
+            /* Wallpaper on/off is negotiated at login, so reconnect when the
+             * quality change crosses the wallpaper threshold. */
+            const nextWallpaper = qualityMode === 'quality';
+            if (connected && prevWallpaper !== nextWallpaper) {
+                setStatus('connecting', '正在应用画质设置...');
+                connect().catch(() => {});
+            }
         });
     }
 
@@ -1286,16 +1326,26 @@ function initToolbar() {
     /* Joystick knob — controls viewport pan in fill mode */
     const joystickKnob = document.getElementById('joystickKnob');
     const joystickContainer = document.getElementById('joystickContainer');
+
+    /* Shared: push current fillPanX/Y to the canvas (only meaningful in fill mode). */
+    const applyFillPan = () => {
+        fillPanX = Math.max(0, Math.min(100, fillPanX));
+        fillPanY = Math.max(0, Math.min(100, fillPanY));
+        if (fitModes[fitModeIdx] === 'fill' && rdpCanvas) {
+            rdpCanvas.style.objectPosition = fillPanX + '% ' + fillPanY + '%';
+        }
+    };
+
     if (joystickKnob && joystickContainer) {
         let joyDrag = null;
         const joyRadius = 50; /* max drag distance in px */
         joystickKnob.addEventListener('pointerdown', (e) => {
             e.preventDefault();
-            joystickKnob.setPointerCapture(e.pointerId);
             const rect = joystickContainer.getBoundingClientRect();
             const cx = rect.left + rect.width / 2;
             const cy = rect.top + rect.height / 2;
             joyDrag = { cx, cy };
+            try { joystickKnob.setPointerCapture(e.pointerId); } catch {}
         });
         joystickKnob.addEventListener('pointermove', (e) => {
             if (!joyDrag) return;
@@ -1303,11 +1353,9 @@ function initToolbar() {
             const dy = Math.max(-joyRadius, Math.min(joyRadius, e.clientY - joyDrag.cy));
             joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
             /* Map knob position to viewport pan (0-100%) */
-            fillPanX = Math.max(0, Math.min(100, 50 + (dx / joyRadius) * 50));
-            fillPanY = Math.max(0, Math.min(100, 50 + (dy / joyRadius) * 50));
-            if (fitModes[fitModeIdx] === 'fill' && rdpCanvas) {
-                rdpCanvas.style.objectPosition = fillPanX + '% ' + fillPanY + '%';
-            }
+            fillPanX = 50 + (dx / joyRadius) * 50;
+            fillPanY = 50 + (dy / joyRadius) * 50;
+            applyFillPan();
         });
         const joyEnd = () => {
             if (!joyDrag) return;
@@ -1317,6 +1365,50 @@ function initToolbar() {
         joystickKnob.addEventListener('pointerup', joyEnd);
         joystickKnob.addEventListener('pointercancel', joyEnd);
     }
+
+    /* Joystick direction arrows — nudge the viewport; press-and-hold to repeat.
+     * Each tap shifts the pan by PAN_STEP percent in fill mode. */
+    const PAN_STEP = 6;
+    const joyDirDelta = {
+        up:    { x: 0, y: -PAN_STEP },
+        down:  { x: 0, y:  PAN_STEP },
+        left:  { x: -PAN_STEP, y: 0 },
+        right: { x:  PAN_STEP, y: 0 },
+    };
+    document.querySelectorAll('[data-joydir]').forEach((arrow) => {
+        const dir = arrow.dataset.joydir;
+        const delta = joyDirDelta[dir];
+        if (!delta) return;
+        let holdTimer = null;
+        let repeatTimer = null;
+        const nudge = () => {
+            fillPanX += delta.x;
+            fillPanY += delta.y;
+            applyFillPan();
+        };
+        const start = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            arrow.classList.add('active');
+            nudge();
+            /* Hold ~350ms then repeat every 90ms. */
+            holdTimer = setTimeout(() => {
+                repeatTimer = setInterval(nudge, 90);
+            }, 350);
+        };
+        const stop = () => {
+            arrow.classList.remove('active');
+            if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+            if (repeatTimer) { clearInterval(repeatTimer); repeatTimer = null; }
+        };
+        arrow.addEventListener('pointerdown', start);
+        arrow.addEventListener('pointerup', stop);
+        arrow.addEventListener('pointercancel', stop);
+        arrow.addEventListener('pointerleave', stop);
+        arrow.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nudge(); }
+        });
+    });
 
     if (ctrlAltDelBtn) {
         ctrlAltDelBtn.addEventListener('click', () => {
@@ -1383,11 +1475,12 @@ function initToolbar() {
     }
 
     /* Resolution button */
-    const resolutions = ['1920x1080', '2560x1440', '3840x2160', 'auto'];
-    let resIdx = 0;
+    const resolutions = ['auto', '1920x1080', '2560x1440', '3840x2160'];
+    let resIdx = resolutions.indexOf(params.rdpResolution);
+    if (resIdx < 0) resIdx = 0;
     if (resolutionBtn) {
         const labels = { '1920x1080': '1080p', '2560x1440': '2K', '3840x2160': '4K', 'auto': '自动' };
-        resolutionBtn.textContent = labels[resolutions[resIdx]] || '1080p';
+        resolutionBtn.textContent = labels[resolutions[resIdx]] || '自动';
         resolutionBtn.addEventListener('click', () => {
             resIdx = (resIdx + 1) % resolutions.length;
             resolutionBtn.textContent = labels[resolutions[resIdx]] || resolutions[resIdx];
@@ -1406,23 +1499,143 @@ function initToolbar() {
     document.querySelectorAll('[data-drag-panel]').forEach((handle) => {
         let dragState = null;
         handle.addEventListener('pointerdown', (e) => {
+            /* Ignore drags that start on the traffic/layout button so it stays clickable. */
+            if (e.target.closest('[data-layout-panel]')) return;
             const panelId = handle.dataset.dragPanel;
             const panel = document.getElementById(panelId);
             if (!panel) return;
             e.preventDefault();
-            handle.setPointerCapture(e.pointerId);
             const rect = panel.getBoundingClientRect();
-            dragState = { panel, startX: e.clientX - rect.left, startY: e.clientY - rect.top };
+            const stage = document.getElementById('rdpStage');
+            const bounds = stage ? stage.getBoundingClientRect() : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+            dragState = { panel, rect, bounds, startX: e.clientX - rect.left, startY: e.clientY - rect.top, moved: false };
+            panel.classList.add('dragging');
+            try { handle.setPointerCapture(e.pointerId); } catch {}
         });
         handle.addEventListener('pointermove', (e) => {
             if (!dragState) return;
-            dragState.panel.style.left = (e.clientX - dragState.startX) + 'px';
-            dragState.panel.style.top = (e.clientY - dragState.startY) + 'px';
+            dragState.moved = true;
+            const { bounds, rect } = dragState;
+            /* Clamp so the panel can't be dragged fully off-screen. */
+            let nx = e.clientX - dragState.startX;
+            let ny = e.clientY - dragState.startY;
+            nx = Math.max(bounds.left - rect.width + 48, Math.min(bounds.right - 48, nx));
+            ny = Math.max(bounds.top, Math.min(bounds.bottom - 40, ny));
+            dragState.panel.style.left = nx + 'px';
+            dragState.panel.style.top = ny + 'px';
             dragState.panel.style.right = 'auto';
             dragState.panel.style.bottom = 'auto';
         });
-        handle.addEventListener('pointerup', () => { dragState = null; });
+        const endDrag = (e) => {
+            if (dragState) {
+                dragState.panel.classList.remove('dragging');
+                try { handle.releasePointerCapture(e.pointerId); } catch {}
+            }
+            dragState = null;
+        };
+        handle.addEventListener('pointerup', endDrag);
+        handle.addEventListener('pointercancel', endDrag);
     });
+
+    /* ─── Panel layout cycling — the traffic (three-dot) button ──────────
+     * Taps cycle each floating panel through docked positions:
+     *   center → left-half → right-half → restore(center).
+     * Self-contained; no dependency on the main app's layout-menu system. */
+    const PANEL_LAYOUTS = ['center', 'left', 'right'];
+    const panelLayoutState = new WeakMap();
+    document.querySelectorAll('[data-layout-panel]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const panel = document.getElementById(btn.dataset.layoutPanel);
+            if (!panel) return;
+            const stage = document.getElementById('rdpStage');
+            const bounds = stage ? stage.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+            const cur = panelLayoutState.get(panel) || 0;
+            const next = (cur + 1) % PANEL_LAYOUTS.length;
+            panelLayoutState.set(panel, next);
+            const layout = PANEL_LAYOUTS[next];
+            applyPanelLayout(panel, layout, bounds);
+            btn.classList.toggle('active-layout', layout !== 'center');
+        });
+    });
+
+    /* ─── Panel resize handles — the two edge bars at the bottom ────────── */
+    document.querySelectorAll('[data-resize-panel]').forEach((handle) => {
+        let resizeState = null;
+        handle.addEventListener('pointerdown', (e) => {
+            const panel = document.getElementById(handle.dataset.resizePanel);
+            if (!panel) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const rect = panel.getBoundingClientRect();
+            resizeState = {
+                panel,
+                edge: handle.dataset.resizeEdge || 'right',
+                startX: e.clientX,
+                startW: rect.width,
+                startH: rect.height,
+                startLeft: rect.left,
+            };
+            panel.classList.add('resizing');
+            try { handle.setPointerCapture(e.pointerId); } catch {}
+        });
+        handle.addEventListener('pointermove', (e) => {
+            if (!resizeState) return;
+            const dx = e.clientX - resizeState.startX;
+            const minW = 240, maxW = Math.min(window.innerWidth - 16, 900);
+            if (resizeState.edge === 'right') {
+                const w = Math.max(minW, Math.min(maxW, resizeState.startW + dx));
+                resizeState.panel.style.width = w + 'px';
+            } else {
+                /* left edge: adjust width and keep right edge anchored */
+                let w = Math.max(minW, Math.min(maxW, resizeState.startW - dx));
+                const newLeft = resizeState.startLeft + (resizeState.startW - w);
+                resizeState.panel.style.width = w + 'px';
+                resizeState.panel.style.left = newLeft + 'px';
+                resizeState.panel.style.right = 'auto';
+            }
+        });
+        const endResize = (e) => {
+            if (resizeState) {
+                resizeState.panel.classList.remove('resizing');
+                try { handle.releasePointerCapture(e.pointerId); } catch {}
+            }
+            resizeState = null;
+        };
+        handle.addEventListener('pointerup', endResize);
+        handle.addEventListener('pointercancel', endResize);
+    });
+}
+
+/* Dock a floating panel to a preset position within the stage bounds. */
+function applyPanelLayout(panel, layout, bounds) {
+    panel.style.bottom = 'auto';
+    if (layout === 'left') {
+        /* Dock to the left half. Width is half the stage but never below the
+         * panel's CSS min-width, and never wider than the stage. */
+        const minW = parseInt(getComputedStyle(panel).minWidth) || 240;
+        const w = Math.max(minW, Math.min(bounds.width - 16, Math.round(bounds.width * 0.5) - 12));
+        panel.style.right = 'auto';
+        panel.style.width = w + 'px';
+        panel.style.left = (bounds.left + 8) + 'px';
+        panel.style.top = (bounds.top + 8) + 'px';
+    } else if (layout === 'right') {
+        /* Dock to the right half. Anchor via the right edge so the position is
+         * correct even when min-width forces the panel wider than half. */
+        const minW = parseInt(getComputedStyle(panel).minWidth) || 240;
+        const w = Math.max(minW, Math.min(bounds.width - 16, Math.round(bounds.width * 0.5) - 12));
+        panel.style.left = 'auto';
+        panel.style.right = (window.innerWidth - bounds.right + 8) + 'px';
+        panel.style.width = w + 'px';
+        panel.style.top = (bounds.top + 8) + 'px';
+    } else {
+        /* center / restore: clear inline positioning, fall back to CSS defaults */
+        panel.style.width = '';
+        panel.style.left = '';
+        panel.style.right = '';
+        panel.style.top = '';
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

@@ -474,6 +474,30 @@ func (c *Client) SetClientAutoReconnect(id uint32, random []byte) {
 	c.info.SetClientAutoReconnect(auto)
 }
 
+// SetPerformanceFlags overrides the RDP performance flags sent in the
+// Client Info PDU (MS-RDPBCGR §2.2.1.11.1.1.1). These control server-side
+// visual features such as desktop wallpaper, full-window drag, menu
+// animations, themes and font smoothing. Call before Login.
+func (c *Client) SetPerformanceFlags(flags uint32) {
+	if c.info != nil && c.info.ExtendedInfo != nil {
+		c.info.ExtendedInfo.PerformanceFlags = flags
+	}
+}
+
+// SetWallpaperEnabled toggles just the wallpaper bit while preserving the
+// other performance flags. When enabled=true the PERF_DISABLE_WALLPAPER bit
+// is cleared so the server streams the user's desktop wallpaper.
+func (c *Client) SetWallpaperEnabled(enabled bool) {
+	if c.info == nil || c.info.ExtendedInfo == nil {
+		return
+	}
+	if enabled {
+		c.info.ExtendedInfo.PerformanceFlags &^= PERF_DISABLE_WALLPAPER
+	} else {
+		c.info.ExtendedInfo.PerformanceFlags |= PERF_DISABLE_WALLPAPER
+	}
+}
+
 func (c *Client) SetAlternateShell(shell string) {
 	buff := &bytes.Buffer{}
 	for _, ch := range utf16.Encode([]rune(shell)) {
