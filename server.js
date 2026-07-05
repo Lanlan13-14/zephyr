@@ -377,6 +377,19 @@ function publicConnection(conn) {
     copy.hasPassword = Boolean(conn.password);
     copy.hasPrivateKey = Boolean(conn.privateKey);
     copy.jumpHostIds = normalizeJumpHostIds(conn);
+    /* Ensure RDP settings have defaults for old connections that were created
+     * before these fields existed — prevents toggles from appearing off. */
+    if (String(copy.protocol || '').toUpperCase() === 'RDP') {
+        if (copy.rdpClipboard === undefined) copy.rdpClipboard = true;
+        if (copy.rdpSoundMode === undefined) copy.rdpSoundMode = 'local';
+        if (copy.rdpResolution === undefined) copy.rdpResolution = '1080p';
+        if (copy.rdpQuality === undefined) copy.rdpQuality = 'balanced';
+        if (copy.rdpFps === undefined) copy.rdpFps = 30;
+        if (copy.rdpMicrophone === undefined) copy.rdpMicrophone = false;
+        if (copy.rdpCamera === undefined) copy.rdpCamera = false;
+        if (copy.rdpStorage === undefined) copy.rdpStorage = false;
+        if (copy.rdpLocation === undefined) copy.rdpLocation = false;
+    }
     return copy;
 }
 
