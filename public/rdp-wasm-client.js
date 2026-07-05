@@ -1963,6 +1963,139 @@ function applyPanelLayout(panel, layout) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * RDP FILE PANEL — Upload / Download / Cross-tab clipboard
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+function initFilePanel() {
+    const filesPanel = document.getElementById('filesPanel');
+    const rdpFileSelectBtn = document.getElementById('rdpFileSelectBtn');
+    const rdpFileInput = document.getElementById('rdpFileInput');
+    const rdpPendingPasteBtn = document.getElementById('rdpPendingPasteBtn');
+    const rdpFilePasteToRemoteBtn = document.getElementById('rdpFilePasteToRemoteBtn');
+    const rdpFileDownloadAllBtn = document.getElementById('rdpFileDownloadAllBtn');
+    const rdpPendingFileList = document.getElementById('rdpPendingFileList');
+    const rdpRemoteFileList = document.getElementById('rdpRemoteFileList');
+    const filesHint = document.getElementById('filesHint');
+
+    /* ── Upload files button ── */
+    if (rdpFileSelectBtn) {
+        rdpFileSelectBtn.addEventListener('click', () => {
+            if (rdpFileInput) rdpFileInput.click();
+            else rdpStoragePickFiles().then(updatePendingFileList);
+        });
+    }
+    if (rdpFileInput) {
+        rdpFileInput.addEventListener('change', async () => {
+            for (const file of rdpFileInput.files) {
+                const data = new Uint8Array(await file.arrayBuffer());
+                rdpStorageFiles.push({ name: file.name, size: file.size, isDir: false, data });
+            }
+            rdpFileInput.value = '';
+            updatePendingFileList();
+            setFilesHint('已添加 ' + rdpFileInput.files.length + ' 个文件到待粘贴列表', 'success');
+        });
+    }
+
+    /* ── Paste pending files to remote (triggers RDPDR virtual drive refresh) ── */
+    if (rdpPendingPasteBtn) {
+        rdpPendingPasteBtn.addEventListener('click', () => {
+            if (!rdpStorageFiles.length) {
+                setFilesHint('请先上传文件', 'warning');
+                return;
+            }
+            /* Files are already in rdpStorageFiles; Go WASM reads them via
+             * rdpStorageGetFiles/rdpStorageReadFile when Windows queries the
+             * virtual drive. Just send Ctrl+V to trigger a paste in Explorer. */
+            rdpKeyDown('ControlLeft');
+            rdpKeyDown('KeyV');
+            setTimeout(() => { rdpKeyUp('KeyV'); rdpKeyUp('ControlLeft'); }, 40);
+            setFilesHint('已粘贴到远程。在 Windows 资源管理器中按 Ctrl+V 可见。', 'success');
+        });
+    }
+
+    /* ── "粘贴到远程" for remote-copied files (stub — file clipboard not yet in cliprdr) ── */
+    if (rdpFilePasteToRemoteBtn) {
+        rdpFilePasteToRemoteBtn.addEventListener('click', () => {
+            setFilesHint('远程文件剪贴板功能开发中', 'warning');
+        });
+    }
+
+    /* ── Download all remote clipboard files ── */
+    if (rdpFileDownloadAllBtn) {
+        rdpFileDownloadAllBtn.addEventListener('click', () => {
+            setFilesHint('远程文件下载功能开发中', 'warning');
+        });
+    }
+
+    function updatePendingFileList() {
+        if (!rdpPendingFileList) return;
+        if (!rdpStorageFiles.length) {
+            rdpPendingFileList.innerHTML = '<div class="rdp-file-empty">暂无待粘贴文件</div>';
+            return;
+        }
+        rdpPendingFileList.innerHTML = rdpStorageFiles.map((f, i) =>
+            '<div class="rdp-file-item">' +
+            '<span class="rdp-file-name">' + escapeHtml(f.name) + '</span>' +
+            '<span class="rdp-file-size">' + formatBytes(f.size) + '</span>' +
+            '<button class="rdp-file-remove" data-idx="' + i + '" title="移除">×</button>' +
+            '</div>'
+        ).join('');
+        rdpPendingFileList.querySelectorAll('.rdp-file-remove').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                rdpStorageFiles.splice(Number(btn.dataset.idx), 1);
+                updatePendingFileList();
+            });
+        });
+    }
+
+    function setFilesHint(msg, level) {
+        if (!filesHint) return;
+        filesHint.textContent = msg;
+        filesHint.dataset.level = level || '';
+    }
+
+    function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function formatBytes(b) {
+        if (b < 1024) return b + ' B';
+        if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+        return (b / 1048576).toFixed(1) + ' MB';
+    }
+
+    /* ── Cross-tab clipboard: listen for files from SSH/other RDP tabs ── */
+    window.addEventListener('message', (e) => {
+        if (!e.data || e.data.source !== 'zephyr-app') return;
+        if (e.data.type === 'shared-file-clipboard-data' && Array.isArray(e.data.files)) {
+            /* Files arrived from another tab (SSH SFTP or another RDP) */
+            for (const f of e.data.files) {
+                if (f.dataUrl) {
+                    fetch(f.dataUrl).then(r => r.arrayBuffer()).then(buf => {
+                        rdpStorageFiles.push({ name: f.name, size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
+                        updatePendingFileList();
+                    }).catch(() => {});
+                }
+            }
+            setFilesHint('已从其他终端接收文件', 'success');
+        }
+        if (e.data.type === 'shared-file-clipboard-available' && Array.isArray(e.data.files)) {
+            /* Available notification — show indicator */
+            setFilesHint('其他终端有 ' + e.data.files.length + ' 个文件可粘贴', 'info');
+        }
+    });
+
+    /* Request any existing shared clipboard on startup */
+    window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'request-shared-file-clipboard', tabId: params.tabId || '' }, '*');
+
+    /* When RDP clipboard receives text from remote, broadcast to other tabs */
+    const origOnClipboard = window.rdpOnClipboard;
+    window.rdpOnClipboard = function (text) {
+        if (origOnClipboard) origOnClipboard(text);
+        /* Forward to parent (app.js) for cross-tab sync */
+        window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-clipboard-text', text, tabId: params.tabId || '' }, '*');
+    };
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
  * PARENT MESSAGE HANDLER (embedded mode)
  * ═══════════════════════════════════════════════════════════════════════ */
 window.addEventListener('message', (e) => {
@@ -1983,6 +2116,7 @@ window.addEventListener('message', (e) => {
 (async function boot() {
     updateInfo();
     initToolbar();
+    initFilePanel();
 
     /* Compute initial resolution */
     const size = computeRdpSize();
