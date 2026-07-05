@@ -137,8 +137,9 @@ function normalizeSharedClipboardFiles(files = []) {
         path: String(file.path || ''),
         mime: String(file.mime || ''),
         dataUrl: String(file.dataUrl || ''),
+        transitUrl: String(file.transitUrl || ''),
         remotePath: String(file.remotePath || ''),
-    })).filter((file) => file.path || file.dataUrl || file.remotePath);
+    })).filter((file) => file.path || file.dataUrl || file.transitUrl || file.remotePath);
 }
 function updateZephyrSharedClipboard(next = {}) {
     zephyrSharedClipboard = {
@@ -218,8 +219,8 @@ function handleSharedClipboardMessage(data = {}) {
         const targetFrame = terminalFrameById(sourceTabId);
         const sourcePage = String(data.sourcePage || zephyrSharedClipboard.sourcePage || '');
         const targetPage = terminalPageForTab(sourceTabId);
-        // Source is RDP (local files with dataUrl) → target is SSH: forward file data directly
-        if (isRemoteDesktopPage(sourcePage) && files.some((f) => f.dataUrl) && targetFrame?.contentWindow) {
+        // Source is RDP (local files with transitUrl or dataUrl) → target is SSH: forward directly
+        if (isRemoteDesktopPage(sourcePage) && files.some((f) => f.transitUrl || f.dataUrl) && targetFrame?.contentWindow) {
             targetFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-data', requestId: '', files, sourceTabId: sourceTabIdForFiles }, '*');
             return true;
         }

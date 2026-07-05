@@ -1115,9 +1115,9 @@ window.addEventListener('message', (e) => {
         return;
     }
     if (e.data.type === 'shared-file-clipboard-read') {
-        /* Another tab (RDP) requests actual file data from our SFTP clipboard.
-         * We download each file via the SFTP download API, convert to dataUrl,
-         * and send back to the parent for relay. */
+        /* Another tab requests actual file data. Instead of reading entire
+         * files into base64 (OOMs on large files), generate SFTP download
+         * tokens and return server-side URLs for streaming download. */
         const requestId = String(e.data.requestId || '');
         const requestedFiles = Array.from(e.data.files || []);
         const respondFiles = [];
@@ -1127,10 +1127,10 @@ window.addEventListener('message', (e) => {
                 if (!f.remotePath && !f.path) continue;
                 const remotePath = f.remotePath || f.path;
                 try {
-                    /* Ask the server to prepare a download token for this file */
                     const tokenPromise = new Promise((resolve, reject) => {
                         const handler = (ev) => {
-                            const msg = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+                            let msg;
+                            try { msg = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data; } catch { return; }
                             if (msg.type === 'sftp-download-ready' && msg.path === remotePath) {
                                 wsConnection.removeEventListener('message', handler);
                                 resolve(msg);
@@ -1144,15 +1144,7 @@ window.addEventListener('message', (e) => {
                         setTimeout(() => { wsConnection.removeEventListener('message', handler); reject(new Error('timeout')); }, 30000);
                     });
                     const dlInfo = await tokenPromise;
-                    const res = await fetch(dlInfo.url);
-                    if (!res.ok) throw new Error('HTTP ' + res.status);
-                    const blob = await res.blob();
-                    const dataUrl = await new Promise((resolve) => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(reader.result);
-                        reader.readAsDataURL(blob);
-                    });
-                    respondFiles.push({ name: f.name || remotePath.split('/').pop(), size: blob.size, dataUrl, path: remotePath });
+                    respondFiles.push({ name: f.name || remotePath.split('/').pop(), size: Number(dlInfo.size) || 0, transitUrl: dlInfo.url, path: remotePath });
                 } catch (err) {
                     console.warn('[shared-file-clipboard-read] failed for', remotePath, err.message);
                 }
@@ -4392,12 +4384,13 @@ async function uploadRemotePathFiles(files = []) {
     }
 }
 async function uploadSharedClipboardFiles(files = []) {
-    const list = Array.from(files || []).filter((file) => file?.name && file?.dataUrl);
+    const list = Array.from(files || []).filter((file) => file?.name && (file?.dataUrl || file?.transitUrl));
     if (!list.length) return;
     const converted = [];
     for (const file of list) {
         try {
-            const res = await fetch(file.dataUrl);
+            const url = file.transitUrl || file.dataUrl;
+            const res = await fetch(url);
             const blob = await res.blob();
             converted.push(new File([blob], file.name, { type: file.mime || blob.type || 'application/octet-stream' }));
         } catch (err) {

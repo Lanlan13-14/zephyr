@@ -4003,6 +4003,62 @@ app.use(express.static(path.join(__dirname, 'public'), {
     },
 }));
 
+// ═══════════════════════════════════════════════════════════════════════
+// Cross-tab clipboard file transit — temporary server-side storage so
+// large files can be transferred between SSH/RDP tabs without base64
+// postMessage (which OOMs on >100MB). Files are streamed, not buffered.
+// ═══════════════════════════════════════════════════════════════════════
+const CLIPBOARD_TRANSIT_DIR = path.join(os.tmpdir(), 'zephyr-clipboard-transit');
+const clipboardTransitTokens = new Map(); // token → { path, name, size, username, expiresAt }
+const CLIPBOARD_TRANSIT_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Upload: RDP/SSH tab sends file to server temp storage, gets a download token.
+app.post('/api/clipboard/upload', requireAuth, (req, res) => {
+    const name = String(req.query.name || 'file').replace(/[/\\]/g, '_').slice(0, 255);
+    const token = crypto.randomUUID();
+    const dir = path.join(CLIPBOARD_TRANSIT_DIR, req.session.username || 'anon');
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, token + '-' + name);
+    const ws = fs.createWriteStream(filePath);
+    let size = 0;
+    req.on('data', (chunk) => { size += chunk.length; ws.write(chunk); });
+    req.on('end', () => {
+        ws.end(() => {
+            clipboardTransitTokens.set(token, { path: filePath, name, size, username: req.session.username, expiresAt: Date.now() + CLIPBOARD_TRANSIT_TTL });
+            res.json({ token, name, size, url: `/api/clipboard/download/${token}` });
+        });
+    });
+    req.on('error', () => { ws.destroy(); res.status(500).json({ error: 'upload failed' }); });
+});
+
+// Download: other tab fetches file by token (streamed).
+app.get('/api/clipboard/download/:token', requireAuth, (req, res) => {
+    const token = String(req.params.token || '');
+    const entry = clipboardTransitTokens.get(token);
+    if (!entry || entry.username !== req.session.username || entry.expiresAt < Date.now()) {
+        clipboardTransitTokens.delete(token);
+        return res.status(404).send('链接已失效');
+    }
+    entry.expiresAt = Date.now() + CLIPBOARD_TRANSIT_TTL; // extend on access
+    const stat = fs.statSync(entry.path, { throwIfNoEntry: false });
+    if (!stat) { clipboardTransitTokens.delete(token); return res.status(404).send('文件已过期'); }
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', String(stat.size));
+    res.setHeader('Content-Disposition', `attachment; filename="${entry.name.replace(/"/g, '_')}"`);
+    fs.createReadStream(entry.path).pipe(res);
+});
+
+// Periodic cleanup of expired transit files
+setInterval(() => {
+    const now = Date.now();
+    for (const [token, entry] of clipboardTransitTokens) {
+        if (entry.expiresAt < now) {
+            clipboardTransitTokens.delete(token);
+            try { fs.unlinkSync(entry.path); } catch {}
+        }
+    }
+}, 60000);
+
 // 健康检查
 let _h264DebugLog = null;
 app.post('/api/rdp/h264-debug', (req, res) => {

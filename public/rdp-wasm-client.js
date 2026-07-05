@@ -2135,65 +2135,65 @@ function initFilePanel() {
         }, '*');
     }
 
-    /* Send full file data (base64 dataUrl) to parent — called when another
-     * tab requests the actual content via shared-file-clipboard-read. */
+    /* Send file data to parent via server-side transit (streaming, supports
+     * any file size). Each file is uploaded to /api/clipboard/upload, and the
+     * download URL is sent in the message instead of a base64 dataUrl. */
     function broadcastFileDataToParent(fileList, requestId) {
         if (!fileList.length) return;
         let pending = fileList.length;
         const results = [];
-        const MAX_CROSS_TAB_SIZE = 100 * 1024 * 1024; // 100MB
         fileList.forEach((f) => {
             const entry = rdpStorageFiles.find(s => s.name === f.name);
-            if (!entry || !entry.data) { pending--; return; }
-            if (entry.data.byteLength > MAX_CROSS_TAB_SIZE) {
-                setFilesHint(f.name + ' 太大（>' + (MAX_CROSS_TAB_SIZE / 1048576) + 'MB），无法通过剪贴板传输', 'warning');
+            if (!entry || !entry.data) { pending--; checkDone(); return; }
+            fetch('/api/clipboard/upload?name=' + encodeURIComponent(f.name), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/octet-stream' },
+                body: entry.data,
+            })
+            .then(r => r.json())
+            .then(info => {
+                results.push({ name: f.name, size: entry.size || 0, path: f.name, transitUrl: info.url });
                 pending--;
-                return;
-            }
-            const blob = new Blob([entry.data]);
-            const reader = new FileReader();
-            reader.onload = () => {
-                results.push({ name: f.name, size: entry.size || 0, path: f.name, dataUrl: reader.result });
-                if (--pending <= 0) {
-                    window.parent?.postMessage?.({
-                        source: 'zephyr-terminal',
-                        type: 'shared-file-clipboard-data',
-                        tabId: params.tabId || '',
-                        requestId: requestId || '',
-                        files: results,
-                    }, '*');
-                }
-            };
-            reader.onerror = () => { if (--pending <= 0) {
-                window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard-data', tabId: params.tabId || '', requestId: requestId || '', files: results }, '*');
-            }};
-            reader.readAsDataURL(blob);
+                checkDone();
+            })
+            .catch(() => { pending--; checkDone(); });
         });
+        function checkDone() {
+            if (pending <= 0 && results.length) {
+                window.parent?.postMessage?.({
+                    source: 'zephyr-terminal',
+                    type: 'shared-file-clipboard-data',
+                    tabId: params.tabId || '',
+                    requestId: requestId || '',
+                    files: results,
+                }, '*');
+            }
+        }
     }
 
     /* ── Cross-tab clipboard: listen for files from SSH/other RDP tabs ── */
     window.addEventListener('message', (e) => {
         if (!e.data || e.data.source !== 'zephyr-app') return;
         if (e.data.type === 'shared-file-clipboard-data' && Array.isArray(e.data.files)) {
-            /* Files arrived from another tab (SSH SFTP or another RDP).
-             * Files may carry dataUrl (base64) or remotePath (server-side). */
-            let received = 0;
+            /* Files arrived from another tab. May carry:
+             *   transitUrl — server-side temp file (streaming, any size)
+             *   dataUrl    — base64 inline (small files, legacy)
+             *   remotePath — SFTP server-side path */
             for (const f of e.data.files) {
-                if (f.dataUrl) {
-                    fetch(f.dataUrl).then(r => r.arrayBuffer()).then(buf => {
-                        rdpStorageFiles.push({ name: f.name, size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
+                const url = f.transitUrl || f.dataUrl || '';
+                if (url) {
+                    fetch(url).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+                    .then(buf => {
+                        rdpStorageFiles.push({ name: f.name || 'file', size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
                         updatePendingFileList();
-                        received++;
                         if (typeof rdpNotifyFilesChanged === 'function') rdpNotifyFilesChanged();
-                    }).catch(() => {});
+                    }).catch(err => setFilesHint('接收文件失败: ' + (f.name || '') + ' ' + err.message, 'warning'));
                 } else if (f.remotePath) {
-                    /* Server-side file: download via API then add to storage */
-                    fetch('/api/rdp/clipboard-file?' + new URLSearchParams({ path: f.remotePath, name: f.name || '' }))
+                    fetch('/api/clipboard-file?' + new URLSearchParams({ path: f.remotePath, name: f.name || '' }))
                         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
                         .then(buf => {
                             rdpStorageFiles.push({ name: f.name || 'file', size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
                             updatePendingFileList();
-                            received++;
                             if (typeof rdpNotifyFilesChanged === 'function') rdpNotifyFilesChanged();
                         }).catch(() => {});
                 }
