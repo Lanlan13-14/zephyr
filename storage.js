@@ -135,7 +135,7 @@ function encryptSettingsValue(key, value) {
 function rowToConnection(row) {
     if (!row) return null;
     const plain = decryptConnection(row);
-    return { ...plain, port: Number(plain.port) || 22, tags: json(plain.tags, []), jumpHostIds: json(plain.jumpHostIds, plain.jumpHostId ? [plain.jumpHostId] : []), sshKeyId: plain.sshKeyId || '', lastConnectedAt: plain.lastConnectedAt || null };
+    return { ...plain, port: Number(plain.port) || 22, tags: json(plain.tags, []), jumpHostIds: json(plain.jumpHostIds, plain.jumpHostId ? [plain.jumpHostId] : []), sshKeyId: plain.sshKeyId || '', lastConnectedAt: plain.lastConnectedAt || null, rdpSoundMode: plain.rdpSoundMode || 'local', rdpClipboard: plain.rdpClipboard === 0 ? false : true, rdpMicrophone: !!plain.rdpMicrophone, rdpCamera: !!plain.rdpCamera, rdpStorage: !!plain.rdpStorage, rdpLocation: !!plain.rdpLocation, rdpResolution: plain.rdpResolution || '1080p', rdpQuality: plain.rdpQuality || 'balanced', rdpFps: Number(plain.rdpFps) || 30, rdpDomain: plain.rdpDomain || '' };
 }
 
 function rowToSshKey(row, { includeSecret = false } = {}) {
@@ -337,6 +337,16 @@ function init({ hashPassword }) {
     addColumnIfMissing('users', 'lockedUntil', 'INTEGER');
     addColumnIfMissing('connections', 'jumpHostIds', "TEXT DEFAULT '[]'");
     addColumnIfMissing('connections', 'sshKeyId', 'TEXT');
+    addColumnIfMissing('connections', 'rdpSoundMode', "TEXT DEFAULT 'local'");
+    addColumnIfMissing('connections', 'rdpClipboard', 'INTEGER DEFAULT 1');
+    addColumnIfMissing('connections', 'rdpMicrophone', 'INTEGER DEFAULT 0');
+    addColumnIfMissing('connections', 'rdpCamera', 'INTEGER DEFAULT 0');
+    addColumnIfMissing('connections', 'rdpStorage', 'INTEGER DEFAULT 0');
+    addColumnIfMissing('connections', 'rdpLocation', 'INTEGER DEFAULT 0');
+    addColumnIfMissing('connections', 'rdpResolution', "TEXT DEFAULT '1080p'");
+    addColumnIfMissing('connections', 'rdpQuality', "TEXT DEFAULT 'balanced'");
+    addColumnIfMissing('connections', 'rdpFps', 'INTEGER DEFAULT 30');
+    addColumnIfMissing('connections', 'rdpDomain', "TEXT DEFAULT ''");
     addColumnIfMissing('proxies', 'type', "TEXT DEFAULT 'socks5'");
     secretCrypto.ensureKeyPair();
 
@@ -483,8 +493,8 @@ function getConnectionsStore() { return { connections: db.prepare('SELECT * FROM
 function saveConnectionsStore(store) {
     const tx = db.transaction(() => {
         db.prepare('DELETE FROM connections').run();
-        const cstmt = db.prepare(`INSERT INTO connections (id,name,host,port,protocol,username,password,privateKey,remark,tags,connectionMode,proxyId,jumpHostId,jumpHostIds,sshKeyId,createdAt,updatedAt,lastConnectedAt) VALUES (@id,@name,@host,@port,@protocol,@username,@password,@privateKey,@remark,@tags,@connectionMode,@proxyId,@jumpHostId,@jumpHostIds,@sshKeyId,@createdAt,@updatedAt,@lastConnectedAt)`);
-        (store.connections || []).forEach((c) => { const safe = encryptConnection({ ...c, tags: JSON.stringify(c.tags || []), jumpHostIds: JSON.stringify(Array.isArray(c.jumpHostIds) && c.jumpHostIds.length ? c.jumpHostIds : (c.jumpHostId ? [c.jumpHostId] : [])), connectionMode: c.connectionMode || 'direct', proxyId: c.proxyId || null, jumpHostId: c.jumpHostId || null, sshKeyId: c.sshKeyId || null }); cstmt.run(safe); });
+        const cstmt = db.prepare(`INSERT INTO connections (id,name,host,port,protocol,username,password,privateKey,remark,tags,connectionMode,proxyId,jumpHostId,jumpHostIds,sshKeyId,rdpSoundMode,rdpClipboard,rdpMicrophone,rdpCamera,rdpStorage,rdpLocation,rdpResolution,rdpQuality,rdpFps,rdpDomain,createdAt,updatedAt,lastConnectedAt) VALUES (@id,@name,@host,@port,@protocol,@username,@password,@privateKey,@remark,@tags,@connectionMode,@proxyId,@jumpHostId,@jumpHostIds,@sshKeyId,@rdpSoundMode,@rdpClipboard,@rdpMicrophone,@rdpCamera,@rdpStorage,@rdpLocation,@rdpResolution,@rdpQuality,@rdpFps,@rdpDomain,@createdAt,@updatedAt,@lastConnectedAt)`);
+        (store.connections || []).forEach((c) => { const safe = encryptConnection({ ...c, tags: JSON.stringify(c.tags || []), jumpHostIds: JSON.stringify(Array.isArray(c.jumpHostIds) && c.jumpHostIds.length ? c.jumpHostIds : (c.jumpHostId ? [c.jumpHostId] : [])), connectionMode: c.connectionMode || 'direct', proxyId: c.proxyId || null, jumpHostId: c.jumpHostId || null, sshKeyId: c.sshKeyId || null, rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false ? 1 : 0, rdpMicrophone: c.rdpMicrophone ? 1 : 0, rdpCamera: c.rdpCamera ? 1 : 0, rdpStorage: c.rdpStorage ? 1 : 0, rdpLocation: c.rdpLocation ? 1 : 0, rdpResolution: c.rdpResolution || '1080p', rdpQuality: c.rdpQuality || 'balanced', rdpFps: c.rdpFps || 30, rdpDomain: c.rdpDomain || '' }); cstmt.run(safe); });
         db.prepare('DELETE FROM activities').run();
         const astmt = db.prepare('INSERT INTO activities (id,time,message,type) VALUES (@id,@time,@message,@type)');
         (store.activities || []).slice(0, 100).forEach((a) => astmt.run({ id: a.id, time: a.time, message: a.message, type: a.type || 'info' }));
