@@ -327,7 +327,7 @@
                         <div class="settings-panel" id="settings-agent">
                             <h2>Zephyr Agent Token</h2>
                             <p class="muted">Token 用于 Zephyr Agent 主动连接主端并注册文件系统代理。可为不同设备创建多个 Token，分别命名、复制、重命名、重新生成或删除。</p>
-                            <div class="agent-token-actions"><button class="btn btn-primary" type="button" id="agentCreateTokenBtn">新增 Token</button><button class="btn" type="button" id="agentRefreshTokenBtn">刷新</button></div>
+                            <div class="agent-token-actions"><button class="btn btn-primary" type="button" id="agentCreateTokenBtn">新增 Token</button><button class="btn" type="button" id="agentRefreshTokenBtn">刷新</button><button class="btn danger" type="button" id="agentResetAllTokenBtn">重置全部 Token</button><label class="inline-field">长度 <input id="agentTokenLengthInput" type="number" min="16" max="256" value="50"></label></div>
                             <div class="agent-token-list" id="agentTokenList"><p class="empty-state">正在加载...</p></div>
                             <h2>连接信息</h2>
                             <div class="agent-connect-info">

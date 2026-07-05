@@ -105,19 +105,65 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _pickDirectory(AgentController ctrl) async {
     if (io.Platform.isAndroid) {
-      final hasAllFiles = await AndroidStorageAccess.hasAllFilesAccess();
-      if (hasAllFiles) {
-        final root = await AndroidStorageAccess.externalStorageRoot();
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('选择映射位置'),
+          children: [
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'all'),
+              child: const ListTile(
+                leading: Icon(Icons.storage),
+                title: Text('映射整个共享存储'),
+                subtitle: Text('/storage/emulated/0，需要“所有文件访问权限”'),
+              ),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'saf'),
+              child: const ListTile(
+                leading: Icon(Icons.folder_open),
+                title: Text('选择自定义目录'),
+                subtitle: Text('使用 Android SAF 授权一个目录'),
+              ),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'path'),
+              child: const ListTile(
+                leading: Icon(Icons.edit),
+                title: Text('手动输入路径'),
+                subtitle: Text('适合 root/Shizuku/特殊挂载路径'),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (choice == null) return;
+      if (choice == 'saf') {
+        final selected = await AndroidSafFileProvider.selectDirectory();
+        if (selected == null) return;
         setState(() {
-          ctrl.config.sharedDirectoryPath = root;
-          ctrl.config.sharedDirectoryName = 'Internal storage';
+          ctrl.config.sharedDirectoryPath = selected.rootUri;
+          ctrl.config.sharedDirectoryName = selected.name;
         });
         _saveConfig(ctrl);
-        _showSnack('已设置为映射整个共享存储: $root');
         return;
       }
-      await AndroidStorageAccess.openAllFilesAccessSettings();
-      _showSnack('请在系统设置中授予“所有文件访问权限”，返回后再启动连接');
+      if (choice == 'path') {
+        await _showDesktopPathDialog(ctrl);
+        return;
+      }
+      final hasAllFiles = await AndroidStorageAccess.hasAllFilesAccess();
+      if (!hasAllFiles) {
+        await AndroidStorageAccess.openAllFilesAccessSettings();
+        _showSnack('请在系统设置中授予“所有文件访问权限”，返回后再启动连接');
+        return;
+      }
+      final root = await AndroidStorageAccess.externalStorageRoot();
+      setState(() {
+        ctrl.config.sharedDirectoryPath = root;
+        ctrl.config.sharedDirectoryName = 'Internal storage';
+      });
+      _saveConfig(ctrl);
       return;
     }
 

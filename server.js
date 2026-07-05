@@ -4182,7 +4182,7 @@ agentFilesWss.on('connection', (ws) => {
 });
 
 /* Mount file-agent REST API routes */
-fileAgentManager.mountRoutes(app, requireAuth, (req) => req.session);
+fileAgentManager.mountRoutes(app, requireAuth, (req) => req.session, verifySensitiveAccess);
 
 function closeWebSocketSafe(ws, code = 1000, reason = '') {
     try {

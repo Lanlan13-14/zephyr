@@ -6259,10 +6259,11 @@ function renderAgentTokens(tokens) {
         <div class="agent-token-item" data-token-id="${escapeHtml(t.id)}">
             <div class="agent-token-main">
                 <div class="agent-token-title"><strong>${escapeHtml(t.name || '未命名 Token')}</strong><span>${escapeHtml(t.id || '')}</span></div>
-                <div class="agent-token-value"><code>${escapeHtml(t.token || '')}</code></div>
+                <div class="agent-token-value"><code>${t.token ? escapeHtml(t.token) : '••••••••••••••••••••••••••••••••'}</code></div>
                 <div class="agent-token-meta">创建：${escapeHtml(formatAgentTokenTime(t.createdAt))} · 更新：${escapeHtml(formatAgentTokenTime(t.updatedAt))} · 最后使用：${escapeHtml(formatAgentTokenTime(t.lastUsedAt))}</div>
             </div>
             <div class="agent-token-buttons">
+                <button class="tool-btn" type="button" data-agent-reveal-token="${escapeHtml(t.id)}">查看</button>
                 <button class="tool-btn" type="button" data-agent-copy-token="${escapeHtml(t.id)}">复制</button>
                 <button class="tool-btn" type="button" data-agent-rename-token="${escapeHtml(t.id)}">重命名</button>
                 <button class="tool-btn" type="button" data-agent-regen-token="${escapeHtml(t.id)}">重新生成</button>
@@ -6280,10 +6281,15 @@ function updateAgentServerInfo() {
     if (el) el.textContent = currentAgentServerUrl();
 }
 
+function currentAgentTokenLength() {
+    const n = Number($('#agentTokenLengthInput')?.value || 50);
+    return Math.max(16, Math.min(256, Number.isFinite(n) ? n : 50));
+}
+
 async function createAgentToken() {
     const name = prompt('Token 名称，例如：我的手机 / 办公室 Windows / Pad', 'Zephyr Agent Token');
     if (name === null) return;
-    await api('/api/rdp/file-agent-tokens', { method: 'POST', body: JSON.stringify({ name }) });
+    await api('/api/rdp/file-agent-tokens', { method: 'POST', body: JSON.stringify({ name, length: currentAgentTokenLength() }) });
     await loadAgentTokens();
     toast('Token 已创建');
 }
@@ -6299,7 +6305,7 @@ async function renameAgentToken(id) {
 
 async function regenerateAgentToken(id) {
     if (!confirm('重新生成后，使用旧 Token 的 Agent 会断开，需要在 Agent App 中填写新 Token。继续？')) return;
-    await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/regenerate`, { method: 'POST' });
+    await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/regenerate`, { method: 'POST', body: JSON.stringify({ length: currentAgentTokenLength() }) });
     await loadAgentTokens();
     toast('Token 已重新生成');
 }
@@ -6311,26 +6317,56 @@ async function deleteAgentToken(id) {
     toast('Token 已删除');
 }
 
-async function copyAgentToken(id) {
+async function revealAgentToken(id, { copy = false } = {}) {
+    const secret = requestSensitiveSecret(copy ? '复制 Zephyr Agent Token' : '查看 Zephyr Agent Token');
+    const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/open`, {
+        method: 'POST',
+        body: JSON.stringify({ secret }),
+    });
+    const token = data.token?.token || '';
+    if (!token) throw new Error('Token 为空');
     const code = document.querySelector(`[data-token-id="${CSS.escape(id)}"] .agent-token-value code`);
-    const token = code?.textContent || '';
-    if (!token) return;
-    await navigator.clipboard.writeText(token);
-    toast('Token 已复制');
+    if (code && !copy) code.textContent = token;
+    if (copy) {
+        await navigator.clipboard.writeText(token);
+        toast('Token 已复制');
+    } else {
+        toast('Token 已显示');
+    }
+}
+
+async function copyAgentToken(id) {
+    await revealAgentToken(id, { copy: true });
+}
+
+async function resetAllAgentTokens() {
+    if (!confirm('这会删除当前账号所有 Zephyr Agent Token，并断开所有已连接 Agent。继续？')) return;
+    const secret = requestSensitiveSecret('重置全部 Zephyr Agent Token');
+    const name = prompt('新 Token 名称', '默认 Token');
+    if (name === null) return;
+    await api('/api/rdp/file-agent-tokens/reset-all', {
+        method: 'POST',
+        body: JSON.stringify({ secret, name, length: currentAgentTokenLength() }),
+    });
+    await loadAgentTokens();
+    toast('全部 Token 已重置，并已创建新 Token');
 }
 
 function setupAgentTokenSettings() {
     $('#agentCreateTokenBtn')?.addEventListener('click', () => createAgentToken().catch((err) => toast(err.message || '创建失败')));
     $('#agentRefreshTokenBtn')?.addEventListener('click', () => loadAgentTokens());
+    $('#agentResetAllTokenBtn')?.addEventListener('click', () => resetAllAgentTokens().catch((err) => toast(err.message || '重置失败')));
     $('#agentCopyServerUrlBtn')?.addEventListener('click', async () => {
         await navigator.clipboard.writeText(currentAgentServerUrl());
         toast('主端地址已复制');
     });
     $('#agentTokenList')?.addEventListener('click', (e) => {
+        const reveal = e.target.dataset.agentRevealToken;
         const copy = e.target.dataset.agentCopyToken;
         const rename = e.target.dataset.agentRenameToken;
         const regen = e.target.dataset.agentRegenToken;
         const del = e.target.dataset.agentDeleteToken;
+        if (reveal) revealAgentToken(reveal).catch((err) => toast(err.message || '查看失败'));
         if (copy) copyAgentToken(copy).catch((err) => toast(err.message || '复制失败'));
         if (rename) renameAgentToken(rename).catch((err) => toast(err.message || '重命名失败'));
         if (regen) regenerateAgentToken(regen).catch((err) => toast(err.message || '重新生成失败'));

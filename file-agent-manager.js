@@ -210,9 +210,14 @@ class FileAgentManager {
         }
     }
 
-    _newTokenRecord(ownerId, name) {
+    _generateToken(length = 50) {
+        const n = Math.max(16, Math.min(256, Number(length) || 50));
+        return crypto.randomBytes(Math.ceil(n * 3 / 4) + 4).toString('base64url').slice(0, n);
+    }
+
+    _newTokenRecord(ownerId, name, length = 50) {
         const now = Date.now();
-        const token = crypto.randomBytes(24).toString('base64url');
+        const token = this._generateToken(length);
         const record = {
             id: `tok_${crypto.randomBytes(8).toString('hex')}`,
             ownerId,
@@ -227,7 +232,7 @@ class FileAgentManager {
         return record;
     }
 
-    listTokens(ownerId, { includeToken = true } = {}) {
+    listTokens(ownerId, { includeToken = false } = {}) {
         return [...this.tokenRecords.values()]
             .filter((t) => t.ownerId === ownerId)
             .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
@@ -241,8 +246,20 @@ class FileAgentManager {
             }));
     }
 
-    createToken(ownerId, name) {
-        return this._newTokenRecord(ownerId, name);
+    publicTokenRecord(record, includeToken = false) {
+        if (!record) return null;
+        return {
+            id: record.id,
+            name: record.name,
+            token: includeToken ? record.token : undefined,
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+            lastUsedAt: record.lastUsedAt || null,
+        };
+    }
+
+    createToken(ownerId, name, length = 50) {
+        return this._newTokenRecord(ownerId, name, length);
     }
 
     findTokenRecord(ownerId, tokenId) {
@@ -268,12 +285,12 @@ class FileAgentManager {
         this._saveTokens();
     }
 
-    regenerateTokenRecord(ownerId, tokenId) {
+    regenerateTokenRecord(ownerId, tokenId, length = 50) {
         const record = this.findTokenRecord(ownerId, tokenId);
         if (!record) throw new AgentError('not_found', 'Token not found');
         this.tokenRecords.delete(record.token);
         this._disconnectAgentsForToken(ownerId, record.id, 'token_regenerated');
-        record.token = crypto.randomBytes(24).toString('base64url');
+        record.token = this._generateToken(length);
         record.updatedAt = Date.now();
         record.lastUsedAt = null;
         this.tokenRecords.set(record.token, record);
@@ -620,7 +637,7 @@ class FileAgentManager {
      * @param {Function} requireAuth - middleware that ensures req.session exists
      * @param {Function} getSessionUser - (req) => { username, ... }
      */
-    mountRoutes(app, requireAuth, getSessionUser) {
+    mountRoutes(app, requireAuth, getSessionUser, verifySensitiveAccess = null) {
         // GET /api/rdp/file-agents — list online agents for current user
         app.get('/api/rdp/file-agents', requireAuth, (req, res) => {
             const user = getSessionUser(req);
@@ -640,8 +657,8 @@ class FileAgentManager {
         app.post('/api/rdp/file-agent-tokens', requireAuth, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
-            const record = this.createToken(user.username, req.body?.name || 'Zephyr Agent Token');
-            res.json({ ok: true, token: this.listTokens(user.username).find((t) => t.id === record.id) });
+            const record = this.createToken(user.username, req.body?.name || 'Zephyr Agent Token', req.body?.length || 50);
+            res.json({ ok: true, token: this.publicTokenRecord(record, true) });
         });
 
         // PATCH /api/rdp/file-agent-tokens/:tokenId — rename token
@@ -661,10 +678,44 @@ class FileAgentManager {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             try {
-                const record = this.regenerateTokenRecord(user.username, req.params.tokenId);
-                res.json({ ok: true, token: this.listTokens(user.username).find((t) => t.id === record.id) });
+                const record = this.regenerateTokenRecord(user.username, req.params.tokenId, req.body?.length || 50);
+                res.json({ ok: true, token: this.publicTokenRecord(record, true) });
             } catch (err) {
                 res.status(err.code === 'not_found' ? 404 : 500).json({ ok: false, error: { code: err.code || 'internal_error', message: err.message } });
+            }
+        });
+
+        // POST /api/rdp/file-agent-tokens/:tokenId/open — reveal token after password/TOTP check
+        app.post('/api/rdp/file-agent-tokens/:tokenId/open', requireAuth, (req, res) => {
+            const user = getSessionUser(req);
+            if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+            try {
+                if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
+                verifySensitiveAccess(req, req.body?.secret);
+                const record = this.findTokenRecord(user.username, req.params.tokenId);
+                if (!record) throw new AgentError('not_found', 'Token not found');
+                res.json({ ok: true, token: this.publicTokenRecord(record, true) });
+            } catch (err) {
+                res.status(err.code === 'not_found' ? 404 : 400).json({ ok: false, error: { code: err.code || 'auth_failed', message: err.message } });
+            }
+        });
+
+        // POST /api/rdp/file-agent-tokens/reset-all — delete all tokens and create one fresh token
+        app.post('/api/rdp/file-agent-tokens/reset-all', requireAuth, (req, res) => {
+            const user = getSessionUser(req);
+            if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+            try {
+                if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
+                verifySensitiveAccess(req, req.body?.secret);
+                for (const record of [...this.tokenRecords.values()]) {
+                    if (record.ownerId === user.username) this.tokenRecords.delete(record.token);
+                }
+                const agentIds = this.ownerAgents.get(user.username);
+                if (agentIds) for (const agentId of [...agentIds]) this.unregisterAgent(agentId, 'tokens_reset');
+                const record = this.createToken(user.username, req.body?.name || '默认 Token', req.body?.length || 50);
+                res.json({ ok: true, token: this.publicTokenRecord(record, true) });
+            } catch (err) {
+                res.status(400).json({ ok: false, error: { code: err.code || 'auth_failed', message: err.message } });
             }
         });
 
@@ -680,20 +731,26 @@ class FileAgentManager {
             }
         });
 
-        // GET /api/rdp/file-agent-token — get or create agent token
+        // GET /api/rdp/file-agent-token — legacy endpoint: ensure default token exists, but do not reveal it.
         app.get('/api/rdp/file-agent-token', requireAuth, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
-            const token = this.getOrCreateToken(user.username);
-            res.json({ ok: true, token });
+            this.getOrCreateToken(user.username);
+            res.json({ ok: true, token: null, deprecated: true, message: 'Use Settings → Zephyr Agent to reveal tokens after password/TOTP verification.' });
         });
 
-        // POST /api/rdp/file-agent-token/regenerate — regenerate token
+        // POST /api/rdp/file-agent-token/regenerate — legacy reset endpoint, requires password/TOTP
         app.post('/api/rdp/file-agent-token/regenerate', requireAuth, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
-            const token = this.regenerateToken(user.username);
-            res.json({ ok: true, token });
+            try {
+                if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
+                verifySensitiveAccess(req, req.body?.secret);
+                const token = this.regenerateToken(user.username);
+                res.json({ ok: true, token });
+            } catch (err) {
+                res.status(400).json({ ok: false, error: { code: err.code || 'auth_failed', message: err.message } });
+            }
         });
 
         // GET /api/rdp/file-agents/events — SSE stream
