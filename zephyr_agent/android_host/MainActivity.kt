@@ -1,7 +1,9 @@
 package com.zephyr.agent
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.os.Environment
@@ -37,6 +39,7 @@ class MainActivity : FlutterActivity() {
                     "hasAllFilesAccess" -> result.success(hasAllFilesAccess())
                     "openAllFilesAccessSettings" -> openAllFilesAccessSettings(result)
                     "externalStorageRoot" -> result.success(Environment.getExternalStorageDirectory().absolutePath)
+                    "setLauncherTheme" -> setLauncherTheme(call, result)
                     "list" -> list(call, result)
                     "stat" -> stat(call, result)
                     "open" -> open(call, result)
@@ -55,6 +58,26 @@ class MainActivity : FlutterActivity() {
                 result.error("io_error", e.message ?: e.javaClass.simpleName, null)
             }
         }
+    }
+
+    private fun setLauncherTheme(call: MethodCall, result: MethodChannel.Result) {
+        val theme = (call.argument<String>("theme") ?: "frost").lowercase()
+        val aliases = mapOf(
+            "frost" to "LauncherFrost",
+            "lava" to "LauncherLava",
+            "asagi" to "LauncherAsagi",
+            "cyber" to "LauncherCyber",
+        )
+        val enabled = aliases[theme] ?: "LauncherFrost"
+        for ((_, alias) in aliases) {
+            val component = ComponentName(this, "$packageName.$alias")
+            packageManager.setComponentEnabledSetting(
+                component,
+                if (alias == enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP,
+            )
+        }
+        result.success(null)
     }
 
     private fun hasAllFilesAccess(): Boolean {
