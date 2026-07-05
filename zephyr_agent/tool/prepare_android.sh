@@ -60,7 +60,14 @@ if not activity_match:
     raise SystemExit('AndroidManifest.xml: MainActivity block not found')
 activity_block=activity_match.group(1)
 activity_block=re.sub(r'android:exported="true"', 'android:exported="false"', activity_block, count=1)
-activity_block=re.sub(r'\n\s*<intent-filter>\s*\n\s*<action android:name="android.intent.action.MAIN" />\s*\n\s*<category android:name="android.intent.category.LAUNCHER" />\s*\n\s*</intent-filter>', '', activity_block, count=1)
+
+def drop_launcher_filter(match):
+    block = match.group(0)
+    if 'android.intent.action.MAIN' in block and 'android.intent.category.LAUNCHER' in block:
+        return ''
+    return block
+
+activity_block=re.sub(r'\n\s*<intent-filter\b[\s\S]*?</intent-filter>', drop_launcher_filter, activity_block)
 if 'android.intent.category.LAUNCHER' in activity_block:
     raise SystemExit('AndroidManifest.xml: failed to remove MainActivity launcher intent-filter')
 m=m[:activity_match.start(1)] + activity_block + m[activity_match.end(1):]
