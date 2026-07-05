@@ -325,7 +325,7 @@ func (h *CliprdrHandler) processFormatDataRequest(body []byte) {
 
 	switch requestedFormat {
 	case CF_UNICODETEXT:
-		encoded := encodeUTF16LE(text + "\x00")
+		encoded := encodeUTF16LE(text) // encodeUTF16LE appends null terminator
 		h.sendPDU(CB_FORMAT_DATA_RESPONSE, CB_RESPONSE_OK, encoded)
 	case CF_TEXT:
 		h.sendPDU(CB_FORMAT_DATA_RESPONSE, CB_RESPONSE_OK, []byte(text+"\x00"))
@@ -345,6 +345,8 @@ func (h *CliprdrHandler) processFormatDataResponse(body []byte, msgFlags uint16)
 		cItems := binary.LittleEndian.Uint32(body[0:4])
 		if cItems > 0 && len(body) >= int(4+cItems*592) {
 			// Parse FileGroupDescriptorW (MS-RDPECLIP 2.2.5.2.3.1)
+			// Each FILEDESCRIPTORW: 592 bytes. Offsets:
+			//   0:flags  36:fileAttributes  64:sizeHigh  68:sizeLow  72:fileName(520)
 			h.serverFiles = make([]ClipFile, 0, cItems)
 			offset := 4
 			for i := uint32(0); i < cItems; i++ {
@@ -354,9 +356,9 @@ func (h *CliprdrHandler) processFormatDataResponse(body []byte, msgFlags uint16)
 				fd := body[offset : offset+592]
 				flags := binary.LittleEndian.Uint32(fd[0:4])
 				fileAttr := binary.LittleEndian.Uint32(fd[36:40])
-				sizeHigh := binary.LittleEndian.Uint32(fd[72:76])
-				sizeLow := binary.LittleEndian.Uint32(fd[76:80])
-				nameBytes := fd[80:592]
+				sizeHigh := binary.LittleEndian.Uint32(fd[64:68])
+				sizeLow := binary.LittleEndian.Uint32(fd[68:72])
+				nameBytes := fd[72:592]
 				name := decodeUTF16LE(nameBytes)
 				name = strings.TrimRight(name, "\x00")
 
@@ -371,9 +373,11 @@ func (h *CliprdrHandler) processFormatDataResponse(body []byte, msgFlags uint16)
 			if h.onRemoteFilesAvailable != nil && len(h.serverFiles) > 0 {
 				h.onRemoteFilesAvailable(h.serverFiles)
 			}
-			h.fgdFormatId = 0
-			return
+		} else {
+			slog.Warn("cliprdr: FileGroupDescriptorW body too small", "cItems", cItems, "bodyLen", len(body))
 		}
+		h.fgdFormatId = 0
+		return
 	}
 
 	// Text response
@@ -548,24 +552,27 @@ func (h *CliprdrHandler) handleFormatDataRequestFiles(requestedFormat uint32) bo
 		return false
 	}
 
-	// Build FileGroupDescriptorW
+	// Build FileGroupDescriptorW (MS-RDPECLIP 2.2.5.2.3.1)
+	// Each FILEDESCRIPTORW is exactly 592 bytes:
+	//   flags(4) + reserved(32) + fileAttributes(4) + reserved(16) +
+	//   lastWriteTime(8) + fileSizeHigh(4) + fileSizeLow(4) + fileName(520)
 	fgd := &bytes.Buffer{}
 	binary.Write(fgd, binary.LittleEndian, uint32(len(files))) // cItems
 	for _, f := range files {
 		fd := make([]byte, 592)
 		// flags: FD_FILESIZE | FD_ATTRIBUTES
 		binary.LittleEndian.PutUint32(fd[0:4], FD_FILESIZE|FD_ATTRIBUTES)
-		// fileAttributes: normal file
+		// offset 36: fileAttributes
 		binary.LittleEndian.PutUint32(fd[36:40], 0x00000080) // FILE_ATTRIBUTE_NORMAL
-		// file size
-		binary.LittleEndian.PutUint32(fd[72:76], uint32(f.Size>>32))
-		binary.LittleEndian.PutUint32(fd[76:80], uint32(f.Size))
-		// filename (UTF-16LE, 512 bytes max)
+		// offset 64: fileSizeHigh, offset 68: fileSizeLow
+		binary.LittleEndian.PutUint32(fd[64:68], uint32(f.Size>>32))
+		binary.LittleEndian.PutUint32(fd[68:72], uint32(f.Size))
+		// offset 72: fileName (520 bytes = 260 UTF-16LE chars, null-terminated)
 		nameBytes := encodeUTF16LE(f.Name)
-		if len(nameBytes) > 510 {
-			nameBytes = nameBytes[:510]
+		if len(nameBytes) > 518 { // 520 - 2 for null
+			nameBytes = nameBytes[:518]
 		}
-		copy(fd[80:], nameBytes)
+		copy(fd[72:], nameBytes)
 		fgd.Write(fd)
 	}
 
