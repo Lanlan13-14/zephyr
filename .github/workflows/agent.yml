@@ -265,6 +265,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/download-artifact@v4
         with:
@@ -284,27 +286,51 @@ jobs:
           cp ios-unsigned/zephyr-agent-ios-unsigned.zip "zephyr-agent-ios-${VERSION}-unsigned.zip" 2>/dev/null || true
           cp ios-unsigned/zephyr-agent-ios-unsigned.ipa "zephyr-agent-ios-${VERSION}-unsigned.ipa" 2>/dev/null || true
 
+      - name: Generate changelog
+        working-directory: .
+        run: |
+          git fetch --tags
+          CURRENT_TAG="${{ github.event.inputs.tag }}"
+          PREV_TAG=$(git tag --sort=-creatordate | grep '^agent-' | grep -v "^${CURRENT_TAG}$" | head -n 1)
+          {
+            echo "RELEASE_BODY<<EOF"
+            echo "## Zephyr Agent ${CURRENT_TAG}"
+            echo ""
+            echo "Cross-platform file sharing agent for Zephyr RDP drive redirection."
+            echo ""
+            echo "### Downloads"
+            echo "| Platform | File |"
+            echo "|---|---|"
+            echo "| Android APK | \`zephyr-agent-android-arm64-${CURRENT_TAG}.apk\` |"
+            echo "| Android AAB | \`zephyr-agent-android-${CURRENT_TAG}.aab\` |"
+            echo "| Windows installer | \`zephyr-agent-windows-x64-${CURRENT_TAG}-setup.exe\` |"
+            echo "| Windows portable | \`zephyr-agent-windows-x64-${CURRENT_TAG}.zip\` |"
+            echo "| Linux x64 | \`zephyr-agent-linux-x64-${CURRENT_TAG}.tar.gz\` |"
+            echo "| macOS DMG | \`zephyr-agent-macos-universal-${CURRENT_TAG}.dmg\` |"
+            echo "| macOS zip | \`zephyr-agent-macos-universal-${CURRENT_TAG}.zip\` |"
+            echo "| iOS unsigned IPA | \`zephyr-agent-ios-${CURRENT_TAG}-unsigned.ipa\` |"
+            echo "| iOS unsigned zip | \`zephyr-agent-ios-${CURRENT_TAG}-unsigned.zip\` |"
+            echo ""
+            if [ -z "$PREV_TAG" ]; then
+              echo "## 🚀 初始版本"
+              echo ""
+              git log --pretty=format:"- %s (%h)"
+            else
+              echo "## 🚀 更新内容"
+              echo ""
+              echo "**对比**: \`$PREV_TAG\` → \`$CURRENT_TAG\`"
+              echo ""
+              git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)"
+            fi
+            echo ""
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag }}
           name: "Zephyr Agent ${{ github.event.inputs.tag }}"
-          body: |
-            ## Zephyr Agent ${{ github.event.inputs.tag }}
-
-            Cross-platform file sharing agent for Zephyr RDP drive redirection.
-
-            ### Downloads
-            | Platform | File |
-            |---|---|
-            | Android APK | `zephyr-agent-android-arm64-${{ github.event.inputs.tag }}.apk` |
-            | Android AAB | `zephyr-agent-android-${{ github.event.inputs.tag }}.aab` |
-            | Windows installer | `zephyr-agent-windows-x64-${{ github.event.inputs.tag }}-setup.exe` |
-            | Windows portable | `zephyr-agent-windows-x64-${{ github.event.inputs.tag }}.zip` |
-            | Linux x64 | `zephyr-agent-linux-x64-${{ github.event.inputs.tag }}.tar.gz` |
-            | macOS DMG | `zephyr-agent-macos-universal-${{ github.event.inputs.tag }}.dmg` |
-            | macOS zip | `zephyr-agent-macos-universal-${{ github.event.inputs.tag }}.zip` |
-            | iOS unsigned IPA | `zephyr-agent-ios-${{ github.event.inputs.tag }}-unsigned.ipa` |
-            | iOS unsigned zip | `zephyr-agent-ios-${{ github.event.inputs.tag }}-unsigned.zip` |
+          body: ${{ env.RELEASE_BODY }}
           draft: false
           prerelease: false
           files: |

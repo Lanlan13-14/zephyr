@@ -8,3 +8,5 @@ data/
 .gitignore
 .DS_Store
 .vscode/
+# Zephyr Agent is built by .github/workflows/agent.yml, not baked into server images.
+zephyr_agent/
