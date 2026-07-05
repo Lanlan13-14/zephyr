@@ -4331,10 +4331,11 @@ function uploadFile(file) {
 }
 
 function handleSharedFileClipboardAvailable(files = [], sourceTabId = '') {
-    // Just notify the user — actual transfer happens on paste via server
     const list = Array.from(files || []);
     if (!list.length) return;
     sftpClipboardAvailable = true;
+    pendingSharedFileSource = sourceTabId;
+    pendingSharedFileMeta = list;
     updateMobileFileActions();
     const names = list.map((f) => f.name || String(f.path || '').split('/').pop() || 'file').slice(0, 3).join('、');
     showToast(`剪贴板有 ${list.length} 个文件（${names}），右键粘贴或 Ctrl+V 传输到 ${currentPath}`, 'info');
@@ -4342,7 +4343,31 @@ function handleSharedFileClipboardAvailable(files = [], sourceTabId = '') {
 let pendingSharedFileSource = '';
 let pendingSharedFileMeta = [];
 function consumePendingSharedFiles() {
-    // Always try server-side paste first — server knows the clipboard source
+    // If the clipboard source is another tab (RDP) with dataUrl files,
+    // request the actual file data via the parent relay instead of
+    // server-side SFTP paste (which only works for SSH→SSH).
+    if (pendingSharedFileMeta.length && pendingSharedFileSource) {
+        const hasDataUrl = pendingSharedFileMeta.some((f) => f.dataUrl);
+        const hasRemotePath = pendingSharedFileMeta.some((f) => f.remotePath || f.path);
+        if (hasDataUrl) {
+            // RDP source with dataUrl — data is already in the parent's
+            // shared clipboard; consume to get it forwarded as
+            // shared-file-clipboard-data with actual file content.
+            window.parent?.postMessage?.({
+                source: 'zephyr-terminal',
+                type: 'shared-file-clipboard-consume',
+                tabId: params?.tabId,
+                sourceTabId: pendingSharedFileSource,
+                files: pendingSharedFileMeta,
+                sourcePage: 'rdp',
+            }, '*');
+            showToast(`正在从远程桌面获取文件并上传到 ${currentPath}`, 'info');
+            pendingSharedFileSource = '';
+            pendingSharedFileMeta = [];
+            return true;
+        }
+    }
+    // Default: server-side SFTP clipboard paste (SSH→SSH or same connection)
     if (sftpReady && wsConnection && wsConnection.readyState === WebSocket.OPEN) {
         wsConnection.send(JSON.stringify({ type: 'sftp-clipboard-paste', targetDir: currentPath, conflict: 'compatible' }));
         showToast(`正在粘贴到 ${currentPath}`, 'info');

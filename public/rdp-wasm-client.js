@@ -2095,34 +2095,30 @@ function initFilePanel() {
      * Converts ArrayBuffer data to dataUrl for cross-iframe transfer. */
     function broadcastFilesToParent(fileList) {
         if (!fileList.length) return;
-        const files = fileList.map(f => {
-            let dataUrl = '';
-            if (f.data) {
-                const blob = new Blob([f.data]);
-                dataUrl = URL.createObjectURL(blob);
-                /* Convert blob URL to data URL for cross-origin iframe transfer */
-                const reader = new FileReader();
-                reader.onload = () => {
-                    const realDataUrl = reader.result;
+        /* Convert all files to base64 data URLs (cross-origin safe), then
+         * broadcast a single shared-file-clipboard message to the parent. */
+        let pending = fileList.length;
+        const results = [];
+        fileList.forEach((f, i) => {
+            if (!f.data) { pending--; return; }
+            const blob = new Blob([f.data]);
+            const reader = new FileReader();
+            reader.onload = () => {
+                results.push({ name: f.name, size: f.size || 0, path: f.name, dataUrl: reader.result });
+                if (--pending <= 0 && results.length) {
                     window.parent?.postMessage?.({
                         source: 'zephyr-terminal',
                         type: 'shared-file-clipboard',
                         tabId: params.tabId || '',
-                        files: [{ name: f.name, size: f.size || 0, path: f.name, dataUrl: realDataUrl }],
+                        files: results,
                     }, '*');
-                    URL.revokeObjectURL(dataUrl);
-                };
-                reader.readAsDataURL(blob);
-            }
-            return { name: f.name, size: f.size || 0, path: f.name, dataUrl };
+                }
+            };
+            reader.onerror = () => { if (--pending <= 0 && results.length) {
+                window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard', tabId: params.tabId || '', files: results }, '*');
+            }};
+            reader.readAsDataURL(blob);
         });
-        /* Also send immediately with blob URLs for same-origin targets */
-        window.parent?.postMessage?.({
-            source: 'zephyr-terminal',
-            type: 'shared-file-clipboard',
-            tabId: params.tabId || '',
-            files: files.filter(f => f.dataUrl),
-        }, '*');
     }
 
     /* ── Cross-tab clipboard: listen for files from SSH/other RDP tabs ── */
