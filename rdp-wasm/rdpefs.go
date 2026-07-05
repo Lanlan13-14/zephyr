@@ -52,6 +52,13 @@ const (
 	PAKID_CORE_DEVICE_IOCOMPLETION = 0x4943 // Device I/O Completion
 	PAKID_CORE_SERVER_CAPABILITY   = 0x5350 // Server Core Capability
 	PAKID_CORE_CLIENT_CAPABILITY   = 0x4350 // Client Core Capability
+	PAKID_CORE_USER_LOGGEDON       = 0x554C // Server User Logged On ("UL")
+	PAKID_CORE_DEVICELIST_REMOVE   = 0x444D // Client Drive Device List Remove
+)
+
+// rdpdr version minor
+const (
+	RDPDR_VERSION_MINOR_RDP51 = 0x0005
 )
 
 // Device types
@@ -130,10 +137,6 @@ type VirtualFile struct {
 	ModTime  time.Time
 	Data     []byte // file content (loaded lazily from JS)
 	Children map[string]*VirtualFile
-
-	// Directory enumeration state (used during IRP_MN_QUERY_DIRECTORY)
-	enumEntries []*VirtualFile
-	enumIndex   int
 }
 
 // RdpefsHandler implements plugin.ChannelTransport for the rdpdr SVC
@@ -154,6 +157,19 @@ type RdpefsHandler struct {
 	// Virtual filesystem root
 	root        *VirtualFile
 	driveName   string
+
+	// Protocol state
+	userLoggedOn bool
+	announced    bool
+
+	// Directory enumeration state keyed by fileID (not on VirtualFile,
+	// so concurrent queries on the same directory don't clobber each other).
+	dirEnum map[uint32]*dirEnumState
+}
+
+type dirEnumState struct {
+	entries []*VirtualFile
+	index   int
 }
 
 func NewRdpefsHandler(enabled bool) *RdpefsHandler {
@@ -163,7 +179,8 @@ func NewRdpefsHandler(enabled bool) *RdpefsHandler {
 		nextFileID: 1,
 		openFiles: make(map[uint32]*VirtualFile),
 		openPaths: make(map[uint32]string),
-		driveName: "WebDrive",
+		dirEnum:   make(map[uint32]*dirEnumState),
+		driveName: "WEBRDP",
 		root: &VirtualFile{
 			Name:     "",
 			IsDir:    true,
@@ -212,6 +229,8 @@ func (h *RdpefsHandler) Process(data []byte) {
 		h.processDeviceReply(data[4:])
 	case PAKID_CORE_DEVICE_IOREQUEST:
 		h.processIORequest(data[4:])
+	case PAKID_CORE_USER_LOGGEDON:
+		h.processUserLoggedOn()
 	default:
 		slog.Debug("rdpefs: unknown packet", "component", component, "packetID", packetID)
 	}
@@ -276,13 +295,37 @@ func (h *RdpefsHandler) processServerCapability(data []byte) {
 	binary.Write(buf, binary.LittleEndian, uint32(0))   // specialTypeDeviceCap
 	h.send(buf.Bytes())
 
-	// Send Device List Announce (filesystem device)
-	if h.enabled {
+	// Refresh file list from JS.
+	h.refreshFileList()
+
+	// Device announce timing (MS-RDPEFS + FreeRDP rdpdr_main.c:1399):
+	//   - RDP 5.1 servers (versionMinor 0x0005) don't send USER_LOGGEDON,
+	//     so we must announce immediately.
+	//   - Modern Windows sends PAKID_CORE_USER_LOGGEDON; we must wait for it
+	//     before announcing, otherwise the drive is rejected as invalid.
+	if h.enabled && h.versionMinor == RDPDR_VERSION_MINOR_RDP51 {
+		h.announceDevice()
+	}
+}
+
+// processUserLoggedOn is sent by modern Windows after the user session is
+// established. This is the correct point to announce redirected drives.
+func (h *RdpefsHandler) processUserLoggedOn() {
+	slog.Debug("rdpefs: user logged on")
+	h.mu.Lock()
+	h.userLoggedOn = true
+	already := h.announced
+	h.mu.Unlock()
+	if h.enabled && !already {
 		h.announceDevice()
 	}
 }
 
 func (h *RdpefsHandler) announceDevice() {
+	h.mu.Lock()
+	h.announced = true
+	h.mu.Unlock()
+
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_DEVICELIST_ANNOUNCE))
@@ -290,17 +333,25 @@ func (h *RdpefsHandler) announceDevice() {
 
 	// Device entry
 	binary.Write(buf, binary.LittleEndian, uint32(RDPDR_DTYP_FILESYSTEM)) // deviceType
-	binary.Write(buf, binary.LittleEndian, h.deviceID) // deviceId
+	binary.Write(buf, binary.LittleEndian, h.deviceID)                    // deviceId
 
-	// PreferredDosName — 8 bytes, null-padded ASCII
+	// PreferredDosName — exactly 8 bytes, null-padded ASCII (MS-RDPEFS
+	// 2.2.1.3). Windows uses this verbatim as the share name (\\tsclient\NAME).
+	// Must be ≤7 chars + null, uppercase; non-ASCII bytes become '_'.
 	dosName := make([]byte, 8)
-	copy(dosName, []byte(h.driveName)[:min(7, len(h.driveName))])
+	name := strings.ToUpper(h.driveName)
+	for i := 0; i < 7 && i < len(name); i++ {
+		c := name[i]
+		if c > 0x7F {
+			c = '_'
+		}
+		dosName[i] = c
+	}
+	// byte 7 stays 0 (null terminator)
 	buf.Write(dosName)
 
-	// DeviceData — drive name as UTF-16LE for display
-	driveNameUTF16 := encodeUTF16LE(h.driveName)
-	binary.Write(buf, binary.LittleEndian, uint32(len(driveNameUTF16)))
-	buf.Write(driveNameUTF16)
+	// DeviceDataLength — 0 for a filesystem drive (name is in PreferredDosName).
+	binary.Write(buf, binary.LittleEndian, uint32(0))
 
 	h.send(buf.Bytes())
 	slog.Debug("rdpefs: announced filesystem device", "name", h.driveName, "id", h.deviceID)
@@ -348,16 +399,17 @@ func (h *RdpefsHandler) processIORequest(data []byte) {
 }
 
 func (h *RdpefsHandler) handleCreate(completionID uint32, data []byte) {
-	if len(data) < 24 {
+	if len(data) < 32 {
 		h.sendIOCompletion(completionID, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
-	// desiredAccess := binary.LittleEndian.Uint32(data[0:4])
+	desiredAccess := binary.LittleEndian.Uint32(data[0:4])
+	_ = desiredAccess
 	// allocationSize := binary.LittleEndian.Uint64(data[4:12])
 	// fileAttributes := binary.LittleEndian.Uint32(data[12:16])
 	// sharedAccess := binary.LittleEndian.Uint32(data[16:20])
-	// createDisposition := binary.LittleEndian.Uint32(data[20:24])
-	// createOptions := binary.LittleEndian.Uint32(data[24:28])
+	createDisposition := binary.LittleEndian.Uint32(data[20:24])
+	createOptions := binary.LittleEndian.Uint32(data[24:28])
 	pathLen := binary.LittleEndian.Uint32(data[28:32])
 	pathBytes := data[32:]
 	if uint32(len(pathBytes)) < pathLen {
@@ -369,13 +421,46 @@ func (h *RdpefsHandler) handleCreate(completionID uint32, data []byte) {
 	path = strings.ReplaceAll(path, "\\", "/")
 	path = strings.TrimPrefix(path, "/")
 
-	slog.Debug("rdpefs: CREATE", "path", path, "completionID", completionID)
+	slog.Debug("rdpefs: CREATE", "path", path, "disp", createDisposition, "opts", createOptions, "completionID", completionID)
+
+	const (
+		FILE_DIRECTORY_FILE     = 0x00000001
+		FILE_NON_DIRECTORY_FILE = 0x00000040
+		FILE_SUPERSEDE          = 0x00000000
+		FILE_OPEN               = 0x00000001
+		FILE_CREATE             = 0x00000002
+		FILE_OPEN_IF            = 0x00000003
+		FILE_OVERWRITE          = 0x00000004
+		FILE_OVERWRITE_IF       = 0x00000005
+		// Information response values
+		FILE_SUPERSEDED = 0x00000000
+		FILE_OPENED     = 0x00000001
+		FILE_OVERWRITTEN = 0x00000003
+	)
 
 	h.mu.Lock()
 	file := h.resolvePath(path)
 	if file == nil {
 		h.mu.Unlock()
+		// Read-only virtual drive: we don't create new files/dirs.
+		if createDisposition == FILE_CREATE || createDisposition == FILE_OPEN_IF ||
+			createDisposition == FILE_OVERWRITE_IF || createDisposition == FILE_SUPERSEDE {
+			h.sendIOCompletion(completionID, STATUS_ACCESS_DENIED, nil)
+			return
+		}
 		h.sendIOCompletion(completionID, STATUS_NO_SUCH_FILE, nil)
+		return
+	}
+
+	// Validate directory/file expectation against createOptions.
+	if createOptions&FILE_DIRECTORY_FILE != 0 && !file.IsDir {
+		h.mu.Unlock()
+		h.sendIOCompletion(completionID, STATUS_NO_SUCH_FILE, nil)
+		return
+	}
+	if createOptions&FILE_NON_DIRECTORY_FILE != 0 && file.IsDir {
+		h.mu.Unlock()
+		h.sendIOCompletion(completionID, STATUS_ACCESS_DENIED, nil)
 		return
 	}
 
@@ -385,10 +470,10 @@ func (h *RdpefsHandler) handleCreate(completionID uint32, data []byte) {
 	h.openPaths[fid] = path
 	h.mu.Unlock()
 
-	// Send success with fileID
+	// Send success with fileID + Information (FILE_OPENED for existing objects).
 	resp := &bytes.Buffer{}
-	binary.Write(resp, binary.LittleEndian, fid)  // FileId
-	binary.Write(resp, binary.LittleEndian, uint8(0)) // Information (FILE_OPENED)
+	binary.Write(resp, binary.LittleEndian, fid)             // FileId (4)
+	binary.Write(resp, binary.LittleEndian, uint8(FILE_OPENED)) // Information (1)
 	h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
 }
 
@@ -396,8 +481,10 @@ func (h *RdpefsHandler) handleClose(completionID uint32, fileID uint32) {
 	h.mu.Lock()
 	delete(h.openFiles, fileID)
 	delete(h.openPaths, fileID)
+	delete(h.dirEnum, fileID)
 	h.mu.Unlock()
-	h.sendIOCompletion(completionID, STATUS_SUCCESS, nil) // padding 5 bytes
+	// DR_CLOSE_RSP: Padding (5 bytes) per MS-RDPEFS 2.2.1.5.2.
+	h.sendIOCompletion(completionID, STATUS_SUCCESS, make([]byte, 5))
 }
 
 func (h *RdpefsHandler) handleRead(completionID uint32, fileID uint32, data []byte) {
@@ -516,11 +603,10 @@ func (h *RdpefsHandler) handleDirectoryControl(completionID uint32, fileID uint3
 	if initialQuery != 0 {
 		// Build list of entries: "." + ".." + children
 		entries := make([]*VirtualFile, 0)
-		// Add . and ..
 		entries = append(entries, &VirtualFile{Name: ".", IsDir: true, ModTime: dir.ModTime})
 		entries = append(entries, &VirtualFile{Name: "..", IsDir: true, ModTime: dir.ModTime})
 		for _, child := range dir.Children {
-			if pattern == "" || pattern == "*" || matchPattern(pattern, child.Name) {
+			if pattern == "" || pattern == "*" || pattern == "*.*" || matchPattern(pattern, child.Name) {
 				entries = append(entries, child)
 			}
 		}
@@ -530,15 +616,10 @@ func (h *RdpefsHandler) handleDirectoryControl(completionID uint32, fileID uint3
 			return
 		}
 
-		// Send first entry
+		// Send the first entry; stash the rest keyed by fileID.
 		entryBuf := h.buildDirectoryEntry(entries[0], infoClass)
-
-		// Store remaining entries for subsequent calls
 		h.mu.Lock()
-		h.openFiles[fileID] = dir
-		// Store enumeration state using a simple approach: attach to dir
-		dir.enumEntries = entries[1:]
-		dir.enumIndex = 0
+		h.dirEnum[fileID] = &dirEnumState{entries: entries[1:], index: 0}
 		h.mu.Unlock()
 
 		resp := &bytes.Buffer{}
@@ -546,20 +627,19 @@ func (h *RdpefsHandler) handleDirectoryControl(completionID uint32, fileID uint3
 		resp.Write(entryBuf)
 		h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
 	} else {
-		// Continue enumeration
+		// Continue enumeration for this fileID.
 		h.mu.Lock()
-		remaining := dir.enumEntries
-		idx := dir.enumIndex
+		st := h.dirEnum[fileID]
 		h.mu.Unlock()
 
-		if remaining == nil || idx >= len(remaining) {
+		if st == nil || st.index >= len(st.entries) {
 			h.sendIOCompletion(completionID, STATUS_NO_MORE_FILES, nil)
 			return
 		}
 
-		entry := remaining[idx]
+		entry := st.entries[st.index]
 		h.mu.Lock()
-		dir.enumIndex++
+		st.index++
 		h.mu.Unlock()
 
 		entryBuf := h.buildDirectoryEntry(entry, infoClass)
@@ -579,7 +659,7 @@ func (h *RdpefsHandler) handleQueryVolume(completionID uint32, data []byte) {
 
 	switch infoClass {
 	case 1: // FileFsVolumeInformation
-		label := encodeUTF16LE(h.driveName)
+		label := encodeUTF16LENoNull(h.driveName)
 		info := &bytes.Buffer{}
 		binary.Write(info, binary.LittleEndian, int64(0))           // VolumeCreationTime
 		binary.Write(info, binary.LittleEndian, uint32(0x12345678)) // VolumeSerialNumber
@@ -603,8 +683,17 @@ func (h *RdpefsHandler) handleQueryVolume(completionID uint32, data []byte) {
 		resp.Write(info.Bytes())
 		h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
 
+	case 4: // FileFsDeviceInformation — required for the drive to initialise
+		info := &bytes.Buffer{}
+		binary.Write(info, binary.LittleEndian, uint32(0x00000007)) // DeviceType = FILE_DEVICE_DISK
+		binary.Write(info, binary.LittleEndian, uint32(0x00000020)) // Characteristics = FILE_REMOTE_DEVICE
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(info.Len()))
+		resp.Write(info.Bytes())
+		h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
+
 	case 5: // FileFsAttributeInformation
-		fsName := encodeUTF16LE("FAT32")
+		fsName := encodeUTF16LENoNull("FAT32")
 		info := &bytes.Buffer{}
 		binary.Write(info, binary.LittleEndian, uint32(0x00000003)) // FileSystemAttributes (CASE_SENSITIVE|UNICODE)
 		binary.Write(info, binary.LittleEndian, uint32(255))         // MaxComponentNameLen
@@ -684,6 +773,11 @@ func (h *RdpefsHandler) buildAttributeTagInfo(f *VirtualFile) []byte {
 
 func (h *RdpefsHandler) buildDirectoryEntry(f *VirtualFile, infoClass uint32) []byte {
 	name := encodeUTF16LE(f.Name)
+	// encodeUTF16LE appends a null terminator; directory entries must NOT
+	// include it in the name field, so strip the trailing 2 bytes.
+	if len(name) >= 2 {
+		name = name[:len(name)-2]
+	}
 	buf := &bytes.Buffer{}
 	ft := windowsFileTime(f.ModTime)
 	attrs := uint32(FILE_ATTRIBUTE_ARCHIVE)
@@ -695,22 +789,58 @@ func (h *RdpefsHandler) buildDirectoryEntry(f *VirtualFile, infoClass uint32) []
 		size = int64(len(f.Data))
 	}
 
-	// FileBothDirectoryInformation format
-	binary.Write(buf, binary.LittleEndian, uint32(0))  // NextEntryOffset
-	binary.Write(buf, binary.LittleEndian, uint32(0))  // FileIndex
-	binary.Write(buf, binary.LittleEndian, ft)          // CreationTime
-	binary.Write(buf, binary.LittleEndian, ft)          // LastAccessTime
-	binary.Write(buf, binary.LittleEndian, ft)          // LastWriteTime
-	binary.Write(buf, binary.LittleEndian, ft)          // ChangeTime
-	binary.Write(buf, binary.LittleEndian, size)        // EndOfFile
-	binary.Write(buf, binary.LittleEndian, size)        // AllocationSize
-	binary.Write(buf, binary.LittleEndian, attrs)       // FileAttributes
-	binary.Write(buf, binary.LittleEndian, uint32(len(name))) // FileNameLength
-	binary.Write(buf, binary.LittleEndian, uint32(0))   // EaSize
-	binary.Write(buf, binary.LittleEndian, uint8(0))    // ShortNameLength
-	binary.Write(buf, binary.LittleEndian, uint8(0))    // Reserved
-	buf.Write(make([]byte, 24))                          // ShortName (24 bytes)
-	buf.Write(name)
+	switch infoClass {
+	case FileNamesInformation:
+		// NextEntryOffset(4) FileIndex(4) FileNameLength(4) FileName
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
+		buf.Write(name)
+
+	case FileDirectoryInformation:
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // NextEntryOffset
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // FileIndex
+		binary.Write(buf, binary.LittleEndian, ft)        // CreationTime
+		binary.Write(buf, binary.LittleEndian, ft)        // LastAccessTime
+		binary.Write(buf, binary.LittleEndian, ft)        // LastWriteTime
+		binary.Write(buf, binary.LittleEndian, ft)        // ChangeTime
+		binary.Write(buf, binary.LittleEndian, size)      // EndOfFile
+		binary.Write(buf, binary.LittleEndian, size)      // AllocationSize
+		binary.Write(buf, binary.LittleEndian, attrs)     // FileAttributes
+		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
+		buf.Write(name)
+
+	case FileFullDirectoryInformation:
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // NextEntryOffset
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // FileIndex
+		binary.Write(buf, binary.LittleEndian, ft)        // CreationTime
+		binary.Write(buf, binary.LittleEndian, ft)        // LastAccessTime
+		binary.Write(buf, binary.LittleEndian, ft)        // LastWriteTime
+		binary.Write(buf, binary.LittleEndian, ft)        // ChangeTime
+		binary.Write(buf, binary.LittleEndian, size)      // EndOfFile
+		binary.Write(buf, binary.LittleEndian, size)      // AllocationSize
+		binary.Write(buf, binary.LittleEndian, attrs)     // FileAttributes
+		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // EaSize
+		buf.Write(name)
+
+	default: // FileBothDirectoryInformation (3)
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // NextEntryOffset
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // FileIndex
+		binary.Write(buf, binary.LittleEndian, ft)        // CreationTime
+		binary.Write(buf, binary.LittleEndian, ft)        // LastAccessTime
+		binary.Write(buf, binary.LittleEndian, ft)        // LastWriteTime
+		binary.Write(buf, binary.LittleEndian, ft)        // ChangeTime
+		binary.Write(buf, binary.LittleEndian, size)      // EndOfFile
+		binary.Write(buf, binary.LittleEndian, size)      // AllocationSize
+		binary.Write(buf, binary.LittleEndian, attrs)     // FileAttributes
+		binary.Write(buf, binary.LittleEndian, uint32(len(name))) // FileNameLength
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // EaSize
+		binary.Write(buf, binary.LittleEndian, uint8(0))  // ShortNameLength
+		binary.Write(buf, binary.LittleEndian, uint8(0))  // Reserved
+		buf.Write(make([]byte, 24))                        // ShortName (24 bytes)
+		buf.Write(name)
+	}
 	return buf.Bytes()
 }
 
@@ -795,6 +925,16 @@ func encodeUTF16LE(s string) []byte {
 	return buf
 }
 
+func encodeUTF16LENoNull(s string) []byte {
+	runes := utf16.Encode([]rune(s))
+	buf := make([]byte, len(runes)*2)
+	for i, r := range runes {
+		buf[i*2] = byte(r)
+		buf[i*2+1] = byte(r >> 8)
+	}
+	return buf
+}
+
 func decodeUTF16LE(b []byte) string {
 	if len(b) < 2 {
 		return ""
@@ -822,11 +962,4 @@ func matchPattern(pattern, name string) bool {
 	pattern = strings.ToLower(pattern)
 	name = strings.ToLower(name)
 	return strings.Contains(name, strings.ReplaceAll(pattern, "*", ""))
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
