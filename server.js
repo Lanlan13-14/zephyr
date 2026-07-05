@@ -1756,7 +1756,9 @@ app.post('/api/connections', requireAuth, (req, res) => {
         conn.rdpLocation = !!body.rdpLocation;
         conn.rdpStorage = !!body.rdpStorage;
         conn.rdpCamera = !!body.rdpCamera;
-        conn.rdpResolution = ['auto', '1920x1080', '2560x1440', '3840x2160', '7680x4320'].includes(body.rdpResolution) ? body.rdpResolution : 'auto';
+        conn.rdpResolution = ['auto', '1080p', '2K', '4K', '8K'].includes(body.rdpResolution) ? body.rdpResolution : '1080p';
+        conn.rdpQuality = ['balanced', 'performance', 'quality'].includes(body.rdpQuality) ? body.rdpQuality : 'balanced';
+        conn.rdpFps = [30, 45, 60, 120, 144].includes(Number(body.rdpFps)) ? Number(body.rdpFps) : 30;
         conn.rdpDomain = String(body.rdpDomain || '').trim();
     }
     applyConnectionRouteFields(conn, body);
@@ -1787,7 +1789,9 @@ app.put('/api/connections/:id', requireAuth, (req, res) => {
         if (body.rdpLocation !== undefined) conn.rdpLocation = !!body.rdpLocation;
         if (body.rdpStorage !== undefined) conn.rdpStorage = !!body.rdpStorage;
         if (body.rdpCamera !== undefined) conn.rdpCamera = !!body.rdpCamera;
-        if (body.rdpResolution !== undefined) conn.rdpResolution = ['auto', '1920x1080', '2560x1440', '3840x2160', '7680x4320'].includes(body.rdpResolution) ? body.rdpResolution : 'auto';
+        if (body.rdpResolution !== undefined) conn.rdpResolution = ['auto', '1080p', '2K', '4K', '8K'].includes(body.rdpResolution) ? body.rdpResolution : '1080p';
+        if (body.rdpQuality !== undefined) conn.rdpQuality = ['balanced', 'performance', 'quality'].includes(body.rdpQuality) ? body.rdpQuality : 'balanced';
+        if (body.rdpFps !== undefined) conn.rdpFps = [30, 45, 60, 120, 144].includes(Number(body.rdpFps)) ? Number(body.rdpFps) : 30;
         if (body.rdpDomain !== undefined) conn.rdpDomain = String(body.rdpDomain || '').trim();
     }
     conn.updatedAt = Date.now();
@@ -1841,7 +1845,7 @@ app.post('/api/rdp/credentials', requireAuth, (req, res) => {
     const domainMatch = username.match(/^([^\\]+)\\(.+)$/);
     if (!domain && domainMatch) { domain = domainMatch[1]; username = domainMatch[2]; }
     console.info('[rdp-credentials]', 'issued', { connectionId, host: conn.host, user: username, sessionUser: req.session?.username });
-    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false, rdpResolution: conn.rdpResolution || 'auto', rdpMicrophone: !!conn.rdpMicrophone, rdpLocation: !!conn.rdpLocation, rdpStorage: !!conn.rdpStorage, rdpCamera: !!conn.rdpCamera });
+    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false, rdpResolution: conn.rdpResolution || '1080p', rdpQuality: conn.rdpQuality || 'balanced', rdpFps: conn.rdpFps || 30, rdpMicrophone: !!conn.rdpMicrophone, rdpLocation: !!conn.rdpLocation, rdpStorage: !!conn.rdpStorage, rdpCamera: !!conn.rdpCamera });
 });
 
 

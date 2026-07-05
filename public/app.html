@@ -172,11 +172,7 @@
                                 </div>
                                 <p class="field-hint">上传图片最高 12MB；URL 适合使用 CDN/对象存储图片。</p>
                                 <div class="form-row">
-                                    <div class="form-group"><label>RDP 默认分辨率</label><select id="rdpDefaultResolution"><option value="auto">自动（跟随窗口）</option><option value="1920x1080">1080p (1920×1080)</option><option value="2560x1440">2K (2560×1440)</option><option value="3840x2160">4K (3840×2160)</option><option value="7680x4320">8K (7680×4320)</option></select></div>
-                                    <div class="form-group"><label>RDP 默认画质</label><select id="rdpDefaultQuality"><option value="balanced">平衡</option><option value="performance">性能</option><option value="quality">画质</option></select></div>
-                                    <div class="form-group"><label>RDP 帧率</label><select id="rdpDefaultFps"><option value="30">30 FPS</option><option value="45">45 FPS</option><option value="60">60 FPS</option><option value="120">120 FPS</option><option value="144">144 FPS</option></select></div>
                                 </div>
-                                <p class="field-hint">2K/4K 需要较高带宽和服务器 CPU；画质模式更吃 CPU 但画面更清晰。</p>
                                 <div class="form-actions">
                                     <button class="btn btn-primary" type="submit">保存外观</button>
                                     <button class="btn" type="button" id="settingsThemeToggle">切换深色/浅色模式</button>
@@ -456,7 +452,9 @@
                 <div class="rdp-toggle-row"><span>位置</span><label class="rdp-toggle"><input type="checkbox" id="rdpLocation"><span class="rdp-toggle-slider"></span></label></div>
                 <h3 style="margin-top:16px">显示</h3>
                 <div class="advanced-route-divider"></div>
-                <div class="form-group rdp-select-group"><label for="rdpResolution">自定义显示器分辨率</label><select id="rdpResolution"><option value="auto">匹配此设备</option><option value="1920x1080">1920×1080 (1080p)</option><option value="2560x1440">2560×1440 (2K)</option><option value="3840x2160">3840×2160 (4K)</option><option value="7680x4320">7680×4320 (8K)</option></select></div>
+                <div class="form-group rdp-select-group"><label for="rdpResolution">分辨率</label><select id="rdpResolution"><option value="auto">自动（匹配此设备）</option><option value="1080p">1080p</option><option value="2K">2K</option><option value="4K">4K</option><option value="8K">8K</option></select></div>
+                <div class="form-group rdp-select-group"><label for="rdpQuality">画质</label><select id="rdpQuality"><option value="balanced">平衡</option><option value="performance">性能</option><option value="quality">画质</option></select></div>
+                <div class="form-group rdp-select-group"><label for="rdpFps">帧率</label><select id="rdpFps"><option value="30">30 FPS</option><option value="45">45 FPS</option><option value="60">60 FPS</option><option value="120">120 FPS</option><option value="144">144 FPS</option></select></div>
             </section>
             <div class="form-group"><label>备注（支持 Markdown）</label><textarea id="connRemark" placeholder="例如：**生产环境**\n`docker ps`"></textarea></div>
             <div class="modal-actions"><button type="button" class="btn" id="testConnectionBtn">测试连接</button><span class="connection-test-latency" id="connectionTestLatency" aria-live="polite"></span><button type="button" class="btn" id="cancelModalBtn">取消</button><button class="btn btn-primary" type="submit">保存</button></div>

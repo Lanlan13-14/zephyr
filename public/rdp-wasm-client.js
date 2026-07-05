@@ -78,7 +78,11 @@ const CONNECT_TIMEOUT_MS = 12000;
 const qualityModes = ['balanced', 'performance', 'quality'];
 let qualityMode = 'balanced';
 const fpsModes = [30, 45, 60, 120, 144];
-let fpsValue = 60;
+let fpsValue = 30;
+
+/* Apply connection-level quality/fps from params (set by connection editor). */
+if (params.quality && qualityModes.includes(params.quality)) qualityMode = params.quality;
+if (params.rdpFps && fpsModes.includes(Number(params.rdpFps))) fpsValue = Number(params.rdpFps);
 
 /* Audio */
 let audioCtx = null;
@@ -1294,7 +1298,8 @@ function computeRdpSize() {
      *   2K    → short edge = 1440
      *   4K    → short edge = 2160
      * The tier fills the SAME region at the SAME PPI on every edge. */
-    const res = params.rdpResolution || 'auto';
+    const res = params.rdpResolution || '1080p';
+    const wxhMatch = res.match(/^(\d+)x(\d+)$/);
 
     /* Measure the display container's real aspect ratio. */
     const stage = document.getElementById('rdpStage');
@@ -1307,7 +1312,13 @@ function computeRdpSize() {
     const aspect = cw / ch; /* width / height of the region we must fill */
 
     let w, h;
-    if (res === 'auto' || !/^\d+p?$|^[0-9]+K$/i.test(res)) {
+    if (wxhMatch) {
+        /* Legacy WxH format (e.g. '1920x1080' from old saved connections):
+         * honour the short edge as a PPI tier, keep container aspect. */
+        const shortPx = Math.min(Number(wxhMatch[1]), Number(wxhMatch[2]));
+        if (aspect >= 1) { h = shortPx; w = Math.round(h * aspect); }
+        else { w = shortPx; h = Math.round(w / aspect); }
+    } else if (res === 'auto' || !/^\d+p?$|^[0-9]+K$/i.test(res)) {
         /* Auto: device physical pixels, capped so the long edge ≤ 4K. */
         const dpr = window.devicePixelRatio || 1;
         w = Math.round(cw * dpr);
@@ -1316,7 +1327,7 @@ function computeRdpSize() {
         /* Density tier: short edge = tier pixels, long edge = short / minRatio
          * so the SHORT dimension carries the tier's PPI and the region keeps
          * the container's exact shape. */
-        const tierShort = { '1080p': 1080, '2K': 1440, '4K': 2160 }[res] || 1080;
+        const tierShort = { '1080p': 1080, '2K': 1440, '4K': 2160, '8K': 4320 }[res] || 1080;
         if (aspect >= 1) {
             /* landscape container: height is the short edge */
             h = tierShort;
@@ -1644,10 +1655,13 @@ function initToolbar() {
     }
 
     /* Resolution button — density tiers (aspect always follows the screen). */
-    const resolutions = ['auto', '1080p', '2K', '4K'];
-    const resLabels = { 'auto': '自动', '1080p': '1080p', '2K': '2K', '4K': '4K' };
-    let resIdx = resolutions.indexOf(params.rdpResolution);
-    if (resIdx < 0) resIdx = 0;
+    const resolutions = ['auto', '1080p', '2K', '4K', '8K'];
+    const resLabels = { 'auto': '自动', '1080p': '1080p', '2K': '2K', '4K': '4K', '8K': '8K' };
+    /* Map legacy WxH values from old saved sessions to new tier names. */
+    const legacyMap = { '1920x1080': '1080p', '2560x1440': '2K', '3840x2160': '4K', '7680x4320': '8K' };
+    const currentRes = legacyMap[params.rdpResolution] || params.rdpResolution || '1080p';
+    let resIdx = resolutions.indexOf(currentRes);
+    if (resIdx < 0) resIdx = 1; /* default 1080p */
     if (resolutionBtn) {
         resolutionBtn.textContent = resLabels[resolutions[resIdx]] || '自动';
         resolutionBtn.addEventListener('click', () => {
