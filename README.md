@@ -13,6 +13,7 @@
 - [配置说明](#配置说明)
 - [AI 助理智能体](#ai-助理智能体)
 - [RDP / VNC / noVNC](#rdp--vnc--novnc)
+- [Zephyr Agent 文件磁盘映射](#zephyr-agent-文件磁盘映射)
 - [Docker Compose 部署](#docker-compose-部署)
 - [Docker 自行构建](#docker-自行构建)
 - [更新容器并保留数据](#更新容器并保留数据)
@@ -33,6 +34,7 @@
 - 📱 **移动端友好**：支持移动端长按、拖拽选择和系统复制菜单。
 - 🗂️ **连接资产管理**：支持 SSH / RDP / VNC 连接管理、搜索、排序、标签和备注。
 - 🖥️ **RDP / VNC 远程桌面**：RDP 使用纯 Go WASM 方案（grdp），全部协议处理和渲染在浏览器端完成——不依赖服务端 FreeRDP、Python 或任何 native 组件。支持 H.264 WebCodecs 硬解、Canvas 2D 位图渲染、RDPGFX/RemoteFX Progressive、画质/FPS/分辨率（PPI 档位：1080p/2K/4K/8K/自动）、移动端软键盘（含 IME 中文输入）、快捷键、视区摇杆（速度模式无限平移）、浮窗布局菜单（全屏/半屏/四分之一/关闭）、双指滚动缩放、剪贴板双向同步、跨标签文件传输。VNC 使用内置 noVNC 页面和 Zephyr WebSocket 代理。
+- 💽 **Zephyr Agent 磁盘映射**：独立 Flutter Agent 应用主动连接 Zephyr 主端，把本机文件系统映射为 RDP 会话里的 `\\tsclient` 虚拟磁盘。支持 Android / Windows / Linux / macOS / iOS 构建；桌面端默认映射整盘/根目录，Android 默认映射 `/storage/emulated/0` 并引导授予“所有文件访问权限”，也支持 SAF 授权目录降级。
 - 🧭 **代理与跳板路由**：支持 SOCKS5 / HTTP CONNECT 代理、SSH 跳板机和多级 SSH 跳板链路。
 - ⚡ **远程批量执行**：可对多个 SSH 连接批量执行命令并查看结果。
 - 🧰 **远程运维能力**：支持远程状态监控、Docker 容器/镜像查看、日志查看、镜像拉取等 SSH 运维操作。
@@ -389,6 +391,59 @@ VNC：
 
 ---
 
+## Zephyr Agent 文件磁盘映射
+
+Zephyr Agent 是独立于 Web 服务端的跨平台 Flutter 应用，用于把运行 Agent 的设备文件系统映射到当前 WebRDP 会话中。它不是 RDP 客户端，也不是简单上传/下载工具；它的定位是 **RDP drive redirection 文件系统代理**。
+
+链路：
+
+```text
+Windows RDP 会话
+  -> \\tsclient\AgentDrive
+  -> 浏览器 Go WASM RDPEFS/RDPDR
+  -> Zephyr 主端 /api/rdp/file-agents RPC
+  -> Zephyr Agent WebSocket
+  -> 本机文件 provider（桌面 dart:io / Android SAF 或 All files access）
+```
+
+### 能力
+
+- **多设备映射**：多个 Agent 可同时在线，每个 Agent 可映射为一个独立 `\\tsclient\<设备名>` 磁盘。
+- **热插拔**：RDP 会话运行中 Agent 上线/下线后，可动态 attach/detach 对应 drive。
+- **文件系统 RPC**：支持 `list/stat/open/read/write/close/mkdir/delete/rename/truncate`。
+- **读写控制**：Agent 可切换只读 / 读写；只读模式会拒绝写入、删除、重命名等操作。
+- **自动关闭共享**：默认 10 分钟自动关闭，可在 Agent 内延长。
+- **连接信息保存**：主端地址、token、设备名、共享位置、权限和主题会保存在本机，下次打开自动恢复。
+- **Zephyr 主题一致**：Agent 使用 Zephyr 的 Frost / Lava / Asagi / Cyber 配色，并跟随系统自动切换深色/浅色。
+
+### 平台行为
+
+| 平台 | 默认映射 | 说明 |
+| --- | --- | --- |
+| Windows Agent | `C:\` | 默认映射系统盘，可改成任意本机路径 |
+| macOS Agent | `/` | 默认映射根目录，受 macOS 文件/隐私权限限制 |
+| Linux Agent | `/` | 默认映射根目录，实际可读写范围取决于当前用户权限 |
+| Android Agent | `/storage/emulated/0` | 默认请求 Android `MANAGE_EXTERNAL_STORAGE`（所有文件访问权限）；未授权时会打开系统授权页，也可降级到 SAF 授权目录 |
+| iOS Agent | 用户授权目录 | iOS 沙盒限制下不能无授权扫描全盘，需要用户选择/授权目录 |
+
+> Android 的“全目录”不是 root 全盘。它对应文件管理器常用的 `MANAGE_EXTERNAL_STORAGE`，可访问共享外部存储（如 `/storage/emulated/0`），但不能读取其他 App 私有目录（如 `/data/data/其他App`）。若要 root 级访问，需要设备 root/Shizuku/系统权限。
+
+### 安装包与 Release
+
+Zephyr Agent 由独立 GitHub Actions workflow 构建，默认发布 tag 为 `agent-v1.0.0`。Release 会生成：
+
+- Android：`.apk`、`.aab`
+- Windows：安装包 `.exe`、便携版 `.zip`
+- Linux：`.tar.gz`
+- macOS：`.dmg`、`.zip`
+- iOS：unsigned `.ipa`、`.zip`
+
+Agent Release 会像服务端 Docker Release 一样生成更新日志；Agent tag 使用 `agent-*` 前缀，避免和服务端镜像 `v*` tag 混在一起。
+
+Agent 构建产物不会被打进 Zephyr 服务端 Docker 镜像；`.dockerignore` 已排除 `zephyr_agent/`。
+
+---
+
 ## Docker Compose 部署
 
 Docker Compose 适合长期部署和后续升级维护。下面示例使用官方镜像，并把运行数据持久化到宿主机 `./zephyr-data` 目录。
@@ -660,6 +715,7 @@ zephyr-ssh/
 │   ├── preview/image/   # 图片预览前端模块（Viewer.js UI 接入与样式）
 │   ├── rdp.html          # RDP 远程桌面页面（Go WASM grdp）
 │   ├── rdp-wasm-client.js # RDP 前端逻辑（渲染、输入、文件、剪贴板）
+│   ├── rdp-fs-provider.js  # Zephyr Agent 文件 RPC / RDP drive bridge
 │   ├── rdp-touch.js       # RDP 移动端触控（单指/双指/三指手势）
 │   ├── novnc.html       # VNC noVNC 远程桌面页面
 │   ├── novnc.js         # VNC noVNC 前端逻辑
@@ -669,7 +725,13 @@ zephyr-ssh/
 │   ├── crypto/          # ML-KEM-768 数据字段加密密钥（必须随数据目录持久化和备份）
 │   └── zephyr.db        # SQLite 数据库
 ├── preview/image/       # 图片预览后端模块（Sharp 转码、ImageMagick 兜底、缓存）
+├── zephyr_agent/        # Zephyr Agent Flutter 应用（RDP 磁盘映射文件系统代理）
+│   ├── lib/             # Dart UI、状态机、文件 provider
+│   ├── android_host/    # Android SAF / MANAGE_EXTERNAL_STORAGE MethodChannel host
+│   ├── platform_assets/ # Agent 平台图标资源
+│   └── tool/            # CI 中注入平台 host code / 图标 / app metadata 的脚本
 ├── server.js            # 后端服务、API、WebSocket、协议路由
+├── file-agent-manager.js # Zephyr Agent 注册、token、RPC 转发与 SSE 在线状态
 ├── storage.js           # SQLite 存储层
 ├── stats.js             # 远程状态采集
 ├── rdp-wasm/            # Go WASM RDP 客户端源码
