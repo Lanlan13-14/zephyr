@@ -64,10 +64,15 @@ let rdpHeight = 0;
 const fitModes = ['adapt', 'original', 'fill'];
 let fitModeIdx = 0;
 let rdpScaleZoom = 1;
+let zoomPanX = 0;
+let zoomPanY = 0;
 
 /* Fill mode viewport panning (0-100%) */
 let fillPanX = 50; /* center */
 let fillPanY = 50;
+
+let connectWatchdogTimer = null;
+const CONNECT_TIMEOUT_MS = 20000;
 
 /* Quality/FPS — kept for UI compat; WASM grdp doesn't need these */
 const qualityModes = ['balanced', 'performance', 'quality'];
@@ -126,6 +131,7 @@ async function loadWasm() {
 
 /* Called by Go when RDP session is ready */
 window.rdpOnReady = function () {
+    clearConnectWatchdog();
     setStatus('connected', 'RDP 已连接');
     connected = true;
     rdpReconnectAttempts = 0;
@@ -136,6 +142,7 @@ window.rdpOnReady = function () {
 /* Called by Go on error */
 window.rdpOnError = function (msg) {
     console.warn('[rdp-wasm] error:', msg);
+    clearConnectWatchdog();
     if (connected) {
         setStatus('error', `RDP 错误: ${msg}`);
         connected = false;
@@ -143,18 +150,25 @@ window.rdpOnError = function (msg) {
         maybeAutoReconnect();
     } else {
         setStatus('error', `RDP 连接失败: ${msg}`);
+        maybeAutoReconnect();
     }
 };
 
 /* Called by Go on connection close */
 window.rdpOnClose = function () {
     console.info('[rdp-wasm] connection closed');
+    clearConnectWatchdog();
     if (connected) {
         connected = false;
         setStatus('disconnected', '连接已断开');
         notifyParentStatus('closed');
         cleanupAudio();
         cleanupH264();
+        maybeAutoReconnect();
+    } else if (!rdpManualDisconnect) {
+        cleanupAudio();
+        cleanupH264();
+        setStatus('disconnected', '连接已关闭，准备重连');
         maybeAutoReconnect();
     }
 };
@@ -694,6 +708,41 @@ function proxyWsUrl() {
     return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
 }
 
+function clearConnectWatchdog() {
+    if (connectWatchdogTimer) {
+        clearTimeout(connectWatchdogTimer);
+        connectWatchdogTimer = null;
+    }
+}
+
+function startConnectWatchdog() {
+    clearConnectWatchdog();
+    connectWatchdogTimer = setTimeout(() => {
+        connectWatchdogTimer = null;
+        if (connected || rdpManualDisconnect) return;
+        console.warn('[rdp-wasm] connect watchdog timeout');
+        setStatus('error', 'RDP 连接超时，正在重试...');
+        try { rdpDisconnect(); } catch {}
+        cleanupAudio();
+        cleanupH264();
+        maybeAutoReconnect();
+    }, CONNECT_TIMEOUT_MS);
+}
+
+function reconnectWithSettings() {
+    if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
+    rdpManualDisconnect = false;
+    connected = false;
+    try { rdpDisconnect(); } catch {}
+    cleanupAudio();
+    cleanupH264();
+    connect().catch((e) => {
+        console.warn('[rdp-wasm] reconnectWithSettings failed:', e);
+        setStatus('error', `RDP 重连失败: ${e.message || e}`);
+        maybeAutoReconnect();
+    });
+}
+
 async function connect() {
     if (!wasmReady) await loadWasm();
 
@@ -798,14 +847,16 @@ async function connect() {
 
     /* rdpConnect is exposed by Go WASM */
     const hasWebCodecs = h264Supported();
-    /* Wallpaper follows quality mode: only "quality" streams the desktop
-     * background; balanced/performance keep it off to save bandwidth. */
-    const wallpaperOn = qualityMode === 'quality';
+    /* Balanced and quality keep wallpaper + desktop effects. Only performance
+     * mode disables expensive visuals. */
+    const wallpaperOn = qualityMode !== 'performance';
+    startConnectWatchdog();
     rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, !!params.rdpStorage, !!params.rdpCamera, hasWebCodecs, wallpaperOn);
 }
 
 function disconnect() {
     rdpManualDisconnect = true;
+    clearConnectWatchdog();
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     connected = false;
     try { rdpDisconnect(); } catch {}
@@ -863,6 +914,26 @@ function ensureCanvas(w, h) {
     attachInputEvents();
 }
 
+function clampZoomPan() {
+    if (!rdpCanvas || !displayShell || rdpScaleZoom <= 1) {
+        zoomPanX = 0;
+        zoomPanY = 0;
+        return;
+    }
+    const shellRect = displayShell.getBoundingClientRect();
+    const maxX = Math.max(0, (shellRect.width * (rdpScaleZoom - 1)) / (2 * rdpScaleZoom));
+    const maxY = Math.max(0, (shellRect.height * (rdpScaleZoom - 1)) / (2 * rdpScaleZoom));
+    zoomPanX = Math.max(-maxX, Math.min(maxX, zoomPanX));
+    zoomPanY = Math.max(-maxY, Math.min(maxY, zoomPanY));
+}
+
+function applyViewTransform() {
+    if (!rdpCanvas) return;
+    clampZoomPan();
+    rdpCanvas.style.transformOrigin = 'center center';
+    rdpCanvas.style.transform = `translate(${zoomPanX}px, ${zoomPanY}px) scale(${rdpScaleZoom})`;
+}
+
 function applyFitMode() {
     if (!rdpCanvas) return;
     const mode = fitModes[fitModeIdx];
@@ -901,6 +972,8 @@ function applyFitMode() {
         rdpCanvas.style.maxWidth = '100%';
         rdpCanvas.style.maxHeight = '100%';
     }
+
+    applyViewTransform();
 
     if (displayShell) {
         displayShell.style.overflow = 'hidden';
@@ -1043,7 +1116,7 @@ function attachInputEvents() {
             sendMouseWheel: (delta) => rdpMouseWheel(delta),
             onZoomChange: (zoom) => {
                 rdpScaleZoom = zoom;
-                if (rdpCanvas) rdpCanvas.style.transform = `scale(${zoom})`;
+                applyViewTransform();
                 const zs = document.getElementById('zoomSlider');
                 const zv = document.getElementById('zoomValue');
                 if (zs) zs.value = Math.round(zoom * 100);
@@ -1166,44 +1239,57 @@ function isPortraitTouch() {
     return !!coarse && (window.innerHeight || 0) >= (window.innerWidth || 0);
 }
 function computeRdpSize() {
+    /* Resolution model: the remote desktop ALWAYS matches the display
+     * container's real aspect ratio (so object-fit:contain leaves NO black
+     * bars). The "resolution" setting is a *pixel-density tier* that only
+     * controls sharpness/bandwidth — NOT the shape:
+     *   auto  → device physical pixels (container CSS size × dpr)
+     *   1080p → short edge = 1080, long edge scaled to container aspect
+     *   2K    → short edge = 1440
+     *   4K    → short edge = 2160
+     * The tier fills the SAME region at the SAME PPI on every edge. */
     const res = params.rdpResolution || 'auto';
-    const m = res.match(/^(\d+)x(\d+)$/);
 
-    /* Explicit resolution (e.g. 1920x1080): honour it verbatim. The user
-     * picked a fixed aspect on purpose; any letterboxing is their choice. */
-    if (m && res !== 'auto') {
-        let w = Number(m[1]);
-        let h = Number(m[2]);
-        w = Math.max(800, Math.min(7680, Math.floor(w / 2) * 2));
-        h = Math.max(600, Math.min(4320, Math.floor(h / 2) * 2));
-        return { width: w, height: h };
-    }
-
-    /* Auto: match the display container's real aspect ratio so that
-     * object-fit:contain in "adapt" mode leaves NO black bars. We do NOT
-     * force landscape — a portrait phone gets a portrait remote desktop. */
-    const dpr = window.devicePixelRatio || 1;
+    /* Measure the display container's real aspect ratio. */
     const stage = document.getElementById('rdpStage');
     let cw = 0, ch = 0;
     if (stage) {
         const r = stage.getBoundingClientRect();
         cw = r.width; ch = r.height;
     }
-    if (!cw || !ch) { cw = window.innerWidth; ch = window.innerHeight; }
+    if (!cw || !ch) { cw = window.innerWidth; ch = window.innerHeight || 1; }
+    const aspect = cw / ch; /* width / height of the region we must fill */
 
-    /* Target physical pixels for crispness, capped so we never exceed 4K
-     * along the longer edge (bandwidth + server limits). */
-    let w = Math.round(cw * dpr);
-    let h = Math.round(ch * dpr);
-    const longEdge = Math.max(w, h);
-    const CAP = 3840;
-    if (longEdge > CAP) {
-        const s = CAP / longEdge;
-        w = Math.round(w * s);
-        h = Math.round(h * s);
+    let w, h;
+    if (res === 'auto' || !/^\d+p?$|^[0-9]+K$/i.test(res)) {
+        /* Auto: device physical pixels, capped so the long edge ≤ 4K. */
+        const dpr = window.devicePixelRatio || 1;
+        w = Math.round(cw * dpr);
+        h = Math.round(ch * dpr);
+        const longEdge = Math.max(w, h);
+        const CAP = 3840;
+        if (longEdge > CAP) {
+            const s = CAP / longEdge;
+            w = Math.round(w * s);
+            h = Math.round(h * s);
+        }
+    } else {
+        /* Density tier: short edge = tier pixels, long edge = short / minRatio
+         * so the SHORT dimension carries the tier's PPI and the region keeps
+         * the container's exact shape. */
+        const tierShort = { '1080p': 1080, '2K': 1440, '4K': 2160 }[res] || 1080;
+        const minRatio = Math.min(aspect, 1 / aspect); /* short/long ≤ 1 */
+        const longPx = Math.round(tierShort / minRatio);
+        if (aspect >= 1) {
+            /* landscape container: height is the short edge */
+            h = tierShort; w = longPx;
+        } else {
+            /* portrait container (phone): width is the short edge */
+            w = tierShort; h = longPx;
+        }
     }
 
-    /* RDP requires even dimensions and sane minimums. */
+    /* RDP requires even dimensions and sane bounds. */
     w = Math.max(640, Math.min(7680, Math.floor(w / 2) * 2));
     h = Math.max(480, Math.min(4320, Math.floor(h / 2) * 2));
     return { width: w, height: h };
@@ -1259,15 +1345,11 @@ function initToolbar() {
         qualityBtn.textContent = qualityMode === 'performance' ? '性能' : qualityMode === 'quality' ? '画质' : '平衡';
         qualityBtn.addEventListener('click', () => {
             const idx = qualityModes.indexOf(qualityMode);
-            const prevWallpaper = qualityMode === 'quality';
             qualityMode = qualityModes[(idx + 1) % qualityModes.length];
             qualityBtn.textContent = qualityMode === 'performance' ? '性能' : qualityMode === 'quality' ? '画质' : '平衡';
-            /* Wallpaper on/off is negotiated at login, so reconnect when the
-             * quality change crosses the wallpaper threshold. */
-            const nextWallpaper = qualityMode === 'quality';
-            if (connected && prevWallpaper !== nextWallpaper) {
+            if (connected) {
                 setStatus('connecting', '正在应用画质设置...');
-                connect().catch(() => {});
+                reconnectWithSettings();
             }
         });
     }
@@ -1278,6 +1360,10 @@ function initToolbar() {
             const idx = fpsModes.indexOf(fpsValue);
             fpsValue = fpsModes[(idx + 1) % fpsModes.length];
             fpsBtn.textContent = fpsValue + 'FPS';
+            if (connected) {
+                setStatus('connecting', '正在应用帧率设置...');
+                reconnectWithSettings();
+            }
         });
     }
 
@@ -1294,7 +1380,7 @@ function initToolbar() {
         zoomSlider.addEventListener('input', () => {
             rdpScaleZoom = Number(zoomSlider.value) / 100;
             if (zoomValue) zoomValue.textContent = Math.round(rdpScaleZoom * 100) + '%';
-            if (rdpCanvas) rdpCanvas.style.transform = `scale(${rdpScaleZoom})`;
+            applyViewTransform();
         });
     }
 
@@ -1331,7 +1417,14 @@ function initToolbar() {
     const applyFillPan = () => {
         fillPanX = Math.max(0, Math.min(100, fillPanX));
         fillPanY = Math.max(0, Math.min(100, fillPanY));
-        if (fitModes[fitModeIdx] === 'fill' && rdpCanvas) {
+        if (rdpScaleZoom > 1 && displayShell) {
+            const shellRect = displayShell.getBoundingClientRect();
+            const maxX = Math.max(0, (shellRect.width * (rdpScaleZoom - 1)) / (2 * rdpScaleZoom));
+            const maxY = Math.max(0, (shellRect.height * (rdpScaleZoom - 1)) / (2 * rdpScaleZoom));
+            zoomPanX = ((fillPanX - 50) / 50) * maxX;
+            zoomPanY = ((fillPanY - 50) / 50) * maxY;
+            applyViewTransform();
+        } else if (fitModes[fitModeIdx] === 'fill' && rdpCanvas) {
             rdpCanvas.style.objectPosition = fillPanX + '% ' + fillPanY + '%';
         }
     };
@@ -1474,23 +1567,23 @@ function initToolbar() {
         });
     }
 
-    /* Resolution button */
-    const resolutions = ['auto', '1920x1080', '2560x1440', '3840x2160'];
+    /* Resolution button — density tiers (aspect always follows the screen). */
+    const resolutions = ['auto', '1080p', '2K', '4K'];
+    const resLabels = { 'auto': '自动', '1080p': '1080p', '2K': '2K', '4K': '4K' };
     let resIdx = resolutions.indexOf(params.rdpResolution);
     if (resIdx < 0) resIdx = 0;
     if (resolutionBtn) {
-        const labels = { '1920x1080': '1080p', '2560x1440': '2K', '3840x2160': '4K', 'auto': '自动' };
-        resolutionBtn.textContent = labels[resolutions[resIdx]] || '自动';
+        resolutionBtn.textContent = resLabels[resolutions[resIdx]] || '自动';
         resolutionBtn.addEventListener('click', () => {
             resIdx = (resIdx + 1) % resolutions.length;
-            resolutionBtn.textContent = labels[resolutions[resIdx]] || resolutions[resIdx];
+            resolutionBtn.textContent = resLabels[resolutions[resIdx]] || resolutions[resIdx];
             params.rdpResolution = resolutions[resIdx];
-            /* Reconnect with new resolution */
+            /* Reconnect with new density tier. */
             if (connected) {
                 const size = computeRdpSize();
                 rdpWidth = size.width;
                 rdpHeight = size.height;
-                connect().catch(() => {});
+                reconnectWithSettings();
             }
         });
     }
@@ -1537,27 +1630,22 @@ function initToolbar() {
         handle.addEventListener('pointercancel', endDrag);
     });
 
-    /* ─── Panel layout cycling — the traffic (three-dot) button ──────────
-     * Taps cycle each floating panel through docked positions:
-     *   center → left-half → right-half → restore(center).
-     * Self-contained; no dependency on the main app's layout-menu system. */
-    const PANEL_LAYOUTS = ['center', 'left', 'right'];
-    const panelLayoutState = new WeakMap();
+    /* ─── Panel layout island menu — same interaction style as SSH terminal ── */
     document.querySelectorAll('[data-layout-panel]').forEach((btn) => {
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
             const panel = document.getElementById(btn.dataset.layoutPanel);
             if (!panel) return;
-            const stage = document.getElementById('rdpStage');
-            const bounds = stage ? stage.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
-            const cur = panelLayoutState.get(panel) || 0;
-            const next = (cur + 1) % PANEL_LAYOUTS.length;
-            panelLayoutState.set(panel, next);
-            const layout = PANEL_LAYOUTS[next];
-            applyPanelLayout(panel, layout, bounds);
-            btn.classList.toggle('active-layout', layout !== 'center');
+            if (navigator.vibrate) navigator.vibrate(8);
+            if (rdpPanelLayoutMenu && rdpPanelLayoutButton === btn) closeRdpPanelLayoutMenu();
+            else openRdpPanelLayoutMenu(btn, panel);
         });
+    });
+    document.addEventListener('pointerdown', (e) => {
+        if (rdpPanelLayoutMenu && !e.target.closest('.panel-layout-menu') && !e.target.closest('[data-layout-panel]')) {
+            closeRdpPanelLayoutMenu();
+        }
     });
 
     /* ─── Panel resize handles — the two edge bars at the bottom ────────── */
@@ -1608,34 +1696,135 @@ function initToolbar() {
     });
 }
 
-/* Dock a floating panel to a preset position within the stage bounds. */
-function applyPanelLayout(panel, layout, bounds) {
-    panel.style.bottom = 'auto';
-    if (layout === 'left') {
-        /* Dock to the left half. Width is half the stage but never below the
-         * panel's CSS min-width, and never wider than the stage. */
-        const minW = parseInt(getComputedStyle(panel).minWidth) || 240;
-        const w = Math.max(minW, Math.min(bounds.width - 16, Math.round(bounds.width * 0.5) - 12));
-        panel.style.right = 'auto';
-        panel.style.width = w + 'px';
-        panel.style.left = (bounds.left + 8) + 'px';
-        panel.style.top = (bounds.top + 8) + 'px';
-    } else if (layout === 'right') {
-        /* Dock to the right half. Anchor via the right edge so the position is
-         * correct even when min-width forces the panel wider than half. */
-        const minW = parseInt(getComputedStyle(panel).minWidth) || 240;
-        const w = Math.max(minW, Math.min(bounds.width - 16, Math.round(bounds.width * 0.5) - 12));
-        panel.style.left = 'auto';
-        panel.style.right = (window.innerWidth - bounds.right + 8) + 'px';
-        panel.style.width = w + 'px';
-        panel.style.top = (bounds.top + 8) + 'px';
-    } else {
-        /* center / restore: clear inline positioning, fall back to CSS defaults */
-        panel.style.width = '';
-        panel.style.left = '';
-        panel.style.right = '';
-        panel.style.top = '';
+let rdpPanelLayoutMenu = null;
+let rdpPanelLayoutButton = null;
+
+function positionRdpPanelLayoutMenu(menu, button, { collapsed = false } = {}) {
+    if (!menu || !button) return;
+    const rect = button.getBoundingClientRect();
+    const vv = window.visualViewport;
+    const vvWidth = vv?.width || window.innerWidth;
+    const anchorX = rect.left + rect.width / 2;
+    const finalWidth = Math.min(284, Math.max(160, vvWidth - 16));
+    const finalHeight = 50;
+    const finalLeft = Math.max(8, Math.min(vvWidth - finalWidth - 8, anchorX - finalWidth / 2));
+    menu.style.left = `${collapsed ? rect.left : finalLeft}px`;
+    menu.style.top = `${rect.top}px`;
+    menu.style.setProperty('--panel-island-menu-width', `${collapsed ? rect.width : finalWidth}px`);
+    menu.style.setProperty('--panel-island-menu-height', `${collapsed ? rect.height : finalHeight}px`);
+    menu.style.setProperty('--panel-island-radius', `${Math.round((collapsed ? rect.height : 36) / 2)}px`);
+    menu.dataset.placement = 'inline';
+}
+
+function closeRdpPanelLayoutMenu({ instant = false } = {}) {
+    const menu = rdpPanelLayoutMenu;
+    const button = rdpPanelLayoutButton;
+    if (!menu) { button?.classList.remove('active-layout'); rdpPanelLayoutButton = null; return; }
+    clearTimeout(menu._closeTimer);
+    if (instant || !button?.isConnected) {
+        button?.classList.remove('active-layout');
+        button?.style.removeProperty('opacity');
+        menu.remove();
+        rdpPanelLayoutMenu = null;
+        rdpPanelLayoutButton = null;
+        return;
     }
+    menu.style.transition = 'none';
+    positionRdpPanelLayoutMenu(menu, button, { collapsed: false });
+    menu.style.opacity = '1';
+    void menu.offsetWidth;
+    menu.classList.remove('island-open');
+    menu.classList.add('island-closing', 'island-animating');
+    button.classList.remove('active-layout');
+    button.style.opacity = '0';
+    requestAnimationFrame(() => {
+        menu.style.removeProperty('transition');
+        positionRdpPanelLayoutMenu(menu, button, { collapsed: true });
+    });
+    menu._closeTimer = setTimeout(() => {
+        button.classList.remove('active-layout');
+        button.style.opacity = '1';
+        requestAnimationFrame(() => button.style.removeProperty('opacity'));
+        menu.remove();
+        if (rdpPanelLayoutMenu === menu) rdpPanelLayoutMenu = null;
+        if (rdpPanelLayoutButton === button) rdpPanelLayoutButton = null;
+    }, 460);
+}
+
+function openRdpPanelLayoutMenu(button, panel) {
+    closeRdpPanelLayoutMenu({ instant: true });
+    rdpPanelLayoutButton = button;
+    button?.classList.remove('active-layout');
+    const menu = document.createElement('div');
+    menu.className = 'panel-layout-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', '窗口布局');
+    menu.innerHTML = '<button data-layout="full" title="全屏" aria-label="全屏"><span class="panel-layout-icon full"></span></button><button data-layout="half" title="半屏" aria-label="半屏"><span class="panel-layout-icon half"></span></button><button data-layout="left-quarter" title="左侧四分之一" aria-label="左侧四分之一"><span class="panel-layout-icon left"></span></button><button data-layout="right-quarter" title="右侧四分之一" aria-label="右侧四分之一"><span class="panel-layout-icon right"></span></button><button data-layout="close" class="panel-layout-close" title="关闭窗口" aria-label="关闭窗口"><span class="panel-layout-icon close"></span></button>';
+    menu.style.transition = 'none';
+    menu.style.zIndex = String((Number(panel.style.zIndex) || 10080) + 200);
+    document.body.appendChild(menu);
+    rdpPanelLayoutMenu = menu;
+    positionRdpPanelLayoutMenu(menu, button, { collapsed: true });
+    button.style.opacity = '0';
+    menu.style.opacity = '1';
+    menu.classList.add('island-animating');
+    void menu.offsetWidth;
+    requestAnimationFrame(() => {
+        menu.style.removeProperty('transition');
+        button?.classList.add('active-layout');
+        menu.classList.add('island-open');
+        positionRdpPanelLayoutMenu(menu, button, { collapsed: false });
+        setTimeout(() => {
+            menu.classList.remove('island-animating');
+            menu.style.removeProperty('opacity');
+        }, 540);
+    });
+    menu.addEventListener('click', (event) => {
+        const item = event.target.closest('[data-layout]');
+        if (!item) return;
+        if (item.dataset.layout === 'close') {
+            panel.classList.remove('open');
+            closeRdpPanelLayoutMenu({ instant: true });
+            return;
+        }
+        applyPanelLayout(panel, item.dataset.layout);
+        closeRdpPanelLayoutMenu();
+    });
+}
+
+/* Dock a floating panel to a preset position within the RDP stage. */
+function applyPanelLayout(panel, layout) {
+    const parent = document.getElementById('rdpStage') || panel.parentElement;
+    const bounds = parent.getBoundingClientRect();
+    const margin = 8;
+    const topbar = 8;
+    let left = bounds.left + margin;
+    let top = bounds.top + topbar;
+    let width = bounds.width - margin * 2;
+    let height = bounds.height - topbar - margin;
+    if (layout === 'half') {
+        width = bounds.width - margin * 2;
+        height = Math.max(260, bounds.height / 2);
+        left = bounds.left + margin;
+        top = bounds.bottom - height - margin;
+    } else if (layout === 'left-quarter') {
+        width = Math.max(260, bounds.width / 4);
+        height = bounds.height - topbar - margin;
+        left = bounds.left + margin;
+        top = bounds.top + topbar;
+    } else if (layout === 'right-quarter') {
+        width = Math.max(260, bounds.width / 4);
+        height = bounds.height - topbar - margin;
+        left = bounds.right - width - margin;
+        top = bounds.top + topbar;
+    }
+    panel.classList.add('layout-animating');
+    clearTimeout(panel._layoutAnimationTimer);
+    Object.assign(panel.style, {
+        left: `${left}px`, top: `${top}px`, right: 'auto', bottom: 'auto',
+        width: `${width}px`, height: `${height}px`,
+    });
+    panel._layoutAnimationTimer = setTimeout(() => panel.classList.remove('layout-animating'), 480);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

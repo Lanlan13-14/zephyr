@@ -484,17 +484,23 @@ func (c *Client) SetPerformanceFlags(flags uint32) {
 	}
 }
 
-// SetWallpaperEnabled toggles just the wallpaper bit while preserving the
-// other performance flags. When enabled=true the PERF_DISABLE_WALLPAPER bit
-// is cleared so the server streams the user's desktop wallpaper.
+// SetWallpaperEnabled toggles the visual-performance bits while preserving the
+// other performance flags. When enabled=true the expensive visual-disable bits
+// are cleared so the server streams the user's desktop wallpaper and desktop
+// effects/animations. When false, performance mode disables them to save
+// bandwidth and CPU.
 func (c *Client) SetWallpaperEnabled(enabled bool) {
 	if c.info == nil || c.info.ExtendedInfo == nil {
 		return
 	}
+	visualDisableFlags := PERF_DISABLE_WALLPAPER |
+		PERF_DISABLE_FULLWINDOWDRAG |
+		PERF_DISABLE_MENUANIMATIONS |
+		PERF_DISABLE_THEMING
 	if enabled {
-		c.info.ExtendedInfo.PerformanceFlags &^= PERF_DISABLE_WALLPAPER
+		c.info.ExtendedInfo.PerformanceFlags &^= visualDisableFlags
 	} else {
-		c.info.ExtendedInfo.PerformanceFlags |= PERF_DISABLE_WALLPAPER
+		c.info.ExtendedInfo.PerformanceFlags |= visualDisableFlags
 	}
 }
 
