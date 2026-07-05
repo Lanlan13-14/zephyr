@@ -30,6 +30,7 @@ s=s.replace('applicationId = "com.zephyr.zephyr_agent"', 'applicationId = "com.z
 manifest=Path('android/app/src/main/AndroidManifest.xml')
 m=manifest.read_text()
 m=m.replace('android:label="zephyr_agent"', 'android:label="Zephyr Agent"')
+m=m.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">', '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />')
 m=m.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@drawable/zephyr_agent_icon"')
 manifest.write_text(m)
 p.write_text(s)

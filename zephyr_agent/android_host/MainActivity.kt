@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.os.Environment
+import android.provider.Settings
 import androidx.annotation.NonNull
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
@@ -32,6 +34,9 @@ class MainActivity : FlutterActivity() {
             try {
                 when (call.method) {
                     "selectDirectory" -> selectDirectory(result)
+                    "hasAllFilesAccess" -> result.success(hasAllFilesAccess())
+                    "openAllFilesAccessSettings" -> openAllFilesAccessSettings(result)
+                    "externalStorageRoot" -> result.success(Environment.getExternalStorageDirectory().absolutePath)
                     "list" -> list(call, result)
                     "stat" -> stat(call, result)
                     "open" -> open(call, result)
@@ -50,6 +55,24 @@ class MainActivity : FlutterActivity() {
                 result.error("io_error", e.message ?: e.javaClass.simpleName, null)
             }
         }
+    }
+
+    private fun hasAllFilesAccess(): Boolean {
+        return android.os.Build.VERSION.SDK_INT < 30 || Environment.isExternalStorageManager()
+    }
+
+    private fun openAllFilesAccessSettings(result: MethodChannel.Result) {
+        val intent = if (android.os.Build.VERSION.SDK_INT >= 30) {
+            Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                data = Uri.parse("package:$packageName")
+            }
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+        }
+        startActivity(intent)
+        result.success(null)
     }
 
     private fun selectDirectory(result: MethodChannel.Result) {

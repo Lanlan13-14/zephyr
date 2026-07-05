@@ -215,6 +215,30 @@ class DesktopFileProvider extends ZephyrFileProvider {
   }
 }
 
+class AndroidStorageAccess {
+  static const MethodChannel _channel = MethodChannel('com.zephyr.agent/saf');
+
+  static Future<bool> hasAllFilesAccess() async {
+    try {
+      return await _channel.invokeMethod<bool>('hasAllFilesAccess') ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  static Future<void> openAllFilesAccessSettings() async {
+    await _channel.invokeMethod<void>('openAllFilesAccessSettings');
+  }
+
+  static Future<String> externalStorageRoot() async {
+    try {
+      return await _channel.invokeMethod<String>('externalStorageRoot') ?? '/storage/emulated/0';
+    } on PlatformException {
+      return '/storage/emulated/0';
+    }
+  }
+}
+
 /// Android Storage Access Framework provider.
 ///
 /// This is the real Android implementation for the Agent disk mapping:

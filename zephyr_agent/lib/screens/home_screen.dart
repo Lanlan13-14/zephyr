@@ -87,7 +87,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _applyDefaultSharePath(AgentConfig config) {
-    if (config.sharedDirectoryPath != null || io.Platform.isAndroid || io.Platform.isIOS) return;
+    if (config.sharedDirectoryPath != null || io.Platform.isIOS) return;
+    if (io.Platform.isAndroid) {
+      config.sharedDirectoryPath = '/storage/emulated/0';
+      config.sharedDirectoryName = 'Internal storage';
+      return;
+    }
     if (io.Platform.isWindows) {
       final drive = io.Platform.environment['SystemDrive'] ?? 'C:';
       config.sharedDirectoryPath = drive.endsWith('\\') ? drive : '$drive\\';
@@ -100,13 +105,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _pickDirectory(AgentController ctrl) async {
     if (io.Platform.isAndroid) {
-      final selected = await AndroidSafFileProvider.selectDirectory();
-      if (selected == null) return;
-      setState(() {
-        ctrl.config.sharedDirectoryPath = selected.rootUri;
-        ctrl.config.sharedDirectoryName = selected.name;
-      });
-      _saveConfig(ctrl);
+      final hasAllFiles = await AndroidStorageAccess.hasAllFilesAccess();
+      if (hasAllFiles) {
+        final root = await AndroidStorageAccess.externalStorageRoot();
+        setState(() {
+          ctrl.config.sharedDirectoryPath = root;
+          ctrl.config.sharedDirectoryName = 'Internal storage';
+        });
+        _saveConfig(ctrl);
+        _showSnack('已设置为映射整个共享存储: $root');
+        return;
+      }
+      await AndroidStorageAccess.openAllFilesAccessSettings();
+      _showSnack('请在系统设置中授予“所有文件访问权限”，返回后再启动连接');
       return;
     }
 
@@ -154,7 +165,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (io.Platform.isAndroid) {
-      ctrl.setFileProvider(AndroidSafFileProvider(ctrl.config.sharedDirectoryPath!));
+      final path = ctrl.config.sharedDirectoryPath!;
+      if (path.startsWith('content://')) {
+        ctrl.setFileProvider(AndroidSafFileProvider(path));
+      } else {
+        final hasAllFiles = await AndroidStorageAccess.hasAllFilesAccess();
+        if (!hasAllFiles) {
+          await AndroidStorageAccess.openAllFilesAccessSettings();
+          _showSnack('需要“所有文件访问权限”才能映射整个共享存储');
+          return;
+        }
+        ctrl.setFileProvider(DesktopFileProvider(path));
+      }
     } else {
       ctrl.setFileProvider(DesktopFileProvider(ctrl.config.sharedDirectoryPath!));
     }
