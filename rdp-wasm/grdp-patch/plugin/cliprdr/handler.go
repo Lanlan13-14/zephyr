@@ -396,6 +396,7 @@ func (h *CliprdrHandler) processFormatDataResponse(body []byte, msgFlags uint16)
 // processFileContentsRequest handles the server asking for file data (client→server).
 func (h *CliprdrHandler) processFileContentsRequest(body []byte) {
 	if len(body) < 24 {
+		// Can't even parse streamId — send bare FAIL.
 		h.sendPDU(CB_FILECONTENTS_RESPONSE, CB_RESPONSE_FAIL, nil)
 		return
 	}
@@ -408,11 +409,17 @@ func (h *CliprdrHandler) processFileContentsRequest(body []byte) {
 
 	slog.Debug("cliprdr: FileContentsRequest", "streamId", streamId, "lindex", lindex, "flags", dwFlags, "pos", uint64(posHigh)<<32|uint64(posLow), "cbReq", cbRequested)
 
+	// Helper: send FAIL with streamId so Windows can match the response.
+	failResp := func() {
+		fb := &bytes.Buffer{}
+		binary.Write(fb, binary.LittleEndian, streamId)
+		h.sendPDU(CB_FILECONTENTS_RESPONSE, CB_RESPONSE_FAIL, fb.Bytes())
+	}
+
 	resp := &bytes.Buffer{}
 	binary.Write(resp, binary.LittleEndian, streamId)
 
 	if dwFlags == FILECONTENTS_SIZE {
-		// Return file size (8 bytes: low + high)
 		if h.getLocalFiles != nil {
 			files := h.getLocalFiles()
 			if int(lindex) < len(files) {
@@ -422,9 +429,8 @@ func (h *CliprdrHandler) processFileContentsRequest(body []byte) {
 				return
 			}
 		}
-		h.sendPDU(CB_FILECONTENTS_RESPONSE, CB_RESPONSE_FAIL, nil)
+		failResp()
 	} else if dwFlags == FILECONTENTS_RANGE {
-		// Return file data
 		offset := uint64(posHigh)<<32 | uint64(posLow)
 		if h.getLocalFileData != nil {
 			data := h.getLocalFileData(int(lindex), offset, cbRequested)
@@ -434,9 +440,9 @@ func (h *CliprdrHandler) processFileContentsRequest(body []byte) {
 				return
 			}
 		}
-		h.sendPDU(CB_FILECONTENTS_RESPONSE, CB_RESPONSE_FAIL, nil)
+		failResp()
 	} else {
-		h.sendPDU(CB_FILECONTENTS_RESPONSE, CB_RESPONSE_FAIL, nil)
+		failResp()
 	}
 }
 
