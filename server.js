@@ -58,6 +58,7 @@ const {
     subtitleToVttArgs,
     cleanupMediaProbeCache,
 } = require('./preview/media/media-service');
+const { FileAgentManager } = require('./file-agent-manager');
 
 const HTTP_ENABLED = process.env.HTTP_ENABLED === 'true';
 const PORT = process.env.PORT || 3000;
@@ -102,6 +103,12 @@ const PREVIEW_CACHE_DIR = path.join(os.tmpdir(), 'zephyr-preview-cache');
 const MEDIA_TOKEN_TTL = 24 * 60 * 60 * 1000;
 const MEDIA_CACHE_TTL = 30 * 60 * 1000;
 const MEDIA_CACHE_DIR = path.join(os.tmpdir(), 'zephyr-media-cache');
+
+/* ─── File Agent Manager ─── */
+const fileAgentManager = new FileAgentManager({
+    log: console.log,
+});
+
 const BROWSER_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'avif']);
 const BROWSER_IMAGE_CONTENT_TYPES = new Map([
     ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'], ['png', 'image/png'], ['webp', 'image/webp'],
@@ -4125,6 +4132,7 @@ const wss = new WebSocketServer(wsServerOptions);
 const noVncWss = new WebSocketServer(wsServerOptions);
 const editorLspWss = new WebSocketServer(wsServerOptions);
 const rdpProxyWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 64 * 1024 * 1024 });
+const agentFilesWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 2 * 1024 * 1024 });
 
 function handleHttpUpgrade(req, socket, head) {
     let pathname = '';
@@ -4142,16 +4150,22 @@ function handleHttpUpgrade(req, socket, head) {
                 ? noVncWss
                 : pathname === '/editor-lsp'
                     ? editorLspWss
-                    : null;
+                    : pathname === '/agent/files'
+                        ? agentFilesWss
+                        : null;
     if (!targetWss) {
         console.warn('[WS-DIAG] rejected websocket upgrade for unknown path', { url: req.url || '' });
         rejectSocket(socket, 404, 'Not Found');
         return;
     }
-    const session = currentSession(req);
-    if (!session || session.mustChangePassword) {
-        rejectSocket(socket, session?.mustChangePassword ? 403 : 401, session?.mustChangePassword ? 'Forbidden' : 'Unauthorized');
-        return;
+    /* /agent/files authenticates via protocol-level token (hello message),
+     * not via HTTP session cookie — skip session check for this path. */
+    if (targetWss !== agentFilesWss) {
+        const session = currentSession(req);
+        if (!session || session.mustChangePassword) {
+            rejectSocket(socket, session?.mustChangePassword ? 403 : 401, session?.mustChangePassword ? 'Forbidden' : 'Unauthorized');
+            return;
+        }
     }
 
     targetWss.handleUpgrade(req, socket, head, (ws) => {
@@ -4161,6 +4175,14 @@ function handleHttpUpgrade(req, socket, head) {
 server.on('upgrade', handleHttpUpgrade);
 if (httpsServer) httpsServer.on('upgrade', handleHttpUpgrade);
 editorLspWss.on('connection', handleEditorLspConnection);
+
+/* ─── File Agent WebSocket ─── */
+agentFilesWss.on('connection', (ws) => {
+    fileAgentManager.handleConnection(ws);
+});
+
+/* Mount file-agent REST API routes */
+fileAgentManager.mountRoutes(app, requireAuth, (req) => req.session);
 
 function closeWebSocketSafe(ws, code = 1000, reason = '') {
     try {
@@ -5658,6 +5680,7 @@ async function startServer() {
     console.log(`   WebSocket 路径: /ssh`);
     console.log(`   RDP 路径: /rdp-proxy -> WASM grdp (browser-side RDP)`);
     console.log(`   VNC/noVNC 路径: /novnc -> VNC Server`);
+    console.log(`   Agent 文件重定向: /agent/files -> Flutter Agent WebSocket`);
 }
 
 startServer().catch((err) => {

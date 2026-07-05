@@ -2,23 +2,29 @@
 
 // rdpefs.go — MS-RDPEFS (File System Virtual Channel Extension) over rdpdr
 //
-// Implements the rdpdr static virtual channel to expose browser-selected
-// files/directories to the remote Windows desktop as a redirected drive.
+// Implements the rdpdr static virtual channel to expose one or more drives
+// to the remote Windows desktop as redirected drives (\\tsclient\NAME).
 //
-// Protocol flow:
-//   Server → Client: Server Announce Request
-//   Client → Server: Client Announce Reply
-//   Client → Server: Client Name Request
-//   Server → Client: Server Core Capability Request
-//   Client → Server: Client Core Capability Response
-//   Client → Server: Client Device List Announce
-//   Server → Client: Server Device Announce Response
-//   Server → Client: Device I/O Request (IRP)
-//   Client → Server: Device I/O Response
+// Two operating modes:
+//   1. LOCAL mode (legacy): files come from browser FileSystem API via
+//      rdpStorageGetFiles/rdpStorageReadFile. Single drive named "WEBRDP".
+//   2. AGENT mode: files come from remote Zephyr Agents via
+//      globalThis.zephyrRdpFs.* JS callbacks. Supports multiple drives,
+//      hot-plug attach/detach while RDP session is running.
+//
+// Hot-plug protocol (AGENT mode):
+//   - After user logs on, existing drives are announced.
+//   - JS calls rdpFsAttachDrive(agentId, driveName, readOnly) to add a new
+//     drive at runtime → Go sends DEVICELIST_ANNOUNCE for the new device.
+//   - JS calls rdpFsDetachDrive(agentId) to remove a drive at runtime →
+//     Go sends DEVICELIST_REMOVE and cleans up open handles.
 //
 // Supported IRP types:
-//   IRP_MJ_CREATE, IRP_MJ_CLOSE, IRP_MJ_READ,
-//   IRP_MJ_QUERY_INFORMATION, IRP_MJ_QUERY_DIRECTORY
+//   IRP_MJ_CREATE, IRP_MJ_CLOSE, IRP_MJ_READ, IRP_MJ_WRITE,
+//   IRP_MJ_QUERY_INFORMATION, IRP_MJ_SET_INFORMATION,
+//   IRP_MJ_QUERY_DIRECTORY, IRP_MJ_QUERY_VOLUME,
+//   IRP_MJ_DIRECTORY_CONTROL, IRP_MJ_LOCK_CONTROL (stub)
+//   IRP_MJ_DEVICE_CONTROL (stub)
 
 package main
 
@@ -43,17 +49,17 @@ const (
 
 // rdpdr packet IDs
 const (
-	PAKID_CORE_SERVER_ANNOUNCE    = 0x496E // Server Announce
-	PAKID_CORE_CLIENTID_CONFIRM   = 0x4343 // Client Announce Reply
-	PAKID_CORE_CLIENT_NAME        = 0x434E // Client Name
-	PAKID_CORE_DEVICELIST_ANNOUNCE = 0x4441 // Device List Announce
-	PAKID_CORE_DEVICE_REPLY       = 0x6452 // Server Device Announce Response
-	PAKID_CORE_DEVICE_IOREQUEST   = 0x4952 // Device I/O Request
-	PAKID_CORE_DEVICE_IOCOMPLETION = 0x4943 // Device I/O Completion
-	PAKID_CORE_SERVER_CAPABILITY   = 0x5350 // Server Core Capability
-	PAKID_CORE_CLIENT_CAPABILITY   = 0x4350 // Client Core Capability
-	PAKID_CORE_USER_LOGGEDON       = 0x554C // Server User Logged On ("UL")
-	PAKID_CORE_DEVICELIST_REMOVE   = 0x444D // Client Drive Device List Remove
+	PAKID_CORE_SERVER_ANNOUNCE     = 0x496E
+	PAKID_CORE_CLIENTID_CONFIRM    = 0x4343
+	PAKID_CORE_CLIENT_NAME         = 0x434E
+	PAKID_CORE_DEVICELIST_ANNOUNCE = 0x4441
+	PAKID_CORE_DEVICE_REPLY        = 0x6452
+	PAKID_CORE_DEVICE_IOREQUEST    = 0x4952
+	PAKID_CORE_DEVICE_IOCOMPLETION = 0x4943
+	PAKID_CORE_SERVER_CAPABILITY   = 0x5350
+	PAKID_CORE_CLIENT_CAPABILITY   = 0x4350
+	PAKID_CORE_USER_LOGGEDON       = 0x554C
+	PAKID_CORE_DEVICELIST_REMOVE   = 0x444D
 )
 
 // rdpdr version minor
@@ -68,48 +74,55 @@ const (
 
 // IRP major functions
 const (
-	IRP_MJ_CREATE          = 0x00000000
-	IRP_MJ_CLOSE           = 0x00000002
-	IRP_MJ_READ            = 0x00000003
-	IRP_MJ_WRITE           = 0x00000004
-	IRP_MJ_DEVICE_CONTROL  = 0x0000000E
-	IRP_MJ_QUERY_VOLUME    = 0x0000000A
-	IRP_MJ_SET_VOLUME      = 0x0000000B
+	IRP_MJ_CREATE            = 0x00000000
+	IRP_MJ_CLOSE             = 0x00000002
+	IRP_MJ_READ              = 0x00000003
+	IRP_MJ_WRITE             = 0x00000004
+	IRP_MJ_DEVICE_CONTROL    = 0x0000000E
+	IRP_MJ_QUERY_VOLUME      = 0x0000000A
+	IRP_MJ_SET_VOLUME        = 0x0000000B
 	IRP_MJ_QUERY_INFORMATION = 0x00000005
 	IRP_MJ_SET_INFORMATION   = 0x00000006
 	IRP_MJ_DIRECTORY_CONTROL = 0x0000000C
-	IRP_MJ_LOCK_CONTROL     = 0x00000011
+	IRP_MJ_LOCK_CONTROL      = 0x00000011
 )
 
 // IRP minor functions for IRP_MJ_DIRECTORY_CONTROL
 const (
-	IRP_MN_QUERY_DIRECTORY  = 0x00000001
+	IRP_MN_QUERY_DIRECTORY         = 0x00000001
 	IRP_MN_NOTIFY_CHANGE_DIRECTORY = 0x00000002
 )
 
 // File information classes
 const (
-	FileBasicInformation       = 4
-	FileStandardInformation    = 5
-	FileAttributeTagInformation = 35
+	FileBasicInformation         = 4
+	FileStandardInformation      = 5
+	FileAttributeTagInformation  = 35
 	FileBothDirectoryInformation = 3
-	FileDirectoryInformation   = 1
+	FileDirectoryInformation     = 1
 	FileFullDirectoryInformation = 2
-	FileNamesInformation       = 12
+	FileNamesInformation         = 12
+	FileEndOfFileInformation     = 20
+	FileDispositionInformation   = 13
+	FileRenameInformation        = 10
+	FileAllocationInformation    = 19
 )
 
 // NT status codes
 const (
-	STATUS_SUCCESS           = 0x00000000
-	STATUS_NO_MORE_FILES     = 0x80000006
-	STATUS_NOT_IMPLEMENTED   = 0xC0000002
-	STATUS_NO_SUCH_FILE      = 0xC000000F
-	STATUS_OBJECT_NAME_NOT_FOUND = 0xC0000034
-	STATUS_ACCESS_DENIED     = 0xC0000022
-	STATUS_NOT_SUPPORTED     = 0xC00000BB
-	STATUS_INVALID_PARAMETER = 0xC000000D
-	STATUS_UNSUCCESSFUL      = 0xC0000001
+	STATUS_SUCCESS                = 0x00000000
+	STATUS_NO_MORE_FILES          = 0x80000006
+	STATUS_NOT_IMPLEMENTED        = 0xC0000002
+	STATUS_NO_SUCH_FILE           = 0xC000000F
+	STATUS_OBJECT_NAME_NOT_FOUND  = 0xC0000034
+	STATUS_ACCESS_DENIED          = 0xC0000022
+	STATUS_NOT_SUPPORTED          = 0xC00000BB
+	STATUS_INVALID_PARAMETER      = 0xC000000D
+	STATUS_UNSUCCESSFUL           = 0xC0000001
 	STATUS_INVALID_DEVICE_REQUEST = 0xC0000010
+	STATUS_OBJECT_NAME_COLLISION  = 0xC0000035
+	STATUS_DIRECTORY_NOT_EMPTY    = 0xC0000101
+	STATUS_DEVICE_OFF_LINE        = 0x80000010
 )
 
 // File attributes
@@ -122,49 +135,73 @@ const (
 
 // Capability types
 const (
-	CAP_GENERAL_TYPE  = 0x0001
-	CAP_PRINTER_TYPE  = 0x0002
-	CAP_PORT_TYPE     = 0x0003
-	CAP_DRIVE_TYPE    = 0x0004
+	CAP_GENERAL_TYPE   = 0x0001
+	CAP_PRINTER_TYPE   = 0x0002
+	CAP_PORT_TYPE      = 0x0003
+	CAP_DRIVE_TYPE     = 0x0004
 	CAP_SMARTCARD_TYPE = 0x0005
 )
 
-// VirtualFile represents a file from the browser FileSystem API
+// Create disposition
+const (
+	FILE_SUPERSEDE   = 0x00000000
+	FILE_OPEN        = 0x00000001
+	FILE_CREATE      = 0x00000002
+	FILE_OPEN_IF     = 0x00000003
+	FILE_OVERWRITE   = 0x00000004
+	FILE_OVERWRITE_IF = 0x00000005
+)
+
+// Create options
+const (
+	FILE_DIRECTORY_FILE     = 0x00000001
+	FILE_NON_DIRECTORY_FILE = 0x00000040
+)
+
+// Information response values
+const (
+	FILE_SUPERSEDED  = 0x00000000
+	FILE_OPENED      = 0x00000001
+	FILE_OVERWRITTEN = 0x00000003
+)
+
+// ─── Drive Management ────────────────────────────────────────────
+
+// DriveMode determines how file data is accessed
+type DriveMode int
+const (
+	DriveModeLocal DriveMode = iota // legacy: rdpStorageGetFiles
+	DriveModeAgent                  // remote: zephyrRdpFs.*
+)
+
+type DriveState struct {
+	DeviceID  uint32
+	AgentID   string
+	DriveName string
+	ReadOnly  bool
+	Mode      DriveMode
+	Status    string // "online", "attaching", "detaching", "removed"
+}
+
+// VirtualFile represents a file entry from local or remote provider
 type VirtualFile struct {
 	Name     string
 	IsDir    bool
 	Size     int64
 	ModTime  time.Time
-	Data     []byte // file content (loaded lazily from JS)
+	Data     []byte // file content (loaded lazily)
 	Children map[string]*VirtualFile
 }
 
-// RdpefsHandler implements plugin.ChannelTransport for the rdpdr SVC
-type RdpefsHandler struct {
-	mu          sync.Mutex
-	sender      func(string, []byte) (int, error)
-	enabled     bool
-	deviceID    uint32
-	clientID    uint32
-	versionMajor uint16
-	versionMinor uint16
-
-	// File handle management
-	nextFileID  uint32
-	openFiles   map[uint32]*VirtualFile // fileID → file
-	openPaths   map[uint32]string       // fileID → path
-
-	// Virtual filesystem root
-	root        *VirtualFile
-	driveName   string
-
-	// Protocol state
-	userLoggedOn bool
-	announced    bool
-
-	// Directory enumeration state keyed by fileID (not on VirtualFile,
-	// so concurrent queries on the same directory don't clobber each other).
-	dirEnum map[uint32]*dirEnumState
+// openHandle tracks an open file/directory for IRP processing
+type openHandle struct {
+	DriveDeviceID uint32
+	AgentID       string
+	Path          string
+	IsDir         bool
+	RemoteHandle  string // handle ID from agent (for agent mode reads)
+	// For local mode compatibility
+	LocalFile *VirtualFile
 }
 
 type dirEnumState struct {
@@ -172,16 +209,44 @@ type dirEnumState struct {
 	index   int
 }
 
+// RdpefsHandler implements plugin.ChannelTransport for the rdpdr SVC
+type RdpefsHandler struct {
+	mu           sync.Mutex
+	sender       func(string, []byte) (int, error)
+	enabled      bool
+
+	clientID     uint32
+	versionMajor uint16
+	versionMinor uint16
+
+	// Multi-drive management
+	nextDeviceID uint32
+	drives       map[uint32]*DriveState // deviceID → drive
+	agentDrives  map[string]uint32      // agentID → deviceID
+
+	// File handle management
+	nextFileID uint32
+	handles    map[uint32]*openHandle // fileID → handle
+	dirEnum    map[uint32]*dirEnumState
+
+	// Legacy local mode support
+	localRoot *VirtualFile
+
+	// Protocol state
+	userLoggedOn bool
+	announced    bool
+}
+
 func NewRdpefsHandler(enabled bool) *RdpefsHandler {
 	return &RdpefsHandler{
-		enabled:   enabled,
-		deviceID:  1,
-		nextFileID: 1,
-		openFiles: make(map[uint32]*VirtualFile),
-		openPaths: make(map[uint32]string),
-		dirEnum:   make(map[uint32]*dirEnumState),
-		driveName: "WEBRDP",
-		root: &VirtualFile{
+		enabled:      enabled,
+		nextDeviceID: 1,
+		nextFileID:   1,
+		drives:       make(map[uint32]*DriveState),
+		agentDrives:  make(map[string]uint32),
+		handles:      make(map[uint32]*openHandle),
+		dirEnum:      make(map[uint32]*dirEnumState),
+		localRoot: &VirtualFile{
 			Name:     "",
 			IsDir:    true,
 			Children: make(map[string]*VirtualFile),
@@ -190,7 +255,7 @@ func NewRdpefsHandler(enabled bool) *RdpefsHandler {
 }
 
 func (h *RdpefsHandler) GetType() (string, uint32) {
-	return "rdpdr", 0x80000000 | 0x40000000 | 0x00400000 // INITIALIZED | ENCRYPT_RDP | COMPRESS_RDP
+	return "rdpdr", 0x80000000 | 0x40000000 | 0x00400000
 }
 
 func (h *RdpefsHandler) Sender(cs core.ChannelSender) {
@@ -208,7 +273,114 @@ func (h *RdpefsHandler) send(data []byte) {
 	}
 }
 
-// Process handles incoming rdpdr PDUs
+// ─── Drive lifecycle (called from JS) ────────────────────────────
+
+// AttachDrive adds a new remote agent drive. Can be called before or
+// after user logon. If after logon, sends an immediate device announce.
+func (h *RdpefsHandler) AttachDrive(agentID, driveName string, readOnly bool) uint32 {
+	h.mu.Lock()
+	// Check if already attached
+	if existingID, ok := h.agentDrives[agentID]; ok {
+		// Already attached — update info and return existing
+		if d := h.drives[existingID]; d != nil {
+			d.DriveName = driveName
+			d.ReadOnly = readOnly
+			d.Status = "online"
+		}
+		h.mu.Unlock()
+		return existingID
+	}
+
+	deviceID := h.nextDeviceID
+	h.nextDeviceID++
+
+	drive := &DriveState{
+		DeviceID:  deviceID,
+		AgentID:   agentID,
+		DriveName: driveName,
+		ReadOnly:  readOnly,
+		Mode:      DriveModeAgent,
+		Status:    "attaching",
+	}
+	h.drives[deviceID] = drive
+	h.agentDrives[agentID] = deviceID
+	loggedOn := h.userLoggedOn
+	h.mu.Unlock()
+
+	slog.Debug("rdpefs: attach drive", "agentID", agentID, "name", driveName, "deviceID", deviceID)
+
+	if loggedOn {
+		h.announceDeviceSingle(deviceID, driveName)
+		h.mu.Lock()
+		drive.Status = "online"
+		h.mu.Unlock()
+	}
+
+	return deviceID
+}
+
+// DetachDrive removes a drive. Closes all open handles and sends device remove.
+func (h *RdpefsHandler) DetachDrive(agentID string) {
+	h.mu.Lock()
+	deviceID, ok := h.agentDrives[agentID]
+	if !ok {
+		h.mu.Unlock()
+		return
+	}
+	drive := h.drives[deviceID]
+	if drive != nil {
+		drive.Status = "detaching"
+	}
+
+	// Close all handles for this device
+	for fid, handle := range h.handles {
+		if handle.DriveDeviceID == deviceID {
+			// If agent mode handle, close remote handle
+			if handle.RemoteHandle != "" {
+				go h.callAgentClose(agentID, handle.RemoteHandle)
+			}
+			delete(h.handles, fid)
+			delete(h.dirEnum, fid)
+		}
+	}
+
+	delete(h.drives, deviceID)
+	delete(h.agentDrives, agentID)
+	loggedOn := h.userLoggedOn
+	h.mu.Unlock()
+
+	slog.Debug("rdpefs: detach drive", "agentID", agentID, "deviceID", deviceID)
+
+	if loggedOn {
+		// Send Client Drive Device List Remove
+		buf := &bytes.Buffer{}
+		binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
+		binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_DEVICELIST_REMOVE))
+		binary.Write(buf, binary.LittleEndian, uint32(1)) // deviceCount
+		binary.Write(buf, binary.LittleEndian, deviceID)
+		h.send(buf.Bytes())
+	}
+}
+
+// ListDrives returns info about all current drives (for JS)
+func (h *RdpefsHandler) ListDrives() []map[string]interface{} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	result := make([]map[string]interface{}, 0, len(h.drives))
+	for _, d := range h.drives {
+		result = append(result, map[string]interface{}{
+			"deviceId":  d.DeviceID,
+			"agentId":   d.AgentID,
+			"driveName": d.DriveName,
+			"readOnly":  d.ReadOnly,
+			"status":    d.Status,
+		})
+	}
+	return result
+}
+
+// ─── Protocol handling ───────────────────────────────────────────
+
 func (h *RdpefsHandler) Process(data []byte) {
 	if len(data) < 4 {
 		return
@@ -249,8 +421,8 @@ func (h *RdpefsHandler) processServerAnnounce(data []byte) {
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_CLIENTID_CONFIRM))
-	binary.Write(buf, binary.LittleEndian, uint16(1)) // versionMajor
-	binary.Write(buf, binary.LittleEndian, uint16(12)) // versionMinor (RDP 6.0)
+	binary.Write(buf, binary.LittleEndian, uint16(1))
+	binary.Write(buf, binary.LittleEndian, uint16(12))
 	binary.Write(buf, binary.LittleEndian, h.clientID)
 	h.send(buf.Bytes())
 
@@ -258,8 +430,8 @@ func (h *RdpefsHandler) processServerAnnounce(data []byte) {
 	nameBuf := &bytes.Buffer{}
 	binary.Write(nameBuf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(nameBuf, binary.LittleEndian, uint16(PAKID_CORE_CLIENT_NAME))
-	binary.Write(nameBuf, binary.LittleEndian, uint32(1)) // unicodeFlag
-	binary.Write(nameBuf, binary.LittleEndian, uint32(0)) // codePage
+	binary.Write(nameBuf, binary.LittleEndian, uint32(1))
+	binary.Write(nameBuf, binary.LittleEndian, uint32(0))
 	computerName := encodeUTF16LE("WEBRDP")
 	binary.Write(nameBuf, binary.LittleEndian, uint32(len(computerName)))
 	nameBuf.Write(computerName)
@@ -269,47 +441,38 @@ func (h *RdpefsHandler) processServerAnnounce(data []byte) {
 func (h *RdpefsHandler) processServerCapability(data []byte) {
 	slog.Debug("rdpefs: server capability received")
 
-	// Refresh file list from JS before announcing drive
-	h.refreshFileList()
+	// Refresh local file list (legacy mode)
+	h.refreshLocalFileList()
 
 	// Send Client Core Capability Response
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_CLIENT_CAPABILITY))
-	binary.Write(buf, binary.LittleEndian, uint16(1))  // numCapabilities
-	binary.Write(buf, binary.LittleEndian, uint16(0))  // padding
+	binary.Write(buf, binary.LittleEndian, uint16(1))
+	binary.Write(buf, binary.LittleEndian, uint16(0))
 
 	// General capability set
 	binary.Write(buf, binary.LittleEndian, uint16(CAP_GENERAL_TYPE))
-	binary.Write(buf, binary.LittleEndian, uint16(44))  // capabilityLength
-	binary.Write(buf, binary.LittleEndian, uint32(1))   // version
-	binary.Write(buf, binary.LittleEndian, uint32(2))   // osType (Windows)
-	binary.Write(buf, binary.LittleEndian, uint32(0))   // osVersion
-	binary.Write(buf, binary.LittleEndian, uint16(1))   // protocolMajor
-	binary.Write(buf, binary.LittleEndian, uint16(12))  // protocolMinor
-	binary.Write(buf, binary.LittleEndian, uint32(0xFFFF)) // ioCode1
-	binary.Write(buf, binary.LittleEndian, uint32(0))   // ioCode2
-	binary.Write(buf, binary.LittleEndian, uint32(7))   // extendedPDU (RDPDR_DEVICE_REMOVE|USER_LOGGEDON|CLIENT_DISPLAY_NAME)
-	binary.Write(buf, binary.LittleEndian, uint32(0))   // extraFlags1
-	binary.Write(buf, binary.LittleEndian, uint32(0))   // extraFlags2
-	binary.Write(buf, binary.LittleEndian, uint32(0))   // specialTypeDeviceCap
+	binary.Write(buf, binary.LittleEndian, uint16(44))
+	binary.Write(buf, binary.LittleEndian, uint32(1))
+	binary.Write(buf, binary.LittleEndian, uint32(2))
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+	binary.Write(buf, binary.LittleEndian, uint16(1))
+	binary.Write(buf, binary.LittleEndian, uint16(12))
+	binary.Write(buf, binary.LittleEndian, uint32(0xFFFF))
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+	binary.Write(buf, binary.LittleEndian, uint32(7)) // RDPDR_DEVICE_REMOVE|USER_LOGGEDON|CLIENT_DISPLAY_NAME
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+	binary.Write(buf, binary.LittleEndian, uint32(0))
 	h.send(buf.Bytes())
 
-	// Refresh file list from JS.
-	h.refreshFileList()
-
-	// Device announce timing (MS-RDPEFS + FreeRDP rdpdr_main.c:1399):
-	//   - RDP 5.1 servers (versionMinor 0x0005) don't send USER_LOGGEDON,
-	//     so we must announce immediately.
-	//   - Modern Windows sends PAKID_CORE_USER_LOGGEDON; we must wait for it
-	//     before announcing, otherwise the drive is rejected as invalid.
+	// RDP 5.1 servers don't send USER_LOGGEDON — announce immediately
 	if h.enabled && h.versionMinor == RDPDR_VERSION_MINOR_RDP51 {
-		h.announceDevice()
+		h.announceAllDevices()
 	}
 }
 
-// processUserLoggedOn is sent by modern Windows after the user session is
-// established. This is the correct point to announce redirected drives.
 func (h *RdpefsHandler) processUserLoggedOn() {
 	slog.Debug("rdpefs: user logged on")
 	h.mu.Lock()
@@ -317,44 +480,102 @@ func (h *RdpefsHandler) processUserLoggedOn() {
 	already := h.announced
 	h.mu.Unlock()
 	if h.enabled && !already {
-		h.announceDevice()
+		h.refreshLocalFileList()
+		h.announceAllDevices()
 	}
 }
 
-func (h *RdpefsHandler) announceDevice() {
+// announceAllDevices sends a single device list announce for all drives
+func (h *RdpefsHandler) announceAllDevices() {
 	h.mu.Lock()
 	h.announced = true
+
+	// Collect all drives to announce
+	type devEntry struct {
+		deviceID  uint32
+		driveName string
+	}
+	var entries []devEntry
+
+	// Always include local WEBRDP drive if it has files
+	hasLocalFiles := len(h.localRoot.Children) > 0
+	if hasLocalFiles {
+		localDevID := uint32(0) // device 0 = local
+		if _, exists := h.drives[localDevID]; !exists {
+			h.drives[localDevID] = &DriveState{
+				DeviceID:  localDevID,
+				DriveName: "WEBRDP",
+				Mode:      DriveModeLocal,
+				Status:    "online",
+			}
+		}
+		entries = append(entries, devEntry{localDevID, "WEBRDP"})
+	}
+
+	// Agent drives
+	for _, d := range h.drives {
+		if d.Mode == DriveModeAgent && d.Status != "removed" {
+			entries = append(entries, devEntry{d.DeviceID, d.DriveName})
+			d.Status = "online"
+		}
+	}
 	h.mu.Unlock()
+
+	if len(entries) == 0 {
+		// Announce empty list
+		buf := &bytes.Buffer{}
+		binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
+		binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_DEVICELIST_ANNOUNCE))
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		h.send(buf.Bytes())
+		return
+	}
 
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_DEVICELIST_ANNOUNCE))
-	binary.Write(buf, binary.LittleEndian, uint32(1)) // deviceCount
+	binary.Write(buf, binary.LittleEndian, uint32(len(entries)))
 
-	// Device entry
-	binary.Write(buf, binary.LittleEndian, uint32(RDPDR_DTYP_FILESYSTEM)) // deviceType
-	binary.Write(buf, binary.LittleEndian, h.deviceID)                    // deviceId
+	for _, e := range entries {
+		binary.Write(buf, binary.LittleEndian, uint32(RDPDR_DTYP_FILESYSTEM))
+		binary.Write(buf, binary.LittleEndian, e.deviceID)
+		dosName := makeDosName(e.driveName)
+		buf.Write(dosName)
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // DeviceDataLength
+	}
 
-	// PreferredDosName — exactly 8 bytes, null-padded ASCII (MS-RDPEFS
-	// 2.2.1.3). Windows uses this verbatim as the share name (\\tsclient\NAME).
-	// Must be ≤7 chars + null, uppercase; non-ASCII bytes become '_'.
+	h.send(buf.Bytes())
+	slog.Debug("rdpefs: announced devices", "count", len(entries))
+}
+
+// announceDeviceSingle sends a device list announce for a single drive (hot-plug)
+func (h *RdpefsHandler) announceDeviceSingle(deviceID uint32, driveName string) {
+	buf := &bytes.Buffer{}
+	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
+	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_DEVICELIST_ANNOUNCE))
+	binary.Write(buf, binary.LittleEndian, uint32(1))
+
+	binary.Write(buf, binary.LittleEndian, uint32(RDPDR_DTYP_FILESYSTEM))
+	binary.Write(buf, binary.LittleEndian, deviceID)
+	dosName := makeDosName(driveName)
+	buf.Write(dosName)
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+
+	h.send(buf.Bytes())
+	slog.Debug("rdpefs: announced single device", "name", driveName, "id", deviceID)
+}
+
+func makeDosName(name string) []byte {
 	dosName := make([]byte, 8)
-	name := strings.ToUpper(h.driveName)
-	for i := 0; i < 7 && i < len(name); i++ {
-		c := name[i]
+	upper := strings.ToUpper(name)
+	for i := 0; i < 7 && i < len(upper); i++ {
+		c := upper[i]
 		if c > 0x7F {
 			c = '_'
 		}
 		dosName[i] = c
 	}
-	// byte 7 stays 0 (null terminator)
-	buf.Write(dosName)
-
-	// DeviceDataLength — 0 for a filesystem drive (name is in PreferredDosName).
-	binary.Write(buf, binary.LittleEndian, uint32(0))
-
-	h.send(buf.Bytes())
-	slog.Debug("rdpefs: announced filesystem device", "name", h.driveName, "id", h.deviceID)
+	return dosName
 }
 
 func (h *RdpefsHandler) processDeviceReply(data []byte) {
@@ -365,6 +586,8 @@ func (h *RdpefsHandler) processDeviceReply(data []byte) {
 	status := binary.LittleEndian.Uint32(data[4:8])
 	slog.Debug("rdpefs: device reply", "deviceID", deviceID, "status", status)
 }
+
+// ─── IRP Processing ──────────────────────────────────────────────
 
 func (h *RdpefsHandler) processIORequest(data []byte) {
 	if len(data) < 20 {
@@ -377,206 +600,545 @@ func (h *RdpefsHandler) processIORequest(data []byte) {
 	minorFunction := binary.LittleEndian.Uint32(data[16:20])
 	payload := data[20:]
 
-	_ = deviceID
-
 	switch majorFunction {
 	case IRP_MJ_CREATE:
-		h.handleCreate(completionID, payload)
+		h.handleCreate(deviceID, completionID, payload)
 	case IRP_MJ_CLOSE:
-		h.handleClose(completionID, fileID)
+		h.handleClose(deviceID, completionID, fileID)
 	case IRP_MJ_READ:
-		h.handleRead(completionID, fileID, payload)
+		h.handleRead(deviceID, completionID, fileID, payload)
+	case IRP_MJ_WRITE:
+		h.handleWrite(deviceID, completionID, fileID, payload)
 	case IRP_MJ_QUERY_INFORMATION:
-		h.handleQueryInformation(completionID, fileID, payload)
+		h.handleQueryInformation(deviceID, completionID, fileID, payload)
+	case IRP_MJ_SET_INFORMATION:
+		h.handleSetInformation(deviceID, completionID, fileID, payload)
 	case IRP_MJ_DIRECTORY_CONTROL:
-		h.handleDirectoryControl(completionID, fileID, minorFunction, payload)
+		h.handleDirectoryControl(deviceID, completionID, fileID, minorFunction, payload)
 	case IRP_MJ_QUERY_VOLUME:
-		h.handleQueryVolume(completionID, payload)
+		h.handleQueryVolume(deviceID, completionID, payload)
+	case IRP_MJ_LOCK_CONTROL:
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, nil)
+	case IRP_MJ_DEVICE_CONTROL:
+		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
 	default:
 		slog.Debug("rdpefs: unsupported IRP", "major", majorFunction, "minor", minorFunction)
-		h.sendIOCompletion(completionID, STATUS_NOT_SUPPORTED, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
 	}
 }
 
-func (h *RdpefsHandler) handleCreate(completionID uint32, data []byte) {
+func (h *RdpefsHandler) getDrive(deviceID uint32) *DriveState {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.drives[deviceID]
+}
+
+// ─── IRP_MJ_CREATE ───────────────────────────────────────────────
+
+func (h *RdpefsHandler) handleCreate(deviceID, completionID uint32, data []byte) {
 	if len(data) < 32 {
-		h.sendIOCompletion(completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	desiredAccess := binary.LittleEndian.Uint32(data[0:4])
 	_ = desiredAccess
-	// allocationSize := binary.LittleEndian.Uint64(data[4:12])
-	// fileAttributes := binary.LittleEndian.Uint32(data[12:16])
-	// sharedAccess := binary.LittleEndian.Uint32(data[16:20])
 	createDisposition := binary.LittleEndian.Uint32(data[20:24])
 	createOptions := binary.LittleEndian.Uint32(data[24:28])
 	pathLen := binary.LittleEndian.Uint32(data[28:32])
 	pathBytes := data[32:]
 	if uint32(len(pathBytes)) < pathLen {
-		h.sendIOCompletion(completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
-	path := decodeUTF16LE(pathBytes[:pathLen])
-	path = strings.TrimRight(path, "\x00")
-	path = strings.ReplaceAll(path, "\\", "/")
-	path = strings.TrimPrefix(path, "/")
+	rdpPath := decodeUTF16LE(pathBytes[:pathLen])
+	rdpPath = strings.TrimRight(rdpPath, "\x00")
+	rdpPath = strings.ReplaceAll(rdpPath, "\\", "/")
+	rdpPath = strings.TrimPrefix(rdpPath, "/")
 
-	slog.Debug("rdpefs: CREATE", "path", path, "disp", createDisposition, "opts", createOptions, "completionID", completionID)
+	slog.Debug("rdpefs: CREATE", "device", deviceID, "path", rdpPath, "disp", createDisposition, "opts", createOptions)
 
-	const (
-		FILE_DIRECTORY_FILE     = 0x00000001
-		FILE_NON_DIRECTORY_FILE = 0x00000040
-		FILE_SUPERSEDE          = 0x00000000
-		FILE_OPEN               = 0x00000001
-		FILE_CREATE             = 0x00000002
-		FILE_OPEN_IF            = 0x00000003
-		FILE_OVERWRITE          = 0x00000004
-		FILE_OVERWRITE_IF       = 0x00000005
-		// Information response values
-		FILE_SUPERSEDED = 0x00000000
-		FILE_OPENED     = 0x00000001
-		FILE_OVERWRITTEN = 0x00000003
-	)
+	drive := h.getDrive(deviceID)
+	if drive == nil {
+		h.sendIOCompletion(deviceID, completionID, STATUS_DEVICE_OFF_LINE, nil)
+		return
+	}
 
-	h.mu.Lock()
-	file := h.resolvePath(path)
-	if file == nil {
-		h.mu.Unlock()
-		// Read-only virtual drive: we don't create new files/dirs.
-		if createDisposition == FILE_CREATE || createDisposition == FILE_OPEN_IF ||
-			createDisposition == FILE_OVERWRITE_IF || createDisposition == FILE_SUPERSEDE {
-			h.sendIOCompletion(completionID, STATUS_ACCESS_DENIED, nil)
+	if drive.Mode == DriveModeAgent {
+		h.handleCreateAgent(drive, completionID, rdpPath, createDisposition, createOptions)
+	} else {
+		h.handleCreateLocal(deviceID, completionID, rdpPath, createDisposition, createOptions)
+	}
+}
+
+func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32, path string, createDisposition, createOptions uint32) {
+	deviceID := drive.DeviceID
+	agentID := drive.AgentID
+	readOnly := drive.ReadOnly
+
+	// For write operations on read-only drive
+	isWriteDisp := createDisposition == FILE_CREATE || createDisposition == FILE_OPEN_IF ||
+		createDisposition == FILE_OVERWRITE_IF || createDisposition == FILE_SUPERSEDE ||
+		createDisposition == FILE_OVERWRITE
+	if readOnly && isWriteDisp {
+		h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+		return
+	}
+
+	// Call agent stat to check if path exists
+	statResult := h.callAgentStat(agentID, path)
+	exists := statResult != nil
+
+	if !exists {
+		if isWriteDisp && !readOnly {
+			// Create file/dir via agent
+			if createOptions&FILE_DIRECTORY_FILE != 0 {
+				mkdirResult := h.callAgentMkdir(agentID, path)
+				if !mkdirResult {
+					h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+					return
+				}
+				statResult = h.callAgentStat(agentID, path)
+				if statResult == nil {
+					h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+					return
+				}
+			} else {
+				// Open for write → open in write mode on agent
+				handle := h.callAgentOpen(agentID, path, "write")
+				if handle == "" {
+					h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+					return
+				}
+				h.mu.Lock()
+				fid := h.nextFileID
+				h.nextFileID++
+				h.handles[fid] = &openHandle{
+					DriveDeviceID: deviceID,
+					AgentID:       agentID,
+					Path:          path,
+					IsDir:         false,
+					RemoteHandle:  handle,
+				}
+				h.mu.Unlock()
+				resp := &bytes.Buffer{}
+				binary.Write(resp, binary.LittleEndian, fid)
+				binary.Write(resp, binary.LittleEndian, uint8(0))
+				h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+				return
+			}
+		} else {
+			h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
 			return
 		}
-		h.sendIOCompletion(completionID, STATUS_NO_SUCH_FILE, nil)
+	}
+
+	isDir := (*statResult).Get("isDir").Bool()
+	if createOptions&FILE_DIRECTORY_FILE != 0 && !isDir {
+		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+		return
+	}
+	if createOptions&FILE_NON_DIRECTORY_FILE != 0 && isDir {
+		h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
 		return
 	}
 
-	// Validate directory/file expectation against createOptions.
+	// Determine mode for agent open
+	mode := "read"
+	if isWriteDisp && !readOnly {
+		mode = "write"
+	}
+
+	remoteHandle := ""
+	if !isDir {
+		remoteHandle = h.callAgentOpen(agentID, path, mode)
+		// It's OK if open fails for read — we'll stat-only
+	}
+
+	h.mu.Lock()
+	fid := h.nextFileID
+	h.nextFileID++
+	h.handles[fid] = &openHandle{
+		DriveDeviceID: deviceID,
+		AgentID:       agentID,
+		Path:          path,
+		IsDir:         isDir,
+		RemoteHandle:  remoteHandle,
+	}
+	h.mu.Unlock()
+
+	resp := &bytes.Buffer{}
+	binary.Write(resp, binary.LittleEndian, fid)
+	binary.Write(resp, binary.LittleEndian, uint8(0))
+	h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+}
+
+func (h *RdpefsHandler) handleCreateLocal(deviceID, completionID uint32, path string, createDisposition, createOptions uint32) {
+	h.mu.Lock()
+	file := h.resolveLocalPath(path)
+	if file == nil {
+		h.mu.Unlock()
+		isWriteDisp := createDisposition == FILE_CREATE || createDisposition == FILE_OPEN_IF ||
+			createDisposition == FILE_OVERWRITE_IF || createDisposition == FILE_SUPERSEDE
+		if isWriteDisp {
+			h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+			return
+		}
+		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+		return
+	}
+
 	if createOptions&FILE_DIRECTORY_FILE != 0 && !file.IsDir {
 		h.mu.Unlock()
-		h.sendIOCompletion(completionID, STATUS_NO_SUCH_FILE, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
 		return
 	}
 	if createOptions&FILE_NON_DIRECTORY_FILE != 0 && file.IsDir {
 		h.mu.Unlock()
-		h.sendIOCompletion(completionID, STATUS_ACCESS_DENIED, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
 		return
 	}
 
 	fid := h.nextFileID
 	h.nextFileID++
-	h.openFiles[fid] = file
-	h.openPaths[fid] = path
+	h.handles[fid] = &openHandle{
+		DriveDeviceID: deviceID,
+		Path:          path,
+		IsDir:         file.IsDir,
+		LocalFile:     file,
+	}
 	h.mu.Unlock()
 
-	// Send success with fileID + Information (FILE_OPENED for existing objects).
 	resp := &bytes.Buffer{}
-	binary.Write(resp, binary.LittleEndian, fid)             // FileId (4)
-	binary.Write(resp, binary.LittleEndian, uint8(FILE_OPENED)) // Information (1)
-	h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
+	binary.Write(resp, binary.LittleEndian, fid)
+	binary.Write(resp, binary.LittleEndian, uint8(0))
+	h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 }
 
-func (h *RdpefsHandler) handleClose(completionID uint32, fileID uint32) {
+// ─── IRP_MJ_CLOSE ───────────────────────────────────────────────
+
+func (h *RdpefsHandler) handleClose(deviceID, completionID, fileID uint32) {
 	h.mu.Lock()
-	delete(h.openFiles, fileID)
-	delete(h.openPaths, fileID)
+	handle := h.handles[fileID]
+	delete(h.handles, fileID)
 	delete(h.dirEnum, fileID)
 	h.mu.Unlock()
-	// DR_CLOSE_RSP: Padding (5 bytes) per MS-RDPEFS 2.2.1.5.2.
-	h.sendIOCompletion(completionID, STATUS_SUCCESS, make([]byte, 5))
+
+	if handle != nil && handle.RemoteHandle != "" {
+		go h.callAgentClose(handle.AgentID, handle.RemoteHandle)
+	}
+
+	h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, nil)
 }
 
-func (h *RdpefsHandler) handleRead(completionID uint32, fileID uint32, data []byte) {
+// ─── IRP_MJ_READ ────────────────────────────────────────────────
+
+func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data []byte) {
 	if len(data) < 12 {
-		h.sendIOCompletion(completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	length := binary.LittleEndian.Uint32(data[0:4])
 	offset := binary.LittleEndian.Uint64(data[4:12])
 
 	h.mu.Lock()
-	file := h.openFiles[fileID]
+	handle := h.handles[fileID]
 	h.mu.Unlock()
 
-	if file == nil || file.IsDir {
-		h.sendIOCompletion(completionID, STATUS_INVALID_DEVICE_REQUEST, nil)
+	if handle == nil || handle.IsDir {
+		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_DEVICE_REQUEST, nil)
 		return
 	}
 
-	// Load file data from JS if not yet loaded
-	if file.Data == nil {
-		h.loadFileData(file)
+	drive := h.getDrive(deviceID)
+	if drive == nil {
+		h.sendIOCompletion(deviceID, completionID, STATUS_DEVICE_OFF_LINE, nil)
+		return
 	}
 
-	start := int(offset)
-	if start >= len(file.Data) {
-		// EOF
+	if drive.Mode == DriveModeAgent {
+		// Read from remote agent
+		readHandle := handle.RemoteHandle
+		if readHandle == "" {
+			// Try to open for read
+			readHandle = h.callAgentOpen(handle.AgentID, handle.Path, "read")
+			if readHandle == "" {
+				h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+				return
+			}
+			h.mu.Lock()
+			handle.RemoteHandle = readHandle
+			h.mu.Unlock()
+		}
+
+		chunk := h.callAgentRead(handle.AgentID, readHandle, offset, length)
 		resp := &bytes.Buffer{}
-		binary.Write(resp, binary.LittleEndian, uint32(0)) // length
-		h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
-		return
+		binary.Write(resp, binary.LittleEndian, uint32(len(chunk)))
+		if len(chunk) > 0 {
+			resp.Write(chunk)
+		}
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+	} else {
+		// Local mode read
+		file := handle.LocalFile
+		if file == nil {
+			h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+			return
+		}
+		if file.Data == nil {
+			h.loadLocalFileData(file)
+		}
+		start := int(offset)
+		if start >= len(file.Data) {
+			resp := &bytes.Buffer{}
+			binary.Write(resp, binary.LittleEndian, uint32(0))
+			h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+			return
+		}
+		end := start + int(length)
+		if end > len(file.Data) {
+			end = len(file.Data)
+		}
+		chunk := file.Data[start:end]
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(len(chunk)))
+		resp.Write(chunk)
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 	}
-
-	end := start + int(length)
-	if end > len(file.Data) {
-		end = len(file.Data)
-	}
-	chunk := file.Data[start:end]
-
-	resp := &bytes.Buffer{}
-	binary.Write(resp, binary.LittleEndian, uint32(len(chunk)))
-	resp.Write(chunk)
-	h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
 }
 
-func (h *RdpefsHandler) handleQueryInformation(completionID uint32, fileID uint32, data []byte) {
+// ─── IRP_MJ_WRITE ───────────────────────────────────────────────
+
+func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data []byte) {
+	if len(data) < 32 {
+		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
+		return
+	}
+	length := binary.LittleEndian.Uint32(data[0:4])
+	offset := binary.LittleEndian.Uint64(data[4:12])
+	// data[12:32] = padding (20 bytes)
+	writeData := data[32:]
+	if uint32(len(writeData)) < length {
+		writeData = writeData[:len(writeData)]
+	} else {
+		writeData = writeData[:length]
+	}
+
+	h.mu.Lock()
+	handle := h.handles[fileID]
+	h.mu.Unlock()
+
+	if handle == nil || handle.IsDir {
+		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_DEVICE_REQUEST, nil)
+		return
+	}
+
+	drive := h.getDrive(deviceID)
+	if drive == nil || drive.ReadOnly {
+		h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+		return
+	}
+
+	if drive.Mode == DriveModeAgent {
+		writeHandle := handle.RemoteHandle
+		if writeHandle == "" {
+			h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+			return
+		}
+		written := h.callAgentWrite(handle.AgentID, writeHandle, offset, writeData)
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(written))
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+	} else {
+		// Local mode: read-only
+		h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+	}
+}
+
+// ─── IRP_MJ_SET_INFORMATION ─────────────────────────────────────
+
+func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint32, data []byte) {
 	if len(data) < 4 {
-		h.sendIOCompletion(completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	infoClass := binary.LittleEndian.Uint32(data[0:4])
 
 	h.mu.Lock()
-	file := h.openFiles[fileID]
+	handle := h.handles[fileID]
 	h.mu.Unlock()
 
-	if file == nil {
-		h.sendIOCompletion(completionID, STATUS_NO_SUCH_FILE, nil)
+	if handle == nil {
+		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
 		return
+	}
+
+	drive := h.getDrive(deviceID)
+	if drive == nil {
+		h.sendIOCompletion(deviceID, completionID, STATUS_DEVICE_OFF_LINE, nil)
+		return
+	}
+
+	switch infoClass {
+	case FileBasicInformation:
+		// Set timestamps — acknowledge without action
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(0))
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+
+	case FileEndOfFileInformation:
+		if drive.ReadOnly {
+			h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+			return
+		}
+		if drive.Mode == DriveModeAgent && len(data) >= 12 {
+			newSize := binary.LittleEndian.Uint64(data[4:12])
+			ok := h.callAgentTruncate(handle.AgentID, handle.Path, newSize)
+			if !ok {
+				h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+				return
+			}
+		}
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(0))
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+
+	case FileDispositionInformation:
+		if drive.ReadOnly {
+			h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+			return
+		}
+		if drive.Mode == DriveModeAgent {
+			ok := h.callAgentDelete(handle.AgentID, handle.Path)
+			if !ok {
+				h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+				return
+			}
+		}
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(0))
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+
+	case FileRenameInformation:
+		if drive.ReadOnly {
+			h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+			return
+		}
+		if drive.Mode == DriveModeAgent && len(data) >= 14 {
+			// Parse rename info: replaceIfExists(1) + rootDir(1) + fileNameLen(4) + fileName(UTF-16LE)
+			fnLen := binary.LittleEndian.Uint32(data[10:14])
+			if uint32(len(data)) >= 14+fnLen {
+				newPath := decodeUTF16LE(data[14 : 14+fnLen])
+				newPath = strings.TrimRight(newPath, "\x00")
+				newPath = strings.ReplaceAll(newPath, "\\", "/")
+				newPath = strings.TrimPrefix(newPath, "/")
+				ok := h.callAgentRename(handle.AgentID, handle.Path, newPath)
+				if !ok {
+					h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+					return
+				}
+				h.mu.Lock()
+				handle.Path = newPath
+				h.mu.Unlock()
+			}
+		}
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(0))
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+
+	case FileAllocationInformation:
+		// Acknowledge without action
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(0))
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+
+	default:
+		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
+	}
+}
+
+// ─── IRP_MJ_QUERY_INFORMATION ───────────────────────────────────
+
+func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID uint32, data []byte) {
+	if len(data) < 4 {
+		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
+		return
+	}
+	infoClass := binary.LittleEndian.Uint32(data[0:4])
+
+	h.mu.Lock()
+	handle := h.handles[fileID]
+	h.mu.Unlock()
+
+	if handle == nil {
+		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+		return
+	}
+
+	drive := h.getDrive(deviceID)
+	if drive == nil {
+		h.sendIOCompletion(deviceID, completionID, STATUS_DEVICE_OFF_LINE, nil)
+		return
+	}
+
+	// Get file metadata
+	var isDir bool
+	var size int64
+	var mtime time.Time
+
+	if drive.Mode == DriveModeAgent {
+		stat := h.callAgentStat(handle.AgentID, handle.Path)
+		if stat == nil {
+			h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+			return
+		}
+		isDir = (*stat).Get("isDir").Bool()
+		size = int64((*stat).Get("size").Int())
+		mtime = time.UnixMilli(int64((*stat).Get("mtime").Float()))
+	} else {
+		file := handle.LocalFile
+		if file == nil {
+			h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+			return
+		}
+		isDir = file.IsDir
+		size = file.Size
+		if file.Data != nil {
+			size = int64(len(file.Data))
+		}
+		mtime = file.ModTime
 	}
 
 	var info []byte
 	switch infoClass {
 	case FileBasicInformation:
-		info = h.buildBasicInfo(file)
+		info = buildBasicInfo(isDir, mtime)
 	case FileStandardInformation:
-		info = h.buildStandardInfo(file)
+		info = buildStandardInfo(isDir, size)
 	case FileAttributeTagInformation:
-		info = h.buildAttributeTagInfo(file)
+		info = buildAttributeTagInfo(isDir)
 	default:
-		slog.Debug("rdpefs: unsupported info class", "class", infoClass)
-		h.sendIOCompletion(completionID, STATUS_NOT_SUPPORTED, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
 		return
 	}
 
 	resp := &bytes.Buffer{}
 	binary.Write(resp, binary.LittleEndian, uint32(len(info)))
 	resp.Write(info)
-	h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
+	h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 }
 
-func (h *RdpefsHandler) handleDirectoryControl(completionID uint32, fileID uint32, minorFunction uint32, data []byte) {
+// ─── IRP_MJ_DIRECTORY_CONTROL ───────────────────────────────────
+
+func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, minorFunction uint32, data []byte) {
 	if minorFunction == IRP_MN_NOTIFY_CHANGE_DIRECTORY {
-		// Silently ignore change notifications
 		return
 	}
 	if minorFunction != IRP_MN_QUERY_DIRECTORY {
-		h.sendIOCompletion(completionID, STATUS_NOT_SUPPORTED, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
 		return
 	}
 	if len(data) < 9 {
-		h.sendIOCompletion(completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 
@@ -590,34 +1152,36 @@ func (h *RdpefsHandler) handleDirectoryControl(completionID uint32, fileID uint3
 	}
 
 	h.mu.Lock()
-	dir := h.openFiles[fileID]
+	handle := h.handles[fileID]
 	h.mu.Unlock()
 
-	if dir == nil || !dir.IsDir {
-		h.sendIOCompletion(completionID, STATUS_NO_SUCH_FILE, nil)
+	if handle == nil || !handle.IsDir {
+		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
 		return
 	}
 
-	_ = infoClass // We always return FileBothDirectoryInformation format
+	drive := h.getDrive(deviceID)
+	if drive == nil {
+		h.sendIOCompletion(deviceID, completionID, STATUS_DEVICE_OFF_LINE, nil)
+		return
+	}
 
 	if initialQuery != 0 {
-		// Build list of entries: "." + ".." + children
-		entries := make([]*VirtualFile, 0)
-		entries = append(entries, &VirtualFile{Name: ".", IsDir: true, ModTime: dir.ModTime})
-		entries = append(entries, &VirtualFile{Name: "..", IsDir: true, ModTime: dir.ModTime})
-		for _, child := range dir.Children {
-			if pattern == "" || pattern == "*" || pattern == "*.*" || matchPattern(pattern, child.Name) {
-				entries = append(entries, child)
-			}
+		// Build entry list
+		var entries []*VirtualFile
+
+		if drive.Mode == DriveModeAgent {
+			entries = h.listAgentDir(handle.AgentID, handle.Path, pattern)
+		} else {
+			entries = h.listLocalDir(handle, pattern)
 		}
 
 		if len(entries) == 0 {
-			h.sendIOCompletion(completionID, STATUS_NO_MORE_FILES, nil)
+			h.sendIOCompletion(deviceID, completionID, STATUS_NO_MORE_FILES, nil)
 			return
 		}
 
-		// Send the first entry; stash the rest keyed by fileID.
-		entryBuf := h.buildDirectoryEntry(entries[0], infoClass)
+		entryBuf := buildDirectoryEntry(entries[0], infoClass)
 		h.mu.Lock()
 		h.dirEnum[fileID] = &dirEnumState{entries: entries[1:], index: 0}
 		h.mu.Unlock()
@@ -625,15 +1189,14 @@ func (h *RdpefsHandler) handleDirectoryControl(completionID uint32, fileID uint3
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(len(entryBuf)))
 		resp.Write(entryBuf)
-		h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 	} else {
-		// Continue enumeration for this fileID.
 		h.mu.Lock()
 		st := h.dirEnum[fileID]
 		h.mu.Unlock()
 
 		if st == nil || st.index >= len(st.entries) {
-			h.sendIOCompletion(completionID, STATUS_NO_MORE_FILES, nil)
+			h.sendIOCompletion(deviceID, completionID, STATUS_NO_MORE_FILES, nil)
 			return
 		}
 
@@ -642,79 +1205,137 @@ func (h *RdpefsHandler) handleDirectoryControl(completionID uint32, fileID uint3
 		st.index++
 		h.mu.Unlock()
 
-		entryBuf := h.buildDirectoryEntry(entry, infoClass)
+		entryBuf := buildDirectoryEntry(entry, infoClass)
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(len(entryBuf)))
 		resp.Write(entryBuf)
-		h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 	}
 }
 
-func (h *RdpefsHandler) handleQueryVolume(completionID uint32, data []byte) {
+func (h *RdpefsHandler) listAgentDir(agentID, dirPath, pattern string) []*VirtualFile {
+	result := js.Global().Call("zephyrRdpFsList", agentID, dirPath)
+	if result.IsNull() || result.IsUndefined() {
+		return nil
+	}
+
+	now := time.Now()
+	entries := make([]*VirtualFile, 0)
+	entries = append(entries, &VirtualFile{Name: ".", IsDir: true, ModTime: now})
+	entries = append(entries, &VirtualFile{Name: "..", IsDir: true, ModTime: now})
+
+	length := result.Length()
+	for i := 0; i < length; i++ {
+		entry := result.Index(i)
+		name := entry.Get("name").String()
+		if pattern != "" && pattern != "*" && pattern != "*.*" && !matchPattern(pattern, name) {
+			continue
+		}
+		mt := time.UnixMilli(int64(entry.Get("mtime").Float()))
+		if mt.IsZero() {
+			mt = now
+		}
+		f := &VirtualFile{
+			Name:    name,
+			IsDir:   entry.Get("isDir").Bool(),
+			Size:    int64(entry.Get("size").Float()),
+			ModTime: mt,
+		}
+		entries = append(entries, f)
+	}
+	return entries
+}
+
+func (h *RdpefsHandler) listLocalDir(handle *openHandle, pattern string) []*VirtualFile {
+	dir := handle.LocalFile
+	if dir == nil || !dir.IsDir {
+		return nil
+	}
+	entries := make([]*VirtualFile, 0)
+	entries = append(entries, &VirtualFile{Name: ".", IsDir: true, ModTime: dir.ModTime})
+	entries = append(entries, &VirtualFile{Name: "..", IsDir: true, ModTime: dir.ModTime})
+	for _, child := range dir.Children {
+		if pattern == "" || pattern == "*" || pattern == "*.*" || matchPattern(pattern, child.Name) {
+			entries = append(entries, child)
+		}
+	}
+	return entries
+}
+
+// ─── IRP_MJ_QUERY_VOLUME ────────────────────────────────────────
+
+func (h *RdpefsHandler) handleQueryVolume(deviceID, completionID uint32, data []byte) {
 	if len(data) < 4 {
-		h.sendIOCompletion(completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	infoClass := binary.LittleEndian.Uint32(data[0:4])
 
+	drive := h.getDrive(deviceID)
+	driveName := "WEBRDP"
+	if drive != nil {
+		driveName = drive.DriveName
+	}
+
 	switch infoClass {
 	case 1: // FileFsVolumeInformation
-		label := encodeUTF16LENoNull(h.driveName)
+		label := encodeUTF16LENoNull(driveName)
 		info := &bytes.Buffer{}
-		binary.Write(info, binary.LittleEndian, int64(0))           // VolumeCreationTime
-		binary.Write(info, binary.LittleEndian, uint32(0x12345678)) // VolumeSerialNumber
-		binary.Write(info, binary.LittleEndian, uint32(len(label))) // VolumeLabelLength
-		binary.Write(info, binary.LittleEndian, uint8(0))           // SupportsObjects
-		binary.Write(info, binary.LittleEndian, uint8(0))           // Reserved
+		binary.Write(info, binary.LittleEndian, int64(0))
+		binary.Write(info, binary.LittleEndian, uint32(0x12345678))
+		binary.Write(info, binary.LittleEndian, uint32(len(label)))
+		binary.Write(info, binary.LittleEndian, uint8(0))
+		binary.Write(info, binary.LittleEndian, uint8(0))
 		info.Write(label)
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(info.Len()))
 		resp.Write(info.Bytes())
-		h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 
 	case 3: // FileFsSizeInformation
 		info := &bytes.Buffer{}
-		binary.Write(info, binary.LittleEndian, int64(1024*1024))  // TotalAllocationUnits
-		binary.Write(info, binary.LittleEndian, int64(512*1024))   // AvailableAllocationUnits
-		binary.Write(info, binary.LittleEndian, uint32(1))          // SectorsPerAllocationUnit
-		binary.Write(info, binary.LittleEndian, uint32(4096))      // BytesPerSector
+		binary.Write(info, binary.LittleEndian, int64(1024*1024))
+		binary.Write(info, binary.LittleEndian, int64(512*1024))
+		binary.Write(info, binary.LittleEndian, uint32(1))
+		binary.Write(info, binary.LittleEndian, uint32(4096))
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(info.Len()))
 		resp.Write(info.Bytes())
-		h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 
-	case 4: // FileFsDeviceInformation — required for the drive to initialise
+	case 4: // FileFsDeviceInformation
 		info := &bytes.Buffer{}
-		binary.Write(info, binary.LittleEndian, uint32(0x00000007)) // DeviceType = FILE_DEVICE_DISK
-		binary.Write(info, binary.LittleEndian, uint32(0x00000020)) // Characteristics = FILE_REMOTE_DEVICE
+		binary.Write(info, binary.LittleEndian, uint32(0x00000007))
+		binary.Write(info, binary.LittleEndian, uint32(0x00000020))
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(info.Len()))
 		resp.Write(info.Bytes())
-		h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 
 	case 5: // FileFsAttributeInformation
 		fsName := encodeUTF16LENoNull("FAT32")
 		info := &bytes.Buffer{}
-		binary.Write(info, binary.LittleEndian, uint32(0x00000003)) // FileSystemAttributes (CASE_SENSITIVE|UNICODE)
-		binary.Write(info, binary.LittleEndian, uint32(255))         // MaxComponentNameLen
-		binary.Write(info, binary.LittleEndian, uint32(len(fsName))) // FileSystemNameLength
+		binary.Write(info, binary.LittleEndian, uint32(0x00000003))
+		binary.Write(info, binary.LittleEndian, uint32(255))
+		binary.Write(info, binary.LittleEndian, uint32(len(fsName)))
 		info.Write(fsName)
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(info.Len()))
 		resp.Write(info.Bytes())
-		h.sendIOCompletion(completionID, STATUS_SUCCESS, resp.Bytes())
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 
 	default:
-		h.sendIOCompletion(completionID, STATUS_NOT_SUPPORTED, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
 	}
 }
 
-// sendIOCompletion sends a Device I/O Completion PDU
-func (h *RdpefsHandler) sendIOCompletion(completionID, status uint32, payload []byte) {
+// ─── IO Completion ───────────────────────────────────────────────
+
+func (h *RdpefsHandler) sendIOCompletion(deviceID, completionID, status uint32, payload []byte) {
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_DEVICE_IOCOMPLETION))
-	binary.Write(buf, binary.LittleEndian, h.deviceID)
+	binary.Write(buf, binary.LittleEndian, deviceID)
 	binary.Write(buf, binary.LittleEndian, completionID)
 	binary.Write(buf, binary.LittleEndian, status)
 	if payload != nil {
@@ -723,141 +1344,87 @@ func (h *RdpefsHandler) sendIOCompletion(completionID, status uint32, payload []
 	h.send(buf.Bytes())
 }
 
-// ─── File info builders ───
+// ─── Agent RPC calls (synchronous JS interop) ───────────────────
 
-func (h *RdpefsHandler) buildBasicInfo(f *VirtualFile) []byte {
-	buf := &bytes.Buffer{}
-	ft := windowsFileTime(f.ModTime)
-	binary.Write(buf, binary.LittleEndian, ft)   // CreationTime
-	binary.Write(buf, binary.LittleEndian, ft)   // LastAccessTime
-	binary.Write(buf, binary.LittleEndian, ft)   // LastWriteTime
-	binary.Write(buf, binary.LittleEndian, ft)   // ChangeTime
-	attrs := uint32(FILE_ATTRIBUTE_ARCHIVE)
-	if f.IsDir {
-		attrs = FILE_ATTRIBUTE_DIRECTORY
+func (h *RdpefsHandler) callAgentStat(agentID, path string) *js.Value {
+	result := js.Global().Call("zephyrRdpFsStat", agentID, path)
+	if result.IsNull() || result.IsUndefined() {
+		return nil
 	}
-	binary.Write(buf, binary.LittleEndian, attrs) // FileAttributes
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // Reserved
-	return buf.Bytes()
+	return &result
 }
 
-func (h *RdpefsHandler) buildStandardInfo(f *VirtualFile) []byte {
-	buf := &bytes.Buffer{}
-	size := int64(f.Size)
-	if f.Data != nil {
-		size = int64(len(f.Data))
-	}
-	binary.Write(buf, binary.LittleEndian, size)  // AllocationSize
-	binary.Write(buf, binary.LittleEndian, size)  // EndOfFile
-	binary.Write(buf, binary.LittleEndian, uint32(1)) // NumberOfLinks
-	deletePending := uint8(0)
-	directory := uint8(0)
-	if f.IsDir {
-		directory = 1
-	}
-	binary.Write(buf, binary.LittleEndian, deletePending)
-	binary.Write(buf, binary.LittleEndian, directory)
-	return buf.Bytes()
+// Wrapper to avoid returning pointer to interface
+func (h *RdpefsHandler) callAgentStatChecked(agentID, path string) *js.Value {
+	return h.callAgentStat(agentID, path)
 }
 
-func (h *RdpefsHandler) buildAttributeTagInfo(f *VirtualFile) []byte {
-	buf := &bytes.Buffer{}
-	attrs := uint32(FILE_ATTRIBUTE_ARCHIVE)
-	if f.IsDir {
-		attrs = FILE_ATTRIBUTE_DIRECTORY
+func (h *RdpefsHandler) callAgentOpen(agentID, path, mode string) string {
+	result := js.Global().Call("zephyrRdpFsOpen", agentID, path, mode)
+	if result.IsNull() || result.IsUndefined() {
+		return ""
 	}
-	binary.Write(buf, binary.LittleEndian, attrs) // FileAttributes
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // ReparseTag
-	return buf.Bytes()
+	return result.String()
 }
 
-func (h *RdpefsHandler) buildDirectoryEntry(f *VirtualFile, infoClass uint32) []byte {
-	name := encodeUTF16LE(f.Name)
-	// encodeUTF16LE appends a null terminator; directory entries must NOT
-	// include it in the name field, so strip the trailing 2 bytes.
-	if len(name) >= 2 {
-		name = name[:len(name)-2]
+func (h *RdpefsHandler) callAgentRead(agentID, handle string, offset uint64, length uint32) []byte {
+	result := js.Global().Call("zephyrRdpFsRead", agentID, handle, int(offset), int(length))
+	if result.IsNull() || result.IsUndefined() {
+		return nil
 	}
-	buf := &bytes.Buffer{}
-	ft := windowsFileTime(f.ModTime)
-	attrs := uint32(FILE_ATTRIBUTE_ARCHIVE)
-	if f.IsDir {
-		attrs = FILE_ATTRIBUTE_DIRECTORY
-	}
-	size := int64(f.Size)
-	if f.Data != nil {
-		size = int64(len(f.Data))
-	}
-
-	switch infoClass {
-	case FileNamesInformation:
-		// NextEntryOffset(4) FileIndex(4) FileNameLength(4) FileName
-		binary.Write(buf, binary.LittleEndian, uint32(0))
-		binary.Write(buf, binary.LittleEndian, uint32(0))
-		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
-		buf.Write(name)
-
-	case FileDirectoryInformation:
-		binary.Write(buf, binary.LittleEndian, uint32(0)) // NextEntryOffset
-		binary.Write(buf, binary.LittleEndian, uint32(0)) // FileIndex
-		binary.Write(buf, binary.LittleEndian, ft)        // CreationTime
-		binary.Write(buf, binary.LittleEndian, ft)        // LastAccessTime
-		binary.Write(buf, binary.LittleEndian, ft)        // LastWriteTime
-		binary.Write(buf, binary.LittleEndian, ft)        // ChangeTime
-		binary.Write(buf, binary.LittleEndian, size)      // EndOfFile
-		binary.Write(buf, binary.LittleEndian, size)      // AllocationSize
-		binary.Write(buf, binary.LittleEndian, attrs)     // FileAttributes
-		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
-		buf.Write(name)
-
-	case FileFullDirectoryInformation:
-		binary.Write(buf, binary.LittleEndian, uint32(0)) // NextEntryOffset
-		binary.Write(buf, binary.LittleEndian, uint32(0)) // FileIndex
-		binary.Write(buf, binary.LittleEndian, ft)        // CreationTime
-		binary.Write(buf, binary.LittleEndian, ft)        // LastAccessTime
-		binary.Write(buf, binary.LittleEndian, ft)        // LastWriteTime
-		binary.Write(buf, binary.LittleEndian, ft)        // ChangeTime
-		binary.Write(buf, binary.LittleEndian, size)      // EndOfFile
-		binary.Write(buf, binary.LittleEndian, size)      // AllocationSize
-		binary.Write(buf, binary.LittleEndian, attrs)     // FileAttributes
-		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
-		binary.Write(buf, binary.LittleEndian, uint32(0)) // EaSize
-		buf.Write(name)
-
-	default: // FileBothDirectoryInformation (3)
-		binary.Write(buf, binary.LittleEndian, uint32(0)) // NextEntryOffset
-		binary.Write(buf, binary.LittleEndian, uint32(0)) // FileIndex
-		binary.Write(buf, binary.LittleEndian, ft)        // CreationTime
-		binary.Write(buf, binary.LittleEndian, ft)        // LastAccessTime
-		binary.Write(buf, binary.LittleEndian, ft)        // LastWriteTime
-		binary.Write(buf, binary.LittleEndian, ft)        // ChangeTime
-		binary.Write(buf, binary.LittleEndian, size)      // EndOfFile
-		binary.Write(buf, binary.LittleEndian, size)      // AllocationSize
-		binary.Write(buf, binary.LittleEndian, attrs)     // FileAttributes
-		binary.Write(buf, binary.LittleEndian, uint32(len(name))) // FileNameLength
-		binary.Write(buf, binary.LittleEndian, uint32(0)) // EaSize
-		binary.Write(buf, binary.LittleEndian, uint8(0))  // ShortNameLength
-		binary.Write(buf, binary.LittleEndian, uint8(0))  // Reserved
-		buf.Write(make([]byte, 24))                        // ShortName (24 bytes)
-		buf.Write(name)
-	}
-	return buf.Bytes()
+	buf := make([]byte, result.Length())
+	js.CopyBytesToGo(buf, result)
+	return buf
 }
 
-// ─── Path resolution ───
+func (h *RdpefsHandler) callAgentWrite(agentID, handle string, offset uint64, data []byte) int {
+	jsArr := js.Global().Get("Uint8Array").New(len(data))
+	js.CopyBytesToJS(jsArr, data)
+	result := js.Global().Call("zephyrRdpFsWrite", agentID, handle, int(offset), jsArr)
+	if result.IsNull() || result.IsUndefined() {
+		return 0
+	}
+	return result.Int()
+}
 
-func (h *RdpefsHandler) resolvePath(path string) *VirtualFile {
+func (h *RdpefsHandler) callAgentClose(agentID, handle string) {
+	js.Global().Call("zephyrRdpFsClose", agentID, handle)
+}
+
+func (h *RdpefsHandler) callAgentMkdir(agentID, path string) bool {
+	result := js.Global().Call("zephyrRdpFsMkdir", agentID, path)
+	return !result.IsNull() && !result.IsUndefined() && result.Bool()
+}
+
+func (h *RdpefsHandler) callAgentDelete(agentID, path string) bool {
+	result := js.Global().Call("zephyrRdpFsDelete", agentID, path)
+	return !result.IsNull() && !result.IsUndefined() && result.Bool()
+}
+
+func (h *RdpefsHandler) callAgentRename(agentID, oldPath, newPath string) bool {
+	result := js.Global().Call("zephyrRdpFsRename", agentID, oldPath, newPath)
+	return !result.IsNull() && !result.IsUndefined() && result.Bool()
+}
+
+func (h *RdpefsHandler) callAgentTruncate(agentID, path string, size uint64) bool {
+	result := js.Global().Call("zephyrRdpFsTruncate", agentID, path, int(size))
+	return !result.IsNull() && !result.IsUndefined()
+}
+
+// ─── Local mode helpers ──────────────────────────────────────────
+
+func (h *RdpefsHandler) resolveLocalPath(path string) *VirtualFile {
 	if path == "" || path == "/" || path == "." {
-		return h.root
+		return h.localRoot
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
-	current := h.root
+	current := h.localRoot
 	for _, part := range parts {
 		if part == "" || part == "." {
 			continue
 		}
 		if part == ".." {
-			continue // stay at root
+			continue
 		}
 		child, ok := current.Children[strings.ToLower(part)]
 		if !ok {
@@ -868,19 +1435,14 @@ func (h *RdpefsHandler) resolvePath(path string) *VirtualFile {
 	return current
 }
 
-// ─── JS interop ───
-
-func (h *RdpefsHandler) refreshFileList() {
-	// Call JS to get the current file list
+func (h *RdpefsHandler) refreshLocalFileList() {
 	result := js.Global().Call("rdpStorageGetFiles")
 	if result.IsNull() || result.IsUndefined() {
 		return
 	}
-
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
-	h.root.Children = make(map[string]*VirtualFile)
+	h.localRoot.Children = make(map[string]*VirtualFile)
 	length := result.Length()
 	for i := 0; i < length; i++ {
 		entry := result.Index(i)
@@ -896,12 +1458,12 @@ func (h *RdpefsHandler) refreshFileList() {
 		if isDir {
 			f.Children = make(map[string]*VirtualFile)
 		}
-		h.root.Children[strings.ToLower(name)] = f
+		h.localRoot.Children[strings.ToLower(name)] = f
 	}
-	slog.Debug("rdpefs: refreshed file list", "count", length)
+	slog.Debug("rdpefs: refreshed local file list", "count", length)
 }
 
-func (h *RdpefsHandler) loadFileData(f *VirtualFile) {
+func (h *RdpefsHandler) loadLocalFileData(f *VirtualFile) {
 	result := js.Global().Call("rdpStorageReadFile", f.Name)
 	if result.IsNull() || result.IsUndefined() {
 		f.Data = []byte{}
@@ -913,7 +1475,115 @@ func (h *RdpefsHandler) loadFileData(f *VirtualFile) {
 	f.Size = int64(len(buf))
 }
 
-// ─── Utility ───
+// ─── File info builders (shared between modes) ──────────────────
+
+func buildBasicInfo(isDir bool, mtime time.Time) []byte {
+	buf := &bytes.Buffer{}
+	ft := windowsFileTime(mtime)
+	binary.Write(buf, binary.LittleEndian, ft) // CreationTime
+	binary.Write(buf, binary.LittleEndian, ft) // LastAccessTime
+	binary.Write(buf, binary.LittleEndian, ft) // LastWriteTime
+	binary.Write(buf, binary.LittleEndian, ft) // ChangeTime
+	attrs := uint32(FILE_ATTRIBUTE_ARCHIVE)
+	if isDir {
+		attrs = FILE_ATTRIBUTE_DIRECTORY
+	}
+	binary.Write(buf, binary.LittleEndian, attrs)
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+	return buf.Bytes()
+}
+
+func buildStandardInfo(isDir bool, size int64) []byte {
+	buf := &bytes.Buffer{}
+	binary.Write(buf, binary.LittleEndian, size) // AllocationSize
+	binary.Write(buf, binary.LittleEndian, size) // EndOfFile
+	binary.Write(buf, binary.LittleEndian, uint32(1))
+	deletePending := uint8(0)
+	directory := uint8(0)
+	if isDir {
+		directory = 1
+	}
+	binary.Write(buf, binary.LittleEndian, deletePending)
+	binary.Write(buf, binary.LittleEndian, directory)
+	return buf.Bytes()
+}
+
+func buildAttributeTagInfo(isDir bool) []byte {
+	buf := &bytes.Buffer{}
+	attrs := uint32(FILE_ATTRIBUTE_ARCHIVE)
+	if isDir {
+		attrs = FILE_ATTRIBUTE_DIRECTORY
+	}
+	binary.Write(buf, binary.LittleEndian, attrs)
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+	return buf.Bytes()
+}
+
+func buildDirectoryEntry(f *VirtualFile, infoClass uint32) []byte {
+	name := encodeUTF16LENoNull(f.Name)
+	buf := &bytes.Buffer{}
+	ft := windowsFileTime(f.ModTime)
+	attrs := uint32(FILE_ATTRIBUTE_ARCHIVE)
+	if f.IsDir {
+		attrs = FILE_ATTRIBUTE_DIRECTORY
+	}
+	size := f.Size
+
+	switch infoClass {
+	case FileNamesInformation:
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
+		buf.Write(name)
+
+	case FileDirectoryInformation:
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, size)
+		binary.Write(buf, binary.LittleEndian, size)
+		binary.Write(buf, binary.LittleEndian, attrs)
+		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
+		buf.Write(name)
+
+	case FileFullDirectoryInformation:
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, size)
+		binary.Write(buf, binary.LittleEndian, size)
+		binary.Write(buf, binary.LittleEndian, attrs)
+		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		buf.Write(name)
+
+	default: // FileBothDirectoryInformation
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, ft)
+		binary.Write(buf, binary.LittleEndian, size)
+		binary.Write(buf, binary.LittleEndian, size)
+		binary.Write(buf, binary.LittleEndian, attrs)
+		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint8(0))
+		binary.Write(buf, binary.LittleEndian, uint8(0))
+		buf.Write(make([]byte, 24))
+		buf.Write(name)
+	}
+	return buf.Bytes()
+}
+
+// ─── Utility ─────────────────────────────────────────────────────
 
 func encodeUTF16LE(s string) []byte {
 	runes := utf16.Encode([]rune(s + "\x00"))
@@ -947,7 +1617,6 @@ func decodeUTF16LE(b []byte) string {
 }
 
 func windowsFileTime(t time.Time) int64 {
-	// Windows FILETIME: 100-nanosecond intervals since Jan 1, 1601
 	const epoch = 116444736000000000
 	if t.IsZero() {
 		return epoch
@@ -961,5 +1630,5 @@ func matchPattern(pattern, name string) bool {
 	}
 	pattern = strings.ToLower(pattern)
 	name = strings.ToLower(name)
-	return strings.Contains(name, strings.ReplaceAll(pattern, "*", ""))
+	return strings.Contains(name, strings.TrimLeft(strings.TrimRight(pattern, "*"), "*"))
 }

@@ -17,3 +17,27 @@ npm-debug.log*
 # OS / editor
 .DS_Store
 .vscode/
+
+# Flutter / Dart
+zephyr_agent/.dart_tool/
+zephyr_agent/.packages
+zephyr_agent/.pub-cache/
+zephyr_agent/.pub/
+zephyr_agent/build/
+zephyr_agent/.flutter-plugins
+zephyr_agent/.flutter-plugins-dependencies
+zephyr_agent/pubspec.lock
+zephyr_agent/android/.gradle/
+zephyr_agent/android/local.properties
+zephyr_agent/android/app/debug/
+zephyr_agent/android/app/profile/
+zephyr_agent/android/app/release/
+zephyr_agent/ios/Pods/
+zephyr_agent/ios/.symlinks/
+zephyr_agent/macos/Pods/
+zephyr_agent/macos/.symlinks/
+*.jks
+*.keystore
+
+# Agent token data
+data/agent-tokens.json

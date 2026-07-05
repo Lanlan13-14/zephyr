@@ -1,0 +1,418 @@
+/// Agent controller — manages WebSocket connection, protocol, heartbeat,
+/// file RPC handling, auto-shutdown timer, and reconnection.
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
+import 'package:uuid/uuid.dart';
+import 'agent_state.dart';
+import '../fs/file_provider.dart';
+
+class AgentController extends ChangeNotifier {
+  AgentConfig _config;
+  AgentStatus _status = AgentStatus.idle;
+  String? _agentId;
+  String _errorMessage = '';
+  int _transferCount = 0;
+  int _transferBytes = 0;
+
+  // Auto-shutdown
+  Timer? _shutdownTimer;
+  DateTime? _shutdownAt;
+
+  // WebSocket
+  WebSocketChannel? _channel;
+  StreamSubscription? _channelSub;
+
+  // Heartbeat
+  Timer? _heartbeatTimer;
+  int _heartbeatIntervalMs = 15000;
+  int _missedHeartbeats = 0;
+
+  // Reconnect
+  int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 10;
+  Timer? _reconnectTimer;
+
+  // File provider
+  ZephyrFileProvider? _fileProvider;
+
+  AgentController(this._config);
+
+  // ─── Getters ─────────────────────────────────────────────────
+
+  AgentConfig get config => _config;
+  AgentStatus get status => _status;
+  String? get agentId => _agentId;
+  String get errorMessage => _errorMessage;
+  int get transferCount => _transferCount;
+  int get transferBytes => _transferBytes;
+  DateTime? get shutdownAt => _shutdownAt;
+
+  Duration? get remainingShutdownTime {
+    if (_shutdownAt == null) return null;
+    final remaining = _shutdownAt!.difference(DateTime.now());
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
+  // ─── Config update ───────────────────────────────────────────
+
+  void updateConfig(AgentConfig newConfig) {
+    _config = newConfig;
+    notifyListeners();
+  }
+
+  // ─── File provider ───────────────────────────────────────────
+
+  void setFileProvider(ZephyrFileProvider provider) {
+    _fileProvider = provider;
+  }
+
+  // ─── Connection lifecycle ────────────────────────────────────
+
+  Future<void> start() async {
+    if (_status.isActive) return;
+    _reconnectAttempts = 0;
+    await _connect();
+  }
+
+  Future<void> stop() async {
+    _setStatus(AgentStatus.stopped);
+    _cancelShutdownTimer();
+    _cancelHeartbeat();
+    _cancelReconnect();
+    await _disconnect();
+  }
+
+  Future<void> _connect() async {
+    _setStatus(AgentStatus.connecting);
+    _errorMessage = '';
+
+    try {
+      final url = _config.serverUrl.replaceFirst('https://', 'wss://').replaceFirst('http://', 'ws://');
+      final wsUrl = url.endsWith('/agent/files') ? url : '$url/agent/files';
+      final uri = Uri.parse(wsUrl);
+
+      _channel = IOWebSocketChannel.connect(
+        uri,
+        pingInterval: Duration(seconds: 30),
+      );
+
+      await _channel!.ready;
+      _channelSub = _channel!.stream.listen(
+        _onMessage,
+        onError: _onError,
+        onDone: _onDone,
+      );
+
+      _setStatus(AgentStatus.authenticating);
+      _sendHello();
+    } catch (e) {
+      _errorMessage = e.toString();
+      _setStatus(AgentStatus.error);
+      _maybeReconnect();
+    }
+  }
+
+  Future<void> _disconnect() async {
+    _channelSub?.cancel();
+    _channelSub = null;
+    try {
+      await _channel?.sink.close();
+    } catch (_) {}
+    _channel = null;
+  }
+
+  // ─── Protocol ────────────────────────────────────────────────
+
+  void _sendHello() {
+    final deviceId = const Uuid().v5(Uuid.NAMESPACE_URL, '${_config.serverUrl}:${_config.deviceName}');
+    _send({
+      'type': 'hello',
+      'protocolVersion': 1,
+      'token': _config.token,
+      'deviceId': deviceId,
+      'deviceName': _config.deviceName,
+      'platform': _platformName(),
+      'appVersion': '1.0.0',
+      'capabilities': {
+        'read': true,
+        'write': !_config.readOnly,
+        'delete': !_config.readOnly,
+        'rename': !_config.readOnly,
+        'mkdir': !_config.readOnly,
+        'truncate': !_config.readOnly,
+        'binary': false,
+        'maxChunkSize': 262144,
+      },
+      'share': {
+        'name': _config.sharedDirectoryName ?? _config.deviceName,
+        'readOnly': _config.readOnly,
+      },
+    });
+  }
+
+  void _onMessage(dynamic raw) {
+    Map<String, dynamic> msg;
+    try {
+      msg = jsonDecode(raw is String ? raw : utf8.decode(raw as List<int>));
+    } catch (_) {
+      return;
+    }
+
+    switch (msg['type']) {
+      case 'hello_ack':
+        _handleHelloAck(msg);
+        break;
+      case 'request':
+        _handleRequest(msg);
+        break;
+      case 'pong':
+        _missedHeartbeats = 0;
+        break;
+      default:
+        break;
+    }
+  }
+
+  void _handleHelloAck(Map<String, dynamic> msg) {
+    if (msg['ok'] == true) {
+      _agentId = msg['agentId'] as String?;
+      _heartbeatIntervalMs = (msg['heartbeatIntervalMs'] as int?) ?? 15000;
+      _setStatus(AgentStatus.online);
+      _reconnectAttempts = 0;
+      _startHeartbeat();
+      _startShutdownTimer();
+    } else {
+      final error = msg['error'] as Map<String, dynamic>?;
+      _errorMessage = error?['message'] as String? ?? 'Authentication failed';
+      _setStatus(AgentStatus.error);
+      // Don't reconnect on auth failure
+    }
+  }
+
+  void _handleRequest(Map<String, dynamic> msg) async {
+    final id = msg['id'] as String?;
+    final method = msg['method'] as String?;
+    final params = msg['params'] as Map<String, dynamic>? ?? {};
+
+    if (id == null || method == null) return;
+
+    if (_fileProvider == null) {
+      _sendResponse(id, false, error: {'code': 'internal_error', 'message': 'No file provider'});
+      return;
+    }
+
+    // Check read-only constraints
+    if (_config.readOnly && ['write', 'mkdir', 'delete', 'rename', 'truncate'].contains(method)) {
+      _sendResponse(id, false, error: {'code': 'read_only', 'message': 'Share is read-only'});
+      return;
+    }
+
+    try {
+      final result = await _dispatchRpc(method, params);
+      _transferCount++;
+      _sendResponse(id, true, result: result);
+    } catch (e) {
+      _sendResponse(id, false, error: {
+        'code': e is FileProviderException ? e.code : 'internal_error',
+        'message': e.toString(),
+      });
+    }
+  }
+
+  Future<Map<String, dynamic>> _dispatchRpc(String method, Map<String, dynamic> params) async {
+    final fp = _fileProvider!;
+    switch (method) {
+      case 'list':
+        final entries = await fp.list(params['path'] as String? ?? '/');
+        return {'entries': entries.map((e) => e.toJson()).toList()};
+      case 'stat':
+        final stat = await fp.stat(params['path'] as String? ?? '/');
+        return stat.toJson();
+      case 'open':
+        final handle = await fp.open(params['path'] as String, params['mode'] as String? ?? 'read');
+        return {'handle': handle};
+      case 'read':
+        final data = await fp.read(
+          params['handle'] as String,
+          params['offset'] as int? ?? 0,
+          params['length'] as int? ?? 262144,
+        );
+        _transferBytes += data.length;
+        notifyListeners();
+        return {
+          'dataBase64': base64Encode(data),
+          'bytesRead': data.length,
+          'eof': data.isEmpty,
+        };
+      case 'write':
+        final bytes = base64Decode(params['dataBase64'] as String);
+        final written = await fp.write(
+          params['handle'] as String,
+          params['offset'] as int? ?? 0,
+          bytes,
+        );
+        _transferBytes += written;
+        notifyListeners();
+        return {'bytesWritten': written};
+      case 'close':
+        await fp.close(params['handle'] as String);
+        return {};
+      case 'mkdir':
+        await fp.mkdir(params['path'] as String);
+        return {};
+      case 'delete':
+        await fp.delete(params['path'] as String, recursive: params['recursive'] as bool? ?? false);
+        return {};
+      case 'rename':
+        await fp.rename(params['oldPath'] as String, params['newPath'] as String);
+        return {};
+      case 'truncate':
+        await fp.truncate(params['path'] as String, params['size'] as int? ?? 0);
+        return {};
+      default:
+        throw FileProviderException('unsupported', 'Unsupported method: $method');
+    }
+  }
+
+  // ─── Heartbeat ───────────────────────────────────────────────
+
+  void _startHeartbeat() {
+    _cancelHeartbeat();
+    _heartbeatTimer = Timer.periodic(Duration(milliseconds: _heartbeatIntervalMs), (_) {
+      if (_status != AgentStatus.online) return;
+      _missedHeartbeats++;
+      if (_missedHeartbeats >= 3) {
+        _errorMessage = 'Heartbeat timeout';
+        _setStatus(AgentStatus.error);
+        _disconnect();
+        _maybeReconnect();
+        return;
+      }
+      _send({'type': 'ping', 'time': DateTime.now().millisecondsSinceEpoch});
+    });
+  }
+
+  void _cancelHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _missedHeartbeats = 0;
+  }
+
+  // ─── Auto-shutdown ───────────────────────────────────────────
+
+  void _startShutdownTimer() {
+    if (!_config.autoShutdown) return;
+    _cancelShutdownTimer();
+    _shutdownAt = DateTime.now().add(Duration(minutes: _config.autoShutdownMinutes));
+    _shutdownTimer = Timer(Duration(minutes: _config.autoShutdownMinutes), () {
+      _send({
+        'type': 'agent_auto_shutdown',
+        'agentId': _agentId ?? '',
+        'reason': 'timeout_${_config.autoShutdownMinutes}min',
+      });
+      stop();
+      _errorMessage = '已因 ${_config.autoShutdownMinutes} 分钟超时自动关闭';
+      _setStatus(AgentStatus.stopped);
+    });
+    notifyListeners();
+  }
+
+  void extendShutdown() {
+    if (!_config.autoShutdown || _status != AgentStatus.online) return;
+    _startShutdownTimer();
+  }
+
+  void _cancelShutdownTimer() {
+    _shutdownTimer?.cancel();
+    _shutdownTimer = null;
+    _shutdownAt = null;
+  }
+
+  // ─── Reconnect ───────────────────────────────────────────────
+
+  void _maybeReconnect() {
+    if (_status == AgentStatus.stopped) return;
+    if (_reconnectAttempts >= _maxReconnectAttempts) {
+      _setStatus(AgentStatus.error);
+      _errorMessage = 'Max reconnect attempts reached';
+      return;
+    }
+    _setStatus(AgentStatus.reconnecting);
+    _reconnectAttempts++;
+    final delay = Duration(seconds: _reconnectAttempts.clamp(1, 30));
+    _reconnectTimer = Timer(delay, () => _connect());
+  }
+
+  void _cancelReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+  }
+
+  // ─── Error/Close handlers ────────────────────────────────────
+
+  void _onError(Object error) {
+    _errorMessage = error.toString();
+    if (_status == AgentStatus.online) {
+      _setStatus(AgentStatus.error);
+      _cancelHeartbeat();
+      _maybeReconnect();
+    }
+  }
+
+  void _onDone() {
+    _cancelHeartbeat();
+    if (_status == AgentStatus.online || _status == AgentStatus.authenticating) {
+      _errorMessage = 'Connection closed';
+      _setStatus(AgentStatus.error);
+      _maybeReconnect();
+    }
+  }
+
+  // ─── Helpers ─────────────────────────────────────────────────
+
+  void _send(Map<String, dynamic> msg) {
+    try {
+      _channel?.sink.add(jsonEncode(msg));
+    } catch (_) {}
+  }
+
+  void _sendResponse(String id, bool ok, {Map<String, dynamic>? result, Map<String, dynamic>? error}) {
+    _send({
+      'id': id,
+      'type': 'response',
+      'ok': ok,
+      if (ok && result != null) 'result': result,
+      if (!ok && error != null) 'error': error,
+    });
+  }
+
+  void _setStatus(AgentStatus newStatus) {
+    if (_status == newStatus) return;
+    _status = newStatus;
+    notifyListeners();
+  }
+
+  String _platformName() {
+    if (kIsWeb) return 'web';
+    if (Platform.isAndroid) return 'android';
+    if (Platform.isIOS) return 'ios';
+    if (Platform.isMacOS) return 'macos';
+    if (Platform.isWindows) return 'windows';
+    if (Platform.isLinux) return 'linux';
+    return 'unknown';
+  }
+
+  @override
+  void dispose() {
+    _cancelShutdownTimer();
+    _cancelHeartbeat();
+    _cancelReconnect();
+    _disconnect();
+    super.dispose();
+  }
+}

@@ -64,6 +64,11 @@ func main() {
 	js.Global().Set("rdpLocationData", js.FuncOf(jsLocationData))
 	js.Global().Set("rdpCameraFrame", js.FuncOf(jsCameraFrame))
 
+	// Agent drive management (hot-plug)
+	js.Global().Set("rdpFsAttachDrive", js.FuncOf(jsAttachDrive))
+	js.Global().Set("rdpFsDetachDrive", js.FuncOf(jsDetachDrive))
+	js.Global().Set("rdpFsListDrives", js.FuncOf(jsListDrives))
+
 	// Block forever — JS callbacks keep things alive.
 	select {}
 }
@@ -655,4 +660,41 @@ func jsCameraFrame(_ js.Value, args []js.Value) any {
 	js.CopyBytesToGo(buf, jsArr)
 	camStreamHandler.SendSample(buf, isKey)
 	return nil
+}
+
+// ─── Agent Drive Management JS Functions ─────────────────────────
+
+// jsAttachDrive: rdpFsAttachDrive(agentId, driveName, readOnly)
+func jsAttachDrive(_ js.Value, args []js.Value) any {
+	if len(args) < 3 || rdpefsHandler == nil {
+		return nil
+	}
+	agentID := args[0].String()
+	driveName := args[1].String()
+	readOnly := args[2].Bool()
+	deviceID := rdpefsHandler.AttachDrive(agentID, driveName, readOnly)
+	return int(deviceID)
+}
+
+// jsDetachDrive: rdpFsDetachDrive(agentId)
+func jsDetachDrive(_ js.Value, args []js.Value) any {
+	if len(args) < 1 || rdpefsHandler == nil {
+		return nil
+	}
+	agentID := args[0].String()
+	rdpefsHandler.DetachDrive(agentID)
+	return nil
+}
+
+// jsListDrives: rdpFsListDrives() → [{deviceId, agentId, driveName, readOnly, status}]
+func jsListDrives(_ js.Value, _ []js.Value) any {
+	if rdpefsHandler == nil {
+		return js.ValueOf(nil)
+	}
+	drives := rdpefsHandler.ListDrives()
+	arr := make([]any, len(drives))
+	for i, d := range drives {
+		arr[i] = d
+	}
+	return js.ValueOf(arr)
 }
