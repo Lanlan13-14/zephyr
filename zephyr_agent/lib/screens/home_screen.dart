@@ -628,7 +628,7 @@ class _ZephyrMarkPainter extends CustomPainter {
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [palette.iconStart, palette.iconMid, palette.iconEnd],
-      stops: const [0, .58, 1],
+      stops: [0, palette.iconMidStop, 1],
     ).createShader(rect);
 
     final main = Path()

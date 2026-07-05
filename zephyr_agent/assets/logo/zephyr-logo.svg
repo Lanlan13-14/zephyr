@@ -1,21 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
   <defs>
-    <linearGradient id="zephyrAgentGrad" x1="15%" y1="15%" x2="85%" y2="85%">
-      <stop offset="0%" stop-color="#DDF4FF"/>
-      <stop offset="58%" stop-color="#9BD3FF"/>
-      <stop offset="100%" stop-color="#5BAAF2"/>
+    <linearGradient id="g" x1="15%" y1="15%" x2="85%" y2="85%">
+      <stop offset="0%" stop-color="#e0f2fe"/>
+      <stop offset="60%" stop-color="#93c5fd"/>
+      <stop offset="100%" stop-color="#60a5fa"/>
     </linearGradient>
-    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="10" result="blur"/>
-      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.36 0 0 0 0 0.67 0 0 0 0 0.95 0 0 0 .45 0"/>
-      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
   </defs>
-  <g filter="url(#glow)">
-    <path d="M45 65C85 45 135 55 160 80C130 80 95 95 75 125" stroke="url(#zephyrAgentGrad)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M50 75C90 75 125 90 145 115C115 135 75 155 40 135" stroke="url(#zephyrAgentGrad)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.86"/>
-    <path d="M85 95C110 110 135 135 155 130" stroke="url(#zephyrAgentGrad)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.62"/>
-    <circle cx="145" cy="115" r="4.5" fill="#5BAAF2" opacity="0.9"/>
-    <circle cx="75" cy="125" r="3" fill="#8EC9F7" opacity="0.8"/>
-  </g>
+  <path d="M 45 65 C 85 45, 135 55, 160 80 C 130 80, 95 95, 75 125" stroke="url(#g)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 50 75 C 90 75, 125 90, 145 115 C 115 135, 75 155, 40 135" stroke="url(#g)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+  <path d="M 85 95 C 110 110, 135 135, 155 130" stroke="url(#g)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+  <circle cx="145" cy="115" r="4.5" fill="#60a5fa" opacity="0.9"/>
+  <circle cx="75" cy="125" r="3" fill="#93c5fd" opacity="0.8"/>
 </svg>
