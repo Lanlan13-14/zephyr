@@ -96,14 +96,25 @@ class AgentController extends ChangeNotifier {
     if (!value.contains('://')) value = 'https://$value';
     final uri = Uri.parse(value);
     if (!uri.hasScheme || uri.host.isEmpty) return value.replaceAll(RegExp(r'/+$'), '');
-    return uri.replace(path: '', query: '', fragment: '').toString().replaceAll(RegExp(r'/+$'), '');
+    return Uri(
+      scheme: uri.scheme,
+      userInfo: uri.userInfo,
+      host: uri.host,
+      port: uri.hasPort ? uri.port : null,
+    ).toString().replaceAll(RegExp(r'/+$'), '');
   }
 
   static Uri agentWebSocketUriForServerUrl(String serverUrl) {
     final normalized = normalizeServerUrl(serverUrl);
     final uri = Uri.parse(normalized);
     final wsScheme = uri.scheme == 'http' ? 'ws' : 'wss';
-    return uri.replace(scheme: wsScheme, path: '/agent/files', query: '', fragment: '');
+    return Uri(
+      scheme: wsScheme,
+      userInfo: uri.userInfo,
+      host: uri.host,
+      port: uri.hasPort ? uri.port : null,
+      path: '/agent/files',
+    );
   }
 
   String _friendlyConnectionError(Object error) {
