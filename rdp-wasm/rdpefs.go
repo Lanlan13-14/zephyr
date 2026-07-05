@@ -568,12 +568,19 @@ func (h *RdpefsHandler) announceDeviceSingle(deviceID uint32, driveName string) 
 func makeDosName(name string) []byte {
 	dosName := make([]byte, 8)
 	upper := strings.ToUpper(name)
-	for i := 0; i < 7 && i < len(upper); i++ {
+	j := 0
+	for i := 0; i < len(upper) && j < 8; i++ {
 		c := upper[i]
 		if c > 0x7F {
-			c = '_'
+			continue
 		}
-		dosName[i] = c
+		if (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$' || c == '~' || c == '-' {
+			dosName[j] = c
+			j++
+		}
+	}
+	if j == 0 {
+		copy(dosName, []byte("ZEPHYR"))
 	}
 	return dosName
 }
@@ -954,6 +961,7 @@ func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data 
 		written := h.callAgentWrite(handle.AgentID, writeHandle, offset, writeData)
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(written))
+		binary.Write(resp, binary.LittleEndian, uint8(0))
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 	} else {
 		// Local mode: read-only
@@ -1144,7 +1152,7 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
 		return
 	}
-	if len(data) < 9 {
+	if len(data) < 32 {
 		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
@@ -1153,8 +1161,8 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 	initialQuery := data[4]
 	pathLen := binary.LittleEndian.Uint32(data[5:9])
 	var pattern string
-	if pathLen > 0 && len(data) >= 9+int(pathLen) {
-		pattern = decodeUTF16LE(data[9 : 9+pathLen])
+	if pathLen > 0 && len(data) >= 32+int(pathLen) {
+		pattern = decodeUTF16LE(data[32 : 32+pathLen])
 		pattern = strings.TrimRight(pattern, "\x00")
 	}
 
@@ -1196,6 +1204,7 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(len(entryBuf)))
 		resp.Write(entryBuf)
+		binary.Write(resp, binary.LittleEndian, uint8(0))
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 	} else {
 		h.mu.Lock()
@@ -1216,6 +1225,7 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(len(entryBuf)))
 		resp.Write(entryBuf)
+		binary.Write(resp, binary.LittleEndian, uint8(0))
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 	}
 }

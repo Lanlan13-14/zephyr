@@ -95,7 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     if (io.Platform.isAndroid) {
       config.sharedDirectoryPath = '/storage/emulated/0';
-      config.sharedDirectoryName = 'Internal storage';
+      config.sharedDirectoryName = config.deviceName;
       return;
     }
     if (io.Platform.isWindows) {
@@ -166,7 +166,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final root = await AndroidStorageAccess.externalStorageRoot();
       setState(() {
         ctrl.config.sharedDirectoryPath = root;
-        ctrl.config.sharedDirectoryName = 'Internal storage';
+        ctrl.config.sharedDirectoryName = ctrl.config.deviceName;
       });
       _saveConfig(ctrl);
       return;

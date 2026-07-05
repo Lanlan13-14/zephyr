@@ -85,7 +85,7 @@ export function resetAttachedDriveState() {
 
 function safeDriveName(name, fallback = 'AGENT') {
     const raw = String(name || fallback).trim() || fallback;
-    const ascii = raw.replace(/[^A-Za-z0-9_$~-]/g, '_').slice(0, 7);
+    const ascii = raw.replace(/[^A-Za-z0-9]/g, '').slice(0, 8);
     return ascii || fallback;
 }
 
@@ -93,7 +93,7 @@ export function syncAgentDrives({ enabled = true } = {}) {
     if (!enabled || typeof globalThis.rdpFsAttachDrive !== 'function') return;
     for (const agent of onlineAgents) {
         if (!agent?.agentId || agent.online === false) continue;
-        const driveName = safeDriveName(agent.shareName || agent.deviceName || agent.tokenName || 'AGENT');
+        const driveName = safeDriveName(agent.deviceName || agent.shareName || agent.tokenName || 'AGENT');
         attachDrive(agent.agentId, driveName, agent.readOnly !== false);
     }
 }
