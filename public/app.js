@@ -89,7 +89,9 @@ let pendingBrandIcon = DEFAULT_BRAND_ICON;
 const SMARTBAR_TEXT_IMAGE_CACHE = new Map();
 
 function apiErrorFromResponse(res, data = {}) {
-    const err = new Error(data.error || data.message || `请求失败（HTTP ${res.status}）`);
+    const raw = data.error || data.message;
+    const message = typeof raw === 'string' ? raw : (raw?.message || raw?.code || `请求失败（HTTP ${res.status}）`);
+    const err = new Error(message);
     err.status = res.status;
     err.transient = !!data.transient || res.status === 502 || res.status === 503 || res.status === 504;
     err.payload = data;
@@ -6275,18 +6277,21 @@ async function loadAgentTokens() {
     }
 }
 
-function renderAgentTokens(tokens) {
+function renderAgentTokens(tokens, revealedTokens = new Map()) {
     const list = $('#agentTokenList');
     if (!list) return;
     if (!tokens.length) {
         list.innerHTML = '<p class="empty-state">暂无 Token。点击“新增 Token”为设备创建连接凭据。</p>';
         return;
     }
-    list.innerHTML = tokens.map((t) => `
+    const revealMap = revealedTokens instanceof Map ? revealedTokens : new Map(Object.entries(revealedTokens || {}));
+    list.innerHTML = tokens.map((t) => {
+        const revealed = t.token || revealMap.get(t.id) || '';
+        return `
         <div class="agent-token-item" data-token-id="${escapeHtml(t.id)}">
             <div class="agent-token-main">
                 <div class="agent-token-title"><strong>${escapeHtml(t.name || '未命名 Token')}</strong><span>${escapeHtml(t.id || '')}</span></div>
-                <div class="agent-token-value"><code>${t.token ? escapeHtml(t.token) : '••••••••••••••••••••••••••••••••'}</code></div>
+                <div class="agent-token-value"><code>${revealed ? escapeHtml(revealed) : '••••••••••••••••••••••••••••••••'}</code></div>
                 <div class="agent-token-meta">创建：${escapeHtml(formatAgentTokenTime(t.createdAt))} · 更新：${escapeHtml(formatAgentTokenTime(t.updatedAt))} · 最后使用：${escapeHtml(formatAgentTokenTime(t.lastUsedAt))}</div>
             </div>
             <div class="agent-token-buttons">
@@ -6296,7 +6301,8 @@ function renderAgentTokens(tokens) {
                 <button class="tool-btn" type="button" data-agent-regen-token="${escapeHtml(t.id)}">重新生成</button>
                 <button class="tool-btn danger" type="button" data-agent-delete-token="${escapeHtml(t.id)}">删除</button>
             </div>
-        </div>`).join('');
+        </div>`;
+    }).join('');
 }
 
 function currentAgentServerUrl() {
@@ -6313,12 +6319,28 @@ function currentAgentTokenLength() {
     return Math.max(16, Math.min(256, Number.isFinite(n) ? n : 50));
 }
 
+async function refreshAgentTokensKeeping(tokenRecord) {
+    const tokens = tokenRecord ? [tokenRecord] : [];
+    if (tokenRecord?.id && tokenRecord?.token) renderAgentTokens(tokens, new Map([[tokenRecord.id, tokenRecord.token]]));
+    try {
+        const data = await api('/api/rdp/file-agent-tokens');
+        const list = Array.isArray(data.tokens) ? data.tokens : [];
+        if (tokenRecord?.id && !list.some((t) => t.id === tokenRecord.id)) list.unshift(tokenRecord);
+        renderAgentTokens(list, tokenRecord?.id && tokenRecord?.token ? new Map([[tokenRecord.id, tokenRecord.token]]) : new Map());
+    } catch (err) {
+        if (!tokenRecord?.id) throw err;
+        toast(`列表刷新失败，已显示新 Token：${err.message || 'unknown'}`);
+    }
+}
+
 async function createAgentToken() {
     const name = prompt('Token 名称，例如：我的手机 / 办公室 Windows / Pad', 'Zephyr Agent Token');
     if (name === null) return;
-    await api('/api/rdp/file-agent-tokens', { method: 'POST', body: JSON.stringify({ name, length: currentAgentTokenLength() }) });
-    await loadAgentTokens();
-    toast('Token 已创建');
+    const data = await api('/api/rdp/file-agent-tokens', { method: 'POST', body: JSON.stringify({ name, length: currentAgentTokenLength() }) });
+    const tokenRecord = data.token;
+    if (!tokenRecord?.token) throw new Error('服务端未返回新 Token');
+    await refreshAgentTokensKeeping(tokenRecord);
+    toast('Token 已创建并显示');
 }
 
 async function renameAgentToken(id) {
@@ -6332,9 +6354,11 @@ async function renameAgentToken(id) {
 
 async function regenerateAgentToken(id) {
     if (!confirm('重新生成后，使用旧 Token 的 Agent 会断开，需要在 Agent App 中填写新 Token。继续？')) return;
-    await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/regenerate`, { method: 'POST', body: JSON.stringify({ length: currentAgentTokenLength() }) });
-    await loadAgentTokens();
-    toast('Token 已重新生成');
+    const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/regenerate`, { method: 'POST', body: JSON.stringify({ length: currentAgentTokenLength() }) });
+    const tokenRecord = data.token;
+    if (!tokenRecord?.token) throw new Error('服务端未返回新 Token');
+    await refreshAgentTokensKeeping(tokenRecord);
+    toast('Token 已重新生成并显示');
 }
 
 async function deleteAgentToken(id) {
@@ -6371,12 +6395,14 @@ async function resetAllAgentTokens() {
     const secret = requestSensitiveSecret('重置全部 Zephyr Agent Token');
     const name = prompt('新 Token 名称', '默认 Token');
     if (name === null) return;
-    await api('/api/rdp/file-agent-tokens/reset-all', {
+    const data = await api('/api/rdp/file-agent-tokens/reset-all', {
         method: 'POST',
         body: JSON.stringify({ secret, name, length: currentAgentTokenLength() }),
     });
-    await loadAgentTokens();
-    toast('全部 Token 已重置，并已创建新 Token');
+    const tokenRecord = data.token;
+    if (!tokenRecord?.token) throw new Error('服务端未返回新 Token');
+    await refreshAgentTokensKeeping(tokenRecord);
+    toast('全部 Token 已重置，新 Token 已显示');
 }
 
 function setupAgentTokenSettings() {
