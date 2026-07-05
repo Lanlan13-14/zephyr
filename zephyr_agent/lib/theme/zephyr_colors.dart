@@ -8,10 +8,10 @@ enum ZephyrTheme {
   cyber;
 
   String get label => switch (this) {
-    frost => 'Frost',
-    lava => 'Lava',
-    asagi => 'Asagi',
-    cyber => 'Cyber',
+    frost => '凝霜蓝',
+    lava => '熔岩流',
+    asagi => '浅葱影',
+    cyber => '极夜青',
   };
 }
 
@@ -57,29 +57,29 @@ class ZephyrColors {
       bg: Color(0xFF101114), surface: Color(0xFF1B1C20), border: Color(0xFF303237),
       text: Color(0xFFF4F4F6), textSecondary: Color(0xFF9A9CA3), accent: Color(0xFF0A84FF),
       accentHover: Color(0xFF2997FF), danger: Color(0xFFFF453A), success: Color(0xFF32D74B), warning: Color(0xFFFFD60A),
-      iconStart: Color(0xFFEEF2F7), iconMid: Color(0xFFA8B5C3), iconEnd: Color(0xFF6E7B88),
-      iconDotA: Color(0xFF0A84FF), iconDotB: Color(0xFF8E99A6),
+      iconStart: Color(0xFFDDF4FF), iconMid: Color(0xFF9BD3FF), iconEnd: Color(0xFF5BAAF2),
+      iconDotA: Color(0xFF5BAAF2), iconDotB: Color(0xFF8EC9F7),
     ),
     ZephyrTheme.lava: ZephyrPalette(
       bg: Color(0xFF12110F), surface: Color(0xFF1E1C19), border: Color(0xFF36312C),
       text: Color(0xFFF5F2EE), textSecondary: Color(0xFFA39D95), accent: Color(0xFFBF5A1F),
       accentHover: Color(0xFFD06A2C), danger: Color(0xFFFF453A), success: Color(0xFF30D158), warning: Color(0xFFD49328),
-      iconStart: Color(0xFFF6D7B4), iconMid: Color(0xFFD89457), iconEnd: Color(0xFF8D4E24),
-      iconDotA: Color(0xFFBF5A1F), iconDotB: Color(0xFFA39D95),
+      iconStart: Color(0xFFFF8A1F), iconMid: Color(0xFFE73B2F), iconEnd: Color(0xFFB61224),
+      iconDotA: Color(0xFFE73B2F), iconDotB: Color(0xFFB85C22),
     ),
     ZephyrTheme.asagi: ZephyrPalette(
       bg: Color(0xFF0F1414), surface: Color(0xFF1A2020), border: Color(0xFF2D3937),
       text: Color(0xFFEDF3F2), textSecondary: Color(0xFF93A09E), accent: Color(0xFF4D9C8A),
       accentHover: Color(0xFF62AD9B), danger: Color(0xFFFF5A66), success: Color(0xFF36C98F), warning: Color(0xFFD7A446),
-      iconStart: Color(0xFFE6F2EF), iconMid: Color(0xFF8FC8BB), iconEnd: Color(0xFF4D9C8A),
-      iconDotA: Color(0xFF4D9C8A), iconDotB: Color(0xFF93A09E),
+      iconStart: Color(0xFF9EF1CF), iconMid: Color(0xFF55DDB3), iconEnd: Color(0xFF1AA58C),
+      iconDotA: Color(0xFF55DDB3), iconDotB: Color(0xFF1AA58C),
     ),
     ZephyrTheme.cyber: ZephyrPalette(
       bg: Color(0xFF0D1114), surface: Color(0xFF171C20), border: Color(0xFF2D343A),
       text: Color(0xFFEDF2F5), textSecondary: Color(0xFF909AA3), accent: Color(0xFF4F9DA6),
       accentHover: Color(0xFF67B0B8), danger: Color(0xFFFF453A), success: Color(0xFF32D74B), warning: Color(0xFFD7A446),
-      iconStart: Color(0xFFE7F5F7), iconMid: Color(0xFF96C8CE), iconEnd: Color(0xFF4F9DA6),
-      iconDotA: Color(0xFF4F9DA6), iconDotB: Color(0xFF909AA3),
+      iconStart: Color(0xFF13B8A6), iconMid: Color(0xFF21344C), iconEnd: Color(0xFF0B1328),
+      iconDotA: Color(0xFF13B8A6), iconDotB: Color(0xFF21344C),
     ),
   };
 
@@ -88,29 +88,29 @@ class ZephyrColors {
       bg: Color(0xFFF5F5F7), surface: Color(0xFFFFFFFF), border: Color(0xFFDEDEE3),
       text: Color(0xFF1D1D1F), textSecondary: Color(0xFF6E6E73), accent: Color(0xFF007AFF),
       accentHover: Color(0xFF006BD6), danger: Color(0xFFD70015), success: Color(0xFF248A3D), warning: Color(0xFFB26A00),
-      iconStart: Color(0xFFEEF2F7), iconMid: Color(0xFFA8B5C3), iconEnd: Color(0xFF6E7B88),
-      iconDotA: Color(0xFF007AFF), iconDotB: Color(0xFF8E99A6),
+      iconStart: Color(0xFFDDF4FF), iconMid: Color(0xFF9BD3FF), iconEnd: Color(0xFF5BAAF2),
+      iconDotA: Color(0xFF5BAAF2), iconDotB: Color(0xFF8EC9F7),
     ),
     ZephyrTheme.lava: ZephyrPalette(
       bg: Color(0xFFF7F3EF), surface: Color(0xFFFFFFFF), border: Color(0xFFE1D8CF),
       text: Color(0xFF2B241F), textSecondary: Color(0xFF746860), accent: Color(0xFFB85C22),
       accentHover: Color(0xFF9F4E1D), danger: Color(0xFFD70015), success: Color(0xFF248A3D), warning: Color(0xFFA35F00),
-      iconStart: Color(0xFFF6D7B4), iconMid: Color(0xFFD89457), iconEnd: Color(0xFF8D4E24),
-      iconDotA: Color(0xFFB85C22), iconDotB: Color(0xFF746860),
+      iconStart: Color(0xFFFF8A1F), iconMid: Color(0xFFE73B2F), iconEnd: Color(0xFFB61224),
+      iconDotA: Color(0xFFE73B2F), iconDotB: Color(0xFFB85C22),
     ),
     ZephyrTheme.asagi: ZephyrPalette(
       bg: Color(0xFFF3F6F5), surface: Color(0xFFFFFFFF), border: Color(0xFFD8E1DF),
       text: Color(0xFF1F2625), textSecondary: Color(0xFF657270), accent: Color(0xFF3F8F82),
       accentHover: Color(0xFF357A70), danger: Color(0xFFC2414A), success: Color(0xFF248A64), warning: Color(0xFF9A6700),
-      iconStart: Color(0xFFE6F2EF), iconMid: Color(0xFF8FC8BB), iconEnd: Color(0xFF3F8F82),
-      iconDotA: Color(0xFF3F8F82), iconDotB: Color(0xFF657270),
+      iconStart: Color(0xFF9EF1CF), iconMid: Color(0xFF55DDB3), iconEnd: Color(0xFF1AA58C),
+      iconDotA: Color(0xFF55DDB3), iconDotB: Color(0xFF1AA58C),
     ),
     ZephyrTheme.cyber: ZephyrPalette(
       bg: Color(0xFFF3F5F6), surface: Color(0xFFFFFFFF), border: Color(0xFFD7DFE3),
       text: Color(0xFF182025), textSecondary: Color(0xFF5F6B72), accent: Color(0xFF448E96),
       accentHover: Color(0xFF36777E), danger: Color(0xFFD70015), success: Color(0xFF248A3D), warning: Color(0xFFA35F00),
-      iconStart: Color(0xFFE7F5F7), iconMid: Color(0xFF96C8CE), iconEnd: Color(0xFF448E96),
-      iconDotA: Color(0xFF448E96), iconDotB: Color(0xFF5F6B72),
+      iconStart: Color(0xFF13B8A6), iconMid: Color(0xFF21344C), iconEnd: Color(0xFF0B1328),
+      iconDotA: Color(0xFF13B8A6), iconDotB: Color(0xFF21344C),
     ),
   };
 

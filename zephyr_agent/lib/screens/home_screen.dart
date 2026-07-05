@@ -276,12 +276,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 itemBuilder: (_) => ZephyrTheme.values.map((t) => PopupMenuItem(
                   value: t,
                   child: Row(children: [
-                    Container(
-                      width: 16, height: 16,
-                      decoration: BoxDecoration(
-                        color: ZephyrColors.getPrimary(t, brightness),
-                        shape: BoxShape.circle,
-                      ),
+                    ZephyrMark(
+                      palette: ZephyrColors.palette(t, brightness),
+                      size: 22,
                     ),
                     const SizedBox(width: 8),
                     Text(t.label),
