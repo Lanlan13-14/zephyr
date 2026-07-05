@@ -2239,7 +2239,6 @@ function initFilePanel() {
                 const idx = Number(btn.dataset.idx);
                 downloadServerFileAsync(idx, filesArr[idx]?.name || 'file');
             });
-            });
         });
         setFilesHint('远程剪贴板有 ' + filesArr.length + ' 个文件', 'success');
     };
