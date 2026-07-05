@@ -88,11 +88,12 @@ if (params.rdpFps && fpsModes.includes(Number(params.rdpFps))) fpsValue = Number
 let audioCtx = null;
 let audioNextAt = 0;
 /* Live-stream audio scheduling. Video is drawn immediately on H.264 decode
- * (zero buffer), so audio latency directly determines lip-sync offset. Keep a
- * small jitter buffer to avoid underruns on LAN, and a tight ceiling so audio
- * can never drift more than a few hundred ms behind the picture. */
-const AUDIO_MIN_LATENCY = 0.08; /* target buffer ahead of playhead (80ms) */
-const AUDIO_MAX_QUEUE = 0.30;   /* hard resync ceiling — bounds A/V desync */
+ * (zero buffer), so audio latency directly determines lip-sync offset.
+ * Strategy: each chunk is scheduled just ahead of the playhead. If multiple
+ * chunks arrive in a burst they queue back-to-back, but we hard-cap total
+ * queue depth so audio never drifts more than ~150ms behind the picture. */
+const AUDIO_MIN_LATENCY = 0.04; /* 40ms — minimum buffer to avoid underruns */
+const AUDIO_MAX_QUEUE = 0.15;   /* 150ms — hard resync ceiling */
 
 /* H.264 WebCodecs */
 let h264Dec = null;
@@ -220,10 +221,13 @@ window.rdpAudioPlay = function (sampleRate, channels, bitsPerSample, uint8Data) 
     src.buffer = audioBuf;
     src.connect(audioCtx.destination);
     const now = audioCtx.currentTime;
-    /* If we've fallen behind (underrun) or drifted too far ahead of the video,
-     * resync to a small fixed latency. This bounds lip-sync error to at most
-     * AUDIO_MAX_QUEUE seconds regardless of how the server bursts audio. */
-    if (audioNextAt < now + AUDIO_MIN_LATENCY || audioNextAt > now + AUDIO_MAX_QUEUE) {
+    /* Resync aggressively: if the scheduled playback point has fallen behind
+     * the playhead (underrun) or drifted too far ahead (burst accumulation),
+     * snap back to just-ahead-of-now. This keeps lip-sync bounded to at most
+     * AUDIO_MAX_QUEUE regardless of network jitter or burst patterns.
+     * For smooth playback we let consecutive chunks chain back-to-back
+     * (audioNextAt += duration) but only within the tight window. */
+    if (audioNextAt < now || audioNextAt > now + AUDIO_MAX_QUEUE) {
         audioNextAt = now + AUDIO_MIN_LATENCY;
     }
     src.start(audioNextAt);
