@@ -1115,10 +1115,50 @@ window.addEventListener('message', (e) => {
         return;
     }
     if (e.data.type === 'shared-file-clipboard-read') {
-        // Another SSH window requests file data from our SFTP clipboard.
-        // The SFTP clipboard is per-user server-side — target can paste directly.
+        /* Another tab (RDP) requests actual file data from our SFTP clipboard.
+         * We download each file via the SFTP download API, convert to dataUrl,
+         * and send back to the parent for relay. */
         const requestId = String(e.data.requestId || '');
-        window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard-data', tabId: params?.tabId, requestId, files: [], error: '' }, '*');
+        const requestedFiles = Array.from(e.data.files || []);
+        const respondFiles = [];
+
+        (async () => {
+            for (const f of requestedFiles) {
+                if (!f.remotePath && !f.path) continue;
+                const remotePath = f.remotePath || f.path;
+                try {
+                    /* Ask the server to prepare a download token for this file */
+                    const tokenPromise = new Promise((resolve, reject) => {
+                        const handler = (ev) => {
+                            const msg = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+                            if (msg.type === 'sftp-download-ready' && msg.path === remotePath) {
+                                wsConnection.removeEventListener('message', handler);
+                                resolve(msg);
+                            } else if (msg.type === 'sftp-download' && msg.path === remotePath && msg.error) {
+                                wsConnection.removeEventListener('message', handler);
+                                reject(new Error(msg.error));
+                            }
+                        };
+                        wsConnection.addEventListener('message', handler);
+                        wsConnection.send(JSON.stringify({ type: 'sftp-download', path: remotePath }));
+                        setTimeout(() => { wsConnection.removeEventListener('message', handler); reject(new Error('timeout')); }, 30000);
+                    });
+                    const dlInfo = await tokenPromise;
+                    const res = await fetch(dlInfo.url);
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    const blob = await res.blob();
+                    const dataUrl = await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(reader.result);
+                        reader.readAsDataURL(blob);
+                    });
+                    respondFiles.push({ name: f.name || remotePath.split('/').pop(), size: blob.size, dataUrl, path: remotePath });
+                } catch (err) {
+                    console.warn('[shared-file-clipboard-read] failed for', remotePath, err.message);
+                }
+            }
+            window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard-data', tabId: params?.tabId, requestId, files: respondFiles, error: '' }, '*');
+        })();
         return;
     }
     if (e.data.type === 'reset-mobile-keyboard') {
@@ -4492,7 +4532,17 @@ installTerminalPasteFileHandler();
 // ── 通知父页 SSH 文件剪贴板 ──
 function notifyParentSftpClipboardSet(mode = 'copy', count = 0) {
     if (embeddedMode && window.parent && window.parent !== window && count > 0) {
-        window.parent.postMessage({ source: 'zephyr-terminal', type: 'shared-file-clipboard-remote', tabId: params?.tabId, files: [{ path: 'sftp-clipboard', count, mode }] }, '*');
+        /* Include real file metadata so RDP tabs can display names/sizes and
+         * consume the clipboard without a round-trip back to this tab. */
+        const selected = getSelectedFiles();
+        const files = selected.map(f => ({
+            name: f.name || '',
+            size: Number(f.size) || 0,
+            path: f.path || '',
+            type: f.type || '-',
+            remotePath: f.path || '',
+        }));
+        window.parent.postMessage({ source: 'zephyr-terminal', type: 'shared-file-clipboard-remote', tabId: params?.tabId, files: files.length ? files : [{ path: 'sftp-clipboard', count, mode }] }, '*');
     }
 }
 

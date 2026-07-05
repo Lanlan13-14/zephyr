@@ -1986,13 +1986,16 @@ function initFilePanel() {
     }
     if (rdpFileInput) {
         rdpFileInput.addEventListener('change', async () => {
+            const added = [];
             for (const file of rdpFileInput.files) {
                 const data = new Uint8Array(await file.arrayBuffer());
                 rdpStorageFiles.push({ name: file.name, size: file.size, isDir: false, data });
+                added.push({ name: file.name, size: file.size, data });
             }
             rdpFileInput.value = '';
             updatePendingFileList();
-            setFilesHint('已添加 ' + rdpFileInput.files.length + ' 个文件到待粘贴列表', 'success');
+            setFilesHint('已添加 ' + added.length + ' 个文件到待粘贴列表', 'success');
+            broadcastFilesToParent(added);
         });
     }
 
@@ -2088,24 +2091,80 @@ function initFilePanel() {
         return (b / 1048576).toFixed(1) + ' MB';
     }
 
+    /* Broadcast uploaded files to parent (app.js) so SSH tabs can receive them.
+     * Converts ArrayBuffer data to dataUrl for cross-iframe transfer. */
+    function broadcastFilesToParent(fileList) {
+        if (!fileList.length) return;
+        const files = fileList.map(f => {
+            let dataUrl = '';
+            if (f.data) {
+                const blob = new Blob([f.data]);
+                dataUrl = URL.createObjectURL(blob);
+                /* Convert blob URL to data URL for cross-origin iframe transfer */
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const realDataUrl = reader.result;
+                    window.parent?.postMessage?.({
+                        source: 'zephyr-terminal',
+                        type: 'shared-file-clipboard',
+                        tabId: params.tabId || '',
+                        files: [{ name: f.name, size: f.size || 0, path: f.name, dataUrl: realDataUrl }],
+                    }, '*');
+                    URL.revokeObjectURL(dataUrl);
+                };
+                reader.readAsDataURL(blob);
+            }
+            return { name: f.name, size: f.size || 0, path: f.name, dataUrl };
+        });
+        /* Also send immediately with blob URLs for same-origin targets */
+        window.parent?.postMessage?.({
+            source: 'zephyr-terminal',
+            type: 'shared-file-clipboard',
+            tabId: params.tabId || '',
+            files: files.filter(f => f.dataUrl),
+        }, '*');
+    }
+
     /* ── Cross-tab clipboard: listen for files from SSH/other RDP tabs ── */
     window.addEventListener('message', (e) => {
         if (!e.data || e.data.source !== 'zephyr-app') return;
         if (e.data.type === 'shared-file-clipboard-data' && Array.isArray(e.data.files)) {
-            /* Files arrived from another tab (SSH SFTP or another RDP) */
+            /* Files arrived from another tab (SSH SFTP or another RDP).
+             * Files may carry dataUrl (base64) or remotePath (server-side). */
+            let received = 0;
             for (const f of e.data.files) {
                 if (f.dataUrl) {
                     fetch(f.dataUrl).then(r => r.arrayBuffer()).then(buf => {
                         rdpStorageFiles.push({ name: f.name, size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
                         updatePendingFileList();
+                        received++;
+                        if (typeof rdpNotifyFilesChanged === 'function') rdpNotifyFilesChanged();
                     }).catch(() => {});
+                } else if (f.remotePath) {
+                    /* Server-side file: download via API then add to storage */
+                    fetch('/api/rdp/clipboard-file?' + new URLSearchParams({ path: f.remotePath, name: f.name || '' }))
+                        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+                        .then(buf => {
+                            rdpStorageFiles.push({ name: f.name || 'file', size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
+                            updatePendingFileList();
+                            received++;
+                            if (typeof rdpNotifyFilesChanged === 'function') rdpNotifyFilesChanged();
+                        }).catch(() => {});
                 }
             }
             setFilesHint('已从其他终端接收文件', 'success');
         }
         if (e.data.type === 'shared-file-clipboard-available' && Array.isArray(e.data.files)) {
-            /* Available notification — show indicator */
-            setFilesHint('其他终端有 ' + e.data.files.length + ' 个文件可粘贴', 'info');
+            /* SSH/other tab has files — auto-consume to pull them in. */
+            const sourceTabId = e.data.sourceTabId || '';
+            setFilesHint('正在从其他终端获取 ' + e.data.files.length + ' 个文件...', 'info');
+            window.parent?.postMessage?.({
+                source: 'zephyr-terminal',
+                type: 'shared-file-clipboard-consume',
+                tabId: params.tabId || '',
+                sourceTabId,
+                files: e.data.files,
+            }, '*');
         }
     });
 
