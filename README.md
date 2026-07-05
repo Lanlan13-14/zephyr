@@ -32,7 +32,7 @@
 - 🌊 **DOM 终端渲染**：基于 `@wterm/dom`，终端文本可像普通网页一样拖选复制。
 - 📱 **移动端友好**：支持移动端长按、拖拽选择和系统复制菜单。
 - 🗂️ **连接资产管理**：支持 SSH / RDP / VNC 连接管理、搜索、排序、标签和备注。
-- 🖥️ **RDP / VNC 远程桌面**：RDP 使用 `/rdp-gfx` → FreeRDP3 RDPEGFX native bridge → 浏览器 WebCodecs/Canvas 的原生链路，支持画质/FPS/分辨率切换（最高 8K、144FPS 选项）、移动端软键盘、快捷键、视区摇杆、浮窗布局菜单；VNC 使用内置 noVNC 页面和 Zephyr WebSocket 代理。
+- 🖥️ **RDP / VNC 远程桌面**：RDP 使用纯 Go WASM 方案（grdp），全部协议处理和渲染在浏览器端完成——不依赖服务端 FreeRDP、Python 或任何 native 组件。支持 H.264 WebCodecs 硬解、Canvas 2D 位图渲染、RDPGFX/RemoteFX Progressive、画质/FPS/分辨率（PPI 档位：1080p/2K/4K/8K/自动）、移动端软键盘（含 IME 中文输入）、快捷键、视区摇杆（速度模式无限平移）、浮窗布局菜单（全屏/半屏/四分之一/关闭）、双指滚动缩放、剪贴板双向同步、跨标签文件传输。VNC 使用内置 noVNC 页面和 Zephyr WebSocket 代理。
 - 🧭 **代理与跳板路由**：支持 SOCKS5 / HTTP CONNECT 代理、SSH 跳板机和多级 SSH 跳板链路。
 - ⚡ **远程批量执行**：可对多个 SSH 连接批量执行命令并查看结果。
 - 🧰 **远程运维能力**：支持远程状态监控、Docker 容器/镜像查看、日志查看、镜像拉取等 SSH 运维操作。
@@ -54,7 +54,7 @@
 - 💾 **SQLite 数据存储**：使用 `better-sqlite3` 持久化用户、连接、设置、安全事件等数据。
 - 🔐 **敏感数据加密**：连接密码/私钥、代理密码、SSH 密钥、TOTP Secret、SMTP/CAPTCHA 密钥等字段使用 ML-KEM-768 + AES-256-GCM 混合加密后落盘。
 - 📦 **数据备份**：支持加密备份导出、备份导入，并在导入前自动生成本地数据库备份。
-- 🐳 **Docker 部署**：Docker 镜像内置 Node.js 运行时、FreeRDP、noVNC 所需运行依赖，可直接部署使用。
+- 🐳 **Docker 部署**：Docker 镜像内置 Node.js 运行时和 noVNC 所需运行依赖，RDP 使用浏览器端 Go WASM 无需服务端 native 组件，可直接部署使用。
 
 ---
 
@@ -71,18 +71,15 @@
 - **SSH** 既可以作为目标连接，也可以作为跳板机。
 - **RDP / VNC** 可以作为目标连接，并且可以通过 SSH 跳板链路访问。
 - **RDP / VNC 不能作为跳板机**。跳板机只能选择 SSH 连接。
-- RDP / VNC 通过跳板访问时，Zephyr 会在服务端建立临时链路：RDP 由 `/rdp-gfx` FreeRDP3 RDPEGFX native bridge 连接目标端口并把图形/输入/剪贴板事件转发到浏览器，VNC 由 Zephyr 的 noVNC WebSocket 代理直接完成 VNC 握手与转发。
+- RDP / VNC 通过跳板访问时，Zephyr 会在服务端建立临时链路：RDP 由 Node.js WebSocket→TCP 代理将浏览器 WASM grdp 客户端的流量转发到目标 RDP 端口，VNC 由 Zephyr 的 noVNC WebSocket 代理直接完成 VNC 握手与转发。
 
 RDP 经 SSH 跳板访问链路：
 
 ```text
-浏览器
-  -> Zephyr /rdp-gfx WebSocket
-  -> Python RDP GFX backend
-  -> FreeRDP3 RDPEGFX native bridge
-  -> 127.0.0.1:临时端口（如使用代理/跳板）
-  -> SSH 跳板链路
-  -> 目标 RDP 主机
+浏览器 (Go WASM grdp)
+  ── WebSocket ──► Zephyr Node.js /rdp-proxy
+  ── TCP ──► SSH 跳板链路
+  ──► 目标 RDP 主机:3389
 ```
 
 VNC 经 SSH 跳板访问链路：
@@ -155,7 +152,7 @@ npm start
 http://localhost:3000
 ```
 
-本地开发运行 RDP 时，需要本机可用的 FreeRDP3 开发/运行库、Python 依赖、`librdp_bridge.so` native bridge、WebP/FFmpeg/Opus 等依赖；Docker 镜像会在构建阶段编译并内置这些依赖。旧的 `xfreerdp -> Xvfb -> ffmpeg` 路径仅作为 fallback/兼容遗留说明，不是当前默认 RDP 页面。
+本地开发运行 RDP 时，需要 Go 1.26+ 编译 `rdp-wasm/` 为 WASM（`GOOS=js GOARCH=wasm go build -o public/vendor/rdp-wasm/main.wasm .`）。Docker 镜像会在构建阶段自动完成编译。
 
 ---
 
@@ -298,44 +295,47 @@ Zephyr 自带的默认 Skill 已经写入了本地运维常用规则，重点包
 
 RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zephyr：
 
-- **RDP**：默认使用 Zephyr 自有 **FreeRDP3 RDPEGFX native bridge**。浏览器通过 `/rdp-gfx` WebSocket 连接 Zephyr，后端由 Python bridge 调用 `librdp_bridge.so`，让 FreeRDP3 负责 RDPGFX/GDI 合成、CLIPRDR、音频等底层协议，再把 RDPEGFX / WebP tile / 音频 / 剪贴板事件转成浏览器可处理的 wire format。
-  - **原生 RDPEGFX 路线**：当前默认页面是 `rdp.html -> rdp-gfx.js -> /rdp-gfx -> rdp-gfx-backend -> FreeRDP3 native bridge`；旧的 `xfreerdp -> Xvfb -> ffmpeg` 路径只作为历史 fallback/兼容说明，不是默认体验。
-  - **工具栏与移动端控制**：支持画质模式、分辨率（1080p/2K/4K/8K/自动）、FPS（30/45/60/120/144）、适应/填充/原始、缩放滑块、剪贴板、文件、软键盘、快捷键、视区摇杆、Ctrl+Alt+Del、重连/断开。RDP 浮窗复用 SSH 文件管理器的三点布局菜单（全屏/半屏/左右四分之一/关闭），视区摇杆可等比缩放，操作摇杆时会临时抑制远程 RDP 输入以避免误触。
-  - **原生文件剪贴板**：浏览器/SSH/RDP 文件会发布为 RDP 原生文件剪贴板；Windows 远端在当前目录 Ctrl+V 时通过 CLIPRDR `FileContentsRequest` 按需拉取内容，不再用共享盘路径冒充粘贴。
-  - **跨会话文件桥接**：支持本机 ↔ RDP、SSH ↔ RDP、RDP ↔ SSH、RDP ↔ RDP。RDP ↔ RDP 会通过 Zephyr 父页面共享文件剪贴板中转；如果源 RDP 是远端 Windows 复制文件，目标 RDP 会向源 RDP 请求真实文件内容，再发布到自己的 RDP 原生剪贴板。
+- **RDP**：使用纯 **Go WASM (grdp)** 方案。所有 RDP 协议处理（NLA/CredSSP 认证、TPKT/MCS/SEC 协议栈、RDPGFX/RemoteFX Progressive 图形管线、CLIPRDR 剪贴板、RDPSND 音频、RDPDR 虚拟驱动器、RDPECAM 摄像头、MS-RDPEL 位置、MS-AUDIN 麦克风）和渲染全部在浏览器端完成，服务端只提供 WebSocket→TCP 代理（`/rdp-proxy`）。
+  - **架构**：`rdp-wasm/` 目录下的 Go 源码编译为 `main.wasm`（Dockerfile Stage 2 自动用 `golang:1.26-alpine` 构建），浏览器加载后通过 `rdp-wasm-client.js` 驱动连接、渲染和用户交互。
+  - **图形渲染**：H.264 帧通过 WebCodecs `VideoDecoder` 硬解并 `drawImage` 到 Canvas；位图通过 `putImageData` 直接绘制（`desynchronized:true` 跳过合成器延迟）；Go 侧复用渲染缓冲区避免重复分配。
+  - **每连接设置**：每个 RDP 连接可独立配置分辨率（PPI 档位：1080p/2K/4K/8K/自动）、画质（平衡/性能/画质）、帧率（30/45/60/120/144 FPS）；默认平衡+1080p+30FPS。分辨率档位按屏幕容器实际宽高比计算远程分辨率（不是固定 16:9），适应模式零黑边。
+  - **文件传输**：上传文件到远程（CLIPRDR FileGroupDescriptorW + FileContents 协议，Windows 右键粘贴触发按需拉取）、从远程下载文件（异步 4MB 分块 FILECONTENTS_RANGE）、RDPDR 虚拟驱动器（`\\tsclient\WEBRDP`）。
+  - **跨标签文件桥接**：SSH ↔ RDP 双向文件传输通过服务端临时文件中转（`/api/clipboard/upload` + `/api/clipboard/download/:token`，流式传输，无大小限制）；复制时只发元数据，粘贴时才拉取真实数据。
+  - **剪贴板**：文本剪贴板双向同步（CF_UNICODETEXT）；文件剪贴板支持 Windows 复制文件→浏览器下载、浏览器上传→Windows 粘贴。
+  - **移动端**：软键盘支持退格/删除/回车 + IME 中文输入（通过剪贴板粘贴注入）；双指上下/左右滚动（屏幕像素计算）；双指缩放。
+  - **连接稳定性**：12 秒连接看门狗、300ms 断开间隔防竞态、AudioContext 复用、重连互斥锁防循环。
+  - **壁纸与动效**：平衡+画质模式启用壁纸和桌面动效（清除 PERF_DISABLE_WALLPAPER/FULLWINDOWDRAG/MENUANIMATIONS/THEMING），仅性能模式禁用。
 - **VNC**：使用内置 **noVNC** 前端，浏览器通过 `/novnc` WebSocket 连接 Zephyr；Zephyr 在服务端直连/代理/SSH 跳板到目标 VNC Server，并在服务端使用保存的 VNC 密码完成 VNCAuth，密码不会下发到浏览器。
 
-### Docker 镜像内置 RDP/VNC 运行依赖
+### Docker 镜像内置运行依赖
 
 项目 Docker 镜像运行层基于 Alpine，已包含：
 
-- FreeRDP3 运行库与 Zephyr 编译的 `librdp_bridge.so` native bridge
-- `rdp-gfx-backend` Python bridge（WebSocket / wire format / CLIPRDR / 音频事件桥接）
-- libwebp、FFmpeg/libav、Opus 等 native bridge 依赖
-- `zephyr-xinput`、`zephyr-file-clip` 等旧 fallback/兼容工具
+- Node.js 运行时
+- Go WASM RDP 客户端（`main.wasm`，Dockerfile 构建阶段用 `golang:1.26-alpine` 从 `rdp-wasm/` 源码编译）
 - noVNC 前端依赖
 
-项目不再包含旧的远程桌面网关组件，也不再依赖浏览器侧第三方 RDP 客户端库。
+RDP 不需要服务端 native 组件（无 FreeRDP、无 Python bridge、无 libwebp/FFmpeg/Opus 依赖）。所有 RDP 协议处理在浏览器 WASM 中完成。
 
-### RDP 相关环境变量
+### RDP 相关说明
 
-| 环境变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `RDP_GFX_BACKEND_PORT` / `RDP_GFX_BACKEND_HOST` | 自动 / `127.0.0.1` | `/rdp-gfx` 后端服务监听地址；通常无需手动设置 |
-| `RDP_BRIDGE_LIBRARY` | 自动查找 | 指定 `librdp_bridge.so` 路径，用于排查多版本 native bridge 污染 |
-| `RDP_MAX_WIDTH` / `RDP_MAX_HEIGHT` | `7680` / `4320` | RDP GFX 允许的最大分辨率；前端提供 8K 选项 |
-| `RDP_MAX_FPS` | `144` | RDP GFX / fallback 捕获允许的最高帧率；前端提供 120/144 FPS 选项 |
-| `RDP_H264_WIDTH` / `RDP_H264_HEIGHT` | `1920` / `1080` | 旧 `/rdp-h264` fallback 的默认分辨率 |
-| `RDP_H264_FPS` | `60` | 旧 `/rdp-h264` fallback 的默认帧率 |
-| `RDP_CLIPBOARD_SYNC` | 启用 | `false` 禁用 RDP 剪贴板双向同步 |
-| `ZEPHYR_RDP_CLIPBOARD_DOWNLOAD_DIR` | `/tmp` | RDP 远程文件剪贴板下载/暂存目录 |
+| 项目 | 说明 |
+| --- | --- |
+| RDP 协议栈 | 纯 Go WASM (grdp fork)，浏览器端运行 |
+| 服务端代理 | Node.js `/rdp-proxy` WebSocket→TCP 代理 |
+| 图形渲染 | H.264 WebCodecs + Canvas 2D `putImageData` |
+| 剪贴板 | MS-RDPECLIP (CLIPRDR) 文本 + 文件双向 |
+| 音频 | RDPSND PCM → Web Audio API |
+| 虚拟驱动器 | MS-RDPEFS (RDPDR) `\\tsclient\WEBRDP` |
+| 分辨率模型 | PPI 档位（1080p/2K/4K/8K），宽高比跟随屏幕 |
+| 跨标签文件中转 | `/api/clipboard/upload` + `/api/clipboard/download/:token` 流式 |
 
 ### 默认端口
 
 | 协议 | 默认端口 | 说明 |
 | --- | --- | --- |
 | `SSH` | `22` | WebSSH 终端 |
-| `RDP` | `3389` | Windows 远程桌面，经 Zephyr `/rdp-gfx` FreeRDP3 RDPEGFX native bridge |
+| `RDP` | `3389` | Windows 远程桌面，经浏览器 Go WASM grdp + Zephyr `/rdp-proxy` WebSocket→TCP 代理 |
 | `VNC` | `5900` | VNC Server，经 noVNC + Zephyr `/novnc` 代理 |
 
 ### RDP/VNC 使用跳板
@@ -377,11 +377,10 @@ VNC：
 服务端日志关键字：
 
 ```text
-[rdp-gfx]
-[rdp_bridge]
-[GFX]
-[rdpsnd]
-[rdp-test]
+[rdp-wasm]
+[rdp-proxy]
+[cliprdr]
+[rdpefs]
 [novnc-ws]
 [novnc-test]
 [tcp-forward]
@@ -435,7 +434,7 @@ services:
         max-file: "3"
 ```
 
-> Docker 镜像已内置 FreeRDP3 native bridge、Python RDP GFX backend、libwebp/FFmpeg/Opus 等 RDP GFX 运行依赖；VNC 走 noVNC + Zephyr `/novnc` 代理，不需要额外启动远程桌面网关容器。
+> Docker 镜像已内置 Go WASM RDP 客户端和 noVNC 前端依赖；RDP 协议处理完全在浏览器端完成，服务端只提供 WebSocket→TCP 代理；VNC 走 noVNC + Zephyr `/novnc` 代理，不需要额外启动远程桌面网关容器。
 
 ### 3. 启动服务
 
@@ -598,8 +597,8 @@ Dockerfile 说明：
 - 构建阶段使用 `node:20-alpine3.20` 与 `alpine:3.20`。
 - 运行阶段基于 `node:20-alpine3.20`。
 - 镜像内复制应用代码和生产依赖。
-- 镜像内置 FreeRDP3 native bridge、RDP GFX Python backend、libwebp/FFmpeg/Opus 等 RDP GFX 依赖；VNC 使用 noVNC + Zephyr `/novnc` 代理。
-- 构建时会验证 native bridge、`node`、`npm` 是否可执行。
+- 镜像内置 Go WASM RDP 客户端（构建阶段编译）和 noVNC 前端依赖；VNC 使用 noVNC + Zephyr `/novnc` 代理。
+- 构建时会验证 `node`、`npm` 是否可执行，并编译 Go WASM。
 
 ---
 
@@ -659,8 +658,9 @@ zephyr-ssh/
 │   ├── terminal.html    # SSH 终端页面
 │   ├── terminal.js      # SSH 终端逻辑
 │   ├── preview/image/   # 图片预览前端模块（Viewer.js UI 接入与样式）
-│   ├── rdp.html          # RDP 远程桌面页面（Zephyr 自有管线）
-│   ├── rdp.js            # RDP WebCodecs/H.264 前端逻辑
+│   ├── rdp.html          # RDP 远程桌面页面（Go WASM grdp）
+│   ├── rdp-wasm-client.js # RDP 前端逻辑（渲染、输入、文件、剪贴板）
+│   ├── rdp-touch.js       # RDP 移动端触控（单指/双指/三指手势）
 │   ├── novnc.html       # VNC noVNC 远程桌面页面
 │   ├── novnc.js         # VNC noVNC 前端逻辑
 │   └── style.css        # 全局样式
@@ -672,6 +672,12 @@ zephyr-ssh/
 ├── server.js            # 后端服务、API、WebSocket、协议路由
 ├── storage.js           # SQLite 存储层
 ├── stats.js             # 远程状态采集
+├── rdp-wasm/            # Go WASM RDP 客户端源码
+│   ├── main.go          # WASM 入口（JS↔Go 桥接）
+│   ├── rdpefs.go        # MS-RDPEFS 虚拟驱动器
+│   ├── grdp-patch/      # grdp fork（RDP 协议栈 + CLIPRDR 文件剪贴板）
+│   ├── Makefile         # WASM 编译（GOOS=js GOARCH=wasm）
+│   └── go.mod           # Go 模块（replace → ./grdp-patch）
 ├── package.json         # 项目依赖与脚本
 ├── package-lock.json    # 锁定依赖版本
 ├── Dockerfile           # Docker 构建文件
