@@ -1977,6 +1977,10 @@ function initFilePanel() {
     const rdpRemoteFileList = document.getElementById('rdpRemoteFileList');
     const filesHint = document.getElementById('filesHint');
 
+    /* Pending cross-tab clipboard (metadata only until user pastes). */
+    let pendingCrossTabFiles = [];
+    let pendingCrossTabSource = '';
+
     /* ── Upload files button ── */
     if (rdpFileSelectBtn) {
         rdpFileSelectBtn.addEventListener('click', () => {
@@ -1995,7 +1999,7 @@ function initFilePanel() {
             rdpFileInput.value = '';
             updatePendingFileList();
             setFilesHint('已添加 ' + added.length + ' 个文件到待粘贴列表', 'success');
-            broadcastFilesToParent(added);
+            broadcastFileMetaToParent(added);
         });
     }
 
@@ -2015,14 +2019,26 @@ function initFilePanel() {
         });
     }
 
-    /* ── "粘贴到远程" for remote-clipboard files — same action ── */
+    /* ── "粘贴到远程" for remote-clipboard files — consume cross-tab on demand ── */
     if (rdpFilePasteToRemoteBtn) {
         rdpFilePasteToRemoteBtn.addEventListener('click', () => {
-            if (typeof rdpNotifyFilesChanged === 'function') {
+            if (pendingCrossTabFiles.length && pendingCrossTabSource) {
+                /* Request actual file data from the source tab now. */
+                setFilesHint('正在获取文件数据...', 'info');
+                window.parent?.postMessage?.({
+                    source: 'zephyr-terminal',
+                    type: 'shared-file-clipboard-consume',
+                    tabId: params.tabId || '',
+                    sourceTabId: pendingCrossTabSource,
+                    files: pendingCrossTabFiles,
+                }, '*');
+                pendingCrossTabFiles = [];
+                pendingCrossTabSource = '';
+            } else if (typeof rdpNotifyFilesChanged === 'function') {
                 rdpNotifyFilesChanged();
                 setFilesHint('已通知远程桌面有文件可粘贴', 'success');
             } else {
-                setFilesHint('WASM 未就绪', 'warning');
+                setFilesHint('无可粘贴的文件', 'warning');
             }
         });
     }
@@ -2105,31 +2121,45 @@ function initFilePanel() {
         });
     }
 
-    /* Broadcast uploaded files to parent (app.js) so SSH tabs can receive them.
-     * Converts ArrayBuffer data to dataUrl for cross-iframe transfer. */
-    function broadcastFilesToParent(fileList) {
+    /* Notify parent (app.js) that we have files available — metadata only,
+     * no actual file data. Real data is sent on-demand when another tab
+     * consumes (pastes) via shared-file-clipboard-consume → read → data. */
+    function broadcastFileMetaToParent(fileList) {
         if (!fileList.length) return;
-        /* Convert all files to base64 data URLs (cross-origin safe), then
-         * broadcast a single shared-file-clipboard message to the parent. */
+        const meta = fileList.map(f => ({ name: f.name, size: f.size || 0, path: f.name }));
+        window.parent?.postMessage?.({
+            source: 'zephyr-terminal',
+            type: 'shared-file-clipboard',
+            tabId: params.tabId || '',
+            files: meta,
+        }, '*');
+    }
+
+    /* Send full file data (base64 dataUrl) to parent — called when another
+     * tab requests the actual content via shared-file-clipboard-read. */
+    function broadcastFileDataToParent(fileList, requestId) {
+        if (!fileList.length) return;
         let pending = fileList.length;
         const results = [];
-        fileList.forEach((f, i) => {
-            if (!f.data) { pending--; return; }
-            const blob = new Blob([f.data]);
+        fileList.forEach((f) => {
+            const entry = rdpStorageFiles.find(s => s.name === f.name);
+            if (!entry || !entry.data) { pending--; return; }
+            const blob = new Blob([entry.data]);
             const reader = new FileReader();
             reader.onload = () => {
-                results.push({ name: f.name, size: f.size || 0, path: f.name, dataUrl: reader.result });
-                if (--pending <= 0 && results.length) {
+                results.push({ name: f.name, size: entry.size || 0, path: f.name, dataUrl: reader.result });
+                if (--pending <= 0) {
                     window.parent?.postMessage?.({
                         source: 'zephyr-terminal',
-                        type: 'shared-file-clipboard',
+                        type: 'shared-file-clipboard-data',
                         tabId: params.tabId || '',
+                        requestId: requestId || '',
                         files: results,
                     }, '*');
                 }
             };
-            reader.onerror = () => { if (--pending <= 0 && results.length) {
-                window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard', tabId: params.tabId || '', files: results }, '*');
+            reader.onerror = () => { if (--pending <= 0) {
+                window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'shared-file-clipboard-data', tabId: params.tabId || '', requestId: requestId || '', files: results }, '*');
             }};
             reader.readAsDataURL(blob);
         });
@@ -2165,16 +2195,16 @@ function initFilePanel() {
             setFilesHint('已从其他终端接收文件', 'success');
         }
         if (e.data.type === 'shared-file-clipboard-available' && Array.isArray(e.data.files)) {
-            /* SSH/other tab has files — auto-consume to pull them in. */
-            const sourceTabId = e.data.sourceTabId || '';
-            setFilesHint('正在从其他终端获取 ' + e.data.files.length + ' 个文件...', 'info');
-            window.parent?.postMessage?.({
-                source: 'zephyr-terminal',
-                type: 'shared-file-clipboard-consume',
-                tabId: params.tabId || '',
-                sourceTabId,
-                files: e.data.files,
-            }, '*');
+            /* Another tab has files — just store metadata and show notification.
+             * Actual data transfer only happens when user clicks paste. */
+            pendingCrossTabFiles = e.data.files;
+            pendingCrossTabSource = e.data.sourceTabId || '';
+            const names = e.data.files.map(f => f.name || 'file').slice(0, 3).join('、');
+            setFilesHint('其他终端有 ' + e.data.files.length + ' 个文件可粘贴（' + names + '）', 'info');
+        }
+        if (e.data.type === 'shared-file-clipboard-read' && Array.isArray(e.data.files)) {
+            /* Another tab (SSH) is requesting our file data for pasting. */
+            broadcastFileDataToParent(e.data.files, e.data.requestId || '');
         }
     });
 

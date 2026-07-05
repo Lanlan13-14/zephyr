@@ -27,6 +27,7 @@ type CliprdrHandler struct {
 
 	useLongFormatNames    bool
 	streamFileClipEnabled bool
+	canLockClipData       bool
 
 	serverCapsReceived bool
 	monitorReady       bool
@@ -148,7 +149,9 @@ func (h *CliprdrHandler) processClipCaps(body []byte) {
 		if capType == CB_CAPSTYPE_GENERAL && capLen >= 12 {
 			generalFlags := binary.LittleEndian.Uint32(body[offset+8:])
 			h.useLongFormatNames = generalFlags&CB_USE_LONG_FORMAT_NAMES != 0
-			slog.Debug("cliprdr: server caps", "generalFlags", generalFlags, "longNames", h.useLongFormatNames)
+			h.streamFileClipEnabled = generalFlags&CB_STREAM_FILECLIP_ENABLED != 0
+			h.canLockClipData = generalFlags&CB_CAN_LOCK_CLIPDATA != 0
+			slog.Debug("cliprdr: server caps", "generalFlags", generalFlags, "longNames", h.useLongFormatNames, "fileClip", h.streamFileClipEnabled, "lockClip", h.canLockClipData)
 		}
 		offset += int(capLen)
 	}
@@ -489,8 +492,10 @@ func (h *CliprdrHandler) DownloadServerFile(index int) []byte {
 		cbReq = 64 * 1024 * 1024 // cap at 64MB per request
 	}
 	binary.Write(b, binary.LittleEndian, uint32(cbReq))
-	if len(b.Bytes()) >= 28 {
-		// clipDataId (only if canLockClipData, but always send 0 for compat)
+	// clipDataId is only present when server advertised CB_CAN_LOCK_CLIPDATA.
+	// Sending it unconditionally adds 4 extra bytes that some Windows builds
+	// may misparse as the start of the next PDU.
+	if h.canLockClipData {
 		binary.Write(b, binary.LittleEndian, uint32(0))
 	}
 	h.sendPDU(CB_FILECONTENTS_REQUEST, 0, b.Bytes())

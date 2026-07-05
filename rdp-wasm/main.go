@@ -26,6 +26,11 @@ var (
 	audinHandler     *AudinHandler
 	rdpelHandler     *RdpelHandler
 	rdpefsHandler    *RdpefsHandler
+
+	// Cache for file data read from JS — avoids re-copying the entire file
+	// from JS→Go on every FILECONTENTS_RANGE chunk request.
+	fileDataCache     map[string][]byte
+	fileDataCacheMu   sync.Mutex
 	camEnumHandler   *CamEnumeratorHandler
 	camStreamHandler *CamStreamHandler
 )
@@ -271,22 +276,37 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 				return nil
 			}
 			name := result.Index(index).Get("name").String()
-			data := js.Global().Call("rdpStorageReadFile", name)
-			if data.IsNull() || data.IsUndefined() {
-				return nil
+
+			// Check cache first to avoid re-copying the entire file from JS
+			// on every chunk request (Windows sends many small RANGE requests).
+			fileDataCacheMu.Lock()
+			if fileDataCache == nil {
+				fileDataCache = make(map[string][]byte)
 			}
-			totalLen := data.Length()
+			cached, ok := fileDataCache[name]
+			fileDataCacheMu.Unlock()
+
+			if !ok {
+				jsData := js.Global().Call("rdpStorageReadFile", name)
+				if jsData.IsNull() || jsData.IsUndefined() {
+					return nil
+				}
+				cached = make([]byte, jsData.Length())
+				js.CopyBytesToGo(cached, jsData)
+				fileDataCacheMu.Lock()
+				fileDataCache[name] = cached
+				fileDataCacheMu.Unlock()
+			}
+
 			start := int(offset)
-			end := start + int(length)
-			if start >= totalLen {
+			if start >= len(cached) {
 				return nil
 			}
-			if end > totalLen {
-				end = totalLen
+			end := start + int(length)
+			if end > len(cached) {
+				end = len(cached)
 			}
-			buf := make([]byte, end-start)
-			js.CopyBytesToGo(buf, data.Call("subarray", start, end))
-			return buf
+			return cached[start:end]
 		},
 	)
 
