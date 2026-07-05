@@ -10,6 +10,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:uuid/uuid.dart';
 import 'agent_state.dart';
 import '../fs/file_provider.dart';
+import '../app/agent_version.dart';
 
 class AgentController extends ChangeNotifier {
   AgentConfig _config;
@@ -137,7 +138,7 @@ class AgentController extends ChangeNotifier {
       'deviceId': deviceId,
       'deviceName': _config.deviceName,
       'platform': _platformName(),
-      'appVersion': '1.0.0',
+      'appVersion': AgentVersion.version,
       'capabilities': {
         'read': true,
         'write': !_config.readOnly,

@@ -63,20 +63,24 @@ class MainActivity : FlutterActivity() {
     private fun setLauncherTheme(call: MethodCall, result: MethodChannel.Result) {
         val theme = (call.argument<String>("theme") ?: "frost").lowercase()
         val aliases = mapOf(
-            "frost" to "LauncherFrost",
-            "lava" to "LauncherLava",
-            "asagi" to "LauncherAsagi",
-            "cyber" to "LauncherCyber",
+            "frost" to "$packageName.LauncherFrost",
+            "lava" to "$packageName.LauncherLava",
+            "asagi" to "$packageName.LauncherAsagi",
+            "cyber" to "$packageName.LauncherCyber",
         )
-        val enabled = aliases[theme] ?: "LauncherFrost"
-        for ((_, alias) in aliases) {
-            val component = ComponentName(this, "$packageName.$alias")
+        val enabled = aliases[theme] ?: aliases["frost"]!!
+        for (className in aliases.values.filter { it != enabled }) {
             packageManager.setComponentEnabledSetting(
-                component,
-                if (alias == enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                ComponentName(this, className),
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP,
             )
         }
+        packageManager.setComponentEnabledSetting(
+            ComponentName(this, enabled),
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+            PackageManager.DONT_KILL_APP,
+        )
         result.success(null)
     }
 

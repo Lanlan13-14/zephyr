@@ -73,9 +73,15 @@ jobs:
       - name: Install Android SAF host code
         run: sh tool/prepare_android.sh
 
+      - name: Generate Agent version metadata
+        run: python3 tool/set_version.py "${{ github.event.inputs.tag }}"
+
+      - name: Validate Android launcher manifest
+        run: python3 tool/validate_android_manifest.py
+
       - run: flutter pub get
-      - run: flutter build apk --release --build-number ${{ github.run_number }}
-      - run: flutter build appbundle --release --build-number ${{ github.run_number }}
+      - run: flutter build apk --release --build-name ${{ env.ZEPHYR_AGENT_VERSION_NAME }} --build-number ${{ env.ZEPHYR_AGENT_VERSION_CODE }} --dart-define ZEPHYR_AGENT_VERSION=${{ env.ZEPHYR_AGENT_VERSION_NAME }} --dart-define ZEPHYR_AGENT_BUILD_NUMBER=${{ env.ZEPHYR_AGENT_VERSION_CODE }}
+      - run: flutter build appbundle --release --build-name ${{ env.ZEPHYR_AGENT_VERSION_NAME }} --build-number ${{ env.ZEPHYR_AGENT_VERSION_CODE }} --dart-define ZEPHYR_AGENT_VERSION=${{ env.ZEPHYR_AGENT_VERSION_NAME }} --dart-define ZEPHYR_AGENT_BUILD_NUMBER=${{ env.ZEPHYR_AGENT_VERSION_CODE }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -108,8 +114,11 @@ jobs:
       - name: Install Windows app metadata
         run: pwsh tool/prepare_windows.ps1
 
+      - name: Generate Agent version metadata
+        run: python3 tool/set_version.py "${{ github.event.inputs.tag }}"
+
       - run: flutter pub get
-      - run: flutter build windows --release
+      - run: flutter build windows --release --build-name ${{ env.ZEPHYR_AGENT_VERSION_NAME }} --build-number ${{ env.ZEPHYR_AGENT_VERSION_CODE }} --dart-define ZEPHYR_AGENT_VERSION=${{ env.ZEPHYR_AGENT_VERSION_NAME }} --dart-define ZEPHYR_AGENT_BUILD_NUMBER=${{ env.ZEPHYR_AGENT_VERSION_CODE }}
 
       - name: Archive portable zip
         shell: pwsh
@@ -119,7 +128,8 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
-          $version = "${{ github.event.inputs.tag }}"
+          $version = "${{ env.ZEPHYR_AGENT_VERSION_NAME }}"
+          $tag = "${{ github.event.inputs.tag }}"
           $iss = @"
           [Setup]
           AppName=Zephyr Agent
@@ -128,7 +138,7 @@ jobs:
           DefaultDirName={autopf}\Zephyr Agent
           DefaultGroupName=Zephyr Agent
           OutputDir=.
-          OutputBaseFilename=zephyr-agent-windows-x64-$version-setup
+          OutputBaseFilename=zephyr-agent-windows-x64-$tag-setup
           Compression=lzma
           SolidCompression=yes
           WizardStyle=modern
@@ -174,8 +184,11 @@ jobs:
       - name: Install Linux app metadata
         run: sh tool/prepare_linux.sh
 
+      - name: Generate Agent version metadata
+        run: python3 tool/set_version.py "${{ github.event.inputs.tag }}"
+
       - run: flutter pub get
-      - run: flutter build linux --release
+      - run: flutter build linux --release --build-name ${{ env.ZEPHYR_AGENT_VERSION_NAME }} --build-number ${{ env.ZEPHYR_AGENT_VERSION_CODE }} --dart-define ZEPHYR_AGENT_VERSION=${{ env.ZEPHYR_AGENT_VERSION_NAME }} --dart-define ZEPHYR_AGENT_BUILD_NUMBER=${{ env.ZEPHYR_AGENT_VERSION_CODE }}
 
       - name: Archive
         run: tar czf zephyr-agent-linux-x64.tar.gz -C build/linux/x64/release/bundle .
@@ -203,8 +216,11 @@ jobs:
       - name: Install macOS app metadata
         run: sh tool/prepare_apple.sh macos
 
+      - name: Generate Agent version metadata
+        run: python3 tool/set_version.py "${{ github.event.inputs.tag }}"
+
       - run: flutter pub get
-      - run: flutter build macos --release
+      - run: flutter build macos --release --build-name ${{ env.ZEPHYR_AGENT_VERSION_NAME }} --build-number ${{ env.ZEPHYR_AGENT_VERSION_CODE }} --dart-define ZEPHYR_AGENT_VERSION=${{ env.ZEPHYR_AGENT_VERSION_NAME }} --dart-define ZEPHYR_AGENT_BUILD_NUMBER=${{ env.ZEPHYR_AGENT_VERSION_CODE }}
 
       - name: Archive macOS zip and dmg
         run: |
@@ -240,8 +256,11 @@ jobs:
       - name: Install iOS app metadata
         run: sh tool/prepare_apple.sh ios
 
+      - name: Generate Agent version metadata
+        run: python3 tool/set_version.py "${{ github.event.inputs.tag }}"
+
       - run: flutter pub get
-      - run: flutter build ios --release --no-codesign
+      - run: flutter build ios --release --no-codesign --build-name ${{ env.ZEPHYR_AGENT_VERSION_NAME }} --build-number ${{ env.ZEPHYR_AGENT_VERSION_CODE }} --dart-define ZEPHYR_AGENT_VERSION=${{ env.ZEPHYR_AGENT_VERSION_NAME }} --dart-define ZEPHYR_AGENT_BUILD_NUMBER=${{ env.ZEPHYR_AGENT_VERSION_CODE }}
 
       - name: Archive iOS zip and ipa
         run: |

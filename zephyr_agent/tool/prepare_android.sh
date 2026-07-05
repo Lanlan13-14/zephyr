@@ -52,7 +52,20 @@ m=manifest.read_text()
 m=m.replace('android:label="zephyr_agent"', 'android:label="Zephyr Agent"')
 m=m.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">', '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />')
 m=m.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@drawable/zephyr_agent_icon_frost"')
-m=re.sub(r'\n\s*<intent-filter>\s*\n\s*<action android:name="android.intent.action.MAIN" />\s*\n\s*<category android:name="android.intent.category.LAUNCHER" />\s*\n\s*</intent-filter>', '', m, count=1)
+# MainActivity must not be a launcher entry. Launcher icon switching is implemented
+# exclusively through activity-alias entries below; leaving Flutter's default
+# MAIN/LAUNCHER intent-filter in place creates a second, non-switchable icon.
+activity_match=re.search(r'(<activity\b[^>]*android:name="\.MainActivity"[\s\S]*?</activity>)', m)
+if not activity_match:
+    raise SystemExit('AndroidManifest.xml: MainActivity block not found')
+activity_block=activity_match.group(1)
+activity_block=re.sub(r'android:exported="true"', 'android:exported="false"', activity_block, count=1)
+activity_block=re.sub(r'\n\s*<intent-filter>\s*\n\s*<action android:name="android.intent.action.MAIN" />\s*\n\s*<category android:name="android.intent.category.LAUNCHER" />\s*\n\s*</intent-filter>', '', activity_block, count=1)
+if 'android.intent.category.LAUNCHER' in activity_block:
+    raise SystemExit('AndroidManifest.xml: failed to remove MainActivity launcher intent-filter')
+m=m[:activity_match.start(1)] + activity_block + m[activity_match.end(1):]
+# Re-running this script during local debugging must not duplicate aliases.
+m=re.sub(r'\n\s*<activity-alias\b[\s\S]*?</activity-alias>', '', m)
 aliases='''
         <activity-alias
             android:name=".LauncherFrost"
