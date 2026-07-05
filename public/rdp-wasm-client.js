@@ -43,6 +43,7 @@ let wasmReady = false;
 let rdpManualDisconnect = false;
 let rdpReconnectTimer = null;
 let rdpReconnectAttempts = 0;
+let rdpReconnecting = false;
 let lastRemoteClipboard = '';
 let lastSyncedLocalClipboardText = '';
 let clipboardSyncTimer = null;
@@ -140,6 +141,7 @@ window.rdpOnReady = function () {
     setStatus('connected', 'RDP 已连接');
     connected = true;
     rdpReconnectAttempts = 0;
+    rdpReconnecting = false;
     notifyParentStatus('connected');
     if (rdpCanvas) rdpCanvas.focus();
 };
@@ -163,17 +165,19 @@ window.rdpOnError = function (msg) {
 window.rdpOnClose = function () {
     console.info('[rdp-wasm] connection closed');
     clearConnectWatchdog();
-    if (connected) {
-        connected = false;
+    const wasConnected = connected;
+    connected = false;
+    if (wasConnected) {
         setStatus('disconnected', '连接已断开');
         notifyParentStatus('closed');
         cleanupAudio();
         cleanupH264();
         maybeAutoReconnect();
-    } else if (!rdpManualDisconnect) {
+    } else if (!rdpManualDisconnect && !rdpReconnecting) {
+        /* Connection failed during setup and rdpOnError didn't already
+         * schedule a reconnect — try once more. */
         cleanupAudio();
         cleanupH264();
-        setStatus('disconnected', '连接已关闭，准备重连');
         maybeAutoReconnect();
     }
 };
@@ -741,6 +745,7 @@ function reconnectWithSettings() {
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     clearConnectWatchdog();
     rdpManualDisconnect = false;
+    rdpReconnecting = false;
     rdpReconnectAttempts = 0;
     connected = false;
     /* Disconnect the old session and give Go WASM + WebSocket a moment to
@@ -877,6 +882,7 @@ async function connect() {
 function disconnect() {
     rdpManualDisconnect = true;
     clearConnectWatchdog();
+    rdpReconnecting = false;
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     connected = false;
     try { rdpDisconnect(); } catch {}
@@ -891,16 +897,24 @@ function disconnect() {
 
 function maybeAutoReconnect() {
     if (rdpManualDisconnect) return;
+    if (rdpReconnecting) return;
     if (rdpReconnectAttempts >= 5) {
         setStatus('error', '重连次数已达上限');
         return;
     }
+    /* Clear any existing timer to prevent parallel reconnect chains. */
+    if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     const delay = Math.min(2000 * Math.pow(1.5, rdpReconnectAttempts), 15000);
     rdpReconnectAttempts++;
+    rdpReconnecting = true;
     setStatus('connecting', `${Math.round(delay / 1000)}秒后自动重连 (${rdpReconnectAttempts}/5)...`);
     rdpReconnectTimer = setTimeout(() => {
         rdpReconnectTimer = null;
-        connect().catch((e) => console.warn('[rdp-wasm] reconnect failed:', e));
+        rdpReconnecting = false;
+        connect().catch((e) => {
+            console.warn('[rdp-wasm] reconnect failed:', e);
+            rdpReconnecting = false;
+        });
     }, delay);
 }
 
