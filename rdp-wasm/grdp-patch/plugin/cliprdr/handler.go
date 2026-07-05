@@ -48,6 +48,9 @@ type CliprdrHandler struct {
 	suppressNextLocalChange bool
 	// formatID assigned by server for FileGroupDescriptorW
 	fgdFormatId uint32
+	// formatIDs we assign in our FORMAT_LIST for client→server file transfer
+	localFGDFormatId uint32
+	localFCFormatId  uint32
 }
 
 // NewHandler creates a CliprdrHandler.
@@ -303,8 +306,15 @@ func (h *CliprdrHandler) processFormatDataRequest(body []byte) {
 	requestedFormat := binary.LittleEndian.Uint32(body[0:4])
 	slog.Debug("cliprdr: server requests format", "formatId", requestedFormat)
 
-	// Check if this is a FileGroupDescriptorW or FileContents request
+	// Check if this is a FileGroupDescriptorW or FileContents format
 	if h.handleFormatDataRequestFiles(requestedFormat) {
+		return
+	}
+	// FileContents via FORMAT_DATA_REQUEST is not standard; actual file data
+	// comes via CB_FILECONTENTS_REQUEST. Respond FAIL to let server use the
+	// correct channel.
+	if requestedFormat == h.localFCFormatId || requestedFormat == 0xC0E1 {
+		h.sendPDU(CB_FORMAT_DATA_RESPONSE, CB_RESPONSE_FAIL, nil)
 		return
 	}
 
@@ -497,20 +507,30 @@ func (h *CliprdrHandler) SendLocalFilesFormatList() {
 		return
 	}
 
+	// Use formatId 0xC0E0/0xC0E1 for our custom formats. These are in the
+	// RegisterClipboardFormat range (0xC000-0xFFFF). The exact value doesn't
+	// matter as long as it's unique within this FORMAT_LIST; the server
+	// identifies the format by its name string, not the numeric ID.
+	const localFGDId = uint32(0xC0E0)
+	const localFCId = uint32(0xC0E1)
+	h.localFGDFormatId = localFGDId
+	h.localFCFormatId = localFCId
+
 	b := &bytes.Buffer{}
 	if h.useLongFormatNames {
-		// CF_UNICODETEXT
+		// CF_UNICODETEXT (standard format, empty name)
 		binary.Write(b, binary.LittleEndian, uint32(CF_UNICODETEXT))
-		b.Write([]byte{0, 0})
-		// FileGroupDescriptorW (custom format name)
-		binary.Write(b, binary.LittleEndian, uint32(0xC001)) // use a fixed custom ID
-		fgdName := encodeUTF16LE("FileGroupDescriptorW\x00")
-		b.Write(fgdName)
+		b.Write([]byte{0, 0}) // null-terminated empty name
+
+		// FileGroupDescriptorW
+		binary.Write(b, binary.LittleEndian, localFGDId)
+		b.Write(encodeUTF16LE("FileGroupDescriptorW")) // encodeUTF16LE appends null
+
 		// FileContents
-		binary.Write(b, binary.LittleEndian, uint32(0xC002))
-		fcName := encodeUTF16LE("FileContents\x00")
-		b.Write(fcName)
+		binary.Write(b, binary.LittleEndian, localFCId)
+		b.Write(encodeUTF16LE("FileContents"))
 	} else {
+		// Short format names (32 bytes fixed)
 		binary.Write(b, binary.LittleEndian, uint32(CF_UNICODETEXT))
 		b.Write(make([]byte, 32))
 	}
@@ -520,7 +540,7 @@ func (h *CliprdrHandler) SendLocalFilesFormatList() {
 // processFormatDataRequest handles FORMAT_DATA_REQUEST for FileGroupDescriptorW.
 // (overrides the text-only version when files are present)
 func (h *CliprdrHandler) handleFormatDataRequestFiles(requestedFormat uint32) bool {
-	if requestedFormat != 0xC001 || h.getLocalFiles == nil {
+	if (requestedFormat != h.localFGDFormatId && requestedFormat != 0xC0E0) || h.getLocalFiles == nil {
 		return false
 	}
 	files := h.getLocalFiles()
