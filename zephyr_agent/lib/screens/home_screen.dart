@@ -32,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     final config = context.read<AgentController>().config;
+    _applyDefaultSharePath(config);
     _urlCtrl = TextEditingController(text: config.serverUrl);
     _tokenCtrl = TextEditingController(text: config.token);
     _nameCtrl = TextEditingController(text: config.deviceName);
@@ -51,12 +52,50 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  ZephyrPalette get _palette => ZephyrColors.palette(widget.currentTheme, Theme.of(context).brightness);
+
   void _saveConfig(AgentController ctrl) {
-    ctrl.config.serverUrl = _urlCtrl.text.trim();
+    var url = _urlCtrl.text.trim();
+    if (url.isNotEmpty && !url.contains('://')) {
+      url = 'https://$url';
+      _urlCtrl.text = url;
+    }
+    ctrl.config.serverUrl = url;
     ctrl.config.token = _tokenCtrl.text.trim();
     ctrl.config.deviceName = _nameCtrl.text.trim();
     ctrl.updateConfig(ctrl.config);
     LocalSettings.saveConfig(ctrl.config);
+  }
+
+  void _saveAndNotify(AgentController ctrl) {
+    _saveConfig(ctrl);
+    _showSnack('连接信息已保存');
+  }
+
+  Future<void> _resetSettings(AgentController ctrl) async {
+    await ctrl.stop();
+    await LocalSettings.resetAll();
+    final fresh = AgentConfig();
+    _applyDefaultSharePath(fresh);
+    _urlCtrl.text = fresh.serverUrl;
+    _tokenCtrl.text = fresh.token;
+    _nameCtrl.text = fresh.deviceName;
+    ctrl.updateConfig(fresh);
+    widget.onThemeChanged(ZephyrTheme.frost);
+    await LocalSettings.saveConfig(fresh);
+    _showSnack('设置已重置');
+  }
+
+  void _applyDefaultSharePath(AgentConfig config) {
+    if (config.sharedDirectoryPath != null || io.Platform.isAndroid || io.Platform.isIOS) return;
+    if (io.Platform.isWindows) {
+      final drive = io.Platform.environment['SystemDrive'] ?? 'C:';
+      config.sharedDirectoryPath = drive.endsWith('\\') ? drive : '$drive\\';
+      config.sharedDirectoryName = drive.replaceAll(':', '');
+      return;
+    }
+    config.sharedDirectoryPath = '/';
+    config.sharedDirectoryName = 'Root';
   }
 
   Future<void> _pickDirectory(AgentController ctrl) async {
@@ -97,7 +136,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (result == null || result.isEmpty) return;
     setState(() {
       ctrl.config.sharedDirectoryPath = result;
-      ctrl.config.sharedDirectoryName = result.split('/').last.split('\\\\').last;
+      ctrl.config.sharedDirectoryName = result.split('/').last.split('\\').last;
     });
     _saveConfig(ctrl);
   }
@@ -133,14 +172,31 @@ class _HomeScreenState extends State<HomeScreen> {
     return Consumer<AgentController>(
       builder: (context, ctrl, _) {
         final isActive = ctrl.status.isActive;
-        final accent = ZephyrColors.getPrimary(widget.currentTheme);
+        final brightness = Theme.of(context).brightness;
+        final accent = ZephyrColors.getPrimary(widget.currentTheme, brightness);
 
         return Scaffold(
           appBar: AppBar(
+            leadingWidth: 96,
+            leading: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: '重置设置',
+                  icon: const Icon(Icons.restart_alt),
+                  onPressed: () => _resetSettings(ctrl),
+                ),
+                IconButton(
+                  tooltip: '保存设置',
+                  icon: const Icon(Icons.save_outlined),
+                  onPressed: () => _saveAndNotify(ctrl),
+                ),
+              ],
+            ),
             title: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.hub, color: accent, size: 24),
+                ZephyrMark(palette: _palette, size: 26),
                 const SizedBox(width: 8),
                 const Text('Zephyr Agent', style: TextStyle(fontWeight: FontWeight.w700)),
               ],
@@ -155,12 +211,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     Container(
                       width: 16, height: 16,
                       decoration: BoxDecoration(
-                        color: ZephyrColors.getPrimary(t),
+                        color: ZephyrColors.getPrimary(t, brightness),
                         shape: BoxShape.circle,
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text(t.name[0].toUpperCase() + t.name.substring(1)),
+                    Text(t.label),
                     if (t == widget.currentTheme) ...[
                       const Spacer(),
                       Icon(Icons.check, size: 18, color: accent),
@@ -215,8 +271,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       icon: const Icon(Icons.stop),
                       label: const Text('停止共享'),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: ZephyrColors.error,
-                        side: BorderSide(color: ZephyrColors.error.withValues(alpha: 0.5)),
+                        foregroundColor: _palette.danger,
+                        side: BorderSide(color: _palette.danger.withValues(alpha: 0.5)),
                       ),
                     ),
                   ),
@@ -245,18 +301,18 @@ class _HomeScreenState extends State<HomeScreen> {
     Color dotColor;
     switch (status) {
       case AgentStatus.online:
-        dotColor = ZephyrColors.success;
+        dotColor = _palette.success;
         break;
       case AgentStatus.connecting:
       case AgentStatus.authenticating:
       case AgentStatus.reconnecting:
-        dotColor = ZephyrColors.warning;
+        dotColor = _palette.warning;
         break;
       case AgentStatus.error:
-        dotColor = ZephyrColors.error;
+        dotColor = _palette.danger;
         break;
       default:
-        dotColor = ZephyrColors.onSurfaceVariant;
+        dotColor = _palette.textSecondary;
     }
 
     return Card(
@@ -277,11 +333,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(fontWeight: FontWeight.w600, color: dotColor, fontSize: 15)),
                   if (ctrl.errorMessage.isNotEmpty)
                     Text(ctrl.errorMessage,
-                      style: TextStyle(color: ZephyrColors.onSurfaceVariant, fontSize: 12),
+                      style: TextStyle(color: _palette.textSecondary, fontSize: 12),
                       maxLines: 2, overflow: TextOverflow.ellipsis),
                   if (ctrl.agentId != null)
                     Text('Agent: ${ctrl.agentId}',
-                      style: const TextStyle(color: ZephyrColors.onSurfaceVariant, fontSize: 11)),
+                      style: TextStyle(color: _palette.textSecondary, fontSize: 11)),
                 ],
               ),
             ),
@@ -301,7 +357,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: ZephyrColors.surfaceVariant,
+        color: _palette.surface,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
@@ -325,7 +381,7 @@ class _HomeScreenState extends State<HomeScreen> {
               enabled: !isActive,
               decoration: const InputDecoration(
                 labelText: '主端地址',
-                hintText: 'wss://example.com',
+                hintText: 'https://example.com',
                 prefixIcon: Icon(Icons.link, size: 20),
               ),
               keyboardType: TextInputType.url,
@@ -370,7 +426,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: ZephyrColors.surfaceVariant,
+                  color: _palette.surface,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
@@ -382,13 +438,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         ctrl.config.sharedDirectoryPath ?? '点击选择共享目录',
                         style: TextStyle(
                           color: ctrl.config.sharedDirectoryPath != null
-                              ? ZephyrColors.onSurface
-                              : ZephyrColors.onSurfaceVariant,
+                              ? _palette.text
+                              : _palette.textSecondary,
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (!isActive) Icon(Icons.chevron_right, color: ZephyrColors.onSurfaceVariant),
+                    if (!isActive) Icon(Icons.chevron_right, color: _palette.textSecondary),
                   ],
                 ),
               ),
@@ -476,4 +532,72 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+}
+
+class ZephyrMark extends StatelessWidget {
+  final ZephyrPalette palette;
+  final double size;
+
+  const ZephyrMark({super.key, required this.palette, this.size = 24});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size.square(size),
+      painter: _ZephyrMarkPainter(palette),
+    );
+  }
+}
+
+class _ZephyrMarkPainter extends CustomPainter {
+  final ZephyrPalette palette;
+  _ZephyrMarkPainter(this.palette);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scaleX = size.width / 200;
+    final scaleY = size.height / 200;
+    Offset p(double x, double y) => Offset(x * scaleX, y * scaleY);
+    final rect = Offset.zero & size;
+    final gradient = LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [palette.iconStart, palette.iconMid, palette.iconEnd],
+      stops: const [0, .58, 1],
+    ).createShader(rect);
+
+    final main = Path()
+      ..moveTo(p(45, 65).dx, p(45, 65).dy)
+      ..cubicTo(p(85, 45).dx, p(85, 45).dy, p(135, 55).dx, p(135, 55).dy, p(160, 80).dx, p(160, 80).dy)
+      ..cubicTo(p(130, 80).dx, p(130, 80).dy, p(95, 95).dx, p(95, 95).dy, p(75, 125).dx, p(75, 125).dy);
+    final mid = Path()
+      ..moveTo(p(50, 75).dx, p(50, 75).dy)
+      ..cubicTo(p(90, 75).dx, p(90, 75).dy, p(125, 90).dx, p(125, 90).dy, p(145, 115).dx, p(145, 115).dy)
+      ..cubicTo(p(115, 135).dx, p(115, 135).dy, p(75, 155).dx, p(75, 155).dy, p(40, 135).dx, p(40, 135).dy);
+    final tail = Path()
+      ..moveTo(p(85, 95).dx, p(85, 95).dy)
+      ..cubicTo(p(110, 110).dx, p(110, 110).dy, p(135, 135).dx, p(135, 135).dy, p(155, 130).dx, p(155, 130).dy);
+
+    void stroke(Path path, double width, double opacity) {
+      canvas.drawPath(
+        path,
+        Paint()
+          ..shader = gradient
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = width * size.width / 200
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..color = palette.accent.withValues(alpha: opacity),
+      );
+    }
+
+    stroke(main, 10, 1);
+    stroke(mid, 6, .86);
+    stroke(tail, 3.5, .62);
+    canvas.drawCircle(p(145, 115), 4.5 * size.width / 200, Paint()..color = palette.iconDotA.withValues(alpha: .9));
+    canvas.drawCircle(p(75, 125), 3 * size.width / 200, Paint()..color = palette.iconDotB.withValues(alpha: .8));
+  }
+
+  @override
+  bool shouldRepaint(covariant _ZephyrMarkPainter oldDelegate) => oldDelegate.palette != palette;
 }

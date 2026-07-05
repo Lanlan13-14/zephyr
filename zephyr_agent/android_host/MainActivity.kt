@@ -1,4 +1,4 @@
-package com.zephyr.zephyr_agent
+package com.zephyr.agent
 
 import android.app.Activity
 import android.content.Intent

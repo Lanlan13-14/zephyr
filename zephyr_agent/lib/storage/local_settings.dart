@@ -27,15 +27,21 @@ class LocalSettings {
 
   static Future<ZephyrTheme> loadTheme() async {
     final prefs = await SharedPreferences.getInstance();
-    final name = prefs.getString(_themeKey) ?? 'blue';
+    final name = prefs.getString(_themeKey) ?? 'frost';
     return ZephyrTheme.values.firstWhere(
       (t) => t.name == name,
-      orElse: () => ZephyrTheme.blue,
+      orElse: () => ZephyrTheme.frost,
     );
   }
 
   static Future<void> saveTheme(ZephyrTheme theme) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_themeKey, theme.name);
+  }
+
+  static Future<void> resetAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_configKey);
+    await prefs.remove(_themeKey);
   }
 }

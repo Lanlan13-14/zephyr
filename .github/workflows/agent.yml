@@ -16,6 +16,7 @@ on:
       tag:
         description: 'Release tag (e.g. agent-v1.0.0)'
         required: false
+        default: 'agent-v1.0.0'
 
 permissions:
   contents: write
@@ -104,17 +105,49 @@ jobs:
       - name: Generate Windows platform files
         run: flutter create --org com.zephyr --project-name zephyr_agent --platforms windows .
 
+      - name: Install Windows app metadata
+        run: pwsh tool/prepare_windows.ps1
+
       - run: flutter pub get
       - run: flutter build windows --release
 
-      - name: Archive
+      - name: Archive portable zip
         shell: pwsh
         run: Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "zephyr-agent-windows-x64.zip"
+
+      - name: Build Windows installer exe
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $version = "${{ github.event.inputs.tag }}"
+          $iss = @"
+          [Setup]
+          AppName=Zephyr Agent
+          AppVersion=$version
+          DefaultDirName={autopf}\Zephyr Agent
+          DefaultGroupName=Zephyr Agent
+          OutputDir=.
+          OutputBaseFilename=zephyr-agent-windows-x64-$version-setup
+          Compression=lzma
+          SolidCompression=yes
+          WizardStyle=modern
+          [Files]
+          Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+          [Icons]
+          Name: "{group}\Zephyr Agent"; Filename: "{app}\zephyr_agent.exe"
+          Name: "{commondesktop}\Zephyr Agent"; Filename: "{app}\zephyr_agent.exe"; Tasks: desktopicon
+          [Tasks]
+          Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
+          "@
+          Set-Content -Path installer.iss -Value $iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer.iss
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: zephyr_agent/zephyr-agent-windows-x64.zip
+          path: |
+            zephyr_agent/zephyr-agent-windows-x64.zip
+            zephyr_agent/zephyr-agent-windows-x64-*-setup.exe
 
   build-linux:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
@@ -136,6 +169,9 @@ jobs:
 
       - name: Generate Linux platform files
         run: flutter create --org com.zephyr --project-name zephyr_agent --platforms linux .
+
+      - name: Install Linux app metadata
+        run: sh tool/prepare_linux.sh
 
       - run: flutter pub get
       - run: flutter build linux --release
@@ -163,18 +199,27 @@ jobs:
       - name: Generate macOS platform files
         run: flutter create --org com.zephyr --project-name zephyr_agent --platforms macos .
 
+      - name: Install macOS app metadata
+        run: sh tool/prepare_apple.sh macos
+
       - run: flutter pub get
       - run: flutter build macos --release
 
-      - name: Archive
+      - name: Archive macOS zip and dmg
         run: |
+          app_path=$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -n 1)
+          app_name=$(basename "$app_path")
           cd build/macos/Build/Products/Release
-          zip -r "$OLDPWD/zephyr-agent-macos-universal.zip" "zephyr_agent.app"
+          zip -r "$OLDPWD/zephyr-agent-macos-universal.zip" "$app_name"
+          cd "$OLDPWD"
+          hdiutil create -volname "Zephyr Agent" -srcfolder "$app_path" -ov -format UDZO zephyr-agent-macos-universal.dmg
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos-universal
-          path: zephyr_agent/zephyr-agent-macos-universal.zip
+          path: |
+            zephyr_agent/zephyr-agent-macos-universal.zip
+            zephyr_agent/zephyr-agent-macos-universal.dmg
 
   build-ios:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
@@ -191,18 +236,27 @@ jobs:
       - name: Generate iOS platform files
         run: flutter create --org com.zephyr --project-name zephyr_agent --platforms ios .
 
+      - name: Install iOS app metadata
+        run: sh tool/prepare_apple.sh ios
+
       - run: flutter pub get
       - run: flutter build ios --release --no-codesign
 
-      - name: Archive
+      - name: Archive iOS zip and ipa
         run: |
           cd build/ios/iphoneos
           zip -r "$OLDPWD/zephyr-agent-ios-unsigned.zip" "Runner.app"
+          rm -rf Payload
+          mkdir Payload
+          cp -R Runner.app Payload/Runner.app
+          zip -r "$OLDPWD/zephyr-agent-ios-unsigned.ipa" Payload
 
       - uses: actions/upload-artifact@v4
         with:
           name: ios-unsigned
-          path: zephyr_agent/zephyr-agent-ios-unsigned.zip
+          path: |
+            zephyr_agent/zephyr-agent-ios-unsigned.zip
+            zephyr_agent/zephyr-agent-ios-unsigned.ipa
 
   # ───────────── Create GitHub Release ──────────────────────────────
   release:
@@ -223,9 +277,12 @@ jobs:
           cp android-apk/app-release.apk "zephyr-agent-android-arm64-${VERSION}.apk" 2>/dev/null || true
           cp android-aab/app-release.aab "zephyr-agent-android-${VERSION}.aab" 2>/dev/null || true
           cp windows-x64/zephyr-agent-windows-x64.zip "zephyr-agent-windows-x64-${VERSION}.zip" 2>/dev/null || true
+          cp windows-x64/zephyr-agent-windows-x64-*-setup.exe "zephyr-agent-windows-x64-${VERSION}-setup.exe" 2>/dev/null || true
           cp linux-x64/zephyr-agent-linux-x64.tar.gz "zephyr-agent-linux-x64-${VERSION}.tar.gz" 2>/dev/null || true
           cp macos-universal/zephyr-agent-macos-universal.zip "zephyr-agent-macos-universal-${VERSION}.zip" 2>/dev/null || true
+          cp macos-universal/zephyr-agent-macos-universal.dmg "zephyr-agent-macos-universal-${VERSION}.dmg" 2>/dev/null || true
           cp ios-unsigned/zephyr-agent-ios-unsigned.zip "zephyr-agent-ios-${VERSION}-unsigned.zip" 2>/dev/null || true
+          cp ios-unsigned/zephyr-agent-ios-unsigned.ipa "zephyr-agent-ios-${VERSION}-unsigned.ipa" 2>/dev/null || true
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -241,10 +298,13 @@ jobs:
             |---|---|
             | Android APK | `zephyr-agent-android-arm64-${{ github.event.inputs.tag }}.apk` |
             | Android AAB | `zephyr-agent-android-${{ github.event.inputs.tag }}.aab` |
-            | Windows x64 | `zephyr-agent-windows-x64-${{ github.event.inputs.tag }}.zip` |
+            | Windows installer | `zephyr-agent-windows-x64-${{ github.event.inputs.tag }}-setup.exe` |
+            | Windows portable | `zephyr-agent-windows-x64-${{ github.event.inputs.tag }}.zip` |
             | Linux x64 | `zephyr-agent-linux-x64-${{ github.event.inputs.tag }}.tar.gz` |
-            | macOS | `zephyr-agent-macos-universal-${{ github.event.inputs.tag }}.zip` |
-            | iOS (unsigned) | `zephyr-agent-ios-${{ github.event.inputs.tag }}-unsigned.zip` |
+            | macOS DMG | `zephyr-agent-macos-universal-${{ github.event.inputs.tag }}.dmg` |
+            | macOS zip | `zephyr-agent-macos-universal-${{ github.event.inputs.tag }}.zip` |
+            | iOS unsigned IPA | `zephyr-agent-ios-${{ github.event.inputs.tag }}-unsigned.ipa` |
+            | iOS unsigned zip | `zephyr-agent-ios-${{ github.event.inputs.tag }}-unsigned.zip` |
           draft: false
           prerelease: false
           files: |

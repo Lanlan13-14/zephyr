@@ -137,7 +137,7 @@ class DesktopFileProvider extends ZephyrFileProvider {
       throw FileProviderException('not_found', 'File not found: $path');
     }
 
-    final fileMode = mode == 'write' ? io.FileMode.writeOnlyAppend : io.FileMode.read;
+    final fileMode = mode == 'write' ? io.FileMode.write : io.FileMode.read;
     final raf = await file.open(mode: fileMode);
     final handle = 'h_${_uuid.v4().substring(0, 8)}';
     _openFiles[handle] = raf;

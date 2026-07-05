@@ -13,7 +13,7 @@ class ZephyrAgentApp extends StatefulWidget {
 }
 
 class _ZephyrAgentAppState extends State<ZephyrAgentApp> {
-  ZephyrTheme _theme = ZephyrTheme.blue;
+  ZephyrTheme _theme = ZephyrTheme.frost;
   AgentController? _controller;
   bool _loaded = false;
 
@@ -42,7 +42,9 @@ class _ZephyrAgentAppState extends State<ZephyrAgentApp> {
   Widget build(BuildContext context) {
     if (!_loaded) {
       return MaterialApp(
-        theme: ZephyrColors.buildTheme(_theme),
+        theme: ZephyrColors.buildTheme(_theme, Brightness.light),
+        darkTheme: ZephyrColors.buildTheme(_theme, Brightness.dark),
+        themeMode: ThemeMode.system,
         home: const Scaffold(body: Center(child: CircularProgressIndicator())),
       );
     }
@@ -52,7 +54,9 @@ class _ZephyrAgentAppState extends State<ZephyrAgentApp> {
       child: MaterialApp(
         title: 'Zephyr Agent',
         debugShowCheckedModeBanner: false,
-        theme: ZephyrColors.buildTheme(_theme),
+        theme: ZephyrColors.buildTheme(_theme, Brightness.light),
+        darkTheme: ZephyrColors.buildTheme(_theme, Brightness.dark),
+        themeMode: ThemeMode.system,
         home: HomeScreen(
           currentTheme: _theme,
           onThemeChanged: _setTheme,

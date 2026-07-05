@@ -1,5 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect width="64" height="64" rx="14" fill="#3B82F6"/>
-  <path d="M16 32 L32 20 L48 32 L32 44 Z" fill="white" opacity="0.9"/>
-  <path d="M24 32 L32 26 L40 32 L32 38 Z" fill="#3B82F6"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <defs>
+    <linearGradient id="zephyrAgentGrad" x1="15%" y1="15%" x2="85%" y2="85%">
+      <stop offset="0%" stop-color="#EEF2F7"/>
+      <stop offset="58%" stop-color="#A8B5C3"/>
+      <stop offset="100%" stop-color="#6E7B88"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="42" fill="#0A84FF"/>
+  <path d="M45 65C85 45 135 55 160 80C130 80 95 95 75 125" stroke="url(#zephyrAgentGrad)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M50 75C90 75 125 90 145 115C115 135 75 155 40 135" stroke="url(#zephyrAgentGrad)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.86"/>
+  <path d="M85 95C110 110 135 135 155 130" stroke="url(#zephyrAgentGrad)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.62"/>
+  <circle cx="145" cy="115" r="4.5" fill="#EEF2F7" opacity="0.9"/>
+  <circle cx="75" cy="125" r="3" fill="#A8B5C3" opacity="0.8"/>
 </svg>
