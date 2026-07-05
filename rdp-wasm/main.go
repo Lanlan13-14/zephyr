@@ -524,25 +524,32 @@ func jsNotifyFilesChanged(_ js.Value, _ []js.Value) any {
 }
 
 // jsDownloadServerFile downloads a file from the server's clipboard by index.
-// Returns a Uint8Array or null.
+// Async: runs in a goroutine and calls the JS callback(uint8Array_or_null).
+// Usage from JS: rdpDownloadServerFile(index, function(data) { ... })
 func jsDownloadServerFile(_ js.Value, args []js.Value) any {
-	if len(args) < 1 {
+	if len(args) < 2 {
 		return nil
 	}
 	idx := args[0].Int()
+	callback := args[1]
 	clientMu.Lock()
 	c := rdpClient
 	clientMu.Unlock()
 	if c == nil {
+		callback.Invoke(js.Null())
 		return nil
 	}
-	data := c.DownloadServerFile(idx)
-	if data == nil {
-		return nil
-	}
-	arr := js.Global().Get("Uint8Array").New(len(data))
-	js.CopyBytesToJS(arr, data)
-	return arr
+	go func() {
+		data := c.DownloadServerFile(idx)
+		if data == nil {
+			callback.Invoke(js.Null())
+			return
+		}
+		arr := js.Global().Get("Uint8Array").New(len(data))
+		js.CopyBytesToJS(arr, data)
+		callback.Invoke(arr)
+	}()
+	return nil
 }
 
 // jsGetServerFiles returns the server's clipboard file list as a JS array.

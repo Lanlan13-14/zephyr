@@ -1999,31 +1999,30 @@ function initFilePanel() {
         });
     }
 
-    /* ── Paste pending files to remote (triggers RDPDR virtual drive refresh) ── */
+    /* ── Paste pending files to remote (advertise via CLIPRDR FileGroupDescriptorW) ── */
     if (rdpPendingPasteBtn) {
         rdpPendingPasteBtn.addEventListener('click', () => {
             if (!rdpStorageFiles.length) {
                 setFilesHint('请先上传文件', 'warning');
                 return;
             }
-            /* Files are already in rdpStorageFiles; Go WASM reads them via
-             * rdpStorageGetFiles/rdpStorageReadFile when Windows queries the
-             * virtual drive. Just send Ctrl+V to trigger a paste in Explorer. */
-            rdpKeyDown('ControlLeft');
-            rdpKeyDown('KeyV');
-            setTimeout(() => { rdpKeyUp('KeyV'); rdpKeyUp('ControlLeft'); }, 40);
-            setFilesHint('已粘贴到远程。在 Windows 资源管理器中按 Ctrl+V 可见。', 'success');
+            if (typeof rdpNotifyFilesChanged === 'function') {
+                rdpNotifyFilesChanged();
+                setFilesHint('已通知远程桌面，在 Windows 中右键 → 粘贴即可', 'success');
+            } else {
+                setFilesHint('WASM 未就绪', 'warning');
+            }
         });
     }
 
-    /* ── "粘贴到远程" for remote-copied files (stub — file clipboard not yet in cliprdr) ── */
+    /* ── "粘贴到远程" for remote-clipboard files — same action ── */
     if (rdpFilePasteToRemoteBtn) {
         rdpFilePasteToRemoteBtn.addEventListener('click', () => {
             if (typeof rdpNotifyFilesChanged === 'function') {
                 rdpNotifyFilesChanged();
                 setFilesHint('已通知远程桌面有文件可粘贴', 'success');
             } else {
-                setFilesHint('文件剪贴板需要 WASM 支持', 'warning');
+                setFilesHint('WASM 未就绪', 'warning');
             }
         });
     }
@@ -2038,20 +2037,7 @@ function initFilePanel() {
             }
             setFilesHint('正在下载 ' + files.length + ' 个文件...', 'info');
             for (let i = 0; i < files.length; i++) {
-                const data = typeof rdpDownloadServerFile === 'function' ? rdpDownloadServerFile(i) : null;
-                if (data && data.byteLength > 0) {
-                    const blob = new Blob([data]);
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = files[i].name || ('file_' + i);
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                    URL.revokeObjectURL(url);
-                } else {
-                    setFilesHint('下载文件 ' + (files[i].name || i) + ' 失败', 'warning');
-                }
+                await downloadServerFileAsync(i, files[i].name || ('file_' + i));
             }
             setFilesHint('下载完成', 'success');
         });
@@ -2089,6 +2075,34 @@ function initFilePanel() {
         if (b < 1024) return b + ' B';
         if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
         return (b / 1048576).toFixed(1) + ' MB';
+    }
+
+    /* Async wrapper for rdpDownloadServerFile (Go callback-based). */
+    function downloadServerFileAsync(index, fileName) {
+        return new Promise((resolve) => {
+            if (typeof rdpDownloadServerFile !== 'function') {
+                setFilesHint('WASM 未就绪', 'warning');
+                resolve(false);
+                return;
+            }
+            rdpDownloadServerFile(index, (data) => {
+                if (data && data.byteLength > 0) {
+                    const blob = new Blob([data]);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileName || ('file_' + index);
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                    resolve(true);
+                } else {
+                    setFilesHint('下载文件 ' + (fileName || index) + ' 失败', 'warning');
+                    resolve(false);
+                }
+            });
+        });
     }
 
     /* Broadcast uploaded files to parent (app.js) so SSH tabs can receive them.
@@ -2187,18 +2201,8 @@ function initFilePanel() {
         rdpRemoteFileList.querySelectorAll('.rdp-file-download-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const idx = Number(btn.dataset.idx);
-                const data = typeof rdpDownloadServerFile === 'function' ? rdpDownloadServerFile(idx) : null;
-                if (data && data.byteLength > 0) {
-                    const blob = new Blob([data]);
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = filesArr[idx]?.name || 'file';
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                    URL.revokeObjectURL(url);
-                }
+                downloadServerFileAsync(idx, filesArr[idx]?.name || 'file');
+            });
             });
         });
         setFilesHint('远程剪贴板有 ' + filesArr.length + ' 个文件', 'success');
