@@ -72,7 +72,7 @@ let fillPanX = 50; /* center */
 let fillPanY = 50;
 
 let connectWatchdogTimer = null;
-const CONNECT_TIMEOUT_MS = 20000;
+const CONNECT_TIMEOUT_MS = 12000;
 
 /* Quality/FPS — kept for UI compat; WASM grdp doesn't need these */
 const qualityModes = ['balanced', 'performance', 'quality'];
@@ -731,26 +731,32 @@ function startConnectWatchdog() {
 
 function reconnectWithSettings() {
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
+    clearConnectWatchdog();
     rdpManualDisconnect = false;
+    rdpReconnectAttempts = 0;
     connected = false;
+    /* Disconnect the old session and give Go WASM + WebSocket a moment to
+     * tear down before starting a fresh connection. Without this gap the new
+     * connect races the old close and the proxy/WASM state machine jams. */
     try { rdpDisconnect(); } catch {}
-    cleanupAudio();
     cleanupH264();
-    connect().catch((e) => {
-        console.warn('[rdp-wasm] reconnectWithSettings failed:', e);
-        setStatus('error', `RDP 重连失败: ${e.message || e}`);
-        maybeAutoReconnect();
-    });
+    if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; audioNextAt = 0; }
+    setTimeout(() => {
+        connect().catch((e) => {
+            console.warn('[rdp-wasm] reconnectWithSettings failed:', e);
+            setStatus('error', `RDP 重连失败: ${e.message || e}`);
+            maybeAutoReconnect();
+        });
+    }, 300);
 }
 
 async function connect() {
     if (!wasmReady) await loadWasm();
 
-    /* Clean up any existing connection first */
+    /* Clean up any lingering state (safe to call even if already clean). */
     try { rdpDisconnect(); } catch {}
     rdpManualDisconnect = false;
     cleanupH264();
-    cleanupAudio();
     rdpAudinStopInternal();
     rdpLocationStopInternal();
     rdpCameraStopInternal();
@@ -763,8 +769,14 @@ async function connect() {
     /* Create canvas */
     ensureCanvas(width, height);
 
-    /* Init audio in user-gesture context */
-    audioCtx = new AudioContext({ latencyHint: 'playback' });
+    /* Reuse AudioContext if still open; create fresh only when needed.
+     * Browsers limit the number of AudioContexts — creating one every
+     * reconnect eventually hits the cap and silently fails. */
+    if (!audioCtx || audioCtx.state === 'closed') {
+        try { audioCtx = new AudioContext({ latencyHint: 'interactive' }); } catch {}
+    } else if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+    }
     audioNextAt = 0;
 
     /* Init H.264 */
