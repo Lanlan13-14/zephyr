@@ -110,6 +110,11 @@ type RdpClient struct {
 	getClipboardFn func() string     // local → remote
 	cliprdrHandler *cliprdr.CliprdrHandler
 
+	// File clipboard callbacks (wired to cliprdr handler)
+	onRemoteFilesFn func(files []cliprdr.ClipFile)
+	getFilesFn      func() []cliprdr.ClipFile
+	getFileDataFn   func(index int, offset uint64, length uint32) []byte
+
 	// reconnectMu serialises concurrent Reconnect() calls.
 	// reconnecting is also set during async server redirects to suppress
 	// user-facing callbacks while the transport is being re-established.
@@ -526,6 +531,9 @@ func (g *RdpClient) doLogin(routingToken []byte) error {
 		},
 	)
 	g.cliprdrHandler = cliprdrHandler
+	if g.onRemoteFilesFn != nil || g.getFilesFn != nil {
+		cliprdrHandler.SetFileCallbacks(g.onRemoteFilesFn, g.getFilesFn, g.getFileDataFn)
+	}
 	g.channels.Register(cliprdrHandler)
 	g.mcs.SetClientClipboard()
 
@@ -1004,6 +1012,48 @@ func (g *RdpClient) OnClipboard(onRemote func(text string), getLocal func() stri
 	g.onClipboardFn = onRemote
 	g.getClipboardFn = getLocal
 	return g
+}
+
+// OnFileClipboard sets callbacks for file clipboard operations.
+// onRemoteFiles is called when the server advertises files on the clipboard.
+// getFiles returns the list of local files available for the server.
+// getFileData returns file content for a given file index, offset, and length.
+func (g *RdpClient) OnFileClipboard(
+	onRemoteFiles func(files []cliprdr.ClipFile),
+	getFiles func() []cliprdr.ClipFile,
+	getFileData func(index int, offset uint64, length uint32) []byte,
+) *RdpClient {
+	g.onRemoteFilesFn = onRemoteFiles
+	g.getFilesFn = getFiles
+	g.getFileDataFn = getFileData
+	if g.cliprdrHandler != nil {
+		g.cliprdrHandler.SetFileCallbacks(onRemoteFiles, getFiles, getFileData)
+	}
+	return g
+}
+
+// NotifyLocalFilesChanged tells the server that local files are available
+// on the clipboard (triggers FORMAT_LIST with FileGroupDescriptorW).
+func (g *RdpClient) NotifyLocalFilesChanged() {
+	if g.cliprdrHandler != nil {
+		g.cliprdrHandler.SendLocalFilesFormatList()
+	}
+}
+
+// DownloadServerFile downloads a file from the server's clipboard by index.
+func (g *RdpClient) DownloadServerFile(index int) []byte {
+	if g.cliprdrHandler != nil {
+		return g.cliprdrHandler.DownloadServerFile(index)
+	}
+	return nil
+}
+
+// GetServerClipboardFiles returns the server's advertised file list.
+func (g *RdpClient) GetServerClipboardFiles() []cliprdr.ClipFile {
+	if g.cliprdrHandler != nil {
+		return g.cliprdrHandler.GetServerFiles()
+	}
+	return nil
 }
 
 // NotifyClipboardChanged tells the server that the local clipboard has

@@ -1,10 +1,8 @@
 module github.com/Lanlan13-14/zephyr-ssh/rdp-wasm
 
-go 1.26
+go 1.26.3
 
-require (
-	github.com/nakagami/grdp v0.9.2
-)
+require github.com/nakagami/grdp v0.9.2
 
 require (
 	github.com/lunixbochs/struc v0.0.0-20200707160740-784aaebc1d40 // indirect

@@ -10,6 +10,7 @@ import (
 	"syscall/js"
 
 	"github.com/nakagami/grdp"
+	"github.com/nakagami/grdp/plugin/cliprdr"
 	"github.com/nakagami/grdp/plugin/rdpsnd"
 )
 
@@ -51,6 +52,9 @@ func main() {
 	js.Global().Set("rdpKeyDown", js.FuncOf(jsKeyDown))
 	js.Global().Set("rdpKeyUp", js.FuncOf(jsKeyUp))
 	js.Global().Set("rdpClipboardChanged", js.FuncOf(jsClipboardChanged))
+	js.Global().Set("rdpNotifyFilesChanged", js.FuncOf(jsNotifyFilesChanged))
+	js.Global().Set("rdpDownloadServerFile", js.FuncOf(jsDownloadServerFile))
+	js.Global().Set("rdpGetServerFiles", js.FuncOf(jsGetServerFiles))
 	js.Global().Set("rdpAudinData", js.FuncOf(jsAudinData))
 	js.Global().Set("rdpLocationData", js.FuncOf(jsLocationData))
 	js.Global().Set("rdpCameraFrame", js.FuncOf(jsCameraFrame))
@@ -222,14 +226,67 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 
 	g.OnClipboard(
 		func(text string) {
-			// Server → client: write text to browser clipboard.
+			if !isCurrentClient(myGen, g) {
+				return
+			}
 			js.Global().Call("rdpOnClipboard", text)
 		},
 		func() string {
-			// Client → server: return current local clipboard text.
 			clipMu.Lock()
 			defer clipMu.Unlock()
 			return localClipboard
+		},
+	)
+
+	// File clipboard: server→client file list + client→server file data
+	g.OnFileClipboard(
+		func(files []cliprdr.ClipFile) {
+			if !isCurrentClient(myGen, g) {
+				return
+			}
+			arr := make([]any, len(files))
+			for i, f := range files {
+				arr[i] = map[string]any{"name": f.Name, "size": f.Size}
+			}
+			js.Global().Call("rdpOnRemoteFiles", js.ValueOf(arr))
+		},
+		func() []cliprdr.ClipFile {
+			result := js.Global().Call("rdpStorageGetFiles")
+			if result.IsNull() || result.IsUndefined() || result.Length() == 0 {
+				return nil
+			}
+			files := make([]cliprdr.ClipFile, result.Length())
+			for i := 0; i < result.Length(); i++ {
+				item := result.Index(i)
+				files[i] = cliprdr.ClipFile{
+					Name: item.Get("name").String(),
+					Size: uint64(item.Get("size").Int()),
+				}
+			}
+			return files
+		},
+		func(index int, offset uint64, length uint32) []byte {
+			result := js.Global().Call("rdpStorageGetFiles")
+			if result.IsNull() || result.IsUndefined() || index >= result.Length() {
+				return nil
+			}
+			name := result.Index(index).Get("name").String()
+			data := js.Global().Call("rdpStorageReadFile", name)
+			if data.IsNull() || data.IsUndefined() {
+				return nil
+			}
+			totalLen := data.Length()
+			start := int(offset)
+			end := start + int(length)
+			if start >= totalLen {
+				return nil
+			}
+			if end > totalLen {
+				end = totalLen
+			}
+			buf := make([]byte, end-start)
+			js.CopyBytesToGo(buf, data.Call("subarray", start, end))
+			return buf
 		},
 	)
 
@@ -453,6 +510,61 @@ func jsClipboardChanged(_ js.Value, args []js.Value) any {
 		c.NotifyClipboardChanged()
 	}
 	return nil
+}
+
+// jsNotifyFilesChanged tells the server that client has files available.
+func jsNotifyFilesChanged(_ js.Value, _ []js.Value) any {
+	clientMu.Lock()
+	c := rdpClient
+	clientMu.Unlock()
+	if c != nil {
+		c.NotifyLocalFilesChanged()
+	}
+	return nil
+}
+
+// jsDownloadServerFile downloads a file from the server's clipboard by index.
+// Returns a Uint8Array or null.
+func jsDownloadServerFile(_ js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return nil
+	}
+	idx := args[0].Int()
+	clientMu.Lock()
+	c := rdpClient
+	clientMu.Unlock()
+	if c == nil {
+		return nil
+	}
+	data := c.DownloadServerFile(idx)
+	if data == nil {
+		return nil
+	}
+	arr := js.Global().Get("Uint8Array").New(len(data))
+	js.CopyBytesToJS(arr, data)
+	return arr
+}
+
+// jsGetServerFiles returns the server's clipboard file list as a JS array.
+func jsGetServerFiles(_ js.Value, _ []js.Value) any {
+	clientMu.Lock()
+	c := rdpClient
+	clientMu.Unlock()
+	if c == nil {
+		return nil
+	}
+	files := c.GetServerClipboardFiles()
+	if len(files) == 0 {
+		return nil
+	}
+	result := js.Global().Get("Array").New(len(files))
+	for i, f := range files {
+		obj := js.Global().Get("Object").New()
+		obj.Set("name", f.Name)
+		obj.Set("size", f.Size)
+		result.SetIndex(i, obj)
+	}
+	return result
 }
 
 // jsAudinData is called from JS with PCM audio data from the microphone.

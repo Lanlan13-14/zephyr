@@ -2016,14 +2016,41 @@ function initFilePanel() {
     /* ── "粘贴到远程" for remote-copied files (stub — file clipboard not yet in cliprdr) ── */
     if (rdpFilePasteToRemoteBtn) {
         rdpFilePasteToRemoteBtn.addEventListener('click', () => {
-            setFilesHint('远程文件剪贴板功能开发中', 'warning');
+            if (typeof rdpNotifyFilesChanged === 'function') {
+                rdpNotifyFilesChanged();
+                setFilesHint('已通知远程桌面有文件可粘贴', 'success');
+            } else {
+                setFilesHint('文件剪贴板需要 WASM 支持', 'warning');
+            }
         });
     }
 
     /* ── Download all remote clipboard files ── */
     if (rdpFileDownloadAllBtn) {
-        rdpFileDownloadAllBtn.addEventListener('click', () => {
-            setFilesHint('远程文件下载功能开发中', 'warning');
+        rdpFileDownloadAllBtn.addEventListener('click', async () => {
+            const files = typeof rdpGetServerFiles === 'function' ? rdpGetServerFiles() : null;
+            if (!files || !files.length) {
+                setFilesHint('远程剪贴板暂无文件', 'warning');
+                return;
+            }
+            setFilesHint('正在下载 ' + files.length + ' 个文件...', 'info');
+            for (let i = 0; i < files.length; i++) {
+                const data = typeof rdpDownloadServerFile === 'function' ? rdpDownloadServerFile(i) : null;
+                if (data && data.byteLength > 0) {
+                    const blob = new Blob([data]);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = files[i].name || ('file_' + i);
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                } else {
+                    setFilesHint('下载文件 ' + (files[i].name || i) + ' 失败', 'warning');
+                }
+            }
+            setFilesHint('下载完成', 'success');
         });
     }
 
@@ -2084,6 +2111,43 @@ function initFilePanel() {
 
     /* Request any existing shared clipboard on startup */
     window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'request-shared-file-clipboard', tabId: params.tabId || '' }, '*');
+
+    /* Go WASM calls this when server advertises files on clipboard */
+    window.rdpOnRemoteFiles = function (filesArr) {
+        if (!rdpRemoteFileList) return;
+        if (!filesArr || !filesArr.length) {
+            rdpRemoteFileList.innerHTML = '<div class="rdp-file-empty">远程剪贴板暂无文件</div>';
+            return;
+        }
+        rdpRemoteFileList.innerHTML = '';
+        for (let i = 0; i < filesArr.length; i++) {
+            const f = filesArr[i];
+            const div = document.createElement('div');
+            div.className = 'rdp-file-item';
+            div.innerHTML = '<span class="rdp-file-name">' + escapeHtml(f.name || '') + '</span>' +
+                '<span class="rdp-file-size">' + formatBytes(Number(f.size) || 0) + '</span>' +
+                '<button class="rdp-file-download-btn" data-idx="' + i + '" title="下载">⬇</button>';
+            rdpRemoteFileList.appendChild(div);
+        }
+        rdpRemoteFileList.querySelectorAll('.rdp-file-download-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const idx = Number(btn.dataset.idx);
+                const data = typeof rdpDownloadServerFile === 'function' ? rdpDownloadServerFile(idx) : null;
+                if (data && data.byteLength > 0) {
+                    const blob = new Blob([data]);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filesArr[idx]?.name || 'file';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                }
+            });
+        });
+        setFilesHint('远程剪贴板有 ' + filesArr.length + ' 个文件', 'success');
+    };
 
     /* When RDP clipboard receives text from remote, broadcast to other tabs */
     const origOnClipboard = window.rdpOnClipboard;

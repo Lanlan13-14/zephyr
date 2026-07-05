@@ -1,8 +1,6 @@
 // Package cliprdr handler.go implements a cross-platform CLIPRDR
 // (Clipboard Virtual Channel Extension, MS-RDPECLIP) handler for
-// bidirectional text clipboard sharing between RDP client and server.
-//
-// Only text formats (CF_UNICODETEXT / CF_TEXT) are supported.
+// bidirectional text and file clipboard sharing between RDP client and server.
 package cliprdr
 
 import (
@@ -15,34 +13,41 @@ import (
 	"github.com/nakagami/grdp/core"
 )
 
+// ClipFile represents a file on the clipboard (client→server or server→client).
+type ClipFile struct {
+	Name string
+	Size uint64
+	Data []byte // only populated for client→server or after download
+}
+
 // CliprdrHandler implements plugin.ChannelTransport for the "cliprdr"
-// static virtual channel.  It uses callbacks for clipboard integration
-// so that any UI toolkit can wire in its own clipboard access.
+// static virtual channel.
 type CliprdrHandler struct {
 	channelSender core.ChannelSender
 
-	useLongFormatNames bool
+	useLongFormatNames    bool
+	streamFileClipEnabled bool
 
-	// serverCapsReceived is set when the server's CB_CLIP_CAPS PDU has been
-	// processed.  Per MS-RDPECLIP §1.3.2.1 the server sends CB_CLIP_CAPS
-	// before CB_MONITOR_READY, so FORMAT_LIST should only be sent once both
-	// have arrived.
 	serverCapsReceived bool
-	// monitorReady is set when CB_MONITOR_READY has been received.
-	monitorReady bool
+	monitorReady       bool
 
-	// onRemoteClipboardChanged is called with the text when the server's
-	// clipboard content arrives.
+	// Text clipboard callbacks
 	onRemoteClipboardChanged func(text string)
+	getLocalClipboardText    func() string
 
-	// getLocalClipboardText is called to retrieve the current local
-	// clipboard text when the server requests it.
-	getLocalClipboardText func() string
+	// File clipboard callbacks
+	onRemoteFilesAvailable func(files []ClipFile) // server advertised files
+	getLocalFiles          func() []ClipFile       // get files to send to server
+	getLocalFileData       func(index int, offset uint64, length uint32) []byte
 
-	// suppressNextLocalChange prevents an echo loop:
-	// server→client clipboard update triggers a local clipboard change
-	// event which would otherwise be sent back to the server.
+	// Track server's file list (from FileGroupDescriptor)
+	serverFiles []ClipFile
+	// Track pending file contents download
+	fileDownloadCh chan []byte
+
 	suppressNextLocalChange bool
+	// formatID assigned by server for FileGroupDescriptorW
+	fgdFormatId uint32
 }
 
 // NewHandler creates a CliprdrHandler.
@@ -55,7 +60,19 @@ func NewHandler(onRemote func(text string), getLocal func() string) *CliprdrHand
 	return &CliprdrHandler{
 		onRemoteClipboardChanged: onRemote,
 		getLocalClipboardText:    getLocal,
+		fileDownloadCh:           make(chan []byte, 4),
 	}
+}
+
+// SetFileCallbacks sets the file clipboard callbacks. Must be called before Login.
+func (h *CliprdrHandler) SetFileCallbacks(
+	onRemoteFiles func(files []ClipFile),
+	getFiles func() []ClipFile,
+	getFileData func(index int, offset uint64, length uint32) []byte,
+) {
+	h.onRemoteFilesAvailable = onRemoteFiles
+	h.getLocalFiles = getFiles
+	h.getLocalFileData = getFileData
 }
 
 // --- plugin.ChannelTransport interface ------------------------------------
@@ -101,6 +118,10 @@ func (h *CliprdrHandler) Process(s []byte) {
 		h.processFormatDataResponse(body, msgFlags)
 	case CB_LOCK_CLIPDATA, CB_UNLOCK_CLIPDATA:
 		// ignored
+	case CB_FILECONTENTS_REQUEST:
+		h.processFileContentsRequest(body)
+	case CB_FILECONTENTS_RESPONSE:
+		h.processFileContentsResponse(body, msgFlags)
 	default:
 		slog.Debug("cliprdr: unhandled msgType", "msgType", msgType)
 	}
@@ -138,13 +159,15 @@ func (h *CliprdrHandler) processClipCaps(body []byte) {
 
 func (h *CliprdrHandler) sendClipCaps() {
 	b := &bytes.Buffer{}
-	// General capability set: type(2) + length(2) + version(4) + flags(4)
 	binary.Write(b, binary.LittleEndian, uint16(CB_CAPSTYPE_GENERAL))
 	binary.Write(b, binary.LittleEndian, uint16(12))
 	binary.Write(b, binary.LittleEndian, uint32(CB_CAPS_VERSION_2))
-	binary.Write(b, binary.LittleEndian, uint32(CB_USE_LONG_FORMAT_NAMES))
+	flags := uint32(CB_USE_LONG_FORMAT_NAMES | CB_STREAM_FILECLIP_ENABLED | CB_FILECLIP_NO_FILE_PATHS)
+	if h.getLocalFiles != nil || h.onRemoteFilesAvailable != nil {
+		flags |= CB_HUGE_FILE_SUPPORT_ENABLED
+	}
+	binary.Write(b, binary.LittleEndian, flags)
 
-	// cCapabilitySets(2) + pad1(2) + capabilitySet
 	body := &bytes.Buffer{}
 	binary.Write(body, binary.LittleEndian, uint16(1))
 	binary.Write(body, binary.LittleEndian, uint16(0))
@@ -188,10 +211,19 @@ func (h *CliprdrHandler) processFormatList(body []byte, msgFlags uint16) {
 	formats := h.parseFormatList(body, msgFlags)
 	slog.Debug("cliprdr: server Format List", "formats", formats)
 
-	// Always respond OK
 	h.sendPDU(CB_FORMAT_LIST_RESPONSE, CB_RESPONSE_OK, nil)
 
-	// Request text data if available
+	// Check for FileGroupDescriptorW first (file clipboard)
+	for _, f := range formats {
+		if strings.Contains(strings.ToLower(f.FormatName), "filegroupdescriptorw") || f.FormatName == "FileGroupDescriptorW" {
+			h.fgdFormatId = f.FormatId
+			h.sendFormatDataRequest(f.FormatId)
+			slog.Debug("cliprdr: requesting FileGroupDescriptorW", "formatId", f.FormatId)
+			return
+		}
+	}
+
+	// Fallback: request text
 	for _, f := range formats {
 		if f.FormatId == CF_UNICODETEXT {
 			h.sendFormatDataRequest(CF_UNICODETEXT)
@@ -271,6 +303,11 @@ func (h *CliprdrHandler) processFormatDataRequest(body []byte) {
 	requestedFormat := binary.LittleEndian.Uint32(body[0:4])
 	slog.Debug("cliprdr: server requests format", "formatId", requestedFormat)
 
+	// Check if this is a FileGroupDescriptorW or FileContents request
+	if h.handleFormatDataRequestFiles(requestedFormat) {
+		return
+	}
+
 	text := ""
 	if h.getLocalClipboardText != nil {
 		text = h.getLocalClipboardText()
@@ -293,7 +330,43 @@ func (h *CliprdrHandler) processFormatDataResponse(body []byte, msgFlags uint16)
 		return
 	}
 
-	// Try to decode as UTF-16LE (CF_UNICODETEXT)
+	// Check if this is a FileGroupDescriptorW response
+	if h.fgdFormatId != 0 && len(body) >= 4 {
+		cItems := binary.LittleEndian.Uint32(body[0:4])
+		if cItems > 0 && len(body) >= int(4+cItems*592) {
+			// Parse FileGroupDescriptorW (MS-RDPECLIP 2.2.5.2.3.1)
+			h.serverFiles = make([]ClipFile, 0, cItems)
+			offset := 4
+			for i := uint32(0); i < cItems; i++ {
+				if offset+592 > len(body) {
+					break
+				}
+				fd := body[offset : offset+592]
+				flags := binary.LittleEndian.Uint32(fd[0:4])
+				fileAttr := binary.LittleEndian.Uint32(fd[36:40])
+				sizeHigh := binary.LittleEndian.Uint32(fd[72:76])
+				sizeLow := binary.LittleEndian.Uint32(fd[76:80])
+				nameBytes := fd[80:592]
+				name := decodeUTF16LE(nameBytes)
+				name = strings.TrimRight(name, "\x00")
+
+				size := uint64(sizeHigh)<<32 | uint64(sizeLow)
+				isDir := flags&FD_ATTRIBUTES != 0 && fileAttr&FILE_ATTRIBUTE_DIRECTORY != 0
+
+				slog.Debug("cliprdr: server file", "name", name, "size", size, "isDir", isDir)
+				h.serverFiles = append(h.serverFiles, ClipFile{Name: name, Size: size})
+				offset += 592
+			}
+
+			if h.onRemoteFilesAvailable != nil && len(h.serverFiles) > 0 {
+				h.onRemoteFilesAvailable(h.serverFiles)
+			}
+			h.fgdFormatId = 0
+			return
+		}
+	}
+
+	// Text response
 	text := decodeUTF16LE(body)
 	text = strings.TrimRight(text, "\x00")
 
@@ -302,6 +375,182 @@ func (h *CliprdrHandler) processFormatDataResponse(body []byte, msgFlags uint16)
 		h.suppressNextLocalChange = true
 		h.onRemoteClipboardChanged(text)
 	}
+}
+
+// --- File Contents Request / Response (MS-RDPECLIP 2.2.5.3) ---------------
+
+// processFileContentsRequest handles the server asking for file data (client→server).
+func (h *CliprdrHandler) processFileContentsRequest(body []byte) {
+	if len(body) < 24 {
+		h.sendPDU(CB_FILECONTENTS_RESPONSE, CB_RESPONSE_FAIL, nil)
+		return
+	}
+	streamId := binary.LittleEndian.Uint32(body[0:4])
+	lindex := binary.LittleEndian.Uint32(body[4:8])
+	dwFlags := binary.LittleEndian.Uint32(body[8:12])
+	posLow := binary.LittleEndian.Uint32(body[12:16])
+	posHigh := binary.LittleEndian.Uint32(body[16:20])
+	cbRequested := binary.LittleEndian.Uint32(body[20:24])
+
+	slog.Debug("cliprdr: FileContentsRequest", "streamId", streamId, "lindex", lindex, "flags", dwFlags, "pos", uint64(posHigh)<<32|uint64(posLow), "cbReq", cbRequested)
+
+	resp := &bytes.Buffer{}
+	binary.Write(resp, binary.LittleEndian, streamId)
+
+	if dwFlags == FILECONTENTS_SIZE {
+		// Return file size (8 bytes: low + high)
+		if h.getLocalFiles != nil {
+			files := h.getLocalFiles()
+			if int(lindex) < len(files) {
+				binary.Write(resp, binary.LittleEndian, uint32(files[lindex].Size))
+				binary.Write(resp, binary.LittleEndian, uint32(files[lindex].Size>>32))
+				h.sendPDU(CB_FILECONTENTS_RESPONSE, CB_RESPONSE_OK, resp.Bytes())
+				return
+			}
+		}
+		h.sendPDU(CB_FILECONTENTS_RESPONSE, CB_RESPONSE_FAIL, nil)
+	} else if dwFlags == FILECONTENTS_RANGE {
+		// Return file data
+		offset := uint64(posHigh)<<32 | uint64(posLow)
+		if h.getLocalFileData != nil {
+			data := h.getLocalFileData(int(lindex), offset, cbRequested)
+			if data != nil {
+				resp.Write(data)
+				h.sendPDU(CB_FILECONTENTS_RESPONSE, CB_RESPONSE_OK, resp.Bytes())
+				return
+			}
+		}
+		h.sendPDU(CB_FILECONTENTS_RESPONSE, CB_RESPONSE_FAIL, nil)
+	} else {
+		h.sendPDU(CB_FILECONTENTS_RESPONSE, CB_RESPONSE_FAIL, nil)
+	}
+}
+
+// processFileContentsResponse handles server sending file data to us (server→client download).
+func (h *CliprdrHandler) processFileContentsResponse(body []byte, msgFlags uint16) {
+	if msgFlags&CB_RESPONSE_OK == 0 || len(body) < 4 {
+		slog.Warn("cliprdr: FileContents Response FAIL")
+		select {
+		case h.fileDownloadCh <- nil:
+		default:
+		}
+		return
+	}
+	// body: streamId(4) + data
+	data := make([]byte, len(body)-4)
+	copy(data, body[4:])
+	select {
+	case h.fileDownloadCh <- data:
+	default:
+		slog.Warn("cliprdr: fileDownloadCh full, dropping response")
+	}
+}
+
+// DownloadServerFile requests file data from server and returns it synchronously.
+// This blocks until the server responds. Index is into h.serverFiles.
+func (h *CliprdrHandler) DownloadServerFile(index int) []byte {
+	if index < 0 || index >= len(h.serverFiles) {
+		return nil
+	}
+	f := h.serverFiles[index]
+	if f.Size == 0 {
+		return []byte{}
+	}
+
+	// Request FILECONTENTS_RANGE for the whole file
+	b := &bytes.Buffer{}
+	binary.Write(b, binary.LittleEndian, uint32(1))              // streamId
+	binary.Write(b, binary.LittleEndian, uint32(index))           // lindex
+	binary.Write(b, binary.LittleEndian, uint32(FILECONTENTS_RANGE))
+	binary.Write(b, binary.LittleEndian, uint32(0))               // posLow
+	binary.Write(b, binary.LittleEndian, uint32(0))               // posHigh
+	cbReq := f.Size
+	if cbReq > 64*1024*1024 {
+		cbReq = 64 * 1024 * 1024 // cap at 64MB per request
+	}
+	binary.Write(b, binary.LittleEndian, uint32(cbReq))
+	if len(b.Bytes()) >= 28 {
+		// clipDataId (only if canLockClipData, but always send 0 for compat)
+		binary.Write(b, binary.LittleEndian, uint32(0))
+	}
+	h.sendPDU(CB_FILECONTENTS_REQUEST, 0, b.Bytes())
+
+	// Wait for response
+	data := <-h.fileDownloadCh
+	return data
+}
+
+// GetServerFiles returns the list of files the server advertised.
+func (h *CliprdrHandler) GetServerFiles() []ClipFile {
+	return h.serverFiles
+}
+
+// SendLocalFilesFormatList sends a FORMAT_LIST advertising FileGroupDescriptorW
+// so the server knows we have files to paste. Call after setting local files.
+func (h *CliprdrHandler) SendLocalFilesFormatList() {
+	if h.getLocalFiles == nil {
+		return
+	}
+	files := h.getLocalFiles()
+	if len(files) == 0 {
+		h.sendFormatList() // revert to text-only
+		return
+	}
+
+	b := &bytes.Buffer{}
+	if h.useLongFormatNames {
+		// CF_UNICODETEXT
+		binary.Write(b, binary.LittleEndian, uint32(CF_UNICODETEXT))
+		b.Write([]byte{0, 0})
+		// FileGroupDescriptorW (custom format name)
+		binary.Write(b, binary.LittleEndian, uint32(0xC001)) // use a fixed custom ID
+		fgdName := encodeUTF16LE("FileGroupDescriptorW\x00")
+		b.Write(fgdName)
+		// FileContents
+		binary.Write(b, binary.LittleEndian, uint32(0xC002))
+		fcName := encodeUTF16LE("FileContents\x00")
+		b.Write(fcName)
+	} else {
+		binary.Write(b, binary.LittleEndian, uint32(CF_UNICODETEXT))
+		b.Write(make([]byte, 32))
+	}
+	h.sendPDU(CB_FORMAT_LIST, 0, b.Bytes())
+}
+
+// processFormatDataRequest handles FORMAT_DATA_REQUEST for FileGroupDescriptorW.
+// (overrides the text-only version when files are present)
+func (h *CliprdrHandler) handleFormatDataRequestFiles(requestedFormat uint32) bool {
+	if requestedFormat != 0xC001 || h.getLocalFiles == nil {
+		return false
+	}
+	files := h.getLocalFiles()
+	if len(files) == 0 {
+		return false
+	}
+
+	// Build FileGroupDescriptorW
+	fgd := &bytes.Buffer{}
+	binary.Write(fgd, binary.LittleEndian, uint32(len(files))) // cItems
+	for _, f := range files {
+		fd := make([]byte, 592)
+		// flags: FD_FILESIZE | FD_ATTRIBUTES
+		binary.LittleEndian.PutUint32(fd[0:4], FD_FILESIZE|FD_ATTRIBUTES)
+		// fileAttributes: normal file
+		binary.LittleEndian.PutUint32(fd[36:40], 0x00000080) // FILE_ATTRIBUTE_NORMAL
+		// file size
+		binary.LittleEndian.PutUint32(fd[72:76], uint32(f.Size>>32))
+		binary.LittleEndian.PutUint32(fd[76:80], uint32(f.Size))
+		// filename (UTF-16LE, 512 bytes max)
+		nameBytes := encodeUTF16LE(f.Name)
+		if len(nameBytes) > 510 {
+			nameBytes = nameBytes[:510]
+		}
+		copy(fd[80:], nameBytes)
+		fgd.Write(fd)
+	}
+
+	h.sendPDU(CB_FORMAT_DATA_RESPONSE, CB_RESPONSE_OK, fgd.Bytes())
+	return true
 }
 
 // --- Public API for local clipboard changes --------------------------------
