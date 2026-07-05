@@ -1127,6 +1127,24 @@ function attachInputEvents() {
 
     /* ─── Mobile keyboard input (textarea mirror) ──── */
     if (mobileKeyboardInput) {
+        /* beforeinput catches deletions (backspace/delete) which have
+         * e.data === null in the 'input' event and would be missed. */
+        mobileKeyboardInput.addEventListener('beforeinput', (e) => {
+            if (!connected) return;
+            if (e.inputType === 'deleteContentBackward') {
+                e.preventDefault();
+                rdpKeyDown('Backspace');
+                setTimeout(() => rdpKeyUp('Backspace'), 30);
+            } else if (e.inputType === 'deleteContentForward') {
+                e.preventDefault();
+                rdpKeyDown('Delete');
+                setTimeout(() => rdpKeyUp('Delete'), 30);
+            } else if (e.inputType === 'insertLineBreak') {
+                e.preventDefault();
+                rdpKeyDown('Enter');
+                setTimeout(() => rdpKeyUp('Enter'), 30);
+            }
+        });
         mobileKeyboardInput.addEventListener('input', (e) => {
             if (!connected) return;
             const data = e.data;
@@ -1139,7 +1157,15 @@ function attachInputEvents() {
                     }
                 }
             }
+            /* Keep textarea short so the cursor doesn't drift offscreen,
+             * but leave a few chars so backspace always has content to delete
+             * (empty textareas don't fire deleteContentBackward on some IMEs). */
+            if (mobileKeyboardInput.value.length > 20) {
+                mobileKeyboardInput.value = mobileKeyboardInput.value.slice(-5);
+            }
         });
+        /* Seed the textarea so backspace has something to delete on first tap. */
+        mobileKeyboardInput.value = '     ';
     }
 }
 
