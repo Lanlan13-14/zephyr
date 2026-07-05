@@ -1,4 +1,4 @@
-/// Platform-abstracted file provider for Zephyr Agent.
+// Platform-abstracted file provider for Zephyr Agent.
 
 import 'dart:io' as io;
 import 'dart:typed_data';

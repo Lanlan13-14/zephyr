@@ -1,4 +1,4 @@
-/// Agent state machine and configuration models.
+// Agent state machine and configuration models.
 
 enum AgentStatus {
   idle,

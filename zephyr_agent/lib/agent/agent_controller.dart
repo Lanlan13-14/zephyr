@@ -1,5 +1,5 @@
-/// Agent controller — manages WebSocket connection, protocol, heartbeat,
-/// file RPC handling, auto-shutdown timer, and reconnection.
+// Agent controller — manages WebSocket connection, protocol, heartbeat,
+// file RPC handling, auto-shutdown timer, and reconnection.
 
 import 'dart:async';
 import 'dart:convert';
@@ -129,7 +129,7 @@ class AgentController extends ChangeNotifier {
   // ─── Protocol ────────────────────────────────────────────────
 
   void _sendHello() {
-    final deviceId = const Uuid().v5(Uuid.NAMESPACE_URL, '${_config.serverUrl}:${_config.deviceName}');
+    final deviceId = const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
     _send({
       'type': 'hello',
       'protocolVersion': 1,

@@ -1,4 +1,4 @@
-/// Local settings persistence using SharedPreferences.
+// Local settings persistence using SharedPreferences.
 
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';

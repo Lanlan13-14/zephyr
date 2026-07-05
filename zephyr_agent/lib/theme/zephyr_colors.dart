@@ -1,4 +1,4 @@
-/// Zephyr theme color definitions — matching zephyr-ssh CSS variables.
+// Zephyr theme color definitions — matching zephyr-ssh CSS variables.
 import 'package:flutter/material.dart';
 
 enum ZephyrTheme { blue, green, purple, orange }
@@ -32,7 +32,6 @@ class ZephyrColors {
 
   static ThemeData buildTheme(ZephyrTheme zTheme) {
     final accent = getPrimary(zTheme);
-    final accentDark = getPrimaryDark(zTheme);
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../theme/zephyr_colors.dart';
 import '../agent/agent_controller.dart';
-import '../agent/agent_state.dart';
 import '../screens/home_screen.dart';
 import '../storage/local_settings.dart';
 
