@@ -123,6 +123,7 @@ jobs:
           $iss = @"
           [Setup]
           AppName=Zephyr Agent
+          AppId={{6D9F4F08-808B-4C35-9F19-6D0FD87C6EAF}
           AppVersion=$version
           DefaultDirName={autopf}\Zephyr Agent
           DefaultGroupName=Zephyr Agent
