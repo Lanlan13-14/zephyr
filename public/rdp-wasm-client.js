@@ -915,14 +915,22 @@ function ensureCanvas(w, h) {
 }
 
 function clampZoomPan() {
-    if (!rdpCanvas || !displayShell || rdpScaleZoom <= 1) {
+    if (!rdpCanvas || rdpScaleZoom <= 1) {
         zoomPanX = 0;
         zoomPanY = 0;
         return;
     }
-    const shellRect = displayShell.getBoundingClientRect();
-    const maxX = Math.max(0, (shellRect.width * (rdpScaleZoom - 1)) / (2 * rdpScaleZoom));
-    const maxY = Math.max(0, (shellRect.height * (rdpScaleZoom - 1)) / (2 * rdpScaleZoom));
+    /* The canvas is rendered at its CSS layout size then scaled by
+     * rdpScaleZoom from center. The visible viewport is shellRect; the
+     * scaled canvas is shellRect * rdpScaleZoom. The max translate that
+     * keeps at least the viewport covered is half the overflow on each axis.
+     * Because our transform is translate(...) scale(...), the translate
+     * values are in pre-scale (CSS) pixels. */
+    const r = rdpCanvas.getBoundingClientRect();
+    const cssW = r.width / rdpScaleZoom;
+    const cssH = r.height / rdpScaleZoom;
+    const maxX = Math.max(0, cssW * (rdpScaleZoom - 1) / 2);
+    const maxY = Math.max(0, cssH * (rdpScaleZoom - 1) / 2);
     zoomPanX = Math.max(-maxX, Math.min(maxX, zoomPanX));
     zoomPanY = Math.max(-maxY, Math.min(maxY, zoomPanY));
 }
@@ -1440,14 +1448,14 @@ function initToolbar() {
     const joystickKnob = document.getElementById('joystickKnob');
     const joystickContainer = document.getElementById('joystickContainer');
 
-    /* Shared: push current fillPanX/Y to the canvas (only meaningful in fill mode). */
+    /* Shared: apply viewport pan to the canvas. In zoom>1 mode, directly
+     * manipulates the pixel-level transform translate. In fill mode (zoom=1),
+     * uses object-position for CSS cover panning. */
     const applyFillPan = () => {
-        if (rdpScaleZoom > 1 && displayShell) {
-            const shellRect = displayShell.getBoundingClientRect();
-            const maxX = Math.max(0, (shellRect.width * (rdpScaleZoom - 1)) / 2);
-            const maxY = Math.max(0, (shellRect.height * (rdpScaleZoom - 1)) / 2);
-            zoomPanX = Math.max(-maxX, Math.min(maxX, ((fillPanX - 50) / 50) * maxX));
-            zoomPanY = Math.max(-maxY, Math.min(maxY, ((fillPanY - 50) / 50) * maxY));
+        if (rdpScaleZoom > 1 && rdpCanvas) {
+            /* Direct pixel pan — no percentage indirection. clampZoomPan
+             * already bounds zoomPanX/Y to the visible overflow area. */
+            clampZoomPan();
             applyViewTransform();
         } else if (fitModes[fitModeIdx] === 'fill' && rdpCanvas) {
             fillPanX = Math.max(0, Math.min(100, fillPanX));
@@ -1464,11 +1472,18 @@ function initToolbar() {
 
         const joyTick = () => {
             if (!joyDrag) { joyAnimFrame = null; return; }
-            /* Accumulate pan based on knob deflection (velocity-mode).
-             * The further the knob is from center, the faster we pan. */
-            fillPanX += joyVX * 2.5;
-            fillPanY += joyVY * 2.5;
-            applyFillPan();
+            if (rdpScaleZoom > 1) {
+                /* Direct pixel panning — speed scales with zoom level so
+                 * full-deflection traverses the entire canvas in ~1 second. */
+                const speed = Math.max(8, rdpScaleZoom * 12);
+                zoomPanX -= joyVX * speed;
+                zoomPanY -= joyVY * speed;
+                applyFillPan();
+            } else if (fitModes[fitModeIdx] === 'fill') {
+                fillPanX += joyVX * 3;
+                fillPanY += joyVY * 3;
+                applyFillPan();
+            }
             joyAnimFrame = requestAnimationFrame(joyTick);
         };
 
@@ -1503,14 +1518,13 @@ function initToolbar() {
         joystickKnob.addEventListener('pointercancel', joyEnd);
     }
 
-    /* Joystick direction arrows — nudge the viewport; press-and-hold to repeat.
-     * Each tap shifts the pan by PAN_STEP percent in fill mode. */
-    const PAN_STEP = 6;
+    /* Joystick direction arrows — nudge the viewport; press-and-hold to repeat. */
+    const PAN_PX_STEP = 30;
     const joyDirDelta = {
-        up:    { x: 0, y: -PAN_STEP },
-        down:  { x: 0, y:  PAN_STEP },
-        left:  { x: -PAN_STEP, y: 0 },
-        right: { x:  PAN_STEP, y: 0 },
+        up:    { x: 0, y: 1 },
+        down:  { x: 0, y: -1 },
+        left:  { x: 1, y: 0 },
+        right: { x: -1, y: 0 },
     };
     document.querySelectorAll('[data-joydir]').forEach((arrow) => {
         const dir = arrow.dataset.joydir;
@@ -1519,9 +1533,15 @@ function initToolbar() {
         let holdTimer = null;
         let repeatTimer = null;
         const nudge = () => {
-            fillPanX += delta.x;
-            fillPanY += delta.y;
-            applyFillPan();
+            if (rdpScaleZoom > 1) {
+                zoomPanX += delta.x * PAN_PX_STEP * rdpScaleZoom;
+                zoomPanY += delta.y * PAN_PX_STEP * rdpScaleZoom;
+                applyFillPan();
+            } else if (fitModes[fitModeIdx] === 'fill') {
+                fillPanX -= delta.x * 4;
+                fillPanY -= delta.y * 4;
+                applyFillPan();
+            }
         };
         const start = (e) => {
             e.preventDefault();
