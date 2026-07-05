@@ -1169,10 +1169,16 @@ function attachInputEvents() {
 
     /* ─── Mobile keyboard input (textarea mirror) ──── */
     if (mobileKeyboardInput) {
-        /* beforeinput catches deletions (backspace/delete) which have
-         * e.data === null in the 'input' event and would be missed. */
-        mobileKeyboardInput.addEventListener('beforeinput', (e) => {
+        let composing = false;
+        mobileKeyboardInput.addEventListener('compositionstart', () => { composing = true; });
+        mobileKeyboardInput.addEventListener('compositionend', (e) => {
+            composing = false;
             if (!connected) return;
+            const text = e.data || '';
+            if (text) sendTextViaClipboard(text);
+        });
+        mobileKeyboardInput.addEventListener('beforeinput', (e) => {
+            if (!connected || composing) return;
             if (e.inputType === 'deleteContentBackward') {
                 e.preventDefault();
                 rdpKeyDown('Backspace');
@@ -1188,30 +1194,51 @@ function attachInputEvents() {
             }
         });
         mobileKeyboardInput.addEventListener('input', (e) => {
-            if (!connected) return;
+            if (!connected || composing) return;
             const data = e.data;
             if (data) {
-                for (const char of data) {
-                    const code = keyCharToCode(char);
-                    if (code) {
-                        rdpKeyDown(code);
-                        setTimeout(() => rdpKeyUp(code), 30);
+                let allAscii = true;
+                for (const ch of data) {
+                    if (ch.charCodeAt(0) > 127) { allAscii = false; break; }
+                }
+                if (allAscii) {
+                    for (const char of data) {
+                        const code = keyCharToCode(char);
+                        if (code) {
+                            rdpKeyDown(code);
+                            setTimeout(() => rdpKeyUp(code), 30);
+                        }
                     }
+                } else {
+                    sendTextViaClipboard(data);
                 }
             }
-            /* Keep textarea short so the cursor doesn't drift offscreen,
-             * but leave a few chars so backspace always has content to delete
-             * (empty textareas don't fire deleteContentBackward on some IMEs). */
             if (mobileKeyboardInput.value.length > 20) {
                 mobileKeyboardInput.value = mobileKeyboardInput.value.slice(-5);
             }
         });
-        /* Seed the textarea so backspace has something to delete on first tap. */
         mobileKeyboardInput.value = '     ';
     }
 }
 
 /* Map single characters to JS key codes for mobile input */
+/* Send non-ASCII text to the remote desktop via clipboard paste.
+ * This is the standard workaround for CJK/emoji input in web RDP clients —
+ * direct Unicode scancode input requires protocol-level support that is
+ * complex to wire through WASM. */
+function sendTextViaClipboard(text) {
+    if (!connected || !text) return;
+    rdpClipboardChanged(text);
+    setTimeout(() => {
+        rdpKeyDown('ControlLeft');
+        rdpKeyDown('KeyV');
+        setTimeout(() => {
+            rdpKeyUp('KeyV');
+            rdpKeyUp('ControlLeft');
+        }, 40);
+    }, 50);
+}
+
 function keyCharToCode(char) {
     const upper = char.toUpperCase();
     if (upper >= 'A' && upper <= 'Z') return 'Key' + upper;

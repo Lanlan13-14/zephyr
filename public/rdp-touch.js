@@ -163,6 +163,8 @@ export class RdpTouchController {
             }
             const d = this._dist2(e.touches[0], e.touches[1]);
             const center = this._centerCoords(e.touches);
+            const scx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            const scy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
             this._state = {
                 type: '2finger',
                 fingers: 2,
@@ -170,9 +172,10 @@ export class RdpTouchController {
                 lastDist: d,
                 startCenterX: center.x, startCenterY: center.y,
                 lastCenterX: center.x, lastCenterY: center.y,
+                lastScreenCX: scx, lastScreenCY: scy,
                 lastClientX: e.touches[0].clientX, lastClientY: e.touches[0].clientY,
                 moved: false,
-                gesture: null, // null → 'scroll' or 'pinch'
+                gesture: null,
                 startTime: performance.now(),
             };
             this._pinchStartDist = d;
@@ -241,29 +244,35 @@ export class RdpTouchController {
 
         } else if (this._state.type === '2finger' && fingers >= 2) {
             const d = this._dist2(e.touches[0], e.touches[1]);
-            const center = this._centerCoords(e.touches);
+            /* Use screen-pixel deltas for scroll detection (immune to remote
+             * coordinate scaling that could shrink/expand the deltas). */
+            const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+            const screenDx = cx - this._state.lastScreenCX;
+            const screenDy = cy - this._state.lastScreenCY;
             const distDelta = Math.abs(d - this._state.startDist);
-            const scrollDx = center.x - this._state.lastCenterX;
-            const scrollDy = center.y - this._state.lastCenterY;
 
             // Classify gesture if not yet decided
             if (!this._state.gesture) {
                 if (distDelta > PINCH_THRESHOLD) {
                     this._state.gesture = 'pinch';
-                } else if (Math.abs(scrollDy) > SCROLL_THRESHOLD || Math.abs(scrollDx) > SCROLL_THRESHOLD) {
+                } else if (Math.abs(screenDy) > SCROLL_THRESHOLD || Math.abs(screenDx) > SCROLL_THRESHOLD) {
                     this._state.gesture = 'scroll';
                 }
             }
 
             if (this._state.gesture === 'scroll') {
-                // Accumulate scroll deltas and send in notch units
-                if (Math.abs(scrollDy) > 1) {
-                    // RDP expects positive=up, negative=down
-                    const notches = -scrollDy / 30;
-                    this.sendMouseWheel(notches);
+                // Vertical scroll — RDP expects positive=up, negative=down
+                if (Math.abs(screenDy) > 1) {
+                    this.sendMouseWheel(-screenDy / 30);
                 }
-                this._state.lastCenterX = center.x;
-                this._state.lastCenterY = center.y;
+                // Horizontal scroll — send via rdpMouseHScroll if available,
+                // otherwise fallback to Left/Right arrow key taps for compat.
+                if (Math.abs(screenDx) > 8 && typeof window.rdpMouseHScroll === 'function') {
+                    window.rdpMouseHScroll(screenDx / 30);
+                }
+                this._state.lastScreenCX = cx;
+                this._state.lastScreenCY = cy;
                 this._state.moved = true;
 
             } else if (this._state.gesture === 'pinch') {
