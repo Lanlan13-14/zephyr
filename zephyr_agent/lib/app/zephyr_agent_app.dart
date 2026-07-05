@@ -1,7 +1,6 @@
-import 'dart:io' as io;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../platform/platform_icon_service.dart';
 import '../theme/zephyr_colors.dart';
 import '../agent/agent_controller.dart';
 import '../screens/home_screen.dart';
@@ -43,11 +42,10 @@ class _ZephyrAgentAppState extends State<ZephyrAgentApp> {
   }
 
   Future<void> _syncAndroidLauncherIcon(ZephyrTheme theme) async {
-    if (!io.Platform.isAndroid) return;
     try {
-      await const MethodChannel('com.zephyr.agent/saf').invokeMethod<void>('setLauncherTheme', {'theme': theme.name});
+      await PlatformIconService.sync(theme);
     } catch (_) {
-      // Launcher icon sync is best-effort; app theme switching must not fail.
+      // Platform icon sync is best-effort; app theme switching must not fail.
     }
   }
 
