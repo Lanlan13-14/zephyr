@@ -1,7 +1,7 @@
 import 'dart:async';
+import 'dart:io' as io;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:file_picker/file_picker.dart';
 import '../agent/agent_controller.dart';
 import '../agent/agent_state.dart';
 import '../fs/file_provider.dart';
@@ -60,16 +60,46 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _pickDirectory(AgentController ctrl) async {
-    final result = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择共享目录',
-    );
-    if (result != null) {
+    if (io.Platform.isAndroid) {
+      final selected = await AndroidSafFileProvider.selectDirectory();
+      if (selected == null) return;
       setState(() {
-        ctrl.config.sharedDirectoryPath = result;
-        ctrl.config.sharedDirectoryName = result.split('/').last.split('\\').last;
+        ctrl.config.sharedDirectoryPath = selected.rootUri;
+        ctrl.config.sharedDirectoryName = selected.name;
       });
       _saveConfig(ctrl);
+      return;
     }
+
+    await _showDesktopPathDialog(ctrl);
+  }
+
+  Future<void> _showDesktopPathDialog(AgentController ctrl) async {
+    final pathCtrl = TextEditingController(text: ctrl.config.sharedDirectoryPath ?? '');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('共享目录路径'),
+        content: TextField(
+          controller: pathCtrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: '/Users/name/Downloads 或 C:\\Users\\name\\Downloads',
+            labelText: '本机目录路径',
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, pathCtrl.text.trim()), child: const Text('确定')),
+        ],
+      ),
+    );
+    if (result == null || result.isEmpty) return;
+    setState(() {
+      ctrl.config.sharedDirectoryPath = result;
+      ctrl.config.sharedDirectoryName = result.split('/').last.split('\\\\').last;
+    });
+    _saveConfig(ctrl);
   }
 
   Future<void> _startConnection(AgentController ctrl) async {
@@ -84,7 +114,11 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    ctrl.setFileProvider(DesktopFileProvider(ctrl.config.sharedDirectoryPath!));
+    if (io.Platform.isAndroid) {
+      ctrl.setFileProvider(AndroidSafFileProvider(ctrl.config.sharedDirectoryPath!));
+    } else {
+      ctrl.setFileProvider(DesktopFileProvider(ctrl.config.sharedDirectoryPath!));
+    }
     await ctrl.start();
   }
 

@@ -11,7 +11,6 @@ dependencies:
     sdk: flutter
   web_socket_channel: ^3.0.1
   shared_preferences: ^2.3.3
-  file_picker: ^11.0.2
   provider: ^6.1.2
   uuid: ^4.5.1
   path: ^1.9.0
