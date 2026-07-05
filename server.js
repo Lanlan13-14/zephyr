@@ -1011,34 +1011,67 @@ async function testRDPConnection(conn, timeout = 10000) {
     const started = Date.now();
     const targetPort = Number(conn.port) || 3389;
     let routedForward = null;
+    let socket = null;
     try {
         routedForward = await createRoutedTcpForward(conn, targetPort, timeout);
         const effectiveHost = routedForward?.host || conn.host;
         const effectivePort = routedForward?.port || targetPort;
-        /* TCP connectivity test — the WASM client handles full RDP auth in-browser */
+        const route = routedForward?.route || `${conn.host}:${targetPort}`;
+
+        /* Full-path test: TCP connect + send X.224 Connection Request +
+         * wait for X.224 Connection Confirm. This tests the complete
+         * network path including all jump hosts/proxies, and verifies
+         * the target is actually an RDP server (not just an open port). */
+        socket = new net.Socket();
+        socket.setNoDelay(true);
+
         await new Promise((resolve, reject) => {
-            const socket = new net.Socket();
-            const timer = setTimeout(() => {
-                socket.destroy();
-                reject(new Error('RDP 连接超时'));
-            }, timeout);
+            const timer = setTimeout(() => { socket.destroy(); reject(new Error('RDP 连接超时')); }, timeout);
+            socket.once('error', (err) => { clearTimeout(timer); reject(err); });
             socket.once('connect', () => {
-                clearTimeout(timer);
-                socket.destroy();
-                resolve();
-            });
-            socket.once('error', (err) => {
-                clearTimeout(timer);
-                reject(err);
+                /* Send X.224 Connection Request (CR) per MS-RDPBCGR 2.2.1.1 */
+                const cr = Buffer.from([
+                    0x03, 0x00, 0x00, 0x13, // TPKT: version=3, length=19
+                    0x0E,                   // X.224: length indicator
+                    0xE0,                   // CR (Connection Request)
+                    0x00, 0x00,             // dst-ref
+                    0x00, 0x00,             // src-ref
+                    0x00,                   // class 0
+                    0x01, 0x00, 0x08, 0x00, // RDP Negotiation Request: type=1, flags=0, length=8
+                    0x03, 0x00, 0x00, 0x00, // requestedProtocols: TLS | CredSSP
+                ]);
+                socket.write(cr);
+
+                /* Wait for X.224 Connection Confirm (CC) */
+                const chunks = [];
+                const onData = (chunk) => {
+                    chunks.push(chunk);
+                    const buf = Buffer.concat(chunks);
+                    if (buf.length >= 4) {
+                        const tpktLen = (buf[2] << 8) | buf[3];
+                        if (buf.length >= tpktLen) {
+                            clearTimeout(timer);
+                            socket.removeListener('data', onData);
+                            /* Check X.224 CC code (0xD0) */
+                            if (buf.length >= 6 && buf[5] === 0xD0) {
+                                resolve();
+                            } else {
+                                reject(new Error('RDP 服务器拒绝连接'));
+                            }
+                        }
+                    }
+                };
+                socket.on('data', onData);
             });
             socket.connect(effectivePort, effectiveHost);
         });
-        return { ok: true, code: 'success', message: `RDP 端口可达（${conn.host}:${targetPort}）`, durationMs: Date.now() - started };
+        return { ok: true, code: 'success', message: `RDP 连接成功（${route}）`, durationMs: Date.now() - started };
     } catch (err) {
         const classified = classifyRdpError(err);
         console.warn('[rdp-test]', 'connection failed', { target: conn.host, code: classified.code, error: classified.message });
         return { ok: false, ...classified, durationMs: Date.now() - started };
     } finally {
+        try { socket?.destroy?.(); } catch {}
         try { routedForward?.close?.(); } catch {}
     }
 }
