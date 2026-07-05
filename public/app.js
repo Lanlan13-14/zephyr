@@ -6186,7 +6186,7 @@ function bindEvents() {
     $('#sshKeyList').addEventListener('click', async (e) => { const editId = e.target.dataset.editSshKey, openId = e.target.dataset.openSshKey, delId = e.target.dataset.delSshKey; if (editId) { const k = sshKeys.find((x) => x.id === editId); if (!k) return; $('#sshKeyId').value = k.id; $('#sshKeyName').value = k.name || ''; $('#sshKeyPrivateKey').value = k.hasPrivateKey ? '******' : ''; $('#sshKeyPassphrase').value = k.hasPassphrase ? '******' : ''; $('#sshKeyRemark').value = k.remark || ''; return; } if (openId) { await openSshKeySecret(openId); return; } if (delId && confirm('删除该 SSH 密钥？已选择它的连接将无法再使用该密钥。')) { await api(`/api/ssh-keys/${delId}`, { method: 'DELETE' }); await loadNetwork(); toast('SSH 密钥已删除'); } });
     $('#passwordForm').addEventListener('submit', async (e) => { e.preventDefault(); const currentPassword = $('#settingsCurrentPassword').value, newPassword = $('#settingsNewPassword').value, confirmPassword = $('#settingsConfirmPassword').value; if (newPassword !== confirmPassword) return toast('两次输入的新密码不一致'); await api('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }); e.target.reset(); toast('密码已更新'); });
     $('#profileForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/profile', { method: 'PUT', body: JSON.stringify({ username: $('#profileUsername').value.trim(), email: $('#profileEmail').value }) }); toast('资料已保存'); await loadSecurityStatus(); });
-    $('#securityPolicyForm').addEventListener('submit', saveSecurityPolicy); $('#captchaForm').addEventListener('submit', saveCaptcha); $('#mailForm').addEventListener('submit', saveMail); $('#appearanceForm').addEventListener('submit', saveAppearance); $('#terminalLayoutForm').addEventListener('submit', saveTerminalLayout); setupSnippetSettings();
+    $('#securityPolicyForm').addEventListener('submit', saveSecurityPolicy); $('#captchaForm').addEventListener('submit', saveCaptcha); $('#mailForm').addEventListener('submit', saveMail); $('#appearanceForm').addEventListener('submit', saveAppearance); $('#terminalLayoutForm').addEventListener('submit', saveTerminalLayout); setupSnippetSettings(); setupAgentTokenSettings();
     $('#totpBox').addEventListener('click', (e) => { if (e.target.id === 'setupTotpBtn') setupTotp().catch((err) => toast(err.message)); });
     $('#totpEnableForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/totp/enable', { method: 'POST', body: JSON.stringify({ code: $('#totpEnableCode').value }) }); toast('TOTP 已开启'); $('#totpEnableForm').classList.add('force-hidden'); await loadSecurityStatus(); });
     $('#totpDisableForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm('确定关闭 TOTP？')) return; await api('/api/security/totp/disable', { method: 'POST', body: JSON.stringify({ currentPassword: $('#totpDisablePassword').value, code: $('#totpDisableCode').value }) }); e.target.reset(); toast('TOTP 已关闭'); await loadSecurityStatus(); });
@@ -6229,3 +6229,113 @@ async function init() {
     }
 }
 init();
+
+// ─── Zephyr Agent Token Settings ─────────────────────────────────
+function formatAgentTokenTime(ms) {
+    if (!ms) return '从未';
+    try { return new Date(Number(ms)).toLocaleString(); } catch { return '未知'; }
+}
+
+async function loadAgentTokens() {
+    const list = $('#agentTokenList');
+    if (!list) return;
+    list.innerHTML = '<p class="empty-state">正在加载...</p>';
+    try {
+        const data = await api('/api/rdp/file-agent-tokens');
+        renderAgentTokens(data.tokens || []);
+    } catch (err) {
+        list.innerHTML = `<p class="empty-state">加载失败：${escapeHtml(err.message || 'unknown')}</p>`;
+    }
+}
+
+function renderAgentTokens(tokens) {
+    const list = $('#agentTokenList');
+    if (!list) return;
+    if (!tokens.length) {
+        list.innerHTML = '<p class="empty-state">暂无 Token。点击“新增 Token”为设备创建连接凭据。</p>';
+        return;
+    }
+    list.innerHTML = tokens.map((t) => `
+        <div class="agent-token-item" data-token-id="${escapeHtml(t.id)}">
+            <div class="agent-token-main">
+                <div class="agent-token-title"><strong>${escapeHtml(t.name || '未命名 Token')}</strong><span>${escapeHtml(t.id || '')}</span></div>
+                <div class="agent-token-value"><code>${escapeHtml(t.token || '')}</code></div>
+                <div class="agent-token-meta">创建：${escapeHtml(formatAgentTokenTime(t.createdAt))} · 更新：${escapeHtml(formatAgentTokenTime(t.updatedAt))} · 最后使用：${escapeHtml(formatAgentTokenTime(t.lastUsedAt))}</div>
+            </div>
+            <div class="agent-token-buttons">
+                <button class="tool-btn" type="button" data-agent-copy-token="${escapeHtml(t.id)}">复制</button>
+                <button class="tool-btn" type="button" data-agent-rename-token="${escapeHtml(t.id)}">重命名</button>
+                <button class="tool-btn" type="button" data-agent-regen-token="${escapeHtml(t.id)}">重新生成</button>
+                <button class="tool-btn danger" type="button" data-agent-delete-token="${escapeHtml(t.id)}">删除</button>
+            </div>
+        </div>`).join('');
+}
+
+function currentAgentServerUrl() {
+    return window.location.origin;
+}
+
+function updateAgentServerInfo() {
+    const el = $('#agentServerUrlText');
+    if (el) el.textContent = currentAgentServerUrl();
+}
+
+async function createAgentToken() {
+    const name = prompt('Token 名称，例如：我的手机 / 办公室 Windows / Pad', 'Zephyr Agent Token');
+    if (name === null) return;
+    await api('/api/rdp/file-agent-tokens', { method: 'POST', body: JSON.stringify({ name }) });
+    await loadAgentTokens();
+    toast('Token 已创建');
+}
+
+async function renameAgentToken(id) {
+    const item = document.querySelector(`[data-token-id="${CSS.escape(id)}"] .agent-token-title strong`);
+    const name = prompt('新的 Token 名称', item?.textContent || 'Zephyr Agent Token');
+    if (name === null) return;
+    await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+    await loadAgentTokens();
+    toast('Token 已重命名');
+}
+
+async function regenerateAgentToken(id) {
+    if (!confirm('重新生成后，使用旧 Token 的 Agent 会断开，需要在 Agent App 中填写新 Token。继续？')) return;
+    await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/regenerate`, { method: 'POST' });
+    await loadAgentTokens();
+    toast('Token 已重新生成');
+}
+
+async function deleteAgentToken(id) {
+    if (!confirm('删除后，使用此 Token 的 Agent 会断开。继续删除？')) return;
+    await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await loadAgentTokens();
+    toast('Token 已删除');
+}
+
+async function copyAgentToken(id) {
+    const code = document.querySelector(`[data-token-id="${CSS.escape(id)}"] .agent-token-value code`);
+    const token = code?.textContent || '';
+    if (!token) return;
+    await navigator.clipboard.writeText(token);
+    toast('Token 已复制');
+}
+
+function setupAgentTokenSettings() {
+    $('#agentCreateTokenBtn')?.addEventListener('click', () => createAgentToken().catch((err) => toast(err.message || '创建失败')));
+    $('#agentRefreshTokenBtn')?.addEventListener('click', () => loadAgentTokens());
+    $('#agentCopyServerUrlBtn')?.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(currentAgentServerUrl());
+        toast('主端地址已复制');
+    });
+    $('#agentTokenList')?.addEventListener('click', (e) => {
+        const copy = e.target.dataset.agentCopyToken;
+        const rename = e.target.dataset.agentRenameToken;
+        const regen = e.target.dataset.agentRegenToken;
+        const del = e.target.dataset.agentDeleteToken;
+        if (copy) copyAgentToken(copy).catch((err) => toast(err.message || '复制失败'));
+        if (rename) renameAgentToken(rename).catch((err) => toast(err.message || '重命名失败'));
+        if (regen) regenerateAgentToken(regen).catch((err) => toast(err.message || '重新生成失败'));
+        if (del) deleteAgentToken(del).catch((err) => toast(err.message || '删除失败'));
+    });
+    updateAgentServerInfo();
+    loadAgentTokens().catch(() => {});
+}

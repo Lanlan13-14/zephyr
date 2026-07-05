@@ -84,6 +84,7 @@
                         <button class="settings-tab" data-settings="ssh-keys">SSH 密钥库</button>
                         <button class="settings-tab" data-settings="snippets">代码片段</button>
                         <button class="settings-tab" data-settings="ai">AI 助理</button>
+                        <button class="settings-tab" data-settings="agent">Zephyr Agent</button>
                         <button class="settings-tab" data-settings="data">数据管理</button>
                         <button class="settings-tab" data-settings="appearance">个性化设置</button>
                         <button class="settings-tab" data-settings="mail">邮件通知</button>
@@ -322,6 +323,18 @@
                                 <div class="form-actions"><button class="btn btn-primary" type="submit">保存 Skill</button><button class="btn" type="button" id="aiSkillResetBtn">清空</button></div>
                             </form>
                             <div class="ai-skill-list" id="aiSkillList"></div>
+                        </div>
+                        <div class="settings-panel" id="settings-agent">
+                            <h2>Zephyr Agent Token</h2>
+                            <p class="muted">Token 用于 Zephyr Agent 主动连接主端并注册文件系统代理。可为不同设备创建多个 Token，分别命名、复制、重命名、重新生成或删除。</p>
+                            <div class="agent-token-actions"><button class="btn btn-primary" type="button" id="agentCreateTokenBtn">新增 Token</button><button class="btn" type="button" id="agentRefreshTokenBtn">刷新</button></div>
+                            <div class="agent-token-list" id="agentTokenList"><p class="empty-state">正在加载...</p></div>
+                            <h2>连接信息</h2>
+                            <div class="agent-connect-info">
+                                <label>主端地址</label>
+                                <div class="copy-line"><code id="agentServerUrlText">--</code><button class="tool-btn" type="button" id="agentCopyServerUrlBtn">复制</button></div>
+                                <p class="field-hint">Agent App 里主端地址填写当前 Zephyr 的 HTTPS 地址，例如 <code>https://ssh.example.com</code>；不要手动填写 <code>wss://</code>。</p>
+                            </div>
                         </div>
                         <div class="settings-panel" id="settings-data"><h2>数据导入导出</h2><p class="muted">导出文件使用 data/.env 中 ENCRYPTION_KEY 加密；敏感字段在数据库中使用 ML-KEM-768 + AES-256-GCM 混合加密保存。</p><button class="btn btn-primary" id="exportDataBtn">开始导出</button><form id="importDataForm" class="settings-form"><input type="file" id="backupFile" accept=".enc"><input type="password" id="importLoginPassword" placeholder="当前登录密码"><input type="password" id="backupPassword" placeholder="备份解密密码（ENCRYPTION_KEY）"><button class="btn danger">导入备份</button></form></div>
                         <div class="settings-panel" id="settings-mail"><h2>邮件通知</h2><form id="mailForm" class="settings-form"><label class="check-line"><input type="checkbox" id="mailEnabled"> 启用邮件通知</label><input id="mailHost" placeholder="SMTP Host"><input id="mailPort" type="number" placeholder="SMTP Port"><label class="check-line"><input type="checkbox" id="mailSecure"> SSL/TLS</label><input id="mailUser" placeholder="SMTP 用户名"><div class="form-group password-field"><input id="mailPass" type="password" placeholder="SMTP 密码"><button type="button" id="toggleMailPassword" title="显示/隐藏 SMTP 密码">👁️</button></div><button type="button" class="link-btn" id="revealMailPass">查看已保存 SMTP 密码</button><p class="field-hint">默认隐藏已保存 SMTP 密码；留空或保持星号不会覆盖已保存密码。</p><input id="mailFrom" placeholder="发件人"><input id="mailAdminEmail" type="email" placeholder="后台管理员邮箱"><label class="check-line"><input type="checkbox" id="notifyLoginSuccess"> 登录成功通知</label><label class="check-line"><input type="checkbox" id="notifyLoginFailure"> 登录失败通知</label><label class="check-line"><input type="checkbox" id="geoLookupEnabled"> IP 地区查询</label><button class="btn btn-primary" type="submit">保存邮件设置</button><button class="btn" type="button" id="testMailBtn">测试邮件</button></form><div class="panel-title-row"><h2>登录事件</h2><button class="tool-btn danger" type="button" id="clearLoginEventsBtn">清理日志</button></div><div class="mini-list" id="loginEventList"></div></div>

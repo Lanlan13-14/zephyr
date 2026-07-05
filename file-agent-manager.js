@@ -33,6 +33,8 @@ class FileAgentConnection {
         this.capabilities = hello.capabilities || { read: true };
         this.share = hello.share || { name: 'Agent', readOnly: true };
         this.ownerId = null; // set after token validation
+        this.tokenId = null;
+        this.tokenName = '';
         this.lastSeenAt = Date.now();
         this.connectedAt = Date.now();
         this.pendingRequests = new Map(); // requestId → { resolve, reject, timer }
@@ -57,6 +59,8 @@ class FileAgentConnection {
             capabilities: { ...this.capabilities },
             connectedAt: this.connectedAt,
             lastSeenAt: this.lastSeenAt,
+            tokenId: this.tokenId,
+            tokenName: this.tokenName,
         };
     }
 
@@ -136,8 +140,8 @@ class FileAgentManager {
         this.ownerAgents = new Map();
         /** @type {Set<import('http').ServerResponse>} SSE subscribers */
         this.sseClients = new Set();
-        /** @type {Map<string, string>} token → ownerId */
-        this.tokenBindings = new Map();
+        /** @type {Map<string, object>} token → token record */
+        this.tokenRecords = new Map();
         /** @type {Function} resolve userId from session cookie (injected) */
         this.resolveSession = options.resolveSession || (() => null);
         /** @type {Function} logger */
@@ -150,13 +154,38 @@ class FileAgentManager {
 
     _loadTokens() {
         try {
-            if (fs.existsSync(TOKEN_FILE)) {
-                const data = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
-                if (data && typeof data === 'object') {
-                    for (const [token, ownerId] of Object.entries(data)) {
-                        this.tokenBindings.set(token, ownerId);
-                    }
+            if (!fs.existsSync(TOKEN_FILE)) return;
+            const data = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
+            if (data && Array.isArray(data.tokens)) {
+                for (const item of data.tokens) {
+                    if (!item || !item.token || !item.ownerId) continue;
+                    this.tokenRecords.set(item.token, {
+                        id: item.id || `tok_${crypto.randomBytes(6).toString('hex')}`,
+                        ownerId: item.ownerId,
+                        name: item.name || '默认 Token',
+                        token: item.token,
+                        createdAt: Number(item.createdAt || Date.now()),
+                        updatedAt: Number(item.updatedAt || item.createdAt || Date.now()),
+                        lastUsedAt: item.lastUsedAt ? Number(item.lastUsedAt) : null,
+                    });
                 }
+                return;
+            }
+            // Backward compatibility: old format was { token: ownerId }.
+            if (data && typeof data === 'object') {
+                for (const [token, ownerId] of Object.entries(data)) {
+                    if (!token || !ownerId || typeof ownerId !== 'string') continue;
+                    this.tokenRecords.set(token, {
+                        id: `tok_${crypto.createHash('sha256').update(token).digest('hex').slice(0, 12)}`,
+                        ownerId,
+                        name: '默认 Token',
+                        token,
+                        createdAt: Date.now(),
+                        updatedAt: Date.now(),
+                        lastUsedAt: null,
+                    });
+                }
+                this._saveTokens();
             }
         } catch (err) {
             this.log('[file-agent] failed to load tokens:', err.message);
@@ -165,51 +194,132 @@ class FileAgentManager {
 
     _saveTokens() {
         try {
-            const obj = {};
-            for (const [token, ownerId] of this.tokenBindings) {
-                obj[token] = ownerId;
-            }
+            const tokens = [...this.tokenRecords.values()].map((t) => ({
+                id: t.id,
+                ownerId: t.ownerId,
+                name: t.name,
+                token: t.token,
+                createdAt: t.createdAt,
+                updatedAt: t.updatedAt,
+                lastUsedAt: t.lastUsedAt || null,
+            }));
             fs.mkdirSync(path.dirname(TOKEN_FILE), { recursive: true });
-            fs.writeFileSync(TOKEN_FILE, JSON.stringify(obj, null, 2));
+            fs.writeFileSync(TOKEN_FILE, JSON.stringify({ version: 2, tokens }, null, 2));
         } catch (err) {
             this.log('[file-agent] failed to save tokens:', err.message);
         }
     }
 
-    /** Generate or retrieve a file-agent token for a user. */
-    getOrCreateToken(ownerId) {
-        // Check if user already has a token
-        for (const [token, owner] of this.tokenBindings) {
-            if (owner === ownerId) return token;
-        }
-        // Generate new token
+    _newTokenRecord(ownerId, name) {
+        const now = Date.now();
         const token = crypto.randomBytes(24).toString('base64url');
-        this.tokenBindings.set(token, ownerId);
+        const record = {
+            id: `tok_${crypto.randomBytes(8).toString('hex')}`,
+            ownerId,
+            name: String(name || 'Zephyr Agent Token').trim().slice(0, 80) || 'Zephyr Agent Token',
+            token,
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: null,
+        };
+        this.tokenRecords.set(token, record);
         this._saveTokens();
-        return token;
+        return record;
     }
 
-    /** Regenerate token for a user (invalidates old one). */
-    regenerateToken(ownerId) {
-        // Remove old tokens for this user
-        for (const [token, owner] of this.tokenBindings) {
-            if (owner === ownerId) {
-                this.tokenBindings.delete(token);
-                // Disconnect any agents using this token
-                const agentIds = this.ownerAgents.get(ownerId);
-                if (agentIds) {
-                    for (const agentId of agentIds) {
-                        this.unregisterAgent(agentId, 'token_regenerated');
-                    }
-                }
-            }
+    listTokens(ownerId, { includeToken = true } = {}) {
+        return [...this.tokenRecords.values()]
+            .filter((t) => t.ownerId === ownerId)
+            .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+            .map((t) => ({
+                id: t.id,
+                name: t.name,
+                token: includeToken ? t.token : undefined,
+                createdAt: t.createdAt,
+                updatedAt: t.updatedAt,
+                lastUsedAt: t.lastUsedAt || null,
+            }));
+    }
+
+    createToken(ownerId, name) {
+        return this._newTokenRecord(ownerId, name);
+    }
+
+    findTokenRecord(ownerId, tokenId) {
+        return [...this.tokenRecords.values()].find((t) => t.ownerId === ownerId && t.id === tokenId) || null;
+    }
+
+    updateToken(ownerId, tokenId, patch = {}) {
+        const record = this.findTokenRecord(ownerId, tokenId);
+        if (!record) throw new AgentError('not_found', 'Token not found');
+        if (patch.name != null) {
+            record.name = String(patch.name || '').trim().slice(0, 80) || record.name;
         }
-        return this.getOrCreateToken(ownerId);
+        record.updatedAt = Date.now();
+        this._saveTokens();
+        return record;
+    }
+
+    deleteToken(ownerId, tokenId) {
+        const record = this.findTokenRecord(ownerId, tokenId);
+        if (!record) throw new AgentError('not_found', 'Token not found');
+        this.tokenRecords.delete(record.token);
+        this._disconnectAgentsForToken(ownerId, record.id, 'token_deleted');
+        this._saveTokens();
+    }
+
+    regenerateTokenRecord(ownerId, tokenId) {
+        const record = this.findTokenRecord(ownerId, tokenId);
+        if (!record) throw new AgentError('not_found', 'Token not found');
+        this.tokenRecords.delete(record.token);
+        this._disconnectAgentsForToken(ownerId, record.id, 'token_regenerated');
+        record.token = crypto.randomBytes(24).toString('base64url');
+        record.updatedAt = Date.now();
+        record.lastUsedAt = null;
+        this.tokenRecords.set(record.token, record);
+        this._saveTokens();
+        return record;
+    }
+
+    _disconnectAgentsForToken(ownerId, tokenId, reason) {
+        const agentIds = this.ownerAgents.get(ownerId);
+        if (!agentIds) return;
+        for (const agentId of [...agentIds]) {
+            const conn = this.agents.get(agentId);
+            if (conn && conn.tokenId === tokenId) this.unregisterAgent(agentId, reason);
+        }
+    }
+
+    /** Generate or retrieve a default file-agent token for legacy callers. */
+    getOrCreateToken(ownerId) {
+        const existing = this.listTokens(ownerId, { includeToken: true })[0];
+        return existing?.token || this._newTokenRecord(ownerId, '默认 Token').token;
+    }
+
+    /** Legacy regenerate: reset all tokens for this user and return a new default token. */
+    regenerateToken(ownerId) {
+        for (const record of [...this.tokenRecords.values()]) {
+            if (record.ownerId === ownerId) this.tokenRecords.delete(record.token);
+        }
+        const agentIds = this.ownerAgents.get(ownerId);
+        if (agentIds) {
+            for (const agentId of [...agentIds]) this.unregisterAgent(agentId, 'token_regenerated');
+        }
+        return this._newTokenRecord(ownerId, '默认 Token').token;
+    }
+
+    validateTokenRecord(token) {
+        const record = this.tokenRecords.get(token) || null;
+        if (record) {
+            record.lastUsedAt = Date.now();
+            this._saveTokens();
+        }
+        return record;
     }
 
     /** Validate a token and return the ownerId, or null if invalid. */
     validateToken(token) {
-        return this.tokenBindings.get(token) || null;
+        return this.validateTokenRecord(token)?.ownerId || null;
     }
 
     // ─── Agent Registration ──────────────────────────────────────────
@@ -294,11 +404,12 @@ class FileAgentManager {
         }
 
         // Validate token
-        const ownerId = this.validateToken(hello.token);
-        if (!ownerId) {
+        const tokenRecord = this.validateTokenRecord(hello.token);
+        if (!tokenRecord) {
             callback(new AgentError('unauthorized', 'Invalid token'));
             return;
         }
+        const ownerId = tokenRecord.ownerId;
 
         // Generate agentId from deviceId (stable) or random
         const agentId = hello.deviceId
@@ -315,6 +426,8 @@ class FileAgentManager {
 
         const conn = new FileAgentConnection(ws, agentId, hello);
         conn.ownerId = ownerId;
+        conn.tokenId = tokenRecord.id;
+        conn.tokenName = tokenRecord.name;
 
         // Register
         this.agents.set(agentId, conn);
@@ -514,6 +627,57 @@ class FileAgentManager {
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             const agents = this.listAgentsForUser(user.username);
             res.json({ ok: true, agents });
+        });
+
+        // GET /api/rdp/file-agent-tokens — list named agent tokens
+        app.get('/api/rdp/file-agent-tokens', requireAuth, (req, res) => {
+            const user = getSessionUser(req);
+            if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+            res.json({ ok: true, tokens: this.listTokens(user.username) });
+        });
+
+        // POST /api/rdp/file-agent-tokens — create named token
+        app.post('/api/rdp/file-agent-tokens', requireAuth, (req, res) => {
+            const user = getSessionUser(req);
+            if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+            const record = this.createToken(user.username, req.body?.name || 'Zephyr Agent Token');
+            res.json({ ok: true, token: this.listTokens(user.username).find((t) => t.id === record.id) });
+        });
+
+        // PATCH /api/rdp/file-agent-tokens/:tokenId — rename token
+        app.patch('/api/rdp/file-agent-tokens/:tokenId', requireAuth, (req, res) => {
+            const user = getSessionUser(req);
+            if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+            try {
+                const record = this.updateToken(user.username, req.params.tokenId, { name: req.body?.name });
+                res.json({ ok: true, token: this.listTokens(user.username).find((t) => t.id === record.id) });
+            } catch (err) {
+                res.status(err.code === 'not_found' ? 404 : 500).json({ ok: false, error: { code: err.code || 'internal_error', message: err.message } });
+            }
+        });
+
+        // POST /api/rdp/file-agent-tokens/:tokenId/regenerate — rotate one token
+        app.post('/api/rdp/file-agent-tokens/:tokenId/regenerate', requireAuth, (req, res) => {
+            const user = getSessionUser(req);
+            if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+            try {
+                const record = this.regenerateTokenRecord(user.username, req.params.tokenId);
+                res.json({ ok: true, token: this.listTokens(user.username).find((t) => t.id === record.id) });
+            } catch (err) {
+                res.status(err.code === 'not_found' ? 404 : 500).json({ ok: false, error: { code: err.code || 'internal_error', message: err.message } });
+            }
+        });
+
+        // DELETE /api/rdp/file-agent-tokens/:tokenId — delete one token
+        app.delete('/api/rdp/file-agent-tokens/:tokenId', requireAuth, (req, res) => {
+            const user = getSessionUser(req);
+            if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+            try {
+                this.deleteToken(user.username, req.params.tokenId);
+                res.json({ ok: true });
+            } catch (err) {
+                res.status(err.code === 'not_found' ? 404 : 500).json({ ok: false, error: { code: err.code || 'internal_error', message: err.message } });
+            }
         });
 
         // GET /api/rdp/file-agent-token — get or create agent token

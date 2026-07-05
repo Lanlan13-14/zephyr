@@ -11259,3 +11259,18 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         max-height: none;
     }
 }
+
+/* Zephyr Agent token settings */
+.agent-token-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0 14px; }
+.agent-token-list { display: grid; gap: 10px; margin-bottom: 18px; }
+.agent-token-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: color-mix(in srgb, var(--surface) 92%, var(--accent) 8%); }
+.agent-token-title { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.agent-token-title strong { color: var(--text); }
+.agent-token-title span { color: var(--text-secondary); font-size: 12px; }
+.agent-token-value { margin-top: 6px; max-width: 760px; overflow: auto; }
+.agent-token-value code, .copy-line code { display: inline-block; padding: 6px 8px; border-radius: 8px; background: color-mix(in srgb, var(--bg) 84%, var(--accent) 16%); color: var(--text); user-select: all; }
+.agent-token-meta { margin-top: 6px; color: var(--text-secondary); font-size: 12px; }
+.agent-token-buttons { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.agent-connect-info { display: grid; gap: 8px; max-width: 760px; }
+.copy-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+@media (max-width: 720px) { .agent-token-item { grid-template-columns: 1fr; } .agent-token-buttons { justify-content: flex-start; } }
