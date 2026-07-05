@@ -267,6 +267,12 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	return nil
 }
 
+var (
+	bitmapRGBABuf []byte
+	bitmapJSArr   js.Value
+	bitmapJSLen   int
+)
+
 func renderBitmaps(bs []grdp.Bitmap) {
 	uint8ClampedCtor := js.Global().Get("Uint8ClampedArray")
 	imageDataCtor := js.Global().Get("ImageData")
@@ -292,13 +298,13 @@ func renderBitmaps(bs []grdp.Bitmap) {
 			continue
 		}
 
-		rgba := make([]byte, w*h*4)
+		need := w * h * 4
+		if cap(bitmapRGBABuf) < need {
+			bitmapRGBABuf = make([]byte, need)
+		}
+		rgba := bitmapRGBABuf[:need]
+
 		if bm.BitsPerPixel == 4 {
-			// Fast path: bm.Data is BGRX/BGRA32. RDPGFX surfaces are commonly
-			// XRGB8888/BGRX8888, where the fourth byte is reserved rather than
-			// meaningful alpha. Canvas ImageData treats alpha literally, so copying
-			// that byte makes most pixels transparent (black background with random
-			// visible fragments). Always force opacity for remote desktop pixels.
 			srcStride := bm.Width * 4
 			dstStride := w * 4
 			for row := 0; row < h; row++ {
@@ -310,14 +316,13 @@ func renderBitmaps(bs []grdp.Bitmap) {
 				src := bm.Data[srcOff:]
 				dst := rgba[dstOff:]
 				for col := 0; col < w; col++ {
-					dst[col*4+0] = src[col*4+2] // R ← BGRX[2]
-					dst[col*4+1] = src[col*4+1] // G
-					dst[col*4+2] = src[col*4+0] // B ← BGRX[0]
-					dst[col*4+3] = 0xFF         // A: force opaque; source byte is often X
+					dst[col*4+0] = src[col*4+2]
+					dst[col*4+1] = src[col*4+1]
+					dst[col*4+2] = src[col*4+0]
+					dst[col*4+3] = 0xFF
 				}
 			}
 		} else {
-			// Slow path: bm.RGBA() converts any legacy bit-depth to RGBA.
 			m := bm.RGBA()
 			for row := 0; row < h; row++ {
 				src := m.Pix[row*m.Stride : row*m.Stride+w*4]
@@ -325,9 +330,12 @@ func renderBitmaps(bs []grdp.Bitmap) {
 			}
 		}
 
-		jsArr := uint8ClampedCtor.New(len(rgba))
-		js.CopyBytesToJS(jsArr, rgba)
-		imageData := imageDataCtor.New(jsArr, w, h)
+		if need != bitmapJSLen {
+			bitmapJSArr = uint8ClampedCtor.New(need)
+			bitmapJSLen = need
+		}
+		js.CopyBytesToJS(bitmapJSArr, rgba)
+		imageData := imageDataCtor.New(bitmapJSArr, w, h)
 		ctx2d.Call("putImageData", imageData, bm.DestLeft, bm.DestTop)
 	}
 }

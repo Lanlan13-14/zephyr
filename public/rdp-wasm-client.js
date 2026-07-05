@@ -909,7 +909,7 @@ function ensureCanvas(w, h) {
     }
     rdpCanvas.width = w;
     rdpCanvas.height = h;
-    rdpCtx2d = rdpCanvas.getContext('2d');
+    rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
     applyFitMode();
     attachInputEvents();
 }
@@ -1266,32 +1266,33 @@ function computeRdpSize() {
         const dpr = window.devicePixelRatio || 1;
         w = Math.round(cw * dpr);
         h = Math.round(ch * dpr);
-        const longEdge = Math.max(w, h);
-        const CAP = 3840;
-        if (longEdge > CAP) {
-            const s = CAP / longEdge;
-            w = Math.round(w * s);
-            h = Math.round(h * s);
-        }
     } else {
         /* Density tier: short edge = tier pixels, long edge = short / minRatio
          * so the SHORT dimension carries the tier's PPI and the region keeps
          * the container's exact shape. */
         const tierShort = { '1080p': 1080, '2K': 1440, '4K': 2160 }[res] || 1080;
-        const minRatio = Math.min(aspect, 1 / aspect); /* short/long ≤ 1 */
-        const longPx = Math.round(tierShort / minRatio);
         if (aspect >= 1) {
             /* landscape container: height is the short edge */
-            h = tierShort; w = longPx;
+            h = tierShort;
+            w = Math.round(h * aspect);
         } else {
             /* portrait container (phone): width is the short edge */
-            w = tierShort; h = longPx;
+            w = tierShort;
+            h = Math.round(w / aspect);
         }
     }
 
-    /* RDP requires even dimensions and sane bounds. */
-    w = Math.max(640, Math.min(7680, Math.floor(w / 2) * 2));
-    h = Math.max(480, Math.min(4320, Math.floor(h / 2) * 2));
+    /* Preserve aspect while respecting RDP/browser/server bounds. */
+    const maxW = 7680, maxH = 4320;
+    const capScale = Math.min(1, maxW / w, maxH / h);
+    if (capScale < 1) {
+        w = Math.round(w * capScale);
+        h = Math.round(h * capScale);
+    }
+
+    /* RDP requires even dimensions and sane minimums. */
+    w = Math.max(640, Math.floor(w / 2) * 2);
+    h = Math.max(480, Math.floor(h / 2) * 2);
     return { width: w, height: h };
 }
 
@@ -1415,45 +1416,62 @@ function initToolbar() {
 
     /* Shared: push current fillPanX/Y to the canvas (only meaningful in fill mode). */
     const applyFillPan = () => {
-        fillPanX = Math.max(0, Math.min(100, fillPanX));
-        fillPanY = Math.max(0, Math.min(100, fillPanY));
         if (rdpScaleZoom > 1 && displayShell) {
             const shellRect = displayShell.getBoundingClientRect();
-            const maxX = Math.max(0, (shellRect.width * (rdpScaleZoom - 1)) / (2 * rdpScaleZoom));
-            const maxY = Math.max(0, (shellRect.height * (rdpScaleZoom - 1)) / (2 * rdpScaleZoom));
-            zoomPanX = ((fillPanX - 50) / 50) * maxX;
-            zoomPanY = ((fillPanY - 50) / 50) * maxY;
+            const maxX = Math.max(0, (shellRect.width * (rdpScaleZoom - 1)) / 2);
+            const maxY = Math.max(0, (shellRect.height * (rdpScaleZoom - 1)) / 2);
+            zoomPanX = Math.max(-maxX, Math.min(maxX, ((fillPanX - 50) / 50) * maxX));
+            zoomPanY = Math.max(-maxY, Math.min(maxY, ((fillPanY - 50) / 50) * maxY));
             applyViewTransform();
         } else if (fitModes[fitModeIdx] === 'fill' && rdpCanvas) {
+            fillPanX = Math.max(0, Math.min(100, fillPanX));
+            fillPanY = Math.max(0, Math.min(100, fillPanY));
             rdpCanvas.style.objectPosition = fillPanX + '% ' + fillPanY + '%';
         }
     };
 
     if (joystickKnob && joystickContainer) {
         let joyDrag = null;
-        const joyRadius = 50; /* max drag distance in px */
+        let joyAnimFrame = null;
+        const joyRadius = 50;
+        let joyVX = 0, joyVY = 0;
+
+        const joyTick = () => {
+            if (!joyDrag) { joyAnimFrame = null; return; }
+            /* Accumulate pan based on knob deflection (velocity-mode).
+             * The further the knob is from center, the faster we pan. */
+            fillPanX += joyVX * 2.5;
+            fillPanY += joyVY * 2.5;
+            applyFillPan();
+            joyAnimFrame = requestAnimationFrame(joyTick);
+        };
+
         joystickKnob.addEventListener('pointerdown', (e) => {
             e.preventDefault();
             const rect = joystickContainer.getBoundingClientRect();
             const cx = rect.left + rect.width / 2;
             const cy = rect.top + rect.height / 2;
             joyDrag = { cx, cy };
+            joyVX = 0; joyVY = 0;
             try { joystickKnob.setPointerCapture(e.pointerId); } catch {}
+            if (!joyAnimFrame) joyAnimFrame = requestAnimationFrame(joyTick);
         });
         joystickKnob.addEventListener('pointermove', (e) => {
             if (!joyDrag) return;
             const dx = Math.max(-joyRadius, Math.min(joyRadius, e.clientX - joyDrag.cx));
             const dy = Math.max(-joyRadius, Math.min(joyRadius, e.clientY - joyDrag.cy));
             joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
-            /* Map knob position to viewport pan (0-100%) */
-            fillPanX = 50 + (dx / joyRadius) * 50;
-            fillPanY = 50 + (dy / joyRadius) * 50;
-            applyFillPan();
+            joyVX = dx / joyRadius;
+            joyVY = dy / joyRadius;
         });
         const joyEnd = () => {
             if (!joyDrag) return;
             joyDrag = null;
+            joyVX = 0; joyVY = 0;
+            if (joyAnimFrame) { cancelAnimationFrame(joyAnimFrame); joyAnimFrame = null; }
+            joystickKnob.classList.add('smooth-back');
             joystickKnob.style.transform = '';
+            setTimeout(() => joystickKnob.classList.remove('smooth-back'), 300);
         };
         joystickKnob.addEventListener('pointerup', joyEnd);
         joystickKnob.addEventListener('pointercancel', joyEnd);
