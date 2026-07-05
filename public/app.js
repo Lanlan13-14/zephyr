@@ -995,7 +995,34 @@ function base64urlToBuffer(value) { const s = String(value).replace(/-/g, '+').r
 function bufferToBase64url(buffer) { return btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
 
 function allTags() { return [...new Set(connections.flatMap((c) => c.tags || []))].sort(); }
-function refreshTagFilter() { const old = $('#tagFilter').value; $('#tagFilter').innerHTML = '<option value="all">全部标签</option>' + allTags().map((t) => `<option ${old === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join(''); }
+const CONNECTION_FILTER_KEY = 'zephyr.connection.filters.v1';
+function readConnectionFilters() {
+    try { return JSON.parse(localStorage.getItem(CONNECTION_FILTER_KEY) || '{}') || {}; } catch { return {}; }
+}
+function saveConnectionFilters() {
+    const data = {
+        q: $('#searchInput')?.value || '',
+        protocol: $('#protocolFilter')?.value || 'all',
+        tag: $('#tagFilter')?.value || 'all',
+        sort: $('#sortSelect')?.value || 'createdAt',
+    };
+    try { localStorage.setItem(CONNECTION_FILTER_KEY, JSON.stringify(data)); } catch {}
+}
+function restoreConnectionFilters() {
+    const data = readConnectionFilters();
+    if ($('#searchInput')) $('#searchInput').value = data.q || '';
+    if ($('#protocolFilter')) $('#protocolFilter').value = data.protocol || 'all';
+    if ($('#sortSelect')) $('#sortSelect').value = data.sort || 'createdAt';
+    if ($('#tagFilter')) $('#tagFilter').dataset.savedValue = data.tag || 'all';
+}
+function refreshTagFilter() {
+    const select = $('#tagFilter');
+    const old = select.dataset.savedValue || select.value || 'all';
+    select.innerHTML = '<option value="all">全部标签</option>' + allTags().map((t) => `<option ${old === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('');
+    if (old === 'all' || allTags().includes(old)) select.value = old;
+    else select.value = 'all';
+    delete select.dataset.savedValue;
+}
 function filteredConnections() {
     const q = $('#searchInput').value.trim().toLowerCase(), proto = $('#protocolFilter').value, tag = $('#tagFilter').value, sort = $('#sortSelect').value;
     const list = connections.filter((c) => [c.name, c.host, c.remark, c.username, (c.tags || []).join(' ')].join(' ').toLowerCase().includes(q) && (proto === 'all' || c.protocol === proto) && (tag === 'all' || (c.tags || []).includes(tag)));
@@ -5862,7 +5889,7 @@ function bindEvents() {
     $('#appThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#settingsThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#logoutBtn').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/'; });
     $('#addConnectionBtn').addEventListener('click', (e) => openModal(null, e.currentTarget)); $('#closeModalBtn').addEventListener('click', closeModal); $('#cancelModalBtn').addEventListener('click', closeModal); $('#toggleConnPassword').addEventListener('click', () => { const el = $('#connPassword'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleConnPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; }); $('#revealConnSecrets').addEventListener('click', () => revealConnectionSecrets().catch((err) => toast(err.message))); $$('.route-type-tab').forEach((btn) => btn.addEventListener('click', () => setRouteMode($('#connMode').value === btn.dataset.routeMode ? 'direct' : btn.dataset.routeMode))); $('#addJumpRouteBtn').addEventListener('click', addJumpRouteRow); $('#jumpRouteList').addEventListener('click', (e) => { if (!e.target.closest?.('[data-remove-jump-route]')) return; const ids = $$('#jumpRouteList [data-jump-route-select]').filter((el) => !el.closest('[data-jump-route-row]').contains(e.target)).map((el) => el.value).filter(Boolean); renderJumpRouteRows(ids); }); $('#testConnectionBtn').addEventListener('click', testConnection);
     $('#connProtocol').addEventListener('change', () => updateProtocolFields({ preservePort: false }));
-    $('#connectionForm').addEventListener('submit', saveConnection); ['searchInput', 'protocolFilter', 'tagFilter', 'sortSelect'].forEach((id) => $(`#${id}`).addEventListener('input', renderConnections));
+    $('#connectionForm').addEventListener('submit', saveConnection); restoreConnectionFilters(); ['searchInput', 'protocolFilter', 'tagFilter', 'sortSelect'].forEach((id) => { const el = $(`#${id}`); const handler = () => { saveConnectionFilters(); renderConnections(); }; el.addEventListener('input', handler); el.addEventListener('change', handler); });
     $('#connectionGrid').addEventListener('click', async (e) => {
         const edit = e.target.closest?.('[data-edit]')?.dataset.edit, del = e.target.closest?.('[data-delete]')?.dataset.delete, connect = e.target.closest?.('[data-connect]')?.dataset.connect;
         if (edit) openModal(connections.find((c) => c.id === edit), e.target.closest?.('[data-edit]'));
