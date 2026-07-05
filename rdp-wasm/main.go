@@ -143,6 +143,10 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	if oldClient != nil {
 		oldClient.Close()
 	}
+	// Clear file data cache on reconnect
+	fileDataCacheMu.Lock()
+	fileDataCache = nil
+	fileDataCacheMu.Unlock()
 
 	// Get canvas from DOM
 	canvas = js.Global().Get("document").Call("getElementById", "rdpCanvas")
@@ -426,6 +430,9 @@ func jsDisconnect(_ js.Value, _ []js.Value) any {
 	if c != nil {
 		c.Close()
 	}
+	fileDataCacheMu.Lock()
+	fileDataCache = nil
+	fileDataCacheMu.Unlock()
 	return nil
 }
 
@@ -534,6 +541,10 @@ func jsClipboardChanged(_ js.Value, args []js.Value) any {
 
 // jsNotifyFilesChanged tells the server that client has files available.
 func jsNotifyFilesChanged(_ js.Value, _ []js.Value) any {
+	// Clear cached file data since the file list changed
+	fileDataCacheMu.Lock()
+	fileDataCache = nil
+	fileDataCacheMu.Unlock()
 	clientMu.Lock()
 	c := rdpClient
 	clientMu.Unlock()

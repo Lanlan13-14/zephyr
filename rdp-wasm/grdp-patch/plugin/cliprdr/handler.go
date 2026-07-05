@@ -469,8 +469,9 @@ func (h *CliprdrHandler) processFileContentsResponse(body []byte, msgFlags uint1
 	}
 }
 
-// DownloadServerFile requests file data from server and returns it synchronously.
-// This blocks until the server responds. Index is into h.serverFiles.
+// DownloadServerFile requests file data from server and returns it.
+// For files > 64MB, issues multiple FILECONTENTS_RANGE requests.
+// This blocks until all chunks are received. Index is into h.serverFiles.
 func (h *CliprdrHandler) DownloadServerFile(index int) []byte {
 	if index < 0 || index >= len(h.serverFiles) {
 		return nil
@@ -480,29 +481,47 @@ func (h *CliprdrHandler) DownloadServerFile(index int) []byte {
 		return []byte{}
 	}
 
-	// Request FILECONTENTS_RANGE for the whole file
-	b := &bytes.Buffer{}
-	binary.Write(b, binary.LittleEndian, uint32(1))              // streamId
-	binary.Write(b, binary.LittleEndian, uint32(index))           // lindex
-	binary.Write(b, binary.LittleEndian, uint32(FILECONTENTS_RANGE))
-	binary.Write(b, binary.LittleEndian, uint32(0))               // posLow
-	binary.Write(b, binary.LittleEndian, uint32(0))               // posHigh
-	cbReq := f.Size
-	if cbReq > 64*1024*1024 {
-		cbReq = 64 * 1024 * 1024 // cap at 64MB per request
-	}
-	binary.Write(b, binary.LittleEndian, uint32(cbReq))
-	// clipDataId is only present when server advertised CB_CAN_LOCK_CLIPDATA.
-	// Sending it unconditionally adds 4 extra bytes that some Windows builds
-	// may misparse as the start of the next PDU.
-	if h.canLockClipData {
-		binary.Write(b, binary.LittleEndian, uint32(0))
-	}
-	h.sendPDU(CB_FILECONTENTS_REQUEST, 0, b.Bytes())
+	const chunkSize = 4 * 1024 * 1024 // 4MB per request — safe for all Windows versions
+	total := f.Size
+	result := make([]byte, 0, total)
+	var pos uint64
 
-	// Wait for response
-	data := <-h.fileDownloadCh
-	return data
+	for pos < total {
+		remaining := total - pos
+		reqLen := uint64(chunkSize)
+		if reqLen > remaining {
+			reqLen = remaining
+		}
+
+		b := &bytes.Buffer{}
+		binary.Write(b, binary.LittleEndian, uint32(1))                  // streamId
+		binary.Write(b, binary.LittleEndian, uint32(index))              // lindex
+		binary.Write(b, binary.LittleEndian, uint32(FILECONTENTS_RANGE))
+		binary.Write(b, binary.LittleEndian, uint32(pos))                // posLow
+		binary.Write(b, binary.LittleEndian, uint32(pos>>32))            // posHigh
+		binary.Write(b, binary.LittleEndian, uint32(reqLen))             // cbRequested
+		if h.canLockClipData {
+			binary.Write(b, binary.LittleEndian, uint32(0)) // clipDataId
+		}
+		h.sendPDU(CB_FILECONTENTS_REQUEST, 0, b.Bytes())
+
+		data := <-h.fileDownloadCh
+		if data == nil {
+			slog.Warn("cliprdr: DownloadServerFile chunk failed", "index", index, "pos", pos)
+			if len(result) > 0 {
+				return result // return partial data
+			}
+			return nil
+		}
+		result = append(result, data...)
+		pos += uint64(len(data))
+
+		// Server may return less than requested (end of file)
+		if uint64(len(data)) < reqLen {
+			break
+		}
+	}
+	return result
 }
 
 // GetServerFiles returns the list of files the server advertised.

@@ -2141,9 +2141,15 @@ function initFilePanel() {
         if (!fileList.length) return;
         let pending = fileList.length;
         const results = [];
+        const MAX_CROSS_TAB_SIZE = 100 * 1024 * 1024; // 100MB
         fileList.forEach((f) => {
             const entry = rdpStorageFiles.find(s => s.name === f.name);
             if (!entry || !entry.data) { pending--; return; }
+            if (entry.data.byteLength > MAX_CROSS_TAB_SIZE) {
+                setFilesHint(f.name + ' 太大（>' + (MAX_CROSS_TAB_SIZE / 1048576) + 'MB），无法通过剪贴板传输', 'warning');
+                pending--;
+                return;
+            }
             const blob = new Blob([entry.data]);
             const reader = new FileReader();
             reader.onload = () => {
