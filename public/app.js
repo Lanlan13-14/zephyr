@@ -161,7 +161,7 @@ function offerSharedClipboardToSshTargets(sourceTabId = '', files = []) {
         toast(names ? `已复制远程文件：${names}；打开 SSH 文件管理器后可粘贴` : '已复制远程文件');
         return;
     }
-    targets.forEach((target) => postToTerminalTab(target.id, { type: 'shared-file-clipboard-available', files, sourceTabId }));
+    targets.forEach((target) => postToTerminalTab(target.id, { type: 'shared-file-clipboard-available', files, sourceTabId, sourcePage: terminalPageForTab(sourceTabId) || 'rdp' }));
     toast(names ? `已复制 RDP 文件：${names}，可到 SSH 文件管理器粘贴` : '已复制 RDP 文件，可到 SSH 文件管理器粘贴');
 }
 function offerSharedClipboardToRdpTargets(sourceTabId = '', files = []) {
@@ -171,7 +171,7 @@ function offerSharedClipboardToRdpTargets(sourceTabId = '', files = []) {
         toast(names ? `已复制文件：${names}；打开 RDP 后可粘贴` : '已复制文件');
         return;
     }
-    targets.forEach((target) => postToTerminalTab(target.id, { type: 'shared-file-clipboard-available', files, sourceTabId }));
+    targets.forEach((target) => postToTerminalTab(target.id, { type: 'shared-file-clipboard-available', files, sourceTabId, sourcePage: 'rdp' }));
     toast(names ? `已复制文件：${names}，可到 RDP 远程桌面粘贴` : '已复制文件，可到 RDP 粘贴');
 }
 function handleSharedClipboardMessage(data = {}) {

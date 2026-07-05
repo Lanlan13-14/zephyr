@@ -1106,7 +1106,7 @@ window.addEventListener('message', (e) => {
         return;
     }
     if (e.data.type === 'shared-file-clipboard-available') {
-        handleSharedFileClipboardAvailable(e.data.files || [], String(e.data.sourceTabId || ''));
+        handleSharedFileClipboardAvailable(e.data.files || [], String(e.data.sourceTabId || ''), String(e.data.sourcePage || ''));
         return;
     }
     if (e.data.type === 'shared-file-clipboard-data') {
@@ -4322,40 +4322,40 @@ function uploadFile(file) {
     });
 }
 
-function handleSharedFileClipboardAvailable(files = [], sourceTabId = '') {
+function handleSharedFileClipboardAvailable(files = [], sourceTabId = '', sourcePage = '') {
     const list = Array.from(files || []);
     if (!list.length) return;
     sftpClipboardAvailable = true;
     pendingSharedFileSource = sourceTabId;
     pendingSharedFileMeta = list;
+    pendingSharedFileSourcePage = sourcePage;
     updateMobileFileActions();
     const names = list.map((f) => f.name || String(f.path || '').split('/').pop() || 'file').slice(0, 3).join('、');
     showToast(`剪贴板有 ${list.length} 个文件（${names}），右键粘贴或 Ctrl+V 传输到 ${currentPath}`, 'info');
 }
 let pendingSharedFileSource = '';
 let pendingSharedFileMeta = [];
+let pendingSharedFileSourcePage = '';
 function consumePendingSharedFiles() {
-    // If the clipboard source is another tab (RDP) with dataUrl files,
-    // request the actual file data via the parent relay instead of
-    // server-side SFTP paste (which only works for SSH→SSH).
     if (pendingSharedFileMeta.length && pendingSharedFileSource) {
-        const hasDataUrl = pendingSharedFileMeta.some((f) => f.dataUrl);
-        const hasRemotePath = pendingSharedFileMeta.some((f) => f.remotePath || f.path);
-        if (hasDataUrl) {
-            // RDP source with dataUrl — data is already in the parent's
-            // shared clipboard; consume to get it forwarded as
-            // shared-file-clipboard-data with actual file content.
+        const isRdpSource = pendingSharedFileSourcePage === 'rdp' || pendingSharedFileSourcePage === 'novnc';
+        if (isRdpSource) {
+            /* RDP/VNC source — files are in the other tab's browser memory.
+             * Send consume so app.js relays shared-file-clipboard-read to the
+             * source tab, which uploads via /api/clipboard/upload and returns
+             * transitUrl for us to download. */
             window.parent?.postMessage?.({
                 source: 'zephyr-terminal',
                 type: 'shared-file-clipboard-consume',
                 tabId: params?.tabId,
                 sourceTabId: pendingSharedFileSource,
                 files: pendingSharedFileMeta,
-                sourcePage: 'rdp',
+                sourcePage: pendingSharedFileSourcePage,
             }, '*');
             showToast(`正在从远程桌面获取文件并上传到 ${currentPath}`, 'info');
             pendingSharedFileSource = '';
             pendingSharedFileMeta = [];
+            pendingSharedFileSourcePage = '';
             return true;
         }
     }
