@@ -430,6 +430,7 @@ func jsDisconnect(_ js.Value, _ []js.Value) any {
 	clientMu.Lock()
 	c := rdpClient
 	rdpClient = nil
+	rdpefsHandler = nil
 	connectGen++
 	clientMu.Unlock()
 	if c != nil {

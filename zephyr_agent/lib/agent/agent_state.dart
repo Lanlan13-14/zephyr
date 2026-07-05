@@ -31,6 +31,7 @@ class AgentConfig {
   bool readOnly;
   bool autoShutdown;
   int autoShutdownMinutes;
+  bool allowBadCertificates;
 
   AgentConfig({
     this.serverUrl = '',
@@ -41,6 +42,7 @@ class AgentConfig {
     this.readOnly = true,
     this.autoShutdown = true,
     this.autoShutdownMinutes = 10,
+    this.allowBadCertificates = true,
   });
 
   Map<String, dynamic> toJson() => {
@@ -52,6 +54,7 @@ class AgentConfig {
     'readOnly': readOnly,
     'autoShutdown': autoShutdown,
     'autoShutdownMinutes': autoShutdownMinutes,
+    'allowBadCertificates': allowBadCertificates,
   };
 
   factory AgentConfig.fromJson(Map<String, dynamic> json) => AgentConfig(
@@ -63,5 +66,6 @@ class AgentConfig {
     readOnly: json['readOnly'] as bool? ?? true,
     autoShutdown: json['autoShutdown'] as bool? ?? true,
     autoShutdownMinutes: json['autoShutdownMinutes'] as int? ?? 10,
+    allowBadCertificates: json['allowBadCertificates'] as bool? ?? true,
   );
 }

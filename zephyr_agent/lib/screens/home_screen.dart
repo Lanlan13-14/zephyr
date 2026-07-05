@@ -55,11 +55,8 @@ class _HomeScreenState extends State<HomeScreen> {
   ZephyrPalette get _palette => ZephyrColors.palette(widget.currentTheme, Theme.of(context).brightness);
 
   void _saveConfig(AgentController ctrl) {
-    var url = _urlCtrl.text.trim();
-    if (url.isNotEmpty && !url.contains('://')) {
-      url = 'https://$url';
-      _urlCtrl.text = url;
-    }
+    final url = AgentController.normalizeServerUrl(_urlCtrl.text);
+    if (_urlCtrl.text.trim() != url) _urlCtrl.text = url;
     ctrl.config.serverUrl = url;
     ctrl.config.token = _tokenCtrl.text.trim();
     ctrl.config.deviceName = _nameCtrl.text.trim();
@@ -87,7 +84,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _applyDefaultSharePath(AgentConfig config) {
-    if (config.sharedDirectoryPath != null || io.Platform.isIOS) return;
+    if (config.sharedDirectoryPath != null) return;
+    if (io.Platform.isIOS) {
+      final home = io.Platform.environment['HOME'] ?? '';
+      final docs = home.isNotEmpty ? '$home/Documents' : io.Directory.systemTemp.path;
+      try { io.Directory(docs).createSync(recursive: true); } catch (_) {}
+      config.sharedDirectoryPath = docs;
+      config.sharedDirectoryName = 'Documents';
+      return;
+    }
     if (io.Platform.isAndroid) {
       config.sharedDirectoryPath = '/storage/emulated/0';
       config.sharedDirectoryName = 'Internal storage';

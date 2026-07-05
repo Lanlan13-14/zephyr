@@ -3991,9 +3991,35 @@ function clearAiSessionRun(sessionId, controller = null) {
 }
 function updateAiRunUiForCurrentSession() { setAiTyping(aiIsSessionRunning(aiCurrentSessionId)); }
 function aiCodeItem(id = '') { return aiCodeBlockStore.get(String(id || '')) || null; }
+async function copyTextToClipboard(text = '', successMessage = '已复制') {
+    const value = String(text || '');
+    let copied = false;
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+        try {
+            await navigator.clipboard.writeText(value);
+            copied = true;
+        } catch (_) {}
+    }
+    if (!copied) {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        ta.style.top = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ta.setSelectionRange(0, ta.value.length);
+        try { copied = document.execCommand('copy'); } catch (_) { copied = false; }
+        ta.remove();
+    }
+    if (!copied) throw new Error('浏览器拒绝剪贴板写入，请手动长按复制');
+    toast(successMessage);
+}
+
 async function aiCopyText(text = '') {
-    try { await navigator.clipboard.writeText(String(text || '')); toast('已复制'); }
-    catch (_) { const ta = document.createElement('textarea'); ta.value = String(text || ''); document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('已复制'); }
+    await copyTextToClipboard(text, '已复制');
 }
 function aiDownloadTextFile(item) {
     if (!item) return;
@@ -6265,13 +6291,15 @@ function formatAgentTokenTime(ms) {
     try { return new Date(Number(ms)).toLocaleString(); } catch { return '未知'; }
 }
 
+const agentRevealedTokens = new Map();
+
 async function loadAgentTokens() {
     const list = $('#agentTokenList');
     if (!list) return;
     list.innerHTML = '<p class="empty-state">正在加载...</p>';
     try {
         const data = await api('/api/rdp/file-agent-tokens');
-        renderAgentTokens(data.tokens || []);
+        renderAgentTokens(data.tokens || [], agentRevealedTokens);
     } catch (err) {
         list.innerHTML = `<p class="empty-state">加载失败：${escapeHtml(err.message || 'unknown')}</p>`;
     }
@@ -6320,13 +6348,15 @@ function currentAgentTokenLength() {
 }
 
 async function refreshAgentTokensKeeping(tokenRecord) {
-    const tokens = tokenRecord ? [tokenRecord] : [];
-    if (tokenRecord?.id && tokenRecord?.token) renderAgentTokens(tokens, new Map([[tokenRecord.id, tokenRecord.token]]));
+    if (tokenRecord?.id && tokenRecord?.token) {
+        agentRevealedTokens.set(tokenRecord.id, tokenRecord.token);
+        renderAgentTokens([tokenRecord], agentRevealedTokens);
+    }
     try {
         const data = await api('/api/rdp/file-agent-tokens');
         const list = Array.isArray(data.tokens) ? data.tokens : [];
         if (tokenRecord?.id && !list.some((t) => t.id === tokenRecord.id)) list.unshift(tokenRecord);
-        renderAgentTokens(list, tokenRecord?.id && tokenRecord?.token ? new Map([[tokenRecord.id, tokenRecord.token]]) : new Map());
+        renderAgentTokens(list, agentRevealedTokens);
     } catch (err) {
         if (!tokenRecord?.id) throw err;
         toast(`列表刷新失败，已显示新 Token：${err.message || 'unknown'}`);
@@ -6369,18 +6399,21 @@ async function deleteAgentToken(id) {
 }
 
 async function revealAgentToken(id, { copy = false } = {}) {
-    const secret = requestSensitiveSecret(copy ? '复制 Zephyr Agent Token' : '查看 Zephyr Agent Token');
-    const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/open`, {
-        method: 'POST',
-        body: JSON.stringify({ secret }),
-    });
-    const token = data.token?.token || '';
-    if (!token) throw new Error('Token 为空');
+    let token = agentRevealedTokens.get(id) || '';
+    if (!token) {
+        const secret = requestSensitiveSecret(copy ? '复制 Zephyr Agent Token' : '查看 Zephyr Agent Token');
+        const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/open`, {
+            method: 'POST',
+            body: JSON.stringify({ secret }),
+        });
+        token = data.token?.token || '';
+        if (!token) throw new Error('Token 为空');
+        agentRevealedTokens.set(id, token);
+    }
     const code = document.querySelector(`[data-token-id="${CSS.escape(id)}"] .agent-token-value code`);
-    if (code && !copy) code.textContent = token;
+    if (code) code.textContent = token;
     if (copy) {
-        await navigator.clipboard.writeText(token);
-        toast('Token 已复制');
+        await copyTextToClipboard(token, 'Token 已复制');
     } else {
         toast('Token 已显示');
     }
@@ -6410,8 +6443,11 @@ function setupAgentTokenSettings() {
     $('#agentRefreshTokenBtn')?.addEventListener('click', () => loadAgentTokens());
     $('#agentResetAllTokenBtn')?.addEventListener('click', () => resetAllAgentTokens().catch((err) => toast(err.message || '重置失败')));
     $('#agentCopyServerUrlBtn')?.addEventListener('click', async () => {
-        await navigator.clipboard.writeText(currentAgentServerUrl());
-        toast('主端地址已复制');
+        try {
+            await copyTextToClipboard(currentAgentServerUrl(), '主端地址已复制');
+        } catch (err) {
+            toast(err.message || '复制失败');
+        }
     });
     $('#agentTokenList')?.addEventListener('click', (e) => {
         const reveal = e.target.dataset.agentRevealToken;

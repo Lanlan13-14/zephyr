@@ -461,7 +461,7 @@
                 <div class="rdp-toggle-row"><span>剪贴板</span><label class="rdp-toggle"><input type="checkbox" id="rdpClipboard" checked><span class="rdp-toggle-slider"></span></label></div>
                 <div class="rdp-toggle-row"><span>麦克风</span><label class="rdp-toggle"><input type="checkbox" id="rdpMicrophone"><span class="rdp-toggle-slider"></span></label></div>
                 <div class="rdp-toggle-row"><span>摄像头</span><label class="rdp-toggle"><input type="checkbox" id="rdpCamera"><span class="rdp-toggle-slider"></span></label></div>
-                <div class="rdp-toggle-row" style="opacity:0.45;pointer-events:none"><span>存储（磁盘映射）<em style="font-size:0.8em;color:var(--text-secondary,#888);margin-left:6px">开发中</em></span><label class="rdp-toggle"><input type="checkbox" id="rdpStorage" disabled><span class="rdp-toggle-slider"></span></label></div>
+                <div class="rdp-toggle-row"><span>Zephyr Agent 存储（磁盘映射）<em style="font-size:0.8em;color:var(--text-secondary,#888);margin-left:6px">需 Agent 在线</em></span><label class="rdp-toggle"><input type="checkbox" id="rdpStorage"><span class="rdp-toggle-slider"></span></label></div>
                 <div class="rdp-toggle-row"><span>位置</span><label class="rdp-toggle"><input type="checkbox" id="rdpLocation"><span class="rdp-toggle-slider"></span></label></div>
                 <h3 style="margin-top:16px">显示</h3>
                 <div class="advanced-route-divider"></div>
@@ -475,6 +475,6 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260705-agent-token-visible" type="module"></script>
+    <script src="app.js?v=20260705-agent-token-api-fix" type="module"></script>
 </body>
 </html>

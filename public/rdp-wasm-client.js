@@ -11,11 +11,20 @@
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
 import { RdpTouchController } from './rdp-touch.js?v=20260704';
+import {
+    subscribeAgentEvents,
+    unsubscribeAgentEvents,
+    syncAgentDrives,
+    detachAllDrives,
+    resetAttachedDriveState,
+} from './rdp-fs-provider.js?v=20260705-agent-drive-fix';
 
 const $ = (sel) => document.querySelector(sel);
 const urlParams = new URLSearchParams(location.search);
 const embeddedMode = urlParams.get('embed') === '1';
 const tabId = urlParams.get('tabId') || '';
+const boolSetting = (value) => value === true || value === 'true' || value === 1 || value === '1';
+const notFalseSetting = (value) => value !== false && value !== 'false' && value !== 0 && value !== '0';
 
 /* ─── DOM refs ─────────────────────────────────────────────────────────── */
 const statusDot = $('#statusDot');
@@ -54,6 +63,8 @@ let lastUserInputAt = 0;
 let rdpClipboardEnabled = true;
 let rdpTouchController = null;
 let rdpLocationWatchId = null;
+let rdpAgentDriveEventsActive = false;
+let rdpAgentStorageEnabled = false;
 
 /* Canvas & scaling */
 let rdpCanvas = null;
@@ -144,12 +155,14 @@ window.rdpOnReady = function () {
     rdpReconnecting = false;
     notifyParentStatus('connected');
     if (rdpCanvas) rdpCanvas.focus();
+    if (rdpAgentStorageEnabled) syncAgentDrives({ enabled: true });
 };
 
 /* Called by Go on error */
 window.rdpOnError = function (msg) {
     console.warn('[rdp-wasm] error:', msg);
     clearConnectWatchdog();
+    stopAgentDriveBridge();
     if (connected) {
         setStatus('error', `RDP 错误: ${msg}`);
         connected = false;
@@ -165,6 +178,7 @@ window.rdpOnError = function (msg) {
 window.rdpOnClose = function () {
     console.info('[rdp-wasm] connection closed');
     clearConnectWatchdog();
+    stopAgentDriveBridge();
     const wasConnected = connected;
     connected = false;
     if (wasConnected) {
@@ -741,6 +755,28 @@ function startConnectWatchdog() {
     }, CONNECT_TIMEOUT_MS);
 }
 
+function startAgentDriveBridge() {
+    if (rdpAgentDriveEventsActive) {
+        syncAgentDrives({ enabled: true });
+        return;
+    }
+    rdpAgentDriveEventsActive = true;
+    subscribeAgentEvents((agents) => {
+        console.info('[rdp-fs] online agents:', Array.isArray(agents) ? agents.length : 0);
+        syncAgentDrives({ enabled: rdpAgentStorageEnabled });
+    });
+    syncAgentDrives({ enabled: true });
+}
+
+function stopAgentDriveBridge() {
+    if (rdpAgentDriveEventsActive) {
+        unsubscribeAgentEvents();
+        rdpAgentDriveEventsActive = false;
+    }
+    try { detachAllDrives(); } catch {}
+    resetAttachedDriveState();
+}
+
 function reconnectWithSettings() {
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     clearConnectWatchdog();
@@ -752,6 +788,7 @@ function reconnectWithSettings() {
      * tear down before starting a fresh connection. Without this gap the new
      * connect races the old close and the proxy/WASM state machine jams. */
     try { rdpDisconnect(); } catch {}
+    stopAgentDriveBridge();
     cleanupH264();
     if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; audioNextAt = 0; }
     setTimeout(() => {
@@ -768,6 +805,7 @@ async function connect() {
 
     /* Clean up any lingering state (safe to call even if already clean). */
     try { rdpDisconnect(); } catch {}
+    stopAgentDriveBridge();
     rdpManualDisconnect = false;
     cleanupH264();
     rdpAudinStopInternal();
@@ -801,7 +839,8 @@ async function connect() {
     const connectionId = params.connectionId || urlParams.get('connectionId') || '';
     let host, port, domain, user, password;
     let rdpSoundMode = 'local';
-    let rdpClipboardEnabled = true;
+    rdpClipboardEnabled = true;
+    let storageEnabled = boolSetting(params.rdpStorage);
 
     if (connectionId) {
         try {
@@ -822,7 +861,8 @@ async function connect() {
             password = cred.password || '';
             /* Apply RDP settings from server */
             rdpSoundMode = cred.rdpSoundMode || params.rdpSoundMode || 'local';
-            rdpClipboardEnabled = cred.rdpClipboard !== false && params.rdpClipboard !== false;
+            rdpClipboardEnabled = notFalseSetting(cred.rdpClipboard) && notFalseSetting(params.rdpClipboard);
+            storageEnabled = boolSetting(cred.rdpStorage) || boolSetting(params.rdpStorage);
         } catch (err) {
             setStatus('error', `获取 RDP 凭据失败: ${err.message}`);
             return;
@@ -834,7 +874,8 @@ async function connect() {
         user = params.username || 'Administrator';
         password = params.password || '';
         rdpSoundMode = params.rdpSoundMode || 'local';
-        rdpClipboardEnabled = params.rdpClipboard !== false;
+        rdpClipboardEnabled = notFalseSetting(params.rdpClipboard);
+        storageEnabled = boolSetting(params.rdpStorage);
     }
 
     /* Apply sound mode setting */
@@ -842,6 +883,8 @@ async function connect() {
         cleanupAudio();
         audioCtx = null;
     }
+
+    rdpAgentStorageEnabled = !!storageEnabled;
 
     /* ── Certificate verification dialog ── */
     if (connectionId && !isCertTrusted(connectionId)) {
@@ -857,6 +900,7 @@ async function connect() {
                 const accepted = await showCertDialog(certInfo, connectionId);
                 if (!accepted) {
                     setStatus('disconnected', '已取消连接');
+                    stopAgentDriveBridge();
                     cleanupAudio();
                     cleanupH264();
                     notifyParentCloseRequest('cert-rejected');
@@ -876,7 +920,9 @@ async function connect() {
      * mode disables expensive visuals. */
     const wallpaperOn = qualityMode !== 'performance';
     startConnectWatchdog();
-    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, !!params.rdpStorage, !!params.rdpCamera, hasWebCodecs, wallpaperOn);
+    if (rdpAgentStorageEnabled) startAgentDriveBridge();
+    else stopAgentDriveBridge();
+    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera, hasWebCodecs, wallpaperOn);
 }
 
 function disconnect() {
@@ -886,6 +932,7 @@ function disconnect() {
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     connected = false;
     try { rdpDisconnect(); } catch {}
+    stopAgentDriveBridge();
     cleanupH264();
     cleanupAudio();
     rdpAudinStopInternal();

@@ -16,6 +16,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import java.util.UUID
 
 class MainActivity : FlutterActivity() {
@@ -28,6 +29,8 @@ class MainActivity : FlutterActivity() {
         val uri: Uri,
         val mode: String,
         val pfd: ParcelFileDescriptor? = null,
+        val stream: FileOutputStream? = null,
+        val channel: FileChannel? = null,
     )
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
@@ -172,15 +175,24 @@ class MainActivity : FlutterActivity() {
         val root = root(call)
         val path = call.argument<String>("path") ?: throw SafException("invalid_path", "Missing path")
         val mode = call.argument<String>("mode") ?: "read"
-        val doc = if (mode == "write") {
+        val wantsWrite = mode == "write" || mode == "writeTruncate"
+        val doc = if (wantsWrite) {
             resolveOrCreateFile(root, path)
         } else {
             resolve(root, path) ?: throw SafException("not_found", "File not found: $path")
         }
         if (doc.isDirectory) throw SafException("is_directory", "Cannot open directory as file")
         val handle = "h_${UUID.randomUUID().toString().replace("-", "").take(12)}"
-        val pfd = if (mode == "write") contentResolver.openFileDescriptor(doc.uri, "rw") else null
-        handles[handle] = SafHandle(doc.uri, mode, pfd)
+        if (wantsWrite) {
+            val pfd = contentResolver.openFileDescriptor(doc.uri, "rw")
+                ?: throw SafException("io_error", "Cannot open file for write")
+            val stream = FileOutputStream(pfd.fileDescriptor)
+            val channel = stream.channel
+            if (mode == "writeTruncate") channel.truncate(0)
+            handles[handle] = SafHandle(doc.uri, mode, pfd, stream, channel)
+        } else {
+            handles[handle] = SafHandle(doc.uri, mode)
+        }
         result.success(handle)
     }
 
@@ -208,9 +220,7 @@ class MainActivity : FlutterActivity() {
         val offset = numberArg(call, "offset").toLong()
         val data = call.argument<ByteArray>("data") ?: ByteArray(0)
         val handle = handles[handleId] ?: throw SafException("not_found", "Invalid handle")
-        val pfd = handle.pfd ?: contentResolver.openFileDescriptor(handle.uri, "rw")
-        val stream = FileOutputStream(pfd!!.fileDescriptor)
-        val channel = stream.channel
+        val channel = handle.channel ?: throw SafException("invalid_handle", "Handle is not writable")
         channel.position(offset)
         channel.write(ByteBuffer.wrap(data))
         channel.force(true)
@@ -220,6 +230,8 @@ class MainActivity : FlutterActivity() {
     private fun close(call: MethodCall, result: MethodChannel.Result) {
         val handleId = call.argument<String>("handle") ?: return result.success(null)
         val handle = handles.remove(handleId)
+        handle?.channel?.close()
+        handle?.stream?.close()
         handle?.pfd?.close()
         result.success(null)
     }

@@ -4110,10 +4110,17 @@ app.get('/api/rdp/h264-debug', (req, res) => {
     res.json(_h264DebugLog || { empty: true });
 });
 
+/* Mount file-agent REST API routes before the SPA catch-all. GET routes like
+ * /api/rdp/file-agent-tokens must not be swallowed by app.get('*'). */
+fileAgentManager.mountRoutes(app, requireAuth, (req) => req.session, verifySensitiveAccess);
+
 app.get('/healthz', (req, res) => res.status(200).send('OK'));
 
 // 兜底路由
 app.get('*', (req, res) => {
+    if (req.url.startsWith('/api/')) {
+        return res.status(404).json({ ok: false, error: { code: 'not_found', message: 'API endpoint not found' } });
+    }
     if (req.url.startsWith('/vendor') || req.url.startsWith('/ssh')) {
         return res.status(404).end();
     }
@@ -4181,8 +4188,7 @@ agentFilesWss.on('connection', (ws) => {
     fileAgentManager.handleConnection(ws);
 });
 
-/* Mount file-agent REST API routes */
-fileAgentManager.mountRoutes(app, requireAuth, (req) => req.session, verifySensitiveAccess);
+/* File-agent REST routes are mounted before the SPA catch-all above. */
 
 function closeWebSocketSafe(ws, code = 1000, reason = '') {
     try {

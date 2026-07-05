@@ -50,7 +50,18 @@ if 'signingConfigs {' not in s:
 manifest=Path('android/app/src/main/AndroidManifest.xml')
 m=manifest.read_text()
 m=m.replace('android:label="zephyr_agent"', 'android:label="Zephyr Agent"')
-m=m.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">', '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />')
+permissions = [
+    '<uses-permission android:name="android.permission.INTERNET" />',
+    '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+    '<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />',
+    '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />',
+    '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />',
+]
+marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+for line in reversed(permissions):
+    name = re.search(r'android:name="([^"]+)"', line).group(1)
+    if f'android:name="{name}"' not in m:
+        m = m.replace(marker, marker + '\n    ' + line, 1)
 m=m.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@drawable/zephyr_agent_icon_frost"')
 # MainActivity must not be a launcher entry. Launcher icon switching is implemented
 # exclusively through activity-alias entries below; leaving Flutter's default

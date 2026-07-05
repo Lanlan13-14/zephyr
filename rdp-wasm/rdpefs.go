@@ -704,7 +704,11 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 				}
 			} else {
 				// Open for write → open in write mode on agent
-				handle := h.callAgentOpen(agentID, path, "write")
+				mode := "write"
+				if createDisposition == FILE_OVERWRITE || createDisposition == FILE_OVERWRITE_IF || createDisposition == FILE_SUPERSEDE {
+					mode = "writeTruncate"
+				}
+				handle := h.callAgentOpen(agentID, path, mode)
 				if handle == "" {
 					h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
 					return
@@ -746,6 +750,9 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 	mode := "read"
 	if isWriteDisp && !readOnly {
 		mode = "write"
+		if createDisposition == FILE_OVERWRITE || createDisposition == FILE_OVERWRITE_IF || createDisposition == FILE_SUPERSEDE {
+			mode = "writeTruncate"
+		}
 	}
 
 	remoteHandle := ""

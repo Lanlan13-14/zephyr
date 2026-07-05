@@ -18,6 +18,11 @@ d=plistlib.loads(p.read_bytes())
 d['CFBundleDisplayName']='Zephyr Agent'
 d['CFBundleName']='Zephyr Agent'
 d['CFBundleIdentifier']='com.zephyr.agent'
+d['NSLocalNetworkUsageDescription']='Zephyr Agent 需要访问局域网中的 Zephyr 主端以建立文件系统代理连接。'
+d['NSAppTransportSecurity'] = {
+    **(d.get('NSAppTransportSecurity') if isinstance(d.get('NSAppTransportSecurity'), dict) else {}),
+    'NSAllowsLocalNetworking': True,
+}
 d['CFBundleIcons'] = {
     'CFBundlePrimaryIcon': {'CFBundleIconName': 'AppIcon'},
     'CFBundleAlternateIcons': {
@@ -42,6 +47,7 @@ elif [ "$platform" = "macos" ]; then
   cp -R platform_assets/macos/AppIcon.appiconset macos/Runner/Assets.xcassets/AppIcon.appiconset
   python3 - <<'PY'
 from pathlib import Path
+import plistlib
 for rel in ['macos/Runner/Configs/AppInfo.xcconfig','macos/Runner/Info.plist']:
     p=Path(rel)
     if not p.exists():
@@ -53,6 +59,14 @@ for rel in ['macos/Runner/Configs/AppInfo.xcconfig','macos/Runner/Info.plist']:
     s=s.replace('PRODUCT_BUNDLE_IDENTIFIER = com.zephyr.zephyr_agent', 'PRODUCT_BUNDLE_IDENTIFIER = com.zephyr.agent')
     s=s.replace('<string>zephyr_agent</string>', '<string>Zephyr Agent</string>')
     p.write_text(s)
+for rel in ['macos/Runner/DebugProfile.entitlements','macos/Runner/Release.entitlements']:
+    p=Path(rel)
+    if not p.exists():
+        continue
+    d=plistlib.loads(p.read_bytes())
+    d['com.apple.security.app-sandbox'] = False
+    d['com.apple.security.network.client'] = True
+    p.write_bytes(plistlib.dumps(d))
 PY
 else
   echo "usage: sh tool/prepare_apple.sh ios|macos" >&2

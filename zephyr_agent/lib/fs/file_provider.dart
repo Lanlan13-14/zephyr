@@ -126,9 +126,15 @@ class DesktopFileProvider extends ZephyrFileProvider {
     final resolved = _resolve(path);
     final file = io.File(resolved);
 
-    if (mode == 'write') {
+    final wantsWrite = mode == 'write' || mode == 'writeTruncate';
+    io.File? preservedCopy;
+    if (wantsWrite) {
       await file.parent.create(recursive: true);
-      if (!await file.exists()) {
+      if (await file.exists()) {
+        if (mode == 'write') {
+          preservedCopy = await file.copy('$resolved.zephyr-agent-preserve-${_uuid.v4()}');
+        }
+      } else {
         await file.create();
       }
     }
@@ -137,8 +143,23 @@ class DesktopFileProvider extends ZephyrFileProvider {
       throw FileProviderException('not_found', 'File not found: $path');
     }
 
-    final fileMode = mode == 'write' ? io.FileMode.write : io.FileMode.read;
+    final fileMode = wantsWrite ? io.FileMode.write : io.FileMode.read;
     final raf = await file.open(mode: fileMode);
+    if (preservedCopy != null) {
+      io.RandomAccessFile? src;
+      try {
+        src = await preservedCopy.open(mode: io.FileMode.read);
+        while (true) {
+          final chunk = await src.read(1024 * 1024);
+          if (chunk.isEmpty) break;
+          await raf.writeFrom(chunk);
+        }
+        await raf.setPosition(0);
+      } finally {
+        await src?.close();
+        try { await preservedCopy.delete(); } catch (_) {}
+      }
+    }
     final handle = 'h_${_uuid.v4().substring(0, 8)}';
     _openFiles[handle] = raf;
     return handle;

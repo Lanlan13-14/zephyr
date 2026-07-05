@@ -88,18 +88,55 @@ class AgentController extends ChangeNotifier {
     await _disconnect();
   }
 
+  static String normalizeServerUrl(String input) {
+    var value = input.trim();
+    if (value.isEmpty) return '';
+    if (value.startsWith('wss://')) value = 'https://${value.substring(6)}';
+    if (value.startsWith('ws://')) value = 'http://${value.substring(5)}';
+    if (!value.contains('://')) value = 'https://$value';
+    final uri = Uri.parse(value);
+    if (!uri.hasScheme || uri.host.isEmpty) return value.replaceAll(RegExp(r'/+$'), '');
+    return uri.replace(path: '', query: '', fragment: '').toString().replaceAll(RegExp(r'/+$'), '');
+  }
+
+  static Uri agentWebSocketUriForServerUrl(String serverUrl) {
+    final normalized = normalizeServerUrl(serverUrl);
+    final uri = Uri.parse(normalized);
+    final wsScheme = uri.scheme == 'http' ? 'ws' : 'wss';
+    return uri.replace(scheme: wsScheme, path: '/agent/files', query: '', fragment: '');
+  }
+
+  String _friendlyConnectionError(Object error) {
+    final raw = error.toString();
+    if (raw.contains('Operation not permitted')) {
+      return '网络连接被系统拒绝：Android 构建缺 INTERNET 权限或系统网络策略阻止。请安装修复后的新版 Zephyr Agent。';
+    }
+    if (raw.contains('CERTIFICATE_VERIFY_FAILED') || raw.contains('HandshakeException')) {
+      return 'TLS/证书验证失败：请使用受信任 HTTPS 证书，或在主端地址填写正确域名。';
+    }
+    if (raw.contains('Connection refused')) return '主端拒绝连接：请确认地址、端口和 Zephyr 服务正在运行。';
+    if (raw.contains('Failed host lookup')) return '域名解析失败：请检查主端地址或 DNS/网络。';
+    if (raw.contains('timed out') || raw.contains('TimeoutException')) return '连接超时：请检查网络、防火墙、反向代理 WebSocket 转发。';
+    return raw;
+  }
+
   Future<void> _connect() async {
     _setStatus(AgentStatus.connecting);
     _errorMessage = '';
 
     try {
-      final url = _config.serverUrl.replaceFirst('https://', 'wss://').replaceFirst('http://', 'ws://');
-      final wsUrl = url.endsWith('/agent/files') ? url : '$url/agent/files';
-      final uri = Uri.parse(wsUrl);
+      final normalizedServerUrl = normalizeServerUrl(_config.serverUrl);
+      if (normalizedServerUrl.isEmpty) throw const FormatException('主端地址为空');
+      final uri = agentWebSocketUriForServerUrl(normalizedServerUrl);
+      _config.serverUrl = normalizedServerUrl;
+      final customClient = _config.allowBadCertificates && uri.scheme == 'wss'
+          ? (HttpClient()..badCertificateCallback = (_, __, ___) => true)
+          : null;
 
       _channel = IOWebSocketChannel.connect(
         uri,
         pingInterval: Duration(seconds: 30),
+        customClient: customClient,
       );
 
       await _channel!.ready;
@@ -112,7 +149,7 @@ class AgentController extends ChangeNotifier {
       _setStatus(AgentStatus.authenticating);
       _sendHello();
     } catch (e) {
-      _errorMessage = e.toString();
+      _errorMessage = _friendlyConnectionError(e);
       _setStatus(AgentStatus.error);
       _maybeReconnect();
     }
@@ -357,8 +394,8 @@ class AgentController extends ChangeNotifier {
   // ─── Error/Close handlers ────────────────────────────────────
 
   void _onError(Object error) {
-    _errorMessage = error.toString();
-    if (_status == AgentStatus.online) {
+    _errorMessage = _friendlyConnectionError(error);
+    if (_status == AgentStatus.online || _status == AgentStatus.authenticating || _status == AgentStatus.connecting) {
       _setStatus(AgentStatus.error);
       _cancelHeartbeat();
       _maybeReconnect();

@@ -79,19 +79,38 @@ export function getAttachedAgents() {
     return new Map(attachedAgents);
 }
 
-/* ─── Drive Attach / Detach ─────────────────────────────────────── */
+export function resetAttachedDriveState() {
+    attachedAgents.clear();
+}
+
+function safeDriveName(name, fallback = 'AGENT') {
+    const raw = String(name || fallback).trim() || fallback;
+    const ascii = raw.replace(/[^A-Za-z0-9_$~-]/g, '_').slice(0, 7);
+    return ascii || fallback;
+}
+
+export function syncAgentDrives({ enabled = true } = {}) {
+    if (!enabled || typeof globalThis.rdpFsAttachDrive !== 'function') return;
+    for (const agent of onlineAgents) {
+        if (!agent?.agentId || agent.online === false) continue;
+        const driveName = safeDriveName(agent.shareName || agent.deviceName || agent.tokenName || 'AGENT');
+        attachDrive(agent.agentId, driveName, agent.readOnly !== false);
+    }
+}
 
 export function attachDrive(agentId, driveName, readOnly) {
-    if (attachedAgents.has(agentId)) return;
+    if (attachedAgents.has(agentId)) return true;
 
-    // Call Go WASM to register the drive
-    let deviceId = null;
-    if (typeof globalThis.rdpFsAttachDrive === 'function') {
-        deviceId = globalThis.rdpFsAttachDrive(agentId, driveName, readOnly);
-    }
+    // Call Go WASM to register the drive. If the current RDP session has not
+    // created its RDPEFS handler yet, do not mark it attached; a later
+    // rdpOnReady/SSE sync will retry against the fresh handler.
+    if (typeof globalThis.rdpFsAttachDrive !== 'function') return false;
+    const deviceId = globalThis.rdpFsAttachDrive(agentId, driveName, readOnly);
+    if (deviceId === null || deviceId === undefined || deviceId === false) return false;
 
     attachedAgents.set(agentId, { driveName, readOnly, deviceId });
-    console.info(`[rdp-fs] attached drive: ${driveName} → ${agentId}`);
+    console.info(`[rdp-fs] attached drive: ${driveName} → ${agentId} (${deviceId})`);
+    return true;
 }
 
 export function detachDrive(agentId) {
@@ -107,7 +126,7 @@ export function detachDrive(agentId) {
 }
 
 export function detachAllDrives() {
-    for (const agentId of attachedAgents.keys()) {
+    for (const agentId of [...attachedAgents.keys()]) {
         detachDrive(agentId);
     }
 }
@@ -127,7 +146,8 @@ function syncRpc(agentId, method, params) {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${RPC_BASE}/${agentId}/rpc`, false); // synchronous
     xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.timeout = RPC_TIMEOUT;
+    // Synchronous XMLHttpRequest cannot use timeout in a document context;
+    // the server-side Agent RPC has its own timeout.
     try {
         xhr.send(JSON.stringify({ method, params }));
     } catch (e) {

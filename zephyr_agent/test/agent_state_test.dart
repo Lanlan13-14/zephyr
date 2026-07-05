@@ -5,13 +5,14 @@ void main() {
   group('AgentConfig', () {
     test('serialization round-trip', () {
       final config = AgentConfig(
-        serverUrl: 'wss://example.com',
+        serverUrl: 'https://example.com',
         token: 'test_token',
         deviceName: 'Test Phone',
         sharedDirectoryPath: '/Downloads',
         readOnly: false,
         autoShutdown: true,
         autoShutdownMinutes: 10,
+        allowBadCertificates: false,
       );
 
       final json = config.toJson();
@@ -24,6 +25,7 @@ void main() {
       expect(restored.readOnly, config.readOnly);
       expect(restored.autoShutdown, config.autoShutdown);
       expect(restored.autoShutdownMinutes, config.autoShutdownMinutes);
+      expect(restored.allowBadCertificates, config.allowBadCertificates);
     });
 
     test('defaults', () {
