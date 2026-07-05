@@ -6,10 +6,9 @@
       <stop offset="100%" stop-color="#6E7B88"/>
     </linearGradient>
   </defs>
-  <rect width="200" height="200" rx="42" fill="#0A84FF"/>
   <path d="M45 65C85 45 135 55 160 80C130 80 95 95 75 125" stroke="url(#zephyrAgentGrad)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="M50 75C90 75 125 90 145 115C115 135 75 155 40 135" stroke="url(#zephyrAgentGrad)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.86"/>
   <path d="M85 95C110 110 135 135 155 130" stroke="url(#zephyrAgentGrad)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.62"/>
-  <circle cx="145" cy="115" r="4.5" fill="#EEF2F7" opacity="0.9"/>
-  <circle cx="75" cy="125" r="3" fill="#A8B5C3" opacity="0.8"/>
+  <circle cx="145" cy="115" r="4.5" fill="#0A84FF" opacity="0.9"/>
+  <circle cx="75" cy="125" r="3" fill="#8E99A6" opacity="0.8"/>
 </svg>
