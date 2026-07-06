@@ -62,9 +62,17 @@ const (
 	PAKID_CORE_DEVICELIST_REMOVE   = 0x444D
 )
 
-// rdpdr version minor
+// rdpdr protocol version
 const (
-	RDPDR_VERSION_MINOR_RDP51 = 0x0005
+	RDPDR_VERSION_MAJOR        = 0x0001
+	RDPDR_VERSION_MINOR_RDP51  = 0x0005
+	RDPDR_VERSION_MINOR_RDP10X = 0x000D
+)
+
+// Capability set versions
+const (
+	GENERAL_CAPABILITY_VERSION_02 = 0x00000002
+	DRIVE_CAPABILITY_VERSION_02   = 0x00000002
 )
 
 // Device types
@@ -75,16 +83,46 @@ const (
 // IRP major functions
 const (
 	IRP_MJ_CREATE            = 0x00000000
+	IRP_MJ_CLEANUP           = 0x00000001
 	IRP_MJ_CLOSE             = 0x00000002
 	IRP_MJ_READ              = 0x00000003
 	IRP_MJ_WRITE             = 0x00000004
-	IRP_MJ_DEVICE_CONTROL    = 0x0000000E
-	IRP_MJ_QUERY_VOLUME      = 0x0000000A
-	IRP_MJ_SET_VOLUME        = 0x0000000B
 	IRP_MJ_QUERY_INFORMATION = 0x00000005
 	IRP_MJ_SET_INFORMATION   = 0x00000006
+	IRP_MJ_FLUSH_BUFFERS     = 0x00000009
+	IRP_MJ_QUERY_VOLUME      = 0x0000000A
+	IRP_MJ_SET_VOLUME        = 0x0000000B
 	IRP_MJ_DIRECTORY_CONTROL = 0x0000000C
+	IRP_MJ_DEVICE_CONTROL    = 0x0000000E
+	IRP_MJ_SHUTDOWN          = 0x00000010
 	IRP_MJ_LOCK_CONTROL      = 0x00000011
+	IRP_MJ_QUERY_SECURITY    = 0x00000014
+	IRP_MJ_SET_SECURITY      = 0x00000015
+)
+
+// GENERAL_CAPS_SET.ioCode1 bitmask values (not IRP major function numbers).
+const (
+	RDPDR_IRP_MJ_CREATE_BIT                   = 0x00000001
+	RDPDR_IRP_MJ_CLEANUP_BIT                  = 0x00000002
+	RDPDR_IRP_MJ_CLOSE_BIT                    = 0x00000004
+	RDPDR_IRP_MJ_READ_BIT                     = 0x00000008
+	RDPDR_IRP_MJ_WRITE_BIT                    = 0x00000010
+	RDPDR_IRP_MJ_FLUSH_BUFFERS_BIT            = 0x00000020
+	RDPDR_IRP_MJ_SHUTDOWN_BIT                 = 0x00000040
+	RDPDR_IRP_MJ_DEVICE_CONTROL_BIT           = 0x00000080
+	RDPDR_IRP_MJ_QUERY_VOLUME_INFORMATION_BIT = 0x00000100
+	RDPDR_IRP_MJ_SET_VOLUME_INFORMATION_BIT   = 0x00000200
+	RDPDR_IRP_MJ_QUERY_INFORMATION_BIT        = 0x00000400
+	RDPDR_IRP_MJ_SET_INFORMATION_BIT          = 0x00000800
+	RDPDR_IRP_MJ_DIRECTORY_CONTROL_BIT        = 0x00001000
+	RDPDR_IRP_MJ_LOCK_CONTROL_BIT             = 0x00002000
+)
+
+const (
+	RDPDR_DEVICE_REMOVE_PDUS      = 0x00000001
+	RDPDR_CLIENT_DISPLAY_NAME_PDU = 0x00000002
+	RDPDR_USER_LOGGEDON_PDU       = 0x00000004
+	RDPDR_ENABLE_ASYNCIO          = 0x00000001
 )
 
 // IRP minor functions for IRP_MJ_DIRECTORY_CONTROL
@@ -114,6 +152,7 @@ const (
 	STATUS_NO_MORE_FILES          = 0x80000006
 	STATUS_NOT_IMPLEMENTED        = 0xC0000002
 	STATUS_NO_SUCH_FILE           = 0xC000000F
+	STATUS_END_OF_FILE            = 0xC0000011
 	STATUS_OBJECT_NAME_NOT_FOUND  = 0xC0000034
 	STATUS_ACCESS_DENIED          = 0xC0000022
 	STATUS_NOT_SUPPORTED          = 0xC00000BB
@@ -144,11 +183,11 @@ const (
 
 // Create disposition
 const (
-	FILE_SUPERSEDE   = 0x00000000
-	FILE_OPEN        = 0x00000001
-	FILE_CREATE      = 0x00000002
-	FILE_OPEN_IF     = 0x00000003
-	FILE_OVERWRITE   = 0x00000004
+	FILE_SUPERSEDE    = 0x00000000
+	FILE_OPEN         = 0x00000001
+	FILE_CREATE       = 0x00000002
+	FILE_OPEN_IF      = 0x00000003
+	FILE_OVERWRITE    = 0x00000004
 	FILE_OVERWRITE_IF = 0x00000005
 )
 
@@ -169,6 +208,7 @@ const (
 
 // DriveMode determines how file data is accessed
 type DriveMode int
+
 const (
 	DriveModeLocal DriveMode = iota // legacy: rdpStorageGetFiles
 	DriveModeAgent                  // remote: zephyrRdpFs.*
@@ -211,9 +251,9 @@ type dirEnumState struct {
 
 // RdpefsHandler implements plugin.ChannelTransport for the rdpdr SVC
 type RdpefsHandler struct {
-	mu           sync.Mutex
-	sender       func(string, []byte) (int, error)
-	enabled      bool
+	mu      sync.Mutex
+	sender  func(string, []byte) (int, error)
+	enabled bool
 
 	clientID     uint32
 	versionMajor uint16
@@ -255,7 +295,7 @@ func NewRdpefsHandler(enabled bool) *RdpefsHandler {
 }
 
 func (h *RdpefsHandler) GetType() (string, uint32) {
-	return "rdpdr", 0x80000000 | 0x40000000 | 0x00400000
+	return "rdpdr", 0x80000000 | 0x40000000 | 0x00800000
 }
 
 func (h *RdpefsHandler) Sender(cs core.ChannelSender) {
@@ -412,17 +452,25 @@ func (h *RdpefsHandler) processServerAnnounce(data []byte) {
 	if len(data) < 8 {
 		return
 	}
-	h.versionMajor = binary.LittleEndian.Uint16(data[0:2])
-	h.versionMinor = binary.LittleEndian.Uint16(data[2:4])
+	serverMajor := binary.LittleEndian.Uint16(data[0:2])
+	serverMinor := binary.LittleEndian.Uint16(data[2:4])
+	h.versionMajor = RDPDR_VERSION_MAJOR
+	h.versionMinor = serverMinor
+	if h.versionMinor > RDPDR_VERSION_MINOR_RDP10X {
+		h.versionMinor = RDPDR_VERSION_MINOR_RDP10X
+	}
+	if h.versionMinor == 0 {
+		h.versionMinor = RDPDR_VERSION_MINOR_RDP51
+	}
 	h.clientID = binary.LittleEndian.Uint32(data[4:8])
-	slog.Debug("rdpefs: server announce", "major", h.versionMajor, "minor", h.versionMinor, "clientID", h.clientID)
+	slog.Debug("rdpefs: server announce", "serverMajor", serverMajor, "serverMinor", serverMinor, "major", h.versionMajor, "minor", h.versionMinor, "clientID", h.clientID)
 
 	// Send Client Announce Reply
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_CLIENTID_CONFIRM))
-	binary.Write(buf, binary.LittleEndian, uint16(1))
-	binary.Write(buf, binary.LittleEndian, uint16(12))
+	binary.Write(buf, binary.LittleEndian, uint16(h.versionMajor))
+	binary.Write(buf, binary.LittleEndian, uint16(h.versionMinor))
 	binary.Write(buf, binary.LittleEndian, h.clientID)
 	h.send(buf.Bytes())
 
@@ -444,27 +492,49 @@ func (h *RdpefsHandler) processServerCapability(data []byte) {
 	// Refresh local file list (legacy mode)
 	h.refreshLocalFileList()
 
-	// Send Client Core Capability Response
+	ioCode1 := uint32(RDPDR_IRP_MJ_CREATE_BIT |
+		RDPDR_IRP_MJ_CLEANUP_BIT |
+		RDPDR_IRP_MJ_CLOSE_BIT |
+		RDPDR_IRP_MJ_READ_BIT |
+		RDPDR_IRP_MJ_WRITE_BIT |
+		RDPDR_IRP_MJ_FLUSH_BUFFERS_BIT |
+		RDPDR_IRP_MJ_SHUTDOWN_BIT |
+		RDPDR_IRP_MJ_DEVICE_CONTROL_BIT |
+		RDPDR_IRP_MJ_QUERY_VOLUME_INFORMATION_BIT |
+		RDPDR_IRP_MJ_SET_VOLUME_INFORMATION_BIT |
+		RDPDR_IRP_MJ_QUERY_INFORMATION_BIT |
+		RDPDR_IRP_MJ_SET_INFORMATION_BIT |
+		RDPDR_IRP_MJ_DIRECTORY_CONTROL_BIT |
+		RDPDR_IRP_MJ_LOCK_CONTROL_BIT)
+
+	// Send Client Core Capability Response.  Drive Capability is required for
+	// filesystem devices; without it Windows can show \\tsclient\NAME but fail
+	// opening the device because the agreed device-type mask excludes drives.
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_CLIENT_CAPABILITY))
-	binary.Write(buf, binary.LittleEndian, uint16(1))
+	binary.Write(buf, binary.LittleEndian, uint16(2)) // General + Drive
 	binary.Write(buf, binary.LittleEndian, uint16(0))
 
-	// General capability set
+	// General Capability Set, Version 2. CapabilityLength includes the 8-byte header.
 	binary.Write(buf, binary.LittleEndian, uint16(CAP_GENERAL_TYPE))
 	binary.Write(buf, binary.LittleEndian, uint16(44))
-	binary.Write(buf, binary.LittleEndian, uint32(1))
-	binary.Write(buf, binary.LittleEndian, uint32(2))
-	binary.Write(buf, binary.LittleEndian, uint32(0))
-	binary.Write(buf, binary.LittleEndian, uint16(1))
-	binary.Write(buf, binary.LittleEndian, uint16(12))
-	binary.Write(buf, binary.LittleEndian, uint32(0xFFFF))
-	binary.Write(buf, binary.LittleEndian, uint32(0))
-	binary.Write(buf, binary.LittleEndian, uint32(7)) // RDPDR_DEVICE_REMOVE|USER_LOGGEDON|CLIENT_DISPLAY_NAME
+	binary.Write(buf, binary.LittleEndian, uint32(GENERAL_CAPABILITY_VERSION_02))
 	binary.Write(buf, binary.LittleEndian, uint32(0))
 	binary.Write(buf, binary.LittleEndian, uint32(0))
-	binary.Write(buf, binary.LittleEndian, uint32(0))
+	binary.Write(buf, binary.LittleEndian, uint16(h.versionMajor))
+	binary.Write(buf, binary.LittleEndian, uint16(h.versionMinor))
+	binary.Write(buf, binary.LittleEndian, ioCode1)
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // ioCode2 reserved
+	binary.Write(buf, binary.LittleEndian, uint32(RDPDR_DEVICE_REMOVE_PDUS|RDPDR_CLIENT_DISPLAY_NAME_PDU|RDPDR_USER_LOGGEDON_PDU))
+	binary.Write(buf, binary.LittleEndian, uint32(RDPDR_ENABLE_ASYNCIO))
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // extraFlags2 reserved
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // SpecialTypeDeviceCap
+
+	// Drive Capability Set, Version 2. Header-only body per MS-RDPEFS.
+	binary.Write(buf, binary.LittleEndian, uint16(CAP_DRIVE_TYPE))
+	binary.Write(buf, binary.LittleEndian, uint16(8))
+	binary.Write(buf, binary.LittleEndian, uint32(DRIVE_CAPABILITY_VERSION_02))
 	h.send(buf.Bytes())
 
 	// RDP 5.1 servers don't send USER_LOGGEDON — announce immediately
@@ -624,10 +694,20 @@ func (h *RdpefsHandler) processIORequest(data []byte) {
 		h.handleDirectoryControl(deviceID, completionID, fileID, minorFunction, payload)
 	case IRP_MJ_QUERY_VOLUME:
 		h.handleQueryVolume(deviceID, completionID, payload)
-	case IRP_MJ_LOCK_CONTROL:
+	case IRP_MJ_CLEANUP:
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, nil)
+	case IRP_MJ_FLUSH_BUFFERS:
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, nil)
+	case IRP_MJ_SHUTDOWN:
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, nil)
+	case IRP_MJ_SET_VOLUME:
+		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, zeroLengthPayload())
+	case IRP_MJ_QUERY_SECURITY, IRP_MJ_SET_SECURITY:
+		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, zeroLengthPayload())
+	case IRP_MJ_LOCK_CONTROL:
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, zeroLengthPayload())
 	case IRP_MJ_DEVICE_CONTROL:
-		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, zeroLengthPayload())
 	default:
 		slog.Debug("rdpefs: unsupported IRP", "major", majorFunction, "minor", minorFunction)
 		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
@@ -830,6 +910,10 @@ func (h *RdpefsHandler) handleCreateLocal(deviceID, completionID uint32, path st
 
 // ─── IRP_MJ_CLOSE ───────────────────────────────────────────────
 
+func fiveBytePaddingPayload() []byte {
+	return []byte{0, 0, 0, 0, 0}
+}
+
 func (h *RdpefsHandler) handleClose(deviceID, completionID, fileID uint32) {
 	h.mu.Lock()
 	handle := h.handles[fileID]
@@ -841,7 +925,7 @@ func (h *RdpefsHandler) handleClose(deviceID, completionID, fileID uint32) {
 		go h.callAgentClose(handle.AgentID, handle.RemoteHandle)
 	}
 
-	h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, nil)
+	h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, fiveBytePaddingPayload())
 }
 
 // ─── IRP_MJ_READ ────────────────────────────────────────────────
@@ -1146,10 +1230,11 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 
 func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, minorFunction uint32, data []byte) {
 	if minorFunction == IRP_MN_NOTIFY_CHANGE_DIRECTORY {
+		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, zeroLengthPayload())
 		return
 	}
 	if minorFunction != IRP_MN_QUERY_DIRECTORY {
-		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
+		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, zeroLengthPayload())
 		return
 	}
 	if len(data) < 32 {
@@ -1163,7 +1248,7 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 	var pattern string
 	if pathLen > 0 && len(data) >= 32+int(pathLen) {
 		pattern = decodeUTF16LE(data[32 : 32+pathLen])
-		pattern = strings.TrimRight(pattern, "\x00")
+		pattern = normalizeDirectoryPattern(pattern)
 	}
 
 	h.mu.Lock()
@@ -1192,7 +1277,7 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 		}
 
 		if len(entries) == 0 {
-			h.sendIOCompletion(deviceID, completionID, STATUS_NO_MORE_FILES, nil)
+			h.sendIOCompletion(deviceID, completionID, STATUS_NO_MORE_FILES, zeroLengthWithPaddingPayload())
 			return
 		}
 
@@ -1204,7 +1289,6 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(len(entryBuf)))
 		resp.Write(entryBuf)
-		binary.Write(resp, binary.LittleEndian, uint8(0))
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 	} else {
 		h.mu.Lock()
@@ -1212,7 +1296,7 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 		h.mu.Unlock()
 
 		if st == nil || st.index >= len(st.entries) {
-			h.sendIOCompletion(deviceID, completionID, STATUS_NO_MORE_FILES, nil)
+			h.sendIOCompletion(deviceID, completionID, STATUS_NO_MORE_FILES, zeroLengthWithPaddingPayload())
 			return
 		}
 
@@ -1225,7 +1309,6 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(len(entryBuf)))
 		resp.Write(entryBuf)
-		binary.Write(resp, binary.LittleEndian, uint8(0))
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 	}
 }
@@ -1296,12 +1379,11 @@ func (h *RdpefsHandler) handleQueryVolume(deviceID, completionID uint32, data []
 
 	switch infoClass {
 	case 1: // FileFsVolumeInformation
-		label := encodeUTF16LENoNull(driveName)
+		label := encodeUTF16LE(driveName)
 		info := &bytes.Buffer{}
 		binary.Write(info, binary.LittleEndian, int64(0))
 		binary.Write(info, binary.LittleEndian, uint32(0x12345678))
 		binary.Write(info, binary.LittleEndian, uint32(len(label)))
-		binary.Write(info, binary.LittleEndian, uint8(0))
 		binary.Write(info, binary.LittleEndian, uint8(0))
 		info.Write(label)
 		resp := &bytes.Buffer{}
@@ -1330,7 +1412,7 @@ func (h *RdpefsHandler) handleQueryVolume(deviceID, completionID uint32, data []
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 
 	case 5: // FileFsAttributeInformation
-		fsName := encodeUTF16LENoNull("FAT32")
+		fsName := encodeUTF16LE("FAT32")
 		info := &bytes.Buffer{}
 		binary.Write(info, binary.LittleEndian, uint32(0x00000003))
 		binary.Write(info, binary.LittleEndian, uint32(255))
@@ -1347,6 +1429,19 @@ func (h *RdpefsHandler) handleQueryVolume(deviceID, completionID uint32, data []
 }
 
 // ─── IO Completion ───────────────────────────────────────────────
+
+func zeroLengthPayload() []byte {
+	buf := &bytes.Buffer{}
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+	return buf.Bytes()
+}
+
+func zeroLengthWithPaddingPayload() []byte {
+	buf := &bytes.Buffer{}
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+	binary.Write(buf, binary.LittleEndian, uint8(0))
+	return buf.Bytes()
+}
 
 func (h *RdpefsHandler) sendIOCompletion(deviceID, completionID, status uint32, payload []byte) {
 	buf := &bytes.Buffer{}
@@ -1506,7 +1601,6 @@ func buildBasicInfo(isDir bool, mtime time.Time) []byte {
 		attrs = FILE_ATTRIBUTE_DIRECTORY
 	}
 	binary.Write(buf, binary.LittleEndian, attrs)
-	binary.Write(buf, binary.LittleEndian, uint32(0))
 	return buf.Bytes()
 }
 
@@ -1560,8 +1654,8 @@ func buildDirectoryEntry(f *VirtualFile, infoClass uint32) []byte {
 		binary.Write(buf, binary.LittleEndian, ft)
 		binary.Write(buf, binary.LittleEndian, ft)
 		binary.Write(buf, binary.LittleEndian, ft)
-		binary.Write(buf, binary.LittleEndian, size)
-		binary.Write(buf, binary.LittleEndian, size)
+		binary.Write(buf, binary.LittleEndian, size) // EndOfFile
+		binary.Write(buf, binary.LittleEndian, size) // AllocationSize
 		binary.Write(buf, binary.LittleEndian, attrs)
 		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
 		buf.Write(name)
@@ -1573,11 +1667,11 @@ func buildDirectoryEntry(f *VirtualFile, infoClass uint32) []byte {
 		binary.Write(buf, binary.LittleEndian, ft)
 		binary.Write(buf, binary.LittleEndian, ft)
 		binary.Write(buf, binary.LittleEndian, ft)
-		binary.Write(buf, binary.LittleEndian, size)
-		binary.Write(buf, binary.LittleEndian, size)
+		binary.Write(buf, binary.LittleEndian, size) // EndOfFile
+		binary.Write(buf, binary.LittleEndian, size) // AllocationSize
 		binary.Write(buf, binary.LittleEndian, attrs)
 		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
-		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // EaSize
 		buf.Write(name)
 
 	default: // FileBothDirectoryInformation
@@ -1587,12 +1681,11 @@ func buildDirectoryEntry(f *VirtualFile, infoClass uint32) []byte {
 		binary.Write(buf, binary.LittleEndian, ft)
 		binary.Write(buf, binary.LittleEndian, ft)
 		binary.Write(buf, binary.LittleEndian, ft)
-		binary.Write(buf, binary.LittleEndian, size)
-		binary.Write(buf, binary.LittleEndian, size)
+		binary.Write(buf, binary.LittleEndian, size) // EndOfFile
+		binary.Write(buf, binary.LittleEndian, size) // AllocationSize
 		binary.Write(buf, binary.LittleEndian, attrs)
 		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
 		binary.Write(buf, binary.LittleEndian, uint32(0))
-		binary.Write(buf, binary.LittleEndian, uint8(0))
 		binary.Write(buf, binary.LittleEndian, uint8(0))
 		buf.Write(make([]byte, 24))
 		buf.Write(name)
@@ -1639,6 +1732,16 @@ func windowsFileTime(t time.Time) int64 {
 		return epoch
 	}
 	return t.UnixNano()/100 + epoch
+}
+
+func normalizeDirectoryPattern(pattern string) string {
+	pattern = strings.TrimRight(pattern, "\x00")
+	pattern = strings.ReplaceAll(pattern, "\\", "/")
+	pattern = strings.TrimPrefix(pattern, "/")
+	if idx := strings.LastIndex(pattern, "/"); idx >= 0 {
+		pattern = pattern[idx+1:]
+	}
+	return pattern
 }
 
 func matchPattern(pattern, name string) bool {
