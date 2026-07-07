@@ -295,7 +295,7 @@ func NewRdpefsHandler(enabled bool) *RdpefsHandler {
 }
 
 func (h *RdpefsHandler) GetType() (string, uint32) {
-	return "rdpdr", 0x80000000 | 0x40000000 | 0x00800000
+	return "rdpdr", 0x80000000 | 0x40000000 | 0x00400000
 }
 
 func (h *RdpefsHandler) Sender(cs core.ChannelSender) {
@@ -452,25 +452,17 @@ func (h *RdpefsHandler) processServerAnnounce(data []byte) {
 	if len(data) < 8 {
 		return
 	}
-	serverMajor := binary.LittleEndian.Uint16(data[0:2])
-	serverMinor := binary.LittleEndian.Uint16(data[2:4])
-	h.versionMajor = RDPDR_VERSION_MAJOR
-	h.versionMinor = serverMinor
-	if h.versionMinor > RDPDR_VERSION_MINOR_RDP10X {
-		h.versionMinor = RDPDR_VERSION_MINOR_RDP10X
-	}
-	if h.versionMinor == 0 {
-		h.versionMinor = RDPDR_VERSION_MINOR_RDP51
-	}
+	h.versionMajor = binary.LittleEndian.Uint16(data[0:2])
+	h.versionMinor = binary.LittleEndian.Uint16(data[2:4])
 	h.clientID = binary.LittleEndian.Uint32(data[4:8])
-	slog.Debug("rdpefs: server announce", "serverMajor", serverMajor, "serverMinor", serverMinor, "major", h.versionMajor, "minor", h.versionMinor, "clientID", h.clientID)
+	slog.Debug("rdpefs: server announce", "major", h.versionMajor, "minor", h.versionMinor, "clientID", h.clientID)
 
 	// Send Client Announce Reply
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_CLIENTID_CONFIRM))
-	binary.Write(buf, binary.LittleEndian, uint16(h.versionMajor))
-	binary.Write(buf, binary.LittleEndian, uint16(h.versionMinor))
+	binary.Write(buf, binary.LittleEndian, uint16(1))
+	binary.Write(buf, binary.LittleEndian, uint16(12))
 	binary.Write(buf, binary.LittleEndian, h.clientID)
 	h.send(buf.Bytes())
 
@@ -492,49 +484,27 @@ func (h *RdpefsHandler) processServerCapability(data []byte) {
 	// Refresh local file list (legacy mode)
 	h.refreshLocalFileList()
 
-	ioCode1 := uint32(RDPDR_IRP_MJ_CREATE_BIT |
-		RDPDR_IRP_MJ_CLEANUP_BIT |
-		RDPDR_IRP_MJ_CLOSE_BIT |
-		RDPDR_IRP_MJ_READ_BIT |
-		RDPDR_IRP_MJ_WRITE_BIT |
-		RDPDR_IRP_MJ_FLUSH_BUFFERS_BIT |
-		RDPDR_IRP_MJ_SHUTDOWN_BIT |
-		RDPDR_IRP_MJ_DEVICE_CONTROL_BIT |
-		RDPDR_IRP_MJ_QUERY_VOLUME_INFORMATION_BIT |
-		RDPDR_IRP_MJ_SET_VOLUME_INFORMATION_BIT |
-		RDPDR_IRP_MJ_QUERY_INFORMATION_BIT |
-		RDPDR_IRP_MJ_SET_INFORMATION_BIT |
-		RDPDR_IRP_MJ_DIRECTORY_CONTROL_BIT |
-		RDPDR_IRP_MJ_LOCK_CONTROL_BIT)
-
-	// Send Client Core Capability Response.  Drive Capability is required for
-	// filesystem devices; without it Windows can show \\tsclient\NAME but fail
-	// opening the device because the agreed device-type mask excludes drives.
+	// Send Client Core Capability Response
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_CLIENT_CAPABILITY))
-	binary.Write(buf, binary.LittleEndian, uint16(2)) // General + Drive
+	binary.Write(buf, binary.LittleEndian, uint16(1))
 	binary.Write(buf, binary.LittleEndian, uint16(0))
 
-	// General Capability Set, Version 2. CapabilityLength includes the 8-byte header.
+	// General capability set
 	binary.Write(buf, binary.LittleEndian, uint16(CAP_GENERAL_TYPE))
 	binary.Write(buf, binary.LittleEndian, uint16(44))
-	binary.Write(buf, binary.LittleEndian, uint32(GENERAL_CAPABILITY_VERSION_02))
+	binary.Write(buf, binary.LittleEndian, uint32(1))
+	binary.Write(buf, binary.LittleEndian, uint32(2))
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+	binary.Write(buf, binary.LittleEndian, uint16(1))
+	binary.Write(buf, binary.LittleEndian, uint16(12))
+	binary.Write(buf, binary.LittleEndian, uint32(0xFFFF))
+	binary.Write(buf, binary.LittleEndian, uint32(0))
+	binary.Write(buf, binary.LittleEndian, uint32(7)) // RDPDR_DEVICE_REMOVE|USER_LOGGEDON|CLIENT_DISPLAY_NAME
 	binary.Write(buf, binary.LittleEndian, uint32(0))
 	binary.Write(buf, binary.LittleEndian, uint32(0))
-	binary.Write(buf, binary.LittleEndian, uint16(h.versionMajor))
-	binary.Write(buf, binary.LittleEndian, uint16(h.versionMinor))
-	binary.Write(buf, binary.LittleEndian, ioCode1)
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // ioCode2 reserved
-	binary.Write(buf, binary.LittleEndian, uint32(RDPDR_DEVICE_REMOVE_PDUS|RDPDR_CLIENT_DISPLAY_NAME_PDU|RDPDR_USER_LOGGEDON_PDU))
-	binary.Write(buf, binary.LittleEndian, uint32(RDPDR_ENABLE_ASYNCIO))
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // extraFlags2 reserved
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // SpecialTypeDeviceCap
-
-	// Drive Capability Set, Version 2. Header-only body per MS-RDPEFS.
-	binary.Write(buf, binary.LittleEndian, uint16(CAP_DRIVE_TYPE))
-	binary.Write(buf, binary.LittleEndian, uint16(8))
-	binary.Write(buf, binary.LittleEndian, uint32(DRIVE_CAPABILITY_VERSION_02))
+	binary.Write(buf, binary.LittleEndian, uint32(0))
 	h.send(buf.Bytes())
 
 	// RDP 5.1 servers don't send USER_LOGGEDON — announce immediately

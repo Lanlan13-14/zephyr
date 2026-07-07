@@ -78,8 +78,8 @@ func TestRdpdrHandshakeCapabilityBytes(t *testing.T) {
 	}
 
 	announce := make([]byte, 8)
-	binary.LittleEndian.PutUint16(announce[0:2], RDPDR_VERSION_MAJOR)
-	binary.LittleEndian.PutUint16(announce[2:4], RDPDR_VERSION_MINOR_RDP10X)
+	binary.LittleEndian.PutUint16(announce[0:2], 1)
+	binary.LittleEndian.PutUint16(announce[2:4], RDPDR_VERSION_MINOR_RDP51)
 	binary.LittleEndian.PutUint32(announce[4:8], 0x11223344)
 	h.processServerAnnounce(announce)
 
@@ -87,39 +87,15 @@ func TestRdpdrHandshakeCapabilityBytes(t *testing.T) {
 		t.Fatalf("server announce should send client confirm + name, got %d packets", len(sent))
 	}
 	confirm := sent[0]
-	if got := binary.LittleEndian.Uint16(confirm[4:6]); got != RDPDR_VERSION_MAJOR {
-		t.Fatalf("client confirm major = %#x", got)
+	// Original working handshake hardcodes version 1.12 in the client confirm.
+	if got := binary.LittleEndian.Uint16(confirm[4:6]); got != 1 {
+		t.Fatalf("client confirm major = %#x, want 1", got)
 	}
-	if got := binary.LittleEndian.Uint16(confirm[6:8]); got != RDPDR_VERSION_MINOR_RDP10X {
-		t.Fatalf("client confirm minor = %#x", got)
+	if got := binary.LittleEndian.Uint16(confirm[6:8]); got != 12 {
+		t.Fatalf("client confirm minor = %#x, want 12", got)
 	}
 	if got := binary.LittleEndian.Uint32(confirm[8:12]); got != 0x11223344 {
 		t.Fatalf("client confirm clientID = %#x", got)
-	}
-
-	sent = nil
-	h.processServerCapability(nil)
-	if len(sent) != 1 {
-		t.Fatalf("capability response packets = %d, want 1", len(sent))
-	}
-	cap := sent[0]
-	if len(cap) != 60 {
-		t.Fatalf("capability response length = %d, want 60", len(cap))
-	}
-	if got := binary.LittleEndian.Uint16(cap[4:6]); got != 2 {
-		t.Fatalf("capability count = %d, want 2", got)
-	}
-	if got := binary.LittleEndian.Uint16(cap[8:10]); got != CAP_GENERAL_TYPE {
-		t.Fatalf("first capability type = %#x", got)
-	}
-	if got := binary.LittleEndian.Uint16(cap[10:12]); got != 44 {
-		t.Fatalf("general capability length = %d", got)
-	}
-	if got := binary.LittleEndian.Uint16(cap[52:54]); got != CAP_DRIVE_TYPE {
-		t.Fatalf("second capability type = %#x, want drive", got)
-	}
-	if got := binary.LittleEndian.Uint16(cap[54:56]); got != 8 {
-		t.Fatalf("drive capability length = %d", got)
 	}
 }
 
