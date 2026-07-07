@@ -936,6 +936,12 @@ func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data [
 
 		chunk := h.callAgentRead(handle.AgentID, readHandle, offset, length)
 		resp := &bytes.Buffer{}
+		if chunk == nil {
+			// Agent RPC failed — must NOT pretend success with Length=0,
+			// or Windows treats it as "device disconnected" (0x8007048F).
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_READ, STATUS_UNSUCCESSFUL, nil)
+			return
+		}
 		binary.Write(resp, binary.LittleEndian, uint32(len(chunk)))
 		if len(chunk) > 0 {
 			resp.Write(chunk)
@@ -1009,6 +1015,10 @@ func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data 
 			return
 		}
 		written := h.callAgentWrite(handle.AgentID, writeHandle, offset, writeData)
+		if written == 0 && len(writeData) > 0 {
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_WRITE, STATUS_UNSUCCESSFUL, nil)
+			return
+		}
 		resp := &bytes.Buffer{}
 		binary.Write(resp, binary.LittleEndian, uint32(written))
 		binary.Write(resp, binary.LittleEndian, uint8(0))
@@ -1428,35 +1438,44 @@ func (h *RdpefsHandler) sendIOCompletionMajor(deviceID, completionID, majorFunct
 }
 
 // defaultPayloadFor returns the minimum mandatory body for a failed IRP of the
-// given major function.  Lengths follow FreeRDP drive_file.c / irp.c.
+// given major function.  FreeRDP's drive_main.c writes these exact bytes on the
+// failure path; the Windows RDPDR server parser expects exactly this much body
+// per IRP type.  Any mismatch (too many or too few bytes) desyncs the stream.
 func defaultPayloadFor(majorFunction uint32) []byte {
 	buf := &bytes.Buffer{}
 	switch majorFunction {
 	case IRP_MJ_CREATE:
-		// DR_CREATE_RSP: FileId(4) + Information(1)
+		// DR_CREATE_RSP: FileId(4) + Information(1) — always written
 		binary.Write(buf, binary.LittleEndian, uint32(0))
 		binary.Write(buf, binary.LittleEndian, uint8(0))
 	case IRP_MJ_CLOSE:
 		// DR_CLOSE_RSP: Padding(5)
 		buf.Write([]byte{0, 0, 0, 0, 0})
 	case IRP_MJ_READ:
-		// DR_READ_RSP: Length(4)
+		// DR_READ_RSP: Length(4)=0
 		binary.Write(buf, binary.LittleEndian, uint32(0))
 	case IRP_MJ_WRITE:
-		// DR_WRITE_RSP: Length(4) + Padding(1)
+		// DR_WRITE_RSP: Length(4)=0 + Padding(1)=0
 		binary.Write(buf, binary.LittleEndian, uint32(0))
 		binary.Write(buf, binary.LittleEndian, uint8(0))
+	case IRP_MJ_SET_INFORMATION:
+		// DR_SET_INFORMATION_RSP: Length(4) — always written
+		binary.Write(buf, binary.LittleEndian, uint32(0))
 	case IRP_MJ_DIRECTORY_CONTROL:
 		// DR_QUERY_DIRECTORY_RSP on failure: Length(4)=0 + Padding(1)=0
 		binary.Write(buf, binary.LittleEndian, uint32(0))
 		binary.Write(buf, binary.LittleEndian, uint8(0))
-	case IRP_MJ_QUERY_INFORMATION, IRP_MJ_QUERY_VOLUME, IRP_MJ_SET_INFORMATION,
-		IRP_MJ_LOCK_CONTROL, IRP_MJ_DEVICE_CONTROL:
-		// Length(4)
+	case IRP_MJ_LOCK_CONTROL, IRP_MJ_DEVICE_CONTROL:
+		// silent_ignore / device_control: Length(4)=0 / OutputBufferLength(4)=0
 		binary.Write(buf, binary.LittleEndian, uint32(0))
+	case IRP_MJ_QUERY_INFORMATION, IRP_MJ_QUERY_VOLUME:
+		// FreeRDP writes NO body on failure for these IRP types.
+		// The server knows from IoStatus != STATUS_SUCCESS that there is no
+		// Length/data pair to read.
+	case IRP_MJ_CLEANUP, IRP_MJ_FLUSH_BUFFERS, IRP_MJ_SHUTDOWN:
+		// No body expected
 	default:
-		// Unknown IRP — emit a zero Length as the safest minimal body.
-		binary.Write(buf, binary.LittleEndian, uint32(0))
+		// Unknown IRP — safest to write nothing.
 	}
 	return buf.Bytes()
 }
