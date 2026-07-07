@@ -1022,11 +1022,23 @@ func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data 
 // ─── IRP_MJ_SET_INFORMATION ─────────────────────────────────────
 
 func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint32, data []byte) {
-	if len(data) < 4 {
+	// DR_SET_INFORMATION_REQ layout:
+	//   FsInformationClass (4)
+	//   Length (4)
+	//   Padding (24)
+	//   <Length bytes of information data>
+	if len(data) < 32 {
 		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	infoClass := binary.LittleEndian.Uint32(data[0:4])
+	infoLen := binary.LittleEndian.Uint32(data[4:8])
+	infoData := data[32:]
+	if uint32(len(infoData)) < infoLen {
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_INVALID_PARAMETER, nil)
+		return
+	}
+	infoData = infoData[:infoLen]
 
 	h.mu.Lock()
 	handle := h.handles[fileID]
@@ -1055,8 +1067,8 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_ACCESS_DENIED, nil)
 			return
 		}
-		if drive.Mode == DriveModeAgent && len(data) >= 12 {
-			newSize := binary.LittleEndian.Uint64(data[4:12])
+		if drive.Mode == DriveModeAgent && len(infoData) >= 8 {
+			newSize := binary.LittleEndian.Uint64(infoData[0:8])
 			ok := h.callAgentTruncate(handle.AgentID, handle.Path, newSize)
 			if !ok {
 				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_UNSUCCESSFUL, nil)
@@ -1073,10 +1085,16 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 			return
 		}
 		if drive.Mode == DriveModeAgent {
-			ok := h.callAgentDelete(handle.AgentID, handle.Path)
-			if !ok {
-				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_UNSUCCESSFUL, nil)
-				return
+			deletePending := true
+			if len(infoData) >= 1 {
+				deletePending = infoData[0] != 0
+			}
+			if deletePending {
+				ok := h.callAgentDelete(handle.AgentID, handle.Path)
+				if !ok {
+					h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_UNSUCCESSFUL, nil)
+					return
+				}
 			}
 		}
 		resp := &bytes.Buffer{}
@@ -1088,11 +1106,11 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_ACCESS_DENIED, nil)
 			return
 		}
-		if drive.Mode == DriveModeAgent && len(data) >= 14 {
-			// Parse rename info: replaceIfExists(1) + rootDir(1) + fileNameLen(4) + fileName(UTF-16LE)
-			fnLen := binary.LittleEndian.Uint32(data[10:14])
-			if uint32(len(data)) >= 14+fnLen {
-				newPath := decodeUTF16LE(data[14 : 14+fnLen])
+		if drive.Mode == DriveModeAgent && len(infoData) >= 6 {
+			// FileRenameInformation: ReplaceIfExists(1) + RootDirectory(1) + FileNameLength(4) + FileName(UTF-16LE)
+			fnLen := binary.LittleEndian.Uint32(infoData[2:6])
+			if uint32(len(infoData)) >= 6+fnLen {
+				newPath := decodeUTF16LE(infoData[6 : 6+fnLen])
 				newPath = strings.TrimRight(newPath, "\x00")
 				newPath = strings.ReplaceAll(newPath, "\\", "/")
 				newPath = strings.TrimPrefix(newPath, "/")
@@ -1428,8 +1446,12 @@ func defaultPayloadFor(majorFunction uint32) []byte {
 		// DR_WRITE_RSP: Length(4) + Padding(1)
 		binary.Write(buf, binary.LittleEndian, uint32(0))
 		binary.Write(buf, binary.LittleEndian, uint8(0))
+	case IRP_MJ_DIRECTORY_CONTROL:
+		// DR_QUERY_DIRECTORY_RSP on failure: Length(4)=0 + Padding(1)=0
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint8(0))
 	case IRP_MJ_QUERY_INFORMATION, IRP_MJ_QUERY_VOLUME, IRP_MJ_SET_INFORMATION,
-		IRP_MJ_DIRECTORY_CONTROL, IRP_MJ_LOCK_CONTROL, IRP_MJ_DEVICE_CONTROL:
+		IRP_MJ_LOCK_CONTROL, IRP_MJ_DEVICE_CONTROL:
 		// Length(4)
 		binary.Write(buf, binary.LittleEndian, uint32(0))
 	default:
