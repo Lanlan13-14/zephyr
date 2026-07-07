@@ -665,22 +665,22 @@ func (h *RdpefsHandler) processIORequest(data []byte) {
 	case IRP_MJ_QUERY_VOLUME:
 		h.handleQueryVolume(deviceID, completionID, payload)
 	case IRP_MJ_CLEANUP:
-		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CLEANUP, STATUS_SUCCESS, nil)
 	case IRP_MJ_FLUSH_BUFFERS:
-		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_FLUSH_BUFFERS, STATUS_SUCCESS, nil)
 	case IRP_MJ_SHUTDOWN:
-		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SHUTDOWN, STATUS_SUCCESS, nil)
 	case IRP_MJ_SET_VOLUME:
-		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, zeroLengthPayload())
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_VOLUME, STATUS_NOT_SUPPORTED, nil)
 	case IRP_MJ_QUERY_SECURITY, IRP_MJ_SET_SECURITY:
-		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, zeroLengthPayload())
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_SECURITY, STATUS_NOT_SUPPORTED, nil)
 	case IRP_MJ_LOCK_CONTROL:
-		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, zeroLengthPayload())
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_LOCK_CONTROL, STATUS_SUCCESS, nil)
 	case IRP_MJ_DEVICE_CONTROL:
-		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, zeroLengthPayload())
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_DEVICE_CONTROL, STATUS_SUCCESS, nil)
 	default:
 		slog.Debug("rdpefs: unsupported IRP", "major", majorFunction, "minor", minorFunction)
-		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, majorFunction, STATUS_NOT_SUPPORTED, nil)
 	}
 }
 
@@ -694,7 +694,7 @@ func (h *RdpefsHandler) getDrive(deviceID uint32) *DriveState {
 
 func (h *RdpefsHandler) handleCreate(deviceID, completionID uint32, data []byte) {
 	if len(data) < 32 {
-		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	desiredAccess := binary.LittleEndian.Uint32(data[0:4])
@@ -704,7 +704,7 @@ func (h *RdpefsHandler) handleCreate(deviceID, completionID uint32, data []byte)
 	pathLen := binary.LittleEndian.Uint32(data[28:32])
 	pathBytes := data[32:]
 	if uint32(len(pathBytes)) < pathLen {
-		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	rdpPath := decodeUTF16LE(pathBytes[:pathLen])
@@ -716,7 +716,7 @@ func (h *RdpefsHandler) handleCreate(deviceID, completionID uint32, data []byte)
 
 	drive := h.getDrive(deviceID)
 	if drive == nil {
-		h.sendIOCompletion(deviceID, completionID, STATUS_DEVICE_OFF_LINE, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_DEVICE_OFF_LINE, nil)
 		return
 	}
 
@@ -737,7 +737,7 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 		createDisposition == FILE_OVERWRITE_IF || createDisposition == FILE_SUPERSEDE ||
 		createDisposition == FILE_OVERWRITE
 	if readOnly && isWriteDisp {
-		h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_ACCESS_DENIED, nil)
 		return
 	}
 
@@ -751,12 +751,12 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 			if createOptions&FILE_DIRECTORY_FILE != 0 {
 				mkdirResult := h.callAgentMkdir(agentID, path)
 				if !mkdirResult {
-					h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+					h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
 					return
 				}
 				statResult = h.callAgentStat(agentID, path)
 				if statResult == nil {
-					h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+					h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
 					return
 				}
 			} else {
@@ -767,7 +767,7 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 				}
 				handle := h.callAgentOpen(agentID, path, mode)
 				if handle == "" {
-					h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+					h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
 					return
 				}
 				h.mu.Lock()
@@ -788,18 +788,18 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 				return
 			}
 		} else {
-			h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_NO_SUCH_FILE, nil)
 			return
 		}
 	}
 
 	isDir := (*statResult).Get("isDir").Bool()
 	if createOptions&FILE_DIRECTORY_FILE != 0 && !isDir {
-		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_NO_SUCH_FILE, nil)
 		return
 	}
 	if createOptions&FILE_NON_DIRECTORY_FILE != 0 && isDir {
-		h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_ACCESS_DENIED, nil)
 		return
 	}
 
@@ -844,21 +844,21 @@ func (h *RdpefsHandler) handleCreateLocal(deviceID, completionID uint32, path st
 		isWriteDisp := createDisposition == FILE_CREATE || createDisposition == FILE_OPEN_IF ||
 			createDisposition == FILE_OVERWRITE_IF || createDisposition == FILE_SUPERSEDE
 		if isWriteDisp {
-			h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_ACCESS_DENIED, nil)
 			return
 		}
-		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_NO_SUCH_FILE, nil)
 		return
 	}
 
 	if createOptions&FILE_DIRECTORY_FILE != 0 && !file.IsDir {
 		h.mu.Unlock()
-		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_NO_SUCH_FILE, nil)
 		return
 	}
 	if createOptions&FILE_NON_DIRECTORY_FILE != 0 && file.IsDir {
 		h.mu.Unlock()
-		h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_ACCESS_DENIED, nil)
 		return
 	}
 
@@ -880,10 +880,6 @@ func (h *RdpefsHandler) handleCreateLocal(deviceID, completionID uint32, path st
 
 // ─── IRP_MJ_CLOSE ───────────────────────────────────────────────
 
-func fiveBytePaddingPayload() []byte {
-	return []byte{0, 0, 0, 0, 0}
-}
-
 func (h *RdpefsHandler) handleClose(deviceID, completionID, fileID uint32) {
 	h.mu.Lock()
 	handle := h.handles[fileID]
@@ -895,14 +891,14 @@ func (h *RdpefsHandler) handleClose(deviceID, completionID, fileID uint32) {
 		go h.callAgentClose(handle.AgentID, handle.RemoteHandle)
 	}
 
-	h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, fiveBytePaddingPayload())
+	h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CLOSE, STATUS_SUCCESS, nil)
 }
 
 // ─── IRP_MJ_READ ────────────────────────────────────────────────
 
 func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data []byte) {
 	if len(data) < 12 {
-		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_READ, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	length := binary.LittleEndian.Uint32(data[0:4])
@@ -913,13 +909,13 @@ func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data [
 	h.mu.Unlock()
 
 	if handle == nil || handle.IsDir {
-		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_DEVICE_REQUEST, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_READ, STATUS_INVALID_DEVICE_REQUEST, nil)
 		return
 	}
 
 	drive := h.getDrive(deviceID)
 	if drive == nil {
-		h.sendIOCompletion(deviceID, completionID, STATUS_DEVICE_OFF_LINE, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_READ, STATUS_DEVICE_OFF_LINE, nil)
 		return
 	}
 
@@ -930,7 +926,7 @@ func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data [
 			// Try to open for read
 			readHandle = h.callAgentOpen(handle.AgentID, handle.Path, "read")
 			if readHandle == "" {
-				h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_READ, STATUS_UNSUCCESSFUL, nil)
 				return
 			}
 			h.mu.Lock()
@@ -949,7 +945,7 @@ func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data [
 		// Local mode read
 		file := handle.LocalFile
 		if file == nil {
-			h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_READ, STATUS_NO_SUCH_FILE, nil)
 			return
 		}
 		if file.Data == nil {
@@ -978,7 +974,7 @@ func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data [
 
 func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data []byte) {
 	if len(data) < 32 {
-		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_WRITE, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	length := binary.LittleEndian.Uint32(data[0:4])
@@ -996,20 +992,20 @@ func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data 
 	h.mu.Unlock()
 
 	if handle == nil || handle.IsDir {
-		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_DEVICE_REQUEST, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_WRITE, STATUS_INVALID_DEVICE_REQUEST, nil)
 		return
 	}
 
 	drive := h.getDrive(deviceID)
 	if drive == nil || drive.ReadOnly {
-		h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_WRITE, STATUS_ACCESS_DENIED, nil)
 		return
 	}
 
 	if drive.Mode == DriveModeAgent {
 		writeHandle := handle.RemoteHandle
 		if writeHandle == "" {
-			h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_WRITE, STATUS_UNSUCCESSFUL, nil)
 			return
 		}
 		written := h.callAgentWrite(handle.AgentID, writeHandle, offset, writeData)
@@ -1019,7 +1015,7 @@ func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data 
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 	} else {
 		// Local mode: read-only
-		h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_WRITE, STATUS_ACCESS_DENIED, nil)
 	}
 }
 
@@ -1027,7 +1023,7 @@ func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data 
 
 func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint32, data []byte) {
 	if len(data) < 4 {
-		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	infoClass := binary.LittleEndian.Uint32(data[0:4])
@@ -1037,13 +1033,13 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 	h.mu.Unlock()
 
 	if handle == nil {
-		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_NO_SUCH_FILE, nil)
 		return
 	}
 
 	drive := h.getDrive(deviceID)
 	if drive == nil {
-		h.sendIOCompletion(deviceID, completionID, STATUS_DEVICE_OFF_LINE, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_DEVICE_OFF_LINE, nil)
 		return
 	}
 
@@ -1056,14 +1052,14 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 
 	case FileEndOfFileInformation:
 		if drive.ReadOnly {
-			h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_ACCESS_DENIED, nil)
 			return
 		}
 		if drive.Mode == DriveModeAgent && len(data) >= 12 {
 			newSize := binary.LittleEndian.Uint64(data[4:12])
 			ok := h.callAgentTruncate(handle.AgentID, handle.Path, newSize)
 			if !ok {
-				h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_UNSUCCESSFUL, nil)
 				return
 			}
 		}
@@ -1073,13 +1069,13 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 
 	case FileDispositionInformation:
 		if drive.ReadOnly {
-			h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_ACCESS_DENIED, nil)
 			return
 		}
 		if drive.Mode == DriveModeAgent {
 			ok := h.callAgentDelete(handle.AgentID, handle.Path)
 			if !ok {
-				h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_UNSUCCESSFUL, nil)
 				return
 			}
 		}
@@ -1089,7 +1085,7 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 
 	case FileRenameInformation:
 		if drive.ReadOnly {
-			h.sendIOCompletion(deviceID, completionID, STATUS_ACCESS_DENIED, nil)
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_ACCESS_DENIED, nil)
 			return
 		}
 		if drive.Mode == DriveModeAgent && len(data) >= 14 {
@@ -1102,7 +1098,7 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 				newPath = strings.TrimPrefix(newPath, "/")
 				ok := h.callAgentRename(handle.AgentID, handle.Path, newPath)
 				if !ok {
-					h.sendIOCompletion(deviceID, completionID, STATUS_UNSUCCESSFUL, nil)
+					h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_UNSUCCESSFUL, nil)
 					return
 				}
 				h.mu.Lock()
@@ -1121,7 +1117,7 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 
 	default:
-		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_NOT_SUPPORTED, nil)
 	}
 }
 
@@ -1129,7 +1125,7 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 
 func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID uint32, data []byte) {
 	if len(data) < 4 {
-		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	infoClass := binary.LittleEndian.Uint32(data[0:4])
@@ -1139,13 +1135,13 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 	h.mu.Unlock()
 
 	if handle == nil {
-		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_NO_SUCH_FILE, nil)
 		return
 	}
 
 	drive := h.getDrive(deviceID)
 	if drive == nil {
-		h.sendIOCompletion(deviceID, completionID, STATUS_DEVICE_OFF_LINE, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_DEVICE_OFF_LINE, nil)
 		return
 	}
 
@@ -1157,7 +1153,7 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 	if drive.Mode == DriveModeAgent {
 		stat := h.callAgentStat(handle.AgentID, handle.Path)
 		if stat == nil {
-			h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_NO_SUCH_FILE, nil)
 			return
 		}
 		isDir = (*stat).Get("isDir").Bool()
@@ -1166,7 +1162,7 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 	} else {
 		file := handle.LocalFile
 		if file == nil {
-			h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_NO_SUCH_FILE, nil)
 			return
 		}
 		isDir = file.IsDir
@@ -1186,7 +1182,7 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 	case FileAttributeTagInformation:
 		info = buildAttributeTagInfo(isDir)
 	default:
-		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_NOT_SUPPORTED, nil)
 		return
 	}
 
@@ -1200,15 +1196,15 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 
 func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, minorFunction uint32, data []byte) {
 	if minorFunction == IRP_MN_NOTIFY_CHANGE_DIRECTORY {
-		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, zeroLengthPayload())
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_DIRECTORY_CONTROL, STATUS_NOT_SUPPORTED, nil)
 		return
 	}
 	if minorFunction != IRP_MN_QUERY_DIRECTORY {
-		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, zeroLengthPayload())
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_DIRECTORY_CONTROL, STATUS_NOT_SUPPORTED, nil)
 		return
 	}
 	if len(data) < 32 {
-		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_DIRECTORY_CONTROL, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 
@@ -1226,13 +1222,13 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 	h.mu.Unlock()
 
 	if handle == nil || !handle.IsDir {
-		h.sendIOCompletion(deviceID, completionID, STATUS_NO_SUCH_FILE, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_DIRECTORY_CONTROL, STATUS_NO_SUCH_FILE, nil)
 		return
 	}
 
 	drive := h.getDrive(deviceID)
 	if drive == nil {
-		h.sendIOCompletion(deviceID, completionID, STATUS_DEVICE_OFF_LINE, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_DIRECTORY_CONTROL, STATUS_DEVICE_OFF_LINE, nil)
 		return
 	}
 
@@ -1247,7 +1243,7 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 		}
 
 		if len(entries) == 0 {
-			h.sendIOCompletion(deviceID, completionID, STATUS_NO_MORE_FILES, zeroLengthWithPaddingPayload())
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_DIRECTORY_CONTROL, STATUS_NO_MORE_FILES, nil)
 			return
 		}
 
@@ -1266,7 +1262,7 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 		h.mu.Unlock()
 
 		if st == nil || st.index >= len(st.entries) {
-			h.sendIOCompletion(deviceID, completionID, STATUS_NO_MORE_FILES, zeroLengthWithPaddingPayload())
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_DIRECTORY_CONTROL, STATUS_NO_MORE_FILES, nil)
 			return
 		}
 
@@ -1336,7 +1332,7 @@ func (h *RdpefsHandler) listLocalDir(handle *openHandle, pattern string) []*Virt
 
 func (h *RdpefsHandler) handleQueryVolume(deviceID, completionID uint32, data []byte) {
 	if len(data) < 4 {
-		h.sendIOCompletion(deviceID, completionID, STATUS_INVALID_PARAMETER, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_VOLUME, STATUS_INVALID_PARAMETER, nil)
 		return
 	}
 	infoClass := binary.LittleEndian.Uint32(data[0:4])
@@ -1394,22 +1390,52 @@ func (h *RdpefsHandler) handleQueryVolume(deviceID, completionID uint32, data []
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 
 	default:
-		h.sendIOCompletion(deviceID, completionID, STATUS_NOT_SUPPORTED, nil)
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_VOLUME, STATUS_NOT_SUPPORTED, nil)
 	}
 }
 
 // ─── IO Completion ───────────────────────────────────────────────
 
-func zeroLengthPayload() []byte {
-	buf := &bytes.Buffer{}
-	binary.Write(buf, binary.LittleEndian, uint32(0))
-	return buf.Bytes()
+// sendIOCompletionMajor sends an IO completion with the correct minimum
+// payload shape for the given IRP major function, even on failure.  MS-RDPEFS
+// requires every DR_DEVICE_IOCOMPLETION to carry the response body expected by
+// that IRP type; omitting it desyncs the server's RDPDR stream parser, which
+// then misreads subsequent IRP responses as the missing payload and surfaces
+// errors like "\\tsclient\TEST 试图访问无效的地址".
+func (h *RdpefsHandler) sendIOCompletionMajor(deviceID, completionID, majorFunction, status uint32, payload []byte) {
+	if payload == nil {
+		payload = defaultPayloadFor(majorFunction)
+	}
+	h.sendIOCompletion(deviceID, completionID, status, payload)
 }
 
-func zeroLengthWithPaddingPayload() []byte {
+// defaultPayloadFor returns the minimum mandatory body for a failed IRP of the
+// given major function.  Lengths follow FreeRDP drive_file.c / irp.c.
+func defaultPayloadFor(majorFunction uint32) []byte {
 	buf := &bytes.Buffer{}
-	binary.Write(buf, binary.LittleEndian, uint32(0))
-	binary.Write(buf, binary.LittleEndian, uint8(0))
+	switch majorFunction {
+	case IRP_MJ_CREATE:
+		// DR_CREATE_RSP: FileId(4) + Information(1)
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint8(0))
+	case IRP_MJ_CLOSE:
+		// DR_CLOSE_RSP: Padding(5)
+		buf.Write([]byte{0, 0, 0, 0, 0})
+	case IRP_MJ_READ:
+		// DR_READ_RSP: Length(4)
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+	case IRP_MJ_WRITE:
+		// DR_WRITE_RSP: Length(4) + Padding(1)
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint8(0))
+	case IRP_MJ_QUERY_INFORMATION, IRP_MJ_QUERY_VOLUME, IRP_MJ_SET_INFORMATION,
+		IRP_MJ_DIRECTORY_CONTROL, IRP_MJ_LOCK_CONTROL, IRP_MJ_DEVICE_CONTROL:
+		// Length(4)
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+	default:
+		// Unknown IRP — emit a zero Length as the safest minimal body.
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+	}
 	return buf.Bytes()
 }
 
