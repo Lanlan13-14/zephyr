@@ -517,6 +517,7 @@ async function saveAppearance(e) {
             url: terminalBgSource === 'upload' ? ($('#terminalBgDataUrl')?.value || previous.terminalBackground?.url || '') : terminalBgSource === 'url' ? ($('#terminalBgUrl')?.value.trim() || '') : '',
             fit: $('#terminalBgFit')?.value || 'cover',
             opacity: Number($('#terminalBgOpacity')?.value || 0.35),
+            blur: Number($('#terminalBgBlur')?.value || 0),
         },
         terminalFontColor: terminalFontColors.dark,
         terminalFontColors,
@@ -536,7 +537,7 @@ async function saveAppearance(e) {
     toast('个性化设置已保存');
 }
 async function resetAppearance() {
-    const appearance = { ...getAppearance(), brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
+    const appearance = { ...getAppearance(), brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
     settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ appearance }) });
     $('#brandIconFile').value = '';
     applyAppearance(settings.appearance || appearance);
@@ -573,6 +574,8 @@ function syncAppearanceSchemeControls(appearance = getAppearance()) {
     if ($('#terminalBgFit')) $('#terminalBgFit').value = bg.fit || 'cover';
     if ($('#terminalBgOpacity')) $('#terminalBgOpacity').value = String(bg.opacity ?? 0.35);
     if ($('#terminalBgOpacityValue')) $('#terminalBgOpacityValue').textContent = `${Math.round(Number(bg.opacity ?? 0.35) * 100)}%`;
+    if ($('#terminalBgBlur')) $('#terminalBgBlur').value = String(bg.blur ?? 0);
+    if ($('#terminalBgBlurValue')) $('#terminalBgBlurValue').textContent = `${Math.round(Number(bg.blur ?? 0))}px`;
     const terminalColors = normalizeTerminalFontColors(appearance);
     const terminalFontEnabled = !!terminalColors.dark;
     if ($('#terminalFontColorEnabled')) $('#terminalFontColorEnabled').checked = terminalFontEnabled;
@@ -819,14 +822,15 @@ function setupAppearanceControls() {
         setFavicon(pendingBrandIcon || DEFAULT_BRAND_ICON);
     }));
     $('#terminalBgSource')?.addEventListener('change', () => syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { ...(getAppearance().terminalBackground || {}), type: $('#terminalBgSource').value } }));
-    $('#terminalBgUrl')?.addEventListener('input', () => syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { type: 'url', url: $('#terminalBgUrl').value.trim(), fit: $('#terminalBgFit')?.value || 'cover', opacity: Number($('#terminalBgOpacity')?.value || 0.35) } }));
+    $('#terminalBgUrl')?.addEventListener('input', () => syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { type: 'url', url: $('#terminalBgUrl').value.trim(), fit: $('#terminalBgFit')?.value || 'cover', opacity: Number($('#terminalBgOpacity')?.value || 0.35), blur: Number($('#terminalBgBlur')?.value || 0) } }));
     $('#terminalFontColorEnabled')?.addEventListener('change', () => {
         const enabled = $('#terminalFontColorEnabled').checked;
         setColorPickerEnabled($('#terminalFontColor'), enabled);
         setColorPickerEnabled($('#terminalFontColorLight'), enabled);
     });
     $('#terminalBgOpacity')?.addEventListener('input', () => { if ($('#terminalBgOpacityValue')) $('#terminalBgOpacityValue').textContent = `${Math.round(Number($('#terminalBgOpacity').value || 0.35) * 100)}%`; });
-    $('#terminalBgFile')?.addEventListener('change', async (e) => { try { const dataUrl = await readTerminalBackgroundAsDataUrl(e.target.files?.[0]); if (!dataUrl) return; $('#terminalBgDataUrl').value = dataUrl; $('#terminalBgSource').value = 'upload'; syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { type: 'upload', url: dataUrl, fit: $('#terminalBgFit')?.value || 'cover', opacity: Number($('#terminalBgOpacity')?.value || 0.35) } }); toast('终端背景已载入，保存外观后生效'); } catch (err) { e.target.value = ''; toast(err.message); } });
+    $('#terminalBgBlur')?.addEventListener('input', () => { if ($('#terminalBgBlurValue')) $('#terminalBgBlurValue').textContent = `${Math.round(Number($('#terminalBgBlur').value || 0))}px`; });
+    $('#terminalBgFile')?.addEventListener('change', async (e) => { try { const dataUrl = await readTerminalBackgroundAsDataUrl(e.target.files?.[0]); if (!dataUrl) return; $('#terminalBgDataUrl').value = dataUrl; $('#terminalBgSource').value = 'upload'; syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { type: 'upload', url: dataUrl, fit: $('#terminalBgFit')?.value || 'cover', opacity: Number($('#terminalBgOpacity')?.value || 0.35), blur: Number($('#terminalBgBlur')?.value || 0) } }); toast('终端背景已载入，保存外观后生效'); } catch (err) { e.target.value = ''; toast(err.message); } });
 }
 function safeJsonParseClient(value, fallback = null) { try { return JSON.parse(String(value || '').trim()); } catch (_) { return fallback; } }
 function escapeAttr(str) { return escapeHtml(str).replace(/'/g, '&#39;'); }
@@ -5659,7 +5663,7 @@ async function loadSettings() {
     $('#terminalMinimizedKeepAlive').value = String(getConfiguredMinimizedKeepAlive());
     $('#terminalSmartbarOrder').value = getTerminalSmartbarOrder();
     $('#terminalShortcutPlatform').value = getTerminalShortcutPlatform();
-    settings.appearance = { brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, theme: 'auto', autoThemeEnabled: true, colorScheme: 'frost', customThemeMode: 'dark', customColors: normalizeCustomThemeColors(), customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, ...(settings.appearance || {}) };
+    settings.appearance = { brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, theme: 'auto', autoThemeEnabled: true, colorScheme: 'frost', customThemeMode: 'dark', customColors: normalizeCustomThemeColors(), customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, ...(settings.appearance || {}) };
     settings.ai = normalizeAiSettings(settings.ai || {});
     applyAppearance(settings.appearance);
     applyTheme(getPreferredTheme());

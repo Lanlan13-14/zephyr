@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260704-rdp-fix">
+    <link rel="stylesheet" href="style.css?v=20260708-terminal-bg-blur1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -158,6 +158,7 @@
                                 <div class="form-row">
                                     <div class="form-group"><label>背景适配</label><select id="terminalBgFit"><option value="cover">覆盖</option><option value="contain">完整显示</option><option value="auto">原始尺寸</option></select></div>
                                     <div class="form-group"><label>背景强度 <span id="terminalBgOpacityValue">35%</span></label><input id="terminalBgOpacity" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="1" step="any" value="0.35"></div>
+                                    <div class="form-group"><label>模糊强度 <span id="terminalBgBlurValue">0px</span></label><input id="terminalBgBlur" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="20" step="any" value="0"></div>
                                 </div>
                                 <label class="check-line"><input type="checkbox" id="terminalFontColorEnabled"> 启用自定义 SSH 终端字体颜色</label>
                                 <div class="form-row terminal-font-color-row">
@@ -475,6 +476,6 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260705-agent-token-api-fix" type="module"></script>
+    <script src="app.js?v=20260708-terminal-bg-blur1" type="module"></script>
 </body>
 </html>

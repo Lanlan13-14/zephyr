@@ -10046,7 +10046,7 @@ textarea,
     background-position: center;
     background-repeat: no-repeat;
     opacity: var(--wterm-custom-bg-opacity, .35);
-    filter: saturate(1.04);
+    filter: saturate(1.04) blur(var(--wterm-custom-bg-blur, 0px));
 }
 :root[data-wterm-theme^="custom-"] .terminal-container::after { z-index: 1; }
 :root[data-wterm-theme^="custom-"] .terminal-container .wterm-wrapper,

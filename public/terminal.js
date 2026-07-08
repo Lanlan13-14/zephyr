@@ -980,6 +980,8 @@ function applyTerminalAppearance(appearance = {}) {
         root.style.setProperty('--wterm-custom-bg-overlay-percent', `${Math.round((1 - bgOpacity) * 100)}%`);
         root.style.setProperty('--wterm-custom-bg-overlay-dark', `rgba(10, 10, 10, ${1 - bgOpacity})`);
         root.style.setProperty('--wterm-custom-bg-overlay-light', `rgba(245, 245, 247, ${1 - bgOpacity})`);
+        const bgBlur = Math.max(0, Number(bg.blur ?? 0));
+        root.style.setProperty('--wterm-custom-bg-blur', `${bgBlur}px`);
     } else {
         root.style.removeProperty('--wterm-custom-bg-image');
         root.style.removeProperty('--wterm-custom-bg-size');
@@ -988,6 +990,7 @@ function applyTerminalAppearance(appearance = {}) {
         root.style.removeProperty('--wterm-custom-bg-overlay-percent');
         root.style.removeProperty('--wterm-custom-bg-overlay-dark');
         root.style.removeProperty('--wterm-custom-bg-overlay-light');
+        root.style.removeProperty('--wterm-custom-bg-blur');
     }
     const fontColor = currentTerminalFontColor(terminalAppearance);
     if (fontColor) {
