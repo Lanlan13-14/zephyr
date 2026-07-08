@@ -155,13 +155,11 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	fileDataCache = nil
 	fileDataCacheMu.Unlock()
 
-	// Get canvas from DOM
+	// Get canvas from DOM.  Do NOT set canvas.width/height here: ensureCanvas()
+	// already set them and initialized the JS-side renderer.  Reassigning
+	// width/height on a canvas resets its drawing buffer/context state, which
+	// clears WebGL textures/programs and leaves the RDP display black.
 	canvas = js.Global().Get("document").Call("getElementById", "rdpCanvas")
-	// Canvas 2D context is only needed as a fallback when WebGL2 is
-	// unavailable.  The JS side (rdpDrawBitmapBGRA) handles context
-	// creation; we just ensure the canvas dimensions are set here.
-	canvas.Set("width", width)
-	canvas.Set("height", height)
 
 	g.OnAudio(func(af rdpsnd.AudioFormat, data []byte) {
 		if !isCurrentClient(myGen, g) {
