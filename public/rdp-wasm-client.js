@@ -116,7 +116,7 @@ const h264FramePos = new Map();
 const pointerCache = new Map();
 
 /* ─── Diagnostics (kept for ABR compat, no HUD) ──────────────────────── */
-const rdpDiag = { renderer: rdpGLSupported() ? 'wasm-webgl2' : 'wasm-canvas2d', codec: 'bitmap', fps: 0, frames: 0, lastFrameAt: 0 };
+const rdpDiag = { renderer: rdpGLSupported() ? 'wasm-webgl' : 'wasm-canvas2d', codec: 'bitmap', fps: 0, frames: 0, lastFrameAt: 0, bitmapCalls: 0, bitmapBytes: 0, bitmapLast: null, h264Calls: 0, h264Frames: 0, drawFails: 0, lastDrawError: '', glError: 0 };
 function notePresentedFrame() {
     const now = performance.now();
     const dt = rdpDiag.lastFrameAt ? now - rdpDiag.lastFrameAt : 0;
@@ -125,6 +125,7 @@ function notePresentedFrame() {
     rdpDiag.frames++;
     rdpDiag.lastFrameAt = now;
 }
+window._rdpRenderDiag = () => JSON.stringify(rdpDiag);
 
 /* ═══════════════════════════════════════════════════════════════════════
  * WEBGL RENDERER - GPU-accelerated bitmap blitting
@@ -316,6 +317,9 @@ function rdpGLBlitBGRA(destX, destY, w, h, uint8Data) {
     gl.texSubImage2D(gl.TEXTURE_2D, 0, destX, destY, w, h, gl.RGBA, gl.UNSIGNED_BYTE, uint8Data);
     const uploadErr = gl.getError();
     if (uploadErr !== gl.NO_ERROR) {
+        rdpDiag.glError = uploadErr;
+        rdpDiag.drawFails++;
+        rdpDiag.lastDrawError = 'texSubImage2D failed: ' + uploadErr;
         console.warn('[rdp-gl] texSubImage2D failed, disabling WebGL renderer:', uploadErr);
         rdpGLCleanup();
         if (rdpCanvas && !rdpCtx2d) rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
@@ -344,7 +348,11 @@ function rdpGLCleanup() {
  * Expects raw BGRA data (no BGR->RGB conversion needed with WebGL).
  * ═══════════════════════════════════════════════════════════════════════ */
 window.rdpDrawBitmapBGRA = function (destX, destY, w, h, uint8Data) {
+    rdpDiag.bitmapCalls++;
+    rdpDiag.bitmapBytes += uint8Data?.byteLength || 0;
+    rdpDiag.bitmapLast = { x: destX, y: destY, w, h, bytes: uint8Data?.byteLength || 0, at: Date.now() };
     if (rdpGL && rdpGLBlitBGRA(destX, destY, w, h, uint8Data)) {
+        notePresentedFrame();
         return true;
     }
     /* Fallback: Canvas2D with putImageData (requires RGBA, not BGRA).
@@ -357,7 +365,11 @@ window.rdpDrawBitmapBGRA = function (destX, destY, w, h, uint8Data) {
         applyFitMode();
         attachInputEvents();
     }
-    if (!rdpCtx2d) return false;
+    if (!rdpCtx2d) {
+        rdpDiag.drawFails++;
+        rdpDiag.lastDrawError = 'no Canvas2D context after fallback';
+        return false;
+    }
     const rgba = new Uint8ClampedArray(w * h * 4);
     for (let i = 0; i < w * h; i++) {
         const s = i * 4;
@@ -368,6 +380,7 @@ window.rdpDrawBitmapBGRA = function (destX, destY, w, h, uint8Data) {
     }
     const imgData = new ImageData(rgba, w, h);
     rdpCtx2d.putImageData(imgData, destX, destY);
+    notePresentedFrame();
     return true;
 };
 
@@ -612,6 +625,7 @@ function h264DrawFrameWebGL(frame, x, y) {
 window.rdpOnH264 = function (destX, destY, w, h, isKey, uint8Data) {
     if (!h264Dec || h264Dec.state === 'closed') return;
     h264CallCount++;
+    rdpDiag.h264Calls++;
     if (h264CallCount <= 10) {
         const firstBytes = Array.from(uint8Data.slice(0, 12)).map(b => b.toString(16).padStart(2,'0')).join(' ');
         h264InfoLog.push('onH264 #' + h264CallCount + ' dest=(' + destX + ',' + destY + ') size=' + w + 'x' + h + ' isKey=' + isKey + ' len=' + uint8Data.length + ' first12=' + firstBytes + ' state=' + h264Dec.state);
@@ -761,6 +775,7 @@ function createH264Decoder() {
     const decoder = new VideoDecoder({
         output(frame) {
             frameCount++;
+            rdpDiag.h264Frames++;
             const pos = h264FramePos.get(frame.timestamp);
             h264FramePos.delete(frame.timestamp);
             const x = pos ? pos.x : 0;
