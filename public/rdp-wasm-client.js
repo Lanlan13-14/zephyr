@@ -350,7 +350,13 @@ window.rdpDrawBitmapBGRA = function (destX, destY, w, h, uint8Data) {
     /* Fallback: Canvas2D with putImageData (requires RGBA, not BGRA).
      * Convert BGRA->RGBA in JS. This path is only used when WebGL is
      * unavailable or a driver rejects the upload. */
-    if (!rdpCtx2d && rdpCanvas) rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
+    if (!rdpCtx2d && rdpCanvas) {
+        recreateCanvasFor2D(rdpWidth || rdpCanvas.width, rdpHeight || rdpCanvas.height);
+        rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
+        rdpDiag.renderer = 'wasm-canvas2d-fallback';
+        applyFitMode();
+        attachInputEvents();
+    }
     if (!rdpCtx2d) return false;
     const rgba = new Uint8ClampedArray(w * h * 4);
     for (let i = 0; i < w * h; i++) {
@@ -1399,6 +1405,22 @@ function maybeAutoReconnect() {
 /* ═══════════════════════════════════════════════════════════════════════
  * CANVAS MANAGEMENT
  * ═══════════════════════════════════════════════════════════════════════ */
+function recreateCanvasFor2D(w, h) {
+    if (!rdpCanvas) return null;
+    const old = rdpCanvas;
+    const fresh = document.createElement('canvas');
+    fresh.id = old.id || 'rdpCanvas';
+    fresh.tabIndex = old.tabIndex || 0;
+    fresh.style.cssText = old.style.cssText;
+    fresh.width = w;
+    fresh.height = h;
+    old.replaceWith(fresh);
+    rdpCanvas = fresh;
+    inputAttached = false;
+    rdpTouchController = null;
+    return fresh;
+}
+
 function ensureCanvas(w, h) {
     rdpWidth = w;
     rdpHeight = h;
@@ -1421,17 +1443,25 @@ function ensureCanvas(w, h) {
     }
     rdpCanvas.width = w;
     rdpCanvas.height = h;
-    /* WebGL is available behind an explicit flag only. Some Android WebView
-     * GPU stacks accept context creation but reject texture uploads, producing
-     * a black screen.  Default to Canvas2D fallback for reliability; enable
-     * with ?rdpWebgl=true or saved param rdpWebgl=true for testing. */
-    const enableWebGL = boolSetting(params.rdpWebgl || urlParams.get('rdpWebgl'));
+    /* Prefer GPU/WebGL by default to minimize CPU copy/conversion cost.
+     * Use ?rdpWebgl=false (or saved param rdpWebgl=false) to force the
+     * Canvas2D fallback.  If WebGL init fails, recreate the canvas because a
+     * canvas that already has a WebGL context cannot reliably acquire a 2D
+     * context afterwards. */
+    const webglFlag = params.rdpWebgl ?? urlParams.get('rdpWebgl');
+    const enableWebGL = webglFlag !== false && webglFlag !== 'false' && webglFlag !== '0';
     if (enableWebGL && rdpGLInit(rdpCanvas, w, h)) {
         rdpCtx2d = null;
     } else {
         rdpGLCleanup();
-        rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
-        rdpDiag.renderer = 'wasm-canvas2d-fallback';
+        if (!enableWebGL) {
+            rdpDiag.renderer = 'wasm-canvas2d-forced';
+        }
+        if (!rdpCtx2d) {
+            recreateCanvasFor2D(w, h);
+            rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
+        }
+        if (rdpCtx2d && rdpDiag.renderer !== 'wasm-canvas2d-forced') rdpDiag.renderer = 'wasm-canvas2d-fallback';
     }
     applyFitMode();
     attachInputEvents();
