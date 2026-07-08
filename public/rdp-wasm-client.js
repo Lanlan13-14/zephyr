@@ -414,6 +414,16 @@ window.rdpOnReady = function () {
     notifyParentStatus('connected');
     if (rdpCanvas) rdpCanvas.focus();
     if (rdpAgentStorageEnabled) syncAgentDrives({ enabled: true });
+    setTimeout(() => {
+        if (!connected) return;
+        if ((rdpDiag.bitmapCalls || 0) === 0 && (rdpDiag.h264Calls || 0) === 0) {
+            setStatus('connected', `RDP 已连接，但 3 秒内未收到画面帧 · ${rdpDiag.renderer}/${rdpDiag.codec}`, { holdOverlayMs: 2500 });
+            console.warn('[rdp-render] no frames after ready', rdpDiag);
+        } else if ((rdpDiag.frames || 0) === 0) {
+            setStatus('connected', `RDP 已连接，收到帧但未绘制 · ${rdpDiag.renderer}/${rdpDiag.codec} · bmp=${rdpDiag.bitmapCalls} h264=${rdpDiag.h264Calls} fail=${rdpDiag.drawFails} err=${rdpDiag.lastDrawError}`, { holdOverlayMs: 3500 });
+            console.warn('[rdp-render] frames received but not presented', rdpDiag);
+        }
+    }, 3000);
 };
 
 /* Called by Go on error */
@@ -1287,7 +1297,7 @@ async function connect() {
      * default to grdp internal H.264 decode -> bitmap updates so all drawing
      * uses one renderer path. */
     const webCodecsFlag = params.rdpWebCodecs ?? urlParams.get('rdpWebCodecs');
-    const hasWebCodecs = h264Supported() && (webCodecsFlag === true || webCodecsFlag === 'true' || !shouldUseWebGLRenderer());
+    const hasWebCodecs = h264Supported() && (webCodecsFlag !== false && webCodecsFlag !== 'false' && webCodecsFlag !== '0') && !shouldUseWebGLRenderer();
     rdpDiag.codec = hasWebCodecs ? 'webcodecs-h264' : 'grdp-bitmap';
 
     /* Init H.264 only when Go will send raw H.264 to JS. */
@@ -1429,7 +1439,10 @@ function maybeAutoReconnect() {
  * ═══════════════════════════════════════════════════════════════════════ */
 function shouldUseWebGLRenderer() {
     const webglFlag = params.rdpWebgl ?? urlParams.get('rdpWebgl');
-    return webglFlag !== false && webglFlag !== 'false' && webglFlag !== '0';
+    // Emergency safe default: Canvas2D. Enable GPU renderer explicitly with
+    // rdpWebgl=true after confirming frame delivery. This avoids silent black
+    // screens while we diagnose the WebGL path on Android WebView.
+    return webglFlag === true || webglFlag === 'true' || webglFlag === '1';
 }
 
 function recreateCanvasFor2D(w, h) {
