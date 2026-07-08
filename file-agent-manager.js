@@ -841,7 +841,7 @@ class FileAgentManager {
 
             const handle = String(req.query.handle || '');
             const offset = Number(req.query.offset || 0);
-            const length = Math.max(0, Math.min(8 * 1024 * 1024, Number(req.query.length || 0)));
+            const length = Math.max(0, Math.min(1 * 1024 * 1024, Number(req.query.length || 0)));
             if (!handle || !Number.isFinite(offset) || !Number.isFinite(length)) {
                 return res.status(400).end();
             }

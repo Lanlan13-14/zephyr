@@ -15,8 +15,8 @@ const RPC_TIMEOUT = 30000;
 // Binary read path can use larger chunks because it avoids base64/JSON payload
 // inflation.  JSON fallback stays conservative to avoid the old multi-GB copy
 // disconnects caused by oversized base64 responses.
-const READ_BINARY_AHEAD_BYTES = 8 * 1024 * 1024;
-const READ_BINARY_RPC_MAX_BYTES = 8 * 1024 * 1024;
+const READ_BINARY_AHEAD_BYTES = 1 * 1024 * 1024;
+const READ_BINARY_RPC_MAX_BYTES = 1 * 1024 * 1024;
 const READ_JSON_RPC_MAX_BYTES = 512 * 1024;
 const READ_CACHE_MAX_HANDLES = 8;
 

@@ -197,7 +197,7 @@ class AgentController extends ChangeNotifier {
         'truncate': !_config.readOnly,
         'binary': true,
         'binaryRead': true,
-        'maxChunkSize': 8 * 1024 * 1024,
+        'maxChunkSize': 1 * 1024 * 1024,
       },
       'share': {
         'name': _config.sharedDirectoryName ?? _config.deviceName,
