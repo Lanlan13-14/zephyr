@@ -14,6 +14,7 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
@@ -29,6 +30,7 @@ class MainActivity : FlutterActivity() {
         val uri: Uri,
         val mode: String,
         val pfd: ParcelFileDescriptor? = null,
+        val inputStream: FileInputStream? = null,
         val stream: FileOutputStream? = null,
         val channel: FileChannel? = null,
     )
@@ -189,9 +191,17 @@ class MainActivity : FlutterActivity() {
             val stream = FileOutputStream(pfd.fileDescriptor)
             val channel = stream.channel
             if (mode == "writeTruncate") channel.truncate(0)
-            handles[handle] = SafHandle(doc.uri, mode, pfd, stream, channel)
+            handles[handle] = SafHandle(doc.uri, mode, pfd, stream = stream, channel = channel)
         } else {
-            handles[handle] = SafHandle(doc.uri, mode)
+            // Keep a persistent seekable read descriptor per handle.  The old
+            // implementation reopened InputStream and skipped from offset 0 on
+            // every read; for multi-GB files the later chunks spent most of the
+            // RPC timeout just skipping gigabytes, which made RDPDR drop the
+            // redirected drive mid-copy.
+            val pfd = contentResolver.openFileDescriptor(doc.uri, "r")
+                ?: throw SafException("io_error", "Cannot open file for read")
+            val stream = FileInputStream(pfd.fileDescriptor)
+            handles[handle] = SafHandle(doc.uri, mode, pfd, inputStream = stream, channel = stream.channel)
         }
         result.success(handle)
     }
@@ -201,6 +211,27 @@ class MainActivity : FlutterActivity() {
         val offset = numberArg(call, "offset").toLong()
         val length = numberArg(call, "length").toInt().coerceAtLeast(0)
         val handle = handles[handleId] ?: throw SafException("not_found", "Invalid handle")
+        if (length == 0) {
+            result.success(ByteArray(0))
+            return
+        }
+
+        val channel = handle.channel
+        if (channel != null) {
+            try {
+                channel.position(offset)
+                val buffer = ByteArray(length)
+                val read = channel.read(ByteBuffer.wrap(buffer))
+                result.success(if (read <= 0) ByteArray(0) else buffer.copyOf(read))
+                return
+            } catch (_: Exception) {
+                // Some exotic DocumentProviders expose non-seekable descriptors.
+                // Fall through to the slower stream+skip compatibility path.
+            }
+        }
+
+        // Fallback for non-seekable providers.  This path should be rare; the
+        // persistent FileChannel above is required for large-file performance.
         val input = contentResolver.openInputStream(handle.uri) ?: throw SafException("io_error", "Cannot open input stream")
         input.use { stream ->
             var skipped = 0L
@@ -231,6 +262,7 @@ class MainActivity : FlutterActivity() {
         val handleId = call.argument<String>("handle") ?: return result.success(null)
         val handle = handles.remove(handleId)
         handle?.channel?.close()
+        handle?.inputStream?.close()
         handle?.stream?.close()
         handle?.pfd?.close()
         result.success(null)
