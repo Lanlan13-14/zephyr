@@ -634,7 +634,8 @@ window.rdpOnH264 = function (destX, destY, w, h, isKey, uint8Data) {
     /* Use high-resolution timestamp for better frame ordering.  The old
      * code used h264Timestamp += 1000 which was a fake counter with no
      * relation to real presentation time. */
-    h264Timestamp = performance.now() * 1000; /* microseconds */
+    const nowUs = Math.round(performance.now() * 1000);
+    h264Timestamp = Math.max(h264Timestamp + 1, nowUs); /* integer microseconds, monotonic */
     h264FramePos.set(h264Timestamp, { x: destX, y: destY });
 
     /* Guard against Map leak: if the decoder queue is too deep (frames

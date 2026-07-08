@@ -351,6 +351,7 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 
 var (
 	bitmapBGRABuf []byte
+	bitmapCropBuf []byte
 	bitmapJSArr   js.Value
 	bitmapJSLen   int
 )
@@ -407,8 +408,13 @@ func renderBitmapsBGRA(bs []grdp.Bitmap) {
 			js.Global().Call("rdpDrawBitmapBGRA", bm.DestLeft, bm.DestTop, w, h, bitmapJSArr)
 		} else {
 			// Clipped or non-32bpp: use FillBGRA on full bitmap then crop.
+			// Full conversion and cropped output must use distinct buffers:
+			// overlapping copy(full -> bgra) corrupts pixels on clipped tiles.
 			full := bm.FillBGRA(bitmapBGRABuf[:fullNeed])
-			bgra := bitmapBGRABuf[:need]
+			if cap(bitmapCropBuf) < need {
+				bitmapCropBuf = make([]byte, need)
+			}
+			bgra := bitmapCropBuf[:need]
 			srcStride := bm.Width * 4
 			dstStride := w * 4
 			for row := 0; row < h; row++ {
