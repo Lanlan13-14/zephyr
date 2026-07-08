@@ -183,11 +183,13 @@ globalThis.zephyrRdpFsList = function(agentId, path) {
 
 globalThis.zephyrRdpFsStat = function(agentId, path) {
     const result = syncRpc(agentId, 'stat', { path: path || '/' });
+    // Return null for not-found so Go can send STATUS_NO_SUCH_FILE.
     return result || null;
 };
 
 globalThis.zephyrRdpFsOpen = function(agentId, path, mode) {
     const result = syncRpc(agentId, 'open', { path, mode: mode || 'read' });
+    // Return '' (empty string) on failure so Go detects the missing handle.
     if (!result || !result.handle) return '';
     return result.handle;
 };
@@ -195,7 +197,9 @@ globalThis.zephyrRdpFsOpen = function(agentId, path, mode) {
 globalThis.zephyrRdpFsRead = function(agentId, handle, offset, length) {
     const result = syncRpc(agentId, 'read', { handle, offset, length });
     if (!result) return null;
-    // Empty read (EOF) — return empty array, NOT null
+    // Empty read (EOF) — return empty array, NOT null.
+    // Returning null would cause rdpefs.go to send STATUS_UNSUCCESSFUL,
+    // which Windows surfaces as 0x8007048F "device not connected" on copy.
     if (!result.dataBase64 || result.dataBase64.length === 0) return new Uint8Array(0);
     // Decode base64 to Uint8Array
     const binaryStr = atob(result.dataBase64);

@@ -114,6 +114,97 @@ func TestNormalizeDirectoryPattern(t *testing.T) {
 	}
 }
 
+// TestCapabilityResponseStructure verifies the Client Core Capability
+// Response contains both General and Drive capability sets with correct
+// Version and CapabilityLength fields.  Windows' RDPDR server parser
+// rejects a mismatched Version/CapabilityLength (e.g. Version=1 with a
+// 36-byte body), which causes the drive to be dropped mid-operation.
+func TestCapabilityResponseStructure(t *testing.T) {
+	storageGetFiles := js.FuncOf(func(this js.Value, args []js.Value) any {
+		return js.Null()
+	})
+	defer storageGetFiles.Release()
+	js.Global().Set("rdpStorageGetFiles", storageGetFiles)
+
+	h := NewRdpefsHandler(true)
+	var sent [][]byte
+	h.sender = func(_ string, data []byte) (int, error) {
+		cp := append([]byte(nil), data...)
+		sent = append(sent, cp)
+		return len(data), nil
+	}
+
+	// processServerCapability sends the capability response
+	h.processServerCapability(nil)
+
+	var capsResp []byte
+	for _, pkt := range sent {
+		if len(pkt) >= 4 &&
+			binary.LittleEndian.Uint16(pkt[0:2]) == RDPDR_CTYP_CORE &&
+			binary.LittleEndian.Uint16(pkt[2:4]) == PAKID_CORE_CLIENT_CAPABILITY {
+			capsResp = pkt
+			break
+		}
+	}
+	if capsResp == nil {
+		t.Fatal("no Client Core Capability Response sent")
+	}
+
+	// numCapabilities must be 2 (General + Drive)
+	numCaps := binary.LittleEndian.Uint16(capsResp[8:10])
+	if numCaps != 2 {
+		t.Fatalf("numCapabilities = %d, want 2 (General + Drive)", numCaps)
+	}
+
+	// Parse first capability set (General)
+	off := 12 // after header(4) + numCaps(2) + pad(2)
+	genType := binary.LittleEndian.Uint16(capsResp[off : off+2])
+	genLen := binary.LittleEndian.Uint16(capsResp[off+2 : off+4])
+	genVer := binary.LittleEndian.Uint32(capsResp[off+4 : off+8])
+	if genType != CAP_GENERAL_TYPE {
+		t.Fatalf("first cap type = %d, want CAP_GENERAL_TYPE=%d", genType, CAP_GENERAL_TYPE)
+	}
+	if genLen != 44 {
+		t.Fatalf("general CapabilityLength = %d, want 44", genLen)
+	}
+	if genVer != GENERAL_CAPABILITY_VERSION_02 {
+		t.Fatalf("general Version = %d, want GENERAL_CAPABILITY_VERSION_02=%d", genVer, GENERAL_CAPABILITY_VERSION_02)
+	}
+	// Verify the 36-byte body follows
+	genBodyEnd := off + 8 + 36
+	if genBodyEnd > len(capsResp) {
+		t.Fatalf("general caps body extends past packet: end=%d, pktLen=%d", genBodyEnd, len(capsResp))
+	}
+
+	// Parse second capability set (Drive)
+	drvType := binary.LittleEndian.Uint16(capsResp[genBodyEnd : genBodyEnd+2])
+	drvLen := binary.LittleEndian.Uint16(capsResp[genBodyEnd+2 : genBodyEnd+4])
+	drvVer := binary.LittleEndian.Uint32(capsResp[genBodyEnd+4 : genBodyEnd+8])
+	if drvType != CAP_DRIVE_TYPE {
+		t.Fatalf("second cap type = %d, want CAP_DRIVE_TYPE=%d", drvType, CAP_DRIVE_TYPE)
+	}
+	if drvLen != 8 {
+		t.Fatalf("drive CapabilityLength = %d, want 8 (header only, no body)", drvLen)
+	}
+	if drvVer != DRIVE_CAPABILITY_VERSION_02 {
+		t.Fatalf("drive Version = %d, want DRIVE_CAPABILITY_VERSION_02=%d", drvVer, DRIVE_CAPABILITY_VERSION_02)
+	}
+}
+
+// TestDefaultPayloadForQueryVolume verifies that a failed QUERY_VOLUME IRP
+// includes a 4-byte Length=0 payload.  FreeRDP's drive_main.c always writes
+// this even on the unhandled/failure path; omitting it desyncs the server's
+// RDPDR stream parser by 4 bytes.
+func TestDefaultPayloadForQueryVolume(t *testing.T) {
+	payload := defaultPayloadFor(IRP_MJ_QUERY_VOLUME)
+	if len(payload) != 4 {
+		t.Fatalf("QUERY_VOLUME default payload length = %d, want 4", len(payload))
+	}
+	if binary.LittleEndian.Uint32(payload) != 0 {
+		t.Fatalf("QUERY_VOLUME default payload = %d, want 0", binary.LittleEndian.Uint32(payload))
+	}
+}
+
 func deterministicTestTime() time.Time {
 	return time.Unix(1700000000, 0).UTC()
 }

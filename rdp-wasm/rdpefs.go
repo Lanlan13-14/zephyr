@@ -485,26 +485,50 @@ func (h *RdpefsHandler) processServerCapability(data []byte) {
 	h.refreshLocalFileList()
 
 	// Send Client Core Capability Response
+	//
+	// MS-RDPEFS §2.2.2.2 Client Core Capability Response:
+	//   numCapabilities(2) + Padding(2) + capability sets
+	//
+	// We send 2 capability sets:
+	//   1. General (CAP_GENERAL_TYPE) — version 02, 36-byte body
+	//   2. Drive (CAP_DRIVE_TYPE) — version 02, 0-byte body
+	//
+	// FreeRDP sends both when drives are present.  Omitting the Drive
+	// capability set confuses the Windows server's RDPDR parser, which
+	// can cause the redirected drive to be dropped mid-operation with
+	// error 0x8007048F ("The device is not connected").
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_CLIENT_CAPABILITY))
-	binary.Write(buf, binary.LittleEndian, uint16(1))
-	binary.Write(buf, binary.LittleEndian, uint16(0))
+	binary.Write(buf, binary.LittleEndian, uint16(2)) // numCapabilities: General + Drive
+	binary.Write(buf, binary.LittleEndian, uint16(0)) // Padding
 
-	// General capability set
+	// ── General capability set (CAP_GENERAL_TYPE) ──
+	// RDPDR_CAPABILITY_HEADER: CapabilityType(2) + CapabilityLength(2) + Version(4)
+	// CapabilityLength = 8 (header) + 36 (body) = 44
+	// Version = GENERAL_CAPABILITY_VERSION_02 (must be 2 to match the 36-byte body;
+	//   VERSION_01 expects only 32 bytes, and the server enforces this match.)
 	binary.Write(buf, binary.LittleEndian, uint16(CAP_GENERAL_TYPE))
 	binary.Write(buf, binary.LittleEndian, uint16(44))
-	binary.Write(buf, binary.LittleEndian, uint32(1))
-	binary.Write(buf, binary.LittleEndian, uint32(2))
-	binary.Write(buf, binary.LittleEndian, uint32(0))
-	binary.Write(buf, binary.LittleEndian, uint16(1))
-	binary.Write(buf, binary.LittleEndian, uint16(12))
-	binary.Write(buf, binary.LittleEndian, uint32(0xFFFF))
-	binary.Write(buf, binary.LittleEndian, uint32(0))
-	binary.Write(buf, binary.LittleEndian, uint32(7)) // RDPDR_DEVICE_REMOVE|USER_LOGGEDON|CLIENT_DISPLAY_NAME
-	binary.Write(buf, binary.LittleEndian, uint32(0))
-	binary.Write(buf, binary.LittleEndian, uint32(0))
-	binary.Write(buf, binary.LittleEndian, uint32(0))
+	binary.Write(buf, binary.LittleEndian, uint32(GENERAL_CAPABILITY_VERSION_02))
+	// GENERAL_CAPS_SET body (36 bytes):
+	binary.Write(buf, binary.LittleEndian, uint32(0))      // osType (ignored on receipt)
+	binary.Write(buf, binary.LittleEndian, uint32(0))      // osVersion (must be 0)
+	binary.Write(buf, binary.LittleEndian, uint16(1))      // protocolMajorVersion (must be 1)
+	binary.Write(buf, binary.LittleEndian, uint16(12))     // protocolMinorVersion
+	binary.Write(buf, binary.LittleEndian, uint32(0xFFFF)) // ioCode1 (all IRP types supported)
+	binary.Write(buf, binary.LittleEndian, uint32(0))      // ioCode2 (reserved, must be 0)
+	binary.Write(buf, binary.LittleEndian, uint32(7))      // extendedPDU: DEVICE_REMOVE|USER_LOGGEDON|CLIENT_DISPLAY_NAME
+	binary.Write(buf, binary.LittleEndian, uint32(0))      // extraFlags1
+	binary.Write(buf, binary.LittleEndian, uint32(0))      // extraFlags2 (reserved, must be 0)
+	binary.Write(buf, binary.LittleEndian, uint32(0))      // specialTypeDeviceCap
+
+	// ── Drive capability set (CAP_DRIVE_TYPE) ──
+	// RDPDR_CAPABILITY_HEADER only: CapabilityType(2) + CapabilityLength(2) + Version(4)
+	// The Drive capability set has NO body (CapabilityLength = 8 = header only).
+	binary.Write(buf, binary.LittleEndian, uint16(CAP_DRIVE_TYPE))
+	binary.Write(buf, binary.LittleEndian, uint16(8)) // CapabilityLength = 8 (header only, no body)
+	binary.Write(buf, binary.LittleEndian, uint32(DRIVE_CAPABILITY_VERSION_02))
 	h.send(buf.Bytes())
 
 	// RDP 5.1 servers don't send USER_LOGGEDON — announce immediately
@@ -1422,6 +1446,37 @@ func (h *RdpefsHandler) handleQueryVolume(deviceID, completionID uint32, data []
 		resp.Write(info.Bytes())
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 
+	case 7: // FileFsFullSizeInformation
+		// http://msdn.microsoft.com/en-us/library/cc232104.aspx
+		info := &bytes.Buffer{}
+		binary.Write(info, binary.LittleEndian, int64(1024*1024)) // TotalAllocationUnits
+		binary.Write(info, binary.LittleEndian, int64(512*1024))  // CallerAvailableAllocationUnits
+		binary.Write(info, binary.LittleEndian, int64(512*1024))  // AvailableAllocationUnits
+		binary.Write(info, binary.LittleEndian, uint32(1))        // SectorsPerAllocationUnit
+		binary.Write(info, binary.LittleEndian, uint32(4096))     // BytesPerSector
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(info.Len()))
+		resp.Write(info.Bytes())
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+
+	case 2: // FileFsLabelInformation
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(0))
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+
+	case 6: // FileFsObjectIdInformation
+		info := &bytes.Buffer{}
+		info.Write(make([]byte, 48))
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(info.Len()))
+		resp.Write(info.Bytes())
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+
+	case 8: // FileFsDriverPathInformation
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(0))
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+
 	default:
 		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_VOLUME, STATUS_NOT_SUPPORTED, nil)
 	}
@@ -1473,8 +1528,15 @@ func defaultPayloadFor(majorFunction uint32) []byte {
 	case IRP_MJ_LOCK_CONTROL, IRP_MJ_DEVICE_CONTROL:
 		// silent_ignore / device_control: Length(4)=0 / OutputBufferLength(4)=0
 		binary.Write(buf, binary.LittleEndian, uint32(0))
-	case IRP_MJ_QUERY_INFORMATION, IRP_MJ_QUERY_VOLUME:
-		// FreeRDP writes NO body on failure for these IRP types.
+	case IRP_MJ_QUERY_VOLUME:
+		// FreeRDP ALWAYS writes Length(4)=0 on failure for QUERY_VOLUME,
+		// even in the default/unhandled case.  Omitting this 4-byte field
+		// desyncs the server's RDPDR stream parser by 4 bytes, which
+		// causes subsequent IOCOMPLETION messages to be misinterpreted
+		// and the drive to be dropped with error 0x8007048F.
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+	case IRP_MJ_QUERY_INFORMATION:
+		// FreeRDP writes NO body on failure for QUERY_INFORMATION.
 		// The server knows from IoStatus != STATUS_SUCCESS that there is no
 		// Length/data pair to read.
 	case IRP_MJ_CLEANUP, IRP_MJ_FLUSH_BUFFERS, IRP_MJ_SHUTDOWN:
@@ -1717,20 +1779,26 @@ func buildDirectoryEntry(f *VirtualFile, infoClass uint32) []byte {
 		buf.Write(name)
 
 	default: // FileBothDirectoryInformation
-		binary.Write(buf, binary.LittleEndian, uint32(0))
-		binary.Write(buf, binary.LittleEndian, uint32(0))
-		binary.Write(buf, binary.LittleEndian, ft)
-		binary.Write(buf, binary.LittleEndian, ft)
-		binary.Write(buf, binary.LittleEndian, ft)
-		binary.Write(buf, binary.LittleEndian, ft)
-		binary.Write(buf, binary.LittleEndian, size) // EndOfFile
-		binary.Write(buf, binary.LittleEndian, size) // AllocationSize
-		binary.Write(buf, binary.LittleEndian, attrs)
-		binary.Write(buf, binary.LittleEndian, uint32(len(name)))
-		binary.Write(buf, binary.LittleEndian, uint32(0))
-		binary.Write(buf, binary.LittleEndian, uint8(0))
-		buf.Write(make([]byte, 24))
-		buf.Write(name)
+		// http://msdn.microsoft.com/en-us/library/cc232095.aspx
+		// Layout: NextEntryOffset(4) + FileIndex(4) +
+		//   CreationTime(8) + LastAccessTime(8) + LastWriteTime(8) + ChangeTime(8) +
+		//   EndOfFile(8) + AllocationSize(8) + FileAttributes(4) +
+		//   FileNameLength(4) + EaSize(4) + ShortNameLength(1) + ShortName(24) + FileName
+		// = 4+4+ 8*4 + 8*2 + 4 + 4+4 + 1+24 = 93 bytes + FileName
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // NextEntryOffset
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // FileIndex
+		binary.Write(buf, binary.LittleEndian, ft)        // CreationTime
+		binary.Write(buf, binary.LittleEndian, ft)        // LastAccessTime
+		binary.Write(buf, binary.LittleEndian, ft)        // LastWriteTime
+		binary.Write(buf, binary.LittleEndian, ft)        // ChangeTime
+		binary.Write(buf, binary.LittleEndian, size)      // EndOfFile
+		binary.Write(buf, binary.LittleEndian, size)      // AllocationSize
+		binary.Write(buf, binary.LittleEndian, attrs)     // FileAttributes
+		binary.Write(buf, binary.LittleEndian, uint32(len(name))) // FileNameLength
+		binary.Write(buf, binary.LittleEndian, uint32(0))         // EaSize
+		binary.Write(buf, binary.LittleEndian, uint8(0))          // ShortNameLength
+		buf.Write(make([]byte, 24))                               // ShortName (WCHAR[12])
+		buf.Write(name)                                           // FileName
 	}
 	return buf.Bytes()
 }
