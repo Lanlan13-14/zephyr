@@ -219,6 +219,18 @@ func TestCreateDispositionHelpers(t *testing.T) {
 	if desiredAccessWantsWrite(0x80000000) { // GENERIC_READ
 		t.Fatal("desiredAccessWantsWrite(GENERIC_READ) = true, want false")
 	}
+	if !isOfficeVolatilePath("Download/Telegram/~$Akari海外价格表.xlsx") {
+		t.Fatal("isOfficeVolatilePath did not detect Office lock file")
+	}
+	if isOfficeVolatilePath("Download/Telegram/Akari海外价格表.xlsx") {
+		t.Fatal("isOfficeVolatilePath matched normal document")
+	}
+	if got := createResponseInformation(FILE_OPEN_IF, true); got != FILE_OPENED {
+		t.Fatalf("createResponseInformation(FILE_OPEN_IF,true) = %d, want FILE_OPENED", got)
+	}
+	if got := createResponseInformation(FILE_OPEN_IF, false); got != FILE_CREATED {
+		t.Fatalf("createResponseInformation(FILE_OPEN_IF,false) = %d, want FILE_CREATED", got)
+	}
 }
 
 func deterministicTestTime() time.Time {

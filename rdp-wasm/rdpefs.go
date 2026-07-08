@@ -216,6 +216,7 @@ const (
 const (
 	FILE_SUPERSEDED  = 0x00000000
 	FILE_OPENED      = 0x00000001
+	FILE_CREATED     = 0x00000002
 	FILE_OVERWRITTEN = 0x00000003
 )
 
@@ -255,6 +256,8 @@ type openHandle struct {
 	Path          string
 	IsDir         bool
 	RemoteHandle  string // handle ID from agent (for agent mode reads)
+	Volatile      bool   // in-memory placeholder for Office temp/lock files on read-only Agent shares
+	VolatileData  []byte // data written to the volatile placeholder during this RDP session
 	// For local mode compatibility
 	LocalFile *VirtualFile
 }
@@ -768,6 +771,10 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 			return
 		}
 		if readOnly {
+			if createOptions&FILE_DIRECTORY_FILE == 0 && isOfficeVolatilePath(path) {
+				h.openVolatileAgentHandle(deviceID, completionID, agentID, path, FILE_CREATED)
+				return
+			}
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_ACCESS_DENIED, nil)
 			return
 		}
@@ -808,7 +815,7 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 			h.mu.Unlock()
 			resp := &bytes.Buffer{}
 			binary.Write(resp, binary.LittleEndian, fid)
-			binary.Write(resp, binary.LittleEndian, uint8(0))
+			binary.Write(resp, binary.LittleEndian, createResponseInformation(createDisposition, false))
 			h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 			return
 		}
@@ -875,7 +882,7 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 
 	resp := &bytes.Buffer{}
 	binary.Write(resp, binary.LittleEndian, fid)
-	binary.Write(resp, binary.LittleEndian, uint8(0))
+	binary.Write(resp, binary.LittleEndian, createResponseInformation(createDisposition, true))
 	h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 }
 
@@ -901,6 +908,53 @@ func desiredAccessWantsWrite(desiredAccess uint32) bool {
 	const writeMask = FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES |
 		DELETE_ACCESS | GENERIC_WRITE_ACCESS | GENERIC_ALL_ACCESS
 	return desiredAccess&writeMask != 0
+}
+
+func createResponseInformation(createDisposition uint32, existed bool) uint8 {
+	if existed {
+		switch createDisposition {
+		case FILE_SUPERSEDE:
+			return FILE_SUPERSEDED
+		case FILE_OVERWRITE, FILE_OVERWRITE_IF:
+			return FILE_OVERWRITTEN
+		default:
+			return FILE_OPENED
+		}
+	}
+	return FILE_CREATED
+}
+
+func isOfficeVolatilePath(path string) bool {
+	base := path
+	if idx := strings.LastIndex(base, "/"); idx >= 0 {
+		base = base[idx+1:]
+	}
+	base = strings.ToLower(base)
+	// Microsoft Office creates hidden lock files named ~$<document> next to the
+	// real document.  On a read-only redirected Agent share, failing that create
+	// can make Excel/Word report the parent folder as moved/deleted.  We satisfy
+	// these lock-file opens with an in-memory handle instead of writing to Agent.
+	return strings.HasPrefix(base, "~$")
+}
+
+func (h *RdpefsHandler) openVolatileAgentHandle(deviceID, completionID uint32, agentID, path string, information uint8) {
+	h.mu.Lock()
+	fid := h.nextFileID
+	h.nextFileID++
+	h.handles[fid] = &openHandle{
+		DriveDeviceID: deviceID,
+		AgentID:       agentID,
+		Path:          path,
+		IsDir:         false,
+		Volatile:      true,
+		VolatileData:  []byte{},
+	}
+	h.mu.Unlock()
+
+	resp := &bytes.Buffer{}
+	binary.Write(resp, binary.LittleEndian, fid)
+	binary.Write(resp, binary.LittleEndian, information)
+	h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 }
 
 func (h *RdpefsHandler) handleCreateLocal(deviceID, completionID uint32, path string, desiredAccess, createDisposition, createOptions uint32) {
@@ -941,7 +995,7 @@ func (h *RdpefsHandler) handleCreateLocal(deviceID, completionID uint32, path st
 
 	resp := &bytes.Buffer{}
 	binary.Write(resp, binary.LittleEndian, fid)
-	binary.Write(resp, binary.LittleEndian, uint8(0))
+	binary.Write(resp, binary.LittleEndian, createResponseInformation(createDisposition, true))
 	h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 }
 
@@ -977,6 +1031,26 @@ func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data [
 
 	if handle == nil || handle.IsDir {
 		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_READ, STATUS_INVALID_DEVICE_REQUEST, nil)
+		return
+	}
+
+	if handle.Volatile {
+		start := int(offset)
+		data := handle.VolatileData
+		if start >= len(data) {
+			resp := &bytes.Buffer{}
+			binary.Write(resp, binary.LittleEndian, uint32(0))
+			h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+			return
+		}
+		end := start + int(length)
+		if end > len(data) {
+			end = len(data)
+		}
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(end-start))
+		resp.Write(data[start:end])
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 		return
 	}
 
@@ -1069,6 +1143,23 @@ func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data 
 		return
 	}
 
+	if handle.Volatile {
+		h.mu.Lock()
+		need := int(offset) + len(writeData)
+		if need > len(handle.VolatileData) {
+			grown := make([]byte, need)
+			copy(grown, handle.VolatileData)
+			handle.VolatileData = grown
+		}
+		copy(handle.VolatileData[int(offset):], writeData)
+		h.mu.Unlock()
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(len(writeData)))
+		binary.Write(resp, binary.LittleEndian, uint8(0))
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+		return
+	}
+
 	drive := h.getDrive(deviceID)
 	if drive == nil || drive.ReadOnly {
 		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_WRITE, STATUS_ACCESS_DENIED, nil)
@@ -1123,6 +1214,27 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 
 	if handle == nil {
 		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_NO_SUCH_FILE, nil)
+		return
+	}
+
+	if handle.Volatile {
+		if infoClass == FileEndOfFileInformation && len(infoData) >= 8 {
+			newSize := int(binary.LittleEndian.Uint64(infoData[0:8]))
+			h.mu.Lock()
+			if newSize < len(handle.VolatileData) {
+				handle.VolatileData = handle.VolatileData[:newSize]
+			} else if newSize > len(handle.VolatileData) {
+				grown := make([]byte, newSize)
+				copy(grown, handle.VolatileData)
+				handle.VolatileData = grown
+			}
+			h.mu.Unlock()
+		}
+		// Office may set timestamps/delete-pending/EOF on its volatile lock file.
+		// Acknowledge these in memory and do not touch the Agent share.
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(0))
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 		return
 	}
 
@@ -1231,6 +1343,28 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 
 	if handle == nil {
 		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_NO_SUCH_FILE, nil)
+		return
+	}
+
+	if handle.Volatile {
+		var info []byte
+		mtime := time.Now()
+		size := int64(len(handle.VolatileData))
+		switch infoClass {
+		case FileBasicInformation:
+			info = buildBasicInfo(false, mtime)
+		case FileStandardInformation:
+			info = buildStandardInfo(false, size)
+		case FileAttributeTagInformation:
+			info = buildAttributeTagInfo(false)
+		default:
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_NOT_SUPPORTED, nil)
+			return
+		}
+		resp := &bytes.Buffer{}
+		binary.Write(resp, binary.LittleEndian, uint32(len(info)))
+		resp.Write(info)
+		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 		return
 	}
 
