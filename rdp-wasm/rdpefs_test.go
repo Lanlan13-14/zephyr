@@ -19,6 +19,15 @@ func TestBuildBasicInfoLengths(t *testing.T) {
 	if got := len(buildAttributeTagInfo(false)); got != 8 {
 		t.Fatalf("FileAttributeTagInformation length = %d, want 8", got)
 	}
+	if got := len(buildNetworkOpenInfo(false, 123, deterministicTestTime())); got != 56 {
+		t.Fatalf("FileNetworkOpenInformation length = %d, want 56", got)
+	}
+	if got := len(buildNameInfo("a.txt")); got != 4+len(encodeUTF16LENoNull("a.txt")) {
+		t.Fatalf("FileNameInformation length = %d", got)
+	}
+	if got := len(buildAllInfo(false, 123, deterministicTestTime(), "a.txt")); got != 94+len(encodeUTF16LENoNull("a.txt")) {
+		t.Fatalf("FileAllInformation length = %d", got)
+	}
 }
 
 func TestBuildDirectoryEntryLengths(t *testing.T) {
@@ -222,8 +231,28 @@ func TestCreateDispositionHelpers(t *testing.T) {
 	if !isOfficeVolatilePath("Download/Telegram/~$Akari海外价格表.xlsx") {
 		t.Fatal("isOfficeVolatilePath did not detect Office lock file")
 	}
+	volatileNames := []string{
+		"Download/Telegram/.~lock.Akari海外价格表.xlsx#",
+		"Download/Telegram/~WRL1234.tmp",
+		"Download/Telegram/archive.zip.tmp",
+		"Download/Telegram/video.mp4.lock",
+		"Download/Telegram/photo.jpg.lck",
+		"Download/Telegram/Thumbs.db",
+		"Download/Telegram/desktop.ini",
+	}
+	for _, name := range volatileNames {
+		if !isOfficeVolatilePath(name) {
+			t.Fatalf("isOfficeVolatilePath(%q) = false, want true", name)
+		}
+	}
 	if isOfficeVolatilePath("Download/Telegram/Akari海外价格表.xlsx") {
 		t.Fatal("isOfficeVolatilePath matched normal document")
+	}
+	if isOfficeVolatilePath("Download/Telegram/archive.zip") {
+		t.Fatal("isOfficeVolatilePath matched normal archive")
+	}
+	if isOfficeVolatilePath("Download/Telegram/video.mp4") {
+		t.Fatal("isOfficeVolatilePath matched normal video")
 	}
 	if got := createResponseInformation(FILE_OPEN_IF, true); got != FILE_OPENED {
 		t.Fatalf("createResponseInformation(FILE_OPEN_IF,true) = %d, want FILE_OPENED", got)

@@ -144,6 +144,16 @@ const (
 	FileDispositionInformation   = 13
 	FileRenameInformation        = 10
 	FileAllocationInformation    = 19
+	FileInternalInformation      = 6
+	FileEaInformation            = 7
+	FileAccessInformation        = 8
+	FileNameInformation          = 9
+	FilePositionInformation      = 14
+	FileModeInformation          = 16
+	FileAlignmentInformation     = 17
+	FileAllInformation           = 18
+	FileStreamInformation        = 22
+	FileNetworkOpenInformation   = 34
 )
 
 // NT status codes
@@ -930,11 +940,25 @@ func isOfficeVolatilePath(path string) bool {
 		base = base[idx+1:]
 	}
 	base = strings.ToLower(base)
-	// Microsoft Office creates hidden lock files named ~$<document> next to the
-	// real document.  On a read-only redirected Agent share, failing that create
-	// can make Excel/Word report the parent folder as moved/deleted.  We satisfy
-	// these lock-file opens with an in-memory handle instead of writing to Agent.
-	return strings.HasPrefix(base, "~$")
+	// Applications opening files directly from a read-only redirected drive often
+	// create sidecar lock/temp files next to the real file.  Examples:
+	//   Microsoft Office: ~$document.xlsx, ~WRLxxxx.tmp
+	//   LibreOffice: .~lock.document.xlsx#
+	//   archive/viewer/indexers: *.tmp, *.lock, *.lck, Thumbs.db, desktop.ini
+	// If these creates fail, apps frequently report the *real* file or parent
+	// directory as moved/deleted.  We satisfy only these volatile sidecars with
+	// in-memory handles; real document/media/archive writes are still rejected.
+	if strings.HasPrefix(base, "~$") || strings.HasPrefix(base, ".~lock.") {
+		return true
+	}
+	if strings.HasSuffix(base, ".tmp") || strings.HasSuffix(base, ".temp") ||
+		strings.HasSuffix(base, ".lock") || strings.HasSuffix(base, ".lck") {
+		return true
+	}
+	if base == "thumbs.db" || base == "desktop.ini" {
+		return true
+	}
+	return false
 }
 
 func (h *RdpefsHandler) openVolatileAgentHandle(deviceID, completionID uint32, agentID, path string, information uint8) {
@@ -1357,6 +1381,20 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 			info = buildStandardInfo(false, size)
 		case FileAttributeTagInformation:
 			info = buildAttributeTagInfo(false)
+		case FileNetworkOpenInformation:
+			info = buildNetworkOpenInfo(false, size, mtime)
+		case FileInternalInformation:
+			info = make([]byte, 8)
+		case FileEaInformation, FileAccessInformation, FileModeInformation, FileAlignmentInformation:
+			info = make([]byte, 4)
+		case FilePositionInformation:
+			info = make([]byte, 8)
+		case FileNameInformation:
+			info = buildNameInfo(handle.Path)
+		case FileStreamInformation:
+			info = []byte{}
+		case FileAllInformation:
+			info = buildAllInfo(false, size, mtime, handle.Path)
 		default:
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_NOT_SUPPORTED, nil)
 			return
@@ -1410,6 +1448,26 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 		info = buildStandardInfo(isDir, size)
 	case FileAttributeTagInformation:
 		info = buildAttributeTagInfo(isDir)
+	case FileNetworkOpenInformation:
+		info = buildNetworkOpenInfo(isDir, size, mtime)
+	case FileInternalInformation:
+		info = make([]byte, 8)
+	case FileEaInformation:
+		info = make([]byte, 4)
+	case FileAccessInformation:
+		info = make([]byte, 4)
+	case FilePositionInformation:
+		info = make([]byte, 8)
+	case FileModeInformation:
+		info = make([]byte, 4)
+	case FileAlignmentInformation:
+		info = make([]byte, 4)
+	case FileNameInformation:
+		info = buildNameInfo(handle.Path)
+	case FileStreamInformation:
+		info = []byte{}
+	case FileAllInformation:
+		info = buildAllInfo(isDir, size, mtime, handle.Path)
 	default:
 		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_NOT_SUPPORTED, nil)
 		return
@@ -1903,6 +1961,45 @@ func buildAttributeTagInfo(isDir bool) []byte {
 	}
 	binary.Write(buf, binary.LittleEndian, attrs)
 	binary.Write(buf, binary.LittleEndian, uint32(0))
+	return buf.Bytes()
+}
+
+func buildNetworkOpenInfo(isDir bool, size int64, mtime time.Time) []byte {
+	buf := &bytes.Buffer{}
+	ft := windowsFileTime(mtime)
+	attrs := uint32(FILE_ATTRIBUTE_ARCHIVE)
+	if isDir {
+		attrs = FILE_ATTRIBUTE_DIRECTORY
+	}
+	binary.Write(buf, binary.LittleEndian, ft)   // CreationTime
+	binary.Write(buf, binary.LittleEndian, ft)   // LastAccessTime
+	binary.Write(buf, binary.LittleEndian, ft)   // LastWriteTime
+	binary.Write(buf, binary.LittleEndian, ft)   // ChangeTime
+	binary.Write(buf, binary.LittleEndian, size) // AllocationSize
+	binary.Write(buf, binary.LittleEndian, size) // EndOfFile
+	binary.Write(buf, binary.LittleEndian, attrs)
+	return buf.Bytes()
+}
+
+func buildNameInfo(path string) []byte {
+	nameBytes := encodeUTF16LENoNull(path)
+	buf := &bytes.Buffer{}
+	binary.Write(buf, binary.LittleEndian, uint32(len(nameBytes)))
+	buf.Write(nameBytes)
+	return buf.Bytes()
+}
+
+func buildAllInfo(isDir bool, size int64, mtime time.Time, path string) []byte {
+	buf := &bytes.Buffer{}
+	buf.Write(buildBasicInfo(isDir, mtime))
+	buf.Write(buildStandardInfo(isDir, size))
+	buf.Write(make([]byte, 8)) // FileInternalInformation.IndexNumber
+	buf.Write(make([]byte, 4)) // FileEaInformation.EaSize
+	buf.Write(make([]byte, 4)) // FileAccessInformation.AccessFlags
+	buf.Write(make([]byte, 8)) // FilePositionInformation.CurrentByteOffset
+	buf.Write(make([]byte, 4)) // FileModeInformation.Mode
+	buf.Write(make([]byte, 4)) // FileAlignmentInformation.AlignmentRequirement
+	buf.Write(buildNameInfo(path))
 	return buf.Bytes()
 }
 
