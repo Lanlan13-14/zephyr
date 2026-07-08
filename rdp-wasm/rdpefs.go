@@ -815,7 +815,12 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 	remoteHandle := ""
 	if !isDir {
 		remoteHandle = h.callAgentOpen(agentID, path, mode)
-		// It's OK if open fails for read — we'll stat-only
+		if remoteHandle == "" && mode != "read" {
+			// Write/open failed — cannot proceed
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
+			return
+		}
+		// For read mode, a missing handle is OK — we'll open on first READ
 	}
 
 	h.mu.Lock()
@@ -1181,11 +1186,11 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 	if drive.Mode == DriveModeAgent {
 		stat := h.callAgentStat(handle.AgentID, handle.Path)
 		if stat == nil {
-			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_NO_SUCH_FILE, nil)
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_UNSUCCESSFUL, nil)
 			return
 		}
 		isDir = (*stat).Get("isDir").Bool()
-		size = int64((*stat).Get("size").Int())
+		size = int64((*stat).Get("size").Float())
 		mtime = time.UnixMilli(int64((*stat).Get("mtime").Float()))
 	} else {
 		file := handle.LocalFile

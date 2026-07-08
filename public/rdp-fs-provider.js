@@ -188,13 +188,15 @@ globalThis.zephyrRdpFsStat = function(agentId, path) {
 
 globalThis.zephyrRdpFsOpen = function(agentId, path, mode) {
     const result = syncRpc(agentId, 'open', { path, mode: mode || 'read' });
-    if (!result || !result.handle) return null;
+    if (!result || !result.handle) return '';
     return result.handle;
 };
 
 globalThis.zephyrRdpFsRead = function(agentId, handle, offset, length) {
     const result = syncRpc(agentId, 'read', { handle, offset, length });
-    if (!result || !result.dataBase64) return null;
+    if (!result) return null;
+    // Empty read (EOF) — return empty array, NOT null
+    if (!result.dataBase64 || result.dataBase64.length === 0) return new Uint8Array(0);
     // Decode base64 to Uint8Array
     const binaryStr = atob(result.dataBase64);
     const bytes = new Uint8Array(binaryStr.length);

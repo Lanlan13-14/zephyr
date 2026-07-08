@@ -17,7 +17,7 @@ import {
     syncAgentDrives,
     detachAllDrives,
     resetAttachedDriveState,
-} from './rdp-fs-provider.js?v=20260705-agent-drive-fix';
+} from './rdp-fs-provider.js?v=20260708-rdpefs-iofix';
 
 const $ = (sel) => document.querySelector(sel);
 const urlParams = new URLSearchParams(location.search);
