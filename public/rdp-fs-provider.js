@@ -12,11 +12,12 @@
 /* ─── Configuration ─────────────────────────────────────────────── */
 const RPC_BASE = '/api/rdp/file-agents';
 const RPC_TIMEOUT = 30000;
-// Windows often reads redirected-drive files in small chunks.  Each read used
-// to trigger one synchronous HTTP RPC + WebSocket round-trip + Agent filesystem
-// read + base64 JSON decode.  Read ahead a few MiB so sequential reads are
-// served from browser memory instead of hammering the Agent with tiny RPCs.
-const READ_AHEAD_BYTES = 4 * 1024 * 1024;
+// Read-ahead is deliberately conservative.  Large single RPCs (multi-MiB
+// base64 JSON over HTTP/WebSocket) are what made multi-GB copies brittle: one
+// slow chunk times out and Windows drops the whole redirected drive.  Keep each
+// Agent read bounded and let Windows issue the next READ if it asked for more.
+const READ_AHEAD_BYTES = 512 * 1024;
+const READ_RPC_MAX_BYTES = 512 * 1024;
 const READ_CACHE_MAX_HANDLES = 8;
 
 /* ─── State ─────────────────────────────────────────────────────── */
@@ -221,8 +222,14 @@ function cachedRead(agentId, handle, offset, length) {
         return cached.data.subarray(wantStart - cached.offset, wantEnd - cached.offset);
     }
 
-    const fetchLen = Math.max(wantLen, READ_AHEAD_BYTES);
-    const bytes = rpcReadBytes(agentId, handle, wantStart, fetchLen);
+    const fetchLen = Math.min(Math.max(wantLen, READ_AHEAD_BYTES), READ_RPC_MAX_BYTES);
+    let bytes = rpcReadBytes(agentId, handle, wantStart, fetchLen);
+    // If an opportunistic read-ahead fails, retry with the exact Windows
+    // request size before reporting failure.  This preserves correctness on
+    // slow links or memory-constrained phones.
+    if (bytes === null && fetchLen > wantLen) {
+        bytes = rpcReadBytes(agentId, handle, wantStart, Math.min(wantLen, READ_RPC_MAX_BYTES));
+    }
     if (bytes === null) return null;
     readCache.set(key, { offset: wantStart, data: bytes, ts: Date.now() });
     trimReadCache();
