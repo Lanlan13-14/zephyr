@@ -1,3 +1,7 @@
+// Deprecated: CliprdrClient is legacy dead code.  Use CliprdrHandler
+// (handler.go) instead, which is the active implementation registered by
+// grdp.go:doLogin().  This file is retained only for its constants and
+// type definitions that may be referenced by external callers.
 package cliprdr
 
 import (

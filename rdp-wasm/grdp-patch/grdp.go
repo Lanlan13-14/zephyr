@@ -1065,6 +1065,12 @@ func (g *RdpClient) NotifyClipboardChanged() {
 	}
 }
 
+// GetClipboardHandler returns the active CLIPRDR handler, or nil if not
+// connected.  Used by WASM bridge code to access clipboard-ready signalling.
+func (g *RdpClient) GetClipboardHandler() *cliprdr.CliprdrHandler {
+	return g.cliprdrHandler
+}
+
 func (g *RdpClient) notifyGfxLocalInput() {
 	if gfx := g.gfxHandler; gfx != nil {
 		gfx.NotifyLocalInput()

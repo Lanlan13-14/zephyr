@@ -8,6 +8,8 @@ import (
 	"encoding/binary"
 	"log/slog"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf16"
 
 	"github.com/nakagami/grdp/core"
@@ -46,7 +48,24 @@ type CliprdrHandler struct {
 	// Track pending file contents download
 	fileDownloadCh chan []byte
 
-	suppressNextLocalChange bool
+	// suppressCount replaces the old single-bool suppressNextLocalChange.
+	// Each remote->local clipboard propagation increments it; each
+	// OnLocalClipboardChanged decrements it.  This correctly handles
+	// consecutive remote changes and async clipboard writes that overlap.
+	suppressCount int32
+	suppressMu    sync.Mutex
+
+	// suppressTimer debounces local clipboard change notifications so that
+	// rapid succession of changes (e.g. programmatic clipboard writes)
+	// collapse into a single FORMAT_LIST PDU.
+	suppressTimer   *time.Timer
+	suppressTimerMu sync.Mutex
+
+	// clipboardReadyCh is used to signal that a FORMAT_DATA_REQUEST has been
+	// fully processed (FORMAT_DATA_RESPONSE sent), so callers waiting for
+	// the server to have the clipboard content can proceed.
+	clipboardReadyCh chan struct{}
+
 	// formatID assigned by server for FileGroupDescriptorW
 	fgdFormatId uint32
 	// formatIDs we assign in our FORMAT_LIST for client→server file transfer
@@ -65,6 +84,7 @@ func NewHandler(onRemote func(text string), getLocal func() string) *CliprdrHand
 		onRemoteClipboardChanged: onRemote,
 		getLocalClipboardText:    getLocal,
 		fileDownloadCh:           make(chan []byte, 4),
+		clipboardReadyCh:         make(chan struct{}, 1),
 	}
 }
 
@@ -205,6 +225,22 @@ func (h *CliprdrHandler) sendFormatList() {
 		// Long Format Name: formatId(4) + wszFormatName(null-terminated UTF-16LE)
 		binary.Write(b, binary.LittleEndian, uint32(CF_UNICODETEXT))
 		b.Write([]byte{0, 0}) // empty name = standard format
+
+		// If local files are available, also advertise file formats so that
+		// text + file clipboard states don't clobber each other.
+		if h.getLocalFiles != nil {
+			files := h.getLocalFiles()
+			if len(files) > 0 {
+				if h.localFGDFormatId == 0 {
+					h.localFGDFormatId = 0xC0E0
+					h.localFCFormatId = 0xC0E1
+				}
+				binary.Write(b, binary.LittleEndian, h.localFGDFormatId)
+				b.Write(encodeUTF16LE("FileGroupDescriptorW"))
+				binary.Write(b, binary.LittleEndian, h.localFCFormatId)
+				b.Write(encodeUTF16LE("FileContents"))
+			}
+		}
 	} else {
 		// Short Format Name: formatId(4) + formatName[32]
 		binary.Write(b, binary.LittleEndian, uint32(CF_UNICODETEXT))
@@ -330,10 +366,38 @@ func (h *CliprdrHandler) processFormatDataRequest(body []byte) {
 	case CF_UNICODETEXT:
 		encoded := encodeUTF16LE(text) // encodeUTF16LE appends null terminator
 		h.sendPDU(CB_FORMAT_DATA_RESPONSE, CB_RESPONSE_OK, encoded)
+		h.signalClipboardReady()
 	case CF_TEXT:
 		h.sendPDU(CB_FORMAT_DATA_RESPONSE, CB_RESPONSE_OK, []byte(text+"\x00"))
+		h.signalClipboardReady()
 	default:
 		h.sendPDU(CB_FORMAT_DATA_RESPONSE, CB_RESPONSE_FAIL, nil)
+	}
+}
+
+// signalClipboardReady notifies any goroutine waiting for the server to have
+// received the local clipboard content (e.g. sendTextViaClipboard in JS).
+func (h *CliprdrHandler) signalClipboardReady() {
+	select {
+	case h.clipboardReadyCh <- struct{}{}:
+	default:
+	}
+}
+
+// WaitForClipboardReady blocks until the server has processed a
+// FORMAT_DATA_REQUEST (i.e. the remote clipboard now has our text) or the
+// timeout expires.  Returns true if the clipboard was confirmed ready.
+func (h *CliprdrHandler) WaitForClipboardReady(timeout time.Duration) bool {
+	// Drain any stale signal first.
+	select {
+	case <-h.clipboardReadyCh:
+	default:
+	}
+	select {
+	case <-h.clipboardReadyCh:
+		return true
+	case <-time.After(timeout):
+		return false
 	}
 }
 
@@ -389,7 +453,9 @@ func (h *CliprdrHandler) processFormatDataResponse(body []byte, msgFlags uint16)
 
 	if text != "" && h.onRemoteClipboardChanged != nil {
 		slog.Debug("cliprdr: received text", "len", len(text))
-		h.suppressNextLocalChange = true
+		h.suppressMu.Lock()
+		h.suppressCount++
+		h.suppressMu.Unlock()
 		h.onRemoteClipboardChanged(text)
 	}
 }
@@ -616,14 +682,29 @@ func (h *CliprdrHandler) handleFormatDataRequestFiles(requestedFormat uint32) bo
 // content has changed.  Call this from the UI when the system clipboard
 // changes (e.g. via polling or a platform clipboard-change signal).
 func (h *CliprdrHandler) OnLocalClipboardChanged() {
-	if h.suppressNextLocalChange {
-		h.suppressNextLocalChange = false
+	// Decrement the suppress counter instead of clearing a single bool.
+	// This correctly handles consecutive remote->local propagations.
+	h.suppressMu.Lock()
+	if h.suppressCount > 0 {
+		h.suppressCount--
+		h.suppressMu.Unlock()
 		return
 	}
-	if h.channelSender != nil {
-		h.sendFormatList()
-		slog.Debug("cliprdr: local clipboard changed, sent Format List")
+	h.suppressMu.Unlock()
+
+	// Debounce: collapse rapid clipboard changes into a single FORMAT_LIST.
+	h.suppressTimerMu.Lock()
+	if h.suppressTimer != nil {
+		h.suppressTimer.Stop()
 	}
+	h.suppressTimer = time.AfterFunc(100*time.Millisecond, func() {
+		h.suppressTimerMu.Lock()
+		h.suppressTimer = nil
+		h.suppressTimerMu.Unlock()
+		h.sendFormatList()
+	})
+	h.suppressTimerMu.Unlock()
+	slog.Debug("cliprdr: local clipboard changed, debounced Format List")
 }
 
 // --- Send helpers ----------------------------------------------------------
@@ -655,9 +736,13 @@ func decodeUTF16LE(b []byte) string {
 func encodeUTF16LE(s string) []byte {
 	runes := []rune(s)
 	u16 := utf16.Encode(runes)
-	b := make([]byte, len(u16)*2)
+	// +1 for the null terminator (UTF-16LE 0x0000).  Windows requires
+	// CF_UNICODETEXT data to be null-terminated; without it, some
+	// applications read past the end of the string or reject the paste.
+	b := make([]byte, (len(u16)+1)*2)
 	for i, v := range u16 {
 		binary.LittleEndian.PutUint16(b[i*2:], v)
 	}
+	// The last 2 bytes are already zero (null terminator) from make().
 	return b
 }

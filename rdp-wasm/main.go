@@ -8,6 +8,7 @@ import (
 	"net"
 	"sync"
 	"syscall/js"
+	"time"
 
 	"github.com/nakagami/grdp"
 	"github.com/nakagami/grdp/plugin/cliprdr"
@@ -57,6 +58,7 @@ func main() {
 	js.Global().Set("rdpKeyDown", js.FuncOf(jsKeyDown))
 	js.Global().Set("rdpKeyUp", js.FuncOf(jsKeyUp))
 	js.Global().Set("rdpClipboardChanged", js.FuncOf(jsClipboardChanged))
+	js.Global().Set("rdpClipboardChangedSync", js.FuncOf(jsClipboardChangedSync))
 	js.Global().Set("rdpNotifyFilesChanged", js.FuncOf(jsNotifyFilesChanged))
 	js.Global().Set("rdpDownloadServerFile", js.FuncOf(jsDownloadServerFile))
 	js.Global().Set("rdpGetServerFiles", js.FuncOf(jsGetServerFiles))
@@ -155,7 +157,9 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 
 	// Get canvas from DOM
 	canvas = js.Global().Get("document").Call("getElementById", "rdpCanvas")
-	ctx2d = canvas.Call("getContext", "2d")
+	// Canvas 2D context is only needed as a fallback when WebGL2 is
+	// unavailable.  The JS side (rdpDrawBitmapBGRA) handles context
+	// creation; we just ensure the canvas dimensions are set here.
 	canvas.Set("width", width)
 	canvas.Set("height", height)
 
@@ -224,18 +228,12 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 		if !isCurrentClient(myGen, g) {
 			return
 		}
-		// Copy bitmap data before rendering (data is borrowed from pool)
-		for i := range bs {
-			d := make([]byte, len(bs[i].Data))
-			copy(d, bs[i].Data)
-			bs[i].Data = d
-		}
-		go func() {
-			if !isCurrentClient(myGen, g) {
-				return
-			}
-			renderBitmaps(bs)
-		}()
+		// Render synchronously - the data is borrowed from a pool and only
+		// valid for the duration of this callback.  We copy into a JS
+		// Uint8Array and call rdpDrawBitmapBGRA immediately.  This avoids
+		// the previous make+copy + goroutine + second CopyBytesToJS pattern
+		// which did 3 full-frame copies per update.
+		renderBitmapsBGRA(bs)
 	})
 
 	g.OnClipboard(
@@ -354,14 +352,18 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 }
 
 var (
-	bitmapRGBABuf []byte
+	bitmapBGRABuf []byte
 	bitmapJSArr   js.Value
 	bitmapJSLen   int
 )
 
-func renderBitmaps(bs []grdp.Bitmap) {
-	uint8ClampedCtor := js.Global().Get("Uint8ClampedArray")
-	imageDataCtor := js.Global().Get("ImageData")
+// renderBitmapsBGRA converts each bitmap to BGRA (if needed) and uploads
+// directly to the JS-side WebGL texture via rdpDrawBitmapBGRA.  This skips
+// the per-pixel BGR->RGB conversion that putImageData required, and uses
+// FillBGRA which reuses a pooled buffer instead of allocating a new
+// image.RGBA on every call.
+func renderBitmapsBGRA(bs []grdp.Bitmap) {
+	uint8Ctor := js.Global().Get("Uint8Array")
 
 	for _, bm := range bs {
 		w := bm.DestRight - bm.DestLeft + 1
@@ -385,44 +387,42 @@ func renderBitmaps(bs []grdp.Bitmap) {
 		}
 
 		need := w * h * 4
-		if cap(bitmapRGBABuf) < need {
-			bitmapRGBABuf = make([]byte, need)
+		// Determine the full bitmap buffer size needed (may be larger than
+		// need when the bitmap is clipped: w < bm.Width).
+		fullNeed := bm.Width * bm.Height * 4
+		bufNeed := need
+		if fullNeed > bufNeed {
+			bufNeed = fullNeed
 		}
-		rgba := bitmapRGBABuf[:need]
+		if cap(bitmapBGRABuf) < bufNeed {
+			bitmapBGRABuf = make([]byte, bufNeed)
+		}
 
-		if bm.BitsPerPixel == 4 {
+		if bm.BitsPerPixel == 4 && w == bm.Width {
+			// Common case: 32bpp BGRA, full width -> bulk copy via FillBGRA.
+			bgra := bm.FillBGRA(bitmapBGRABuf[:need])
+			if need != bitmapJSLen {
+				bitmapJSArr = uint8Ctor.New(need)
+				bitmapJSLen = need
+			}
+			js.CopyBytesToJS(bitmapJSArr, bgra)
+			js.Global().Call("rdpDrawBitmapBGRA", bm.DestLeft, bm.DestTop, w, h, bitmapJSArr)
+		} else {
+			// Clipped or non-32bpp: use FillBGRA on full bitmap then crop.
+			full := bm.FillBGRA(bitmapBGRABuf[:fullNeed])
+			bgra := bitmapBGRABuf[:need]
 			srcStride := bm.Width * 4
 			dstStride := w * 4
 			for row := 0; row < h; row++ {
-				srcOff := row * srcStride
-				dstOff := row * dstStride
-				if srcOff+dstStride > len(bm.Data) || dstOff+dstStride > len(rgba) {
-					break
-				}
-				src := bm.Data[srcOff:]
-				dst := rgba[dstOff:]
-				for col := 0; col < w; col++ {
-					dst[col*4+0] = src[col*4+2]
-					dst[col*4+1] = src[col*4+1]
-					dst[col*4+2] = src[col*4+0]
-					dst[col*4+3] = 0xFF
-				}
+				copy(bgra[row*dstStride:], full[row*srcStride:row*srcStride+dstStride])
 			}
-		} else {
-			m := bm.RGBA()
-			for row := 0; row < h; row++ {
-				src := m.Pix[row*m.Stride : row*m.Stride+w*4]
-				copy(rgba[row*w*4:], src)
+			if need != bitmapJSLen {
+				bitmapJSArr = uint8Ctor.New(need)
+				bitmapJSLen = need
 			}
+			js.CopyBytesToJS(bitmapJSArr, bgra)
+			js.Global().Call("rdpDrawBitmapBGRA", bm.DestLeft, bm.DestTop, w, h, bitmapJSArr)
 		}
-
-		if need != bitmapJSLen {
-			bitmapJSArr = uint8ClampedCtor.New(need)
-			bitmapJSLen = need
-		}
-		js.CopyBytesToJS(bitmapJSArr, rgba)
-		imageData := imageDataCtor.New(bitmapJSArr, w, h)
-		ctx2d.Call("putImageData", imageData, bm.DestLeft, bm.DestTop)
 	}
 }
 
@@ -543,6 +543,50 @@ func jsClipboardChanged(_ js.Value, args []js.Value) any {
 		c.NotifyClipboardChanged()
 	}
 	return nil
+}
+
+// jsClipboardChangedSync is like jsClipboardChanged but returns a Promise that
+// resolves true when the server has confirmed receipt of the clipboard content
+// (FORMAT_DATA_REQUEST processed), or false on timeout.  Used by the JS-side
+// sendTextViaClipboard path to avoid sending Ctrl+V before the remote clipboard
+// is actually updated.
+func jsClipboardChangedSync(_ js.Value, args []js.Value) any {
+	text := ""
+	if len(args) >= 1 {
+		text = args[0].String()
+	}
+	clipMu.Lock()
+	localClipboard = text
+	clipMu.Unlock()
+
+	clientMu.Lock()
+	c := rdpClient
+	clientMu.Unlock()
+	if c == nil {
+		return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+			promiseArgs[1].Invoke(js.ValueOf("no client"))
+			return nil
+		}))
+	}
+	c.NotifyClipboardChanged()
+
+	handler := c.GetClipboardHandler()
+	if handler == nil {
+		return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+			promiseArgs[1].Invoke(js.ValueOf("no clipboard handler"))
+			return nil
+		}))
+	}
+
+	// Return a Promise that resolves when the server confirms clipboard receipt.
+	return js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		go func() {
+			ready := handler.WaitForClipboardReady(2 * time.Second)
+			resolve.Invoke(js.ValueOf(ready))
+		}()
+		return nil
+	}))
 }
 
 // jsNotifyFilesChanged tells the server that client has files available.
