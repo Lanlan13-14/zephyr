@@ -12,12 +12,19 @@
 /* ─── Configuration ─────────────────────────────────────────────── */
 const RPC_BASE = '/api/rdp/file-agents';
 const RPC_TIMEOUT = 30000;
+// Windows often reads redirected-drive files in small chunks.  Each read used
+// to trigger one synchronous HTTP RPC + WebSocket round-trip + Agent filesystem
+// read + base64 JSON decode.  Read ahead a few MiB so sequential reads are
+// served from browser memory instead of hammering the Agent with tiny RPCs.
+const READ_AHEAD_BYTES = 4 * 1024 * 1024;
+const READ_CACHE_MAX_HANDLES = 8;
 
 /* ─── State ─────────────────────────────────────────────────────── */
 let onlineAgents = [];         // [{agentId, deviceName, platform, online, readOnly, ...}]
 let attachedAgents = new Map(); // agentId → {driveName, readOnly, deviceId}
 let eventSource = null;
 let onAgentsChanged = null;    // callback(agents[])
+let readCache = new Map();     // `${agentId}:${handle}` → { offset, data: Uint8Array, ts }
 
 /* ─── SSE Subscription ──────────────────────────────────────────── */
 
@@ -170,6 +177,58 @@ function syncRpc(agentId, method, params) {
     }
 }
 
+function cacheKey(agentId, handle) {
+    return `${agentId}:${handle}`;
+}
+
+function trimReadCache() {
+    if (readCache.size <= READ_CACHE_MAX_HANDLES) return;
+    const entries = [...readCache.entries()].sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
+    while (readCache.size > READ_CACHE_MAX_HANDLES && entries.length) {
+        readCache.delete(entries.shift()[0]);
+    }
+}
+
+function clearReadCache(agentId, handle) {
+    if (handle) readCache.delete(cacheKey(agentId, handle));
+}
+
+function decodeBase64Bytes(dataBase64) {
+    if (!dataBase64 || dataBase64.length === 0) return new Uint8Array(0);
+    const binaryStr = atob(dataBase64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+    }
+    return bytes;
+}
+
+function rpcReadBytes(agentId, handle, offset, length) {
+    const result = syncRpc(agentId, 'read', { handle, offset, length });
+    if (!result) return null;
+    return decodeBase64Bytes(result.dataBase64);
+}
+
+function cachedRead(agentId, handle, offset, length) {
+    const key = cacheKey(agentId, handle);
+    const cached = readCache.get(key);
+    const wantStart = Number(offset) || 0;
+    const wantLen = Math.max(0, Number(length) || 0);
+    if (wantLen === 0) return new Uint8Array(0);
+    const wantEnd = wantStart + wantLen;
+    if (cached && wantStart >= cached.offset && wantEnd <= cached.offset + cached.data.length) {
+        cached.ts = Date.now();
+        return cached.data.subarray(wantStart - cached.offset, wantEnd - cached.offset);
+    }
+
+    const fetchLen = Math.max(wantLen, READ_AHEAD_BYTES);
+    const bytes = rpcReadBytes(agentId, handle, wantStart, fetchLen);
+    if (bytes === null) return null;
+    readCache.set(key, { offset: wantStart, data: bytes, ts: Date.now() });
+    trimReadCache();
+    return bytes.subarray(0, Math.min(wantLen, bytes.length));
+}
+
 /* ─── Global functions for Go WASM ──────────────────────────────
  * These are set on globalThis so rdpefs.go can call them via
  * js.Global().Call("zephyrRdpFsList", ...) etc.
@@ -195,22 +254,16 @@ globalThis.zephyrRdpFsOpen = function(agentId, path, mode) {
 };
 
 globalThis.zephyrRdpFsRead = function(agentId, handle, offset, length) {
-    const result = syncRpc(agentId, 'read', { handle, offset, length });
-    if (!result) return null;
+    const bytes = cachedRead(agentId, handle, offset, length);
+    if (bytes === null) return null;
     // Empty read (EOF) — return empty array, NOT null.
     // Returning null would cause rdpefs.go to send STATUS_UNSUCCESSFUL,
     // which Windows surfaces as 0x8007048F "device not connected" on copy.
-    if (!result.dataBase64 || result.dataBase64.length === 0) return new Uint8Array(0);
-    // Decode base64 to Uint8Array
-    const binaryStr = atob(result.dataBase64);
-    const bytes = new Uint8Array(binaryStr.length);
-    for (let i = 0; i < binaryStr.length; i++) {
-        bytes[i] = binaryStr.charCodeAt(i);
-    }
     return bytes;
 };
 
 globalThis.zephyrRdpFsWrite = function(agentId, handle, offset, uint8Data) {
+    clearReadCache(agentId, handle);
     // Encode to base64
     let binary = '';
     for (let i = 0; i < uint8Data.length; i++) {
@@ -223,6 +276,7 @@ globalThis.zephyrRdpFsWrite = function(agentId, handle, offset, uint8Data) {
 };
 
 globalThis.zephyrRdpFsClose = function(agentId, handle) {
+    clearReadCache(agentId, handle);
     syncRpc(agentId, 'close', { handle });
 };
 
