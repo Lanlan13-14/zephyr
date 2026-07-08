@@ -1283,8 +1283,15 @@ async function connect() {
     }
     audioNextAt = 0;
 
-    /* Init H.264 */
-    if (h264Supported()) h264Dec = createH264Decoder();
+    /* Select render/codec path. When WebGL bitmap renderer is active,
+     * default to grdp internal H.264 decode -> bitmap updates so all drawing
+     * uses one renderer path. */
+    const webCodecsFlag = params.rdpWebCodecs ?? urlParams.get('rdpWebCodecs');
+    const hasWebCodecs = h264Supported() && (webCodecsFlag === true || webCodecsFlag === 'true' || !shouldUseWebGLRenderer());
+    rdpDiag.codec = hasWebCodecs ? 'webcodecs-h264' : 'grdp-bitmap';
+
+    /* Init H.264 only when Go will send raw H.264 to JS. */
+    if (hasWebCodecs) h264Dec = createH264Decoder();
 
     setStatus('connecting', '正在获取 RDP 凭据...');
 
@@ -1368,7 +1375,6 @@ async function connect() {
     setStatus('connecting', '正在连接 RDP...');
 
     /* rdpConnect is exposed by Go WASM */
-    const hasWebCodecs = h264Supported();
     /* Balanced and quality keep wallpaper + desktop effects. Only performance
      * mode disables expensive visuals. */
     const wallpaperOn = qualityMode !== 'performance';
@@ -1421,6 +1427,11 @@ function maybeAutoReconnect() {
 /* ═══════════════════════════════════════════════════════════════════════
  * CANVAS MANAGEMENT
  * ═══════════════════════════════════════════════════════════════════════ */
+function shouldUseWebGLRenderer() {
+    const webglFlag = params.rdpWebgl ?? urlParams.get('rdpWebgl');
+    return webglFlag !== false && webglFlag !== 'false' && webglFlag !== '0';
+}
+
 function recreateCanvasFor2D(w, h) {
     if (!rdpCanvas) return null;
     const old = rdpCanvas;
@@ -1464,8 +1475,7 @@ function ensureCanvas(w, h) {
      * Canvas2D fallback.  If WebGL init fails, recreate the canvas because a
      * canvas that already has a WebGL context cannot reliably acquire a 2D
      * context afterwards. */
-    const webglFlag = params.rdpWebgl ?? urlParams.get('rdpWebgl');
-    const enableWebGL = webglFlag !== false && webglFlag !== 'false' && webglFlag !== '0';
+    const enableWebGL = shouldUseWebGLRenderer();
     if (enableWebGL && rdpGLInit(rdpCanvas, w, h)) {
         rdpCtx2d = null;
     } else {
