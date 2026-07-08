@@ -12,12 +12,12 @@
 /* ─── Configuration ─────────────────────────────────────────────── */
 const RPC_BASE = '/api/rdp/file-agents';
 const RPC_TIMEOUT = 30000;
-// Read-ahead is deliberately conservative.  Large single RPCs (multi-MiB
-// base64 JSON over HTTP/WebSocket) are what made multi-GB copies brittle: one
-// slow chunk times out and Windows drops the whole redirected drive.  Keep each
-// Agent read bounded and let Windows issue the next READ if it asked for more.
-const READ_AHEAD_BYTES = 512 * 1024;
-const READ_RPC_MAX_BYTES = 512 * 1024;
+// Binary read path can use larger chunks because it avoids base64/JSON payload
+// inflation.  JSON fallback stays conservative to avoid the old multi-GB copy
+// disconnects caused by oversized base64 responses.
+const READ_BINARY_AHEAD_BYTES = 8 * 1024 * 1024;
+const READ_BINARY_RPC_MAX_BYTES = 8 * 1024 * 1024;
+const READ_JSON_RPC_MAX_BYTES = 512 * 1024;
 const READ_CACHE_MAX_HANDLES = 8;
 
 /* ─── State ─────────────────────────────────────────────────────── */
@@ -27,6 +27,7 @@ let eventSource = null;
 let onAgentsChanged = null;    // callback(agents[])
 let readCache = new Map();     // `${agentId}:${handle}` → { offset, data: Uint8Array, ts }
 let binaryReadUnsupported = new Set(); // agentId values that returned 426 for binary read
+let binaryReadCooldownUntil = new Map(); // agentId → timestamp; temporary fallback after binary transport failures
 
 /* ─── SSE Subscription ──────────────────────────────────────────── */
 
@@ -207,6 +208,8 @@ function decodeBase64Bytes(dataBase64) {
 
 function rpcReadBytesBinary(agentId, handle, offset, length) {
     if (binaryReadUnsupported.has(agentId)) return null;
+    const cooldownUntil = binaryReadCooldownUntil.get(agentId) || 0;
+    if (Date.now() < cooldownUntil) return null;
     const xhr = new XMLHttpRequest();
     const url = `${RPC_BASE}/${agentId}/rpc/read-binary?handle=${encodeURIComponent(handle)}&offset=${encodeURIComponent(offset)}&length=${encodeURIComponent(length)}`;
     xhr.open('POST', url, false);
@@ -225,7 +228,8 @@ function rpcReadBytesBinary(agentId, handle, offset, length) {
         return null;
     }
     if (xhr.status !== 200) {
-        console.warn(`[rdp-fs] binary read failed → ${xhr.status}`);
+        console.warn(`[rdp-fs] binary read failed → ${xhr.status}; falling back briefly to JSON`);
+        binaryReadCooldownUntil.set(agentId, Date.now() + 15000);
         return null;
     }
     const text = xhr.responseText || '';
@@ -234,10 +238,9 @@ function rpcReadBytesBinary(agentId, handle, offset, length) {
     return bytes;
 }
 
-function rpcReadBytes(agentId, handle, offset, length) {
-    const binary = rpcReadBytesBinary(agentId, handle, offset, length);
-    if (binary !== null) return binary;
-    const result = syncRpc(agentId, 'read', { handle, offset, length });
+function rpcReadBytesJson(agentId, handle, offset, length) {
+    const safeLength = Math.min(Math.max(0, Number(length) || 0), READ_JSON_RPC_MAX_BYTES);
+    const result = syncRpc(agentId, 'read', { handle, offset, length: safeLength });
     if (!result) return null;
     return decodeBase64Bytes(result.dataBase64);
 }
@@ -254,14 +257,16 @@ function cachedRead(agentId, handle, offset, length) {
         return cached.data.subarray(wantStart - cached.offset, wantEnd - cached.offset);
     }
 
-    const fetchLen = Math.min(Math.max(wantLen, READ_AHEAD_BYTES), READ_RPC_MAX_BYTES);
-    let bytes = rpcReadBytes(agentId, handle, wantStart, fetchLen);
-    // If an opportunistic read-ahead fails, retry with the exact Windows
-    // request size before reporting failure.  This preserves correctness on
-    // slow links or memory-constrained phones.
-    if (bytes === null && fetchLen > wantLen) {
-        bytes = rpcReadBytes(agentId, handle, wantStart, Math.min(wantLen, READ_RPC_MAX_BYTES));
+    // New Agent: binary fast path, larger chunk for local/LAN throughput.
+    const binaryLen = Math.min(Math.max(wantLen, READ_BINARY_AHEAD_BYTES), READ_BINARY_RPC_MAX_BYTES);
+    let bytes = rpcReadBytesBinary(agentId, handle, wantStart, binaryLen);
+
+    // Old Agent or temporary binary failure: conservative JSON/base64 fallback.
+    if (bytes === null) {
+        const jsonLen = Math.min(Math.max(wantLen, READ_JSON_RPC_MAX_BYTES), READ_JSON_RPC_MAX_BYTES);
+        bytes = rpcReadBytesJson(agentId, handle, wantStart, jsonLen);
     }
+
     if (bytes === null) return null;
     readCache.set(key, { offset: wantStart, data: bytes, ts: Date.now() });
     trimReadCache();

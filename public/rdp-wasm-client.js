@@ -17,7 +17,7 @@ import {
     syncAgentDrives,
     detachAllDrives,
     resetAttachedDriveState,
-} from './rdp-fs-provider.js?v=20260708-rdpefs-binread1';
+} from './rdp-fs-provider.js?v=20260708-rdpefs-binread2';
 
 const $ = (sel) => document.querySelector(sel);
 const urlParams = new URLSearchParams(location.search);
