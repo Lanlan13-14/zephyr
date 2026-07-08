@@ -186,6 +186,41 @@ func TestDefaultPayloadForQueryVolume(t *testing.T) {
 	}
 }
 
+func TestCreateDispositionHelpers(t *testing.T) {
+	createMissing := []uint32{FILE_SUPERSEDE, FILE_CREATE, FILE_OPEN_IF, FILE_OVERWRITE_IF}
+	for _, disp := range createMissing {
+		if !createDispositionCanCreateMissing(disp) {
+			t.Fatalf("createDispositionCanCreateMissing(%d) = false, want true", disp)
+		}
+	}
+	noCreateMissing := []uint32{FILE_OPEN, FILE_OVERWRITE}
+	for _, disp := range noCreateMissing {
+		if createDispositionCanCreateMissing(disp) {
+			t.Fatalf("createDispositionCanCreateMissing(%d) = true, want false", disp)
+		}
+	}
+
+	truncates := []uint32{FILE_SUPERSEDE, FILE_OVERWRITE, FILE_OVERWRITE_IF}
+	for _, disp := range truncates {
+		if !createDispositionTruncatesExisting(disp) {
+			t.Fatalf("createDispositionTruncatesExisting(%d) = false, want true", disp)
+		}
+	}
+	nonTruncating := []uint32{FILE_OPEN, FILE_CREATE, FILE_OPEN_IF}
+	for _, disp := range nonTruncating {
+		if createDispositionTruncatesExisting(disp) {
+			t.Fatalf("createDispositionTruncatesExisting(%d) = true, want false", disp)
+		}
+	}
+
+	if !desiredAccessWantsWrite(GENERIC_WRITE_ACCESS) {
+		t.Fatal("desiredAccessWantsWrite(GENERIC_WRITE_ACCESS) = false, want true")
+	}
+	if desiredAccessWantsWrite(0x80000000) { // GENERIC_READ
+		t.Fatal("desiredAccessWantsWrite(GENERIC_READ) = true, want false")
+	}
+}
+
 func deterministicTestTime() time.Time {
 	return time.Unix(1700000000, 0).UTC()
 }

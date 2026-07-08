@@ -197,6 +197,21 @@ const (
 	FILE_NON_DIRECTORY_FILE = 0x00000040
 )
 
+// Access masks used to decide whether an existing agent file should be opened
+// with a writable remote handle.  On read-only Agent shares we still allow
+// opening existing files/directories even if Windows asks for a broad access
+// mask; actual write/set/delete IRPs are rejected later.  This avoids common
+// apps failing with ACCESS_DENIED during harmless open probes.
+const (
+	FILE_WRITE_DATA       = 0x00000002
+	FILE_APPEND_DATA      = 0x00000004
+	FILE_WRITE_EA         = 0x00000010
+	FILE_WRITE_ATTRIBUTES = 0x00000100
+	DELETE_ACCESS         = 0x00010000
+	GENERIC_ALL_ACCESS    = 0x10000000
+	GENERIC_WRITE_ACCESS  = 0x40000000
+)
+
 // Information response values
 const (
 	FILE_SUPERSEDED  = 0x00000000
@@ -706,7 +721,6 @@ func (h *RdpefsHandler) handleCreate(deviceID, completionID uint32, data []byte)
 		return
 	}
 	desiredAccess := binary.LittleEndian.Uint32(data[0:4])
-	_ = desiredAccess
 	createDisposition := binary.LittleEndian.Uint32(data[20:24])
 	createOptions := binary.LittleEndian.Uint32(data[24:28])
 	pathLen := binary.LittleEndian.Uint32(data[28:32])
@@ -729,76 +743,87 @@ func (h *RdpefsHandler) handleCreate(deviceID, completionID uint32, data []byte)
 	}
 
 	if drive.Mode == DriveModeAgent {
-		h.handleCreateAgent(drive, completionID, rdpPath, createDisposition, createOptions)
+		h.handleCreateAgent(drive, completionID, rdpPath, desiredAccess, createDisposition, createOptions)
 	} else {
-		h.handleCreateLocal(deviceID, completionID, rdpPath, createDisposition, createOptions)
+		h.handleCreateLocal(deviceID, completionID, rdpPath, desiredAccess, createDisposition, createOptions)
 	}
 }
 
-func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32, path string, createDisposition, createOptions uint32) {
+func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32, path string, desiredAccess, createDisposition, createOptions uint32) {
 	deviceID := drive.DeviceID
 	agentID := drive.AgentID
 	readOnly := drive.ReadOnly
 
-	// For write operations on read-only drive
-	isWriteDisp := createDisposition == FILE_CREATE || createDisposition == FILE_OPEN_IF ||
-		createDisposition == FILE_OVERWRITE_IF || createDisposition == FILE_SUPERSEDE ||
-		createDisposition == FILE_OVERWRITE
-	if readOnly && isWriteDisp {
-		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_ACCESS_DENIED, nil)
-		return
-	}
-
-	// Call agent stat to check if path exists
+	// Query existence BEFORE applying read-only write rules.  Many Windows
+	// apps open existing files/directories with FILE_OPEN_IF or a broad access
+	// mask even when they only intend to read.  Treating FILE_OPEN_IF as a
+	// write/create unconditionally causes ACCESS_DENIED on read-only Agent
+	// shares when users simply double-click files.
 	statResult := h.callAgentStat(agentID, path)
 	exists := statResult != nil
 
 	if !exists {
-		if isWriteDisp && !readOnly {
-			// Create file/dir via agent
-			if createOptions&FILE_DIRECTORY_FILE != 0 {
-				mkdirResult := h.callAgentMkdir(agentID, path)
-				if !mkdirResult {
-					h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
-					return
-				}
-				statResult = h.callAgentStat(agentID, path)
-				if statResult == nil {
-					h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
-					return
-				}
-			} else {
-				// Open for write → open in write mode on agent
-				mode := "write"
-				if createDisposition == FILE_OVERWRITE || createDisposition == FILE_OVERWRITE_IF || createDisposition == FILE_SUPERSEDE {
-					mode = "writeTruncate"
-				}
-				handle := h.callAgentOpen(agentID, path, mode)
-				if handle == "" {
-					h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
-					return
-				}
-				h.mu.Lock()
-				fid := h.nextFileID
-				h.nextFileID++
-				h.handles[fid] = &openHandle{
-					DriveDeviceID: deviceID,
-					AgentID:       agentID,
-					Path:          path,
-					IsDir:         false,
-					RemoteHandle:  handle,
-				}
-				h.mu.Unlock()
-				resp := &bytes.Buffer{}
-				binary.Write(resp, binary.LittleEndian, fid)
-				binary.Write(resp, binary.LittleEndian, uint8(0))
-				h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
-				return
-			}
-		} else {
+		if !createDispositionCanCreateMissing(createDisposition) {
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_NO_SUCH_FILE, nil)
 			return
 		}
+		if readOnly {
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_ACCESS_DENIED, nil)
+			return
+		}
+
+		// Create file/dir via agent for create-capable dispositions.
+		if createOptions&FILE_DIRECTORY_FILE != 0 {
+			mkdirResult := h.callAgentMkdir(agentID, path)
+			if !mkdirResult {
+				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
+				return
+			}
+			statResult = h.callAgentStat(agentID, path)
+			if statResult == nil {
+				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
+				return
+			}
+			exists = true
+		} else {
+			mode := "write"
+			if createDispositionTruncatesExisting(createDisposition) {
+				mode = "writeTruncate"
+			}
+			handle := h.callAgentOpen(agentID, path, mode)
+			if handle == "" {
+				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
+				return
+			}
+			h.mu.Lock()
+			fid := h.nextFileID
+			h.nextFileID++
+			h.handles[fid] = &openHandle{
+				DriveDeviceID: deviceID,
+				AgentID:       agentID,
+				Path:          path,
+				IsDir:         false,
+				RemoteHandle:  handle,
+			}
+			h.mu.Unlock()
+			resp := &bytes.Buffer{}
+			binary.Write(resp, binary.LittleEndian, fid)
+			binary.Write(resp, binary.LittleEndian, uint8(0))
+			h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
+			return
+		}
+	}
+
+	if !exists || statResult == nil {
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_NO_SUCH_FILE, nil)
+		return
+	}
+
+	// Existing path. FILE_CREATE means "create new" and should fail on
+	// existing objects instead of opening them.
+	if createDisposition == FILE_CREATE {
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_OBJECT_NAME_COLLISION, nil)
+		return
 	}
 
 	isDir := (*statResult).Get("isDir").Bool()
@@ -811,11 +836,18 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 		return
 	}
 
-	// Determine mode for agent open
+	// Destructive dispositions on an existing object are not allowed on a
+	// read-only Agent share.  Non-destructive opens (FILE_OPEN/FILE_OPEN_IF),
+	// even with broad desiredAccess, are allowed and mapped to a read handle.
+	if readOnly && createDispositionTruncatesExisting(createDisposition) {
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_ACCESS_DENIED, nil)
+		return
+	}
+
 	mode := "read"
-	if isWriteDisp && !readOnly {
+	if !readOnly && !isDir && (createDispositionTruncatesExisting(createDisposition) || desiredAccessWantsWrite(desiredAccess)) {
 		mode = "write"
-		if createDisposition == FILE_OVERWRITE || createDisposition == FILE_OVERWRITE_IF || createDisposition == FILE_SUPERSEDE {
+		if createDispositionTruncatesExisting(createDisposition) {
 			mode = "writeTruncate"
 		}
 	}
@@ -824,11 +856,9 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 	if !isDir {
 		remoteHandle = h.callAgentOpen(agentID, path, mode)
 		if remoteHandle == "" && mode != "read" {
-			// Write/open failed — cannot proceed
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
 			return
 		}
-		// For read mode, a missing handle is OK — we'll open on first READ
 	}
 
 	h.mu.Lock()
@@ -849,7 +879,31 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 	h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 }
 
-func (h *RdpefsHandler) handleCreateLocal(deviceID, completionID uint32, path string, createDisposition, createOptions uint32) {
+func createDispositionCanCreateMissing(createDisposition uint32) bool {
+	switch createDisposition {
+	case FILE_SUPERSEDE, FILE_CREATE, FILE_OPEN_IF, FILE_OVERWRITE_IF:
+		return true
+	default:
+		return false
+	}
+}
+
+func createDispositionTruncatesExisting(createDisposition uint32) bool {
+	switch createDisposition {
+	case FILE_SUPERSEDE, FILE_OVERWRITE, FILE_OVERWRITE_IF:
+		return true
+	default:
+		return false
+	}
+}
+
+func desiredAccessWantsWrite(desiredAccess uint32) bool {
+	const writeMask = FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES |
+		DELETE_ACCESS | GENERIC_WRITE_ACCESS | GENERIC_ALL_ACCESS
+	return desiredAccess&writeMask != 0
+}
+
+func (h *RdpefsHandler) handleCreateLocal(deviceID, completionID uint32, path string, desiredAccess, createDisposition, createOptions uint32) {
 	h.mu.Lock()
 	file := h.resolveLocalPath(path)
 	if file == nil {
@@ -1769,15 +1823,15 @@ func buildDirectoryEntry(f *VirtualFile, infoClass uint32) []byte {
 		//   EndOfFile(8) + AllocationSize(8) + FileAttributes(4) +
 		//   FileNameLength(4) + EaSize(4) + ShortNameLength(1) + ShortName(24) + FileName
 		// = 4+4+ 8*4 + 8*2 + 4 + 4+4 + 1+24 = 93 bytes + FileName
-		binary.Write(buf, binary.LittleEndian, uint32(0)) // NextEntryOffset
-		binary.Write(buf, binary.LittleEndian, uint32(0)) // FileIndex
-		binary.Write(buf, binary.LittleEndian, ft)        // CreationTime
-		binary.Write(buf, binary.LittleEndian, ft)        // LastAccessTime
-		binary.Write(buf, binary.LittleEndian, ft)        // LastWriteTime
-		binary.Write(buf, binary.LittleEndian, ft)        // ChangeTime
-		binary.Write(buf, binary.LittleEndian, size)      // EndOfFile
-		binary.Write(buf, binary.LittleEndian, size)      // AllocationSize
-		binary.Write(buf, binary.LittleEndian, attrs)     // FileAttributes
+		binary.Write(buf, binary.LittleEndian, uint32(0))         // NextEntryOffset
+		binary.Write(buf, binary.LittleEndian, uint32(0))         // FileIndex
+		binary.Write(buf, binary.LittleEndian, ft)                // CreationTime
+		binary.Write(buf, binary.LittleEndian, ft)                // LastAccessTime
+		binary.Write(buf, binary.LittleEndian, ft)                // LastWriteTime
+		binary.Write(buf, binary.LittleEndian, ft)                // ChangeTime
+		binary.Write(buf, binary.LittleEndian, size)              // EndOfFile
+		binary.Write(buf, binary.LittleEndian, size)              // AllocationSize
+		binary.Write(buf, binary.LittleEndian, attrs)             // FileAttributes
 		binary.Write(buf, binary.LittleEndian, uint32(len(name))) // FileNameLength
 		binary.Write(buf, binary.LittleEndian, uint32(0))         // EaSize
 		binary.Write(buf, binary.LittleEndian, uint8(0))          // ShortNameLength
