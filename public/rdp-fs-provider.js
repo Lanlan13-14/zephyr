@@ -26,6 +26,7 @@ let attachedAgents = new Map(); // agentId → {driveName, readOnly, deviceId}
 let eventSource = null;
 let onAgentsChanged = null;    // callback(agents[])
 let readCache = new Map();     // `${agentId}:${handle}` → { offset, data: Uint8Array, ts }
+let binaryReadUnsupported = new Set(); // agentId values that returned 426 for binary read
 
 /* ─── SSE Subscription ──────────────────────────────────────────── */
 
@@ -204,7 +205,38 @@ function decodeBase64Bytes(dataBase64) {
     return bytes;
 }
 
+function rpcReadBytesBinary(agentId, handle, offset, length) {
+    if (binaryReadUnsupported.has(agentId)) return null;
+    const xhr = new XMLHttpRequest();
+    const url = `${RPC_BASE}/${agentId}/rpc/read-binary?handle=${encodeURIComponent(handle)}&offset=${encodeURIComponent(offset)}&length=${encodeURIComponent(length)}`;
+    xhr.open('POST', url, false);
+    // responseType='arraybuffer' is not allowed for synchronous XHR on some
+    // browsers/main-thread contexts.  x-user-defined preserves byte values in
+    // responseText so we can reconstruct Uint8Array without base64/JSON.
+    if (xhr.overrideMimeType) xhr.overrideMimeType('text/plain; charset=x-user-defined');
+    try {
+        xhr.send(null);
+    } catch (e) {
+        console.warn('[rdp-fs] binary read transport error', e);
+        return null;
+    }
+    if (xhr.status === 426) {
+        binaryReadUnsupported.add(agentId);
+        return null;
+    }
+    if (xhr.status !== 200) {
+        console.warn(`[rdp-fs] binary read failed → ${xhr.status}`);
+        return null;
+    }
+    const text = xhr.responseText || '';
+    const bytes = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xFF;
+    return bytes;
+}
+
 function rpcReadBytes(agentId, handle, offset, length) {
+    const binary = rpcReadBytesBinary(agentId, handle, offset, length);
+    if (binary !== null) return binary;
     const result = syncRpc(agentId, 'read', { handle, offset, length });
     if (!result) return null;
     return decodeBase64Bytes(result.dataBase64);

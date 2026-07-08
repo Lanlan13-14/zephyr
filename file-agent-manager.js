@@ -93,6 +93,53 @@ class FileAgentConnection {
         });
     }
 
+    /** Send a binary read request to the Agent and return a Buffer. */
+    callBinaryRead(params, timeoutMs) {
+        return new Promise((resolve, reject) => {
+            if (!this.online) {
+                reject(new AgentError('agent_offline', 'Agent is offline'));
+                return;
+            }
+            const id = `rpc_${this.agentId}_${this.nextRequestId++}`;
+            const timer = setTimeout(() => {
+                this.pendingRequests.delete(id);
+                reject(new AgentError('timeout', `binary read timed out after ${timeoutMs}ms`));
+            }, timeoutMs || RPC_READ_TIMEOUT_MS);
+
+            this.pendingRequests.set(id, { resolve, reject, timer, method: 'readBinary', binary: true });
+            try {
+                this.ws.send(JSON.stringify({
+                    id,
+                    type: 'request',
+                    method: 'readBinary',
+                    params: params || {},
+                }));
+            } catch (err) {
+                clearTimeout(timer);
+                this.pendingRequests.delete(id);
+                reject(new AgentError('io_error', err.message));
+            }
+        });
+    }
+
+    /** Handle an incoming binary response from the Agent. */
+    handleBinaryResponse(raw) {
+        const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+        // Binary frame: magic "ZFB1" (4) + idLen uint16BE (2) + id UTF-8 + payload
+        if (buf.length < 6 || buf[0] !== 0x5a || buf[1] !== 0x46 || buf[2] !== 0x42 || buf[3] !== 0x31) {
+            return false;
+        }
+        const idLen = buf.readUInt16BE(4);
+        if (idLen <= 0 || 6 + idLen > buf.length) return false;
+        const id = buf.subarray(6, 6 + idLen).toString('utf8');
+        const pending = this.pendingRequests.get(id);
+        if (!pending) return true;
+        clearTimeout(pending.timer);
+        this.pendingRequests.delete(id);
+        pending.resolve(buf.subarray(6 + idLen));
+        return true;
+    }
+
     /** Handle an incoming response from the Agent */
     handleResponse(msg) {
         const pending = this.pendingRequests.get(msg.id);
@@ -352,6 +399,11 @@ class FileAgentManager {
         }, 10000);
 
         ws.on('message', (raw) => {
+            if (authenticated && agentId) {
+                const conn = this.agents.get(agentId);
+                if (conn && conn.handleBinaryResponse(raw)) return;
+            }
+
             let msg;
             try {
                 msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf8'));
@@ -563,6 +615,16 @@ class FileAgentManager {
         return conn.callRpc(method, params, timeout);
     }
 
+    async callAgentBinaryRead(agentId, params, timeoutMs) {
+        const conn = this.agents.get(agentId);
+        if (!conn) throw new AgentError('agent_offline', `Agent ${agentId} not found or offline`);
+        if (!conn.online) throw new AgentError('agent_offline', `Agent ${agentId} is not connected`);
+        if (!conn.capabilities || conn.capabilities.binaryRead !== true) {
+            throw new AgentError('unsupported', 'Agent does not support binary read');
+        }
+        return conn.callBinaryRead(params, timeoutMs || RPC_READ_TIMEOUT_MS);
+    }
+
     // ─── Query ───────────────────────────────────────────────────────
 
     /** List online agents for a specific user. */
@@ -765,6 +827,37 @@ class FileAgentManager {
             });
             res.write('\n');
             this.subscribeSse(res, user.username);
+        });
+
+        // POST /api/rdp/file-agents/:agentId/rpc/read-binary — binary fast path for reads
+        app.post('/api/rdp/file-agents/:agentId/rpc/read-binary', requireAuth, async (req, res) => {
+            const user = getSessionUser(req);
+            if (!user) return res.status(401).end();
+
+            const { agentId } = req.params;
+            if (!this.isAgentOwnedBy(agentId, user.username)) {
+                return res.status(403).end();
+            }
+
+            const handle = String(req.query.handle || '');
+            const offset = Number(req.query.offset || 0);
+            const length = Math.max(0, Math.min(1024 * 1024, Number(req.query.length || 0)));
+            if (!handle || !Number.isFinite(offset) || !Number.isFinite(length)) {
+                return res.status(400).end();
+            }
+
+            try {
+                const buf = await this.callAgentBinaryRead(agentId, { handle, offset, length });
+                res.status(200);
+                res.setHeader('Content-Type', 'application/octet-stream');
+                res.setHeader('Cache-Control', 'no-store');
+                res.setHeader('Content-Length', buf.length);
+                res.end(buf);
+            } catch (err) {
+                const code = err.code || 'internal_error';
+                const status = code === 'unsupported' ? 426 : code === 'agent_offline' ? 503 : code === 'timeout' ? 504 : 500;
+                res.status(status).setHeader('X-Zephyr-Error', code).end();
+            }
         });
 
         // POST /api/rdp/file-agents/:agentId/rpc — forward RPC to agent

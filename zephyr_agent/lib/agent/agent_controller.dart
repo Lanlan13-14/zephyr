@@ -4,6 +4,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
@@ -194,8 +195,9 @@ class AgentController extends ChangeNotifier {
         'rename': !_config.readOnly,
         'mkdir': !_config.readOnly,
         'truncate': !_config.readOnly,
-        'binary': false,
-        'maxChunkSize': 262144,
+        'binary': true,
+        'binaryRead': true,
+        'maxChunkSize': 1048576,
       },
       'share': {
         'name': _config.sharedDirectoryName ?? _config.deviceName,
@@ -262,6 +264,19 @@ class AgentController extends ChangeNotifier {
     }
 
     try {
+      if (method == 'readBinary') {
+        final data = await _fileProvider!.read(
+          params['handle'] as String,
+          params['offset'] as int? ?? 0,
+          params['length'] as int? ?? 262144,
+        );
+        _transferCount++;
+        _transferBytes += data.length;
+        notifyListeners();
+        _sendBinaryResponse(id, data);
+        return;
+      }
+
       final result = await _dispatchRpc(method, params);
       _transferCount++;
       _sendResponse(id, true, result: result);
@@ -438,6 +453,27 @@ class AgentController extends ChangeNotifier {
       if (ok && result != null) 'result': result,
       if (!ok && error != null) 'error': error,
     });
+  }
+
+  void _sendBinaryResponse(String id, List<int> payload) {
+    final idBytes = utf8.encode(id);
+    if (idBytes.length > 65535) {
+      _sendResponse(id, false, error: {'code': 'invalid_parameter', 'message': 'Request id too long'});
+      return;
+    }
+    final out = Uint8List(4 + 2 + idBytes.length + payload.length);
+    // Magic: ZFB1
+    out[0] = 0x5A;
+    out[1] = 0x46;
+    out[2] = 0x42;
+    out[3] = 0x31;
+    out[4] = (idBytes.length >> 8) & 0xFF;
+    out[5] = idBytes.length & 0xFF;
+    out.setRange(6, 6 + idBytes.length, idBytes);
+    out.setRange(6 + idBytes.length, out.length, payload);
+    try {
+      _channel?.sink.add(out);
+    } catch (_) {}
   }
 
   void _setStatus(AgentStatus newStatus) {
