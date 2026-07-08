@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
 	"syscall/js"
 	"testing"
@@ -115,33 +114,17 @@ func TestNormalizeDirectoryPattern(t *testing.T) {
 	}
 }
 
-// TestCapabilityResponseStructure verifies the Client Core Capability
-// Response mirrors back the capability types the server announced.
-// Windows' RDPDR server parser rejects a mismatched Version/CapabilityLength
-// (e.g. Version=1 with a 36-byte body), and sending an unannounced capset
-// type (e.g. CAP_DRIVE_TYPE when the server didn't announce it) can cause
-// the server to tear down the RDPDR channel entirely.
-func TestCapabilityResponseStructure(t *testing.T) {
+// TestCapabilityResponsePreservesDeviceAnnounceCompatibleBytes locks the
+// capability response to the bytes that are known to allow Windows Explorer to
+// show the redirected drive for this project.  Do not add Drive capsets or
+// change the General capset version here without live-testing device
+// announcement first; previous attempts made the drive disappear entirely.
+func TestCapabilityResponsePreservesDeviceAnnounceCompatibleBytes(t *testing.T) {
 	storageGetFiles := js.FuncOf(func(this js.Value, args []js.Value) any {
 		return js.Null()
 	})
 	defer storageGetFiles.Release()
 	js.Global().Set("rdpStorageGetFiles", storageGetFiles)
-
-	// Simulate a server capability request with General + Drive capsets.
-	// Layout: numCapabilities(2) + pad(2) + [capType(2)+capLen(2)+version(4)+body]
-	serverCaps := &bytes.Buffer{}
-	binary.Write(serverCaps, binary.LittleEndian, uint16(2)) // numCapabilities
-	binary.Write(serverCaps, binary.LittleEndian, uint16(0)) // padding
-	// General capset (server side): type=1, len=44, ver=2, 36-byte body
-	binary.Write(serverCaps, binary.LittleEndian, uint16(CAP_GENERAL_TYPE))
-	binary.Write(serverCaps, binary.LittleEndian, uint16(44))
-	binary.Write(serverCaps, binary.LittleEndian, uint32(GENERAL_CAPABILITY_VERSION_02))
-	serverCaps.Write(make([]byte, 36)) // body (zeros)
-	// Drive capset (server side): type=4, len=8, ver=2, no body
-	binary.Write(serverCaps, binary.LittleEndian, uint16(CAP_DRIVE_TYPE))
-	binary.Write(serverCaps, binary.LittleEndian, uint16(8))
-	binary.Write(serverCaps, binary.LittleEndian, uint32(DRIVE_CAPABILITY_VERSION_02))
 
 	h := NewRdpefsHandler(true)
 	var sent [][]byte
@@ -151,7 +134,7 @@ func TestCapabilityResponseStructure(t *testing.T) {
 		return len(data), nil
 	}
 
-	h.processServerCapability(serverCaps.Bytes())
+	h.processServerCapability(nil)
 
 	var capsResp []byte
 	for _, pkt := range sent {
@@ -165,91 +148,27 @@ func TestCapabilityResponseStructure(t *testing.T) {
 	if capsResp == nil {
 		t.Fatal("no Client Core Capability Response sent")
 	}
-
-	// numCapabilities must be 2 (General + Drive) since server announced both
-	numCaps := binary.LittleEndian.Uint16(capsResp[8:10])
-	if numCaps != 2 {
-		t.Fatalf("numCapabilities = %d, want 2 (General + Drive)", numCaps)
+	if got := len(capsResp); got != 52 {
+		t.Fatalf("capability response length = %d, want 52", got)
 	}
-
-	off := 12 // after header(4) + numCaps(2) + pad(2)
-	genType := binary.LittleEndian.Uint16(capsResp[off : off+2])
-	genLen := binary.LittleEndian.Uint16(capsResp[off+2 : off+4])
-	genVer := binary.LittleEndian.Uint32(capsResp[off+4 : off+8])
-	if genType != CAP_GENERAL_TYPE {
-		t.Fatalf("first cap type = %d, want CAP_GENERAL_TYPE=%d", genType, CAP_GENERAL_TYPE)
+	if got := binary.LittleEndian.Uint16(capsResp[8:10]); got != 1 {
+		t.Fatalf("numCapabilities = %d, want 1", got)
 	}
-	if genLen != 44 {
-		t.Fatalf("general CapabilityLength = %d, want 44", genLen)
+	if got := binary.LittleEndian.Uint16(capsResp[12:14]); got != CAP_GENERAL_TYPE {
+		t.Fatalf("capset type = %d, want CAP_GENERAL_TYPE", got)
 	}
-	if genVer != GENERAL_CAPABILITY_VERSION_02 {
-		t.Fatalf("general Version = %d, want GENERAL_CAPABILITY_VERSION_02=%d", genVer, GENERAL_CAPABILITY_VERSION_02)
+	if got := binary.LittleEndian.Uint16(capsResp[14:16]); got != 44 {
+		t.Fatalf("general CapabilityLength = %d, want 44", got)
 	}
-	genBodyEnd := off + 8 + 36
-	if genBodyEnd > len(capsResp) {
-		t.Fatalf("general caps body extends past packet: end=%d, pktLen=%d", genBodyEnd, len(capsResp))
+	if got := binary.LittleEndian.Uint32(capsResp[16:20]); got != 1 {
+		t.Fatalf("general Version = %d, want legacy Version=1", got)
 	}
-
-	drvType := binary.LittleEndian.Uint16(capsResp[genBodyEnd : genBodyEnd+2])
-	drvLen := binary.LittleEndian.Uint16(capsResp[genBodyEnd+2 : genBodyEnd+4])
-	drvVer := binary.LittleEndian.Uint32(capsResp[genBodyEnd+4 : genBodyEnd+8])
-	if drvType != CAP_DRIVE_TYPE {
-		t.Fatalf("second cap type = %d, want CAP_DRIVE_TYPE=%d", drvType, CAP_DRIVE_TYPE)
+	// Existing wire bytes include osType=2 and protocolMinorVersion=12.
+	if got := binary.LittleEndian.Uint32(capsResp[20:24]); got != 2 {
+		t.Fatalf("osType = %d, want legacy osType=2", got)
 	}
-	if drvLen != 8 {
-		t.Fatalf("drive CapabilityLength = %d, want 8 (header only, no body)", drvLen)
-	}
-	if drvVer != DRIVE_CAPABILITY_VERSION_02 {
-		t.Fatalf("drive Version = %d, want DRIVE_CAPABILITY_VERSION_02=%d", drvVer, DRIVE_CAPABILITY_VERSION_02)
-	}
-}
-
-// TestCapabilityResponseNoDriveCapset verifies that when the server does NOT
-// announce CAP_DRIVE_TYPE, we don't send it back.  Sending an unannounced
-// capset can cause the server to reject the capability response and tear
-// down the RDPDR channel, which prevents device announcement entirely.
-func TestCapabilityResponseNoDriveCapset(t *testing.T) {
-	storageGetFiles := js.FuncOf(func(this js.Value, args []js.Value) any {
-		return js.Null()
-	})
-	defer storageGetFiles.Release()
-	js.Global().Set("rdpStorageGetFiles", storageGetFiles)
-
-	// Server announces ONLY General capset (no Drive)
-	serverCaps := &bytes.Buffer{}
-	binary.Write(serverCaps, binary.LittleEndian, uint16(1)) // numCapabilities
-	binary.Write(serverCaps, binary.LittleEndian, uint16(0)) // padding
-	binary.Write(serverCaps, binary.LittleEndian, uint16(CAP_GENERAL_TYPE))
-	binary.Write(serverCaps, binary.LittleEndian, uint16(44))
-	binary.Write(serverCaps, binary.LittleEndian, uint32(GENERAL_CAPABILITY_VERSION_02))
-	serverCaps.Write(make([]byte, 36))
-
-	h := NewRdpefsHandler(true)
-	var sent [][]byte
-	h.sender = func(_ string, data []byte) (int, error) {
-		cp := append([]byte(nil), data...)
-		sent = append(sent, cp)
-		return len(data), nil
-	}
-
-	h.processServerCapability(serverCaps.Bytes())
-
-	var capsResp []byte
-	for _, pkt := range sent {
-		if len(pkt) >= 4 &&
-			binary.LittleEndian.Uint16(pkt[0:2]) == RDPDR_CTYP_CORE &&
-			binary.LittleEndian.Uint16(pkt[2:4]) == PAKID_CORE_CLIENT_CAPABILITY {
-			capsResp = pkt
-			break
-		}
-	}
-	if capsResp == nil {
-		t.Fatal("no Client Core Capability Response sent")
-	}
-
-	numCaps := binary.LittleEndian.Uint16(capsResp[8:10])
-	if numCaps != 1 {
-		t.Fatalf("numCapabilities = %d, want 1 (General only, server didn't announce Drive)", numCaps)
+	if got := binary.LittleEndian.Uint16(capsResp[30:32]); got != 12 {
+		t.Fatalf("protocolMinorVersion = %d, want 12", got)
 	}
 }
 
