@@ -275,6 +275,10 @@ type RdpefsHandler struct {
 	// Protocol state
 	userLoggedOn bool
 	announced    bool
+
+	// Server capability tracking — records which capset types the server
+	// announced, so we only mirror back the ones it understands.
+	serverCaps map[uint16]bool
 }
 
 func NewRdpefsHandler(enabled bool) *RdpefsHandler {
@@ -286,6 +290,7 @@ func NewRdpefsHandler(enabled bool) *RdpefsHandler {
 		agentDrives:  make(map[string]uint32),
 		handles:      make(map[uint32]*openHandle),
 		dirEnum:      make(map[uint32]*dirEnumState),
+		serverCaps:   make(map[uint16]bool),
 		localRoot: &VirtualFile{
 			Name:     "",
 			IsDir:    true,
@@ -481,54 +486,86 @@ func (h *RdpefsHandler) processServerAnnounce(data []byte) {
 func (h *RdpefsHandler) processServerCapability(data []byte) {
 	slog.Debug("rdpefs: server capability received")
 
+	// Parse the server's capability request to learn which capset types
+	// it announced.  We must only mirror back the ones the server knows
+	// about — sending an unannounced capset (e.g. CAP_DRIVE_TYPE to a
+	// server that only sent CAP_GENERAL_TYPE) can cause the server to
+	// reject the capability response and tear down the RDPDR channel,
+	// which prevents USER_LOGGEDON and device announcement entirely.
+	//
+	// Layout (MS-RDPEFS §2.2.2.1 Server Core Capability Request):
+	//   numCapabilities(2) + Padding(2) + [CapabilityHeader(8)+body]*
+	h.mu.Lock()
+	h.serverCaps = make(map[uint16]bool)
+	h.mu.Unlock()
+
+	off := 0
+	if len(data) >= 4 {
+		numCaps := binary.LittleEndian.Uint16(data[0:2])
+		// data[2:4] = padding
+		off = 4
+		for i := 0; i < int(numCaps) && off+8 <= len(data); i++ {
+			capType := binary.LittleEndian.Uint16(data[off : off+2])
+			capLen := binary.LittleEndian.Uint16(data[off+2 : off+4])
+			// capLen includes the 8-byte header; body = capLen - 8
+			h.mu.Lock()
+			h.serverCaps[capType] = true
+			h.mu.Unlock()
+			slog.Debug("rdpefs: server announced cap", "type", capType, "len", capLen)
+			// Advance past header + body
+			off += int(capLen)
+		}
+	}
+
 	// Refresh local file list (legacy mode)
 	h.refreshLocalFileList()
 
-	// Send Client Core Capability Response
-	//
-	// MS-RDPEFS §2.2.2.2 Client Core Capability Response:
-	//   numCapabilities(2) + Padding(2) + capability sets
-	//
-	// We send 2 capability sets:
-	//   1. General (CAP_GENERAL_TYPE) — version 02, 36-byte body
-	//   2. Drive (CAP_DRIVE_TYPE) — version 02, 0-byte body
-	//
-	// FreeRDP sends both when drives are present.  Omitting the Drive
-	// capability set confuses the Windows server's RDPDR parser, which
-	// can cause the redirected drive to be dropped mid-operation with
-	// error 0x8007048F ("The device is not connected").
+	// Build the capability set list to mirror back.  Always send General;
+	// only send Drive if the server announced CAP_DRIVE_TYPE (which every
+	// modern Windows server does, but older/non-drive servers may not).
+	capsBuf := &bytes.Buffer{}
+
+	// ── General capability set (CAP_GENERAL_TYPE) ──
+	// Always sent.  Version=02 with 36-byte body (server enforces
+	// Version/length match; VERSION_01 expects 32 bytes).
+	binary.Write(capsBuf, binary.LittleEndian, uint16(CAP_GENERAL_TYPE))
+	binary.Write(capsBuf, binary.LittleEndian, uint16(44)) // 8 header + 36 body
+	binary.Write(capsBuf, binary.LittleEndian, uint32(GENERAL_CAPABILITY_VERSION_02))
+	// GENERAL_CAPS_SET body (36 bytes):
+	binary.Write(capsBuf, binary.LittleEndian, uint32(0))      // osType (ignored)
+	binary.Write(capsBuf, binary.LittleEndian, uint32(0))      // osVersion (must be 0)
+	binary.Write(capsBuf, binary.LittleEndian, uint16(1))      // protocolMajorVersion (must be 1)
+	binary.Write(capsBuf, binary.LittleEndian, uint16(12))     // protocolMinorVersion
+	binary.Write(capsBuf, binary.LittleEndian, uint32(0xFFFF)) // ioCode1 (all IRP types)
+	binary.Write(capsBuf, binary.LittleEndian, uint32(0))      // ioCode2 (reserved)
+	binary.Write(capsBuf, binary.LittleEndian, uint32(7))      // extendedPDU
+	binary.Write(capsBuf, binary.LittleEndian, uint32(0))      // extraFlags1
+	binary.Write(capsBuf, binary.LittleEndian, uint32(0))      // extraFlags2 (reserved)
+	binary.Write(capsBuf, binary.LittleEndian, uint32(0))      // specialTypeDeviceCap
+
+	numCaps := uint16(1)
+
+	h.mu.Lock()
+	serverHasDrive := h.serverCaps[CAP_DRIVE_TYPE]
+	h.mu.Unlock()
+
+	if serverHasDrive {
+		// ── Drive capability set (CAP_DRIVE_TYPE) ──
+		// Header only (no body).  FreeRDP sends this when the client has
+		// drives and the server announced CAP_DRIVE_TYPE.
+		binary.Write(capsBuf, binary.LittleEndian, uint16(CAP_DRIVE_TYPE))
+		binary.Write(capsBuf, binary.LittleEndian, uint16(8)) // header only
+		binary.Write(capsBuf, binary.LittleEndian, uint32(DRIVE_CAPABILITY_VERSION_02))
+		numCaps = 2
+	}
+
+	// Assemble the full Client Core Capability Response
 	buf := &bytes.Buffer{}
 	binary.Write(buf, binary.LittleEndian, uint16(RDPDR_CTYP_CORE))
 	binary.Write(buf, binary.LittleEndian, uint16(PAKID_CORE_CLIENT_CAPABILITY))
-	binary.Write(buf, binary.LittleEndian, uint16(2)) // numCapabilities: General + Drive
+	binary.Write(buf, binary.LittleEndian, numCaps) // numCapabilities
 	binary.Write(buf, binary.LittleEndian, uint16(0)) // Padding
-
-	// ── General capability set (CAP_GENERAL_TYPE) ──
-	// RDPDR_CAPABILITY_HEADER: CapabilityType(2) + CapabilityLength(2) + Version(4)
-	// CapabilityLength = 8 (header) + 36 (body) = 44
-	// Version = GENERAL_CAPABILITY_VERSION_02 (must be 2 to match the 36-byte body;
-	//   VERSION_01 expects only 32 bytes, and the server enforces this match.)
-	binary.Write(buf, binary.LittleEndian, uint16(CAP_GENERAL_TYPE))
-	binary.Write(buf, binary.LittleEndian, uint16(44))
-	binary.Write(buf, binary.LittleEndian, uint32(GENERAL_CAPABILITY_VERSION_02))
-	// GENERAL_CAPS_SET body (36 bytes):
-	binary.Write(buf, binary.LittleEndian, uint32(0))      // osType (ignored on receipt)
-	binary.Write(buf, binary.LittleEndian, uint32(0))      // osVersion (must be 0)
-	binary.Write(buf, binary.LittleEndian, uint16(1))      // protocolMajorVersion (must be 1)
-	binary.Write(buf, binary.LittleEndian, uint16(12))     // protocolMinorVersion
-	binary.Write(buf, binary.LittleEndian, uint32(0xFFFF)) // ioCode1 (all IRP types supported)
-	binary.Write(buf, binary.LittleEndian, uint32(0))      // ioCode2 (reserved, must be 0)
-	binary.Write(buf, binary.LittleEndian, uint32(7))      // extendedPDU: DEVICE_REMOVE|USER_LOGGEDON|CLIENT_DISPLAY_NAME
-	binary.Write(buf, binary.LittleEndian, uint32(0))      // extraFlags1
-	binary.Write(buf, binary.LittleEndian, uint32(0))      // extraFlags2 (reserved, must be 0)
-	binary.Write(buf, binary.LittleEndian, uint32(0))      // specialTypeDeviceCap
-
-	// ── Drive capability set (CAP_DRIVE_TYPE) ──
-	// RDPDR_CAPABILITY_HEADER only: CapabilityType(2) + CapabilityLength(2) + Version(4)
-	// The Drive capability set has NO body (CapabilityLength = 8 = header only).
-	binary.Write(buf, binary.LittleEndian, uint16(CAP_DRIVE_TYPE))
-	binary.Write(buf, binary.LittleEndian, uint16(8)) // CapabilityLength = 8 (header only, no body)
-	binary.Write(buf, binary.LittleEndian, uint32(DRIVE_CAPABILITY_VERSION_02))
+	buf.Write(capsBuf.Bytes())
 	h.send(buf.Bytes())
 
 	// RDP 5.1 servers don't send USER_LOGGEDON — announce immediately
