@@ -20,6 +20,8 @@ const HEARTBEAT_INTERVAL_MS = 15000;
 const HEARTBEAT_TIMEOUT_FACTOR = 3;
 const RPC_DEFAULT_TIMEOUT_MS = 30000;
 const RPC_READ_TIMEOUT_MS = 60000;
+const BINARY_READ_PREFETCH_CHUNKS = 1;
+const BINARY_READ_MAX_CACHE_BYTES = 64 * 1024 * 1024;
 const TOKEN_FILE = path.join(__dirname, 'data', 'agent-tokens.json');
 
 class FileAgentConnection {
@@ -189,6 +191,10 @@ class FileAgentManager {
         this.sseClients = new Set();
         /** @type {Map<string, object>} token → token record */
         this.tokenRecords = new Map();
+        /** @type {Map<string, {promise?: Promise<Buffer>, data?: Buffer, ts: number, size: number}>} */
+        this.binaryReadCache = new Map();
+        this.binaryReadCacheBytes = 0;
+        this.binaryReadQueues = new Map(); // `${agentId}:${handle}` → Promise chain
         /** @type {Function} resolve userId from session cookie (injected) */
         this.resolveSession = options.resolveSession || (() => null);
         /** @type {Function} logger */
@@ -625,6 +631,93 @@ class FileAgentManager {
         return conn.callBinaryRead(params, timeoutMs || RPC_READ_TIMEOUT_MS);
     }
 
+    _binaryReadKey(agentId, handle, offset, length) {
+        return `${agentId}:${handle}:${offset}:${length}`;
+    }
+
+    _binaryReadQueueKey(agentId, handle) {
+        return `${agentId}:${handle}`;
+    }
+
+    _callAgentBinaryReadQueued(agentId, params, timeoutMs) {
+        const handle = String(params.handle || '');
+        const qKey = this._binaryReadQueueKey(agentId, handle);
+        const prev = this.binaryReadQueues.get(qKey) || Promise.resolve();
+        const next = prev.catch(() => {}).then(() => this.callAgentBinaryRead(agentId, params, timeoutMs));
+        let tracked;
+        tracked = next.finally(() => {
+            if (this.binaryReadQueues.get(qKey) === tracked) this.binaryReadQueues.delete(qKey);
+        });
+        this.binaryReadQueues.set(qKey, tracked);
+        return next;
+    }
+
+    _trimBinaryReadCache() {
+        if (this.binaryReadCacheBytes <= BINARY_READ_MAX_CACHE_BYTES) return;
+        const entries = [...this.binaryReadCache.entries()].sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
+        for (const [key, entry] of entries) {
+            if (this.binaryReadCacheBytes <= BINARY_READ_MAX_CACHE_BYTES) break;
+            this.binaryReadCache.delete(key);
+            if (entry.data) this.binaryReadCacheBytes -= entry.size || entry.data.length || 0;
+        }
+    }
+
+    _dropBinaryReadCacheForHandle(agentId, handle) {
+        const prefix = `${agentId}:${handle}:`;
+        for (const [key, entry] of [...this.binaryReadCache.entries()]) {
+            if (!key.startsWith(prefix)) continue;
+            this.binaryReadCache.delete(key);
+            if (entry.data) this.binaryReadCacheBytes -= entry.size || entry.data.length || 0;
+        }
+    }
+
+    _scheduleBinaryReadPrefetch(agentId, handle, offset, length) {
+        if (!handle || !Number.isFinite(offset) || !Number.isFinite(length) || length <= 0) return;
+        for (let i = 1; i <= BINARY_READ_PREFETCH_CHUNKS; i++) {
+            const nextOffset = offset + length * i;
+            const key = this._binaryReadKey(agentId, handle, nextOffset, length);
+            if (this.binaryReadCache.has(key)) continue;
+            const entry = { ts: Date.now(), size: 0 };
+            entry.promise = this._callAgentBinaryReadQueued(agentId, { handle, offset: nextOffset, length })
+                .then((buf) => {
+                    entry.data = buf;
+                    entry.size = buf.length;
+                    entry.ts = Date.now();
+                    this.binaryReadCacheBytes += buf.length;
+                    this._trimBinaryReadCache();
+                    return buf;
+                })
+                .catch((err) => {
+                    entry.error = err;
+                    this.binaryReadCache.delete(key);
+                    return null;
+                });
+            this.binaryReadCache.set(key, entry);
+        }
+    }
+
+    async callAgentBinaryReadCached(agentId, params, timeoutMs) {
+        const handle = String(params.handle || '');
+        const offset = Number(params.offset || 0);
+        const length = Number(params.length || 0);
+        const key = this._binaryReadKey(agentId, handle, offset, length);
+        let entry = this.binaryReadCache.get(key);
+        let buf;
+        if (entry) {
+            entry.ts = Date.now();
+            buf = entry.data || await entry.promise;
+            this.binaryReadCache.delete(key);
+            if (entry.data) this.binaryReadCacheBytes -= entry.size || entry.data.length || 0;
+            if (!Buffer.isBuffer(buf)) {
+                buf = await this._callAgentBinaryReadQueued(agentId, params, timeoutMs);
+            }
+        } else {
+            buf = await this._callAgentBinaryReadQueued(agentId, params, timeoutMs);
+        }
+        this._scheduleBinaryReadPrefetch(agentId, handle, offset, length);
+        return buf;
+    }
+
     // ─── Query ───────────────────────────────────────────────────────
 
     /** List online agents for a specific user. */
@@ -847,7 +940,7 @@ class FileAgentManager {
             }
 
             try {
-                const buf = await this.callAgentBinaryRead(agentId, { handle, offset, length });
+                const buf = await this.callAgentBinaryReadCached(agentId, { handle, offset, length });
                 res.status(200);
                 res.setHeader('Content-Type', 'application/octet-stream');
                 res.setHeader('Cache-Control', 'no-store');
@@ -876,6 +969,10 @@ class FileAgentManager {
             }
 
             try {
+                if (['write', 'close', 'delete', 'rename', 'truncate'].includes(method)) {
+                    const h = params?.handle;
+                    if (h) this._dropBinaryReadCacheForHandle(agentId, String(h));
+                }
                 const result = await this.callAgent(agentId, method, params);
                 res.json({ ok: true, result });
             } catch (err) {
