@@ -149,38 +149,36 @@ let rdpGLSampLoc = -1;   /* uniform location: sampler */
 let rdpGLProgNoSwap = null;
 let rdpGLSampLocNoSwap = -1;
 
-const RDP_GLSL_VERT = `#version 300 es
-in vec2 a_pos;
-in vec2 a_tex;
-out vec2 v_tex;
+const RDP_GLSL_VERT = `
+attribute vec2 a_pos;
+attribute vec2 a_tex;
+varying vec2 v_tex;
 void main() {
     v_tex = a_tex;
     gl_Position = vec4(a_pos, 0.0, 1.0);
 }`;
 
-const RDP_GLSL_FRAG = `#version 300 es
+const RDP_GLSL_FRAG = `
 precision mediump float;
-in vec2 v_tex;
-out vec4 frag;
+varying vec2 v_tex;
 uniform sampler2D u_tex;
 void main() {
     /* Texture is BGRA; swizzle to RGBA on the GPU. */
-    vec4 c = texture(u_tex, v_tex);
-    frag = vec4(c.b, c.g, c.r, 1.0);
+    vec4 c = texture2D(u_tex, v_tex);
+    gl_FragColor = vec4(c.b, c.g, c.r, 1.0);
 }`;
 
-const RDP_GLSL_FRAG_NOSWAP = `#version 300 es
+const RDP_GLSL_FRAG_NOSWAP = `
 precision mediump float;
-in vec2 v_tex;
-out vec4 frag;
+varying vec2 v_tex;
 uniform sampler2D u_tex;
 void main() {
-    /* Texture is already RGBA (from VideoFrame); no swizzle needed. */
-    frag = texture(u_tex, v_tex);
+    /* Texture is already RGBA (from VideoFrame/ImageData); no swizzle needed. */
+    gl_FragColor = texture2D(u_tex, v_tex);
 }`;
 
 function rdpGLSupported() {
-    return typeof WebGL2RenderingContext !== 'undefined';
+    return typeof WebGLRenderingContext !== 'undefined';
 }
 
 function rdpGLInit(canvas, w, h) {
@@ -192,6 +190,12 @@ function rdpGLInit(canvas, w, h) {
         depth: false,
         stencil: false,
         desynchronized: true,
+    }) || canvas.getContext('webgl', {
+        premultipliedAlpha: false,
+        preserveDrawingBuffer: true,
+        antialias: false,
+        depth: false,
+        stencil: false,
     });
     if (!gl) return false;
     rdpGL = gl;
@@ -275,13 +279,20 @@ function rdpGLInit(canvas, w, h) {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    /* Allocate storage with BGRA8 internal format (WebGL2 supports this) */
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    /* Allocate storage using unsized RGBA internalformat for WebGL1/Android WebView compatibility. */
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    const texErr = gl.getError();
+    if (texErr !== gl.NO_ERROR) {
+        console.warn('[rdp-gl] texture allocation failed, falling back to Canvas2D:', texErr);
+        rdpGL = null;
+        return false;
+    }
 
     gl.viewport(0, 0, w, h);
     gl.disable(gl.BLEND);
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    console.info('[rdp-gl] WebGL2 renderer initialised', { w, h });
+    rdpDiag.renderer = 'wasm-webgl';
+    console.info('[rdp-gl] WebGL renderer initialised', { w, h });
     return true;
 }
 
@@ -291,7 +302,7 @@ function rdpGLResize(w, h) {
     rdpGLTexH = h;
     rdpGL.activeTexture(rdpGL.TEXTURE0);
     rdpGL.bindTexture(rdpGL.TEXTURE_2D, rdpGLTex);
-    rdpGL.texImage2D(rdpGL.TEXTURE_2D, 0, rdpGL.RGBA8, w, h, 0, rdpGL.RGBA, rdpGL.UNSIGNED_BYTE, null);
+    rdpGL.texImage2D(rdpGL.TEXTURE_2D, 0, rdpGL.RGBA, w, h, 0, rdpGL.RGBA, rdpGL.UNSIGNED_BYTE, null);
     rdpGL.viewport(0, 0, w, h);
 }
 
@@ -303,9 +314,16 @@ function rdpGLBlitBGRA(destX, destY, w, h, uint8Data) {
     gl.bindTexture(gl.TEXTURE_2D, rdpGLTex);
     /* Upload only the dirty region.  texSubImage2D uses GPU DMA path. */
     gl.texSubImage2D(gl.TEXTURE_2D, 0, destX, destY, w, h, gl.RGBA, gl.UNSIGNED_BYTE, uint8Data);
+    const uploadErr = gl.getError();
+    if (uploadErr !== gl.NO_ERROR) {
+        console.warn('[rdp-gl] texSubImage2D failed, disabling WebGL renderer:', uploadErr);
+        rdpGLCleanup();
+        if (rdpCanvas && !rdpCtx2d) rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
+        return false;
+    }
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    return true;
+    return gl.getError() === gl.NO_ERROR;
 }
 
 function rdpGLCleanup() {
@@ -326,12 +344,13 @@ function rdpGLCleanup() {
  * Expects raw BGRA data (no BGR->RGB conversion needed with WebGL).
  * ═══════════════════════════════════════════════════════════════════════ */
 window.rdpDrawBitmapBGRA = function (destX, destY, w, h, uint8Data) {
-    if (rdpGL) {
-        return rdpGLBlitBGRA(destX, destY, w, h, uint8Data);
+    if (rdpGL && rdpGLBlitBGRA(destX, destY, w, h, uint8Data)) {
+        return true;
     }
     /* Fallback: Canvas2D with putImageData (requires RGBA, not BGRA).
-     * Convert BGRA->RGBA in JS. This path is only used when WebGL2 is
-     * unavailable. */
+     * Convert BGRA->RGBA in JS. This path is only used when WebGL is
+     * unavailable or a driver rejects the upload. */
+    if (!rdpCtx2d && rdpCanvas) rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
     if (!rdpCtx2d) return false;
     const rgba = new Uint8ClampedArray(w * h * 4);
     for (let i = 0; i < w * h; i++) {
@@ -1402,9 +1421,17 @@ function ensureCanvas(w, h) {
     }
     rdpCanvas.width = w;
     rdpCanvas.height = h;
-    /* Try WebGL2 first (GPU-accelerated BGRA blit); fall back to Canvas 2D. */
-    if (!rdpGLInit(rdpCanvas, w, h)) {
+    /* WebGL is available behind an explicit flag only. Some Android WebView
+     * GPU stacks accept context creation but reject texture uploads, producing
+     * a black screen.  Default to Canvas2D fallback for reliability; enable
+     * with ?rdpWebgl=true or saved param rdpWebgl=true for testing. */
+    const enableWebGL = boolSetting(params.rdpWebgl || urlParams.get('rdpWebgl'));
+    if (enableWebGL && rdpGLInit(rdpCanvas, w, h)) {
+        rdpCtx2d = null;
+    } else {
+        rdpGLCleanup();
         rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
+        rdpDiag.renderer = 'wasm-canvas2d-fallback';
     }
     applyFitMode();
     attachInputEvents();
