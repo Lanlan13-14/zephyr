@@ -1,12 +1,13 @@
 /**
- * rdp-wasm-client.js — Zephyr RDP Client powered by grdp WASM
+ * rdp-wasm-client.js — Zephyr RDP Client powered by Rust/IronRDP Worker
  *
  * Architecture:
- *   Browser (Go WASM grdp) ── WebSocket ──► Node.js proxy ── TCP ──► RDP Server
+ *   Browser (Rust/IronRDP Worker) ── WebSocket ──► Node.js proxy ── TCP ──► RDP Server
  *
- * The Go WASM module handles the entire RDP protocol (bitmap decode, H.264,
- * cursor, keyboard, clipboard, audio).  The server is a dumb WS→TCP proxy.
- * All rendering happens client-side via Canvas 2D putImageData and WebCodecs.
+ * The Rust/IronRDP Worker owns the RDP protocol. Rendering is staged through
+ * a Rust WASM FrameCompositor when available so many bitmap tiles are merged
+ * into one requestAnimationFrame upload/draw. H.264 WebCodecs frames share the
+ * same rAF loop and are presented against the audio clock for bounded A/V sync.
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
@@ -39,6 +40,9 @@ const clipboardText = $('#clipboardText');
 const remoteClipboardText = $('#remoteClipboardText');
 const clipboardHint = $('#clipboardHint');
 const mobileKeyboardInput = $('#mobileKeyboardInput');
+const rdpPointerOverlay = $('#rdpPointerOverlay');
+const rdpFloatBar = $('#rdpFloatBar');
+const rdpEdgeTrigger = $('#rdpEdgeTrigger');
 
 const filesPanel = $('#filesPanel');
 const filesHint = $('#filesHint');
@@ -49,6 +53,14 @@ const rdpFileSelectBtn = $('#rdpFileSelectBtn');
 let connected = false;
 let params = loadParams();
 let wasmReady = false;
+let rdpWorker = null;
+let rdpWorkerReady = false;
+let rdpSAB = null;
+let rdpSABCtrl = null;
+let rdpSABPixels = null;
+const RDP_SAB_PIXELS_OFFSET = 276;
+const RDP_SAB_CTRL_I32_LEN = 69;
+const rdpPendingDownloads = new Map();
 let rdpManualDisconnect = false;
 let rdpReconnectTimer = null;
 let rdpReconnectAttempts = 0;
@@ -86,7 +98,7 @@ let fillPanY = 50;
 let connectWatchdogTimer = null;
 const CONNECT_TIMEOUT_MS = 12000;
 
-/* Quality/FPS — kept for UI compat; WASM grdp doesn't need these */
+/* Quality/FPS — kept for UI compat; Rust/IronRDP WASM doesn't need these */
 const qualityModes = ['balanced', 'performance', 'quality'];
 let qualityMode = 'balanced';
 const fpsModes = [30, 45, 60, 120, 144];
@@ -132,7 +144,7 @@ window._rdpRenderDiag = () => JSON.stringify(rdpDiag);
  *
  * Replaces Canvas 2D putImageData (pure CPU copy) with WebGL texture
  * upload.  The fragment shader performs BGRA->RGBA swizzle on the GPU,
- * eliminating the per-pixel conversion loop in Go WASM.
+ * eliminating the per-pixel conversion loop in Rust/IronRDP Worker.
  * ═══════════════════════════════════════════════════════════════════════ */
 let rdpGL = null;        /* WebGL2 context */
 let rdpGLProg = null;    /* shader program */
@@ -150,6 +162,12 @@ let rdpGLSampLoc = -1;   /* uniform location: sampler */
 let rdpGLProgNoSwap = null;
 let rdpGLSampLocNoSwap = -1;
 
+/* Rust WASM compositor: protocol callbacks write tiles into a shadow buffer;
+ * the unified rAF loop uploads/draws at most once per browser frame. */
+let rdpCompositor = null;
+let rdpPresentRAF = null;
+let rdpUseUnifiedRgbaTexture = false;
+
 const RDP_GLSL_VERT = `
 attribute vec2 a_pos;
 attribute vec2 a_tex;
@@ -164,7 +182,7 @@ precision mediump float;
 varying vec2 v_tex;
 uniform sampler2D u_tex;
 void main() {
-    /* Texture is BGRA; swizzle to RGBA on the GPU. */
+    /* Texture is BGRA unless unified RGBA mode is enabled. */
     vec4 c = texture2D(u_tex, v_tex);
     gl_FragColor = vec4(c.b, c.g, c.r, 1.0);
 }`;
@@ -307,8 +325,11 @@ function rdpGLResize(w, h) {
     rdpGL.viewport(0, 0, w, h);
 }
 
-/* Upload a BGRA bitmap tile to the GPU texture and render. */
-function rdpGLBlitBGRA(destX, destY, w, h, uint8Data) {
+/* Upload a full-screen texture tile and render. In normal bitmap-only mode the
+ * bytes are BGRA and the swap shader fixes channel order. In unified RGBA mode
+ * (WebCodecs + bitmap sharing one texture), callers pass RGBA and we use the
+ * no-swap shader so H.264 and bitmap regions can coexist without color drift. */
+function rdpGLBlitPixels(destX, destY, w, h, uint8Data, alreadyRgba = false) {
     if (!rdpGL || !rdpGLTex) return false;
     const gl = rdpGL;
     gl.activeTexture(gl.TEXTURE0);
@@ -326,8 +347,38 @@ function rdpGLBlitBGRA(destX, destY, w, h, uint8Data) {
         return false;
     }
     gl.clear(gl.COLOR_BUFFER_BIT);
+    if (alreadyRgba && rdpGLProgNoSwap) {
+        useNoSwapProgram(gl);
+    } else {
+        useSwapProgram(gl);
+    }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if (alreadyRgba && rdpGLProgNoSwap && !rdpUseUnifiedRgbaTexture) useSwapProgram(gl);
     return gl.getError() === gl.NO_ERROR;
+}
+
+function rdpGLBlitBGRA(destX, destY, w, h, uint8Data) {
+    return rdpGLBlitPixels(destX, destY, w, h, uint8Data, false);
+}
+
+function useNoSwapProgram(gl) {
+    if (!rdpGLProgNoSwap) return;
+    gl.useProgram(rdpGLProgNoSwap);
+    gl.uniform1i(rdpGLSampLocNoSwap, 0);
+    const posLoc = gl.getAttribLocation(rdpGLProgNoSwap, 'a_pos');
+    const texLoc = gl.getAttribLocation(rdpGLProgNoSwap, 'a_tex');
+    if (posLoc >= 0) { gl.enableVertexAttribArray(posLoc); gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 16, 0); }
+    if (texLoc >= 0) { gl.enableVertexAttribArray(texLoc); gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 16, 8); }
+}
+
+function useSwapProgram(gl) {
+    if (!rdpGLProg) return;
+    gl.useProgram(rdpGLProg);
+    gl.uniform1i(rdpGLSampLoc, 0);
+    const posLoc = gl.getAttribLocation(rdpGLProg, 'a_pos');
+    const texLoc = gl.getAttribLocation(rdpGLProg, 'a_tex');
+    if (posLoc >= 0) { gl.enableVertexAttribArray(posLoc); gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 16, 0); }
+    if (texLoc >= 0) { gl.enableVertexAttribArray(texLoc); gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 16, 8); }
 }
 
 function rdpGLCleanup() {
@@ -342,15 +393,141 @@ function rdpGLCleanup() {
     rdpGLTexH = 0;
 }
 
+function bgraToRgba(uint8Data, w, h) {
+    const len = w * h * 4;
+    if (window.RdpRenderWasm?.bgra_to_rgba) {
+        try { return window.RdpRenderWasm.bgra_to_rgba(uint8Data); } catch {}
+    }
+    const rgba = new Uint8Array(len);
+    for (let i = 0; i < w * h; i++) {
+        const s = i * 4;
+        rgba[s] = uint8Data[s + 2];
+        rgba[s + 1] = uint8Data[s + 1];
+        rgba[s + 2] = uint8Data[s];
+        rgba[s + 3] = uint8Data[s + 3] ?? 0xFF;
+    }
+    return rgba;
+}
+
+function initCompositor(w, h) {
+    cleanupCompositor();
+    if (!rdpGL || !window.RdpRenderWasm?.FrameCompositor || rdpUseUnifiedRgbaTexture) return false;
+    try {
+        rdpCompositor = new window.RdpRenderWasm.FrameCompositor(w, h);
+        rdpDiag.renderer = 'wasm-webgl-compositor';
+        return true;
+    } catch (err) {
+        console.warn('[rdp-render] FrameCompositor init failed:', err?.message || err);
+        rdpCompositor = null;
+        return false;
+    }
+}
+
+function cleanupCompositor() {
+    if (rdpCompositor && typeof rdpCompositor.free === 'function') {
+        try { rdpCompositor.free(); } catch {}
+    }
+    rdpCompositor = null;
+}
+
+function flushSabFrame() {
+    if (!rdpSABCtrl || !rdpSABPixels || !rdpGL || !rdpGLTex) return false;
+    if (Atomics.load(rdpSABCtrl, 0) !== 1) return false;
+    const x = Atomics.load(rdpSABCtrl, 1);
+    const y = Atomics.load(rdpSABCtrl, 2);
+    const x1 = Atomics.load(rdpSABCtrl, 3);
+    const y1 = Atomics.load(rdpSABCtrl, 4);
+    const w = x1 - x;
+    const h = y1 - y;
+    if (w <= 0 || h <= 0) { Atomics.store(rdpSABCtrl, 0, 0); return false; }
+    const rowBytes = w * 4;
+    const out = new Uint8Array(rowBytes * h);
+    const stride = (rdpWidth || Atomics.load(rdpSABCtrl, 5)) * 4;
+    for (let row = 0; row < h; row++) {
+        const src = (y + row) * stride + x * 4;
+        out.set(rdpSABPixels.subarray(src, src + rowBytes), row * rowBytes);
+    }
+    Atomics.store(rdpSABCtrl, 0, 0);
+    if (rdpGLBlitPixels(x, y, w, h, out, true)) { notePresentedFrame(); return true; }
+    return false;
+}
+
+function flushCompositorFrame() {
+    if (!rdpCompositor || !rdpGL || !rdpGLTex) return false;
+    const dirty = rdpCompositor.take_dirty();
+    if (!dirty || dirty.length !== 4) return false;
+    const x = dirty[0] | 0;
+    const y = dirty[1] | 0;
+    const w = dirty[2] | 0;
+    const h = dirty[3] | 0;
+    if (w <= 0 || h <= 0) return false;
+    const pixels = rdpCompositor.get_dirty_pixels(x, y, w, h);
+    const upload = pixels instanceof Uint8Array ? pixels : new Uint8Array(pixels);
+    if (upload.byteLength < w * h * 4) {
+        rdpDiag.drawFails++;
+        rdpDiag.lastDrawError = 'compositor returned short dirty buffer';
+        return false;
+    }
+    if (rdpGLBlitBGRA(x, y, w, h, upload)) {
+        notePresentedFrame();
+        return true;
+    }
+    cleanupCompositor();
+    return false;
+}
+
+function getAudioClock() {
+    if (audioCtx && audioCtx.state !== 'closed') return audioCtx.currentTime;
+    return performance.now() / 1000;
+}
+
+function startRdpPresentLoop() {
+    if (rdpPresentRAF) return;
+    const tick = () => {
+        rdpPresentRAF = null;
+        flushSabFrame();
+        flushCompositorFrame();
+        h264PresentTick();
+        rdpPresentRAF = requestAnimationFrame(tick);
+    };
+    rdpPresentRAF = requestAnimationFrame(tick);
+}
+
+function stopRdpPresentLoop() {
+    if (rdpPresentRAF) {
+        cancelAnimationFrame(rdpPresentRAF);
+        rdpPresentRAF = null;
+    }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  * BITMAP DRAW DISPATCH - chooses WebGL or Canvas2D fallback
- * Called from Go WASM via window.rdpDrawBitmap.
+ * Called from Rust/IronRDP Worker via window.rdpDrawBitmap.
  * Expects raw BGRA data (no BGR->RGB conversion needed with WebGL).
  * ═══════════════════════════════════════════════════════════════════════ */
 window.rdpDrawBitmapBGRA = function (destX, destY, w, h, uint8Data) {
     rdpDiag.bitmapCalls++;
     rdpDiag.bitmapBytes += uint8Data?.byteLength || 0;
     rdpDiag.bitmapLast = { x: destX, y: destY, w, h, bytes: uint8Data?.byteLength || 0, at: Date.now() };
+    if (rdpCompositor) {
+        try {
+            if (rdpCompositor.blit_tile(destX, destY, w, h, uint8Data)) return true;
+            rdpDiag.drawFails++;
+            rdpDiag.lastDrawError = 'FrameCompositor.blit_tile rejected tile';
+        } catch (err) {
+            rdpDiag.drawFails++;
+            rdpDiag.lastDrawError = 'FrameCompositor.blit_tile failed: ' + (err?.message || err);
+            console.warn('[rdp-render] compositor blit failed, disabling compositor:', err);
+            cleanupCompositor();
+        }
+    }
+    if (rdpGL && rdpUseUnifiedRgbaTexture) {
+        const rgba = bgraToRgba(uint8Data, w, h);
+        if (rdpGLBlitPixels(destX, destY, w, h, rgba, true)) {
+            notePresentedFrame();
+            return true;
+        }
+    }
     if (rdpGL && rdpGLBlitBGRA(destX, destY, w, h, uint8Data)) {
         notePresentedFrame();
         return true;
@@ -384,20 +561,131 @@ window.rdpDrawBitmapBGRA = function (destX, destY, w, h, uint8Data) {
     return true;
 };
 
+
+const RDP_KEYMAP = {
+    Escape:0x0001, Digit1:0x0002, Digit2:0x0003, Digit3:0x0004, Digit4:0x0005, Digit5:0x0006, Digit6:0x0007, Digit7:0x0008, Digit8:0x0009, Digit9:0x000A, Digit0:0x000B,
+    Minus:0x000C, Equal:0x000D, Backspace:0x000E, Tab:0x000F, KeyQ:0x0010, KeyW:0x0011, KeyE:0x0012, KeyR:0x0013, KeyT:0x0014, KeyY:0x0015,
+    KeyU:0x0016, KeyI:0x0017, KeyO:0x0018, KeyP:0x0019, BracketLeft:0x001A, BracketRight:0x001B, Enter:0x001C, ControlLeft:0x001D,
+    KeyA:0x001E, KeyS:0x001F, KeyD:0x0020, KeyF:0x0021, KeyG:0x0022, KeyH:0x0023, KeyJ:0x0024, KeyK:0x0025, KeyL:0x0026,
+    Semicolon:0x0027, Quote:0x0028, Backquote:0x0029, ShiftLeft:0x002A, Backslash:0x002B, KeyZ:0x002C, KeyX:0x002D, KeyC:0x002E,
+    KeyV:0x002F, KeyB:0x0030, KeyN:0x0031, KeyM:0x0032, Comma:0x0033, Period:0x0034, Slash:0x0035, ShiftRight:0x0036,
+    NumpadMultiply:0x0037, AltLeft:0x0038, Space:0x0039, CapsLock:0x003A, F1:0x003B, F2:0x003C, F3:0x003D, F4:0x003E,
+    F5:0x003F, F6:0x0040, F7:0x0041, F8:0x0042, F9:0x0043, F10:0x0044, ScrollLock:0x0046, Numpad7:0x0047,
+    Numpad8:0x0048, Numpad9:0x0049, NumpadSubtract:0x004A, Numpad4:0x004B, Numpad5:0x004C, Numpad6:0x004D, NumpadAdd:0x004E,
+    Numpad1:0x004F, Numpad2:0x0050, Numpad3:0x0051, Numpad0:0x0052, NumpadDecimal:0x0053, F11:0x0057, F12:0x0058,
+    NumpadEqual:0x0059, NumpadEnter:0xE01C, ControlRight:0xE01D, NumpadDivide:0xE035, PrintScreen:0xE037, AltRight:0xE038,
+    NumLock:0xE045, Pause:0xE046, Home:0xE047, ArrowUp:0xE048, PageUp:0xE049, ArrowLeft:0xE04B, ArrowRight:0xE04D,
+    End:0xE04F, ArrowDown:0xE050, PageDown:0xE051, Insert:0xE052, Delete:0xE053, ContextMenu:0xE05D, MetaLeft:0xE05B, MetaRight:0xE05C,
+    IntlRo:0x0073, KanaMode:0x0070, IntlYen:0x007D, Convert:0x0079, NonConvert:0x007B,
+};
+function keyCodeToScancode(code) { return RDP_KEYMAP[code] || 0; }
+function keyCodeExtended(sc) { return (sc & 0xFF00) === 0xE000; }
+function postRdpWorker(msg, transfer) { if (rdpWorker) rdpWorker.postMessage(msg, transfer || []); }
+
+function rdpMouseMove(x, y) { postRdpWorker({ type: 'mouse_move', x, y }); }
+function rdpMouseDown(button, x, y) { postRdpWorker({ type: 'mouse_down', button, x, y }); }
+function rdpMouseUp(button, x, y) { postRdpWorker({ type: 'mouse_up', button, x, y }); }
+function rdpMouseWheel(delta, x = 0, y = 0) { postRdpWorker({ type: 'mouse_wheel', delta: Math.trunc(delta), x, y }); }
+window.rdpMouseHScroll = function(delta, x = 0, y = 0) { postRdpWorker({ type: 'mouse_h_scroll', delta: Math.trunc(delta), x, y }); };
+function rdpKeyDown(code) { const sc = typeof code === 'number' ? code : keyCodeToScancode(code); if (sc) postRdpWorker({ type: 'key_down', scancode: sc, extended: keyCodeExtended(sc) }); }
+function rdpKeyUp(code) { const sc = typeof code === 'number' ? code : keyCodeToScancode(code); if (sc) postRdpWorker({ type: 'key_up', scancode: sc, extended: keyCodeExtended(sc) }); }
+function rdpDisconnect() { postRdpWorker({ type: 'disconnect' }); }
+function rdpClipboardChanged(text) { postRdpWorker({ type: 'clipboard_changed', text }); }
+function rdpClipboardChangedSync(text) { rdpClipboardChanged(text); return Promise.resolve(true); }
+function rdpNotifyFilesChanged() { postRdpWorker({ type: 'notify_files' }); }
+function rdpDownloadServerFile(index, callback) { const requestId = Math.random().toString(36).slice(2); rdpPendingDownloads.set(requestId, callback); postRdpWorker({ type: 'download_file', index, requestId }); }
+function rdpGetServerFiles() { return []; }
+function rdpFsAttachDrive(agentId, driveName, readOnly) { postRdpWorker({ type: 'fs_attach_drive', agentId, driveName, readOnly }); return undefined; }
+function rdpFsDetachDrive(agentId) { postRdpWorker({ type: 'fs_detach_drive', agentId }); }
+function rdpFsListDrives() { return []; }
+function rdpAudinData(data) { postRdpWorker({ type: 'audin_data', data }, data?.buffer ? [data.buffer] : []); }
+function rdpLocationData(lat, lon, alt, accuracy, speed, heading) { postRdpWorker({ type: 'location_data', lat, lon, alt, accuracy, speed, heading }); }
+function rdpCameraFrame(data, isKey) { postRdpWorker({ type: 'camera_frame', data, isKey }, data?.buffer ? [data.buffer] : []); }
+function rdpResizeDisplay(width, height) { postRdpWorker({ type: 'resize_display', width, height }); }
+window.rdpResizeDisplay = rdpResizeDisplay;
+
+function handleWorkerMessage(e) {
+    const msg = e.data || {};
+    switch (msg.type) {
+        case 'ready': rdpWorkerReady = true; break;
+        case 'ready_rdp': window.rdpOnReady?.(); break;
+        case 'error': window.rdpOnError?.(msg.message || 'RDP Worker error'); break;
+        case 'close': window.rdpOnClose?.(); break;
+        case 'clipboard': window.rdpOnClipboard?.(msg.text || ''); break;
+        case 'remote_files': window.rdpOnRemoteFiles?.(msg.files || []); break;
+        case 'h264': window.rdpOnH264?.(msg.dx, msg.dy, msg.w, msg.h, msg.isKey, new Uint8Array(msg.data)); break;
+        case 'audio': window.rdpAudioPlay?.(msg.sr, msg.ch, msg.bps, new Uint8Array(msg.data)); break;
+        case 'audio_reset': window.rdpAudioReset?.(); break;
+        case 'pointer_update': window.rdpOnPointerUpdate?.(...(msg.args || [])); break;
+        case 'pointer_hide': window.rdpOnPointerHide?.(); break;
+        case 'pointer_cached': window.rdpOnPointerCached?.(msg.idx); break;
+        case 'desktop_resize': if (msg.width && msg.height) ensureCanvas(msg.width, msg.height); break;
+        case 'bitmap_rgba': if (rdpGL) { rdpGLBlitPixels(msg.x, msg.y, msg.w, msg.h, new Uint8Array(msg.data), true); notePresentedFrame(); } break;
+        case 'download_file_result': {
+            const cb = rdpPendingDownloads.get(msg.requestId); rdpPendingDownloads.delete(msg.requestId);
+            if (cb) cb(msg.data);
+            break;
+        }
+    }
+}
+
+async function initWorker(width, height) {
+    if (rdpWorker && rdpWorkerReady && rdpSABCtrl && rdpWidth === width && rdpHeight === height) return;
+    if (rdpWorker) { try { rdpWorker.terminate(); } catch {} }
+    rdpWorkerReady = false;
+    const pixelBytes = width * height * 4;
+    if (typeof SharedArrayBuffer === 'function' && crossOriginIsolated) {
+        rdpSAB = new SharedArrayBuffer(RDP_SAB_PIXELS_OFFSET + pixelBytes);
+        rdpSABCtrl = new Int32Array(rdpSAB, 0, RDP_SAB_CTRL_I32_LEN);
+        rdpSABPixels = new Uint8Array(rdpSAB, RDP_SAB_PIXELS_OFFSET, pixelBytes);
+    } else {
+        console.warn('[rdp-worker] SharedArrayBuffer unavailable; bitmap fallback will use postMessage');
+        rdpSAB = rdpSABCtrl = rdpSABPixels = null;
+    }
+    rdpWorker = new Worker(new URL('./rdp-worker.js?v=20260709-worker1', import.meta.url), { type: 'module' });
+    rdpWorker.onmessage = handleWorkerMessage;
+    rdpWorker.onerror = (err) => window.rdpOnError?.(err.message || 'RDP Worker failed');
+    const ready = new Promise((resolve) => {
+        const orig = rdpWorker.onmessage;
+        rdpWorker.onmessage = (ev) => {
+            orig(ev);
+            if (ev.data?.type === 'ready') { rdpWorker.onmessage = orig; resolve(); }
+        };
+    });
+    rdpWorker.postMessage({ type: 'init', sab: rdpSAB, width, height });
+    await ready;
+}
+
+function rdpConnect(proxyWsUrl, host, port, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264Supported, wallpaper) {
+    postRdpWorker({ type: 'connect', proxyWsUrl, host, port: Number(port) || 3389, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264Supported, wallpaper });
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  * WASM BOOTSTRAP
  ══════════════════════════════════════════════════════════════════════ */
 
+async function loadRenderWasm() {
+    if (window.RdpRenderWasm?.FrameCompositor) return true;
+    try {
+        const mod = await import('./vendor/rdp-render/rdp_render_wasm.js?v=20260709-compositor3');
+        const wasmUrl = new URL('./vendor/rdp-render/rdp_render_wasm_bg.wasm?v=20260709-compositor3', import.meta.url);
+        await mod.default({ module_or_path: wasmUrl });
+        window.RdpRenderWasm = mod;
+        console.info('[rdp-render] Rust FrameCompositor loaded');
+        return true;
+    } catch (err) {
+        console.warn('[rdp-render] Rust FrameCompositor unavailable, using immediate renderer:', err?.message || err);
+        window.RdpRenderWasm = null;
+        return false;
+    }
+}
+
 async function loadWasm() {
-    setStatus('connecting', '加载 RDP WASM 引擎...');
-    const go = new Go();
-    const result = await WebAssembly.instantiateStreaming(
-        fetch('vendor/rdp-wasm/main.wasm?v=' + Date.now()),
-        go.importObject,
-    );
-    go.run(result.instance);
+    setStatus('connecting', '加载 RDP Rust Worker 引擎...');
+    await loadRenderWasm();
+    await initWorker(rdpWidth || 1920, rdpHeight || 1080);
     wasmReady = true;
-    console.info('[rdp-wasm] WASM engine loaded');
+    console.info('[rdp-worker] Rust/IronRDP Worker loaded');
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -412,6 +700,7 @@ window.rdpOnReady = function () {
     rdpReconnectAttempts = 0;
     rdpReconnecting = false;
     notifyParentStatus('connected');
+    haptic('connect');
     if (rdpCanvas) rdpCanvas.focus();
     if (rdpAgentStorageEnabled) syncAgentDrives({ enabled: true });
     setTimeout(() => {
@@ -447,6 +736,8 @@ window.rdpOnClose = function () {
     console.info('[rdp-wasm] connection closed');
     clearConnectWatchdog();
     stopAgentDriveBridge();
+    stopRdpPresentLoop();
+    cleanupCompositor();
     const wasConnected = connected;
     connected = false;
     if (wasConnected) {
@@ -532,45 +823,44 @@ let h264InfoLog = [];
  * recent frame whose timestamp is due and draws it, discarding stale
  * frames to maintain low latency. */
 const h264PresentQueue = [];
-let h264PresentRAF = null;
-let h264LastDrawnFrame = null;
 
 /* Temp canvas for H.264 -> WebGL fallback (only used when direct
  * VideoFrame texSubImage2D is unsupported by the browser). */
 let h264TempCanvas = null;
 let h264TempCtx = null;
 
-function h264StartPresentLoop() {
-    if (h264PresentRAF) return;
-    const tick = () => {
-        h264PresentRAF = null;
-        if (h264PresentQueue.length === 0) {
-            h264PresentRAF = requestAnimationFrame(tick);
-            return;
-        }
-        /* Drain: keep only the most recent frame (discard stale ones). */
-        while (h264PresentQueue.length > 1) {
-            const old = h264PresentQueue.shift();
-            try { old.frame.close(); } catch {}
-        }
-        const item = h264PresentQueue.shift();
-        if (item) {
-            if (rdpCtx2d) {
-                rdpCtx2d.drawImage(item.frame, item.x, item.y);
-            } else if (rdpGL) {
-                /* WebGL active: draw VideoFrame to a temp canvas then upload. */
-                h264DrawFrameWebGL(item.frame, item.x, item.y);
-            }
+function h264PresentTick() {
+    if (h264PresentQueue.length === 0) return false;
+    const now = getAudioClock();
+    let drew = false;
+    while (h264PresentQueue.length > 0) {
+        const item = h264PresentQueue[0];
+        const pts = Number.isFinite(item.pts) ? item.pts : now;
+        const diff = pts - now;
+        if (diff > 0.10) break;
+        h264PresentQueue.shift();
+        if (diff < -0.15) {
             try { item.frame.close(); } catch {}
-            notePresentedFrame();
+            continue;
         }
-        h264PresentRAF = requestAnimationFrame(tick);
-    };
-    h264PresentRAF = requestAnimationFrame(tick);
+        if (rdpCtx2d) {
+            rdpCtx2d.drawImage(item.frame, item.x, item.y);
+        } else if (rdpGL) {
+            h264DrawFrameWebGL(item.frame, item.x, item.y);
+        }
+        try { item.frame.close(); } catch {}
+        notePresentedFrame();
+        drew = true;
+        break;
+    }
+    return drew;
+}
+
+function h264StartPresentLoop() {
+    startRdpPresentLoop();
 }
 
 function h264StopPresentLoop() {
-    if (h264PresentRAF) { cancelAnimationFrame(h264PresentRAF); h264PresentRAF = null; }
     while (h264PresentQueue.length > 0) {
         const item = h264PresentQueue.shift();
         try { item.frame.close(); } catch {}
@@ -600,36 +890,28 @@ function h264DrawFrameWebGL(frame, x, y) {
     } catch (e) {
         /* Fallback: some browsers may not support VideoFrame as texSubImage2D
          * source.  Use a Canvas2D intermediate. */
+        const fw = frame.displayWidth || frame.codedWidth || 0;
+        const fh = frame.displayHeight || frame.codedHeight || 0;
         if (!h264TempCanvas) {
             h264TempCanvas = document.createElement('canvas');
-            h264TempCanvas.width = rdpWidth || 1920;
-            h264TempCanvas.height = rdpHeight || 1080;
             h264TempCtx = h264TempCanvas.getContext('2d', { desynchronized: true });
         }
-        h264TempCtx.drawImage(frame, x, y, frame.displayWidth, frame.displayHeight);
-        const imgData = h264TempCtx.getImageData(x, y, frame.displayWidth, frame.displayHeight);
+        if (h264TempCanvas.width !== fw || h264TempCanvas.height !== fh) {
+            h264TempCanvas.width = fw;
+            h264TempCanvas.height = fh;
+        }
+        h264TempCtx.clearRect(0, 0, fw, fh);
+        h264TempCtx.drawImage(frame, 0, 0, fw, fh);
+        const imgData = h264TempCtx.getImageData(0, 0, fw, fh);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, imgData.data);
     }
     /* Use the no-swap program for H.264 (texture is already RGBA). */
-    if (rdpGLProgNoSwap) {
-        gl.useProgram(rdpGLProgNoSwap);
-        gl.uniform1i(rdpGLSampLocNoSwap, 0);
-        /* Re-bind attrib locations (may differ from the swap program). */
-        const posLoc = gl.getAttribLocation(rdpGLProgNoSwap, 'a_pos');
-        const texLoc = gl.getAttribLocation(rdpGLProgNoSwap, 'a_tex');
-        if (posLoc >= 0) { gl.enableVertexAttribArray(posLoc); gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 16, 0); }
-        if (texLoc >= 0) { gl.enableVertexAttribArray(texLoc); gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 16, 8); }
-    }
+    useNoSwapProgram(gl);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    /* Switch back to the swap program for bitmap path. */
-    gl.useProgram(rdpGLProg);
-    gl.uniform1i(rdpGLSampLoc, 0);
-    /* Re-bind attrib locations for the swap program. */
-    const posLoc2 = gl.getAttribLocation(rdpGLProg, 'a_pos');
-    const texLoc2 = gl.getAttribLocation(rdpGLProg, 'a_tex');
-    if (posLoc2 >= 0) { gl.enableVertexAttribArray(posLoc2); gl.vertexAttribPointer(posLoc2, 2, gl.FLOAT, false, 16, 0); }
-    if (texLoc2 >= 0) { gl.enableVertexAttribArray(texLoc2); gl.vertexAttribPointer(texLoc2, 2, gl.FLOAT, false, 16, 8); }
+    /* In unified RGBA mode bitmap uploads also use no-swap. Otherwise switch
+     * back to the swap program for the bitmap-only BGRA path. */
+    if (!rdpUseUnifiedRgbaTexture) useSwapProgram(gl);
 }
 
 window.rdpOnH264 = function (destX, destY, w, h, isKey, uint8Data) {
@@ -646,7 +928,7 @@ window.rdpOnH264 = function (destX, destY, w, h, isKey, uint8Data) {
      * relation to real presentation time. */
     const nowUs = Math.round(performance.now() * 1000);
     h264Timestamp = Math.max(h264Timestamp + 1, nowUs); /* integer microseconds, monotonic */
-    h264FramePos.set(h264Timestamp, { x: destX, y: destY });
+    h264FramePos.set(h264Timestamp, { x: destX, y: destY, pts: audioNextAt || getAudioClock() });
 
     /* Guard against Map leak: if the decoder queue is too deep (frames
      * not being consumed fast enough), proactively drop old entries. */
@@ -692,7 +974,7 @@ window.rdpOnPointerUpdate = function (idx, xorBpp, hotX, hotY, w, h, andMask, xo
 };
 
 /* ═══════════════════════════════════════════════════════════════════════
- * CURSOR RASTERISER (from grdpwasm)
+ * CURSOR RASTERISER (from Rust/IronRDP)
  * ═══════════════════════════════════════════════════════════════════════ */
 function buildCursorCss(xorBpp, hotX, hotY, w, h, andMask, xorData) {
     if (w <= 0 || h <= 0) return null;
@@ -783,35 +1065,49 @@ function createH264Decoder() {
     h264InfoLog = [];
     h264ErrorLog = [];
     h264CallCount = 0;
-    const decoder = new VideoDecoder({
-        output(frame) {
-            frameCount++;
-            rdpDiag.h264Frames++;
-            const pos = h264FramePos.get(frame.timestamp);
-            h264FramePos.delete(frame.timestamp);
-            const x = pos ? pos.x : 0;
-            const y = pos ? pos.y : 0;
-            if (frameCount <= 5) h264InfoLog.push('decoded #' + frameCount + ' pos=(' + x + ',' + y + ') coded=' + frame.codedWidth + 'x' + frame.codedHeight + ' display=' + frame.displayWidth + 'x' + frame.displayHeight);
-            /* Enqueue for the rAF present loop instead of drawing immediately.
-             * This aligns frame presentation to vsync and allows the queue
-             * to absorb decoder jitter without blocking the output callback. */
-            h264PresentQueue.push({ frame, x, y });
-            /* Hard cap: if the queue grows beyond 3 frames, drop the oldest
-             * to bound latency. */
-            while (h264PresentQueue.length > 3) {
-                const stale = h264PresentQueue.shift();
-                try { stale.frame.close(); } catch {}
-            }
-        },
-        error(e) {
-            errorCount++;
-            if (errorCount <= 20) h264ErrorLog.push('ERROR #' + errorCount + ': ' + (e.message || e));
-        },
-    });
-    decoder.configure({
-        codec: 'avc1.42E01E',
-        optimizeForLatency: true,
-    });
+    let decoder;
+    try {
+        decoder = new VideoDecoder({
+            output(frame) {
+                frameCount++;
+                rdpDiag.h264Frames++;
+                const pos = h264FramePos.get(frame.timestamp);
+                h264FramePos.delete(frame.timestamp);
+                const x = pos ? pos.x : 0;
+                const y = pos ? pos.y : 0;
+                const pts = pos && Number.isFinite(pos.pts) ? pos.pts : getAudioClock();
+                if (frameCount <= 5) h264InfoLog.push('decoded #' + frameCount + ' pos=(' + x + ',' + y + ') coded=' + frame.codedWidth + 'x' + frame.codedHeight + ' display=' + frame.displayWidth + 'x' + frame.displayHeight + ' pts=' + pts.toFixed(3));
+                /* Enqueue for the unified rAF present loop. The loop compares
+                 * frame PTS against the audio clock and drops frames that are too
+                 * late, avoiding the previous zero-buffer video vs queued-audio
+                 * lip-sync drift. */
+                h264PresentQueue.push({ frame, x, y, pts });
+                /* Hard cap: if the queue grows beyond 3 frames, drop the oldest
+                 * to bound latency. */
+                while (h264PresentQueue.length > 3) {
+                    const stale = h264PresentQueue.shift();
+                    try { stale.frame.close(); } catch {}
+                }
+            },
+            error(e) {
+                errorCount++;
+                if (errorCount <= 20) h264ErrorLog.push('ERROR #' + errorCount + ': ' + (e.message || e));
+            },
+        });
+    } catch (err) {
+        h264ErrorLog.push('constructor failed: ' + (err?.message || err));
+        return null;
+    }
+    try {
+        decoder.configure({
+            codec: 'avc1.42E01E',
+            optimizeForLatency: true,
+        });
+    } catch (err) {
+        h264ErrorLog.push('configure failed: ' + (err?.message || err));
+        try { decoder.close(); } catch {}
+        return null;
+    }
     h264StartPresentLoop();
     h264InfoLog.push('decoder created, state=' + decoder.state);
     /* Expose logs for remote retrieval */
@@ -828,12 +1124,17 @@ function cleanupH264() {
     h264TempCtx = null;
 }
 
+window.rdpAudioReset = function () {
+    audioNextAt = audioCtx && audioCtx.state !== 'closed' ? audioCtx.currentTime : 0;
+    h264PresentQueue.splice(0).forEach((item) => { try { item.frame.close(); } catch {} });
+};
+
 function cleanupAudio() {
     if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; audioNextAt = 0; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * MICROPHONE INPUT (AUDIN) — browser getUserMedia → Go WASM → RDP server
+ * MICROPHONE INPUT (AUDIN) — browser getUserMedia → Rust/IronRDP Worker → RDP server
  * ═══════════════════════════════════════════════════════════════════════ */
 let audinStream = null;
 let audinProcessor = null;
@@ -860,7 +1161,7 @@ class AudinProcessor extends AudioWorkletProcessor {
 registerProcessor('audin-processor', AudinProcessor);
 `;
 
-/* Called from Go WASM when the server requests microphone capture */
+/* Called from Rust/IronRDP Worker when the server requests microphone capture */
 window.rdpAudinStart = function (sampleRate, channels, bitsPerSample, framesPerPacket) {
     console.info('[rdp-audin] start', { sampleRate, channels, bitsPerSample, framesPerPacket });
     rdpAudinStopInternal();
@@ -925,7 +1226,7 @@ window.rdpAudinStart = function (sampleRate, channels, bitsPerSample, framesPerP
         });
 };
 
-/* Called from Go WASM when microphone should stop */
+/* Called from Rust/IronRDP Worker when microphone should stop */
 window.rdpAudinStop = function () {
     rdpAudinStopInternal();
 };
@@ -937,10 +1238,10 @@ function rdpAudinStopInternal() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * LOCATION REDIRECTION (RDPEL) — browser Geolocation → Go WASM → RDP server
+ * LOCATION REDIRECTION (RDPEL) — browser Geolocation → Rust/IronRDP Worker → RDP server
  * ═══════════════════════════════════════════════════════════════════════ */
 
-/* Called from Go WASM when the server requests location data */
+/* Called from Rust/IronRDP Worker when the server requests location data */
 window.rdpLocationStart = function () {
     console.info('[rdp-location] start');
     rdpLocationStopInternal();
@@ -979,12 +1280,12 @@ function rdpLocationStopInternal() {
  * ═══════════════════════════════════════════════════════════════════════ */
 let rdpStorageFiles = []; // { name, size, isDir, handle }
 
-/* Called from Go WASM to get the list of shared files */
+/* Called from Rust/IronRDP Worker to get the list of shared files */
 window.rdpStorageGetFiles = function () {
     return rdpStorageFiles.map((f) => ({ name: f.name, size: f.size, isDir: f.isDir }));
 };
 
-/* Called from Go WASM to read a file's contents by name */
+/* Called from Rust/IronRDP Worker to read a file's contents by name */
 window.rdpStorageReadFile = function (name) {
     const entry = rdpStorageFiles.find((f) => f.name === name);
     if (!entry || !entry.data) return null;
@@ -1037,7 +1338,7 @@ let camVideo = null;
 let camCanvas = null;
 let camCanvasCtx = null;
 
-/* Called from Go WASM when the server requests camera streaming */
+/* Called from Rust/IronRDP Worker when the server requests camera streaming */
 window.rdpCameraStart = function (width, height, fps) {
     console.info('[rdp-camera] start', { width, height, fps });
     rdpCameraStopInternal();
@@ -1115,7 +1416,7 @@ window.rdpCameraStart = function (width, height, fps) {
     });
 };
 
-/* Called from Go WASM when camera should stop */
+/* Called from Rust/IronRDP Worker when camera should stop */
 window.rdpCameraStop = function () { rdpCameraStopInternal(); };
 
 function rdpCameraStopInternal() {
@@ -1247,11 +1548,13 @@ function reconnectWithSettings() {
     rdpReconnecting = false;
     rdpReconnectAttempts = 0;
     connected = false;
-    /* Disconnect the old session and give Go WASM + WebSocket a moment to
+    /* Disconnect the old session and give Rust/IronRDP Worker + WebSocket a moment to
      * tear down before starting a fresh connection. Without this gap the new
      * connect races the old close and the proxy/WASM state machine jams. */
     try { rdpDisconnect(); } catch {}
+    stopRdpPresentLoop();
     stopAgentDriveBridge();
+    cleanupCompositor();
     cleanupH264();
     if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; audioNextAt = 0; }
     setTimeout(() => {
@@ -1268,7 +1571,9 @@ async function connect() {
 
     /* Clean up any lingering state (safe to call even if already clean). */
     try { rdpDisconnect(); } catch {}
+    stopRdpPresentLoop();
     stopAgentDriveBridge();
+    cleanupCompositor();
     rdpManualDisconnect = false;
     cleanupH264();
     rdpAudinStopInternal();
@@ -1279,6 +1584,13 @@ async function connect() {
 
     const width = rdpWidth || 1920;
     const height = rdpHeight || 1080;
+
+    /* Select render/codec path before canvas init because WebCodecs shares
+     * the same WebGL texture and therefore requires unified RGBA uploads. */
+    const webCodecsFlag = params.rdpWebCodecs ?? urlParams.get('rdpWebCodecs');
+    const hasWebCodecs = h264Supported() && (webCodecsFlag !== false && webCodecsFlag !== 'false' && webCodecsFlag !== '0');
+    rdpUseUnifiedRgbaTexture = hasWebCodecs;
+    rdpDiag.codec = hasWebCodecs ? 'webcodecs-h264' : 'rust-bitmap';
 
     /* Create canvas */
     ensureCanvas(width, height);
@@ -1293,15 +1605,15 @@ async function connect() {
     }
     audioNextAt = 0;
 
-    /* Select render/codec path. When WebGL bitmap renderer is active,
-     * default to grdp internal H.264 decode -> bitmap updates so all drawing
-     * uses one renderer path. */
-    const webCodecsFlag = params.rdpWebCodecs ?? urlParams.get('rdpWebCodecs');
-    const hasWebCodecs = h264Supported() && (webCodecsFlag !== false && webCodecsFlag !== 'false' && webCodecsFlag !== '0') && !shouldUseWebGLRenderer();
-    rdpDiag.codec = hasWebCodecs ? 'webcodecs-h264' : 'grdp-bitmap';
-
     /* Init H.264 only when Go will send raw H.264 to JS. */
-    if (hasWebCodecs) h264Dec = createH264Decoder();
+    if (hasWebCodecs) {
+        h264Dec = createH264Decoder();
+        if (!h264Dec) {
+            rdpUseUnifiedRgbaTexture = false;
+            rdpDiag.codec = 'rust-bitmap';
+            ensureCanvas(width, height);
+        }
+    }
 
     setStatus('connecting', '正在获取 RDP 凭据...');
 
@@ -1384,14 +1696,15 @@ async function connect() {
 
     setStatus('connecting', '正在连接 RDP...');
 
-    /* rdpConnect is exposed by Go WASM */
+    /* rdpConnect is exposed by Rust/IronRDP Worker */
     /* Balanced and quality keep wallpaper + desktop effects. Only performance
      * mode disables expensive visuals. */
     const wallpaperOn = qualityMode !== 'performance';
     startConnectWatchdog();
     if (rdpAgentStorageEnabled) startAgentDriveBridge();
     else stopAgentDriveBridge();
-    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera, hasWebCodecs, wallpaperOn);
+    const h264ForGo = !!h264Dec;
+    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera, h264ForGo, wallpaperOn);
 }
 
 function disconnect() {
@@ -1401,7 +1714,9 @@ function disconnect() {
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     connected = false;
     try { rdpDisconnect(); } catch {}
+    stopRdpPresentLoop();
     stopAgentDriveBridge();
+    cleanupCompositor();
     cleanupH264();
     cleanupAudio();
     rdpAudinStopInternal();
@@ -1439,13 +1754,13 @@ function maybeAutoReconnect() {
  * ═══════════════════════════════════════════════════════════════════════ */
 function shouldUseWebGLRenderer() {
     const webglFlag = params.rdpWebgl ?? urlParams.get('rdpWebgl');
-    // Emergency safe default: Canvas2D. Enable GPU renderer explicitly with
-    // rdpWebgl=true after confirming frame delivery. This avoids silent black
-    // screens while we diagnose the WebGL path on Android WebView.
-    return webglFlag === true || webglFlag === 'true' || webglFlag === '1';
+    // Default ON: probe/fallback disables WebGL if the browser or driver rejects it.
+    // Use rdpWebgl=false to force Canvas2D for emergency diagnosis.
+    return webglFlag !== false && webglFlag !== 'false' && webglFlag !== '0';
 }
 
 function recreateCanvasFor2D(w, h) {
+    cleanupCompositor();
     if (!rdpCanvas) return null;
     const old = rdpCanvas;
     const fresh = document.createElement('canvas');
@@ -1489,10 +1804,16 @@ function ensureCanvas(w, h) {
      * canvas that already has a WebGL context cannot reliably acquire a 2D
      * context afterwards. */
     const enableWebGL = shouldUseWebGLRenderer();
-    if (enableWebGL && rdpGLInit(rdpCanvas, w, h)) {
+    cleanupCompositor();
+    rdpGLCleanup();
+    if (enableWebGL && rdpGLInit(rdpCanvas, w, h) && (!rdpUseUnifiedRgbaTexture || rdpGLProgNoSwap)) {
         rdpCtx2d = null;
+        if (rdpUseUnifiedRgbaTexture) useNoSwapProgram(rdpGL);
+        initCompositor(w, h);
+        startRdpPresentLoop();
     } else {
         rdpGLCleanup();
+        stopRdpPresentLoop();
         if (!enableWebGL) {
             rdpDiag.renderer = 'wasm-canvas2d-forced';
         }
@@ -1581,7 +1902,7 @@ function applyFitMode() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * INPUT EVENTS (mouse/keyboard/touch → Go WASM)
+ * INPUT EVENTS (mouse/keyboard/touch → Rust/IronRDP Worker)
  * ═══════════════════════════════════════════════════════════════════════ */
 let inputAttached = false;
 let clipboardSyncPromise = Promise.resolve();
@@ -1732,6 +2053,7 @@ function attachInputEvents() {
             sendMouseDown: (btn, x, y) => rdpMouseDown(btn, x, y),
             sendMouseUp: (btn, x, y) => rdpMouseUp(btn, x, y),
             sendMouseWheel: (delta) => rdpMouseWheel(delta),
+            pointerOverlay: rdpPointerOverlay,
             onZoomChange: (zoom) => {
                 rdpScaleZoom = zoom;
                 applyViewTransform();
@@ -1881,7 +2203,7 @@ function setClipboardHint(text, level = 'info') {
 function updateInfo() {
     const name = params.name || params.host || 'RDP';
     const port = params.port || 3389;
-    if (connInfo) connInfo.textContent = `${name} · WASM/grdp · ${params.host || ''}:${port}`;
+    if (connInfo) connInfo.textContent = `${name} · Rust/IronRDP · ${params.host || ''}:${port}`;
 }
 
 function escapeHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -2557,6 +2879,77 @@ function applyPanelLayout(panel, layout) {
  * RDP FILE PANEL — Upload / Download / Cross-tab clipboard
  * ═══════════════════════════════════════════════════════════════════════ */
 
+
+function haptic(type) {
+    if (!navigator.vibrate) return;
+    try {
+        if (type === 'tap') navigator.vibrate(8);
+        else if (type === 'connect') navigator.vibrate([20, 30, 20]);
+        else if (type === 'error') navigator.vibrate([50, 30, 50]);
+    } catch {}
+}
+
+function applyLocalZoom(zoom) {
+    rdpScaleZoom = Math.max(0.5, Math.min(5, Number(zoom) || 1));
+    applyViewTransform();
+    const zs = document.getElementById('zoomSlider');
+    const zv = document.getElementById('zoomValue');
+    if (zs) zs.value = Math.round(rdpScaleZoom * 100);
+    if (zv) zv.textContent = Math.round(rdpScaleZoom * 100) + '%';
+}
+
+function makeDraggable(el) {
+    if (!el) return;
+    let dragging = false, startX = 0, startY = 0, origLeft = 0, origBottom = 0;
+    el.addEventListener('pointerdown', (e) => {
+        if (e.target !== el) return;
+        dragging = true;
+        startX = e.clientX; startY = e.clientY;
+        const rect = el.getBoundingClientRect();
+        origLeft = rect.left;
+        origBottom = window.innerHeight - rect.bottom;
+        el.classList.add('dragging');
+        try { el.setPointerCapture(e.pointerId); } catch {}
+    });
+    el.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        el.style.left = Math.max(8, Math.min(window.innerWidth - el.offsetWidth - 8, origLeft + dx)) + 'px';
+        el.style.bottom = Math.max(8, Math.min(window.innerHeight - el.offsetHeight - 8, origBottom - dy)) + 'px';
+        el.style.transform = 'none';
+    });
+    const stop = () => { dragging = false; el.classList.remove('dragging'); };
+    el.addEventListener('pointerup', stop);
+    el.addEventListener('pointercancel', stop);
+}
+
+function initFloatBar() {
+    const bar = rdpFloatBar;
+    const trigger = rdpEdgeTrigger;
+    if (!bar || !trigger) return;
+    let edgeStartX = 0;
+    trigger.addEventListener('pointerdown', (e) => { edgeStartX = e.clientX; }, { passive: true });
+    trigger.addEventListener('pointerup', (e) => {
+        if (e.clientX - edgeStartX > 40) { bar.hidden = false; haptic('tap'); }
+    }, { passive: true });
+    $('#fbCtrlAltDel')?.addEventListener('click', () => rdpWorkerPost({ type: 'key_combo', combo: 'ctrl_alt_del' }));
+    $('#fbWinKey')?.addEventListener('click', () => {
+        rdpWorkerPost({ type: 'key_down', scancode: 0xE05B, extended: true });
+        setTimeout(() => rdpWorkerPost({ type: 'key_up', scancode: 0xE05B, extended: true }), 50);
+    });
+    $('#fbKeyboard')?.addEventListener('click', () => { mobileKeyboardInput?.focus(); mobileKeyboardInput?.click(); });
+    $('#fbRelMode')?.addEventListener('click', () => {
+        const on = !rdpTouchController?.relativeMode;
+        rdpTouchController?.setRelativeMode(on);
+        $('#fbRelMode')?.classList.toggle('active', on);
+    });
+    $('#fbZoomIn')?.addEventListener('click', () => applyLocalZoom(rdpScaleZoom * 1.25));
+    $('#fbZoomOut')?.addEventListener('click', () => applyLocalZoom(rdpScaleZoom / 1.25));
+    $('#fbClose')?.addEventListener('click', () => { bar.hidden = true; });
+    makeDraggable(bar);
+}
+
 function initFilePanel() {
     const filesPanel = document.getElementById('filesPanel');
     const rdpFileSelectBtn = document.getElementById('rdpFileSelectBtn');
@@ -2808,7 +3201,7 @@ function initFilePanel() {
     /* Request any existing shared clipboard on startup */
     window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'request-shared-file-clipboard', tabId: params.tabId || '' }, '*');
 
-    /* Go WASM calls this when server advertises files on clipboard */
+    /* Rust/IronRDP Worker calls this when server advertises files on clipboard */
     window.rdpOnRemoteFiles = function (filesArr) {
         if (!rdpRemoteFileList) return;
         if (!filesArr || !filesArr.length) {
@@ -2856,7 +3249,7 @@ window.addEventListener('message', (e) => {
         applyFrameTheme(msg.theme, msg.appearance);
     } else if (msg.type === 'shared-clipboard-text' && msg.text && connected) {
         /* Text arrived from another tab's remote clipboard.  Sync it to our
-         * remote without re-broadcasting (the Go-side suppress counter will
+         * remote without re-broadcasting (the Rust-side suppress counter will
          * absorb the local change notification that this triggers). */
         rdpClipboardChanged(msg.text);
     } else if (msg.type === 'params-update') {
@@ -2870,6 +3263,7 @@ window.addEventListener('message', (e) => {
 (async function boot() {
     updateInfo();
     initToolbar();
+    initFloatBar();
     initFilePanel();
 
     /* Compute initial resolution */
@@ -2879,15 +3273,6 @@ window.addEventListener('message', (e) => {
 
     /* Load WASM then connect */
     try {
-        /* Load wasm_exec.js runtime first */
-        await new Promise((resolve, reject) => {
-            if (typeof Go !== 'undefined') { resolve(); return; }
-            const script = document.createElement('script');
-            script.src = 'vendor/rdp-wasm/wasm_exec.js';
-            script.onload = resolve;
-            script.onerror = () => reject(new Error('Failed to load wasm_exec.js'));
-            document.head.appendChild(script);
-        });
         await loadWasm();
         await connect();
     } catch (err) {

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
     <title>Zephyr - 远程桌面</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260705-file-full">
+    <link rel="stylesheet" href="style.css?v=20260709-rdp-touch-worker1">
 </head>
 <body>
     <div class="novnc-page rdp-page">
@@ -34,6 +34,18 @@
         <div class="rdp-stage novnc-stage" id="rdpStage" tabindex="0">
             <textarea id="mobileKeyboardInput" class="rdp-mobile-keyboard-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" enterkeyhint="done" aria-label="远程桌面软键盘输入"></textarea>
             <!-- debug HUD removed -->
+
+            <div id="rdpPointerOverlay" class="rdp-pointer-overlay" hidden></div>
+            <div id="rdpEdgeTrigger" class="rdp-edge-trigger" aria-hidden="true"></div>
+            <div id="rdpFloatBar" class="rdp-float-bar" hidden>
+                <button id="fbKeyboard" title="键盘">⌨</button>
+                <button id="fbCtrlAltDel" title="Ctrl+Alt+Del">🔒</button>
+                <button id="fbWinKey" title="Win键">⊞</button>
+                <button id="fbRelMode" title="触控板模式">🖱</button>
+                <button id="fbZoomIn" title="放大">＋</button>
+                <button id="fbZoomOut" title="缩小">－</button>
+                <button id="fbClose" title="关闭工具栏">✕</button>
+            </div>
 
             <div class="rdp-floating-panel clipboard-panel" id="clipboardPanel" hidden>
                 <div class="panel-drag-handle" data-drag-panel="clipboardPanel" title="拖动移动窗口">
@@ -214,7 +226,7 @@
             </div>
         </div>
     </div>
-    <script src="rdp-wasm-client.js?v=20260708-render-audio-clip6" type="module"></script>
+    <script src="rdp-wasm-client.js?v=20260709-worker-touch1" type="module"></script>
     <script>
     /* Auto-report H264 debug logs to server after 8 seconds */
     setTimeout(async () => {

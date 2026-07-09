@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>RDP Client WASM Smoke</title></head>
+<body>
+<pre id="out">running</pre>
+<script type="module">
+const out = document.getElementById('out');
+try {
+  const mod = await import('../public/vendor/rdp-client/rdp_client_wasm.js');
+  await mod.default({ module_or_path: '../public/vendor/rdp-client/rdp_client_wasm_bg.wasm' });
+  const names = ['rdp_connect','rdp_disconnect','rdp_mouse_move','rdp_mouse_h_scroll','rdp_resize_display'];
+  for (const n of names) if (typeof mod[n] !== 'function') throw new Error(n + ' missing');
+  out.textContent = 'rdp-client-browser-smoke ok';
+  out.dataset.ok = '1';
+} catch (err) {
+  out.textContent = 'rdp-client-browser-smoke failed: ' + (err?.stack || err);
+  out.dataset.ok = '0';
+}
+</script>
+</body>
+</html>

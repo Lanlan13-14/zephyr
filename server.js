@@ -68,14 +68,29 @@ const SSH_STATS_ENABLED = process.env.SSH_STATS_ENABLED !== 'false';
 const APP_VERSION = getAppVersion();
 const app = express();
 
-function applyCrossOriginIsolationHeaders(req, res, next) {
-    // rdp-wasm WASM client uses SharedArrayBuffer for Go runtime.
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+function applyRdpCrossOriginIsolationHeaders(req, res, next) {
+    // RDP Rust Worker uses SharedArrayBuffer for frame transport. Keep COOP/COEP
+    // scoped to the RDP page and its worker/WASM resources to avoid breaking the
+    // rest of the app with cross-origin embedder restrictions.
+    const pathname = (() => {
+        try { return new URL(req.originalUrl || req.url || '/', 'http://localhost').pathname; }
+        catch { return req.path || req.url || ''; }
+    })();
+    const isRdpResource = pathname === '/rdp.html'
+        || pathname === '/rdp-wasm-client.js'
+        || pathname === '/rdp-worker.js'
+        || pathname === '/rdp-touch.js'
+        || pathname.startsWith('/vendor/rdp-client/')
+        || pathname.startsWith('/vendor/rdp-render/')
+        || pathname.startsWith('/vendor/rdp-wasm/');
+    if (isRdpResource) {
+        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+        res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+        res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    }
     next();
 }
-app.use(applyCrossOriginIsolationHeaders);
+app.use(applyRdpCrossOriginIsolationHeaders);
 
 const DATA_DIR = path.join(__dirname, 'data');
 const HTTPS_DIR = path.join(DATA_DIR, 'https');
@@ -4199,9 +4214,9 @@ function closeWebSocketSafe(ws, code = 1000, reason = '') {
 }
 
 /* ====================================================================
- * RDP WASM PROXY — WebSocket ↔ TCP bridge for browser-side grdp WASM
+ * RDP Rust Worker PROXY — WebSocket ↔ TCP bridge for browser-side IronRDP WASM
  *
- * The browser runs the full RDP protocol stack (Go compiled to WASM).
+ * The browser Worker runs the full RDP protocol stack (Rust/IronRDP compiled to WASM).
  * This proxy simply bridges the browser's WebSocket to the target's TCP
  * port 3389.  Zero decoding, zero encoding — pure byte pass-through.
  *
@@ -5685,7 +5700,7 @@ async function startServer() {
     if (httpsServer) console.log(`🔐 Zephyr HTTPS 服务运行在 https://localhost:${HTTPS_PORT}`);
     else if (HTTPS_ENABLED) console.warn('[https] HTTPS requested but disabled because certificate setup failed');
     console.log(`   WebSocket 路径: /ssh`);
-    console.log(`   RDP 路径: /rdp-proxy -> WASM grdp (browser-side RDP)`);
+    console.log(`   RDP 路径: /rdp-proxy -> Rust/IronRDP Worker (browser-side RDP)`);
     console.log(`   VNC/noVNC 路径: /novnc -> VNC Server`);
     console.log(`   Agent 文件重定向: /agent/files -> Flutter Agent WebSocket`);
 }

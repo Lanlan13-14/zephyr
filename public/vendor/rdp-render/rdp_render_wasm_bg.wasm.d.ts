@@ -1,0 +1,33 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_tilepool_free: (a: number, b: number) => void;
+export const tilepool_new: (a: number, b: number, c: number) => number;
+export const tilepool_available: (a: number) => number;
+export const tilepool_release: (a: number, b: number, c: number) => void;
+export const __wbg_dirtyqueue_free: (a: number, b: number) => void;
+export const dirtyqueue_new: () => number;
+export const dirtyqueue_push: (a: number, b: number, c: number, d: number, e: number) => void;
+export const dirtyqueue_clear: (a: number) => void;
+export const dirtyqueue_len: (a: number) => number;
+export const dirtyqueue_is_empty: (a: number) => number;
+export const dirtyqueue_take_merged: (a: number) => [number, number];
+export const __wbg_framecompositor_free: (a: number, b: number) => void;
+export const framecompositor_new: (a: number, b: number) => number;
+export const framecompositor_width: (a: number) => number;
+export const framecompositor_height: (a: number) => number;
+export const framecompositor_blit_tile: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
+export const framecompositor_take_dirty: (a: number) => [number, number];
+export const framecompositor_get_dirty_pixels: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+export const framecompositor_resize: (a: number, b: number, c: number) => void;
+export const framecompositor_clear: (a: number, b: number, c: number, d: number, e: number) => void;
+export const bgra_to_rgba: (a: number, b: number) => [number, number];
+export const bgr24_to_bgra: (a: number, b: number) => [number, number];
+export const rgb565_to_bgra: (a: number, b: number) => [number, number];
+export const crop_bgra: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
+export const tilepool_tile_width: (a: number) => number;
+export const tilepool_tile_height: (a: number) => number;
+export const __wbindgen_export_0: WebAssembly.Table;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __wbindgen_start: () => void;
