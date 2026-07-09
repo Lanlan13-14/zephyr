@@ -5429,31 +5429,76 @@ function animateAiPanelFromButton(panel, button, opening = true, onDone = null) 
     };
     panel._aiMorphTransitionEnd = onEnd;
     panel.addEventListener('transitionend', onEnd);
-    requestAnimationFrame(() => {
-        if (panel._aiMorphMotionId !== motionId) return;
+    const za = window.__zaEngine;
+    if (za) {
+        // Spring-driven AI panel hero morph.
+        // CSS custom properties drive left/top/width/height/radius on .ai-morphing[data-za-morphing].
+        // This replaces the CSS transition and makes the morph interruptible.
+        panel.dataset.zaMorphing = '1';
         panel.classList.toggle('ai-morph-open', opening);
         panel.classList.toggle('ai-morph-closing', !opening);
-        panel.style.transition = `
-            top ${dur} ${spring},
-            left ${dur} ${spring},
-            width ${dur} ${spring},
-            height ${dur} ${spring},
-            border-radius ${dur} ${spring},
-            box-shadow ${opening ? '0.35s ease-out' : '0.18s ease-in'}
-        `;
-        Object.assign(panel.style, {
-            left: finalLeft,
-            top: finalTop,
-            width: finalWidth,
-            height: finalHeight,
-            borderRadius: endRadius,
-            boxShadow: opening ? 'var(--ai-morph-shadow-active)' : 'var(--ai-morph-shadow-idle)',
-            background: opening ? '' : source.background,
-            borderColor: opening ? '' : source.borderColor,
-            color: opening ? '' : source.color,
+        panel.style.transition = 'none';
+        // Teleport to start geometry via CSS vars (already set by Object.assign above)
+        za.setEl(panel, '--za-morph-left',   parseFloat(startLeft));
+        za.setEl(panel, '--za-morph-top',    parseFloat(startTop));
+        za.setEl(panel, '--za-morph-width',  parseFloat(startWidth));
+        za.setEl(panel, '--za-morph-height', parseFloat(startHeight));
+        za.setEl(panel, '--za-morph-radius', parseFloat(startRadius) || 18);
+        requestAnimationFrame(() => {
+            if (panel._aiMorphMotionId !== motionId) return;
+            // Spring to final geometry
+            za.springEl(panel, '--za-morph-left',   parseFloat(finalLeft),   'hero', 'px');
+            za.springEl(panel, '--za-morph-top',    parseFloat(finalTop),    'hero', 'px');
+            za.springEl(panel, '--za-morph-width',  parseFloat(finalWidth),  'hero', 'px');
+            za.springEl(panel, '--za-morph-height', parseFloat(finalHeight), 'hero', 'px');
+            za.springEl(panel, '--za-morph-radius', parseFloat(endRadius) || (opening ? 18 : parseFloat(sourceRadius) || 22), 'snappy', 'px');
+            Object.assign(panel.style, {
+                boxShadow: opening ? 'var(--ai-morph-shadow-active)' : 'var(--ai-morph-shadow-idle)',
+                background: opening ? '' : source.background,
+                borderColor: opening ? '' : source.borderColor,
+                color: opening ? '' : source.color,
+            });
         });
-    });
-    panel._aiPanelMotionTimer = window.setTimeout(finish, fallbackMs);
+        // Finish after spring settles (~600ms for hero preset)
+        const zaDur = opening ? 640 : 520;
+        panel._aiPanelMotionTimer = window.setTimeout(() => {
+            if (panel._aiMorphMotionId !== motionId) return;
+            // Clean up spring slots and switch panel back to absolute positioning
+            delete panel.dataset.zaMorphing;
+            za.releaseEl(panel, '--za-morph-left');
+            za.releaseEl(panel, '--za-morph-top');
+            za.releaseEl(panel, '--za-morph-width');
+            za.releaseEl(panel, '--za-morph-height');
+            za.releaseEl(panel, '--za-morph-radius');
+            finish();
+        }, zaDur);
+    } else {
+        requestAnimationFrame(() => {
+            if (panel._aiMorphMotionId !== motionId) return;
+            panel.classList.toggle('ai-morph-open', opening);
+            panel.classList.toggle('ai-morph-closing', !opening);
+            panel.style.transition = `
+                top ${dur} ${spring},
+                left ${dur} ${spring},
+                width ${dur} ${spring},
+                height ${dur} ${spring},
+                border-radius ${dur} ${spring},
+                box-shadow ${opening ? '0.35s ease-out' : '0.18s ease-in'}
+            `;
+            Object.assign(panel.style, {
+                left: finalLeft,
+                top: finalTop,
+                width: finalWidth,
+                height: finalHeight,
+                borderRadius: endRadius,
+                boxShadow: opening ? 'var(--ai-morph-shadow-active)' : 'var(--ai-morph-shadow-idle)',
+                background: opening ? '' : source.background,
+                borderColor: opening ? '' : source.borderColor,
+                color: opening ? '' : source.color,
+            });
+        });
+        panel._aiPanelMotionTimer = window.setTimeout(finish, fallbackMs);
+    }
     return true;
 }
 function aiPanelParentRect(panel) {

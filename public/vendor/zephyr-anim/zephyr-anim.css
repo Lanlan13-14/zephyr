@@ -487,3 +487,22 @@
 .ai-agent-panel.ai-morphing {
   will-change: left, top, width, height, border-radius, box-shadow;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AI panel hero morph (animateAiPanelFromButton — spring-driven)
+   When data-za-morphing="1", spring engine drives left/top/width/height/radius
+   via --za-morph-* custom properties. CSS transition on those axes is suppressed.
+══════════════════════════════════════════════════════════════════════════ */
+.ai-agent-panel[data-za-morphing] {
+  will-change: left, top, width, height, border-radius;
+  left:          var(--za-morph-left,   auto) !important;
+  top:           var(--za-morph-top,    auto) !important;
+  width:         var(--za-morph-width,  auto) !important;
+  height:        var(--za-morph-height, auto) !important;
+  border-radius: var(--za-morph-radius, 18px) !important;
+  transition:
+    box-shadow   0.35s ease-out,
+    background   0.22s ease,
+    border-color 0.22s ease,
+    color        0.22s ease !important;
+}
