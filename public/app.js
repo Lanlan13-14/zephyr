@@ -1406,18 +1406,31 @@ function openModal(conn = null, trigger = null) {
         document.body.classList.add('connection-home-blur');
         modal.classList.add('app-visible');
         layer.classList.add('source-visual-hidden');
-        layer.style.transition = `
-            top var(--connection-app-duration) var(--connection-ios-spring),
-            left var(--connection-app-duration) var(--connection-ios-spring),
-            width var(--connection-app-duration) var(--connection-ios-spring),
-            height var(--connection-app-duration) var(--connection-ios-spring),
-            border-radius var(--connection-app-duration) var(--connection-ios-spring)
-        `;
-        layer.style.left = `${viewport.left}px`;
-        layer.style.top = `${viewport.top}px`;
-        layer.style.width = `${viewport.width}px`;
-        layer.style.height = `${viewport.height}px`;
-        layer.style.borderRadius = '0px';
+        const za = window.__zaEngine;
+        if (za) {
+            // Spring-driven hero: per-element springs on left/top/width/height/radius.
+            // Uses 'hero' preset (k=280, c=30, m=1.1) — slightly heavier than 'sheet'
+            // so large geometry moves feel weighty like a UINavigationController push.
+            layer.style.transition = 'none';
+            za.springEl(layer, '--za-hero-left',   viewport.left,    'hero', 'px');
+            za.springEl(layer, '--za-hero-top',    viewport.top,     'hero', 'px');
+            za.springEl(layer, '--za-hero-width',  viewport.width,   'hero', 'px');
+            za.springEl(layer, '--za-hero-height', viewport.height,  'hero', 'px');
+            za.springEl(layer, '--za-hero-radius', 0,                'hero', 'px');
+        } else {
+            layer.style.transition = `
+                top var(--connection-app-duration) var(--connection-ios-spring),
+                left var(--connection-app-duration) var(--connection-ios-spring),
+                width var(--connection-app-duration) var(--connection-ios-spring),
+                height var(--connection-app-duration) var(--connection-ios-spring),
+                border-radius var(--connection-app-duration) var(--connection-ios-spring)
+            `;
+            layer.style.left = `${viewport.left}px`;
+            layer.style.top = `${viewport.top}px`;
+            layer.style.width = `${viewport.width}px`;
+            layer.style.height = `${viewport.height}px`;
+            layer.style.borderRadius = '0px';
+        }
         layer.style.boxShadow = 'none';
         console.debug('[connection-transition]', 'open:morph-start', { durationMs: 500 });
     });
@@ -1496,31 +1509,43 @@ function closeModal() {
     });
 
     requestAnimationFrame(() => {
-        layer.style.transition = `
-            top var(--connection-app-duration) var(--connection-ios-spring),
-            left var(--connection-app-duration) var(--connection-ios-spring),
-            width var(--connection-app-duration) var(--connection-ios-spring),
-            height var(--connection-app-duration) var(--connection-ios-spring),
-            border-radius var(--connection-app-duration) var(--connection-ios-spring)
-        `;
-
-        setConnectionLayerRect(layer, sourceRect);
-        layer.style.borderRadius = sourceBorderRadius;
-
-        shadowLayer.style.transition = `
-            left var(--connection-app-duration) var(--connection-ios-spring),
-            top var(--connection-app-duration) var(--connection-ios-spring),
-            width var(--connection-app-duration) var(--connection-ios-spring),
-            height var(--connection-app-duration) var(--connection-ios-spring),
-            border-radius var(--connection-app-duration) var(--connection-ios-spring),
-            opacity 0.72s cubic-bezier(.16, 1, .3, 1),
-            box-shadow 0.72s cubic-bezier(.16, 1, .3, 1)
-        `;
-        setConnectionLayerRect(shadowLayer, sourceRect);
-        shadowLayer.style.borderRadius = sourceBorderRadius;
-        shadowLayer.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)';
-        shadowLayer.style.opacity = '0';
-
+        const za = window.__zaEngine;
+        if (za) {
+            // Spring-driven hero close: animate layer back to source rect.
+            // Interrupt-safe: if user re-opens mid-close, velocity is inherited.
+            layer.style.transition = 'none';
+            za.springEl(layer, '--za-hero-left',   sourceRect.left,   'hero', 'px');
+            za.springEl(layer, '--za-hero-top',    sourceRect.top,    'hero', 'px');
+            za.springEl(layer, '--za-hero-width',  sourceRect.width,  'hero', 'px');
+            za.springEl(layer, '--za-hero-height', sourceRect.height, 'hero', 'px');
+            za.springEl(layer, '--za-hero-radius', parseFloat(sourceBorderRadius) || 14, 'hero', 'px');
+            // Shadow fades out
+            za.springEl(shadowLayer, '--za-shadow-opacity', 0.0, 'stiff');
+            shadowLayer.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)';
+        } else {
+            layer.style.transition = `
+                top var(--connection-app-duration) var(--connection-ios-spring),
+                left var(--connection-app-duration) var(--connection-ios-spring),
+                width var(--connection-app-duration) var(--connection-ios-spring),
+                height var(--connection-app-duration) var(--connection-ios-spring),
+                border-radius var(--connection-app-duration) var(--connection-ios-spring)
+            `;
+            setConnectionLayerRect(layer, sourceRect);
+            layer.style.borderRadius = sourceBorderRadius;
+            shadowLayer.style.transition = `
+                left var(--connection-app-duration) var(--connection-ios-spring),
+                top var(--connection-app-duration) var(--connection-ios-spring),
+                width var(--connection-app-duration) var(--connection-ios-spring),
+                height var(--connection-app-duration) var(--connection-ios-spring),
+                border-radius var(--connection-app-duration) var(--connection-ios-spring),
+                opacity 0.72s cubic-bezier(.16, 1, .3, 1),
+                box-shadow 0.72s cubic-bezier(.16, 1, .3, 1)
+            `;
+            setConnectionLayerRect(shadowLayer, sourceRect);
+            shadowLayer.style.borderRadius = sourceBorderRadius;
+            shadowLayer.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)';
+            shadowLayer.style.opacity = '0';
+        }
         console.debug('[connection-transition]', 'close:morph-start', { durationMs: 500 });
     });
 
@@ -2435,25 +2460,40 @@ function animateTerminalWindowLayoutFrom(beforeRects, { reason = 'layout-change'
             const resized = Math.abs(1 - sx) + Math.abs(1 - sy) > 0.01;
             if (!moved && !resized) return;
             el.classList.add('layout-morphing');
-            const anim = el.animate([
-                {
-                    transform: `translate3d(${dx}px, ${dy}px, 0) scale3d(${sx}, ${sy}, 1)`,
-                    filter: 'blur(.6px) saturate(.98)',
-                    boxShadow: '0 18px 52px rgba(0,0,0,.30), inset 0 0 0 1px rgba(255,255,255,.03)'
-                },
-                {
-                    transform: 'translate3d(0, 0, 0) scale3d(1, 1, 1)',
-                    filter: 'blur(0) saturate(1)',
-                    boxShadow: el.classList.contains('active')
-                        ? '0 24px 70px rgba(0,0,0,.38), 0 0 0 3px rgba(10,132,255,.08)'
-                        : '0 18px 52px rgba(0,0,0,.32), inset 0 0 0 1px rgba(255,255,255,.03)'
-                }
-            ], {
-                duration: 560,
-                easing: 'cubic-bezier(.16, 1, .3, 1)',
-                fill: 'both'
-            });
-            animations.push(anim.finished.catch(() => {}).finally(() => el.classList.remove('layout-morphing')));
+            const za = window.__zaEngine;
+            if (za) {
+                // Spring FLIP: teleport to before-rect, spring to after-rect (rest).
+                // Interruptible — if layout changes again mid-flight, velocity carries over.
+                za.setEl(el, '--za-flip-tx', dx, 'px');
+                za.setEl(el, '--za-flip-ty', dy, 'px');
+                za.setEl(el, '--za-flip-sx', sx);
+                za.setEl(el, '--za-flip-sy', sy);
+                el.dataset.zaFlipping = '1';
+                const finished = new Promise(res => {
+                    requestAnimationFrame(() => {
+                        za.springEl(el, '--za-flip-tx', 0.0, 'hero', 'px');
+                        za.springEl(el, '--za-flip-ty', 0.0, 'hero', 'px');
+                        za.springEl(el, '--za-flip-sx', 1.0, 'hero');
+                        za.springEl(el, '--za-flip-sy', 1.0, 'hero');
+                    });
+                    setTimeout(() => {
+                        delete el.dataset.zaFlipping;
+                        el.classList.remove('layout-morphing');
+                        za.releaseEl(el, '--za-flip-tx');
+                        za.releaseEl(el, '--za-flip-ty');
+                        za.releaseEl(el, '--za-flip-sx');
+                        za.releaseEl(el, '--za-flip-sy');
+                        res();
+                    }, 700);
+                });
+                animations.push(finished);
+            } else {
+                const anim = el.animate([
+                    { transform: `translate3d(${dx}px, ${dy}px, 0) scale3d(${sx}, ${sy}, 1)`, filter: 'blur(.6px) saturate(.98)', boxShadow: '0 18px 52px rgba(0,0,0,.30), inset 0 0 0 1px rgba(255,255,255,.03)' },
+                    { transform: 'translate3d(0, 0, 0) scale3d(1, 1, 1)', filter: 'blur(0) saturate(1)', boxShadow: el.classList.contains('active') ? '0 24px 70px rgba(0,0,0,.38), 0 0 0 3px rgba(10,132,255,.08)' : '0 18px 52px rgba(0,0,0,.32), inset 0 0 0 1px rgba(255,255,255,.03)' }
+                ], { duration: 560, easing: 'cubic-bezier(.16, 1, .3, 1)', fill: 'both' });
+                animations.push(anim.finished.catch(() => {}).finally(() => el.classList.remove('layout-morphing')));
+            }
         });
         window.clearTimeout(animateTerminalWindowLayoutFrom._timer);
         Promise.all(animations).finally(() => {
@@ -2462,8 +2502,11 @@ function animateTerminalWindowLayoutFrom(beforeRects, { reason = 'layout-change'
         });
         animateTerminalWindowLayoutFrom._timer = window.setTimeout(() => {
             workspace.classList.remove('terminal-layout-morphing');
-            workspace.querySelectorAll('.terminal-window.layout-morphing').forEach((el) => el.classList.remove('layout-morphing'));
-        }, 720);
+            workspace.querySelectorAll('.terminal-window.layout-morphing').forEach((el) => {
+                el.classList.remove('layout-morphing');
+                delete el.dataset.zaFlipping;
+            });
+        }, 760);
     });
 }
 
@@ -2912,11 +2955,21 @@ function reorderTerminalOrder(dragId, targetId) {
 }
 function resetDockMagnification(dock = document.querySelector('.smartbar-dock')) {
     dock?.querySelectorAll('.smartbar-session, .smartbar-add').forEach((item) => {
-        item.style.removeProperty('--dock-scale');
-        item.style.removeProperty('--dock-lift');
-        item.style.removeProperty('--dock-shift');
-        item.style.removeProperty('--dock-blur');
-        item.style.removeProperty('--dock-rotate');
+        if (window.__zaEngine) {
+            // Spring-return all per-element magnification vars to rest
+            window.__zaEngine.springEl(item, '--dock-scale',  1.0,  'snappy');
+            window.__zaEngine.springEl(item, '--dock-lift',   0.0,  'snappy', 'px');
+            window.__zaEngine.springEl(item, '--dock-shift',  0.0,  'snappy', 'px');
+            window.__zaEngine.springEl(item, '--dock-rotate', 0.0,  'snappy', 'deg');
+            // dock-blur doesn't spring, just clear it
+            item.style.removeProperty('--dock-blur');
+        } else {
+            item.style.removeProperty('--dock-scale');
+            item.style.removeProperty('--dock-lift');
+            item.style.removeProperty('--dock-shift');
+            item.style.removeProperty('--dock-blur');
+            item.style.removeProperty('--dock-rotate');
+        }
     });
 }
 function updateDockMagnification(clientX, dock = document.querySelector('.smartbar-dock'), clientY = null) {
@@ -2924,6 +2977,7 @@ function updateDockMagnification(clientX, dock = document.querySelector('.smartb
     const verticalDock = isCompactTerminalWorkspace() && document.body.classList.contains('terminal-custom-fullscreen-open');
     const influence = verticalDock ? 118 : 142;
     const pointerCoord = verticalDock ? (clientY ?? smartbarDragState?.currentY ?? 0) : clientX;
+    const za = window.__zaEngine;
     dock.querySelectorAll('.smartbar-session, .smartbar-add').forEach((item) => {
         const rect = item.getBoundingClientRect();
         const center = verticalDock ? rect.top + rect.height / 2 : rect.left + rect.width / 2;
@@ -2931,11 +2985,27 @@ function updateDockMagnification(clientX, dock = document.querySelector('.smartb
         const t = Math.max(0, 1 - d / influence);
         const eased = 1 - Math.pow(1 - t, 3);
         const direction = Math.sign(center - pointerCoord);
-        item.style.setProperty('--dock-scale', (1 + eased * 0.26).toFixed(3));
-        item.style.setProperty('--dock-lift', `${(-eased * (verticalDock ? 6 : 15)).toFixed(2)}px`);
-        item.style.setProperty('--dock-shift', `${(direction * eased * (verticalDock ? 9 : 8)).toFixed(2)}px`);
-        item.style.setProperty('--dock-blur', `${((1 - eased) * 0.14).toFixed(2)}px`);
-        item.style.setProperty('--dock-rotate', `${(direction * eased * (verticalDock ? -1.1 : -0.7)).toFixed(2)}deg`);
+        const targetScale  = 1 + eased * 0.26;
+        const targetLift   = -eased * (verticalDock ? 6 : 15);
+        const targetShift  = direction * eased * (verticalDock ? 9 : 8);
+        const targetRotate = direction * eased * (verticalDock ? -1.1 : -0.7);
+        const targetBlur   = (1 - eased) * 0.14;
+        if (za) {
+            // Use 'magnify' preset: very stiff, near-instant follow so it tracks
+            // the pointer without lag, but still has a tiny spring tail on release
+            za.springEl(item, '--dock-scale',  targetScale,  'magnify');
+            za.springEl(item, '--dock-lift',   targetLift,   'magnify', 'px');
+            za.springEl(item, '--dock-shift',  targetShift,  'magnify', 'px');
+            za.springEl(item, '--dock-rotate', targetRotate, 'magnify', 'deg');
+            // blur is instantaneous (not springed — blurs during drag are distracting)
+            item.style.setProperty('--dock-blur', `${targetBlur.toFixed(2)}px`);
+        } else {
+            item.style.setProperty('--dock-scale',  targetScale.toFixed(3));
+            item.style.setProperty('--dock-lift',   `${targetLift.toFixed(2)}px`);
+            item.style.setProperty('--dock-shift',  `${targetShift.toFixed(2)}px`);
+            item.style.setProperty('--dock-blur',   `${targetBlur.toFixed(2)}px`);
+            item.style.setProperty('--dock-rotate', `${targetRotate.toFixed(2)}deg`);
+        }
     });
 }
 function animateWindowFromDock(tabId, sourceRect, { swap = false } = {}) {
@@ -2949,11 +3019,47 @@ function animateWindowFromDock(tabId, sourceRect, { swap = false } = {}) {
         const sy = Math.max(0.06, sourceRect.height / rect.height);
         const dx = (sourceRect.left + sourceRect.width / 2) - (rect.left + rect.width / 2);
         const dy = (sourceRect.top + sourceRect.height / 2) - (rect.top + rect.height / 2);
-        win.animate([
-            { transform: `translate3d(${dx}px, ${dy}px, 0) scale3d(${sx}, ${sy}, 1)`, opacity: 0.28, filter: 'blur(18px) saturate(.82)', borderRadius: '30px' },
-            { transform: `translate3d(${dx * 0.16}px, ${dy * 0.16 - 8}px, 0) scale3d(1.025, 1.018, 1)`, opacity: 1, filter: 'blur(0) saturate(1.08)', borderRadius: '12px', offset: 0.72 },
-            { transform: 'translate3d(0, 0, 0) scale3d(1, 1, 1)', opacity: 1, filter: 'blur(0) saturate(1)', borderRadius: '0px' }
-        ], { duration: swap ? 620 : 560, easing: 'cubic-bezier(.16,1,.3,1)' });
+        const za = window.__zaEngine;
+        if (za) {
+            // Spring-driven dock launch: teleport to origin rect then spring to rest.
+            // Uses per-element springs so multiple windows can animate simultaneously
+            // without ID collisions, and each animation is interruptible.
+            // We encode dx/dy/sx/sy as CSS custom properties then use transform in CSS.
+            za.setEl(win, '--za-launch-tx',  dx,  'px');
+            za.setEl(win, '--za-launch-ty',  dy,  'px');
+            za.setEl(win, '--za-launch-sx',  sx);
+            za.setEl(win, '--za-launch-sy',  sy);
+            za.setEl(win, '--za-launch-opacity', 0.22);
+            za.setEl(win, '--za-launch-blur', 18.0, 'px');
+            // Apply the special launch-mode class so CSS shows the launch transform
+            win.dataset.zaLaunching = '1';
+            requestAnimationFrame(() => {
+                const preset = swap ? 'window_open' : 'hero';
+                za.springEl(win, '--za-launch-tx',      0,   preset, 'px');
+                za.springEl(win, '--za-launch-ty',      0,   preset, 'px');
+                za.springEl(win, '--za-launch-sx',      1.0, preset);
+                za.springEl(win, '--za-launch-sy',      1.0, preset);
+                za.springEl(win, '--za-launch-opacity', 1.0, 'stiff');
+                za.springEl(win, '--za-launch-blur',    0.0, 'snappy', 'px');
+            });
+            const dur = swap ? 680 : 620;
+            setTimeout(() => {
+                delete win.dataset.zaLaunching;
+                // Release launch springs back to pool
+                za.releaseEl(win, '--za-launch-tx');
+                za.releaseEl(win, '--za-launch-ty');
+                za.releaseEl(win, '--za-launch-sx');
+                za.releaseEl(win, '--za-launch-sy');
+                za.releaseEl(win, '--za-launch-opacity');
+                za.releaseEl(win, '--za-launch-blur');
+            }, dur + 100);
+        } else {
+            win.animate([
+                { transform: `translate3d(${dx}px, ${dy}px, 0) scale3d(${sx}, ${sy}, 1)`, opacity: 0.28, filter: 'blur(18px) saturate(.82)', borderRadius: '30px' },
+                { transform: `translate3d(${dx * 0.16}px, ${dy * 0.16 - 8}px, 0) scale3d(1.025, 1.018, 1)`, opacity: 1, filter: 'blur(0) saturate(1.08)', borderRadius: '12px', offset: 0.72 },
+                { transform: 'translate3d(0, 0, 0) scale3d(1, 1, 1)', opacity: 1, filter: 'blur(0) saturate(1)', borderRadius: '0px' }
+            ], { duration: swap ? 620 : 560, easing: 'cubic-bezier(.16,1,.3,1)' });
+        }
     });
 }
 function activateTerminalFromDock(tabId, sourceEl = null) {
@@ -4086,7 +4192,21 @@ function hideAiMessageMenu() {
     const menu = $('#aiMessageContextMenu');
     if (!menu) return;
     menu.classList.add('closing');
-    window.setTimeout(() => { menu.classList.add('hidden'); menu.classList.remove('open', 'closing'); }, 120);
+    const za = window.__zaEngine;
+    if (za) {
+        za.springEl(menu, '--za-menu-ty',      8.0,  'snappy', 'px');
+        za.springEl(menu, '--za-menu-scale',   0.92, 'snappy');
+        za.springEl(menu, '--za-menu-opacity', 0.0,  'stiff');
+        window.setTimeout(() => {
+            menu.classList.add('hidden');
+            menu.classList.remove('open', 'closing');
+            za.releaseEl(menu, '--za-menu-ty');
+            za.releaseEl(menu, '--za-menu-scale');
+            za.releaseEl(menu, '--za-menu-opacity');
+        }, 140);
+    } else {
+        window.setTimeout(() => { menu.classList.add('hidden'); menu.classList.remove('open', 'closing'); }, 120);
+    }
 }
 function showAiMessageMenu(messageEl, x, y) {
     if (!messageEl) return;
@@ -4109,7 +4229,21 @@ function showAiMessageMenu(messageEl, x, y) {
     const rect = menu.getBoundingClientRect();
     menu.style.left = `${Math.max(8, Math.min(vw - (rect.width || 180) - 8, x))}px`;
     menu.style.top = `${Math.max(8, Math.min(vh - (rect.height || 180) - 8, y))}px`;
-    requestAnimationFrame(() => menu.classList.add('open'));
+    const za = window.__zaEngine;
+    if (za) {
+        // Spring in from slightly below, replacing CSS opacity/scale transition
+        za.setEl(menu, '--za-menu-ty',      10.0, 'px');
+        za.setEl(menu, '--za-menu-scale',   0.88);
+        za.setEl(menu, '--za-menu-opacity', 0.0);
+        requestAnimationFrame(() => {
+            menu.classList.add('open');
+            za.springEl(menu, '--za-menu-ty',      0.0, 'bouncy',  'px');
+            za.springEl(menu, '--za-menu-scale',   1.0, 'bouncy');
+            za.springEl(menu, '--za-menu-opacity', 1.0, 'stiff');
+        });
+    } else {
+        requestAnimationFrame(() => menu.classList.add('open'));
+    }
 }
 function selectAiMessageText(el) {
     if (!el) return;
@@ -5366,23 +5500,45 @@ function closeAiPanelLayoutMenu({ instant = false } = {}) {
     if (instant || !button?.isConnected) {
         button?.classList.remove('active-layout');
         button?.style.removeProperty('opacity');
+        window.__zaEngine?.releaseAllEl?.(menu);
         menu.remove(); aiPanelLayoutMenu = null; aiPanelLayoutMenuButton = null; return;
     }
-    menu.style.transition = 'none';
-    positionAiPanelLayoutMenu(menu, button, { collapsed: false });
-    menu.style.opacity = '1';
-    void menu.offsetWidth;
-    menu.classList.remove('island-open');
-    menu.classList.add('island-closing', 'island-animating');
-    button.classList.remove('active-layout');
-    button.style.opacity = '0';
-    requestAnimationFrame(() => { menu.style.removeProperty('transition'); positionAiPanelLayoutMenu(menu, button, { collapsed: true }); });
-    menu._closeTimer = window.setTimeout(() => {
+    const za = window.__zaEngine;
+    if (za) {
+        // Spring-close: scale down + fade out — replaces island-closing CSS keyframe
+        menu.classList.remove('island-open');
+        menu.classList.add('island-closing', 'island-animating');
         button.classList.remove('active-layout');
-        button.style.opacity = '1';
-        requestAnimationFrame(() => button.style.removeProperty('opacity'));
-        menu.remove(); if (aiPanelLayoutMenu === menu) aiPanelLayoutMenu = null; if (aiPanelLayoutMenuButton === button) aiPanelLayoutMenuButton = null;
-    }, 460);
+        // Restore button spring-style
+        za.springEl(button, '--za-btn-scale', 1.0, 'snappy');
+        za.springEl(menu, '--za-island-scale',   0.80, 'snappy');
+        za.springEl(menu, '--za-island-opacity', 0.0,  'stiff');
+        positionAiPanelLayoutMenu(menu, button, { collapsed: true });
+        menu._closeTimer = window.setTimeout(() => {
+            button.classList.remove('active-layout');
+            button.style.removeProperty('opacity');
+            za.releaseAllEl(menu);
+            menu.remove();
+            if (aiPanelLayoutMenu === menu) aiPanelLayoutMenu = null;
+            if (aiPanelLayoutMenuButton === button) aiPanelLayoutMenuButton = null;
+        }, 400);
+    } else {
+        menu.style.transition = 'none';
+        positionAiPanelLayoutMenu(menu, button, { collapsed: false });
+        menu.style.opacity = '1';
+        void menu.offsetWidth;
+        menu.classList.remove('island-open');
+        menu.classList.add('island-closing', 'island-animating');
+        button.classList.remove('active-layout');
+        button.style.opacity = '0';
+        requestAnimationFrame(() => { menu.style.removeProperty('transition'); positionAiPanelLayoutMenu(menu, button, { collapsed: true }); });
+        menu._closeTimer = window.setTimeout(() => {
+            button.classList.remove('active-layout');
+            button.style.opacity = '1';
+            requestAnimationFrame(() => button.style.removeProperty('opacity'));
+            menu.remove(); if (aiPanelLayoutMenu === menu) aiPanelLayoutMenu = null; if (aiPanelLayoutMenuButton === button) aiPanelLayoutMenuButton = null;
+        }, 460);
+    }
 }
 function openAiPanelLayoutMenu(button, panel) {
     closeAiPanelLayoutMenu({ instant: true });
@@ -5399,22 +5555,41 @@ function openAiPanelLayoutMenu(button, panel) {
         <button data-layout="right-quarter" title="右侧四分之一" aria-label="右侧四分之一"><span class="panel-layout-icon right"></span></button>
         <button data-layout="close" class="panel-layout-close" title="关闭窗口" aria-label="关闭窗口"><span class="panel-layout-icon close"></span></button>
     `;
-    menu.style.transition = 'none';
     document.body.appendChild(menu);
     const baseZ = Number(panel?.style?.zIndex || getComputedStyle(panel || document.body).zIndex || 10080) || 10080;
     menu.style.zIndex = String(baseZ + 200);
     aiPanelLayoutMenu = menu;
-    positionAiPanelLayoutMenu(menu, button, { collapsed: true });
-    button.style.opacity = '0';
-    menu.style.opacity = '1';
-    menu.classList.add('island-animating');
-    void menu.offsetWidth;
-    requestAnimationFrame(() => {
-        menu.style.removeProperty('transition');
-        menu.classList.add('island-open');
-        positionAiPanelLayoutMenu(menu, button, { collapsed: false });
-        window.setTimeout(() => { menu.classList.remove('island-animating'); menu.style.removeProperty('opacity'); }, 540);
-    });
+    positionAiPanelLayoutMenu(menu, button, { collapsed: false });
+    const za = window.__zaEngine;
+    if (za) {
+        // Spring open: scale from 0.78 → 1.0 with island bounce preset
+        za.setEl(menu, '--za-island-scale',   0.78);
+        za.setEl(menu, '--za-island-opacity', 0.0);
+        menu.classList.add('island-animating', 'island-open');
+        button.style.opacity = '0';
+        requestAnimationFrame(() => {
+            za.springEl(menu, '--za-island-scale',   1.0, 'island');
+            za.springEl(menu, '--za-island-opacity', 1.0, 'stiff');
+            // Restore button after spring settles
+            setTimeout(() => {
+                button.style.removeProperty('opacity');
+                menu.classList.remove('island-animating');
+            }, 500);
+        });
+    } else {
+        menu.style.transition = 'none';
+        positionAiPanelLayoutMenu(menu, button, { collapsed: true });
+        button.style.opacity = '0';
+        menu.style.opacity = '1';
+        menu.classList.add('island-animating');
+        void menu.offsetWidth;
+        requestAnimationFrame(() => {
+            menu.style.removeProperty('transition');
+            menu.classList.add('island-open');
+            positionAiPanelLayoutMenu(menu, button, { collapsed: false });
+            window.setTimeout(() => { menu.classList.remove('island-animating'); menu.style.removeProperty('opacity'); }, 540);
+        });
+    }
     menu.addEventListener('click', (ev) => {
         const item = ev.target.closest?.('[data-layout]');
         if (!item) return;

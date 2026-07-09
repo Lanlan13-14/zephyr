@@ -1,0 +1,489 @@
+/**
+ * zephyr-anim.css  v2
+ * ===================
+ * Consumes spring-driven CSS custom properties.
+ *
+ * Design rules:
+ *   1. Every animated element has will-change declared here — compositor layer.
+ *   2. CSS `transition` on animated axes is REMOVED (engine owns those axes).
+ *      Non-animated axes keep normal transitions.
+ *   3. Fallback values (--za-* defaults) match the at-rest state so the UI
+ *      looks correct before WASM loads or with reduced-motion.
+ *   4. prefers-reduced-motion: all --za-* forced to rest values.
+ */
+
+/* ── Reduced motion: force all engine vars to rest ────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    --za-island-sx: 1 !important;
+    --za-island-sy: 1 !important;
+    --za-island-blur: 0px !important;
+    --za-morph-ty: 0px !important;
+    --za-morph-scale: 1 !important;
+    --za-morph-opacity: 1 !important;
+    --za-shelf-opacity: 1 !important;
+    --za-menu-scale: 1 !important;
+    --za-menu-opacity: 1 !important;
+    --za-dock-scale: 1 !important;
+    --za-card-scale: 1 !important;
+    --za-modal-ty: 0px !important;
+    --za-modal-scale: 1 !important;
+    --za-modal-opacity: 1 !important;
+    --za-win-ty: 0px !important;
+    --za-win-scale: 1 !important;
+    --za-win-opacity: 1 !important;
+    --za-drag-ty: 0px !important;
+    --za-btn-scale: 1 !important;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AI floating button / Dynamic Island (global spring, shared binding)
+══════════════════════════════════════════════════════════════════════════ */
+.ai-floating-btn,
+[data-island] {
+  will-change: transform, filter;
+  transform:
+    scaleX(var(--za-island-sx, 1))
+    scaleY(var(--za-island-sy, 1));
+  filter: blur(var(--za-island-blur, 0px));
+  /* Suppress transform transition — engine owns it */
+  transition:
+    background-color 260ms ease,
+    color            260ms ease,
+    box-shadow       260ms ease,
+    border-color     260ms ease,
+    opacity          260ms ease !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Terminal grip (Dynamic Island) — per-element springs
+══════════════════════════════════════════════════════════════════════════ */
+.terminal-grip[data-za-island] {
+  will-change: transform, backdrop-filter, filter;
+  transform:
+    translate3d(var(--island-x, -50%), var(--island-y, -50%), 0)
+    scale3d(
+      calc(var(--island-fluid-scale-x, 1) * var(--za-island-sx, 1)),
+      calc(var(--island-fluid-scale-y, 1) * var(--za-island-sy, 1)),
+      1
+    );
+  /* Remove CSS transition on transform — engine drives it */
+  transition:
+    border-color     .24s ease,
+    background       .24s ease,
+    color            .18s ease,
+    box-shadow       .36s ease,
+    opacity          .12s ease,
+    backdrop-filter  .24s ease,
+    -webkit-backdrop-filter .24s ease !important;
+}
+
+/* Suppress the existing terminalIslandTapBounce keyframe when engine is active */
+[data-zephyr-anim-ready] .terminal-grip.island-pressing {
+  animation: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AI morph panel
+══════════════════════════════════════════════════════════════════════════ */
+.ai-panel,
+[data-ai-panel] {
+  will-change: transform, opacity;
+  transform:
+    translateY(var(--za-morph-ty, 0px))
+    scale(var(--za-morph-scale, 1));
+  opacity: var(--za-morph-opacity, 1);
+  transition:
+    background-color 260ms ease,
+    color            260ms ease,
+    border-color     260ms ease,
+    box-shadow       260ms ease !important;
+}
+
+/* Default closed (before engine, while hidden) */
+.ai-panel:not(.active):not(.open),
+[data-ai-panel]:not(.active):not(.open) {
+  --za-morph-ty: 44px;
+  --za-morph-scale: 0.94;
+  --za-morph-opacity: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AI layout menu (island-open/closing)
+══════════════════════════════════════════════════════════════════════════ */
+.panel-layout-menu {
+  will-change: transform, opacity;
+  transform: scale(var(--za-menu-scale, 1));
+  transform-origin: top right;
+  opacity: var(--za-menu-opacity, 1);
+}
+
+.panel-layout-menu:not(.island-open) {
+  --za-menu-scale: 0.85;
+  --za-menu-opacity: 0;
+}
+
+/* Suppress CSS keyframe panelMenuIn when engine active */
+[data-zephyr-anim-ready] .panel-layout-menu.island-open {
+  animation: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Smartbar panel fade (shelf open/close)
+══════════════════════════════════════════════════════════════════════════ */
+.terminal-smartbar .smartbar-panel {
+  will-change: opacity;
+  opacity: var(--za-shelf-opacity, 1);
+  /* Suppress closing animation — engine owns opacity */
+}
+[data-zephyr-anim-ready] .terminal-smartbar.closing .smartbar-panel {
+  animation: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Dock / smartbar tab items
+══════════════════════════════════════════════════════════════════════════ */
+.terminal-tab,
+.session-tab,
+[data-dock-item],
+.smartbar-session,
+.smartbar-add {
+  will-change: transform;
+  /* Merge engine scale with existing dock magnification CSS vars */
+  transform:
+    translate3d(
+      var(--dock-shift,   0px),
+      var(--dock-lift,    0px),
+      0
+    )
+    scale(var(--za-dock-scale, var(--dock-scale, 1)))
+    rotateZ(var(--dock-rotate, 0deg));
+  transform-origin: center bottom;
+  transition:
+    background-color 260ms ease,
+    color            260ms ease,
+    border-color     260ms ease,
+    box-shadow       260ms ease,
+    opacity          260ms ease !important;
+}
+
+/* Suppress the existing dockItemBloom and dockActivePulse keyframes */
+[data-zephyr-anim-ready] .smartbar-session:not([data-za-bloom-done]) {
+  animation: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Connection cards
+══════════════════════════════════════════════════════════════════════════ */
+.connection-card,
+#addConnectionBtn,
+.connection-list [data-edit] {
+  will-change: transform;
+  transform: scale(var(--za-card-scale, 1));
+  transform-origin: center;
+  transition:
+    background-color 260ms ease,
+    background       260ms ease,
+    color            260ms ease,
+    border-color     260ms ease,
+    box-shadow       260ms ease,
+    opacity          260ms ease !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Modal / connection sheet
+══════════════════════════════════════════════════════════════════════════ */
+.connection-modal,
+.info-modal,
+.fm-editor-modal,
+[data-spring-modal] {
+  will-change: transform, opacity;
+  transform:
+    translateY(var(--za-modal-ty, 0px))
+    scale(var(--za-modal-scale, 1));
+  opacity: var(--za-modal-opacity, 1);
+  transition:
+    background-color 260ms ease,
+    color            260ms ease,
+    border-color     260ms ease,
+    box-shadow       260ms ease !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Terminal windows: open / close / minimize / dock-launch
+══════════════════════════════════════════════════════════════════════════ */
+.terminal-window {
+  will-change: transform, opacity, filter;
+  transform:
+    translateY(var(--za-win-ty,    0px))
+    scale(var(--za-win-scale,      1));
+  opacity: var(--za-win-opacity, 1);
+  /* Remove transform/opacity from the global transition — engine owns them */
+  transition:
+    filter       .32s ease,
+    border-color .24s ease,
+    box-shadow   .34s ease !important;
+}
+
+/* Suppress original CSS keyframes when engine is active */
+[data-zephyr-anim-ready] .terminal-window {
+  animation: none !important;
+}
+[data-zephyr-anim-ready] .terminal-window.closing {
+  /* engine drives --za-win-* to collapsed values; CSS opacity/transform override removed */
+  filter: blur(12px);
+  pointer-events: none;
+}
+[data-zephyr-anim-ready] .terminal-window.minimizing {
+  filter: blur(14px) saturate(.72);
+  pointer-events: none;
+}
+[data-zephyr-anim-ready] .terminal-window.dock-swapping {
+  animation: none !important;
+}
+[data-zephyr-anim-ready] .terminal-window.dock-launching {
+  animation: none !important;
+}
+
+/* Dragging: engine teleports to drag offset; CSS gives visual styling */
+.terminal-window.dragging {
+  transform:
+    translate3d(var(--drag-x, 0), var(--drag-y, 0), 0)
+    scale(.985) !important;
+  transition: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Drag handle (mobile dock toggle)
+══════════════════════════════════════════════════════════════════════════ */
+.mobile-fullscreen-dock-toggle,
+[data-smartbar-toggle] {
+  will-change: transform;
+  transform: translateY(var(--za-drag-ty, 0px));
+  transition:
+    background-color 180ms ease,
+    opacity          180ms ease !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Generic buttons
+══════════════════════════════════════════════════════════════════════════ */
+.btn,
+.btn-sm,
+.tool-btn,
+.icon-btn,
+.nav-tab,
+.settings-tab,
+[data-spring-btn] {
+  will-change: transform;
+  transform: scale(var(--za-btn-scale, 1));
+  transform-origin: center;
+  transition:
+    background-color 260ms ease,
+    background       260ms ease,
+    color            260ms ease,
+    border-color     260ms ease,
+    box-shadow       260ms ease,
+    opacity          260ms ease !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Engine-ready fade-in
+══════════════════════════════════════════════════════════════════════════ */
+[data-zephyr-anim-loading] {
+  opacity: 0;
+  pointer-events: none;
+}
+[data-zephyr-anim-ready] {
+  animation: zaEngineReady 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes zaEngineReady {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Terminal window — Dock launch (spring-driven, replaces WAAPI .animate())
+   When data-za-launching="1" the window shows the origin offset transform.
+   The engine springs --za-launch-* to 0/1/0 → window morphs in smoothly.
+══════════════════════════════════════════════════════════════════════════ */
+.terminal-window[data-za-launching] {
+  will-change: transform, opacity, filter;
+  transform:
+    translate3d(
+      var(--za-launch-tx, 0px),
+      var(--za-launch-ty, 0px),
+      0
+    )
+    scale3d(
+      var(--za-launch-sx, 1),
+      var(--za-launch-sy, 1),
+      1
+    );
+  opacity: var(--za-launch-opacity, 1);
+  filter: blur(var(--za-launch-blur, 0px)) saturate(.88);
+  transition: none !important;
+  border-radius: calc(
+    30px * max(0, min(1, var(--za-launch-opacity, 1) - 0.5))
+  ) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Terminal window — spring FLIP (layout change / split-pane rearrange)
+   Engine writes --za-flip-* to encode the before→after delta.
+══════════════════════════════════════════════════════════════════════════ */
+.terminal-window[data-za-flipping] {
+  will-change: transform;
+  transform:
+    translate3d(
+      var(--za-flip-tx, 0px),
+      var(--za-flip-ty, 0px),
+      0
+    )
+    scale3d(
+      var(--za-flip-sx, 1),
+      var(--za-flip-sy, 1),
+      1
+    );
+  transition: none !important;
+}
+
+/* Override the global terminal-window spring vars while flipping
+   so they don't fight each other */
+.terminal-window[data-za-flipping] {
+  --za-win-ty: 0px;
+  --za-win-scale: 1;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Dock item bloom: spring-driven open animation
+   Engine writes --za-bloom-ty, --za-bloom-scale, --za-bloom-opacity.
+   Class .za-blooming set by ui.js, removed when spring settles.
+══════════════════════════════════════════════════════════════════════════ */
+.smartbar-session.za-blooming,
+.smartbar-add.za-blooming {
+  will-change: transform, opacity;
+  transform:
+    translate3d(
+      var(--dock-shift, 0px),
+      calc(var(--dock-lift, 0px) + var(--za-bloom-ty, 0px)),
+      0
+    )
+    scale(calc(var(--dock-scale, 1) * var(--za-bloom-scale, 1)))
+    rotateZ(var(--dock-rotate, 0deg));
+  opacity: var(--za-bloom-opacity, 1);
+  /* Suppress the CSS keyframe during spring bloom */
+  animation: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Floating panels (file-manager / docker / snippet / shortcut / info-modal)
+   replaces @keyframes floatingPanelOpenFromButton/Close
+   Engine writes --za-panel-ty/scale/opacity via animatePanelFromButton patch
+══════════════════════════════════════════════════════════════════════════ */
+.file-manager,
+.docker-panel,
+.info-modal,
+.rdp-floating-panel,
+.snippet-panel,
+.shortcut-panel,
+[data-spring-panel] {
+  will-change: transform, opacity;
+  transform:
+    translateY(var(--za-panel-ty, 0px))
+    scale(var(--za-panel-scale, 1));
+  opacity: var(--za-panel-opacity, 1);
+  transform-origin: var(--panel-origin-x, 50%) var(--panel-origin-y, 0%);
+}
+
+/* Suppress CSS keyframe once engine is ready */
+[data-zephyr-anim-ready] .file-manager.panel-opening,
+[data-zephyr-anim-ready] .docker-panel.panel-opening,
+[data-zephyr-anim-ready] .info-modal.panel-opening,
+[data-zephyr-anim-ready] .rdp-floating-panel.panel-opening,
+[data-zephyr-anim-ready] .snippet-panel.panel-opening,
+[data-zephyr-anim-ready] .shortcut-panel.panel-opening,
+[data-zephyr-anim-ready] .file-manager.panel-closing,
+[data-zephyr-anim-ready] .docker-panel.panel-closing,
+[data-zephyr-anim-ready] .info-modal.panel-closing,
+[data-zephyr-anim-ready] .rdp-floating-panel.panel-closing,
+[data-zephyr-anim-ready] .snippet-panel.panel-closing,
+[data-zephyr-anim-ready] .shortcut-panel.panel-closing {
+  animation: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AI message context menu spring pop-in/out
+   Engine writes --za-menu-ty/scale/opacity via showAiMessageMenu patch
+══════════════════════════════════════════════════════════════════════════ */
+.ai-message-menu {
+  will-change: transform, opacity;
+  transform:
+    translateY(var(--za-menu-ty, 0px))
+    scale(var(--za-menu-scale, 1));
+  opacity: var(--za-menu-opacity, 1);
+  transform-origin: top left;
+}
+
+/* Engine owns transform/opacity — suppress CSS transition on those axes */
+[data-zephyr-anim-ready] .ai-message-menu {
+  transition: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AI layout menu (island pop) spring open/close
+   Engine writes --za-island-scale/opacity via openAiPanelLayoutMenu patch
+══════════════════════════════════════════════════════════════════════════ */
+.panel-layout-menu {
+  will-change: transform, opacity;
+  transform: scale(var(--za-island-scale, 1));
+  opacity: var(--za-island-opacity, 1);
+  transform-origin: top right;
+}
+
+[data-zephyr-anim-ready] .panel-layout-menu.island-open {
+  animation: none !important;
+}
+[data-zephyr-anim-ready] .panel-layout-menu.island-closing {
+  animation: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Connection modal hero transition
+   Engine writes --za-hero-left/top/width/height/radius via openModal/closeModal patch.
+   The #connectionTransitionLayer is a position:fixed overlay — springs drive
+   its geometry so the card-to-fullscreen morph is interruptible.
+══════════════════════════════════════════════════════════════════════════ */
+#connectionTransitionLayer {
+  will-change: left, top, width, height, border-radius;
+  left:          var(--za-hero-left,   0px);
+  top:           var(--za-hero-top,    0px);
+  width:         var(--za-hero-width,  100px);
+  height:        var(--za-hero-height, 100px);
+  border-radius: var(--za-hero-radius, 14px);
+}
+
+/* Engine drives geometry — suppress CSS transition on those axes */
+[data-zephyr-anim-ready] #connectionTransitionLayer {
+  transition: none !important;
+}
+
+/* Connection shadow layer */
+#connectionTransitionShadow {
+  will-change: opacity;
+  opacity: var(--za-shadow-opacity, 1);
+}
+[data-zephyr-anim-ready] #connectionTransitionShadow {
+  transition: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AI panel hero morph (animateAiPanelFromButton)
+   CSS still drives top/left/width/height via panel.style.transition;
+   we only add will-change here since we have not replaced this morph yet
+   (it requires bi-directional geometry sync with panel._aiMorphFinalStyle).
+══════════════════════════════════════════════════════════════════════════ */
+.ai-agent-panel.ai-morphing {
+  will-change: left, top, width, height, border-radius, box-shadow;
+}
