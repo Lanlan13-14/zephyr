@@ -189,7 +189,7 @@ function defaultSettings(legacySettings = {}) {
             customColors: {},
             customCss: '',
             customJs: '',
-            terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35 },
+            terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 },
             terminalFontColor: '',
         },
         terminal: {
