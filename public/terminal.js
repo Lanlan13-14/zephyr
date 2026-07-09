@@ -3186,55 +3186,18 @@ function animatePanelFromButton(panel, button, opening = true) {
     if (!panel || !button) return;
     const panelRect = panel.getBoundingClientRect?.();
     const buttonRect = button.getBoundingClientRect?.();
-    // Always set origin so CSS fallback still works
-    if (panelRect && buttonRect && panelRect.width > 1) {
-        const originX = ((buttonRect.left + buttonRect.width / 2 - panelRect.left) / panelRect.width) * 100;
-        const originY = ((buttonRect.top + buttonRect.height / 2 - panelRect.top) / panelRect.height) * 100;
-        panel.style.setProperty('--panel-origin-x', `${Math.max(8, Math.min(92, originX))}%`);
-        panel.style.setProperty('--panel-origin-y', `${Math.max(8, Math.min(92, originY))}%`);
-    }
-    const za = window.__zaEngine;
-    if (za) {
-        // Spring-driven open/close replacing @keyframes floatingPanelOpenFromButton/Close.
-        // CSS class is still added so selectors (display, pointer-events) stay correct;
-        // but @keyframes is suppressed by [data-zephyr-anim-ready] rule in zephyr-anim.css.
-        panel.classList.remove('panel-opening', 'panel-closing');
-        void panel.offsetWidth;
-        panel.classList.add(opening ? 'panel-opening' : 'panel-closing');
-        if (opening) {
-            // Teleport to closed state, spring to open
-            za.setEl(panel, '--za-panel-ty',      18.0, 'px');
-            za.setEl(panel, '--za-panel-scale',   0.82);
-            za.setEl(panel, '--za-panel-opacity', 0.0);
-            requestAnimationFrame(() => {
-                za.springEl(panel, '--za-panel-ty',      0.0, 'gentle',  'px');
-                za.springEl(panel, '--za-panel-scale',   1.0, 'gentle');
-                za.springEl(panel, '--za-panel-opacity', 1.0, 'stiff');
-            });
-        } else {
-            // Spring to closed state; caller handles display:none after 320ms
-            za.springEl(panel, '--za-panel-ty',      18.0, 'snappy', 'px');
-            za.springEl(panel, '--za-panel-scale',   0.82, 'snappy');
-            za.springEl(panel, '--za-panel-opacity', 0.0,  'stiff');
-            // Release spring pool slots after animation settles
-            setTimeout(() => {
-                za.releaseEl(panel, '--za-panel-ty');
-                za.releaseEl(panel, '--za-panel-scale');
-                za.releaseEl(panel, '--za-panel-opacity');
-            }, 400);
-        }
-    } else {
-        panel.classList.remove('panel-opening', 'panel-closing');
-        void panel.offsetWidth;
-        panel.classList.add(opening ? 'panel-opening' : 'panel-closing');
-    }
+    if (!panelRect || !buttonRect || panelRect.width <= 1 || panelRect.height <= 1) return;
+    const originX = ((buttonRect.left + buttonRect.width / 2 - panelRect.left) / panelRect.width) * 100;
+    const originY = ((buttonRect.top + buttonRect.height / 2 - panelRect.top) / panelRect.height) * 100;
+    panel.style.setProperty('--panel-origin-x', `${Math.max(8, Math.min(92, originX))}%`);
+    panel.style.setProperty('--panel-origin-y', `${Math.max(8, Math.min(92, originY))}%`);
+    panel.classList.remove('panel-opening', 'panel-closing');
+    void panel.offsetWidth;
+    panel.classList.add(opening ? 'panel-opening' : 'panel-closing');
 }
 function clearPanelMotion(panel) {
     if (!panel) return;
     panel.classList.remove('panel-opening', 'panel-closing');
-    window.__zaEngine?.stopEl?.(panel, '--za-panel-ty');
-    window.__zaEngine?.stopEl?.(panel, '--za-panel-scale');
-    window.__zaEngine?.stopEl?.(panel, '--za-panel-opacity');
 }
 
 

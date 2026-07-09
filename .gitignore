@@ -41,6 +41,3 @@ zephyr_agent/macos/.symlinks/
 
 # Agent token data
 data/agent-tokens.json
-
-# Rust animation engine build artifacts
-zephyr-anim/target/

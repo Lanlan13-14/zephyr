@@ -21,21 +21,6 @@ COPY . .
 RUN npm run build:editor 2>&1 || echo "[WARN] editor build skipped"
 
 # ============================================================
-# Stage 2a: anim-wasm-builder — 编译 Rust 动画引擎 WASM
-# ============================================================
-FROM rust:1.78-alpine AS anim-wasm-builder
-
-WORKDIR /build
-
-RUN apk add --no-cache musl-dev && \
-    rustup target add wasm32-unknown-unknown
-
-COPY zephyr-anim/ ./
-
-RUN cargo build --target wasm32-unknown-unknown --release && \
-    cp target/wasm32-unknown-unknown/release/zephyr_anim.wasm zephyr_anim.wasm
-
-# ============================================================
 # Stage 2: rdp-wasm-builder — 编译 grdp Go WASM (RDP 协议栈)
 # ============================================================
 FROM golang:1.26-alpine AS rdp-wasm-builder
@@ -85,11 +70,6 @@ COPY --from=app-build /app /app
 RUN mkdir -p /app/public/vendor/rdp-wasm
 COPY --from=rdp-wasm-builder /build/main.wasm /app/public/vendor/rdp-wasm/
 COPY --from=rdp-wasm-builder /build/wasm_exec.js /app/public/vendor/rdp-wasm/
-
-# Animation engine WASM → public/vendor/zephyr-anim/
-RUN mkdir -p /app/public/vendor/zephyr-anim
-COPY --from=anim-wasm-builder /build/zephyr_anim.wasm /app/public/vendor/zephyr-anim/
-# JS bridge files are already in public/vendor/zephyr-anim/ via app-build
 
 ENV ZEPHYR_VERSION=${ZEPHYR_VERSION}
 ENV MALLOC_TRIM_THRESHOLD_=32768
