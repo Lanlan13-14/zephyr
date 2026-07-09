@@ -1261,6 +1261,7 @@ function normalizeSettingsInput(body) {
             url: allowedTerminalBgUrl ? terminalBgUrlRaw.slice(0, 20 * 1024 * 1024) : '',
             fit: ['cover', 'contain', 'auto'].includes(terminalBg.fit) ? terminalBg.fit : 'cover',
             opacity: Math.max(0, Math.min(1, Number(terminalBg.opacity ?? 0.35))),
+            blur: Math.max(0, Math.min(20, Number(terminalBg.blur ?? 0))),
         };
         const normalizeHexServer = (value) => /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value) : '';
         const invertHexServer = (value) => {
