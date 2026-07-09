@@ -2,8 +2,8 @@
   "users": [
     {
       "username": "admin",
-      "passwordHash": "d35090e40d1e5ecf26daea82c009e29d:e440ec1849c18aac3e5417468c6e911c4690897010a1319671cc74694adf07bb",
-      "defaultPassword": true,
+      "passwordHash": "c5fda15332933c8adf2bf066635f0864:8b6308d5c5ab752898dd17a20ff3d65b2bbf5f6e3be16fc19b42199e43ff6bd1",
+      "defaultPassword": false,
       "createdAt": 1777647682450
     }
   ]
