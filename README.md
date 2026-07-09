@@ -3,6 +3,8 @@
 > Zephyr-SSH 是一个基于 Node.js 的浏览器服务器管理平台，提供 WebSSH 终端、SSH / RDP / VNC 连接管理、SSH 跳板与代理路由、安全登录、多因素认证、远程批量执行、数据备份导入导出等能力。
 
 **RDP方面还需漫长时间优化修复，如果你无法接受，请选择其他项目**
+
+**如果你想提交pr，如果你是vibe code，我们不接受任何deepseek doubao qwen minimax修改的代码
 ---
 
 ## 目录
