@@ -10,7 +10,7 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { RdpTouchController } from './rdp-touch.js?v=20260704';
+import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260710-touch-input1';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
@@ -409,6 +409,7 @@ window.rdpOnReady = function () {
     clearConnectWatchdog();
     setStatus('connected', 'RDP 已连接');
     connected = true;
+    rdpHaptic('connect');
     rdpReconnectAttempts = 0;
     rdpReconnecting = false;
     notifyParentStatus('connected');
@@ -429,6 +430,7 @@ window.rdpOnReady = function () {
 /* Called by Go on error */
 window.rdpOnError = function (msg) {
     console.warn('[rdp-wasm] error:', msg);
+    rdpHaptic('error');
     clearConnectWatchdog();
     stopAgentDriveBridge();
     if (connected) {
@@ -1333,6 +1335,10 @@ async function connect() {
             rdpSoundMode = cred.rdpSoundMode || params.rdpSoundMode || 'local';
             rdpClipboardEnabled = notFalseSetting(cred.rdpClipboard) && notFalseSetting(params.rdpClipboard);
             storageEnabled = boolSetting(cred.rdpStorage) || boolSetting(params.rdpStorage);
+            params.rdpTouchMode = cred.rdpTouchMode || params.rdpTouchMode || 'direct';
+            params.rdpTouchSensitivity = Number(cred.rdpTouchSensitivity || params.rdpTouchSensitivity || 1.5);
+            rdpTouchController?.setRelativeMode(params.rdpTouchMode === 'relative');
+            rdpTouchController?.setRelativeSensitivity(params.rdpTouchSensitivity);
         } catch (err) {
             setStatus('error', `获取 RDP 凭据失败: ${err.message}`);
             return;
@@ -1448,6 +1454,10 @@ function shouldUseWebGLRenderer() {
 function recreateCanvasFor2D(w, h) {
     if (!rdpCanvas) return null;
     const old = rdpCanvas;
+    if (rdpTouchController) {
+        rdpTouchController.destroy();
+        rdpTouchController = null;
+    }
     const fresh = document.createElement('canvas');
     fresh.id = old.id || 'rdpCanvas';
     fresh.tabIndex = old.tabIndex || 0;
@@ -1457,7 +1467,6 @@ function recreateCanvasFor2D(w, h) {
     old.replaceWith(fresh);
     rdpCanvas = fresh;
     inputAttached = false;
-    rdpTouchController = null;
     return fresh;
 }
 
@@ -1724,6 +1733,9 @@ function attachInputEvents() {
 
     /* ─── Touch input — uses RdpTouchController module ──── */
     if (!rdpTouchController) {
+        const pointerOverlay = document.getElementById('rdpPointerOverlay');
+        const relativeMode = String(params.rdpTouchMode || 'direct') === 'relative';
+        const relativeSensitivity = Math.max(0.5, Math.min(3, Number(params.rdpTouchSensitivity) || 1.5));
         rdpTouchController = new RdpTouchController({
             canvas: rdpCanvas,
             getConnected: () => connected,
@@ -1732,14 +1744,22 @@ function attachInputEvents() {
             sendMouseDown: (btn, x, y) => rdpMouseDown(btn, x, y),
             sendMouseUp: (btn, x, y) => rdpMouseUp(btn, x, y),
             sendMouseWheel: (delta) => rdpMouseWheel(delta),
-            onZoomChange: (zoom) => {
-                rdpScaleZoom = zoom;
-                applyViewTransform();
-                const zs = document.getElementById('zoomSlider');
-                const zv = document.getElementById('zoomValue');
-                if (zs) zs.value = Math.round(zoom * 100);
-                if (zv) zv.textContent = Math.round(zoom * 100) + '%';
+            sendMouseHWheel: (delta) => rdpMouseHScroll(delta),
+            sendKeyCombo: (gesture) => {
+                const combos = {
+                    '3up': ['MetaLeft', 'Tab'],
+                    '3down': ['MetaLeft', 'KeyD'],
+                    '3left': ['ControlLeft', 'MetaLeft', 'ArrowLeft'],
+                    '3right': ['ControlLeft', 'MetaLeft', 'ArrowRight'],
+                };
+                const keys = combos[gesture];
+                if (!keys) return;
+                for (const code of keys) rdpKeyDown(code);
+                setTimeout(() => { for (const code of keys.slice().reverse()) rdpKeyUp(code); }, 50);
             },
+            pointerOverlay,
+            relativeMode,
+            relativeSensitivity,
         });
     }
 

@@ -79,10 +79,10 @@ type RdpClient struct {
 	sec             *sec.Client
 	pdu             *pdu.Client
 	channels        *plugin.Channels
-	eventReady     atomic.Bool
-	decompressPool sync.Pool // pools []uint8 buffers for bitmap decompression
-	flipLinePool   sync.Pool // pools line-sized []uint8 buffers for bitmap vertical flip
-	closed         atomic.Bool
+	eventReady      atomic.Bool
+	decompressPool  sync.Pool // pools []uint8 buffers for bitmap decompression
+	flipLinePool    sync.Pool // pools line-sized []uint8 buffers for bitmap vertical flip
+	closed          atomic.Bool
 
 	// credentials stored for reconnection
 	domain   string
@@ -122,8 +122,9 @@ type RdpClient struct {
 	reconnecting atomic.Bool
 
 	// mouse and wheel hold all coalescing state for pointer input.
-	mouse mouseCoalescer
-	wheel wheelCoalescer
+	mouse  mouseCoalescer
+	wheel  wheelCoalescer
+	hwheel wheelCoalescer
 
 	// gfxHandler is the active RDPGFX handler; nil when not connected.
 	// Stored here so closeTransport() can stop its goroutines.
@@ -321,6 +322,7 @@ func NewRdpClient(host string, width, height int, dialer func(string) (net.Conn,
 	// sendMouseMoveLocked / sendWheelLocked need no per-call allocations.
 	g.mouse.pduBuf[0] = &g.mouse.pdu
 	g.wheel.pduBuf[0] = &g.wheel.pdu
+	g.hwheel.pduBuf[0] = &g.hwheel.pdu
 	return g
 }
 
@@ -1083,7 +1085,7 @@ func (g *RdpClient) KeyUp(sc int) {
 	}
 	slog.Debug("KeyUp", "sc", sc)
 	g.flushMouseMove()
-	g.flushWheel()
+	g.flushWheels()
 
 	p := &pdu.ScancodeKeyEvent{}
 	p.KeyCode = uint16(sc)
@@ -1098,7 +1100,7 @@ func (g *RdpClient) KeyDown(sc int) {
 	}
 	slog.Debug("KeyDown", "sc", sc)
 	g.flushMouseMove()
-	g.flushWheel()
+	g.flushWheels()
 
 	p := &pdu.ScancodeKeyEvent{}
 	p.KeyCode = uint16(sc)
@@ -1175,105 +1177,125 @@ func (g *RdpClient) sendMouseMoveLocked(now time.Time) {
 
 // MouseWheel sends a vertical scroll event to the remote desktop.
 // delta is the rotation amount in physical notches (1.0 = one click of a
-// scroll wheel = Windows WHEEL_DELTA).  Fractional values are accepted for
-// smooth / high-resolution input devices such as trackpads.
-// Positive values scroll up (away from the user); negative values scroll down.
+// scroll wheel = Windows WHEEL_DELTA). Fractional values are coalesced.
 func (g *RdpClient) MouseWheel(delta float64) {
 	if !g.eventReady.Load() {
 		return
 	}
 	slog.Debug("MouseWheel", "delta", delta)
 	g.flushMouseMove()
+	g.flushHWheel()
+	g.queueWheel(&g.wheel, delta, pdu.PTRFLAGS_WHEEL, g.flushWheelTimer)
+}
 
-	// Convert notch count to RDP WHEEL_DELTA units (120 per notch).
+// MouseHWheel sends a horizontal scroll event. Positive values scroll right;
+// negative values scroll left. It uses the same 9-bit rotation encoding and
+// coalescing rules as MouseWheel.
+func (g *RdpClient) MouseHWheel(delta float64) {
+	if !g.eventReady.Load() {
+		return
+	}
+	slog.Debug("MouseHWheel", "delta", delta)
+	g.flushMouseMove()
+	g.flushWheel()
+	g.queueWheel(&g.hwheel, delta, pdu.PTRFLAGS_HWHEEL, g.flushHWheelTimer)
+}
+
+func (g *RdpClient) queueWheel(w *wheelCoalescer, delta float64, axis uint16, flushTimer func()) {
 	const wheelDelta = 120
-	g.wheel.mu.Lock()
-	g.wheel.accum += delta * wheelDelta
-	if g.wheel.accum == 0 {
-		// Opposite deltas cancelled out; nothing to send.
-		g.wheel.mu.Unlock()
+	w.mu.Lock()
+	w.accum += delta * wheelDelta
+	if w.accum == 0 {
+		w.mu.Unlock()
 		return
 	}
-
 	now := time.Now()
-	since := now.Sub(g.wheel.lastTx)
+	since := now.Sub(w.lastTx)
 	if since >= mouseCoalesceInterval {
-		g.sendWheelLocked(now)
-		g.wheel.mu.Unlock()
+		g.sendWheelCoalescerLocked(w, axis, now)
+		w.mu.Unlock()
 		return
 	}
-
-	if g.wheel.timer == nil {
-		delay := mouseCoalesceInterval - since
-		g.wheel.timer = time.AfterFunc(delay, g.flushWheelTimer)
+	if w.timer == nil {
+		w.timer = time.AfterFunc(mouseCoalesceInterval-since, flushTimer)
 	}
-	g.wheel.mu.Unlock()
+	w.mu.Unlock()
 }
 
-// flushWheel sends any pending wheel event synchronously.  Called before any
-// non-wheel input event to preserve server-side ordering.
 func (g *RdpClient) flushWheel() {
-	g.wheel.mu.Lock()
-	if g.wheel.timer != nil {
-		g.wheel.timer.Stop()
-		g.wheel.timer = nil
-	}
-	if g.wheel.accum != 0 {
-		g.sendWheelLocked(time.Now())
-	}
-	g.wheel.mu.Unlock()
+	g.flushWheelCoalescer(&g.wheel, pdu.PTRFLAGS_WHEEL)
 }
 
-// flushWheelTimer is the time.AfterFunc callback for wheel coalescing.
+func (g *RdpClient) flushHWheel() {
+	g.flushWheelCoalescer(&g.hwheel, pdu.PTRFLAGS_HWHEEL)
+}
+
+func (g *RdpClient) flushWheels() {
+	g.flushWheel()
+	g.flushHWheel()
+}
+
+func (g *RdpClient) flushWheelCoalescer(w *wheelCoalescer, axis uint16) {
+	w.mu.Lock()
+	if w.timer != nil {
+		w.timer.Stop()
+		w.timer = nil
+	}
+	if w.accum != 0 {
+		g.sendWheelCoalescerLocked(w, axis, time.Now())
+	}
+	w.mu.Unlock()
+}
+
 func (g *RdpClient) flushWheelTimer() {
-	g.wheel.mu.Lock()
-	g.wheel.timer = nil
-	if g.wheel.accum != 0 && g.eventReady.Load() {
-		g.sendWheelLocked(time.Now())
-	}
-	g.wheel.mu.Unlock()
+	g.flushWheelTimerFor(&g.wheel, pdu.PTRFLAGS_WHEEL)
 }
 
-// sendWheelLocked must be called with wheel.mu held.
-// Modelled on FreeRDP's send_mouse_wheel in client/SDL/SDL2/sdl_touch.cpp.
-func (g *RdpClient) sendWheelLocked(now time.Time) {
-	// Truncate the accumulated float to a whole WHEEL_DELTA integer; keep the
-	// fractional remainder so sub-notch trackpad movements aren't discarded.
-	iaccum := int(g.wheel.accum)
-	g.wheel.accum -= float64(iaccum)
-	g.wheel.lastTx = now
+func (g *RdpClient) flushHWheelTimer() {
+	g.flushWheelTimerFor(&g.hwheel, pdu.PTRFLAGS_HWHEEL)
+}
 
+func (g *RdpClient) flushWheelTimerFor(w *wheelCoalescer, axis uint16) {
+	w.mu.Lock()
+	w.timer = nil
+	if w.accum != 0 && g.eventReady.Load() {
+		g.sendWheelCoalescerLocked(w, axis, time.Now())
+	}
+	w.mu.Unlock()
+}
+
+// encodeWheelPointerFlags returns the MS-RDPBCGR 9-bit wheel rotation packed
+// into PointerFlags. rotation must be in [-255, 255] and non-zero.
+func encodeWheelPointerFlags(axis uint16, rotation int) uint16 {
+	if rotation < 0 {
+		magnitude := min(-rotation, 0xFF)
+		return ((axis | uint16(pdu.PTRFLAGS_WHEEL_NEGATIVE)) & 0xFF00) | uint16(0x100-magnitude)
+	}
+	return axis | uint16(min(rotation, 0xFF))
+}
+
+// sendWheelCoalescerLocked must be called with w.mu held.
+func (g *RdpClient) sendWheelCoalescerLocked(w *wheelCoalescer, axis uint16, now time.Time) {
+	iaccum := int(w.accum)
+	w.accum -= float64(iaccum)
+	w.lastTx = now
 	if iaccum == 0 {
 		return
 	}
-
 	negative := iaccum < 0
+	remaining := iaccum
 	if negative {
-		iaccum = -iaccum
+		remaining = -remaining
 	}
-
-	baseFlags := uint16(pdu.PTRFLAGS_WHEEL)
-	if negative {
-		baseFlags |= uint16(pdu.PTRFLAGS_WHEEL_NEGATIVE)
-	}
-
-	// The WheelRotation field is 9 bits.  Bits 0–7 hold the unsigned
-	// magnitude (max 0xFF per event); bit 8 is the sign (PTRFLAGS_WHEEL_NEGATIVE).
-	// For negative values the receiver computes -(0x100 - bits[0:7]), so we
-	// must store the 9-bit two's-complement form, not the raw magnitude.
-	// Send as many 0xFF-capped events as needed (same loop as FreeRDP).
-	for iaccum > 0 {
-		cval := min(iaccum, 0xFF)
-		iaccum -= cval
-
+	for remaining > 0 {
+		chunk := min(remaining, 0xFF)
+		remaining -= chunk
+		rotation := chunk
 		if negative {
-			// 9-bit two's complement: keep flags in bits 8–15, set bits 0–7
-			// to (0x100 - cval) so the receiver recovers the correct magnitude.
-			g.wheel.pdu.PointerFlags = (baseFlags & 0xFF00) | uint16(0x100-cval)
-		} else {
-			g.wheel.pdu.PointerFlags = baseFlags | uint16(cval)
+			rotation = -chunk
 		}
-		g.pdu.SendInputEvents(pdu.INPUT_EVENT_MOUSE, g.wheel.pduBuf[:])
+		w.pdu.PointerFlags = encodeWheelPointerFlags(axis, rotation)
+		g.pdu.SendInputEvents(pdu.INPUT_EVENT_MOUSE, w.pduBuf[:])
 	}
 	g.notifyGfxLocalInput()
 }
@@ -1284,7 +1306,7 @@ func (g *RdpClient) MouseUp(button int, x, y int) {
 	}
 	slog.Debug("MouseUp", "x", x, "y", y, "button", button)
 	g.flushMouseMove()
-	g.flushWheel()
+	g.flushWheels()
 	p := &pdu.PointerEvent{}
 	p.PointerFlags = mouseButtonFlag(button)
 	p.XPos = uint16(x)
@@ -1299,7 +1321,7 @@ func (g *RdpClient) MouseDown(button int, x, y int) {
 	}
 	slog.Debug("MouseDown", "x", x, "y", y, "button", button)
 	g.flushMouseMove()
-	g.flushWheel()
+	g.flushWheels()
 	p := &pdu.PointerEvent{}
 	p.PointerFlags = pdu.PTRFLAGS_DOWN | mouseButtonFlag(button)
 	p.XPos = uint16(x)
@@ -1440,8 +1462,30 @@ func (g *RdpClient) reregisterCallbacks() {
 	}
 }
 
-// closeTransport closes the underlying transport and stops any active GFX handler.
+// cancelInputCoalescers stops delayed input callbacks without sending after
+// the transport has started closing.
+func (g *RdpClient) cancelInputCoalescers() {
+	g.mouse.mu.Lock()
+	if g.mouse.timer != nil {
+		g.mouse.timer.Stop()
+		g.mouse.timer = nil
+	}
+	g.mouse.pending = false
+	g.mouse.mu.Unlock()
+	for _, w := range []*wheelCoalescer{&g.wheel, &g.hwheel} {
+		w.mu.Lock()
+		if w.timer != nil {
+			w.timer.Stop()
+			w.timer = nil
+		}
+		w.accum = 0
+		w.mu.Unlock()
+	}
+}
+
+// closeTransport closes the underlying transport and stops active handlers.
 func (g *RdpClient) closeTransport() {
+	g.cancelInputCoalescers()
 	if g.gfxHandler != nil {
 		g.gfxHandler.Close()
 		g.gfxHandler = nil

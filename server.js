@@ -392,6 +392,8 @@ function publicConnection(conn) {
         if (copy.rdpResolution === undefined) copy.rdpResolution = '1080p';
         if (copy.rdpQuality === undefined) copy.rdpQuality = 'balanced';
         if (copy.rdpFps === undefined) copy.rdpFps = 30;
+        if (copy.rdpTouchMode === undefined) copy.rdpTouchMode = 'direct';
+        if (copy.rdpTouchSensitivity === undefined) copy.rdpTouchSensitivity = 1.5;
         if (copy.rdpMicrophone === undefined) copy.rdpMicrophone = false;
         if (copy.rdpCamera === undefined) copy.rdpCamera = false;
         if (copy.rdpStorage === undefined) copy.rdpStorage = false;
@@ -1813,6 +1815,8 @@ app.post('/api/connections', requireAuth, (req, res) => {
         conn.rdpResolution = ['auto', '1080p', '2K', '4K', '8K'].includes(body.rdpResolution) ? body.rdpResolution : '1080p';
         conn.rdpQuality = ['balanced', 'performance', 'quality'].includes(body.rdpQuality) ? body.rdpQuality : 'balanced';
         conn.rdpFps = [30, 45, 60, 120, 144].includes(Number(body.rdpFps)) ? Number(body.rdpFps) : 30;
+        conn.rdpTouchMode = body.rdpTouchMode === 'relative' ? 'relative' : 'direct';
+        conn.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number(body.rdpTouchSensitivity) || 1.5));
         conn.rdpDomain = String(body.rdpDomain || '').trim();
     }
     applyConnectionRouteFields(conn, body);
@@ -1846,6 +1850,8 @@ app.put('/api/connections/:id', requireAuth, (req, res) => {
         if (body.rdpResolution !== undefined) conn.rdpResolution = ['auto', '1080p', '2K', '4K', '8K'].includes(body.rdpResolution) ? body.rdpResolution : '1080p';
         if (body.rdpQuality !== undefined) conn.rdpQuality = ['balanced', 'performance', 'quality'].includes(body.rdpQuality) ? body.rdpQuality : 'balanced';
         if (body.rdpFps !== undefined) conn.rdpFps = [30, 45, 60, 120, 144].includes(Number(body.rdpFps)) ? Number(body.rdpFps) : 30;
+        if (body.rdpTouchMode !== undefined) conn.rdpTouchMode = body.rdpTouchMode === 'relative' ? 'relative' : 'direct';
+        if (body.rdpTouchSensitivity !== undefined) conn.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number(body.rdpTouchSensitivity) || 1.5));
         if (body.rdpDomain !== undefined) conn.rdpDomain = String(body.rdpDomain || '').trim();
     }
     conn.updatedAt = Date.now();
@@ -1899,7 +1905,7 @@ app.post('/api/rdp/credentials', requireAuth, (req, res) => {
     const domainMatch = username.match(/^([^\\]+)\\(.+)$/);
     if (!domain && domainMatch) { domain = domainMatch[1]; username = domainMatch[2]; }
     console.info('[rdp-credentials]', 'issued', { connectionId, host: conn.host, user: username, sessionUser: req.session?.username });
-    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false, rdpResolution: conn.rdpResolution || '1080p', rdpQuality: conn.rdpQuality || 'balanced', rdpFps: conn.rdpFps || 30, rdpMicrophone: !!conn.rdpMicrophone, rdpLocation: !!conn.rdpLocation, rdpStorage: !!conn.rdpStorage, rdpCamera: !!conn.rdpCamera });
+    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false, rdpResolution: conn.rdpResolution || '1080p', rdpQuality: conn.rdpQuality || 'balanced', rdpFps: conn.rdpFps || 30, rdpTouchMode: conn.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(conn.rdpTouchSensitivity) || 1.5)), rdpMicrophone: !!conn.rdpMicrophone, rdpLocation: !!conn.rdpLocation, rdpStorage: !!conn.rdpStorage, rdpCamera: !!conn.rdpCamera });
 });
 
 

@@ -1367,6 +1367,9 @@ function prepareConnectionModalForm(conn = null) {
     if ($('#rdpResolution')) $('#rdpResolution').value = conn?.rdpResolution || '1080p';
     if ($('#rdpQuality')) $('#rdpQuality').value = conn?.rdpQuality || 'balanced';
     if ($('#rdpFps')) $('#rdpFps').value = String(conn?.rdpFps || 30);
+    if ($('#rdpTouchMode')) $('#rdpTouchMode').value = conn?.rdpTouchMode === 'relative' ? 'relative' : 'direct';
+    if ($('#rdpTouchSensitivity')) $('#rdpTouchSensitivity').value = String(Math.max(0.5, Math.min(3, Number(conn?.rdpTouchSensitivity) || 1.5)));
+    updateRdpTouchSettingsUi();
     if ($('#rdpDomain')) $('#rdpDomain').value = conn?.rdpDomain || '';
     updateProtocolFields({ preservePort: !!conn });
 }
@@ -1575,6 +1578,17 @@ function closeModal() {
     layer.addEventListener('transitionend', onEnd);
     closeModal._timer = window.setTimeout(finish, 560);
 }
+function updateRdpTouchSettingsUi() {
+    const mode = $('#rdpTouchMode')?.value === 'relative' ? 'relative' : 'direct';
+    const sensitivity = Math.max(0.5, Math.min(3, Number($('#rdpTouchSensitivity')?.value) || 1.5));
+    const group = $('#rdpTouchSensitivityGroup');
+    const input = $('#rdpTouchSensitivity');
+    const output = $('#rdpTouchSensitivityValue');
+    if (group) group.classList.toggle('rdp-range-disabled', mode !== 'relative');
+    if (input) input.disabled = mode !== 'relative';
+    if (output) output.textContent = `${sensitivity.toFixed(1)}×`;
+}
+
 function connectionPayload({ forTest = false } = {}) {
     const mode = $('#connMode').value;
     const proxyId = $('#connRoute')?.value || '';
@@ -1592,6 +1606,8 @@ function connectionPayload({ forTest = false } = {}) {
         payload.rdpResolution = $('#rdpResolution')?.value || '1080p';
         payload.rdpQuality = $('#rdpQuality')?.value || 'balanced';
         payload.rdpFps = Number($('#rdpFps')?.value) || 30;
+        payload.rdpTouchMode = $('#rdpTouchMode')?.value === 'relative' ? 'relative' : 'direct';
+        payload.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number($('#rdpTouchSensitivity')?.value) || 1.5));
         payload.rdpDomain = ($('#rdpDomain')?.value || '').trim();
     }
     console.debug('[route-ui]', 'connection payload route', { mode, proxyId: payload.proxyId, jumpHostIds, sshKeyId: payload.sshKeyId });
@@ -1639,8 +1655,7 @@ async function openConnection(id) {
     const protocol = String(c.protocol || 'SSH').toUpperCase();
     const tabId = `tab_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     if (protocol === 'RDP' || protocol === 'VNC') {
-        const rdpDefaults = getAppearance().rdp || {};
-        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, embedded: true, timestamp: Date.now(), rdpResolution: c.rdpResolution || '1080p', quality: c.rdpQuality || 'balanced', rdpFps: Number(c.rdpFps || 30), rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false, rdpDomain: c.rdpDomain || '', rdpMicrophone: !!c.rdpMicrophone, rdpLocation: !!c.rdpLocation, rdpStorage: !!c.rdpStorage, rdpCamera: !!c.rdpCamera }));
+        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, embedded: true, timestamp: Date.now(), rdpResolution: c.rdpResolution || '1080p', quality: c.rdpQuality || 'balanced', rdpFps: Number(c.rdpFps || 30), rdpTouchMode: c.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(c.rdpTouchSensitivity) || 1.5)), rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false, rdpDomain: c.rdpDomain || '', rdpMicrophone: !!c.rdpMicrophone, rdpLocation: !!c.rdpLocation, rdpStorage: !!c.rdpStorage, rdpCamera: !!c.rdpCamera }));
         terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: protocol === 'VNC' ? 'novnc' : 'rdp', connectionId: c.id, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
         console.debug(protocol === 'VNC' ? '[novnc-client]' : '[rdp-client]', 'open remote desktop tab', { protocol, tabId, connectionId: c.id, host: c.host, port: c.port });
     } else {
@@ -5921,6 +5936,8 @@ function bindEvents() {
     $('#appThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#settingsThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#logoutBtn').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/'; });
     $('#addConnectionBtn').addEventListener('click', (e) => openModal(null, e.currentTarget)); $('#closeModalBtn').addEventListener('click', closeModal); $('#cancelModalBtn').addEventListener('click', closeModal); $('#toggleConnPassword').addEventListener('click', () => { const el = $('#connPassword'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleConnPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; }); $('#revealConnSecrets').addEventListener('click', () => revealConnectionSecrets().catch((err) => toast(err.message))); $$('.route-type-tab').forEach((btn) => btn.addEventListener('click', () => setRouteMode($('#connMode').value === btn.dataset.routeMode ? 'direct' : btn.dataset.routeMode))); $('#addJumpRouteBtn').addEventListener('click', addJumpRouteRow); $('#jumpRouteList').addEventListener('click', (e) => { if (!e.target.closest?.('[data-remove-jump-route]')) return; const ids = $$('#jumpRouteList [data-jump-route-select]').filter((el) => !el.closest('[data-jump-route-row]').contains(e.target)).map((el) => el.value).filter(Boolean); renderJumpRouteRows(ids); }); $('#testConnectionBtn').addEventListener('click', testConnection);
     $('#connProtocol').addEventListener('change', () => updateProtocolFields({ preservePort: false }));
+    $('#rdpTouchMode')?.addEventListener('change', updateRdpTouchSettingsUi);
+    $('#rdpTouchSensitivity')?.addEventListener('input', updateRdpTouchSettingsUi);
     $('#connectionForm').addEventListener('submit', saveConnection); restoreConnectionFilters(); ['searchInput', 'protocolFilter', 'tagFilter', 'sortSelect'].forEach((id) => { const el = $(`#${id}`); const handler = () => { saveConnectionFilters(); renderConnections(); }; el.addEventListener('input', handler); el.addEventListener('change', handler); });
     $('#connectionGrid').addEventListener('click', async (e) => {
         const edit = e.target.closest?.('[data-edit]')?.dataset.edit, del = e.target.closest?.('[data-delete]')?.dataset.delete, connect = e.target.closest?.('[data-connect]')?.dataset.connect;

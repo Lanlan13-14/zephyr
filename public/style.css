@@ -2273,6 +2273,32 @@ body.connection-transition-closing .app-shell {
     background-repeat: no-repeat;
     background-position: right 12px center;
 }
+.rdp-range-group {
+    margin-bottom: 14px;
+}
+.rdp-range-group label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+.rdp-range-group output {
+    min-width: 42px;
+    color: var(--text);
+    font-weight: 700;
+    text-align: right;
+}
+.rdp-range-group input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+}
+.rdp-range-group.rdp-range-disabled {
+    opacity: .5;
+}
+.rdp-range-group.rdp-range-disabled input { pointer-events: none; }
 .rdp-toggle-row {
     display: flex;
     justify-content: space-between;
@@ -4823,6 +4849,24 @@ html.keyboard-open .terminal-page {
     position: relative;
     z-index: 5;
 }
+
+/* Local touch cursor: visual feedback for touchpad/pen input. */
+.rdp-pointer-overlay {
+    position: fixed;
+    width: 20px;
+    height: 20px;
+    margin: -10px 0 0 -10px;
+    border: 2px solid rgba(74,144,226,.86);
+    border-radius: 50%;
+    background: rgba(74,144,226,.17);
+    box-shadow: 0 2px 10px rgba(0,0,0,.28);
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity .3s ease;
+    z-index: 998;
+}
+.rdp-pointer-overlay.fading { opacity: 0; }
+.rdp-pointer-overlay[hidden] { display: none; }
 
 .rdp-stage {
     position: relative;

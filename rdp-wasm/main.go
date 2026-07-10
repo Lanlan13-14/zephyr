@@ -16,24 +16,24 @@ import (
 )
 
 var (
-	rdpClient        *grdp.RdpClient
-	connectGen       uint64
-	clientMu         sync.Mutex
-	canvas           js.Value
-	ctx2d            js.Value
-	localClipboard   string
-	clipMu           sync.Mutex
-	swapAltMeta      bool
-	audinHandler     *AudinHandler
-	rdpelHandler     *RdpelHandler
-	rdpefsHandler    *RdpefsHandler
+	rdpClient      *grdp.RdpClient
+	connectGen     uint64
+	clientMu       sync.Mutex
+	canvas         js.Value
+	ctx2d          js.Value
+	localClipboard string
+	clipMu         sync.Mutex
+	swapAltMeta    bool
+	audinHandler   *AudinHandler
+	rdpelHandler   *RdpelHandler
+	rdpefsHandler  *RdpefsHandler
 
 	// Cache for file data read from JS — avoids re-copying the entire file
 	// from JS→Go on every FILECONTENTS_RANGE chunk request.
 	fileDataCache     map[string][]byte
 	fileDataCacheMu   sync.Mutex
-	camEnumHandler   *CamEnumeratorHandler
-	camStreamHandler *CamStreamHandler
+	camEnumHandler    *CamEnumeratorHandler
+	camStreamHandler  *CamStreamHandler
 )
 
 func isCurrentClient(gen uint64, c *grdp.RdpClient) bool {
@@ -55,6 +55,7 @@ func main() {
 	js.Global().Set("rdpMouseDown", js.FuncOf(jsMouseDown))
 	js.Global().Set("rdpMouseUp", js.FuncOf(jsMouseUp))
 	js.Global().Set("rdpMouseWheel", js.FuncOf(jsMouseWheel))
+	js.Global().Set("rdpMouseHScroll", js.FuncOf(jsMouseHScroll))
 	js.Global().Set("rdpKeyDown", js.FuncOf(jsKeyDown))
 	js.Global().Set("rdpKeyUp", js.FuncOf(jsKeyUp))
 	js.Global().Set("rdpClipboardChanged", js.FuncOf(jsClipboardChanged))
@@ -494,6 +495,19 @@ func jsMouseWheel(_ js.Value, args []js.Value) any {
 	clientMu.Unlock()
 	if c != nil {
 		c.MouseWheel(args[0].Float())
+	}
+	return nil
+}
+
+func jsMouseHScroll(_ js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return nil
+	}
+	clientMu.Lock()
+	c := rdpClient
+	clientMu.Unlock()
+	if c != nil {
+		c.MouseHWheel(args[0].Float())
 	}
 	return nil
 }

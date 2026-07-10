@@ -257,7 +257,7 @@ func (c *Client) sendConfirmActivePDU() {
 	//orderCapa.OrderSupport[TS_NEG_FAST_GLYPH_INDEX] = 1
 
 	inputCapa := c.clientCapabilities[CAPSTYPE_INPUT].(*InputCapability)
-	inputCapa.Flags = INPUT_FLAG_SCANCODES | INPUT_FLAG_MOUSEX | INPUT_FLAG_UNICODE |
+	inputCapa.Flags = INPUT_FLAG_SCANCODES | INPUT_FLAG_MOUSEX | INPUT_FLAG_MOUSE_HWHEEL | INPUT_FLAG_UNICODE |
 		INPUT_FLAG_FASTPATH_INPUT | INPUT_FLAG_FASTPATH_INPUT2
 	inputCapa.KeyboardLayout = c.clientCoreData.KbdLayout
 	inputCapa.KeyboardType = c.clientCoreData.KeyboardType
