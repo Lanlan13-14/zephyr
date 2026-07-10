@@ -41,9 +41,3 @@ zephyr_agent/macos/.symlinks/
 
 # Agent token data
 data/agent-tokens.json
-
-# Rust/WASM build artifacts
-rdp-render-wasm/target/
-rdp-render-wasm/pkg/
-rdp-client-wasm/target/
-rdp-client-wasm/pkg/

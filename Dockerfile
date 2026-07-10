@@ -21,35 +21,22 @@ COPY . .
 RUN npm run build:editor 2>&1 || echo "[WARN] editor build skipped"
 
 # ============================================================
-# Stage 2: rdp-client-builder — 编译 Rust/IronRDP WASM 协议栈
+# Stage 2: rdp-wasm-builder — 编译 grdp Go WASM (RDP 协议栈)
 # ============================================================
-FROM rust:1.89-slim AS rdp-client-builder
+FROM golang:1.26-alpine AS rdp-wasm-builder
 
 WORKDIR /build
 
-RUN apt-get update && apt-get install -y --no-install-recommends         ca-certificates build-essential pkg-config curl &&     rm -rf /var/lib/apt/lists/* &&     /usr/local/cargo/bin/rustup target add wasm32-unknown-unknown &&     /usr/local/cargo/bin/cargo install wasm-bindgen-cli --version 0.2.126 --locked
+RUN apk add --no-cache make
 
-COPY rdp-client-wasm/ ./
-RUN /usr/local/cargo/bin/cargo build --target wasm32-unknown-unknown --release &&     mkdir -p pkg &&     /usr/local/cargo/bin/wasm-bindgen --target web --out-dir pkg --out-name rdp_client_wasm         target/wasm32-unknown-unknown/release/rdp_client_wasm.wasm
+COPY rdp-wasm/ ./
 
-# ============================================================
-# Stage 2b: rdp-render-builder — 编译 Rust FrameCompositor WASM
-# ============================================================
-FROM rust:1.89-slim AS rdp-render-builder
+# Build Go WASM binary (uses local grdp-patch with custom DVC handler support)
+RUN go mod tidy && GOOS=js GOARCH=wasm go build -o main.wasm .
 
-WORKDIR /build
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates build-essential pkg-config && \
-    rm -rf /var/lib/apt/lists/* && \
-    /usr/local/cargo/bin/rustup target add wasm32-unknown-unknown && \
-    /usr/local/cargo/bin/cargo install wasm-bindgen-cli --version 0.2.100 --locked
-
-COPY rdp-render-wasm/ ./
-RUN /usr/local/cargo/bin/cargo build --target wasm32-unknown-unknown --release && \
-    mkdir -p pkg && \
-    /usr/local/cargo/bin/wasm-bindgen --target web --out-dir pkg --out-name rdp_render_wasm \
-        target/wasm32-unknown-unknown/release/rdp_render_wasm.wasm
+# Copy wasm_exec.js from Go SDK
+RUN cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" wasm_exec.js 2>/dev/null || \
+    cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" wasm_exec.js
 
 # ============================================================
 # Stage 3: runtime — Zephyr + WASM RDP client (Alpine)
@@ -79,10 +66,10 @@ RUN apk add --no-cache \
 
 COPY --from=app-build /app /app
 
-# RDP Rust WASM artifacts → public/vendor/rdp-client/ + public/vendor/rdp-render/
-RUN mkdir -p /app/public/vendor/rdp-client /app/public/vendor/rdp-render
-COPY --from=rdp-client-builder /build/pkg/ /app/public/vendor/rdp-client/
-COPY --from=rdp-render-builder /build/pkg/ /app/public/vendor/rdp-render/
+# RDP WASM artifacts → public/vendor/rdp-wasm/
+RUN mkdir -p /app/public/vendor/rdp-wasm
+COPY --from=rdp-wasm-builder /build/main.wasm /app/public/vendor/rdp-wasm/
+COPY --from=rdp-wasm-builder /build/wasm_exec.js /app/public/vendor/rdp-wasm/
 
 ENV ZEPHYR_VERSION=${ZEPHYR_VERSION}
 ENV MALLOC_TRIM_THRESHOLD_=32768
@@ -92,11 +79,9 @@ RUN echo "=== runtime diagnostics ===" && \
     cat /etc/alpine-release && \
     node --version && \
     npm --version && \
-    test -f /app/public/vendor/rdp-client/rdp_client_wasm.js && \
-    test -f /app/public/vendor/rdp-client/rdp_client_wasm_bg.wasm && \
-    test -f /app/public/vendor/rdp-render/rdp_render_wasm.js && \
-    test -f /app/public/vendor/rdp-render/rdp_render_wasm_bg.wasm && \
-    wc -c /app/public/vendor/rdp-client/rdp_client_wasm_bg.wasm /app/public/vendor/rdp-render/rdp_render_wasm_bg.wasm && \
+    test -f /app/public/vendor/rdp-wasm/main.wasm && \
+    test -f /app/public/vendor/rdp-wasm/wasm_exec.js && \
+    wc -c /app/public/vendor/rdp-wasm/main.wasm && \
     node -e "require('better-sqlite3'); console.log('better-sqlite3 loaded')" && \
     (HTTP_ENABLED=true HTTPS_ENABLED=false PORT=39080 node server.js > /tmp/zephyr-startup.log 2>&1 & pid=$!; ok=0; for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:39080/ >/dev/null 2>&1 && ok=1 && break; kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done; cat /tmp/zephyr-startup.log; kill "$pid" 2>/dev/null || true; rm -rf /app/data /tmp/zephyr-startup.log; test "$ok" = 1; echo "server startup smoke loaded")
 

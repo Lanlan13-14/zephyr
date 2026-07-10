@@ -33,7 +33,7 @@
 - 🌊 **DOM 终端渲染**：基于 `@wterm/dom`，终端文本可像普通网页一样拖选复制。
 - 📱 **移动端友好**：支持移动端长按、拖拽选择和系统复制菜单。
 - 🗂️ **连接资产管理**：支持 SSH / RDP / VNC 连接管理、搜索、排序、标签和备注。
-- 🖥️ **RDP / VNC 远程桌面**：RDP 使用 Rust/IronRDP WASM Worker 方案，协议处理在浏览器 Worker 内完成，渲染通过 SharedArrayBuffer + WebGL 合成——不依赖服务端 FreeRDP、Python 或任何 native 组件。支持 H.264 WebCodecs 硬解、Canvas 2D 位图渲染、RDPGFX/RemoteFX Progressive、画质/FPS/分辨率（PPI 档位：1080p/2K/4K/8K/自动）、移动端软键盘（含 IME 中文输入）、快捷键、视区摇杆（速度模式无限平移）、浮窗布局菜单（全屏/半屏/四分之一/关闭）、双指滚动缩放、剪贴板双向同步、跨标签文件传输。VNC 使用内置 noVNC 页面和 Zephyr WebSocket 代理。
+- 🖥️ **RDP / VNC 远程桌面**：RDP 使用纯 Go WASM 方案（grdp），全部协议处理和渲染在浏览器端完成——不依赖服务端 FreeRDP、Python 或任何 native 组件。支持 H.264 WebCodecs 硬解、Canvas 2D 位图渲染、RDPGFX/RemoteFX Progressive、画质/FPS/分辨率（PPI 档位：1080p/2K/4K/8K/自动）、移动端软键盘（含 IME 中文输入）、快捷键、视区摇杆（速度模式无限平移）、浮窗布局菜单（全屏/半屏/四分之一/关闭）、双指滚动缩放、剪贴板双向同步、跨标签文件传输。VNC 使用内置 noVNC 页面和 Zephyr WebSocket 代理。
 - 💽 **Zephyr Agent 磁盘映射**：独立 Flutter Agent 应用主动连接 Zephyr 主端，把本机文件系统映射为 RDP 会话里的 `\\tsclient` 虚拟磁盘。支持 Android / Windows / Linux / macOS / iOS 构建；桌面端默认映射整盘/根目录，Android 默认映射 `/storage/emulated/0` 并引导授予“所有文件访问权限”，也支持 SAF 授权目录降级。
 - 🧭 **代理与跳板路由**：支持 SOCKS5 / HTTP CONNECT 代理、SSH 跳板机和多级 SSH 跳板链路。
 - ⚡ **远程批量执行**：可对多个 SSH 连接批量执行命令并查看结果。
@@ -56,7 +56,7 @@
 - 💾 **SQLite 数据存储**：使用 `better-sqlite3` 持久化用户、连接、设置、安全事件等数据。
 - 🔐 **敏感数据加密**：连接密码/私钥、代理密码、SSH 密钥、TOTP Secret、SMTP/CAPTCHA 密钥等字段使用 ML-KEM-768 + AES-256-GCM 混合加密后落盘。
 - 📦 **数据备份**：支持加密备份导出、备份导入，并在导入前自动生成本地数据库备份。
-- 🐳 **Docker 部署**：Docker 镜像内置 Node.js 运行时和 noVNC 所需运行依赖，RDP 使用浏览器端 Rust/IronRDP WASM Worker，无需服务端 native 组件，可直接部署使用。
+- 🐳 **Docker 部署**：Docker 镜像内置 Node.js 运行时和 noVNC 所需运行依赖，RDP 使用浏览器端 Go WASM 无需服务端 native 组件，可直接部署使用。
 
 ---
 
@@ -73,12 +73,12 @@
 - **SSH** 既可以作为目标连接，也可以作为跳板机。
 - **RDP / VNC** 可以作为目标连接，并且可以通过 SSH 跳板链路访问。
 - **RDP / VNC 不能作为跳板机**。跳板机只能选择 SSH 连接。
-- RDP / VNC 通过跳板访问时，Zephyr 会在服务端建立临时链路：RDP 由 Node.js WebSocket→TCP 代理将浏览器 Rust/IronRDP WASM Worker 的流量转发到目标 RDP 端口，VNC 由 Zephyr 的 noVNC WebSocket 代理直接完成 VNC 握手与转发。
+- RDP / VNC 通过跳板访问时，Zephyr 会在服务端建立临时链路：RDP 由 Node.js WebSocket→TCP 代理将浏览器 WASM grdp 客户端的流量转发到目标 RDP 端口，VNC 由 Zephyr 的 noVNC WebSocket 代理直接完成 VNC 握手与转发。
 
 RDP 经 SSH 跳板访问链路：
 
 ```text
-浏览器 Worker (Rust/IronRDP WASM)
+浏览器 (Go WASM grdp)
   ── WebSocket ──► Zephyr Node.js /rdp-proxy
   ── TCP ──► SSH 跳板链路
   ──► 目标 RDP 主机:3389
@@ -154,7 +154,7 @@ npm start
 http://localhost:3000
 ```
 
-本地开发运行 RDP 时，需要 Rust 1.89+ 编译 `rdp-client-wasm/` 和 `rdp-render-wasm/` 为 WASM；Docker 镜像会在构建阶段自动完成编译。
+本地开发运行 RDP 时，需要 Go 1.26+ 编译 `rdp-wasm/` 为 WASM（`GOOS=js GOARCH=wasm go build -o public/vendor/rdp-wasm/main.wasm .`）。Docker 镜像会在构建阶段自动完成编译。
 
 ---
 
@@ -297,8 +297,8 @@ Zephyr 自带的默认 Skill 已经写入了本地运维常用规则，重点包
 
 RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zephyr：
 
-- **RDP**：使用 **Rust/IronRDP WASM Worker** 方案。RDP 协议处理在浏览器 Worker 内完成，渲染通过 SAB/WebGL 合成器在浏览器端完成，服务端只提供 WebSocket→TCP 代理（`/rdp-proxy`）。
-  - **架构**：`rdp-client-wasm/` 和 `rdp-render-wasm/` 编译为 WebAssembly（Dockerfile Stage 2 自动用 Rust 构建），浏览器通过 `rdp-worker.js` + `rdp-wasm-client.js` 驱动连接、渲染和用户交互。
+- **RDP**：使用纯 **Go WASM (grdp)** 方案。所有 RDP 协议处理（NLA/CredSSP 认证、TPKT/MCS/SEC 协议栈、RDPGFX/RemoteFX Progressive 图形管线、CLIPRDR 剪贴板、RDPSND 音频、RDPDR 虚拟驱动器、RDPECAM 摄像头、MS-RDPEL 位置、MS-AUDIN 麦克风）和渲染全部在浏览器端完成，服务端只提供 WebSocket→TCP 代理（`/rdp-proxy`）。
+  - **架构**：`rdp-wasm/` 目录下的 Go 源码编译为 `main.wasm`（Dockerfile Stage 2 自动用 `golang:1.26-alpine` 构建），浏览器加载后通过 `rdp-wasm-client.js` 驱动连接、渲染和用户交互。
   - **图形渲染**：H.264 帧通过 WebCodecs `VideoDecoder` 硬解并 `drawImage` 到 Canvas；位图通过 `putImageData` 直接绘制（`desynchronized:true` 跳过合成器延迟）；Go 侧复用渲染缓冲区避免重复分配。
   - **每连接设置**：每个 RDP 连接可独立配置分辨率（PPI 档位：1080p/2K/4K/8K/自动）、画质（平衡/性能/画质）、帧率（30/45/60/120/144 FPS）；默认平衡+1080p+30FPS。分辨率档位按屏幕容器实际宽高比计算远程分辨率（不是固定 16:9），适应模式零黑边。
   - **文件传输**：上传文件到远程（CLIPRDR FileGroupDescriptorW + FileContents 协议，Windows 右键粘贴触发按需拉取）、从远程下载文件（异步 4MB 分块 FILECONTENTS_RANGE）、RDPDR 虚拟驱动器（`\\tsclient\WEBRDP`）。
@@ -314,7 +314,7 @@ RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zeph
 项目 Docker 镜像运行层基于 Alpine，已包含：
 
 - Node.js 运行时
-- Rust/IronRDP WASM RDP 客户端（Dockerfile 构建阶段从 `rdp-client-wasm/` 和 `rdp-render-wasm/` 源码编译）
+- Go WASM RDP 客户端（`main.wasm`，Dockerfile 构建阶段用 `golang:1.26-alpine` 从 `rdp-wasm/` 源码编译）
 - noVNC 前端依赖
 
 RDP 不需要服务端 native 组件（无 FreeRDP、无 Python bridge、无 libwebp/FFmpeg/Opus 依赖）。所有 RDP 协议处理在浏览器 WASM 中完成。
@@ -323,7 +323,7 @@ RDP 不需要服务端 native 组件（无 FreeRDP、无 Python bridge、无 lib
 
 | 项目 | 说明 |
 | --- | --- |
-| RDP 协议栈 | Rust/IronRDP WASM Worker，浏览器端运行 |
+| RDP 协议栈 | 纯 Go WASM (grdp fork)，浏览器端运行 |
 | 服务端代理 | Node.js `/rdp-proxy` WebSocket→TCP 代理 |
 | 图形渲染 | H.264 WebCodecs + Canvas 2D `putImageData` |
 | 剪贴板 | MS-RDPECLIP (CLIPRDR) 文本 + 文件双向 |
@@ -337,7 +337,7 @@ RDP 不需要服务端 native 组件（无 FreeRDP、无 Python bridge、无 lib
 | 协议 | 默认端口 | 说明 |
 | --- | --- | --- |
 | `SSH` | `22` | WebSSH 终端 |
-| `RDP` | `3389` | Windows 远程桌面，经浏览器 Rust/IronRDP Worker + Zephyr `/rdp-proxy` WebSocket→TCP 代理 |
+| `RDP` | `3389` | Windows 远程桌面，经浏览器 Go WASM grdp + Zephyr `/rdp-proxy` WebSocket→TCP 代理 |
 | `VNC` | `5900` | VNC Server，经 noVNC + Zephyr `/novnc` 代理 |
 
 ### RDP/VNC 使用跳板
@@ -400,7 +400,7 @@ Zephyr Agent 是独立于 Web 服务端的跨平台 Flutter 应用，用于把�
 ```text
 Windows RDP 会话
   -> \\tsclient\AgentDrive
-  -> 浏览器 Rust/IronRDP RDPEFS/RDPDR
+  -> 浏览器 Go WASM RDPEFS/RDPDR
   -> Zephyr 主端 /api/rdp/file-agents RPC
   -> Zephyr Agent WebSocket
   -> 本机文件 provider（桌面 dart:io / Android SAF 或 All files access）
@@ -489,7 +489,7 @@ services:
         max-file: "3"
 ```
 
-> Docker 镜像已内置 Rust/IronRDP WASM RDP 客户端和 noVNC 前端依赖；RDP 协议处理完全在浏览器端完成，服务端只提供 WebSocket→TCP 代理；VNC 走 noVNC + Zephyr `/novnc` 代理，不需要额外启动远程桌面网关容器。
+> Docker 镜像已内置 Go WASM RDP 客户端和 noVNC 前端依赖；RDP 协议处理完全在浏览器端完成，服务端只提供 WebSocket→TCP 代理；VNC 走 noVNC + Zephyr `/novnc` 代理，不需要额外启动远程桌面网关容器。
 
 ### 3. 启动服务
 
@@ -652,8 +652,8 @@ Dockerfile 说明：
 - 构建阶段使用 `node:20-alpine3.20` 与 `alpine:3.20`。
 - 运行阶段基于 `node:20-alpine3.20`。
 - 镜像内复制应用代码和生产依赖。
-- 镜像内置 Rust/IronRDP WASM RDP 客户端（构建阶段编译）和 noVNC 前端依赖；VNC 使用 noVNC + Zephyr `/novnc` 代理。
-- 构建时会验证 `node`、`npm` 是否可执行，并编译 Rust WASM。
+- 镜像内置 Go WASM RDP 客户端（构建阶段编译）和 noVNC 前端依赖；VNC 使用 noVNC + Zephyr `/novnc` 代理。
+- 构建时会验证 `node`、`npm` 是否可执行，并编译 Go WASM。
 
 ---
 
@@ -713,7 +713,7 @@ zephyr-ssh/
 │   ├── terminal.html    # SSH 终端页面
 │   ├── terminal.js      # SSH 终端逻辑
 │   ├── preview/image/   # 图片预览前端模块（Viewer.js UI 接入与样式）
-│   ├── rdp.html          # RDP 远程桌面页面（Rust/IronRDP Worker）
+│   ├── rdp.html          # RDP 远程桌面页面（Go WASM grdp）
 │   ├── rdp-wasm-client.js # RDP 前端逻辑（渲染、输入、文件、剪贴板）
 │   ├── rdp-fs-provider.js  # Zephyr Agent 文件 RPC / RDP drive bridge
 │   ├── rdp-touch.js       # RDP 移动端触控（单指/双指/三指手势）
@@ -734,12 +734,12 @@ zephyr-ssh/
 ├── file-agent-manager.js # Zephyr Agent 注册、token、RPC 转发与 SSE 在线状态
 ├── storage.js           # SQLite 存储层
 ├── stats.js             # 远程状态采集
-├── rdp-client-wasm/            # Rust/IronRDP WASM RDP 客户端源码
+├── rdp-wasm/            # Go WASM RDP 客户端源码
 │   ├── main.go          # WASM 入口（JS↔Go 桥接）
 │   ├── rdpefs.go        # MS-RDPEFS 虚拟驱动器
-│   ├── IronRDP-patch/      # IronRDP fork（RDP 协议栈 + CLIPRDR 文件剪贴板）
+│   ├── grdp-patch/      # grdp fork（RDP 协议栈 + CLIPRDR 文件剪贴板）
 │   ├── Makefile         # WASM 编译（GOOS=js GOARCH=wasm）
-│   └── go.mod           # Go 模块（replace → ./IronRDP-patch）
+│   └── go.mod           # Go 模块（replace → ./grdp-patch）
 ├── package.json         # 项目依赖与脚本
 ├── package-lock.json    # 锁定依赖版本
 ├── Dockerfile           # Docker 构建文件

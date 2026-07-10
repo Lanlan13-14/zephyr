@@ -1,7 +1,7 @@
 /**
  * rdp-fs-provider.js — File Agent Bridge for RDP Drive Redirection
  *
- * Provides the globalThis.zephyrRdpFs* functions that Rust/IronRDP Worker's Rust RDPEFS backend
+ * Provides the globalThis.zephyrRdpFs* functions that Go WASM's rdpefs.go
  * calls synchronously. Under the hood these use a SharedArrayBuffer-based
  * blocking pattern to call async HTTP RPCs to the server, which forwards
  * to the correct Flutter Agent via WebSocket.
@@ -111,7 +111,7 @@ export function syncAgentDrives({ enabled = true } = {}) {
 export function attachDrive(agentId, driveName, readOnly) {
     if (attachedAgents.has(agentId)) return true;
 
-    // Call Rust/IronRDP Worker to register the drive. If the current RDP session has not
+    // Call Go WASM to register the drive. If the current RDP session has not
     // created its RDPEFS handler yet, do not mark it attached; a later
     // rdpOnReady/SSE sync will retry against the fresh handler.
     if (typeof globalThis.rdpFsAttachDrive !== 'function') return false;
@@ -126,7 +126,7 @@ export function attachDrive(agentId, driveName, readOnly) {
 export function detachDrive(agentId) {
     if (!attachedAgents.has(agentId)) return;
 
-    // Call Rust/IronRDP Worker to remove the drive
+    // Call Go WASM to remove the drive
     if (typeof globalThis.rdpFsDetachDrive === 'function') {
         globalThis.rdpFsDetachDrive(agentId);
     }
@@ -141,9 +141,9 @@ export function detachAllDrives() {
     }
 }
 
-/* ─── Synchronous RPC helpers (called from Rust/IronRDP Worker) ─────────────
+/* ─── Synchronous RPC helpers (called from Go WASM) ─────────────
  *
- * Rust/IronRDP Worker Rust RDPEFS backend calls these via js.Global().Call(). Since the Rust Worker bridge can only
+ * Go WASM rdpefs.go calls these via js.Global().Call(). Since Go can only
  * do synchronous calls into JS, these must return results synchronously.
  * We use XMLHttpRequest (synchronous mode, which is allowed in workers and
  * WASM contexts) to achieve this. This is intentional and necessary.
@@ -273,8 +273,8 @@ function cachedRead(agentId, handle, offset, length) {
     return bytes.subarray(0, Math.min(wantLen, bytes.length));
 }
 
-/* ─── Global functions for Rust/IronRDP Worker ──────────────────────────────
- * These are set on globalThis so Rust RDPEFS backend can call them via
+/* ─── Global functions for Go WASM ──────────────────────────────
+ * These are set on globalThis so rdpefs.go can call them via
  * js.Global().Call("zephyrRdpFsList", ...) etc.
  */
 
@@ -301,7 +301,7 @@ globalThis.zephyrRdpFsRead = function(agentId, handle, offset, length) {
     const bytes = cachedRead(agentId, handle, offset, length);
     if (bytes === null) return null;
     // Empty read (EOF) — return empty array, NOT null.
-    // Returning null would cause Rust RDPEFS backend to send STATUS_UNSUCCESSFUL,
+    // Returning null would cause rdpefs.go to send STATUS_UNSUCCESSFUL,
     // which Windows surfaces as 0x8007048F "device not connected" on copy.
     return bytes;
 };

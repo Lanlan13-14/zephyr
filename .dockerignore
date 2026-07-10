@@ -10,9 +10,3 @@ data/
 .vscode/
 # Zephyr Agent is built by .github/workflows/agent.yml, not baked into server images.
 zephyr_agent/
-
-# Rust build output is regenerated inside Docker stages.
-rdp-render-wasm/target/
-rdp-render-wasm/pkg/
-rdp-client-wasm/target/
-rdp-client-wasm/pkg/

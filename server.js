@@ -68,29 +68,14 @@ const SSH_STATS_ENABLED = process.env.SSH_STATS_ENABLED !== 'false';
 const APP_VERSION = getAppVersion();
 const app = express();
 
-function applyRdpCrossOriginIsolationHeaders(req, res, next) {
-    // RDP Rust Worker uses SharedArrayBuffer for frame transport. Keep COOP/COEP
-    // scoped to the RDP page and its worker/WASM resources to avoid breaking the
-    // rest of the app with cross-origin embedder restrictions.
-    const pathname = (() => {
-        try { return new URL(req.originalUrl || req.url || '/', 'http://localhost').pathname; }
-        catch { return req.path || req.url || ''; }
-    })();
-    const isRdpResource = pathname === '/rdp.html'
-        || pathname === '/rdp-wasm-client.js'
-        || pathname === '/rdp-worker.js'
-        || pathname === '/rdp-touch.js'
-        || pathname.startsWith('/vendor/rdp-client/')
-        || pathname.startsWith('/vendor/rdp-render/')
-        || pathname.startsWith('/vendor/rdp-wasm/');
-    if (isRdpResource) {
-        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-        res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-        res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-    }
+function applyCrossOriginIsolationHeaders(req, res, next) {
+    // rdp-wasm WASM client uses SharedArrayBuffer for Go runtime.
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     next();
 }
-app.use(applyRdpCrossOriginIsolationHeaders);
+app.use(applyCrossOriginIsolationHeaders);
 
 const DATA_DIR = path.join(__dirname, 'data');
 const HTTPS_DIR = path.join(DATA_DIR, 'https');
@@ -4155,7 +4140,6 @@ const wss = new WebSocketServer(wsServerOptions);
 const noVncWss = new WebSocketServer(wsServerOptions);
 const editorLspWss = new WebSocketServer(wsServerOptions);
 const rdpProxyWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 64 * 1024 * 1024 });
-const rdpBridgeWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 64 * 1024 * 1024 });
 const agentFilesWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 2 * 1024 * 1024 });
 
 function handleHttpUpgrade(req, socket, head) {
@@ -4170,15 +4154,13 @@ function handleHttpUpgrade(req, socket, head) {
         ? wss
         : pathname === '/rdp-proxy'
             ? rdpProxyWss
-            : pathname === '/rdp-bridge'
-                ? rdpBridgeWss
-                : pathname === '/novnc'
-                    ? noVncWss
-                    : pathname === '/editor-lsp'
-                        ? editorLspWss
-                        : pathname === '/agent/files'
-                            ? agentFilesWss
-                            : null;
+            : pathname === '/novnc'
+                ? noVncWss
+                : pathname === '/editor-lsp'
+                    ? editorLspWss
+                    : pathname === '/agent/files'
+                        ? agentFilesWss
+                        : null;
     if (!targetWss) {
         console.warn('[WS-DIAG] rejected websocket upgrade for unknown path', { url: req.url || '' });
         rejectSocket(socket, 404, 'Not Found');
@@ -4217,9 +4199,9 @@ function closeWebSocketSafe(ws, code = 1000, reason = '') {
 }
 
 /* ====================================================================
- * RDP Rust Worker PROXY — WebSocket ↔ TCP bridge for browser-side IronRDP WASM
+ * RDP WASM PROXY — WebSocket ↔ TCP bridge for browser-side grdp WASM
  *
- * The browser Worker runs the full RDP protocol stack (Rust/IronRDP compiled to WASM).
+ * The browser runs the full RDP protocol stack (Go compiled to WASM).
  * This proxy simply bridges the browser's WebSocket to the target's TCP
  * port 3389.  Zero decoding, zero encoding — pure byte pass-through.
  *
@@ -4312,100 +4294,26 @@ rdpProxyWss.on('connection', async (ws, req) => {
             user: sessionUser.username,
         });
 
-        /* ── Bidirectional pipe with server-side TLS upgrade ───── */
-        /* After X.224 Connection Confirm selects TLS/NLA, upgrade the
-         * target-side TCP to TLS and forward decrypted RDP protocol bytes
-         * to the browser. IronRDP marks the transport as upgraded and runs
-         * CredSSP over the plaintext channel. */
+        /* ── Bidirectional pipe ────────────────────────────────────── */
 
-        let rdpStream = tcpConn;
-        let tlsUpgrading = false;
-        let tlsUpgraded = false;
-        const pendingBrowserChunks = [];
-        let wsBytesIn = 0, tlsBytesIn = 0;
-
-        const selectedProtocolFromX224Confirm = (chunk) => {
-            if (!Buffer.isBuffer(chunk) || chunk.length < 19) return null;
-            if (chunk[0] !== 0x03 || chunk[1] !== 0x00) return null;
-            for (let i = 7; i + 7 < chunk.length; i++) {
-                if (chunk[i] === 0x02 && chunk[i + 2] === 0x08 && chunk[i + 3] === 0x00) {
-                    return chunk.readUInt32LE(i + 4);
-                }
+        /* WebSocket → TCP */
+        ws.on('message', (data, isBinary) => {
+            if (closed || tcpConn.destroyed) return;
+            try {
+                const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+                tcpConn.write(buf);
+            } catch (err) {
+                console.warn('[rdp-proxy] ws→tcp write error', err.message);
             }
-            return null;
-        };
-
-        const writeToRdp = (buf) => {
-            if (closed || !rdpStream || rdpStream.destroyed) return;
-            try { rdpStream.write(buf); }
-            catch (err) { console.warn('[rdp-proxy] ws->rdp write error', err.message); }
-        };
-
-        const upgradeRdpStreamToTls = () => {
-            if (tlsUpgrading || tlsUpgraded || closed) return;
-            tlsUpgrading = true;
-            tcpConn.pause();
-            tcpConn.removeAllListeners('data');
-            const tls = require('tls');
-            const tlsConn = tls.connect({
-                socket: tcpConn,
-                rejectUnauthorized: false,
-                minVersion: 'TLSv1',
-                maxVersion: 'TLSv1.3',
-                ciphers: 'ALL:@SECLEVEL=0',
-            }, () => {
-                rdpStream = tlsConn;
-                tlsUpgraded = true;
-                tlsUpgrading = false;
-                while (pendingBrowserChunks.length) writeToRdp(pendingBrowserChunks.shift());
-                console.info('[rdp-proxy] TLS upgraded after X.224 negotiation', { target });
-            });
-            tlsConn.setNoDelay?.(true);
-            tlsConn.on('data', (chunk) => {
-                if (closed || ws.readyState !== ws.OPEN) return;
-                tlsBytesIn += chunk.length;
-                if (tlsBytesIn <= 500 || tlsBytesIn % 10000 < chunk.length) {
-                    console.log('[rdp-proxy-dbg] tls->ws', { bytes: chunk.length, total: tlsBytesIn, hex: chunk.slice(0, 30).toString('hex') });
-                }
-                try { ws.send(chunk, { binary: true }); }
-                catch (err) { console.warn('[rdp-proxy] tls->ws send error', err.message); }
-            });
-            tlsConn.on('error', (err) => {
-                if (!closed) {
-                    console.warn('[rdp-proxy] tls error', err.message);
-                    closeWebSocketSafe(ws, 1011, 'TLS error');
-                    cleanup('tls-error');
-                }
-            });
-            tlsConn.on('close', () => {
-                if (!closed) {
-                    closeWebSocketSafe(ws, 1000, 'TLS closed');
-                    cleanup('tls-close');
-                }
-            });
-        };
-
-        /* WebSocket -> RDP transport */
-        ws.on('message', (data) => {
-            const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-            wsBytesIn += buf.length;
-            if (wsBytesIn <= 500 || wsBytesIn % 10000 < buf.length) {
-                console.log('[rdp-proxy-dbg] ws->rdp', { bytes: buf.length, total: wsBytesIn, tlsUpgraded, hex: buf.slice(0, 30).toString('hex') });
-            }
-            if (tlsUpgrading && !tlsUpgraded) pendingBrowserChunks.push(buf);
-            else writeToRdp(buf);
         });
 
-        /* TCP -> WebSocket for initial X.224 negotiation, then upgrade to TLS */
+        /* TCP → WebSocket */
         tcpConn.on('data', (chunk) => {
             if (closed || ws.readyState !== ws.OPEN) return;
-            console.log('[rdp-proxy-dbg] tcp->ws (pre-TLS)', { bytes: chunk.length, hex: chunk.slice(0, 30).toString('hex') });
-            try { ws.send(chunk, { binary: true }); }
-            catch (err) { console.warn('[rdp-proxy] tcp->ws send error', err.message); }
-            const selectedProtocol = selectedProtocolFromX224Confirm(chunk);
-            if (selectedProtocol !== null) {
-                console.log('[rdp-proxy-dbg] X.224 selected protocol:', selectedProtocol, '(0=standard,1=TLS,2=HYBRID/NLA,8=HYBRID_EX)');
-                if (selectedProtocol !== 0) upgradeRdpStreamToTls();
+            try {
+                ws.send(chunk, { binary: true });
+            } catch (err) {
+                console.warn('[rdp-proxy] tcp→ws send error', err.message);
             }
         });
 
@@ -4437,131 +4345,6 @@ rdpProxyWss.on('connection', async (ws, req) => {
         cleanup('connect-error');
     }
 });
-
-/* ====================================================================
- * /rdp-bridge — FreeRDP native bridge WebSocket endpoint
- *
- * Spawns zephyr-rdp-bridge process for each connection.
- * Wire protocol: binary frames [type(4LE) len(4LE) payload...]
- * Bridge→browser: BITMAP_BGRA(1) H264_FRAME(2) DESKTOP_SIZE(3)
- *                 CONNECTED(4) DISCONNECTED(5) ERROR(6)
- *                 FRAME_START(8) FRAME_END(9)
- * Browser→bridge: MOUSE_EVENT(100) KEYBOARD_EVENT(101)
- *                 UNICODE_EVENT(102) RESIZE(103)
- *                 DISCONNECT(104) FRAME_ACK(105)
- * ==================================================================== */
-
-const BRIDGE_BIN = '/app/rdp-bridge/zephyr-rdp-bridge';
-
-rdpBridgeWss.on('connection', (ws, req) => {
-    const url = new URL(req.url || '/rdp-bridge', `http://${req.headers.host || 'localhost'}`);
-    const connectionId = url.searchParams.get('connectionId') || '';
-
-    const sessionUser = currentSession(req);
-    if (!sessionUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
-    if (!connectionId) { closeWebSocketSafe(ws, 1008, 'connectionId required'); return; }
-
-    const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-    const conn = (store.connections || []).find((c) => c.id === connectionId);
-    if (!conn) { closeWebSocketSafe(ws, 1008, 'connection not found'); return; }
-    if (String(conn.protocol || 'SSH').toUpperCase() !== 'RDP') {
-        closeWebSocketSafe(ws, 1008, 'not an RDP connection'); return;
-    }
-
-    /* Resolve password from credentials store */
-    const resolved = resolveSshKeyForConnection(conn);
-    const password = resolved.password || '';
-    const host = conn.host || 'localhost';
-    const port = Number(conn.port) || 3389;
-    const username = conn.username || 'Administrator';
-    const domain = conn.rdpDomain || '';
-    
-    /* Parse resolution string (e.g. "1080p" → 1920x1080) */
-    const parseResolution = (res) => {
-        if (!res) return { width: 1920, height: 1080 };
-        const direct = String(res).match(/^(\d+)x(\d+)$/i);
-        if (direct) return { width: parseInt(direct[1]), height: parseInt(direct[2]) };
-        const presets = {
-            '720p': [1280, 720], '1080p': [1920, 1080], '1440p': [2560, 1440], '4k': [3840, 2160]
-        };
-        const p = presets[String(res).toLowerCase()];
-        return p ? { width: p[0], height: p[1] } : { width: 1920, height: 1080 };
-    };
-    const { width, height } = parseResolution(conn.rdpResolution);
-
-    let bridgeProcess = null;
-    let closed = false;
-    /* stdout read buffer for framing */
-    let readBuf = Buffer.alloc(0);
-
-    const cleanup = (reason) => {
-        if (closed) return;
-        closed = true;
-        console.info('[rdp-bridge] cleanup', { connectionId, reason });
-        try { bridgeProcess?.kill('SIGTERM'); } catch {}
-        closeWebSocketSafe(ws, 1000, reason || 'closed');
-    };
-
-    ws.on('close', () => cleanup('browser-close'));
-    ws.on('error', (err) => { console.warn('[rdp-bridge] ws error', err.message); cleanup('ws-error'); });
-
-    /* Spawn bridge with stdio pipes */
-    const { spawn } = require('child_process');
-    const args = [
-        '--host', host, '--port', String(port),
-        '--user', username, '--password', password,
-        '--width', String(width), '--height', String(height),
-    ];
-    if (domain) args.push('--domain', domain);
-
-    console.info('[rdp-bridge] spawning', { host, port, username, width, height });
-    bridgeProcess = spawn(BRIDGE_BIN, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-
-    bridgeProcess.stderr.on('data', (d) => process.stderr.write('[bridge] ' + d));
-    bridgeProcess.on('exit', (code, sig) => {
-        console.info('[rdp-bridge] process exited', { code, sig });
-        if (!closed) cleanup('bridge-exit');
-    });
-    bridgeProcess.on('error', (err) => {
-        console.error('[rdp-bridge] spawn error', err.message);
-        cleanup('spawn-error');
-    });
-
-    /* Bridge stdout → WebSocket (binary framed) */
-    let bridgeFrameCount = 0;
-    bridgeProcess.stdout.on('data', (chunk) => {
-        if (closed) return;
-        readBuf = Buffer.concat([readBuf, chunk]);
-        while (readBuf.length >= 8) {
-            const type = readBuf.readUInt32LE(0);
-            const plen = readBuf.readUInt32LE(4);
-            const total = 8 + plen;
-            if (plen > 128 * 1024 * 1024) {
-                console.error('[rdp-bridge] bad stdout frame length', { type, plen, head: readBuf.slice(0, 32).toString('hex') });
-                cleanup('bad-bridge-frame');
-                return;
-            }
-            if (readBuf.length < total) break;
-            const frame = readBuf.slice(0, total);
-            readBuf = readBuf.slice(total);
-            bridgeFrameCount++;
-            if (bridgeFrameCount <= 10 || bridgeFrameCount % 60 === 0) {
-                console.info('[rdp-bridge] bridge→browser frame', { n: bridgeFrameCount, type, plen });
-            }
-            if (ws.readyState === ws.OPEN) {
-                try { ws.send(frame, { binary: true }); } catch (err) { console.warn('[rdp-bridge] browser send failed', err.message); }
-            }
-        }
-    });
-    bridgeProcess.stdout.on('end', () => { if (!closed) cleanup('bridge-stdout-end'); });
-
-    /* Browser WebSocket → bridge stdin */
-    ws.on('message', (data) => {
-        if (closed || !bridgeProcess || !bridgeProcess.stdin.writable) return;
-        try { bridgeProcess.stdin.write(Buffer.isBuffer(data) ? data : Buffer.from(data)); } catch {}
-    });
-});
-
 wss.on('connection', (ws, req) => {
     console.log(`[WS] 客户端连接 ${req.socket.remoteAddress}`);
     let sshClient = null;
@@ -5902,7 +5685,7 @@ async function startServer() {
     if (httpsServer) console.log(`🔐 Zephyr HTTPS 服务运行在 https://localhost:${HTTPS_PORT}`);
     else if (HTTPS_ENABLED) console.warn('[https] HTTPS requested but disabled because certificate setup failed');
     console.log(`   WebSocket 路径: /ssh`);
-    console.log(`   RDP 路径: /rdp-proxy -> Rust/IronRDP Worker (browser-side RDP)`);
+    console.log(`   RDP 路径: /rdp-proxy -> WASM grdp (browser-side RDP)`);
     console.log(`   VNC/noVNC 路径: /novnc -> VNC Server`);
     console.log(`   Agent 文件重定向: /agent/files -> Flutter Agent WebSocket`);
 }
