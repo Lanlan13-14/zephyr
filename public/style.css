@@ -4850,23 +4850,7 @@ html.keyboard-open .terminal-page {
     z-index: 5;
 }
 
-/* Local touch cursor: visual feedback for touchpad/pen input. */
-.rdp-pointer-overlay {
-    position: fixed;
-    width: 20px;
-    height: 20px;
-    margin: -10px 0 0 -10px;
-    border: 2px solid rgba(74,144,226,.86);
-    border-radius: 50%;
-    background: rgba(74,144,226,.17);
-    box-shadow: 0 2px 10px rgba(0,0,0,.28);
-    pointer-events: none;
-    opacity: 1;
-    transition: opacity .3s ease;
-    z-index: 998;
-}
-.rdp-pointer-overlay.fading { opacity: 0; }
-.rdp-pointer-overlay[hidden] { display: none; }
+/* Touch input uses the remote Windows pointer only. */
 
 .rdp-stage {
     position: relative;

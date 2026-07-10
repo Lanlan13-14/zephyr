@@ -12,13 +12,6 @@ const rafCallbacks = new Map();
 globalThis.requestAnimationFrame = (cb) => { const id = ++rafId; rafCallbacks.set(id, cb); return id; };
 globalThis.cancelAnimationFrame = (id) => rafCallbacks.delete(id);
 
-class MockClassList {
-    constructor() { this.values = new Set(); }
-    add(v) { this.values.add(v); }
-    remove(v) { this.values.delete(v); }
-    contains(v) { return this.values.has(v); }
-}
-
 class MockCanvas {
     constructor() {
         this.width = 1000;
@@ -40,7 +33,6 @@ const touchEvent = (touches, changedTouches = touches) => ({ touches, changedTou
 
 function fixture(options = {}) {
     const canvas = new MockCanvas();
-    const overlay = { hidden: true, style: {}, classList: new MockClassList() };
     const events = { move: [], down: [], up: [], wheel: [], hwheel: [], combo: [] };
     const controller = new RdpTouchController({
         canvas,
@@ -52,10 +44,9 @@ function fixture(options = {}) {
         sendMouseWheel: (d) => events.wheel.push(d),
         sendMouseHWheel: (d) => events.hwheel.push(d),
         sendKeyCombo: (g) => events.combo.push(g),
-        pointerOverlay: overlay,
         ...options,
     });
-    return { canvas, overlay, events, controller };
+    return { canvas, events, controller };
 }
 
 test('single tap is immediate and double tap is exactly two clicks', () => {

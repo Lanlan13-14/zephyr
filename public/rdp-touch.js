@@ -17,12 +17,7 @@
  *
  * Pointer mode:
  *   Direct touch mode (default) — touch position maps directly to remote coords
- *   Relative touchpad mode      — touch delta moves a local cursor (like a trackpad)
- *
- * Local cursor overlay:
- *   Shows a software cursor dot at the current remote pointer position,
- *   so the user knows where clicks will land even when the server cursor
- *   is hidden or the touch is in relative mode.
+ *   Relative touchpad mode      — touch delta moves the remote Windows pointer
  */
 
 const LONG_PRESS_MS = 450;
@@ -61,7 +56,7 @@ export function rdpHaptic(type) {
 }
 
 export class RdpTouchController {
-    constructor({ canvas, getConnected, canvasCoords, sendMouseMove, sendMouseDown, sendMouseUp, sendMouseWheel, sendMouseHWheel, sendKeyCombo, pointerOverlay, relativeMode = false, relativeSensitivity = 1.5 }) {
+    constructor({ canvas, getConnected, canvasCoords, sendMouseMove, sendMouseDown, sendMouseUp, sendMouseWheel, sendMouseHWheel, sendKeyCombo, relativeMode = false, relativeSensitivity = 1.5 }) {
         this.canvas = canvas;
         this.getConnected = getConnected;
         this.canvasCoords = canvasCoords;
@@ -71,7 +66,6 @@ export class RdpTouchController {
         this.sendMouseWheel = sendMouseWheel;
         this.sendMouseHWheel = sendMouseHWheel;
         this.sendKeyCombo = sendKeyCombo;
-        this.pointerOverlay = pointerOverlay;
 
         // Gesture state
         this._state = null;
@@ -79,7 +73,6 @@ export class RdpTouchController {
         this._lastTapX = 0;
         this._lastTapY = 0;
         this._longPressTimer = null;
-        this._cursorHideTimer = null;
         this._flingRAF = null;
         this._lastMoveAt = 0;
         this._cursorX = Math.max(0, Number(canvas.width) / 2 || 0);
@@ -139,7 +132,7 @@ export class RdpTouchController {
         this._penPointerId = e.pointerId;
         this.sendMouseMove(x, y);
         this.sendMouseDown(button, x, y);
-        this._showCursor(x, y);
+        this._updateCursor(x, y);
     }
 
     _onPenMove(e) {
@@ -147,7 +140,7 @@ export class RdpTouchController {
         e.preventDefault();
         const { x, y } = this._coords(e);
         this.sendMouseMove(x, y);
-        this._showCursor(x, y);
+        this._updateCursor(x, y);
     }
 
     _onPenUp(e) {
@@ -214,35 +207,9 @@ export class RdpTouchController {
         this._flingRAF = requestAnimationFrame(tick);
     }
 
-    _showCursor(x, y) {
+    _updateCursor(x, y) {
         this._cursorX = x;
         this._cursorY = y;
-        if (this.pointerOverlay) {
-            clearTimeout(this._cursorHideTimer);
-            this.pointerOverlay.hidden = false;
-            this.pointerOverlay.classList.remove('fading');
-            // Convert remote coords to screen position
-            const r = this.canvas.getBoundingClientRect();
-            const sx = r.left + (x / this.canvas.width) * r.width;
-            const sy = r.top + (y / this.canvas.height) * r.height;
-            this.pointerOverlay.style.left = sx + 'px';
-            this.pointerOverlay.style.top = sy + 'px';
-            this._cursorHideTimer = setTimeout(() => {
-                if (this.pointerOverlay) this.pointerOverlay.classList.add('fading');
-            }, 2000);
-        }
-    }
-
-    _hideCursor() {
-        clearTimeout(this._cursorHideTimer);
-        this._cursorHideTimer = null;
-        if (this.pointerOverlay) {
-            this.pointerOverlay.classList.add('fading');
-            this._cursorHideTimer = setTimeout(() => {
-                if (this.pointerOverlay?.classList.contains('fading')) this.pointerOverlay.hidden = true;
-                this._cursorHideTimer = null;
-            }, 300);
-        }
     }
 
     _onTouchStart(e) {
@@ -272,9 +239,9 @@ export class RdpTouchController {
             // cursor in relative touchpad mode.
             if (!this.relativeMode) {
                 this.sendMouseMove(x, y);
-                this._showCursor(x, y);
+                this._updateCursor(x, y);
             } else {
-                this._showCursor(this._cursorX, this._cursorY);
+                this._updateCursor(this._cursorX, this._cursorY);
             }
 
             // Start long-press timer
@@ -357,7 +324,7 @@ export class RdpTouchController {
                 this._state.lastMoveTime = this._state.startTime;
 
                 if (this.relativeMode) {
-                    // In relative mode, the cursor is already at _cursorX/_cursorY
+                    // In relative mode, use the retained remote cursor coordinates.
                     this.sendMouseDown(0, this._cursorX, this._cursorY);
                 } else {
                     this.sendMouseDown(0, this._state.startX, this._state.startY);
@@ -378,10 +345,10 @@ export class RdpTouchController {
                     this._cursorX = Math.max(0, Math.min(this.canvas.width, this._cursorX + rdx));
                     this._cursorY = Math.max(0, Math.min(this.canvas.height, this._cursorY + rdy));
                     this.sendMouseMove(Math.round(this._cursorX), Math.round(this._cursorY));
-                    this._showCursor(this._cursorX, this._cursorY);
+                    this._updateCursor(this._cursorX, this._cursorY);
                 } else {
                     this.sendMouseMove(x, y);
-                    this._showCursor(x, y);
+                    this._updateCursor(x, y);
                 }
             }
 
@@ -521,7 +488,6 @@ export class RdpTouchController {
         this._destroyed = true;
         this._clearLongPress();
         this._cancelFling();
-        this._hideCursor();
         if (this._penButton !== null) {
             this.sendMouseUp(this._penButton, Math.round(this._cursorX), Math.round(this._cursorY));
         }

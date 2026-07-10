@@ -50,6 +50,19 @@ test('T6 floating toolbar was not introduced', async () => {
     }
 });
 
+test('touch indicator implementation is absent', async () => {
+    const files = await Promise.all([
+        read('public/rdp-touch.js'),
+        read('public/rdp-wasm-client.js'),
+        read('public/rdp.html'),
+        read('public/style.css'),
+    ]);
+    const joined = files.join('\n');
+    for (const token of ['rdpPointerOverlay', 'rdp-pointer-overlay', 'pointerOverlay']) {
+        assert.equal(joined.includes(token), false, `${token} must remain absent`);
+    }
+});
+
 test('horizontal wheel is exported and capability-advertised', async () => {
     const [main, grdp, pdu] = await Promise.all([
         read('rdp-wasm/main.go'),

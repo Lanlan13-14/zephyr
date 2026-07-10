@@ -10,7 +10,7 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260710-touch-input1';
+import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260710-touch-input2';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
@@ -1733,7 +1733,6 @@ function attachInputEvents() {
 
     /* ─── Touch input — uses RdpTouchController module ──── */
     if (!rdpTouchController) {
-        const pointerOverlay = document.getElementById('rdpPointerOverlay');
         const relativeMode = String(params.rdpTouchMode || 'direct') === 'relative';
         const relativeSensitivity = Math.max(0.5, Math.min(3, Number(params.rdpTouchSensitivity) || 1.5));
         rdpTouchController = new RdpTouchController({
@@ -1757,7 +1756,6 @@ function attachInputEvents() {
                 for (const code of keys) rdpKeyDown(code);
                 setTimeout(() => { for (const code of keys.slice().reverse()) rdpKeyUp(code); }, 50);
             },
-            pointerOverlay,
             relativeMode,
             relativeSensitivity,
         });
