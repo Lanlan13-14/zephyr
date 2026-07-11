@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>RDP renderer smoke</title>
+<canvas id="c" width="4" height="2"></canvas><pre id="out">running</pre>
+<script type="module">
+import { RdpGpuSurfaceCompositor } from '../public/rdp-renderer.js';
+const out = document.getElementById('out');
+try {
+ const c = document.getElementById('c');
+ let callback;
+ const r = new RdpGpuSurfaceCompositor(c,{requestFrame:fn=>(callback=fn,1),cancelFrame(){}});
+ r.reset(4,2); r.createSurface(1,4,2); r.mapSurface(1,0,0,4,2);
+ const bgra = new Uint8Array([
+   0,0,255,255, 0,255,0,255, 255,0,0,255, 255,255,255,255,
+   0,0,0,255, 0,255,255,255, 255,255,0,255, 255,0,255,255,
+ ]);
+ r.uploadBitmap(1,{left:0,top:0,right:4,bottom:2},bgra,16);
+ r.beginFrame(1); r.endFrame(1); callback();
+ const p=new Uint8Array(32); r.gl.readPixels(0,0,4,2,r.gl.RGBA,r.gl.UNSIGNED_BYTE,p);
+ window.result={ok:true,pixels:[...p],presents:r.presentedFrames}; out.textContent=JSON.stringify(window.result);
+} catch(e){window.result={ok:false,error:e.stack};out.textContent=JSON.stringify(window.result)}
+</script>

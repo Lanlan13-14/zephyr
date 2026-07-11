@@ -28,7 +28,7 @@ test('touch settings persist through UI, API and storage layers', async () => {
         read('server.js'),
         read('storage.js'),
     ]);
-    for (const field of ['rdpTouchMode', 'rdpTouchSensitivity']) {
+    for (const field of ['rdpTouchMode', 'rdpTouchSensitivity', 'rdpPipeline']) {
         for (const [index, source] of files.entries()) {
             assert.ok(source.includes(field), `${field} missing from persistence layer ${index}`);
         }

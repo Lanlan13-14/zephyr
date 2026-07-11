@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 // TestEncodeUTF16LENullTerminator verifies that encodeUTF16LE appends a
@@ -30,14 +31,12 @@ func TestEncodeUTF16LENullTerminator(t *testing.T) {
 			t.Errorf("encodeUTF16LE(%q): missing null terminator, last 2 bytes = %x %x",
 				s, b[len(b)-2], b[len(b)-1])
 		}
-		// Verify the content before the null matches
-		expectedRunes := []rune(s)
-		expectedU16 := make([]uint16, len(expectedRunes))
-		for i, r := range expectedRunes {
-			// Manual encoding for verification
-			if r < 0x10000 {
-				expectedU16[i] = uint16(r)
-			}
+		// Verify all UTF-16 code units before the terminator, including surrogate
+		// pairs for non-BMP code points such as emoji.
+		expectedU16 := utf16.Encode([]rune(s))
+		if len(b) != (len(expectedU16)+1)*2 {
+			t.Errorf("encodeUTF16LE(%q): expected %d bytes, got %d", s, (len(expectedU16)+1)*2, len(b))
+			continue
 		}
 		for i, v := range expectedU16 {
 			got := binary.LittleEndian.Uint16(b[i*2:])
@@ -132,11 +131,11 @@ func TestClipboardReadyTimeout(t *testing.T) {
 // includes FileGroupDescriptorW format when local files are available.
 func TestSendFormatListIncludesFileFormats(t *testing.T) {
 	h := &CliprdrHandler{
-		fileDownloadCh:   make(chan []byte, 4),
-		clipboardReadyCh: make(chan struct{}, 1),
+		fileDownloadCh:     make(chan []byte, 4),
+		clipboardReadyCh:   make(chan struct{}, 1),
 		useLongFormatNames: true,
-		localFGDFormatId: 0xC0E0,
-		localFCFormatId:  0xC0E1,
+		localFGDFormatId:   0xC0E0,
+		localFCFormatId:    0xC0E1,
 		getLocalFiles: func() []ClipFile {
 			return []ClipFile{{Name: "test.txt", Size: 100}}
 		},

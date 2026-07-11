@@ -6,10 +6,16 @@
  *
  * The Go WASM module handles the entire RDP protocol (bitmap decode, H.264,
  * cursor, keyboard, clipboard, audio).  The server is a dumb WS→TCP proxy.
- * All rendering happens client-side via Canvas 2D putImageData and WebCodecs.
+ * Rendering uses the unified RDPGFX/classic-bitmap semantic GPU compositor
+ * through Worker OffscreenCanvas by default, with page-thread GPU v2 fallback.
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
+import { createRdpDiagnostics, normalizeRdpPipeline } from './rdp-diagnostics.js?v=20260711-baseline1';
+import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260711-gpu-v2-page1';
+import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260711-avc444-v1';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260711-worker-v1';
+import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260711-linear-memory1';
 import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260710-touch-input2';
 import {
     subscribeAgentEvents,
@@ -68,7 +74,11 @@ let rdpAgentStorageEnabled = false;
 
 /* Canvas & scaling */
 let rdpCanvas = null;
-let rdpCtx2d = null;
+let rdpGpuV2 = null;
+let rdpGpuV2Decoder = null;
+let rdpGpuV2Avc444Decoder = null;
+let rdpWorkerBridge = null;
+let rdpWasmBitmapUploader = null;
 let rdpWidth = 0;
 let rdpHeight = 0;
 
@@ -107,282 +117,92 @@ let audioNextAt = 0;
 const AUDIO_MIN_LATENCY = 0.04; /* 40ms — minimum buffer to avoid underruns */
 const AUDIO_MAX_QUEUE = 0.15;   /* 150ms — hard resync ceiling */
 
-/* H.264 WebCodecs */
-let h264Dec = null;
-let h264Timestamp = 0;
-const h264FramePos = new Map();
-
 /* Pointer cache */
 const pointerCache = new Map();
 
 /* ─── Diagnostics (kept for ABR compat, no HUD) ──────────────────────── */
-const rdpDiag = { renderer: rdpGLSupported() ? 'wasm-webgl' : 'wasm-canvas2d', codec: 'bitmap', fps: 0, frames: 0, lastFrameAt: 0, bitmapCalls: 0, bitmapBytes: 0, bitmapLast: null, h264Calls: 0, h264Frames: 0, drawFails: 0, lastDrawError: '', glError: 0 };
-function notePresentedFrame() {
-    const now = performance.now();
-    const dt = rdpDiag.lastFrameAt ? now - rdpDiag.lastFrameAt : 0;
-    const inst = dt > 0 ? 1000 / dt : 0;
-    rdpDiag.fps = rdpDiag.fps ? rdpDiag.fps * 0.85 + inst * 0.15 : inst;
-    rdpDiag.frames++;
-    rdpDiag.lastFrameAt = now;
+const pipelineParam = params.rdpPipeline ?? urlParams.get('rdpPipeline');
+let selectedPipeline = normalizeRdpPipeline(pipelineParam);
+const { state: rdpDiag, notePresentedFrame, snapshot: snapshotRdpDiagnostics } = createRdpDiagnostics({
+    pipeline: selectedPipeline,
+    renderer: 'gpu-v2-page-pending',
+});
+function failGpuV2(error, reason = 'GPU_V2_FRAME_FAILED') {
+    rdpDiag.drawFails++;
+    rdpDiag.lastDrawError = error?.message || String(error);
+    rdpDiag.fallbackReason = reason;
+    console.error('[rdp-gpu-v2] fail-closed', error);
+    try { rdpDisconnect(); } catch {}
+    setStatus('error', `GPU RDP 管线失败: ${rdpDiag.lastDrawError}`);
 }
-window._rdpRenderDiag = () => JSON.stringify(rdpDiag);
-
-/* ═══════════════════════════════════════════════════════════════════════
- * WEBGL RENDERER - GPU-accelerated bitmap blitting
- *
- * Replaces Canvas 2D putImageData (pure CPU copy) with WebGL texture
- * upload.  The fragment shader performs BGRA->RGBA swizzle on the GPU,
- * eliminating the per-pixel conversion loop in Go WASM.
- * ═══════════════════════════════════════════════════════════════════════ */
-let rdpGL = null;        /* WebGL2 context */
-let rdpGLProg = null;    /* shader program */
-let rdpGLTex = null;     /* single large texture for the entire screen */
-let rdpGLTexW = 0;       /* texture width */
-let rdpGLTexH = 0;       /* texture height */
-let rdpGLQuad = null;    /* vertex buffer for full-screen quad */
-let rdpGLPosLoc = -1;    /* attribute location: position */
-let rdpGLTexLoc = -1;    /* attribute location: texcoord */
-let rdpGLSampLoc = -1;   /* uniform location: sampler */
-
-/* Second shader program for H.264 frames (no R/B swap).
- * Bitmap path uploads BGRA -> shader swaps R/B.
- * H.264 path: WebGL converts VideoFrame to RGBA8 -> no swap needed. */
-let rdpGLProgNoSwap = null;
-let rdpGLSampLocNoSwap = -1;
-
-const RDP_GLSL_VERT = `
-attribute vec2 a_pos;
-attribute vec2 a_tex;
-varying vec2 v_tex;
-void main() {
-    v_tex = a_tex;
-    gl_Position = vec4(a_pos, 0.0, 1.0);
-}`;
-
-const RDP_GLSL_FRAG = `
-precision mediump float;
-varying vec2 v_tex;
-uniform sampler2D u_tex;
-void main() {
-    /* Texture is BGRA; swizzle to RGBA on the GPU. */
-    vec4 c = texture2D(u_tex, v_tex);
-    gl_FragColor = vec4(c.b, c.g, c.r, 1.0);
-}`;
-
-const RDP_GLSL_FRAG_NOSWAP = `
-precision mediump float;
-varying vec2 v_tex;
-uniform sampler2D u_tex;
-void main() {
-    /* Texture is already RGBA (from VideoFrame/ImageData); no swizzle needed. */
-    gl_FragColor = texture2D(u_tex, v_tex);
-}`;
-
-function rdpGLSupported() {
-    return typeof WebGLRenderingContext !== 'undefined';
+function handlePageRenderEvent(event) {
+    const kind = Number(event?.kind);
+    if (kind === 5) {
+        rdpGpuV2Decoder?.resetSurface(event.surfaceId);
+        rdpGpuV2Avc444Decoder?.resetSurface(event.surfaceId);
+    } else if (kind === 1) {
+        rdpGpuV2Decoder?.close();
+        rdpGpuV2Avc444Decoder?.close();
+        rdpGpuV2Decoder = createPageAvc420Decoder();
+        rdpGpuV2Avc444Decoder = createPageAvc444Decoder();
+    }
+    if (kind === 9) {
+        const frameId = Number(event.frameId) || 0;
+        rdpGpuV2?.addFramePending(frameId);
+        try { rdpGpuV2Decoder.decode(event); } catch (error) { failGpuV2(error, 'AVC420_GPU_DECODE_FAILED'); }
+        return;
+    }
+    if (kind === 10) {
+        const frameId = Number(event.frameId) || 0;
+        rdpGpuV2?.addFramePending(frameId);
+        rdpGpuV2Avc444Decoder.decode(event).then(() => rdpGpuV2?.completeFramePending(frameId)).catch((error) => failGpuV2(error, 'AVC444_GPU_DECODE_FAILED'));
+        return;
+    }
+    try { rdpGpuV2?.handleEvent(event); }
+    catch (error) { failGpuV2(error, 'GPU_V2_RENDER_EVENT_FAILED'); }
 }
 
-function rdpGLInit(canvas, w, h) {
-    if (!rdpGLSupported()) return false;
-    const gl = canvas.getContext('webgl2', {
-        premultipliedAlpha: false,
-        preserveDrawingBuffer: true,
-        antialias: false,
-        depth: false,
-        stencil: false,
-        desynchronized: true,
-    }) || canvas.getContext('webgl', {
-        premultipliedAlpha: false,
-        preserveDrawingBuffer: true,
-        antialias: false,
-        depth: false,
-        stencil: false,
+function createPageAvc420Decoder() {
+    return new RdpAvc420Decoder({
+        onFrame(frame, event) {
+            try { rdpGpuV2.uploadVideoFrame(event.surfaceId, event.rect, frame); }
+            finally { rdpGpuV2.completeFramePending(event.frameId); try { frame.close(); } catch {} }
+        },
+        onError(error) { failGpuV2(error, 'AVC420_GPU_DECODER_ERROR'); },
     });
-    if (!gl) return false;
-    rdpGL = gl;
-
-    /* Compile shaders */
-    const vs = gl.createShader(gl.VERTEX_SHADER);
-    gl.shaderSource(vs, RDP_GLSL_VERT);
-    gl.compileShader(vs);
-    if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
-        console.warn('[rdp-gl] vertex shader compile error:', gl.getShaderInfoLog(vs));
-        rdpGL = null;
-        return false;
-    }
-    const fs = gl.createShader(gl.FRAGMENT_SHADER);
-    gl.shaderSource(fs, RDP_GLSL_FRAG);
-    gl.compileShader(fs);
-    if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
-        console.warn('[rdp-gl] fragment shader compile error:', gl.getShaderInfoLog(fs));
-        rdpGL = null;
-        return false;
-    }
-    rdpGLProg = gl.createProgram();
-    gl.attachShader(rdpGLProg, vs);
-    gl.attachShader(rdpGLProg, fs);
-    gl.linkProgram(rdpGLProg);
-    if (!gl.getProgramParameter(rdpGLProg, gl.LINK_STATUS)) {
-        console.warn('[rdp-gl] link error:', gl.getProgramInfoLog(rdpGLProg));
-        rdpGL = null;
-        return false;
-    }
-    gl.useProgram(rdpGLProg);
-
-    /* Full-screen quad: position (x,y) + texcoord (u,v) */
-    /* Triangles cover clip space [-1,1] with texcoords [0,1] */
-    const quad = new Float32Array([
-        -1, -1, 0, 1,
-         1, -1, 1, 1,
-        -1,  1, 0, 0,
-         1,  1, 1, 0,
-    ]);
-    rdpGLQuad = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, rdpGLQuad);
-    gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
-
-    rdpGLPosLoc = gl.getAttribLocation(rdpGLProg, 'a_pos');
-    rdpGLTexLoc = gl.getAttribLocation(rdpGLProg, 'a_tex');
-    gl.enableVertexAttribArray(rdpGLPosLoc);
-    gl.enableVertexAttribArray(rdpGLTexLoc);
-    gl.vertexAttribPointer(rdpGLPosLoc, 2, gl.FLOAT, false, 16, 0);
-    gl.vertexAttribPointer(rdpGLTexLoc, 2, gl.FLOAT, false, 16, 8);
-
-    rdpGLSampLoc = gl.getUniformLocation(rdpGLProg, 'u_tex');
-    gl.uniform1i(rdpGLSampLoc, 0);
-
-    /* Build second program (no-swap) for H.264 frames. */
-    const fsNS = gl.createShader(gl.FRAGMENT_SHADER);
-    gl.shaderSource(fsNS, RDP_GLSL_FRAG_NOSWAP);
-    gl.compileShader(fsNS);
-    if (!gl.getShaderParameter(fsNS, gl.COMPILE_STATUS)) {
-        console.warn('[rdp-gl] no-swap fragment shader compile error:', gl.getShaderInfoLog(fsNS));
-    } else {
-        rdpGLProgNoSwap = gl.createProgram();
-        gl.attachShader(rdpGLProgNoSwap, vs);
-        gl.attachShader(rdpGLProgNoSwap, fsNS);
-        gl.linkProgram(rdpGLProgNoSwap);
-        if (!gl.getProgramParameter(rdpGLProgNoSwap, gl.LINK_STATUS)) {
-            console.warn('[rdp-gl] no-swap link error:', gl.getProgramInfoLog(rdpGLProgNoSwap));
-            rdpGLProgNoSwap = null;
-        } else {
-            rdpGLSampLocNoSwap = gl.getUniformLocation(rdpGLProgNoSwap, 'u_tex');
-        }
-    }
-
-    /* Create screen-sized BGRA texture */
-    rdpGLTexW = w;
-    rdpGLTexH = h;
-    rdpGLTex = gl.createTexture();
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, rdpGLTex);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    /* Allocate storage using unsized RGBA internalformat for WebGL1/Android WebView compatibility. */
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    const texErr = gl.getError();
-    if (texErr !== gl.NO_ERROR) {
-        console.warn('[rdp-gl] texture allocation failed, falling back to Canvas2D:', texErr);
-        rdpGL = null;
-        return false;
-    }
-
-    gl.viewport(0, 0, w, h);
-    gl.disable(gl.BLEND);
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    rdpDiag.renderer = 'wasm-webgl';
-    console.info('[rdp-gl] WebGL renderer initialised', { w, h });
-    return true;
 }
 
-function rdpGLResize(w, h) {
-    if (!rdpGL || !rdpGLTex) return;
-    rdpGLTexW = w;
-    rdpGLTexH = h;
-    rdpGL.activeTexture(rdpGL.TEXTURE0);
-    rdpGL.bindTexture(rdpGL.TEXTURE_2D, rdpGLTex);
-    rdpGL.texImage2D(rdpGL.TEXTURE_2D, 0, rdpGL.RGBA, w, h, 0, rdpGL.RGBA, rdpGL.UNSIGNED_BYTE, null);
-    rdpGL.viewport(0, 0, w, h);
+function createPageAvc444Decoder() {
+    return new RdpAvc444Decoder({
+        onMainFrame(frame, event) { rdpGpuV2.uploadVideoFrame(event.surfaceId, event.rect, frame); },
+        onCombinedBitmap(bytes, event) {
+            const width = Number(event.rect.right) - Number(event.rect.left);
+            rdpGpuV2.uploadBitmap(event.surfaceId, event.rect, bytes, width * 4, false);
+        },
+    });
 }
 
-/* Upload a BGRA bitmap tile to the GPU texture and render. */
-function rdpGLBlitBGRA(destX, destY, w, h, uint8Data) {
-    if (!rdpGL || !rdpGLTex) return false;
-    const gl = rdpGL;
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, rdpGLTex);
-    /* Upload only the dirty region.  texSubImage2D uses GPU DMA path. */
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, destX, destY, w, h, gl.RGBA, gl.UNSIGNED_BYTE, uint8Data);
-    const uploadErr = gl.getError();
-    if (uploadErr !== gl.NO_ERROR) {
-        rdpDiag.glError = uploadErr;
-        rdpDiag.drawFails++;
-        rdpDiag.lastDrawError = 'texSubImage2D failed: ' + uploadErr;
-        console.warn('[rdp-gl] texSubImage2D failed, disabling WebGL renderer:', uploadErr);
-        rdpGLCleanup();
-        if (rdpCanvas && !rdpCtx2d) rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
-        return false;
-    }
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    return gl.getError() === gl.NO_ERROR;
+function initPageGpuPipeline() {
+    rdpGpuV2?.destroy();
+    rdpGpuV2Decoder?.close();
+    rdpGpuV2Avc444Decoder?.close();
+    rdpGpuV2 = new RdpGpuSurfaceCompositor(rdpCanvas, {
+        diagnostics: rdpDiag,
+        onContextRestoreNeeded() {
+            rdpDiag.fallbackReason = 'CONTEXT_RESTORED_NEEDS_REFRESH';
+            try { rdpRequestFullRefresh(); } catch (error) { failGpuV2(error, 'FULL_REFRESH_FAILED'); }
+        },
+        onFramesPresented(frameIds) {
+            for (const frameId of frameIds) rdpGfxCompleteFrame(frameId, 0);
+            notePresentedFrame();
+        },
+    });
+    rdpGpuV2Decoder = createPageAvc420Decoder();
+    rdpGpuV2Avc444Decoder = createPageAvc444Decoder();
+    window.rdpOnRenderEvent = handlePageRenderEvent;
+    rdpDiag.renderer = 'gpu-v2-page';
 }
-
-function rdpGLCleanup() {
-    if (rdpGL) {
-        if (rdpGLTex) { rdpGL.deleteTexture(rdpGLTex); rdpGLTex = null; }
-        if (rdpGLQuad) { rdpGL.deleteBuffer(rdpGLQuad); rdpGLQuad = null; }
-        if (rdpGLProg) { rdpGL.deleteProgram(rdpGLProg); rdpGLProg = null; }
-        if (rdpGLProgNoSwap) { rdpGL.deleteProgram(rdpGLProgNoSwap); rdpGLProgNoSwap = null; }
-        rdpGL = null;
-    }
-    rdpGLTexW = 0;
-    rdpGLTexH = 0;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
- * BITMAP DRAW DISPATCH - chooses WebGL or Canvas2D fallback
- * Called from Go WASM via window.rdpDrawBitmap.
- * Expects raw BGRA data (no BGR->RGB conversion needed with WebGL).
- * ═══════════════════════════════════════════════════════════════════════ */
-window.rdpDrawBitmapBGRA = function (destX, destY, w, h, uint8Data) {
-    rdpDiag.bitmapCalls++;
-    rdpDiag.bitmapBytes += uint8Data?.byteLength || 0;
-    rdpDiag.bitmapLast = { x: destX, y: destY, w, h, bytes: uint8Data?.byteLength || 0, at: Date.now() };
-    if (rdpGL && rdpGLBlitBGRA(destX, destY, w, h, uint8Data)) {
-        notePresentedFrame();
-        return true;
-    }
-    /* Fallback: Canvas2D with putImageData (requires RGBA, not BGRA).
-     * Convert BGRA->RGBA in JS. This path is only used when WebGL is
-     * unavailable or a driver rejects the upload. */
-    if (!rdpCtx2d && rdpCanvas) {
-        recreateCanvasFor2D(rdpWidth || rdpCanvas.width, rdpHeight || rdpCanvas.height);
-        rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
-        rdpDiag.renderer = 'wasm-canvas2d-fallback';
-        applyFitMode();
-        attachInputEvents();
-    }
-    if (!rdpCtx2d) {
-        rdpDiag.drawFails++;
-        rdpDiag.lastDrawError = 'no Canvas2D context after fallback';
-        return false;
-    }
-    const rgba = new Uint8ClampedArray(w * h * 4);
-    for (let i = 0; i < w * h; i++) {
-        const s = i * 4;
-        rgba[s] = uint8Data[s + 2];
-        rgba[s + 1] = uint8Data[s + 1];
-        rgba[s + 2] = uint8Data[s];
-        rgba[s + 3] = 0xFF;
-    }
-    const imgData = new ImageData(rgba, w, h);
-    rdpCtx2d.putImageData(imgData, destX, destY);
-    notePresentedFrame();
-    return true;
-};
+window._rdpRenderDiag = () => JSON.stringify(snapshotRdpDiagnostics());
 
 /* ═══════════════════════════════════════════════════════════════════════
  * WASM BOOTSTRAP
@@ -395,6 +215,17 @@ async function loadWasm() {
         fetch('vendor/rdp-wasm/main.wasm?v=' + Date.now()),
         go.importObject,
     );
+    if (result.instance.exports.mem) {
+        rdpWasmBitmapUploader = createSynchronousBitmapUploader({
+            memoryProvider: () => result.instance.exports.mem,
+            upload(event) {
+                if (Number(event.kind) === 16) rdpGpuV2.uploadClassicBitmap(event.rect, event.data, event.stride);
+                else rdpGpuV2.uploadBitmap(event.surfaceId, event.rect, event.data, event.stride);
+                if (!Number(event.frameId)) rdpGpuV2.schedulePresent();
+            },
+        });
+        window.rdpOnWasmBitmap = (event) => rdpWasmBitmapUploader(event);
+    }
     go.run(result.instance);
     wasmReady = true;
     console.info('[rdp-wasm] WASM engine loaded');
@@ -455,14 +286,12 @@ window.rdpOnClose = function () {
         setStatus('disconnected', '连接已断开');
         notifyParentStatus('closed');
         cleanupAudio();
-        cleanupH264();
-        maybeAutoReconnect();
+            maybeAutoReconnect();
     } else if (!rdpManualDisconnect && !rdpReconnecting) {
         /* Connection failed during setup and rdpOnError didn't already
          * schedule a reconnect — try once more. */
         cleanupAudio();
-        cleanupH264();
-        maybeAutoReconnect();
+            maybeAutoReconnect();
     }
 };
 
@@ -527,156 +356,7 @@ let h264CallCount = 0;
 let h264ErrorLog = [];
 let h264InfoLog = [];
 
-/* H.264 Frame Presenter - queues decoded frames and presents them on
- * requestAnimationFrame, aligned to the audio clock for A/V sync.
- * Instead of drawing immediately in the VideoDecoder output callback,
- * frames are enqueued with their position. The rAF loop picks the most
- * recent frame whose timestamp is due and draws it, discarding stale
- * frames to maintain low latency. */
-const h264PresentQueue = [];
-let h264PresentRAF = null;
-let h264LastDrawnFrame = null;
-
-/* Temp canvas for H.264 -> WebGL fallback (only used when direct
- * VideoFrame texSubImage2D is unsupported by the browser). */
-let h264TempCanvas = null;
-let h264TempCtx = null;
-
-function h264StartPresentLoop() {
-    if (h264PresentRAF) return;
-    const tick = () => {
-        h264PresentRAF = null;
-        if (h264PresentQueue.length === 0) {
-            h264PresentRAF = requestAnimationFrame(tick);
-            return;
-        }
-        /* Drain: keep only the most recent frame (discard stale ones). */
-        while (h264PresentQueue.length > 1) {
-            const old = h264PresentQueue.shift();
-            try { old.frame.close(); } catch {}
-        }
-        const item = h264PresentQueue.shift();
-        if (item) {
-            if (rdpCtx2d) {
-                rdpCtx2d.drawImage(item.frame, item.x, item.y);
-            } else if (rdpGL) {
-                /* WebGL active: draw VideoFrame to a temp canvas then upload. */
-                h264DrawFrameWebGL(item.frame, item.x, item.y);
-            }
-            try { item.frame.close(); } catch {}
-            notePresentedFrame();
-        }
-        h264PresentRAF = requestAnimationFrame(tick);
-    };
-    h264PresentRAF = requestAnimationFrame(tick);
-}
-
-function h264StopPresentLoop() {
-    if (h264PresentRAF) { cancelAnimationFrame(h264PresentRAF); h264PresentRAF = null; }
-    while (h264PresentQueue.length > 0) {
-        const item = h264PresentQueue.shift();
-        try { item.frame.close(); } catch {}
-    }
-}
-
-/* When WebGL is active, VideoDecoder output frames are uploaded directly
- * to the WebGL texture via texSubImage2D, which accepts VideoFrame as a
- * source (per WebGL2 spec).  This avoids the intermediate Canvas2D
- * readback entirely. */
-function h264DrawFrameWebGL(frame, x, y) {
-    if (!rdpGL || !rdpGLTex) {
-        try { frame.close(); } catch {}
-        return;
-    }
-    const gl = rdpGL;
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, rdpGLTex);
-    /* texSubImage2D with a VideoFrame source: WebGL2 converts the frame's
-     * native format (e.g. NV12, I420, RGBA) to the texture's internal
-     * format (RGBA8).  Since the data is now correctly ordered RGBA in the
-     * texture, we must NOT do the R/B swap that the bitmap path uses. */
-    var usedDirect = false;
-    try {
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, frame);
-        usedDirect = true;
-    } catch (e) {
-        /* Fallback: some browsers may not support VideoFrame as texSubImage2D
-         * source.  Use a Canvas2D intermediate. */
-        if (!h264TempCanvas) {
-            h264TempCanvas = document.createElement('canvas');
-            h264TempCanvas.width = rdpWidth || 1920;
-            h264TempCanvas.height = rdpHeight || 1080;
-            h264TempCtx = h264TempCanvas.getContext('2d', { desynchronized: true });
-        }
-        h264TempCtx.drawImage(frame, x, y, frame.displayWidth, frame.displayHeight);
-        const imgData = h264TempCtx.getImageData(x, y, frame.displayWidth, frame.displayHeight);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, imgData.data);
-    }
-    /* Use the no-swap program for H.264 (texture is already RGBA). */
-    if (rdpGLProgNoSwap) {
-        gl.useProgram(rdpGLProgNoSwap);
-        gl.uniform1i(rdpGLSampLocNoSwap, 0);
-        /* Re-bind attrib locations (may differ from the swap program). */
-        const posLoc = gl.getAttribLocation(rdpGLProgNoSwap, 'a_pos');
-        const texLoc = gl.getAttribLocation(rdpGLProgNoSwap, 'a_tex');
-        if (posLoc >= 0) { gl.enableVertexAttribArray(posLoc); gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 16, 0); }
-        if (texLoc >= 0) { gl.enableVertexAttribArray(texLoc); gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 16, 8); }
-    }
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    /* Switch back to the swap program for bitmap path. */
-    gl.useProgram(rdpGLProg);
-    gl.uniform1i(rdpGLSampLoc, 0);
-    /* Re-bind attrib locations for the swap program. */
-    const posLoc2 = gl.getAttribLocation(rdpGLProg, 'a_pos');
-    const texLoc2 = gl.getAttribLocation(rdpGLProg, 'a_tex');
-    if (posLoc2 >= 0) { gl.enableVertexAttribArray(posLoc2); gl.vertexAttribPointer(posLoc2, 2, gl.FLOAT, false, 16, 0); }
-    if (texLoc2 >= 0) { gl.enableVertexAttribArray(texLoc2); gl.vertexAttribPointer(texLoc2, 2, gl.FLOAT, false, 16, 8); }
-}
-
-window.rdpOnH264 = function (destX, destY, w, h, isKey, uint8Data) {
-    if (!h264Dec || h264Dec.state === 'closed') return;
-    h264CallCount++;
-    rdpDiag.h264Calls++;
-    if (h264CallCount <= 10) {
-        const firstBytes = Array.from(uint8Data.slice(0, 12)).map(b => b.toString(16).padStart(2,'0')).join(' ');
-        h264InfoLog.push('onH264 #' + h264CallCount + ' dest=(' + destX + ',' + destY + ') size=' + w + 'x' + h + ' isKey=' + isKey + ' len=' + uint8Data.length + ' first12=' + firstBytes + ' state=' + h264Dec.state);
-    }
-
-    /* Use high-resolution timestamp for better frame ordering.  The old
-     * code used h264Timestamp += 1000 which was a fake counter with no
-     * relation to real presentation time. */
-    const nowUs = Math.round(performance.now() * 1000);
-    h264Timestamp = Math.max(h264Timestamp + 1, nowUs); /* integer microseconds, monotonic */
-    h264FramePos.set(h264Timestamp, { x: destX, y: destY });
-
-    /* Guard against Map leak: if the decoder queue is too deep (frames
-     * not being consumed fast enough), proactively drop old entries. */
-    if (h264FramePos.size > 30) {
-        const oldestKey = h264FramePos.keys().next().value;
-        h264FramePos.delete(oldestKey);
-    }
-
-    /* Check decoder queue depth; if too deep, skip this frame to avoid
-     * unbounded memory growth. */
-    if (h264Dec.decodeQueueSize > 10) {
-        h264FramePos.delete(h264Timestamp);
-        return;
-    }
-
-    try {
-        h264Dec.decode(new EncodedVideoChunk({
-            type: isKey ? 'key' : 'delta',
-            timestamp: h264Timestamp,
-            data: uint8Data,
-        }));
-    } catch (e) {
-        console.warn('[rdp-wasm] H.264 decode error:', e);
-        h264FramePos.delete(h264Timestamp);
-    }
-};
-
-/* ─── Pointer callbacks ──────────────────────────────────────────────── */
+/* ─── Pointer callbacks/* ─── Pointer callbacks ──────────────────────────────────────────────── */
 window.rdpOnPointerHide = function () {
     if (rdpCanvas) rdpCanvas.style.cursor = 'none';
 };
@@ -762,72 +442,6 @@ function buildCursorCss(xorBpp, hotX, hotY, w, h, andMask, xorData) {
     const hx = Math.max(0, Math.min(w - 1, hotX | 0));
     const hy = Math.max(0, Math.min(h - 1, hotY | 0));
     return `url("${dataUrl}") ${hx} ${hy}, default`;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
- * H.264 WEBCODECS
- * ═══════════════════════════════════════════════════════════════════════ */
-/* ═══════════════════════════════════════════════════════════════════════
- * H.264 WEBCODECS — per-tile decoder that handles varying dimensions
- * ═══════════════════════════════════════════════════════════════════════ */
-function h264Supported() {
-    return typeof VideoDecoder !== 'undefined' && typeof EncodedVideoChunk !== 'undefined';
-}
-
-/* RDP AVC420 sends H.264 tiles. Configure the decoder WITHOUT fixed
- * codedWidth/codedHeight so it reads dimensions from the H.264 SPS NAL
- * in each bitstream. This handles tiles of any size without reconfiguring. */
-
-function createH264Decoder() {
-    if (!h264Supported()) return null;
-    let frameCount = 0;
-    let errorCount = 0;
-    h264InfoLog = [];
-    h264ErrorLog = [];
-    h264CallCount = 0;
-    const decoder = new VideoDecoder({
-        output(frame) {
-            frameCount++;
-            rdpDiag.h264Frames++;
-            const pos = h264FramePos.get(frame.timestamp);
-            h264FramePos.delete(frame.timestamp);
-            const x = pos ? pos.x : 0;
-            const y = pos ? pos.y : 0;
-            if (frameCount <= 5) h264InfoLog.push('decoded #' + frameCount + ' pos=(' + x + ',' + y + ') coded=' + frame.codedWidth + 'x' + frame.codedHeight + ' display=' + frame.displayWidth + 'x' + frame.displayHeight);
-            /* Enqueue for the rAF present loop instead of drawing immediately.
-             * This aligns frame presentation to vsync and allows the queue
-             * to absorb decoder jitter without blocking the output callback. */
-            h264PresentQueue.push({ frame, x, y });
-            /* Hard cap: if the queue grows beyond 3 frames, drop the oldest
-             * to bound latency. */
-            while (h264PresentQueue.length > 3) {
-                const stale = h264PresentQueue.shift();
-                try { stale.frame.close(); } catch {}
-            }
-        },
-        error(e) {
-            errorCount++;
-            if (errorCount <= 20) h264ErrorLog.push('ERROR #' + errorCount + ': ' + (e.message || e));
-        },
-    });
-    decoder.configure({
-        codec: 'avc1.42E01E',
-        optimizeForLatency: true,
-    });
-    h264StartPresentLoop();
-    h264InfoLog.push('decoder created, state=' + decoder.state);
-    /* Expose logs for remote retrieval */
-    window._h264Logs = () => JSON.stringify({ info: h264InfoLog, errors: h264ErrorLog, calls: h264CallCount, frames: frameCount });
-    return decoder;
-}
-
-function cleanupH264() {
-    h264StopPresentLoop();
-    if (h264Dec) { try { h264Dec.close(); } catch {} h264Dec = null; }
-    h264FramePos.clear();
-    h264Timestamp = 0;
-    h264TempCanvas = null;
-    h264TempCtx = null;
 }
 
 function cleanupAudio() {
@@ -1002,6 +616,7 @@ async function rdpStoragePickFiles() {
                 const file = await handle.getFile();
                 const data = new Uint8Array(await file.arrayBuffer());
                 rdpStorageFiles.push({ name: file.name, size: file.size, isDir: false, data, handle });
+                if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
             }
         } else {
             /* Fallback: use <input type="file"> */
@@ -1015,6 +630,7 @@ async function rdpStoragePickFiles() {
                     for (const file of input.files) {
                         const data = new Uint8Array(await file.arrayBuffer());
                         rdpStorageFiles.push({ name: file.name, size: file.size, isDir: false, data });
+                        if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
                     }
                     resolve();
                 };
@@ -1215,8 +831,7 @@ function startConnectWatchdog() {
         setStatus('error', 'RDP 连接超时，正在重试...');
         try { rdpDisconnect(); } catch {}
         cleanupAudio();
-        cleanupH264();
-        maybeAutoReconnect();
+            maybeAutoReconnect();
     }, CONNECT_TIMEOUT_MS);
 }
 
@@ -1254,7 +869,12 @@ function reconnectWithSettings() {
      * connect races the old close and the proxy/WASM state machine jams. */
     try { rdpDisconnect(); } catch {}
     stopAgentDriveBridge();
-    cleanupH264();
+    if (selectedPipeline === 'worker-gpu-v2') {
+        try { rdpWorkerBridge?.close(); } catch {}
+        rdpWorkerBridge = null;
+        setStatus('error', 'Worker RDP 需要重新加载页面以重建 OffscreenCanvas');
+        return;
+    }
     if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; audioNextAt = 0; }
     setTimeout(() => {
         connect().catch((e) => {
@@ -1272,7 +892,6 @@ async function connect() {
     try { rdpDisconnect(); } catch {}
     stopAgentDriveBridge();
     rdpManualDisconnect = false;
-    cleanupH264();
     rdpAudinStopInternal();
     rdpLocationStopInternal();
     rdpCameraStopInternal();
@@ -1282,8 +901,7 @@ async function connect() {
     const width = rdpWidth || 1920;
     const height = rdpHeight || 1080;
 
-    /* Create canvas */
-    ensureCanvas(width, height);
+    if (!rdpCanvas) ensureCanvas(width, height);
 
     /* Reuse AudioContext if still open; create fresh only when needed.
      * Browsers limit the number of AudioContexts — creating one every
@@ -1295,15 +913,7 @@ async function connect() {
     }
     audioNextAt = 0;
 
-    /* Select render/codec path. When WebGL bitmap renderer is active,
-     * default to grdp internal H.264 decode -> bitmap updates so all drawing
-     * uses one renderer path. */
-    const webCodecsFlag = params.rdpWebCodecs ?? urlParams.get('rdpWebCodecs');
-    const hasWebCodecs = h264Supported() && (webCodecsFlag !== false && webCodecsFlag !== 'false' && webCodecsFlag !== '0') && !shouldUseWebGLRenderer();
-    rdpDiag.codec = hasWebCodecs ? 'webcodecs-h264' : 'grdp-bitmap';
-
-    /* Init H.264 only when Go will send raw H.264 to JS. */
-    if (hasWebCodecs) h264Dec = createH264Decoder();
+    rdpDiag.codec = 'semantic-webcodecs';
 
     setStatus('connecting', '正在获取 RDP 凭据...');
 
@@ -1378,8 +988,7 @@ async function connect() {
                     setStatus('disconnected', '已取消连接');
                     stopAgentDriveBridge();
                     cleanupAudio();
-                    cleanupH264();
-                    notifyParentCloseRequest('cert-rejected');
+                                    notifyParentCloseRequest('cert-rejected');
                     return;
                 }
             }
@@ -1397,19 +1006,30 @@ async function connect() {
     startConnectWatchdog();
     if (rdpAgentStorageEnabled) startAgentDriveBridge();
     else stopAgentDriveBridge();
-    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera, hasWebCodecs, wallpaperOn);
+    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera, wallpaperOn);
 }
 
 function disconnect() {
     rdpManualDisconnect = true;
+    rdpWorkerBridge?.input?.releaseAll();
     clearConnectWatchdog();
     rdpReconnecting = false;
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     connected = false;
     try { rdpDisconnect(); } catch {}
     stopAgentDriveBridge();
-    cleanupH264();
     cleanupAudio();
+    if (selectedPipeline === 'worker-gpu-v2') {
+        try { rdpWorkerBridge?.close(); } catch {}
+        rdpWorkerBridge = null;
+    } else if (selectedPipeline === 'gpu-v2-page') {
+        try { rdpGpuV2Decoder?.close(); } catch {}
+        try { rdpGpuV2Avc444Decoder?.close(); } catch {}
+        try { rdpGpuV2?.destroy(); } catch {}
+        rdpGpuV2Decoder = null;
+        rdpGpuV2Avc444Decoder = null;
+        rdpGpuV2 = null;
+    }
     rdpAudinStopInternal();
     rdpLocationStopInternal();
     rdpCameraStopInternal();
@@ -1443,33 +1063,6 @@ function maybeAutoReconnect() {
 /* ═══════════════════════════════════════════════════════════════════════
  * CANVAS MANAGEMENT
  * ═══════════════════════════════════════════════════════════════════════ */
-function shouldUseWebGLRenderer() {
-    const webglFlag = params.rdpWebgl ?? urlParams.get('rdpWebgl');
-    // Emergency safe default: Canvas2D. Enable GPU renderer explicitly with
-    // rdpWebgl=true after confirming frame delivery. This avoids silent black
-    // screens while we diagnose the WebGL path on Android WebView.
-    return webglFlag === true || webglFlag === 'true' || webglFlag === '1';
-}
-
-function recreateCanvasFor2D(w, h) {
-    if (!rdpCanvas) return null;
-    const old = rdpCanvas;
-    if (rdpTouchController) {
-        rdpTouchController.destroy();
-        rdpTouchController = null;
-    }
-    const fresh = document.createElement('canvas');
-    fresh.id = old.id || 'rdpCanvas';
-    fresh.tabIndex = old.tabIndex || 0;
-    fresh.style.cssText = old.style.cssText;
-    fresh.width = w;
-    fresh.height = h;
-    old.replaceWith(fresh);
-    rdpCanvas = fresh;
-    inputAttached = false;
-    return fresh;
-}
-
 function ensureCanvas(w, h) {
     rdpWidth = w;
     rdpHeight = h;
@@ -1485,31 +1078,14 @@ function ensureCanvas(w, h) {
         rdpCanvas.style.webkitTouchCallout = 'none';
         rdpCanvas.style.background = '#000';
         rdpCanvas.style.cursor = 'default';
-        if (displayRoot) {
-            displayRoot.innerHTML = '';
-            displayRoot.appendChild(rdpCanvas);
-        }
+        if (displayRoot) { displayRoot.innerHTML = ''; displayRoot.appendChild(rdpCanvas); }
     }
     rdpCanvas.width = w;
     rdpCanvas.height = h;
-    /* Prefer GPU/WebGL by default to minimize CPU copy/conversion cost.
-     * Use ?rdpWebgl=false (or saved param rdpWebgl=false) to force the
-     * Canvas2D fallback.  If WebGL init fails, recreate the canvas because a
-     * canvas that already has a WebGL context cannot reliably acquire a 2D
-     * context afterwards. */
-    const enableWebGL = shouldUseWebGLRenderer();
-    if (enableWebGL && rdpGLInit(rdpCanvas, w, h)) {
-        rdpCtx2d = null;
+    if (selectedPipeline === 'worker-gpu-v2') {
+        rdpDiag.renderer = 'worker-gpu-v2-pending';
     } else {
-        rdpGLCleanup();
-        if (!enableWebGL) {
-            rdpDiag.renderer = 'wasm-canvas2d-forced';
-        }
-        if (!rdpCtx2d) {
-            recreateCanvasFor2D(w, h);
-            rdpCtx2d = rdpCanvas.getContext('2d', { desynchronized: true });
-        }
-        if (rdpCtx2d && rdpDiag.renderer !== 'wasm-canvas2d-forced') rdpDiag.renderer = 'wasm-canvas2d-fallback';
+        initPageGpuPipeline();
     }
     applyFitMode();
     attachInputEvents();
@@ -1655,7 +1231,8 @@ function attachInputEvents() {
     rdpCanvas.addEventListener('mousemove', (e) => {
         if (!connected) return;
         const { x, y } = canvasCoords(e);
-        rdpMouseMove(x, y);
+        if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('mouse-move', { x, y });
+        else rdpMouseMove(x, y);
     });
 
     rdpCanvas.addEventListener('mousedown', (e) => {
@@ -1663,14 +1240,16 @@ function attachInputEvents() {
         e.preventDefault();
         rdpCanvas.focus();
         const { x, y } = canvasCoords(e);
-        rdpMouseDown(e.button, x, y);
+        if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('mouse-down', { button: e.button, x, y });
+        else rdpMouseDown(e.button, x, y);
     });
 
     rdpCanvas.addEventListener('mouseup', (e) => {
         if (!connected) return;
         e.preventDefault();
         const { x, y } = canvasCoords(e);
-        rdpMouseUp(e.button, x, y);
+        if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('mouse-up', { button: e.button, x, y });
+        else rdpMouseUp(e.button, x, y);
     });
 
     rdpCanvas.addEventListener('wheel', (e) => {
@@ -1680,7 +1259,8 @@ function attachInputEvents() {
         if (e.deltaMode === 1) delta = -e.deltaY / 3;
         else if (e.deltaMode === 2) delta = -e.deltaY;
         else delta = -e.deltaY / 100;
-        rdpMouseWheel(delta);
+        if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('wheel', { delta });
+        else rdpMouseWheel(delta);
     }, { passive: false });
 
     rdpCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1722,13 +1302,15 @@ function attachInputEvents() {
             syncClipboard();
         }
         await clipboardSyncPromise;
-        rdpKeyDown(e.code);
+        if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('key-down', { code: e.code });
+        else rdpKeyDown(e.code);
     });
 
     rdpCanvas.addEventListener('keyup', (e) => {
         if (!connected) return;
         e.preventDefault();
-        rdpKeyUp(e.code);
+        if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('key-up', { code: e.code });
+        else rdpKeyUp(e.code);
     });
 
     /* ─── Touch input — uses RdpTouchController module ──── */
@@ -1739,11 +1321,11 @@ function attachInputEvents() {
             canvas: rdpCanvas,
             getConnected: () => connected,
             canvasCoords,
-            sendMouseMove: (x, y) => rdpMouseMove(x, y),
-            sendMouseDown: (btn, x, y) => rdpMouseDown(btn, x, y),
-            sendMouseUp: (btn, x, y) => rdpMouseUp(btn, x, y),
-            sendMouseWheel: (delta) => rdpMouseWheel(delta),
-            sendMouseHWheel: (delta) => rdpMouseHScroll(delta),
+            sendMouseMove: (x, y) => selectedPipeline === 'worker-gpu-v2' ? rdpWorkerBridge.input.push('mouse-move', { x, y }) : rdpMouseMove(x, y),
+            sendMouseDown: (btn, x, y) => selectedPipeline === 'worker-gpu-v2' ? rdpWorkerBridge.input.push('mouse-down', { button: btn, x, y }) : rdpMouseDown(btn, x, y),
+            sendMouseUp: (btn, x, y) => selectedPipeline === 'worker-gpu-v2' ? rdpWorkerBridge.input.push('mouse-up', { button: btn, x, y }) : rdpMouseUp(btn, x, y),
+            sendMouseWheel: (delta) => selectedPipeline === 'worker-gpu-v2' ? rdpWorkerBridge.input.push('wheel', { delta }) : rdpMouseWheel(delta),
+            sendMouseHWheel: (delta) => selectedPipeline === 'worker-gpu-v2' ? rdpWorkerBridge.input.push('hwheel', { delta }) : rdpMouseHScroll(delta),
             sendKeyCombo: (gesture) => {
                 const combos = {
                     '3up': ['MetaLeft', 'Tab'],
@@ -1753,8 +1335,10 @@ function attachInputEvents() {
                 };
                 const keys = combos[gesture];
                 if (!keys) return;
-                for (const code of keys) rdpKeyDown(code);
-                setTimeout(() => { for (const code of keys.slice().reverse()) rdpKeyUp(code); }, 50);
+                const sendDown = (code) => selectedPipeline === 'worker-gpu-v2' ? rdpWorkerBridge.input.push('key-down', { code }) : rdpKeyDown(code);
+                const sendUp = (code) => selectedPipeline === 'worker-gpu-v2' ? rdpWorkerBridge.input.push('key-up', { code }) : rdpKeyUp(code);
+                for (const code of keys) sendDown(code);
+                setTimeout(() => { for (const code of keys.slice().reverse()) sendUp(code); }, 50);
             },
             relativeMode,
             relativeSensitivity,
@@ -2603,6 +2187,7 @@ function initFilePanel() {
             for (const file of rdpFileInput.files) {
                 const data = new Uint8Array(await file.arrayBuffer());
                 rdpStorageFiles.push({ name: file.name, size: file.size, isDir: false, data });
+                if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
                 added.push({ name: file.name, size: file.size, data });
             }
             rdpFileInput.value = '';
@@ -2655,7 +2240,9 @@ function initFilePanel() {
     /* ── Download all remote clipboard files ── */
     if (rdpFileDownloadAllBtn) {
         rdpFileDownloadAllBtn.addEventListener('click', async () => {
-            const files = typeof rdpGetServerFiles === 'function' ? rdpGetServerFiles() : null;
+            const files = selectedPipeline === 'worker-gpu-v2'
+                ? await rdpWorkerBridge.call('rdpGetServerFiles', []).catch(() => null)
+                : (typeof rdpGetServerFiles === 'function' ? rdpGetServerFiles() : null);
             if (!files || !files.length) {
                 setFilesHint('远程剪贴板暂无文件', 'warning');
                 return;
@@ -2684,6 +2271,7 @@ function initFilePanel() {
         rdpPendingFileList.querySelectorAll('.rdp-file-remove').forEach((btn) => {
             btn.addEventListener('click', () => {
                 rdpStorageFiles.splice(Number(btn.dataset.idx), 1);
+                if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
                 updatePendingFileList();
             });
         });
@@ -2794,6 +2382,7 @@ function initFilePanel() {
                     fetch(url).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
                     .then(buf => {
                         rdpStorageFiles.push({ name: f.name || 'file', size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
+                        if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
                         updatePendingFileList();
                         if (typeof rdpNotifyFilesChanged === 'function') rdpNotifyFilesChanged();
                     }).catch(err => setFilesHint('接收文件失败: ' + (f.name || '') + ' ' + err.message, 'warning'));
@@ -2802,6 +2391,7 @@ function initFilePanel() {
                         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
                         .then(buf => {
                             rdpStorageFiles.push({ name: f.name || 'file', size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
+                            if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
                             updatePendingFileList();
                             if (typeof rdpNotifyFilesChanged === 'function') rdpNotifyFilesChanged();
                         }).catch(() => {});
@@ -2894,10 +2484,9 @@ window.addEventListener('message', (e) => {
     const size = computeRdpSize();
     rdpWidth = size.width;
     rdpHeight = size.height;
+    ensureCanvas(rdpWidth, rdpHeight);
 
-    /* Load WASM then connect */
-    try {
-        /* Load wasm_exec.js runtime first */
+    async function loadPageWasm() {
         await new Promise((resolve, reject) => {
             if (typeof Go !== 'undefined') { resolve(); return; }
             const script = document.createElement('script');
@@ -2907,6 +2496,33 @@ window.addEventListener('message', (e) => {
             document.head.appendChild(script);
         });
         await loadWasm();
+    }
+
+    /* Load WASM then connect */
+    try {
+        if (selectedPipeline === 'worker-gpu-v2') {
+            if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') throw new Error('Worker RDP requires cross-origin isolation');
+            if (typeof Worker === 'undefined' || typeof rdpCanvas?.transferControlToOffscreen !== 'function') throw new Error('OffscreenCanvas Worker is unavailable');
+            const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260711-worker-v1' });
+            if (!probe.supported) {
+                rdpDiag.fallbackReason = probe.reason;
+                rdpDiag.workerProbe = probe;
+                selectedPipeline = 'gpu-v2-page';
+                rdpDiag.pipeline = 'gpu-v2-page';
+                console.warn('[rdp-worker] capability probe failed; using page GPU v2 without transferring canvas', probe);
+                initPageGpuPipeline();
+                await loadPageWasm();
+            } else {
+                rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260711-worker-v1', { type: 'module' }));
+                rdpWorkerBridge.installGlobals(window);
+                rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
+                const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
+                rdpDiag.renderer = 'worker-gpu-v2';
+                rdpDiag.worker = capabilities;
+            }
+        } else {
+            await loadPageWasm();
+        }
         await connect();
     } catch (err) {
         console.error('[rdp-wasm] boot failed:', err);

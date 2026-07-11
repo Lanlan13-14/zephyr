@@ -6,7 +6,14 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "build:editor": "esbuild public/editor/src/zephyr-editor.js --bundle --format=esm --target=es2020 --outfile=public/editor/zephyr-editor.bundle.js --minify"
+    "build:editor": "esbuild public/editor/src/zephyr-editor.js --bundle --format=esm --target=es2020 --outfile=public/editor/zephyr-editor.bundle.js --minify",
+    "test": "npm run test:rdp-node",
+    "test:rdp-node": "node --test tests/*.test.mjs",
+    "test:syntax": "node tests/check-js-syntax.mjs",
+    "test:go": "cd rdp-wasm/grdp-patch && GOOS=js GOARCH=wasm go test -exec=\"$(go env GOROOT)/lib/wasm/go_js_wasm_exec\" ./plugin/rdpgfx ./plugin/cliprdr ./protocol/nla && cd ../.. && GOOS=js GOARCH=wasm go test -exec=\"$(go env GOROOT)/lib/wasm/go_js_wasm_exec\" ./...",
+    "test:wasm-build": "cd rdp-wasm && GOOS=js GOARCH=wasm go build -o /tmp/zephyr-rdp-main.wasm . && test -s /tmp/zephyr-rdp-main.wasm && rm -f /tmp/zephyr-rdp-main.wasm",
+    "test:browser-smoke": "node tests/rdp-browser-smoke-runner.mjs",
+    "test:ci": "npm run test:syntax && npm run test:rdp-node && npm run test:go && npm run test:wasm-build"
   },
   "dependencies": {
     "@babel/runtime": "^7.29.2",

@@ -1978,6 +1978,7 @@ func buildNetworkOpenInfo(isDir bool, size int64, mtime time.Time) []byte {
 	binary.Write(buf, binary.LittleEndian, size) // AllocationSize
 	binary.Write(buf, binary.LittleEndian, size) // EndOfFile
 	binary.Write(buf, binary.LittleEndian, attrs)
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // Reserved
 	return buf.Bytes()
 }
 

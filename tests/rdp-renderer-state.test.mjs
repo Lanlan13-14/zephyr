@@ -1,0 +1,93 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+
+const source = await fs.readFile(new URL('../public/rdp-renderer.js', import.meta.url), 'utf8');
+const { RdpGpuSurfaceCompositor } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+
+function schedulingFixture() {
+    const compositor = Object.create(RdpGpuSurfaceCompositor.prototype);
+    Object.assign(compositor, {
+        contextLost: false,
+        dirty: true,
+        sealedFrames: new Set(),
+        framePending: new Map(),
+        presentedFrames: [],
+        surfaces: new Map(),
+        width: 100,
+        height: 100,
+        diagnostics: { presents: 0 },
+        onFramesPresented: null,
+        raf: null,
+        requestFrame(callback) { this.callback = callback; return 1; },
+        gl: {
+            FRAMEBUFFER: 1, COLOR_BUFFER_BIT: 2, TEXTURE_2D: 3, TEXTURE0: 4,
+            bindFramebuffer() {}, viewport() {}, clearColor() {}, clear() {}, deleteFramebuffer() {}, deleteTexture() {},
+        },
+    });
+    compositor._drawTexture = () => {};
+    return compositor;
+}
+
+test('sealed frame waits for all asynchronous video tokens', () => {
+    const compositor = schedulingFixture();
+    compositor.beginFrame(7);
+    compositor.addFramePending(7);
+    compositor.endFrame(7);
+    assert.equal(compositor.present(), false);
+    assert.deepEqual(compositor.presentedFrames, []);
+    compositor.completeFramePending(7);
+    assert.equal(compositor.present(), true);
+    assert.deepEqual(compositor.presentedFrames, [7]);
+});
+
+test('later ready frame cannot bypass an earlier pending frame', () => {
+    const compositor = schedulingFixture();
+    compositor.beginFrame(1);
+    compositor.addFramePending(1);
+    compositor.endFrame(1);
+    compositor.beginFrame(2);
+    compositor.endFrame(2);
+    assert.equal(compositor.present(), false);
+    compositor.completeFramePending(1);
+    assert.equal(compositor.present(), true);
+    assert.deepEqual(compositor.presentedFrames, [1, 2]);
+});
+
+test('multiple tiles in one frame schedule only one present callback', () => {
+    const compositor = schedulingFixture();
+    compositor.beginFrame(8);
+    compositor.dirty = true;
+    compositor.dirty = true;
+    compositor.endFrame(8);
+    const first = compositor.raf;
+    compositor.schedulePresent();
+    assert.equal(compositor.raf, first);
+});
+
+test('classic bitmap event uploads to the unified desktop surface', () => {
+    const compositor = schedulingFixture();
+    let uploaded = null;
+    compositor.ensureDesktopSurface = () => ({ id: 0 });
+    compositor.uploadBitmap = (...args) => { uploaded = args; };
+    compositor.uploadClassicBitmap({ left: 3, top: 4, right: 5, bottom: 6 }, new Uint8Array(16), 8);
+    assert.equal(uploaded[0], 0);
+    assert.deepEqual(uploaded[1], { left: 3, top: 4, right: 5, bottom: 6 });
+});
+
+test('surface cache commands preserve independent cached content', () => {
+    const compositor = schedulingFixture();
+    compositor.cacheEntries = new Map([[7, { slot: 7, width: 2, height: 2, texture: {}, framebuffer: {} }]]);
+    assert.equal(compositor.cacheEntries.get(7).width, 2);
+    compositor.evictCache(7);
+    assert.equal(compositor.cacheEntries.has(7), false);
+});
+
+test('surface definitions remain independent', () => {
+    const compositor = schedulingFixture();
+    compositor.surfaces.set(1, { id: 1, width: 10 });
+    compositor.surfaces.set(2, { id: 2, width: 20 });
+    assert.equal(compositor._requireSurface(1).width, 10);
+    assert.equal(compositor._requireSurface(2).width, 20);
+    assert.throws(() => compositor._requireSurface(3), /unknown RDP surface/);
+});

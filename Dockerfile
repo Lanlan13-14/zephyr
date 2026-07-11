@@ -6,7 +6,7 @@ FROM node:20-alpine3.20 AS app-build
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+RUN npm ci
 
 # 复制 @wterm 前端依赖
 RUN mkdir -p public/vendor/@wterm/dom && \
@@ -17,8 +17,11 @@ RUN mkdir -p public/vendor/@wterm/dom && \
 
 COPY . .
 
-# 构建编辑器 bundle
-RUN npm run build:editor 2>&1 || echo "[WARN] editor build skipped"
+# 构建编辑器 bundle；失败必须阻断镜像，禁止继续打包陈旧产物
+RUN npm run build:editor
+
+# Runtime 不需要 devDependencies
+RUN npm prune --omit=dev
 
 # ============================================================
 # Stage 2: rdp-wasm-builder — 编译 grdp Go WASM (RDP 协议栈)

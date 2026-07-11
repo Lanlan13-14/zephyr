@@ -1,0 +1,54 @@
+name: Zephyr-SSH CI
+
+on:
+  workflow_call:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  node-and-rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Set up Go 1.26.3
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: |
+            rdp-wasm/go.sum
+            rdp-wasm/grdp-patch/go.sum
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Check JavaScript syntax
+        run: npm run test:syntax
+
+      - name: Run RDP Node tests
+        run: npm run test:rdp-node
+
+      - name: Run RDP browser compositor smoke
+        run: npm run test:browser-smoke
+
+      - name: Run Go and WASM tests
+        run: npm run test:go
+
+      - name: Build RDP WASM
+        run: npm run test:wasm-build

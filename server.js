@@ -59,6 +59,7 @@ const {
     cleanupMediaProbeCache,
 } = require('./preview/media/media-service');
 const { FileAgentManager } = require('./file-agent-manager');
+const { attachRdpProxyBridge } = require('./server/rdp-proxy-bridge');
 
 const HTTP_ENABLED = process.env.HTTP_ENABLED === 'true';
 const PORT = process.env.PORT || 3000;
@@ -1815,6 +1816,7 @@ app.post('/api/connections', requireAuth, (req, res) => {
         conn.rdpResolution = ['auto', '1080p', '2K', '4K', '8K'].includes(body.rdpResolution) ? body.rdpResolution : '1080p';
         conn.rdpQuality = ['balanced', 'performance', 'quality'].includes(body.rdpQuality) ? body.rdpQuality : 'balanced';
         conn.rdpFps = [30, 45, 60, 120, 144].includes(Number(body.rdpFps)) ? Number(body.rdpFps) : 30;
+        conn.rdpPipeline = ['gpu-v2-page', 'worker-gpu-v2'].includes(body.rdpPipeline) ? body.rdpPipeline : 'worker-gpu-v2';
         conn.rdpTouchMode = body.rdpTouchMode === 'relative' ? 'relative' : 'direct';
         conn.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number(body.rdpTouchSensitivity) || 1.5));
         conn.rdpDomain = String(body.rdpDomain || '').trim();
@@ -1850,6 +1852,7 @@ app.put('/api/connections/:id', requireAuth, (req, res) => {
         if (body.rdpResolution !== undefined) conn.rdpResolution = ['auto', '1080p', '2K', '4K', '8K'].includes(body.rdpResolution) ? body.rdpResolution : '1080p';
         if (body.rdpQuality !== undefined) conn.rdpQuality = ['balanced', 'performance', 'quality'].includes(body.rdpQuality) ? body.rdpQuality : 'balanced';
         if (body.rdpFps !== undefined) conn.rdpFps = [30, 45, 60, 120, 144].includes(Number(body.rdpFps)) ? Number(body.rdpFps) : 30;
+        if (body.rdpPipeline !== undefined) conn.rdpPipeline = ['gpu-v2-page', 'worker-gpu-v2'].includes(body.rdpPipeline) ? body.rdpPipeline : 'worker-gpu-v2';
         if (body.rdpTouchMode !== undefined) conn.rdpTouchMode = body.rdpTouchMode === 'relative' ? 'relative' : 'direct';
         if (body.rdpTouchSensitivity !== undefined) conn.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number(body.rdpTouchSensitivity) || 1.5));
         if (body.rdpDomain !== undefined) conn.rdpDomain = String(body.rdpDomain || '').trim();
@@ -1905,7 +1908,7 @@ app.post('/api/rdp/credentials', requireAuth, (req, res) => {
     const domainMatch = username.match(/^([^\\]+)\\(.+)$/);
     if (!domain && domainMatch) { domain = domainMatch[1]; username = domainMatch[2]; }
     console.info('[rdp-credentials]', 'issued', { connectionId, host: conn.host, user: username, sessionUser: req.session?.username });
-    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false, rdpResolution: conn.rdpResolution || '1080p', rdpQuality: conn.rdpQuality || 'balanced', rdpFps: conn.rdpFps || 30, rdpTouchMode: conn.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(conn.rdpTouchSensitivity) || 1.5)), rdpMicrophone: !!conn.rdpMicrophone, rdpLocation: !!conn.rdpLocation, rdpStorage: !!conn.rdpStorage, rdpCamera: !!conn.rdpCamera });
+    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false, rdpResolution: conn.rdpResolution || '1080p', rdpQuality: conn.rdpQuality || 'balanced', rdpFps: conn.rdpFps || 30, rdpPipeline: ['gpu-v2-page', 'worker-gpu-v2'].includes(conn.rdpPipeline) ? conn.rdpPipeline : 'worker-gpu-v2', rdpTouchMode: conn.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(conn.rdpTouchSensitivity) || 1.5)), rdpMicrophone: !!conn.rdpMicrophone, rdpLocation: !!conn.rdpLocation, rdpStorage: !!conn.rdpStorage, rdpCamera: !!conn.rdpCamera });
 });
 
 
@@ -4221,6 +4224,7 @@ function closeWebSocketSafe(ws, code = 1000, reason = '') {
 rdpProxyWss.on('connection', async (ws, req) => {
     const url = new URL(req.url || '/rdp-proxy', `http://${req.headers.host || 'localhost'}`);
     const target = url.searchParams.get('target') || '';
+    const flowControlEnabled = url.searchParams.get('flow') === 'v2';
 
     if (!target || !target.includes(':')) {
         console.warn('[rdp-proxy] rejected: missing or invalid target', { target });
@@ -4232,11 +4236,13 @@ rdpProxyWss.on('connection', async (ws, req) => {
     const targetPort = Number(targetPortStr) || 3389;
     let tcpConn = null;
     let routedForward = null;
+    let proxyBridge = null;
     let closed = false;
 
     const cleanup = (reason = 'cleanup') => {
         if (closed) return;
         closed = true;
+        try { proxyBridge?.dispose?.(); } catch {}
         try { tcpConn?.destroy?.(); } catch {}
         try { routedForward?.close?.(); } catch {}
         console.info('[rdp-proxy] closed', { target, reason });
@@ -4302,25 +4308,17 @@ rdpProxyWss.on('connection', async (ws, req) => {
 
         /* ── Bidirectional pipe ────────────────────────────────────── */
 
-        /* WebSocket → TCP */
-        ws.on('message', (data, isBinary) => {
-            if (closed || tcpConn.destroyed) return;
-            try {
-                const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-                tcpConn.write(buf);
-            } catch (err) {
-                console.warn('[rdp-proxy] ws→tcp write error', err.message);
-            }
-        });
-
-        /* TCP → WebSocket */
-        tcpConn.on('data', (chunk) => {
-            if (closed || ws.readyState !== ws.OPEN) return;
-            try {
-                ws.send(chunk, { binary: true });
-            } catch (err) {
-                console.warn('[rdp-proxy] tcp→ws send error', err.message);
-            }
+        proxyBridge = attachRdpProxyBridge({
+            ws,
+            tcpConn,
+            flowControlEnabled,
+            logger: console,
+            onFatal(code, message) {
+                if (closed) return;
+                console.warn('[rdp-proxy] backpressure fatal', { target, code, message });
+                closeWebSocketSafe(ws, 1011, code);
+                cleanup(code);
+            },
         });
 
         tcpConn.on('end', () => {

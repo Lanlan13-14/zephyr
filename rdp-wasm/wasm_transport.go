@@ -5,22 +5,32 @@ package main
 import (
 	"fmt"
 	"net"
+	"sync"
 	"syscall/js"
 	"time"
+)
+
+const (
+	wsReadHighWater = 8 * 1024 * 1024
+	wsReadLowWater  = 2 * 1024 * 1024
+	wsReadHardLimit = 32 * 1024 * 1024
 )
 
 // wsConn implements net.Conn over a browser WebSocket.
 // It is created by dialWebSocket and injected into grdp via RdpClient.Dialer.
 type wsConn struct {
-	ws      js.Value
-	readBuf chan []byte
-	pending []byte
-	closed  bool
+	ws          js.Value
+	readQueue   *byteQueue
+	closed      bool
+	mu          sync.Mutex
+	flowPaused  bool
+	flowControl bool
 }
 
 func dialWebSocket(proxyURL string) (net.Conn, error) {
 	c := &wsConn{
-		readBuf: make(chan []byte, 256),
+		readQueue:   newByteQueue(wsReadHardLimit),
+		flowControl: true,
 	}
 
 	ws := js.Global().Get("WebSocket").New(proxyURL)
@@ -47,18 +57,24 @@ func dialWebSocket(proxyURL string) (net.Conn, error) {
 		arr := js.Global().Get("Uint8Array").New(data)
 		buf := make([]byte, arr.Length())
 		js.CopyBytesToGo(buf, arr)
-		if !c.closed {
-			select {
-			case c.readBuf <- buf:
-			default:
-				// drop if buffer full
-			}
+		c.mu.Lock()
+		closed := c.closed
+		c.mu.Unlock()
+		if closed {
+			return nil
+		}
+		state, ok := c.readQueue.Push(buf)
+		if !ok {
+			c.fail("RDP receive queue hard limit exceeded")
+			return nil
+		}
+		if state.QueuedBytes >= wsReadHighWater {
+			c.setRemoteFlowPaused(true)
 		}
 		return nil
 	})
 	onClose = js.FuncOf(func(this js.Value, args []js.Value) any {
-		c.closed = true
-		close(c.readBuf)
+		c.markClosed()
 		return nil
 	})
 
@@ -81,27 +97,64 @@ func dialWebSocket(proxyURL string) (net.Conn, error) {
 	return c, nil
 }
 
-func (c *wsConn) Read(b []byte) (int, error) {
-	// Drain pending bytes from last read first.
-	if len(c.pending) > 0 {
-		n := copy(b, c.pending)
-		c.pending = c.pending[n:]
-		return n, nil
+func (c *wsConn) markClosed() {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
 	}
+	c.closed = true
+	c.mu.Unlock()
+	c.readQueue.Close()
+}
 
-	chunk, ok := <-c.readBuf
-	if !ok {
-		return 0, fmt.Errorf("websocket closed")
+func (c *wsConn) fail(reason string) {
+	c.markClosed()
+	if c.ws.Truthy() {
+		c.ws.Call("close", 1011, reason)
 	}
-	n := copy(b, chunk)
-	if n < len(chunk) {
-		c.pending = chunk[n:]
+}
+
+func (c *wsConn) setRemoteFlowPaused(paused bool) {
+	c.mu.Lock()
+	if c.closed || !c.flowControl || c.flowPaused == paused {
+		c.mu.Unlock()
+		return
 	}
-	return n, nil
+	c.flowPaused = paused
+	c.mu.Unlock()
+	if c.ws.Get("readyState").Int() != 1 {
+		return
+	}
+	message := js.Global().Get("JSON").Call("stringify", map[string]any{
+		"type":  "zephyr-rdp-flow",
+		"state": map[bool]string{true: "pause", false: "resume"}[paused],
+	})
+	c.ws.Call("send", message)
+}
+
+func (c *wsConn) Read(b []byte) (int, error) {
+	for {
+		n, closed := c.readQueue.Read(b)
+		if n > 0 {
+			state := c.readQueue.State()
+			if state.QueuedBytes <= wsReadLowWater {
+				c.setRemoteFlowPaused(false)
+			}
+			return n, nil
+		}
+		if closed {
+			return 0, fmt.Errorf("websocket closed")
+		}
+		<-c.readQueue.notify
+	}
 }
 
 func (c *wsConn) Write(b []byte) (int, error) {
-	if c.closed {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
 		return 0, fmt.Errorf("websocket closed")
 	}
 	arr := js.Global().Get("Uint8Array").New(len(b))
@@ -111,8 +164,12 @@ func (c *wsConn) Write(b []byte) (int, error) {
 }
 
 func (c *wsConn) Close() error {
-	if !c.closed {
-		c.closed = true
+	c.mu.Lock()
+	alreadyClosed := c.closed
+	c.closed = true
+	c.mu.Unlock()
+	c.readQueue.Close()
+	if !alreadyClosed && c.ws.Truthy() {
 		c.ws.Call("close")
 	}
 	return nil

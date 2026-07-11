@@ -90,20 +90,22 @@ type RdpClient struct {
 	password string
 
 	// stored callbacks for re-registration on reconnect
-	onErrorFn         func(e error)
-	onCloseFn         func()
-	onSuccessFn       func()
-	onReadyFn         func()
-	onBitmapPaintFn   func([]Bitmap)
-	onPointerHideFn   func()
-	onPointerCachedFn func(uint16)
-	onPointerUpdateFn func(uint16, uint16, uint16, uint16, uint16, uint16, []byte, []byte)
-	onAudioFn         func(rdpsnd.AudioFormat, []byte)
-	onAudioResetFn    func()
-	onH264RawFn       func(destX, destY, w, h int, isKey bool, data []byte)
-	onH264I420Fn      func(destX, destY, w, h int, y []byte, yStride int, u []byte, uStride int, v []byte, vStride int)
-	onH264NV12Fn      func(destX, destY, w, h int, y []byte, yStride int, uv []byte, uvStride int)
-	onDecoderBrokenFn func()
+	onErrorFn               func(e error)
+	onCloseFn               func()
+	onSuccessFn             func()
+	onReadyFn               func()
+	onBitmapPaintFn         func([]Bitmap)
+	onPointerHideFn         func()
+	onPointerCachedFn       func(uint16)
+	onPointerUpdateFn       func(uint16, uint16, uint16, uint16, uint16, uint16, []byte, []byte)
+	onAudioFn               func(rdpsnd.AudioFormat, []byte)
+	onAudioResetFn          func()
+	onH264RawFn             func(destX, destY, w, h int, isKey bool, data []byte)
+	onH264I420Fn            func(destX, destY, w, h int, y []byte, yStride int, u []byte, uStride int, v []byte, vStride int)
+	onH264NV12Fn            func(destX, destY, w, h int, y []byte, yStride int, uv []byte, uvStride int)
+	onRenderEventFn         rdpgfx.RenderEventSink
+	externalFrameCompletion bool
+	onDecoderBrokenFn       func()
 
 	// clipboard callbacks and handler
 	onClipboardFn  func(text string) // remote → local
@@ -589,6 +591,10 @@ func (g *RdpClient) doLogin(routingToken []byte) error {
 	if g.onH264NV12Fn != nil {
 		gfxHandler.SetNV12Callback(g.onH264NV12Fn)
 	}
+	if g.onRenderEventFn != nil {
+		gfxHandler.SetRenderEventSink(g.onRenderEventFn)
+	}
+	gfxHandler.SetExternalFrameCompletion(g.externalFrameCompletion)
 	if g.avc444Disabled {
 		gfxHandler.SetAVC444Disabled(true)
 	}
@@ -989,6 +995,35 @@ func (g *RdpClient) OnH264NV12(fn func(destX, destY, w, h int, y []byte, yStride
 		g.gfxHandler.SetNV12Callback(fn)
 	}
 	return g
+}
+
+func (g *RdpClient) OnRenderEvent(fn rdpgfx.RenderEventSink) *RdpClient {
+	g.onRenderEventFn = fn
+	if g.gfxHandler != nil {
+		g.gfxHandler.SetRenderEventSink(fn)
+	}
+	return g
+}
+
+func (g *RdpClient) SetExternalFrameCompletion(enabled bool) *RdpClient {
+	g.externalFrameCompletion = enabled
+	if g.gfxHandler != nil {
+		g.gfxHandler.SetExternalFrameCompletion(enabled)
+	}
+	return g
+}
+
+func (g *RdpClient) CompleteGfxFrame(frameID, queueDepth uint32) error {
+	if g.gfxHandler == nil {
+		return fmt.Errorf("RDPGFX handler is not connected")
+	}
+	return g.gfxHandler.CompleteFrame(frameID, queueDepth)
+}
+
+func (g *RdpClient) RequestFullRefresh() {
+	if g.pdu != nil {
+		g.pdu.SendForceRefresh(uint16(g.width), uint16(g.height))
+	}
 }
 
 // OnDecoderBroken registers a callback that is invoked when the H.264 decoder

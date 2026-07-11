@@ -1367,6 +1367,7 @@ function prepareConnectionModalForm(conn = null) {
     if ($('#rdpResolution')) $('#rdpResolution').value = conn?.rdpResolution || '1080p';
     if ($('#rdpQuality')) $('#rdpQuality').value = conn?.rdpQuality || 'balanced';
     if ($('#rdpFps')) $('#rdpFps').value = String(conn?.rdpFps || 30);
+    if ($('#rdpPipeline')) $('#rdpPipeline').value = ['gpu-v2-page', 'worker-gpu-v2'].includes(conn?.rdpPipeline) ? conn.rdpPipeline : 'worker-gpu-v2';
     if ($('#rdpTouchMode')) $('#rdpTouchMode').value = conn?.rdpTouchMode === 'relative' ? 'relative' : 'direct';
     if ($('#rdpTouchSensitivity')) $('#rdpTouchSensitivity').value = String(Math.max(0.5, Math.min(3, Number(conn?.rdpTouchSensitivity) || 1.5)));
     updateRdpTouchSettingsUi();
@@ -1606,6 +1607,7 @@ function connectionPayload({ forTest = false } = {}) {
         payload.rdpResolution = $('#rdpResolution')?.value || '1080p';
         payload.rdpQuality = $('#rdpQuality')?.value || 'balanced';
         payload.rdpFps = Number($('#rdpFps')?.value) || 30;
+        payload.rdpPipeline = ['gpu-v2-page', 'worker-gpu-v2'].includes($('#rdpPipeline')?.value) ? $('#rdpPipeline').value : 'worker-gpu-v2';
         payload.rdpTouchMode = $('#rdpTouchMode')?.value === 'relative' ? 'relative' : 'direct';
         payload.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number($('#rdpTouchSensitivity')?.value) || 1.5));
         payload.rdpDomain = ($('#rdpDomain')?.value || '').trim();
@@ -1655,7 +1657,7 @@ async function openConnection(id) {
     const protocol = String(c.protocol || 'SSH').toUpperCase();
     const tabId = `tab_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     if (protocol === 'RDP' || protocol === 'VNC') {
-        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, embedded: true, timestamp: Date.now(), rdpResolution: c.rdpResolution || '1080p', quality: c.rdpQuality || 'balanced', rdpFps: Number(c.rdpFps || 30), rdpTouchMode: c.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(c.rdpTouchSensitivity) || 1.5)), rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false, rdpDomain: c.rdpDomain || '', rdpMicrophone: !!c.rdpMicrophone, rdpLocation: !!c.rdpLocation, rdpStorage: !!c.rdpStorage, rdpCamera: !!c.rdpCamera }));
+        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, embedded: true, timestamp: Date.now(), rdpResolution: c.rdpResolution || '1080p', quality: c.rdpQuality || 'balanced', rdpFps: Number(c.rdpFps || 30), rdpPipeline: ['gpu-v2-page', 'worker-gpu-v2'].includes(c.rdpPipeline) ? c.rdpPipeline : 'worker-gpu-v2', rdpTouchMode: c.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(c.rdpTouchSensitivity) || 1.5)), rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false, rdpDomain: c.rdpDomain || '', rdpMicrophone: !!c.rdpMicrophone, rdpLocation: !!c.rdpLocation, rdpStorage: !!c.rdpStorage, rdpCamera: !!c.rdpCamera }));
         terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: protocol === 'VNC' ? 'novnc' : 'rdp', connectionId: c.id, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
         console.debug(protocol === 'VNC' ? '[novnc-client]' : '[rdp-client]', 'open remote desktop tab', { protocol, tabId, connectionId: c.id, host: c.host, port: c.port });
     } else {

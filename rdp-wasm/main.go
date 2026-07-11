@@ -19,8 +19,6 @@ var (
 	rdpClient      *grdp.RdpClient
 	connectGen     uint64
 	clientMu       sync.Mutex
-	canvas         js.Value
-	ctx2d          js.Value
 	localClipboard string
 	clipMu         sync.Mutex
 	swapAltMeta    bool
@@ -30,10 +28,10 @@ var (
 
 	// Cache for file data read from JS — avoids re-copying the entire file
 	// from JS→Go on every FILECONTENTS_RANGE chunk request.
-	fileDataCache     map[string][]byte
-	fileDataCacheMu   sync.Mutex
-	camEnumHandler    *CamEnumeratorHandler
-	camStreamHandler  *CamStreamHandler
+	fileDataCache    map[string][]byte
+	fileDataCacheMu  sync.Mutex
+	camEnumHandler   *CamEnumeratorHandler
+	camStreamHandler *CamStreamHandler
 )
 
 func isCurrentClient(gen uint64, c *grdp.RdpClient) bool {
@@ -66,6 +64,8 @@ func main() {
 	js.Global().Set("rdpAudinData", js.FuncOf(jsAudinData))
 	js.Global().Set("rdpLocationData", js.FuncOf(jsLocationData))
 	js.Global().Set("rdpCameraFrame", js.FuncOf(jsCameraFrame))
+	js.Global().Set("rdpGfxCompleteFrame", js.FuncOf(jsGfxCompleteFrame))
+	js.Global().Set("rdpRequestFullRefresh", js.FuncOf(jsRequestFullRefresh))
 
 	// Agent drive management (hot-plug)
 	js.Global().Set("rdpFsAttachDrive", js.FuncOf(jsAttachDrive))
@@ -77,7 +77,7 @@ func main() {
 }
 
 // jsConnect is called from JS: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta)
-// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264Supported)
+// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled, storageEnabled, cameraEnabled, wallpaper)
 func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) < 8 {
 		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, ...])")
@@ -111,17 +111,13 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) >= 13 {
 		cameraEnabled = args[12].Bool()
 	}
-	h264OK := true
-	if len(args) >= 14 {
-		h264OK = args[13].Bool()
-	}
 	wallpaper := false
-	if len(args) >= 15 {
-		wallpaper = args[14].Bool()
+	if len(args) >= 14 {
+		wallpaper = args[13].Bool()
 	}
 
 	go func() {
-		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264OK, wallpaper); err != nil {
+		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled, wallpaper); err != nil {
 			slog.Error("connect", "err", err)
 			js.Global().Call("rdpOnError", err.Error())
 		}
@@ -129,11 +125,12 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	return nil
 }
 
-func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled, h264OK, wallpaper bool) error {
+func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled, wallpaper bool) error {
 	hostPort := host + ":" + port
 
-	// Build WebSocket URL for the proxy: ws://host:port/rdp-proxy?target=rdphost:3389
-	wsURL := proxyWsURL + "/rdp-proxy?target=" + hostPort
+	// Build WebSocket URL for the proxy. flow=v2 negotiates the text control
+	// messages used only for reliable high/low-water receive backpressure.
+	wsURL := proxyWsURL + "/rdp-proxy?flow=v2&target=" + hostPort
 
 	g := grdp.NewRdpClient(hostPort, width, height, func(hp string) (net.Conn, error) {
 		return dialWebSocket(wsURL)
@@ -156,11 +153,8 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	fileDataCache = nil
 	fileDataCacheMu.Unlock()
 
-	// Get canvas from DOM.  Do NOT set canvas.width/height here: ensureCanvas()
-	// already set them and initialized the JS-side renderer.  Reassigning
-	// width/height on a canvas resets its drawing buffer/context state, which
-	// clears WebGL textures/programs and leaves the RDP display black.
-	canvas = js.Global().Get("document").Call("getElementById", "rdpCanvas")
+	// Worker mode has no DOM. Rendering is owned entirely by JavaScript on the
+	// page or OffscreenCanvas Worker side; the Go protocol stack is DOM-free.
 
 	g.OnAudio(func(af rdpsnd.AudioFormat, data []byte) {
 		if !isCurrentClient(myGen, g) {
@@ -171,19 +165,12 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 		playAudio(int(af.SamplesPerSec), int(af.Channels), int(af.BitsPerSample), cp)
 	})
 
-	// Only register H.264 raw callback if browser supports WebCodecs VideoDecoder.
-	// When not registered, grdp's internal GFX handler will decode H.264 to bitmap
-	// and deliver via OnBitmap instead — slower but universally compatible.
-	if h264OK {
-		g.OnH264Raw(func(destX, destY, w, h int, isKey bool, data []byte) {
-			if !isCurrentClient(myGen, g) {
-				return
-			}
-			jsArr := js.Global().Get("Uint8Array").New(len(data))
-			js.CopyBytesToJS(jsArr, data)
-			js.Global().Call("rdpOnH264", destX, destY, w, h, isKey, jsArr)
-		})
+	if js.Global().Get("rdpOnRenderEvent").Type() != js.TypeFunction {
+		return fmt.Errorf("semantic GPU compositor callback is unavailable")
 	}
+	g.OnRenderEvent(forwardRenderEvent)
+	g.SetExternalFrameCompletion(true)
+	g.OnH264Raw(nil)
 
 	uint8Ctor := js.Global().Get("Uint8Array")
 	g.OnPointerHide(func() {
@@ -202,6 +189,9 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 		js.Global().Call("rdpOnPointerUpdate",
 			int(idx), int(xorBpp), int(hotX), int(hotY), int(w), int(h), andArr, xorArr)
 	})
+
+	// Graphics callbacks were selected before Login so CAPS_ADVERTISE sees the
+	// final decoder/rendering capabilities.
 
 	g.OnError(func(e error) {
 		if !isCurrentClient(myGen, g) {
@@ -227,12 +217,9 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 		if !isCurrentClient(myGen, g) {
 			return
 		}
-		// Render synchronously - the data is borrowed from a pool and only
-		// valid for the duration of this callback.  We copy into a JS
-		// Uint8Array and call rdpDrawBitmapBGRA immediately.  This avoids
-		// the previous make+copy + goroutine + second CopyBytesToJS pattern
-		// which did 3 full-frame copies per update.
-		renderBitmapsBGRA(bs)
+		// Classic bitmap/RemoteFX fallback updates feed the same GPU compositor.
+		// The callback is synchronous because source bytes are pool-borrowed.
+		forwardClassicBitmaps(bs)
 	})
 
 	g.OnClipboard(
@@ -353,17 +340,11 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 var (
 	bitmapBGRABuf []byte
 	bitmapCropBuf []byte
-	bitmapJSArr   js.Value
-	bitmapJSLen   int
 )
 
-// renderBitmapsBGRA converts each bitmap to BGRA (if needed) and uploads
-// directly to the JS-side WebGL texture via rdpDrawBitmapBGRA.  This skips
-// the per-pixel BGR->RGB conversion that putImageData required, and uses
-// FillBGRA which reuses a pooled buffer instead of allocating a new
-// image.RGBA on every call.
-func renderBitmapsBGRA(bs []grdp.Bitmap) {
-	uint8Ctor := js.Global().Get("Uint8Array")
+// forwardClassicBitmaps converts classic bitmap updates to BGRA and feeds the
+// same semantic compositor used by RDPGFX. Data is consumed synchronously.
+func forwardClassicBitmaps(bs []grdp.Bitmap) {
 
 	for _, bm := range bs {
 		w := bm.DestRight - bm.DestLeft + 1
@@ -399,14 +380,9 @@ func renderBitmapsBGRA(bs []grdp.Bitmap) {
 		}
 
 		if bm.BitsPerPixel == 4 && w == bm.Width {
-			// Common case: 32bpp BGRA, full width -> bulk copy via FillBGRA.
+			// Common case: 32bpp BGRA, full width.
 			bgra := bm.FillBGRA(bitmapBGRABuf[:need])
-			if need != bitmapJSLen {
-				bitmapJSArr = uint8Ctor.New(need)
-				bitmapJSLen = need
-			}
-			js.CopyBytesToJS(bitmapJSArr, bgra)
-			js.Global().Call("rdpDrawBitmapBGRA", bm.DestLeft, bm.DestTop, w, h, bitmapJSArr)
+			forwardClassicBitmap(bm.DestLeft, bm.DestTop, w, h, bgra)
 		} else {
 			// Clipped or non-32bpp: use FillBGRA on full bitmap then crop.
 			// Full conversion and cropped output must use distinct buffers:
@@ -421,12 +397,7 @@ func renderBitmapsBGRA(bs []grdp.Bitmap) {
 			for row := 0; row < h; row++ {
 				copy(bgra[row*dstStride:], full[row*srcStride:row*srcStride+dstStride])
 			}
-			if need != bitmapJSLen {
-				bitmapJSArr = uint8Ctor.New(need)
-				bitmapJSLen = need
-			}
-			js.CopyBytesToJS(bitmapJSArr, bgra)
-			js.Global().Call("rdpDrawBitmapBGRA", bm.DestLeft, bm.DestTop, w, h, bitmapJSArr)
+			forwardClassicBitmap(bm.DestLeft, bm.DestTop, w, h, bgra)
 		}
 	}
 }

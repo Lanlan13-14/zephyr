@@ -155,6 +155,7 @@ func (g *GfxHandler) emitAndReleaseUpdates(updates []BitmapUpdate) {
 }
 
 type surface struct {
+	id            uint16
 	width, height uint16
 	format        uint8
 	data          []byte // BGRA, 4 bytes per pixel
@@ -379,7 +380,11 @@ type GfxHandler struct {
 	// sites to avoid a make([][4]uint16, ...) on every H.264 frame that carries
 	// dirty region metadata.
 	// Safe: used only on the single decode goroutine.
-	regionHintBuf [][4]uint16
+	regionHintBuf           [][4]uint16
+	onRenderEvent           RenderEventSink
+	frameTracker            *frameTracker
+	externalFrameCompletion bool
+	currentFrameID          uint32
 	// onH264Raw is called with raw H.264 NAL unit data when h264dec is nil
 	// (e.g. WASM builds without CGo).  The caller can forward the data to a
 	// JavaScript WebCodecs VideoDecoder instead.
@@ -407,11 +412,12 @@ func NewGfxHandler(onBitmap func([]BitmapUpdate)) *GfxHandler {
 		progressive:  newRfxProgressiveDecoder(),
 		// h264dec2 starts nil; primeAuxDecoder creates it on the first stream2 IDR
 		// so it is always primed before decoding LC=2 P-frames.
-		onBitmap:   onBitmap,
-		decodeCh:   make(chan decodePkt, 1024),
-		ackCh:      make(chan []byte, 512),
-		doneCh:     make(chan struct{}),
-		watchdogCh: make(chan struct{}, 4),
+		onBitmap:     onBitmap,
+		decodeCh:     make(chan decodePkt, 1024),
+		ackCh:        make(chan []byte, 512),
+		doneCh:       make(chan struct{}),
+		watchdogCh:   make(chan struct{}, 4),
+		frameTracker: newFrameTracker(),
 	}
 	g.h264dec = newH264DecoderWithWatchdog(g.watchdogCh)
 	go g.decodeLoop()
@@ -773,11 +779,9 @@ func (g *GfxHandler) sendCapsAdvertise() {
 	defer pduBufPool.Put(p[:0])
 
 	// AVC capsets are advertised when we can deliver decoded frames either
-	// in-process (h264dec) or by handing the raw NALs off to the embedder
-	// (onH264Raw, used by the WASM build to forward to WebCodecs). Without
-	// either, the v8.0+AVCDisabled fallback below forces the server to
-	// reject RDPGFX and use legacy bitmap PDUs.
-	if g.h264dec != nil || g.onH264Raw != nil {
+	// in-process (h264dec), by handing legacy raw NALs to the embedder, or by
+	// emitting complete semantic video events for an external compositor.
+	if g.h264dec != nil || g.onH264Raw != nil || g.onRenderEvent != nil {
 		if g.avc444Disabled {
 			// AVC444 disabled: advertise only v8.0 and v8.1 so the server
 			// uses AVC420 (4:2:0) exclusively and never sends LC=2 data.
@@ -1140,9 +1144,11 @@ func (g *GfxHandler) dispatchDecode(cmdId uint16, data []byte) {
 	case cmdidMapSurfaceToOutput:
 		g.onMapSurfaceToOutput(data)
 	case cmdidStartFrame:
-		// nothing to do
+		g.onStartFrame(data)
 	case cmdidSurfaceToSurface:
 		g.onSurfaceToSurface(data)
+	case cmdidSurfaceToCache:
+		g.onSurfaceToCache(data)
 	case cmdidEndFrame:
 		g.onEndFrame(data)
 	case cmdidWireToSurface1:
@@ -1248,6 +1254,7 @@ func (g *GfxHandler) onResetGraphics(data []byte) {
 	h := binary.LittleEndian.Uint32(data[4:])
 	slog.Debug("RDPGFX: RESET_GRAPHICS", "w", w, "h", h)
 	g.surfaces = make(map[uint16]*surface)
+	g.cacheEntries = make(map[uint16]cacheEntry)
 	g.clearCtx = newClearCodecCtx()
 	g.framesDecoded.Store(0)
 	g.softResetCount = 0
@@ -1279,6 +1286,9 @@ func (g *GfxHandler) onResetGraphics(data []byte) {
 	g.avc444YPlane = avc444YPlane{}
 	g.avc444IDRYPlane = avc444YPlane{}
 	g.progressive.Reset()
+	g.frameTracker.Reset()
+	g.currentFrameID = 0
+	g.emitRenderEvent(RenderEvent{Kind: RenderResetGraphics, Width: w, Height: h})
 }
 
 func (g *GfxHandler) onCreateSurface(data []byte) {
@@ -1291,10 +1301,11 @@ func (g *GfxHandler) onCreateSurface(data []byte) {
 	f := data[6]
 	slog.Debug("RDPGFX: CREATE_SURFACE", "id", id, "w", w, "h", h)
 	g.surfaces[id] = &surface{
-		width: w, height: h, format: f,
+		id: id, width: w, height: h, format: f,
 		data:        make([]byte, int(w)*int(h)*4),
 		shadowStale: true,
 	}
+	g.emitRenderEvent(RenderEvent{Kind: RenderCreateSurface, FrameID: g.currentFrameID, SurfaceID: id, Width: uint32(w), Height: uint32(h), PixelFormat: f})
 }
 
 func (g *GfxHandler) onDeleteSurface(data []byte) {
@@ -1303,6 +1314,7 @@ func (g *GfxHandler) onDeleteSurface(data []byte) {
 	}
 	id := binary.LittleEndian.Uint16(data)
 	delete(g.surfaces, id)
+	g.emitRenderEvent(RenderEvent{Kind: RenderDeleteSurface, FrameID: g.currentFrameID, SurfaceID: id})
 }
 
 func (g *GfxHandler) onMapSurfaceToOutput(data []byte) {
@@ -1318,6 +1330,7 @@ func (g *GfxHandler) onMapSurfaceToOutput(data []byte) {
 		s.outputX = ox
 		s.outputY = oy
 		s.mapped = true
+		g.emitRenderEvent(RenderEvent{Kind: RenderMapSurface, FrameID: g.currentFrameID, SurfaceID: id, OutputX: ox, OutputY: oy, Width: uint32(s.width), Height: uint32(s.height)})
 		g.emitBitmap(s, 0, 0, int(s.width), int(s.height), s.data)
 	}
 }
@@ -1330,12 +1343,14 @@ func (g *GfxHandler) onMapSurfaceToScaledOutput(data []byte) {
 	// data[2:4] = reserved
 	ox := binary.LittleEndian.Uint32(data[4:])
 	oy := binary.LittleEndian.Uint32(data[8:])
-	// data[12:16] = targetWidth, data[16:20] = targetHeight (unused)
+	targetW := binary.LittleEndian.Uint32(data[12:])
+	targetH := binary.LittleEndian.Uint32(data[16:])
 	slog.Debug("RDPGFX: MAP_SURFACE_SCALED", "id", id, "ox", ox, "oy", oy)
 	if s, ok := g.surfaces[id]; ok {
 		s.outputX = ox
 		s.outputY = oy
 		s.mapped = true
+		g.emitRenderEvent(RenderEvent{Kind: RenderMapSurfaceScaled, FrameID: g.currentFrameID, SurfaceID: id, OutputX: ox, OutputY: oy, Width: targetW, Height: targetH})
 		g.emitBitmap(s, 0, 0, int(s.width), int(s.height), s.data)
 	}
 }
@@ -1349,6 +1364,20 @@ func (g *GfxHandler) onMapSurfaceToScaledOutput(data []byte) {
 // and frame rate based on the client's decode backlog.  Pass
 // suspendFrameAcknowledge (0xFFFFFFFF) to ask the server to suspend new
 // frames until a subsequent ACK with a lower value is received.
+func (g *GfxHandler) onStartFrame(data []byte) {
+	if len(data) < 8 {
+		return
+	}
+	timestamp := binary.LittleEndian.Uint32(data[0:])
+	frameID := binary.LittleEndian.Uint32(data[4:])
+	if err := g.frameTracker.Start(frameID); err != nil {
+		slog.Warn("RDPGFX: invalid START_FRAME", "frameId", frameID, "err", err)
+		return
+	}
+	g.currentFrameID = frameID
+	g.emitRenderEvent(RenderEvent{Kind: RenderBeginFrame, FrameID: frameID, Timestamp: timestamp})
+}
+
 func (g *GfxHandler) sendFrameAck(frameId uint32, queueDepth uint32) {
 	decoded := g.framesDecoded.Add(1)
 	// 8-byte RDPGFX header + 12-byte FRAME_ACKNOWLEDGE payload = 20 bytes.
@@ -1362,9 +1391,8 @@ func (g *GfxHandler) sendFrameAck(frameId uint32, queueDepth uint32) {
 	binary.LittleEndian.PutUint32(pdu[16:], decoded)
 	select {
 	case g.ackCh <- pdu:
-	default:
+	case <-g.doneCh:
 		ackPDUPool.Put(pdu)
-		slog.Warn("RDPGFX: ackCh full, ACK dropped")
 	}
 }
 
@@ -1372,11 +1400,45 @@ func (g *GfxHandler) onEndFrame(data []byte) {
 	if len(data) < 4 {
 		return
 	}
+	frameID := binary.LittleEndian.Uint32(data)
+	if err := g.frameTracker.Seal(frameID); err != nil {
+		slog.Warn("RDPGFX: invalid END_FRAME", "frameId", frameID, "err", err)
+		return
+	}
+	g.emitRenderEvent(RenderEvent{Kind: RenderEndFrame, FrameID: frameID})
+	g.currentFrameID = 0
+	if g.externalFrameCompletion {
+		return
+	}
 	realDepth := uint32(len(g.decodeCh))
 	if hint := g.queueDepthHint.Load(); hint > realDepth {
 		realDepth = hint
 	}
-	g.sendFrameAck(binary.LittleEndian.Uint32(data), realDepth)
+	if err := g.frameTracker.Complete(frameID, realDepth); err != nil {
+		slog.Warn("RDPGFX: frame completion failed", "frameId", frameID, "err", err)
+		return
+	}
+	g.sendReadyFrameAcks()
+}
+
+func (g *GfxHandler) sendReadyFrameAcks() {
+	for _, frame := range g.frameTracker.DrainReady() {
+		g.sendFrameAck(frame.id, frame.depth)
+	}
+}
+
+// SetExternalFrameCompletion defers FRAME_ACK until CompleteFrame is called by
+// an asynchronous decoder/compositor. Legacy mode completes at END_FRAME.
+func (g *GfxHandler) SetExternalFrameCompletion(enabled bool) { g.externalFrameCompletion = enabled }
+
+// CompleteFrame marks a sealed frame complete and emits all consecutively
+// ready ACKs in protocol order.
+func (g *GfxHandler) CompleteFrame(frameID, queueDepth uint32) error {
+	if err := g.frameTracker.Complete(frameID, queueDepth); err != nil {
+		return err
+	}
+	g.sendReadyFrameAcks()
+	return nil
 }
 
 // SetQueueDepthHint sets a minimum queueDepth to report in FRAME_ACKNOWLEDGE
@@ -1390,6 +1452,30 @@ func (g *GfxHandler) onEndFrame(data []byte) {
 // (the stream resumes automatically when the hint is cleared).
 func (g *GfxHandler) SetQueueDepthHint(depth uint32) {
 	g.queueDepthHint.Store(depth)
+}
+
+func videoStreamEvent(role uint8, stream *avc420Stream) *RenderVideoStream {
+	if stream == nil || len(stream.h264Data) == 0 {
+		return nil
+	}
+	return &RenderVideoStream{Role: role, Key: isH264Keyframe(stream.h264Data), Regions: cloneAVCRegions(stream.regions), Data: stream.h264Data}
+}
+
+func (g *GfxHandler) emitVideoRenderEvent(surfaceID, codecID uint16, pixelFormat uint8, rect RenderRect, data []byte) {
+	switch codecID {
+	case codecAVC420:
+		stream, err := parseAVC420Stream(data)
+		if err != nil {
+			return
+		}
+		g.emitRenderEvent(RenderEvent{Kind: RenderAVC420, FrameID: g.currentFrameID, SurfaceID: surfaceID, CodecID: codecID, PixelFormat: pixelFormat, Rect: rect, Stream1: videoStreamEvent(1, stream)})
+	case codecAVC444, codecAVC444v2:
+		stream1, stream2, lc, err := parseAVC444Stream(data)
+		if err != nil {
+			return
+		}
+		g.emitRenderEvent(RenderEvent{Kind: RenderAVC444, FrameID: g.currentFrameID, SurfaceID: surfaceID, CodecID: codecID, PixelFormat: pixelFormat, LC: lc, Rect: rect, Stream1: videoStreamEvent(1, stream1), Stream2: videoStreamEvent(2, stream2)})
+	}
 }
 
 // onWireToSurface1Decode handles RDPGFX_WIRE_TO_SURFACE_PDU_1 (MS-RDPEGFX 2.2.2.1).
@@ -1427,6 +1513,7 @@ func (g *GfxHandler) onWireToSurface1Decode(data []byte) {
 	if !ok {
 		return
 	}
+	g.emitVideoRenderEvent(surfId, codecId, pixFmt, RenderRect{Left: left, Top: top, Right: right, Bottom: bottom}, bmpData)
 
 	// CaVideo (0x0003) carries RFX tile-encoded data; decode onto the
 	// persistent surface buffer like the progressive codec in WTS2.
@@ -1587,6 +1674,7 @@ func (g *GfxHandler) onWireToSurface2Decode(data []byte) {
 
 	w := int(s.width)
 	h := int(s.height)
+	g.emitVideoRenderEvent(surfId, codecId, pixFmt, RenderRect{Left: 0, Top: 0, Right: s.width, Bottom: s.height}, bmpData)
 
 	if slog.Default().Enabled(nil, slog.LevelDebug) {
 		slog.Debug("RDPGFX: WTS2", "surfId", surfId, "codecId", codecId,
@@ -1816,6 +1904,7 @@ func (g *GfxHandler) onSolidFill(data []byte) {
 		if w <= 0 || h <= 0 {
 			continue
 		}
+		g.emitRenderEvent(RenderEvent{Kind: RenderSolidFill, FrameID: g.currentFrameID, SurfaceID: surfId, Rect: RenderRect{Left: left, Top: top, Right: right, Bottom: bottom}, ColorBGRA: pixelU32})
 
 		// Clamp to surface bounds
 		yEnd := min(int(bottom), int(s.height))
@@ -1908,6 +1997,7 @@ func (g *GfxHandler) onSurfaceToSurface(data []byte) {
 		}
 		dstX := destPtX + left
 		dstY := destPtY + top
+		g.emitRenderEvent(RenderEvent{Kind: RenderSurfaceCopy, FrameID: g.currentFrameID, SurfaceID: dstId, SurfaceID2: srcId, OutputX: uint32(dstX), OutputY: uint32(dstY), Rect: RenderRect{Left: uint16(left), Top: uint16(top), Right: uint16(right), Bottom: uint16(bottom)}})
 		rowBytes := w * 4
 		for row := 0; row < h; row++ {
 			srcRow := top + row
@@ -1926,6 +2016,42 @@ func (g *GfxHandler) onSurfaceToSurface(data []byte) {
 		}
 		g.emitBitmap(dst, dstX, dstY, w, h, dst.data)
 	}
+}
+
+func (g *GfxHandler) onSurfaceToCache(data []byte) {
+	// RDPGFX_SURFACE_TO_CACHE_PDU: surfaceId(2), cacheKey(8), cacheSlot(2),
+	// rectSrc(8). cacheKey is only used for persistent-cache identity; this
+	// client keeps a connection-local cache indexed by cacheSlot.
+	if len(data) < 20 {
+		return
+	}
+	surfID := binary.LittleEndian.Uint16(data[0:])
+	cacheSlot := binary.LittleEndian.Uint16(data[10:])
+	left := int(binary.LittleEndian.Uint16(data[12:]))
+	top := int(binary.LittleEndian.Uint16(data[14:]))
+	right := int(binary.LittleEndian.Uint16(data[16:]))
+	bottom := int(binary.LittleEndian.Uint16(data[18:]))
+	surface := g.surfaces[surfID]
+	if surface == nil {
+		return
+	}
+	left = max(0, min(left, int(surface.width)))
+	top = max(0, min(top, int(surface.height)))
+	right = max(left, min(right, int(surface.width)))
+	bottom = max(top, min(bottom, int(surface.height)))
+	width, height := right-left, bottom-top
+	if width == 0 || height == 0 {
+		return
+	}
+	pixels := make([]byte, width*height*4)
+	srcStride := int(surface.width) * 4
+	dstStride := width * 4
+	for row := 0; row < height; row++ {
+		src := (top+row)*srcStride + left*4
+		copy(pixels[row*dstStride:(row+1)*dstStride], surface.data[src:src+dstStride])
+	}
+	g.cacheEntries[cacheSlot] = cacheEntry{data: pixels, width: width, height: height}
+	g.emitRenderEvent(RenderEvent{Kind: RenderSurfaceToCache, FrameID: g.currentFrameID, SurfaceID: surfID, SurfaceID2: cacheSlot, Rect: RenderRect{Left: uint16(left), Top: uint16(top), Right: uint16(right), Bottom: uint16(bottom)}, Width: uint32(width), Height: uint32(height)})
 }
 
 func (g *GfxHandler) onCacheToSurface(data []byte) {
@@ -1948,6 +2074,7 @@ func (g *GfxHandler) onCacheToSurface(data []byte) {
 		dy := binary.LittleEndian.Uint16(data[offset+2:])
 		offset += 4
 		if hasCE && hasSurf {
+			g.emitRenderEvent(RenderEvent{Kind: RenderCacheToSurface, FrameID: g.currentFrameID, SurfaceID: surfId, SurfaceID2: cacheSlot, OutputX: uint32(dx), OutputY: uint32(dy), Width: uint32(ce.width), Height: uint32(ce.height)})
 			blitToSurface(s, int(dx), int(dy), ce.width, ce.height, ce.data)
 			g.emitBitmap(s, int(dx), int(dy), ce.width, ce.height, ce.data)
 		}
@@ -1960,6 +2087,7 @@ func (g *GfxHandler) onEvictCacheEntry(data []byte) {
 	}
 	slot := binary.LittleEndian.Uint16(data)
 	delete(g.cacheEntries, slot)
+	g.emitRenderEvent(RenderEvent{Kind: RenderCacheEvict, FrameID: g.currentFrameID, SurfaceID: slot})
 }
 
 func (g *GfxHandler) onCacheImportOffer() {
@@ -2026,11 +2154,23 @@ func blitToSurface(s *surface, x, y, w, h int, src []byte) {
 	}
 }
 
+func (g *GfxHandler) surfaceID(target *surface) uint16 {
+	if target == nil {
+		return 0
+	}
+	return target.id
+}
+
 // emitBitmapPooled is like emitBitmap but releases `decoded` back to
 // bitmapBufPool after the synchronous onBitmap callback returns.  Use this
 // for codec output buffers that the GfxHandler owns end-to-end (currently
 // uncompressed and planar).
 func (g *GfxHandler) emitBitmapPooled(s *surface, x, y, w, h int, decoded []byte) {
+	g.emitRenderEvent(RenderEvent{Kind: RenderBitmap, FrameID: g.currentFrameID, SurfaceID: g.surfaceID(s), Rect: RenderRect{Left: uint16(x), Top: uint16(y), Right: uint16(x + w), Bottom: uint16(y + h)}, Width: uint32(w), Height: uint32(h), Data: decoded, Stride: uint32(w * 4)})
+	if g.onRenderEvent != nil {
+		releaseBitmapBuf(decoded)
+		return
+	}
 	if !s.mapped || g.onBitmap == nil {
 		releaseBitmapBuf(decoded)
 		return
@@ -2046,6 +2186,10 @@ func (g *GfxHandler) emitBitmapPooled(s *surface, x, y, w, h int, decoded []byte
 }
 
 func (g *GfxHandler) emitBitmap(s *surface, x, y, w, h int, decoded []byte) {
+	g.emitRenderEvent(RenderEvent{Kind: RenderBitmap, FrameID: g.currentFrameID, SurfaceID: g.surfaceID(s), Rect: RenderRect{Left: uint16(x), Top: uint16(y), Right: uint16(x + w), Bottom: uint16(y + h)}, Width: uint32(w), Height: uint32(h), Data: decoded, Stride: uint32(w * 4)})
+	if g.onRenderEvent != nil {
+		return
+	}
 	if !s.mapped || g.onBitmap == nil {
 		return
 	}

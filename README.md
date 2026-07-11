@@ -33,7 +33,7 @@
 - 🌊 **DOM 终端渲染**：基于 `@wterm/dom`，终端文本可像普通网页一样拖选复制。
 - 📱 **移动端友好**：支持移动端长按、拖拽选择和系统复制菜单。
 - 🗂️ **连接资产管理**：支持 SSH / RDP / VNC 连接管理、搜索、排序、标签和备注。
-- 🖥️ **RDP / VNC 远程桌面**：RDP 使用纯 Go WASM 方案（grdp），全部协议处理和渲染在浏览器端完成——不依赖服务端 FreeRDP、Python 或任何 native 组件。支持 H.264 WebCodecs 硬解、Canvas 2D 位图渲染、RDPGFX/RemoteFX Progressive、画质/FPS/分辨率（PPI 档位：1080p/2K/4K/8K/自动）、移动端软键盘（含 IME 中文输入）、快捷键、视区摇杆（速度模式无限平移）、浮窗布局菜单（全屏/半屏/四分之一/关闭）、双指滚动缩放、剪贴板双向同步、跨标签文件传输。VNC 使用内置 noVNC 页面和 Zephyr WebSocket 代理。
+- 🖥️ **RDP / VNC 远程桌面**：RDP 使用浏览器端 Go WASM（grdp）协议栈，不依赖服务端 FreeRDP、Python 或 native bridge；默认且首选 `worker-gpu-v2`，能力探测失败时使用页面线程 `gpu-v2-page`。两条管线共用 RDPGFX/classic-bitmap semantic、WebGL2 FBO compositor、WebCodecs AVC420/AVC444 双流、可靠 FRAME_ACK 和 WebSocket↔TCP 双向背压；旧 Canvas2D/raw-H264/单纹理 WebGL 管线已删除。
 - 💽 **Zephyr Agent 磁盘映射**：独立 Flutter Agent 应用主动连接 Zephyr 主端，把本机文件系统映射为 RDP 会话里的 `\\tsclient` 虚拟磁盘。支持 Android / Windows / Linux / macOS / iOS 构建；桌面端默认映射整盘/根目录，Android 默认映射 `/storage/emulated/0` 并引导授予“所有文件访问权限”，也支持 SAF 授权目录降级。
 - 🧭 **代理与跳板路由**：支持 SOCKS5 / HTTP CONNECT 代理、SSH 跳板机和多级 SSH 跳板链路。
 - ⚡ **远程批量执行**：可对多个 SSH 连接批量执行命令并查看结果。
@@ -297,14 +297,15 @@ Zephyr 自带的默认 Skill 已经写入了本地运维常用规则，重点包
 
 RDP 和 VNC 都不需要把目标端口暴露到公网，浏览器只连接 Zephyr：
 
-- **RDP**：使用纯 **Go WASM (grdp)** 方案。所有 RDP 协议处理（NLA/CredSSP 认证、TPKT/MCS/SEC 协议栈、RDPGFX/RemoteFX Progressive 图形管线、CLIPRDR 剪贴板、RDPSND 音频、RDPDR 虚拟驱动器、RDPECAM 摄像头、MS-RDPEL 位置、MS-AUDIN 麦克风）和渲染全部在浏览器端完成，服务端只提供 WebSocket→TCP 代理（`/rdp-proxy`）。
-  - **架构**：`rdp-wasm/` 目录下的 Go 源码编译为 `main.wasm`（Dockerfile Stage 2 自动用 `golang:1.26-alpine` 构建），浏览器加载后通过 `rdp-wasm-client.js` 驱动连接、渲染和用户交互。
-  - **图形渲染**：H.264 帧通过 WebCodecs `VideoDecoder` 硬解并 `drawImage` 到 Canvas；位图通过 `putImageData` 直接绘制（`desynchronized:true` 跳过合成器延迟）；Go 侧复用渲染缓冲区避免重复分配。
+- **RDP**：使用浏览器端 **Go WASM (grdp)** 协议栈。NLA/CredSSP、RDPGFX/RemoteFX Progressive、CLIPRDR、RDPSND、RDPDR、RDPECAM、RDPEL 和 AUDIN 均在浏览器执行；服务端只提供带双向背压的 WebSocket→TCP 代理（`/rdp-proxy`）。
+  - **架构**：`rdp-wasm/` 编译为 `main.wasm`。默认 `worker-gpu-v2` 将 Go WASM、WebSocket、WebCodecs 和 OffscreenCanvas WebGL2 compositor 移入 Dedicated Worker；完整 compositor probe 失败时使用页面线程 `gpu-v2-page`，页面继续负责 DOM、输入、IME 和权限 API。
+  - **图形渲染**：两条管线共用按 `surfaceId/frameId` 建立的 WebGL2 texture/FBO 图；classic bitmap 也适配到统一 desktop surface。bitmap 使用 WASM linear-memory 同步上传与 GPU BGRA→RGBA，AVC420 使用 WebCodecs，AVC444/AVC444v2 处理 LC 与双流后按 BT.709 reference 规则重建。旧 Canvas2D、raw-H264 和单纹理 WebGL 管线已删除。
+  - **可靠性**：浏览器接收队列、Node WebSocket→TCP 与 TCP→WebSocket 均使用高/低水位和硬上限；协议字节与 FRAME_ACK 不允许静默丢弃。实验管线失败会明确断开并报告 reason code，不继续运行已损坏的流。
   - **每连接设置**：每个 RDP 连接可独立配置分辨率（PPI 档位：1080p/2K/4K/8K/自动）、画质（平衡/性能/画质）、帧率（30/45/60/120/144 FPS）；默认平衡+1080p+30FPS。分辨率档位按屏幕容器实际宽高比计算远程分辨率（不是固定 16:9），适应模式零黑边。
   - **文件传输**：上传文件到远程（CLIPRDR FileGroupDescriptorW + FileContents 协议，Windows 右键粘贴触发按需拉取）、从远程下载文件（异步 4MB 分块 FILECONTENTS_RANGE）、RDPDR 虚拟驱动器（`\\tsclient\WEBRDP`）。
   - **跨标签文件桥接**：SSH ↔ RDP 双向文件传输通过服务端临时文件中转（`/api/clipboard/upload` + `/api/clipboard/download/:token`，流式传输，无大小限制）；复制时只发元数据，粘贴时才拉取真实数据。
   - **剪贴板**：文本剪贴板双向同步（CF_UNICODETEXT）；文件剪贴板支持 Windows 复制文件→浏览器下载、浏览器上传→Windows 粘贴。
-  - **移动端**：软键盘支持退格/删除/回车 + IME 中文输入（通过剪贴板粘贴注入）；双指上下/左右滚动（屏幕像素计算）；双指缩放。
+  - **移动端**：软键盘支持退格/删除/回车 + IME 中文输入；支持直接触控/相对触控板、pen、三指快捷键和双指上下/左右惯性滚动。缩放横条是 viewport zoom 唯一入口，不提供 pinch zoom 或本地触控圆环。
   - **连接稳定性**：12 秒连接看门狗、300ms 断开间隔防竞态、AudioContext 复用、重连互斥锁防循环。
   - **壁纸与动效**：平衡+画质模式启用壁纸和桌面动效（清除 PERF_DISABLE_WALLPAPER/FULLWINDOWDRAG/MENUANIMATIONS/THEMING），仅性能模式禁用。
 - **VNC**：使用内置 **noVNC** 前端，浏览器通过 `/novnc` WebSocket 连接 Zephyr；Zephyr 在服务端直连/代理/SSH 跳板到目标 VNC Server，并在服务端使用保存的 VNC 密码完成 VNCAuth，密码不会下发到浏览器。
@@ -325,7 +326,7 @@ RDP 不需要服务端 native 组件（无 FreeRDP、无 Python bridge、无 lib
 | --- | --- |
 | RDP 协议栈 | 纯 Go WASM (grdp fork)，浏览器端运行 |
 | 服务端代理 | Node.js `/rdp-proxy` WebSocket→TCP 代理 |
-| 图形渲染 | H.264 WebCodecs + Canvas 2D `putImageData` |
+| 图形渲染 | 默认 Worker OffscreenCanvas WebGL2；页面线程 WebGL2 作为能力回退；AVC420/AVC444 WebCodecs |
 | 剪贴板 | MS-RDPECLIP (CLIPRDR) 文本 + 文件双向 |
 | 音频 | RDPSND PCM → Web Audio API |
 | 虚拟驱动器 | MS-RDPEFS (RDPDR) `\\tsclient\WEBRDP` |

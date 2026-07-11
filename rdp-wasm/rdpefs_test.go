@@ -163,20 +163,22 @@ func TestCapabilityResponsePreservesDeviceAnnounceCompatibleBytes(t *testing.T) 
 	if got := binary.LittleEndian.Uint16(capsResp[8:10]); got != 1 {
 		t.Fatalf("numCapabilities = %d, want 1", got)
 	}
-	if got := binary.LittleEndian.Uint16(capsResp[12:14]); got != CAP_GENERAL_TYPE {
+	// RDPDR header is 4 bytes and numCapabilities/padding is another 4;
+	// therefore the first capability set starts at byte 8.
+	if got := binary.LittleEndian.Uint16(capsResp[8:10]); got != CAP_GENERAL_TYPE {
 		t.Fatalf("capset type = %d, want CAP_GENERAL_TYPE", got)
 	}
-	if got := binary.LittleEndian.Uint16(capsResp[14:16]); got != 44 {
+	if got := binary.LittleEndian.Uint16(capsResp[10:12]); got != 44 {
 		t.Fatalf("general CapabilityLength = %d, want 44", got)
 	}
-	if got := binary.LittleEndian.Uint32(capsResp[16:20]); got != 1 {
+	if got := binary.LittleEndian.Uint32(capsResp[12:16]); got != 1 {
 		t.Fatalf("general Version = %d, want legacy Version=1", got)
 	}
 	// Existing wire bytes include osType=2 and protocolMinorVersion=12.
-	if got := binary.LittleEndian.Uint32(capsResp[20:24]); got != 2 {
+	if got := binary.LittleEndian.Uint32(capsResp[16:20]); got != 2 {
 		t.Fatalf("osType = %d, want legacy osType=2", got)
 	}
-	if got := binary.LittleEndian.Uint16(capsResp[30:32]); got != 12 {
+	if got := binary.LittleEndian.Uint16(capsResp[26:28]); got != 12 {
 		t.Fatalf("protocolMinorVersion = %d, want 12", got)
 	}
 }
