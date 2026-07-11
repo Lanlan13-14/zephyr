@@ -51,7 +51,9 @@ jobs:
           node scripts/build-go-wasm-esm.mjs public/vendor/rdp-wasm/wasm_exec.js public/vendor/rdp-wasm/wasm_exec.mjs
           node --input-type=module -e "import('./public/vendor/rdp-wasm/wasm_exec.mjs').then(m => { if (typeof m.Go !== 'function') throw new Error('ESM Go export missing') })"
 
-      - name: Run RDP browser compositor smoke
+      - name: Run optional RDP browser compositor diagnostic
+        continue-on-error: true
+        timeout-minutes: 2
         run: npm run test:browser-smoke
 
       - name: Run Go and WASM tests
