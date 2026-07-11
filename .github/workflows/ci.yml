@@ -44,14 +44,12 @@ jobs:
       - name: Run RDP Node tests
         run: npm run test:rdp-node
 
-      - name: Prepare Go Worker browser runtime
+      - name: Prepare and verify Go Worker ESM runtime
         run: |
           mkdir -p public/vendor/rdp-wasm
           cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" public/vendor/rdp-wasm/wasm_exec.js
-
-      - name: Verify Go runtime registers globalThis.Go
-        run: |
-          node --input-type=module -e "await import('./public/vendor/rdp-wasm/wasm_exec.js'); if (typeof globalThis.Go !== 'function') throw new Error('globalThis.Go missing')"
+          node scripts/build-go-wasm-esm.mjs public/vendor/rdp-wasm/wasm_exec.js public/vendor/rdp-wasm/wasm_exec.mjs
+          node --input-type=module -e "import('./public/vendor/rdp-wasm/wasm_exec.mjs').then(m => { if (typeof m.Go !== 'function') throw new Error('ESM Go export missing') })"
 
       - name: Run RDP browser compositor smoke
         run: npm run test:browser-smoke

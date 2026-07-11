@@ -2536,7 +2536,7 @@ window.addEventListener('message', (e) => {
                     initPageGpuPipeline();
                     await loadPageWasm();
                 } else {
-                    rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260711-worker-go-runtime1', { type: 'module' }));
+                    rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260711-go-esm1', { type: 'module' }));
                     rdpWorkerBridge.installGlobals(window);
                     rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
                     const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });

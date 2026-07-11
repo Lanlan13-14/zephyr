@@ -1,3 +1,4 @@
+import { Go as GoRuntime } from './vendor/rdp-wasm/wasm_exec.mjs?v=20260711-go-esm1';
 import { RdpGpuSurfaceCompositor } from './rdp-renderer.js';
 import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js';
 import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js';
@@ -55,13 +56,8 @@ function syncPageRpc(name, args) {
 }
 
 async function loadGoWasm() {
-    bootStage('wasm-exec-loading');
-    // wasm_exec.js is a side-effect script. Dynamic import works in a module
-    // Worker, whereas importScripts is forbidden by the module-worker spec.
-    await import('./vendor/rdp-wasm/wasm_exec.js');
     bootStage('wasm-exec-loaded');
-    const GoRuntime = globalThis.Go;
-    if (typeof GoRuntime !== 'function') throw new Error('Go WASM runtime did not register globalThis.Go');
+    if (typeof GoRuntime !== 'function') throw new Error('Go ESM runtime export is unavailable');
     const go = new GoRuntime();
     bootStage('wasm-fetching');
     const response = await fetch('./vendor/rdp-wasm/main.wasm');
