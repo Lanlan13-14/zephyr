@@ -105,6 +105,7 @@ type RdpClient struct {
 	onH264NV12Fn            func(destX, destY, w, h int, y []byte, yStride int, uv []byte, uvStride int)
 	onRenderEventFn         rdpgfx.RenderEventSink
 	externalFrameCompletion bool
+	externalVideoDecode     bool
 	onDecoderBrokenFn       func()
 
 	// clipboard callbacks and handler
@@ -594,6 +595,7 @@ func (g *RdpClient) doLogin(routingToken []byte) error {
 	if g.onRenderEventFn != nil {
 		gfxHandler.SetRenderEventSink(g.onRenderEventFn)
 	}
+	gfxHandler.SetExternalVideoDecode(g.externalVideoDecode)
 	gfxHandler.SetExternalFrameCompletion(g.externalFrameCompletion)
 	if g.avc444Disabled {
 		gfxHandler.SetAVC444Disabled(true)
@@ -1001,6 +1003,14 @@ func (g *RdpClient) OnRenderEvent(fn rdpgfx.RenderEventSink) *RdpClient {
 	g.onRenderEventFn = fn
 	if g.gfxHandler != nil {
 		g.gfxHandler.SetRenderEventSink(fn)
+	}
+	return g
+}
+
+func (g *RdpClient) SetExternalVideoDecode(enabled bool) *RdpClient {
+	g.externalVideoDecode = enabled
+	if g.gfxHandler != nil {
+		g.gfxHandler.SetExternalVideoDecode(enabled)
 	}
 	return g
 }

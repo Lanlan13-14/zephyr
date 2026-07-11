@@ -168,8 +168,10 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	if js.Global().Get("rdpOnRenderEvent").Type() != js.TypeFunction {
 		return fmt.Errorf("semantic GPU compositor callback is unavailable")
 	}
+	videoDecode := js.Global().Get("rdpExternalVideoDecode").Bool()
 	g.OnRenderEvent(forwardRenderEvent)
-	g.SetExternalFrameCompletion(true)
+	g.SetExternalVideoDecode(videoDecode)
+	g.SetExternalFrameCompletion(videoDecode)
 	g.OnH264Raw(nil)
 
 	uint8Ctor := js.Global().Get("Uint8Array")

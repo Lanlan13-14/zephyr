@@ -143,8 +143,10 @@ function handlePageRenderEvent(event) {
     } else if (kind === 1) {
         rdpGpuV2Decoder?.close();
         rdpGpuV2Avc444Decoder?.close();
-        rdpGpuV2Decoder = createPageAvc420Decoder();
-        rdpGpuV2Avc444Decoder = createPageAvc444Decoder();
+        if (window.rdpExternalVideoDecode) {
+            rdpGpuV2Decoder = createPageAvc420Decoder();
+            rdpGpuV2Avc444Decoder = createPageAvc444Decoder();
+        }
     }
     if (kind === 9) {
         const frameId = Number(event.frameId) || 0;
@@ -183,6 +185,8 @@ function createPageAvc444Decoder() {
 }
 
 function initPageGpuPipeline() {
+    const videoDecodeAvailable = typeof globalThis.VideoDecoder === 'function' && typeof globalThis.EncodedVideoChunk === 'function';
+    window.rdpExternalVideoDecode = videoDecodeAvailable;
     rdpGpuV2?.destroy();
     rdpGpuV2Decoder?.close();
     rdpGpuV2Avc444Decoder?.close();
@@ -193,12 +197,15 @@ function initPageGpuPipeline() {
             try { rdpRequestFullRefresh(); } catch (error) { failGpuV2(error, 'FULL_REFRESH_FAILED'); }
         },
         onFramesPresented(frameIds) {
-            for (const frameId of frameIds) rdpGfxCompleteFrame(frameId, 0);
+            if (window.rdpExternalVideoDecode) {
+                for (const frameId of frameIds) rdpGfxCompleteFrame(frameId, 0);
+            }
             notePresentedFrame();
         },
     });
-    rdpGpuV2Decoder = createPageAvc420Decoder();
-    rdpGpuV2Avc444Decoder = createPageAvc444Decoder();
+    rdpGpuV2Decoder = videoDecodeAvailable ? createPageAvc420Decoder() : null;
+    rdpGpuV2Avc444Decoder = videoDecodeAvailable ? createPageAvc444Decoder() : null;
+    if (!videoDecodeAvailable) rdpDiag.fallbackReason = [rdpDiag.fallbackReason, 'WEBCODECS_UNAVAILABLE_BITMAP_MODE'].filter(Boolean).join('+');
     window.rdpOnRenderEvent = handlePageRenderEvent;
     rdpDiag.renderer = 'gpu-v2-page';
 }
@@ -2501,24 +2508,39 @@ window.addEventListener('message', (e) => {
     /* Load WASM then connect */
     try {
         if (selectedPipeline === 'worker-gpu-v2') {
-            if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') throw new Error('Worker RDP requires cross-origin isolation');
-            if (typeof Worker === 'undefined' || typeof rdpCanvas?.transferControlToOffscreen !== 'function') throw new Error('OffscreenCanvas Worker is unavailable');
-            const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260711-worker-v1' });
-            if (!probe.supported) {
-                rdpDiag.fallbackReason = probe.reason;
-                rdpDiag.workerProbe = probe;
+            const isolationReady = globalThis.isSecureContext === true && globalThis.crossOriginIsolated === true && typeof SharedArrayBuffer !== 'undefined';
+            const workerReady = typeof Worker !== 'undefined' && typeof rdpCanvas?.transferControlToOffscreen === 'function';
+            if (!isolationReady || !workerReady) {
+                const reasons = [];
+                if (!globalThis.isSecureContext) reasons.push('INSECURE_CONTEXT');
+                if (!globalThis.crossOriginIsolated) reasons.push('CROSS_ORIGIN_ISOLATION_UNAVAILABLE');
+                if (typeof SharedArrayBuffer === 'undefined') reasons.push('SHARED_ARRAY_BUFFER_UNAVAILABLE');
+                if (!workerReady) reasons.push('WORKER_OFFSCREEN_UNAVAILABLE');
+                rdpDiag.fallbackReason = reasons.join('+') || 'WORKER_CAPABILITY_UNAVAILABLE';
+                rdpDiag.workerProbe = { supported: false, reason: rdpDiag.fallbackReason };
                 selectedPipeline = 'gpu-v2-page';
                 rdpDiag.pipeline = 'gpu-v2-page';
-                console.warn('[rdp-worker] capability probe failed; using page GPU v2 without transferring canvas', probe);
+                console.warn('[rdp-worker] isolation/capability unavailable; using page GPU v2 before canvas transfer', rdpDiag.workerProbe);
                 initPageGpuPipeline();
                 await loadPageWasm();
             } else {
-                rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260711-worker-v1', { type: 'module' }));
-                rdpWorkerBridge.installGlobals(window);
-                rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
-                const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
-                rdpDiag.renderer = 'worker-gpu-v2';
-                rdpDiag.worker = capabilities;
+                const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260711-worker-v1' });
+                if (!probe.supported) {
+                    rdpDiag.fallbackReason = probe.reason;
+                    rdpDiag.workerProbe = probe;
+                    selectedPipeline = 'gpu-v2-page';
+                    rdpDiag.pipeline = 'gpu-v2-page';
+                    console.warn('[rdp-worker] capability probe failed; using page GPU v2 without transferring canvas', probe);
+                    initPageGpuPipeline();
+                    await loadPageWasm();
+                } else {
+                    rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260711-worker-v1', { type: 'module' }));
+                    rdpWorkerBridge.installGlobals(window);
+                    rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
+                    const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
+                    rdpDiag.renderer = 'worker-gpu-v2';
+                    rdpDiag.worker = capabilities;
+                }
             }
         } else {
             await loadPageWasm();

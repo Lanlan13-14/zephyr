@@ -17,6 +17,28 @@ test('pipeline selection defaults to Worker GPU v2 and excludes legacy', () => {
     assert.equal(normalizeRdpPipeline('unknown'), 'worker-gpu-v2');
 });
 
+test('isolation and Worker capability failure falls back before canvas transfer', async () => {
+    const client = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
+    const capabilityAt = client.indexOf('const isolationReady =');
+    const fallbackAt = client.indexOf("selectedPipeline = 'gpu-v2-page'", capabilityAt);
+    const transferAt = client.indexOf('await rdpWorkerBridge.init', capabilityAt);
+    assert.ok(capabilityAt >= 0 && fallbackAt > capabilityAt && transferAt > fallbackAt);
+    assert.equal(client.includes("throw new Error('Worker RDP requires cross-origin isolation')"), false);
+});
+
+test('page GPU fallback does not require WebCodecs', async () => {
+    const client = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
+    assert.ok(client.includes("window.rdpExternalVideoDecode = videoDecodeAvailable"));
+    assert.ok(client.includes("WEBCODECS_UNAVAILABLE_BITMAP_MODE"));
+});
+
+test('bitmap fallback keeps frame ACK ownership in Go', async () => {
+    const client = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
+    assert.ok(client.includes('if (window.rdpExternalVideoDecode)'));
+    const main = await fs.readFile(new URL('../rdp-wasm/main.go', import.meta.url), 'utf8');
+    assert.ok(main.includes('g.SetExternalFrameCompletion(videoDecode)'));
+});
+
 test('legacy renderer entry points are absent from production client', async () => {
     const client = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
     for (const forbidden of ['rdpDrawBitmapBGRA', 'rdpOnH264', 'putImageData and WebCodecs', 'shouldUseWebGLRenderer', "selectedPipeline = 'legacy'"]) {

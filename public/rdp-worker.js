@@ -110,6 +110,7 @@ function createAvc444Decoder() {
 }
 
 function setupRenderer(canvas) {
+    globalThis.rdpExternalVideoDecode = true;
     bootStage('webgl2-compositor-starting');
     compositor = new RdpGpuSurfaceCompositor(canvas, {
         onFramesPresented(frameIds) { for (const frameId of frameIds) globalThis.rdpGfxCompleteFrame(frameId, decoderBacklog()); },

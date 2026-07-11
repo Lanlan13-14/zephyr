@@ -384,6 +384,7 @@ type GfxHandler struct {
 	onRenderEvent           RenderEventSink
 	frameTracker            *frameTracker
 	externalFrameCompletion bool
+	externalVideoDecode     bool
 	currentFrameID          uint32
 	// onH264Raw is called with raw H.264 NAL unit data when h264dec is nil
 	// (e.g. WASM builds without CGo).  The caller can forward the data to a
@@ -778,10 +779,10 @@ func (g *GfxHandler) sendCapsAdvertise() {
 	p := pduBufPool.Get().([]byte)[:0]
 	defer pduBufPool.Put(p[:0])
 
-	// AVC capsets are advertised when we can deliver decoded frames either
-	// in-process (h264dec), by handing legacy raw NALs to the embedder, or by
-	// emitting complete semantic video events for an external compositor.
-	if g.h264dec != nil || g.onH264Raw != nil || g.onRenderEvent != nil {
+	// AVC capsets are advertised only when compressed video has an actual
+	// decoder. A semantic sink alone can still consume bitmap/RFX events and
+	// must not make the server send AVC if WebCodecs is unavailable.
+	if g.h264dec != nil || g.onH264Raw != nil || g.externalVideoDecode {
 		if g.avc444Disabled {
 			// AVC444 disabled: advertise only v8.0 and v8.1 so the server
 			// uses AVC420 (4:2:0) exclusively and never sends LC=2 data.
@@ -1426,6 +1427,8 @@ func (g *GfxHandler) sendReadyFrameAcks() {
 		g.sendFrameAck(frame.id, frame.depth)
 	}
 }
+
+func (g *GfxHandler) SetExternalVideoDecode(enabled bool) { g.externalVideoDecode = enabled }
 
 // SetExternalFrameCompletion defers FRAME_ACK until CompleteFrame is called by
 // an asynchronous decoder/compositor. Legacy mode completes at END_FRAME.
