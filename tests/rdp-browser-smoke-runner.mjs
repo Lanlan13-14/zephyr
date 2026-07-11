@@ -19,7 +19,9 @@ try {
         if (result.error) throw result.error;
         const match = result.stdout.match(/<pre id="out">([^<]+)<\/pre>/);
         if (!match) throw new Error(`${page.path} result missing: ${result.stderr}`);
-        const value = JSON.parse(match[1].replaceAll('&quot;', '"'));
+        const raw = match[1].replaceAll('&quot;', '"');
+        if (raw === 'running') throw new Error(`${page.path} did not complete before Chromium exited`);
+        const value = JSON.parse(raw);
         if (!page.validate(value)) throw new Error(`${page.path} failed: ${JSON.stringify(value)}`);
         console.log(`${page.path}: ${JSON.stringify(value)}`);
     }
