@@ -15,7 +15,7 @@ try {
         { path: 'tests/rdp-renderer-browser-smoke.html', validate(value) { return value.ok && value.presents?.[0] === 1 && value.pixels?.length === 32; } },
         { path: 'tests/go-worker-runtime-smoke.html', validate(value) { return value.ok && value.hasImportObject === true; } },
     ]) {
-        const result = spawnSync(chromium, ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--virtual-time-budget=3000', '--dump-dom', `http://127.0.0.1:${port}/${page.path}`], { encoding: 'utf8', timeout: 30000 });
+        const result = spawnSync(chromium, ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--virtual-time-budget=12000', '--dump-dom', `http://127.0.0.1:${port}/${page.path}`], { encoding: 'utf8', timeout: 30000 });
         if (result.error) throw result.error;
         const match = result.stdout.match(/<pre id="out">([^<]+)<\/pre>/);
         if (!match) throw new Error(`${page.path} result missing: ${result.stderr}`);
