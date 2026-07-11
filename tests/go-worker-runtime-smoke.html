@@ -1,0 +1,7 @@
+<!doctype html><meta charset="utf-8"><title>Go Worker runtime smoke</title><pre id="out">running</pre><script type="module">
+const worker = new Worker('./go-worker-runtime-smoke.js', { type: 'module' });
+const timeout = setTimeout(() => finish({ ok:false, error:'timeout' }), 10000);
+function finish(result) { clearTimeout(timeout); globalThis.goWorkerSmokeResult=result; document.querySelector('#out').textContent=JSON.stringify(result); worker.terminate(); }
+worker.onmessage = ({data}) => finish(data);
+worker.onerror = (event) => finish({ok:false,error:event.message});
+</script>

@@ -60,7 +60,9 @@ async function loadGoWasm() {
     // Worker, whereas importScripts is forbidden by the module-worker spec.
     await import('./vendor/rdp-wasm/wasm_exec.js');
     bootStage('wasm-exec-loaded');
-    const go = new Go();
+    const GoRuntime = globalThis.Go;
+    if (typeof GoRuntime !== 'function') throw new Error('Go WASM runtime did not register globalThis.Go');
+    const go = new GoRuntime();
     bootStage('wasm-fetching');
     const response = await fetch('./vendor/rdp-wasm/main.wasm');
     bootStage('wasm-instantiating');

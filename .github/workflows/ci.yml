@@ -44,6 +44,11 @@ jobs:
       - name: Run RDP Node tests
         run: npm run test:rdp-node
 
+      - name: Prepare Go Worker browser runtime
+        run: |
+          mkdir -p public/vendor/rdp-wasm
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" public/vendor/rdp-wasm/wasm_exec.js
+
       - name: Run RDP browser compositor smoke
         run: npm run test:browser-smoke
 

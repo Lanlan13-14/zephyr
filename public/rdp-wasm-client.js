@@ -217,7 +217,9 @@ window._rdpRenderDiag = () => JSON.stringify(snapshotRdpDiagnostics());
 
 async function loadWasm() {
     setStatus('connecting', '加载 RDP WASM 引擎...');
-    const go = new Go();
+    const GoRuntime = globalThis.Go;
+    if (typeof GoRuntime !== 'function') throw new Error('Go WASM runtime did not register globalThis.Go');
+    const go = new GoRuntime();
     const result = await WebAssembly.instantiateStreaming(
         fetch('vendor/rdp-wasm/main.wasm?v=' + Date.now()),
         go.importObject,
@@ -2534,7 +2536,7 @@ window.addEventListener('message', (e) => {
                     initPageGpuPipeline();
                     await loadPageWasm();
                 } else {
-                    rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260711-worker-v1', { type: 'module' }));
+                    rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260711-worker-go-runtime1', { type: 'module' }));
                     rdpWorkerBridge.installGlobals(window);
                     rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
                     const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
