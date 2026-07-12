@@ -43,6 +43,14 @@ const (
 	TYPE_RDP_NEG_FAILURE                 = 0x03
 )
 
+// RDP Negotiation Request Flags (MS-RDPBCGR 2.2.1.1.1)
+const (
+	NEG_REQ_FLAG_EXTENDED_CLIENT_DATA   = 0x01
+	NEG_REQ_FLAG_DYNVC_GFX_PROTOCOL     = 0x02
+	NEG_REQ_FLAG_RESTRICTED_ADMIN_MODE  = 0x08
+	NEG_REQ_FLAG_REDIRECTED_AUTH_MODE   = 0x10
+)
+
 /**
  * Protocols available for x224 layer
  */
@@ -264,6 +272,7 @@ func (x *X224) Connect() error {
 
 	message := NewClientConnectionRequestPDU([]byte(cookie), x.requestedProtocol)
 	message.ProtocolNeg.Type = TYPE_RDP_NEG_REQ
+	message.ProtocolNeg.Flag = NEG_REQ_FLAG_EXTENDED_CLIENT_DATA | NEG_REQ_FLAG_DYNVC_GFX_PROTOCOL
 	message.ProtocolNeg.Result = uint32(x.requestedProtocol)
 
 	slog.Debug("x224 Connect", "message", core.Hex(message.Serialize()))

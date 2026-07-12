@@ -920,6 +920,11 @@ func (c *Client) SetFastPathListener(f core.FastPathListener) {
 }
 
 func (c *Client) RecvFastPath(secFlag byte, s []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("sec RecvFastPath panic", "err", r, "dataLen", len(s))
+		}
+	}()
 	data := s
 	if c.enableEncryption && secFlag&FASTPATH_OUTPUT_ENCRYPTED != 0 {
 		data = c.readEncryptedPayload(s, secFlag&FASTPATH_OUTPUT_SECURE_CHECKSUM != 0)

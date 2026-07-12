@@ -11,12 +11,8 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { createRdpDiagnostics, normalizeRdpPipeline } from './rdp-diagnostics.js?v=20260711-baseline1';
-import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260711-gpu-v2-page1';
-import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260711-avc444-v1';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260711-worker-v1';
-import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260711-linear-memory1';
-import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260711-go-esm2';
+import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260712-worker-gpu-scheduler1';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260712-worker-gpu-scheduler1';
 import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260710-touch-input2';
 import {
     subscribeAgentEvents,
@@ -73,13 +69,9 @@ let rdpLocationWatchId = null;
 let rdpAgentDriveEventsActive = false;
 let rdpAgentStorageEnabled = false;
 
-/* Canvas & scaling */
+/* Canvas & scaling — rendering and Go WASM live exclusively in the Worker. */
 let rdpCanvas = null;
-let rdpGpuV2 = null;
-let rdpGpuV2Decoder = null;
-let rdpGpuV2Avc444Decoder = null;
 let rdpWorkerBridge = null;
-let rdpWasmBitmapUploader = null;
 let rdpWidth = 0;
 let rdpHeight = 0;
 
@@ -95,6 +87,9 @@ let fillPanX = 50; /* center */
 let fillPanY = 50;
 
 let connectWatchdogTimer = null;
+let lastConnectStage = 'idle';
+let lastConnectError = '';
+let connectionFailureReported = false;
 const CONNECT_TIMEOUT_MS = 12000;
 
 /* Quality/FPS — kept for UI compat; WASM grdp doesn't need these */
@@ -122,127 +117,14 @@ const AUDIO_MAX_QUEUE = 0.15;   /* 150ms — hard resync ceiling */
 const pointerCache = new Map();
 
 /* ─── Diagnostics (kept for ABR compat, no HUD) ──────────────────────── */
-const pipelineParam = params.rdpPipeline ?? urlParams.get('rdpPipeline');
-let selectedPipeline = normalizeRdpPipeline(pipelineParam);
-const { state: rdpDiag, notePresentedFrame, snapshot: snapshotRdpDiagnostics } = createRdpDiagnostics({
+const selectedPipeline = 'worker-gpu-v2';
+const { state: rdpDiag, snapshot: snapshotRdpDiagnostics } = createRdpDiagnostics({
     pipeline: selectedPipeline,
-    renderer: 'gpu-v2-page-pending',
+    renderer: 'worker-gpu-v2-pending',
 });
-function failGpuV2(error, reason = 'GPU_V2_FRAME_FAILED') {
-    rdpDiag.drawFails++;
-    rdpDiag.lastDrawError = error?.message || String(error);
-    rdpDiag.fallbackReason = reason;
-    console.error('[rdp-gpu-v2] fail-closed', error);
-    try { rdpDisconnect(); } catch {}
-    setStatus('error', `GPU RDP 管线失败: ${rdpDiag.lastDrawError}`);
-}
-function handlePageRenderEvent(event) {
-    const kind = Number(event?.kind);
-    if (kind === 5) {
-        rdpGpuV2Decoder?.resetSurface(event.surfaceId);
-        rdpGpuV2Avc444Decoder?.resetSurface(event.surfaceId);
-    } else if (kind === 1) {
-        rdpGpuV2Decoder?.close();
-        rdpGpuV2Avc444Decoder?.close();
-        if (window.rdpExternalVideoDecode) {
-            rdpGpuV2Decoder = createPageAvc420Decoder();
-            rdpGpuV2Avc444Decoder = createPageAvc444Decoder();
-        }
-    }
-    if (kind === 9) {
-        const frameId = Number(event.frameId) || 0;
-        rdpGpuV2?.addFramePending(frameId);
-        try { rdpGpuV2Decoder.decode(event); } catch (error) { failGpuV2(error, 'AVC420_GPU_DECODE_FAILED'); }
-        return;
-    }
-    if (kind === 10) {
-        const frameId = Number(event.frameId) || 0;
-        rdpGpuV2?.addFramePending(frameId);
-        rdpGpuV2Avc444Decoder.decode(event).then(() => rdpGpuV2?.completeFramePending(frameId)).catch((error) => failGpuV2(error, 'AVC444_GPU_DECODE_FAILED'));
-        return;
-    }
-    try { rdpGpuV2?.handleEvent(event); }
-    catch (error) { failGpuV2(error, 'GPU_V2_RENDER_EVENT_FAILED'); }
-}
-
-function createPageAvc420Decoder() {
-    return new RdpAvc420Decoder({
-        onFrame(frame, event) {
-            try { rdpGpuV2.uploadVideoFrame(event.surfaceId, event.rect, frame); }
-            finally { rdpGpuV2.completeFramePending(event.frameId); try { frame.close(); } catch {} }
-        },
-        onError(error) { failGpuV2(error, 'AVC420_GPU_DECODER_ERROR'); },
-    });
-}
-
-function createPageAvc444Decoder() {
-    return new RdpAvc444Decoder({
-        onMainFrame(frame, event) { rdpGpuV2.uploadVideoFrame(event.surfaceId, event.rect, frame); },
-        onCombinedBitmap(bytes, event) {
-            const width = Number(event.rect.right) - Number(event.rect.left);
-            rdpGpuV2.uploadBitmap(event.surfaceId, event.rect, bytes, width * 4, false);
-        },
-    });
-}
-
-function initPageGpuPipeline() {
-    const videoDecodeAvailable = typeof globalThis.VideoDecoder === 'function' && typeof globalThis.EncodedVideoChunk === 'function';
-    window.rdpExternalVideoDecode = videoDecodeAvailable;
-    rdpGpuV2?.destroy();
-    rdpGpuV2Decoder?.close();
-    rdpGpuV2Avc444Decoder?.close();
-    rdpGpuV2 = new RdpGpuSurfaceCompositor(rdpCanvas, {
-        diagnostics: rdpDiag,
-        onContextRestoreNeeded() {
-            rdpDiag.fallbackReason = 'CONTEXT_RESTORED_NEEDS_REFRESH';
-            try { rdpRequestFullRefresh(); } catch (error) { failGpuV2(error, 'FULL_REFRESH_FAILED'); }
-        },
-        onFramesPresented(frameIds) {
-            if (window.rdpExternalVideoDecode) {
-                for (const frameId of frameIds) rdpGfxCompleteFrame(frameId, 0);
-            }
-            notePresentedFrame();
-        },
-    });
-    rdpGpuV2Decoder = videoDecodeAvailable ? createPageAvc420Decoder() : null;
-    rdpGpuV2Avc444Decoder = videoDecodeAvailable ? createPageAvc444Decoder() : null;
-    if (!videoDecodeAvailable) rdpDiag.fallbackReason = [rdpDiag.fallbackReason, 'WEBCODECS_UNAVAILABLE_BITMAP_MODE'].filter(Boolean).join('+');
-    window.rdpOnRenderEvent = handlePageRenderEvent;
-    rdpDiag.renderer = 'gpu-v2-page';
-}
 window._rdpRenderDiag = () => JSON.stringify(snapshotRdpDiagnostics());
 
-/* ═══════════════════════════════════════════════════════════════════════
- * WASM BOOTSTRAP
- ══════════════════════════════════════════════════════════════════════ */
-
-async function loadWasm(GoRuntime) {
-    setStatus('connecting', '加载 RDP WASM 引擎...');
-    if (typeof GoRuntime !== 'function') GoRuntime = await loadGoRuntime({ pipeline: 'gpu-v2-page' });
-    const { go, result } = await instantiateGoWasm(GoRuntime, {
-        wasmUrl: 'vendor/rdp-wasm/main.wasm?v=' + Date.now(),
-        pipeline: 'gpu-v2-page',
-    });
-    if (result.instance.exports.mem) {
-        rdpWasmBitmapUploader = createSynchronousBitmapUploader({
-            memoryProvider: () => result.instance.exports.mem,
-            upload(event) {
-                if (Number(event.kind) === 16) rdpGpuV2.uploadClassicBitmap(event.rect, event.data, event.stride);
-                else rdpGpuV2.uploadBitmap(event.surfaceId, event.rect, event.data, event.stride);
-                if (!Number(event.frameId)) rdpGpuV2.schedulePresent();
-            },
-        });
-        window.rdpOnWasmBitmap = (event) => rdpWasmBitmapUploader(event);
-    }
-    const runPromise = go.run(result.instance);
-    runPromise?.catch?.((error) => {
-        wasmReady = false;
-        setStatus('error', `Go WASM runtime exited: ${error?.message || error}`);
-        console.error('[rdp-wasm] Go runtime exited', error);
-    });
-    wasmReady = true;
-    console.info('[rdp-wasm] WASM engine loaded');
-}
+/* Go WASM is instantiated only inside rdp-worker.js. */
 
 /* ═══════════════════════════════════════════════════════════════════════
  * WASM → JS CALLBACKS (called by Go code)
@@ -251,6 +133,7 @@ async function loadWasm(GoRuntime) {
 /* Called by Go when RDP session is ready */
 window.rdpOnReady = function () {
     clearConnectWatchdog();
+    connectionFailureReported = false;
     setStatus('connected', 'RDP 已连接');
     connected = true;
     rdpHaptic('connect');
@@ -259,42 +142,77 @@ window.rdpOnReady = function () {
     notifyParentStatus('connected');
     if (rdpCanvas) rdpCanvas.focus();
     if (rdpAgentStorageEnabled) syncAgentDrives({ enabled: true });
-    setTimeout(() => {
-        if (!connected) return;
-        if ((rdpDiag.bitmapCalls || 0) === 0 && (rdpDiag.h264Calls || 0) === 0) {
-            setStatus('connected', `RDP 已连接，但 3 秒内未收到画面帧 · ${rdpDiag.renderer}/${rdpDiag.codec}`, { holdOverlayMs: 2500 });
-            console.warn('[rdp-render] no frames after ready', rdpDiag);
-        } else if ((rdpDiag.frames || 0) === 0) {
-            setStatus('connected', `RDP 已连接，收到帧但未绘制 · ${rdpDiag.renderer}/${rdpDiag.codec} · bmp=${rdpDiag.bitmapCalls} h264=${rdpDiag.h264Calls} fail=${rdpDiag.drawFails} err=${rdpDiag.lastDrawError}`, { holdOverlayMs: 3500 });
-            console.warn('[rdp-render] frames received but not presented', rdpDiag);
+    setTimeout(async () => {
+        if (!connected || !rdpWorkerBridge) return;
+        try {
+            const diag = await rdpWorkerBridge.call('rdpGetWorkerDiagnostics', []);
+            Object.assign(rdpDiag, {
+                bitmapCalls: Number(diag.bitmapEvents || 0) + Number(diag.classicBitmaps || 0),
+                h264Calls: Number(diag.avc420Events || 0) + Number(diag.avc444Events || 0),
+                frames: Number(diag.presentedFrames || 0),
+                presents: Number(diag.presents || 0),
+                drawFails: Number(diag.drawFails || 0),
+                lastDrawError: diag.lastError || '',
+                worker: { ...(rdpDiag.worker || {}), ...diag },
+            });
+            const events = Number(diag.semanticEvents || 0);
+            const protocolEntries = Object.entries(diag.protocol || {}).sort(([a], [b]) => a.localeCompare(b));
+            const protocolSummary = protocolEntries.length
+                ? protocolEntries.map(([name, count]) => `${name}=${count}`).join(' · ')
+                : 'no-protocol-milestones';
+            if (events === 0) {
+                setStatus('connected', `RDP 黑屏诊断 · ${protocolSummary} · gl=${diag.glRenderer}`, { holdOverlayMs: 12000 });
+            } else if (Number(diag.presents || 0) === 0) {
+                setStatus('connected', `RDP 已收到 ${events} 个图形命令但 GPU 未呈现 · lastKind=${diag.lastKind} AVC=${diag.avc420Events}/${diag.avc444Events} fail=${diag.drawFails} ${diag.lastError || ''}`, { holdOverlayMs: 4500 });
+            }
+            console.info('[rdp-render] Worker GPU diagnostics', diag);
+        } catch (error) {
+            console.warn('[rdp-render] Worker diagnostics unavailable', error);
         }
     }, 3000);
 };
 
+/* Called by Go while establishing the RDP transport and protocol session. */
+window.rdpOnStage = function (stage) {
+    lastConnectStage = String(stage || 'unknown');
+    console.info('[rdp-stage]', lastConnectStage);
+};
+
+window.rdpOnProtocolMilestone = function (event) {
+    console.info('[rdp-protocol]', event);
+};
+
 /* Called by Go on error */
 window.rdpOnError = function (msg) {
-    console.warn('[rdp-wasm] error:', msg);
+    connectionFailureReported = true;
+    lastConnectError = String(msg || 'unknown error');
+    console.warn('[rdp-wasm] error:', lastConnectError);
     rdpHaptic('error');
     clearConnectWatchdog();
     stopAgentDriveBridge();
     if (connected) {
-        setStatus('error', `RDP 错误: ${msg}`);
+        setStatus('error', `RDP 错误 [${lastConnectStage}]: ${lastConnectError}`);
         connected = false;
         notifyParentStatus('error');
-        maybeAutoReconnect();
     } else {
-        setStatus('error', `RDP 连接失败: ${msg}`);
-        maybeAutoReconnect();
+        setStatus('error', `RDP 连接失败 [${lastConnectStage}]: ${lastConnectError}`);
     }
+    // Preserve the first actionable failure. Automatic reconnect previously
+    // replaced it immediately with a generic countdown and hid the root cause.
+    rdpReconnecting = false;
 };
 
 /* Called by Go on connection close */
 window.rdpOnClose = function () {
-    console.info('[rdp-wasm] connection closed');
+    console.info('[rdp-wasm] connection closed', { stage: lastConnectStage, failureReported: connectionFailureReported });
     clearConnectWatchdog();
     stopAgentDriveBridge();
     const wasConnected = connected;
     connected = false;
+    if (connectionFailureReported) {
+        cleanupAudio();
+        return;
+    }
     if (wasConnected) {
         setStatus('disconnected', '连接已断开');
         notifyParentStatus('closed');
@@ -840,11 +758,10 @@ function startConnectWatchdog() {
     connectWatchdogTimer = setTimeout(() => {
         connectWatchdogTimer = null;
         if (connected || rdpManualDisconnect) return;
-        console.warn('[rdp-wasm] connect watchdog timeout');
-        setStatus('error', 'RDP 连接超时，正在重试...');
+        console.warn('[rdp-wasm] connect watchdog timeout', { stage: lastConnectStage, error: lastConnectError });
+        setStatus('error', `RDP 连接超时 [${lastConnectStage}]${lastConnectError ? `: ${lastConnectError}` : ''}`);
         try { rdpDisconnect(); } catch {}
         cleanupAudio();
-            maybeAutoReconnect();
     }, CONNECT_TIMEOUT_MS);
 }
 
@@ -882,25 +799,13 @@ function reconnectWithSettings() {
      * connect races the old close and the proxy/WASM state machine jams. */
     try { rdpDisconnect(); } catch {}
     stopAgentDriveBridge();
-    if (selectedPipeline === 'worker-gpu-v2') {
-        try { rdpWorkerBridge?.close(); } catch {}
-        rdpWorkerBridge = null;
-        location.reload();
-        return;
-    }
-    if (!rdpGpuV2) initPageGpuPipeline();
-    if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; audioNextAt = 0; }
-    setTimeout(() => {
-        connect().catch((e) => {
-            console.warn('[rdp-wasm] reconnectWithSettings failed:', e);
-            setStatus('error', `RDP 重连失败: ${e.message || e}`);
-            maybeAutoReconnect();
-        });
-    }, 300);
+    try { rdpWorkerBridge?.close(); } catch {}
+    rdpWorkerBridge = null;
+    location.reload();
 }
 
 async function connect() {
-    if (!wasmReady) await loadWasm();
+    if (!wasmReady || !rdpWorkerBridge) throw new Error('Worker GPU WASM engine is not ready');
 
     /* Clean up any lingering state (safe to call even if already clean). */
     try { rdpDisconnect(); } catch {}
@@ -1011,6 +916,9 @@ async function connect() {
         }
     }
 
+    lastConnectStage = 'page-connect-started';
+    lastConnectError = '';
+    connectionFailureReported = false;
     setStatus('connecting', '正在连接 RDP...');
 
     /* rdpConnect is exposed by Go WASM */
@@ -1020,7 +928,7 @@ async function connect() {
     startConnectWatchdog();
     if (rdpAgentStorageEnabled) startAgentDriveBridge();
     else stopAgentDriveBridge();
-    rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera, wallpaperOn);
+    await Promise.resolve(rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera, wallpaperOn));
 }
 
 function disconnect() {
@@ -1033,17 +941,8 @@ function disconnect() {
     try { rdpDisconnect(); } catch {}
     stopAgentDriveBridge();
     cleanupAudio();
-    if (selectedPipeline === 'worker-gpu-v2') {
-        try { rdpWorkerBridge?.close(); } catch {}
-        rdpWorkerBridge = null;
-    } else if (selectedPipeline === 'gpu-v2-page') {
-        try { rdpGpuV2Decoder?.close(); } catch {}
-        try { rdpGpuV2Avc444Decoder?.close(); } catch {}
-        try { rdpGpuV2?.destroy(); } catch {}
-        rdpGpuV2Decoder = null;
-        rdpGpuV2Avc444Decoder = null;
-        rdpGpuV2 = null;
-    }
+    try { rdpWorkerBridge?.close(); } catch {}
+    rdpWorkerBridge = null;
     rdpAudinStopInternal();
     rdpLocationStopInternal();
     rdpCameraStopInternal();
@@ -1067,11 +966,10 @@ function maybeAutoReconnect() {
     rdpReconnectTimer = setTimeout(() => {
         rdpReconnectTimer = null;
         rdpReconnecting = false;
-        if (selectedPipeline === 'worker-gpu-v2' && !rdpWorkerBridge) {
+        if (!rdpWorkerBridge) {
             location.reload();
             return;
         }
-        if (selectedPipeline === 'gpu-v2-page' && !rdpGpuV2) initPageGpuPipeline();
         connect().catch((e) => {
             console.warn('[rdp-wasm] reconnect failed:', e);
             rdpReconnecting = false;
@@ -1101,11 +999,7 @@ function ensureCanvas(w, h) {
     }
     rdpCanvas.width = w;
     rdpCanvas.height = h;
-    if (selectedPipeline === 'worker-gpu-v2') {
-        rdpDiag.renderer = 'worker-gpu-v2-pending';
-    } else {
-        initPageGpuPipeline();
-    }
+    rdpDiag.renderer = 'worker-gpu-v2-pending';
     applyFitMode();
     attachInputEvents();
 }
@@ -2505,69 +2399,37 @@ window.addEventListener('message', (e) => {
     rdpHeight = size.height;
     ensureCanvas(rdpWidth, rdpHeight);
 
-    async function loadPageWasm() {
-        const GoRuntime = await loadGoRuntime({ pipeline: 'gpu-v2-page' });
-        await loadWasm(GoRuntime);
-    }
-
-    /* Load WASM then connect */
+    /* Worker GPU is mandatory: no page-thread WASM, Canvas2D, or page GPU fallback. */
     try {
-        if (selectedPipeline === 'worker-gpu-v2') {
-            const isolationReady = globalThis.isSecureContext === true && globalThis.crossOriginIsolated === true && typeof SharedArrayBuffer !== 'undefined';
-            const workerReady = typeof Worker !== 'undefined' && typeof rdpCanvas?.transferControlToOffscreen === 'function';
-            if (!isolationReady || !workerReady) {
-                const reasons = [];
-                if (!globalThis.isSecureContext) reasons.push('INSECURE_CONTEXT');
-                if (!globalThis.crossOriginIsolated) reasons.push('CROSS_ORIGIN_ISOLATION_UNAVAILABLE');
-                if (typeof SharedArrayBuffer === 'undefined') reasons.push('SHARED_ARRAY_BUFFER_UNAVAILABLE');
-                if (!workerReady) reasons.push('WORKER_OFFSCREEN_UNAVAILABLE');
-                rdpDiag.fallbackReason = reasons.join('+') || 'WORKER_CAPABILITY_UNAVAILABLE';
-                rdpDiag.workerProbe = { supported: false, reason: rdpDiag.fallbackReason };
-                selectedPipeline = 'gpu-v2-page';
-                rdpDiag.pipeline = 'gpu-v2-page';
-                console.warn('[rdp-worker] isolation/capability unavailable; using page GPU v2 before canvas transfer', rdpDiag.workerProbe);
-                initPageGpuPipeline();
-                await loadPageWasm();
-            } else {
-                const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260711-worker-v1' });
-                if (!probe.supported) {
-                    rdpDiag.fallbackReason = probe.reason;
-                    rdpDiag.workerProbe = probe;
-                    selectedPipeline = 'gpu-v2-page';
-                    rdpDiag.pipeline = 'gpu-v2-page';
-                    console.warn('[rdp-worker] capability probe failed; using page GPU v2 without transferring canvas', probe);
-                    initPageGpuPipeline();
-                    await loadPageWasm();
-                } else {
-                    rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260711-go-esm2', { type: 'module' }));
-                    rdpWorkerBridge.installGlobals(window);
-                    rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
-                    try {
-                        const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
-                        rdpDiag.renderer = 'worker-gpu-v2';
-                        rdpDiag.worker = capabilities;
-                    } catch (error) {
-                        // transferControlToOffscreen is irreversible. Replace the
-                        // transferred canvas before starting the page pipeline.
-                        const failedStage = rdpWorkerBridge.bootStage;
-                        rdpWorkerBridge.close();
-                        rdpWorkerBridge = null;
-                        rdpCanvas = null;
-                        selectedPipeline = 'gpu-v2-page';
-                        rdpDiag.pipeline = 'gpu-v2-page';
-                        rdpDiag.fallbackReason = `WORKER_INIT_FAILED:${failedStage}`;
-                        rdpDiag.worker = { error: error?.message || String(error), bootStage: failedStage };
-                        ensureCanvas(rdpWidth, rdpHeight);
-                        await loadPageWasm();
-                    }
-                }
-            }
-        } else {
-            await loadPageWasm();
+        const missing = [];
+        if (!globalThis.isSecureContext) missing.push('INSECURE_CONTEXT');
+        if (!globalThis.crossOriginIsolated) missing.push('CROSS_ORIGIN_ISOLATION_UNAVAILABLE');
+        if (typeof SharedArrayBuffer === 'undefined') missing.push('SHARED_ARRAY_BUFFER_UNAVAILABLE');
+        if (typeof Worker === 'undefined') missing.push('MODULE_WORKER_UNAVAILABLE');
+        if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
+        if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
+
+        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260712-worker-gpu-scheduler1' });
+        rdpDiag.workerProbe = probe;
+        if (!probe.supported) {
+            throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
         }
+
+        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260712-worker-gpu-scheduler1', { type: 'module' }));
+        rdpWorkerBridge.installGlobals(window);
+        rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
+        const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
+        wasmReady = true;
+        rdpDiag.renderer = 'worker-gpu-v2';
+        rdpDiag.worker = capabilities;
         await connect();
     } catch (err) {
-        console.error('[rdp-wasm] boot failed:', err);
-        setStatus('error', `RDP WASM 引擎加载失败: ${err.message}`);
+        const failedStage = rdpWorkerBridge?.bootStage || 'pre-worker';
+        try { rdpWorkerBridge?.close(); } catch {}
+        rdpWorkerBridge = null;
+        wasmReady = false;
+        rdpDiag.worker = { error: err?.message || String(err), bootStage: failedStage };
+        console.error('[rdp-worker] mandatory GPU boot failed:', err);
+        setStatus('error', `RDP Worker GPU 启动失败 [${failedStage}]: ${err.message || err}`);
     }
 })();

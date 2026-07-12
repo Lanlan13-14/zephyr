@@ -1,4 +1,4 @@
-const DEFAULT_RUNTIME_URL = './vendor/rdp-wasm/wasm_exec.mjs?v=20260711-go-esm2';
+const DEFAULT_RUNTIME_URL = './vendor/rdp-wasm/wasm_exec.mjs?v=20260712-worker-gpu-scheduler1';
 
 export async function loadGoRuntime({ runtimeUrl = DEFAULT_RUNTIME_URL, importer = (url) => import(url), pipeline = 'unknown' } = {}) {
     let runtime;

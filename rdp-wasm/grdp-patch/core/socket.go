@@ -4,10 +4,9 @@ import (
 	"bufio"
 	"crypto/rsa"
 	"crypto/tls"
-	"encoding/asn1"
+	"crypto/x509"
 	"errors"
 	"fmt"
-	"math/big"
 	"net"
 	"time"
 )
@@ -93,11 +92,6 @@ func (s *SocketLayer) StartTLS() error {
 	return nil
 }
 
-type PublicKey struct {
-	N *big.Int `asn1:"explicit,tag:0"` // modulus
-	E int      `asn1:"explicit,tag:1"` // public exponent
-}
-
 func (s *SocketLayer) TlsPubKey() ([]byte, error) {
 	if s.tlsConn == nil {
 		return nil, errors.New("TLS conn does not exist")
@@ -110,5 +104,8 @@ func (s *SocketLayer) TlsPubKey() ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("unsupported TLS public key type %T", certificates[0].PublicKey)
 	}
-	return asn1.Marshal(*pub)
+	// MS-CSSP SubjectPublicKey uses the algorithm-specific DER bytes returned
+	// by OpenSSL i2d_PublicKey. For RSA that is PKCS#1 RSAPublicKey DER, not
+	// SubjectPublicKeyInfo and not a custom context-tagged ASN.1 structure.
+	return x509.MarshalPKCS1PublicKey(pub), nil
 }

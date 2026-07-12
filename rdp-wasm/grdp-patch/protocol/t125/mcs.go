@@ -265,6 +265,7 @@ type MCSClient struct {
 	nbChannelRequested   int
 	messageChannelId     uint16 // from SC_MCS_MSGCHANNEL; 0 = not negotiated
 	messageChannelJoined bool
+	protocolObserver     func(string)
 	bwStartTime          time.Time // timestamp of last RDP_BW_START for timeDelta calculation
 }
 
@@ -278,6 +279,16 @@ func NewMCSClient(t core.Transport, kbdLayout uint32, keyboardType uint32, keybo
 	}
 	c.transport.On("connect", c.connect)
 	return c
+}
+
+func (c *MCSClient) SetProtocolObserver(observer func(string)) {
+	c.protocolObserver = observer
+}
+
+func (c *MCSClient) observe(event string) {
+	if c.protocolObserver != nil {
+		c.protocolObserver(event)
+	}
 }
 
 func (c *MCSClient) SetClientDesktop(width, height uint16) {
@@ -472,6 +483,11 @@ func (c *MCSClient) sendChannelJoinRequest(channelId uint16) {
 }
 
 func (c *MCSClient) recvData(s []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("MCS recvData panic", "err", r, "dataLen", len(s))
+		}
+	}()
 	r := bytes.NewReader(s)
 	option, err := core.ReadUInt8(r)
 	if err != nil {
@@ -518,6 +534,9 @@ func (c *MCSClient) recvData(s []byte) {
 		c.Emit("error", errors.New(fmt.Sprintf("mcs recvData get data error %v", err)))
 		return
 	}
+	if channelName == drdynvc.ChannelName {
+		c.observe("mcs.drdynvc.data")
+	}
 	c.Emit("sec", channelName, left)
 }
 
@@ -554,7 +573,7 @@ func (c *MCSClient) recvChannelJoinConfirm(s []byte) {
 			if channelId == c.serverNetworkData.ChannelIdArray[i] {
 				var t MCSChannelInfo
 				t.ID = channelId
-				t.Name = string(c.clientNetworkData.ChannelDefArray[i].Name[:])
+				t.Name = c.clientNetworkData.ChannelDefArray[i].Name
 				c.channels = append(c.channels, t)
 			}
 		}

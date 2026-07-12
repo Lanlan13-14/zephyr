@@ -3,6 +3,7 @@ package drdynvc
 import (
 	"bytes"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -64,6 +65,7 @@ type DvcClient struct {
 	channelById       map[uint32]*dvcChannelInfo   // channelId → info
 	reassembly        map[uint32]*dvcReassembly    // channelId → reassembly state
 	negotiatedVersion uint16
+	protocolObserver  func(string)
 }
 
 func NewDvcClient() *DvcClient {
@@ -77,6 +79,16 @@ func NewDvcClient() *DvcClient {
 }
 
 // RegisterHandler registers a handler for a named DVC channel.
+func (c *DvcClient) SetProtocolObserver(observer func(string)) {
+	c.protocolObserver = observer
+}
+
+func (c *DvcClient) observe(event string) {
+	if c.protocolObserver != nil {
+		c.protocolObserver(event)
+	}
+}
+
 func (c *DvcClient) RegisterHandler(name string, handler DvcChannelHandler) {
 	c.handlers[name] = handler
 }
@@ -196,6 +208,7 @@ func (c *DvcClient) processCreateReq(hdr *DvcHeader, s []byte) {
 	nameBytes, _ := core.ReadBytes(r.Len(), r)
 	channelName := strings.TrimRight(string(nameBytes), "\x00")
 	slog.Debug("dvc: create request", "channelId", channelId, "name", channelName)
+	c.observe("drdynvc.create:" + channelName)
 
 	// Associate handler if registered
 	var handler DvcChannelHandler
@@ -331,10 +344,16 @@ func (c *DvcClient) processCapsPdu(hdr *DvcHeader, s []byte) {
 	core.ReadUInt8(r)
 	ver, _ := core.ReadUint16LE(r)
 	slog.Debug("Server supports dvc", "version", ver)
+	c.observe(fmt.Sprintf("drdynvc.caps.request:v%d", ver))
 
-	// Respond with the server's version (up to 3).
-	// Version 3 is required for some servers to activate RDPGFX.
-	ver = min(ver, 3)
+	// Always respond with version 3. FreeRDP and mstsc always advertise v3
+	// in the CAPS response regardless of the server's offered version.
+	// Windows servers will not create the RDPGFX DVC channel unless the
+	// client negotiates DVC version 3, even when the server itself offered
+	// a lower version in the CAPS request. Capping at the server version
+	// causes the server to skip RDPGFX channel creation entirely, resulting
+	// in a black screen with no graphics data.
+	ver = 3
 
 	// Client CAPS response: header(1) + pad(1) + version(2) = 4 bytes
 	// Priority charges are only in the server's CAPS request, not the client response.
@@ -345,6 +364,7 @@ func (c *DvcClient) processCapsPdu(hdr *DvcHeader, s []byte) {
 	slog.Debug("dvc: CAPS response", "version", ver, "len", b.Len())
 	c.Send(b.Bytes())
 	c.negotiatedVersion = ver
+	c.observe(fmt.Sprintf("drdynvc.caps.response:v%d", ver))
 }
 
 func (c *DvcClient) processSoftSyncRequest(hdr *DvcHeader, s []byte) {

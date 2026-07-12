@@ -1,6 +1,7 @@
 package tpkt
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -61,17 +62,23 @@ const (
  */
 type TPKT struct {
 	emission.Emitter
-	Conn             *core.SocketLayer
-	ntlm             *nla.NTLMv2
-	fastPathListener core.FastPathListener
-	ntlmSec          *nla.NTLMv2Security
+	Conn               *core.SocketLayer
+	ntlm               *nla.NTLMv2
+	fastPathListener   core.FastPathListener
+	ntlmSec            *nla.NTLMv2Security
+	credsspVersion     int
+	credsspPeerVersion int
+	credsspClientNonce []byte
+	credsspPublicKey   []byte
 }
 
 func New(s *core.SocketLayer, ntlm *nla.NTLMv2) *TPKT {
 	t := &TPKT{
-		Emitter: *emission.NewEmitter(),
-		Conn:    s,
-		ntlm:    ntlm,
+		Emitter:            *emission.NewEmitter(),
+		Conn:               s,
+		ntlm:               ntlm,
+		credsspVersion:     nla.CredSSPVersion,
+		credsspPeerVersion: nla.CredSSPVersion,
 	}
 	go t.readLoop()
 	return t
@@ -83,6 +90,12 @@ func New(s *core.SocketLayer, ntlm *nla.NTLMv2) *TPKT {
 // individual read.  By using a single blocking loop with io.ReadFull, we eliminate
 // goroutine creation/destruction overhead on the hot receive path.
 func (t *TPKT) readLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("TPKT readLoop panic", "err", r)
+			t.Emit("error", fmt.Errorf("TPKT readLoop panic: %v", r))
+		}
+	}()
 	var hdr [2]byte
 	for {
 		if _, err := io.ReadFull(t.Conn, hdr[:]); err != nil {
@@ -125,7 +138,7 @@ func (t *TPKT) readLoop() {
 					return
 				}
 				leftPart := length & ^0x80
-				packetSize = (leftPart<<8) + int(extByte[0]) - 3
+				packetSize = (leftPart << 8) + int(extByte[0]) - 3
 			} else {
 				packetSize = length - 2
 			}
@@ -162,7 +175,9 @@ func (t *TPKT) StartNLA() error {
 		return err
 	}
 	slog.Debug("StartNLA: TLS handshake complete")
-	req := nla.EncodeDERTRequest([]nla.Message{t.ntlm.GetNegotiateMessage()}, nil, nil)
+	t.credsspClientNonce = core.Random(nla.CredSSPClientNonceLength)
+	t.credsspPublicKey = nil
+	req := nla.EncodeDERTRequestVersion(t.credsspVersion, []nla.Message{t.ntlm.GetNegotiateMessage()}, nil, nil, t.credsspClientNonce)
 	slog.Debug("StartNLA send", "req", core.Hex(req), "len", len(req))
 	_, err = t.Conn.Write(req)
 	if err != nil {
@@ -188,6 +203,15 @@ func (t *TPKT) recvChallenge(data []byte) error {
 		slog.Debug("DecodeDERTRequest", "err", err)
 		return err
 	}
+	if tsreq.ErrorCode != 0 {
+		return fmt.Errorf("CredSSP server error 0x%08x", uint32(tsreq.ErrorCode))
+	}
+	if tsreq.Version > 0 {
+		t.credsspPeerVersion = tsreq.Version
+	}
+	if len(tsreq.NegoTokens) == 0 || len(tsreq.NegoTokens[0].Data) == 0 {
+		return fmt.Errorf("CredSSP challenge omitted negoToken")
+	}
 	slog.Debug("recvChallenge", "tsreq", tsreq)
 	// get pubkey
 	pubkey, err := t.Conn.TlsPubKey()
@@ -196,11 +220,19 @@ func (t *TPKT) recvChallenge(data []byte) error {
 	}
 	slog.Debug("recvChallenge", "pubkey", core.Hex(pubkey))
 
+	t.credsspPublicKey = append(t.credsspPublicKey[:0], pubkey...)
 	authMsg, ntlmSec := t.ntlm.GetAuthenticateMessage(tsreq.NegoTokens[0].Data)
+	if authMsg == nil || ntlmSec == nil {
+		return fmt.Errorf("CredSSP NTLM challenge is invalid")
+	}
 	t.ntlmSec = ntlmSec
 
-	encryptPubkey := ntlmSec.GssEncrypt(pubkey)
-	req := nla.EncodeDERTRequest([]nla.Message{authMsg}, nil, encryptPubkey)
+	pubKeyProof := pubkey
+	if t.credsspPeerVersion >= nla.CredSSPBindingHashVersion {
+		pubKeyProof = nla.CredSSPBindingHash(true, t.credsspClientNonce, pubkey)
+	}
+	encryptPubkey := ntlmSec.GssEncrypt(pubKeyProof)
+	req := nla.EncodeDERTRequestVersion(t.credsspVersion, []nla.Message{authMsg}, nil, encryptPubkey, t.credsspClientNonce)
 	slog.Debug("recvChallenge", "send", core.Hex(req), "len", len(req))
 	_, err = t.Conn.Write(req)
 	if err != nil {
@@ -226,14 +258,38 @@ func (t *TPKT) recvPubKeyInc(data []byte) error {
 		slog.Debug("DecodeDERTRequest", "err", err)
 		return err
 	}
+	if tsreq.ErrorCode != 0 {
+		return fmt.Errorf("CredSSP server error 0x%08x", uint32(tsreq.ErrorCode))
+	}
+	if tsreq.Version > 0 && tsreq.Version != t.credsspPeerVersion {
+		return fmt.Errorf("CredSSP server changed version from %d to %d", t.credsspPeerVersion, tsreq.Version)
+	}
+	if len(tsreq.PubKeyAuth) == 0 {
+		return fmt.Errorf("CredSSP server omitted pubKeyAuth")
+	}
 	slog.Debug("PubKeyAuth", "key", core.Hex(tsreq.PubKeyAuth))
-	//ignore
-	pubkey := t.ntlmSec.GssDecrypt([]byte(tsreq.PubKeyAuth))
-	slog.Debug("GssDecrypy", "pubkey", core.Hex(pubkey))
+	serverProof := t.ntlmSec.GssDecrypt([]byte(tsreq.PubKeyAuth))
+	if serverProof == nil {
+		return fmt.Errorf("CredSSP server pubKeyAuth signature is invalid")
+	}
+	if t.credsspPeerVersion >= nla.CredSSPBindingHashVersion {
+		expected := nla.CredSSPBindingHash(false, t.credsspClientNonce, t.credsspPublicKey)
+		if !bytes.Equal(serverProof, expected) {
+			return fmt.Errorf("CredSSP server binding hash mismatch")
+		}
+	} else {
+		if len(serverProof) == 0 {
+			return fmt.Errorf("CredSSP server public key echo is empty")
+		}
+		serverProof[0]--
+		if !bytes.Equal(serverProof, t.credsspPublicKey) {
+			return fmt.Errorf("CredSSP server public key echo mismatch")
+		}
+	}
 	domain, username, password := t.ntlm.GetEncodedCredentials()
 	credentials := nla.EncodeDERTCredentials(domain, username, password)
 	authInfo := t.ntlmSec.GssEncrypt(credentials)
-	req := nla.EncodeDERTRequest(nil, authInfo, nil)
+	req := nla.EncodeDERTRequestVersion(t.credsspVersion, nil, authInfo, nil, t.credsspClientNonce)
 	_, err = t.Conn.Write(req)
 	if err != nil {
 		slog.Debug("send AuthenticateMessage", "err", err)
@@ -274,4 +330,3 @@ func (t *TPKT) SendFastPath(secFlag byte, data []byte) (n int, err error) {
 	writePool.Put(buf[:0])
 	return
 }
-

@@ -19,6 +19,8 @@ var (
 	rdpClient      *grdp.RdpClient
 	connectGen     uint64
 	clientMu       sync.Mutex
+	protocolDiag   = make(map[string]uint64)
+	protocolDiagMu sync.Mutex
 	localClipboard string
 	clipMu         sync.Mutex
 	swapAltMeta    bool
@@ -33,6 +35,31 @@ var (
 	camEnumHandler   *CamEnumeratorHandler
 	camStreamHandler *CamStreamHandler
 )
+
+func noteProtocol(event string) {
+	protocolDiagMu.Lock()
+	protocolDiag[event]++
+	protocolDiagMu.Unlock()
+	if callback := js.Global().Get("rdpOnProtocolMilestone"); callback.Type() == js.TypeFunction {
+		callback.Invoke(event)
+	}
+}
+
+func resetProtocolDiagnostics() {
+	protocolDiagMu.Lock()
+	protocolDiag = make(map[string]uint64)
+	protocolDiagMu.Unlock()
+}
+
+func jsGetProtocolDiagnostics(_ js.Value, _ []js.Value) any {
+	protocolDiagMu.Lock()
+	defer protocolDiagMu.Unlock()
+	value := make(map[string]any, len(protocolDiag))
+	for key, count := range protocolDiag {
+		value[key] = float64(count)
+	}
+	return js.ValueOf(value)
+}
 
 func isCurrentClient(gen uint64, c *grdp.RdpClient) bool {
 	clientMu.Lock()
@@ -66,14 +93,29 @@ func main() {
 	js.Global().Set("rdpCameraFrame", js.FuncOf(jsCameraFrame))
 	js.Global().Set("rdpGfxCompleteFrame", js.FuncOf(jsGfxCompleteFrame))
 	js.Global().Set("rdpRequestFullRefresh", js.FuncOf(jsRequestFullRefresh))
+	js.Global().Set("rdpGetProtocolDiagnostics", js.FuncOf(jsGetProtocolDiagnostics))
+	js.Global().Set("rdpConfigureRenderer", js.FuncOf(jsConfigureRenderer))
 
 	// Agent drive management (hot-plug)
 	js.Global().Set("rdpFsAttachDrive", js.FuncOf(jsAttachDrive))
 	js.Global().Set("rdpFsDetachDrive", js.FuncOf(jsDetachDrive))
 	js.Global().Set("rdpFsListDrives", js.FuncOf(jsListDrives))
 
+	// JavaScript must not expose the engine before all syscall/js exports above
+	// exist. go.run() starts asynchronously, so its returned Promise is not a
+	// readiness signal (this program intentionally never exits).
+	if ready := js.Global().Get("zephyrRdpWasmReady"); ready.Type() == js.TypeFunction {
+		ready.Invoke()
+	}
+
 	// Block forever — JS callbacks keep things alive.
 	select {}
+}
+
+func reportStage(stage string) {
+	if callback := js.Global().Get("rdpOnStage"); callback.Type() == js.TypeFunction {
+		callback.Invoke(stage)
+	}
 }
 
 // jsConnect is called from JS: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta)
@@ -116,7 +158,9 @@ func jsConnect(_ js.Value, args []js.Value) any {
 		wallpaper = args[13].Bool()
 	}
 
+	reportStage("go-connect-dispatched")
 	go func() {
+		reportStage("go-connect-started")
 		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled, wallpaper); err != nil {
 			slog.Error("connect", "err", err)
 			js.Global().Call("rdpOnError", err.Error())
@@ -138,6 +182,9 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	// Quality mode: when wallpaper is requested, clear PERF_DISABLE_WALLPAPER
 	// so the server streams the desktop background.
 	g.SetWallpaperEnabled(wallpaper)
+	resetProtocolDiagnostics()
+	g.SetProtocolObserver(noteProtocol)
+	g.OnOrders(func(count int) { noteProtocol(fmt.Sprintf("pdu.orders:%d", count)) })
 
 	clientMu.Lock()
 	connectGen++
@@ -165,10 +212,10 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 		playAudio(int(af.SamplesPerSec), int(af.Channels), int(af.BitsPerSample), cp)
 	})
 
-	if js.Global().Get("rdpOnRenderEvent").Type() != js.TypeFunction {
-		return fmt.Errorf("semantic GPU compositor callback is unavailable")
+	renderCallback, _, videoDecode, rendererConfigured := configuredRenderer()
+	if !rendererConfigured || renderCallback.Type() != js.TypeFunction {
+		return fmt.Errorf("semantic GPU compositor callback is not configured")
 	}
-	videoDecode := js.Global().Get("rdpExternalVideoDecode").Bool()
 	g.OnRenderEvent(forwardRenderEvent)
 	g.SetExternalVideoDecode(videoDecode)
 	g.SetExternalFrameCompletion(videoDecode)
@@ -176,10 +223,13 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 
 	uint8Ctor := js.Global().Get("Uint8Array")
 	g.OnPointerHide(func() {
+		noteProtocol("pdu.pointer.hide")
 		js.Global().Call("rdpOnPointerHide")
 	}).OnPointerCached(func(idx uint16) {
+		noteProtocol("pdu.pointer.cached")
 		js.Global().Call("rdpOnPointerCached", int(idx))
 	}).OnPointerUpdate(func(idx, xorBpp, hotX, hotY, w, h uint16, andMask, xorData []byte) {
+		noteProtocol("pdu.pointer.update")
 		andArr := uint8Ctor.New(len(andMask))
 		if len(andMask) > 0 {
 			js.CopyBytesToJS(andArr, andMask)
@@ -210,12 +260,14 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	}).OnSuccess(func() {
 		slog.Debug("rdp success")
 	}).OnReady(func() {
+		noteProtocol("pdu.ready")
 		if !isCurrentClient(myGen, g) {
 			return
 		}
 		slog.Debug("rdp ready")
 		js.Global().Call("rdpOnReady")
 	}).OnBitmap(func(bs []grdp.Bitmap) {
+		noteProtocol("pdu.bitmap")
 		if !isCurrentClient(myGen, g) {
 			return
 		}
@@ -326,7 +378,9 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	g.RegisterDvcHandler("RDCamera_Device_WebCam0_0", camStreamHandler)
 	camEnumHandler.streamHandler = camStreamHandler
 
+	reportStage("grdp-login-started")
 	if err := g.Login(domain, user, password); err != nil {
+		reportStage("grdp-login-failed")
 		clientMu.Lock()
 		if rdpClient == g {
 			rdpClient = nil
@@ -336,6 +390,7 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 		return err
 	}
 
+	reportStage("grdp-login-ready")
 	return nil
 }
 
@@ -347,6 +402,12 @@ var (
 // forwardClassicBitmaps converts classic bitmap updates to BGRA and feeds the
 // same semantic compositor used by RDPGFX. Data is consumed synchronously.
 func forwardClassicBitmaps(bs []grdp.Bitmap) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("forwardClassicBitmaps panic", "err", r, "count", len(bs))
+		}
+	}()
+	slog.Info("forwardClassicBitmaps", "count", len(bs))
 
 	for _, bm := range bs {
 		w := bm.DestRight - bm.DestLeft + 1

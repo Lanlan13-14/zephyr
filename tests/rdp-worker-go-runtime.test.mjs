@@ -20,12 +20,22 @@ function response(bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]), { ok = 
     };
 }
 
-test('worker and page fallback share the lexical Go ESM loader', () => {
+test('only the Worker imports and runs the lexical Go ESM runtime', () => {
     assert.match(worker, /loadGoRuntime\(\{ pipeline: 'worker-gpu-v2' \}\)/);
-    assert.match(client, /loadGoRuntime\(\{ pipeline: 'gpu-v2-page' \}\)/);
+    assert.doesNotMatch(client, /loadGoRuntime|instantiateGoWasm|go\.run\(/);
     for (const source of [worker, client]) {
         assert.doesNotMatch(source, /globalThis\.Go|\bnew Go\(\)|wasm_exec\.js/);
     }
+});
+
+test('Worker waits for Go to register callable exports', async () => {
+    const goMain = await fs.readFile(new URL('../rdp-wasm/main.go', import.meta.url), 'utf8');
+    assert.match(goMain, /Get\("zephyrRdpWasmReady"\)/);
+    assert.match(goMain, /ready\.Invoke\(\)/);
+    assert.match(worker, /Go WASM exports registration timed out/);
+    assert.match(worker, /await exportsReady/);
+    assert.match(worker, /requiredExports = \['rdpConnect', 'rdpDisconnect', 'rdpConfigureRenderer', 'rdpGetProtocolDiagnostics', 'rdpGfxCompleteFrame', 'rdpRequestFullRefresh'\]/);
+    assert.doesNotMatch(worker, /go\.run\(result\.instance\);\s*(?:runPromise\?\.catch[\s\S]*?}\);\s*)?wasmReady = true/);
 });
 
 test('Go runtime loader consumes the named export without a global side effect', async () => {
@@ -43,8 +53,8 @@ test('Go runtime loader consumes the named export without a global side effect',
 
 test('Go runtime loader reports pipeline, URL and available exports', async () => {
     await assert.rejects(
-        loadGoRuntime({ runtimeUrl: '/broken/runtime.mjs', importer: async () => ({ NotGo: class {} }), pipeline: 'gpu-v2-page' }),
-        /ESM export 'Go'.*pipeline=gpu-v2-page.*url=\/broken\/runtime\.mjs.*exports=NotGo/,
+        loadGoRuntime({ runtimeUrl: '/broken/runtime.mjs', importer: async () => ({ NotGo: class {} }), pipeline: 'worker-gpu-v2' }),
+        /ESM export 'Go'.*pipeline=worker-gpu-v2.*url=\/broken\/runtime\.mjs.*exports=NotGo/,
     );
 });
 
@@ -82,4 +92,34 @@ test('Go runtime converter emits an importable ESM class', async () => {
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
+});
+
+
+test('connection errors remain visible and close cannot restart reconnect loop', async () => {
+    const source = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
+    assert.match(source, /window\.rdpOnError = function \(msg\) \{\s*connectionFailureReported = true;/);
+    assert.match(source, /if \(connectionFailureReported\) \{\s*cleanupAudio\(\);\s*return;/);
+    const errorHandler = source.slice(source.indexOf('window.rdpOnError = function'), source.indexOf('window.rdpOnClose = function'));
+    assert.doesNotMatch(errorHandler, /maybeAutoReconnect\(/);
+    assert.match(source, /RDP 连接失败 \[\$\{lastConnectStage\}\]/);
+});
+
+
+test('renderer callbacks are configured explicitly instead of rediscovered from mutable globals', async () => {
+    const goMain = await fs.readFile(new URL('../rdp-wasm/main.go', import.meta.url), 'utf8');
+    const renderBridge = await fs.readFile(new URL('../rdp-wasm/render_bridge.go', import.meta.url), 'utf8');
+    assert.match(goMain, /Set\("rdpConfigureRenderer", js\.FuncOf\(jsConfigureRenderer\)\)/);
+    assert.doesNotMatch(goMain, /Get\("rdpOnRenderEvent"\)/);
+    assert.match(renderBridge, /renderEventCallback = args\[0\]/);
+    assert.match(renderBridge, /renderCallback\.Invoke/);
+    assert.doesNotMatch(renderBridge, /js\.Global\(\)\.Call\("rdpOnRenderEvent"/);
+    assert.match(worker, /rdpConfigureRenderer\(handleRenderEvent, globalThis\.rdpOnWasmBitmap, true\)/);
+    assert.doesNotMatch(client, /rdpConfigureRenderer|rdpOnRenderEvent|rdpOnWasmBitmap/);
+});
+
+
+test('black-screen diagnostics report protocol milestones from Go Worker', () => {
+    assert.match(worker, /rdpGetProtocolDiagnostics/);
+    assert.match(client, /protocolSummary/);
+    assert.match(client, /RDP 黑屏诊断/);
 });

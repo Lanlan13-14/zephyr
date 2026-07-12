@@ -3,12 +3,37 @@
 package main
 
 import (
+	"log/slog"
 	"runtime"
+	"sync"
 	"syscall/js"
 	"unsafe"
 
 	"github.com/nakagami/grdp/plugin/rdpgfx"
 )
+
+var renderEventCallback js.Value
+var wasmBitmapCallback js.Value
+var rendererExternalVideoDecode bool
+var rendererConfigMu sync.RWMutex
+
+func jsConfigureRenderer(_ js.Value, args []js.Value) any {
+	if len(args) < 3 || args[0].Type() != js.TypeFunction || args[1].Type() != js.TypeFunction {
+		return "usage: rdpConfigureRenderer(renderEventCallback, wasmBitmapCallback, externalVideoDecode)"
+	}
+	rendererConfigMu.Lock()
+	renderEventCallback = args[0]
+	wasmBitmapCallback = args[1]
+	rendererExternalVideoDecode = args[2].Bool()
+	rendererConfigMu.Unlock()
+	return nil
+}
+
+func configuredRenderer() (js.Value, js.Value, bool, bool) {
+	rendererConfigMu.RLock()
+	defer rendererConfigMu.RUnlock()
+	return renderEventCallback, wasmBitmapCallback, rendererExternalVideoDecode, renderEventCallback.Type() == js.TypeFunction
+}
 
 func renderRectValue(rect rdpgfx.RenderRect) map[string]any {
 	return map[string]any{"left": int(rect.Left), "top": int(rect.Top), "right": int(rect.Right), "bottom": int(rect.Bottom)}
@@ -30,9 +55,20 @@ func renderStreamValue(stream *rdpgfx.RenderVideoStream) any {
 }
 
 func forwardRenderEvent(event rdpgfx.RenderEvent) {
-	if (event.Kind == rdpgfx.RenderBitmap || event.Kind == rdpgfx.RenderClassicBitmap) && len(event.Data) > 0 && js.Global().Get("rdpOnWasmBitmap").Type() == js.TypeFunction {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("forwardRenderEvent panic", "err", r, "kind", event.Kind)
+		}
+	}()
+	renderCallback, bitmapCallback, _, configured := configuredRenderer()
+	if !configured {
+		slog.Warn("forwardRenderEvent: renderer not configured", "kind", event.Kind)
+		return
+	}
+	slog.Info("forwardRenderEvent", "kind", event.Kind, "frameId", event.FrameID, "surfaceId", event.SurfaceID, "dataLen", len(event.Data))
+	if (event.Kind == rdpgfx.RenderBitmap || event.Kind == rdpgfx.RenderClassicBitmap) && len(event.Data) > 0 && bitmapCallback.Type() == js.TypeFunction {
 		pointer := uintptr(unsafe.Pointer(unsafe.SliceData(event.Data)))
-		js.Global().Call("rdpOnWasmBitmap", js.ValueOf(map[string]any{
+		bitmapCallback.Invoke(js.ValueOf(map[string]any{
 			"kind": int(event.Kind), "frameId": int(event.FrameID), "surfaceId": int(event.SurfaceID),
 			"rect": renderRectValue(event.Rect), "pointer": int(pointer),
 			"length": len(event.Data), "stride": int(event.Stride),
@@ -58,7 +94,7 @@ func forwardRenderEvent(event rdpgfx.RenderEvent) {
 	if event.Stream2 != nil {
 		value["stream2"] = renderStreamValue(event.Stream2)
 	}
-	js.Global().Call("rdpOnRenderEvent", js.ValueOf(value))
+	renderCallback.Invoke(js.ValueOf(value))
 }
 
 func forwardClassicBitmap(x, y, width, height int, data []byte) {

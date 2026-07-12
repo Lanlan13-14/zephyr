@@ -1,7 +1,8 @@
-import { RdpGpuSurfaceCompositor } from './rdp-renderer.js';
-import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js';
-import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js';
-import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260711-go-esm2';
+import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260712-worker-gpu-scheduler1';
+import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260712-worker-gpu-scheduler1';
+import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260712-worker-gpu-scheduler1';
+import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260712-worker-gpu-scheduler1';
+import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260712-worker-gpu-scheduler1';
 
 let compositor = null;
 let avc420 = null;
@@ -11,9 +12,28 @@ let syncData = null;
 let initialized = false;
 let wasmReady = false;
 let localFiles = [];
-function bootStage(stage, detail = '') { postMessage({ type: 'boot-stage', stage, detail }); }
+const frameScheduler = createWorkerFrameScheduler(globalThis, { fallbackMs: 34 });
+const workerDiag = {
+    semanticEvents: 0,
+    classicBitmaps: 0,
+    bitmapEvents: 0,
+    avc420Events: 0,
+    avc444Events: 0,
+    presents: 0,
+    presentedFrames: 0,
+    drawFails: 0,
+    lastError: '',
+    lastKind: 0,
+    lastEventAt: 0,
+    glRenderer: '',
+};
+let currentBootStage = 'created';
+function bootStage(stage, detail = '') {
+    currentBootStage = String(stage || 'unknown');
+    postMessage({ type: 'boot-stage', stage: currentBootStage, detail });
+}
 const callbacksToPage = new Set([
-    'rdpOnReady', 'rdpOnError', 'rdpOnClose', 'rdpOnClipboard', 'rdpOnRemoteFiles',
+    'rdpOnReady', 'rdpOnError', 'rdpOnClose', 'rdpOnStage', 'rdpOnProtocolMilestone', 'rdpOnClipboard', 'rdpOnRemoteFiles',
     'rdpOnPointerHide', 'rdpOnPointerCached', 'rdpOnPointerUpdate',
     'rdpAudioPlay', 'rdpAudinStart', 'rdpAudinStop', 'rdpCameraStart',
     'rdpCameraStop', 'rdpLocationStart', 'rdpLocationStop',
@@ -70,6 +90,11 @@ async function loadGoWasm() {
         const upload = createSynchronousBitmapUploader({
             memoryProvider: () => result.instance.exports.mem,
             upload(event) {
+                workerDiag.semanticEvents++;
+                workerDiag.classicBitmaps += Number(event.kind) === 16 ? 1 : 0;
+                workerDiag.bitmapEvents += Number(event.kind) === 8 ? 1 : 0;
+                workerDiag.lastKind = Number(event.kind) || 0;
+                workerDiag.lastEventAt = Date.now();
                 if (Number(event.kind) === 16) compositor.uploadClassicBitmap(event.rect, event.data, event.stride);
                 else compositor.uploadBitmap(event.surfaceId, event.rect, event.data, event.stride);
                 if (!Number(event.frameId)) compositor.schedulePresent();
@@ -78,13 +103,31 @@ async function loadGoWasm() {
         globalThis.rdpOnWasmBitmap = (event) => upload(event);
     }
     bootStage('go-runtime-starting');
+    const exportsReady = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Go WASM exports registration timed out')), 10000);
+        globalThis.zephyrRdpWasmReady = () => {
+            clearTimeout(timeout);
+            resolve();
+        };
+    });
     const runPromise = go.run(result.instance);
     runPromise?.catch?.((error) => {
         wasmReady = false;
         failClosed('GO_RUNTIME_EXITED', error);
     });
+    try {
+        await exportsReady;
+    } finally {
+        delete globalThis.zephyrRdpWasmReady;
+    }
+    const requiredExports = ['rdpConnect', 'rdpDisconnect', 'rdpConfigureRenderer', 'rdpGetProtocolDiagnostics', 'rdpGfxCompleteFrame', 'rdpRequestFullRefresh'];
+    const missingExports = requiredExports.filter((name) => typeof globalThis[name] !== 'function');
+    if (missingExports.length) throw new Error(`Go WASM exports unavailable: ${missingExports.join(', ')}`);
+    if (typeof globalThis.rdpOnWasmBitmap !== 'function') throw new Error('Worker WASM bitmap callback is unavailable');
+    const configureError = globalThis.rdpConfigureRenderer(handleRenderEvent, globalThis.rdpOnWasmBitmap, true);
+    if (configureError) throw new Error(String(configureError));
     wasmReady = true;
-    bootStage('go-runtime-ready');
+    bootStage('go-exports-ready');
 }
 
 function createAvc420Decoder() {
@@ -115,9 +158,16 @@ function setupRenderer(canvas) {
     globalThis.rdpExternalVideoDecode = true;
     bootStage('webgl2-compositor-starting');
     compositor = new RdpGpuSurfaceCompositor(canvas, {
-        onFramesPresented(frameIds) { for (const frameId of frameIds) globalThis.rdpGfxCompleteFrame(frameId, decoderBacklog()); },
+        requestFrame: frameScheduler.request,
+        cancelFrame: frameScheduler.cancel,
+        diagnostics: workerDiag,
+        onFramesPresented(frameIds) {
+            workerDiag.presentedFrames += frameIds.length;
+            for (const frameId of frameIds) globalThis.rdpGfxCompleteFrame(frameId, decoderBacklog());
+        },
         onContextRestoreNeeded() { globalThis.rdpRequestFullRefresh(); },
     });
+    workerDiag.glRenderer = String(compositor.gl.getParameter(compositor.gl.RENDERER) || 'webgl2');
     bootStage('webgl2-compositor-ready');
     avc420 = createAvc420Decoder();
     bootStage('avc420-decoder-ready');
@@ -135,6 +185,12 @@ function decoderBacklog() {
 
 function handleRenderEvent(event) {
     const kind = Number(event.kind);
+    workerDiag.semanticEvents++;
+    workerDiag.lastKind = kind || 0;
+    workerDiag.lastEventAt = Date.now();
+    if (kind === 8) workerDiag.bitmapEvents++;
+    if (kind === 9) workerDiag.avc420Events++;
+    if (kind === 10) workerDiag.avc444Events++;
     if (kind === 5) {
         avc420?.resetSurface(event.surfaceId);
         avc444?.resetSurface(event.surfaceId);
@@ -163,8 +219,10 @@ function handleRenderEvent(event) {
 }
 
 function failClosed(code, error) {
+    workerDiag.drawFails++;
+    workerDiag.lastError = `${code}: ${error?.message || error}`;
     try { globalThis.rdpDisconnect?.(); } catch {}
-    postMessage({ type: 'callback', name: 'rdpOnError', args: [`${code}: ${error?.message || error}`] });
+    postMessage({ type: 'callback', name: 'rdpOnError', args: [workerDiag.lastError] });
 }
 
 function dispatchInput(envelope) {
@@ -182,6 +240,12 @@ function dispatchInput(envelope) {
 }
 
 async function invokeMethod(method, args) {
+    if (method === 'rdpGetWorkerDiagnostics') {
+        const protocol = typeof globalThis.rdpGetProtocolDiagnostics === 'function'
+            ? globalThis.rdpGetProtocolDiagnostics()
+            : {};
+        return { ...workerDiag, protocol, frameScheduler: { ...frameScheduler.stats }, decoderBacklog: decoderBacklog(), wasmReady, bootStage: currentBootStage };
+    }
     const fn = globalThis[method];
     if (typeof fn !== 'function') throw new Error(`unknown Worker method ${method}`);
     if (method === 'rdpDownloadServerFile') {
@@ -215,7 +279,12 @@ onmessage = async ({ data: message }) => {
             if (message.type === 'request') postMessage({ type: 'response', id: message.id, ok: true, value });
         }
     } catch (error) {
-        if (message.type === 'request') postMessage({ type: 'response', id: message.id, ok: false, error: error.message });
-        else failClosed('WORKER_MESSAGE_FAILED', error);
+        if (message.type === 'request') {
+            postMessage({ type: 'response', id: message.id, ok: false, error: error.message });
+        } else if (message.type === 'init') {
+            postMessage({ type: 'boot-error', code: 'WORKER_GPU_INIT_FAILED', stage: currentBootStage, error: error?.message || String(error) });
+        } else {
+            failClosed('WORKER_MESSAGE_FAILED', error);
+        }
     }
 };

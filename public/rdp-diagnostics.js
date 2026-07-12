@@ -1,8 +1,7 @@
-export const RDP_PIPELINES = Object.freeze(['gpu-v2-page', 'worker-gpu-v2']);
+export const RDP_PIPELINES = Object.freeze(['worker-gpu-v2']);
 
-export function normalizeRdpPipeline(value, fallback = 'worker-gpu-v2') {
-    const candidate = String(value || '').trim().toLowerCase();
-    return RDP_PIPELINES.includes(candidate) ? candidate : fallback;
+export function normalizeRdpPipeline() {
+    return 'worker-gpu-v2';
 }
 
 export function createRdpDiagnostics(initial = {}) {

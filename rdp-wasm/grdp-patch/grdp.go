@@ -95,6 +95,7 @@ type RdpClient struct {
 	onSuccessFn             func()
 	onReadyFn               func()
 	onBitmapPaintFn         func([]Bitmap)
+	onOrdersFn              func(int)
 	onPointerHideFn         func()
 	onPointerCachedFn       func(uint16)
 	onPointerUpdateFn       func(uint16, uint16, uint16, uint16, uint16, uint16, []byte, []byte)
@@ -114,9 +115,10 @@ type RdpClient struct {
 	cliprdrHandler *cliprdr.CliprdrHandler
 
 	// File clipboard callbacks (wired to cliprdr handler)
-	onRemoteFilesFn func(files []cliprdr.ClipFile)
-	getFilesFn      func() []cliprdr.ClipFile
-	getFileDataFn   func(index int, offset uint64, length uint32) []byte
+	onRemoteFilesFn  func(files []cliprdr.ClipFile)
+	getFilesFn       func() []cliprdr.ClipFile
+	getFileDataFn    func(index int, offset uint64, length uint32) []byte
+	protocolObserver func(string)
 
 	// reconnectMu serialises concurrent Reconnect() calls.
 	// reconnecting is also set during async server redirects to suppress
@@ -132,6 +134,7 @@ type RdpClient struct {
 	// gfxHandler is the active RDPGFX handler; nil when not connected.
 	// Stored here so closeTransport() can stop its goroutines.
 	gfxHandler *rdpgfx.GfxHandler
+	dvcClient  *drdynvc.DvcClient
 
 	// avc444Disabled, when true, limits CAPS_ADVERTISE to v8.1 so the server
 	// uses AVC420 only.  Set via DisableAVC444() before Connect(); preserved
@@ -544,6 +547,9 @@ func (g *RdpClient) doLogin(routingToken []byte) error {
 
 	// drdynvc (Dynamic Virtual Channels)
 	dvcClient := drdynvc.NewDvcClient()
+	dvcClient.SetProtocolObserver(g.protocolObserver)
+	g.dvcClient = dvcClient
+	g.mcs.SetProtocolObserver(g.protocolObserver)
 	g.channels.Register(dvcClient)
 	g.mcs.SetClientDynvcProtocol()
 
@@ -600,6 +606,7 @@ func (g *RdpClient) doLogin(routingToken []byte) error {
 	if g.avc444Disabled {
 		gfxHandler.SetAVC444Disabled(true)
 	}
+	gfxHandler.SetProtocolObserver(g.protocolObserver)
 	g.gfxHandler = gfxHandler
 	dvcClient.RegisterHandler(rdpgfx.ChannelName, gfxHandler)
 
@@ -803,6 +810,14 @@ func (g *RdpClient) OnReady(f func()) *RdpClient {
 	g.onReadyFn = f
 	if g.pdu != nil {
 		g.pdu.On("ready", f)
+	}
+	return g
+}
+
+func (g *RdpClient) OnOrders(f func(count int)) *RdpClient {
+	g.onOrdersFn = f
+	if g.pdu != nil {
+		g.pdu.On("orders", func(orders []pdu.OrderPdu) { f(len(orders)) })
 	}
 	return g
 }
@@ -1065,6 +1080,20 @@ func (g *RdpClient) OnClipboard(onRemote func(text string), getLocal func() stri
 // onRemoteFiles is called when the server advertises files on the clipboard.
 // getFiles returns the list of local files available for the server.
 // getFileData returns file content for a given file index, offset, and length.
+func (g *RdpClient) SetProtocolObserver(observer func(string)) *RdpClient {
+	g.protocolObserver = observer
+	if g.mcs != nil {
+		g.mcs.SetProtocolObserver(observer)
+	}
+	if g.dvcClient != nil {
+		g.dvcClient.SetProtocolObserver(observer)
+	}
+	if g.gfxHandler != nil {
+		g.gfxHandler.SetProtocolObserver(observer)
+	}
+	return g
+}
+
 func (g *RdpClient) OnFileClipboard(
 	onRemoteFiles func(files []cliprdr.ClipFile),
 	getFiles func() []cliprdr.ClipFile,
@@ -1489,6 +1518,9 @@ func (g *RdpClient) reregisterCallbacks() {
 	}
 	if g.onBitmapPaintFn != nil {
 		g.OnBitmap(g.onBitmapPaintFn)
+	}
+	if g.onOrdersFn != nil {
+		g.OnOrders(g.onOrdersFn)
 	}
 	if g.onPointerHideFn != nil {
 		g.OnPointerHide(g.onPointerHideFn)

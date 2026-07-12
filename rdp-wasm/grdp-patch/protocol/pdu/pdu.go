@@ -95,7 +95,7 @@ func NewPDULayer(t core.Transport) *PDULayer {
 			CAPSTYPE_INPUT:           &InputCapability{},
 			CAPSTYPE_FONT:            &FontCapability{0x0001, 0},
 			CAPSTYPE_BRUSH:           &BrushCapability{BRUSH_COLOR_8x8},
-			CAPSTYPE_GLYPHCACHE:      &GlyphCapability{},
+			CAPSTYPE_GLYPHCACHE:      &GlyphCapability{SupportLevel: GLYPH_SUPPORT_NONE},
 			CAPSETTYPE_BITMAP_CODECS: newClientBitmapCodecsCapability(),
 			CAPSTYPE_BITMAPCACHE_REV2: &BitmapCache2Capability{
 				BitmapCachePersist: 2,
@@ -242,19 +242,6 @@ func (c *Client) sendConfirmActivePDU() {
 	orderCapa.OrderSupport[TS_NEG_DSTBLT_INDEX] = 1
 	orderCapa.OrderSupport[TS_NEG_PATBLT_INDEX] = 1
 	orderCapa.OrderSupport[TS_NEG_SCRBLT_INDEX] = 1
-	//orderCapa.OrderSupport[TS_NEG_LINETO_INDEX] = 1
-	//orderCapa.OrderSupport[TS_NEG_MEMBLT_INDEX] = 1
-	//orderCapa.OrderSupport[TS_NEG_MEM3BLT_INDEX] = 1
-	//orderCapa.OrderSupport[TS_NEG_POLYLINE_INDEX] = 1
-	/*orderCapa.OrderSupport[TS_NEG_MULTIOPAQUERECT_INDEX] = 1
-	orderCapa.OrderSupport[TS_NEG_GLYPH_INDEX_INDEX] = 1
-	//orderCapa.OrderSupport[TS_NEG_DRAWNINEGRID_INDEX] = 1
-	orderCapa.OrderSupport[TS_NEG_SAVEBITMAP_INDEX] = 1
-	orderCapa.OrderSupport[TS_NEG_POLYGON_SC_INDEX] = 1
-	orderCapa.OrderSupport[TS_NEG_POLYGON_CB_INDEX] = 1
-	orderCapa.OrderSupport[TS_NEG_ELLIPSE_SC_INDEX] = 1
-	orderCapa.OrderSupport[TS_NEG_ELLIPSE_CB_INDEX] = 1*/
-	//orderCapa.OrderSupport[TS_NEG_FAST_GLYPH_INDEX] = 1
 
 	inputCapa := c.clientCapabilities[CAPSTYPE_INPUT].(*InputCapability)
 	inputCapa.Flags = INPUT_FLAG_SCANCODES | INPUT_FLAG_MOUSEX | INPUT_FLAG_MOUSE_HWHEEL | INPUT_FLAG_UNICODE |
@@ -409,6 +396,11 @@ func (c *Client) recvServerFontMapPDU(s []byte) {
 }
 
 func (c *Client) recvPDU(s []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("recvPDU panic", "err", r, "dataLen", len(s))
+		}
+	}()
 	r := readerPool.Get().(*bytes.Reader)
 	r.Reset(s)
 	defer readerPool.Put(r)
@@ -434,7 +426,9 @@ func (c *Client) recvPDU(s []byte) {
 				up := d.Data.(*UpdateDataPDU)
 				p := up.Udata
 				if up.UpdateType == FASTPATH_UPDATETYPE_BITMAP {
-					c.Emit("bitmap", p.(*BitmapUpdateDataPDU).Rectangles)
+					rects := p.(*BitmapUpdateDataPDU).Rectangles
+					slog.Info("recvPDU slow-path BITMAP", "rects", len(rects))
+					c.Emit("bitmap", rects)
 				} else if up.UpdateType == FASTPATH_UPDATETYPE_ORDERS {
 					c.Emit("orders", p.(*FastPathOrdersPDU).OrderPdus)
 				}
@@ -456,7 +450,19 @@ func (c *Client) recvPDU(s []byte) {
 	}
 }
 
+func decodeFastPathUpdateHeader(updateHeader byte) (updateCode, fragmentation, compression byte) {
+	// MS-RDPBCGR 2.2.9.1.2: updateCode occupies bits 0..3,
+	// fragmentation bits 4..5, and compression bits 6..7. Compression
+	// constants are unshifted values (FASTPATH_OUTPUT_COMPRESSION_USED == 2).
+	return updateHeader & 0x0f, updateHeader & 0x30, (updateHeader >> 6) & 0x03
+}
+
 func (c *Client) RecvFastPath(secFlag byte, s []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("RecvFastPath panic", "err", r, "dataLen", len(s))
+		}
+	}()
 	r := readerPool.Get().(*bytes.Reader)
 	r.Reset(s)
 	defer readerPool.Put(r)
@@ -465,9 +471,7 @@ func (c *Client) RecvFastPath(secFlag byte, s []byte) {
 		if err != nil {
 			return
 		}
-		updateCode := updateHeader & 0x0f
-		fragmentation := updateHeader & 0x30
-		compression := updateHeader & 0xC0
+		updateCode, fragmentation, compression := decodeFastPathUpdateHeader(updateHeader)
 
 		var compressionFlags uint8 = 0
 		if compression == FASTPATH_OUTPUT_COMPRESSION_USED {
@@ -492,6 +496,13 @@ func (c *Client) RecvFastPath(secFlag byte, s []byte) {
 			"compressionFlags", compressionFlags,
 			"fragmentation", fragmentation,
 			"size", size)
+
+		if updateCode == FASTPATH_UPDATETYPE_BITMAP {
+			slog.Info("RecvFastPath BITMAP", "rects", "pending", "size", size)
+		}
+		if updateCode == FASTPATH_UPDATETYPE_SURFCMDS {
+			slog.Info("RecvFastPath SURFCMDS", "size", size)
+		}
 
 		// Handle fragmentation: reassemble fragments first, then decompress.
 		if fragmentation != FASTPATH_FRAGMENT_SINGLE {

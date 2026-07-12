@@ -60,6 +60,7 @@ const {
 } = require('./preview/media/media-service');
 const { FileAgentManager } = require('./file-agent-manager');
 const { attachRdpProxyBridge } = require('./server/rdp-proxy-bridge');
+const { negotiateRdpTls } = require('./server/rdp-cert-probe');
 
 const HTTP_ENABLED = process.env.HTTP_ENABLED === 'true';
 const PORT = process.env.PORT || 3000;
@@ -1816,7 +1817,7 @@ app.post('/api/connections', requireAuth, (req, res) => {
         conn.rdpResolution = ['auto', '1080p', '2K', '4K', '8K'].includes(body.rdpResolution) ? body.rdpResolution : '1080p';
         conn.rdpQuality = ['balanced', 'performance', 'quality'].includes(body.rdpQuality) ? body.rdpQuality : 'balanced';
         conn.rdpFps = [30, 45, 60, 120, 144].includes(Number(body.rdpFps)) ? Number(body.rdpFps) : 30;
-        conn.rdpPipeline = ['gpu-v2-page', 'worker-gpu-v2'].includes(body.rdpPipeline) ? body.rdpPipeline : 'worker-gpu-v2';
+        conn.rdpPipeline = 'worker-gpu-v2';
         conn.rdpTouchMode = body.rdpTouchMode === 'relative' ? 'relative' : 'direct';
         conn.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number(body.rdpTouchSensitivity) || 1.5));
         conn.rdpDomain = String(body.rdpDomain || '').trim();
@@ -1852,7 +1853,7 @@ app.put('/api/connections/:id', requireAuth, (req, res) => {
         if (body.rdpResolution !== undefined) conn.rdpResolution = ['auto', '1080p', '2K', '4K', '8K'].includes(body.rdpResolution) ? body.rdpResolution : '1080p';
         if (body.rdpQuality !== undefined) conn.rdpQuality = ['balanced', 'performance', 'quality'].includes(body.rdpQuality) ? body.rdpQuality : 'balanced';
         if (body.rdpFps !== undefined) conn.rdpFps = [30, 45, 60, 120, 144].includes(Number(body.rdpFps)) ? Number(body.rdpFps) : 30;
-        if (body.rdpPipeline !== undefined) conn.rdpPipeline = ['gpu-v2-page', 'worker-gpu-v2'].includes(body.rdpPipeline) ? body.rdpPipeline : 'worker-gpu-v2';
+        if (body.rdpPipeline !== undefined) conn.rdpPipeline = 'worker-gpu-v2';
         if (body.rdpTouchMode !== undefined) conn.rdpTouchMode = body.rdpTouchMode === 'relative' ? 'relative' : 'direct';
         if (body.rdpTouchSensitivity !== undefined) conn.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number(body.rdpTouchSensitivity) || 1.5));
         if (body.rdpDomain !== undefined) conn.rdpDomain = String(body.rdpDomain || '').trim();
@@ -1908,7 +1909,7 @@ app.post('/api/rdp/credentials', requireAuth, (req, res) => {
     const domainMatch = username.match(/^([^\\]+)\\(.+)$/);
     if (!domain && domainMatch) { domain = domainMatch[1]; username = domainMatch[2]; }
     console.info('[rdp-credentials]', 'issued', { connectionId, host: conn.host, user: username, sessionUser: req.session?.username });
-    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false, rdpResolution: conn.rdpResolution || '1080p', rdpQuality: conn.rdpQuality || 'balanced', rdpFps: conn.rdpFps || 30, rdpPipeline: ['gpu-v2-page', 'worker-gpu-v2'].includes(conn.rdpPipeline) ? conn.rdpPipeline : 'worker-gpu-v2', rdpTouchMode: conn.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(conn.rdpTouchSensitivity) || 1.5)), rdpMicrophone: !!conn.rdpMicrophone, rdpLocation: !!conn.rdpLocation, rdpStorage: !!conn.rdpStorage, rdpCamera: !!conn.rdpCamera });
+    res.json({ host: conn.host, port: Number(conn.port) || 3389, username, password: resolved.password || '', domain, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false, rdpResolution: conn.rdpResolution || '1080p', rdpQuality: conn.rdpQuality || 'balanced', rdpFps: conn.rdpFps || 30, rdpPipeline: 'worker-gpu-v2', rdpTouchMode: conn.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(conn.rdpTouchSensitivity) || 1.5)), rdpMicrophone: !!conn.rdpMicrophone, rdpLocation: !!conn.rdpLocation, rdpStorage: !!conn.rdpStorage, rdpCamera: !!conn.rdpCamera });
 });
 
 
@@ -1930,24 +1931,42 @@ app.post('/api/rdp/probe-cert', requireAuth, async (req, res) => {
         const effectivePort = routedForward?.port || targetPort;
         const tls = require('tls');
         const certInfo = await new Promise((resolve) => {
-            const socket = tls.connect({ host: effectiveHost, port: effectivePort, rejectUnauthorized: false, timeout: 8000 }, () => {
-                const cert = socket.getPeerCertificate();
-                const authorized = socket.authorized;
-                const authError = socket.authorizationError || '';
-                socket.destroy();
-                if (!cert || !cert.subject) { resolve({ hasCert: false, host: conn.host, port: targetPort }); return; }
-                const reasons = [];
-                if (!authorized) {
-                    if (/SELF_SIGNED|DEPTH_ZERO/i.test(authError)) reasons.push('不是来自受信任的认证机构');
-                    else if (/ERR_TLS_CERT_ALTNAME_INVALID|Hostname|hostname/i.test(authError)) reasons.push('电脑名称不匹配');
-                    else if (/EXPIRED|CERT_HAS_EXPIRED/i.test(authError)) reasons.push('证书已过期');
-                    else if (authError) reasons.push(authError);
-                    if (!reasons.length) reasons.push('不是来自受信任的认证机构');
+            const tcpSocket = net.connect({ host: effectiveHost, port: effectivePort });
+            tcpSocket.setTimeout(8000);
+            const fail = (error) => {
+                tcpSocket.destroy();
+                resolve({ hasCert: false, host: conn.host, port: targetPort, error: error?.message || String(error) });
+            };
+            tcpSocket.once('error', fail);
+            tcpSocket.once('timeout', () => fail(new Error('timeout')));
+            tcpSocket.once('connect', async () => {
+                tcpSocket.removeListener('error', fail);
+                try {
+                    await negotiateRdpTls(tcpSocket, { timeoutMs: 8000 });
+                    const socket = tls.connect({ socket: tcpSocket, servername: net.isIP(conn.host) ? undefined : conn.host, rejectUnauthorized: false });
+                    socket.setTimeout(8000);
+                    socket.once('secureConnect', () => {
+                        const cert = socket.getPeerCertificate();
+                        const authorized = socket.authorized;
+                        const authError = socket.authorizationError || '';
+                        socket.destroy();
+                        if (!cert || !cert.subject) { resolve({ hasCert: false, host: conn.host, port: targetPort }); return; }
+                        const reasons = [];
+                        if (!authorized) {
+                            if (/SELF_SIGNED|DEPTH_ZERO/i.test(authError)) reasons.push('不是来自受信任的认证机构');
+                            else if (/ERR_TLS_CERT_ALTNAME_INVALID|Hostname|hostname/i.test(authError)) reasons.push('电脑名称不匹配');
+                            else if (/EXPIRED|CERT_HAS_EXPIRED/i.test(authError)) reasons.push('证书已过期');
+                            else if (authError) reasons.push(authError);
+                            if (!reasons.length) reasons.push('不是来自受信任的认证机构');
+                        }
+                        resolve({ hasCert: true, host: conn.host, port: targetPort, subject: cert.subject?.CN || cert.subject?.O || '', issuer: cert.issuer?.CN || cert.issuer?.O || '', validFrom: cert.valid_from || '', validTo: cert.valid_to || '', fingerprint: cert.fingerprint || '', authorized, reasons });
+                    });
+                    socket.once('error', (error) => { socket.destroy(); resolve({ hasCert: false, host: conn.host, port: targetPort, error: error.message }); });
+                    socket.once('timeout', () => { socket.destroy(); resolve({ hasCert: false, host: conn.host, port: targetPort, error: 'timeout' }); });
+                } catch (error) {
+                    fail(error);
                 }
-                resolve({ hasCert: true, host: conn.host, port: targetPort, subject: cert.subject?.CN || cert.subject?.O || '', issuer: cert.issuer?.CN || cert.issuer?.O || '', validFrom: cert.valid_from || '', validTo: cert.valid_to || '', fingerprint: cert.fingerprint || '', authorized, reasons });
             });
-            socket.on('error', (err) => { socket.destroy(); resolve({ hasCert: false, host: conn.host, port: targetPort, error: err.message }); });
-            socket.setTimeout(8000, () => { socket.destroy(); resolve({ hasCert: false, host: conn.host, port: targetPort, error: 'timeout' }); });
         });
         res.json(certInfo);
     } catch (err) {
@@ -4183,8 +4202,18 @@ function handleHttpUpgrade(req, socket, head) {
     if (targetWss !== agentFilesWss) {
         const session = currentSession(req);
         if (!session || session.mustChangePassword) {
+            console.warn('[WS-DIAG] rejected websocket upgrade by session auth', {
+                path: pathname,
+                hasCookie: /(?:^|;\s*)zephyr_sid=/.test(String(req.headers.cookie || '')),
+                hasSession: !!session,
+                mustChangePassword: !!session?.mustChangePassword,
+                origin: req.headers.origin || '',
+            });
             rejectSocket(socket, session?.mustChangePassword ? 403 : 401, session?.mustChangePassword ? 'Forbidden' : 'Unauthorized');
             return;
+        }
+        if (pathname === '/rdp-proxy') {
+            console.info('[rdp-proxy] websocket upgrade accepted', { user: session.username, origin: req.headers.origin || '' });
         }
     }
 

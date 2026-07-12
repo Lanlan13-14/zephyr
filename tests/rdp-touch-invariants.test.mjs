@@ -20,7 +20,7 @@ test('toolbar range is the only viewport zoom writer', async () => {
     assert.ok(writes[1].index > sliderStart && writes[1].index < sliderStart + 300);
 });
 
-test('touch settings persist through UI, API and storage layers', async () => {
+test('touch settings persist through UI, API and storage layers while pipeline is fixed', async () => {
     const files = await Promise.all([
         read('public/app.html'),
         read('public/app.js'),
@@ -28,10 +28,15 @@ test('touch settings persist through UI, API and storage layers', async () => {
         read('server.js'),
         read('storage.js'),
     ]);
-    for (const field of ['rdpTouchMode', 'rdpTouchSensitivity', 'rdpPipeline']) {
+    for (const field of ['rdpTouchMode', 'rdpTouchSensitivity']) {
         for (const [index, source] of files.entries()) {
             assert.ok(source.includes(field), `${field} missing from persistence layer ${index}`);
         }
+    }
+    assert.equal(files[2].includes('rdpPipeline'), false, 'runtime client must not accept a selectable pipeline');
+    for (const [index, source] of files.entries()) {
+        if (index === 2) continue;
+        assert.ok(source.includes('worker-gpu-v2'), `fixed Worker GPU pipeline missing from layer ${index}`);
     }
 });
 

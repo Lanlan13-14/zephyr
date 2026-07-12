@@ -1,20 +1,42 @@
 package nla
 
 import (
+	"crypto/sha256"
 	"encoding/asn1"
 	"log/slog"
 )
+
+const (
+	CredSSPVersion                 = 6
+	CredSSPBindingHashVersion      = 5
+	CredSSPClientNonceLength       = 32
+	clientToServerBindingHashMagic = "CredSSP Client-To-Server Binding Hash\x00"
+	serverToClientBindingHashMagic = "CredSSP Server-To-Client Binding Hash\x00"
+)
+
+func CredSSPBindingHash(clientToServer bool, nonce, subjectPublicKey []byte) []byte {
+	magic := serverToClientBindingHashMagic
+	if clientToServer {
+		magic = clientToServerBindingHashMagic
+	}
+	h := sha256.New()
+	_, _ = h.Write([]byte(magic))
+	_, _ = h.Write(nonce)
+	_, _ = h.Write(subjectPublicKey)
+	return h.Sum(nil)
+}
 
 type NegoToken struct {
 	Data []byte `asn1:"explicit,tag:0"`
 }
 
 type TSRequest struct {
-	Version    int         `asn1:"explicit,tag:0"`
-	NegoTokens []NegoToken `asn1:"optional,explicit,tag:1"`
-	AuthInfo   []byte      `asn1:"optional,explicit,tag:2"`
-	PubKeyAuth []byte      `asn1:"optional,explicit,tag:3"`
-	//ErrorCode  int         `asn1:"optional,explicit,tag:4"`
+	Version     int         `asn1:"explicit,tag:0"`
+	NegoTokens  []NegoToken `asn1:"optional,explicit,tag:1"`
+	AuthInfo    []byte      `asn1:"optional,explicit,tag:2"`
+	PubKeyAuth  []byte      `asn1:"optional,explicit,tag:3"`
+	ErrorCode   int         `asn1:"optional,explicit,tag:4"`
+	ClientNonce []byte      `asn1:"optional,explicit,tag:5"`
 }
 
 type TSCredentials struct {
@@ -43,10 +65,8 @@ type TSSmartCardCreds struct {
 	DomainHint string            `asn1:"explicit,tag:3"`
 }
 
-func EncodeDERTRequest(msgs []Message, authInfo []byte, pubKeyAuth []byte) []byte {
-	req := TSRequest{
-		Version: 2,
-	}
+func EncodeDERTRequestVersion(version int, msgs []Message, authInfo []byte, pubKeyAuth []byte, clientNonce []byte) []byte {
+	req := TSRequest{Version: version}
 
 	if len(msgs) > 0 {
 		req.NegoTokens = make([]NegoToken, 0, len(msgs))
@@ -64,12 +84,19 @@ func EncodeDERTRequest(msgs []Message, authInfo []byte, pubKeyAuth []byte) []byt
 	if len(pubKeyAuth) > 0 {
 		req.PubKeyAuth = pubKeyAuth
 	}
+	if len(clientNonce) > 0 {
+		req.ClientNonce = clientNonce
+	}
 
 	result, err := asn1.Marshal(req)
 	if err != nil {
 		slog.Error("EncodeDERTRequest", "err", err)
 	}
 	return result
+}
+
+func EncodeDERTRequest(msgs []Message, authInfo []byte, pubKeyAuth []byte) []byte {
+	return EncodeDERTRequestVersion(CredSSPVersion, msgs, authInfo, pubKeyAuth, nil)
 }
 
 func DecodeDERTRequest(s []byte) (*TSRequest, error) {

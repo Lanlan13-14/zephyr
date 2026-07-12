@@ -7,36 +7,64 @@ async function importBrowserModule(path) {
     return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 }
 
-const { createRdpDiagnostics, normalizeRdpPipeline } = await importBrowserModule('../public/rdp-diagnostics.js');
+const { RDP_PIPELINES, createRdpDiagnostics, normalizeRdpPipeline } = await importBrowserModule('../public/rdp-diagnostics.js');
 const { RdpTraceRecorder, sanitizeRdpTraceEvent } = await importBrowserModule('../public/rdp-trace.js');
 
-test('pipeline selection defaults to Worker GPU v2 and excludes legacy', () => {
-    assert.equal(normalizeRdpPipeline('gpu-v2-page'), 'gpu-v2-page');
-    assert.equal(normalizeRdpPipeline('worker-gpu-v2'), 'worker-gpu-v2');
-    assert.equal(normalizeRdpPipeline('legacy'), 'worker-gpu-v2');
-    assert.equal(normalizeRdpPipeline('unknown'), 'worker-gpu-v2');
+test('Worker GPU v2 is the only accepted production pipeline', () => {
+    assert.deepEqual(RDP_PIPELINES, ['worker-gpu-v2']);
+    for (const value of ['gpu-v2-page', 'legacy', 'unknown', '', null]) assert.equal(normalizeRdpPipeline(value), 'worker-gpu-v2');
 });
 
-test('isolation and Worker capability failure falls back before canvas transfer', async () => {
+test('client fails closed when mandatory Worker GPU capabilities are absent', async () => {
     const client = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
-    const capabilityAt = client.indexOf('const isolationReady =');
-    const fallbackAt = client.indexOf("selectedPipeline = 'gpu-v2-page'", capabilityAt);
-    const transferAt = client.indexOf('await rdpWorkerBridge.init', capabilityAt);
-    assert.ok(capabilityAt >= 0 && fallbackAt > capabilityAt && transferAt > fallbackAt);
-    assert.equal(client.includes("throw new Error('Worker RDP requires cross-origin isolation')"), false);
+    for (const reason of ['INSECURE_CONTEXT', 'CROSS_ORIGIN_ISOLATION_UNAVAILABLE', 'SHARED_ARRAY_BUFFER_UNAVAILABLE', 'MODULE_WORKER_UNAVAILABLE', 'OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE']) {
+        assert.ok(client.includes(reason), `${reason} must be explicit`);
+    }
+    assert.match(client, /WORKER_GPU_REQUIRED/);
+    assert.match(client, /WORKER_GPU_PROBE_FAILED/);
 });
 
-test('page GPU fallback does not require WebCodecs', async () => {
+test('client contains no page-thread WASM or GPU fallback', async () => {
     const client = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
-    assert.ok(client.includes("window.rdpExternalVideoDecode = videoDecodeAvailable"));
-    assert.ok(client.includes("WEBCODECS_UNAVAILABLE_BITMAP_MODE"));
+    for (const forbidden of ['gpu-v2-page', 'initPageGpuPipeline', 'loadPageWasm', 'async function loadWasm', 'RdpGpuSurfaceCompositor', 'RdpAvc420Decoder', 'RdpAvc444Decoder', 'createSynchronousBitmapUploader', 'Page GPU callbacks']) {
+        assert.equal(client.includes(forbidden), false, `${forbidden} must be absent from page client`);
+    }
+    assert.match(client, /if \(!wasmReady \|\| !rdpWorkerBridge\) throw new Error\('Worker GPU WASM engine is not ready'\)/);
+    assert.match(client, /wasmReady = true;\s*rdpDiag\.renderer = 'worker-gpu-v2';/);
 });
 
-test('bitmap fallback keeps frame ACK ownership in Go', async () => {
+test('Worker owns OffscreenCanvas WebGL2 and Go WASM', async () => {
+    const worker = await fs.readFile(new URL('../public/rdp-worker.js', import.meta.url), 'utf8');
+    const renderer = await fs.readFile(new URL('../public/rdp-renderer.js', import.meta.url), 'utf8');
+    assert.match(worker, /new RdpGpuSurfaceCompositor\(canvas/);
+    assert.match(worker, /instantiateGoWasm/);
+    assert.match(worker, /rdpConfigureRenderer\(handleRenderEvent, globalThis\.rdpOnWasmBitmap, true\)/);
+    assert.match(renderer, /getContext\('webgl2'/);
+});
+
+test('Worker boot failures propagate immediately with exact stage', async () => {
+    const worker = await fs.readFile(new URL('../public/rdp-worker.js', import.meta.url), 'utf8');
+    const bridge = await fs.readFile(new URL('../public/rdp-worker-bridge.js', import.meta.url), 'utf8');
+    assert.match(worker, /type: 'boot-error'.*stage: currentBootStage/s);
+    assert.match(bridge, /message\?\.type === 'boot-error'/);
+});
+
+test('Worker ready diagnostics come from Worker RPC, never page counters', async () => {
     const client = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
-    assert.ok(client.includes('if (window.rdpExternalVideoDecode)'));
-    const main = await fs.readFile(new URL('../rdp-wasm/main.go', import.meta.url), 'utf8');
-    assert.ok(main.includes('g.SetExternalFrameCompletion(videoDecode)'));
+    assert.match(client, /rdpWorkerBridge\.call\('rdpGetWorkerDiagnostics'/);
+    assert.match(client, /RDP 黑屏诊断/);
+    assert.match(client, /GPU 未呈现/);
+    assert.doesNotMatch(client, /3 秒内未收到画面帧/);
+});
+
+test('pipeline configuration exposes Worker GPU only', async () => {
+    const appHtml = await fs.readFile(new URL('../public/app.html', import.meta.url), 'utf8');
+    const app = await fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+    const server = await fs.readFile(new URL('../server.js', import.meta.url), 'utf8');
+    const storage = await fs.readFile(new URL('../storage.js', import.meta.url), 'utf8');
+    assert.equal(appHtml.includes('value="gpu-v2-page"'), false);
+    assert.match(appHtml, /value="worker-gpu-v2" selected/);
+    for (const source of [app, server, storage]) assert.equal(source.includes("['gpu-v2-page', 'worker-gpu-v2']"), false);
 });
 
 test('legacy renderer entry points are absent from production client', async () => {
@@ -46,24 +74,8 @@ test('legacy renderer entry points are absent from production client', async () 
     }
 });
 
-test('Worker probe fallback occurs before real canvas transfer', async () => {
-    const client = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
-    const probeAt = client.indexOf('await RdpWorkerBridge.probe');
-    const transferAt = client.indexOf('await rdpWorkerBridge.init');
-    const fallbackAt = client.indexOf("selectedPipeline = 'gpu-v2-page'", probeAt);
-    assert.ok(probeAt >= 0 && fallbackAt > probeAt && transferAt > fallbackAt);
-});
-
-test('pipeline configuration has no legacy option and defaults to Worker', async () => {
-    const appHtml = await fs.readFile(new URL('../public/app.html', import.meta.url), 'utf8');
-    const storage = await fs.readFile(new URL('../storage.js', import.meta.url), 'utf8');
-    assert.equal(appHtml.includes('value="legacy"'), false);
-    assert.ok(appHtml.includes('value="worker-gpu-v2"'));
-    assert.ok(storage.includes("TEXT DEFAULT 'worker-gpu-v2'"));
-});
-
 test('diagnostics snapshot is detached and counts presents', () => {
-    const diag = createRdpDiagnostics({ renderer: 'canvas2d' });
+    const diag = createRdpDiagnostics({ renderer: 'worker-gpu-v2' });
     diag.notePresentedFrame(100);
     diag.notePresentedFrame(116);
     const snapshot = diag.snapshot();

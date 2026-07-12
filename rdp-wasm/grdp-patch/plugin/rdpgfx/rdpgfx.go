@@ -2,6 +2,7 @@ package rdpgfx
 
 import (
 	"encoding/binary"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -271,6 +272,7 @@ type GfxHandler struct {
 	// keyframe.  Optional: if nil, the decoder will wait for the next
 	// server-initiated keyframe.
 	onKeyframeRequest func()
+	protocolObserver  func(string)
 	// lastKeyframeRequest is the wall-clock time of the most recent keyframe
 	// request sent to the server.  Used to rate-limit repeat requests.
 	lastKeyframeRequest time.Time
@@ -721,6 +723,16 @@ func (g *GfxHandler) SetDecoderBrokenCallback(fn func()) {
 // speeds up recovery: without it the decoder waits for the server to
 // spontaneously send a keyframe.  A typical implementation calls
 // pdu.SendRefreshRect with the current screen dimensions.
+func (g *GfxHandler) SetProtocolObserver(observer func(string)) {
+	g.protocolObserver = observer
+}
+
+func (g *GfxHandler) observe(event string) {
+	if g.protocolObserver != nil {
+		g.protocolObserver(event)
+	}
+}
+
 func (g *GfxHandler) SetKeyframeRequestFunc(fn func()) {
 	g.onKeyframeRequest = fn
 }
@@ -769,6 +781,7 @@ func (g *GfxHandler) SetAVC444Disabled(v bool) {
 // OnChannelCreated is called after the DVC CREATE_RSP has been sent.
 // It sends CAPS_ADVERTISE to the server to initiate the RDPGFX pipeline.
 func (g *GfxHandler) OnChannelCreated() {
+	g.observe("rdpgfx.channel.created")
 	g.sendCapsAdvertise()
 }
 
@@ -776,6 +789,7 @@ func (g *GfxHandler) OnChannelCreated() {
 // The client must advertise its capabilities before the server will
 // send any graphics data (MS-RDPEGFX 2.2.3.1).
 func (g *GfxHandler) sendCapsAdvertise() {
+	g.observe("rdpgfx.caps.advertise")
 	p := pduBufPool.Get().([]byte)[:0]
 	defer pduBufPool.Put(p[:0])
 
@@ -1133,6 +1147,7 @@ func (g *GfxHandler) decodePDUs(data []byte) {
 
 // dispatchDecode routes a single PDU.
 func (g *GfxHandler) dispatchDecode(cmdId uint16, data []byte) {
+	g.observe(fmt.Sprintf("rdpgfx.pdu:0x%04x", cmdId))
 	switch cmdId {
 	case cmdidCapsConfirm:
 		g.onCapsConfirm(data)

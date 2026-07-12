@@ -70,6 +70,10 @@ export class RdpWorkerBridge {
 
     installGlobals(target = globalThis) {
         for (const name of WORKER_EXPORTS) target[name] = (...args) => this.notify(name, args);
+        // Connection startup is control-plane state, not a lossy notification.
+        // Await a Worker response so missing Go exports and dispatch failures are
+        // visible to the page instead of degrading into a watchdog reconnect.
+        target.rdpConnect = (...args) => this.call('rdpConnect', args);
         target.rdpMouseMove = (x, y) => this.input.push('mouse-move', { x, y });
         target.rdpMouseDown = (button, x, y) => this.input.push('mouse-down', { button, x, y });
         target.rdpMouseUp = (button, x, y) => this.input.push('mouse-up', { button, x, y });
@@ -83,6 +87,7 @@ export class RdpWorkerBridge {
         target.rdpDownloadServerFile = (index, callback) => this.call('rdpDownloadServerFile', [index]).then((data) => callback?.(data)).catch(() => callback?.(null));
         target.rdpGetServerFiles = () => { throw new Error('rdpGetServerFiles is asynchronous in Worker mode'); };
         target.rdpGetServerFilesAsync = () => this.call('rdpGetServerFiles', []);
+        target.rdpGetWorkerDiagnostics = () => this.call('rdpGetWorkerDiagnostics', []);
         target.rdpFsListDrives = () => { throw new Error('rdpFsListDrives is asynchronous in Worker mode'); };
         target.rdpFsListDrivesAsync = () => this.call('rdpFsListDrives', []);
         return this;
@@ -134,6 +139,15 @@ export class RdpWorkerBridge {
         if (message?.type === 'boot-stage') {
             this.bootStage = String(message.stage || 'unknown');
             this.bootHistory.push({ stage: this.bootStage, detail: message.detail || '', at: Date.now() });
+            return;
+        }
+        if (message?.type === 'boot-error') {
+            const error = new Error(`${message.code || 'WORKER_BOOT_FAILED'} at ${message.stage || this.bootStage}: ${message.error || 'unknown error'}`);
+            if (!this.readySettled) {
+                this.readySettled = true;
+                if (this.bootTimer) { clearTimeout(this.bootTimer); this.bootTimer = null; }
+                this.rejectReady(error);
+            }
             return;
         }
         if (message?.type === 'ready') {

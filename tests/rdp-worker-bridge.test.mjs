@@ -37,6 +37,19 @@ test('Worker bridge request/response is explicit and timed', async () => {
     assert.equal(await promise, 7);
 });
 
+test('Worker bridge promotes connection startup to acknowledged RPC', async () => {
+    const worker = new MockWorker();
+    const bridge = new RdpWorkerBridge(worker, { syncBytes: 1024 });
+    const target = {};
+    bridge.installGlobals(target);
+    const promise = target.rdpConnect('wss://example.test', 'rdp', '3389');
+    const sent = worker.sent.at(-1).message;
+    assert.equal(sent.type, 'request');
+    assert.equal(sent.method, 'rdpConnect');
+    worker.message({ type: 'response', id: sent.id, ok: true, value: null });
+    assert.equal(await promise, null);
+});
+
 test('Worker bridge close is idempotent and rejects boot plus later calls', async () => {
     const worker = new MockWorker();
     const bridge = new RdpWorkerBridge(worker, { syncBytes: 1024 });
@@ -57,4 +70,28 @@ test('Worker input uses ordered envelopes', () => {
     const inputs = worker.sent.filter(({ message }) => message.type === 'input').map(({ message }) => message.envelope);
     assert.deepEqual(inputs.map((event) => event.type), ['mouse-move', 'mouse-down']);
     assert.equal(inputs[0].payload.x, 2);
+});
+
+
+test('Worker bridge rejects init immediately with exact GPU boot stage', async () => {
+    const worker = new MockWorker();
+    const bridge = new RdpWorkerBridge(worker, { syncBytes: 1024, timeoutMs: 1000 });
+    const ready = bridge.init({ transferControlToOffscreen: () => ({}) });
+    worker.message({ type: 'boot-stage', stage: 'webgl2-compositor-starting' });
+    worker.message({ type: 'boot-error', code: 'WORKER_GPU_INIT_FAILED', stage: 'webgl2-compositor-starting', error: 'WebGL2 unavailable' });
+    await assert.rejects(ready, /WORKER_GPU_INIT_FAILED at webgl2-compositor-starting: WebGL2 unavailable/);
+});
+
+
+test('Worker bridge exposes acknowledged GPU diagnostics RPC', async () => {
+    const worker = new MockWorker();
+    const bridge = new RdpWorkerBridge(worker, { syncBytes: 1024 });
+    const target = {};
+    bridge.installGlobals(target);
+    const promise = target.rdpGetWorkerDiagnostics();
+    const sent = worker.sent.at(-1).message;
+    assert.equal(sent.type, 'request');
+    assert.equal(sent.method, 'rdpGetWorkerDiagnostics');
+    worker.message({ type: 'response', id: sent.id, ok: true, value: { semanticEvents: 2, presents: 1 } });
+    assert.deepEqual(await promise, { semanticEvents: 2, presents: 1 });
 });

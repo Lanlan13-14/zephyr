@@ -28,6 +28,7 @@ type wsConn struct {
 }
 
 func dialWebSocket(proxyURL string) (net.Conn, error) {
+	reportStage("websocket-creating")
 	c := &wsConn{
 		readQueue:   newByteQueue(wsReadHardLimit),
 		flowControl: true,
@@ -42,10 +43,12 @@ func dialWebSocket(proxyURL string) (net.Conn, error) {
 	var onOpen, onError, onMessage, onClose js.Func
 
 	onOpen = js.FuncOf(func(this js.Value, args []js.Value) any {
+		reportStage("websocket-open")
 		openCh <- nil
 		return nil
 	})
 	onError = js.FuncOf(func(this js.Value, args []js.Value) any {
+		reportStage("websocket-error")
 		select {
 		case openCh <- fmt.Errorf("websocket error"):
 		default:
@@ -74,6 +77,13 @@ func dialWebSocket(proxyURL string) (net.Conn, error) {
 		return nil
 	})
 	onClose = js.FuncOf(func(this js.Value, args []js.Value) any {
+		code := 0
+		reason := ""
+		if len(args) > 0 {
+			code = args[0].Get("code").Int()
+			reason = args[0].Get("reason").String()
+		}
+		reportStage(fmt.Sprintf("websocket-close:%d:%s", code, reason))
 		c.markClosed()
 		return nil
 	})
