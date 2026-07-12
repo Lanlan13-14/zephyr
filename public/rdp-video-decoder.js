@@ -67,7 +67,7 @@ export class RdpAvc420Decoder {
         const prefix = `${Number(surfaceId)}:`;
         for (const [key, state] of this.decoders) {
             if (!key.startsWith(prefix)) continue;
-            try { state.decoder.reset(); } catch {}
+            try { state.decoder.close(); } catch {}
             for (const item of state.metadata.values()) this.onError(new Error('decoder reset'), item.event, item.token);
             state.metadata.clear();
             this.decoders.delete(key);
@@ -179,9 +179,11 @@ export class RdpAvc444Decoder {
             if (!event.stream1 || !event.stream2) throw new Error('AVC444 LC=0 requires stream1 and stream2');
             const [mainFrame, auxFrame] = await Promise.all([this._submit(surfaceId, 1, event.stream1), this._submit(surfaceId, 2, event.stream2)]);
             try {
-                const planes = await copyFrameI420(mainFrame);
-                this.mainPlanes.set(surfaceId, planes);
-                this.onMainFrame?.(mainFrame, event);
+                const [main, aux] = await Promise.all([copyFrameI420(mainFrame), copyFrameI420(auxFrame)]);
+                this.mainPlanes.set(surfaceId, main);
+                const width = Number(event.rect?.right) - Number(event.rect?.left) || main.width;
+                const height = Number(event.rect?.bottom) - Number(event.rect?.top) || main.height;
+                this.onCombinedBitmap?.(combineAvc444Planes(main, aux, width, height), event);
             } finally {
                 mainFrame.close?.();
                 auxFrame.close?.();
@@ -258,7 +260,12 @@ export class RdpAvc444Decoder {
     }
 
     close() {
-        for (const state of this.states.values()) { try { state.decoder.close(); } catch {} }
+        const error = new Error('decoder closed');
+        for (const state of this.states.values()) {
+            try { state.decoder.close(); } catch {}
+            for (const item of state.pending.values()) item.reject(error);
+            state.pending.clear();
+        }
         this.states.clear();
         this.mainPlanes.clear();
     }

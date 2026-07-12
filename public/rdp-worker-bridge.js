@@ -48,7 +48,9 @@ export class RdpWorkerBridge {
                 resolve(result);
             };
             const timer = setTimeout(() => finish({ supported: false, reason: 'WORKER_WEBGL2_PROBE_TIMEOUT' }), timeoutMs);
-            worker.addEventListener('message', ({ data }) => finish(data?.ok ? { supported: true, renderer: data.renderer || 'webgl2' } : { supported: false, reason: 'WORKER_WEBGL2_PROBE_FAILED', error: data?.error || '' }));
+            worker.addEventListener('message', ({ data }) => finish(data?.ok
+                ? { supported: true, renderer: data.renderer || 'webgl2', goRuntime: data.goRuntime === true }
+                : { supported: false, reason: 'WORKER_CAPABILITY_PROBE_FAILED', stage: data?.stage || 'unknown', error: data?.error || '' }));
             worker.addEventListener('error', (event) => finish({ supported: false, reason: 'WORKER_WEBGL2_PROBE_ERROR', error: event.message || '' }));
         });
     }
@@ -118,6 +120,10 @@ export class RdpWorkerBridge {
         if (this.closed) return;
         this.closed = true;
         if (this.bootTimer) { clearTimeout(this.bootTimer); this.bootTimer = null; }
+        if (!this.readySettled) {
+            this.readySettled = true;
+            this.rejectReady(new Error(`RDP Worker closed during boot at ${this.bootStage}`));
+        }
         this.input.releaseAll();
         for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('RDP Worker closed')); }
         this.pending.clear();

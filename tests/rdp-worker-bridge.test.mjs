@@ -37,12 +37,13 @@ test('Worker bridge request/response is explicit and timed', async () => {
     assert.equal(await promise, 7);
 });
 
-test('Worker bridge close is idempotent and rejects later calls', async () => {
+test('Worker bridge close is idempotent and rejects boot plus later calls', async () => {
     const worker = new MockWorker();
     const bridge = new RdpWorkerBridge(worker, { syncBytes: 1024 });
     bridge.close();
     bridge.close();
     assert.equal(worker.terminated, true);
+    await assert.rejects(bridge.ready, /closed during boot/);
     await assert.rejects(() => bridge.call('method'), /closed/);
     assert.throws(() => bridge.notify('method'), /closed/);
 });

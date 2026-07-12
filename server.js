@@ -4049,7 +4049,10 @@ app.get('/player.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'pla
 app.use(express.static(path.join(__dirname, 'public'), {
     index: 'index.html',
     setHeaders: (res, filePath) => {
-        if (/\.(?:js|css)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+        if (/\.(?:js|mjs|css)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+        if (/\.mjs$/i.test(filePath)) res.type('text/javascript; charset=utf-8');
+        if (/\.wasm$/i.test(filePath)) res.type('application/wasm');
+        if (/[/\\]vendor[/\\]rdp-wasm[/\\]/i.test(filePath)) res.setHeader('X-Content-Type-Options', 'nosniff');
     },
 }));
 
@@ -4234,7 +4237,13 @@ rdpProxyWss.on('connection', async (ws, req) => {
 
     const [targetHost, targetPortStr] = target.split(':');
     const targetPort = Number(targetPortStr) || 3389;
-    let tcpConn = null;
+    // Attach the WS listener immediately. Browser-side Go sends X.224 as soon
+    // as WebSocket open resolves; Node EventEmitter does not queue messages for
+    // listeners registered after route/TCP setup completes. net.Socket safely
+    // buffers bounded writes issued before connect().
+    let tcpConn = new net.Socket();
+    tcpConn.setKeepAlive(true, 30000);
+    tcpConn.setNoDelay(true);
     let routedForward = null;
     let proxyBridge = null;
     let closed = false;
@@ -4270,6 +4279,22 @@ rdpProxyWss.on('connection', async (ws, req) => {
             return;
         }
 
+        // Validation above is synchronous, so the event loop cannot deliver a
+        // WS message before this listener is installed. Attach before the first
+        // await to preserve X.224 while avoiding pre-auth socket buffering.
+        proxyBridge = attachRdpProxyBridge({
+            ws,
+            tcpConn,
+            flowControlEnabled,
+            logger: console,
+            onFatal(code, message) {
+                if (closed) return;
+                console.warn('[rdp-proxy] backpressure fatal', { target, code, message });
+                closeWebSocketSafe(ws, 1011, code);
+                cleanup(code);
+            },
+        });
+
         /* Resolve routing (jump hosts, proxies) */
         routedForward = await createRoutedTcpForward(conn, targetPort, 15000);
         const effectiveHost = routedForward ? routedForward.host : targetHost;
@@ -4277,11 +4302,7 @@ rdpProxyWss.on('connection', async (ws, req) => {
 
         if (closed || ws.readyState !== ws.OPEN) return;
 
-        /* Open TCP connection to RDP server */
-        tcpConn = new net.Socket();
-        tcpConn.setKeepAlive(true, 30000);
-        tcpConn.setNoDelay(true);
-
+        /* Open the already-bridged TCP socket to the RDP server. */
         await new Promise((resolve, reject) => {
             let settled = false;
             const finish = (err) => {
@@ -4306,20 +4327,7 @@ rdpProxyWss.on('connection', async (ws, req) => {
             user: sessionUser.username,
         });
 
-        /* ── Bidirectional pipe ────────────────────────────────────── */
-
-        proxyBridge = attachRdpProxyBridge({
-            ws,
-            tcpConn,
-            flowControlEnabled,
-            logger: console,
-            onFatal(code, message) {
-                if (closed) return;
-                console.warn('[rdp-proxy] backpressure fatal', { target, code, message });
-                closeWebSocketSafe(ws, 1011, code);
-                cleanup(code);
-            },
-        });
+        /* ── Bidirectional pipe was attached before async setup ───── */
 
         tcpConn.on('end', () => {
             if (!closed) {

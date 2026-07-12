@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/asn1"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"time"
@@ -101,6 +102,13 @@ func (s *SocketLayer) TlsPubKey() ([]byte, error) {
 	if s.tlsConn == nil {
 		return nil, errors.New("TLS conn does not exist")
 	}
-	pub := s.tlsConn.ConnectionState().PeerCertificates[0].PublicKey.(*rsa.PublicKey)
+	certificates := s.tlsConn.ConnectionState().PeerCertificates
+	if len(certificates) == 0 {
+		return nil, errors.New("TLS peer did not provide a certificate")
+	}
+	pub, ok := certificates[0].PublicKey.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("unsupported TLS public key type %T", certificates[0].PublicKey)
+	}
 	return asn1.Marshal(*pub)
 }

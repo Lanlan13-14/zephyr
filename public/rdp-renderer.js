@@ -99,6 +99,13 @@ export class RdpGpuSurfaceCompositor {
             this.contextLost = false;
             this._initGl();
             for (const id of [...this.surfaces.keys()]) this.deleteSurface(id);
+            // All resources from the lost context are invalid, including cache
+            // textures/FBOs. Drop frame bookkeeping that can no longer finish.
+            this.cacheEntries.clear();
+            this.sealedFrames.clear();
+            this.framePending.clear();
+            this.activeFrame = null;
+            this.presentedFrames.length = 0;
             this.dirty = false;
             this.onContextRestoreNeeded?.();
         };
@@ -287,6 +294,8 @@ export class RdpGpuSurfaceCompositor {
         this.canvas.width = this.width;
         this.canvas.height = this.height;
         this.sealedFrames.clear();
+        this.framePending.clear();
+        this.activeFrame = null;
         this.presentedFrames.length = 0;
         this.dirty = true;
     }
@@ -424,6 +433,18 @@ export class RdpGpuSurfaceCompositor {
         this._cancelPresent();
         for (const id of [...this.surfaces.keys()]) this.deleteSurface(id);
         for (const slot of [...this.cacheEntries.keys()]) this.evictCache(slot);
+        this.sealedFrames.clear();
+        this.framePending.clear();
+        this.activeFrame = null;
+        this.presentedFrames.length = 0;
+        const gl = this.gl;
+        if (gl) {
+            if (this.rgbaProgram) gl.deleteProgram(this.rgbaProgram);
+            if (this.bgraProgram) gl.deleteProgram(this.bgraProgram);
+            if (this.vertexBuffer) gl.deleteBuffer(this.vertexBuffer);
+            if (this.stagingTexture) gl.deleteTexture(this.stagingTexture);
+        }
+        this.rgbaProgram = this.bgraProgram = this.vertexBuffer = this.stagingTexture = null;
         this.canvas.removeEventListener?.('webglcontextlost', this._onContextLost);
         this.canvas.removeEventListener?.('webglcontextrestored', this._onContextRestored);
     }

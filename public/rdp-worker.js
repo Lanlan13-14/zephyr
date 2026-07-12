@@ -1,7 +1,7 @@
-import { Go as GoRuntime } from './vendor/rdp-wasm/wasm_exec.mjs?v=20260711-go-esm1';
 import { RdpGpuSurfaceCompositor } from './rdp-renderer.js';
 import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js';
 import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js';
+import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260711-go-esm2';
 
 let compositor = null;
 let avc420 = null;
@@ -56,15 +56,15 @@ function syncPageRpc(name, args) {
 }
 
 async function loadGoWasm() {
+    bootStage('wasm-exec-loading');
+    const GoRuntime = await loadGoRuntime({ pipeline: 'worker-gpu-v2' });
     bootStage('wasm-exec-loaded');
-    if (typeof GoRuntime !== 'function') throw new Error('Go ESM runtime export is unavailable');
-    const go = new GoRuntime();
     bootStage('wasm-fetching');
-    const response = await fetch('./vendor/rdp-wasm/main.wasm');
     bootStage('wasm-instantiating');
-    const result = WebAssembly.instantiateStreaming
-        ? await WebAssembly.instantiateStreaming(response, go.importObject)
-        : await WebAssembly.instantiate(await response.arrayBuffer(), go.importObject);
+    const { go, result } = await instantiateGoWasm(GoRuntime, {
+        wasmUrl: './vendor/rdp-wasm/main.wasm',
+        pipeline: 'worker-gpu-v2',
+    });
     if (result.instance.exports.mem) {
         bootStage('wasm-memory-binding');
         const upload = createSynchronousBitmapUploader({
@@ -78,7 +78,11 @@ async function loadGoWasm() {
         globalThis.rdpOnWasmBitmap = (event) => upload(event);
     }
     bootStage('go-runtime-starting');
-    go.run(result.instance);
+    const runPromise = go.run(result.instance);
+    runPromise?.catch?.((error) => {
+        wasmReady = false;
+        failClosed('GO_RUNTIME_EXITED', error);
+    });
     wasmReady = true;
     bootStage('go-runtime-ready');
 }

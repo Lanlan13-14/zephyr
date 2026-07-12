@@ -16,6 +16,7 @@ import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260711-gpu-v2-pag
 import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260711-avc444-v1';
 import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260711-worker-v1';
 import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260711-linear-memory1';
+import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260711-go-esm2';
 import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260710-touch-input2';
 import {
     subscribeAgentEvents,
@@ -215,15 +216,13 @@ window._rdpRenderDiag = () => JSON.stringify(snapshotRdpDiagnostics());
  * WASM BOOTSTRAP
  ══════════════════════════════════════════════════════════════════════ */
 
-async function loadWasm() {
+async function loadWasm(GoRuntime) {
     setStatus('connecting', '加载 RDP WASM 引擎...');
-    const GoRuntime = globalThis.Go;
-    if (typeof GoRuntime !== 'function') throw new Error('Go WASM runtime did not register globalThis.Go');
-    const go = new GoRuntime();
-    const result = await WebAssembly.instantiateStreaming(
-        fetch('vendor/rdp-wasm/main.wasm?v=' + Date.now()),
-        go.importObject,
-    );
+    if (typeof GoRuntime !== 'function') GoRuntime = await loadGoRuntime({ pipeline: 'gpu-v2-page' });
+    const { go, result } = await instantiateGoWasm(GoRuntime, {
+        wasmUrl: 'vendor/rdp-wasm/main.wasm?v=' + Date.now(),
+        pipeline: 'gpu-v2-page',
+    });
     if (result.instance.exports.mem) {
         rdpWasmBitmapUploader = createSynchronousBitmapUploader({
             memoryProvider: () => result.instance.exports.mem,
@@ -235,7 +234,12 @@ async function loadWasm() {
         });
         window.rdpOnWasmBitmap = (event) => rdpWasmBitmapUploader(event);
     }
-    go.run(result.instance);
+    const runPromise = go.run(result.instance);
+    runPromise?.catch?.((error) => {
+        wasmReady = false;
+        setStatus('error', `Go WASM runtime exited: ${error?.message || error}`);
+        console.error('[rdp-wasm] Go runtime exited', error);
+    });
     wasmReady = true;
     console.info('[rdp-wasm] WASM engine loaded');
 }
@@ -881,9 +885,10 @@ function reconnectWithSettings() {
     if (selectedPipeline === 'worker-gpu-v2') {
         try { rdpWorkerBridge?.close(); } catch {}
         rdpWorkerBridge = null;
-        setStatus('error', 'Worker RDP 需要重新加载页面以重建 OffscreenCanvas');
+        location.reload();
         return;
     }
+    if (!rdpGpuV2) initPageGpuPipeline();
     if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; audioNextAt = 0; }
     setTimeout(() => {
         connect().catch((e) => {
@@ -1062,6 +1067,11 @@ function maybeAutoReconnect() {
     rdpReconnectTimer = setTimeout(() => {
         rdpReconnectTimer = null;
         rdpReconnecting = false;
+        if (selectedPipeline === 'worker-gpu-v2' && !rdpWorkerBridge) {
+            location.reload();
+            return;
+        }
+        if (selectedPipeline === 'gpu-v2-page' && !rdpGpuV2) initPageGpuPipeline();
         connect().catch((e) => {
             console.warn('[rdp-wasm] reconnect failed:', e);
             rdpReconnecting = false;
@@ -1848,7 +1858,7 @@ function initToolbar() {
     if (reconnectBtn) {
         reconnectBtn.addEventListener('click', () => {
             rdpReconnectAttempts = 0;
-            connect().catch((e) => console.warn('[rdp-wasm] reconnect failed:', e));
+            reconnectWithSettings();
         });
     }
 
@@ -2496,15 +2506,8 @@ window.addEventListener('message', (e) => {
     ensureCanvas(rdpWidth, rdpHeight);
 
     async function loadPageWasm() {
-        await new Promise((resolve, reject) => {
-            if (typeof Go !== 'undefined') { resolve(); return; }
-            const script = document.createElement('script');
-            script.src = 'vendor/rdp-wasm/wasm_exec.js';
-            script.onload = resolve;
-            script.onerror = () => reject(new Error('Failed to load wasm_exec.js'));
-            document.head.appendChild(script);
-        });
-        await loadWasm();
+        const GoRuntime = await loadGoRuntime({ pipeline: 'gpu-v2-page' });
+        await loadWasm(GoRuntime);
     }
 
     /* Load WASM then connect */
@@ -2536,12 +2539,27 @@ window.addEventListener('message', (e) => {
                     initPageGpuPipeline();
                     await loadPageWasm();
                 } else {
-                    rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260711-go-esm1', { type: 'module' }));
+                    rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260711-go-esm2', { type: 'module' }));
                     rdpWorkerBridge.installGlobals(window);
                     rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
-                    const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
-                    rdpDiag.renderer = 'worker-gpu-v2';
-                    rdpDiag.worker = capabilities;
+                    try {
+                        const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
+                        rdpDiag.renderer = 'worker-gpu-v2';
+                        rdpDiag.worker = capabilities;
+                    } catch (error) {
+                        // transferControlToOffscreen is irreversible. Replace the
+                        // transferred canvas before starting the page pipeline.
+                        const failedStage = rdpWorkerBridge.bootStage;
+                        rdpWorkerBridge.close();
+                        rdpWorkerBridge = null;
+                        rdpCanvas = null;
+                        selectedPipeline = 'gpu-v2-page';
+                        rdpDiag.pipeline = 'gpu-v2-page';
+                        rdpDiag.fallbackReason = `WORKER_INIT_FAILED:${failedStage}`;
+                        rdpDiag.worker = { error: error?.message || String(error), bootStage: failedStage };
+                        ensureCanvas(rdpWidth, rdpHeight);
+                        await loadPageWasm();
+                    }
                 }
             }
         } else {

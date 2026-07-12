@@ -93,35 +93,43 @@
 
 ## 4. 已知未解决问题清单
 
-### 4.1 Go WASM runtime — 实测首个阻塞 bug
+### 4.1 Go WASM runtime — 根因已定位并修复，待生产验证
 
-**实测错误**：`RDP WASM 引擎加载失败: Go WASM runtime did not register globalThis.Go`
+**原实测错误**：`RDP WASM 引擎加载失败: Go WASM runtime did not register globalThis.Go`
 
-- 已尝试的修复：`scripts/build-go-wasm-esm.mjs` 将 Go SDK runtime 转为 ESM `export class Go`，取消 `globalThis.Go` 依赖
-- **该修复在生产 HTTPS WebView 中仍失败**：module Worker 依赖 global side-effect 注册不可靠
-- Go 1.26.3 工具链在 Android/PRoot 下 segfault，必须在 Linux/Docker 环境构建
-- 如果 Go SDK 升级，`wasm_exec.mjs` 转换脚本可能需要同步更新
-- **恢复后第一个要解决的问题就是这个**，不解决它 RDP 无法启动
+- **根因**：`7978860` 只把 `worker-gpu-v2` 迁移到 `wasm_exec.mjs` named export；隔离或 Worker probe 失败后的 `gpu-v2-page` 路径仍加载 classic `wasm_exec.js` 并检查 `globalThis.Go`
+- worker、probe、page fallback 现统一通过 `public/rdp-wasm-runtime.js` 显式导入 `module.Go`，生产代码不再依赖 global side effect
+- Docker 最终镜像不再发布 `wasm_exec.js`；CI/镜像构建会拒绝旧错误字符串、旧 runtime 引用和 `globalThis.Go` 泄漏
+- loader 现在区分 ESM import、HTTP status、WASM MIME/instantiate，并在错误中包含 pipeline 与 URL
+- Go 1.26.3 工具链在 Android/PRoot 下 segfault，仍必须在 Linux/Docker 环境构建
+- **状态**：代码级根因已关闭；必须在生产 HTTPS WebView 清缓存后验证 worker 与 page fallback 两条路径
 
 ### 4.2 Worker 隔离回退
 - 非安全 HTTP、缺少 COOP/COEP、SAB 或 OffscreenCanvas 不可用时回退 `gpu-v2-page`
-- 回退逻辑已在真实 Canvas 转移前启动一次性 Worker probe
-- probe 3 秒超时/错误则终止并安全回退
-- **未验证**：某些 WebView 环境可能 probe 通过但实际渲染失败
+- probe 在真实 Canvas 转移前验证 Go ESM import、OffscreenCanvas 和完整 WebGL compositor
+- probe 3 秒超时/错误则终止并安全回退，并记录失败 stage
+- probe 后正式 Worker 若仍启动失败，会替换不可逆转移的 Canvas，再启动 page fallback
+- **未验证**：Android WebView 中 module Worker/WebCodecs/COOP/COEP 的真实组合
 
-### 4.3 AVC444 双流
-- LC（Lossless Codec）模式实现完整性需验证
-- 双流 surface/frame 语义需真实 Windows RDP 验证
-- 软件 reference 解码器质量门禁未设
+### 4.3 本轮额外修复的 confirmed bugs
+- WS→TCP bridge 在同步授权后、首个异步路由/TCP await 前挂接，避免浏览器立即发送的 X.224 首帧丢失
+- X.224 在发送 Connection Request 前注册 confirm listener，关闭快速目标响应竞态
+- `SURFACE_COPY` / `CACHE_TO_SURFACE` 不再被错误或陈旧 bitmap 二次覆盖
+- AVC444 LC=0 同时复制并组合 main/aux I420，而不是丢弃 chroma upgrade stream
+- graphics reset 清理 frame pending；decoder close reject pending；compositor destroy 释放基础 GL 对象
+- Worker 启动中关闭会 settle ready promise；显式重连会重建 page pipeline 或 reload Worker 页面
 
-### 4.4 CI 稳定性
-- GitHub Chromium headless WebGL 像素诊断多次超时，已改为 continue-on-error
-- 确定性 ESM、Node、Go WASM、WASM build 保持硬门禁
+### 4.4 仍需真实环境/fixture 验证的高风险项
+- CredSSP 当前存在把单次 TLS `Read` 当完整 DER message 的风险，需要分片/大 target-info fixture
+- ECDSA RDP 证书路径及 CredSSP pubKeyAuth 绑定需要真实证书验证
+- IPv6 RDP target 的 host:port 构造与服务端解析尚未列入发布支持
+- 跨 surface/跨 decoder 的 frame apply 顺序和 ACK queue depth 需要真实 RDPGFX trace
+- AVC partial regions、AVC444 LC=2 非原点 rect、context loss 后 cache 重建需要 reference fixture
 
-### 4.5 性能基线缺失
-- 没有端到端延迟测量
-- 没有帧率基线
-- 没有与 Guacamole 方案的对比数据
+### 4.5 CI 与性能门禁
+- GitHub Chromium headless WebGL 像素诊断仍为 continue-on-error；不能作为生产 GPU 可用证明
+- ESM contract、Node、Go WASM、WASM build 保持硬门禁
+- 仍缺少端到端延迟、帧率、长时内存和 Guacamole 对比基线
 
 ---
 

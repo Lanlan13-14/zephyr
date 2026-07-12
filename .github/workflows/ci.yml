@@ -49,7 +49,8 @@ jobs:
           mkdir -p public/vendor/rdp-wasm
           cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" public/vendor/rdp-wasm/wasm_exec.js
           node scripts/build-go-wasm-esm.mjs public/vendor/rdp-wasm/wasm_exec.js public/vendor/rdp-wasm/wasm_exec.mjs
-          node --input-type=module -e "import('./public/vendor/rdp-wasm/wasm_exec.mjs').then(m => { if (typeof m.Go !== 'function') throw new Error('ESM Go export missing') })"
+          node --input-type=module -e "import('./public/vendor/rdp-wasm/wasm_exec.mjs').then(m => { if (typeof m.Go !== 'function') throw new Error('ESM Go export missing'); if (typeof globalThis.Go !== 'undefined') throw new Error('ESM runtime leaked globalThis.Go') })"
+          ! grep -R -E "globalThis\.Go|did not register globalThis\.Go|wasm_exec\.js" public/rdp-*.js
 
       - name: Run optional RDP browser compositor diagnostic
         continue-on-error: true

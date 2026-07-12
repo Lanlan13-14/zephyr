@@ -191,6 +191,9 @@ func (t *TPKT) recvChallenge(data []byte) error {
 	slog.Debug("recvChallenge", "tsreq", tsreq)
 	// get pubkey
 	pubkey, err := t.Conn.TlsPubKey()
+	if err != nil {
+		return fmt.Errorf("get TLS public key: %w", err)
+	}
 	slog.Debug("recvChallenge", "pubkey", core.Hex(pubkey))
 
 	authMsg, ntlmSec := t.ntlm.GetAuthenticateMessage(tsreq.NegoTokens[0].Data)

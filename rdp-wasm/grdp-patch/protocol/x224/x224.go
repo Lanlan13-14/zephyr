@@ -267,8 +267,10 @@ func (x *X224) Connect() error {
 	message.ProtocolNeg.Result = uint32(x.requestedProtocol)
 
 	slog.Debug("x224 Connect", "message", core.Hex(message.Serialize()))
-	_, err := x.transport.Write(message.Serialize())
+	// Register before Write: fast targets may return the connection confirm
+	// synchronously enough for the transport read goroutine to emit it first.
 	x.transport.Once("data", x.recvConnectionConfirm)
+	_, err := x.transport.Write(message.Serialize())
 	return err
 }
 

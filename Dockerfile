@@ -37,9 +37,8 @@ COPY rdp-wasm/ ./
 # Build Go WASM binary (uses local grdp-patch with custom DVC handler support)
 RUN go mod tidy && GOOS=js GOARCH=wasm go build -o main.wasm .
 
-# Copy classic runtime for page fallback and build a real ESM runtime for the
-# module Worker. The Worker must import a lexical class binding rather than
-# relying on globalThis side effects that vary across WebView implementations.
+# Build one ESM runtime shared by the module Worker and page fallback. Both
+# pipelines import a lexical class binding; neither relies on globalThis.
 RUN cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" wasm_exec.js 2>/dev/null || \
     cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" wasm_exec.js
 COPY scripts/build-go-wasm-esm.mjs /build/build-go-wasm-esm.mjs
@@ -76,7 +75,6 @@ COPY --from=app-build /app /app
 # RDP WASM artifacts → public/vendor/rdp-wasm/
 RUN mkdir -p /app/public/vendor/rdp-wasm
 COPY --from=rdp-wasm-builder /build/main.wasm /app/public/vendor/rdp-wasm/
-COPY --from=rdp-wasm-builder /build/wasm_exec.js /app/public/vendor/rdp-wasm/
 COPY --from=rdp-wasm-builder /build/wasm_exec.mjs /app/public/vendor/rdp-wasm/
 
 ENV ZEPHYR_VERSION=${ZEPHYR_VERSION}
@@ -88,9 +86,10 @@ RUN echo "=== runtime diagnostics ===" && \
     node --version && \
     npm --version && \
     test -f /app/public/vendor/rdp-wasm/main.wasm && \
-    test -f /app/public/vendor/rdp-wasm/wasm_exec.js && \
     test -f /app/public/vendor/rdp-wasm/wasm_exec.mjs && \
-    node --input-type=module -e "import('./public/vendor/rdp-wasm/wasm_exec.mjs').then(m => { if (typeof m.Go !== 'function') throw new Error('ESM Go export missing') })" && \
+    test ! -f /app/public/vendor/rdp-wasm/wasm_exec.js && \
+    node --input-type=module -e "import('./public/vendor/rdp-wasm/wasm_exec.mjs').then(m => { if (typeof m.Go !== 'function') throw new Error('ESM Go export missing'); if (typeof globalThis.Go !== 'undefined') throw new Error('ESM runtime leaked globalThis.Go') })" && \
+    ! grep -R -E "globalThis\\.Go|did not register globalThis\\.Go|wasm_exec\\.js" /app/public/rdp-*.js && \
     wc -c /app/public/vendor/rdp-wasm/main.wasm && \
     node -e "require('better-sqlite3'); console.log('better-sqlite3 loaded')" && \
     (HTTP_ENABLED=true HTTPS_ENABLED=false PORT=39080 node server.js > /tmp/zephyr-startup.log 2>&1 & pid=$!; ok=0; for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:39080/ >/dev/null 2>&1 && ok=1 && break; kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done; cat /tmp/zephyr-startup.log; kill "$pid" 2>/dev/null || true; rm -rf /app/data /tmp/zephyr-startup.log; test "$ok" = 1; echo "server startup smoke loaded")

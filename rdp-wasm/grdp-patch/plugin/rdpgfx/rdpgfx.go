@@ -1960,64 +1960,46 @@ func (g *GfxHandler) onSolidFill(data []byte) {
 }
 
 // onSurfaceToSurface handles RDPGFX_SURFACE_TO_SURFACE_PDU (MS-RDPEGFX 2.2.2.5).
-// It blits one or more source rectangles from srcSurface to destSurface.
-// For each rect r, pixels at (r.left, r.top, r.right, r.bottom) in the source
-// are copied to (destPt.x+r.left, destPt.y+r.top) in the destination.
+// The wire format carries one source rectangle followed by POINT16 destinations.
 func (g *GfxHandler) onSurfaceToSurface(data []byte) {
-	// Header: srcSurfaceId(2) + destSurfaceId(2) + destPt.x(2) + destPt.y(2) + rectCount(2) = 10 bytes
-	if len(data) < 10 {
+	// surfaceIdSrc(2) + surfaceIdDest(2) + rectSrc(8) + destPtsCount(2)
+	if len(data) < 14 {
 		return
 	}
 	srcId := binary.LittleEndian.Uint16(data[0:])
 	dstId := binary.LittleEndian.Uint16(data[2:])
-	destPtX := int(binary.LittleEndian.Uint16(data[4:]))
-	destPtY := int(binary.LittleEndian.Uint16(data[6:]))
-	rectCount := int(binary.LittleEndian.Uint16(data[8:]))
+	left := int(binary.LittleEndian.Uint16(data[4:]))
+	top := int(binary.LittleEndian.Uint16(data[6:]))
+	right := int(binary.LittleEndian.Uint16(data[8:]))
+	bottom := int(binary.LittleEndian.Uint16(data[10:]))
+	destCount := int(binary.LittleEndian.Uint16(data[12:]))
+	if destCount < 1 || len(data) < 14+destCount*4 {
+		return
+	}
 
 	src, srcOk := g.surfaces[srcId]
 	dst, dstOk := g.surfaces[dstId]
-	if !srcOk || !dstOk {
+	w, h := right-left, bottom-top
+	if !srcOk || !dstOk || w <= 0 || h <= 0 || left < 0 || top < 0 || right > int(src.width) || bottom > int(src.height) {
 		return
 	}
 
 	srcStride := int(src.width) * 4
 	dstStride := int(dst.width) * 4
-	offset := 10
-	for i := 0; i < rectCount; i++ {
-		if offset+8 > len(data) {
-			break
-		}
-		left := int(binary.LittleEndian.Uint16(data[offset:]))
-		top := int(binary.LittleEndian.Uint16(data[offset+2:]))
-		right := int(binary.LittleEndian.Uint16(data[offset+4:]))
-		bottom := int(binary.LittleEndian.Uint16(data[offset+6:]))
-		offset += 8
-
-		w := right - left
-		h := bottom - top
-		if w <= 0 || h <= 0 {
+	rowBytes := w * 4
+	for i := 0; i < destCount; i++ {
+		offset := 14 + i*4
+		dstX := int(binary.LittleEndian.Uint16(data[offset:]))
+		dstY := int(binary.LittleEndian.Uint16(data[offset+2:]))
+		if dstX < 0 || dstY < 0 || dstX+w > int(dst.width) || dstY+h > int(dst.height) {
 			continue
 		}
-		dstX := destPtX + left
-		dstY := destPtY + top
 		g.emitRenderEvent(RenderEvent{Kind: RenderSurfaceCopy, FrameID: g.currentFrameID, SurfaceID: dstId, SurfaceID2: srcId, OutputX: uint32(dstX), OutputY: uint32(dstY), Rect: RenderRect{Left: uint16(left), Top: uint16(top), Right: uint16(right), Bottom: uint16(bottom)}})
-		rowBytes := w * 4
 		for row := 0; row < h; row++ {
-			srcRow := top + row
-			dstRow := dstY + row
-			if srcRow < 0 || srcRow >= int(src.height) ||
-				dstRow < 0 || dstRow >= int(dst.height) {
-				continue
-			}
-			srcOff := srcRow*srcStride + left*4
-			dstOff := dstRow*dstStride + dstX*4
-			if srcOff < 0 || srcOff+rowBytes > len(src.data) ||
-				dstOff < 0 || dstOff+rowBytes > len(dst.data) {
-				continue
-			}
+			srcOff := (top+row)*srcStride + left*4
+			dstOff := (dstY+row)*dstStride + dstX*4
 			copy(dst.data[dstOff:dstOff+rowBytes], src.data[srcOff:srcOff+rowBytes])
 		}
-		g.emitBitmap(dst, dstX, dstY, w, h, dst.data)
 	}
 }
 
@@ -2079,7 +2061,6 @@ func (g *GfxHandler) onCacheToSurface(data []byte) {
 		if hasCE && hasSurf {
 			g.emitRenderEvent(RenderEvent{Kind: RenderCacheToSurface, FrameID: g.currentFrameID, SurfaceID: surfId, SurfaceID2: cacheSlot, OutputX: uint32(dx), OutputY: uint32(dy), Width: uint32(ce.width), Height: uint32(ce.height)})
 			blitToSurface(s, int(dx), int(dy), ce.width, ce.height, ce.data)
-			g.emitBitmap(s, int(dx), int(dy), ce.width, ce.height, ce.data)
 		}
 	}
 }
