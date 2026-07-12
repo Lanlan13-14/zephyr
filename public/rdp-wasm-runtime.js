@@ -38,7 +38,7 @@ export async function instantiateGoWasm(GoRuntime, {
         // WebViews/reverse proxies that serve a generic MIME type.
         const result = typeof WebAssembly.instantiateStreaming === 'function'
             ? await WebAssembly.instantiateStreaming(response.clone(), go.importObject)
-                .catch(() => WebAssembly.instantiate(response.arrayBuffer(), go.importObject))
+                .catch(async () => WebAssembly.instantiate(await response.arrayBuffer(), go.importObject))
             : await WebAssembly.instantiate(await response.arrayBuffer(), go.importObject);
         return { go, result };
     } catch (error) {
