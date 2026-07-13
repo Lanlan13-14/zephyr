@@ -64,6 +64,7 @@ const (
 	codecUncompressed uint16 = 0x0000
 	codecCaVideo      uint16 = 0x0003 // RDPGFX_CODECID_CAVIDEO (RemoteFX tiles)
 	codecPlanar       uint16 = 0x0004
+	codecClear        uint16 = 0x0008
 	codecProgressive  uint16 = 0x0009
 	codecAVC420       uint16 = 0x000B
 	codecAVC444       uint16 = 0x000E
@@ -203,6 +204,7 @@ type GfxHandler struct {
 	surfaces     map[uint16]*surface
 	cacheEntries map[uint16]cacheEntry
 	clearCtx     *clearCodecCtx
+	clearDecoder *clearDecoder
 	zgfx         *zgfxContext
 	rfx          *rfxDecoder
 	progressive  *rfxProgressiveDecoder
@@ -410,6 +412,7 @@ func NewGfxHandler(onBitmap func([]BitmapUpdate)) *GfxHandler {
 		surfaces:     make(map[uint16]*surface),
 		cacheEntries: make(map[uint16]cacheEntry),
 		clearCtx:     newClearCodecCtx(),
+		clearDecoder: newClearDecoder(),
 		zgfx:         newZgfxContext(),
 		rfx:          newRfxDecoder(),
 		progressive:  newRfxProgressiveDecoder(),
@@ -1272,6 +1275,7 @@ func (g *GfxHandler) onResetGraphics(data []byte) {
 	g.surfaces = make(map[uint16]*surface)
 	g.cacheEntries = make(map[uint16]cacheEntry)
 	g.clearCtx = newClearCodecCtx()
+	g.clearDecoder = newClearDecoder()
 	g.framesDecoded.Store(0)
 	g.softResetCount = 0
 	g.noIDRSoftResetCount = 0
@@ -1551,6 +1555,13 @@ func (g *GfxHandler) onWireToSurface1Decode(data []byte) {
 	case codecPlanar:
 		decoded = decodePlanar(bmpData, w, h)
 		owned = true
+	case codecClear:
+		var err error
+		decoded, err = g.clearDecoder.decode(bmpData, w, h)
+		if err != nil {
+			slog.Warn("RDPGFX: ClearCodec decode failed", "err", err, "surfId", surfId, "w", w, "h", h)
+			return
+		}
 	case codecAVC420:
 		destX := int(s.outputX) + int(left)
 		destY := int(s.outputY) + int(top)

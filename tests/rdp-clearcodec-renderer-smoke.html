@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><canvas id="c" width="4" height="4"></canvas><script type="module">
+import {RdpGpuSurfaceCompositor} from '../public/rdp-renderer.js';
+try{
+const c=document.getElementById('c');
+const r=new RdpGpuSurfaceCompositor(c,{width:4,height:4});
+r.handleSemantic({kind:4,surfaceId:1,width:2,height:2,pixelFormat:32});
+r.handleSemantic({kind:7,surfaceId:1,outputX:0,outputY:0,width:4,height:4});
+const bgra=new Uint8Array([0,0,255,255,0,255,0,255,255,0,0,255,255,255,255,255]);
+r.handleSemantic({kind:8,surfaceId:1,rect:{left:0,top:0,right:2,bottom:2},stride:8,data:bgra});
+r.handleSemantic({kind:3,frameId:1});r.present();
+const p=new Uint8Array(4*4*4);r.gl.readPixels(0,0,4,4,r.gl.RGBA,r.gl.UNSIGNED_BYTE,p);
+const colors=new Set();for(let i=0;i<p.length;i+=4)colors.add(`${p[i]},${p[i+1]},${p[i+2]},${p[i+3]}`);
+window.result=colors.has('255,0,0,255')&&colors.has('0,255,0,255')&&colors.has('0,0,255,255')&&colors.has('255,255,255,255')?'PASS':'FAIL:'+JSON.stringify([...colors]);
+}catch(e){window.result='ERROR:'+e.stack}
+</script>
