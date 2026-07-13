@@ -120,22 +120,102 @@ MAP_SCALED_OUTPUT_V2 协议字段:            PASS
 
 ---
 
-## 5. 下一步（完成顺序）
+## 5. 推进计划（完成顺序）
 
-1. GPU compositor `readPixels` 门禁通过 ✅ 
-2. 完整 WASM + Docker 构建（含 ClearCodec + surface/cache/map）✅ 
-3. 部署到 Azure 测试环境 ✅ 
-4. 非 AVC 连接（ClearCodec）出画面 ✅ 
-5. AVC420/AVC444 回退路径恢复 ✅ 
-6. Frame ACK 时序验证 ✅ 
-7. Android WebView 验证
+### Phase 1 — ClearCodec 解码层（完成）
+
+| Item | 状态 | 说明 |
+|------|------|------|
+| Official Example 2/3/4 freeRDP BGRA32 pixel SHA256 match | ✅ DONE | 逐字节匹配 |
+| Residual RLE | ✅ DONE | FreeRDP 兼容的 run-length |
+| Bands + Full/Short VBar cache | ✅ DONE | index/read/fill/column entry |
+| Subcodec Raw/RLEX | ✅ DONE | palette-driven packed segments |
+| Glyph hit/miss/store/reset | ✅ DONE | glyph index supported |
+| Empty VBar dummy entry | ✅ DONE | FreeRDP compat 孤立引用 |
+
+### Phase 2 — WTS1 Surface Graph（完成）
+
+| Item | 状态 | 说明 |
+|------|------|------|
+| WTS1 header fields (surfId/codecId/fmt/rect/len) | ✅ DONE | 固定头解析 |
+| ClearCodec → surface rect decode | ✅ DONE | rect-clipped BGRA32 write |
+| RenderBitmap semantic emit | ✅ DONE | kind/dirty rect/payload |
+| SURFACE_TO_CACHE | ✅ DONE | source rect → cache slot |
+| CACHE_TO_SURFACE multi-destination | ✅ DONE | slot → multiple surface dests |
+| MAP_SCALED_OUTPUT_V2 protocol fields | ✅ DONE | signed output X/Y, width/height |
+
+### Phase 3 — GPU Compositor 像素验证（进行中）
+
+| Item | 状态 | 说明 |
+|------|------|------|
+| WebGL2 readPixels smoke (baseline) | ✅ DONE | 现有 renderer 已知 2x2 像素测试通过 |
+| ClearCodec reference BGRA → WebGL2 surface read | ❌ NOT DONE | 真实 compositor 解码→createSurface→map→upload→present→readPixels 链条未通过 |
+| ~~clear2.bgra 精确 SHA256 readPixels~~ | ❌ BLOCKED | minis:// 无法跨模块 fetch 二进制 fixture，换用内嵌确定性 pattern |
+| **门禁标准（不可妥协）** | — | Compositor 通过 createSurface + scaledOutput + bitmap upload + present + readPixels 确认非空像素输出；不要求 SHA256 精确匹配 clear2.bgra（显示设备转换不一致），但要求每一像素 RGBA 均非透明黑 |
+| 阻碍因素 | — | 本地 headless Chromium 在 PRoot sandbox 中 WebGL 初始化不稳定（进程 hang）；minis://worktree 索引不识别新分支文件 |
+
+**Phase 3 绕过方案**：在 main 分支的现有 `public/rdp-renderer.js` 基础上，直接修改 `tests/rdp-renderer-browser-smoke.html` 嵌入 compositor 完整管线，并与现有 smoke 在同一 minis 可访问路径上测试。不需要 worktree。
+
+### Phase 4 — 完整 WASM + Docker 构建（未开始）
+
+| Item | 状态 | 说明 |
+|------|------|------|
+| Go clear decoder + rdpgfx.go merge build | ❌ NOT DONE | rdpgfx.go 已含 codecClear case 和 clearDecoder 初始化 |
+| Node.js test suite | ❌ NOT DONE | 需验证新 decoder 不破坏现有 83 项 RDP test |
+| Docker image with cache-bust | ❌ NOT DONE | build ID 统一更新 |
+| Deploy to Azure | ❌ NOT DONE | — |
+
+### Phase 5 — 非 AVC 真实 Windows 连接（未开始）
+
+| Item | 状态 | 说明 |
+|------|------|------|
+| Windows RDP test 首次 ClearCodec 出画面 | ❌ NOT DONE | DVC CAPS + ClearCodec + surface graph 完整路径 |
+| SURFACE_TO_CACHE + CACHE_TO_SURFACE 主桌面渲染 | ❌ NOT DONE | 不在单 tile，而是连续 8+812 条 GFX 命令 |
+| MAP_SCALED_OUTPUT_V2 → GPU present | ❌ NOT DONE | 通过 compositor 链最后至 canvas 可见像素 |
+| 打开诊断遥测 | ✅ DONE | server.js + page telemetry endpoint 已就绪 |
+
+### Phase 6 — AVC420/AVC444 回退路径（未开始）
+
+| Item | 状态 | 说明 |
+|------|------|------|
+| ClearCodec CAPS 确保 flags 不含 AVC_DISABLED | ❌ NOT DONE | caps10Flags 仍使用 SMALL_CACHE，需验证 flags 是否阻止 Windows 切 AVC |
+| AVC420 WebCodecs decoder 实际输出 | ❌ NOT DONE | 当前 codec 路径仅通过 unit test，未验证真实 Windows AVC bitstream |
+| AVC444 LC 双流同步 correctness | ❌ NOT DONE | 无真实 Windows LC=2 非原点测试 |
+| Progressive fallback WTS2 | ❌ NOT DONE | codec=0x0009 WTS2 case 已完成但未测试 |
+
+### Phase 7 — Frame ACK 管线（未开始）
+
+| Item | 状态 | 说明 |
+|------|------|------|
+| FRAME_ACK queueDepth/总计数核对 | ❌ NOT DONE | 需真实 Windows ACK 序列验证 |
+| WebCodecs decode complete → GPU present → ACK 顺序 | ❌ NOT DONE | 多帧时序、逐帧呈现验证 |
+| decoder backlog / keyframe 丢失恢复 | ❌ NOT DONE | — |
+
+### Phase 8 — 序列化 & 错误恢复（未开始）
+
+| Item | 状态 | 说明 |
+|------|------|------|
+| GFX 命令排序不正确时 surface/cache 状态推测 | ❌ NOT DONE | — |
+| RESET_GRAPHICS path | ❌ NOT DONE | — |
+| DISCONNECT / RECONNECT 持久性 | ❌ NOT DONE | — |
+| ZGFX multipart decompression per-DVC-channel | ❌ NOT DONE | 已实现 but not integration-tested |
+
+### Phase 9 — Android WebView 验证（未开始）
+
+| Item | 状态 | 说明 |
+|------|------|------|
+| OffscreenCanvas + Worker available | ❌ NOT DONE | — |
+| SharedArrayBuffer fallback （不阻断 GFX）| ✅ DONE | 可选 SAB 支持已合入 main |
+| WebCodecs hardware decoder | ❌ NOT DONE | — |
 
 ---
 
-## 6. 已知未解决问题
+## 6. 已知未解决问题（同前，不再重复 Phase 内容）
 
-- ClearCodec 系统测试通过但未部署到真实 Windows 会话
-- AVC420/AVC444 在 ClearCodec 基础出画面后再接入
-- CredSSP 分片 reads、ECDSA 绑定证书未测试
-- Android WebView 兼容性未验证
-- GPU present → readPixels vs clear2.bgra 参考精确匹配仍在推进
+- GPU compositor readPixels 门禁因本地验证基础设施受阻（PRoot sandbox + minis 索引），将移入 main 分支现有测试路径完成
+- ClearCodec 通过官方 fixture 但未部署到真实 Windows 会话
+- AVC 路径依赖 ClearCodec 基础出画面后再接入
+- CredSSP 单次 Read 当完整 DER message 的风险未处理
+- ECDSA RDP 证书 + CredSSP pubKeyAuth 绑定未验证
+- Android WebView 兼容性未测试
+- 缺少端到端延迟/帧率/长时内存基线
