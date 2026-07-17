@@ -1549,12 +1549,11 @@ func (g *GfxHandler) onWireToSurface1Decode(data []byte) {
 		g.emitCaVideoRects(s, rects)
 		return
 	}
-	if codecId == codecClear {
-		decoded := g.clearCtx.decode(bmpData, int(right-left), int(bottom-top))
-		g.observe(fmt.Sprintf("rdpgfx.clear.bytes:%d", len(decoded)))
-		g.emitBitmap(s, int(left), int(top), int(right-left), int(bottom-top), decoded)
-		return
-	}
+	// NOTE: ClearCodec (0x0008) must NOT early-return here. It flows through
+	// the codec switch below so the decoded region is also written into the
+	// persistent surface buffer (blitToSurface) — SURFACE_TO_CACHE reads its
+	// pixels from that buffer, and skipping the write makes every cached tile
+	// capture zeros, which then renders as repeated black/garbage tiles.
 	// Progressive codec (0x0009) — decode tiles directly onto the persistent
 	// surface buffer, then emit each dirty region.
 	if codecId == codecProgressive {
