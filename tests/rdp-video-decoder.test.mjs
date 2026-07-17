@@ -7,7 +7,7 @@ async function browserModule(path) {
     return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 }
 
-const { RdpAvc420Decoder } = await browserModule('../public/rdp-video-decoder.js');
+const { RdpAvc420Decoder, h264CodecFromAnnexB } = await browserModule('../public/rdp-video-decoder.js');
 
 class FakeChunk { constructor(init) { Object.assign(this, init); } }
 class FakeDecoder {
@@ -19,6 +19,19 @@ class FakeDecoder {
     reset() { this.decodeQueueSize = 0; }
     close() {}
 }
+
+test('Annex-B SPS selects actual H.264 profile and level', () => {
+    const high = new Uint8Array([0, 0, 0, 1, 0x67, 0x64, 0x00, 0x33, 1]);
+    const main = new Uint8Array([0, 0, 1, 0x67, 0x4d, 0x40, 0x29, 1]);
+    assert.equal(h264CodecFromAnnexB(high), 'avc1.640033');
+    assert.equal(h264CodecFromAnnexB(main), 'avc1.4D4029');
+});
+
+test('decoder reconfigures from SPS instead of forcing Baseline', () => {
+    const decoder = new RdpAvc420Decoder({ Decoder: FakeDecoder, Chunk: FakeChunk });
+    decoder.decode({ surfaceId: 1, frameId: 1, stream1: { key: true, data: new Uint8Array([0, 0, 1, 0x67, 0x4d, 0x40, 0x29, 0, 0, 1, 0x65]) } });
+    assert.equal(decoder.decoders.get('1:1').decoder.config.codec, 'avc1.4D4029');
+});
 
 test('AVC420 decoder preserves every compressed input in order', () => {
     const outputs = [];

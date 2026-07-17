@@ -4,9 +4,9 @@ import fs from 'node:fs/promises';
 
 let source = await fs.readFile(new URL('../public/rdp-worker-probe.js', import.meta.url), 'utf8');
 source = source
-    .replace("import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260712-worker-gpu-scheduler1';", 'const RdpGpuSurfaceCompositor = class { constructor(canvas, options) { return new globalThis.__ProbeCompositor(canvas, options); } };')
-    .replace("import { loadGoRuntime } from './rdp-wasm-runtime.js?v=20260712-worker-gpu-scheduler1';", 'const loadGoRuntime = async () => class Go {};')
-    .replace("import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260712-worker-gpu-scheduler1';", 'const createWorkerFrameScheduler = (...args) => globalThis.__CreateProbeScheduler(...args);')
+    .replace(/^import \{ RdpGpuSurfaceCompositor \} from '.\/rdp-renderer\.js\?v=[^']+';$/m, 'const RdpGpuSurfaceCompositor = class { constructor(canvas, options) { return new globalThis.__ProbeCompositor(canvas, options); } };')
+    .replace(/^import \{ loadGoRuntime \} from '.\/rdp-wasm-runtime\.js\?v=[^']+';$/m, 'const loadGoRuntime = async () => class Go {};')
+    .replace(/^import \{ createWorkerFrameScheduler \} from '.\/rdp-worker-frame-scheduler\.js\?v=[^']+';$/m, 'const createWorkerFrameScheduler = (...args) => globalThis.__CreateProbeScheduler(...args);')
     .replace("if (typeof postMessage === 'function' && typeof document === 'undefined')", 'if (false)');
 const { runWorkerCapabilityProbe } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 

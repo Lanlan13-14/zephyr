@@ -104,19 +104,11 @@ func parseAVC444Stream(data []byte) (stream1, stream2 *avc420Stream, lc uint8, e
 			}
 		}
 		return stream1, stream2, lc, nil
-	case 1: // Main stream only
-		streamData := rest
-		if cbStream1 > 0 && cbStream1 <= len(rest) {
-			streamData = rest[:cbStream1]
-		}
-		stream1, err = parseAVC420Stream(streamData)
+	case 1: // Main stream only: FreeRDP consumes the complete remaining payload.
+		stream1, err = parseAVC420Stream(rest)
 		return stream1, nil, lc, err
-	case 2: // Auxiliary only (chroma upgrade)
-		streamData := rest
-		if cbStream1 > 0 && cbStream1 <= len(rest) {
-			streamData = rest[:cbStream1]
-		}
-		stream2, err = parseAVC420Stream(streamData)
+	case 2: // Auxiliary only: FreeRDP consumes the complete remaining payload.
+		stream2, err = parseAVC420Stream(rest)
 		return nil, stream2, lc, err
 	default:
 		return nil, nil, lc, fmt.Errorf("avc444: invalid LC=%d", lc)
@@ -153,21 +145,13 @@ func (g *GfxHandler) fillAVC444Stream(data []byte) (stream1, stream2 *avc420Stre
 			}
 		}
 		return stream1, stream2, lc, nil
-	case 1: // Main stream only
-		streamData := rest
-		if cbStream1 > 0 && cbStream1 <= len(rest) {
-			streamData = rest[:cbStream1]
-		}
-		if err = fillAVC420Stream(streamData, &g.avcStream1); err != nil {
+	case 1: // Main stream only: consume the complete remaining payload.
+		if err = fillAVC420Stream(rest, &g.avcStream1); err != nil {
 			return nil, nil, lc, err
 		}
 		return &g.avcStream1, nil, lc, nil
-	case 2: // Auxiliary only (chroma upgrade)
-		streamData := rest
-		if cbStream1 > 0 && cbStream1 <= len(rest) {
-			streamData = rest[:cbStream1]
-		}
-		if err = fillAVC420Stream(streamData, &g.avcStream2); err != nil {
+	case 2: // Auxiliary only: consume the complete remaining payload.
+		if err = fillAVC420Stream(rest, &g.avcStream2); err != nil {
 			return nil, nil, lc, err
 		}
 		return nil, &g.avcStream2, lc, nil
@@ -247,7 +231,6 @@ func firstNALType(data []byte) byte {
 	}
 	return 0xFF
 }
-
 
 // decoded frame plus the dirty rectangle list reported in the AVC420 stream
 // header (in decoded-frame coordinates).  When regions is non-empty callers
@@ -1178,6 +1161,7 @@ func isAVC444YPlaneChromaBlank(yp *avc444YPlane) bool {
 //	cachedU/cachedV      – Cb/Cr from stream1, half-res (stride=uvStride=(w+1)/2)
 //	i420aux              – I420 output from decoding stream2
 //	fullRange            – true for PC-range [0-255], false for video [16-235]
+//
 // maxConvertWorkers caps the number of goroutines used to parallelise the
 // per-row YCbCr→BGRA conversions.  Beyond ~8 workers the conversion is limited
 // by memory bandwidth rather than CPU, so additional workers only add

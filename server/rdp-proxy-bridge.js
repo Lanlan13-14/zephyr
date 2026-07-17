@@ -15,6 +15,10 @@ function attachRdpProxyBridge({ ws, tcpConn, flowControlEnabled = false, limits 
     let tcpPausedByClient = false;
     let wsSocketPausedForTcp = false;
     let wsBacklogTimer = null;
+    let wsToTcpBytes = 0;
+    let tcpToWsBytes = 0;
+    let wsToTcpFrames = 0;
+    let tcpToWsFrames = 0;
 
     const fatal = (code, message) => {
         if (disposed) return;
@@ -65,6 +69,8 @@ function attachRdpProxyBridge({ ws, tcpConn, flowControlEnabled = false, limits 
             return;
         }
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        wsToTcpBytes += buffer.length;
+        wsToTcpFrames++;
         try {
             const writable = tcpConn.write(buffer);
             if (!writable) {
@@ -86,6 +92,8 @@ function attachRdpProxyBridge({ ws, tcpConn, flowControlEnabled = false, limits 
     };
     const onTcpData = (chunk) => {
         if (disposed || ws.readyState !== ws.OPEN) return;
+        tcpToWsBytes += chunk.length;
+        tcpToWsFrames++;
         try {
             ws.send(chunk, { binary: true }, (error) => {
                 if (error) return fatal('WS_SEND_ERROR', error.message);
@@ -116,7 +124,7 @@ function attachRdpProxyBridge({ ws, tcpConn, flowControlEnabled = false, limits 
         },
         inspectWsBacklog,
         state() {
-            return { disposed, tcpPausedForWs, tcpPausedByClient, wsSocketPausedForTcp };
+            return { disposed, tcpPausedForWs, tcpPausedByClient, wsSocketPausedForTcp, wsToTcpBytes, tcpToWsBytes, wsToTcpFrames, tcpToWsFrames };
         },
     };
 }

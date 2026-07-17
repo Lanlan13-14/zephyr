@@ -272,7 +272,6 @@ func (x *X224) Connect() error {
 
 	message := NewClientConnectionRequestPDU([]byte(cookie), x.requestedProtocol)
 	message.ProtocolNeg.Type = TYPE_RDP_NEG_REQ
-	message.ProtocolNeg.Flag = NEG_REQ_FLAG_EXTENDED_CLIENT_DATA | NEG_REQ_FLAG_DYNVC_GFX_PROTOCOL
 	message.ProtocolNeg.Result = uint32(x.requestedProtocol)
 
 	slog.Debug("x224 Connect", "message", core.Hex(message.Serialize()))

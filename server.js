@@ -1916,6 +1916,36 @@ app.post('/api/rdp/credentials', requireAuth, (req, res) => {
 /* RDP TLS certificate probe — connects to the target RDP port via TLS,
  * grabs the server certificate details, and returns them so the frontend
  * can show a Windows-style "unable to verify certificate" dialog. */
+app.post('/api/rdp/telemetry', requireAuth, (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const safe = {
+        connectionId: String(body.connectionId || '').slice(0, 128),
+        kind: String(body.kind || 'snapshot').slice(0, 64),
+        stage: String(body.stage || '').slice(0, 128),
+        value: String(body.value || '').slice(0, 1000),
+        failureReported: Boolean(body.failureReported),
+        elapsedMs: Math.max(0, Number(body.elapsedMs) || 0),
+        semanticEvents: Math.max(0, Number(body.semanticEvents) || 0),
+        bitmapEvents: Math.max(0, Number(body.bitmapEvents) || 0),
+        classicBitmaps: Math.max(0, Number(body.classicBitmaps) || 0),
+        avc420Events: Math.max(0, Number(body.avc420Events) || 0),
+        avc444Events: Math.max(0, Number(body.avc444Events) || 0),
+        presentedFrames: Math.max(0, Number(body.presentedFrames) || 0),
+        presents: Math.max(0, Number(body.presents) || 0),
+        drawFails: Math.max(0, Number(body.drawFails) || 0),
+        lastKind: Number(body.lastKind) || 0,
+        lastError: String(body.lastError || '').slice(0, 1000),
+        bootStage: String(body.bootStage || '').slice(0, 128),
+        glRenderer: String(body.glRenderer || '').slice(0, 256),
+        decoderBacklog: Math.max(0, Number(body.decoderBacklog) || 0),
+        protocol: body.protocol && typeof body.protocol === 'object'
+            ? Object.fromEntries(Object.entries(body.protocol).slice(0, 100).map(([k, v]) => [String(k).slice(0, 160), Number(v) || 0]))
+            : {},
+    };
+    console.info('[rdp-telemetry]', safe);
+    res.json({ ok: true });
+});
+
 app.post('/api/rdp/probe-cert', requireAuth, async (req, res) => {
     const connectionId = String(req.body?.connectionId || '').trim();
     if (!connectionId) return res.status(400).json({ error: 'connectionId required' });
@@ -4071,7 +4101,12 @@ app.use(express.static(path.join(__dirname, 'public'), {
         if (/\.(?:js|mjs|css)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
         if (/\.mjs$/i.test(filePath)) res.type('text/javascript; charset=utf-8');
         if (/\.wasm$/i.test(filePath)) res.type('application/wasm');
-        if (/[/\\]vendor[/\\]rdp-wasm[/\\]/i.test(filePath)) res.setHeader('X-Content-Type-Options', 'nosniff');
+        if (/[/\\]vendor[/\\]rdp-wasm[/\\]/i.test(filePath)) {
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+        }
     },
 }));
 
@@ -4283,7 +4318,7 @@ rdpProxyWss.on('connection', async (ws, req) => {
         try { proxyBridge?.dispose?.(); } catch {}
         try { tcpConn?.destroy?.(); } catch {}
         try { routedForward?.close?.(); } catch {}
-        console.info('[rdp-proxy] closed', { target, reason });
+        console.info('[rdp-proxy] closed', { target, reason, ...(proxyBridge?.state?.() || {}) });
     };
 
     ws.on('close', () => cleanup('browser-close'));

@@ -15,10 +15,20 @@ test('Worker GPU v2 is the only accepted production pipeline', () => {
     for (const value of ['gpu-v2-page', 'legacy', 'unknown', '', null]) assert.equal(normalizeRdpPipeline(value), 'worker-gpu-v2');
 });
 
+test('RDP telemetry uses module-scoped active connection id', async () => {
+    const client = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
+    assert.ok(client.includes("let activeConnectionId = '';"));
+    assert.ok(client.includes('connectionId: activeConnectionId'));
+    assert.equal(/JSON\.stringify\(\{ connectionId,/.test(client), false);
+});
+
 test('client fails closed when mandatory Worker GPU capabilities are absent', async () => {
     const client = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
-    for (const reason of ['INSECURE_CONTEXT', 'CROSS_ORIGIN_ISOLATION_UNAVAILABLE', 'SHARED_ARRAY_BUFFER_UNAVAILABLE', 'MODULE_WORKER_UNAVAILABLE', 'OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE']) {
+    for (const reason of ['INSECURE_CONTEXT', 'MODULE_WORKER_UNAVAILABLE', 'OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE']) {
         assert.ok(client.includes(reason), `${reason} must be explicit`);
+    }
+    for (const optional of ['CROSS_ORIGIN_ISOLATION_UNAVAILABLE', 'SHARED_ARRAY_BUFFER_UNAVAILABLE']) {
+        assert.equal(client.includes(optional), false, `${optional} must not block Worker GPU rendering`);
     }
     assert.match(client, /WORKER_GPU_REQUIRED/);
     assert.match(client, /WORKER_GPU_PROBE_FAILED/);

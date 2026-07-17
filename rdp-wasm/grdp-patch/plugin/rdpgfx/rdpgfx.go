@@ -66,6 +66,7 @@ const (
 	codecPlanar       uint16 = 0x0004
 	codecClear        uint16 = 0x0008
 	codecProgressive  uint16 = 0x0009
+	codecClear        uint16 = 0x0008
 	codecAVC420       uint16 = 0x000B
 	codecAVC444       uint16 = 0x000E
 	codecAVC444v2     uint16 = 0x000F
@@ -183,6 +184,7 @@ type vBarEntry struct {
 type clearCodecCtx struct {
 	vBarStorage      []vBarEntry
 	shortVBarStorage []vBarEntry
+	glyphStorage     map[uint16]cacheEntry
 	vBarCursor       int
 	shortVBarCursor  int
 }
@@ -191,6 +193,7 @@ func newClearCodecCtx() *clearCodecCtx {
 	return &clearCodecCtx{
 		vBarStorage:      make([]vBarEntry, 32768),
 		shortVBarStorage: make([]vBarEntry, 16384),
+		glyphStorage:     make(map[uint16]cacheEntry, 128),
 	}
 }
 
@@ -1263,6 +1266,7 @@ func (g *GfxHandler) onCapsConfirm(data []byte) {
 		flags = binary.LittleEndian.Uint32(data[8:])
 	}
 	slog.Debug("RDPGFX: CAPS_CONFIRM", "version", version, "flags", flags)
+	g.observe(fmt.Sprintf("rdpgfx.caps.confirm:v0x%08x:flags0x%08x", version, flags))
 }
 
 func (g *GfxHandler) onResetGraphics(data []byte) {
@@ -1519,6 +1523,7 @@ func (g *GfxHandler) onWireToSurface1Decode(data []byte) {
 		return
 	}
 	bmpData := data[17 : 17+int(bmpLen)]
+	g.observe(fmt.Sprintf("rdpgfx.wts1:codec0x%04x:bytes%d:%dx%d", codecId, bmpLen, right-left, bottom-top))
 
 	if slog.Default().Enabled(nil, slog.LevelDebug) {
 		slog.Debug("RDPGFX: WTS1", "surfId", surfId, "codecId", codecId,
@@ -1541,7 +1546,41 @@ func (g *GfxHandler) onWireToSurface1Decode(data []byte) {
 	// persistent surface buffer like the progressive codec in WTS2.
 	if codecId == codecCaVideo {
 		rects := g.rfx.Decode(bmpData, int(left), int(top), s.data, int(s.width), int(s.height))
+		g.observe(fmt.Sprintf("rdpgfx.cavideo.rects:%d", len(rects)))
 		g.emitCaVideoRects(s, rects)
+		return
+	}
+	if codecId == codecClear {
+		decoded := g.clearCtx.decode(bmpData, int(right-left), int(bottom-top))
+		g.observe(fmt.Sprintf("rdpgfx.clear.bytes:%d", len(decoded)))
+		g.emitBitmap(s, int(left), int(top), int(right-left), int(bottom-top), decoded)
+		return
+	}
+	// Progressive codec (0x0009) — decode tiles directly onto the persistent
+	// surface buffer, then emit each dirty region.
+	if codecId == codecProgressive {
+		rects := g.progressive.Decode(bmpData, s.data, int(s.width), int(s.height))
+		g.observe(fmt.Sprintf("rdpgfx.progressive.rects:%d", len(rects)))
+		for _, rc := range rects {
+			needed := rc.w * rc.h * 4
+			region := regionPool.Get().([]byte)
+			if cap(region) < needed {
+				region = make([]byte, needed)
+			} else {
+				region = region[:needed]
+			}
+			stride := int(s.width) * 4
+			rowBytes := rc.w * 4
+			for row := 0; row < rc.h; row++ {
+				srcOff := (rc.y+row)*stride + rc.x*4
+				dstOff := row * rowBytes
+				if srcOff+rowBytes <= len(s.data) {
+					copy(region[dstOff:dstOff+rowBytes], s.data[srcOff:srcOff+rowBytes])
+				}
+			}
+			g.emitBitmap(s, rc.x, rc.y, rc.w, rc.h, region)
+			regionPool.Put(region)
+		}
 		return
 	}
 
@@ -2399,14 +2438,36 @@ func applyDelta(plane []byte, w, h int) {
 // --- Codec: ClearCodec (MS-RDPEGFX 2.2.4) ---
 
 func (ctx *clearCodecCtx) decode(data []byte, w, h int) []byte {
-	if len(data) < 12 {
+	if len(data) < 2 {
 		return make([]byte, w*h*4)
 	}
-	// Direct binary indexing — avoids bytes.NewReader and per-field interface dispatch.
-	residualLen := int(binary.LittleEndian.Uint32(data[0:]))
-	bandsLen := int(binary.LittleEndian.Uint32(data[4:]))
-	subcodecLen := int(binary.LittleEndian.Uint32(data[8:]))
-	off := 12
+	flags := data[0]
+	off := 2 // flags + sequenceNumber
+	var glyphIndex uint16
+	if flags&0x01 != 0 {
+		if len(data) < off+2 {
+			return make([]byte, w*h*4)
+		}
+		glyphIndex = binary.LittleEndian.Uint16(data[off:])
+		off += 2
+	}
+	if flags&0x04 != 0 {
+		ctx.vBarCursor = 0
+		ctx.shortVBarCursor = 0
+	}
+	if flags&0x02 != 0 {
+		if cached, ok := ctx.glyphStorage[glyphIndex]; ok && cached.width == w && cached.height == h {
+			return append([]byte(nil), cached.data...)
+		}
+		return make([]byte, w*h*4)
+	}
+	if len(data) < off+12 {
+		return make([]byte, w*h*4)
+	}
+	residualLen := int(binary.LittleEndian.Uint32(data[off:]))
+	bandsLen := int(binary.LittleEndian.Uint32(data[off+4:]))
+	subcodecLen := int(binary.LittleEndian.Uint32(data[off+8:]))
+	off += 12
 
 	out := make([]byte, w*h*4)
 	if residualLen > 0 && off+residualLen <= len(data) {
@@ -2420,28 +2481,45 @@ func (ctx *clearCodecCtx) decode(data []byte, w, h int) []byte {
 	if subcodecLen > 0 && off >= 0 && off+subcodecLen <= len(data) {
 		decodeSubcodec(data[off:off+subcodecLen], w, out)
 	}
+	if flags&0x01 != 0 && w*h <= 1024 {
+		ctx.glyphStorage[glyphIndex] = cacheEntry{data: append([]byte(nil), out...), width: w, height: h}
+	}
 	return out
 }
 
 func decodeResidual(data []byte, w, h int, out []byte) {
-	for y := range h {
-		rowDstStart := y * w * 4
-		rowSrcStart := y * w * 3
-		rowDstEnd := rowDstStart + w*4
-		rowSrcEnd := rowSrcStart + w*3
-		if rowDstEnd > len(out) || rowSrcEnd > len(data) {
-			return
+	off, pixel := 0, 0
+	maxPixels := min(w*h, len(out)/4)
+	for off+4 <= len(data) && pixel < maxPixels {
+		blue, green, red := data[off], data[off+1], data[off+2]
+		off += 3
+		run := int(data[off])
+		off++
+		if run == 0xFF {
+			if off+2 > len(data) {
+				return
+			}
+			run = int(binary.LittleEndian.Uint16(data[off:]))
+			off += 2
+			if run == 0xFFFF {
+				if off+4 > len(data) {
+					return
+				}
+				raw := binary.LittleEndian.Uint32(data[off:])
+				off += 4
+				if uint64(raw) > uint64(maxPixels-pixel) {
+					run = maxPixels - pixel
+				} else {
+					run = int(raw)
+				}
+			}
 		}
-		dst := out[rowDstStart:rowDstEnd:rowDstEnd]
-		src := data[rowSrcStart:rowSrcEnd:rowSrcEnd]
-		for x := range w {
-			si := x * 3
-			di := x * 4
-			dst[di] = src[si]
-			dst[di+1] = src[si+1]
-			dst[di+2] = src[si+2]
-			dst[di+3] = 0xFF
+		run = min(run, maxPixels-pixel)
+		for i := 0; i < run; i++ {
+			di := (pixel + i) * 4
+			out[di], out[di+1], out[di+2], out[di+3] = blue, green, red, 0xFF
 		}
+		pixel += run
 	}
 }
 

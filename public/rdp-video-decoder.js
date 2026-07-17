@@ -1,3 +1,17 @@
+function hexByte(value) { return Number(value).toString(16).padStart(2, '0').toUpperCase(); }
+
+export function h264CodecFromAnnexB(data, fallback = 'avc1.640033') {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data || 0);
+    for (let i = 0; i + 4 < bytes.length; i++) {
+        let nal = -1;
+        if (bytes[i] === 0 && bytes[i + 1] === 0 && bytes[i + 2] === 1) nal = i + 3;
+        else if (i + 5 < bytes.length && bytes[i] === 0 && bytes[i + 1] === 0 && bytes[i + 2] === 0 && bytes[i + 3] === 1) nal = i + 4;
+        if (nal < 0 || (bytes[nal] & 0x1f) !== 7 || nal + 3 >= bytes.length) continue;
+        return `avc1.${hexByte(bytes[nal + 1])}${hexByte(bytes[nal + 2])}${hexByte(bytes[nal + 3])}`;
+    }
+    return fallback;
+}
+
 export class RdpAvc420Decoder {
     constructor({ Decoder = globalThis.VideoDecoder, Chunk = globalThis.EncodedVideoChunk, onFrame, onError = () => {}, maxQueue = 64 } = {}) {
         if (!Decoder || !Chunk) throw new Error('WebCodecs VideoDecoder is unavailable');
@@ -33,6 +47,12 @@ export class RdpAvc420Decoder {
         const token = ++this.nextToken;
         state.metadata.set(token, { event, token });
         try {
+            const codec = h264CodecFromAnnexB(stream.data, state.codec);
+            if (codec !== state.codec) {
+                if (state.decoder.decodeQueueSize || state.metadata.size > 1) throw new Error(`AVC420 codec changed with pending frames: ${state.codec} -> ${codec}`);
+                state.decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
+                state.codec = codec;
+            }
             state.decoder.decode(new this.Chunk({ type: stream.key ? 'key' : 'delta', timestamp: token, data: stream.data }));
         } catch (error) {
             state.metadata.delete(token);
@@ -57,8 +77,9 @@ export class RdpAvc420Decoder {
                 metadata.clear();
             },
         });
-        decoder.configure({ codec: 'avc1.42E01E', optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
-        state = { decoder, metadata };
+        const codec = 'avc1.640033';
+        decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
+        state = { decoder, metadata, codec };
         this.decoders.set(key, state);
         return state;
     }
@@ -221,6 +242,12 @@ export class RdpAvc444Decoder {
         const token = ++this.nextToken;
         return new Promise((resolve, reject) => {
             state.pending.set(token, { resolve, reject });
+            const codec = h264CodecFromAnnexB(stream.data, state.codec);
+            if (codec !== state.codec) {
+                if (state.decoder.decodeQueueSize || state.pending.size > 1) throw new Error(`AVC444 codec changed with pending frames: ${state.codec} -> ${codec}`);
+                state.decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
+                state.codec = codec;
+            }
             try { state.decoder.decode(new this.Chunk({ type: stream.key ? 'key' : 'delta', timestamp: token, data: stream.data })); }
             catch (error) { state.pending.delete(token); reject(error); }
         });
@@ -242,8 +269,9 @@ export class RdpAvc444Decoder {
                 pending.clear();
             },
         });
-        decoder.configure({ codec: 'avc1.42E01E', optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
-        state = { decoder, pending };
+        const codec = 'avc1.640033';
+        decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
+        state = { decoder, pending, codec };
         this.states.set(key, state);
         return state;
     }

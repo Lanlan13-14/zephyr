@@ -1,6 +1,6 @@
-import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260712-worker-gpu-scheduler1';
-import { loadGoRuntime } from './rdp-wasm-runtime.js?v=20260712-worker-gpu-scheduler1';
-import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260712-worker-gpu-scheduler1';
+import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260712-freerdp-gfx-complete1';
+import { loadGoRuntime } from './rdp-wasm-runtime.js?v=20260712-freerdp-gfx-complete1';
+import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260712-freerdp-gfx-complete1';
 
 export async function runWorkerCapabilityProbe({ runtimeLoader = loadGoRuntime } = {}) {
     if (typeof OffscreenCanvas === 'undefined') return { ok: false, stage: 'offscreen-canvas', error: 'OffscreenCanvas is unavailable' };

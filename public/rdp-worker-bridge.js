@@ -20,8 +20,9 @@ export class RdpWorkerBridge {
         this.bootTimer = null;
         this.bootHistory = [];
         this.ready = new Promise((resolve, reject) => { this.resolveReady = resolve; this.rejectReady = reject; });
-        this.syncControl = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 4);
-        this.syncData = new SharedArrayBuffer(syncBytes);
+        const sabAvailable = typeof SharedArrayBuffer === 'function';
+        this.syncControl = sabAvailable ? new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 4) : null;
+        this.syncData = sabAvailable ? new SharedArrayBuffer(syncBytes) : null;
         this.worker.addEventListener('message', (event) => this._message(event.data));
         this.worker.addEventListener('error', (event) => {
             const error = new Error(event.message || 'RDP Worker failed');
@@ -58,7 +59,12 @@ export class RdpWorkerBridge {
     async init(canvas, options = {}) {
         let offscreen = canvas;
         if (typeof canvas?.transferControlToOffscreen === 'function') offscreen = canvas.transferControlToOffscreen();
-        this.worker.postMessage({ type: 'init', canvas: offscreen, syncControl: this.syncControl, syncData: this.syncData, options }, [offscreen]);
+        const payload = { type: 'init', canvas: offscreen, options };
+        if (this.syncControl && this.syncData) {
+            payload.syncControl = this.syncControl;
+            payload.syncData = this.syncData;
+        }
+        this.worker.postMessage(payload, [offscreen]);
         this.bootTimer = setTimeout(() => {
             if (this.readySettled) return;
             this.readySettled = true;
@@ -178,6 +184,10 @@ export class RdpWorkerBridge {
     }
 
     _syncRpc(message) {
+        if (!this.syncControl || !this.syncData) {
+            console.warn('[rdp-worker] sync RPC ignored because SharedArrayBuffer is unavailable', message?.name || 'unknown');
+            return;
+        }
         const control = new Int32Array(this.syncControl);
         const output = new Uint8Array(this.syncData);
         try {

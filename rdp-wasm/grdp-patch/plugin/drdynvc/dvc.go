@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"strings"
 
 	"github.com/nakagami/grdp/core"
 	"github.com/nakagami/grdp/plugin"
+	"github.com/nakagami/grdp/plugin/rdpgfx"
 )
 
 const (
@@ -50,6 +50,7 @@ type dvcChannelInfo struct {
 	id      uint32
 	cbChId  uint8
 	handler DvcChannelHandler
+	zgfx    *rdpgfx.ZGFXDecoder
 }
 
 type dvcReassembly struct {
@@ -65,6 +66,7 @@ type DvcClient struct {
 	channelById       map[uint32]*dvcChannelInfo   // channelId → info
 	reassembly        map[uint32]*dvcReassembly    // channelId → reassembly state
 	negotiatedVersion uint16
+	capsReady         bool
 	protocolObserver  func(string)
 }
 
@@ -134,6 +136,31 @@ func (h *DvcHeader) serialize(channelId uint32) []byte {
 	return b.Bytes()
 }
 
+func (c *DvcClient) sendCapsResponse(version uint16) error {
+	b := &bytes.Buffer{}
+	core.WriteUInt16LE(0x0050, b) // Cmd+Sp+cbChId+Pad, matching FreeRDP/mstsc
+	core.WriteUInt16LE(version, b)
+	_, err := c.Send(b.Bytes())
+	if err == nil {
+		c.negotiatedVersion = version
+		c.capsReady = true
+		c.observe(fmt.Sprintf("drdynvc.caps.response:v%d", version))
+	}
+	return err
+}
+
+func (c *DvcClient) ensureCapsReady() bool {
+	if c.capsReady {
+		return true
+	}
+	// FreeRDP fallback: some servers skip CAPS_REQ and send CREATE directly.
+	if err := c.sendCapsResponse(3); err != nil {
+		slog.Warn("dvc: unsolicited CAPS response failed", "err", err)
+		return false
+	}
+	return true
+}
+
 func (c *DvcClient) Send(s []byte) (int, error) {
 	slog.Debug("dvc Send", "len", len(s), "data", hex.EncodeToString(s))
 	name, _ := c.GetType()
@@ -178,8 +205,12 @@ func (c *DvcClient) Process(s []byte) {
 		c.processCreateReq(hdr, b)
 	case DYNVC_DATA_FIRST:
 		c.processDataFirst(hdr, b)
+	case DYNVC_DATA_FIRST_COMPRESSED:
+		c.processCompressedDataFirst(hdr, b)
 	case DYNVC_DATA:
 		c.processData(hdr, b)
+	case DYNVC_DATA_COMPRESSED:
+		c.processCompressedData(hdr, b)
 	case DYNVC_CLOSE:
 		c.processClose(hdr, b)
 	case DYNVC_SOFT_SYNC_REQUEST:
@@ -203,10 +234,18 @@ func (c *DvcClient) processClose(hdr *DvcHeader, s []byte) {
 }
 
 func (c *DvcClient) processCreateReq(hdr *DvcHeader, s []byte) {
+	if !c.ensureCapsReady() {
+		return
+	}
 	r := bytes.NewReader(s)
 	channelId := readDvcId(r, hdr.cbChId)
 	nameBytes, _ := core.ReadBytes(r.Len(), r)
-	channelName := strings.TrimRight(string(nameBytes), "\x00")
+	nul := bytes.IndexByte(nameBytes, 0)
+	if nul < 0 {
+		slog.Warn("dvc: CREATE channel name is not NUL terminated", "channelId", channelId)
+		return
+	}
+	channelName := string(nameBytes[:nul])
 	slog.Debug("dvc: create request", "channelId", channelId, "name", channelName)
 	c.observe("drdynvc.create:" + channelName)
 
@@ -219,6 +258,7 @@ func (c *DvcClient) processCreateReq(hdr *DvcHeader, s []byte) {
 			id:      channelId,
 			cbChId:  hdr.cbChId,
 			handler: handler,
+			zgfx:    rdpgfx.NewZGFXDecoder(),
 		}
 		c.channelById[channelId] = info
 
@@ -232,22 +272,24 @@ func (c *DvcClient) processCreateReq(hdr *DvcHeader, s []byte) {
 		slog.Debug("dvc: handler registered", "channel", channelName, "id", channelId)
 	}
 
-	// If explicitly rejected, send a non-zero CreationStatus so the server
-	// does not use this channel (e.g. AUDIO_PLAYBACK_LOSSY_DVC → fallback to PCM).
-	if c.rejectedChannels[channelName] {
-		slog.Debug("dvc: rejecting channel", "channel", channelName, "id", channelId)
+	// Match FreeRDP/mstsc: unknown channels are rejected with STATUS_NOT_FOUND.
+	// Accepting an unknown channel tells the server to stream data into a
+	// channel with no consumer and can interfere with unrelated DVC fallback.
+	if handler == nil || c.rejectedChannels[channelName] {
+		status := uint32(0xC0000225) // STATUS_NOT_FOUND
+		if c.rejectedChannels[channelName] {
+			status = 0x80004005 // E_FAIL for an explicitly rejected feature
+		}
+		slog.Debug("dvc: rejecting channel", "channel", channelName, "id", channelId, "status", status)
 		rspHdr := &DvcHeader{cmd: DYNVC_CREATE_REQ, sp: 0, cbChId: hdr.cbChId}
 		b := &bytes.Buffer{}
 		b.Write(rspHdr.serialize(channelId))
-		core.WriteUInt32LE(0x80004005, b) // E_FAIL
+		core.WriteUInt32LE(status, b)
 		c.Send(b.Bytes())
 		return
 	}
 
-	// Send success response (Sp SHOULD be 0 per MS-RDPEDYC 2.2.2.2).
-	// Always accept: some Windows servers stop sending data on static
-	// virtual channels (e.g. cliprdr) when DVC creation requests are
-	// rejected, even for unrelated channels.
+	// Send success response (Sp MUST be 0 per MS-RDPEDYC 2.2.2.2).
 	rspHdr := &DvcHeader{cmd: DYNVC_CREATE_REQ, sp: 0, cbChId: hdr.cbChId}
 	b := &bytes.Buffer{}
 	b.Write(rspHdr.serialize(channelId))
@@ -275,6 +317,53 @@ func readDvcId(r io.Reader, cbLen uint8) (id uint32) {
 	}
 	return
 }
+func (c *DvcClient) processCompressedDataFirst(hdr *DvcHeader, s []byte) {
+	r := bytes.NewReader(s)
+	channelId := readDvcId(r, hdr.cbChId)
+	totalLen := readDvcId(r, hdr.sp)
+	ch, ok := c.channelById[channelId]
+	if !ok || ch.zgfx == nil {
+		slog.Warn("dvc: compressed DATA_FIRST for unknown channel", "channelId", channelId)
+		return
+	}
+	compressed, _ := core.ReadBytes(r.Len(), r)
+	data, err := ch.zgfx.Decompress(compressed)
+	if err != nil {
+		slog.Warn("dvc: DATA_FIRST ZGFX failed", "channelId", channelId, "err", err)
+		return
+	}
+	plain := &bytes.Buffer{}
+	plain.Write((&DvcHeader{cbChId: hdr.cbChId}).serialize(channelId)[1:])
+	switch hdr.sp {
+	case 0:
+		core.WriteUInt8(uint8(totalLen), plain)
+	case 1:
+		core.WriteUInt16LE(uint16(totalLen), plain)
+	default:
+		core.WriteUInt32LE(totalLen, plain)
+	}
+	plain.Write(data)
+	c.processDataFirst(hdr, plain.Bytes())
+}
+
+func (c *DvcClient) processCompressedData(hdr *DvcHeader, s []byte) {
+	r := bytes.NewReader(s)
+	channelId := readDvcId(r, hdr.cbChId)
+	ch, ok := c.channelById[channelId]
+	if !ok || ch.zgfx == nil {
+		slog.Warn("dvc: compressed DATA for unknown channel", "channelId", channelId)
+		return
+	}
+	compressed, _ := core.ReadBytes(r.Len(), r)
+	data, err := ch.zgfx.Decompress(compressed)
+	if err != nil {
+		slog.Warn("dvc: DATA ZGFX failed", "channelId", channelId, "err", err)
+		return
+	}
+	plain := append((&DvcHeader{cbChId: hdr.cbChId}).serialize(channelId)[1:], data...)
+	c.processData(hdr, plain)
+}
+
 func (c *DvcClient) processDataFirst(hdr *DvcHeader, s []byte) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -303,13 +392,18 @@ func (c *DvcClient) processDataFirst(hdr *DvcHeader, s []byte) {
 		return
 	}
 
-	if uint32(len(data)) >= totalLen {
-		ch.handler.Process(data[:totalLen])
-	} else {
-		ra := &dvcReassembly{totalLen: totalLen}
-		ra.buf.Write(data)
-		c.reassembly[channelId] = ra
+	if totalLen == 0 || uint32(len(data)) > totalLen {
+		slog.Warn("dvc: DATA_FIRST invalid length", "channelId", channelId, "total", totalLen, "fragment", len(data))
+		delete(c.reassembly, channelId)
+		return
 	}
+	if uint32(len(data)) == totalLen {
+		ch.handler.Process(data)
+		return
+	}
+	ra := &dvcReassembly{totalLen: totalLen}
+	ra.buf.Write(data)
+	c.reassembly[channelId] = ra
 }
 
 func (c *DvcClient) processData(hdr *DvcHeader, s []byte) {
@@ -329,10 +423,16 @@ func (c *DvcClient) processData(hdr *DvcHeader, s []byte) {
 
 	ra, hasReassembly := c.reassembly[channelId]
 	if hasReassembly {
-		ra.buf.Write(data)
-		if uint32(ra.buf.Len()) >= ra.totalLen {
-			ch.handler.Process(ra.buf.Bytes()[:ra.totalLen])
+		if uint32(ra.buf.Len()+len(data)) > ra.totalLen {
+			slog.Warn("dvc: DATA reassembly overflow", "channelId", channelId, "total", ra.totalLen, "next", ra.buf.Len()+len(data))
 			delete(c.reassembly, channelId)
+			return
+		}
+		ra.buf.Write(data)
+		if uint32(ra.buf.Len()) == ra.totalLen {
+			assembled := append([]byte(nil), ra.buf.Bytes()...)
+			delete(c.reassembly, channelId)
+			ch.handler.Process(assembled)
 		}
 	} else {
 		ch.handler.Process(data)
@@ -346,25 +446,15 @@ func (c *DvcClient) processCapsPdu(hdr *DvcHeader, s []byte) {
 	slog.Debug("Server supports dvc", "version", ver)
 	c.observe(fmt.Sprintf("drdynvc.caps.request:v%d", ver))
 
-	// Always respond with version 3. FreeRDP and mstsc always advertise v3
-	// in the CAPS response regardless of the server's offered version.
-	// Windows servers will not create the RDPGFX DVC channel unless the
-	// client negotiates DVC version 3, even when the server itself offered
-	// a lower version in the CAPS request. Capping at the server version
-	// causes the server to skip RDPGFX channel creation entirely, resulting
-	// in a black screen with no graphics data.
-	ver = 3
+	// Reply with the version advertised by the server. This matches
+	// FreeRDP's drdynvc_process_capability_request implementation and
+	// MS-RDPEDYC capability negotiation. Version 3 is used only for the
+	// unsolicited fallback response when a server omitted CAPS_REQ.
 
-	// Client CAPS response: header(1) + pad(1) + version(2) = 4 bytes
-	// Priority charges are only in the server's CAPS request, not the client response.
-	b := &bytes.Buffer{}
-	core.WriteUInt8(0x50, b) // header: Cmd=5(CAPS), Sp=0, CbChId=0
-	core.WriteUInt8(0x00, b) // pad
-	core.WriteUInt16LE(ver, b)
-	slog.Debug("dvc: CAPS response", "version", ver, "len", b.Len())
-	c.Send(b.Bytes())
-	c.negotiatedVersion = ver
-	c.observe(fmt.Sprintf("drdynvc.caps.response:v%d", ver))
+	slog.Debug("dvc: CAPS response", "version", ver)
+	if err := c.sendCapsResponse(ver); err != nil {
+		slog.Warn("dvc: CAPS response failed", "err", err)
+	}
 }
 
 func (c *DvcClient) processSoftSyncRequest(hdr *DvcHeader, s []byte) {

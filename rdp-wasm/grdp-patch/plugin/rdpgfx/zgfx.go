@@ -1,10 +1,81 @@
 package rdpgfx
 
+import (
+	"encoding/binary"
+	"fmt"
+)
+
 // ZGFX (RDP8 Bulk Compression) decompressor.
 // Implements the decompression algorithm described in MS-RDPEGFX 2.2.4 / 3.3.8.
 // Based on FreeRDP's reference implementation (libfreerdp/codec/zgfx.c).
 
 const zgfxHistorySize = 2500000
+
+// ZGFXDecoder exposes the protocol-correct ZGFX history decoder for other
+// RDP channel layers. Each logical channel must own an independent instance.
+type ZGFXDecoder struct{ ctx *zgfxContext }
+
+func NewZGFXDecoder() *ZGFXDecoder { return &ZGFXDecoder{ctx: newZgfxContext()} }
+
+func (d *ZGFXDecoder) decodeSegment(seg []byte) ([]byte, error) {
+	if len(seg) < 1 {
+		return nil, fmt.Errorf("ZGFX segment header missing")
+	}
+	header := seg[0]
+	payload := seg[1:]
+	if header&0x20 != 0 {
+		out := d.ctx.Decompress(payload, nil)
+		if out == nil {
+			return nil, fmt.Errorf("invalid compressed ZGFX segment")
+		}
+		return out, nil
+	}
+	d.ctx.historyWrite(payload)
+	return append([]byte(nil), payload...), nil
+}
+
+func (d *ZGFXDecoder) Decompress(data []byte) ([]byte, error) {
+	if d == nil || d.ctx == nil {
+		return nil, fmt.Errorf("ZGFX decoder is not initialized")
+	}
+	if len(data) < 2 {
+		return nil, fmt.Errorf("ZGFX descriptor missing")
+	}
+	switch data[0] {
+	case 0xE0:
+		return d.decodeSegment(data[1:])
+	case 0xE1:
+		if len(data) < 7 {
+			return nil, fmt.Errorf("ZGFX multipart header truncated")
+		}
+		count := int(binary.LittleEndian.Uint16(data[1:3]))
+		expected := int(binary.LittleEndian.Uint32(data[3:7]))
+		offset := 7
+		out := make([]byte, 0, expected)
+		for i := 0; i < count; i++ {
+			if offset+4 > len(data) {
+				return nil, fmt.Errorf("ZGFX multipart segment length truncated")
+			}
+			size := int(binary.LittleEndian.Uint32(data[offset : offset+4]))
+			offset += 4
+			if size < 1 || offset+size > len(data) {
+				return nil, fmt.Errorf("ZGFX multipart segment truncated")
+			}
+			part, err := d.decodeSegment(data[offset : offset+size])
+			if err != nil {
+				return nil, err
+			}
+			offset += size
+			out = append(out, part...)
+		}
+		if offset != len(data) || len(out) != expected {
+			return nil, fmt.Errorf("ZGFX multipart length mismatch: expected=%d actual=%d trailing=%d", expected, len(out), len(data)-offset)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("unknown ZGFX descriptor 0x%02x", data[0])
+	}
+}
 
 type zgfxContext struct {
 	history    []byte

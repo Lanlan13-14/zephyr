@@ -11,8 +11,8 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260712-worker-gpu-scheduler1';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260712-worker-gpu-scheduler1';
+import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260712-freerdp-gfx-complete1';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260712-freerdp-gfx-complete1';
 import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260710-touch-input2';
 import {
     subscribeAgentEvents,
@@ -90,6 +90,7 @@ let connectWatchdogTimer = null;
 let lastConnectStage = 'idle';
 let lastConnectError = '';
 let connectionFailureReported = false;
+let activeConnectionId = '';
 const CONNECT_TIMEOUT_MS = 12000;
 
 /* Quality/FPS — kept for UI compat; WASM grdp doesn't need these */
@@ -130,6 +131,19 @@ window._rdpRenderDiag = () => JSON.stringify(snapshotRdpDiagnostics());
  * WASM → JS CALLBACKS (called by Go code)
  * ═══════════════════════════════════════════════════════════════════════ */
 
+async function reportWorkerTelemetry(elapsedMs) {
+    if (!rdpWorkerBridge) return null;
+    const diag = await rdpWorkerBridge.call('rdpGetWorkerDiagnostics', []);
+    fetch('/api/rdp/telemetry', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionId: activeConnectionId, elapsedMs, ...diag }),
+        keepalive: true,
+    }).catch(() => {});
+    return diag;
+}
+
 /* Called by Go when RDP session is ready */
 window.rdpOnReady = function () {
     clearConnectWatchdog();
@@ -142,6 +156,10 @@ window.rdpOnReady = function () {
     notifyParentStatus('connected');
     if (rdpCanvas) rdpCanvas.focus();
     if (rdpAgentStorageEnabled) syncAgentDrives({ enabled: true });
+    for (const elapsedMs of [1000, 3000, 8000, 15000]) {
+        setTimeout(() => reportWorkerTelemetry(elapsedMs).catch(() => {}), elapsedMs);
+    }
+
     setTimeout(async () => {
         if (!connected || !rdpWorkerBridge) return;
         try {
@@ -172,14 +190,24 @@ window.rdpOnReady = function () {
     }, 3000);
 };
 
+function reportRdpEvent(kind, detail = {}) {
+    fetch('/api/rdp/telemetry', {
+        method: 'POST', credentials: 'same-origin', keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionId: activeConnectionId, kind, stage: lastConnectStage, ...detail }),
+    }).catch(() => {});
+}
+
 /* Called by Go while establishing the RDP transport and protocol session. */
 window.rdpOnStage = function (stage) {
     lastConnectStage = String(stage || 'unknown');
     console.info('[rdp-stage]', lastConnectStage);
+    reportRdpEvent('stage', { value: lastConnectStage });
 };
 
 window.rdpOnProtocolMilestone = function (event) {
     console.info('[rdp-protocol]', event);
+    reportRdpEvent('protocol', { value: String(event || '') });
 };
 
 /* Called by Go on error */
@@ -187,6 +215,7 @@ window.rdpOnError = function (msg) {
     connectionFailureReported = true;
     lastConnectError = String(msg || 'unknown error');
     console.warn('[rdp-wasm] error:', lastConnectError);
+    reportRdpEvent('error', { value: lastConnectError });
     rdpHaptic('error');
     clearConnectWatchdog();
     stopAgentDriveBridge();
@@ -205,6 +234,7 @@ window.rdpOnError = function (msg) {
 /* Called by Go on connection close */
 window.rdpOnClose = function () {
     console.info('[rdp-wasm] connection closed', { stage: lastConnectStage, failureReported: connectionFailureReported });
+    reportRdpEvent('close', { failureReported: connectionFailureReported });
     clearConnectWatchdog();
     stopAgentDriveBridge();
     const wasConnected = connected;
@@ -838,6 +868,7 @@ async function connect() {
 
     /* Fetch credentials from server (password never stored on client) */
     const connectionId = params.connectionId || urlParams.get('connectionId') || '';
+    activeConnectionId = connectionId;
     let host, port, domain, user, password;
     let rdpSoundMode = 'local';
     rdpClipboardEnabled = true;
@@ -917,6 +948,7 @@ async function connect() {
     }
 
     lastConnectStage = 'page-connect-started';
+    reportRdpEvent('connect-start', { host, port });
     lastConnectError = '';
     connectionFailureReported = false;
     setStatus('connecting', '正在连接 RDP...');
@@ -2403,19 +2435,17 @@ window.addEventListener('message', (e) => {
     try {
         const missing = [];
         if (!globalThis.isSecureContext) missing.push('INSECURE_CONTEXT');
-        if (!globalThis.crossOriginIsolated) missing.push('CROSS_ORIGIN_ISOLATION_UNAVAILABLE');
-        if (typeof SharedArrayBuffer === 'undefined') missing.push('SHARED_ARRAY_BUFFER_UNAVAILABLE');
         if (typeof Worker === 'undefined') missing.push('MODULE_WORKER_UNAVAILABLE');
         if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
         if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
 
-        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260712-worker-gpu-scheduler1' });
+        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260712-freerdp-gfx-complete1' });
         rdpDiag.workerProbe = probe;
         if (!probe.supported) {
             throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
         }
 
-        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260712-worker-gpu-scheduler1', { type: 'module' }));
+        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260712-freerdp-gfx-complete1', { type: 'module' }));
         rdpWorkerBridge.installGlobals(window);
         rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
         const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });

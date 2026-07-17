@@ -213,20 +213,25 @@ type ChannelClient struct {
 	t ChannelTransport
 }
 
+type channelReassembly struct {
+	buf      bytes.Buffer
+	expected uint32
+}
+
 type Channels struct {
 	emission.Emitter
 	channels      map[string]ChannelClient
 	transport     core.Transport
-	buff          *bytes.Buffer
+	reassembly    map[string]*channelReassembly
 	channelSender core.ChannelSender
 }
 
 func NewChannels(t core.Transport) *Channels {
 	c := &Channels{
-		Emitter:   *emission.NewEmitter(),
-		channels:  make(map[string]ChannelClient, 20),
-		transport: t,
-		buff:      &bytes.Buffer{},
+		Emitter:    *emission.NewEmitter(),
+		channels:   make(map[string]ChannelClient, 20),
+		transport:  t,
+		reassembly: make(map[string]*channelReassembly, 20),
 	}
 	t.On("channel", c.process)
 	return c
@@ -290,19 +295,46 @@ func (c *Channels) process(channel string, s []byte) {
 	if len(s) < 8 {
 		return
 	}
-	// Parse 8-byte header directly: totalLen(4) + flags(4)
-	flags := uint32(s[4]) | uint32(s[5])<<8 | uint32(s[6])<<16 | uint32(s[7])<<24
+	// Parse 8-byte CHANNEL_PDU_HEADER: totalLength(4) + flags(4).
+	totalLength := binary.LittleEndian.Uint32(s[0:4])
+	flags := binary.LittleEndian.Uint32(s[4:8])
 	payload := s[8:]
-	if flags&CHANNEL_FLAG_FIRST == 0 || flags&CHANNEL_FLAG_LAST == 0 {
-		if flags&CHANNEL_FLAG_FIRST != 0 {
-			c.buff.Reset()
-		}
-		c.buff.Write(payload)
-		if flags&CHANNEL_FLAG_LAST == 0 {
+	first := flags&CHANNEL_FLAG_FIRST != 0
+	last := flags&CHANNEL_FLAG_LAST != 0
+
+	if first && last {
+		if uint32(len(payload)) != totalLength {
+			slog.Warn("channel single-fragment length mismatch", "channel", channel, "expected", totalLength, "actual", len(payload))
 			return
 		}
-		cli.t.Process(c.buff.Bytes())
-	} else {
 		cli.t.Process(payload)
+		return
 	}
+
+	state, ok := c.reassembly[channel]
+	if !ok {
+		state = &channelReassembly{}
+		c.reassembly[channel] = state
+	}
+	if first {
+		state.buf.Reset()
+		state.expected = totalLength
+	} else if state.expected == 0 {
+		slog.Warn("channel continuation without FIRST", "channel", channel)
+		return
+	}
+	state.buf.Write(payload)
+	if !last {
+		return
+	}
+	if uint32(state.buf.Len()) != state.expected {
+		slog.Warn("channel reassembly length mismatch", "channel", channel, "expected", state.expected, "actual", state.buf.Len())
+		state.buf.Reset()
+		state.expected = 0
+		return
+	}
+	assembled := append([]byte(nil), state.buf.Bytes()...)
+	state.buf.Reset()
+	state.expected = 0
+	cli.t.Process(assembled)
 }
