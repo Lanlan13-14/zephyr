@@ -1428,7 +1428,7 @@ function setClipboardHint(text, level = 'info') {
 function updateInfo() {
     const name = params.name || params.host || 'RDP';
     const port = params.port || 3389;
-    if (connInfo) connInfo.textContent = `${name} · WASM/grdp · ${params.host || ''}:${port}`;
+    if (connInfo) connInfo.textContent = `${name} · WASM/grdp · ${params.host || ''}:${port} · build 20260717-orientation-fix1`;
 }
 
 function escapeHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
