@@ -66,7 +66,6 @@ const (
 	codecPlanar       uint16 = 0x0004
 	codecClear        uint16 = 0x0008
 	codecProgressive  uint16 = 0x0009
-	codecClear        uint16 = 0x0008
 	codecAVC420       uint16 = 0x000B
 	codecAVC444       uint16 = 0x000E
 	codecAVC444v2     uint16 = 0x000F
