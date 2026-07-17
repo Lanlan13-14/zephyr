@@ -1,12 +1,12 @@
 # Zephyr RDP WASM GPU 管线 - 现状
 
-> 最后更新：2026-07-17（花屏修复后）
-> 当前提交：`cedac0a` (main)
+> 最后更新：2026-07-17（第三次修复后）
+> 当前提交：`17032e0` (main)
+> 部署版本：`orientation-fix-r3`
 > 基线版本：v1.1.447（稳定，RDP 可用）
 >
 > ⚠️ 本文档 2026-07-17 早先版本中的多项"PASS/✅"结论未经真实验证
 > （浏览器冒烟只断言像素数量而非像素值；Go 测试在 main 上根本无法编译）。
-> 本版本只记录已在真实 Windows 会话中眼见为实的结果。
 
 ---
 
@@ -77,7 +77,7 @@ WebGL2 surface compositor + Dedicated Worker + OffscreenCanvas。
 | 画面 | ✅ 有画面 |
 | 残留 | chansrv 僵尸进程导致 16 秒会话终止 |
 
-### 3.2 Windows RDP（commit `cedac0a`，真实会话眼见为实）
+### 3.2 Windows RDP（当前状态：花屏，仅在特定 GPU 驱动上复现）
 
 | 项目 | 状态 |
 |------|------|
@@ -86,25 +86,29 @@ WebGL2 surface compositor + Dedicated Worker + OffscreenCanvas。
 | MCS / DVC / RDPGFX 建链 | ✅ |
 | CAPS_ADVERTISE / CAPS_CONFIRM | ✅ |
 | ClearCodec 解码 | ✅ 像素正确（双实现验证） |
-| 画面方向 | ✅ 任务栏在底部、图标左上、文字端正 |
-| 画面内容 | ✅ 壁纸/图标/任务栏正确，无重复图块 |
+| 画面方向 | ✅ 修复已推（见根因 1） |
+| 画面内容 | ❌ Adreno 750 / ANGLE OpenGL ES 上仍花屏 |
+| 画面内容 | ✅ WebKit WebGL / 桌面 Chrome 上正常 |
 | AVC420/AVC444 | 未出现（Windows 当前只发 ClearCodec） |
-| 稳定性 | ⚠️ 观察到偶发 websocket-close:1006 / 对端 ECONNRESET，待查 |
+| 稳定性 | ⚠️ 偶发 websocket-close:1006 / 对端 ECONNRESET |
 
-修复的根因（三个独立缺陷叠加成"花屏"）：
+**桌面 Chrome（WebKit WebGL）**和**Android Chrome（Adreno 750 / ANGLE OpenGL ES）**在
+同一份代码、同一台服务器、同一个 Windows 目标上呈现不同结果：桌面正常，手机花屏。
+这排除了协议层和缓存问题（build marker 已在状态栏可见，确认手机跑的是新代码）。
+根因高度指向 ANGLE→OpenGL ES 翻译层对 WebGL2 特定 API 的行为差异。
+
+已修复的根因（三个独立缺陷，修复后桌面端正常）：
 
 1. **JS 合成器 V 坐标约定错误**（`public/rdp-renderer.js` `_drawTexture`）：
-   v=0 被映射到 rect 顶边，而 Go 端发的是 bottom-up 行序，导致每个
-   ClearCodec 图块、cache 贴图、solid fill 都落在垂直镜像位置
-   （任务栏显示在屏幕顶部、壁纸区布满错位重复小图块）。现统一为
+   v=0 被映射到 rect 顶边，而 Go 端发的是 bottom-up 行序。现统一为
    GL 自然约定：纹理行 0 = 图像底行；VideoFrame（top-down 源）经
-   `topDownSource` 标志单独处理。
+   `topDownSource` 标志单独处理。FreeRDP 自己也在 GDI 路径用
+   `FREERDP_FLIP_VERTICAL` 做相同转换，约定一致。
 2. **ClearCodec 未写持久 surface**（`rdpgfx.go` WTS1 快速路径提前返回，
    未执行 `blitToSurface`）：SURFACE_TO_CACHE 从 surface 缓冲抓到的全
    是 0，CACHE_TO_SURFACE 把黑块/垃圾贴满屏幕。已改走正常 codec
-   switch（使用经过一致性验证的解码器并写 surface）。
-3. **main 分支 WASM 无法编译**（`codecClear` 常量重复声明）：上一个
-   提交引入，导致 2 号缺陷从未在可运行产物中被测试覆盖到。已删除。
+   switch。
+3. **main 分支 WASM 无法编译**（`codecClear` 常量重复声明）：已删除。
 
 浏览器冒烟门禁原先只断言像素**数量**，对上述回归完全无感；现已改为
 断言精确像素值（全屏/局部上传、cache 往返、solid fill 四个场景）。
@@ -113,13 +117,21 @@ WebGL2 surface compositor + Dedicated Worker + OffscreenCanvas。
 
 ## 4. 未解决问题
 
-### 4.1 重复小图块和阶梯错位 —— 已修复（见 3.2 根因 1/2/3）
+### 4.1 花屏（Android Adreno 750 / ANGLE OpenGL ES）—— 未解决，当前主要问题
 
-通过 560 条真实 cache 命令 trace（`/api/rdp/cache-trace`）+ 逐命令
-GPU 像素级最小复现（orientation/partial 两个 truth 页面）定位：
-不是 cache PDU 布局问题，也不是 GPU 读时机问题，而是 3.2 列出的
-三个独立缺陷的叠加。修复后真实会话逐区域（任务栏/图标/壁纸/文字）
-目检正确。
+- 桌面 Chrome（WebKit WebGL）和 Android Chrome（Adreno 750 / ANGLE OpenGL ES）
+  在同一份代码、同一服务器、同一 Windows 目标上结果不同：桌面正常，手机花屏
+- 已排除协议层、缓存、行序约定（FreeRDP 对照一致）
+- 根因高度指向 ANGLE→OpenGL ES 翻译层差异
+- 已知可疑点（Adreno 750 workarounds 清单）：
+  - `blitFramebuffer` 区域裁剪（`adjustSrcDstRegionForBlitFramebuffer` 在本设备上
+    未启用，但 blit 被大量用于 SURFACE_TO_CACHE 和 copySurface 实现）
+  - `use_copyteximage2d_instead_of_readpixels_on_multisampled_textures` 已启用
+  - `exit_on_context_lost` 已启用（GL 上下文丢失不恢复）
+  - `round_down_uniform_bind_buffer_range_size` 已启用
+  - `dont_invalidate_incomplete_fbos` 已启用
+- **下一步**：为 Adreno 设备添加 driver-specific 规避路径（替换 blitFramebuffer
+  为 render-to-texture + scissor 方案，或添加 ANGLE-specific 诊断页面）
 
 ### 4.2 其他未解决
 
@@ -127,10 +139,11 @@ GPU 像素级最小复现（orientation/partial 两个 truth 页面）定位：
 - ECDSA RDP 证书 + CredSSP pubKeyAuth 绑定未验证
 - Android WebView 兼容性未测试
 - 缺少端到端延迟/帧率/长时内存基线
+- **新增**：Adreno 750 / ANGLE OpenGL ES 花屏（见 4.1）
 
 ---
 
-## 5. 验证基线（cedac0a，本次全部实跑）
+## 5. 验证基线（commit `17032e0`，本次全部实跑）
 
 ### Go 测试（远程 Go 1.26 Docker）
 
@@ -146,13 +159,20 @@ plugin/rdpgfx:   PASS（实跑，含 WTS1 surface 写入与 cache 往返哈希�
 84/84 PASS (exit code 0，实跑)
 ```
 
-### 浏览器像素级冒烟（真实 WebGL2，断言精确像素值）
+### 浏览器像素级冒烟（桌面 WebKit WebGL，断言精确像素值）
 
 ```
 全屏上传方向:        PASS
 局部 rect 落点:      PASS
 cache 往返内容与落点: PASS
 solid fill 区域:     PASS
+```
+
+### 真实桌面 RDP 会话（commit `17032e0`，目检）
+
+```
+桌面 Chrome:    ✅ 壁纸/图标/任务栏/文字全部正确
+Android Chrome: ❌ 花屏（Adreno 750 / ANGLE OpenGL ES）
 ```
 
 ### ClearCodec 双实现差分
@@ -162,13 +182,6 @@ Go decoder vs 独立 Rust decoder
 8 个真实 Windows payload
 每包像素差异: 0
 总差异: 0
-```
-
-### GPU 门禁
-
-```
-四角方向 readPixels:     PASS
-Cache 往返方向 readPixels: PASS
 ```
 
 ### WASM / Docker
@@ -188,15 +201,16 @@ Docker build:                  PASS
 
 ### Phase 4：完整构建（完成）
 
-### Phase 5：真实 Windows 出画面（完成）
+### Phase 5：真实 Windows 出画面（部分完成）
 
 | Item | 状态 |
 |------|------|
 | RDPGFX 建链 | ✅ |
 | ClearCodec 解码 | ✅ |
 | 画面方向 | ✅ |
-| 画面内容正确 | ✅（cedac0a，真实会话目检） |
-| cache command 离线差分 | ✅（trace + 最小复现已定位根因） |
+| 画面内容正确（桌面 Chrome） | ✅ |
+| 画面内容正确（Android Chrome） | ❌ 花屏 |
+| cache command 离线差分 | ✅（trace + 最小复现已定位三个根因） |
 
 ### Phase 6：AVC420/AVC444（代码就绪，真实会话未触发）
 
@@ -213,4 +227,13 @@ Docker build:                  PASS
 | PDU 字段编码 | ✅ |
 | 真实时序 | ❌ |
 
-### Phase 8-9：错误恢复 / Android（未开始）
+### Phase 8：Android 兼容性（当前主要问题）
+
+| Item | 状态 |
+|------|------|
+| 桌面 Chrome 验证 | ✅ |
+| Android Chrome 验证 | ❌ 花屏（Adreno 750 / ANGLE OpenGL ES） |
+| 根因定位 | 高度指向 ANGLE→OpenGL ES 翻译层差异 |
+| 规避方案 | 待实施（替代 blitFramebuffer 或 Adreno 专用路径） |
+
+### Phase 9：错误恢复 / 长时稳定性（未开始）
