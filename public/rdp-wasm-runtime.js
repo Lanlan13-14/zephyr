@@ -1,4 +1,4 @@
-const DEFAULT_RUNTIME_URL = './vendor/rdp-wasm/wasm_exec.mjs?v=20260712-freerdp-gfx-complete1';
+const DEFAULT_RUNTIME_URL = './vendor/rdp-wasm/wasm_exec.mjs?v=20260717-orientation-fix1';
 
 export async function loadGoRuntime({ runtimeUrl = DEFAULT_RUNTIME_URL, importer = (url) => import(url), pipeline = 'unknown' } = {}) {
     let runtime;
@@ -15,7 +15,7 @@ export async function loadGoRuntime({ runtimeUrl = DEFAULT_RUNTIME_URL, importer
 }
 
 export async function instantiateGoWasm(GoRuntime, {
-    wasmUrl = './vendor/rdp-wasm/main.wasm?v=20260712-freerdp-gfx-complete1',
+    wasmUrl = './vendor/rdp-wasm/main.wasm?v=20260717-orientation-fix1',
     fetchImpl = globalThis.fetch,
     pipeline = 'unknown',
 } = {}) {
