@@ -17,20 +17,24 @@ export const RDP_RENDER_EVENT = Object.freeze({
     CLASSIC_BITMAP: 16,
 });
 
+// Texture coordinates must be highp: mediump varyings are fp16 on real
+// OpenGL ES hardware (Adreno/Mali), which is below single-texel precision
+// for 1080p+ textures and causes mis-sampled NEAREST texels. Desktop ANGLE
+// backends promote mediump to highp, which hides the bug there.
 const VERTEX_SHADER = `#version 300 es
 in vec2 a_position;
 in vec2 a_texCoord;
-out vec2 v_texCoord;
+out highp vec2 v_texCoord;
 void main() { v_texCoord = a_texCoord; gl_Position = vec4(a_position, 0.0, 1.0); }`;
 const FRAGMENT_RGBA = `#version 300 es
-precision mediump float;
-in vec2 v_texCoord;
+precision highp float;
+in highp vec2 v_texCoord;
 uniform sampler2D u_texture;
 out vec4 outColor;
 void main() { outColor = texture(u_texture, v_texCoord); }`;
 const FRAGMENT_BGRA = `#version 300 es
-precision mediump float;
-in vec2 v_texCoord;
+precision highp float;
+in highp vec2 v_texCoord;
 uniform sampler2D u_texture;
 out vec4 outColor;
 void main() { vec4 c = texture(u_texture, v_texCoord); outColor = vec4(c.b, c.g, c.r, 1.0); }`;
@@ -125,6 +129,12 @@ export class RdpGpuSurfaceCompositor {
         this.stagingTexture = this._newTexture(1, 1);
         this.stagingWidth = 1;
         this.stagingHeight = 1;
+        // Scratch texture for same-surface copies; created lazily by
+        // _ensureScratch. Null it here so a context restore recreates it.
+        this.scratchTexture = null;
+        this.scratchFramebuffer = null;
+        this.scratchWidth = 0;
+        this.scratchHeight = 0;
         gl.disable(gl.BLEND);
         gl.disable(gl.DEPTH_TEST);
         gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
@@ -194,9 +204,18 @@ export class RdpGpuSurfaceCompositor {
         const entry = { slot: Number(slot), width: clipped.width, height: clipped.height, texture: this._newTexture(clipped.width, clipped.height), framebuffer: gl.createFramebuffer() };
         gl.bindFramebuffer(gl.FRAMEBUFFER, entry.framebuffer);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, entry.texture, 0);
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, source.framebuffer);
-        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, entry.framebuffer);
-        gl.blitFramebuffer(clipped.left, source.height - clipped.bottom, clipped.right, source.height - clipped.top, 0, 0, clipped.width, clipped.height, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+        if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error(`cache slot ${slot} framebuffer incomplete`);
+        // Copy via an ordinary shader draw, never blitFramebuffer:
+        // blitFramebuffer behavior varies across ANGLE backends and mobile
+        // drivers (silently dropped same-FBO blits observed on Adreno),
+        // while a textured draw is well-defined everywhere. The UV window
+        // keeps the GL-natural convention (texture row 0 = image bottom row).
+        this._drawTexture(source.texture, entry.framebuffer, clipped.width, clipped.height, { left: 0, top: 0, right: clipped.width, bottom: clipped.height, width: clipped.width, height: clipped.height }, this.rgbaProgram, {
+            u0: clipped.left / source.width,
+            v0: (source.height - clipped.bottom) / source.height,
+            u1: clipped.right / source.width,
+            v1: (source.height - clipped.top) / source.height,
+        });
         this.cacheEntries.set(entry.slot, entry);
     }
 
@@ -243,7 +262,7 @@ export class RdpGpuSurfaceCompositor {
         const gl = this.gl;
         gl.bindTexture(gl.TEXTURE_2D, this.stagingTexture);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, clipped.width, clipped.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-        this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, clipped, bgra ? this.bgraProgram : this.rgbaProgram);
+        this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, clipped, bgra ? this.bgraProgram : this.rgbaProgram, { u0: 0, v0: 0, u1: clipped.width / this.stagingWidth, v1: clipped.height / this.stagingHeight });
         this.dirty = true;
     }
 
@@ -257,7 +276,9 @@ export class RdpGpuSurfaceCompositor {
         const gl = this.gl;
         gl.bindTexture(gl.TEXTURE_2D, this.stagingTexture);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, frame);
-        this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, clipped, this.rgbaProgram, { sourceWidth, sourceHeight }, true);
+        // VideoFrame sources are top-down: sample from vMax at the rect's
+        // bottom edge down to 0 at its top edge.
+        this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, clipped, this.rgbaProgram, { u0: 0, v0: sourceHeight / this.stagingHeight, u1: sourceWidth / this.stagingWidth, v1: 0 });
         this.dirty = true;
     }
 
@@ -278,11 +299,40 @@ export class RdpGpuSurfaceCompositor {
     }
 
     copySurface(srcId, dstId, srcRect, dstX, dstY) {
-        const gl = this.gl, src = this._requireSurface(srcId), dst = this._requireSurface(dstId);
-        const rect = clampRect(srcRect, src.width, src.height);
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, src.framebuffer);
-        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dst.framebuffer);
-        gl.blitFramebuffer(rect.left, src.height - rect.bottom, rect.right, src.height - rect.top, Number(dstX), dst.height - Number(dstY) - rect.height, Number(dstX) + rect.width, dst.height - Number(dstY), gl.COLOR_BUFFER_BIT, gl.NEAREST);
+        const src = this._requireSurface(srcId), dst = this._requireSurface(dstId);
+        const s = clampRect(srcRect, src.width, src.height);
+        if (!s.width || !s.height) return;
+        // Clip the destination against the target surface, shifting the
+        // source window by the same delta (1:1 copy). Real servers can send
+        // negative or overflowing destinations; the previous blit path handed
+        // those to the driver unclipped, which is driver-dependent.
+        let dx = Math.trunc(Number(dstX) || 0), dy = Math.trunc(Number(dstY) || 0);
+        let sx = s.left, sy = s.top, w = s.width, h = s.height;
+        if (dx < 0) { sx -= dx; w += dx; dx = 0; }
+        if (dy < 0) { sy -= dy; h += dy; dy = 0; }
+        if (dx + w > dst.width) w = dst.width - dx;
+        if (dy + h > dst.height) h = dst.height - dy;
+        if (w <= 0 || h <= 0) return;
+        const dstRect = { left: dx, top: dy, right: dx + w, bottom: dy + h, width: w, height: h };
+        const uv = {
+            u0: sx / src.width,
+            v0: (src.height - (sy + h)) / src.height,
+            u1: (sx + w) / src.width,
+            v1: (src.height - sy) / src.height,
+        };
+        if (src === dst) {
+            // Same-surface copy. Sampling a texture attached to the current
+            // draw framebuffer is a feedback loop (undefined behavior), and
+            // same-FBO blitFramebuffer is silently dropped on Adreno/ANGLE
+            // (verified on Adreno 750: dst keeps stale content -> mosaic).
+            // Route through a scratch texture with two plain draws, which is
+            // legal and deterministic on every WebGL2 implementation.
+            this._ensureScratch(w, h);
+            this._drawTexture(src.texture, this.scratchFramebuffer, w, h, { left: 0, top: 0, right: w, bottom: h, width: w, height: h }, this.rgbaProgram, uv);
+            this._drawTexture(this.scratchTexture, dst.framebuffer, dst.width, dst.height, dstRect, this.rgbaProgram, { u0: 0, v0: 0, u1: w / this.scratchWidth, v1: h / this.scratchHeight });
+        } else {
+            this._drawTexture(src.texture, dst.framebuffer, dst.width, dst.height, dstRect, this.rgbaProgram, uv);
+        }
         this.dirty = true;
     }
 
@@ -384,34 +434,56 @@ export class RdpGpuSurfaceCompositor {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.stagingWidth, this.stagingHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     }
 
+    // Scratch texture backing same-surface copies (see copySurface). Grow-only
+    // like the staging texture; recreated lazily after a context loss.
+    _ensureScratch(width, height) {
+        const gl = this.gl;
+        if (!this.scratchTexture) {
+            this.scratchTexture = this._newTexture(1, 1);
+            this.scratchFramebuffer = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, this.scratchFramebuffer);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.scratchTexture, 0);
+            this.scratchWidth = 1;
+            this.scratchHeight = 1;
+        }
+        if (width <= this.scratchWidth && height <= this.scratchHeight) return;
+        this.scratchWidth = Math.max(width, this.scratchWidth);
+        this.scratchHeight = Math.max(height, this.scratchHeight);
+        gl.bindTexture(gl.TEXTURE_2D, this.scratchTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.scratchWidth, this.scratchHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    }
+
     // Texture storage convention: row 0 of every surface/cache texture is the
     // BOTTOM row of the image (GL-natural, matches the bottom-up BGRA rows the
     // Go WASM side emits). Protocol rects are top-down (top<bottom); the V
     // mapping below places texel row 0 at the rect's bottom edge so image
-    // content lands at texture rows [height-bottom, height-top]. Sources that
-    // are already top-down (VideoFrame) pass topDownSource=true to sample the
-    // same texture orientation instead.
-    _drawTexture(texture, framebuffer, targetWidth, targetHeight, rect, program, sourceSize = null, topDownSource = false) {
+    // content lands at texture rows [height-bottom, height-top].
+    //
+    // uv = {u0, v0, u1, v1} selects the sampled window explicitly:
+    // u0/v0 attach to the rect's left/bottom edges, u1/v1 to right/top.
+    // Defaults sample the whole texture in GL-natural orientation. Callers
+    // pass fractional windows for oversized staging/scratch textures and
+    // sub-rect windows for surface-to-surface and surface-to-cache copies.
+    // (Copy operations intentionally never use blitFramebuffer: its behavior
+    // diverges across ANGLE backends and mobile drivers — same-FBO blits are
+    // silently dropped on Adreno — while a textured draw is well-defined
+    // everywhere WebGL2 exists.)
+    _drawTexture(texture, framebuffer, targetWidth, targetHeight, rect, program, uv = null) {
         const gl = this.gl;
         gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
         gl.viewport(0, 0, targetWidth, targetHeight);
         gl.useProgram(program);
-        const effectiveWidth = sourceSize?.sourceWidth || rect.width;
-        const effectiveHeight = sourceSize?.sourceHeight || rect.height;
-        const uMax = texture === this.stagingTexture ? effectiveWidth / this.stagingWidth : 1;
-        const vMax = texture === this.stagingTexture ? effectiveHeight / this.stagingHeight : 1;
+        const u0 = uv?.u0 ?? 0, v0 = uv?.v0 ?? 0, u1 = uv?.u1 ?? 1, v1 = uv?.v1 ?? 1;
         const left = -1 + (2 * rect.left) / targetWidth;
         const right = -1 + (2 * rect.right) / targetWidth;
         const top = 1 - (2 * rect.top) / targetHeight;
         const bottom = 1 - (2 * rect.bottom) / targetHeight;
-        const vAtBottom = topDownSource ? vMax : 0;
-        const vAtTop = topDownSource ? 0 : vMax;
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-            left, bottom, 0, vAtBottom,
-            right, bottom, uMax, vAtBottom,
-            left, top, 0, vAtTop,
-            right, top, uMax, vAtTop,
+            left, bottom, u0, v0,
+            right, bottom, u1, v0,
+            left, top, u0, v1,
+            right, top, u1, v1,
         ]), gl.DYNAMIC_DRAW);
         const position = gl.getAttribLocation(program, 'a_position');
         const texCoord = gl.getAttribLocation(program, 'a_texCoord');
@@ -452,8 +524,12 @@ export class RdpGpuSurfaceCompositor {
             if (this.bgraProgram) gl.deleteProgram(this.bgraProgram);
             if (this.vertexBuffer) gl.deleteBuffer(this.vertexBuffer);
             if (this.stagingTexture) gl.deleteTexture(this.stagingTexture);
+            if (this.scratchTexture) gl.deleteTexture(this.scratchTexture);
+            if (this.scratchFramebuffer) gl.deleteFramebuffer(this.scratchFramebuffer);
         }
         this.rgbaProgram = this.bgraProgram = this.vertexBuffer = this.stagingTexture = null;
+        this.scratchTexture = this.scratchFramebuffer = null;
+        this.scratchWidth = this.scratchHeight = 0;
         this.canvas.removeEventListener?.('webglcontextlost', this._onContextLost);
         this.canvas.removeEventListener?.('webglcontextrestored', this._onContextRestored);
     }

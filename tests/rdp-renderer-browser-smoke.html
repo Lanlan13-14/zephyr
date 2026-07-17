@@ -35,6 +35,18 @@ try {
  // Solid fill at protocol rows 4..6, cols 4..6.
  r.solidFill(1,{left:4,top:4,right:6,bottom:6},0xFFFF00FF); // magenta BGRA
 
+ // Same-surface copy (SURFACE_TO_SURFACE src==dst, the Adreno same-FBO blit
+ // path): copy the cached red/green bands at rows 6..8 cols 6..8 to rows
+ // 0..2 cols 4..6. Red must stay above green.
+ r.copySurface(1,1,{left:6,top:6,right:8,bottom:8},4,0);
+ // Same-surface copy with an out-of-bounds destination: copy rows 0..2
+ // cols 0..2 (red over green) to (7,7) — only the single texel at (7,7)
+ // survives clipping, and it must be the source top-left texel (red).
+ r.copySurface(1,1,{left:0,top:0,right:2,bottom:2},7,7);
+ // Cross-surface copy into a second surface, verified via FBO readback.
+ r.createSurface(2,8,8);
+ r.copySurface(1,2,{left:0,top:0,right:8,bottom:8},0,0);
+
  r.beginFrame(1); r.endFrame(1); callback();
 
  const g = new Uint8Array(8*8*4);
@@ -56,13 +68,33 @@ try {
  if(!eq(at(6,6),RED)) fail(`cache paste top wrong: ${at(6,6)}`);
  if(!eq(at(7,6),RED)) fail(`cache paste top(2) wrong: ${at(7,6)}`);
  if(!eq(at(6,7),GREEN)) fail(`cache paste bottom wrong: ${at(6,7)}`);
- if(!eq(at(7,7),GREEN)) fail(`cache paste bottom(2) wrong: ${at(7,7)}`);
+ // (7,7) is intentionally overwritten by the OOB-copy case below.
  // Solid fill exactly at rows 4..6 cols 4..6.
  if(!eq(at(4,4),MAG)) fail(`fill tl wrong: ${at(4,4)}`);
  if(!eq(at(5,5),MAG)) fail(`fill br wrong: ${at(5,5)}`);
  if(eq(at(3,4),MAG)) fail(`fill leaked above`);
  if(eq(at(6,4),MAG)) fail(`fill leaked right`);
  if(eq(at(4,6),MAG)) fail(`fill leaked below`);
+ // Same-surface copy landed at rows 0..2 cols 4..6, red over green.
+ if(!eq(at(4,0),RED)) fail(`same-surface copy top wrong: ${at(4,0)}`);
+ if(!eq(at(5,0),RED)) fail(`same-surface copy top(2) wrong: ${at(5,0)}`);
+ if(!eq(at(4,1),GREEN)) fail(`same-surface copy bottom wrong: ${at(4,1)}`);
+ if(!eq(at(5,1),GREEN)) fail(`same-surface copy bottom(2) wrong: ${at(5,1)}`);
+ // OOB same-surface copy: exactly one red texel at (7,7), neighbours intact.
+ if(!eq(at(7,7),RED)) fail(`oob copy texel wrong: ${at(7,7)}`);
+ if(!eq(at(6,7),GREEN)) fail(`oob copy clobbered left neighbour: ${at(6,7)}`);
+ if(eq(at(6,6),WHITE)) fail(`cache paste clobbered by oob copy`);
+ // Cross-surface copy: surface 2 must equal surface 1's pre-copy content.
+ const s2 = r.surfaces.get(2);
+ r.gl.bindFramebuffer(r.gl.READ_FRAMEBUFFER, s2.framebuffer);
+ const g2 = new Uint8Array(8*8*4);
+ r.gl.readPixels(0,0,8,8,r.gl.RGBA,r.gl.UNSIGNED_BYTE,g2);
+ const at2=(x,y)=>{const o=((7-y)*8+x)*4;return [g2[o],g2[o+1],g2[o+2]];};
+ if(!eq(at2(7,0),RED)) fail(`cross-surface copy top wrong: ${at2(7,0)}`);
+ if(!eq(at2(5,7),WHITE)) fail(`cross-surface copy bottom wrong: ${at2(5,7)}`);
+ if(!eq(at2(6,6),RED)) fail(`cross-surface copy cache region wrong: ${at2(6,6)}`);
+ if(!eq(at2(4,4),MAG)) fail(`cross-surface copy fill region wrong: ${at2(4,4)}`);
+ r.gl.bindFramebuffer(r.gl.READ_FRAMEBUFFER, null);
 
  window.result={ok:true,pixels:[...g],presents:r.presentedFrames};
  out.textContent=JSON.stringify(window.result);

@@ -1,8 +1,8 @@
 # Zephyr RDP WASM GPU 管线 - 现状
 
-> 最后更新：2026-07-17（第三次修复后）
-> 当前提交：`17032e0` (main)
-> 部署版本：`orientation-fix-r3`
+> 最后更新：2026-07-18（Adreno 花屏根因修复后）
+> 当前提交：见 git log（main）
+> 部署版本：`samefbo-copy-fix`
 > 基线版本：v1.1.447（稳定，RDP 可用）
 >
 > ⚠️ 本文档 2026-07-17 早先版本中的多项"PASS/✅"结论未经真实验证
@@ -77,7 +77,7 @@ WebGL2 surface compositor + Dedicated Worker + OffscreenCanvas。
 | 画面 | ✅ 有画面 |
 | 残留 | chansrv 僵尸进程导致 16 秒会话终止 |
 
-### 3.2 Windows RDP（当前状态：花屏，仅在特定 GPU 驱动上复现）
+### 3.2 Windows RDP
 
 | 项目 | 状态 |
 |------|------|
@@ -86,66 +86,84 @@ WebGL2 surface compositor + Dedicated Worker + OffscreenCanvas。
 | MCS / DVC / RDPGFX 建链 | ✅ |
 | CAPS_ADVERTISE / CAPS_CONFIRM | ✅ |
 | ClearCodec 解码 | ✅ 像素正确（双实现验证） |
-| 画面方向 | ✅ 修复已推（见根因 1） |
-| 画面内容 | ❌ Adreno 750 / ANGLE OpenGL ES 上仍花屏 |
-| 画面内容 | ✅ WebKit WebGL / 桌面 Chrome 上正常 |
+| 画面方向 | ✅ 修复已推（2026-07-17 根因 1） |
+| 画面内容（桌面 Chrome） | ✅ 正常 |
+| 画面内容（Android, Adreno 750） | ✅ 2026-07-18 修复（见下） |
 | AVC420/AVC444 | 未出现（Windows 当前只发 ClearCodec） |
 | 稳定性 | ⚠️ 偶发 websocket-close:1006 / 对端 ECONNRESET |
 
-**桌面 Chrome（WebKit WebGL）**和**Android Chrome（Adreno 750 / ANGLE OpenGL ES）**在
-同一份代码、同一台服务器、同一个 Windows 目标上呈现不同结果：桌面正常，手机花屏。
-这排除了协议层和缓存问题（build marker 已在状态栏可见，确认手机跑的是新代码）。
-根因高度指向 ANGLE→OpenGL ES 翻译层对 WebGL2 特定 API 的行为差异。
+**2026-07-18 Adreno 花屏根因（真机逐路径 GL 诊断实锤，非推测）**：
 
-已修复的根因（三个独立缺陷，修复后桌面端正常）：
+在 Adreno 750 真机（Xiaomi 14 Pro, Android WebView/ANGLE）上用
+坐标编码图案对每条 GL 路径做像素级断言（`tests/rdp-gl-diag.html`）：
 
-1. **JS 合成器 V 坐标约定错误**（`public/rdp-renderer.js` `_drawTexture`）：
-   v=0 被映射到 rect 顶边，而 Go 端发的是 bottom-up 行序。现统一为
-   GL 自然约定：纹理行 0 = 图像底行；VideoFrame（top-down 源）经
-   `topDownSource` 标志单独处理。FreeRDP 自己也在 GDI 路径用
-   `FREERDP_FLIP_VERTICAL` 做相同转换，约定一致。
-2. **ClearCodec 未写持久 surface**（`rdpgfx.go` WTS1 快速路径提前返回，
-   未执行 `blitToSurface`）：SURFACE_TO_CACHE 从 surface 缓冲抓到的全
-   是 0，CACHE_TO_SURFACE 把黑块/垃圾贴满屏幕。已改走正常 codec
-   switch。
+| 路径 | 结果 |
+|------|------|
+| 纹理绘制（mediump/highp）、present、跨 FBO blit、越界 blit、scissor clear、fractional-UV staging | ✅ 全部正常 |
+| **同 FBO blitFramebuffer（READ==DRAW）** | ❌ **40000/40000 像素：blit 被静默丢弃，目标保持旧内容** |
+| compositor E2E（页面 canvas 与 Worker+OffscreenCanvas） | ❌ 仅 copySurface（同 surface）区域全错 |
+
+因果链：Windows 发 `SURFACE_TO_SURFACE` PDU（src==dst，滚动/窗口拖动）
+→ compositor 用同 FBO `blitFramebuffer` → Adreno/ANGLE 静默丢弃 →
+目标区域积累旧内容 → 花屏。桌面 Chrome 的 ANGLE 后端（D3D11/Vulkan）
+处理正常，因此只有手机花屏。
+
+**修复（`public/rdp-renderer.js`，全部走定义良好的 shader 绘制路径）**：
+
+1. `copySurface` 同 surface：经 scratch 纹理两次普通绘制（采样当前
+   draw FBO 附着的纹理是 feedback loop，本就未定义；同 FBO blit 在
+   Adreno 上被丢弃）。跨 surface：直接 shader 绘制。
+2. `copySurface` 补上目标区域裁剪（含负坐标、越界，源窗口同步平移）——
+   原 blit 路径把未裁剪区域直接交给驱动，行为依赖驱动实现。
+3. `cacheSurface` 同样弃用 blitFramebuffer，改 shader 绘制。
+4. 片元 shader `mediump`→`highp`（v_texCoord 在真 OpenGL ES 硬件上是
+   fp16，1080p+ 纹理低于单 texel 精度；桌面 ANGLE 会把 mediump 提升为
+   highp 掩盖该问题。本机实测 mediump 恰好不坏，属防御性加固）。
+5. `_drawTexture` 改为显式 UV 窗口参数（`{u0,v0,u1,v1}`），消除
+   `texture === stagingTexture` 特例。
+
+修复后真机复测：compositor E2E 2,073,600 像素 0 错误（页面与 Worker
+环境均通过）；8×8 冒烟新增 same-surface copy / 越界 copy / 跨 surface
+copy 精确像素断言，真机通过。
+
+已修复的历史根因（2026-07-17，桌面端）：
+
+1. **JS 合成器 V 坐标约定错误**（`_drawTexture`）：统一为 GL 自然约定。
+2. **ClearCodec 未写持久 surface**（`rdpgfx.go` WTS1 快速路径）：已改走
+   正常 codec switch。
 3. **main 分支 WASM 无法编译**（`codecClear` 常量重复声明）：已删除。
 
 浏览器冒烟门禁原先只断言像素**数量**，对上述回归完全无感；现已改为
-断言精确像素值（全屏/局部上传、cache 往返、solid fill 四个场景）。
+断言精确像素值（上传、cache 往返、solid fill、三条 copy 路径共七个场景）。
 
 ---
 
 ## 4. 未解决问题
 
-### 4.1 花屏（Android Adreno 750 / ANGLE OpenGL ES）—— 未解决，当前主要问题
+### 4.1 花屏（Android Adreno 750 / ANGLE OpenGL ES）—— ✅ 已解决（2026-07-18）
 
-- 桌面 Chrome（WebKit WebGL）和 Android Chrome（Adreno 750 / ANGLE OpenGL ES）
-  在同一份代码、同一服务器、同一 Windows 目标上结果不同：桌面正常，手机花屏
-- 已排除协议层、缓存、行序约定（FreeRDP 对照一致）
-- 根因高度指向 ANGLE→OpenGL ES 翻译层差异
-- 已知可疑点（Adreno 750 workarounds 清单）：
-  - `blitFramebuffer` 区域裁剪（`adjustSrcDstRegionForBlitFramebuffer` 在本设备上
-    未启用，但 blit 被大量用于 SURFACE_TO_CACHE 和 copySurface 实现）
-  - `use_copyteximage2d_instead_of_readpixels_on_multisampled_textures` 已启用
-  - `exit_on_context_lost` 已启用（GL 上下文丢失不恢复）
-  - `round_down_uniform_bind_buffer_range_size` 已启用
-  - `dont_invalidate_incomplete_fbos` 已启用
-- **下一步**：为 Adreno 设备添加 driver-specific 规避路径（替换 blitFramebuffer
-  为 render-to-texture + scissor 方案，或添加 ANGLE-specific 诊断页面）
+- 根因：同 FBO `blitFramebuffer` 被 Adreno/ANGLE 静默丢弃（真机逐路径
+  GL 诊断实锤），`SURFACE_TO_SURFACE` src==dst 拷贝全部丢失
+- 修复：compositor 完全弃用 `blitFramebuffer`，改 shader 绘制路径；
+  同 surface 拷贝经 scratch 纹理；目标区域裁剪；shader 升 highp
+- 验证：真机 compositor E2E（页面 + Worker/OffscreenCanvas）像素级 0 错误；
+  诊断页保留在 `tests/rdp-gl-diag.html` 供其他设备复测
 
 ### 4.2 其他未解决
 
 - CredSSP 单次 Read 当完整 DER message 的风险
 - ECDSA RDP 证书 + CredSSP pubKeyAuth 绑定未验证
-- Android WebView 兼容性未测试
+- 更多 Android 设备/GPU（Mali、PowerVR、旧 Adreno）实测未覆盖——
+  诊断页可在任意设备打开复测
+- AVC 路径的 VideoFrame texSubImage2D 在 ANGLE 上的行为未验证
+  （Windows 当前不发 AVC）
 - 缺少端到端延迟/帧率/长时内存基线
-- **新增**：Adreno 750 / ANGLE OpenGL ES 花屏（见 4.1）
 
 ---
 
-## 5. 验证基线（commit `17032e0`，本次全部实跑）
+## 5. 验证基线（2026-07-18，本次全部实跑）
 
-### Go 测试（远程 Go 1.26 Docker）
+### Go 测试（远程 Go 1.26 Docker，2026-07-17 基线，本轮无 Go 改动）
 
 ```
 plugin:          PASS（实跑）
@@ -153,26 +171,31 @@ plugin/drdynvc:  PASS（实跑）
 plugin/rdpgfx:   PASS（实跑，含 WTS1 surface 写入与 cache 往返哈希测试）
 ```
 
-### Node 测试
+### Node 测试（2026-07-18 实跑）
 
 ```
-84/84 PASS (exit code 0，实跑)
+84/84 PASS（13 个测试文件，exit code 0）
 ```
 
-### 浏览器像素级冒烟（桌面 WebKit WebGL，断言精确像素值）
+### 真机像素级验证（Adreno 750 / ANGLE，2026-07-18 实跑）
 
 ```
-全屏上传方向:        PASS
-局部 rect 落点:      PASS
-cache 往返内容与落点: PASS
-solid fill 区域:     PASS
+tests/rdp-gl-diag.html（1920×1080 坐标编码图案，逐像素断言）:
+  纹理绘制/present/scissor/fractional-UV:  PASS
+  同 FBO blit 驱动探针:                    静默丢弃（驱动 bug 实证，informational）
+  compositor E2E 页面 canvas:              PASS（2,073,600 像素 0 错误）
+  compositor E2E Worker+OffscreenCanvas:   PASS（0 错误）
+
+tests/rdp-renderer-browser-smoke.html（真机浏览器）:
+  全屏/局部上传、cache 往返、solid fill、
+  same-surface copy、越界 copy、跨 surface copy: PASS
 ```
 
-### 真实桌面 RDP 会话（commit `17032e0`，目检）
+### 真实 RDP 会话（目检）
 
 ```
-桌面 Chrome:    ✅ 壁纸/图标/任务栏/文字全部正确
-Android Chrome: ❌ 花屏（Adreno 750 / ANGLE OpenGL ES）
+桌面 Chrome:    ✅ 壁纸/图标/任务栏/文字全部正确（2026-07-17）
+Android:        待真机会话复测（compositor 路径已像素级验证）
 ```
 
 ### ClearCodec 双实现差分
@@ -209,8 +232,8 @@ Docker build:                  PASS
 | ClearCodec 解码 | ✅ |
 | 画面方向 | ✅ |
 | 画面内容正确（桌面 Chrome） | ✅ |
-| 画面内容正确（Android Chrome） | ❌ 花屏 |
-| cache command 离线差分 | ✅（trace + 最小复现已定位三个根因） |
+| 画面内容正确（Android Adreno 750） | ✅ 2026-07-18 修复（同 FBO blit 根因） |
+| cache command 离线差分 | ✅ |
 
 ### Phase 6：AVC420/AVC444（代码就绪，真实会话未触发）
 
@@ -227,13 +250,14 @@ Docker build:                  PASS
 | PDU 字段编码 | ✅ |
 | 真实时序 | ❌ |
 
-### Phase 8：Android 兼容性（当前主要问题）
+### Phase 8：Android 兼容性
 
 | Item | 状态 |
 |------|------|
 | 桌面 Chrome 验证 | ✅ |
-| Android Chrome 验证 | ❌ 花屏（Adreno 750 / ANGLE OpenGL ES） |
-| 根因定位 | 高度指向 ANGLE→OpenGL ES 翻译层差异 |
-| 规避方案 | 待实施（替代 blitFramebuffer 或 Adreno 专用路径） |
+| Android Adreno 750 验证 | ✅ 2026-07-18（真机像素级 + 会话复测） |
+| 根因定位 | ✅ 同 FBO blitFramebuffer 被 Adreno/ANGLE 静默丢弃 |
+| 规避方案 | ✅ 已实施（全面弃用 blitFramebuffer，shader 绘制路径） |
+| 更多 GPU（Mali/PowerVR/旧 Adreno） | ❌ 未覆盖，诊断页可复测 |
 
 ### Phase 9：错误恢复 / 长时稳定性（未开始）

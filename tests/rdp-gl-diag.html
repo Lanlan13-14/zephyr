@@ -1,0 +1,334 @@
+<!doctype html><meta charset="utf-8"><title>RDP GL path diagnostics</title>
+<pre id="out">running</pre>
+<script type="module">
+// Self-contained GL path diagnostics for the RDP compositor.
+// Every GL primitive the compositor relies on is exercised at realistic
+// resolution with coordinate-encoded patterns, so single-texel sampling
+// errors and broken copies are detected and localized.
+// v2: corrected copy-verification (expected source origin), added
+// fractional-UV staging tests and a Worker/OffscreenCanvas E2E.
+import { RdpGpuSurfaceCompositor } from '../public/rdp-renderer.js';
+
+const out = document.getElementById('out');
+const W = 1920, H = 1080;
+const results = { ok: true, tests: {} };
+const record = (name, pass, detail = {}) => {
+  results.tests[name] = { pass, ...detail };
+  if (!pass) results.ok = false;
+};
+// Raw driver probes: document driver behavior but do not gate results.ok —
+// the compositor deliberately avoids blitFramebuffer entirely (T9/T10 are
+// the authoritative end-to-end criteria).
+const recordInfo = (name, pass, detail = {}) => {
+  results.tests[name] = { pass, informational: true, ...detail };
+};
+
+// encode (x,y): R = x&0xFF, G = y&0xFF, B = ((x>>8)&0xF)|(((y>>8)&0xF)<<4), A=255
+const makePattern = (w, h) => {
+  const p = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const o = (y * w + x) * 4;
+    p[o] = x & 0xFF; p[o + 1] = y & 0xFF;
+    p[o + 2] = ((x >> 8) & 0xF) | (((y >> 8) & 0xF) << 4); p[o + 3] = 255;
+  }
+  return p;
+};
+const decodeXY = (buf, o) => [buf[o] | ((buf[o + 2] & 0xF) << 8), buf[o + 1] | ((buf[o + 2] >> 4) << 8)];
+// verify buf[(y0+y)*bufW + (x0+x)] == encode(srcX0+x, srcY0+y)
+const verifyBlock = (buf, bufW, x0, y0, w, h, srcX0, srcY0, maxReport = 5) => {
+  let bad = 0; const samples = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const o = ((y0 + y) * bufW + (x0 + x)) * 4;
+    const [dx, dy] = decodeXY(buf, o);
+    if (dx !== srcX0 + x || dy !== srcY0 + y || buf[o + 3] !== 255) {
+      bad++;
+      if (samples.length < maxReport) samples.push({ at: [x0 + x, y0 + y], got: [dx, dy, buf[o + 3]], exp: [srcX0 + x, srcY0 + y] });
+    }
+  }
+  return { bad, samples };
+};
+
+const VS = `#version 300 es
+in vec2 a_position; in vec2 a_texCoord; out vec2 v_texCoord;
+void main() { v_texCoord = a_texCoord; gl_Position = vec4(a_position, 0.0, 1.0); }`;
+const FS_MEDIUMP = `#version 300 es
+precision mediump float; in vec2 v_texCoord; uniform sampler2D u_texture; out vec4 outColor;
+void main() { outColor = texture(u_texture, v_texCoord); }`;
+const FS_HIGHP = `#version 300 es
+precision highp float; in vec2 v_texCoord; uniform sampler2D u_texture; out vec4 outColor;
+void main() { outColor = texture(u_texture, v_texCoord); }`;
+
+function makeProg(gl, fs) {
+  const mk = (t, s) => { const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh)); return sh; };
+  const p = gl.createProgram();
+  gl.attachShader(p, mk(gl.VERTEX_SHADER, VS)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+// draw tex (uv 0..uMax,0..vMax) into fb with the compositor's vertex layout
+function drawQuad(gl, prog, tex, fb, w, h, uMax = 1, vMax = 1) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.viewport(0, 0, w, h);
+  gl.useProgram(prog);
+  const vb = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1, -1, 0, 0, 1, -1, uMax, 0, -1, 1, 0, vMax, 1, 1, uMax, vMax,
+  ]), gl.STATIC_DRAW);
+  const pa = gl.getAttribLocation(prog, 'a_position'), ta = gl.getAttribLocation(prog, 'a_texCoord');
+  gl.enableVertexAttribArray(pa); gl.enableVertexAttribArray(ta);
+  gl.vertexAttribPointer(pa, 2, gl.FLOAT, false, 16, 0);
+  gl.vertexAttribPointer(ta, 2, gl.FLOAT, false, 16, 8);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.uniform1i(gl.getUniformLocation(prog, 'u_texture'), 0);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.deleteBuffer(vb);
+}
+function newTex(gl, w, h, data = null) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  return t;
+}
+function newFbo(gl, tex) {
+  const f = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  return f;
+}
+function readFb(gl, fb, w, h) {
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fb);
+  const b = new Uint8Array(w * h * 4);
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, b);
+  return b;
+}
+
+const main = async () => { try {
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  document.body.appendChild(canvas);
+  const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false, desynchronized: true, preserveDrawingBuffer: false });
+  if (!gl) throw new Error('no webgl2');
+
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const precM = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.MEDIUM_FLOAT);
+  const precH = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+  results.env = {
+    renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+    vendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR),
+    maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+    fragMediumpFloat: { precision: precM.precision, rangeMax: precM.rangeMax },
+    fragHighpFloat: { precision: precH.precision, rangeMax: precH.rangeMax },
+    userAgent: navigator.userAgent,
+    workerOffscreen: typeof OffscreenCanvas !== 'undefined',
+  };
+
+  const pattern = makePattern(W, H);
+  const texSrc = newTex(gl, W, H, pattern);
+  const progMed = makeProg(gl, FS_MEDIUMP);
+  const progHigh = makeProg(gl, FS_HIGHP);
+
+  // T1: offscreen draw, current mediump shader, full UV
+  {
+    const texDst = newTex(gl, W, H); const fb = newFbo(gl, texDst);
+    drawQuad(gl, progMed, texSrc, fb, W, H);
+    const buf = readFb(gl, fb, W, H);
+    const { bad, samples } = verifyBlock(buf, W, 0, 0, W, H, 0, 0);
+    record('T1_mediump_offscreen_draw', bad === 0, { mismatches: bad, samples });
+    gl.deleteFramebuffer(fb); gl.deleteTexture(texDst);
+  }
+
+  // T2: offscreen draw, highp, full UV
+  {
+    const texDst = newTex(gl, W, H); const fb = newFbo(gl, texDst);
+    drawQuad(gl, progHigh, texSrc, fb, W, H);
+    const buf = readFb(gl, fb, W, H);
+    const { bad, samples } = verifyBlock(buf, W, 0, 0, W, H, 0, 0);
+    record('T2_highp_offscreen_draw', bad === 0, { mismatches: bad, samples });
+    gl.deleteFramebuffer(fb); gl.deleteTexture(texDst);
+  }
+
+  // T3: present to default framebuffer, mediump
+  {
+    drawQuad(gl, progMed, texSrc, null, W, H);
+    const buf = readFb(gl, null, W, H);
+    const { bad, samples } = verifyBlock(buf, W, 0, 0, W, H, 0, 0);
+    record('T3_mediump_present_canvas', bad === 0, { mismatches: bad, samples });
+  }
+
+  // T4: cross-FBO blit in-bounds; dst must contain src sub-rect content
+  {
+    const texDst = newTex(gl, W, H); const fbDst = newFbo(gl, texDst);
+    const fbSrc = newFbo(gl, texSrc);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fbSrc);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, fbDst);
+    gl.blitFramebuffer(100, 100, 500, 300, 1000, 700, 1400, 900, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    const buf = readFb(gl, fbDst, W, H);
+    const { bad, samples } = verifyBlock(buf, W, 1000, 700, 400, 200, 100, 100);
+    recordInfo('T4_blit_cross_fbo', bad === 0, { mismatches: bad, samples });
+    gl.deleteFramebuffer(fbDst); gl.deleteTexture(texDst);
+  }
+
+  // T5: cross-FBO blit, dst partially out of bounds (spec: clipped)
+  {
+    const texDst = newTex(gl, W, H); const fbDst = newFbo(gl, texDst);
+    const fbSrc = newFbo(gl, texSrc);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbDst);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fbSrc);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, fbDst);
+    gl.blitFramebuffer(0, 0, 200, 200, W - 100, H - 100, W + 100, H + 100, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    const buf = readFb(gl, fbDst, W, H);
+    const { bad, samples } = verifyBlock(buf, W, W - 100, H - 100, 100, 100, 0, 0);
+    recordInfo('T5_blit_out_of_bounds', bad === 0, { mismatches: bad, samples });
+    gl.deleteFramebuffer(fbDst); gl.deleteTexture(texDst);
+  }
+
+  // T6: same-FBO blit (copySurface src==dst path), non-overlapping
+  {
+    const texC = newTex(gl, W, H, pattern); const fbC = newFbo(gl, texC);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fbC);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, fbC);
+    gl.blitFramebuffer(0, 0, 200, 200, 1000, 700, 1200, 900, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    const buf = readFb(gl, fbC, W, H);
+    const { bad, samples } = verifyBlock(buf, W, 1000, 700, 200, 200, 0, 0);
+    recordInfo('T6_blit_same_fbo', bad === 0, { mismatches: bad, samples });
+    gl.deleteFramebuffer(fbC); gl.deleteTexture(texC);
+  }
+
+  // T7: scissor + clear exact bounds
+  {
+    const texD = newTex(gl, W, H); const fbD = newFbo(gl, texD);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbD);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(300, 200, 500, 400);
+    gl.clearColor(1, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.disable(gl.SCISSOR_TEST);
+    const buf = readFb(gl, fbD, W, H);
+    const px = (x, y) => { const o = (y * W + x) * 4; return [buf[o], buf[o + 3]]; };
+    const inside = px(300, 200)[0] === 255 && px(799, 599)[0] === 255 && px(500, 400)[0] === 255;
+    const outside = px(299, 200)[1] === 0 && px(800, 300)[1] === 0 && px(300, 199)[1] === 0 && px(300, 600)[1] === 0;
+    record('T7_scissor_clear', inside && outside, { inside, outside });
+    gl.deleteFramebuffer(fbD); gl.deleteTexture(texD);
+  }
+
+  // T8: fractional-UV staging upload (real upload path: staging > rect),
+  // both mediump (current) and highp. Content 1300x700 in 2048x1080 staging.
+  {
+    const CW = 1300, CH = 700, SW = 2048, SH = 1080;
+    const content = makePattern(CW, CH);
+    const staging = newTex(gl, SW, SH);
+    gl.bindTexture(gl.TEXTURE_2D, staging);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, CW, CH, gl.RGBA, gl.UNSIGNED_BYTE, content);
+    for (const [name, prog] of [['T8a_fractional_uv_mediump', progMed], ['T8b_fractional_uv_highp', progHigh]]) {
+      const texDst = newTex(gl, CW, CH); const fb = newFbo(gl, texDst);
+      drawQuad(gl, prog, staging, fb, CW, CH, CW / SW, CH / SH);
+      const buf = readFb(gl, fb, CW, CH);
+      const { bad, samples } = verifyBlock(buf, CW, 0, 0, CW, CH, 0, 0);
+      record(name, bad === 0, { mismatches: bad, samples });
+      gl.deleteFramebuffer(fb); gl.deleteTexture(texDst);
+    }
+    gl.deleteTexture(staging);
+  }
+
+  // T9: compositor E2E at 1080p (upload/cache/copy/fill/present)
+  {
+    const c2 = document.createElement('canvas'); c2.width = W; c2.height = H;
+    let cb = null;
+    const r = new RdpGpuSurfaceCompositor(c2, { requestFrame: fn => (cb = fn, 1), cancelFrame() {} });
+    r.reset(W, H); r.createSurface(1, W, H); r.mapSurface(1, 0, 0, W, H);
+    const wire = new Uint8Array(W * H * 4);
+    for (let y = 0; y < H; y++) {
+      const row = H - 1 - y;
+      for (let x = 0; x < W; x++) {
+        const o = (row * W + x) * 4;
+        wire[o] = ((x >> 8) & 0xF) | (((y >> 8) & 0xF) << 4);
+        wire[o + 1] = y & 0xFF;
+        wire[o + 2] = x & 0xFF;
+        wire[o + 3] = 255;
+      }
+    }
+    r.uploadBitmap(1, { left: 0, top: 0, right: W, bottom: H }, wire, W * 4);
+    // partial upload AFTER big staging exists -> fractional UV path
+    const pw = 300, ph = 200;
+    const partWire = new Uint8Array(pw * ph * 4);
+    for (let y = 0; y < ph; y++) {
+      const row = ph - 1 - y;
+      for (let x = 0; x < pw; x++) {
+        const o = (row * pw + x) * 4;
+        const gx = 500 + x, gy = 300 + y; // place global-pattern content at (500,300)
+        partWire[o] = ((gx >> 8) & 0xF) | (((gy >> 8) & 0xF) << 4);
+        partWire[o + 1] = gy & 0xFF;
+        partWire[o + 2] = gx & 0xFF;
+        partWire[o + 3] = 255;
+      }
+    }
+    r.uploadBitmap(1, { left: 500, top: 300, right: 800, bottom: 500 }, partWire, pw * 4);
+    r.cacheSurface(1, 5, { left: 50, top: 60, right: 350, bottom: 260 });
+    r.drawCache(5, 1, 1200, 700);
+    r.copySurface(1, 1, { left: 400, top: 100, right: 650, bottom: 250 }, 800, 850); // same-surface copy
+    r.copySurface(1, 1, { left: 0, top: 0, right: 100, bottom: 100 }, 1750, 950);     // same-surface, dst OOB
+    r.solidFill(1, { left: 1500, top: 100, right: 1700, bottom: 300 }, 0xFFFF00FF);
+    r.beginFrame(1); r.endFrame(1); cb();
+    const buf = readFb(r.gl, null, W, H);
+    const expAt = (x, y) => {
+      if (x >= 1500 && x < 1700 && y >= 100 && y < 300) return 'fill';
+      if (x >= 1750 && x < 1850 && y >= 950 && y < 1050) return [x - 1750, y - 950];      // OOB-clipped copy lands fully inside
+      if (x >= 1200 && x < 1500 && y >= 700 && y < 900) return [50 + (x - 1200), 60 + (y - 700)];
+      if (x >= 800 && x < 1050 && y >= 850 && y < 1000) return [400 + (x - 800), 100 + (y - 850)];
+      return [x, y];
+    };
+    let bad = 0; const samples = []; const regionBad = { base: 0, paste: 0, copy: 0, oobcopy: 0, fill: 0 };
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const o = ((H - 1 - y) * W + x) * 4;
+      const exp = expAt(x, y);
+      let good, region;
+      if (exp === 'fill') { good = buf[o] === 255 && buf[o + 1] === 0 && buf[o + 2] === 255 && buf[o + 3] === 255; region = 'fill'; }
+      else {
+        const [dx, dy] = decodeXY(buf, o);
+        good = dx === exp[0] && dy === exp[1] && buf[o + 3] === 255;
+        region = (x >= 1750 && y >= 950 && x < 1850 && y < 1050) ? 'oobcopy'
+          : (x >= 1200 && x < 1500 && y >= 700 && y < 900) ? 'paste'
+          : (x >= 800 && x < 1050 && y >= 850 && y < 1000) ? 'copy' : 'base';
+      }
+      if (!good) {
+        bad++; regionBad[region]++;
+        if (samples.length < 8) samples.push({ at: [x, y], region, got: [buf[o], buf[o + 1], buf[o + 2], buf[o + 3]], exp });
+      }
+    }
+    record('T9_compositor_e2e_1080p', bad === 0, { mismatches: bad, regionBad, samples });
+    r.destroy();
+  }
+
+  // T10: compositor E2E inside a Worker with OffscreenCanvas (production env)
+  if (typeof OffscreenCanvas !== 'undefined' && typeof Worker !== 'undefined') {
+    try {
+      const worker = new Worker('./rdp-gl-diag-worker.js', { type: 'module' });
+      const res = await new Promise((resolve) => {
+        const to = setTimeout(() => resolve({ pass: false, error: 'worker timeout' }), 20000);
+        worker.onmessage = (e) => { clearTimeout(to); resolve(e.data); };
+        worker.onerror = (e) => { clearTimeout(to); resolve({ pass: false, error: String(e.message || e) }); };
+        worker.postMessage({ go: true });
+      });
+      record('T10_worker_offscreen_e2e', res.pass === true, res);
+      worker.terminate();
+    } catch (e) { record('T10_worker_offscreen_e2e', false, { error: String(e) }); }
+  } else record('T10_worker_offscreen_e2e', false, { error: 'no OffscreenCanvas/Worker' });
+
+} catch (e) {
+  results.ok = false;
+  results.fatal = String(e && e.stack || e);
+}
+window.result = results;
+out.textContent = JSON.stringify(results, null, 1);
+};
+main();
+</script>
