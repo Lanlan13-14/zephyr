@@ -38,6 +38,6 @@ try {
   const match = result.stdout.match(/<pre id="out">([^<]+)<\/pre>/);
   if (!match) throw new Error(`smoke result missing: ${result.stderr}`);
   const value = JSON.parse(match[1].replaceAll('&quot;', '"'));
-  if (!value.ok || value.presents?.[0] !== 1 || value.pixels?.length !== 32) throw new Error(`smoke failed: ${JSON.stringify(value)}`);
+  if (!value.ok || value.presents?.[0] !== 1 || value.pixels?.length !== 256) throw new Error(`smoke failed: ${JSON.stringify(value)}`);
   console.log(JSON.stringify(value));
 } finally { server.kill('SIGTERM'); }

@@ -257,7 +257,7 @@ export class RdpGpuSurfaceCompositor {
         const gl = this.gl;
         gl.bindTexture(gl.TEXTURE_2D, this.stagingTexture);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, frame);
-        this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, clipped, this.rgbaProgram, { sourceWidth, sourceHeight });
+        this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, clipped, this.rgbaProgram, { sourceWidth, sourceHeight }, true);
         this.dirty = true;
     }
 
@@ -384,7 +384,14 @@ export class RdpGpuSurfaceCompositor {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.stagingWidth, this.stagingHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     }
 
-    _drawTexture(texture, framebuffer, targetWidth, targetHeight, rect, program, sourceSize = null) {
+    // Texture storage convention: row 0 of every surface/cache texture is the
+    // BOTTOM row of the image (GL-natural, matches the bottom-up BGRA rows the
+    // Go WASM side emits). Protocol rects are top-down (top<bottom); the V
+    // mapping below places texel row 0 at the rect's bottom edge so image
+    // content lands at texture rows [height-bottom, height-top]. Sources that
+    // are already top-down (VideoFrame) pass topDownSource=true to sample the
+    // same texture orientation instead.
+    _drawTexture(texture, framebuffer, targetWidth, targetHeight, rect, program, sourceSize = null, topDownSource = false) {
         const gl = this.gl;
         gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
         gl.viewport(0, 0, targetWidth, targetHeight);
@@ -397,12 +404,14 @@ export class RdpGpuSurfaceCompositor {
         const right = -1 + (2 * rect.right) / targetWidth;
         const top = 1 - (2 * rect.top) / targetHeight;
         const bottom = 1 - (2 * rect.bottom) / targetHeight;
+        const vAtBottom = topDownSource ? vMax : 0;
+        const vAtTop = topDownSource ? 0 : vMax;
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-            left, bottom, 0, vMax,
-            right, bottom, uMax, vMax,
-            left, top, 0, 0,
-            right, top, uMax, 0,
+            left, bottom, 0, vAtBottom,
+            right, bottom, uMax, vAtBottom,
+            left, top, 0, vAtTop,
+            right, top, uMax, vAtTop,
         ]), gl.DYNAMIC_DRAW);
         const position = gl.getAttribLocation(program, 'a_position');
         const texCoord = gl.getAttribLocation(program, 'a_texCoord');
