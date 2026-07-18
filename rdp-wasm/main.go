@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
@@ -61,6 +62,32 @@ func jsGetProtocolDiagnostics(_ js.Value, _ []js.Value) any {
 	return js.ValueOf(value)
 }
 
+// jsGetClearCapture dumps the forensic ClearCodec capture (payloads + decode
+// results) so a garbled session can be replayed offline byte-for-byte.
+func jsGetClearCapture(_ js.Value, _ []js.Value) any {
+	client := currentClient()
+	if client == nil {
+		return nil
+	}
+	handler := client.GfxHandler()
+	if handler == nil {
+		return nil
+	}
+	entries := handler.ClearCapture()
+	out := make([]any, len(entries))
+	for i, e := range entries {
+		out[i] = map[string]any{
+			"frameId": int(e.FrameID),
+			"surfId":  int(e.SurfID),
+			"rect":    []int{int(e.Rect[0]), int(e.Rect[1]), int(e.Rect[2]), int(e.Rect[3])},
+			"payload": base64.StdEncoding.EncodeToString(e.Payload),
+			"outHash": base64.StdEncoding.EncodeToString(e.OutHash[:]),
+			"err":     e.Err,
+		}
+	}
+	return js.ValueOf(out)
+}
+
 func isCurrentClient(gen uint64, c *grdp.RdpClient) bool {
 	clientMu.Lock()
 	defer clientMu.Unlock()
@@ -94,6 +121,7 @@ func main() {
 	js.Global().Set("rdpGfxCompleteFrame", js.FuncOf(jsGfxCompleteFrame))
 	js.Global().Set("rdpRequestFullRefresh", js.FuncOf(jsRequestFullRefresh))
 	js.Global().Set("rdpGetProtocolDiagnostics", js.FuncOf(jsGetProtocolDiagnostics))
+	js.Global().Set("rdpGetClearCapture", js.FuncOf(jsGetClearCapture))
 	js.Global().Set("rdpConfigureRenderer", js.FuncOf(jsConfigureRenderer))
 
 	// Agent drive management (hot-plug)

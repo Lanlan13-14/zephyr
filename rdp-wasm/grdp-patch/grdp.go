@@ -1014,6 +1014,10 @@ func (g *RdpClient) OnH264NV12(fn func(destX, destY, w, h int, y []byte, yStride
 	return g
 }
 
+// GfxHandler exposes the active RDPGFX handler (nil when not connected),
+// for forensic capture access.
+func (g *RdpClient) GfxHandler() *rdpgfx.GfxHandler { return g.gfxHandler }
+
 func (g *RdpClient) OnRenderEvent(fn rdpgfx.RenderEventSink) *RdpClient {
 	g.onRenderEventFn = fn
 	if g.gfxHandler != nil {

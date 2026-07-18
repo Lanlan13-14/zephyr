@@ -266,6 +266,21 @@ async function invokeMethod(method, args) {
         const protocol = typeof globalThis.rdpGetProtocolDiagnostics === 'function'
             ? globalThis.rdpGetProtocolDiagnostics()
             : {};
+        // One-shot forensic ClearCodec capture dump (payloads + decode
+        // results) for offline replay against FreeRDP; ~a few MB once.
+        if (!globalThis.__dbgCapturePosted && typeof globalThis.rdpGetClearCapture === 'function') {
+            globalThis.__dbgCapturePosted = true;
+            try {
+                const capture = globalThis.rdpGetClearCapture();
+                if (capture && capture.length) {
+                    fetch('/api/rdp/h264-debug', {
+                        method: 'POST', credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ clearCapture: capture, at: Date.now() }),
+                    }).catch(() => { });
+                }
+            } catch {}
+        }
         // Flatten field diagnostics into protocol keys (telemetry whitelist
         // only forwards the numeric protocol map + a few scalar fields).
         workerDiag.bitmapSamples.forEach((s, i) => {

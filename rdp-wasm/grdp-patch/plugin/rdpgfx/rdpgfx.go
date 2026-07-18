@@ -1,6 +1,7 @@
 package rdpgfx
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"log/slog"
@@ -207,6 +208,12 @@ type GfxHandler struct {
 	cacheEntries map[uint16]cacheEntry
 	clearCtx     *clearCodecCtx
 	clearDecoder *clearDecoder
+	// clearCapture is a bounded forensic record of the first ClearCodec
+	// WTS1 payloads of the session (payload bytes + decode result), so a
+	// garbled session can be replayed byte-for-byte offline against both
+	// this decoder and FreeRDP's clear.c. Field-debug only.
+	clearCapture []clearCaptureEntry
+	clearCapBytes int
 	zgfx         *zgfxContext
 	rfx          *rfxDecoder
 	progressive  *rfxProgressiveDecoder
@@ -1594,11 +1601,19 @@ func (g *GfxHandler) onWireToSurface1Decode(data []byte) {
 		owned = true
 	case codecClear:
 		var err error
+		capIdx := g.captureClearPayload(surfId, left, top, right, bottom, bmpData)
 		decoded, err = g.clearDecoder.decode(bmpData, w, h)
+		if capIdx >= 0 && err == nil && decoded != nil {
+			h := sha256.Sum256(decoded)
+			g.clearCapture[capIdx].outHash = h
+		}
 		for _, warn := range g.clearDecoder.takeWarns() {
 			g.observe("rdpgfx.clearcodec.warn:" + warn)
 		}
 		if err != nil {
+			if capIdx >= 0 {
+				g.clearCapture[capIdx].err = err.Error()
+			}
 			g.observe(fmt.Sprintf("rdpgfx.clearcodec.drop:%v", err))
 			slog.Warn("RDPGFX: ClearCodec decode failed", "err", err, "surfId", surfId, "w", w, "h", h)
 			return
@@ -2150,6 +2165,58 @@ func (g *GfxHandler) onCacheImportOffer() {
 
 // emitCaVideoRects copies decoded RemoteFX tile regions from the surface
 // pixel buffer into individual BitmapUpdate slices and emits them.
+// clearCaptureEntry records one ClearCodec WTS1 payload and its decode fate.
+type clearCaptureEntry struct {
+	FrameID uint32
+	SurfID  uint16
+	Rect    [4]uint16
+	Payload []byte
+	outHash [32]byte // sha256 of decoded BGRA output, when decode succeeded
+	err     string
+}
+
+// ClearCaptureEntry exposes a capture record for the JS forensic bridge.
+type ClearCaptureEntry struct {
+	FrameID uint32
+	SurfID  uint16
+	Rect    [4]uint16
+	Payload []byte
+	OutHash [32]byte
+	Err     string
+}
+
+const (
+	clearCaptureMaxEntries = 96
+	clearCaptureMaxBytes   = 6 << 20
+)
+
+// captureClearPayload retains the first ClearCodec payloads of the session
+// (bounded) and returns the capture index or -1 when the budget is exhausted.
+func (g *GfxHandler) captureClearPayload(surfId uint16, left, top, right, bottom uint16, bmpData []byte) int {
+	if len(g.clearCapture) >= clearCaptureMaxEntries || g.clearCapBytes+len(bmpData) > clearCaptureMaxBytes {
+		return -1
+	}
+	payload := make([]byte, len(bmpData))
+	copy(payload, bmpData)
+	g.clearCapture = append(g.clearCapture, clearCaptureEntry{
+		FrameID: g.currentFrameID,
+		SurfID:  surfId,
+		Rect:    [4]uint16{left, top, right, bottom},
+		Payload: payload,
+	})
+	g.clearCapBytes += len(bmpData)
+	return len(g.clearCapture) - 1
+}
+
+// ClearCapture returns the captured payloads for offline replay.
+func (g *GfxHandler) ClearCapture() []ClearCaptureEntry {
+	out := make([]ClearCaptureEntry, len(g.clearCapture))
+	for i, e := range g.clearCapture {
+		out[i] = ClearCaptureEntry{FrameID: e.FrameID, SurfID: e.SurfID, Rect: e.Rect, Payload: e.Payload, OutHash: e.outHash, Err: e.err}
+	}
+	return out
+}
+
 // Used by both onWireToSurface1Decode and onWireToSurface2Decode.
 func (g *GfxHandler) emitCaVideoRects(s *surface, rects []rfxRect) {
 	if !s.mapped || g.onBitmap == nil || len(rects) == 0 {
