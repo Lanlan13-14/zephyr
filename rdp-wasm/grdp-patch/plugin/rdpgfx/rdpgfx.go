@@ -1595,7 +1595,11 @@ func (g *GfxHandler) onWireToSurface1Decode(data []byte) {
 	case codecClear:
 		var err error
 		decoded, err = g.clearDecoder.decode(bmpData, w, h)
+		for _, warn := range g.clearDecoder.takeWarns() {
+			g.observe("rdpgfx.clearcodec.warn:" + warn)
+		}
 		if err != nil {
+			g.observe(fmt.Sprintf("rdpgfx.clearcodec.drop:%v", err))
 			slog.Warn("RDPGFX: ClearCodec decode failed", "err", err, "surfId", surfId, "w", w, "h", h)
 			return
 		}

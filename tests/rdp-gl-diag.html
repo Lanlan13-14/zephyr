@@ -308,6 +308,70 @@ const main = async () => { try {
     r.destroy();
   }
 
+  // T11: texSubImage2D from a WASM-linear-memory-backed view (production
+  // upload path: Go passes {pointer,length} into instance.exports.mem).
+  {
+    const wasmBytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 5, 3, 1, 0, 2, 7, 7, 1, 3, 109, 101, 109, 2, 0]);
+    const { instance } = await WebAssembly.instantiate(wasmBytes);
+    const mem = instance.exports.mem;
+    const CW = 190, CH = 132;
+    const content = makePattern(CW, CH);
+    new Uint8Array(mem.buffer, 0, content.length).set(content);
+    const view = new Uint8Array(mem.buffer, 0, content.length);
+    const tex = newTex(gl, CW, CH);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, CW, CH, gl.RGBA, gl.UNSIGNED_BYTE, view);
+    const texDst = newTex(gl, CW, CH); const fb = newFbo(gl, texDst);
+    drawQuad(gl, progHigh, tex, fb, CW, CH);
+    const buf = readFb(gl, fb, CW, CH);
+    const { bad, samples } = verifyBlock(buf, CW, 0, 0, CW, CH, 0, 0);
+    record('T11_texsubimage_from_wasm_memory', bad === 0, { mismatches: bad, samples });
+    gl.deleteFramebuffer(fb); gl.deleteTexture(texDst); gl.deleteTexture(tex);
+  }
+
+  // T12: compositor uploadBitmap with WASM-memory view at production tile
+  // size/position on a portrait (1080x1990) surface, then present.
+  {
+    const wasmBytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 5, 3, 1, 0, 2, 7, 7, 1, 3, 109, 101, 109, 2, 0]);
+    const { instance } = await WebAssembly.instantiate(wasmBytes);
+    const mem = instance.exports.mem;
+    const PW = 1080, PH = 1990;
+    const c3 = document.createElement('canvas'); c3.width = PW; c3.height = PH;
+    let cb3 = null;
+    const r3 = new RdpGpuSurfaceCompositor(c3, { requestFrame: fn => (cb3 = fn, 1), cancelFrame() {} });
+    r3.reset(PW, PH); r3.createSurface(1, PW, PH); r3.mapSurface(1, 0, 0, PW, PH);
+    // tile 190x132 at (445,700), wire = bottom-up BGRA rows
+    const TW = 190, TH = 132;
+    const tile = new Uint8Array(TW * TH * 4);
+    for (let y = 0; y < TH; y++) {
+      const row = TH - 1 - y;
+      for (let x = 0; x < TW; x++) {
+        const o = (row * TW + x) * 4;
+        const gx = 445 + x, gy = 700 + y;
+        tile[o] = ((gx >> 8) & 0xF) | (((gy >> 8) & 0xF) << 4);
+        tile[o + 1] = gy & 0xFF; tile[o + 2] = gx & 0xFF; tile[o + 3] = 255;
+      }
+    }
+    new Uint8Array(mem.buffer, 0, tile.length).set(tile);
+    const view = new Uint8Array(mem.buffer, 0, tile.length);
+    r3.uploadBitmap(1, { left: 445, top: 700, right: 445 + TW, bottom: 700 + TH }, view, TW * 4);
+    r3.beginFrame(1); r3.endFrame(1); cb3();
+    const buf = readFb(r3.gl, null, PW, PH);
+    // canvas readPixels row 0 = bottom; screen (x,y) -> row PH-1-y
+    const check = (sx, sy, ex, ey) => {
+      const o = ((PH - 1 - sy) * PW + sx) * 4;
+      const [dx, dy] = decodeXY(buf, o);
+      return dx === ex && dy === ey && buf[o + 3] === 255;
+    };
+    let bad = 0; const badSamples = [];
+    for (const [sx, sy] of [[445, 700], [445 + TW - 1, 700], [445, 700 + TH - 1], [445 + TW - 1, 700 + TH - 1], [445 + 95, 700 + 66]]) {
+      if (!check(sx, sy, sx, sy)) { bad++; if (badSamples.length < 5) { const o = ((PH - 1 - sy) * PW + sx) * 4; badSamples.push({ at: [sx, sy], got: [buf[o], buf[o + 1], buf[o + 2], buf[o + 3]] }); } }
+    }
+    record('T12_wasm_view_tile_portrait_surface', bad === 0, { mismatches: bad, samples: badSamples });
+    r3.destroy();
+  }
+
   // T10: compositor E2E inside a Worker with OffscreenCanvas (production env)
   if (typeof OffscreenCanvas !== 'undefined' && typeof Worker !== 'undefined') {
     try {

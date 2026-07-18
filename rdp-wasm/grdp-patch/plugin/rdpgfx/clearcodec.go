@@ -10,22 +10,32 @@ const (
 	clearFlagGlyphHit       = 0x02
 	clearFlagCacheReset     = 0x04
 	clearGlyphCacheSize     = 4000
+	clearGlyphMaxPixels     = 1024 * 1024 // FreeRDP clear.c: glyph too large above 1024*1024
 	clearVBarCacheSize      = 32768
 	clearShortVBarCacheSize = 16384
 	clearMaxBandHeight      = 52
 )
 
+// clearGlyph is a cached ClearCodec glyph. Pixels are a flat row-major BGRX
+// array; a GLYPH_HIT reads the first w*h pixels (FreeRDP semantics: the hit
+// copy uses the current PDU's nWidth as source stride, i.e. a flat prefix).
 type clearGlyph struct {
 	width, height int
 	pixels        []byte
 }
 
+// clearDecoder holds the per-channel ClearCodec codec caches. All fields are
+// keyed exactly like FreeRDP's CLEAR_CONTEXT (VBarStorage / ShortVBarStorage
+// / GlyphCache) so behavior can be compared against clear.c line by line.
 type clearDecoder struct {
 	vbars       [][]byte
 	shortVbars  [][]byte
 	glyphs      map[uint16]clearGlyph
 	vbarCursor  int
 	shortCursor int
+	seq         byte
+	seqMismatch uint32
+	warns       []string
 }
 
 func newClearDecoder() *clearDecoder {
@@ -33,6 +43,21 @@ func newClearDecoder() *clearDecoder {
 		vbars:      make([][]byte, clearVBarCacheSize),
 		shortVbars: make([][]byte, clearShortVBarCacheSize),
 		glyphs:     make(map[uint16]clearGlyph),
+	}
+}
+
+// takeWarns returns and clears the decode warnings accumulated since the last
+// call. The WTS1 handler forwards them to the protocol observer so dropped or
+// degraded tiles are visible in telemetry instead of silent.
+func (d *clearDecoder) takeWarns() []string {
+	w := d.warns
+	d.warns = nil
+	return w
+}
+
+func (d *clearDecoder) warnf(format string, args ...any) {
+	if len(d.warns) < 16 {
+		d.warns = append(d.warns, fmt.Sprintf(format, args...))
 	}
 }
 
@@ -61,6 +86,8 @@ func (c *clearCursor) u32() uint32 {
 }
 func (c *clearCursor) take(n int) []byte { v := c.data[c.off : c.off+n]; c.off += n; return v }
 
+// clearRunLength reads the variable-length run factor (1, 1+2 or 1+2+4 bytes),
+// identical to FreeRDP's runLengthFactor handling.
 func clearRunLength(c *clearCursor, what string) (uint32, error) {
 	if err := c.need(1, what); err != nil {
 		return 0, err
@@ -91,10 +118,33 @@ func (d *clearDecoder) decode(data []byte, width, height int) ([]byte, error) {
 		return nil, err
 	}
 	flags := c.u8()
-	_ = c.u8()
+	seq := c.u8()
+
+	// Sequence continuity guards every codec cache. FreeRDP hard-fails on a
+	// mismatch (clear.c: seqNumber != clear->seqNumber); we self-heal instead:
+	// a missed stream invalidates all caches, so wipe them and resync to the
+	// sender. Continuing with desynced caches paints stale VBars/glyphs.
+	if d.seq == 0 && seq != 0 {
+		d.seq = seq
+	}
+	if seq != d.seq {
+		d.seqMismatch++
+		d.warnf("seq mismatch got %d want %d: caches wiped", seq, d.seq)
+		d.vbarCursor = 0
+		d.shortCursor = 0
+		d.vbars = make([][]byte, clearVBarCacheSize)
+		d.shortVbars = make([][]byte, clearShortVBarCacheSize)
+		d.glyphs = make(map[uint16]clearGlyph)
+		d.seq = seq
+	}
+	d.seq = (seq + 1) & 0xff
+
 	var glyphIndex uint16
 	hasGlyph := flags&clearFlagGlyphIndex != 0
 	if hasGlyph {
+		if width*height > clearGlyphMaxPixels {
+			return nil, fmt.Errorf("ClearCodec glyph too large: %dx%d", width, height)
+		}
 		if err := c.need(2, "glyph index"); err != nil {
 			return nil, err
 		}
@@ -104,30 +154,51 @@ func (d *clearDecoder) decode(data []byte, width, height int) ([]byte, error) {
 		}
 	}
 	if flags&clearFlagCacheReset != 0 {
+		// FreeRDP clear_reset_vbar_storage(clear, FALSE): cursors reset,
+		// storage content kept.
 		d.vbarCursor = 0
 		d.shortCursor = 0
 	}
+
+	out := make([]byte, width*height*4)
+
 	if flags&clearFlagGlyphHit != 0 {
 		if !hasGlyph {
 			return nil, fmt.Errorf("ClearCodec glyph hit without index")
 		}
 		g, ok := d.glyphs[glyphIndex]
-		if !ok || g.width != width || g.height != height {
+		if !ok {
 			return nil, fmt.Errorf("ClearCodec glyph cache miss %d", glyphIndex)
 		}
-		return append([]byte(nil), g.pixels...), nil
-	}
-	hadBands := c.remaining() >= 12 && binary.LittleEndian.Uint32(c.data[c.off+4:c.off+8]) > 0
-	out := make([]byte, width*height*4)
-	if c.remaining() > 0 {
-		if err := d.decodeComposite(c, out, width); err != nil {
-			return nil, err
+		// FreeRDP: (nWidth*nHeight) > glyphEntry->count -> error; otherwise a
+		// flat prefix copy of count pixels (source stride = nWidth).
+		if width*height > len(g.pixels)/4 {
+			return nil, fmt.Errorf("ClearCodec glyph %d too small: need %d have %d", glyphIndex, width*height, len(g.pixels)/4)
 		}
+		copy(out, g.pixels[:width*height*4])
 	}
-	if hasGlyph && width*height <= 1024 {
+
+	// After glyph handling a stream may end (pure glyph store/hit) or carry a
+	// composite payload. FreeRDP: remaining < 12 is only valid when both
+	// GLYPH_INDEX and GLYPH_HIT are set (pure hit); anything else is an error.
+	if c.remaining() < 12 {
+		if hasGlyph && flags&clearFlagGlyphHit != 0 {
+			return out, nil
+		}
+		if hasGlyph && c.remaining() == 0 {
+			return nil, fmt.Errorf("ClearCodec glyph store without payload")
+		}
+		return nil, fmt.Errorf("ClearCodec missing composite header: %d bytes", c.remaining())
+	}
+	if err := d.decodeComposite(c, out, width); err != nil {
+		return nil, err
+	}
+
+	if hasGlyph {
+		// Store the fully decoded output (layers applied), FreeRDP copies the
+		// dst area into the glyph entry at the end of clear_decompress.
 		d.glyphs[glyphIndex] = clearGlyph{width, height, append([]byte(nil), out...)}
 	}
-	_ = hadBands // retained for debugger visibility of stream layer selection
 	return out, nil
 }
 
@@ -150,9 +221,12 @@ func (d *clearDecoder) decodeComposite(c *clearCursor, out []byte, width int) er
 	if err := d.decodeClearBands(bands, out, width); err != nil {
 		return err
 	}
-	if err := decodeClearSubcodecs(sub, out, width); err != nil {
-		return err
-	}
+	// The subcodec layer never fails the tile: residual+bands content is
+	// usually the smooth background and is far better than dropping the whole
+	// update. Offending subcodecs are skipped and counted (FreeRDP would fail
+	// the whole decompress; for a UI client that is the difference between a
+	// stale mosaic and a nearly-correct frame).
+	d.decodeClearSubcodecs(sub, out, width)
 	if c.remaining() != 0 {
 		return fmt.Errorf("ClearCodec trailing bytes %d", c.remaining())
 	}
@@ -187,43 +261,50 @@ func decodeClearResidual(data, out []byte) error {
 	return nil
 }
 
-func decodeClearSubcodecs(data, out []byte, surfW int) error {
+// decodeClearSubcodecs decodes what it can and skips what it cannot. Every
+// skip is recorded as a warning; the tile itself is kept.
+func (d *clearDecoder) decodeClearSubcodecs(data, out []byte, surfW int) {
 	c := &clearCursor{data: data}
 	surfH := len(out) / (surfW * 4)
 	for c.remaining() > 0 {
-		if err := c.need(13, "subcodec header"); err != nil {
-			return err
+		if c.remaining() < 13 {
+			d.warnf("subcodec header truncated: %d bytes", c.remaining())
+			return
 		}
 		x, y, w, h := int(c.u16()), int(c.u16()), int(c.u16()), int(c.u16())
 		n := int(c.u32())
 		id := c.u8()
-		if w <= 0 || h <= 0 || x+w > surfW || y+h > surfH {
-			return fmt.Errorf("ClearCodec subcodec bounds")
-		}
-		if err := c.need(n, "subcodec payload"); err != nil {
-			return err
+		if c.remaining() < n {
+			d.warnf("subcodec %d payload truncated: need %d have %d", id, n, c.remaining())
+			return
 		}
 		payload := c.take(n)
+		if w <= 0 || h <= 0 || x+w > surfW || y+h > surfH {
+			d.warnf("subcodec %d bounds (%d,%d %dx%d)", id, x, y, w, h)
+			continue
+		}
 		switch id {
 		case 0:
-			if err := decodeClearRaw(payload, out, x, y, w, h, surfW); err != nil {
-				return err
+			if len(payload) != w*h*3 {
+				d.warnf("raw subcodec size %d != %d", len(payload), w*h*3)
+				continue
 			}
+			decodeClearRaw(payload, out, x, y, w, h, surfW)
+		case 1:
+			// NSCODEC: not implemented; counted so telemetry shows its
+			// frequency. FreeRDP decodes it via nsc_process_message.
+			d.warnf("nscodec subcodec %dx%d skipped", w, h)
 		case 2:
 			if err := decodeClearRlexRegion(payload, out, x, y, w, h, surfW); err != nil {
-				return err
+				d.warnf("rlex: %v", err)
 			}
 		default:
-			return fmt.Errorf("ClearCodec unsupported subcodec %d", id)
+			d.warnf("unsupported subcodec %d", id)
 		}
 	}
-	return nil
 }
 
-func decodeClearRaw(data, out []byte, x0, y0, w, h, surfW int) error {
-	if len(data) < w*h*3 {
-		return fmt.Errorf("ClearCodec raw truncated")
-	}
+func decodeClearRaw(data, out []byte, x0, y0, w, h, surfW int) {
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			s := (y*w + x) * 3
@@ -231,7 +312,6 @@ func decodeClearRaw(data, out []byte, x0, y0, w, h, surfW int) error {
 			out[d], out[d+1], out[d+2], out[d+3] = data[s], data[s+1], data[s+2], 0xff
 		}
 	}
-	return nil
 }
 
 func decodeClearRlexRegion(data, out []byte, x0, y0, w, h, surfW int) error {
@@ -288,6 +368,9 @@ func decodeClearRlexRegion(data, out []byte, x0, y0, w, h, surfW int) error {
 	return nil
 }
 
+// clearFullVBar synthesizes a full-height VBar from a short entry, FreeRDP
+// vBarUpdate semantics: rows [0,yOn) background, then the short pixels, then
+// background again up to height.
 func clearFullVBar(yOn int, short []byte, height int, bg [3]byte) []byte {
 	out := make([]byte, height*4)
 	for i := 0; i < height; i++ {
@@ -324,11 +407,20 @@ func (d *clearDecoder) decodeClearVBar(c *clearCursor, height int, bg [3]byte) (
 			return nil, fmt.Errorf("ClearCodec VBar index %d", i)
 		}
 		if d.vbars[i] == nil {
-			// FreeRDP compatibility: isolated examples may reference a cache
-			// entry populated by a prior frame. Synthesize BGRX black pixels.
+			// FreeRDP compatibility: empty cache entries are filled with
+			// dummy (zeroed) pixels and resized to the band height.
 			d.vbars[i] = make([]byte, height*4)
 		}
-		return d.vbars[i], nil
+		bar := d.vbars[i]
+		// FreeRDP resize semantics: a cached VBar shorter than the band is
+		// zero-extended to the band height (and the cache entry updated).
+		if len(bar)/4 < height {
+			nb := make([]byte, height*4)
+			copy(nb, bar)
+			d.vbars[i] = nb
+			bar = nb
+		}
+		return bar, nil
 	}
 	if header&0x4000 != 0 {
 		i := int(header & 0x3fff)
@@ -345,8 +437,11 @@ func (d *clearDecoder) decodeClearVBar(c *clearCursor, height int, bg [3]byte) (
 	}
 	yOn := int(header & 0xff)
 	yOff := int((header >> 8) & 0x3f)
-	if yOff < yOn || yOff > height {
-		return nil, fmt.Errorf("ClearCodec invalid short VBar %d..%d height %d", yOn, yOff, height)
+	if yOff < yOn {
+		return nil, fmt.Errorf("ClearCodec invalid short VBar %d..%d", yOn, yOff)
+	}
+	if yOff-yOn > clearMaxBandHeight {
+		return nil, fmt.Errorf("ClearCodec short VBar count %d", yOff-yOn)
 	}
 	n := (yOff - yOn) * 3
 	if err := c.need(n, "short VBar pixels"); err != nil {
@@ -358,6 +453,11 @@ func (d *clearDecoder) decodeClearVBar(c *clearCursor, height int, bg [3]byte) (
 	d.storeVBar(full)
 	return full, nil
 }
+
+// decodeClearBands consumes one VBar per column in [xs, xe] (bytes are always
+// consumed, FreeRDP reads the header for every column) and writes only the
+// columns/rows that land inside the tile (FreeRDP skips out-of-tile writes
+// instead of failing the whole stream).
 func (d *clearDecoder) decodeClearBands(data, out []byte, width int) error {
 	if len(data) == 0 {
 		return nil
@@ -370,7 +470,7 @@ func (d *clearDecoder) decodeClearBands(data, out []byte, width int) error {
 		}
 		xs, xe, ys, ye := int(c.u16()), int(c.u16()), int(c.u16()), int(c.u16())
 		bg := [3]byte{c.u8(), c.u8(), c.u8()}
-		if xe < xs || ye < ys || xe >= width || ye >= height {
+		if xe < xs || ye < ys {
 			return fmt.Errorf("ClearCodec invalid band bounds")
 		}
 		bh := ye - ys + 1
@@ -382,8 +482,14 @@ func (d *clearDecoder) decodeClearBands(data, out []byte, width int) error {
 			if err != nil {
 				return err
 			}
+			if x >= width {
+				continue // bytes consumed, column outside the tile: skip write
+			}
 			rows := min(len(bar)/4, bh)
 			for row := 0; row < rows; row++ {
+				if ys+row >= height {
+					break // row outside the tile: skip write
+				}
 				s := row * 4
 				dst := ((ys+row)*width + x) * 4
 				copy(out[dst:dst+4], bar[s:s+4])
