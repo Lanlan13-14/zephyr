@@ -177,6 +177,9 @@ export class Engine {
         backend = await instantiateWasm(WASM_URL);
       } catch (err) {
         backend = new JsBackend();
+        // Kept for diagnostics (Motion.engine.initError) — the page must be
+        // able to explain why it isn't running the wasm backend.
+        this.initError = String(err?.message || err);
         if (typeof console !== 'undefined') {
           console.warn('[zephyr-motion] wasm unavailable, JS fallback active:', err?.message || err);
         }

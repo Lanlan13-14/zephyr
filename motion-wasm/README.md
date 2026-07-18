@@ -98,3 +98,10 @@ pool. TinyGo exports memory as `memory`, stdgo as `mem` — both handled.
 Open `tests/motion-feel.html`: interrupt/retarget, flick-with-snap drag,
 shared-element morph, stagger, press feedback, reduced-motion toggle, plus
 automated self-tests (title flips to `MOTION_PASS`).
+
+Note: sandboxed previews whose scheme handler blocks page `fetch()` (e.g.
+some in-app WebView previews) cannot load `.wasm` — the runtime then falls
+back to the JS solver automatically and reports the reason on
+`Motion.engine.initError`. Production serves `public/` through Express, the
+same path the legacy `zephyr_anim.wasm` already uses, so the wasm backend
+loads normally there. `Motion.usingWasm` tells you which backend is live.
