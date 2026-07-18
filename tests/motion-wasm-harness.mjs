@@ -12,6 +12,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createWasiShim, isWasiExit } from '../public/vendor/zephyr-motion/wasi-shim.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(here, '..');
@@ -33,20 +34,44 @@ export function tickTo(ex, fromT, toT) {
   return t;
 }
 
+function bootExports(instance, kind) {
+  const ex = instance.exports;
+  ex.__wasm_call_ctors?.();
+  if (typeof ex._initialize === 'function') {
+    ex._initialize();
+  } else if (typeof ex._start === 'function') {
+    try { ex._start(); } catch (err) { if (!isWasiExit(err)) throw err; }
+  }
+  if (typeof ex.engine_init !== 'function') {
+    throw new Error(`${kind}: module lacks engine_init`);
+  }
+  return { exports: ex, kind };
+}
+
+async function instantiateWithTiers(bytes, kind) {
+  // Tier 1: freestanding.
+  try {
+    const { instance } = await WebAssembly.instantiate(bytes, {});
+    return bootExports(instance, kind);
+  } catch { /* needs imports */ }
+  // Tier 2: TinyGo — WASI via shared shim.
+  const { imports, setMemory } = createWasiShim();
+  const { instance } = await WebAssembly.instantiate(bytes, {
+    wasi_snapshot_preview1: imports,
+  });
+  setMemory(instance.exports.memory ?? instance.exports.mem);
+  return bootExports(instance, kind);
+}
+
 export async function loadMotionWasm() {
   const envWasm = process.env.ZEPHYR_MOTION_WASM;
 
   if (envWasm) {
     if (!existsSync(envWasm)) throw new Error(`ZEPHYR_MOTION_WASM not found: ${envWasm}`);
     const bytes = readFileSync(envWasm);
-    // Try freestanding first; fall back to stdgo via wasm_exec glue.
     try {
-      const { instance } = await WebAssembly.instantiate(bytes, {});
-      const ex = instance.exports;
-      ex.__wasm_call_ctors?.();
-      ex._initialize?.();
-      if (typeof ex.engine_init === 'function') return { exports: ex, kind: 'freestanding' };
-    } catch { /* needs glue */ }
+      return await instantiateWithTiers(bytes, 'env-build');
+    } catch { /* stdgo build — needs glue */ }
     const gluePath = process.env.ZEPHYR_WASM_EXEC;
     if (!gluePath || !existsSync(gluePath)) {
       throw new Error('stdgo build needs ZEPHYR_WASM_EXEC=/path/to/wasm_exec.js');
@@ -69,14 +94,7 @@ export async function loadMotionWasm() {
 
   if (!existsSync(DEFAULT_ARTIFACT)) return null;
   const bytes = readFileSync(DEFAULT_ARTIFACT);
-  const { instance } = await WebAssembly.instantiate(bytes, {});
-  const ex = instance.exports;
-  ex.__wasm_call_ctors?.();
-  ex._initialize?.();
-  if (typeof ex.engine_init !== 'function') {
-    throw new Error('artifact lacks engine_init — wrong wasm?');
-  }
-  return { exports: ex, kind: 'tinygo-artifact' };
+  return instantiateWithTiers(bytes, 'artifact');
 }
 
 export const EXPECTED_EXPORTS = [

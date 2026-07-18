@@ -12,6 +12,7 @@
  */
 
 import { SpringEngine, VelocityTracker, project, rubberband, rubberbandClamp, cubicBezierSample, BUFFER_STRIDE } from './spring.js';
+import { createWasiShim, isWasiExit } from './wasi-shim.js';
 
 const WASM_URL = new URL('./zephyr_motion.wasm', import.meta.url).href;
 const TRACKER_COUNT = 8;
@@ -58,21 +59,43 @@ class WasmBackend {
   bezier(x1, y1, x2, y2, x) { return this.ex.cubic_bezier_sample(x1, y1, x2, y2, x); }
 }
 
+/** Run whatever startup the module exposes, tolerating command-style main
+ * that ends in proc_exit (runtime init already happened by then). */
+function bootModule(instance) {
+  const ex = instance.exports;
+  if (typeof ex.__wasm_call_ctors === 'function') ex.__wasm_call_ctors();
+  if (typeof ex._initialize === 'function') {
+    ex._initialize();
+  } else if (typeof ex._start === 'function') {
+    try { ex._start(); } catch (err) { if (!isWasiExit(err)) throw err; }
+  }
+  if (typeof ex.engine_init !== 'function') throw new Error('engine_init missing');
+  return new WasmBackend(ex);
+}
+
 async function instantiateWasm(url) {
   const bytes = await (await fetch(url)).arrayBuffer();
 
-  // Preferred: freestanding module (TinyGo artifact) — empty imports.
+  // Tier 1: freestanding module — empty imports.
   try {
     const { instance } = await WebAssembly.instantiate(bytes, {});
+    return bootModule(instance);
+  } catch { /* needs imports — try next tier */ }
+
+  // Tier 2: TinyGo artifact — wasi_snapshot_preview1 via our shim.
+  try {
+    const { imports, setMemory } = createWasiShim();
+    const { instance } = await WebAssembly.instantiate(bytes, {
+      wasi_snapshot_preview1: imports,
+    });
     const ex = instance.exports;
-    if (typeof ex.__wasm_call_ctors === 'function') ex.__wasm_call_ctors();
-    if (typeof ex._initialize === 'function') ex._initialize();
-    if (typeof ex.engine_init !== 'function') throw new Error('engine_init missing');
-    return new WasmBackend(ex);
-  } catch (freestandingErr) {
-    // Local verification build (standard Go): needs the wasm_exec glue —
-    // the host page must have loaded it (globalThis.Go) beforehand.
-    if (typeof globalThis.Go !== 'function') throw freestandingErr;
+    setMemory(ex.memory ?? ex.mem);
+    return bootModule(instance);
+  } catch { /* not a TinyGo-style module — try next tier */ }
+
+  // Tier 3: local standard-Go verification build — needs the wasm_exec
+  // glue (host page loads it beforehand: globalThis.Go).
+  if (typeof globalThis.Go === 'function') {
     const go = new globalThis.Go();
     const { instance } = await WebAssembly.instantiate(bytes, go.importObject);
     go.run(instance); // never resolves (main blocks); exports live already
@@ -80,6 +103,7 @@ async function instantiateWasm(url) {
     if (typeof ex.engine_init !== 'function') throw new Error('engine_init missing');
     return new WasmBackend(ex);
   }
+  throw new Error('zephyr_motion.wasm: unsupported module (no freestanding/wasi/stdgo path matched)');
 }
 
 // ── JS fallback backend (same math, shared golden vectors) ───────────────
