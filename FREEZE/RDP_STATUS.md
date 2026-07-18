@@ -1,8 +1,8 @@
 # Zephyr RDP WASM GPU 管线 - 现状
 
-> 最后更新：2026-07-18（Adreno 花屏根因修复后）
+> 最后更新：2026-07-18（花屏三层根因全部修复后）
 > 当前提交：见 git log（main）
-> 部署版本：`samefbo-copy-fix`
+> 部署版本：`vbar-nil-fix`
 > 基线版本：v1.1.447（稳定，RDP 可用）
 >
 > ⚠️ 本文档 2026-07-17 早先版本中的多项"PASS/✅"结论未经真实验证
@@ -138,18 +138,49 @@ copy 精确像素断言，真机通过。
 
 ---
 
-## 4. 未解决问题
+## 4. 花屏根因与修复（2026-07-18，全部实锤）
 
-### 4.1 花屏（Android Adreno 750 / ANGLE OpenGL ES）—— ✅ 已解决（2026-07-18）
+花屏共有**三层独立根因**，全部定位并修复：
 
-- 根因：同 FBO `blitFramebuffer` 被 Adreno/ANGLE 静默丢弃（真机逐路径
-  GL 诊断实锤），`SURFACE_TO_SURFACE` src==dst 拷贝全部丢失
-- 修复：compositor 完全弃用 `blitFramebuffer`，改 shader 绘制路径；
-  同 surface 拷贝经 scratch 纹理；目标区域裁剪；shader 升 highp
-- 验证：真机 compositor E2E（页面 + Worker/OffscreenCanvas）像素级 0 错误；
-  诊断页保留在 `tests/rdp-gl-diag.html` 供其他设备复测
+### 4.1 根因一：Adreno 同 FBO blitFramebuffer 被静默丢弃 ✅
 
-### 4.2 其他未解决
+- 真机逐路径 GL 诊断（`tests/rdp-gl-diag.html`，1920×1080 坐标编码图案
+  逐像素断言）实锤：READ==DRAW 同 FBO 的 blitFramebuffer 在 Adreno 750 /
+  ANGLE 上是静默 no-op，`SURFACE_TO_SURFACE` src==dst 拷贝全部丢失
+- 修复：compositor 完全弃用 blitFramebuffer，全部走 shader 绘制路径
+  （同 surface 拷贝经 scratch 纹理中转，避免 feedback loop；补上目标
+  区域裁剪；fragment shader 升 highp 防 fp16-only GPU）
+- 真机验证：compositor E2E 2,073,600 像素 0 错误（页面 + Worker 环境）
+
+### 4.2 根因二：ClearCodec glyph cache 与 FreeRDP 语义分歧 ✅
+
+对照 FreeRDP `libfreerdp/codec/clear.c` 逐行审计发现（每条都导致
+WTS1 整块丢弃 → 内容缺失 → 马赛克）：
+
+- glyph 存储上限 1024 像素，FreeRDP 是 1024×1024 → 大 glyph（窗口
+  标题栏、图标、文字块）全部无法缓存，后续 hit 全部丢块
+- glyph hit 要求尺寸精确一致，FreeRDP 是扁平前缀读取（w×h ≤ 缓存
+  像素数即可）→ 尺寸不同即丢块
+- glyph hit 流带图层时提前返回，FreeRDP 会在 hit 拷贝上继续解码图层
+- band 越界、short-VBar yOff>band 高、subcodec 层错误（含 NSCODEC）
+  过度严格 → 整块丢弃；改为 FreeRDP 式宽容（按列消费跳过越界写、
+  子块跳过但保留 residual+bands 内容）
+- ClearCodec seq 断档无处理：采用 FreeRDP 规则采纳首个非零 seq，
+  断档时清空全部 codec 缓存并重新对齐（自愈，优于 FreeRDP 的硬失败）
+
+### 4.3 根因三：零长度 short VBar 被存成 nil（马赛克级联的总源头）✅
+
+- 通过**真实会话 55 条 ClearCodec 流捕获 + Go/FreeRDP 双实现离线重放**
+  定位（Node 直连驱动 + C 版 clear.c 对照 harness）：
+  一条 yOff==yOn 的 short VBar（零像素、纯背景列）经 `append([]byte(nil))`
+  存成 **nil 切片**，缓存槽与"从未存储"无法区分 → 后续每次 SHORT_HIT
+  失败 → 整块丢弃 → 更多 short store 丢失 → **级联马赛克**
+- FreeRDP 行为：条目保留 count=0，hit 正常命中
+- 修复：make+copy 存储（空切片非 nil）；regression 测试覆盖
+- **验证：55/55 捕获流解码输出与 FreeRDP 逐字节完全一致**
+  （修复前：10 条错误 + 11 条内容分歧）
+
+### 4.4 其他未解决
 
 - CredSSP 单次 Read 当完整 DER message 的风险
 - ECDSA RDP 证书 + CredSSP pubKeyAuth 绑定未验证
