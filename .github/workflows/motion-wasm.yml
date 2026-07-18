@@ -23,7 +23,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  TINYGO_VERSION: '0.37.0'
+  TINYGO_VERSION: '0.41.1'
 
 jobs:
   build-test-commit:
