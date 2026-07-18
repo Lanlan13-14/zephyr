@@ -49,7 +49,7 @@ jobs:
           curl -fsSL "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo${TINYGO_VERSION}.linux-amd64.tar.gz" -o /tmp/tinygo.tar.gz
           sudo tar -C /usr/local -xzf /tmp/tinygo.tar.gz
           echo "/usr/local/tinygo/bin" >> "$GITHUB_PATH"
-          tinygo version
+          /usr/local/tinygo/bin/tinygo version
 
       - name: Run Go physics tests (native)
         run: cd motion-wasm && go test ./...

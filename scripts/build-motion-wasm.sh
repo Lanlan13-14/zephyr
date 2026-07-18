@@ -26,14 +26,18 @@ if [ "${1:-}" = "--local" ]; then
   exit 0
 fi
 
-if ! command -v tinygo >/dev/null 2>&1; then
+TINYGO="$(command -v tinygo || true)"
+if [ -z "$TINYGO" ] && [ -x /usr/local/tinygo/bin/tinygo ]; then
+  TINYGO=/usr/local/tinygo/bin/tinygo
+fi
+if [ -z "$TINYGO" ]; then
   echo "error: tinygo not found." >&2
   echo "  CI installs it automatically; locally use '$0 --local' for a" >&2
   echo "  verification build, or install https://tinygo.org/getting-started/" >&2
   exit 1
 fi
 
-(cd "$ROOT/motion-wasm" && tinygo build \
+(cd "$ROOT/motion-wasm" && "$TINYGO" build \
   -target wasm -opt=2 -panic=trap -scheduler=none -gc=leaking -no-debug \
   -o "$ARTIFACT" .)
 
