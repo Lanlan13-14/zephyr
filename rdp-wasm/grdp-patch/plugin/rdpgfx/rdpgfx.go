@@ -181,6 +181,10 @@ type vBarEntry struct {
 	count  int
 }
 
+// clearCodecCtx is a legacy incomplete ClearCodec path. Live WTS1 decoding
+// uses clearDecoder exclusively (see onWireToSurface1Decode codecClear case).
+// Kept only so RESET_GRAPHICS still resets both objects until the dead path
+// is fully deleted in a follow-up; do not call ctx.decode from new code.
 type clearCodecCtx struct {
 	vBarStorage      []vBarEntry
 	shortVBarStorage []vBarEntry

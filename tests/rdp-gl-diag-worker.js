@@ -1,6 +1,5 @@
 // Worker-side E2E for the RDP compositor on OffscreenCanvas (production env).
-// Mirrors the T9 sequence: upload / fractional-UV partial upload / cache
-// round-trip / same-surface copy / OOB copy / solid fill / present.
+// Uses top-down semantic pixels (Go ClearCodec / FreeRDP contract).
 import { RdpGpuSurfaceCompositor } from '../public/rdp-renderer.js';
 
 const W = 1920, H = 1080;
@@ -14,9 +13,8 @@ self.onmessage = () => {
     r.reset(W, H); r.createSurface(1, W, H); r.mapSurface(1, 0, 0, W, H);
     const wire = new Uint8Array(W * H * 4);
     for (let y = 0; y < H; y++) {
-      const row = H - 1 - y;
       for (let x = 0; x < W; x++) {
-        const o = (row * W + x) * 4;
+        const o = (y * W + x) * 4;
         wire[o] = ((x >> 8) & 0xF) | (((y >> 8) & 0xF) << 4);
         wire[o + 1] = y & 0xFF; wire[o + 2] = x & 0xFF; wire[o + 3] = 255;
       }
@@ -25,9 +23,8 @@ self.onmessage = () => {
     const pw = 300, ph = 200;
     const partWire = new Uint8Array(pw * ph * 4);
     for (let y = 0; y < ph; y++) {
-      const row = ph - 1 - y;
       for (let x = 0; x < pw; x++) {
-        const o = (row * pw + x) * 4;
+        const o = (y * pw + x) * 4;
         const gx = 500 + x, gy = 300 + y;
         partWire[o] = ((gx >> 8) & 0xF) | (((gy >> 8) & 0xF) << 4);
         partWire[o + 1] = gy & 0xFF; partWire[o + 2] = gx & 0xFF; partWire[o + 3] = 255;

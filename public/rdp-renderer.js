@@ -262,7 +262,13 @@ export class RdpGpuSurfaceCompositor {
         const gl = this.gl;
         gl.bindTexture(gl.TEXTURE_2D, this.stagingTexture);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, clipped.width, clipped.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-        this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, clipped, bgra ? this.bgraProgram : this.rgbaProgram, { u0: 0, v0: 0, u1: clipped.width / this.stagingWidth, v1: clipped.height / this.stagingHeight });
+        // CPU semantic pixels (ClearCodec / RFX / classic OnBitmap / Go
+        // surface buffer) are top-down: byte row 0 = visual top. Staging
+        // stores them that way after texSubImage2D. Surface FBOs use the
+        // GL-natural convention (texel row 0 = visual bottom), so invert V:
+        // protocol top samples staging row 0, protocol bottom samples the
+        // last staging row. Same UV contract as uploadVideoFrame.
+        this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, clipped, bgra ? this.bgraProgram : this.rgbaProgram, { u0: 0, v0: clipped.height / this.stagingHeight, u1: clipped.width / this.stagingWidth, v1: 0 });
         this.dirty = true;
     }
 
@@ -276,8 +282,7 @@ export class RdpGpuSurfaceCompositor {
         const gl = this.gl;
         gl.bindTexture(gl.TEXTURE_2D, this.stagingTexture);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, frame);
-        // VideoFrame sources are top-down: sample from vMax at the rect's
-        // bottom edge down to 0 at its top edge.
+        // VideoFrame is top-down, same contract as uploadBitmap.
         this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, clipped, this.rgbaProgram, { u0: 0, v0: sourceHeight / this.stagingHeight, u1: sourceWidth / this.stagingWidth, v1: 0 });
         this.dirty = true;
     }
@@ -453,21 +458,20 @@ export class RdpGpuSurfaceCompositor {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.scratchWidth, this.scratchHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     }
 
-    // Texture storage convention: row 0 of every surface/cache texture is the
-    // BOTTOM row of the image (GL-natural, matches the bottom-up BGRA rows the
-    // Go WASM side emits). Protocol rects are top-down (top<bottom); the V
-    // mapping below places texel row 0 at the rect's bottom edge so image
-    // content lands at texture rows [height-bottom, height-top].
+    // Two conventions coexist and must not be confused (see FREEZE/RDP_ORIENTATION_PROOF.md):
     //
-    // uv = {u0, v0, u1, v1} selects the sampled window explicitly:
-    // u0/v0 attach to the rect's left/bottom edges, u1/v1 to right/top.
-    // Defaults sample the whole texture in GL-natural orientation. Callers
-    // pass fractional windows for oversized staging/scratch textures and
-    // sub-rect windows for surface-to-surface and surface-to-cache copies.
-    // (Copy operations intentionally never use blitFramebuffer: its behavior
-    // diverges across ANGLE backends and mobile drivers — same-FBO blits are
-    // silently dropped on Adreno — while a textured draw is well-defined
-    // everywhere WebGL2 exists.)
+    // 1) CPU semantic pixels (Go ClearCodec/RFX/classic OnBitmap, FreeRDP
+    //    GDI surfaces): top-down — byte/row 0 = visual TOP.
+    // 2) GPU surface/cache textures: GL-natural — texel row 0 = visual BOTTOM.
+    //
+    // uploadBitmap / uploadVideoFrame convert (1)→(2) by inverting V when
+    // sampling the staging texture. cacheSurface / copySurface / present
+    // operate entirely in (2) and use GL-natural UV windows.
+    //
+    // uv = {u0, v0, u1, v1}: u0/v0 attach to the rect's LEFT/BOTTOM edges,
+    // u1/v1 to RIGHT/TOP. Defaults sample a full GL-natural texture.
+    // (Copy operations intentionally never use blitFramebuffer: same-FBO
+    // blits are silently dropped on Adreno/ANGLE.)
     _drawTexture(texture, framebuffer, targetWidth, targetHeight, rect, program, uv = null) {
         const gl = this.gl;
         gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);

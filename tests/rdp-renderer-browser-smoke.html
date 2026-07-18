@@ -10,40 +10,34 @@ try {
  const r = new RdpGpuSurfaceCompositor(c,{requestFrame:fn=>(callback=fn,1),cancelFrame(){}});
  r.reset(8,8); r.createSurface(1,8,8); r.mapSurface(1,0,0,8,8);
 
- // Full-surface upload, bottom-up BGRA bytes (Go WASM wire order):
- // byte row 7 = red (image top), byte row 0 = white (image bottom).
+ // REAL contract: Go ClearCodec / RFX / classic OnBitmap emit top-down BGRA
+ // (row 0 = visual top). Matches FreeRDP GDI surface storage.
  const bgra = new Uint8Array(8*8*4);
  const setRow=(row,px)=>{for(let x=0;x<8;x++)bgra.set(px,(row*8+x)*4);};
- setRow(7,[0,0,255,255]); // red = image top
- setRow(6,[0,255,0,255]); // green
- setRow(1,[255,0,0,255]); // blue
- setRow(0,[255,255,255,255]); // white = image bottom
+ setRow(0,[0,0,255,255]); // red = visual top
+ setRow(1,[0,255,0,255]); // green
+ setRow(6,[255,0,0,255]); // blue
+ setRow(7,[255,255,255,255]); // white = visual bottom
  r.uploadBitmap(1,{left:0,top:0,right:8,bottom:8},bgra,32);
 
- // Partial upload at protocol rows 2..4, cols 0..4: byte row 1 = magenta
- // (band top), byte row 0 = cyan (band bottom).
+ // Partial upload at protocol rows 2..4: row 0 of payload = band top (magenta),
+ // row 1 = band bottom (cyan).
  const part = new Uint8Array(4*2*4);
- for(let x=0;x<4;x++){part.set([255,255,0,255],x*4);part.set([255,0,255,255],16+x*4);}
+ for(let x=0;x<4;x++){part.set([255,0,255,255],x*4);part.set([255,255,0,255],16+x*4);}
  r.uploadBitmap(1,{left:0,top:2,right:4,bottom:4},part,16);
 
- // Cache round trip: cache protocol rect rows 0..2 cols 0..2 (red/green
- // bands) into slot 2, paste at (6,6). Must land at rows 6..8 cols 6..8
- // with red on top, green below.
+ // Cache protocol top-left 2x2 (red over green) into slot 2, paste at (6,6).
  r.cacheSurface(1,2,{left:0,top:0,right:2,bottom:2});
  r.drawCache(2,1,6,6);
 
  // Solid fill at protocol rows 4..6, cols 4..6.
  r.solidFill(1,{left:4,top:4,right:6,bottom:6},0xFFFF00FF); // magenta BGRA
 
- // Same-surface copy (SURFACE_TO_SURFACE src==dst, the Adreno same-FBO blit
- // path): copy the cached red/green bands at rows 6..8 cols 6..8 to rows
- // 0..2 cols 4..6. Red must stay above green.
+ // Same-surface copy: copy paste region rows 6..8 cols 6..8 to rows 0..2 cols 4..6.
  r.copySurface(1,1,{left:6,top:6,right:8,bottom:8},4,0);
- // Same-surface copy with an out-of-bounds destination: copy rows 0..2
- // cols 0..2 (red over green) to (7,7) — only the single texel at (7,7)
- // survives clipping, and it must be the source top-left texel (red).
+ // OOB same-surface copy: only (7,7) survives; source top-left is red.
  r.copySurface(1,1,{left:0,top:0,right:2,bottom:2},7,7);
- // Cross-surface copy into a second surface, verified via FBO readback.
+ // Cross-surface copy.
  r.createSurface(2,8,8);
  r.copySurface(1,2,{left:0,top:0,right:8,bottom:8},0,0);
 
@@ -51,40 +45,32 @@ try {
 
  const g = new Uint8Array(8*8*4);
  r.gl.readPixels(0,0,8,8,r.gl.RGBA,r.gl.UNSIGNED_BYTE,g);
- // readPixels row 0 = canvas bottom; screen[y] = visual top-down row.
+ // readPixels row 0 = canvas bottom; at(x,y) uses visual top-down y.
  const at=(x,y)=>{const o=((7-y)*8+x)*4;return [g[o],g[o+1],g[o+2]];};
  const eq=(a,b)=>a[0]===b[0]&&a[1]===b[1]&&a[2]===b[2];
  const RED=[255,0,0],GREEN=[0,255,0],BLUE=[0,0,255],WHITE=[255,255,255],CYAN=[0,255,255],MAG=[255,0,255];
- // Full upload orientation: image top (red) at screen row 0.
  if(!eq(at(7,0),RED)) fail(`top row not red: ${at(7,0)}`);
  if(!eq(at(7,1),GREEN)) fail(`row1 not green: ${at(7,1)}`);
  if(!eq(at(5,6),BLUE)) fail(`row6 not blue: ${at(5,6)}`);
  if(!eq(at(5,7),WHITE)) fail(`bottom row not white: ${at(5,7)}`);
- // Partial upload lands at protocol rows 2..3 with band top (magenta) above.
  if(!eq(at(0,2),MAG)) fail(`partial top row wrong: ${at(0,2)}`);
  if(!eq(at(0,3),CYAN)) fail(`partial bottom row wrong: ${at(0,3)}`);
  if(!eq(at(3,2),MAG)) fail(`partial right edge wrong: ${at(3,2)}`);
- // Cache paste at rows 6..8 cols 6..8, red over green.
  if(!eq(at(6,6),RED)) fail(`cache paste top wrong: ${at(6,6)}`);
  if(!eq(at(7,6),RED)) fail(`cache paste top(2) wrong: ${at(7,6)}`);
+ // (7,7) overwritten by OOB copy below — assert left neighbour only.
  if(!eq(at(6,7),GREEN)) fail(`cache paste bottom wrong: ${at(6,7)}`);
- // (7,7) is intentionally overwritten by the OOB-copy case below.
- // Solid fill exactly at rows 4..6 cols 4..6.
  if(!eq(at(4,4),MAG)) fail(`fill tl wrong: ${at(4,4)}`);
  if(!eq(at(5,5),MAG)) fail(`fill br wrong: ${at(5,5)}`);
- if(eq(at(3,4),MAG)) fail(`fill leaked above`);
+ if(eq(at(3,4),MAG)) fail(`fill leaked left`);
  if(eq(at(6,4),MAG)) fail(`fill leaked right`);
  if(eq(at(4,6),MAG)) fail(`fill leaked below`);
- // Same-surface copy landed at rows 0..2 cols 4..6, red over green.
  if(!eq(at(4,0),RED)) fail(`same-surface copy top wrong: ${at(4,0)}`);
  if(!eq(at(5,0),RED)) fail(`same-surface copy top(2) wrong: ${at(5,0)}`);
  if(!eq(at(4,1),GREEN)) fail(`same-surface copy bottom wrong: ${at(4,1)}`);
  if(!eq(at(5,1),GREEN)) fail(`same-surface copy bottom(2) wrong: ${at(5,1)}`);
- // OOB same-surface copy: exactly one red texel at (7,7), neighbours intact.
  if(!eq(at(7,7),RED)) fail(`oob copy texel wrong: ${at(7,7)}`);
  if(!eq(at(6,7),GREEN)) fail(`oob copy clobbered left neighbour: ${at(6,7)}`);
- if(eq(at(6,6),WHITE)) fail(`cache paste clobbered by oob copy`);
- // Cross-surface copy: surface 2 must equal surface 1's pre-copy content.
  const s2 = r.surfaces.get(2);
  r.gl.bindFramebuffer(r.gl.READ_FRAMEBUFFER, s2.framebuffer);
  const g2 = new Uint8Array(8*8*4);

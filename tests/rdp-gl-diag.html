@@ -245,11 +245,11 @@ const main = async () => { try {
     let cb = null;
     const r = new RdpGpuSurfaceCompositor(c2, { requestFrame: fn => (cb = fn, 1), cancelFrame() {} });
     r.reset(W, H); r.createSurface(1, W, H); r.mapSurface(1, 0, 0, W, H);
+    // Top-down semantic pixels (Go/FreeRDP contract): byte row y = visual y.
     const wire = new Uint8Array(W * H * 4);
     for (let y = 0; y < H; y++) {
-      const row = H - 1 - y;
       for (let x = 0; x < W; x++) {
-        const o = (row * W + x) * 4;
+        const o = (y * W + x) * 4;
         wire[o] = ((x >> 8) & 0xF) | (((y >> 8) & 0xF) << 4);
         wire[o + 1] = y & 0xFF;
         wire[o + 2] = x & 0xFF;
@@ -261,9 +261,8 @@ const main = async () => { try {
     const pw = 300, ph = 200;
     const partWire = new Uint8Array(pw * ph * 4);
     for (let y = 0; y < ph; y++) {
-      const row = ph - 1 - y;
       for (let x = 0; x < pw; x++) {
-        const o = (row * pw + x) * 4;
+        const o = (y * pw + x) * 4;
         const gx = 500 + x, gy = 300 + y; // place global-pattern content at (500,300)
         partWire[o] = ((gx >> 8) & 0xF) | (((gy >> 8) & 0xF) << 4);
         partWire[o + 1] = gy & 0xFF;
@@ -341,13 +340,12 @@ const main = async () => { try {
     let cb3 = null;
     const r3 = new RdpGpuSurfaceCompositor(c3, { requestFrame: fn => (cb3 = fn, 1), cancelFrame() {} });
     r3.reset(PW, PH); r3.createSurface(1, PW, PH); r3.mapSurface(1, 0, 0, PW, PH);
-    // tile 190x132 at (445,700), wire = bottom-up BGRA rows
+    // tile 190x132 at (445,700), top-down semantic BGRA (Go/FreeRDP contract)
     const TW = 190, TH = 132;
     const tile = new Uint8Array(TW * TH * 4);
     for (let y = 0; y < TH; y++) {
-      const row = TH - 1 - y;
       for (let x = 0; x < TW; x++) {
-        const o = (row * TW + x) * 4;
+        const o = (y * TW + x) * 4;
         const gx = 445 + x, gy = 700 + y;
         tile[o] = ((gx >> 8) & 0xF) | (((gy >> 8) & 0xF) << 4);
         tile[o + 1] = gy & 0xFF; tile[o + 2] = gx & 0xFF; tile[o + 3] = 255;

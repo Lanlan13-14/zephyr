@@ -1,0 +1,42 @@
+<!doctype html><meta charset="utf-8"><title>RDP real bitmap contract</title>
+<canvas id="c" width="8" height="8"></canvas><pre id="out">running</pre>
+<script type="module">
+// Proves the REAL semantic contract used by Go ClearCodec / FreeRDP / classic
+// OnBitmap: top-down BGRA (byte row 0 = visual top). Must stay green after
+// the orientation-contract fix; the old bottom-up assumption fails this page.
+import { RdpGpuSurfaceCompositor } from '../public/rdp-renderer.js';
+const out = document.getElementById('out');
+const fail = (msg) => { throw new Error(msg); };
+try {
+ const c = document.getElementById('c'); let callback;
+ const r = new RdpGpuSurfaceCompositor(c,{requestFrame:fn=>(callback=fn,1),cancelFrame(){}});
+ r.reset(8,8); r.createSurface(1,8,8); r.mapSurface(1,0,0,8,8);
+ const bgra = new Uint8Array(8*8*4);
+ const setRow=(row,px)=>{for(let x=0;x<8;x++)bgra.set(px,(row*8+x)*4);};
+ setRow(0,[0,0,255,255]); // visual top = red
+ setRow(1,[0,255,0,255]); // green
+ setRow(6,[255,0,0,255]); // blue
+ setRow(7,[255,255,255,255]); // visual bottom = white
+ r.uploadBitmap(1,{left:0,top:0,right:8,bottom:8},bgra,32);
+ r.beginFrame(1); r.endFrame(1); callback();
+ const g = new Uint8Array(8*8*4);
+ r.gl.readPixels(0,0,8,8,r.gl.RGBA,r.gl.UNSIGNED_BYTE,g);
+ const at=(x,y)=>{const o=((7-y)*8+x)*4;return [g[o],g[o+1],g[o+2]];};
+ const eq=(a,b)=>a[0]===b[0]&&a[1]===b[1]&&a[2]===b[2];
+ const RED=[255,0,0],GREEN=[0,255,0],BLUE=[0,0,255],WHITE=[255,255,255];
+ if(!eq(at(7,0),RED)) fail(`top row wrong: ${at(7,0)} expected ${RED}`);
+ if(!eq(at(7,1),GREEN)) fail(`row1 wrong: ${at(7,1)} expected ${GREEN}`);
+ if(!eq(at(5,6),BLUE)) fail(`row6 wrong: ${at(5,6)} expected ${BLUE}`);
+ if(!eq(at(7,7),WHITE)) fail(`bottom row wrong: ${at(7,7)} expected ${WHITE}`);
+ // Cache top-left 2x2 (red over green), paste at (6,6).
+ r.cacheSurface(1,2,{left:0,top:0,right:2,bottom:2});
+ r.drawCache(2,1,6,6);
+ r.beginFrame(2); r.endFrame(2); callback();
+ r.gl.readPixels(0,0,8,8,r.gl.RGBA,r.gl.UNSIGNED_BYTE,g);
+ if(!eq(at(6,6),RED)) fail(`cache top wrong: ${at(6,6)} expected ${RED}`);
+ if(!eq(at(6,7),GREEN)) fail(`cache bottom wrong: ${at(6,7)} expected ${GREEN}`);
+ // Uncovered bottom-left must still be white after paste.
+ if(!eq(at(0,7),WHITE)) fail(`bottom-left clobbered: ${at(0,7)}`);
+ window.result={ok:true,presents:r.presentedFrames}; out.textContent=JSON.stringify(window.result);
+} catch(e) { window.result={ok:false,error:e.stack}; out.textContent=JSON.stringify(window.result); }
+</script>

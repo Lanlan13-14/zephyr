@@ -1,6 +1,6 @@
-import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260718-vbar-nil-fix2';
-import { loadGoRuntime } from './rdp-wasm-runtime.js?v=20260718-vbar-nil-fix2';
-import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260718-vbar-nil-fix2';
+import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260718-orientation-contract1';
+import { loadGoRuntime } from './rdp-wasm-runtime.js?v=20260718-orientation-contract1';
+import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260718-orientation-contract1';
 
 export async function runWorkerCapabilityProbe({ runtimeLoader = loadGoRuntime } = {}) {
     if (typeof OffscreenCanvas === 'undefined') return { ok: false, stage: 'offscreen-canvas', error: 'OffscreenCanvas is unavailable' };
