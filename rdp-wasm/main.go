@@ -79,7 +79,7 @@ func jsGetClearCapture(_ js.Value, _ []js.Value) any {
 		out[i] = map[string]any{
 			"frameId": int(e.FrameID),
 			"surfId":  int(e.SurfID),
-			"rect":    []int{int(e.Rect[0]), int(e.Rect[1]), int(e.Rect[2]), int(e.Rect[3])},
+			"rect":    []any{int(e.Rect[0]), int(e.Rect[1]), int(e.Rect[2]), int(e.Rect[3])},
 			"payload": base64.StdEncoding.EncodeToString(e.Payload),
 			"outHash": base64.StdEncoding.EncodeToString(e.OutHash[:]),
 			"err":     e.Err,

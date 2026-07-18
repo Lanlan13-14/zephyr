@@ -275,3 +275,49 @@ func TestClearSeqAdoptsFirstNonZero(t *testing.T) {
 		t.Fatalf("unexpected mismatch count %d", d.seqMismatch)
 	}
 }
+
+// Regression: a zero-length short VBar (yOff==yOn, a column of pure
+// background) must be stored as a real cache entry. The old append-to-nil
+// stored a nil slice, so every later SHORT_HIT on that slot failed with
+// "short VBar miss" and the whole tile was dropped — the real-session
+// mosaic cascade. (Root cause confirmed against FreeRDP clear.c, which
+// keeps the entry with count=0 and accepts the hit.)
+func TestClearZeroLengthShortVBarHit(t *testing.T) {
+	d := newClearDecoder()
+	// One-column band 1x10: short miss yOn=0, yOff=0 (zero short pixels).
+	var band []byte
+	var hdr [11]byte
+	binary.LittleEndian.PutUint16(hdr[0:2], 0) // xs
+	binary.LittleEndian.PutUint16(hdr[2:4], 0) // xe
+	binary.LittleEndian.PutUint16(hdr[4:6], 0) // ys
+	binary.LittleEndian.PutUint16(hdr[6:8], 9) // ye -> bh=10
+	hdr[8], hdr[9], hdr[10] = 9, 8, 7
+	band = append(band, hdr[:]...)
+	var vh [2]byte
+	binary.LittleEndian.PutUint16(vh[:], 0) // yOn=0, yOff=0 -> zero-length short
+	band = append(band, vh[:]...)
+	stream := buildClearStream(0, 1, nil, nil, band, nil)
+	if _, err := d.decode(stream, 1, 10); err != nil {
+		t.Fatalf("zero-length short store: %v", err)
+	}
+	// Second stream: SHORT_HIT on index 0 — must succeed (empty => all bg).
+	var band2 []byte
+	hdr2 := hdr
+	hdr2[8], hdr2[9], hdr2[10] = 9, 8, 7
+	band2 = append(band2, hdr2[:]...)
+	var vh2 [2]byte
+	binary.LittleEndian.PutUint16(vh2[:], 0x4000) // SHORT_HIT idx=0
+	band2 = append(band2, vh2[:]...)
+	band2 = append(band2, 0) // yOn=0
+	stream2 := buildClearStream(0, 2, nil, nil, band2, nil)
+	out, err := d.decode(stream2, 1, 10)
+	if err != nil {
+		t.Fatalf("zero-length short hit must succeed: %v", err)
+	}
+	for i := 0; i < 10; i++ {
+		o := i * 4
+		if out[o] != 9 || out[o+1] != 8 || out[o+2] != 7 {
+			t.Fatalf("row %d = %v, want bg", i, out[o:o+3])
+		}
+	}
+}

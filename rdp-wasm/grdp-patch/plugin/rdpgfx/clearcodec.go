@@ -251,7 +251,7 @@ func decodeClearResidual(data, out []byte) error {
 		}
 		for i := 0; i < int(run); i++ {
 			o := (pixel + i) * 4
-			out[o], out[o+1], out[o+2], out[o+3] = b, g, r, 0
+			out[o], out[o+1], out[o+2], out[o+3] = b, g, r, 0xFF
 		}
 		pixel += int(run)
 		if pixel == max {
@@ -385,15 +385,25 @@ func clearFullVBar(yOn int, short []byte, height int, bg [3]byte) []byte {
 	}
 	return out
 }
+// storeVBar/storeShort copy into cache slots. make+copy (never append to
+// nil): a zero-length short VBar (yOff==yOn, a column of pure background) is
+// legal and common; append([]byte(nil)) would store a nil slice, making the
+// slot indistinguishable from "never stored" and failing every later hit —
+// which is exactly the real-session short-VBar-miss cascade. FreeRDP keeps
+// the entry with count=0 and accepts the hit.
 func (d *clearDecoder) storeVBar(v []byte) int {
 	i := d.vbarCursor
-	d.vbars[i] = append([]byte(nil), v...)
+	buf := make([]byte, len(v))
+	copy(buf, v)
+	d.vbars[i] = buf
 	d.vbarCursor = (i + 1) % len(d.vbars)
 	return i
 }
 func (d *clearDecoder) storeShort(v []byte) {
 	i := d.shortCursor
-	d.shortVbars[i] = append([]byte(nil), v...)
+	buf := make([]byte, len(v))
+	copy(buf, v)
+	d.shortVbars[i] = buf
 	d.shortCursor = (i + 1) % len(d.shortVbars)
 }
 func (d *clearDecoder) decodeClearVBar(c *clearCursor, height int, bg [3]byte) ([]byte, error) {
