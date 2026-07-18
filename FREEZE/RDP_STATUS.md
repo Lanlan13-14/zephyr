@@ -1,12 +1,21 @@
 # Zephyr RDP WASM GPU 管线 - 现状
 
-> 最后更新：2026-07-18（花屏三层根因全部修复后）
-> 当前提交：见 git log（main）
-> 部署版本：`vbar-nil-fix2`
+> 最后更新：2026-07-18（方向契约修复后）
+> 当前提交：`23ed63b`（main）
+> 部署版本：`orientation-contract1` / build `20260718-orientation-contract1`
 > 基线版本：v1.1.447（稳定，RDP 可用）
 >
-> ⚠️ 本文档 2026-07-17 早先版本中的多项"PASS/✅"结论未经真实验证
-> （浏览器冒烟只断言像素数量而非像素值；Go 测试在 main 上根本无法编译）。
+> ⚠️ 验收标准：状态栏必须显示 `build 20260718-orientation-contract1`。
+> 若仍显示 `clearcodec-parity1` / `vbar-nil-fix2`，客户端跑的是旧缓存，结论无效。
+> 形式证明见 [RDP_ORIENTATION_PROOF.md](./RDP_ORIENTATION_PROOF.md)。
+> ⚠️ 本文档 2026-07-17 早先版本中的多项"PASS/✅"结论未经真实验证。
+>
+> **第四层根因（2026-07-18 晚）**：Go/FreeRDP 语义像素为 **top-down**，JS
+> `uploadBitmap` 却按 **bottom-up** 采样 staging → 每块写入 surface 时上下颠倒；
+> `SURFACE_TO_CACHE` 从错误垂直条带取样 → `CACHE_TO_SURFACE` 铺满错误 64×64 块。
+> 与 ClearCodec 是否正确无关：解码全对也会花屏。已修 UV 契约并重写门禁。
+> 真机 smoke + real-bitmap-contract + GL E2E 全绿；Node 直连软件合成对照
+> FreeRDP 显示正向图标/连续壁纸/窗口（非网格马赛克）。
 
 ---
 
