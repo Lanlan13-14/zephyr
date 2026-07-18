@@ -1,21 +1,9 @@
 # Zephyr RDP WASM GPU 管线 - 现状
 
-> 最后更新：2026-07-18（方向契约修复后）
-> 当前提交：`23ed63b`（main）
-> 部署版本：`orientation-contract1` / build `20260718-orientation-contract1`
+> 最后更新：2026-07-18（Progressive 根因定位后）
+> 当前提交：见 git log（main）
+> 部署版本：`progressive-parity`
 > 基线版本：v1.1.447（稳定，RDP 可用）
->
-> ⚠️ 验收标准：状态栏必须显示 `build 20260718-orientation-contract1`。
-> 若仍显示 `clearcodec-parity1` / `vbar-nil-fix2`，客户端跑的是旧缓存，结论无效。
-> 形式证明见 [RDP_ORIENTATION_PROOF.md](./RDP_ORIENTATION_PROOF.md)。
-> ⚠️ 本文档 2026-07-17 早先版本中的多项"PASS/✅"结论未经真实验证。
->
-> **第四层根因（2026-07-18 晚）**：Go/FreeRDP 语义像素为 **top-down**，JS
-> `uploadBitmap` 却按 **bottom-up** 采样 staging → 每块写入 surface 时上下颠倒；
-> `SURFACE_TO_CACHE` 从错误垂直条带取样 → `CACHE_TO_SURFACE` 铺满错误 64×64 块。
-> 与 ClearCodec 是否正确无关：解码全对也会花屏。已修 UV 契约并重写门禁。
-> 真机 smoke + real-bitmap-contract + GL E2E 全绿；Node 直连软件合成对照
-> FreeRDP 显示正向图标/连续壁纸/窗口（非网格马赛克）。
 
 ---
 
@@ -149,55 +137,68 @@ copy 精确像素断言，真机通过。
 
 ## 4. 花屏根因与修复（2026-07-18，全部实锤）
 
-花屏共有**三层独立根因**，全部定位并修复：
+花屏共有**五层独立根因**，全部定位。前四层已验证修复，第五层（Progressive）已定位并完成隔离修复，待部署 full build。
 
 ### 4.1 根因一：Adreno 同 FBO blitFramebuffer 被静默丢弃 ✅
 
-- 真机逐路径 GL 诊断（`tests/rdp-gl-diag.html`，1920×1080 坐标编码图案
-  逐像素断言）实锤：READ==DRAW 同 FBO 的 blitFramebuffer 在 Adreno 750 /
+- 真机逐路径 GL 诊断实锤：READ==DRAW 同 FBO 的 blitFramebuffer 在 Adreno 750 /
   ANGLE 上是静默 no-op，`SURFACE_TO_SURFACE` src==dst 拷贝全部丢失
 - 修复：compositor 完全弃用 blitFramebuffer，全部走 shader 绘制路径
-  （同 surface 拷贝经 scratch 纹理中转，避免 feedback loop；补上目标
-  区域裁剪；fragment shader 升 highp 防 fp16-only GPU）
-- 真机验证：compositor E2E 2,073,600 像素 0 错误（页面 + Worker 环境）
+  （同 surface 拷贝经 scratch 纹理中转，补目标区域裁剪，fragment shader 升 highp）
+- 真机验证：compositor E2E 2,073,600 像素 0 错误
 
 ### 4.2 根因二：ClearCodec glyph cache 与 FreeRDP 语义分歧 ✅
 
-对照 FreeRDP `libfreerdp/codec/clear.c` 逐行审计发现（每条都导致
-WTS1 整块丢弃 → 内容缺失 → 马赛克）：
+对照 FreeRDP `libfreerdp/codec/clear.c` 逐行审计：
 
-- glyph 存储上限 1024 像素，FreeRDP 是 1024×1024 → 大 glyph（窗口
-  标题栏、图标、文字块）全部无法缓存，后续 hit 全部丢块
-- glyph hit 要求尺寸精确一致，FreeRDP 是扁平前缀读取（w×h ≤ 缓存
-  像素数即可）→ 尺寸不同即丢块
-- glyph hit 流带图层时提前返回，FreeRDP 会在 hit 拷贝上继续解码图层
-- band 越界、short-VBar yOff>band 高、subcodec 层错误（含 NSCODEC）
-  过度严格 → 整块丢弃；改为 FreeRDP 式宽容（按列消费跳过越界写、
-  子块跳过但保留 residual+bands 内容）
-- ClearCodec seq 断档无处理：采用 FreeRDP 规则采纳首个非零 seq，
-  断档时清空全部 codec 缓存并重新对齐（自愈，优于 FreeRDP 的硬失败）
+- glyph 存储上限 1024 像素，FreeRDP 是 1024×1024 → 大 glyph 全部无法缓存
+- glyph hit 要求尺寸精确一致，FreeRDP 是扁平前缀读取
+- glyph hit+layers 提前返回，FreeRDP 继续解码图层
+- band 越界、short-VBar yOff>band 高、subcodec 层错误（含 NSCODEC）过度严格
+- ClearCodec seq 断档无处理：改为 FreeRDP 规则 + 自愈
 
 ### 4.3 根因三：零长度 short VBar 被存成 nil（马赛克级联的总源头）✅
 
-- 通过**真实会话 55 条 ClearCodec 流捕获 + Go/FreeRDP 双实现离线重放**
-  定位（Node 直连驱动 + C 版 clear.c 对照 harness）：
-  一条 yOff==yOn 的 short VBar（零像素、纯背景列）经 `append([]byte(nil))`
-  存成 **nil 切片**，缓存槽与"从未存储"无法区分 → 后续每次 SHORT_HIT
-  失败 → 整块丢弃 → 更多 short store 丢失 → **级联马赛克**
-- FreeRDP 行为：条目保留 count=0，hit 正常命中
-- 修复：make+copy 存储（空切片非 nil）；regression 测试覆盖
-- **验证：55/55 捕获流解码输出与 FreeRDP 逐字节完全一致**
-  （修复前：10 条错误 + 11 条内容分歧）
+- 真实会话 55 条 ClearCodec 流捕获 + Go/FreeRDP 双实现离线重放定位
+- `append([]byte(nil))` 存成 nil 切片 → 缓存槽与"从未存储"无法区分 →
+  后续 SHORT_HIT 全败 → 级联马赛克
+- 验证：55/55 捕获流解码输出与 FreeRDP 逐字节完全一致
 
-### 4.4 其他未解决
+### 4.4 根因四：pixel 行序契约（top-down vs bottom-up）✅
 
-- CredSSP 单次 Read 当完整 DER message 的风险
-- ECDSA RDP 证书 + CredSSP pubKeyAuth 绑定未验证
-- 更多 Android 设备/GPU（Mali、PowerVR、旧 Adreno）实测未覆盖——
-  诊断页可在任意设备打开复测
-- AVC 路径的 VideoFrame texSubImage2D 在 ANGLE 上的行为未验证
-  （Windows 当前不发 AVC）
-- 缺少端到端延迟/帧率/长时内存基线
+- Go/FreeRDP 语义像素为 top-down；旧 `uploadBitmap` UV 按 bottom-up 上传
+- FBO 倒置 → SURFACE_TO_CACHE 取到错误垂直条带 → CACHE_TO_SURFACE 铺错误 64×64 块
+- 形式证明见 [FREEZE/RDP_ORIENTATION_PROOF.md](./RDP_ORIENTATION_PROOF.md)
+
+### 4.5 根因五：Progressive 解码器错误实现 🔴
+
+**定位过程**（单一变量 A/B 实验）：
+
+1. 帧 7 开始出现 64 像素对齐的灰色矩形条带，覆盖此前已正确解码的 ClearCodec 彩色瓦片
+2. A/B：同一干净提交，唯一变量 WTS2 Progressive。A（启用）→ 灰占比 94.6%；B（跳过）→ 0%
+3. 捕获 8 条真实 WTS2 Progressive payload（codecId 0x0009），FreeRDP 输出彩色桌面，
+   Go 输出中性灰 (~128,128,128)
+
+**已确认的 Go Progressive 实现缺陷**（与 FreeRDP `progressive.c` 逐行对照）：
+
+| 缺陷 | FreeRDP | Go（修复前） |
+|---|---|---|
+| progressive quant 表 | 16 字节，3 分量各 5 字节 | 被忽略 |
+| 量化组合 | `quant + progQuant - 1` | 只用 quant |
+| extrapolate 子带布局 | 1023/1023/961/272/272/256/72/72/64/81 | 非 extrapolate 布局 |
+| 逆 DWT | 3 级 extrapolate DWT | 非 extrapolate DWT |
+| TILE_UPGRADE | SRL bit-plane 状态机 + RAW 码流 | 无实现 |
+| tile 缓存 | sign/current 数组 + 逐子带 bitPos/numBits | 无实现 |
+
+**修复状态**：隔离 worktree 已重写，同一 8 条 payload 离线重放逐帧 FNV 不一致，
+但第 0 帧（TILE_FIRST）RGB 像素一致；后续 TILE_UPGRADE 帧仍偏离。
+TILE_FIRST/SIMPLE 路径（extrapolate + progressive quant）已修复；
+TILE_UPGRADE（SRL bit-plane）尚未完整移植，生产环境仍需规避该 codec 能力。
+
+**后续**：完整移植 FreeRDP `progressive_decompress_tile_upgrade` 状态机，
+或暂时撤回 WTS2 Progressive 能力广告，强制服务器回退到 ClearCodec-only。
+
+### 4.6 其他未解决
 
 ---
 

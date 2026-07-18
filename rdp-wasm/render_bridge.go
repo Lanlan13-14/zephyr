@@ -67,10 +67,15 @@ func forwardRenderEvent(event rdpgfx.RenderEvent) {
 	}
 	slog.Info("forwardRenderEvent", "kind", event.Kind, "frameId", event.FrameID, "surfaceId", event.SurfaceID, "dataLen", len(event.Data))
 	if (event.Kind == rdpgfx.RenderBitmap || event.Kind == rdpgfx.RenderClassicBitmap) && len(event.Data) > 0 && bitmapCallback.Type() == js.TypeFunction {
-		pointer := uintptr(unsafe.Pointer(unsafe.SliceData(event.Data)))
+		// Pass the linear-memory offset as float64, NOT int. On go/wasm,
+		// int is 32-bit; casting a uintptr ≥ 2^31 yields a negative int,
+		// and JS then builds Uint8Array(buffer, negativeOffset) → wrong
+		// bytes / empty views → full-screen garbage tiles. float64 can
+		// represent every wasm32 address exactly.
+		pointer := float64(uintptr(unsafe.Pointer(unsafe.SliceData(event.Data))))
 		bitmapCallback.Invoke(js.ValueOf(map[string]any{
 			"kind": int(event.Kind), "frameId": int(event.FrameID), "surfaceId": int(event.SurfaceID),
-			"rect": renderRectValue(event.Rect), "pointer": int(pointer),
+			"rect": renderRectValue(event.Rect), "pointer": pointer,
 			"length": len(event.Data), "stride": int(event.Stride),
 		}))
 		runtime.KeepAlive(event.Data)

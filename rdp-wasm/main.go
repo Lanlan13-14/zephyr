@@ -88,6 +88,23 @@ func jsGetClearCapture(_ js.Value, _ []js.Value) any {
 	return js.ValueOf(out)
 }
 
+func jsGetProgressiveCapture(_ js.Value, _ []js.Value) any {
+	client := currentClient()
+	if client == nil || client.GfxHandler() == nil {
+		return nil
+	}
+	entries := client.GfxHandler().ProgressiveCapture()
+	out := make([]any, len(entries))
+	for i, e := range entries {
+		out[i] = map[string]any{
+			"frameId": int(e.FrameID), "surfId": int(e.SurfID), "codecId": int(e.CodecID),
+			"codecCtxId": int(e.CodecCtxID), "width": int(e.Width), "height": int(e.Height),
+			"rects": e.Rects, "payload": base64.StdEncoding.EncodeToString(e.Payload),
+		}
+	}
+	return js.ValueOf(out)
+}
+
 func isCurrentClient(gen uint64, c *grdp.RdpClient) bool {
 	clientMu.Lock()
 	defer clientMu.Unlock()
@@ -122,6 +139,7 @@ func main() {
 	js.Global().Set("rdpRequestFullRefresh", js.FuncOf(jsRequestFullRefresh))
 	js.Global().Set("rdpGetProtocolDiagnostics", js.FuncOf(jsGetProtocolDiagnostics))
 	js.Global().Set("rdpGetClearCapture", js.FuncOf(jsGetClearCapture))
+	js.Global().Set("rdpGetProgressiveCapture", js.FuncOf(jsGetProgressiveCapture))
 	js.Global().Set("rdpConfigureRenderer", js.FuncOf(jsConfigureRenderer))
 
 	// Agent drive management (hot-plug)

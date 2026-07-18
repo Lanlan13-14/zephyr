@@ -216,12 +216,16 @@ type GfxHandler struct {
 	// WTS1 payloads of the session (payload bytes + decode result), so a
 	// garbled session can be replayed byte-for-byte offline against both
 	// this decoder and FreeRDP's clear.c. Field-debug only.
-	clearCapture []clearCaptureEntry
+	clearCapture  []clearCaptureEntry
 	clearCapBytes int
-	zgfx         *zgfxContext
-	rfx          *rfxDecoder
-	progressive  *rfxProgressiveDecoder
-	h264dec      H264Decoder
+	// Bounded raw WTS2 Progressive captures for reference-decoder replay.
+	progressiveCapture      []progressiveCaptureEntry
+	progressiveCapBytes     int
+	progressiveCaptureCount uint32
+	zgfx                    *zgfxContext
+	rfx                     *rfxDecoder
+	progressive             *rfxProgressiveDecoder
+	h264dec                 H264Decoder
 	// h264dec2 is the auxiliary H.264 decoder used for AVC444v2 LC=2 chroma-upgrade
 	// frames.  It decodes stream2, which carries chroma values for positions not
 	// covered by stream1's 4:2:0 quantiser.  The decoded I420 planes are combined
@@ -1930,8 +1934,12 @@ func (g *GfxHandler) onWireToSurface2Decode(data []byte) {
 			}
 		}
 	case codecProgressive:
+		capIdx := g.captureProgressivePayload(surfId, codecId, codecCtxId, uint16(w), uint16(h), bmpData)
 		// Decode tiles directly onto the persistent surface buffer.
 		rects := g.progressive.Decode(bmpData, s.data, w, h)
+		if capIdx >= 0 {
+			g.progressiveCapture[capIdx].Rects = len(rects)
+		}
 		for _, rc := range rects {
 			needed := rc.w * rc.h * 4
 			region := regionPool.Get().([]byte)
@@ -2167,9 +2175,56 @@ func (g *GfxHandler) onCacheImportOffer() {
 
 // --- Helpers ---
 
+// progressiveCaptureEntry stores one raw WTS2 Progressive payload.
+type progressiveCaptureEntry struct {
+	FrameID    uint32
+	SurfID     uint16
+	CodecID    uint16
+	CodecCtxID uint32
+	Width      uint16
+	Height     uint16
+	Payload    []byte
+	Rects      int
+}
+
+type ProgressiveCaptureEntry struct {
+	FrameID    uint32
+	SurfID     uint16
+	CodecID    uint16
+	CodecCtxID uint32
+	Width      uint16
+	Height     uint16
+	Payload    []byte
+	Rects      int
+}
+
+const (
+	progressiveCaptureMaxEntries = 32
+	progressiveCaptureMaxBytes   = 16 << 20
+)
+
+func (g *GfxHandler) captureProgressivePayload(surfID, codecID uint16, ctxID uint32, width, height uint16, payload []byte) int {
+	if len(g.progressiveCapture) >= progressiveCaptureMaxEntries || g.progressiveCapBytes+len(payload) > progressiveCaptureMaxBytes {
+		return -1
+	}
+	p := make([]byte, len(payload))
+	copy(p, payload)
+	g.progressiveCapture = append(g.progressiveCapture, progressiveCaptureEntry{FrameID: g.currentFrameID, SurfID: surfID, CodecID: codecID, CodecCtxID: ctxID, Width: width, Height: height, Payload: p})
+	g.progressiveCapBytes += len(payload)
+	g.progressiveCaptureCount++
+	return len(g.progressiveCapture) - 1
+}
+
+func (g *GfxHandler) ProgressiveCapture() []ProgressiveCaptureEntry {
+	out := make([]ProgressiveCaptureEntry, len(g.progressiveCapture))
+	for i, e := range g.progressiveCapture {
+		out[i] = ProgressiveCaptureEntry{FrameID: e.FrameID, SurfID: e.SurfID, CodecID: e.CodecID, CodecCtxID: e.CodecCtxID, Width: e.Width, Height: e.Height, Payload: e.Payload, Rects: e.Rects}
+	}
+	return out
+}
+
 // emitCaVideoRects copies decoded RemoteFX tile regions from the surface
 // pixel buffer into individual BitmapUpdate slices and emits them.
-// clearCaptureEntry records one ClearCodec WTS1 payload and its decode fate.
 type clearCaptureEntry struct {
 	FrameID uint32
 	SurfID  uint16
