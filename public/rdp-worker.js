@@ -4,13 +4,6 @@ import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260718
 import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260718-clearcodec-parity1';
 import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260718-clearcodec-parity1';
 
-// Boot heartbeat: proves this exact worker file is the one running.
-fetch('/api/rdp/h264-debug', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workerBoot: 'cap3-heartbeat', at: Date.now() }),
-}).catch(() => { });
-
 let compositor = null;
 let avc420 = null;
 let avc444 = null;
@@ -128,35 +121,6 @@ async function loadGoWasm() {
         globalThis.rdpOnWasmBitmap = (event) => upload(event);
     }
     bootStage('go-runtime-starting');
-    // Forensic ClearCodec capture auto-dump: the debug endpoint holds a
-    // single body and page-side diagnostics are unreliable, so the worker
-    // posts the capture itself every 12s while the session is young.
-    let capturePosts = 0;
-    const captureTimer = setInterval(() => {
-        if (capturePosts >= 3 || typeof globalThis.rdpGetClearCapture !== 'function') {
-            if (capturePosts >= 3) clearInterval(captureTimer);
-            return;
-        }
-        try {
-            const capture = globalThis.rdpGetClearCapture();
-            capturePosts++;
-            fetch('/api/rdp/h264-debug', {
-                method: 'POST', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    captureStatus: { hasFn: true, entries: capture ? capture.length : -1, at: Date.now(), seq: capturePosts },
-                    ...(capture && capture.length ? { clearCapture: capture } : {}),
-                }),
-            }).catch(() => { });
-        } catch (e) {
-            capturePosts++;
-            fetch('/api/rdp/h264-debug', {
-                method: 'POST', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ captureStatus: { error: String(e), at: Date.now() } }),
-            }).catch(() => { });
-        }
-    }, 12000);
     const exportsReady = new Promise((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('Go WASM exports registration timed out')), 10000);
         globalThis.zephyrRdpWasmReady = () => {
@@ -302,22 +266,9 @@ async function invokeMethod(method, args) {
         const protocol = typeof globalThis.rdpGetProtocolDiagnostics === 'function'
             ? globalThis.rdpGetProtocolDiagnostics()
             : {};
-        // Forensic ClearCodec capture dump (payloads + decode results) for
-        // offline replay against FreeRDP. Reposted on every diagnostics call:
-        // the endpoint holds a single body and rdp.html's h264 log reporter
-        // overwrites it otherwise.
-        if (typeof globalThis.rdpGetClearCapture === 'function') {
-            try {
-                const capture = globalThis.rdpGetClearCapture();
-                if (capture && capture.length) {
-                    fetch('/api/rdp/h264-debug', {
-                        method: 'POST', credentials: 'same-origin',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ clearCapture: capture, at: Date.now() }),
-                    }).catch(() => { });
-                }
-            } catch {}
-        }
+        // (The forensic ClearCodec capture remains available on demand via
+        // the rdpGetClearCapture WASM export; auto-dumping was removed after
+        // the 2026-07-18 root-cause fix.)
         // Flatten field diagnostics into protocol keys (telemetry whitelist
         // only forwards the numeric protocol map + a few scalar fields).
         workerDiag.bitmapSamples.forEach((s, i) => {
