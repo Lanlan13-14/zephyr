@@ -825,7 +825,7 @@ docker run -d \
 ## 赞助商
 
 <a href="https://www.lightcone.hk/">
-  <img src=".github/sponsors/lightcone.svg" alt="LightCone Server" width="360">
+  <img src=".github/sponsors/lightcone.png" alt="LightCone" height="100">
 </a>
 
 感谢 **[LightCone](https://www.lightcone.hk/)** 对本项目的赞助。
