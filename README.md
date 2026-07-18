@@ -24,6 +24,7 @@
 - [安全建议](#安全建议)
 - [依赖与数据说明](#依赖与数据说明)
 - [计划](#计划)
+- [赞助商](#赞助商)
 - [致谢](#致谢)
 
 ---
@@ -818,6 +819,16 @@ docker run -d \
 
 > **项目目前处于维护冻结状态，暂不接受功能请求，暂不处理 Pull Request。**  
 > 提交 Issue 请按 [Issue 模板](.github/ISSUE_TEMPLATE/ISSUE_TEMPLATE.md) 格式填写。
+
+---
+
+## 赞助商
+
+<a href="https://www.lightcone.hk/">
+  <img src=".github/sponsors/lightcone.svg" alt="LightCone Server" width="360">
+</a>
+
+感谢 **[LightCone](https://www.lightcone.hk/)** 对本项目的赞助。
 
 ---
 
