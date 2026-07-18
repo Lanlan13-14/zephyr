@@ -1,0 +1,77 @@
+name: Motion Engine
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'motion-wasm/**'
+      - 'public/vendor/zephyr-motion/**'
+      - 'tests/motion-*'
+      - 'scripts/build-motion-wasm.sh'
+      - '.github/workflows/motion-wasm.yml'
+  pull_request:
+    paths:
+      - 'motion-wasm/**'
+      - 'public/vendor/zephyr-motion/**'
+      - 'tests/motion-*'
+      - 'scripts/build-motion-wasm.sh'
+      - '.github/workflows/motion-wasm.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write # push the rebuilt artifact back to main
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TINYGO_VERSION: '0.37.0'
+
+jobs:
+  build-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: motion-wasm/go.sum
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Install TinyGo
+        run: |
+          curl -fsSL "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo${TINYGO_VERSION}.linux-amd64.tar.gz" -o /tmp/tinygo.tar.gz
+          sudo tar -C /usr/local -xzf /tmp/tinygo.tar.gz
+          echo "/usr/local/tinygo/bin" >> "$GITHUB_PATH"
+          tinygo version
+
+      - name: Run Go physics tests (native)
+        run: cd motion-wasm && go test ./...
+
+      - name: Run JS fallback + runtime tests (no artifact needed)
+        run: node --test tests/motion-spring-js.test.mjs tests/motion-runtime.test.mjs
+
+      - name: Build wasm artifact (TinyGo)
+        run: scripts/build-motion-wasm.sh
+
+      - name: Run ABI tests against the real artifact
+        run: node --test tests/motion-abi.test.mjs
+
+      - name: Commit rebuilt artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/vendor/zephyr-motion/zephyr_motion.wasm
+          if git diff --cached --quiet; then
+            echo "artifact unchanged"
+          else
+            git commit -m "chore(motion): rebuild zephyr_motion.wasm [skip ci]"
+            git push
+          fi

@@ -11,9 +11,11 @@
     "test:rdp-node": "node --test tests/*.test.mjs",
     "test:syntax": "node tests/check-js-syntax.mjs",
     "test:go": "cd rdp-wasm/grdp-patch && GOOS=js GOARCH=wasm go test -exec=\"$(pwd)/../../tests/go-js-wasm-exec-clean.sh\" ./plugin/rdpgfx ./plugin/cliprdr ./protocol/nla && cd .. && GOOS=js GOARCH=wasm go test -exec=\"$(pwd)/../tests/go-js-wasm-exec-clean.sh\" ./...",
+    "test:motion-go": "cd motion-wasm && go test ./...",
+    "test:motion": "node --test tests/motion-spring-js.test.mjs tests/motion-runtime.test.mjs tests/motion-abi.test.mjs",
     "test:wasm-build": "cd rdp-wasm && GOOS=js GOARCH=wasm go build -o /tmp/zephyr-rdp-main.wasm . && test -s /tmp/zephyr-rdp-main.wasm && rm -f /tmp/zephyr-rdp-main.wasm",
     "test:browser-smoke": "node tests/rdp-browser-smoke-runner.mjs",
-    "test:ci": "npm run test:syntax && npm run test:rdp-node && npm run test:go && npm run test:wasm-build"
+    "test:ci": "npm run test:syntax && npm run test:rdp-node && npm run test:motion && npm run test:go && npm run test:motion-go && npm run test:wasm-build"
   },
   "dependencies": {
     "@babel/runtime": "^7.29.2",

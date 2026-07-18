@@ -14,6 +14,11 @@ data/zephyr-before-import-*.db
 *.log
 npm-debug.log*
 
+# Motion engine: local verification builds (CI commits the TinyGo artifact
+# at public/vendor/zephyr-motion/zephyr_motion.wasm — do NOT ignore that one)
+motion-wasm/*.wasm
+/tmp_*.wasm
+
 # OS / editor
 .DS_Store
 .vscode/

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>zephyr-motion feel check</title>
+<style>
+  :root { color-scheme: dark; --bg:#101114; --surface:#1b1c20; --border:#303237; --text:#f4f4f6; --accent:#0a84ff; --ok:#32d74b; --bad:#ff453a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  header { padding:18px 22px 10px; }
+  header h1 { font-size:17px; margin:0 0 4px; }
+  header p { margin:0; color:#9a9ca3; font-size:12.5px; }
+  #status { display:flex; gap:14px; flex-wrap:wrap; padding:10px 22px; font:12px/1.4 ui-monospace, monospace; color:#9a9ca3; border-bottom:1px solid var(--border); }
+  #status b { color:var(--text); font-weight:600; }
+  #sleep { color:var(--ok); }
+  #sleep.awake { color:var(--accent); }
+  main { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px,1fr)); gap:14px; padding:16px 22px 40px; }
+  section { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:14px 16px 16px; overflow:hidden; }
+  section h2 { font-size:13.5px; margin:0 0 3px; }
+  section .hint { font-size:11.5px; color:#8e8e96; margin:0 0 12px; }
+  .stage { position:relative; height:190px; border-radius:10px; background:#141519; border:1px solid #26272c; overflow:hidden; touch-action:none; }
+  .box { position:absolute; width:44px; height:44px; border-radius:12px; background:var(--accent); will-change:transform; left:24px; top:24px; }
+  .target { position:absolute; width:14px; height:14px; border-radius:50%; border:2px solid #3a3b42; transform:translate(-50%,-50%); cursor:pointer; }
+  .target:hover { border-color:var(--accent); }
+  #velread { font:11px ui-monospace,monospace; color:#8e8e96; margin-top:8px; min-height:15px; }
+  .pill { display:inline-block; padding:9px 18px; border-radius:999px; background:var(--accent); color:#fff; border:0; font:600 13px/1 inherit; cursor:pointer; will-change:transform; user-select:none; -webkit-user-select:none; }
+  .row { display:flex; gap:10px; align-items:center; }
+  #panel { position:absolute; left:50%; top:50%; width:230px; height:140px; margin:-70px 0 0 -115px; border-radius:18px; background:#26272e; border:1px solid #34353c; display:none; padding:14px; will-change:transform; }
+  #panel.show { display:block; }
+  #panel h3 { margin:0 0 6px; font-size:13px; }
+  #panel p { margin:0; font-size:11.5px; color:#9a9ca3; }
+  .listitem { padding:10px 12px; margin:6px 0; border-radius:10px; background:#202127; border:1px solid #2c2d33; will-change:transform,opacity; }
+  #selftest { margin:0 22px 30px; padding:12px 16px; border-radius:12px; background:#141519; border:1px solid var(--border); font:12px/1.7 ui-monospace,monospace; white-space:pre-wrap; }
+  .pass { color:var(--ok); } .fail { color:var(--bad); }
+  #dragzone .box { cursor:grab; }
+  #dragzone .box:active { cursor:grabbing; }
+  .snapline { position:absolute; top:0; bottom:0; width:1px; background:#2a2b31; }
+</style>
+</head>
+<body>
+<header>
+  <h1>zephyr-motion — feel & smoke check</h1>
+  <p>Springs are interruptible everywhere: grab anything mid-flight. No CSS transitions drive these — all channels run through the engine.</p>
+</header>
+<div id="status">
+  <span>backend <b id="backend">…</b></span>
+  <span>engine <b id="sleep">asleep</b></span>
+  <span>reduced-motion <b id="rms">off</b></span>
+  <span><label><input type="checkbox" id="rm"> emulate reduce</label></span>
+</div>
+<main>
+  <section>
+    <h2>1 · Interrupt & retarget</h2>
+    <p class="hint">Click dots in rapid succession — the box must redirect from its live position with its current velocity (no restart, no jump). Watch |v| continuity.</p>
+    <div class="stage" id="retarget">
+      <div class="box" id="box1"></div>
+    </div>
+    <div id="velread">|v| —</div>
+  </section>
+
+  <section id="dragzone">
+    <h2>2 · Drag, momentum, snap</h2>
+    <p class="hint">Throw the ball: release velocity projects the resting point, then snaps to a line (0 / 140 / 280px). Slow release = no overshoot; fast flick = glide.</p>
+    <div class="stage" id="dragstage">
+      <div class="snapline" style="left:54px"></div>
+      <div class="snapline" style="left:194px"></div>
+      <div class="snapline" style="left:334px"></div>
+      <div class="box" id="ball" style="border-radius:50%; left:30px; top:70px;"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>3 · Shared-element morph</h2>
+    <p class="hint">Button ↔ panel FLIP morph. Toggle repeatedly mid-flight — it must reverse from wherever it is.</p>
+    <div class="stage">
+      <button class="pill" id="morphBtn" style="position:absolute; left:20px; top:20px;">Open panel</button>
+      <div id="panel"><h3>Panel</h3><p>Sprung on x / y / scaleX / scaleY through the morph preset. Click the button again any time.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>4 · Stagger</h2>
+    <p class="hint">Logical-time delays inside the engine (not setTimeout).</p>
+    <div class="row"><button class="pill" id="staggerBtn">Replay</button></div>
+    <div id="staggerList">
+      <div class="listitem">Alpha</div><div class="listitem">Beta</div>
+      <div class="listitem">Gamma</div><div class="listitem">Delta</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>5 · Press feedback</h2>
+    <p class="hint">Pointer-down squish (scale 0.97), spring return on release.</p>
+    <div class="row" style="padding:18px 4px;">
+      <button class="pill" id="pressBtn">Press me</button>
+      <button class="pill" id="pressBtn2" style="background:#5e5ce6;">And me</button>
+    </div>
+  </section>
+</main>
+<div id="selftest">self-test: running…</div>
+
+<script type="module">
+import { Motion, engine, PRESETS } from '../public/vendor/zephyr-motion/index.js';
+
+const $ = s => document.querySelector(s);
+const results = [];
+const check = (name, cond, detail='') => {
+  results.push({ name, cond, detail });
+  const el = document.createElement('div');
+  el.className = cond ? 'pass' : 'fail';
+  el.textContent = `${cond ? 'PASS' : 'FAIL'}  ${name}${cond ? '' : '  ' + detail}`;
+  document.getElementById('selftest').appendChild(el);
+};
+
+await Motion.init({ capacity: 256 });
+$('#backend').textContent = Motion.usingWasm ? 'wasm' : 'js-fallback';
+
+// ── sleep indicator ──────────────────────────────────────────────────────
+const sleepEl = $('#sleep');
+(function pollSleep() {
+  const awake = engine._rafId !== 0;
+  sleepEl.textContent = awake ? 'animating' : 'asleep';
+  sleepEl.classList.toggle('awake', awake);
+  setTimeout(pollSleep, 120);
+})();
+
+// ── reduced motion toggle ────────────────────────────────────────────────
+$('#rm').addEventListener('change', e => {
+  Motion.setReducedMotion(e.target.checked ? true : null);
+  $('#rms').textContent = e.target.checked ? 'ON' : 'off';
+});
+
+// ── demo 1: retarget ─────────────────────────────────────────────────────
+const stage1 = $('#retarget');
+const box1 = $('#box1');
+const spots = [[40,40],[220,40],[220,110],[60,110],[140,70]];
+for (const [sx, sy] of spots) {
+  const dot = document.createElement('div');
+  dot.className = 'target';
+  dot.style.left = sx + 22 + 'px';
+  dot.style.top = sy + 22 + 'px';
+  dot.addEventListener('pointerdown', () => {
+    Motion.to(box1, { x: sx - 24, y: sy - 24 }, { preset: 'ui' });
+  });
+  stage1.appendChild(dot);
+}
+const velEl = $('#velread');
+setInterval(() => {
+  const vx = Motion.value(box1, 'x'), vy = Motion.value(box1, 'y');
+  velEl.textContent = `pos (${vx.toFixed(1)}, ${vy.toFixed(1)})`;
+}, 150);
+
+// ── demo 2: drag ─────────────────────────────────────────────────────────
+Motion.drag($('#ball'), {
+  bounds: { minX: 0, maxX: 280, minY: -46, maxY: 76 },
+  snap: { x: [0, 140, 280] },
+  preset: 'sheet',
+});
+
+// ── demo 3: morph ────────────────────────────────────────────────────────
+const morphBtn = $('#morphBtn');
+const panel = $('#panel');
+let panelOpen = false;
+morphBtn.addEventListener('click', () => {
+  const btnRect = morphBtn.getBoundingClientRect();
+  const stageRect = morphBtn.parentElement.getBoundingClientRect();
+  const from = { left: btnRect.left - stageRect.left, top: btnRect.top - stageRect.top,
+                 width: btnRect.width, height: btnRect.height };
+  if (!panelOpen) {
+    panel.classList.add('show');
+    panelOpen = true;
+    Motion.morph(panel, from, { radiusFrom: 999, radiusTo: 18 });
+  } else {
+    panelOpen = false;
+    Motion.morphTo(panel, from, { radiusTo: 999 }).then(() => {
+      if (!panelOpen) { panel.classList.remove('show'); Motion.release(panel); }
+    });
+  }
+});
+
+// ── demo 4: stagger ──────────────────────────────────────────────────────
+function playStagger() {
+  const items = document.querySelectorAll('#staggerList .listitem');
+  items.forEach(el => Motion.set(el, { x: -30, opacity: 0 }));
+  Motion.stagger(items, { x: 0, opacity: 1 }, { step: 0.055, preset: 'snappy' });
+}
+$('#staggerBtn').addEventListener('click', playStagger);
+playStagger();
+
+// ── demo 5: press ────────────────────────────────────────────────────────
+Motion.press($('#pressBtn'));
+Motion.press($('#pressBtn2'));
+
+// ── self tests (browser environment) ────────────────────────────────────
+check('engine booted', engine.ready);
+check('presets expose Apple params', PRESETS.sheet.damping === 0.8 && PRESETS.ui.response === 0.4);
+
+{
+  // Motion.to resolves and composes transform in a real DOM.
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:absolute;left:-9999px;top:0;width:10px;height:10px;';
+  document.body.appendChild(probe);
+  const t0 = performance.now();
+  const done = Motion.to(probe, { x: 60, opacity: 0.25 }, { preset: 'snappy' });
+  const raced = await Promise.race([
+    done.then(() => 'settled'),
+    new Promise(r => setTimeout(() => r('timeout'), 4000)),
+  ]);
+  check('Motion.to settles in-browser', raced === 'settled', raced);
+  check('transform composed', /translate3d\(60px/.test(probe.style.transform), probe.style.transform);
+  check('opacity written', probe.style.opacity === '0.25', probe.style.opacity);
+  check('settle latency sane', performance.now() - t0 < 3000);
+  probe.remove();
+}
+
+{
+  // Reduced motion: instant jump, no frames.
+  Motion.setReducedMotion(true);
+  const probe2 = document.createElement('div');
+  probe2.style.cssText = 'position:absolute;left:-9999px;top:0;width:10px;height:10px;';
+  document.body.appendChild(probe2);
+  await Motion.to(probe2, { x: 33 }, { preset: 'ui' });
+  check('reduced-motion jumps to target', Motion.value(probe2, 'x') === 33);
+  Motion.setReducedMotion(null);
+  probe2.remove();
+}
+
+{
+  // Retarget continuity through the live browser path.
+  const probe3 = document.createElement('div');
+  probe3.style.cssText = 'position:absolute;left:-9999px;top:0;width:10px;height:10px;';
+  document.body.appendChild(probe3);
+  Motion.to(probe3, { x: 200 }, { preset: 'gentle' });
+  await new Promise(r => setTimeout(r, 120));
+  const midX = Motion.value(probe3, 'x');
+  Motion.to(probe3, { x: 0 }, { preset: 'gentle' });
+  const afterX = Motion.value(probe3, 'x');
+  check('retarget starts from live value', midX > 0 && afterX === midX, `mid=${midX} after=${afterX}`);
+  probe3.remove();
+}
+
+const failed = results.filter(r => !r.cond).length;
+document.getElementById('selftest').dataset.result = failed === 0 ? 'pass' : 'fail';
+document.title = failed === 0 ? 'MOTION_PASS' : `MOTION_FAIL(${failed})`;
+</script>
+</body>
+</html>
