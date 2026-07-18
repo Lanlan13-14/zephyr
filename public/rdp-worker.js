@@ -1,8 +1,8 @@
-import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260718-samefbo-copy-fix1';
-import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260718-samefbo-copy-fix1';
-import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260718-samefbo-copy-fix1';
-import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260718-samefbo-copy-fix1';
-import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260718-samefbo-copy-fix1';
+import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260718-clearcodec-parity1';
+import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260718-clearcodec-parity1';
+import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260718-clearcodec-parity1';
+import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260718-clearcodec-parity1';
+import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260718-clearcodec-parity1';
 
 let compositor = null;
 let avc420 = null;
@@ -86,7 +86,7 @@ async function loadGoWasm() {
     bootStage('wasm-fetching');
     bootStage('wasm-instantiating');
     const { go, result } = await instantiateGoWasm(GoRuntime, {
-        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20260718-samefbo-copy-fix1',
+        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20260718-clearcodec-parity1',
         pipeline: 'worker-gpu-v2',
     });
     if (result.instance.exports.mem) {
@@ -99,22 +99,6 @@ async function loadGoWasm() {
                 workerDiag.bitmapEvents += Number(event.kind) === 8 ? 1 : 0;
                 workerDiag.lastKind = Number(event.kind) || 0;
                 workerDiag.lastEventAt = Date.now();
-                let crc = 0;
-                if (event.data && event.data.length) {
-                    for (let i = 0; i < event.data.length; i++) crc = (crc * 31 + event.data[i]) >>> 0;
-                }
-                traceEvent(event, { ln: event.data ? event.data.length : 0, crc });
-                // Stash the first large band bitmap's bytes for offline
-                // inspection (is Go emitting torn content, or does the
-                // upload path scramble it?).
-                if (!globalThis.__dbgBandDump && event.data && event.data.length > 100000 && event.data.length < 400000) {
-                    const copy = new Uint8Array(event.data.length);
-                    copy.set(event.data);
-                    globalThis.__dbgBandDump = {
-                        rect: event.rect, stride: Number(event.stride) || 0,
-                        base64: (() => { let s = ''; for (let i = 0; i < copy.length; i += 8192) s += String.fromCharCode(...copy.subarray(i, i + 8192)); return btoa(s); })(),
-                    };
-                }
                 if (workerDiag.bitmapSamples.length < 6 && event.data) {
                     let nonzero = 0;
                     const n = Math.min(event.data.length, 8192);
@@ -190,7 +174,6 @@ function createAvc444Decoder() {
 
 function setupRenderer(canvas) {
     globalThis.rdpExternalVideoDecode = true;
-    globalThis.__DBG_DISABLE_CACHE_PASTE = true;
     bootStage('webgl2-compositor-starting');
     compositor = new RdpGpuSurfaceCompositor(canvas, {
         requestFrame: frameScheduler.request,
@@ -218,87 +201,15 @@ function decoderBacklog() {
     return backlog;
 }
 
-// Field diagnostics: upload a PNG of the current surface to the server so a
-// black/garbled screen can be attributed from the server side without any
-// client console access. Posted once per session on the first diagnostics
-// call; fetched via GET /api/rdp/h264-debug.
-async function postSurfaceShot(compositorInstance, seq) {
-    try {
-        const gl = compositorInstance.gl;
-        const surface = compositorInstance.surfaces.get(0) || [...compositorInstance.surfaces.values()][0];
-        if (!surface) return;
-        const w = surface.width, h = surface.height;
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, surface.framebuffer);
-        const raw = new Uint8Array(w * h * 4);
-        gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, raw);
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-        // readPixels is bottom-up; ImageData is top-down — flip rows.
-        const img = new ImageData(w, h);
-        const rowBytes = w * 4;
-        for (let y = 0; y < h; y++) img.data.set(raw.subarray((h - 1 - y) * rowBytes, (h - y) * rowBytes), y * rowBytes);
-        const shot = new OffscreenCanvas(w, h);
-        shot.getContext('2d').putImageData(img, 0, 0);
-        const blob = await shot.convertToBlob({ type: 'image/png' });
-        const buf = new Uint8Array(await blob.arrayBuffer());
-        let bin = '';
-        for (let i = 0; i < buf.length; i += 8192) bin += String.fromCharCode(...buf.subarray(i, i + 8192));
-        // Also dump the most-pasted cache entries (what is actually being
-        // stamped across the screen) as raw RGBA base64.
-        const cacheDumps = {};
-        for (const [slot, entry] of compositorInstance.cacheEntries) {
-            if (Object.keys(cacheDumps).length >= 10) break;
-            try {
-                gl.bindFramebuffer(gl.READ_FRAMEBUFFER, entry.framebuffer);
-                const eb = new Uint8Array(entry.width * entry.height * 4);
-                gl.readPixels(0, 0, entry.width, entry.height, gl.RGBA, gl.UNSIGNED_BYTE, eb);
-                let ebin = '';
-                for (let i = 0; i < eb.length; i += 8192) ebin += String.fromCharCode(...eb.subarray(i, i + 8192));
-                cacheDumps[slot] = { w: entry.width, h: entry.height, rgbaBase64: btoa(ebin) };
-            } catch {}
-        }
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-        await fetch('/api/rdp/h264-debug', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ surfaceShotPngBase64: btoa(bin), width: w, height: h, seq, at: Date.now(), trace: eventTrace, cacheDumps, bandDump: globalThis.__dbgBandDump || null }),
-        });
-    } catch (error) {
-        workerDiag.lastError = `surface-shot: ${error?.message || error}`;
-    }
-}
-
-// Field diagnostics: record the full render-event stream (metadata + CRC,
-// no payload) so a garbled frame can be reconstructed and attributed
-// offline. Ring buffer, ~3000 events.
-const eventTrace = [];
-function traceEvent(event, extra = {}) {
-    if (eventTrace.length >= 3000) eventTrace.shift();
-    const r = event.rect || {};
-    eventTrace.push({
-        k: Number(event.kind) || 0,
-        f: Number(event.frameId) || 0,
-        s: Number(event.surfaceId) || 0,
-        s2: Number(event.surfaceId2) || 0,
-        x: Number(event.outputX) || 0,
-        y: Number(event.outputY) || 0,
-        w: Number(event.width) || 0,
-        h: Number(event.height) || 0,
-        rl: Number(r.left) || 0,
-        rt: Number(r.top) || 0,
-        rr: Number(r.right) || 0,
-        rb: Number(r.bottom) || 0,
-        st: Number(event.stride) || 0,
-        c: Number(event.colorBGRA) || 0,
-        ...extra,
-    });
-}
+// (Field-debug surface/cache PNG dumping used during the 2026-07-18 mosaic
+// hunt was removed after the ClearCodec root-cause fix; lightweight counters
+// remain in rdpGetWorkerDiagnostics.)
 
 function handleRenderEvent(event) {
     const kind = Number(event.kind);
     workerDiag.semanticEvents++;
     workerDiag.lastKind = kind || 0;
     workerDiag.lastEventAt = Date.now();
-    traceEvent(event);
     if (kind === 8) workerDiag.bitmapEvents++;
     if (kind === 9) workerDiag.avc420Events++;
     if (kind === 10) workerDiag.avc444Events++;
@@ -365,57 +276,6 @@ async function invokeMethod(method, args) {
             protocol[`dbg.bm${i}.rb`] = s.rb;
             protocol[`dbg.bm${i}.b`] = s.b[0] * 16777216 + s.b[1] * 65536 + s.b[2] * 256 + s.b[3];
         });
-        if (compositor) {
-            try {
-                const gl = compositor.gl;
-                let idx = 0;
-                for (const [id, s] of compositor.surfaces) {
-                    if (idx >= 3) break;
-                    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, s.framebuffer);
-                    const buf = new Uint8Array(s.width * s.height * 4);
-                    gl.readPixels(0, 0, s.width, s.height, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-                    let nonzero = 0;
-                    for (let i = 0; i < buf.length; i += 4) { if (buf[i] || buf[i + 1] || buf[i + 2]) nonzero++; }
-                    const mid = ((s.height >> 1) * s.width + (s.width >> 1)) * 4;
-                    protocol[`dbg.s${idx}.id`] = Number(id);
-                    protocol[`dbg.s${idx}.wh`] = s.width * 100000 + s.height;
-                    protocol[`dbg.s${idx}.nz`] = nonzero;
-                    protocol[`dbg.s${idx}.map`] = s.mapped ? 1 : 0;
-                    protocol[`dbg.s${idx}.mid`] = buf[mid] * 16777216 + buf[mid + 1] * 65536 + buf[mid + 2] * 256 + buf[mid + 3];
-                    idx++;
-                }
-                gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-                // Probe the canvas default framebuffer right after a forced
-                // present: distinguishes "present draws black" from
-                // "canvas never composites to the page".
-                try {
-                    compositor.dirty = true;
-                    compositor.present();
-                    const cw = compositor.width, ch = compositor.height;
-                    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-                    const cbuf = new Uint8Array(cw * ch * 4);
-                    gl.readPixels(0, 0, cw, ch, gl.RGBA, gl.UNSIGNED_BYTE, cbuf);
-                    let cnz = 0;
-                    for (let i = 0; i < cbuf.length; i += 4) { if (cbuf[i] || cbuf[i + 1] || cbuf[i + 2]) cnz++; }
-                    const cmid = ((ch >> 1) * cw + (cw >> 1)) * 4;
-                    protocol['dbg.cvs.wh'] = cw * 100000 + ch;
-                    protocol['dbg.cvs.nz'] = cnz;
-                    protocol['dbg.cvs.mid'] = cbuf[cmid] * 16777216 + cbuf[cmid + 1] * 65536 + cbuf[cmid + 2] * 256 + cbuf[cmid + 3];
-                    protocol['dbg.cvs.ctxlost'] = gl.isContextLost() ? 1 : 0;
-                    protocol['dbg.cvs.err'] = gl.getError();
-                } catch (e2) {
-                    protocol['dbg.cvs.error'] = 1;
-                    workerDiag.lastError = `canvas-dump: ${e2?.message || e2}`;
-                }
-            } catch (error) {
-                protocol['dbg.surface.error'] = 1;
-                workerDiag.lastError = `surface-dump: ${error?.message || error}`;
-            }
-        }
-        if (compositor) {
-            globalThis.__dbgShotSeq = (globalThis.__dbgShotSeq || 0) + 1;
-            postSurfaceShot(compositor, globalThis.__dbgShotSeq);
-        }
         return { ...workerDiag, bitmapSamples: undefined, protocol, frameScheduler: { ...frameScheduler.stats }, decoderBacklog: decoderBacklog(), wasmReady, bootStage: currentBootStage };
     }
     const fn = globalThis[method];
