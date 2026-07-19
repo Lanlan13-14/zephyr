@@ -3,6 +3,8 @@ package rdpgfx
 import (
 	"encoding/binary"
 	"fmt"
+
+	"github.com/nakagami/grdp/protocol/pdu"
 )
 
 const (
@@ -221,11 +223,6 @@ func (d *clearDecoder) decodeComposite(c *clearCursor, out []byte, width int) er
 	if err := d.decodeClearBands(bands, out, width); err != nil {
 		return err
 	}
-	// The subcodec layer never fails the tile: residual+bands content is
-	// usually the smooth background and is far better than dropping the whole
-	// update. Offending subcodecs are skipped and counted (FreeRDP would fail
-	// the whole decompress; for a UI client that is the difference between a
-	// stale mosaic and a nearly-correct frame).
 	d.decodeClearSubcodecs(sub, out, width)
 	if c.remaining() != 0 {
 		return fmt.Errorf("ClearCodec trailing bytes %d", c.remaining())
@@ -261,8 +258,6 @@ func decodeClearResidual(data, out []byte) error {
 	return nil
 }
 
-// decodeClearSubcodecs decodes what it can and skips what it cannot. Every
-// skip is recorded as a warning; the tile itself is kept.
 func (d *clearDecoder) decodeClearSubcodecs(data, out []byte, surfW int) {
 	c := &clearCursor{data: data}
 	surfH := len(out) / (surfW * 4)
@@ -291,9 +286,18 @@ func (d *clearDecoder) decodeClearSubcodecs(data, out []byte, surfW int) {
 			}
 			decodeClearRaw(payload, out, x, y, w, h, surfW)
 		case 1:
-			// NSCODEC: not implemented; counted so telemetry shows its
-			// frequency. FreeRDP decodes it via nsc_process_message.
-			d.warnf("nscodec subcodec %dx%d skipped", w, h)
+			// FreeRDP routes NSCodec through nsc_process_message with
+			// FLIP_NONE. DecodeNSCodec returns top-down BGRA rows.
+			decoded := pdu.DecodeNSCodec(payload, w, h)
+			if len(decoded) != w*h*4 {
+				d.warnf("nscodec subcodec %dx%d decode failed", w, h)
+				continue
+			}
+			for row := 0; row < h; row++ {
+				srcOff := row * w * 4
+				dstOff := ((y+row)*surfW + x) * 4
+				copy(out[dstOff:dstOff+w*4], decoded[srcOff:srcOff+w*4])
+			}
 		case 2:
 			if err := decodeClearRlexRegion(payload, out, x, y, w, h, surfW); err != nil {
 				d.warnf("rlex: %v", err)
@@ -385,6 +389,7 @@ func clearFullVBar(yOn int, short []byte, height int, bg [3]byte) []byte {
 	}
 	return out
 }
+
 // storeVBar/storeShort copy into cache slots. make+copy (never append to
 // nil): a zero-length short VBar (yOff==yOn, a column of pure background) is
 // legal and common; append([]byte(nil)) would store a nil slice, making the
