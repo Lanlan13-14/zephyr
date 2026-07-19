@@ -5241,6 +5241,7 @@ wss.on('connection', (ws, req) => {
     });
 
     // 启动实时监控推送
+    let statsSampleSeq = 0;
     function startStatsPush() {
         if (!SSH_STATS_ENABLED) {
             console.info('[STATS] realtime stats disabled by SSH_STATS_ENABLED=false');
@@ -5255,8 +5256,15 @@ wss.on('connection', (ws, req) => {
             try {
                 const result = await getRemoteStats(sshClient, remoteStatsState);
                 remoteStatsState = result.state;
-                sendJSON({ type: 'stats', data: result.stats });
-                console.debug('[STATS] remote stats pushed', { durationMs: Date.now() - startedAt });
+                statsSampleSeq += 1;
+                sendJSON({
+                    type: 'stats',
+                    data: result.stats,
+                    sampleSeq: statsSampleSeq,
+                    sampledAt: startedAt,
+                    durationMs: Date.now() - startedAt,
+                });
+                console.debug('[STATS] remote stats pushed', { durationMs: Date.now() - startedAt, seq: statsSampleSeq });
             } catch (err) {
                 console.error('[STATS] 读取远程统计失败:', {
                     message: err.message,
@@ -5831,6 +5839,16 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
         }
 
         // 手动请求一帧实时监控数据（打开监控面板时使用）
+        if (msg.type === 'stats-subscribe') {
+            // Explicit subscribe (FREEZE plan §2.3.2): start periodic push.
+            startStatsPush();
+            return;
+        }
+        if (msg.type === 'stats-unsubscribe') {
+            // Explicit unsubscribe: stop periodic push without disconnecting SSH.
+            stopStatsPush();
+            return;
+        }
         if (msg.type === 'stats-request') {
             if (!sshClient || statsRunning) return;
             statsRunning = true;

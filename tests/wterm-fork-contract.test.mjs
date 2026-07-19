@@ -31,6 +31,13 @@ test('fork exposes public isAtBottom/scrollToBottom/followBottom/lockBottom alia
     }
 });
 
+test('fork exposes extended viewport API (§3.8.2)', () => {
+    for (const m of ['getViewportState', 'onRenderComplete', 'onViewportChange', 'scrollToLine', 'fitToContainer', 'getBufferSnapshot']) {
+        assert.ok(new RegExp(`\\b${m}\\(`).test(wtermSrc), `fork must expose ${m}()`);
+    }
+    assert.ok(/_fireRenderComplete/.test(wtermSrc), 'fork must fire render-complete callbacks');
+});
+
 test('fork index.js exports WTerm and local core (no bare @wterm/core specifier)', () => {
     assert.ok(/export \{ WTerm \} from "\.\/wterm\.js"/.test(indexSrc), 'must re-export WTerm');
     assert.ok(!/from "@wterm\/core"/.test(indexSrc), 'must not use bare @wterm/core specifier');

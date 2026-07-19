@@ -116,6 +116,68 @@ export class WTerm {
     scrollToBottom() { this._scrollToBottom(); }
     followBottom() { this._shouldScrollToBottom = true; }
     lockBottom() { this._shouldScrollToBottom = false; }
+
+    /* ── Extended public API (Zephyr fork, FREEZE plan §3.8.2) ───────────── */
+    /** Return a serializable snapshot of the current viewport state. */
+    getViewportState() {
+        const el = this.element;
+        return {
+            atBottom: this._isScrolledToBottom(),
+            scrollTop: el ? el.scrollTop : 0,
+            maxScroll: el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0,
+            rowHeight: this._rowHeight || 17,
+            rows: this.rows || 0,
+            cols: this.cols || 0,
+            followEnabled: !!this._shouldScrollToBottom,
+        };
+    }
+    /** Register a callback fired after each render. Returns an unsubscribe fn. */
+    onRenderComplete(cb) {
+        if (typeof cb !== 'function') return () => {};
+        this._renderCallbacks = this._renderCallbacks || new Set();
+        this._renderCallbacks.add(cb);
+        return () => { this._renderCallbacks?.delete(cb); };
+    }
+    /** Register a callback fired when the viewport scrolls. Returns unsubscribe. */
+    onViewportChange(cb) {
+        if (typeof cb !== 'function') return () => {};
+        this._viewportCallbacks = this._viewportCallbacks || new Set();
+        this._viewportCallbacks.add(cb);
+        if (!this._viewportListenerBound) {
+            this._viewportListenerBound = true;
+            this.element?.addEventListener?.('scroll', () => {
+                const st = this.getViewportState();
+                this._viewportCallbacks?.forEach((fn) => { try { fn(st); } catch {} });
+            }, { passive: true });
+        }
+        return () => { this._viewportCallbacks?.delete(cb); };
+    }
+    /** Scroll to a specific line (0-indexed). Best-effort, clamped. */
+    scrollToLine(line) {
+        const el = this.element;
+        if (!el) return;
+        const rh = this._rowHeight || 17;
+        const target = Math.max(0, Math.floor(Number(line) || 0) * rh);
+        el.scrollTop = Math.min(target, Math.max(0, el.scrollHeight - el.clientHeight));
+    }
+    /** Recalculate dimensions after the container resizes. */
+    fitToContainer() {
+        if (typeof this._setupResizeObserver === 'function') {
+            // Trigger a manual resize measurement
+            this._setupResizeObserver();
+        }
+    }
+    /** Return a snapshot of the visible buffer text (rows currently in DOM). */
+    getBufferSnapshot() {
+        const rows = this.element?.querySelectorAll?.('[data-line]') || [];
+        return Array.from(rows).map((r) => r.textContent || '');
+    }
+    /** Fire render-complete callbacks (called internally after _doRender). */
+    _fireRenderComplete() {
+        if (!this._renderCallbacks) return;
+        const st = this.getViewportState();
+        this._renderCallbacks.forEach((fn) => { try { fn(st); } catch {} });
+    }
     write(data) {
         if (!this.bridge)
             return;
@@ -192,6 +254,8 @@ export class WTerm {
         if (response !== null && this.onData) {
             this.onData(response);
         }
+        // Fire render-complete callbacks (Zephyr fork §3.8.2)
+        this._fireRenderComplete();
     }
     _lockHeight() {
         const rh = this._rowHeight || 17;
