@@ -95,12 +95,13 @@ test('Go runtime converter emits an importable ESM class', async () => {
 });
 
 
-test('connection errors remain visible and close cannot restart reconnect loop', async () => {
+test('connection errors stay visible and still enter the SSH-style reconnect path', async () => {
     const source = await fs.readFile(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
-    assert.match(source, /window\.rdpOnError = function \(msg\) \{\s*connectionFailureReported = true;/);
-    assert.match(source, /if \(connectionFailureReported\) \{\s*cleanupAudio\(\);\s*return;/);
+    assert.match(source, /window\.rdpOnError = function \(msg\) \{\s*const wasConnected = connected;\s*connectionFailureReported = true;/s);
+    assert.match(source, /if \(connectionFailureReported\) \{\s*\/\/ rdpOnError already scheduled reconnect if appropriate\.\s*cleanupAudio\(\);\s*return;/s);
     const errorHandler = source.slice(source.indexOf('window.rdpOnError = function'), source.indexOf('window.rdpOnClose = function'));
-    assert.doesNotMatch(errorHandler, /maybeAutoReconnect\(/);
+    assert.match(errorHandler, /maybeAutoReconnect\(\{ reason: lastConnectError \}\)/);
+    assert.match(source, /自动重连失败，请手动点击“重连”/);
     assert.match(source, /RDP 连接失败 \[\$\{lastConnectStage\}\]/);
 });
 

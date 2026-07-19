@@ -65,6 +65,28 @@ test('multiple tiles in one frame schedule only one present callback', () => {
     assert.equal(compositor.raf, first);
 });
 
+test('open FrameMarker holds present until EndFrame seals the frame', () => {
+    const compositor = schedulingFixture();
+    compositor.beginFrame(9);
+    compositor.dirty = true;
+    assert.equal(compositor.present(), false, 'mid-frame present would tear the desktop');
+    compositor.endFrame(9);
+    assert.equal(compositor.present(), true);
+    assert.deepEqual(compositor.presentedFrames, [9]);
+});
+
+test('framed draw events do not schedule present until EndFrame', () => {
+    const compositor = schedulingFixture();
+    let scheduled = 0;
+    compositor.schedulePresent = () => { scheduled += 1; };
+    compositor.uploadBitmap = () => { compositor.dirty = true; };
+    compositor.beginFrame(11);
+    compositor.handleEvent({ kind: 8, frameId: 11, surfaceId: 1, rect: { left: 0, top: 0, right: 1, bottom: 1 }, data: new Uint8Array(4), stride: 4 });
+    assert.equal(scheduled, 0);
+    compositor.endFrame(11);
+    assert.equal(scheduled, 1);
+});
+
 test('classic bitmap event uploads to the unified desktop surface', () => {
     const compositor = schedulingFixture();
     let uploaded = null;

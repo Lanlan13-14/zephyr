@@ -370,6 +370,9 @@ export class RdpGpuSurfaceCompositor {
         if (!this.dirty && !this.sealedFrames.size) return false;
         const orderedSealed = [...this.sealedFrames].sort((a, b) => a - b);
         if (orderedSealed.length && this.framePending.has(orderedSealed[0])) return false;
+        // While a FrameMarker is open, hold the display until EndFrame seals it.
+        // Presenting mid-frame is what produces torn rectangles on mobile GPUs.
+        if (!orderedSealed.length && this.activeFrame !== null) return false;
         const gl = this.gl;
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, this.width, this.height);
@@ -427,7 +430,13 @@ export class RdpGpuSurfaceCompositor {
         case RDP_RENDER_EVENT.SOLID_FILL: this.solidFill(event.surfaceId, event.rect, event.colorBGRA); break;
         case RDP_RENDER_EVENT.SURFACE_COPY: this.copySurface(event.surfaceId2, event.surfaceId, event.rect, event.outputX, event.outputY); break;
         }
-        if (!Number(event.frameId) && ![RDP_RENDER_EVENT.BEGIN_FRAME, RDP_RENDER_EVENT.END_FRAME].includes(Number(event.kind))) this.schedulePresent();
+        // Drawing ops only schedule a present when we are outside a FrameMarker
+        // or the event itself carries no frame id. Framed updates present once
+        // on EndFrame / async completion, which keeps the on-screen image whole.
+        const kind = Number(event.kind);
+        if ([RDP_RENDER_EVENT.BEGIN_FRAME, RDP_RENDER_EVENT.END_FRAME].includes(kind)) return;
+        if (this.activeFrame !== null || Number(event.frameId)) return;
+        this.schedulePresent();
     }
 
     _ensureStaging(width, height) {

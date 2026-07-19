@@ -11,9 +11,9 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-clear-nscodec1';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-clear-nscodec1';
-import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260710-touch-input2';
+import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-rdp-touch-reconnect1';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-rdp-touch-reconnect1';
+import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-rdp-touch-reconnect1';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
@@ -212,6 +212,7 @@ window.rdpOnProtocolMilestone = function (event) {
 
 /* Called by Go on error */
 window.rdpOnError = function (msg) {
+    const wasConnected = connected;
     connectionFailureReported = true;
     lastConnectError = String(msg || 'unknown error');
     console.warn('[rdp-wasm] error:', lastConnectError);
@@ -219,16 +220,20 @@ window.rdpOnError = function (msg) {
     rdpHaptic('error');
     clearConnectWatchdog();
     stopAgentDriveBridge();
-    if (connected) {
+    connected = false;
+    if (wasConnected) {
+        // Keep the concrete error visible briefly, then fall into the same
+        // auto-reconnect path as an unexpected close. Manual disconnect still
+        // suppresses reconnect via rdpManualDisconnect.
         setStatus('error', `RDP 错误 [${lastConnectStage}]: ${lastConnectError}`);
-        connected = false;
         notifyParentStatus('error');
+        cleanupAudio();
+        maybeAutoReconnect({ reason: lastConnectError });
     } else {
         setStatus('error', `RDP 连接失败 [${lastConnectStage}]: ${lastConnectError}`);
+        cleanupAudio();
+        maybeAutoReconnect({ reason: lastConnectError });
     }
-    // Preserve the first actionable failure. Automatic reconnect previously
-    // replaced it immediately with a generic countdown and hid the root cause.
-    rdpReconnecting = false;
 };
 
 /* Called by Go on connection close */
@@ -240,6 +245,7 @@ window.rdpOnClose = function () {
     const wasConnected = connected;
     connected = false;
     if (connectionFailureReported) {
+        // rdpOnError already scheduled reconnect if appropriate.
         cleanupAudio();
         return;
     }
@@ -247,12 +253,10 @@ window.rdpOnClose = function () {
         setStatus('disconnected', '连接已断开');
         notifyParentStatus('closed');
         cleanupAudio();
-            maybeAutoReconnect();
+        maybeAutoReconnect({ reason: '连接已断开' });
     } else if (!rdpManualDisconnect && !rdpReconnecting) {
-        /* Connection failed during setup and rdpOnError didn't already
-         * schedule a reconnect — try once more. */
         cleanupAudio();
-            maybeAutoReconnect();
+        maybeAutoReconnect({ reason: '连接中断' });
     }
 };
 
@@ -982,22 +986,26 @@ function disconnect() {
     notifyParentStatus('closed');
 }
 
-function maybeAutoReconnect() {
+function maybeAutoReconnect({ reason = '连接已断开' } = {}) {
     if (rdpManualDisconnect) return;
     if (rdpReconnecting) return;
     if (rdpReconnectAttempts >= 5) {
-        setStatus('error', '重连次数已达上限');
+        setStatus('error', '自动重连失败，请手动点击“重连”');
         return;
     }
     /* Clear any existing timer to prevent parallel reconnect chains. */
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
-    const delay = Math.min(2000 * Math.pow(1.5, rdpReconnectAttempts), 15000);
+    // Match SSH: fixed 2s spacing between attempts, max 5 tries, suppress on
+    // manual disconnect, and keep the first concrete error in the countdown.
+    const delay = 2000;
     rdpReconnectAttempts++;
     rdpReconnecting = true;
-    setStatus('connecting', `${Math.round(delay / 1000)}秒后自动重连 (${rdpReconnectAttempts}/5)...`);
+    const label = `正在重连 (${rdpReconnectAttempts}/5)...`;
+    setStatus('connecting', reason ? `${reason}，${label}` : label);
     rdpReconnectTimer = setTimeout(() => {
         rdpReconnectTimer = null;
         rdpReconnecting = false;
+        if (rdpManualDisconnect || connected) return;
         if (!rdpWorkerBridge) {
             location.reload();
             return;
@@ -1005,6 +1013,7 @@ function maybeAutoReconnect() {
         connect().catch((e) => {
             console.warn('[rdp-wasm] reconnect failed:', e);
             rdpReconnecting = false;
+            if (!rdpManualDisconnect && !connected) maybeAutoReconnect({ reason: e?.message || '重连失败' });
         });
     }, delay);
 }
@@ -1428,7 +1437,7 @@ function setClipboardHint(text, level = 'info') {
 function updateInfo() {
     const name = params.name || params.host || 'RDP';
     const port = params.port || 3389;
-    if (connInfo) connInfo.textContent = `${name} · WASM/grdp · ${params.host || ''}:${port} · build 20260719-clear-nscodec1`;
+    if (connInfo) connInfo.textContent = `${name} · WASM/grdp · ${params.host || ''}:${port} · build 20260719-rdp-touch-reconnect1`;
 }
 
 function escapeHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -2439,13 +2448,13 @@ window.addEventListener('message', (e) => {
         if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
         if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
 
-        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-clear-nscodec1' });
+        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-rdp-touch-reconnect1' });
         rdpDiag.workerProbe = probe;
         if (!probe.supported) {
             throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
         }
 
-        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-clear-nscodec1', { type: 'module' }));
+        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-rdp-touch-reconnect1', { type: 'module' }));
         rdpWorkerBridge.installGlobals(window);
         rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
         const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });

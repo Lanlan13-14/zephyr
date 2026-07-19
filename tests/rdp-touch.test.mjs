@@ -60,6 +60,44 @@ test('single tap is immediate and double tap is exactly two clicks', () => {
     controller.destroy();
 });
 
+test('double tap pairs by screen distance under remote-coordinate scaling', () => {
+    // Simulate a phone-scale mapping: one CSS pixel becomes ~4 remote pixels.
+    // A real finger drift of 20 CSS pixels used to become 80 remote pixels and
+    // fail the old remote-pixel double-tap threshold.
+    const canvas = new MockCanvas();
+    const events = { move: [], down: [], up: [], wheel: [], hwheel: [], combo: [] };
+    const controller = new RdpTouchController({
+        canvas,
+        getConnected: () => true,
+        canvasCoords: ({ clientX, clientY }) => ({ x: clientX * 4, y: clientY * 4 }),
+        sendMouseMove: (x, y) => events.move.push([x, y]),
+        sendMouseDown: (b, x, y) => events.down.push([b, x, y]),
+        sendMouseUp: (b, x, y) => events.up.push([b, x, y]),
+        sendMouseWheel: (d) => events.wheel.push(d),
+        sendMouseHWheel: (d) => events.hwheel.push(d),
+        sendKeyCombo: (g) => events.combo.push(g),
+    });
+    canvas.fire('touchstart', touchEvent([point(100, 120)]));
+    canvas.fire('touchend', touchEvent([], [point(100, 120)]));
+    assert.equal(events.down.length, 1);
+    canvas.fire('touchstart', touchEvent([point(120, 135)]));
+    canvas.fire('touchend', touchEvent([], [point(120, 135)]));
+    assert.equal(events.down.length, 2, 'screen-space double tap must still pair');
+    controller.destroy();
+});
+
+test('small screen jitter does not promote a tap into a drag', () => {
+    const { canvas, events, controller } = fixture();
+    canvas.fire('touchstart', touchEvent([point(100, 100)]));
+    // 8 CSS pixels used to exceed the old remote-pixel drag threshold under
+    // typical phone scale. Screen-space threshold must keep this a pending tap.
+    canvas.fire('touchmove', touchEvent([point(108, 104)]));
+    assert.equal(controller._state?.type, 'pending');
+    assert.equal(controller._state?.moved, false);
+    assert.equal(events.down.length, 0, 'sub-threshold screen motion must not start a drag');
+    controller.destroy();
+});
+
 test('distance-only two-finger pinch cannot zoom or scroll', () => {
     const { canvas, events, controller } = fixture();
     canvas.fire('touchstart', touchEvent([point(100, 100)]));

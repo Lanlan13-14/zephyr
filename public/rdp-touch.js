@@ -21,9 +21,13 @@
  */
 
 const LONG_PRESS_MS = 450;
-const DOUBLE_TAP_MS = 300;
-const DOUBLE_TAP_DIST = 20;
-const DRAG_THRESHOLD = 6;
+// Double-tap and drag thresholds are measured in CSS/screen pixels, not
+// remote desktop pixels. On a phone the remote surface is often scaled to
+// ~1/3–1/5, so a 6–20 remote-pixel threshold collapses to 1–5 CSS pixels
+// and almost every real finger tap becomes a drag or fails to pair.
+const DOUBLE_TAP_MS = 450;
+const DOUBLE_TAP_SCREEN_DIST = 48;
+const DRAG_THRESHOLD_SCREEN = 12;
 const SCROLL_THRESHOLD = 4;
 const THREE_FINGER_SWIPE_THRESHOLD = 40;
 const MOVE_THROTTLE_MS = 4;
@@ -72,6 +76,8 @@ export class RdpTouchController {
         this._lastTapTime = 0;
         this._lastTapX = 0;
         this._lastTapY = 0;
+        this._lastTapClientX = 0;
+        this._lastTapClientY = 0;
         this._longPressTimer = null;
         this._flingRAF = null;
         this._lastMoveAt = 0;
@@ -312,10 +318,10 @@ export class RdpTouchController {
         if (this._state.type === 'pending' && fingers === 1) {
             const t = e.touches[0];
             const { x, y } = this._coords(t);
-            const dx = x - this._state.startX;
-            const dy = y - this._state.startY;
+            const screenDx = t.clientX - this._state.startClientX;
+            const screenDy = t.clientY - this._state.startClientY;
 
-            if (!this._state.moved && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
+            if (!this._state.moved && (Math.abs(screenDx) > DRAG_THRESHOLD_SCREEN || Math.abs(screenDy) > DRAG_THRESHOLD_SCREEN)) {
                 this._state.moved = true;
                 this._state.type = 'drag';
                 this._clearLongPress();
@@ -425,16 +431,21 @@ export class RdpTouchController {
             const dt = now - this._state.startTime;
 
             if (dt < LONG_PRESS_MS) {
-                // Check for double-tap
+                // Pair double-taps by screen proximity. Using remote pixels here
+                // makes mobile double-tap nearly impossible under fit/zoom.
                 const tapDt = now - this._lastTapTime;
-                const tapDist = Math.abs(x - this._lastTapX) + Math.abs(y - this._lastTapY);
+                const clientX = this._state.startClientX;
+                const clientY = this._state.startClientY;
+                const tapDist = Math.hypot(clientX - this._lastTapClientX, clientY - this._lastTapClientY);
 
-                if (tapDt < DOUBLE_TAP_MS && tapDist < DOUBLE_TAP_DIST) {
+                if (tapDt < DOUBLE_TAP_MS && tapDist <= DOUBLE_TAP_SCREEN_DIST) {
                     // The first tap was already sent immediately. Send exactly
                     // one more click so the pair is a double-click, not a triple.
                     this.sendMouseDown(0, x, y);
                     setTimeout(() => this.sendMouseUp(0, x, y), 40);
                     this._lastTapTime = 0;
+                    this._lastTapClientX = 0;
+                    this._lastTapClientY = 0;
                     rdpHaptic('double_tap');
                 } else {
                     // Immediate single click; never wait for the double-tap window.
@@ -443,6 +454,8 @@ export class RdpTouchController {
                     this._lastTapTime = now;
                     this._lastTapX = x;
                     this._lastTapY = y;
+                    this._lastTapClientX = clientX;
+                    this._lastTapClientY = clientY;
                     rdpHaptic('tap');
                 }
             }

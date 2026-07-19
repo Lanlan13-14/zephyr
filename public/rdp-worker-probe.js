@@ -1,6 +1,6 @@
-import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260719-clear-nscodec1';
-import { loadGoRuntime } from './rdp-wasm-runtime.js?v=20260719-clear-nscodec1';
-import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260719-clear-nscodec1';
+import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260719-rdp-touch-reconnect1';
+import { loadGoRuntime } from './rdp-wasm-runtime.js?v=20260719-rdp-touch-reconnect1';
+import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260719-rdp-touch-reconnect1';
 
 export async function runWorkerCapabilityProbe({ runtimeLoader = loadGoRuntime } = {}) {
     if (typeof OffscreenCanvas === 'undefined') return { ok: false, stage: 'offscreen-canvas', error: 'OffscreenCanvas is unavailable' };
