@@ -6539,6 +6539,15 @@ function bindDeepLinkChannel() {
             transientToken: data.token,
         });
     });
+    // Terminal -> app: open notes filtered by current connection
+    window.addEventListener('message', (event) => {
+        if (event.origin !== location.origin) return;
+        const data = event.data || {};
+        if (data.source !== 'zephyr-terminal' || data.type !== 'open-notes-for-connection') return;
+        switchView('notes');
+        notesController?.filterByConnection?.(data.connectionId);
+        toast(data.connectionId ? '已按当前连接过滤笔记' : '已打开笔记');
+    });
 }
 
 async function init() {

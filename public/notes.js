@@ -68,6 +68,7 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         searchTimer: null,
         generation: 0,
         loaded: false,
+        connectionFilter: '', // terminal side-panel hand-off (§9)
     };
 
     function setSaveState(kind, text) {
@@ -165,6 +166,7 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         }
         if (state.trash || state.groupFilter === '__trash') params.set('trash', '1');
         if (state.tagFilter && state.tagFilter !== 'all') params.set('tag', state.tagFilter);
+        if (state.connectionFilter) params.set('connectionId', state.connectionFilter);
         const data = await api(`/api/notes?${params.toString()}`);
         if (gen !== state.generation) return;
         state.notes = data.notes || [];
@@ -399,6 +401,16 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         setMode(state.mode);
     }
 
+    /* Terminal side-panel hand-off: filter notes by the current connection
+     * so the user sees only notes relevant to the SSH/RDP session they're
+     * looking at (FREEZE plan §6.4 / §9). */
+    async function filterByConnection(connectionId) {
+        state.connectionFilter = connectionId || '';
+        const connInput = document.getElementById('notesConnectionFilter');
+        if (connInput) connInput.value = state.connectionFilter;
+        await loadList();
+    }
+
     bind();
     setMode('edit');
 
@@ -409,5 +421,6 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         selectNote,
         createNote,
         loadList,
+        filterByConnection,
     };
 }

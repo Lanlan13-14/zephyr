@@ -3543,6 +3543,22 @@ function hideShortcutPanel() {
     window.setTimeout(() => { clearPanelMotion(shortcutPanel); if (!shortcutPanel.classList.contains('open')) shortcutPanel.style.display = 'none'; }, 320);
 }
 snippetBtn?.addEventListener('click', () => snippetPanel.classList.contains('open') ? hideSnippetPanel() : showSnippetPanel());
+// Notes side panel: postMessage to parent (app.js) to open notes filtered by
+// the current connection. The terminal iframe doesn't own the notes UI; the
+// app shell does (it has the notesController and ACL context).
+const notesBtn = document.getElementById('notesBtn');
+notesBtn?.addEventListener('click', () => {
+    if (embeddedMode && window.parent && window.parent !== window) {
+        window.parent.postMessage({
+            source: 'zephyr-terminal',
+            type: 'open-notes-for-connection',
+            tabId: params?.tabId,
+            connectionId: params?.connectionId || '',
+        }, '*');
+    } else {
+        showToast('笔记面板需要在应用主界面打开');
+    }
+});
 snippetSearch?.addEventListener('input', renderSnippetPanel);
 shortcutBtn?.addEventListener('click', () => shortcutPanel.classList.contains('open') ? hideShortcutPanel() : showShortcutPanel());
 window.addEventListener('storage', (event) => { if (event.key === SNIPPET_STORAGE_KEY && snippetPanel?.classList.contains('open')) renderSnippetPanel(); });
