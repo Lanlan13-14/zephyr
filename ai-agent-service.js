@@ -1030,13 +1030,22 @@ async function fetchUrlText(url, maxChars = MAX_TOOL_TEXT) {
 function connectionSummary(conn) {
     return { id: conn.id, name: conn.name, protocol: conn.protocol, host: conn.host, port: conn.port, username: conn.username, tags: conn.tags || [], remark: conn.remark || '', lastConnectedAt: conn.lastConnectedAt || null };
 }
-function getAllConnections(deps) {
+function getAllConnections(deps, ctx) {
+    // ACL-filtered: only return connections the calling user can discover
+    if (ctx?.resourceService && ctx?.user) {
+        return ctx.resourceService.listConnections(ctx.user).map((c) => ({
+            ...c,
+            // strip secret placeholders - AI never sees raw credentials
+            password: c.hasPassword ? '******' : '',
+            privateKey: c.hasPrivateKey ? '******' : '',
+        }));
+    }
     return (deps.readJSON(deps.CONNECTIONS_FILE, { connections: [] }).connections || []);
 }
-function findConnectionByIdOrName(deps, value = '') {
+function findConnectionByIdOrName(deps, value = '', ctx) {
     const key = String(value || '').trim();
     if (!key) return null;
-    const list = getAllConnections(deps);
+    const list = getAllConnections(deps, ctx);
     return list.find((c) => c.id === key)
         || list.find((c) => String(c.name || '').toLowerCase() === key.toLowerCase())
         || list.find((c) => String(c.host || '').toLowerCase() === key.toLowerCase())
@@ -1100,18 +1109,39 @@ function normalizeConnectionForSave(raw = {}, old = null) {
     next.updatedAt = Date.now();
     return next;
 }
-function publicResourceList(deps, resources = []) {
+function publicResourceList(deps, resources = [], ctx) {
     const wanted = new Set((resources.length ? resources : ['connections', 'proxies', 'sshKeys', 'jumpHosts', 'snippets']).map((x) => String(x || '').toLowerCase()));
     const out = {};
-    if (wanted.has('connections')) out.connections = getAllConnections(deps).map(publicConnectionForAi);
-    if (wanted.has('proxies')) out.proxies = typeof deps.storage.listProxies === 'function' ? deps.storage.listProxies() : [];
-    if (wanted.has('sshkeys') || wanted.has('ssh_keys')) out.sshKeys = typeof deps.storage.listSshKeys === 'function' ? deps.storage.listSshKeys() : [];
-    if (wanted.has('jumphosts') || wanted.has('jump_hosts')) out.jumpHosts = typeof deps.storage.listJumpHosts === 'function' ? deps.storage.listJumpHosts() : [];
-    if (wanted.has('snippets')) out.snippets = Array.isArray(deps.storage.getSettings()?.snippets) ? deps.storage.getSettings().snippets : [];
+    if (wanted.has('connections')) out.connections = getAllConnections(deps, ctx).map(publicConnectionForAi);
+    // ACL-filter proxies/sshKeys/jumpHosts by owner + explicit share
+    if (wanted.has('proxies')) {
+        const all = typeof deps.storage.listProxies === 'function' ? deps.storage.listProxies() : [];
+        out.proxies = ctx?.resourceService && ctx?.user ? ctx.resourceService.listOwned(ctx.user, 'proxy') : all;
+    }
+    if (wanted.has('sshkeys') || wanted.has('ssh_keys')) {
+        const all = typeof deps.storage.listSshKeys === 'function' ? deps.storage.listSshKeys() : [];
+        out.sshKeys = ctx?.resourceService && ctx?.user ? ctx.resourceService.listOwned(ctx.user, 'sshKey') : all;
+    }
+    if (wanted.has('jumphosts') || wanted.has('jump_hosts')) {
+        const all = typeof deps.storage.listJumpHosts === 'function' ? deps.storage.listJumpHosts() : [];
+        out.jumpHosts = ctx?.resourceService && ctx?.user ? ctx.resourceService.listOwned(ctx.user, 'jumpHost') : all;
+    }
+    if (wanted.has('snippets')) {
+        // Snippets are personal settings (§15), filtered by user override
+        const s = deps.storage.getSettings() || {};
+        let snippets = Array.isArray(s.snippets) ? s.snippets : [];
+        if (ctx?.user?.userId) {
+            try {
+                const overrides = deps.storage.rawDb?.().prepare?.('SELECT value FROM user_settings WHERE user_id = ? AND key = ?').get?.(ctx.user.userId, 'snippets');
+                if (overrides) snippets = JSON.parse(overrides.value);
+            } catch {}
+        }
+        out.snippets = snippets;
+    }
     return out;
 }
-function getSshConnections(deps) {
-    return getAllConnections(deps).filter((c) => String(c.protocol || '').toUpperCase() === 'SSH');
+function getSshConnections(deps, ctx) {
+    return getAllConnections(deps, ctx).filter((c) => String(c.protocol || '').toUpperCase() === 'SSH');
 }
 function aiEnvList(ai = {}) {
     return (Array.isArray(ai.envVars) ? ai.envVars : []).filter((item) => item?.enabled !== false && item.name && item.visibleToAi === true);
@@ -1227,8 +1257,18 @@ function selectPromptMemories(ai = {}, context = {}, max = 28) {
     const globals = ranked.filter((m) => String(m.scope || '').toLowerCase() === 'global' && !relevant.some((x) => x.id === m.id)).slice(0, 6);
     return [...relevant, ...globals].slice(0, max);
 }
-function findConnection(deps, id) {
-    const conn = getSshConnections(deps).find((c) => c.id === String(id || ''));
+function findConnection(deps, id, ctx) {
+    let conn;
+    if (ctx?.resourceService && ctx?.user) {
+        // ACL-aware lookup: throws 404 if not discoverable
+        try {
+            conn = ctx.resourceService.getConnection(ctx.user, String(id || ''));
+        } catch (e) {
+            throw new Error('SSH 连接不存在或不可用');
+        }
+    } else {
+        conn = getSshConnections(deps, ctx).find((c) => c.id === String(id || ''));
+    }
     if (!conn) throw new Error('SSH 连接不存在或不可用');
     return conn;
 }
@@ -1392,7 +1432,7 @@ function confirmationSummary(toolName, args, deps) {
     if (toolName === 'remote_execute') return `在 ${(args.connectionIds || []).length} 台服务器执行：${String(args.command || '').slice(0, 200)}`;
     if (toolName === 'remote_write_file') {
         let connName = args.connectionId;
-        try { connName = findConnection(deps, args.connectionId).name || connName; } catch {}
+        try { connName = findConnection(deps, args.connectionId, ctx).name || connName; } catch {}
         return `写入远程文件：${connName}:${args.path}${args.append ? '（追加）' : ''}`;
     }
     if (toolName === 'get_env_var') return `读取 AI 环境变量：${String(args.name || '').slice(0, 120)}`;
@@ -1450,7 +1490,7 @@ async function maybeRequireConfirmation(toolName, args, ctx, run, deps) {
     }
     const id = crypto.randomUUID();
     const confirmation = { id, toolName, summary: confirmationSummary(toolName, args, deps), args: publicToolArgs(toolName, args), createdAt: Date.now(), expiresAt: Date.now() + 10 * 60 * 1000 };
-    pendingActions.set(id, { ...confirmation, username: ctx.req.session.username, rawArgs: args, context: ctx.context || {} });
+    pendingActions.set(id, { ...confirmation, userId: ctx.user?.userId || ctx.req?.session?.userId || '', username: ctx.req?.session?.username || '', rawArgs: args, context: ctx.context || {} });
     return { confirmationRequired: true, confirmation };
 }
 async function executeAiTool(toolName, args = {}, ctx, deps) {
@@ -1458,9 +1498,9 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
     const p = ai.permissions || {};
     switch (toolName) {
         case 'list_connections':
-            return { connections: getAllConnections(deps).map(connectionSummary) };
+            return { connections: getAllConnections(deps, ctx).map(connectionSummary) };
         case 'list_zephyr_resources':
-            return publicResourceList(deps, args.resources || []);
+            return publicResourceList(deps, args.resources || [], ctx);
         case 'connection_create':
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
                 if (!String(args.name || '').trim() || !String(args.host || '').trim()) throw new Error('connection_create 只能用于新增连接，必须提供 name 和 host；如果是打开已有连接，请先 list_connections 再 open_connection({ connectionId })');
@@ -1469,7 +1509,7 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 store.connections = [conn, ...(store.connections || [])];
                 addStoreActivity(store, `AI 新增连接：${conn.name}`);
                 saveConnectionsStore(deps, store);
-                return { connection: publicConnectionForAi(conn), resources: publicResourceList(deps, ['connections']) };
+                return { connection: publicConnectionForAi(conn), resources: publicResourceList(deps, ['connections'], ctx) };
             }, deps);
         case 'connection_update':
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
@@ -1481,7 +1521,7 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 store.connections[idx] = conn;
                 addStoreActivity(store, `AI 修改连接：${conn.name}`);
                 saveConnectionsStore(deps, store);
-                return { connection: publicConnectionForAi(conn), resources: publicResourceList(deps, ['connections']) };
+                return { connection: publicConnectionForAi(conn), resources: publicResourceList(deps, ['connections'], ctx) };
             }, deps);
         case 'connection_delete':
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
@@ -1492,7 +1532,7 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 store.connections = (store.connections || []).filter((c) => c.id !== connectionId);
                 addStoreActivity(store, `AI 删除连接：${target.name}`);
                 saveConnectionsStore(deps, store);
-                return { deleted: true, connectionId, name: target.name, resources: publicResourceList(deps, ['connections']) };
+                return { deleted: true, connectionId, name: target.name, resources: publicResourceList(deps, ['connections'], ctx) };
             }, deps);
         case 'connection_test': {
             if (typeof deps.testConnection !== 'function') throw new Error('连接测试接口不可用');
@@ -1520,14 +1560,14 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 });
                 if (!proxy.name || !proxy.host || !proxy.port) throw new Error('代理名称、主机、端口不能为空');
                 deps.addActivity?.(`AI ${old ? '修改' : '新增'}代理：${proxy.name}`);
-                return { proxy, resources: publicResourceList(deps, ['proxies']) };
+                return { proxy, resources: publicResourceList(deps, ['proxies'], ctx) };
             }, deps);
         case 'proxy_delete':
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
                 const proxyId = String(args.proxyId || '').trim();
                 deps.storage.deleteProxy(proxyId);
                 deps.addActivity?.(`AI 删除代理：${proxyId}`);
-                return { deleted: true, proxyId, resources: publicResourceList(deps, ['proxies']) };
+                return { deleted: true, proxyId, resources: publicResourceList(deps, ['proxies'], ctx) };
             }, deps);
         case 'ssh_key_save':
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
@@ -1545,31 +1585,31 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                     updatedAt: Date.now(),
                 });
                 deps.addActivity?.(`AI ${old ? '修改' : '新增'} SSH 密钥：${sshKey.name}`);
-                return { sshKey, resources: publicResourceList(deps, ['sshKeys']) };
+                return { sshKey, resources: publicResourceList(deps, ['sshKeys'], ctx) };
             }, deps);
         case 'ssh_key_delete':
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
                 const sshKeyId = String(args.sshKeyId || '').trim();
                 deps.storage.deleteSshKey(sshKeyId);
                 deps.addActivity?.(`AI 删除 SSH 密钥：${sshKeyId}`);
-                return { deleted: true, sshKeyId, resources: publicResourceList(deps, ['sshKeys']) };
+                return { deleted: true, sshKeyId, resources: publicResourceList(deps, ['sshKeys'], ctx) };
             }, deps);
         case 'jump_host_save':
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
                 const connectionId = String(args.connectionId || '').trim();
-                const conn = getAllConnections(deps).find((c) => c.id === connectionId);
+                const conn = getAllConnections(deps, ctx).find((c) => c.id === connectionId);
                 if (!conn || String(conn.protocol || 'SSH').toUpperCase() !== 'SSH') throw new Error('跳板机必须选择一个 SSH 连接');
                 const old = args.jumpHostId ? (deps.storage.listJumpHosts() || []).find((j) => j.id === String(args.jumpHostId)) : null;
                 const jumpHost = deps.storage.saveJumpHost({ id: String(args.jumpHostId || old?.id || crypto.randomUUID()), name: String(args.name ?? old?.name ?? '').trim(), connectionId, createdAt: old?.createdAt || Date.now(), updatedAt: Date.now() });
                 deps.addActivity?.(`AI ${old ? '修改' : '新增'}跳板机：${jumpHost.name}`);
-                return { jumpHost, resources: publicResourceList(deps, ['jumpHosts']) };
+                return { jumpHost, resources: publicResourceList(deps, ['jumpHosts'], ctx) };
             }, deps);
         case 'jump_host_delete':
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
                 const jumpHostId = String(args.jumpHostId || '').trim();
                 deps.storage.deleteJumpHost(jumpHostId);
                 deps.addActivity?.(`AI 删除跳板机：${jumpHostId}`);
-                return { deleted: true, jumpHostId, resources: publicResourceList(deps, ['jumpHosts']) };
+                return { deleted: true, jumpHostId, resources: publicResourceList(deps, ['jumpHosts'], ctx) };
             }, deps);
         case 'snippet_save': {
             const settings = deps.storage.getSettings();
@@ -1578,14 +1618,14 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             const item = normalizeSnippet(args, idx >= 0 ? snippets[idx] : null);
             if (idx >= 0) snippets[idx] = item; else snippets.unshift(item);
             deps.storage.updateSettings({ snippets: snippets.slice(0, 500) });
-            return { snippet: item, resources: publicResourceList(deps, ['snippets']) };
+            return { snippet: item, resources: publicResourceList(deps, ['snippets'], ctx) };
         }
         case 'snippet_delete': {
             const snippetId = String(args.snippetId || '').trim();
             const settings = deps.storage.getSettings();
             const snippets = (Array.isArray(settings.snippets) ? settings.snippets : []).filter((x) => x.id !== snippetId);
             deps.storage.updateSettings({ snippets });
-            return { deleted: true, snippetId, resources: publicResourceList(deps, ['snippets']) };
+            return { deleted: true, snippetId, resources: publicResourceList(deps, ['snippets'], ctx) };
         }
         case 'terminal_read_output': {
             const maxChars = clampNumber(args.maxChars, 1000, 60000, 30000);
@@ -1654,9 +1694,13 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
         }
         case 'open_connection': {
             const requested = String(args.connectionId || args.name || args.host || '').trim();
-            const conn = findConnectionByIdOrName(deps, requested);
+            const conn = findConnectionByIdOrName(deps, requested, ctx);
             if (!conn) throw new Error('连接不存在；请先调用 list_connections 获取可用连接并使用返回的 connectionId');
-            deps.addActivity?.(`AI 请求打开连接：${conn.name || conn.id}`);
+            // USE capability required to open a connection (§16.4)
+            if (ctx.authz && ctx.user) {
+                ctx.authz.assertCan(ctx.user, 'use', 'connection', conn.id, conn, { resourceExists: true });
+            }
+            deps.addActivity?.(`AI 请求打开连接：${conn.name || conn.id}`, ctx.user?.userId);
             return { uiAction: 'open_connection', connectionId: conn.id, connection: connectionSummary(conn), message: `准备在页面打开 ${conn.protocol || 'SSH'} 连接：${conn.name || conn.host}` };
         }
         case 'memory_search':
@@ -1756,15 +1800,26 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 if (!ids.length) throw new Error('请选择 SSH 连接');
                 const command = String(args.command || '').trim();
                 if (!command) throw new Error('命令不能为空');
-                const targets = getSshConnections(deps).filter((c) => ids.includes(c.id));
-                if (!targets.length) throw new Error('远程执行仅支持 SSH 连接；RDP/VNC 只能作为资产上下文或通过连接入口打开');
+                // Per-target EXECUTE capability check (§16.4 / §19.7)
+                const visible = getSshConnections(deps, ctx).filter((c) => ids.includes(c.id));
+                const targets = [];
+                for (const c of visible) {
+                    if (ctx.authz && ctx.user) {
+                        try { ctx.authz.assertCan(ctx.user, 'execute', 'connection', c.id, c, { resourceExists: true }); }
+                        catch { continue; } // skip targets the user can't execute on
+                    }
+                    targets.push(c);
+                }
+                if (!targets.length) throw new Error('没有可执行命令的 SSH 连接（权限不足）');
                 const results = await Promise.all(targets.map((conn) => deps.runRemoteCommand(conn, command, clampNumber(args.timeoutSeconds, 1, 300, 30), { signal: ctx.signal })));
-                deps.addActivity?.(`AI 助理远程执行：${targets.length} 台服务器，命令 ${command.slice(0, 40)}`);
+                deps.addActivity?.(`AI 助理远程执行：${targets.length} 台服务器，命令 ${command.slice(0, 40)}`, ctx.user?.userId);
                 return { results };
             }, deps);
         case 'remote_read_file':
             if (p.fileRead === false) throw new Error('远程文件读取权限未开启');
-            return withRemoteSftp(deps, findConnection(deps, args.connectionId), async (sftp) => {
+            return withRemoteSftp(deps, findConnection(deps, args.connectionId, ctx), async (sftp) => {
+                // Per-call fileRead capability re-check (§16.4)
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'fileRead', 'connection', args.connectionId, null, { resourceExists: true });
                 const targetPath = String(args.path || '');
                 const maxBytes = clampNumber(args.maxBytes, 1, MAX_REMOTE_READ, MAX_REMOTE_READ);
                 const stat = await sftpStat(sftp, targetPath);
@@ -1774,12 +1829,14 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             });
         case 'remote_write_file':
             if (p.fileWrite === false) throw new Error('远程文件写入权限未开启');
-            return maybeRequireConfirmation(toolName, args, ctx, async () => withRemoteSftp(deps, findConnection(deps, args.connectionId), async (sftp) => {
+            return maybeRequireConfirmation(toolName, args, ctx, async () => withRemoteSftp(deps, findConnection(deps, args.connectionId, ctx), async (sftp) => {
+                // Per-call fileWrite capability re-check (§16.4)
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'fileWrite', 'connection', args.connectionId, null, { resourceExists: true });
                 const targetPath = String(args.path || '');
                 const buffer = args.encoding === 'base64' ? Buffer.from(String(args.content || ''), 'base64') : Buffer.from(String(args.content || ''), 'utf8');
                 if (buffer.length > MAX_REMOTE_WRITE) throw new Error(`写入内容过大，当前上限 ${MAX_REMOTE_WRITE} bytes`);
                 await sftpWriteFile(sftp, targetPath, buffer, !!args.append);
-                deps.addActivity?.(`AI 助理写入远程文件：${targetPath}`);
+                deps.addActivity?.(`AI 助理写入远程文件：${targetPath}`, ctx.user?.userId);
                 return { path: targetPath, bytes: buffer.length, append: !!args.append };
             }), deps);
         case 'remote_desktop_screenshot': {
@@ -2007,12 +2064,32 @@ function cleanupPendingActions() {
     for (const [id, item] of pendingActions.entries()) if (!item || item.expiresAt < now) pendingActions.delete(id);
 }
 function registerAiRoutes(app, deps) {
-    app.get('/api/ai/status', deps.requireAuth, (req, res) => {
-        const ai = safeAiSettings(deps.storage.getSettings().ai || {});
-        res.json({ ai, pending: pendingActions.size });
+    const requireUser = deps.requireUser || requireUser;
+    const handleServiceError = deps.handleServiceError || ((res, err, fb = 500) => {
+        if (err?.status) return res.status(err.status).json({ error: err.message, code: err.code || 'ai_error' });
+        res.status(fb).json({ error: err.message || 'AI 错误' });
+    });
+    const authz = deps.authz;
+    const resourceService = deps.resourceService;
+    const aiPolicy = deps.aiPolicyService;
+
+    app.get('/api/ai/status', requireUser, (req, res) => {
+        const rawAi = deps.storage.getSettings().ai || {};
+        const policy = aiPolicy ? aiPolicy.policyFor(req.user) : { mode: 'admin_shared' };
+        // Admin sees raw provider keys for management; non-admin gets
+        // sanitized providers through the policy service (§16.2).
+        let providers;
+        if (req.user.role === 'admin') {
+            providers = (Array.isArray(rawAi.providers) ? rawAi.providers : []).map((p) => ({ ...p }));
+        } else {
+            const sanitized = safeAiSettings(rawAi);
+            providers = (sanitized.providers || []).map((p) => aiPolicy ? aiPolicy.sanitizeProviderForUser(p, req.user) : p);
+        }
+        const ai = safeAiSettings(rawAi);
+        res.json({ ai: { ...ai, providers }, pending: pendingActions.size, policy });
     });
 
-    app.get('/api/ai/browser/screenshots/:name', deps.requireAuth, (req, res) => {
+    app.get('/api/ai/browser/screenshots/:name', requireUser, (req, res) => {
         const name = path.basename(String(req.params.name || ''));
         if (!/^[A-Za-z0-9_.-]+\.png$/.test(name)) return res.status(400).end('bad screenshot name');
         const file = path.join(SHOT_DIR, name);
@@ -2021,20 +2098,27 @@ function registerAiRoutes(app, deps) {
         res.sendFile(file);
     });
 
-    app.post('/api/ai/models', deps.requireAuth, async (req, res) => {
+    app.post('/api/ai/models', requireUser, async (req, res) => {
         try {
             const ai = deps.storage.getSettings().ai || {};
             const providerId = String(req.body?.providerId || '').trim();
-            const provider = providerId
-                ? (Array.isArray(ai.providers) ? ai.providers : []).find((p) => p.id === providerId)
-                : req.body?.provider;
+            // Resolve provider through policy (own vs admin-shared)
+            let provider;
+            if (aiPolicy) {
+                const resolved = aiPolicy.resolveProvider(req.user, providerId || null, null);
+                provider = resolved.provider;
+            } else {
+                provider = providerId
+                    ? (Array.isArray(ai.providers) ? ai.providers : []).find((p) => p.id === providerId)
+                    : req.body?.provider;
+            }
             if (!provider) return res.status(404).json({ error: '模型供应商不存在' });
             const models = await listProviderModels(provider);
             res.json({ ok: true, models: models.slice(0, 300) });
-        } catch (err) { res.status(isTransientAiFetchError(err) ? 502 : 400).json({ error: publicError(err), transient: isTransientAiFetchError(err) }); }
+        } catch (err) { res.status(err?.status || (isTransientAiFetchError(err) ? 502 : 400)).json({ error: publicError(err), code: err?.code || '', transient: isTransientAiFetchError(err) }); }
     });
 
-    app.post('/api/ai/chat', deps.requireAuth, async (req, res) => {
+    app.post('/api/ai/chat', requireUser, async (req, res) => {
         const abortController = new AbortController();
         const abortRequest = () => {
             if (res.writableEnded) return;
@@ -2045,7 +2129,22 @@ function registerAiRoutes(app, deps) {
         try {
             const ai = deps.storage.getSettings().ai || {};
             if (!ai.enabled) return res.status(403).json({ error: 'AI 助理未启用，请先到设置中开启' });
-            const { provider, model } = selectProvider(ai, req.body || {});
+            // Policy gate: disabled users cannot chat
+            if (aiPolicy) {
+                const policy = aiPolicy.policyFor(req.user);
+                if (policy.mode === 'disabled') return res.status(403).json({ error: 'AI 助理未启用', code: 'ai_disabled' });
+            }
+            // Provider resolution through policy (own vs admin-shared)
+            let provider, model;
+            if (aiPolicy) {
+                const resolved = aiPolicy.resolveProvider(req.user, req.body?.providerId || null, req.body?.model || null);
+                provider = resolved.provider;
+                model = resolved.model || selectProvider(ai, req.body || {}).model;
+            } else {
+                const sel = selectProvider(ai, req.body || {});
+                provider = sel.provider;
+                model = sel.model;
+            }
             const context = normalizeAiContext(req.body?.context || {});
             const limits = normalizeContextLimits(ai, provider);
             const requestStartedAt = Date.now();
@@ -2058,6 +2157,17 @@ function registerAiRoutes(app, deps) {
             let messages = baseMessages;
             const toolResults = [];
             const maxToolRounds = toolRoundLimit(ai, provider);
+            // Build ACL-aware tool execution context
+            const toolCtx = {
+                req,
+                user: req.user,
+                confirmed: !!req.body?.confirmed,
+                signal: abortController.signal,
+                context,
+                authz,
+                resourceService,
+                aiPolicy,
+            };
             for (let step = 0; step < maxToolRounds; step += 1) {
                 throwIfAborted(abortController.signal);
                 const providerStartedAt = Date.now();
@@ -2067,7 +2177,7 @@ function registerAiRoutes(app, deps) {
                 throwIfAborted(abortController.signal);
                 const calls = Array.isArray(message.tool_calls) ? message.tool_calls.map(parseToolCall).filter((c) => c.name) : [];
                 if (!calls.length) {
-                    deps.addActivity?.(`AI 助理对话：${provider.name || provider.type}/${model}`);
+                    deps.addActivity?.(`AI 助理对话：${provider.name || provider.type}/${model}`, req.user?.userId);
                     const durationMs = Date.now() - requestStartedAt;
                     recordAiPerf({ status: 'ok', durationMs, providerMs, toolMs, providerCalls, toolResults: toolResults.length, model, provider: provider.name || provider.type, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0, inputCharsBeforeCompact: contextStats.inputCharsBeforeCompact || 0 });
                     return res.json({ ok: true, message: { role: 'assistant', content: message.content || '' }, toolResults, provider: { id: provider.id, name: provider.name, type: provider.type }, model, metrics: { durationMs, providerMs, toolMs, providerCalls, toolResults: toolResults.length, compactedMessages: contextStats.compactedMessages || 0, originalMessages: contextStats.originalMessages || 0, inputCharsBeforeCompact: contextStats.inputCharsBeforeCompact || 0 } });
@@ -2080,7 +2190,7 @@ function registerAiRoutes(app, deps) {
                     let result;
                     let status = 'success';
                     try {
-                        result = await executeAiTool(call.name, call.args, { req, context, responseMode: openAiApiMode(provider), signal: abortController.signal }, deps);
+                        result = await executeAiTool(call.name, call.args, { req, user: req.user, context, responseMode: openAiApiMode(provider), signal: abortController.signal, authz, resourceService, aiPolicy, confirmed: !!req.body?.confirmed }, deps);
                     } catch (toolErr) {
                         if (toolErr?.name === 'AbortError' || abortController.signal.aborted) throw toolErr;
                         status = 'error';
@@ -2125,11 +2235,11 @@ function registerAiRoutes(app, deps) {
         }
     });
 
-    app.get('/api/ai/metrics', deps.requireAuth, (req, res) => {
+    app.get('/api/ai/metrics', requireUser, (req, res) => {
         res.json({ ok: true, metrics: aiPerfSnapshot() });
     });
 
-    app.post('/api/ai/providers/:id/open', deps.requireAuth, async (req, res) => {
+    app.post('/api/ai/providers/:id/open', requireUser, async (req, res) => {
         try {
             if (typeof deps.verifySensitiveAccess !== 'function') return res.status(403).json({ error: '敏感信息验证不可用' });
             const auth = deps.verifySensitiveAccess(req, req.body?.secret);
@@ -2142,16 +2252,16 @@ function registerAiRoutes(app, deps) {
         } catch (err) { res.status(403).json({ error: publicError(err) }); }
     });
 
-    app.post('/api/ai/tools/run', deps.requireAuth, async (req, res) => {
+    app.post('/api/ai/tools/run', requireUser, async (req, res) => {
         try {
             const ai = deps.storage.getSettings().ai || {};
             if (!ai.enabled) return res.status(403).json({ error: 'AI 助理未启用' });
-            const result = await executeAiTool(String(req.body?.tool || ''), req.body?.args || {}, { req, context: req.body?.context || {} }, deps);
+            const result = await executeAiTool(String(req.body?.tool || ''), req.body?.args || {}, { req, user: req.user, context: req.body?.context || {}, authz, resourceService, aiPolicy }, deps);
             res.json({ ok: true, result });
-        } catch (err) { res.status(400).json({ error: publicError(err) }); }
+        } catch (err) { handleServiceError(res, err, 400); }
     });
 
-    app.post('/api/ai/confirm/:id', deps.requireAuth, async (req, res) => {
+    app.post('/api/ai/confirm/:id', requireUser, async (req, res) => {
         const abortController = new AbortController();
         const abortRequest = () => {
             if (res.writableEnded) return;
@@ -2162,12 +2272,13 @@ function registerAiRoutes(app, deps) {
         try {
             cleanupPendingActions();
             const item = pendingActions.get(req.params.id);
-            if (!item || item.username !== req.session.username) return res.status(404).json({ error: '确认请求不存在或已过期' });
+            // Owner check by immutable userId, not displayable username (§16.3)
+            if (!item || item.userId !== req.user.userId) return res.status(404).json({ error: '确认请求不存在或已过期' });
             pendingActions.delete(req.params.id);
             if (req.body?.approve === false) return res.json({ ok: true, cancelled: true });
             const startedAt = Date.now();
             throwIfAborted(abortController.signal);
-            const result = await executeAiTool(item.toolName, item.rawArgs || item.args || {}, { req, confirmed: true, context: item.context || {}, signal: abortController.signal }, deps);
+            const result = await executeAiTool(item.toolName, item.rawArgs || item.args || {}, { req, user: req.user, confirmed: true, context: item.context || {}, signal: abortController.signal, authz, resourceService, aiPolicy }, deps);
             throwIfAborted(abortController.signal);
             const endedAt = Date.now();
             res.json({ ok: true, toolName: item.toolName, args: publicToolArgs(item.toolName, item.rawArgs || item.args || {}), result, status: 'success', startedAt, endedAt, durationMs: endedAt - startedAt });
@@ -2184,7 +2295,7 @@ function registerAiRoutes(app, deps) {
         }
     });
 
-    app.post('/api/ai/complete', deps.requireAuth, async (req, res) => {
+    app.post('/api/ai/complete', requireUser, async (req, res) => {
         try {
             const ai = deps.storage.getSettings().ai || {};
             if (!ai.enabled || ai.codeCompletionEnabled === false || ai.permissions?.codeEdit === false) return res.json({ suggestions: [] });
