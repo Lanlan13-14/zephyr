@@ -37,6 +37,7 @@ const { WorkspaceService } = require('./workspace-service');
 const { UserSettingsService } = require('./user-settings-service');
 const { NotesService } = require('./notes-service');
 const { DeepLinkService } = require('./deeplink-service');
+const { WorkerBridge } = require('./worker-bridge');
 const secretCrypto = require('./secret-crypto');
 const { handleEditorLspConnection } = require('./editor-lsp-server');
 const { getAppVersion } = require('./version');
@@ -294,6 +295,12 @@ const workspaceService = new WorkspaceService(storage.rawDb(), { resources: reso
 const userSettingsService = new UserSettingsService(storage.rawDb(), storage);
 const notesService = new NotesService(storage.rawDb(), authz);
 const deepLinkService = new DeepLinkService(storage.rawDb());
+const workerBridge = new WorkerBridge({
+    storage,
+    resources: resourceService,
+    deepLink: deepLinkService,
+    authz,
+});
 setInterval(() => { try { deepLinkService.gc(); } catch {} }, 5 * 60 * 1000).unref();
 
 function reopenStorage() {
@@ -319,6 +326,7 @@ function rebuildAuthServices() {
     Object.assign(userSettingsService, new UserSettingsService(storage.rawDb(), storage));
     Object.assign(notesService, new NotesService(storage.rawDb(), authz));
     Object.assign(deepLinkService, new DeepLinkService(storage.rawDb()));
+    Object.assign(workerBridge, new WorkerBridge({ storage, resources: resourceService, deepLink: deepLinkService, authz }));
 }
 
 function parseBackupKeyFile(buffer) {
@@ -733,6 +741,21 @@ function connectSSHClient(conn, { timeout = 10000, sock = undefined } = {}) {
         const onError = (err) => finish(err);
         client.once('ready', onReady);
         client.once('error', onError);
+        // After ready fires, onError is removed. But ssh2 can still emit
+        // 'error' on a ready client if the socket dies mid-handshake or
+        // during teardown - that would crash the process (unhandled 'error').
+        // Keep a permanent safety handler that logs and suppresses post-ready
+        // errors (the caller already owns the client lifecycle).
+        client.on('error', (err) => {
+            if (!settled) return; // pre-ready errors go through onError -> finish
+            console.warn('[SSH-DIAG] ssh client post-ready error suppressed', {
+                connectionId: conn?.id || '',
+                label,
+                code: err.code || '',
+                level: err.level || '',
+                message: err.message,
+            });
+        });
         client.once('end', () => console.info('[SSH-DIAG] ssh client end', { connectionId: conn?.id || '', label }));
         client.once('close', () => console.info('[SSH-DIAG] ssh client close', { connectionId: conn?.id || '', label, settled }));
         try {
@@ -2110,6 +2133,64 @@ app.post('/api/deeplinks/:token/test', requireUser, async (req, res) => {
             ? await testSSHConnection(conn, timeoutMs)
             : { ok: false, code: 'unsupported_protocol', message: `不支持的协议：${conn.protocol}`, durationMs: 0 };
         res.status(result.ok ? 200 : 400).json(result);
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+/* ─── Persistent worker bridge (FREEZE plan §14) ───
+ * Node stays in the control plane: authenticate, resolve ACL+secrets, issue a
+ * one-time ticket. The browser then connects to the Go worker directly; the
+ * terminal byte stream never transits Node. */
+app.post('/api/worker/ticket', requireUser, async (req, res) => {
+    try {
+        res.setHeader('Cache-Control', 'no-store');
+        const body = req.body || {};
+        let result;
+        if (body.transientToken) {
+            result = await workerBridge.issueForTransient(req.user, String(body.transientToken), body.overrides || {});
+        } else if (body.connectionId) {
+            result = await workerBridge.issueForConnection(req.user, String(body.connectionId));
+        } else {
+            return res.status(400).json({ error: '需要 connectionId 或 transientToken', code: 'invalid_request' });
+        }
+        authz.audit({
+            actorUserId: req.user.userId,
+            action: 'worker.ticket_issued',
+            outcome: 'success',
+            metadata: { source: body.transientToken ? 'transient' : 'saved', host: result.workerWsUrl ? 'redacted' : '' },
+        });
+        res.json(result);
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.get('/api/worker/sessions', requireUser, async (req, res) => {
+    /* Only admins see the full live-session list; regular users see only
+     * their own (filtered server-side by the worker on userId claim). */
+    try {
+        const data = await workerBridge.listSessions();
+        const sessions = req.user.role === 'admin'
+            ? (data.sessions || [])
+            : (data.sessions || []).filter((s) => s.userId === req.user.userId);
+        res.json({ sessions, enabled: workerBridge.enabled });
+    } catch (err) {
+        handleServiceError(res, err, 500);
+    }
+});
+
+app.post('/api/worker/sessions/:id/kill', requireUser, async (req, res) => {
+    try {
+        const data = await workerBridge.listSessions();
+        const target = (data.sessions || []).find((s) => s.id === req.params.id);
+        if (!target) throw new HttpError(404, 'session_not_found', '会话不存在');
+        if (target.userId !== req.user.userId && req.user.role !== 'admin') {
+            throw new HttpError(403, 'forbidden_resource_control', '无权操作此会话');
+        }
+        await workerBridge.killSession(req.params.id);
+        authz.audit({ actorUserId: req.user.userId, resourceType: 'terminalSession', resourceId: req.params.id, action: 'worker.kill_session', outcome: 'success' });
+        res.json({ ok: true });
     } catch (err) {
         handleServiceError(res, err, 400);
     }

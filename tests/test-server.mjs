@@ -29,9 +29,27 @@ export class TestServer {
             NODE_ENV: 'production',
         };
         this.proc = spawn(process.execPath, ['server.js'], { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
+        // Safety net: if the test runner is killed (SIGKILL, timeout, Ctrl-C)
+        // before `after` runs, the spawned server.js must not become an orphan
+        // holding the port. Register on the process and on common fatal signals.
+        const procRef = this.proc;
+        const killHard = () => { try { procRef.kill('SIGKILL'); } catch {} };
+        process.once('exit', killHard);
+        for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(sig, killHard);
         let log = '';
         this.proc.stdout.on('data', (d) => { log += d; });
-        this.proc.stderr.on('data', (d) => { log += d; });
+        this.proc.stderr.on('data', (d) => {
+            log += d;
+            // Forward server stderr to the test process so crashes are visible
+            // in test output instead of being swallowed.
+            process.stderr.write(`[server:${this.port}] ${d}`);
+        });
+        // If the server dies unexpectedly, surface why.
+        this.proc.on('exit', (code, signal) => {
+            if (code !== null && code !== 0) {
+                process.stderr.write(`[server:${this.port}] exited code=${code}\n${log.slice(-1500)}\n`);
+            }
+        });
         const deadline = Date.now() + 45000;
         while (true) {
             if (this.proc.exitCode !== null) throw new Error(`server exited (${this.proc.exitCode}):\n${log.slice(-2000)}`);
