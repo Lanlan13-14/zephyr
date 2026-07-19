@@ -1,8 +1,8 @@
-import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260718-orientation-contract1';
-import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260718-orientation-contract1';
-import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260718-orientation-contract1';
-import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260718-orientation-contract1';
-import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260718-orientation-contract1';
+import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260719-clear-nscodec1';
+import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260719-clear-nscodec1';
+import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260719-clear-nscodec1';
+import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260719-clear-nscodec1';
+import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260719-clear-nscodec1';
 
 let compositor = null;
 let avc420 = null;
@@ -86,7 +86,7 @@ async function loadGoWasm() {
     bootStage('wasm-fetching');
     bootStage('wasm-instantiating');
     const { go, result } = await instantiateGoWasm(GoRuntime, {
-        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20260718-orientation-contract1',
+        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20260719-clear-nscodec1',
         pipeline: 'worker-gpu-v2',
     });
     if (result.instance.exports.mem) {

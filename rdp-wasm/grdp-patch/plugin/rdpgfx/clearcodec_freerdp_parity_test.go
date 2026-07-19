@@ -1,6 +1,7 @@
 package rdpgfx
 
 import (
+	"bytes"
 	"encoding/binary"
 	"strings"
 	"testing"
@@ -217,25 +218,56 @@ func TestClearUnknownSubcodecKeepsTile(t *testing.T) {
 	}
 }
 
-func TestClearNSCodecSubcodecCounted(t *testing.T) {
+func buildNSCodecRaw2x2() []byte {
+	msg := make([]byte, 20)
+	binary.LittleEndian.PutUint32(msg[0:], 4)
+	binary.LittleEndian.PutUint32(msg[4:], 4)
+	binary.LittleEndian.PutUint32(msg[8:], 4)
+	binary.LittleEndian.PutUint32(msg[12:], 0)
+	msg = append(msg, 0, 1, 2, 3) // Y
+	msg = append(msg, 0, 0, 0, 0) // Co
+	msg = append(msg, 0, 0, 0, 0) // Cg
+	return msg
+}
+
+func TestClearNSCodecSubcodecDecodedTopDown(t *testing.T) {
+	nsc := buildNSCodecRaw2x2()
+	sub := make([]byte, 13+len(nsc))
+	binary.LittleEndian.PutUint16(sub[4:], 2)
+	binary.LittleEndian.PutUint16(sub[6:], 2)
+	binary.LittleEndian.PutUint32(sub[8:], uint32(len(nsc)))
+	sub[12] = 1
+	copy(sub[13:], nsc)
+	stream := buildClearStream(0, 1, nil, residualSolid(11, 22, 33, 2*2), nil, sub)
+
+	out, err := newClearDecoder().decode(stream, 2, 2)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	want := []byte{
+		0, 0, 0, 0xFF, 1, 1, 1, 0xFF,
+		2, 2, 2, 0xFF, 3, 3, 3, 0xFF,
+	}
+	if !bytes.Equal(out, want) {
+		t.Fatalf("decoded NSCodec pixels=%v want=%v", out, want)
+	}
+}
+
+func TestClearNSCodecMalformedPayloadWarns(t *testing.T) {
 	d := newClearDecoder()
 	sub := []byte{0, 0, 0, 0, 2, 0, 2, 0, 6, 0, 0, 0, 1, 1, 2, 3, 4, 5, 6}
 	stream := buildClearStream(0, 1, nil, residualSolid(11, 22, 33, 4*4), nil, sub)
-	out, err := d.decode(stream, 4, 4)
-	if err != nil {
-		t.Fatalf("nscodec subcodec must not drop the tile: %v", err)
-	}
-	if out[0] != 11 || out[1] != 22 || out[2] != 33 {
-		t.Fatalf("residual lost: %v", out[:3])
+	if _, err := d.decode(stream, 4, 4); err != nil {
+		t.Fatalf("malformed optional subcodec must not drop the tile: %v", err)
 	}
 	found := false
 	for _, w := range d.takeWarns() {
-		if strings.Contains(w, "nscodec") {
+		if strings.Contains(w, "nscodec") && strings.Contains(w, "decode failed") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("missing nscodec warning")
+		t.Fatal("missing malformed nscodec warning")
 	}
 }
 

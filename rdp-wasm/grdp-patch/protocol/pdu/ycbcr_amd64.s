@@ -1,3 +1,5 @@
+//go:build amd64 && nscsimd
+
 // SSE2 implementation of ycoCgToBGRASSE2.
 // Processes 8 pixels per iteration (no chroma subsampling, alpha = 0xFF).
 // Stack ABI (ABI0):

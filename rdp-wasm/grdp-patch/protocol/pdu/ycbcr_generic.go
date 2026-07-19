@@ -1,4 +1,4 @@
-//go:build !amd64 && !arm64
+//go:build !arm64 && (!amd64 || !nscsimd)
 
 package pdu
 
