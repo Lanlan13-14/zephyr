@@ -28,6 +28,7 @@ const {
 } = require('@simplewebauthn/server');
 const { getRemoteStats } = require('./stats');
 const storage = require('./storage');
+const { SessionStore, sha256: sessionTokenHash } = require('./session-store');
 const secretCrypto = require('./secret-crypto');
 const { handleEditorLspConnection } = require('./editor-lsp-server');
 const { getAppVersion } = require('./version');
@@ -88,7 +89,6 @@ const DB_FILE = path.join(DATA_DIR, 'zephyr.db');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
-const sessions = new Map();
 const sshTerminalSessions = new Map();
 const sftpDownloadTokens = new Map();
 const sftpUploadTokens = new Map();
@@ -256,9 +256,37 @@ function initData() {
 
 storage.init({ hashPassword });
 
+/* Unique per-process identifier; lets clients distinguish "service restarted"
+ * from "my session is invalid" (FREEZE plan §4.6). */
+const INSTANCE_ID = crypto.randomUUID();
+
+/* Persistent auth sessions (FREEZE plan §4.6/§18.1): cookie carries a random
+ * SID, SQLite stores only SHA-256(SID). Sliding idle TTL + absolute TTL.
+ * Legacy SESSION_TTL_SECONDS / REMEMBER_SESSION_TTL_SECONDS still work and map
+ * to the idle TTLs. */
+const SESSION_IDLE_TTL_MS = Math.max(5 * 60000, Number(process.env.SESSION_IDLE_TTL_SECONDS || process.env.SESSION_TTL_SECONDS || 24 * 60 * 60) * 1000);
+const SESSION_ABSOLUTE_TTL_MS = Math.max(SESSION_IDLE_TTL_MS, Number(process.env.SESSION_ABSOLUTE_TTL_SECONDS || 7 * 24 * 60 * 60) * 1000);
+const REMEMBER_IDLE_TTL_MS = Math.max(SESSION_IDLE_TTL_MS, Number(process.env.REMEMBER_SESSION_IDLE_TTL_SECONDS || process.env.REMEMBER_SESSION_TTL_SECONDS || 30 * 24 * 60 * 60) * 1000);
+const REMEMBER_ABSOLUTE_TTL_MS = Math.max(REMEMBER_IDLE_TTL_MS, Number(process.env.REMEMBER_SESSION_ABSOLUTE_TTL_SECONDS || 90 * 24 * 60 * 60) * 1000);
+let sessionStore = new SessionStore(storage.rawDb(), {
+    idleTtlMs: SESSION_IDLE_TTL_MS,
+    absoluteTtlMs: SESSION_ABSOLUTE_TTL_MS,
+    rememberIdleTtlMs: REMEMBER_IDLE_TTL_MS,
+    rememberAbsoluteTtlMs: REMEMBER_ABSOLUTE_TTL_MS,
+});
+setInterval(() => { try { sessionStore.gc(); } catch {} }, 10 * 60 * 1000).unref();
+
 function reopenStorage() {
     storage.close();
     storage.init({ hashPassword });
+    // Prepared statements inside the session store reference the old Database
+    // handle; rebuild the store against the reopened one.
+    sessionStore = new SessionStore(storage.rawDb(), {
+        idleTtlMs: SESSION_IDLE_TTL_MS,
+        absoluteTtlMs: SESSION_ABSOLUTE_TTL_MS,
+        rememberIdleTtlMs: REMEMBER_IDLE_TTL_MS,
+        rememberAbsoluteTtlMs: REMEMBER_ABSOLUTE_TTL_MS,
+    });
 }
 
 function parseBackupKeyFile(buffer) {
@@ -281,21 +309,19 @@ function parseCookies(req) {
     }, {});
 }
 
-const SESSION_TTL_MS = Math.max(5 * 60000, Number(process.env.SESSION_TTL_SECONDS || 24 * 60 * 60) * 1000);
-const REMEMBER_SESSION_TTL_MS = Math.max(SESSION_TTL_MS, Number(process.env.REMEMBER_SESSION_TTL_SECONDS || 30 * 24 * 60 * 60) * 1000);
-
+/* Resolve the app session from the persistent SQLite-backed store.
+ * SQLite is authoritative, so sessions survive process restarts; the in-memory
+ * cache inside SessionStore is only a hot path. */
 function currentSession(req) {
     const sid = parseCookies(req).zephyr_sid;
     if (!sid) return null;
-    const session = sessions.get(sid);
-    if (!session) return null;
-    const ttl = session.remember ? REMEMBER_SESSION_TTL_MS : SESSION_TTL_MS;
-    if (Date.now() - Number(session.createdAt || 0) > ttl) {
-        sessions.delete(sid);
-        return null;
-    }
-    session.lastSeenAt = Date.now();
-    return session;
+    return sessionStore.resolve(sid);
+}
+
+/* Lightweight structured auth error; keeps the legacy `error` string field so
+ * existing clients keep working while new clients can branch on `code`. */
+function authError(res, status, code, message, retryable = false) {
+    return res.status(status).json({ error: message, code, retryable });
 }
 
 function isPasswordChangeAllowedPath(req) {
@@ -304,9 +330,9 @@ function isPasswordChangeAllowedPath(req) {
 
 function requireAuth(req, res, next) {
     const session = currentSession(req);
-    if (!session) return res.status(401).json({ error: '未登录' });
+    if (!session) return authError(res, 401, 'app_session_expired', '未登录或会话已过期', false);
     if (session.mustChangePassword && !isPasswordChangeAllowedPath(req)) {
-        return res.status(403).json({ error: '请先修改默认密码', mustChangePassword: true });
+        return res.status(403).json({ error: '请先修改默认密码', code: 'must_change_password', mustChangePassword: true, retryable: false });
     }
     req.session = session;
     next();
@@ -1350,9 +1376,15 @@ function sessionClearCookie(req) {
 }
 
 function createSession(req, res, user, { remember = false } = {}) {
-    const sid = crypto.randomUUID();
-    sessions.set(sid, { username: user.username, createdAt: Date.now(), lastSeenAt: Date.now(), remember: !!remember, mustChangePassword: !!user.defaultPassword });
-    const maxAgeSeconds = remember ? Math.floor(REMEMBER_SESSION_TTL_MS / 1000) : '';
+    const { sid } = sessionStore.create({
+        userId: user.userId,
+        username: user.username,
+        remember,
+        mustChangePassword: !!user.defaultPassword,
+        userAgent: req.headers['user-agent'] || '',
+        ip: clientIp(req),
+    });
+    const maxAgeSeconds = remember ? Math.floor(REMEMBER_ABSOLUTE_TTL_MS / 1000) : '';
     const maxAge = maxAgeSeconds ? `; Max-Age=${maxAgeSeconds}` : '';
     res.setHeader('Set-Cookie', `zephyr_sid=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax${secureCookieFlag(req)}${maxAge}`);
     return sid;
@@ -1667,6 +1699,15 @@ app.post('/api/auth/login', async (req, res) => {
         await notifyLogin({ username, ip: guard.ip, userAgent: ua, success: false, reason: '密码错误' });
         return res.status(401).json({ error: '账号或密码错误' });
     }
+    if (user.status === 'suspended') {
+        recordLoginFailure(guard.ip);
+        await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: false, reason: '账号已停用' });
+        return authError(res, 403, 'account_suspended', '账号已被停用，请联系管理员', false);
+    }
+    if (user.status === 'deleted') {
+        recordLoginFailure(guard.ip);
+        return authError(res, 401, 'invalid_credentials', '账号或密码错误', false);
+    }
     if (!defaultPasswordRemoteLoginAllowed(req, user)) {
         recordLoginFailure(guard.ip);
         await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: false, reason: '默认密码禁止公网登录' });
@@ -1701,11 +1742,16 @@ app.post('/api/auth/forgot-password/request', async (req, res) => {
     resetRequestHits.set(ip, [...hits, nowTs]);
     const { email, captchaToken } = req.body || {}, s = storage.getSettings();
     if (!(await verifyCaptcha(s.captcha?.provider, captchaToken, ip))) return res.json({ ok: true, message: '如果邮箱匹配，验证码将发送到邮箱' });
-    const user = storage.getFirstUser(); const adminEmail = s.mail?.adminEmail || user?.email || '';
-    if (user && adminEmail && String(email || '').trim().toLowerCase() === String(adminEmail).toLowerCase()) {
+    /* Per-user reset (FREEZE plan §11.3): match the target user by their own
+     * email; the response is uniform either way so account existence is not
+     * leaked. The code is bound to that user's userId + email. */
+    const wanted = String(email || '').trim().toLowerCase();
+    const target = wanted ? storage.listUsers().find((u) => u.email && String(u.email).toLowerCase() === wanted && u.status === 'active') : null;
+    if (target) {
         const code = String(Math.floor(100000 + Math.random() * 900000));
-        storage.createResetCode({ id: crypto.randomUUID(), username: user.username, email: adminEmail, codeHash: sha256(code), expiresAt: Date.now() + 10 * 60000, createdAt: Date.now() });
-        sendMail('Zephyr 密码重置验证码', `Zephyr 密码重置验证码：${code}\n有效期：10 分钟。`, adminEmail).catch((err) => console.error('[MAIL] 重置验证码发送失败:', err.message));
+        storage.createResetCode({ id: crypto.randomUUID(), username: target.username, email: target.email, codeHash: sha256(code), expiresAt: Date.now() + 10 * 60000, createdAt: Date.now() });
+        try { storage.rawDb().prepare('UPDATE password_reset_codes SET userId = ? WHERE username = ? AND userId IS NULL').run(target.userId, target.username); } catch {}
+        sendMail('Zephyr 密码重置验证码', `Zephyr 密码重置验证码：${code}\n有效期：10 分钟。`, target.email).catch((err) => console.error('[MAIL] 重置验证码发送失败:', err.message));
     }
     res.json({ ok: true, message: '如果邮箱匹配，验证码将发送到邮箱' });
 });
@@ -1713,35 +1759,67 @@ app.post('/api/auth/forgot-password/request', async (req, res) => {
 app.post('/api/auth/forgot-password/reset', (req, res) => {
     const { email, code, newPassword } = req.body || {};
     if (!newPassword || String(newPassword).length < 4) return res.status(400).json({ error: '新密码至少 4 位' });
-    const user = storage.getFirstUser(); const adminEmail = storage.getSettings().mail?.adminEmail || user?.email || '';
-    const rec = user ? storage.findResetCode(user.username, adminEmail) : null;
-    if (!user || !adminEmail || String(email || '').toLowerCase() !== String(adminEmail).toLowerCase() || !rec || rec.expiresAt < Date.now() || rec.codeHash !== sha256(code)) return res.status(400).json({ error: '验证码无效或已过期' });
-    storage.updateUser(user.username, { passwordHash: hashPassword(newPassword), defaultPassword: false }); storage.markResetCodeUsed(rec.id); addActivity('通过邮箱验证码重置密码');
+    const wanted = String(email || '').trim().toLowerCase();
+    const user = wanted ? storage.listUsers().find((u) => u.email && String(u.email).toLowerCase() === wanted) : null;
+    const rec = user ? storage.findResetCode(user.username, user.email) : null;
+    if (!user || !rec || rec.expiresAt < Date.now() || rec.codeHash !== sha256(code)) return res.status(400).json({ error: '验证码无效或已过期' });
+    storage.updateUser(user.username, { passwordHash: hashPassword(newPassword), defaultPassword: false });
+    storage.markResetCodeUsed(rec.id);
+    sessionStore.revokeAllForUser(user.userId, 'password-reset');
+    sessionStore.setMustChangePassword(user.userId, false);
+    addActivity('通过邮箱验证码重置密码');
     res.json({ ok: true });
 });
 
 app.post('/api/auth/logout', (req, res) => {
     const sid = parseCookies(req).zephyr_sid;
-    if (sid) sessions.delete(sid);
+    if (sid) sessionStore.revoke(sid, 'logout');
     res.setHeader('Set-Cookie', sessionClearCookie(req));
     res.json({ ok: true });
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
-    res.json({ user: { username: req.session.username }, mustChangePassword: !!req.session.mustChangePassword });
+    res.json({
+        user: { username: req.session.username, userId: req.session.userId, role: storage.getUserById(req.session.userId)?.role || 'user' },
+        mustChangePassword: !!req.session.mustChangePassword,
+        instanceId: INSTANCE_ID,
+    });
 });
 
 app.post('/api/auth/change-password', requireAuth, (req, res) => {
     const { currentPassword, newPassword } = req.body || {};
     if (!newPassword || String(newPassword).length < 4) return res.status(400).json({ error: '新密码至少 4 位' });
-    const data = readJSON(USERS_FILE, { users: [] });
-    const user = data.users.find((u) => u.username === req.session.username);
+    const user = storage.getUserById(req.session.userId) || storage.getUser(req.session.username);
     if (!user || !verifyPassword(currentPassword, user.passwordHash)) return res.status(400).json({ error: '当前密码错误' });
-    user.passwordHash = hashPassword(newPassword);
-    user.defaultPassword = false;
-    user.updatedAt = Date.now();
-    writeJSON(USERS_FILE, data);
+    storage.updateUser(user.username, { passwordHash: hashPassword(newPassword), defaultPassword: false });
+    /* Password change invalidates every other session (FREEZE plan §11.3);
+     * the current session survives and its must-change flag clears. */
+    const sid = parseCookies(req).zephyr_sid;
+    sessionStore.revokeAllForUser(user.userId, 'password-changed', { exceptSid: sid || '' });
+    sessionStore.setMustChangePassword(user.userId, false);
     req.session.mustChangePassword = false;
+    addActivity('修改登录密码');
+    res.json({ ok: true });
+});
+
+app.get('/api/me/sessions', requireAuth, (req, res) => {
+    const currentHash = sessionTokenHash(parseCookies(req).zephyr_sid || '');
+    const sessions = sessionStore.listForUser(req.session.userId).map((s) => ({
+        id: s.id,
+        createdAt: s.createdAt,
+        lastSeenAt: s.lastSeenAt,
+        remember: s.remember,
+        current: s.id === currentHash,
+    }));
+    res.json({ sessions });
+});
+
+app.delete('/api/me/sessions/:id', requireAuth, (req, res) => {
+    const targetId = String(req.params.id || '');
+    const currentHash = sessionTokenHash(parseCookies(req).zephyr_sid || '');
+    if (targetId === currentHash) return res.status(400).json({ error: '不能撤销当前会话，请使用退出登录', code: 'cannot_revoke_current' });
+    const ok = sessionStore.revokeForUser(req.session.userId, targetId, 'user-revoked');
+    if (!ok) return res.status(404).json({ error: '会话不存在', code: 'not_found' });
     res.json({ ok: true });
 });
 
@@ -1768,6 +1846,9 @@ app.put('/api/security/profile', requireAuth, (req, res) => {
         let u = storage.updateUser(req.session.username, { email: String(req.body?.email || '') });
         if (nextUsername !== req.session.username) {
             u = storage.renameUser(req.session.username, nextUsername);
+            /* Identity follows the immutable userId; live sessions only need
+             * their display username refreshed (FREEZE plan §18.1). */
+            sessionStore.renameUser(u.userId, u.username);
             req.session.username = nextUsername;
             addActivity(`修改登录用户名：${nextUsername}`);
         }
@@ -4181,7 +4262,7 @@ app.get('/api/rdp/h264-debug', (req, res) => {
  * /api/rdp/file-agent-tokens must not be swallowed by app.get('*'). */
 fileAgentManager.mountRoutes(app, requireAuth, (req) => req.session, verifySensitiveAccess);
 
-app.get('/healthz', (req, res) => res.status(200).send('OK'));
+app.get('/healthz', (req, res) => res.status(200).json({ ok: true, instanceId: INSTANCE_ID, version: APP_VERSION }));
 
 // 兜底路由
 app.get('*', (req, res) => {
@@ -4247,6 +4328,10 @@ function handleHttpUpgrade(req, socket, head) {
             rejectSocket(socket, session?.mustChangePassword ? 403 : 401, session?.mustChangePassword ? 'Forbidden' : 'Unauthorized');
             return;
         }
+        /* Bind the verified identity once at upgrade; message handlers below
+         * must use req.authSession instead of re-parsing the cookie jar
+         * (FREEZE plan §4.6 — no Upgrade/connect double-auth race). */
+        req.authSession = session;
         if (pathname === '/rdp-proxy') {
             console.info('[rdp-proxy] websocket upgrade accepted', { user: session.username, origin: req.headers.origin || '' });
         }
@@ -4272,6 +4357,23 @@ function closeWebSocketSafe(ws, code = 1000, reason = '') {
         if (ws && ws.readyState === WebSocket.OPEN) ws.close(code, String(reason || '').slice(0, 120));
         else if (ws && ws.readyState === WebSocket.CONNECTING) ws.terminate();
     } catch {}
+}
+
+/* Periodically re-validates a long-lived WebSocket's app session against the
+ * persistent store (catches cross-process revocations). On expiry the socket
+ * closes with 4001 so the client routes to re-login instead of retrying
+ * blindly (FREEZE plan §4.6). */
+function startSessionWatchdog(ws, req, intervalMs = 5 * 60 * 1000) {
+    const sid = parseCookies(req).zephyr_sid;
+    if (!sid) return () => {};
+    const timer = setInterval(() => {
+        let live = null;
+        try { live = sessionStore.resolve(sid, { touch: false }); } catch { live = null; }
+        if (!live) closeWebSocketSafe(ws, 4001, 'app-session-expired');
+    }, intervalMs);
+    timer.unref?.();
+    ws.on('close', () => clearInterval(timer));
+    return () => clearInterval(timer);
 }
 
 /* ====================================================================
@@ -4326,8 +4428,9 @@ rdpProxyWss.on('connection', async (ws, req) => {
 
     try {
         /* Validate target against saved connections for the authenticated user */
-        const sessionUser = currentSession(req);
+        const sessionUser = req.authSession;
         if (!sessionUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
+        startSessionWatchdog(ws, req);
 
         const store = readJSON(CONNECTIONS_FILE, { connections: [] });
         const conn = (store.connections || []).find((c) => {
@@ -4423,6 +4526,7 @@ rdpProxyWss.on('connection', async (ws, req) => {
 });
 wss.on('connection', (ws, req) => {
     console.log(`[WS] 客户端连接 ${req.socket.remoteAddress}`);
+    startSessionWatchdog(ws, req);
     let sshClient = null;
     let sshClients = [];
     let sshStream = null;
@@ -4813,10 +4917,12 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
         // ------------------------- SSH 连接 -------------------------
         if (msg.type === 'connect') {
-            const sessionUser = currentSession(req);
+            /* Identity was verified once at upgrade; reuse it (no double-auth
+             * race between Upgrade and connect — FREEZE plan §4.3). */
+            const sessionUser = req.authSession;
             if (!sessionUser) {
-                sendJSON({ type: 'error', message: '未登录或会话已过期' });
-                try { ws.close(1008, 'unauthorized'); } catch {}
+                sendJSON({ type: 'error', code: 'app_session_expired', message: '未登录或会话已过期', retryable: false });
+                try { ws.close(4001, 'app-session-expired'); } catch {}
                 return;
             }
             const { host, port, username, password, privateKey, init, connectionId } = msg;
@@ -4845,8 +4951,6 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 let connectionSource = 'fallback-message';
                 let storeConnectionCount = null;
                 if (connectionId) {
-                    const session = currentSession(req);
-                    if (!session) throw new Error('未登录或会话已过期');
                     const store = readJSON(CONNECTIONS_FILE, { connections: [] });
                     storeConnectionCount = (store.connections || []).length;
                     conn = (store.connections || []).find((c) => c.id === connectionId);
@@ -5243,7 +5347,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 const token = crypto.randomBytes(24).toString('hex');
                 sftpDownloadTokens.set(token, {
                     sessionId: attachedSshSession?.id || '',
-                    username: currentSession(req)?.username || '',
+                    username: req.authSession?.username || '',
                     connectionConfig: attachedSshSession?.connectionConfig || conn,
                     downloadId: msg.downloadId || '',
                     path: targetPath,
@@ -5259,7 +5363,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
 
         if (msg.type === 'sftp-clipboard-set') {
-            const username = currentSession(req)?.username || '';
+            const username = req.authSession?.username || '';
             const rawItems = Array.isArray(msg.items) ? msg.items : [];
             const items = rawItems.map((item) => ({
                 path: normalizeRemotePath(item.path || ''),
@@ -5295,7 +5399,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
         }
 
         if (msg.type === 'sftp-clipboard-check-conflicts') {
-            const username = currentSession(req)?.username || '';
+            const username = req.authSession?.username || '';
             const targetDir = String(msg.targetDir || msg.path || '.');
             const requestId = String(msg.requestId || '');
             checkSftpClipboardTargetConflicts({ username, targetSession: attachedSshSession, targetDir }).then((result) => {
@@ -5307,7 +5411,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
         }
 
         if (msg.type === 'sftp-clipboard-paste') {
-            const username = currentSession(req)?.username || '';
+            const username = req.authSession?.username || '';
             const targetDir = String(msg.targetDir || msg.path || '.');
             const clip = sftpClipboardByUser.get(username);
             if (!clip) {
@@ -5351,7 +5455,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 sendJSON({ type: 'sftp-compress', success: false, error: '缺少压缩项目或目标路径' });
                 return;
             }
-            const username = currentSession(req)?.username || '';
+            const username = req.authSession?.username || '';
             const archiveTransfer = createSftpArchiveTransfer({ id: msg.transferId || '', username, path: targetPath, operation: 'compress' });
             sendTransferEvent(username, { transferId: archiveTransfer.id, direction: 'archive', path: targetPath, loaded: 0, size: 0, status: 'active', phase: 'prepare', cancellable: true });
             const finishArchive = () => finishSftpArchiveTransfer(archiveTransfer.id);
@@ -5381,7 +5485,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 return;
             }
             const lower = archivePath.toLowerCase();
-            const username = currentSession(req)?.username || '';
+            const username = req.authSession?.username || '';
             const archiveTransfer = createSftpArchiveTransfer({ id: msg.transferId || '', username, path: archivePath, operation: 'extract' });
             sendTransferEvent(username, { transferId: archiveTransfer.id, direction: 'archive', path: archivePath, loaded: 0, size: 0, status: 'active', phase: 'prepare', cancellable: true });
             const finishArchive = () => finishSftpArchiveTransfer(archiveTransfer.id);
@@ -5426,7 +5530,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     const token = crypto.randomBytes(24).toString('hex');
                     sftpDownloadTokens.set(token, {
                         sessionId: attachedSshSession?.id || '',
-                        username: currentSession(req)?.username || '',
+                        username: req.authSession?.username || '',
                         connectionConfig: attachedSshSession?.connectionConfig || conn,
                         downloadId: msg.downloadId || '',
                         path: tmpPath,
@@ -5475,7 +5579,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
             const token = crypto.randomBytes(24).toString('hex');
             sftpUploadTokens.set(token, {
                 sessionId: attachedSshSession?.id || '',
-                username: currentSession(req)?.username || '',
+                username: req.authSession?.username || '',
                 connectionConfig: attachedSshSession?.connectionConfig || conn,
                 uploadId,
                 path: targetPath,
@@ -5564,7 +5668,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 const token = crypto.randomBytes(24).toString('hex');
                 sftpPreviewTokens.set(token, {
                     path: targetPath,
-                    username: currentSession(req)?.username || '',
+                    username: req.authSession?.username || '',
                     sessionId: attachedSshSession?.id || '',
                     connectionConfig: attachedSshSession?.connectionConfig || conn,
                     size: Number(stats.size) || 0,
@@ -5652,7 +5756,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     subtitles.push(...await listExternalSubtitles());
                     sftpMediaTokens.set(token, {
                         path: targetPath,
-                        username: currentSession(req)?.username || '',
+                        username: req.authSession?.username || '',
                         sessionId: attachedSshSession?.id || '',
                         connectionConfig: attachedSshSession?.connectionConfig || conn,
                         size,

@@ -5,7 +5,7 @@ const { getAppVersion } = require('./version');
 const { DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, DEFAULT_ZEPHYR_SYSTEM_PROMPT, cloneDefaultZephyrSkills } = require('./ai-defaults');
 const secretCrypto = require('./secret-crypto');
 
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.ZEPHYR_DATA_DIR ? path.resolve(process.env.ZEPHYR_DATA_DIR) : path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'zephyr.db');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
@@ -328,6 +328,27 @@ function init({ hashPassword }) {
             used INTEGER DEFAULT 0,
             createdAt INTEGER
         );
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            username TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            last_seen_at INTEGER NOT NULL,
+            idle_expires_at INTEGER NOT NULL,
+            absolute_expires_at INTEGER NOT NULL,
+            remember INTEGER NOT NULL DEFAULT 0,
+            must_change_password INTEGER NOT NULL DEFAULT 0,
+            revoked_at INTEGER,
+            revoke_reason TEXT,
+            user_agent_hash TEXT,
+            ip_prefix TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(idle_expires_at, absolute_expires_at);
     `);
 
     addColumnIfMissing('users', 'email', 'TEXT');
@@ -335,6 +356,12 @@ function init({ hashPassword }) {
     addColumnIfMissing('users', 'totpSecret', 'TEXT');
     addColumnIfMissing('users', 'failedLoginCount', 'INTEGER DEFAULT 0');
     addColumnIfMissing('users', 'lockedUntil', 'INTEGER');
+    // Multi-user identity (FREEZE plan §11, §18.1): immutable userId + role + status.
+    addColumnIfMissing('users', 'userId', 'TEXT');
+    addColumnIfMissing('users', 'role', 'TEXT');
+    addColumnIfMissing('users', 'status', 'TEXT');
+    addColumnIfMissing('passkeys', 'userId', 'TEXT');
+    addColumnIfMissing('password_reset_codes', 'userId', 'TEXT');
     addColumnIfMissing('connections', 'jumpHostIds', "TEXT DEFAULT '[]'");
     addColumnIfMissing('connections', 'sshKeyId', 'TEXT');
     addColumnIfMissing('connections', 'rdpSoundMode', "TEXT DEFAULT 'local'");
@@ -375,6 +402,7 @@ function init({ hashPassword }) {
         const astmt = db.prepare('INSERT OR REPLACE INTO activities (id,time,message,type) VALUES (@id,@time,@message,@type)');
         (legacy.activities || []).forEach((a) => astmt.run({ id: a.id, time: a.time || now(), message: a.message || '', type: a.type || 'info' }));
     }
+    migrateUserIdentity();
     const legacySettings = readJSONFile(SETTINGS_FILE, {});
     const defaults = defaultSettings(legacySettings);
     Object.entries(defaults).forEach(([key, value]) => setSettingDefault(key, value));
@@ -382,6 +410,39 @@ function init({ hashPassword }) {
     if (migrated) { try { db.exec('VACUUM'); db.pragma('wal_checkpoint(TRUNCATE)'); } catch {} }
     if ((getSettings().version || '0') !== APP_VERSION) updateSettings({ ...defaults, ...getSettings(), version: APP_VERSION });
     ensureAiGuidanceDefaults();
+}
+
+/*
+ * Idempotent multi-user identity migration (FREEZE plan §18.1, §21.2):
+ * - every user gets an immutable random userId
+ * - pre-existing users (single-user installs) become role=admin so upgrades
+ *   keep their full access; newly created users default to role=user
+ * - status defaults to active
+ * - passkeys / password reset codes switch from username to userId foreign key
+ */
+function migrateUserIdentity() {
+    const crypto = require('crypto');
+    const tx = db.transaction(() => {
+        const users = db.prepare('SELECT username, userId, role, status FROM users').all();
+        const byName = new Map();
+        const seenIds = new Set();
+        const upd = db.prepare('UPDATE users SET userId = ?, role = ?, status = ? WHERE username = ?');
+        for (const u of users) {
+            let userId = String(u.userId || '').trim();
+            if (!userId || seenIds.has(userId)) userId = crypto.randomUUID();
+            seenIds.add(userId);
+            const role = String(u.role || '').trim() || 'admin';
+            const status = String(u.status || '').trim() || 'active';
+            if (userId !== u.userId || role !== u.role || status !== u.status) upd.run(userId, role, status, u.username);
+            byName.set(u.username, userId);
+        }
+        db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_userId ON users(userId)');
+        const pkUpd = db.prepare('UPDATE passkeys SET userId = ? WHERE username = ? AND (userId IS NULL OR userId = \'\')');
+        const rcUpd = db.prepare('UPDATE password_reset_codes SET userId = ? WHERE username = ? AND (userId IS NULL OR userId = \'\')');
+        for (const [username, userId] of byName) { pkUpd.run(userId, username); rcUpd.run(userId, username); }
+        db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (\'identityMigratedAt\', ?)').run(String(now()));
+    });
+    tx();
 }
 
 function ensureAiGuidanceDefaults() {
@@ -477,15 +538,47 @@ function updateSettings(values) {
     return getSettings();
 }
 
-function normalizeUser(u) { const plain = decryptUser(u); return { ...plain, defaultPassword: !!plain.defaultPassword, totpEnabled: !!plain.totpEnabled }; }
+function normalizeUser(u) { const plain = decryptUser(u); return { ...plain, defaultPassword: !!plain.defaultPassword, totpEnabled: !!plain.totpEnabled, role: plain.role || 'user', status: plain.status || 'active' }; }
 function getUsersStore() { return { users: db.prepare('SELECT * FROM users ORDER BY createdAt').all().map(normalizeUser) }; }
+/* Legacy whole-store rewrite (used by writeJSON(USERS_FILE)). Preserves the
+ * immutable identity fields (userId/role/status) of existing rows and assigns
+ * fresh identity to genuinely new usernames. */
 function saveUsersStore(store) {
-    const tx = db.transaction((users) => { db.prepare('DELETE FROM users').run(); const stmt = db.prepare('INSERT INTO users (username,passwordHash,defaultPassword,createdAt,updatedAt,email,totpEnabled,totpSecret,failedLoginCount,lockedUntil) VALUES (@username,@passwordHash,@defaultPassword,@createdAt,@updatedAt,@email,@totpEnabled,@totpSecret,@failedLoginCount,@lockedUntil)'); users.forEach((u) => { const safe = encryptUser(u); stmt.run({ ...safe, email: safe.email || '', totpEnabled: safe.totpEnabled ? 1 : 0, totpSecret: safe.totpSecret || null, failedLoginCount: Number(safe.failedLoginCount) || 0, lockedUntil: safe.lockedUntil || null, defaultPassword: safe.defaultPassword ? 1 : 0 }); }); });
+    const crypto = require('crypto');
+    const tx = db.transaction((users) => {
+        const existing = new Map(db.prepare('SELECT username, userId, role, status FROM users').all().map((r) => [r.username, r]));
+        db.prepare('DELETE FROM users').run();
+        const stmt = db.prepare('INSERT INTO users (username,passwordHash,defaultPassword,createdAt,updatedAt,email,totpEnabled,totpSecret,failedLoginCount,lockedUntil,userId,role,status) VALUES (@username,@passwordHash,@defaultPassword,@createdAt,@updatedAt,@email,@totpEnabled,@totpSecret,@failedLoginCount,@lockedUntil,@userId,@role,@status)');
+        users.forEach((u) => {
+            const safe = encryptUser(u);
+            const prior = existing.get(u.username);
+            stmt.run({ ...safe, email: safe.email || '', totpEnabled: safe.totpEnabled ? 1 : 0, totpSecret: safe.totpSecret || null, failedLoginCount: Number(safe.failedLoginCount) || 0, lockedUntil: safe.lockedUntil || null, defaultPassword: safe.defaultPassword ? 1 : 0, userId: prior?.userId || u.userId || crypto.randomUUID(), role: prior?.role || u.role || 'admin', status: prior?.status || u.status || 'active' });
+        });
+    });
     tx(store.users || []);
 }
 function getUser(username) { const u = db.prepare('SELECT * FROM users WHERE username=?').get(username); return u ? normalizeUser(u) : null; }
+function getUserById(userId) { const u = db.prepare('SELECT * FROM users WHERE userId=?').get(String(userId || '')); return u ? normalizeUser(u) : null; }
 function getFirstUser() { const u = db.prepare('SELECT * FROM users ORDER BY createdAt LIMIT 1').get(); return u ? normalizeUser(u) : null; }
+function listUsers() { return db.prepare('SELECT * FROM users ORDER BY createdAt').all().map(normalizeUser); }
+function createUser({ username, passwordHash, email = '', role = 'user', status = 'active', defaultPassword = false }) {
+    const crypto = require('crypto');
+    const ts = now();
+    const userId = crypto.randomUUID();
+    db.prepare('INSERT INTO users (username,passwordHash,defaultPassword,createdAt,updatedAt,email,totpEnabled,totpSecret,failedLoginCount,lockedUntil,userId,role,status) VALUES (?,?,?,?,?,?,0,NULL,0,NULL,?,?,?)')
+        .run(String(username), String(passwordHash), defaultPassword ? 1 : 0, ts, ts, String(email || ''), userId, role === 'admin' ? 'admin' : 'user', ['active', 'invited', 'suspended'].includes(status) ? status : 'active');
+    return getUserById(userId);
+}
 function updateUser(username, values) { const old = getUser(username); if (!old) return null; const next = { ...old, ...values, updatedAt: now(), defaultPassword: values.defaultPassword ?? old.defaultPassword ? 1 : 0, totpEnabled: values.totpEnabled ?? old.totpEnabled ? 1 : 0 }; const safe = encryptUser(next); db.prepare('UPDATE users SET passwordHash=@passwordHash, defaultPassword=@defaultPassword, updatedAt=@updatedAt, email=@email, totpEnabled=@totpEnabled, totpSecret=@totpSecret, failedLoginCount=@failedLoginCount, lockedUntil=@lockedUntil WHERE username=@username').run({ ...safe, email: safe.email || '', totpSecret: safe.totpSecret || null, failedLoginCount: Number(safe.failedLoginCount) || 0, lockedUntil: safe.lockedUntil || null }); return getUser(username); }
+function updateUserById(userId, values) {
+    const old = getUserById(userId);
+    if (!old) return null;
+    const next = { ...old, ...values, updatedAt: now() };
+    const safe = encryptUser(next);
+    db.prepare('UPDATE users SET passwordHash=@passwordHash, defaultPassword=@defaultPassword, updatedAt=@updatedAt, email=@email, totpEnabled=@totpEnabled, totpSecret=@totpSecret, failedLoginCount=@failedLoginCount, lockedUntil=@lockedUntil, role=@role, status=@status WHERE userId=@userId')
+        .run({ ...safe, email: safe.email || '', totpSecret: safe.totpSecret || null, failedLoginCount: Number(safe.failedLoginCount) || 0, lockedUntil: safe.lockedUntil || null, defaultPassword: safe.defaultPassword ? 1 : 0, totpEnabled: safe.totpEnabled ? 1 : 0, role: safe.role === 'admin' ? 'admin' : 'user', status: ['active', 'invited', 'suspended', 'deleted'].includes(safe.status) ? safe.status : 'active' });
+    return getUserById(userId);
+}
 function renameUser(oldUsername, newUsername) {
     const old = getUser(oldUsername);
     if (!old) return null;
@@ -546,4 +639,4 @@ function deletePasskey(username, id) { db.prepare('DELETE FROM passkeys WHERE us
 function rawDb() { return db; }
 function close() { if (db) { db.close(); db = null; } }
 
-module.exports = { init, getUsersStore, saveUsersStore, getUser, getFirstUser, updateUser, renameUser, getConnectionsStore, saveConnectionsStore, getSettings, updateSettings, addActivity, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close };
+module.exports = { init, getUsersStore, saveUsersStore, getUser, getUserById, getFirstUser, listUsers, createUser, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getSettings, updateSettings, addActivity, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close };
