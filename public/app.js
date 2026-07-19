@@ -3963,54 +3963,7 @@ async function saveAiProvider(e) {
         toast('模型供应商已保存，正在获取模型...');
         await fetchAiModelsForProvider(savedId);
     } else toast('模型供应商已保存');
-    return;
-    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    const id = $('#aiProviderId').value || `provider-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const providerTypeValue = $('#aiProviderType').value;
-    const provider = {
-        id,
-        name: $('#aiProviderName').value.trim() || '未命名供应商',
-        type: providerTypeValue,
-        enabled: $('#aiProviderEnabled').checked,
-        baseUrl: $('#aiProviderBaseUrl').value.trim(),
-        apiMode: ['openai-compatible', 'openai'].includes(providerTypeValue) ? ($('#aiProviderApiMode').value || 'auto') : 'native',
-        apiKey: $('#aiProviderApiKey').value,
-        organization: $('#aiProviderOrganization').value.trim(),
-        extraHeaders: $('#aiProviderExtraHeaders').value.trim(),
-        models: $('#aiProviderModels').value,
-        modelUserAgents: $('#aiProviderModelUserAgents')?.value.trim() || '',
-        defaultModel: $('#aiProviderDefaultModel').value.trim(),
-        options: {
-            temperature: Number($('#aiProviderTemperature').value),  // -1 means omit
-            top_p: Number($('#aiProviderTopP').value),  // -1 means omit
-            max_tokens: Number($('#aiProviderMaxTokens').value) || 4096,
-            max_output_tokens: Number($('#aiProviderMaxTokens').value) || 4096,
-            reasoning_effort: $('#aiProviderReasoningEffort').value,
-            use_previous_response_id: !!$('#aiProviderUsePreviousResponse')?.checked,
-            context: { windowTokens: Number($('#aiProviderContextWindow')?.value) || undefined },
-            presence_penalty: Number($('#aiProviderPresencePenalty').value) || 0,
-            frequency_penalty: Number($('#aiProviderFrequencyPenalty').value) || 0,
-            extraJson: $('#aiProviderExtraJson').value.trim(),
-        },
-    };
-    const hadApiKey = !!provider.apiKey && provider.apiKey !== '******';
-    const idx = ai.providers.findIndex((p) => p.id === id);
-    if (idx >= 0) ai.providers[idx] = provider; else ai.providers.push(provider);
-    if (!ai.defaultProviderId) ai.defaultProviderId = id;
-    const firstProviderModel = provider.defaultModel || aiModelNames(provider)[0] || '';
-    if (!provider.defaultModel && firstProviderModel) provider.defaultModel = firstProviderModel;
-    if (idx >= 0) ai.providers[idx] = provider; else ai.providers[ai.providers.length - 1] = provider;
-    if (!ai.defaultModel && firstProviderModel) ai.defaultModel = firstProviderModel;
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
-    closeAiProviderModal();
-    renderAiSettingsForm();
-    const shouldAutoFetchModels = !aiModelNames(provider).length && provider.enabled !== false && hadApiKey;
-    if (shouldAutoFetchModels) {
-        toast('模型供应商已保存，正在获取模型...');
-        await fetchAiModelsForProvider(id);
-    } else {
-        toast('模型供应商已保存');
-    }
+    // Provider persistence is handled by the per-user API above.
 }
 function renderAiProviderList() {
     const list = $('#aiProviderList');
