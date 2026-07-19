@@ -29,6 +29,10 @@ const {
 const { getRemoteStats } = require('./stats');
 const storage = require('./storage');
 const { SessionStore, sha256: sessionTokenHash } = require('./session-store');
+const { Authz, CAP, HttpError } = require('./authz');
+const { ResourceService } = require('./resource-service');
+const { SharingService } = require('./sharing-service');
+const { UserService } = require('./user-service');
 const secretCrypto = require('./secret-crypto');
 const { handleEditorLspConnection } = require('./editor-lsp-server');
 const { getAppVersion } = require('./version');
@@ -276,17 +280,32 @@ let sessionStore = new SessionStore(storage.rawDb(), {
 });
 setInterval(() => { try { sessionStore.gc(); } catch {} }, 10 * 60 * 1000).unref();
 
+/* Unified authorization (FREEZE plan §19.1) — every route/WS/tool goes through
+ * these services; no route may re-implement role or ownership checks. */
+const authz = new Authz(storage.rawDb(), { getUserById: (id) => storage.getUserBrief(id) });
+const resourceService = new ResourceService(storage, authz);
+const sharingService = new SharingService(authz, storage, resourceService);
+const userService = new UserService(storage, () => sessionStore, authz, hashPassword);
+
 function reopenStorage() {
     storage.close();
     storage.init({ hashPassword });
-    // Prepared statements inside the session store reference the old Database
-    // handle; rebuild the store against the reopened one.
+    // Prepared statements inside the session store / authz reference the old
+    // Database handle; rebuild every service against the reopened one.
     sessionStore = new SessionStore(storage.rawDb(), {
         idleTtlMs: SESSION_IDLE_TTL_MS,
         absoluteTtlMs: SESSION_ABSOLUTE_TTL_MS,
         rememberIdleTtlMs: REMEMBER_IDLE_TTL_MS,
         rememberAbsoluteTtlMs: REMEMBER_ABSOLUTE_TTL_MS,
     });
+    rebuildAuthServices();
+}
+
+function rebuildAuthServices() {
+    Object.assign(authz, new Authz(storage.rawDb(), { getUserById: (id) => storage.getUserBrief(id) }));
+    Object.assign(resourceService, new ResourceService(storage, authz));
+    Object.assign(sharingService, new SharingService(authz, storage, resourceService));
+    Object.assign(userService, new UserService(storage, () => sessionStore, authz, hashPassword));
 }
 
 function parseBackupKeyFile(buffer) {
@@ -343,6 +362,46 @@ function requirePageAuth(req, res, next) {
     if (!session || session.mustChangePassword) return res.redirect('/');
     req.session = session;
     next();
+}
+
+/* Multi-user middlewares (FREEZE plan §19.1): requireUser attaches the full
+ * identity (immutable userId + role); requireAdmin gates platform APIs. */
+function requireUser(req, res, next) {
+    const session = currentSession(req);
+    if (!session) return authError(res, 401, 'app_session_expired', '未登录或会话已过期', false);
+    if (session.mustChangePassword && !isPasswordChangeAllowedPath(req)) {
+        return res.status(403).json({ error: '请先修改默认密码', code: 'must_change_password', mustChangePassword: true, retryable: false });
+    }
+    const user = storage.getUserBrief(session.userId);
+    if (!user || user.status === 'deleted') return authError(res, 401, 'app_session_expired', '未登录或会话已过期', false);
+    if (user.status === 'suspended') return authError(res, 403, 'account_suspended', '账号已被停用，请联系管理员', false);
+    req.session = session;
+    req.user = { userId: user.userId, username: user.username, role: user.role, status: user.status, email: user.email || '' };
+    next();
+}
+
+function requireAdmin(req, res, next) {
+    requireUser(req, res, () => {
+        if (req.user.role !== 'admin') return authError(res, 403, 'forbidden_admin_required', '需要管理员权限', false);
+        next();
+    });
+}
+
+/** Uniform HttpError → response mapping (structured codes, §19.7). */
+function handleServiceError(res, err, fallbackStatus = 500) {
+    if (err instanceof HttpError) {
+        return res.status(err.status).json({ error: err.message, code: err.code, retryable: err.retryable });
+    }
+    console.error('[service-error]', err);
+    return res.status(fallbackStatus).json({ error: err.message || '服务器内部错误', code: 'internal_error', retryable: false });
+}
+
+/** req.user equivalent for WebSocket handlers (identity bound at upgrade). */
+function userFromAuthSession(req) {
+    if (!req.authSession) return null;
+    const user = storage.getUserBrief(req.authSession.userId);
+    if (!user || user.status !== 'active') return null;
+    return { userId: user.userId, username: user.username, role: user.role, status: user.status, email: user.email || '' };
 }
 
 function certificateAltNames() {
@@ -1196,8 +1255,8 @@ function runRemoteCommand(conn, command, timeoutSeconds = 30, options = {}) {
     });
 }
 
-function addActivity(message) {
-    storage.addActivity({ id: crypto.randomUUID(), time: Date.now(), message, type: 'info' });
+function addActivity(message, userId = null) {
+    storage.addActivity({ id: crypto.randomUUID(), time: Date.now(), message, type: 'info', userId });
 }
 
 function trustProxyEnabled() {
@@ -1720,7 +1779,8 @@ app.post('/api/auth/login', async (req, res) => {
     }
     recordLoginSuccess(guard.ip);
     createSession(req, res, user, { remember: !!remember });
-    addActivity(`用户登录：${user.username}`);
+    try { storage.rawDb().prepare('UPDATE users SET lastLoginAt = ? WHERE userId = ?').run(Date.now(), user.userId); } catch {}
+    addActivity(`用户登录：${user.username}`, user.userId);
     await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: true, reason: '' });
     res.json({ ok: true, user: { username: user.username }, mustChangePassword: !!user.defaultPassword });
 });
@@ -1823,6 +1883,182 @@ app.delete('/api/me/sessions/:id', requireAuth, (req, res) => {
     res.json({ ok: true });
 });
 
+/* ─── Multi-user bootstrap (FREEZE plan §19.2) ─── */
+app.get('/api/me/bootstrap', requireUser, (req, res) => {
+    const user = storage.getUserById(req.user.userId);
+    const connections = resourceService.listConnections(req.user);
+    const shared = sharingService.listSharedWithMe(req.user, { resourceType: 'connection' });
+    res.json({
+        user: {
+            userId: user.userId,
+            username: user.username,
+            role: user.role,
+            status: user.status,
+            email: user.email || '',
+            totpEnabled: !!user.totpEnabled,
+        },
+        instanceId: INSTANCE_ID,
+        resources: {
+            connections: connections.length,
+            sharedConnections: shared.length,
+        },
+        policies: {
+            aiEnabled: !!storage.getSettings().ai?.enabled,
+        },
+    });
+});
+
+/* ─── Resource sharing (FREEZE plan §19.4) ─── */
+app.get('/api/resources/:type/:id/shares', requireUser, (req, res) => {
+    try {
+        res.json({ shares: sharingService.listShares(req.user, req.params.type, req.params.id) });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.put('/api/resources/:type/:id/shares', requireUser, (req, res) => {
+    try {
+        const results = sharingService.putShares(req.user, req.params.type, req.params.id, req.body?.shares || []);
+        res.json({ ok: true, results });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.delete('/api/resources/:type/:id/shares/:subjectId', requireUser, (req, res) => {
+    try {
+        sharingService.deleteShare(req.user, req.params.type, req.params.id, req.params.subjectId);
+        res.json({ ok: true });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.get('/api/me/shared', requireUser, (req, res) => {
+    res.json({ shares: sharingService.listSharedWithMe(req.user) });
+});
+
+/* ─── Admin: user management (FREEZE plan §19.3) ─── */
+app.get('/api/admin/users', requireAdmin, (req, res) => {
+    res.json({ users: userService.listUsers() });
+});
+
+app.post('/api/admin/users', requireAdmin, (req, res) => {
+    try {
+        const user = userService.createUser(req.user, req.body || {});
+        res.json({ user });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.get('/api/admin/users/:userId', requireAdmin, (req, res) => {
+    try {
+        const user = userService.getUser(req.params.userId);
+        const grants = authz.listSubjectGrants(req.params.userId).map((g) => {
+            const raw = resourceService._rawResource(g.resourceType, g.resourceId);
+            return { ...g, resourceExists: !!raw, resourceName: raw?.name || '' };
+        });
+        res.json({ user, grants });
+    } catch (err) {
+        handleServiceError(res, err, 404);
+    }
+});
+
+app.patch('/api/admin/users/:userId', requireAdmin, (req, res) => {
+    try {
+        const user = userService.updateUser(req.user, req.params.userId, req.body || {});
+        res.json({ user });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/admin/users/:userId/suspend', requireAdmin, (req, res) => {
+    try {
+        res.json({ user: userService.suspendUser(req.user, req.params.userId) });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/admin/users/:userId/reactivate', requireAdmin, (req, res) => {
+    try {
+        res.json({ user: userService.reactivateUser(req.user, req.params.userId) });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/admin/users/:userId/force-password-reset', requireAdmin, (req, res) => {
+    try {
+        userService.forcePasswordReset(req.user, req.params.userId, req.body || {});
+        res.json({ ok: true });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/admin/users/:userId/revoke-sessions', requireAdmin, (req, res) => {
+    try {
+        const count = userService.revokeSessions(req.user, req.params.userId);
+        res.json({ ok: true, revoked: count });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.delete('/api/admin/users/:userId', requireAdmin, (req, res) => {
+    try {
+        userService.deleteUser(req.user, req.params.userId, { resourcePolicy: String(req.body?.resourcePolicy || 'transfer-to-admin') });
+        res.json({ ok: true });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.put('/api/admin/users/:userId/grants', requireAdmin, (req, res) => {
+    try {
+        const target = storage.getUserBrief(req.params.userId);
+        if (!target) throw new HttpError(404, 'user_not_found', '用户不存在');
+        const desired = Array.isArray(req.body?.grants) ? req.body.grants : [];
+        const results = [];
+        const byResource = new Map();
+        for (const g of desired) {
+            const key = `${g.resourceType}:${g.resourceId}`;
+            if (!byResource.has(key)) byResource.set(key, g);
+        }
+        for (const g of byResource.values()) {
+            const raw = resourceService._rawResource(String(g.resourceType), String(g.resourceId));
+            authz.assertCan(req.user, CAP.SHARE, String(g.resourceType), String(g.resourceId), raw || { ownerUserId: '' }, { resourceExists: !!raw });
+            const caps = Array.isArray(g.capabilities) ? g.capabilities : [];
+            if (!caps.length) {
+                authz.revoke({ resourceType: g.resourceType, resourceId: g.resourceId, subjectId: target.userId, revokedByUserId: req.user.userId });
+                results.push({ resourceType: g.resourceType, resourceId: g.resourceId, revoked: true });
+            } else {
+                const granted = authz.grant({
+                    resourceType: String(g.resourceType),
+                    resourceId: String(g.resourceId),
+                    subjectId: target.userId,
+                    capabilities: caps,
+                    grantedByUserId: req.user.userId,
+                    expiresAt: g.expiresAt || null,
+                });
+                results.push({ resourceType: g.resourceType, resourceId: g.resourceId, capabilities: granted });
+            }
+        }
+        res.json({ ok: true, results });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.get('/api/admin/audit', requireAdmin, (req, res) => {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 1000);
+    res.json({ events: authz.listAuditEvents({ limit }) });
+});
+
 app.post('/api/security/totp/setup', requireAuth, async (req, res) => {
     const user = storage.getUser(req.session.username); const secret = generateSecret();
     const otpauth = generateURI({ label: user.username, issuer: 'Zephyr', secret }); const qr = await QRCode.toDataURL(otpauth);
@@ -1858,13 +2094,19 @@ app.put('/api/security/profile', requireAuth, (req, res) => {
     }
 });
 
-app.get('/api/connections', requireAuth, (req, res) => {
-    const store = readJSON(CONNECTIONS_FILE, { connections: [], activities: [] });
-    res.json({ connections: (store.connections || []).map(publicConnection), activities: store.activities || [] });
+app.get('/api/connections', requireUser, (req, res) => {
+    /* Owner-aware list: own resources + explicitly shared ones (§19.4). */
+    try {
+        const activities = req.user.role === 'admin'
+            ? storage.getActivities()
+            : storage.getActivitiesForUser(req.user.userId);
+        res.json({ connections: resourceService.listConnections(req.user), activities });
+    } catch (err) {
+        handleServiceError(res, err, 500);
+    }
 });
 
-app.post('/api/connections', requireAuth, (req, res) => {
-    const store = readJSON(CONNECTIONS_FILE, { connections: [], activities: [] });
+app.post('/api/connections', requireUser, (req, res) => {
     const body = req.body || {};
     const protocol = String(body.protocol || 'SSH').toUpperCase();
     if (!body.name || !body.host || (protocol === 'SSH' && !body.username)) return res.status(400).json({ error: protocol === 'SSH' ? '名称、主机、用户名不能为空' : '名称、主机不能为空' });
@@ -1904,85 +2146,97 @@ app.post('/api/connections', requireAuth, (req, res) => {
         conn.rdpDomain = String(body.rdpDomain || '').trim();
     }
     applyConnectionRouteFields(conn, body);
-    store.connections.unshift(conn);
-    store.activities = [{ id: crypto.randomUUID(), time: Date.now(), message: `新增连接：${conn.name}` }, ...(store.activities || [])].slice(0, 20);
-    writeJSON(CONNECTIONS_FILE, store);
-    res.json({ connection: publicConnection(conn) });
-});
-
-app.put('/api/connections/:id', requireAuth, (req, res) => {
-    const store = readJSON(CONNECTIONS_FILE, { connections: [], activities: [] });
-    const conn = (store.connections || []).find((c) => c.id === req.params.id);
-    if (!conn) return res.status(404).json({ error: '连接不存在' });
-    const body = req.body || {};
-    ['name', 'host', 'username', 'remark'].forEach((key) => { if (body[key] !== undefined) conn[key] = String(body[key]); });
-    if (body.port !== undefined) conn.port = Number(body.port) || 22;
-    if (body.protocol !== undefined) conn.protocol = String(body.protocol).toUpperCase();
-    if (body.tags !== undefined) conn.tags = Array.isArray(body.tags) ? body.tags.map(String).filter(Boolean) : String(body.tags || '').split(',').map((v) => v.trim()).filter(Boolean);
-    if (body.sshKeyId !== undefined) conn.sshKeyId = String(body.sshKeyId || '');
-    applyConnectionRouteFields(conn, body);
-    if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
-    if (body.privateKey !== undefined && body.privateKey !== '******') conn.privateKey = String(body.privateKey || '');
-    /* RDP-specific settings */
-    if (String(conn.protocol || '').toUpperCase() === 'RDP') {
-        if (body.rdpSoundMode !== undefined) conn.rdpSoundMode = ['local', 'remote', 'off'].includes(body.rdpSoundMode) ? body.rdpSoundMode : 'local';
-        if (body.rdpClipboard !== undefined) conn.rdpClipboard = body.rdpClipboard !== false;
-        if (body.rdpMicrophone !== undefined) conn.rdpMicrophone = !!body.rdpMicrophone;
-        if (body.rdpLocation !== undefined) conn.rdpLocation = !!body.rdpLocation;
-        if (body.rdpStorage !== undefined) conn.rdpStorage = !!body.rdpStorage;
-        if (body.rdpCamera !== undefined) conn.rdpCamera = !!body.rdpCamera;
-        if (body.rdpResolution !== undefined) conn.rdpResolution = ['auto', '1080p', '2K', '4K', '8K'].includes(body.rdpResolution) ? body.rdpResolution : '1080p';
-        if (body.rdpQuality !== undefined) conn.rdpQuality = ['balanced', 'performance', 'quality'].includes(body.rdpQuality) ? body.rdpQuality : 'balanced';
-        if (body.rdpFps !== undefined) conn.rdpFps = [30, 45, 60, 120, 144].includes(Number(body.rdpFps)) ? Number(body.rdpFps) : 30;
-        if (body.rdpPipeline !== undefined) conn.rdpPipeline = 'worker-gpu-v2';
-        if (body.rdpTouchMode !== undefined) conn.rdpTouchMode = body.rdpTouchMode === 'relative' ? 'relative' : 'direct';
-        if (body.rdpTouchSensitivity !== undefined) conn.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number(body.rdpTouchSensitivity) || 1.5));
-        if (body.rdpDomain !== undefined) conn.rdpDomain = String(body.rdpDomain || '').trim();
-    }
-    conn.updatedAt = Date.now();
-    store.activities = [{ id: crypto.randomUUID(), time: Date.now(), message: `编辑连接：${conn.name}` }, ...(store.activities || [])].slice(0, 20);
-    writeJSON(CONNECTIONS_FILE, store);
-    res.json({ connection: publicConnection(conn) });
-});
-
-app.delete('/api/connections/:id', requireAuth, (req, res) => {
-    const store = readJSON(CONNECTIONS_FILE, { connections: [], activities: [] });
-    const target = (store.connections || []).find((c) => c.id === req.params.id);
-    store.connections = (store.connections || []).filter((c) => c.id !== req.params.id);
-    if (target) store.activities = [{ id: crypto.randomUUID(), time: Date.now(), message: `删除连接：${target.name}` }, ...(store.activities || [])].slice(0, 20);
-    writeJSON(CONNECTIONS_FILE, store);
-    res.json({ ok: true });
-});
-
-app.post('/api/connections/:id/open', requireAuth, (req, res) => {
-    const store = readJSON(CONNECTIONS_FILE, { connections: [], activities: [] });
-    const conn = (store.connections || []).find((c) => c.id === req.params.id);
-    if (!conn) return res.status(404).json({ error: '连接不存在' });
-    const reveal = req.body?.purpose === 'reveal' || req.body?.secret !== undefined;
     try {
+        const saved = resourceService.createConnection(req.user, conn);
+        addActivity(`新增连接：${conn.name}`, req.user.userId);
+        res.json({ connection: saved });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.put('/api/connections/:id', requireUser, (req, res) => {
+    const body = req.body || {};
+    try {
+        const saved = resourceService.updateConnection(req.user, req.params.id, (conn) => {
+            ['name', 'host', 'username', 'remark'].forEach((key) => { if (body[key] !== undefined) conn[key] = String(body[key]); });
+            if (body.port !== undefined) conn.port = Number(body.port) || 22;
+            if (body.protocol !== undefined) conn.protocol = String(body.protocol).toUpperCase();
+            if (body.tags !== undefined) conn.tags = Array.isArray(body.tags) ? body.tags.map(String).filter(Boolean) : String(body.tags || '').split(',').map((v) => v.trim()).filter(Boolean);
+            if (body.sshKeyId !== undefined) conn.sshKeyId = String(body.sshKeyId || '');
+            applyConnectionRouteFields(conn, body);
+            if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
+            if (body.privateKey !== undefined && body.privateKey !== '******') conn.privateKey = String(body.privateKey || '');
+            if (String(conn.protocol || '').toUpperCase() === 'RDP') {
+                if (body.rdpSoundMode !== undefined) conn.rdpSoundMode = ['local', 'remote', 'off'].includes(body.rdpSoundMode) ? body.rdpSoundMode : 'local';
+                if (body.rdpClipboard !== undefined) conn.rdpClipboard = body.rdpClipboard !== false;
+                if (body.rdpMicrophone !== undefined) conn.rdpMicrophone = !!body.rdpMicrophone;
+                if (body.rdpLocation !== undefined) conn.rdpLocation = !!body.rdpLocation;
+                if (body.rdpStorage !== undefined) conn.rdpStorage = !!body.rdpStorage;
+                if (body.rdpCamera !== undefined) conn.rdpCamera = !!body.rdpCamera;
+                if (body.rdpResolution !== undefined) conn.rdpResolution = ['auto', '1080p', '2K', '4K', '8K'].includes(body.rdpResolution) ? body.rdpResolution : '1080p';
+                if (body.rdpQuality !== undefined) conn.rdpQuality = ['balanced', 'performance', 'quality'].includes(body.rdpQuality) ? body.rdpQuality : 'balanced';
+                if (body.rdpFps !== undefined) conn.rdpFps = [30, 45, 60, 120, 144].includes(Number(body.rdpFps)) ? Number(body.rdpFps) : 30;
+                if (body.rdpPipeline !== undefined) conn.rdpPipeline = 'worker-gpu-v2';
+                if (body.rdpTouchMode !== undefined) conn.rdpTouchMode = body.rdpTouchMode === 'relative' ? 'relative' : 'direct';
+                if (body.rdpTouchSensitivity !== undefined) conn.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number(body.rdpTouchSensitivity) || 1.5));
+                if (body.rdpDomain !== undefined) conn.rdpDomain = String(body.rdpDomain || '').trim();
+            }
+            return conn;
+        });
+        addActivity(`编辑连接：${saved.name}`, req.user.userId);
+        res.json({ connection: saved });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.delete('/api/connections/:id', requireUser, (req, res) => {
+    try {
+        resourceService.deleteConnection(req.user, req.params.id);
+        addActivity(`删除连接：${req.params.id}`, req.user.userId);
+        res.json({ ok: true });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/connections/:id/open', requireUser, (req, res) => {
+    try {
+        const reveal = req.body?.purpose === 'reveal' || req.body?.secret !== undefined;
         if (reveal) {
             const auth = verifySensitiveAccess(req, req.body?.secret);
+            const conn = resourceService.getConnection(req.user, req.params.id, { reveal: true });
+            authz.audit({ actorUserId: req.user.userId, resourceType: 'connection', resourceId: req.params.id, action: 'resource.reveal_secret', outcome: 'success', metadata: { method: auth.method } });
             console.info('[secret-open] reveal connection secrets', { connectionId: conn.id, name: conn.name, authMethod: auth.method });
             return res.json({ connection: { ...conn, jumpHostIds: normalizeJumpHostIds(conn) } });
         }
-        conn.jumpHostIds = normalizeJumpHostIds(conn);
-        conn.lastConnectedAt = Date.now();
-        store.activities = [{ id: crypto.randomUUID(), time: Date.now(), message: `打开连接：${conn.name}` }, ...(store.activities || [])].slice(0, 20);
-        writeJSON(CONNECTIONS_FILE, store);
-        res.json({ connection: publicConnection(conn) });
+        /* Connect intent requires the `use` capability (§12.3). */
+        const raw = storage.getConnectionById(req.params.id);
+        authz.assertCan(req.user, CAP.USE, 'connection', req.params.id, raw || { ownerUserId: '' }, { resourceExists: !!raw });
+        resourceService.markConnected(req.user, req.params.id);
+        addActivity(`打开连接：${raw.name}`, req.user.userId);
+        res.json({ connection: resourceService.getConnection(req.user, req.params.id) });
     } catch (err) {
-        res.status(403).json({ error: err.message || '验证失败' });
+        handleServiceError(res, err, 403);
     }
 });
 
 /* RDP WASM credential endpoint — returns credentials for browser-side RDP connections.
  * Only accessible to authenticated users.  Credentials are never cached on the client. */
-app.post('/api/rdp/credentials', requireAuth, (req, res) => {
+app.post('/api/rdp/credentials', requireUser, (req, res) => {
     const connectionId = String(req.body?.connectionId || '').trim();
     if (!connectionId) return res.status(400).json({ error: 'connectionId required' });
-    const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-    const conn = (store.connections || []).find((c) => c.id === connectionId);
-    if (!conn) return res.status(404).json({ error: '连接不存在' });
+    /* RDP runs the protocol in the browser, so credentials must leave the
+     * server — gate on the explicit revealSecret capability (§12.3). Shared
+     * `use` without revealSecret cannot mint browser-side RDP credentials. */
+    const raw = storage.getConnectionById(connectionId);
+    try {
+        authz.assertCan(req.user, CAP.REVEAL_SECRET, 'connection', connectionId, raw || { ownerUserId: '' }, { resourceExists: !!raw });
+    } catch (err) {
+        return handleServiceError(res, err, 403);
+    }
+    const conn = raw;
     if (String(conn.protocol || 'SSH').toUpperCase() !== 'RDP') return res.status(400).json({ error: '非 RDP 连接' });
     const resolved = resolveSshKeyForConnection(conn);
     let username = String(resolved.username || 'Administrator');
@@ -2279,12 +2533,17 @@ app.post('/api/data/import', requireAuth, upload.single('backup'), async (req, r
     } catch (err) { res.status(400).json({ error: err.message || '导入失败' }); }
 });
 
-app.post('/api/connections/test', requireAuth, async (req, res) => {
+app.post('/api/connections/test', requireUser, async (req, res) => {
     const body = req.body || {};
-    const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-    let conn = body.connectionId ? (store.connections || []).find((c) => c.id === body.connectionId) : null;
-    if (conn) {
-        conn = { ...conn };
+    let conn = null;
+    if (body.connectionId) {
+        /* Testing a saved connection requires `use`; unsaved ad-hoc tests use
+         * the caller-provided credentials only. */
+        try {
+            conn = { ...resourceService.resolveForConnect(req.user, String(body.connectionId)) };
+        } catch (err) {
+            return handleServiceError(res, err, 403);
+        }
         ['name', 'host', 'username', 'remark'].forEach((key) => { if (body[key] !== undefined) conn[key] = String(body[key]); });
         if (body.port !== undefined) conn.port = Number(body.port) || 22;
         if (body.protocol !== undefined) conn.protocol = String(body.protocol).toUpperCase();
@@ -2306,125 +2565,165 @@ app.post('/api/connections/test', requireAuth, async (req, res) => {
             : protocol === 'RDP'
                 ? await testRDPConnection(conn, timeoutMs)
                 : { ok: false, code: 'unsupported_protocol', message: `不支持的协议：${protocol}`, durationMs: 0 };
-    addActivity(`测试连接：${conn.name || conn.host} - ${result.message}`);
+    addActivity(`测试连接：${conn.name || conn.host} - ${result.message}`, req.user.userId);
     res.status(result.ok ? 200 : 400).json(result);
 });
 
-app.post('/api/remote-execute', requireAuth, async (req, res) => {
+app.post('/api/remote-execute', requireUser, async (req, res) => {
     const { connectionIds, command, timeoutSeconds } = req.body || {};
     if (!Array.isArray(connectionIds) || !connectionIds.length) return res.status(400).json({ error: '请选择服务器' });
     if (!String(command || '').trim()) return res.status(400).json({ error: '请输入命令' });
-    const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-    const targets = (store.connections || []).filter((c) => connectionIds.includes(c.id) && c.protocol === 'SSH');
+    /* Batch remote execution requires the `execute` capability per target
+     * (§12.3) — use/control alone never authorizes command execution. */
+    const targets = [];
+    for (const id of connectionIds.map(String)) {
+        const conn = storage.getConnectionById(id);
+        if (!conn) continue;
+        try {
+            authz.assertCan(req.user, CAP.EXECUTE, 'connection', conn.id, conn, { resourceExists: true });
+            if (conn.protocol === 'SSH') targets.push(resourceService.resolveForConnect(req.user, conn.id));
+        } catch (err) {
+            targets.push({ __denied: true, connectionId: conn.id, name: conn.name, host: conn.host, error: err.message });
+        }
+    }
     const started = Date.now();
-    const results = await Promise.all(targets.map((conn) => runRemoteCommand(conn, String(command), timeoutSeconds)));
-    addActivity(`远程执行：${targets.length} 台服务器，命令 ${String(command).slice(0, 40)}`);
+    const results = await Promise.all(targets.map((conn) => {
+        if (conn.__denied) return Promise.resolve({ connectionId: conn.connectionId, name: conn.name, host: conn.host, success: false, error: conn.error, denied: true });
+        return runRemoteCommand(conn, String(command), timeoutSeconds);
+    }));
+    authz.audit({ actorUserId: req.user.userId, action: 'resource.remote_execute', outcome: 'success', metadata: { targets: targets.length, command: String(command).slice(0, 120) } });
+    addActivity(`远程执行：${targets.length} 台服务器，命令 ${String(command).slice(0, 40)}`, req.user.userId);
     res.json({ startedAt: started, durationMs: Date.now() - started, results });
 });
 
-app.get('/api/proxies', requireAuth, (req, res) => res.json({ proxies: storage.listProxies() }));
-app.post('/api/proxies', requireAuth, (req, res) => {
+app.get('/api/proxies', requireUser, (req, res) => res.json({ proxies: resourceService.listOwned(req.user, 'proxy') }));
+app.post('/api/proxies', requireUser, (req, res) => {
     const b = req.body || {};
     if (!b.name || !b.host || !b.port) return res.status(400).json({ error: '名称、IP、端口不能为空' });
-    const proxy = storage.saveProxy({ id: crypto.randomUUID(), name: String(b.name), host: String(b.host), port: Number(b.port) || 1080, type: normalizeProxyType(b.type), username: String(b.username || ''), password: String(b.password || ''), createdAt: Date.now(), updatedAt: Date.now() });
-    console.debug('[proxy]', 'saved proxy', { id: proxy.id, name: proxy.name, host: proxy.host, port: proxy.port, type: proxy.type });
-    addActivity(`新增代理：${proxy.name}`);
+    const proxy = resourceService.createOwned(req.user, 'proxy', { id: crypto.randomUUID(), name: String(b.name), host: String(b.host), port: Number(b.port) || 1080, type: normalizeProxyType(b.type), username: String(b.username || ''), password: String(b.password || ''), createdAt: Date.now(), updatedAt: Date.now() });
+    addActivity(`新增代理：${proxy.name}`, req.user.userId);
     res.json({ proxy });
 });
-app.put('/api/proxies/:id', requireAuth, (req, res) => {
-    const old = storage.getProxyRaw(req.params.id);
-    if (!old) return res.status(404).json({ error: '代理不存在' });
-    const b = req.body || {};
-    const proxy = storage.saveProxy({ ...old, name: String(b.name ?? old.name), host: String(b.host ?? old.host), port: Number(b.port ?? old.port) || 1080, type: normalizeProxyType(b.type ?? old.type), username: String(b.username ?? old.username ?? ''), password: b.password === '******' ? old.password : String(b.password ?? old.password ?? ''), updatedAt: Date.now() });
-    console.debug('[proxy]', 'updated proxy', { id: proxy.id, name: proxy.name, host: proxy.host, port: proxy.port, type: proxy.type });
-    addActivity(`编辑代理：${proxy.name}`);
-    res.json({ proxy });
+app.put('/api/proxies/:id', requireUser, (req, res) => {
+    try {
+        const old = resourceService.getRawAuthorized(req.user, 'proxy', req.params.id, CAP.EDIT);
+        const b = req.body || {};
+        const proxy = resourceService.updateOwned(req.user, 'proxy', req.params.id, { name: String(b.name ?? old.name), host: String(b.host ?? old.host), port: Number(b.port ?? old.port) || 1080, type: normalizeProxyType(b.type ?? old.type), username: String(b.username ?? old.username ?? ''), password: b.password === '******' ? old.password : String(b.password ?? old.password ?? ''), updatedAt: Date.now() });
+        addActivity(`编辑代理：${proxy.name}`, req.user.userId);
+        res.json({ proxy });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
 });
-app.post('/api/proxies/:id/open', requireAuth, (req, res) => {
+app.post('/api/proxies/:id/open', requireUser, (req, res) => {
     try {
         const auth = verifySensitiveAccess(req, req.body?.secret);
-        const proxy = storage.getProxyRaw(req.params.id);
-        if (!proxy) return res.status(404).json({ error: '代理不存在' });
+        const proxy = resourceService.getRawAuthorized(req.user, 'proxy', req.params.id, CAP.REVEAL_SECRET);
+        authz.audit({ actorUserId: req.user.userId, resourceType: 'proxy', resourceId: req.params.id, action: 'resource.reveal_secret', outcome: 'success', metadata: { method: auth.method } });
         console.info('[secret-open] reveal proxy', { id: proxy.id, name: proxy.name, hasPassword: !!proxy.password, authMethod: auth.method });
         res.json({ proxy: { ...proxy, hasPassword: !!proxy.password } });
     } catch (err) {
-        res.status(403).json({ error: err.message || '验证失败' });
+        handleServiceError(res, err, 403);
     }
 });
-app.delete('/api/proxies/:id', requireAuth, (req, res) => { storage.deleteProxy(req.params.id); addActivity('删除代理'); res.json({ ok: true }); });
+app.delete('/api/proxies/:id', requireUser, (req, res) => {
+    try {
+        resourceService.deleteOwned(req.user, 'proxy', req.params.id);
+        addActivity('删除代理', req.user.userId);
+        res.json({ ok: true });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
 
-app.get('/api/ssh-keys', requireAuth, (req, res) => res.json({ sshKeys: storage.listSshKeys() }));
-app.post('/api/ssh-keys', requireAuth, (req, res) => {
+app.get('/api/ssh-keys', requireUser, (req, res) => res.json({ sshKeys: resourceService.listOwned(req.user, 'sshKey') }));
+app.post('/api/ssh-keys', requireUser, (req, res) => {
     const b = req.body || {};
     if (!String(b.name || '').trim()) return res.status(400).json({ error: '密钥名称不能为空' });
     if (!String(b.privateKey || '').includes('-----BEGIN')) return res.status(400).json({ error: '请填写有效的 SSH 私钥' });
-    const sshKey = storage.saveSshKey({ id: crypto.randomUUID(), name: String(b.name).trim(), privateKey: String(b.privateKey), passphrase: String(b.passphrase || ''), remark: String(b.remark || ''), createdAt: Date.now(), updatedAt: Date.now() });
-    console.debug('[ssh-key] saved key', { id: sshKey.id, name: sshKey.name, hasPrivateKey: sshKey.hasPrivateKey, hasPassphrase: sshKey.hasPassphrase });
-    addActivity(`新增 SSH 密钥：${sshKey.name}`);
+    const sshKey = resourceService.createOwned(req.user, 'sshKey', { id: crypto.randomUUID(), name: String(b.name).trim(), privateKey: String(b.privateKey), passphrase: String(b.passphrase || ''), remark: String(b.remark || ''), createdAt: Date.now(), updatedAt: Date.now() });
+    addActivity(`新增 SSH 密钥：${sshKey.name}`, req.user.userId);
     res.json({ sshKey });
 });
-app.put('/api/ssh-keys/:id', requireAuth, (req, res) => {
-    const old = storage.getSshKeyRaw(req.params.id);
-    if (!old) return res.status(404).json({ error: 'SSH 密钥不存在' });
-    const b = req.body || {};
-    const privateKey = b.privateKey === '******' || b.privateKey === undefined ? old.privateKey : String(b.privateKey || '');
-    const passphrase = b.passphrase === '******' || b.passphrase === undefined ? old.passphrase : String(b.passphrase || '');
-    if (!String((b.name ?? old.name) || '').trim()) return res.status(400).json({ error: '密钥名称不能为空' });
-    if (!privateKey.includes('-----BEGIN')) return res.status(400).json({ error: '请填写有效的 SSH 私钥' });
-    const sshKey = storage.saveSshKey({ ...old, name: String(b.name ?? old.name).trim(), privateKey, passphrase, remark: String(b.remark ?? old.remark ?? ''), updatedAt: Date.now() });
-    console.debug('[ssh-key] updated key', { id: sshKey.id, name: sshKey.name, hasPrivateKey: sshKey.hasPrivateKey, hasPassphrase: sshKey.hasPassphrase });
-    addActivity(`编辑 SSH 密钥：${sshKey.name}`);
-    res.json({ sshKey });
+app.put('/api/ssh-keys/:id', requireUser, (req, res) => {
+    try {
+        const old = resourceService.getRawAuthorized(req.user, 'sshKey', req.params.id, CAP.EDIT);
+        const b = req.body || {};
+        const privateKey = b.privateKey === '******' || b.privateKey === undefined ? old.privateKey : String(b.privateKey || '');
+        const passphrase = b.passphrase === '******' || b.passphrase === undefined ? old.passphrase : String(b.passphrase || '');
+        if (!String((b.name ?? old.name) || '').trim()) return res.status(400).json({ error: '密钥名称不能为空' });
+        if (!privateKey.includes('-----BEGIN')) return res.status(400).json({ error: '请填写有效的 SSH 私钥' });
+        const sshKey = resourceService.updateOwned(req.user, 'sshKey', req.params.id, { name: String(b.name ?? old.name).trim(), privateKey, passphrase, remark: String(b.remark ?? old.remark ?? ''), updatedAt: Date.now() });
+        addActivity(`编辑 SSH 密钥：${sshKey.name}`, req.user.userId);
+        res.json({ sshKey });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
 });
-app.post('/api/ssh-keys/:id/open', requireAuth, (req, res) => {
+app.post('/api/ssh-keys/:id/open', requireUser, (req, res) => {
     try {
         const auth = verifySensitiveAccess(req, req.body?.secret);
-        const key = storage.getSshKeyRaw(req.params.id);
-        if (!key) return res.status(404).json({ error: 'SSH 密钥不存在' });
+        const key = resourceService.getRawAuthorized(req.user, 'sshKey', req.params.id, CAP.REVEAL_SECRET);
+        authz.audit({ actorUserId: req.user.userId, resourceType: 'sshKey', resourceId: req.params.id, action: 'resource.reveal_secret', outcome: 'success', metadata: { method: auth.method } });
         console.info('[secret-open] reveal ssh key', { id: key.id, name: key.name, authMethod: auth.method });
         res.json({ sshKey: { ...key, hasPrivateKey: !!key.privateKey, hasPassphrase: !!key.passphrase } });
     } catch (err) {
-        res.status(403).json({ error: err.message || '验证失败' });
+        handleServiceError(res, err, 403);
     }
 });
-app.delete('/api/ssh-keys/:id', requireAuth, (req, res) => { storage.deleteSshKey(req.params.id); addActivity('删除 SSH 密钥'); res.json({ ok: true }); });
+app.delete('/api/ssh-keys/:id', requireUser, (req, res) => {
+    try {
+        resourceService.deleteOwned(req.user, 'sshKey', req.params.id);
+        addActivity('删除 SSH 密钥', req.user.userId);
+        res.json({ ok: true });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
 
-function ensureSshJumpConnection(connectionId) {
-    const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-    const conn = (store.connections || []).find((c) => c.id === String(connectionId || ''));
+function ensureSshJumpConnection(connectionId, user) {
+    const conn = storage.getConnectionById(String(connectionId || ''));
     if (!conn) throw new Error('跳板机连接不存在或已删除');
     if (String(conn.protocol || 'SSH').toUpperCase() !== 'SSH') throw new Error('跳板机只能选择 SSH 连接，VNC/RDP 只能作为目标通过跳板访问');
+    if (user) authz.assertCan(user, CAP.USE, 'connection', conn.id, conn, { resourceExists: true });
     return conn;
 }
 
-app.get('/api/jump-hosts', requireAuth, (req, res) => res.json({ jumpHosts: storage.listJumpHosts() }));
-app.post('/api/jump-hosts', requireAuth, (req, res) => {
+app.get('/api/jump-hosts', requireUser, (req, res) => res.json({ jumpHosts: resourceService.listOwned(req.user, 'jumpHost') }));
+app.post('/api/jump-hosts', requireUser, (req, res) => {
     const b = req.body || {};
     if (!b.name || !b.connectionId) return res.status(400).json({ error: '名称和 SSH 连接不能为空' });
     try {
-        ensureSshJumpConnection(b.connectionId);
-        const jumpHost = storage.saveJumpHost({ id: crypto.randomUUID(), name: String(b.name), connectionId: String(b.connectionId), createdAt: Date.now(), updatedAt: Date.now() });
-        addActivity(`新增跳板机：${jumpHost.name}`);
+        ensureSshJumpConnection(b.connectionId, req.user);
+        const jumpHost = resourceService.createOwned(req.user, 'jumpHost', { id: crypto.randomUUID(), name: String(b.name), connectionId: String(b.connectionId), createdAt: Date.now(), updatedAt: Date.now() });
+        addActivity(`新增跳板机：${jumpHost.name}`, req.user.userId);
         res.json({ jumpHost });
     } catch (err) {
-        res.status(400).json({ error: err.message || '跳板机配置无效' });
+        handleServiceError(res, err, 400);
     }
 });
-app.put('/api/jump-hosts/:id', requireAuth, (req, res) => {
-    const old = storage.listJumpHosts().find((j) => j.id === req.params.id);
-    if (!old) return res.status(404).json({ error: '跳板机不存在' });
-    const b = req.body || {};
-    const nextConnectionId = String(b.connectionId ?? old.connectionId);
+app.put('/api/jump-hosts/:id', requireUser, (req, res) => {
     try {
-        ensureSshJumpConnection(nextConnectionId);
-        const jumpHost = storage.saveJumpHost({ ...old, name: String(b.name ?? old.name), connectionId: nextConnectionId, updatedAt: Date.now() });
-        addActivity(`编辑跳板机：${jumpHost.name}`);
+        const old = resourceService.getRawAuthorized(req.user, 'jumpHost', req.params.id, CAP.EDIT);
+        const b = req.body || {};
+        const nextConnectionId = String(b.connectionId ?? old.connectionId);
+        ensureSshJumpConnection(nextConnectionId, req.user);
+        const jumpHost = resourceService.updateOwned(req.user, 'jumpHost', req.params.id, { name: String(b.name ?? old.name), connectionId: nextConnectionId, updatedAt: Date.now() });
+        addActivity(`编辑跳板机：${jumpHost.name}`, req.user.userId);
         res.json({ jumpHost });
     } catch (err) {
-        res.status(400).json({ error: err.message || '跳板机配置无效' });
+        handleServiceError(res, err, 400);
     }
 });
-app.delete('/api/jump-hosts/:id', requireAuth, (req, res) => { storage.deleteJumpHost(req.params.id); addActivity('删除跳板机'); res.json({ ok: true }); });
+app.delete('/api/jump-hosts/:id', requireUser, (req, res) => {
+    try {
+        resourceService.deleteOwned(req.user, 'jumpHost', req.params.id);
+        addActivity('删除跳板机', req.user.userId);
+        res.json({ ok: true });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
 
 function execRemoteCommand(sshClient, command, { transfer = null } = {}) {
     return new Promise((resolve, reject) => {
@@ -4427,21 +4726,24 @@ rdpProxyWss.on('connection', async (ws, req) => {
     ws.on('error', (err) => { console.warn('[rdp-proxy] ws error', err.message); cleanup('ws-error'); });
 
     try {
-        /* Validate target against saved connections for the authenticated user */
+        /* Validate target against ACL-filtered RDP connections for this user. */
         const sessionUser = req.authSession;
         if (!sessionUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
         startSessionWatchdog(ws, req);
+        const authUser = userFromAuthSession(req);
+        if (!authUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
 
-        const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-        const conn = (store.connections || []).find((c) => {
+        const visible = resourceService.listConnections(authUser).filter((c) => {
             if (String(c.protocol || 'SSH').toUpperCase() !== 'RDP') return false;
+            if (!Array.isArray(c.capabilities) || !c.capabilities.includes(CAP.USE)) return false;
             const cHost = String(c.host || '').toLowerCase();
             const cPort = Number(c.port) || 3389;
             return cHost === targetHost.toLowerCase() && cPort === targetPort;
         });
+        const conn = visible[0] || null;
 
         if (!conn) {
-            console.warn('[rdp-proxy] target not found in saved connections', { target, user: sessionUser.username });
+            console.warn('[rdp-proxy] target not found in authorized connections', { target, user: sessionUser.username });
             closeWebSocketSafe(ws, 1008, 'target not found in saved connections');
             return;
         }
@@ -4929,8 +5231,13 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
             const requestedSessionId = String(msg.sessionId || msg.terminalSessionId || msg.tabId || connectionId || crypto.randomUUID());
             const existingSession = sshTerminalSessions.get(requestedSessionId);
             if (existingSession && !existingSession.closed) {
-                if (existingSession.username && existingSession.username !== sessionUser.username) {
-                    sendJSON({ type: 'error', message: '会话不属于当前用户' });
+                /* Ownership by immutable userId (renames must not orphan live
+                 * sessions); fall back to username for pre-multi-user rows. */
+                const sameOwner = existingSession.userId
+                    ? existingSession.userId === sessionUser.userId
+                    : existingSession.username === sessionUser.username;
+                if (!sameOwner) {
+                    sendJSON({ type: 'error', code: 'resource_not_found_or_inaccessible', message: '会话不存在或无权访问', retryable: false });
                     try { ws.close(1008, 'session-owner-mismatch'); } catch {}
                     return;
                 }
@@ -4951,11 +5258,14 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 let connectionSource = 'fallback-message';
                 let storeConnectionCount = null;
                 if (connectionId) {
-                    const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-                    storeConnectionCount = (store.connections || []).length;
-                    conn = (store.connections || []).find((c) => c.id === connectionId);
-                    if (!conn) throw new Error('连接不存在或已删除');
-                    connectionSource = 'sqlite-by-connectionId';
+                    /* Saved-connection connects go through the resource ACL
+                     * (§19.4): `use` capability required, dependencies resolved
+                     * server-side, secrets never leave the server. */
+                    const authUser = userFromAuthSession(req);
+                    if (!authUser) throw new Error('未登录或会话已过期');
+                    conn = resourceService.resolveForConnect(authUser, String(connectionId));
+                    connectionSource = 'acl-resolved';
+                    storeConnectionCount = 1;
                 } else {
                     conn = { host, port: port || 22, username, password: password || '', privateKey: privateKey || '', connectionMode: 'direct' };
                 }
@@ -5058,6 +5368,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     lastActive: Date.now(),
                     lastDetachedAt: 0,
                     username: sessionUser.username || '',
+                    userId: sessionUser.userId || '',
                     connectionConfig: conn,
                     closed: false,
                 };
