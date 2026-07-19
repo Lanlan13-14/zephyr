@@ -563,7 +563,6 @@
                 <div class="form-group rdp-select-group"><label for="rdpResolution">分辨率</label><select id="rdpResolution"><option value="auto">自动（匹配此设备）</option><option value="1080p">1080p</option><option value="2K">2K</option><option value="4K">4K</option><option value="8K">8K</option></select></div>
                 <div class="form-group rdp-select-group"><label for="rdpQuality">画质</label><select id="rdpQuality"><option value="balanced">平衡</option><option value="performance">性能</option><option value="quality">画质</option></select></div>
                 <div class="form-group rdp-select-group"><label for="rdpFps">帧率</label><select id="rdpFps"><option value="30">30 FPS</option><option value="45">45 FPS</option><option value="60">60 FPS</option><option value="120">120 FPS</option><option value="144">144 FPS</option></select></div>
-                <div class="form-group rdp-select-group"><label for="rdpPipeline">渲染管线</label><select id="rdpPipeline" disabled><option value="worker-gpu-v2" selected>WASM Worker + OffscreenCanvas WebGL2（GPU）</option></select><p class="field-hint">唯一生产管线；Worker、OffscreenCanvas、WebGL2 或跨源隔离失败时直接报错，不降级到页面线程或 Canvas2D。</p></div>
                 <div class="form-group rdp-select-group"><label for="rdpTouchMode">触控方式</label><select id="rdpTouchMode"><option value="direct">直接触控</option><option value="relative">触控板模式</option></select></div>
                 <div class="form-group rdp-range-group" id="rdpTouchSensitivityGroup">
                     <label for="rdpTouchSensitivity"><span>触控板灵敏度</span><output id="rdpTouchSensitivityValue">1.5×</output></label>
@@ -582,7 +581,7 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260719-audit2" type="module"></script>
+    <script src="app.js?v=20260719-drop-pipeline1" type="module"></script>
     <script src="vendor/zephyr-anim/zephyr-anim-init.js?v=20260709-minimal" type="module"></script>
 </body>
 </html>
