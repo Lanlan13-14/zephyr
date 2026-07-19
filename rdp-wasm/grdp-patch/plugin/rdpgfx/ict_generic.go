@@ -2,37 +2,53 @@
 
 package rdpgfx
 
-import "unsafe"
+func mulHiI16(a, b int16) int16 {
+	return int16((int32(a) * int32(b)) >> 16)
+}
 
-// ictToBGRA converts n pixels from YCbCr (ICT) to BGRA and writes them into
-// dst (which must hold ≥ 4*n bytes).  Processing n pixels in [8]int32 arrays
-// with a scalar inner loop.
-func ictToBGRA(yRow, cbRow, crRow []int16, dst []byte, n int) {
-	const batch = 8
-	full := (n / batch) * batch
-	for base := 0; base < full; base += batch {
-		var yv, cb, cr [batch]int32
-		for k := range batch {
-			yv[k] = int32(yRow[base+k])
-			cb[k] = int32(cbRow[base+k])
-			cr[k] = int32(crRow[base+k])
-		}
-		for k := range batch {
-			ys := (yv[k] + 4096) << 16
-			bv := uint32(max(0, min((cb[k]*115992+ys)>>21, 255)))
-			gv := uint32(max(0, min((ys-cb[k]*22527-cr[k]*46819)>>21, 255)))
-			rv := uint32(max(0, min((cr[k]*91916+ys)>>21, 255)))
-			*(*uint32)(unsafe.Pointer(&dst[(base+k)*4])) = bv | gv<<8 | rv<<16 | 0xFF000000
-		}
+func ictPixel(v int32) byte {
+	if v < 0 {
+		return 0
 	}
-	for col := full; col < n; col++ {
-		yv := int32(yRow[col])
-		cb := int32(cbRow[col])
-		cr := int32(crRow[col])
-		ys := (yv + 4096) << 16
-		bv := uint32(max(0, min((cb*115992+ys)>>21, 255)))
-		gv := uint32(max(0, min((ys-cb*22527-cr*46819)>>21, 255)))
-		rv := uint32(max(0, min((cr*91916+ys)>>21, 255)))
-		*(*uint32)(unsafe.Pointer(&dst[col*4])) = bv | gv<<8 | rv<<16 | 0xFF000000
+	if v > 255 {
+		return 255
+	}
+	return byte(v)
+}
+
+func ictToBGRA(yRow, cbRow, crRow []int16, dst []byte, n int) {
+	// FreeRDP's x86 production path processes complete groups of 16 with
+	// SSE2 fixed-point arithmetic. Reproduce its int16 wrapping, signed
+	// high-word multiply and shifts exactly so WASM and FreeRDP agree.
+	full := n - n%16
+	for i := 0; i < full; i++ {
+		y := int16(yRow[i] + 4096)
+		y >>= 2
+		cb, cr := cbRow[i], crRow[i]
+		r := int16(y + mulHiI16(cr, 22987))
+		g := int16(y + mulHiI16(cb, -5636))
+		g = int16(g + mulHiI16(cr, -11698))
+		b := int16(y + mulHiI16(cb, 29000))
+		r >>= 3
+		g >>= 3
+		b >>= 3
+		p := dst[i*4 : i*4+4]
+		p[0] = ictPixel(int32(b))
+		p[1] = ictPixel(int32(g))
+		p[2] = ictPixel(int32(r))
+		p[3] = 0xFF
+	}
+	for i := full; i < n; i++ {
+		y := int32(yRow[i]) + 4096
+		ys := int32(uint32(y) << 16)
+		cb, cr := int32(cbRow[i]), int32(crRow[i])
+		r := int16(((cr*91916 + ys) >> 16) >> 5)
+		g := int16(((ys - cb*22527 - cr*46819) >> 16) >> 5)
+		b := int16(((cb*115992 + ys) >> 16) >> 5)
+		p := dst[i*4 : i*4+4]
+		p[0] = ictPixel(int32(b))
+		p[1] = ictPixel(int32(g))
+		p[2] = ictPixel(int32(r))
+		p[3] = 0xFF
 	}
 }

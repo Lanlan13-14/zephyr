@@ -170,7 +170,7 @@ copy 精确像素断言，真机通过。
 - FBO 倒置 → SURFACE_TO_CACHE 取到错误垂直条带 → CACHE_TO_SURFACE 铺错误 64×64 块
 - 形式证明见 [FREEZE/RDP_ORIENTATION_PROOF.md](./RDP_ORIENTATION_PROOF.md)
 
-### 4.5 根因五：Progressive 解码器错误实现 🔴
+### 4.5 根因五：Progressive 解码器错误实现 ✅（能力仍撤回）
 
 **定位过程**（单一变量 A/B 实验）：
 
@@ -179,7 +179,7 @@ copy 精确像素断言，真机通过。
 3. 捕获 8 条真实 WTS2 Progressive payload（codecId 0x0009），FreeRDP 输出彩色桌面，
    Go 输出中性灰 (~128,128,128)
 
-**已确认的 Go Progressive 实现缺陷**（与 FreeRDP `progressive.c` 逐行对照）：
+**已确认的 Go Progressive 历史实现缺陷**（下表均为修复前，与 FreeRDP `progressive.c` 逐行对照）：
 
 | 缺陷 | FreeRDP | Go（修复前） |
 |---|---|---|
@@ -190,32 +190,46 @@ copy 精确像素断言，真机通过。
 | TILE_UPGRADE | SRL bit-plane 状态机 + RAW 码流 | 无实现 |
 | tile 缓存 | sign/current 数组 + 逐子带 bitPos/numBits | 无实现 |
 
-**修复状态**：隔离 worktree 已重写，同一 8 条 payload 离线重放逐帧 FNV 不一致，
-但第 0 帧（TILE_FIRST）RGB 像素一致；后续 TILE_UPGRADE 帧仍偏离。
-TILE_FIRST/SIMPLE 路径（extrapolate + progressive quant）已修复；
-TILE_UPGRADE（SRL bit-plane）尚未完整移植，生产环境仍需规避该 codec 能力。
+**修复状态（2026-07-19）**：已逐段移植并对照 FreeRDP：
 
-**后续**：完整移植 FreeRDP `progressive_decompress_tile_upgrade` 状态机，
-或暂时撤回 WTS2 Progressive 能力广告，强制服务器回退到 ClearCodec-only。
+- `TILE_FIRST` / `TILE_SIMPLE`：progressive quant、extrapolate/non-extrapolate DWT、
+  current/sign cache 与 bitPos 状态完整实现；
+- `TILE_UPGRADE`：SRL + RAW、10 个子带、跨 band 状态、逐分量 bitPos/numBits、
+  多轮 upgrade cache 更新完整实现；
+- 修复 `CONTEXT.flags` 偏移（body byte 3，旧代码错误读取 byte 2）；
+- 修复非 extrapolate IDWT 垂直 odd 样本使用未窄化 intermediate 的问题；
+- ICT 按测试机 FreeRDP SSE2 primitives 的 `mulhi/shift` 整数语义复刻，
+  合法 64×64 三平面向量 4096/4096 BGRA 像素一致；
+- 截断 RAW/SRL、quant bitPos 回升均原子拒绝，不再部分污染持久 tile cache。
+
+**参考实现陷阱**：Debian FreeRDP 3.15 的 CVE-2026-33983 回移补丁把
+`q1->HL1 < q2->HL1` 误写为 `q1->HH1 < q2->HL1`，会错误拒绝合法 upgrade。
+差分基线使用同版本源码并仅修正该上游已正确的字段笔误，未修改系统库。
+在该基线上，最小 RAW-only、SRL-only、mixed variable-bit 三组 upgrade 的
+Y/Cb/Cr `current+sign` 共 18 个 4096 项数组全部 0 差异；四轮 multi-pass ladder
+的 24 个状态数组也全部 0 差异。
+
+**生产策略**：能力广告仍保持撤回，不在本次提交中启用 WTS2 Progressive；
+需补真实 Windows Progressive payload 重放和真实会话验收后再恢复能力。
 
 ### 4.6 其他未解决
 
 ---
 
-## 5. 验证基线（2026-07-18，本次全部实跑）
+## 5. 验证基线（2026-07-19，本次全部实跑）
 
-### Go 测试（远程 Go 1.26 Docker，2026-07-17 基线，本轮无 Go 改动）
-
-```
-plugin:          PASS（实跑）
-plugin/drdynvc:  PASS（实跑）
-plugin/rdpgfx:   PASS（实跑，含 WTS1 surface 写入与 cache 往返哈希测试）
-```
-
-### Node 测试（2026-07-18 实跑）
+### Go 测试（测试机 Go 1.26，2026-07-19 实跑）
 
 ```
-84/84 PASS（13 个测试文件，exit code 0）
+plugin/rdpgfx:   PASS（含 Progressive first/simple/upgrade、截断流原子回滚）
+go vet rdpgfx:  PASS
+rdp-wasm ./...: PASS
+```
+
+### Node 测试（2026-07-19 实跑）
+
+```
+114/114 PASS（16 个测试文件，exit code 0）
 ```
 
 ### 真机像素级验证（Adreno 750 / ANGLE，2026-07-18 实跑）
