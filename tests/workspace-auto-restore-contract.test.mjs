@@ -39,3 +39,11 @@ test('restore prefers terminal when sessions are reopened', () => {
   assert.match(js, /preferTerminal/);
   assert.match(js, /accessible !== false/);
 });
+
+test('workspace persists sessionId so SSH PTY can be reattached', () => {
+  assert.match(js, /sessionId:\s*t\.sessionId \|\| t\.id/);
+  assert.match(js, /activeSessionId/);
+  assert.match(js, /function stableTerminalSessionId/);
+  assert.match(js, /skipViewSwitch:\s*true/);
+  assert.match(js, /zephyr\.lastView/);
+});

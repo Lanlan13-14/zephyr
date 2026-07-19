@@ -10046,18 +10046,22 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                                 rememberTerminalFitSnapshot('ready-pty');
                             }
                         }
-                        setStatus('connected', '已连接');
+                        setStatus('connected', msg.attached ? '已恢复会话' : '已连接');
                         if (!isMobileStableInputMode()) {
                             window.setTimeout(() => repairOversizedWTermRows('ready-oversized-rows', { force: true }), 120);
                         }
                         if (!isTouchKeyboardDevice() && term?.focus) term.focus();
                         reconnectAttempts = 0;
-                        if (followOnConnect) {
+                        // After replaying a detached session, always pin to the latest line so the
+                        // restored surface matches "what I left open", not a mid-history viewport.
+                        if (followOnConnect || msg.attached || msg.replayed) {
                             requestAnimationFrame(() => {
                                 if (term?._zephyrOriginalScrollToBottom) {
                                     isProgrammaticTerminalScroll = true;
                                     try { term._zephyrOriginalScrollToBottom(); } catch (_) {}
                                     finally { requestAnimationFrame(() => { isProgrammaticTerminalScroll = false; }); }
+                                } else {
+                                    try { term?.scrollToBottom?.(); } catch (_) {}
                                 }
                                 scheduleTerminalScrollbarUpdate();
                             });
@@ -10069,6 +10073,10 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                         break;
                     case 'data':
                         writeTerminalData(msg.data);
+                        if (msg.replay || msg.extra?.replay) {
+                            // Keep the viewport on the live end while history is replaying.
+                            try { term?.scrollToBottom?.(); } catch (_) {}
+                        }
                         if (isTouchKeyboardDevice() && !writeTerminalData._mobileFirstDataFlushed) {
                             writeTerminalData._mobileFirstDataFlushed = true;
                             requestInitialMobileRenderFlush('first-data');

@@ -1029,6 +1029,7 @@ function closeTerminalSmartbarForViewLeave() {
 function switchView(name) {
     const target = name === 'ai' ? 'dashboard' : name;
     currentAppView = target;
+    rememberLastAppView(target);
     if (target !== 'notes' && notesController?.state?.dirty) {
         notesController.flushSave().catch(() => {});
     }
@@ -1911,25 +1912,55 @@ async function revealConnectionSecrets() {
     toast(isSsh ? '已载入保存的密码/私钥' : '已载入保存的密码');
 }
 
-async function openConnection(id) {
+function stableTerminalSessionId(connectionId, protocol = 'SSH') {
+    const client = String(workspaceClientId || ensureWorkspaceClientId() || 'default').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'default';
+    const conn = String(connectionId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || 'unknown';
+    const proto = String(protocol || 'SSH').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'SSH';
+    // Stable across refresh so the server can re-attach the live PTY + output buffer.
+    return `sess_${proto}_${client}_${conn}`;
+}
+
+function rememberLastAppView(view = currentAppView) {
+    try { localStorage.setItem('zephyr.lastView', String(view || 'dashboard')); } catch {}
+}
+
+async function openConnection(id, options = {}) {
     const data = await api(`/api/connections/${id}/open`, { method: 'POST' }); const c = data.connection;
     const protocol = String(c.protocol || 'SSH').toUpperCase();
-    const tabId = `tab_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    // Restore path supplies a stable sessionId so refresh reattaches the live PTY.
+    // Normal "连接" still opens a fresh tab unless the same session is already open.
+    const preferredId = String(options.sessionId || options.tabId || '').trim();
+    const tabId = preferredId || `tab_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const existing = terminalTabs.find((t) => t.id === tabId)
+        || (preferredId ? terminalTabs.find((t) => t.sessionId === preferredId) : null)
+        || (options.reuseOpenTab
+            ? terminalTabs.find((t) => t.connectionId === c.id && !t.transient && String(t.protocol || '').toUpperCase() === protocol)
+            : null);
+    if (existing && !options.forceNew) {
+        existing.minimized = false;
+        if (preferredId) existing.sessionId = preferredId;
+        activeTerminalTab = existing.id;
+        touchTerminalSession(existing.id);
+        renderTerminalTabs({ rebuildWorkspace: true });
+        if (!options.skipViewSwitch) switchView('terminal');
+        scheduleWorkspaceSave('reopen-existing-tab', { immediate: true });
+        return existing.id;
+    }
     if (protocol === 'RDP' || protocol === 'VNC') {
-        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, embedded: true, timestamp: Date.now(), rdpResolution: c.rdpResolution || '1080p', quality: c.rdpQuality || 'balanced', rdpFps: Number(c.rdpFps || 30), rdpPipeline: 'worker-gpu-v2', rdpTouchMode: c.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(c.rdpTouchSensitivity) || 1.5)), rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false, rdpDomain: c.rdpDomain || '', rdpMicrophone: !!c.rdpMicrophone, rdpLocation: !!c.rdpLocation, rdpStorage: !!c.rdpStorage, rdpCamera: !!c.rdpCamera }));
-        terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: protocol === 'VNC' ? 'novnc' : 'rdp', connectionId: c.id, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
+        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, sessionId: tabId, embedded: true, timestamp: Date.now(), rdpResolution: c.rdpResolution || '1080p', quality: c.rdpQuality || 'balanced', rdpFps: Number(c.rdpFps || 30), rdpPipeline: 'worker-gpu-v2', rdpTouchMode: c.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(c.rdpTouchSensitivity) || 1.5)), rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false, rdpDomain: c.rdpDomain || '', rdpMicrophone: !!c.rdpMicrophone, rdpLocation: !!c.rdpLocation, rdpStorage: !!c.rdpStorage, rdpCamera: !!c.rdpCamera }));
+        terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: protocol === 'VNC' ? 'novnc' : 'rdp', connectionId: c.id, sessionId: tabId, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
         console.debug(protocol === 'VNC' ? '[novnc-client]' : '[rdp-client]', 'open remote desktop tab', { protocol, tabId, connectionId: c.id, host: c.host, port: c.port });
     } else {
-        const sshParams = { connectionId: c.id, host: c.host, port: c.port, username: c.username, init: '', tabId, embedded: !isCompactTerminalWorkspace(), timestamp: Date.now(), snippets: settings?.snippets || [] };
+        const sshParams = { connectionId: c.id, host: c.host, port: c.port, username: c.username, init: '', tabId, sessionId: tabId, embedded: !isCompactTerminalWorkspace(), timestamp: Date.now(), snippets: settings?.snippets || [] };
         sessionStorage.setItem(`zephyr_ssh_params_${tabId}`, JSON.stringify(sshParams));
-        terminalTabs.push({ id: tabId, name: c.name, protocol: c.protocol, status: 'connecting', iframe: true, page: 'terminal', connectionId: c.id, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
+        terminalTabs.push({ id: tabId, name: c.name, protocol: c.protocol, status: 'connecting', iframe: true, page: 'terminal', connectionId: c.id, sessionId: tabId, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
     }
-    openOrderStack.push(tabId);
+    if (!openOrderStack.includes(tabId)) openOrderStack.push(tabId);
     activeTerminalTab = tabId;
     touchTerminalSession(tabId);
     enforceTerminalWorkspaceLimit(tabId);
     renderTerminalTabs();
-    switchView('terminal');
+    if (!options.skipViewSwitch) switchView('terminal');
     renderTerminalTabs({ rebuildWorkspace: true });
     if (isCompactTerminalWorkspace() && document.body.classList.contains('terminal-custom-fullscreen-open')) {
         window.setTimeout(() => renderTerminalTabs({ rebuildWorkspace: true }), 80);
@@ -6616,6 +6647,8 @@ function collectWorkspaceState() {
         .map((t, index) => ({
             connectionId: t.connectionId,
             protocol: t.protocol || 'SSH',
+            sessionId: t.sessionId || t.id || '',
+            tabId: t.id,
             minimized: !!t.minimized,
             order: index,
             active: t.id === activeTerminalTab,
@@ -6625,6 +6658,9 @@ function collectWorkspaceState() {
         tabs,
         ui: { activeView: currentAppView },
         activeConnectionId: terminalTabs.find((t) => t.id === activeTerminalTab)?.connectionId || '',
+        activeSessionId: terminalTabs.find((t) => t.id === activeTerminalTab)?.sessionId
+            || terminalTabs.find((t) => t.id === activeTerminalTab)?.id
+            || '',
     };
 }
 
@@ -6692,15 +6728,29 @@ async function restoreLastWorkspace() {
                 .filter((t) => t && t.connectionId && t.accessible !== false)
                 .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
             : [];
+        const view = String(state.ui?.activeView || 'dashboard');
+        const allowedView = ['dashboard', 'terminal', 'remote', 'notes', 'settings'].includes(view) ? view : 'dashboard';
+        // Switch view first so the user lands on the terminal shell immediately,
+        // then re-attach sessions underneath (with history replay).
+        if (savedTabs.length && (allowedView === 'terminal' || savedTabs.some((t) => t.active))) {
+            switchView('terminal');
+        }
         const opened = new Map();
         for (const saved of savedTabs) {
             const conn = connections.find((c) => c.id === saved.connectionId);
             if (!conn) continue;
             try {
-                await openConnection(conn.id);
-                const tab = terminalTabs.find((t) => t.connectionId === conn.id && !opened.has(t.id));
+                const sessionId = String(saved.sessionId || saved.tabId || '').trim()
+                    || stableTerminalSessionId(conn.id, saved.protocol || conn.protocol || 'SSH');
+                const tabId = await openConnection(conn.id, {
+                    sessionId,
+                    tabId: sessionId,
+                    skipViewSwitch: true,
+                });
+                const tab = terminalTabs.find((t) => t.id === tabId && !opened.has(t.id));
                 if (tab) {
                     tab.minimized = !!saved.minimized;
+                    tab.sessionId = sessionId;
                     opened.set(tab.id, saved);
                 }
             } catch (err) {
@@ -6708,14 +6758,16 @@ async function restoreLastWorkspace() {
             }
         }
         const activeConnectionId = state.activeConnectionId || savedTabs.find((t) => t.active)?.connectionId || '';
-        const active = terminalTabs.find((t) => t.connectionId === activeConnectionId) || terminalTabs.find((t) => !t.minimized) || terminalTabs[0];
+        const activeSessionId = state.activeSessionId || savedTabs.find((t) => t.active)?.sessionId || savedTabs.find((t) => t.active)?.tabId || '';
+        const active = terminalTabs.find((t) => activeSessionId && (t.sessionId === activeSessionId || t.id === activeSessionId))
+            || terminalTabs.find((t) => t.connectionId === activeConnectionId)
+            || terminalTabs.find((t) => !t.minimized)
+            || terminalTabs[0];
         if (active) {
             active.minimized = false;
             activeTerminalTab = active.id;
         }
         renderTerminalTabs({ rebuildWorkspace: true });
-        const view = String(state.ui?.activeView || 'dashboard');
-        const allowedView = ['dashboard', 'terminal', 'remote', 'notes', 'settings'].includes(view) ? view : 'dashboard';
         // If any session was restored, prefer terminal so refresh matches the last live session.
         const preferTerminal = terminalTabs.length > 0 && (allowedView === 'terminal' || !!activeConnectionId || savedTabs.some((t) => t.active));
         switchView(preferTerminal ? 'terminal' : (terminalTabs.length && allowedView === 'terminal' ? 'terminal' : allowedView));
@@ -6965,6 +7017,17 @@ async function init() {
         document.documentElement.dataset.appInitAuth = 'ok';
         if (me.mustChangePassword) { location.href = '/'; return; }
         ensureWorkspaceClientId();
+        // Early shell switch: if last view was terminal, paint that shell before
+        // network restore so refresh does not flash the dashboard first.
+        try {
+            const lastView = localStorage.getItem('zephyr.lastView') || '';
+            if (['terminal', 'remote', 'notes', 'settings', 'dashboard'].includes(lastView) && lastView !== 'dashboard') {
+                currentAppView = lastView;
+                $$('.nav-tab').forEach((b) => b.classList.toggle('active', b.dataset.view === lastView));
+                $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${lastView}`));
+                document.body.classList.toggle('terminal-mode', lastView === 'terminal');
+            }
+        } catch {}
         notesController = createNotesController({
             api,
             toast,

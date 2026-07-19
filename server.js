@@ -176,6 +176,11 @@ function sendTransferEvent(username, payload) {
     }
 }
 
+const SSH_DETACHED_SESSION_TTL_MS = Math.max(
+    5 * 60 * 1000,
+    Number(process.env.SSH_DETACHED_SESSION_TTL_MS) || (6 * 60 * 60 * 1000),
+);
+
 function destroySshTerminalSession(sessionOrId, reason = 'session-destroy') {
     const session = typeof sessionOrId === 'string' ? sshTerminalSessions.get(sessionOrId) : sessionOrId;
     if (!session || session.closed) return;
@@ -5397,18 +5402,22 @@ wss.on('connection', (ws, req) => {
         sftpStream = session.sftpStream || null;
         session.attachedWs.add(ws);
         session.lastActive = Date.now();
+        session.lastDetachedAt = 0;
         ws._sshTerminalSession = session;
         console.info('[SSH-SESSION]', 'attach websocket', {
             sessionId: session.id,
             connectionId: session.connectionId || '',
             attached: session.attachedWs.size,
             replay,
+            bufferChunks: session.outputBuffer?.length || 0,
         });
         const pty = session.pty || { cols: 80, rows: 24 };
-        sendJSON({ type: 'ready', sessionId: session.id, attached: true, cols: pty.cols, rows: pty.rows });
+        // Replay first so the terminal paints previous content as soon as it is ready,
+        // then emit ready so the client can treat the surface as fully attached.
         if (replay && session.outputBuffer.length) {
-            sendJSON({ type: 'data', data: session.outputBuffer.join('') });
+            sendJSON({ type: 'data', data: session.outputBuffer.join(''), replay: true });
         }
+        sendJSON({ type: 'ready', sessionId: session.id, attached: true, cols: pty.cols, rows: pty.rows, replayed: !!(replay && session.outputBuffer.length) });
         startStatsPush();
         return true;
     }
@@ -6593,6 +6602,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
     ws.on('close', () => {
         console.log('[WS] 客户端断开');
+        // Detach only — keep the SSH PTY + output buffer so refresh can resume.
         cleanup({ destroySsh: false, reason: 'ws-close' });
     });
 
@@ -6601,6 +6611,20 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
         cleanup({ destroySsh: false, reason: 'ws-error' });
     });
 });
+
+// GC detached SSH sessions that nobody re-attached within the TTL.
+setInterval(() => {
+    const now = Date.now();
+    for (const session of [...sshTerminalSessions.values()]) {
+        if (session.closed) continue;
+        const attached = session.attachedWs?.size || 0;
+        if (attached > 0) continue;
+        const idleFrom = Number(session.lastDetachedAt || session.lastActive || session.createdAt || 0);
+        if (idleFrom && now - idleFrom > SSH_DETACHED_SESSION_TTL_MS) {
+            destroySshTerminalSession(session, 'detached-ttl');
+        }
+    }
+}, 60 * 1000).unref();
 
 async function startServer() {
     let dataDirEntries = [];
