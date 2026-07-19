@@ -2037,13 +2037,17 @@ app.put('/api/me/workspaces/:id', requireUser, (req, res) => {
     }
 });
 
-app.post('/api/me/workspaces/:id/restore', requireUser, (req, res) => {
+function handleWorkspaceRestore(req, res) {
     try {
         res.json(workspaceService.restore(req.user, req.params.id));
     } catch (err) {
         handleServiceError(res, err, 404);
     }
-});
+}
+// Accept both POST and GET. Early clients called restore with GET and silently
+// failed (Express 404), so refresh never reopened terminal sessions.
+app.post('/api/me/workspaces/:id/restore', requireUser, handleWorkspaceRestore);
+app.get('/api/me/workspaces/:id/restore', requireUser, handleWorkspaceRestore);
 
 app.delete('/api/me/workspaces/:id', requireUser, (req, res) => {
     try {

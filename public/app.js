@@ -1935,6 +1935,7 @@ async function openConnection(id) {
         window.setTimeout(() => renderTerminalTabs({ rebuildWorkspace: true }), 80);
     }
     await loadConnections();
+    scheduleWorkspaceSave('open-connection', { immediate: true });
     return tabId;
 }
 function openPlaceholderTab(c) {
@@ -2653,6 +2654,7 @@ function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
             switchView('terminal');
         }
         renderTerminalTabs();
+        scheduleWorkspaceSave('close-terminal-tab', { immediate: true });
     }, 260);
 }
 
@@ -6626,13 +6628,18 @@ function collectWorkspaceState() {
     };
 }
 
-function scheduleWorkspaceSave(reason = '') {
+function scheduleWorkspaceSave(reason = '', { immediate = false } = {}) {
     if (!workspaceReady || workspaceRestoring || !workspaceClientId) return;
     clearTimeout(workspaceSaveTimer);
+    if (immediate) {
+        workspaceSaveTimer = null;
+        saveWorkspaceNow({ reason }).catch((err) => console.warn('[workspace-save]', err));
+        return;
+    }
     workspaceSaveTimer = setTimeout(() => saveWorkspaceNow({ reason }).catch((err) => console.warn('[workspace-save]', err)), 700);
 }
 
-async function saveWorkspaceNow({ keepalive = false } = {}) {
+async function saveWorkspaceNow({ keepalive = false, reason = '' } = {}) {
     if (!workspaceReady || workspaceRestoring || !workspaceClientId) return;
     clearTimeout(workspaceSaveTimer);
     workspaceSaveTimer = null;
@@ -6643,14 +6650,23 @@ async function saveWorkspaceNow({ keepalive = false } = {}) {
         expectedRevision: workspaceRevision,
     };
     try {
-        const data = await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}`, { method: 'PUT', body: JSON.stringify(body), keepalive });
+        const data = await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}`, {
+            method: 'PUT',
+            body: JSON.stringify(body),
+            keepalive,
+        });
         workspaceRevision = data.workspace?.revision ?? workspaceRevision;
+        if (reason) console.debug('[workspace-save]', reason, { revision: workspaceRevision, tabs: body.state?.tabs?.length || 0, view: body.state?.ui?.activeView });
     } catch (err) {
         if (err.status === 409) {
             const latest = await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}`);
             workspaceRevision = latest.workspace?.revision ?? null;
             body.expectedRevision = workspaceRevision;
-            const data = await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}`, { method: 'PUT', body: JSON.stringify(body), keepalive });
+            const data = await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}`, {
+                method: 'PUT',
+                body: JSON.stringify(body),
+                keepalive,
+            });
             workspaceRevision = data.workspace?.revision ?? workspaceRevision;
             return;
         }
@@ -6662,11 +6678,20 @@ async function restoreLastWorkspace() {
     if (!workspaceClientId) return;
     workspaceRestoring = true;
     try {
-        const restored = await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}/restore`);
+        // Backend only exposes POST /restore (GET falls through to Express 404 and was
+        // previously swallowed, so refresh always dropped back to the dashboard).
+        const restored = await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}/restore`, {
+            method: 'POST',
+            body: '{}',
+        });
         const workspace = restored.workspace;
         workspaceRevision = workspace?.revision ?? null;
         const state = workspace?.state || {};
-        const savedTabs = Array.isArray(state.tabs) ? [...state.tabs].sort((a, b) => Number(a.order || 0) - Number(b.order || 0)) : [];
+        const savedTabs = Array.isArray(state.tabs)
+            ? [...state.tabs]
+                .filter((t) => t && t.connectionId && t.accessible !== false)
+                .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
+            : [];
         const opened = new Map();
         for (const saved of savedTabs) {
             const conn = connections.find((c) => c.id === saved.connectionId);
@@ -6683,17 +6708,24 @@ async function restoreLastWorkspace() {
             }
         }
         const activeConnectionId = state.activeConnectionId || savedTabs.find((t) => t.active)?.connectionId || '';
-        const active = terminalTabs.find((t) => t.connectionId === activeConnectionId);
-        if (active) { active.minimized = false; activeTerminalTab = active.id; }
+        const active = terminalTabs.find((t) => t.connectionId === activeConnectionId) || terminalTabs.find((t) => !t.minimized) || terminalTabs[0];
+        if (active) {
+            active.minimized = false;
+            activeTerminalTab = active.id;
+        }
         renderTerminalTabs({ rebuildWorkspace: true });
         const view = String(state.ui?.activeView || 'dashboard');
         const allowedView = ['dashboard', 'terminal', 'remote', 'notes', 'settings'].includes(view) ? view : 'dashboard';
-        switchView(terminalTabs.length && allowedView === 'terminal' ? 'terminal' : allowedView);
+        // If any session was restored, prefer terminal so refresh matches the last live session.
+        const preferTerminal = terminalTabs.length > 0 && (allowedView === 'terminal' || !!activeConnectionId || savedTabs.some((t) => t.active));
+        switchView(preferTerminal ? 'terminal' : (terminalTabs.length && allowedView === 'terminal' ? 'terminal' : allowedView));
     } catch (err) {
         if (err.status !== 404) console.warn('[workspace-restore]', err);
     } finally {
         workspaceRestoring = false;
         workspaceReady = true;
+        // Persist the filtered restore result so the next load stays consistent.
+        scheduleWorkspaceSave('restore-complete', { immediate: true });
     }
 }
 
@@ -6959,7 +6991,12 @@ async function init() {
         window.__zephyrMyUserId = (await api("/api/auth/me"))?.user?.userId || "";
         window.openConnectionModal = openConnectionModal;
         window.openTransientFromUri = openTransientFromUri;
-        window.addEventListener('pagehide', () => { saveWorkspaceNow({ keepalive: true }).catch(() => {}); });
+        const flushWorkspace = () => { saveWorkspaceNow({ keepalive: true, reason: 'page-exit' }).catch(() => {}); };
+        window.addEventListener('pagehide', flushWorkspace);
+        window.addEventListener('beforeunload', flushWorkspace);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') flushWorkspace();
+        });
     } catch (err) {
         console.error('[app-init]', err);
         document.documentElement.dataset.appInitError = err?.message || String(err || 'unknown');
