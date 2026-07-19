@@ -1215,22 +1215,33 @@ function updateConnectionSecretRevealChrome(protocol = $('#connProtocol')?.value
         : '编辑时默认隐藏已保存密码；留空或保持星号不会覆盖已保存密码。';
 }
 function updateProtocolFields({ preservePort = true } = {}) {
-    const protocol = $('#connProtocol')?.value || 'SSH';
+    const protocol = String($('#connProtocol')?.value || 'SSH').toUpperCase();
     const portInput = $('#connPort');
     const usernameInput = $('#connUsername');
     const defaultPort = protocol === 'RDP' ? 3389 : protocol === 'VNC' ? 5900 : protocol === 'TELNET' ? 23 : 22;
     if (portInput && (!preservePort || !Number(portInput.value))) portInput.value = defaultPort;
     if (usernameInput) {
         usernameInput.required = protocol === 'SSH';
-        usernameInput.placeholder = protocol === 'VNC' ? '用户名（可选，取决于 VNC 服务）' : '用户名';
+        usernameInput.placeholder = protocol === 'TELNET'
+            ? '用户名（可选，终端内认证）'
+            : protocol === 'VNC'
+                ? '用户名（可选，取决于 VNC 服务）'
+                : '用户名';
     }
     $('#connSshKey')?.closest('.form-group')?.classList.toggle('force-hidden', protocol !== 'SSH');
     $('#connPrivateKey')?.closest('.form-group')?.classList.toggle('force-hidden', protocol !== 'SSH');
+    // Telnet is cleartext and has no SSH jump/proxy chain support yet.
+    $('#connPassword')?.closest('.form-group')?.classList.toggle('force-hidden', protocol === 'TELNET');
+    $('#telnetPlaintextBanner')?.classList.toggle('force-hidden', protocol !== 'TELNET');
+    $('#telnetUsernameHint')?.classList.toggle('force-hidden', protocol !== 'TELNET');
     $('#rdpSettingsPanel')?.classList.toggle('force-hidden', protocol !== 'RDP');
     $('#rdpDomainGroup')?.classList.toggle('force-hidden', protocol !== 'RDP');
-    updateConnectionSecretRevealChrome(protocol);
-    $('.advanced-route-panel')?.classList.remove('force-hidden');
-    console.debug('[rdp-client]', 'protocol fields updated', { protocol, defaultPort, usernameRequired: protocol === 'SSH', routePanelEnabled: true });
+    $('.advanced-route-panel')?.classList.toggle('force-hidden', protocol === 'TELNET');
+    if (protocol === 'TELNET') setRouteMode?.('direct');
+    // Telnet auth is in-band; never surface stored-secret chrome.
+    if (protocol === 'TELNET') $('#connSecretRevealGroup')?.classList.add('force-hidden');
+    else updateConnectionSecretRevealChrome(protocol);
+    console.debug('[conn-protocol]', 'protocol fields updated', { protocol, defaultPort, usernameRequired: protocol === 'SSH' });
 }
 function setConnectionTestLatency(text = '', state = '') {
     const el = $('#connectionTestLatency');
@@ -1431,13 +1442,11 @@ function setConnectionModalMode(mode = 'create', { source = 'dashboard', draft =
         cred.classList.toggle('force-hidden', !(connectionModalMode === 'transient' && transientHasCredential));
         cred.textContent = transientHasCredential ? '已载入一次性凭据' : '';
     }
-    // Telnet without transport: keep UI readable but block connect.
     const connectBtn = $('#connectTransientBtn');
     if (connectBtn) {
-        const telnetBlocked = connectionModalMode === 'transient' && false; // Telnet now supported (Stage 12)
-        connectBtn.disabled = !!telnetBlocked;
-        connectBtn.title = telnetBlocked ? '当前版本尚未启用 Telnet transport' : '';
-        connectBtn.textContent = telnetBlocked ? '不支持当前协议' : '连接';
+        connectBtn.disabled = false;
+        connectBtn.title = '';
+        connectBtn.textContent = '连接';
     }
 }
 
@@ -1712,12 +1721,13 @@ function updateRdpTouchSettingsUi() {
 }
 
 function connectionPayload({ forTest = false } = {}) {
-    const mode = $('#connMode').value;
-    const proxyId = $('#connRoute')?.value || '';
+    const protocol = String($('#connProtocol').value || 'SSH').toUpperCase();
+    // Telnet has no jump/proxy chain yet — force direct.
+    const mode = protocol === 'TELNET' ? 'direct' : ($('#connMode').value || 'direct');
+    const proxyId = mode === 'proxy' ? ($('#connRoute')?.value || '') : '';
     const jumpHostIds = mode === 'jump' ? [...new Set($$('#jumpRouteList [data-jump-route-select]').map((el) => el.value).filter(Boolean))] : [];
-    const protocol = $('#connProtocol').value;
     const defaultPort = protocol === 'RDP' ? 3389 : protocol === 'VNC' ? 5900 : protocol === 'TELNET' ? 23 : 22;
-    const payload = { name: $('#connName').value.trim(), protocol, host: $('#connHost').value.trim(), port: Number($('#connPort').value) || defaultPort, username: $('#connUsername').value.trim(), sshKeyId: protocol === 'SSH' ? ($('#connSshKey')?.value || '') : '', password: $('#connPassword').value, privateKey: protocol === 'SSH' ? $('#connPrivateKey').value : '', remark: $('#connRemark').value, tags: parseTags($('#connTags').value), connectionMode: mode, proxyId: mode === 'proxy' ? proxyId : '', jumpHostId: mode === 'jump' ? (jumpHostIds[0] || '') : '', jumpHostIds, shareWithUsers: !!$('#connShareUsers')?.checked, shareWithAdmins: !!$('#connShareAdmins')?.checked };
+    const payload = { name: $('#connName').value.trim(), protocol, host: $('#connHost').value.trim(), port: Number($('#connPort').value) || defaultPort, username: $('#connUsername').value.trim(), sshKeyId: protocol === 'SSH' ? ($('#connSshKey')?.value || '') : '', password: protocol === 'TELNET' ? '' : $('#connPassword').value, privateKey: protocol === 'SSH' ? $('#connPrivateKey').value : '', remark: $('#connRemark').value, tags: parseTags($('#connTags').value), connectionMode: mode, proxyId: mode === 'proxy' ? proxyId : '', jumpHostId: mode === 'jump' ? (jumpHostIds[0] || '') : '', jumpHostIds, shareWithUsers: !!$('#connShareUsers')?.checked, shareWithAdmins: !!$('#connShareAdmins')?.checked };
     if (protocol === 'RDP') {
         payload.rdpSoundMode = $('#rdpSoundMode')?.value || 'local';
         payload.rdpClipboard = $('#rdpClipboard')?.checked !== false;
@@ -1787,8 +1797,7 @@ async function testConnection() {
         btn.disabled = false;
         btn.textContent = oldText;
         if (connectBtn && connectionModalMode === 'transient') {
-            const telnetBlocked = String($('#connProtocol')?.value || '').toUpperCase() === 'TELNET';
-            connectBtn.disabled = telnetBlocked;
+            connectBtn.disabled = false;
         }
     }
 }
@@ -1805,9 +1814,6 @@ async function connectTransient() {
     if (testBtn) testBtn.disabled = true;
     try {
         const payload = connectionPayload({ forTest: true });
-        if (String(payload.protocol || '').toUpperCase() === 'TELNET') {
-            throw new Error('当前版本尚未启用 Telnet transport');
-        }
         const token = transientToken;
         const overrides = {
             name: payload.name, host: payload.host, port: payload.port,
@@ -1822,6 +1828,7 @@ async function connectTransient() {
             host: payload.host,
             port: payload.port,
             username: payload.username,
+            protocol: payload.protocol || 'SSH',
             // password/privateKey only if the user overrode the one-time credential
             password: (payload.password && payload.password !== '******') ? payload.password : '',
             privateKey: (payload.privateKey && payload.privateKey !== '******') ? payload.privateKey : '',
@@ -1951,9 +1958,23 @@ async function openConnection(id, options = {}) {
         terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: protocol === 'VNC' ? 'novnc' : 'rdp', connectionId: c.id, sessionId: tabId, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
         console.debug(protocol === 'VNC' ? '[novnc-client]' : '[rdp-client]', 'open remote desktop tab', { protocol, tabId, connectionId: c.id, host: c.host, port: c.port });
     } else {
-        const sshParams = { connectionId: c.id, host: c.host, port: c.port, username: c.username, init: '', tabId, sessionId: tabId, embedded: !isCompactTerminalWorkspace(), timestamp: Date.now(), snippets: settings?.snippets || [] };
+        // SSH and TELNET share the terminal page; protocol is carried on the tab
+        // and in session params so the server can pick the right transport.
+        const sshParams = {
+            connectionId: c.id,
+            host: c.host,
+            port: c.port,
+            username: c.username,
+            protocol,
+            init: '',
+            tabId,
+            sessionId: tabId,
+            embedded: !isCompactTerminalWorkspace(),
+            timestamp: Date.now(),
+            snippets: settings?.snippets || [],
+        };
         sessionStorage.setItem(`zephyr_ssh_params_${tabId}`, JSON.stringify(sshParams));
-        terminalTabs.push({ id: tabId, name: c.name, protocol: c.protocol, status: 'connecting', iframe: true, page: 'terminal', connectionId: c.id, sessionId: tabId, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
+        terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: 'terminal', connectionId: c.id, sessionId: tabId, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
     }
     if (!openOrderStack.includes(tabId)) openOrderStack.push(tabId);
     activeTerminalTab = tabId;

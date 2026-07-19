@@ -11735,6 +11735,23 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     font-size: 13px;
 }
 .transient-connection-banner strong { font-weight: 600; }
+.telnet-plaintext-banner {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--warning, #f5a524) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warning, #f5a524) 36%, transparent);
+    color: var(--text);
+    font-size: 13px;
+}
+.telnet-plaintext-banner strong {
+    font-weight: 700;
+    color: var(--warning, #d9900a);
+}
 .transient-credential-state {
     display: inline-flex;
     align-items: center;

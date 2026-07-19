@@ -44,6 +44,12 @@ const secretCrypto = require('./secret-crypto');
 const { handleEditorLspConnection } = require('./editor-lsp-server');
 const { getAppVersion } = require('./version');
 const {
+    dialTelnet,
+    filterIac,
+    sendNaws,
+    defaultPort: protocolDefaultPort,
+} = require('./telnet-transport');
+const {
     registerAiRoutes,
     normalizeAiSettingsInput,
     safeAiSettings,
@@ -1234,7 +1240,8 @@ function classifySSHError(err) {
 
 /* Telnet connectivity test (FREEZE plan §5.6): TCP connect to host:port and
  * send a minimal IAC DO TERMINAL-TYPE to confirm a Telnet server is listening.
- * Full IAC negotiation happens in the Go worker; this just verifies reachability. */
+ * Full IAC negotiation happens on the live /ssh session; this just verifies
+ * reachability. */
 function testTelnetConnection(conn, timeout = 10000) {
     return new Promise((resolve) => {
         const started = Date.now();
@@ -2205,12 +2212,9 @@ app.post('/api/deeplinks/:token/test', requireUser, async (req, res) => {
     try {
         res.setHeader('Cache-Control', 'no-store');
         const { draft, credential } = deepLinkService.forTest(req.user, req.params.token, req.body?.overrides || {});
-        if (draft.telnetUnsupported) {
-            return res.status(400).json({ error: '当前版本尚未启用 Telnet transport', code: 'telnet_unsupported', retryable: false });
-        }
         if (String(draft.protocol || '').toUpperCase() === 'TELNET') {
-            // Telnet test: just verify host:port reachability (no IAC negotiation
-            // needed for a connectivity test)
+            // Telnet test: just verify host:port reachability (no full IAC
+            // negotiation needed for a connectivity test).
             const timeoutMs = Math.max(1000, Math.min(Number(req.body?.timeoutSeconds || 10) * 1000, 30000));
             const result = await testTelnetConnection({ host: draft.host, port: draft.port }, timeoutMs);
             return res.status(result.ok ? 200 : 400).json(result);
@@ -2506,7 +2510,7 @@ app.post('/api/connections', requireUser, (req, res) => {
         id: crypto.randomUUID(),
         name: String(body.name).trim(),
         host: String(body.host).trim(),
-        port: Number(body.port) || (protocol === 'RDP' ? 3389 : protocol === 'VNC' ? 5900 : 22),
+        port: Number(body.port) || protocolDefaultPort(protocol),
         protocol,
         username: String(body.username || '').trim(),
         password: String(body.password || ''),
@@ -2539,7 +2543,19 @@ app.post('/api/connections', requireUser, (req, res) => {
         conn.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number(body.rdpTouchSensitivity) || 1.5));
         conn.rdpDomain = String(body.rdpDomain || '').trim();
     }
-    applyConnectionRouteFields(conn, body);
+    if (protocol === 'TELNET') {
+        // Telnet is direct-only: no jump/proxy, no SSH key, no password store
+        // for out-of-band auth (auth is in-band after connect).
+        conn.connectionMode = 'direct';
+        conn.proxyId = null;
+        conn.jumpHostId = null;
+        conn.jumpHostIds = [];
+        conn.sshKeyId = '';
+        conn.privateKey = '';
+        conn.password = '';
+    } else {
+        applyConnectionRouteFields(conn, body);
+    }
     try {
         const saved = resourceService.createConnection(req.user, conn);
         addActivity(`新增连接：${conn.name}`, req.user.userId);
@@ -2554,15 +2570,25 @@ app.put('/api/connections/:id', requireUser, (req, res) => {
     try {
         const saved = resourceService.updateConnection(req.user, req.params.id, (conn) => {
             ['name', 'host', 'username', 'remark'].forEach((key) => { if (body[key] !== undefined) conn[key] = String(body[key]); });
-            if (body.port !== undefined) conn.port = Number(body.port) || 22;
+            if (body.port !== undefined) conn.port = Number(body.port) || protocolDefaultPort(body.protocol || conn.protocol);
             if (body.protocol !== undefined) conn.protocol = String(body.protocol).toUpperCase();
             if (body.tags !== undefined) conn.tags = Array.isArray(body.tags) ? body.tags.map(String).filter(Boolean) : String(body.tags || '').split(',').map((v) => v.trim()).filter(Boolean);
             if (body.sshKeyId !== undefined) conn.sshKeyId = String(body.sshKeyId || '');
             if (body.shareWithUsers !== undefined) conn.shareWithUsers = !!body.shareWithUsers;
             if (body.shareWithAdmins !== undefined) conn.shareWithAdmins = !!body.shareWithAdmins;
-            applyConnectionRouteFields(conn, body);
-            if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
-            if (body.privateKey !== undefined && body.privateKey !== '******') conn.privateKey = String(body.privateKey || '');
+            if (String(conn.protocol || '').toUpperCase() === 'TELNET') {
+                conn.connectionMode = 'direct';
+                conn.proxyId = null;
+                conn.jumpHostId = null;
+                conn.jumpHostIds = [];
+                conn.sshKeyId = '';
+                conn.privateKey = '';
+                conn.password = '';
+            } else {
+                applyConnectionRouteFields(conn, body);
+                if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
+                if (body.privateKey !== undefined && body.privateKey !== '******') conn.privateKey = String(body.privateKey || '');
+            }
             if (String(conn.protocol || '').toUpperCase() === 'RDP') {
                 if (body.rdpSoundMode !== undefined) conn.rdpSoundMode = ['local', 'remote', 'off'].includes(body.rdpSoundMode) ? body.rdpSoundMode : 'local';
                 if (body.rdpClipboard !== undefined) conn.rdpClipboard = body.rdpClipboard !== false;
@@ -2958,11 +2984,18 @@ app.post('/api/connections/test', requireUser, async (req, res) => {
         if (body.privateKey !== undefined && body.privateKey !== '******') conn.privateKey = String(body.privateKey || '');
         applyConnectionRouteFields(conn, body);
     } else {
-        conn = { ...body, port: Number(body.port) || 22 };
+        conn = { ...body, port: Number(body.port) || protocolDefaultPort(body.protocol) };
         applyConnectionRouteFields(conn, body);
     }
     const protocol = String(conn.protocol || 'SSH').toUpperCase();
     if (!conn.host || (protocol === 'SSH' && !conn.username)) return res.status(400).json({ error: protocol === 'SSH' ? '主机和用户名不能为空' : '主机不能为空' });
+    // Telnet is direct-only; ignore proxy/jump for connectivity tests.
+    if (protocol === 'TELNET') {
+        conn.connectionMode = 'direct';
+        conn.proxyId = null;
+        conn.jumpHostId = null;
+        conn.jumpHostIds = [];
+    }
     const timeoutMs = Math.max(1000, Math.min(Number(body.timeoutSeconds || 10) * 1000, 30000));
     const result = protocol === 'SSH'
         ? await testSSHConnection(conn, timeoutMs)
@@ -2970,7 +3003,9 @@ app.post('/api/connections/test', requireUser, async (req, res) => {
             ? await testNoVncConnection(conn, timeoutMs)
             : protocol === 'RDP'
                 ? await testRDPConnection(conn, timeoutMs)
-                : { ok: false, code: 'unsupported_protocol', message: `不支持的协议：${protocol}`, durationMs: 0 };
+                : protocol === 'TELNET'
+                    ? await testTelnetConnection(conn, timeoutMs)
+                    : { ok: false, code: 'unsupported_protocol', message: `不支持的协议：${protocol}`, durationMs: 0 };
     addActivity(`测试连接：${conn.name || conn.host} - ${result.message}`, req.user.userId);
     res.status(result.ok ? 200 : 400).json(result);
 });
@@ -3090,7 +3125,7 @@ app.delete('/api/ssh-keys/:id', requireUser, (req, res) => {
 function ensureSshJumpConnection(connectionId, user) {
     const conn = storage.getConnectionById(String(connectionId || ''));
     if (!conn) throw new Error('跳板机连接不存在或已删除');
-    if (String(conn.protocol || 'SSH').toUpperCase() !== 'SSH') throw new Error('跳板机只能选择 SSH 连接，VNC/RDP 只能作为目标通过跳板访问');
+    if (String(conn.protocol || 'SSH').toUpperCase() !== 'SSH') throw new Error('跳板机只能选择 SSH 连接，VNC/RDP/TELNET 只能作为目标通过跳板访问');
     if (user) authz.assertCan(user, CAP.USE, 'connection', conn.id, conn, { resourceExists: true });
     return conn;
 }
@@ -5244,11 +5279,20 @@ wss.on('connection', (ws, req) => {
     let sshStream = null;
     let attachedSshSession = null;
     let sftpStream = null;
+    let telnetSocket = null;
+    let telnetProtocol = false;
     let statsTimer = null;
     let statsRunning = false;
     let remoteStatsState = {};
     const dockerLogStreams = new Map();
     const sftpUploadStreams = new Map();
+    const closeTelnetSocket = (reason = 'cleanup') => {
+        if (!telnetSocket) return;
+        try { telnetSocket.destroy(); } catch {}
+        console.info('[TELNET]', 'socket closed', { reason });
+        telnetSocket = null;
+        telnetProtocol = false;
+    };
 
     const sendJSON = (obj) => {
         if (ws.readyState === ws.OPEN) {
@@ -5363,6 +5407,7 @@ wss.on('connection', (ws, req) => {
         stopStatsPush();
         stopDockerLogStreams();
         stopSftpUploadStreams();
+        closeTelnetSocket(reason);
         if (sftpStream) {
             const closingSftp = sftpStream;
             try { closingSftp.end(); } catch {}
@@ -5639,7 +5684,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
             bytes: Buffer.byteLength(rawText),
         });
 
-        // ------------------------- SSH 连接 -------------------------
+        // ------------------------- SSH / TELNET 连接 -------------------------
         if (msg.type === 'connect') {
             /* Identity was verified once at upgrade; reuse it (no double-auth
              * race between Upgrade and connect — FREEZE plan §4.3). */
@@ -5686,16 +5731,14 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     const authUser = userFromAuthSession(req);
                     if (!authUser) throw new Error('未登录或会话已过期');
                     const consumed = deepLinkService.consume(authUser, String(transientToken), transientOverrides || {});
-                    if (String(consumed.draft.protocol || '').toUpperCase() === 'TELNET') {
-                        throw new Error('Telnet 临时连接请使用 worker ticket 路径');
-                    }
+                    const draftProtocol = String(consumed.draft.protocol || 'SSH').toUpperCase();
                     conn = {
                         host: consumed.draft.host,
-                        port: consumed.draft.port || 22,
+                        port: consumed.draft.port || protocolDefaultPort(draftProtocol),
                         username: consumed.draft.username || '',
-                        password: consumed.credential?.password || '',
+                        password: draftProtocol === 'TELNET' ? '' : (consumed.credential?.password || ''),
                         privateKey: '',
-                        protocol: consumed.draft.protocol || 'SSH',
+                        protocol: draftProtocol,
                         connectionMode: 'direct',
                         name: consumed.draft.name || '',
                         transient: true,
@@ -5712,9 +5755,28 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     connectionSource = 'acl-resolved';
                     storeConnectionCount = 1;
                 } else {
-                    conn = { host, port: port || 22, username, password: password || '', privateKey: privateKey || '', connectionMode: 'direct' };
+                    const fallbackProtocol = String(msg.protocol || 'SSH').toUpperCase();
+                    conn = {
+                        host,
+                        port: port || protocolDefaultPort(fallbackProtocol),
+                        username,
+                        password: password || '',
+                        privateKey: privateKey || '',
+                        protocol: fallbackProtocol,
+                        connectionMode: 'direct',
+                    };
                 }
-                if (!conn.host || !conn.username) throw new Error('主机和用户名不能为空');
+                const protocol = String(conn.protocol || msg.protocol || 'SSH').toUpperCase();
+                conn.protocol = protocol;
+                // Telnet: host is enough; username is display-only / in-band.
+                if (!conn.host) throw new Error('主机不能为空');
+                if (protocol !== 'TELNET' && !conn.username) throw new Error('主机和用户名不能为空');
+                if (protocol === 'TELNET') {
+                    conn.connectionMode = 'direct';
+                    conn.proxyId = null;
+                    conn.jumpHostId = null;
+                    conn.jumpHostIds = [];
+                }
                 console.info('[SSH-DIAG] resolved connection config', {
                     connectionId: conn.id || connectionId || '',
                     requestedConnectionId: connectionId || '',
@@ -5723,11 +5785,11 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     dbFile: DB_FILE,
                     storeConnectionCount,
                     name: conn.name || '',
-                    target: `${conn.host}:${Number(conn.port) || 22}`,
+                    target: `${conn.host}:${Number(conn.port) || protocolDefaultPort(protocol)}`,
                     host: conn.host || '',
-                    port: Number(conn.port) || 22,
+                    port: Number(conn.port) || protocolDefaultPort(protocol),
                     username: conn.username || '',
-                    protocol: conn.protocol || 'SSH',
+                    protocol,
                     mode: conn.connectionMode || 'direct',
                     proxyId: conn.proxyId || '',
                     jumpHostIds: normalizeJumpHostIds(conn),
@@ -5735,6 +5797,48 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     hasPassword: !!conn.password,
                     hasPrivateKey: !!conn.privateKey,
                 });
+
+                const initialRows = Number.isFinite(Number(msg.rows)) ? Math.min(200, Math.max(2, Math.floor(Number(msg.rows)))) : 24;
+                const initialCols = Number.isFinite(Number(msg.cols)) ? Math.min(500, Math.max(20, Math.floor(Number(msg.cols)))) : 80;
+
+                if (protocol === 'TELNET') {
+                    // FREEZE plan §5.6: Node /ssh is the default Telnet path.
+                    // Auth is in-band; we only open TCP + IAC negotiate.
+                    if (connectionId) console.log(`[TELNET] 使用已保存连接 ${conn.name || conn.host}`);
+                    const socket = await dialTelnet(conn, { timeout: 10000, cols: initialCols, rows: initialRows });
+                    telnetSocket = socket;
+                    telnetProtocol = true;
+                    socket.setTimeout(0); // live session — no idle timeout kill
+                    console.log(`[TELNET] 已连接: ${conn.host}:${Number(conn.port) || 23}`);
+                    sendJSON({
+                        type: 'ready',
+                        sessionId: requestedSessionId,
+                        cols: initialCols,
+                        rows: initialRows,
+                        protocol: 'TELNET',
+                        warning: 'Telnet 未加密；凭据以明文传输',
+                    });
+                    socket.on('data', (chunk) => {
+                        const filtered = filterIac(chunk);
+                        if (!filtered.length) return;
+                        sendJSON({ type: 'data', data: filtered.toString('utf-8') });
+                    });
+                    socket.on('error', (err) => {
+                        console.error(`[TELNET] 错误: ${err.message}`);
+                        sendJSON({ type: 'error', message: `Telnet 连接失败: ${err.message}` });
+                        cleanup({ reason: 'telnet-error' });
+                    });
+                    socket.on('close', () => {
+                        console.log('[TELNET] 连接关闭');
+                        sendJSON({ type: 'close', message: 'Telnet 连接已关闭' });
+                        cleanup({ reason: 'telnet-close' });
+                    });
+                    if (init && typeof init === 'string' && init.trim().length > 0) {
+                        try { socket.write(init + '\n'); } catch {}
+                    }
+                    return;
+                }
+
                 if (connectionId) console.log(`[SSH] 使用已保存路由连接 ${conn.name || conn.host}`);
                 const routed = await createRoutedSSHConnection(conn, 10000);
                 sshClient = routed.client;
@@ -5745,112 +5849,115 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     route: routed.route,
                     clientCount: sshClients.length,
                 });
+
+                sshClient.on('error', (err) => {
+                    console.error(`[SSH] 错误: ${err.message}`);
+                    if (attachedSshSession) {
+                        broadcastSshSession(attachedSshSession, { type: 'error', message: `SSH 连接失败: ${err.message}` });
+                        destroySshTerminalSession(attachedSshSession, 'ssh-error');
+                    } else {
+                        sendJSON({ type: 'error', message: `SSH 连接失败: ${err.message}` });
+                        cleanup();
+                    }
+                });
+
+                sshClient.on('close', () => {
+                    console.log('[SSH] 连接关闭');
+                    if (attachedSshSession) {
+                        broadcastSshSession(attachedSshSession, { type: 'close', message: 'SSH 连接已关闭' });
+                        destroySshTerminalSession(attachedSshSession, 'ssh-close');
+                    } else {
+                        sendJSON({ type: 'close', message: 'SSH 连接已关闭' });
+                        cleanup();
+                    }
+                });
+
+                // 打开 shell
+                sshClient.shell({ term: 'xterm-256color', rows: initialRows, cols: initialCols }, (err, stream) => {
+                    if (err) {
+                        console.warn('[SSH-DIAG] shell open failed after ssh ready', {
+                            connectionId: conn.id || connectionId || '',
+                            target: `${conn.host}:${Number(conn.port) || 22}`,
+                            username: conn.username || '',
+                            error: err.message,
+                            stack: err.stack,
+                        });
+                        sendJSON({ type: 'error', message: `打开 Shell 失败: ${err.message}` });
+                        cleanup();
+                        return;
+                    }
+                    console.info('[SSH-DIAG] shell opened successfully', {
+                        connectionId: conn.id || connectionId || '',
+                        target: `${conn.host}:${Number(conn.port) || 22}`,
+                        username: conn.username || '',
+                    });
+                    sshStream = stream;
+                    const session = {
+                        id: requestedSessionId,
+                        connectionId: conn.id || connectionId || '',
+                        sshClient,
+                        sshClients,
+                        sshStream,
+                        attachedWs: new Set([ws]),
+                        pty: { rows: initialRows, cols: initialCols },
+                        outputBuffer: [],
+                        createdAt: Date.now(),
+                        lastActive: Date.now(),
+                        lastDetachedAt: 0,
+                        username: sessionUser.username || '',
+                        userId: sessionUser.userId || '',
+                        connectionConfig: conn,
+                        closed: false,
+                    };
+                    attachedSshSession = session;
+                    ws._sshTerminalSession = session;
+                    sshTerminalSessions.set(session.id, session);
+                    const pty = session.pty || { rows: initialRows, cols: initialCols };
+                    sendJSON({ type: 'ready', sessionId: session.id, cols: pty.cols, rows: pty.rows });
+
+                    // SSH 连接就绪后，启动实时监控推送
+                    startStatsPush();
+
+                    stream.on('data', (data) => {
+                        const text = data.toString('utf-8');
+                        appendSshSessionBuffer(session, text);
+                        broadcastSshSession(session, { type: 'data', data: text });
+                    });
+                    stream.on('close', (code, signal) => {
+                        console.log(`[SSH] Shell 关闭 code=${code} signal=${signal}`);
+                        broadcastSshSession(session, { type: 'close', message: `Shell 已关闭 (code=${code})` });
+                        destroySshTerminalSession(session, `shell-close-${code ?? 'N/A'}`);
+                    });
+                    stream.stderr.on('data', (data) => {
+                        const text = data.toString('utf-8');
+                        appendSshSessionBuffer(session, text);
+                        broadcastSshSession(session, { type: 'data', data: text });
+                    });
+
+                    if (init && typeof init === 'string' && init.trim().length > 0) {
+                        stream.write(init + '\n');
+                    }
+                });
             } catch (err) {
                 console.warn('[SSH-DIAG] ssh connection failed before shell', {
                     connectionId: connectionId || '',
                     error: err.message,
                     stack: err.stack,
                 });
-                sendJSON({ type: 'error', message: `SSH 连接失败: ${err.message}` });
+                const label = String(conn?.protocol || msg.protocol || 'SSH').toUpperCase() === 'TELNET' ? 'Telnet' : 'SSH';
+                sendJSON({ type: 'error', message: `${label} 连接失败: ${err.message}` });
                 cleanup();
                 return;
             }
-
-            sshClient.on('error', (err) => {
-                console.error(`[SSH] 错误: ${err.message}`);
-                if (attachedSshSession) {
-                    broadcastSshSession(attachedSshSession, { type: 'error', message: `SSH 连接失败: ${err.message}` });
-                    destroySshTerminalSession(attachedSshSession, 'ssh-error');
-                } else {
-                    sendJSON({ type: 'error', message: `SSH 连接失败: ${err.message}` });
-                    cleanup();
-                }
-            });
-
-            sshClient.on('close', () => {
-                console.log('[SSH] 连接关闭');
-                if (attachedSshSession) {
-                    broadcastSshSession(attachedSshSession, { type: 'close', message: 'SSH 连接已关闭' });
-                    destroySshTerminalSession(attachedSshSession, 'ssh-close');
-                } else {
-                    sendJSON({ type: 'close', message: 'SSH 连接已关闭' });
-                    cleanup();
-                }
-            });
-
-            // 打开 shell
-            const initialRows = Number.isFinite(Number(msg.rows)) ? Math.min(200, Math.max(2, Math.floor(Number(msg.rows)))) : 24;
-            const initialCols = Number.isFinite(Number(msg.cols)) ? Math.min(500, Math.max(20, Math.floor(Number(msg.cols)))) : 80;
-            sshClient.shell({ term: 'xterm-256color', rows: initialRows, cols: initialCols }, (err, stream) => {
-                if (err) {
-                    console.warn('[SSH-DIAG] shell open failed after ssh ready', {
-                        connectionId: conn.id || connectionId || '',
-                        target: `${conn.host}:${Number(conn.port) || 22}`,
-                        username: conn.username || '',
-                        error: err.message,
-                        stack: err.stack,
-                    });
-                    sendJSON({ type: 'error', message: `打开 Shell 失败: ${err.message}` });
-                    cleanup();
-                    return;
-                }
-                console.info('[SSH-DIAG] shell opened successfully', {
-                    connectionId: conn.id || connectionId || '',
-                    target: `${conn.host}:${Number(conn.port) || 22}`,
-                    username: conn.username || '',
-                });
-                sshStream = stream;
-                const session = {
-                    id: requestedSessionId,
-                    connectionId: conn.id || connectionId || '',
-                    sshClient,
-                    sshClients,
-                    sshStream,
-                    attachedWs: new Set([ws]),
-                    pty: { rows: initialRows, cols: initialCols },
-                    outputBuffer: [],
-                    createdAt: Date.now(),
-                    lastActive: Date.now(),
-                    lastDetachedAt: 0,
-                    username: sessionUser.username || '',
-                    userId: sessionUser.userId || '',
-                    connectionConfig: conn,
-                    closed: false,
-                };
-                attachedSshSession = session;
-                ws._sshTerminalSession = session;
-                sshTerminalSessions.set(session.id, session);
-                const pty = session.pty || { rows: initialRows, cols: initialCols };
-                sendJSON({ type: 'ready', sessionId: session.id, cols: pty.cols, rows: pty.rows });
-
-                // SSH 连接就绪后，启动实时监控推送
-                startStatsPush();
-
-                stream.on('data', (data) => {
-                    const text = data.toString('utf-8');
-                    appendSshSessionBuffer(session, text);
-                    broadcastSshSession(session, { type: 'data', data: text });
-                });
-                stream.on('close', (code, signal) => {
-                    console.log(`[SSH] Shell 关闭 code=${code} signal=${signal}`);
-                    broadcastSshSession(session, { type: 'close', message: `Shell 已关闭 (code=${code})` });
-                    destroySshTerminalSession(session, `shell-close-${code ?? 'N/A'}`);
-                });
-                stream.stderr.on('data', (data) => {
-                    const text = data.toString('utf-8');
-                    appendSshSessionBuffer(session, text);
-                    broadcastSshSession(session, { type: 'data', data: text });
-                });
-
-                if (init && typeof init === 'string' && init.trim().length > 0) {
-                    stream.write(init + '\n');
-                }
-            });
             return;
         }
 
         // 输入
         if (msg.type === 'input') {
+            if (telnetSocket && !telnetSocket.destroyed) {
+                try { telnetSocket.write(String(msg.data || ''), 'utf-8'); } catch {}
+                return;
+            }
             if (sshStream && sshStream.writable) sshStream.write(msg.data);
             return;
         }
@@ -5861,6 +5968,10 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
             const cols = Math.floor(Number(msg.cols));
             if (!Number.isFinite(rows) || !Number.isFinite(cols) || rows < 2 || cols < 20 || rows > 200 || cols > 500) {
                 console.warn('[SSH] 忽略异常 PTY resize', { rows: msg.rows, cols: msg.cols });
+                return;
+            }
+            if (telnetSocket && !telnetSocket.destroyed) {
+                try { sendNaws(telnetSocket, cols, rows); } catch {}
                 return;
             }
             if (sshStream && sshStream.setWindow) {

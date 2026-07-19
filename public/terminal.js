@@ -567,7 +567,7 @@ const TERMINAL_BOTTOM_THRESHOLD = 8;
 const TERMINAL_SCROLLBAR_MIN_THUMB = 28;
 const TERMINAL_XTERM_SCROLL_LOCK_THRESHOLD = 18;
 const TERMINAL_ALT_SCROLL_REPEAT_MS = 16;
-const TERMINAL_LINK_PROTOCOL_RE = /\b(?:https?:\/\/|ftp:\/\/|ssh:\/\/|mailto:)[^\s<>'"`\u3000]+/ig;
+const TERMINAL_LINK_PROTOCOL_RE = /\b(?:https?:\/\/|ftp:\/\/|ssh:\/\/|telnet:\/\/|mailto:)[^\s<>'"`\u3000]+/ig;
 const TERMINAL_LAYOUT_DIAGNOSTICS = false;
 const TERMINAL_SCROLL_DIAGNOSTICS = false;
 const TERMINAL_MIN_RESIZE_WIDTH = 120;
@@ -9984,6 +9984,7 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                 username: params.username,
                 password: params.password || '',
                 privateKey: params.privateKey || '',
+                protocol: params.protocol || params.transientOverrides?.protocol || 'SSH',
                 // One-time Deep Link credential (FREEZE plan §5.4); server
                 // consumes it atomically and never writes it to assets.
                 transientToken: params.transientToken || '',

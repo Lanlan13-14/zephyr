@@ -66,13 +66,15 @@ class WorkerBridge {
         if (!conn) throw new HttpError(404, 'resource_not_found_or_inaccessible', '连接不存在或无权访问');
         this.authz.assertCan(user, 'use', 'connection', connectionId, conn, { resourceExists: true });
         const resolved = this.resources.resolveForConnect(user, connectionId);
+        const protocol = String(resolved.protocol || 'SSH').toUpperCase();
         return this._issueTicket(user, {
             connId: connectionId,
             host: resolved.host,
-            port: Number(resolved.port) || 22,
+            port: Number(resolved.port) || (protocol === 'TELNET' ? 23 : 22),
             username: resolved.username || '',
             password: resolved.password && resolved.password !== '******' ? resolved.password : '',
             privateKey: resolved.privateKey && resolved.privateKey !== '******' ? resolved.privateKey : '',
+            protocol,
             source: 'saved',
         });
     }
@@ -83,22 +85,26 @@ class WorkerBridge {
      */
     async issueForTransient(user, transientToken, overrides = {}) {
         const consumed = this.deepLink.consume(user, transientToken, overrides);
-        if (consumed.draft.telnetUnsupported || String(consumed.draft.protocol || '').toUpperCase() === 'TELNET') {
-            throw new HttpError(400, 'telnet_unsupported', '当前版本尚未启用 Telnet transport');
-        }
+        const protocol = String(consumed.draft.protocol || 'SSH').toUpperCase();
         return this._issueTicket(user, {
             connId: '',
             host: consumed.draft.host,
-            port: Number(consumed.draft.port) || 22,
+            port: Number(consumed.draft.port) || (protocol === 'TELNET' ? 23 : 22),
             username: consumed.draft.username || '',
             password: consumed.credential?.password || '',
             privateKey: '',
+            protocol,
             source: 'transient',
         });
     }
 
-    async _issueTicket(user, { connId, host, port, username, password, privateKey, source }) {
-        if (!host || !username) throw new HttpError(400, 'invalid_connect_target', '主机和用户名不能为空');
+    async _issueTicket(user, { connId, host, port, username, password, privateKey, protocol = 'SSH', source }) {
+        const proto = String(protocol || 'SSH').toUpperCase();
+        if (!host) throw new HttpError(400, 'invalid_connect_target', '主机不能为空');
+        // Telnet authenticates in-band; username is optional display-only.
+        if (proto !== 'TELNET' && !username) {
+            throw new HttpError(400, 'invalid_connect_target', '主机和用户名不能为空');
+        }
         const resp = await this._post('/admin/tickets', {
             userId: user.userId,
             connId,
@@ -107,6 +113,7 @@ class WorkerBridge {
             username,
             password,
             privateKey,
+            protocol: proto,
             source,
             ttlSeconds: TICKET_TTL_SECONDS,
         });

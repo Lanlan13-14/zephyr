@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260719-session-resume1">
+    <link rel="stylesheet" href="style.css?v=20260720-telnet-ui1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -37,7 +37,7 @@
                 </div>
                 <div class="action-bar">
                     <input class="search-input" id="searchInput" placeholder="搜索名称、IP、备注...">
-                    <select id="protocolFilter"><option value="all">全部协议</option><option value="SSH">SSH</option><option value="RDP">RDP</option><option value="VNC">VNC</option></select>
+                    <select id="protocolFilter"><option value="all">全部协议</option><option value="SSH">SSH</option><option value="TELNET">TELNET</option><option value="RDP">RDP</option><option value="VNC">VNC</option></select>
                     <select id="tagFilter"><option value="all">全部标签</option></select>
                     <select id="sortSelect"><option value="createdAt">按创建时间</option><option value="name">按名称</option><option value="lastConnectedAt">按最近连接</option><option value="protocol">按协议</option></select>
                 </div>
@@ -523,11 +523,15 @@
                 <span>· 本次参数不会保存到主机库</span>
             </div>
             <div class="transient-credential-state force-hidden" id="transientCredentialState">已载入一次性凭据</div>
+            <div class="telnet-plaintext-banner force-hidden" id="telnetPlaintextBanner" role="alert">
+                <strong>Telnet 未加密</strong>
+                <span>· 账号口令与终端内容以明文传输，仅用于可信内网或设备 console</span>
+            </div>
             <input type="hidden" id="connectionId">
             <input type="hidden" id="transientToken">
-            <div class="form-row"><div class="form-group"><label>名称</label><input id="connName" required></div><div class="form-group port-group"><label>协议</label><select id="connProtocol"><option>SSH</option><option>RDP</option><option>VNC</option></select></div></div>
+            <div class="form-row"><div class="form-group"><label>名称</label><input id="connName" required></div><div class="form-group port-group"><label>协议</label><select id="connProtocol"><option>SSH</option><option>TELNET</option><option>RDP</option><option>VNC</option></select></div></div>
             <div class="form-row"><div class="form-group"><label>IP / 主机</label><input id="connHost" required></div><div class="form-group port-group"><label>端口</label><input id="connPort" type="number" value="22" min="1" max="65535"></div></div>
-            <div class="form-group"><label>用户名</label><input id="connUsername" required></div>
+            <div class="form-group"><label>用户名</label><input id="connUsername" required><p class="field-hint force-hidden" id="telnetUsernameHint">Telnet 认证在终端内完成；此处用户名仅用于显示，可留空。</p></div>
             <div class="form-group force-hidden" id="rdpDomainGroup"><label>Windows 域（可选）</label><input id="rdpDomain" placeholder="例如 CORP 或 WORKGROUP"><p class="field-hint">Active Directory 域名。家庭/工作组环境可留空。等同于 DOMAIN\username 中的 DOMAIN。</p></div>
             <div class="form-group"><label>选择已保存 SSH 密钥</label><select id="connSshKey"><option value="">不使用密钥库</option></select><p class="field-hint">选择后连接时会自动使用该私钥；下方手动填写的密码/私钥会优先生效或作为私钥口令。</p></div>
             <div class="form-group"><label>标签（逗号分隔）</label><input id="connTags" placeholder="生产, 数据库, 海外"></div>
@@ -594,7 +598,7 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260719-session-resume1" type="module"></script>
+    <script src="app.js?v=20260720-telnet-ui1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {
