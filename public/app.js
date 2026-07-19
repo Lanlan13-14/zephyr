@@ -1,4 +1,4 @@
-import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
+import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';import { createNotesController } from './notes.js?v=20260719-notes1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -46,8 +46,14 @@ const AI_CHAT_STORAGE_KEY = 'zephyr-ai-chat-sessions';
 let editingId = null;
 let editingSecretLoaded = false;
 let editingConnectionSecretState = { hasPassword: false, hasPrivateKey: false, sshKeyId: '' };
+let connectionModalMode = 'create'; // create | edit | transient
+let connectionModalSource = 'dashboard';
+let transientToken = '';
+let transientHasCredential = false;
 let connectionModalTrigger = null;
 let connectionModalOriginRect = null;
+let notesController = null;
+let workspaceClientId = '';
 let terminalTabs = [], activeTerminalTab = null;
 let openOrderStack = [], visualLayout = [], recentUseStack = [];
 let terminalSmartbarOpen = false;
@@ -93,6 +99,8 @@ function apiErrorFromResponse(res, data = {}) {
     const message = typeof raw === 'string' ? raw : (raw?.message || raw?.code || `请求失败（HTTP ${res.status}）`);
     const err = new Error(message);
     err.status = res.status;
+    err.code = data.code || raw?.code || '';
+    err.retryable = !!data.retryable;
     err.transient = !!data.transient || res.status === 502 || res.status === 503 || res.status === 504;
     err.payload = data;
     return err;
@@ -972,6 +980,9 @@ function closeTerminalSmartbarForViewLeave() {
 }
 function switchView(name) {
     const target = name === 'ai' ? 'dashboard' : name;
+    if (target !== 'notes' && notesController?.state?.dirty) {
+        notesController.flushSave().catch(() => {});
+    }
     $$('.nav-tab').forEach((b) => b.classList.toggle('active', b.dataset.view === target));
     $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${target}`));
     const wasTerminal = document.body.classList.contains('terminal-mode');
@@ -994,6 +1005,9 @@ function switchView(name) {
     } else {
         document.body.classList.remove('terminal-mode-entering');
         if (leavingTerminal) scheduleTerminalSmartbarTopSync('switch-leave-terminal');
+    }
+    if (target === 'notes') {
+        notesController?.activate?.().catch((err) => toast(err.message || '加载笔记失败'));
     }
 }
 function parseTags(v) { return String(v || '').split(',').map((x) => x.trim()).filter(Boolean); }
@@ -1038,11 +1052,19 @@ function renderConnections() {
     refreshTagFilter();
     $('#connectionTitle').textContent = `连接列表 (${connections.length})`;
     const list = filteredConnections();
-    $('#connectionGrid').innerHTML = list.length ? list.map((c) => `
-        <article class="connection-card"><div class="card-top"><span class="protocol-badge">${escapeHtml(c.protocol)}</span><span class="last-time">${fmtTime(c.lastConnectedAt)}</span></div>
+    $('#connectionGrid').innerHTML = list.length ? list.map((c) => {
+        const caps = Array.isArray(c.capabilities) ? c.capabilities : [];
+        const canEdit = !caps.length || caps.includes('edit');
+        const canDelete = !caps.length || caps.includes('delete');
+        const canUse = !caps.length || caps.includes('use') || caps.includes('control');
+        const sourceBadge = c.owner === 'shared'
+            ? '<span class="connection-source-badge shared">共享</span>'
+            : (c.owner === 'own' ? '<span class="connection-source-badge">我的</span>' : '');
+        return `<article class="connection-card"><div class="card-top"><span class="protocol-badge">${escapeHtml(c.protocol)}</span>${sourceBadge}<span class="last-time">${fmtTime(c.lastConnectedAt)}</span></div>
         <h2>${escapeHtml(c.name)}</h2><p class="host-line">${escapeHtml(c.host)}:${escapeHtml(c.port)} · ${c.connectionMode === 'proxy' ? '代理' : c.connectionMode === 'jump' ? '跳板机' : '直连'}</p>
         <div class="tag-row">${(c.tags || []).map((t) => `<span>${escapeHtml(t)}</span>`).join('')}</div><div class="remark-md">${renderMarkdown(c.remark || '暂无备注')}</div>
-        <div class="card-actions"><button class="tool-btn" data-edit="${c.id}">编辑</button><button class="tool-btn danger" data-delete="${c.id}">删除</button><button class="btn btn-primary" data-connect="${c.id}">连接</button></div></article>`).join('') : '<div class="empty-card">暂无连接，点击右上角添加新连接。</div>';
+        <div class="card-actions">${canEdit ? `<button class="tool-btn" data-edit="${c.id}">编辑</button>` : ''}${canDelete ? `<button class="tool-btn danger" data-delete="${c.id}">删除</button>` : ''}${canUse ? `<button class="btn btn-primary" data-connect="${c.id}">连接</button>` : '<button class="btn btn-primary" disabled title="仅观察">只读</button>'}</div></article>`;
+    }).join('') : '<div class="empty-card">暂无连接，点击右上角添加新连接。</div>';
     $('#activityList').innerHTML = activities.length ? activities.map((a) => `<div class="activity-item"><span>${fmtTime(a.time)}</span><b>${escapeHtml(a.message)}</b></div>`).join('') : '<div class="muted">暂无活动</div>';
     renderRemoteServers(); renderJumpOptions();
 }
@@ -1343,20 +1365,58 @@ function resetConnectionTransitionLayer(layer) {
     layer.removeAttribute('data-has-source-visual');
     layer.classList.remove('source-visual-hidden');
 }
-function prepareConnectionModalForm(conn = null) {
-    editingId = conn?.id || null;
+function setConnectionModalMode(mode = 'create', { source = 'dashboard', draft = null, token = '' } = {}) {
+    connectionModalMode = mode === 'transient' ? 'transient' : (mode === 'edit' || draft?.id ? 'edit' : 'create');
+    connectionModalSource = source || 'dashboard';
+    transientToken = connectionModalMode === 'transient' ? String(token || '') : '';
+    transientHasCredential = connectionModalMode === 'transient' && !!(draft?.hasTransientCredential);
+    const form = $('#connectionForm');
+    form?.classList.toggle('transient-mode', connectionModalMode === 'transient');
+    form?.setAttribute('data-mode', connectionModalMode);
+    $('#transientToken') && ($('#transientToken').value = transientToken);
+    $('#transientConnectionBanner')?.classList.toggle('force-hidden', connectionModalMode !== 'transient');
+    const cred = $('#transientCredentialState');
+    if (cred) {
+        cred.classList.toggle('force-hidden', !(connectionModalMode === 'transient' && transientHasCredential));
+        cred.textContent = transientHasCredential ? '已载入一次性凭据' : '';
+    }
+    // Telnet without transport: keep UI readable but block connect.
+    const connectBtn = $('#connectTransientBtn');
+    if (connectBtn) {
+        const telnetBlocked = connectionModalMode === 'transient' && (String(draft?.protocol || '').toUpperCase() === 'TELNET' || draft?.telnetUnsupported);
+        connectBtn.disabled = !!telnetBlocked;
+        connectBtn.title = telnetBlocked ? '当前版本尚未启用 Telnet transport' : '';
+        connectBtn.textContent = telnetBlocked ? '不支持当前协议' : '连接';
+    }
+}
+
+function prepareConnectionModalForm(conn = null, options = {}) {
+    const mode = options.mode || (conn?.id ? 'edit' : 'create');
+    setConnectionModalMode(mode, { source: options.source || 'dashboard', draft: conn, token: options.transientToken || '' });
+    editingId = mode === 'transient' ? null : (conn?.id || null);
     editingSecretLoaded = false;
     editingConnectionSecretState = {
-        hasPassword: !!conn?.hasPassword,
+        hasPassword: !!conn?.hasPassword || !!(mode === 'transient' && conn?.hasTransientCredential),
         hasPrivateKey: !!conn?.hasPrivateKey,
         sshKeyId: conn?.sshKeyId || '',
     };
-    $('#modalTitle').textContent = editingId ? '编辑服务器' : '添加服务器'; $('#connectionId').value = editingId || '';
+    $('#modalTitle').textContent = mode === 'transient' ? '临时连接' : (editingId ? '编辑服务器' : '添加服务器');
+    $('#connectionId').value = editingId || '';
     setConnectionTestLatency();
     $('#connName').value = conn?.name || ''; $('#connProtocol').value = conn?.protocol || 'SSH'; $('#connHost').value = conn?.host || ''; $('#connPort').value = conn?.port || ($('#connProtocol').value === 'RDP' ? 3389 : $('#connProtocol').value === 'VNC' ? 5900 : 22); $('#connUsername').value = conn?.username || '';
     renderSshKeyOptions(conn?.sshKeyId || '');
     $('#connTags').value = (conn?.tags || []).join(', '); setRouteMode(conn?.connectionMode || 'direct', conn?.connectionMode === 'jump' ? (conn?.jumpHostIds || (conn?.jumpHostId ? [conn.jumpHostId] : [])) : (conn?.proxyId || ''));
-    $('#connPassword').type = 'password'; $('#toggleConnPassword').textContent = '👁️'; $('#connPassword').value = conn?.hasPassword ? '******' : ''; $('#connPrivateKey').value = conn?.hasPrivateKey ? '******' : ''; $('#connRemark').value = conn?.remark || '';
+    $('#connPassword').type = 'password'; $('#toggleConnPassword').textContent = '👁️';
+    // Transient credentials must never be written as a readable DOM value.
+    if (mode === 'transient' && conn?.hasTransientCredential) {
+        $('#connPassword').value = '';
+        $('#connPassword').placeholder = '已载入一次性凭据（可覆盖）';
+    } else {
+        $('#connPassword').placeholder = '';
+        $('#connPassword').value = conn?.hasPassword ? '******' : '';
+    }
+    $('#connPrivateKey').value = conn?.hasPrivateKey ? '******' : '';
+    $('#connRemark').value = conn?.remark || '';
     /* RDP settings */
     if ($('#rdpSoundMode')) $('#rdpSoundMode').value = conn?.rdpSoundMode || 'local';
     if ($('#rdpClipboard')) $('#rdpClipboard').checked = conn?.rdpClipboard !== false;
@@ -1374,11 +1434,11 @@ function prepareConnectionModalForm(conn = null) {
     if ($('#rdpDomain')) $('#rdpDomain').value = conn?.rdpDomain || '';
     updateProtocolFields({ preservePort: !!conn });
 }
-function openModal(conn = null, trigger = null) {
+function openModal(conn = null, trigger = null, options = {}) {
     const modal = $('#connectionModal');
     const layer = $('#connectionTransitionLayer');
     if (!modal || !layer || modal.classList.contains('show')) return;
-    prepareConnectionModalForm(conn);
+    prepareConnectionModalForm(conn, options);
     connectionModalTrigger = trigger || connectionTransitionTargetRect().source;
     window.clearTimeout(openModal._finishTimer);
     window.clearTimeout(closeModal._timer);
@@ -1453,6 +1513,14 @@ function closeModal() {
 
     modal.classList.add('closing');
     modal.classList.remove('app-visible');
+
+    // Wipe transient credential handles on close (FREEZE plan §5.3.5).
+    transientToken = '';
+    transientHasCredential = false;
+    connectionModalMode = 'create';
+    $('#transientToken') && ($('#transientToken').value = '');
+    $('#connectionForm')?.classList.remove('transient-mode');
+    $('#connPassword') && ($('#connPassword').placeholder = '');
 
     setConnectionTestLatency();
 
@@ -1616,17 +1684,47 @@ function connectionPayload({ forTest = false } = {}) {
     if (!forTest && editingId) { if (payload.password === '******') delete payload.password; if (payload.privateKey === '******') delete payload.privateKey; }
     return payload;
 }
-async function saveConnection(e) { e.preventDefault(); const payload = connectionPayload(); if (editingId) await api(`/api/connections/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) }); else await api('/api/connections', { method: 'POST', body: JSON.stringify(payload) }); closeModal(); toast('连接已保存'); await loadConnections(); }
+async function saveConnection(e) {
+    e.preventDefault();
+    // Hard guard: transient mode must never hit POST /api/connections.
+    if (connectionModalMode === 'transient') {
+        toast('临时连接不会保存到主机库');
+        return;
+    }
+    const payload = connectionPayload();
+    if (editingId) await api(`/api/connections/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) });
+    else await api('/api/connections', { method: 'POST', body: JSON.stringify(payload) });
+    closeModal();
+    toast('连接已保存');
+    await loadConnections();
+}
 async function testConnection() {
     const btn = $('#testConnectionBtn');
+    const connectBtn = $('#connectTransientBtn');
     const oldText = btn.textContent;
     btn.disabled = true;
+    if (connectBtn) connectBtn.disabled = true;
     btn.textContent = '测试中...';
     setConnectionTestLatency('测试中...', 'pending');
     try {
         const payload = connectionPayload({ forTest: true });
-        console.debug('[rdp-client]', 'test connection', { protocol: payload.protocol, host: payload.host, port: payload.port });
-        const result = await api('/api/connections/test', { method: 'POST', body: JSON.stringify({ ...payload, connectionId: editingId || '', timeoutSeconds: 10 }) });
+        let result;
+        if (connectionModalMode === 'transient') {
+            if (!transientToken) throw new Error('临时凭据已失效，请重新打开链接');
+            const overrides = {
+                name: payload.name, host: payload.host, port: payload.port,
+                username: payload.username, protocol: payload.protocol,
+            };
+            const credentialOverride = {};
+            if (payload.password && payload.password !== '******') credentialOverride.password = payload.password;
+            if (payload.privateKey && payload.privateKey !== '******') credentialOverride.privateKey = payload.privateKey;
+            result = await api(`/api/deeplinks/${encodeURIComponent(transientToken)}/test`, {
+                method: 'POST',
+                body: JSON.stringify({ overrides, credentialOverride, timeoutSeconds: 10 }),
+            });
+        } else {
+            result = await api('/api/connections/test', { method: 'POST', body: JSON.stringify({ ...payload, connectionId: editingId || '', timeoutSeconds: 10 }) });
+        }
         setConnectionTestLatency(`连接延迟：${result.durationMs}ms`, 'success');
         toast(result.message || '连接测试成功');
     } catch (err) {
@@ -1635,6 +1733,115 @@ async function testConnection() {
     } finally {
         btn.disabled = false;
         btn.textContent = oldText;
+        if (connectBtn && connectionModalMode === 'transient') {
+            const telnetBlocked = String($('#connProtocol')?.value || '').toUpperCase() === 'TELNET';
+            connectBtn.disabled = telnetBlocked;
+        }
+    }
+}
+
+async function connectTransient() {
+    if (connectionModalMode !== 'transient') return;
+    if (!transientToken) {
+        toast('临时凭据已失效，请重新打开链接');
+        return;
+    }
+    const btn = $('#connectTransientBtn');
+    const testBtn = $('#testConnectionBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '正在连接…'; }
+    if (testBtn) testBtn.disabled = true;
+    try {
+        const payload = connectionPayload({ forTest: true });
+        if (String(payload.protocol || '').toUpperCase() === 'TELNET') {
+            throw new Error('当前版本尚未启用 Telnet transport');
+        }
+        const token = transientToken;
+        const overrides = {
+            name: payload.name, host: payload.host, port: payload.port,
+            username: payload.username, protocol: payload.protocol,
+        };
+        // Open a terminal tab that consumes the one-time token server-side.
+        const tabId = `tab_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const title = payload.name || `${payload.username || 'user'}@${payload.host}`;
+        const sshParams = {
+            transientToken: token,
+            transientOverrides: overrides,
+            host: payload.host,
+            port: payload.port,
+            username: payload.username,
+            // password/privateKey only if the user overrode the one-time credential
+            password: (payload.password && payload.password !== '******') ? payload.password : '',
+            privateKey: (payload.privateKey && payload.privateKey !== '******') ? payload.privateKey : '',
+            init: '',
+            tabId,
+            embedded: !isCompactTerminalWorkspace(),
+            timestamp: Date.now(),
+            snippets: settings?.snippets || [],
+            transient: true,
+        };
+        sessionStorage.setItem(`zephyr_ssh_params_${tabId}`, JSON.stringify(sshParams));
+        terminalTabs.push({
+            id: tabId,
+            name: `${title} · 临时`,
+            protocol: payload.protocol || 'SSH',
+            status: 'connecting',
+            iframe: true,
+            page: 'terminal',
+            connectionId: '',
+            transient: true,
+            createdAt: Date.now(),
+            lastUsedAt: Date.now(),
+            minimized: false,
+        });
+        openOrderStack.push(tabId);
+        activeTerminalTab = tabId;
+        touchTerminalSession?.(tabId);
+        enforceTerminalWorkspaceLimit?.(tabId);
+        // Consume path: clear local token handle before navigation so a double
+        // click cannot reuse it even if the server race loses.
+        transientToken = '';
+        $('#transientToken') && ($('#transientToken').value = '');
+        closeModal();
+        renderTerminalTabs();
+        switchView('terminal');
+        renderTerminalTabs({ rebuildWorkspace: true });
+        toast('正在建立临时连接…');
+    } catch (err) {
+        toast(err.message || '连接失败');
+        if (btn) { btn.disabled = false; btn.textContent = '连接'; }
+        if (testBtn) testBtn.disabled = false;
+    }
+}
+
+async function openTransientFromUri(uri) {
+    try {
+        const prepared = await api('/api/deeplinks/prepare', { method: 'POST', body: JSON.stringify({ uri }) });
+        openConnectionModal({
+            mode: 'transient',
+            source: 'note',
+            draft: prepared.draft,
+            transientToken: prepared.token,
+        });
+    } catch (err) {
+        toast(err.message || '无法打开临时连接');
+    }
+}
+
+function openConnectionModal({ mode = 'create', source = 'dashboard', draft = null, transientToken: token = '', trigger = null } = {}) {
+    openModal(draft, trigger, { mode, source, transientToken: token });
+}
+
+async function openTransientFromToken(token) {
+    try {
+        const peeked = await api(`/api/deeplinks/${encodeURIComponent(token)}`);
+        openConnectionModal({
+            mode: 'transient',
+            source: 'deeplink',
+            draft: peeked.draft,
+            transientToken: token,
+        });
+    } catch (err) {
+        toast(err.message || '临时凭据无效或已过期');
     }
 }
 
@@ -5936,7 +6143,7 @@ function bindEvents() {
     $$('.nav-tab').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view)));
     $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => { $$('.settings-tab').forEach((b) => b.classList.remove('active')); btn.classList.add('active'); $$('.settings-panel').forEach((p) => p.classList.remove('active')); $(`#settings-${btn.dataset.settings}`).classList.add('active'); }));
     $('#appThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#settingsThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#logoutBtn').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/'; });
-    $('#addConnectionBtn').addEventListener('click', (e) => openModal(null, e.currentTarget)); $('#closeModalBtn').addEventListener('click', closeModal); $('#cancelModalBtn').addEventListener('click', closeModal); $('#toggleConnPassword').addEventListener('click', () => { const el = $('#connPassword'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleConnPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; }); $('#revealConnSecrets').addEventListener('click', () => revealConnectionSecrets().catch((err) => toast(err.message))); $$('.route-type-tab').forEach((btn) => btn.addEventListener('click', () => setRouteMode($('#connMode').value === btn.dataset.routeMode ? 'direct' : btn.dataset.routeMode))); $('#addJumpRouteBtn').addEventListener('click', addJumpRouteRow); $('#jumpRouteList').addEventListener('click', (e) => { if (!e.target.closest?.('[data-remove-jump-route]')) return; const ids = $$('#jumpRouteList [data-jump-route-select]').filter((el) => !el.closest('[data-jump-route-row]').contains(e.target)).map((el) => el.value).filter(Boolean); renderJumpRouteRows(ids); }); $('#testConnectionBtn').addEventListener('click', testConnection);
+    $('#addConnectionBtn').addEventListener('click', (e) => openModal(null, e.currentTarget, { mode: 'create', source: 'dashboard' })); $('#closeModalBtn').addEventListener('click', closeModal); $('#cancelModalBtn').addEventListener('click', closeModal); $('#toggleConnPassword').addEventListener('click', () => { const el = $('#connPassword'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleConnPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; }); $('#revealConnSecrets').addEventListener('click', () => revealConnectionSecrets().catch((err) => toast(err.message))); $$('.route-type-tab').forEach((btn) => btn.addEventListener('click', () => setRouteMode($('#connMode').value === btn.dataset.routeMode ? 'direct' : btn.dataset.routeMode))); $('#addJumpRouteBtn').addEventListener('click', addJumpRouteRow); $('#jumpRouteList').addEventListener('click', (e) => { if (!e.target.closest?.('[data-remove-jump-route]')) return; const ids = $$('#jumpRouteList [data-jump-route-select]').filter((el) => !el.closest('[data-jump-route-row]').contains(e.target)).map((el) => el.value).filter(Boolean); renderJumpRouteRows(ids); }); $('#testConnectionBtn').addEventListener('click', testConnection); $('#connectTransientBtn')?.addEventListener('click', () => connectTransient().catch((err) => toast(err.message)));
     $('#connProtocol').addEventListener('change', () => updateProtocolFields({ preservePort: false }));
     $('#rdpTouchMode')?.addEventListener('change', updateRdpTouchSettingsUi);
     $('#rdpTouchSensitivity')?.addEventListener('input', updateRdpTouchSettingsUi);
@@ -6281,6 +6488,59 @@ function bindEvents() {
     $('#clearLoginEventsBtn').addEventListener('click', async () => { if (!confirm('确定清理登录事件日志？')) return; await api('/api/security/login-events', { method: 'DELETE' }); await loadSecurityLists(); toast('登录事件已清理'); });
     $('#importDataForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm('导入会覆盖当前数据库，系统会先生成本地备份。继续？')) return; const fd = new FormData(); fd.append('backup', $('#backupFile').files[0]); fd.append('loginPassword', $('#importLoginPassword').value); fd.append('backupPassword', $('#backupPassword').value); const res = await fetch('/api/data/import', { method: 'POST', body: fd, credentials: 'same-origin' }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || '导入失败'); toast(data.message || '导入完成'); });
 }
+function ensureWorkspaceClientId() {
+    const key = 'zephyr.workspace.clientId';
+    try {
+        let id = localStorage.getItem(key);
+        if (!id) {
+            id = (crypto.randomUUID?.() || `c_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`);
+            localStorage.setItem(key, id);
+        }
+        workspaceClientId = id;
+        return id;
+    } catch {
+        workspaceClientId = `mem_${Date.now()}`;
+        return workspaceClientId;
+    }
+}
+
+function handleTransientHash() {
+    const hash = String(location.hash || '').replace(/^#/, '');
+    if (!hash.startsWith('transient=')) return false;
+    const token = decodeURIComponent(hash.slice('transient='.length));
+    history.replaceState(null, '', location.pathname + location.search);
+    if (token) openTransientFromToken(token).catch((err) => toast(err.message || '临时凭据无效'));
+    return true;
+}
+
+function bindDeepLinkChannel() {
+    if (!('BroadcastChannel' in window)) return;
+    try {
+        const channel = new BroadcastChannel('zephyr-deeplink');
+        channel.addEventListener('message', (event) => {
+            const data = event.data || {};
+            if (data.type !== 'zephyr-transient-connect' || !data.token) return;
+            openConnectionModal({
+                mode: 'transient',
+                source: 'deeplink',
+                draft: data.draft || null,
+                transientToken: data.token,
+            });
+        });
+    } catch {}
+    window.addEventListener('message', (event) => {
+        if (event.origin !== location.origin) return;
+        const data = event.data || {};
+        if (data.type !== 'zephyr-transient-connect' || !data.token) return;
+        openConnectionModal({
+            mode: 'transient',
+            source: 'deeplink',
+            draft: data.draft || null,
+            transientToken: data.token,
+        });
+    });
+}
+
 async function init() {
     document.documentElement.dataset.appInit = 'start';
     try {
@@ -6289,7 +6549,16 @@ async function init() {
         const me = await api('/api/auth/me');
         document.documentElement.dataset.appInitAuth = 'ok';
         if (me.mustChangePassword) { location.href = '/'; return; }
+        ensureWorkspaceClientId();
+        notesController = createNotesController({
+            api,
+            toast,
+            openTransientFromUri,
+            $,
+            $$,
+        });
         bindEvents();
+        bindDeepLinkChannel();
         document.documentElement.dataset.appBindEvents = 'done';
         await loadSettings();
         document.documentElement.dataset.appLoadSettings = 'ok';
@@ -6298,8 +6567,12 @@ async function init() {
         await loadConnections();
         document.documentElement.dataset.appLoadConnections = 'ok';
         await loadNetwork();
+        // Deep Link hand-off from /open (token only — never the raw URI).
+        handleTransientHash();
         document.documentElement.dataset.appReady = '1';
         window.__zephyrAppReady = true;
+        window.openConnectionModal = openConnectionModal;
+        window.openTransientFromUri = openTransientFromUri;
     } catch (err) {
         console.error('[app-init]', err);
         document.documentElement.dataset.appInitError = err?.message || String(err || 'unknown');

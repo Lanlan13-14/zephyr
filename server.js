@@ -33,6 +33,10 @@ const { Authz, CAP, HttpError } = require('./authz');
 const { ResourceService } = require('./resource-service');
 const { SharingService } = require('./sharing-service');
 const { UserService } = require('./user-service');
+const { WorkspaceService } = require('./workspace-service');
+const { UserSettingsService } = require('./user-settings-service');
+const { NotesService } = require('./notes-service');
+const { DeepLinkService } = require('./deeplink-service');
 const secretCrypto = require('./secret-crypto');
 const { handleEditorLspConnection } = require('./editor-lsp-server');
 const { getAppVersion } = require('./version');
@@ -286,6 +290,11 @@ const authz = new Authz(storage.rawDb(), { getUserById: (id) => storage.getUserB
 const resourceService = new ResourceService(storage, authz);
 const sharingService = new SharingService(authz, storage, resourceService);
 const userService = new UserService(storage, () => sessionStore, authz, hashPassword);
+const workspaceService = new WorkspaceService(storage.rawDb(), { resources: resourceService });
+const userSettingsService = new UserSettingsService(storage.rawDb(), storage);
+const notesService = new NotesService(storage.rawDb(), authz);
+const deepLinkService = new DeepLinkService(storage.rawDb());
+setInterval(() => { try { deepLinkService.gc(); } catch {} }, 5 * 60 * 1000).unref();
 
 function reopenStorage() {
     storage.close();
@@ -306,6 +315,10 @@ function rebuildAuthServices() {
     Object.assign(resourceService, new ResourceService(storage, authz));
     Object.assign(sharingService, new SharingService(authz, storage, resourceService));
     Object.assign(userService, new UserService(storage, () => sessionStore, authz, hashPassword));
+    Object.assign(workspaceService, new WorkspaceService(storage.rawDb(), { resources: resourceService }));
+    Object.assign(userSettingsService, new UserSettingsService(storage.rawDb(), storage));
+    Object.assign(notesService, new NotesService(storage.rawDb(), authz));
+    Object.assign(deepLinkService, new DeepLinkService(storage.rawDb()));
 }
 
 function parseBackupKeyFile(buffer) {
@@ -1888,6 +1901,10 @@ app.get('/api/me/bootstrap', requireUser, (req, res) => {
     const user = storage.getUserById(req.user.userId);
     const connections = resourceService.listConnections(req.user);
     const shared = sharingService.listSharedWithMe(req.user, { resourceType: 'connection' });
+    const clientId = String(req.query.clientId || '').slice(0, 80);
+    const workspaces = clientId
+        ? workspaceService.list(req.user.userId, { clientId })
+        : workspaceService.list(req.user.userId).slice(0, 10);
     res.json({
         user: {
             userId: user.userId,
@@ -1898,6 +1915,8 @@ app.get('/api/me/bootstrap', requireUser, (req, res) => {
             totpEnabled: !!user.totpEnabled,
         },
         instanceId: INSTANCE_ID,
+        settings: userSettingsService.effective(req.user),
+        workspaces,
         resources: {
             connections: connections.length,
             sharedConnections: shared.length,
@@ -1906,6 +1925,194 @@ app.get('/api/me/bootstrap', requireUser, (req, res) => {
             aiEnabled: !!storage.getSettings().ai?.enabled,
         },
     });
+});
+
+/* ─── Personal settings (FREEZE plan §15) ─── */
+app.get('/api/me/settings', requireUser, (req, res) => {
+    res.json({ settings: userSettingsService.effective(req.user), overrides: userSettingsService.getUserOverrides(req.user.userId) });
+});
+
+app.put('/api/me/settings', requireUser, (req, res) => {
+    try {
+        const overrides = userSettingsService.putUserOverrides(req.user.userId, req.body || {});
+        res.json({ ok: true, overrides, settings: userSettingsService.effective(req.user) });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+/* ─── Workspaces (FREEZE plan §14) ─── */
+app.get('/api/me/workspaces', requireUser, (req, res) => {
+    const clientId = req.query.clientId ? String(req.query.clientId) : null;
+    res.json({ workspaces: workspaceService.list(req.user.userId, { clientId }) });
+});
+
+app.get('/api/me/workspaces/:id', requireUser, (req, res) => {
+    try {
+        res.json({ workspace: workspaceService.get(req.user.userId, req.params.id) });
+    } catch (err) {
+        handleServiceError(res, err, 404);
+    }
+});
+
+app.put('/api/me/workspaces/:id', requireUser, (req, res) => {
+    try {
+        const body = req.body || {};
+        const workspace = workspaceService.put(req.user, {
+            workspaceId: req.params.id === 'new' ? undefined : req.params.id,
+            clientId: body.clientId,
+            name: body.name,
+            state: body.state,
+            expectedRevision: body.expectedRevision,
+        });
+        res.json({ workspace });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/me/workspaces/:id/restore', requireUser, (req, res) => {
+    try {
+        res.json(workspaceService.restore(req.user, req.params.id));
+    } catch (err) {
+        handleServiceError(res, err, 404);
+    }
+});
+
+app.delete('/api/me/workspaces/:id', requireUser, (req, res) => {
+    try {
+        workspaceService.delete(req.user.userId, req.params.id);
+        res.json({ ok: true });
+    } catch (err) {
+        handleServiceError(res, err, 404);
+    }
+});
+
+/* ─── Notes (FREEZE plan §6) ─── */
+app.get('/api/notes', requireUser, (req, res) => {
+    try {
+        res.json(notesService.list(req.user, {
+            q: req.query.q,
+            group: req.query.group,
+            tag: req.query.tag,
+            connectionId: req.query.connectionId,
+            limit: req.query.limit,
+            offset: req.query.offset,
+            trash: req.query.trash === '1' || req.query.trash === 'true',
+        }));
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.get('/api/notes/groups', requireUser, (req, res) => {
+    res.json({ groups: notesService.groups(req.user) });
+});
+
+app.post('/api/notes', requireUser, (req, res) => {
+    try {
+        res.json({ note: notesService.create(req.user, req.body || {}) });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.get('/api/notes/:id', requireUser, (req, res) => {
+    try {
+        res.json({ note: notesService.get(req.user, req.params.id) });
+    } catch (err) {
+        handleServiceError(res, err, 404);
+    }
+});
+
+app.put('/api/notes/:id', requireUser, (req, res) => {
+    try {
+        res.json({ note: notesService.update(req.user, req.params.id, req.body || {}) });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.delete('/api/notes/:id', requireUser, (req, res) => {
+    try {
+        notesService.delete(req.user, req.params.id);
+        res.json({ ok: true });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/notes/:id/restore', requireUser, (req, res) => {
+    try {
+        res.json({ note: notesService.restore(req.user, req.params.id) });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/notes/import-markdown', requireUser, (req, res) => {
+    try {
+        res.json({ note: notesService.importMarkdown(req.user, req.body || {}) });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.get('/api/notes/:id/export.md', requireUser, (req, res) => {
+    try {
+        const file = notesService.exportMarkdown(req.user, req.params.id);
+        res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${file.filename.replace(/"/g, '')}"`);
+        res.send(file.content);
+    } catch (err) {
+        handleServiceError(res, err, 404);
+    }
+});
+
+/* ─── Deep Link prepare/test (FREEZE plan §5) ─── */
+app.post('/api/deeplinks/prepare', requireUser, (req, res) => {
+    try {
+        res.setHeader('Cache-Control', 'no-store');
+        const result = deepLinkService.prepare(req.user, req.body?.uri);
+        res.json(result);
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.get('/api/deeplinks/:token', requireUser, (req, res) => {
+    try {
+        res.setHeader('Cache-Control', 'no-store');
+        res.json(deepLinkService.peek(req.user, req.params.token));
+    } catch (err) {
+        handleServiceError(res, err, 404);
+    }
+});
+
+app.post('/api/deeplinks/:token/test', requireUser, async (req, res) => {
+    try {
+        res.setHeader('Cache-Control', 'no-store');
+        const { draft, credential } = deepLinkService.forTest(req.user, req.params.token, req.body?.overrides || {});
+        if (draft.telnetUnsupported || draft.protocol === 'TELNET') {
+            return res.status(400).json({ error: '当前版本尚未启用 Telnet transport', code: 'telnet_unsupported', retryable: false });
+        }
+        const conn = {
+            host: draft.host,
+            port: draft.port,
+            username: draft.username,
+            password: (req.body?.credentialOverride?.password) || credential?.password || '',
+            privateKey: req.body?.credentialOverride?.privateKey || '',
+            protocol: draft.protocol || 'SSH',
+            connectionMode: 'direct',
+        };
+        const timeoutMs = Math.max(1000, Math.min(Number(req.body?.timeoutSeconds || 10) * 1000, 30000));
+        const result = String(conn.protocol).toUpperCase() === 'SSH'
+            ? await testSSHConnection(conn, timeoutMs)
+            : { ok: false, code: 'unsupported_protocol', message: `不支持的协议：${conn.protocol}`, durationMs: 0 };
+        res.status(result.ok ? 200 : 400).json(result);
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
 });
 
 /* ─── Resource sharing (FREEZE plan §19.4) ─── */
@@ -4475,6 +4682,10 @@ app.get('/terminal.html', requirePageAuth, (req, res) => sendNoStorePage(res, 't
 app.get('/rdp.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'rdp.html'));
 app.get('/novnc.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'novnc.html'));
 app.get('/player.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'player.html'));
+/* Deep Link landing page may be hit while logged out; the page itself
+ * redirects to login and keeps the sensitive URI in sessionStorage. */
+app.get('/open', (req, res) => sendNoStorePage(res, 'open.html'));
+app.get('/open.html', (req, res) => sendNoStorePage(res, 'open.html'));
 app.use(express.static(path.join(__dirname, 'public'), {
     index: 'index.html',
     setHeaders: (res, filePath) => {
@@ -5227,7 +5438,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 try { ws.close(4001, 'app-session-expired'); } catch {}
                 return;
             }
-            const { host, port, username, password, privateKey, init, connectionId } = msg;
+            const { host, port, username, password, privateKey, init, connectionId, transientToken, transientOverrides } = msg;
             const requestedSessionId = String(msg.sessionId || msg.terminalSessionId || msg.tabId || connectionId || crypto.randomUUID());
             const existingSession = sshTerminalSessions.get(requestedSessionId);
             if (existingSession && !existingSession.closed) {
@@ -5251,13 +5462,36 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     remoteAddress: req.socket.remoteAddress,
                     hasConnectionId: !!connectionId,
                     connectionId: connectionId || '',
-                    fallbackTarget: connectionId ? '' : `${host || ''}:${port || 22}`,
+                    hasTransientToken: !!transientToken,
+                    fallbackTarget: connectionId || transientToken ? '' : `${host || ''}:${port || 22}`,
                     hasFallbackPassword: !!password && password !== '******',
                     hasFallbackPrivateKey: !!privateKey && privateKey !== '******',
                 });
                 let connectionSource = 'fallback-message';
                 let storeConnectionCount = null;
-                if (connectionId) {
+                if (transientToken) {
+                    /* One-time Deep Link credential (FREEZE plan §5.4): bound to
+                     * userId, atomically consumed, never written to assets. */
+                    const authUser = userFromAuthSession(req);
+                    if (!authUser) throw new Error('未登录或会话已过期');
+                    const consumed = deepLinkService.consume(authUser, String(transientToken), transientOverrides || {});
+                    if (consumed.draft.telnetUnsupported || String(consumed.draft.protocol || '').toUpperCase() === 'TELNET') {
+                        throw new Error('当前版本尚未启用 Telnet transport');
+                    }
+                    conn = {
+                        host: consumed.draft.host,
+                        port: consumed.draft.port || 22,
+                        username: consumed.draft.username || '',
+                        password: consumed.credential?.password || '',
+                        privateKey: '',
+                        protocol: consumed.draft.protocol || 'SSH',
+                        connectionMode: 'direct',
+                        name: consumed.draft.name || '',
+                        transient: true,
+                        autoOpenSftp: !!consumed.draft.autoOpenSftp,
+                    };
+                    connectionSource = 'deeplink-transient';
+                } else if (connectionId) {
                     /* Saved-connection connects go through the resource ACL
                      * (§19.4): `use` capability required, dependencies resolved
                      * server-side, secrets never leave the server. */

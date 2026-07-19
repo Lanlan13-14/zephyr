@@ -9823,6 +9823,10 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                 username: params.username,
                 password: params.password || '',
                 privateKey: params.privateKey || '',
+                // One-time Deep Link credential (FREEZE plan §5.4); server
+                // consumes it atomically and never writes it to assets.
+                transientToken: params.transientToken || '',
+                transientOverrides: params.transientOverrides || null,
                 init: params.init || '',
                 cols: initialSize.cols,
                 rows: initialSize.rows

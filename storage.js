@@ -376,6 +376,51 @@ function init({ hashPassword }) {
         );
         CREATE INDEX IF NOT EXISTS idx_audit_events_time ON audit_events(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_audit_events_actor ON audit_events(actor_user_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS workspaces (
+            workspace_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            client_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            state_json TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, client_id, workspace_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_workspaces_user_client ON workspaces(user_id, client_id, updated_at DESC);
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, key)
+        );
+        CREATE TABLE IF NOT EXISTS notes (
+            note_id TEXT PRIMARY KEY,
+            owner_user_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
+            group_path TEXT NOT NULL DEFAULT '',
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            linked_connection_ids_json TEXT NOT NULL DEFAULT '[]',
+            sort_order REAL,
+            revision INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            deleted_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_notes_owner_updated ON notes(owner_user_id, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_notes_owner_group ON notes(owner_user_id, group_path);
+        CREATE TABLE IF NOT EXISTS deeplink_tokens (
+            token_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            draft_json TEXT NOT NULL,
+            credential_enc TEXT,
+            expires_at INTEGER NOT NULL,
+            consumed_at INTEGER,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_deeplink_tokens_user ON deeplink_tokens(user_id, expires_at);
     `);
 
     addColumnIfMissing('users', 'email', 'TEXT');

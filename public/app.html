@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260710-rdp-touch1">
+    <link rel="stylesheet" href="style.css?v=20260719-notes-deeplink1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -15,6 +15,7 @@
                 <button class="nav-tab active" data-view="dashboard">仪表盘</button>
                 <button class="nav-tab" data-view="terminal">终端</button>
                 <button class="nav-tab" data-view="remote">远程执行</button>
+                <button class="nav-tab" data-view="notes">笔记</button>
                 <button class="nav-tab nav-tab-ai force-hidden" id="aiNavTab" data-view="ai">AI</button>
                 <button class="nav-tab" data-view="settings">设置</button>
             </nav>
@@ -64,6 +65,84 @@
                     </form>
                 </div>
                 <div class="remote-results" id="remoteResults"></div>
+            </section>
+
+            <section class="view notes-view" id="view-notes" aria-label="笔记工作区">
+                <div class="section-head notes-section-head">
+                    <div>
+                        <p class="eyebrow">Notes</p>
+                        <h1>笔记</h1>
+                    </div>
+                    <div class="notes-head-actions">
+                        <button type="button" class="btn-sm" id="notesImportBtn" title="导入 Markdown">导入</button>
+                        <button type="button" class="btn-sm" id="notesExportBtn" title="导出当前笔记">导出</button>
+                        <button class="btn add-btn" id="notesNewBtn" type="button">＋ 新建笔记</button>
+                    </div>
+                </div>
+                <div class="notes-workspace" id="notesWorkspace">
+                    <aside class="notes-groups" id="notesGroups" aria-label="笔记分组">
+                        <button type="button" class="notes-group-item active" data-group="__all">全部笔记 <span class="notes-group-count" id="notesCountAll">0</span></button>
+                        <button type="button" class="notes-group-item" data-group="">未分组 <span class="notes-group-count" id="notesCountUngrouped">0</span></button>
+                        <button type="button" class="notes-group-item" data-group="__trash">回收站 <span class="notes-group-count" id="notesCountTrash">0</span></button>
+                        <div class="notes-groups-divider"></div>
+                        <div id="notesGroupTree" class="notes-group-tree"></div>
+                        <button type="button" class="notes-group-new" id="notesNewGroupBtn">＋ 新建分组</button>
+                    </aside>
+                    <section class="notes-list-pane" aria-label="笔记列表">
+                        <div class="notes-list-toolbar">
+                            <input class="search-input" id="notesSearchInput" placeholder="搜索标题、正文、标签…" autocomplete="off">
+                            <select id="notesTagFilter"><option value="all">全部标签</option></select>
+                        </div>
+                        <div class="notes-list" id="notesList" role="listbox" aria-label="笔记"></div>
+                        <div class="notes-list-empty empty-state force-hidden" id="notesListEmpty">还没有笔记。点击右上角新建一条。</div>
+                    </section>
+                    <section class="notes-editor-pane" id="notesEditorPane" aria-label="笔记编辑器">
+                        <div class="notes-editor-empty empty-state" id="notesEditorEmpty">
+                            <div class="empty-card">
+                                <h2>选择或新建笔记</h2>
+                                <p>笔记默认私有，可关联连接，并在权限允许时供 AI 按需读写。</p>
+                            </div>
+                        </div>
+                        <div class="notes-editor force-hidden" id="notesEditor">
+                            <div class="notes-editor-head">
+                                <input class="notes-title-input" id="notesTitleInput" placeholder="标题" maxlength="200" aria-label="笔记标题">
+                                <div class="notes-editor-meta">
+                                    <span class="notes-save-state" id="notesSaveState" aria-live="polite">已保存</span>
+                                    <div class="notes-mode-switch" role="tablist" aria-label="编辑模式">
+                                        <button type="button" class="notes-mode-btn active" data-notes-mode="edit" role="tab" aria-selected="true">编辑</button>
+                                        <button type="button" class="notes-mode-btn" data-notes-mode="split" role="tab" aria-selected="false">分屏</button>
+                                        <button type="button" class="notes-mode-btn" data-notes-mode="preview" role="tab" aria-selected="false">预览</button>
+                                    </div>
+                                    <button type="button" class="btn-sm" id="notesLinkConnBtn" title="关联连接">关联</button>
+                                    <button type="button" class="btn-sm danger" id="notesDeleteBtn" title="删除笔记">删除</button>
+                                </div>
+                            </div>
+                            <div class="notes-toolbar" id="notesToolbar" aria-label="Markdown 工具栏">
+                                <button type="button" data-md="h2" title="标题">H</button>
+                                <button type="button" data-md="bold" title="粗体"><strong>B</strong></button>
+                                <button type="button" data-md="italic" title="斜体"><em>I</em></button>
+                                <button type="button" data-md="strike" title="删除线"><s>S</s></button>
+                                <button type="button" data-md="code" title="行内代码">`</button>
+                                <button type="button" data-md="codeblock" title="代码块">{ }</button>
+                                <button type="button" data-md="link" title="链接">🔗</button>
+                                <button type="button" data-md="quote" title="引用">“</button>
+                                <button type="button" data-md="ul" title="无序列表">•</button>
+                                <button type="button" data-md="ol" title="有序列表">1.</button>
+                                <button type="button" data-md="task" title="任务列表">☑</button>
+                            </div>
+                            <div class="notes-tags-row">
+                                <input id="notesTagsInput" class="search-input" placeholder="标签，逗号分隔" autocomplete="off" aria-label="标签">
+                                <input id="notesGroupInput" class="search-input" placeholder="分组路径，如 ops/runbooks" autocomplete="off" aria-label="分组">
+                            </div>
+                            <div class="notes-body" id="notesBody">
+                                <textarea id="notesContentInput" class="notes-content-input" spellcheck="false" aria-label="Markdown 正文" placeholder="支持 Markdown。不要在笔记中保存密码、私钥或 token。"></textarea>
+                                <article class="notes-preview force-hidden" id="notesPreview" aria-label="预览"></article>
+                            </div>
+                            <div class="notes-security-hint">不要在笔记中保存密码、私钥或 token。预览会转义 HTML 并限制链接协议。</div>
+                        </div>
+                    </section>
+                </div>
+                <input type="file" id="notesImportFile" accept=".md,text/markdown,text/plain" class="force-hidden" aria-hidden="true">
             </section>
 
             <section class="view" id="view-ai">
@@ -422,9 +501,15 @@
     </div>
 
     <div class="modal-backdrop" id="connectionModal" aria-hidden="true">
-        <form class="connection-modal" id="connectionForm">
+        <form class="connection-modal" id="connectionForm" data-mode="create">
             <div class="modal-head"><h2 id="modalTitle">添加服务器</h2><button type="button" class="icon-btn" id="closeModalBtn">✕</button></div>
+            <div class="transient-connection-banner force-hidden" id="transientConnectionBanner" role="status">
+                <strong>临时连接</strong>
+                <span>· 本次参数不会保存到主机库</span>
+            </div>
+            <div class="transient-credential-state force-hidden" id="transientCredentialState">已载入一次性凭据</div>
             <input type="hidden" id="connectionId">
+            <input type="hidden" id="transientToken">
             <div class="form-row"><div class="form-group"><label>名称</label><input id="connName" required></div><div class="form-group port-group"><label>协议</label><select id="connProtocol"><option>SSH</option><option>RDP</option><option>VNC</option></select></div></div>
             <div class="form-row"><div class="form-group"><label>IP / 主机</label><input id="connHost" required></div><div class="form-group port-group"><label>端口</label><input id="connPort" type="number" value="22" min="1" max="65535"></div></div>
             <div class="form-group"><label>用户名</label><input id="connUsername" required></div>
@@ -477,12 +562,18 @@
                 </div>
             </section>
             <div class="form-group"><label>备注（支持 Markdown）</label><textarea id="connRemark" placeholder="例如：**生产环境**\n`docker ps`"></textarea></div>
-            <div class="modal-actions"><button type="button" class="btn" id="testConnectionBtn">测试连接</button><span class="connection-test-latency" id="connectionTestLatency" aria-live="polite"></span><button type="button" class="btn" id="cancelModalBtn">取消</button><button class="btn btn-primary" type="submit">保存</button></div>
+            <div class="modal-actions" id="connectionModalActions">
+                <button type="button" class="btn" id="testConnectionBtn">测试连接</button>
+                <span class="connection-test-latency" id="connectionTestLatency" aria-live="polite"></span>
+                <button type="button" class="btn connection-action-normal" id="cancelModalBtn">取消</button>
+                <button class="btn btn-primary connection-action-normal" type="submit" id="saveConnectionBtn">保存</button>
+                <button type="button" class="btn btn-primary connection-action-transient force-hidden" id="connectTransientBtn">连接</button>
+            </div>
         </form>
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260711-worker-gpu-default1" type="module"></script>
+    <script src="app.js?v=20260719-notes-deeplink1" type="module"></script>
     <script src="vendor/zephyr-anim/zephyr-anim-init.js?v=20260709-minimal" type="module"></script>
 </body>
 </html>
