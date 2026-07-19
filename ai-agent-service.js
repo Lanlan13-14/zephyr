@@ -2164,17 +2164,52 @@ function registerAiRoutes(app, deps) {
     app.get('/api/ai/status', requireUser, (req, res) => {
         const rawAi = deps.storage.getSettings().ai || {};
         const policy = aiPolicy ? aiPolicy.policyFor(req.user) : { mode: 'admin_shared' };
-        // Admin sees raw provider keys for management; non-admin gets
-        // sanitized providers through the policy service (§16.2).
-        let providers;
-        if (req.user.role === 'admin') {
-            providers = (Array.isArray(rawAi.providers) ? rawAi.providers : []).map((p) => ({ ...p }));
-        } else {
-            const sanitized = safeAiSettings(rawAi);
-            providers = (sanitized.providers || []).map((p) => aiPolicy ? aiPolicy.sanitizeProviderForUser(p, req.user) : p);
-        }
+        const providers = deps.aiProviderService
+            ? deps.aiProviderService.listVisible(req.user)
+            : (safeAiSettings(rawAi).providers || []);
         const ai = safeAiSettings(rawAi);
         res.json({ ai: { ...ai, providers }, pending: pendingActions.size, policy });
+    });
+
+    app.get('/api/ai/providers', requireUser, (req, res) => {
+        if (!deps.aiProviderService) return res.json({ providers: [] });
+        res.json({ providers: deps.aiProviderService.listVisible(req.user) });
+    });
+
+    app.get('/api/ai/share-targets', requireUser, (req, res) => {
+        const users = deps.storage.listUsers()
+            .filter((u) => u.status === 'active' && u.userId !== req.user.userId)
+            .map((u) => ({ userId: u.userId, username: u.username, role: u.role, isSuperAdmin: !!u.isSuperAdmin }));
+        res.json({ users });
+    });
+
+    app.post('/api/ai/providers', requireUser, (req, res) => {
+        try {
+            if (!deps.aiProviderService) throw new Error('AI Provider 服务不可用');
+            res.json({ provider: deps.aiProviderService.create(req.user, req.body || {}) });
+        } catch (err) { handleServiceError(res, err, 400); }
+    });
+
+    app.patch('/api/ai/providers/:id', requireUser, (req, res) => {
+        try {
+            if (!deps.aiProviderService) throw new Error('AI Provider 服务不可用');
+            res.json({ provider: deps.aiProviderService.update(req.user, req.params.id, req.body || {}) });
+        } catch (err) { handleServiceError(res, err, 400); }
+    });
+
+    app.put('/api/ai/providers/:id/shares', requireUser, (req, res) => {
+        try {
+            if (!deps.aiProviderService) throw new Error('AI Provider 服务不可用');
+            res.json({ provider: deps.aiProviderService.share(req.user, req.params.id, req.body || {}) });
+        } catch (err) { handleServiceError(res, err, 400); }
+    });
+
+    app.delete('/api/ai/providers/:id', requireUser, (req, res) => {
+        try {
+            if (!deps.aiProviderService) throw new Error('AI Provider 服务不可用');
+            deps.aiProviderService.remove(req.user, req.params.id);
+            res.json({ ok: true });
+        } catch (err) { handleServiceError(res, err, 400); }
     });
 
     app.get('/api/ai/browser/screenshots/:name', requireUser, (req, res) => {
@@ -2190,9 +2225,10 @@ function registerAiRoutes(app, deps) {
         try {
             const ai = deps.storage.getSettings().ai || {};
             const providerId = String(req.body?.providerId || '').trim();
-            // Resolve provider through policy (own vs admin-shared)
             let provider;
-            if (aiPolicy) {
+            if (deps.aiProviderService) {
+                provider = deps.aiProviderService.resolveForUse(req.user, providerId || null).provider;
+            } else if (aiPolicy) {
                 const resolved = aiPolicy.resolveProvider(req.user, providerId || null, null);
                 provider = resolved.provider;
             } else {
@@ -2222,9 +2258,13 @@ function registerAiRoutes(app, deps) {
                 const policy = aiPolicy.policyFor(req.user);
                 if (policy.mode === 'disabled') return res.status(403).json({ error: 'AI 助理未启用', code: 'ai_disabled' });
             }
-            // Provider resolution through policy (own vs admin-shared)
             let provider, model;
-            if (aiPolicy) {
+            if (deps.aiProviderService) {
+                const resolved = deps.aiProviderService.resolveForUse(req.user, req.body?.providerId || null, req.body?.model || null);
+                provider = resolved.provider;
+                model = resolved.model;
+                if (!model) throw new Error('未配置默认模型');
+            } else if (aiPolicy) {
                 const resolved = aiPolicy.resolveProvider(req.user, req.body?.providerId || null, req.body?.model || null);
                 provider = resolved.provider;
                 model = resolved.model || selectProvider(ai, req.body || {}).model;
@@ -2337,13 +2377,16 @@ function registerAiRoutes(app, deps) {
         try {
             if (typeof deps.verifySensitiveAccess !== 'function') return res.status(403).json({ error: '敏感信息验证不可用' });
             const auth = deps.verifySensitiveAccess(req, req.body?.secret);
+            if (deps.aiProviderService) {
+                const provider = deps.aiProviderService.getOwned(req.user.userId, req.params.id, { includeSecret: true });
+                deps.addActivity?.(`查看自己的 AI Provider API Key：${provider.name || provider.id}`, req.user.userId);
+                return res.json({ providerId: provider.id, apiKey: provider.apiKey || '', hasApiKey: !!provider.apiKey });
+            }
             const ai = deps.storage.getSettings().ai || {};
             const provider = (Array.isArray(ai.providers) ? ai.providers : []).find((p) => p.id === req.params.id);
             if (!provider) return res.status(404).json({ error: '模型供应商不存在' });
-            deps.addActivity?.(`查看 AI Provider API Key：${provider.name || provider.id}`);
-            console.info('[ai-secret-open] reveal provider api key', { providerId: provider.id, name: provider.name, hasApiKey: !!provider.apiKey, authMethod: auth.method });
             res.json({ providerId: provider.id, apiKey: provider.apiKey || '', hasApiKey: !!provider.apiKey });
-        } catch (err) { res.status(403).json({ error: publicError(err) }); }
+        } catch (err) { res.status(err?.status || 403).json({ error: publicError(err), code: err?.code || '' }); }
     });
 
     app.post('/api/ai/tools/run', requireUser, async (req, res) => {

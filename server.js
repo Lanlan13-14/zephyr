@@ -39,6 +39,7 @@ const { NotesService } = require('./notes-service');
 const { DeepLinkService } = require('./deeplink-service');
 const { WorkerBridge } = require('./worker-bridge');
 const { AiPolicyService } = require('./ai-policy');
+const { AiProviderService } = require('./ai-provider-service');
 const secretCrypto = require('./secret-crypto');
 const { handleEditorLspConnection } = require('./editor-lsp-server');
 const { getAppVersion } = require('./version');
@@ -307,6 +308,7 @@ const workerBridge = new WorkerBridge({
     authz,
 });
 const aiPolicyService = new AiPolicyService(storage.rawDb(), { storage, userSettings: userSettingsService });
+const aiProviderService = new AiProviderService(storage.rawDb(), { storage, secretCrypto });
 setInterval(() => { try { deepLinkService.gc(); } catch {} }, 5 * 60 * 1000).unref();
 
 function reopenStorage() {
@@ -334,6 +336,7 @@ function rebuildAuthServices() {
     Object.assign(deepLinkService, new DeepLinkService(storage.rawDb()));
     Object.assign(workerBridge, new WorkerBridge({ storage, resources: resourceService, deepLink: deepLinkService, authz }));
     Object.assign(aiPolicyService, new AiPolicyService(storage.rawDb(), { storage, userSettings: userSettingsService }));
+    Object.assign(aiProviderService, new AiProviderService(storage.rawDb(), { storage, secretCrypto }));
 }
 
 function parseBackupKeyFile(buffer) {
@@ -2793,6 +2796,7 @@ registerAiRoutes(app, {
     authz,
     resourceService,
     aiPolicyService,
+    aiProviderService,
     userSettingsService,
     notesService,
     readJSON,

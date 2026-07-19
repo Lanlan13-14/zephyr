@@ -11321,6 +11321,12 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 .agent-token-actions .inline-field { display: inline-flex; gap: 6px; align-items: center; color: var(--text-secondary); font-size: 13px; }
 .agent-token-actions .inline-field input { width: 78px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
 
+.ai-provider-share-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--surface) 92%, var(--bg)); }
+.ai-provider-share-targets { max-height: 180px; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; }
+.ai-provider-share-user { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; }
+.ai-provider-share-user small { color: var(--text-secondary); }
+@media (hover: hover) and (pointer: fine) { .ai-provider-share-user:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); } }
+
 /* ─── Admin user management (§19.3) ─── */
 .admin-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
 .admin-add-btn { display: inline-flex; align-items: center; gap: 6px; }

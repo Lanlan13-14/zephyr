@@ -17,6 +17,8 @@ document.documentElement.dataset.appModule = 'loaded';
 let connections = [], activities = [], proxies = [], jumpHosts = [], sshKeys = [], settings = {};
 let zephyrSharedClipboard = { type: '', text: '', files: [], sourceTabId: '', sourcePage: '', updatedAt: 0 };
 let aiSettingsState = null;
+let aiProviderShareTargetsState = [];
+let aiProviderSelectedUserIds = new Set();
 let aiChatSessions = [];
 let aiCurrentSessionId = null;
 let aiPanelLayoutMenu = null;
@@ -3819,19 +3821,20 @@ async function saveAiSettings(e) {
     renderAiSettingsForm();
     toast('AI 助理设置已保存');
 }
-function openAiProviderModal(provider = null) {
+async function openAiProviderModal(provider = null) {
+    if (provider && provider.owned === false) { toast('共享 Provider 只能调用，不能编辑'); return; }
     const modal = $('#aiProviderModal');
     $('#aiProviderModalTitle').textContent = provider ? '编辑模型供应商' : '添加模型供应商';
     $('#aiProviderId').value = provider?.id || '';
     $('#aiProviderName').value = provider?.name || '';
     $('#aiProviderType').value = provider?.type || 'openai-compatible';
     $('#aiProviderBaseUrl').value = provider?.baseUrl || '';
-    $('#aiProviderApiKey').value = provider?.apiKey ? '******' : '';
-    $('#aiProviderApiMode').value = provider?.apiMode || 'auto';
-    $('#aiProviderModels').value = provider?.models || '';
+    $('#aiProviderApiKey').value = provider?.hasApiKey ? '******' : '';
+    $('#aiProviderApiMode').value = provider?.apiMode || provider?.options?.apiMode || 'auto';
+    $('#aiProviderModels').value = Array.isArray(provider?.models) ? provider.models.join('\n') : (provider?.models || '');
     $('#aiProviderDefaultModel').value = provider?.defaultModel || '';
     if ($('#aiProviderModelUserAgents')) $('#aiProviderModelUserAgents').value = provider?.modelUserAgents || '';
-    $('#aiProviderOrganization').value = provider?.organization || '';
+    $('#aiProviderOrganization').value = provider?.organization || provider?.options?.organization || '';
     $('#aiProviderExtraHeaders').value = provider?.extraHeaders || '';
     $('#aiProviderTemperature').value = provider?.options?.temperature ?? -1;
     $('#aiProviderTopP').value = provider?.options?.top_p ?? -1;
@@ -3844,8 +3847,25 @@ function openAiProviderModal(provider = null) {
     $('#aiProviderExtraJson').value = provider?.options?.extraJson || '';
     updateAiProviderModalHints();
     $('#aiProviderEnabled').checked = provider?.enabled !== false;
+    $('#aiProviderShareUsers').checked = !!provider?.shareWithUsers;
+    $('#aiProviderShareAdmins').checked = !!provider?.shareWithAdmins;
+    aiProviderSelectedUserIds = new Set(provider?.sharedUserIds || []);
+    aiProviderShareTargetsState = (await api('/api/ai/share-targets').catch(() => ({ users: [] }))).users || [];
+    renderAiProviderShareTargets();
+    $('#aiProviderShareSearch').oninput = renderAiProviderShareTargets;
     modal.classList.add('show', 'app-visible');
     modal.setAttribute('aria-hidden', 'false');
+}
+function renderAiProviderShareTargets() {
+    const root = $('#aiProviderShareTargets');
+    if (!root) return;
+    const q = String($('#aiProviderShareSearch')?.value || '').trim().toLowerCase();
+    const users = aiProviderShareTargetsState.filter((u) => !q || String(u.username || '').toLowerCase().includes(q));
+    root.innerHTML = users.length ? users.map((u) => `<label class="check-line ai-provider-share-user"><input type="checkbox" data-ai-share-user="${escapeHtml(u.userId)}" ${aiProviderSelectedUserIds.has(u.userId) ? 'checked' : ''}><span>${escapeHtml(u.username)}</span><small>${u.role === 'admin' ? '管理员' : '普通用户'}</small></label>`).join('') : '<span class="muted">没有匹配用户</span>';
+    root.querySelectorAll('[data-ai-share-user]').forEach((input) => input.addEventListener('change', () => {
+        if (input.checked) aiProviderSelectedUserIds.add(input.dataset.aiShareUser);
+        else aiProviderSelectedUserIds.delete(input.dataset.aiShareUser);
+    }));
 }
 function closeAiProviderModal() {
     const modal = $('#aiProviderModal');
@@ -3854,6 +3874,52 @@ function closeAiProviderModal() {
 }
 async function saveAiProvider(e) {
     e.preventDefault();
+    const existingId = $('#aiProviderId').value || '';
+    const providerTypeValue = $('#aiProviderType').value;
+    const apiKeyValue = $('#aiProviderApiKey').value;
+    const payload = {
+        name: $('#aiProviderName').value.trim() || '未命名供应商',
+        type: providerTypeValue,
+        enabled: $('#aiProviderEnabled').checked,
+        baseUrl: $('#aiProviderBaseUrl').value.trim(),
+        apiMode: ['openai-compatible', 'openai'].includes(providerTypeValue) ? ($('#aiProviderApiMode').value || 'auto') : 'native',
+        models: $('#aiProviderModels').value,
+        defaultModel: $('#aiProviderDefaultModel').value.trim(),
+        modelUserAgents: $('#aiProviderModelUserAgents')?.value.trim() || '',
+        organization: $('#aiProviderOrganization').value.trim(),
+        extraHeaders: $('#aiProviderExtraHeaders').value.trim(),
+        options: {
+            temperature: Number($('#aiProviderTemperature').value),
+            top_p: Number($('#aiProviderTopP').value),
+            max_tokens: Number($('#aiProviderMaxTokens').value) || 4096,
+            max_output_tokens: Number($('#aiProviderMaxTokens').value) || 4096,
+            reasoning_effort: $('#aiProviderReasoningEffort').value,
+            use_previous_response_id: !!$('#aiProviderUsePreviousResponse')?.checked,
+            context: { windowTokens: Number($('#aiProviderContextWindow')?.value) || undefined },
+            presence_penalty: Number($('#aiProviderPresencePenalty').value) || 0,
+            frequency_penalty: Number($('#aiProviderFrequencyPenalty').value) || 0,
+            extraJson: $('#aiProviderExtraJson').value.trim(),
+        },
+        shareWithUsers: !!$('#aiProviderShareUsers').checked,
+        shareWithAdmins: !!$('#aiProviderShareAdmins').checked,
+        sharedUserIds: Array.from(aiProviderSelectedUserIds),
+    };
+    if (apiKeyValue && apiKeyValue !== '******') payload.apiKey = apiKeyValue;
+    const result = existingId
+        ? await api(`/api/ai/providers/${encodeURIComponent(existingId)}`, { method: 'PATCH', body: JSON.stringify(payload) })
+        : await api('/api/ai/providers', { method: 'POST', body: JSON.stringify(payload) });
+    const savedId = result.provider.id;
+    const visible = await api('/api/ai/providers');
+    settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
+    aiSettingsState = normalizeAiSettings(settings.ai);
+    closeAiProviderModal();
+    renderAiSettingsForm();
+    const shouldAutoFetchModels = !aiModelNames(result.provider).length && result.provider.enabled !== false && (result.provider.hasApiKey || !!payload.apiKey);
+    if (shouldAutoFetchModels) {
+        toast('模型供应商已保存，正在获取模型...');
+        await fetchAiModelsForProvider(savedId);
+    } else toast('模型供应商已保存');
+    return;
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     const id = $('#aiProviderId').value || `provider-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const providerTypeValue = $('#aiProviderType').value;
@@ -3909,8 +3975,14 @@ function renderAiProviderList() {
     list.innerHTML = ai.providers.length ? ai.providers.map((p) => {
         const models = aiModelNames(p);
         const modelText = p.defaultModel || models[0] || (p.modelsPending ? '可点击获取模型' : '未获取模型');
-        return `<div class="ai-provider-item" data-provider-id="${escapeHtml(p.id)}"><div><strong>${escapeHtml(p.name || '未命名供应商')}</strong><span>${escapeHtml(p.type || 'openai-compatible')} · ${escapeHtml(p.apiMode || 'auto')} · ${p.enabled === false ? '已停用' : '已启用'} · ${escapeHtml(modelText)}</span><code>${escapeHtml(p.baseUrl || '默认 API 地址')}</code></div><button class="tool-btn" data-ai-fetch-provider-models="${escapeHtml(p.id)}">获取模型</button><button class="tool-btn" data-ai-reveal-provider-key="${escapeHtml(p.id)}">查看 Key</button><button class="tool-btn" data-ai-edit-provider="${escapeHtml(p.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-provider="${escapeHtml(p.id)}">删除</button></div>`;
-    }).join('') : '<p class="empty-state">暂无模型供应商。支持 OpenAI Chat/Responses API、OpenAI 兼容、Anthropic、Gemini，以及自定义 API 地址。</p>';
+        const owned = p.owned !== false;
+        const sharedLabels = [];
+        if (p.shareWithUsers) sharedLabels.push('所有用户');
+        if (p.shareWithAdmins) sharedLabels.push('所有管理员');
+        if (Array.isArray(p.sharedUserIds) && p.sharedUserIds.length) sharedLabels.push(`指定用户 ${p.sharedUserIds.length}`);
+        const source = owned ? '我的 Provider' : `由 ${p.ownerUsername || '其他用户'} 共享`;
+        return `<div class="ai-provider-item" data-provider-id="${escapeHtml(p.id)}"><div><strong>${escapeHtml(p.name || '未命名供应商')}</strong><span>${escapeHtml(p.type || 'openai-compatible')} · ${p.enabled === false ? '已停用' : '已启用'} · ${escapeHtml(modelText)} · ${escapeHtml(source)}${sharedLabels.length ? ` · 共享：${escapeHtml(sharedLabels.join('、'))}` : ''}</span><code>${escapeHtml(p.baseUrl || '默认 API 地址')}</code></div><button class="tool-btn" data-ai-fetch-provider-models="${escapeHtml(p.id)}">获取模型</button>${owned ? `<button class="tool-btn" data-ai-reveal-provider-key="${escapeHtml(p.id)}">查看 Key</button><button class="tool-btn" data-ai-edit-provider="${escapeHtml(p.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-provider="${escapeHtml(p.id)}">删除</button>` : '<span class="muted">仅可调用</span>'}</div>`;
+    }).join('') : '<p class="empty-state">暂无可用模型供应商。创建自己的 Provider，或让其他用户共享给你。</p>';
 }
 async function fetchAiModelsForProvider(id = '') {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
@@ -3935,13 +4007,12 @@ async function fetchAiModelsForProvider(id = '') {
         const uniqueNames = Array.from(new Set(names));
         if (!uniqueNames.length) return toast('没有获取到模型');
         if (id) {
-            const idx = ai.providers.findIndex((p) => p.id === id);
-            if (idx >= 0) {
-                ai.providers[idx] = { ...ai.providers[idx], models: uniqueNames.join('\n'), defaultModel: ai.providers[idx].defaultModel || uniqueNames[0], modelsPending: false };
-                if (ai.defaultProviderId === id && !ai.defaultModel) ai.defaultModel = uniqueNames[0];
-                settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
-                renderAiSettingsForm();
-            }
+            if (provider.owned === false) return toast(`已获取 ${uniqueNames.length} 个模型（共享 Provider 不能修改）`);
+            await api(`/api/ai/providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ models: uniqueNames, defaultModel: provider.defaultModel || uniqueNames[0] }) });
+            const visible = await api('/api/ai/providers');
+            settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
+            aiSettingsState = normalizeAiSettings(settings.ai);
+            renderAiSettingsForm();
         } else {
             $('#aiProviderModels').value = uniqueNames.join('\n');
             if (!$('#aiProviderDefaultModel').value) $('#aiProviderDefaultModel').value = uniqueNames[0] || '';
@@ -3952,10 +4023,10 @@ async function fetchAiModelsForProvider(id = '') {
 
 async function deleteAiProvider(id) {
     if (!confirm('删除该模型供应商？')) return;
-    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    ai.providers = ai.providers.filter((p) => p.id !== id);
-    if (ai.defaultProviderId === id) ai.defaultProviderId = ai.providers[0]?.id || '';
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
+    await api(`/api/ai/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const visible = await api('/api/ai/providers');
+    settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
+    aiSettingsState = normalizeAiSettings(settings.ai);
     renderAiSettingsForm();
     toast('模型供应商已删除');
 }
@@ -5887,6 +5958,10 @@ async function loadSettings() {
     settings = await api('/api/settings').catch(() => ({}));
     const personal = await api('/api/me/settings').catch(() => null);
     if (personal?.settings?.notes) settings.notes = { ...(settings.notes || {}), ...personal.settings.notes };
+    const aiProvidersData = await api('/api/ai/providers').catch(() => null);
+    if (aiProvidersData?.providers) {
+        settings.ai = { ...(settings.ai || {}), providers: aiProvidersData.providers };
+    }
     const sec = settings.security || {}, cap = settings.captcha || {}, mail = settings.mail || {}, beian = settings.beian || {};
     $('#versionText').textContent = settings.version || '--'; $('#icpInput').value = beian.icp ?? settings.icp ?? ''; $('#icpUrlInput').value = beian.icpUrl ?? settings.icpUrl ?? ''; $('#policeInput').value = beian.policeBeian ?? settings.policeBeian ?? ''; $('#policeUrlInput').value = beian.policeBeianUrl ?? settings.policeBeianUrl ?? ''; $('#showBeianInput').checked = (beian.show ?? settings.showBeian) !== false;
     $('#ipWhitelistEnabled').checked = !!sec.ipWhitelistEnabled; $('#ipWhitelist').value = sec.ipWhitelist || ''; $('#bruteForceEnabled').checked = sec.bruteForceEnabled !== false; $('#bruteForceMaxFailures').value = sec.bruteForceMaxFailures || 5; $('#bruteForceBanMinutes').value = sec.bruteForceBanMinutes || 15;

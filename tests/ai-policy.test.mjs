@@ -19,6 +19,7 @@ before(async () => {
     const boot = await server.bootstrapAdmin('admin-ai-pass');
     adminCookie = boot.cookie;
     adminId = (await server.api(adminCookie, 'GET', '/api/auth/me')).body.user.userId;
+    await server.api(adminCookie, 'PUT', '/api/settings', { ai: { enabled: true, permissions: { webSearch: true, webFetch: true, browser: true, remoteExecute: true, fileRead: true, fileWrite: true, codeEdit: true, memory: true, notesRead: true, notesWrite: true, env: true } } });
 
     const a = await server.api(adminCookie, 'POST', '/api/admin/users', { username: 'ai-alice', password: 'a-pass-1', role: 'user' });
     aliceId = a.body.user.userId;
@@ -37,26 +38,31 @@ after(async () => {
     await server.cleanup();
 });
 
-test('AI status returns policy and sanitized providers for non-admin', async () => {
-    // Admin configures an AI provider with an API key
-    await server.api(adminCookie, 'PUT', '/api/settings', {
-        ai: {
-            enabled: true,
-            providers: [{ id: 'p1', name: 'Test', type: 'openai', baseUrl: 'http://localhost:1111', apiKey: 'secret-key-xyz', enabled: true, models: ['gpt-4'] }],
-        },
+test('AI status returns owned provider metadata and never leaks keys', async () => {
+    const created = await server.api(adminCookie, 'POST', '/api/ai/providers', {
+        name: 'Test', type: 'openai-compatible', baseUrl: 'http://localhost:1111', apiKey: 'secret-key-xyz', enabled: true, models: ['gpt-4'], defaultModel: 'gpt-4',
     });
+    assert.equal(created.status, 200);
+    const providerId = created.body.provider.id;
 
     const adminStatus = await server.api(adminCookie, 'GET', '/api/ai/status');
     assert.equal(adminStatus.status, 200);
-    const adminProvider = adminStatus.body.ai.providers[0];
-    assert.equal(adminProvider.apiKey, 'secret-key-xyz', 'admin sees the real key');
+    const adminProvider = adminStatus.body.ai.providers.find((p) => p.id === providerId);
+    assert.equal(adminProvider.owned, true);
+    assert.equal(adminProvider.hasApiKey, true);
+    assert.equal(Object.hasOwn(adminProvider, 'apiKey'), false, 'owner list never echoes the key');
 
+    const alicePrivate = await server.api(aliceCookie, 'GET', '/api/ai/status');
+    assert.equal(alicePrivate.status, 200);
+    assert.equal(alicePrivate.body.ai.providers.some((p) => p.id === providerId), false, 'private provider is invisible');
+
+    await server.api(adminCookie, 'PUT', `/api/ai/providers/${providerId}/shares`, { sharedUserIds: [aliceId] });
     const aliceStatus = await server.api(aliceCookie, 'GET', '/api/ai/status');
-    assert.equal(aliceStatus.status, 200);
     assert.ok(aliceStatus.body.policy, 'policy returned');
-    const aliceProvider = aliceStatus.body.ai.providers[0];
-    assert.equal(aliceProvider.apiKey, '', 'non-admin must not see the API key');
-    assert.equal(aliceProvider.hasApiKey, true, 'non-admin sees hasApiKey flag');
+    const aliceProvider = aliceStatus.body.ai.providers.find((p) => p.id === providerId);
+    assert.equal(aliceProvider.owned, false);
+    assert.equal(aliceProvider.hasApiKey, true);
+    assert.equal(Object.hasOwn(aliceProvider, 'apiKey'), false, 'shared user never receives apiKey');
 });
 
 test('AI tools/run list_connections only returns own connections', async () => {

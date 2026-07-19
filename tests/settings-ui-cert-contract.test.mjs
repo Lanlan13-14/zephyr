@@ -31,3 +31,12 @@ test('custom TLS certificate paths and data volume are configurable', () => {
   assert.match(docker, /VOLUME \["\/app\/data"\]/);
   assert.match(docker, /ENV ZEPHYR_DATA_DIR=\/app\/data/);
 });
+test('AI Provider UI exposes all-user, all-admin and multi-user sharing', () => {
+  assert.match(html, /id="aiProviderShareUsers"/);
+  assert.match(html, /id="aiProviderShareAdmins"/);
+  assert.match(html, /id="aiProviderShareTargets"/);
+  assert.match(js, /\/api\/ai\/share-targets/);
+  assert.match(js, /sharedUserIds:\s*Array\.from\(aiProviderSelectedUserIds\)/);
+  assert.match(js, /shareWithUsers:\s*!!\$\('#aiProviderShareUsers'\)\.checked/);
+  assert.match(js, /shareWithAdmins:\s*!!\$\('#aiProviderShareAdmins'\)\.checked/);
+});
