@@ -3760,6 +3760,8 @@ function renderAiSettingsForm() {
     $('#aiPermFileWrite').checked = p.fileWrite !== false;
     $('#aiPermCodeEdit').checked = p.codeEdit !== false;
     $('#aiPermMemory').checked = p.memory !== false;
+    $('#aiPermNotesRead').checked = p.notesRead !== false;
+    $('#aiPermNotesWrite').checked = p.notesWrite !== false;
     $('#aiPermEnv').checked = p.env !== false;
     $('#aiMemoryEnabled').checked = ai.memory?.enabled !== false;
     $('#aiMemoryMaxItems').value = ai.memory?.maxItems ?? 500;
@@ -3801,6 +3803,8 @@ function collectAiSettingsForm() {
             fileWrite: $('#aiPermFileWrite').checked,
             codeEdit: $('#aiPermCodeEdit').checked,
             memory: $('#aiPermMemory').checked,
+            notesRead: $('#aiPermNotesRead').checked,
+            notesWrite: $('#aiPermNotesWrite').checked,
             env: $('#aiPermEnv').checked,
         },
         planner: { enabled: $('#aiPlannerEnabled').checked, requirePlanBeforeTools: $('#aiRequirePlanBeforeTools').checked },
@@ -5880,7 +5884,10 @@ function renderRemoteServers() { const ssh = connections.filter((c) => c.protoco
 async function remoteExecute(e) { e.preventDefault(); const ids = $$('#remoteServerList input:checked').map((i) => i.value); try { $('#remoteResults').innerHTML = '<div class="empty-card">执行中...</div>'; const data = await api('/api/remote-execute', { method: 'POST', body: JSON.stringify({ connectionIds: ids, command: $('#remoteCommand').value, timeoutSeconds: Number($('#remoteTimeout').value) || 30 }) }); $('#remoteResults').innerHTML = data.results.map((r) => `<article class="result-card ${r.success ? 'ok' : 'fail'}"><h3>${escapeHtml(r.name)} <span>${escapeHtml(r.status)} · ${r.durationMs}ms</span></h3>${r.error ? `<p class="error-text">${escapeHtml(r.error)}</p>` : ''}<pre>${escapeHtml(r.stdout || '')}</pre>${r.stderr ? `<pre class="stderr">${escapeHtml(r.stderr)}</pre>` : ''}</article>`).join(''); await loadConnections(); } catch (err) { toast(err.message); } }
 
 async function loadSettings() {
-    settings = await api('/api/settings').catch(() => ({})); const sec = settings.security || {}, cap = settings.captcha || {}, mail = settings.mail || {}, beian = settings.beian || {};
+    settings = await api('/api/settings').catch(() => ({}));
+    const personal = await api('/api/me/settings').catch(() => null);
+    if (personal?.settings?.notes) settings.notes = { ...(settings.notes || {}), ...personal.settings.notes };
+    const sec = settings.security || {}, cap = settings.captcha || {}, mail = settings.mail || {}, beian = settings.beian || {};
     $('#versionText').textContent = settings.version || '--'; $('#icpInput').value = beian.icp ?? settings.icp ?? ''; $('#icpUrlInput').value = beian.icpUrl ?? settings.icpUrl ?? ''; $('#policeInput').value = beian.policeBeian ?? settings.policeBeian ?? ''; $('#policeUrlInput').value = beian.policeBeianUrl ?? settings.policeBeianUrl ?? ''; $('#showBeianInput').checked = (beian.show ?? settings.showBeian) !== false;
     $('#ipWhitelistEnabled').checked = !!sec.ipWhitelistEnabled; $('#ipWhitelist').value = sec.ipWhitelist || ''; $('#bruteForceEnabled').checked = sec.bruteForceEnabled !== false; $('#bruteForceMaxFailures').value = sec.bruteForceMaxFailures || 5; $('#bruteForceBanMinutes').value = sec.bruteForceBanMinutes || 15;
     $('#captchaEnabled').checked = !!cap.enabled; $('#captchaProvider').value = cap.provider || 'turnstile'; $('#captchaSiteKey').value = cap.siteKey || cap.tencentCaptchaAppId || cap.aliyunCaptchaId || cap.aliyunSceneId || ''; $('#captchaSecretKey').value = cap.secretKey || cap.tencentAppSecretKey || cap.aliyunAccessKeySecret || '';
@@ -5911,9 +5918,10 @@ function renderNotesToggle() {
 async function saveNotesSettings(e) {
     e.preventDefault();
     const enabled = document.getElementById('notesEnabledInput')?.checked || false;
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ notes: { enabled } }) });
+    const result = await api('/api/me/settings', { method: 'PUT', body: JSON.stringify({ 'notes.enabled': enabled }) });
+    settings.notes = { ...(settings.notes || {}), enabled: !!result?.settings?.notes?.enabled };
     renderNotesToggle();
-    toast(enabled ? '笔记功能已开启' : '笔记功能已关闭');
+    toast(enabled ? '已为当前用户开启笔记功能' : '已为当前用户关闭笔记功能');
 }
 async function saveBeian(e) { e.preventDefault(); settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ beian: { icp: $('#icpInput').value, icpUrl: $('#icpUrlInput').value, policeBeian: $('#policeInput').value, policeBeianUrl: $('#policeUrlInput').value, show: $('#showBeianInput').checked } }) }); toast('备案信息已保存'); }
 async function loadSecurityStatus() { securityStatus = await api('/api/security/status').catch(() => ({ user: {}, passkeys: [] })); $('#profileUsername').value = securityStatus.user.username || ''; $('#profileEmail').value = securityStatus.user.email || ''; renderTotp(); renderPasskeys(); }
@@ -6606,8 +6614,10 @@ async function loadAdminUsers() {
         const me = await api('/api/auth/me');
         myIdentity = { userId: me.user?.userId || '', role: me.user?.role || 'user', isSuperAdmin: !!me.user?.isSuperAdmin };
     } catch { myIdentity = { userId: '', role: 'user', isSuperAdmin: false }; }
-    if (myIdentity.role !== 'admin') { panel.classList.add('force-hidden'); return; }
+    const adminTab = document.getElementById('adminSettingsTab');
+    if (myIdentity.role !== 'admin') { panel.classList.add('force-hidden'); adminTab?.classList.add('force-hidden'); return; }
     panel.classList.remove('force-hidden');
+    adminTab?.classList.remove('force-hidden');
     // Inject SVG icons into title and add button
     const title = document.getElementById('adminPanelTitle');
     if (title && !title.dataset.iconInjected) { title.innerHTML = adminIcon('shield', 18) + ' 多用户管理'; title.dataset.iconInjected = '1'; }

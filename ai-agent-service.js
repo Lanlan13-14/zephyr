@@ -588,13 +588,15 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'snippet_delete', description: '删除代码片段。', parameters: { type: 'object', properties: { snippetId: { type: 'string' } }, required: ['snippetId'] } } });
     // Note tools (FREEZE plan §6.5 / §10): AI searches first, reads on demand,
     // never auto-injects all note content into context.
-    if (p.notesRead !== false && p.notesWrite !== false) {
-        tools.push({ type: 'function', function: { name: 'note_list', description: '列出当前用户的笔记。返回标题、分组、标签、更新时间和摘要（前 200 字），不返回全文。先搜索再按需 note_get 读取正文。', parameters: { type: 'object', properties: { group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' }, offset: { type: 'number' }, trash: { type: 'boolean' } } } } });
-        tools.push({ type: 'function', function: { name: 'note_search', description: '按关键词搜索笔记标题、正文和标签。返回匹配笔记的摘要，不返回全文。', parameters: { type: 'object', properties: { query: { type: 'string' }, group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] } } });
-        tools.push({ type: 'function', function: { name: 'note_get', description: '读取一条笔记的完整内容（标题、正文、标签、分组、关联连接）。需要 noteId；用 note_list 或 note_search 找到 ID。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
-        tools.push({ type: 'function', function: { name: 'note_create', description: '创建一条新笔记。标题、正文、标签、分组均可选；可关联连接 ID。写操作需要确认。', parameters: { type: 'object', properties: { title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } } }, required: ['title'] } } });
-        tools.push({ type: 'function', function: { name: 'note_update', description: '修改已有笔记。需要 noteId 和 expectedRevision；未传字段保持不变。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' }, title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } }, expectedRevision: { type: 'number' } }, required: ['noteId'] } } });
-        tools.push({ type: 'function', function: { name: 'note_delete', description: '删除笔记（软删除，移入回收站）。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
+    if (p.notesRead !== false) {
+        tools.push({ type: 'function', function: { name: 'note_list', description: '列出当前用户可读的笔记。返回标题、分组、标签、更新时间和摘要（前 200 字），不返回全文。先搜索再按需 note_get 读取正文。', parameters: { type: 'object', properties: { group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' }, offset: { type: 'number' }, trash: { type: 'boolean' } } } } });
+        tools.push({ type: 'function', function: { name: 'note_search', description: '按关键词搜索当前用户可读的笔记标题、正文和标签。返回匹配笔记的摘要，不返回全文。', parameters: { type: 'object', properties: { query: { type: 'string' }, group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] } } });
+        tools.push({ type: 'function', function: { name: 'note_get', description: '读取一条有权限笔记的完整内容（标题、正文、标签、分组、关联连接）。需要 noteId；用 note_list 或 note_search 找到 ID。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
+    }
+    if (p.notesWrite !== false) {
+        tools.push({ type: 'function', function: { name: 'note_create', description: '为当前用户创建一条新笔记。标题、正文、标签、分组均可选；可关联连接 ID。写操作需要确认。', parameters: { type: 'object', properties: { title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } } }, required: ['title'] } } });
+        tools.push({ type: 'function', function: { name: 'note_update', description: '修改当前用户拥有的笔记。需要 noteId 和 expectedRevision；未传字段保持不变。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' }, title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } }, expectedRevision: { type: 'number' } }, required: ['noteId'] } } });
+        tools.push({ type: 'function', function: { name: 'note_delete', description: '删除当前用户拥有的笔记（软删除，移入回收站）。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
     }
     tools.push({ type: 'function', function: { name: 'terminal_read_output', description: '读取用户当前 Zephyr SSH 终端输出快照（屏幕/scrollback 文本、当前输入框内容、连接信息）。当用户问“终端里显示什么/刚才命令输出/当前屏幕结果”时优先调用。', parameters: { type: 'object', properties: { tabId: { type: 'string' }, maxChars: { type: 'number' }, allVisible: { type: 'boolean' } } } } });
     tools.push({ type: 'function', function: { name: 'remote_desktop_screenshot', description: '实时读取用户当前 Zephyr RDP/VNC 远程桌面最新画面快照（JPEG 截图）。RDP/VNC 没有文本终端输出；当你需要确认刚才操作是否生效、页面是否加载完成、当前画面是什么时调用本工具。策略：先使用 ui_action 返回的 remoteDesktopScreenshot；若状态仍不确定，等待约 2 秒后再截图；允许必要的多次截图，但不要连续秒截或为了找按钮反复截图。', parameters: { type: 'object', properties: { tabId: { type: 'string' }, maxWidth: { type: 'number' } } } } });
@@ -1506,6 +1508,10 @@ async function maybeRequireConfirmation(toolName, args, ctx, run, deps) {
 async function executeAiTool(toolName, args = {}, ctx, deps) {
     const ai = deps.storage.getSettings().ai || {};
     const p = ai.permissions || {};
+    if (String(toolName || '').startsWith('note_') && deps.userSettingsService && ctx?.user) {
+        const effective = deps.userSettingsService.effective(ctx.user);
+        if (!effective?.notes?.enabled) throw new Error('当前用户未启用笔记功能');
+    }
     switch (toolName) {
         case 'list_connections':
             return { connections: getAllConnections(deps, ctx).map(connectionSummary) };
@@ -2019,6 +2025,8 @@ function normalizeAiSettingsInput(currentAi = {}, ai = {}) {
         fileWrite: permissionsIn.fileWrite !== false,
         codeEdit: permissionsIn.codeEdit !== false,
         memory: permissionsIn.memory !== false,
+        notesRead: permissionsIn.notesRead !== false,
+        notesWrite: permissionsIn.notesWrite !== false,
         env: permissionsIn.env !== false,
     };
     const plannerIn = { ...(currentAi.planner || {}), ...(Object.prototype.hasOwnProperty.call(partial, 'planner') ? (partial.planner || {}) : {}) };
@@ -2233,7 +2241,13 @@ function registerAiRoutes(app, deps) {
             let providerCalls = 0;
             const baseMessages = convertMessagesForProvider(req.body?.messages || [], buildSystemPrompt(ai, context, limits), limits);
             const contextStats = baseMessages._contextStats || {};
-            const tools = providerSupportsTools(provider) ? cachedToolDefinitions(ai) : [];
+            let tools = providerSupportsTools(provider) ? cachedToolDefinitions(ai) : [];
+            if (deps.userSettingsService && req.user) {
+                const effectiveUserSettings = deps.userSettingsService.effective(req.user);
+                if (!effectiveUserSettings?.notes?.enabled) {
+                    tools = tools.filter((t) => !String(t?.function?.name || '').startsWith('note_'));
+                }
+            }
             let messages = baseMessages;
             const toolResults = [];
             const maxToolRounds = toolRoundLimit(ai, provider);

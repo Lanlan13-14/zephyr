@@ -25,6 +25,7 @@ const USER_ALLOWED_KEYS = new Set([
     'terminal.smartbarOrder',
     'terminal.shortcutPlatform',
     'snippets',
+    'notes.enabled',
     'notes.editorMode',
     'notes.fontSize',
     'workspace.defaultView',

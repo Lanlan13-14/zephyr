@@ -128,6 +128,15 @@ class Authz {
         if (user.role === 'admin') {
             for (const cap of ADMIN_GOVERNANCE_CAPS) caps.add(cap);
         }
+        // Built-in visibility modes used by the connection sharing UI.
+        // Grant connect/use but never secret reveal, edit, share or delete.
+        const visibility = String(resource.visibility || '');
+        if (visibility === 'shared_users' || visibility === 'shared_all' || (visibility === 'shared_admins' && user.role === 'admin')) {
+            caps.add(CAP.DISCOVER);
+            caps.add(CAP.VIEW);
+            caps.add(CAP.USE);
+            caps.add(CAP.OBSERVE);
+        }
         const row = this.stmtGrantGet.get(resourceType, resourceId, 'user', user.userId);
         if (this._isGrantLive(row, this.now())) {
             for (const cap of normalizeCapabilities(JSON.parse(row.capabilities_json || '[]'))) caps.add(cap);
@@ -253,6 +262,10 @@ class Authz {
         for (const row of rows || []) {
             if (row.ownerUserId && row.ownerUserId === user.userId) out.add(row.id);
             else if (discoverable.has(row.id)) out.add(row.id);
+            else {
+                const vis = String(row.visibility || '');
+                if (vis === 'shared_users' || vis === 'shared_all' || (vis === 'shared_admins' && user.role === 'admin')) out.add(row.id);
+            }
         }
         return out;
     }

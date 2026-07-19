@@ -2505,6 +2505,8 @@ app.post('/api/connections', requireUser, (req, res) => {
         connectionMode: ['direct', 'proxy', 'jump'].includes(body.connectionMode) ? body.connectionMode : 'direct',
         proxyId: body.proxyId || null,
         jumpHostId: body.jumpHostId || null,
+        shareWithUsers: !!body.shareWithUsers,
+        shareWithAdmins: !!body.shareWithAdmins,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         lastConnectedAt: null,
@@ -2544,6 +2546,8 @@ app.put('/api/connections/:id', requireUser, (req, res) => {
             if (body.protocol !== undefined) conn.protocol = String(body.protocol).toUpperCase();
             if (body.tags !== undefined) conn.tags = Array.isArray(body.tags) ? body.tags.map(String).filter(Boolean) : String(body.tags || '').split(',').map((v) => v.trim()).filter(Boolean);
             if (body.sshKeyId !== undefined) conn.sshKeyId = String(body.sshKeyId || '');
+            if (body.shareWithUsers !== undefined) conn.shareWithUsers = !!body.shareWithUsers;
+            if (body.shareWithAdmins !== undefined) conn.shareWithAdmins = !!body.shareWithAdmins;
             applyConnectionRouteFields(conn, body);
             if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
             if (body.privateKey !== undefined && body.privateKey !== '******') conn.privateKey = String(body.privateKey || '');
@@ -2789,6 +2793,7 @@ registerAiRoutes(app, {
     authz,
     resourceService,
     aiPolicyService,
+    userSettingsService,
     notesService,
     readJSON,
     writeJSON,

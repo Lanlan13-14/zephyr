@@ -175,6 +175,8 @@
                         <button class="settings-tab" data-settings="data">数据管理</button>
                         <button class="settings-tab" data-settings="appearance">个性化设置</button>
                         <button class="settings-tab" data-settings="mail">邮件通知</button>
+                        <button class="settings-tab" data-settings="notes">笔记功能</button>
+                        <button class="settings-tab force-hidden" id="adminSettingsTab" data-settings="admin">多用户管理</button>
                         <button class="settings-tab" data-settings="about">关于</button>
                     </div>
                     <div class="settings-content">
@@ -362,6 +364,8 @@
                                     <label class="check-line"><input type="checkbox" id="aiPermFileWrite"> 远程文件写入</label>
                                     <label class="check-line"><input type="checkbox" id="aiPermCodeEdit"> 代码编辑/补全</label>
                                     <label class="check-line"><input type="checkbox" id="aiPermMemory"> 长期 Memory / 项目记忆</label>
+                                    <label class="check-line"><input type="checkbox" id="aiPermNotesRead"> 读取笔记</label>
+                                    <label class="check-line"><input type="checkbox" id="aiPermNotesWrite"> 创建、修改和删除笔记</label>
                                     <label class="check-line"><input type="checkbox" id="aiPermEnv"> AI 环境变量</label>
                                 </div>
                                 <h3>长期 Memory / 任务规划器</h3>

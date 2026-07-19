@@ -70,6 +70,8 @@ class ResourceService {
         copy.hasPrivateKey = Boolean(conn.privateKey);
         copy.owner = owned ? 'own' : 'shared';
         copy.capabilities = [...caps];
+        copy.shareWithUsers = conn.visibility === 'shared_users' || conn.visibility === 'shared_all';
+        copy.shareWithAdmins = conn.visibility === 'shared_admins' || conn.visibility === 'shared_all';
         if (!caps.has(CAP.REVEAL_SECRET)) {
             delete copy.ownerUserId; // do not leak owner identity fields to non-privileged viewers
         }
@@ -85,11 +87,14 @@ class ResourceService {
     }
 
     createConnection(user, data) {
+        const visibility = data.shareWithUsers
+            ? (data.shareWithAdmins ? 'shared_all' : 'shared_users')
+            : (data.shareWithAdmins ? 'shared_admins' : 'private');
         const conn = {
             ...data,
             ownerUserId: user.userId,
             createdByUserId: user.userId,
-            visibility: 'private',
+            visibility,
         };
         this._assertDependenciesUsable(user, conn);
         const saved = this.storage.insertConnection(conn);
@@ -104,7 +109,9 @@ class ResourceService {
         next.id = conn.id;
         next.ownerUserId = conn.ownerUserId;
         next.createdByUserId = conn.createdByUserId;
-        next.visibility = conn.visibility;
+        const users = next.shareWithUsers !== undefined ? !!next.shareWithUsers : (conn.visibility === 'shared_users' || conn.visibility === 'shared_all');
+        const admins = next.shareWithAdmins !== undefined ? !!next.shareWithAdmins : (conn.visibility === 'shared_admins' || conn.visibility === 'shared_all');
+        next.visibility = users ? (admins ? 'shared_all' : 'shared_users') : (admins ? 'shared_admins' : 'private');
         /* Route changes must not jump the connection onto dependencies the
          * editor may not use (§13.1). */
         this._assertDependenciesUsable(user, next);

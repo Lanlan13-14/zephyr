@@ -186,6 +186,9 @@ class UserService {
         const target = this.storage.getUserById(targetUserId);
         if (!target) throw new HttpError(404, 'user_not_found', '用户不存在');
         if (target.userId === actor.userId) throw new HttpError(400, 'cannot_transfer_to_self', '不能转移给自己');
+        if (target.role !== 'admin' || target.status !== 'active') {
+            throw new HttpError(400, 'target_must_be_active_admin', '超级管理员只能转让给另一名已启用的管理员');
+        }
         this.storage.updateUserById(targetUserId, { role: 'admin', isSuperAdmin: true });
         this.storage.updateUserById(actor.userId, { role: 'admin', isSuperAdmin: false });
         this.authz.audit({ actorUserId: actor.userId, targetUserId, action: 'user.transfer_super_admin', outcome: 'success' });
