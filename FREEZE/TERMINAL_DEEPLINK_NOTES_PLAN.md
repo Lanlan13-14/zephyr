@@ -1,10 +1,16 @@
-# Zephyr SSH 终端稳定性、会话可靠性、Deep Link 与 AI 笔记功能改造方案
+# Zephyr SSH 终端稳定性、会话可靠性、Deep Link、AI 笔记、多用户权限、协同与持久任务统一改造方案
 
 > [KNOWN] 审计基线：`Lanlan13-14/zephyr-ssh` `main` / `v1.1.447`，提交 `a2b917ed08a5645d1bc5d400946b2acb76934cdf`。  
 > [KNOWN] 对照基线：`@wterm/dom 0.1.9` / `@wterm/core 0.1.9` 实际发布包；`xtermjs/xterm.js` 提交 `8aab310366549d8d865bd8fc4bd509051f2bb2a1` 仅用于分析成熟终端的视口与重排原则；`binaricat/Netcatty` 提交 `56216dbf4779b31b83c170859e93cfe6e6b795b8` 用于 Deep Link 与笔记功能参考。  
 > [KNOWN] 产品约束：**继续使用 WTerm，不迁移到 xterm.js，不引入 xterm.js 运行时依赖。**  
 > [KNOWN] UI 约束：笔记必须有完整可操作 UI；Deep Link 必须有 UI，并复用现有添加连接窗口的视觉与表单组件。临时连接模式不保存资产，底部业务动作只保留“测试连接”和“连接”。  
 > [KNOWN] 审计日期：2026-07-11。  
+> [KNOWN · HIGH] 多用户整合补充审计基线：当前本地 `main` 提交 `80b98a1`；原技术审计的文件行号仍对应其声明的旧基线，实施前必须在目标提交上重新核对。
+>
+> [KNOWN · HIGH] 本文已把原独立多用户规格并入同一主文档；多用户、资源 ACL、工作区恢复和持久任务是 Deep Link、笔记、AI、终端与 Agent 能力的前置横切约束。
+>
+> [INFERRED · HIGH] 多用户默认安全边界：用户资源默认私有，管理员资源按 capability 共享，管理员不自动获得用户私有秘密，浏览器关闭只断开订阅而不取消持久任务。
+>
 > [KNOWN] 本文只给出修复与功能实施方案，没有修改业务源码、提交或推送。  
 > [INFERRED] 总体结论置信度：HIGH。
 
@@ -26,6 +32,10 @@
 4. [INFERRED] 登录会话改为 SQLite 持久化、散列 SID、滑动空闲 TTL 与绝对 TTL 双限制；WebSocket Upgrade 和首个 `connect` 消息共享同一份已验证身份。**置信度：HIGH。**
 5. [INFERRED] Deep Link 分成两层：Web 版实现 `https://<Zephyr>/open#...` 与可注册的 `web+zephyr:`；系统级 `ssh://`、`telnet://`、`jms://` 由原生壳接管。无论入口为何，最终都打开统一的“临时连接”UI，用户可检查/修改参数，只能“测试连接”或“连接”，不会保存到主机库。**置信度：HIGH。**
 6. [INFERRED] 笔记使用独立 SQLite 表，并提供与现有 Zephyr 一致的完整 UI：主导航入口、列表/分组/搜索、Markdown 编辑/预览、连接关联、导入导出；同时给 AI 增加 `note_list/search/get/create/update/delete` 工具。**置信度：HIGH。**
+7. [INFERRED · HIGH] 用户、认证会话、连接、代理、密钥、笔记、AI 资源、工作区、终端会话、Agent Token 和后台任务全部使用不可变 `userId` 归属，并通过统一 ACL 在服务端授权。**置信度：HIGH。**
+8. [INFERRED · HIGH] 工作区按 `userId + clientId + workspaceId` 保存；重新打开浏览器时只恢复当前用户仍有权访问的页面、标签和任务订阅，不重放危险输入或自动确认。**置信度：HIGH。**
+9. [INFERRED · HIGH] SSH/Codex 等长任务使用远端 tmux/持久 Agent 或独立 Worker；AI 长操作改为持久任务与事件流，不能继续绑定单次浏览器 `fetch`。**置信度：HIGH。**
+10. [INFERRED · HIGH] AI 支持 `disabled/admin_shared/self_managed/both` 四种用户策略；共享管理员 Provider 只授予调用权，不暴露 API Key。**置信度：HIGH。**
 
 ---
 
@@ -401,7 +411,7 @@ term.getBufferSnapshot(options): WTermBufferSnapshot;
 ```sql
 CREATE TABLE auth_sessions (
   token_hash TEXT PRIMARY KEY,
-  username TEXT NOT NULL,
+  user_id TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   last_seen_at INTEGER NOT NULL,
   idle_expires_at INTEGER NOT NULL,
@@ -412,7 +422,7 @@ CREATE TABLE auth_sessions (
   user_agent_hash TEXT,
   ip_prefix TEXT
 );
-CREATE INDEX idx_auth_sessions_user ON auth_sessions(username);
+CREATE INDEX idx_auth_sessions_user ON auth_sessions(user_id);
 CREATE INDEX idx_auth_sessions_expiry ON auth_sessions(idle_expires_at, absolute_expires_at);
 ```
 
@@ -629,7 +639,7 @@ POST /api/deeplinks/:token/test
 }
 ```
 
-- [INFERRED] token 与 Zephyr username 绑定，默认 60 秒过期；测试连接可在过期前重复使用但不会续期，正式 connect 原子领取并删除 token。**置信度：HIGH。**
+- [INFERRED] token 与 Zephyr `userId` 绑定，默认 60 秒过期；测试连接可在过期前重复使用但不会续期，正式 connect 原子领取并删除 token。**置信度：HIGH。**
 - [INFERRED] WS 服务端将领取到的凭据直接放入当前 SSH/Telnet session 内存，创建连接后清除中间对象；不得落入 `connections`、settings、activities 或输出 buffer。**置信度：HIGH。**
 - [INFERRED] 正式连接失败后不能复用已消费 token；客户端保留无敏感字段 draft，并请求用户重新打开链接或重新输入凭据。**置信度：HIGH。**
 - [INFERRED] 日志只记录 scheme、目标 host hash、成功/失败原因，不记录原始 URI、用户名、密码或 JMS token。**置信度：HIGH。**
@@ -683,7 +693,7 @@ POST /api/deeplinks/:token/test
 ```sql
 CREATE TABLE notes (
   id TEXT PRIMARY KEY,
-  username TEXT NOT NULL,
+  owner_user_id TEXT NOT NULL,
   title TEXT NOT NULL,
   content TEXT NOT NULL DEFAULT '',
   group_path TEXT NOT NULL DEFAULT '',
@@ -695,11 +705,11 @@ CREATE TABLE notes (
   updated_at INTEGER NOT NULL,
   deleted_at INTEGER
 );
-CREATE INDEX idx_notes_owner_updated ON notes(username, updated_at DESC);
-CREATE INDEX idx_notes_owner_group ON notes(username, group_path);
+CREATE INDEX idx_notes_owner_updated ON notes(owner_user_id, updated_at DESC);
+CREATE INDEX idx_notes_owner_group ON notes(owner_user_id, group_path);
 ```
 
-- [INFERRED] 所有 CRUD 必须按 `req.session.username` 过滤，不能只凭 note id。**置信度：HIGH。**
+- [INFERRED] 所有 CRUD 必须按认证主体的不可变 `userId` 和 note ACL 过滤，不能只凭 note id。**置信度：HIGH。**
 - [INFERRED] title 限 200 字符，content 建议限 1 MiB，tags/连接关联各限 100 项。**置信度：MED。**
 - [INFERRED] `revision` 用于乐观并发：更新携带 expectedRevision，不匹配返回 409。**置信度：HIGH。**
 - [INFERRED] 可选 FTS5 表用于标题、正文、标签全文搜索；不支持 FTS5 的构建回退到参数化 LIKE。**置信度：HIGH。**
@@ -1016,133 +1026,1129 @@ rdp-wasm/
 
 ---
 
-## 8. 分阶段实施顺序
+---
 
-## Phase 0：基线与可观测性
+## 8. 产品目标与最终行为
 
-- [INFERRED] 增加浏览器 E2E 基线：监控、终端输出/滚动/resize、登录重启恢复。**置信度：HIGH。**
-- [INFERRED] 为 WS 错误增加结构化 code，但先不改变 UI 行为。**置信度：HIGH。**
-- [INFERRED] 记录 terminal resize 次数、scroll action 次数、render 次数、stats duration 和 auth failure reason，不记录敏感数据。**置信度：HIGH。**
+### 8.1 用户要得到的行为
 
-## Phase 1：修会话持久化
+[INFERRED · HIGH] 用户 A 在设备 A 登录 Zephyr 后，可以打开自己的连接、管理员共享给他的连接、自己的笔记和 AI 任务；关闭浏览器后，重新登录同一账号时，系统只恢复属于该账号和该浏览器实例的工作区，不加载其他用户的标签、任务、聊天或私有资源。
 
-- [INFERRED] 先消除“随机重新登录”，因为后续大改和部署重启会频繁触发此问题。**置信度：HIGH。**
-- [INFERRED] 新建 auth_sessions、迁移 currentSession、统一 Upgrade 身份、前端错误分类。**置信度：HIGH。**
+[INFERRED · HIGH] 用户 B 登录同一 Zephyr 实例时，系统加载 B 自己的工作区和 B 有权访问的共享资源；B 不会因为使用同一服务器、同一浏览器设备或同一个管理员账号的资源而看到 A 的私有数据。
 
-## Phase 2：修监控闪烁和采集负载
+[INFERRED · HIGH] 浏览器关闭只应断开页面订阅，不应自动取消已经转交给持久任务执行器的 SSH、AI 或其他后台任务；用户回来后可以通过任务 ID 重新订阅输出和结果。
 
-- [INFERRED] 拆静态/动态采集，改显式 subscribe，前端稳定 DOM 和 Chart 实例。**置信度：HIGH。**
-- [INFERRED] 将 Chart.js 本地化并补监控 E2E。**置信度：HIGH。**
+[INFERRED · HIGH] 管理员可以控制用户 A 能否发现、连接、查看、输入、执行命令、使用文件传输或修改某个管理员资源；这些能力应按资源和操作分别授权，而不是只有一个“能用/不能用”开关。
 
-## Phase 3：固定并修复 Zephyr WTerm fork
+[INFERRED · HIGH] 用户 A 默认可以创建自己的 SSH/RDP/VNC 连接、代理、SSH 密钥、笔记和个人 AI 配置；这些资源默认仅 A 可见，不自动出现在管理员列表中。A 可以显式把资源或指定操作权限共享给管理员或其他用户。
 
-- [INFERRED] 将 `@wterm/dom/core 0.1.9` 固定到仓库 fork，先保持行为不变并建立可重复构建、upstream 基线测试和产物哈希检查。**置信度：HIGH。**
-- [INFERRED] 在 WTerm 内实现公开 viewport state/event、程序滚动抑制、精确 scroll bottom 和单次 render commit；Zephyr 页面改用公开 API。**置信度：HIGH。**
-- [INFERRED] 不引入 xterm.js，不增加双引擎设置，不保留迁移回退分支。**置信度：HIGH。**
+[INFERRED · HIGH] 用户可以修改自己的密码、绑定自己的邮箱、配置自己的 MFA/Passkey，并通过属于自己的邮箱完成密码找回；管理员可以执行账号管理和强制失效会话，但默认不能读取用户的旧密码、连接密码、私有 AI API Key 或私有笔记正文。
 
-## Phase 4：WTerm resize/reflow 修复并删除页面补丁
+[INFERRED · HIGH] 管理员配置的系统默认外观、平台安全策略和共享 AI 供应商，与用户自己的个性化设置、个人 AI 供应商和个人工作区分离。用户可以覆盖允许覆盖的页面配置，不会修改管理员页面或其他用户页面。
 
-- [INFERRED] 在 WTerm core 增加稳定 row id、ResizeDelta 和语义 anchor 映射，DOM Renderer 做离屏构建和原子替换。**置信度：HIGH。**
-- [INFERRED] 删除 Zephyr 页面六个私有 monkey patch、多阶段 timer、像素 scrollTop 恢复、PTY-only resize 和文本快照回灌。**置信度：HIGH。**
-- [INFERRED] 达到桌面/手机/alt-screen/长输出测试门禁后，更新固定 WTerm fork 版本并保持唯一引擎。**置信度：HIGH。**
+### 8.2 不能接受的实现
 
-## Phase 5：笔记存储、API 与完整 UI
+[INFERRED · HIGH] 不能只把 `username` 放进前端请求或 localStorage 就宣称完成隔离；服务端每一个 HTTP 路由、WebSocket upgrade、WebSocket 消息、后台任务、AI 工具调用、文件代理调用和导出接口都必须重新验证当前会话与资源 ACL。
 
-- [INFERRED] SQLite/API → 主导航笔记 view → 三栏桌面/分层手机布局 → CodeMirror 编辑/分屏/预览 → 搜索/分组/标签/连接关联 → 终端笔记侧窗 → 导入导出。**置信度：HIGH。**
-- [INFERRED] 完成所有主题视觉回归、移动端和可访问性测试后才视为功能交付；只有 API 不算完成。**置信度：HIGH。**
+[INFERRED · HIGH] 不能继续让所有用户共用一份全局 `connections`、`settings`、AI provider、Memory、notes 或活动日志，然后在前端按用户过滤；这种结构会造成越权读取和交叉修改。
 
-## Phase 6：AI 笔记工具
+[INFERRED · HIGH] 不能把关闭浏览器后的任务继续执行建立在浏览器 `fetch`、页面 JavaScript、单个 WebSocket 或 Node 进程内的临时 Map 上；页面和进程都可能消失。
 
-- [INFERRED] 增加读写权限、确认策略、工具定义、执行器、revision 冲突处理、前端 side effect 刷新和审计测试。**置信度：HIGH。**
+[INFERRED · HIGH] 不能把管理员角色等同于“自动拥有所有用户私有资源的明文秘密”。管理员需要平台治理能力，但私有资源的秘密读取必须是独立权限，并且默认关闭、显式确认、完整审计。
 
-## Phase 7：HTTPS Deep Link、临时连接 UI 与一次性凭据
+## 9. 当前代码基线与改造原因
 
-- [INFERRED] 先交付 SSH/JMS SSH/SFTP；所有入口必须打开复用现有添加连接窗口的 transient mode。**置信度：HIGH。**
-- [INFERRED] transient mode 底部只保留“测试连接”和“连接”，不会调用保存 API；凭据全程 transient。**置信度：HIGH。**
-- [INFERRED] 笔记内连接链接和 Web `web+zephyr:` 注册接入同一 parser 与临时连接 UI。**置信度：HIGH。**
+### 9.1 当前已经存在的基础
 
-## Phase 8：Telnet 与原生协议接管
+[KNOWN · HIGH] 当前项目已经使用 SQLite 存储用户、连接、设置、安全事件等部分数据，并保留了从旧 JSON 文件迁移的逻辑。
 
-- [INFERRED] Telnet transport 完成后开放 `telnet://`。**置信度：HIGH。**
-- [INFERRED] Android/桌面原生壳注册 `ssh/telnet/jms`，Web 版保持 HTTPS fallback。**置信度：HIGH。**
+[KNOWN · HIGH] 当前 `users` 表已经有用户名、密码哈希、邮箱、TOTP、登录失败和锁定字段；但现有用户模型还没有完整的不可变 `userId`、角色、状态、资源归属和通用 ACL 模型。
 
-## Phase 9：RDP 文件传输 Go WebSocket 重构
+[KNOWN · HIGH] 当前 Web 会话主要保存在 `server.js` 进程内的 `sessions` Map；有效 Cookie 对应的会话在进程重启或多实例分流时不能可靠恢复。
 
-- [INFERRED] 新增 `rdp-wasm/file_transfer.go`：Go WASM WebSocket 管理、二进制帧编解码、SAB 同步原语、多 requestId 并发。**置信度：HIGH。**
-- [INFERRED] 修改 `rdpefs.go` 的数据获取层，从 `js.Global().Call()` 改为调用 `file_transfer.go` 的同步接口；IRP 解析、drive 生命周期、NT status 映射保持不变。**置信度：HIGH。**
-- [INFERRED] 精简 `rdp-fs-provider.js`：删除 syncRpc/syncXHR/base64 编解码，仅保留 SSE agent 状态和 drive attach/detach。**置信度：HIGH。**
-- [INFERRED] 服务端新增 `file-transfer-ws.js` WebSocket 端点，使用二进制帧协议复用 `file-agent-manager.js` 的 Agent 连接池。**置信度：HIGH。**
-- [INFERRED] 优先实现服务端 Node.js 方案以减小改动；Go 独立 sidecar 方案作为后续优化。**置信度：HIGH。**
-- [INFERRED] 实现 4-8 并发 requestId 的流水线化；Agent 不支持时回退到串行但无 sync XHR 阻塞。**置信度：HIGH。**
-- [INFERRED] 性能测试：100MB 文件 LAN 环境下吞吐量达到 40 MB/s 以上，主线程不出现 Long Task。**置信度：HIGH。**
-- [INFERRED] 移动端 SAB/Atomics 可用性检测；不支持时回退到 sync XHR 路径。**置信度：HIGH。**
+[KNOWN · HIGH] 当前 SSH 活跃会话保存在进程内的 `sshTerminalSessions` Map；WebSocket 断开时已有 detach 逻辑，但该会话及其 SSH 连接不是跨进程持久任务。
+
+[KNOWN · HIGH] 当前 `public/app.js` 的终端标签、活动标签和布局数组主要是页面内存状态；SSH/RDP 参数还使用了按 tabId 命名的 `sessionStorage` 条目，因此不能作为跨关闭、跨账号的可靠工作区存储。
+
+[KNOWN · HIGH] 当前 AI 设置通过全局 settings 的 `ai` 对象保存 provider、skills、Memory、plans 和环境变量；当前代码没有按用户拆分这些对象，也没有完整的管理员 AI 授权层。
+
+[KNOWN · HIGH] 当前 `/api/ai/chat` 在请求或响应关闭时触发 AbortController；这意味着页面关闭会取消当前同步 AI 请求，而不是把它转为独立后台任务。
+
+[KNOWN · HIGH] 当前部分连接接口仍直接读取旧的 `connections.json`，而不是统一经过带用户过滤的 SQLite 资源服务；多用户改造前必须消除这种双数据源。
+
+[KNOWN · HIGH] 当前忘记密码流程使用第一个用户和全局管理员邮箱作为重置对象，不满足每个用户独立找回密码的要求。
+
+### 9.2 前述技术方案中尚未完成的相关能力
+
+[KNOWN · HIGH] 本文第 4–7 节将持久登录会话、WTerm 视口/resize 修复、监控订阅、HTTPS Deep Link、临时连接 UI、笔记 UI/AI 工具和 RDP 文件传输重构列为后续方案，而不是当前已完成能力。
+
+[INFERRED · HIGH] 多用户 ACL 必须先成为这些能力的横切基础；否则先按单用户实现，再补用户隔离，会导致 notes、Deep Link token、terminal session、AI task、Agent token 和 workspace 全部返工。
+
+[INFERRED · HIGH] 本文前述方案中的所有“持久化”对象都必须增加 `ownerUserId` 或等价的主体字段；所有“共享”对象都必须通过统一 ACL 服务计算有效权限；所有“自动恢复”对象都必须检查当前用户是否仍然有权访问。
+
+## 10. 术语、范围与默认决策
+
+### 10.1 术语
+
+[INFERRED · HIGH] **安装实例**指一套 Zephyr 服务、数据库和配置；本文不把不同安装实例之间的用户数据混合起来。
+
+[INFERRED · HIGH] **用户**指可以登录 Web UI 的人；每个用户有不可变 `userId`，用户名只是可修改的登录标识，不得作为资源外键。
+
+[INFERRED · HIGH] **管理员**指具有平台管理权限的用户角色；管理员权限和某个连接资源的秘密读取权限是两组不同能力。
+
+[INFERRED · HIGH] **资源**指连接、代理、SSH 密钥、跳板机、笔记、AI provider、AI 会话、终端会话、后台任务、Agent token、工作区和其他需要归属或授权的对象。
+
+[INFERRED · HIGH] **拥有者**指资源的 `ownerUserId` 对应用户；拥有者负责资源的普通编辑、删除和分享，除非平台策略另有明确限制。
+
+[INFERRED · HIGH] **共享**指通过 ACL 把某资源的一个或多个能力授予另一个用户；共享不转移所有权。
+
+[INFERRED · HIGH] **工作区**指某个用户在某个浏览器实例中的视图、终端标签、布局、选中的连接、AI 面板状态和待恢复订阅信息；工作区不包含密码、私钥、API Key 等秘密。
+
+[INFERRED · HIGH] **持久任务**指脱离当前浏览器请求后仍可运行、拥有任务 ID、状态、事件日志和退出结果的执行单元。
+
+[INFERRED · HIGH] **协同会话**指多个已授权用户同时观察或操作同一个终端/RDP/任务；协同会话必须区分观察权限和控制权限。
+
+### 10.2 默认决策
+
+| 项目 | 默认行为 |
+|---|---|
+| 新建普通用户 | [INFERRED · HIGH] 允许登录；默认不能看到任何管理员设备，不能使用 AI，不能创建资源，除非管理员策略开启。 |
+| 用户新建连接 | [INFERRED · HIGH] 归当前用户所有，默认私有，不显示给管理员或其他用户。 |
+| 管理员设备 | [INFERRED · HIGH] 归管理员所有，默认仅管理员可用；管理员通过 ACL 指定 A 可以做什么。 |
+| 用户分享给管理员 | [INFERRED · HIGH] 默认允许用户主动选择是否分享；管理员列表不会自动扫描用户私有设备。管理员可通过平台策略关闭该能力。 |
+| 管理员查看用户私有资源 | [INFERRED · HIGH] 默认不允许读取连接秘密、私有笔记正文、私有 AI 内容；管理员仍可禁用账号、撤销会话和执行平台级安全处置。 |
+| 页面恢复 | [INFERRED · HIGH] 按 `userId + clientId` 恢复；恢复 UI 和订阅，不自动重复执行危险动作。 |
+| 任务恢复 | [INFERRED · HIGH] 任务由服务端 Worker、远端 tmux/后台进程或其他持久执行器继续；浏览器只重新订阅。 |
+| AI | [INFERRED · HIGH] 默认关闭普通用户 AI；管理员可以授予管理员共享 AI、允许用户自带 AI，或两者同时允许。 |
+| 自定义 JavaScript | [INFERRED · HIGH] 普通用户默认关闭；若开放，必须在隔离沙箱或受限能力模型中运行，不能让用户脚本直接读取全站 Cookie、其他用户数据或管理员设置。 |
+
+### 10.3 范围
+
+[INFERRED · HIGH] 本规格覆盖账号与会话、资源归属、ACL 分享、工作区恢复、SSH/AI 持久任务、终端协同、个人设置、AI 权限、Deep Link、笔记、RDP Agent/文件传输和本文前述技术方案的权限接入。
+
+[INFERRED · MED] 本规格暂不要求多安装实例联邦登录、组织/部门层级、计费系统、跨实例资源复制或完整企业目录同步；这些可以在稳定的单实例用户/ACL模型上后续扩展。
+
+## 11. 用户、角色与账号生命周期
+
+### 11.1 角色模型
+
+| 角色 | 平台能力 | 资源默认范围 |
+|---|---|---|
+| `admin` | [INFERRED · HIGH] 管理用户、全局策略、系统默认配置、共享管理员资源、审计和平台运行状态。 | [INFERRED · HIGH] 自己拥有的资源；其他用户私有资源仅在显式 ACL 或 break-glass 策略下可见。 |
+| `user` | [INFERRED · HIGH] 使用被授予的资源，管理自己的资源、工作区、笔记、个人设置和被允许的 AI。 | [INFERRED · HIGH] 自己拥有的资源与显式共享资源。 |
+| `service` | [INFERRED · MED] 仅供 Agent/Worker 使用，不提供普通 Web 登录。 | [INFERRED · HIGH] 由任务或资源 ACL 限定的最小范围。 |
+
+[INFERRED · HIGH] 第一版可以继续保留一个初始 `admin` 账号，但数据库和授权代码应使用角色字段而不是硬编码用户名 `admin`；这样改名、增加第二管理员或迁移账号时不会破坏权限。
+
+[INFERRED · HIGH] 管理员用户的创建、删除、降级和最后一个管理员保护必须是事务操作；系统不得允许把最后一个可用管理员降级或删除后无法管理实例。
+
+### 11.2 用户状态
+
+[INFERRED · HIGH] 用户状态至少包括 `active`、`invited`、`suspended`、`deleted`；被暂停用户不能创建新会话，也不能继续建立新的 WebSocket/任务订阅。
+
+[INFERRED · HIGH] 暂停用户的后台任务默认继续或暂停应由管理员策略决定；安全默认是停止新的危险操作、保留已有任务日志、允许管理员处理任务，而不是静默删除数据。
+
+[INFERRED · HIGH] 删除用户必须先执行资源处置策略：转移给管理员、全部删除、保留为不可访问归档或逐项选择；不得因为删除账号而把资源无主地留在可访问列表中。
+
+### 11.3 密码、找回与 MFA
+
+[INFERRED · HIGH] 每个用户都有自己的密码哈希、邮箱和密码更新时间；密码修改接口只修改当前用户，不得再读取旧 JSON 文件或第一个用户。
+
+[INFERRED · HIGH] 忘记密码请求按用户名/邮箱匹配目标用户，但响应必须使用统一文案，避免泄露账号是否存在；验证码记录必须绑定 `userId`、邮箱、过期时间、使用状态和请求风控信息。
+
+[INFERRED · HIGH] 管理员可以为用户发起“发送重置邮件”“强制下次登录改密”“撤销全部会话”，但不能看到用户当前密码；管理员直接设置新密码时必须明确标记为管理员操作并强制用户下次登录改密。
+
+[INFERRED · HIGH] TOTP Secret、Passkey、公钥凭据和密码重置记录都必须按 `userId` 隔离；重命名用户名不能破坏凭据关联。
+
+[INFERRED · HIGH] 密码修改、重置、角色变化、账号暂停和管理员撤销会话都应使相关认证会话失效或重新验证，避免旧 Cookie 继续使用过期权限。
+
+## 12. 资源归属与统一 ACL
+
+### 12.1 资源归属原则
+
+[INFERRED · HIGH] 每个持久资源都必须有明确的 `ownerUserId`，或者明确标记为 `system` 资源；不能用“当前请求是谁”在读取时临时推断所有权。
+
+[INFERRED · HIGH] 资源 ID 使用随机 UUID/不可预测 ID；ID 本身不构成授权，服务端仍必须查询当前用户的有效 ACL。
+
+[INFERRED · HIGH] 资源列表接口默认只返回当前用户拥有或被授予 `discover` 权限的资源；搜索、排序、分页和导出也必须在过滤后的集合上执行。
+
+[INFERRED · HIGH] 资源删除、转移所有权、分享和修改 ACL 都必须在事务中检查拥有者、管理员策略和目标用户状态，防止并发请求绕过权限。
+
+### 12.2 需要纳入归属/ACL的资源
+
+| 资源 | 默认拥有者 | 需要的最小访问判断 |
+|---|---|---|
+| SSH/RDP/VNC 连接 | [INFERRED · HIGH] 创建者 | [INFERRED · HIGH] 发现、查看元数据、连接、终端控制、RDP 输入、SFTP、Docker、编辑、分享、删除、秘密读取分开判断。 |
+| 代理、SSH 密钥、跳板机 | [INFERRED · HIGH] 创建者 | [INFERRED · HIGH] 连接资源只能间接使用被授权的依赖，不得因知道 connectionId 自动获得依赖秘密。 |
+| 终端/远程桌面会话 | [INFERRED · HIGH] 启动者 | [INFERRED · HIGH] 观察、控制、共享控制、结束、读取输出分别判断。 |
+| 后台任务与任务事件 | [INFERRED · HIGH] 创建者 | [INFERRED · HIGH] 查看、订阅、暂停、取消、重试、确认和分享分别判断。 |
+| 笔记 | [INFERRED · HIGH] 创建者 | [INFERRED · HIGH] 读取、编辑、评论/协同、分享、删除分别判断。 |
+| AI Provider/API Key | [INFERRED · HIGH] 创建者或系统 | [INFERRED · HIGH] 使用权与查看/导出 API Key 永远分开；共享 provider 只向获授权用户发起服务端请求。 |
+| AI 对话、Memory、计划、环境变量 | [INFERRED · HIGH] 当前用户 | [INFERRED · HIGH] 按用户隔离；共享时只授予明确的读/写或执行能力。 |
+| 浏览器自动化会话/截图 | [INFERRED · HIGH] AI 任务拥有者 | [INFERRED · HIGH] 绑定 `userId + aiTaskId/conversationId`，其他用户不能用猜到的 session 名称访问。 |
+| Zephyr Agent Token/磁盘映射 | [INFERRED · HIGH] 创建者或被授权连接拥有者 | [INFERRED · HIGH] Token、Agent、RDP 会话和文件读写权限必须同时匹配。 |
+| 工作区、标签、布局、个人 snippets | [INFERRED · HIGH] 当前用户和 clientId | [INFERRED · HIGH] 不能被其他用户恢复或读取；管理员只能看到必要运行元数据。 |
+| 活动日志、审计日志 | [INFERRED · HIGH] 系统记录 | [INFERRED · HIGH] 普通用户只能看自己的可公开活动；管理员看平台审计，但敏感字段脱敏。 |
+
+### 12.3 权限原子项
+
+[INFERRED · HIGH] 统一 ACL 不应只存一个布尔值；建议使用以下能力集合，资源可以只授予其中一部分：
+
+```text
+resource.discover       出现在列表/搜索结果中
+resource.view           查看非秘密元数据
+resource.use            发起连接或使用 provider
+resource.observe        查看实时输出/画面/统计
+resource.control        发送终端输入、RDP 输入或任务控制指令
+resource.execute        执行远程命令/高风险工具
+resource.fileRead       读取远程文件
+resource.fileWrite      写入、删除或重命名远程文件
+resource.edit           修改资源配置
+resource.share          修改该资源的共享对象
+resource.delete         删除资源
+resource.revealSecret   查看密码、私钥、API Key 等明文秘密
+resource.administer     资源级强制处置或转移所有权
+```
+
+[INFERRED · HIGH] `resource.use` 不应自动包含 `resource.revealSecret`；服务端可以用加密保存的秘密代替用户发起连接，而不把秘密返回给浏览器。
+
+[INFERRED · HIGH] `resource.control` 不应自动包含 `resource.execute`；用户可能被允许观察和输入普通终端，但不允许 AI 或批量执行工具在该设备执行命令。
+
+### 12.4 权限档位
+
+| 档位 | 包含能力 | 适用场景 |
+|---|---|---|
+| `observer` | [INFERRED · HIGH] `discover/view/observe` | [INFERRED · HIGH] 只看设备信息、终端输出或远程桌面。 |
+| `operator` | [INFERRED · HIGH] `observer + use/control` | [INFERRED · HIGH] 可连接、输入和交互，但不能改资产配置。 |
+| `file-operator` | [INFERRED · HIGH] `operator + fileRead/fileWrite` | [INFERRED · HIGH] 允许文件管理或 RDP 文件映射。 |
+| `executor` | [INFERRED · HIGH] `operator + execute` | [INFERRED · HIGH] 允许远程命令/危险 AI 工具，仍受确认策略限制。 |
+| `editor` | [INFERRED · HIGH] `operator + edit` | [INFERRED · HIGH] 可修改连接参数，不自动获得秘密读取。 |
+| `manager` | [INFERRED · HIGH] 以上能力加 `share/delete` | [INFERRED · HIGH] 资源拥有者或被明确授权的管理员。 |
+
+[INFERRED · HIGH] UI 可以展示档位快捷选择，但数据库最终应保存展开后的 capability 集合或可审计的 policy version，避免以后修改档位定义时悄悄扩大旧授权。
+
+### 12.5 有效权限计算
+
+[INFERRED · HIGH] 一次操作的有效权限应按以下顺序计算：
+
+```text
+有效权限
+= 用户状态允许
+∩ 平台全局策略允许
+∩ 角色上限允许
+∩ 资源拥有权或 ACL 允许
+∩ 依赖资源 ACL 允许
+∩ 当前会话/任务状态允许
+∩ 操作安全确认条件满足
+```
+
+[INFERRED · HIGH] 任何一层拒绝都应在服务端返回结构化错误，例如 `forbidden_resource_control`、`forbidden_ai_remote_execute` 或 `resource_not_found_or_inaccessible`；对普通用户可把不存在和无权访问统一为 404，避免资源枚举。
+
+## 13. 管理员与普通用户的设备共享
+
+### 13.1 管理员设备共享给用户 A
+
+[INFERRED · HIGH] 管理员在“用户管理 → 用户 A → 资源授权”或连接详情的“共享”面板中选择设备、权限档位、有效期和是否允许协同。
+
+[INFERRED · HIGH] 管理员可以授予 A 只读、操作、文件操作、命令执行、编辑或管理权限；每项权限都应在 UI 显示实际影响，例如“允许发送终端输入”“允许 Docker 重启”“允许读取远程文件”。
+
+[INFERRED · HIGH] A 登录后在连接列表中看到“管理员共享”分组和资源来源；A 可以使用资源但不应看到管理员保存的密码、私钥、代理密码或 API Key 明文。
+
+[INFERRED · HIGH] 管理员撤销共享后，A 的新请求立即被拒绝；已打开的 WebSocket/协同会话应在短时间内收到权限撤销事件并按策略变为只读或关闭。
+
+[INFERRED · HIGH] 共享管理员设备所依赖的代理、跳板机和 SSH 密钥必须作为依赖授权一并解析；用户不能通过修改路由字段把连接跳转到未授权的代理或跳板机。
+
+### 13.2 用户 A 自己添加设备
+
+[INFERRED · HIGH] 当平台策略 `allowUserOwnedResources` 开启时，A 可以新建 SSH/RDP/VNC 连接；新资源的 `ownerUserId` 必须是 A 的不可变 `userId`。
+
+[INFERRED · HIGH] A 的资源默认 `visibility=private`，不会出现在管理员的普通连接列表、管理员 AI 的 `list_connections`、管理员活动摘要或其他用户搜索结果中。
+
+[INFERRED · HIGH] A 可以在资源分享面板选择“共享给管理员”“共享给指定用户”或“生成协同邀请”；默认选项必须是“不共享”。
+
+[INFERRED · HIGH] A 分享给管理员时可以只授予 `observe` 或 `use`，不必授予 `revealSecret`、`edit` 或 `delete`；管理员不能通过管理员角色自动扩大这项 ACL，除非启用并触发 break-glass 流程。
+
+[INFERRED · HIGH] A 删除自己的设备时，相关共享、协同会话、任务依赖和恢复条目必须进入一致的失效流程；已运行的远程任务是否继续由任务策略决定，但不能再创建新的连接操作。
+
+### 13.3 管理员对用户私有资源的治理边界
+
+[INFERRED · HIGH] 默认管理员可以执行以下平台治理动作：暂停账号、撤销会话、撤销共享、禁用 Agent Token、停止由该用户拥有的危险后台任务、查看资源数量/状态和审计元数据。
+
+[INFERRED · HIGH] 默认管理员不能执行以下读取动作：读取用户私有连接密码/私钥、读取私有 AI API Key、读取私有笔记正文、读取私有 AI 对话内容、接管用户私有终端输入。
+
+[INFERRED · MED] 可选的 break-glass 功能可以在系统设置中关闭；若开启，管理员必须填写原因、进行二次确认，系统记录操作者、目标用户、资源、字段、时间和结果，并尽量只授予一次性最小能力。
+
+[INFERRED · HIGH] 这是产品权限边界，不是依靠 UI 隐藏实现；所有秘密读取和强制接管都必须经过独立服务端授权函数和审计记录。
+
+### 13.4 协同控制
+
+[INFERRED · HIGH] SSH 终端允许多个用户同时观察，但同一时刻默认只有一个 `controller` 可以发送输入；其他用户是 `observer`，可以申请控制权。
+
+[INFERRED · HIGH] 控制权采用租约或显式锁，包含 `holderUserId`、取得时间、过期时间和最后心跳；浏览器关闭、会话断开或超时后自动释放。
+
+[INFERRED · HIGH] RDP/VNC 默认允许多个观察者但只允许一个输入控制者；剪贴板、文件传输、Ctrl+Alt+Del 等高影响动作还需单独 capability。
+
+[INFERRED · HIGH] 任务协同至少支持 `observe`、`approve`、`control` 三种角色；“能看任务”不能自动获得“能取消任务”或“能批准危险操作”。
+
+[INFERRED · HIGH] 所有协同输入、控制权转移、任务暂停/恢复和确认操作都写入审计日志，并标记真实操作者，而不是只记录任务拥有者。
+
+## 14. 用户工作区、跨设备恢复与任务持久化
+
+### 14.1 工作区隔离模型
+
+[INFERRED · HIGH] 工作区主键建议为 `(userId, clientId, workspaceId)`：`userId` 保证账号隔离，`clientId` 区分设备/浏览器实例，`workspaceId` 支持用户建立多个工作区。
+
+[INFERRED · HIGH] `clientId` 可以首次登录后由浏览器生成并保存在该浏览器的 localStorage，但它只用于选择恢复槽位，不用于授权；服务端永远以认证会话中的 `userId` 为准。
+
+[INFERRED · HIGH] 同一用户在设备 A 和设备 B 登录时，默认恢复两个独立工作区，避免 A 的终端标签和 B 的标签互相覆盖；用户可以显式选择“复制工作区”或“在其他设备打开”。
+
+[INFERRED · HIGH] 同一浏览器先登录 A、退出再登录 B 时，内存状态、嵌入 iframe、AI 面板、待确认项和本地缓存都必须清理或换到 B 的命名空间；不能继续显示 A 的数据。
+
+[INFERRED · HIGH] 工作区保存内容至少包括：当前 view、活动 tab、终端 tab 元数据、布局、窗口顺序、面板开关、筛选器、笔记选中项、AI 当前会话 ID、待恢复任务 ID和版本号。
+
+[INFERRED · HIGH] 工作区禁止保存：SSH 密码、私钥、RDP 密码、代理密码、API Key、TOTP Secret、JMS token、一次性 Deep Link 密码以及完整敏感终端输出，除非另有加密任务日志策略。
+
+### 14.2 启动恢复流程
+
+[INFERRED · HIGH] 登录成功后客户端调用一个原子 bootstrap 接口，服务端一次性返回当前用户、有效能力摘要、可见资源摘要、工作区元数据、未完成任务摘要和待确认事项摘要。
+
+[INFERRED · HIGH] 客户端按照以下顺序恢复：
+
+```text
+验证 App 会话
+→ 获取用户 bootstrap
+→ 读取 userId + clientId 对应工作区
+→ 再次过滤资源 ACL
+→ 恢复视图和 tab 元数据
+→ 对每个 tab 建立新的受权连接/订阅
+→ 回放任务事件和终端历史
+→ 恢复未完成 AI 确认界面
+```
+
+[INFERRED · HIGH] 恢复过程不能自动重发上次的键盘输入、不能重复提交表单、不能再次执行远程命令、不能自动批准 AI 敏感操作；只能恢复页面状态并等待用户明确操作。
+
+[INFERRED · HIGH] 如果资源已经删除、被撤销共享或用户权限降低，工作区显示“无权访问/资源已移除”的占位项，不应通过旧 tabId 越权重连。
+
+[INFERRED · HIGH] 如果服务端实例发生重启，客户端应显示“正在恢复服务端会话/任务订阅”，而不是直接把远端 SSH 错误显示成需要重新登录。
+
+### 14.3 SSH 长任务
+
+[INFERRED · HIGH] 需要跨浏览器关闭、Node 重启继续执行的命令必须进入持久执行层，例如远端 `tmux`/`screen`、远端后台进程加日志、或独立 Worker；普通 WebSocket PTY 只能作为实时交互通道，不能是唯一任务存储。
+
+[INFERRED · HIGH] 每个长任务至少保存 `taskId`、`ownerUserId`、目标连接 ID、远端会话标识/PID、命令摘要、日志位置、状态、退出码、开始/结束时间和最后心跳。
+
+[INFERRED · HIGH] 任务日志应按事件或分段持久化，并设置最大容量、轮转和脱敏策略；不能无限把所有输出存进 Node 内存。
+
+[INFERRED · HIGH] 浏览器关闭后，服务端保留任务执行；用户回来时先检查任务 ACL，再从持久日志回放历史，最后订阅新增事件。
+
+[INFERRED · HIGH] 交互式 `vim`、`codex` 等程序如果需要完整 PTY，推荐把 PTY 放在远端 tmux 会话或持久 Agent 中；页面只是重新 attach。程序是否因远端环境收到 SIGHUP 退出，必须在实际目标系统上做测试，不得靠理论宣称全部兼容。
+
+### 14.4 RDP/VNC 恢复边界
+
+[INFERRED · HIGH] 浏览器关闭会断开当前浏览器到 Zephyr 的 RDP/VNC 显示通道；重新打开时应恢复连接 tab 并重新建立受权通道，而不是假设浏览器端 WebGL/WASM 状态仍存在。
+
+[INFERRED · MED] 远端 Windows 会话是否保留取决于 RDP 服务端的断线重连策略；Zephyr 可以恢复连接和页面，但不能保证每个目标系统都保留远程桌面会话状态。
+
+[INFERRED · HIGH] RDP Agent 文件映射和临时文件传输订阅必须绑定用户、资源和 RDP 会话；页面恢复后重新签发短期授权，不复用其他用户或旧浏览器的 token。
+
+### 14.5 AI 长任务
+
+[INFERRED · HIGH] `/api/ai/chat` 的同步请求模式不能作为最终后台任务接口；应新增 `ai_tasks` 和 Worker/任务调度层，HTTP 请求只负责创建任务或提交事件。
+
+[INFERRED · HIGH] AI 任务至少保存：`taskId`、`ownerUserId`、provider/profile ID、对话 ID、输入摘要、状态、当前工具轮次、事件、确认项、错误、结果、创建/更新时间和资源访问快照版本。
+
+[INFERRED · HIGH] 浏览器断开时只取消事件流订阅，不自动调用任务 Abort；用户点击“停止”或服务端策略/超时才取消任务。
+
+[INFERRED · HIGH] AI 任务每次调用工具前都重新检查当前用户对目标连接、笔记、浏览器会话和文件的权限；任务创建时有权不代表任务执行时永远有权。
+
+[INFERRED · HIGH] AI 任务进入 `waiting_confirmation` 后，确认记录归任务拥有者或明确的 `approve` 协作者；浏览器重新打开时恢复确认卡片，但不会因为超时或页面重开自动批准。
+
+## 15. 个人设置与管理员默认配置
+
+### 15.1 设置分层
+
+[INFERRED · HIGH] 设置必须拆成三层：
+
+```text
+systemSettings       平台运行、安全、邮件、全局策略，仅管理员
+adminDefaults        管理员设置的品牌和默认外观，仅作为默认值
+userSettings         当前用户的个人外观、终端、快捷键、工作区和个人 AI 设置
+```
+
+[INFERRED · HIGH] 当前 `/api/settings` 不能继续让普通用户直接读写整份全局 settings；应拆为 `/api/admin/settings`、`/api/me/settings` 和必要的只读 `/api/bootstrap`。
+
+[INFERRED · HIGH] 设置合并优先级建议为：平台强制策略 > 用户允许范围内的个人覆盖 > 管理员默认值 > 内置默认值；个人设置不能覆盖安全策略、资源 ACL、AI 禁止项或数据保留策略。
+
+### 15.2 普通用户可以自定义的内容
+
+[INFERRED · HIGH] 管理员开启策略后，普通用户可以独立修改自己的主题、亮暗模式、终端字体、终端背景、终端布局上限、快捷键平台、个人 snippets、笔记编辑器偏好、AI 面板布局和个人工作区默认页。
+
+[INFERRED · HIGH] 用户的自定义 CSS 必须按 `userId` 存储和加载；用户 A 的 CSS 不能进入 B 的页面，也不能修改管理员的全局 CSS。
+
+[INFERRED · HIGH] 任意自定义 JavaScript 具有读取和修改页面状态的潜在能力，普通用户默认不应直接在主页面执行；可选实现应采用 sandbox iframe、受限事件 API 或管理员明确开启的信任模式。
+
+[INFERRED · HIGH] 管理员可以设置允许哪些个人配置项、最大 CSS/脚本大小、是否允许自定义品牌、是否允许用户覆盖系统主题；这些策略自身不应被普通用户的 `PUT /api/me/settings` 修改。
+
+### 15.3 配置隔离验收
+
+[INFERRED · HIGH] 修改 A 的主题后，B 的页面和管理员页面不变；修改管理员默认主题后，只影响没有个人覆盖的用户，不能覆盖已有个人设置。
+
+[INFERRED · HIGH] 用户退出并重新登录另一个账号时，页面必须重新加载目标用户的设置，不能把上一个账号的 brand、CSS、AI 面板或 snippets 留在内存中。
+
+[INFERRED · HIGH] 设置导出/导入必须声明范围：个人设置只导出当前用户可读内容，管理员系统备份才可以包含平台配置；导出文件中的秘密必须继续加密或排除。
+
+## 16. AI 多用户权限与供应商策略
+
+### 16.1 管理员可配置的 AI 模式
+
+[INFERRED · HIGH] 管理员为每个用户设置一个 AI access policy，至少支持以下模式：
+
+| 模式 | 行为 |
+|---|---|
+| `disabled` | [INFERRED · HIGH] 用户看不到 AI 入口，所有 AI API 和 AI WebSocket 请求服务端拒绝。 |
+| `admin_shared` | [INFERRED · HIGH] 用户只能使用管理员授权的 provider/model；API Key 由服务端持有，用户不能查看或导出。 |
+| `self_managed` | [INFERRED · HIGH] 用户可以添加和使用自己的 provider；是否允许网页搜索、远程执行等工具仍由管理员策略控制。 |
+| `both` | [INFERRED · HIGH] 用户可以在管理员共享 provider 和自己的 provider 之间选择；两者的模型、额度和工具权限分别受限。 |
+
+[INFERRED · HIGH] 管理员可以为用户设置 AI 总开关、允许的 provider/model 白名单、每日/每月请求额度、最大并发任务、最大工具轮次、是否允许后台任务、是否允许浏览器自动化和是否必须人工确认。
+
+[INFERRED · HIGH] “给用户用管理员的 AI”只表示授予服务端代发请求的使用权，不表示把管理员 API Key、provider 原始配置、组织字段或隐藏 Header 返回给用户。
+
+[INFERRED · HIGH] “允许用户自己添加 AI”必须把 provider 归属到用户；用户自己的 API Key 对管理员默认不可见，管理员只能看到 provider 名称、启用状态、用量和健康状态等非秘密元数据。
+
+### 16.2 AI 工具能力权限
+
+[INFERRED · HIGH] AI 工具权限至少分为：`chat`、`webSearch`、`webFetch`、`browser`、`remoteObserve`、`remoteExecute`、`fileRead`、`fileWrite`、`codeEdit`、`memoryRead`、`memoryWrite`、`notesRead`、`notesWrite`、`envRead`、`uiControl`、`taskBackground`。
+
+[INFERRED · HIGH] 管理员的全局 AI policy、用户 grant、目标资源 ACL 和现有敏感确认策略共同决定工具是否可用；AI system prompt 中写了“可以”不能替代执行器授权。
+
+[INFERRED · HIGH] `list_connections`、`remote_execute`、`remote_read_file`、`remote_write_file`、`open_connection`、RDP 截图和 UI action 都必须接收当前用户上下文，并过滤/检查资源 ACL；不能继续调用返回全局连接列表的旧 helper。
+
+[INFERRED · HIGH] AI 使用管理员共享设备时，工具执行器必须以当前用户身份进行授权；不能因为 provider 属于管理员就让 AI 获得管理员的全部设备权限。
+
+[INFERRED · HIGH] AI 使用用户私有设备时，只有用户自己的任务或明确共享给协作者的任务可以访问；管理员 AI 不应自动读取用户私有设备。
+
+### 16.3 AI 对话、Memory、计划和环境变量隔离
+
+[INFERRED · HIGH] AI 对话、消息、浏览器会话、截图、Memory、计划、环境变量和任务默认按 `userId` 隔离；不能继续把聊天只存浏览器 localStorage 后宣称跨设备恢复完成。
+
+[INFERRED · HIGH] Memory 的作用域应至少支持 `user`、`connection`、`project`、`shared`；`shared` 也必须有 ACL，不是管理员全局可读。
+
+[INFERRED · HIGH] AI 环境变量的名称、值、是否暴露给 AI、是否允许用户读取和是否允许共享都应独立授权；任何 API 返回都不能泄露未授权值。
+
+[INFERRED · HIGH] AI 计划/任务的创建者默认拥有控制权；协作者可以被授予观察、确认或控制；删除、重试、远程写入和执行命令必须再次确认并审计。
+
+### 16.4 AI 后台任务与确认
+
+[INFERRED · HIGH] AI 后台任务创建接口必须检查用户的 `taskBackground` 权限、额度和目标资源 ACL，然后立即返回不可预测的 `taskId`。
+
+[INFERRED · HIGH] 任务事件不能只保存在 SSE/HTTP 响应中；应持久化为可按用户授权读取的事件流，支持浏览器关闭后重连和分页回放。
+
+[INFERRED · HIGH] 页面关闭后若任务等待确认，系统应向用户下次登录后的工作区恢复待确认卡；确认提交时再次验证任务尚未过期、用户仍有权限且资源 ACL 未撤销。
+
+[INFERRED · HIGH] 管理员可以看到 AI 用量和失败统计；默认不能看到用户私有对话全文和 prompt，除非用户共享或触发有审计的 break-glass 读取。
+
+## 17. 前述终端、Deep Link、笔记与文件传输方案的逐项权限接入
+
+[INFERRED · HIGH] 本文第 2–7 节中的每项能力都必须叠加下面的用户/ACL 条件；没有这些条件，技术实现仍然只是单用户版本。
+
+| 前述能力 | 多用户归属 | 必须新增的权限逻辑 |
+|---|---|---|
+| 持久登录会话 | [INFERRED · HIGH] `auth_sessions.userId` | [INFERRED · HIGH] 会话只恢复所属用户；密码修改、暂停、角色变化和 logout 可撤销；WebSocket 使用同一认证主体。 |
+| WTerm 终端视口/scrollback | [INFERRED · HIGH] 当前用户的 terminal session/workspace | [INFERRED · HIGH] DOM、buffer snapshot、scrollback 和 AI 读取不能跨用户；共享终端必须显式 `observe/control`。 |
+| 监控订阅 | [INFERRED · HIGH] 当前用户 + 连接资源 | [INFERRED · HIGH] 订阅前检查 `observe`；关闭/撤销后停止 stats channel；不允许通过 connectionId 猜测其他用户主机。 |
+| Deep Link 临时连接 | [INFERRED · HIGH] 发起用户 | [INFERRED · HIGH] prepare token 绑定 `userId`、过期时间和来源；临时资源不写入公共资产；只允许发起用户消费。 |
+| JumpServer/JMS token | [INFERRED · HIGH] 发起用户 + 一次性 token | [INFERRED · HIGH] 不写日志/数据库明文；重复消费、跨用户消费和共享都拒绝。 |
+| 笔记 | [INFERRED · HIGH] note owner + note ACL | [INFERRED · HIGH] CRUD、搜索、导入导出、连接关联、回收站和 AI 工具均按 owner/ACL过滤；默认私有。 |
+| 笔记中的 SSH/Telnet/JMS 链接 | [INFERRED · HIGH] 点击者 | [INFERRED · HIGH] 进入点击者自己的 transient UI；解析出的连接不自动继承笔记拥有者的凭据或权限。 |
+| AI 笔记工具 | [INFERRED · HIGH] AI task owner | [INFERRED · HIGH] `notesRead/notesWrite` + note ACL + revision 检查；写入仍走确认策略。 |
+| AI 浏览器会话/截图 | [INFERRED · HIGH] conversation/task owner | [INFERRED · HIGH] session 名称不能成为授权凭据；截图 URL 需要当前用户和资源检查。 |
+| RDP Agent/文件传输 | [INFERRED · HIGH] user + connection + agent | [INFERRED · HIGH] Agent token、RDP tab、drive handle、读写操作四层绑定；管理员不能因平台角色读取用户私有 Agent。 |
+| 用户自定义页面 | [INFERRED · HIGH] `userSettings.userId` | [INFERRED · HIGH] CSS/脚本和工作区按用户加载；系统默认与个人 override 分开。 |
+| 远程命令/任务 | [INFERRED · HIGH] task owner + target ACL | [INFERRED · HIGH] 浏览器关闭不取消；任务事件和控制操作按任务 ACL；每次工具调用重新授权。 |
+
+[INFERRED · HIGH] 本文前述方案建议的文件传输 WebSocket 不能只验证一次 RDP 连接；每个端点初始化、drive attach、handle 操作和二进制请求都要绑定已认证用户、连接 ID、Agent ID 与权限快照/实时 ACL。
+
+[INFERRED · HIGH] 本文前述方案建议的笔记 `notes` 表应在原有字段上增加 owner、共享和 revision 语义；AI 工具 `note_list/search/get/create/update/delete` 必须调用统一授权服务，而不是直接读 settings。
+
+[INFERRED · HIGH] 本文前述方案建议的 Deep Link transient token 必须绑定用户；未登录流程在登录回跳后只能交给同一用户的 session，不能把原始 fragment 传给另一个登录账号。
+
+## 18. 数据模型与迁移目标
+
+### 18.1 用户与认证
+
+[INFERRED · HIGH] 目标 `users` 表建议至少包含以下字段；字段名可按现有 camelCase 风格落地，但语义不可省略：
+
+```sql
+users(
+  userId TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL DEFAULT 'user',
+  status TEXT NOT NULL DEFAULT 'active',
+  email TEXT,
+  passwordHash TEXT NOT NULL,
+  defaultPassword INTEGER NOT NULL DEFAULT 0,
+  passwordChangedAt INTEGER,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  lastLoginAt INTEGER
+);
+```
+
+[INFERRED · HIGH] 用户名可以修改，但所有外键、会话、ACL、任务和审计记录使用 `userId`；用户名变化不能让资源丢失或换主。
+
+```sql
+auth_sessions(
+  sessionId TEXT PRIMARY KEY,
+  tokenHash TEXT NOT NULL UNIQUE,
+  userId TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  lastSeenAt INTEGER NOT NULL,
+  idleExpiresAt INTEGER NOT NULL,
+  absoluteExpiresAt INTEGER NOT NULL,
+  remember INTEGER NOT NULL DEFAULT 0,
+  revokedAt INTEGER,
+  revokeReason TEXT,
+  userAgentHash TEXT,
+  ipPrefix TEXT
+);
+CREATE INDEX idx_auth_sessions_user ON auth_sessions(userId);
+```
+
+[INFERRED · HIGH] Cookie 只保存随机 token，数据库保存哈希；内存 cache 可以加速，但 SQLite 必须是可恢复的权威来源。
+
+### 18.2 用户设置和工作区
+
+```sql
+userSettings(
+  userId TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  PRIMARY KEY(userId, key)
+);
+
+workspaces(
+  workspaceId TEXT PRIMARY KEY,
+  userId TEXT NOT NULL,
+  clientId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  stateJson TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updatedAt INTEGER NOT NULL,
+  UNIQUE(userId, clientId, workspaceId)
+);
+CREATE INDEX idx_workspaces_user_client ON workspaces(userId, clientId, updatedAt DESC);
+```
+
+[INFERRED · HIGH] 工作区 `stateJson` 只能存资源 ID、布局和非秘密状态；服务端写入前应做 schema 校验和大小限制。
+
+### 18.3 资源和 ACL
+
+[INFERRED · HIGH] 现有 connections、proxies、ssh_keys、jump_hosts、agent_tokens 等表都应增加 `ownerUserId`、`visibility`、`createdByUserId` 和必要的版本字段。
+
+```sql
+resourceAcl(
+  resourceType TEXT NOT NULL,
+  resourceId TEXT NOT NULL,
+  subjectType TEXT NOT NULL DEFAULT 'user',
+  subjectId TEXT NOT NULL,
+  capabilitiesJson TEXT NOT NULL,
+  grantedByUserId TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  expiresAt INTEGER,
+  revokedAt INTEGER,
+  PRIMARY KEY(resourceType, resourceId, subjectType, subjectId)
+);
+CREATE INDEX idx_resource_acl_subject ON resourceAcl(subjectType, subjectId, revokedAt, expiresAt);
+CREATE INDEX idx_resource_acl_resource ON resourceAcl(resourceType, resourceId, revokedAt);
+```
+
+[INFERRED · HIGH] ACL 表不应把秘密写入 capabilities；ACL 只表示能力，秘密仍在资源加密字段中。
+
+[INFERRED · HIGH] 连接依赖可以使用 `resourceType/resourceId` 统一表达，也可以在业务表中保留外键；授权服务必须递归检查依赖，防止共享 connection 时意外暴露 proxy/ssh key/jump host。
+
+### 18.4 终端、协同和任务
+
+```sql
+terminalSessions(
+  terminalSessionId TEXT PRIMARY KEY,
+  ownerUserId TEXT NOT NULL,
+  connectionId TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  backendRef TEXT,
+  status TEXT NOT NULL,
+  ptyRows INTEGER,
+  ptyCols INTEGER,
+  createdAt INTEGER NOT NULL,
+  lastSeenAt INTEGER NOT NULL,
+  endedAt INTEGER
+);
+
+sessionAcl(
+  terminalSessionId TEXT NOT NULL,
+  userId TEXT NOT NULL,
+  role TEXT NOT NULL,
+  grantedByUserId TEXT NOT NULL,
+  expiresAt INTEGER,
+  PRIMARY KEY(terminalSessionId, userId)
+);
+
+backgroundTasks(
+  taskId TEXT PRIMARY KEY,
+  ownerUserId TEXT NOT NULL,
+  taskType TEXT NOT NULL,
+  targetResourceType TEXT,
+  targetResourceId TEXT,
+  status TEXT NOT NULL,
+  backendRef TEXT,
+  commandSummary TEXT,
+  resultJson TEXT,
+  exitCode INTEGER,
+  createdAt INTEGER NOT NULL,
+  startedAt INTEGER,
+  updatedAt INTEGER NOT NULL,
+  finishedAt INTEGER,
+  cancelRequestedAt INTEGER
+);
+
+taskEvents(
+  eventId TEXT PRIMARY KEY,
+  taskId TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  eventType TEXT NOT NULL,
+  payloadJson TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  UNIQUE(taskId, seq)
+);
+CREATE INDEX idx_tasks_owner_status ON backgroundTasks(ownerUserId, status, updatedAt DESC);
+CREATE INDEX idx_task_events_task_seq ON taskEvents(taskId, seq);
+```
+
+[INFERRED · HIGH] `backendRef` 只能保存不含密码的远端 tmux 名称、Worker ID 或代理句柄；实际秘密由受授权的服务端连接层读取。
+
+### 18.5 AI、笔记与审计
+
+```sql
+aiProviders(
+  providerId TEXT PRIMARY KEY,
+  ownerUserId TEXT,
+  scope TEXT NOT NULL DEFAULT 'user',
+  encryptedConfig TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
+
+aiAccessGrants(
+  userId TEXT NOT NULL,
+  providerId TEXT NOT NULL,
+  capabilitiesJson TEXT NOT NULL,
+  modelAllowlistJson TEXT,
+  quotaJson TEXT,
+  grantedByUserId TEXT NOT NULL,
+  expiresAt INTEGER,
+  PRIMARY KEY(userId, providerId)
+);
+
+notes(
+  noteId TEXT PRIMARY KEY,
+  ownerUserId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  groupPath TEXT NOT NULL DEFAULT '',
+  tagsJson TEXT NOT NULL DEFAULT '[]',
+  linkedConnectionIdsJson TEXT NOT NULL DEFAULT '[]',
+  revision INTEGER NOT NULL DEFAULT 1,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+
+aiConversations(
+  conversationId TEXT PRIMARY KEY,
+  ownerUserId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
+
+auditEvents(
+  eventId TEXT PRIMARY KEY,
+  actorUserId TEXT,
+  targetUserId TEXT,
+  resourceType TEXT,
+  resourceId TEXT,
+  action TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  metadataJson TEXT NOT NULL DEFAULT '{}',
+  createdAt INTEGER NOT NULL
+);
+```
+
+[INFERRED · HIGH] AI 对话消息、任务事件和笔记正文应按数据保留策略分开存储；管理员审计页面默认只显示元数据和脱敏摘要，不把正文复制进活动日志。
+
+[INFERRED · HIGH] 所有新表迁移必须支持旧库重复执行、失败回滚、备份恢复和旧版本启动检查；迁移完成前不得启用多用户入口。
+
+## 19. 服务端授权架构与 API 约定
+
+### 19.1 统一授权模块
+
+[INFERRED · HIGH] 建议新增 `authz.js` 或等价服务，提供统一函数：
+
+```js
+requireUser(req)
+requireRole(req, 'admin')
+can(user, action, resource)
+assertCan(user, action, resource)
+listVisibleResources(user, type, filters)
+filterToolResources(user, resources)
+```
+
+[INFERRED · HIGH] 所有业务路由只能通过这些函数判断，不能在每个文件里复制一套“如果 username === admin”的逻辑。
+
+[INFERRED · HIGH] WebSocket 在 upgrade 时解析并绑定认证主体；连接后的每条消息仍通过会话/资源授权检查，尤其是 `input`、`resize`、`stats-request`、Docker、SFTP、RDP proxy 和 file-transfer 消息。
+
+[INFERRED · HIGH] AI 工具执行器必须接收 `{ userId, sessionId, taskId, signal }` 上下文，并在工具真正访问资源前调用 `assertCan`；前端传入的 `context.connections` 只能作为提示，不能作为权限证据。
+
+### 19.2 认证和 bootstrap API
+
+```text
+GET  /api/auth/me
+POST /api/auth/login
+POST /api/auth/logout
+POST /api/auth/change-password
+POST /api/auth/forgot-password/request
+POST /api/auth/forgot-password/reset
+GET  /api/me/bootstrap
+GET  /api/me/sessions
+DELETE /api/me/sessions/:id
+```
+
+[INFERRED · HIGH] `/api/me/bootstrap` 返回当前用户基本资料、角色、有效个人设置、平台策略摘要、可见资源摘要、工作区列表、未完成任务和待确认事项，但不返回任何秘密。
+
+[INFERRED · HIGH] `GET /api/auth/me` 和 WebSocket 使用同一个持久认证会话解析器；不能出现 HTTP 仍认为登录、WebSocket 却用另一份内存 Map 失败的双重身份来源。
+
+### 19.3 用户管理 API
+
+```text
+GET    /api/admin/users
+POST   /api/admin/users
+GET    /api/admin/users/:userId
+PATCH  /api/admin/users/:userId
+POST   /api/admin/users/:userId/suspend
+POST   /api/admin/users/:userId/force-password-reset
+POST   /api/admin/users/:userId/revoke-sessions
+DELETE /api/admin/users/:userId
+GET    /api/admin/users/:userId/grants
+PUT    /api/admin/users/:userId/grants
+```
+
+[INFERRED · HIGH] 这些接口只允许管理员角色，并且每个写操作都写审计；返回用户列表时不返回密码哈希、TOTP Secret、Passkey 公钥内部敏感字段或 AI API Key。
+
+### 19.4 资源和分享 API
+
+```text
+GET    /api/connections
+POST   /api/connections
+GET    /api/connections/:id
+PUT    /api/connections/:id
+DELETE /api/connections/:id
+GET    /api/resources/:type/:id/shares
+PUT    /api/resources/:type/:id/shares
+DELETE /api/resources/:type/:id/shares/:subjectId
+POST   /api/resources/:type/:id/transfer
+```
+
+[INFERRED · HIGH] 现有 connections API 应保留兼容路径，但内部必须改为 `resourceService`；旧的 `readJSON(CONNECTIONS_FILE)` 直接读写路径应在迁移后删除或只作为一次性导入器。
+
+[INFERRED · HIGH] `/open`、`/credentials`、`/test` 和 WebSocket 连接接口都必须复用同一个资源授权函数；只保护列表和编辑接口是不完整的。
+
+### 19.5 工作区和任务 API
+
+```text
+GET  /api/me/workspaces
+GET  /api/me/workspaces/:id
+PUT  /api/me/workspaces/:id
+POST /api/me/workspaces/:id/restore
+GET  /api/tasks
+POST /api/tasks
+GET  /api/tasks/:taskId
+GET  /api/tasks/:taskId/events?after=
+POST /api/tasks/:taskId/cancel
+POST /api/tasks/:taskId/retry
+POST /api/tasks/:taskId/confirm
+PUT  /api/tasks/:taskId/shares
+```
+
+[INFERRED · HIGH] 任务接口返回 404 或结构化 403 时不能泄露另一个用户的任务存在性；事件分页必须按 task ACL 过滤。
+
+### 19.6 AI API
+
+```text
+GET  /api/ai/status
+GET  /api/ai/effective-policy
+GET  /api/ai/providers
+POST /api/ai/providers
+PUT  /api/ai/providers/:id
+DELETE /api/ai/providers/:id
+POST /api/ai/tasks
+GET  /api/ai/tasks/:id
+GET  /api/ai/tasks/:id/events
+POST /api/ai/tasks/:id/confirm
+POST /api/ai/tasks/:id/cancel
+```
+
+[INFERRED · HIGH] 原有 `/api/ai/chat` 可以暂时保留为短请求兼容接口，但必须在服务端根据 policy 和资源 ACL 授权；长任务和需要页面关闭后继续的操作必须迁移到 `/api/ai/tasks`。
+
+### 19.7 错误协议
+
+[INFERRED · HIGH] 建议所有接口统一返回非敏感的 `code`、用户可读 `message`、`retryable` 和可选 `resourceType`：
+
+```json
+{
+  "error": {
+    "code": "forbidden_resource_control",
+    "message": "当前账号没有控制此资源的权限",
+    "retryable": false
+  }
+}
+```
+
+[INFERRED · HIGH] `app_session_expired`、`network_timeout`、`ssh_auth_failed`、`resource_revoked`、`task_cancelled` 和 `ai_policy_denied` 必须分开，前端不能把所有错误都显示成“请重新登录”。
+
+## 20. 前端功能与页面结构
+
+### 20.1 登录后恢复页
+
+[INFERRED · HIGH] 登录成功后可显示一个短暂恢复面板：正在恢复工作区、恢复 N 个终端、重新订阅 M 个任务、X 个资源已失效；用户可以取消恢复但不能绕过授权。
+
+[INFERRED · HIGH] 终端栏应区分“我的连接”“管理员共享”“其他用户共享”“临时连接”，并显示权限徽标，例如“只读”“可操作”“可执行”。
+
+[INFERRED · HIGH] 任务中心应显示“运行中”“等待确认”“已完成”“失败”“已取消”，并把任务拥有者、目标资源来源和当前用户可执行动作展示清楚。
+
+### 20.2 管理员控制台
+
+[INFERRED · HIGH] 管理员页面至少包含：用户列表、用户详情、账号状态、密码/MFA 操作、资源授权、AI policy、全局设置、审计日志、任务治理和共享资源列表。
+
+[INFERRED · HIGH] “给 A 授权设备”界面应提供资源搜索、权限档位展开预览、有效期、是否允许协同和撤销按钮；提交前显示“这不会把密码暴露给 A”。
+
+[INFERRED · HIGH] 管理员连接列表默认只显示管理员拥有或明确共享给管理员的资源；用户私有资源不会通过全局搜索混入。
+
+### 20.3 用户页面
+
+[INFERRED · HIGH] 普通用户设置页面包含个人资料、修改密码、找回邮箱、MFA、外观、终端、工作区、个人 AI、Memory、笔记和 Agent 管理；系统安全、用户管理和平台备份入口不可见且服务端也拒绝。
+
+[INFERRED · HIGH] 连接详情显示资源所有者和共享状态；用户可以“分享给管理员/指定用户”，但默认不勾选任何对象。
+
+[INFERRED · HIGH] 用户看到管理员共享设备时，UI 应明确哪些功能不可用，而不是点击后才收到模糊错误；按钮隐藏只是体验优化，服务端拒绝仍必须存在。
+
+### 20.4 协同 UI
+
+[INFERRED · HIGH] 终端标题栏显示当前观察者、控制者、控制锁剩余时间和“申请控制/释放控制”按钮；失去控制权时输入区域变为只读。
+
+[INFERRED · HIGH] RDP/VNC 显示观察者数量、输入控制者和文件传输权限；高影响动作需要二次确认和对应 capability。
+
+[INFERRED · HIGH] 笔记和 AI 任务共享面板复用同一 ACL 组件，避免用户在不同页面面对互相矛盾的权限语义。
+
+### 20.5 Deep Link 临时连接
+
+[INFERRED · HIGH] 本文前述方案要求所有 Deep Link 最终进入现有连接弹窗的 transient mode；在多用户版本中，该 modal 的 draft、一次性 token、临时 tab 和输出都归发起用户，不写入公共连接库。
+
+[INFERRED · HIGH] 如果 Deep Link 指向管理员共享设备，只有拥有 `use` 的用户可以继续；如果指向用户私有设备，只有资源拥有者或显式 ACL 用户可以使用；解析成功不等于授权成功。
+
+[INFERRED · HIGH] transient mode 仍只保留“测试连接”和“连接”两个业务动作；连接成功后临时 tab 也必须带 owner/session 信息，不能被另一用户通过猜 tabId 恢复。
+
+## 21. 数据迁移与兼容策略
+
+### 21.1 迁移前保护
+
+[INFERRED · HIGH] 实施前必须备份 SQLite、旧 JSON、加密密钥和部署配置，并在副本数据库上执行迁移演练；没有可验证回滚点不得改生产库。
+
+[INFERRED · HIGH] 迁移工具必须输出统计而不是敏感内容：用户数、连接数、设置项数、待处理秘密数、错误数和迁移版本；日志不得打印密码、私钥、API Key 或 token。
+
+### 21.2 旧用户和资源归属
+
+[INFERRED · HIGH] 现有第一个管理员用户迁移为 `role=admin`，生成稳定 `userId`；现有连接、代理、SSH 密钥和跳板机默认归该管理员所有，以保持单用户安装升级后的原有可用性。
+
+[INFERRED · HIGH] 迁移后的普通用户默认看不到这些旧资源，管理员必须显式共享；这比把旧资源错误暴露给所有新用户安全。
+
+[INFERRED · HIGH] 现有全局 AI provider、skills、Memory 和计划迁移为管理员私有或系统默认资源；普通用户只有在管理员授予 AI policy 和资源权限后才能使用。
+
+[INFERRED · HIGH] 浏览器 localStorage 中的旧 AI 对话无法从服务端可靠判断账号归属；首次登录时可提供“导入到当前用户”动作，默认不自动把旧聊天复制给所有用户。
+
+[INFERRED · HIGH] 现有全局外观迁移为 `adminDefaults`；普通用户首次登录使用管理员默认值，后续保存个人覆盖进入 `userSettings`。
+
+### 21.3 旧接口切换
+
+[INFERRED · HIGH] 迁移完成后，连接、代理、密钥、跳板机、活动和设置的读写必须统一通过 SQLite/service layer；保留旧 JSON 只用于导入、备份兼容或明确只读诊断。
+
+[INFERRED · HIGH] 所有旧接口都应先加授权包裹，再逐步替换数据源；不能先把全局接口暴露给普通用户，再依赖后续清理。
+
+[INFERRED · HIGH] 旧的按用户名存储 TOTP/重置码/Passkey 关联在迁移时改为 `userId` 外键；用户名重命名后相关数据仍然归同一用户。
+
+### 21.4 兼容与回滚
+
+[INFERRED · HIGH] 数据库加入 schema version 和 migration journal；每个 migration 可重复执行，失败时事务回滚，应用启动时拒绝使用半迁移状态。
+
+[INFERRED · HIGH] 发布初期可以提供只读兼容开关，但不能让新用户写入旧全局 JSON；否则双写会造成权限漂移。
+
+[INFERRED · HIGH] 回滚应用版本时必须保留新表和数据，旧版本若不理解新表应安全停止或只读，不能把多用户数据压回单用户结构而造成泄露。
 
 ---
 
-## 9. 文件级修改清单
+## 22. 统一分阶段实施顺序
 
-### 现有文件
+[INFERRED · HIGH] 多用户与任务生命周期不能作为最后补丁加入。统一实施顺序必须先建立身份、归属和授权，再让监控、WTerm、Deep Link、笔记、AI 与文件传输接入这些边界。
 
-| 文件 | 修改 |
+### Stage 0：冻结基线、可观测性与安全测试骨架
+
+- [INFERRED · HIGH] 固定目标提交、数据库副本、WTerm 版本和浏览器矩阵；建立可重复的旧库升级测试。
+- [INFERRED · HIGH] 增加 HTTP/WS 结构化错误、terminal resize/render/scroll、stats duration、auth failure、task state 和 ACL deny 指标；日志不记录秘密。
+- [INFERRED · HIGH] 先建立三用户（admin/A/B）跨用户越权测试骨架，覆盖 HTTP、WebSocket、AI tool、导出、Deep Link 和 Agent 文件传输。
+
+### Stage 1：不可变用户身份与持久认证会话
+
+- [INFERRED · HIGH] 为用户生成不可变 `userId`，增加 role/status，迁移 TOTP、Passkey、重置码和审计外键。
+- [INFERRED · HIGH] 新建 SQLite `auth_sessions`，Cookie 保存随机 SID、数据库只保存哈希；实现 idle/absolute TTL、remember、撤销和多副本一致解析。
+- [INFERRED · HIGH] WebSocket Upgrade 绑定同一认证主体，连接后不再重复从旧内存 Map 推断身份；修复“服务重启后随机要求登录”。
+- [INFERRED · HIGH] 完成每用户改密、找回密码、会话列表/撤销、暂停账号和最后一个管理员保护。
+
+### Stage 2：资源 ownership、ACL 与旧全局数据源收敛
+
+- [INFERRED · HIGH] 给 connection/proxy/SSH key/jump host/Agent token 等资源增加 owner；现有旧资源迁移给初始管理员。
+- [INFERRED · HIGH] 实现统一 `authz/resource-service/sharing-service`，完成 capability、依赖资源检查、分享/撤销、秘密不外泄和审计。
+- [INFERRED · HIGH] 所有连接列表、详情、test/open/credentials、SSH/RDP/VNC WS、SFTP、Docker 和批量执行改走同一资源服务。
+- [INFERRED · HIGH] 停止生产代码直接读写旧 `connections.json/settings.json`；旧 JSON 仅保留一次性迁移和明确的兼容导入用途。
+
+### Stage 3：个人设置与工作区恢复
+
+- [INFERRED · HIGH] 将设置拆成 system settings、admin defaults 和 user settings；普通用户只能修改策略允许的个人覆盖。
+- [INFERRED · HIGH] 建立 `userId + clientId + workspaceId` 工作区，保存页面、标签、布局、面板和任务引用，不保存密码、私钥或 API Key。
+- [INFERRED · HIGH] 实现 `/api/me/bootstrap` 与启动恢复状态机；账号切换时销毁前一个用户的 iframe、AI 状态、缓存和待确认项。
+- [INFERRED · HIGH] 恢复前重新计算 ACL；已撤销或删除资源显示失效占位，不通过旧 tabId 重连。
+
+### Stage 4：监控闪烁与采集负载修复
+
+- [INFERRED · HIGH] 拆静态、动态和进程采集；打开监控时显式 subscribe，关闭或撤权后 unsubscribe。
+- [INFERRED · HIGH] 前端使用稳定 DOM、keyed reconcile、持久 Chart 实例和真实 ring buffer；将 Chart.js 本地化。
+- [INFERRED · HIGH] stats subscribe 前检查资源 `observe` capability，并为序号、延迟、关闭面板和权限撤销补 E2E。
+
+### Stage 5：固定并修复 Zephyr WTerm fork
+
+- [INFERRED · HIGH] vendoring `@wterm/dom/core 0.1.9`，建立 upstream 基线测试、固定版本和产物哈希；不引入 xterm.js。
+- [INFERRED · HIGH] 在 WTerm 内实现公开 viewport state/event、程序滚动抑制、精确 bottom 和单次 render commit；Zephyr 页面改用公开 API。
+- [INFERRED · HIGH] buffer snapshot 由 WTerm core 提供，并受 terminal session `observe`/AI tool 权限约束。
+
+### Stage 6：WTerm resize/reflow 与旧补丁清理
+
+- [INFERRED · HIGH] 增加稳定 row id、ResizeDelta、语义 anchor 和离屏原子 DOM commit。
+- [INFERRED · HIGH] 删除六个私有 monkey patch、多阶段滚动 timer、旧 pixel scrollTop 恢复、PTY-only resize 和文本快照回灌。
+- [INFERRED · HIGH] 通过桌面/手机、长输出、宽字符、alternate screen、选择复制和 50 次 resize 循环门禁。
+
+### Stage 7：持久 SSH 会话、后台任务与协同控制
+
+- [INFERRED · HIGH] 建立 terminal sessions、background tasks、task events 和 session/task ACL；普通 WS detach 不销毁持久后端。
+- [INFERRED · HIGH] SSH/Codex 长任务使用远端 tmux、持久 Agent 或 Worker，并记录 backend ref、日志、状态与退出码。
+- [INFERRED · HIGH] 实现 observer/controller lease、控制权申请/释放、权限撤销、任务分享和真实操作者审计。
+- [INFERRED · HIGH] 验证浏览器关闭、网络中断、Node 重启、容器重启和多浏览器重连；不得重发最后输入。
+
+### Stage 8：AI 多用户策略、Provider 隔离与后台 AI 任务
+
+- [INFERRED · HIGH] 实现 `disabled/admin_shared/self_managed/both`，Provider ownership、模型白名单、额度、并发和工具 capability。
+- [INFERRED · HIGH] 将对话、Memory、计划、环境变量、浏览器会话和截图按 userId 隔离；共享管理员 Provider 不返回 Key。
+- [INFERRED · HIGH] 新建 AI task Worker、持久事件和 waiting-confirmation；关闭页面只断开订阅。
+- [INFERRED · HIGH] 每次 AI 工具执行重新检查用户 policy、资源 ACL、任务状态和确认条件。
+
+### Stage 9：笔记存储、API 与完整 UI
+
+- [INFERRED · HIGH] 实现 owner/ACL/revision/soft-delete/FTS 的 notes service，再交付主导航三栏桌面 UI、移动分层 UI、CodeMirror 编辑/预览、搜索、分组、标签、关联和导入导出。
+- [INFERRED · HIGH] 终端笔记侧窗和“当前连接”过滤只显示当前用户可读笔记；完整 UI、主题、移动端和可访问性测试全部通过才算交付。
+
+### Stage 10：AI 笔记工具
+
+- [INFERRED · HIGH] 增加 `note_list/search/get/create/update/delete`，接入 `notesRead/notesWrite`、note ACL、revision 冲突和确认策略。
+- [INFERRED · HIGH] AI 不自动注入全部笔记正文；先搜索再按需读取，写操作记录真实任务/用户并保持正文不进入普通活动日志。
+
+### Stage 11：HTTPS Deep Link、临时连接 UI 与一次性凭据
+
+- [INFERRED · HIGH] 先交付 SSH/JMS SSH/SFTP；所有入口进入现有连接 modal 的 transient mode，底部只有“测试连接”和“连接”。
+- [INFERRED · HIGH] token 绑定 userId、Same-Origin、短 TTL 和原子消费；密码/JMS token 不进入 query、localStorage、资产库或日志。
+- [INFERRED · HIGH] 笔记链接、登录回跳和工作区临时 tab 接入同一 parser/authz，覆盖跨用户消费和重复消费测试。
+
+### Stage 12：Telnet 与原生协议接管
+
+- [INFERRED · HIGH] 完成 Telnet transport 后才开放 `telnet://`，并明确明文风险。
+- [INFERRED · HIGH] Android/桌面壳注册 `ssh/telnet/jms`；Web 版保持 HTTPS/web+ fallback，不虚假宣称纯网页接管系统 scheme。
+
+### Stage 13：RDP 文件传输二进制 WebSocket 重构
+
+- [INFERRED · HIGH] 新增 Go WASM file transfer 层与 Node file-transfer WS，使用二进制帧、requestId 和 4-8 路流水线，删除 sync XHR/base64 主路径。
+- [INFERRED · HIGH] 每个 WS、Agent、drive、handle 和读写请求绑定 userId、connectionId、sessionId 与 `fileRead/fileWrite` capability。
+- [INFERRED · HIGH] 100MB LAN 基准目标不低于 40 MB/s且主线程无传输 Long Task；不支持 SAB/Atomics 的平台使用经过测试的兼容路径。
+
+### Stage 14：全面迁移、灰度与发布
+
+- [INFERRED · HIGH] 在副本库演练迁移/回滚，关闭旧全局写路径，运行完整 Node/Go/浏览器/移动端/权限/并发/重启矩阵。
+- [INFERRED · HIGH] 灰度观察越权拒绝、WS 401、异常重连、任务恢复、AI 用量、监控和文件传输指标；没有跨用户安全与恢复证据不得标记完成。
+
+---
+
+## 23. 文件级修改与新增模块清单
+
+### 23.1 现有文件
+
+| 文件 | 统一改造内容 |
 |---|---|
-| `server.js` | [INFERRED] 持久 session store、WS 身份传递、stats subscribe、Deep Link prepare/consume、notes routes 接线。 |
-| `storage.js` | [INFERRED] `auth_sessions`、`notes` schema/migration/CRUD/事务。 |
-| `stats.js` | [INFERRED] 静态/动态/进程采集拆分、缓存、序号、超时隔离。 |
-| `public/terminal.js` | [INFERRED] 改用 Zephyr WTerm 公开 viewport/fit/snapshot API，删除六个私有 monkey patch、多阶段滚动、像素恢复、文本回灌，并拆出监控逻辑。 |
-| `public/terminal.html` | [INFERRED] 移除 Chart CDN；继续加载固定 Zephyr WTerm CSS/模块。 |
-| `public/style.css` | [INFERRED] 保留 WTerm 必需主题样式，删除重复和用于操纵私有布局状态的 mobile override；加入笔记 view、终端笔记侧窗、临时连接 banner/state，全部复用现有主题变量。 |
-| `public/app.js` | [INFERRED] 完整 Notes UI、Deep Link transient modal mode、测试/临时连接分流、AI note side effect、auth-expired 状态。 |
-| `public/app.html` | [INFERRED] 顶部笔记入口、笔记三栏工作区、终端笔记入口、现有 connection modal 的 transient 状态元素和只含测试/连接的动作组、AI 权限设置。 |
-| `public/rdp-fs-provider.js` | [INFERRED] 精简：删除 syncRpc/syncXHR/base64 编解码，仅保留 SSE agent 状态和 drive attach/detach；新增 `globalThis.rdpFileTransferConnect` 和消息回调。 |
-| `rdp-wasm/rdpefs.go` | [INFERRED] 数据获取层从 `js.Global().Call()` 改为调用 `file_transfer.go` 同步接口；IRP 解析和驱动生命周期保持不变。 |
-| `ai-agent-service.js` | [INFERRED] note 工具定义、执行器、确认与权限。 |
-| `package.json` | [INFERRED] 指向固定 Zephyr WTerm fork、本地 Chart 依赖与 E2E test scripts；明确不加入 xterm.js。 |
-| `package-lock.json` | [INFERRED] 锁定 WTerm fork 精确版本/提交和本地前端依赖。 |
-| `Dockerfile` | [INFERRED] 构建/复制固定 WTerm fork 与本地 Chart 产物，不再依赖运行时 CDN。 |
+| `server.js` | [INFERRED · HIGH] 持久认证、统一 authz 接线、用户管理、资源过滤、工作区/任务 API、SSH/RDP/VNC/SFTP/Docker/Agent WS 授权、stats subscribe、Deep Link 和 notes route 接线。 |
+| `storage.js` | [INFERRED · HIGH] userId/role/status、auth sessions、user settings、workspaces、resource/session/task ACL、tasks/events、notes、AI resources、audit 与可重复 migration。 |
+| `ai-agent-service.js` | [INFERRED · HIGH] effective AI policy、Provider ownership、后台 task、用户隔离对话/Memory/plan/env/browser、工具级 ACL、notes 工具与确认。 |
+| `stats.js` | [INFERRED · HIGH] 静态/动态/进程采集拆分、缓存、sample sequence、超时隔离和订阅参数。 |
+| `public/app.js` | [INFERRED · HIGH] bootstrap、账号切换清理、工作区恢复、共享资源/用户管理/任务中心/个人设置/Notes/Deep Link transient UI 与 AI task 事件。 |
+| `public/app.html` | [INFERRED · HIGH] 用户管理、资源分享、AI policy、恢复面板、任务中心、完整 Notes 工作区和 transient connection 状态元素。 |
+| `public/terminal.js` | [INFERRED · HIGH] terminal owner/session ACL、协同 observer/controller、持久 attach、权限撤销；改用 WTerm 公开 API并删除旧 monkey patch/多阶段恢复。 |
+| `public/terminal.html` | [INFERRED · HIGH] 固定 Zephyr WTerm 产物，移除运行时 Chart CDN，加载拆分后的 terminal 模块。 |
+| `public/style.css` | [INFERRED · HIGH] 用户/共享/权限/恢复/协同/Notes/transient UI；全部复用现有主题变量并清理操纵 WTerm 私有布局的 override。 |
+| `public/rdp-fs-provider.js` | [INFERRED · HIGH] 删除 sync XHR/base64 主路径，仅保留 Agent 状态和 drive 生命周期，接入授权后的二进制 WS。 |
+| `rdp-wasm/rdpefs.go` | [INFERRED · HIGH] IRP 数据层改用 file transfer 同步接口，保留协议、handle 和 NT status 逻辑。 |
+| `file-agent-manager.js` | [INFERRED · HIGH] Agent ownership/token scope、按用户/连接/会话授权和二进制转发。 |
+| `package.json` / `package-lock.json` | [INFERRED · HIGH] 固定 WTerm fork、Chart 本地依赖、测试脚本和精确产物版本；不加入 xterm.js。 |
+| `Dockerfile` / `compose.yml` | [INFERRED · HIGH] 构建固定前端/WASM 产物、持久数据库与 task worker，并提供安全的迁移/健康检查。 |
+| `FREEZE/INDEX.md` | [INFERRED · HIGH] 指向本文唯一统一方案，删除独立多用户规格入口。 |
 
-### 建议新增文件
+### 23.2 建议新增服务模块
+
+```text
+authz.js                    # 角色、策略和 capability 的单一授权入口
+user-service.js             # 用户生命周期、密码、MFA、找回与会话撤销
+session-store.js            # SQLite 持久 App session
+resource-service.js         # owner-aware 资源 CRUD 与依赖解析
+sharing-service.js          # ACL、权限档位、过期和撤销
+workspace-service.js        # userId/clientId/workspace 恢复
+collaboration-service.js    # observer/controller lease
+task-service.js             # 持久任务、事件、确认和 task ACL
+task-worker.js              # SSH/AI 后台执行与重启恢复
+ai-policy-service.js        # 管理员策略与用户 effective policy
+notes-service.js            # owner/ACL/revision/FTS 笔记服务
+deeplink-service.js         # user-bound transient token 与 parser
+telnet-session.js           # Telnet IAC/NAWS/TTYPE transport
+file-transfer-ws.js         # 授权后的二进制 RDP Agent 文件传输
+migration-multi-user.js     # 可重复、可审计的多用户迁移
+```
+
+### 23.3 建议新增前端与 WTerm 模块
 
 ```text
 vendor/wterm-zephyr/packages/core/
 vendor/wterm-zephyr/packages/dom/
 vendor/wterm-zephyr/tests/
-session-store.js
-notes-service.js
-deeplink-service.js
-telnet-session.js
 public/open.html
 public/open.js
 public/notes.js
+public/user-admin.js
+public/user-settings.js
+public/sharing-ui.js
+public/workspace-restore.js
+public/task-center.js
 public/terminal-runtime.js
 public/terminal-layout.js
 public/terminal-mobile-input.js
 public/terminal-monitor.js
+```
+
+### 23.4 建议新增测试
+
+```text
+tests/authz.test.mjs
+tests/user-isolation.test.mjs
 tests/session-store.test.mjs
-tests/wterm-viewport.test.mjs
-tests/wterm-resize-anchor.test.mjs
-tests/wterm-render-commit.test.mjs
-tests/stats-sampler.test.mjs
-tests/deeplink-parser.test.mjs
-tests/deeplink-transient-token.test.mjs
-tests/deeplink-transient-ui.test.mjs
+tests/resource-sharing.test.mjs
+tests/workspace-restore.test.mjs
+tests/task-persistence.test.mjs
+tests/ai-policy.test.mjs
+tests/ai-task-resume.test.mjs
 tests/notes-storage.test.mjs
 tests/notes-api.test.mjs
 tests/ai-notes-tools.test.mjs
+tests/deeplink-parser.test.mjs
+tests/deeplink-transient-token.test.mjs
+tests/deeplink-transient-ui.test.mjs
+tests/stats-sampler.test.mjs
+tests/wterm-viewport.test.mjs
+tests/wterm-resize-anchor.test.mjs
+tests/wterm-render-commit.test.mjs
+tests/file-transfer-ws.test.mjs
+tests/e2e/session-restart.spec.mjs
+tests/e2e/cross-user-isolation.spec.mjs
+tests/e2e/workspace-task-restore.spec.mjs
+tests/e2e/collaboration-control.spec.mjs
 tests/e2e/wterm-resize-scroll.spec.mjs
 tests/e2e/monitor-stability.spec.mjs
-tests/e2e/session-restart.spec.mjs
 tests/e2e/deeplink-transient-ui.spec.mjs
 tests/e2e/notes-ui.spec.mjs
+tests/e2e/rdp-file-transfer.spec.mjs
 rdp-wasm/file_transfer.go
 rdp-wasm/file_transfer_test.go
-file-transfer-ws.js
-tests/file-transfer-ws.test.mjs
-tests/e2e/rdp-file-transfer.spec.mjs
 ```
 
 ---
 
-## 10. CI 与发布门禁
+## 24. 测试与验收矩阵
+
+### 24.1 账号隔离
+
+[INFERRED · HIGH] 创建用户 A、B 和管理员；A 创建私有连接、笔记、AI provider、任务和工作区；B 与管理员登录后，所有列表、搜索、详情、导出、WebSocket、AI tool 和截图接口都不能读到 A 的私有对象。
+
+[INFERRED · HIGH] A 退出后同一浏览器登录 B，页面不显示 A 的 tab、聊天、主题、待确认项、任务或缓存输出；B 关闭再打开只恢复 B 的工作区。
+
+[INFERRED · HIGH] 修改 A 的密码、暂停 A、撤销 A 的会话后，A 的 HTTP、WebSocket、任务控制和 AI 确认都按策略失效；B 和管理员的会话不受错误影响。
+
+### 24.2 资源共享
+
+[INFERRED · HIGH] 管理员只给 A 某台设备 `observer`，A 能看但不能输入、执行或修改；升级为 `operator` 后输入可用，仍不能编辑；撤销后已建立连接收到权限变化。
+
+[INFERRED · HIGH] A 新建设备后管理员列表看不到；A 只共享 `observe` 给管理员后，管理员能观察但不能读取密码、输入或编辑；A 撤销后访问立即停止。
+
+[INFERRED · HIGH] 共享 connection 依赖 proxy/jump/key 的组合测试覆盖：缺少依赖授权时连接被拒绝，不会 fallback 到全局资源或泄露依赖名称/秘密。
+
+### 24.3 工作区和任务恢复
+
+[INFERRED · HIGH] 设备 A 关闭浏览器，SSH tmux 长任务继续；等待一段时间后重新登录，原 tab 恢复、历史日志回放、实时输出继续，且不重复发送最后一条输入。
+
+[INFERRED · HIGH] 在任务运行中重启 Node/Docker 容器后，任务状态、日志和用户 ACL 仍可读取；服务重启不应把有效 App Cookie 随机变成需要重新登录。
+
+[INFERRED · HIGH] 两个浏览器实例以同一用户登录时工作区不互相覆盖；一个用户共享任务给另一个用户后，观察者能看，未授予控制权者不能取消或确认。
+
+[INFERRED · HIGH] RDP/VNC 关闭后重新打开能重新建立授权通道；目标系统断线重连差异必须在验收报告中明确记录，不把远端会话保留误报为 Zephyr 保证。
+
+### 24.4 AI 权限
+
+[INFERRED · HIGH] 管理员将 A 设为 `disabled` 时，A 的 AI UI、API、WebSocket、编辑器补全和后台任务都拒绝；切换到 `admin_shared` 后只能使用白名单 provider/model。
+
+[INFERRED · HIGH] A 添加自己的 provider 后，A 可以使用，管理员不能读取 API Key；管理员关闭 `self_managed` 后 A 不能新增或调用，但历史配置按保留策略处理。
+
+[INFERRED · HIGH] A 的 AI 只能列出 A 有权访问的连接和笔记；即使 AI 模型生成了其他用户的 ID，工具执行器也拒绝。
+
+[INFERRED · HIGH] AI 任务在浏览器关闭后继续；任务进入确认状态时重新打开可恢复确认卡，未经用户点击不会执行敏感动作。
+
+### 24.5 前述技术功能
+
+[INFERRED · HIGH] Deep Link token 跨用户消费、重复消费、过期消费和未登录回跳账号切换都被拒绝；transient 连接不会写入主机库。
+
+[INFERRED · HIGH] 笔记 CRUD、全文搜索、导入导出、连接关联、AI note 工具和 revision 冲突都进行 owner/ACL 测试；A 的笔记链接不能让 B 获得连接权限。
+
+[INFERRED · HIGH] WTerm 输出/scrollback、监控 stats、RDP file-transfer 的所有入口都通过用户和资源授权；用户撤销共享后不再接收新数据。
+
+### 24.6 安全和工程门禁
+
+[INFERRED · HIGH] 运行静态扫描禁止业务代码直接用 `username === 'admin'` 代替授权、直接读取旧全局 connections/settings、把 API Key/password 写入日志或把前端 context 当权限依据。
+
+[INFERRED · HIGH] API、WebSocket、AI tool、后台 Worker、导出、Deep Link、Agent 文件传输和协同锁都要有自动化跨用户越权测试；只测页面按钮不算通过。
+
+[INFERRED · HIGH] 数据迁移、回滚、服务重启、多实例、并发双消费 token、并发修改 ACL、并发任务控制和数据库锁竞争都必须在 CI 或独立验收环境验证。
+
+### 24.7 技术功能与发布门禁
 
 - [INFERRED] 每次提交运行 Node syntax、unit、storage migration、API integration 和 Playwright desktop/mobile。**置信度：HIGH。**
 - [INFERRED] 源码门禁禁止 Zephyr 业务层重新出现 `term._doRender`、`term._scheduleRender`、`term._scrollToBottom`、`term._shouldScrollToBottom` 等 WTerm 私有耦合；私有实现只能存在固定 WTerm fork 内并由其自身测试覆盖。**置信度：HIGH。**
@@ -1152,10 +2158,12 @@ tests/e2e/rdp-file-transfer.spec.mjs
 - [INFERRED] 固定 WTerm fork 每次发布必须验证源码提交、WASM/JS 产物哈希和 API contract；禁止静默回退 npm 原版或在 node_modules 上做未测试临时修改。**置信度：HIGH。**
 - [INFERRED] 笔记与 Deep Link transient UI 必须通过桌面/手机及所有主题视觉回归；只有后端/API 通过不算功能完成。**置信度：HIGH。**
 - [INFERRED] 数据库 session/notes 和 Deep Link schema 必须向前兼容；回滚不得删除用户笔记或将临时连接写入主机库。**置信度：HIGH。**
+- [INFERRED · HIGH] CI 必须额外运行跨用户 HTTP/WS/AI/导出/Deep Link/Agent 越权矩阵；只验证 UI 隐藏不算权限测试。**置信度：HIGH。**
+- [INFERRED · HIGH] 发布 artifact 必须记录 schema version、WTerm fork hash、WASM hash 和 migration compatibility；服务重启恢复测试必须使用真实持久卷。**置信度：HIGH。**
 
 ---
 
-## 11. 不应采用的伪修复
+## 25. 不应采用的伪修复
 
 - [INFERRED] **不要**迁移或混入 xterm.js；xterm.js 在本文只作为状态机原则参考，运行时和最终实现均保持 WTerm。**置信度：HIGH。**
 - [INFERRED] **不要**继续增加更多 `setTimeout/requestAnimationFrame` 滚动阶段。**置信度：HIGH。**
@@ -1171,10 +2179,18 @@ tests/e2e/rdp-file-transfer.spec.mjs
 - [INFERRED] **不要**在纯网页里声称已接管操作系统 `ssh://`；必须如实区分 HTTPS/web+ scheme 与原生 handler。**置信度：HIGH。**
 - [INFERRED] **不要**继续用同步 XMLHttpRequest 做文件传输 RPC；sync XHR 阻塞主线程是吞吐量瓶颈，不是增加块大小能解决的。**置信度：HIGH。**
 - [INFERRED] **不要**把文件传输的 base64 编码路径当作正常行为保留；二进制帧协议是正确方案。**置信度：HIGH。**
+- [INFERRED · HIGH] **不要**只在前端按 username 过滤列表；HTTP、WebSocket、Worker、AI tool、导出和文件传输都必须服务端授权。**置信度：HIGH。**
+- [INFERRED · HIGH] **不要**用可修改 username 作为资源外键；必须使用不可变 userId。**置信度：HIGH。**
+- [INFERRED · HIGH] **不要**让管理员角色隐式读取所有用户密码、私钥、AI Key、笔记和对话；秘密读取必须是独立 capability 或受审计 break-glass。**置信度：HIGH。**
+- [INFERRED · HIGH] **不要**把共享 connection 视为自动共享 proxy、jump host、SSH key 和 Agent；依赖必须在服务端安全解析。**置信度：HIGH。**
+- [INFERRED · HIGH] **不要**把终端标签写入未命名空间的 localStorage 后宣称工作区隔离；恢复必须按 userId + clientId 且重新计算 ACL。**置信度：HIGH。**
+- [INFERRED · HIGH] **不要**让 AI system prompt 或前端 context 充当权限；每个工具执行点必须调用统一 authz。**置信度：HIGH。**
+- [INFERRED · HIGH] **不要**把后台任务继续运行建立在 Node 内存 Map、浏览器 fetch 或单个 WebSocket 上。**置信度：HIGH。**
+- [INFERRED · HIGH] **不要**在迁移期间长期双写旧 JSON 与新 owner-aware SQLite；这会造成权限漂移和数据分叉。**置信度：HIGH。**
 
 ---
 
-## 12. 最终验收定义
+## 26. 最终验收定义
 
 ### 监控
 
@@ -1200,9 +2216,31 @@ tests/e2e/rdp-file-transfer.spec.mjs
 
 - [INFERRED] 在 LAN 环境下，100MB 文件从 Zephyr Agent 到 Windows 的吞吐量不低于 40 MB/s；主线程不被传输阻塞，RDP 画面和交互保持流畅。**置信度：HIGH。**
 
+### 多用户、权限、恢复与持久任务
+
+[INFERRED · HIGH] 多用户功能只有在以下条件全部满足时才能标记为“可用”，不能因为登录页能创建第二个账号就宣称完成：
+
+1. [INFERRED · HIGH] 用户、会话、资源、工作区、任务、AI、笔记和 Agent token 都有明确 owner 或 system scope。
+2. [INFERRED · HIGH] 所有 HTTP、WebSocket、Worker、AI tool、导出和 Deep Link 入口都经过服务端 ACL。
+3. [INFERRED · HIGH] A 的私有资源默认不出现在 B/管理员列表，A 可选择共享且可撤销。
+4. [INFERRED · HIGH] 管理员可以逐项控制 A 对管理员设备的发现、连接、观察、控制、执行、文件和编辑权限。
+5. [INFERRED · HIGH] 每个用户可以独立改密、找回密码、配置 MFA 和个人页面；管理员全局配置不会覆盖用户个人 override。
+6. [INFERRED · HIGH] AI 支持禁用、管理员共享、用户自带和混合模式；provider、对话、任务、Memory 和秘密按用户隔离。
+7. [INFERRED · HIGH] 浏览器关闭后，持久 SSH/AI 任务继续；重新打开只恢复当前用户有权访问的工作区和任务。
+8. [INFERRED · HIGH] 本文的 Deep Link、笔记、WTerm、监控和 RDP 文件传输方案全部接入用户/ACL/任务模型。
+9. [INFERRED · HIGH] 数据库迁移、服务重启、多设备并发、权限撤销和跨用户安全测试通过，且日志无秘密泄露。
+10. [INFERRED · HIGH] 管理员私有资源治理边界、break-glass 是否开启、RDP 断线重连限制和自定义 JavaScript 安全边界在 UI/文档中明确说明。
+
+### 产品完成边界
+
+- [INFERRED · HIGH] Zephyr 只有在用户、会话、资源、工作区、任务、AI、笔记和 Agent token 都有 owner/system scope，且所有入口完成服务端 ACL 后，才能称为多用户平台。**置信度：HIGH。**
+- [INFERRED · HIGH] 浏览器关闭后 SSH/AI 持久任务继续，重新打开只恢复当前用户仍有权访问的页面和任务；不重放输入、不自动批准。**置信度：HIGH。**
+- [INFERRED · HIGH] 用户私有资源默认不向管理员公开；管理员设备按 capability 分享；AI 默认不给普通用户，开放方式由明确 policy 决定。**置信度：HIGH。**
+- [KNOWN · HIGH] 当前仓库尚未实现本文全部内容；本文是统一实施与验收规格，不是当前能力说明。**置信度：HIGH。**
+
 ---
 
-## 13. 参考源码位置
+## 27. 参考源码位置
 
 - [KNOWN] Zephyr 监控：`public/terminal.js:6463-6562, 7840-8218`；`server.js:4388-4418`；`stats.js:1-323`。**置信度：HIGH。**
 - [KNOWN] Zephyr 滚动/resize：`public/terminal.js:1320-2136, 6464-7770, 8229-8425, 9588-9945`。**置信度：HIGH。**
@@ -1214,6 +2252,5 @@ tests/e2e/rdp-file-transfer.spec.mjs
 - [KNOWN] 许可证：Zephyr 与 Netcatty 均为 GPL-3.0；xterm.js 为 MIT。**置信度：HIGH。**
 - [KNOWN] Zephyr RDP 文件传输：`rdp-wasm/rdpefs.go:1-2133`（Go WASM rdpdr IRP 处理）、`public/rdp-fs-provider.js:1-359`（JS 同步 RPC 桥）、`file-agent-manager.js:1-999`（Node.js Agent WS 管理）、`public/rdp-wasm-client.js`（WASM 加载与 SAB 桥）。**置信度：HIGH。**
 - [KNOWN] MS-RDPEFS 协议：`[MS-RDPEFS].pdf`（RDP 文件系统虚拟通道扩展）、`[MS-RDPDR].pdf`（RDP 设备重定向静态虚拟通道）。**置信度：HIGH。**
-
----
-
+- [KNOWN · HIGH] 当前多用户相关基线：`storage.js` 的 `users/connections/settings/passkeys/password_reset_codes` 表与迁移；`server.js` 的内存 `sessions/sshTerminalSessions`、认证、连接和设置路由；`ai-agent-service.js` 的全局 AI settings、同步 `/api/ai/chat` 与工具执行器。**置信度：HIGH。**
+- [KNOWN · HIGH] 当前页面恢复相关基线：`public/app.js` 的内存 `terminalTabs/activeTerminalTab/visualLayout`、tab 参数 `sessionStorage` 与本地 AI chat storage；实施前需以目标提交重新定位行号。**置信度：HIGH。**
