@@ -547,6 +547,14 @@ body.terminal-mode .terminal-view.active { animation: none; }
     100% { opacity: 0; transform: translate3d(0, -14px, 0) scale(.90); filter: blur(10px) saturate(.72); }
 }
 .card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
+.card-top-meta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-left: auto;
+    min-width: 0;
+}
 .protocol-badge { padding: 4px 9px; border-radius: 999px; background: var(--protocol-badge-bg, rgba(10,132,255,.15)); color: var(--protocol-badge-fg, var(--accent-hover)); font-size: 12px; font-weight: 800; }
 .last-time, .muted { color: var(--text-secondary); font-size: 12px; }
 .muted-link { color: inherit; text-decoration-color: currentColor; }
