@@ -62,3 +62,16 @@ jobs:
 
       - name: Build RDP WASM
         run: npm run test:wasm-build
+
+      # ── zephyr-worker (Go persistent SSH worker, Stage 7) ──
+      - name: Build zephyr-worker
+        run: |
+          cd zephyr-worker
+          go mod tidy
+          go build ./...
+          go vet ./...
+
+      - name: Test zephyr-worker
+        run: |
+          cd zephyr-worker
+          go test ./... -v

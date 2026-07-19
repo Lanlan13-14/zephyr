@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="color-scheme" content="dark light">
+    <title>临时连接 · Zephyr</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        /* /open is a thin hand-off page: parse fragment, prepare token, then
+         * either open the in-app transient modal or show a self-contained
+         * fallback form that reuses the same design tokens. */
+        .open-shell {
+            min-height: 100dvh;
+            display: grid;
+            place-items: center;
+            padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font-sans);
+        }
+        .open-card {
+            width: min(440px, 100%);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lift);
+            padding: 28px 24px 22px;
+            transform: translateY(0) scale(1);
+            opacity: 1;
+            transition: transform 220ms var(--ease-smooth), opacity 220ms var(--ease-smooth);
+        }
+        .open-card[data-state="enter"] {
+            transform: translateY(8px) scale(0.97);
+            opacity: 0;
+        }
+        .open-eyebrow {
+            font-size: 12px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+        .open-title {
+            font-size: 22px;
+            font-weight: 650;
+            letter-spacing: -0.02em;
+            margin: 0 0 8px;
+            line-height: 1.2;
+        }
+        .open-sub {
+            color: var(--text-secondary);
+            font-size: 14px;
+            line-height: 1.5;
+            margin: 0 0 20px;
+        }
+        .open-banner {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 10px 12px;
+            border-radius: var(--radius-sm);
+            background: color-mix(in srgb, var(--accent) 10%, transparent);
+            border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+            color: var(--text);
+            font-size: 13px;
+            margin-bottom: 18px;
+        }
+        .open-banner strong { font-weight: 600; }
+        .open-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            min-height: 20px;
+            margin-bottom: 16px;
+        }
+        .open-spinner {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+            border-top-color: var(--accent);
+            animation: open-spin 700ms linear infinite;
+        }
+        @keyframes open-spin { to { transform: rotate(360deg); } }
+        .open-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 8px;
+        }
+        .open-actions .btn { width: auto; flex: 1; margin-top: 0; }
+        .open-actions .btn:active { transform: scale(0.97); }
+        .open-error {
+            background: color-mix(in srgb, var(--danger) 12%, transparent);
+            border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+            color: var(--danger);
+            border-radius: var(--radius-sm);
+            padding: 10px 12px;
+            font-size: 13px;
+            margin-bottom: 14px;
+            display: none;
+        }
+        .open-error.show { display: block; }
+        @media (prefers-reduced-motion: reduce) {
+            .open-card { transition: none; }
+            .open-spinner { animation: none; border-top-color: var(--accent); opacity: 0.7; }
+            .open-actions .btn:active { transform: none; }
+        }
+    </style>
+</head>
+<body>
+    <main class="open-shell">
+        <section class="open-card" id="openCard" data-state="enter" aria-live="polite">
+            <div class="open-eyebrow">Deep Link</div>
+            <h1 class="open-title" id="openTitle">准备临时连接</h1>
+            <p class="open-sub" id="openSub">正在解析链接参数。本次连接不会写入主机库。</p>
+            <div class="open-banner" id="openBanner" hidden>
+                <span aria-hidden="true">⚡</span>
+                <div><strong>临时连接</strong> · 本次参数不会保存到主机库</div>
+            </div>
+            <div class="open-error" id="openError" role="alert"></div>
+            <div class="open-status" id="openStatus">
+                <span class="open-spinner" aria-hidden="true"></span>
+                <span id="openStatusText">检查登录状态…</span>
+            </div>
+            <div class="open-actions" id="openActions" hidden>
+                <button type="button" class="btn" id="openRetryBtn">重试</button>
+                <button type="button" class="btn btn-primary" id="openAppBtn">打开应用</button>
+            </div>
+        </section>
+    </main>
+    <script src="/open.js" type="module"></script>
+</body>
+</html>

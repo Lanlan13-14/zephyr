@@ -3543,6 +3543,22 @@ function hideShortcutPanel() {
     window.setTimeout(() => { clearPanelMotion(shortcutPanel); if (!shortcutPanel.classList.contains('open')) shortcutPanel.style.display = 'none'; }, 320);
 }
 snippetBtn?.addEventListener('click', () => snippetPanel.classList.contains('open') ? hideSnippetPanel() : showSnippetPanel());
+// Notes side panel: postMessage to parent (app.js) to open notes filtered by
+// the current connection. The terminal iframe doesn't own the notes UI; the
+// app shell does (it has the notesController and ACL context).
+const notesBtn = document.getElementById('notesBtn');
+notesBtn?.addEventListener('click', () => {
+    if (embeddedMode && window.parent && window.parent !== window) {
+        window.parent.postMessage({
+            source: 'zephyr-terminal',
+            type: 'open-notes-for-connection',
+            tabId: params?.tabId,
+            connectionId: params?.connectionId || '',
+        }, '*');
+    } else {
+        showToast('笔记面板需要在应用主界面打开');
+    }
+});
 snippetSearch?.addEventListener('input', renderSnippetPanel);
 shortcutBtn?.addEventListener('click', () => shortcutPanel.classList.contains('open') ? hideShortcutPanel() : showShortcutPanel());
 window.addEventListener('storage', (event) => { if (event.key === SNIPPET_STORAGE_KEY && snippetPanel?.classList.contains('open')) renderSnippetPanel(); });
@@ -8012,64 +8028,48 @@ function bindMonitorPager() {
     viewport.addEventListener('pointercancel', () => { tracking = false; }, { passive: true });
 }
 
-function renderStats(d) {
-    if (!infoBody || !d) return;
-    latestStatsData = d;
-    const cpuUsage = safeVal(d.cpu?.usage);
-    const memUsedGB = (safeVal(d.memUsed) / 1024).toFixed(1);
-    const memTotalGB = (safeVal(d.memTotal) / 1024).toFixed(1);
-    const swapUsedGB = (safeVal(d.swapUsed) / 1024).toFixed(1);
-    const swapTotalGB = (safeVal(d.swapTotal) / 1024).toFixed(1);
-    const rxMbps = safeVal(d.net?.rx).toFixed(1);
-    const txMbps = safeVal(d.net?.tx).toFixed(1);
-    const ipv4 = d.ip?.ipv4 || 'N/A';
-    const ipv6 = d.ip?.ipv6 || 'N/A';
-    const hostName = d.host?.hostname || 'N/A';
-    const hostOS = d.host?.os || 'N/A';
+function ensureStatsSkeleton(d) {
+    /* Build the monitor DOM once per open; subsequent stats pushes only
+     * update text nodes and chart data (FREEZE plan §2.3). Rebuilding the
+     * whole innerHTML on every stats tick is the direct cause of the panel
+     * flicker - canvas teardown + recreation + re-layout flashes visibly. */
+    if (infoBody.dataset.statsSkeleton === '1' && !monitorPageSwitching) return;
     const diskDevices = Array.isArray(d.disk?.devices) ? d.disk.devices : [];
     const diskDeviceCards = diskDevices.map(device => `
-        <div class="doughnut-item disk-card">
+        <div class="doughnut-item disk-card" data-disk-id="${device.id}">
             <div class="disk-card-meta">
                 <div class="doughnut-label">${device.mountpoint}</div>
-                <div class="doughnut-text">${device.usedGB} / ${device.totalGB} GB</div>
-                <div class="doughnut-sub">${device.filesystem}</div>
-                <div class="doughnut-sub">已用 ${device.usageLabel}</div>
-                <div class="doughnut-sub">读 ${device.readKBps} KB/s · 写 ${device.writeKBps} KB/s</div>
+                <div class="doughnut-text" data-disk-text="${device.id}">${device.usedGB} / ${device.totalGB} GB</div>
+                <div class="doughnut-sub" data-disk-fs="${device.id}">${device.filesystem}</div>
+                <div class="doughnut-sub" data-disk-pct="${device.id}">已用 ${device.usageLabel}</div>
+                <div class="doughnut-sub" data-disk-rw="${device.id}">读 ${device.readKBps} KB/s · 写 ${device.writeKBps} KB/s</div>
             </div>
             <div class="doughnut-wrap"><canvas id="${device.id}"></canvas></div>
         </div>
     `).join('');
 
-    const previousBodyScrollTop = infoBody.scrollTop || 0;
-    const activeElement = document.activeElement;
-    const activeElementId = infoBody.contains(activeElement) ? activeElement?.id || '' : '';
-    const activeSelection = activeElementId && typeof activeElement.selectionStart === 'number'
-        ? { start: activeElement.selectionStart, end: activeElement.selectionEnd }
-        : null;
-    const isMonitorSwitching = monitorPageSwitching && monitorPrevPage !== monitorPage;
-    const monitorDir = monitorSwitchDirection >= 0 ? 1 : -1;
     const monitorPageClass = (page) => [
         'monitor-page',
         `monitor-page-${page}`,
         page === 0 ? 'monitor-overview-page' : 'monitor-process-page',
         monitorPage === page ? 'active' : '',
     ].filter(Boolean).join(' ');
-    const monitorPageHidden = (page) => (monitorPage === page || (isMonitorSwitching && monitorPrevPage === page)) ? '' : 'hidden';
+    const monitorPageHidden = (page) => (monitorPage === page) ? '' : 'hidden';
 
     infoBody.innerHTML = `
-        <div class="monitor-tabs ${isMonitorSwitching ? 'switching' : ''}" role="tablist" aria-label="监控分页" style="--monitor-tab-index:${monitorPage}">
+        <div class="monitor-tabs" role="tablist" aria-label="监控分页" style="--monitor-tab-index:${monitorPage}">
             <span class="monitor-tab-thumb" aria-hidden="true"></span>
             <button class="monitor-tab ${monitorPage === 0 ? 'active' : ''}" data-monitor-page="0" type="button" role="tab" aria-selected="${monitorPage === 0 ? 'true' : 'false'}" tabindex="${monitorPage === 0 ? '0' : '-1'}">概览</button>
             <button class="monitor-tab ${monitorPage === 1 ? 'active' : ''}" data-monitor-page="1" type="button" role="tab" aria-selected="${monitorPage === 1 ? 'true' : 'false'}" tabindex="${monitorPage === 1 ? '0' : '-1'}">进程</button>
         </div>
-        <div class="monitor-pages-viewport ${isMonitorSwitching ? 'switching' : ''}" data-monitor-page="${monitorPage}" data-monitor-prev-page="${monitorPrevPage}" data-monitor-dir="${monitorDir}">
+        <div class="monitor-pages-viewport" data-monitor-page="${monitorPage}">
             <section class="${monitorPageClass(0)}" ${monitorPageHidden(0)}>
         <div class="doughnut-row">
             <div class="doughnut-item disk-card full-width">
                 <div class="disk-card-meta">
                     <div class="doughnut-label">主机</div>
-                    <div class="doughnut-text">${hostName}</div>
-                    <div class="doughnut-sub">${hostOS}</div>
+                    <div class="doughnut-text" data-stat="hostName">N/A</div>
+                    <div class="doughnut-sub" data-stat="hostOS">N/A</div>
                 </div>
             </div>
         </div>
@@ -8077,9 +8077,9 @@ function renderStats(d) {
             <div class="doughnut-item disk-card full-width">
                 <div class="disk-card-meta">
                     <div class="doughnut-label">CPU</div>
-                    <div class="doughnut-text">${d.cpu?.model || 'N/A'}</div>
-                    <div class="doughnut-sub">${d.cpu?.freq || 'N/A'}</div>
-                    <div class="doughnut-sub">${d.cpu?.cores || 0} 核心</div>
+                    <div class="doughnut-text" data-stat="cpuModel">N/A</div>
+                    <div class="doughnut-sub" data-stat="cpuFreq">N/A</div>
+                    <div class="doughnut-sub" data-stat="cpuCores">0 核心</div>
                 </div>
                 <div class="doughnut-wrap"><canvas id="cpuDoughnut"></canvas></div>
             </div>
@@ -8088,12 +8088,12 @@ function renderStats(d) {
             <div class="doughnut-item">
                 <div class="doughnut-label">内存</div>
                 <div class="doughnut-wrap"><canvas id="ramDoughnut"></canvas></div>
-                <div class="doughnut-text">${memUsedGB} / ${memTotalGB} GB</div>
+                <div class="doughnut-text" data-stat="memText">0 / 0 GB</div>
             </div>
             <div class="doughnut-item">
                 <div class="doughnut-label">Swap</div>
                 <div class="doughnut-wrap"><canvas id="swapDoughnut"></canvas></div>
-                <div class="doughnut-text">${swapUsedGB} / ${swapTotalGB} GB</div>
+                <div class="doughnut-text" data-stat="swapText">0 / 0 GB</div>
             </div>
         </div>
         <div class="doughnut-row disk-card-row">
@@ -8102,22 +8102,22 @@ function renderStats(d) {
         <div class="doughnut-row two-col">
             <div class="doughnut-item">
                 <div class="doughnut-label">下载</div>
-                <div class="doughnut-text">${rxMbps} Mbps</div>
+                <div class="doughnut-text" data-stat="rxText">0 Mbps</div>
                 <div class="sparkline-row">
                     <canvas id="rxLine" data-color="#3fb950" class="line-canvas" height="30"></canvas>
                 </div>
             </div>
             <div class="doughnut-item">
                 <div class="doughnut-label">上传</div>
-                <div class="doughnut-text">${txMbps} Mbps</div>
+                <div class="doughnut-text" data-stat="txText">0 Mbps</div>
                 <div class="sparkline-row">
                     <canvas id="txLine" data-color="#0a84ff" class="line-canvas" height="30"></canvas>
                 </div>
             </div>
         </div>
         <div class="ip-section">
-            <div class="ip-box"><span>IPv4</span><code>${ipv4}</code><button class="copy-ip-btn" aria-label="复制 IPv4" onclick="navigator.clipboard.writeText('${ipv4}')">${zephyrButtonGlyph('copy', '复制')}</button></div>
-            <div class="ip-box"><span>IPv6</span><code>${ipv6}</code><button class="copy-ip-btn" aria-label="复制 IPv6" onclick="navigator.clipboard.writeText('${ipv6}')">${zephyrButtonGlyph('copy', '复制')}</button></div>
+            <div class="ip-box"><span>IPv4</span><code data-stat="ipv4">N/A</code><button class="copy-ip-btn" aria-label="复制 IPv4" data-copy-stat="ipv4">${zephyrButtonGlyph('copy', '复制')}</button></div>
+            <div class="ip-box"><span>IPv6</span><code data-stat="ipv6">N/A</code><button class="copy-ip-btn" aria-label="复制 IPv6" data-copy-stat="ipv6">${zephyrButtonGlyph('copy', '复制')}</button></div>
         </div>
             </section>
             <section class="${monitorPageClass(1)}" ${monitorPageHidden(1)}>
@@ -8125,30 +8125,76 @@ function renderStats(d) {
             </section>
         </div>
     `;
-
+    infoBody.dataset.statsSkeleton = '1';
     bindMonitorPager();
     bindProcessPageEvents();
-    if (isMonitorSwitching) {
-        window.clearTimeout(renderStats._monitorSwitchCleanup);
-        renderStats._monitorSwitchCleanup = window.setTimeout(() => {
-            if (!monitorPageSwitching) return;
-            finishMonitorPageSwitch({ render: false });
-        }, 380);
+    infoBody.querySelectorAll('[data-copy-stat]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const name = btn.dataset.copyStat;
+            const code = infoBody.querySelector(`[data-stat="${name}"]`);
+            const value = code?.textContent || '';
+            if (value) navigator.clipboard.writeText(value).then(() => showToast('已复制', 'success')).catch(() => {});
+        });
+    });
+    requestAnimationFrame(() => updateMonitorTabThumb({ immediate: true }));
+    try { initCharts(); } catch (err) { console.warn('[Stats] 图表初始化失败:', err); }
+}
+
+function setTextStat(name, value) {
+    const el = infoBody.querySelector(`[data-stat="${name}"]`);
+    if (el && el.textContent !== value) el.textContent = value;
+}
+
+function renderStats(d) {
+    if (!infoBody || !d) return;
+    latestStatsData = d;
+    // Rebuild skeleton when disk devices change (mount added/removed) or on
+    // monitor page switch; otherwise keep the DOM and update in place.
+    const diskDevices = Array.isArray(d.disk?.devices) ? d.disk.devices : [];
+    const knownDiskIds = Array.from(infoBody.querySelectorAll('[data-disk-id]')).map((el) => el.dataset.diskId);
+    const diskChanged = diskDevices.length !== knownDiskIds.length
+        || diskDevices.some((dev, i) => dev.id !== knownDiskIds[i]);
+    if (infoBody.dataset.statsSkeleton !== '1' || diskChanged || monitorPageSwitching) {
+        delete infoBody.dataset.statsSkeleton;
+        ensureStatsSkeleton(d);
     }
-    requestAnimationFrame(() => {
-        updateMonitorTabThumb({ immediate: !monitorPageSwitching });
-        if (previousBodyScrollTop && monitorPage === 0) infoBody.scrollTop = previousBodyScrollTop;
-        if (activeElementId) {
-            const nextActive = document.getElementById(activeElementId);
-            nextActive?.focus?.({ preventScroll: true });
-            if (activeSelection && typeof nextActive?.setSelectionRange === 'function') {
-                try { nextActive.setSelectionRange(activeSelection.start, activeSelection.end); } catch (_) {}
-            }
-        }
+
+    const cpuUsage = safeVal(d.cpu?.usage);
+    const memUsedGB = (safeVal(d.memUsed) / 1024).toFixed(1);
+    const memTotalGB = (safeVal(d.memTotal) / 1024).toFixed(1);
+    const swapUsedGB = (safeVal(d.swapUsed) / 1024).toFixed(1);
+    const swapTotalGB = (safeVal(d.swapTotal) / 1024).toFixed(1);
+    const rxMbps = safeVal(d.net?.rx).toFixed(1);
+    const txMbps = safeVal(d.net?.tx).toFixed(1);
+
+    setTextStat('hostName', d.host?.hostname || 'N/A');
+    setTextStat('hostOS', d.host?.os || 'N/A');
+    setTextStat('cpuModel', d.cpu?.model || 'N/A');
+    setTextStat('cpuFreq', d.cpu?.freq || 'N/A');
+    setTextStat('cpuCores', `${d.cpu?.cores || 0} 核心`);
+    setTextStat('memText', `${memUsedGB} / ${memTotalGB} GB`);
+    setTextStat('swapText', `${swapUsedGB} / ${swapTotalGB} GB`);
+    setTextStat('rxText', `${rxMbps} Mbps`);
+    setTextStat('txText', `${txMbps} Mbps`);
+    setTextStat('ipv4', d.ip?.ipv4 || 'N/A');
+    setTextStat('ipv6', d.ip?.ipv6 || 'N/A');
+
+    diskDevices.forEach((device) => {
+        setTextStatName(`[data-disk-text="${device.id}"]`, `${device.usedGB} / ${device.totalGB} GB`);
+        setTextStatName(`[data-disk-pct="${device.id}"]`, `已用 ${device.usageLabel}`);
+        setTextStatName(`[data-disk-rw="${device.id}"]`, `读 ${device.readKBps} KB/s · 写 ${device.writeKBps} KB/s`);
     });
 
+    if (monitorPage === 1) {
+        const procSection = infoBody.querySelector('.monitor-page-1');
+        if (procSection) {
+            const next = renderProcessesPage(d);
+            if (procSection.innerHTML !== next) procSection.innerHTML = next;
+            bindProcessPageEvents();
+        }
+    }
+
     try {
-        initCharts();
         updateDoughnut('cpuDoughnut', cpuUsage);
         updateDoughnut('ramDoughnut', (safeVal(d.memUsed) / safeVal(d.memTotal)) * 100);
         updateDoughnut('swapDoughnut', safeVal(d.swapTotal) ? (safeVal(d.swapUsed) / safeVal(d.swapTotal)) * 100 : 0);
@@ -8156,8 +8202,13 @@ function renderStats(d) {
         updateLine('rxLine', rxMbps);
         updateLine('txLine', txMbps);
     } catch (err) {
-        console.warn('[Stats] 图表初始化失败:', err);
+        console.warn('[Stats] 图表更新失败:', err);
     }
+}
+
+function setTextStatName(selector, value) {
+    const el = infoBody.querySelector(selector);
+    if (el && el.textContent !== value) el.textContent = value;
 }
 
 function setInfoButtonActive(active = infoModal?.classList?.contains('open')) {
@@ -8229,10 +8280,45 @@ function showInfoModal() {
 function patchWTermScrollBehavior() {
     if (!term || term._zephyrScrollPatched) return;
 
-    // xterm.js 风格滚动语义：
-    // - 输出/resize 前若贴底，则渲染后跟随到底；
-    // - 用户滚到历史区时锁定视图，不被远端输出、输入回显、键盘布局事件抢走；
-    // - 回到底部后自动恢复 follow。
+    // Fork path: @wterm/dom fork exposes a public viewport API. Don't
+    // monkey-patch private methods; just bridge the fork's public API to the
+    // legacy term.viewport facade so the rest of the app works unchanged.
+    if (term.viewport && typeof term.viewport.follow === 'function' && typeof term.isAtBottom === 'function') {
+        term._zephyrScrollPatched = true;
+        term._zephyrForkViewport = true;
+        // Bridge fork public API -> legacy facade contract used by callers
+        const forkViewport = term.viewport;
+        term.viewport = {
+            get atBottom() { return forkViewport.atBottom; },
+            get followEnabled() { return terminalAutoFollowEnabled; },
+            state() {
+                return {
+                    atBottom: forkViewport.atBottom,
+                    followEnabled: terminalAutoFollowEnabled,
+                    programmaticScroll: isProgrammaticTerminalScroll,
+                    hasSelection: hasLiveTerminalSelection?.() || false,
+                    maxScroll: forkViewport.maxScroll || 0,
+                    scrollTop: forkViewport.scrollTop || 0,
+                };
+            },
+            follow(reason = 'viewport-follow', opts = {}) {
+                followTerminalBottomNow(reason, { force: true, ...opts });
+                setTerminalAutoFollow(true, reason);
+                forkViewport.follow();
+            },
+            lock(reason = 'viewport-lock') {
+                setTerminalAutoFollow(false, reason);
+                forkViewport.lock();
+            },
+            unlock(reason = 'viewport-unlock') {
+                setTerminalAutoFollow(true, reason);
+                forkViewport.follow();
+            },
+        };
+        return;
+    }
+
+    // Legacy path: stock @wterm/dom - monkey-patch private methods.
     const originalScrollToBottom = typeof term._scrollToBottom === 'function' ? term._scrollToBottom.bind(term) : null;
     const originalIsScrolledToBottom = typeof term._isScrolledToBottom === 'function' ? term._isScrolledToBottom.bind(term) : null;
     const originalDoRender = typeof term._doRender === 'function' ? term._doRender.bind(term) : null;
@@ -8378,6 +8464,42 @@ function patchWTermScrollBehavior() {
     term._zephyrOriginalDoRender = originalDoRender;
     term._zephyrOriginalScheduleRender = originalScheduleRender;
     term._zephyrScrollPatched = true;
+
+    /* Public viewport facade (FREEZE plan §3.8 transitional layer).
+     * Business code should call term.viewport.* instead of touching
+     * term._scrollToBottom / _isScrolledToBottom / _doRender. When the WTerm
+     * fork exposes these as real public methods, only this facade moves. */
+    if (!term.viewport) {
+        term.viewport = {
+            get atBottom() {
+                return isMobileStableInputMode()
+                    ? isMobileStableAtVisualBottom()
+                    : (originalIsScrolledToBottom ? originalIsScrolledToBottom() : isTerminalAtBottom());
+            },
+            get followEnabled() { return terminalAutoFollowEnabled; },
+            state() {
+                const el = getTerminalScrollElement();
+                return {
+                    atBottom: this.atBottom,
+                    followEnabled: terminalAutoFollowEnabled,
+                    programmaticScroll: isProgrammaticTerminalScroll,
+                    hasSelection: hasLiveTerminalSelection?.() || false,
+                    maxScroll: el ? getTerminalMaxScroll(el) : 0,
+                    scrollTop: el ? el.scrollTop : 0,
+                };
+            },
+            follow(reason = 'viewport-follow', opts = {}) {
+                followTerminalBottomNow(reason, { force: true, ...opts });
+                setTerminalAutoFollow(true, reason);
+            },
+            lock(reason = 'viewport-lock') {
+                setTerminalAutoFollow(false, reason);
+            },
+            unlock(reason = 'viewport-unlock') {
+                setTerminalAutoFollow(true, reason);
+            },
+        };
+    }
 }
 
 function requestInitialMobileRenderFlush(reason = 'mobile-initial-render') {
@@ -8436,6 +8558,14 @@ function hideInfoModal() {
         clearPanelMotion(infoModal);
         if (!infoModal.classList.contains('open')) {
             infoModal.style.display = 'none';
+            // Tear down the skeleton so the next open starts fresh (new disk
+            // set, theme, or terminal instance). Charts are destroyed here,
+            // not on every stats tick (FREEZE plan §2.3).
+            try { destroyCharts(); } catch (_) {}
+            if (infoBody) {
+                delete infoBody.dataset.statsSkeleton;
+                infoBody.innerHTML = '<div class="info-loading">正在加载服务器实时监控数据...</div>';
+            }
         }
     }, 320);
 }
@@ -9741,11 +9871,18 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     mobileWTermInputGuard = null;
     let WTermClass;
     try {
-        const module = await import('/vendor/@wterm/dom/dist/index.js');
+        // Zephyr fork of @wterm/dom with public viewport API (FREEZE plan
+        // §3.8/§5). Falls back to the stock package if the fork is absent.
+        const module = await import('/vendor/wterm-fork/index.js');
         WTermClass = module.WTerm;
     } catch {
-        const module = await import('/vendor/@wterm/dom/dist/wterm.js');
-        WTermClass = module.WTerm || module.default;
+        try {
+            const module = await import('/vendor/@wterm/dom/dist/index.js');
+            WTermClass = module.WTerm;
+        } catch {
+            const module = await import('/vendor/@wterm/dom/dist/wterm.js');
+            WTermClass = module.WTerm || module.default;
+        }
     }
     if (connectionToken !== activeConnectionToken) throw new Error('终端初始化已取消');
     wtermWrapper.innerHTML = '';
@@ -9823,6 +9960,10 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                 username: params.username,
                 password: params.password || '',
                 privateKey: params.privateKey || '',
+                // One-time Deep Link credential (FREEZE plan §5.4); server
+                // consumes it atomically and never writes it to assets.
+                transientToken: params.transientToken || '',
+                transientOverrides: params.transientOverrides || null,
                 init: params.init || '',
                 cols: initialSize.cols,
                 rows: initialSize.rows
