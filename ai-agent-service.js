@@ -586,6 +586,16 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'jump_host_delete', description: '删除跳板机配置。敏感操作，需要确认。', parameters: { type: 'object', properties: { jumpHostId: { type: 'string' } }, required: ['jumpHostId'] } } });
     tools.push({ type: 'function', function: { name: 'snippet_save', description: '新增或修改代码片段。传 snippetId 为修改，不传为新增。', parameters: { type: 'object', properties: { snippetId: { type: 'string' }, name: { type: 'string' }, command: { type: 'string' }, group: { type: 'string' }, autoRun: { type: 'boolean' } }, required: ['name', 'command'] } } });
     tools.push({ type: 'function', function: { name: 'snippet_delete', description: '删除代码片段。', parameters: { type: 'object', properties: { snippetId: { type: 'string' } }, required: ['snippetId'] } } });
+    // Note tools (FREEZE plan §6.5 / §10): AI searches first, reads on demand,
+    // never auto-injects all note content into context.
+    if (p.notes !== false) {
+        tools.push({ type: 'function', function: { name: 'note_list', description: '列出当前用户的笔记。返回标题、分组、标签、更新时间和摘要（前 200 字），不返回全文。先搜索再按需 note_get 读取正文。', parameters: { type: 'object', properties: { group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' }, offset: { type: 'number' }, trash: { type: 'boolean' } } } } });
+        tools.push({ type: 'function', function: { name: 'note_search', description: '按关键词搜索笔记标题、正文和标签。返回匹配笔记的摘要，不返回全文。', parameters: { type: 'object', properties: { query: { type: 'string' }, group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] } } });
+        tools.push({ type: 'function', function: { name: 'note_get', description: '读取一条笔记的完整内容（标题、正文、标签、分组、关联连接）。需要 noteId；用 note_list 或 note_search 找到 ID。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
+        tools.push({ type: 'function', function: { name: 'note_create', description: '创建一条新笔记。标题、正文、标签、分组均可选；可关联连接 ID。写操作需要确认。', parameters: { type: 'object', properties: { title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } } }, required: ['title'] } } });
+        tools.push({ type: 'function', function: { name: 'note_update', description: '修改已有笔记。需要 noteId 和 expectedRevision；未传字段保持不变。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' }, title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } }, expectedRevision: { type: 'number' } }, required: ['noteId'] } } });
+        tools.push({ type: 'function', function: { name: 'note_delete', description: '删除笔记（软删除，移入回收站）。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
+    }
     tools.push({ type: 'function', function: { name: 'terminal_read_output', description: '读取用户当前 Zephyr SSH 终端输出快照（屏幕/scrollback 文本、当前输入框内容、连接信息）。当用户问“终端里显示什么/刚才命令输出/当前屏幕结果”时优先调用。', parameters: { type: 'object', properties: { tabId: { type: 'string' }, maxChars: { type: 'number' }, allVisible: { type: 'boolean' } } } } });
     tools.push({ type: 'function', function: { name: 'remote_desktop_screenshot', description: '实时读取用户当前 Zephyr RDP/VNC 远程桌面最新画面快照（JPEG 截图）。RDP/VNC 没有文本终端输出；当你需要确认刚才操作是否生效、页面是否加载完成、当前画面是什么时调用本工具。策略：先使用 ui_action 返回的 remoteDesktopScreenshot；若状态仍不确定，等待约 2 秒后再截图；允许必要的多次截图，但不要连续秒截或为了找按钮反复截图。', parameters: { type: 'object', properties: { tabId: { type: 'string' }, maxWidth: { type: 'number' } } } } });
     tools.push({ type: 'function', function: { name: 'ui_action', description: '在用户当前 Zephyr 页面执行可见 UI 代操作：切换视图、打开新增/编辑连接弹窗、打开/全屏/排列终端、点击 SSH 终端工具栏、以及点击/调整 RDP/VNC 远程桌面工具栏（画质、视图/适应、缩放、剪贴板、键盘、快捷键、视区/拖拽、Ctrl+Alt+Del、重连、断开、发送快捷键/文本）。RDP/VNC 动作执行后通常会返回 remoteDesktopScreenshot，可直接依据该截图继续，不要重复截图。打开远程网页优先 shortcut:win 或 ctrl-l + remote_desktop_send_text 粘贴 URL。terminal_send_input 且 run=true 会像用户按发送一样执行命令，需要确认；run=false 只填入输入框。不要用于安全/数据管理设置页。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['switch_view', 'open_add_connection', 'open_edit_connection', 'terminal_fullscreen', 'terminal_exit_fullscreen', 'terminal_window_action', 'terminal_toolbar', 'terminal_send_input', 'remote_desktop_toolbar', 'remote_desktop_send_text', 'remote_desktop_mouse', 'toast'] }, view: { type: 'string', enum: ['dashboard', 'terminal', 'remote', 'settings'] }, settingsSection: { type: 'string', enum: ['ai', 'appearance', 'terminal', 'network', 'profile', 'snippets'] }, connectionId: { type: 'string' }, tabId: { type: 'string' }, windowAction: { type: 'string', enum: ['fullscreen', 'exit-fullscreen', 'left-half', 'right-half', 'right-top', 'right-bottom', 'left-two-thirds', 'right-two-thirds', 'minimize', 'close', 'reconnect-mobile'] }, control: { type: 'string', enum: ['file', 'info', 'docker', 'snippet', 'shortcut', 'copy', 'paste', 'theme', 'wterm-theme', 'reconnect', 'disconnect', 'quality', 'fit', 'zoom', 'clipboard', 'keyboard', 'shortcuts', 'joystick', 'drag', 'ctrl_alt_del', 'clipboard_send', 'clipboard_read_local', 'clipboard_copy_remote'] }, desktopControl: { type: 'string', enum: ['quality', 'fit', 'zoom', 'clipboard', 'keyboard', 'shortcuts', 'joystick', 'drag', 'ctrl_alt_del', 'reconnect', 'disconnect', 'clipboard_send', 'clipboard_read_local', 'clipboard_copy_remote', 'shortcut', 'text', 'mouse_click'] }, text: { type: 'string' }, run: { type: 'boolean' }, maxChars: { type: 'number' }, maxWidth: { type: 'number' }, qualityMode: { type: 'string', enum: ['balanced', 'performance', 'quality'] }, fitMode: { type: 'string', enum: ['fit', '1:1', '16:9', '4:3', 'original', 'drag'] }, zoomPercent: { type: 'number' }, sequence: { type: 'string' }, paste: { type: 'boolean' }, x: { type: 'number' }, y: { type: 'number' }, button: { type: 'number' }, coordinateSpace: { type: 'string', enum: ['remote', 'screenshot'] } }, required: ['action'] } } });
@@ -1706,6 +1716,76 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
         case 'memory_search':
             if (p.memory === false || ai.memory?.enabled === false) throw new Error('长期 Memory 权限未开启');
             return { memories: searchMemories(ai, args.query || '', args.scope || args.project || '', args.maxResults || 10, { ...(ctx.context || {}), activeConnectionIds: uniqueStrings([...stringList(ctx.context?.activeConnectionIds), ...stringList(args.connectionIds)]), projects: uniqueStrings([...stringList(ctx.context?.projects), args.project].filter(Boolean)), tags: uniqueStrings([...stringList(ctx.context?.tags), ...stringList(args.tags)]) }) };
+        // ── Note tools (FREEZE plan §10): search-first, read-on-demand ──
+        case 'note_list': {
+            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (!deps.notesService) throw new Error('笔记服务未配置');
+            const result = deps.notesService.list(ctx.user, {
+                group: args.group, tag: args.tag, connectionId: args.connectionId,
+                limit: args.limit, offset: args.offset, trash: !!args.trash,
+            });
+            return { notes: (result.notes || []).map((n) => ({
+                noteId: n.noteId, title: n.title, groupPath: n.groupPath,
+                tags: n.tags || [], linkedConnectionIds: n.linkedConnectionIds || [],
+                updatedAt: n.updatedAt, summary: String(n.content || '').slice(0, 200),
+            })) };
+        }
+        case 'note_search': {
+            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (!deps.notesService) throw new Error('笔记服务未配置');
+            const result = deps.notesService.list(ctx.user, {
+                q: String(args.query || ''), group: args.group, tag: args.tag,
+                connectionId: args.connectionId, limit: args.limit || 20,
+            });
+            return { notes: (result.notes || []).map((n) => ({
+                noteId: n.noteId, title: n.title, groupPath: n.groupPath,
+                tags: n.tags || [], updatedAt: n.updatedAt,
+                summary: String(n.content || '').slice(0, 200),
+            })) };
+        }
+        case 'note_get': {
+            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (!deps.notesService) throw new Error('笔记服务未配置');
+            const note = deps.notesService.get(ctx.user, String(args.noteId || ''));
+            return { note };
+        }
+        case 'note_create':
+            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (!deps.notesService) throw new Error('笔记服务未配置');
+            return maybeRequireConfirmation(toolName, args, ctx, async () => {
+                const note = deps.notesService.create(ctx.user, {
+                    title: String(args.title || 'AI 笔记').slice(0, 200),
+                    content: String(args.content || '').slice(0, 100000),
+                    tags: Array.isArray(args.tags) ? args.tags.map(String).filter(Boolean) : [],
+                    groupPath: String(args.group || ''),
+                    linkedConnectionIds: Array.isArray(args.connectionIds) ? args.connectionIds.map(String).filter(Boolean) : [],
+                });
+                deps.addActivity?.(`AI 创建笔记：${note.title}`, ctx.user?.userId);
+                return { note: { noteId: note.noteId, title: note.title, revision: note.revision } };
+            }, deps);
+        case 'note_update':
+            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (!deps.notesService) throw new Error('笔记服务未配置');
+            return maybeRequireConfirmation(toolName, args, ctx, async () => {
+                const note = deps.notesService.update(ctx.user, String(args.noteId || ''), {
+                    title: args.title !== undefined ? String(args.title).slice(0, 200) : undefined,
+                    content: args.content !== undefined ? String(args.content).slice(0, 100000) : undefined,
+                    tags: Array.isArray(args.tags) ? args.tags.map(String).filter(Boolean) : undefined,
+                    groupPath: args.group !== undefined ? String(args.group) : undefined,
+                    linkedConnectionIds: Array.isArray(args.connectionIds) ? args.connectionIds.map(String).filter(Boolean) : undefined,
+                    expectedRevision: args.expectedRevision,
+                });
+                deps.addActivity?.(`AI 修改笔记：${note.title}`, ctx.user?.userId);
+                return { note: { noteId: note.noteId, title: note.title, revision: note.revision } };
+            }, deps);
+        case 'note_delete':
+            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (!deps.notesService) throw new Error('笔记服务未配置');
+            return maybeRequireConfirmation(toolName, args, ctx, async () => {
+                deps.notesService.delete(ctx.user, String(args.noteId || ''));
+                deps.addActivity?.(`AI 删除笔记：${args.noteId}`, ctx.user?.userId);
+                return { deleted: true, noteId: args.noteId };
+            }, deps);
         case 'memory_save': {
             if (p.memory === false || ai.memory?.enabled === false) throw new Error('长期 Memory 权限未开启');
             const memories = Array.isArray(ai.memories) ? ai.memories.slice(0, 1000) : [];

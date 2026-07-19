@@ -2700,6 +2700,7 @@ registerAiRoutes(app, {
     authz,
     resourceService,
     aiPolicyService,
+    notesService,
     readJSON,
     writeJSON,
     CONNECTIONS_FILE,
