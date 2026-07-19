@@ -141,17 +141,22 @@ function postToTerminalTab(tabId = '', message = {}) {
     return true;
 }
 function normalizeSharedClipboardFiles(files = []) {
-    return Array.from(files || []).map((file) => ({
-        id: String(file.id || ''),
-        name: String(file.name || (file.path ? file.path.split('/').pop() : '') || 'clipboard-file').slice(0, 255),
-        size: Number(file.size) || 0,
-        type: file.type === 'd' ? 'd' : '-',
-        path: String(file.path || ''),
-        mime: String(file.mime || ''),
-        dataUrl: String(file.dataUrl || ''),
-        transitUrl: String(file.transitUrl || ''),
-        remotePath: String(file.remotePath || ''),
-    })).filter((file) => file.path || file.dataUrl || file.transitUrl || file.remotePath);
+    return Array.from(files || []).map((file) => {
+        const name = String(file.name || (file.path ? String(file.path).split(/[\\/]/).pop() : '') || 'clipboard-file').slice(0, 255);
+        const path = String(file.path || file.remotePath || name || '');
+        return {
+            id: String(file.id || ''),
+            name,
+            size: Number(file.size) || 0,
+            type: file.type === 'd' ? 'd' : '-',
+            path,
+            mime: String(file.mime || ''),
+            dataUrl: String(file.dataUrl || ''),
+            transitUrl: String(file.transitUrl || ''),
+            remotePath: String(file.remotePath || ''),
+            source: String(file.source || ''),
+        };
+    }).filter((file) => file.name || file.path || file.dataUrl || file.transitUrl || file.remotePath);
 }
 function updateZephyrSharedClipboard(next = {}) {
     zephyrSharedClipboard = {
@@ -176,14 +181,20 @@ function offerSharedClipboardToSshTargets(sourceTabId = '', files = []) {
     targets.forEach((target) => postToTerminalTab(target.id, { type: 'shared-file-clipboard-available', files, sourceTabId, sourcePage: terminalPageForTab(sourceTabId) || 'rdp' }));
     toast(names ? `已复制 RDP 文件：${names}，可到 SSH 文件管理器粘贴` : '已复制 RDP 文件，可到 SSH 文件管理器粘贴');
 }
-function offerSharedClipboardToRdpTargets(sourceTabId = '', files = []) {
+function offerSharedClipboardToRdpTargets(sourceTabId = '', files = [], sourcePage = '') {
     const names = fileClipboardNames(files);
+    const page = sourcePage || terminalPageForTab(sourceTabId) || 'rdp';
     const targets = terminalTabs.filter((t) => !closingTerminalTabs.has(t.id) && t.id !== sourceTabId && (t.page === 'rdp' || t.page === 'novnc') && t.iframe);
     if (!targets.length) {
         toast(names ? `已复制文件：${names}；打开 RDP 后可粘贴` : '已复制文件');
         return;
     }
-    targets.forEach((target) => postToTerminalTab(target.id, { type: 'shared-file-clipboard-available', files, sourceTabId, sourcePage: 'rdp' }));
+    targets.forEach((target) => postToTerminalTab(target.id, {
+        type: 'shared-file-clipboard-available',
+        files,
+        sourceTabId,
+        sourcePage: page,
+    }));
     toast(names ? `已复制文件：${names}，可到 RDP 远程桌面粘贴` : '已复制文件，可到 RDP 粘贴');
 }
 function handleSharedClipboardMessage(data = {}) {
@@ -204,49 +215,74 @@ function handleSharedClipboardMessage(data = {}) {
         const files = normalizeSharedClipboardFiles(data.files || []);
         if (!files.length) return true;
         updateZephyrSharedClipboard({ type: 'files', files, sourceTabId, sourcePage: terminalPageForTab(sourceTabId) });
-        // If source is RDP/VNC, offer to both SSH targets and other RDP/VNC targets.
-        if (isRemoteDesktopPage(terminalPageForTab(sourceTabId))) {
+        const page = terminalPageForTab(sourceTabId);
+        if (isRemoteDesktopPage(page)) {
+            // RDP source: offer to SSH tabs and other RDP tabs.
             offerSharedClipboardToSshTargets(sourceTabId, files);
-            offerSharedClipboardToRdpTargets(sourceTabId, files);
-        }
-        // If source is SSH, offer to RDP targets
-        else {
-            offerSharedClipboardToRdpTargets(sourceTabId, files);
+            offerSharedClipboardToRdpTargets(sourceTabId, files, page);
+        } else {
+            // SSH / terminal source: offer to RDP tabs.
+            offerSharedClipboardToRdpTargets(sourceTabId, files, page || 'terminal');
         }
         return true;
     }
     // ── Request clipboard from parent (SSH/RDP startup) ──
     if (data.type === 'request-shared-file-clipboard') {
         if (zephyrSharedClipboard.type === 'files' && zephyrSharedClipboard.files.length) {
-            postToTerminalTab(sourceTabId, { type: 'shared-file-clipboard-available', files: zephyrSharedClipboard.files, sourceTabId: zephyrSharedClipboard.sourceTabId });
+            postToTerminalTab(sourceTabId, {
+                type: 'shared-file-clipboard-available',
+                files: zephyrSharedClipboard.files,
+                sourceTabId: zephyrSharedClipboard.sourceTabId,
+                sourcePage: zephyrSharedClipboard.sourcePage || '',
+            });
             return true;
         }
         return true;
     }
-    // ── Target consumes clipboard (SSH→RDP or RDP→SSH) ──
+    // ── Target consumes clipboard (SSH↔RDP / RDP↔RDP) ──
     if (data.type === 'shared-file-clipboard-consume') {
         const files = normalizeSharedClipboardFiles(data.files || zephyrSharedClipboard.files || []);
         if (!files.length) return true;
         const sourceTabIdForFiles = String(data.sourceTabId || zephyrSharedClipboard.sourceTabId || '');
-        const targetFrame = terminalFrameById(sourceTabId);
-        const sourcePage = String(data.sourcePage || zephyrSharedClipboard.sourcePage || '');
-        const targetPage = terminalPageForTab(sourceTabId);
-        // Source is RDP (local files with transitUrl or dataUrl) → target is SSH: forward directly
-        if (isRemoteDesktopPage(sourcePage) && files.some((f) => f.transitUrl || f.dataUrl) && targetFrame?.contentWindow) {
-            targetFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-data', requestId: '', files, sourceTabId: sourceTabIdForFiles }, '*');
+        // Consumer is the tab that asked to paste (message origin).
+        const consumerFrame = terminalFrameById(sourceTabId);
+        // Already-hydrated bytes: forward immediately.
+        if (files.every((f) => f.transitUrl || f.dataUrl || f.remotePath) && consumerFrame?.contentWindow) {
+            consumerFrame.contentWindow.postMessage({
+                source: 'zephyr-app',
+                type: 'shared-file-clipboard-data',
+                requestId: '',
+                files,
+                sourceTabId: sourceTabIdForFiles,
+            }, '*');
             return true;
         }
-        // Source is SSH (server-side SFTP clipboard) → target is RDP: relay via iframe-to-parent messages
+        // Ask source tab to materialize bytes, then relay to consumer.
+        // RDP source → cliprdr download + transit upload.
+        // SSH source → sftp clipboard upload.
         const sourceFrame = terminalFrameById(sourceTabIdForFiles);
-        if (sourceFrame?.contentWindow && targetFrame?.contentWindow) {
+        if (sourceFrame?.contentWindow && consumerFrame?.contentWindow) {
             const requestId = `shared-file-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
             const relay = (event) => {
                 if (event.source !== sourceFrame.contentWindow || event.data?.source !== 'zephyr-terminal' || event.data?.type !== 'shared-file-clipboard-data' || event.data?.requestId !== requestId) return;
                 window.removeEventListener('message', relay, true);
-                targetFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-data', requestId, files: event.data.files || [], error: event.data.error || '', sourceTabId: sourceTabIdForFiles }, '*');
+                consumerFrame.contentWindow.postMessage({
+                    source: 'zephyr-app',
+                    type: 'shared-file-clipboard-data',
+                    requestId,
+                    files: event.data.files || [],
+                    error: event.data.error || '',
+                    sourceTabId: sourceTabIdForFiles,
+                }, '*');
             };
             window.addEventListener('message', relay, true);
-            sourceFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-read', requestId, files, sourceTabId: sourceTabIdForFiles }, '*');
+            sourceFrame.contentWindow.postMessage({
+                source: 'zephyr-app',
+                type: 'shared-file-clipboard-read',
+                requestId,
+                files,
+                sourceTabId: sourceTabIdForFiles,
+            }, '*');
             window.setTimeout(() => window.removeEventListener('message', relay, true), 60000);
         }
         return true;
@@ -256,7 +292,7 @@ function handleSharedClipboardMessage(data = {}) {
         const files = normalizeSharedClipboardFiles(data.files || []);
         if (!files.length) return true;
         updateZephyrSharedClipboard({ type: 'files', files, sourceTabId, sourcePage: 'terminal' });
-        offerSharedClipboardToRdpTargets(sourceTabId, files);
+        offerSharedClipboardToRdpTargets(sourceTabId, files, 'terminal');
         return true;
     }
     return false;
