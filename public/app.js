@@ -56,6 +56,11 @@ let connectionModalTrigger = null;
 let connectionModalOriginRect = null;
 let notesController = null;
 let workspaceClientId = '';
+let workspaceRevision = null;
+let workspaceRestoring = false;
+let workspaceReady = false;
+let workspaceSaveTimer = null;
+let currentAppView = 'dashboard';
 let terminalTabs = [], activeTerminalTab = null;
 let openOrderStack = [], visualLayout = [], recentUseStack = [];
 let terminalSmartbarOpen = false;
@@ -1018,6 +1023,7 @@ function closeTerminalSmartbarForViewLeave() {
 }
 function switchView(name) {
     const target = name === 'ai' ? 'dashboard' : name;
+    currentAppView = target;
     if (target !== 'notes' && notesController?.state?.dirty) {
         notesController.flushSave().catch(() => {});
     }
@@ -1047,6 +1053,7 @@ function switchView(name) {
     if (target === 'notes') {
         notesController?.activate?.().catch((err) => toast(err.message || '加载笔记失败'));
     }
+    scheduleWorkspaceSave('view-change');
 }
 function parseTags(v) { return String(v || '').split(',').map((x) => x.trim()).filter(Boolean); }
 function base64urlToBuffer(value) { const s = String(value).replace(/-/g, '+').replace(/_/g, '/'); return Uint8Array.from(atob(s + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0)); }
@@ -2575,6 +2582,7 @@ function renderTerminalTabs({ rebuildWorkspace = true } = {}) {
         terminalTabs.forEach((t) => { $$(`[data-window-status="${t.id}"]`).forEach((el) => { el.textContent = t.status || ''; }); });
     }
     requestAnimationFrame(() => broadcastThemeToTerminals(document.documentElement.getAttribute('data-theme') || getPreferredTheme()));
+    scheduleWorkspaceSave('terminal-tabs');
 }
 
 function exitTerminalFullscreen() {
@@ -6635,6 +6643,99 @@ function bindEvents() {
     $('#clearLoginEventsBtn').addEventListener('click', async () => { if (!confirm('确定清理登录事件日志？')) return; await api('/api/security/login-events', { method: 'DELETE' }); await loadSecurityLists(); toast('登录事件已清理'); });
     $('#importDataForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm('导入会覆盖当前数据库，系统会先生成本地备份。继续？')) return; const fd = new FormData(); fd.append('backup', $('#backupFile').files[0]); fd.append('loginPassword', $('#importLoginPassword').value); fd.append('backupPassword', $('#backupPassword').value); const res = await fetch('/api/data/import', { method: 'POST', body: fd, credentials: 'same-origin' }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || '导入失败'); toast(data.message || '导入完成'); });
 }
+function automaticWorkspaceId() {
+    return `auto-${String(workspaceClientId || 'default').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80)}`;
+}
+
+function collectWorkspaceState() {
+    const tabs = terminalTabs
+        .filter((t) => t.connectionId && !t.transient)
+        .map((t, index) => ({
+            connectionId: t.connectionId,
+            protocol: t.protocol || 'SSH',
+            minimized: !!t.minimized,
+            order: index,
+            active: t.id === activeTerminalTab,
+        }));
+    return {
+        version: 1,
+        tabs,
+        ui: { activeView: currentAppView },
+        activeConnectionId: terminalTabs.find((t) => t.id === activeTerminalTab)?.connectionId || '',
+    };
+}
+
+function scheduleWorkspaceSave(reason = '') {
+    if (!workspaceReady || workspaceRestoring || !workspaceClientId) return;
+    clearTimeout(workspaceSaveTimer);
+    workspaceSaveTimer = setTimeout(() => saveWorkspaceNow({ reason }).catch((err) => console.warn('[workspace-save]', err)), 700);
+}
+
+async function saveWorkspaceNow({ keepalive = false } = {}) {
+    if (!workspaceReady || workspaceRestoring || !workspaceClientId) return;
+    clearTimeout(workspaceSaveTimer);
+    workspaceSaveTimer = null;
+    const body = {
+        clientId: workspaceClientId,
+        name: '默认工作区',
+        state: collectWorkspaceState(),
+        expectedRevision: workspaceRevision,
+    };
+    try {
+        const data = await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}`, { method: 'PUT', body: JSON.stringify(body), keepalive });
+        workspaceRevision = data.workspace?.revision ?? workspaceRevision;
+    } catch (err) {
+        if (err.status === 409) {
+            const latest = await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}`);
+            workspaceRevision = latest.workspace?.revision ?? null;
+            body.expectedRevision = workspaceRevision;
+            const data = await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}`, { method: 'PUT', body: JSON.stringify(body), keepalive });
+            workspaceRevision = data.workspace?.revision ?? workspaceRevision;
+            return;
+        }
+        throw err;
+    }
+}
+
+async function restoreLastWorkspace() {
+    if (!workspaceClientId) return;
+    workspaceRestoring = true;
+    try {
+        const restored = await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}/restore`);
+        const workspace = restored.workspace;
+        workspaceRevision = workspace?.revision ?? null;
+        const state = workspace?.state || {};
+        const savedTabs = Array.isArray(state.tabs) ? [...state.tabs].sort((a, b) => Number(a.order || 0) - Number(b.order || 0)) : [];
+        const opened = new Map();
+        for (const saved of savedTabs) {
+            const conn = connections.find((c) => c.id === saved.connectionId);
+            if (!conn) continue;
+            try {
+                await openConnection(conn.id);
+                const tab = terminalTabs.find((t) => t.connectionId === conn.id && !opened.has(t.id));
+                if (tab) {
+                    tab.minimized = !!saved.minimized;
+                    opened.set(tab.id, saved);
+                }
+            } catch (err) {
+                console.warn('[workspace-restore] skip connection', conn.id, err);
+            }
+        }
+        const activeConnectionId = state.activeConnectionId || savedTabs.find((t) => t.active)?.connectionId || '';
+        const active = terminalTabs.find((t) => t.connectionId === activeConnectionId);
+        if (active) { active.minimized = false; activeTerminalTab = active.id; }
+        renderTerminalTabs({ rebuildWorkspace: true });
+        const view = String(state.ui?.activeView || 'dashboard');
+        const allowedView = ['dashboard', 'terminal', 'remote', 'notes', 'settings'].includes(view) ? view : 'dashboard';
+        switchView(terminalTabs.length && allowedView === 'terminal' ? 'terminal' : allowedView);
+    } catch (err) {
+        if (err.status !== 404) console.warn('[workspace-restore]', err);
+    } finally {
+        workspaceRestoring = false;
+        workspaceReady = true;
+    }
+}
+
 function ensureWorkspaceClientId() {
     const key = 'zephyr.workspace.clientId';
     try {
@@ -6883,6 +6984,7 @@ async function init() {
         renderSnippetSettings();
         await loadConnections();
         document.documentElement.dataset.appLoadConnections = 'ok';
+        await restoreLastWorkspace();
         await loadNetwork();
         await loadAdminUsers();
         // Deep Link hand-off from /open (token only — never the raw URI).
@@ -6892,6 +6994,7 @@ async function init() {
         window.__zephyrMyUserId = (await api("/api/auth/me"))?.user?.userId || "";
         window.openConnectionModal = openConnectionModal;
         window.openTransientFromUri = openTransientFromUri;
+        window.addEventListener('pagehide', () => { saveWorkspaceNow({ keepalive: true }).catch(() => {}); });
     } catch (err) {
         console.error('[app-init]', err);
         document.documentElement.dataset.appInitError = err?.message || String(err || 'unknown');

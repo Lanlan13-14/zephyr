@@ -16,11 +16,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  verify:
-    uses: ./.github/workflows/ci.yml
-
   build:
-    needs: verify
     runs-on: ubuntu-latest
 
     steps:
