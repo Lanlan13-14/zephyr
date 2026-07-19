@@ -23,7 +23,7 @@
                 <button class="btn-sm zoom-control" id="zoomBtn" data-rdp-icon="zoom" title="拖动无极缩放远程画面"><input id="zoomSlider" type="range" min="50" max="250" step="1" value="100" aria-label="远程画面无极缩放"><em id="zoomValue">100%</em></button>
                 <button class="btn-sm" id="clipboardBtn" data-rdp-icon="clipboard" title="打开跨设备剪贴板面板">剪贴板</button>
                 <button class="btn-sm" id="rdpFilesBtn" data-rdp-icon="file" title="打开 RDP 文件剪贴板/下载面板">文件</button>
-                <button class="btn-sm" id="keyboardBtn" data-rdp-icon="keyboard" title="手机软键盘输入">键盘</button>
+                <button class="btn-sm" id="keyboardBtn" data-rdp-icon="keyboard" title="打开/关闭手机软键盘" aria-pressed="false">键盘</button>
                 <button class="btn-sm" id="shortcutsBtn" data-rdp-icon="shortcuts" title="打开常用快捷键">快捷键</button>
                 <button class="btn-sm" id="joystickBtn" data-rdp-icon="joystick" aria-label="视区">视区</button>
                 <button class="btn-sm" id="ctrlAltDelBtn" data-rdp-icon="security" title="发送 Ctrl+Alt+Del">Ctrl+Alt+Del</button>
@@ -32,7 +32,7 @@
             </div>
         </div>
         <div class="rdp-stage novnc-stage" id="rdpStage" tabindex="0">
-            <textarea id="mobileKeyboardInput" class="rdp-mobile-keyboard-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" enterkeyhint="done" aria-label="远程桌面软键盘输入"></textarea>
+            <textarea id="mobileKeyboardInput" class="rdp-mobile-keyboard-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" enterkeyhint="enter" lang="" aria-label="远程桌面软键盘输入"></textarea>
             <!-- debug HUD removed -->
 
             <div class="rdp-floating-panel clipboard-panel" id="clipboardPanel" hidden>
@@ -214,7 +214,7 @@
             </div>
         </div>
     </div>
-    <script src="rdp-wasm-client.js?v=20260719-hide-build1" type="module"></script>
+    <script src="rdp-wasm-client.js?v=20260719-mobile-kbd1" type="module"></script>
     <script>
     /* Auto-report H264 debug logs to server after 8 seconds */
     setTimeout(async () => {

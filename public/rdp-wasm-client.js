@@ -11,9 +11,10 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-hide-build1';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-hide-build1';
-import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-hide-build1';
+import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-mobile-kbd1';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-mobile-kbd1';
+import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-mobile-kbd1';
+import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-mobile-kbd1';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
@@ -1299,65 +1300,15 @@ function attachInputEvents() {
         });
     }
 
-    /* ─── Mobile keyboard input (textarea mirror) ──── */
-    if (mobileKeyboardInput) {
-        let composing = false;
-        mobileKeyboardInput.addEventListener('compositionstart', () => { composing = true; });
-        mobileKeyboardInput.addEventListener('compositionend', (e) => {
-            composing = false;
-            if (!connected) return;
-            const text = e.data || '';
-            if (text) sendTextViaClipboard(text);
-        });
-        mobileKeyboardInput.addEventListener('beforeinput', (e) => {
-            if (!connected || composing) return;
-            if (e.inputType === 'deleteContentBackward') {
-                e.preventDefault();
-                rdpKeyDown('Backspace');
-                setTimeout(() => rdpKeyUp('Backspace'), 30);
-            } else if (e.inputType === 'deleteContentForward') {
-                e.preventDefault();
-                rdpKeyDown('Delete');
-                setTimeout(() => rdpKeyUp('Delete'), 30);
-            } else if (e.inputType === 'insertLineBreak') {
-                e.preventDefault();
-                rdpKeyDown('Enter');
-                setTimeout(() => rdpKeyUp('Enter'), 30);
-            }
-        });
-        mobileKeyboardInput.addEventListener('input', (e) => {
-            if (!connected || composing) return;
-            const data = e.data;
-            if (data) {
-                let allAscii = true;
-                for (const ch of data) {
-                    if (ch.charCodeAt(0) > 127) { allAscii = false; break; }
-                }
-                if (allAscii) {
-                    for (const char of data) {
-                        const code = keyCharToCode(char);
-                        if (code) {
-                            rdpKeyDown(code);
-                            setTimeout(() => rdpKeyUp(code), 30);
-                        }
-                    }
-                } else {
-                    sendTextViaClipboard(data);
-                }
-            }
-            if (mobileKeyboardInput.value.length > 20) {
-                mobileKeyboardInput.value = mobileKeyboardInput.value.slice(-5);
-            }
-        });
-        mobileKeyboardInput.value = '     ';
-    }
+    /* ─── Mobile keyboard input (textarea IME host) ──── */
+    // Bound later in initToolbar once keyboardBtn is available.
 }
 
-/* Map single characters to JS key codes for mobile input */
 /* Send non-ASCII text to the remote desktop via clipboard paste.
  * This is the standard workaround for CJK/emoji input in web RDP clients —
  * direct Unicode scancode input requires protocol-level support that is
- * complex to wire through WASM. */
+ * complex to wire through WASM. Callers must serialize through the mobile
+ * keyboard controller so rapid commits cannot interleave Ctrl+V. */
 async function sendTextViaClipboard(text) {
     if (!connected || !text) return;
     /* Try the synchronous wait path first (WASM exposes rdpClipboardChangedSync). */
@@ -1366,37 +1317,25 @@ async function sendTextViaClipboard(text) {
             const ready = await rdpClipboardChangedSync(text);
             if (!ready) {
                 /* Timeout - fall back to a longer delay before sending Ctrl+V. */
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 250));
             }
         } catch {
             /* Promise rejected - fall back to old delay path. */
             rdpClipboardChanged(text);
-            await new Promise(r => setTimeout(r, 200));
+            await new Promise(r => setTimeout(r, 250));
         }
     } else {
         /* Older WASM without rdpClipboardChangedSync: use conservative delay. */
         rdpClipboardChanged(text);
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 250));
     }
     rdpKeyDown('ControlLeft');
     rdpKeyDown('KeyV');
-    setTimeout(() => {
-        rdpKeyUp('KeyV');
-        rdpKeyUp('ControlLeft');
-    }, 40);
-}
-
-function keyCharToCode(char) {
-    const upper = char.toUpperCase();
-    if (upper >= 'A' && upper <= 'Z') return 'Key' + upper;
-    if (char >= '0' && char <= '9') return 'Digit' + char;
-    const map = {
-        ' ': 'Space', '\n': 'Enter', '\t': 'Tab',
-        '-': 'Minus', '=': 'Equal', '[': 'BracketLeft', ']': 'BracketRight',
-        '\\': 'Backslash', ';': 'Semicolon', "'": 'Quote', '`': 'Backquote',
-        ',': 'Comma', '.': 'Period', '/': 'Slash',
-    };
-    return map[char] || null;
+    await new Promise((r) => setTimeout(r, 50));
+    rdpKeyUp('KeyV');
+    rdpKeyUp('ControlLeft');
+    // Give the remote a beat before the next paste in the queue.
+    await new Promise((r) => setTimeout(r, 40));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1645,9 +1584,15 @@ function initToolbar() {
     }
 
     if (keyboardBtn && mobileKeyboardInput) {
-        keyboardBtn.addEventListener('click', () => {
-            mobileKeyboardInput.focus();
-            mobileKeyboardInput.click();
+        // Destroy previous controller if toolbar is re-inited.
+        try { window.__rdpMobileKeyboard?.destroy?.(); } catch {}
+        window.__rdpMobileKeyboard = new RdpMobileKeyboard({
+            host: mobileKeyboardInput,
+            button: keyboardBtn,
+            isConnected: () => connected,
+            sendKeyDown: (code) => rdpKeyDown(code),
+            sendKeyUp: (code) => rdpKeyUp(code),
+            sendClipboardText: (text) => sendTextViaClipboard(text),
         });
     }
 
@@ -2448,13 +2393,13 @@ window.addEventListener('message', (e) => {
         if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
         if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
 
-        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-hide-build1' });
+        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-mobile-kbd1' });
         rdpDiag.workerProbe = probe;
         if (!probe.supported) {
             throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
         }
 
-        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-hide-build1', { type: 'module' }));
+        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-mobile-kbd1', { type: 'module' }));
         rdpWorkerBridge.installGlobals(window);
         rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
         const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
