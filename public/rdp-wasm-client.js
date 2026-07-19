@@ -11,10 +11,10 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-panel-syntax1';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-panel-syntax1';
-import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-panel-syntax1';
-import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-panel-syntax1';
+import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-xfile3';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-xfile3';
+import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-xfile3';
+import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-xfile3';
 import {
     setupPanelInteractions,
     toggleFloatingPanel,
@@ -23,7 +23,7 @@ import {
     bringPanelToFront,
     applyPanelLayout,
     closePanelLayoutMenu,
-} from './floating-panel.js?v=20260719-panel-syntax1';
+} from './floating-panel.js?v=20260719-xfile3';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
@@ -1995,28 +1995,28 @@ function initFilePanel() {
     /* ── "粘贴到远程" for remote-clipboard files — consume cross-tab on demand ── */
     if (rdpFilePasteToRemoteBtn) {
         rdpFilePasteToRemoteBtn.addEventListener('click', async () => {
-            if (pendingCrossTabFiles.length && pendingCrossTabSource) {
-                /* Request actual file data from the source tab now. */
-                setFilesHint('正在获取文件数据...', 'info');
-                window.parent?.postMessage?.({
-                    source: 'zephyr-terminal',
-                    type: 'shared-file-clipboard-consume',
-                    tabId: params.tabId || '',
-                    sourceTabId: pendingCrossTabSource,
-                    files: pendingCrossTabFiles,
-                }, '*');
-                pendingCrossTabFiles = [];
-                pendingCrossTabSource = '';
-            } else if (rdpStorageFiles.length) {
+            if (pendingCrossTabFiles.length || pendingCrossTabSource) {
+                await consumePendingCrossTabFiles();
+                return;
+            }
+            if (rdpStorageFiles.length) {
                 try {
                     await syncLocalFilesToRemote({ advertise: true });
                     setFilesHint('已通知远程桌面有文件可粘贴', 'success');
                 } catch (err) {
                     setFilesHint('同步文件失败: ' + (err?.message || err), 'warning');
                 }
-            } else {
-                setFilesHint('无可粘贴的文件', 'warning');
+                return;
             }
+            window.parent?.postMessage?.({
+                source: 'zephyr-terminal',
+                type: 'shared-file-clipboard-consume',
+                tabId: params.tabId || '',
+                sourceTabId: '',
+                sourcePage: '',
+                files: [],
+            }, '*');
+            setFilesHint('正在获取跨标签文件...', 'info');
         });
     }
 
@@ -2085,30 +2085,47 @@ function initFilePanel() {
     }
 
     /* Async wrapper for rdpDownloadServerFile (Go callback-based). */
-    function downloadServerFileAsync(index, fileName) {
-        return new Promise((resolve) => {
+    function downloadServerFileBytes(index) {
+        return new Promise((resolve, reject) => {
             if (typeof rdpDownloadServerFile !== 'function') {
-                setFilesHint('WASM 未就绪', 'warning');
-                resolve(false);
+                reject(new Error('WASM 未就绪'));
                 return;
             }
+            let settled = false;
+            const timer = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                reject(new Error('download timeout'));
+            }, 30000);
             rdpDownloadServerFile(index, (data) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
                 if (data && data.byteLength > 0) {
-                    const blob = new Blob([data]);
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = fileName || ('file_' + index);
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                    URL.revokeObjectURL(url);
-                    resolve(true);
+                    resolve(data instanceof Uint8Array ? data : new Uint8Array(data));
                 } else {
-                    setFilesHint('下载文件 ' + (fileName || index) + ' 失败', 'warning');
-                    resolve(false);
+                    reject(new Error('empty response'));
                 }
             });
+        });
+    }
+
+    function downloadServerFileAsync(index, fileName) {
+        return downloadServerFileBytes(index).then((bytes) => {
+            const blob = new Blob([bytes]);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName || ('file_' + index);
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            setFilesHint('已下载: ' + (fileName || index), 'success');
+            return bytes;
+        }).catch((err) => {
+            setFilesHint('下载文件 ' + (fileName || index) + ' 失败: ' + (err?.message || err), 'warning');
+            throw err;
         });
     }
 
@@ -2151,25 +2168,21 @@ function initFilePanel() {
             // 2) Remote Windows clipboard files: download via cliprdr then transit.
             const remoteList = Array.isArray(window.__rdpRemoteFilesCache) ? window.__rdpRemoteFilesCache : [];
             const remoteIdx = remoteList.findIndex((r) => r.name === f.name);
-            if (remoteIdx >= 0 && typeof rdpDownloadServerFile === 'function') {
+            if (remoteIdx >= 0) {
                 try {
-                    const result = await rdpDownloadServerFile(remoteIdx);
-                    const data = result?.data || result;
-                    if (data) {
-                        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-                        const info = await fetch('/api/clipboard/upload?name=' + encodeURIComponent(f.name || remoteList[remoteIdx].name || 'file'), {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/octet-stream' },
-                            body: bytes,
-                        }).then((r) => r.json());
-                        results.push({
-                            name: f.name || remoteList[remoteIdx].name || 'file',
-                            size: bytes.byteLength,
-                            path: f.name || remoteList[remoteIdx].name || 'file',
-                            transitUrl: info.url,
-                        });
-                        continue;
-                    }
+                    const bytes = await downloadServerFileBytes(remoteIdx);
+                    const info = await fetch('/api/clipboard/upload?name=' + encodeURIComponent(f.name || remoteList[remoteIdx].name || 'file'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/octet-stream' },
+                        body: bytes,
+                    }).then((r) => r.json());
+                    results.push({
+                        name: f.name || remoteList[remoteIdx].name || 'file',
+                        size: bytes.byteLength,
+                        path: f.name || remoteList[remoteIdx].name || 'file',
+                        transitUrl: info.url,
+                    });
+                    continue;
                 } catch (err) {
                     results.push({ name: f.name || 'file', size: f.size || 0, error: err?.message || 'download failed' });
                     continue;
@@ -2190,52 +2203,98 @@ function initFilePanel() {
     window.addEventListener('message', (e) => {
         if (!e.data || e.data.source !== 'zephyr-app') return;
         if (e.data.type === 'shared-file-clipboard-data' && Array.isArray(e.data.files)) {
-            /* Files arrived from another tab. May carry:
-             *   transitUrl — server-side temp file (streaming, any size)
-             *   dataUrl    — base64 inline (small files, legacy)
-             *   remotePath — SFTP server-side path */
-            for (const f of e.data.files) {
-                const url = f.transitUrl || f.dataUrl || '';
-                if (url) {
-                    fetch(url).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-                    .then(async (buf) => {
-                        rdpStorageFiles.push({ name: f.name || 'file', size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
-                        try {
-                            if (rdpWorkerBridge) await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: connected });
-                        } catch (err) {
-                            console.warn('[rdp] cross-tab file sync failed', err);
-                        }
-                        updatePendingFileList();
-                    }).catch(err => setFilesHint('接收文件失败: ' + (f.name || '') + ' ' + err.message, 'warning'));
-                } else if (f.remotePath) {
-                    fetch('/api/clipboard-file?' + new URLSearchParams({ path: f.remotePath, name: f.name || '' }))
-                        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-                        .then(async (buf) => {
-                            rdpStorageFiles.push({ name: f.name || 'file', size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
-                            try {
-                                if (rdpWorkerBridge) await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: connected });
-                            } catch (err) {
-                                console.warn('[rdp] cross-tab file sync failed', err);
-                            }
-                            updatePendingFileList();
-                        }).catch(() => {});
+            ingestCrossTabFiles(e.data.files, { sourceTabId: e.data.sourceTabId || '' });
+        } else if (e.data.type === 'shared-file-clipboard-available') {
+            if (Array.isArray(e.data.files) && e.data.files.length) {
+                pendingCrossTabFiles = e.data.files.slice();
+                pendingCrossTabSource = e.data.sourceTabId || '';
+                setFilesHint(
+                    `其他标签复制了 ${e.data.files.length} 个文件，点击「粘贴到远程」获取`,
+                    'info',
+                );
+                if (filesPanel && !filesPanel.classList.contains('open') && rdpFilesBtn) {
+                    try {
+                        openFloatingPanel(filesPanel, rdpFilesBtn, {
+                            kind: 'files',
+                            defaults: { width: 360, height: 480, right: 16, top: 56 },
+                            refresh: () => updatePendingFileList(),
+                        });
+                    } catch {}
                 }
             }
-            setFilesHint('已从其他终端接收文件', 'success');
-        }
-        if (e.data.type === 'shared-file-clipboard-available' && Array.isArray(e.data.files)) {
-            /* Another tab has files — just store metadata and show notification.
-             * Actual data transfer only happens when user clicks paste. */
-            pendingCrossTabFiles = e.data.files;
-            pendingCrossTabSource = e.data.sourceTabId || '';
-            const names = e.data.files.map(f => f.name || 'file').slice(0, 3).join('、');
-            setFilesHint('其他终端有 ' + e.data.files.length + ' 个文件可粘贴（' + names + '）', 'info');
-        }
-        if (e.data.type === 'shared-file-clipboard-read' && Array.isArray(e.data.files)) {
-            /* Another tab (SSH) is requesting our file data for pasting. */
-            broadcastFileDataToParent(e.data.files, e.data.requestId || '');
+        } else if (e.data.type === 'shared-file-clipboard-read') {
+            broadcastFileDataToParent(e.data.files || [], e.data.requestId || '');
         }
     });
+
+    async function ingestCrossTabFiles(fileList, { sourceTabId = '' } = {}) {
+        if (!Array.isArray(fileList) || !fileList.length) return 0;
+        let accepted = 0;
+        for (const f of fileList) {
+            try {
+                let bytes = null;
+                if (f.transitUrl || f.dataUrl) {
+                    const resp = await fetch(f.transitUrl || f.dataUrl);
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    bytes = new Uint8Array(await resp.arrayBuffer());
+                } else if (f.remotePath) {
+                    const resp = await fetch('/api/clipboard-file?' + new URLSearchParams({
+                        path: f.remotePath,
+                        name: f.name || '',
+                    }));
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    bytes = new Uint8Array(await resp.arrayBuffer());
+                } else {
+                    pendingCrossTabFiles.push(f);
+                    pendingCrossTabSource = sourceTabId || pendingCrossTabSource;
+                    continue;
+                }
+                rdpStorageFiles = rdpStorageFiles.filter((x) => x.name !== (f.name || 'file'));
+                rdpStorageFiles.push({
+                    name: f.name || 'file',
+                    size: bytes.byteLength,
+                    isDir: false,
+                    data: bytes,
+                });
+                accepted += 1;
+            } catch (err) {
+                setFilesHint('接收文件失败: ' + (f.name || '') + ' ' + (err?.message || err), 'warning');
+            }
+        }
+        updatePendingFileList();
+        if (accepted > 0) {
+            try {
+                if (rdpWorkerBridge) {
+                    await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: connected });
+                }
+            } catch (err) {
+                console.warn('[rdp] cross-tab file sync failed', err);
+            }
+            setFilesHint(
+                connected
+                    ? `已接收 ${accepted} 个文件，可在 Windows 里 Ctrl+V 粘贴`
+                    : `已接收 ${accepted} 个文件到待粘贴列表`,
+                'success',
+            );
+        }
+        return accepted;
+    }
+
+    async function consumePendingCrossTabFiles() {
+        const files = pendingCrossTabFiles.length ? pendingCrossTabFiles.slice() : [];
+        const sourceTabId = pendingCrossTabSource || '';
+        setFilesHint('正在获取跨标签文件...', 'info');
+        window.parent?.postMessage?.({
+            source: 'zephyr-terminal',
+            type: 'shared-file-clipboard-consume',
+            tabId: params.tabId || '',
+            sourceTabId,
+            sourcePage: '',
+            files,
+        }, '*');
+        pendingCrossTabFiles = [];
+        pendingCrossTabSource = '';
+    }
 
     /* Request any existing shared clipboard on startup */
     window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'request-shared-file-clipboard', tabId: params.tabId || '' }, '*');
@@ -2330,13 +2389,13 @@ window.addEventListener('message', (e) => {
         if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
         if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
 
-        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-panel-syntax1' });
+        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-xfile3' });
         rdpDiag.workerProbe = probe;
         if (!probe.supported) {
             throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
         }
 
-        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-panel-syntax1', { type: 'module' }));
+        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-xfile3', { type: 'module' }));
         rdpWorkerBridge.installGlobals(window);
         await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: false });
         const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
