@@ -159,7 +159,7 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         list.innerHTML = sorted.map((n) => {
             const tags = (n.tags || []).slice(0, 4).map((t) => `<span class="tag-chip">${escapeHtml(t)}</span>`).join('');
             const connLinks = (n.linkedConnectionIds || n.linkedConnections || []).length
-                ? `<span class="tag-chip" style="background:color-mix(in srgb, var(--accent) 12%, transparent)">🔗 ${(n.linkedConnectionIds || n.linkedConnections || []).length}</span>`
+                ? `<span class="tag-chip" style="background:color-mix(in srgb, var(--accent) 12%, transparent)">${(n.linkedConnectionIds || n.linkedConnections || []).length} 连接</span>`
                 : '';
             const dirtyBadge = n.noteId === state.selectedId && state.dirty ? '<span class="tag-chip" style="background:var(--warning);color:#fff">未保存</span>' : '';
             return `<button type="button" class="notes-list-item${n.noteId === state.selectedId ? ' active' : ''}" data-note-id="${escapeHtml(n.noteId)}" role="option" aria-selected="${n.noteId === state.selectedId ? 'true' : 'false'}">
@@ -368,7 +368,60 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         $('#notesNewBtn')?.classList.toggle('force-hidden', inTrash);
     }
 
-    /* ── Link connection modal (§6.4.5): search + multi-select SSH/RDP/VNC ── */
+    /* ── Note share modal (§6.4): share_with_users / share_with_admins ── */
+    async function openNoteShareModal() {
+        if (!state.current) { toast?.('请先选择一条笔记'); return; }
+        // Only owner can change sharing settings
+        if (state.current.ownerUserId && state.current.ownerUserId !== window.__zephyrMyUserId) {
+            toast?.('只有笔记所有者可以修改共享设置'); return;
+        }
+        let modal = document.getElementById('notesShareModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'notesShareModal';
+            modal.className = 'modal-backdrop';
+            modal.innerHTML = `
+                <div class="connection-modal" style="max-width:400px">
+                    <div class="modal-head"><h2>笔记共享设置</h2><button type="button" class="icon-btn" id="notesShareModalClose">✕</button></div>
+                    <div style="padding:16px;display:flex;flex-direction:column;gap:14px">
+                        <p style="font-size:13px;color:var(--text-secondary)">共享后其他用户可以读取此笔记，但不能编辑。</p>
+                        <label class="check-line"><input type="checkbox" id="notesShareUsers"> 共享给所有用户</label>
+                        <label class="check-line"><input type="checkbox" id="notesShareAdmins"> 共享给管理员</label>
+                        <p style="font-size:11px;color:var(--text-secondary)">两项可同时开启。共享后你的笔记标题对有权限的用户可见。</p>
+                    </div>
+                    <div class="modal-actions">
+                        <button class="btn" type="button" id="notesShareCancel">取消</button>
+                        <button class="btn btn-primary" type="button" id="notesShareSave">保存</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+        }
+        modal.querySelector('#notesShareUsers').checked = !!state.current.shareWithUsers;
+        modal.querySelector('#notesShareAdmins').checked = !!state.current.shareWithAdmins;
+        modal.classList.add('show');
+        modal.setAttribute('aria-hidden', 'false');
+        const close = () => { modal.classList.remove('show'); modal.setAttribute('aria-hidden', 'true'); };
+        modal.querySelector('#notesShareModalClose').onclick = close;
+        modal.querySelector('#notesShareCancel').onclick = close;
+        modal.querySelector('#notesShareSave').onclick = async () => {
+            const shareWithUsers = modal.querySelector('#notesShareUsers').checked;
+            const shareWithAdmins = modal.querySelector('#notesShareAdmins').checked;
+            try {
+                const updated = await api(`/api/notes/${encodeURIComponent(state.current.noteId)}`, {
+                    method: 'PUT', body: JSON.stringify({
+                        shareWithUsers,
+                        shareWithAdmins,
+                        expectedRevision: state.current.revision,
+                    }),
+                });
+                state.current = updated.note;
+                state.dirty = false;
+                fillEditor(updated.note);
+                close();
+                toast?.(shareWithUsers ? '已共享给所有用户' : shareWithAdmins ? '已共享给管理员' : '已设为私有');
+            } catch (err) { toast?.(err.message || '保存失败'); }
+        };
+    }
     async function openLinkConnectionModal() {
         if (!state.current) { toast?.('请先选择一条笔记'); return; }
         // Build a lightweight modal using existing styles
@@ -676,6 +729,7 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
             createNote().catch((err) => toast?.(err.message));
         });
         $('#notesLinkConnBtn')?.addEventListener('click', () => openLinkConnectionModal().catch((err) => toast?.(err.message)));
+        $('#notesShareBtn')?.addEventListener('click', () => openNoteShareModal().catch((err) => toast?.(err.message)));
         $('#notesSortSelect')?.addEventListener('change', (e) => {
             state.sortBy = e.target.value || 'updated';
             renderList();

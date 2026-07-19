@@ -406,10 +406,14 @@ function init({ hashPassword }) {
             revision INTEGER NOT NULL DEFAULT 1,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
-            deleted_at INTEGER
+            deleted_at INTEGER,
+            visibility TEXT NOT NULL DEFAULT 'private',
+            share_with_users INTEGER NOT NULL DEFAULT 0,
+            share_with_admins INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_notes_owner_updated ON notes(owner_user_id, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_notes_owner_group ON notes(owner_user_id, group_path);
+        CREATE INDEX IF NOT EXISTS idx_notes_visibility ON notes(owner_user_id, visibility);
         CREATE TABLE IF NOT EXISTS deeplink_tokens (
             token_hash TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -449,6 +453,10 @@ function init({ hashPassword }) {
     addColumnIfMissing('jump_hosts', 'createdByUserId', 'TEXT');
     addColumnIfMissing('users', 'lastLoginAt', 'INTEGER');
     addColumnIfMissing('activities', 'userId', 'TEXT');
+    addColumnIfMissing('users', 'isSuperAdmin', 'INTEGER DEFAULT 0');
+    addColumnIfMissing('notes', 'visibility', "TEXT NOT NULL DEFAULT 'private'");
+    addColumnIfMissing('notes', 'share_with_users', 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing('notes', 'share_with_admins', 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing('connections', 'jumpHostIds', "TEXT DEFAULT '[]'");
     addColumnIfMissing('connections', 'sshKeyId', 'TEXT');
     addColumnIfMissing('connections', 'rdpSoundMode', "TEXT DEFAULT 'local'");
@@ -491,6 +499,7 @@ function init({ hashPassword }) {
     }
     migrateUserIdentity();
     migrateResourceOwnership();
+    migrateSuperAdmin();
     const legacySettings = readJSONFile(SETTINGS_FILE, {});
     const defaults = defaultSettings(legacySettings);
     Object.entries(defaults).forEach(([key, value]) => setSettingDefault(key, value));
@@ -549,6 +558,24 @@ function migrateResourceOwnership() {
             db.prepare(`UPDATE ${table} SET visibility = 'private' WHERE visibility IS NULL OR visibility = ''`).run();
         }
         db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (\'ownershipMigratedAt\', ?)').run(String(now()));
+    });
+    tx();
+}
+
+/*
+ * Idempotent super-admin migration: the first user (earliest createdAt) gets
+ * isSuperAdmin=1. Super admin can promote/demote other admins; regular admins
+ * cannot (FREEZE plan §18.1 / §19.3).
+ */
+function migrateSuperAdmin() {
+    const tx = db.transaction(() => {
+        const existing = db.prepare('SELECT COUNT(*) as c FROM users WHERE isSuperAdmin = 1').get();
+        if (existing && existing.c > 0) return;
+        const first = db.prepare('SELECT userId FROM users ORDER BY createdAt LIMIT 1').get();
+        if (first?.userId) {
+            db.prepare('UPDATE users SET isSuperAdmin = 1, role = ? WHERE userId = ?').run('admin', first.userId);
+        }
+        db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (\'superAdminMigratedAt\', ?)').run(String(now()));
     });
     tx();
 }
@@ -646,7 +673,7 @@ function updateSettings(values) {
     return getSettings();
 }
 
-function normalizeUser(u) { const plain = decryptUser(u); return { ...plain, defaultPassword: !!plain.defaultPassword, totpEnabled: !!plain.totpEnabled, role: plain.role || 'user', status: plain.status || 'active' }; }
+function normalizeUser(u) { const plain = decryptUser(u); return { ...plain, defaultPassword: !!plain.defaultPassword, totpEnabled: !!plain.totpEnabled, role: plain.role || 'user', status: plain.status || 'active', isSuperAdmin: !!plain.isSuperAdmin }; }
 function getUsersStore() { return { users: db.prepare('SELECT * FROM users ORDER BY createdAt').all().map(normalizeUser) }; }
 /* Legacy whole-store rewrite (used by writeJSON(USERS_FILE)). Preserves the
  * immutable identity fields (userId/role/status) of existing rows and assigns
@@ -668,15 +695,15 @@ function saveUsersStore(store) {
 function getUser(username) { const u = db.prepare('SELECT * FROM users WHERE username=?').get(username); return u ? normalizeUser(u) : null; }
 function getUserById(userId) { const u = db.prepare('SELECT * FROM users WHERE userId=?').get(String(userId || '')); return u ? normalizeUser(u) : null; }
 /* Lightweight identity lookup for hot auth paths — no secret decryption. */
-function getUserBrief(userId) { const u = db.prepare('SELECT userId, username, role, status, email, defaultPassword FROM users WHERE userId=?').get(String(userId || '')); return u ? { ...u, defaultPassword: !!u.defaultPassword } : null; }
+function getUserBrief(userId) { const u = db.prepare('SELECT userId, username, role, status, email, defaultPassword, isSuperAdmin FROM users WHERE userId=?').get(String(userId || '')); return u ? { ...u, defaultPassword: !!u.defaultPassword, isSuperAdmin: !!u.isSuperAdmin } : null; }
 function getFirstUser() { const u = db.prepare('SELECT * FROM users ORDER BY createdAt LIMIT 1').get(); return u ? normalizeUser(u) : null; }
 function listUsers() { return db.prepare('SELECT * FROM users ORDER BY createdAt').all().map(normalizeUser); }
-function createUser({ username, passwordHash, email = '', role = 'user', status = 'active', defaultPassword = false }) {
+function createUser({ username, passwordHash, email = '', role = 'user', status = 'active', defaultPassword = false, isSuperAdmin = 0 }) {
     const crypto = require('crypto');
     const ts = now();
     const userId = crypto.randomUUID();
-    db.prepare('INSERT INTO users (username,passwordHash,defaultPassword,createdAt,updatedAt,email,totpEnabled,totpSecret,failedLoginCount,lockedUntil,userId,role,status) VALUES (?,?,?,?,?,?,0,NULL,0,NULL,?,?,?)')
-        .run(String(username), String(passwordHash), defaultPassword ? 1 : 0, ts, ts, String(email || ''), userId, role === 'admin' ? 'admin' : 'user', ['active', 'invited', 'suspended'].includes(status) ? status : 'active');
+    db.prepare('INSERT INTO users (username,passwordHash,defaultPassword,createdAt,updatedAt,email,totpEnabled,totpSecret,failedLoginCount,lockedUntil,userId,role,status,isSuperAdmin) VALUES (?,?,?,?,?,?,0,NULL,0,NULL,?,?,?,?)')
+        .run(String(username), String(passwordHash), defaultPassword ? 1 : 0, ts, ts, String(email || ''), userId, role === 'admin' ? 'admin' : 'user', ['active', 'invited', 'suspended'].includes(status) ? status : 'active', isSuperAdmin ? 1 : 0);
     return getUserById(userId);
 }
 function updateUser(username, values) { const old = getUser(username); if (!old) return null; const next = { ...old, ...values, updatedAt: now(), defaultPassword: values.defaultPassword ?? old.defaultPassword ? 1 : 0, totpEnabled: values.totpEnabled ?? old.totpEnabled ? 1 : 0 }; const safe = encryptUser(next); db.prepare('UPDATE users SET passwordHash=@passwordHash, defaultPassword=@defaultPassword, updatedAt=@updatedAt, email=@email, totpEnabled=@totpEnabled, totpSecret=@totpSecret, failedLoginCount=@failedLoginCount, lockedUntil=@lockedUntil WHERE username=@username').run({ ...safe, email: safe.email || '', totpSecret: safe.totpSecret || null, failedLoginCount: Number(safe.failedLoginCount) || 0, lockedUntil: safe.lockedUntil || null }); return getUser(username); }
@@ -685,8 +712,8 @@ function updateUserById(userId, values) {
     if (!old) return null;
     const next = { ...old, ...values, updatedAt: now() };
     const safe = encryptUser(next);
-    db.prepare('UPDATE users SET passwordHash=@passwordHash, defaultPassword=@defaultPassword, updatedAt=@updatedAt, email=@email, totpEnabled=@totpEnabled, totpSecret=@totpSecret, failedLoginCount=@failedLoginCount, lockedUntil=@lockedUntil, role=@role, status=@status WHERE userId=@userId')
-        .run({ ...safe, email: safe.email || '', totpSecret: safe.totpSecret || null, failedLoginCount: Number(safe.failedLoginCount) || 0, lockedUntil: safe.lockedUntil || null, defaultPassword: safe.defaultPassword ? 1 : 0, totpEnabled: safe.totpEnabled ? 1 : 0, role: safe.role === 'admin' ? 'admin' : 'user', status: ['active', 'invited', 'suspended', 'deleted'].includes(safe.status) ? safe.status : 'active' });
+    db.prepare('UPDATE users SET passwordHash=@passwordHash, defaultPassword=@defaultPassword, updatedAt=@updatedAt, email=@email, totpEnabled=@totpEnabled, totpSecret=@totpSecret, failedLoginCount=@failedLoginCount, lockedUntil=@lockedUntil, role=@role, status=@status, isSuperAdmin=@isSuperAdmin WHERE userId=@userId')
+        .run({ ...safe, email: safe.email || '', totpSecret: safe.totpSecret || null, failedLoginCount: Number(safe.failedLoginCount) || 0, lockedUntil: safe.lockedUntil || null, defaultPassword: safe.defaultPassword ? 1 : 0, totpEnabled: safe.totpEnabled ? 1 : 0, role: safe.role === 'admin' ? 'admin' : 'user', status: ['active', 'invited', 'suspended', 'deleted'].includes(safe.status) ? safe.status : 'active', isSuperAdmin: safe.isSuperAdmin ? 1 : 0 });
     return getUserById(userId);
 }
 function renameUser(oldUsername, newUsername) {

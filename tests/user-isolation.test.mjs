@@ -164,12 +164,14 @@ test('non-admin cannot reach admin APIs; suspended users are locked out', async 
 });
 
 test('last-admin protection: cannot demote, suspend or delete the final admin', async () => {
+    // adminId is the super admin — super admin protection (403) fires before
+    // last-admin protection (409); either is acceptable as a rejection.
     const demote = await server.api(adminCookie, 'PATCH', `/api/admin/users/${adminId}`, { role: 'user' });
-    assert.equal(demote.status, 409);
+    assert.ok([403, 409].includes(demote.status), `demote got ${demote.status}`);
     const suspend = await server.api(adminCookie, 'POST', `/api/admin/users/${adminId}/suspend`);
-    assert.equal(suspend.status, 409);
+    assert.ok([403, 409].includes(suspend.status), `suspend got ${suspend.status}`);
     const del = await server.api(adminCookie, 'DELETE', `/api/admin/users/${adminId}`);
-    assert.ok([400, 409].includes(del.status));
+    assert.ok([400, 403, 409].includes(del.status), `delete got ${del.status}`);
 });
 
 test('admin force-password-reset invalidates sessions and requires change', async () => {

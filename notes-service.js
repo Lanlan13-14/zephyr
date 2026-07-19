@@ -26,11 +26,12 @@ class NotesService {
         this.authz = authz;
         this.now = now;
         this.stmtInsert = db.prepare(`INSERT INTO notes
-            (note_id, owner_user_id, title, content, group_path, tags_json, linked_connection_ids_json, sort_order, revision, created_at, updated_at, deleted_at)
-            VALUES (@noteId, @ownerUserId, @title, @content, @groupPath, @tagsJson, @linkedJson, @sortOrder, 1, @createdAt, @updatedAt, NULL)`);
+            (note_id, owner_user_id, title, content, group_path, tags_json, linked_connection_ids_json, sort_order, revision, created_at, updated_at, deleted_at, visibility, share_with_users, share_with_admins)
+            VALUES (@noteId, @ownerUserId, @title, @content, @groupPath, @tagsJson, @linkedJson, @sortOrder, 1, @createdAt, @updatedAt, NULL, @visibility, @shareWithUsers, @shareWithAdmins)`);
         this.stmtGet = db.prepare('SELECT * FROM notes WHERE note_id = ?');
         this.stmtUpdate = db.prepare(`UPDATE notes SET title=@title, content=@content, group_path=@groupPath, tags_json=@tagsJson,
-            linked_connection_ids_json=@linkedJson, sort_order=@sortOrder, revision=@revision, updated_at=@updatedAt
+            linked_connection_ids_json=@linkedJson, sort_order=@sortOrder, revision=@revision, updated_at=@updatedAt,
+            visibility=@visibility, share_with_users=@shareWithUsers, share_with_admins=@shareWithAdmins
             WHERE note_id=@noteId AND revision=@expectedRevision AND deleted_at IS NULL`);
         this.stmtSoftDelete = db.prepare('UPDATE notes SET deleted_at = ?, updated_at = ? WHERE note_id = ? AND deleted_at IS NULL');
         this.stmtRestore = db.prepare('UPDATE notes SET deleted_at = NULL, updated_at = ?, revision = revision + 1 WHERE note_id = ? AND deleted_at IS NOT NULL');
@@ -57,6 +58,9 @@ class NotesService {
             createdAt: Number(row.created_at),
             updatedAt: Number(row.updated_at),
             deletedAt: row.deleted_at ? Number(row.deleted_at) : null,
+            shareWithUsers: !!row.share_with_users,
+            shareWithAdmins: !!row.share_with_admins,
+            visibility: row.visibility || 'private',
         };
         if (includeContent) out.content = row.content || '';
         else out.preview = String(row.content || '').slice(0, 240);
@@ -73,6 +77,10 @@ class NotesService {
     _canRead(user, row) {
         if (!row) return false;
         if (row.owner_user_id === user.userId) return true;
+        // shareWithAdmins: only admins can see
+        if (row.share_with_admins && user.role === 'admin') return true;
+        // shareWithUsers: any authenticated user can see
+        if (row.share_with_users) return true;
         return this.authz.can(user, CAP.VIEW, 'note', row.note_id, { ownerUserId: row.owner_user_id });
     }
 
@@ -82,7 +90,7 @@ class NotesService {
         return this.authz.can(user, CAP.EDIT, 'note', row.note_id, { ownerUserId: row.owner_user_id });
     }
 
-    create(user, { title, content = '', groupPath = '', tags = [], linkedConnectionIds = [] } = {}) {
+    create(user, { title, content = '', groupPath = '', tags = [], linkedConnectionIds = [], shareWithUsers = false, shareWithAdmins = false } = {}) {
         title = String(title || '').trim() || '未命名笔记';
         content = String(content || '');
         groupPath = String(groupPath || '').replace(/\.\./g, '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
@@ -91,6 +99,8 @@ class NotesService {
         this._assertSize({ title, content, tags, linkedConnectionIds });
         const nowTs = this.now();
         const noteId = crypto.randomUUID();
+        const shareWithUsersVal = shareWithUsers ? 1 : 0;
+        const shareWithAdminsVal = shareWithAdmins ? 1 : 0;
         this.stmtInsert.run({
             noteId,
             ownerUserId: user.userId,
@@ -102,6 +112,9 @@ class NotesService {
             sortOrder: null,
             createdAt: nowTs,
             updatedAt: nowTs,
+            visibility: shareWithUsersVal ? 'shared' : shareWithAdminsVal ? 'admin' : 'private',
+            shareWithUsers: shareWithUsersVal,
+            shareWithAdmins: shareWithAdminsVal,
         });
         this.authz.audit({ actorUserId: user.userId, resourceType: 'note', resourceId: noteId, action: 'note.create', outcome: 'success', metadata: { title } });
         return this.get(user, noteId);
@@ -121,6 +134,8 @@ class NotesService {
         if (!this._canWrite(user, row)) throw new HttpError(403, 'forbidden_resource_edit', '当前账号没有编辑此笔记的权限');
         const expectedRevision = Number(patch.expectedRevision);
         if (!Number.isInteger(expectedRevision)) throw new HttpError(400, 'revision_required', '更新必须携带 expectedRevision');
+        const shareWithUsers = patch.shareWithUsers !== undefined ? (patch.shareWithUsers ? 1 : 0) : (row.share_with_users || 0);
+        const shareWithAdmins = patch.shareWithAdmins !== undefined ? (patch.shareWithAdmins ? 1 : 0) : (row.share_with_admins || 0);
         const next = {
             noteId: row.note_id,
             title: patch.title !== undefined ? String(patch.title).trim() || '未命名笔记' : row.title,
@@ -134,6 +149,9 @@ class NotesService {
             expectedRevision,
             revision: expectedRevision + 1,
             updatedAt: this.now(),
+            visibility: shareWithUsers ? 'shared' : shareWithAdmins ? 'admin' : 'private',
+            shareWithUsers,
+            shareWithAdmins,
         };
         this._assertSize(next);
         const result = this.stmtUpdate.run({
@@ -207,13 +225,23 @@ class NotesService {
         } else {
             rows = this.stmtListOwner.all(user.userId, limit, offset);
         }
-        // also include notes shared to this user with discover/view
-        const shared = this.authz.listSubjectGrants(user.userId, { resourceType: 'note' })
-            .filter((g) => g.capabilities.includes(CAP.VIEW) || g.capabilities.includes(CAP.DISCOVER));
-        for (const g of shared) {
-            if (rows.some((r) => r.note_id === g.resourceId)) continue;
-            const row = this.stmtGet.get(g.resourceId);
-            if (row && !row.deleted_at) rows.push(row);
+        // Include notes other users have shared with this user:
+        // 1. ACL grants (CAP.VIEW / DISCOVER)
+        if (!trash) {
+            const granted = this.authz.listSubjectGrants(user.userId, { resourceType: 'note' })
+                .filter((g) => g.capabilities.includes(CAP.VIEW) || g.capabilities.includes(CAP.DISCOVER));
+            for (const g of granted) {
+                if (rows.some((r) => r.note_id === g.resourceId)) continue;
+                const row = this.stmtGet.get(g.resourceId);
+                if (row && !row.deleted_at) rows.push(row);
+            }
+            // 2. share_with_users — any authenticated user sees these
+            const byFlag = user.role === 'admin'
+                ? this.db.prepare('SELECT * FROM notes WHERE owner_user_id != ? AND deleted_at IS NULL AND (share_with_users = 1 OR share_with_admins = 1) ORDER BY updated_at DESC LIMIT 200').all(user.userId)
+                : this.db.prepare('SELECT * FROM notes WHERE owner_user_id != ? AND deleted_at IS NULL AND share_with_users = 1 ORDER BY updated_at DESC LIMIT 200').all(user.userId);
+            for (const row of byFlag) {
+                if (!rows.some((r) => r.note_id === row.note_id)) rows.push(row);
+            }
         }
         if (group != null) {
             const g = String(group);

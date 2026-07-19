@@ -11323,6 +11323,8 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 
 /* ─── Admin user management (§19.3) ─── */
 .admin-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.admin-add-btn { display: inline-flex; align-items: center; gap: 6px; }
+.admin-add-btn .admin-icon-inline { display: inline-flex; }
 .admin-user-list { display: flex; flex-direction: column; gap: 8px; }
 .admin-user-row {
     display: flex;
@@ -11341,10 +11343,49 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 }
 .admin-user-info { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; min-width: 0; }
 .admin-user-info b { font-weight: 600; }
+.admin-user-name { display: inline-flex; color: var(--text-secondary); }
 .admin-user-actions { display: flex; gap: 4px; flex-wrap: wrap; flex-shrink: 0; }
+.admin-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 140ms var(--ease-smooth), border-color 140ms var(--ease-smooth), transform 120ms var(--ease-micro);
+}
+.admin-action-btn:active { transform: scale(0.96); }
+@media (hover: hover) and (pointer: fine) {
+    .admin-action-btn:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+}
+.admin-action-btn.danger { color: var(--danger); }
+@media (hover: hover) and (pointer: fine) {
+    .admin-action-btn.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); }
+}
+.admin-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    font-weight: 500;
+    line-height: 1.4;
+}
+.admin-badge.super { background: color-mix(in srgb, #bf8700 18%, transparent); color: #bf8700; }
+.admin-badge.admin { background: color-mix(in srgb, #0969da 16%, transparent); color: #0969da; }
+.admin-badge.user { background: color-mix(in srgb, var(--border) 55%, transparent); color: var(--text-secondary); }
+.admin-badge.ok { background: color-mix(in srgb, #1a7f37 16%, transparent); color: #1a7f37; }
+.admin-badge.warn { background: color-mix(in srgb, #cf222e 16%, transparent); color: #cf222e; }
 
 @media (prefers-reduced-motion: reduce) {
-    .admin-user-row { transition: none; }
+    .admin-user-row, .admin-action-btn { transition: none; }
+    .admin-action-btn:active { transform: none; }
 }
 
 /* Notes list sort select */

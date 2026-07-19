@@ -90,8 +90,12 @@ function applyCrossOriginIsolationHeaders(req, res, next) {
 }
 app.use(applyCrossOriginIsolationHeaders);
 
-const DATA_DIR = path.join(__dirname, 'data');
-const HTTPS_DIR = path.join(DATA_DIR, 'https');
+const DATA_DIR = process.env.ZEPHYR_DATA_DIR
+    ? path.resolve(process.env.ZEPHYR_DATA_DIR)
+    : path.join(__dirname, 'data');
+const HTTPS_DIR = process.env.ZEPHYR_HTTPS_DIR
+    ? path.resolve(process.env.ZEPHYR_HTTPS_DIR)
+    : path.join(DATA_DIR, 'https');
 const HTTPS_KEY_FILE = process.env.HTTPS_KEY_FILE || process.env.SSL_KEY_FILE || path.join(HTTPS_DIR, 'zephyr.key');
 const HTTPS_CERT_FILE = process.env.HTTPS_CERT_FILE || process.env.SSL_CERT_FILE || path.join(HTTPS_DIR, 'zephyr.crt');
 const HTTPS_CERT_CN = process.env.HTTPS_CERT_CN || process.env.PUBLIC_HOST || 'localhost';
@@ -400,7 +404,7 @@ function requireUser(req, res, next) {
     if (!user || user.status === 'deleted') return authError(res, 401, 'app_session_expired', '未登录或会话已过期', false);
     if (user.status === 'suspended') return authError(res, 403, 'account_suspended', '账号已被停用，请联系管理员', false);
     req.session = session;
-    req.user = { userId: user.userId, username: user.username, role: user.role, status: user.status, email: user.email || '' };
+    req.user = { userId: user.userId, username: user.username, role: user.role, status: user.status, email: user.email || '', isSuperAdmin: !!user.isSuperAdmin };
     next();
 }
 
@@ -1909,7 +1913,7 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
     res.json({
-        user: { username: req.session.username, userId: req.session.userId, role: storage.getUserById(req.session.userId)?.role || 'user' },
+        user: { username: req.session.username, userId: req.session.userId, role: storage.getUserById(req.session.userId)?.role || 'user', isSuperAdmin: !!storage.getUserBrief(req.session.userId)?.isSuperAdmin },
         mustChangePassword: !!req.session.mustChangePassword,
         instanceId: INSTANCE_ID,
     });
@@ -1970,6 +1974,7 @@ app.get('/api/me/bootstrap', requireUser, (req, res) => {
             status: user.status,
             email: user.email || '',
             totpEnabled: !!user.totpEnabled,
+            isSuperAdmin: !!user.isSuperAdmin,
         },
         instanceId: INSTANCE_ID,
         settings: userSettingsService.effective(req.user),
@@ -2353,6 +2358,14 @@ app.post('/api/admin/users/:userId/suspend', requireAdmin, (req, res) => {
 app.post('/api/admin/users/:userId/reactivate', requireAdmin, (req, res) => {
     try {
         res.json({ user: userService.reactivateUser(req.user, req.params.userId) });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/admin/users/:userId/transfer-super-admin', requireAdmin, (req, res) => {
+    try {
+        res.json({ user: userService.transferSuperAdmin(req.user, req.params.userId) });
     } catch (err) {
         handleServiceError(res, err, 400);
     }

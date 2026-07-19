@@ -1,4 +1,4 @@
-import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';import { createNotesController } from './notes.js?v=20260719-audit2';
+import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';import { createNotesController } from './notes.js?v=20260719-superadmin1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -1417,6 +1417,9 @@ function prepareConnectionModalForm(conn = null, options = {}) {
     }
     $('#connPrivateKey').value = conn?.hasPrivateKey ? '******' : '';
     $('#connRemark').value = conn?.remark || '';
+    // Sharing flags (non-transient only)
+    if ($('#connShareUsers')) $('#connShareUsers').checked = !!conn?.shareWithUsers;
+    if ($('#connShareAdmins')) $('#connShareAdmins').checked = !!conn?.shareWithAdmins;
     /* RDP settings */
     if ($('#rdpSoundMode')) $('#rdpSoundMode').value = conn?.rdpSoundMode || 'local';
     if ($('#rdpClipboard')) $('#rdpClipboard').checked = conn?.rdpClipboard !== false;
@@ -1663,7 +1666,7 @@ function connectionPayload({ forTest = false } = {}) {
     const jumpHostIds = mode === 'jump' ? [...new Set($$('#jumpRouteList [data-jump-route-select]').map((el) => el.value).filter(Boolean))] : [];
     const protocol = $('#connProtocol').value;
     const defaultPort = protocol === 'RDP' ? 3389 : protocol === 'VNC' ? 5900 : protocol === 'TELNET' ? 23 : 22;
-    const payload = { name: $('#connName').value.trim(), protocol, host: $('#connHost').value.trim(), port: Number($('#connPort').value) || defaultPort, username: $('#connUsername').value.trim(), sshKeyId: protocol === 'SSH' ? ($('#connSshKey')?.value || '') : '', password: $('#connPassword').value, privateKey: protocol === 'SSH' ? $('#connPrivateKey').value : '', remark: $('#connRemark').value, tags: parseTags($('#connTags').value), connectionMode: mode, proxyId: mode === 'proxy' ? proxyId : '', jumpHostId: mode === 'jump' ? (jumpHostIds[0] || '') : '', jumpHostIds };
+    const payload = { name: $('#connName').value.trim(), protocol, host: $('#connHost').value.trim(), port: Number($('#connPort').value) || defaultPort, username: $('#connUsername').value.trim(), sshKeyId: protocol === 'SSH' ? ($('#connSshKey')?.value || '') : '', password: $('#connPassword').value, privateKey: protocol === 'SSH' ? $('#connPrivateKey').value : '', remark: $('#connRemark').value, tags: parseTags($('#connTags').value), connectionMode: mode, proxyId: mode === 'proxy' ? proxyId : '', jumpHostId: mode === 'jump' ? (jumpHostIds[0] || '') : '', jumpHostIds, shareWithUsers: !!$('#connShareUsers')?.checked, shareWithAdmins: !!$('#connShareAdmins')?.checked };
     if (protocol === 'RDP') {
         payload.rdpSoundMode = $('#rdpSoundMode')?.value || 'local';
         payload.rdpClipboard = $('#rdpClipboard')?.checked !== false;
@@ -6576,13 +6579,40 @@ function bindDeepLinkChannel() {
 }
 
 // ─── Multi-user management UI (FREEZE plan §19.3) ───────────────────────────
+// Apple-style line SVG icons (no emoji). 24x24, currentColor, rounded.
+function adminIcon(name, size = 16) {
+    const icons = {
+        user: '<svg width="{s}" height="{s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>',
+        plus: '<svg width="{s}" height="{s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+        shield: '<svg width="{s}" height="{s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 3v7c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V5l8-3z"/></svg>',
+        crown: '<svg width="{s}" height="{s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l4 5 5-7 5 7 4-5v11H3V7z"/></svg>',
+        pause: '<svg width="{s}" height="{s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+        play: '<svg width="{s}" height="{s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l12 7-12 7V5z"/></svg>',
+        key: '<svg width="{s}" height="{s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="16" r="4"/><path d="M11 13l9-9M16 8l2 2"/></svg>',
+        logout: '<svg width="{s}" height="{s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M16 17l5-5-5-5M21 12H9"/></svg>',
+        trash: '<svg width="{s}" height="{s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>',
+        transfer: '<svg width="{s}" height="{s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3l4 4-4 4M20 7H8M8 21l-4-4 4-4M4 17h12"/></svg>',
+        promote: '<svg width="{s}" height="{s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+    };
+    return (icons[name] || icons.user).replace(/\{s\}/g, String(size));
+}
+
+let myIdentity = { userId: '', role: 'user', isSuperAdmin: false };
+
 async function loadAdminUsers() {
-    // Only admins see the panel; non-admins get it hidden
     const panel = document.getElementById('settings-admin');
     if (!panel) return;
-    const me = await api('/api/auth/me').catch(() => ({}));
-    if (me.user?.role !== 'admin') { panel.classList.add('force-hidden'); return; }
+    try {
+        const me = await api('/api/auth/me');
+        myIdentity = { userId: me.user?.userId || '', role: me.user?.role || 'user', isSuperAdmin: !!me.user?.isSuperAdmin };
+    } catch { myIdentity = { userId: '', role: 'user', isSuperAdmin: false }; }
+    if (myIdentity.role !== 'admin') { panel.classList.add('force-hidden'); return; }
     panel.classList.remove('force-hidden');
+    // Inject SVG icons into title and add button
+    const title = document.getElementById('adminPanelTitle');
+    if (title && !title.dataset.iconInjected) { title.innerHTML = adminIcon('shield', 18) + ' 多用户管理'; title.dataset.iconInjected = '1'; }
+    const addBtn = document.getElementById('adminAddUserBtn');
+    if (addBtn && !addBtn.dataset.iconInjected) { const span = addBtn.querySelector('.admin-icon-inline'); if (span) span.innerHTML = adminIcon('plus', 15); addBtn.dataset.iconInjected = '1'; }
     try {
         const data = await api('/api/admin/users');
         renderAdminUsers(data.users || []);
@@ -6598,28 +6628,60 @@ function renderAdminUsers(users) {
         list.innerHTML = '<p class="muted">暂无用户</p>';
         return;
     }
+    const activeAdmins = users.filter((u) => u.role === 'admin' && u.status === 'active');
     list.innerHTML = users.map((u) => {
-        const statusBadge = u.status === 'active' ? '<span class="tag-chip" style="background:#1a7f37;color:#fff">正常</span>'
-            : u.status === 'suspended' ? '<span class="tag-chip" style="background:#cf222e;color:#fff">已停用</span>'
-            : u.status === 'invited' ? '<span class="tag-chip" style="background:#bf8700;color:#fff">已邀请</span>'
-            : `<span class="tag-chip">${escapeHtml(u.status || '未知')}</span>`;
-        const roleBadge = u.role === 'admin' ? '<span class="tag-chip" style="background:#0969da;color:#fff">管理员</span>' : '<span class="tag-chip">普通用户</span>';
-        const isSelf = u.userId === window.__zephyrMyUserId;
-        const isLastAdmin = u.role === 'admin' && users.filter((x) => x.role === 'admin' && x.status === 'active').length <= 1;
+        const isSelf = u.userId === myIdentity.userId;
+        const isLastActiveAdmin = u.role === 'admin' && u.status === 'active' && activeAdmins.length <= 1;
+        const roleBadge = u.isSuperAdmin
+            ? `<span class="admin-badge super">${adminIcon('crown', 12)} 超级管理员</span>`
+            : u.role === 'admin'
+                ? `<span class="admin-badge admin">${adminIcon('shield', 12)} 管理员</span>`
+                : `<span class="admin-badge user">${adminIcon('user', 12)} 普通用户</span>`;
+        const statusBadge = u.status === 'active' ? '<span class="admin-badge ok">正常</span>'
+            : u.status === 'suspended' ? '<span class="admin-badge warn">已停用</span>'
+            : u.status === 'invited' ? '<span class="admin-badge warn">已邀请</span>'
+            : `<span class="admin-badge">${escapeHtml(u.status || '未知')}</span>`;
+        let actions = '';
+        // Suspend / reactivate
+        if (u.status === 'active' && !u.isSuperAdmin && !isLastActiveAdmin) {
+            actions += `<button class="admin-action-btn" data-admin-action="suspend" data-user-id="${escapeHtml(u.userId)}" title="停用">${adminIcon('pause', 14)} 停用</button>`;
+        }
+        if (u.status === 'suspended') {
+            actions += `<button class="admin-action-btn" data-admin-action="reactivate" data-user-id="${escapeHtml(u.userId)}" title="启用">${adminIcon('play', 14)} 启用</button>`;
+        }
+        // Reset password (not for super admin unless self)
+        if (!u.isSuperAdmin || isSelf) {
+            actions += `<button class="admin-action-btn" data-admin-action="reset-pw" data-user-id="${escapeHtml(u.userId)}" title="重置密码">${adminIcon('key', 14)} 重置密码</button>`;
+        }
+        // Revoke sessions (not for self)
+        if (!isSelf && !u.isSuperAdmin) {
+            actions += `<button class="admin-action-btn" data-admin-action="revoke-sessions" data-user-id="${escapeHtml(u.userId)}" title="强制下线">${adminIcon('logout', 14)} 踢下线</button>`;
+        }
+        // Promote to admin (only super admin can, target must be non-admin)
+        if (myIdentity.isSuperAdmin && u.role !== 'admin' && !isSelf) {
+            actions += `<button class="admin-action-btn" data-admin-action="promote" data-user-id="${escapeHtml(u.userId)}" title="授予管理员">${adminIcon('promote', 14)} 授权管理员</button>`;
+        }
+        // Demote admin (only super admin, not self, not super admin target)
+        if (myIdentity.isSuperAdmin && u.role === 'admin' && !u.isSuperAdmin && !isSelf && !isLastActiveAdmin) {
+            actions += `<button class="admin-action-btn" data-admin-action="demote" data-user-id="${escapeHtml(u.userId)}" title="撤销管理员">${adminIcon('promote', 14)} 撤销管理员</button>`;
+        }
+        // Transfer super admin (only current super admin, target is admin and not self)
+        if (myIdentity.isSuperAdmin && u.role === 'admin' && !isSelf) {
+            actions += `<button class="admin-action-btn" data-admin-action="transfer-super" data-user-id="${escapeHtml(u.userId)}" title="转移超级管理员">${adminIcon('transfer', 14)} 转移超管</button>`;
+        }
+        // Delete (not for self, not for super admin, not last admin)
+        if (!isSelf && !u.isSuperAdmin && !isLastActiveAdmin) {
+            actions += `<button class="admin-action-btn danger" data-admin-action="delete" data-user-id="${escapeHtml(u.userId)}" title="删除">${adminIcon('trash', 14)} 删除</button>`;
+        }
         return `<div class="admin-user-row" data-user-id="${escapeHtml(u.userId)}">
             <div class="admin-user-info">
+                <span class="admin-user-name">${adminIcon(u.isSuperAdmin ? 'crown' : (u.role === 'admin' ? 'shield' : 'user'), 18)}</span>
                 <b>${escapeHtml(u.username)}</b>${isSelf ? ' <span class="muted">(你)</span>' : ''}
                 <span class="muted">${escapeHtml(u.email || '无邮箱')}</span>
                 ${roleBadge}${statusBadge}
                 <span class="muted">${u.lastLoginAt ? '最后登录 ' + fmtTime(u.lastLoginAt) : '从未登录'}</span>
             </div>
-            <div class="admin-user-actions">
-                ${u.status === 'active' && !isLastAdmin ? `<button class="tool-btn" data-admin-action="suspend" data-user-id="${escapeHtml(u.userId)}">停用</button>` : ''}
-                ${u.status === 'suspended' ? `<button class="tool-btn" data-admin-action="reactivate" data-user-id="${escapeHtml(u.userId)}">启用</button>` : ''}
-                <button class="tool-btn" data-admin-action="reset-pw" data-user-id="${escapeHtml(u.userId)}">重置密码</button>
-                <button class="tool-btn" data-admin-action="revoke-sessions" data-user-id="${escapeHtml(u.userId)}">踢下线</button>
-                ${!isLastAdmin ? `<button class="tool-btn danger" data-admin-action="delete" data-user-id="${escapeHtml(u.userId)}">删除</button>` : ''}
-            </div>
+            <div class="admin-user-actions">${actions}</div>
         </div>`;
     }).join('');
 }
@@ -6629,7 +6691,10 @@ function openAdminAddUserDialog() {
     if (!name) return;
     const password = prompt(`为 ${name} 设置初始密码：`);
     if (!password) return;
-    const role = confirm(`${name} 是管理员吗？\n确定=管理员，取消=普通用户`) ? 'admin' : 'user';
+    let role = 'user';
+    if (myIdentity.isSuperAdmin) {
+        role = confirm(`${name} 设为管理员吗？\n确定 = 管理员，取消 = 普通用户`) ? 'admin' : 'user';
+    }
     api('/api/admin/users', { method: 'POST', body: JSON.stringify({ username: name, password, role }) })
         .then(() => { toast('用户已创建'); loadAdminUsers(); })
         .catch((err) => toast(err.message || '创建失败'));
@@ -6649,6 +6714,18 @@ async function handleAdminAction(action, userId) {
         } else if (action === 'revoke-sessions') {
             await api(`/api/admin/users/${userId}/revoke-sessions`, { method: 'POST' });
             toast('已强制下线');
+        } else if (action === 'promote') {
+            if (!confirm('确定授予此用户管理员角色？')) return;
+            await api(`/api/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ role: 'admin' }) });
+        } else if (action === 'demote') {
+            if (!confirm('确定撤销此用户的管理员角色？')) return;
+            await api(`/api/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ role: 'user' }) });
+        } else if (action === 'transfer-super') {
+            if (!confirm('确定将超级管理员转移给此用户？\n转移后你将变为普通管理员。此操作不可撤销。')) return;
+            await api(`/api/admin/users/${userId}/transfer-super-admin`, { method: 'POST' });
+            toast('超级管理员已转移，请重新登录');
+            setTimeout(() => location.href = '/', 1500);
+            return;
         } else if (action === 'delete') {
             if (!confirm('确定删除此用户？其资源将转移给管理员。此操作不可撤销。')) return;
             await api(`/api/admin/users/${userId}`, { method: 'DELETE', body: JSON.stringify({ resourcePolicy: 'transfer-to-admin' }) });

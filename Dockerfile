@@ -78,6 +78,31 @@ COPY --from=rdp-wasm-builder /build/main.wasm /app/public/vendor/rdp-wasm/
 COPY --from=rdp-wasm-builder /build/wasm_exec.mjs /app/public/vendor/rdp-wasm/
 
 ENV ZEPHYR_VERSION=${ZEPHYR_VERSION}
+
+# Data and TLS certificate directories. Mount these as volumes or set the
+# env vars to point at host paths when deploying with a real certificate.
+#
+#   ZEPHYR_DATA_DIR   - persistent data (SQLite, JSON stores, auto-cert)
+#                       default: /app/data
+#   ZEPHYR_HTTPS_DIR  - TLS certificate directory
+#                       default: $ZEPHYR_DATA_DIR/https
+#   HTTPS_CERT_FILE   - full path to PEM certificate file
+#                       default: $ZEPHYR_HTTPS_DIR/zephyr.crt
+#   HTTPS_KEY_FILE    - full path to PEM private key file
+#                       default: $ZEPHYR_HTTPS_DIR/zephyr.key
+#
+# Quick usage (bring-your-own cert):
+#   docker run -v /etc/letsencrypt/live/yourdomain:/certs:ro \
+#              -e HTTPS_CERT_FILE=/certs/fullchain.pem \
+#              -e HTTPS_KEY_FILE=/certs/privkey.pem \
+#              ...
+#
+# Or just mount the data directory and drop the cert there:
+#   docker run -v /host/zephyr-data:/data \
+#              -e ZEPHYR_DATA_DIR=/data \
+#              ...
+ENV ZEPHYR_DATA_DIR=/app/data
+VOLUME ["/app/data"]
 ENV MALLOC_TRIM_THRESHOLD_=32768
 ENV MALLOC_MMAP_THRESHOLD_=65536
 

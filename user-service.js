@@ -37,6 +37,7 @@ class UserService {
             createdAt: u.createdAt || null,
             updatedAt: u.updatedAt || null,
             lastLoginAt: u.lastLoginAt || null,
+            isSuperAdmin: !!u.isSuperAdmin,
         };
     }
 
@@ -56,6 +57,8 @@ class UserService {
         if (this.storage.getUser(username)) throw new HttpError(409, 'username_taken', '用户名已存在');
         if (!password || String(password).length < 4) throw new HttpError(400, 'weak_password', '密码至少 4 位');
         if (!ROLES.has(role)) throw new HttpError(400, 'invalid_role', '角色不合法');
+        // Only super admin can create new admins (§19.3)
+        if (role === 'admin' && !actor.isSuperAdmin) throw new HttpError(403, 'super_admin_required', '只有超级管理员可以创建管理员账号');
         const user = this.storage.createUser({
             username,
             passwordHash: this.hashPassword(String(password)),
@@ -75,11 +78,18 @@ class UserService {
         if (email !== undefined) patch.email = String(email || '');
         if (role !== undefined) {
             if (!ROLES.has(role)) throw new HttpError(400, 'invalid_role', '角色不合法');
+            // Only super admin can promote/demote admin roles (§19.3)
+            if (role === 'admin' || target.role === 'admin') {
+                if (!actor.isSuperAdmin) throw new HttpError(403, 'super_admin_required', '只有超级管理员可以授予或撤销管理员角色');
+            }
             if (target.role === 'admin' && role !== 'admin') this._assertNotLastAdmin(target, '降级');
+            // Super admin cannot be demoted by anyone (including self)
+            if (target.isSuperAdmin && role !== 'admin') throw new HttpError(403, 'cannot_demote_super_admin', '超级管理员不能被降级');
             patch.role = role;
         }
         if (status !== undefined) {
             if (!STATUSES.has(status)) throw new HttpError(400, 'invalid_status', '状态不合法');
+            if (target.isSuperAdmin) throw new HttpError(403, 'cannot_suspend_super_admin', '超级管理员不能被停用或删除');
             if (target.status === 'active' && status !== 'active' && target.role === 'admin') this._assertNotLastAdmin(target, '停用');
             patch.status = status;
         }
@@ -99,6 +109,7 @@ class UserService {
     suspendUser(actor, userId) {
         const target = this.storage.getUserById(userId);
         if (!target) throw new HttpError(404, 'user_not_found', '用户不存在');
+        if (target.isSuperAdmin) throw new HttpError(403, 'cannot_suspend_super_admin', '超级管理员不能被停用');
         if (target.role === 'admin') this._assertNotLastAdmin(target, '停用');
         const updated = this.storage.updateUserById(userId, { status: 'suspended' });
         this.getSessionStore().revokeAllForUser(userId, 'suspended');
@@ -138,6 +149,7 @@ class UserService {
         const target = this.storage.getUserById(userId);
         if (!target) throw new HttpError(404, 'user_not_found', '用户不存在');
         if (target.userId === actor.userId) throw new HttpError(400, 'cannot_delete_self', '不能删除自己的账号');
+        if (target.isSuperAdmin) throw new HttpError(403, 'cannot_delete_super_admin', '超级管理员不能被删除');
         if (target.role === 'admin') this._assertNotLastAdmin(target, '删除');
         const db = this.storage.rawDb();
         const admin = actor;
@@ -165,6 +177,19 @@ class UserService {
     _assertNotLastAdmin(target, actionLabel) {
         const admins = this.storage.listUsers().filter((u) => u.role === 'admin' && u.status === 'active' && u.userId !== target.userId);
         if (!admins.length) throw new HttpError(409, 'last_admin_protected', `不能${actionLabel}最后一个可用管理员`);
+    }
+
+    /** Transfer super admin to another user; the current super admin becomes
+     * a regular admin. There must always be exactly one super admin. */
+    transferSuperAdmin(actor, targetUserId) {
+        if (!actor.isSuperAdmin) throw new HttpError(403, 'super_admin_required', '只有超级管理员可以转移超级管理员权限');
+        const target = this.storage.getUserById(targetUserId);
+        if (!target) throw new HttpError(404, 'user_not_found', '用户不存在');
+        if (target.userId === actor.userId) throw new HttpError(400, 'cannot_transfer_to_self', '不能转移给自己');
+        this.storage.updateUserById(targetUserId, { role: 'admin', isSuperAdmin: true });
+        this.storage.updateUserById(actor.userId, { role: 'admin', isSuperAdmin: false });
+        this.authz.audit({ actorUserId: actor.userId, targetUserId, action: 'user.transfer_super_admin', outcome: 'success' });
+        return this._publicUser(this.storage.getUserById(targetUserId));
     }
 }
 
