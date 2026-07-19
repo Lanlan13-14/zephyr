@@ -43,13 +43,20 @@
 - ⚡ **远程批量执行**：可对多个 SSH 连接批量执行命令并查看结果。
 - 🧰 **远程运维能力**：支持远程状态监控、Docker 容器/镜像查看、日志查看、镜像拉取等 SSH 运维操作。
 - 🤖 **AI 助理智能体**：可在设置中启用独立 AI 助理入口，支持多模型供应商、自定义 API Base URL、模型参数、逐模型请求 User-Agent、Skills、内置 Chromium 浏览器自动化与截图嵌入预览、按连接/项目/标签关联的长期 Memory、可暂停/继续/重试的任务规划器、AI 专用加密环境变量、远程命令执行、远程文件读写、敏感操作确认和编辑器 AI 代码补全。
+- **AI Provider 所有权与共享**：每个 Provider 归属于创建者，可独立共享给所有管理员、所有用户，或指定一个/多个用户；共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。AI 笔记工具可分别控制读取权限与创建/修改/删除权限。
 - 🖼️ **图片类文件预览**：文件管理器支持图片预览，前端使用 Viewer.js 负责缩放/拖动/全屏，后端 Preview API 对浏览器不支持的 HEIC/TIFF/PSD/RAW/DDS/HDR 等格式通过 Sharp 优先、ImageMagick 兜底转为 WebP。
 - 🎨 **个性化终端**：设置页支持品牌名/图标、主题、自定义 CSS/JS、SSH 终端背景图与背景强度、自定义深色/浅色终端字体颜色；浅色字体未填写时会自动使用深色字体的反色。
 - 📋 **跨会话文件剪贴板**：支持本机 ↔ RDP、SSH ↔ RDP、RDP ↔ SSH、RDP ↔ RDP 的文件剪贴板桥接；RDP 侧使用 Windows 原生 CLIPRDR 文件剪贴板语义，远端 Ctrl+V 时按需拉取文件内容。
+- **笔记工作区**：支持分组、标签、搜索、Markdown 编辑/预览、关联连接、导入导出、软删除和回收站彻底删除；笔记开关与笔记数据按用户独立保存。
+- **连接与笔记共享**：可共享给所有用户、所有管理员，或指定一个/多个用户；连接共享不会向共享者暴露密码、私钥和其他凭据。
+- **工作区自动恢复**：按浏览器设备保存已打开连接、标签顺序、最小化状态、活动连接和当前页面；重新打开时会再次校验 ACL 并恢复可访问项目，不保存密码、命令、临时连接或 Deep Link 凭据。
+- **Deep Link 临时连接**：支持解析 `ssh://`、`telnet://` 和 `jms://`，一次性凭据仅在服务端短期保存并绑定当前用户消费。
+- **Go 会话数据面**：`zephyr-worker` 负责持久 SSH/Telnet 会话、PTY、输出回放和订阅分发；Node.js 负责认证、ACL、笔记、AI 和控制面 API。
 
 ### 安全与账号
 
 - 🔐 **安全登录体系**：默认管理员、首次登录强制改密、登录会话、密码修改。
+- **多用户与角色管理**：首个账号为超级管理员，可创建用户、授权或撤销管理员、停用/启用账号、重置密码、强制下线、删除用户并转移资源；超级管理员可将权限转让给另一名已启用管理员。角色与不可变 `userId` 绑定，修改用户名不会改变权限。
 - 🧩 **MFA 多因素认证**：支持 TOTP 动态验证码与 Passkey / WebAuthn。
 - 🛡️ **登录防护**：支持 CAPTCHA、人机验证、登录失败记录、IP 防爆破封禁、IP 白名单。
 - ✉️ **邮件通知**：支持 SMTP 测试邮件、登录成功/失败通知、忘记密码邮箱验证码重置。
@@ -69,12 +76,14 @@
 | 协议 | 作为目标连接 | 可通过代理访问 | 可通过 SSH 跳板访问 | 可作为跳板机 |
 | --- | --- | --- | --- | --- |
 | `SSH` | ✅ | ✅ | ✅ | ✅ |
+| `Telnet` | ✅ | ❌ | ❌ | ❌ |
 | `RDP` | ✅ | ✅ | ✅ | ❌ |
 | `VNC` | ✅ | ✅ | ✅ | ❌ |
 
 说明：
 
 - **SSH** 既可以作为目标连接，也可以作为跳板机。
+- **Telnet** 由 Go worker 提供 IAC、NAWS、TTYPE 与 WebSocket 双向转发，支持通过 Deep Link 创建临时连接。
 - **RDP / VNC** 可以作为目标连接，并且可以通过 SSH 跳板链路访问。
 - **RDP / VNC 不能作为跳板机**。跳板机只能选择 SSH 连接。
 - RDP / VNC 通过跳板访问时，Zephyr 会在服务端建立临时链路：RDP 由 Node.js WebSocket→TCP 代理将浏览器 WASM grdp 客户端的流量转发到目标 RDP 端口，VNC 由 Zephyr 的 noVNC WebSocket 代理直接完成 VNC 握手与转发。
@@ -186,6 +195,8 @@ HTTPS_PORT=3443
 | `HTTPS_PORT` / `ZEPHYR_HTTPS_PORT` | 内置 HTTPS 服务监听端口；Docker 默认暴露 `3443` | `3443` |
 | `HTTPS_CERT_FILE` / `SSL_CERT_FILE` | 可选：自有 TLS 证书路径；未设置时自动生成自签证书到 `data/https/zephyr.crt` | `data/https/zephyr.crt` |
 | `HTTPS_KEY_FILE` / `SSL_KEY_FILE` | 可选：自有 TLS 私钥路径；未设置时自动生成自签私钥到 `data/https/zephyr.key` | `data/https/zephyr.key` |
+| `ZEPHYR_DATA_DIR` | SQLite、加密密钥、会话和持久配置目录；Docker 建议挂载到 `/app/data` | `./data` |
+| `ZEPHYR_HTTPS_DIR` | 自签证书默认生成目录；也可以单独挂载为自有证书目录 | `$ZEPHYR_DATA_DIR/https` |
 | `HTTPS_CERT_CN` / `PUBLIC_HOST` | 自动自签证书的 CN；SAN 会自动包含本机局域网 IPv4、`localhost`、`127.0.0.1`，也可用 `HTTPS_CERT_ALT_NAMES` 追加 | `localhost` |
 | `ENCRYPTION_KEY` | 备份导出/导入加密密钥，生产环境必须改为强随机字符串 | `please-change-this-key` |
 | `ZEPHYR_DATA_MLKEM768_PUBLIC_KEY_B64` / `ZEPHYR_DATA_MLKEM768_SECRET_KEY_B64` | 可选：外部注入 ML-KEM-768 数据字段加密密钥对；未设置时会自动生成到 `data/crypto/ml-kem-768-keypair.json` | 自动生成 |
@@ -213,8 +224,10 @@ HTTPS_PORT=3443
 Zephyr 内置可选 AI Agent 能力，默认关闭。登录后台后进入 **设置 → AI 助理** 可启用：
 
 - **多模型供应商**：支持 OpenAI 兼容接口、Anthropic Claude、Google Gemini；可配置自定义 API Base URL、API Key、模型列表、默认模型、上下文窗口/最大输入长度、逐模型请求 User-Agent、额外请求头和常见模型参数（temperature、top_p、max_tokens/max_output_tokens、presence/frequency penalty、reasoning_effort、额外 JSON 参数等）。逐模型 User-Agent 以 `模型名=User-Agent` 形式配置，只对聊天/生成请求中精确匹配的模型生效；未配置的模型保持默认请求头。`auto` 默认按 Chat Completions 兼容路径发送，只有明确选择 Responses API 或 Base URL 以 `/responses` 结尾时才使用 Responses；`previous_response_id` 默认关闭，避免兼容网关报错。高轮次对话会自动做上下文压缩：早期轮次合并为摘要注入系统提示，最近消息保持原文，避免请求体随轮次线性膨胀导致响应变慢、超时或上游模型报错；这不是限制对话轮次。Zephyr 内置默认系统提示词，约束 AI 按当前连接、标签、备注、Memory、计划器和敏感确认流程工作。
+- **Provider 所有权与共享**：每个 Provider 绑定创建者，可独立共享给所有管理员、所有用户，或指定一个/多个用户；共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。
 - **独立入口与浮窗**：启用后顶部 AI 按钮会打开类似 SSH 文件/监控面板的浮窗；桌面端支持拖拽、缩放和布局，移动端优化为稳定的全屏/近全屏面板，保留顶部整条标题栏拖动、横向对话切换和内部滚动，避免浮窗导致页面无法滑动或画面消失。
 - **工具权限与透明过程**：可单独开关网页搜索、网页正文读取、内置 Chromium 浏览器自动化、远程执行、远程文件读取、远程文件写入、代码编辑/补全、长期 Memory 和 AI 环境变量。AI 还能列出/新增/修改/删除连接、代理、SSH 密钥库、跳板机和代码片段，测试 SSH/RDP/VNC 连通性，读取当前 SSH 终端屏幕/scrollback 输出，读取 RDP/VNC 远程桌面画面快照，并通过 `ui_action` 在当前 Zephyr 页面可见地切换视图、打开连接弹窗、排列终端窗口、点击 SSH 终端工具栏，或直接调整 RDP/VNC 工具栏（画质、视图/适应、缩放、剪贴板、软键盘、快捷键、视区/拖拽、Ctrl+Alt+Del、重连/断开、发送文本/快捷键/坐标点击）。AI 每次工具调用会在聊天中生成独立过程卡片，展示工具、参数摘要、耗时、结果摘要和可展开的完整参数/结果；敏感字段仍会打码。RDP/VNC 画面截图在支持视觉输入的模型供应商上会以多模态图片传给模型（Anthropic/Gemini/OpenAI 均支持）。
+- **笔记工具权限**：笔记读取与笔记创建/修改/删除分别控制；用户关闭自己的笔记功能后，AI 不会获得该用户的笔记工具。
 - **内置 Chromium 浏览器自动化**：Docker 运行镜像内置 `chromium`，AI 可通过 CDP 执行页面导航、截图、点击、输入、滚动和正文读取；每次浏览器工具调用会返回 `/api/ai/browser/screenshots/...` 预览，AI 浮窗会把截图直接嵌入聊天流和顶部浏览器预览区。默认每个 Zephyr 进程使用独立运行 profile（`data/ai-browser/profile/runtime-<host>-<pid>`），避免容器重启、滚动更新或旧 Chromium 残留时触发 `profile appears to be in use` 锁冲突；如确实要多个进程共用同一个 profile，可设置 `AI_CHROMIUM_PROFILE_SHARED=true`，但不推荐。
 - **长期 Memory / 项目记忆**：可在设置页维护项目约定、服务器规则、用户偏好，也可由 AI 通过 `memory_save` 工具写入、`memory_search` 工具检索；Memory 支持按 SSH 连接 ID、项目/Scope、标签自动关联和排序，而不是只靠全文搜索。
 - **任务规划器**：AI 可用 `plan_task` 为复杂任务生成步骤、风险和状态，设置页会展示最近计划；后续可通过 `plan_update` 更新步骤状态、暂停/继续计划、标记失败并重试失败步骤，也可通过设置页按钮或 `plan_delete` 删除计划。
@@ -470,6 +483,20 @@ EOF
 - `ENCRYPTION_KEY`：生产环境必须改成强随机字符串，用于加密备份文件。
 - `PUBLIC_ORIGIN`：必须改成用户实际访问地址；如果通过域名和 HTTPS 访问，应填写 `https://你的域名`。
 - `PORT`：容器内 Web 服务监听端口，通常保持 `3000`。
+
+使用自有 TLS 证书时，可在 `.env` 中设置：
+
+```bash
+HTTPS_CERT_FILE=/certs/fullchain.pem
+HTTPS_KEY_FILE=/certs/privkey.pem
+ZEPHYR_HTTPS_DIR=/certs
+```
+
+并在 `compose.yaml` 的 `volumes` 中追加只读证书目录：
+
+```yaml
+      - /etc/letsencrypt/live/ssh.example.com:/certs:ro
+```
 
 ### 2. 创建 compose.yaml
 
@@ -739,6 +766,15 @@ zephyr-ssh/
 ├── file-agent-manager.js # Zephyr Agent 注册、token、RPC 转发与 SSE 在线状态
 ├── storage.js           # SQLite 存储层
 ├── stats.js             # 远程状态采集
+├── authz.js             # 统一资源 ACL 与 capability 判定
+├── session-store.js     # SQLite 持久登录会话、滑动/绝对过期与撤销
+├── user-service.js      # 超级管理员、管理员和普通用户生命周期管理
+├── workspace-service.js # 用户/设备工作区保存、ACL 过滤恢复和版本冲突
+├── notes-service.js     # 用户笔记、分组、关联连接、共享、回收站和导入导出
+├── ai-agent-service.js  # AI 多模型调用、工具、浏览器自动化、Memory 与任务
+├── ai-provider-service.js # AI Provider 所有权、API Key 加密、共享矩阵和调用授权
+├── ai-policy.js         # 用户 AI 模式、模型白名单和工具策略
+├── zephyr-worker/       # Go SSH/Telnet 会话数据面、PTY、回放和 WebSocket 分发
 ├── rdp-wasm/            # Go WASM RDP 客户端源码
 │   ├── main.go          # WASM 入口（JS↔Go 桥接）
 │   ├── rdpefs.go        # MS-RDPEFS 虚拟驱动器
