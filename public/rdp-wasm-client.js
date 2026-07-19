@@ -11,10 +11,10 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-panel-file1';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-panel-file1';
-import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-panel-file1';
-import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-panel-file1';
+import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-panel-syntax1';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-panel-syntax1';
+import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-panel-syntax1';
+import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-panel-syntax1';
 import {
     setupPanelInteractions,
     toggleFloatingPanel,
@@ -23,7 +23,7 @@ import {
     bringPanelToFront,
     applyPanelLayout,
     closePanelLayoutMenu,
-} from './floating-panel.js?v=20260719-panel-file1';
+} from './floating-panel.js?v=20260719-panel-syntax1';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
@@ -1922,6 +1922,7 @@ function initToolbar() {
             }
         });
     }
+} // end initToolbar
 
 /* ═══════════════════════════════════════════════════════════════════════
  * RDP FILE PANEL — Upload / Download / Cross-tab clipboard
@@ -2329,13 +2330,13 @@ window.addEventListener('message', (e) => {
         if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
         if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
 
-        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-panel-file1' });
+        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-panel-syntax1' });
         rdpDiag.workerProbe = probe;
         if (!probe.supported) {
             throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
         }
 
-        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-panel-file1', { type: 'module' }));
+        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-panel-syntax1', { type: 'module' }));
         rdpWorkerBridge.installGlobals(window);
         await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: false });
         const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
