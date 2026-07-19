@@ -85,7 +85,7 @@ class NotesService {
     create(user, { title, content = '', groupPath = '', tags = [], linkedConnectionIds = [] } = {}) {
         title = String(title || '').trim() || '未命名笔记';
         content = String(content || '');
-        groupPath = String(groupPath || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+        groupPath = String(groupPath || '').replace(/\.\./g, '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
         tags = Array.isArray(tags) ? tags.map(String).filter(Boolean).slice(0, TAGS_MAX) : [];
         linkedConnectionIds = Array.isArray(linkedConnectionIds) ? linkedConnectionIds.map(String).filter(Boolean).slice(0, LINKS_MAX) : [];
         this._assertSize({ title, content, tags, linkedConnectionIds });
@@ -125,7 +125,7 @@ class NotesService {
             noteId: row.note_id,
             title: patch.title !== undefined ? String(patch.title).trim() || '未命名笔记' : row.title,
             content: patch.content !== undefined ? String(patch.content) : row.content,
-            groupPath: patch.groupPath !== undefined ? String(patch.groupPath || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') : row.group_path,
+            groupPath: patch.groupPath !== undefined ? String(patch.groupPath || '').replace(/\.\./g, '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/') : row.group_path,
             tags: patch.tags !== undefined ? (Array.isArray(patch.tags) ? patch.tags.map(String).filter(Boolean).slice(0, TAGS_MAX) : []) : parseJson(row.tags_json, []),
             linkedConnectionIds: patch.linkedConnectionIds !== undefined
                 ? (Array.isArray(patch.linkedConnectionIds) ? patch.linkedConnectionIds.map(String).filter(Boolean).slice(0, LINKS_MAX) : [])
@@ -237,6 +237,29 @@ class NotesService {
         return this.stmtGroups.all(user.userId).map((r) => ({ groupPath: r.groupPath || '', count: Number(r.count) }));
     }
 
+    /* Rename a group path for all of the user's notes in that group (§6.4.2).
+     * Sub-paths are NOT rewritten (e.g. ops/runbooks -> dev/runbooks only
+     * affects notes whose group_path === 'ops/runbooks', not 'ops/runbooks/old'). */
+    renameGroup(user, oldPath, newPath) {
+        const oldSafe = String(oldPath || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+        const newSafe = String(newPath || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+        if (!oldSafe) throw new HttpError(400, 'invalid_group', '分组路径不能为空');
+        const result = this.db.prepare('UPDATE notes SET group_path = ?, updated_at = ? WHERE owner_user_id = ? AND group_path = ? AND deleted_at IS NULL')
+            .run(newSafe, this.now(), user.userId, oldSafe);
+        this.authz.audit({ actorUserId: user.userId, action: 'note.rename_group', outcome: 'success', metadata: { from: oldSafe, to: newSafe, affected: result.changes } });
+        return { renamed: result.changes };
+    }
+
+    /* Delete a group: move all its notes to ungrouped (§6.4.2). */
+    deleteGroup(user, groupPath) {
+        const safe = String(groupPath || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+        if (!safe) throw new HttpError(400, 'invalid_group', '分组路径不能为空');
+        const result = this.db.prepare('UPDATE notes SET group_path = ?, updated_at = ? WHERE owner_user_id = ? AND group_path = ? AND deleted_at IS NULL')
+            .run('', this.now(), user.userId, safe);
+        this.authz.audit({ actorUserId: user.userId, action: 'note.delete_group', outcome: 'success', metadata: { group: safe, affected: result.changes } });
+        return { moved: result.changes };
+    }
+
     /** Import a single markdown file. Filename → title, optional directory → group. */
     importMarkdown(user, { filename, content, groupPath = '' } = {}) {
         const base = String(filename || 'import.md').replace(/[\\/]+/g, '/').split('/').pop();
@@ -248,7 +271,9 @@ class NotesService {
     exportMarkdown(user, noteId) {
         const note = this.get(user, noteId, { includeContent: true });
         const safeName = note.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80) || 'note';
-        return { filename: `${safeName}.md`, content: note.content, title: note.title };
+        // Prepend a title heading so the exported file is self-describing
+        const body = `# ${note.title}\n\n${note.content || ''}`;
+        return { filename: `${safeName}.md`, content: body, title: note.title };
     }
 }
 

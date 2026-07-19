@@ -588,7 +588,7 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'snippet_delete', description: '删除代码片段。', parameters: { type: 'object', properties: { snippetId: { type: 'string' } }, required: ['snippetId'] } } });
     // Note tools (FREEZE plan §6.5 / §10): AI searches first, reads on demand,
     // never auto-injects all note content into context.
-    if (p.notes !== false) {
+    if (p.notesRead !== false && p.notesWrite !== false) {
         tools.push({ type: 'function', function: { name: 'note_list', description: '列出当前用户的笔记。返回标题、分组、标签、更新时间和摘要（前 200 字），不返回全文。先搜索再按需 note_get 读取正文。', parameters: { type: 'object', properties: { group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' }, offset: { type: 'number' }, trash: { type: 'boolean' } } } } });
         tools.push({ type: 'function', function: { name: 'note_search', description: '按关键词搜索笔记标题、正文和标签。返回匹配笔记的摘要，不返回全文。', parameters: { type: 'object', properties: { query: { type: 'string' }, group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] } } });
         tools.push({ type: 'function', function: { name: 'note_get', description: '读取一条笔记的完整内容（标题、正文、标签、分组、关联连接）。需要 noteId；用 note_list 或 note_search 找到 ID。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
@@ -1718,7 +1718,7 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             return { memories: searchMemories(ai, args.query || '', args.scope || args.project || '', args.maxResults || 10, { ...(ctx.context || {}), activeConnectionIds: uniqueStrings([...stringList(ctx.context?.activeConnectionIds), ...stringList(args.connectionIds)]), projects: uniqueStrings([...stringList(ctx.context?.projects), args.project].filter(Boolean)), tags: uniqueStrings([...stringList(ctx.context?.tags), ...stringList(args.tags)]) }) };
         // ── Note tools (FREEZE plan §10): search-first, read-on-demand ──
         case 'note_list': {
-            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (p.notesRead === false) throw new Error('笔记工具未开启');
             if (!deps.notesService) throw new Error('笔记服务未配置');
             const result = deps.notesService.list(ctx.user, {
                 group: args.group, tag: args.tag, connectionId: args.connectionId,
@@ -1731,7 +1731,7 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             })) };
         }
         case 'note_search': {
-            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (p.notesRead === false) throw new Error('笔记工具未开启');
             if (!deps.notesService) throw new Error('笔记服务未配置');
             const result = deps.notesService.list(ctx.user, {
                 q: String(args.query || ''), group: args.group, tag: args.tag,
@@ -1744,13 +1744,13 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             })) };
         }
         case 'note_get': {
-            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (p.notesRead === false) throw new Error('笔记工具未开启');
             if (!deps.notesService) throw new Error('笔记服务未配置');
             const note = deps.notesService.get(ctx.user, String(args.noteId || ''));
             return { note };
         }
         case 'note_create':
-            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (p.notesWrite === false) throw new Error('笔记工具未开启');
             if (!deps.notesService) throw new Error('笔记服务未配置');
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
                 const note = deps.notesService.create(ctx.user, {
@@ -1764,7 +1764,7 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 return { note: { noteId: note.noteId, title: note.title, revision: note.revision } };
             }, deps);
         case 'note_update':
-            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (p.notesWrite === false) throw new Error('笔记工具未开启');
             if (!deps.notesService) throw new Error('笔记服务未配置');
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
                 const note = deps.notesService.update(ctx.user, String(args.noteId || ''), {
@@ -1779,7 +1779,7 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 return { note: { noteId: note.noteId, title: note.title, revision: note.revision } };
             }, deps);
         case 'note_delete':
-            if (p.notes === false) throw new Error('笔记工具未开启');
+            if (p.notesWrite === false) throw new Error('笔记工具未开启');
             if (!deps.notesService) throw new Error('笔记服务未配置');
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
                 deps.notesService.delete(ctx.user, String(args.noteId || ''));

@@ -1961,6 +1961,7 @@ app.get('/api/me/bootstrap', requireUser, (req, res) => {
     const workspaces = clientId
         ? workspaceService.list(req.user.userId, { clientId })
         : workspaceService.list(req.user.userId).slice(0, 10);
+    const globalSettings = storage.getSettings();
     res.json({
         user: {
             userId: user.userId,
@@ -1978,7 +1979,8 @@ app.get('/api/me/bootstrap', requireUser, (req, res) => {
             sharedConnections: shared.length,
         },
         policies: {
-            aiEnabled: !!storage.getSettings().ai?.enabled,
+            aiEnabled: !!globalSettings.ai?.enabled,
+            notesEnabled: !!(globalSettings.notes && globalSettings.notes.enabled),
         },
     });
 });
@@ -2065,6 +2067,22 @@ app.get('/api/notes/groups', requireUser, (req, res) => {
     res.json({ groups: notesService.groups(req.user) });
 });
 
+app.post('/api/notes/groups/rename', requireUser, (req, res) => {
+    try {
+        res.json(notesService.renameGroup(req.user, req.body?.oldPath, req.body?.newPath));
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/notes/groups/delete', requireUser, (req, res) => {
+    try {
+        res.json(notesService.deleteGroup(req.user, req.body?.groupPath));
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
 app.post('/api/notes', requireUser, (req, res) => {
     try {
         res.json({ note: notesService.create(req.user, req.body || {}) });
@@ -2135,7 +2153,11 @@ app.get('/api/notes/:id/export.md', requireUser, (req, res) => {
     try {
         const file = notesService.exportMarkdown(req.user, req.params.id);
         res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="${file.filename.replace(/"/g, '')}"`);
+        // RFC 5987: ASCII fallback filename + UTF-8 encoded filename* for
+        // non-ASCII titles (emoji, Chinese). Node rejects non-ASCII in header values.
+        const asciiName = file.filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '');
+        const utf8Name = encodeURIComponent(file.filename);
+        res.setHeader('Content-Disposition', `attachment; filename="${asciiName}"; filename*=UTF-8''${utf8Name}`);
         res.send(file.content);
     } catch (err) {
         handleServiceError(res, err, 404);
