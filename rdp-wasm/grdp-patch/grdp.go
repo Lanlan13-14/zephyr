@@ -146,6 +146,9 @@ type RdpClient struct {
 	// SetWallpaperEnabled() before Login; preserved across reconnects and
 	// re-applied to the freshly-created sec.Client in doLogin().
 	wallpaperEnabled bool
+	// qualityMode is "performance" | "balanced" | "quality". Empty falls back
+	// to the wallpaperEnabled boolean for legacy callers.
+	qualityMode string
 
 	// dispHandler is the active MS-RDPEDISP handler; nil when not connected.
 	// Used by SetResolution to send MONITOR_LAYOUT PDUs.
@@ -411,6 +414,27 @@ func (g *RdpClient) SetWallpaperEnabled(enabled bool) *RdpClient {
 	return g
 }
 
+// SetQualityMode applies the three UI quality tiers before Login.
+// See sec.Client.SetQualityMode. Also updates wallpaperEnabled so reconnect
+// re-applies a consistent visual profile.
+func (g *RdpClient) SetQualityMode(mode string) *RdpClient {
+	switch mode {
+	case "quality":
+		g.qualityMode = "quality"
+		g.wallpaperEnabled = true
+	case "balanced":
+		g.qualityMode = "balanced"
+		g.wallpaperEnabled = false
+	default:
+		g.qualityMode = "performance"
+		g.wallpaperEnabled = false
+	}
+	if g.sec != nil {
+		g.sec.SetQualityMode(g.qualityMode)
+	}
+	return g
+}
+
 // RegisterDvcHandler registers a custom Dynamic Virtual Channel handler
 // that will be attached to the DVC client during connection setup.
 // Must be called before Login(). The handler implements drdynvc.DvcChannelHandler.
@@ -482,9 +506,13 @@ func (g *RdpClient) doLogin(routingToken []byte) error {
 	g.x224 = x224.New(g.tpkt)
 	g.mcs = t125.NewMCSClient(g.x224, g.kbdLayout, g.keyboardType, g.keyboardSubType)
 	g.sec = sec.NewClient(g.mcs)
-	// Re-apply the wallpaper preference to the freshly-created sec client so
-	// it survives reconnects (doLogin runs on every connect attempt).
-	g.sec.SetWallpaperEnabled(g.wallpaperEnabled)
+	// Re-apply the visual preference to the freshly-created sec client so it
+	// survives reconnects (doLogin runs on every connect attempt).
+	if g.qualityMode != "" {
+		g.sec.SetQualityMode(g.qualityMode)
+	} else {
+		g.sec.SetWallpaperEnabled(g.wallpaperEnabled)
+	}
 	g.pdu = pdu.NewClient(g.sec)
 	g.channels = plugin.NewChannels(g.sec)
 

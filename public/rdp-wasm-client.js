@@ -11,10 +11,10 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-mobile-kbd1';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-mobile-kbd1';
-import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-mobile-kbd1';
-import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-mobile-kbd1';
+import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-settings-apply1';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-settings-apply1';
+import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-settings-apply1';
+import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-settings-apply1';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
@@ -822,6 +822,30 @@ function stopAgentDriveBridge() {
     resetAttachedDriveState();
 }
 
+function persistSessionParams(patch = {}) {
+    params = { ...params, ...patch };
+    const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';
+    try {
+        const prev = JSON.parse(sessionStorage.getItem(key) || '{}') || {};
+        sessionStorage.setItem(key, JSON.stringify({ ...prev, ...params, timestamp: Date.now() }));
+    } catch {}
+    // Best-effort: also update the saved connection on the server so the next
+    // open (not just this tab reload) keeps the chosen density/quality/fps.
+    const connectionId = params.connectionId || urlParams.get('connectionId') || '';
+    if (!connectionId) return;
+    const body = {};
+    if (params.rdpResolution) body.rdpResolution = params.rdpResolution;
+    if (params.quality) body.rdpQuality = params.quality;
+    if (params.rdpFps) body.rdpFps = Number(params.rdpFps);
+    if (!Object.keys(body).length) return;
+    fetch(`/api/connections/${encodeURIComponent(connectionId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+    }).catch((err) => console.warn('[rdp] persist settings failed', err));
+}
+
 function reconnectWithSettings() {
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     clearConnectWatchdog();
@@ -829,6 +853,13 @@ function reconnectWithSettings() {
     rdpReconnecting = false;
     rdpReconnectAttempts = 0;
     connected = false;
+    // Persist before reload so the new session actually applies the clicked
+    // resolution / quality / fps instead of re-reading the old params.
+    persistSessionParams({
+        rdpResolution: params.rdpResolution || '1080p',
+        quality: qualityMode,
+        rdpFps: fpsValue,
+    });
     /* Disconnect the old session and give Go WASM + WebSocket a moment to
      * tear down before starting a fresh connection. Without this gap the new
      * connect races the old close and the proxy/WASM state machine jams. */
@@ -902,6 +933,20 @@ async function connect() {
             storageEnabled = boolSetting(cred.rdpStorage) || boolSetting(params.rdpStorage);
             params.rdpTouchMode = cred.rdpTouchMode || params.rdpTouchMode || 'direct';
             params.rdpTouchSensitivity = Number(cred.rdpTouchSensitivity || params.rdpTouchSensitivity || 1.5);
+            // Prefer the values already chosen in this tab (sessionStorage /
+            // toolbar clicks). Fall back to the saved connection profile.
+            if (!params.rdpResolution && cred.rdpResolution) params.rdpResolution = cred.rdpResolution;
+            if (!params.quality && cred.rdpQuality) {
+                params.quality = cred.rdpQuality;
+                if (qualityModes.includes(cred.rdpQuality)) qualityMode = cred.rdpQuality;
+            }
+            if (!params.rdpFps && cred.rdpFps) {
+                const n = Number(cred.rdpFps);
+                if (fpsModes.includes(n)) {
+                    params.rdpFps = n;
+                    fpsValue = n;
+                }
+            }
             rdpTouchController?.setRelativeMode(params.rdpTouchMode === 'relative');
             rdpTouchController?.setRelativeSensitivity(params.rdpTouchSensitivity);
         } catch (err) {
@@ -958,14 +1003,19 @@ async function connect() {
     connectionFailureReported = false;
     setStatus('connecting', '正在连接 RDP...');
 
-    /* rdpConnect is exposed by Go WASM */
-    /* Balanced and quality keep wallpaper + desktop effects. Only performance
-     * mode disables expensive visuals. */
-    const wallpaperOn = qualityMode !== 'performance';
+    /* rdpConnect is exposed by Go WASM.
+     * qualityMode → ClientInfo PERF flags; fps → RDPGFX queueDepth hint. */
+    const quality = qualityModes.includes(qualityMode) ? qualityMode : 'balanced';
+    const fps = fpsModes.includes(Number(fpsValue)) ? Number(fpsValue) : 30;
     startConnectWatchdog();
     if (rdpAgentStorageEnabled) startAgentDriveBridge();
     else stopAgentDriveBridge();
-    await Promise.resolve(rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera, wallpaperOn));
+    await Promise.resolve(rdpConnect(
+        proxyWsUrl(), host, port, domain, user, password,
+        width, height, false,
+        !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera,
+        quality, fps,
+    ));
 }
 
 function disconnect() {
@@ -1536,6 +1586,7 @@ function initToolbar() {
             const idx = qualityModes.indexOf(qualityMode);
             qualityMode = qualityModes[(idx + 1) % qualityModes.length];
             qualityBtn.textContent = qualityMode === 'performance' ? '性能' : qualityMode === 'quality' ? '画质' : '平衡';
+            persistSessionParams({ quality: qualityMode });
             if (connected) {
                 setStatus('connecting', '正在应用画质设置...');
                 reconnectWithSettings();
@@ -1549,6 +1600,7 @@ function initToolbar() {
             const idx = fpsModes.indexOf(fpsValue);
             fpsValue = fpsModes[(idx + 1) % fpsModes.length];
             fpsBtn.textContent = fpsValue + 'FPS';
+            persistSessionParams({ rdpFps: fpsValue });
             if (connected) {
                 setStatus('connecting', '正在应用帧率设置...');
                 reconnectWithSettings();
@@ -1805,11 +1857,13 @@ function initToolbar() {
             resIdx = (resIdx + 1) % resolutions.length;
             resolutionBtn.textContent = resLabels[resolutions[resIdx]] || resolutions[resIdx];
             params.rdpResolution = resolutions[resIdx];
+            persistSessionParams({ rdpResolution: params.rdpResolution });
             /* Reconnect with new density tier. */
             if (connected) {
                 const size = computeRdpSize();
                 rdpWidth = size.width;
                 rdpHeight = size.height;
+                setStatus('connecting', '正在应用分辨率设置...');
                 reconnectWithSettings();
             }
         });
@@ -2393,13 +2447,13 @@ window.addEventListener('message', (e) => {
         if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
         if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
 
-        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-mobile-kbd1' });
+        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-settings-apply1' });
         rdpDiag.workerProbe = probe;
         if (!probe.supported) {
             throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
         }
 
-        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-mobile-kbd1', { type: 'module' }));
+        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-settings-apply1', { type: 'module' }));
         rdpWorkerBridge.installGlobals(window);
         rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
         const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });

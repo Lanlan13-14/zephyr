@@ -490,17 +490,39 @@ func (c *Client) SetPerformanceFlags(flags uint32) {
 // effects/animations. When false, performance mode disables them to save
 // bandwidth and CPU.
 func (c *Client) SetWallpaperEnabled(enabled bool) {
+	if enabled {
+		c.SetQualityMode("quality")
+	} else {
+		c.SetQualityMode("performance")
+	}
+}
+
+// SetQualityMode applies TS_EXTENDED_INFO_PACKET performance flags for the
+// three UI tiers. Call before Login.
+//
+//	performance — disable wallpaper/themes/animations (lowest bandwidth)
+//	balanced    — no wallpaper, keep composition + font smoothing
+//	quality     — wallpaper + themes + composition (highest fidelity)
+func (c *Client) SetQualityMode(mode string) {
 	if c.info == nil || c.info.ExtendedInfo == nil {
 		return
 	}
-	visualDisableFlags := PERF_DISABLE_WALLPAPER |
-		PERF_DISABLE_FULLWINDOWDRAG |
-		PERF_DISABLE_MENUANIMATIONS |
-		PERF_DISABLE_THEMING
-	if enabled {
-		c.info.ExtendedInfo.PerformanceFlags &^= visualDisableFlags
-	} else {
-		c.info.ExtendedInfo.PerformanceFlags |= visualDisableFlags
+	base := uint32(PERF_ENABLE_FONT_SMOOTHING | PERF_ENABLE_DESKTOP_COMPOSITION)
+	switch mode {
+	case "quality":
+		c.info.ExtendedInfo.PerformanceFlags = base
+	case "balanced":
+		c.info.ExtendedInfo.PerformanceFlags = base |
+			PERF_DISABLE_WALLPAPER |
+			PERF_DISABLE_FULLWINDOWDRAG |
+			PERF_DISABLE_MENUANIMATIONS
+	default: // performance
+		c.info.ExtendedInfo.PerformanceFlags = base |
+			PERF_DISABLE_WALLPAPER |
+			PERF_DISABLE_FULLWINDOWDRAG |
+			PERF_DISABLE_MENUANIMATIONS |
+			PERF_DISABLE_THEMING |
+			PERF_DISABLE_CURSOR_SHADOW
 	}
 }
 
