@@ -652,21 +652,31 @@ func (h *CliprdrHandler) handleFormatDataRequestFiles(requestedFormat uint32) bo
 	// Each FILEDESCRIPTORW is exactly 592 bytes:
 	//   flags(4) + reserved(32) + fileAttributes(4) + reserved(16) +
 	//   lastWriteTime(8) + fileSizeHigh(4) + fileSizeLow(4) + fileName(520)
+	// FreeRDP synthetic_file.c sets:
+	//   FD_ATTRIBUTES | FD_FILESIZE | FD_WRITESTIME | FD_PROGRESSUI
+	// Windows Explorer often ignores descriptors that only advertise FILESIZE.
 	fgd := &bytes.Buffer{}
 	binary.Write(fgd, binary.LittleEndian, uint32(len(files))) // cItems
+	now := filetimeNow()
 	for _, f := range files {
 		fd := make([]byte, 592)
-		// flags: FD_FILESIZE | FD_ATTRIBUTES
-		binary.LittleEndian.PutUint32(fd[0:4], FD_FILESIZE|FD_ATTRIBUTES)
+		binary.LittleEndian.PutUint32(fd[0:4], FD_ATTRIBUTES|FD_FILESIZE|FD_WRITESTIME|FD_PROGRESSUI)
 		// offset 36: fileAttributes
 		binary.LittleEndian.PutUint32(fd[36:40], 0x00000080) // FILE_ATTRIBUTE_NORMAL
+		// offset 56: ftLastWriteTime (FILETIME)
+		binary.LittleEndian.PutUint32(fd[56:60], uint32(now))
+		binary.LittleEndian.PutUint32(fd[60:64], uint32(now>>32))
 		// offset 64: fileSizeHigh, offset 68: fileSizeLow
 		binary.LittleEndian.PutUint32(fd[64:68], uint32(f.Size>>32))
 		binary.LittleEndian.PutUint32(fd[68:72], uint32(f.Size))
-		// offset 72: fileName (520 bytes = 260 UTF-16LE chars, null-terminated)
-		nameBytes := encodeUTF16LE(f.Name)
+		// offset 72: basename only (CB_FILECLIP_NO_FILE_PATHS advertised)
+		base := f.Name
+		if i := strings.LastIndexAny(base, `/\`); i >= 0 {
+			base = base[i+1:]
+		}
+		nameBytes := encodeUTF16LE(base)
 		if len(nameBytes) > 518 { // 520 - 2 for null
-			nameBytes = nameBytes[:518]
+			nameBytes = append(nameBytes[:518], 0, 0)
 		}
 		copy(fd[72:], nameBytes)
 		fgd.Write(fd)
@@ -714,6 +724,18 @@ func (h *CliprdrHandler) sendPDU(msgType, msgFlags uint16, body []byte) {
 		return
 	}
 	sendClipPDU(h.channelSender, msgType, msgFlags, body)
+}
+
+// filetimeNow returns the current UTC time as a Windows FILETIME
+// (100-ns intervals since 1601-01-01).
+func filetimeNow() uint64 {
+	// Unix epoch (1970) is 11644473600 seconds after Windows epoch (1601).
+	const epochDiff = 11644473600
+	now := time.Now().UTC().Unix()
+	if now < 0 {
+		return 0
+	}
+	return (uint64(now) + epochDiff) * 10_000_000
 }
 
 // --- UTF-16LE helpers ------------------------------------------------------

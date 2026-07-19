@@ -11,10 +11,10 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-mobile-kbd1';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-mobile-kbd1';
-import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-mobile-kbd1';
-import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-mobile-kbd1';
+import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-file-clip1';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-file-clip1';
+import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-file-clip1';
+import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-file-clip1';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
@@ -582,7 +582,6 @@ async function rdpStoragePickFiles() {
                 const file = await handle.getFile();
                 const data = new Uint8Array(await file.arrayBuffer());
                 rdpStorageFiles.push({ name: file.name, size: file.size, isDir: false, data, handle });
-                if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
             }
         } else {
             /* Fallback: use <input type="file"> */
@@ -596,13 +595,15 @@ async function rdpStoragePickFiles() {
                     for (const file of input.files) {
                         const data = new Uint8Array(await file.arrayBuffer());
                         rdpStorageFiles.push({ name: file.name, size: file.size, isDir: false, data });
-                        if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
                     }
                     resolve();
                 };
                 input.click();
             });
             input.remove();
+        }
+        if (rdpWorkerBridge) {
+            await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: connected });
         }
         console.info('[rdp-storage] files shared:', rdpStorageFiles.length);
     } catch (err) {
@@ -822,6 +823,30 @@ function stopAgentDriveBridge() {
     resetAttachedDriveState();
 }
 
+function persistSessionParams(patch = {}) {
+    params = { ...params, ...patch };
+    const key = tabId ? `zephyr_remote_desktop_params_${tabId}` : 'zephyr_remote_desktop_params';
+    try {
+        const prev = JSON.parse(sessionStorage.getItem(key) || '{}') || {};
+        sessionStorage.setItem(key, JSON.stringify({ ...prev, ...params, timestamp: Date.now() }));
+    } catch {}
+    // Best-effort: also update the saved connection on the server so the next
+    // open (not just this tab reload) keeps the chosen density/quality/fps.
+    const connectionId = params.connectionId || urlParams.get('connectionId') || '';
+    if (!connectionId) return;
+    const body = {};
+    if (params.rdpResolution) body.rdpResolution = params.rdpResolution;
+    if (params.quality) body.rdpQuality = params.quality;
+    if (params.rdpFps) body.rdpFps = Number(params.rdpFps);
+    if (!Object.keys(body).length) return;
+    fetch(`/api/connections/${encodeURIComponent(connectionId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+    }).catch((err) => console.warn('[rdp] persist settings failed', err));
+}
+
 function reconnectWithSettings() {
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     clearConnectWatchdog();
@@ -829,6 +854,13 @@ function reconnectWithSettings() {
     rdpReconnecting = false;
     rdpReconnectAttempts = 0;
     connected = false;
+    // Persist before reload so the new session actually applies the clicked
+    // resolution / quality / fps instead of re-reading the old params.
+    persistSessionParams({
+        rdpResolution: params.rdpResolution || '1080p',
+        quality: qualityMode,
+        rdpFps: fpsValue,
+    });
     /* Disconnect the old session and give Go WASM + WebSocket a moment to
      * tear down before starting a fresh connection. Without this gap the new
      * connect races the old close and the proxy/WASM state machine jams. */
@@ -902,6 +934,20 @@ async function connect() {
             storageEnabled = boolSetting(cred.rdpStorage) || boolSetting(params.rdpStorage);
             params.rdpTouchMode = cred.rdpTouchMode || params.rdpTouchMode || 'direct';
             params.rdpTouchSensitivity = Number(cred.rdpTouchSensitivity || params.rdpTouchSensitivity || 1.5);
+            // Prefer the values already chosen in this tab (sessionStorage /
+            // toolbar clicks). Fall back to the saved connection profile.
+            if (!params.rdpResolution && cred.rdpResolution) params.rdpResolution = cred.rdpResolution;
+            if (!params.quality && cred.rdpQuality) {
+                params.quality = cred.rdpQuality;
+                if (qualityModes.includes(cred.rdpQuality)) qualityMode = cred.rdpQuality;
+            }
+            if (!params.rdpFps && cred.rdpFps) {
+                const n = Number(cred.rdpFps);
+                if (fpsModes.includes(n)) {
+                    params.rdpFps = n;
+                    fpsValue = n;
+                }
+            }
             rdpTouchController?.setRelativeMode(params.rdpTouchMode === 'relative');
             rdpTouchController?.setRelativeSensitivity(params.rdpTouchSensitivity);
         } catch (err) {
@@ -958,14 +1004,19 @@ async function connect() {
     connectionFailureReported = false;
     setStatus('connecting', '正在连接 RDP...');
 
-    /* rdpConnect is exposed by Go WASM */
-    /* Balanced and quality keep wallpaper + desktop effects. Only performance
-     * mode disables expensive visuals. */
-    const wallpaperOn = qualityMode !== 'performance';
+    /* rdpConnect is exposed by Go WASM.
+     * qualityMode → ClientInfo PERF flags; fps → RDPGFX queueDepth hint. */
+    const quality = qualityModes.includes(qualityMode) ? qualityMode : 'balanced';
+    const fps = fpsModes.includes(Number(fpsValue)) ? Number(fpsValue) : 30;
     startConnectWatchdog();
     if (rdpAgentStorageEnabled) startAgentDriveBridge();
     else stopAgentDriveBridge();
-    await Promise.resolve(rdpConnect(proxyWsUrl(), host, port, domain, user, password, width, height, false, !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera, wallpaperOn));
+    await Promise.resolve(rdpConnect(
+        proxyWsUrl(), host, port, domain, user, password,
+        width, height, false,
+        !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera,
+        quality, fps,
+    ));
 }
 
 function disconnect() {
@@ -1536,6 +1587,7 @@ function initToolbar() {
             const idx = qualityModes.indexOf(qualityMode);
             qualityMode = qualityModes[(idx + 1) % qualityModes.length];
             qualityBtn.textContent = qualityMode === 'performance' ? '性能' : qualityMode === 'quality' ? '画质' : '平衡';
+            persistSessionParams({ quality: qualityMode });
             if (connected) {
                 setStatus('connecting', '正在应用画质设置...');
                 reconnectWithSettings();
@@ -1549,6 +1601,7 @@ function initToolbar() {
             const idx = fpsModes.indexOf(fpsValue);
             fpsValue = fpsModes[(idx + 1) % fpsModes.length];
             fpsBtn.textContent = fpsValue + 'FPS';
+            persistSessionParams({ rdpFps: fpsValue });
             if (connected) {
                 setStatus('connecting', '正在应用帧率设置...');
                 reconnectWithSettings();
@@ -1580,7 +1633,23 @@ function initToolbar() {
     }
 
     if (rdpFilesBtn && filesPanel) {
-        rdpFilesBtn.addEventListener('click', () => { filesPanel.classList.toggle('open'); });
+        rdpFilesBtn.addEventListener('click', () => {
+            const willOpen = !filesPanel.classList.contains('open');
+            filesPanel.classList.toggle('open', willOpen);
+            if (willOpen) {
+                // First open: give the floating panel a default dock so it is
+                // not stuck at 0,0 with zero size on some layouts.
+                if (!filesPanel.style.left && !filesPanel.style.top) {
+                    try { applyPanelLayout(filesPanel, 'right-quarter'); } catch {}
+                }
+                filesPanel.classList.add('front');
+                renderFileList();
+                renderRemoteFiles();
+                if (typeof rdpFsListDrives === 'function') {
+                    rdpFsListDrives().then(renderAgentDrives).catch(() => {});
+                }
+            }
+        });
     }
 
     if (keyboardBtn && mobileKeyboardInput) {
@@ -1805,11 +1874,13 @@ function initToolbar() {
             resIdx = (resIdx + 1) % resolutions.length;
             resolutionBtn.textContent = resLabels[resolutions[resIdx]] || resolutions[resIdx];
             params.rdpResolution = resolutions[resIdx];
+            persistSessionParams({ rdpResolution: params.rdpResolution });
             /* Reconnect with new density tier. */
             if (connected) {
                 const size = computeRdpSize();
                 rdpWidth = size.width;
                 rdpHeight = size.height;
+                setStatus('connecting', '正在应用分辨率设置...');
                 reconnectWithSettings();
             }
         });
@@ -2086,35 +2157,45 @@ function initFilePanel() {
             for (const file of rdpFileInput.files) {
                 const data = new Uint8Array(await file.arrayBuffer());
                 rdpStorageFiles.push({ name: file.name, size: file.size, isDir: false, data });
-                if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
                 added.push({ name: file.name, size: file.size, data });
             }
             rdpFileInput.value = '';
             updatePendingFileList();
-            setFilesHint('已添加 ' + added.length + ' 个文件到待粘贴列表', 'success');
+            try {
+                // Wait until Worker has the bytes, then advertise cliprdr formats.
+                await syncLocalFilesToRemote({ advertise: connected });
+                setFilesHint(
+                    connected
+                        ? `已添加 ${added.length} 个文件；在 Windows 里 Ctrl+V / 右键粘贴`
+                        : `已添加 ${added.length} 个文件到待粘贴列表`,
+                    'success',
+                );
+            } catch (err) {
+                setFilesHint('同步文件失败: ' + (err?.message || err), 'warning');
+            }
             broadcastFileMetaToParent(added);
         });
     }
 
     /* ── Paste pending files to remote (advertise via CLIPRDR FileGroupDescriptorW) ── */
     if (rdpPendingPasteBtn) {
-        rdpPendingPasteBtn.addEventListener('click', () => {
+        rdpPendingPasteBtn.addEventListener('click', async () => {
             if (!rdpStorageFiles.length) {
                 setFilesHint('请先上传文件', 'warning');
                 return;
             }
-            if (typeof rdpNotifyFilesChanged === 'function') {
-                rdpNotifyFilesChanged();
+            try {
+                await syncLocalFilesToRemote({ advertise: true });
                 setFilesHint('已通知远程桌面，在 Windows 中右键 → 粘贴即可', 'success');
-            } else {
-                setFilesHint('WASM 未就绪', 'warning');
+            } catch (err) {
+                setFilesHint('同步文件失败: ' + (err?.message || err), 'warning');
             }
         });
     }
 
     /* ── "粘贴到远程" for remote-clipboard files — consume cross-tab on demand ── */
     if (rdpFilePasteToRemoteBtn) {
-        rdpFilePasteToRemoteBtn.addEventListener('click', () => {
+        rdpFilePasteToRemoteBtn.addEventListener('click', async () => {
             if (pendingCrossTabFiles.length && pendingCrossTabSource) {
                 /* Request actual file data from the source tab now. */
                 setFilesHint('正在获取文件数据...', 'info');
@@ -2127,9 +2208,13 @@ function initFilePanel() {
                 }, '*');
                 pendingCrossTabFiles = [];
                 pendingCrossTabSource = '';
-            } else if (typeof rdpNotifyFilesChanged === 'function') {
-                rdpNotifyFilesChanged();
-                setFilesHint('已通知远程桌面有文件可粘贴', 'success');
+            } else if (rdpStorageFiles.length) {
+                try {
+                    await syncLocalFilesToRemote({ advertise: true });
+                    setFilesHint('已通知远程桌面有文件可粘贴', 'success');
+                } catch (err) {
+                    setFilesHint('同步文件失败: ' + (err?.message || err), 'warning');
+                }
             } else {
                 setFilesHint('无可粘贴的文件', 'warning');
             }
@@ -2154,6 +2239,13 @@ function initFilePanel() {
         });
     }
 
+        async function syncLocalFilesToRemote({ advertise = false } = {}) {
+        if (!rdpWorkerBridge) throw new Error('RDP Worker 未就绪');
+        await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, {
+            notify: !!advertise && connected,
+        });
+    }
+
     function updatePendingFileList() {
         if (!rdpPendingFileList) return;
         if (!rdpStorageFiles.length) {
@@ -2168,9 +2260,13 @@ function initFilePanel() {
             '</div>'
         ).join('');
         rdpPendingFileList.querySelectorAll('.rdp-file-remove').forEach((btn) => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
                 rdpStorageFiles.splice(Number(btn.dataset.idx), 1);
-                if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
+                try {
+                    await syncLocalFilesToRemote({ advertise: connected && rdpStorageFiles.length > 0 });
+                } catch (err) {
+                    console.warn('[rdp] resync after remove failed', err);
+                }
                 updatePendingFileList();
             });
         });
@@ -2279,20 +2375,26 @@ function initFilePanel() {
                 const url = f.transitUrl || f.dataUrl || '';
                 if (url) {
                     fetch(url).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-                    .then(buf => {
+                    .then(async (buf) => {
                         rdpStorageFiles.push({ name: f.name || 'file', size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
-                        if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
+                        try {
+                            if (rdpWorkerBridge) await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: connected });
+                        } catch (err) {
+                            console.warn('[rdp] cross-tab file sync failed', err);
+                        }
                         updatePendingFileList();
-                        if (typeof rdpNotifyFilesChanged === 'function') rdpNotifyFilesChanged();
                     }).catch(err => setFilesHint('接收文件失败: ' + (f.name || '') + ' ' + err.message, 'warning'));
                 } else if (f.remotePath) {
                     fetch('/api/clipboard-file?' + new URLSearchParams({ path: f.remotePath, name: f.name || '' }))
                         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-                        .then(buf => {
+                        .then(async (buf) => {
                             rdpStorageFiles.push({ name: f.name || 'file', size: buf.byteLength, isDir: false, data: new Uint8Array(buf) });
-                            if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge?.setLocalFiles(rdpStorageFiles);
+                            try {
+                                if (rdpWorkerBridge) await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: connected });
+                            } catch (err) {
+                                console.warn('[rdp] cross-tab file sync failed', err);
+                            }
                             updatePendingFileList();
-                            if (typeof rdpNotifyFilesChanged === 'function') rdpNotifyFilesChanged();
                         }).catch(() => {});
                 }
             }
@@ -2393,15 +2495,15 @@ window.addEventListener('message', (e) => {
         if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
         if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
 
-        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-mobile-kbd1' });
+        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-file-clip1' });
         rdpDiag.workerProbe = probe;
         if (!probe.supported) {
             throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
         }
 
-        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-mobile-kbd1', { type: 'module' }));
+        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-file-clip1', { type: 'module' }));
         rdpWorkerBridge.installGlobals(window);
-        rdpWorkerBridge.setLocalFiles(rdpStorageFiles);
+        await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: false });
         const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
         wasmReady = true;
         rdpDiag.renderer = 'worker-gpu-v2';

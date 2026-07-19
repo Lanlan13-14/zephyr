@@ -99,17 +99,32 @@ export class RdpWorkerBridge {
         return this;
     }
 
-    setLocalFiles(files) {
+    /**
+     * Replace the Worker-side local file list used by cliprdr/rdpefs.
+     * When notify=true, advertise after the Worker has stored the bytes so
+     * Windows does not request FileContents against an empty list.
+     * @returns {Promise<{count:number}>}
+     */
+    setLocalFiles(files, { notify = false } = {}) {
+        if (this.closed) return Promise.reject(new Error('RDP Worker is closed'));
         const entries = (files || []).map((file) => ({
             name: file.name,
             size: Number(file.size) || file.data?.byteLength || 0,
             isDir: !!file.isDir,
             data: file.data ? new Uint8Array(file.data).slice() : null,
         }));
-        // Structured clone copies page-owned file bytes so the UI retains its
-        // clipboard source. Large files are not JSON/base64 or bounded by the
-        // synchronous RPC buffer.
-        this.worker.postMessage({ type: 'local-files', entries });
+        const id = ++this.nextRequestId;
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.pending.delete(id);
+                reject(new Error('setLocalFiles timed out'));
+            }, this.timeoutMs);
+            this.pending.set(id, { resolve, reject, timer });
+            // Structured clone copies page-owned file bytes so the UI retains
+            // its clipboard source. Large files are not JSON/base64 or bounded
+            // by the synchronous RPC buffer.
+            this.worker.postMessage({ type: 'local-files', id, notify: !!notify, entries });
+        });
     }
 
     notify(method, args = []) {

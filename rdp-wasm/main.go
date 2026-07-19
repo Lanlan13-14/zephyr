@@ -164,8 +164,14 @@ func reportStage(stage string) {
 	}
 }
 
-// jsConnect is called from JS: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta)
-// jsConnect: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height, swapAltMeta, micEnabled, locationEnabled, storageEnabled, cameraEnabled, wallpaper)
+// jsConnect is called from JS:
+// rdpConnect(proxyWsURL, host, port, domain, user, password, width, height,
+//
+//	swapAltMeta, micEnabled, locationEnabled, storageEnabled, cameraEnabled,
+//	qualityMode, fps)
+//
+// qualityMode: "performance" | "balanced" | "quality" (also accepts bool wallpaper for legacy)
+// fps: target client FPS (30–144); 0 means no artificial queueDepth throttle
 func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) < 8 {
 		return fmt.Sprintf("usage: rdpConnect(proxyWsURL, host, port, domain, user, password, width, height[, ...])")
@@ -199,15 +205,28 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) >= 13 {
 		cameraEnabled = args[12].Bool()
 	}
-	wallpaper := false
+	qualityMode := "balanced"
 	if len(args) >= 14 {
-		wallpaper = args[13].Bool()
+		if args[13].Type() == js.TypeBoolean {
+			// Legacy: wallpaper bool → quality/performance.
+			if args[13].Bool() {
+				qualityMode = "quality"
+			} else {
+				qualityMode = "performance"
+			}
+		} else if args[13].Type() == js.TypeString {
+			qualityMode = args[13].String()
+		}
+	}
+	fps := 0
+	if len(args) >= 15 && args[14].Type() == js.TypeNumber {
+		fps = args[14].Int()
 	}
 
 	reportStage("go-connect-dispatched")
 	go func() {
 		reportStage("go-connect-started")
-		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled, wallpaper); err != nil {
+		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled, qualityMode, fps); err != nil {
 			slog.Error("connect", "err", err)
 			js.Global().Call("rdpOnError", err.Error())
 		}
@@ -215,7 +234,7 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	return nil
 }
 
-func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled, wallpaper bool) error {
+func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled bool, qualityMode string, fps int) error {
 	hostPort := host + ":" + port
 
 	// Build WebSocket URL for the proxy. flow=v2 negotiates the text control
@@ -225,9 +244,21 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	g := grdp.NewRdpClient(hostPort, width, height, func(hp string) (net.Conn, error) {
 		return dialWebSocket(wsURL)
 	})
-	// Quality mode: when wallpaper is requested, clear PERF_DISABLE_WALLPAPER
-	// so the server streams the desktop background.
-	g.SetWallpaperEnabled(wallpaper)
+	// Apply quality tier before Login so ClientInfo performance flags match UI.
+	g.SetQualityMode(qualityMode)
+	// Frame-rate hint via RDPGFX queueDepth: higher depth → server slows encode.
+	// 0 keeps real queue depth (no artificial throttle). Map target FPS to a
+	// mild backlog for lower rates so the server is free to drop quality.
+	if fps > 0 && fps < 60 {
+		// Rough throttle: 30fps → depth 20, 45fps → depth 8, else 0.
+		depth := uint32(0)
+		if fps <= 30 {
+			depth = 20
+		} else if fps <= 45 {
+			depth = 8
+		}
+		g.SetQueueDepthHint(depth)
+	}
 	resetProtocolDiagnostics()
 	g.SetProtocolObserver(noteProtocol)
 	g.OnOrders(func(count int) { noteProtocol(fmt.Sprintf("pdu.orders:%d", count)) })

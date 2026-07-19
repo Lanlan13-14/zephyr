@@ -1,8 +1,8 @@
-import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260719-mobile-kbd1';
-import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260719-mobile-kbd1';
-import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260719-mobile-kbd1';
-import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260719-mobile-kbd1';
-import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260719-mobile-kbd1';
+import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260719-file-clip1';
+import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260719-file-clip1';
+import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260719-file-clip1';
+import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260719-file-clip1';
+import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260719-file-clip1';
 
 let compositor = null;
 let avc420 = null;
@@ -86,7 +86,7 @@ async function loadGoWasm() {
     bootStage('wasm-fetching');
     bootStage('wasm-instantiating');
     const { go, result } = await instantiateGoWasm(GoRuntime, {
-        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20260719-mobile-kbd1',
+        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20260719-file-clip1',
         pipeline: 'worker-gpu-v2',
     });
     if (result.instance.exports.mem) {
@@ -306,6 +306,15 @@ onmessage = async ({ data: message }) => {
         }
         if (message.type === 'local-files') {
             localFiles = (message.entries || []).map((entry) => ({ ...entry, data: entry.data ? new Uint8Array(entry.data) : null }));
+            // Advertise only after the Worker list is updated — the page used
+            // to fire rdpNotifyFilesChanged immediately and race this path.
+            if (message.notify && typeof globalThis.rdpNotifyFilesChanged === 'function') {
+                try { globalThis.rdpNotifyFilesChanged(); }
+                catch (err) { console.warn('[rdp-worker] rdpNotifyFilesChanged failed', err); }
+            }
+            if (message.id != null) {
+                postMessage({ type: 'response', id: message.id, ok: true, value: { count: localFiles.length } });
+            }
             return;
         }
         if (!wasmReady) throw new Error('RDP WASM is not ready');
