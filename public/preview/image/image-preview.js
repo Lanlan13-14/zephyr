@@ -268,12 +268,16 @@
             this.pending.add(filePath);
             this.modal.dataset.previewPath = filePath;
             this.modal.style.display = 'flex';
+            this.modal.classList.remove('panel-opening', 'panel-closing');
             if (!this.modal.style.left) {
                 const offset = (this.index % 5) * 22;
                 this.modal.style.left = window.innerWidth <= 720 ? '6px' : `${56 + offset}px`;
                 this.modal.style.top = window.innerWidth <= 720 ? '6px' : `${72 + offset}px`;
             }
             this.focus();
+            requestAnimationFrame(() => {
+                if (!this.closed && this.modal.isConnected) this.modal.classList.add('panel-opening');
+            });
             this.setLoading(filePath);
             this.send({ type: 'sftp-preview', path: filePath, force: !!options.force });
             return true;
@@ -391,10 +395,25 @@
         }
 
         close() {
+            if (this.closed) return;
             this.closed = true;
             this.destroyViewer();
-            this.modal.remove();
-            this.onClose(this);
+            this.layoutMenu?.close?.({ instant: true });
+            this.modal.classList.remove('panel-opening');
+            this.modal.classList.add('panel-closing');
+            const onAnimationEnd = (event) => {
+                if (event.target !== this.modal || event.animationName !== 'floatingPanelCloseToButton') return;
+                remove();
+            };
+            const remove = () => {
+                if (!this.modal.isConnected) return;
+                window.clearTimeout(this.closeTimer);
+                this.modal.removeEventListener('animationend', onAnimationEnd);
+                this.modal.remove();
+                this.onClose(this);
+            };
+            this.modal.addEventListener('animationend', onAnimationEnd);
+            this.closeTimer = window.setTimeout(remove, 360);
         }
     }
 

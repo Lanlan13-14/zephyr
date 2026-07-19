@@ -5315,7 +5315,9 @@ body.smartbar-trash-hover .smartbar-trash-target {
 .info-modal,
 .rdp-floating-panel,
 .snippet-panel,
-.shortcut-panel {
+.shortcut-panel,
+.image-preview-modal,
+.media-preview-modal {
     --panel-origin-x: 50%;
     --panel-origin-y: 0%;
     transform-origin: var(--panel-origin-x) var(--panel-origin-y);
@@ -5326,7 +5328,9 @@ body.smartbar-trash-hover .smartbar-trash-target {
 .info-modal.panel-opening,
 .rdp-floating-panel.panel-opening,
 .snippet-panel.panel-opening,
-.shortcut-panel.panel-opening {
+.shortcut-panel.panel-opening,
+.image-preview-modal.panel-opening,
+.media-preview-modal.panel-opening {
     animation: floatingPanelOpenFromButton .36s cubic-bezier(.16, 1, .3, 1) both;
 }
 .file-manager.panel-closing,
@@ -5335,7 +5339,9 @@ body.smartbar-trash-hover .smartbar-trash-target {
 .info-modal.panel-closing,
 .rdp-floating-panel.panel-closing,
 .snippet-panel.panel-closing,
-.shortcut-panel.panel-closing {
+.shortcut-panel.panel-closing,
+.image-preview-modal.panel-closing,
+.media-preview-modal.panel-closing {
     animation: floatingPanelCloseToButton .28s cubic-bezier(.4, 0, .2, 1) both;
 }
 @keyframes floatingPanelOpenFromButton {
@@ -5368,6 +5374,17 @@ body.smartbar-trash-hover .smartbar-trash-target {
         filter: blur(8px) saturate(.88);
         border-radius: 30px;
     }
+}
+@media (prefers-reduced-motion: reduce) {
+    .image-preview-modal.panel-opening,
+    .image-preview-modal.panel-closing,
+    .media-preview-modal.panel-opening,
+    .media-preview-modal.panel-closing {
+        animation: none !important;
+        filter: none !important;
+    }
+    .image-preview-modal.panel-closing,
+    .media-preview-modal.panel-closing { opacity: 0; }
 }
 
 /* macOS-like terminal window layout morph */
@@ -11130,8 +11147,6 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 
 /* Monitor panel controlled pages + process list */
 .monitor-tabs {
-    --monitor-tab-index: 0;
-    --monitor-tab-thumb-x: 3px;
     --monitor-tab-thumb-width: calc((100% - 6px) / 2);
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -11159,15 +11174,18 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     width: var(--monitor-tab-thumb-width);
     border-radius: calc(var(--radius-sm) - 3px);
     background: color-mix(in srgb, var(--accent) 82%, #1f7fb8);
-    box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 20%, transparent), inset 0 1px 0 rgba(255,255,255,.22);
-    transform: translate3d(var(--monitor-tab-thumb-x), 0, 0);
-    transition: transform .34s cubic-bezier(.22, 1, .36, 1), width .34s cubic-bezier(.22, 1, .36, 1), box-shadow .22s ease, background .22s ease;
+    box-shadow: none;
+    transform: translate3d(3px, 0, 0);
+    transition: transform .26s cubic-bezier(.23, 1, .32, 1);
     pointer-events: none;
     z-index: 0;
-    will-change: transform, width;
+    will-change: transform;
+}
+.monitor-tabs[data-monitor-page="1"] .monitor-tab-thumb {
+    transform: translate3d(calc(100% + 3px), 0, 0);
 }
 .monitor-tabs.switching .monitor-tab-thumb {
-    box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 24%, transparent), inset 0 1px 0 rgba(255,255,255,.26);
+    box-shadow: none;
 }
 .monitor-tab {
     position: relative;

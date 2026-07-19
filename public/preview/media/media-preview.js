@@ -226,8 +226,10 @@
             if (meta) meta.textContent = '';
             this.setState('正在准备媒体流...', 'loading');
             this.modal.style.display = 'flex';
-            this.modal.classList.remove('closing');
-            requestAnimationFrame(() => this.modal.classList.add('open'));
+            this.modal.classList.remove('open', 'closing', 'panel-opening', 'panel-closing');
+            requestAnimationFrame(() => {
+                if (!this.closed && this.modal.isConnected) this.modal.classList.add('panel-opening');
+            });
             this.focus();
             this.send({ type: 'sftp-media-preview', path: filePath, force: !!options.force, capabilities: this.getCapabilities(filePath) });
             return true;
@@ -407,11 +409,22 @@
             this.revokeTrackObjects();
             const stage = this.modal.querySelector('[data-role="stage"]');
             stage?.querySelectorAll('video,audio').forEach((media) => { try { media.pause(); media.removeAttribute('src'); media.load?.(); } catch {} });
-            this.modal.classList.add('closing');
-            window.setTimeout(() => {
+            this.layoutMenu?.close?.({ instant: true });
+            this.modal.classList.remove('open', 'closing', 'panel-opening');
+            this.modal.classList.add('panel-closing');
+            const onAnimationEnd = (event) => {
+                if (event.target !== this.modal || event.animationName !== 'floatingPanelCloseToButton') return;
+                remove();
+            };
+            const remove = () => {
+                if (!this.modal.isConnected) return;
+                window.clearTimeout(this.closeTimer);
+                this.modal.removeEventListener('animationend', onAnimationEnd);
                 this.modal.remove();
                 this.onClose(this);
-            }, 180);
+            };
+            this.modal.addEventListener('animationend', onAnimationEnd);
+            this.closeTimer = window.setTimeout(remove, 360);
         }
     }
 

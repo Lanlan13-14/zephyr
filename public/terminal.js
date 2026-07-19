@@ -5740,7 +5740,7 @@ function ensureMediaPreviewModule() {
             window.__zephyrMediaPreviewLoading = null;
             resolve(false);
         }, { once: true });
-        script.src = `preview/media/media-preview.js?v=20260529-subtitle-path-fix-${Date.now()}`;
+        script.src = `preview/media/media-preview.js?v=20260720-telnet-ui-motion2-${Date.now()}`;
         document.body.appendChild(script);
     });
     return window.__zephyrMediaPreviewLoading;
@@ -7928,16 +7928,12 @@ function bindProcessPageEvents() {
 function updateMonitorTabThumb({ immediate = false } = {}) {
     const tabsWrap = $('.monitor-tabs');
     if (!tabsWrap) return;
-    const active = tabsWrap.querySelector('.monitor-tab.active') || tabsWrap.querySelector(`[data-monitor-page="${monitorPage}"]`);
     const thumb = tabsWrap.querySelector('.monitor-tab-thumb');
-    if (!active || !thumb) return;
-    const wrapRect = tabsWrap.getBoundingClientRect();
-    const activeRect = active.getBoundingClientRect();
-    const x = Math.round(Math.max(3, activeRect.left - wrapRect.left));
-    const width = Math.round(Math.max(0, activeRect.width));
+    if (!thumb) return;
     if (immediate) thumb.style.transition = 'none';
-    tabsWrap.style.setProperty('--monitor-tab-thumb-x', `${x}px`);
-    tabsWrap.style.setProperty('--monitor-tab-thumb-width', `${width}px`);
+    // The two equal grid tracks let CSS own the geometry. Measuring while the
+    // monitor panel is scaled by its opening motion used to shrink the blue
+    // thumb until another click forced a settled-layout measurement.
     tabsWrap.dataset.monitorPage = String(monitorPage);
     if (immediate) {
         void thumb.offsetWidth;
@@ -7982,7 +7978,7 @@ function setMonitorPage(page, { render = true } = {}) {
         viewport.setAttribute('data-monitor-prev-page', String(monitorPrevPage));
         viewport.classList.add('switching');
         tabsWrap.classList.add('switching');
-        tabsWrap.style.setProperty('--monitor-tab-index', String(monitorPage));
+        tabsWrap.dataset.monitorPage = String(monitorPage);
         const oldPage = viewport.querySelector(`.monitor-page-${monitorPrevPage}`);
         const newPage = viewport.querySelector(`.monitor-page-${monitorPage}`);
         tabs.forEach((btn) => {
@@ -8081,7 +8077,7 @@ function ensureStatsSkeleton(d) {
     const monitorPageHidden = (page) => (monitorPage === page) ? '' : 'hidden';
 
     infoBody.innerHTML = `
-        <div class="monitor-tabs" role="tablist" aria-label="监控分页" style="--monitor-tab-index:${monitorPage}">
+        <div class="monitor-tabs" role="tablist" aria-label="监控分页" data-monitor-page="${monitorPage}">
             <span class="monitor-tab-thumb" aria-hidden="true"></span>
             <button class="monitor-tab ${monitorPage === 0 ? 'active' : ''}" data-monitor-page="0" type="button" role="tab" aria-selected="${monitorPage === 0 ? 'true' : 'false'}" tabindex="${monitorPage === 0 ? '0' : '-1'}">概览</button>
             <button class="monitor-tab ${monitorPage === 1 ? 'active' : ''}" data-monitor-page="1" type="button" role="tab" aria-selected="${monitorPage === 1 ? 'true' : 'false'}" tabindex="${monitorPage === 1 ? '0' : '-1'}">进程</button>
