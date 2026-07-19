@@ -1,4 +1,4 @@
-import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';import { createNotesController } from './notes.js?v=20260719-superadmin1';
+import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';import { createNotesController } from './notes.js?v=20260719-notes-kbfix1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -446,7 +446,12 @@ function scheduleTerminalLayoutStabilize(reason = 'layout-stabilize', options = 
         });
     }, 24);
 }
-function broadcastThemeToTerminals(theme) { const appearance = getAppearance(); $$('#terminalWorkspace iframe.terminal-frame').forEach((frame) => frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'theme-change', theme, appearance }, '*')); scheduleTerminalLayoutStabilize('theme-change', { focus: false, tabId: null }); }
+function broadcastThemeToTerminals(theme) {
+    const appearance = getAppearance();
+    $$('#terminalWorkspace iframe.terminal-frame').forEach((frame) => frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'theme-change', theme, appearance }, '*'));
+    broadcastNotesEnabled();
+    scheduleTerminalLayoutStabilize('theme-change', { focus: false, tabId: null });
+}
 function applyTheme(theme, { persist = false } = {}) {
     const root = document.documentElement;
     const previousTheme = root.getAttribute('data-theme') || getSystemTheme();
@@ -2453,6 +2458,15 @@ function createTerminalWindowElement(t) {
                 ? `/novnc.html?embed=1&tabId=${encodeURIComponent(t.id)}&connectionId=${encodeURIComponent(t.connectionId || '')}`
                 : `/terminal.html?embed=1&tabId=${encodeURIComponent(t.id)}`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
+        frame.addEventListener('load', () => {
+            try {
+                frame.contentWindow?.postMessage({
+                    source: 'zephyr-app',
+                    type: 'notes-enabled',
+                    enabled: isNotesEnabled(),
+                }, '*');
+            } catch (_) {}
+        }, { once: true });
         body.appendChild(frame);
     } else {
         const placeholder = document.createElement('div');
@@ -2873,68 +2887,42 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         : (parentKeyboardTop || metricsKeyboardTop || layoutHeight);
     const keyboardOpen = (!!metrics.keyboardOpen || parentInset >= 100 || inset >= 100) && effectiveInset >= 80;
 
-    // 移动端 stable input（全屏/非全屏）使用同一套“父页裁剪 iframe，iframe 内正常排版”的逻辑：
-    // 底部工具栏应始终在键盘上方，而不是被系统键盘覆盖；同时不能裁到 180px。
-    // 旧实现混用 parent visualViewport 与 iframe virtualKeyboard 坐标，某些 Android WebView 会把
-    // keyboardTop 算到 workspace 顶部附近，导致全屏底部栏“起飞”、非全屏下方内容被盖住。
+    // mobile-stable-input：键盘纯覆盖，父页绝不缩高 iframe。
+    // 旧路径用 keyboardTop 裁剪 workspace 高度，Android WebView 瞬态 vv 会把底栏“起飞”
+    // 并抢走焦点，导致无法输入/键盘呼出失败。iframe 内靠 padding-bottom 把光标顶出键盘。
     if (isStableInput && isCompact) {
-        const wsRect = workspace.getBoundingClientRect();
         const viewRect = document.querySelector('.terminal-view.active')?.getBoundingClientRect?.();
-
-        // Normal bottom: workspace bottom when no keyboard. In non-fullscreen Android WebView,
-        // window.innerHeight may already be shrunk by IME, so use the remembered pre-keyboard
-        // baseline to avoid keeping the auxiliary bar under the system keyboard.
-        const normalBottom = isFullscreenTerminalSurface
-            ? Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, appKeyboardBaseline || 0)
-            : Math.max(
-                viewRect?.bottom || 0,
-                appKeyboardBaseline || 0,
-                parentKeyboardTop + (effectiveInset || 0),
-                layoutHeight || 0,
-                window.innerHeight || 0,
-                document.documentElement.clientHeight || 0,
-            );
-
-        // Keyboard top: use the most credible bottom boundary from parent/iframe
-        // metrics. Android WebView sometimes reports a transient visualViewport
-        // bottom near the top edge during IME animation; trusting that single value
-        // compresses the iframe so the bottom toolbars appear to fly upward. Pick
-        // the max sane candidate and clamp absurdly tiny heights.
-        let kbTop = keyboardOpen ? (keyboardTop || metricsKeyboardTop || parentKeyboardTop || normalBottom) : normalBottom;
-        kbTop = Math.min(kbTop, normalBottom);
-        const fullUsableHeight = Math.max(0, Math.round(normalBottom - wsRect.top));
-        let usableHeight = Math.max(0, Math.round(kbTop - wsRect.top));
-        if (keyboardOpen && fullUsableHeight >= 360) {
-            const minUsableHeight = Math.min(fullUsableHeight, Math.max(260, Math.round(fullUsableHeight * 0.38)));
-            if (usableHeight < minUsableHeight) {
-                const maxKeyboardInset = Math.round(fullUsableHeight * 0.58);
-                const clampedInset = Math.min(Math.max(effectiveInset || 0, Math.round(fullUsableHeight * 0.34)), maxKeyboardInset);
-                kbTop = Math.min(normalBottom, Math.max(kbTop, normalBottom - clampedInset, wsRect.top + minUsableHeight));
-                usableHeight = Math.max(0, Math.round(kbTop - wsRect.top));
-            }
-        }
-
+        const fullHeight = Math.max(
+            isFullscreenTerminalSurface ? (window.innerHeight || 0) : 0,
+            isFullscreenTerminalSurface ? (document.documentElement.clientHeight || 0) : 0,
+            appKeyboardBaseline || 0,
+            layoutHeight || 0,
+            parentLayoutHeight || 0,
+            Math.round(viewRect?.height || 0),
+            parentVvHeight || 0,
+        );
         appKeyboardPendingMetrics = keyboardOpen
-            ? { ...metrics, stableInput: true, keyboardOpen: true, keyboardInset: effectiveInset, viewportHeight: metricsViewportHeight || parentVvHeight || Math.max(1, layoutHeight - effectiveInset), layoutHeight, offsetTop: parentOffsetTop }
+            ? {
+                ...metrics,
+                stableInput: true,
+                keyboardOpen: true,
+                keyboardInset: effectiveInset,
+                viewportHeight: metricsViewportHeight || parentVvHeight || Math.max(1, layoutHeight - effectiveInset),
+                layoutHeight: Math.max(layoutHeight, fullHeight),
+                offsetTop: parentOffsetTop,
+            }
             : null;
         workspace.classList.toggle('keyboard-open', keyboardOpen);
         appKeyboardOpen = keyboardOpen;
-        const rawShift = keyboardOpen && !isFullscreenTerminalSurface
-            ? Math.max(
-                normalBottom - kbTop,
-                effectiveInset || 0,
-                parentInset || 0,
-                inset || 0,
-                metricsViewportHeight > 0 && metricsLayoutHeight > metricsViewportHeight ? metricsLayoutHeight - metricsViewportHeight - metricsOffsetTop : 0,
-            )
-            : 0;
-        const shiftY = keyboardOpen && !isFullscreenTerminalSurface
-            ? Math.min(Math.max(0, Math.round(rawShift)), Math.max(0, Math.round(normalBottom - 180)))
-            : 0;
-        if (isFullscreenTerminalSurface) document.body.classList.remove('terminal-keyboard-lift');
+        document.body.classList.remove('terminal-keyboard-lift');
         workspace.style.flex = isFullscreenTerminalSurface ? '0 0 auto' : '';
-        workspace.style.height = isFullscreenTerminalSurface ? `${usableHeight}px` : '';
-        workspace.style.maxHeight = isFullscreenTerminalSurface ? `${usableHeight}px` : '';
+        if (isFullscreenTerminalSurface && fullHeight > 0) {
+            workspace.style.height = `${fullHeight}px`;
+            workspace.style.maxHeight = `${fullHeight}px`;
+        } else {
+            workspace.style.height = '';
+            workspace.style.maxHeight = '';
+        }
         workspace.style.minHeight = '0px';
         workspace.style.marginBottom = '0px';
         workspace.querySelectorAll('.terminal-frame').forEach((frame) => {
@@ -2942,13 +2930,13 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             frame.style.maxHeight = '100%';
             frame.style.minHeight = '0px';
         });
-        document.body.classList.toggle('terminal-keyboard-lift', keyboardOpen && !isFullscreenTerminalSurface && shiftY > 0);
         document.documentElement.style.setProperty('--app-keyboard-inset', `${keyboardOpen ? effectiveInset : 0}px`);
-        document.documentElement.style.setProperty('--app-keyboard-shift', `${shiftY}px`);
-        document.documentElement.style.setProperty('--app-visual-vh', `${isFullscreenTerminalSurface ? usableHeight : normalBottom}px`);
+        document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
+        document.documentElement.style.setProperty('--app-visual-vh', `${isFullscreenTerminalSurface && fullHeight > 0 ? fullHeight : Math.max(fullHeight, parentKeyboardTop || 0)}px`);
         document.documentElement.style.setProperty('--app-visual-offset-top', `${parentOffsetTop}px`);
-        document.documentElement.style.setProperty('--app-keyboard-top', keyboardOpen ? `${Math.round(kbTop)}px` : '100vh');
-        scheduleTerminalLayoutStabilize(keyboardOpen ? (isFullscreenTerminalSurface ? 'parent-keyboard-compact-open' : 'parent-keyboard-compact-lift') : 'parent-keyboard-compact-close', { focus: false });
+        // Keep keyboard-top as a CSS hint only; layout height stays full.
+        document.documentElement.style.setProperty('--app-keyboard-top', keyboardOpen ? `${Math.max(0, Math.round((isFullscreenTerminalSurface ? fullHeight : (viewRect?.bottom || fullHeight)) - effectiveInset))}px` : '100vh');
+        scheduleTerminalLayoutStabilize(keyboardOpen ? 'parent-keyboard-stable-overlay-open' : 'parent-keyboard-stable-overlay-close', { focus: false });
         return;
     }
     if (!keyboardOpen || !isFullscreenTerminalSurface) {
@@ -5977,14 +5965,34 @@ async function loadSettings() {
     await loadSecurityStatus(); await loadSecurityLists();
 }
 
+function isNotesEnabled() {
+    return !!(settings.notes && settings.notes.enabled);
+}
+
+function broadcastNotesEnabled(enabled = isNotesEnabled()) {
+    $$('#terminalWorkspace iframe.terminal-frame').forEach((frame) => {
+        try {
+            frame.contentWindow?.postMessage({
+                source: 'zephyr-app',
+                type: 'notes-enabled',
+                enabled: !!enabled,
+            }, '*');
+        } catch (_) {}
+    });
+}
+
 function renderNotesToggle() {
     // Notes is opt-in (FREEZE plan §6.1): the nav tab only appears when an
     // admin (or the user override) enables it. Default off.
-    const notesEnabled = !!(settings.notes && settings.notes.enabled);
+    const notesEnabled = isNotesEnabled();
     const navTab = document.getElementById('notesNavTab');
     if (navTab) navTab.classList.toggle('force-hidden', !notesEnabled);
     const settingsCheckbox = document.getElementById('notesEnabledInput');
     if (settingsCheckbox) settingsCheckbox.checked = notesEnabled;
+    if (!notesEnabled && document.querySelector('.nav-tab.active')?.dataset.view === 'notes') {
+        switchView('dashboard');
+    }
+    broadcastNotesEnabled(notesEnabled);
 }
 
 async function saveNotesSettings(e) {
@@ -6745,6 +6753,10 @@ function bindDeepLinkChannel() {
         if (event.origin !== location.origin) return;
         const data = event.data || {};
         if (data.source !== 'zephyr-terminal' || data.type !== 'open-notes-for-connection') return;
+        if (!isNotesEnabled()) {
+            toast('笔记功能未开启，请在设置中启用');
+            return;
+        }
         switchView('notes');
         notesController?.filterByConnection?.(data.connectionId);
         toast(data.connectionId ? '已按当前连接过滤笔记' : '已打开笔记');

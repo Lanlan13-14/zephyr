@@ -1068,6 +1068,10 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e)
 
 window.addEventListener('message', (e) => {
     if (e.data?.source !== 'zephyr-app') return;
+    if (e.data.type === 'notes-enabled') {
+        applyNotesFeatureEnabled(!!e.data.enabled);
+        return;
+    }
     if (e.data.type === 'theme-change' && ['light', 'dark'].includes(e.data.theme)) {
         if (e.data.appearance) terminalAppearance = e.data.appearance || {};
         applyZephyrColorScheme(terminalAppearance || {}, { theme: e.data.theme, page: 'terminal' });
@@ -3547,7 +3551,18 @@ snippetBtn?.addEventListener('click', () => snippetPanel.classList.contains('ope
 // the current connection. The terminal iframe doesn't own the notes UI; the
 // app shell does (it has the notesController and ACL context).
 const notesBtn = document.getElementById('notesBtn');
+let notesFeatureEnabled = false;
+function applyNotesFeatureEnabled(enabled) {
+    notesFeatureEnabled = !!enabled;
+    notesBtn?.classList.toggle('force-hidden', !notesFeatureEnabled);
+    if (notesBtn) notesBtn.hidden = !notesFeatureEnabled;
+}
+applyNotesFeatureEnabled(false);
 notesBtn?.addEventListener('click', () => {
+    if (!notesFeatureEnabled) {
+        showToast('笔记功能未开启，请在设置中启用', 'error');
+        return;
+    }
     if (embeddedMode && window.parent && window.parent !== window) {
         window.parent.postMessage({
             source: 'zephyr-terminal',
@@ -3637,6 +3652,15 @@ async function loadTerminalSettings() {
         applyTheme(getPreferredTheme());
         applyWtermTheme(getPreferredWtermTheme());
     } catch (_) {}
+    try {
+        const personal = await fetch('/api/me/settings', { credentials: 'same-origin', cache: 'no-store' });
+        if (personal.ok) {
+            const payload = await personal.json();
+            applyNotesFeatureEnabled(!!payload?.settings?.notes?.enabled);
+        }
+    } catch (_) {
+        applyNotesFeatureEnabled(false);
+    }
 }
 loadTerminalSettings();
 function fullFilePath(name) { return currentPath.replace(/\/+$/, '') + '/' + name; }
