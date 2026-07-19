@@ -11,10 +11,19 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-file-clip1';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-file-clip1';
-import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-file-clip1';
-import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-file-clip1';
+import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-panel-file1';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-panel-file1';
+import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-panel-file1';
+import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-panel-file1';
+import {
+    setupPanelInteractions,
+    toggleFloatingPanel,
+    closeFloatingPanel,
+    openFloatingPanel,
+    bringPanelToFront,
+    applyPanelLayout,
+    closePanelLayoutMenu,
+} from './floating-panel.js?v=20260719-panel-file1';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
@@ -1626,29 +1635,31 @@ function initToolbar() {
         });
     }
 
-    if (clipboardBtn) {
+    if (clipboardBtn && clipboardPanel) {
         clipboardBtn.addEventListener('click', () => {
-            if (clipboardPanel) clipboardPanel.classList.toggle('open');
+            toggleFloatingPanel(clipboardPanel, clipboardBtn, {
+                kind: 'clipboard',
+                refresh: () => {
+                    try { renderRemoteClipboard?.(); } catch {}
+                },
+            });
         });
     }
 
     if (rdpFilesBtn && filesPanel) {
         rdpFilesBtn.addEventListener('click', () => {
-            const willOpen = !filesPanel.classList.contains('open');
-            filesPanel.classList.toggle('open', willOpen);
-            if (willOpen) {
-                // First open: give the floating panel a default dock so it is
-                // not stuck at 0,0 with zero size on some layouts.
-                if (!filesPanel.style.left && !filesPanel.style.top) {
-                    try { applyPanelLayout(filesPanel, 'right-quarter'); } catch {}
-                }
-                filesPanel.classList.add('front');
-                renderFileList();
-                renderRemoteFiles();
-                if (typeof rdpFsListDrives === 'function') {
-                    rdpFsListDrives().then(renderAgentDrives).catch(() => {});
-                }
-            }
+            toggleFloatingPanel(filesPanel, rdpFilesBtn, {
+                kind: 'files',
+                defaults: { width: 360, height: 480, right: 16, top: 56 },
+                refresh: () => {
+                    try { updatePendingFileList?.(); } catch {}
+                    try {
+                        if (typeof window.rdpOnRemoteFiles === 'function' && Array.isArray(window.__rdpRemoteFilesCache)) {
+                            window.rdpOnRemoteFiles(window.__rdpRemoteFilesCache);
+                        }
+                    } catch {}
+                },
+            });
         });
     }
 
@@ -1666,12 +1677,38 @@ function initToolbar() {
     }
 
     if (shortcutsBtn && shortcutsPanel) {
-        shortcutsBtn.addEventListener('click', () => { shortcutsPanel.classList.toggle('open'); });
+        shortcutsBtn.addEventListener('click', () => {
+            toggleFloatingPanel(shortcutsPanel, shortcutsBtn, {
+                kind: 'shortcuts',
+                defaults: { width: 320, height: 360, right: 16, top: 56 },
+            });
+        });
     }
 
     if (joystickBtn && joystickPanel) {
-        joystickBtn.addEventListener('click', () => { joystickPanel.classList.toggle('open'); });
+        joystickBtn.addEventListener('click', () => {
+            toggleFloatingPanel(joystickPanel, joystickBtn, {
+                kind: 'joystick',
+                defaults: { width: 280, height: 280, right: 16, bottom: 16 },
+            });
+        });
     }
+
+    // Shared SSH-parity interactions: titlebar drag, traffic-light drag/menu,
+    // edge resize, front-most z-index, island layout menu.
+    setupPanelInteractions(document, {
+        panelSelector: '.rdp-floating-panel',
+        onClosePanel: (panel) => {
+            const map = [
+                [clipboardPanel, clipboardBtn],
+                [filesPanel, rdpFilesBtn],
+                [shortcutsPanel, shortcutsBtn],
+                [joystickPanel, joystickBtn],
+            ];
+            const hit = map.find(([p]) => p === panel);
+            closeFloatingPanel(panel, hit?.[1] || null);
+        },
+    });
 
     /* Joystick knob — controls viewport pan in fill mode */
     const joystickKnob = document.getElementById('joystickKnob');
@@ -1886,245 +1923,6 @@ function initToolbar() {
         });
     }
 
-    /* Panel drag handles */
-    document.querySelectorAll('[data-drag-panel]').forEach((handle) => {
-        let dragState = null;
-        handle.addEventListener('pointerdown', (e) => {
-            /* Ignore drags that start on the traffic/layout button so it stays clickable. */
-            if (e.target.closest('[data-layout-panel]')) return;
-            const panelId = handle.dataset.dragPanel;
-            const panel = document.getElementById(panelId);
-            if (!panel) return;
-            e.preventDefault();
-            const rect = panel.getBoundingClientRect();
-            const stage = document.getElementById('rdpStage');
-            const bounds = stage ? stage.getBoundingClientRect() : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
-            dragState = { panel, rect, bounds, startX: e.clientX - rect.left, startY: e.clientY - rect.top, moved: false };
-            panel.classList.add('dragging');
-            try { handle.setPointerCapture(e.pointerId); } catch {}
-        });
-        handle.addEventListener('pointermove', (e) => {
-            if (!dragState) return;
-            dragState.moved = true;
-            const { bounds, rect } = dragState;
-            /* Clamp so the panel can't be dragged fully off-screen. */
-            let nx = e.clientX - dragState.startX;
-            let ny = e.clientY - dragState.startY;
-            nx = Math.max(bounds.left - rect.width + 48, Math.min(bounds.right - 48, nx));
-            ny = Math.max(bounds.top, Math.min(bounds.bottom - 40, ny));
-            dragState.panel.style.left = nx + 'px';
-            dragState.panel.style.top = ny + 'px';
-            dragState.panel.style.right = 'auto';
-            dragState.panel.style.bottom = 'auto';
-        });
-        const endDrag = (e) => {
-            if (dragState) {
-                dragState.panel.classList.remove('dragging');
-                try { handle.releasePointerCapture(e.pointerId); } catch {}
-            }
-            dragState = null;
-        };
-        handle.addEventListener('pointerup', endDrag);
-        handle.addEventListener('pointercancel', endDrag);
-    });
-
-    /* ─── Panel layout island menu — same interaction style as SSH terminal ── */
-    document.querySelectorAll('[data-layout-panel]').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const panel = document.getElementById(btn.dataset.layoutPanel);
-            if (!panel) return;
-            if (navigator.vibrate) navigator.vibrate(8);
-            if (rdpPanelLayoutMenu && rdpPanelLayoutButton === btn) closeRdpPanelLayoutMenu();
-            else openRdpPanelLayoutMenu(btn, panel);
-        });
-    });
-    document.addEventListener('pointerdown', (e) => {
-        if (rdpPanelLayoutMenu && !e.target.closest('.panel-layout-menu') && !e.target.closest('[data-layout-panel]')) {
-            closeRdpPanelLayoutMenu();
-        }
-    });
-
-    /* ─── Panel resize handles — the two edge bars at the bottom ────────── */
-    document.querySelectorAll('[data-resize-panel]').forEach((handle) => {
-        let resizeState = null;
-        handle.addEventListener('pointerdown', (e) => {
-            const panel = document.getElementById(handle.dataset.resizePanel);
-            if (!panel) return;
-            e.preventDefault();
-            e.stopPropagation();
-            const rect = panel.getBoundingClientRect();
-            resizeState = {
-                panel,
-                edge: handle.dataset.resizeEdge || 'right',
-                startX: e.clientX,
-                startW: rect.width,
-                startH: rect.height,
-                startLeft: rect.left,
-            };
-            panel.classList.add('resizing');
-            try { handle.setPointerCapture(e.pointerId); } catch {}
-        });
-        handle.addEventListener('pointermove', (e) => {
-            if (!resizeState) return;
-            const dx = e.clientX - resizeState.startX;
-            const minW = 240, maxW = Math.min(window.innerWidth - 16, 900);
-            if (resizeState.edge === 'right') {
-                const w = Math.max(minW, Math.min(maxW, resizeState.startW + dx));
-                resizeState.panel.style.width = w + 'px';
-            } else {
-                /* left edge: adjust width and keep right edge anchored */
-                let w = Math.max(minW, Math.min(maxW, resizeState.startW - dx));
-                const newLeft = resizeState.startLeft + (resizeState.startW - w);
-                resizeState.panel.style.width = w + 'px';
-                resizeState.panel.style.left = newLeft + 'px';
-                resizeState.panel.style.right = 'auto';
-            }
-        });
-        const endResize = (e) => {
-            if (resizeState) {
-                resizeState.panel.classList.remove('resizing');
-                try { handle.releasePointerCapture(e.pointerId); } catch {}
-            }
-            resizeState = null;
-        };
-        handle.addEventListener('pointerup', endResize);
-        handle.addEventListener('pointercancel', endResize);
-    });
-}
-
-let rdpPanelLayoutMenu = null;
-let rdpPanelLayoutButton = null;
-
-function positionRdpPanelLayoutMenu(menu, button, { collapsed = false } = {}) {
-    if (!menu || !button) return;
-    const rect = button.getBoundingClientRect();
-    const vv = window.visualViewport;
-    const vvWidth = vv?.width || window.innerWidth;
-    const anchorX = rect.left + rect.width / 2;
-    const finalWidth = Math.min(284, Math.max(160, vvWidth - 16));
-    const finalHeight = 50;
-    const finalLeft = Math.max(8, Math.min(vvWidth - finalWidth - 8, anchorX - finalWidth / 2));
-    menu.style.left = `${collapsed ? rect.left : finalLeft}px`;
-    menu.style.top = `${rect.top}px`;
-    menu.style.setProperty('--panel-island-menu-width', `${collapsed ? rect.width : finalWidth}px`);
-    menu.style.setProperty('--panel-island-menu-height', `${collapsed ? rect.height : finalHeight}px`);
-    menu.style.setProperty('--panel-island-radius', `${Math.round((collapsed ? rect.height : 36) / 2)}px`);
-    menu.dataset.placement = 'inline';
-}
-
-function closeRdpPanelLayoutMenu({ instant = false } = {}) {
-    const menu = rdpPanelLayoutMenu;
-    const button = rdpPanelLayoutButton;
-    if (!menu) { button?.classList.remove('active-layout'); rdpPanelLayoutButton = null; return; }
-    clearTimeout(menu._closeTimer);
-    if (instant || !button?.isConnected) {
-        button?.classList.remove('active-layout');
-        button?.style.removeProperty('opacity');
-        menu.remove();
-        rdpPanelLayoutMenu = null;
-        rdpPanelLayoutButton = null;
-        return;
-    }
-    menu.style.transition = 'none';
-    positionRdpPanelLayoutMenu(menu, button, { collapsed: false });
-    menu.style.opacity = '1';
-    void menu.offsetWidth;
-    menu.classList.remove('island-open');
-    menu.classList.add('island-closing', 'island-animating');
-    button.classList.remove('active-layout');
-    button.style.opacity = '0';
-    requestAnimationFrame(() => {
-        menu.style.removeProperty('transition');
-        positionRdpPanelLayoutMenu(menu, button, { collapsed: true });
-    });
-    menu._closeTimer = setTimeout(() => {
-        button.classList.remove('active-layout');
-        button.style.opacity = '1';
-        requestAnimationFrame(() => button.style.removeProperty('opacity'));
-        menu.remove();
-        if (rdpPanelLayoutMenu === menu) rdpPanelLayoutMenu = null;
-        if (rdpPanelLayoutButton === button) rdpPanelLayoutButton = null;
-    }, 460);
-}
-
-function openRdpPanelLayoutMenu(button, panel) {
-    closeRdpPanelLayoutMenu({ instant: true });
-    rdpPanelLayoutButton = button;
-    button?.classList.remove('active-layout');
-    const menu = document.createElement('div');
-    menu.className = 'panel-layout-menu';
-    menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', '窗口布局');
-    menu.innerHTML = '<button data-layout="full" title="全屏" aria-label="全屏"><span class="panel-layout-icon full"></span></button><button data-layout="half" title="半屏" aria-label="半屏"><span class="panel-layout-icon half"></span></button><button data-layout="left-quarter" title="左侧四分之一" aria-label="左侧四分之一"><span class="panel-layout-icon left"></span></button><button data-layout="right-quarter" title="右侧四分之一" aria-label="右侧四分之一"><span class="panel-layout-icon right"></span></button><button data-layout="close" class="panel-layout-close" title="关闭窗口" aria-label="关闭窗口"><span class="panel-layout-icon close"></span></button>';
-    menu.style.transition = 'none';
-    menu.style.zIndex = String((Number(panel.style.zIndex) || 10080) + 200);
-    document.body.appendChild(menu);
-    rdpPanelLayoutMenu = menu;
-    positionRdpPanelLayoutMenu(menu, button, { collapsed: true });
-    button.style.opacity = '0';
-    menu.style.opacity = '1';
-    menu.classList.add('island-animating');
-    void menu.offsetWidth;
-    requestAnimationFrame(() => {
-        menu.style.removeProperty('transition');
-        button?.classList.add('active-layout');
-        menu.classList.add('island-open');
-        positionRdpPanelLayoutMenu(menu, button, { collapsed: false });
-        setTimeout(() => {
-            menu.classList.remove('island-animating');
-            menu.style.removeProperty('opacity');
-        }, 540);
-    });
-    menu.addEventListener('click', (event) => {
-        const item = event.target.closest('[data-layout]');
-        if (!item) return;
-        if (item.dataset.layout === 'close') {
-            panel.classList.remove('open');
-            closeRdpPanelLayoutMenu({ instant: true });
-            return;
-        }
-        applyPanelLayout(panel, item.dataset.layout);
-        closeRdpPanelLayoutMenu();
-    });
-}
-
-/* Dock a floating panel to a preset position within the RDP stage. */
-function applyPanelLayout(panel, layout) {
-    const parent = document.getElementById('rdpStage') || panel.parentElement;
-    const bounds = parent.getBoundingClientRect();
-    const margin = 8;
-    const topbar = 8;
-    let left = bounds.left + margin;
-    let top = bounds.top + topbar;
-    let width = bounds.width - margin * 2;
-    let height = bounds.height - topbar - margin;
-    if (layout === 'half') {
-        width = bounds.width - margin * 2;
-        height = Math.max(260, bounds.height / 2);
-        left = bounds.left + margin;
-        top = bounds.bottom - height - margin;
-    } else if (layout === 'left-quarter') {
-        width = Math.max(260, bounds.width / 4);
-        height = bounds.height - topbar - margin;
-        left = bounds.left + margin;
-        top = bounds.top + topbar;
-    } else if (layout === 'right-quarter') {
-        width = Math.max(260, bounds.width / 4);
-        height = bounds.height - topbar - margin;
-        left = bounds.right - width - margin;
-        top = bounds.top + topbar;
-    }
-    panel.classList.add('layout-animating');
-    clearTimeout(panel._layoutAnimationTimer);
-    Object.assign(panel.style, {
-        left: `${left}px`, top: `${top}px`, right: 'auto', bottom: 'auto',
-        width: `${width}px`, height: `${height}px`,
-    });
-    panel._layoutAnimationTimer = setTimeout(() => panel.classList.remove('layout-animating'), 480);
-}
-
 /* ═══════════════════════════════════════════════════════════════════════
  * RDP FILE PANEL — Upload / Download / Cross-tab clipboard
  * ═══════════════════════════════════════════════════════════════════════ */
@@ -2330,37 +2128,61 @@ function initFilePanel() {
     /* Send file data to parent via server-side transit (streaming, supports
      * any file size). Each file is uploaded to /api/clipboard/upload, and the
      * download URL is sent in the message instead of a base64 dataUrl. */
-    function broadcastFileDataToParent(fileList, requestId) {
-        if (!fileList.length) return;
-        let pending = fileList.length;
+    async function broadcastFileDataToParent(fileList, requestId) {
         const results = [];
-        fileList.forEach((f) => {
-            const entry = rdpStorageFiles.find(s => s.name === f.name);
-            if (!entry || !entry.data) { pending--; checkDone(); return; }
-            fetch('/api/clipboard/upload?name=' + encodeURIComponent(f.name), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/octet-stream' },
-                body: entry.data,
-            })
-            .then(r => r.json())
-            .then(info => {
-                results.push({ name: f.name, size: entry.size || 0, path: f.name, transitUrl: info.url });
-                pending--;
-                checkDone();
-            })
-            .catch(() => { pending--; checkDone(); });
-        });
-        function checkDone() {
-            if (pending <= 0 && results.length) {
-                window.parent?.postMessage?.({
-                    source: 'zephyr-terminal',
-                    type: 'shared-file-clipboard-data',
-                    tabId: params.tabId || '',
-                    requestId: requestId || '',
-                    files: results,
-                }, '*');
+        for (const f of fileList || []) {
+            // 1) Local pending files already in this RDP tab.
+            const entry = rdpStorageFiles.find((s) => s.name === f.name && s.data);
+            if (entry?.data) {
+                try {
+                    const info = await fetch('/api/clipboard/upload?name=' + encodeURIComponent(f.name), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/octet-stream' },
+                        body: entry.data,
+                    }).then((r) => r.json());
+                    results.push({ name: f.name, size: entry.size || 0, path: f.name, transitUrl: info.url });
+                    continue;
+                } catch {
+                    results.push({ name: f.name || 'file', size: f.size || 0, error: 'upload failed' });
+                    continue;
+                }
             }
+            // 2) Remote Windows clipboard files: download via cliprdr then transit.
+            const remoteList = Array.isArray(window.__rdpRemoteFilesCache) ? window.__rdpRemoteFilesCache : [];
+            const remoteIdx = remoteList.findIndex((r) => r.name === f.name);
+            if (remoteIdx >= 0 && typeof rdpDownloadServerFile === 'function') {
+                try {
+                    const result = await rdpDownloadServerFile(remoteIdx);
+                    const data = result?.data || result;
+                    if (data) {
+                        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+                        const info = await fetch('/api/clipboard/upload?name=' + encodeURIComponent(f.name || remoteList[remoteIdx].name || 'file'), {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/octet-stream' },
+                            body: bytes,
+                        }).then((r) => r.json());
+                        results.push({
+                            name: f.name || remoteList[remoteIdx].name || 'file',
+                            size: bytes.byteLength,
+                            path: f.name || remoteList[remoteIdx].name || 'file',
+                            transitUrl: info.url,
+                        });
+                        continue;
+                    }
+                } catch (err) {
+                    results.push({ name: f.name || 'file', size: f.size || 0, error: err?.message || 'download failed' });
+                    continue;
+                }
+            }
+            results.push({ name: f.name || 'file', size: f.size || 0, error: 'data not available in this tab' });
         }
+        window.parent?.postMessage?.({
+            source: 'zephyr-terminal',
+            type: 'shared-file-clipboard-data',
+            tabId: params.tabId || '',
+            requestId: requestId || '',
+            files: results,
+        }, '*');
     }
 
     /* ── Cross-tab clipboard: listen for files from SSH/other RDP tabs ── */
@@ -2420,6 +2242,7 @@ function initFilePanel() {
     /* Go WASM calls this when server advertises files on clipboard */
     window.rdpOnRemoteFiles = function (filesArr) {
         if (!rdpRemoteFileList) return;
+        window.__rdpRemoteFilesCache = Array.isArray(filesArr) ? filesArr : [];
         if (!filesArr || !filesArr.length) {
             rdpRemoteFileList.innerHTML = '<div class="rdp-file-empty">远程剪贴板暂无文件</div>';
             return;
@@ -2441,6 +2264,17 @@ function initFilePanel() {
             });
         });
         setFilesHint('远程剪贴板有 ' + filesArr.length + ' 个文件', 'success');
+        // Tell sibling SSH/RDP tabs a Windows clipboard file list is available.
+        try {
+            broadcastFileMetaToParent(filesArr.map((f) => ({
+                name: f.name || 'file',
+                size: Number(f.size) || 0,
+                path: f.name || 'file',
+                source: 'rdp-remote',
+            })));
+        } catch (err) {
+            console.warn('[rdp] broadcast remote files failed', err);
+        }
     };
 
     /* When RDP clipboard receives text from remote, broadcast to other tabs.
@@ -2495,13 +2329,13 @@ window.addEventListener('message', (e) => {
         if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
         if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
 
-        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-file-clip1' });
+        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-panel-file1' });
         rdpDiag.workerProbe = probe;
         if (!probe.supported) {
             throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
         }
 
-        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-file-clip1', { type: 'module' }));
+        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-panel-file1', { type: 'module' }));
         rdpWorkerBridge.installGlobals(window);
         await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: false });
         const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });

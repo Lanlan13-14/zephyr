@@ -226,22 +226,24 @@ function handleSharedClipboardMessage(data = {}) {
         const files = normalizeSharedClipboardFiles(data.files || zephyrSharedClipboard.files || []);
         if (!files.length) return true;
         const sourceTabIdForFiles = String(data.sourceTabId || zephyrSharedClipboard.sourceTabId || '');
-        const targetFrame = terminalFrameById(sourceTabId);
+        // Consumer is the tab that requested paste (message origin), not the source.
+        const consumerFrame = terminalFrameById(sourceTabId);
         const sourcePage = String(data.sourcePage || zephyrSharedClipboard.sourcePage || '');
-        const targetPage = terminalPageForTab(sourceTabId);
-        // Source is RDP (local files with transitUrl or dataUrl) → target is SSH: forward directly
-        if (isRemoteDesktopPage(sourcePage) && files.some((f) => f.transitUrl || f.dataUrl) && targetFrame?.contentWindow) {
-            targetFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-data', requestId: '', files, sourceTabId: sourceTabIdForFiles }, '*');
+        // Source is RDP with already-hydrated transit/data URLs → forward as-is.
+        if (isRemoteDesktopPage(sourcePage) && files.some((f) => f.transitUrl || f.dataUrl) && consumerFrame?.contentWindow) {
+            consumerFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-data', requestId: '', files, sourceTabId: sourceTabIdForFiles }, '*');
             return true;
         }
-        // Source is SSH (server-side SFTP clipboard) → target is RDP: relay via iframe-to-parent messages
+        // Otherwise ask the source tab (SSH or RDP) to materialize bytes, then
+        // relay them to the consumer. RDP sources will download from Windows
+        // cliprdr; SSH sources will upload from their SFTP clipboard.
         const sourceFrame = terminalFrameById(sourceTabIdForFiles);
-        if (sourceFrame?.contentWindow && targetFrame?.contentWindow) {
+        if (sourceFrame?.contentWindow && consumerFrame?.contentWindow) {
             const requestId = `shared-file-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
             const relay = (event) => {
                 if (event.source !== sourceFrame.contentWindow || event.data?.source !== 'zephyr-terminal' || event.data?.type !== 'shared-file-clipboard-data' || event.data?.requestId !== requestId) return;
                 window.removeEventListener('message', relay, true);
-                targetFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-data', requestId, files: event.data.files || [], error: event.data.error || '', sourceTabId: sourceTabIdForFiles }, '*');
+                consumerFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-data', requestId, files: event.data.files || [], error: event.data.error || '', sourceTabId: sourceTabIdForFiles }, '*');
             };
             window.addEventListener('message', relay, true);
             sourceFrame.contentWindow.postMessage({ source: 'zephyr-app', type: 'shared-file-clipboard-read', requestId, files, sourceTabId: sourceTabIdForFiles }, '*');
