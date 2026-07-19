@@ -148,10 +148,6 @@ class DeepLinkService {
 
     prepare(user, uri) {
         const { source, draft, credential } = parseDeepLinkUri(uri);
-        if (draft.protocol === 'TELNET') {
-            // Telnet transport is Stage 12 — parser/UI work, connect disabled.
-            draft.telnetUnsupported = true;
-        }
         const token = crypto.randomBytes(24).toString('base64url');
         const tokenHash = sha256(token);
         const nowTs = this.now();

@@ -1167,7 +1167,7 @@ function updateProtocolFields({ preservePort = true } = {}) {
     const protocol = $('#connProtocol')?.value || 'SSH';
     const portInput = $('#connPort');
     const usernameInput = $('#connUsername');
-    const defaultPort = protocol === 'RDP' ? 3389 : protocol === 'VNC' ? 5900 : 22;
+    const defaultPort = protocol === 'RDP' ? 3389 : protocol === 'VNC' ? 5900 : protocol === 'TELNET' ? 23 : 22;
     if (portInput && (!preservePort || !Number(portInput.value))) portInput.value = defaultPort;
     if (usernameInput) {
         usernameInput.required = protocol === 'SSH';
@@ -1383,7 +1383,7 @@ function setConnectionModalMode(mode = 'create', { source = 'dashboard', draft =
     // Telnet without transport: keep UI readable but block connect.
     const connectBtn = $('#connectTransientBtn');
     if (connectBtn) {
-        const telnetBlocked = connectionModalMode === 'transient' && (String(draft?.protocol || '').toUpperCase() === 'TELNET' || draft?.telnetUnsupported);
+        const telnetBlocked = connectionModalMode === 'transient' && false; // Telnet now supported (Stage 12)
         connectBtn.disabled = !!telnetBlocked;
         connectBtn.title = telnetBlocked ? '当前版本尚未启用 Telnet transport' : '';
         connectBtn.textContent = telnetBlocked ? '不支持当前协议' : '连接';
@@ -1403,7 +1403,7 @@ function prepareConnectionModalForm(conn = null, options = {}) {
     $('#modalTitle').textContent = mode === 'transient' ? '临时连接' : (editingId ? '编辑服务器' : '添加服务器');
     $('#connectionId').value = editingId || '';
     setConnectionTestLatency();
-    $('#connName').value = conn?.name || ''; $('#connProtocol').value = conn?.protocol || 'SSH'; $('#connHost').value = conn?.host || ''; $('#connPort').value = conn?.port || ($('#connProtocol').value === 'RDP' ? 3389 : $('#connProtocol').value === 'VNC' ? 5900 : 22); $('#connUsername').value = conn?.username || '';
+    $('#connName').value = conn?.name || ''; $('#connProtocol').value = conn?.protocol || 'SSH'; $('#connHost').value = conn?.host || ''; $('#connPort').value = conn?.port || ($('#connProtocol').value === 'RDP' ? 3389 : $('#connProtocol').value === 'VNC' ? 5900 : $('#connProtocol').value === 'TELNET' ? 23 : 22); $('#connUsername').value = conn?.username || '';
     renderSshKeyOptions(conn?.sshKeyId || '');
     $('#connTags').value = (conn?.tags || []).join(', '); setRouteMode(conn?.connectionMode || 'direct', conn?.connectionMode === 'jump' ? (conn?.jumpHostIds || (conn?.jumpHostId ? [conn.jumpHostId] : [])) : (conn?.proxyId || ''));
     $('#connPassword').type = 'password'; $('#toggleConnPassword').textContent = '👁️';
@@ -1663,7 +1663,7 @@ function connectionPayload({ forTest = false } = {}) {
     const proxyId = $('#connRoute')?.value || '';
     const jumpHostIds = mode === 'jump' ? [...new Set($$('#jumpRouteList [data-jump-route-select]').map((el) => el.value).filter(Boolean))] : [];
     const protocol = $('#connProtocol').value;
-    const defaultPort = protocol === 'RDP' ? 3389 : protocol === 'VNC' ? 5900 : 22;
+    const defaultPort = protocol === 'RDP' ? 3389 : protocol === 'VNC' ? 5900 : protocol === 'TELNET' ? 23 : 22;
     const payload = { name: $('#connName').value.trim(), protocol, host: $('#connHost').value.trim(), port: Number($('#connPort').value) || defaultPort, username: $('#connUsername').value.trim(), sshKeyId: protocol === 'SSH' ? ($('#connSshKey')?.value || '') : '', password: $('#connPassword').value, privateKey: protocol === 'SSH' ? $('#connPrivateKey').value : '', remark: $('#connRemark').value, tags: parseTags($('#connTags').value), connectionMode: mode, proxyId: mode === 'proxy' ? proxyId : '', jumpHostId: mode === 'jump' ? (jumpHostIds[0] || '') : '', jumpHostIds };
     if (protocol === 'RDP') {
         payload.rdpSoundMode = $('#rdpSoundMode')?.value || 'local';

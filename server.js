@@ -1220,8 +1220,38 @@ function classifySSHError(err) {
     return { code: 'unknown', message: msg };
 }
 
-function testSSHConnection(conn, timeout = 10000) {
+/* Telnet connectivity test (FREEZE plan §5.6): TCP connect to host:port and
+ * send a minimal IAC DO TERMINAL-TYPE to confirm a Telnet server is listening.
+ * Full IAC negotiation happens in the Go worker; this just verifies reachability. */
+function testTelnetConnection(conn, timeout = 10000) {
     return new Promise((resolve) => {
+        const started = Date.now();
+        const socket = new net.Socket();
+        let done = false;
+        const finish = (result) => {
+            if (done) return;
+            done = true;
+            socket.destroy();
+            resolve({ ...result, durationMs: Date.now() - started });
+        };
+        const timer = setTimeout(() => finish({ ok: false, code: 'timeout', message: 'Telnet 连接超时', durationMs: 0 }), timeout + 1000);
+        socket.setTimeout(timeout);
+        socket.once('connect', () => {
+            clearTimeout(timer);
+            // Send IAC DO TERMINAL-TYPE (255 253 24) to probe for a Telnet server
+            try { socket.write(Buffer.from([255, 253, 24])); } catch {}
+            finish({ ok: true, code: 'success', message: 'Telnet 端口可达' });
+        });
+        socket.once('timeout', () => finish({ ok: false, code: 'timeout', message: 'Telnet 连接超时' }));
+        socket.once('error', (err) => {
+            clearTimeout(timer);
+            finish({ ok: false, code: 'connect_failed', message: err.message || 'Telnet 连接失败' });
+        });
+        socket.connect(Number(conn.port) || 23, String(conn.host || ''));
+    });
+}
+
+function testSSHConnection(conn, timeout = 10000) {    return new Promise((resolve) => {
         const started = Date.now();
         let done = false;
         let routed = null;
@@ -2119,8 +2149,15 @@ app.post('/api/deeplinks/:token/test', requireUser, async (req, res) => {
     try {
         res.setHeader('Cache-Control', 'no-store');
         const { draft, credential } = deepLinkService.forTest(req.user, req.params.token, req.body?.overrides || {});
-        if (draft.telnetUnsupported || draft.protocol === 'TELNET') {
+        if (draft.telnetUnsupported) {
             return res.status(400).json({ error: '当前版本尚未启用 Telnet transport', code: 'telnet_unsupported', retryable: false });
+        }
+        if (String(draft.protocol || '').toUpperCase() === 'TELNET') {
+            // Telnet test: just verify host:port reachability (no IAC negotiation
+            // needed for a connectivity test)
+            const timeoutMs = Math.max(1000, Math.min(Number(req.body?.timeoutSeconds || 10) * 1000, 30000));
+            const result = await testTelnetConnection({ host: draft.host, port: draft.port }, timeoutMs);
+            return res.status(result.ok ? 200 : 400).json(result);
         }
         const conn = {
             host: draft.host,
@@ -2715,7 +2752,9 @@ registerAiRoutes(app, {
                 ? testNoVncConnection(conn, timeoutMs)
                 : protocol === 'RDP'
                     ? testRDPConnection(conn, timeoutMs)
-                    : { ok: false, code: 'unsupported_protocol', message: `不支持的协议：${protocol}`, durationMs: 0 };
+                    : protocol === 'TELNET'
+                        ? testTelnetConnection(conn, timeoutMs)
+                        : { ok: false, code: 'unsupported_protocol', message: `不支持的协议：${protocol}`, durationMs: 0 };
     },
     addActivity,
     verifySensitiveAccess,
@@ -5565,8 +5604,8 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     const authUser = userFromAuthSession(req);
                     if (!authUser) throw new Error('未登录或会话已过期');
                     const consumed = deepLinkService.consume(authUser, String(transientToken), transientOverrides || {});
-                    if (consumed.draft.telnetUnsupported || String(consumed.draft.protocol || '').toUpperCase() === 'TELNET') {
-                        throw new Error('当前版本尚未启用 Telnet transport');
+                    if (String(consumed.draft.protocol || '').toUpperCase() === 'TELNET') {
+                        throw new Error('Telnet 临时连接请使用 worker ticket 路径');
                     }
                     conn = {
                         host: consumed.draft.host,

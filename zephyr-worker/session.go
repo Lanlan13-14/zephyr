@@ -39,7 +39,7 @@ func (h *WSHandler) serveWS(ctx context.Context, conn Conn, t *Ticket) {
 	}
 
 	if t.HostSpec.Protocol == "TELNET" {
-		_ = conn.WriteJSON(Envelope{Type: "error", Code: "telnet_unsupported", Message: "Telnet transport not yet implemented"})
+		h.serveTelnetWS(ctx, conn, t)
 		return
 	}
 
