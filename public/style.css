@@ -5843,6 +5843,7 @@ body.smartbar-trash-hover .smartbar-trash-target {
     .terminal-page .topbar-actions .btn-sm[data-mobile-icon="stats"] { --mobile-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M4 20V4h16v2H6v12h14v2H4zm3-3V9h3v8H7zm5 0V6h3v11h-3zm5 0v-5h3v5h-3z'/%3E%3C/svg%3E"); color: #4aa3df; }
     .terminal-page .topbar-actions .btn-sm[data-mobile-icon="docker"] { --mobile-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M3 13h18c-.6 4-3.8 7-8.8 7C7.5 20 4 17.8 3 13zm2-5h3v3H5V8zm4 0h3v3H9V8zm4 0h3v3h-3V8zM9 4h3v3H9V4zm4 0h3v3h-3V4zm4 4h3v3h-3V8z'/%3E%3C/svg%3E"); color: #2aa9c9; }
     .terminal-page .topbar-actions .btn-sm[data-mobile-icon="snippet"] { --mobile-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M13 2 4 14h7l-1 8 10-13h-7l0-7z'/%3E%3C/svg%3E"); color: #d9aa18; }
+    .terminal-page .topbar-actions .btn-sm[data-mobile-icon="notes"] { --mobile-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M5 3h10l4 4v14H5V3zm9 1.5V8h3.5L14 4.5zM7 6h5v2H7V6zm0 4h10v2H7v-2zm0 4h10v2H7v-2zm0 4h7v2H7v-2z'/%3E%3C/svg%3E"); color: #6b8e9e; }
     .terminal-page .topbar-actions .btn-sm[data-mobile-icon="keyboard"] { --mobile-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M3 6h18v12H3V6zm2 2v8h14V8H5zm1 1h2v2H6V9zm3 0h2v2H9V9zm3 0h2v2h-2V9zm3 0h2v2h-2V9zM6 12h2v2H6v-2zm3 0h6v2H9v-2zm7 0h2v2h-2v-2z'/%3E%3C/svg%3E"); color: #6b7684; }
     .terminal-page .topbar-actions .btn-sm[data-mobile-icon="copy"] { --mobile-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 7V3h14v14h-4v4H3V7h4zm2 0h8v8h2V5H9v2zm-4 2v10h10V9H5z'/%3E%3C/svg%3E"); color: #7a6042; }
     .terminal-page .topbar-actions .btn-sm[data-mobile-icon="paste"] { --mobile-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M9 3h6l1 2h3v16H5V5h3l1-2zm1 4h4l1-2h-6l1 2zm-3 1v11h10V8h-2v2H9V8H7z'/%3E%3C/svg%3E"); color: #9a6a3a; }
@@ -11305,6 +11306,35 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 
 .agent-token-actions .inline-field { display: inline-flex; gap: 6px; align-items: center; color: var(--text-secondary); font-size: 13px; }
 .agent-token-actions .inline-field input { width: 78px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+
+/* ─── Admin user management (§19.3) ─── */
+.admin-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.admin-user-list { display: flex; flex-direction: column; gap: 8px; }
+.admin-user-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    flex-wrap: wrap;
+    transition: border-color 150ms var(--ease-smooth);
+}
+@media (hover: hover) and (pointer: fine) {
+    .admin-user-row:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+}
+.admin-user-info { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; min-width: 0; }
+.admin-user-info b { font-weight: 600; }
+.admin-user-actions { display: flex; gap: 4px; flex-wrap: wrap; flex-shrink: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+    .admin-user-row { transition: none; }
+}
+
+/* Notes list sort select */
+.notes-list-toolbar select { min-width: 0; }
 
 /* ─── Notes workspace (FREEZE plan §6.4) ─── */
 .notes-view { display: none; flex-direction: column; min-height: 0; height: 100%; }

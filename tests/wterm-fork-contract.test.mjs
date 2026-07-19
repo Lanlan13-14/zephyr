@@ -13,8 +13,13 @@ const wtermSrc = fs.readFileSync(path.join(forkDir, 'wterm.js'), 'utf8');
 const indexSrc = fs.readFileSync(path.join(forkDir, 'index.js'), 'utf8');
 const terminalSrc = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'public', 'terminal.js'), 'utf8');
 
-test('fork exposes a public viewport getter', () => {
-    assert.ok(/get viewport\(\)/.test(wtermSrc), 'fork must expose get viewport()');
+test('fork exposes a public viewport API (writable property, not getter-only)', () => {
+    // viewport must be mounted as a plain writable property in the constructor
+    // (NOT a getter) so patchWTermScrollBehavior can replace it without
+    // tripping "has only a getter".
+    assert.ok(/this\.viewport\s*=/.test(wtermSrc), 'fork must set this.viewport in constructor');
+    assert.ok(/_buildViewportFacade/.test(wtermSrc), 'fork must build the viewport facade');
+    assert.ok(!/get viewport\(\)/.test(wtermSrc), 'fork must NOT use get viewport() (causes getter-only crash)');
     assert.ok(/atBottom/.test(wtermSrc), 'viewport must expose atBottom');
     assert.ok(/follow\(\)/.test(wtermSrc), 'viewport must expose follow()');
     assert.ok(/lock\(\)/.test(wtermSrc), 'viewport must expose lock()');

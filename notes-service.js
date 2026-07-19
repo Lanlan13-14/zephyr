@@ -159,6 +159,34 @@ class NotesService {
         return true;
     }
 
+    /* Permanently destroy a note already in the trash (FREEZE plan §6.3).
+     * Regular delete is soft; purge is the irreversible second step. */
+    purge(user, noteId) {
+        const row = this.stmtGet.get(String(noteId));
+        if (!row) throw new HttpError(404, 'resource_not_found_or_inaccessible', '笔记不存在');
+        if (!row.deleted_at) throw new HttpError(409, 'note_not_in_trash', '笔记不在回收站，无法彻底删除');
+        if (row.owner_user_id !== user.userId && !this.authz.can(user, CAP.DELETE, 'note', noteId, { ownerUserId: row.owner_user_id })) {
+            throw new HttpError(403, 'forbidden_resource_delete', '当前账号没有删除此笔记的权限');
+        }
+        this.db.prepare('DELETE FROM notes WHERE note_id = ?').run(String(noteId));
+        this.authz.audit({ actorUserId: user.userId, resourceType: 'note', resourceId: noteId, action: 'note.purge', outcome: 'success' });
+        return true;
+    }
+
+    /* Empty the trash for the calling user (permanently destroy all their
+     * soft-deleted notes). */
+    emptyTrash(user) {
+        const rows = this.db.prepare('SELECT note_id FROM notes WHERE owner_user_id = ? AND deleted_at IS NOT NULL').all(user.userId);
+        if (!rows.length) return { purged: 0 };
+        const stmt = this.db.prepare('DELETE FROM notes WHERE note_id = ? AND owner_user_id = ?');
+        const tx = this.db.transaction((items) => {
+            for (const r of items) stmt.run(r.note_id, user.userId);
+        });
+        tx(rows);
+        this.authz.audit({ actorUserId: user.userId, action: 'note.empty_trash', outcome: 'success', metadata: { count: rows.length } });
+        return { purged: rows.length };
+    }
+
     restore(user, noteId) {
         const row = this.stmtGet.get(String(noteId));
         if (!row || !row.deleted_at) throw new HttpError(404, 'resource_not_found_or_inaccessible', '笔记不在回收站');

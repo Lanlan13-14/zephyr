@@ -202,6 +202,7 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         const note = await api(`/api/notes/${encodeURIComponent(noteId)}`);
         state.current = note.note;
         fillEditor(note.note);
+        updateTrashButtons();
     }
 
     function markDirty() {
@@ -280,14 +281,54 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
 
     async function deleteCurrent() {
         if (!state.current) return;
-        if (!confirm('删除这条笔记？可在回收站恢复。')) return;
-        await api(`/api/notes/${encodeURIComponent(state.current.noteId)}`, { method: 'DELETE' });
+        if (state.trash) {
+            // In trash view: permanent delete (purge)
+            if (!confirm('彻底删除这条笔记？此操作不可撤销，无法恢复。')) return;
+            await api(`/api/notes/${encodeURIComponent(state.current.noteId)}/purge`, { method: 'DELETE' });
+            state.current = null;
+            state.selectedId = null;
+            state.dirty = false;
+            fillEditor(null);
+            await loadList();
+            toast?.('已彻底删除');
+        } else {
+            // Normal view: soft delete (move to trash)
+            if (!confirm('删除这条笔记？可在回收站恢复。')) return;
+            await api(`/api/notes/${encodeURIComponent(state.current.noteId)}`, { method: 'DELETE' });
+            state.current = null;
+            state.selectedId = null;
+            state.dirty = false;
+            fillEditor(null);
+            await loadList();
+            toast?.('已移到回收站');
+        }
+    }
+
+    async function purgeCurrent() {
+        if (!state.current) return;
+        if (!confirm('彻底删除这条笔记？此操作不可撤销，无法恢复。')) return;
+        await api(`/api/notes/${encodeURIComponent(state.current.noteId)}/purge`, { method: 'DELETE' });
         state.current = null;
         state.selectedId = null;
         state.dirty = false;
         fillEditor(null);
         await loadList();
-        toast?.('已移到回收站');
+        toast?.('已彻底删除');
+    }
+
+    async function emptyTrash() {
+        if (!confirm('清空回收站？所有已删除的笔记将被彻底移除，无法恢复。')) return;
+        const result = await api('/api/notes/trash/empty', { method: 'POST' });
+        await loadList();
+        toast?.(result?.purged ? `已清空回收站（${result.purged} 条）` : '回收站已空');
+    }
+
+    function updateTrashButtons() {
+        const inTrash = state.trash || state.groupFilter === '__trash';
+        $('#notesDeleteBtn')?.classList.toggle('force-hidden', inTrash);
+        $('#notesPurgeBtn')?.classList.toggle('force-hidden', !inTrash || !state.current);
+        $('#notesEmptyTrashBtn')?.classList.toggle('force-hidden', !inTrash);
+        $('#notesNewBtn')?.classList.toggle('force-hidden', inTrash);
     }
 
     function wrapSelection(before, after = before) {
@@ -308,6 +349,8 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
     function bind() {
         $('#notesNewBtn')?.addEventListener('click', () => createNote().catch((e) => toast?.(e.message)));
         $('#notesDeleteBtn')?.addEventListener('click', () => deleteCurrent().catch((e) => toast?.(e.message)));
+        $('#notesPurgeBtn')?.addEventListener('click', () => purgeCurrent().catch((e) => toast?.(e.message)));
+        $('#notesEmptyTrashBtn')?.addEventListener('click', () => emptyTrash().catch((e) => toast?.(e.message)));
         $('#notesSearchInput')?.addEventListener('input', (e) => {
             state.query = e.target.value || '';
             window.clearTimeout(state.searchTimer);
@@ -322,6 +365,7 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
             if (!btn) return;
             state.groupFilter = btn.dataset.group;
             state.trash = state.groupFilter === '__trash';
+            updateTrashButtons();
             loadList().catch((err) => toast?.(err.message));
             renderGroups();
         });

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260719-notes-deeplink1">
+    <link rel="stylesheet" href="style.css?v=20260719-hotfix1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -15,7 +15,7 @@
                 <button class="nav-tab active" data-view="dashboard">仪表盘</button>
                 <button class="nav-tab" data-view="terminal">终端</button>
                 <button class="nav-tab" data-view="remote">远程执行</button>
-                <button class="nav-tab" data-view="notes">笔记</button>
+                <button class="nav-tab force-hidden" id="notesNavTab" data-view="notes">笔记</button>
                 <button class="nav-tab nav-tab-ai force-hidden" id="aiNavTab" data-view="ai">AI</button>
                 <button class="nav-tab" data-view="settings">设置</button>
             </nav>
@@ -91,6 +91,11 @@
                     <section class="notes-list-pane" aria-label="笔记列表">
                         <div class="notes-list-toolbar">
                             <input class="search-input" id="notesSearchInput" placeholder="搜索标题、正文、标签…" autocomplete="off">
+                            <select id="notesSortSelect" aria-label="排序">
+                                <option value="updated">按更新时间</option>
+                                <option value="created">按创建时间</option>
+                                <option value="title">按标题</option>
+                            </select>
                             <select id="notesTagFilter"><option value="all">全部标签</option></select>
                         </div>
                         <div class="notes-list" id="notesList" role="listbox" aria-label="笔记"></div>
@@ -115,6 +120,8 @@
                                     </div>
                                     <button type="button" class="btn-sm" id="notesLinkConnBtn" title="关联连接">关联</button>
                                     <button type="button" class="btn-sm danger" id="notesDeleteBtn" title="删除笔记">删除</button>
+                                    <button type="button" class="btn-sm danger force-hidden" id="notesPurgeBtn" title="彻底删除（不可恢复）">彻底删除</button>
+                                    <button type="button" class="btn-sm danger force-hidden" id="notesEmptyTrashBtn" title="清空回收站">清空回收站</button>
                                 </div>
                             </div>
                             <div class="notes-toolbar" id="notesToolbar" aria-label="Markdown 工具栏">
@@ -418,6 +425,8 @@
                         </div>
                         <div class="settings-panel" id="settings-data"><h2>数据导入导出</h2><p class="muted">导出文件使用 data/.env 中 ENCRYPTION_KEY 加密；敏感字段在数据库中使用 ML-KEM-768 + AES-256-GCM 混合加密保存。</p><button class="btn btn-primary" id="exportDataBtn">开始导出</button><form id="importDataForm" class="settings-form"><input type="file" id="backupFile" accept=".enc"><input type="password" id="importLoginPassword" placeholder="当前登录密码"><input type="password" id="backupPassword" placeholder="备份解密密码（ENCRYPTION_KEY）"><button class="btn danger">导入备份</button></form></div>
                         <div class="settings-panel" id="settings-mail"><h2>邮件通知</h2><form id="mailForm" class="settings-form"><label class="check-line"><input type="checkbox" id="mailEnabled"> 启用邮件通知</label><input id="mailHost" placeholder="SMTP Host"><input id="mailPort" type="number" placeholder="SMTP Port"><label class="check-line"><input type="checkbox" id="mailSecure"> SSL/TLS</label><input id="mailUser" placeholder="SMTP 用户名"><div class="form-group password-field"><input id="mailPass" type="password" placeholder="SMTP 密码"><button type="button" id="toggleMailPassword" title="显示/隐藏 SMTP 密码">👁️</button></div><button type="button" class="link-btn" id="revealMailPass">查看已保存 SMTP 密码</button><p class="field-hint">默认隐藏已保存 SMTP 密码；留空或保持星号不会覆盖已保存密码。</p><input id="mailFrom" placeholder="发件人"><input id="mailAdminEmail" type="email" placeholder="后台管理员邮箱"><label class="check-line"><input type="checkbox" id="notifyLoginSuccess"> 登录成功通知</label><label class="check-line"><input type="checkbox" id="notifyLoginFailure"> 登录失败通知</label><label class="check-line"><input type="checkbox" id="geoLookupEnabled"> IP 地区查询</label><button class="btn btn-primary" type="submit">保存邮件设置</button><button class="btn" type="button" id="testMailBtn">测试邮件</button></form><div class="panel-title-row"><h2>登录事件</h2><button class="tool-btn danger" type="button" id="clearLoginEventsBtn">清理日志</button></div><div class="mini-list" id="loginEventList"></div></div>
+                        <div class="settings-panel" id="settings-notes"><h2>笔记功能</h2><form id="notesSettingsForm" class="settings-form"><label class="check-line"><input type="checkbox" id="notesEnabledInput"> 启用笔记功能</label><p class="field-hint">关闭后导航栏不显示笔记入口，AI 笔记工具也一并禁用。</p><button class="btn btn-primary" type="submit">保存</button></form></div>
+                        <div class="settings-panel force-hidden" id="settings-admin"><h2>多用户管理</h2><div class="admin-toolbar"><button class="btn btn-primary" type="button" id="adminAddUserBtn">添加用户</button></div><div class="admin-user-list" id="adminUserList"></div></div>
                         <div class="settings-panel" id="settings-about">
                             <h2>关于 Zephyr</h2>
                             <p>版本：<strong id="versionText">--</strong></p>
@@ -573,7 +582,7 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260719-notes-deeplink1" type="module"></script>
+    <script src="app.js?v=20260719-hotfix1" type="module"></script>
     <script src="vendor/zephyr-anim/zephyr-anim-init.js?v=20260709-minimal" type="module"></script>
 </body>
 </html>

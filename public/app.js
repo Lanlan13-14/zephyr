@@ -1,4 +1,4 @@
-import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';import { createNotesController } from './notes.js?v=20260719-notes1';
+import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';import { createNotesController } from './notes.js?v=20260719-hotfix1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -5892,7 +5892,26 @@ async function loadSettings() {
     applyAppearance(settings.appearance);
     applyTheme(getPreferredTheme());
     renderAiSettingsForm();
+    renderNotesToggle();
     await loadSecurityStatus(); await loadSecurityLists();
+}
+
+function renderNotesToggle() {
+    // Notes is opt-in (FREEZE plan §6.1): the nav tab only appears when an
+    // admin (or the user override) enables it. Default off.
+    const notesEnabled = !!(settings.notes && settings.notes.enabled);
+    const navTab = document.getElementById('notesNavTab');
+    if (navTab) navTab.classList.toggle('force-hidden', !notesEnabled);
+    const settingsCheckbox = document.getElementById('notesEnabledInput');
+    if (settingsCheckbox) settingsCheckbox.checked = notesEnabled;
+}
+
+async function saveNotesSettings(e) {
+    e.preventDefault();
+    const enabled = document.getElementById('notesEnabledInput')?.checked || false;
+    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ notes: { enabled } }) });
+    renderNotesToggle();
+    toast(enabled ? '笔记功能已开启' : '笔记功能已关闭');
 }
 async function saveBeian(e) { e.preventDefault(); settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ beian: { icp: $('#icpInput').value, icpUrl: $('#icpUrlInput').value, policeBeian: $('#policeInput').value, policeBeianUrl: $('#policeUrlInput').value, show: $('#showBeianInput').checked } }) }); toast('备案信息已保存'); }
 async function loadSecurityStatus() { securityStatus = await api('/api/security/status').catch(() => ({ user: {}, passkeys: [] })); $('#profileUsername').value = securityStatus.user.username || ''; $('#profileEmail').value = securityStatus.user.email || ''; renderTotp(); renderPasskeys(); }
@@ -6143,6 +6162,13 @@ function bindEvents() {
     $$('.nav-tab').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view)));
     $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => { $$('.settings-tab').forEach((b) => b.classList.remove('active')); btn.classList.add('active'); $$('.settings-panel').forEach((p) => p.classList.remove('active')); $(`#settings-${btn.dataset.settings}`).classList.add('active'); }));
     $('#appThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#settingsThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#logoutBtn').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/'; });
+    $('#notesSettingsForm')?.addEventListener('submit', saveNotesSettings);
+    $('#adminAddUserBtn')?.addEventListener('click', openAdminAddUserDialog);
+    document.getElementById('adminUserList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-admin-action]');
+        if (!btn) return;
+        handleAdminAction(btn.dataset.adminAction, btn.dataset.userId);
+    });
     $('#addConnectionBtn').addEventListener('click', (e) => openModal(null, e.currentTarget, { mode: 'create', source: 'dashboard' })); $('#closeModalBtn').addEventListener('click', closeModal); $('#cancelModalBtn').addEventListener('click', closeModal); $('#toggleConnPassword').addEventListener('click', () => { const el = $('#connPassword'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleConnPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; }); $('#revealConnSecrets').addEventListener('click', () => revealConnectionSecrets().catch((err) => toast(err.message))); $$('.route-type-tab').forEach((btn) => btn.addEventListener('click', () => setRouteMode($('#connMode').value === btn.dataset.routeMode ? 'direct' : btn.dataset.routeMode))); $('#addJumpRouteBtn').addEventListener('click', addJumpRouteRow); $('#jumpRouteList').addEventListener('click', (e) => { if (!e.target.closest?.('[data-remove-jump-route]')) return; const ids = $$('#jumpRouteList [data-jump-route-select]').filter((el) => !el.closest('[data-jump-route-row]').contains(e.target)).map((el) => el.value).filter(Boolean); renderJumpRouteRows(ids); }); $('#testConnectionBtn').addEventListener('click', testConnection); $('#connectTransientBtn')?.addEventListener('click', () => connectTransient().catch((err) => toast(err.message)));
     $('#connProtocol').addEventListener('change', () => updateProtocolFields({ preservePort: false }));
     $('#rdpTouchMode')?.addEventListener('change', updateRdpTouchSettingsUi);
@@ -6550,6 +6576,91 @@ function bindDeepLinkChannel() {
     });
 }
 
+// ─── Multi-user management UI (FREEZE plan §19.3) ───────────────────────────
+async function loadAdminUsers() {
+    // Only admins see the panel; non-admins get it hidden
+    const panel = document.getElementById('settings-admin');
+    if (!panel) return;
+    const me = await api('/api/auth/me').catch(() => ({}));
+    if (me.user?.role !== 'admin') { panel.classList.add('force-hidden'); return; }
+    panel.classList.remove('force-hidden');
+    try {
+        const data = await api('/api/admin/users');
+        renderAdminUsers(data.users || []);
+    } catch (err) {
+        panel.classList.add('force-hidden');
+    }
+}
+
+function renderAdminUsers(users) {
+    const list = document.getElementById('adminUserList');
+    if (!list) return;
+    if (!users.length) {
+        list.innerHTML = '<p class="muted">暂无用户</p>';
+        return;
+    }
+    list.innerHTML = users.map((u) => {
+        const statusBadge = u.status === 'active' ? '<span class="tag-chip" style="background:#1a7f37;color:#fff">正常</span>'
+            : u.status === 'suspended' ? '<span class="tag-chip" style="background:#cf222e;color:#fff">已停用</span>'
+            : u.status === 'invited' ? '<span class="tag-chip" style="background:#bf8700;color:#fff">已邀请</span>'
+            : `<span class="tag-chip">${escapeHtml(u.status || '未知')}</span>`;
+        const roleBadge = u.role === 'admin' ? '<span class="tag-chip" style="background:#0969da;color:#fff">管理员</span>' : '<span class="tag-chip">普通用户</span>';
+        const isSelf = u.userId === window.__zephyrMyUserId;
+        const isLastAdmin = u.role === 'admin' && users.filter((x) => x.role === 'admin' && x.status === 'active').length <= 1;
+        return `<div class="admin-user-row" data-user-id="${escapeHtml(u.userId)}">
+            <div class="admin-user-info">
+                <b>${escapeHtml(u.username)}</b>${isSelf ? ' <span class="muted">(你)</span>' : ''}
+                <span class="muted">${escapeHtml(u.email || '无邮箱')}</span>
+                ${roleBadge}${statusBadge}
+                <span class="muted">${u.lastLoginAt ? '最后登录 ' + fmtTime(u.lastLoginAt) : '从未登录'}</span>
+            </div>
+            <div class="admin-user-actions">
+                ${u.status === 'active' && !isLastAdmin ? `<button class="tool-btn" data-admin-action="suspend" data-user-id="${escapeHtml(u.userId)}">停用</button>` : ''}
+                ${u.status === 'suspended' ? `<button class="tool-btn" data-admin-action="reactivate" data-user-id="${escapeHtml(u.userId)}">启用</button>` : ''}
+                <button class="tool-btn" data-admin-action="reset-pw" data-user-id="${escapeHtml(u.userId)}">重置密码</button>
+                <button class="tool-btn" data-admin-action="revoke-sessions" data-user-id="${escapeHtml(u.userId)}">踢下线</button>
+                ${!isLastAdmin ? `<button class="tool-btn danger" data-admin-action="delete" data-user-id="${escapeHtml(u.userId)}">删除</button>` : ''}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function openAdminAddUserDialog() {
+    const name = prompt('新用户用户名：');
+    if (!name) return;
+    const password = prompt(`为 ${name} 设置初始密码：`);
+    if (!password) return;
+    const role = confirm(`${name} 是管理员吗？\n确定=管理员，取消=普通用户`) ? 'admin' : 'user';
+    api('/api/admin/users', { method: 'POST', body: JSON.stringify({ username: name, password, role }) })
+        .then(() => { toast('用户已创建'); loadAdminUsers(); })
+        .catch((err) => toast(err.message || '创建失败'));
+}
+
+async function handleAdminAction(action, userId) {
+    try {
+        if (action === 'suspend') {
+            if (!confirm('确定停用此用户？停用后该用户无法登录。')) return;
+            await api(`/api/admin/users/${userId}/suspend`, { method: 'POST' });
+        } else if (action === 'reactivate') {
+            await api(`/api/admin/users/${userId}/reactivate`, { method: 'POST' });
+        } else if (action === 'reset-pw') {
+            const pw = prompt('输入新密码：');
+            if (!pw) return;
+            await api(`/api/admin/users/${userId}/force-password-reset`, { method: 'POST', body: JSON.stringify({ newPassword: pw }) });
+        } else if (action === 'revoke-sessions') {
+            await api(`/api/admin/users/${userId}/revoke-sessions`, { method: 'POST' });
+            toast('已强制下线');
+        } else if (action === 'delete') {
+            if (!confirm('确定删除此用户？其资源将转移给管理员。此操作不可撤销。')) return;
+            await api(`/api/admin/users/${userId}`, { method: 'DELETE', body: JSON.stringify({ resourcePolicy: 'transfer-to-admin' }) });
+        }
+        toast('操作成功');
+        await loadAdminUsers();
+    } catch (err) {
+        toast(err.message || '操作失败');
+    }
+}
+
 async function init() {
     document.documentElement.dataset.appInit = 'start';
     try {
@@ -6576,10 +6687,12 @@ async function init() {
         await loadConnections();
         document.documentElement.dataset.appLoadConnections = 'ok';
         await loadNetwork();
+        await loadAdminUsers();
         // Deep Link hand-off from /open (token only — never the raw URI).
         handleTransientHash();
         document.documentElement.dataset.appReady = '1';
         window.__zephyrAppReady = true;
+        window.__zephyrMyUserId = (await api("/api/auth/me"))?.user?.userId || "";
         window.openConnectionModal = openConnectionModal;
         window.openTransientFromUri = openTransientFromUri;
     } catch (err) {

@@ -2106,6 +2106,23 @@ app.post('/api/notes/:id/restore', requireUser, (req, res) => {
     }
 });
 
+app.delete('/api/notes/:id/purge', requireUser, (req, res) => {
+    try {
+        notesService.purge(req.user, req.params.id);
+        res.json({ ok: true });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/notes/trash/empty', requireUser, (req, res) => {
+    try {
+        res.json(notesService.emptyTrash(req.user));
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
 app.post('/api/notes/import-markdown', requireUser, (req, res) => {
     try {
         res.json({ note: notesService.importMarkdown(req.user, req.body || {}) });

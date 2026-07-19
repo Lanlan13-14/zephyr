@@ -66,12 +66,30 @@ export class WTerm {
             }
             this.input.focus();
             this._initialRender();
+            // Mount the public viewport facade as a plain writable property
+            // (NOT a getter) so downstream code (terminal.js patchWTermScroll
+            // Behavior) can replace it without tripping "has only a getter".
+            this.viewport = this._buildViewportFacade();
         }
         catch (err) {
             this.destroy();
             throw new Error(`wterm: failed to initialize: ${err instanceof Error ? err.message : err}`);
         }
         return this;
+    }
+    _buildViewportFacade() {
+        const self = this;
+        return {
+            get atBottom() { return self._isScrolledToBottom(); },
+            get maxScroll() { return Math.max(0, self.element.scrollHeight - self.element.clientHeight); },
+            get scrollTop() { return self.element.scrollTop; },
+            get rowHeight() { return self._rowHeight || 17; },
+            get rows() { return self.rows; },
+            get cols() { return self.cols; },
+            scrollToBottom() { self._scrollToBottom(); },
+            follow() { self._shouldScrollToBottom = true; },
+            lock() { self._shouldScrollToBottom = false; },
+        };
     }
     _isScrolledToBottom() {
         const el = this.element;
@@ -93,20 +111,6 @@ export class WTerm {
      * so the terminal controller can read and drive the viewport without
      * monkey-patching. `atBottom` is a semantic truth (maxScroll - scrollTop),
      * never inferred from pixel positions after reflow. */
-    get viewport() {
-        const self = this;
-        return {
-            get atBottom() { return self._isScrolledToBottom(); },
-            get maxScroll() { return Math.max(0, self.element.scrollHeight - self.element.clientHeight); },
-            get scrollTop() { return self.element.scrollTop; },
-            get rowHeight() { return self._rowHeight || 17; },
-            get rows() { return self.rows; },
-            get cols() { return self.cols; },
-            scrollToBottom() { self._scrollToBottom(); },
-            follow() { self._shouldScrollToBottom = true; },
-            lock() { self._shouldScrollToBottom = false; },
-        };
-    }
     // Public aliases so external code never touches underscore privates
     isAtBottom() { return this._isScrolledToBottom(); }
     scrollToBottom() { this._scrollToBottom(); }
