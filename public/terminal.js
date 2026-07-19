@@ -8280,10 +8280,45 @@ function showInfoModal() {
 function patchWTermScrollBehavior() {
     if (!term || term._zephyrScrollPatched) return;
 
-    // xterm.js 风格滚动语义：
-    // - 输出/resize 前若贴底，则渲染后跟随到底；
-    // - 用户滚到历史区时锁定视图，不被远端输出、输入回显、键盘布局事件抢走；
-    // - 回到底部后自动恢复 follow。
+    // Fork path: @wterm/dom fork exposes a public viewport API. Don't
+    // monkey-patch private methods; just bridge the fork's public API to the
+    // legacy term.viewport facade so the rest of the app works unchanged.
+    if (term.viewport && typeof term.viewport.follow === 'function' && typeof term.isAtBottom === 'function') {
+        term._zephyrScrollPatched = true;
+        term._zephyrForkViewport = true;
+        // Bridge fork public API -> legacy facade contract used by callers
+        const forkViewport = term.viewport;
+        term.viewport = {
+            get atBottom() { return forkViewport.atBottom; },
+            get followEnabled() { return terminalAutoFollowEnabled; },
+            state() {
+                return {
+                    atBottom: forkViewport.atBottom,
+                    followEnabled: terminalAutoFollowEnabled,
+                    programmaticScroll: isProgrammaticTerminalScroll,
+                    hasSelection: hasLiveTerminalSelection?.() || false,
+                    maxScroll: forkViewport.maxScroll || 0,
+                    scrollTop: forkViewport.scrollTop || 0,
+                };
+            },
+            follow(reason = 'viewport-follow', opts = {}) {
+                followTerminalBottomNow(reason, { force: true, ...opts });
+                setTerminalAutoFollow(true, reason);
+                forkViewport.follow();
+            },
+            lock(reason = 'viewport-lock') {
+                setTerminalAutoFollow(false, reason);
+                forkViewport.lock();
+            },
+            unlock(reason = 'viewport-unlock') {
+                setTerminalAutoFollow(true, reason);
+                forkViewport.follow();
+            },
+        };
+        return;
+    }
+
+    // Legacy path: stock @wterm/dom - monkey-patch private methods.
     const originalScrollToBottom = typeof term._scrollToBottom === 'function' ? term._scrollToBottom.bind(term) : null;
     const originalIsScrolledToBottom = typeof term._isScrolledToBottom === 'function' ? term._isScrolledToBottom.bind(term) : null;
     const originalDoRender = typeof term._doRender === 'function' ? term._doRender.bind(term) : null;
@@ -9836,11 +9871,18 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     mobileWTermInputGuard = null;
     let WTermClass;
     try {
-        const module = await import('/vendor/@wterm/dom/dist/index.js');
+        // Zephyr fork of @wterm/dom with public viewport API (FREEZE plan
+        // §3.8/§5). Falls back to the stock package if the fork is absent.
+        const module = await import('/vendor/wterm-fork/index.js');
         WTermClass = module.WTerm;
     } catch {
-        const module = await import('/vendor/@wterm/dom/dist/wterm.js');
-        WTermClass = module.WTerm || module.default;
+        try {
+            const module = await import('/vendor/@wterm/dom/dist/index.js');
+            WTermClass = module.WTerm;
+        } catch {
+            const module = await import('/vendor/@wterm/dom/dist/wterm.js');
+            WTermClass = module.WTerm || module.default;
+        }
     }
     if (connectionToken !== activeConnectionToken) throw new Error('终端初始化已取消');
     wtermWrapper.innerHTML = '';
