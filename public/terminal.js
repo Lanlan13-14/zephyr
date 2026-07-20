@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift4';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift5';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 
 const $ = (sel) => document.querySelector(sel);
@@ -8323,7 +8323,15 @@ function ensureSshSoftKeyboard() {
         },
         onCloseCommitted: (reason) => {
             logTerminalLayoutDiagnostics?.('ssh-soft-keyboard:close-committed', { reason });
-            assertKeyboardLayoutSettled(`${reason}:controller-close`);
+            // Clear keyboard-open NOW so fixed positioning reverts to static.
+            // Do NOT wait for assertKeyboardLayoutSettled delay.
+            document.documentElement.classList.remove('keyboard-open');
+            terminalContainer?.classList.remove('mobile-keyboard-open');
+            document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.WORKSPACE;
+            // Give CSS a frame to apply static before calling settled assertions.
+            requestAnimationFrame(() => {
+                assertKeyboardLayoutSettled(`${reason}:controller-close`);
+            });
             scheduleKeyboardCloseFit?.(`${reason}:controller-close`, 420);
             updateMobileKeyboardButtonUi();
         },

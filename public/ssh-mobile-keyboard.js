@@ -198,6 +198,8 @@ export function createSshMobileSoftKeyboard(host) {
             ));
         } catch (_) {}
         emit();
+        // IMPORTANT: fire callbacks synchronously so CSS fixed positioning releases
+        // on close without waiting for assertKeyboardLayoutSettled delay.
         if (open && !layoutFrozen) host.onOpenCommitted?.(reason);
         else if (!open) host.onCloseCommitted?.(reason);
         log('physical', { reason, open, inset: state.inset, liftMode: state.liftMode, layoutFrozen });
