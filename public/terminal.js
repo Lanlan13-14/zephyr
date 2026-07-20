@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent } from './ssh-mobile-keyboard.js?v=20260720-wterm-main1';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 
 const $ = (sel) => document.querySelector(sel);
@@ -738,8 +738,21 @@ function getEstimatedKeyboardInset() {
     return Math.round(Math.min(380, Math.max(230, baseline * 0.33)));
 }
 
+function getActiveKeyboardLiftMode(metrics = {}) {
+    if (metrics.liftMode === SoftKeyboardLiftMode.NONE || metrics.liftMode === SoftKeyboardLiftMode.WORKSPACE) {
+        return metrics.liftMode;
+    }
+    if (metrics.source === 'cmd') return SoftKeyboardLiftMode.NONE;
+    try {
+        if (sshSoftKeyboard?.getLiftMode) return sshSoftKeyboard.getLiftMode();
+    } catch (_) {}
+    if (document.activeElement === cmdInput) return SoftKeyboardLiftMode.NONE;
+    return SoftKeyboardLiftMode.WORKSPACE;
+}
+
 function notifyParentKeyboardMetrics(metrics) {
     if (embeddedMode && window.parent && window.parent !== window) {
+        const liftMode = getActiveKeyboardLiftMode(metrics);
         window.parent.postMessage({
             source: 'zephyr-terminal',
             type: 'keyboard-metrics',
@@ -751,6 +764,9 @@ function notifyParentKeyboardMetrics(metrics) {
             offsetTop: metrics.offsetTop || 0,
             fallback: !!metrics.fallback,
             stableInput: isMobileStableInputMode(),
+            liftMode,
+            inputSource: metrics.source || (liftMode === SoftKeyboardLiftMode.NONE ? 'cmd' : 'terminal-ime'),
+            reason: metrics.reason || '',
         }, '*');
     }
 }
@@ -5436,7 +5452,8 @@ function setupEditorPanel(panel) {
         bringPanelToFront(panel);
     }, { capture: true });
     panel.querySelector('.fm-editor-header')?.addEventListener('pointerdown', (e) => {
-        if (e.target.closest('button,input,select,textarea,label')) return;
+        // Buttons + the horizontally-scrollable actions strip must not start window drag.
+        if (e.target.closest('button,input,select,textarea,label,.fm-editor-header-actions')) return;
         e.preventDefault();
         e.stopPropagation();
         updateActiveEditorRefs(panel);
@@ -7226,6 +7243,9 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     document.documentElement.style.setProperty('--keyboard-inset', `${safeInset}px`);
     document.documentElement.classList.toggle('keyboard-open', !!keyboardOpen && safeInset > 0);
     terminalContainer?.classList.toggle('mobile-keyboard-open', !!keyboardOpen && safeInset > 0);
+    if (!keyboardOpen || safeInset <= 0) {
+        document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
+    }
     if (!isMobileStableInputMode()) return;
     updateTerminalInputPanelMetrics();
     document.documentElement.classList.remove('viewport-updating');
@@ -7239,6 +7259,36 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     } else {
         restoreMobileStableScrollTop(previousTop, reason);
     }
+}
+
+/** Force-clear residual keyboard layout so the page never stays half-lifted. */
+function assertKeyboardLayoutSettled(reason = 'keyboard-settled') {
+    const forceClear = () => {
+        if (sshSoftKeyboard?.desiredOpen?.() || sshSoftKeyboard?.physicalOpen?.()) return;
+        if (mobileKeyboardOpen || mobileKeyboardInset > 0) {
+            mobileKeyboardOpen = false;
+            mobileKeyboardInset = 0;
+        }
+        document.documentElement.style.setProperty('--keyboard-inset', '0px');
+        document.documentElement.classList.remove('keyboard-open', 'viewport-updating');
+        terminalContainer?.classList.remove('mobile-keyboard-open');
+        document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
+        notifyParentKeyboardMetrics({
+            keyboardOpen: false,
+            keyboardInset: 0,
+            viewportHeight: Math.round(window.visualViewport?.height || window.innerHeight || 0),
+            layoutHeight: Math.round(window.innerHeight || document.documentElement.clientHeight || 0),
+            offsetTop: 0,
+            liftMode: SoftKeyboardLiftMode.NONE,
+            source: 'terminal-ime',
+            reason: `${reason}:assert-clear`,
+        });
+        logTerminalLayoutDiagnostics?.('keyboard-layout:assert-settled', { reason });
+    };
+    forceClear();
+    window.clearTimeout(assertKeyboardLayoutSettled._timer);
+    assertKeyboardLayoutSettled._timer = window.setTimeout(forceClear, 120);
+    window.setTimeout(forceClear, 360);
 }
 
 function getMobileStableSafeGap() {
@@ -7944,11 +7994,24 @@ function updateViewportInsets() {
         return;
     }
     const keyboardWantsAvoidance = mobileKeyboardUserControlled || keyboardFocusLikely || mobileKeyboardOpen || isKeyboardAvoidanceTarget();
-    const keyboardOpen = metrics.keyboardInset >= 80 && keyboardWantsAvoidance;
-    if (mobileKeyboardUserControlled && !keyboardOpen && mobileKeyboardOpen) {
+    // When the intent controller owns open state, use its hysteresis (close at ~12px),
+    // not the open threshold (80). The old fixed-80 close path caused ~1s self-dismiss
+    // during IME animation jitter.
+    const controllerDesired = !!sshSoftKeyboard?.desiredOpen?.();
+    const controllerPhysical = !!sshSoftKeyboard?.physicalOpen?.();
+    const keyboardOpen = controllerDesired || controllerPhysical
+        ? (metrics.keyboardInset > 12 && (controllerDesired || keyboardWantsAvoidance))
+        : (metrics.keyboardInset >= 80 && keyboardWantsAvoidance);
+    if (!controllerDesired && mobileKeyboardUserControlled && !keyboardOpen && mobileKeyboardOpen) {
         // Android/浏览器返回键可能绕过按钮直接收起 IME。网页无法可靠取消系统返回键，
         // 这里至少立即恢复为按钮关闭态，避免状态半开和布局残留。
+        // Controller-owned open is handled by sshSoftKeyboard.syncFromViewport instead.
         finalizeKeyboardClose({ force: true });
+        return;
+    }
+    if (controllerDesired && !keyboardOpen && mobileKeyboardOpen && metrics.keyboardInset <= 12) {
+        // Defer to controller settle; do not double-finalize here.
+        sshSoftKeyboard?.syncFromViewport?.('updateViewportInsets:physical-low');
         return;
     }
     const inset = keyboardOpen ? metrics.keyboardInset : 0;
@@ -8065,7 +8128,11 @@ function finalizeKeyboardClose({ force = false } = {}) {
         viewportHeight: Math.round(window.visualViewport?.height || window.innerHeight || 0),
         layoutHeight: Math.round(window.innerHeight || document.documentElement.clientHeight || 0),
         offsetTop: Math.round(window.visualViewport?.offsetTop || 0),
+        liftMode: SoftKeyboardLiftMode.NONE,
+        source: 'terminal-ime',
+        reason: 'keyboard-close-final',
     });
+    assertKeyboardLayoutSettled('keyboard-close-final');
     scheduleTerminalScrollbarUpdate();
     if (wasReadingHistory) lockMobileTerminalAutoFollow('keyboard-close-final', 1800);
     else if (wasAtBottom && !isMobileStableInputMode()) requestTerminalAutoFollow('keyboard-close-final');
@@ -8131,13 +8198,17 @@ function ensureSshSoftKeyboard() {
         getViewportMetrics: () => getViewportKeyboardMetrics(),
         isSelectionMode: () => !!(mobileTerminalSelectionMode || hasLiveTerminalSelection?.()),
         isGestureSuppressed: () => !!(terminalTouchMoved || Date.now() < (mobileStableSuppressScrollUntil || 0)),
-        applyInset: (inset, open, reason) => {
+        applyInset: (inset, open, reason, meta = {}) => {
             mobileKeyboardOpen = !!open;
             mobileKeyboardInset = open ? inset : 0;
             applyMobileStableKeyboardInset(open ? inset : 0, !!open, reason || 'controller');
             document.documentElement.classList.toggle('keyboard-open', !!open && inset > 0);
             terminalContainer?.classList.toggle('mobile-keyboard-open', !!open && inset > 0);
+            document.documentElement.dataset.keyboardLiftMode = open
+                ? (meta.liftMode || SoftKeyboardLiftMode.WORKSPACE)
+                : SoftKeyboardLiftMode.NONE;
             updateMobileKeyboardButtonUi();
+            if (!open) assertKeyboardLayoutSettled(reason || 'controller-close');
         },
         notifyParent: (metrics) => notifyParentKeyboardMetrics(metrics),
         onStateChange: (state) => {
@@ -8148,11 +8219,12 @@ function ensureSshSoftKeyboard() {
                 mobileKeyboardInset = state.inset;
             } else if (state.intent === SoftKeyboardIntent.CLOSED) {
                 mobileKeyboardOpen = false;
+                mobileKeyboardInset = 0;
             }
             updateMobileKeyboardButtonUi();
         },
         onOpenCommitted: (reason) => {
-            logTerminalLayoutDiagnostics?.('ssh-soft-keyboard:open-committed', { reason });
+            logTerminalLayoutDiagnostics?.('ssh-soft-keyboard:open-committed', { reason, liftMode: sshSoftKeyboard?.getLiftMode?.() });
             if (mobileStableLastBottomIntent || terminalAutoFollowEnabled) {
                 ensureMobileStableCursorVisible(`${reason}:open-visible`);
             }
@@ -8160,6 +8232,7 @@ function ensureSshSoftKeyboard() {
         },
         onCloseCommitted: (reason) => {
             logTerminalLayoutDiagnostics?.('ssh-soft-keyboard:close-committed', { reason });
+            assertKeyboardLayoutSettled(`${reason}:controller-close`);
             scheduleKeyboardCloseFit?.(`${reason}:controller-close`, 420);
             updateMobileKeyboardButtonUi();
         },
@@ -8266,10 +8339,15 @@ function setupMobileKeyboardAvoidance() {
             getCssPxVar('--stable-vh'),
         );
         // Explicit command-box focus counts as open intent on mobile.
+        // liftMode=none: do not raise the whole terminal surface (scheme A exception).
         if (isTouchKeyboardDevice()) {
             mobileKeyboardUserControlled = true;
             ensureSshSoftKeyboard();
-            sshSoftKeyboard?.open?.('cmd-input-focus', { gesture: true });
+            sshSoftKeyboard?.open?.('cmd-input-focus', {
+                gesture: true,
+                liftMode: SoftKeyboardLiftMode.NONE,
+            });
+            document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
         }
         markKeyboardFocusActive();
         updateViewportInsets();

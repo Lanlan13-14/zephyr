@@ -365,32 +365,62 @@
     .fm-editor-header {
         margin-bottom: 5px;
         gap: 5px;
+        min-width: 0;
+        flex-wrap: nowrap;
     }
     .fm-editor-header span {
         font-size: 14px;
         min-width: 0;
+        flex: 0 1 32%;
+        max-width: 36%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
+    /* Must shrink + scroll: flex-shrink:0 was clipping right-side buttons. */
     .fm-editor-header-actions {
+        flex: 1 1 auto;
+        min-width: 0;
+        flex-wrap: nowrap;
         gap: 4px;
         overflow-x: auto;
+        overflow-y: hidden;
         scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-x;
+        overscroll-behavior-x: contain;
     }
     .fm-editor-header-actions::-webkit-scrollbar { display: none; }
     .fm-editor-header-actions .tool-btn {
+        flex: 0 0 auto;
         min-width: 34px;
         height: 32px;
         padding: 4px 8px;
         border-radius: 11px;
         font-size: 12px;
+        white-space: nowrap;
     }
     .fm-editor-toolbar {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, auto));
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: center;
         gap: 5px 7px;
         padding: 5px 6px;
         margin-bottom: 6px;
         border-radius: 13px;
         font-size: 11px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-x;
+        scrollbar-width: none;
+    }
+    .fm-editor-toolbar::-webkit-scrollbar { display: none; }
+    .fm-editor-toolbar label,
+    .fm-editor-toolbar .fm-editor-check,
+    .fm-editor-toolbar .fm-editor-status {
+        flex: 0 0 auto;
+        white-space: nowrap;
     }
     .fm-editor-toolbar label { gap: 3px; }
     .fm-editor-select {

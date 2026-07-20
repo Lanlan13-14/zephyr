@@ -2946,10 +2946,14 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         : (parentKeyboardTop || metricsKeyboardTop || layoutHeight);
     const keyboardOpen = (!!metrics.keyboardOpen || parentInset >= 100 || inset >= 100) && effectiveInset >= 80;
 
-    // mobile-stable-input：键盘纯覆盖，父页绝不缩高 iframe。
-    // 旧路径用 keyboardTop 裁剪 workspace 高度，Android WebView 瞬态 vv 会把底栏“起飞”
-    // 并抢走焦点，导致无法输入/键盘呼出失败。iframe 内靠 padding-bottom 把光标顶出键盘。
+    // Scheme A (20260720): SSH mobile stable keyboard lifts the whole workspace so its
+    // bottom edge sits on the keyboard top. Command-box input (liftMode=none) is the
+    // only exception — then we keep full height and do not raise the page.
+    // Focus ownership stays with the iframe intent controller; parent only clips geometry.
     if (isStableInput && isCompact) {
+        const liftMode = metrics.liftMode === 'none' || metrics.inputSource === 'cmd' || metrics.source === 'cmd'
+            ? 'none'
+            : 'workspace';
         const viewRect = document.querySelector('.terminal-view.active')?.getBoundingClientRect?.();
         const fullHeight = Math.max(
             isFullscreenTerminalSurface ? (window.innerHeight || 0) : 0,
@@ -2960,6 +2964,15 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             Math.round(viewRect?.height || 0),
             parentVvHeight || 0,
         );
+        const shouldLift = keyboardOpen && liftMode === 'workspace' && effectiveInset >= 80;
+        // Usable height = area above the keyboard (parent visualViewport bottom, or layout - inset).
+        const usableFromKeyboardTop = keyboardTop > 0 && viewRect
+            ? Math.max(180, Math.round(keyboardTop - (viewRect.top || 0)))
+            : 0;
+        const usableFromInset = effectiveInset > 0
+            ? Math.max(180, Math.round((isFullscreenTerminalSurface ? fullHeight : (viewRect?.height || fullHeight)) - effectiveInset))
+            : 0;
+        const usableHeight = Math.max(usableFromKeyboardTop, usableFromInset, 180);
         appKeyboardPendingMetrics = keyboardOpen
             ? {
                 ...metrics,
@@ -2969,19 +2982,11 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
                 viewportHeight: metricsViewportHeight || parentVvHeight || Math.max(1, layoutHeight - effectiveInset),
                 layoutHeight: Math.max(layoutHeight, fullHeight),
                 offsetTop: parentOffsetTop,
+                liftMode,
             }
             : null;
         workspace.classList.toggle('keyboard-open', keyboardOpen);
         appKeyboardOpen = keyboardOpen;
-        document.body.classList.remove('terminal-keyboard-lift');
-        workspace.style.flex = isFullscreenTerminalSurface ? '0 0 auto' : '';
-        if (isFullscreenTerminalSurface && fullHeight > 0) {
-            workspace.style.height = `${fullHeight}px`;
-            workspace.style.maxHeight = `${fullHeight}px`;
-        } else {
-            workspace.style.height = '';
-            workspace.style.maxHeight = '';
-        }
         workspace.style.minHeight = '0px';
         workspace.style.marginBottom = '0px';
         workspace.querySelectorAll('.terminal-frame').forEach((frame) => {
@@ -2990,12 +2995,61 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             frame.style.minHeight = '0px';
         });
         document.documentElement.style.setProperty('--app-keyboard-inset', `${keyboardOpen ? effectiveInset : 0}px`);
-        document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
-        document.documentElement.style.setProperty('--app-visual-vh', `${isFullscreenTerminalSurface && fullHeight > 0 ? fullHeight : Math.max(fullHeight, parentKeyboardTop || 0)}px`);
         document.documentElement.style.setProperty('--app-visual-offset-top', `${parentOffsetTop}px`);
-        // Keep keyboard-top as a CSS hint only; layout height stays full.
-        document.documentElement.style.setProperty('--app-keyboard-top', keyboardOpen ? `${Math.max(0, Math.round((isFullscreenTerminalSurface ? fullHeight : (viewRect?.bottom || fullHeight)) - effectiveInset))}px` : '100vh');
-        scheduleTerminalLayoutStabilize(keyboardOpen ? 'parent-keyboard-stable-overlay-open' : 'parent-keyboard-stable-overlay-close', { focus: false });
+
+        if (shouldLift) {
+            // Whole terminal surface sits above the keyboard.
+            document.body.classList.add('terminal-keyboard-lift');
+            workspace.style.flex = '0 0 auto';
+            workspace.style.height = `${usableHeight}px`;
+            workspace.style.maxHeight = `${usableHeight}px`;
+            // Non-fullscreen: shift shell so the clipped workspace rides above IME.
+            // Fullscreen: height clip alone is enough (workspace already fills the screen).
+            const shift = isFullscreenTerminalSurface
+                ? 0
+                : Math.max(0, Math.round(effectiveInset));
+            document.documentElement.style.setProperty('--app-keyboard-shift', `${shift}px`);
+            document.documentElement.style.setProperty('--app-visual-vh', `${usableHeight}px`);
+            document.documentElement.style.setProperty('--app-keyboard-top', `${Math.max(0, Math.round(keyboardTop || (fullHeight - effectiveInset)))}px`);
+            scheduleTerminalLayoutStabilize('parent-keyboard-stable-lift-open', { focus: false });
+        } else if (keyboardOpen && liftMode === 'none') {
+            // Command bar: keep full page height, no lift.
+            document.body.classList.remove('terminal-keyboard-lift');
+            workspace.style.flex = isFullscreenTerminalSurface ? '0 0 auto' : '';
+            if (isFullscreenTerminalSurface && fullHeight > 0) {
+                workspace.style.height = `${fullHeight}px`;
+                workspace.style.maxHeight = `${fullHeight}px`;
+            } else {
+                workspace.style.height = '';
+                workspace.style.maxHeight = '';
+            }
+            document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
+            document.documentElement.style.setProperty('--app-visual-vh', `${isFullscreenTerminalSurface && fullHeight > 0 ? fullHeight : Math.max(fullHeight, parentKeyboardTop || 0)}px`);
+            document.documentElement.style.setProperty('--app-keyboard-top', '100vh');
+            scheduleTerminalLayoutStabilize('parent-keyboard-stable-cmd-no-lift', { focus: false });
+        } else {
+            // Closed path for stable compact.
+            document.body.classList.remove('terminal-keyboard-lift');
+            workspace.style.flex = isFullscreenTerminalSurface ? '0 0 auto' : '';
+            if (isFullscreenTerminalSurface && fullHeight > 0 && keyboardOpen) {
+                workspace.style.height = `${fullHeight}px`;
+                workspace.style.maxHeight = `${fullHeight}px`;
+            } else {
+                workspace.style.height = '';
+                workspace.style.maxHeight = '';
+            }
+            document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
+            document.documentElement.style.setProperty('--app-visual-vh', `${isFullscreenTerminalSurface && fullHeight > 0 ? fullHeight : Math.max(fullHeight, parentKeyboardTop || 0)}px`);
+            document.documentElement.style.setProperty('--app-keyboard-top', '100vh');
+            if (!keyboardOpen) {
+                // Atomic landing: clear residual geometry immediately.
+                workspace.style.height = '';
+                workspace.style.maxHeight = '';
+                workspace.style.flex = '';
+                document.documentElement.style.setProperty('--app-keyboard-inset', '0px');
+            }
+            scheduleTerminalLayoutStabilize(keyboardOpen ? 'parent-keyboard-stable-open' : 'parent-keyboard-stable-lift-close', { focus: false });
+        }
         return;
     }
     if (!keyboardOpen || !isFullscreenTerminalSurface) {
@@ -7258,8 +7312,13 @@ function bindEvents() {
             const tabId = String(e.data.tabId || '');
             if (tabId && tabId !== activeTerminalTab) return;
             if (e.data.fallback && e.data.stableInput) return;
-            if (e.data.keyboardOpen || Number(e.data.keyboardInset) >= 80) applyTerminalWorkspaceKeyboard(e.data);
-            else scheduleCompactKeyboardViewportCheck('iframe-keyboard-metrics-closed');
+            if (e.data.keyboardOpen || Number(e.data.keyboardInset) >= 80) {
+                applyTerminalWorkspaceKeyboard(e.data);
+            } else {
+                // Atomic close: do not leave workspace half-lifted while vv settles.
+                resetTerminalWorkspaceKeyboard({ force: false });
+                scheduleCompactKeyboardViewportCheck('iframe-keyboard-metrics-closed');
+            }
             return;
         }
         if (e.data.type === 'activity') {

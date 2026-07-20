@@ -3912,8 +3912,23 @@ html.keyboard-open .terminal-page {
     pointer-events: none;
 }
 .fm-editor-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 700; min-width: 0; }
-.fm-editor-header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fm-editor-header-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.fm-editor-header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+.fm-editor-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+}
+.fm-editor-header-actions::-webkit-scrollbar { display: none; }
+.fm-editor-header-actions .tool-btn { flex: 0 0 auto; white-space: nowrap; }
 .fm-editor-modal.editor-window {
     position: absolute;
     top: 52px;
@@ -11105,26 +11120,33 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     }
 }
 
-/* Mobile non-fullscreen SSH keyboard: keep in-frame toolbars above IME like fullscreen mode. */
+/* Mobile SSH keyboard scheme A: whole workspace sits above IME; closed must land fully. */
 @media (max-width: 760px) and (hover: none) and (pointer: coarse) {
     body.app-body.terminal-mode.terminal-keyboard-lift:not(.terminal-custom-fullscreen-open) .app-shell {
         transform: translate3d(0, calc(-1 * var(--app-keyboard-shift, 0px)), 0) !important;
-        transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
         will-change: transform;
     }
     body.app-body.terminal-mode:not(.terminal-keyboard-lift) .app-shell {
         transform: translate3d(0, 0, 0) !important;
-        transition: none !important;
+        transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
         will-change: auto;
     }
     body.app-body.terminal-mode.terminal-keyboard-lift:not(.terminal-custom-fullscreen-open) .terminal-view.active {
-        overflow: visible !important;
+        overflow: hidden !important;
     }
-    body.app-body.terminal-mode.terminal-keyboard-lift:not(.terminal-custom-fullscreen-open) .terminal-workspace.compact {
-        flex: 1 1 auto !important;
-        height: auto !important;
-        max-height: none !important;
+    body.app-body.terminal-mode.terminal-keyboard-lift .terminal-workspace.compact {
+        flex: 0 0 auto !important;
         min-height: 0 !important;
+        overflow: hidden !important;
+    }
+    body.app-body.terminal-mode.terminal-keyboard-lift .terminal-workspace.compact.keyboard-open {
+        /* height is set inline from visualViewport — keep it */
+        max-height: var(--app-visual-vh, 100dvh) !important;
+    }
+    body.app-body.terminal-mode:not(.terminal-keyboard-lift) .terminal-workspace.compact {
+        /* Land fully — clear any half-lift residual from inline styles when class drops */
+        transform: none !important;
     }
 }
 
