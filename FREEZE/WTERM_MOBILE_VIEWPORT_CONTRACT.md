@@ -46,11 +46,15 @@
 | V9 | 键盘动画 | 非单调 scrollTop 写入 ≤1 |
 | V10 | 图3 | 禁止 prompt 悬视口中部 + 大块 bottom blank |
 
-几何：
+几何（`computeCursorAboveChromeScrollTop`）：
 
 - `--ime-chrome-bottom` 来自父页 `frameRect.bottom - keyboardTop`
 - keyboard-open：`padding-bottom` **只**含 tools+aux，**不含** `keyboard-inset`（bars 已 fixed）
-- 少内容：`scrollTop=0`，允许光标偏上
+- 少内容 `maxScroll<=0`：`scrollTop=0`，允许光标偏上，禁止造黑洞
+- 铺满 + following：`scrollTop = cursorBottom - (scrollportHeight - chromeHeight - pad)`，**禁止** chase `maxScroll`
+- 同行可打印输入：`sameLineInput` 且 fully visible → **0** scroll
+- 移动端关闭 WTerm 内部 `_shouldScrollToBottom`（其实现 chase maxScroll）
+- 入口：`applyCursorAboveChromeScroll`（terminal.js）
 
 ## 光标
 

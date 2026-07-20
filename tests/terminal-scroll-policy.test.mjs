@@ -22,6 +22,8 @@ const {
     scrollTerminalToBottomAfterOutputIfEnabled,
     shouldScrollForInputReason,
     scrollSettlePhases,
+    computeCursorAboveChromeScrollTop,
+    allowScrollDuringTyping,
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
 } = await import(pathToFileURL(policyPath).href);
 
@@ -174,4 +176,96 @@ test('contract: keyboard-open padding does not double-count keyboard-inset', () 
 test('contract: active-line rect prefers bridge cursor / overlay class', () => {
     assert.match(terminalJs, /term-cursor-overlay|bridge\.getCursor|getCursor\(/);
     assert.match(terminalJs, /ime-active/);
+});
+
+test('sparse content: maxScroll 0 forces scrollTop 0 (no black void)', () => {
+    const d = computeCursorAboveChromeScrollTop({
+        scrollTop: 40,
+        maxScroll: 0,
+        scrollportHeight: 400,
+        cursorBottomInContent: 80,
+        chromeHeight: 90,
+        lineHeight: 20,
+    });
+    assert.equal(d.scrollTop, 0);
+    assert.equal(d.changed, true);
+    assert.equal(d.reason, 'sparse-zero-max');
+});
+
+test('cursor already above chrome: same-line typing does not scroll', () => {
+    // viewport 400, chrome 90 → visible 310; cursor bottom at 200 with scroll 0
+    const d = computeCursorAboveChromeScrollTop({
+        scrollTop: 0,
+        maxScroll: 500,
+        scrollportHeight: 400,
+        cursorBottomInContent: 200,
+        cursorTopInContent: 180,
+        chromeHeight: 90,
+        lineHeight: 20,
+        sameLineInput: true,
+    });
+    assert.equal(d.changed, false);
+    assert.equal(d.reason, 'same-line-visible');
+    assert.equal(allowScrollDuringTyping(d), false);
+});
+
+test('cursor clipped by chrome: scroll just enough to unclip', () => {
+    // scrollport 400, chrome 100, visibleBottom≈300-pad; cursor at content 500
+    // with scrollTop 100 → visible at 400 which is below visibleBottom
+    const d = computeCursorAboveChromeScrollTop({
+        scrollTop: 100,
+        maxScroll: 800,
+        scrollportHeight: 400,
+        cursorBottomInContent: 500,
+        cursorTopInContent: 480,
+        chromeHeight: 100,
+        lineHeight: 20,
+        padPx: 4,
+        sameLineInput: true,
+    });
+    assert.equal(d.changed, true);
+    assert.ok(d.scrollTop > 100, `expected scroll down, got ${d.scrollTop}`);
+    // cursor bottom should land near visibleBottom = 400-100-4 = 296
+    // scrollTop ≈ 500 - 296 = 204 → aligned 200
+    assert.ok(d.scrollTop <= 220, `must not overscroll into void, got ${d.scrollTop}`);
+    assert.equal(allowScrollDuringTyping(d), true);
+});
+
+test('never chase maxScroll past cursor-useful scroll (fig.3 void)', () => {
+    // Cursor BELOW visible band with huge maxScroll blank padding
+    // visibleBottom = 400-90-4 = 306; cursor at 900 → need scroll ~594, NOT 2000
+    const d = computeCursorAboveChromeScrollTop({
+        scrollTop: 0,
+        maxScroll: 2000,
+        scrollportHeight: 400,
+        cursorBottomInContent: 900,
+        cursorTopInContent: 880,
+        chromeHeight: 90,
+        lineHeight: 20,
+        padPx: 4,
+        force: true,
+    });
+    assert.equal(d.changed, true);
+    assert.ok(d.scrollTop < 800, `must not approach maxScroll, got ${d.scrollTop}`);
+    assert.ok(d.scrollTop >= 500, `must scroll enough to reveal cursor, got ${d.scrollTop}`);
+});
+
+test('force does not move scroll when cursor already fully visible', () => {
+    const d = computeCursorAboveChromeScrollTop({
+        scrollTop: 0,
+        maxScroll: 500,
+        scrollportHeight: 400,
+        cursorBottomInContent: 200,
+        cursorTopInContent: 180,
+        chromeHeight: 90,
+        lineHeight: 20,
+        force: true,
+    });
+    assert.equal(d.changed, false);
+    assert.equal(d.scrollTop, 0);
+});
+
+test('contract: terminal.js uses computeCursorAboveChromeScrollTop', () => {
+    assert.match(terminalJs, /computeCursorAboveChromeScrollTop/);
+    assert.match(terminalJs, /applyCursorAboveChromeScroll/);
 });

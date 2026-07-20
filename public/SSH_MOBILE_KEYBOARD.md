@@ -60,7 +60,7 @@ parent `keyboard-metrics` 字段：`liftMode`, `inputSource` (`cmd` | `terminal-
 
 IME 仍走隐藏 `#mobileTerminalImeProxy` textarea。WTerm grid 在键盘开合时冻结，不 resize 行列。
 
-cache-bust: `20260721-wterm-scroll1`
+cache-bust: `20260721-wterm-scroll2`
 
 ## Scroll coupling (2026-07-21)
 

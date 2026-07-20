@@ -1,8 +1,10 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260721-wterm-scroll1';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260721-wterm-scroll2';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
+    allowScrollDuringTyping,
+    computeCursorAboveChromeScrollTop,
     scrollSettlePhases,
     scrollTerminalToBottomAfterInputIfEnabled,
     scrollTerminalToBottomAfterOutputIfEnabled,
@@ -10,7 +12,7 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-wterm-scroll1';
+} from './terminal-scroll-policy.js?v=20260721-wterm-scroll2';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -37,6 +39,11 @@ function getWTermScrollTarget() {
             return isTerminalAtBottom?.() ?? true;
         },
         scrollToBottom: () => {
+            // Mobile: product geometry wins over WTerm maxScroll stick (fig.3).
+            if (isMobileStableInputMode()) {
+                applyCursorAboveChromeScroll('policy-scroll-to-bottom', { force: true });
+                return;
+            }
             try {
                 if (typeof term.scrollToBottom === 'function') {
                     term.scrollToBottom();
@@ -96,8 +103,159 @@ function applyPolicyScrollAfterPaste(reason = 'paste') {
         getWTermScrollTarget(),
         getTerminalScrollPolicySettings(),
     );
+    // Paste may still need chrome-aware pin after WTerm stick.
+    if (isMobileStableInputMode()) applyCursorAboveChromeScroll(`${reason}:paste-chrome`, { force: true });
     scheduleTerminalScrollbarUpdate?.();
     return did;
+}
+
+/** Live height of fixed bottom chrome covering the terminal scrollport. */
+function getMobileBottomChromeHeight() {
+    if (!isMobileStableInputMode()) return 0;
+    const keyboardOpen = mobileKeyboardOpen
+        || mobileKeyboardInset > 8
+        || document.documentElement.classList.contains('keyboard-open');
+    const auxH = Math.max(
+        0,
+        Math.round(
+            Number.parseFloat(document.documentElement.style.getPropertyValue('--mobile-aux-keys-height'))
+            || terminalInputPanel?.getBoundingClientRect?.().height
+            || terminalInputPanel?.offsetHeight
+            || 0,
+        ),
+    );
+    const actionsH = Math.max(
+        0,
+        Math.round(
+            Number.parseFloat(document.documentElement.style.getPropertyValue('--mobile-bottom-actions-height'))
+            || topbarActions?.getBoundingClientRect?.().height
+            || topbarActions?.offsetHeight
+            || 0,
+        ),
+    );
+    // When keyboard closed, bars are in normal document flow below the terminal
+    // (not overlaying the scrollport) — chromeHeight for scroll math is 0.
+    // When keyboard open, bars are position:fixed and cover the bottom of the scrollport.
+    if (!keyboardOpen) return 0;
+    return auxH + actionsH;
+}
+
+/**
+ * Cursor position in content coordinates (px from content top).
+ * Prefers bridge cursor row * rowHeight + scrollTop of viewport-relative grid.
+ */
+function getCursorContentMetrics() {
+    const el = getTerminalScrollElement();
+    const lineHeight = (term && term.getViewportState?.()?.rowHeight)
+        || term?.viewport?.rowHeight
+        || getTerminalCharMetrics?.()?.lineHeight
+        || terminalFontSize * 1.35
+        || 17;
+    try {
+        const cursor = term?.bridge?.getCursor?.() || term?.getCursor?.();
+        if (cursor && Number.isFinite(cursor.row)) {
+            // WTerm cursor.row is viewport-relative to the painted grid.
+            // Content Y of viewport row 0 == current scrollTop (grid is in scrolled content).
+            const scrollTop = el?.scrollTop || 0;
+            const top = scrollTop + (cursor.row * lineHeight);
+            return {
+                cursorTopInContent: top,
+                cursorBottomInContent: top + lineHeight,
+                lineHeight,
+                row: cursor.row,
+                col: cursor.col,
+                visible: cursor.visible !== false,
+            };
+        }
+    } catch (_) {}
+    // Fallback: DOM overlay / last non-empty row
+    const rect = getMobileStableActiveLineRect?.();
+    const port = el?.getBoundingClientRect?.();
+    if (rect && port && el) {
+        const top = (el.scrollTop || 0) + (rect.top - port.top);
+        return {
+            cursorTopInContent: top,
+            cursorBottomInContent: top + (rect.height || lineHeight),
+            lineHeight,
+            row: -1,
+            col: -1,
+            visible: true,
+        };
+    }
+    return null;
+}
+
+/**
+ * Product rule (user): pin cursor just above bottom toolbar; sparse content
+ * stays at scrollTop 0 (no mid-screen prompt + black void). Same-line typing
+ * does not scroll unless the cursor is actually clipped.
+ *
+ * @returns {boolean} whether scrollTop changed
+ */
+function applyCursorAboveChromeScroll(reason = 'cursor-above-chrome', {
+    force = false,
+    sameLineInput = false,
+} = {}) {
+    if (!isMobileStableInputMode()) return false;
+    const el = getTerminalScrollElement();
+    if (!el) return false;
+    if (hasLiveTerminalSelection?.() || mobileTerminalSelectionMode) return false;
+    if (mobileImeComposing && !force) return false;
+    if (isMobileTerminalAutoFollowLocked() && !force && !isMobileStableActualInputReason(reason)) {
+        return false;
+    }
+
+    const metrics = getCursorContentMetrics();
+    if (!metrics) {
+        scheduleTerminalScrollbarUpdate?.();
+        return false;
+    }
+
+    const decision = computeCursorAboveChromeScrollTop({
+        scrollTop: el.scrollTop || 0,
+        maxScroll: getTerminalMaxScroll(el),
+        scrollportHeight: el.clientHeight || 0,
+        cursorBottomInContent: metrics.cursorBottomInContent,
+        cursorTopInContent: metrics.cursorTopInContent,
+        chromeHeight: getMobileBottomChromeHeight(),
+        lineHeight: metrics.lineHeight,
+        sameLineInput,
+        force,
+    });
+
+    logTerminalScrollDiagnostics('cursor-above-chrome', {
+        reason,
+        ...decision,
+        chromeHeight: getMobileBottomChromeHeight(),
+        cursorBottom: Math.round(metrics.cursorBottomInContent),
+        sameLineInput,
+        force,
+    });
+
+    if (sameLineInput && !force && !allowScrollDuringTyping(decision)) {
+        scheduleTerminalScrollbarUpdate?.();
+        return false;
+    }
+    if (!decision.changed) {
+        scheduleTerminalScrollbarUpdate?.();
+        return false;
+    }
+
+    isProgrammaticTerminalScroll = true;
+    try {
+        el.scrollTop = decision.scrollTop;
+        if (wtermWrapper && wtermWrapper !== el) {
+            wtermWrapper.scrollTop = Math.min(decision.scrollTop, getTerminalMaxScroll(wtermWrapper));
+        }
+        if (force || decision.reason !== 'sparse-zero-max') {
+            mobileStableLastBottomIntent = true;
+            setTerminalAutoFollow?.(true, `${reason}:${decision.reason}`);
+        }
+    } finally {
+        scheduleTerminalScrollbarUpdate?.();
+        requestAnimationFrame(() => { isProgrammaticTerminalScroll = false; });
+    }
+    return true;
 }
 
 function getParams() {
@@ -7413,27 +7571,30 @@ function followTerminalBottomNow(reason = 'bottom-follow', { force = false } = {
         || isMobileStableAtVisualBottom(el)
         || isMobileStableActualInputReason(reason);
     if (!canFollow) return false;
+
+    // Mobile stable: NEVER chase DOM maxScroll (creates fig.3 black void).
+    // Pin cursor just above bottom chrome; sparse content → scrollTop 0.
+    if (isMobileStableInputMode()) {
+        mobileTerminalAutoFollowLockUntil = 0;
+        mobileTerminalAutoFollowLockReason = '';
+        const label = String(reason || '').toLowerCase();
+        const sameLine = /beforeinput|input-fallback|composition|sent-visible|typing|printable/.test(label)
+            && !/enter|return|paste|control|keypad|command-box/.test(label);
+        return applyCursorAboveChromeScroll(reason, { force: true, sameLineInput: sameLine });
+    }
+
     isProgrammaticTerminalScroll = true;
     try {
         const maxScroll = getTerminalMaxScroll(el);
-        let target = maxScroll;
-        if (isMobileStableInputMode()) {
-            const activeTarget = getMobileStableActiveLineScrollTarget(el, reason);
-            if (Number.isFinite(activeTarget)) {
-                // In mobile stable mode WTerm can report large bottom blank space after
-                // fullscreen/keyboard transitions. Following DOM maxScroll jumps into that
-                // blank area. Follow the cursor/last real line instead, with a tiny tolerance.
-                target = activeTarget;
-            }
-        }
-        // P0-4 fix: row-height align the target so we never land mid-line.
-        // Previously the raw maxScroll (or raw cursor-rect target) was used,
-        // which conflicts with fork _scrollToBottom (floor(maxScroll/rh)*rh)
-        // and causes the end-of-buffer jitter / up-down fighting.
-        const rh = (term && typeof term.viewport !== "undefined" && term.viewport.rowHeight) || getTerminalCharMetrics?.()?.lineHeight || terminalFontSize * 1.35 || 17;
-        const aligned = Math.floor(Math.max(0, Math.min(maxScroll, target)) / rh) * rh;
+        const rh = (term && typeof term.viewport !== 'undefined' && term.viewport.rowHeight)
+            || getTerminalCharMetrics?.()?.lineHeight
+            || terminalFontSize * 1.35
+            || 17;
+        const aligned = Math.floor(Math.max(0, maxScroll) / rh) * rh;
         el.scrollTop = aligned;
-        if (wtermWrapper && wtermWrapper !== el) wtermWrapper.scrollTop = Math.max(0, Math.min(getTerminalMaxScroll(wtermWrapper), aligned));
+        if (wtermWrapper && wtermWrapper !== el) {
+            wtermWrapper.scrollTop = Math.max(0, Math.min(getTerminalMaxScroll(wtermWrapper), aligned));
+        }
         mobileTerminalAutoFollowLockUntil = 0;
         mobileTerminalAutoFollowLockReason = '';
         mobileStableLastBottomIntent = true;
@@ -7532,11 +7693,10 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     const actualInputReason = isMobileStableActualInputReason(reason);
     if (actualInputReason) {
         cancelMobileStableScrollRestore(`${reason}:actual-input`);
-        // Input path already did policy scroll; keyboard inset is layout only.
-        requestAnimationFrame(() => scrollTerminalToBottomIfNeeded(getWTermScrollTarget()));
+        requestAnimationFrame(() => applyCursorAboveChromeScroll(reason, { force: false, sameLineInput: true }));
     } else if (wasFollowing) {
-        // Layout change while following: single ifNeeded, no multi-phase.
-        scrollTerminalToBottomIfNeeded(getWTermScrollTarget());
+        // Layout/keyboard geometry change: one chrome-pin, never maxScroll chase.
+        requestAnimationFrame(() => applyCursorAboveChromeScroll(`${reason}:keep-bottom`, { force: true }));
     } else {
         restoreMobileStableScrollTop(previousTop, reason);
     }
@@ -7782,16 +7942,26 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
     cancelMobileStableScrollRestore(`${source}:typing`);
     clearMobileTerminalHistoryLock(`${source}:input`);
     sendData(paste ? prepareTerminalPastePayload(payload) : payload, { source, forceFollow: false, applyModifiers: false });
-    // Netcatty: one event → ≤1 scroll. Paste may use short settle; plain input single-shot.
+    // One event → ≤1 scroll. Geometry = cursor-above-chrome (not maxScroll).
     if (paste) {
         applyPolicyScrollAfterPaste(`${source}:paste`);
-        scheduleTerminalBottomFollow(`${source}:sent-visible`, { force: true, phases: scrollSettlePhases('paste') });
+        // Short settle after paste echo only.
+        const phases = scrollSettlePhases('paste');
+        phases.forEach((delay) => {
+            window.setTimeout(() => {
+                applyCursorAboveChromeScroll(`${source}:paste-settle`, { force: true });
+            }, delay);
+        });
     } else if (!mobileImeComposing) {
         let done = false;
         const finish = () => {
             if (done) return;
             done = true;
-            applyPolicyScrollAfterUserInput(payload, `${source}:sent-visible`);
+            // Same-line printable: scroll ONLY if cursor actually clipped by chrome.
+            applyCursorAboveChromeScroll(`${source}:sent-visible`, {
+                force: false,
+                sameLineInput: true,
+            });
         };
         if (term && typeof term.onRenderComplete === 'function') {
             const unsub = term.onRenderComplete(() => { unsub(); finish(); });
@@ -7820,16 +7990,17 @@ function sendMobileStableControl(seq = '', source = 'mobile-ime-control') {
     clearMobileTerminalHistoryLock(`${source}:control`);
     sendData(payload, { source, forceFollow: false, applyModifiers: false });
     if (isEnterLike) {
-        // Enter: allow key-press style follow once (policy treats \r as non-printable;
-        // force a single ifNeeded so new prompt stays visible).
         clearMobileTerminalHistoryLock(`${source}:enter`);
         setTerminalAutoFollow(true, `${source}:enter`);
-        scrollTerminalToBottomIfNeeded(getWTermScrollTarget());
-        scheduleTerminalBottomFollow(`${source}:enter-visible`, { force: true, phases: scrollSettlePhases('enter') });
-    } else {
-        // Arrows/backspace etc.: default scrollOnKeyPress=false → no scroll.
-        applyPolicyScrollAfterUserInput(payload, `${source}:control-visible`);
+        // Enter may create a new line — pin cursor above chrome once (+ short settle).
+        applyCursorAboveChromeScroll(`${source}:enter`, { force: true, sameLineInput: false });
+        scrollSettlePhases('enter').forEach((delay) => {
+            window.setTimeout(() => {
+                applyCursorAboveChromeScroll(`${source}:enter-settle`, { force: true });
+            }, delay);
+        });
     }
+    // Non-enter controls: scrollOnKeyPress default false → no scroll (Netcatty).
     return true;
 }
 
@@ -7890,8 +8061,10 @@ function focusMobileStableImeProxy(reason = 'mobile-ime-focus') {
     // Focus/keyboard open alone must not move history. If the terminal was following,
     // keep following the current visual bottom instead of restoring a stale pre-fullscreen top.
     if (mobileStableLastBottomIntent) {
-        // Focus/open keyboard is layout — single policy ifNeeded, no multi-phase chase.
-        scrollTerminalToBottomIfNeeded(getWTermScrollTarget());
+        setWTermImeActive(true, `${reason}:focus`);
+        requestAnimationFrame(() => {
+            applyCursorAboveChromeScroll(`${reason}:focus-chrome`, { force: true });
+        });
     }
     else restoreMobileStableScrollTop(previousTop, reason);
     return true;
@@ -8591,10 +8764,11 @@ function ensureSshSoftKeyboard() {
         onOpenCommitted: (reason) => {
             logTerminalLayoutDiagnostics?.('ssh-soft-keyboard:open-committed', { reason, liftMode: sshSoftKeyboard?.getLiftMode?.() });
             setWTermImeActive(true, `${reason}:open-committed`);
-            // Keyboard open is layout — do not multi-phase chase scroll (V9).
-            // Only correct if cursor is actually covered (single policy ifNeeded).
+            // After bars go fixed, pin cursor above chrome once (not maxScroll).
             if (mobileStableLastBottomIntent || terminalAutoFollowEnabled) {
-                scrollTerminalToBottomIfNeeded(getWTermScrollTarget());
+                requestAnimationFrame(() => {
+                    applyCursorAboveChromeScroll(`${reason}:open-chrome`, { force: true });
+                });
             }
             updateMobileKeyboardButtonUi();
         },
@@ -9314,9 +9488,13 @@ function patchWTermScrollBehavior() {
             const echoSuppressed = isMobileStableInputMode() && Date.now() < mobileStableEchoSuppressUntil;
             const shouldFollow = !!term._zephyrShouldFollowAfterRender || (terminalAutoFollowEnabled && !echoSuppressed);
             const previousWTermShouldScroll = term._shouldScrollToBottom;
-            // Let WTerm's own stick-to-bottom run once inside _doRender. Do NOT
-            // schedule outer multi-phase follow afterward (Netcatty S6).
-            if (shouldFollow && !echoSuppressed) {
+            const mobile = isMobileStableInputMode();
+            // Desktop: WTerm internal stick-to-bottom is fine.
+            // Mobile: WTerm _scrollToBottom chases maxScroll → fig.3 black void.
+            // Force internal flag OFF; chrome-pin runs once after render if needed.
+            if (mobile) {
+                term._shouldScrollToBottom = false;
+            } else if (shouldFollow && !echoSuppressed) {
                 term._shouldScrollToBottom = true;
             }
             try {
@@ -9324,8 +9502,18 @@ function patchWTermScrollBehavior() {
             } finally {
                 term._shouldScrollToBottom = previousWTermShouldScroll;
                 term._zephyrRenderingDepth = Math.max(0, (term._zephyrRenderingDepth || 1) - 1);
+                // During typing/composition the input path owns the single scroll.
+                // Render must not fight it (per-keystroke jitter).
+                const typingWindow = Date.now() < (mobileStableTypingUntil || 0)
+                    || Date.now() < (mobileStableSuppressScrollUntil || 0)
+                    || mobileImeComposing;
+                const wantPin = mobile && shouldFollow && !echoSuppressed && !typingWindow;
                 term._zephyrShouldFollowAfterRender = false;
-                scheduleTerminalScrollbarUpdate();
+                if (wantPin) {
+                    applyCursorAboveChromeScroll('render-chrome-pin', { force: true });
+                } else {
+                    scheduleTerminalScrollbarUpdate();
+                }
                 updateTerminalWebLinks();
             }
         };
