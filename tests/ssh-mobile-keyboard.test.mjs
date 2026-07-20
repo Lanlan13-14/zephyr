@@ -22,6 +22,7 @@ function createHost(overrides = {}) {
         isTouchDevice: () => true,
         isStableMode: () => true,
         proxy: {
+            tagName: 'TEXTAREA',
             focus() { documentActive = this; },
             blur() { if (documentActive === this) documentActive = null; },
         },
@@ -154,6 +155,35 @@ test('hysteresis keeps open through small inset jitter', () => {
     assert.equal(kb.desiredOpen(), true);
 });
 
+test('focused proxy accepts real physical close only after sustained low inset', () => {
+    const realNow = Date.now;
+    let now = 10_000;
+    Date.now = () => now;
+    try {
+        const host = createHost();
+        const kb = createSshMobileSoftKeyboard(host);
+        kb.open('tap');
+        host.setInset(300);
+        kb.syncFromViewport('open');
+        assert.equal(kb.physicalOpen(), true);
+        assert.equal(documentActive, host.proxy);
+        // Past open-hold; first zero starts debounce, does not close.
+        now += 4000;
+        host.setInset(0);
+        kb.syncFromViewport('physical-low-1');
+        assert.equal(kb.desiredOpen(), true);
+        // Sustained low for >480ms is a real system dismiss even if proxy focus survives.
+        now += 520;
+        kb.syncFromViewport('physical-low-2');
+        assert.equal(kb.desiredOpen(), false);
+        assert.equal(kb.physicalOpen(), false);
+        assert.notEqual(documentActive, host.proxy);
+    } finally {
+        Date.now = realNow;
+        documentActive = null;
+    }
+});
+
 test('cmd open uses liftMode none and freezes layout (no inset to parent)', () => {
     const host = createHost();
     const kb = createSshMobileSoftKeyboard(host);
@@ -206,7 +236,7 @@ test('wiring contract: terminal imports controller; button removed', () => {
     assert.match(terminalJs, /assertKeyboardLayoutSettled/);
     assert.match(terminalJs, /liftMode:\s*SoftKeyboardLiftMode\.NONE/);
     assert.doesNotMatch(terminalHtml, /id="cmdKeyboardBtn"/);
-    assert.match(terminalHtml, /ssh-kb-lift6/);
+    assert.match(terminalHtml, /ssh-kb-lift7/);
     assert.match(styleCss, /\.cmd-keyboard-btn \{ display: none !important/);
 });
 
@@ -273,4 +303,38 @@ test('keyboard toggle button removed; stable chrome pins above IME', () => {
     assert.match(styleCss, /position:\s*fixed !important/);
     assert.match(styleCss, /html\.mobile-stable-input\.keyboard-open \.terminal-container/);
     assert.match(styleCss, /min-height:\s*120px !important/);
+});
+
+test('large blue pill regression: terminal scrollbar is vertical and hidden on mobile', () => {
+    assert.match(styleCss, /\.terminal-scrollbar\s*\{[^}]*position:\s*absolute/s);
+    assert.match(styleCss, /\.terminal-scrollbar\s*\{[^}]*right:\s*3px/s);
+    assert.match(styleCss, /\.terminal-scrollbar\s*\{[^}]*width:\s*var\(--terminal-scrollbar-size/s);
+    assert.match(styleCss, /html\.mobile-stable-input \.terminal-scrollbar\s*\{[^}]*display:\s*none !important/s);
+    assert.doesNotMatch(styleCss, /\.terminal-scrollbar-thumb\s*\{[^}]*rgba\(10,132,255/s);
+});
+
+test('parent sends exact iframe overlap and physical close is authoritative', () => {
+    assert.match(appJs, /frameKeyboardOverlap/);
+    assert.match(appJs, /frameRect\.bottom - physicalKeyboardTop/);
+    assert.match(appJs, /layoutHeight - effectiveInset/);
+    assert.match(appJs, /type:\s*'keyboard-overlap'/);
+    assert.match(terminalJs, /e\.data\.type === 'keyboard-overlap'/);
+    assert.match(terminalJs, /parent-physical-close/);
+    assert.match(terminalJs, /authoritative:\s*parentAuthoritative/);
+    assert.doesNotMatch(appJs, /keyboardOpen:\s*inset >= 80 \|\| appKeyboardOpen/);
+    // Parent may close only after its own visualViewport observed physical open.
+    assert.match(appJs, /appKeyboardParentPhysicalOpen/);
+    assert.match(appJs, /if \(!appKeyboardParentPhysicalOpen && inset < 80\) return false/);
+    assert.match(appJs, /const keyboardOpen = inset >= 80 \|\| \(appKeyboardParentPhysicalOpen && wasOpen && inset >= 16\)/);
+});
+
+test('IME bars use exact overlap with no safe-area seam', () => {
+    assert.match(styleCss, /bottom:\s*var\(--ime-chrome-bottom/);
+    const openBar = styleCss.slice(
+        styleCss.indexOf('html.mobile-stable-input.keyboard-open .terminal-bottom-bar'),
+        styleCss.indexOf('html.mobile-stable-input:not(.keyboard-open) .terminal-bottom-bar'),
+    );
+    assert.match(openBar, /padding-bottom:\s*0 !important/);
+    assert.match(openBar, /margin:\s*0 !important/);
+    assert.match(openBar, /border-bottom:\s*0 !important/);
 });

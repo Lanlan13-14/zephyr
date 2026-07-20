@@ -3156,6 +3156,15 @@ html.keyboard-open .terminal-page {
 }
 .terminal-scrollbar {
     display: none;
+    position: absolute;
+    top: 8px;
+    right: 3px;
+    bottom: 8px;
+    width: var(--terminal-scrollbar-size, 12px);
+    height: auto;
+    z-index: 8;
+    opacity: 0;
+    pointer-events: none;
 }
 .terminal-container.scrollable .terminal-scrollbar,
 .terminal-container:hover .terminal-scrollbar,
@@ -3180,8 +3189,8 @@ html.keyboard-open .terminal-page {
     top: 0;
     min-height: 28px;
     border-radius: 999px;
-    background: linear-gradient(180deg, rgba(10,132,255,0.95), rgba(10,132,255,0.52));
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.12) inset, 0 4px 12px rgba(0,0,0,0.28);
+    background: rgba(139,148,158,0.64);
+    box-shadow: none;
     transform: translateY(var(--terminal-scroll-thumb-top, 0px));
     height: var(--terminal-scroll-thumb-height, 100%);
     cursor: grab;
@@ -3190,7 +3199,7 @@ html.keyboard-open .terminal-page {
 .terminal-scrollbar-thumb:active,
 .terminal-scrollbar.dragging .terminal-scrollbar-thumb {
     cursor: grabbing;
-    background: linear-gradient(180deg, rgba(41,151,255,1), rgba(10,132,255,0.68));
+    background: rgba(139,148,158,0.82);
 }
 :root[data-theme="light"] .terminal-scrollbar-track {
     background: rgba(101,109,118,0.14);
@@ -7293,6 +7302,12 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         overscroll-behavior: contain !important;
         transform: none !important;
         will-change: auto !important;
+    }
+    /* Mobile uses direct touch scroll; never render the custom scrollbar/thumb. */
+    html.mobile-stable-input .terminal-scrollbar {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
     }
 
     /* Keyboard open: pin bottom chrome above IME; keep terminal flex height.

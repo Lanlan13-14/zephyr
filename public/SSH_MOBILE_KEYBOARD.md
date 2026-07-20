@@ -60,7 +60,7 @@ parent `keyboard-metrics` 字段：`liftMode`, `inputSource` (`cmd` | `terminal-
 
 IME 仍走隐藏 `#mobileTerminalImeProxy` textarea。WTerm grid 在键盘开合时冻结，不 resize 行列。
 
-cache-bust: `20260720-ssh-kb-lift4`
+cache-bust: `20260720-ssh-kb-lift7`
 
 ## 实现注意（灰屏 / 自收回归）
 
@@ -71,3 +71,6 @@ cache-bust: `20260720-ssh-kb-lift4`
 5. 父页 soft reset **不得** `postMessage reset-mobile-keyboard`（会 blur IME → 1s 自收）。
 6. focus 仍在 editable 时 controller **禁止** system-dismiss。
 7. 键盘按钮已删除。
+8. 截图中的大蓝条是 `.terminal-scrollbar-thumb`：容器必须绝对定位为竖条；移动端彻底隐藏自定义滚动条。
+9. 键盘贴合必须使用父页 `frameRect.bottom - keyboardTop` 的 iframe-local overlap，不能把全屏键盘高度直接当 iframe `bottom`。
+10. 父页 visualViewport 物理关闭是权威信号：必须同步 close controller，不能因 IME proxy 仍 focus 而保持 `keyboard-open`。

@@ -86,6 +86,9 @@ const terminalReconnectFallbackTimers = new Map();
 let fullscreenLoadingTimer = 0;
 let appKeyboardBaseline = 0;
 let appKeyboardOpen = false;
+// True only after parent visualViewport itself observed a real IME inset.
+// An overlays-content parent that always reports 0 must never close an iframe-open IME.
+let appKeyboardParentPhysicalOpen = false;
 let appKeyboardSettleTimer = 0;
 let appKeyboardLastSignature = '';
 let appKeyboardPendingMetrics = null;
@@ -375,8 +378,30 @@ function maybeApplyCompactKeyboardFromViewport(reason = 'compact-keyboard-viewpo
     const viewportHeight = Math.round(window.visualViewport.height || 0);
     const offsetTop = Math.round(window.visualViewport.offsetTop || 0);
     const inset = Math.max(0, Math.round(baseline - viewportHeight - offsetTop));
-    if (inset < 80 && !workspace.classList.contains('keyboard-open')) return false;
-    applyTerminalWorkspaceKeyboard({ keyboardOpen: inset >= 80 || appKeyboardOpen, keyboardInset: inset, viewportHeight, layoutHeight: baseline, offsetTop, stableInput: true, reason });
+    const wasOpen = appKeyboardOpen || workspace.classList.contains('keyboard-open');
+    if (inset >= 80) appKeyboardParentPhysicalOpen = true;
+    // Only a parent that previously observed physical open may authoritatively close.
+    // In overlays-content mode parent inset stays 0 while iframe sees the IME; treating
+    // that 0 as close caused the ~1s auto-dismiss loop.
+    if (!appKeyboardParentPhysicalOpen && inset < 80) return false;
+    const keyboardOpen = inset >= 80 || (appKeyboardParentPhysicalOpen && wasOpen && inset >= 16);
+    if (!keyboardOpen && !wasOpen) {
+        appKeyboardParentPhysicalOpen = false;
+        return false;
+    }
+    applyTerminalWorkspaceKeyboard({
+        keyboardOpen,
+        keyboardInset: keyboardOpen ? inset : 0,
+        viewportHeight,
+        layoutHeight: baseline,
+        offsetTop,
+        stableInput: true,
+        liftMode: 'workspace',
+        inputSource: 'terminal-ime',
+        parentPhysical: true,
+        reason,
+    });
+    if (!keyboardOpen) appKeyboardParentPhysicalOpen = false;
     return true;
 }
 function scheduleCompactKeyboardViewportCheck(reason = 'compact-keyboard-check') {
@@ -2796,6 +2821,7 @@ function resetTerminalWorkspaceKeyboard({ force = false, notifyIframe = false } 
     if (!workspace || (!force && !appKeyboardOpen && !workspace.classList.contains('keyboard-open') && !workspace.classList.contains('keyboard-settling'))) return;
     const wasOpen = appKeyboardOpen;
     appKeyboardOpen = false;
+    appKeyboardParentPhysicalOpen = false;
     appKeyboardBaseline = 0;
     appKeyboardPendingMetrics = null;
     appKeyboardLastSignature = '';
@@ -2946,7 +2972,12 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         // Parent only tracks open for diagnostics; geometry stays full.
         // cmd metrics already filtered to keyboardOpen=false in message handler.
         const wantOpen = keyboardOpen && liftMode === 'workspace';
-        const signature = `stable-overlay:${wantOpen ? 1 : 0}:${Math.round(effectiveInset / 24) * 24}`;
+        const activeFrame = workspace.querySelector(`.terminal-frame[data-frame="${CSS.escape(activeTerminalTab || '')}"]`)
+            || workspace.querySelector('.terminal-frame.active');
+        const activeFrameRect = activeFrame?.getBoundingClientRect?.();
+        // Include frame bottom: Android browser chrome / viewport changes can move the
+        // iframe without changing keyboard height. We must resend exact overlap then.
+        const signature = `stable-overlay:${wantOpen ? 1 : 0}:${Math.round(effectiveInset)}:${Math.round(parentKeyboardTop)}:${Math.round(metricsKeyboardTop)}:${Math.round(activeFrameRect?.bottom || 0)}`;
         if (signature === appKeyboardLastSignature) {
             appKeyboardOpen = wantOpen;
             return;
@@ -2973,6 +3004,28 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         document.documentElement.style.setProperty('--app-visual-vh', '100vh');
         document.documentElement.style.setProperty('--app-visual-offset-top', '0px');
         document.documentElement.style.setProperty('--app-keyboard-top', '100vh');
+
+        // Exact iframe-local overlap: frameBottom - physical keyboardTop.
+        // Sending raw keyboard height is wrong because the iframe does not start at y=0.
+        if (activeFrame?.contentWindow) {
+            const frameRect = activeFrame.getBoundingClientRect?.();
+            const physicalKeyboardTop = parentInset >= 80 && parentKeyboardTop > 0
+                ? parentKeyboardTop
+                : (effectiveInset >= 80 && layoutHeight > effectiveInset
+                    ? Math.max(0, layoutHeight - effectiveInset)
+                    : keyboardTop);
+            const frameKeyboardOverlap = wantOpen && frameRect && physicalKeyboardTop > 0
+                ? Math.max(0, Math.round(frameRect.bottom - physicalKeyboardTop))
+                : 0;
+            activeFrame.contentWindow.postMessage({
+                source: 'zephyr-app',
+                type: 'keyboard-overlap',
+                keyboardOpen: wantOpen && frameKeyboardOverlap > 0,
+                keyboardOverlap: frameKeyboardOverlap,
+                keyboardTop: physicalKeyboardTop,
+                reason: metrics.reason || 'parent-stable-overlap',
+            }, '*');
+        }
         return;
     }
     if (!keyboardOpen || !isFullscreenTerminalSurface) {

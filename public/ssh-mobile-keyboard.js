@@ -88,6 +88,7 @@ export function createSshMobileSoftKeyboard(host) {
     let lastOpenGestureAt = 0;
     let openHoldUntil = 0;
     let lastPhysicalAboveCloseAt = 0;
+    let physicalLowSince = 0;
 
     function log(event, details = {}) {
         try { host.log?.(event, { ...details, state: snapshot() }); } catch (_) {}
@@ -230,14 +231,33 @@ export function createSshMobileSoftKeyboard(host) {
         const active = getActiveElement();
         const stillOnEditable = isEditableElement(active);
 
-        // CRITICAL: while an editable still has focus, NEVER auto-close from
-        // visualViewport noise / parent layout resize. Only blur/close() dismisses.
-        // This kills the "keyboard opens then dies in ~1s" loop.
+        // Editable focus can survive Android system-back after IME is physically gone.
+        // Therefore focus alone cannot keep bars floating forever. Accept close only after:
+        // 1) we previously measured physical open; 2) past open-hold; 3) low inset remains
+        // continuously for >=480ms. A single zero/jitter can never auto-dismiss.
         if (state.intent === SoftKeyboardIntent.OPEN && stillOnEditable) {
-            if (open) commitPhysical(true, inset, `${reason}:open-focused`);
-            else log('keep-open-while-focused', { reason, inset });
+            if (open) {
+                physicalLowSince = 0;
+                commitPhysical(true, inset, `${reason}:open-focused`);
+            } else if (state.physicalOpen) {
+                if (!physicalLowSince) physicalLowSince = Date.now();
+                const lowFor = Date.now() - physicalLowSince;
+                const healthyAgo = Date.now() - lastPhysicalAboveCloseAt;
+                if (!withinOpenHold() && lowFor >= 480 && healthyAgo >= 480) {
+                    setIntent(SoftKeyboardIntent.CLOSED, `${reason}:focused-physical-close`);
+                    state.focusLikely = false;
+                    commitPhysical(false, 0, `${reason}:focused-physical-close`);
+                    blurProxy(`${reason}:focused-physical-close`);
+                } else {
+                    log('keep-open-focused-low-debounce', { reason, inset, lowFor, healthyAgo });
+                }
+            } else {
+                physicalLowSince = 0;
+                log('keep-open-await-first-physical', { reason, inset });
+            }
             return snapshot();
         }
+        if (open) physicalLowSince = 0;
 
         // System dismissed keyboard (Android back) while we still desired open.
         // Accept only when: past open-hold, AND no editable focused, AND physical closed.
@@ -321,6 +341,7 @@ export function createSshMobileSoftKeyboard(host) {
         state.lastGestureAt = Date.now();
         if (gesture) lastOpenGestureAt = Date.now();
         openHoldUntil = Date.now() + OPEN_HOLD_MS;
+        physicalLowSince = 0;
         suppressRefocusUntil = 0;
         // Command bar owns the real focus — do NOT steal it with the IME proxy.
         let focused = true;
@@ -352,6 +373,7 @@ export function createSshMobileSoftKeyboard(host) {
         setIntent(SoftKeyboardIntent.CLOSED, reason);
         state.focusLikely = false;
         openHoldUntil = 0;
+        physicalLowSince = 0;
         suppressRefocusUntil = Date.now() + REFOCUS_GUARD_MS;
         window.clearTimeout(refocusTimer);
         blurProxy(reason);

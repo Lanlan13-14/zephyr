@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift6';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift7';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 
 const $ = (sel) => document.querySelector(sel);
@@ -732,13 +732,14 @@ function measureImeChromeBottom() {
     return Math.max(0, layoutH - vvBottom);
 }
 
-function pinMobileImeChrome(open, inset = 0) {
+function pinMobileImeChrome(open, inset = 0, { authoritative = false } = {}) {
     if (!isMobileStableInputMode()) return;
     const chromeBottom = open ? Math.max(0, Math.round(Number(inset) || measureImeChromeBottom() || 0)) : 0;
-    // Prefer live measured chrome bottom over baseline-inflated inset when both exist.
     const measured = open ? measureImeChromeBottom() : 0;
+    // Parent overlap is computed from frameRect.bottom - keyboardTop and is exact.
+    // Never overwrite it with iframe-local visualViewport measurement.
     const pin = open
-        ? (measured > 40 ? measured : chromeBottom)
+        ? (authoritative ? chromeBottom : (measured > 40 ? measured : chromeBottom))
         : 0;
     document.documentElement.style.setProperty('--ime-chrome-bottom', `${pin}px`);
     // Live aux height so tools sit flush on the aux bar (no 44px guess gap).
@@ -1324,6 +1325,36 @@ window.addEventListener('message', (e) => {
         logTerminalLayoutDiagnostics('parent-keyboard-freeze-message', { payload: e.data, freezeUntil: parentKeyboardResizeFreezeUntil });
         scheduleTerminalScrollbarUpdate();
         if (!e.data.frozen) window.setTimeout(() => repairOversizedWTermRows(`keyboard-freeze-release:${e.data.reason || ''}`, { force: false }), 180);
+        return;
+    }
+    if (e.data.type === 'keyboard-overlap') {
+        const overlap = Math.max(0, Math.round(Number(e.data.keyboardOverlap) || 0));
+        const open = !!e.data.keyboardOpen && overlap > 0;
+        if (isCmdOverlayMode()) {
+            // Top command input explicitly freezes layout.
+            applyMobileStableKeyboardInset(0, false, 'parent-overlap:cmd-frozen');
+            return;
+        }
+        // Parent knows iframe's real screen rect, so this is authoritative.
+        const wasOpen = mobileKeyboardOpen
+            || mobileKeyboardInset > 0
+            || document.documentElement.classList.contains('keyboard-open');
+        applyMobileStableKeyboardInset(open ? overlap : 0, open, `parent-overlap:${e.data.reason || ''}`);
+        if (!open) {
+            mobileKeyboardOpen = false;
+            mobileKeyboardInset = 0;
+            document.documentElement.classList.remove('keyboard-open');
+            terminalContainer?.classList.remove('mobile-keyboard-open');
+            document.documentElement.style.setProperty('--keyboard-inset', '0px');
+            document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
+            pinMobileImeChrome(false, 0);
+            // Parent visualViewport confirmed IME is physically closed. Close intent and
+            // blur proxy even if proxy still owns focus, otherwise bars remain sticky and
+            // the next terminal tap cannot reopen the system keyboard.
+            if (wasOpen && sshSoftKeyboard?.desiredOpen?.()) {
+                sshSoftKeyboard.close('parent-physical-close', { force: false, blurCmd: false });
+            }
+        }
         return;
     }
     if (e.data.type === 'layout-stabilize') {
@@ -7354,16 +7385,17 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     // insets leave a black seam between aux bar and IME.
     const measured = measureImeChromeBottom();
     const reported = Math.max(0, Math.round(Number(inset) || 0));
-    const open = !!keyboardOpen && (reported > 12 || measured > 40);
+    const parentAuthoritative = String(reason || '').includes('parent-overlap');
+    const open = !!keyboardOpen && (reported > 12 || (!parentAuthoritative && measured > 40));
     const pinInset = open
-        ? (measured > 40 ? measured : reported)
+        ? (parentAuthoritative ? reported : (measured > 40 ? measured : reported))
         : 0;
     const safeInset = pinInset;
     mobileKeyboardInset = safeInset;
     document.documentElement.style.setProperty('--keyboard-inset', `${safeInset}px`);
     document.documentElement.classList.toggle('keyboard-open', open && safeInset > 0);
     terminalContainer?.classList.toggle('mobile-keyboard-open', open && safeInset > 0);
-    pinMobileImeChrome(open && safeInset > 0, safeInset);
+    pinMobileImeChrome(open && safeInset > 0, safeInset, { authoritative: parentAuthoritative });
     if (!open || safeInset <= 0) {
         if (!cmdOverlayMode) document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.WORKSPACE;
         document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
@@ -7372,7 +7404,7 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     updateTerminalInputPanelMetrics();
     // Re-pin after metrics so aux height is accurate once bars are laid out.
     if (open && safeInset > 0) {
-        requestAnimationFrame(() => pinMobileImeChrome(true, safeInset));
+        requestAnimationFrame(() => pinMobileImeChrome(true, safeInset, { authoritative: parentAuthoritative }));
     }
     document.documentElement.classList.remove('viewport-updating');
     setStableViewportHeight();
