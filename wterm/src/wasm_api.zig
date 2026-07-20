@@ -127,6 +127,13 @@ export fn getTitleLen() u32 {
 export fn getHyperlinkPtr(id: u32) [*]const u8 { return terminal.getLinkPtr(@intCast(id)); }
 export fn getHyperlinkLen(id: u32) u32 { return terminal.getLinkLen(@intCast(id)); }
 
+export fn getClipboardPending() u32 { return if (terminal.clipboard_pending) 1 else 0; }
+export fn getClipboardQuery() u32 { return if (terminal.clipboard_query) 1 else 0; }
+export fn getClipboardSelection() u32 { return terminal.clipboard_selection; }
+export fn getClipboardPtr() [*]const u8 { return &terminal.clipboard_data; }
+export fn getClipboardLen() u32 { return terminal.clipboard_len; }
+export fn clearClipboard() void { terminal.clipboard_pending = false; terminal.clipboard_len = 0; }
+
 export fn getTitleChanged() u32 {
     if (terminal.title_changed) {
         terminal.title_changed = false;

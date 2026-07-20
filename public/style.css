@@ -13022,3 +13022,10 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     line-height: var(--term-row-height, 17px);
     tab-size: 8;
 }
+
+.term-hyperlink {
+  color: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

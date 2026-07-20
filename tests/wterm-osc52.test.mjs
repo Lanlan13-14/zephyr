@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import {WasmBridge} from '../public/vendor/wterm-fork/core/index.js';
+test('OSC 52 surfaces writes and blocks read response',async()=>{const b=await WasmBridge.load();b.init(80,24);b.writeString('\x1b]52;c;SGVsbG8=\x07');assert.deepEqual(b.takeClipboardRequest(),{selection:'c',base64:'SGVsbG8=',query:false});
+b.writeString('\x1b]52;c;?\x07');assert.deepEqual(b.takeClipboardRequest(),{selection:'c',base64:'?',query:true});assert.equal(b.getResponse(),null);});
+test('browser policy requires focus and recent gesture',()=>{const s=fs.readFileSync(new URL('../public/terminal.js',import.meta.url),'utf8');assert.match(s,/Date\.now\(\) - terminalUserGestureAt > 10000/);assert.match(s,/wterm-clipboard-query-blocked/);});

@@ -107,6 +107,11 @@ pub const Terminal = struct {
     link_count: u16 = 0,
     link_lens: [MAX_LINKS]u16 = [_]u16{0} ** MAX_LINKS,
     link_uris: [MAX_LINKS][MAX_LINK_URI]u8 = undefined,
+    clipboard_pending: bool = false,
+    clipboard_query: bool = false,
+    clipboard_selection: u8 = 'c',
+    clipboard_len: u16 = 0,
+    clipboard_data: [65535]u8 = undefined,
 
     // Response buffer for DSR and similar host-to-application replies
     response_buf: [64]u8 = undefined,
@@ -194,6 +199,9 @@ pub const Terminal = struct {
         self.current_link_id = 0;
         self.link_count = 0;
         self.link_lens = [_]u16{0} ** MAX_LINKS;
+        self.clipboard_pending = false;
+        self.clipboard_query = false;
+        self.clipboard_len = 0;
         self.response_len = 0;
         self.tab_stops = initTabStops();
     }
@@ -1160,6 +1168,22 @@ pub const Terminal = struct {
             const uri = data[sep + 1 ..];
             if (uri.len == 0) { self.current_link_id = 0; return; }
             self.current_link_id = self.internLink(uri);
+            return;
+        }
+
+        // OSC 52 ; selection ; base64 ST. Query payload '?' is surfaced but
+        // never answered by the core, preventing silent clipboard reads.
+        if (data.len >= 4 and data[0] == '5' and data[1] == '2' and data[2] == ';') {
+            var sep: usize = 3;
+            while (sep < data.len and data[sep] != ';') : (sep += 1) {}
+            if (sep >= data.len) return;
+            self.clipboard_selection = if (sep > 3) data[3] else 'c';
+            const payload = data[sep + 1 ..];
+            self.clipboard_query = payload.len == 1 and payload[0] == '?';
+            const len = @min(payload.len, self.clipboard_data.len);
+            @memcpy(self.clipboard_data[0..len], payload[0..len]);
+            self.clipboard_len = @intCast(len);
+            self.clipboard_pending = true;
         }
     }
 

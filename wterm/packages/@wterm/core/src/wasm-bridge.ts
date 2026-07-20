@@ -32,6 +32,12 @@ interface WasmExports {
   getTitleLen(): number;
   getHyperlinkPtr(id: number): number;
   getHyperlinkLen(id: number): number;
+  getClipboardPending(): number;
+  getClipboardQuery(): number;
+  getClipboardSelection(): number;
+  getClipboardPtr(): number;
+  getClipboardLen(): number;
+  clearClipboard(): void;
   getTitleChanged(): number;
   getScrollbackCount(): number;
   getScrollbackLine(offset: number): number;
@@ -225,6 +231,15 @@ export class WasmBridge implements TerminalCore {
     const len = this.exports.getHyperlinkLen(id);
     if (!len) return null;
     return this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getHyperlinkPtr(id), len));
+  }
+
+  takeClipboardRequest(): { selection: string; base64: string; query: boolean } | null {
+    if (this.exports.getClipboardPending() === 0) return null;
+    const len = this.exports.getClipboardLen();
+    const base64 = this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getClipboardPtr(), len));
+    const request = { selection: String.fromCharCode(this.exports.getClipboardSelection()), base64, query: this.exports.getClipboardQuery() !== 0 };
+    this.exports.clearClipboard();
+    return request;
   }
 
   getResponse(): string | null {

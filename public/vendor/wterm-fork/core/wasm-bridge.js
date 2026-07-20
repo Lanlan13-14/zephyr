@@ -155,6 +155,14 @@ class WasmBridge {
     if (!len) return null;
     return this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getHyperlinkPtr(id), len));
   }
+  takeClipboardRequest() {
+    if (this.exports.getClipboardPending() === 0) return null;
+    const len = this.exports.getClipboardLen();
+    const base64 = this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getClipboardPtr(), len));
+    const request = { selection: String.fromCharCode(this.exports.getClipboardSelection()), base64, query: this.exports.getClipboardQuery() !== 0 };
+    this.exports.clearClipboard();
+    return request;
+  }
   getResponse() {
     const len = this.exports.getResponseLen();
     if (len === 0) return null;

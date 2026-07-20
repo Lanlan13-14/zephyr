@@ -10055,13 +10055,31 @@ async function startAutoReconnect(reason = '连接已断开') {
 }
 
 // ---------- WTerm 初始化 ----------
+let terminalUserGestureAt = 0;
+function noteTerminalUserGesture() { terminalUserGestureAt = Date.now(); }
+function decodeOsc52Base64(value) {
+    const input = String(value || '');
+    if (!input || input.length > 65535 || !/^[A-Za-z0-9+/]*={0,2}$/.test(input)) return null;
+    try { const binary = atob(input), bytes = new Uint8Array(binary.length); for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i); return new TextDecoder().decode(bytes); }
+    catch { return null; }
+}
+async function handleTerminalClipboardRequest(request) {
+    const query = !!request?.query, detail = { selection: String(request?.selection || 'c'), query, text: null, allowed: false };
+    if (query) { window.dispatchEvent(new CustomEvent('wterm-clipboard-query-blocked', { detail })); return; }
+    const text = decodeOsc52Base64(request?.base64); if (text == null) return; detail.text = text;
+    if (!window.dispatchEvent(new CustomEvent('wterm-clipboard-write', { detail, cancelable: true }))) return;
+    if (!document.hasFocus() || Date.now() - terminalUserGestureAt > 10000 || !navigator.clipboard?.writeText) { if (typeof showToast === 'function') showToast('终端请求写入剪贴板，请先点击终端后重试'); return; }
+    try { await navigator.clipboard.writeText(text); detail.allowed = true; }
+    catch { if (typeof showToast === 'function') showToast('浏览器阻止了终端剪贴板写入'); }
+}
+
 async function initWTerm(connectionToken = activeConnectionToken, { followOnConnect = true } = {}) {
     mobileWTermInputGuard = null;
     let WTermClass;
     try {
         // Zephyr fork of @wterm/dom with public viewport API (FREEZE plan
         // §3.8/§5). Falls back to the stock package if the fork is absent.
-        const module = await import('/vendor/wterm-fork/index.js');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260720-wterm-osc52-1');
         WTermClass = module.WTerm;
     } catch {
         try {
@@ -10086,6 +10104,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
             theme: getPreferredWtermTheme() === 'light' ? 'light' : 'default',
             fontSize: terminalFontSize,
             onData: (data) => sendData(data, { source: 'wterm-onData' }),
+            onClipboard: (request) => { void handleTerminalClipboardRequest(request); },
             onResize: (cols, rows) => {
                 if (!suppressWTermResizeEvent) sendTerminalResize(cols, rows, { reason: 'wterm-onResize' });
             },
@@ -10095,6 +10114,9 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
         if (typeof term.onData === 'function') term.onData(data => sendData(data, { source: 'wterm-onData' }));
         else if (typeof term.on === 'function') term.on('data', data => sendData(data, { source: 'wterm-onData' }));
     }
+    term.onClipboard = (request) => { void handleTerminalClipboardRequest(request); };
+    wtermWrapper.addEventListener('pointerdown', noteTerminalUserGesture, { passive: true });
+    wtermWrapper.addEventListener('keydown', noteTerminalUserGesture, true);
     if (typeof term.init === 'function') await term.init();
     terminalRemoteHistory?.destroy?.();
     terminalRemoteHistory = createTerminalRemoteHistory({

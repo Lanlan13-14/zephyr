@@ -36,6 +36,7 @@ class WTerm {
     __publicField(this, "onTitle");
     __publicField(this, "onResize");
     __publicField(this, "onBell", null);
+    __publicField(this, "onClipboard", null);
     __publicField(this, "_container");
     this.element = element;
     this._coreOption = options.core;
@@ -48,6 +49,7 @@ class WTerm {
     this.onTitle = options.onTitle || null;
     this.onResize = options.onResize || null;
     this.onBell = options.onBell || null;
+    this.onClipboard = options.onClipboard || null;
     this._container = document.createElement("div");
     this._container.className = "term-grid";
     this.element.appendChild(this._container);
@@ -337,6 +339,8 @@ class WTerm {
       this.bridge.clearBell();
       if (this.onBell) this.onBell();
     }
+    const clipboard = this.bridge.takeClipboardRequest();
+    if (clipboard && this.onClipboard) this.onClipboard(clipboard);
     this._fireRenderComplete();
   }
   _lockHeight() {

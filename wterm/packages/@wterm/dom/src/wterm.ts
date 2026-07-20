@@ -19,6 +19,7 @@ export interface WTermOptions {
   onTitle?: (title: string) => void;
   onResize?: (cols: number, rows: number) => void;
   onBell?: () => void;
+  onClipboard?: (request: { selection: string; base64: string; query: boolean }) => void;
 }
 
 /** Viewport snapshot returned by {@link WTerm.getViewportState}. */
@@ -84,6 +85,7 @@ export class WTerm {
   onTitle: ((title: string) => void) | null;
   onResize: ((cols: number, rows: number) => void) | null;
   onBell: (() => void) | null = null;
+  onClipboard: ((request: { selection: string; base64: string; query: boolean }) => void) | null = null;
 
   private _container: HTMLDivElement;
 
@@ -100,6 +102,7 @@ export class WTerm {
     this.onTitle = options.onTitle || null;
     this.onResize = options.onResize || null;
     this.onBell = options.onBell || null;
+    this.onClipboard = options.onClipboard || null;
 
     this._container = document.createElement("div");
     this._container.className = "term-grid";
@@ -441,6 +444,9 @@ export class WTerm {
       this.bridge.clearBell();
       if (this.onBell) this.onBell();
     }
+
+    const clipboard = this.bridge.takeClipboardRequest();
+    if (clipboard && this.onClipboard) this.onClipboard(clipboard);
 
     // Fire render-complete callbacks (Zephyr fork §3.8.2). This lets
     // downstream scroll-follow logic read the post-render DOM instead of

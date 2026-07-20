@@ -1,6 +1,6 @@
 pub const MAX_PARAMS: u8 = 16;
 pub const MAX_INTERMEDIATES: u8 = 2;
-pub const MAX_OSC: u16 = 512;
+pub const MAX_OSC: u16 = 65535;
 
 pub const Action = enum {
     none,
