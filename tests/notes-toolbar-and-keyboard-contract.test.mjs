@@ -39,4 +39,6 @@ test('stable mobile keyboard scheme A lifts workspace for terminal-ime only', ()
   assert.match(body, /liftMode === 'none'/);
   assert.match(body, /parent-keyboard-stable-cmd-no-lift/);
   assert.match(body, /fullHeight/);
+  // No shell translate — only height clip.
+  assert.match(body, /--app-keyboard-shift',\s*'0px'/);
 });

@@ -44,3 +44,12 @@ test('editor header markup still hosts the action buttons', () => {
     assert.match(terminalHtml, /id="fmEditorAiBtn"/);
     assert.match(terminalHtml, /id="fmEditorFormatBtn"/);
 });
+
+test('keyboard lift CSS never translates app-shell by inset', () => {
+    // Regression: translate3d(0, -inset) threw the UI off-screen (gray void).
+    assert.doesNotMatch(
+        styleCss,
+        /terminal-keyboard-lift[^{]*\{[^}]*translate3d\(0,\s*calc\(-1 \* var\(--app-keyboard-shift/s,
+    );
+    assert.match(styleCss, /terminal-keyboard-lift \.app-shell[\s\S]{0,120}transform:\s*none/s);
+});

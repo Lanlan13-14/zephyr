@@ -11120,33 +11120,31 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     }
 }
 
-/* Mobile SSH keyboard scheme A: whole workspace sits above IME; closed must land fully. */
+/* Mobile SSH keyboard scheme A: CLIP workspace height only. Never translate .app-shell
+   by keyboard inset — that pushed the UI off-screen (gray void above IME). */
 @media (max-width: 760px) and (hover: none) and (pointer: coarse) {
-    body.app-body.terminal-mode.terminal-keyboard-lift:not(.terminal-custom-fullscreen-open) .app-shell {
-        transform: translate3d(0, calc(-1 * var(--app-keyboard-shift, 0px)), 0) !important;
-        transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
-        will-change: transform;
-    }
+    body.app-body.terminal-mode.terminal-keyboard-lift .app-shell,
     body.app-body.terminal-mode:not(.terminal-keyboard-lift) .app-shell {
-        transform: translate3d(0, 0, 0) !important;
-        transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        transform: none !important;
         will-change: auto;
     }
-    body.app-body.terminal-mode.terminal-keyboard-lift:not(.terminal-custom-fullscreen-open) .terminal-view.active {
+    body.app-body.terminal-mode.terminal-keyboard-lift .terminal-view.active {
         overflow: hidden !important;
+        min-height: 0 !important;
     }
     body.app-body.terminal-mode.terminal-keyboard-lift .terminal-workspace.compact {
         flex: 0 0 auto !important;
         min-height: 0 !important;
         overflow: hidden !important;
-    }
-    body.app-body.terminal-mode.terminal-keyboard-lift .terminal-workspace.compact.keyboard-open {
-        /* height is set inline from visualViewport — keep it */
+        /* height/max-height set inline from visualViewport */
         max-height: var(--app-visual-vh, 100dvh) !important;
     }
-    body.app-body.terminal-mode:not(.terminal-keyboard-lift) .terminal-workspace.compact {
-        /* Land fully — clear any half-lift residual from inline styles when class drops */
-        transform: none !important;
+    body.app-body.terminal-mode.terminal-keyboard-lift .terminal-workspace.compact .terminal-window,
+    body.app-body.terminal-mode.terminal-keyboard-lift .terminal-workspace.compact .terminal-window-body,
+    body.app-body.terminal-mode.terminal-keyboard-lift .terminal-workspace.compact .terminal-frame {
+        height: 100% !important;
+        max-height: 100% !important;
+        min-height: 0 !important;
     }
 }
 

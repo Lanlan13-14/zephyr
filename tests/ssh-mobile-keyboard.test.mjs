@@ -203,7 +203,7 @@ test('wiring contract: terminal imports controller and exposes button', () => {
     assert.match(terminalJs, /assertKeyboardLayoutSettled/);
     assert.match(terminalJs, /liftMode:\s*SoftKeyboardLiftMode\.NONE/);
     assert.match(terminalHtml, /id="cmdKeyboardBtn"/);
-    assert.match(terminalHtml, /ssh-kb-lift1/);
+    assert.match(terminalHtml, /ssh-kb-lift2/);
     assert.match(styleCss, /cmd-keyboard-btn/);
     // Must not hard-hide the button forever.
     assert.doesNotMatch(styleCss, /\.cmd-keyboard-btn,\s*\.mobile-secure-keyboard-proxy \{ display: none !important; \}/);
@@ -240,9 +240,13 @@ test('parent stable path lifts workspace height for terminal-ime', () => {
     assert.match(body, /parent-keyboard-stable-cmd-no-lift/);
     assert.match(body, /terminal-keyboard-lift/);
     assert.match(body, /workspace\.style\.height = `\$\{usableHeight\}px`/);
+    // Must never shell-translate by keyboard inset (causes gray void).
+    assert.match(body, /--app-keyboard-shift',\s*'0px'/);
+    assert.doesNotMatch(body, /const shift = isFullscreenTerminalSurface/);
 });
 
-test('parent closed metrics force resetTerminalWorkspaceKeyboard', () => {
+test('parent closed metrics debounced reset and open hysteresis', () => {
     assert.match(appJs, /resetTerminalWorkspaceKeyboard\(\{ force: false \}\)/);
-    assert.match(appJs, /iframe-keyboard-metrics-closed/);
+    assert.match(appJs, /_closeDebounce/);
+    assert.match(appJs, /appKeyboardOpen && inset >= 16/);
 });

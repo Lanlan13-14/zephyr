@@ -60,4 +60,10 @@ parent `keyboard-metrics` 字段：`liftMode`, `inputSource` (`cmd` | `terminal-
 
 IME 仍走隐藏 `#mobileTerminalImeProxy` textarea。WTerm grid 在键盘开合时冻结，不 resize 行列。
 
-cache-bust: `20260720-ssh-kb-lift1`
+cache-bust: `20260720-ssh-kb-lift2`
+
+## 方案 A 实现注意（灰屏回归）
+
+**禁止** `transform: translateY(-keyboardInset)` 作用于 `.app-shell`。
+抬升只改 workspace 的 `height/maxHeight` 裁到 visualViewport 底边；`--app-keyboard-shift` 恒为 `0`。
+关闭路径带 hysteresis（≥16 保持 open）+ 180ms debounce，避免 open/close 闪。
