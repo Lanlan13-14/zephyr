@@ -103,13 +103,15 @@
   outline-offset: -1px;
 }
 
-.wterm.focused .term-cursor-overlay {
+.wterm.focused .term-cursor-overlay,
+.wterm.ime-active .term-cursor-overlay {
   background: var(--term-cursor);
   color: var(--term-bg);
   outline: none;
 }
 
-.wterm.focused.cursor-blink .term-cursor-overlay {
+.wterm.focused.cursor-blink .term-cursor-overlay,
+.wterm.ime-active.cursor-blink .term-cursor-overlay {
   animation: cursor-blink 1s step-end infinite;
 }
 
@@ -148,12 +150,15 @@
   width: 2px !important;
 }
 .wterm.focused .term-cursor-style-0,
-.wterm.focused .term-cursor-style-1 {
+.wterm.focused .term-cursor-style-1,
+.wterm.ime-active .term-cursor-style-0,
+.wterm.ime-active .term-cursor-style-1 {
   background: var(--term-cursor);
   color: var(--term-bg);
   outline: none;
 }
-.wterm.focused .term-cursor-style-2 {
+.wterm.focused .term-cursor-style-2,
+.wterm.ime-active .term-cursor-style-2 {
   background: var(--term-cursor);
   outline: none;
 }
@@ -161,7 +166,11 @@
 .wterm.focused.cursor-blink .term-cursor-style-0,
 .wterm.focused.cursor-blink .term-cursor-style-1,
 .wterm.focused.cursor-blink .term-cursor-style-3,
-.wterm.focused.cursor-blink .term-cursor-style-5 {
+.wterm.focused.cursor-blink .term-cursor-style-5,
+.wterm.ime-active.cursor-blink .term-cursor-style-0,
+.wterm.ime-active.cursor-blink .term-cursor-style-1,
+.wterm.ime-active.cursor-blink .term-cursor-style-3,
+.wterm.ime-active.cursor-blink .term-cursor-style-5 {
   animation: cursor-blink 1s step-end infinite;
 }
 
@@ -171,13 +180,15 @@
   outline-offset: -1px;
 }
 
-.wterm.focused .term-cursor {
+.wterm.focused .term-cursor,
+.wterm.ime-active .term-cursor {
   background: var(--term-cursor);
   color: var(--term-bg);
   outline: none;
 }
 
-.wterm.focused.cursor-blink .term-cursor {
+.wterm.focused.cursor-blink .term-cursor,
+.wterm.ime-active.cursor-blink .term-cursor {
   animation: cursor-blink 1s step-end infinite;
 }
 

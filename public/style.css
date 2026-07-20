@@ -7318,11 +7318,11 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         min-height: 120px !important;
         height: auto !important;
         max-height: none !important;
-        /* room for fixed tools + aux above keyboard */
+        /* bars are position:fixed above IME — only reserve tools+aux height.
+           Do NOT add keyboard-inset here (double-count → floating chrome / black void). */
         padding-bottom: calc(
             var(--mobile-bottom-actions-height, 46px)
             + var(--mobile-aux-keys-height, 44px)
-            + var(--keyboard-inset, 0px)
             + 8px
         ) !important;
     }

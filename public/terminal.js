@@ -1,9 +1,104 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift7';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260721-wterm-scroll1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
+import {
+    DEFAULT_TERMINAL_SCROLL_SETTINGS,
+    scrollSettlePhases,
+    scrollTerminalToBottomAfterInputIfEnabled,
+    scrollTerminalToBottomAfterOutputIfEnabled,
+    scrollTerminalToBottomAfterPasteIfEnabled,
+    scrollTerminalToBottomIfNeeded,
+    shouldScrollForInputReason,
+    shouldScrollOnTerminalOutput,
+} from './terminal-scroll-policy.js?v=20260721-wterm-scroll1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+/** Netcatty-aligned settings (output follow OFF by default). */
+function getTerminalScrollPolicySettings() {
+    return {
+        ...DEFAULT_TERMINAL_SCROLL_SETTINGS,
+        // User reading history locks output follow regardless of setting.
+        scrollOnOutput: false,
+    };
+}
+
+/** Adapter so policy can call WTerm public scroll API without touching DOM scrollTop. */
+function getWTermScrollTarget() {
+    if (!term) return null;
+    return {
+        isAtBottom: () => {
+            try {
+                if (typeof term.isAtBottom === 'function') return !!term.isAtBottom();
+                if (term.viewport && typeof term.viewport.atBottom === 'boolean') return !!term.viewport.atBottom;
+                if (typeof term.getViewportState === 'function') return !!term.getViewportState()?.atBottom;
+            } catch (_) {}
+            return isTerminalAtBottom?.() ?? true;
+        },
+        scrollToBottom: () => {
+            try {
+                if (typeof term.scrollToBottom === 'function') {
+                    term.scrollToBottom();
+                    return;
+                }
+                if (term.viewport && typeof term.viewport.scrollToBottom === 'function') {
+                    term.viewport.scrollToBottom();
+                    return;
+                }
+            } catch (_) {}
+            followTerminalBottomNow('policy-scroll-to-bottom', { force: true });
+        },
+        getViewportState: () => {
+            try {
+                if (typeof term.getViewportState === 'function') return term.getViewportState();
+                if (term.viewport && typeof term.viewport.state === 'function') return term.viewport.state();
+            } catch (_) {}
+            return null;
+        },
+    };
+}
+
+function setWTermImeActive(active, reason = 'ime') {
+    const el = term?.element || wtermWrapper?.querySelector?.('.wterm') || wtermWrapper;
+    if (!el?.classList) return;
+    el.classList.toggle('ime-active', !!active);
+    // Keep a solid cursor even if WTerm's hidden textarea is not focused.
+    if (active) el.classList.add('cursor-blink');
+    logTerminalLayoutDiagnostics?.('wterm-ime-active', { active: !!active, reason });
+}
+
+/**
+ * One-shot policy scroll after real user input. No multi-phase chase.
+ * @returns {boolean} whether scroll API ran
+ */
+function applyPolicyScrollAfterUserInput(data, reason = 'input') {
+    if (mobileImeComposing) return false;
+    if (!shouldScrollForInputReason(reason, { composing: mobileImeComposing })) return false;
+    if (isMobileTerminalAutoFollowLocked() && !isMobileStableActualInputReason(reason)) return false;
+    if (hasLiveTerminalSelection?.() || mobileTerminalSelectionMode) return false;
+    clearMobileTerminalHistoryLock?.(`${reason}:policy-input`);
+    setTerminalAutoFollow?.(true, `${reason}:policy-input`);
+    const did = scrollTerminalToBottomAfterInputIfEnabled(
+        getWTermScrollTarget(),
+        getTerminalScrollPolicySettings(),
+        data,
+    );
+    scheduleTerminalScrollbarUpdate?.();
+    return did;
+}
+
+function applyPolicyScrollAfterPaste(reason = 'paste') {
+    if (hasLiveTerminalSelection?.() || mobileTerminalSelectionMode) return false;
+    clearMobileTerminalHistoryLock?.(`${reason}:policy-paste`);
+    setTerminalAutoFollow?.(true, `${reason}:policy-paste`);
+    const did = scrollTerminalToBottomAfterPasteIfEnabled(
+        getWTermScrollTarget(),
+        getTerminalScrollPolicySettings(),
+    );
+    scheduleTerminalScrollbarUpdate?.();
+    return did;
+}
 
 function getParams() {
     try {
@@ -1209,7 +1304,7 @@ window.addEventListener('message', (e) => {
     if (e.data.type === 'focus-terminal') {
         requestStableTerminalLayout('parent-focus-terminal', { includeResize: true, focus: true });
         if (isMobileStableInputMode() && (terminalAutoFollowEnabled || mobileStableLastBottomIntent || isMobileStableAtVisualBottom())) {
-            scheduleTerminalBottomFollow('parent-focus-terminal', { force: true, phases: [0, 80, 180, 360] });
+            scheduleTerminalBottomFollow('parent-focus-terminal', { force: true, phases: scrollSettlePhases('input') });
         }
     }
     if (e.data.type === 'reconnect-terminal') {
@@ -1404,7 +1499,7 @@ window.addEventListener('message', (e) => {
             // ensureMobileStableCursorVisible() and will scroll only if the cursor is covered.
             if (isMobileStableInputMode()) {
                 if (terminalAutoFollowEnabled || mobileStableLastBottomIntent || isMobileStableAtVisualBottom()) {
-                    scheduleTerminalBottomFollow(`parent-layout:${reason}:stable`, { force: true, phases: [0, 80, 180, 360] });
+                    scheduleTerminalBottomFollow(`parent-layout:${reason}:stable`, { force: true, phases: scrollSettlePhases('layout') });
                 } else {
                     scheduleTerminalScrollbarUpdate();
                 }
@@ -7350,17 +7445,43 @@ function followTerminalBottomNow(reason = 'bottom-follow', { force = false } = {
     return true;
 }
 
-function scheduleTerminalBottomFollow(reason = 'bottom-follow', { force = false, phases = [0, 32, 80, 160, 280, 420, 680] } = {}) {
+function scheduleTerminalBottomFollow(reason = 'bottom-follow', { force = false, phases } = {}) {
     const el = getTerminalScrollElement();
     if (!el) return;
+    // Netcatty discipline: never multi-phase chase. Callers that still use this
+    // helper get a single rAF shot unless they explicitly pass short settle phases
+    // from scrollSettlePhases() (paste/enter ≤2).
+    const label = String(reason || '').toLowerCase();
+    let resolvedPhases = Array.isArray(phases) ? phases : null;
+    if (!resolvedPhases) {
+        if (/paste/.test(label)) resolvedPhases = scrollSettlePhases('paste');
+        else if (/enter|return/.test(label)) resolvedPhases = scrollSettlePhases('enter');
+        else if (/keyboard|viewport|layout|visual|focus|resize|open|close/.test(label)) {
+            resolvedPhases = scrollSettlePhases('layout'); // []
+        } else {
+            resolvedPhases = scrollSettlePhases('input'); // [0]
+        }
+    }
+    if (!resolvedPhases.length) {
+        scheduleTerminalScrollbarUpdate();
+        return;
+    }
     cancelMobileStableScrollRestore(`${reason}:bottom-follow`);
     cancelTerminalBottomFollow(reason);
     const token = terminalBottomFollowToken;
     const run = () => {
         if (token !== terminalBottomFollowToken) return;
-        followTerminalBottomNow(reason, { force });
+        // Prefer policy 0/1 scroll over DOM scrollTop stomping when WTerm API exists.
+        if (force || terminalAutoFollowEnabled || isMobileStableAtVisualBottom(el)) {
+            const did = scrollTerminalToBottomIfNeeded(getWTermScrollTarget());
+            if (!did && force) followTerminalBottomNow(reason, { force });
+            else if (did) setTerminalAutoFollow(true, reason);
+            else scheduleTerminalScrollbarUpdate();
+        } else {
+            scheduleTerminalScrollbarUpdate();
+        }
     };
-    phases.forEach((delay) => {
+    resolvedPhases.forEach((delay) => {
         const timer = window.setTimeout(() => requestAnimationFrame(run), Math.max(0, delay));
         terminalBottomFollowTimers.push(timer);
     });
@@ -7411,9 +7532,11 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     const actualInputReason = isMobileStableActualInputReason(reason);
     if (actualInputReason) {
         cancelMobileStableScrollRestore(`${reason}:actual-input`);
-        requestAnimationFrame(() => ensureMobileStableCursorVisible(reason));
+        // Input path already did policy scroll; keyboard inset is layout only.
+        requestAnimationFrame(() => scrollTerminalToBottomIfNeeded(getWTermScrollTarget()));
     } else if (wasFollowing) {
-        scheduleTerminalBottomFollow(`${reason}:keep-bottom`, { force: true });
+        // Layout change while following: single ifNeeded, no multi-phase.
+        scrollTerminalToBottomIfNeeded(getWTermScrollTarget());
     } else {
         restoreMobileStableScrollTop(previousTop, reason);
     }
@@ -7457,7 +7580,41 @@ function getMobileStableSafeGap() {
 
 function getMobileStableActiveLineRect() {
     if (!wtermWrapper) return null;
-    const cursor = wtermWrapper.querySelector('.cursor, .term-cursor, .terminal-cursor, [data-cursor="true"], [data-cursor]');
+    // Prefer decoupled overlay (actual WTerm cursor), not legacy .cursor class.
+    const overlay = wtermWrapper.querySelector('.term-cursor-overlay');
+    if (overlay && overlay.style.display !== 'none') {
+        const overlayRect = overlay.getBoundingClientRect?.();
+        if (overlayRect?.height) return overlayRect;
+    }
+    // Bridge cursor + row metrics → synthetic rect (no brittle class names).
+    try {
+        const cursor = term?.bridge?.getCursor?.() || term?.getCursor?.();
+        const rh = term?.getViewportState?.()?.rowHeight
+            || term?.viewport?.rowHeight
+            || getTerminalCharMetrics?.()?.lineHeight
+            || terminalFontSize * 1.35
+            || 17;
+        const host = term?.element || wtermWrapper;
+        const hostRect = host?.getBoundingClientRect?.();
+        if (cursor && hostRect && Number.isFinite(cursor.row)) {
+            const scrollEl = getTerminalScrollElement() || wtermWrapper;
+            const scrollTop = scrollEl?.scrollTop || 0;
+            // Approximate: rows above viewport are scrolled away; visible row 0 is at host top.
+            // WTerm paints only the viewport grid — cursor.row is viewport-relative.
+            const top = hostRect.top + (cursor.row * rh);
+            return {
+                top,
+                bottom: top + rh,
+                left: hostRect.left,
+                right: hostRect.right,
+                height: rh,
+                width: Math.max(1, hostRect.width || 0),
+                _fromBridge: true,
+                scrollTop,
+            };
+        }
+    } catch (_) {}
+    const cursor = wtermWrapper.querySelector('.term-cursor, .cursor, .terminal-cursor, [data-cursor="true"], [data-cursor]');
     const cursorRect = cursor?.getBoundingClientRect?.();
     if (cursorRect?.height && cursorRect?.width) return cursorRect;
     const rows = Array.from(wtermWrapper.querySelectorAll('.term-row, .term-scrollback-row'));
@@ -7625,20 +7782,22 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
     cancelMobileStableScrollRestore(`${source}:typing`);
     clearMobileTerminalHistoryLock(`${source}:input`);
     sendData(paste ? prepareTerminalPastePayload(payload) : payload, { source, forceFollow: false, applyModifiers: false });
-    if (paste) scheduleTerminalBottomFollow(`${source}:sent-visible`, { force: true, phases: [80, 180, 320] });
-    else {
-        // P0-3 fix: wait for the next render-complete before reading cursor
-        // rect. Previously a fixed 32ms timeout raced against WTerm rendering:
-        // data arrived -> we read a stale cursor rect -> scrolled to wrong
-        // position -> next frame the real content appeared -> jitter.
-        // onRenderComplete fires after _doRender, so the DOM is current.
+    // Netcatty: one event → ≤1 scroll. Paste may use short settle; plain input single-shot.
+    if (paste) {
+        applyPolicyScrollAfterPaste(`${source}:paste`);
+        scheduleTerminalBottomFollow(`${source}:sent-visible`, { force: true, phases: scrollSettlePhases('paste') });
+    } else if (!mobileImeComposing) {
         let done = false;
-        const finish = () => { if (done) return; done = true; ensureMobileStableCursorVisible(`${source}:sent-visible`); };
-        if (term && typeof term.onRenderComplete === "function") {
+        const finish = () => {
+            if (done) return;
+            done = true;
+            applyPolicyScrollAfterUserInput(payload, `${source}:sent-visible`);
+        };
+        if (term && typeof term.onRenderComplete === 'function') {
             const unsub = term.onRenderComplete(() => { unsub(); finish(); });
-            window.setTimeout(finish, 120); // fallback if render never fires
+            window.setTimeout(finish, 100);
         } else {
-            window.setTimeout(finish, 32);
+            requestAnimationFrame(finish);
         }
     }
     return true;
@@ -7660,15 +7819,24 @@ function sendMobileStableControl(seq = '', source = 'mobile-ime-control') {
     cancelMobileStableScrollRestore(`${source}:control`);
     clearMobileTerminalHistoryLock(`${source}:control`);
     sendData(payload, { source, forceFollow: false, applyModifiers: false });
-    if (isEnterLike) scheduleTerminalBottomFollow(`${source}:enter-visible`, { force: true, phases: [40, 120, 240] });
-    else requestAnimationFrame(() => ensureMobileStableCursorVisible(`${source}:control-visible`));
+    if (isEnterLike) {
+        // Enter: allow key-press style follow once (policy treats \r as non-printable;
+        // force a single ifNeeded so new prompt stays visible).
+        clearMobileTerminalHistoryLock(`${source}:enter`);
+        setTerminalAutoFollow(true, `${source}:enter`);
+        scrollTerminalToBottomIfNeeded(getWTermScrollTarget());
+        scheduleTerminalBottomFollow(`${source}:enter-visible`, { force: true, phases: scrollSettlePhases('enter') });
+    } else {
+        // Arrows/backspace etc.: default scrollOnKeyPress=false → no scroll.
+        applyPolicyScrollAfterUserInput(payload, `${source}:control-visible`);
+    }
     return true;
 }
 
 function restoreMobileStableScrollTop(previousTop = 0, reason = 'restore-scroll') {
     if (!isMobileStableInputMode() || !Number.isFinite(previousTop)) return;
     if (terminalAutoFollowEnabled || mobileStableLastBottomIntent || isMobileStableAtVisualBottom()) {
-        scheduleTerminalBottomFollow(`${reason}:restore-as-bottom`, { force: true, phases: [0, 80, 180] });
+        scheduleTerminalBottomFollow(`${reason}:restore-as-bottom`, { force: true, phases: scrollSettlePhases('input') });
         return;
     }
     const target = Math.max(0, previousTop);
@@ -7722,8 +7890,8 @@ function focusMobileStableImeProxy(reason = 'mobile-ime-focus') {
     // Focus/keyboard open alone must not move history. If the terminal was following,
     // keep following the current visual bottom instead of restoring a stale pre-fullscreen top.
     if (mobileStableLastBottomIntent) {
-        ensureMobileStableCursorVisible(`${reason}:focus-visible`);
-        scheduleTerminalBottomFollow(`${reason}:focus-bottom`, { force: true, phases: [120, 260, 520] });
+        // Focus/open keyboard is layout — single policy ifNeeded, no multi-phase chase.
+        scrollTerminalToBottomIfNeeded(getWTermScrollTarget());
     }
     else restoreMobileStableScrollTop(previousTop, reason);
     return true;
@@ -7843,6 +8011,7 @@ function setupMobileStableImeProxy() {
     proxy.addEventListener('focus', () => {
         mobileTerminalSelectionMode = false;
         document.documentElement.classList.remove('terminal-selection-mode');
+        setWTermImeActive(true, 'ime-proxy-focus');
         // Only treat focus as intentional open if controller already desires open
         // or a gesture just requested it. Bare focus must not flip intent.
         if (sshSoftKeyboard?.desiredOpen?.() || mobileKeyboardUserControlled) {
@@ -7858,6 +8027,11 @@ function setupMobileStableImeProxy() {
         [60, 160, 320, 560].forEach((delay) => window.setTimeout(updateViewportInsets, delay));
     });
     proxy.addEventListener('blur', () => {
+        // Keep solid cursor briefly while system IME animates closed; clear if
+        // focus did not return to proxy.
+        window.setTimeout(() => {
+            if (document.activeElement !== mobileImeProxy) setWTermImeActive(false, 'ime-proxy-blur');
+        }, 200);
         markKeyboardFocusInactive();
         sshSoftKeyboard?.onProxyBlur?.('ime-proxy-blur');
         updateMobileKeyboardButtonUi();
@@ -7868,9 +8042,16 @@ function setupMobileStableImeProxy() {
             }, delay);
         });
     });
-    proxy.addEventListener('compositionstart', () => { mobileImeComposing = true; });
+    proxy.addEventListener('compositionstart', () => {
+        mobileImeComposing = true;
+        // Netcatty S5: freeze buffer scroll during IME composition.
+        cancelTerminalBottomFollow('compositionstart');
+        cancelMobileStableScrollRestore('compositionstart');
+        mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 4000);
+    });
     proxy.addEventListener('compositionend', (e) => {
         mobileImeComposing = false;
+        mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 120);
         const text = e.data || proxy.value || '';
         if (text) sendMobileStableImeText(text, 'mobile-ime-composition');
         proxy.value = '';
@@ -8365,7 +8546,9 @@ function ensureSshSoftKeyboard() {
         },
         getViewportMetrics: () => getViewportKeyboardMetrics(),
         isSelectionMode: () => !!(mobileTerminalSelectionMode || hasLiveTerminalSelection?.()),
-        isGestureSuppressed: () => !!(terminalTouchMoved || Date.now() < (mobileStableSuppressScrollUntil || 0)),
+        // Only suppress keyboard open for actual pan/selection — NOT while typing
+        // (mobileStableSuppressScrollUntil is a scroll freeze, not a gesture lock).
+        isGestureSuppressed: () => !!(terminalTouchMoved || mobileTerminalSelectionMode || hasLiveTerminalSelection?.()),
         applyInset: (inset, open, reason, meta = {}) => {
             const layoutFrozen = !!meta.layoutFrozen
                 || meta.liftMode === SoftKeyboardLiftMode.NONE
@@ -8407,13 +8590,17 @@ function ensureSshSoftKeyboard() {
         },
         onOpenCommitted: (reason) => {
             logTerminalLayoutDiagnostics?.('ssh-soft-keyboard:open-committed', { reason, liftMode: sshSoftKeyboard?.getLiftMode?.() });
+            setWTermImeActive(true, `${reason}:open-committed`);
+            // Keyboard open is layout — do not multi-phase chase scroll (V9).
+            // Only correct if cursor is actually covered (single policy ifNeeded).
             if (mobileStableLastBottomIntent || terminalAutoFollowEnabled) {
-                ensureMobileStableCursorVisible(`${reason}:open-visible`);
+                scrollTerminalToBottomIfNeeded(getWTermScrollTarget());
             }
             updateMobileKeyboardButtonUi();
         },
         onCloseCommitted: (reason) => {
             logTerminalLayoutDiagnostics?.('ssh-soft-keyboard:close-committed', { reason });
+            setWTermImeActive(false, `${reason}:close-committed`);
             // Clear keyboard-open NOW so fixed positioning reverts to static.
             // Do NOT wait for assertKeyboardLayoutSettled delay.
             document.documentElement.classList.remove('keyboard-open');
@@ -9081,11 +9268,18 @@ function patchWTermScrollBehavior() {
             const wasAtBottom = isMobileStableInputMode()
                 ? isMobileStableAtVisualBottom()
                 : (originalIsScrolledToBottom ? originalIsScrolledToBottom() : isTerminalAtBottom());
-            const shouldFollow = !plainEchoSuppressed && !blockedByHistory && (terminalAutoFollowEnabled || wasAtBottom);
-            term._zephyrShouldFollowAfterRender = shouldFollow;
+            // Netcatty: output does not app-layer scroll by default. Keep WTerm's
+            // internal stick-to-bottom only when already following / at bottom.
+            const policyOutput = shouldScrollOnTerminalOutput(getTerminalScrollPolicySettings());
+            const shouldFollow = !plainEchoSuppressed && !blockedByHistory
+                && (policyOutput || terminalAutoFollowEnabled || wasAtBottom);
+            term._zephyrShouldFollowAfterRender = shouldFollow && wasAtBottom;
             const result = originalWrite(data);
-            if (shouldFollow) scheduleTerminalBottomFollow('write-follow', { force: true });
-            else scheduleTerminalScrollbarUpdate();
+            if (policyOutput && !blockedByHistory) {
+                scrollTerminalToBottomAfterOutputIfEnabled(getWTermScrollTarget(), getTerminalScrollPolicySettings());
+            }
+            // Never schedule multi-phase write-follow — WTerm render handles stick.
+            scheduleTerminalScrollbarUpdate();
             return result;
         };
     }
@@ -9120,12 +9314,9 @@ function patchWTermScrollBehavior() {
             const echoSuppressed = isMobileStableInputMode() && Date.now() < mobileStableEchoSuppressUntil;
             const shouldFollow = !!term._zephyrShouldFollowAfterRender || (terminalAutoFollowEnabled && !echoSuppressed);
             const previousWTermShouldScroll = term._shouldScrollToBottom;
-            // @wterm/dom _doRender() has an internal branch that writes scrollTop = 0
-            // when it believes there is no scrollback and _shouldScrollToBottom is false.
-            // On mobile stable input this can flash the top content for one frame, then
-            // our bottom-follow restores it. Keep WTerm in its own scroll-to-bottom path
-            // for frames where our state machine says we are following.
-            if (isMobileStableInputMode() && shouldFollow && !echoSuppressed) {
+            // Let WTerm's own stick-to-bottom run once inside _doRender. Do NOT
+            // schedule outer multi-phase follow afterward (Netcatty S6).
+            if (shouldFollow && !echoSuppressed) {
                 term._shouldScrollToBottom = true;
             }
             try {
@@ -9134,8 +9325,7 @@ function patchWTermScrollBehavior() {
                 term._shouldScrollToBottom = previousWTermShouldScroll;
                 term._zephyrRenderingDepth = Math.max(0, (term._zephyrRenderingDepth || 1) - 1);
                 term._zephyrShouldFollowAfterRender = false;
-                if (shouldFollow) scheduleTerminalBottomFollow('render-follow', { force: true, phases: [0, 32, 90, 180] });
-                else scheduleTerminalScrollbarUpdate();
+                scheduleTerminalScrollbarUpdate();
                 updateTerminalWebLinks();
             }
         };
@@ -9144,11 +9334,10 @@ function patchWTermScrollBehavior() {
     if (originalScheduleRender) {
         term._scheduleRender = () => {
             originalScheduleRender();
-            requestAnimationFrame(() => requestAnimationFrame(() => {
-                if (terminalAutoFollowEnabled && !(isMobileStableInputMode() && Date.now() < mobileStableEchoSuppressUntil)) scheduleTerminalBottomFollow('scheduled-render-follow', { force: true, phases: [0, 80, 180] });
-                else scheduleTerminalScrollbarUpdate();
+            requestAnimationFrame(() => {
+                scheduleTerminalScrollbarUpdate();
                 updateTerminalWebLinks();
-            }));
+            });
         };
     }
 
@@ -9228,15 +9417,20 @@ function writeTerminalData(data = '') {
     if (plainEcho) mobileStableEchoSuppressUntil = Date.now() + 180;
     const historyLocked = isMobileTerminalAutoFollowLocked() || isTerminalUserReadingHistory() || mobileTerminalSelectionMode || hasLiveTerminalSelection();
     const wasAtBottom = !historyLocked && Boolean(term._isScrolledToBottom ? term._isScrolledToBottom() : isTerminalAtBottom());
-    const shouldFollow = !plainEcho && !historyLocked && (terminalAutoFollowEnabled || wasAtBottom);
-    logTerminalScrollDiagnostics('terminal-data:before-write-xterm-follow', {
+    // Netcatty S3: app-layer output follow default OFF. WTerm sticks if already at bottom.
+    const policyOutput = shouldScrollOnTerminalOutput(getTerminalScrollPolicySettings());
+    logTerminalScrollDiagnostics('terminal-data:before-write-policy', {
         length: String(data).length,
         wasAtBottom,
-        shouldFollow,
+        policyOutput,
+        historyLocked,
+        plainEcho,
     });
     term.write(data);
-    if (shouldFollow) scheduleTerminalBottomFollow('terminal-data', { force: true });
-    else requestAnimationFrame(scheduleTerminalScrollbarUpdate);
+    if (policyOutput && !historyLocked && !plainEcho) {
+        scrollTerminalToBottomAfterOutputIfEnabled(getWTermScrollTarget(), getTerminalScrollPolicySettings());
+    }
+    requestAnimationFrame(scheduleTerminalScrollbarUpdate);
 }
 
 function hideInfoModal() {
@@ -9884,7 +10078,7 @@ function sendCommand() {
             mobileTerminalAutoFollowLockUntil = 0;
             mobileTerminalAutoFollowLockReason = '';
             setTerminalAutoFollow(true, 'command-box-send:before-send');
-            scheduleTerminalBottomFollow('command-box-send:before-send', { force: true, phases: [0, 80, 180] });
+            scheduleTerminalBottomFollow('command-box-send:before-send', { force: true, phases: scrollSettlePhases('enter') });
         }
         sendData(text + '\r', { normalizeNewlines: true, source: 'command-box-send', forceFollow: isMobileStableInputMode() });
     }
@@ -10306,13 +10500,17 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
         }
         if (isMobileStableInputMode() && !mobileTerminalSelectionMode && !hasLiveTerminalSelection()) {
             const now = performance.now();
-            if (now - mobileStableLastFocusGestureAt > 260) {
+            ensureSshSoftKeyboard();
+            const alreadyOpen = !!(sshSoftKeyboard?.desiredOpen?.() || sshSoftKeyboard?.physicalOpen?.() || mobileKeyboardOpen);
+            // Always retain if already open. If closed, open on gesture — only
+            // throttle duplicate open attempts (not retain) to avoid focus thrash.
+            if (alreadyOpen || now - mobileStableLastFocusGestureAt > 120) {
                 mobileStableLastFocusGestureAt = now;
                 // Intent-driven: body tap opens or retains keyboard. Never dismisses.
-                // Dismiss only via keyboard button / system back / parent reset.
-                ensureSshSoftKeyboard();
+                // Focus proxy MUST stay in the user-gesture stack (no delay).
                 if (sshSoftKeyboard) {
                     sshSoftKeyboard.handleTerminalTap('terminal-touch-immediate');
+                    setWTermImeActive(true, 'terminal-touch-immediate');
                     mobileKeyboardUserControlled = sshSoftKeyboard.desiredOpen();
                     keyboardFocusLikely = sshSoftKeyboard.desiredOpen();
                 } else {
@@ -10330,14 +10528,15 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
                 return;
             }
             if (isMobileStableInputMode()) {
-                // Delayed path only retains / opens if the immediate path didn't run
-                // and user didn't start scrolling. Never dismisses here.
+                // Delayed path: only retry open if immediate path failed (still closed).
                 ensureSshSoftKeyboard();
                 if (sshSoftKeyboard) {
                     if (!sshSoftKeyboard.desiredOpen() && !sshSoftKeyboard.physicalOpen()) {
                         sshSoftKeyboard.handleTerminalTap('terminal-touch');
+                        setWTermImeActive(true, 'terminal-touch-retry');
                     } else {
                         sshSoftKeyboard.retainForChrome('terminal-touch-retain');
+                        setWTermImeActive(true, 'terminal-touch-retain');
                     }
                     mobileKeyboardUserControlled = sshSoftKeyboard.desiredOpen();
                     keyboardFocusLikely = sshSoftKeyboard.desiredOpen();

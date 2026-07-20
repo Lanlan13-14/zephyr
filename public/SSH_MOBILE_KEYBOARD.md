@@ -60,7 +60,14 @@ parent `keyboard-metrics` 字段：`liftMode`, `inputSource` (`cmd` | `terminal-
 
 IME 仍走隐藏 `#mobileTerminalImeProxy` textarea。WTerm grid 在键盘开合时冻结，不 resize 行列。
 
-cache-bust: `20260720-ssh-kb-lift7`
+cache-bust: `20260721-wterm-scroll1`
+
+## Scroll coupling (2026-07-21)
+
+Buffer auto-scroll is owned by `terminal-scroll-policy.js` (Netcatty-aligned):
+at-bottom short-circuit, printable-input follow, **output follow OFF by default**,
+composition freeze, ≤1 scroll API call per event. See
+`FREEZE/WTERM_MOBILE_VIEWPORT_CONTRACT.md`.
 
 ## 实现注意（灰屏 / 自收回归）
 

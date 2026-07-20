@@ -5325,7 +5325,11 @@ app.get('/api/sftp/download/:token', requireAuth, async (req, res) => {
 app.use('/vendor/viewerjs', express.static(path.join(__dirname, 'node_modules', 'viewerjs', 'dist')));
 app.use('/vendor/novnc', express.static(path.join(__dirname, 'node_modules', '@novnc', 'novnc')));
 app.get('/vendor/@wterm/dom/terminal.css', (req, res) => {
-    res.type('text/css').sendFile(path.join(__dirname, 'node_modules', '@wterm', 'dom', 'src', 'terminal.css'));
+    // Prefer vendored fork CSS (ime-active cursor, etc.). Fall back to node_modules stock.
+    const forkCss = path.join(__dirname, 'public', 'vendor', 'wterm-fork', 'terminal.css');
+    const stockCss = path.join(__dirname, 'node_modules', '@wterm', 'dom', 'src', 'terminal.css');
+    const file = fs.existsSync(forkCss) ? forkCss : stockCss;
+    res.type('text/css').sendFile(file);
 });
 app.use('/vendor/@wterm', express.static(path.join(__dirname, 'node_modules', '@wterm')));
 function sendNoStorePage(res, file) {
