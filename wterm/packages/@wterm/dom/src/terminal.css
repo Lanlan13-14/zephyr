@@ -61,6 +61,17 @@
   display: inline-block;
   height: var(--term-row-height);
   vertical-align: top;
+  /* Keep 1 cell = 1 glyph by default. Ligatures would collapse widths and
+     desync the cursor/selection grid. */
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "clig" 0, "calt" 0, "dlig" 0;
+}
+
+/* Opt-in ligatures: only within a same-style run span. Cross-run text still
+   cannot ligate because each span is an independent inline-block. */
+.wterm.allow-ligatures .term-row > span:not(.term-wide):not(.term-block) {
+  font-variant-ligatures: common-ligatures contextual;
+  font-feature-settings: "liga" 1, "clig" 1, "calt" 1;
 }
 
 .term-wide {

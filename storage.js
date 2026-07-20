@@ -197,6 +197,7 @@ function defaultSettings(legacySettings = {}) {
             minimizedKeepAlive: 0,
             smartbarOrder: 'old-first',
             shortcutPlatform: 'auto',
+            allowLigatures: false,
         },
         ai: {
             enabled: false,

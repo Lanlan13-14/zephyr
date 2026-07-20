@@ -446,6 +446,11 @@ function scheduleTerminalLayoutStabilize(reason = 'layout-stabilize', options = 
         });
     }, 24);
 }
+function broadcastTerminalSettings(terminal = {}) {
+    $$('#terminalWorkspace iframe.terminal-frame').forEach((frame) => {
+        try { frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'terminal-settings', terminal }, '*'); } catch (_) {}
+    });
+}
 function broadcastThemeToTerminals(theme) {
     const appearance = getAppearance();
     $$('#terminalWorkspace iframe.terminal-frame').forEach((frame) => frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'theme-change', theme, appearance }, '*'));
@@ -6689,6 +6694,7 @@ async function loadSettings() {
     $('#captchaEnabled').checked = !!cap.enabled; $('#captchaProvider').value = cap.provider || 'turnstile'; $('#captchaSiteKey').value = cap.siteKey || cap.tencentCaptchaAppId || cap.aliyunCaptchaId || cap.aliyunSceneId || ''; $('#captchaSecretKey').value = cap.secretKey || cap.tencentAppSecretKey || cap.aliyunAccessKeySecret || '';
     $('#mailEnabled').checked = !!mail.enabled; $('#mailHost').value = mail.host || ''; $('#mailPort').value = mail.port || 465; $('#mailSecure').checked = mail.secure !== false; $('#mailUser').value = mail.user || ''; $('#mailPass').value = mail.pass || ''; $('#mailFrom').value = mail.from || ''; $('#mailAdminEmail').value = mail.adminEmail || ''; $('#notifyLoginSuccess').checked = mail.notifyLoginSuccess !== false; $('#notifyLoginFailure').checked = mail.notifyLoginFailure !== false; $('#geoLookupEnabled').checked = mail.geoLookupEnabled !== false;
     $('#terminalMaxWindows').value = String(getConfiguredTerminalMaxWindows());
+    if ($('#terminalAllowLigatures')) $('#terminalAllowLigatures').checked = !!(settings?.terminal?.allowLigatures);
     $('#terminalMinimizedKeepAlive').value = String(getConfiguredMinimizedKeepAlive());
     $('#terminalSmartbarOrder').value = getTerminalSmartbarOrder();
     $('#terminalShortcutPlatform').value = getTerminalShortcutPlatform();
@@ -6822,11 +6828,14 @@ async function saveTerminalLayout(e) {
     localStorage.setItem('zephyr-terminal-minimized-keepalive', String(minimizedKeepAlive));
     localStorage.setItem('zephyr-terminal-smartbar-order', smartbarOrder);
     localStorage.setItem('zephyr-shortcut-platform', shortcutPlatform);
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ terminal: { ...(settings.terminal || {}), maxWindows, minimizedKeepAlive, smartbarOrder, shortcutPlatform } }) });
+    const allowLigatures = !!$('#terminalAllowLigatures')?.checked;
+    localStorage.setItem('zephyr-terminal-allow-ligatures', allowLigatures ? '1' : '0');
+    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ terminal: { ...(settings.terminal || {}), maxWindows, minimizedKeepAlive, smartbarOrder, shortcutPlatform, allowLigatures } }) });
     enforceTerminalWorkspaceLimit(activeTerminalTab);
     renderTerminalTabs();
     const keepAliveText = minimizedKeepAlive === -1 ? '最小化无限保活' : `最小化保活 ${minimizedKeepAlive} 个`;
     toast(`终端布局已保存：最多 ${maxWindows} 窗，${keepAliveText}`);
+    broadcastTerminalSettings({ allowLigatures });
 }
 
 const SNIPPET_STORAGE_KEY = 'zephyr-ssh-snippets';

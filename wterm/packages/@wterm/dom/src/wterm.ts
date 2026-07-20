@@ -36,6 +36,11 @@ export interface WTermOptions {
   wasmUrl?: string;
   autoResize?: boolean;
   cursorBlink?: boolean;
+  /**
+   * Enable font ligatures within same-style text runs.
+   * Default false: monospaced terminals usually keep 1:1 cell mapping.
+   */
+  allowLigatures?: boolean;
   debug?: boolean;
   onData?: (data: string) => void;
   onTitle?: (title: string) => void;
@@ -131,6 +136,7 @@ export class WTerm {
     this.element.appendChild(this._container);
     this.element.classList.add("wterm");
     if (options.cursorBlink) this.element.classList.add("cursor-blink");
+    this.setLigatures(options.allowLigatures === true);
 
     this._onClickFocus = () => {
       const sel = window.getSelection();
@@ -568,6 +574,15 @@ export class WTerm {
       }
     });
     this.resizeObserver.observe(this.element);
+  }
+
+  /** Enable/disable font ligatures for same-style runs. */
+  setLigatures(enabled: boolean): void {
+    this.element.classList.toggle("allow-ligatures", !!enabled);
+  }
+
+  getLigatures(): boolean {
+    return this.element.classList.contains("allow-ligatures");
   }
 
   destroy(): void {

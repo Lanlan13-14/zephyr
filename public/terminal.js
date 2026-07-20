@@ -320,6 +320,21 @@ let terminalScrollCleanup = null;
 let terminalResizeCleanup = null;
 let suppressWTermResizeEvent = false;
 let terminalFontSize = 14;
+let terminalAllowLigatures = localStorage.getItem('zephyr-terminal-allow-ligatures') === '1';
+function getTerminalAllowLigatures() {
+    return !!terminalAllowLigatures;
+}
+function applyTerminalLigatures(enabled, { persist = true } = {}) {
+    terminalAllowLigatures = !!enabled;
+    try { term?.setLigatures?.(terminalAllowLigatures); } catch (_) {}
+    try {
+        if (term?.element?.classList) term.element.classList.toggle('allow-ligatures', terminalAllowLigatures);
+        document.documentElement.classList.toggle('wterm-allow-ligatures', terminalAllowLigatures);
+        wtermWrapper?.classList?.toggle('allow-ligatures', terminalAllowLigatures);
+    } catch (_) {}
+    if (persist) localStorage.setItem('zephyr-terminal-allow-ligatures', terminalAllowLigatures ? '1' : '0');
+}
+
 // Mobile devices get a larger default for readability
 const TERMINAL_FONT_MOBILE_DEFAULT = 16;
 let mobileKeyboardOpen = false;
@@ -1086,6 +1101,9 @@ window.addEventListener('message', (e) => {
         applyWtermTheme(getPreferredWtermTheme());
         if (!hasTerminalThemeOverride()) applyTheme(e.data.theme);
         requestStableTerminalLayout('parent-theme-change', { includeResize: false });
+    }
+    if ((e.data.type === 'terminal-settings' || e.data.terminal) && e.data.terminal && Object.prototype.hasOwnProperty.call(e.data.terminal, 'allowLigatures')) {
+        applyTerminalLigatures(!!e.data.terminal.allowLigatures);
     }
     if (e.data.type === 'focus-terminal') {
         requestStableTerminalLayout('parent-focus-terminal', { includeResize: true, focus: true });
@@ -3581,8 +3599,13 @@ async function loadTerminalSettings() {
         terminalShortcutPlatform = data?.terminal?.shortcutPlatform || localStorage.getItem('zephyr-shortcut-platform') || 'auto';
         terminalAppearance = data?.appearance || {};
         localStorage.setItem('zephyr-shortcut-platform', terminalShortcutPlatform);
+        if (Object.prototype.hasOwnProperty.call(data?.terminal || {}, 'allowLigatures')) {
+            terminalAllowLigatures = !!data.terminal.allowLigatures;
+            localStorage.setItem('zephyr-terminal-allow-ligatures', terminalAllowLigatures ? '1' : '0');
+        }
         applyTheme(getPreferredTheme());
         applyWtermTheme(getPreferredWtermTheme());
+        applyTerminalLigatures(terminalAllowLigatures, { persist: false });
     } catch (_) {}
     try {
         const personal = await fetch('/api/me/settings', { credentials: 'same-origin', cache: 'no-store' });
@@ -10079,7 +10102,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API (FREEZE plan
         // §3.8/§5). Falls back to the stock package if the fork is absent.
-        const module = await import('/vendor/wterm-fork/index.js?v=20260720-wterm-kitty1');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260720-wterm-liga1');
         WTermClass = module.WTerm;
     } catch {
         try {
@@ -10103,6 +10126,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
             cursorBlink: true,
             theme: getPreferredWtermTheme() === 'light' ? 'light' : 'default',
             fontSize: terminalFontSize,
+            allowLigatures: getTerminalAllowLigatures(),
             onData: (data) => sendData(data, { source: 'wterm-onData' }),
             onClipboard: (request) => { void handleTerminalClipboardRequest(request); },
             onResize: (cols, rows) => {
@@ -10131,6 +10155,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     rememberTerminalFitSnapshot('init-wterm');
     applyWtermTheme(getPreferredWtermTheme());
     applyTerminalFontSize(terminalFontSize, { persist: false });
+    applyTerminalLigatures(terminalAllowLigatures, { persist: false });
     patchWTermScrollBehavior();
     restoreMobileWTermNativeInput();
     if (isMobileStableInputMode()) {
