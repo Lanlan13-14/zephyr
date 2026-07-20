@@ -68,11 +68,15 @@ class WasmBridge {
   getCell(row, col) {
     const offset = this.gridPtr + (row * this.maxCols + col) * this.cellSize;
     const dv = this._dv;
+    const fgRgb = dv.getUint32(offset + 12, true);
+    const bgRgb = dv.getUint32(offset + 16, true);
     return {
       char: dv.getUint32(offset, true),
       fg: dv.getUint16(offset + 4, true),
       bg: dv.getUint16(offset + 6, true),
-      flags: dv.getUint8(offset + 8)
+      flags: dv.getUint8(offset + 8),
+      fgRgb: fgRgb || void 0,
+      bgRgb: bgRgb || void 0
     };
   }
   isDirtyRow(row) {
@@ -126,11 +130,15 @@ class WasmBridge {
     const ptr = this.exports.getScrollbackLine(offset);
     const off = ptr + col * this.cellSize;
     const dv = this._dv;
+    const fgRgb = dv.getUint32(off + 12, true);
+    const bgRgb = dv.getUint32(off + 16, true);
     return {
       char: dv.getUint32(off, true),
       fg: dv.getUint16(off + 4, true),
       bg: dv.getUint16(off + 6, true),
-      flags: dv.getUint8(off + 8)
+      flags: dv.getUint8(off + 8),
+      fgRgb: fgRgb || void 0,
+      bgRgb: bgRgb || void 0
     };
   }
   getScrollbackLineLen(offset) {

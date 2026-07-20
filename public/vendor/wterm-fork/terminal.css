@@ -68,6 +68,36 @@
   overflow: hidden;
 }
 
+/* P1-2: Decoupled cursor overlay. Positioned via CSS custom properties
+   --cursor-row and --cursor-col set by the renderer. This avoids rebuilding
+   row content when the cursor moves. */
+.term-cursor-overlay {
+  position: absolute;
+  top: calc(var(--cursor-row, 0) * var(--term-row-height, 17px));
+  left: calc(var(--cursor-col, 0) * 1ch);
+  width: 1ch;
+  height: var(--term-row-height, 17px);
+  pointer-events: none;
+  z-index: 1;
+  white-space: pre;
+}
+
+.term-cursor-overlay {
+  outline: 1px solid var(--term-cursor);
+  outline-offset: -1px;
+}
+
+.wterm.focused .term-cursor-overlay {
+  background: var(--term-cursor);
+  color: var(--term-bg);
+  outline: none;
+}
+
+.wterm.focused.cursor-blink .term-cursor-overlay {
+  animation: cursor-blink 1s step-end infinite;
+}
+
+/* Legacy inline cursor (for scrollback rows that still use it) */
 .term-cursor {
   outline: 1px solid var(--term-cursor);
   outline-offset: -1px;

@@ -125,6 +125,9 @@ class InputHandler {
   }
   handleKeyDown(e) {
     if (this.composing) return;
+    if (e.altKey && e.ctrlKey && e.key.length === 1 && e.key >= " ") {
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key === "c") {
       const sel = window.getSelection();
       if (sel && sel.toString().length > 0) return;
@@ -185,10 +188,14 @@ class InputHandler {
     }
   }
   keyToSequence(e) {
+    const mods = (e.shiftKey ? 1 : 0) | (e.altKey ? 2 : 0) | (e.ctrlKey ? 4 : 0) | (e.metaKey ? 8 : 0);
     if (e.ctrlKey && !e.altKey && !e.metaKey) {
       if (e.key.length === 1) {
         const code = e.key.toLowerCase().charCodeAt(0);
-        if (code >= 97 && code <= 122) return String.fromCharCode(code - 96);
+        if (code >= 97 && code <= 122) {
+          if (e.shiftKey) return `\x1B[${code - 96 + 64};${mods + 1}u`;
+          return String.fromCharCode(code - 96);
+        }
       }
       if (e.key === "[") return "\x1B";
       if (e.key === "\\") return "";
@@ -196,15 +203,42 @@ class InputHandler {
       if (e.key === "^") return "";
       if (e.key === "_") return "";
     }
-    if (e.key === "Enter" && e.shiftKey) return "\x1B[13;2u";
-    if (e.key === "Tab" && e.shiftKey) return "\x1B[Z";
+    if (e.key === "Enter") {
+      if (mods > 0) return `\x1B[13;${mods + 1}u`;
+      return "\r";
+    }
+    if (e.key === "Tab") {
+      if (e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) return "\x1B[Z";
+      if (mods > 0) return `\x1B[9;${mods + 1}u`;
+      return "	";
+    }
     const fixed = FIXED_KEYS[e.key];
-    if (fixed) return e.altKey ? "\x1B" + fixed : fixed;
+    if (fixed) {
+      if (mods > 0 && !e.altKey) {
+        const code = e.key === "Escape" ? 27 : 0;
+        if (code) return `\x1B[${code};${mods + 1}u`;
+      }
+      return e.altKey ? "\x1B" + fixed : fixed;
+    }
     const bridge = this.getBridge();
     const appMode = bridge && bridge.cursorKeysApp();
     const navMap = appMode ? APP_KEYS : NORMAL_KEYS;
     const nav = navMap[e.key];
-    if (nav) return e.altKey ? "\x1B" + nav : nav;
+    if (nav) {
+      const navCodes = {
+        ArrowUp: 65,
+        ArrowDown: 66,
+        ArrowRight: 67,
+        ArrowLeft: 68,
+        Home: 72,
+        End: 70
+      };
+      const code = navCodes[e.key];
+      if (code && mods > 1) {
+        return `\x1B[${code};${mods + 1}u`;
+      }
+      return e.altKey ? "\x1B" + nav : nav;
+    }
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
       return e.altKey ? "\x1B" + e.key : e.key;
     }

@@ -18,6 +18,10 @@ pub const Cell = extern struct {
     _pad1: u8 = 0,
     _pad2: u8 = 0,
     _pad3: u8 = 0,
+    /// P1-4: Packed 24-bit RGB (0xRRGGBB) for true color. 0 = not set (use fg index).
+    fg_rgb: u32 = 0,
+    /// P1-4: Packed 24-bit RGB (0xRRGGBB) for true color. 0 = not set (use bg index).
+    bg_rgb: u32 = 0,
 
     pub const BYTE_SIZE = @sizeOf(Cell);
 };

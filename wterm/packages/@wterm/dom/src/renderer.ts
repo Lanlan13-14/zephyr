@@ -197,16 +197,43 @@ function getBlockBackground(cp: number, fg: string, bg: string): string {
   }
 }
 
+/** A compact signature of a cell for diffing. Two cells with the same
+ *  signature produce identical visual output, so the renderer can skip them. */
+function cellSignature(
+  char: number,
+  fg: number,
+  bg: number,
+  flags: number,
+  fgRgb?: number,
+  bgRgb?: number,
+): string {
+  // Pack into a string. Using | 0 on flags to keep it short.
+  // When fgRgb/bgRgb are present, include them; otherwise the 16-bit index suffices.
+  if (fgRgb !== undefined || bgRgb !== undefined) {
+    return `${char},${fg},${bg},${flags},${fgRgb ?? -1},${bgRgb ?? -1}`;
+  }
+  return `${char},${fg},${bg},${flags}`;
+}
+
 export class Renderer {
   private container: HTMLElement;
   private rows = 0;
   private cols = 0;
 
   private rowEls: HTMLDivElement[] = [];
+  /** Per-row signature cache for cell-level diffing (P1-2). Each entry is an
+   *  array of cell signatures, or null when the row needs full rebuild. */
+  private rowSignatures: (string[] | null)[] = [];
   private prevCursorRow = -1;
   private prevCursorCol = -1;
   private prevContainerBg = "";
   private prevRowBg: string[] = [];
+
+  /** Decoupled cursor overlay element (P1-2). The cursor is rendered as an
+   *  absolutely-positioned element layered above the row content, so moving
+   *  the cursor never forces a row rebuild. */
+  private cursorEl: HTMLDivElement | null = null;
+  private cursorVisible = false;
 
   private _scrollbackRowEls: HTMLDivElement[] = [];
   private _renderedScrollbackCount = 0;
@@ -220,6 +247,7 @@ export class Renderer {
     this.rows = rows;
     this.container.innerHTML = "";
     this.rowEls = [];
+    this.rowSignatures = [];
     this.prevRowBg = [];
     this._scrollbackRowEls = [];
     this._renderedScrollbackCount = 0;
@@ -230,7 +258,15 @@ export class Renderer {
       rowEl.className = "term-row";
       fragment.appendChild(rowEl);
       this.rowEls.push(rowEl);
+      this.rowSignatures.push(null);
     }
+
+    // Create the cursor overlay (P1-2: decoupled cursor)
+    this.cursorEl = document.createElement("div");
+    this.cursorEl.className = "term-cursor-overlay";
+    this.cursorEl.style.display = "none";
+    fragment.appendChild(this.cursorEl);
+
     this.container.appendChild(fragment);
     this.prevCursorRow = -1;
     this.prevCursorCol = -1;
@@ -247,7 +283,6 @@ export class Renderer {
       bgRgb?: number;
     },
     lineLen: number,
-    cursorCol: number,
     rowIndex: number,
   ): void {
     let html = "";
@@ -258,32 +293,9 @@ export class Renderer {
     const flushRun = (endCol: number) => {
       if (!runText) return;
       const escaped = escapeHTML(runText);
-
-      if (cursorCol >= runStart && cursorCol < endCol) {
-        const offset = cursorCol - runStart;
-        const chars = [...runText];
-        const before = chars.slice(0, offset).join("");
-        const cursorChar = chars[offset] || " ";
-        const after = chars.slice(offset + 1).join("");
-
-        if (before) {
-          html += runStyle
-            ? `<span style="${runStyle}">${escapeHTML(before)}</span>`
-            : `<span>${escapeHTML(before)}</span>`;
-        }
-        html += runStyle
-          ? `<span class="term-cursor" style="${runStyle}">${escapeHTML(cursorChar)}</span>`
-          : `<span class="term-cursor">${escapeHTML(cursorChar)}</span>`;
-        if (after) {
-          html += runStyle
-            ? `<span style="${runStyle}">${escapeHTML(after)}</span>`
-            : `<span>${escapeHTML(after)}</span>`;
-        }
-      } else {
-        html += runStyle
-          ? `<span style="${runStyle}">${escaped}</span>`
-          : `<span>${escaped}</span>`;
-      }
+      html += runStyle
+        ? `<span style="${runStyle}">${escaped}</span>`
+        : `<span>${escaped}</span>`;
     };
 
     for (let col = 0; col < this.cols; col++) {
@@ -301,10 +313,9 @@ export class Renderer {
           cell.fgRgb,
           cell.bgRgb,
         );
-        const cls = col === cursorCol ? "term-block term-cursor" : "term-block";
         const bg = getBlockBackground(cp, colors.fg, colors.bg);
         const dim = cell.flags & FLAG_DIM ? "opacity:0.5;" : "";
-        html += `<span class="${cls}" style="background:${bg};${dim}"></span>`;
+        html += `<span class="term-block" style="background:${bg};${dim}"></span>`;
 
         runStyle = "";
         runText = "";
@@ -362,13 +373,7 @@ export class Renderer {
     rowEl.className = "term-row term-scrollback-row";
     const lineLen = core.getScrollbackLineLen(sbOffset);
 
-    this._buildRowContent(
-      rowEl,
-      (col) => core.getScrollbackCell(sbOffset, col),
-      lineLen,
-      -1,
-      -1,
-    );
+    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1);
     return rowEl;
   }
 
@@ -400,6 +405,40 @@ export class Renderer {
     this._renderedScrollbackCount = scrollbackCount;
   }
 
+  /** Update the decoupled cursor overlay position and visibility (P1-2). */
+  private _updateCursorOverlay(
+    core: TerminalCore,
+    cursor: { row: number; col: number; visible: boolean },
+  ): void {
+    if (!this.cursorEl) return;
+
+    if (!cursor.visible || cursor.row >= this.rows || cursor.col >= this.cols) {
+      this.cursorEl.style.display = "none";
+      this.cursorVisible = false;
+      return;
+    }
+
+    // Read the cell under the cursor to inherit its colors
+    const cell = core.getCell(cursor.row, cursor.col);
+    const style = buildCellStyle(
+      cell.fg,
+      cell.bg,
+      cell.flags,
+      cell.fgRgb,
+      cell.bgRgb,
+    );
+
+    const ch = cell.char >= 32 ? String.fromCodePoint(cell.char) : " ";
+    this.cursorEl.textContent = ch;
+    this.cursorEl.style.cssText = `display:block;${style}`;
+    // Position using CSS custom properties; the CSS rules use these to
+    // translate the overlay to the correct cell.
+    this.cursorEl.style.setProperty("--cursor-row", String(cursor.row));
+    this.cursorEl.style.setProperty("--cursor-col", String(cursor.col));
+
+    this.cursorVisible = true;
+  }
+
   render(core: TerminalCore): void {
     const rows = core.getRows();
     const cols = core.getCols();
@@ -413,26 +452,75 @@ export class Renderer {
     this.syncScrollback(core);
 
     const cursor = core.getCursor();
-    const cursorVisible = cursor.visible;
-
-    const needsCursorUpdate =
+    const cursorMoved =
       cursor.row !== this.prevCursorRow || cursor.col !== this.prevCursorCol;
 
+    // P1-2: cell-level diff. For each dirty row, compare cell signatures
+    // against the cached version. If all cells match, skip the rebuild.
+    // Only rebuild rows where actual content changed.
     for (let r = 0; r < this.rows; r++) {
       const isDirty = resized || core.isDirtyRow(r);
-      const hadCursor = r === this.prevCursorRow && needsCursorUpdate;
-      const hasCursor = r === cursor.row;
 
-      if (isDirty || hadCursor || (hasCursor && needsCursorUpdate)) {
-        const cCol = hasCursor && cursorVisible ? cursor.col : -1;
-        this._buildRowContent(
-          this.rowEls[r],
-          (col) => core.getCell(r, col),
-          this.cols,
-          cCol,
-          r,
+      if (!isDirty) continue;
+
+      // Build the new signature array and compare
+      const oldSigs = this.rowSignatures[r];
+      let allMatch = oldSigs !== null && oldSigs.length === this.cols;
+
+      if (allMatch) {
+        // Quick check: compare signatures cell by cell
+        for (let col = 0; col < this.cols; col++) {
+          const cell = core.getCell(r, col);
+          const sig = cellSignature(
+            cell.char,
+            cell.fg,
+            cell.bg,
+            cell.flags,
+            cell.fgRgb,
+            cell.bgRgb,
+          );
+          if (sig !== oldSigs[col]) {
+            allMatch = false;
+            break;
+          }
+        }
+      }
+
+      if (allMatch) {
+        // No visual change; skip the DOM rebuild entirely
+        continue;
+      }
+
+      // Rebuild the row and cache signatures
+      this._buildRowContent(
+        this.rowEls[r],
+        (col) => core.getCell(r, col),
+        this.cols,
+        r,
+      );
+
+      // Cache signatures for next frame's diff
+      const newSigs: string[] = [];
+      for (let col = 0; col < this.cols; col++) {
+        const cell = core.getCell(r, col);
+        newSigs.push(
+          cellSignature(
+            cell.char,
+            cell.fg,
+            cell.bg,
+            cell.flags,
+            cell.fgRgb,
+            cell.bgRgb,
+          ),
         );
       }
+      this.rowSignatures[r] = newSigs;
+    }
+
+    // P1-2: update cursor overlay independently. Cursor movement no longer
+    // forces row rebuilds.
+    if (cursorMoved || resized || cursor.visible !== this.cursorVisible) {
+      this._updateCursorOverlay(core, cursor);
     }
 
     this.prevCursorRow = cursor.row;

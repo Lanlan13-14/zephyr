@@ -140,6 +140,12 @@ export class InputHandler {
   private handleKeyDown(e: KeyboardEvent): void {
     if (this.composing) return;
 
+    // P1-3: AltGr (AltGraph) produces printable characters on European
+    // keyboards (e.g. AltGr+Q = @ on German layout). Let the browser handle
+    // these so the composed character reaches the terminal via input event.
+    if (e.altKey && e.ctrlKey && e.key.length === 1 && e.key >= " ") {
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key === "c") {
       const sel = window.getSelection();
       if (sel && sel.toString().length > 0) return;
@@ -214,10 +220,21 @@ export class InputHandler {
   }
 
   private keyToSequence(e: KeyboardEvent): string | null {
+    // P1-3: Build a modifier bitmask for CSI-u style encoding.
+    // Bit 1=Shift, 2=Alt, 4=Control, 8=Meta (per Kitty/CSI-u spec).
+    const mods =
+      (e.shiftKey ? 1 : 0) | (e.altKey ? 2 : 0) |
+      (e.ctrlKey ? 4 : 0) | (e.metaKey ? 8 : 0);
+
+    // Ctrl + letter (no Alt/Meta): classic control codes a-z -> 0x01-0x1A
     if (e.ctrlKey && !e.altKey && !e.metaKey) {
       if (e.key.length === 1) {
         const code = e.key.toLowerCase().charCodeAt(0);
-        if (code >= 97 && code <= 122) return String.fromCharCode(code - 96);
+        if (code >= 97 && code <= 122) {
+          // Ctrl+Shift+letter: uppercase variant via CSI-u (code + 64, mods=1)
+          if (e.shiftKey) return `\x1b[${code - 96 + 64};${mods + 1}u`;
+          return String.fromCharCode(code - 96);
+        }
       }
       if (e.key === "[") return "\x1b";
       if (e.key === "\\") return "\x1c";
@@ -226,17 +243,45 @@ export class InputHandler {
       if (e.key === "_") return "\x1f";
     }
 
-    if (e.key === "Enter" && e.shiftKey) return "\x1b[13;2u";
-    if (e.key === "Tab" && e.shiftKey) return "\x1b[Z";
+    // Enter and Tab with modifiers: use CSI-u encoding for modifier combos.
+    // Plain Enter/Tab/Shift+Tab are handled by FIXED_KEYS below.
+    if (e.key === "Enter") {
+      if (mods > 0) return `\x1b[13;${mods + 1}u`;
+      return "\r";
+    }
+    if (e.key === "Tab") {
+      if (e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) return "\x1b[Z";
+      if (mods > 0) return `\x1b[9;${mods + 1}u`;
+      return "\t";
+    }
 
     const fixed = FIXED_KEYS[e.key];
-    if (fixed) return e.altKey ? "\x1b" + fixed : fixed;
+    if (fixed) {
+      // Modifier + function/navigation keys: CSI-u with modifier param
+      if (mods > 0 && !e.altKey) {
+        // Only encode non-Alt modifiers via CSI-u; Alt prefix is traditional
+        const code = e.key === "Escape" ? 27 : 0;
+        if (code) return `\x1b[${code};${mods + 1}u`;
+      }
+      return e.altKey ? "\x1b" + fixed : fixed;
+    }
 
     const bridge = this.getBridge();
     const appMode = bridge && bridge.cursorKeysApp();
     const navMap = appMode ? APP_KEYS : NORMAL_KEYS;
     const nav = navMap[e.key];
-    if (nav) return e.altKey ? "\x1b" + nav : nav;
+    if (nav) {
+      // Navigation keys with Ctrl/Meta: CSI-u encoding
+      const navCodes: Record<string, number> = {
+        ArrowUp: 65, ArrowDown: 66, ArrowRight: 67, ArrowLeft: 68,
+        Home: 72, End: 70,
+      };
+      const code = navCodes[e.key];
+      if (code && mods > 1) {
+        return `\x1b[${code};${mods + 1}u`;
+      }
+      return e.altKey ? "\x1b" + nav : nav;
+    }
 
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
       return e.altKey ? "\x1b" + e.key : e.key;

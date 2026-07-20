@@ -41,10 +41,14 @@ pub const Terminal = struct {
     saved_cursor_col: u16 = 0,
     saved_fg: u16 = cell_mod.DEFAULT_COLOR,
     saved_bg: u16 = cell_mod.DEFAULT_COLOR,
+    saved_fg_rgb: u32 = 0,
+    saved_bg_rgb: u32 = 0,
     saved_flags: u8 = 0,
 
     current_fg: u16 = cell_mod.DEFAULT_COLOR,
     current_bg: u16 = cell_mod.DEFAULT_COLOR,
+    current_fg_rgb: u32 = 0,
+    current_bg_rgb: u32 = 0,
     current_flags: u8 = 0,
 
     scroll_top: u16 = 0,
@@ -62,6 +66,8 @@ pub const Terminal = struct {
     alt_saved_cursor_col: u16 = 0,
     alt_saved_fg: u16 = cell_mod.DEFAULT_COLOR,
     alt_saved_bg: u16 = cell_mod.DEFAULT_COLOR,
+    alt_saved_fg_rgb: u32 = 0,
+    alt_saved_bg_rgb: u32 = 0,
     alt_saved_flags: u8 = 0,
     using_alt_screen: bool = false,
 
@@ -270,7 +276,7 @@ pub const Terminal = struct {
         self.grid.setCell(self.cursor_row, self.cursor_col, Cell{
             .char = @intCast(codepoint),
             .fg = self.current_fg,
-            .bg = self.current_bg,
+            .bg = self.current_bg, .fg_rgb = self.current_fg_rgb, .bg_rgb = self.current_bg_rgb,
             .flags = self.current_flags,
         });
 
@@ -381,6 +387,8 @@ pub const Terminal = struct {
         self.saved_cursor_col = self.cursor_col;
         self.saved_fg = self.current_fg;
         self.saved_bg = self.current_bg;
+        self.saved_fg_rgb = self.current_fg_rgb;
+        self.saved_bg_rgb = self.current_bg_rgb;
         self.saved_flags = self.current_flags;
     }
 
@@ -389,6 +397,8 @@ pub const Terminal = struct {
         self.cursor_col = self.saved_cursor_col;
         self.current_fg = self.saved_fg;
         self.current_bg = self.saved_bg;
+        self.current_fg_rgb = self.saved_fg_rgb;
+        self.current_bg_rgb = self.saved_bg_rgb;
         self.current_flags = self.saved_flags;
         self.wrap_pending = false;
     }
@@ -521,6 +531,8 @@ pub const Terminal = struct {
         self.alt_saved_cursor_col = self.cursor_col;
         self.alt_saved_fg = self.current_fg;
         self.alt_saved_bg = self.current_bg;
+        self.alt_saved_fg_rgb = self.current_fg_rgb;
+        self.alt_saved_bg_rgb = self.current_bg_rgb;
         self.alt_saved_flags = self.current_flags;
     }
 
@@ -529,6 +541,8 @@ pub const Terminal = struct {
         self.cursor_col = self.alt_saved_cursor_col;
         self.current_fg = self.alt_saved_fg;
         self.current_bg = self.alt_saved_bg;
+        self.current_fg_rgb = self.alt_saved_fg_rgb;
+        self.current_bg_rgb = self.alt_saved_bg_rgb;
         self.current_flags = self.alt_saved_flags;
         self.wrap_pending = false;
     }
@@ -799,14 +813,14 @@ pub const Terminal = struct {
                 29 => self.current_flags &= ~cell_mod.FLAG_STRIKETHROUGH,
                 30...37 => self.current_fg = @intCast(p - 30),
                 38 => {
-                    i += self.parseExtendedColor(i, &self.current_fg);
+                    i += self.parseExtendedColor(i, &self.current_fg, &self.current_fg_rgb);
                 },
-                39 => self.current_fg = cell_mod.DEFAULT_COLOR,
+                39 => { self.current_fg = cell_mod.DEFAULT_COLOR; self.current_fg_rgb = 0; },
                 40...47 => self.current_bg = @intCast(p - 40),
                 48 => {
-                    i += self.parseExtendedColor(i, &self.current_bg);
+                    i += self.parseExtendedColor(i, &self.current_bg, &self.current_bg_rgb);
                 },
-                49 => self.current_bg = cell_mod.DEFAULT_COLOR,
+                49 => { self.current_bg = cell_mod.DEFAULT_COLOR; self.current_bg_rgb = 0; },
                 90...97 => self.current_fg = @intCast(p - 90 + 8),
                 100...107 => self.current_bg = @intCast(p - 100 + 8),
                 else => {
@@ -821,21 +835,21 @@ pub const Terminal = struct {
     }
 
     /// Parses 38;5;n (256-color) and 38;2;r;g;b (24-bit color)
-    fn parseExtendedColor(self: *const Terminal, start: u8, color: *u16) u8 {
+    fn parseExtendedColor(self: *Terminal, start: u8, color: *u16, rgb_out: *u32) u8 {
         if (start + 1 >= self.parser.param_count) return 0;
         const kind = self.parser.params[start + 1];
         if (kind == 5 and start + 2 < self.parser.param_count) {
             color.* = self.parser.params[start + 2];
+            rgb_out.* = 0;
             return 2;
         }
         if (kind == 2 and start + 4 < self.parser.param_count) {
             const r = self.parser.params[start + 2];
             const g = self.parser.params[start + 3];
             const b_val = self.parser.params[start + 4];
-            // Pack RGB into u16: use color indices 257+ for RGB
-            // Store as index into a separate RGB table via WASM API
-            // For now, find closest 256-color match
+            const packed_rgb: u32 = (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b_val));
             color.* = rgbTo256(@intCast(r), @intCast(g), @intCast(b_val));
+            rgb_out.* = packed_rgb;
             return 4;
         }
         return 0;
@@ -844,6 +858,8 @@ pub const Terminal = struct {
     fn resetStyle(self: *Terminal) void {
         self.current_fg = cell_mod.DEFAULT_COLOR;
         self.current_bg = cell_mod.DEFAULT_COLOR;
+        self.current_fg_rgb = 0;
+        self.current_bg_rgb = 0;
         self.current_flags = 0;
     }
 
