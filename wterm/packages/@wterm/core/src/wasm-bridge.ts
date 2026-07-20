@@ -30,6 +30,8 @@ interface WasmExports {
   getFocusReporting(): number;
   getReverseScreen(): number;
   getKittyKeyboardFlags(): number;
+  getKeypadApp(): number;
+  getInsertMode(): number;
   getImageCount(): number;
   getImageId(index: number): number;
   getImageX(index: number): number;
@@ -242,6 +244,8 @@ export class WasmBridge implements TerminalCore {
   focusReporting(): boolean { return this.exports.getFocusReporting() !== 0; }
   reverseScreen(): boolean { return this.exports.getReverseScreen() !== 0; }
   kittyKeyboardFlags(): number { return this.exports.getKittyKeyboardFlags(); }
+  keypadApp(): boolean { return this.exports.getKeypadApp() !== 0; }
+  insertMode(): boolean { return this.exports.getInsertMode() !== 0; }
   getImages(): Array<{ id: number; x: number; y: number; width: number; height: number; cols: number; rows: number; pixels: Uint8ClampedArray; stride: number }> {
     const n = this.exports.getImageCount();
     const stride = this.exports.getImageStride();

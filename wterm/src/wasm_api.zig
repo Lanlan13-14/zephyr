@@ -117,6 +117,8 @@ export fn getSyncOutput() u32 {
 export fn getFocusReporting() u32 { return if (terminal.focus_reporting) 1 else 0; }
 export fn getReverseScreen() u32 { return if (terminal.reverse_screen) 1 else 0; }
 export fn getKittyKeyboardFlags() u32 { return terminal.kitty_flags; }
+export fn getKeypadApp() u32 { return if (terminal.keypad_app) 1 else 0; }
+export fn getInsertMode() u32 { return if (terminal.insert_mode) 1 else 0; }
 
 export fn getUsingAltScreen() u32 {
     return if (terminal.using_alt_screen) 1 else 0;

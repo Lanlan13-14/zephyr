@@ -83,6 +83,8 @@ pub const Terminal = struct {
 
     auto_wrap: bool = true,
     origin_mode: bool = false,
+    insert_mode: bool = false,
+    keypad_app: bool = false,
     cursor_keys_app: bool = false,
     bracketed_paste: bool = false,
     /// P2-3: Mouse reporting mode. 0=off, 1=normal(X10), 2=button-event, 3=any-event.
@@ -208,6 +210,8 @@ pub const Terminal = struct {
         self.scroll_bottom = rows;
         self.auto_wrap = true;
         self.origin_mode = false;
+        self.insert_mode = false;
+        self.keypad_app = false;
         self.cursor_keys_app = false;
         self.bracketed_paste = false;
         self.linefeed_mode = false;
@@ -556,6 +560,10 @@ pub const Terminal = struct {
             .link_id = self.current_link_id,
             .wide = if (is_wide) cell_mod.WIDE_LEAD else cell_mod.WIDE_NARROW,
         };
+        if (self.insert_mode) {
+            const width: u16 = if (is_wide) 2 else 1;
+            self.insertBlanks(width);
+        }
         self.grid.setCell(self.cursor_row, self.cursor_col, printed);
         self.last_printed_cell = printed;
         self.has_last_printed = true;
@@ -663,6 +671,8 @@ pub const Terminal = struct {
             'M' => self.reverseIndex(),
             'c' => self.fullReset(),
             'H' => self.setTabStop(),
+            '=' => self.keypad_app = true, // DECKPAM
+            '>' => self.keypad_app = false, // DECKPNM
             else => {},
         }
     }
@@ -777,6 +787,8 @@ pub const Terminal = struct {
             'd' => self.cursorToRow(self.parser.getParam(0, 1)),
             'e' => self.cursorDown(self.parser.getParam(0, 1)),
             'g' => self.clearTabStop(self.parser.getParam(0, 0)),
+            'h' => self.setAnsiMode(true),
+            'l' => self.setAnsiMode(false),
             'm' => self.handleSgr(),
             'n' => self.handleDeviceStatus(),
             'r' => self.setScrollRegion(self.parser.getParam(0, 1), self.parser.getParam(1, self.rows)),
@@ -867,6 +879,19 @@ pub const Terminal = struct {
         self.response_len = len;
     }
 
+    fn setAnsiMode(self: *Terminal, enabled: bool) void {
+        var i: u8 = 0;
+        const count = if (self.parser.param_count == 0) @as(u8, 1) else self.parser.param_count;
+        while (i < count) : (i += 1) {
+            const mode = if (self.parser.param_count == 0) @as(u16, 0) else self.parser.params[i];
+            switch (mode) {
+                4 => self.insert_mode = enabled, // IRM
+                20 => self.linefeed_mode = enabled, // LNM
+                else => {},
+            }
+        }
+    }
+
     fn setPrivateMode(self: *Terminal, enabled: bool) void {
         var i: u8 = 0;
         const count = if (self.parser.param_count == 0) @as(u8, 1) else self.parser.param_count;
@@ -878,7 +903,6 @@ pub const Terminal = struct {
                 5 => self.reverse_screen = enabled,
                 7 => self.auto_wrap = enabled,
                 12 => {}, // cursor blink - handled by renderer
-                20 => self.linefeed_mode = enabled,
                 25 => self.cursor_visible = enabled,
                 47 => self.switchScreen(enabled, false),
                 1047 => self.switchScreen(enabled, false),
@@ -949,6 +973,8 @@ pub const Terminal = struct {
         self.origin_mode = false;
         self.auto_wrap = true;
         self.cursor_keys_app = false;
+        self.insert_mode = false;
+        self.keypad_app = false;
         self.bracketed_paste = false;
         self.scroll_top = 0;
         self.scroll_bottom = self.rows;

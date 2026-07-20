@@ -10102,7 +10102,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API (FREEZE plan
         // §3.8/§5). Falls back to the stock package if the fork is absent.
-        const module = await import('/vendor/wterm-fork/index.js?v=20260720-wterm-gfx1');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260720-wterm-kitty1');
         WTermClass = module.WTerm;
     } catch {
         try {
@@ -10127,6 +10127,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
             theme: getPreferredWtermTheme() === 'light' ? 'light' : 'default',
             fontSize: terminalFontSize,
             allowLigatures: getTerminalAllowLigatures(),
+            renderer: (localStorage.getItem('zephyr-terminal-renderer') === 'canvas' ? 'canvas' : 'dom'),
             onData: (data) => sendData(data, { source: 'wterm-onData' }),
             onClipboard: (request) => { void handleTerminalClipboardRequest(request); },
             onResize: (cols, rows) => {

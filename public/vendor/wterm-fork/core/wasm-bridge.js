@@ -148,6 +148,12 @@ class WasmBridge {
   kittyKeyboardFlags() {
     return this.exports.getKittyKeyboardFlags();
   }
+  keypadApp() {
+    return this.exports.getKeypadApp() !== 0;
+  }
+  insertMode() {
+    return this.exports.getInsertMode() !== 0;
+  }
   getImages() {
     const n = this.exports.getImageCount();
     const stride = this.exports.getImageStride();

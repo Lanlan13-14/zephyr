@@ -1,7 +1,14 @@
 import { WasmBridge, type TerminalCore } from "@wterm/core";
 import { Renderer, resolveQueryColor } from "./renderer.js";
+import { CanvasRenderer } from "./canvas-renderer.js";
 import { InputHandler } from "./input.js";
 import { DebugAdapter } from "./debug.js";
+
+type TermRenderer = {
+  setup(cols: number, rows: number): void;
+  render(core: any): void;
+  invalidateAll(): void;
+};
 
 export function parseOscColor(value: string): string | null {
   const input = value.trim();
@@ -41,6 +48,12 @@ export interface WTermOptions {
    * Default false: monospaced terminals usually keep 1:1 cell mapping.
    */
   allowLigatures?: boolean;
+  /**
+   * Rendering backend.
+   * - "dom" (default): full selection/history/hyperlink support
+   * - "canvas": higher throughput for dense output; limited selection UX
+   */
+  renderer?: "dom" | "canvas";
   debug?: boolean;
   onData?: (data: string) => void;
   onTitle?: (title: string) => void;
@@ -93,7 +106,8 @@ export class WTerm {
   private _coreOption: TerminalCore | undefined;
   private wasmUrl: string | undefined;
   private _debugEnabled: boolean;
-  private renderer: Renderer | null = null;
+  private renderer: TermRenderer | null = null;
+  private _rendererMode: "dom" | "canvas" = "dom";
   private input: InputHandler | null = null;
   private rafId: number | null = null;
   private _renderTimer: ReturnType<typeof setTimeout> | null = null;
@@ -137,6 +151,8 @@ export class WTerm {
     this.element.classList.add("wterm");
     if (options.cursorBlink) this.element.classList.add("cursor-blink");
     this.setLigatures(options.allowLigatures === true);
+    this._rendererMode = options.renderer === "canvas" ? "canvas" : "dom";
+    this.element.classList.toggle("renderer-canvas", this._rendererMode === "canvas");
 
     this._onClickFocus = () => {
       const sel = window.getSelection();
@@ -168,7 +184,9 @@ export class WTerm {
 
       this._setRowHeight();
 
-      this.renderer = new Renderer(this._container);
+      this.renderer = this._rendererMode === "canvas"
+        ? new CanvasRenderer(this._container)
+        : new Renderer(this._container);
       this.renderer.setup(this.cols, this.rows);
 
       this.input = new InputHandler(

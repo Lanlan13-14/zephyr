@@ -5,6 +5,7 @@ export type {
   ViewportFacade,
 } from "./wterm.js";
 export { Renderer } from "./renderer.js";
+export { CanvasRenderer } from "./canvas-renderer.js";
 export { InputHandler } from "./input.js";
 export { DebugAdapter } from "./debug.js";
 export type {

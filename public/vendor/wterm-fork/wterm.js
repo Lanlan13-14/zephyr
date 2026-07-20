@@ -3,6 +3,7 @@ var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { en
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 import { WasmBridge } from "./core/index.js";
 import { Renderer, resolveQueryColor } from "./renderer.js";
+import { CanvasRenderer } from "./canvas-renderer.js";
 import { InputHandler } from "./input.js";
 import { DebugAdapter } from "./debug.js";
 function parseOscColor(value) {
@@ -50,6 +51,7 @@ class WTerm {
     __publicField(this, "wasmUrl");
     __publicField(this, "_debugEnabled");
     __publicField(this, "renderer", null);
+    __publicField(this, "_rendererMode", "dom");
     __publicField(this, "input", null);
     __publicField(this, "rafId", null);
     __publicField(this, "_renderTimer", null);
@@ -87,6 +89,8 @@ class WTerm {
     this.element.classList.add("wterm");
     if (options.cursorBlink) this.element.classList.add("cursor-blink");
     this.setLigatures(options.allowLigatures === true);
+    this._rendererMode = options.renderer === "canvas" ? "canvas" : "dom";
+    this.element.classList.toggle("renderer-canvas", this._rendererMode === "canvas");
     this._onClickFocus = () => {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) this.input?.focus();
@@ -109,7 +113,7 @@ class WTerm {
         globalThis.__wterm = this;
       }
       this._setRowHeight();
-      this.renderer = new Renderer(this._container);
+      this.renderer = this._rendererMode === "canvas" ? new CanvasRenderer(this._container) : new Renderer(this._container);
       this.renderer.setup(this.cols, this.rows);
       this.input = new InputHandler(
         this.element,

@@ -536,6 +536,18 @@ export class InputHandler {
       return e.altKey ? "\x1b" + e.key : e.key;
     }
 
-    return null;
+        // Application keypad (DECKPAM)
+    const keypad = this.getBridge()?.keypadApp?.();
+    if (keypad) {
+      const map: Record<string, string> = {
+        Numpad0: "\x1bOp", Numpad1: "\x1bOq", Numpad2: "\x1bOr", Numpad3: "\x1bOs",
+        Numpad4: "\x1bOt", Numpad5: "\x1bOu", Numpad6: "\x1bOv", Numpad7: "\x1bOw",
+        Numpad8: "\x1bOx", Numpad9: "\x1bOy", NumpadAdd: "\x1bOk", NumpadSubtract: "\x1bOm",
+        NumpadMultiply: "\x1bOj", NumpadDivide: "\x1bOo", NumpadDecimal: "\x1bOn", NumpadEnter: "\x1bOM",
+      };
+      if (map[e.code]) return map[e.code];
+    }
+
+return null;
   }
 }

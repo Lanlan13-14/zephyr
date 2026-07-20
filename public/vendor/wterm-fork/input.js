@@ -539,6 +539,28 @@ class InputHandler {
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
       return e.altKey ? "\x1B" + e.key : e.key;
     }
+    const keypad = this.getBridge()?.keypadApp?.();
+    if (keypad) {
+      const map = {
+        Numpad0: "\x1BOp",
+        Numpad1: "\x1BOq",
+        Numpad2: "\x1BOr",
+        Numpad3: "\x1BOs",
+        Numpad4: "\x1BOt",
+        Numpad5: "\x1BOu",
+        Numpad6: "\x1BOv",
+        Numpad7: "\x1BOw",
+        Numpad8: "\x1BOx",
+        Numpad9: "\x1BOy",
+        NumpadAdd: "\x1BOk",
+        NumpadSubtract: "\x1BOm",
+        NumpadMultiply: "\x1BOj",
+        NumpadDivide: "\x1BOo",
+        NumpadDecimal: "\x1BOn",
+        NumpadEnter: "\x1BOM"
+      };
+      if (map[e.code]) return map[e.code];
+    }
     return null;
   }
 }
