@@ -9,13 +9,19 @@ pub const FLAG_REVERSE: u8 = 0x20;
 pub const FLAG_INVISIBLE: u8 = 0x40;
 pub const FLAG_STRIKETHROUGH: u8 = 0x80;
 
+pub const WIDE_NARROW: u8 = 0;
+pub const WIDE_LEAD: u8 = 1;
+pub const WIDE_CONT: u8 = 2;
+
 /// 12-byte extern struct with C-compatible layout so JS can read directly from WASM memory.
 pub const Cell = extern struct {
     char: u32 = ' ',
     fg: u16 = DEFAULT_COLOR,
     bg: u16 = DEFAULT_COLOR,
     flags: u8 = 0,
-    _pad1: u8 = 0,
+    /// P2-1: Wide character width. 0 = narrow (1 cell), 1 = wide lead (2 cells),
+    /// 2 = wide continuation (placeholder, not rendered).
+    wide: u8 = 0,
     _pad2: u8 = 0,
     _pad3: u8 = 0,
     /// P1-4: Packed 24-bit RGB (0xRRGGBB) for true color. 0 = not set (use fg index).

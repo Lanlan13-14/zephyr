@@ -21,6 +21,10 @@ interface WasmExports {
   getRows(): number;
   getCursorKeysApp(): number;
   getBracketedPaste(): number;
+  getMouseMode(): number;
+  getMouseSGR(): number;
+  getBellPending(): number;
+  clearBell(): void;
   getUsingAltScreen(): number;
   getTitlePtr(): number;
   getTitleLen(): number;
@@ -122,6 +126,7 @@ export class WasmBridge implements TerminalCore {
       fg: dv.getUint16(offset + 4, true),
       bg: dv.getUint16(offset + 6, true),
       flags: dv.getUint8(offset + 8),
+      wide: dv.getUint8(offset + 9),
       fgRgb: fgRgb || undefined,
       bgRgb: bgRgb || undefined,
     };
@@ -155,6 +160,18 @@ export class WasmBridge implements TerminalCore {
   }
   bracketedPaste(): boolean {
     return this.exports.getBracketedPaste() !== 0;
+  }
+  mouseMode(): number {
+    return this.exports.getMouseMode();
+  }
+  mouseSGR(): boolean {
+    return this.exports.getMouseSGR() !== 0;
+  }
+  bellPending(): boolean {
+    return this.exports.getBellPending() !== 0;
+  }
+  clearBell(): void {
+    this.exports.clearBell();
   }
   usingAltScreen(): boolean {
     return this.exports.getUsingAltScreen() !== 0;
@@ -193,6 +210,7 @@ export class WasmBridge implements TerminalCore {
       fg: dv.getUint16(off + 4, true),
       bg: dv.getUint16(off + 6, true),
       flags: dv.getUint8(off + 8),
+      wide: dv.getUint8(off + 9),
       fgRgb: fgRgb || undefined,
       bgRgb: bgRgb || undefined,
     };

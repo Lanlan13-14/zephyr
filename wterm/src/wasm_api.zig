@@ -84,6 +84,24 @@ export fn getBracketedPaste() u32 {
     return if (terminal.bracketed_paste) 1 else 0;
 }
 
+// P2-3: Mouse reporting
+export fn getMouseMode() u32 {
+    return terminal.mouse_mode;
+}
+
+export fn getMouseSGR() u32 {
+    return if (terminal.mouse_sgr) 1 else 0;
+}
+
+// P2-4: Bell
+export fn getBellPending() u32 {
+    return if (terminal.bell_pending) 1 else 0;
+}
+
+export fn clearBell() void {
+    terminal.bell_pending = false;
+}
+
 export fn getUsingAltScreen() u32 {
     return if (terminal.using_alt_screen) 1 else 0;
 }

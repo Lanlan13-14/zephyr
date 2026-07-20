@@ -7,6 +7,8 @@ export interface CellData {
   fgRgb?: number;
   /** Resolved 24-bit background color (0xRRGGBB). Present when the core provides true color. */
   bgRgb?: number;
+  /** P2-1: Wide character width. 0 = narrow, 1 = wide lead (2 cells), 2 = continuation. */
+  wide?: number;
 }
 
 export interface CursorState {
@@ -49,6 +51,10 @@ export interface TerminalCore {
   // -- Modes --
   cursorKeysApp(): boolean;
   bracketedPaste(): boolean;
+  mouseMode(): number;
+  mouseSGR(): boolean;
+  bellPending(): boolean;
+  clearBell(): void;
   usingAltScreen(): boolean;
 
   // -- Side outputs --

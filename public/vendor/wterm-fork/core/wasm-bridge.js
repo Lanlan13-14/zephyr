@@ -75,6 +75,7 @@ class WasmBridge {
       fg: dv.getUint16(offset + 4, true),
       bg: dv.getUint16(offset + 6, true),
       flags: dv.getUint8(offset + 8),
+      wide: dv.getUint8(offset + 9),
       fgRgb: fgRgb || void 0,
       bgRgb: bgRgb || void 0
     };
@@ -103,6 +104,18 @@ class WasmBridge {
   }
   bracketedPaste() {
     return this.exports.getBracketedPaste() !== 0;
+  }
+  mouseMode() {
+    return this.exports.getMouseMode();
+  }
+  mouseSGR() {
+    return this.exports.getMouseSGR() !== 0;
+  }
+  bellPending() {
+    return this.exports.getBellPending() !== 0;
+  }
+  clearBell() {
+    this.exports.clearBell();
   }
   usingAltScreen() {
     return this.exports.getUsingAltScreen() !== 0;
@@ -137,6 +150,7 @@ class WasmBridge {
       fg: dv.getUint16(off + 4, true),
       bg: dv.getUint16(off + 6, true),
       flags: dv.getUint8(off + 8),
+      wide: dv.getUint8(off + 9),
       fgRgb: fgRgb || void 0,
       bgRgb: bgRgb || void 0
     };

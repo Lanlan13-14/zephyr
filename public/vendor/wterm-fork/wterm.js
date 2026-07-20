@@ -35,6 +35,7 @@ class WTerm {
     __publicField(this, "onData");
     __publicField(this, "onTitle");
     __publicField(this, "onResize");
+    __publicField(this, "onBell", null);
     __publicField(this, "_container");
     this.element = element;
     this._coreOption = options.core;
@@ -46,6 +47,7 @@ class WTerm {
     this.onData = options.onData || null;
     this.onTitle = options.onTitle || null;
     this.onResize = options.onResize || null;
+    this.onBell = options.onBell || null;
     this._container = document.createElement("div");
     this._container.className = "term-grid";
     this.element.appendChild(this._container);
@@ -329,6 +331,10 @@ class WTerm {
     const response = this.bridge.getResponse();
     if (response !== null && this.onData) {
       this.onData(response);
+    }
+    if (this.bridge.bellPending()) {
+      this.bridge.clearBell();
+      if (this.onBell) this.onBell();
     }
     this._fireRenderComplete();
   }

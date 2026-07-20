@@ -206,13 +206,14 @@ function cellSignature(
   flags: number,
   fgRgb?: number,
   bgRgb?: number,
+  wide?: number,
 ): string {
   // Pack into a string. Using | 0 on flags to keep it short.
   // When fgRgb/bgRgb are present, include them; otherwise the 16-bit index suffices.
   if (fgRgb !== undefined || bgRgb !== undefined) {
-    return `${char},${fg},${bg},${flags},${fgRgb ?? -1},${bgRgb ?? -1}`;
+    return `${char},${fg},${bg},${flags},${fgRgb ?? -1},${bgRgb ?? -1},${wide ?? 0}`;
   }
-  return `${char},${fg},${bg},${flags}`;
+  return `${char},${fg},${bg},${flags},${wide ?? 0}`;
 }
 
 export class Renderer {
@@ -293,9 +294,13 @@ export class Renderer {
     const flushRun = (endCol: number) => {
       if (!runText) return;
       const escaped = escapeHTML(runText);
-      html += runStyle
-        ? `<span style="${runStyle}">${escaped}</span>`
-        : `<span>${escaped}</span>`;
+      // P2-1: runStyle may include " term-wide" suffix for wide chars
+      const isWide = runStyle.includes(" term-wide");
+      const pureStyle = isWide ? runStyle.replace(" term-wide", "") : runStyle;
+      const cls = isWide ? ' class="term-wide"' : "";
+      html += pureStyle
+        ? `<span${cls} style="${pureStyle}">${escaped}</span>`
+        : (isWide ? `<span${cls}>${escaped}</span>` : `<span>${escaped}</span>`);
     };
 
     for (let col = 0; col < this.cols; col++) {
@@ -321,14 +326,27 @@ export class Renderer {
         runText = "";
         runStart = col + 1;
       } else {
+        // P2-1: Skip wide continuation cells (they are placeholders for the
+        // second cell of a wide character). The lead cell already renders
+        // at double width via a style override.
+        if (inBounds && cell.wide === 2) {
+          flushRun(col);
+          runStyle = "";
+          runText = "";
+          runStart = col + 1;
+          continue;
+        }
         const ch = inBounds && cp >= 32 ? String.fromCodePoint(cp) : " ";
         const style = inBounds
           ? buildCellStyle(cell.fg, cell.bg, cell.flags, cell.fgRgb, cell.bgRgb)
           : "";
+        // P2-1: Wide lead cell gets a width override via a data attribute.
+        // The CSS .term-wide rule sets width: 2ch for these spans.
+        const wideAttr = inBounds && cell.wide === 1 ? " term-wide" : "";
 
-        if (style !== runStyle) {
+        if (style + wideAttr !== runStyle) {
           flushRun(col);
-          runStyle = style;
+          runStyle = style + wideAttr;
           runText = ch;
           runStart = col;
         } else {
@@ -478,6 +496,7 @@ export class Renderer {
             cell.flags,
             cell.fgRgb,
             cell.bgRgb,
+            cell.wide,
           );
           if (sig !== oldSigs[col]) {
             allMatch = false;
@@ -511,6 +530,7 @@ export class Renderer {
             cell.flags,
             cell.fgRgb,
             cell.bgRgb,
+            cell.wide,
           ),
         );
       }

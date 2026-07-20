@@ -161,11 +161,11 @@ function getBlockBackground(cp, fg, bg) {
     }
   }
 }
-function cellSignature(char, fg, bg, flags, fgRgb, bgRgb) {
+function cellSignature(char, fg, bg, flags, fgRgb, bgRgb, wide) {
   if (fgRgb !== void 0 || bgRgb !== void 0) {
-    return `${char},${fg},${bg},${flags},${fgRgb ?? -1},${bgRgb ?? -1}`;
+    return `${char},${fg},${bg},${flags},${fgRgb ?? -1},${bgRgb ?? -1},${wide ?? 0}`;
   }
-  return `${char},${fg},${bg},${flags}`;
+  return `${char},${fg},${bg},${flags},${wide ?? 0}`;
 }
 class Renderer {
   constructor(container) {
@@ -222,7 +222,10 @@ class Renderer {
     const flushRun = (endCol) => {
       if (!runText) return;
       const escaped = escapeHTML(runText);
-      html += runStyle ? `<span style="${runStyle}">${escaped}</span>` : `<span>${escaped}</span>`;
+      const isWide = runStyle.includes(" term-wide");
+      const pureStyle = isWide ? runStyle.replace(" term-wide", "") : runStyle;
+      const cls = isWide ? ' class="term-wide"' : "";
+      html += pureStyle ? `<span${cls} style="${pureStyle}">${escaped}</span>` : isWide ? `<span${cls}>${escaped}</span>` : `<span>${escaped}</span>`;
     };
     for (let col = 0; col < this.cols; col++) {
       const cell = getCell(col);
@@ -244,11 +247,19 @@ class Renderer {
         runText = "";
         runStart = col + 1;
       } else {
+        if (inBounds && cell.wide === 2) {
+          flushRun(col);
+          runStyle = "";
+          runText = "";
+          runStart = col + 1;
+          continue;
+        }
         const ch = inBounds && cp >= 32 ? String.fromCodePoint(cp) : " ";
         const style = inBounds ? buildCellStyle(cell.fg, cell.bg, cell.flags, cell.fgRgb, cell.bgRgb) : "";
-        if (style !== runStyle) {
+        const wideAttr = inBounds && cell.wide === 1 ? " term-wide" : "";
+        if (style + wideAttr !== runStyle) {
           flushRun(col);
-          runStyle = style;
+          runStyle = style + wideAttr;
           runText = ch;
           runStart = col;
         } else {
@@ -359,7 +370,8 @@ class Renderer {
             cell.bg,
             cell.flags,
             cell.fgRgb,
-            cell.bgRgb
+            cell.bgRgb,
+            cell.wide
           );
           if (sig !== oldSigs[col]) {
             allMatch = false;
@@ -386,7 +398,8 @@ class Renderer {
             cell.bg,
             cell.flags,
             cell.fgRgb,
-            cell.bgRgb
+            cell.bgRgb,
+            cell.wide
           )
         );
       }

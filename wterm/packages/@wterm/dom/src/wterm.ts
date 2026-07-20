@@ -18,6 +18,7 @@ export interface WTermOptions {
   onData?: (data: string) => void;
   onTitle?: (title: string) => void;
   onResize?: (cols: number, rows: number) => void;
+  onBell?: () => void;
 }
 
 /** Viewport snapshot returned by {@link WTerm.getViewportState}. */
@@ -82,6 +83,7 @@ export class WTerm {
   onData: ((data: string) => void) | null;
   onTitle: ((title: string) => void) | null;
   onResize: ((cols: number, rows: number) => void) | null;
+  onBell: (() => void) | null = null;
 
   private _container: HTMLDivElement;
 
@@ -97,6 +99,7 @@ export class WTerm {
     this.onData = options.onData || null;
     this.onTitle = options.onTitle || null;
     this.onResize = options.onResize || null;
+    this.onBell = options.onBell || null;
 
     this._container = document.createElement("div");
     this._container.className = "term-grid";
@@ -426,6 +429,11 @@ export class WTerm {
     const response = this.bridge.getResponse();
     if (response !== null && this.onData) {
       this.onData(response);
+    }
+
+    if (this.bridge.bellPending()) {
+      this.bridge.clearBell();
+      if (this.onBell) this.onBell();
     }
 
     // Fire render-complete callbacks (Zephyr fork §3.8.2). This lets

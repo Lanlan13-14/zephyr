@@ -58,6 +58,12 @@ pub const Terminal = struct {
     origin_mode: bool = false,
     cursor_keys_app: bool = false,
     bracketed_paste: bool = false,
+    /// P2-3: Mouse reporting mode. 0=off, 1=normal(X10), 2=button-event, 3=any-event.
+    mouse_mode: u8 = 0,
+    /// P2-3: SGR mouse encoding (DECSET 1006).
+    mouse_sgr: bool = false,
+    /// P2-4: Bell flag - set when BEL (0x07) is received. Cleared by WASM API.
+    bell_pending: bool = false,
     linefeed_mode: bool = false,
 
     // Alternate screen buffer (pointer to avoid doubling struct size)
@@ -151,6 +157,9 @@ pub const Terminal = struct {
         self.alt_saved_bg = cell_mod.DEFAULT_COLOR;
         self.alt_saved_flags = 0;
         self.using_alt_screen = false;
+        self.mouse_mode = 0;
+        self.mouse_sgr = false;
+        self.bell_pending = false;
         self.title_len = 0;
         self.title_changed = false;
         self.response_len = 0;
@@ -266,6 +275,28 @@ pub const Terminal = struct {
 
     // -- Print --
 
+    fn isWideCodepoint(cp: u21) bool {
+        // East Asian Wide + Fullwidth + Emoji ranges (subset of Unicode EAW).
+        // Covers CJK, CJK Ext, Hiragana, Katakana, Hangul, CJK punctuation,
+        // fullwidth forms, and common emoji width ranges.
+        if (cp < 0x1100) return false;
+        if (cp <= 0x115F) return true; // Hangul Jamo
+        if (cp >= 0x2E80 and cp <= 0x303E) return true; // CJK radicals, Kangxi
+        if (cp >= 0x3041 and cp <= 0x33FF) return true; // Hiragana, Katakana, CJK sym
+        if (cp >= 0x3400 and cp <= 0x4DBF) return true; // CJK Ext A
+        if (cp >= 0x4E00 and cp <= 0x9FFF) return true; // CJK Unified
+        if (cp >= 0xA000 and cp <= 0xA4CF) return true; // Yi
+        if (cp >= 0xAC00 and cp <= 0xD7A3) return true; // Hangul Syllables
+        if (cp >= 0xF900 and cp <= 0xFAFF) return true; // CJK Compatibility
+        if (cp >= 0xFE30 and cp <= 0xFE4F) return true; // CJK Compatibility Forms
+        if (cp >= 0xFF00 and cp <= 0xFF60) return true; // Fullwidth Forms
+        if (cp >= 0xFFE0 and cp <= 0xFFE6) return true; // Fullwidth Signs
+        if (cp >= 0x1F300 and cp <= 0x1F64F) return true; // Emoji
+        if (cp >= 0x1F900 and cp <= 0x1F9FF) return true; // Supplemental Symbols
+        if (cp >= 0x20000 and cp <= 0x3FFFD) return true; // CJK Ext B-F
+        return false;
+    }
+
     fn printChar(self: *Terminal, codepoint: u21) void {
         if (self.wrap_pending) {
             self.cursor_col = 0;
@@ -273,12 +304,36 @@ pub const Terminal = struct {
             self.wrap_pending = false;
         }
 
+        const is_wide = isWideCodepoint(codepoint);
+
+        // If wide char and not enough room (need 2 cells), wrap to next line
+        if (is_wide and self.cursor_col >= self.cols - 1) {
+            if (self.auto_wrap) {
+                self.cursor_col = 0;
+                self.doLinefeed();
+            }
+        }
+
+        // Write the wide lead cell
         self.grid.setCell(self.cursor_row, self.cursor_col, Cell{
             .char = @intCast(codepoint),
             .fg = self.current_fg,
             .bg = self.current_bg, .fg_rgb = self.current_fg_rgb, .bg_rgb = self.current_bg_rgb,
             .flags = self.current_flags,
+            .wide = if (is_wide) cell_mod.WIDE_LEAD else cell_mod.WIDE_NARROW,
         });
+
+        if (is_wide and self.cursor_col < self.cols - 1) {
+            // Write the continuation cell (placeholder, not rendered)
+            self.cursor_col += 1;
+            self.grid.setCell(self.cursor_row, self.cursor_col, Cell{
+                .char = 0,
+                .fg = self.current_fg,
+                .bg = self.current_bg, .fg_rgb = self.current_fg_rgb, .bg_rgb = self.current_bg_rgb,
+                .flags = self.current_flags,
+                .wide = cell_mod.WIDE_CONT,
+            });
+        }
 
         if (self.cursor_col < self.cols - 1) {
             self.cursor_col += 1;
@@ -291,7 +346,7 @@ pub const Terminal = struct {
 
     fn executeControl(self: *Terminal, byte: u8) void {
         switch (byte) {
-            0x07 => {}, // BEL
+            0x07 => { self.bell_pending = true; }, // BEL (P2-4)
             0x08, 0x7F => self.backspace(),
             0x09 => self.horizontalTab(),
             0x0A, 0x0B, 0x0C => {
@@ -499,6 +554,11 @@ pub const Terminal = struct {
                 },
                 1049 => self.switchScreen(enabled, true),
                 2004 => self.bracketed_paste = enabled,
+                9 => self.mouse_mode = if (enabled) 1 else 0, // X10 mouse
+                1000 => self.mouse_mode = if (enabled) 2 else 0, // normal mouse
+                1002 => self.mouse_mode = if (enabled) 2 else 0, // button-event
+                1003 => self.mouse_mode = if (enabled) 3 else 0, // any-event
+                1006 => self.mouse_sgr = enabled, // SGR encoding
                 else => {},
             }
         }
