@@ -4,16 +4,13 @@
  * Bear/Craft/Apple Notes-inspired layout, SVG chrome, master-detail mobile.
  */
 
+import { renderMarkdown as renderMarkdownFull, escapeHtml as mdEscapeHtml } from './markdown.js?v=20260720-notes-md1';
+
 const NOTES_DEBOUNCE_MS = 800;
 const NOTES_SEARCH_MS = 180;
 
 function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+    return mdEscapeHtml(value);
 }
 
 function prefersReducedMotion() {
@@ -24,30 +21,14 @@ function prefersReducedMotion() {
     }
 }
 
+/** Full GFM render for notes preview (tables, tasks, nested lists, etc.). */
 function safeMarkdown(src) {
-    if (typeof window.renderMarkdown === 'function') {
-        try { return window.renderMarkdown(String(src || '')); } catch {}
+    try {
+        return renderMarkdownFull(String(src || ''));
+    } catch (err) {
+        console.warn('[notes] markdown render failed', err);
+        return `<p>${escapeHtml(src)}</p>`;
     }
-    let text = escapeHtml(src || '');
-    text = text.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${code}</code></pre>`);
-    text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-    text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-    text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-    text = text.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    text = text.replace(/~~([^~]+)~~/g, '<s>$1</s>');
-    text = text.replace(/^\s*[-*] \[ \]\s+(.+)$/gm, '<li class="task"><input type="checkbox" disabled> $1</li>');
-    text = text.replace(/^\s*[-*] \[x\]\s+(.+)$/gim, '<li class="task"><input type="checkbox" checked disabled> $1</li>');
-    text = text.replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>');
-    text = text.replace(/(<li[\s\S]*?<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`);
-    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => {
-        const url = String(href || '').trim();
-        if (!/^(https?:|ssh:|telnet:|jms:|mailto:)/i.test(url)) return label;
-        return `<a href="${escapeHtml(url)}" rel="noopener noreferrer">${label}</a>`;
-    });
-    text = text.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
-    return `<p>${text}</p>`;
 }
 
 function formatRelativeTime(ts) {
@@ -309,6 +290,26 @@ export function createNotesController({
         }
     }
 
+    function refreshPreview() {
+        const preview = $('#notesPreview');
+        if (!preview) return;
+        if (state.mode !== 'preview' && state.mode !== 'split') return;
+        const input = $('#notesContentInput');
+        preview.innerHTML = safeMarkdown(input?.value || '');
+        interceptPreviewLinks(preview);
+        preview.querySelectorAll('a[href^="ssh:"],a[href^="telnet:"],a[href^="jms:"]').forEach((a) => {
+            a.addEventListener('click', (e) => {
+                e.preventDefault();
+                openTransientFromUri?.(a.getAttribute('href'));
+            });
+        });
+    }
+
+    function schedulePreviewRefresh() {
+        window.clearTimeout(schedulePreviewRefresh._timer);
+        schedulePreviewRefresh._timer = window.setTimeout(refreshPreview, 80);
+    }
+
     function setMode(mode) {
         state.mode = mode;
         $$('.notes-mode-btn').forEach((btn) => {
@@ -320,20 +321,7 @@ export function createNotesController({
         if (switcher) switcher.dataset.mode = mode;
         const body = $('#notesBody');
         if (body) body.dataset.mode = mode;
-        const preview = $('#notesPreview');
-        const input = $('#notesContentInput');
-        if (mode === 'preview' || mode === 'split') {
-            if (preview) {
-                preview.innerHTML = safeMarkdown(input?.value || '');
-                interceptPreviewLinks(preview);
-            }
-        }
-        preview?.querySelectorAll?.('a[href^="ssh:"],a[href^="telnet:"],a[href^="jms:"]')?.forEach((a) => {
-            a.addEventListener('click', (e) => {
-                e.preventDefault();
-                openTransientFromUri?.(a.getAttribute('href'));
-            });
-        });
+        refreshPreview();
     }
 
     function setMobileDetail(open) {
@@ -1420,7 +1408,10 @@ export function createNotesController({
         });
 
         ['notesTitleInput', 'notesContentInput'].forEach((id) => {
-            $(`#${id}`)?.addEventListener('input', markDirty);
+            $(`#${id}`)?.addEventListener('input', () => {
+                markDirty();
+                if (id === 'notesContentInput') schedulePreviewRefresh();
+            });
         });
 
         // Meta chips (event delegation)

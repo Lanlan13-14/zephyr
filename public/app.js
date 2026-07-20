@@ -1,4 +1,6 @@
-import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';import { createNotesController } from './notes.js?v=20260720-notes-craft1';
+import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
+import { createNotesController } from './notes.js?v=20260720-notes-md1';
+import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -931,54 +933,31 @@ function codeMimeType(filename = '', lang = '') {
     return 'text/plain;charset=utf-8';
 }
 function renderInlineMarkdown(text = '') {
-    let s = String(text || '');
-    s = s.replace(/!\[([^\]]*)\]\(([^\s)]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (_, alt, url) => `<img class="ai-md-image" src="${escapeAttr(safeHref(url))}" alt="${escapeAttr(alt)}">`);
-    s = s.replace(/\[([^\]]+)\]\(([^\s)]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (_, label, url) => `<a href="${escapeAttr(safeHref(url))}" target="_blank" rel="noopener">${label}</a>`);
-    s = s.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>');
-    return s;
+    return renderInlineMarkdownCore(text);
 }
 function renderCodeBlockHtml(code = '', info = '', enhanced = false) {
     const meta = parseCodeFenceInfo(info);
     const cleanCode = String(code || '').replace(/\n$/, '');
     const escapedCode = escapeHtml(cleanCode);
-    if (!enhanced) return `<pre><code class="language-${escapeAttr(meta.lang)}">${escapedCode}</code></pre>`;
+    if (!enhanced) {
+        const langClass = meta.lang ? ` class="language-${escapeAttr(meta.lang)}"` : '';
+        return `<pre class="md-code"><code${langClass}>${escapedCode}</code></pre>`;
+    }
     const id = `ai-code-${++aiCodeBlockSeq}`;
     aiCodeBlockStore.set(id, { code: cleanCode, lang: meta.lang, filename: meta.filename });
     const isHtml = meta.lang === 'html' || /\.html?$/i.test(meta.filename);
     return `<div class="ai-code-block" data-ai-code-id="${escapeAttr(id)}"><div class="ai-code-toolbar"><span class="ai-code-name"><i>⌘</i>${escapeHtml(meta.filename || meta.lang || 'code')}</span><div class="ai-code-actions">${isHtml ? `<button type="button" data-ai-code-preview="${escapeAttr(id)}">▶ 预览</button>` : ''}<button type="button" data-ai-code-copy="${escapeAttr(id)}">⧉ 复制</button><button type="button" data-ai-code-download="${escapeAttr(id)}">⇩ 下载</button></div></div><pre><code class="language-${escapeAttr(meta.lang)}">${escapedCode}</code></pre></div>`;
 }
-function renderMarkdownBlocks(text = '', codeBlocks = []) {
-    const lines = String(text || '').split('\n'), out = [];
-    const token = (line) => /^§§CODE(\d+)§§$/.exec(String(line || '').trim());
-    const tableSep = (line) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(line || '');
-    const splitTable = (line) => String(line || '').trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((x) => x.trim());
-    const special = (i) => { const line = lines[i] || ''; return !line.trim() || token(line) || /^#{1,6}\s+/.test(line) || /^\s*>\s?/.test(line) || /^\s*[-*+]\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line) || /^\s*---+\s*$/.test(line) || (line.includes('|') && tableSep(lines[i + 1] || '')); };
-    for (let i = 0; i < lines.length;) {
-        const line = lines[i] || '', tk = token(line);
-        if (tk) { out.push(codeBlocks[Number(tk[1])] || ''); i++; continue; }
-        if (!line.trim()) { i++; continue; }
-        const h = /^(#{1,6})\s+(.+)$/.exec(line);
-        if (h) { const n = Math.min(6, h[1].length); out.push(`<h${n}>${renderInlineMarkdown(h[2].trim())}</h${n}>`); i++; continue; }
-        if (/^\s*---+\s*$/.test(line)) { out.push('<hr>'); i++; continue; }
-        if (line.includes('|') && tableSep(lines[i + 1] || '')) {
-            const heads = splitTable(line); i += 2; const rows = [];
-            while (i < lines.length && lines[i].includes('|') && lines[i].trim()) { rows.push(splitTable(lines[i])); i++; }
-            out.push(`<div class="ai-md-table-wrap"><table><thead><tr>${heads.map((x) => `<th>${renderInlineMarkdown(x)}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${heads.map((_, idx) => `<td>${renderInlineMarkdown(r[idx] || '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`); continue;
-        }
-        if (/^\s*>\s?/.test(line)) { const q=[]; while (i < lines.length && /^\s*>\s?/.test(lines[i] || '')) q.push((lines[i++] || '').replace(/^\s*>\s?/, '')); out.push(`<blockquote>${q.map(renderInlineMarkdown).join('<br>')}</blockquote>`); continue; }
-        if (/^\s*[-*+]\s+/.test(line)) { const a=[]; while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i] || '')) a.push((lines[i++] || '').replace(/^\s*[-*+]\s+/, '')); out.push(`<ul>${a.map((x)=>`<li>${renderInlineMarkdown(x)}</li>`).join('')}</ul>`); continue; }
-        if (/^\s*\d+[.)]\s+/.test(line)) { const a=[]; while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i] || '')) a.push((lines[i++] || '').replace(/^\s*\d+[.)]\s+/, '')); out.push(`<ol>${a.map((x)=>`<li>${renderInlineMarkdown(x)}</li>`).join('')}</ol>`); continue; }
-        const para=[]; while (i < lines.length && !special(i)) para.push(lines[i++]); if (para.length) out.push(`<p>${para.map(renderInlineMarkdown).join('<br>')}</p>`);
-    }
-    return out.join('\n');
-}
 function renderMarkdown(md, options = {}) {
     const enhanced = !!options.enhancedCode;
-    const codeBlocks = [];
-    let source = String(md || '').replace(/\r\n?/g, '\n');
-    source = source.replace(/```([^\n`]*)\n?([\s\S]*?)```/g, (_, info, code) => { const idx = codeBlocks.length; codeBlocks.push(renderCodeBlockHtml(code, info, enhanced)); return `\n§§CODE${idx}§§\n`; });
-    return renderMarkdownBlocks(escapeHtml(source), codeBlocks);
+    return renderMarkdownCore(md, {
+        renderCodeBlock: enhanced
+            ? (code, info) => renderCodeBlockHtml(code, info, true)
+            : undefined,
+    });
 }
+// Expose for any non-module consumers / notes fallback.
+try { window.renderMarkdown = renderMarkdown; } catch (_) {}
 function splitCsv(value) { return String(value || '').split(/[\n,，]+/).map((x) => x.trim()).filter(Boolean); }
 function fmtTime(ts) { return ts ? new Date(ts).toLocaleString() : '从未连接'; }
 function requestSensitiveSecret(actionText = '查看已保存敏感信息') {
