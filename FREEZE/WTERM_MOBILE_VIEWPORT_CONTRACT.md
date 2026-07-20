@@ -4,11 +4,28 @@
 基线：Netcatty `domain/terminalScroll.ts` 纪律 + Zephyr IME chrome 产品几何  
 实现模块：`public/terminal-scroll-policy.js`
 
-## 分离两条权威
+## 单一控制面
+
+`public/terminal-surface-controller.js` 是移动端 **唯一事件入口**：
+
+```
+tap / IME / composition / enter / output / viewport / cmd focus
+        │
+        ▼
+ TerminalSurfaceController
+   ├─ ssh-mobile-keyboard (intent)
+   ├─ host.pinScroll → applyCursorAboveChromeScroll (唯一 scrollTop 写手)
+   ├─ ime-active class
+   └─ applyChromeLayout (CSS vars / keyboard-open)
+```
+
+`terminal.js` 只做 host adapter + 桌面路径。`ensureSshSoftKeyboard` 不得再 `createSshMobileSoftKeyboard({...})` 平行宿主。
+
+## 分离两条权威（Surface 内部）
 
 | 轨 | 职责 | 禁止 |
 |----|------|------|
-| **A. BufferScrollPolicy** | 何时对终端 buffer 调用 `scrollToBottom` | DOM `getBoundingClientRect` 驱动滚动；多相位 timer 追滚 |
+| **A. BufferScrollPolicy** | 何时 pin / 是否 follow | DOM rect 驱动滚动；多相位 timer 追滚 |
 | **B. ImeChromeLayout** | 软键盘 inset、工具栏 fixed、光标可见 class | 在键盘动画里每帧改 `scrollTop` |
 
 应用层改 `element.scrollTop` 抢权视为违约（调试除外）。

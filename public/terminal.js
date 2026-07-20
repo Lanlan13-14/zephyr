@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260721-wterm-scroll3';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260721-wterm-scroll4';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -12,8 +12,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-wterm-scroll3';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-wterm-scroll3';
+} from './terminal-scroll-policy.js?v=20260721-wterm-scroll4';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-wterm-scroll4';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -138,8 +138,13 @@ function ensureTerminalSurface() {
         getChromeHeight: () => getMobileBottomChromeHeight(),
         getCursorMetrics: () => getCursorContentMetrics(),
         getMaxScroll: () => getTerminalMaxScroll(getTerminalScrollElement()),
+        // THE single scrollTop writer — surface only decides when.
+        pinScroll: (reason, opts = {}) => applyCursorAboveChromeScroll(reason, opts),
         applyChromeLayout: (open, inset, meta = {}) => {
-            const layoutFrozen = !!meta.layoutFrozen;
+            const layoutFrozen = !!meta.layoutFrozen
+                || meta.liftMode === SoftKeyboardLiftMode.NONE
+                || meta.source === 'cmd'
+                || isCmdOverlayMode?.();
             if (layoutFrozen) {
                 mobileKeyboardOpen = false;
                 mobileKeyboardInset = 0;
@@ -147,25 +152,46 @@ function ensureTerminalSurface() {
                 document.documentElement.classList.remove('keyboard-open');
                 terminalContainer?.classList.remove('mobile-keyboard-open');
                 document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
+                updateMobileKeyboardButtonUi?.();
                 return;
             }
             mobileKeyboardOpen = !!open;
             mobileKeyboardInset = open ? inset : 0;
+            mobileKeyboardUserControlled = !!open || mobileKeyboardUserControlled;
+            keyboardFocusLikely = !!open || keyboardFocusLikely;
             applyMobileStableKeyboardInset(open ? inset : 0, !!open, meta.reason || 'surface');
             document.documentElement.classList.toggle('keyboard-open', !!open && inset > 0);
             terminalContainer?.classList.toggle('mobile-keyboard-open', !!open && inset > 0);
+            document.documentElement.dataset.keyboardLiftMode = open
+                ? (meta.liftMode || SoftKeyboardLiftMode.WORKSPACE)
+                : SoftKeyboardLiftMode.WORKSPACE;
             if (!open) {
                 document.documentElement.style.setProperty('--keyboard-inset', '0px');
                 document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
                 pinMobileImeChrome(false, 0);
-                assertKeyboardLayoutSettled?.(meta.reason || 'surface-close');
+                requestAnimationFrame(() => assertKeyboardLayoutSettled?.(meta.reason || 'surface-close'));
+                scheduleKeyboardCloseFit?.(meta.reason || 'surface-close', 420);
             }
             updateMobileKeyboardButtonUi?.();
         },
         notifyParent: (metrics) => notifyParentKeyboardMetrics(metrics),
         onScrollbar: () => scheduleTerminalScrollbarUpdate(),
+        onSoftKeyboardState: (state) => {
+            mobileKeyboardUserControlled = state.intent === SoftKeyboardIntent.OPEN;
+            keyboardFocusLikely = !!(state.focusLikely || state.intent === SoftKeyboardIntent.OPEN);
+            if (state.physicalOpen) {
+                mobileKeyboardOpen = true;
+                mobileKeyboardInset = state.inset;
+            } else if (state.intent === SoftKeyboardIntent.CLOSED) {
+                mobileKeyboardOpen = false;
+                mobileKeyboardInset = 0;
+            }
+            updateMobileKeyboardButtonUi?.();
+        },
         log: (event, details) => logTerminalLayoutDiagnostics?.(event, details || {}),
     });
+    // Bridge legacy sshSoftKeyboard variable so old call sites share the same instance.
+    sshSoftKeyboard = terminalSurface.getSoftKeyboard?.() || sshSoftKeyboard;
     return terminalSurface;
 }
 
@@ -7443,6 +7469,8 @@ function setTerminalAutoFollow(enabled, reason = 'unknown') {
     terminalUserScrolledAway = !terminalAutoFollowEnabled;
     terminalContainer?.classList.toggle('terminal-follow-paused', !terminalAutoFollowEnabled);
     terminalContainer?.classList.toggle('terminal-following', terminalAutoFollowEnabled);
+    // Keep surface mode in lockstep — avoid dual brains on follow state.
+    try { ensureTerminalSurface()?.setFollowEnabled?.(terminalAutoFollowEnabled, reason); } catch (_) {}
     logTerminalScrollDiagnostics('auto-follow:set', { enabled: terminalAutoFollowEnabled, reason });
 }
 
@@ -8001,33 +8029,14 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
     cancelMobileStableScrollRestore(`${source}:typing`);
     clearMobileTerminalHistoryLock(`${source}:input`);
     sendData(paste ? prepareTerminalPastePayload(payload) : payload, { source, forceFollow: false, applyModifiers: false });
-    // One event → ≤1 scroll. Geometry = cursor-above-chrome (not maxScroll).
-    if (paste) {
+    // Unified surface owns when/how to pin (≤1 scroll, same-line safe).
+    const surface = ensureTerminalSurface();
+    if (surface && isMobileStableInputMode()) {
+        surface.onUserInputCommitted(payload, source, { paste: !!paste });
+    } else if (paste) {
         applyPolicyScrollAfterPaste(`${source}:paste`);
-        // Short settle after paste echo only.
-        const phases = scrollSettlePhases('paste');
-        phases.forEach((delay) => {
-            window.setTimeout(() => {
-                applyCursorAboveChromeScroll(`${source}:paste-settle`, { force: true });
-            }, delay);
-        });
     } else if (!mobileImeComposing) {
-        let done = false;
-        const finish = () => {
-            if (done) return;
-            done = true;
-            // Same-line printable: scroll ONLY if cursor actually clipped by chrome.
-            applyCursorAboveChromeScroll(`${source}:sent-visible`, {
-                force: false,
-                sameLineInput: true,
-            });
-        };
-        if (term && typeof term.onRenderComplete === 'function') {
-            const unsub = term.onRenderComplete(() => { unsub(); finish(); });
-            window.setTimeout(finish, 100);
-        } else {
-            requestAnimationFrame(finish);
-        }
+        applyCursorAboveChromeScroll(`${source}:sent-visible`, { force: false, sameLineInput: true });
     }
     return true;
 }
@@ -8048,16 +8057,12 @@ function sendMobileStableControl(seq = '', source = 'mobile-ime-control') {
     cancelMobileStableScrollRestore(`${source}:control`);
     clearMobileTerminalHistoryLock(`${source}:control`);
     sendData(payload, { source, forceFollow: false, applyModifiers: false });
+    const surface = ensureTerminalSurface();
     if (isEnterLike) {
         clearMobileTerminalHistoryLock(`${source}:enter`);
         setTerminalAutoFollow(true, `${source}:enter`);
-        // Enter may create a new line — pin cursor above chrome once (+ short settle).
-        applyCursorAboveChromeScroll(`${source}:enter`, { force: true, sameLineInput: false });
-        scrollSettlePhases('enter').forEach((delay) => {
-            window.setTimeout(() => {
-                applyCursorAboveChromeScroll(`${source}:enter-settle`, { force: true });
-            }, delay);
-        });
+        if (surface && isMobileStableInputMode()) surface.onEnterCommitted(source);
+        else applyCursorAboveChromeScroll(`${source}:enter`, { force: true, sameLineInput: false });
     }
     // Non-enter controls: scrollOnKeyPress default false → no scroll (Netcatty).
     return true;
@@ -8111,19 +8116,19 @@ function focusMobileStableImeProxy(reason = 'mobile-ime-focus') {
     keyboardViewportBaseline = Math.max(getKeyboardBaselineHeight(), keyboardViewportBaseline || 0);
     if (el && !mobileStableLastBottomIntent) el.scrollTop = previousTop;
     markKeyboardFocusActive();
-    // Prefer controller open so intent + focus stay in one path.
-    if (sshSoftKeyboard) {
+    // Prefer surface open so intent + ime-active + pin stay one path.
+    const surface = ensureTerminalSurface();
+    if (surface) {
+        surface.openKeyboard(reason, { gesture: true });
+    } else if (sshSoftKeyboard) {
         sshSoftKeyboard.open(reason, { gesture: true });
     } else if (document.activeElement !== mobileImeProxy) {
         try { mobileImeProxy.focus({ preventScroll: true }); } catch (_) { try { mobileImeProxy.focus(); } catch (__) {} }
     }
-    // Focus/keyboard open alone must not move history. If the terminal was following,
-    // keep following the current visual bottom instead of restoring a stale pre-fullscreen top.
     if (mobileStableLastBottomIntent) {
         setWTermImeActive(true, `${reason}:focus`);
-        requestAnimationFrame(() => {
-            applyCursorAboveChromeScroll(`${reason}:focus-chrome`, { force: true });
-        });
+        // openKeyboard already schedules pin via onOpenCommitted; one extra pin if following.
+        surface?.pinCursorAboveChrome?.(`${reason}:focus-chrome`, { force: true });
     }
     else restoreMobileStableScrollTop(previousTop, reason);
     return true;
@@ -8280,10 +8285,12 @@ function setupMobileStableImeProxy() {
         cancelTerminalBottomFollow('compositionstart');
         cancelMobileStableScrollRestore('compositionstart');
         mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 4000);
+        ensureTerminalSurface()?.onCompositionStart?.();
     });
     proxy.addEventListener('compositionend', (e) => {
         mobileImeComposing = false;
         mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 120);
+        ensureTerminalSurface()?.onCompositionEnd?.();
         const text = e.data || proxy.value || '';
         if (text) sendMobileStableImeText(text, 'mobile-ime-composition');
         proxy.value = '';
@@ -8767,92 +8774,10 @@ function setupHorizontalScrollbarVisibility(...elements) {
 }
 
 function ensureSshSoftKeyboard() {
-    if (sshSoftKeyboard) return sshSoftKeyboard;
-    if (!isTouchKeyboardDevice()) return null;
-    sshSoftKeyboard = createSshMobileSoftKeyboard({
-        isTouchDevice: () => isTouchKeyboardDevice(),
-        isStableMode: () => isMobileStableInputMode(),
-        ensureProxy: () => {
-            setupMobileStableImeProxy();
-            return mobileImeProxy;
-        },
-        getViewportMetrics: () => getViewportKeyboardMetrics(),
-        isSelectionMode: () => !!(mobileTerminalSelectionMode || hasLiveTerminalSelection?.()),
-        // Only suppress keyboard open for actual pan/selection — NOT while typing
-        // (mobileStableSuppressScrollUntil is a scroll freeze, not a gesture lock).
-        isGestureSuppressed: () => !!(terminalTouchMoved || mobileTerminalSelectionMode || hasLiveTerminalSelection?.()),
-        applyInset: (inset, open, reason, meta = {}) => {
-            const layoutFrozen = !!meta.layoutFrozen
-                || meta.liftMode === SoftKeyboardLiftMode.NONE
-                || meta.source === 'cmd'
-                || isCmdOverlayMode();
-            if (layoutFrozen) {
-                mobileKeyboardOpen = false;
-                mobileKeyboardInset = 0;
-                applyMobileStableKeyboardInset(0, false, reason || 'controller-cmd-frozen');
-                document.documentElement.classList.remove('keyboard-open');
-                terminalContainer?.classList.remove('mobile-keyboard-open');
-                document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
-                updateMobileKeyboardButtonUi();
-                return;
-            }
-            mobileKeyboardOpen = !!open;
-            mobileKeyboardInset = open ? inset : 0;
-            applyMobileStableKeyboardInset(open ? inset : 0, !!open, reason || 'controller');
-            document.documentElement.classList.toggle('keyboard-open', !!open && inset > 0);
-            terminalContainer?.classList.toggle('mobile-keyboard-open', !!open && inset > 0);
-            document.documentElement.dataset.keyboardLiftMode = open
-                ? (meta.liftMode || SoftKeyboardLiftMode.WORKSPACE)
-                : SoftKeyboardLiftMode.WORKSPACE;
-            updateMobileKeyboardButtonUi();
-            if (!open) assertKeyboardLayoutSettled(reason || 'controller-close');
-        },
-        notifyParent: (metrics) => notifyParentKeyboardMetrics(metrics),
-        onStateChange: (state) => {
-            mobileKeyboardUserControlled = state.intent === SoftKeyboardIntent.OPEN;
-            keyboardFocusLikely = !!(state.focusLikely || state.intent === SoftKeyboardIntent.OPEN);
-            if (state.physicalOpen) {
-                mobileKeyboardOpen = true;
-                mobileKeyboardInset = state.inset;
-            } else if (state.intent === SoftKeyboardIntent.CLOSED) {
-                mobileKeyboardOpen = false;
-                mobileKeyboardInset = 0;
-            }
-            updateMobileKeyboardButtonUi();
-        },
-        onOpenCommitted: (reason) => {
-            logTerminalLayoutDiagnostics?.('ssh-soft-keyboard:open-committed', { reason, liftMode: sshSoftKeyboard?.getLiftMode?.() });
-            setWTermImeActive(true, `${reason}:open-committed`);
-            // After bars go fixed, pin cursor above chrome once (not maxScroll).
-            if (mobileStableLastBottomIntent || terminalAutoFollowEnabled) {
-                requestAnimationFrame(() => {
-                    applyCursorAboveChromeScroll(`${reason}:open-chrome`, { force: true });
-                });
-            }
-            updateMobileKeyboardButtonUi();
-        },
-        onCloseCommitted: (reason) => {
-            logTerminalLayoutDiagnostics?.('ssh-soft-keyboard:close-committed', { reason });
-            setWTermImeActive(false, `${reason}:close-committed`);
-            // Clear keyboard-open NOW so fixed positioning reverts to static.
-            // Do NOT wait for assertKeyboardLayoutSettled delay.
-            document.documentElement.classList.remove('keyboard-open');
-            terminalContainer?.classList.remove('mobile-keyboard-open');
-            document.documentElement.style.setProperty('--keyboard-inset', '0px');
-            document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
-            document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.WORKSPACE;
-            pinMobileImeChrome(false, 0);
-            // Give CSS a frame to apply static before calling settled assertions.
-            requestAnimationFrame(() => {
-                assertKeyboardLayoutSettled(`${reason}:controller-close`);
-            });
-            scheduleKeyboardCloseFit?.(`${reason}:controller-close`, 420);
-            updateMobileKeyboardButtonUi();
-        },
-        log: (event, details) => {
-            logTerminalLayoutDiagnostics?.(`ssh-soft-keyboard:${event}`, details || {});
-        },
-    });
+    // Single ownership: soft keyboard lives inside TerminalSurfaceController.
+    const surface = ensureTerminalSurface();
+    if (!surface) return null;
+    sshSoftKeyboard = surface.getSoftKeyboard?.() || sshSoftKeyboard;
     return sshSoftKeyboard;
 }
 
@@ -8863,6 +8788,8 @@ function setupMobileKeyboardButton() {
 
 function setupMobileKeyboardAvoidance() {
     enableMobileStableInputMode();
+    // Boot the unified surface FIRST — owns soft-kb + pin routing.
+    ensureTerminalSurface();
     ensureSshSoftKeyboard();
     setupMobileKeyboardButton();
     if (embeddedMode && !isMobileStableInputMode()) return;
@@ -8872,7 +8799,9 @@ function setupMobileKeyboardAvoidance() {
     } catch (_) {}
 
     const onViewport = (reason) => {
-        if (sshSoftKeyboard) sshSoftKeyboard.syncFromViewport(reason);
+        const surface = ensureTerminalSurface();
+        if (surface) surface.onViewport(reason);
+        else sshSoftKeyboard?.syncFromViewport?.(reason);
         updateViewportInsets();
         updateMobileKeyboardButtonUi();
     };
@@ -8924,12 +8853,15 @@ function setupMobileKeyboardAvoidance() {
         // Layout-frozen overlay: only show system IME above the page. Zero geometry change.
         if (isTouchKeyboardDevice()) {
             enterCmdOverlayMode('cmd-input-focus');
+            const surface = ensureTerminalSurface();
             ensureSshSoftKeyboard();
-            // Intent tracking only — controller must not focus proxy or apply inset.
-            sshSoftKeyboard?.open?.('cmd-input-focus', {
-                gesture: true,
-                liftMode: SoftKeyboardLiftMode.NONE,
-            });
+            if (surface) surface.onCmdFocus('cmd-input-focus');
+            else {
+                sshSoftKeyboard?.open?.('cmd-input-focus', {
+                    gesture: true,
+                    liftMode: SoftKeyboardLiftMode.NONE,
+                });
+            }
             // Keep real focus on the command textarea (open() no longer steals it).
             try {
                 if (document.activeElement !== cmdInput) cmdInput.focus({ preventScroll: true });
@@ -8952,8 +8884,9 @@ function setupMobileKeyboardAvoidance() {
         window.setTimeout(() => {
             if (document.activeElement === cmdInput) return;
             leaveCmdOverlayMode('cmd-input-blur');
-            // Close controller intent without forcing another layout path.
-            if (sshSoftKeyboard?.getLiftMode?.() === SoftKeyboardLiftMode.NONE
+            const surface = ensureTerminalSurface();
+            if (surface) surface.onCmdBlur('cmd-input-blur');
+            else if (sshSoftKeyboard?.getLiftMode?.() === SoftKeyboardLiftMode.NONE
                 || sshSoftKeyboard?.desiredOpen?.()) {
                 sshSoftKeyboard?.close?.('cmd-input-blur', { force: false, blurCmd: false });
             }
@@ -9420,9 +9353,14 @@ function patchWTermScrollBehavior() {
                 };
             },
             follow(reason = 'viewport-follow', opts = {}) {
+                // Mobile: chrome-pin only. Do NOT ask fork to maxScroll-stick.
                 followTerminalBottomNow(reason, { force: true, ...opts });
                 setTerminalAutoFollow(true, reason);
-                forkViewport.follow();
+                if (!isMobileStableInputMode()) forkViewport.follow();
+                else {
+                    try { term.lockBottom?.(); } catch (_) {}
+                    try { term._shouldScrollToBottom = false; } catch (_) {}
+                }
             },
             lock(reason = 'viewport-lock') {
                 setTerminalAutoFollow(false, reason);
@@ -9430,9 +9368,43 @@ function patchWTermScrollBehavior() {
             },
             unlock(reason = 'viewport-unlock') {
                 setTerminalAutoFollow(true, reason);
-                forkViewport.follow();
+                if (!isMobileStableInputMode()) forkViewport.follow();
+                else {
+                    try { term.lockBottom?.(); } catch (_) {}
+                    try { term._shouldScrollToBottom = false; } catch (_) {}
+                    followTerminalBottomNow(reason, { force: true });
+                }
             },
         };
+
+        // Mobile fork: PUBLIC API only (contract: never overwrite _scrollToBottom/_doRender).
+        // lockBottom keeps internal stick off; public scrollToBottom → chrome-pin;
+        // public write re-locks after each paint so WTerm cannot maxScroll-chase.
+        if (isMobileStableInputMode()) {
+            try { term.lockBottom?.(); } catch (_) {}
+            if (!term._zephyrMobileScrollPinned && typeof term.scrollToBottom === 'function') {
+                term._zephyrMobileScrollPinned = true;
+                term.scrollToBottom = () => {
+                    if (terminalAutoFollowEnabled || mobileStableLastBottomIntent) {
+                        followTerminalBottomNow('wterm-fork-scroll-to-bottom', { force: true });
+                    } else {
+                        scheduleTerminalScrollbarUpdate();
+                    }
+                    try { term.lockBottom?.(); } catch (_) {}
+                };
+            }
+            if (!term._zephyrMobileWriteLocked && typeof term.write === 'function') {
+                term._zephyrMobileWriteLocked = true;
+                const originalWriteFork = term.write.bind(term);
+                term.write = (data) => {
+                    try { term.lockBottom?.(); } catch (_) {}
+                    const result = originalWriteFork(data);
+                    try { term.lockBottom?.(); } catch (_) {}
+                    scheduleTerminalScrollbarUpdate();
+                    return result;
+                };
+            }
+        }
         return;
     }
 
@@ -9660,20 +9632,20 @@ function writeTerminalData(data = '') {
     if (plainEcho) mobileStableEchoSuppressUntil = Date.now() + 180;
     const historyLocked = isMobileTerminalAutoFollowLocked() || isTerminalUserReadingHistory() || mobileTerminalSelectionMode || hasLiveTerminalSelection();
     const wasAtBottom = !historyLocked && Boolean(term._isScrolledToBottom ? term._isScrolledToBottom() : isTerminalAtBottom());
-    // Netcatty S3: app-layer output follow default OFF. WTerm sticks if already at bottom.
-    const policyOutput = shouldScrollOnTerminalOutput(getTerminalScrollPolicySettings());
-    logTerminalScrollDiagnostics('terminal-data:before-write-policy', {
+    logTerminalScrollDiagnostics('terminal-data:before-write-surface', {
         length: String(data).length,
         wasAtBottom,
-        policyOutput,
         historyLocked,
         plainEcho,
     });
     term.write(data);
-    if (policyOutput && !historyLocked && !plainEcho) {
-        scrollTerminalToBottomAfterOutputIfEnabled(getWTermScrollTarget(), getTerminalScrollPolicySettings());
+    // Surface owns output stick policy (default OFF + chrome-pin when following).
+    const surface = ensureTerminalSurface();
+    if (surface && isMobileStableInputMode() && !historyLocked && !plainEcho) {
+        surface.onOutput('terminal-data');
+    } else {
+        requestAnimationFrame(scheduleTerminalScrollbarUpdate);
     }
-    requestAnimationFrame(scheduleTerminalScrollbarUpdate);
 }
 
 function hideInfoModal() {
@@ -10743,15 +10715,19 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
         }
         if (isMobileStableInputMode() && !mobileTerminalSelectionMode && !hasLiveTerminalSelection()) {
             const now = performance.now();
+            const surface = ensureTerminalSurface();
             ensureSshSoftKeyboard();
             const alreadyOpen = !!(sshSoftKeyboard?.desiredOpen?.() || sshSoftKeyboard?.physicalOpen?.() || mobileKeyboardOpen);
             // Always retain if already open. If closed, open on gesture — only
             // throttle duplicate open attempts (not retain) to avoid focus thrash.
             if (alreadyOpen || now - mobileStableLastFocusGestureAt > 120) {
                 mobileStableLastFocusGestureAt = now;
-                // Intent-driven: body tap opens or retains keyboard. Never dismisses.
-                // Focus proxy MUST stay in the user-gesture stack (no delay).
-                if (sshSoftKeyboard) {
+                // Never dismisses. Surface owns open/retain + ime-active. Gesture stack only.
+                if (surface) {
+                    surface.onTerminalTap('terminal-touch-immediate');
+                    mobileKeyboardUserControlled = !!sshSoftKeyboard?.desiredOpen?.();
+                    keyboardFocusLikely = mobileKeyboardUserControlled;
+                } else if (sshSoftKeyboard) {
                     sshSoftKeyboard.handleTerminalTap('terminal-touch-immediate');
                     setWTermImeActive(true, 'terminal-touch-immediate');
                     mobileKeyboardUserControlled = sshSoftKeyboard.desiredOpen();
@@ -10772,8 +10748,18 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
             }
             if (isMobileStableInputMode()) {
                 // Delayed path: only retry open if immediate path failed (still closed).
+                const surface = ensureTerminalSurface();
                 ensureSshSoftKeyboard();
-                if (sshSoftKeyboard) {
+                if (surface) {
+                    if (!sshSoftKeyboard?.desiredOpen?.() && !sshSoftKeyboard?.physicalOpen?.()) {
+                        surface.onTerminalTap('terminal-touch');
+                    } else {
+                        sshSoftKeyboard?.retainForChrome?.('terminal-touch-retain');
+                        surface.setImeActive?.(true, 'terminal-touch-retain');
+                    }
+                    mobileKeyboardUserControlled = !!sshSoftKeyboard?.desiredOpen?.();
+                    keyboardFocusLikely = mobileKeyboardUserControlled;
+                } else if (sshSoftKeyboard) {
                     if (!sshSoftKeyboard.desiredOpen() && !sshSoftKeyboard.physicalOpen()) {
                         sshSoftKeyboard.handleTerminalTap('terminal-touch');
                         setWTermImeActive(true, 'terminal-touch-retry');
@@ -11113,6 +11099,12 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     applyTerminalFontSize(terminalFontSize, { persist: false });
     applyTerminalLigatures(terminalAllowLigatures, { persist: false });
     patchWTermScrollBehavior();
+    // Bind unified surface to this term (mobile scroll/keyboard control plane).
+    if (isMobileStableInputMode() || isTouchKeyboardDevice()) {
+        const surface = ensureTerminalSurface();
+        surface?.attachTerm?.('term-created');
+        surface?.setFollowEnabled?.(!!terminalAutoFollowEnabled, 'term-created');
+    }
     restoreMobileWTermNativeInput();
     if (isMobileStableInputMode()) {
         rememberMobileStableKeyboardGrid('init-wterm-grid');

@@ -20,14 +20,14 @@ import {
     SoftKeyboardIntent,
     SoftKeyboardLiftMode,
     createSshMobileSoftKeyboard,
-} from './ssh-mobile-keyboard.js?v=20260721-wterm-scroll3';
+} from './ssh-mobile-keyboard.js?v=20260721-wterm-scroll4';
 import {
     computeCursorAboveChromeScrollTop,
     allowScrollDuringTyping,
     scrollSettlePhases,
     shouldScrollOnTerminalOutput,
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
-} from './terminal-scroll-policy.js?v=20260721-wterm-scroll3';
+} from './terminal-scroll-policy.js?v=20260721-wterm-scroll4';
 
 /**
  * @typedef {object} SurfaceHost
@@ -44,9 +44,12 @@ import {
  * @property {() => { lineHeight: number, cursorTopInContent?: number, cursorBottomInContent?: number } | null} getCursorMetrics
  * @property {() => number} getMaxScroll
  * @property {(open: boolean, inset: number, meta?: object) => void} applyChromeLayout
+ * @property {(reason: string, opts?: { force?: boolean, sameLineInput?: boolean, immediate?: boolean }) => boolean} [pinScroll]
+ *        Single scrollTop writer owned by host (applyCursorAboveChromeScroll).
  * @property {(metrics: object) => void} [notifyParent]
  * @property {(label: string, details?: object) => void} [log]
  * @property {() => void} [onScrollbar]
+ * @property {(state: object) => void} [onSoftKeyboardState]
  * @property {() => boolean} [hasLiveSelection]
  * @property {() => boolean} [isUserReadingHistory]
  */
@@ -140,10 +143,10 @@ export function createTerminalSurfaceController(host) {
     // ─── single scroll writer ───────────────────────────────────────────
 
     /**
-     * THE only place that writes scrollTop on mobile stable surface.
+     * Route pin through host.pinScroll (single writer). Surface only decides WHEN.
      * @returns {boolean}
      */
-    function pinCursorAboveChrome(reason = 'pin', { force = false, sameLineInput = false } = {}) {
+    function pinCursorAboveChrome(reason = 'pin', { force = false, sameLineInput = false, immediate = false } = {}) {
         if (!host.isMobileStable?.()) return false;
         recomputeMode();
 
@@ -159,19 +162,30 @@ export function createTerminalSurfaceController(host) {
             log('pin-blocked-composing', { reason });
             return false;
         }
-        if (!force && Date.now() < suppressScrollUntil && sameLineInput === false) {
-            // layout suppress — still allow same-line unclip
+
+        if (typeof host.pinScroll === 'function') {
+            const did = !!host.pinScroll(reason, { force, sameLineInput, immediate });
+            if (did) {
+                scrollApiCalls += 1;
+                lastScrollReason = reason;
+                try {
+                    lastScrollTop = host.getScrollElement?.()?.scrollTop || lastScrollTop;
+                } catch (_) {}
+                if (!sameLineInput || force) followEnabled = true;
+                recomputeMode();
+            }
+            log('pin', { reason, did, force, sameLineInput });
+            return did;
         }
 
+        // Fallback pure path (tests / host without pinScroll)
         const el = host.getScrollElement?.();
         if (!el) return false;
-
         const cursor = host.getCursorMetrics?.();
         if (!cursor || !(Number.isFinite(cursor.cursorBottomInViewport) || Number.isFinite(cursor.cursorBottomInContent))) {
             host.onScrollbar?.();
             return false;
         }
-
         const decision = computeCursorAboveChromeScrollTop({
             scrollTop: el.scrollTop || 0,
             maxScroll: host.getMaxScroll?.() ?? Math.max(0, el.scrollHeight - el.clientHeight),
@@ -185,7 +199,6 @@ export function createTerminalSurfaceController(host) {
             sameLineInput,
             force,
         });
-
         if (sameLineInput && !force && !allowScrollDuringTyping(decision)) {
             host.onScrollbar?.();
             return false;
@@ -194,14 +207,11 @@ export function createTerminalSurfaceController(host) {
             host.onScrollbar?.();
             return false;
         }
-
         el.scrollTop = decision.scrollTop;
         lastScrollTop = decision.scrollTop;
         lastScrollReason = `${reason}:${decision.reason}`;
         scrollApiCalls += 1;
-        if (decision.reason !== 'sparse-zero-max') {
-            followEnabled = true;
-        }
+        if (decision.reason !== 'sparse-zero-max') followEnabled = true;
         recomputeMode();
         host.onScrollbar?.();
         log('pin', { reason: lastScrollReason, scrollTop: lastScrollTop });
@@ -262,6 +272,7 @@ export function createTerminalSurfaceController(host) {
                     keyboardInset = 0;
                 }
                 recomputeMode();
+                try { host.onSoftKeyboardState?.(state); } catch (_) {}
             },
             onOpenCommitted: (reason) => {
                 setImeActive(true, `${reason}:open`);
