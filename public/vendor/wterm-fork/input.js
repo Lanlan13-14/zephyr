@@ -53,6 +53,19 @@ class InputHandler {
     __publicField(this, "_onInput");
     __publicField(this, "_onFocus");
     __publicField(this, "_onBlur");
+    // P2-3: Mouse reporting state
+    __publicField(this, "_onMouseDown");
+    __publicField(this, "_onMouseUp");
+    __publicField(this, "_onMouseMove");
+    __publicField(this, "_onMouseScroll");
+    // P2-2: Selection state
+    __publicField(this, "_clickCount", 0);
+    __publicField(this, "_clickTimer", null);
+    __publicField(this, "_lastClickTime", 0);
+    __publicField(this, "_lastClickCol", -1);
+    __publicField(this, "_lastClickRow", -1);
+    __publicField(this, "_selectionStart", null);
+    __publicField(this, "_selectionEnd", null);
     this.element = element;
     this.onData = onData;
     this.getBridge = getBridge;
@@ -102,9 +115,173 @@ class InputHandler {
     this.textarea.addEventListener("input", this._onInput);
     this.textarea.addEventListener("focus", this._onFocus);
     this.textarea.addEventListener("blur", this._onBlur);
+    this._onMouseDown = this.handleMouseDown.bind(this);
+    this._onMouseUp = this.handleMouseUp.bind(this);
+    this._onMouseMove = this.handleMouseMove.bind(this);
+    this._onMouseScroll = this.handleMouseWheel.bind(this);
+    this.element.addEventListener("mousedown", this._onMouseDown);
+    this.element.addEventListener("mouseup", this._onMouseUp);
+    this.element.addEventListener("mousemove", this._onMouseMove);
+    this.element.addEventListener("wheel", this._onMouseScroll, { passive: false });
   }
   focus() {
     this.textarea.focus({ preventScroll: true });
+  }
+  mouseToCell(e) {
+    const rect = this.element.getBoundingClientRect();
+    const cs = getComputedStyle(this.element);
+    const fontSize = parseFloat(cs.fontSize) || 14;
+    const lineHeight = parseFloat(cs.lineHeight) || fontSize * 1.2;
+    const padding = parseFloat(cs.paddingLeft) || 0;
+    const paddingTop = parseFloat(cs.paddingTop) || 0;
+    const col = Math.floor((e.clientX - rect.left - padding) / fontSize);
+    const row = Math.floor((e.clientY - rect.top - paddingTop) / lineHeight);
+    return { col: Math.max(0, col), row: Math.max(0, row) };
+  }
+  sendMouseEvent(button, col, row, press) {
+    const bridge = this.getBridge();
+    if (!bridge || bridge.mouseMode() === 0) return;
+    const c = Math.min(255, col + 1);
+    const r = Math.min(255, row + 1);
+    if (bridge.mouseSGR()) {
+      this.onData(`\x1B[<${button};${c};${r}${press ? "M" : "m"}`);
+    } else {
+      const b = String.fromCharCode(button + 32);
+      const cx = String.fromCharCode(Math.min(255, c + 31));
+      const rx = String.fromCharCode(Math.min(255, r + 31));
+      this.onData(`\x1B[M${b}${cx}${rx}`);
+    }
+  }
+  // P2-2: Multi-click selection
+  handleClickSelection(e) {
+    const { col, row } = this.mouseToCell(e);
+    const now = Date.now();
+    if (this._clickTimer && now - this._lastClickTime < 400 && col === this._lastClickCol && row === this._lastClickRow) {
+      this._clickCount++;
+    } else {
+      this._clickCount = 1;
+    }
+    this._lastClickTime = now;
+    this._lastClickCol = col;
+    this._lastClickRow = row;
+    if (this._clickTimer) clearTimeout(this._clickTimer);
+    this._clickTimer = setTimeout(() => {
+      this._clickCount = 0;
+    }, 400);
+    if (e.shiftKey && this._selectionStart) {
+      this._selectionEnd = { row, col };
+      this._applySelection();
+      e.preventDefault();
+      return;
+    }
+    if (this._clickCount === 2) {
+      this._selectionStart = { row, col: this._wordStart(row, col) };
+      this._selectionEnd = { row, col: this._wordEnd(row, col) };
+      this._applySelection();
+      e.preventDefault();
+    } else if (this._clickCount >= 3) {
+      const bridge = this.getBridge();
+      const cols = bridge ? bridge.getCols() : 80;
+      this._selectionStart = { row, col: 0 };
+      this._selectionEnd = { row, col: cols };
+      this._applySelection();
+      e.preventDefault();
+    } else {
+      this._selectionStart = { row, col };
+      this._selectionEnd = null;
+    }
+  }
+  _wordStart(row, col) {
+    const bridge = this.getBridge();
+    if (!bridge) return col;
+    let c = col;
+    while (c > 0) {
+      const ch = bridge.getCell(row, c - 1).char;
+      if (ch < 33 || this._isDelimiter(ch)) break;
+      c--;
+    }
+    return c;
+  }
+  _wordEnd(row, col) {
+    const bridge = this.getBridge();
+    if (!bridge) return col + 1;
+    const cols = bridge.getCols();
+    let c = col;
+    while (c < cols - 1) {
+      const ch = bridge.getCell(row, c + 1).char;
+      if (ch < 33 || this._isDelimiter(ch)) break;
+      c++;
+    }
+    return c + 1;
+  }
+  _isDelimiter(ch) {
+    return ch >= 33 && ch <= 47 || ch >= 58 && ch <= 64 || ch >= 91 && ch <= 96 || ch >= 123 && ch <= 126;
+  }
+  _applySelection() {
+    if (!this._selectionStart) return;
+    const end = this._selectionEnd || this._selectionStart;
+    const rows = this.element.querySelectorAll(".term-row, .term-scrollback-row");
+    const bridge = this.getBridge();
+    const gridRows = bridge ? bridge.getRows() : 24;
+    const sbCount = Math.max(0, rows.length - gridRows);
+    const startIdx = this._selectionStart.row + sbCount;
+    const endIdx = end.row + sbCount;
+    if (startIdx >= rows.length || endIdx >= rows.length) return;
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    const startEl = rows[startIdx];
+    const endEl = rows[endIdx];
+    try {
+      if (startEl === endEl) {
+        range.selectNodeContents(startEl);
+      } else {
+        range.setStart(startEl, 0);
+        range.setEnd(endEl, endEl.childNodes.length);
+      }
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch {
+    }
+  }
+  handleMouseDown(e) {
+    const bridge = this.getBridge();
+    if (!bridge || bridge.mouseMode() === 0 || e.shiftKey) {
+      this.handleClickSelection(e);
+    }
+    if (!bridge || bridge.mouseMode() === 0) return;
+    e.preventDefault();
+    const { col, row } = this.mouseToCell(e);
+    this._lastClickCol = col;
+    this._lastClickRow = row;
+    const button = e.button === 2 ? 2 : e.button === 1 ? 1 : 0;
+    this.sendMouseEvent(button, col, row, true);
+  }
+  handleMouseUp(e) {
+    const bridge = this.getBridge();
+    if (!bridge || bridge.mouseMode() === 0) return;
+    e.preventDefault();
+    const { col, row } = this.mouseToCell(e);
+    const button = e.button === 2 ? 2 : e.button === 1 ? 1 : 0;
+    this.sendMouseEvent(button, col, row, false);
+  }
+  handleMouseMove(e) {
+    const bridge = this.getBridge();
+    if (!bridge || bridge.mouseMode() < 2) return;
+    const { col, row } = this.mouseToCell(e);
+    if (col === this._lastClickCol && row === this._lastClickRow) return;
+    this._lastClickCol = col;
+    this._lastClickRow = row;
+    const button = e.buttons > 0 ? Math.log2(e.buttons) | 0 : 3;
+    this.sendMouseEvent(button, col, row, true);
+  }
+  handleMouseWheel(e) {
+    const bridge = this.getBridge();
+    if (!bridge || bridge.mouseMode() === 0) return;
+    e.preventDefault();
+    const { col, row } = this.mouseToCell(e);
+    const button = e.deltaY < 0 ? 64 : 65;
+    this.sendMouseEvent(button, col, row, true);
   }
   destroy() {
     this.textarea.removeEventListener("keydown", this._onKeyDown);
@@ -121,6 +298,10 @@ class InputHandler {
     this.textarea.removeEventListener("focus", this._onFocus);
     this.textarea.removeEventListener("blur", this._onBlur);
     this.element.classList.remove("focused");
+    this.element.removeEventListener("mousedown", this._onMouseDown);
+    this.element.removeEventListener("mouseup", this._onMouseUp);
+    this.element.removeEventListener("mousemove", this._onMouseMove);
+    this.element.removeEventListener("wheel", this._onMouseScroll);
     this.textarea.remove();
   }
   handleKeyDown(e) {
