@@ -267,3 +267,50 @@ func TestCreateDispositionHelpers(t *testing.T) {
 func deterministicTestTime() time.Time {
 	return time.Unix(1700000000, 0).UTC()
 }
+
+func TestAgentReadIRPDoesNotBlockProtocolLoop(t *testing.T) {
+	transfer := &fakeFileTransfer{blocked: make(chan struct{})}
+	h := NewRdpefsHandler(true)
+	h.SetFileTransfer(transfer)
+	h.drives[1] = &DriveState{DeviceID: 1, AgentID: "agent", DriveName: "AGENT", Mode: DriveModeAgent}
+	h.handles[1] = &openHandle{DriveDeviceID: 1, AgentID: "agent", Path: "file.bin", RemoteHandle: "handle"}
+
+	request := make([]byte, 20+12)
+	binary.LittleEndian.PutUint32(request[0:4], 1)
+	binary.LittleEndian.PutUint32(request[4:8], 1)
+	binary.LittleEndian.PutUint32(request[8:12], 99)
+	binary.LittleEndian.PutUint32(request[12:16], IRP_MJ_READ)
+	binary.LittleEndian.PutUint32(request[20:24], 64*1024)
+
+	returned := make(chan struct{})
+	go func() { h.processIORequest(request); close(returned) }()
+	select {
+	case <-returned:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("processIORequest blocked on remote file transfer")
+	}
+	close(transfer.blocked)
+}
+
+func TestAgentReadAheadCacheServesSequentialIRPs(t *testing.T) {
+	data := make([]byte, agentReadAheadChunkBytes)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	transfer := &recordingFileTransfer{readData: data}
+	h := NewRdpefsHandler(true)
+	h.SetFileTransfer(transfer)
+	handle := &openHandle{AgentID: "agent", Path: "file.bin", RemoteHandle: "handle"}
+
+	first := h.readAgentCached(handle, 0, 64*1024)
+	second := h.readAgentCached(handle, 64*1024, 64*1024)
+	if len(first) != 64*1024 || len(second) != 64*1024 {
+		t.Fatalf("unexpected read lengths %d %d", len(first), len(second))
+	}
+	if transfer.reads != agentReadAheadParallel {
+		t.Fatalf("network reads = %d, want %d", transfer.reads, agentReadAheadParallel)
+	}
+	if first[1] != 1 || second[1] != 1 {
+		t.Fatal("cached data mismatch")
+	}
+}

@@ -77,6 +77,7 @@ const {
     cleanupMediaProbeCache,
 } = require('./preview/media/media-service');
 const { FileAgentManager } = require('./file-agent-manager');
+const { FileTransferGateway } = require('./file-transfer-ws');
 const { attachRdpProxyBridge } = require('./server/rdp-proxy-bridge');
 const { negotiateRdpTls } = require('./server/rdp-cert-probe');
 
@@ -131,6 +132,7 @@ const MEDIA_CACHE_DIR = path.join(os.tmpdir(), 'zephyr-media-cache');
 const fileAgentManager = new FileAgentManager({
     log: console.log,
 });
+let fileTransferGateway = null;
 
 const BROWSER_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'avif']);
 const BROWSER_IMAGE_CONTENT_TYPES = new Map([
@@ -320,6 +322,7 @@ const workerBridge = new WorkerBridge({
 });
 const aiPolicyService = new AiPolicyService(storage.rawDb(), { storage, userSettings: userSettingsService });
 const aiProviderService = new AiProviderService(storage.rawDb(), { storage, secretCrypto });
+fileTransferGateway = new FileTransferGateway({ fileAgentManager, authz, storage, log: console.log });
 setInterval(() => { try { deepLinkService.gc(); } catch {} }, 5 * 60 * 1000).unref();
 
 function reopenStorage() {
@@ -5032,6 +5035,7 @@ const noVncWss = new WebSocketServer(wsServerOptions);
 const editorLspWss = new WebSocketServer(wsServerOptions);
 const rdpProxyWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 64 * 1024 * 1024 });
 const agentFilesWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 2 * 1024 * 1024 });
+const fileTransferWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 2 * 1024 * 1024 });
 
 function handleHttpUpgrade(req, socket, head) {
     let pathname = '';
@@ -5051,7 +5055,9 @@ function handleHttpUpgrade(req, socket, head) {
                     ? editorLspWss
                     : pathname === '/agent/files'
                         ? agentFilesWss
-                        : null;
+                        : pathname === '/file-transfer'
+                            ? fileTransferWss
+                            : null;
     if (!targetWss) {
         console.warn('[WS-DIAG] rejected websocket upgrade for unknown path', { url: req.url || '' });
         rejectSocket(socket, 404, 'Not Found');
@@ -5092,6 +5098,10 @@ editorLspWss.on('connection', handleEditorLspConnection);
 /* ─── File Agent WebSocket ─── */
 agentFilesWss.on('connection', (ws) => {
     fileAgentManager.handleConnection(ws);
+});
+fileTransferWss.on('connection', (ws, req) => {
+    startSessionWatchdog(ws, req);
+    fileTransferGateway.handleConnection(ws, req);
 });
 
 /* File-agent REST routes are mounted before the SPA catch-all above. */

@@ -54,10 +54,17 @@ abstract class ZephyrFileProvider {
   Future<void> truncate(String path, int size);
 }
 
+class _DesktopOpenFile {
+  final String path;
+  final io.RandomAccessFile file;
+  final bool writable;
+  _DesktopOpenFile(this.path, this.file, this.writable);
+}
+
 /// Desktop file provider using dart:io
 class DesktopFileProvider extends ZephyrFileProvider {
   final String rootDir;
-  final Map<String, io.RandomAccessFile> _openFiles = {};
+  final Map<String, _DesktopOpenFile> _openFiles = {};
   final _uuid = const Uuid();
 
   DesktopFileProvider(this.rootDir);
@@ -161,31 +168,37 @@ class DesktopFileProvider extends ZephyrFileProvider {
       }
     }
     final handle = 'h_${_uuid.v4().substring(0, 8)}';
-    _openFiles[handle] = raf;
+    _openFiles[handle] = _DesktopOpenFile(resolved, raf, wantsWrite);
     return handle;
   }
 
   @override
   Future<Uint8List> read(String handle, int offset, int length) async {
-    final raf = _openFiles[handle];
-    if (raf == null) throw FileProviderException('not_found', 'Invalid handle');
-    await raf.setPosition(offset);
-    return await raf.read(length);
+    final opened = _openFiles[handle];
+    if (opened == null) throw FileProviderException('not_found', 'Invalid handle');
+    final raf = await io.File(opened.path).open(mode: io.FileMode.read);
+    try {
+      await raf.setPosition(offset);
+      return await raf.read(length);
+    } finally {
+      await raf.close();
+    }
   }
 
   @override
   Future<int> write(String handle, int offset, Uint8List data) async {
-    final raf = _openFiles[handle];
-    if (raf == null) throw FileProviderException('not_found', 'Invalid handle');
-    await raf.setPosition(offset);
-    await raf.writeFrom(data);
+    final opened = _openFiles[handle];
+    if (opened == null) throw FileProviderException('not_found', 'Invalid handle');
+    if (!opened.writable) throw FileProviderException('read_only', 'Handle is not writable');
+    await opened.file.setPosition(offset);
+    await opened.file.writeFrom(data);
     return data.length;
   }
 
   @override
   Future<void> close(String handle) async {
-    final raf = _openFiles.remove(handle);
-    if (raf != null) await raf.close();
+    final opened = _openFiles.remove(handle);
+    if (opened != null) await opened.file.close();
   }
 
   @override
@@ -229,8 +242,8 @@ class DesktopFileProvider extends ZephyrFileProvider {
   }
 
   void closeAll() {
-    for (final raf in _openFiles.values) {
-      try { raf.closeSync(); } catch (_) {}
+    for (final opened in _openFiles.values) {
+      try { opened.file.closeSync(); } catch (_) {}
     }
     _openFiles.clear();
   }

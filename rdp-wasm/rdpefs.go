@@ -31,6 +31,8 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -259,6 +261,22 @@ type VirtualFile struct {
 	Children map[string]*VirtualFile
 }
 
+const (
+	agentReadAheadChunkBytes = 1024 * 1024
+	agentReadAheadParallel   = 4
+	agentReadAheadWindow     = agentReadAheadChunkBytes * agentReadAheadParallel
+	agentReadAheadMaxBytes   = 16 * 1024 * 1024
+)
+
+type agentReadCache struct {
+	mu       sync.Mutex
+	start    uint64
+	data     []byte
+	loading  bool
+	loadFrom uint64
+	ready    chan struct{}
+}
+
 // openHandle tracks an open file/directory for IRP processing
 type openHandle struct {
 	DriveDeviceID uint32
@@ -266,6 +284,7 @@ type openHandle struct {
 	Path          string
 	IsDir         bool
 	RemoteHandle  string // handle ID from agent (for agent mode reads)
+	ReadCache     *agentReadCache
 	Volatile      bool   // in-memory placeholder for Office temp/lock files on read-only Agent shares
 	VolatileData  []byte // data written to the volatile placeholder during this RDP session
 	// For local mode compatibility
@@ -279,9 +298,11 @@ type dirEnumState struct {
 
 // RdpefsHandler implements plugin.ChannelTransport for the rdpdr SVC
 type RdpefsHandler struct {
-	mu      sync.Mutex
-	sender  func(string, []byte) (int, error)
-	enabled bool
+	mu       sync.Mutex
+	sendMu   sync.Mutex
+	sender   func(string, []byte) (int, error)
+	enabled  bool
+	transfer fileTransfer
 
 	clientID     uint32
 	versionMajor uint16
@@ -337,7 +358,25 @@ func (h *RdpefsHandler) send(data []byte) {
 	fn := h.sender
 	h.mu.Unlock()
 	if fn != nil {
+		h.sendMu.Lock()
+		defer h.sendMu.Unlock()
 		fn("rdpdr", data)
+	}
+}
+
+func (h *RdpefsHandler) SetFileTransfer(transfer fileTransfer) {
+	h.mu.Lock()
+	h.transfer = transfer
+	h.mu.Unlock()
+}
+
+func (h *RdpefsHandler) Close() {
+	h.mu.Lock()
+	transfer := h.transfer
+	h.transfer = nil
+	h.mu.Unlock()
+	if transfer != nil {
+		transfer.Close()
 	}
 }
 
@@ -681,7 +720,7 @@ func (h *RdpefsHandler) processIORequest(data []byte) {
 	completionID := binary.LittleEndian.Uint32(data[8:12])
 	majorFunction := binary.LittleEndian.Uint32(data[12:16])
 	minorFunction := binary.LittleEndian.Uint32(data[16:20])
-	payload := data[20:]
+	payload := append([]byte(nil), data[20:]...)
 
 	switch majorFunction {
 	case IRP_MJ_CREATE:
@@ -689,15 +728,15 @@ func (h *RdpefsHandler) processIORequest(data []byte) {
 	case IRP_MJ_CLOSE:
 		h.handleClose(deviceID, completionID, fileID)
 	case IRP_MJ_READ:
-		h.handleRead(deviceID, completionID, fileID, payload)
+		go h.handleRead(deviceID, completionID, fileID, payload)
 	case IRP_MJ_WRITE:
-		h.handleWrite(deviceID, completionID, fileID, payload)
+		go h.handleWrite(deviceID, completionID, fileID, payload)
 	case IRP_MJ_QUERY_INFORMATION:
-		h.handleQueryInformation(deviceID, completionID, fileID, payload)
+		go h.handleQueryInformation(deviceID, completionID, fileID, payload)
 	case IRP_MJ_SET_INFORMATION:
-		h.handleSetInformation(deviceID, completionID, fileID, payload)
+		go h.handleSetInformation(deviceID, completionID, fileID, payload)
 	case IRP_MJ_DIRECTORY_CONTROL:
-		h.handleDirectoryControl(deviceID, completionID, fileID, minorFunction, payload)
+		go h.handleDirectoryControl(deviceID, completionID, fileID, minorFunction, payload)
 	case IRP_MJ_QUERY_VOLUME:
 		h.handleQueryVolume(deviceID, completionID, payload)
 	case IRP_MJ_CLEANUP:
@@ -756,7 +795,7 @@ func (h *RdpefsHandler) handleCreate(deviceID, completionID uint32, data []byte)
 	}
 
 	if drive.Mode == DriveModeAgent {
-		h.handleCreateAgent(drive, completionID, rdpPath, desiredAccess, createDisposition, createOptions)
+		go h.handleCreateAgent(drive, completionID, rdpPath, desiredAccess, createDisposition, createOptions)
 	} else {
 		h.handleCreateLocal(deviceID, completionID, rdpPath, desiredAccess, createDisposition, createOptions)
 	}
@@ -843,7 +882,7 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 		return
 	}
 
-	isDir := (*statResult).Get("isDir").Bool()
+	isDir := statResult.IsDir
 	if createOptions&FILE_DIRECTORY_FILE != 0 && !isDir {
 		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_NO_SUCH_FILE, nil)
 		return
@@ -1099,7 +1138,7 @@ func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data [
 			h.mu.Unlock()
 		}
 
-		chunk := h.callAgentRead(handle.AgentID, readHandle, offset, length)
+		chunk := h.readAgentCached(handle, offset, length)
 		resp := &bytes.Buffer{}
 		if chunk == nil {
 			// Agent RPC failed — must NOT pretend success with Length=0,
@@ -1139,6 +1178,89 @@ func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data [
 		resp.Write(chunk)
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 	}
+}
+
+func (h *RdpefsHandler) readAgentCached(handle *openHandle, offset uint64, length uint32) []byte {
+	if length == 0 {
+		return []byte{}
+	}
+	cache := handle.ReadCache
+	if cache == nil {
+		h.mu.Lock()
+		if handle.ReadCache == nil {
+			handle.ReadCache = &agentReadCache{}
+		}
+		cache = handle.ReadCache
+		h.mu.Unlock()
+	}
+	for {
+		cache.mu.Lock()
+		if offset >= cache.start && offset+uint64(length) <= cache.start+uint64(len(cache.data)) {
+			start := int(offset - cache.start)
+			chunk := append([]byte(nil), cache.data[start:start+int(length)]...)
+			cache.mu.Unlock()
+			addProtocolCounter("file.cache.hit", 1)
+			addProtocolCounter("file.bytes.cache", uint64(len(chunk)))
+			return chunk
+		}
+		if cache.loading && offset >= cache.loadFrom && offset < cache.loadFrom+agentReadAheadWindow {
+			ready := cache.ready
+			cache.mu.Unlock()
+			<-ready
+			continue
+		}
+		cache.loading = true
+		cache.loadFrom = offset
+		cache.ready = make(chan struct{})
+		ready := cache.ready
+		cache.mu.Unlock()
+
+		fetchLength := uint32(agentReadAheadWindow)
+		if length > fetchLength {
+			fetchLength = length
+		}
+		if fetchLength > agentReadAheadMaxBytes {
+			fetchLength = agentReadAheadMaxBytes
+		}
+		started := time.Now()
+		data := h.callAgentReadWindow(handle.AgentID, handle.RemoteHandle, offset, fetchLength)
+		elapsed := time.Since(started)
+
+		cache.mu.Lock()
+		if data != nil {
+			cache.start = offset
+			cache.data = data
+			if len(cache.data) > agentReadAheadMaxBytes {
+				cache.data = cache.data[:agentReadAheadMaxBytes]
+			}
+		} else {
+			cache.data = nil
+		}
+		cache.loading = false
+		close(ready)
+		cache.mu.Unlock()
+		addProtocolCounter("file.cache.miss", 1)
+		addProtocolCounter("file.bytes.network", uint64(len(data)))
+		addProtocolCounter("file.read.latency_ms", uint64(elapsed.Milliseconds()))
+		if data == nil {
+			return nil
+		}
+		if uint32(len(data)) < length {
+			return append([]byte(nil), data...)
+		}
+		return append([]byte(nil), data[:length]...)
+	}
+}
+
+func invalidateAgentReadCache(handle *openHandle) {
+	if handle == nil || handle.ReadCache == nil {
+		return
+	}
+	cache := handle.ReadCache
+	cache.mu.Lock()
+	cache.data = nil
+	cache.start = 0
+	cache.mu.Unlock()
 }
 
 // ─── IRP_MJ_WRITE ───────────────────────────────────────────────
@@ -1197,6 +1319,7 @@ func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data 
 			return
 		}
 		written := h.callAgentWrite(handle.AgentID, writeHandle, offset, writeData)
+		invalidateAgentReadCache(handle)
 		if written == 0 && len(writeData) > 0 {
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_WRITE, STATUS_UNSUCCESSFUL, nil)
 			return
@@ -1283,6 +1406,7 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 		if drive.Mode == DriveModeAgent && len(infoData) >= 8 {
 			newSize := binary.LittleEndian.Uint64(infoData[0:8])
 			ok := h.callAgentTruncate(handle.AgentID, handle.Path, newSize)
+			invalidateAgentReadCache(handle)
 			if !ok {
 				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_UNSUCCESSFUL, nil)
 				return
@@ -1423,9 +1547,9 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_UNSUCCESSFUL, nil)
 			return
 		}
-		isDir = (*stat).Get("isDir").Bool()
-		size = int64((*stat).Get("size").Float())
-		mtime = time.UnixMilli(int64((*stat).Get("mtime").Float()))
+		isDir = stat.IsDir
+		size = stat.Size
+		mtime = time.UnixMilli(stat.Mtime)
 	} else {
 		file := handle.LocalFile
 		if file == nil {
@@ -1567,34 +1691,37 @@ func (h *RdpefsHandler) handleDirectoryControl(deviceID, completionID, fileID, m
 }
 
 func (h *RdpefsHandler) listAgentDir(agentID, dirPath, pattern string) []*VirtualFile {
-	result := js.Global().Call("zephyrRdpFsList", agentID, dirPath)
-	if result.IsNull() || result.IsUndefined() {
+	response, err := h.requestAgent(agentID, zft2List, map[string]any{"path": dirPath}, nil)
+	if err != nil {
+		return nil
+	}
+	entriesJSON, err := json.Marshal(response.Meta["entries"])
+	if err != nil {
+		return nil
+	}
+	var entriesRaw []struct {
+		Name  string `json:"name"`
+		IsDir bool   `json:"isDir"`
+		Size  int64  `json:"size"`
+		Mtime int64  `json:"mtime"`
+	}
+	if err := json.Unmarshal(entriesJSON, &entriesRaw); err != nil {
 		return nil
 	}
 
 	now := time.Now()
-	entries := make([]*VirtualFile, 0)
+	entries := make([]*VirtualFile, 0, len(entriesRaw)+2)
 	entries = append(entries, &VirtualFile{Name: ".", IsDir: true, ModTime: now})
 	entries = append(entries, &VirtualFile{Name: "..", IsDir: true, ModTime: now})
-
-	length := result.Length()
-	for i := 0; i < length; i++ {
-		entry := result.Index(i)
-		name := entry.Get("name").String()
-		if pattern != "" && pattern != "*" && pattern != "*.*" && !matchPattern(pattern, name) {
+	for _, entry := range entriesRaw {
+		if pattern != "" && pattern != "*" && pattern != "*.*" && !matchPattern(pattern, entry.Name) {
 			continue
 		}
-		mt := time.UnixMilli(int64(entry.Get("mtime").Float()))
+		mt := time.UnixMilli(entry.Mtime)
 		if mt.IsZero() {
 			mt = now
 		}
-		f := &VirtualFile{
-			Name:    name,
-			IsDir:   entry.Get("isDir").Bool(),
-			Size:    int64(entry.Get("size").Float()),
-			ModTime: mt,
-		}
-		entries = append(entries, f)
+		entries = append(entries, &VirtualFile{Name: entry.Name, IsDir: entry.IsDir, Size: entry.Size, ModTime: mt})
 	}
 	return entries
 }
@@ -1790,71 +1917,133 @@ func (h *RdpefsHandler) sendIOCompletion(deviceID, completionID, status uint32, 
 	h.send(buf.Bytes())
 }
 
-// ─── Agent RPC calls (synchronous JS interop) ───────────────────
+// ─── Agent RPC calls (ZFT2 binary WebSocket) ────────────────────
 
-func (h *RdpefsHandler) callAgentStat(agentID, path string) *js.Value {
-	result := js.Global().Call("zephyrRdpFsStat", agentID, path)
-	if result.IsNull() || result.IsUndefined() {
-		return nil
-	}
-	return &result
+type agentFileStat struct {
+	Name  string
+	Path  string
+	IsDir bool
+	Size  int64
+	Mtime int64
 }
 
-// Wrapper to avoid returning pointer to interface
-func (h *RdpefsHandler) callAgentStatChecked(agentID, path string) *js.Value {
-	return h.callAgentStat(agentID, path)
+func (h *RdpefsHandler) requestAgent(agentID string, op byte, meta map[string]any, payload []byte) (fileTransferResponse, error) {
+	h.mu.Lock()
+	transfer := h.transfer
+	h.mu.Unlock()
+	if transfer == nil {
+		return fileTransferResponse{}, fmt.Errorf("file transfer is unavailable")
+	}
+	return transfer.Request(agentID, op, meta, payload)
+}
+
+func (h *RdpefsHandler) callAgentStat(agentID, path string) *agentFileStat {
+	response, err := h.requestAgent(agentID, zft2Stat, map[string]any{"path": path}, nil)
+	if err != nil {
+		if zerr, ok := err.(*zft2Error); ok && zerr.Code == "not_found" {
+			return nil
+		}
+		slog.Warn("rdpefs: agent stat failed", "agent", agentID, "path", path, "err", err)
+		return nil
+	}
+	return &agentFileStat{
+		Name: stringMeta(response.Meta, "name"), Path: stringMeta(response.Meta, "path"),
+		IsDir: boolMeta(response.Meta, "isDir"), Size: int64Meta(response.Meta, "size"),
+		Mtime: int64Meta(response.Meta, "mtime"),
+	}
 }
 
 func (h *RdpefsHandler) callAgentOpen(agentID, path, mode string) string {
-	result := js.Global().Call("zephyrRdpFsOpen", agentID, path, mode)
-	if result.IsNull() || result.IsUndefined() {
+	response, err := h.requestAgent(agentID, zft2Open, map[string]any{"path": path, "mode": mode}, nil)
+	if err != nil {
+		slog.Warn("rdpefs: agent open failed", "path", path, "err", err)
 		return ""
 	}
-	return result.String()
+	return stringMeta(response.Meta, "handle")
 }
 
 func (h *RdpefsHandler) callAgentRead(agentID, handle string, offset uint64, length uint32) []byte {
-	result := js.Global().Call("zephyrRdpFsRead", agentID, handle, int(offset), int(length))
-	if result.IsNull() || result.IsUndefined() {
+	response, err := h.requestAgent(agentID, zft2Read, map[string]any{"handle": handle, "offset": offset, "length": length}, nil)
+	if err != nil {
+		slog.Warn("rdpefs: agent read failed", "handle", handle, "offset", offset, "err", err)
 		return nil
 	}
-	buf := make([]byte, result.Length())
-	js.CopyBytesToGo(buf, result)
-	return buf
+	return response.Payload
+}
+
+func (h *RdpefsHandler) callAgentReadWindow(agentID, handle string, offset uint64, length uint32) []byte {
+	if length <= zft2MaxPayloadBytes {
+		return h.callAgentRead(agentID, handle, offset, length)
+	}
+	type part struct {
+		index int
+		data  []byte
+	}
+	parts := int((length + zft2MaxPayloadBytes - 1) / zft2MaxPayloadBytes)
+	results := make(chan part, parts)
+	for index := 0; index < parts; index++ {
+		partOffset := offset + uint64(index*zft2MaxPayloadBytes)
+		partLength := uint32(zft2MaxPayloadBytes)
+		remaining := int(length) - index*zft2MaxPayloadBytes
+		if remaining < int(partLength) {
+			partLength = uint32(remaining)
+		}
+		go func(index int, partOffset uint64, partLength uint32) {
+			results <- part{index: index, data: h.callAgentRead(agentID, handle, partOffset, partLength)}
+		}(index, partOffset, partLength)
+	}
+	ordered := make([][]byte, parts)
+	for range parts {
+		result := <-results
+		if result.data == nil {
+			return nil
+		}
+		ordered[result.index] = result.data
+	}
+	window := make([]byte, 0, length)
+	for _, data := range ordered {
+		window = append(window, data...)
+		if len(data) < zft2MaxPayloadBytes {
+			break
+		}
+	}
+	return window
 }
 
 func (h *RdpefsHandler) callAgentWrite(agentID, handle string, offset uint64, data []byte) int {
-	jsArr := js.Global().Get("Uint8Array").New(len(data))
-	js.CopyBytesToJS(jsArr, data)
-	result := js.Global().Call("zephyrRdpFsWrite", agentID, handle, int(offset), jsArr)
-	if result.IsNull() || result.IsUndefined() {
+	response, err := h.requestAgent(agentID, zft2Write, map[string]any{"handle": handle, "offset": offset}, data)
+	if err != nil {
+		slog.Warn("rdpefs: agent write failed", "handle", handle, "offset", offset, "err", err)
 		return 0
 	}
-	return result.Int()
+	return int(int64Meta(response.Meta, "bytesWritten"))
 }
 
 func (h *RdpefsHandler) callAgentClose(agentID, handle string) {
-	js.Global().Call("zephyrRdpFsClose", agentID, handle)
+	_, err := h.requestAgent(agentID, zft2Close, map[string]any{"handle": handle}, nil)
+	if err != nil {
+		slog.Debug("rdpefs: agent close failed", "handle", handle, "err", err)
+	}
 }
 
 func (h *RdpefsHandler) callAgentMkdir(agentID, path string) bool {
-	result := js.Global().Call("zephyrRdpFsMkdir", agentID, path)
-	return !result.IsNull() && !result.IsUndefined() && result.Bool()
+	_, err := h.requestAgent(agentID, zft2Mkdir, map[string]any{"path": path}, nil)
+	return err == nil
 }
 
 func (h *RdpefsHandler) callAgentDelete(agentID, path string) bool {
-	result := js.Global().Call("zephyrRdpFsDelete", agentID, path)
-	return !result.IsNull() && !result.IsUndefined() && result.Bool()
+	_, err := h.requestAgent(agentID, zft2Delete, map[string]any{"path": path}, nil)
+	return err == nil
 }
 
 func (h *RdpefsHandler) callAgentRename(agentID, oldPath, newPath string) bool {
-	result := js.Global().Call("zephyrRdpFsRename", agentID, oldPath, newPath)
-	return !result.IsNull() && !result.IsUndefined() && result.Bool()
+	_, err := h.requestAgent(agentID, zft2Rename, map[string]any{"oldPath": oldPath, "newPath": newPath}, nil)
+	return err == nil
 }
 
 func (h *RdpefsHandler) callAgentTruncate(agentID, path string, size uint64) bool {
-	result := js.Global().Call("zephyrRdpFsTruncate", agentID, path, int(size))
-	return !result.IsNull() && !result.IsUndefined()
+	_, err := h.requestAgent(agentID, zft2Truncate, map[string]any{"path": path, "size": size}, nil)
+	return err == nil
 }
 
 // ─── Local mode helpers ──────────────────────────────────────────

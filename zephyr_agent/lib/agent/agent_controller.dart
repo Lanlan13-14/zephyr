@@ -11,6 +11,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:uuid/uuid.dart';
 import 'agent_state.dart';
 import '../fs/file_provider.dart';
+import 'file_transfer_protocol.dart';
 import '../app/agent_version.dart';
 
 class AgentController extends ChangeNotifier {
@@ -41,6 +42,11 @@ class AgentController extends ChangeNotifier {
 
   // File provider
   ZephyrFileProvider? _fileProvider;
+  final Map<int, Future<void>> _zft2Tasks = {};
+  final Map<String, Future<void>> _zft2HandleQueues = {};
+  final Set<int> _zft2Cancelled = {};
+  Timer? _transferUiTimer;
+  bool _transferUiDirty = false;
 
   AgentController(this._config);
 
@@ -182,7 +188,7 @@ class AgentController extends ChangeNotifier {
     final deviceId = const Uuid().v5(Namespace.url.value, '${_config.serverUrl}:${_config.deviceName}');
     _send({
       'type': 'hello',
-      'protocolVersion': 1,
+      'protocolVersion': 2,
       'token': _config.token,
       'deviceId': deviceId,
       'deviceName': _config.deviceName,
@@ -197,6 +203,10 @@ class AgentController extends ChangeNotifier {
         'truncate': !_config.readOnly,
         'binary': true,
         'binaryRead': true,
+        'binaryWrite': true,
+        'cancel': true,
+        'creditFlow': true,
+        'maxInflight': 8,
         'maxChunkSize': 1 * 1024 * 1024,
       },
       'share': {
@@ -207,6 +217,17 @@ class AgentController extends ChangeNotifier {
   }
 
   void _onMessage(dynamic raw) {
+    if (raw is List<int>) {
+      try {
+        final bytes = raw is Uint8List ? raw : Uint8List.fromList(raw);
+        if (bytes.length >= 4 && bytes[0] == 0x5a && bytes[1] == 0x46 && bytes[2] == 0x54 && bytes[3] == 0x32) {
+          _handleZft2Frame(decodeZft2Frame(bytes));
+          return;
+        }
+      } catch (_) {
+        return;
+      }
+    }
     Map<String, dynamic> msg;
     try {
       msg = jsonDecode(raw is String ? raw : utf8.decode(raw as List<int>));
@@ -227,6 +248,118 @@ class AgentController extends ChangeNotifier {
       default:
         break;
     }
+  }
+
+  void _handleZft2Frame(Zft2Frame frame) {
+    if (frame.isResponse) return;
+    if (frame.type == Zft2Op.cancel) {
+      final target = (frame.meta['targetRequestId'] as num?)?.toInt() ?? -1;
+      if (_zft2Tasks.containsKey(target)) _zft2Cancelled.add(target);
+      return;
+    }
+    if (_zft2Tasks.length >= 8) {
+      _sendBytes(encodeZft2Error(frame, 'busy', 'Agent request window is full', retryable: true));
+      return;
+    }
+    final handle = frame.meta['handle']?.toString() ?? '';
+    Future<void> run() async {
+      try {
+        final response = await _dispatchZft2(frame);
+        if (!_zft2Cancelled.contains(frame.requestId)) _sendBytes(response);
+      } catch (e) {
+        final code = e is FileProviderException ? e.code : 'internal_error';
+        if (!_zft2Cancelled.contains(frame.requestId)) _sendBytes(encodeZft2Error(frame, code, e.toString()));
+      } finally {
+        _zft2Tasks.remove(frame.requestId);
+        _zft2Cancelled.remove(frame.requestId);
+      }
+    }
+    Future<void> task;
+    if (handle.isNotEmpty && [Zft2Op.write, Zft2Op.close].contains(frame.type)) {
+      final previous = _zft2HandleQueues[handle] ?? Future.value();
+      task = previous.catchError((_) {}).then((_) => run());
+      _zft2HandleQueues[handle] = task.whenComplete(() {
+        if (identical(_zft2HandleQueues[handle], task)) _zft2HandleQueues.remove(handle);
+      });
+    } else {
+      task = run();
+    }
+    _zft2Tasks[frame.requestId] = task;
+  }
+
+  Future<Uint8List> _dispatchZft2(Zft2Frame frame) async {
+    final fp = _fileProvider;
+    if (fp == null) throw FileProviderException('internal_error', 'No file provider');
+    final meta = frame.meta;
+    final mutating = [Zft2Op.write, Zft2Op.mkdir, Zft2Op.delete, Zft2Op.rename, Zft2Op.truncate];
+    if (_config.readOnly && mutating.contains(frame.type)) throw FileProviderException('read_only', 'Share is read-only');
+    Map<String, dynamic> result = {};
+    Uint8List payload = Uint8List(0);
+    switch (frame.type) {
+      case Zft2Op.open:
+        result = {'handle': await fp.open(meta['path'] as String, meta['mode'] as String? ?? 'read')};
+        break;
+      case Zft2Op.read:
+        payload = await fp.read(meta['handle'] as String, (meta['offset'] as num?)?.toInt() ?? 0, (meta['length'] as num?)?.toInt() ?? 262144);
+        result = {'bytesRead': payload.length, 'eof': payload.isEmpty};
+        _recordTransfer(payload.length);
+        break;
+      case Zft2Op.write:
+        final written = await fp.write(meta['handle'] as String, (meta['offset'] as num?)?.toInt() ?? 0, frame.payload);
+        result = {'bytesWritten': written};
+        _recordTransfer(written);
+        break;
+      case Zft2Op.close:
+        await fp.close(meta['handle'] as String);
+        break;
+      case Zft2Op.stat:
+        result = (await fp.stat(meta['path'] as String? ?? '/')).toJson();
+        break;
+      case Zft2Op.list:
+        final entries = await fp.list(meta['path'] as String? ?? '/');
+        result = {'entries': entries.map((e) => e.toJson()).toList()};
+        break;
+      case Zft2Op.mkdir:
+        await fp.mkdir(meta['path'] as String);
+        break;
+      case Zft2Op.delete:
+        await fp.delete(meta['path'] as String, recursive: meta['recursive'] == true);
+        break;
+      case Zft2Op.rename:
+        await fp.rename(meta['oldPath'] as String, meta['newPath'] as String);
+        break;
+      case Zft2Op.truncate:
+        await fp.truncate(meta['path'] as String, (meta['size'] as num?)?.toInt() ?? 0);
+        break;
+      case Zft2Op.ping:
+        result = {'agentTime': DateTime.now().millisecondsSinceEpoch};
+        break;
+      default:
+        throw FileProviderException('unsupported', 'Unsupported ZFT2 operation: ${frame.type}');
+    }
+    _transferCount++;
+    _scheduleTransferUiUpdate();
+    return encodeZft2Response(frame, meta: result, payload: payload);
+  }
+
+  void _recordTransfer(int bytes) {
+    _transferBytes += bytes;
+    _scheduleTransferUiUpdate();
+  }
+
+  void _scheduleTransferUiUpdate() {
+    _transferUiDirty = true;
+    if (_transferUiTimer != null) return;
+    _transferUiTimer = Timer(const Duration(milliseconds: 250), () {
+      _transferUiTimer = null;
+      if (!_transferUiDirty) return;
+      _transferUiDirty = false;
+      notifyListeners();
+    });
+  }
+
+  void _sendBytes(Uint8List bytes) {
+    try { _channel?.sink.add(bytes); } catch (_) {}
   }
 
   void _handleHelloAck(Map<String, dynamic> msg) {
@@ -301,28 +434,9 @@ class AgentController extends ChangeNotifier {
         final handle = await fp.open(params['path'] as String, params['mode'] as String? ?? 'read');
         return {'handle': handle};
       case 'read':
-        final data = await fp.read(
-          params['handle'] as String,
-          params['offset'] as int? ?? 0,
-          params['length'] as int? ?? 262144,
-        );
-        _transferBytes += data.length;
-        notifyListeners();
-        return {
-          'dataBase64': base64Encode(data),
-          'bytesRead': data.length,
-          'eof': data.isEmpty,
-        };
+        throw FileProviderException('unsupported', 'Base64 reads are disabled in protocol v2');
       case 'write':
-        final bytes = base64Decode(params['dataBase64'] as String);
-        final written = await fp.write(
-          params['handle'] as String,
-          params['offset'] as int? ?? 0,
-          bytes,
-        );
-        _transferBytes += written;
-        notifyListeners();
-        return {'bytesWritten': written};
+        throw FileProviderException('unsupported', 'Base64 writes are disabled in protocol v2');
       case 'close':
         await fp.close(params['handle'] as String);
         return {};
@@ -494,6 +608,10 @@ class AgentController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _transferUiTimer?.cancel();
+    _zft2Tasks.clear();
+    _zft2HandleQueues.clear();
+    _zft2Cancelled.clear();
     _cancelShutdownTimer();
     _cancelHeartbeat();
     _cancelReconnect();

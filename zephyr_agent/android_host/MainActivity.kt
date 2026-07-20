@@ -19,12 +19,13 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 class MainActivity : FlutterActivity() {
     private val channelName = "com.zephyr.agent/saf"
     private val requestOpenTree = 0x5A13
     private var pendingSelectResult: MethodChannel.Result? = null
-    private val handles = mutableMapOf<String, SafHandle>()
+    private val handles = ConcurrentHashMap<String, SafHandle>()
 
     data class SafHandle(
         val uri: Uri,
@@ -216,22 +217,24 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        val channel = handle.channel
-        if (channel != null) {
-            try {
-                channel.position(offset)
-                val buffer = ByteArray(length)
-                val read = channel.read(ByteBuffer.wrap(buffer))
-                result.success(if (read <= 0) ByteArray(0) else buffer.copyOf(read))
-                return
-            } catch (_: Exception) {
-                // Some exotic DocumentProviders expose non-seekable descriptors.
-                // Fall through to the slower stream+skip compatibility path.
+        // Open a descriptor per offset read. ZFT2 intentionally runs up to four
+        // reads for the same handle in parallel; mutating one shared
+        // FileChannel.position would corrupt those ranges.
+        try {
+            val pfd = contentResolver.openFileDescriptor(handle.uri, "r")
+                ?: throw SafException("io_error", "Cannot open file for read")
+            pfd.use {
+                FileInputStream(it.fileDescriptor).use { stream ->
+                    val buffer = ByteArray(length)
+                    val read = stream.channel.read(ByteBuffer.wrap(buffer), offset)
+                    result.success(if (read <= 0) ByteArray(0) else buffer.copyOf(read))
+                    return
+                }
             }
+        } catch (_: Exception) {
+            // Some exotic DocumentProviders expose non-seekable descriptors.
         }
 
-        // Fallback for non-seekable providers.  This path should be rare; the
-        // persistent FileChannel above is required for large-file performance.
         val input = contentResolver.openInputStream(handle.uri) ?: throw SafException("io_error", "Cannot open input stream")
         input.use { stream ->
             var skipped = 0L

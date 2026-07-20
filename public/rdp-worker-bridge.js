@@ -20,9 +20,6 @@ export class RdpWorkerBridge {
         this.bootTimer = null;
         this.bootHistory = [];
         this.ready = new Promise((resolve, reject) => { this.resolveReady = resolve; this.rejectReady = reject; });
-        const sabAvailable = typeof SharedArrayBuffer === 'function';
-        this.syncControl = sabAvailable ? new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 4) : null;
-        this.syncData = sabAvailable ? new SharedArrayBuffer(syncBytes) : null;
         this.worker.addEventListener('message', (event) => this._message(event.data));
         this.worker.addEventListener('error', (event) => {
             const error = new Error(event.message || 'RDP Worker failed');
@@ -60,10 +57,6 @@ export class RdpWorkerBridge {
         let offscreen = canvas;
         if (typeof canvas?.transferControlToOffscreen === 'function') offscreen = canvas.transferControlToOffscreen();
         const payload = { type: 'init', canvas: offscreen, options };
-        if (this.syncControl && this.syncData) {
-            payload.syncControl = this.syncControl;
-            payload.syncData = this.syncData;
-        }
         this.worker.postMessage(payload, [offscreen]);
         this.bootTimer = setTimeout(() => {
             if (this.readySettled) return;
@@ -195,49 +188,5 @@ export class RdpWorkerBridge {
             }
             return;
         }
-        if (message?.type === 'sync-rpc') this._syncRpc(message);
-    }
-
-    _syncRpc(message) {
-        if (!this.syncControl || !this.syncData) {
-            console.warn('[rdp-worker] sync RPC ignored because SharedArrayBuffer is unavailable', message?.name || 'unknown');
-            return;
-        }
-        const control = new Int32Array(this.syncControl);
-        const output = new Uint8Array(this.syncData);
-        try {
-            const fn = globalThis[message.name];
-            if (typeof fn !== 'function') throw new Error(`page RPC ${message.name} is unavailable`);
-            let args = message.args || [];
-            if (message.name === 'zephyrRdpFsWrite' && args.length >= 4) {
-                // Worker->page binary arguments arrive as structured-cloned
-                // Uint8Array and stay binary; never JSON/base64 encode them.
-                args = [...args];
-                args[3] = args[3] instanceof Uint8Array ? args[3] : new Uint8Array(args[3]);
-            }
-            const result = fn(...args);
-            if (result && typeof result.then === 'function') throw new Error(`page RPC ${message.name} must be synchronous`);
-            if (result instanceof Uint8Array || result instanceof ArrayBuffer) {
-                const bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
-                if (bytes.byteLength > output.byteLength) throw new Error(`page RPC response exceeds ${output.byteLength} bytes`);
-                output.set(bytes);
-                Atomics.store(control, 1, 1);
-                Atomics.store(control, 2, bytes.byteLength);
-            } else {
-                const bytes = new TextEncoder().encode(JSON.stringify(result ?? null));
-                if (bytes.byteLength > output.byteLength) throw new Error(`page RPC response exceeds ${output.byteLength} bytes`);
-                output.set(bytes);
-                Atomics.store(control, 1, 0);
-                Atomics.store(control, 2, bytes.byteLength);
-            }
-            Atomics.store(control, 3, 0);
-        } catch (error) {
-            const bytes = new TextEncoder().encode(error.message || String(error));
-            output.set(bytes.subarray(0, output.byteLength));
-            Atomics.store(control, 2, Math.min(bytes.byteLength, output.byteLength));
-            Atomics.store(control, 3, 1);
-        }
-        Atomics.store(control, 0, 1);
-        Atomics.notify(control, 0, 1);
     }
 }

@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { test } from 'node:test';
+import { FileAgentConnection } from '../file-agent-manager.js';
+import { OP, FLAG_RESPONSE, encodeFrame } from '../file-transfer-protocol.js';
+
+class MockAgentSocket extends EventEmitter {
+  constructor() {
+    super();
+    this.readyState = 1;
+    this.OPEN = 1;
+    this.sent = [];
+  }
+  send(frame, options, callback) {
+    this.sent.push({ frame: Buffer.from(frame), options });
+    callback?.();
+  }
+}
+
+function connection() {
+  return new FileAgentConnection(new MockAgentSocket(), 'agent-1', {
+    protocolVersion: 2,
+    deviceName: 'phone',
+    capabilities: { binaryRead: true, binaryWrite: true, maxInflight: 2, maxChunkSize: 1048576 },
+    share: { readOnly: false },
+  });
+}
+
+test('Agent v2 resolves binary reads and structured writes', async () => {
+  const conn = connection();
+  const read = conn.callBinaryV2(OP.READ, { handle: 'h', offset: 0, length: 3 }, null, 1000);
+  const readId = conn.nextRequestId - 1;
+  conn.handleBinaryResponse(encodeFrame({ type: OP.READ, requestId: readId, flags: FLAG_RESPONSE, meta: { bytesRead: 3 }, payload: Buffer.from([9, 8, 7]) }));
+  assert.deepEqual([...await read.promise], [9, 8, 7]);
+
+  const write = conn.callBinaryV2(OP.WRITE, { handle: 'h', offset: 0 }, Buffer.from([1]), 1000);
+  const writeId = conn.nextRequestId - 1;
+  conn.handleBinaryResponse(encodeFrame({ type: OP.WRITE, requestId: writeId, flags: FLAG_RESPONSE, meta: { bytesWritten: 1 } }));
+  assert.deepEqual(await write.promise, { bytesWritten: 1 });
+});
+
+test('Agent v2 cancellation rejects immediately and emits CANCEL', async () => {
+  const conn = connection();
+  const operation = conn.callBinaryV2(OP.READ, { handle: 'h', offset: 0, length: 1 }, null, 1000);
+  operation.cancel();
+  await assert.rejects(operation.promise, (error) => error.code === 'cancelled');
+  assert.equal(conn.pendingRequests.size, 0);
+  assert.equal(conn.ws.sent.length, 2);
+});
+
+test('Agent v2 enforces negotiated in-flight limit', async () => {
+  const conn = connection();
+  const one = conn.callBinaryV2(OP.READ, { handle: 'h1', length: 1 }, null, 1000);
+  const two = conn.callBinaryV2(OP.READ, { handle: 'h2', length: 1 }, null, 1000);
+  const three = conn.callBinaryV2(OP.READ, { handle: 'h3', length: 1 }, null, 1000);
+  await assert.rejects(three.promise, (error) => error.code === 'busy');
+  one.cancel();
+  two.cancel();
+  await Promise.allSettled([one.promise, two.promise]);
+});
