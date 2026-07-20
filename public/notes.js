@@ -59,6 +59,12 @@ const ICONS = {
     folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l1.5 1.8h7.5a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
     note: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.8h7.2L19 8.6V20.2a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 3.8V9h5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 12.5h7M8.5 15.5h7M8.5 18.5h4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
     trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M9 10.5v7M12 10.5v7M15 10.5v7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    /* Restore from trash — counterclockwise arrow out of bin (stroke, matches trash weight). */
+    restore: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 10.2V7.6A1.1 1.1 0 0 1 8.6 6.5h6.8A1.1 1.1 0 0 1 16.5 7.6v2.6M9.2 6.5V5.3A1 1 0 0 1 10.2 4.3h3.6a1 1 0 0 1 1 1v1.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.2 14.2a4.3 4.3 0 1 0 1.3-3.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M7.2 9.4h3.4v3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 12.2 10.2 16 17.5 8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    selectAll: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 12.2l2.4 2.4L16.2 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    multi: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="10.5" height="10.5" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9.5 15.5h7.3A1.7 1.7 0 0 0 18.5 13.8V6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7.6 10.2l1.8 1.8 3.4-3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    purge: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 12.2 14 16.2M14 12.2 10 16.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
     link: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.5 14.5 9.5M8.2 12.2l-1.4 1.4a3.2 3.2 0 1 0 4.5 4.5l1.4-1.4M15.8 11.8l1.4-1.4a3.2 3.2 0 0 0-4.5-4.5l-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
     share: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.5" cy="12" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="6.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="17.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 11.1 14.8 7.6M8.6 13 14.8 16.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
     more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="18" cy="12" r="1.5" fill="currentColor"/></svg>',
@@ -249,6 +255,9 @@ export function createNotesController({
         trashCount: 0,
         mobileDetail: false,
         allTags: [],
+        /** Multi-select mode for bulk trash/restore/purge. */
+        selectMode: false,
+        selectedIds: new Set(),
     };
 
     const SORT_LABELS = {
@@ -474,6 +483,12 @@ export function createNotesController({
             return;
         }
         empty?.classList.add('force-hidden');
+        // Drop selection of notes no longer in the list.
+        if (state.selectMode) {
+            const alive = new Set(sorted.map((n) => n.noteId));
+            state.selectedIds = new Set([...state.selectedIds].filter((id) => alive.has(id)));
+        }
+        list.classList.toggle('notes-list-selecting', !!state.selectMode);
         list.innerHTML = sorted.map((n, i) => {
             const tags = (n.tags || []).slice(0, 3).map((t) => `<span class="notes-chip">${escapeHtml(t)}</span>`).join('');
             const links = (n.linkedConnectionIds || []).length;
@@ -487,17 +502,25 @@ export function createNotesController({
                 ? '<span class="notes-chip">共享</span>'
                 : '';
             const delay = prefersReducedMotion() ? 0 : Math.min(i, 12) * 18;
-            return `<button type="button" class="notes-list-item${n.noteId === state.selectedId ? ' active' : ''}" data-note-id="${escapeHtml(n.noteId)}" role="option" aria-selected="${n.noteId === state.selectedId ? 'true' : 'false'}" style="--notes-stagger:${delay}ms">
-                <div class="notes-list-item-main">
-                    <div class="notes-list-title">${escapeHtml(n.title || '未命名笔记')}</div>
-                    <div class="notes-list-preview">${escapeHtml(n.preview || n.summary || '暂无内容')}</div>
-                </div>
-                <div class="notes-list-meta">
-                    <time datetime="${escapeHtml(String(n.updatedAt || ''))}" title="${escapeHtml(formatAbsoluteTime(n.updatedAt))}">${escapeHtml(formatRelativeTime(n.updatedAt))}</time>
-                    <div class="notes-list-chips">${tags}${connChip}${shared}${dirtyBadge}</div>
-                </div>
-            </button>`;
+            const checked = state.selectedIds.has(n.noteId);
+            const active = n.noteId === state.selectedId && !state.selectMode;
+            return `<div class="notes-list-item${active ? ' active' : ''}${checked ? ' is-checked' : ''}${state.selectMode ? ' is-selecting' : ''}" data-note-id="${escapeHtml(n.noteId)}" role="option" aria-selected="${active || checked ? 'true' : 'false'}" style="--notes-stagger:${delay}ms">
+                <button type="button" class="notes-list-check" data-note-check="${escapeHtml(n.noteId)}" aria-label="${checked ? '取消选择' : '选择'}" aria-pressed="${checked ? 'true' : 'false'}">
+                    <span class="notes-list-check-box" aria-hidden="true">${checked ? icon('check') : ''}</span>
+                </button>
+                <button type="button" class="notes-list-body" data-note-open="${escapeHtml(n.noteId)}">
+                    <div class="notes-list-item-main">
+                        <div class="notes-list-title">${escapeHtml(n.title || '未命名笔记')}</div>
+                        <div class="notes-list-preview">${escapeHtml(n.preview || n.summary || '暂无内容')}</div>
+                    </div>
+                    <div class="notes-list-meta">
+                        <time datetime="${escapeHtml(String(n.updatedAt || ''))}" title="${escapeHtml(formatAbsoluteTime(n.updatedAt))}">${escapeHtml(formatRelativeTime(n.updatedAt))}</time>
+                        <div class="notes-list-chips">${tags}${connChip}${shared}${dirtyBadge}</div>
+                    </div>
+                </button>
+            </div>`;
         }).join('');
+        updateSelectionBar();
     }
 
     function showEditor(show) {
@@ -752,6 +775,122 @@ export function createNotesController({
         toast?.('已新建笔记');
     }
 
+    function selectedIdList() {
+        return [...state.selectedIds];
+    }
+
+    function setSelectMode(on, { render = true } = {}) {
+        state.selectMode = !!on;
+        if (!state.selectMode) state.selectedIds = new Set();
+        document.getElementById('notesShell')?.classList.toggle('notes-select-mode', state.selectMode);
+        $('#notesSelectModeBtn')?.classList.toggle('is-active', state.selectMode);
+        $('#notesSelectModeBtn')?.setAttribute('aria-pressed', state.selectMode ? 'true' : 'false');
+        if (render) renderList();
+        else updateSelectionBar();
+    }
+
+    function toggleNoteChecked(noteId, force) {
+        if (!noteId) return;
+        const next = force === true ? true : force === false ? false : !state.selectedIds.has(noteId);
+        if (next) state.selectedIds.add(noteId);
+        else state.selectedIds.delete(noteId);
+        if (!state.selectMode && state.selectedIds.size) setSelectMode(true, { render: false });
+        renderList();
+    }
+
+    function selectAllVisible() {
+        if (!state.selectMode) setSelectMode(true, { render: false });
+        state.selectedIds = new Set(state.notes.map((n) => n.noteId));
+        renderList();
+    }
+
+    function clearSelection() {
+        state.selectedIds = new Set();
+        renderList();
+    }
+
+    function updateSelectionBar() {
+        let bar = document.getElementById('notesSelectionBar');
+        if (!bar) return;
+        const count = state.selectedIds.size;
+        const inTrash = state.trash || state.groupFilter === '__trash';
+        bar.classList.toggle('force-hidden', !state.selectMode);
+        bar.classList.toggle('is-empty', count === 0);
+        const countEl = bar.querySelector('[data-sel-count]');
+        if (countEl) countEl.textContent = String(count);
+        bar.querySelectorAll('[data-sel-action]').forEach((btn) => {
+            const action = btn.dataset.selAction;
+            const needsSelection = action !== 'all' && action !== 'exit' && action !== 'none';
+            btn.disabled = needsSelection && count === 0;
+            if (action === 'trash') btn.classList.toggle('force-hidden', inTrash);
+            if (action === 'restore') btn.classList.toggle('force-hidden', !inTrash);
+            if (action === 'purge') btn.classList.toggle('force-hidden', !inTrash);
+            if (action === 'purge_permanent') btn.classList.toggle('force-hidden', inTrash);
+        });
+        const allBtn = bar.querySelector('[data-sel-action="all"]');
+        if (allBtn) {
+            const allSelected = state.notes.length > 0 && state.selectedIds.size >= state.notes.length;
+            allBtn.setAttribute('aria-pressed', allSelected ? 'true' : 'false');
+            allBtn.title = allSelected ? '取消全选' : '全选当前列表';
+        }
+    }
+
+    async function runBulk(action) {
+        const ids = selectedIdList();
+        if (!ids.length) return;
+        const inTrash = state.trash || state.groupFilter === '__trash';
+        let title = '';
+        let message = '';
+        let confirmLabel = '确定';
+        let apiAction = action;
+        if (action === 'trash') {
+            title = '移到回收站';
+            message = `将 ${ids.length} 条笔记移到回收站？可稍后恢复。`;
+            confirmLabel = '移到回收站';
+        } else if (action === 'restore') {
+            title = '恢复笔记';
+            message = `恢复 ${ids.length} 条笔记？`;
+            confirmLabel = '恢复';
+        } else if (action === 'purge') {
+            title = '彻底删除';
+            message = `彻底删除回收站中的 ${ids.length} 条笔记？此操作不可撤销。`;
+            confirmLabel = '彻底删除';
+        } else if (action === 'purge_permanent') {
+            title = '直接删除';
+            message = `永久删除 ${ids.length} 条笔记？不会进入回收站，此操作不可撤销。`;
+            confirmLabel = '永久删除';
+            apiAction = 'purge_permanent';
+        } else {
+            return;
+        }
+        if (action === 'purge' && !inTrash) {
+            toast?.('只能彻底删除回收站中的笔记');
+            return;
+        }
+        const ok = await nativeConfirm({ title, message, confirmLabel, danger: action !== 'restore' });
+        if (!ok) return;
+        try {
+            const result = await api('/api/notes/bulk', {
+                method: 'POST',
+                body: JSON.stringify({ noteIds: ids, action: apiAction }),
+            });
+            if (state.selectedId && ids.includes(state.selectedId)) {
+                state.current = null;
+                state.selectedId = null;
+                state.dirty = false;
+                fillEditor(null);
+            }
+            state.selectedIds = new Set();
+            await loadList();
+            const n = result?.affected ?? ids.length;
+            if (action === 'trash') toast?.(`已移到回收站（${n}）`);
+            else if (action === 'restore') toast?.(`已恢复（${n}）`);
+            else toast?.(`已永久删除（${n}）`);
+        } catch (err) {
+            toast?.(err.message || '批量操作失败');
+        }
+    }
+
     async function deleteCurrent() {
         if (!state.current) return;
         if (state.trash || state.groupFilter === '__trash') {
@@ -787,22 +926,26 @@ export function createNotesController({
         }
     }
 
-    async function purgeCurrent() {
+    async function purgeCurrent({ permanent = false } = {}) {
         if (!state.current) return;
+        const inTrash = state.trash || state.groupFilter === '__trash';
         const ok = await nativeConfirm({
-            title: '彻底删除',
-            message: '彻底删除这条笔记？此操作不可撤销。',
-            confirmLabel: '彻底删除',
+            title: permanent && !inTrash ? '直接删除' : '彻底删除',
+            message: permanent && !inTrash
+                ? '永久删除这条笔记？不会进入回收站，此操作不可撤销。'
+                : '彻底删除这条笔记？此操作不可撤销。',
+            confirmLabel: permanent && !inTrash ? '永久删除' : '彻底删除',
             danger: true,
         });
         if (!ok) return;
-        await api(`/api/notes/${encodeURIComponent(state.current.noteId)}/purge`, { method: 'DELETE' });
+        const q = permanent && !inTrash ? '?force=1' : '';
+        await api(`/api/notes/${encodeURIComponent(state.current.noteId)}/purge${q}`, { method: 'DELETE' });
         state.current = null;
         state.selectedId = null;
         state.dirty = false;
         fillEditor(null);
         await loadList();
-        toast?.('已彻底删除');
+        toast?.(permanent && !inTrash ? '已永久删除' : '已彻底删除');
     }
 
     async function emptyTrash() {
@@ -837,12 +980,29 @@ export function createNotesController({
 
     function updateTrashButtons() {
         const inTrash = state.trash || state.groupFilter === '__trash';
-        $('#notesDeleteBtn')?.classList.toggle('force-hidden', inTrash);
-        $('#notesPurgeBtn')?.classList.toggle('force-hidden', !inTrash || !state.current);
-        $('#notesRestoreBtn')?.classList.toggle('force-hidden', !inTrash || !state.current);
+        const hasCurrent = !!state.current;
+        $('#notesDeleteBtn')?.classList.toggle('force-hidden', inTrash || !hasCurrent);
+        // Permanent delete (skip trash) available on active notes.
+        $('#notesPurgePermanentBtn')?.classList.toggle('force-hidden', inTrash || !hasCurrent);
+        $('#notesPurgeBtn')?.classList.toggle('force-hidden', !inTrash || !hasCurrent);
+        $('#notesRestoreBtn')?.classList.toggle('force-hidden', !inTrash || !hasCurrent);
         $('#notesEmptyTrashBtn')?.classList.toggle('force-hidden', !inTrash);
         $('#notesNewBtn')?.classList.toggle('force-hidden', inTrash);
         $('#notesEditorActions')?.classList.toggle('notes-in-trash', inTrash);
+        // more-menu items
+        document.querySelectorAll('#notesMoreMenu [data-more-action="delete"]').forEach((el) => {
+            el.classList.toggle('force-hidden', inTrash);
+        });
+        document.querySelectorAll('#notesMoreMenu [data-more-action="purge_permanent"]').forEach((el) => {
+            el.classList.toggle('force-hidden', inTrash);
+        });
+        document.querySelectorAll('#notesMoreMenu [data-more-action="restore"]').forEach((el) => {
+            el.classList.toggle('force-hidden', !inTrash);
+        });
+        document.querySelectorAll('#notesMoreMenu [data-more-action="purge"]').forEach((el) => {
+            el.classList.toggle('force-hidden', !inTrash);
+        });
+        updateSelectionBar();
     }
 
     function placeMenu(menu, x, y) {
@@ -1044,15 +1204,17 @@ export function createNotesController({
         menu.dataset.ephemeral = '1';
         const inTrash = state.trash || state.groupFilter === '__trash';
         menu.innerHTML = inTrash ? `
-            <button type="button" class="notes-menu-item" data-ctx-action="restore" data-note-id="${escapeHtml(noteId)}"><span>恢复</span></button>
-            <button type="button" class="notes-menu-item danger" data-ctx-action="purge" data-note-id="${escapeHtml(noteId)}">${icon('trash')}<span>彻底删除</span></button>
+            <button type="button" class="notes-menu-item" data-ctx-action="restore" data-note-id="${escapeHtml(noteId)}">${icon('restore')}<span>恢复</span></button>
+            <button type="button" class="notes-menu-item danger" data-ctx-action="purge" data-note-id="${escapeHtml(noteId)}">${icon('purge')}<span>彻底删除</span></button>
         ` : `
             <button type="button" class="notes-menu-item" data-ctx-action="rename" data-note-id="${escapeHtml(noteId)}"><span>重命名</span></button>
             <button type="button" class="notes-menu-item" data-ctx-action="move" data-note-id="${escapeHtml(noteId)}">${icon('folder')}<span>移动分组</span></button>
             <button type="button" class="notes-menu-item" data-ctx-action="copy" data-note-id="${escapeHtml(noteId)}"><span>复制</span></button>
             <button type="button" class="notes-menu-item" data-ctx-action="export" data-note-id="${escapeHtml(noteId)}">${icon('export')}<span>导出 Markdown</span></button>
+            <button type="button" class="notes-menu-item" data-ctx-action="select" data-note-id="${escapeHtml(noteId)}">${icon('multi')}<span>多选</span></button>
             <div class="notes-menu-sep"></div>
-            <button type="button" class="notes-menu-item danger" data-ctx-action="delete" data-note-id="${escapeHtml(noteId)}">${icon('trash')}<span>删除</span></button>
+            <button type="button" class="notes-menu-item danger" data-ctx-action="delete" data-note-id="${escapeHtml(noteId)}">${icon('trash')}<span>移到回收站</span></button>
+            <button type="button" class="notes-menu-item danger" data-ctx-action="purge_permanent" data-note-id="${escapeHtml(noteId)}">${icon('purge')}<span>直接删除</span></button>
         `;
         placeMenu(menu, x, y);
         requestAnimationFrame(() => menu.classList.add('show'));
@@ -1150,22 +1312,30 @@ export function createNotesController({
             }
             await loadList();
             toast?.('已移到回收站');
-        } else if (action === 'purge') {
+        } else if (action === 'purge' || action === 'purge_permanent') {
+            const permanent = action === 'purge_permanent';
             const ok = await nativeConfirm({
-                title: '彻底删除',
-                message: '彻底删除这条笔记？此操作不可撤销。',
-                confirmLabel: '彻底删除',
+                title: permanent ? '直接删除' : '彻底删除',
+                message: permanent
+                    ? '永久删除这条笔记？不会进入回收站，此操作不可撤销。'
+                    : '彻底删除这条笔记？此操作不可撤销。',
+                confirmLabel: permanent ? '永久删除' : '彻底删除',
                 danger: true,
             });
             if (!ok) return;
-            await api(`/api/notes/${encodeURIComponent(noteId)}/purge`, { method: 'DELETE' });
+            const q = permanent ? '?force=1' : '';
+            await api(`/api/notes/${encodeURIComponent(noteId)}/purge${q}`, { method: 'DELETE' });
             if (state.current?.noteId === noteId) {
                 state.current = null;
                 state.selectedId = null;
                 fillEditor(null);
             }
+            state.selectedIds.delete(noteId);
             await loadList();
-            toast?.('已彻底删除');
+            toast?.(permanent ? '已永久删除' : '已彻底删除');
+        } else if (action === 'select') {
+            setSelectMode(true, { render: false });
+            toggleNoteChecked(noteId, true);
         } else if (action === 'restore') {
             try {
                 await api(`/api/notes/${encodeURIComponent(noteId)}/restore`, { method: 'POST' });
@@ -1174,6 +1344,7 @@ export function createNotesController({
                     state.selectedId = null;
                     fillEditor(null);
                 }
+                state.selectedIds.delete(noteId);
                 await loadList();
                 toast?.('已恢复');
             } catch (err) {
@@ -1326,9 +1497,25 @@ export function createNotesController({
     function bind() {
         $('#notesNewBtn')?.addEventListener('click', () => createNote().catch((e) => toast?.(e.message)));
         $('#notesDeleteBtn')?.addEventListener('click', () => deleteCurrent().catch((e) => toast?.(e.message)));
-        $('#notesPurgeBtn')?.addEventListener('click', () => purgeCurrent().catch((e) => toast?.(e.message)));
+        $('#notesPurgeBtn')?.addEventListener('click', () => purgeCurrent({ permanent: false }).catch((e) => toast?.(e.message)));
+        $('#notesPurgePermanentBtn')?.addEventListener('click', () => purgeCurrent({ permanent: true }).catch((e) => toast?.(e.message)));
         $('#notesEmptyTrashBtn')?.addEventListener('click', () => emptyTrash().catch((e) => toast?.(e.message)));
         $('#notesRestoreBtn')?.addEventListener('click', () => restoreCurrent().catch((e) => toast?.(e.message)));
+        $('#notesSelectModeBtn')?.addEventListener('click', () => {
+            setSelectMode(!state.selectMode);
+        });
+        $('#notesSelectionBar')?.addEventListener('click', (e) => {
+            const btn = e.target.closest?.('[data-sel-action]');
+            if (!btn || btn.disabled) return;
+            const action = btn.dataset.selAction;
+            if (action === 'exit') setSelectMode(false);
+            else if (action === 'all') {
+                const allSelected = state.notes.length > 0 && state.selectedIds.size >= state.notes.length;
+                if (allSelected) clearSelection();
+                else selectAllVisible();
+            } else if (action === 'none') clearSelection();
+            else runBulk(action).catch((err) => toast?.(err.message));
+        });
         $('#notesBackBtn')?.addEventListener('click', () => {
             setMobileDetail(false);
         });
@@ -1385,6 +1572,7 @@ export function createNotesController({
             if (!btn) return;
             state.groupFilter = btn.dataset.group;
             state.trash = state.groupFilter === '__trash';
+            if (state.selectMode) setSelectMode(false, { render: false });
             updateTrashButtons();
             setMobileDetail(false);
             loadList().catch((err) => toast?.(err.message));
@@ -1392,9 +1580,23 @@ export function createNotesController({
         });
 
         $('#notesList')?.addEventListener('click', (e) => {
+            const checkBtn = e.target.closest?.('[data-note-check]');
+            if (checkBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!state.selectMode) setSelectMode(true, { render: false });
+                toggleNoteChecked(checkBtn.dataset.noteCheck);
+                return;
+            }
             const item = e.target.closest?.('[data-note-id]');
             if (!item) return;
-            selectNote(item.dataset.noteId).catch((err) => toast?.(err.message));
+            const noteId = item.dataset.noteId;
+            if (state.selectMode) {
+                // In select mode, body click toggles checkbox (iOS Files style).
+                toggleNoteChecked(noteId);
+                return;
+            }
+            selectNote(noteId).catch((err) => toast?.(err.message));
         });
         $('#notesList')?.addEventListener('contextmenu', (e) => {
             const item = e.target.closest('[data-note-id]');
@@ -1522,6 +1724,10 @@ export function createNotesController({
                 if (!state.current) return toast?.('请先选择笔记');
                 window.open(`/api/notes/${encodeURIComponent(state.current.noteId)}/export.md`, '_blank');
             } else if (action === 'delete') deleteCurrent().catch((err) => toast?.(err.message));
+            else if (action === 'purge_permanent') purgeCurrent({ permanent: true }).catch((err) => toast?.(err.message));
+            else if (action === 'purge') purgeCurrent({ permanent: false }).catch((err) => toast?.(err.message));
+            else if (action === 'restore') restoreCurrent().catch((err) => toast?.(err.message));
+            else if (action === 'select') setSelectMode(true);
             else if (action === 'import') $('#notesImportFile')?.click();
         });
 

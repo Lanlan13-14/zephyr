@@ -16,6 +16,9 @@ test('notes view uses craft shell layout (sidebar / list / editor)', () => {
   assert.match(appHtml, /id="notesMoreMenu"/);
   assert.match(appHtml, /id="notesBackBtn"/);
   assert.match(appHtml, /id="notesRestoreBtn"/);
+  assert.match(appHtml, /id="notesSelectModeBtn"/);
+  assert.match(appHtml, /id="notesSelectionBar"/);
+  assert.match(appHtml, /id="notesPurgePermanentBtn"/);
   // Markdown toolbar uses SVG, not emoji chrome
   assert.match(appHtml, /id="notesToolbar"[\s\S]*?<svg/);
   assert.doesNotMatch(appHtml, /data-md="link"[^>]*>🔗/);
@@ -81,9 +84,9 @@ test('notes CSS covers glass chrome, mode thumb, dialogs, mobile master-detail',
 });
 
 test('app wires craft notes module cache-bust', () => {
-  assert.match(appJs, /notes\.js\?v=20260720-notes-craft1/);
-  assert.match(appHtml, /style\.css\?v=20260720-notes-craft1/);
-  assert.match(appHtml, /app\.js\?v=20260720-notes-craft1/);
+  assert.match(appJs, /notes\.js\?v=20260720-notes-select1/);
+  assert.match(appHtml, /style\.css\?v=20260720-notes-select1/);
+  assert.match(appHtml, /app\.js\?v=20260720-notes-select1/);
 });
 
 test('keyboard shortcuts exist for high-frequency notes actions', () => {

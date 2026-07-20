@@ -12064,14 +12064,17 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 .notes-list-item {
     border: 1px solid transparent;
     border-radius: 12px;
-    padding: 11px 12px;
-    cursor: pointer;
+    padding: 0;
+    cursor: default;
     background: transparent;
     transition: background 150ms var(--notes-ease, var(--ease-smooth)), border-color 150ms var(--notes-ease, var(--ease-smooth)), transform 120ms var(--ease-micro);
     text-align: left;
     width: 100%;
     color: inherit;
     font: inherit;
+    display: flex;
+    align-items: stretch;
+    gap: 0;
     animation: notesListItemIn 220ms var(--notes-ease, var(--ease-smooth)) both;
     animation-delay: var(--notes-stagger, 0ms);
 }
@@ -12079,15 +12082,125 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
 }
-.notes-list-item:active { transform: scale(0.985); }
+.notes-list-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    padding: 11px 12px;
+    border-radius: 12px;
+}
+.notes-list-body:active { transform: scale(0.99); }
+.notes-list-check {
+    flex: 0 0 auto;
+    width: 0;
+    opacity: 0;
+    overflow: hidden;
+    border: 0;
+    background: transparent;
+    color: var(--accent);
+    padding: 0;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    transition: width 160ms var(--ease-smooth), opacity 140ms var(--ease-smooth), transform 120ms var(--ease-micro);
+}
+.notes-list-check:active { transform: scale(0.94); }
+.notes-list-check-box {
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    border: 1.5px solid color-mix(in srgb, var(--border) 80%, var(--text-secondary));
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    transition: background 140ms var(--ease-smooth), border-color 140ms var(--ease-smooth), transform 120ms var(--ease-micro);
+}
+.notes-list-check-box svg { width: 12px; height: 12px; display: block; }
+.notes-list-selecting .notes-list-check,
+.notes-list-item.is-selecting .notes-list-check,
+.notes-shell.notes-select-mode .notes-list-check {
+    width: 40px;
+    opacity: 1;
+    padding-left: 8px;
+}
+.notes-list-item.is-checked .notes-list-check-box {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+.notes-list-item.is-checked {
+    border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+    background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
 @media (hover: hover) and (pointer: fine) {
     .notes-list-item:hover { background: color-mix(in srgb, var(--text) 4.5%, transparent); }
+    .notes-list-item:not(.is-selecting) .notes-list-check:focus-visible {
+        width: 40px;
+        opacity: 1;
+        padding-left: 8px;
+    }
 }
 .notes-list-item.active {
     border-color: color-mix(in srgb, var(--accent) 28%, transparent);
     background: color-mix(in srgb, var(--accent) 11%, transparent);
 }
 .notes-list-item-main { min-width: 0; }
+
+/* Multi-select toolbar — glass, compact, icon-first (Emil: press scale, ease-out). */
+.notes-selection-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 8px;
+    padding: 6px 8px;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+    background: color-mix(in srgb, var(--surface) 86%, transparent);
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+}
+.notes-selection-bar.is-empty .notes-selection-actions [data-sel-action="trash"],
+.notes-selection-bar.is-empty .notes-selection-actions [data-sel-action="restore"],
+.notes-selection-bar.is-empty .notes-selection-actions [data-sel-action="purge"],
+.notes-selection-bar.is-empty .notes-selection-actions [data-sel-action="purge_permanent"] {
+    opacity: 0.4;
+}
+.notes-selection-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: 550;
+    padding-left: 4px;
+    white-space: nowrap;
+}
+.notes-selection-meta strong {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+.notes-selection-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-wrap: nowrap;
+}
+#notesSelectModeBtn.is-active {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+#notesRestoreBtn {
+    color: var(--accent-hover, var(--accent));
+}
+@media (hover: hover) and (pointer: fine) {
+    #notesRestoreBtn:hover {
+        background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+}
 .notes-list-title {
     font-size: 14px;
     font-weight: 600;

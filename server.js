@@ -2218,8 +2218,22 @@ app.post('/api/notes/:id/restore', requireUser, (req, res) => {
 
 app.delete('/api/notes/:id/purge', requireUser, (req, res) => {
     try {
-        notesService.purge(req.user, req.params.id);
-        res.json({ ok: true });
+        const force = req.query.force === '1'
+            || req.query.force === 'true'
+            || req.query.permanent === '1'
+            || req.query.permanent === 'true'
+            || req.body?.force === true
+            || req.body?.permanent === true;
+        notesService.purge(req.user, req.params.id, { allowActive: !!force });
+        res.json({ ok: true, permanent: !!force });
+    } catch (err) {
+        handleServiceError(res, err, 400);
+    }
+});
+
+app.post('/api/notes/bulk', requireUser, (req, res) => {
+    try {
+        res.json(notesService.bulk(req.user, req.body || {}));
     } catch (err) {
         handleServiceError(res, err, 400);
     }

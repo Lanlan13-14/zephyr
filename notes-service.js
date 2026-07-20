@@ -177,18 +177,63 @@ class NotesService {
         return true;
     }
 
-    /* Permanently destroy a note already in the trash (FREEZE plan §6.3).
-     * Regular delete is soft; purge is the irreversible second step. */
-    purge(user, noteId) {
+    /* Permanently destroy a note.
+     * Default: only notes already in trash (FREEZE §6.3 second step).
+     * force/allowActive: skip trash and hard-delete an active note (user-confirmed). */
+    purge(user, noteId, { allowActive = false } = {}) {
         const row = this.stmtGet.get(String(noteId));
         if (!row) throw new HttpError(404, 'resource_not_found_or_inaccessible', '笔记不存在');
-        if (!row.deleted_at) throw new HttpError(409, 'note_not_in_trash', '笔记不在回收站，无法彻底删除');
+        if (!row.deleted_at && !allowActive) {
+            throw new HttpError(409, 'note_not_in_trash', '笔记不在回收站，无法彻底删除');
+        }
         if (row.owner_user_id !== user.userId && !this.authz.can(user, CAP.DELETE, 'note', noteId, { ownerUserId: row.owner_user_id })) {
             throw new HttpError(403, 'forbidden_resource_delete', '当前账号没有删除此笔记的权限');
         }
         this.db.prepare('DELETE FROM notes WHERE note_id = ?').run(String(noteId));
-        this.authz.audit({ actorUserId: user.userId, resourceType: 'note', resourceId: noteId, action: 'note.purge', outcome: 'success' });
+        this.authz.audit({
+            actorUserId: user.userId,
+            resourceType: 'note',
+            resourceId: noteId,
+            action: allowActive && !row.deleted_at ? 'note.purge_permanent' : 'note.purge',
+            outcome: 'success',
+        });
         return true;
+    }
+
+    /** Soft-delete or permanent-purge many notes (owner-scoped). */
+    bulk(user, { noteIds = [], action = 'trash' } = {}) {
+        const ids = [...new Set((noteIds || []).map((id) => String(id || '').trim()).filter(Boolean))].slice(0, 200);
+        if (!ids.length) return { ok: true, affected: 0, action };
+        let affected = 0;
+        const tx = this.db.transaction((items) => {
+            for (const id of items) {
+                try {
+                    if (action === 'trash') {
+                        this.delete(user, id);
+                        affected += 1;
+                    } else if (action === 'restore') {
+                        this.restore(user, id);
+                        affected += 1;
+                    } else if (action === 'purge') {
+                        this.purge(user, id, { allowActive: false });
+                        affected += 1;
+                    } else if (action === 'purge_permanent') {
+                        this.purge(user, id, { allowActive: true });
+                        affected += 1;
+                    }
+                } catch (_) {
+                    // skip unauthorized / missing rows
+                }
+            }
+        });
+        tx(ids);
+        this.authz.audit({
+            actorUserId: user.userId,
+            action: `note.bulk_${action}`,
+            outcome: 'success',
+            metadata: { requested: ids.length, affected },
+        });
+        return { ok: true, affected, action };
     }
 
     /* Empty the trash for the calling user (permanently destroy all their

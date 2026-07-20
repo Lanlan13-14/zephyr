@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260720-ssh-kb-lift3">
+    <link rel="stylesheet" href="style.css?v=20260720-notes-select1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -122,6 +122,9 @@
                                     <span class="notes-list-count" id="notesListCount">0</span>
                                 </div>
                                 <div class="notes-list-filters">
+                                    <button type="button" class="notes-icon-btn" id="notesSelectModeBtn" title="多选" aria-label="多选" aria-pressed="false">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="10.5" height="10.5" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9.5 15.5h7.3A1.7 1.7 0 0 0 18.5 13.8V6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7.6 10.2l1.8 1.8 3.4-3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </button>
                                     <button type="button" class="notes-filter-trigger" id="notesSortTrigger" aria-haspopup="menu" aria-expanded="false" aria-controls="notesSortMenu">
                                         <span class="notes-filter-label">最近更新</span>
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 9.5 12 13l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -129,6 +132,31 @@
                                     <button type="button" class="notes-filter-trigger" id="notesTagTrigger" aria-haspopup="menu" aria-expanded="false" aria-controls="notesTagMenu">
                                         <span class="notes-filter-label">全部标签</span>
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 9.5 12 13l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="notes-selection-bar force-hidden" id="notesSelectionBar" role="toolbar" aria-label="批量操作">
+                                <div class="notes-selection-meta">
+                                    <span class="notes-selection-count">已选 <strong data-sel-count>0</strong></span>
+                                </div>
+                                <div class="notes-selection-actions">
+                                    <button type="button" class="notes-icon-btn" data-sel-action="all" title="全选" aria-label="全选">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 12.2l2.4 2.4L16.2 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </button>
+                                    <button type="button" class="notes-icon-btn" data-sel-action="restore" title="恢复" aria-label="恢复所选">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 10.2V7.6A1.1 1.1 0 0 1 8.6 6.5h6.8A1.1 1.1 0 0 1 16.5 7.6v2.6M9.2 6.5V5.3A1 1 0 0 1 10.2 4.3h3.6a1 1 0 0 1 1 1v1.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.2 14.2a4.3 4.3 0 1 0 1.3-3.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M7.2 9.4h3.4v3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </button>
+                                    <button type="button" class="notes-icon-btn notes-icon-btn-danger" data-sel-action="trash" title="移到回收站" aria-label="移到回收站">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M9 10.5v7M12 10.5v7M15 10.5v7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </button>
+                                    <button type="button" class="notes-icon-btn notes-icon-btn-danger" data-sel-action="purge" title="彻底删除" aria-label="彻底删除所选">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 12.2 14 16.2M14 12.2 10 16.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                                    </button>
+                                    <button type="button" class="notes-icon-btn notes-icon-btn-danger" data-sel-action="purge_permanent" title="直接删除（不进回收站）" aria-label="直接删除所选">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 12.2 14 16.2M14 12.2 10 16.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                                    </button>
+                                    <button type="button" class="notes-icon-btn" data-sel-action="exit" title="退出多选" aria-label="退出多选">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
                                     </button>
                                 </div>
                             </div>
@@ -194,12 +222,19 @@
                                         <button type="button" class="notes-icon-btn" id="notesMoreBtn" title="更多" aria-label="更多" aria-haspopup="menu" aria-expanded="false" aria-controls="notesMoreMenu">
                                             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="18" cy="12" r="1.5" fill="currentColor"/></svg>
                                         </button>
-                                        <button type="button" class="notes-text-btn force-hidden" id="notesRestoreBtn" title="恢复笔记">恢复</button>
-                                        <button type="button" class="notes-icon-btn notes-icon-btn-danger" id="notesDeleteBtn" title="删除笔记" aria-label="删除">
+                                        <button type="button" class="notes-icon-btn force-hidden" id="notesRestoreBtn" title="恢复笔记" aria-label="恢复">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 10.2V7.6A1.1 1.1 0 0 1 8.6 6.5h6.8A1.1 1.1 0 0 1 16.5 7.6v2.6M9.2 6.5V5.3A1 1 0 0 1 10.2 4.3h3.6a1 1 0 0 1 1 1v1.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.2 14.2a4.3 4.3 0 1 0 1.3-3.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M7.2 9.4h3.4v3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                        </button>
+                                        <button type="button" class="notes-icon-btn notes-icon-btn-danger" id="notesDeleteBtn" title="移到回收站" aria-label="移到回收站">
                                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M9 10.5v7M12 10.5v7M15 10.5v7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                         </button>
-                                        <button type="button" class="notes-text-btn notes-text-btn-danger force-hidden" id="notesPurgeBtn" title="彻底删除（不可恢复）">彻底删除</button>
-                                        <button type="button" class="notes-text-btn notes-text-btn-danger force-hidden" id="notesEmptyTrashBtn" title="清空回收站">清空回收站</button>
+                                        <button type="button" class="notes-icon-btn notes-icon-btn-danger force-hidden" id="notesPurgePermanentBtn" title="直接删除（不进回收站）" aria-label="直接删除">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 12.2 14 16.2M14 12.2 10 16.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                                        </button>
+                                        <button type="button" class="notes-icon-btn notes-icon-btn-danger force-hidden" id="notesPurgeBtn" title="彻底删除（不可恢复）" aria-label="彻底删除">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 12.2 14 16.2M14 12.2 10 16.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                                        </button>
+                                        <button type="button" class="notes-text-btn notes-text-btn-danger force-hidden" id="notesEmptyTrashBtn" title="清空回收站">清空</button>
                                     </div>
                                 </div>
                                 <div class="notes-menu force-hidden" id="notesMoreMenu" role="menu" aria-label="更多操作">
@@ -207,8 +242,12 @@
                                     <button type="button" class="notes-menu-item" data-more-action="link" role="menuitem"><span>关联连接</span></button>
                                     <button type="button" class="notes-menu-item" data-more-action="export" role="menuitem"><span>导出 Markdown</span></button>
                                     <button type="button" class="notes-menu-item" data-more-action="import" role="menuitem"><span>导入 Markdown</span></button>
+                                    <button type="button" class="notes-menu-item" data-more-action="select" role="menuitem"><span>多选管理</span></button>
                                     <div class="notes-menu-sep"></div>
-                                    <button type="button" class="notes-menu-item danger" data-more-action="delete" role="menuitem"><span>删除</span></button>
+                                    <button type="button" class="notes-menu-item" data-more-action="restore" role="menuitem"><span>恢复</span></button>
+                                    <button type="button" class="notes-menu-item danger" data-more-action="delete" role="menuitem"><span>移到回收站</span></button>
+                                    <button type="button" class="notes-menu-item danger" data-more-action="purge_permanent" role="menuitem"><span>直接删除</span></button>
+                                    <button type="button" class="notes-menu-item danger" data-more-action="purge" role="menuitem"><span>彻底删除</span></button>
                                 </div>
                                 <input class="notes-title-input" id="notesTitleInput" placeholder="无标题" maxlength="200" aria-label="笔记标题">
                                 <div class="notes-meta-row" id="notesMetaRow">
@@ -757,7 +796,7 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260720-ssh-kb-lift3" type="module"></script>
+    <script src="app.js?v=20260720-notes-select1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {
