@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><style>#w{height:100px;width:400px;overflow:auto;font:14px monospace;--term-row-height:17px}.term-row,.term-remote-history-row{height:17px;white-space:pre}.filler{height:500px}</style></head><body><div id="w"><div class="term-grid"><div class="filler"></div></div></div><pre id="result">RUNNING</pre><script type="module">
+import { createTerminalRemoteHistory } from '../public/terminal-remote-history.js';
+const pages=[{lines:[{seq:2,runs:[{text:'old-2',fg:1,bg:256,flags:1}]},{seq:3,runs:[{text:'old-3',fg:2,bg:256,flags:0}]}],beforeSeq:2,hasMore:true},{lines:[{seq:1,runs:[{text:'old-1',fg:3,bg:256,flags:0}]}],beforeSeq:1,hasMore:false}];
+let calls=[];globalThis.fetch=async(url)=>{calls.push(url);return{ok:true,json:async()=>pages.shift()}};
+const w=document.querySelector('#w');const c=createTerminalRemoteHistory({wrapper:w,getSessionId:()=> 's'});w.scrollTop=0;await c.loadOlder();
+const anchor1=w.scrollTop;w.scrollTop=0;await c.loadOlder();const rows=[...w.querySelectorAll('.term-remote-history-row')].map(e=>e.textContent);
+let ok=rows.join(',')==='old-1,old-2,old-3'&&anchor1>0&&calls[1].includes('beforeSeq=2')&&['bold','700'].includes(w.querySelector('[data-history-seq="2"] span').style.fontWeight);
+// Simulate renderer.setup preserving the extension node.
+const remote=w.querySelector('.term-remote-history');remote.remove();w.innerHTML='';w.appendChild(remote);const grid=document.createElement('div');grid.className='term-grid';w.appendChild(grid);ok=ok&&remote.isConnected&&w.firstElementChild===remote;
+document.querySelector('#result').textContent=ok?'REMOTE_HISTORY_PASS':JSON.stringify({rows,anchor1,calls});c.destroy();
+</script></body></html>

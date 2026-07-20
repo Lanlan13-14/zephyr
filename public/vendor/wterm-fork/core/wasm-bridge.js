@@ -43,6 +43,20 @@ class WasmBridge {
     this.exports.init(cols, rows);
     this._updatePointers();
   }
+  /** Copy the complete WASM linear memory for server-side history checkpoints. */
+  exportCheckpoint() {
+    return new Uint8Array(this.memory.buffer).slice();
+  }
+  /** Restore a checkpoint created from the same WTerm WASM build. */
+  importCheckpoint(checkpoint) {
+    const pageSize = 64 * 1024;
+    if (checkpoint.byteLength > this.memory.buffer.byteLength) {
+      this.memory.grow(Math.ceil((checkpoint.byteLength - this.memory.buffer.byteLength) / pageSize));
+    }
+    new Uint8Array(this.memory.buffer).fill(0);
+    new Uint8Array(this.memory.buffer, 0, checkpoint.byteLength).set(checkpoint);
+    this._updatePointers();
+  }
   _updatePointers() {
     this.gridPtr = this.exports.getGridPtr();
     this.dirtyPtr = this.exports.getDirtyPtr();
@@ -164,6 +178,29 @@ class WasmBridge {
   }
   getScrollbackLineLen(offset) {
     return this.exports.getScrollbackLineLen(offset);
+  }
+  setCaptureEvicted(enabled) {
+    this.exports.setCaptureEvicted(enabled ? 1 : 0);
+  }
+  getEvictedCount() {
+    return this.exports.getEvictedCount();
+  }
+  getEvictedLineLen() {
+    return this.exports.getEvictedLineLen();
+  }
+  getEvictedLineWrapped() {
+    return this.exports.getEvictedLineWrapped() !== 0;
+  }
+  getEvictedCell(col) {
+    const ptr = this.exports.getEvictedLine();
+    const off = ptr + col * this.cellSize;
+    const dv = this._dv;
+    const fgRgb = dv.getUint32(off + 12, true);
+    const bgRgb = dv.getUint32(off + 16, true);
+    return { char: dv.getUint32(off, true), fg: dv.getUint16(off + 4, true), bg: dv.getUint16(off + 6, true), flags: dv.getUint8(off + 8), wide: dv.getUint8(off + 9), fgRgb: fgRgb || void 0, bgRgb: bgRgb || void 0 };
+  }
+  popEvictedLine() {
+    this.exports.popEvictedLine();
   }
   getUnhandledSequences() {
     const count = this.exports.getDebugLogCount();

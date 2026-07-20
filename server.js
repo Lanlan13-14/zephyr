@@ -38,6 +38,7 @@ const { UserSettingsService } = require('./user-settings-service');
 const { NotesService } = require('./notes-service');
 const { DeepLinkService } = require('./deeplink-service');
 const { WorkerBridge } = require('./worker-bridge');
+const { TerminalHistoryService } = require('./terminal-history-service');
 const { AiPolicyService } = require('./ai-policy');
 const { AiProviderService } = require('./ai-provider-service');
 const secretCrypto = require('./secret-crypto');
@@ -117,6 +118,18 @@ const DB_FILE = path.join(DATA_DIR, 'zephyr.db');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const terminalHistory = new TerminalHistoryService({
+    root: process.env.TERMINAL_HISTORY_DIR || path.join(DATA_DIR, 'terminal-history'),
+    maxSessionBytes: Number(process.env.TERMINAL_HISTORY_SEGMENT_BYTES) || undefined,
+    maxReplayBytes: Number(process.env.TERMINAL_HISTORY_REPLAY_BYTES) || undefined,
+    maxSegments: Number(process.env.TERMINAL_HISTORY_MAX_SEGMENTS) || undefined,
+    maxUserBytes: Number(process.env.TERMINAL_HISTORY_USER_BYTES) || undefined,
+    retentionMs: Number(process.env.TERMINAL_HISTORY_RETENTION_MS) || undefined,
+});
+const terminalHistoryCleanupTimer = setInterval(() => {
+    try { terminalHistory.cleanupExpired(); } catch (error) { console.warn('[TERMINAL-HISTORY] cleanup failed', { error: error.message }); }
+}, 24 * 60 * 60 * 1000);
+terminalHistoryCleanupTimer.unref?.();
 const sshTerminalSessions = new Map();
 const sftpDownloadTokens = new Map();
 const sftpUploadTokens = new Map();
@@ -167,13 +180,52 @@ function wsSendJSON(targetWs, obj) {
     }
 }
 
-function appendSshSessionBuffer(session, data) {
-    if (!session || !data) return;
-    session.outputBuffer.push(String(data));
-    let total = session.outputBuffer.reduce((sum, item) => sum + item.length, 0);
-    while (total > 512 * 1024 && session.outputBuffer.length > 1) {
-        total -= session.outputBuffer.shift().length;
+function flushSshSessionHistory(session) {
+    if (!session?.historyPending?.length) return;
+    const chunks = session.historyPending;
+    session.historyPending = [];
+    session.historyPendingBytes = 0;
+    if (session.historyFlushTimer) clearTimeout(session.historyFlushTimer);
+    session.historyFlushTimer = 0;
+    try { terminalHistory.appendOutput(session.userId, session.id, Buffer.concat(chunks)); }
+    catch (err) { console.warn('[TERMINAL-HISTORY] append failed', { sessionId: session.id, error: err.message }); }
+}
+
+function flushAllSshSessionHistory() {
+    for (const session of sshTerminalSessions.values()) flushSshSessionHistory(session);
+}
+process.once('exit', flushAllSshSessionHistory);
+for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.once(signal, () => {
+        flushAllSshSessionHistory();
+        process.exit(signal === 'SIGTERM' ? 0 : 130);
+    });
+}
+
+function queueSshSessionHistory(session, bytes) {
+    if (!session.historyPending) session.historyPending = [];
+    session.historyPending.push(Buffer.from(bytes));
+    session.historyPendingBytes = (session.historyPendingBytes || 0) + bytes.length;
+    if (session.historyPendingBytes >= 64 * 1024) return flushSshSessionHistory(session);
+    if (!session.historyFlushTimer) {
+        session.historyFlushTimer = setTimeout(() => flushSshSessionHistory(session), 50);
+        session.historyFlushTimer.unref?.();
     }
+}
+
+function appendSshSessionBuffer(session, data) {
+    if (!session || session.closed || !data) return;
+    const bytes = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf8');
+    const text = bytes.toString('utf8');
+    // Keep only a tiny hot replay window in Node heap. The authoritative
+    // history is the append-only journal under DATA_DIR/terminal-history.
+    session.outputBuffer.push(text);
+    let total = session.outputBuffer.reduce((sum, item) => sum + Buffer.byteLength(item, 'utf8'), 0);
+    while (total > 64 * 1024 && session.outputBuffer.length > 1) {
+        total -= Buffer.byteLength(session.outputBuffer.shift(), 'utf8');
+    }
+    queueSshSessionHistory(session, bytes);
+    session.lastActive = Date.now();
 }
 
 function broadcastSshSession(session, obj) {
@@ -221,6 +273,8 @@ function destroySshTerminalSession(sessionOrId, reason = 'session-destroy') {
         attached: session.attachedWs?.size || 0,
         connectionId: session.connectionId || '',
     });
+    flushSshSessionHistory(session);
+    try { terminalHistory.close(session.userId, session.id, reason); } catch {}
     broadcastSshSession(session, { type: 'close', message: reason === 'client-disconnect' ? '会话已断开' : 'SSH 会话已关闭' });
     for (const targetWs of [...(session.attachedWs || [])]) {
         try { targetWs._sshTerminalSession = null; } catch {}
@@ -2256,6 +2310,59 @@ app.post('/api/deeplinks/:token/test', requireUser, async (req, res) => {
  * Node stays in the control plane: authenticate, resolve ACL+secrets, issue a
  * one-time ticket. The browser then connects to the Go worker directly; the
  * terminal byte stream never transits Node. */
+app.get('/api/terminal-history/:sessionId', requireUser, (req, res) => {
+    try {
+        const beforeSeq = req.query.beforeSeq == null ? Infinity : Number(req.query.beforeSeq);
+        const limit = Math.max(1, Math.min(1000, Number(req.query.limit) || 200));
+        const records = terminalHistory.readRecords(req.user.userId, req.params.sessionId, { beforeSeq, limit });
+        res.json({ sessionId: req.params.sessionId, records, hasMore: records.length === limit });
+    } catch (err) {
+        res.status(400).json({ error: err.message, code: 'terminal_history_read_failed' });
+    }
+});
+
+app.get('/api/terminal-history/:sessionId/tail', requireUser, (req, res) => {
+    try {
+        const maxBytes = Math.max(1024, Math.min(2 * 1024 * 1024, Number(req.query.maxBytes) || undefined));
+        res.json(terminalHistory.replayTail(req.user.userId, req.params.sessionId, maxBytes));
+    } catch (err) {
+        res.status(400).json({ error: err.message, code: 'terminal_history_tail_failed' });
+    }
+});
+
+
+let terminalHistoryIndexerPromise = null;
+async function getTerminalHistoryIndexer() {
+    if (!terminalHistoryIndexerPromise) {
+        terminalHistoryIndexerPromise = import('./terminal-history-indexer.mjs')
+            .then(({ TerminalHistoryIndexer }) => new TerminalHistoryIndexer({ history: terminalHistory, root: path.join(DATA_DIR, 'terminal-history') }))
+            .catch((error) => { terminalHistoryIndexerPromise = null; throw error; });
+    }
+    return terminalHistoryIndexerPromise;
+}
+
+const terminalHistoryIndexTimer = setInterval(() => {
+    void getTerminalHistoryIndexer()
+        .then((indexer) => indexer.indexAllSessions())
+        .catch((error) => console.warn('[TERMINAL-HISTORY] background index failed', { error: error.message }));
+}, Math.max(1000, Number(process.env.TERMINAL_HISTORY_INDEX_INTERVAL_MS) || 5000));
+terminalHistoryIndexTimer.unref?.();
+
+app.get('/api/terminal-history/:sessionId/lines', requireUser, async (req, res) => {
+    try {
+        const indexer = await getTerminalHistoryIndexer();
+        const page = await indexer.readPage(req.user.userId, req.params.sessionId, {
+            beforeSeq: req.query.beforeSeq == null ? Infinity : Number(req.query.beforeSeq),
+            afterSeq: req.query.afterSeq == null ? null : Number(req.query.afterSeq),
+            limit: Number(req.query.limit) || 200,
+        });
+        res.json({ ok: true, sessionId: req.params.sessionId, ...page });
+    } catch (error) {
+        console.error('[TERMINAL-HISTORY] logical-line index failed', { sessionId: req.params.sessionId, error: error.message });
+        res.status(500).json({ error: 'terminal_history_index_failed' });
+    }
+});
+
 app.post('/api/worker/ticket', requireUser, async (req, res) => {
     try {
         res.setHeader('Cache-Control', 'no-store');
@@ -5768,10 +5875,13 @@ wss.on('connection', (ws, req) => {
         const pty = session.pty || { cols: 80, rows: 24 };
         // Replay first so the terminal paints previous content as soon as it is ready,
         // then emit ready so the client can treat the surface as fully attached.
-        if (replay && session.outputBuffer.length) {
-            sendJSON({ type: 'data', data: session.outputBuffer.join(''), replay: true });
+        let replayData = '';
+        if (replay) {
+            try { replayData = terminalHistory.replayTail(session.userId, session.id).data; } catch {}
+            if (!replayData && session.outputBuffer.length) replayData = session.outputBuffer.join('');
+            if (replayData) sendJSON({ type: 'data', data: replayData, replay: true });
         }
-        sendJSON({ type: 'ready', sessionId: session.id, attached: true, cols: pty.cols, rows: pty.rows, replayed: !!(replay && session.outputBuffer.length) });
+        sendJSON({ type: 'ready', sessionId: session.id, attached: true, cols: pty.cols, rows: pty.rows, replayed: !!replayData });
         startStatsPush();
         return true;
     }
@@ -6221,6 +6331,9 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     attachedSshSession = session;
                     ws._sshTerminalSession = session;
                     sshTerminalSessions.set(session.id, session);
+                    try { terminalHistory.open({ userId: session.userId, sessionId: session.id, connectionId: session.connectionId, cols: initialCols, rows: initialRows }); } catch (err) {
+                        console.warn('[TERMINAL-HISTORY] open failed', { sessionId: session.id, error: err.message });
+                    }
                     const pty = session.pty || { rows: initialRows, cols: initialCols };
                     sendJSON({ type: 'ready', sessionId: session.id, cols: pty.cols, rows: pty.rows });
 
@@ -6229,7 +6342,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
                     stream.on('data', (data) => {
                         const text = data.toString('utf-8');
-                        appendSshSessionBuffer(session, text);
+                        appendSshSessionBuffer(session, data);
                         broadcastSshSession(session, { type: 'data', data: text });
                     });
                     stream.on('close', (code, signal) => {
@@ -6239,7 +6352,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     });
                     stream.stderr.on('data', (data) => {
                         const text = data.toString('utf-8');
-                        appendSshSessionBuffer(session, text);
+                        appendSshSessionBuffer(session, data);
                         broadcastSshSession(session, { type: 'data', data: text });
                     });
 
@@ -6288,6 +6401,8 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 if (attachedSshSession) {
                     attachedSshSession.pty = { rows, cols };
                     attachedSshSession.lastActive = Date.now();
+                    flushSshSessionHistory(attachedSshSession);
+                    try { terminalHistory.appendResize(attachedSshSession.userId, attachedSshSession.id, cols, rows); } catch {}
                 }
             }
             return;

@@ -246,7 +246,13 @@ export class Renderer {
   setup(cols: number, rows: number): void {
     this.cols = cols;
     this.rows = rows;
+    // Preserve server-backed history pages across renderer resize/setup.
+    // WTerm owns grid/cursor nodes; .term-remote-history is owned by the
+    // pagination controller and must remain in the same scroll container.
+    const remoteHistory = this.container.querySelector<HTMLElement>(":scope > .term-remote-history");
+    if (remoteHistory) remoteHistory.remove();
     this.container.innerHTML = "";
+    if (remoteHistory) this.container.appendChild(remoteHistory);
     this.rowEls = [];
     this.rowSignatures = [];
     this.prevRowBg = [];

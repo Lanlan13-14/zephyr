@@ -4,6 +4,7 @@ node_modules/
 # Runtime data and secrets
 data/.env
 data/crypto/
+data/terminal-history/
 data/*.db
 data/*.db-shm
 data/*.db-wal

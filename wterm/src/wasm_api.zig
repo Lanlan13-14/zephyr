@@ -170,6 +170,25 @@ export fn clearResponse() void {
     terminal.response_len = 0;
 }
 
+// -- Evicted scrollback export (server-side history indexer) --
+export fn setCaptureEvicted(enabled: u32) void {
+    scrollback.setCaptureEvicted(enabled != 0);
+}
+export fn getEvictedCount() u32 { return scrollback.evicted_count; }
+export fn getEvictedLine() [*]const u8 {
+    if (scrollback.peekEvicted()) |line| return @ptrCast(&line.cells);
+    return &scrollback_line_buf;
+}
+export fn getEvictedLineLen() u32 {
+    if (scrollback.peekEvicted()) |line| return line.len;
+    return 0;
+}
+export fn getEvictedLineWrapped() u32 {
+    if (scrollback.peekEvicted()) |line| return if (line.wrapped) 1 else 0;
+    return 0;
+}
+export fn popEvictedLine() void { scrollback.popEvicted(); }
+
 // -- Debug log (unhandled sequences ring buffer) --
 
 export fn getDebugLogPtr() [*]const u8 {

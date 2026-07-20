@@ -1,5 +1,6 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb1';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent } from './ssh-mobile-keyboard.js?v=20260720-wterm-main1';
+import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -17,6 +18,8 @@ function getParams() {
 }
 
 const params = getParams();
+let terminalHistorySessionId = String(params?.tabId || params?.sessionId || params?.connectionId || '');
+let terminalRemoteHistory = null;
 const embeddedMode = new URLSearchParams(location.search).get('embed') === '1' || !!params?.embedded;
 function notifyParentStatus(status) {
     if (embeddedMode && window.parent && window.parent !== window) {
@@ -10093,6 +10096,13 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
         else if (typeof term.on === 'function') term.on('data', data => sendData(data, { source: 'wterm-onData' }));
     }
     if (typeof term.init === 'function') await term.init();
+    terminalRemoteHistory?.destroy?.();
+    terminalRemoteHistory = createTerminalRemoteHistory({
+        wrapper: wtermWrapper,
+        getSessionId: () => terminalHistorySessionId,
+        maxCachedRows: 2000,
+        pageSize: 200,
+    });
     normalizeWTermContainerLayout('init-after-wterm-init');
     if (connectionToken !== activeConnectionToken) throw new Error('终端初始化已取消');
     lastSentTerminalSize = { cols: Number(term.cols || 80), rows: Number(term.rows || 24) };
@@ -10188,6 +10198,10 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                 if (msg.type?.startsWith('docker-')) { handleDockerMessage(msg); return; }
                 switch (msg.type) {
                     case 'ready':
+                        if (msg.sessionId) {
+                            terminalHistorySessionId = String(msg.sessionId);
+                            terminalRemoteHistory?.setSession?.(terminalHistorySessionId);
+                        }
                         ready = true;
                         settled = true;
                         if (msg.cols && msg.rows) {

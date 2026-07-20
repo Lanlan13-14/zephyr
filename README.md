@@ -196,6 +196,12 @@ HTTPS_PORT=3443
 | `HTTPS_CERT_FILE` / `SSL_CERT_FILE` | 可选：自有 TLS 证书路径；未设置时自动生成自签证书到 `data/https/zephyr.crt` | `data/https/zephyr.crt` |
 | `HTTPS_KEY_FILE` / `SSL_KEY_FILE` | 可选：自有 TLS 私钥路径；未设置时自动生成自签私钥到 `data/https/zephyr.key` | `data/https/zephyr.key` |
 | `ZEPHYR_DATA_DIR` | SQLite、加密密钥、会话和持久配置目录；Docker 建议挂载到 `/app/data` | `./data` |
+| `TERMINAL_HISTORY_DIR` | 可选：Go Worker 的终端历史目录；Worker 与 Node 分进程/容器运行时必须指向同一共享卷 `$ZEPHYR_DATA_DIR/terminal-history` | `$ZEPHYR_DATA_DIR/terminal-history` |
+| `TERMINAL_HISTORY_SESSION_BYTES` | 每个会话单个原始 PTY journal 分段的大小 | `16777216`（16 MiB） |
+| `TERMINAL_HISTORY_SEGMENTS` | 每个会话保留的 journal 分段数 | `8` |
+| `TERMINAL_HISTORY_USER_BYTES` | 每个用户所有终端历史制品的磁盘总额度 | `536870912`（512 MiB） |
+| `TERMINAL_HISTORY_RETENTION_MS` | 终端历史保留时间 | `604800000`（7 天） |
+| `TERMINAL_HISTORY_INDEX_INTERVAL_MS` | 服务端将原始 PTY journal 增量索引成逻辑行页的周期 | `5000` |
 | `ZEPHYR_HTTPS_DIR` | 自签证书默认生成目录；也可以单独挂载为自有证书目录 | `$ZEPHYR_DATA_DIR/https` |
 | `HTTPS_CERT_CN` / `PUBLIC_HOST` | 自动自签证书的 CN；SAN 会自动包含本机局域网 IPv4、`localhost`、`127.0.0.1`，也可用 `HTTPS_CERT_ALT_NAMES` 追加 | `localhost` |
 | `ENCRYPTION_KEY` | 备份导出/导入加密密钥，生产环境必须改为强随机字符串 | `please-change-this-key` |
@@ -213,6 +219,7 @@ HTTPS_PORT=3443
 - 使用 Passkey / WebAuthn 时，生产环境建议启用 HTTPS。
 - `PUBLIC_ORIGIN` 必须与实际访问地址一致，例如 `https://ssh.example.com`。生产环境配置为 HTTPS 后，登录 Cookie 会自动带 `Secure`。
 - Zephyr 会校验非 GET 请求的 `Origin` / `Referer` 与 `PUBLIC_ORIGIN` 同源，反代后的公开域名、协议配置不一致会导致写操作返回 403。
+- 终端历史采用分层存储：浏览器/WASM 仅保留最近 1000 行实时窗口；Node/Go Worker 将原始 PTY 字节、resize 与 close 事件写入分段 journal，Node 后台增量索引为带样式 run 的逻辑行页。滚到本地窗口顶部时，浏览器按 200 行分页加载，客户端最多缓存 2000 行。Worker 作为独立容器运行时，必须把 `TERMINAL_HISTORY_DIR` 与 Node 的 `$ZEPHYR_DATA_DIR/terminal-history` 挂到同一持久卷。
 - `ENCRYPTION_KEY` 用于加密备份文件。旧备份需要使用导出时的旧密钥才能解密导入。
 - Zephyr 首次启动会生成 ML-KEM-768 数据字段加密密钥对，默认保存在 `data/crypto/ml-kem-768-keypair.json`。数据库内的敏感字段会使用该密钥派生的混合加密方案落盘；迁移、备份或恢复时必须同时保留该密钥文件，或通过 `ZEPHYR_DATA_MLKEM768_PUBLIC_KEY_B64` / `ZEPHYR_DATA_MLKEM768_SECRET_KEY_B64` 外部注入同一密钥对。使用默认文件密钥时，后台导出的 `.zip.enc` 备份会把该密钥文件一起放入 `ENCRYPTION_KEY` 加密包中，便于跨机器恢复。
 - 程序首次启动如果发现 `data/.env` 不存在，会生成默认占位文件；生产环境不要长期使用默认密钥。

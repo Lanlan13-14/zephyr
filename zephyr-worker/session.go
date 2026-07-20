@@ -56,7 +56,10 @@ func (h *WSHandler) serveWS(ctx context.Context, conn Conn, t *Ticket) {
 		return
 	}
 
-	sess := NewSession(sessionID, t.UserID, t.ConnID, t.HostSpec.Host, t.HostSpec.Username)
+	sess := NewSession(sessionID, t.UserID, t.ConnID, t.HostSpec.Host, t.HostSpec.Username, h.history)
+	if h.history != nil {
+		h.history.AppendResize(t.UserID, sessionID, 120, 30)
+	}
 	sess.client = client
 	sess.stream = stream
 	sess.stdin = stdin
@@ -107,8 +110,15 @@ func (h *WSHandler) attachToSession(conn Conn, s *Session) {
 	sub := s.subscribe()
 	defer s.unsubscribe(sub)
 
-	// Replay buffered output so reconnects see recent context.
-	if snap := s.outputBuf.Snapshot(); snap != "" {
+	// Prefer persisted journal tail; ring buffer is only a small hot fallback.
+	snap := ""
+	if s.history != nil {
+		snap = s.history.ReplayTail(s.UserID, s.ID)
+	}
+	if snap == "" {
+		snap = s.outputBuf.Snapshot()
+	}
+	if snap != "" {
 		_ = conn.WriteJSON(Envelope{Type: "data", SessionID: s.ID, Data: snap, Extra: json.RawMessage(`{"replay":true}`)})
 	}
 	_ = conn.WriteJSON(Envelope{Type: "ready", SessionID: s.ID})

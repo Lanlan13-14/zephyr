@@ -34,6 +34,12 @@ interface WasmExports {
   getScrollbackCount(): number;
   getScrollbackLine(offset: number): number;
   getScrollbackLineLen(offset: number): number;
+  setCaptureEvicted(enabled: number): void;
+  getEvictedCount(): number;
+  getEvictedLine(): number;
+  getEvictedLineLen(): number;
+  getEvictedLineWrapped(): number;
+  popEvictedLine(): void;
   getResponsePtr(): number;
   getResponseLen(): number;
   clearResponse(): void;
@@ -90,6 +96,22 @@ export class WasmBridge implements TerminalCore {
 
   init(cols: number, rows: number): void {
     this.exports.init(cols, rows);
+    this._updatePointers();
+  }
+
+  /** Copy the complete WASM linear memory for server-side history checkpoints. */
+  exportCheckpoint(): Uint8Array {
+    return new Uint8Array(this.memory.buffer).slice();
+  }
+
+  /** Restore a checkpoint created from the same WTerm WASM build. */
+  importCheckpoint(checkpoint: Uint8Array): void {
+    const pageSize = 64 * 1024;
+    if (checkpoint.byteLength > this.memory.buffer.byteLength) {
+      this.memory.grow(Math.ceil((checkpoint.byteLength - this.memory.buffer.byteLength) / pageSize));
+    }
+    new Uint8Array(this.memory.buffer).fill(0);
+    new Uint8Array(this.memory.buffer, 0, checkpoint.byteLength).set(checkpoint);
     this._updatePointers();
   }
 
@@ -229,6 +251,22 @@ export class WasmBridge implements TerminalCore {
   getScrollbackLineLen(offset: number): number {
     return this.exports.getScrollbackLineLen(offset);
   }
+
+  setCaptureEvicted(enabled: boolean): void {
+    this.exports.setCaptureEvicted(enabled ? 1 : 0);
+  }
+  getEvictedCount(): number { return this.exports.getEvictedCount(); }
+  getEvictedLineLen(): number { return this.exports.getEvictedLineLen(); }
+  getEvictedLineWrapped(): boolean { return this.exports.getEvictedLineWrapped() !== 0; }
+  getEvictedCell(col: number): CellData {
+    const ptr = this.exports.getEvictedLine();
+    const off = ptr + col * this.cellSize;
+    const dv = this._dv;
+    const fgRgb = dv.getUint32(off + 12, true);
+    const bgRgb = dv.getUint32(off + 16, true);
+    return { char: dv.getUint32(off, true), fg: dv.getUint16(off + 4, true), bg: dv.getUint16(off + 6, true), flags: dv.getUint8(off + 8), wide: dv.getUint8(off + 9), fgRgb: fgRgb || undefined, bgRgb: bgRgb || undefined };
+  }
+  popEvictedLine(): void { this.exports.popEvictedLine(); }
 
   getUnhandledSequences(): UnhandledSequence[] {
     const count = this.exports.getDebugLogCount();

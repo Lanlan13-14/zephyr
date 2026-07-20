@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -45,10 +46,10 @@ import (
 type Ticket struct {
 	Token     string
 	UserID    string
-	ConnID    string    // saved-connection id (may be empty for transient)
-	HostSpec  HostSpec  // resolved connect target (no secrets reach the worker via URL)
-	Secrets   Secrets   // server-side resolved credentials (set by Node out-of-band)
-	Source    string    // "saved" | "transient"
+	ConnID    string   // saved-connection id (may be empty for transient)
+	HostSpec  HostSpec // resolved connect target (no secrets reach the worker via URL)
+	Secrets   Secrets  // server-side resolved credentials (set by Node out-of-band)
+	Source    string   // "saved" | "transient"
 	ExpiresAt time.Time
 	Consumed  bool
 }
@@ -60,8 +61,8 @@ type HostSpec struct {
 	Protocol       string `json:"protocol"` // SSH | TELNET
 	ConnectionMode string `json:"connectionMode"`
 	// Proxy / jump chain resolved by Node; worker dials the first hop only.
-	ProxyHost string `json:"proxyHost,omitempty"`
-	ProxyPort int    `json:"proxyPort,omitempty"`
+	ProxyHost string   `json:"proxyHost,omitempty"`
+	ProxyPort int      `json:"proxyPort,omitempty"`
 	JumpHosts []string `json:"jumpHosts,omitempty"`
 }
 
@@ -155,6 +156,7 @@ type Session struct {
 	closed    bool
 	attached  []chan Envelope // subscribers (browser tabs / pollers)
 	outputBuf *RingBuffer
+	history   *WorkerHistory
 }
 
 // sshSession wraps *ssh.Session so we can store nil cleanly (ssh.Session is
@@ -175,16 +177,17 @@ type Envelope struct {
 	Extra     json.RawMessage `json:"extra,omitempty"`
 }
 
-func NewSession(id, userID, connID, host, username string) *Session {
+func NewSession(id, userID, connID, host, username string, history *WorkerHistory) *Session {
 	return &Session{
-		ID:        id,
-		UserID:    userID,
-		ConnID:    connID,
-		Host:      host,
-		Username:  username,
-		CreatedAt: time.Now(),
+		ID:         id,
+		UserID:     userID,
+		ConnID:     connID,
+		Host:       host,
+		Username:   username,
+		CreatedAt:  time.Now(),
 		LastActive: time.Now(),
-		outputBuf: NewRingBuffer(512 * 1024),
+		outputBuf:  NewRingBuffer(64 * 1024),
+		history:    history,
 	}
 }
 
@@ -236,6 +239,10 @@ func (s *Session) writeInput(data string) error {
 func (s *Session) resize(cols, rows int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.LastActive = time.Now()
+	if s.history != nil {
+		s.history.AppendResize(s.UserID, s.ID, cols, rows)
+	}
 	if s.stream == nil {
 		return errors.New("session_not_ready")
 	}
@@ -252,6 +259,9 @@ func (s *Session) close(reason string) {
 		return
 	}
 	s.closed = true
+	if s.history != nil {
+		s.history.AppendClose(s.UserID, s.ID, reason)
+	}
 	if s.stream != nil {
 		s.stream.Close()
 	}
@@ -276,6 +286,9 @@ func (s *Session) readLoops() {
 			n, err := s.stdout.Read(buf)
 			if n > 0 {
 				chunk := string(buf[:n])
+				if s.history != nil {
+					s.history.AppendOutput(s.UserID, s.ID, buf[:n])
+				}
 				s.outputBuf.Write(chunk)
 				s.broadcast(Envelope{Type: "data", SessionID: s.ID, Data: chunk})
 			}
@@ -291,6 +304,9 @@ func (s *Session) readLoops() {
 			n, err := s.stderr.Read(buf)
 			if n > 0 {
 				chunk := string(buf[:n])
+				if s.history != nil {
+					s.history.AppendOutput(s.UserID, s.ID, buf[:n])
+				}
 				s.outputBuf.Write(chunk)
 				s.broadcast(Envelope{Type: "data", SessionID: s.ID, Data: chunk})
 			}
@@ -452,6 +468,7 @@ func dialSSH(ctx context.Context, spec HostSpec, secrets Secrets) (*ssh.Client, 
 type WSHandler struct {
 	tickets  *TicketStore
 	sessions *SessionManager
+	history  *WorkerHistory
 	log      *slog.Logger
 }
 
@@ -494,7 +511,11 @@ func main() {
 
 	tickets := NewTicketStore()
 	sessions := NewSessionManager()
-	handler := &WSHandler{tickets: tickets, sessions: sessions, log: log}
+	historyRoot := os.Getenv("TERMINAL_HISTORY_DIR")
+	if historyRoot == "" {
+		historyRoot = filepath.Join("data", "terminal-history")
+	}
+	handler := &WSHandler{tickets: tickets, sessions: sessions, history: NewWorkerHistory(historyRoot), log: log}
 
 	mux := http.NewServeMux()
 	mux.Handle("/ssh", handler)
@@ -549,7 +570,7 @@ var (
 	defaultDialer   = &netDialerImpl{}
 )
 
-func upgrader() Upgrader { return defaultUpgrader }
+func upgrader() Upgrader        { return defaultUpgrader }
 func netDialer() *netDialerImpl { return defaultDialer }
 
 // Ensure unused imports referenced via interface compile.

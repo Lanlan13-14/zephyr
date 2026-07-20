@@ -13005,3 +13005,20 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     .notes-list-item:active,
     .notes-toolbar button:active { transform: none; }
 }
+
+/* Server-backed terminal history pages. Kept outside WTerm's managed grid so
+   renderer scrollback synchronization cannot delete remotely paged rows. */
+.terminal-container .wterm-wrapper .term-remote-history {
+    display: block;
+    white-space: pre;
+    contain: layout paint style;
+    overflow-anchor: none;
+    user-select: text;
+    -webkit-user-select: text;
+}
+.terminal-container .wterm-wrapper .term-remote-history-row {
+    min-width: 100%;
+    height: var(--term-row-height, 17px);
+    line-height: var(--term-row-height, 17px);
+    tab-size: 8;
+}

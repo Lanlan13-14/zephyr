@@ -192,7 +192,10 @@ class Renderer {
   setup(cols, rows) {
     this.cols = cols;
     this.rows = rows;
+    const remoteHistory = this.container.querySelector(":scope > .term-remote-history");
+    if (remoteHistory) remoteHistory.remove();
     this.container.innerHTML = "";
+    if (remoteHistory) this.container.appendChild(remoteHistory);
     this.rowEls = [];
     this.rowSignatures = [];
     this.prevRowBg = [];
