@@ -270,3 +270,17 @@
   text-underline-offset: 2px;
   cursor: pointer;
 }
+
+
+/* Sixel / Kitty graphics overlay */
+.term-graphics-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 2;
+}
+.term-graphics-layer canvas {
+  position: absolute;
+  image-rendering: pixelated;
+}

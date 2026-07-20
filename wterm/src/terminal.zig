@@ -4,12 +4,15 @@ const cell_mod = @import("cell.zig");
 const grid_mod = @import("grid.zig");
 const parser_mod = @import("parser.zig");
 const scrollback_mod = @import("scrollback.zig");
+const graphics_mod = @import("graphics.zig");
+const sixel_mod = @import("sixel.zig");
 
 const Cell = cell_mod.Cell;
 const Grid = grid_mod.Grid;
 const Parser = parser_mod.Parser;
 const Action = parser_mod.Action;
 const Scrollback = scrollback_mod.Scrollback;
+const GraphicsStore = graphics_mod.Store;
 
 pub const DEBUG_LOG_MAX: u8 = 32;
 
@@ -45,6 +48,7 @@ pub const Terminal = struct {
     grid: Grid,
     parser: Parser = .{},
     scrollback: ?*Scrollback = null,
+    graphics: ?*GraphicsStore = null,
 
     cols: u16,
     rows: u16,
@@ -469,7 +473,10 @@ pub const Terminal = struct {
             .csi_dispatch => self.handleCsi(),
             .esc_dispatch => self.handleEsc(),
             .osc_dispatch => self.handleOsc(),
+            .dcs_start => self.handleDcsStart(),
+            .dcs_put => self.handleDcsPut(self.parser.dcs_put_byte),
             .dcs_dispatch => self.handleDcs(),
+            .apc_dispatch => self.handleApc(),
         }
     }
 
@@ -948,7 +955,80 @@ pub const Terminal = struct {
         self.resetStyle();
     }
 
+    fn handleDcsStart(self: *Terminal) void {
+        // Currently only Sixel streams via dcs_start/put.
+        if (self.parser.dcs_final == 'q' or (self.parser.dcs_private != '$' and self.parser.dcs_private != '+')) {
+            if (self.graphics) |g| {
+                const p1 = self.parser.getParam(0, 0);
+                const p2 = self.parser.getParam(1, 0);
+                const p3 = self.parser.getParam(2, 0);
+                g.beginSixel(self.cursor_col, self.cursor_row, p1, p2, p3);
+            }
+        }
+    }
+
+    fn handleDcsPut(self: *Terminal, byte: u8) void {
+        if (self.graphics) |g| {
+            if (g.sixel_active) g.feedSixel(byte);
+        }
+    }
+
+    fn handleApc(self: *Terminal) void {
+        if (self.parser.apc_len == 0) return;
+        const data = self.parser.apc_data[0..self.parser.apc_len];
+        // Kitty graphics: ESC _ G <controls> ; <payload> ST
+        if (data.len < 2 or data[0] != 'G') return;
+        const g = self.graphics orelse return;
+        g.beginKitty();
+        // split controls/payload on first ';'
+        var sep: usize = 1;
+        while (sep < data.len and data[sep] != ';') : (sep += 1) {}
+        const controls = data[1..sep];
+        const payload = if (sep < data.len) data[sep + 1 ..] else data[0..0];
+
+        // parse key=value,key=value
+        var start: usize = 0;
+        var i: usize = 0;
+        while (true) {
+            const at_end = i >= controls.len;
+            if (at_end or controls[i] == ',') {
+                const token = controls[start..i];
+                if (token.len > 0) {
+                    var eq: usize = 0;
+                    while (eq < token.len and token[eq] != '=') : (eq += 1) {}
+                    if (eq < token.len) g.setKittyControl(token[0..eq], token[eq + 1 ..]);
+                }
+                if (at_end) break;
+                start = i + 1;
+            }
+            i += 1;
+            if (at_end) break;
+        }
+        g.appendKittyPayload(payload);
+        _ = g.finishKitty(self.cursor_col, self.cursor_row, 8, 16);
+    }
+
     fn handleDcs(self: *Terminal) void {
+        // Finish streaming Sixel if active.
+        if (self.graphics) |g| {
+            if (g.sixel_active) {
+                // Approximate cell size for placement math; DOM measures true size.
+                g.endSixel(8, 16);
+                // Advance cursor by image rows if possible.
+                const rows = g.images[g.sixel_slot].rows;
+                if (rows > 0) {
+                    var i: u16 = 0;
+                    while (i < rows) : (i += 1) {
+                        self.row_wrapped[self.cursor_row] = 0;
+                        self.doLinefeed();
+                    }
+                    self.cursor_col = 0;
+                    self.wrap_pending = false;
+                }
+                return;
+            }
+        }
+
         if (self.parser.dcs_len == 0) return;
         const data = self.parser.dcs_data[0..self.parser.dcs_len];
         // DECRQSS: DCS $ q <Pt> ST

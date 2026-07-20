@@ -251,6 +251,10 @@ class Renderer {
     __publicField(this, "cursorEl", null);
     __publicField(this, "cursorVisible", false);
     __publicField(this, "screenReverse", false);
+    __publicField(this, "_graphicsLayer", null);
+    __publicField(this, "_graphicsIds", /* @__PURE__ */ new Set());
+    __publicField(this, "_charWidth", 8);
+    __publicField(this, "_cellHeight", 16);
     __publicField(this, "_scrollbackRowEls", []);
     __publicField(this, "_renderedScrollbackCount", 0);
     this.container = container;
@@ -274,6 +278,9 @@ class Renderer {
     this.prevRowBg = [];
     this._scrollbackRowEls = [];
     this._renderedScrollbackCount = 0;
+    this._graphicsLayer = null;
+    this._graphicsIds.clear();
+    this._ensureGraphicsLayer();
     const fragment = document.createDocumentFragment();
     for (let r = 0; r < rows; r++) {
       const rowEl = document.createElement("div");
@@ -432,6 +439,65 @@ class Renderer {
     this.cursorEl.style.setProperty("--cursor-col", String(cursor.col));
     this.cursorVisible = true;
   }
+  _ensureGraphicsLayer() {
+    if (this._graphicsLayer && this._graphicsLayer.isConnected) return;
+    const layer = document.createElement("div");
+    layer.className = "term-graphics-layer";
+    layer.style.cssText = "position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:none;overflow:hidden;z-index:2;";
+    this.container.appendChild(layer);
+    this._graphicsLayer = layer;
+  }
+  _measureCellMetrics() {
+    const row = this.rowEls[0];
+    if (!row) return;
+    const span = row.querySelector("span");
+    if (span) {
+      const rect = span.getBoundingClientRect();
+      if (rect.width > 0) this._charWidth = rect.width;
+      if (rect.height > 0) this._cellHeight = rect.height;
+    } else {
+      const rect = row.getBoundingClientRect();
+      if (rect.height > 0) this._cellHeight = rect.height;
+    }
+  }
+  _syncGraphics(core) {
+    if (typeof core.getImages !== "function") return;
+    this._ensureGraphicsLayer();
+    this._measureCellMetrics();
+    const images = core.getImages();
+    const seen = /* @__PURE__ */ new Set();
+    for (const img of images) {
+      seen.add(img.id);
+      let canvas = this._graphicsLayer.querySelector(`canvas[data-img-id="${img.id}"]`);
+      if (!canvas) {
+        canvas = document.createElement("canvas");
+        canvas.dataset.imgId = String(img.id);
+        canvas.style.position = "absolute";
+        canvas.style.imageRendering = "pixelated";
+        this._graphicsLayer.appendChild(canvas);
+      }
+      if (canvas.width !== img.width || canvas.height !== img.height) {
+        canvas.width = Math.max(1, img.width);
+        canvas.height = Math.max(1, img.height);
+        const ctx = canvas.getContext("2d");
+        if (ctx && img.width > 0 && img.height > 0) {
+          const data = new ImageData(img.pixels, img.width, img.height);
+          ctx.putImageData(data, 0, 0);
+        }
+      }
+      const left = img.x * this._charWidth;
+      const top = img.y * this._cellHeight;
+      canvas.style.left = `${left}px`;
+      canvas.style.top = `${top}px`;
+      canvas.style.width = `${img.width}px`;
+      canvas.style.height = `${img.height}px`;
+    }
+    for (const old of Array.from(this._graphicsLayer.querySelectorAll("canvas[data-img-id]"))) {
+      const id = Number(old.dataset.imgId || 0);
+      if (!seen.has(id)) old.remove();
+    }
+    this._graphicsIds = seen;
+  }
   render(core) {
     const rows = core.getRows();
     const cols = core.getCols();
@@ -529,6 +595,7 @@ class Renderer {
         this.prevContainerBg = containerBg;
       }
     }
+    this._syncGraphics(core);
     core.clearDirty();
   }
 }

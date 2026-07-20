@@ -30,6 +30,16 @@ interface WasmExports {
   getFocusReporting(): number;
   getReverseScreen(): number;
   getKittyKeyboardFlags(): number;
+  getImageCount(): number;
+  getImageId(index: number): number;
+  getImageX(index: number): number;
+  getImageY(index: number): number;
+  getImageWidth(index: number): number;
+  getImageHeight(index: number): number;
+  getImageCols(index: number): number;
+  getImageRows(index: number): number;
+  getImagePtr(index: number): number;
+  getImageStride(): number;
   getUsingAltScreen(): number;
   getTitlePtr(): number;
   getTitleLen(): number;
@@ -232,6 +242,35 @@ export class WasmBridge implements TerminalCore {
   focusReporting(): boolean { return this.exports.getFocusReporting() !== 0; }
   reverseScreen(): boolean { return this.exports.getReverseScreen() !== 0; }
   kittyKeyboardFlags(): number { return this.exports.getKittyKeyboardFlags(); }
+  getImages(): Array<{ id: number; x: number; y: number; width: number; height: number; cols: number; rows: number; pixels: Uint8ClampedArray; stride: number }> {
+    const n = this.exports.getImageCount();
+    const stride = this.exports.getImageStride();
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const width = this.exports.getImageWidth(i);
+      const height = this.exports.getImageHeight(i);
+      const ptr = this.exports.getImagePtr(i);
+      // pixels are stored at stride MAX_WIDTH*4; copy visible sub-rect tightly for canvas upload convenience.
+      const tight = new Uint8ClampedArray(width * height * 4);
+      const src = new Uint8Array(this.memory.buffer, ptr, stride * Math.max(height, 1));
+      for (let y = 0; y < height; y++) {
+        const row = src.subarray(y * stride, y * stride + width * 4);
+        tight.set(row, y * width * 4);
+      }
+      out.push({
+        id: this.exports.getImageId(i),
+        x: this.exports.getImageX(i),
+        y: this.exports.getImageY(i),
+        width,
+        height,
+        cols: this.exports.getImageCols(i),
+        rows: this.exports.getImageRows(i),
+        pixels: tight,
+        stride: width * 4,
+      });
+    }
+    return out;
+  }
   usingAltScreen(): boolean {
     return this.exports.getUsingAltScreen() !== 0;
   }

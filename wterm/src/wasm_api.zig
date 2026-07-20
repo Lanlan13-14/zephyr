@@ -2,12 +2,15 @@ const terminal_mod = @import("terminal.zig");
 const grid_mod = @import("grid.zig");
 const cell_mod = @import("cell.zig");
 const scrollback_mod = @import("scrollback.zig");
+const graphics_mod = @import("graphics.zig");
+const sixel_mod = @import("sixel.zig");
 
 const Terminal = terminal_mod.Terminal;
 
 var terminal: Terminal = undefined;
 var scrollback: scrollback_mod.Scrollback = .{};
 var alt_grid: grid_mod.Grid = undefined;
+var graphics: graphics_mod.Store = .{};
 var input_buffer: [8192]u8 = undefined;
 var initialized: bool = false;
 
@@ -19,7 +22,9 @@ export fn init(cols: u32, rows: u32) void {
     terminal.reset(c, r);
     terminal.scrollback = &scrollback;
     terminal.alt_grid = &alt_grid;
+    terminal.graphics = &graphics;
     scrollback.reset();
+    graphics.reset();
     initialized = true;
 }
 
@@ -193,6 +198,46 @@ export fn getResponseLen() u32 {
 
 export fn clearResponse() void {
     terminal.response_len = 0;
+}
+
+// -- Graphics plane (Sixel / Kitty) --
+export fn getImageCount() u32 {
+    return graphics.count();
+}
+export fn getImageId(index: u32) u32 {
+    if (graphics.get(index)) |img| return img.id;
+    return 0;
+}
+export fn getImageX(index: u32) u32 {
+    if (graphics.get(index)) |img| return img.x_cell;
+    return 0;
+}
+export fn getImageY(index: u32) u32 {
+    if (graphics.get(index)) |img| return img.y_cell;
+    return 0;
+}
+export fn getImageWidth(index: u32) u32 {
+    if (graphics.get(index)) |img| return img.width_px;
+    return 0;
+}
+export fn getImageHeight(index: u32) u32 {
+    if (graphics.get(index)) |img| return img.height_px;
+    return 0;
+}
+export fn getImageCols(index: u32) u32 {
+    if (graphics.get(index)) |img| return img.cols;
+    return 0;
+}
+export fn getImageRows(index: u32) u32 {
+    if (graphics.get(index)) |img| return img.rows;
+    return 0;
+}
+export fn getImagePtr(index: u32) [*]const u8 {
+    if (graphics.get(index)) |img| return @ptrCast(&img.pixels);
+    return @ptrCast(&graphics.images[0].pixels);
+}
+export fn getImageStride() u32 {
+    return sixel_mod.MAX_WIDTH * 4;
 }
 
 // -- Evicted scrollback export (server-side history indexer) --

@@ -10,7 +10,10 @@ pub const Action = enum {
     csi_dispatch,
     esc_dispatch,
     osc_dispatch,
+    dcs_start,
+    dcs_put,
     dcs_dispatch,
+    apc_dispatch,
 };
 
 pub const State = enum {
@@ -24,6 +27,7 @@ pub const State = enum {
     osc_string,
     dcs_entry,
     dcs_string,
+    apc_string,
 };
 
 pub const Parser = struct {
@@ -46,10 +50,19 @@ pub const Parser = struct {
     osc_data: [MAX_OSC]u8 = undefined,
     osc_len: u16 = 0,
 
-    // DCS collected data
+    // DCS collected data (for small control DCS like DECRQSS/XTGETTCAP).
+    // Large binary DCS payloads (Sixel) are streamed via dcs_put actions and
+    // are not buffered here.
     dcs_data: [MAX_DCS]u8 = undefined,
     dcs_len: u16 = 0,
     dcs_private: u8 = 0,
+    dcs_final: u8 = 0,
+    dcs_stream: bool = false,
+    dcs_put_byte: u8 = 0,
+
+    // APC (used by Kitty graphics): ESC _ ... ST
+    apc_data: [MAX_DCS]u8 = undefined,
+    apc_len: u16 = 0,
 
     // UTF-8 decoder
     utf8_buf: [4]u8 = undefined,
@@ -57,7 +70,7 @@ pub const Parser = struct {
     utf8_expected: u3 = 0,
 
     pub fn feed(self: *Parser, byte: u8) Action {
-        // ESC always starts a new sequence (except in OSC/DCS where ST = ESC \ terminates)
+        // ESC always starts a new sequence (except in OSC/DCS/APC where ST = ESC \ terminates)
         if (byte == 0x1B) {
             if (self.state == .osc_string) {
                 self.state = .escape;
@@ -66,6 +79,10 @@ pub const Parser = struct {
             if (self.state == .dcs_string or self.state == .dcs_entry) {
                 self.state = .escape;
                 return .dcs_dispatch;
+            }
+            if (self.state == .apc_string) {
+                self.state = .escape;
+                return .apc_dispatch;
             }
             self.enterEscape();
             return .none;
@@ -88,6 +105,7 @@ pub const Parser = struct {
             .osc_string => self.handleOscString(byte),
             .dcs_entry => self.handleDcsEntry(byte),
             .dcs_string => self.handleDcsString(byte),
+            .apc_string => self.handleApcString(byte),
         };
     }
 
@@ -187,7 +205,12 @@ pub const Parser = struct {
             self.enterDcs();
             return .none;
         }
-        // ST terminator residual after OSC/DCS: ESC \
+        if (byte == '_') {
+            self.state = .apc_string;
+            self.apc_len = 0;
+            return .none;
+        }
+        // ST terminator residual after OSC/DCS/APC: ESC \
         if (byte == '\\') {
             self.state = .ground;
             return .none;
@@ -333,6 +356,9 @@ pub const Parser = struct {
         self.state = .dcs_entry;
         self.dcs_len = 0;
         self.dcs_private = 0;
+        self.dcs_final = 0;
+        self.dcs_stream = false;
+        self.dcs_put_byte = 0;
         self.param_count = 0;
         self.params_full = false;
         self.intermediate_count = 0;
@@ -379,6 +405,14 @@ pub const Parser = struct {
             self.collectIntermediate(byte);
             return .none;
         }
+        // Sixel introduces itself with the final byte 'q' after params, then
+        // streams binary payload. Buffering all of it is impossible; stream.
+        if (byte == 'q' and self.dcs_private != '$' and self.dcs_private != '+') {
+            self.dcs_final = 'q';
+            self.dcs_stream = true;
+            self.state = .dcs_string;
+            return .dcs_start;
+        }
         // First non-parameter byte begins the DCS string body, including the
         // identifier for XTGETTCAP/DECRQSS (e.g. 'q').
         self.state = .dcs_string;
@@ -391,10 +425,32 @@ pub const Parser = struct {
             self.state = .ground;
             return .dcs_dispatch;
         }
+        if (self.dcs_stream) {
+            // Stream payload bytes to the terminal instead of buffering.
+            if (byte >= 0x20) {
+                self.dcs_put_byte = byte;
+                return .dcs_put;
+            }
+            return .none;
+        }
         if (byte >= 0x20 and byte <= 0x7E) {
             if (self.dcs_len < MAX_DCS) {
                 self.dcs_data[self.dcs_len] = byte;
                 self.dcs_len += 1;
+            }
+        }
+        return .none;
+    }
+
+    fn handleApcString(self: *Parser, byte: u8) Action {
+        if (byte == 0x07) {
+            self.state = .ground;
+            return .apc_dispatch;
+        }
+        if (byte >= 0x20 and byte <= 0x7E) {
+            if (self.apc_len < MAX_DCS) {
+                self.apc_data[self.apc_len] = byte;
+                self.apc_len += 1;
             }
         }
         return .none;
