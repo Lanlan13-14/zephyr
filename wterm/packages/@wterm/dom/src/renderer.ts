@@ -40,19 +40,20 @@ function cellBgCSS(bg: number, bgRgb: number | undefined): string | null {
   return colorToCSS(bg);
 }
 
-function buildCellStyle(
+export function buildCellStyle(
   fg: number,
   bg: number,
   flags: number,
   fgRgb?: number,
   bgRgb?: number,
+  screenReverse = false,
 ): string {
   let fgIdx = fg,
     bgIdx = bg,
     fgR = fgRgb,
     bgR = bgRgb;
 
-  if (flags & FLAG_REVERSE) {
+  if ((flags & FLAG_REVERSE) !== (screenReverse ? FLAG_REVERSE : 0)) {
     const tmpIdx = fgIdx;
     fgIdx = bgIdx;
     bgIdx = tmpIdx;
@@ -114,13 +115,14 @@ function resolveColors(
   flags: number,
   fgRgb?: number,
   bgRgb?: number,
+  screenReverse = false,
 ): { fg: string; bg: string } {
   let fgIdx = fg,
     bgIdx = bg,
     fgR = fgRgb,
     bgR = bgRgb;
 
-  if (flags & FLAG_REVERSE) {
+  if ((flags & FLAG_REVERSE) !== (screenReverse ? FLAG_REVERSE : 0)) {
     [fgIdx, bgIdx] = [bgIdx, fgIdx];
     [fgR, bgR] = [bgR, fgR];
     if (fgR === undefined && fgIdx === DEFAULT_COLOR) fgIdx = 0;
@@ -248,6 +250,7 @@ export class Renderer {
    *  the cursor never forces a row rebuild. */
   private cursorEl: HTMLDivElement | null = null;
   private cursorVisible = false;
+  private screenReverse = false;
 
   private _scrollbackRowEls: HTMLDivElement[] = [];
   private _renderedScrollbackCount = 0;
@@ -306,6 +309,7 @@ export class Renderer {
     lineLen: number,
     rowIndex: number,
     getHyperlink: (id: number) => string | null,
+    screenReverse: boolean,
   ): void {
     let html = "";
     let runStyle = "";
@@ -340,6 +344,7 @@ export class Renderer {
           cell.flags,
           cell.fgRgb,
           cell.bgRgb,
+          screenReverse,
         );
         const bg = getBlockBackground(cp, colors.fg, colors.bg);
         const dim = cell.flags & FLAG_DIM ? "opacity:0.5;" : "";
@@ -363,7 +368,7 @@ export class Renderer {
         }
         const ch = inBounds && cp >= 32 ? String.fromCodePoint(cp) : " ";
         const style = inBounds
-          ? buildCellStyle(cell.fg, cell.bg, cell.flags, cell.fgRgb, cell.bgRgb)
+          ? buildCellStyle(cell.fg, cell.bg, cell.flags, cell.fgRgb, cell.bgRgb, screenReverse)
           : "";
         // P2-1: Wide lead cell gets a width override via a data attribute.
         // The CSS .term-wide rule sets width: 2ch for these spans.
@@ -418,7 +423,7 @@ export class Renderer {
     rowEl.className = "term-row term-scrollback-row";
     const lineLen = core.getScrollbackLineLen(sbOffset);
 
-    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1, (id) => core.getHyperlink(id));
+    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1, (id) => core.getHyperlink(id), this.screenReverse);
     return rowEl;
   }
 
@@ -471,6 +476,7 @@ export class Renderer {
       cell.flags,
       cell.fgRgb,
       cell.bgRgb,
+      this.screenReverse,
     );
 
     const ch = cell.char >= 32 ? String.fromCodePoint(cell.char) : " ";
@@ -497,6 +503,17 @@ export class Renderer {
       resized = true;
     }
 
+    const reverseNow = core.reverseScreen();
+    const screenReverseChanged = reverseNow !== this.screenReverse;
+    if (screenReverseChanged) {
+      this.screenReverse = reverseNow;
+      for (const el of this._scrollbackRowEls) el.remove();
+      this._scrollbackRowEls = [];
+      this._renderedScrollbackCount = 0;
+      this.rowSignatures = this.rowSignatures.map(() => null);
+      this.prevRowBg.fill("");
+    }
+
     this.syncScrollback(core);
 
     const cursor = core.getCursor();
@@ -507,7 +524,7 @@ export class Renderer {
     // against the cached version. If all cells match, skip the rebuild.
     // Only rebuild rows where actual content changed.
     for (let r = 0; r < this.rows; r++) {
-      const isDirty = resized || core.isDirtyRow(r);
+      const isDirty = resized || screenReverseChanged || core.isDirtyRow(r);
 
       if (!isDirty) continue;
 
@@ -548,6 +565,7 @@ export class Renderer {
         this.cols,
         r,
         (id) => core.getHyperlink(id),
+        this.screenReverse,
       );
 
       // Cache signatures for next frame's diff

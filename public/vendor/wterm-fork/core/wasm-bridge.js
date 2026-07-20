@@ -142,6 +142,9 @@ class WasmBridge {
   focusReporting() {
     return this.exports.getFocusReporting() !== 0;
   }
+  reverseScreen() {
+    return this.exports.getReverseScreen() !== 0;
+  }
   usingAltScreen() {
     return this.exports.getUsingAltScreen() !== 0;
   }

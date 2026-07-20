@@ -63,6 +63,7 @@ export interface TerminalCore {
   /** True while DECSET 2026 synchronized output is active. */
   syncOutput(): boolean;
   focusReporting(): boolean;
+  reverseScreen(): boolean;
   usingAltScreen(): boolean;
 
   // -- Side outputs --

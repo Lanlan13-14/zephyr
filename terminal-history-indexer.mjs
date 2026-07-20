@@ -16,8 +16,9 @@ function cellStyle(cell, link) {
   if (link) out.link = link;
   return out;
 }
-function appendCell(pending, cell, link = null) {
+function appendCell(pending, cell, link = null, screenReverse = false) {
   if (cell.wide === 2 || cell.char === 0) return;
+  if (screenReverse) cell = { ...cell, flags: cell.flags ^ 0x20 };
   const char = cell.char >= 32 ? String.fromCodePoint(cell.char) : ' ';
   const key = styleKey(cell, link);
   let run = pending.runs[pending.runs.length - 1];
@@ -81,7 +82,7 @@ export class TerminalHistoryIndexer {
       const len = bridge.getEvictedLineLen();
       for (let col = 0; col < len; col++) {
         const cell = bridge.getEvictedCell(col);
-        appendCell(state.pending, cell, bridge.getHyperlink(cell.linkId || 0));
+        appendCell(state.pending, cell, bridge.getHyperlink(cell.linkId || 0), bridge.reverseScreen());
       }
       const wrapped = bridge.getEvictedLineWrapped();
       bridge.popEvictedLine();

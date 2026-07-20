@@ -87,6 +87,7 @@ pub const Terminal = struct {
     /// buffer frames until synchronized output ends.
     sync_output: bool = false,
     focus_reporting: bool = false,
+    reverse_screen: bool = false,
     linefeed_mode: bool = false,
 
     // Alternate screen buffer (pointer to avoid doubling struct size)
@@ -196,6 +197,7 @@ pub const Terminal = struct {
         self.bell_pending = false;
         self.sync_output = false;
         self.focus_reporting = false;
+        self.reverse_screen = false;
         self.title_len = 0;
         self.title_changed = false;
         self.current_link_id = 0;
@@ -731,6 +733,7 @@ pub const Terminal = struct {
             switch (mode) {
                 1 => self.cursor_keys_app = enabled,
                 6 => self.origin_mode = enabled,
+                5 => self.reverse_screen = enabled,
                 7 => self.auto_wrap = enabled,
                 12 => {}, // cursor blink - handled by renderer
                 20 => self.linefeed_mode = enabled,

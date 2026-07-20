@@ -36,9 +36,9 @@ function cellBgCSS(bg, bgRgb) {
   if (bgRgb !== void 0) return rgbToCSS(bgRgb);
   return colorToCSS(bg);
 }
-function buildCellStyle(fg, bg, flags, fgRgb, bgRgb) {
+function buildCellStyle(fg, bg, flags, fgRgb, bgRgb, screenReverse = false) {
   let fgIdx = fg, bgIdx = bg, fgR = fgRgb, bgR = bgRgb;
-  if (flags & FLAG_REVERSE) {
+  if ((flags & FLAG_REVERSE) !== (screenReverse ? FLAG_REVERSE : 0)) {
     const tmpIdx = fgIdx;
     fgIdx = bgIdx;
     bgIdx = tmpIdx;
@@ -84,9 +84,9 @@ function safeHyperlink(uri) {
     return null;
   }
 }
-function resolveColors(fg, bg, flags, fgRgb, bgRgb) {
+function resolveColors(fg, bg, flags, fgRgb, bgRgb, screenReverse = false) {
   let fgIdx = fg, bgIdx = bg, fgR = fgRgb, bgR = bgRgb;
-  if (flags & FLAG_REVERSE) {
+  if ((flags & FLAG_REVERSE) !== (screenReverse ? FLAG_REVERSE : 0)) {
     [fgIdx, bgIdx] = [bgIdx, fgIdx];
     [fgR, bgR] = [bgR, fgR];
     if (fgR === void 0 && fgIdx === DEFAULT_COLOR) fgIdx = 0;
@@ -197,6 +197,7 @@ class Renderer {
      *  the cursor never forces a row rebuild. */
     __publicField(this, "cursorEl", null);
     __publicField(this, "cursorVisible", false);
+    __publicField(this, "screenReverse", false);
     __publicField(this, "_scrollbackRowEls", []);
     __publicField(this, "_renderedScrollbackCount", 0);
     this.container = container;
@@ -229,7 +230,7 @@ class Renderer {
     this.prevCursorRow = -1;
     this.prevCursorCol = -1;
   }
-  _buildRowContent(rowEl, getCell, lineLen, rowIndex, getHyperlink) {
+  _buildRowContent(rowEl, getCell, lineLen, rowIndex, getHyperlink, screenReverse) {
     let html = "";
     let runStyle = "";
     let runText = "";
@@ -255,7 +256,8 @@ class Renderer {
           cell.bg,
           cell.flags,
           cell.fgRgb,
-          cell.bgRgb
+          cell.bgRgb,
+          screenReverse
         );
         const bg = getBlockBackground(cp, colors.fg, colors.bg);
         const dim = cell.flags & FLAG_DIM ? "opacity:0.5;" : "";
@@ -274,7 +276,7 @@ class Renderer {
           continue;
         }
         const ch = inBounds && cp >= 32 ? String.fromCodePoint(cp) : " ";
-        const style = inBounds ? buildCellStyle(cell.fg, cell.bg, cell.flags, cell.fgRgb, cell.bgRgb) : "";
+        const style = inBounds ? buildCellStyle(cell.fg, cell.bg, cell.flags, cell.fgRgb, cell.bgRgb, screenReverse) : "";
         const wideAttr = inBounds && cell.wide === 1 ? " term-wide" : "";
         const link = inBounds ? safeHyperlink(getHyperlink(cell.linkId || 0)) : null;
         if (style + wideAttr !== runStyle || link !== runLink) {
@@ -318,7 +320,7 @@ class Renderer {
     const rowEl = document.createElement("div");
     rowEl.className = "term-row term-scrollback-row";
     const lineLen = core.getScrollbackLineLen(sbOffset);
-    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1, (id) => core.getHyperlink(id));
+    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1, (id) => core.getHyperlink(id), this.screenReverse);
     return rowEl;
   }
   syncScrollback(core) {
@@ -357,7 +359,8 @@ class Renderer {
       cell.bg,
       cell.flags,
       cell.fgRgb,
-      cell.bgRgb
+      cell.bgRgb,
+      this.screenReverse
     );
     const ch = cell.char >= 32 ? String.fromCodePoint(cell.char) : " ";
     this.cursorEl.textContent = ch;
@@ -376,11 +379,21 @@ class Renderer {
       this.setup(cols, rows);
       resized = true;
     }
+    const reverseNow = core.reverseScreen();
+    const screenReverseChanged = reverseNow !== this.screenReverse;
+    if (screenReverseChanged) {
+      this.screenReverse = reverseNow;
+      for (const el of this._scrollbackRowEls) el.remove();
+      this._scrollbackRowEls = [];
+      this._renderedScrollbackCount = 0;
+      this.rowSignatures = this.rowSignatures.map(() => null);
+      this.prevRowBg.fill("");
+    }
     this.syncScrollback(core);
     const cursor = core.getCursor();
     const cursorMoved = cursor.row !== this.prevCursorRow || cursor.col !== this.prevCursorCol;
     for (let r = 0; r < this.rows; r++) {
-      const isDirty = resized || core.isDirtyRow(r);
+      const isDirty = resized || screenReverseChanged || core.isDirtyRow(r);
       if (!isDirty) continue;
       const oldSigs = this.rowSignatures[r];
       let allMatch = oldSigs !== null && oldSigs.length === this.cols;
@@ -411,7 +424,8 @@ class Renderer {
         (col) => core.getCell(r, col),
         this.cols,
         r,
-        (id) => core.getHyperlink(id)
+        (id) => core.getHyperlink(id),
+        this.screenReverse
       );
       const newSigs = [];
       for (let col = 0; col < this.cols; col++) {
@@ -457,5 +471,6 @@ class Renderer {
   }
 }
 export {
-  Renderer
+  Renderer,
+  buildCellStyle
 };

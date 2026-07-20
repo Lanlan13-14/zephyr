@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {WasmBridge} from '../public/vendor/wterm-fork/core/index.js';import {buildCellStyle} from '../public/vendor/wterm-fork/renderer.js';
+test('DECSET 5 toggles reverse screen',async()=>{const b=await WasmBridge.load();b.init(80,24);assert.equal(b.reverseScreen(),false);b.writeString('\x1b[?5h');assert.equal(b.reverseScreen(),true);b.writeString('\x1b[?5l');assert.equal(b.reverseScreen(),false);});
+test('screen reverse XOR cell reverse',()=>{const normal=buildCellStyle(1,4,0,undefined,undefined,false);const screen=buildCellStyle(1,4,0,undefined,undefined,true);const both=buildCellStyle(1,4,0x20,undefined,undefined,true);assert.notEqual(normal,screen);assert.equal(normal,both);});
