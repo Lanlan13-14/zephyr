@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="/vendor/viewerjs/viewer.min.css">
     <link rel="stylesheet" href="preview/image/image-preview.css?v=20260720-telnet-ui-motion2">
     <link rel="stylesheet" href="preview/media/media-preview.css?v=20260720-telnet-ui-motion2">
-    <link rel="stylesheet" href="editor/zephyr-editor.css">
+    <link rel="stylesheet" href="editor/zephyr-editor.css?v=20260720-editor-p0p1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script type="importmap">
         {
@@ -79,18 +79,27 @@
                     <button class="panel-traffic-btn" data-layout-panel="editor" title="窗口布局"><span></span></button>
                 </div>
                 <div class="fm-editor-header">
-                    <span id="fmEditorTitle">编辑文件</span>
+                    <span id="fmEditorTitle" data-editor-role="title">编辑文件</span>
+                    <div class="fm-editor-tabs" id="fmEditorTabs" data-editor-role="tabs" aria-label="打开的文件"></div>
                     <div class="fm-editor-header-actions">
-                        <button class="tool-btn fm-editor-compact-btn" id="fmEditorCompactBtn" title="切换紧凑布局">紧凑</button>
-                        <button class="tool-btn" id="fmEditorMinimapToggle" title="显示/隐藏代码概览">概览</button>
-                        <button class="tool-btn fm-editor-palette-btn" id="fmEditorPaletteBtn" title="打开/关闭命令面板">命令</button>
-                        <button class="tool-btn fm-editor-ai-btn" id="fmEditorAiBtn" title="AI 代码补全（Ctrl/⌘+Shift+Space）">AI补全</button>
-                        <button class="tool-btn fm-editor-format-btn" id="fmEditorFormatBtn" title="格式化 YAML/JSON/JS">格式化</button>
-                        <button class="tool-btn" id="fmEditorUndoBtn" title="撤回">↶</button>
-                        <button class="tool-btn" id="fmEditorRedoBtn" title="前进">↷</button>
-                        <button class="tool-btn fm-editor-save-icon" id="fmEditorSaveBtn" title="保存" aria-label="保存"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg></button>
-                        <button class="tool-btn fm-editor-close-icon" id="fmEditorCloseBtn" title="关闭" aria-label="关闭">×</button>
+                        <button class="tool-btn" data-editor-action="workspace-search" id="fmEditorSearchWsBtn" title="当前目录搜索（有界）">搜目录</button>
+                        <button class="tool-btn" data-editor-action="outline" id="fmEditorOutlineBtn" title="大纲">大纲</button>
+                        <button class="tool-btn" data-editor-action="problems" id="fmEditorProblemsBtn" title="问题">问题</button>
+                        <button class="tool-btn fm-editor-compact-btn" id="fmEditorCompactBtn" data-editor-action="compact" title="切换紧凑布局">紧凑</button>
+                        <button class="tool-btn" id="fmEditorMinimapToggle" data-editor-action="minimap" title="显示/隐藏代码概览">概览</button>
+                        <button class="tool-btn fm-editor-palette-btn" id="fmEditorPaletteBtn" data-editor-action="palette" title="打开/关闭命令面板">命令</button>
+                        <button class="tool-btn fm-editor-ai-btn" id="fmEditorAiBtn" data-editor-action="ai" title="AI 代码补全（Ctrl/⌘+Shift+Space）">AI补全</button>
+                        <button class="tool-btn fm-editor-format-btn" id="fmEditorFormatBtn" data-editor-action="format" title="格式化">格式化</button>
+                        <button class="tool-btn" id="fmEditorUndoBtn" data-editor-action="undo" title="撤回">↶</button>
+                        <button class="tool-btn" id="fmEditorRedoBtn" data-editor-action="redo" title="前进">↷</button>
+                        <button class="tool-btn fm-editor-save-icon" id="fmEditorSaveBtn" data-editor-action="save" title="保存" aria-label="保存"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg></button>
+                        <button class="tool-btn fm-editor-close-icon" id="fmEditorCloseBtn" data-editor-action="close" title="关闭" aria-label="关闭">×</button>
                     </div>
+                </div>
+                <div class="fm-editor-workspace-search" id="fmEditorWorkspaceSearch" data-editor-role="workspaceSearch">
+                    <input type="search" id="fmEditorWorkspaceSearchInput" placeholder="在当前 SFTP 目录搜索文本…" autocomplete="off">
+                    <button type="button" class="tool-btn" data-editor-action="workspace-search-run">搜索</button>
+                    <button type="button" class="tool-btn" data-editor-action="workspace-search-close">关闭</button>
                 </div>
                 <div class="fm-editor-toolbar">
                     <label>编码
@@ -118,7 +127,14 @@
                     <span class="fm-editor-status" id="fmEditorStatus">Ready</span>
                 </div>
                 <div class="fm-editor-code-shell cm-ide-shell">
-                    <div class="fm-editor-main cm-editor-host wrap-enabled" id="fmEditorMain"></div>
+                    <div class="fm-editor-main cm-editor-host wrap-enabled" id="fmEditorMain" data-editor-role="main"></div>
+                    <aside class="fm-editor-sidepanel" id="fmEditorSidepanel" data-editor-role="sidepanel" aria-label="侧栏">
+                        <div class="fm-editor-sidepanel-head">
+                            <span data-editor-role="sidepanelTitle">面板</span>
+                            <button type="button" class="tool-btn" data-editor-action="sidepanel-close" title="关闭">×</button>
+                        </div>
+                        <div class="fm-editor-sidepanel-body" data-editor-role="sidepanelBody"></div>
+                    </aside>
                 </div>
                 <div class="fm-editor-actions" hidden></div>
             </div>
@@ -345,7 +361,7 @@
     <script src="/vendor/viewerjs/viewer.min.js"></script>
     <script src="preview/image/image-preview.js?v=20260720-telnet-ui-motion2"></script>
     <script src="preview/media/media-preview.js?v=20260720-telnet-ui-motion2"></script>
-    <script src="editor/zephyr-editor.bundle.js?v=20260608-ai-completion" type="module"></script>
-    <script src="terminal.js?v=20260720-wterm-main1" type="module"></script>
+<script src="editor/zephyr-editor.bundle.js?v=20260720-editor-p0p1" type="module"></script>
+    <script src="terminal.js?v=20260720-editor-p0p1" type="module"></script>
 </body>
 </html>

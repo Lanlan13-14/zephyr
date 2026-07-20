@@ -214,6 +214,7 @@ const FLOATING_PANEL_SELECTOR = '.file-manager, .info-modal, .docker-panel, .sni
 const editorPanelsByPath = new Map();
 const pendingEditorReads = new Map();
 const pendingRemoteSubtitleReads = new Map();
+const pendingWorkspaceSearches = new Map();
 const SFTP_VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'flv', 'f4v', 'mpeg', 'mpg', 'mpe', 'ts', 'mts', 'm2ts', 'vob', 'ogv', '3gp', '3g2', 'asf', 'rm', 'rmvb', 'divx', 'mxf']);
 const SFTP_AUDIO_EXTENSIONS = new Set(['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'opus', 'weba', 'wma', 'alac', 'aiff', 'aif', 'ape', 'amr', 'mid', 'midi', 'mka', 'caf', 'ac3', 'dts', 'm4b']);
 const SFTP_ARCHIVE_ICON_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'tbz', 'tbz2', 'xz', 'txz', 'zst', 'lz', 'lzma', 'br', 'jar', 'war', 'ear', 'apk', 'ipa', 'deb', 'rpm', 'pkg', 'dmg', 'iso']);
@@ -5377,7 +5378,8 @@ function loadEditorFromBytes(bytes, encoding = fmEditorEncoding.value) {
             path: editorFilePath,
             language: editorLanguage,
             text,
-            size: bytes?.length || 0,
+            size: bytes?.length || fmEditorModal._editorSize || 0,
+            mtimeMs: fmEditorModal._editorMtimeMs || 0,
             tabSize: Number(fmEditorTabSize?.value) || 4,
             wrap: fmEditorWrap?.checked !== false,
             autoSave: false,
@@ -5387,9 +5389,16 @@ function loadEditorFromBytes(bytes, encoding = fmEditorEncoding.value) {
             statusEl: fmEditorStatus,
             notify: showToast,
             onSave: ({ silent } = {}) => saveActiveEditor({ closeAfterSave: !silent }),
+            onDiagnostics: (diags) => {
+                fmEditorModal._diagnostics = diags || [];
+                const btn = fmEditorModal.querySelector('[data-editor-action="problems"]');
+                if (btn) btn.classList.toggle('active', (diags || []).length > 0);
+            },
+            onOutline: (items) => showEditorSidepanel(fmEditorModal, 'outline', items || []),
         });
         updateActiveEditorRefs(fmEditorModal);
         updateEditorStatus();
+        renderEditorTabs(fmEditorModal);
     };
     if (window.ZephyrCodeEditor?.create) create();
     else window.setTimeout(create, 80);
@@ -5782,37 +5791,235 @@ async function pickRemoteSubtitleForMedia(mediaPath = '') {
     return readRemoteSubtitleFile(filePath.trim());
 }
 
+function handleEditorSaveConflict(panel, msg = {}) {
+    const p = panel || fmEditorModal;
+    if (!p) {
+        showToast('保存冲突：远端文件已修改', 'error');
+        return;
+    }
+    const remoteMtime = Number(msg.mtimeMs) || 0;
+    const body = p.querySelector('[data-editor-role="sidepanelBody"]');
+    const title = p.querySelector('[data-editor-role="sidepanelTitle"]');
+    const side = p.querySelector('[data-editor-role="sidepanel"]');
+    if (title) title.textContent = '保存冲突';
+    if (body) {
+        body.innerHTML = `
+            <p style="margin:6px 8px 10px;font-size:12px;line-height:1.45;color:var(--text-secondary)">
+              远端文件在打开后已被修改（mtime 冲突）。可覆盖远端，或重新加载丢弃本地未保存修改。
+            </p>
+            <button type="button" class="fm-editor-sidepanel-item" data-conflict-act="overwrite"><strong>覆盖远端</strong><small>用当前编辑器内容强制写入</small></button>
+            <button type="button" class="fm-editor-sidepanel-item" data-conflict-act="reload"><strong>重新加载远端</strong><small>丢弃本地未保存修改</small></button>
+            <button type="button" class="fm-editor-sidepanel-item" data-conflict-act="cancel"><strong>取消</strong><small>继续编辑，稍后再保存</small></button>
+        `;
+        body.querySelectorAll('[data-conflict-act]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const act = btn.dataset.conflictAct;
+                if (act === 'overwrite') {
+                    closeEditorSidepanel(p);
+                    saveActiveEditor({ closeAfterSave: false, forceOverwrite: true });
+                } else if (act === 'reload') {
+                    closeEditorSidepanel(p);
+                    const path = p.dataset.editorPath || editorFilePath;
+                    const requestId = `${p.dataset.editorId || path}-reload-${Date.now()}`;
+                    pendingEditorReads.set(requestId, p);
+                    wsConnection.send(JSON.stringify({ type: 'sftp-readfile', path, requestId }));
+                    if (fmEditorStatus) fmEditorStatus.textContent = '重新加载中...';
+                } else {
+                    if (remoteMtime) p._editorMtimeMs = remoteMtime;
+                    closeEditorSidepanel(p);
+                }
+            });
+        });
+    }
+    side?.classList.add('open');
+    showToast('保存冲突：远端文件已变更', 'error');
+}
+
+function closeEditorSidepanel(panel = fmEditorModal) {
+    panel?.querySelector?.('[data-editor-role="sidepanel"]')?.classList.remove('open');
+}
+
+function showEditorSidepanel(panel, kind, items = [], meta = {}) {
+    const p = panel || fmEditorModal;
+    if (!p) return;
+    const side = p.querySelector('[data-editor-role="sidepanel"]');
+    const title = p.querySelector('[data-editor-role="sidepanelTitle"]');
+    const body = p.querySelector('[data-editor-role="sidepanelBody"]');
+    if (!side || !body) return;
+    const label = kind === 'outline' ? '大纲' : kind === 'problems' ? '问题' : kind === 'search' ? '搜索结果' : '面板';
+    if (title) title.textContent = label + (meta.query ? ` · ${meta.query}` : '');
+    if (!items.length) {
+        body.innerHTML = `<div class="empty-state" style="padding:12px;font-size:12px">${
+            kind === 'search' ? '无匹配' : kind === 'problems' ? '暂无问题' : '暂无符号'
+        }${meta.filesScanned != null ? `<br><small>已扫描 ${meta.filesScanned} 个文件</small>` : ''}</div>`;
+    } else if (kind === 'problems') {
+        body.innerHTML = items.map((d, i) => {
+            const line = p._codeEditor?.view ? p._codeEditor.view.state.doc.lineAt(Math.min(p._codeEditor.view.state.doc.length, d.from || 0)).number : '?';
+            return `<button type="button" class="fm-editor-sidepanel-item" data-goto-from="${Number(d.from) || 0}"><strong>${escapeHtml(d.severity || 'error')}</strong> L${line}<small>${escapeHtml(d.message || '')}</small></button>`;
+        }).join('');
+        body.querySelectorAll('[data-goto-from]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const from = Number(btn.dataset.gotoFrom) || 0;
+                const view = getEditorInstance()?.view;
+                if (!view) return;
+                view.dispatch({ selection: { anchor: from }, effects: window.ZephyrCodeEditor ? undefined : undefined });
+                try {
+                    const { EditorView } = view.constructor;
+                } catch {}
+                window.ZephyrCodeEditor?.gotoLine?.(getEditorInstance(), view.state.doc.lineAt(from).number);
+            });
+        });
+    } else if (kind === 'search') {
+        body.innerHTML = items.map((m) => `<button type="button" class="fm-editor-sidepanel-item" data-open-path="${escapeHtml(m.path)}" data-open-line="${Number(m.line) || 1}"><strong>${escapeHtml(editorBaseName(m.path))}</strong> :${Number(m.line) || 1}<small>${escapeHtml(m.text || '')}</small></button>`).join('');
+        body.querySelectorAll('[data-open-path]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const path = btn.dataset.openPath;
+                const line = Number(btn.dataset.openLine) || 1;
+                openEditor(path);
+                window.setTimeout(() => window.ZephyrCodeEditor?.gotoLine?.(getEditorInstance(), line), 120);
+            });
+        });
+    } else {
+        // outline
+        body.innerHTML = items.map((it) => `<button type="button" class="fm-editor-sidepanel-item" data-goto-line="${Number(it.line) || 1}"><strong>${escapeHtml(it.name || '')}</strong><small>L${Number(it.line) || 1}</small></button>`).join('');
+        body.querySelectorAll('[data-goto-line]').forEach((btn) => {
+            btn.addEventListener('click', () => window.ZephyrCodeEditor?.gotoLine?.(getEditorInstance(), Number(btn.dataset.gotoLine) || 1));
+        });
+    }
+    side.classList.add('open');
+}
+
+function toggleWorkspaceSearchBar(panel, open) {
+    const p = panel || fmEditorModal;
+    const bar = p?.querySelector?.('[data-editor-role="workspaceSearch"]');
+    if (!bar) return;
+    bar.classList.toggle('open', open !== false ? (open === true ? true : !bar.classList.contains('open')) : false);
+    if (bar.classList.contains('open')) bar.querySelector('input')?.focus?.();
+}
+
+function runWorkspaceSearch(panel) {
+    const p = panel || fmEditorModal;
+    const input = p?.querySelector?.('[data-editor-role="workspaceSearch"] input');
+    const query = String(input?.value || '').trim();
+    if (!query) return showToast('请输入搜索词', 'info');
+    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) return showToast('SFTP 未连接', 'error');
+    // search root = directory of current file or FM path
+    const filePath = p?.dataset?.editorPath || editorFilePath || '';
+    let root = (typeof currentPath === 'string' && currentPath) ? currentPath : '.';
+    if (filePath.includes('/')) root = filePath.replace(/\/[^/]*$/, '') || root || '/';
+    const requestId = `ws-search-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    pendingWorkspaceSearches.set(requestId, p);
+    showEditorSidepanel(p, 'search', [], { query });
+    const body = p.querySelector('[data-editor-role="sidepanelBody"]');
+    if (body) body.innerHTML = '<div class="empty-state" style="padding:12px;font-size:12px">搜索中…</div>';
+    wsConnection.send(JSON.stringify({
+        type: 'sftp-workspace-search',
+        requestId,
+        path: root || '.',
+        query,
+        maxFiles: 80,
+        maxMatches: 60,
+        maxDepth: 2,
+    }));
+}
+
+function findEditorPanelByPath(filePath = '') {
+    const path = String(filePath || '');
+    if (!path) return null;
+    for (const panel of editorPanelsByPath.values()) {
+        if (panel?.dataset?.editorPath === path && panel.style.display !== 'none' && !panel.classList.contains('closing')) return panel;
+    }
+    return null;
+}
+
+function editorBaseName(filePath = '') {
+    const parts = String(filePath || '').split(/[\\/]/);
+    return parts[parts.length - 1] || filePath || 'untitled';
+}
+
+function renderEditorTabs(activePanel = fmEditorModal) {
+    const host = activePanel?.querySelector?.('[data-editor-role="tabs"]') || document.getElementById('fmEditorTabs');
+    if (!host) return;
+    const open = [];
+    for (const panel of editorPanelsByPath.values()) {
+        if (!panel || panel.style.display === 'none' || panel.classList.contains('closing')) continue;
+        open.push(panel);
+    }
+    // Always include active if missing from map briefly
+    if (activePanel && !open.includes(activePanel) && activePanel.dataset?.editorPath) open.push(activePanel);
+    host.innerHTML = open.map((panel) => {
+        const path = panel.dataset.editorPath || '';
+        const dirty = !!window.ZephyrCodeEditor?.dirty?.(panel._codeEditor);
+        const active = panel === activePanel;
+        return `<button type="button" class="fm-editor-tab${active ? ' active' : ''}${dirty ? ' dirty' : ''}" data-editor-tab-id="${escapeHtml(panel.dataset.editorId || '')}" title="${escapeHtml(path)}">${escapeHtml(editorBaseName(path))}</button>`;
+    }).join('');
+    host.querySelectorAll('[data-editor-tab-id]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const id = btn.dataset.editorTabId;
+            const panel = editorPanelsByPath.get(id);
+            if (!panel) return;
+            updateActiveEditorRefs(panel);
+            panel.style.display = 'flex';
+            panel.classList.add('open');
+            bringPanelToFront(panel);
+            updateEditorZIndex(panel);
+            renderEditorTabs(panel);
+            window.ZephyrCodeEditor?.focus?.(panel._codeEditor);
+        });
+    });
+}
+
 function openEditor(filePath) {
+    const existing = findEditorPanelByPath(filePath);
+    if (existing) {
+        updateActiveEditorRefs(existing);
+        existing.style.display = 'flex';
+        existing.classList.remove('closing');
+        requestAnimationFrame(() => existing.classList.add('open'));
+        updateEditorZIndex(existing);
+        bringPanelToFront(existing);
+        renderEditorTabs(existing);
+        window.ZephyrCodeEditor?.focus?.(existing._codeEditor);
+        return existing;
+    }
     const panel = createEditorPanel(filePath);
     updateActiveEditorRefs(panel);
     editorFilePath = filePath;
     editorLanguage = detectEditorLanguage(filePath);
     panel._editorLanguage = editorLanguage;
+    panel._editorMtimeMs = 0;
     panel.style.display = 'flex';
     panel.classList.remove('closing');
     requestAnimationFrame(() => panel.classList.add('open'));
-    fmEditorTitle.textContent = `编辑: ${filePath}`;
-    fmEditorStatus.textContent = '读取中...';
+    if (fmEditorTitle) fmEditorTitle.textContent = `编辑: ${filePath}`;
+    if (fmEditorStatus) fmEditorStatus.textContent = '读取中...';
     if (fmEditorMain) fmEditorMain.innerHTML = '';
     updateEditorZIndex(panel);
     bringPanelToFront(panel);
+    renderEditorTabs(panel);
     const requestId = panel.dataset.editorId || `${filePath}#${Date.now()}-${Math.random().toString(36).slice(2)}`;
     pendingEditorReads.set(requestId, panel);
     wsConnection.send(JSON.stringify({ type: 'sftp-readfile', path: filePath, requestId }));
+    return panel;
 }
 
-function saveActiveEditor({ closeAfterSave = true, forceClose = false } = {}) {
+function saveActiveEditor({ closeAfterSave = true, forceClose = false, forceOverwrite = false } = {}) {
     if (!editorFilePath) return;
     const panel = fmEditorModal;
     const text = normalizeLineEnding(getEditorText(panel), fmEditorLineEnding?.value || 'lf');
     const bytes = encodeText(text, fmEditorEncoding?.value || 'utf-8');
-    wsConnection.send(JSON.stringify({ type: 'sftp-writefile', editorId: panel?.dataset.editorId || '', path: editorFilePath, data: bytesToBase64(bytes), encoding: 'base64' }));
-    if (panel?._codeEditor) {
-        panel._codeEditor.originalText = text;
-        panel._codeEditor.dirty = false;
-        updateEditorStatus();
-    }
-    if (closeAfterSave) closeEditor({ force: forceClose });
+    const expectedMtimeMs = forceOverwrite ? undefined : (panel?._codeEditor?.mtimeMs || panel?._editorMtimeMs || undefined);
+    panel._pendingSave = { text, closeAfterSave, forceClose };
+    wsConnection.send(JSON.stringify({
+        type: 'sftp-writefile',
+        editorId: panel?.dataset.editorId || '',
+        path: editorFilePath,
+        data: bytesToBase64(bytes),
+        encoding: 'base64',
+        expectedMtimeMs: expectedMtimeMs || undefined,
+    }));
 }
 
 function closeEditorCommandPalette(panel = null) {
@@ -5867,14 +6074,34 @@ function setupClonedEditorEvents(panel) {
         if (action === 'close') closeEditor();
         else if (action === 'minimap') { window.ZephyrCodeEditor?.toggleMinimap?.(getEditorInstance()); localStorage.setItem('zephyr-editor-minimap-hidden', getEditorInstance()?.minimap ? '0' : '1'); updateEditorStatus(); }
         else if (action === 'compact') { window.ZephyrCodeEditor?.toggleCompact?.(getEditorInstance()); localStorage.setItem('zephyr-editor-compact', getEditorInstance()?.compact ? '1' : '0'); updateEditorStatus(); }
-        else if (action === 'palette') { const instance = getEditorInstance(); window.ZephyrCodeEditor?.openPalette?.(instance); fmEditorPaletteBtn?.classList.toggle('active', !!instance?.panel?.querySelector('[data-editor-role="commandPalette"]')?.classList.contains('open')); }
-        else if (action === 'ai-complete') { const ok = await window.ZephyrCodeEditor?.aiComplete?.(getEditorInstance()); if (ok) showToast('AI 补全已处理', 'success'); }
+        else if (action === 'palette') { const instance = getEditorInstance(); window.ZephyrCodeEditor?.openPalette?.(instance); actionEl.classList.toggle('active', !!instance?.panel?.querySelector('[data-editor-role="commandPalette"]')?.classList.contains('open')); }
+        else if (action === 'ai' || action === 'ai-complete') { const ok = await window.ZephyrCodeEditor?.aiComplete?.(getEditorInstance()); if (ok) showToast('AI 补全已处理', 'success'); }
         else if (action === 'undo') window.ZephyrCodeEditor?.undo?.(getEditorInstance());
         else if (action === 'redo') window.ZephyrCodeEditor?.redo?.(getEditorInstance());
         else if (action === 'save') saveActiveEditor({ closeAfterSave: false });
         else if (action === 'format') {
             const ok = await window.ZephyrCodeEditor?.format?.(getEditorInstance());
             if (ok) showToast('格式化完成', 'success');
+        } else if (action === 'outline') {
+            const items = window.ZephyrCodeEditor?.getOutline?.(getEditorInstance()) || [];
+            showEditorSidepanel(panel, 'outline', items);
+        } else if (action === 'problems') {
+            showEditorSidepanel(panel, 'problems', panel._diagnostics || getEditorInstance()?._diagnostics || []);
+        } else if (action === 'sidepanel-close') {
+            closeEditorSidepanel(panel);
+        } else if (action === 'workspace-search') {
+            toggleWorkspaceSearchBar(panel, true);
+        } else if (action === 'workspace-search-close') {
+            toggleWorkspaceSearchBar(panel, false);
+        } else if (action === 'workspace-search-run') {
+            runWorkspaceSearch(panel);
+        }
+    });
+    panel.querySelector('[data-editor-role="workspaceSearch"] input')?.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            updateActiveEditorRefs(panel);
+            runWorkspaceSearch(panel);
         }
     });
     panel.addEventListener('change', (e) => {
@@ -6064,19 +6291,54 @@ function handleSFTPMessage(msg) {
             if (msg.requestId) pendingEditorReads.delete(msg.requestId);
             if (panel) updateActiveEditorRefs(panel);
             if (msg.error) {
-                alert('读取失败: ' + msg.error);
-                fmEditorStatus.textContent = '读取失败';
+                showToast('读取失败: ' + msg.error, 'error');
+                if (fmEditorStatus) fmEditorStatus.textContent = '读取失败';
             } else {
                 const bytes = msg.encoding === 'base64' ? base64ToBytes(msg.data) : new TextEncoder().encode(msg.data || '');
-                fmEditorEncoding.value = detectEncoding(bytes);
-                loadEditorFromBytes(bytes, fmEditorEncoding.value);
+                if (panel) {
+                    panel._editorMtimeMs = Number(msg.mtimeMs) || 0;
+                    panel._editorSize = Number(msg.size) || bytes.length || 0;
+                }
+                if (fmEditorEncoding) fmEditorEncoding.value = detectEncoding(bytes);
+                loadEditorFromBytes(bytes, fmEditorEncoding?.value || 'utf-8');
+                renderEditorTabs(panel || fmEditorModal);
             }
             break;
         }
         case 'sftp-writefile': {
             const panel = msg.editorId ? editorPanelsByPath.get(msg.editorId) : Array.from(editorPanelsByPath.values()).reverse().find((p) => p.dataset.editorPath === msg.path);
             if (panel) updateActiveEditorRefs(panel);
-            if (msg.success) { refreshAllOpenFileManagers(); } else alert('保存失败: ' + (msg.error || '未知错误'));
+            if (msg.success) {
+                const pending = panel?._pendingSave;
+                if (panel?._codeEditor) {
+                    window.ZephyrCodeEditor?.markSaved?.(panel._codeEditor, {
+                        text: pending?.text,
+                        mtimeMs: Number(msg.mtimeMs) || Date.now(),
+                        size: Number(msg.size) || undefined,
+                    });
+                    panel._editorMtimeMs = Number(msg.mtimeMs) || panel._editorMtimeMs || 0;
+                }
+                if (panel) panel._pendingSave = null;
+                refreshAllOpenFileManagers();
+                showToast('已保存', 'success');
+                renderEditorTabs(panel || fmEditorModal);
+                if (pending?.closeAfterSave) closeEditor({ force: !!pending.forceClose });
+            } else if (msg.conflict || msg.code === 'mtime_conflict') {
+                handleEditorSaveConflict(panel, msg);
+            } else {
+                showToast('保存失败: ' + (msg.error || '未知错误'), 'error');
+            }
+            break;
+        }
+        case 'sftp-workspace-search': {
+            const panel = msg.requestId ? pendingWorkspaceSearches.get(msg.requestId) : null;
+            if (msg.requestId) pendingWorkspaceSearches.delete(msg.requestId);
+            const host = panel || fmEditorModal;
+            if (msg.error) {
+                showToast('目录搜索失败: ' + msg.error, 'error');
+                break;
+            }
+            showEditorSidepanel(host, 'search', msg.matches || [], { query: msg.query, filesScanned: msg.filesScanned });
             break;
         }
         case 'sftp-error': alert('SFTP 错误: ' + msg.message); sftpReady = false; break;

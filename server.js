@@ -7093,35 +7093,165 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
         if (msg.type === 'sftp-readfile') {
             const requestId = String(msg.requestId || '');
-            sftpStream.readFile(msg.path, (err, data) => {
-                if (err) {
-                    sendJSON({ type: 'sftp-readfile', requestId, path: msg.path, error: err.message });
-                    return;
-                }
-                sendJSON({
-                    type: 'sftp-readfile',
-                    requestId,
-                    path: msg.path,
-                    data: Buffer.isBuffer(data) ? data.toString('base64') : '',
-                    encoding: 'base64',
-                    size: Buffer.isBuffer(data) ? data.length : 0,
+            sftpStream.stat(msg.path, (statErr, stats) => {
+                sftpStream.readFile(msg.path, (err, data) => {
+                    if (err) {
+                        sendJSON({ type: 'sftp-readfile', requestId, path: msg.path, error: err.message });
+                        return;
+                    }
+                    const mtimeMs = stats && stats.mtime
+                        ? (stats.mtime instanceof Date ? stats.mtime.getTime() : Number(stats.mtime) * (Number(stats.mtime) < 1e12 ? 1000 : 1))
+                        : 0;
+                    sendJSON({
+                        type: 'sftp-readfile',
+                        requestId,
+                        path: msg.path,
+                        data: Buffer.isBuffer(data) ? data.toString('base64') : '',
+                        encoding: 'base64',
+                        size: Buffer.isBuffer(data) ? data.length : 0,
+                        mtimeMs,
+                    });
                 });
             });
             return;
         }
 
-        // 编辑文件：保存内容
+        // 编辑文件：保存内容（可选 expectedMtimeMs 乐观锁）
         if (msg.type === 'sftp-writefile') {
-            const writeStream = sftpStream.createWriteStream(msg.path);
-            writeStream.on('error', (err) => {
-                sendJSON({ type: 'sftp-writefile', editorId: String(msg.editorId || ''), path: msg.path, success: false, error: err.message });
+            const editorId = String(msg.editorId || '');
+            const expected = msg.expectedMtimeMs != null && msg.expectedMtimeMs !== ''
+                ? Number(msg.expectedMtimeMs)
+                : null;
+            const doWrite = () => {
+                const writeStream = sftpStream.createWriteStream(msg.path);
+                writeStream.on('error', (err) => {
+                    sendJSON({ type: 'sftp-writefile', editorId, path: msg.path, success: false, error: err.message });
+                });
+                const buffer = msg.encoding === 'base64'
+                    ? Buffer.from(msg.data || '', 'base64')
+                    : Buffer.from(msg.data || '', 'utf8');
+                writeStream.end(buffer, () => {
+                    sftpStream.stat(msg.path, (statErr, stats) => {
+                        const mtimeMs = !statErr && stats && stats.mtime
+                            ? (stats.mtime instanceof Date ? stats.mtime.getTime() : Number(stats.mtime) * (Number(stats.mtime) < 1e12 ? 1000 : 1))
+                            : Date.now();
+                        sendJSON({
+                            type: 'sftp-writefile',
+                            editorId,
+                            path: msg.path,
+                            success: true,
+                            mtimeMs,
+                            size: buffer.length,
+                        });
+                    });
+                });
+            };
+            if (expected != null && Number.isFinite(expected) && expected > 0) {
+                sftpStream.stat(msg.path, (statErr, stats) => {
+                    if (statErr) {
+                        // new file / missing — allow write
+                        return doWrite();
+                    }
+                    const current = stats.mtime instanceof Date
+                        ? stats.mtime.getTime()
+                        : Number(stats.mtime) * (Number(stats.mtime) < 1e12 ? 1000 : 1);
+                    // 2s skew tolerance for filesystem timestamp precision
+                    if (Math.abs(current - expected) > 2000) {
+                        return sendJSON({
+                            type: 'sftp-writefile',
+                            editorId,
+                            path: msg.path,
+                            success: false,
+                            conflict: true,
+                            code: 'mtime_conflict',
+                            error: '远端文件已被修改',
+                            mtimeMs: current,
+                            size: Number(stats.size) || 0,
+                        });
+                    }
+                    doWrite();
+                });
+            } else {
+                doWrite();
+            }
+            return;
+        }
+
+        // 工作区文本搜索（当前目录浅层/有界递归）
+        if (msg.type === 'sftp-workspace-search') {
+            const requestId = String(msg.requestId || '');
+            const root = String(msg.path || '.').replace(/\/+$/, '') || '.';
+            const query = String(msg.query || '');
+            const maxFiles = Math.min(200, Math.max(1, Number(msg.maxFiles) || 80));
+            const maxMatches = Math.min(200, Math.max(1, Number(msg.maxMatches) || 60));
+            const maxDepth = Math.min(4, Math.max(0, Number(msg.maxDepth) || 2));
+            if (!query || query.length > 200) {
+                sendJSON({ type: 'sftp-workspace-search', requestId, path: root, error: 'invalid_query', matches: [] });
+                return;
+            }
+            const qLower = query.toLowerCase();
+            const matches = [];
+            const visited = new Set();
+            const listDir = (dir) => new Promise((resolve) => {
+                sftpStream.readdir(dir, (err, list) => resolve(err ? [] : (list || [])));
             });
-            const buffer = msg.encoding === 'base64'
-                ? Buffer.from(msg.data || '', 'base64')
-                : Buffer.from(msg.data || '', 'utf8');
-            writeStream.end(buffer, () => {
-                sendJSON({ type: 'sftp-writefile', editorId: String(msg.editorId || ''), path: msg.path, success: true });
+            const readHead = (filePath) => new Promise((resolve) => {
+                sftpStream.open(filePath, 'r', (err, handle) => {
+                    if (err) return resolve('');
+                    const buf = Buffer.alloc(64 * 1024);
+                    sftpStream.read(handle, buf, 0, buf.length, 0, (readErr, bytesRead) => {
+                        sftpStream.close(handle, () => {});
+                        if (readErr || !bytesRead) return resolve('');
+                        resolve(buf.slice(0, bytesRead).toString('utf8'));
+                    });
+                });
             });
+            (async () => {
+                let filesScanned = 0;
+                const walk = async (dir, depth) => {
+                    if (matches.length >= maxMatches || filesScanned >= maxFiles) return;
+                    if (visited.has(dir)) return;
+                    visited.add(dir);
+                    const list = await listDir(dir);
+                    for (const ent of list) {
+                        if (matches.length >= maxMatches || filesScanned >= maxFiles) break;
+                        const name = ent.filename || ent.longname || '';
+                        if (!name || name === '.' || name === '..') continue;
+                        if (name.startsWith('.') && name !== '.env' && name !== '.gitignore') continue;
+                        const full = `${dir}/${name}`.replace(/\/+/g, '/');
+                        const isDir = (ent.attrs && (ent.attrs.isDirectory?.() || (ent.attrs.mode & 0o170000) === 0o040000))
+                            || String(ent.longname || '').startsWith('d');
+                        if (isDir) {
+                            if (depth < maxDepth && !['node_modules', '.git', 'vendor', 'dist', 'build'].includes(name)) {
+                                await walk(full, depth + 1);
+                            }
+                            continue;
+                        }
+                        const lower = name.toLowerCase();
+                        if (!/\.(txt|md|json|ya?ml|js|ts|jsx|tsx|py|go|rs|java|c|h|cpp|hpp|css|scss|html|xml|toml|ini|conf|cfg|sh|bash|zsh|env|sql|php|rb|swift|kt)$/i.test(lower)
+                            && !/^(Dockerfile|Makefile|Jenkinsfile)$/i.test(name)) continue;
+                        filesScanned += 1;
+                        const text = await readHead(full);
+                        if (!text) continue;
+                        const lines = text.split(/\r?\n/);
+                        for (let i = 0; i < lines.length && matches.length < maxMatches; i++) {
+                            if (lines[i].toLowerCase().includes(qLower)) {
+                                matches.push({
+                                    path: full,
+                                    line: i + 1,
+                                    text: lines[i].slice(0, 240),
+                                });
+                            }
+                        }
+                    }
+                };
+                try {
+                    await walk(root, 0);
+                    sendJSON({ type: 'sftp-workspace-search', requestId, path: root, query, matches, filesScanned });
+                } catch (err) {
+                    sendJSON({ type: 'sftp-workspace-search', requestId, path: root, error: err.message || String(err), matches });
+                }
+            })();
             return;
         }
     };
