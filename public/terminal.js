@@ -586,7 +586,7 @@ let terminalFitSnapshot = null;
 let terminalStableResizeTimer = 0;
 let terminalViewportFreezeUntil = 0;
 let terminalKeyboardSettlingTimer = 0;
-let terminalVisualHistory = [];
+/* terminalVisualHistory removed (P0-2): text-regression self-heal deleted */
 const TERMINAL_STABLE_LAYOUT_DELAYS = [0, 60, 160, 360, 720];
 const TERMINAL_OVERSIZED_ROWS_RATIO = 1.18;
 let terminalAutoFollowEnabled = true;
@@ -1482,7 +1482,6 @@ function resizeWTermSafely(cols, rows, reason = 'safe-resize') {
         }
         try { term.refresh?.(); } catch (_) {}
         rememberTerminalFitSnapshot(`${reason}:resizeWTermSafely`);
-        scheduleWTermTextIntegrityCheck(`${reason}:resizeWTermSafely`);
         normalizeWTermContainerLayout(`${reason}:resizeWTermSafely`);
         logTerminalLayoutDiagnostics('wterm-layout:safe-resized', {
             reason,
@@ -1800,7 +1799,6 @@ function scheduleStableTerminalGridResize(reason = 'stable-terminal-grid-resize'
         }
         repairWTermLayoutAfterVisibilityChange(`${reason}:fit`, { sendResize: true, follow: terminalAutoFollowEnabled || isTerminalAtBottom(undefined, TERMINAL_XTERM_SCROLL_LOCK_THRESHOLD) });
         rememberTerminalFitSnapshot(`${reason}:remember`);
-        scheduleWTermTextIntegrityCheck(`${reason}:after-fit`);
     }, delay);
 }
 
@@ -1875,29 +1873,6 @@ function terminalOrderInversionCount(previousLines = [], currentLines = []) {
     return inversions;
 }
 
-function snapshotWTermVisualLines(reason = 'snapshot-visual-lines') {
-    if (!term || !wtermWrapper) return null;
-    const bufferLines = collectWTermBufferLines();
-    const domRows = Array.from(wtermWrapper.querySelectorAll('.term-row, .term-scrollback-row'));
-    const domLines = domRows.map((row) => cleanTerminalRowText(row.textContent || ''));
-    const bufferText = bufferLines.join('\n').replace(/[\s\n]+$/g, '');
-    const domText = domLines.join('\n').replace(/[\s\n]+$/g, '');
-    const lines = bufferText.trim().length >= domText.trim().length ? bufferLines : domLines;
-    const nonEmptyCount = lines.filter((line) => line.trim()).length;
-    const text = lines.join('\n').replace(/[\s\n]+$/g, '');
-    if (!text.trim() || nonEmptyCount < 2) return null;
-    const snapshot = {
-        reason,
-        lines: normalizeTerminalSnapshotLines(lines),
-        text,
-        lineCount: nonEmptyCount,
-        at: performance.now(),
-    };
-    terminalVisualHistory.push(snapshot);
-    if (terminalVisualHistory.length > 12) terminalVisualHistory.shift();
-    return snapshot;
-}
-
 function collectTerminalOutputLinesForAi() {
     if (!term || !wtermWrapper) return [];
     const bufferLines = collectWTermBufferLines();
@@ -1939,62 +1914,6 @@ function getAiTerminalOutputSnapshot(options = {}) {
 }
 window.__zephyrGetTerminalOutput = getAiTerminalOutputSnapshot;
 
-function hasTerminalTextRegression(previous = '', next = '') {
-    const prev = String(previous || '').replace(/[\s\n]+$/g, '');
-    const cur = String(next || '').replace(/[\s\n]+$/g, '');
-    if (!prev || !cur || prev === cur) return false;
-    const prevLines = nonEmptyTerminalLines(prev);
-    const curLines = nonEmptyTerminalLines(cur);
-    if (prevLines.length < 2 || curLines.length < 1) return false;
-
-    const missing = terminalMultisetMissingCount(prevLines, curLines);
-    if (missing > 0 && curLines.length < prevLines.length) return true;
-
-    const inversions = terminalOrderInversionCount(prevLines, curLines);
-    if (inversions > 0 && curLines.length >= Math.min(prevLines.length, 3)) return true;
-
-    if (cur.length < prev.length && prevLines.length >= 4 && curLines.length + 1 < prevLines.length) return true;
-    return false;
-}
-
-function restoreWTermVisualSnapshot(snapshot, reason = 'restore-visual-snapshot') {
-    if (!snapshot?.lines?.length || !term || !term.bridge) return false;
-    const cols = Math.max(20, Number(term.bridge.getCols?.() || term.cols || lastSentTerminalSize.cols || 80));
-    const rows = Math.max(2, Number(term.bridge.getRows?.() || term.rows || lastSentTerminalSize.rows || 24));
-    const normalized = snapshot.lines.map((line) => String(line || '').slice(0, cols)).join('\r\n');
-    runWithSuppressedWTermResizeEvent(() => {
-        term.bridge.init(cols, rows);
-        if (normalized) term.bridge.writeString(normalized);
-        term.cols = cols;
-        term.rows = rows;
-        term.renderer?.setup?.(cols, rows);
-        term._scheduleRender?.();
-    });
-    requestAnimationFrame(() => requestTerminalAutoFollow(`${reason}:follow`));
-    logTerminalLayoutDiagnostics('wterm-layout:visual-snapshot-restored', { reason, rows, cols, lineCount: snapshot.lines.length });
-    return true;
-}
-
-function detectAndRepairWTermTextRegression(reason = 'text-regression-check') {
-    if (!term || !wtermWrapper || document.visibilityState !== 'visible') return false;
-    const current = snapshotWTermVisualLines(`${reason}:current`);
-    const candidates = current
-        ? terminalVisualHistory.slice(0, -1)
-        : terminalVisualHistory.slice();
-    const previous = candidates.reverse().find((item) => item?.text && item.text !== current?.text);
-    if (!previous || !current) return false;
-    if (!hasTerminalTextRegression(previous.text, current.text)) return false;
-    const restored = restoreWTermVisualSnapshot(previous, reason);
-    if (restored) terminalVisualHistory = [previous];
-    return restored;
-}
-
-function scheduleWTermTextIntegrityCheck(reason = 'text-integrity-check') {
-    [0, 80, 220].forEach((delay) => {
-        window.setTimeout(() => detectAndRepairWTermTextRegression(`${reason}:phase-${delay}`), delay);
-    });
-}
-
 function runWithSuppressedWTermResizeEvent(callback) {
     suppressWTermResizeEvent = true;
     try {
@@ -2019,7 +1938,6 @@ function updateWTermLocalGridSize(cols, rows, reason = 'local-grid-size') {
         term.renderer.setup(nextCols, nextRows);
         term._scheduleRender?.();
     });
-    scheduleWTermTextIntegrityCheck(`${reason}:local-grid-resize`);
     normalizeWTermContainerLayout(`${reason}:local-grid`);
     logTerminalLayoutDiagnostics('wterm-layout:local-grid-resized', { reason, cols: nextCols, rows: nextRows, previousCols: currentCols, previousRows: currentRows });
     return true;
@@ -6754,8 +6672,6 @@ function scrollTerminalToBottom(reason = 'scroll-bottom') {
         if (isMobileStableInputMode()) {
             const activeTarget = getMobileStableActiveLineScrollTarget(el, reason);
             el.scrollTop = Number.isFinite(activeTarget) ? activeTarget : maxScroll;
-        } else if (term?._zephyrOriginalScrollToBottom) {
-            term._zephyrOriginalScrollToBottom();
         } else {
             el.scrollTop = maxScroll;
         }
@@ -6978,8 +6894,14 @@ function followTerminalBottomNow(reason = 'bottom-follow', { force = false } = {
                 target = activeTarget;
             }
         }
-        el.scrollTop = Math.max(0, Math.min(maxScroll, target));
-        if (wtermWrapper && wtermWrapper !== el) wtermWrapper.scrollTop = Math.max(0, Math.min(getTerminalMaxScroll(wtermWrapper), target));
+        // P0-4 fix: row-height align the target so we never land mid-line.
+        // Previously the raw maxScroll (or raw cursor-rect target) was used,
+        // which conflicts with fork _scrollToBottom (floor(maxScroll/rh)*rh)
+        // and causes the end-of-buffer jitter / up-down fighting.
+        const rh = (term && typeof term.viewport !== "undefined" && term.viewport.rowHeight) || getTerminalCharMetrics?.()?.lineHeight || terminalFontSize * 1.35 || 17;
+        const aligned = Math.floor(Math.max(0, Math.min(maxScroll, target)) / rh) * rh;
+        el.scrollTop = aligned;
+        if (wtermWrapper && wtermWrapper !== el) wtermWrapper.scrollTop = Math.max(0, Math.min(getTerminalMaxScroll(wtermWrapper), aligned));
         mobileTerminalAutoFollowLockUntil = 0;
         mobileTerminalAutoFollowLockReason = '';
         mobileStableLastBottomIntent = true;
@@ -7071,7 +6993,9 @@ function getMobileStableActiveLineScrollTarget(el = getTerminalScrollElement(), 
         target -= Math.ceil(visibleTop - activeRect.top);
     }
     const maxScroll = getTerminalMaxScroll(el);
-    const clamped = Math.max(0, Math.min(maxScroll, Math.round(target)));
+    // P0-4 fix: row-height align so we do not fight fork _scrollToBottom.
+    const rh = (term && typeof term.viewport !== "undefined" && term.viewport.rowHeight) || lineHeight || 17;
+    const clamped = Math.floor(Math.max(0, Math.min(maxScroll, Math.round(target))) / rh) * rh;
     logTerminalScrollDiagnostics('mobile-stable:active-line-target', {
         reason,
         currentTop: Math.round(el.scrollTop || 0),
@@ -7204,7 +7128,21 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
     clearMobileTerminalHistoryLock(`${source}:input`);
     sendData(paste ? prepareTerminalPastePayload(payload) : payload, { source, forceFollow: false, applyModifiers: false });
     if (paste) scheduleTerminalBottomFollow(`${source}:sent-visible`, { force: true, phases: [80, 180, 320] });
-    else window.setTimeout(() => ensureMobileStableCursorVisible(`${source}:sent-visible`), 32);
+    else {
+        // P0-3 fix: wait for the next render-complete before reading cursor
+        // rect. Previously a fixed 32ms timeout raced against WTerm rendering:
+        // data arrived -> we read a stale cursor rect -> scrolled to wrong
+        // position -> next frame the real content appeared -> jitter.
+        // onRenderComplete fires after _doRender, so the DOM is current.
+        let done = false;
+        const finish = () => { if (done) return; done = true; ensureMobileStableCursorVisible(`${source}:sent-visible`); };
+        if (term && typeof term.onRenderComplete === "function") {
+            const unsub = term.onRenderComplete(() => { unsub(); finish(); });
+            window.setTimeout(finish, 120); // fallback if render never fires
+        } else {
+            window.setTimeout(finish, 32);
+        }
+    }
     return true;
 }
 
@@ -8607,7 +8545,6 @@ function patchWTermScrollBehavior() {
             const shouldFollow = !plainEchoSuppressed && !blockedByHistory && (terminalAutoFollowEnabled || wasAtBottom);
             term._zephyrShouldFollowAfterRender = shouldFollow;
             const result = originalWrite(data);
-            requestAnimationFrame(() => snapshotWTermVisualLines('write-after-render'));
             if (shouldFollow) scheduleTerminalBottomFollow('write-follow', { force: true });
             else scheduleTerminalScrollbarUpdate();
             return result;
@@ -8629,11 +8566,9 @@ function patchWTermScrollBehavior() {
                 return updateWTermLocalGridSize(keepCols, keepRows, 'suppressed-wterm-resize');
             }
             const shouldFollow = terminalAutoFollowEnabled || (originalIsScrolledToBottom ? originalIsScrolledToBottom() : isTerminalAtBottom());
-            snapshotWTermVisualLines('before-wterm-resize');
             term._zephyrShouldFollowAfterRender = shouldFollow;
             const result = originalResize(cols, rows);
             rememberTerminalFitSnapshot('wterm-resize');
-            scheduleWTermTextIntegrityCheck('after-wterm-resize');
             if (shouldFollow) requestAnimationFrame(() => requestTerminalAutoFollow('resize-follow'));
             else scheduleTerminalScrollbarUpdate();
             return result;
@@ -8663,7 +8598,6 @@ function patchWTermScrollBehavior() {
                 if (shouldFollow) scheduleTerminalBottomFollow('render-follow', { force: true, phases: [0, 32, 90, 180] });
                 else scheduleTerminalScrollbarUpdate();
                 updateTerminalWebLinks();
-                snapshotWTermVisualLines('render-after');
             }
         };
     }
@@ -8675,7 +8609,6 @@ function patchWTermScrollBehavior() {
                 if (terminalAutoFollowEnabled && !(isMobileStableInputMode() && Date.now() < mobileStableEchoSuppressUntil)) scheduleTerminalBottomFollow('scheduled-render-follow', { force: true, phases: [0, 80, 180] });
                 else scheduleTerminalScrollbarUpdate();
                 updateTerminalWebLinks();
-                snapshotWTermVisualLines('scheduled-render-after');
             }));
         };
     }
@@ -8762,7 +8695,6 @@ function writeTerminalData(data = '') {
         wasAtBottom,
         shouldFollow,
     });
-    term._zephyrShouldFollowAfterRender = shouldFollow;
     term.write(data);
     if (shouldFollow) scheduleTerminalBottomFollow('terminal-data', { force: true });
     else requestAnimationFrame(scheduleTerminalScrollbarUpdate);
@@ -10286,13 +10218,7 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                         // restored surface matches "what I left open", not a mid-history viewport.
                         if (followOnConnect || msg.attached || msg.replayed) {
                             requestAnimationFrame(() => {
-                                if (term?._zephyrOriginalScrollToBottom) {
-                                    isProgrammaticTerminalScroll = true;
-                                    try { term._zephyrOriginalScrollToBottom(); } catch (_) {}
-                                    finally { requestAnimationFrame(() => { isProgrammaticTerminalScroll = false; }); }
-                                } else {
-                                    try { term?.scrollToBottom?.(); } catch (_) {}
-                                }
+                                try { term?.scrollToBottom?.(); } catch (_) {}
                                 scheduleTerminalScrollbarUpdate();
                             });
                         } else {

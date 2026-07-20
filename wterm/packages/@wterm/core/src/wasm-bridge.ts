@@ -1,35 +1,77 @@
-var __defProp = Object.defineProperty;
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+import type {
+  CellData,
+  CursorState,
+  UnhandledSequence,
+  TerminalCore,
+} from "./terminal-core.js";
+
+interface WasmExports {
+  memory: WebAssembly.Memory;
+  init(cols: number, rows: number): void;
+  resizeTerminal(cols: number, rows: number): void;
+  getWriteBuffer(): number;
+  writeBytes(len: number): void;
+  getGridPtr(): number;
+  getDirtyPtr(): number;
+  clearDirty(): void;
+  getCursorRow(): number;
+  getCursorCol(): number;
+  getCursorVisible(): number;
+  getCols(): number;
+  getRows(): number;
+  getCursorKeysApp(): number;
+  getBracketedPaste(): number;
+  getUsingAltScreen(): number;
+  getTitlePtr(): number;
+  getTitleLen(): number;
+  getTitleChanged(): number;
+  getScrollbackCount(): number;
+  getScrollbackLine(offset: number): number;
+  getScrollbackLineLen(offset: number): number;
+  getResponsePtr(): number;
+  getResponseLen(): number;
+  clearResponse(): void;
+  getCellSize(): number;
+  getMaxCols(): number;
+  getDebugLogPtr(): number;
+  getDebugLogCount(): number;
+  getDebugLogEntrySize(): number;
+  getDebugLogMax(): number;
+}
+
 import { WASM_BASE64 } from "./wasm-inline.js";
-function decodeBase64(base64) {
+
+function decodeBase64(base64: string): ArrayBuffer {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes.buffer;
 }
-class WasmBridge {
-  constructor(instance) {
-    __publicField(this, "exports");
-    __publicField(this, "memory");
-    __publicField(this, "gridPtr", 0);
-    __publicField(this, "dirtyPtr", 0);
-    __publicField(this, "writeBufferPtr", 0);
-    __publicField(this, "cellSize", 12);
-    __publicField(this, "maxCols", 256);
-    __publicField(this, "encoder", new TextEncoder());
-    __publicField(this, "decoder", new TextDecoder());
-    __publicField(this, "_dv");
-    this.exports = instance.exports;
+
+export class WasmBridge implements TerminalCore {
+  private exports: WasmExports;
+  private memory: WebAssembly.Memory;
+  private gridPtr = 0;
+  private dirtyPtr = 0;
+  private writeBufferPtr = 0;
+  private cellSize = 12;
+  private maxCols = 256;
+  private encoder = new TextEncoder();
+  private decoder = new TextDecoder();
+  private _dv!: DataView;
+
+  constructor(instance: WebAssembly.Instance) {
+    this.exports = instance.exports as unknown as WasmExports;
     this.memory = this.exports.memory;
   }
-  static async load(url) {
-    let bytes;
+
+  static async load(url?: string): Promise<WasmBridge> {
+    let bytes: ArrayBuffer;
     if (url) {
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(
-          `[wterm] Failed to load WASM from ${url}: ${response.status} ${response.statusText}`
+          `[wterm] Failed to load WASM from ${url}: ${response.status} ${response.statusText}`,
         );
       }
       bytes = await response.arrayBuffer();
@@ -39,11 +81,13 @@ class WasmBridge {
     const { instance } = await WebAssembly.instantiate(bytes);
     return new WasmBridge(instance);
   }
-  init(cols, rows) {
+
+  init(cols: number, rows: number): void {
     this.exports.init(cols, rows);
     this._updatePointers();
   }
-  _updatePointers() {
+
+  private _updatePointers(): void {
     this.gridPtr = this.exports.getGridPtr();
     this.dirtyPtr = this.exports.getDirtyPtr();
     this.writeBufferPtr = this.exports.getWriteBuffer();
@@ -51,11 +95,13 @@ class WasmBridge {
     this.maxCols = this.exports.getMaxCols();
     this._dv = new DataView(this.memory.buffer);
   }
-  writeString(str) {
+
+  writeString(str: string): void {
     const encoded = this.encoder.encode(str);
     this.writeRaw(encoded);
   }
-  writeRaw(data) {
+
+  writeRaw(data: Uint8Array): void {
     const buf = new Uint8Array(this.memory.buffer, this.writeBufferPtr, 8192);
     let offset = 0;
     while (offset < data.length) {
@@ -65,52 +111,60 @@ class WasmBridge {
       offset += chunk;
     }
   }
-  getCell(row, col) {
+
+  getCell(row: number, col: number): CellData {
     const offset = this.gridPtr + (row * this.maxCols + col) * this.cellSize;
     const dv = this._dv;
     return {
       char: dv.getUint32(offset, true),
       fg: dv.getUint16(offset + 4, true),
       bg: dv.getUint16(offset + 6, true),
-      flags: dv.getUint8(offset + 8)
+      flags: dv.getUint8(offset + 8),
     };
   }
-  isDirtyRow(row) {
+
+  isDirtyRow(row: number): boolean {
     return new Uint8Array(this.memory.buffer, this.dirtyPtr, 256)[row] !== 0;
   }
-  clearDirty() {
+
+  clearDirty(): void {
     this.exports.clearDirty();
   }
-  getCursor() {
+
+  getCursor(): CursorState {
     return {
       row: this.exports.getCursorRow(),
       col: this.exports.getCursorCol(),
-      visible: this.exports.getCursorVisible() !== 0
+      visible: this.exports.getCursorVisible() !== 0,
     };
   }
-  getCols() {
+
+  getCols(): number {
     return this.exports.getCols();
   }
-  getRows() {
+  getRows(): number {
     return this.exports.getRows();
   }
-  cursorKeysApp() {
+
+  cursorKeysApp(): boolean {
     return this.exports.getCursorKeysApp() !== 0;
   }
-  bracketedPaste() {
+  bracketedPaste(): boolean {
     return this.exports.getBracketedPaste() !== 0;
   }
-  usingAltScreen() {
+  usingAltScreen(): boolean {
     return this.exports.getUsingAltScreen() !== 0;
   }
-  getTitle() {
+
+  getTitle(): string | null {
     if (this.exports.getTitleChanged() === 0) return null;
     const ptr = this.exports.getTitlePtr();
     const len = this.exports.getTitleLen();
     const bytes = new Uint8Array(this.memory.buffer, ptr, len);
     return this.decoder.decode(bytes);
   }
-  getResponse() {
+
+  getResponse(): string | null {
     const len = this.exports.getResponseLen();
     if (len === 0) return null;
     const ptr = this.exports.getResponsePtr();
@@ -119,10 +173,12 @@ class WasmBridge {
     this.exports.clearResponse();
     return str;
   }
-  getScrollbackCount() {
+
+  getScrollbackCount(): number {
     return this.exports.getScrollbackCount();
   }
-  getScrollbackCell(offset, col) {
+
+  getScrollbackCell(offset: number, col: number): CellData {
     const ptr = this.exports.getScrollbackLine(offset);
     const off = ptr + col * this.cellSize;
     const dv = this._dv;
@@ -130,13 +186,15 @@ class WasmBridge {
       char: dv.getUint32(off, true),
       fg: dv.getUint16(off + 4, true),
       bg: dv.getUint16(off + 6, true),
-      flags: dv.getUint8(off + 8)
+      flags: dv.getUint8(off + 8),
     };
   }
-  getScrollbackLineLen(offset) {
+
+  getScrollbackLineLen(offset: number): number {
     return this.exports.getScrollbackLineLen(offset);
   }
-  getUnhandledSequences() {
+
+  getUnhandledSequences(): UnhandledSequence[] {
     const count = this.exports.getDebugLogCount();
     if (count === 0) return [];
     const ptr = this.exports.getDebugLogPtr();
@@ -144,7 +202,7 @@ class WasmBridge {
     const maxEntries = this.exports.getDebugLogMax();
     const total = Math.min(count, maxEntries);
     const dv = new DataView(this.memory.buffer);
-    const entries = [];
+    const entries: UnhandledSequence[] = [];
     const startIdx = count >= maxEntries ? count % maxEntries : 0;
     for (let i = 0; i < total; i++) {
       const idx = (startIdx + i) % maxEntries;
@@ -153,7 +211,7 @@ class WasmBridge {
       if (finalByte === 0) continue;
       const privateByte = dv.getUint8(off + 1);
       const paramCount = dv.getUint8(off + 2);
-      const params = [];
+      const params: number[] = [];
       for (let p = 0; p < Math.min(paramCount, 4); p++) {
         params.push(dv.getUint16(off + 4 + p * 2, true));
       }
@@ -161,16 +219,14 @@ class WasmBridge {
         final: String.fromCharCode(finalByte),
         private: privateByte ? String.fromCharCode(privateByte) : "",
         paramCount,
-        params
+        params,
       });
     }
     return entries;
   }
-  resize(cols, rows) {
+
+  resize(cols: number, rows: number): void {
     this.exports.resizeTerminal(cols, rows);
     this._updatePointers();
   }
 }
-export {
-  WasmBridge
-};

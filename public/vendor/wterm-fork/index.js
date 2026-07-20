@@ -1,8 +1,11 @@
-export { WTerm } from "./wterm.js";
-export { Renderer } from "./renderer.js";
-export { InputHandler } from "./input.js";
-export { DebugAdapter } from "./debug.js";
-// Local core files (vendored) instead of bare specifier "@wterm/core" so the
-// fork loads in the browser without a bundler / import map.
+import { WTerm } from "./wterm.js";
+import { Renderer } from "./renderer.js";
+import { InputHandler } from "./input.js";
+import { DebugAdapter } from "./debug.js";
 export * from "./core/index.js";
-//# sourceMappingURL=index.js.map
+export {
+  DebugAdapter,
+  InputHandler,
+  Renderer,
+  WTerm
+};

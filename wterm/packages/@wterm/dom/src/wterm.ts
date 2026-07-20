@@ -1,41 +1,91 @@
-var __defProp = Object.defineProperty;
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-import { WasmBridge } from "./core/index.js";
+import { WasmBridge, type TerminalCore } from "@wterm/core";
 import { Renderer } from "./renderer.js";
 import { InputHandler } from "./input.js";
 import { DebugAdapter } from "./debug.js";
-class WTerm {
-  constructor(element, options = {}) {
-    __publicField(this, "element");
-    __publicField(this, "cols");
-    __publicField(this, "rows");
-    __publicField(this, "bridge", null);
-    __publicField(this, "autoResize");
-    __publicField(this, "debug", null);
-    /** Public viewport facade (Zephyr fork). */
-    __publicField(this, "viewport");
-    __publicField(this, "_coreOption");
-    __publicField(this, "wasmUrl");
-    __publicField(this, "_debugEnabled");
-    __publicField(this, "renderer", null);
-    __publicField(this, "input", null);
-    __publicField(this, "rafId", null);
-    __publicField(this, "_renderTimer", null);
-    __publicField(this, "resizeObserver", null);
-    __publicField(this, "_destroyed", false);
-    __publicField(this, "_shouldScrollToBottom", false);
-    __publicField(this, "_rowHeight", 0);
-    __publicField(this, "_onClickFocus");
-    /** Render-complete callback set (Zephyr fork §3.8.2). */
-    __publicField(this, "_renderCallbacks", /* @__PURE__ */ new Set());
-    /** Viewport-change callback set (Zephyr fork §3.8.2). */
-    __publicField(this, "_viewportCallbacks", /* @__PURE__ */ new Set());
-    __publicField(this, "_viewportListenerBound", false);
-    __publicField(this, "onData");
-    __publicField(this, "onTitle");
-    __publicField(this, "onResize");
-    __publicField(this, "_container");
+
+export interface WTermOptions {
+  cols?: number;
+  rows?: number;
+  /**
+   * A pre-constructed terminal core. When provided, `wasmUrl` is ignored and
+   * this core is used directly instead of loading the built-in Zig WASM binary.
+   */
+  core?: TerminalCore;
+  wasmUrl?: string;
+  autoResize?: boolean;
+  cursorBlink?: boolean;
+  debug?: boolean;
+  onData?: (data: string) => void;
+  onTitle?: (title: string) => void;
+  onResize?: (cols: number, rows: number) => void;
+}
+
+/** Viewport snapshot returned by {@link WTerm.getViewportState}. */
+export interface ViewportState {
+  atBottom: boolean;
+  scrollTop: number;
+  maxScroll: number;
+  rowHeight: number;
+  rows: number;
+  cols: number;
+  followEnabled: boolean;
+}
+
+/**
+ * Public viewport facade. Exposed as `term.viewport` so downstream controllers
+ * can read and drive the viewport without touching private methods.
+ * `atBottom` is a semantic truth (maxScroll - scrollTop), never inferred from
+ * pixel positions after reflow.
+ */
+export interface ViewportFacade {
+  readonly atBottom: boolean;
+  readonly maxScroll: number;
+  readonly scrollTop: number;
+  readonly rowHeight: number;
+  readonly rows: number;
+  readonly cols: number;
+  follow(): void;
+  lock(): void;
+  scrollToBottom(): void;
+  scrollToLine(line: number): void;
+  state(): ViewportState;
+}
+
+export class WTerm {
+  element: HTMLElement;
+  cols: number;
+  rows: number;
+  bridge: TerminalCore | null = null;
+  autoResize: boolean;
+  debug: DebugAdapter | null = null;
+  /** Public viewport facade (Zephyr fork). */
+  viewport: ViewportFacade;
+
+  private _coreOption: TerminalCore | undefined;
+  private wasmUrl: string | undefined;
+  private _debugEnabled: boolean;
+  private renderer: Renderer | null = null;
+  private input: InputHandler | null = null;
+  private rafId: number | null = null;
+  private _renderTimer: ReturnType<typeof setTimeout> | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private _destroyed = false;
+  private _shouldScrollToBottom = false;
+  private _rowHeight = 0;
+  private _onClickFocus: () => void;
+  /** Render-complete callback set (Zephyr fork §3.8.2). */
+  private _renderCallbacks: Set<(state: ViewportState) => void> = new Set();
+  /** Viewport-change callback set (Zephyr fork §3.8.2). */
+  private _viewportCallbacks: Set<(state: ViewportState) => void> = new Set();
+  private _viewportListenerBound = false;
+
+  onData: ((data: string) => void) | null;
+  onTitle: ((title: string) => void) | null;
+  onResize: ((cols: number, rows: number) => void) | null;
+
+  private _container: HTMLDivElement;
+
+  constructor(element: HTMLElement, options: WTermOptions = {}) {
     this.element = element;
     this._coreOption = options.core;
     this.wasmUrl = options.wasmUrl;
@@ -43,22 +93,30 @@ class WTerm {
     this.rows = options.rows || 24;
     this.autoResize = options.autoResize !== false;
     this._debugEnabled = options.debug ?? false;
+
     this.onData = options.onData || null;
     this.onTitle = options.onTitle || null;
     this.onResize = options.onResize || null;
+
     this._container = document.createElement("div");
     this._container.className = "term-grid";
     this.element.appendChild(this._container);
     this.element.classList.add("wterm");
     if (options.cursorBlink) this.element.classList.add("cursor-blink");
+
     this._onClickFocus = () => {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) this.input?.focus();
     };
     this.element.addEventListener("click", this._onClickFocus);
+
+    // Mount the public viewport facade as a plain writable property (NOT a
+    // getter) so downstream code can replace it without tripping "has only a
+    // getter". Built once; reads live DOM on every access.
     this.viewport = this._buildViewportFacade();
   }
-  async init() {
+
+  async init(): Promise<this> {
     try {
       if (this._coreOption) {
         this.bridge = this._coreOption;
@@ -67,14 +125,18 @@ class WTerm {
       }
       if (this._destroyed) return this;
       this.bridge.init(this.cols, this.rows);
+
       if (this._debugEnabled) {
         this.debug = new DebugAdapter();
         this.debug.setBridge(this.bridge);
-        globalThis.__wterm = this;
+        (globalThis as Record<string, unknown>).__wterm = this;
       }
+
       this._setRowHeight();
+
       this.renderer = new Renderer(this._container);
       this.renderer.setup(this.cols, this.rows);
+
       this.input = new InputHandler(
         this.element,
         (data) => {
@@ -85,28 +147,33 @@ class WTerm {
             this.write(data);
           }
         },
-        () => this.bridge
+        () => this.bridge,
       );
+
       if (this.autoResize) {
         this._setupResizeObserver();
       } else {
         this._lockHeight();
       }
+
       this.input.focus();
       this._initialRender();
     } catch (err) {
       this.destroy();
       throw new Error(
-        `wterm: failed to initialize: ${err instanceof Error ? err.message : err}`
+        `wterm: failed to initialize: ${err instanceof Error ? err.message : err}`,
       );
     }
+
     return this;
   }
-  _isScrolledToBottom() {
+
+  private _isScrolledToBottom(): boolean {
     const el = this.element;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 5;
   }
-  _scrollToBottom() {
+
+  private _scrollToBottom(): void {
     const el = this.element;
     const maxScroll = el.scrollHeight - el.clientHeight;
     if (maxScroll <= 0) {
@@ -116,42 +183,47 @@ class WTerm {
     const rh = this._rowHeight || 17;
     el.scrollTop = Math.floor(maxScroll / rh) * rh;
   }
+
   /* ── Public viewport API (Zephyr fork, FREEZE plan §3.8) ──────────────
    * The stock @wterm/dom keeps these private; the Zephyr fork exposes them
    * so the terminal controller can read and drive the viewport without
    * monkey-patching. `atBottom` is a semantic truth (maxScroll - scrollTop),
    * never inferred from pixel positions after reflow. */
+
   /** Public alias so external code never touches underscore privates. */
-  isAtBottom() {
+  isAtBottom(): boolean {
     return this._isScrolledToBottom();
   }
+
   /** Scroll to the bottom, row-height aligned. Public alias. */
-  scrollToBottom() {
+  scrollToBottom(): void {
     this._scrollToBottom();
   }
+
   /** Enable follow mode: subsequent renders auto-scroll to bottom. */
-  followBottom() {
+  followBottom(): void {
     this._shouldScrollToBottom = true;
   }
+
   /** Disable follow mode: renders will not auto-scroll. */
-  lockBottom() {
+  lockBottom(): void {
     this._shouldScrollToBottom = false;
   }
+
   /** Register a callback fired after each render completes. Returns an
    *  unsubscribe function. Use this to drive scroll-follow decisions that
    *  must read the post-render DOM (e.g. cursor visibility after IME). */
-  onRenderComplete(cb) {
-    if (typeof cb !== "function") return () => {
-    };
+  onRenderComplete(cb: (state: ViewportState) => void): () => void {
+    if (typeof cb !== "function") return () => {};
     this._renderCallbacks.add(cb);
     return () => {
       this._renderCallbacks.delete(cb);
     };
   }
+
   /** Register a callback fired when the viewport scrolls. Returns unsubscribe. */
-  onViewportChange(cb) {
-    if (typeof cb !== "function") return () => {
-    };
+  onViewportChange(cb: (state: ViewportState) => void): () => void {
+    if (typeof cb !== "function") return () => {};
     this._viewportCallbacks.add(cb);
     if (!this._viewportListenerBound) {
       this._viewportListenerBound = true;
@@ -163,63 +235,73 @@ class WTerm {
             try {
               fn(st);
             } catch {
+              /* swallow */
             }
           });
         },
-        { passive: true }
+        { passive: true },
       );
     }
     return () => {
       this._viewportCallbacks.delete(cb);
     };
   }
+
   /** Return a serializable snapshot of the current viewport state. */
-  getViewportState() {
+  getViewportState(): ViewportState {
     const el = this.element;
     return {
       atBottom: this._isScrolledToBottom(),
       scrollTop: el ? el.scrollTop : 0,
-      maxScroll: el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0,
+      maxScroll: el
+        ? Math.max(0, el.scrollHeight - el.clientHeight)
+        : 0,
       rowHeight: this._rowHeight || 17,
       rows: this.rows || 0,
       cols: this.cols || 0,
-      followEnabled: !!this._shouldScrollToBottom
+      followEnabled: !!this._shouldScrollToBottom,
     };
   }
+
   /** Scroll to a specific line (0-indexed). Best-effort, clamped, row-aligned. */
-  scrollToLine(line) {
+  scrollToLine(line: number): void {
     const el = this.element;
     if (!el) return;
     const rh = this._rowHeight || 17;
     const target = Math.max(0, Math.floor(Number(line) || 0) * rh);
     el.scrollTop = Math.min(
       target,
-      Math.max(0, el.scrollHeight - el.clientHeight)
+      Math.max(0, el.scrollHeight - el.clientHeight),
     );
   }
+
   /** Recalculate dimensions after the container resizes (manual trigger). */
-  fitToContainer() {
+  fitToContainer(): void {
     if (typeof this._setupResizeObserver === "function") {
       this._setupResizeObserver();
     }
   }
+
   /** Return a snapshot of the visible buffer text (rows currently in DOM). */
-  getBufferSnapshot() {
+  getBufferSnapshot(): string[] {
     const rows = this.element?.querySelectorAll?.("[data-line]") ?? [];
-    return Array.from(rows).map((r) => r.textContent || "");
+    return Array.from(rows).map((r) => (r as HTMLElement).textContent || "");
   }
+
   /** Fire render-complete callbacks (called internally after _doRender). */
-  _fireRenderComplete() {
+  private _fireRenderComplete(): void {
     if (this._renderCallbacks.size === 0) return;
     const st = this.getViewportState();
     this._renderCallbacks.forEach((fn) => {
       try {
         fn(st);
       } catch {
+        /* swallow */
       }
     });
   }
-  _buildViewportFacade() {
+
+  private _buildViewportFacade(): ViewportFacade {
     const self = this;
     return {
       get atBottom() {
@@ -227,7 +309,9 @@ class WTerm {
       },
       get maxScroll() {
         const el = self.element;
-        return el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0;
+        return el
+          ? Math.max(0, el.scrollHeight - el.clientHeight)
+          : 0;
       },
       get scrollTop() {
         const el = self.element;
@@ -251,15 +335,16 @@ class WTerm {
       scrollToBottom() {
         self._scrollToBottom();
       },
-      scrollToLine(line) {
+      scrollToLine(line: number) {
         self.scrollToLine(line);
       },
       state() {
         return self.getViewportState();
-      }
+      },
     };
   }
-  write(data) {
+
+  write(data: string | Uint8Array): void {
     if (!this.bridge) return;
     if (this.debug) this.debug.traceWrite(data);
     this._shouldScrollToBottom = this._isScrolledToBottom();
@@ -270,7 +355,8 @@ class WTerm {
     }
     this._scheduleRender();
   }
-  resize(cols, rows) {
+
+  resize(cols: number, rows: number): void {
     if (!this.bridge) return;
     this._shouldScrollToBottom = this._isScrolledToBottom();
     this.cols = cols;
@@ -280,14 +366,16 @@ class WTerm {
     this._scheduleRender();
     if (this.onResize) this.onResize(cols, rows);
   }
-  focus() {
+
+  focus(): void {
     if (this.input) {
       this.input.focus();
     } else {
       this.element.focus();
     }
   }
-  _scheduleRender() {
+
+  private _scheduleRender(): void {
     if (this._renderTimer != null) return;
     this._renderTimer = setTimeout(() => {
       this._renderTimer = null;
@@ -299,11 +387,14 @@ class WTerm {
       }
     }, 0);
   }
-  _initialRender() {
+
+  private _initialRender(): void {
     this._doRender();
   }
-  _doRender() {
+
+  private _doRender(): void {
     if (!this.bridge || !this.renderer) return;
+
     let dirtyCount = 0;
     const t0 = this.debug ? performance.now() : 0;
     if (this.debug) {
@@ -311,38 +402,53 @@ class WTerm {
         if (this.bridge.isDirtyRow(r)) dirtyCount++;
       }
     }
+
     this.renderer.render(this.bridge);
+
     if (this.debug) {
       this.debug.recordRender(performance.now() - t0, dirtyCount);
     }
+
     const hasScrollback = this.bridge.getScrollbackCount() > 0;
     this.element.classList.toggle("has-scrollback", hasScrollback);
+
     if (this._shouldScrollToBottom) {
       this._scrollToBottom();
     } else if (!hasScrollback && this.element.scrollTop !== 0) {
       this.element.scrollTop = 0;
     }
+
     const title = this.bridge.getTitle();
     if (title !== null && this.onTitle) {
       this.onTitle(title);
     }
+
     const response = this.bridge.getResponse();
     if (response !== null && this.onData) {
       this.onData(response);
     }
+
+    // Fire render-complete callbacks (Zephyr fork §3.8.2). This lets
+    // downstream scroll-follow logic read the post-render DOM instead of
+    // racing against the next animation frame.
     this._fireRenderComplete();
   }
-  _lockHeight() {
+
+  private _lockHeight(): void {
     const rh = this._rowHeight || 17;
     const gridHeight = this.rows * rh;
     const cs = getComputedStyle(this.element);
-    let extra = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    let extra =
+      (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
     if (cs.boxSizing === "border-box") {
-      extra += (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+      extra +=
+        (parseFloat(cs.borderTopWidth) || 0) +
+        (parseFloat(cs.borderBottomWidth) || 0);
     }
     this.element.style.height = `${gridHeight + extra}px`;
   }
-  _setRowHeight() {
+
+  private _setRowHeight(): void {
     const probe = document.createElement("div");
     probe.className = "term-row";
     probe.style.visibility = "hidden";
@@ -357,32 +463,43 @@ class WTerm {
       this.element.style.setProperty("--term-row-height", `${rh}px`);
     }
   }
-  _measureCharSize() {
+
+  private _measureCharSize(): {
+    charWidth: number;
+    rowHeight: number;
+  } | null {
     const row = document.createElement("div");
     row.className = "term-row";
     row.style.visibility = "hidden";
     row.style.position = "absolute";
+
     const probe = document.createElement("span");
     probe.textContent = "W";
     row.appendChild(probe);
+
     this._container.appendChild(row);
     const charWidth = probe.getBoundingClientRect().width;
     const rowHeight = row.getBoundingClientRect().height;
     row.remove();
+
     if (charWidth === 0 || rowHeight === 0) return null;
     this._rowHeight = rowHeight;
     return { charWidth, rowHeight };
   }
-  _setupResizeObserver() {
+
+  private _setupResizeObserver(): void {
     const initial = this._measureCharSize();
     if (!initial) return;
+
     let { charWidth, rowHeight } = initial;
+
     this.resizeObserver = new ResizeObserver((entries) => {
       const measured = this._measureCharSize();
       if (measured) {
         charWidth = measured.charWidth;
         rowHeight = measured.rowHeight;
       }
+
       for (const entry of entries) {
         const { width, height } = entry.contentRect;
         const newCols = Math.max(1, Math.floor(width / charWidth));
@@ -394,7 +511,8 @@ class WTerm {
     });
     this.resizeObserver.observe(this.element);
   }
-  destroy() {
+
+  destroy(): void {
     this._destroyed = true;
     if (this._renderTimer != null) clearTimeout(this._renderTimer);
     if (this.rafId != null) cancelAnimationFrame(this.rafId);
@@ -404,12 +522,12 @@ class WTerm {
     this.element.innerHTML = "";
     this._renderCallbacks.clear();
     this._viewportCallbacks.clear();
-    if (this.debug && globalThis.__wterm === this) {
-      delete globalThis.__wterm;
+    if (
+      this.debug &&
+      (globalThis as Record<string, unknown>).__wterm === this
+    ) {
+      delete (globalThis as Record<string, unknown>).__wterm;
     }
     this.debug = null;
   }
 }
-export {
-  WTerm
-};

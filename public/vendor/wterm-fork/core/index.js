@@ -1,3 +1,6 @@
-export { WasmBridge } from "./wasm-bridge.js";
-export { WebSocketTransport } from "./transport.js";
-//# sourceMappingURL=index.js.map
+import { WasmBridge } from "./wasm-bridge.js";
+import { WebSocketTransport } from "./transport.js";
+export {
+  WasmBridge,
+  WebSocketTransport
+};
