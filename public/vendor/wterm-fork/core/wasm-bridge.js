@@ -139,6 +139,9 @@ class WasmBridge {
   syncOutput() {
     return this.exports.getSyncOutput() !== 0;
   }
+  focusReporting() {
+    return this.exports.getFocusReporting() !== 0;
+  }
   usingAltScreen() {
     return this.exports.getUsingAltScreen() !== 0;
   }

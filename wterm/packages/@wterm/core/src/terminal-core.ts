@@ -62,6 +62,7 @@ export interface TerminalCore {
   clearBell(): void;
   /** True while DECSET 2026 synchronized output is active. */
   syncOutput(): boolean;
+  focusReporting(): boolean;
   usingAltScreen(): boolean;
 
   // -- Side outputs --

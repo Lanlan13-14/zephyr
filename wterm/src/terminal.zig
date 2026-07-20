@@ -86,6 +86,7 @@ pub const Terminal = struct {
     /// Synchronized output (DECSET 2026): when active, renderer should
     /// buffer frames until synchronized output ends.
     sync_output: bool = false,
+    focus_reporting: bool = false,
     linefeed_mode: bool = false,
 
     // Alternate screen buffer (pointer to avoid doubling struct size)
@@ -194,6 +195,7 @@ pub const Terminal = struct {
         self.mouse_sgr = false;
         self.bell_pending = false;
         self.sync_output = false;
+        self.focus_reporting = false;
         self.title_len = 0;
         self.title_changed = false;
         self.current_link_id = 0;
@@ -743,6 +745,7 @@ pub const Terminal = struct {
                 2026 => self.sync_output = enabled, // synchronized output
                 9 => self.mouse_mode = if (enabled) 1 else 0, // X10 mouse
                 1000 => self.mouse_mode = if (enabled) 2 else 0, // normal mouse
+                1004 => self.focus_reporting = enabled,
                 1002 => self.mouse_mode = if (enabled) 2 else 0, // button-event
                 1003 => self.mouse_mode = if (enabled) 3 else 0, // any-event
                 1006 => self.mouse_sgr = enabled, // SGR encoding

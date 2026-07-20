@@ -119,10 +119,14 @@ export class InputHandler {
     this._onMouseUp = this.handleMouseUp.bind(this);
     this._onMouseMove = this.handleMouseMove.bind(this);
     this._onMouseScroll = this.handleMouseWheel.bind(this);
+    this._onWindowFocus = () => { if (this.getBridge()?.focusReporting()) this.onData("\x1b[I"); };
+    this._onWindowBlur = () => { if (this.getBridge()?.focusReporting()) this.onData("\x1b[O"); };
     this.element.addEventListener("mousedown", this._onMouseDown);
     this.element.addEventListener("mouseup", this._onMouseUp);
     this.element.addEventListener("mousemove", this._onMouseMove);
     this.element.addEventListener("wheel", this._onMouseScroll, { passive: false });
+    window.addEventListener("focus", this._onWindowFocus);
+    window.addEventListener("blur", this._onWindowBlur);
   }
 
   focus(): void {
@@ -134,6 +138,8 @@ export class InputHandler {
   private _onMouseUp: (e: MouseEvent) => void;
   private _onMouseMove: (e: MouseEvent) => void;
   private _onMouseScroll: (e: WheelEvent) => void;
+  private _onWindowFocus: () => void;
+  private _onWindowBlur: () => void;
 
   // P2-2: Selection state
   private _clickCount = 0;
@@ -331,6 +337,8 @@ export class InputHandler {
     this.element.removeEventListener("mouseup", this._onMouseUp);
     this.element.removeEventListener("mousemove", this._onMouseMove);
     this.element.removeEventListener("wheel", this._onMouseScroll);
+    window.removeEventListener("focus", this._onWindowFocus);
+    window.removeEventListener("blur", this._onWindowBlur);
     this.textarea.remove();
   }
 

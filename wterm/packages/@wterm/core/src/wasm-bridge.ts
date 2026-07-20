@@ -27,6 +27,7 @@ interface WasmExports {
   getBellPending(): number;
   clearBell(): void;
   getSyncOutput(): number;
+  getFocusReporting(): number;
   getUsingAltScreen(): number;
   getTitlePtr(): number;
   getTitleLen(): number;
@@ -214,6 +215,7 @@ export class WasmBridge implements TerminalCore {
   syncOutput(): boolean {
     return this.exports.getSyncOutput() !== 0;
   }
+  focusReporting(): boolean { return this.exports.getFocusReporting() !== 0; }
   usingAltScreen(): boolean {
     return this.exports.getUsingAltScreen() !== 0;
   }

@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import {WasmBridge} from '../public/vendor/wterm-fork/core/index.js';
+test('DECSET 1004 toggles focus reporting',async()=>{const b=await WasmBridge.load();b.init(80,24);assert.equal(b.focusReporting(),false);b.writeString('\x1b[?1004h');assert.equal(b.focusReporting(),true);b.writeString('\x1b[?1004l');assert.equal(b.focusReporting(),false);});
+test('input emits CSI I/O and removes listeners',()=>{const s=fs.readFileSync(new URL('../wterm/packages/@wterm/dom/src/input.ts',import.meta.url),'utf8');assert.match(s,/onData\("\\x1b\[I"\)/);assert.match(s,/onData\("\\x1b\[O"\)/);assert.match(s,/removeEventListener\("blur"/);});

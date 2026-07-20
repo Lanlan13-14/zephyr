@@ -109,6 +109,7 @@ export fn clearBell() void {
 export fn getSyncOutput() u32 {
     return if (terminal.sync_output) 1 else 0;
 }
+export fn getFocusReporting() u32 { return if (terminal.focus_reporting) 1 else 0; }
 
 export fn getUsingAltScreen() u32 {
     return if (terminal.using_alt_screen) 1 else 0;
