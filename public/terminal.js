@@ -1,4 +1,5 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -359,6 +360,9 @@ let mobileStableKeyboardOpenGrid = null;
 let mobileImeLastSent = { text: '', source: '', at: 0 };
 let mobileImeLastControl = { seq: '', source: '', at: 0 };
 let mobileStableLastFocusGestureAt = 0;
+/** @type {ReturnType<typeof createSshMobileSoftKeyboard> | null} */
+let sshSoftKeyboard = null;
+let sshSoftKeyboardUiBound = false;
 let mobileStableLastActualInputAt = 0;
 let mobileStableSuppressScrollUntil = 0;
 let mobileStableScrollRestoreToken = 0;
@@ -1163,12 +1167,19 @@ window.addEventListener('message', (e) => {
     if (e.data.type === 'reset-mobile-keyboard') {
         keyboardFocusLikely = false;
         mobileKeyboardUserControlled = false;
-        try { mobileImeProxy?.blur?.(); } catch (_) {}
-        try { cmdInput?.blur?.(); } catch (_) {}
-        finalizeKeyboardClose({ force: true });
+        if (sshSoftKeyboard) {
+            sshSoftKeyboard.reset(`parent-reset:${e.data.reason || ''}`);
+        } else {
+            try { mobileImeProxy?.blur?.(); } catch (_) {}
+            try { cmdInput?.blur?.(); } catch (_) {}
+            finalizeKeyboardClose({ force: true });
+        }
+        updateMobileKeyboardButtonUi();
         [80, 220, 520, 900].forEach((delay) => window.setTimeout(() => {
             if (keyboardFocusLikely || mobileKeyboardUserControlled || document.activeElement === mobileImeProxy || document.activeElement === cmdInput) return;
+            if (sshSoftKeyboard?.desiredOpen?.()) return;
             finalizeKeyboardClose({ force: true });
+            updateMobileKeyboardButtonUi();
         }, delay));
         return;
     }
@@ -6916,7 +6927,9 @@ function mountMobileStableBarsInFlow() {
 function enableMobileStableInputMode() {
     if (!MOBILE_STABLE_INPUT_MODE || mobileStableInputEnabled) return;
     mobileStableInputEnabled = true;
-    mobileKeyboardUserControlled = true;
+    // Intent starts closed. Only an explicit user gesture (tap / keyboard button)
+    // may open the soft keyboard. Never force userControlled on mode enable.
+    mobileKeyboardUserControlled = false;
     document.documentElement.classList.add('mobile-stable-input');
     document.body?.classList.add('mobile-stable-input');
     try { if (navigator.virtualKeyboard) navigator.virtualKeyboard.overlaysContent = true; } catch (_) {}
@@ -7253,16 +7266,21 @@ function restoreMobileStableScrollTop(previousTop = 0, reason = 'restore-scroll'
 
 function focusMobileStableImeProxy(reason = 'mobile-ime-focus') {
     if (!isMobileStableInputMode()) return false;
+    ensureSshSoftKeyboard();
     setupMobileStableImeProxy();
     if (!mobileImeProxy) return false;
     const el = getTerminalScrollElement();
     const previousTop = wtermWrapper?.scrollTop ?? el?.scrollTop ?? 0;
     mobileStableLastBottomIntent = !el || isMobileStableAtVisualBottom(el) || terminalAutoFollowEnabled;
     keyboardFocusLikely = true;
+    mobileKeyboardUserControlled = true;
     keyboardViewportBaseline = Math.max(getKeyboardBaselineHeight(), keyboardViewportBaseline || 0);
     if (el && !mobileStableLastBottomIntent) el.scrollTop = previousTop;
     markKeyboardFocusActive();
-    if (document.activeElement !== mobileImeProxy) {
+    // Prefer controller open so intent + focus stay in one path.
+    if (sshSoftKeyboard) {
+        sshSoftKeyboard.open(reason, { gesture: true });
+    } else if (document.activeElement !== mobileImeProxy) {
         try { mobileImeProxy.focus({ preventScroll: true }); } catch (_) { try { mobileImeProxy.focus(); } catch (__) {} }
     }
     // Focus/keyboard open alone must not move history. If the terminal was following,
@@ -7273,6 +7291,37 @@ function focusMobileStableImeProxy(reason = 'mobile-ime-focus') {
     }
     else restoreMobileStableScrollTop(previousTop, reason);
     return true;
+}
+
+function dismissMobileStableImeProxy(reason = 'mobile-ime-dismiss') {
+    if (!isMobileStableInputMode()) {
+        try { mobileImeProxy?.blur?.(); } catch (_) {}
+        try { cmdInput?.blur?.(); } catch (_) {}
+        return false;
+    }
+    ensureSshSoftKeyboard();
+    mobileKeyboardUserControlled = false;
+    keyboardFocusLikely = false;
+    if (sshSoftKeyboard) sshSoftKeyboard.close(reason, { force: true });
+    else {
+        try { mobileImeProxy?.blur?.(); } catch (_) {}
+        try { cmdInput?.blur?.(); } catch (_) {}
+        finalizeKeyboardClose({ force: true });
+    }
+    updateMobileKeyboardButtonUi();
+    return true;
+}
+
+function updateMobileKeyboardButtonUi() {
+    const btn = document.getElementById('cmdKeyboardBtn');
+    if (!btn) return;
+    const open = !!(sshSoftKeyboard?.isActive?.()
+        || mobileKeyboardOpen
+        || document.documentElement.classList.contains('keyboard-open'));
+    btn.classList.toggle('keyboard-visible', open);
+    btn.setAttribute('aria-pressed', open ? 'true' : 'false');
+    btn.title = open ? '收起软键盘' : '打开软键盘';
+    btn.setAttribute('aria-label', open ? '收起软键盘' : '打开软键盘');
 }
 
 function rememberMobileStableKeyboardGrid(reason = 'mobile-keyboard-open-grid') {
@@ -7364,16 +7413,32 @@ function setupMobileStableImeProxy() {
     proxy.spellcheck = false;
     proxy.setAttribute('aria-label', '移动端终端输入代理');
     proxy.addEventListener('focus', () => {
-        mobileKeyboardUserControlled = true;
         mobileTerminalSelectionMode = false;
         document.documentElement.classList.remove('terminal-selection-mode');
-        markKeyboardFocusActive();
+        // Only treat focus as intentional open if controller already desires open
+        // or a gesture just requested it. Bare focus must not flip intent.
+        if (sshSoftKeyboard?.desiredOpen?.() || mobileKeyboardUserControlled) {
+            mobileKeyboardUserControlled = true;
+            markKeyboardFocusActive();
+            sshSoftKeyboard?.onProxyFocus?.('ime-proxy-focus');
+        } else {
+            markKeyboardFocusActive();
+            sshSoftKeyboard?.onProxyFocus?.('ime-proxy-focus-unowned');
+        }
         updateViewportInsets();
+        updateMobileKeyboardButtonUi();
         [60, 160, 320, 560].forEach((delay) => window.setTimeout(updateViewportInsets, delay));
     });
     proxy.addEventListener('blur', () => {
         markKeyboardFocusInactive();
-        [80, 200, 420, 680].forEach((delay) => window.setTimeout(updateViewportInsets, delay));
+        sshSoftKeyboard?.onProxyBlur?.('ime-proxy-blur');
+        updateMobileKeyboardButtonUi();
+        [80, 200, 420, 680].forEach((delay) => {
+            window.setTimeout(() => {
+                updateViewportInsets();
+                updateMobileKeyboardButtonUi();
+            }, delay);
+        });
     });
     proxy.addEventListener('compositionstart', () => { mobileImeComposing = true; });
     proxy.addEventListener('compositionend', (e) => {
@@ -7707,6 +7772,21 @@ function updateViewportInsets() {
 }
 
 function finalizeKeyboardClose({ force = false } = {}) {
+    // Align controller intent only. Do not call controller.close() here — that would
+    // re-enter layout/parent notify while finalize is already performing the close path.
+    if (sshSoftKeyboard?.desiredOpen?.()) {
+        try {
+            // Soft-close intent via public API once, guarded against recursion.
+            if (!finalizeKeyboardClose._syncingController) {
+                finalizeKeyboardClose._syncingController = true;
+                sshSoftKeyboard.close(force ? 'finalize-force' : 'finalize-align', { force: !!force });
+                finalizeKeyboardClose._syncingController = false;
+            }
+        } catch (_) {
+            finalizeKeyboardClose._syncingController = false;
+        }
+        // controller.close already applied inset/parent metrics; continue for legacy cleanup.
+    }
     if (!isTouchKeyboardDevice()) {
         const metrics = getViewportKeyboardMetrics();
         const visuallyRestored = isViewportVisuallyRestored(metrics);
@@ -7812,36 +7892,143 @@ function setupHorizontalScrollbarVisibility(...elements) {
     });
 }
 
+function ensureSshSoftKeyboard() {
+    if (sshSoftKeyboard) return sshSoftKeyboard;
+    if (!isTouchKeyboardDevice()) return null;
+    sshSoftKeyboard = createSshMobileSoftKeyboard({
+        isTouchDevice: () => isTouchKeyboardDevice(),
+        isStableMode: () => isMobileStableInputMode(),
+        ensureProxy: () => {
+            setupMobileStableImeProxy();
+            return mobileImeProxy;
+        },
+        getViewportMetrics: () => getViewportKeyboardMetrics(),
+        isSelectionMode: () => !!(mobileTerminalSelectionMode || hasLiveTerminalSelection?.()),
+        isGestureSuppressed: () => !!(terminalTouchMoved || Date.now() < (mobileStableSuppressScrollUntil || 0)),
+        applyInset: (inset, open, reason) => {
+            mobileKeyboardOpen = !!open;
+            mobileKeyboardInset = open ? inset : 0;
+            applyMobileStableKeyboardInset(open ? inset : 0, !!open, reason || 'controller');
+            document.documentElement.classList.toggle('keyboard-open', !!open && inset > 0);
+            terminalContainer?.classList.toggle('mobile-keyboard-open', !!open && inset > 0);
+            updateMobileKeyboardButtonUi();
+        },
+        notifyParent: (metrics) => notifyParentKeyboardMetrics(metrics),
+        onStateChange: (state) => {
+            mobileKeyboardUserControlled = state.intent === SoftKeyboardIntent.OPEN;
+            keyboardFocusLikely = !!(state.focusLikely || state.intent === SoftKeyboardIntent.OPEN);
+            if (state.physicalOpen) {
+                mobileKeyboardOpen = true;
+                mobileKeyboardInset = state.inset;
+            } else if (state.intent === SoftKeyboardIntent.CLOSED) {
+                mobileKeyboardOpen = false;
+            }
+            updateMobileKeyboardButtonUi();
+        },
+        onOpenCommitted: (reason) => {
+            logTerminalLayoutDiagnostics?.('ssh-soft-keyboard:open-committed', { reason });
+            if (mobileStableLastBottomIntent || terminalAutoFollowEnabled) {
+                ensureMobileStableCursorVisible(`${reason}:open-visible`);
+            }
+            updateMobileKeyboardButtonUi();
+        },
+        onCloseCommitted: (reason) => {
+            logTerminalLayoutDiagnostics?.('ssh-soft-keyboard:close-committed', { reason });
+            scheduleKeyboardCloseFit?.(`${reason}:controller-close`, 420);
+            updateMobileKeyboardButtonUi();
+        },
+        log: (event, details) => {
+            logTerminalLayoutDiagnostics?.(`ssh-soft-keyboard:${event}`, details || {});
+        },
+    });
+    return sshSoftKeyboard;
+}
+
+function setupMobileKeyboardButton() {
+    if (sshSoftKeyboardUiBound) return;
+    const btn = document.getElementById('cmdKeyboardBtn');
+    if (!btn) return;
+    sshSoftKeyboardUiBound = true;
+    btn.type = 'button';
+    btn.tabIndex = -1;
+    const fire = (reason) => {
+        ensureSshSoftKeyboard();
+        if (!sshSoftKeyboard) return;
+        // Toggle must run inside the gesture turn so iOS will present IME.
+        sshSoftKeyboard.toggle(reason);
+        mobileKeyboardUserControlled = sshSoftKeyboard.desiredOpen();
+        keyboardFocusLikely = sshSoftKeyboard.desiredOpen();
+        updateMobileKeyboardButtonUi();
+        [60, 160, 320].forEach((delay) => window.setTimeout(() => {
+            updateViewportInsets();
+            updateMobileKeyboardButtonUi();
+        }, delay));
+    };
+    btn.addEventListener('pointerdown', (e) => {
+        // Keep focus path under our control; prevent button focus steal.
+        e.preventDefault();
+        e.stopPropagation();
+        fire('keyboard-button-pointerdown');
+    }, { passive: false });
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // pointerdown already handled on capable browsers; click is fallback.
+        if (e.detail === 0 || e.pointerType === '') fire('keyboard-button-click');
+    });
+    updateMobileKeyboardButtonUi();
+}
+
 function setupMobileKeyboardAvoidance() {
     enableMobileStableInputMode();
+    ensureSshSoftKeyboard();
+    setupMobileKeyboardButton();
     if (embeddedMode && !isMobileStableInputMode()) return;
     if (!window.visualViewport && !navigator.virtualKeyboard && !isTouchKeyboardDevice()) return;
     try {
         if (navigator.virtualKeyboard) navigator.virtualKeyboard.overlaysContent = true;
     } catch (_) {}
+
+    const onViewport = (reason) => {
+        if (sshSoftKeyboard) sshSoftKeyboard.syncFromViewport(reason);
+        updateViewportInsets();
+        updateMobileKeyboardButtonUi();
+    };
+
     // 如果 navigator.virtualKeyboard 不可用，用 window.resize 作为后备
     // （即使 overlays-content 下 visualViewport 不变化，某些 WebView 仍会触发 window.resize）
-    window.visualViewport?.addEventListener('resize', updateViewportInsets, { passive: true });
+    window.visualViewport?.addEventListener('resize', () => onViewport('vv-resize'), { passive: true });
     window.addEventListener('resize', () => {
         if (!navigator.virtualKeyboard) {
-            // safeDebounce: 避免 window.resize 高频触发时重复计算
             window.clearTimeout(setupMobileKeyboardAvoidance._windowResizeTimer);
-            setupMobileKeyboardAvoidance._windowResizeTimer = window.setTimeout(updateViewportInsets, 40);
+            setupMobileKeyboardAvoidance._windowResizeTimer = window.setTimeout(() => onViewport('window-resize'), 40);
         }
     }, { passive: true });
-    window.visualViewport?.addEventListener('scroll', updateViewportInsets, { passive: true });
-    navigator.virtualKeyboard?.addEventListener?.('geometrychange', updateViewportInsets);
+    window.visualViewport?.addEventListener('scroll', () => onViewport('vv-scroll'), { passive: true });
+    navigator.virtualKeyboard?.addEventListener?.('geometrychange', () => onViewport('vk-geometry'));
+
     document.addEventListener('focusin', (e) => {
-        if (isTouchKeyboardDevice() && e.target === cmdInput && !mobileKeyboardUserControlled) {
+        // Command box on mobile only receives focus when user explicitly taps it
+        // and controller allows editable focus (desired open or non-stable path).
+        if (isTouchKeyboardDevice() && e.target === cmdInput && !mobileKeyboardUserControlled && !sshSoftKeyboard?.desiredOpen?.()) {
             cmdInput.blur();
+            return;
+        }
+        if (e.target === mobileImeProxy) {
+            sshSoftKeyboard?.onProxyFocus?.('focusin-proxy');
             return;
         }
         if (isKeyboardAvoidanceTarget(e.target)) markKeyboardFocusActive();
     }, true);
     document.addEventListener('focusout', (e) => {
         if (mobileClipboardActionInProgress) return;
+        if (e.target === mobileImeProxy) {
+            sshSoftKeyboard?.onProxyBlur?.('focusout-proxy');
+            return;
+        }
         if (isKeyboardAvoidanceTarget(e.target)) markKeyboardFocusInactive();
     }, true);
+
     cmdInput?.addEventListener('focus', () => {
         mobileTerminalSelectionMode = false;
         document.documentElement.classList.remove('terminal-selection-mode');
@@ -7852,8 +8039,15 @@ function setupMobileKeyboardAvoidance() {
             window.visualViewport?.height || 0,
             getCssPxVar('--stable-vh'),
         );
+        // Explicit command-box focus counts as open intent on mobile.
+        if (isTouchKeyboardDevice()) {
+            mobileKeyboardUserControlled = true;
+            ensureSshSoftKeyboard();
+            sshSoftKeyboard?.open?.('cmd-input-focus', { gesture: true });
+        }
         markKeyboardFocusActive();
         updateViewportInsets();
+        updateMobileKeyboardButtonUi();
         window.setTimeout(updateViewportInsets, 80);
         window.setTimeout(updateViewportInsets, 260);
         window.setTimeout(updateViewportInsets, 520);
@@ -7862,12 +8056,19 @@ function setupMobileKeyboardAvoidance() {
         markKeyboardFocusInactive();
         // 不在 blur 立即复位。iOS/Android 标准键盘收起时 visualViewport 仍在动画中，
         // 过早恢复 100vh 会造成页面先下坠再回弹；改为继续跟随到接近全高后再释放。
-        [80, 180, 320, 520].forEach((delay) => window.setTimeout(updateViewportInsets, delay));
+        [80, 180, 320, 520].forEach((delay) => window.setTimeout(() => {
+            updateViewportInsets();
+            updateMobileKeyboardButtonUi();
+        }, delay));
         window.setTimeout(() => {
-            if (!keyboardFocusLikely && !isKeyboardAvoidanceTarget()) finalizeKeyboardClose();
+            if (!keyboardFocusLikely && !isKeyboardAvoidanceTarget() && !sshSoftKeyboard?.desiredOpen?.()) {
+                finalizeKeyboardClose();
+                updateMobileKeyboardButtonUi();
+            }
         }, 680);
     });
     updateViewportInsets();
+    updateMobileKeyboardButtonUi();
 }
 
 function renderProcessRows(processes = []) {
@@ -9277,6 +9478,23 @@ if (mobileAuxKeys) {
 
     function keepMobileAuxImeFocused(reason = 'mobile-aux-focus') {
         if (!isMobileStableInputMode()) return false;
+        ensureSshSoftKeyboard();
+        // Aux keys only retain an already-desired keyboard; they never open a new one
+        // unless the controller already thinks it should be open / physical open.
+        if (sshSoftKeyboard) {
+            const active = sshSoftKeyboard.desiredOpen() || sshSoftKeyboard.physicalOpen() || mobileKeyboardOpen;
+            if (!active) return false;
+            mobileKeyboardUserControlled = true;
+            keyboardFocusLikely = true;
+            sshSoftKeyboard.retainForChrome(reason);
+            requestAnimationFrame(() => sshSoftKeyboard.retainForChrome(`${reason}:raf`));
+            window.setTimeout(() => sshSoftKeyboard.retainForChrome(`${reason}:settle-80`), 80);
+            window.setTimeout(() => {
+                updateViewportInsets();
+                updateMobileKeyboardButtonUi();
+            }, 120);
+            return true;
+        }
         mobileKeyboardUserControlled = true;
         keyboardFocusLikely = true;
         const focus = (label) => {
@@ -9619,28 +9837,43 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
             const now = performance.now();
             if (now - mobileStableLastFocusGestureAt > 260) {
                 mobileStableLastFocusGestureAt = now;
-                // Toggle keyboard: if already open, dismiss; otherwise open.
-                if (mobileKeyboardOpen || document.documentElement.classList.contains('keyboard-open')) {
-                    try { mobileImeProxy?.blur?.(); } catch (_) {}
-                    cmdInput?.blur?.();
-                    document.activeElement?.blur?.();
+                // Intent-driven: body tap opens or retains keyboard. Never dismisses.
+                // Dismiss only via keyboard button / system back / parent reset.
+                ensureSshSoftKeyboard();
+                if (sshSoftKeyboard) {
+                    sshSoftKeyboard.handleTerminalTap('terminal-touch-immediate');
+                    mobileKeyboardUserControlled = sshSoftKeyboard.desiredOpen();
+                    keyboardFocusLikely = sshSoftKeyboard.desiredOpen();
                 } else {
                     focusMobileStableImeProxy('terminal-touch-immediate');
                 }
+                updateMobileKeyboardButtonUi();
             }
         }
         terminalTouchFocusTimer = window.setTimeout(() => {
             const hasSelection = hasLiveTerminalSelection();
             if (mobileTerminalSelectionMode || terminalTouchMoved || hasSelection) {
                 if (hasSelection) enterMobileTerminalSelectionMode('touch-has-selection');
+                // Scroll/selection must not open keyboard after the delayed timer.
                 notifyParentActivity();
                 return;
             }
             if (isMobileStableInputMode()) {
-                // Only focus if keyboard wasn't just dismissed by the immediate handler
-                if (!mobileKeyboardOpen && !document.documentElement.classList.contains('keyboard-open')) {
+                // Delayed path only retains / opens if the immediate path didn't run
+                // and user didn't start scrolling. Never dismisses here.
+                ensureSshSoftKeyboard();
+                if (sshSoftKeyboard) {
+                    if (!sshSoftKeyboard.desiredOpen() && !sshSoftKeyboard.physicalOpen()) {
+                        sshSoftKeyboard.handleTerminalTap('terminal-touch');
+                    } else {
+                        sshSoftKeyboard.retainForChrome('terminal-touch-retain');
+                    }
+                    mobileKeyboardUserControlled = sshSoftKeyboard.desiredOpen();
+                    keyboardFocusLikely = sshSoftKeyboard.desiredOpen();
+                } else if (!mobileKeyboardOpen && !document.documentElement.classList.contains('keyboard-open')) {
                     focusMobileStableImeProxy('terminal-touch');
                 }
+                updateMobileKeyboardButtonUi();
                 notifyParentActivity();
                 return;
             }
@@ -10150,12 +10383,18 @@ reconnectBtn.addEventListener('click', reconnect);
 
 // ---------- 移动端软键盘处理 ----------
 function handleKeyboardShow() {
+    ensureSshSoftKeyboard();
+    sshSoftKeyboard?.open?.('legacy-show', { gesture: false });
     updateViewportInsets();
+    updateMobileKeyboardButtonUi();
 }
 
 function handleKeyboardHide() {
-    finalizeKeyboardClose({ force: true });
+    ensureSshSoftKeyboard();
+    if (sshSoftKeyboard) sshSoftKeyboard.close('legacy-hide', { force: true });
+    else finalizeKeyboardClose({ force: true });
     notifyParentKeyboardMetrics(getViewportKeyboardMetrics());
+    updateMobileKeyboardButtonUi();
 }
 
 if (typeof visualViewport !== 'undefined') {

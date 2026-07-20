@@ -6,7 +6,7 @@
     <title>Zephyr - 终端</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
     <link rel="stylesheet" href="/vendor/@wterm/dom/terminal.css">
-    <link rel="stylesheet" href="style.css?v=20260720-telnet-ui-motion2">
+    <link rel="stylesheet" href="style.css?v=20260720-ssh-kb1">
     <link rel="stylesheet" href="/vendor/viewerjs/viewer.min.css">
     <link rel="stylesheet" href="preview/image/image-preview.css?v=20260720-telnet-ui-motion2">
     <link rel="stylesheet" href="preview/media/media-preview.css?v=20260720-telnet-ui-motion2">
@@ -301,6 +301,7 @@
         <div class="terminal-top-input" id="terminalTopInput">
             <div class="cmd-input-row">
                 <textarea class="cmd-input" id="cmdInput" rows="1" placeholder="在此输入命令，Enter 发送，Shift+Enter 换行..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+                <button type="button" class="cmd-keyboard-btn" id="cmdKeyboardBtn" title="打开软键盘" aria-label="打开软键盘" aria-pressed="false"></button>
                 <button class="cmd-send-btn" id="cmdSendBtn">发送</button>
             </div>
         </div>
@@ -345,6 +346,6 @@
     <script src="preview/image/image-preview.js?v=20260720-telnet-ui-motion2"></script>
     <script src="preview/media/media-preview.js?v=20260720-telnet-ui-motion2"></script>
     <script src="editor/zephyr-editor.bundle.js?v=20260608-ai-completion" type="module"></script>
-    <script src="terminal.js?v=20260720-telnet-ui-motion2" type="module"></script>
+    <script src="terminal.js?v=20260720-ssh-kb1" type="module"></script>
 </body>
 </html>

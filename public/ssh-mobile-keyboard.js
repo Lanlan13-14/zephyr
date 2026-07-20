@@ -1,0 +1,378 @@
+/**
+ * SSH mobile soft-keyboard controller (intent-driven).
+ *
+ * Design goals (Termius / Blink / iOS Terminal class):
+ * 1. User intent is explicit: open | closed. Viewport only reports physical state.
+ * 2. Open only from a real user gesture (focus proxy in the same event turn).
+ * 3. Terminal body: single clean tap opens; never toggle-dismisses.
+ *    Dismiss via keyboard button, system back/gesture, or parent reset.
+ * 4. Scroll / long-press / double-tap selection never open the keyboard.
+ * 5. Aux keys keep focus on the IME proxy without stealing it.
+ * 6. Physical open is measured from visualViewport / virtualKeyboard with hysteresis.
+ */
+
+export const SoftKeyboardIntent = Object.freeze({
+    OPEN: 'open',
+    CLOSED: 'closed',
+});
+
+/**
+ * @typedef {object} SoftKeyboardHost
+ * @property {() => boolean} isTouchDevice
+ * @property {() => boolean} isStableMode
+ * @property {() => HTMLTextAreaElement | null} ensureProxy
+ * @property {(proxy: HTMLTextAreaElement) => void} [onProxyAttached]
+ * @property {() => { keyboardInset: number, keyboardOpenHint?: boolean }} getViewportMetrics
+ * @property {() => boolean} isSelectionMode
+ * @property {() => boolean} isGestureSuppressed
+ * @property {(state: SoftKeyboardState) => void} onStateChange
+ * @property {(metrics: object) => void} [notifyParent]
+ * @property {(inset: number, open: boolean, reason: string) => void} [applyInset]
+ * @property {(reason: string) => void} [onOpenCommitted]
+ * @property {(reason: string) => void} [onCloseCommitted]
+ * @property {(label: string, details?: object) => void} [log]
+ */
+
+/**
+ * @typedef {object} SoftKeyboardState
+ * @property {'open'|'closed'} intent
+ * @property {boolean} physicalOpen
+ * @property {number} inset
+ * @property {string} lastReason
+ * @property {number} lastGestureAt
+ * @property {boolean} focusLikely
+ */
+
+const OPEN_INSET_THRESHOLD = 80;
+const CLOSE_INSET_THRESHOLD = 12;
+const GESTURE_FOCUS_MS = 900;
+const REFOCUS_GUARD_MS = 420;
+const PHYSICAL_DEBOUNCE_MS = 48;
+
+/**
+ * @param {SoftKeyboardHost} host
+ */
+export function createSshMobileSoftKeyboard(host) {
+    /** @type {SoftKeyboardState} */
+    let state = {
+        intent: SoftKeyboardIntent.CLOSED,
+        physicalOpen: false,
+        inset: 0,
+        lastReason: 'init',
+        lastGestureAt: 0,
+        focusLikely: false,
+    };
+
+    let settleTimer = 0;
+    let refocusTimer = 0;
+    let signature = '';
+    let suppressRefocusUntil = 0;
+    let lastOpenGestureAt = 0;
+
+    function log(event, details = {}) {
+        try { host.log?.(event, { ...details, state: snapshot() }); } catch (_) {}
+    }
+
+    function snapshot() {
+        return { ...state };
+    }
+
+    function emit() {
+        try { host.onStateChange?.(snapshot()); } catch (_) {}
+    }
+
+    function getActiveElement() {
+        try { return globalThis.document?.activeElement || null; } catch (_) { return null; }
+    }
+
+    function focusProxy(reason = 'focus') {
+        const proxy = host.ensureProxy?.();
+        if (!proxy) return false;
+        try {
+            if (getActiveElement() !== proxy) {
+                proxy.focus({ preventScroll: true });
+            }
+        } catch (_) {
+            try { proxy.focus(); } catch (__) { return false; }
+        }
+        state.focusLikely = true;
+        lastOpenGestureAt = Date.now();
+        log('focus-proxy', { reason });
+        return getActiveElement() === proxy || state.intent === SoftKeyboardIntent.OPEN;
+    }
+
+    function blurProxy(reason = 'blur') {
+        const proxy = host.ensureProxy?.();
+        state.focusLikely = false;
+        try { proxy?.blur?.(); } catch (_) {}
+        try {
+            const active = getActiveElement();
+            if (active && (active === proxy || active?.classList?.contains?.('mobile-terminal-ime-proxy'))) {
+                active.blur?.();
+            }
+        } catch (_) {}
+        log('blur-proxy', { reason });
+    }
+
+    function setIntent(intent, reason) {
+        if (state.intent === intent && state.lastReason === reason) return false;
+        state.intent = intent;
+        state.lastReason = reason;
+        emit();
+        return true;
+    }
+
+    function commitPhysical(open, inset, reason) {
+        const nextInset = Math.max(0, Math.round(inset || 0));
+        const changed = state.physicalOpen !== open || Math.abs(state.inset - nextInset) >= 4;
+        state.physicalOpen = open;
+        state.inset = open ? nextInset : 0;
+        if (!changed && signature === `${open}:${state.inset}`) return false;
+        signature = `${open}:${state.inset}`;
+        try { host.applyInset?.(state.inset, open, reason); } catch (_) {}
+        try {
+            host.notifyParent?.({
+                keyboardOpen: open,
+                keyboardInset: state.inset,
+                viewportHeight: Math.round(window.visualViewport?.height || window.innerHeight || 0),
+                layoutHeight: Math.round(window.innerHeight || document.documentElement.clientHeight || 0),
+                offsetTop: Math.round(window.visualViewport?.offsetTop || 0),
+                stableInput: !!host.isStableMode?.(),
+            });
+        } catch (_) {}
+        emit();
+        if (open) host.onOpenCommitted?.(reason);
+        else host.onCloseCommitted?.(reason);
+        log('physical', { reason, open, inset: state.inset });
+        return true;
+    }
+
+    function measurePhysical() {
+        const metrics = host.getViewportMetrics?.() || { keyboardInset: 0 };
+        const inset = Math.max(0, Math.round(Number(metrics.keyboardInset) || 0));
+        // Hysteresis: easier to stay open than to flip-flop during IME animation.
+        if (state.physicalOpen) {
+            return { open: inset > CLOSE_INSET_THRESHOLD, inset };
+        }
+        return { open: inset >= OPEN_INSET_THRESHOLD, inset };
+    }
+
+    function syncFromViewport(reason = 'viewport') {
+        if (!host.isTouchDevice?.()) return snapshot();
+        const { open, inset } = measurePhysical();
+
+        // System dismissed keyboard (Android back) while we still desired open.
+        if (state.intent === SoftKeyboardIntent.OPEN && state.physicalOpen && !open) {
+            setIntent(SoftKeyboardIntent.CLOSED, `${reason}:system-dismiss`);
+            state.focusLikely = false;
+            commitPhysical(false, 0, `${reason}:system-dismiss`);
+            return snapshot();
+        }
+
+        // Desired closed but viewport still reports residual inset mid-animation: ignore open.
+        if (state.intent === SoftKeyboardIntent.CLOSED) {
+            if (!open) commitPhysical(false, 0, `${reason}:closed`);
+            else if (inset < OPEN_INSET_THRESHOLD) commitPhysical(false, 0, `${reason}:noise`);
+            // If physical is open but intent closed (race), force blur path again.
+            else if (Date.now() - lastOpenGestureAt > GESTURE_FOCUS_MS) {
+                blurProxy(`${reason}:intent-closed-but-physical`);
+                commitPhysical(false, 0, `${reason}:force-closed`);
+            }
+            return snapshot();
+        }
+
+        // Intent open
+        if (open) {
+            commitPhysical(true, inset, `${reason}:open`);
+        } else if (state.focusLikely && Date.now() - lastOpenGestureAt < GESTURE_FOCUS_MS) {
+            // Focus landed but IME height not yet reported — keep waiting, don't thrash.
+            log('await-physical-open', { reason, inset });
+        } else if (state.physicalOpen) {
+            commitPhysical(false, 0, `${reason}:lost-physical`);
+            setIntent(SoftKeyboardIntent.CLOSED, `${reason}:lost-physical`);
+        }
+        return snapshot();
+    }
+
+    function scheduleSync(reason = 'viewport', delays = [0, 48, 120, 240, 480]) {
+        window.clearTimeout(settleTimer);
+        delays.forEach((delay, index) => {
+            window.setTimeout(() => {
+                if (index === delays.length - 1) syncFromViewport(`${reason}:settle`);
+                else syncFromViewport(`${reason}:t${delay}`);
+            }, delay);
+        });
+    }
+
+    /**
+     * Open keyboard. Must be called from a user gesture for iOS/WebKit reliability.
+     */
+    function open(reason = 'open', { gesture = true } = {}) {
+        if (!host.isTouchDevice?.()) return false;
+        if (host.isSelectionMode?.()) {
+            log('open-blocked-selection', { reason });
+            return false;
+        }
+        if (host.isGestureSuppressed?.() && gesture) {
+            log('open-blocked-suppressed', { reason });
+            return false;
+        }
+        setIntent(SoftKeyboardIntent.OPEN, reason);
+        state.focusLikely = true;
+        state.lastGestureAt = Date.now();
+        if (gesture) lastOpenGestureAt = Date.now();
+        suppressRefocusUntil = 0;
+        const focused = focusProxy(reason);
+        // Immediate optimistic UI so aux bar / button react before viewport settles.
+        if (!state.physicalOpen) {
+            // Don't fake a huge inset; parent/viewport will fill real height.
+            // Still mark focus-likely open for button chrome.
+            emit();
+        }
+        scheduleSync(reason);
+        log('open', { reason, focused });
+        return focused;
+    }
+
+    function close(reason = 'close', { force = false } = {}) {
+        setIntent(SoftKeyboardIntent.CLOSED, reason);
+        state.focusLikely = false;
+        suppressRefocusUntil = Date.now() + REFOCUS_GUARD_MS;
+        window.clearTimeout(refocusTimer);
+        blurProxy(reason);
+        // Also blur cmd input if it was holding IME.
+        try {
+            const active = getActiveElement();
+            const tag = active?.tagName?.toLowerCase?.();
+            if (tag === 'textarea' || tag === 'input') active.blur?.();
+        } catch (_) {}
+        commitPhysical(false, 0, reason);
+        scheduleSync(reason, force ? [0, 80, 200, 480] : [0, 120, 320, 680]);
+        log('close', { reason, force });
+        return true;
+    }
+
+    function toggle(reason = 'toggle') {
+        if (state.intent === SoftKeyboardIntent.OPEN || state.physicalOpen) {
+            return close(`${reason}:to-closed`, { force: true });
+        }
+        return open(`${reason}:to-open`, { gesture: true });
+    }
+
+    /**
+     * Terminal body single-tap policy:
+     * - closed → open
+     * - open → keep open / re-focus (do NOT dismiss)
+     */
+    function handleTerminalTap(reason = 'terminal-tap') {
+        if (!host.isTouchDevice?.()) return false;
+        if (host.isSelectionMode?.() || host.isGestureSuppressed?.()) return false;
+        state.lastGestureAt = Date.now();
+        if (state.intent === SoftKeyboardIntent.OPEN || state.physicalOpen) {
+            // Re-assert focus without layout thrash.
+            setIntent(SoftKeyboardIntent.OPEN, `${reason}:retain`);
+            focusProxy(`${reason}:retain`);
+            scheduleSync(`${reason}:retain`, [0, 80, 200]);
+            return true;
+        }
+        return open(reason, { gesture: true });
+    }
+
+    /**
+     * Aux key / chrome pressed: never steal focus from IME proxy.
+     */
+    function retainForChrome(reason = 'chrome') {
+        if (state.intent !== SoftKeyboardIntent.OPEN && !state.physicalOpen) return false;
+        setIntent(SoftKeyboardIntent.OPEN, `${reason}:retain`);
+        state.focusLikely = true;
+        lastOpenGestureAt = Date.now();
+        focusProxy(`${reason}:retain`);
+        return true;
+    }
+
+    function onProxyFocus(reason = 'proxy-focus') {
+        // Focus alone does not flip intent to open unless we already desired open
+        // or this focus was requested by open()/handleTerminalTap.
+        if (state.intent === SoftKeyboardIntent.OPEN || Date.now() - lastOpenGestureAt < GESTURE_FOCUS_MS) {
+            state.focusLikely = true;
+            setIntent(SoftKeyboardIntent.OPEN, reason);
+            scheduleSync(reason);
+        }
+    }
+
+    function onProxyBlur(reason = 'proxy-blur') {
+        state.focusLikely = false;
+        if (Date.now() < suppressRefocusUntil) {
+            scheduleSync(`${reason}:suppressed`);
+            return;
+        }
+        // If intent is still open, a chrome button may have stolen focus for one frame.
+        // Give a short window to recover; if viewport says closed, accept dismiss.
+        if (state.intent === SoftKeyboardIntent.OPEN) {
+            window.clearTimeout(refocusTimer);
+            refocusTimer = window.setTimeout(() => {
+                if (state.intent !== SoftKeyboardIntent.OPEN) return;
+                if (Date.now() < suppressRefocusUntil) return;
+                const { open } = measurePhysical();
+                const active = getActiveElement();
+                const stillOnEditable = active
+                    && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT' || active.isContentEditable);
+                if (stillOnEditable) return;
+                if (open) {
+                    focusProxy(`${reason}:recover`);
+                    return;
+                }
+                // Physical closed → user dismissed via system UI.
+                setIntent(SoftKeyboardIntent.CLOSED, `${reason}:system`);
+                commitPhysical(false, 0, `${reason}:system`);
+            }, 140);
+        } else {
+            scheduleSync(reason);
+        }
+    }
+
+    function desiredOpen() {
+        return state.intent === SoftKeyboardIntent.OPEN;
+    }
+
+    function physicalOpen() {
+        return state.physicalOpen;
+    }
+
+    function isActive() {
+        return desiredOpen() || physicalOpen() || state.focusLikely;
+    }
+
+    function reset(reason = 'reset') {
+        return close(reason, { force: true });
+    }
+
+    function getState() {
+        return snapshot();
+    }
+
+    return {
+        open,
+        close,
+        toggle,
+        handleTerminalTap,
+        retainForChrome,
+        onProxyFocus,
+        onProxyBlur,
+        syncFromViewport,
+        scheduleSync,
+        desiredOpen,
+        physicalOpen,
+        isActive,
+        reset,
+        getState,
+        // Expose thresholds for contract tests / diagnostics
+        thresholds: {
+            openInset: OPEN_INSET_THRESHOLD,
+            closeInset: CLOSE_INSET_THRESHOLD,
+            gestureFocusMs: GESTURE_FOCUS_MS,
+        },
+    };
+}
+
+export default createSshMobileSoftKeyboard;

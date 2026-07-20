@@ -5604,22 +5604,28 @@ body.smartbar-trash-hover .smartbar-trash-target {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 38px;
-        min-width: 38px;
-        height: 34px;
+        width: 40px;
+        min-width: 40px;
+        height: 36px;
         border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        background: var(--surface);
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--surface) 88%, var(--bg));
         color: var(--text);
-        font-size: 17px;
+        font-size: 0;
         font-weight: 800;
+        flex: 0 0 auto;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
     }
     .terminal-page .cmd-keyboard-btn.keyboard-visible {
         background: var(--accent);
-        border-color: var(--accent);
+        border-color: color-mix(in srgb, var(--accent) 80%, #000);
         color: #fff;
-        font-size: 22px;
-        line-height: 1;
+        box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 28%, transparent);
+    }
+    html.mobile-stable-input .cmd-keyboard-btn {
+        display: inline-flex;
     }
     .terminal-page .cmd-input[readonly] {
         caret-color: transparent;
@@ -5977,9 +5983,9 @@ body.smartbar-trash-hover .smartbar-trash-target {
     }
 }
 
-/* 移除移动端手动键盘按钮/安全键盘代理后的最终覆盖 */
-.cmd-keyboard-btn,
+/* 安全键盘代理保持隐藏；cmd-keyboard-btn 在移动触控媒体查询中显示 */
 .mobile-secure-keyboard-proxy { display: none !important; }
+.cmd-keyboard-btn { display: none; }
 
 @media (max-width: 700px) and (hover: none) and (pointer: coarse) {
     html.keyboard-open .terminal-page {
@@ -10640,8 +10646,9 @@ textarea,
         padding: 6px 8px !important;
         z-index: 4 !important;
     }
-    html.mobile-stable-input .cmd-input-row { gap: 10px !important; }
+    html.mobile-stable-input .cmd-input-row { gap: 8px !important; align-items: center !important; }
     html.mobile-stable-input .cmd-input { min-width: 0 !important; resize: none !important; }
+    html.mobile-stable-input .cmd-keyboard-btn { display: inline-flex !important; }
     html.mobile-stable-input .cmd-send-btn { flex: 0 0 auto !important; min-width: 58px !important; }
     html.mobile-stable-input .terminal-container {
         grid-area: mobile-terminal !important;
