@@ -19,12 +19,13 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 class MainActivity : FlutterActivity() {
     private val channelName = "com.zephyr.agent/saf"
     private val requestOpenTree = 0x5A13
     private var pendingSelectResult: MethodChannel.Result? = null
-    private val handles = mutableMapOf<String, SafHandle>()
+    private val handles = ConcurrentHashMap<String, SafHandle>()
 
     data class SafHandle(
         val uri: Uri,

@@ -1,14 +1,12 @@
-import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260719-xfile3';
-import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260719-xfile3';
-import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260719-xfile3';
-import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260719-xfile3';
-import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260719-xfile3';
+import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260720-zft2';
+import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260720-zft2';
+import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260720-zft2';
+import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260720-zft2';
+import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260720-zft2';
 
 let compositor = null;
 let avc420 = null;
 let avc444 = null;
-let syncControl = null;
-let syncData = null;
 let initialized = false;
 let wasmReady = false;
 let localFiles = [];
@@ -42,14 +40,7 @@ const callbacksToPage = new Set([
     'rdpAudioPlay', 'rdpAudinStart', 'rdpAudinStop', 'rdpCameraStart',
     'rdpCameraStop', 'rdpLocationStart', 'rdpLocationStop',
 ]);
-const syncPageMethods = new Set([
-    'zephyrRdpFsList', 'zephyrRdpFsStat',
-    'zephyrRdpFsOpen', 'zephyrRdpFsRead', 'zephyrRdpFsWrite', 'zephyrRdpFsClose',
-    'zephyrRdpFsMkdir', 'zephyrRdpFsDelete', 'zephyrRdpFsRename', 'zephyrRdpFsTruncate',
-]);
-
 for (const name of callbacksToPage) globalThis[name] = (...args) => postMessage({ type: 'callback', name, args }, transferables(args));
-for (const name of syncPageMethods) globalThis[name] = (...args) => syncPageRpc(name, args);
 globalThis.rdpStorageGetFiles = () => localFiles.map(({ name, size, isDir }) => ({ name, size, isDir }));
 globalThis.rdpStorageReadFile = (name) => localFiles.find((file) => file.name === name)?.data || null;
 
@@ -62,23 +53,6 @@ function transferables(values) {
     return list;
 }
 
-function syncPageRpc(name, args) {
-    if (!syncControl || !syncData) throw new Error('Worker sync RPC is unavailable');
-    const control = new Int32Array(syncControl);
-    Atomics.store(control, 0, 0);
-    Atomics.store(control, 1, 0);
-    Atomics.store(control, 2, 0);
-    Atomics.store(control, 3, 0);
-    postMessage({ type: 'sync-rpc', name, args });
-    const wait = Atomics.wait(control, 0, 0, 30000);
-    if (wait === 'timed-out') throw new Error(`page RPC ${name} timed out`);
-    const length = Atomics.load(control, 2);
-    const bytes = new Uint8Array(syncData, 0, length).slice();
-    if (Atomics.load(control, 3)) throw new Error(new TextDecoder().decode(bytes));
-    if (Atomics.load(control, 1) === 1) return bytes;
-    return JSON.parse(new TextDecoder().decode(bytes) || 'null');
-}
-
 async function loadGoWasm() {
     bootStage('wasm-exec-loading');
     const GoRuntime = await loadGoRuntime({ pipeline: 'worker-gpu-v2' });
@@ -86,7 +60,7 @@ async function loadGoWasm() {
     bootStage('wasm-fetching');
     bootStage('wasm-instantiating');
     const { go, result } = await instantiateGoWasm(GoRuntime, {
-        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20260719-xfile3',
+        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20260720-zft2',
         pipeline: 'worker-gpu-v2',
     });
     if (result.instance.exports.mem) {
@@ -295,8 +269,6 @@ onmessage = async ({ data: message }) => {
         if (message.type === 'init') {
             if (initialized) throw new Error('RDP Worker already initialized');
             initialized = true;
-            syncControl = message.syncControl;
-            syncData = message.syncData;
             bootStage('renderer-starting');
             setupRenderer(message.canvas);
             bootStage('renderer-ready');

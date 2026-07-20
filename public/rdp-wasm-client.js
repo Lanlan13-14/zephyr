@@ -11,10 +11,10 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260719-xfile3';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260719-xfile3';
-import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260719-xfile3';
-import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260719-xfile3';
+import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260720-zft2';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260720-zft2';
+import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260720-zft2';
+import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260720-zft2';
 import {
     setupPanelInteractions,
     toggleFloatingPanel,
@@ -23,14 +23,14 @@ import {
     bringPanelToFront,
     applyPanelLayout,
     closePanelLayoutMenu,
-} from './floating-panel.js?v=20260719-xfile3';
+} from './floating-panel.js?v=20260720-zft2';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
     syncAgentDrives,
     detachAllDrives,
     resetAttachedDriveState,
-} from './rdp-fs-provider.js?v=20260708-rdpefs-binread3';
+} from './rdp-fs-provider.js?v=20260720-zft2';
 
 const $ = (sel) => document.querySelector(sel);
 const urlParams = new URLSearchParams(location.search);
@@ -1024,7 +1024,7 @@ async function connect() {
         proxyWsUrl(), host, port, domain, user, password,
         width, height, false,
         !!params.rdpMicrophone, !!params.rdpLocation, storageEnabled, !!params.rdpCamera,
-        quality, fps,
+        quality, fps, connectionId,
     ));
 }
 
@@ -2389,13 +2389,13 @@ window.addEventListener('message', (e) => {
         if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
         if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
 
-        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260719-xfile3' });
+        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260720-zft2' });
         rdpDiag.workerProbe = probe;
         if (!probe.supported) {
             throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
         }
 
-        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260719-xfile3', { type: 'module' }));
+        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260720-zft2', { type: 'module' }));
         rdpWorkerBridge.installGlobals(window);
         await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: false });
         const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });

@@ -15,6 +15,13 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const {
+    OP: ZFT2_OP,
+    FLAG_ERROR: ZFT2_FLAG_ERROR,
+    FLAG_RESPONSE: ZFT2_FLAG_RESPONSE,
+    encodeFrame: encodeZft2Frame,
+    decodeFrame: decodeZft2Frame,
+} = require('./file-transfer-protocol');
 
 const HEARTBEAT_INTERVAL_MS = 15000;
 const HEARTBEAT_TIMEOUT_FACTOR = 3;
@@ -41,6 +48,9 @@ class FileAgentConnection {
         this.connectedAt = Date.now();
         this.pendingRequests = new Map(); // requestId → { resolve, reject, timer }
         this.nextRequestId = 1;
+        this.protocolVersion = Number(hello.protocolVersion || 1);
+        this.maxInflight = Math.max(1, Math.min(16, Number(this.capabilities.maxInflight || 8)));
+        this.maxChunkSize = Math.max(64 * 1024, Math.min(1024 * 1024, Number(this.capabilities.maxChunkSize || 1024 * 1024)));
         this.heartbeatTimer = null;
         this.heartbeatMissCount = 0;
     }
@@ -59,6 +69,9 @@ class FileAgentConnection {
             readOnly: this.share.readOnly !== false,
             shareName: this.share.name || this.deviceName,
             capabilities: { ...this.capabilities },
+            protocolVersion: this.protocolVersion,
+            maxInflight: this.maxInflight,
+            maxChunkSize: this.maxChunkSize,
             connectedAt: this.connectedAt,
             lastSeenAt: this.lastSeenAt,
             tokenId: this.tokenId,
@@ -124,8 +137,87 @@ class FileAgentConnection {
         });
     }
 
+    /** Send a protocol-v2 binary request to the Agent. */
+    callBinaryV2(type, meta, payload, timeoutMs) {
+        let settled = false;
+        let cancel = () => {};
+        const promise = new Promise((resolve, reject) => {
+            if (!this.online) {
+                reject(new AgentError('agent_offline', 'Agent is offline'));
+                return;
+            }
+            if (this.protocolVersion < 2) {
+                reject(new AgentError('unsupported', 'Agent does not support ZFT2'));
+                return;
+            }
+            if (this.pendingRequests.size >= this.maxInflight) {
+                reject(new AgentError('busy', 'Agent request window is full'));
+                return;
+            }
+            const id = this.nextRequestId++ >>> 0;
+            const frame = encodeZft2Frame({ type, requestId: id, meta: meta || {}, payload });
+            const timer = setTimeout(() => {
+                this.pendingRequests.delete(id);
+                if (!settled) {
+                    finishReject(new AgentError('timeout', `ZFT2 request timed out after ${timeoutMs}ms`));
+                }
+            }, timeoutMs || RPC_DEFAULT_TIMEOUT_MS);
+            const finishResolve = (value) => {
+                if (settled) return;
+                settled = true;
+                resolve(value);
+            };
+            const finishReject = (error) => {
+                if (settled) return;
+                settled = true;
+                reject(error);
+            };
+            this.pendingRequests.set(id, { resolve: finishResolve, reject: finishReject, timer, binaryV2: true, method: type });
+            cancel = () => {
+                if (settled) return;
+                clearTimeout(timer);
+                this.pendingRequests.delete(id);
+                try { this.ws.send(encodeZft2Frame({ type: ZFT2_OP.CANCEL, requestId: this.nextRequestId++ >>> 0, meta: { targetRequestId: id } })); } catch {}
+                finishReject(new AgentError('cancelled', 'File request cancelled'));
+            };
+            try {
+                this.ws.send(frame, { binary: true }, (err) => {
+                    if (!err || settled) return;
+                    clearTimeout(timer);
+                    this.pendingRequests.delete(id);
+                    finishReject(new AgentError('io_error', err.message));
+                });
+            } catch (err) {
+                clearTimeout(timer);
+                this.pendingRequests.delete(id);
+                finishReject(new AgentError('io_error', err.message));
+            }
+        });
+        return { promise, cancel };
+    }
+
+    /** Handle an incoming ZFT2 response from the Agent. */
+    handleBinaryV2(raw) {
+        let frame;
+        try { frame = decodeZft2Frame(raw); } catch { return false; }
+        if (!(frame.flags & ZFT2_FLAG_RESPONSE)) return false;
+        const pending = this.pendingRequests.get(frame.requestId);
+        if (!pending || !pending.binaryV2) return true;
+        clearTimeout(pending.timer);
+        this.pendingRequests.delete(frame.requestId);
+        if (frame.flags & ZFT2_FLAG_ERROR) {
+            pending.reject(new AgentError(frame.meta.code || 'internal_error', frame.meta.message || 'Agent request failed'));
+        } else if (frame.type === ZFT2_OP.READ) {
+            pending.resolve(frame.payload);
+        } else {
+            pending.resolve(frame.meta || {});
+        }
+        return true;
+    }
+
     /** Handle an incoming binary response from the Agent. */
     handleBinaryResponse(raw) {
+        if (this.handleBinaryV2(raw)) return true;
         const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
         // Binary frame: magic "ZFB1" (4) + idLen uint16BE (2) + id UTF-8 + payload
         if (buf.length < 6 || buf[0] !== 0x5a || buf[1] !== 0x46 || buf[2] !== 0x42 || buf[3] !== 0x31) {
@@ -473,7 +565,7 @@ class FileAgentManager {
 
     _handleHello(ws, hello, callback) {
         // Validate protocol version
-        if (hello.protocolVersion !== 1) {
+        if (hello.protocolVersion !== 1 && hello.protocolVersion !== 2) {
             callback(new AgentError('unsupported', `Unsupported protocol version: ${hello.protocolVersion}`));
             return;
         }
@@ -757,6 +849,43 @@ class FileAgentManager {
         return conn ? conn.ownerId === ownerId : false;
     }
 
+    /** Accept immutable userId ownership with username fallback for migrated tokens. */
+    isAgentOwnedByUser(agentId, user) {
+        const conn = this.agents.get(agentId);
+        if (!conn || !user) return false;
+        return conn.ownerId === user.userId || conn.ownerId === user.username;
+    }
+
+    /** Protocol-v2 operation with explicit cancellation. */
+    callAgentV2(agentId, method, params = {}, timeoutMs = RPC_READ_TIMEOUT_MS) {
+        const conn = this.agents.get(agentId);
+        if (!conn || !conn.online) {
+            return { promise: Promise.reject(new AgentError('agent_offline', `Agent ${agentId} is not connected`)), cancel() {} };
+        }
+        if (method === 'writeBinary' && conn.share.readOnly) {
+            return { promise: Promise.reject(new AgentError('read_only', 'Agent share is read-only')), cancel() {} };
+        }
+        const mutating = ['writeBinary', 'mkdir', 'delete', 'rename', 'truncate'];
+        if (mutating.includes(method) && conn.share.readOnly) {
+            return { promise: Promise.reject(new AgentError('read_only', 'Agent share is read-only')), cancel() {} };
+        }
+        const map = {
+            open: ZFT2_OP.OPEN, readBinary: ZFT2_OP.READ, writeBinary: ZFT2_OP.WRITE,
+            close: ZFT2_OP.CLOSE, stat: ZFT2_OP.STAT, list: ZFT2_OP.LIST,
+            mkdir: ZFT2_OP.MKDIR, delete: ZFT2_OP.DELETE, rename: ZFT2_OP.RENAME,
+            truncate: ZFT2_OP.TRUNCATE,
+        };
+        const type = map[method];
+        if (!type) return { promise: Promise.reject(new AgentError('unsupported', `Unsupported ZFT2 method ${method}`)), cancel() {} };
+        const meta = { ...params };
+        let payload = null;
+        if (method === 'writeBinary') {
+            payload = Buffer.from(meta.data || []);
+            delete meta.data;
+        }
+        return conn.callBinaryV2(type, meta, payload, timeoutMs);
+    }
+
     // ─── SSE Broadcasting ────────────────────────────────────────────
 
     /** Subscribe an SSE client (HTTP response) for agent events. */
@@ -797,8 +926,7 @@ class FileAgentManager {
         app.get('/api/rdp/file-agents', requireAuth, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
-            const agents = this.listAgentsForUser(user.username);
-            res.json({ ok: true, agents });
+            res.json({ ok: true, agents: this.listAgentsForUser(user.username) });
         });
 
         // GET /api/rdp/file-agent-tokens — list named agent tokens
@@ -996,4 +1124,4 @@ class FileAgentManager {
     }
 }
 
-module.exports = { FileAgentManager, AgentError };
+module.exports = { FileAgentManager, AgentError, FileAgentConnection };

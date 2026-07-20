@@ -222,11 +222,15 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	if len(args) >= 15 && args[14].Type() == js.TypeNumber {
 		fps = args[14].Int()
 	}
+	connectionID := ""
+	if len(args) >= 16 && args[15].Type() == js.TypeString {
+		connectionID = args[15].String()
+	}
 
 	reportStage("go-connect-dispatched")
 	go func() {
 		reportStage("go-connect-started")
-		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled, qualityMode, fps); err != nil {
+		if err := connect(proxyWsURL, host, port, domain, user, password, width, height, micEnabled, locationEnabled, storageEnabled, cameraEnabled, qualityMode, fps, connectionID); err != nil {
 			slog.Error("connect", "err", err)
 			js.Global().Call("rdpOnError", err.Error())
 		}
@@ -234,7 +238,7 @@ func jsConnect(_ js.Value, args []js.Value) any {
 	return nil
 }
 
-func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled bool, qualityMode string, fps int) error {
+func connect(proxyWsURL, host, port, domain, user, password string, width, height int, micEnabled, locationEnabled, storageEnabled, cameraEnabled bool, qualityMode string, fps int, connectionID string) error {
 	hostPort := host + ":" + port
 
 	// Build WebSocket URL for the proxy. flow=v2 negotiates the text control
@@ -267,8 +271,13 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	connectGen++
 	myGen := connectGen
 	oldClient := rdpClient
+	oldRdpefs := rdpefsHandler
 	rdpClient = g
+	rdpefsHandler = nil
 	clientMu.Unlock()
+	if oldRdpefs != nil {
+		oldRdpefs.Close()
+	}
 	if oldClient != nil {
 		oldClient.Close()
 	}
@@ -443,10 +452,16 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	g.RegisterDvcHandler("Microsoft::Windows::RDS::Location", rdpelHandler)
 
 	// Register RDPEFS (storage/drive redirection) if enabled
-	rdpefsHandler = NewRdpefsHandler(storageEnabled)
+	nextRdpefs := NewRdpefsHandler(storageEnabled)
 	if storageEnabled {
-		g.SetRdpdrHandler(rdpefsHandler)
+		nextRdpefs.SetFileTransfer(newWSFileTransfer(proxyWsURL, connectionID))
+		g.SetRdpdrHandler(nextRdpefs)
 	}
+	clientMu.Lock()
+	if rdpClient == g && connectGen == myGen {
+		rdpefsHandler = nextRdpefs
+	}
+	clientMu.Unlock()
 
 	// Register MS-RDPECAM (camera redirection) if enabled
 	camEnumHandler = NewCamEnumeratorHandler(cameraEnabled)
@@ -462,7 +477,11 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 		if rdpClient == g {
 			rdpClient = nil
 		}
+		if rdpefsHandler == nextRdpefs {
+			rdpefsHandler = nil
+		}
 		clientMu.Unlock()
+		nextRdpefs.Close()
 		g.Close()
 		return err
 	}
@@ -545,10 +564,14 @@ func forwardClassicBitmaps(bs []grdp.Bitmap) {
 func jsDisconnect(_ js.Value, _ []js.Value) any {
 	clientMu.Lock()
 	c := rdpClient
+	h := rdpefsHandler
 	rdpClient = nil
 	rdpefsHandler = nil
 	connectGen++
 	clientMu.Unlock()
+	if h != nil {
+		h.Close()
+	}
 	if c != nil {
 		c.Close()
 	}

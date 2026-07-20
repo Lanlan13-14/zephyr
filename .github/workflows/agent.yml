@@ -49,6 +49,12 @@ jobs:
       - name: Run tests
         run: flutter test
 
+      - name: Build Android debug bundle for host-code compile coverage
+        run: |
+          flutter create --org com.zephyr --project-name zephyr_agent --platforms android .
+          sh tool/prepare_android.sh
+          flutter build apk --debug
+
   # ───────────── Release builds: only on workflow_dispatch with tag ──
   build-android:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
