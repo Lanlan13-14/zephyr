@@ -137,8 +137,8 @@ pub const Terminal = struct {
     kitty_stack_len: u8 = 0,
 
     // Response buffer for DSR and similar host-to-application replies
-    response_buf: [64]u8 = undefined,
-    response_len: u8 = 0,
+    response_buf: [1024]u8 = undefined,
+    response_len: u16 = 0,
 
     // Ring buffer of unhandled/ignored CSI sequences for debug introspection
     debug_log: [DEBUG_LOG_MAX]DebugLogEntry = [_]DebugLogEntry{.{}} ** DEBUG_LOG_MAX,
@@ -469,6 +469,7 @@ pub const Terminal = struct {
             .csi_dispatch => self.handleCsi(),
             .esc_dispatch => self.handleEsc(),
             .osc_dispatch => self.handleOsc(),
+            .dcs_dispatch => self.handleDcs(),
         }
     }
 
@@ -792,8 +793,17 @@ pub const Terminal = struct {
     }
 
     fn respondKittyKeyboard(self: *Terminal) void {
-        var len: u8 = 0; self.response_buf[len] = 0x1b; len += 1; self.response_buf[len] = '['; len += 1; self.response_buf[len] = '?'; len += 1;
-        len = appendU16(self.response_buf[0..], len, self.kitty_flags); self.response_buf[len] = 'u'; len += 1; self.response_len = len;
+        var len: u16 = 0;
+        self.response_buf[len] = 0x1b;
+        len += 1;
+        self.response_buf[len] = '[';
+        len += 1;
+        self.response_buf[len] = '?';
+        len += 1;
+        len = appendU16(self.response_buf[0..], len, self.kitty_flags);
+        self.response_buf[len] = 'u';
+        len += 1;
+        self.response_len = len;
     }
 
     fn handleKittyKeyboard(self: *Terminal, marker: u8) void {
@@ -832,15 +842,21 @@ pub const Terminal = struct {
             2026 => if (self.sync_output) 1 else 2,
             else => 0,
         };
-        var len: u8 = 0;
-        self.response_buf[len] = 0x1b; len += 1;
-        self.response_buf[len] = '['; len += 1;
-        self.response_buf[len] = '?'; len += 1;
+        var len: u16 = 0;
+        self.response_buf[len] = 0x1b;
+        len += 1;
+        self.response_buf[len] = '[';
+        len += 1;
+        self.response_buf[len] = '?';
+        len += 1;
         len = appendU16(self.response_buf[0..], len, mode);
-        self.response_buf[len] = ';'; len += 1;
+        self.response_buf[len] = ';';
+        len += 1;
         len = appendU16(self.response_buf[0..], len, status);
-        self.response_buf[len] = '$'; len += 1;
-        self.response_buf[len] = 'y'; len += 1;
+        self.response_buf[len] = '$';
+        len += 1;
+        self.response_buf[len] = 'y';
+        len += 1;
         self.response_len = len;
     }
 
@@ -932,25 +948,225 @@ pub const Terminal = struct {
         self.resetStyle();
     }
 
+    fn handleDcs(self: *Terminal) void {
+        if (self.parser.dcs_len == 0) return;
+        const data = self.parser.dcs_data[0..self.parser.dcs_len];
+        // DECRQSS: DCS $ q <Pt> ST
+        if (self.parser.dcs_private == '$' and data.len >= 1 and data[0] == 'q') {
+            const pt = if (data.len > 1) data[1..] else "m";
+            self.handleDecrqss(pt);
+            return;
+        }
+        // XTGETTCAP: DCS + q <hex names...> ST
+        if (self.parser.dcs_private == '+' and data.len >= 1 and data[0] == 'q') {
+            const payload = if (data.len > 1) data[1..] else "";
+            self.handleXtgettcap(payload);
+            return;
+        }
+    }
+
+    fn handleDecrqss(self: *Terminal, pt: []const u8) void {
+        // DCS 1 $ r <Pt> ST on success, DCS 0 $ r ST on failure.
+        var body: [128]u8 = undefined;
+        var blen: u16 = 0;
+        var ok = true;
+        if (std.mem.eql(u8, pt, "m")) {
+            // Report effective SGR. Keep it compact but complete enough for apps.
+            body[0] = '0';
+            blen = 1;
+            if ((self.current_flags & cell_mod.FLAG_BOLD) != 0) blen = appendBytes(body[0..], blen, ";1");
+            if ((self.current_flags & cell_mod.FLAG_DIM) != 0) blen = appendBytes(body[0..], blen, ";2");
+            if ((self.current_flags & cell_mod.FLAG_ITALIC) != 0) blen = appendBytes(body[0..], blen, ";3");
+            if ((self.current_flags & cell_mod.FLAG_UNDERLINE) != 0) blen = appendBytes(body[0..], blen, ";4");
+            if ((self.current_flags & cell_mod.FLAG_BLINK) != 0) blen = appendBytes(body[0..], blen, ";5");
+            if ((self.current_flags & cell_mod.FLAG_REVERSE) != 0) blen = appendBytes(body[0..], blen, ";7");
+            if ((self.current_flags & cell_mod.FLAG_INVISIBLE) != 0) blen = appendBytes(body[0..], blen, ";8");
+            if ((self.current_flags & cell_mod.FLAG_STRIKETHROUGH) != 0) blen = appendBytes(body[0..], blen, ";9");
+            if (self.current_fg_rgb != 0) {
+                blen = appendBytes(body[0..], blen, ";38;2;");
+                blen = appendU16(body[0..], blen, @intCast((self.current_fg_rgb >> 16) & 0xFF));
+                body[blen] = ';';
+                blen += 1;
+                blen = appendU16(body[0..], blen, @intCast((self.current_fg_rgb >> 8) & 0xFF));
+                body[blen] = ';';
+                blen += 1;
+                blen = appendU16(body[0..], blen, @intCast(self.current_fg_rgb & 0xFF));
+            } else if (self.current_fg != cell_mod.DEFAULT_COLOR) {
+                if (self.current_fg < 8) {
+                    blen = appendBytes(body[0..], blen, ";");
+                    blen = appendU16(body[0..], blen, 30 + self.current_fg);
+                } else if (self.current_fg < 16) {
+                    blen = appendBytes(body[0..], blen, ";");
+                    blen = appendU16(body[0..], blen, 90 + (self.current_fg - 8));
+                } else {
+                    blen = appendBytes(body[0..], blen, ";38;5;");
+                    blen = appendU16(body[0..], blen, self.current_fg);
+                }
+            }
+            if (self.current_bg_rgb != 0) {
+                blen = appendBytes(body[0..], blen, ";48;2;");
+                blen = appendU16(body[0..], blen, @intCast((self.current_bg_rgb >> 16) & 0xFF));
+                body[blen] = ';';
+                blen += 1;
+                blen = appendU16(body[0..], blen, @intCast((self.current_bg_rgb >> 8) & 0xFF));
+                body[blen] = ';';
+                blen += 1;
+                blen = appendU16(body[0..], blen, @intCast(self.current_bg_rgb & 0xFF));
+            } else if (self.current_bg != cell_mod.DEFAULT_COLOR) {
+                if (self.current_bg < 8) {
+                    blen = appendBytes(body[0..], blen, ";");
+                    blen = appendU16(body[0..], blen, 40 + self.current_bg);
+                } else if (self.current_bg < 16) {
+                    blen = appendBytes(body[0..], blen, ";");
+                    blen = appendU16(body[0..], blen, 100 + (self.current_bg - 8));
+                } else {
+                    blen = appendBytes(body[0..], blen, ";48;5;");
+                    blen = appendU16(body[0..], blen, self.current_bg);
+                }
+            }
+            body[blen] = 'm';
+            blen += 1;
+        } else if (std.mem.eql(u8, pt, "r")) {
+            blen = appendU16(body[0..], blen, self.scroll_top + 1);
+            body[blen] = ';';
+            blen += 1;
+            blen = appendU16(body[0..], blen, self.scroll_bottom);
+            body[blen] = 'r';
+            blen += 1;
+        } else if (std.mem.eql(u8, pt, " q") or std.mem.eql(u8, pt, "q")) {
+            // DECSCUSR
+            blen = appendU16(body[0..], blen, self.cursor_style);
+            body[blen] = ' ';
+            blen += 1;
+            body[blen] = 'q';
+            blen += 1;
+        } else if (std.mem.eql(u8, pt, "\"p")) {
+            // DECSCL: claim VT220 7-bit controls.
+            blen = appendBytes(body[0..], blen, "62;1\"p");
+        } else {
+            ok = false;
+        }
+
+        var len: u16 = 0;
+        self.response_buf[len] = 0x1b;
+        len += 1;
+        self.response_buf[len] = 'P';
+        len += 1;
+        self.response_buf[len] = if (ok) '1' else '0';
+        len += 1;
+        self.response_buf[len] = '$';
+        len += 1;
+        self.response_buf[len] = 'r';
+        len += 1;
+        if (ok) len = appendBytes(self.response_buf[0..], len, body[0..blen]);
+        self.response_buf[len] = 0x1b;
+        len += 1;
+        self.response_buf[len] = '\\';
+        len += 1;
+        self.response_len = len;
+    }
+
+    fn handleXtgettcap(self: *Terminal, payload: []const u8) void {
+        // payload: hexname[;hexname...]
+        var len: u16 = 0;
+        self.response_buf[len] = 0x1b;
+        len += 1;
+        self.response_buf[len] = 'P';
+        len += 1;
+        // Validity bit is updated after processing; start optimistic and flip if needed.
+        const valid_pos = len;
+        self.response_buf[len] = '1';
+        len += 1;
+        self.response_buf[len] = '+';
+        len += 1;
+        self.response_buf[len] = 'r';
+        len += 1;
+
+        var any = false;
+        var all_ok = true;
+        var start: usize = 0;
+        var i: usize = 0;
+        while (true) {
+            const at_end = i >= payload.len;
+            if (at_end or payload[i] == ';') {
+                if (i > start) {
+                    const token = payload[start..i];
+                    var name_buf: [64]u8 = undefined;
+                    if (decodeHexBytes(token, name_buf[0..])) |nlen| {
+                        const name = name_buf[0..nlen];
+                        if (lookupTermcap(name)) |value| {
+                            if (any) {
+                                self.response_buf[len] = ';';
+                                len += 1;
+                            }
+                            len = appendHexAscii(self.response_buf[0..], len, name);
+                            self.response_buf[len] = '=';
+                            len += 1;
+                            len = appendHexAscii(self.response_buf[0..], len, value);
+                            any = true;
+                        } else {
+                            all_ok = false;
+                            if (any) {
+                                self.response_buf[len] = ';';
+                                len += 1;
+                            }
+                            len = appendHexAscii(self.response_buf[0..], len, name);
+                            any = true;
+                        }
+                    } else {
+                        all_ok = false;
+                    }
+                }
+                if (at_end) break;
+                start = i + 1;
+            }
+            i += 1;
+            if (at_end) break;
+        }
+        if (!any) all_ok = false;
+        self.response_buf[valid_pos] = if (all_ok) '1' else '0';
+        self.response_buf[len] = 0x1b;
+        len += 1;
+        self.response_buf[len] = '\\';
+        len += 1;
+        self.response_len = len;
+    }
+
+    fn lookupTermcap(name: []const u8) ?[]const u8 {
+        // Keep a practical subset used by modern TUIs / ncurses probes.
+        if (std.mem.eql(u8, name, "TN") or std.mem.eql(u8, name, "name")) return "xterm-256color";
+        if (std.mem.eql(u8, name, "Co") or std.mem.eql(u8, name, "colors")) return "256";
+        if (std.mem.eql(u8, name, "RGB")) return "8/8/8";
+        if (std.mem.eql(u8, name, "Ms")) return "\x1b]52;c;%p2%s\x1b\\";
+        if (std.mem.eql(u8, name, "Ts")) return "\x1b]2;%p1%s\x1b\\";
+        if (std.mem.eql(u8, name, "XM") or std.mem.eql(u8, name, "xm")) return "\x1b[?1006;1000%?%p1%{1}%=%th%el%;";
+        if (std.mem.eql(u8, name, "Smulx")) return "\x1b[4:%p1%dm";
+        if (std.mem.eql(u8, name, "Setulc")) return "\x1b[58:2:%p1%d:%p2%d:%p3%dm";
+        if (std.mem.eql(u8, name, "Ss")) return "\x1b[%p1%d q";
+        if (std.mem.eql(u8, name, "Se")) return "\x1b[ q";
+        if (std.mem.eql(u8, name, "hs")) return "\x1b]2;";
+        if (std.mem.eql(u8, name, "ds")) return "\x1b]2;\x1b\\";
+        if (std.mem.eql(u8, name, "u8")) return "\x1b[?%{1}c";
+        return null;
+    }
+
     fn handleDeviceStatus(self: *Terminal) void {
         const param = self.parser.getParam(0, 0);
         if (param == 6) {
             // CPR – Cursor Position Report: ESC [ row ; col R
             const row = self.cursor_row + 1;
             const col = self.cursor_col + 1;
-            var buf: [64]u8 = undefined;
-            var len: u8 = 0;
-            buf[len] = 0x1B;
+            var len: u16 = 0;
+            self.response_buf[len] = 0x1B;
             len += 1;
-            buf[len] = '[';
+            self.response_buf[len] = '[';
             len += 1;
-            len = appendU16(buf[0..], len, row);
-            buf[len] = ';';
+            len = appendU16(self.response_buf[0..], len, row);
+            self.response_buf[len] = ';';
             len += 1;
-            len = appendU16(buf[0..], len, col);
-            buf[len] = 'R';
+            len = appendU16(self.response_buf[0..], len, col);
+            self.response_buf[len] = 'R';
             len += 1;
-            self.response_buf = buf;
             self.response_len = len;
         }
     }
@@ -959,7 +1175,7 @@ pub const Terminal = struct {
     // Response: ESC[?62;22c  (62=VT220, 22=ANSI color)
     fn handleDeviceAttributes(self: *Terminal) void {
         const resp = "\x1b[?62;22c";
-        var i: u8 = 0;
+        var i: u16 = 0;
         while (i < resp.len and i < self.response_buf.len) : (i += 1) {
             self.response_buf[i] = resp[i];
         }
@@ -970,7 +1186,7 @@ pub const Terminal = struct {
     // Response: ESC[>0;0;0c  (0=VT220, 0=firmware, 0=ROM card)
     fn handleSecondaryDA(self: *Terminal) void {
         const resp = "\x1b[>0;0;0c";
-        var i: u8 = 0;
+        var i: u16 = 0;
         while (i < resp.len and i < self.response_buf.len) : (i += 1) {
             self.response_buf[i] = resp[i];
         }
@@ -1435,12 +1651,12 @@ pub const Terminal = struct {
     }
 };
 
-fn appendU16(buf: []u8, start: u8, val: u16) u8 {
+fn appendU16(buf: []u8, start: u16, val: u16) u16 {
     var v = val;
     var tmp: [5]u8 = undefined;
     var count: u8 = 0;
     if (v == 0) {
-        buf[start] = '0';
+        if (start < buf.len) buf[start] = '0';
         return start + 1;
     }
     while (v > 0) : (count += 1) {
@@ -1451,10 +1667,63 @@ fn appendU16(buf: []u8, start: u8, val: u16) u8 {
     var i = count;
     while (i > 0) {
         i -= 1;
-        buf[pos] = tmp[i];
+        if (pos < buf.len) buf[pos] = tmp[i];
         pos += 1;
     }
     return pos;
+}
+
+fn appendBytes(buf: []u8, start: u16, bytes: []const u8) u16 {
+    var pos = start;
+    for (bytes) |b| {
+        if (pos >= buf.len) break;
+        buf[pos] = b;
+        pos += 1;
+    }
+    return pos;
+}
+
+fn appendHexByte(buf: []u8, start: u16, value: u8) u16 {
+    const hex = "0123456789ABCDEF";
+    var pos = start;
+    if (pos < buf.len) {
+        buf[pos] = hex[(value >> 4) & 0xF];
+        pos += 1;
+    }
+    if (pos < buf.len) {
+        buf[pos] = hex[value & 0xF];
+        pos += 1;
+    }
+    return pos;
+}
+
+fn appendHexAscii(buf: []u8, start: u16, bytes: []const u8) u16 {
+    var pos = start;
+    for (bytes) |b| pos = appendHexByte(buf, pos, b);
+    return pos;
+}
+
+fn hexNibble(c: u8) ?u8 {
+    return switch (c) {
+        '0'...'9' => c - '0',
+        'a'...'f' => c - 'a' + 10,
+        'A'...'F' => c - 'A' + 10,
+        else => null,
+    };
+}
+
+fn decodeHexBytes(src: []const u8, out: []u8) ?usize {
+    if ((src.len & 1) != 0) return null;
+    var oi: usize = 0;
+    var i: usize = 0;
+    while (i + 1 < src.len) : (i += 2) {
+        const hi = hexNibble(src[i]) orelse return null;
+        const lo = hexNibble(src[i + 1]) orelse return null;
+        if (oi >= out.len) return null;
+        out[oi] = (hi << 4) | lo;
+        oi += 1;
+    }
+    return oi;
 }
 
 fn rgbTo256(r: u8, g: u8, b: u8) u16 {

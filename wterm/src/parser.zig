@@ -1,6 +1,7 @@
 pub const MAX_PARAMS: u8 = 16;
 pub const MAX_INTERMEDIATES: u8 = 2;
 pub const MAX_OSC: u16 = 65535;
+pub const MAX_DCS: u16 = 4096;
 
 pub const Action = enum {
     none,
@@ -9,6 +10,7 @@ pub const Action = enum {
     csi_dispatch,
     esc_dispatch,
     osc_dispatch,
+    dcs_dispatch,
 };
 
 pub const State = enum {
@@ -20,6 +22,8 @@ pub const State = enum {
     csi_intermediate,
     csi_ignore,
     osc_string,
+    dcs_entry,
+    dcs_string,
 };
 
 pub const Parser = struct {
@@ -42,17 +46,26 @@ pub const Parser = struct {
     osc_data: [MAX_OSC]u8 = undefined,
     osc_len: u16 = 0,
 
+    // DCS collected data
+    dcs_data: [MAX_DCS]u8 = undefined,
+    dcs_len: u16 = 0,
+    dcs_private: u8 = 0,
+
     // UTF-8 decoder
     utf8_buf: [4]u8 = undefined,
     utf8_remaining: u3 = 0,
     utf8_expected: u3 = 0,
 
     pub fn feed(self: *Parser, byte: u8) Action {
-        // ESC always starts a new sequence (except in OSC where ST = ESC \ terminates)
+        // ESC always starts a new sequence (except in OSC/DCS where ST = ESC \ terminates)
         if (byte == 0x1B) {
             if (self.state == .osc_string) {
                 self.state = .escape;
                 return .osc_dispatch;
+            }
+            if (self.state == .dcs_string or self.state == .dcs_entry) {
+                self.state = .escape;
+                return .dcs_dispatch;
             }
             self.enterEscape();
             return .none;
@@ -73,6 +86,8 @@ pub const Parser = struct {
             .csi_intermediate => self.handleCsiIntermediate(byte),
             .csi_ignore => self.handleCsiIgnore(byte),
             .osc_string => self.handleOscString(byte),
+            .dcs_entry => self.handleDcsEntry(byte),
+            .dcs_string => self.handleDcsString(byte),
         };
     }
 
@@ -166,6 +181,15 @@ pub const Parser = struct {
         if (byte == ']') {
             self.state = .osc_string;
             self.osc_len = 0;
+            return .none;
+        }
+        if (byte == 'P') {
+            self.enterDcs();
+            return .none;
+        }
+        // ST terminator residual after OSC/DCS: ESC \
+        if (byte == '\\') {
+            self.state = .ground;
             return .none;
         }
         if (byte >= 0x20 and byte <= 0x2F) {
@@ -298,6 +322,79 @@ pub const Parser = struct {
             if (self.osc_len < MAX_OSC) {
                 self.osc_data[self.osc_len] = byte;
                 self.osc_len += 1;
+            }
+        }
+        return .none;
+    }
+
+    // -- DCS --
+
+    fn enterDcs(self: *Parser) void {
+        self.state = .dcs_entry;
+        self.dcs_len = 0;
+        self.dcs_private = 0;
+        self.param_count = 0;
+        self.params_full = false;
+        self.intermediate_count = 0;
+        self.csi_private = 0;
+        var i: u8 = 0;
+        while (i < MAX_PARAMS) : (i += 1) {
+            self.params[i] = 0;
+            self.subparam[i] = false;
+        }
+    }
+
+    fn handleDcsEntry(self: *Parser, byte: u8) Action {
+        // Collect optional params/intermediates then transition to string body.
+        if (byte == '?' or byte == '>' or byte == '!' or byte == '=' or byte == '<' or byte == '$' or byte == '+') {
+            if (self.dcs_private == 0) self.dcs_private = byte else if (self.intermediate_count < MAX_INTERMEDIATES) {
+                self.intermediates[self.intermediate_count] = byte;
+                self.intermediate_count += 1;
+            }
+            return .none;
+        }
+        if (byte >= '0' and byte <= '9') {
+            if (!self.params_full) {
+                const idx = if (self.param_count == 0) blk: {
+                    self.param_count = 1;
+                    break :blk @as(u8, 0);
+                } else self.param_count - 1;
+                const digit: u16 = byte - '0';
+                self.params[idx] = self.params[idx] *| 10 +| digit;
+            }
+            return .none;
+        }
+        if (byte == ';' or byte == ':') {
+            if (self.param_count < MAX_PARAMS) {
+                if (self.param_count == 0) self.param_count = 1;
+                self.param_count += 1;
+                if (self.param_count > MAX_PARAMS) {
+                    self.param_count = MAX_PARAMS;
+                    self.params_full = true;
+                }
+            }
+            return .none;
+        }
+        if (byte >= 0x20 and byte <= 0x2F) {
+            self.collectIntermediate(byte);
+            return .none;
+        }
+        // First non-parameter byte begins the DCS string body, including the
+        // identifier for XTGETTCAP/DECRQSS (e.g. 'q').
+        self.state = .dcs_string;
+        return self.handleDcsString(byte);
+    }
+
+    fn handleDcsString(self: *Parser, byte: u8) Action {
+        // BEL is accepted as a non-standard terminator for robustness.
+        if (byte == 0x07) {
+            self.state = .ground;
+            return .dcs_dispatch;
+        }
+        if (byte >= 0x20 and byte <= 0x7E) {
+            if (self.dcs_len < MAX_DCS) {
+                self.dcs_data[self.dcs_len] = byte;
+                self.dcs_len += 1;
             }
         }
         return .none;
