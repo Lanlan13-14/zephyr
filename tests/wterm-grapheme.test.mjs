@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {WasmBridge} from '../public/vendor/wterm-fork/core/index.js';
+test('combining mark stays in one cell',async()=>{const b=await WasmBridge.load();b.init(20,4);b.writeString('e\u0301');assert.equal(b.getCursor().col,1);assert.equal(b.getGrapheme(b.getCell(0,0).char),'e\u0301');});
+test('emoji modifier and ZWJ do not advance extra cells',async()=>{const b=await WasmBridge.load();b.init(20,4);b.writeString('👍🏽');assert.equal(b.getCursor().col,2);assert.equal(b.getGrapheme(b.getCell(0,0).char),'👍🏽');b.init(20,4);b.writeString('👩‍💻');assert.equal(b.getCursor().col,2);assert.equal(b.getGrapheme(b.getCell(0,0).char),'👩‍💻');});

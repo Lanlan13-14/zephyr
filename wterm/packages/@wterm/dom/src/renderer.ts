@@ -40,7 +40,7 @@ function cellBgCSS(bg: number, bgRgb: number | undefined): string | null {
   return colorToCSS(bg);
 }
 
-export function buildCellStyle(
+function buildCellStyle(
   fg: number,
   bg: number,
   flags: number,
@@ -309,6 +309,7 @@ export class Renderer {
     lineLen: number,
     rowIndex: number,
     getHyperlink: (id: number) => string | null,
+    getGrapheme: (char: number) => string | null,
     screenReverse: boolean,
   ): void {
     let html = "";
@@ -366,7 +367,7 @@ export class Renderer {
           runStart = col + 1;
           continue;
         }
-        const ch = inBounds && cp >= 32 ? String.fromCodePoint(cp) : " ";
+        const ch = inBounds && cp >= 32 ? (getGrapheme(cp) || String.fromCodePoint(cp)) : " ";
         const style = inBounds
           ? buildCellStyle(cell.fg, cell.bg, cell.flags, cell.fgRgb, cell.bgRgb, screenReverse)
           : "";
@@ -423,7 +424,7 @@ export class Renderer {
     rowEl.className = "term-row term-scrollback-row";
     const lineLen = core.getScrollbackLineLen(sbOffset);
 
-    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1, (id) => core.getHyperlink(id), this.screenReverse);
+    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1, (id) => core.getHyperlink(id), (char) => core.getGrapheme(char), this.screenReverse);
     return rowEl;
   }
 
@@ -479,7 +480,7 @@ export class Renderer {
       this.screenReverse,
     );
 
-    const ch = cell.char >= 32 ? String.fromCodePoint(cell.char) : " ";
+    const ch = core.getGrapheme(cell.char) || (cell.char >= 32 && cell.char <= 0x10ffff ? String.fromCodePoint(cell.char) : " ");
     this.cursorEl.textContent = ch;
     // DECSCUSR: apply cursor style class (0-6)
     const styleClass = `term-cursor-style-${cursor.style || 0}`;
@@ -565,6 +566,7 @@ export class Renderer {
         this.cols,
         r,
         (id) => core.getHyperlink(id),
+        (char) => core.getGrapheme(char),
         this.screenReverse,
       );
 

@@ -1814,7 +1814,7 @@ function collectWTermBufferLines() {
         let text = '';
         for (let col = 0; col < cols; col += 1) {
             const cp = getter(col)?.char || 0;
-            text += cp >= 32 ? String.fromCodePoint(cp) : ' ';
+            text += bridge.getGrapheme?.(cp) || (cp >= 32 && cp <= 0x10ffff ? String.fromCodePoint(cp) : ' ');
         }
         return cleanTerminalRowText(text);
     };
@@ -2258,7 +2258,7 @@ function getRangeIntersectionText(range, node) {
 
 function bridgeCellToChar(cell) {
     const cp = Number(cell?.char || 0);
-    return cp >= 32 ? String.fromCodePoint(cp) : ' ';
+    return term?.bridge?.getGrapheme?.(cp) || (cp >= 32 && cp <= 0x10ffff ? String.fromCodePoint(cp) : ' ');
 }
 
 function readMainBufferRowText(rowIndex, cols) {

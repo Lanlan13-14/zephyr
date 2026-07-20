@@ -44,6 +44,7 @@ export interface TerminalCore {
   // -- Grid --
   getCell(row: number, col: number): CellData;
   getHyperlink(id: number): string | null;
+  getGrapheme(char: number): string | null;
   isDirtyRow(row: number): boolean;
   clearDirty(): void;
   getCols(): number;

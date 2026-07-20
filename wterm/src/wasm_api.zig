@@ -135,6 +135,8 @@ export fn getClipboardSelection() u32 { return terminal.clipboard_selection; }
 export fn getClipboardPtr() [*]const u8 { return &terminal.clipboard_data; }
 export fn getClipboardLen() u32 { return terminal.clipboard_len; }
 export fn clearClipboard() void { terminal.clipboard_pending = false; terminal.clipboard_len = 0; }
+export fn getGraphemePtr(id: u32) [*]const u8 { if (id == 0 or id > terminal.grapheme_count) return &terminal.graphemes[0]; return &terminal.graphemes[id - 1]; }
+export fn getGraphemeLen(id: u32) u32 { if (id == 0 or id > terminal.grapheme_count) return 0; return terminal.grapheme_lens[id - 1]; }
 
 export fn getTitleChanged() u32 {
     if (terminal.title_changed) {

@@ -37,6 +37,9 @@ comptime {
 
 const MAX_LINKS: usize = 256;
 const MAX_LINK_URI: usize = 512;
+const MAX_GRAPHEMES: usize = 4096;
+const MAX_GRAPHEME_BYTES: usize = 64;
+const GRAPHEME_MARKER: u32 = 0x80000000;
 
 pub const Terminal = struct {
     grid: Grid,
@@ -117,6 +120,10 @@ pub const Terminal = struct {
     clipboard_selection: u8 = 'c',
     clipboard_len: u16 = 0,
     clipboard_data: [65535]u8 = undefined,
+    grapheme_count: u16 = 0,
+    grapheme_lens: [MAX_GRAPHEMES]u8 = [_]u8{0} ** MAX_GRAPHEMES,
+    graphemes: [MAX_GRAPHEMES][MAX_GRAPHEME_BYTES]u8 = undefined,
+    join_next_grapheme: bool = false,
 
     // Response buffer for DSR and similar host-to-application replies
     response_buf: [64]u8 = undefined,
@@ -210,6 +217,9 @@ pub const Terminal = struct {
         self.clipboard_pending = false;
         self.clipboard_query = false;
         self.clipboard_len = 0;
+        self.grapheme_count = 0;
+        self.grapheme_lens = [_]u8{0} ** MAX_GRAPHEMES;
+        self.join_next_grapheme = false;
         self.response_len = 0;
         self.tab_stops = initTabStops();
     }
@@ -455,7 +465,47 @@ pub const Terminal = struct {
         return false;
     }
 
+    fn isZeroWidthCodepoint(cp: u21) bool {
+        return (cp >= 0x0300 and cp <= 0x036F) or (cp >= 0x1AB0 and cp <= 0x1AFF) or
+            (cp >= 0x1DC0 and cp <= 0x1DFF) or (cp >= 0x20D0 and cp <= 0x20FF) or
+            (cp >= 0xFE00 and cp <= 0xFE0F) or (cp >= 0xFE20 and cp <= 0xFE2F) or
+            (cp >= 0xE0100 and cp <= 0xE01EF) or (cp >= 0x1F3FB and cp <= 0x1F3FF) or cp == 0x200D;
+    }
+
+    fn encodeUtf8(cp: u21, out: *[4]u8) usize {
+        if (cp <= 0x7F) { out[0] = @intCast(cp); return 1; }
+        if (cp <= 0x7FF) { out[0] = @intCast(0xC0 | (cp >> 6)); out[1] = @intCast(0x80 | (cp & 0x3F)); return 2; }
+        if (cp <= 0xFFFF) { out[0] = @intCast(0xE0 | (cp >> 12)); out[1] = @intCast(0x80 | ((cp >> 6) & 0x3F)); out[2] = @intCast(0x80 | (cp & 0x3F)); return 3; }
+        out[0] = @intCast(0xF0 | (cp >> 18)); out[1] = @intCast(0x80 | ((cp >> 12) & 0x3F)); out[2] = @intCast(0x80 | ((cp >> 6) & 0x3F)); out[3] = @intCast(0x80 | (cp & 0x3F)); return 4;
+    }
+
+    fn appendToPreviousGrapheme(self: *Terminal, cp: u21) bool {
+        var row = self.cursor_row; var col = self.cursor_col;
+        if (!self.wrap_pending) { if (col > 0) col -= 1 else if (row > 0 and self.row_wrapped[row - 1] != 0) { row -= 1; col = self.cols - 1; } else return false; }
+        var cell = self.grid.getCell(row, col);
+        if (cell.wide == cell_mod.WIDE_CONT and col > 0) { col -= 1; cell = self.grid.getCell(row, col); }
+        var bytes: [MAX_GRAPHEME_BYTES]u8 = undefined; var len: usize = 0;
+        if ((cell.char & GRAPHEME_MARKER) != 0) { const id: usize = (cell.char & ~GRAPHEME_MARKER) - 1; if (id >= self.grapheme_count) return false; len = self.grapheme_lens[id]; @memcpy(bytes[0..len], self.graphemes[id][0..len]); }
+        else { var encoded: [4]u8 = undefined; const n = encodeUtf8(@intCast(cell.char), &encoded); @memcpy(bytes[0..n], encoded[0..n]); len = n; }
+        var extra: [4]u8 = undefined; const n = encodeUtf8(cp, &extra); if (len + n > MAX_GRAPHEME_BYTES or self.grapheme_count >= MAX_GRAPHEMES) return false;
+        @memcpy(bytes[len..len+n], extra[0..n]); len += n;
+        var existing: usize = 0;
+        while (existing < self.grapheme_count) : (existing += 1) {
+            if (self.grapheme_lens[existing] == len and std.mem.eql(u8, self.graphemes[existing][0..len], bytes[0..len])) {
+                cell.char = GRAPHEME_MARKER | @as(u32, @intCast(existing + 1)); self.grid.setCell(row, col, cell); return true;
+            }
+        }
+        if (self.grapheme_count >= MAX_GRAPHEMES) return false;
+        const id: usize = self.grapheme_count; @memcpy(self.graphemes[id][0..len], bytes[0..len]); self.grapheme_lens[id] = @intCast(len); self.grapheme_count += 1;
+        cell.char = GRAPHEME_MARKER | @as(u32, @intCast(id + 1)); self.grid.setCell(row, col, cell); return true;
+    }
+
     fn printChar(self: *Terminal, codepoint: u21) void {
+        const zero = isZeroWidthCodepoint(codepoint);
+        if (zero or self.join_next_grapheme) {
+            if (self.appendToPreviousGrapheme(codepoint)) { self.join_next_grapheme = codepoint == 0x200D; return; }
+            self.join_next_grapheme = false;
+        }
         if (self.wrap_pending) {
             self.row_wrapped[self.cursor_row] = 1;
             self.cursor_col = 0;

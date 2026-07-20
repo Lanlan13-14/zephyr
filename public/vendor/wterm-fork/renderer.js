@@ -230,7 +230,7 @@ class Renderer {
     this.prevCursorRow = -1;
     this.prevCursorCol = -1;
   }
-  _buildRowContent(rowEl, getCell, lineLen, rowIndex, getHyperlink, screenReverse) {
+  _buildRowContent(rowEl, getCell, lineLen, rowIndex, getHyperlink, getGrapheme, screenReverse) {
     let html = "";
     let runStyle = "";
     let runText = "";
@@ -275,7 +275,7 @@ class Renderer {
           runStart = col + 1;
           continue;
         }
-        const ch = inBounds && cp >= 32 ? String.fromCodePoint(cp) : " ";
+        const ch = inBounds && cp >= 32 ? getGrapheme(cp) || String.fromCodePoint(cp) : " ";
         const style = inBounds ? buildCellStyle(cell.fg, cell.bg, cell.flags, cell.fgRgb, cell.bgRgb, screenReverse) : "";
         const wideAttr = inBounds && cell.wide === 1 ? " term-wide" : "";
         const link = inBounds ? safeHyperlink(getHyperlink(cell.linkId || 0)) : null;
@@ -320,7 +320,7 @@ class Renderer {
     const rowEl = document.createElement("div");
     rowEl.className = "term-row term-scrollback-row";
     const lineLen = core.getScrollbackLineLen(sbOffset);
-    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1, (id) => core.getHyperlink(id), this.screenReverse);
+    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1, (id) => core.getHyperlink(id), (char) => core.getGrapheme(char), this.screenReverse);
     return rowEl;
   }
   syncScrollback(core) {
@@ -362,7 +362,7 @@ class Renderer {
       cell.bgRgb,
       this.screenReverse
     );
-    const ch = cell.char >= 32 ? String.fromCodePoint(cell.char) : " ";
+    const ch = core.getGrapheme(cell.char) || (cell.char >= 32 && cell.char <= 1114111 ? String.fromCodePoint(cell.char) : " ");
     this.cursorEl.textContent = ch;
     const styleClass = `term-cursor-style-${cursor.style || 0}`;
     this.cursorEl.className = `term-cursor-overlay ${styleClass}`;
@@ -425,6 +425,7 @@ class Renderer {
         this.cols,
         r,
         (id) => core.getHyperlink(id),
+        (char) => core.getGrapheme(char),
         this.screenReverse
       );
       const newSigs = [];
@@ -471,6 +472,5 @@ class Renderer {
   }
 }
 export {
-  Renderer,
-  buildCellStyle
+  Renderer
 };

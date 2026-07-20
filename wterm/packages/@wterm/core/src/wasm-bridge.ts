@@ -40,6 +40,8 @@ interface WasmExports {
   getClipboardPtr(): number;
   getClipboardLen(): number;
   clearClipboard(): void;
+  getGraphemePtr(id: number): number;
+  getGraphemeLen(id: number): number;
   getTitleChanged(): number;
   getScrollbackCount(): number;
   getScrollbackLine(offset: number): number;
@@ -235,6 +237,13 @@ export class WasmBridge implements TerminalCore {
     const len = this.exports.getHyperlinkLen(id);
     if (!len) return null;
     return this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getHyperlinkPtr(id), len));
+  }
+
+  getGrapheme(char: number): string | null {
+    if ((char & 0x80000000) === 0) return null;
+    const id = (char & 0x7fffffff) >>> 0, len = this.exports.getGraphemeLen(id);
+    if (!len) return null;
+    return this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getGraphemePtr(id), len));
   }
 
   takeClipboardRequest(): { selection: string; base64: string; query: boolean } | null {
