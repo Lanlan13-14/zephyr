@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260720-notes-craft1">
+    <link rel="stylesheet" href="style.css?v=20260720-ai-runtime5">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -438,7 +438,9 @@
                             <form id="aiSettingsForm" class="settings-form ai-settings-form">
                                 <label class="check-line"><input type="checkbox" id="aiEnabled"> 启用 AI 助理</label>
                                 <label>助理名称</label><input id="aiAssistantName" maxlength="40" placeholder="Zephyr AI">
-                                <label>默认模型供应商</label><select id="aiDefaultProvider"><option value="">自动选择第一个可用供应商</option></select>
+                                <label>默认模型供应商</label>
+                                <input type="hidden" id="aiDefaultProvider" value="">
+                                <button type="button" class="ui-btn ai-picker-btn ai-settings-picker" id="aiDefaultProviderBtn" data-ai-field-picker="defaultProvider">自动选择第一个可用供应商</button>
                                 <label>默认模型</label><input id="aiDefaultModel" placeholder="留空自动使用供应商默认/第一个模型">
                                 <label>系统提示词</label><textarea id="aiSystemPrompt" rows="5" placeholder="给 AI 助理的全局行为要求，可留空。"></textarea>
                                 <h3>上下文长度</h3>
@@ -470,6 +472,22 @@
                                 <label class="check-line"><input type="checkbox" id="aiAutoConfirm"> 自动确认敏感操作</label>
                                 <label>自动确认延迟（毫秒）</label><input id="aiAutoConfirmDelayMs" type="number" min="0" max="60000" step="100" placeholder="2500">
                                 <p class="field-hint">敏感操作包括远程执行、远程写文件等。关闭确认或开启自动确认会显著提高风险。</p>
+                                <h3>权限规则（Go Runtime）</h3>
+                                <p class="field-hint">优先级：deny &gt; ask &gt; allow &gt; 模式默认。规则形如 <code>remote_execute(rm -rf*)</code> 或 <code>list_connections</code>。每行一条。</p>
+                                <label>默认模式</label>
+                                <div class="ai-segment ai-segment-block" id="aiPermRuleMode" data-value="ask" data-cols="3" role="tablist" aria-label="权限默认模式">
+                                    <span class="ai-segment-thumb" aria-hidden="true"></span>
+                                    <button type="button" class="ai-segment-btn active" data-value="ask" role="tab" aria-selected="true" title="写操作询问">Ask</button>
+                                    <button type="button" class="ai-segment-btn" data-value="auto" role="tab" aria-selected="false" title="只读自动，写操作询问">Auto</button>
+                                    <button type="button" class="ai-segment-btn" data-value="yolo" role="tab" aria-selected="false" title="除 deny 外全自动（危险）">Yolo</button>
+                                </div>
+                                <p class="field-hint ai-perm-mode-hint" id="aiPermModeHint">Ask：写操作默认询问</p>
+                                <label>Deny（永久拒绝）</label>
+                                <textarea id="aiPermDeny" rows="3" placeholder="remote_execute(rm -rf*)&#10;connection_delete(*)"></textarea>
+                                <label>Allow（永不询问）</label>
+                                <textarea id="aiPermAllow" rows="3" placeholder="remote_execute(systemctl status*)&#10;remote_read_file(*)"></textarea>
+                                <label>Ask（强制询问）</label>
+                                <textarea id="aiPermAsk" rows="2" placeholder="remote_write_file(*)"></textarea>
                                 <button class="btn btn-primary" type="submit">保存 AI 设置</button>
                             </form>
                             <h2>模型供应商</h2>
@@ -507,6 +525,36 @@
                                 <div class="form-actions"><button class="btn btn-primary" type="submit">保存 Skill</button><button class="btn" type="button" id="aiSkillResetBtn">清空</button></div>
                             </form>
                             <div class="ai-skill-list" id="aiSkillList"></div>
+                            <h2>MCP 服务器（Go AI Runtime）</h2>
+                            <p class="field-hint">仅在启用 <code>ZEPHYR_AI_URL</code> 时生效。stdio 在服务端执行；http 为远程 MCP。工具名形如 <code>mcp__name__tool</code>。</p>
+                            <form id="aiMcpForm" class="settings-form ai-mcp-form">
+                                <input type="hidden" id="aiMcpId">
+                                <div class="form-row">
+                                    <div class="form-group"><label>名称</label><input id="aiMcpName" placeholder="例如 filesystem" maxlength="80"></div>
+                                    <div class="form-group"><label>类型</label>
+                                        <div class="ai-segment ai-segment-block" id="aiMcpType" data-value="stdio" data-cols="2" role="tablist" aria-label="MCP 传输类型">
+                                            <span class="ai-segment-thumb" aria-hidden="true"></span>
+                                            <button type="button" class="ai-segment-btn active" data-value="stdio" role="tab" aria-selected="true">stdio</button>
+                                            <button type="button" class="ai-segment-btn" data-value="http" role="tab" aria-selected="false">http</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="form-group" id="aiMcpStdioFields">
+                                    <label>命令</label><input id="aiMcpCommand" placeholder="npx">
+                                    <label>参数（空格分隔）</label><input id="aiMcpArgs" placeholder="-y @modelcontextprotocol/server-filesystem /data">
+                                    <label>环境变量（KEY=VAL 每行一个）</label><textarea id="aiMcpEnv" rows="3" placeholder="FOO=bar"></textarea>
+                                </div>
+                                <div class="form-group force-hidden" id="aiMcpHttpFields">
+                                    <label>URL</label><input id="aiMcpUrl" placeholder="https://mcp.example.com/mcp">
+                                    <label>Headers（Header: value 每行）</label><textarea id="aiMcpHeaders" rows="3" placeholder="Authorization: Bearer …"></textarea>
+                                </div>
+                                <label>信任为只读的工具名（逗号分隔，原始 MCP 名）</label>
+                                <input id="aiMcpTrustedReadOnly" placeholder="read_file, list_dir">
+                                <label>调用超时（秒）</label><input id="aiMcpTimeout" type="number" min="1" max="7200" value="300">
+                                <label class="check-line"><input type="checkbox" id="aiMcpEnabled" checked> 启用</label>
+                                <div class="form-actions"><button class="btn btn-primary" type="submit">保存 MCP</button><button class="btn" type="button" id="aiMcpResetBtn">清空</button></div>
+                            </form>
+                            <div class="ai-mcp-list" id="aiMcpList"></div>
                         </div>
                         <div class="settings-panel" id="settings-agent">
                             <h2>Zephyr Agent Token</h2>
@@ -556,6 +604,12 @@
                         <input id="aiThinkIntensity" type="hidden">
                         <button class="ui-btn ai-picker-btn" type="button" id="aiProviderPickerBtn">供应商</button>
                         <button class="ui-btn ai-picker-btn" type="button" id="aiModelPickerBtn">模型</button>
+                        <div class="ai-segment ai-collab-segment" id="aiCollabMode" data-value="standard" data-cols="3" role="tablist" aria-label="协作模式">
+                            <span class="ai-segment-thumb" aria-hidden="true"></span>
+                            <button type="button" class="ai-segment-btn active" data-value="standard" role="tab" aria-selected="true">标准</button>
+                            <button type="button" class="ai-segment-btn" data-value="plan" role="tab" aria-selected="false">计划</button>
+                            <button type="button" class="ai-segment-btn" data-value="goal" role="tab" aria-selected="false">Goal</button>
+                        </div>
                         <button class="ui-btn ai-picker-btn" type="button" id="aiThinkPickerBtn">推理</button>
                         <button class="ui-btn" type="button" id="aiUsageBtn">用量</button>
                         <button class="ui-btn" type="button" id="aiBrowserPreviewToggleBtn">浏览器预览</button>
@@ -589,9 +643,16 @@
         <form class="connection-modal ai-provider-modal" id="aiProviderForm">
             <div class="modal-head"><h2 id="aiProviderModalTitle">添加模型供应商</h2><button type="button" class="icon-btn" id="aiProviderCloseBtn">✕</button></div>
             <input type="hidden" id="aiProviderId">
-            <div class="form-row"><div class="form-group"><label>名称</label><input id="aiProviderName" required placeholder="OpenAI / DeepSeek / Claude / Gemini"></div><div class="form-group"><label>类型</label><select id="aiProviderType"><option value="openai-compatible">OpenAI 兼容</option><option value="anthropic">Anthropic Claude</option><option value="gemini">Google Gemini</option></select></div></div>
+            <div class="form-row"><div class="form-group"><label>名称</label><input id="aiProviderName" required placeholder="OpenAI / DeepSeek / Claude / Gemini"></div><div class="form-group"><label>类型</label>
+                <input type="hidden" id="aiProviderType" value="openai-compatible">
+                <button type="button" class="ui-btn ai-picker-btn ai-settings-picker" id="aiProviderTypeBtn" data-ai-field-picker="providerType">OpenAI 兼容</button>
+            </div></div>
             <div class="form-row"><div class="form-group"><label>API Base URL</label><input id="aiProviderBaseUrl" placeholder="https://api.openai.com/v1 / https://api.openai.com/v1/responses / https://api.deepseek.com/v1"></div><div class="form-group"><label>API Key</label><input id="aiProviderApiKey" type="password" placeholder="留 ****** 表示不修改"></div></div>
-            <div class="form-row"><div class="form-group"><label>接口模式（仅 OpenAI / OpenAI 兼容）</label><select id="aiProviderApiMode"><option value="auto">自动识别</option><option value="chat">OpenAI Chat Completions</option><option value="responses">OpenAI Responses API</option></select><p class="field-hint">Claude 固定使用 Anthropic Messages API；Gemini 固定使用 generateContent，不使用此项。</p></div><div class="form-group ai-model-actions"><label>模型列表</label><button class="btn" type="button" id="aiFetchModelsBtn">获取模型</button></div></div>
+            <div class="form-row"><div class="form-group"><label>接口模式（仅 OpenAI / OpenAI 兼容）</label>
+                <input type="hidden" id="aiProviderApiMode" value="auto">
+                <button type="button" class="ui-btn ai-picker-btn ai-settings-picker" id="aiProviderApiModeBtn" data-ai-field-picker="providerApiMode">自动识别</button>
+                <p class="field-hint">Claude 固定使用 Anthropic Messages API；Gemini 固定使用 generateContent，不使用此项。</p>
+            </div><div class="form-group ai-model-actions"><label>模型列表</label><button class="btn" type="button" id="aiFetchModelsBtn">获取模型</button></div></div>
             <div class="form-row"><div class="form-group"><label>模型列表</label><textarea id="aiProviderModels" rows="3" placeholder="保存 API Key/Base URL 后可点获取模型；也可手动填写，逗号或换行分隔"></textarea></div><div class="form-group"><label>默认模型</label><input id="aiProviderDefaultModel" placeholder="留空自动选择第一个可用模型"></div></div>
             <div class="form-group ai-provider-share-box" id="aiProviderShareBox"><label>共享设置</label><label class="check-line"><input type="checkbox" id="aiProviderShareUsers"> 共享给所有用户</label><label class="check-line"><input type="checkbox" id="aiProviderShareAdmins"> 共享给所有管理员</label><label>指定用户（可多选）</label><input id="aiProviderShareSearch" placeholder="搜索用户名"><div id="aiProviderShareTargets" class="ai-provider-share-targets"></div><p class="field-hint">共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。以上选项可以同时开启。</p></div>
             <div class="form-group"><label>模型请求 User-Agent（可选，逐模型）</label><textarea id="aiProviderModelUserAgents" rows="3" placeholder="每行一个：模型名=User-Agent\ngpt-4.1=Mozilla/5.0 ...\nclaude-sonnet-4-5=MyClient/1.0"></textarea><p class="field-hint">只对聊天/生成时匹配的模型请求生效；未配置的模型不发送自定义 User-Agent，保持默认请求行为。</p></div>
@@ -599,7 +660,11 @@
             <h3>模型参数</h3>
             <div class="form-row"><div class="form-group"><label>temperature（-1 不发送）</label><input id="aiProviderTemperature" type="number" step="0.1" min="-1" max="2" value="-1"></div><div class="form-group"><label>top_p（-1 不发送）</label><input id="aiProviderTopP" type="number" step="0.05" min="-1" max="1" value="-1"></div></div>
             <div class="form-row"><div class="form-group"><label>max_tokens / max_output_tokens</label><input id="aiProviderMaxTokens" type="number" min="1" value="4096"></div><div class="form-group"><label>上下文窗口 Tokens（可选）</label><input id="aiProviderContextWindow" type="number" min="1024" step="1024" placeholder="留空使用全局"></div></div>
-            <div class="form-row"><div class="form-group"><label>推理强度（按供应商映射）</label><select id="aiProviderReasoningEffort"><option value="">默认 / 不发送</option><option value="none">none / 关闭（仅部分模型）</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh（仅部分模型）</option></select><p class="field-hint">OpenAI Responses: reasoning.effort；Claude: thinking/output_config；Gemini: thinkingLevel/thinkingBudget。各模型支持值不同，默认不发送。</p></div><div class="form-group"><label class="check-line"><input type="checkbox" id="aiProviderUsePreviousResponse"> OpenAI Responses 使用 previous_response_id（兼容接口慎开）</label></div></div>
+            <div class="form-row"><div class="form-group"><label>推理强度（按供应商映射）</label>
+                <input type="hidden" id="aiProviderReasoningEffort" value="">
+                <button type="button" class="ui-btn ai-picker-btn ai-settings-picker" id="aiProviderReasoningEffortBtn" data-ai-field-picker="providerReasoning">默认 / 不发送</button>
+                <p class="field-hint">OpenAI Responses: reasoning.effort；Claude: thinking/output_config；Gemini: thinkingLevel/thinkingBudget。各模型支持值不同，默认不发送。</p>
+            </div><div class="form-group"><label class="check-line"><input type="checkbox" id="aiProviderUsePreviousResponse"> OpenAI Responses 使用 previous_response_id（兼容接口慎开）</label></div></div>
             <div class="form-row"><div class="form-group"><label>presence_penalty</label><input id="aiProviderPresencePenalty" type="number" step="0.1" value="0"></div><div class="form-group"><label>frequency_penalty</label><input id="aiProviderFrequencyPenalty" type="number" step="0.1" value="0"></div></div>
             <div class="form-group"><label>供应商原生额外参数 JSON</label><textarea id="aiProviderExtraJson" rows="4" placeholder='OpenAI: {"response_format":{"type":"json_object"}}；Claude: {"thinking":{"type":"adaptive","display":"omitted"}}；Gemini: {"thinkingConfig":{"thinkingLevel":"low"}}'></textarea></div>
             <label class="check-line"><input type="checkbox" id="aiProviderEnabled" checked> 启用此供应商</label>
@@ -690,7 +755,7 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260720-notes-craft1" type="module"></script>
+    <script src="app.js?v=20260720-ai-runtime5" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

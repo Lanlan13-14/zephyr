@@ -3710,9 +3710,78 @@ function applyAiVisibility() {
 function renderAiProviderOptions() {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     const providers = ai.providers || [];
-    const defaultSelect = $('#aiDefaultProvider');
-    if (defaultSelect) defaultSelect.innerHTML = '<option value="">自动选择第一个可用供应商</option>' + providers.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name || p.type || '供应商')}</option>`).join('');
-    if (defaultSelect) defaultSelect.value = ai.defaultProviderId || '';
+    const hidden = $('#aiDefaultProvider');
+    const btn = $('#aiDefaultProviderBtn');
+    if (hidden) hidden.value = ai.defaultProviderId || '';
+    if (btn) {
+        const p = providers.find((x) => x.id === (ai.defaultProviderId || ''));
+        btn.textContent = p ? (p.name || p.type || '供应商') : '自动选择第一个可用供应商';
+    }
+}
+
+const AI_FIELD_PICKER_CHOICES = {
+    defaultProvider: () => {
+        const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+        return [
+            { value: '', label: '自动选择第一个可用供应商' },
+            ...(ai.providers || []).map((p) => ({ value: p.id, label: p.name || p.type || '供应商' })),
+        ];
+    },
+    providerType: () => [
+        { value: 'openai-compatible', label: 'OpenAI 兼容' },
+        { value: 'anthropic', label: 'Anthropic Claude' },
+        { value: 'gemini', label: 'Google Gemini' },
+    ],
+    providerApiMode: () => [
+        { value: 'auto', label: '自动识别' },
+        { value: 'chat', label: 'OpenAI Chat Completions' },
+        { value: 'responses', label: 'OpenAI Responses API' },
+    ],
+    providerReasoning: () => [
+        { value: '', label: '默认 / 不发送' },
+        { value: 'none', label: 'none / 关闭（仅部分模型）' },
+        { value: 'minimal', label: 'minimal' },
+        { value: 'low', label: 'low' },
+        { value: 'medium', label: 'medium' },
+        { value: 'high', label: 'high' },
+        { value: 'xhigh', label: 'xhigh（仅部分模型）' },
+    ],
+};
+
+function aiFieldPickerTargets(kind = '') {
+    if (kind === 'defaultProvider') return { input: $('#aiDefaultProvider'), button: $('#aiDefaultProviderBtn') };
+    if (kind === 'providerType') return { input: $('#aiProviderType'), button: $('#aiProviderTypeBtn') };
+    if (kind === 'providerApiMode') return { input: $('#aiProviderApiMode'), button: $('#aiProviderApiModeBtn') };
+    if (kind === 'providerReasoning') return { input: $('#aiProviderReasoningEffort'), button: $('#aiProviderReasoningEffortBtn') };
+    return { input: null, button: null };
+}
+
+function setAiFieldPickerValue(kind, value) {
+    const { input, button } = aiFieldPickerTargets(kind);
+    const choices = (AI_FIELD_PICKER_CHOICES[kind]?.() || []);
+    const match = choices.find((c) => c.value === value) || choices[0];
+    const resolved = match ? match.value : value;
+    if (input) input.value = resolved ?? '';
+    if (button) button.textContent = match?.label || String(resolved || '选择');
+    if (kind === 'providerType' || kind === 'providerApiMode') updateAiProviderModalHints?.();
+}
+
+function openAiFieldPicker(kind = '', anchor = null) {
+    closeAiPickerPopover();
+    const choices = AI_FIELD_PICKER_CHOICES[kind]?.() || [];
+    if (!choices.length || !anchor) return;
+    const { input } = aiFieldPickerTargets(kind);
+    const current = input?.value ?? '';
+    const pop = document.createElement('div');
+    pop.className = 'ai-picker-popover';
+    pop.innerHTML = choices.map((item) => `<button type="button" class="ai-picker-option${item.value === current ? ' active' : ''}" data-field-kind="${escapeHtml(kind)}" data-value="${escapeHtml(item.value)}"><span>${escapeHtml(item.label)}</span>${item.value === current ? '<b>✓</b>' : ''}</button>`).join('');
+    document.body.appendChild(pop);
+    const rect = anchor.getBoundingClientRect();
+    const pr = pop.getBoundingClientRect();
+    pop.style.transformOrigin = 'top left';
+    pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pr.width - 8, rect.left))}px`;
+    pop.style.top = `${Math.max(8, Math.min(window.innerHeight - pr.height - 8, rect.bottom + 8))}px`;
+    requestAnimationFrame(() => pop.classList.add('open'));
 }
 function renderAiHeaderSelectors() {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
@@ -3749,7 +3818,88 @@ function aiHeaderChoices(kind = '') {
     if (kind === 'thinking') return aiThinkingOptionsForProvider(provider, $('#aiModelSelect')?.value || provider.defaultModel || '').map(([value, label]) => ({ value, label }));
     return [];
 }
+/** Custom segmented control (no native <select>). Value lives on data-value. */
+function getAiSegmentValue(id, fallback = '') {
+    const el = typeof id === 'string' ? document.getElementById(id) : id;
+    if (!el) return fallback;
+    return String(el.dataset.value || fallback);
+}
+function setAiSegmentValue(id, value, { silent = false } = {}) {
+    const el = typeof id === 'string' ? document.getElementById(id) : id;
+    if (!el) return;
+    const next = String(value ?? '');
+    const buttons = [...el.querySelectorAll('.ai-segment-btn')];
+    const match = buttons.find((b) => b.dataset.value === next) || buttons[0];
+    const resolved = match?.dataset.value || next;
+    const idx = Math.max(0, buttons.findIndex((b) => b.dataset.value === resolved));
+    el.dataset.value = resolved;
+    el.dataset.index = String(idx);
+    if (buttons.length) el.dataset.cols = String(buttons.length);
+    buttons.forEach((btn) => {
+        const on = btn.dataset.value === resolved;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    if (!silent) {
+        if (el.id === 'aiMcpType') toggleAiMcpTypeFields();
+        if (el.id === 'aiPermRuleMode') updateAiPermModeHint();
+        if (el.id === 'aiCollabMode') {
+            const s = aiCurrentSession();
+            if (s) { s.collabMode = resolved; saveAiChats(); }
+        }
+    }
+}
+function updateAiPermModeHint() {
+    const hint = $('#aiPermModeHint');
+    if (!hint) return;
+    const mode = getAiSegmentValue('aiPermRuleMode', 'ask');
+    hint.textContent = mode === 'auto'
+        ? 'Auto：只读工具自动通过，写操作仍询问'
+        : mode === 'yolo'
+            ? 'Yolo：除 Deny 规则外全部自动执行（高风险）'
+            : 'Ask：写操作默认询问';
+}
+function bindAiSegmentControls(root = document) {
+    root.querySelectorAll?.('.ai-segment').forEach((seg) => {
+        if (!seg.dataset.cols) {
+            const n = seg.querySelectorAll('.ai-segment-btn').length || 3;
+            seg.dataset.cols = String(n);
+        }
+        setAiSegmentValue(seg, seg.dataset.value || seg.querySelector('.ai-segment-btn.active')?.dataset.value || '', { silent: true });
+    });
+}
 function closeAiPickerPopover() { document.querySelector('.ai-picker-popover')?.remove(); }
+/** In-app confirm sheet — never window.confirm. */
+function openAiInlineConfirm({ title = '确认', body = '', confirmLabel = '确认', cancelLabel = '取消', danger = false, onConfirm } = {}) {
+    document.querySelector('.ai-inline-confirm')?.remove();
+    const mask = document.createElement('div');
+    mask.className = 'ai-inline-confirm';
+    mask.innerHTML = `
+      <div class="ai-inline-confirm-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+        <div class="ai-inline-confirm-title">${escapeHtml(title)}</div>
+        <div class="ai-inline-confirm-body">${escapeHtml(body)}</div>
+        <div class="ai-inline-confirm-actions">
+          <button type="button" class="ui-btn" data-ai-inline-cancel>${escapeHtml(cancelLabel)}</button>
+          <button type="button" class="ui-btn ${danger ? 'danger' : 'btn-primary'}" data-ai-inline-ok>${escapeHtml(confirmLabel)}</button>
+        </div>
+      </div>`;
+    const close = () => {
+        mask.classList.add('closing');
+        const done = () => mask.remove();
+        mask.addEventListener('animationend', done, { once: true });
+        setTimeout(done, 220);
+    };
+    mask.addEventListener('click', (e) => {
+        if (e.target === mask || e.target.closest?.('[data-ai-inline-cancel]')) close();
+        if (e.target.closest?.('[data-ai-inline-ok]')) {
+            close();
+            try { onConfirm?.(); } catch (err) { toast(err.message || String(err)); }
+        }
+    });
+    document.body.appendChild(mask);
+    requestAnimationFrame(() => mask.classList.add('open'));
+    mask.querySelector('[data-ai-inline-ok]')?.focus?.();
+}
 function openAiPicker(kind = '', anchor = null) {
     closeAiPickerPopover();
     const choices = aiHeaderChoices(kind);
@@ -3761,8 +3911,11 @@ function openAiPicker(kind = '', anchor = null) {
     document.body.appendChild(pop);
     const rect = anchor.getBoundingClientRect();
     const pr = pop.getBoundingClientRect();
+    // origin near trigger (popover, not modal)
+    pop.style.transformOrigin = 'top left';
     pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pr.width - 8, rect.left))}px`;
     pop.style.top = `${Math.max(8, Math.min(window.innerHeight - pr.height - 8, rect.bottom + 8))}px`;
+    requestAnimationFrame(() => pop.classList.add('open'));
 }
 function applyAiPickerChoice(kind = '', value = '') {
     if (kind === 'provider') { $('#aiProviderSelect').value = value; renderAiHeaderSelectors(); }
@@ -3855,13 +4008,134 @@ function renderAiSettingsForm() {
     $('#aiMemoryMaxItems').value = ai.memory?.maxItems ?? 500;
     $('#aiPlannerEnabled').checked = ai.planner?.enabled !== false;
     $('#aiRequirePlanBeforeTools').checked = !!ai.planner?.requirePlanBeforeTools;
+    setAiSegmentValue('aiPermRuleMode', ai.permissions?.mode || 'ask', { silent: true });
+    updateAiPermModeHint();
+    if ($('#aiPermDeny')) $('#aiPermDeny').value = (ai.permissions?.deny || []).join('\n');
+    if ($('#aiPermAllow')) $('#aiPermAllow').value = (ai.permissions?.allow || []).join('\n');
+    if ($('#aiPermAsk')) $('#aiPermAsk').value = (ai.permissions?.ask || []).join('\n');
     renderAiProviderOptions();
     renderAiProviderList();
     renderAiEnvList();
     renderAiMemoryList();
     renderAiPlanList();
     renderAiSkillList();
+    renderAiMcpList();
     applyAiVisibility();
+}
+function parseEnvLines(text = '') {
+    const env = {};
+    String(text || '').split('\n').forEach((line) => {
+        const s = line.trim();
+        if (!s || s.startsWith('#')) return;
+        const i = s.indexOf('=');
+        if (i <= 0) return;
+        env[s.slice(0, i).trim()] = s.slice(i + 1).trim();
+    });
+    return env;
+}
+function parseHeaderLines(text = '') {
+    const headers = {};
+    String(text || '').split('\n').forEach((line) => {
+        const s = line.trim();
+        if (!s) return;
+        const i = s.indexOf(':');
+        if (i <= 0) return;
+        headers[s.slice(0, i).trim()] = s.slice(i + 1).trim();
+    });
+    return headers;
+}
+function renderAiMcpList() {
+    const list = $('#aiMcpList');
+    if (!list) return;
+    const servers = Array.isArray(aiSettingsState?.mcpServers) ? aiSettingsState.mcpServers : (settings.ai?.mcpServers || []);
+    if (!servers.length) {
+        list.innerHTML = '<p class="empty-state">暂无 MCP 服务器。配置后由 Go AI Runtime 在每次 run 时连接。</p>';
+        return;
+    }
+    list.innerHTML = servers.map((s) => {
+        const detail = s.type === 'http' ? escapeHtml(s.url || '') : escapeHtml([s.command, ...(s.args || [])].filter(Boolean).join(' '));
+        return `<div class="ai-list-row" data-ai-mcp-id="${escapeHtml(s.id)}">
+            <div class="ai-list-main"><strong>${escapeHtml(s.name)}</strong>
+            <span class="muted">${escapeHtml(s.type)} · ${s.enabled === false ? '停用' : '启用'}</span>
+            <div class="muted mono">${detail}</div></div>
+            <div class="ai-list-actions">
+                <button type="button" class="tool-btn" data-ai-mcp-edit="${escapeHtml(s.id)}">编辑</button>
+                <button type="button" class="tool-btn danger" data-ai-mcp-del="${escapeHtml(s.id)}">删除</button>
+            </div></div>`;
+    }).join('');
+}
+function resetAiMcpForm() {
+    $('#aiMcpId').value = '';
+    $('#aiMcpName').value = '';
+    setAiSegmentValue('aiMcpType', 'stdio', { silent: true });
+    $('#aiMcpCommand').value = '';
+    $('#aiMcpArgs').value = '';
+    $('#aiMcpEnv').value = '';
+    $('#aiMcpUrl').value = '';
+    $('#aiMcpHeaders').value = '';
+    $('#aiMcpTrustedReadOnly').value = '';
+    $('#aiMcpTimeout').value = '300';
+    $('#aiMcpEnabled').checked = true;
+    toggleAiMcpTypeFields();
+}
+function toggleAiMcpTypeFields() {
+    const http = getAiSegmentValue('aiMcpType', 'stdio') === 'http';
+    $('#aiMcpStdioFields')?.classList.toggle('force-hidden', http);
+    $('#aiMcpHttpFields')?.classList.toggle('force-hidden', !http);
+}
+function fillAiMcpForm(s) {
+    if (!s) return resetAiMcpForm();
+    $('#aiMcpId').value = s.id || '';
+    $('#aiMcpName').value = s.name || '';
+    setAiSegmentValue('aiMcpType', s.type === 'http' ? 'http' : 'stdio', { silent: true });
+    $('#aiMcpCommand').value = s.command || '';
+    $('#aiMcpArgs').value = Array.isArray(s.args) ? s.args.join(' ') : '';
+    $('#aiMcpEnv').value = s.env ? Object.entries(s.env).map(([k, v]) => `${k}=${v}`).join('\n') : '';
+    $('#aiMcpUrl').value = s.url || '';
+    $('#aiMcpHeaders').value = s.headers ? Object.entries(s.headers).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
+    $('#aiMcpTrustedReadOnly').value = Array.isArray(s.trustedReadOnlyTools) ? s.trustedReadOnlyTools.join(', ') : '';
+    $('#aiMcpTimeout').value = s.callTimeoutSeconds || 300;
+    $('#aiMcpEnabled').checked = s.enabled !== false;
+    toggleAiMcpTypeFields();
+}
+async function saveAiMcpFromForm(e) {
+    e?.preventDefault?.();
+    const ai = normalizeAiSettings(settings.ai || {});
+    const id = $('#aiMcpId').value || (crypto.randomUUID?.() || `mcp_${Date.now()}`);
+    const type = getAiSegmentValue('aiMcpType', 'stdio') === 'http' ? 'http' : 'stdio';
+    const next = {
+        id,
+        name: $('#aiMcpName').value.trim(),
+        type,
+        command: $('#aiMcpCommand').value.trim(),
+        args: $('#aiMcpArgs').value.trim().split(/\s+/).filter(Boolean),
+        env: parseEnvLines($('#aiMcpEnv').value),
+        url: $('#aiMcpUrl').value.trim(),
+        headers: parseHeaderLines($('#aiMcpHeaders').value),
+        trustedReadOnlyTools: $('#aiMcpTrustedReadOnly').value.split(/[\n,]/).map((x) => x.trim()).filter(Boolean),
+        callTimeoutSeconds: Number($('#aiMcpTimeout').value) || 300,
+        enabled: $('#aiMcpEnabled').checked,
+        updatedAt: Date.now(),
+    };
+    if (!next.name) return toast('MCP 名称不能为空');
+    if (type === 'http' && !next.url) return toast('HTTP MCP 需要 URL');
+    if (type === 'stdio' && !next.command) return toast('stdio MCP 需要命令');
+    const list = Array.isArray(ai.mcpServers) ? ai.mcpServers.slice() : [];
+    const idx = list.findIndex((x) => x.id === id);
+    if (idx >= 0) list[idx] = next; else list.push(next);
+    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai: { ...ai, mcpServers: list } }) });
+    aiSettingsState = normalizeAiSettings(settings.ai || {});
+    renderAiMcpList();
+    resetAiMcpForm();
+    toast('MCP 已保存');
+}
+async function deleteAiMcp(id) {
+    const ai = normalizeAiSettings(settings.ai || {});
+    const list = (ai.mcpServers || []).filter((s) => s.id !== id);
+    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai: { ...ai, mcpServers: list } }) });
+    aiSettingsState = normalizeAiSettings(settings.ai || {});
+    renderAiMcpList();
+    toast('已删除');
 }
 function collectAiSettingsForm() {
     const old = normalizeAiSettings(settings.ai || aiSettingsState || {});
@@ -3894,6 +4168,10 @@ function collectAiSettingsForm() {
             notesRead: $('#aiPermNotesRead').checked,
             notesWrite: $('#aiPermNotesWrite').checked,
             env: $('#aiPermEnv').checked,
+            mode: getAiSegmentValue('aiPermRuleMode', 'ask'),
+            deny: String($('#aiPermDeny')?.value || '').split('\n').map((x) => x.trim()).filter(Boolean),
+            allow: String($('#aiPermAllow')?.value || '').split('\n').map((x) => x.trim()).filter(Boolean),
+            ask: String($('#aiPermAsk')?.value || '').split('\n').map((x) => x.trim()).filter(Boolean),
         },
         planner: { enabled: $('#aiPlannerEnabled').checked, requirePlanBeforeTools: $('#aiRequirePlanBeforeTools').checked },
         memory: { enabled: $('#aiMemoryEnabled').checked, maxItems: Number($('#aiMemoryMaxItems').value) || 500 },
@@ -3913,10 +4191,10 @@ async function openAiProviderModal(provider = null) {
     $('#aiProviderModalTitle').textContent = provider ? '编辑模型供应商' : '添加模型供应商';
     $('#aiProviderId').value = provider?.id || '';
     $('#aiProviderName').value = provider?.name || '';
-    $('#aiProviderType').value = provider?.type || 'openai-compatible';
+    setAiFieldPickerValue('providerType', provider?.type || 'openai-compatible');
     $('#aiProviderBaseUrl').value = provider?.baseUrl || '';
     $('#aiProviderApiKey').value = provider?.hasApiKey ? '******' : '';
-    $('#aiProviderApiMode').value = provider?.apiMode || provider?.options?.apiMode || 'auto';
+    setAiFieldPickerValue('providerApiMode', provider?.apiMode || provider?.options?.apiMode || 'auto');
     $('#aiProviderModels').value = Array.isArray(provider?.models) ? provider.models.join('\n') : (provider?.models || '');
     $('#aiProviderDefaultModel').value = provider?.defaultModel || '';
     if ($('#aiProviderModelUserAgents')) $('#aiProviderModelUserAgents').value = provider?.modelUserAgents || '';
@@ -3927,7 +4205,7 @@ async function openAiProviderModal(provider = null) {
     $('#aiProviderMaxTokens').value = provider?.options?.max_tokens ?? provider?.options?.max_output_tokens ?? 4096;
     if ($('#aiProviderContextWindow')) $('#aiProviderContextWindow').value = provider?.options?.context?.windowTokens ?? '';
     if ($('#aiProviderUsePreviousResponse')) $('#aiProviderUsePreviousResponse').checked = !!provider?.options?.use_previous_response_id;
-    $('#aiProviderReasoningEffort').value = provider?.options?.reasoning_effort || '';
+    setAiFieldPickerValue('providerReasoning', provider?.options?.reasoning_effort || '');
     $('#aiProviderPresencePenalty').value = provider?.options?.presence_penalty ?? 0;
     $('#aiProviderFrequencyPenalty').value = provider?.options?.frequency_penalty ?? 0;
     $('#aiProviderExtraJson').value = provider?.options?.extraJson || '';
@@ -4061,13 +4339,20 @@ async function fetchAiModelsForProvider(id = '') {
 }
 
 async function deleteAiProvider(id) {
-    if (!confirm('删除该模型供应商？')) return;
-    await api(`/api/ai/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    const visible = await api('/api/ai/providers');
-    settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
-    aiSettingsState = normalizeAiSettings(settings.ai);
-    renderAiSettingsForm();
-    toast('模型供应商已删除');
+    openAiInlineConfirm({
+        title: '删除模型供应商',
+        body: '删除后需重新配置 API Key 与模型列表。',
+        confirmLabel: '删除',
+        danger: true,
+        onConfirm: async () => {
+            await api(`/api/ai/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+            const visible = await api('/api/ai/providers');
+            settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
+            aiSettingsState = normalizeAiSettings(settings.ai);
+            renderAiSettingsForm();
+            toast('模型供应商已删除');
+        },
+    });
 }
 
 function resetAiEnvForm() {
@@ -4110,11 +4395,18 @@ async function saveAiEnv(e) {
     resetAiEnvForm(); renderAiSettingsForm(); toast('AI 环境变量已保存');
 }
 async function deleteAiEnv(id) {
-    if (!confirm('删除该 AI 环境变量？')) return;
-    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    ai.envVars = ai.envVars.filter((x) => x.id !== id);
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
-    renderAiSettingsForm(); toast('AI 环境变量已删除');
+    openAiInlineConfirm({
+        title: '删除环境变量',
+        body: '删除后 AI 将无法再通过此变量名读取对应密钥。',
+        confirmLabel: '删除',
+        danger: true,
+        onConfirm: async () => {
+            const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+            ai.envVars = ai.envVars.filter((x) => x.id !== id);
+            settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
+            renderAiSettingsForm(); toast('AI 环境变量已删除');
+        },
+    });
 }
 function resetAiMemoryForm() {
     $('#aiMemoryId').value = '';
@@ -4163,7 +4455,17 @@ async function saveAiMemory(e) {
     resetAiMemoryForm(); renderAiSettingsForm(); toast('Memory 已保存');
 }
 async function deleteAiMemory(id) {
-    if (!confirm('删除该 Memory？')) return;
+    openAiInlineConfirm({
+        title: '删除 Memory',
+        body: '删除后无法恢复该条长期记忆。',
+        confirmLabel: '删除',
+        danger: true,
+        onConfirm: async () => {
+            await deleteAiMemoryConfirmed(id);
+        },
+    });
+}
+async function deleteAiMemoryConfirmed(id) {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     ai.memories = ai.memories.filter((x) => x.id !== id);
     settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
@@ -4207,12 +4509,19 @@ async function saveAiSkill(e) {
     toast('Skill 已保存');
 }
 async function deleteAiSkill(id) {
-    if (!confirm('删除该 Skill？')) return;
-    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    ai.skills = ai.skills.filter((s) => s.id !== id);
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
-    renderAiSettingsForm();
-    toast('Skill 已删除');
+    openAiInlineConfirm({
+        title: '删除 Skill',
+        body: '删除后该能力包不会再注入 AI 系统提示。',
+        confirmLabel: '删除',
+        danger: true,
+        onConfirm: async () => {
+            const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+            ai.skills = ai.skills.filter((s) => s.id !== id);
+            settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
+            renderAiSettingsForm();
+            toast('Skill 已删除');
+        },
+    });
 }
 function saveAiChats() {
     try { localStorage.setItem(AI_CHAT_STORAGE_KEY, JSON.stringify({ current: aiCurrentSessionId, sessions: aiChatSessions.slice(0, 20) })); } catch (_) {}
@@ -4251,6 +4560,7 @@ function renderAiChat() {
     if (!aiChatSessions.length) createAiChat({ silent: true });
     const session = aiCurrentSession();
     $('#aiCurrentChatTitle').textContent = session.title || '新对话';
+    setAiSegmentValue('aiCollabMode', session.collabMode || 'standard', { silent: true });
     renderAiBrowserPreview();
     const area = $('#aiChatArea');
     const typing = $('#aiTypingIndicator');
@@ -4541,7 +4851,16 @@ function closeAiBrowserForSession(id) {
     if (sessionId === aiCurrentSessionId) renderAiBrowserPreview();
 }
 function deleteAiChat(id) {
-    if (!id || !confirm('删除这个对话？')) return;
+    if (!id) return;
+    openAiInlineConfirm({
+        title: '删除对话',
+        body: '将删除此会话的本地消息记录（服务端会话若已创建不会自动清档）。',
+        confirmLabel: '删除',
+        danger: true,
+        onConfirm: () => deleteAiChatConfirmed(id),
+    });
+}
+function deleteAiChatConfirmed(id) {
     const controller = aiRunForSession(id);
     if (controller) {
         aiStoppedControllers.add(controller);
@@ -4590,6 +4909,10 @@ function stopAiResponse(sessionId = aiCurrentSessionId) {
     aiStoppedControllers.add(controller);
     controller.abort();
     clearAiSessionRun(id, controller);
+    const sess = aiChatSessions.find((s) => s.id === id);
+    if (sess?.runtimeRunId) {
+        api(`/api/ai/runtime/runs/${encodeURIComponent(sess.runtimeRunId)}/abort`, { method: 'POST', body: '{}' }).catch(() => {});
+    }
     appendAiMessage('已停止 AI 回复/操作。', 'system', { sessionId: id });
     return true;
 }
@@ -5101,7 +5424,16 @@ function formatAiToolResult(r = {}) {
     </div>`;
 }
 async function deleteAiPlan(planId) {
-    if (!planId || !confirm('删除这个任务计划？')) return;
+    if (!planId) return;
+    openAiInlineConfirm({
+        title: '删除任务计划',
+        body: '删除后计划步骤与日志不可恢复。',
+        confirmLabel: '删除',
+        danger: true,
+        onConfirm: () => deleteAiPlanConfirmed(planId),
+    });
+}
+async function deleteAiPlanConfirmed(planId) {
     try {
         const data = await api('/api/ai/tools/run', { method: 'POST', body: JSON.stringify({ tool: 'plan_delete', args: { planId }, context: collectAiContext() }) });
         const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
@@ -5134,6 +5466,243 @@ function formatAiRequestFailure(err) {
     }
     return `请求失败：${message}\n\n建议：如果这是长对话或 RDP 操作后失败，点“压缩摘要”后重试；我已减少默认上下文和截图大小以降低这类失败。`;
 }
+let aiRuntimeEnabledCache = null;
+async function aiRuntimeIsEnabled() {
+    if (aiRuntimeEnabledCache != null) return aiRuntimeEnabledCache;
+    try {
+        const st = await api('/api/ai/runtime/status');
+        aiRuntimeEnabledCache = !!st?.enabled;
+    } catch {
+        aiRuntimeEnabledCache = false;
+    }
+    return aiRuntimeEnabledCache;
+}
+
+/** Consume SSE from Node proxy. Supports fetch streaming (cookie auth). */
+async function consumeAiRuntimeSse(path, { signal, onEvent } = {}) {
+    const res = await fetch(path, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: { Accept: 'text/event-stream' },
+        signal,
+    });
+    if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw Object.assign(new Error(errBody.error || res.statusText || 'SSE failed'), { status: res.status, body: errBody });
+    }
+    const reader = res.body?.getReader?.();
+    if (!reader) throw new Error('SSE stream unsupported');
+    const dec = new TextDecoder();
+    let buf = '';
+    let eventName = 'message';
+    let dataLines = [];
+    const flush = () => {
+        if (!dataLines.length) return;
+        const raw = dataLines.join('\n');
+        dataLines = [];
+        let payload = raw;
+        try { payload = JSON.parse(raw); } catch {}
+        const type = payload?.type || eventName;
+        onEvent?.({ type, data: payload, raw });
+        eventName = 'message';
+    };
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+            let line = buf.slice(0, idx);
+            buf = buf.slice(idx + 1);
+            if (line.endsWith('\r')) line = line.slice(0, -1);
+            if (line === '') { flush(); continue; }
+            if (line.startsWith(':')) continue;
+            if (line.startsWith('event:')) { eventName = line.slice(6).trim(); continue; }
+            if (line.startsWith('data:')) { dataLines.push(line.slice(5).trimStart()); continue; }
+        }
+    }
+    flush();
+}
+
+async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, model, options, context, abortController }) {
+    // Bind browser chat id → server session id (stored on session object).
+    let serverSessionId = session.runtimeSessionId || '';
+    if (!serverSessionId) {
+        const created = await api('/api/ai/runtime/sessions', {
+            method: 'POST',
+            body: JSON.stringify({ title: session.title || '新对话', metadata: { clientSessionId: sessionId } }),
+        });
+        serverSessionId = created.session?.id || created.sessionId;
+        session.runtimeSessionId = serverSessionId;
+        saveAiChats();
+    }
+    const aiCfg = normalizeAiSettings(settings.ai || {});
+    const collabMode = getAiSegmentValue('aiCollabMode', session.collabMode || 'standard');
+    session.collabMode = collabMode;
+    setAiSegmentValue('aiCollabMode', collabMode, { silent: true });
+    const perm = aiCfg.permissions || {};
+    const permissionMode = perm.mode || (aiCfg.sensitive?.autoConfirm ? 'auto' : 'ask');
+    const start = await api('/api/ai/runtime/runs', {
+        method: 'POST',
+        signal: abortController.signal,
+        body: JSON.stringify({
+            sessionId: serverSessionId,
+            message: text,
+            providerId,
+            model,
+            options,
+            context,
+            mode: collabMode,
+            permissionMode,
+            permission: {
+                mode: permissionMode,
+                deny: perm.deny || [],
+                allow: perm.allow || [],
+                ask: perm.ask || [],
+            },
+        }),
+    });
+    session.runtimeRunId = start.runId;
+    session.runtimeTicket = start.ticket || session.runtimeTicket || '';
+    saveAiChats();
+
+    let assistantText = '';
+    const toolTrace = [];
+    let assistantEl = null;
+    let assistantMsgIndex = -1;
+    const ensureAssistantBubble = () => {
+        if (assistantEl && document.contains(assistantEl)) return assistantEl;
+        appendAiMessage(assistantText || '', 'assistant', {
+            sessionId,
+            meta: [model].filter(Boolean).join(' / '),
+            store: true,
+        });
+        const area = $('#aiChatArea');
+        const nodes = area?.querySelectorAll?.('.ai-message.ai, .ai-message.assistant');
+        assistantEl = nodes?.[nodes.length - 1] || null;
+        if (assistantEl?.dataset?.aiMessageIndex != null) {
+            assistantMsgIndex = Number(assistantEl.dataset.aiMessageIndex);
+        }
+        return assistantEl;
+    };
+    const patchAssistant = () => {
+        ensureAssistantBubble();
+        if (!assistantEl) return;
+        const metaHtml = assistantEl.querySelector('small')
+            ? `<small>${assistantEl.querySelector('small').innerHTML}</small>`
+            : (model ? `<small>${escapeHtml(model)}</small>` : '');
+        assistantEl.innerHTML = `${metaHtml}${renderAiMessageContent(assistantText, 'assistant', false)}`;
+        assistantEl.dataset.aiMessageText = assistantText;
+        const s = aiChatSessions.find((x) => x.id === sessionId);
+        if (s?.messages?.length) {
+            if (assistantMsgIndex >= 0 && s.messages[assistantMsgIndex]?.role === 'assistant') {
+                s.messages[assistantMsgIndex].content = assistantText;
+            } else {
+                const last = s.messages[s.messages.length - 1];
+                if (last?.role === 'assistant') last.content = assistantText;
+            }
+            saveAiChats();
+        }
+        scrollAiChat();
+    };
+
+    const ssePath = start.sseProxyPath || start.ssePath || `/api/ai/runtime/runs/${encodeURIComponent(start.runId)}/events?ticket=${encodeURIComponent(start.ticket || '')}`;
+    await consumeAiRuntimeSse(ssePath, {
+        signal: abortController.signal,
+        onEvent: async ({ type, data }) => {
+            const evType = data?.type || type;
+            const payload = data?.data != null && typeof data.data === 'object' && !Array.isArray(data.data)
+                ? data.data
+                : (typeof data?.data === 'string' ? (() => { try { return JSON.parse(data.data); } catch { return { text: data.data }; } })() : data);
+            // When full event envelope: data is Event, payload in data.data (already parsed object or string)
+            let body = payload;
+            if (data?.data && data.type) {
+                body = typeof data.data === 'string' ? (() => { try { return JSON.parse(data.data); } catch { return {}; } })() : data.data;
+            }
+            switch (evType) {
+                case 'text.delta': {
+                    const t = body?.text || payload?.text || '';
+                    if (t) { assistantText += t; patchAssistant(); }
+                    break;
+                }
+                case 'tool.start':
+                case 'tool.pending':
+                    toolTrace.push({ phase: evType, name: body?.name || '', callId: body?.callId || '' });
+                    break;
+                case 'tool.result':
+                case 'tool.error': {
+                    const item = {
+                        tool: body?.name || 'tool',
+                        args: body?.args || {},
+                        result: body?.result,
+                        status: body?.status || (evType === 'tool.error' ? 'error' : 'success'),
+                    };
+                    toolTrace.push(item);
+                    try { await syncAiToolSideEffects([item], { sessionId }); } catch {}
+                    appendAiMessage(formatAiToolResult(item), 'trace', { rawHtml: true, sessionId });
+                    break;
+                }
+                case 'permission.ask': {
+                    const conf = {
+                        id: body?.askId || body?.callId || `ask_${Date.now()}`,
+                        tool: body?.name || '',
+                        summary: body?.summary || `允许执行 ${body?.name || '操作'}？`,
+                        args: body?.args || {},
+                    };
+                    appendAiConfirmation(conf, {
+                        runtime: true,
+                        runId: start.runId,
+                        serverSessionId,
+                        providerId,
+                        model,
+                        options,
+                        context,
+                        sessionId,
+                    });
+                    break;
+                }
+                case 'client.capture': {
+                    // Reuse legacy capture path shape
+                    await handleAiClientCapture({
+                        clientCaptureRequired: true,
+                        clientCapture: body,
+                        provider: { name: 'runtime' },
+                        model,
+                    }, { providerId, model, options, signal: abortController.signal, original: text, sessionId, runtime: true, runId: start.runId });
+                    break;
+                }
+                case 'message.completed': {
+                    if (body?.content && !assistantText) {
+                        assistantText = body.content;
+                        patchAssistant();
+                    }
+                    break;
+                }
+                case 'run.completed': {
+                    if (!assistantText) {
+                        appendAiMessage('执行完成。', 'assistant', { sessionId, metrics: body?.metrics || null });
+                    } else {
+                        // finalize metrics on last message
+                        const s = aiChatSessions.find((x) => x.id === sessionId);
+                        const last = s?.messages?.[s.messages.length - 1];
+                        if (last?.role === 'assistant') last.metrics = body?.metrics || null;
+                        saveAiChats();
+                    }
+                    break;
+                }
+                case 'run.failed':
+                    appendAiMessage(body?.error || 'AI 运行失败', 'system', { sessionId });
+                    break;
+                case 'run.aborted':
+                    appendAiMessage('AI 回复已中断。', 'system', { sessionId });
+                    break;
+                default:
+                    break;
+            }
+        },
+    });
+}
+
 async function sendAiMessage() {
     const session = aiCurrentSession();
     const sessionId = session?.id || '';
@@ -5164,6 +5733,11 @@ async function sendAiMessage() {
         const providerId = $('#aiProviderSelect').value;
         const model = $('#aiModelSelect').value;
         const options = aiIntensityOptions();
+        const useRuntime = await aiRuntimeIsEnabled();
+        if (useRuntime) {
+            await sendAiMessageViaRuntime({ session, sessionId, text, providerId, model, options, context, abortController });
+            return;
+        }
         const requestMessages = aiMessagesForRequest(session, text);
         const data = await api('/api/ai/chat', { method: 'POST', signal: abortController.signal, body: JSON.stringify({ messages: requestMessages, providerId, model, options, context }) });
         if (data.toolResults?.length) {
@@ -5283,6 +5857,68 @@ async function resolveAiConfirmation(id, approve) {
     const abortController = new AbortController();
     registerAiSessionRun(sessionId, abortController);
     try {
+        // Go runtime permission path (grant + optional follow-up).
+        if (pending?.runtime && pending.runId) {
+            await api(`/api/ai/runtime/runs/${encodeURIComponent(pending.runId)}/permission`, {
+                method: 'POST',
+                signal: abortController.signal,
+                body: JSON.stringify({
+                    approve: !!approve,
+                    sessionId: pending.serverSessionId || '',
+                    callId: id,
+                    tool: pending.confirmation?.tool || '',
+                    scope: approve ? (pending.scope || 'session') : 'once',
+                    providerId: pending.providerId || $('#aiProviderSelect')?.value || '',
+                    model: pending.model || $('#aiModelSelect')?.value || '',
+                }),
+            });
+            aiPendingConfirmations.delete(id);
+            const session = aiChatSessions.find((s) => s.id === sessionId);
+            if (session) session.messages = session.messages.filter((m) => m.confirmationId !== id);
+            if (!approve) {
+                appendAiMessage('已拒绝执行敏感操作。', 'system', { sessionId });
+                if (sessionId === aiCurrentSessionId) renderAiChat();
+                return;
+            }
+            appendAiMessage(approve ? '已授权，正在继续…' : '已拒绝。', 'system', { sessionId });
+            clearAiSessionRun(sessionId, abortController);
+            // True mid-run resume: Go continues same run; keep listening on same SSE ticket if still open.
+            // Permission endpoint launches resume; client re-subscribes SSE for the same runId.
+            if (approve && pending.runId) {
+                const contController = new AbortController();
+                registerAiSessionRun(sessionId, contController);
+                try {
+                    const ticket = session?.runtimeTicket || '';
+                    const ssePath = `/api/ai/runtime/runs/${encodeURIComponent(pending.runId)}/events?ticket=${encodeURIComponent(ticket)}`;
+                    // If ticket missing, status poll only — user still sees tool traces on next message.
+                    if (ticket) {
+                        await consumeAiRuntimeSse(ssePath, {
+                            signal: contController.signal,
+                            onEvent: ({ type, data }) => {
+                                const evType = data?.type || type;
+                                if (evType === 'text.delta') {
+                                    const body = typeof data?.data === 'string' ? (() => { try { return JSON.parse(data.data); } catch { return {}; } })() : (data?.data || data);
+                                    if (body?.text) appendAiMessage(body.text, 'assistant', { sessionId, store: true });
+                                }
+                                if (evType === 'tool.result' || evType === 'tool.error') {
+                                    const body = typeof data?.data === 'string' ? (() => { try { return JSON.parse(data.data); } catch { return {}; } })() : (data?.data || data);
+                                    const item = { tool: body?.name || 'tool', args: body?.args || {}, result: body?.result, status: body?.status || 'success' };
+                                    appendAiMessage(formatAiToolResult(item), 'trace', { rawHtml: true, sessionId });
+                                }
+                                if (evType === 'run.completed' && data?.data) {
+                                    const body = typeof data.data === 'string' ? (() => { try { return JSON.parse(data.data); } catch { return {}; } })() : data.data;
+                                    if (body?.metrics) { /* optional */ }
+                                }
+                            },
+                        });
+                    }
+                } finally {
+                    clearAiSessionRun(sessionId, contController);
+                }
+            }
+            return;
+        }
+
         const data = await api(`/api/ai/confirm/${encodeURIComponent(id)}`, { method: 'POST', signal: abortController.signal, body: JSON.stringify({ approve }) });
         if (approve && data.result) {
             await syncAiToolSideEffects([{ tool: data.toolName || (data.result?.plan ? 'plan_update' : ''), args: data.args || {}, result: data.result }], { sessionId });
@@ -5875,12 +6511,18 @@ function setupAiPanelChrome() {
 }
 function updateAiProviderModalHints() {
     const type = $('#aiProviderType')?.value || 'openai-compatible';
-    const modeSelect = $('#aiProviderApiMode');
-    const mode = modeSelect?.value || 'auto';
+    const modeInput = $('#aiProviderApiMode');
+    const modeBtn = $('#aiProviderApiModeBtn');
+    let mode = modeInput?.value || 'auto';
     const isOpenAiLike = type === 'openai-compatible' || type === 'openai';
-    if (modeSelect) {
-        modeSelect.disabled = !isOpenAiLike;
-        if (!isOpenAiLike) modeSelect.value = 'auto';
+    if (modeBtn) {
+        modeBtn.disabled = !isOpenAiLike;
+        modeBtn.classList.toggle('is-disabled', !isOpenAiLike);
+        modeBtn.setAttribute('aria-disabled', isOpenAiLike ? 'false' : 'true');
+    }
+    if (!isOpenAiLike && modeInput) {
+        setAiFieldPickerValue('providerApiMode', 'auto');
+        mode = 'auto';
     }
     const base = $('#aiProviderBaseUrl');
     const extra = $('#aiProviderExtraJson');
@@ -5910,8 +6552,13 @@ function setupAiAssistant() {
     $('#aiAddProviderBtn')?.addEventListener('click', () => openAiProviderModal());
     $('#aiProviderForm')?.addEventListener('submit', saveAiProvider);
     $('#aiFetchModelsBtn')?.addEventListener('click', () => fetchAiModelsForProvider());
-    $('#aiProviderType')?.addEventListener('change', updateAiProviderModalHints);
-    $('#aiProviderApiMode')?.addEventListener('change', updateAiProviderModalHints);
+    document.addEventListener('click', (e) => {
+        const fieldBtn = e.target.closest?.('[data-ai-field-picker]');
+        if (!fieldBtn || fieldBtn.disabled || fieldBtn.getAttribute('aria-disabled') === 'true') return;
+        e.preventDefault();
+        e.stopPropagation();
+        openAiFieldPicker(fieldBtn.dataset.aiFieldPicker, fieldBtn);
+    });
     $('#aiProviderCloseBtn')?.addEventListener('click', closeAiProviderModal);
     $('#aiProviderCancelBtn')?.addEventListener('click', closeAiProviderModal);
     $('#aiProviderList')?.addEventListener('click', (e) => { const edit = e.target.dataset.aiEditProvider, del = e.target.dataset.aiDeleteProvider, fetchModels = e.target.dataset.aiFetchProviderModels, reveal = e.target.dataset.aiRevealProviderKey; const ai = normalizeAiSettings(settings.ai || {}); if (fetchModels) fetchAiModelsForProvider(fetchModels); if (reveal) revealAiProviderKey(reveal).catch((err) => toast(err.message || '读取 API Key 失败')); if (edit) openAiProviderModal(ai.providers.find((p) => p.id === edit)); if (del) deleteAiProvider(del); });
@@ -5931,6 +6578,33 @@ function setupAiAssistant() {
         if (stepPlan) updateAiPlan(stepPlan, { steps: [{ index: Number(e.target.dataset.stepIndex), status: e.target.dataset.stepStatus }] });
     });
     $('#aiSkillForm')?.addEventListener('submit', saveAiSkill);
+    $('#aiMcpForm')?.addEventListener('submit', saveAiMcpFromForm);
+    $('#aiMcpResetBtn')?.addEventListener('click', resetAiMcpForm);
+    bindAiSegmentControls(document);
+    document.addEventListener('click', (e) => {
+        const segBtn = e.target.closest?.('.ai-segment-btn');
+        if (!segBtn) return;
+        const root = segBtn.closest?.('.ai-segment');
+        if (!root) return;
+        e.preventDefault();
+        setAiSegmentValue(root, segBtn.dataset.value);
+    });
+    $('#aiMcpList')?.addEventListener('click', (e) => {
+        const edit = e.target.closest?.('[data-ai-mcp-edit]')?.dataset.aiMcpEdit;
+        const del = e.target.closest?.('[data-ai-mcp-del]')?.dataset.aiMcpDel;
+        const ai = normalizeAiSettings(settings.ai || {});
+        if (edit) fillAiMcpForm((ai.mcpServers || []).find((x) => x.id === edit));
+        if (del) {
+            // craft confirm card instead of window.confirm
+            openAiInlineConfirm({
+                title: '删除 MCP 服务器',
+                body: '删除后需重新配置才能连接该 MCP。',
+                confirmLabel: '删除',
+                danger: true,
+                onConfirm: () => deleteAiMcp(del).catch((err) => toast(err.message)),
+            });
+        }
+    });
     $('#aiSkillResetBtn')?.addEventListener('click', resetAiSkillForm);
     $('#aiSkillList')?.addEventListener('click', (e) => { const edit = e.target.dataset.aiEditSkill, del = e.target.dataset.aiDeleteSkill; const ai = normalizeAiSettings(settings.ai || {}); if (edit) { const s = ai.skills.find((x) => x.id === edit); if (!s) return; $('#aiSkillId').value = s.id; $('#aiSkillName').value = s.name || ''; $('#aiSkillDescription').value = s.description || ''; $('#aiSkillPrompt').value = s.prompt || ''; $('#aiSkillEnabled').checked = s.enabled !== false; } if (del) deleteAiSkill(del); });
     $('#openAiAssistantBtn')?.addEventListener('click', (e) => openAiAssistantPanel(e.currentTarget)); $('#openAiAssistantBtn2')?.addEventListener('click', (e) => openAiAssistantPanel(e.currentTarget));
@@ -5951,8 +6625,16 @@ function setupAiAssistant() {
     $('#aiUsageBtn')?.addEventListener('click', (e) => { e.stopPropagation(); openAiUsageSheet(null, e.currentTarget); });
     document.addEventListener('click', (e) => {
         const option = e.target.closest?.('.ai-picker-option');
-        if (option) { applyAiPickerChoice(option.dataset.kind, option.dataset.value || ''); return; }
-        if (!e.target.closest?.('.ai-picker-popover,.ai-picker-btn')) closeAiPickerPopover();
+        if (option) {
+            if (option.dataset.fieldKind) {
+                setAiFieldPickerValue(option.dataset.fieldKind, option.dataset.value || '');
+                closeAiPickerPopover();
+            } else {
+                applyAiPickerChoice(option.dataset.kind, option.dataset.value || '');
+            }
+            return;
+        }
+        if (!e.target.closest?.('.ai-picker-popover,.ai-picker-btn,[data-ai-field-picker]')) closeAiPickerPopover();
         if (!e.target.closest?.('.ai-usage-popover,#aiUsageBtn')) document.querySelector('.ai-usage-popover')?.remove();
     }, true);
     $('#aiBrowserPreviewToggleBtn')?.addEventListener('click', () => { const state = aiBrowserPreviewStateForSession(aiCurrentSessionId); state.visible = !state.visible; renderAiBrowserPreview(); });

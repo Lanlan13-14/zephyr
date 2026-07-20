@@ -31,6 +31,13 @@
 - **核心问题**：监控闪烁、WTerm 滚动竞争、登录会话不持久
 - **恢复起点**：方案文档第 0 节"结论先行"
 
+### 2b. AI Go Runtime（优先级：高 · Stage A 完成）
+- **状态**：Stage A 完成；compaction 已接入 loop（2026-07-20）
+- **方案文档**：[AI_GO_RUNTIME_PLAN.md](./AI_GO_RUNTIME_PLAN.md)
+- **代码**：`zephyr-ai/` + `ai-runtime-bridge.js` + `/api/ai/runtime/*` + Docker entrypoint
+- **约束**：SSE、服务端会话、权限规则、MCP、真 resume；禁止为省 token 改 system 拼装
+- **续作**：archive 回查、Plan/Goal UI、权限规则编辑器
+
 ### 3. Agent 内嵌 WebView + 本地设备管理（优先级：低）
 - **状态**：完整方案已写，未开始实施
 - **方案文档**：[AGENT_WEBAPP_PLAN.md](./AGENT_WEBAPP_PLAN.md)（1687 行）

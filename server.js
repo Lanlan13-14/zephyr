@@ -53,7 +53,13 @@ const {
     registerAiRoutes,
     normalizeAiSettingsInput,
     safeAiSettings,
+    formatAiContextForPrompt,
+    selectPromptMemories,
 } = require('./ai-agent-service');
+const {
+    AiRuntimeBridge,
+    registerAiHostRoutes,
+} = require('./ai-runtime-bridge');
 const {
     getImageExt,
     isBrowserImageExt,
@@ -318,6 +324,11 @@ const workerBridge = new WorkerBridge({
     storage,
     resources: resourceService,
     deepLink: deepLinkService,
+    authz,
+});
+const aiRuntimeBridge = new AiRuntimeBridge({
+    storage,
+    resources: resourceService,
     authz,
 });
 const aiPolicyService = new AiPolicyService(storage.rawDb(), { storage, userSettings: userSettingsService });
@@ -2827,6 +2838,293 @@ app.get('/api/security/login-events', requireAuth, (req, res) => res.json({ even
 app.delete('/api/security/login-events', requireAuth, (req, res) => { storage.clearLoginEvents(); addActivity('清理登录事件日志'); res.json({ ok: true }); });
 app.delete('/api/activities', requireAuth, (req, res) => { storage.clearActivities(); res.json({ ok: true }); });
 
+/* Platform tool host for zephyr-ai (Go). Must stay on control plane.
+ * deps must match registerAiRoutes so executeAiToolForHost can run the full tool surface. */
+const aiHostDeps = {
+    storage,
+    authz,
+    resourceService,
+    resources: resourceService,
+    aiPolicyService,
+    aiProviderService,
+    userSettingsService,
+    notesService,
+    readJSON,
+    writeJSON,
+    DATA_DIR,
+    CONNECTIONS_FILE,
+    createRoutedSSHConnection,
+    runRemoteCommand,
+    testConnection: async (conn, timeoutSeconds = 10) => {
+        const protocol = String(conn.protocol || 'SSH').toUpperCase();
+        const timeoutMs = Math.max(1000, Math.min(Number(timeoutSeconds || 10) * 1000, 30000));
+        return protocol === 'SSH'
+            ? testSSHConnection(conn, timeoutMs)
+            : protocol === 'VNC'
+                ? testNoVncConnection(conn, timeoutMs)
+                : protocol === 'RDP'
+                    ? testRDPConnection(conn, timeoutMs)
+                    : protocol === 'TELNET'
+                        ? testTelnetConnection(conn, timeoutMs)
+                        : { ok: false, code: 'unsupported_protocol', message: `不支持的协议：${protocol}`, durationMs: 0 };
+    },
+    addActivity,
+    verifySensitiveAccess,
+    upload,
+    handleServiceError,
+};
+registerAiHostRoutes(app, aiHostDeps);
+
+/* Go AI runtime control API (sessions/runs). Legacy /api/ai/chat remains. */
+function handleAiRuntimeError(res, err) {
+    const status = err?.status || 500;
+    return res.status(status).json({ error: err.message || 'AI runtime error', code: err.code || 'ai_runtime_error' });
+}
+
+app.get('/api/ai/runtime/status', requireUser, (req, res) => {
+    res.json({
+        enabled: !!aiRuntimeBridge.enabled,
+        url: process.env.ZEPHYR_AI_URL ? '[set]' : '',
+        legacyChat: true,
+    });
+});
+
+app.post('/api/ai/runtime/sessions', requireUser, async (req, res) => {
+    try {
+        if (!aiRuntimeBridge.enabled) throw Object.assign(new Error('Go AI 运行时未启用'), { status: 503, code: 'ai_runtime_unavailable' });
+        const data = await aiRuntimeBridge.createSession(req.user, { title: req.body?.title, metadata: req.body?.metadata });
+        res.json(data);
+    } catch (err) { handleAiRuntimeError(res, err); }
+});
+
+app.get('/api/ai/runtime/sessions', requireUser, async (req, res) => {
+    try {
+        if (!aiRuntimeBridge.enabled) return res.json({ ok: true, sessions: [], enabled: false });
+        const data = await aiRuntimeBridge.listSessions(req.user);
+        res.json({ ...data, enabled: true });
+    } catch (err) { handleAiRuntimeError(res, err); }
+});
+
+app.get('/api/ai/runtime/sessions/:id/messages', requireUser, async (req, res) => {
+    try {
+        const data = await aiRuntimeBridge.listMessages(req.user, req.params.id);
+        res.json(data);
+    } catch (err) { handleAiRuntimeError(res, err); }
+});
+
+app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
+    try {
+        if (!aiRuntimeBridge.enabled) throw Object.assign(new Error('Go AI 运行时未启用'), { status: 503, code: 'ai_runtime_unavailable' });
+        const ai = storage.getSettings().ai || {};
+        if (!ai.enabled) return res.status(403).json({ error: 'AI 助理未启用', code: 'ai_disabled' });
+        if (aiPolicyService) {
+            const policy = aiPolicyService.policyFor(req.user);
+            if (policy.mode === 'disabled') return res.status(403).json({ error: 'AI 助理未启用', code: 'ai_disabled' });
+        }
+        let provider;
+        let model = req.body?.model || '';
+        if (aiProviderService) {
+            const resolved = aiProviderService.resolveForUse(req.user, req.body?.providerId || null, model || null);
+            provider = resolved.provider;
+            model = resolved.model;
+        } else {
+            throw Object.assign(new Error('AI Provider 服务不可用'), { status: 503 });
+        }
+        if (!model) throw Object.assign(new Error('未配置默认模型'), { status: 400 });
+
+        // Provider payload for Go — includes secret; never returned to browser.
+        const providerPayload = {
+            id: provider.id,
+            name: provider.name,
+            kind: provider.type || 'openai-compatible',
+            baseUrl: provider.baseUrl || '',
+            apiKey: provider.apiKey || '',
+            defaultModel: provider.defaultModel || model,
+            models: provider.models || [],
+            apiMode: provider.config?.apiMode || provider.apiMode || 'auto',
+            organization: provider.config?.organization || provider.organization || '',
+            options: provider.config?.options || provider.options || {},
+            timeoutMs: Number(provider.config?.timeoutMs || 120000),
+            retries: Number(provider.config?.retries || 1),
+        };
+
+        const contextObj = req.body?.context || {};
+        const contextText = typeof req.body?.contextText === 'string' && req.body.contextText
+            ? req.body.contextText
+            : formatAiContextForPrompt(contextObj);
+        // Memory selection: preserve legacy ranking — do not drop for tokens.
+        const memories = Array.isArray(req.body?.memories) && req.body.memories.length
+            ? req.body.memories
+            : selectPromptMemories(ai, contextObj, Number(ai.context?.memoryItems) || 28);
+        const systemCompose = aiRuntimeBridge.buildSystemCompose(ai, contextText, memories);
+
+        const bodyPerm = req.body?.permission && typeof req.body.permission === 'object' ? req.body.permission : {};
+        const aiPerm = ai.permissions || {};
+        const perm = {
+            mode: bodyPerm.mode || req.body?.permissionMode || aiPerm.mode || (ai.sensitive?.autoConfirm ? 'auto' : 'ask'),
+            deny: Array.isArray(bodyPerm.deny) ? bodyPerm.deny : (Array.isArray(req.body?.deny) ? req.body.deny : (aiPerm.deny || [])),
+            allow: Array.isArray(bodyPerm.allow) ? bodyPerm.allow : (Array.isArray(req.body?.allow) ? req.body.allow : (aiPerm.allow || [])),
+            ask: Array.isArray(bodyPerm.ask) ? bodyPerm.ask : (Array.isArray(req.body?.ask) ? req.body.ask : (aiPerm.ask || [])),
+        };
+
+        let sessionId = String(req.body?.sessionId || '').trim();
+        if (!sessionId) {
+            const created = await aiRuntimeBridge.createSession(req.user, {
+                title: String(req.body?.title || '').slice(0, 80) || '新对话',
+                metadata: { source: 'runtime' },
+            });
+            sessionId = created.session?.id || created.sessionId;
+        }
+
+        const policy = aiPolicyService ? aiPolicyService.policyFor(req.user) : {};
+        const data = await aiRuntimeBridge.startRun(req.user, {
+            sessionId,
+            provider: providerPayload,
+            model,
+            message: req.body?.message || '',
+            messages: req.body?.messages,
+            options: req.body?.options || {},
+            maxSteps: req.body?.maxSteps || ai.context?.maxToolRounds || 0,
+            permission: perm,
+            mode: req.body?.mode || 'standard',
+            systemCompose,
+            context: req.body?.context || null,
+            mcpServers: (Array.isArray(req.body?.mcpServers) ? req.body.mcpServers : (ai.mcpServers || []))
+                .filter((s) => s && s.enabled !== false)
+                .map((s) => ({
+                    name: s.name,
+                    type: s.type || 'stdio',
+                    command: s.command,
+                    args: s.args,
+                    env: s.env,
+                    url: s.url,
+                    headers: s.headers,
+                    callTimeoutSeconds: s.callTimeoutSeconds,
+                    trustedReadOnlyTools: s.trustedReadOnlyTools,
+                })),
+            hourlyLimit: policy.quota?.hourlyRequests || 0,
+            dailyLimit: policy.quota?.dailyRequests || 0,
+        });
+        // Rewrite SSE path through Node proxy if public AI URL not set
+        const ssePath = data.ssePath || `/api/ai/runtime/runs/${data.runId}/events?ticket=${encodeURIComponent(data.ticket || '')}`;
+        res.json({
+            ok: true,
+            runId: data.runId,
+            sessionId: data.sessionId || sessionId,
+            ticket: data.ticket,
+            ssePath: ssePath.startsWith('http') ? ssePath : ssePath,
+            sseProxyPath: `/api/ai/runtime/runs/${encodeURIComponent(data.runId)}/events?ticket=${encodeURIComponent(data.ticket || '')}`,
+        });
+    } catch (err) { handleAiRuntimeError(res, err); }
+});
+
+app.post('/api/ai/runtime/runs/:id/abort', requireUser, async (req, res) => {
+    try {
+        const data = await aiRuntimeBridge.abortRun(req.params.id);
+        res.json(data);
+    } catch (err) { handleAiRuntimeError(res, err); }
+});
+
+app.post('/api/ai/runtime/runs/:id/permission', requireUser, async (req, res) => {
+    try {
+        // Re-inject provider secret for mid-run resume (never stored in Go resume_json).
+        let providerPayload;
+        if (aiProviderService && (req.body?.providerId || req.body?.model)) {
+            try {
+                const resolved = aiProviderService.resolveForUse(req.user, req.body?.providerId || null, req.body?.model || null);
+                const provider = resolved.provider;
+                providerPayload = {
+                    id: provider.id,
+                    name: provider.name,
+                    kind: provider.type || 'openai-compatible',
+                    baseUrl: provider.baseUrl || '',
+                    apiKey: provider.apiKey || '',
+                    defaultModel: provider.defaultModel || resolved.model,
+                    apiMode: provider.config?.apiMode || provider.apiMode || 'auto',
+                    organization: provider.config?.organization || '',
+                    options: provider.config?.options || provider.options || {},
+                };
+            } catch (_) { /* resume state may still have enough non-secret fields */ }
+        }
+        const data = await aiRuntimeBridge.decidePermission(req.params.id, {
+            userId: req.user.userId,
+            sessionId: req.body?.sessionId || '',
+            callId: req.body?.callId || '',
+            tool: req.body?.tool || '',
+            approve: !!req.body?.approve,
+            scope: req.body?.scope || 'once',
+            provider: providerPayload,
+        });
+        res.json(data);
+    } catch (err) { handleAiRuntimeError(res, err); }
+});
+
+app.post('/api/ai/runtime/runs/:id/capture', requireUser, async (req, res) => {
+    try {
+        let providerPayload;
+        if (aiProviderService && req.body?.providerId) {
+            try {
+                const resolved = aiProviderService.resolveForUse(req.user, req.body.providerId, req.body?.model || null);
+                const provider = resolved.provider;
+                providerPayload = {
+                    id: provider.id,
+                    name: provider.name,
+                    kind: provider.type || 'openai-compatible',
+                    baseUrl: provider.baseUrl || '',
+                    apiKey: provider.apiKey || '',
+                    defaultModel: provider.defaultModel || resolved.model,
+                    apiMode: provider.config?.apiMode || 'auto',
+                    options: provider.config?.options || {},
+                };
+            } catch (_) {}
+        }
+        const data = await aiRuntimeBridge.submitCapture(req.params.id, {
+            userId: req.user.userId,
+            callId: req.body?.callId || '',
+            result: req.body?.result ?? req.body?.capture ?? {},
+            provider: providerPayload,
+        });
+        res.json(data);
+    } catch (err) { handleAiRuntimeError(res, err); }
+});
+
+/** SSE proxy: browser → Node (cookie auth) → Go (ticket). */
+app.get('/api/ai/runtime/runs/:id/events', requireUser, async (req, res) => {
+    if (!aiRuntimeBridge.enabled) return res.status(503).json({ error: 'AI runtime unavailable' });
+    const runId = req.params.id;
+    const ticket = String(req.query.ticket || '');
+    const url = `${process.env.ZEPHYR_AI_URL}/v1/runs/${encodeURIComponent(runId)}/events?ticket=${encodeURIComponent(ticket)}`;
+    try {
+        const upstream = await fetch(url, { headers: { accept: 'text/event-stream' } });
+        if (!upstream.ok) {
+            const text = await upstream.text().catch(() => '');
+            return res.status(upstream.status).json({ error: text || upstream.statusText });
+        }
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        const reader = upstream.body?.getReader?.();
+        if (!reader) {
+            // Node fetch body as web stream may differ; fallback arrayBuffer stream
+            const buf = Buffer.from(await upstream.arrayBuffer());
+            res.write(buf);
+            return res.end();
+        }
+        const dec = new TextDecoder();
+        req.on('close', () => { try { reader.cancel(); } catch {} });
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(typeof value === 'string' ? value : dec.decode(value, { stream: true }));
+        }
+        res.end();
+    } catch (err) {
+        if (!res.headersSent) res.status(502).json({ error: err.message || 'SSE proxy failed' });
+        else try { res.end(); } catch {}
+    }
+});
+
 registerAiRoutes(app, {
     requireAuth,
     requireUser,
@@ -2839,6 +3137,7 @@ registerAiRoutes(app, {
     notesService,
     readJSON,
     writeJSON,
+    DATA_DIR,
     CONNECTIONS_FILE,
     createRoutedSSHConnection,
     runRemoteCommand,

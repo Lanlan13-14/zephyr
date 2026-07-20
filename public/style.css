@@ -7766,6 +7766,173 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
 .ai-status-failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
 .ai-status-paused { color: var(--warning, #f5a524); background: color-mix(in srgb, var(--warning, #f5a524) 16%, transparent); }
 .ai-chat-area { flex: 1; overflow-y: auto; padding: 18px 14px; display: flex; flex-direction: column; gap: 14px; }
+/* AI segmented controls — same craft as notes-mode-switch / monitor-tabs (no native select) */
+.ai-segment {
+    --ai-seg-ease: cubic-bezier(0.23, 1, 0.32, 1);
+    --ai-seg-cols: 3;
+    position: relative;
+    display: inline-grid;
+    grid-template-columns: repeat(var(--ai-seg-cols), minmax(0, 1fr));
+    align-items: stretch;
+    gap: 0;
+    padding: 2px;
+    border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+    border-radius: var(--radius-pill, 999px);
+    background: color-mix(in srgb, var(--bg) 48%, var(--surface));
+    box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
+    vertical-align: middle;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.ai-segment[data-cols="2"] { --ai-seg-cols: 2; }
+.ai-segment[data-cols="3"] { --ai-seg-cols: 3; }
+.ai-segment-block {
+    display: grid;
+    width: 100%;
+    max-width: 320px;
+    margin: 2px 0 8px;
+    border-radius: 12px;
+}
+.ai-segment-block .ai-segment-thumb {
+    border-radius: 10px;
+}
+.ai-collab-segment {
+    min-width: 148px;
+    flex: 0 0 auto;
+}
+.ai-segment-thumb {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    left: 2px;
+    width: calc((100% - 4px) / var(--ai-seg-cols));
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    box-shadow:
+        0 1px 2px rgba(0, 0, 0, 0.12),
+        0 0 0 1px color-mix(in srgb, var(--border) 45%, transparent);
+    transform: translate3d(0, 0, 0);
+    transition: transform 220ms var(--ai-seg-ease);
+    pointer-events: none;
+    z-index: 0;
+    will-change: transform;
+}
+/* Geometric page offsets — no JS measuring during layout animation */
+.ai-segment[data-cols="2"][data-value="http"] .ai-segment-thumb,
+.ai-segment[data-cols="2"][data-index="1"] .ai-segment-thumb {
+    transform: translate3d(100%, 0, 0);
+}
+.ai-segment[data-cols="3"][data-value="plan"] .ai-segment-thumb,
+.ai-segment[data-cols="3"][data-value="auto"] .ai-segment-thumb,
+.ai-segment[data-cols="3"][data-index="1"] .ai-segment-thumb {
+    transform: translate3d(100%, 0, 0);
+}
+.ai-segment[data-cols="3"][data-value="goal"] .ai-segment-thumb,
+.ai-segment[data-cols="3"][data-value="yolo"] .ai-segment-thumb,
+.ai-segment[data-cols="3"][data-index="2"] .ai-segment-thumb {
+    transform: translate3d(200%, 0, 0);
+}
+.ai-segment-btn {
+    position: relative;
+    z-index: 1;
+    border: 0;
+    margin: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 6px 10px;
+    min-height: 28px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    border-radius: inherit;
+    transition: color 150ms var(--ease-smooth, ease);
+    -webkit-tap-highlight-color: transparent;
+}
+.ai-segment-block .ai-segment-btn {
+    min-height: 34px;
+    padding: 8px 12px;
+}
+.ai-segment-btn:hover { color: var(--text); }
+.ai-segment-btn:active { transform: scale(0.97); }
+.ai-segment-btn.active,
+.ai-segment-btn[aria-selected="true"] {
+    color: var(--text);
+}
+.ai-segment-btn:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+    outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+    .ai-segment-thumb { transition: none; }
+    .ai-segment-btn:active { transform: none; }
+}
+.ai-perm-mode-hint { margin-top: -4px; margin-bottom: 10px; }
+
+/* Craft confirm sheet (replaces window.confirm) */
+.ai-inline-confirm {
+    position: fixed;
+    inset: 0;
+    z-index: 10240;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: color-mix(in srgb, #000 36%, transparent);
+    backdrop-filter: blur(10px) saturate(1.05);
+    -webkit-backdrop-filter: blur(10px) saturate(1.05);
+    opacity: 0;
+    transition: opacity 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.ai-inline-confirm.open { opacity: 1; }
+.ai-inline-confirm.closing { opacity: 0; }
+.ai-inline-confirm-card {
+    width: min(360px, 100%);
+    padding: 18px 18px 14px;
+    border-radius: 18px;
+    border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+    background: color-mix(in srgb, var(--surface) 96%, var(--bg));
+    box-shadow: var(--shadow-lift, 0 24px 48px rgba(0,0,0,.28));
+    transform: scale(0.96) translateY(6px);
+    opacity: 0.92;
+    transition:
+        transform 200ms cubic-bezier(0.23, 1, 0.32, 1),
+        opacity 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.ai-inline-confirm.open .ai-inline-confirm-card {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+}
+.ai-inline-confirm.closing .ai-inline-confirm-card {
+    transform: scale(0.97) translateY(4px);
+    opacity: 0;
+}
+.ai-inline-confirm-title {
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin-bottom: 8px;
+    color: var(--text);
+}
+.ai-inline-confirm-body {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+}
+.ai-inline-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.ai-inline-confirm-actions .ui-btn:active {
+    transform: scale(0.97);
+}
+@media (prefers-reduced-motion: reduce) {
+    .ai-inline-confirm,
+    .ai-inline-confirm-card { transition: none; }
+}
+
 .ai-message { max-width: 78%; padding: 12px 15px; border-radius: 18px; line-height: 1.48; white-space: pre-wrap; word-break: break-word; box-shadow: 0 8px 22px rgba(0,0,0,.08); }
 .ai-message small { display: block; opacity: .68; margin-bottom: 5px; font-size: 11px; }
 .ai-message.ai, .ai-message.assistant { align-self: flex-start; background: color-mix(in srgb, var(--surface) 76%, var(--bg)); border-bottom-left-radius: 5px; }
@@ -10963,6 +11130,47 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 
 /* AI header custom pickers: avoid native browser select UI and add usage sheet. */
 .ai-picker-btn { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-settings-picker {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    max-width: none;
+    min-height: 38px;
+    padding: 8px 12px;
+    text-align: left;
+    border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--surface) 88%, var(--bg));
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 550;
+    cursor: pointer;
+    transition: background 140ms ease, border-color 140ms ease, transform 100ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.ai-settings-picker::after {
+    content: '';
+    width: 0.45em;
+    height: 0.45em;
+    border-right: 1.5px solid var(--text-secondary);
+    border-bottom: 1.5px solid var(--text-secondary);
+    transform: rotate(45deg) translateY(-25%);
+    opacity: 0.7;
+    flex: 0 0 auto;
+}
+.ai-settings-picker:hover {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    background: color-mix(in srgb, var(--surface) 96%, var(--bg));
+}
+.ai-settings-picker:active { transform: scale(0.98); }
+.ai-settings-picker.is-disabled,
+.ai-settings-picker:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+}
 .ai-picker-popover {
     position: fixed;
     z-index: 10120;
@@ -10977,6 +11185,15 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     box-shadow: var(--shadow-lift);
     backdrop-filter: blur(16px) saturate(1.1);
     -webkit-backdrop-filter: blur(16px) saturate(1.1);
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+    transition:
+        opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+        transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.ai-picker-popover.open {
+    opacity: 1;
+    transform: scale(1) translateY(0);
 }
 .ai-picker-option {
     width: 100%;
@@ -10992,9 +11209,14 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     text-align: left;
     font: inherit;
     cursor: pointer;
+    transition: background 140ms ease, transform 100ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .ai-picker-option:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.ai-picker-option:active { transform: scale(0.98); }
 .ai-picker-option.active { background: var(--accent); color: #fff; }
+@media (prefers-reduced-motion: reduce) {
+    .ai-picker-popover { transition: none; transform: none; opacity: 1; }
+}
 .ai-usage-popover {
     position: fixed;
     z-index: 10130;

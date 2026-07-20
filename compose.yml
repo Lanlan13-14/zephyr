@@ -5,6 +5,15 @@ services:
     restart: unless-stopped
     env_file:
       - ./zephyr-data/.env
+    environment:
+      # Go AI runtime (bundled in image; loopback). Override token in .env for stable multi-replica.
+      ZEPHYR_AI_LISTEN: "127.0.0.1:8450"
+      ZEPHYR_AI_URL: "http://127.0.0.1:8450"
+      ZEPHYR_AI_DATA: "/app/data/zephyr-ai"
+      # Must reach Node HTTP from inside the container (set if you disable HTTP / change port).
+      # ZEPHYR_AI_PLATFORM_HOST_URL: "http://127.0.0.1:3080"
+      # ZEPHYR_AI_ADMIN_TOKEN: "change-me"
+      # ZEPHYR_AI_PLATFORM_HOST_TOKEN: "change-me"
     ports:
       - "3443:3443"
     volumes:

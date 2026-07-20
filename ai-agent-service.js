@@ -629,7 +629,11 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'plan_delete', description: '删除一个任务计划。', parameters: { type: 'object', properties: { planId: { type: 'string' } }, required: ['planId'] } } });
     if (p.remoteExecute !== false) tools.push({ type: 'function', function: { name: 'remote_execute', description: '在一个或多个 SSH 连接上执行 shell 命令。敏感操作需要用户确认。', parameters: { type: 'object', properties: { connectionIds: { type: 'array', items: { type: 'string' } }, command: { type: 'string' }, timeoutSeconds: { type: 'number' } }, required: ['connectionIds', 'command'] } } });
     if (p.fileRead !== false) tools.push({ type: 'function', function: { name: 'remote_read_file', description: '读取远程 SSH 主机上的文本文件。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, path: { type: 'string' }, maxBytes: { type: 'number' } }, required: ['connectionId', 'path'] } } });
-    if (p.fileWrite !== false) tools.push({ type: 'function', function: { name: 'remote_write_file', description: '写入或追加远程 SSH 主机文件。敏感操作需要用户确认。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, path: { type: 'string' }, content: { type: 'string' }, encoding: { type: 'string', enum: ['utf8', 'base64'] }, append: { type: 'boolean' } }, required: ['connectionId', 'path', 'content'] } } });
+    if (p.fileWrite !== false) {
+        tools.push({ type: 'function', function: { name: 'remote_write_file', description: '写入或追加远程 SSH 主机文件。写入前自动快照原文（若可读），返回 snapshotId 可用 remote_file_rollback 回滚。敏感操作需要用户确认。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, path: { type: 'string' }, content: { type: 'string' }, encoding: { type: 'string', enum: ['utf8', 'base64'] }, append: { type: 'boolean' } }, required: ['connectionId', 'path', 'content'] } } });
+        tools.push({ type: 'function', function: { name: 'remote_file_rollback', description: '用 remote_write_file 返回的 snapshotId 回滚远程文件到写入前内容；若原路径不存在则删除新文件。敏感操作需要确认。', parameters: { type: 'object', properties: { snapshotId: { type: 'string' } }, required: ['snapshotId'] } } });
+        tools.push({ type: 'function', function: { name: 'remote_file_snapshot_list', description: '列出当前用户最近的远程文件写前快照（不含全文）。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, path: { type: 'string' }, limit: { type: 'number' } } } } });
+    }
     return tools;
 }
 function convertMessagesForProvider(messages = [], systemPrompt = '', limits = {}) {
@@ -1411,10 +1415,88 @@ async function withRemoteSftp(deps, conn, fn) {
         (routed?.clients || []).reverse().forEach((client) => { try { client.end(); } catch {} });
     }
 }
+const FILE_SNAPSHOT_MAX = 80;
+const FILE_SNAPSHOT_CONTENT_MAX = 512 * 1024;
+
+function fileSnapshotPath(deps) {
+    const base = deps.DATA_DIR || deps.dataDir || path.join(process.cwd(), 'data');
+    return path.join(base, 'ai-file-snapshots.json');
+}
+
+function loadAllFileSnapshots(deps) {
+    try {
+        const raw = deps.readJSON ? deps.readJSON(fileSnapshotPath(deps), { snapshots: [] }) : { snapshots: [] };
+        return Array.isArray(raw.snapshots) ? raw.snapshots : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveAllFileSnapshots(deps, snapshots) {
+    const p = fileSnapshotPath(deps);
+    if (typeof deps.writeJSON === 'function') {
+        deps.writeJSON(p, { snapshots: snapshots.slice(0, FILE_SNAPSHOT_MAX) });
+        return;
+    }
+    const fs = require('fs');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify({ snapshots: snapshots.slice(0, FILE_SNAPSHOT_MAX) }, null, 2));
+}
+
+function saveFileSnapshot(deps, entry = {}) {
+    const id = crypto.randomUUID();
+    let content = String(entry.content || '');
+    if (content.length > FILE_SNAPSHOT_CONTENT_MAX) {
+        content = content.slice(0, FILE_SNAPSHOT_CONTENT_MAX);
+        entry.truncated = true;
+    }
+    const snap = {
+        id,
+        userId: String(entry.userId || ''),
+        connectionId: String(entry.connectionId || ''),
+        path: String(entry.path || ''),
+        content,
+        encoding: entry.encoding === 'base64' ? 'base64' : 'utf8',
+        existed: !!entry.existed,
+        size: Number(entry.size) || content.length,
+        skippedContent: !!entry.skippedContent,
+        reason: entry.reason || '',
+        truncated: !!entry.truncated,
+        createdAt: Date.now(),
+    };
+    const all = loadAllFileSnapshots(deps);
+    all.unshift(snap);
+    saveAllFileSnapshots(deps, all);
+    return snap;
+}
+
+function loadFileSnapshot(deps, id, userId) {
+    const all = loadAllFileSnapshots(deps);
+    const snap = all.find((s) => s.id === id);
+    if (!snap) return null;
+    if (userId && snap.userId && snap.userId !== String(userId)) return null;
+    return snap;
+}
+
+function listFileSnapshots(deps, userId, { connectionId, path: filePath, limit = 20 } = {}) {
+    let all = loadAllFileSnapshots(deps).filter((s) => !userId || !s.userId || s.userId === String(userId));
+    if (connectionId) all = all.filter((s) => s.connectionId === String(connectionId));
+    if (filePath) all = all.filter((s) => s.path === String(filePath));
+    return all.slice(0, limit).map((s) => ({
+        id: s.id,
+        connectionId: s.connectionId,
+        path: s.path,
+        existed: s.existed,
+        size: s.size,
+        skippedContent: !!s.skippedContent,
+        createdAt: s.createdAt,
+    }));
+}
+
 function isSensitiveTool(name, args = {}) {
     const value = String(name || '');
     if (value === 'ui_action') return String(args.action || '') === 'terminal_send_input' && args.run !== false;
-    return ['remote_execute', 'remote_write_file', 'get_env_var', 'connection_create', 'connection_update', 'connection_delete', 'proxy_save', 'proxy_delete', 'ssh_key_save', 'ssh_key_delete', 'jump_host_save', 'jump_host_delete'].includes(value);
+    return ['remote_execute', 'remote_write_file', 'remote_file_rollback', 'get_env_var', 'connection_create', 'connection_update', 'connection_delete', 'proxy_save', 'proxy_delete', 'ssh_key_save', 'ssh_key_delete', 'jump_host_save', 'jump_host_delete'].includes(value);
 }
 function maskToolPayload(value, key = '') {
     const sensitiveKeys = /password|passwd|private[_-]?key|passphrase|secret|token|authorization|cookie|api[_-]?key/i;
@@ -1919,12 +2001,94 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 // Per-call fileWrite capability re-check (§16.4)
                 if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'fileWrite', 'connection', args.connectionId, null, { resourceExists: true });
                 const targetPath = String(args.path || '');
+                const connectionId = String(args.connectionId || '');
                 const buffer = args.encoding === 'base64' ? Buffer.from(String(args.content || ''), 'base64') : Buffer.from(String(args.content || ''), 'utf8');
                 if (buffer.length > MAX_REMOTE_WRITE) throw new Error(`写入内容过大，当前上限 ${MAX_REMOTE_WRITE} bytes`);
+                // Pre-write snapshot for rollback (ops checkpoint, not git).
+                let snapshot = null;
+                try {
+                    const stat = await sftpStat(sftp, targetPath);
+                    if (Number(stat.size) <= MAX_REMOTE_READ) {
+                        const prev = await sftpReadFile(sftp, targetPath);
+                        snapshot = saveFileSnapshot(deps, {
+                            userId: ctx.user?.userId,
+                            connectionId,
+                            path: targetPath,
+                            content: prev.toString('utf8'),
+                            encoding: 'utf8',
+                            existed: true,
+                            size: prev.length,
+                        });
+                    } else {
+                        snapshot = saveFileSnapshot(deps, {
+                            userId: ctx.user?.userId,
+                            connectionId,
+                            path: targetPath,
+                            content: '',
+                            encoding: 'utf8',
+                            existed: true,
+                            size: Number(stat.size) || 0,
+                            skippedContent: true,
+                            reason: 'file_too_large_for_snapshot',
+                        });
+                    }
+                } catch {
+                    // new file — record non-existence so rollback can delete
+                    snapshot = saveFileSnapshot(deps, {
+                        userId: ctx.user?.userId,
+                        connectionId,
+                        path: targetPath,
+                        content: '',
+                        encoding: 'utf8',
+                        existed: false,
+                        size: 0,
+                    });
+                }
                 await sftpWriteFile(sftp, targetPath, buffer, !!args.append);
                 deps.addActivity?.(`AI 助理写入远程文件：${targetPath}`, ctx.user?.userId);
-                return { path: targetPath, bytes: buffer.length, append: !!args.append };
+                return {
+                    path: targetPath,
+                    bytes: buffer.length,
+                    append: !!args.append,
+                    snapshotId: snapshot?.id || null,
+                    snapshot: snapshot ? { id: snapshot.id, existed: snapshot.existed, skippedContent: !!snapshot.skippedContent } : null,
+                    rollbackHint: snapshot?.id ? `可用 remote_file_rollback({ snapshotId: "${snapshot.id}" }) 回滚此写入（需确认）` : null,
+                };
             }), deps);
+        case 'remote_file_rollback':
+            if (p.fileWrite === false) throw new Error('远程文件写入权限未开启');
+            return maybeRequireConfirmation(toolName, args, ctx, async () => {
+                const snapshotId = String(args.snapshotId || '').trim();
+                if (!snapshotId) throw new Error('snapshotId 不能为空');
+                const snap = loadFileSnapshot(deps, snapshotId, ctx.user?.userId);
+                if (!snap) throw new Error('快照不存在或无权访问');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'fileWrite', 'connection', snap.connectionId, null, { resourceExists: true });
+                return withRemoteSftp(deps, findConnection(deps, snap.connectionId, ctx), async (sftp) => {
+                    if (!snap.existed) {
+                        // original was new file — best-effort delete
+                        await new Promise((resolve, reject) => {
+                            sftp.unlink(snap.path, (err) => (err && err.code !== 2 ? reject(err) : resolve()));
+                        });
+                        deps.addActivity?.(`AI 回滚删除新建文件：${snap.path}`, ctx.user?.userId);
+                        return { rolledBack: true, action: 'deleted_new_file', path: snap.path, snapshotId };
+                    }
+                    if (snap.skippedContent) throw new Error('原文件过大未保存内容，无法自动回滚；请手工恢复');
+                    const buf = snap.encoding === 'base64'
+                        ? Buffer.from(String(snap.content || ''), 'base64')
+                        : Buffer.from(String(snap.content || ''), 'utf8');
+                    await sftpWriteFile(sftp, snap.path, buf, false);
+                    deps.addActivity?.(`AI 回滚远程文件：${snap.path}`, ctx.user?.userId);
+                    return { rolledBack: true, action: 'restored', path: snap.path, bytes: buf.length, snapshotId };
+                });
+            }, deps);
+        case 'remote_file_snapshot_list':
+            return {
+                snapshots: listFileSnapshots(deps, ctx.user?.userId, {
+                    connectionId: args.connectionId,
+                    path: args.path,
+                    limit: clampNumber(args.limit, 1, 50, 20),
+                }),
+            };
         case 'remote_desktop_screenshot': {
             const raw = Array.isArray(ctx.context?.remoteDesktopSnapshots) ? ctx.context.remoteDesktopSnapshots : [];
             const tabId = String(args.tabId || '').trim();
@@ -2016,6 +2180,10 @@ function normalizeAiSettingsInput(currentAi = {}, ai = {}) {
         autoConfirmDelayMs: clampNumber(sensitiveIn.autoConfirmDelayMs, 0, 60000, 2500),
     };
     const permissionsIn = { ...(currentAi.permissions || {}), ...(Object.prototype.hasOwnProperty.call(partial, 'permissions') ? (partial.permissions || {}) : {}) };
+    const ruleList = (v) => (Array.isArray(v) ? v : String(v || '').split('\n'))
+        .map((x) => String(x || '').trim())
+        .filter(Boolean)
+        .slice(0, 200);
     next.permissions = {
         webSearch: permissionsIn.webSearch !== false,
         webFetch: permissionsIn.webFetch !== false,
@@ -2028,6 +2196,13 @@ function normalizeAiSettingsInput(currentAi = {}, ai = {}) {
         notesRead: permissionsIn.notesRead !== false,
         notesWrite: permissionsIn.notesWrite !== false,
         env: permissionsIn.env !== false,
+        // Rule engine (Go runtime): deny > ask > allow > mode fallback
+        mode: ['ask', 'auto', 'yolo'].includes(String(permissionsIn.mode || '').toLowerCase())
+            ? String(permissionsIn.mode).toLowerCase()
+            : 'ask',
+        deny: ruleList(permissionsIn.deny),
+        allow: ruleList(permissionsIn.allow),
+        ask: ruleList(permissionsIn.ask),
     };
     const plannerIn = { ...(currentAi.planner || {}), ...(Object.prototype.hasOwnProperty.call(partial, 'planner') ? (partial.planner || {}) : {}) };
     next.planner = { enabled: plannerIn.enabled !== false, requirePlanBeforeTools: !!plannerIn.requirePlanBeforeTools };
@@ -2134,6 +2309,41 @@ function normalizeAiSettingsInput(currentAi = {}, ai = {}) {
             createdAt: Number(plan.createdAt || Date.now()),
             updatedAt: Number(plan.updatedAt || Date.now()),
         }));
+    }
+    if (Array.isArray(ai.mcpServers)) {
+        next.mcpServers = ai.mcpServers.slice(0, 40).map((s) => {
+            const type = String(s.type || s.Type || 'stdio').toLowerCase() === 'http' ? 'http' : 'stdio';
+            const env = {};
+            if (s.env && typeof s.env === 'object' && !Array.isArray(s.env)) {
+                for (const [k, v] of Object.entries(s.env)) {
+                    if (k) env[String(k).slice(0, 80)] = String(v ?? '').slice(0, 2000);
+                }
+            }
+            const headers = {};
+            if (s.headers && typeof s.headers === 'object' && !Array.isArray(s.headers)) {
+                for (const [k, v] of Object.entries(s.headers)) {
+                    if (k) headers[String(k).slice(0, 120)] = String(v ?? '').slice(0, 4000);
+                }
+            }
+            return {
+                id: String(s.id || crypto.randomUUID()).slice(0, 120),
+                name: String(s.name || '').trim().slice(0, 80),
+                type,
+                command: String(s.command || '').slice(0, 500),
+                args: Array.isArray(s.args) ? s.args.map((a) => String(a).slice(0, 500)).slice(0, 40) : String(s.args || '').split(/\s+/).filter(Boolean).slice(0, 40),
+                env,
+                url: String(s.url || '').slice(0, 1000),
+                headers,
+                callTimeoutSeconds: clampNumber(s.callTimeoutSeconds ?? s.call_timeout_seconds, 1, 7200, 300),
+                trustedReadOnlyTools: Array.isArray(s.trustedReadOnlyTools)
+                    ? s.trustedReadOnlyTools.map((x) => String(x).slice(0, 120)).filter(Boolean).slice(0, 100)
+                    : String(s.trustedReadOnlyTools || '').split(/[\n,]/).map((x) => x.trim()).filter(Boolean).slice(0, 100),
+                enabled: s.enabled !== false,
+                updatedAt: Number(s.updatedAt || Date.now()),
+            };
+        }).filter((s) => s.name && (s.type === 'http' ? s.url : s.command));
+    } else if (!Array.isArray(next.mcpServers)) {
+        next.mcpServers = [];
     }
     return next;
 }
@@ -2444,4 +2654,72 @@ function registerAiRoutes(app, deps) {
     });
 }
 
-module.exports = { registerAiRoutes, normalizeAiSettingsInput, safeAiSettings };
+/**
+ * Host RPC entry for zephyr-ai (Go). Keeps tool execution in Node where
+ * SSH pools / notes ACL / browser CDP already live.
+ */
+async function executeAiToolForHost(toolName, args = {}, hostCtx = {}) {
+    const deps = hostCtx.deps;
+    if (!deps) throw new Error('executeAiToolForHost: deps required');
+    const ctx = {
+        user: hostCtx.user,
+        req: { user: hostCtx.user },
+        context: hostCtx.context || {},
+        confirmed: !!hostCtx.confirmed,
+        signal: hostCtx.signal || null,
+        authz: deps.authz,
+        resourceService: deps.resourceService || deps.resources,
+        aiPolicy: deps.aiPolicyService || deps.aiPolicy,
+        responseMode: hostCtx.responseMode || 'chat',
+        sessionId: hostCtx.sessionId,
+        runId: hostCtx.runId,
+    };
+    return executeAiTool(toolName, args, ctx, deps);
+}
+
+/** Dynamic tool catalog for platform host (schemas + risk flags). */
+function listToolCatalog(ai = {}) {
+    const defs = toolDefinitions(ai || {});
+    return defs.map((d) => {
+        const name = d.function?.name || d.name;
+        const description = d.function?.description || d.description || '';
+        const parameters = d.function?.parameters || d.parameters || { type: 'object', properties: {} };
+        const readOnly = isReadOnlyToolName(name);
+        const risk = riskForToolName(name, readOnly);
+        return {
+            name,
+            description,
+            parameters,
+            readOnly,
+            risk,
+            parallelSafe: readOnly,
+        };
+    });
+}
+
+function isReadOnlyToolName(name) {
+    const n = String(name || '');
+    if (!n) return false;
+    if (/^(list_|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read|remote_desktop_screenshot|remote_read|browser_inspect|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
+    if (n.endsWith('_list') || n.endsWith('_search') || n.endsWith('_get') || n.endsWith('_status')) return true;
+    return false;
+}
+
+function riskForToolName(name, readOnly) {
+    const n = String(name || '');
+    if (/_delete$|connection_delete|remote_write|rm |proxy_delete|ssh_key_delete/.test(n)) return 'destructive';
+    if (readOnly) return 'low';
+    return 'high';
+}
+
+module.exports = {
+    registerAiRoutes,
+    normalizeAiSettingsInput,
+    safeAiSettings,
+    executeAiToolForHost,
+    listToolCatalog,
+    toolDefinitions,
+    formatAiContextForPrompt,
+    selectPromptMemories,
+    rankMemories,
+};

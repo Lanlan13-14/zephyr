@@ -45,6 +45,14 @@ COPY scripts/build-go-wasm-esm.mjs /build/build-go-wasm-esm.mjs
 RUN node /build/build-go-wasm-esm.mjs wasm_exec.js wasm_exec.mjs
 
 # ============================================================
+# Stage 2b: zephyr-ai-builder — Go AI runtime (SSE agent loop)
+# ============================================================
+FROM golang:1.26-alpine AS zephyr-ai-builder
+WORKDIR /build
+COPY zephyr-ai/ ./
+RUN go mod tidy && CGO_ENABLED=0 go build -o /zephyr-ai ./cmd/zephyr-ai
+
+# ============================================================
 # Stage 3: runtime — Zephyr + WASM RDP client (Alpine)
 # ============================================================
 FROM node:20-alpine3.20
@@ -71,6 +79,9 @@ RUN apk add --no-cache \
     && echo "=== runtime deps installed ==="
 
 COPY --from=app-build /app /app
+COPY --from=zephyr-ai-builder /zephyr-ai /usr/local/bin/zephyr-ai
+COPY scripts/docker-entrypoint-ai.sh /usr/local/bin/docker-entrypoint-ai.sh
+RUN chmod +x /usr/local/bin/zephyr-ai /usr/local/bin/docker-entrypoint-ai.sh
 
 # RDP WASM artifacts → public/vendor/rdp-wasm/
 RUN mkdir -p /app/public/vendor/rdp-wasm
@@ -119,6 +130,14 @@ RUN echo "=== runtime diagnostics ===" && \
     node -e "require('better-sqlite3'); console.log('better-sqlite3 loaded')" && \
     (HTTP_ENABLED=true HTTPS_ENABLED=false PORT=39080 node server.js > /tmp/zephyr-startup.log 2>&1 & pid=$!; ok=0; for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:39080/ >/dev/null 2>&1 && ok=1 && break; kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done; cat /tmp/zephyr-startup.log; kill "$pid" 2>/dev/null || true; rm -rf /app/data /tmp/zephyr-startup.log; test "$ok" = 1; echo "server startup smoke loaded")
 
+# Go AI runtime defaults (loopback inside container; Node proxies SSE)
+ENV ZEPHYR_AI_LISTEN=127.0.0.1:8450
+ENV ZEPHYR_AI_URL=http://127.0.0.1:8450
+ENV ZEPHYR_AI_DATA=/app/data/zephyr-ai
+ENV ZEPHYR_AI_PLATFORM_HOST_URL=https://127.0.0.1:3443
+# ZEPHYR_AI_ADMIN_TOKEN / ZEPHYR_AI_PLATFORM_HOST_TOKEN: set via env_file or -e
+# (same value). If empty, entrypoint generates a per-boot token into the data dir.
+
 EXPOSE 3443
 
-CMD ["node", "server.js"]
+CMD ["/usr/local/bin/docker-entrypoint-ai.sh"]
