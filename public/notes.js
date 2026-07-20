@@ -1,10 +1,11 @@
 /**
  * notes.js — Notes workspace UI (FREEZE plan §6.4).
- * Uses existing Zephyr CSS variables / components. Markdown preview reuses
- * the page's escape-first renderer when available.
+ * Craft-first shell: in-app dialogs only (no browser chrome dialogs),
+ * Bear/Craft/Apple Notes-inspired layout, SVG chrome, master-detail mobile.
  */
 
 const NOTES_DEBOUNCE_MS = 800;
+const NOTES_SEARCH_MS = 180;
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -15,12 +16,18 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+function prefersReducedMotion() {
+    try {
+        return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch {
+        return false;
+    }
+}
+
 function safeMarkdown(src) {
-    // Prefer the app's existing renderer if present.
     if (typeof window.renderMarkdown === 'function') {
         try { return window.renderMarkdown(String(src || '')); } catch {}
     }
-    // Minimal escape-first fallback: no raw HTML, links allowlist http(s)/ssh/telnet/jms/mailto.
     let text = escapeHtml(src || '');
     text = text.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${code}</code></pre>`);
     text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -30,8 +37,10 @@ function safeMarkdown(src) {
     text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     text = text.replace(/~~([^~]+)~~/g, '<s>$1</s>');
+    text = text.replace(/^\s*[-*] \[ \]\s+(.+)$/gm, '<li class="task"><input type="checkbox" disabled> $1</li>');
+    text = text.replace(/^\s*[-*] \[x\]\s+(.+)$/gim, '<li class="task"><input type="checkbox" checked disabled> $1</li>');
     text = text.replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>');
-    text = text.replace(/(<li>.*<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`);
+    text = text.replace(/(<li[\s\S]*?<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`);
     text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => {
         const url = String(href || '').trim();
         if (!/^(https?:|ssh:|telnet:|jms:|mailto:)/i.test(url)) return label;
@@ -48,10 +57,196 @@ function formatRelativeTime(ts) {
     if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} 分钟前`;
     if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)} 小时前`;
     if (delta < 7 * 86_400_000) return `${Math.floor(delta / 86_400_000)} 天前`;
-    try { return new Date(ts).toLocaleDateString(); } catch { return ''; }
+    try {
+        return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    } catch {
+        return '';
+    }
 }
 
-export function createNotesController({ api, toast, openTransientFromUri, $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)] }) {
+function formatAbsoluteTime(ts) {
+    try {
+        return new Date(ts).toLocaleString();
+    } catch {
+        return '';
+    }
+}
+
+const ICONS = {
+    plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    search: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16.2 16.2 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l1.5 1.8h7.5a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+    note: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.8h7.2L19 8.6V20.2a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 3.8V9h5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 12.5h7M8.5 15.5h7M8.5 18.5h4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M9 10.5v7M12 10.5v7M15 10.5v7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    link: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.5 14.5 9.5M8.2 12.2l-1.4 1.4a3.2 3.2 0 1 0 4.5 4.5l1.4-1.4M15.8 11.8l1.4-1.4a3.2 3.2 0 0 0-4.5-4.5l-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+    share: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.5" cy="12" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="6.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="17.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 11.1 14.8 7.6M8.6 13 14.8 16.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="18" cy="12" r="1.5" fill="currentColor"/></svg>',
+    back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5.5 8.5 12 15 18.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    chevron: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 9.5 12 13l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    export: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5v9.5M8.5 8 12 4.5 15.5 8M5.5 14.5v3.2A1.3 1.3 0 0 0 6.8 19h10.4a1.3 1.3 0 0 0 1.3-1.3v-3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    import: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14.5V5M8.5 11 12 14.5 15.5 11M5.5 16.5v1.2A1.3 1.3 0 0 0 6.8 19h10.4a1.3 1.3 0 0 0 1.3-1.3v-1.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
+    bold: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 5.5h5.2a3.4 3.4 0 0 1 0 6.8H7.5zm0 6.8h5.8a3.5 3.5 0 0 1 0 7H7.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
+    italic: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5.5h6M7 18.5h6M13.5 5.5 10.5 18.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    strike: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M9 7.5c.8-1.6 2-2.3 3.6-2.3 2.2 0 3.6 1.3 3.6 3.1 0 1.1-.4 1.9-1.2 2.5M8.4 14.2c.3 2.1 1.8 3.6 4 3.6 2.3 0 4-1.4 4-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+    code: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.5 4.5 12 9 16.5M15 7.5 19.5 12 15 16.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    codeblock: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5.5" width="15" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 10 7 12l1.5 2M15.5 10 17 12l-1.5 2M12.4 9.5l-1.2 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    heading: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 5.5v13M17.5 5.5v13M6.5 12h11" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
+    quote: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 17.5c-2.2 0-3.8-1.7-3.8-4.1 0-3.2 2.3-5.9 5.3-7.1l.7 1.4c-1.8.9-3 2.5-3.1 4.2.5-.3 1.1-.5 1.8-.5 1.7 0 3 1.2 3 3 0 1.7-1.3 3.1-3.9 3.1zm9 0c-2.2 0-3.8-1.7-3.8-4.1 0-3.2 2.3-5.9 5.3-7.1l.7 1.4c-1.8.9-3 2.5-3.1 4.2.5-.3 1.1-.5 1.8-.5 1.7 0 3 1.2 3 3 0 1.7-1.3 3.1-3.9 3.1z" fill="currentColor"/></svg>',
+    list: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 7h9M9.5 12h9M9.5 17h9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="6" cy="7" r="1.1" fill="currentColor"/><circle cx="6" cy="12" r="1.1" fill="currentColor"/><circle cx="6" cy="17" r="1.1" fill="currentColor"/></svg>',
+    olist: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7h9M10 12h9M10 17h9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><text x="4.2" y="8.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">1</text><text x="4.2" y="13.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">2</text><text x="4.2" y="18.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">3</text></svg>',
+    task: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 12.2l2.4 2.4L16.2 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
+};
+
+function icon(name) {
+    return ICONS[name] || '';
+}
+
+/** In-app dialog layer — never reaches for browser chrome dialogs. */
+function ensureDialogHost() {
+    let host = document.getElementById('notesDialogHost');
+    if (host) return host;
+    host = document.createElement('div');
+    host.id = 'notesDialogHost';
+    host.className = 'notes-dialog-host';
+    host.setAttribute('aria-live', 'polite');
+    document.body.appendChild(host);
+    return host;
+}
+
+function openNativeDialog({
+    title = '',
+    message = '',
+    input = null, // { value, placeholder, maxLength, label }
+    confirmLabel = '确定',
+    cancelLabel = '取消',
+    danger = false,
+    hideCancel = false,
+} = {}) {
+    return new Promise((resolve) => {
+        const host = ensureDialogHost();
+        const backdrop = document.createElement('div');
+        backdrop.className = 'notes-dialog-backdrop';
+        backdrop.setAttribute('role', 'presentation');
+        const panel = document.createElement('div');
+        panel.className = 'notes-dialog';
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-modal', 'true');
+        panel.setAttribute('aria-label', title || '对话框');
+        const inputId = `notesDialogInput-${Math.random().toString(36).slice(2, 8)}`;
+        panel.innerHTML = `
+            <div class="notes-dialog-head">
+                <h2 class="notes-dialog-title">${escapeHtml(title)}</h2>
+                <button type="button" class="notes-icon-btn notes-dialog-close" data-notes-dialog="cancel" aria-label="关闭">${icon('close')}</button>
+            </div>
+            ${message ? `<p class="notes-dialog-message">${escapeHtml(message)}</p>` : ''}
+            ${input ? `
+                <label class="notes-dialog-field" for="${inputId}">
+                    ${input.label ? `<span>${escapeHtml(input.label)}</span>` : ''}
+                    <input id="${inputId}" class="notes-dialog-input" type="text"
+                        value="${escapeHtml(input.value || '')}"
+                        placeholder="${escapeHtml(input.placeholder || '')}"
+                        maxlength="${Number(input.maxLength) || 200}"
+                        autocomplete="off" spellcheck="false">
+                </label>` : ''}
+            <div class="notes-dialog-actions">
+                ${hideCancel ? '' : `<button type="button" class="btn notes-dialog-cancel" data-notes-dialog="cancel">${escapeHtml(cancelLabel)}</button>`}
+                <button type="button" class="btn btn-primary${danger ? ' notes-dialog-danger' : ''}" data-notes-dialog="confirm">${escapeHtml(confirmLabel)}</button>
+            </div>`;
+        backdrop.appendChild(panel);
+        host.appendChild(backdrop);
+
+        const inputEl = input ? panel.querySelector('.notes-dialog-input') : null;
+        const confirmBtn = panel.querySelector('[data-notes-dialog="confirm"]');
+        let settled = false;
+
+        const settle = (value) => {
+            if (settled) return;
+            settled = true;
+            backdrop.classList.add('closing');
+            const done = () => {
+                backdrop.removeEventListener('animationend', done);
+                backdrop.remove();
+            };
+            if (prefersReducedMotion()) {
+                backdrop.remove();
+            } else {
+                backdrop.addEventListener('animationend', done);
+                window.setTimeout(done, 280);
+            }
+            window.removeEventListener('keydown', onKey);
+            resolve(value);
+        };
+
+        const onKey = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                settle(input ? null : false);
+            } else if (e.key === 'Enter' && !e.isComposing) {
+                if (document.activeElement === inputEl || e.target === confirmBtn) {
+                    e.preventDefault();
+                    settle(input ? (inputEl?.value ?? '') : true);
+                }
+            }
+        };
+
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) settle(input ? null : false);
+        });
+        panel.querySelectorAll('[data-notes-dialog]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const kind = btn.getAttribute('data-notes-dialog');
+                if (kind === 'cancel') settle(input ? null : false);
+                else settle(input ? (inputEl?.value ?? '') : true);
+            });
+        });
+        window.addEventListener('keydown', onKey);
+
+        requestAnimationFrame(() => {
+            backdrop.classList.add('show');
+            if (inputEl) {
+                inputEl.focus();
+                inputEl.select?.();
+            } else {
+                confirmBtn?.focus();
+            }
+        });
+    });
+}
+
+function nativeConfirm(opts) {
+    return openNativeDialog({
+        title: opts.title || '确认',
+        message: opts.message || '',
+        confirmLabel: opts.confirmLabel || '确定',
+        cancelLabel: opts.cancelLabel || '取消',
+        danger: !!opts.danger,
+    }).then((v) => v === true);
+}
+
+function nativePrompt(opts) {
+    return openNativeDialog({
+        title: opts.title || '',
+        message: opts.message || '',
+        input: {
+            value: opts.value || '',
+            placeholder: opts.placeholder || '',
+            maxLength: opts.maxLength || 200,
+            label: opts.label || '',
+        },
+        confirmLabel: opts.confirmLabel || '确定',
+        cancelLabel: opts.cancelLabel || '取消',
+    });
+}
+
+export function createNotesController({
+    api,
+    toast,
+    openTransientFromUri,
+    $ = (s) => document.querySelector(s),
+    $$ = (s) => [...document.querySelectorAll(s)],
+}) {
     const state = {
         notes: [],
         groups: [],
@@ -68,8 +263,17 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         searchTimer: null,
         generation: 0,
         loaded: false,
-        connectionFilter: '', // terminal side-panel hand-off (§9)
-        sortBy: 'updated', // updated | created | title (§6.4.3)
+        connectionFilter: '',
+        sortBy: 'updated',
+        trashCount: 0,
+        mobileDetail: false,
+        allTags: [],
+    };
+
+    const SORT_LABELS = {
+        updated: '最近更新',
+        created: '最近创建',
+        title: '标题',
     };
 
     function setSaveState(kind, text) {
@@ -77,6 +281,32 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         if (!el) return;
         el.dataset.state = kind;
         el.textContent = text;
+        el.title = text;
+    }
+
+    function headingForFilter() {
+        if (state.trash || state.groupFilter === '__trash') return '回收站';
+        if (state.groupFilter === '__all') return '全部笔记';
+        if (state.groupFilter === '' || state.groupFilter == null) return '未分组';
+        return state.groupFilter;
+    }
+
+    function updateListHeading() {
+        const h = $('#notesListHeading');
+        const c = $('#notesListCount');
+        if (h) h.textContent = headingForFilter();
+        if (c) c.textContent = String(state.notes.length);
+        const sortBtn = $('#notesSortTrigger');
+        if (sortBtn) {
+            const label = SORT_LABELS[state.sortBy] || SORT_LABELS.updated;
+            sortBtn.querySelector('.notes-filter-label') && (sortBtn.querySelector('.notes-filter-label').textContent = label);
+        }
+        const tagBtn = $('#notesTagTrigger');
+        if (tagBtn) {
+            const label = state.tagFilter === 'all' ? '全部标签' : state.tagFilter;
+            const span = tagBtn.querySelector('.notes-filter-label');
+            if (span) span.textContent = label;
+        }
     }
 
     function setMode(mode) {
@@ -86,14 +316,18 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
             btn.classList.toggle('active', active);
             btn.setAttribute('aria-selected', active ? 'true' : 'false');
         });
+        const switcher = $('#notesModeSwitch');
+        if (switcher) switcher.dataset.mode = mode;
         const body = $('#notesBody');
         if (body) body.dataset.mode = mode;
         const preview = $('#notesPreview');
         const input = $('#notesContentInput');
         if (mode === 'preview' || mode === 'split') {
-            if (preview) preview.innerHTML = safeMarkdown(input?.value || '');
+            if (preview) {
+                preview.innerHTML = safeMarkdown(input?.value || '');
+                interceptPreviewLinks(preview);
+            }
         }
-        // Wire note links in preview to transient UI.
         preview?.querySelectorAll?.('a[href^="ssh:"],a[href^="telnet:"],a[href^="jms:"]')?.forEach((a) => {
             a.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -102,36 +336,120 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         });
     }
 
+    function setMobileDetail(open) {
+        state.mobileDetail = !!open;
+        const shell = $('#notesShell') || $('#notesWorkspace');
+        shell?.classList.toggle('notes-mobile-detail', !!open);
+        shell?.classList.toggle('notes-mobile-list', !open);
+    }
+
     function renderGroups() {
         const tree = $('#notesGroupTree');
-        if (!tree) return;
-        const counts = { all: state.notes.length, ungrouped: 0 };
-        for (const n of state.notes) {
-            if (!n.groupPath) counts.ungrouped += 1;
+        if ($('#notesCountAll')) $('#notesCountAll').textContent = String(
+            state.groupFilter === '__all' ? state.notes.length : ($('#notesCountAll').dataset.total || state.notes.length),
+        );
+        // Keep all-count from last full list when filtered — refresh via data attr
+        if (state.groupFilter === '__all' && !state.query && state.tagFilter === 'all' && !state.connectionFilter) {
+            if ($('#notesCountAll')) {
+                $('#notesCountAll').textContent = String(state.notes.length);
+                $('#notesCountAll').dataset.total = String(state.notes.length);
+            }
         }
-        if ($('#notesCountAll')) $('#notesCountAll').textContent = String(counts.all);
-        if ($('#notesCountUngrouped')) $('#notesCountUngrouped').textContent = String(counts.ungrouped);
+        let ungrouped = 0;
+        for (const n of state.notes) {
+            if (!n.groupPath) ungrouped += 1;
+        }
+        // Only meaningful when viewing unfiltered; still update when possible
+        if ($('#notesCountUngrouped') && state.groupFilter === '__all' && !state.query) {
+            // count from groups API when available
+            const gEmpty = state.groups.find((g) => !g.groupPath);
+            $('#notesCountUngrouped').textContent = String(gEmpty ? gEmpty.count : ungrouped);
+        }
+        if ($('#notesCountTrash')) $('#notesCountTrash').textContent = String(state.trashCount);
+
+        $$('.notes-group-item').forEach((btn) => {
+            const g = btn.dataset.group;
+            const active = g === state.groupFilter || (g === '' && state.groupFilter === '');
+            // __all special
+            btn.classList.toggle('active', String(g) === String(state.groupFilter));
+        });
+
+        if (!tree) return;
         tree.innerHTML = state.groups
             .filter((g) => g.groupPath)
-            .map((g) => `<button type="button" class="notes-group-item${state.groupFilter === g.groupPath ? ' active' : ''}" data-group="${escapeHtml(g.groupPath)}">${escapeHtml(g.groupPath)} <span class="notes-group-count">${g.count}</span></button>`)
+            .map((g) => {
+                const active = state.groupFilter === g.groupPath ? ' active' : '';
+                return `<button type="button" class="notes-group-item${active}" data-group="${escapeHtml(g.groupPath)}" title="${escapeHtml(g.groupPath)}">
+                    <span class="notes-group-icon">${icon('folder')}</span>
+                    <span class="notes-group-label">${escapeHtml(g.groupPath)}</span>
+                    <span class="notes-group-count">${g.count}</span>
+                </button>`;
+            })
             .join('');
-        $$('.notes-group-item').forEach((btn) => {
-            btn.classList.toggle('active', btn.dataset.group === state.groupFilter);
-            btn.addEventListener('contextmenu', (e) => {
+
+        tree.querySelectorAll('.notes-group-item').forEach((btn) => {
+            btn.addEventListener('contextmenu', async (e) => {
                 e.preventDefault();
-                const action = confirm(`分组：${btn.dataset.group}\n确定 = 重命名，取消 = 删除（笔记移到未分组）`);
-                if (action) {
-                    const newName = prompt('新分组路径：', btn.dataset.group);
-                    if (newName && newName !== btn.dataset.group) {
-                        api('/api/notes/groups/rename', { method: 'POST', body: JSON.stringify({ oldPath: btn.dataset.group, newPath: newName }) })
-                            .then(() => { toast?.('已重命名分组'); loadList(); })
-                            .catch((err) => toast?.(err.message));
+                e.stopPropagation();
+                await showGroupContextMenu(btn.dataset.group, e.clientX, e.clientY);
+            });
+        });
+    }
+
+    async function showGroupContextMenu(groupPath, x, y) {
+        closeMenus();
+        const menu = document.createElement('div');
+        menu.id = 'notesContextMenu';
+        menu.className = 'notes-menu notes-context-menu';
+        menu.innerHTML = `
+            <button type="button" class="notes-menu-item" data-g-action="rename">${icon('note')}<span>重命名分组</span></button>
+            <button type="button" class="notes-menu-item danger" data-g-action="delete">${icon('trash')}<span>删除分组</span></button>`;
+        placeMenu(menu, x, y);
+        requestAnimationFrame(() => menu.classList.add('show'));
+        menu.querySelectorAll('[data-g-action]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                closeMenus();
+                const action = btn.dataset.gAction;
+                if (action === 'rename') {
+                    const newName = await nativePrompt({
+                        title: '重命名分组',
+                        message: `将「${groupPath}」重命名为：`,
+                        value: groupPath,
+                        placeholder: 'ops/runbooks',
+                        confirmLabel: '重命名',
+                    });
+                    if (newName == null) return;
+                    const trimmed = String(newName).trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+                    if (!trimmed || trimmed === groupPath) return;
+                    try {
+                        await api('/api/notes/groups/rename', {
+                            method: 'POST',
+                            body: JSON.stringify({ oldPath: groupPath, newPath: trimmed }),
+                        });
+                        if (state.groupFilter === groupPath) state.groupFilter = trimmed;
+                        toast?.('已重命名分组');
+                        await loadList();
+                    } catch (err) {
+                        toast?.(err.message || '重命名失败');
                     }
-                } else {
-                    if (confirm(`确定删除分组 "${btn.dataset.group}"？该分组下的笔记将移到未分组。`)) {
-                        api('/api/notes/groups/delete', { method: 'POST', body: JSON.stringify({ groupPath: btn.dataset.group }) })
-                            .then(() => { toast?.('已删除分组'); loadList(); })
-                            .catch((err) => toast?.(err.message));
+                } else if (action === 'delete') {
+                    const ok = await nativeConfirm({
+                        title: '删除分组',
+                        message: `确定删除分组「${groupPath}」？该分组下的笔记会移到未分组。`,
+                        confirmLabel: '删除分组',
+                        danger: true,
+                    });
+                    if (!ok) return;
+                    try {
+                        await api('/api/notes/groups/delete', {
+                            method: 'POST',
+                            body: JSON.stringify({ groupPath }),
+                        });
+                        if (state.groupFilter === groupPath) state.groupFilter = '__all';
+                        toast?.('已删除分组');
+                        await loadList();
+                    } catch (err) {
+                        toast?.(err.message || '删除失败');
                     }
                 }
             });
@@ -142,30 +460,54 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         const list = $('#notesList');
         const empty = $('#notesListEmpty');
         if (!list) return;
-        // Sort (§6.4.3): updated / created / title
         const sorted = [...state.notes];
         const sortBy = state.sortBy || 'updated';
         sorted.sort((a, b) => {
-            if (sortBy === 'title') return String(a.title || '').localeCompare(String(b.title || ''));
+            if (sortBy === 'title') return String(a.title || '').localeCompare(String(b.title || ''), 'zh');
             if (sortBy === 'created') return Number(b.createdAt || 0) - Number(a.createdAt || 0);
             return Number(b.updatedAt || 0) - Number(a.updatedAt || 0);
         });
+        updateListHeading();
         if (!sorted.length) {
             list.innerHTML = '';
             empty?.classList.remove('force-hidden');
+            const emptyTitle = empty?.querySelector('[data-empty-title]');
+            const emptyDesc = empty?.querySelector('[data-empty-desc]');
+            if (state.trash) {
+                if (emptyTitle) emptyTitle.textContent = '回收站是空的';
+                if (emptyDesc) emptyDesc.textContent = '删除的笔记会出现在这里，可恢复或彻底清除。';
+            } else if (state.query) {
+                if (emptyTitle) emptyTitle.textContent = '没有匹配的笔记';
+                if (emptyDesc) emptyDesc.textContent = '试试换个关键词，或清除筛选条件。';
+            } else {
+                if (emptyTitle) emptyTitle.textContent = '还没有笔记';
+                if (emptyDesc) emptyDesc.textContent = '从左侧新建一条，或导入 Markdown 文件。';
+            }
             return;
         }
         empty?.classList.add('force-hidden');
-        list.innerHTML = sorted.map((n) => {
-            const tags = (n.tags || []).slice(0, 4).map((t) => `<span class="tag-chip">${escapeHtml(t)}</span>`).join('');
-            const connLinks = (n.linkedConnectionIds || n.linkedConnections || []).length
-                ? `<span class="tag-chip" style="background:color-mix(in srgb, var(--accent) 12%, transparent)">${(n.linkedConnectionIds || n.linkedConnections || []).length} 连接</span>`
+        list.innerHTML = sorted.map((n, i) => {
+            const tags = (n.tags || []).slice(0, 3).map((t) => `<span class="notes-chip">${escapeHtml(t)}</span>`).join('');
+            const links = (n.linkedConnectionIds || []).length;
+            const connChip = links
+                ? `<span class="notes-chip notes-chip-accent">${links} 连接</span>`
                 : '';
-            const dirtyBadge = n.noteId === state.selectedId && state.dirty ? '<span class="tag-chip" style="background:var(--warning);color:#fff">未保存</span>' : '';
-            return `<button type="button" class="notes-list-item${n.noteId === state.selectedId ? ' active' : ''}" data-note-id="${escapeHtml(n.noteId)}" role="option" aria-selected="${n.noteId === state.selectedId ? 'true' : 'false'}">
-                <div class="notes-list-title">${escapeHtml(n.title || '未命名笔记')}</div>
-                <div class="notes-list-preview">${escapeHtml(n.preview || n.summary || '')}</div>
-                <div class="notes-list-meta"><span>${escapeHtml(formatRelativeTime(n.updatedAt))}</span>${tags}${connLinks}${dirtyBadge}</div>
+            const dirtyBadge = n.noteId === state.selectedId && state.dirty
+                ? '<span class="notes-chip notes-chip-warn">未保存</span>'
+                : '';
+            const shared = n.shareWithUsers || n.shareWithAdmins || n.visibility === 'shared'
+                ? '<span class="notes-chip">共享</span>'
+                : '';
+            const delay = prefersReducedMotion() ? 0 : Math.min(i, 12) * 18;
+            return `<button type="button" class="notes-list-item${n.noteId === state.selectedId ? ' active' : ''}" data-note-id="${escapeHtml(n.noteId)}" role="option" aria-selected="${n.noteId === state.selectedId ? 'true' : 'false'}" style="--notes-stagger:${delay}ms">
+                <div class="notes-list-item-main">
+                    <div class="notes-list-title">${escapeHtml(n.title || '未命名笔记')}</div>
+                    <div class="notes-list-preview">${escapeHtml(n.preview || n.summary || '暂无内容')}</div>
+                </div>
+                <div class="notes-list-meta">
+                    <time datetime="${escapeHtml(String(n.updatedAt || ''))}" title="${escapeHtml(formatAbsoluteTime(n.updatedAt))}">${escapeHtml(formatRelativeTime(n.updatedAt))}</time>
+                    <div class="notes-list-chips">${tags}${connChip}${shared}${dirtyBadge}</div>
+                </div>
             </button>`;
         }).join('');
     }
@@ -175,16 +517,54 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         $('#notesEditor')?.classList.toggle('force-hidden', !show);
     }
 
+    function renderMetaChips(note) {
+        const tagsHost = $('#notesTagsChips');
+        const groupHost = $('#notesGroupChip');
+        if (tagsHost) {
+            const tags = note?.tags || [];
+            tagsHost.innerHTML = tags.map((t) => (
+                `<button type="button" class="notes-meta-chip" data-tag-chip="${escapeHtml(t)}" title="移除标签">
+                    <span>${escapeHtml(t)}</span>${icon('x')}
+                </button>`
+            )).join('') + `<button type="button" class="notes-meta-chip notes-meta-chip-add" id="notesAddTagBtn" title="添加标签">${icon('plus')}<span>标签</span></button>`;
+        }
+        if (groupHost) {
+            const g = note?.groupPath || '';
+            groupHost.innerHTML = g
+                ? `<button type="button" class="notes-meta-chip notes-meta-chip-group" id="notesEditGroupBtn" title="修改分组">${icon('folder')}<span>${escapeHtml(g)}</span></button>`
+                : `<button type="button" class="notes-meta-chip notes-meta-chip-add" id="notesEditGroupBtn" title="设置分组">${icon('folder')}<span>分组</span></button>`;
+        }
+        // keep hidden inputs in sync for save path
+        if ($('#notesTagsInput')) $('#notesTagsInput').value = (note?.tags || []).join(', ');
+        if ($('#notesGroupInput')) $('#notesGroupInput').value = note?.groupPath || '';
+    }
+
     function fillEditor(note) {
         showEditor(!!note);
-        if (!note) return;
+        if (!note) {
+            setMobileDetail(false);
+            return;
+        }
         $('#notesTitleInput').value = note.title || '';
         $('#notesContentInput').value = note.content || '';
-        $('#notesTagsInput').value = (note.tags || []).join(', ');
-        $('#notesGroupInput').value = note.groupPath || '';
+        renderMetaChips(note);
         setSaveState('saved', '已保存');
         state.dirty = false;
         if (state.mode !== 'edit') setMode(state.mode);
+        updateTrashButtons();
+        setMobileDetail(true);
+    }
+
+    async function refreshTrashCount() {
+        try {
+            const data = await api('/api/notes?trash=1&limit=1');
+            // trash list returns total as rows.length (limited) — fetch higher limit for count
+            const full = await api('/api/notes?trash=1&limit=200');
+            state.trashCount = (full.notes || []).length;
+            if ($('#notesCountTrash')) $('#notesCountTrash').textContent = String(state.trashCount);
+        } catch {
+            /* ignore */
+        }
     }
 
     async function loadList() {
@@ -192,7 +572,6 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         const params = new URLSearchParams();
         if (state.query) params.set('q', state.query);
         if (state.groupFilter !== '__all' && state.groupFilter !== '__trash') {
-            // empty string means ungrouped; must still be sent
             params.set('group', state.groupFilter == null ? '' : String(state.groupFilter));
         }
         if (state.trash || state.groupFilter === '__trash') params.set('trash', '1');
@@ -207,21 +586,69 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
             if (gen !== state.generation) return;
             state.groups = groups.groups || [];
             renderGroups();
-        } catch {}
-        // tag filter options
-        const tagSelect = $('#notesTagFilter');
-        if (tagSelect) {
-            const tags = [...new Set(state.notes.flatMap((n) => n.tags || []))].sort();
-            const current = state.tagFilter;
-            tagSelect.innerHTML = `<option value="all">全部标签</option>${tags.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}`;
-            tagSelect.value = tags.includes(current) ? current : 'all';
+        } catch {
+            renderGroups();
         }
+        // Tags from current list + accumulate
+        const tags = [...new Set([
+            ...state.allTags,
+            ...state.notes.flatMap((n) => n.tags || []),
+        ])].sort((a, b) => a.localeCompare(b, 'zh'));
+        state.allTags = tags;
+        renderTagMenu();
+        if (!(state.trash || state.groupFilter === '__trash')) {
+            refreshTrashCount().catch(() => {});
+        } else {
+            state.trashCount = state.notes.length;
+            if ($('#notesCountTrash')) $('#notesCountTrash').textContent = String(state.trashCount);
+        }
+        renderConnectionFilterBar();
         state.loaded = true;
+    }
+
+    function renderTagMenu() {
+        const menu = $('#notesTagMenu');
+        if (!menu) return;
+        const tags = state.allTags;
+        menu.innerHTML = `
+            <button type="button" class="notes-menu-item${state.tagFilter === 'all' ? ' active' : ''}" data-tag-value="all"><span>全部标签</span></button>
+            ${tags.map((t) => `<button type="button" class="notes-menu-item${state.tagFilter === t ? ' active' : ''}" data-tag-value="${escapeHtml(t)}"><span>${escapeHtml(t)}</span></button>`).join('')}`;
+    }
+
+    function renderSortMenu() {
+        const menu = $('#notesSortMenu');
+        if (!menu) return;
+        menu.innerHTML = Object.entries(SORT_LABELS).map(([value, label]) => (
+            `<button type="button" class="notes-menu-item${state.sortBy === value ? ' active' : ''}" data-sort-value="${value}"><span>${label}</span></button>`
+        )).join('');
+    }
+
+    function renderConnectionFilterBar() {
+        const bar = $('#notesConnectionFilterBar');
+        if (!bar) return;
+        if (!state.connectionFilter) {
+            bar.classList.add('force-hidden');
+            bar.innerHTML = '';
+            return;
+        }
+        bar.classList.remove('force-hidden');
+        bar.innerHTML = `
+            <div class="notes-filter-banner">
+                <span>已筛选关联连接 <code>${escapeHtml(state.connectionFilter)}</code></span>
+                <button type="button" class="notes-text-btn" id="notesClearConnectionFilter">清除</button>
+            </div>`;
+        $('#notesClearConnectionFilter')?.addEventListener('click', () => {
+            state.connectionFilter = '';
+            loadList().catch((err) => toast?.(err.message));
+        });
     }
 
     async function selectNote(noteId) {
         if (state.dirty && state.current) {
-            try { await flushSave(); } catch (err) { toast?.(err.message || '保存失败'); return; }
+            try { await flushSave(); } catch (err) {
+                toast?.(err.message || '保存失败');
+                return;
+            }
         }
         state.selectedId = noteId;
         renderList();
@@ -241,7 +668,19 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         state.dirty = true;
         setSaveState('dirty', '未保存');
         window.clearTimeout(state.saveTimer);
-        state.saveTimer = window.setTimeout(() => { flushSave().catch((err) => toast?.(err.message || '自动保存失败')); }, NOTES_DEBOUNCE_MS);
+        state.saveTimer = window.setTimeout(() => {
+            flushSave().catch((err) => toast?.(err.message || '自动保存失败'));
+        }, NOTES_DEBOUNCE_MS);
+        // live preview
+        if (state.mode === 'split' || state.mode === 'preview') {
+            const preview = $('#notesPreview');
+            const input = $('#notesContentInput');
+            if (preview && input) {
+                preview.innerHTML = safeMarkdown(input.value || '');
+                interceptPreviewLinks(preview);
+            }
+        }
+        renderList();
     }
 
     async function flushSave() {
@@ -249,11 +688,15 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         state.saving = true;
         setSaveState('saving', '保存中…');
         try {
+            const tags = String($('#notesTagsInput')?.value || '')
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
             const payload = {
                 title: $('#notesTitleInput')?.value || '',
                 content: $('#notesContentInput')?.value || '',
                 groupPath: $('#notesGroupInput')?.value || '',
-                tags: String($('#notesTagsInput')?.value || '').split(',').map((s) => s.trim()).filter(Boolean),
+                tags,
                 expectedRevision: state.current.revision,
             };
             const data = await api(`/api/notes/${encodeURIComponent(state.current.noteId)}`, {
@@ -263,7 +706,6 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
             state.current = data.note;
             state.dirty = false;
             setSaveState('saved', '已保存');
-            // refresh list preview without full reload when possible
             const idx = state.notes.findIndex((n) => n.noteId === data.note.noteId);
             if (idx >= 0) {
                 state.notes[idx] = {
@@ -274,8 +716,12 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
                     groupPath: data.note.groupPath,
                     updatedAt: data.note.updatedAt,
                     revision: data.note.revision,
+                    shareWithUsers: data.note.shareWithUsers,
+                    shareWithAdmins: data.note.shareWithAdmins,
+                    visibility: data.note.visibility,
                 };
                 renderList();
+                renderMetaChips(data.note);
             } else {
                 await loadList();
             }
@@ -283,7 +729,6 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         } catch (err) {
             if (String(err?.code || err?.message || '').includes('revision') || err?.status === 409) {
                 setSaveState('error', '版本冲突');
-                // Fetch server version and show conflict resolution window (§6.4.4)
                 try {
                     const serverData = await api(`/api/notes/${encodeURIComponent(state.current.noteId)}`);
                     await showConflictWindow(state.current.noteId, serverData.note);
@@ -303,24 +748,32 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         if (state.dirty) {
             try { await flushSave(); } catch {}
         }
-        const groupPath = state.groupFilter && state.groupFilter !== '__all' && state.groupFilter !== '__trash' ? state.groupFilter : '';
+        const groupPath = state.groupFilter && state.groupFilter !== '__all' && state.groupFilter !== '__trash'
+            ? state.groupFilter
+            : '';
         const data = await api('/api/notes', {
             method: 'POST',
             body: JSON.stringify({ title: '未命名笔记', content: '', groupPath }),
         });
         state.trash = false;
-        state.groupFilter = '__all';
+        if (state.groupFilter === '__trash') state.groupFilter = '__all';
         await loadList();
         await selectNote(data.note.noteId);
         $('#notesTitleInput')?.focus();
+        $('#notesTitleInput')?.select?.();
         toast?.('已新建笔记');
     }
 
     async function deleteCurrent() {
         if (!state.current) return;
-        if (state.trash) {
-            // In trash view: permanent delete (purge)
-            if (!confirm('彻底删除这条笔记？此操作不可撤销，无法恢复。')) return;
+        if (state.trash || state.groupFilter === '__trash') {
+            const ok = await nativeConfirm({
+                title: '彻底删除',
+                message: '彻底删除这条笔记？此操作不可撤销。',
+                confirmLabel: '彻底删除',
+                danger: true,
+            });
+            if (!ok) return;
             await api(`/api/notes/${encodeURIComponent(state.current.noteId)}/purge`, { method: 'DELETE' });
             state.current = null;
             state.selectedId = null;
@@ -329,8 +782,13 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
             await loadList();
             toast?.('已彻底删除');
         } else {
-            // Normal view: soft delete (move to trash)
-            if (!confirm('删除这条笔记？可在回收站恢复。')) return;
+            const ok = await nativeConfirm({
+                title: '删除笔记',
+                message: '将笔记移到回收站？可稍后恢复。',
+                confirmLabel: '移到回收站',
+                danger: true,
+            });
+            if (!ok) return;
             await api(`/api/notes/${encodeURIComponent(state.current.noteId)}`, { method: 'DELETE' });
             state.current = null;
             state.selectedId = null;
@@ -343,7 +801,13 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
 
     async function purgeCurrent() {
         if (!state.current) return;
-        if (!confirm('彻底删除这条笔记？此操作不可撤销，无法恢复。')) return;
+        const ok = await nativeConfirm({
+            title: '彻底删除',
+            message: '彻底删除这条笔记？此操作不可撤销。',
+            confirmLabel: '彻底删除',
+            danger: true,
+        });
+        if (!ok) return;
         await api(`/api/notes/${encodeURIComponent(state.current.noteId)}/purge`, { method: 'DELETE' });
         state.current = null;
         state.selectedId = null;
@@ -354,42 +818,107 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
     }
 
     async function emptyTrash() {
-        if (!confirm('清空回收站？所有已删除的笔记将被彻底移除，无法恢复。')) return;
+        const ok = await nativeConfirm({
+            title: '清空回收站',
+            message: '清空回收站？所有已删除笔记将被永久移除。',
+            confirmLabel: '清空',
+            danger: true,
+        });
+        if (!ok) return;
         const result = await api('/api/notes/trash/empty', { method: 'POST' });
+        state.current = null;
+        state.selectedId = null;
+        fillEditor(null);
         await loadList();
         toast?.(result?.purged ? `已清空回收站（${result.purged} 条）` : '回收站已空');
+    }
+
+    async function restoreCurrent() {
+        if (!state.current) return;
+        try {
+            await api(`/api/notes/${encodeURIComponent(state.current.noteId)}/restore`, { method: 'POST' });
+            toast?.('已恢复');
+            state.current = null;
+            state.selectedId = null;
+            fillEditor(null);
+            await loadList();
+        } catch (err) {
+            toast?.(err.message || '恢复失败');
+        }
     }
 
     function updateTrashButtons() {
         const inTrash = state.trash || state.groupFilter === '__trash';
         $('#notesDeleteBtn')?.classList.toggle('force-hidden', inTrash);
         $('#notesPurgeBtn')?.classList.toggle('force-hidden', !inTrash || !state.current);
+        $('#notesRestoreBtn')?.classList.toggle('force-hidden', !inTrash || !state.current);
         $('#notesEmptyTrashBtn')?.classList.toggle('force-hidden', !inTrash);
         $('#notesNewBtn')?.classList.toggle('force-hidden', inTrash);
+        $('#notesEditorActions')?.classList.toggle('notes-in-trash', inTrash);
     }
 
-    /* ── Note share modal (§6.4): share_with_users / share_with_admins ── */
+    function placeMenu(menu, x, y) {
+        menu.style.left = '0px';
+        menu.style.top = '0px';
+        document.body.appendChild(menu);
+        const rect = menu.getBoundingClientRect();
+        const left = Math.min(Math.max(8, x), window.innerWidth - rect.width - 8);
+        const top = Math.min(Math.max(8, y), window.innerHeight - rect.height - 8);
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
+    }
+
+    function closeMenus() {
+        document.querySelectorAll('.notes-menu, .notes-context-menu, .notes-popover').forEach((el) => {
+            el.classList.remove('show');
+            if (el.id === 'notesContextMenu' || el.dataset.ephemeral === '1') {
+                el.remove();
+            } else {
+                el.classList.add('force-hidden');
+            }
+        });
+        $$('.notes-filter-trigger[aria-expanded="true"]').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+        $('#notesMoreBtn')?.setAttribute('aria-expanded', 'false');
+    }
+
+    function togglePopover(trigger, menu) {
+        if (!trigger || !menu) return;
+        const open = menu.classList.contains('show') && !menu.classList.contains('force-hidden');
+        closeMenus();
+        if (open) return;
+        menu.classList.remove('force-hidden');
+        const rect = trigger.getBoundingClientRect();
+        menu.style.position = 'fixed';
+        menu.style.left = `${Math.min(rect.left, window.innerWidth - 200)}px`;
+        menu.style.top = `${rect.bottom + 6}px`;
+        requestAnimationFrame(() => menu.classList.add('show'));
+        trigger.setAttribute('aria-expanded', 'true');
+    }
+
+    /* ── Share modal ── */
     async function openNoteShareModal() {
         if (!state.current) { toast?.('请先选择一条笔记'); return; }
-        // Only owner can change sharing settings
         if (state.current.ownerUserId && state.current.ownerUserId !== window.__zephyrMyUserId) {
-            toast?.('只有笔记所有者可以修改共享设置'); return;
+            toast?.('只有笔记所有者可以修改共享设置');
+            return;
         }
         let modal = document.getElementById('notesShareModal');
         if (!modal) {
             modal = document.createElement('div');
             modal.id = 'notesShareModal';
-            modal.className = 'modal-backdrop';
+            modal.className = 'notes-dialog-backdrop notes-modal-backdrop';
             modal.innerHTML = `
-                <div class="connection-modal" style="max-width:400px">
-                    <div class="modal-head"><h2>笔记共享设置</h2><button type="button" class="icon-btn" id="notesShareModalClose">✕</button></div>
-                    <div style="padding:16px;display:flex;flex-direction:column;gap:14px">
-                        <p style="font-size:13px;color:var(--text-secondary)">共享后其他用户可以读取此笔记，但不能编辑。</p>
-                        <label class="check-line"><input type="checkbox" id="notesShareUsers"> 共享给所有用户</label>
-                        <label class="check-line"><input type="checkbox" id="notesShareAdmins"> 共享给管理员</label>
-                        <p style="font-size:11px;color:var(--text-secondary)">两项可同时开启。共享后你的笔记标题对有权限的用户可见。</p>
+                <div class="notes-dialog notes-dialog-md" role="dialog" aria-modal="true" aria-label="共享设置">
+                    <div class="notes-dialog-head">
+                        <h2 class="notes-dialog-title">共享设置</h2>
+                        <button type="button" class="notes-icon-btn" id="notesShareModalClose" aria-label="关闭">${icon('close')}</button>
                     </div>
-                    <div class="modal-actions">
+                    <p class="notes-dialog-message">共享后其他用户可读此笔记，不可编辑。默认私有。</p>
+                    <div class="notes-share-options">
+                        <label class="notes-check"><input type="checkbox" id="notesShareUsers"><span>共享给所有用户</span></label>
+                        <label class="notes-check"><input type="checkbox" id="notesShareAdmins"><span>共享给管理员</span></label>
+                    </div>
+                    <div class="notes-dialog-actions">
                         <button class="btn" type="button" id="notesShareCancel">取消</button>
                         <button class="btn btn-primary" type="button" id="notesShareSave">保存</button>
                     </div>
@@ -399,16 +928,19 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         modal.querySelector('#notesShareUsers').checked = !!state.current.shareWithUsers;
         modal.querySelector('#notesShareAdmins').checked = !!state.current.shareWithAdmins;
         modal.classList.add('show');
-        modal.setAttribute('aria-hidden', 'false');
-        const close = () => { modal.classList.remove('show'); modal.setAttribute('aria-hidden', 'true'); };
+        const close = () => {
+            modal.classList.remove('show');
+        };
         modal.querySelector('#notesShareModalClose').onclick = close;
         modal.querySelector('#notesShareCancel').onclick = close;
+        modal.onclick = (e) => { if (e.target === modal) close(); };
         modal.querySelector('#notesShareSave').onclick = async () => {
             const shareWithUsers = modal.querySelector('#notesShareUsers').checked;
             const shareWithAdmins = modal.querySelector('#notesShareAdmins').checked;
             try {
                 const updated = await api(`/api/notes/${encodeURIComponent(state.current.noteId)}`, {
-                    method: 'PUT', body: JSON.stringify({
+                    method: 'PUT',
+                    body: JSON.stringify({
                         shareWithUsers,
                         shareWithAdmins,
                         expectedRevision: state.current.revision,
@@ -419,30 +951,39 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
                 fillEditor(updated.note);
                 close();
                 toast?.(shareWithUsers ? '已共享给所有用户' : shareWithAdmins ? '已共享给管理员' : '已设为私有');
-            } catch (err) { toast?.(err.message || '保存失败'); }
+                await loadList();
+            } catch (err) {
+                toast?.(err.message || '保存失败');
+            }
         };
     }
+
     async function openLinkConnectionModal() {
         if (!state.current) { toast?.('请先选择一条笔记'); return; }
-        // Build a lightweight modal using existing styles
         let modal = document.getElementById('notesLinkModal');
         if (!modal) {
             modal = document.createElement('div');
             modal.id = 'notesLinkModal';
-            modal.className = 'modal-backdrop';
+            modal.className = 'notes-dialog-backdrop notes-modal-backdrop';
             modal.innerHTML = `
-                <div class="connection-modal" style="max-width:480px">
-                    <div class="modal-head"><h2>关联连接</h2><button type="button" class="icon-btn" id="notesLinkModalClose">✕</button></div>
-                    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
-                        <input class="search-input" id="notesLinkSearch" placeholder="搜索连接名称或主机…" autocomplete="off">
-                        <div id="notesLinkList" style="max-height:320px;overflow:auto;display:flex;flex-direction:column;gap:4px"></div>
+                <div class="notes-dialog notes-dialog-lg" role="dialog" aria-modal="true" aria-label="关联连接">
+                    <div class="notes-dialog-head">
+                        <h2 class="notes-dialog-title">关联连接</h2>
+                        <button type="button" class="notes-icon-btn" id="notesLinkModalClose" aria-label="关闭">${icon('close')}</button>
                     </div>
-                    <div class="modal-actions"><button class="btn" type="button" id="notesLinkCancel">取消</button><button class="btn btn-primary" type="button" id="notesLinkSave">保存</button></div>
+                    <div class="notes-link-search-wrap">
+                        <span class="notes-search-icon">${icon('search')}</span>
+                        <input class="notes-dialog-input" id="notesLinkSearch" placeholder="搜索连接名称或主机…" autocomplete="off">
+                    </div>
+                    <div id="notesLinkList" class="notes-link-list" role="listbox"></div>
+                    <div class="notes-dialog-actions">
+                        <button class="btn" type="button" id="notesLinkCancel">取消</button>
+                        <button class="btn btn-primary" type="button" id="notesLinkSave">保存</button>
+                    </div>
                 </div>`;
             document.body.appendChild(modal);
         }
         modal.classList.add('show');
-        modal.setAttribute('aria-hidden', 'false');
         const listEl = modal.querySelector('#notesLinkList');
         const searchEl = modal.querySelector('#notesLinkSearch');
         let allConns = [];
@@ -450,14 +991,26 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         try {
             const data = await api('/api/connections');
             allConns = data.connections || [];
-        } catch { allConns = []; }
+        } catch {
+            allConns = [];
+        }
         function renderConns() {
             const q = String(searchEl.value || '').toLowerCase();
-            const filtered = allConns.filter((c) => !q || String(c.name || '').toLowerCase().includes(q) || String(c.host || '').toLowerCase().includes(q));
-            listEl.innerHTML = filtered.length ? filtered.map((c) => {
-                const checked = selected.has(c.id);
-                return `<label class="check-line" style="padding:6px 8px;border-radius:6px;cursor:pointer"><input type="checkbox" data-conn-id="${escapeHtml(c.id)}" ${checked ? 'checked' : ''}> <b>${escapeHtml(c.name)}</b> <span class="muted">${escapeHtml(c.protocol)} ${escapeHtml(c.host)}:${escapeHtml(c.port)}</span></label>`;
-            }).join('') : '<p class="muted">无匹配连接</p>';
+            const filtered = allConns.filter((c) => !q
+                || String(c.name || '').toLowerCase().includes(q)
+                || String(c.host || '').toLowerCase().includes(q));
+            listEl.innerHTML = filtered.length
+                ? filtered.map((c) => {
+                    const checked = selected.has(c.id);
+                    return `<label class="notes-check notes-link-row">
+                        <input type="checkbox" data-conn-id="${escapeHtml(c.id)}" ${checked ? 'checked' : ''}>
+                        <span class="notes-link-row-text">
+                            <b>${escapeHtml(c.name)}</b>
+                            <span class="muted">${escapeHtml(c.protocol)} · ${escapeHtml(c.host)}:${escapeHtml(String(c.port))}</span>
+                        </span>
+                    </label>`;
+                }).join('')
+                : '<p class="notes-empty-inline">无匹配连接</p>';
             listEl.querySelectorAll('[data-conn-id]').forEach((cb) => {
                 cb.addEventListener('change', () => {
                     if (cb.checked) selected.add(cb.dataset.connId);
@@ -467,12 +1020,15 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         }
         renderConns();
         searchEl.oninput = renderConns;
+        const closeLinkModal = () => modal.classList.remove('show');
         modal.querySelector('#notesLinkModalClose').onclick = closeLinkModal;
         modal.querySelector('#notesLinkCancel').onclick = closeLinkModal;
+        modal.onclick = (e) => { if (e.target === modal) closeLinkModal(); };
         modal.querySelector('#notesLinkSave').onclick = async () => {
             try {
                 const updated = await api(`/api/notes/${encodeURIComponent(state.current.noteId)}`, {
-                    method: 'PUT', body: JSON.stringify({
+                    method: 'PUT',
+                    body: JSON.stringify({
                         linkedConnectionIds: Array.from(selected),
                         expectedRevision: state.current.revision,
                     }),
@@ -481,118 +1037,199 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
                 state.dirty = false;
                 fillEditor(updated.note);
                 toast?.('关联连接已保存');
-            } catch (err) { toast?.(err.message || '保存失败'); }
+                await loadList();
+            } catch (err) {
+                toast?.(err.message || '保存失败');
+            }
             closeLinkModal();
         };
-        function closeLinkModal() {
-            modal.classList.remove('show');
-            modal.setAttribute('aria-hidden', 'true');
-        }
+        searchEl.focus();
     }
 
-    /* ── Note context menu (§6.4.3): rename, move, copy, export, delete ── */
     function showNoteContextMenu(noteId, x, y) {
-        let menu = document.getElementById('notesContextMenu');
-        if (!menu) {
-            menu = document.createElement('div');
-            menu.id = 'notesContextMenu';
-            menu.className = 'notes-context-menu';
-            menu.style.cssText = 'position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,0.2);min-width:140px';
-            document.body.appendChild(menu);
-        }
+        closeMenus();
         const note = state.notes.find((n) => n.noteId === noteId);
         if (!note) return;
-        menu.innerHTML = `
-            <button class="ctx-item" data-ctx-action="rename" data-note-id="${escapeHtml(noteId)}" style="display:block;width:100%;padding:6px 12px;text-align:left;background:none;border:none;color:var(--text);cursor:pointer;border-radius:4px">重命名</button>
-            <button class="ctx-item" data-ctx-action="move" data-note-id="${escapeHtml(noteId)}" style="display:block;width:100%;padding:6px 12px;text-align:left;background:none;border:none;color:var(--text);cursor:pointer;border-radius:4px">移动分组</button>
-            <button class="ctx-item" data-ctx-action="copy" data-note-id="${escapeHtml(noteId)}" style="display:block;width:100%;padding:6px 12px;text-align:left;background:none;border:none;color:var(--text);cursor:pointer;border-radius:4px">复制</button>
-            <button class="ctx-item" data-ctx-action="export" data-note-id="${escapeHtml(noteId)}" style="display:block;width:100%;padding:6px 12px;text-align:left;background:none;border:none;color:var(--text);cursor:pointer;border-radius:4px">导出 Markdown</button>
-            <button class="ctx-item" data-ctx-action="delete" data-note-id="${escapeHtml(noteId)}" style="display:block;width:100%;padding:6px 12px;text-align:left;background:none;border:none;color:var(--danger);cursor:pointer;border-radius:4px">删除</button>`;
-        menu.style.left = `${Math.min(x, window.innerWidth - 160)}px`;
-        menu.style.top = `${Math.min(y, window.innerHeight - 180)}px`;
-        menu.classList.remove('force-hidden');
+        const menu = document.createElement('div');
+        menu.id = 'notesContextMenu';
+        menu.className = 'notes-menu notes-context-menu';
+        menu.dataset.ephemeral = '1';
+        const inTrash = state.trash || state.groupFilter === '__trash';
+        menu.innerHTML = inTrash ? `
+            <button type="button" class="notes-menu-item" data-ctx-action="restore" data-note-id="${escapeHtml(noteId)}"><span>恢复</span></button>
+            <button type="button" class="notes-menu-item danger" data-ctx-action="purge" data-note-id="${escapeHtml(noteId)}">${icon('trash')}<span>彻底删除</span></button>
+        ` : `
+            <button type="button" class="notes-menu-item" data-ctx-action="rename" data-note-id="${escapeHtml(noteId)}"><span>重命名</span></button>
+            <button type="button" class="notes-menu-item" data-ctx-action="move" data-note-id="${escapeHtml(noteId)}">${icon('folder')}<span>移动分组</span></button>
+            <button type="button" class="notes-menu-item" data-ctx-action="copy" data-note-id="${escapeHtml(noteId)}"><span>复制</span></button>
+            <button type="button" class="notes-menu-item" data-ctx-action="export" data-note-id="${escapeHtml(noteId)}">${icon('export')}<span>导出 Markdown</span></button>
+            <div class="notes-menu-sep"></div>
+            <button type="button" class="notes-menu-item danger" data-ctx-action="delete" data-note-id="${escapeHtml(noteId)}">${icon('trash')}<span>删除</span></button>
+        `;
+        placeMenu(menu, x, y);
+        requestAnimationFrame(() => menu.classList.add('show'));
         menu.querySelectorAll('[data-ctx-action]').forEach((btn) => {
             btn.addEventListener('click', () => {
-                menu.classList.add('force-hidden');
+                closeMenus();
                 handleContextAction(btn.dataset.ctxAction, btn.dataset.noteId);
             });
-            btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--surface-2)'; });
-            btn.addEventListener('mouseleave', () => { btn.style.background = 'none'; });
         });
     }
 
     async function handleContextAction(action, noteId) {
         const note = state.notes.find((n) => n.noteId === noteId);
-        if (!note) return;
+        if (!note && action !== 'purge' && action !== 'restore') return;
         if (action === 'rename') {
-            const name = prompt('新标题：', note.title || '');
-            if (!name) return;
+            const name = await nativePrompt({
+                title: '重命名',
+                value: note.title || '',
+                placeholder: '笔记标题',
+                maxLength: 200,
+                confirmLabel: '保存',
+            });
+            if (name == null) return;
             try {
                 const cur = await api(`/api/notes/${encodeURIComponent(noteId)}`);
-                const updated = await api(`/api/notes/${encodeURIComponent(noteId)}`, { method: 'PUT', body: JSON.stringify({ title: name, expectedRevision: cur.note.revision }) });
+                await api(`/api/notes/${encodeURIComponent(noteId)}`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ title: name, expectedRevision: cur.note.revision }),
+                });
                 toast?.('已重命名');
+                if (state.current?.noteId === noteId) {
+                    state.current.title = name;
+                    if ($('#notesTitleInput')) $('#notesTitleInput').value = name;
+                }
                 await loadList();
-            } catch (err) { toast?.(err.message); }
+            } catch (err) {
+                toast?.(err.message);
+            }
         } else if (action === 'move') {
-            const group = prompt('移动到分组（留空移到未分组）：', note.groupPath || '');
+            const group = await nativePrompt({
+                title: '移动分组',
+                message: '留空则移到未分组',
+                value: note.groupPath || '',
+                placeholder: 'ops/runbooks',
+                confirmLabel: '移动',
+            });
             if (group === null) return;
             try {
                 const cur = await api(`/api/notes/${encodeURIComponent(noteId)}`);
-                const updated = await api(`/api/notes/${encodeURIComponent(noteId)}`, { method: 'PUT', body: JSON.stringify({ groupPath: group || '', expectedRevision: cur.note.revision }) });
+                await api(`/api/notes/${encodeURIComponent(noteId)}`, {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        groupPath: String(group || '').trim(),
+                        expectedRevision: cur.note.revision,
+                    }),
+                });
                 toast?.('已移动');
                 await loadList();
-            } catch (err) { toast?.(err.message); }
+            } catch (err) {
+                toast?.(err.message);
+            }
         } else if (action === 'copy') {
             try {
                 const full = await api(`/api/notes/${encodeURIComponent(noteId)}`);
-                const created = await api('/api/notes', { method: 'POST', body: JSON.stringify({ title: `${full.note.title} (副本)`, content: full.note.content, tags: full.note.tags, groupPath: full.note.groupPath }) });
+                const created = await api('/api/notes', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        title: `${full.note.title} (副本)`,
+                        content: full.note.content,
+                        tags: full.note.tags,
+                        groupPath: full.note.groupPath,
+                    }),
+                });
                 toast?.('已复制');
                 await loadList();
                 await selectNote(created.note.noteId);
-            } catch (err) { toast?.(err.message); }
+            } catch (err) {
+                toast?.(err.message);
+            }
         } else if (action === 'export') {
             window.open(`/api/notes/${encodeURIComponent(noteId)}/export.md`, '_blank');
         } else if (action === 'delete') {
-            if (!confirm('删除这条笔记？可在回收站恢复。')) return;
+            const ok = await nativeConfirm({
+                title: '删除笔记',
+                message: '将笔记移到回收站？可稍后恢复。',
+                confirmLabel: '移到回收站',
+                danger: true,
+            });
+            if (!ok) return;
             await api(`/api/notes/${encodeURIComponent(noteId)}`, { method: 'DELETE' });
-            if (state.current?.noteId === noteId) { state.current = null; state.selectedId = null; fillEditor(null); }
+            if (state.current?.noteId === noteId) {
+                state.current = null;
+                state.selectedId = null;
+                fillEditor(null);
+            }
             await loadList();
             toast?.('已移到回收站');
+        } else if (action === 'purge') {
+            const ok = await nativeConfirm({
+                title: '彻底删除',
+                message: '彻底删除这条笔记？此操作不可撤销。',
+                confirmLabel: '彻底删除',
+                danger: true,
+            });
+            if (!ok) return;
+            await api(`/api/notes/${encodeURIComponent(noteId)}/purge`, { method: 'DELETE' });
+            if (state.current?.noteId === noteId) {
+                state.current = null;
+                state.selectedId = null;
+                fillEditor(null);
+            }
+            await loadList();
+            toast?.('已彻底删除');
+        } else if (action === 'restore') {
+            try {
+                await api(`/api/notes/${encodeURIComponent(noteId)}/restore`, { method: 'POST' });
+                if (state.current?.noteId === noteId) {
+                    state.current = null;
+                    state.selectedId = null;
+                    fillEditor(null);
+                }
+                await loadList();
+                toast?.('已恢复');
+            } catch (err) {
+                toast?.(err.message);
+            }
         }
     }
 
-    /* ── Conflict resolution window (§6.4.4): 409 revision conflict ── */
     async function showConflictWindow(noteId, serverNote) {
         let modal = document.getElementById('notesConflictModal');
         if (!modal) {
             modal = document.createElement('div');
             modal.id = 'notesConflictModal';
-            modal.className = 'modal-backdrop';
+            modal.className = 'notes-dialog-backdrop notes-modal-backdrop';
             modal.innerHTML = `
-                <div class="connection-modal" style="max-width:600px">
-                    <div class="modal-head"><h2>笔记冲突</h2><button type="button" class="icon-btn" id="notesConflictClose">✕</button></div>
-                    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
-                        <p>该笔记已被另一处修改（版本冲突）。请选择：</p>
-                        <div style="display:flex;gap:8px;flex-wrap:wrap">
-                            <button class="btn btn-primary" type="button" id="conflictKeepMine">保留我的版本</button>
-                            <button class="btn" type="button" id="conflictLoadServer">载入服务器版本</button>
+                <div class="notes-dialog notes-dialog-xl" role="dialog" aria-modal="true" aria-label="笔记冲突">
+                    <div class="notes-dialog-head">
+                        <h2 class="notes-dialog-title">版本冲突</h2>
+                        <button type="button" class="notes-icon-btn" id="notesConflictClose" aria-label="关闭">${icon('close')}</button>
+                    </div>
+                    <p class="notes-dialog-message">该笔记在其他地方被修改。选择保留你的编辑，或载入服务器版本。</p>
+                    <div class="notes-conflict-grid">
+                        <div>
+                            <h3>我的版本</h3>
+                            <pre id="conflictMyVersion" class="notes-conflict-pre"></pre>
                         </div>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-                            <div><h3>我的版本</h3><pre id="conflictMyVersion" style="max-height:300px;overflow:auto;background:var(--surface-2);padding:8px;border-radius:6px;font-size:12px;white-space:pre-wrap"></pre></div>
-                            <div><h3>服务器版本</h3><pre id="conflictServerVersion" style="max-height:300px;overflow:auto;background:var(--surface-2);padding:8px;border-radius:6px;font-size:12px;white-space:pre-wrap"></pre></div>
+                        <div>
+                            <h3>服务器版本</h3>
+                            <pre id="conflictServerVersion" class="notes-conflict-pre"></pre>
                         </div>
+                    </div>
+                    <div class="notes-dialog-actions">
+                        <button class="btn" type="button" id="conflictLoadServer">载入服务器版本</button>
+                        <button class="btn btn-primary" type="button" id="conflictKeepMine">保留我的版本</button>
                     </div>
                 </div>`;
             document.body.appendChild(modal);
         }
-        const myContent = state.current?.content || '';
-        const serverContent = serverNote?.content || '';
-        modal.querySelector('#conflictMyVersion').textContent = myContent;
-        modal.querySelector('#conflictServerVersion').textContent = serverContent;
+        modal.querySelector('#conflictMyVersion').textContent = state.current?.content || '';
+        modal.querySelector('#conflictServerVersion').textContent = serverNote?.content || '';
         modal.classList.add('show');
-        modal.setAttribute('aria-hidden', 'false');
-        const close = () => { modal.classList.remove('show'); modal.setAttribute('aria-hidden', 'true'); };
+        const close = () => modal.classList.remove('show');
         modal.querySelector('#notesConflictClose').onclick = close;
+        modal.onclick = (e) => { if (e.target === modal) close(); };
         modal.querySelector('#conflictLoadServer').onclick = async () => {
             state.current = serverNote;
             state.dirty = false;
@@ -603,10 +1240,13 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         modal.querySelector('#conflictKeepMine').onclick = async () => {
             try {
                 const updated = await api(`/api/notes/${encodeURIComponent(noteId)}`, {
-                    method: 'PUT', body: JSON.stringify({
-                        title: state.current.title, content: state.current.content,
-                        tags: state.current.tags, groupPath: state.current.groupPath,
-                        expectedRevision: serverNote.revision, // force overwrite with server's revision
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        title: state.current.title,
+                        content: state.current.content,
+                        tags: state.current.tags,
+                        groupPath: state.current.groupPath,
+                        expectedRevision: serverNote.revision,
                     }),
                 });
                 state.current = updated.note;
@@ -614,11 +1254,12 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
                 fillEditor(updated.note);
                 close();
                 toast?.('已保留我的版本');
-            } catch (err) { toast?.(err.message || '保存失败'); }
+            } catch (err) {
+                toast?.(err.message || '保存失败');
+            }
         };
     }
 
-    /* ── Preview link interception (§6.4.5): ssh://telnet://jms:// → transient ── */
     function interceptPreviewLinks(previewEl) {
         if (!previewEl) return;
         previewEl.querySelectorAll('a[href]').forEach((a) => {
@@ -626,7 +1267,9 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
             if (/^(ssh:|telnet:|jms:)/i.test(href)) {
                 a.addEventListener('click', (e) => {
                     e.preventDefault();
-                    if (typeof window.openTransientFromUri === 'function') {
+                    if (typeof openTransientFromUri === 'function') {
+                        openTransientFromUri(href);
+                    } else if (typeof window.openTransientFromUri === 'function') {
                         window.openTransientFromUri(href);
                     } else {
                         toast?.('请在应用主界面打开此链接');
@@ -651,38 +1294,162 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
         if (state.mode !== 'edit') setMode(state.mode);
     }
 
+    async function addTagInteractive() {
+        const tag = await nativePrompt({
+            title: '添加标签',
+            placeholder: '例如 runbook',
+            maxLength: 40,
+            confirmLabel: '添加',
+        });
+        if (tag == null) return;
+        const t = String(tag).trim();
+        if (!t) return;
+        const current = String($('#notesTagsInput')?.value || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        if (!current.includes(t)) current.push(t);
+        if ($('#notesTagsInput')) $('#notesTagsInput').value = current.join(', ');
+        if (state.current) {
+            state.current.tags = current;
+            renderMetaChips(state.current);
+        }
+        markDirty();
+    }
+
+    async function editGroupInteractive() {
+        const group = await nativePrompt({
+            title: '设置分组',
+            message: '使用 / 表示层级，例如 ops/runbooks。留空表示未分组。',
+            value: $('#notesGroupInput')?.value || '',
+            placeholder: 'ops/runbooks',
+            confirmLabel: '保存',
+        });
+        if (group === null) return;
+        const g = String(group || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+        if ($('#notesGroupInput')) $('#notesGroupInput').value = g;
+        if (state.current) {
+            state.current.groupPath = g;
+            renderMetaChips(state.current);
+        }
+        markDirty();
+    }
+
     function bind() {
         $('#notesNewBtn')?.addEventListener('click', () => createNote().catch((e) => toast?.(e.message)));
         $('#notesDeleteBtn')?.addEventListener('click', () => deleteCurrent().catch((e) => toast?.(e.message)));
         $('#notesPurgeBtn')?.addEventListener('click', () => purgeCurrent().catch((e) => toast?.(e.message)));
         $('#notesEmptyTrashBtn')?.addEventListener('click', () => emptyTrash().catch((e) => toast?.(e.message)));
+        $('#notesRestoreBtn')?.addEventListener('click', () => restoreCurrent().catch((e) => toast?.(e.message)));
+        $('#notesBackBtn')?.addEventListener('click', () => {
+            setMobileDetail(false);
+        });
+
         $('#notesSearchInput')?.addEventListener('input', (e) => {
             state.query = e.target.value || '';
             window.clearTimeout(state.searchTimer);
-            state.searchTimer = window.setTimeout(() => loadList().catch((err) => toast?.(err.message)), 220);
+            state.searchTimer = window.setTimeout(() => {
+                loadList().catch((err) => toast?.(err.message));
+            }, NOTES_SEARCH_MS);
+        });
+
+        // Custom sort / tag menus
+        renderSortMenu();
+        $('#notesSortTrigger')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            togglePopover($('#notesSortTrigger'), $('#notesSortMenu'));
+        });
+        $('#notesTagTrigger')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            renderTagMenu();
+            togglePopover($('#notesTagTrigger'), $('#notesTagMenu'));
+        });
+        $('#notesSortMenu')?.addEventListener('click', (e) => {
+            const btn = e.target.closest?.('[data-sort-value]');
+            if (!btn) return;
+            state.sortBy = btn.dataset.sortValue || 'updated';
+            closeMenus();
+            renderSortMenu();
+            updateListHeading();
+            renderList();
+        });
+        $('#notesTagMenu')?.addEventListener('click', (e) => {
+            const btn = e.target.closest?.('[data-tag-value]');
+            if (!btn) return;
+            state.tagFilter = btn.dataset.tagValue || 'all';
+            closeMenus();
+            updateListHeading();
+            loadList().catch((err) => toast?.(err.message));
+        });
+
+        // Keep hidden native selects in sync for any external contract (if present)
+        $('#notesSortSelect')?.addEventListener('change', (e) => {
+            state.sortBy = e.target.value || 'updated';
+            renderList();
         });
         $('#notesTagFilter')?.addEventListener('change', (e) => {
             state.tagFilter = e.target.value || 'all';
             loadList().catch((err) => toast?.(err.message));
         });
+
         $('#notesGroups')?.addEventListener('click', (e) => {
             const btn = e.target.closest?.('[data-group]');
             if (!btn) return;
             state.groupFilter = btn.dataset.group;
             state.trash = state.groupFilter === '__trash';
             updateTrashButtons();
+            setMobileDetail(false);
             loadList().catch((err) => toast?.(err.message));
             renderGroups();
         });
+
         $('#notesList')?.addEventListener('click', (e) => {
             const item = e.target.closest?.('[data-note-id]');
             if (!item) return;
             selectNote(item.dataset.noteId).catch((err) => toast?.(err.message));
         });
-        $$('.notes-mode-btn').forEach((btn) => btn.addEventListener('click', () => setMode(btn.dataset.notesMode)));
-        ['notesTitleInput', 'notesContentInput', 'notesTagsInput', 'notesGroupInput'].forEach((id) => {
+        $('#notesList')?.addEventListener('contextmenu', (e) => {
+            const item = e.target.closest('[data-note-id]');
+            if (!item) return;
+            e.preventDefault();
+            showNoteContextMenu(item.dataset.noteId, e.clientX, e.clientY);
+        });
+
+        $$('.notes-mode-btn').forEach((btn) => {
+            btn.addEventListener('click', () => setMode(btn.dataset.notesMode));
+        });
+
+        ['notesTitleInput', 'notesContentInput'].forEach((id) => {
             $(`#${id}`)?.addEventListener('input', markDirty);
         });
+
+        // Meta chips (event delegation)
+        $('#notesMetaRow')?.addEventListener('click', async (e) => {
+            const removeTag = e.target.closest?.('[data-tag-chip]');
+            if (removeTag) {
+                const tag = removeTag.dataset.tagChip;
+                const current = String($('#notesTagsInput')?.value || '')
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+                    .filter((t) => t !== tag);
+                if ($('#notesTagsInput')) $('#notesTagsInput').value = current.join(', ');
+                if (state.current) {
+                    state.current.tags = current;
+                    renderMetaChips(state.current);
+                }
+                markDirty();
+                return;
+            }
+            if (e.target.closest?.('#notesAddTagBtn')) {
+                await addTagInteractive();
+                return;
+            }
+            if (e.target.closest?.('#notesEditGroupBtn')) {
+                await editGroupInteractive();
+            }
+        });
+
         $('#notesToolbar')?.addEventListener('click', (e) => {
             const btn = e.target.closest?.('[data-md]');
             if (!btn) return;
@@ -699,6 +1466,7 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
             else if (kind === 'ol') wrapSelection('\n1. ', '\n');
             else if (kind === 'task') wrapSelection('\n- [ ] ', '\n');
         });
+
         $('#notesImportBtn')?.addEventListener('click', () => $('#notesImportFile')?.click());
         $('#notesImportFile')?.addEventListener('change', async (e) => {
             const file = e.target.files?.[0];
@@ -718,40 +1486,61 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
                 e.target.value = '';
             }
         });
+
         $('#notesExportBtn')?.addEventListener('click', () => {
             if (!state.current) return toast?.('请先选择笔记');
             window.open(`/api/notes/${encodeURIComponent(state.current.noteId)}/export.md`, '_blank');
         });
-        $('#notesNewGroupBtn')?.addEventListener('click', () => {
-            const name = prompt('新分组路径（例如 ops/runbooks）');
-            if (!name) return;
-            state.groupFilter = name.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+
+        $('#notesNewGroupBtn')?.addEventListener('click', async () => {
+            const name = await nativePrompt({
+                title: '新建分组',
+                message: '使用 / 表示层级，例如 ops/runbooks',
+                placeholder: 'ops/runbooks',
+                confirmLabel: '创建并写笔记',
+            });
+            if (name == null) return;
+            const path = String(name).trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+            if (!path) return;
+            state.groupFilter = path;
+            state.trash = false;
             createNote().catch((err) => toast?.(err.message));
         });
-        $('#notesLinkConnBtn')?.addEventListener('click', () => openLinkConnectionModal().catch((err) => toast?.(err.message)));
-        $('#notesShareBtn')?.addEventListener('click', () => openNoteShareModal().catch((err) => toast?.(err.message)));
-        $('#notesSortSelect')?.addEventListener('change', (e) => {
-            state.sortBy = e.target.value || 'updated';
-            renderList();
+
+        $('#notesLinkConnBtn')?.addEventListener('click', () => {
+            closeMenus();
+            openLinkConnectionModal().catch((err) => toast?.(err.message));
         });
-        $('#notesList')?.addEventListener('contextmenu', (e) => {
-            const item = e.target.closest('[data-note-id]');
-            if (!item) return;
-            e.preventDefault();
-            showNoteContextMenu(item.dataset.noteId, e.clientX, e.clientY);
+        $('#notesShareBtn')?.addEventListener('click', () => {
+            closeMenus();
+            openNoteShareModal().catch((err) => toast?.(err.message));
         });
-        $('#notesList')?.addEventListener('click', (e) => {
-            const action = e.target.closest('[data-ctx-action]');
-            if (action) return; // context menu handled separately
-            const item = e.target.closest('[data-note-id]');
-            if (item) selectNote(item.dataset.noteId).catch((err) => toast?.(err.message));
+
+        $('#notesMoreBtn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            togglePopover($('#notesMoreBtn'), $('#notesMoreMenu'));
         });
+        $('#notesMoreMenu')?.addEventListener('click', (e) => {
+            const btn = e.target.closest?.('[data-more-action]');
+            if (!btn) return;
+            const action = btn.dataset.moreAction;
+            closeMenus();
+            if (action === 'share') openNoteShareModal().catch((err) => toast?.(err.message));
+            else if (action === 'link') openLinkConnectionModal().catch((err) => toast?.(err.message));
+            else if (action === 'export') {
+                if (!state.current) return toast?.('请先选择笔记');
+                window.open(`/api/notes/${encodeURIComponent(state.current.noteId)}/export.md`, '_blank');
+            } else if (action === 'delete') deleteCurrent().catch((err) => toast?.(err.message));
+            else if (action === 'import') $('#notesImportFile')?.click();
+        });
+
         document.addEventListener('click', (e) => {
-            const menu = document.getElementById('notesContextMenu');
-            if (menu && !menu.contains(e.target) && !e.target.closest('[data-note-id]')) {
-                menu.classList.add('force-hidden');
+            if (e.target.closest?.('.notes-menu') || e.target.closest?.('.notes-filter-trigger') || e.target.closest?.('#notesMoreBtn')) {
+                return;
             }
+            closeMenus();
         });
+
         window.addEventListener('beforeunload', (e) => {
             if (state.dirty) {
                 e.preventDefault();
@@ -763,26 +1552,59 @@ export function createNotesController({ api, toast, openTransientFromUri, $ = (s
                 flushSave().catch(() => {});
             }
         });
+
+        // Keyboard shortcuts (skip when typing in native dialogs / other inputs outside notes)
+        document.addEventListener('keydown', (e) => {
+            const view = document.getElementById('view-notes');
+            if (!view?.classList.contains('active')) return;
+            if (e.target?.closest?.('.notes-dialog, .notes-dialog-backdrop')) return;
+            const meta = e.metaKey || e.ctrlKey;
+            const key = e.key.toLowerCase();
+            if (meta && key === 'n') {
+                e.preventDefault();
+                if (!(state.trash || state.groupFilter === '__trash')) {
+                    createNote().catch((err) => toast?.(err.message));
+                }
+            } else if (meta && key === 's') {
+                e.preventDefault();
+                flushSave().catch((err) => toast?.(err.message));
+            } else if (meta && key === 'f') {
+                e.preventDefault();
+                $('#notesSearchInput')?.focus();
+                $('#notesSearchInput')?.select?.();
+            } else if (meta && key === 'e') {
+                e.preventDefault();
+                const order = ['edit', 'split', 'preview'];
+                const idx = order.indexOf(state.mode);
+                setMode(order[(idx + 1) % order.length]);
+            } else if (e.key === 'Escape' && state.mobileDetail && window.matchMedia('(max-width: 980px)').matches) {
+                if (document.activeElement && document.activeElement !== document.body) {
+                    // allow default blur first; second Esc handled next time
+                    if (document.activeElement.id === 'notesContentInput' || document.activeElement.id === 'notesTitleInput') {
+                        document.activeElement.blur();
+                        return;
+                    }
+                }
+                setMobileDetail(false);
+            }
+        });
     }
 
     async function activate() {
-        if (!state.loaded) await loadList();
-        else await loadList();
+        await loadList();
         setMode(state.mode);
+        updateTrashButtons();
+        if (!state.selectedId) setMobileDetail(false);
     }
 
-    /* Terminal side-panel hand-off: filter notes by the current connection
-     * so the user sees only notes relevant to the SSH/RDP session they're
-     * looking at (FREEZE plan §6.4 / §9). */
     async function filterByConnection(connectionId) {
         state.connectionFilter = connectionId || '';
-        const connInput = document.getElementById('notesConnectionFilter');
-        if (connInput) connInput.value = state.connectionFilter;
         await loadList();
     }
 
     bind();
     setMode('edit');
+    setMobileDetail(false);
 
     return {
         activate,

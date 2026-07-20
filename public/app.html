@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260720-telnet-ui1">
+    <link rel="stylesheet" href="style.css?v=20260720-notes-craft1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -68,83 +68,175 @@
             </section>
 
             <section class="view notes-view" id="view-notes" aria-label="笔记工作区">
-                <div class="section-head notes-section-head">
-                    <div>
-                        <p class="eyebrow">Notes</p>
-                        <h1>笔记</h1>
-                    </div>
-                    <div class="notes-head-actions">
-                        <button type="button" class="btn-sm" id="notesImportBtn" title="导入 Markdown">导入</button>
-                        <button type="button" class="btn-sm" id="notesExportBtn" title="导出当前笔记">导出</button>
-                        <button class="btn add-btn" id="notesNewBtn" type="button">＋ 新建笔记</button>
-                    </div>
-                </div>
-                <div class="notes-workspace" id="notesWorkspace">
-                    <aside class="notes-groups" id="notesGroups" aria-label="笔记分组">
-                        <button type="button" class="notes-group-item active" data-group="__all">全部笔记 <span class="notes-group-count" id="notesCountAll">0</span></button>
-                        <button type="button" class="notes-group-item" data-group="">未分组 <span class="notes-group-count" id="notesCountUngrouped">0</span></button>
-                        <button type="button" class="notes-group-item" data-group="__trash">回收站 <span class="notes-group-count" id="notesCountTrash">0</span></button>
-                        <div class="notes-groups-divider"></div>
+                <div class="notes-shell" id="notesShell">
+                    <aside class="notes-sidebar" id="notesGroups" aria-label="笔记分组">
+                        <div class="notes-sidebar-head">
+                            <div class="notes-sidebar-brand">
+                                <span class="notes-sidebar-kicker">Notes</span>
+                                <h1 class="notes-sidebar-title">笔记</h1>
+                            </div>
+                            <div class="notes-sidebar-actions">
+                                <button type="button" class="notes-icon-btn" id="notesImportBtn" title="导入 Markdown" aria-label="导入 Markdown">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14.5V5M8.5 11 12 14.5 15.5 11M5.5 16.5v1.2A1.3 1.3 0 0 0 6.8 19h10.4a1.3 1.3 0 0 0 1.3-1.3v-1.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                </button>
+                                <button type="button" class="notes-icon-btn notes-icon-btn-accent" id="notesNewBtn" title="新建笔记 (⌘N)" aria-label="新建笔记">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <nav class="notes-nav" aria-label="笔记库">
+                            <button type="button" class="notes-group-item active" data-group="__all">
+                                <span class="notes-group-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3.8h7.2L19 8.6V20.2a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 3.8V9h5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
+                                <span class="notes-group-label">全部笔记</span>
+                                <span class="notes-group-count" id="notesCountAll">0</span>
+                            </button>
+                            <button type="button" class="notes-group-item" data-group="">
+                                <span class="notes-group-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l1.5 1.8h7.5a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></span>
+                                <span class="notes-group-label">未分组</span>
+                                <span class="notes-group-count" id="notesCountUngrouped">0</span>
+                            </button>
+                            <button type="button" class="notes-group-item notes-group-trash" data-group="__trash">
+                                <span class="notes-group-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M9 10.5v7M12 10.5v7M15 10.5v7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                                <span class="notes-group-label">回收站</span>
+                                <span class="notes-group-count" id="notesCountTrash">0</span>
+                            </button>
+                        </nav>
+                        <div class="notes-groups-divider" role="separator"></div>
+                        <div class="notes-groups-label">分组</div>
                         <div id="notesGroupTree" class="notes-group-tree"></div>
-                        <button type="button" class="notes-group-new" id="notesNewGroupBtn">＋ 新建分组</button>
+                        <button type="button" class="notes-group-new" id="notesNewGroupBtn">
+                            <span class="notes-group-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+                            <span>新建分组</span>
+                        </button>
                     </aside>
+
                     <section class="notes-list-pane" aria-label="笔记列表">
                         <div class="notes-list-toolbar">
-                            <input class="search-input" id="notesSearchInput" placeholder="搜索标题、正文、标签…" autocomplete="off">
-                            <select id="notesSortSelect" aria-label="排序">
+                            <div class="notes-search-field">
+                                <span class="notes-search-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16.2 16.2 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>
+                                <input class="notes-search-input" id="notesSearchInput" placeholder="搜索标题、正文、标签…" autocomplete="off" aria-label="搜索笔记">
+                            </div>
+                            <div class="notes-list-heading-row">
+                                <div class="notes-list-heading">
+                                    <h2 id="notesListHeading">全部笔记</h2>
+                                    <span class="notes-list-count" id="notesListCount">0</span>
+                                </div>
+                                <div class="notes-list-filters">
+                                    <button type="button" class="notes-filter-trigger" id="notesSortTrigger" aria-haspopup="menu" aria-expanded="false" aria-controls="notesSortMenu">
+                                        <span class="notes-filter-label">最近更新</span>
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 9.5 12 13l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </button>
+                                    <button type="button" class="notes-filter-trigger" id="notesTagTrigger" aria-haspopup="menu" aria-expanded="false" aria-controls="notesTagMenu">
+                                        <span class="notes-filter-label">全部标签</span>
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 9.5 12 13l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="notesConnectionFilterBar" class="force-hidden"></div>
+                            <!-- hidden native selects kept for compatibility / tests -->
+                            <select id="notesSortSelect" class="force-hidden" aria-hidden="true" tabindex="-1">
                                 <option value="updated">按更新时间</option>
                                 <option value="created">按创建时间</option>
                                 <option value="title">按标题</option>
                             </select>
-                            <select id="notesTagFilter"><option value="all">全部标签</option></select>
+                            <select id="notesTagFilter" class="force-hidden" aria-hidden="true" tabindex="-1"><option value="all">全部标签</option></select>
                         </div>
                         <div class="notes-list" id="notesList" role="listbox" aria-label="笔记"></div>
-                        <div class="notes-list-empty empty-state force-hidden" id="notesListEmpty">还没有笔记。点击右上角新建一条。</div>
+                        <div class="notes-list-empty force-hidden" id="notesListEmpty">
+                            <div class="notes-empty-illustration" aria-hidden="true">
+                                <svg viewBox="0 0 24 24"><path d="M7 3.8h7.2L19 8.6V20.2a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M14 3.8V9h5M8.5 12.5h7M8.5 15.5h7M8.5 18.5h4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                            </div>
+                            <h3 data-empty-title>还没有笔记</h3>
+                            <p data-empty-desc>从左侧新建一条，或导入 Markdown 文件。</p>
+                        </div>
+                        <div class="notes-menu force-hidden" id="notesSortMenu" role="menu" aria-label="排序"></div>
+                        <div class="notes-menu force-hidden" id="notesTagMenu" role="menu" aria-label="标签筛选"></div>
                     </section>
+
                     <section class="notes-editor-pane" id="notesEditorPane" aria-label="笔记编辑器">
-                        <div class="notes-editor-empty empty-state" id="notesEditorEmpty">
-                            <div class="empty-card">
+                        <div class="notes-editor-empty" id="notesEditorEmpty">
+                            <div class="notes-empty-card">
+                                <div class="notes-empty-illustration" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24"><path d="M7 3.8h7.2L19 8.6V20.2a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M14 3.8V9h5M8.5 12.5h7M8.5 15.5h7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                                </div>
                                 <h2>选择或新建笔记</h2>
-                                <p>笔记默认私有，可关联连接，并在权限允许时供 AI 按需读写。</p>
+                                <p>默认私有。可关联连接、按标签归档，并在权限允许时供 AI 按需读写。</p>
+                                <div class="notes-empty-hints">
+                                    <span><kbd>⌘</kbd><kbd>N</kbd> 新建</span>
+                                    <span><kbd>⌘</kbd><kbd>S</kbd> 保存</span>
+                                    <span><kbd>⌘</kbd><kbd>E</kbd> 切换预览</span>
+                                </div>
                             </div>
                         </div>
                         <div class="notes-editor force-hidden" id="notesEditor">
-                            <div class="notes-editor-head">
-                                <input class="notes-title-input" id="notesTitleInput" placeholder="标题" maxlength="200" aria-label="笔记标题">
-                                <div class="notes-editor-meta">
-                                    <span class="notes-save-state" id="notesSaveState" aria-live="polite">已保存</span>
-                                    <div class="notes-mode-switch" role="tablist" aria-label="编辑模式">
+                            <div class="notes-editor-chrome">
+                                <div class="notes-editor-top">
+                                    <button type="button" class="notes-icon-btn notes-back-btn" id="notesBackBtn" title="返回列表" aria-label="返回列表">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5.5 8.5 12 15 18.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </button>
+                                    <div class="notes-mode-switch" id="notesModeSwitch" data-mode="edit" role="tablist" aria-label="编辑模式">
+                                        <span class="notes-mode-thumb" aria-hidden="true"></span>
                                         <button type="button" class="notes-mode-btn active" data-notes-mode="edit" role="tab" aria-selected="true">编辑</button>
                                         <button type="button" class="notes-mode-btn" data-notes-mode="split" role="tab" aria-selected="false">分屏</button>
                                         <button type="button" class="notes-mode-btn" data-notes-mode="preview" role="tab" aria-selected="false">预览</button>
                                     </div>
-                                    <button type="button" class="btn-sm" id="notesLinkConnBtn" title="关联连接">关联</button>
-                                    <button type="button" class="btn-sm" id="notesShareBtn" title="共享设置">共享</button>
-                                    <button type="button" class="btn-sm danger" id="notesDeleteBtn" title="删除笔记">删除</button>
-                                    <button type="button" class="btn-sm danger force-hidden" id="notesPurgeBtn" title="彻底删除（不可恢复）">彻底删除</button>
-                                    <button type="button" class="btn-sm danger force-hidden" id="notesEmptyTrashBtn" title="清空回收站">清空回收站</button>
+                                    <div class="notes-editor-actions" id="notesEditorActions">
+                                        <span class="notes-save-state" id="notesSaveState" data-state="saved" aria-live="polite">已保存</span>
+                                        <button type="button" class="notes-icon-btn" id="notesLinkConnBtn" title="关联连接" aria-label="关联连接">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.5 14.5 9.5M8.2 12.2l-1.4 1.4a3.2 3.2 0 1 0 4.5 4.5l1.4-1.4M15.8 11.8l1.4-1.4a3.2 3.2 0 0 0-4.5-4.5l-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                                        </button>
+                                        <button type="button" class="notes-icon-btn" id="notesShareBtn" title="共享设置" aria-label="共享设置">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.5" cy="12" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="6.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="17.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 11.1 14.8 7.6M8.6 13 14.8 16.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                                        </button>
+                                        <button type="button" class="notes-icon-btn" id="notesExportBtn" title="导出 Markdown" aria-label="导出">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5v9.5M8.5 8 12 4.5 15.5 8M5.5 14.5v3.2A1.3 1.3 0 0 0 6.8 19h10.4a1.3 1.3 0 0 0 1.3-1.3v-3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                        </button>
+                                        <button type="button" class="notes-icon-btn" id="notesMoreBtn" title="更多" aria-label="更多" aria-haspopup="menu" aria-expanded="false" aria-controls="notesMoreMenu">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="18" cy="12" r="1.5" fill="currentColor"/></svg>
+                                        </button>
+                                        <button type="button" class="notes-text-btn force-hidden" id="notesRestoreBtn" title="恢复笔记">恢复</button>
+                                        <button type="button" class="notes-icon-btn notes-icon-btn-danger" id="notesDeleteBtn" title="删除笔记" aria-label="删除">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M9 10.5v7M12 10.5v7M15 10.5v7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                        </button>
+                                        <button type="button" class="notes-text-btn notes-text-btn-danger force-hidden" id="notesPurgeBtn" title="彻底删除（不可恢复）">彻底删除</button>
+                                        <button type="button" class="notes-text-btn notes-text-btn-danger force-hidden" id="notesEmptyTrashBtn" title="清空回收站">清空回收站</button>
+                                    </div>
+                                </div>
+                                <div class="notes-menu force-hidden" id="notesMoreMenu" role="menu" aria-label="更多操作">
+                                    <button type="button" class="notes-menu-item" data-more-action="share" role="menuitem"><span>共享设置</span></button>
+                                    <button type="button" class="notes-menu-item" data-more-action="link" role="menuitem"><span>关联连接</span></button>
+                                    <button type="button" class="notes-menu-item" data-more-action="export" role="menuitem"><span>导出 Markdown</span></button>
+                                    <button type="button" class="notes-menu-item" data-more-action="import" role="menuitem"><span>导入 Markdown</span></button>
+                                    <div class="notes-menu-sep"></div>
+                                    <button type="button" class="notes-menu-item danger" data-more-action="delete" role="menuitem"><span>删除</span></button>
+                                </div>
+                                <input class="notes-title-input" id="notesTitleInput" placeholder="无标题" maxlength="200" aria-label="笔记标题">
+                                <div class="notes-meta-row" id="notesMetaRow">
+                                    <div class="notes-meta-group" id="notesGroupChip"></div>
+                                    <div class="notes-meta-tags" id="notesTagsChips"></div>
+                                </div>
+                                <!-- hidden inputs keep save path stable -->
+                                <input type="hidden" id="notesTagsInput" value="" aria-hidden="true">
+                                <input type="hidden" id="notesGroupInput" value="" aria-hidden="true">
+                                <div class="notes-toolbar" id="notesToolbar" aria-label="Markdown 工具栏">
+                                    <button type="button" data-md="h2" title="标题" aria-label="标题"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 5.5v13M17.5 5.5v13M6.5 12h11" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></button>
+                                    <button type="button" data-md="bold" title="粗体" aria-label="粗体"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 5.5h5.2a3.4 3.4 0 0 1 0 6.8H7.5zm0 6.8h5.8a3.5 3.5 0 0 1 0 7H7.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>
+                                    <button type="button" data-md="italic" title="斜体" aria-label="斜体"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5.5h6M7 18.5h6M13.5 5.5 10.5 18.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+                                    <button type="button" data-md="strike" title="删除线" aria-label="删除线"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M9 7.5c.8-1.6 2-2.3 3.6-2.3 2.2 0 3.6 1.3 3.6 3.1 0 1.1-.4 1.9-1.2 2.5M8.4 14.2c.3 2.1 1.8 3.6 4 3.6 2.3 0 4-1.4 4-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+                                    <span class="notes-toolbar-sep" aria-hidden="true"></span>
+                                    <button type="button" data-md="code" title="行内代码" aria-label="行内代码"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.5 4.5 12 9 16.5M15 7.5 19.5 12 15 16.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                                    <button type="button" data-md="codeblock" title="代码块" aria-label="代码块"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5.5" width="15" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 10 7 12l1.5 2M15.5 10 17 12l-1.5 2M12.4 9.5l-1.2 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+                                    <button type="button" data-md="link" title="链接" aria-label="链接"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.5 14.5 9.5M8.2 12.2l-1.4 1.4a3.2 3.2 0 1 0 4.5 4.5l1.4-1.4M15.8 11.8l1.4-1.4a3.2 3.2 0 0 0-4.5-4.5l-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+                                    <span class="notes-toolbar-sep" aria-hidden="true"></span>
+                                    <button type="button" data-md="quote" title="引用" aria-label="引用"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 17.5c-2.2 0-3.8-1.7-3.8-4.1 0-3.2 2.3-5.9 5.3-7.1l.7 1.4c-1.8.9-3 2.5-3.1 4.2.5-.3 1.1-.5 1.8-.5 1.7 0 3 1.2 3 3 0 1.7-1.3 3.1-3.9 3.1zm9 0c-2.2 0-3.8-1.7-3.8-4.1 0-3.2 2.3-5.9 5.3-7.1l.7 1.4c-1.8.9-3 2.5-3.1 4.2.5-.3 1.1-.5 1.8-.5 1.7 0 3 1.2 3 3 0 1.7-1.3 3.1-3.9 3.1z" fill="currentColor"/></svg></button>
+                                    <button type="button" data-md="ul" title="无序列表" aria-label="无序列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 7h9M9.5 12h9M9.5 17h9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="6" cy="7" r="1.1" fill="currentColor"/><circle cx="6" cy="12" r="1.1" fill="currentColor"/><circle cx="6" cy="17" r="1.1" fill="currentColor"/></svg></button>
+                                    <button type="button" data-md="ol" title="有序列表" aria-label="有序列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7h9M10 12h9M10 17h9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><text x="4.2" y="8.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">1</text><text x="4.2" y="13.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">2</text><text x="4.2" y="18.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">3</text></svg></button>
+                                    <button type="button" data-md="task" title="任务列表" aria-label="任务列表"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 12.2l2.4 2.4L16.2 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                                 </div>
                             </div>
-                            <div class="notes-toolbar" id="notesToolbar" aria-label="Markdown 工具栏">
-                                <button type="button" data-md="h2" title="标题">H</button>
-                                <button type="button" data-md="bold" title="粗体"><strong>B</strong></button>
-                                <button type="button" data-md="italic" title="斜体"><em>I</em></button>
-                                <button type="button" data-md="strike" title="删除线"><s>S</s></button>
-                                <button type="button" data-md="code" title="行内代码">`</button>
-                                <button type="button" data-md="codeblock" title="代码块">{ }</button>
-                                <button type="button" data-md="link" title="链接">🔗</button>
-                                <button type="button" data-md="quote" title="引用">“</button>
-                                <button type="button" data-md="ul" title="无序列表">•</button>
-                                <button type="button" data-md="ol" title="有序列表">1.</button>
-                                <button type="button" data-md="task" title="任务列表">☑</button>
-                            </div>
-                            <div class="notes-tags-row">
-                                <input id="notesTagsInput" class="search-input" placeholder="标签，逗号分隔" autocomplete="off" aria-label="标签">
-                                <input id="notesGroupInput" class="search-input" placeholder="分组路径，如 ops/runbooks" autocomplete="off" aria-label="分组">
-                            </div>
-                            <div class="notes-body" id="notesBody">
-                                <textarea id="notesContentInput" class="notes-content-input" spellcheck="false" aria-label="Markdown 正文" placeholder="支持 Markdown。不要在笔记中保存密码、私钥或 token。"></textarea>
-                                <article class="notes-preview force-hidden" id="notesPreview" aria-label="预览"></article>
+                            <div class="notes-body" id="notesBody" data-mode="edit">
+                                <textarea id="notesContentInput" class="notes-content-input" spellcheck="false" aria-label="Markdown 正文" placeholder="开始写点什么… 支持 Markdown。不要保存密码、私钥或 token。"></textarea>
+                                <article class="notes-preview" id="notesPreview" aria-label="预览"></article>
                             </div>
                             <div class="notes-security-hint">不要在笔记中保存密码、私钥或 token。预览会转义 HTML 并限制链接协议。</div>
                         </div>
@@ -598,7 +690,7 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="app.js?v=20260720-telnet-ui1" type="module"></script>
+    <script src="app.js?v=20260720-notes-craft1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {
