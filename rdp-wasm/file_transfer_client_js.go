@@ -38,6 +38,8 @@ type agentTransferConn struct {
 	agentID   string
 	ws        js.Value
 	ready     chan error
+	opened    chan struct{}
+	openErr   error
 	pending   map[uint32]*pendingFileTransfer
 	nextID    uint32
 	mu        sync.Mutex
@@ -60,9 +62,16 @@ func (t *wsFileTransfer) connection(agentID string) (*agentTransferConn, error) 
 	}
 	if conn := t.connections[agentID]; conn != nil {
 		t.mu.Unlock()
+		<-conn.opened
+		conn.mu.Lock()
+		err := conn.openErr
+		conn.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
 		return conn, nil
 	}
-	conn := &agentTransferConn{parent: t, agentID: agentID, ready: make(chan error, 1), pending: make(map[uint32]*pendingFileTransfer), nextID: 1}
+	conn := &agentTransferConn{parent: t, agentID: agentID, ready: make(chan error, 1), opened: make(chan struct{}), pending: make(map[uint32]*pendingFileTransfer), nextID: 1}
 	t.connections[agentID] = conn
 	t.mu.Unlock()
 	if err := conn.open(); err != nil {
@@ -74,7 +83,13 @@ func (t *wsFileTransfer) connection(agentID string) (*agentTransferConn, error) 
 	return conn, nil
 }
 
-func (c *agentTransferConn) open() error {
+func (c *agentTransferConn) open() (err error) {
+	defer func() {
+		c.mu.Lock()
+		c.openErr = err
+		c.mu.Unlock()
+		close(c.opened)
+	}()
 	url := c.parent.baseURL + "/file-transfer?agentId=" + js.Global().Get("encodeURIComponent").Invoke(c.agentID).String() + "&connectionId=" + js.Global().Get("encodeURIComponent").Invoke(c.parent.connectionID).String()
 	ws := js.Global().Get("WebSocket").New(url)
 	ws.Set("binaryType", "arraybuffer")

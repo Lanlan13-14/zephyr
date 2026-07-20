@@ -275,7 +275,7 @@ class AgentController extends ChangeNotifier {
       }
     }
     Future<void> task;
-    if (handle.isNotEmpty && [Zft2Op.read, Zft2Op.write, Zft2Op.close].contains(frame.type)) {
+    if (handle.isNotEmpty && [Zft2Op.write, Zft2Op.close].contains(frame.type)) {
       final previous = _zft2HandleQueues[handle] ?? Future.value();
       task = previous.catchError((_) {}).then((_) => run());
       _zft2HandleQueues[handle] = task.whenComplete(() {

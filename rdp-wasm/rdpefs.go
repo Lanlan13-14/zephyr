@@ -261,6 +261,22 @@ type VirtualFile struct {
 	Children map[string]*VirtualFile
 }
 
+const (
+	agentReadAheadChunkBytes = 1024 * 1024
+	agentReadAheadParallel   = 4
+	agentReadAheadWindow     = agentReadAheadChunkBytes * agentReadAheadParallel
+	agentReadAheadMaxBytes   = 16 * 1024 * 1024
+)
+
+type agentReadCache struct {
+	mu       sync.Mutex
+	start    uint64
+	data     []byte
+	loading  bool
+	loadFrom uint64
+	ready    chan struct{}
+}
+
 // openHandle tracks an open file/directory for IRP processing
 type openHandle struct {
 	DriveDeviceID uint32
@@ -268,6 +284,7 @@ type openHandle struct {
 	Path          string
 	IsDir         bool
 	RemoteHandle  string // handle ID from agent (for agent mode reads)
+	ReadCache     *agentReadCache
 	Volatile      bool   // in-memory placeholder for Office temp/lock files on read-only Agent shares
 	VolatileData  []byte // data written to the volatile placeholder during this RDP session
 	// For local mode compatibility
@@ -1121,7 +1138,7 @@ func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data [
 			h.mu.Unlock()
 		}
 
-		chunk := h.callAgentRead(handle.AgentID, readHandle, offset, length)
+		chunk := h.readAgentCached(handle, offset, length)
 		resp := &bytes.Buffer{}
 		if chunk == nil {
 			// Agent RPC failed — must NOT pretend success with Length=0,
@@ -1161,6 +1178,89 @@ func (h *RdpefsHandler) handleRead(deviceID, completionID, fileID uint32, data [
 		resp.Write(chunk)
 		h.sendIOCompletion(deviceID, completionID, STATUS_SUCCESS, resp.Bytes())
 	}
+}
+
+func (h *RdpefsHandler) readAgentCached(handle *openHandle, offset uint64, length uint32) []byte {
+	if length == 0 {
+		return []byte{}
+	}
+	cache := handle.ReadCache
+	if cache == nil {
+		h.mu.Lock()
+		if handle.ReadCache == nil {
+			handle.ReadCache = &agentReadCache{}
+		}
+		cache = handle.ReadCache
+		h.mu.Unlock()
+	}
+	for {
+		cache.mu.Lock()
+		if offset >= cache.start && offset+uint64(length) <= cache.start+uint64(len(cache.data)) {
+			start := int(offset - cache.start)
+			chunk := append([]byte(nil), cache.data[start:start+int(length)]...)
+			cache.mu.Unlock()
+			addProtocolCounter("file.cache.hit", 1)
+			addProtocolCounter("file.bytes.cache", uint64(len(chunk)))
+			return chunk
+		}
+		if cache.loading && offset >= cache.loadFrom && offset < cache.loadFrom+agentReadAheadWindow {
+			ready := cache.ready
+			cache.mu.Unlock()
+			<-ready
+			continue
+		}
+		cache.loading = true
+		cache.loadFrom = offset
+		cache.ready = make(chan struct{})
+		ready := cache.ready
+		cache.mu.Unlock()
+
+		fetchLength := uint32(agentReadAheadWindow)
+		if length > fetchLength {
+			fetchLength = length
+		}
+		if fetchLength > agentReadAheadMaxBytes {
+			fetchLength = agentReadAheadMaxBytes
+		}
+		started := time.Now()
+		data := h.callAgentReadWindow(handle.AgentID, handle.RemoteHandle, offset, fetchLength)
+		elapsed := time.Since(started)
+
+		cache.mu.Lock()
+		if data != nil {
+			cache.start = offset
+			cache.data = data
+			if len(cache.data) > agentReadAheadMaxBytes {
+				cache.data = cache.data[:agentReadAheadMaxBytes]
+			}
+		} else {
+			cache.data = nil
+		}
+		cache.loading = false
+		close(ready)
+		cache.mu.Unlock()
+		addProtocolCounter("file.cache.miss", 1)
+		addProtocolCounter("file.bytes.network", uint64(len(data)))
+		addProtocolCounter("file.read.latency_ms", uint64(elapsed.Milliseconds()))
+		if data == nil {
+			return nil
+		}
+		if uint32(len(data)) < length {
+			return append([]byte(nil), data...)
+		}
+		return append([]byte(nil), data[:length]...)
+	}
+}
+
+func invalidateAgentReadCache(handle *openHandle) {
+	if handle == nil || handle.ReadCache == nil {
+		return
+	}
+	cache := handle.ReadCache
+	cache.mu.Lock()
+	cache.data = nil
+	cache.start = 0
+	cache.mu.Unlock()
 }
 
 // ─── IRP_MJ_WRITE ───────────────────────────────────────────────
@@ -1219,6 +1319,7 @@ func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data 
 			return
 		}
 		written := h.callAgentWrite(handle.AgentID, writeHandle, offset, writeData)
+		invalidateAgentReadCache(handle)
 		if written == 0 && len(writeData) > 0 {
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_WRITE, STATUS_UNSUCCESSFUL, nil)
 			return
@@ -1305,6 +1406,7 @@ func (h *RdpefsHandler) handleSetInformation(deviceID, completionID, fileID uint
 		if drive.Mode == DriveModeAgent && len(infoData) >= 8 {
 			newSize := binary.LittleEndian.Uint64(infoData[0:8])
 			ok := h.callAgentTruncate(handle.AgentID, handle.Path, newSize)
+			invalidateAgentReadCache(handle)
 			if !ok {
 				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_SET_INFORMATION, STATUS_UNSUCCESSFUL, nil)
 				return
@@ -1867,6 +1969,45 @@ func (h *RdpefsHandler) callAgentRead(agentID, handle string, offset uint64, len
 		return nil
 	}
 	return response.Payload
+}
+
+func (h *RdpefsHandler) callAgentReadWindow(agentID, handle string, offset uint64, length uint32) []byte {
+	if length <= zft2MaxPayloadBytes {
+		return h.callAgentRead(agentID, handle, offset, length)
+	}
+	type part struct {
+		index int
+		data  []byte
+	}
+	parts := int((length + zft2MaxPayloadBytes - 1) / zft2MaxPayloadBytes)
+	results := make(chan part, parts)
+	for index := 0; index < parts; index++ {
+		partOffset := offset + uint64(index*zft2MaxPayloadBytes)
+		partLength := uint32(zft2MaxPayloadBytes)
+		remaining := int(length) - index*zft2MaxPayloadBytes
+		if remaining < int(partLength) {
+			partLength = uint32(remaining)
+		}
+		go func(index int, partOffset uint64, partLength uint32) {
+			results <- part{index: index, data: h.callAgentRead(agentID, handle, partOffset, partLength)}
+		}(index, partOffset, partLength)
+	}
+	ordered := make([][]byte, parts)
+	for range parts {
+		result := <-results
+		if result.data == nil {
+			return nil
+		}
+		ordered[result.index] = result.data
+	}
+	window := make([]byte, 0, length)
+	for _, data := range ordered {
+		window = append(window, data...)
+		if len(data) < zft2MaxPayloadBytes {
+			break
+		}
+	}
+	return window
 }
 
 func (h *RdpefsHandler) callAgentWrite(agentID, handle string, offset uint64, data []byte) int {

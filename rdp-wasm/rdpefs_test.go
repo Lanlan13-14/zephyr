@@ -291,3 +291,26 @@ func TestAgentReadIRPDoesNotBlockProtocolLoop(t *testing.T) {
 	}
 	close(transfer.blocked)
 }
+
+func TestAgentReadAheadCacheServesSequentialIRPs(t *testing.T) {
+	data := make([]byte, agentReadAheadChunkBytes)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	transfer := &recordingFileTransfer{readData: data}
+	h := NewRdpefsHandler(true)
+	h.SetFileTransfer(transfer)
+	handle := &openHandle{AgentID: "agent", Path: "file.bin", RemoteHandle: "handle"}
+
+	first := h.readAgentCached(handle, 0, 64*1024)
+	second := h.readAgentCached(handle, 64*1024, 64*1024)
+	if len(first) != 64*1024 || len(second) != 64*1024 {
+		t.Fatalf("unexpected read lengths %d %d", len(first), len(second))
+	}
+	if transfer.reads != agentReadAheadParallel {
+		t.Fatalf("network reads = %d, want %d", transfer.reads, agentReadAheadParallel)
+	}
+	if first[1] != 1 || second[1] != 1 {
+		t.Fatal("cached data mismatch")
+	}
+}

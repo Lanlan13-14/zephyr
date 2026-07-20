@@ -38,12 +38,16 @@ var (
 )
 
 func noteProtocol(event string) {
-	protocolDiagMu.Lock()
-	protocolDiag[event]++
-	protocolDiagMu.Unlock()
+	addProtocolCounter(event, 1)
 	if callback := js.Global().Get("rdpOnProtocolMilestone"); callback.Type() == js.TypeFunction {
 		callback.Invoke(event)
 	}
+}
+
+func addProtocolCounter(event string, value uint64) {
+	protocolDiagMu.Lock()
+	protocolDiag[event] += value
+	protocolDiagMu.Unlock()
 }
 
 func resetProtocolDiagnostics() {
