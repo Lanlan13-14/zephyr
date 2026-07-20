@@ -1,0 +1,4 @@
+<!doctype html><meta charset="utf-8"><div id="row"><span>see https://exa</span><span>mple.com/path.</span></div><pre id="result">RUNNING</pre><script type="module">
+import {linkifyRow} from '../public/vendor/wterm-fork/renderer.js?v=url1';const row=document.querySelector('#row');linkifyRow(row);const a=row.querySelector('a');
+const ok=a?.textContent==='https://example.com/path'&&a?.href==='https://example.com/path'&&a?.rel==='noopener noreferrer'&&row.textContent.endsWith('.');document.querySelector('#result').textContent=ok?'URL_LINK_PASS':row.innerHTML;
+</script>

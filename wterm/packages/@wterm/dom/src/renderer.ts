@@ -109,6 +109,22 @@ function safeHyperlink(uri: string | null): string | null {
   } catch { return null; }
 }
 
+export function linkifyRow(row: HTMLElement): void {
+  if (row.querySelector('a.term-hyperlink')) return;
+  const text = row.textContent || '';
+  const matches = [...text.matchAll(/https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)}\]]/g)];
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const match = matches[i], start = match.index || 0, end = start + match[0].length;
+    const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+    let node: Node | null, offset = 0, startNode: Text | null = null, endNode: Text | null = null, startOffset = 0, endOffset = 0;
+    while ((node = walker.nextNode())) { const len = node.textContent?.length || 0; if (!startNode && start >= offset && start <= offset + len) { startNode = node as Text; startOffset = start - offset; } if (end >= offset && end <= offset + len) { endNode = node as Text; endOffset = end - offset; break; } offset += len; }
+    if (!startNode || !endNode) continue;
+    const href = safeHyperlink(match[0]); if (!href) continue;
+    const range = document.createRange(); range.setStart(startNode, startOffset); range.setEnd(endNode, endOffset);
+    const anchor = document.createElement('a'); anchor.className = 'term-hyperlink term-auto-link'; anchor.href = href; anchor.target = '_blank'; anchor.rel = 'noopener noreferrer'; anchor.appendChild(range.extractContents()); range.insertNode(anchor);
+  }
+}
+
 function resolveColors(
   fg: number,
   bg: number,
@@ -390,6 +406,7 @@ export class Renderer {
     flushRun(this.cols);
 
     rowEl.innerHTML = html;
+    linkifyRow(rowEl);
 
     let bgCss = "";
     if (lineLen >= this.cols && this.cols > 0) {
