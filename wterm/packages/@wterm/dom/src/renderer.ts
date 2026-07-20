@@ -55,7 +55,7 @@ function cellBgCSS(bg: number, bgRgb: number | undefined): string | null {
   return colorToCSS(bg);
 }
 
-function buildCellStyle(
+export function buildCellStyle(
   fg: number,
   bg: number,
   flags: number,

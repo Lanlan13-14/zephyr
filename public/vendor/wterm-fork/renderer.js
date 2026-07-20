@@ -601,6 +601,7 @@ class Renderer {
 }
 export {
   Renderer,
+  buildCellStyle,
   linkifyRow,
   resolveQueryColor
 };
