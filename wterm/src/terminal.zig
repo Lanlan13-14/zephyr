@@ -660,7 +660,11 @@ pub const Terminal = struct {
         const final = self.parser.execute_byte;
 
         if (self.parser.csi_private == '?') {
-            self.handlePrivateMode(final);
+            if (final == 'p' and self.parser.intermediate_count > 0 and self.parser.intermediates[0] == '$') {
+                self.handlePrivateModeQuery();
+            } else {
+                self.handlePrivateMode(final);
+            }
             return;
         }
         if (self.parser.csi_private == '!' and final == 'p') {
@@ -723,6 +727,37 @@ pub const Terminal = struct {
             'l' => self.setPrivateMode(false),
             else => self.logUnhandled(final, '?'),
         }
+    }
+
+    fn handlePrivateModeQuery(self: *Terminal) void {
+        const mode = self.parser.getParam(0, 0);
+        const status: u16 = switch (mode) {
+            1 => if (self.cursor_keys_app) 1 else 2,
+            5 => if (self.reverse_screen) 1 else 2,
+            6 => if (self.origin_mode) 1 else 2,
+            7 => if (self.auto_wrap) 1 else 2,
+            9 => if (self.mouse_mode == 1) 1 else 2,
+            25 => if (self.cursor_visible) 1 else 2,
+            47, 1047, 1049 => if (self.using_alt_screen) 1 else 2,
+            1000 => if (self.mouse_mode == 2) 1 else 2,
+            1002 => if (self.mouse_mode == 3) 1 else 2,
+            1003 => if (self.mouse_mode == 4) 1 else 2,
+            1004 => if (self.focus_reporting) 1 else 2,
+            1006 => if (self.mouse_sgr) 1 else 2,
+            2004 => if (self.bracketed_paste) 1 else 2,
+            2026 => if (self.sync_output) 1 else 2,
+            else => 0,
+        };
+        var len: u8 = 0;
+        self.response_buf[len] = 0x1b; len += 1;
+        self.response_buf[len] = '['; len += 1;
+        self.response_buf[len] = '?'; len += 1;
+        len = appendU16(self.response_buf[0..], len, mode);
+        self.response_buf[len] = ';'; len += 1;
+        len = appendU16(self.response_buf[0..], len, status);
+        self.response_buf[len] = '$'; len += 1;
+        self.response_buf[len] = 'y'; len += 1;
+        self.response_len = len;
     }
 
     fn setPrivateMode(self: *Terminal, enabled: bool) void {
