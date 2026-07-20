@@ -26,6 +26,7 @@ interface WasmExports {
   getMouseSGR(): number;
   getBellPending(): number;
   clearBell(): void;
+  getSyncOutput(): number;
   getUsingAltScreen(): number;
   getTitlePtr(): number;
   getTitleLen(): number;
@@ -178,6 +179,9 @@ export class WasmBridge implements TerminalCore {
   }
   clearBell(): void {
     this.exports.clearBell();
+  }
+  syncOutput(): boolean {
+    return this.exports.getSyncOutput() !== 0;
   }
   usingAltScreen(): boolean {
     return this.exports.getUsingAltScreen() !== 0;

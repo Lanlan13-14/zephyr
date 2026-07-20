@@ -398,6 +398,12 @@ export class WTerm {
   private _doRender(): void {
     if (!this.bridge || !this.renderer) return;
 
+    // DECSET 2026 synchronized output: the core continues parsing and keeps
+    // every dirty row marked, but DOM publication is deferred until the
+    // application sends the matching reset (ESC[?2026l). This prevents a
+    // stream of intermediate frames from flashing during large redraws.
+    if (this.bridge.syncOutput()) return;
+
     let dirtyCount = 0;
     const t0 = this.debug ? performance.now() : 0;
     if (this.debug) {

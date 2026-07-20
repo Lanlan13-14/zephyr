@@ -306,6 +306,7 @@ class WTerm {
   }
   _doRender() {
     if (!this.bridge || !this.renderer) return;
+    if (this.bridge.syncOutput()) return;
     let dirtyCount = 0;
     const t0 = this.debug ? performance.now() : 0;
     if (this.debug) {

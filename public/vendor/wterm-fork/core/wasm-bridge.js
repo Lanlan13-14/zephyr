@@ -121,6 +121,9 @@ class WasmBridge {
   clearBell() {
     this.exports.clearBell();
   }
+  syncOutput() {
+    return this.exports.getSyncOutput() !== 0;
+  }
   usingAltScreen() {
     return this.exports.getUsingAltScreen() !== 0;
   }

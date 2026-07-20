@@ -11,6 +11,15 @@ const Scrollback = scrollback_mod.Scrollback;
 
 pub const DEBUG_LOG_MAX: u8 = 32;
 
+// Width-reflow scratch storage lives in static WASM memory, not the call
+// stack. 1000 scrollback rows * 256 cells * 20-byte Cell is ~5 MiB; placing
+// that as a local would overflow the freestanding WASM stack at runtime.
+const MAX_REFLOW_CELLS = (scrollback_mod.MAX_SCROLLBACK_LINES + grid_mod.MAX_ROWS) * grid_mod.MAX_COLS;
+const MAX_REFLOW_LOGICAL = scrollback_mod.MAX_SCROLLBACK_LINES + grid_mod.MAX_ROWS;
+var reflow_cells: [MAX_REFLOW_CELLS]Cell = undefined;
+var reflow_starts: [MAX_REFLOW_LOGICAL + 1]u32 = undefined;
+var reflow_lengths: [MAX_REFLOW_LOGICAL]u32 = undefined;
+
 pub const DebugLogEntry = struct {
     final_byte: u8 = 0,
     private_marker: u8 = 0,
@@ -39,6 +48,9 @@ pub const Terminal = struct {
     /// 3=blinking underline, 4=steady underline, 5=blinking bar, 6=steady bar.
     cursor_style: u8 = 0,
     wrap_pending: bool = false,
+    /// Per-grid-row automatic-wrap metadata. row_wrapped[r] means row r is
+    /// logically continued by row r+1. This is required for width reflow.
+    row_wrapped: [grid_mod.MAX_ROWS]u8 = [_]u8{0} ** grid_mod.MAX_ROWS,
 
     saved_cursor_row: u16 = 0,
     saved_cursor_col: u16 = 0,
@@ -67,6 +79,9 @@ pub const Terminal = struct {
     mouse_sgr: bool = false,
     /// P2-4: Bell flag - set when BEL (0x07) is received. Cleared by WASM API.
     bell_pending: bool = false,
+    /// Synchronized output (DECSET 2026): when active, renderer should
+    /// buffer frames until synchronized output ends.
+    sync_output: bool = false,
     linefeed_mode: bool = false,
 
     // Alternate screen buffer (pointer to avoid doubling struct size)
@@ -140,6 +155,7 @@ pub const Terminal = struct {
         self.cursor_visible = true;
         self.cursor_style = 0;
         self.wrap_pending = false;
+        self.row_wrapped = [_]u8{0} ** grid_mod.MAX_ROWS;
         self.saved_cursor_row = 0;
         self.saved_cursor_col = 0;
         self.saved_fg = cell_mod.DEFAULT_COLOR;
@@ -164,6 +180,7 @@ pub const Terminal = struct {
         self.mouse_mode = 0;
         self.mouse_sgr = false;
         self.bell_pending = false;
+        self.sync_output = false;
         self.title_len = 0;
         self.title_changed = false;
         self.response_len = 0;
@@ -178,89 +195,215 @@ pub const Terminal = struct {
         }
     }
 
+    fn effectiveLineLen(cells: []const Cell, width: u16) u16 {
+        var len = width;
+        while (len > 0) : (len -= 1) {
+            const cell = cells[len - 1];
+            if (cell.char != ' ' or cell.bg != cell_mod.DEFAULT_COLOR or cell.fg != cell_mod.DEFAULT_COLOR or cell.flags != 0 or cell.fg_rgb != 0 or cell.bg_rgb != 0 or cell.wide != 0) break;
+        }
+        return len;
+    }
+
+    fn appendReflowCell(dst: *[MAX_REFLOW_CELLS]Cell, len: *u32, cell: Cell) void {
+        if (len.* >= dst.len) return;
+        dst[len.*] = cell;
+        len.* += 1;
+    }
+
+    /// Width-aware reflow for the normal screen. It joins only rows linked by
+    /// automatic-wrap metadata; explicit LF/NEL boundaries remain distinct.
+    /// Rewrapped output is split so the newest `rows` physical rows remain
+    /// visible and older rows return to scrollback.
+    fn reflowWidth(self: *Terminal, new_cols: u16, new_rows: u16) void {
+        const sb = self.scrollback orelse return;
+        const old_rows = self.rows;
+        const old_cols = self.cols;
+        const old_sb_count = sb.count;
+
+        // Fixed-capacity module-level scratch keeps the core allocator-free
+        // without putting ~5 MiB on the WASM stack.
+        const flat = &reflow_cells;
+        const starts = &reflow_starts;
+        const lengths = &reflow_lengths;
+        var logical_count: u16 = 0;
+        var flat_len: u32 = 0;
+        var logical_start: u32 = 0;
+
+        // Append physical scrollback oldest -> newest, joining wrapped rows.
+        var old_index: u32 = old_sb_count;
+        while (old_index > 0) {
+            old_index -= 1;
+            const line = sb.getLine(old_index) orelse continue;
+            const line_len = if (line.wrapped) line.len else effectiveLineLen(&line.cells, line.len);
+            var c: u16 = 0;
+            while (c < line_len) : (c += 1) appendReflowCell(flat, &flat_len, line.cells[c]);
+            if (!line.wrapped) {
+                starts[logical_count] = logical_start;
+                lengths[logical_count] = flat_len - logical_start;
+                logical_count += 1;
+                logical_start = flat_len;
+            }
+        }
+
+        // Append visible rows. Cursor logical offset is recorded before split.
+        var cursor_logical: u16 = logical_count;
+        var cursor_offset: u32 = 0;
+        var r: u16 = 0;
+        while (r < old_rows) : (r += 1) {
+            if (r == self.cursor_row) {
+                cursor_logical = logical_count;
+                // wrap_pending means the cursor is logically one cell beyond
+                // the final displayed column, waiting for the next printable
+                // character to perform the wrap.
+                const cursor_in_row: u32 = if (self.wrap_pending) old_cols else self.cursor_col;
+                cursor_offset = (flat_len - logical_start) + cursor_in_row;
+            }
+            const line_len = if (self.row_wrapped[r] != 0) old_cols else effectiveLineLen(&self.grid.cells[r], old_cols);
+            var c: u16 = 0;
+            while (c < line_len) : (c += 1) appendReflowCell(flat, &flat_len, self.grid.cells[r][c]);
+            if (self.row_wrapped[r] == 0) {
+                starts[logical_count] = logical_start;
+                lengths[logical_count] = flat_len - logical_start;
+                logical_count += 1;
+                logical_start = flat_len;
+            }
+        }
+        if (logical_start < flat_len or logical_count == 0) {
+            starts[logical_count] = logical_start;
+            lengths[logical_count] = flat_len - logical_start;
+            logical_count += 1;
+        }
+
+        // Count physical output rows after wrapping.
+        var physical_total: u32 = 0;
+        var l: u16 = 0;
+        while (l < logical_count) : (l += 1) {
+            const n = lengths[l];
+            physical_total += if (n == 0) 1 else (n + new_cols - 1) / new_cols;
+        }
+        const visible_count: u32 = if (physical_total > new_rows) new_rows else physical_total;
+        const history_count = physical_total - visible_count;
+
+        sb.reset();
+        var physical_index: u32 = 0;
+        var visible_row: u16 = 0;
+        var cursor_physical: u32 = 0;
+        var cursor_col: u16 = 0;
+        var cursor_wrap_pending = false;
+        l = 0;
+        while (l < logical_count) : (l += 1) {
+            const logical_len = lengths[l];
+            const chunks: u32 = if (logical_len == 0) 1 else (logical_len + new_cols - 1) / new_cols;
+            var cursor_chunk: u32 = 0;
+            var cursor_chunk_col: u16 = 0;
+            if (l == cursor_logical) {
+                cursor_wrap_pending = false;
+                cursor_chunk = cursor_offset / new_cols;
+                cursor_chunk_col = @intCast(cursor_offset % new_cols);
+                if (cursor_chunk >= chunks) {
+                    // Cursor sits just after a line that exactly fills the
+                    // final chunk. Terminal semantics keep it on the final
+                    // cell with wrap_pending set, not on a nonexistent row.
+                    cursor_chunk = chunks - 1;
+                    cursor_chunk_col = new_cols - 1;
+                    cursor_wrap_pending = true;
+                }
+            }
+            var chunk: u32 = 0;
+            while (chunk < chunks) : (chunk += 1) {
+                const chunk_start = starts[l] + chunk * new_cols;
+                const remaining = if (logical_len > chunk * new_cols) logical_len - chunk * new_cols else 0;
+                const chunk_len: u16 = @intCast(if (remaining > new_cols) new_cols else remaining);
+                var row_buf: [grid_mod.MAX_COLS]Cell = [_]Cell{.{}} ** grid_mod.MAX_COLS;
+                var c: u16 = 0;
+                while (c < chunk_len) : (c += 1) row_buf[c] = flat[chunk_start + c];
+                const wrapped = chunk + 1 < chunks;
+
+                if (physical_index < history_count) {
+                    sb.pushWrapped(&row_buf, chunk_len, wrapped);
+                } else if (visible_row < new_rows) {
+                    self.grid.cells[visible_row] = row_buf;
+                    self.row_wrapped[visible_row] = if (wrapped) 1 else 0;
+                    visible_row += 1;
+                }
+
+                if (l == cursor_logical and chunk == cursor_chunk) {
+                    cursor_physical = physical_index;
+                    cursor_col = cursor_chunk_col;
+                }
+                physical_index += 1;
+            }
+        }
+
+        while (visible_row < new_rows) : (visible_row += 1) {
+            self.grid.cells[visible_row] = [_]Cell{.{}} ** grid_mod.MAX_COLS;
+            self.row_wrapped[visible_row] = 0;
+        }
+
+        self.cursor_row = if (cursor_physical < history_count) 0 else @intCast(cursor_physical - history_count);
+        if (self.cursor_row >= new_rows) self.cursor_row = new_rows - 1;
+        self.cursor_col = if (cursor_col >= new_cols) new_cols - 1 else cursor_col;
+        self.wrap_pending = cursor_wrap_pending;
+    }
+
     pub fn resize(self: *Terminal, new_cols: u16, new_rows: u16) void {
         const cols = if (new_cols > grid_mod.MAX_COLS) grid_mod.MAX_COLS else if (new_cols == 0) 1 else new_cols;
         const rows = if (new_rows > grid_mod.MAX_ROWS) grid_mod.MAX_ROWS else if (new_rows == 0) 1 else new_rows;
-
         const old_cols = self.cols;
         const old_rows = self.rows;
-
         if (cols == old_cols and rows == old_rows) return;
 
-        // Clear cells beyond the new column width for each preserved row
-        if (cols < old_cols) {
-            const preserve_rows = if (rows < old_rows) rows else old_rows;
-            var r: u16 = 0;
-            while (r < preserve_rows) : (r += 1) {
-                var c: u16 = cols;
-                while (c < old_cols) : (c += 1) {
-                    self.grid.cells[r][c] = Cell{};
+        // Full normal-screen width reflow. Alternate screens intentionally do
+        // not touch scrollback; they retain the conservative resize behavior.
+        if (cols != old_cols and !self.using_alt_screen and self.scrollback != null) {
+            self.reflowWidth(cols, rows);
+            self.cols = cols;
+            self.rows = rows;
+            self.grid.cols = cols;
+            self.grid.rows = rows;
+        } else {
+            // Vertical-only resize: top rows leave the viewport, bottom rows stay.
+            if (rows < old_rows) {
+                const excess = old_rows - rows;
+                if (!self.using_alt_screen and self.scrollback != null) {
+                    var r: u16 = 0;
+                    while (r < excess) : (r += 1) {
+                        self.scrollback.?.pushWrapped(&self.grid.cells[r], old_cols, self.row_wrapped[r] != 0);
+                    }
                 }
-            }
-        }
-
-        // Push excess TOP rows into scrollback when shrinking vertically.
-        // P1-1 fix: the original code pushed rows[rows..old_rows] (the bottom
-        // rows), which is wrong -- shrinking means the TOP rows scroll out of
-        // the visible window, not the bottom. The bottom rows should stay
-        // visible. We push rows[0..excess] (top rows, oldest first) into
-        // scrollback, then shift the remaining rows up.
-        if (rows < old_rows) {
-            const excess = old_rows - rows;
-            if (!self.using_alt_screen and self.scrollback != null) {
-                // Push top rows (oldest first) so scrollback order is correct:
-                // getLine(0) = most recently pushed = the row that was just
-                // above the new visible window.
-                var r: u16 = 0;
-                while (r < excess) : (r += 1) {
-                    self.scrollback.?.push(&self.grid.cells[r], if (cols < old_cols) cols else old_cols);
-                }
-            }
-            // Shift remaining rows [excess..old_rows) up to [0..rows)
-            if (excess > 0) {
                 var r: u16 = 0;
                 while (r < rows) : (r += 1) {
                     self.grid.cells[r] = self.grid.cells[r + excess];
+                    self.row_wrapped[r] = self.row_wrapped[r + excess];
+                }
+            }
+            self.cols = cols;
+            self.rows = rows;
+            self.grid.cols = cols;
+            self.grid.rows = rows;
+            if (rows > old_rows) {
+                var r: u16 = old_rows;
+                while (r < rows) : (r += 1) {
+                    self.grid.clearRow(r);
+                    self.row_wrapped[r] = 0;
+                }
+            }
+            if (cols > old_cols) {
+                const preserve_rows = if (old_rows < rows) old_rows else rows;
+                var r: u16 = 0;
+                while (r < preserve_rows) : (r += 1) {
+                    var c: u16 = old_cols;
+                    while (c < cols) : (c += 1) self.grid.cells[r][c] = Cell{};
                 }
             }
         }
 
-        self.cols = cols;
-        self.rows = rows;
-        self.grid.cols = cols;
-        self.grid.rows = rows;
-
-        // Clear any newly exposed rows when growing vertically
-        if (rows > old_rows) {
-            var r: u16 = old_rows;
-            while (r < rows) : (r += 1) {
-                self.grid.clearRow(r);
-            }
-        }
-
-        // Clear newly exposed columns when growing horizontally
-        if (cols > old_cols) {
-            const preserve_rows = if (old_rows < rows) old_rows else rows;
-            var r2: u16 = 0;
-            while (r2 < preserve_rows) : (r2 += 1) {
-                var c: u16 = old_cols;
-                while (c < cols) : (c += 1) {
-                    self.grid.cells[r2][c] = Cell{};
-                }
-                self.grid.dirty[r2] = 1;
-            }
-        }
         self.scroll_top = 0;
         self.scroll_bottom = rows;
-
         if (self.cursor_col >= cols) self.cursor_col = cols - 1;
         if (self.cursor_row >= rows) self.cursor_row = rows - 1;
-
-        // Mark all rows dirty so the renderer picks up the changes
         var r: u16 = 0;
-        while (r < rows) : (r += 1) {
-            self.grid.dirty[r] = 1;
-        }
+        while (r < rows) : (r += 1) self.grid.dirty[r] = 1;
     }
 
     // -- Byte processing --
@@ -303,6 +446,7 @@ pub const Terminal = struct {
 
     fn printChar(self: *Terminal, codepoint: u21) void {
         if (self.wrap_pending) {
+            self.row_wrapped[self.cursor_row] = 1;
             self.cursor_col = 0;
             self.doLinefeed();
             self.wrap_pending = false;
@@ -313,6 +457,7 @@ pub const Terminal = struct {
         // If wide char and not enough room (need 2 cells), wrap to next line
         if (is_wide and self.cursor_col >= self.cols - 1) {
             if (self.auto_wrap) {
+                self.row_wrapped[self.cursor_row] = 1;
                 self.cursor_col = 0;
                 self.doLinefeed();
             }
@@ -354,6 +499,7 @@ pub const Terminal = struct {
             0x08, 0x7F => self.backspace(),
             0x09 => self.horizontalTab(),
             0x0A, 0x0B, 0x0C => {
+                self.row_wrapped[self.cursor_row] = 0;
                 self.doLinefeed();
                 if (self.linefeed_mode) self.carriageReturn();
             },
@@ -382,10 +528,15 @@ pub const Terminal = struct {
         if (self.cursor_row + 1 >= self.scroll_bottom) {
             if (!self.using_alt_screen and self.scroll_top == 0) {
                 if (self.scrollback) |sb| {
-                    sb.push(&self.grid.cells[self.scroll_top], self.cols);
+                    sb.pushWrapped(&self.grid.cells[self.scroll_top], self.cols, self.row_wrapped[self.scroll_top] != 0);
                 }
             }
             self.grid.scrollUp(self.scroll_top, self.scroll_bottom, 1, self.blankCell());
+            var r = self.scroll_top;
+            while (r + 1 < self.scroll_bottom) : (r += 1) {
+                self.row_wrapped[r] = self.row_wrapped[r + 1];
+            }
+            self.row_wrapped[self.scroll_bottom - 1] = 0;
         } else {
             self.cursor_row += 1;
         }
@@ -411,8 +562,12 @@ pub const Terminal = struct {
         switch (byte) {
             '7' => self.saveCursor(),
             '8' => self.restoreCursor(),
-            'D' => self.doLinefeed(),
+            'D' => {
+                self.row_wrapped[self.cursor_row] = 0;
+                self.doLinefeed();
+            },
             'E' => {
+                self.row_wrapped[self.cursor_row] = 0;
                 self.carriageReturn();
                 self.doLinefeed();
             },
@@ -564,6 +719,7 @@ pub const Terminal = struct {
                 },
                 1049 => self.switchScreen(enabled, true),
                 2004 => self.bracketed_paste = enabled,
+                2026 => self.sync_output = enabled, // synchronized output
                 9 => self.mouse_mode = if (enabled) 1 else 0, // X10 mouse
                 1000 => self.mouse_mode = if (enabled) 2 else 0, // normal mouse
                 1002 => self.mouse_mode = if (enabled) 2 else 0, // button-event
@@ -825,11 +981,15 @@ pub const Terminal = struct {
             if (self.scrollback) |sb| {
                 var i: u16 = 0;
                 while (i < count and i < self.scroll_bottom - self.scroll_top) : (i += 1) {
-                    sb.push(&self.grid.cells[self.scroll_top + i], self.cols);
+                    sb.pushWrapped(&self.grid.cells[self.scroll_top + i], self.cols, self.row_wrapped[self.scroll_top + i] != 0);
                 }
             }
         }
         self.grid.scrollUp(self.scroll_top, self.scroll_bottom, count, self.blankCell());
+        const moved = if (count > self.scroll_bottom - self.scroll_top) self.scroll_bottom - self.scroll_top else count;
+        var r = self.scroll_top;
+        while (r + moved < self.scroll_bottom) : (r += 1) self.row_wrapped[r] = self.row_wrapped[r + moved];
+        while (r < self.scroll_bottom) : (r += 1) self.row_wrapped[r] = 0;
     }
 
     fn scrollDownN(self: *Terminal, n: u16) void {

@@ -7,6 +7,9 @@ pub const MAX_SCROLLBACK_LINES: u32 = 1000;
 pub const ScrollbackLine = struct {
     cells: [grid_mod.MAX_COLS]Cell = undefined,
     len: u16 = 0,
+    /// True when the next physical row is a continuation created by automatic
+    /// terminal wrapping. Explicit LF/NEL line boundaries leave this false.
+    wrapped: bool = false,
 };
 
 pub const Scrollback = struct {
@@ -21,12 +24,17 @@ pub const Scrollback = struct {
     }
 
     pub fn push(self: *Scrollback, row: []const Cell, len: u16) void {
+        self.pushWrapped(row, len, false);
+    }
+
+    pub fn pushWrapped(self: *Scrollback, row: []const Cell, len: u16, wrapped: bool) void {
         var line = &self.lines[self.write_pos];
         var i: u16 = 0;
         while (i < len) : (i += 1) {
             line.cells[i] = row[i];
         }
         line.len = len;
+        line.wrapped = wrapped;
 
         self.write_pos = (self.write_pos + 1) % MAX_SCROLLBACK_LINES;
         if (self.count < MAX_SCROLLBACK_LINES) {
