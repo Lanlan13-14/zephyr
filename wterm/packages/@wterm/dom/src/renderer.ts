@@ -290,6 +290,14 @@ export class Renderer {
     this.container = container;
   }
 
+  invalidateAll(): void {
+    this.rowSignatures = this.rowSignatures.map(() => null);
+    this.prevRowBg.fill("");
+    for (const el of this._scrollbackRowEls) el.remove();
+    this._scrollbackRowEls = [];
+    this._renderedScrollbackCount = 0;
+  }
+
   setup(cols: number, rows: number): void {
     this.cols = cols;
     this.rows = rows;

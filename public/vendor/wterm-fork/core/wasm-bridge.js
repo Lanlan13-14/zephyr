@@ -161,6 +161,15 @@ class WasmBridge {
     if (!len) return null;
     return this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getHyperlinkPtr(id), len));
   }
+  takeColorChanges() {
+    const out = [];
+    while (this.exports.getColorChangeCount() > 0 && out.length < 32) {
+      const len = this.exports.getColorChangeLen();
+      out.push({ kind: this.exports.getColorChangeKind(), index: this.exports.getColorChangeIndex(), value: this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getColorChangePtr(), len)) });
+      this.exports.shiftColorChange();
+    }
+    return out;
+  }
   takeColorQueries() {
     const out = [];
     while (this.exports.getColorQueryCount() > 0 && out.length < 32) {

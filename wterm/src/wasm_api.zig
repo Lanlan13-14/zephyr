@@ -141,6 +141,12 @@ export fn getColorQueryCount() u32 { return terminal.color_query_count; }
 export fn getColorQueryKind() u32 { return if (terminal.color_query_count > 0) terminal.color_query_kind[0] else 0; }
 export fn getColorQueryIndex() u32 { return if (terminal.color_query_count > 0) terminal.color_query_index[0] else 0; }
 export fn shiftColorQuery() void { terminal.shiftColorQuery(); }
+export fn getColorChangeCount() u32 { return terminal.color_change_count; }
+export fn getColorChangeKind() u32 { return if (terminal.color_change_count > 0) terminal.color_change_kind[0] else 0; }
+export fn getColorChangeIndex() u32 { return if (terminal.color_change_count > 0) terminal.color_change_index[0] else 0; }
+export fn getColorChangePtr() [*]const u8 { return &terminal.color_change_data[0]; }
+export fn getColorChangeLen() u32 { return if (terminal.color_change_count > 0) terminal.color_change_lens[0] else 0; }
+export fn shiftColorChange() void { terminal.shiftColorChange(); }
 
 export fn getTitleChanged() u32 {
     if (terminal.title_changed) {

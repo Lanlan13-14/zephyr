@@ -46,6 +46,12 @@ interface WasmExports {
   getColorQueryKind(): number;
   getColorQueryIndex(): number;
   shiftColorQuery(): void;
+  getColorChangeCount(): number;
+  getColorChangeKind(): number;
+  getColorChangeIndex(): number;
+  getColorChangePtr(): number;
+  getColorChangeLen(): number;
+  shiftColorChange(): void;
   getTitleChanged(): number;
   getScrollbackCount(): number;
   getScrollbackLine(offset: number): number;
@@ -241,6 +247,16 @@ export class WasmBridge implements TerminalCore {
     const len = this.exports.getHyperlinkLen(id);
     if (!len) return null;
     return this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getHyperlinkPtr(id), len));
+  }
+
+  takeColorChanges(): Array<{ kind: number; index: number; value: string }> {
+    const out: Array<{ kind: number; index: number; value: string }> = [];
+    while (this.exports.getColorChangeCount() > 0 && out.length < 32) {
+      const len = this.exports.getColorChangeLen();
+      out.push({ kind: this.exports.getColorChangeKind(), index: this.exports.getColorChangeIndex(), value: this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getColorChangePtr(), len)) });
+      this.exports.shiftColorChange();
+    }
+    return out;
   }
 
   takeColorQueries(): Array<{ kind: number; index: number }> {

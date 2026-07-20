@@ -127,6 +127,11 @@ pub const Terminal = struct {
     color_query_count: u8 = 0,
     color_query_kind: [32]u8 = [_]u8{0} ** 32,
     color_query_index: [32]u16 = [_]u16{0} ** 32,
+    color_change_count: u8 = 0,
+    color_change_kind: [32]u8 = [_]u8{0} ** 32,
+    color_change_index: [32]u16 = [_]u16{0} ** 32,
+    color_change_lens: [32]u8 = [_]u8{0} ** 32,
+    color_change_data: [32][64]u8 = undefined,
 
     // Response buffer for DSR and similar host-to-application replies
     response_buf: [64]u8 = undefined,
@@ -224,6 +229,7 @@ pub const Terminal = struct {
         self.grapheme_lens = [_]u8{0} ** MAX_GRAPHEMES;
         self.join_next_grapheme = false;
         self.color_query_count = 0;
+        self.color_change_count = 0;
         self.response_len = 0;
         self.tab_stops = initTabStops();
     }
@@ -1282,15 +1288,29 @@ pub const Terminal = struct {
                 var index: u16 = 0; var has_digit = false;
                 while (pos < data.len and data[pos] >= '0' and data[pos] <= '9') : (pos += 1) { has_digit = true; index = index * 10 + (data[pos] - '0'); }
                 if (!has_digit or pos >= data.len or data[pos] != ';') break;
-                pos += 1; if (pos < data.len and data[pos] == '?') self.enqueueColorQuery(4, index);
+                pos += 1;
+                const value_start = pos;
                 while (pos < data.len and data[pos] != ';') : (pos += 1) {}
+                const value = data[value_start..pos];
+                if (value.len == 1 and value[0] == '?') self.enqueueColorQuery(4, index) else self.enqueueColorChange(4, index, value);
                 if (pos < data.len) pos += 1;
             }
             return;
         }
-        if (data.len == 4 and data[2] == ';' and data[3] == '?' and data[0] == '1' and (data[1] == '0' or data[1] == '1')) {
-            self.enqueueColorQuery(if (data[1] == '0') 10 else 11, 0); return;
+        if (data.len >= 3 and data[0] == '1' and (data[1] == '0' or data[1] == '1') and data[2] == ';') {
+            const kind: u8 = if (data[1] == '0') 10 else 11; const value = data[3..];
+            if (value.len == 1 and value[0] == '?') self.enqueueColorQuery(kind, 0) else self.enqueueColorChange(kind, 0, value);
+            return;
         }
+        if (data.len >= 3 and data[0] == '1' and data[1] == '0' and data[2] == '4') {
+            if (data.len == 3) self.enqueueColorChange(104, 65535, "") else {
+                var pos: usize = 4;
+                while (pos < data.len) { var index: u16 = 0; var digit = false; while (pos < data.len and data[pos] >= '0' and data[pos] <= '9') : (pos += 1) { digit = true; index = index * 10 + (data[pos] - '0'); } if (digit) self.enqueueColorChange(104, index, ""); if (pos < data.len and data[pos] == ';') pos += 1 else break; }
+            }
+            return;
+        }
+        if (std.mem.eql(u8, data, "110")) { self.enqueueColorChange(110, 0, ""); return; }
+        if (std.mem.eql(u8, data, "111")) { self.enqueueColorChange(111, 0, ""); return; }
 
         // OSC 8 ; params ; URI ST. An empty URI closes the current link.
         if (data.len >= 3 and data[0] == '8' and data[1] == ';') {
@@ -1317,6 +1337,19 @@ pub const Terminal = struct {
             self.clipboard_len = @intCast(len);
             self.clipboard_pending = true;
         }
+    }
+
+    fn enqueueColorChange(self: *Terminal, kind: u8, index: u16, value: []const u8) void {
+        if (self.color_change_count >= self.color_change_kind.len) return;
+        const slot: usize = self.color_change_count; const len = @min(value.len, self.color_change_data[slot].len);
+        self.color_change_kind[slot] = kind; self.color_change_index[slot] = index; self.color_change_lens[slot] = @intCast(len);
+        @memcpy(self.color_change_data[slot][0..len], value[0..len]); self.color_change_count += 1;
+    }
+
+    pub fn shiftColorChange(self: *Terminal) void {
+        if (self.color_change_count == 0) return;
+        var i: usize = 1; while (i < self.color_change_count) : (i += 1) { self.color_change_kind[i - 1] = self.color_change_kind[i]; self.color_change_index[i - 1] = self.color_change_index[i]; self.color_change_lens[i - 1] = self.color_change_lens[i]; @memcpy(self.color_change_data[i - 1][0..], self.color_change_data[i][0..]); }
+        self.color_change_count -= 1;
     }
 
     fn enqueueColorQuery(self: *Terminal, kind: u8, index: u16) void {

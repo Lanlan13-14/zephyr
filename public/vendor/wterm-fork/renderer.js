@@ -255,6 +255,13 @@ class Renderer {
     __publicField(this, "_renderedScrollbackCount", 0);
     this.container = container;
   }
+  invalidateAll() {
+    this.rowSignatures = this.rowSignatures.map(() => null);
+    this.prevRowBg.fill("");
+    for (const el of this._scrollbackRowEls) el.remove();
+    this._scrollbackRowEls = [];
+    this._renderedScrollbackCount = 0;
+  }
   setup(cols, rows) {
     this.cols = cols;
     this.rows = rows;

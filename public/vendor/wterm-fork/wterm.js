@@ -5,6 +5,37 @@ import { WasmBridge } from "./core/index.js";
 import { Renderer, resolveQueryColor } from "./renderer.js";
 import { InputHandler } from "./input.js";
 import { DebugAdapter } from "./debug.js";
+function parseOscColor(value) {
+  const input = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(input)) return input.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(input)) return "#" + [...input.slice(1)].map((c) => c + c).join("").toLowerCase();
+  const match = input.match(/^rgb:([0-9a-fA-F]{1,4})\/([0-9a-fA-F]{1,4})\/([0-9a-fA-F]{1,4})$/);
+  if (!match) return null;
+  const component = (part) => Math.round(parseInt(part, 16) * 255 / (Math.pow(16, part.length) - 1)).toString(16).padStart(2, "0");
+  return `#${component(match[1])}${component(match[2])}${component(match[3])}`;
+}
+function applyColorChange(element, change) {
+  if (change.kind === 104) {
+    if (change.index === 65535) for (let i = 0; i < 256; i++) element.style.removeProperty(`--term-color-${i}`);
+    else if (change.index >= 0 && change.index < 256) element.style.removeProperty(`--term-color-${change.index}`);
+    return true;
+  }
+  if (change.kind === 110) {
+    element.style.removeProperty("--term-fg");
+    return true;
+  }
+  if (change.kind === 111) {
+    element.style.removeProperty("--term-bg");
+    return true;
+  }
+  const color = parseOscColor(change.value);
+  if (!color) return false;
+  if (change.kind === 4 && change.index >= 0 && change.index < 256) element.style.setProperty(`--term-color-${change.index}`, color);
+  else if (change.kind === 10) element.style.setProperty("--term-fg", color);
+  else if (change.kind === 11) element.style.setProperty("--term-bg", color);
+  else return false;
+  return true;
+}
 class WTerm {
   constructor(element, options = {}) {
     __publicField(this, "element");
@@ -339,6 +370,11 @@ class WTerm {
       this.bridge.clearBell();
       if (this.onBell) this.onBell();
     }
+    const colorChanges = this.bridge.takeColorChanges();
+    if (colorChanges.some((change) => applyColorChange(this.element, change))) {
+      this.renderer.invalidateAll();
+      requestAnimationFrame(() => this.renderer.render(this.bridge));
+    }
     const colorQueries = this.bridge.takeColorQueries();
     if (colorQueries.length && this.onData) {
       for (const query of colorQueries) {
@@ -431,5 +467,7 @@ class WTerm {
   }
 }
 export {
-  WTerm
+  WTerm,
+  applyColorChange,
+  parseOscColor
 };
