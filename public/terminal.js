@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift5';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift6';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 
 const $ = (sel) => document.querySelector(sel);
@@ -711,6 +711,47 @@ function getVirtualKeyboardInset() {
     const rect = navigator.virtualKeyboard?.boundingRect;
     const height = Math.round(rect?.height || 0);
     return height > 0 ? height : 0;
+}
+
+/**
+ * Distance from the layout viewport bottom to the visual viewport bottom.
+ * This is the true keyboard top gap and must NOT use inflated baseline heights
+ * (those produce a black seam between chrome and IME).
+ */
+function measureImeChromeBottom() {
+    try {
+        const vk = navigator.virtualKeyboard?.boundingRect;
+        if (vk && Number(vk.height) > 40) {
+            return Math.max(0, Math.round(Number(vk.height) || 0));
+        }
+    } catch (_) {}
+    const vv = window.visualViewport;
+    if (!vv) return 0;
+    const layoutH = Math.round(window.innerHeight || document.documentElement.clientHeight || 0);
+    const vvBottom = Math.round((vv.offsetTop || 0) + (vv.height || 0));
+    return Math.max(0, layoutH - vvBottom);
+}
+
+function pinMobileImeChrome(open, inset = 0) {
+    if (!isMobileStableInputMode()) return;
+    const chromeBottom = open ? Math.max(0, Math.round(Number(inset) || measureImeChromeBottom() || 0)) : 0;
+    // Prefer live measured chrome bottom over baseline-inflated inset when both exist.
+    const measured = open ? measureImeChromeBottom() : 0;
+    const pin = open
+        ? (measured > 40 ? measured : chromeBottom)
+        : 0;
+    document.documentElement.style.setProperty('--ime-chrome-bottom', `${pin}px`);
+    // Live aux height so tools sit flush on the aux bar (no 44px guess gap).
+    const auxH = Math.max(
+        36,
+        Math.round(terminalInputPanel?.getBoundingClientRect?.().height || terminalInputPanel?.offsetHeight || 44),
+    );
+    document.documentElement.style.setProperty('--mobile-aux-keys-height', `${auxH}px`);
+    const actionsH = Math.max(
+        36,
+        Math.round(topbarActions?.getBoundingClientRect?.().height || topbarActions?.offsetHeight || 46),
+    );
+    document.documentElement.style.setProperty('--mobile-bottom-actions-height', `${actionsH}px`);
 }
 
 function isTouchKeyboardDevice() {
@@ -7299,24 +7340,40 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     if (isCmdOverlayMode() || String(reason || '').includes('cmd')) {
         mobileKeyboardInset = 0;
         document.documentElement.style.setProperty('--keyboard-inset', '0px');
+        document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
         document.documentElement.classList.remove('keyboard-open', 'viewport-updating');
         terminalContainer?.classList.remove('mobile-keyboard-open');
         document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
+        pinMobileImeChrome(false, 0);
         return;
     }
     const el = getTerminalScrollElement();
     const wasFollowing = Boolean(el && (terminalAutoFollowEnabled || mobileStableLastBottomIntent || isMobileStableAtVisualBottom(el)));
     const previousTop = wtermWrapper?.scrollTop ?? el?.scrollTop ?? 0;
-    const safeInset = Math.max(0, Math.round(Number(inset) || 0));
+    // Prefer live visualViewport chrome bottom for pinning — baseline-inflated
+    // insets leave a black seam between aux bar and IME.
+    const measured = measureImeChromeBottom();
+    const reported = Math.max(0, Math.round(Number(inset) || 0));
+    const open = !!keyboardOpen && (reported > 12 || measured > 40);
+    const pinInset = open
+        ? (measured > 40 ? measured : reported)
+        : 0;
+    const safeInset = pinInset;
     mobileKeyboardInset = safeInset;
     document.documentElement.style.setProperty('--keyboard-inset', `${safeInset}px`);
-    document.documentElement.classList.toggle('keyboard-open', !!keyboardOpen && safeInset > 0);
-    terminalContainer?.classList.toggle('mobile-keyboard-open', !!keyboardOpen && safeInset > 0);
-    if (!keyboardOpen || safeInset <= 0) {
+    document.documentElement.classList.toggle('keyboard-open', open && safeInset > 0);
+    terminalContainer?.classList.toggle('mobile-keyboard-open', open && safeInset > 0);
+    pinMobileImeChrome(open && safeInset > 0, safeInset);
+    if (!open || safeInset <= 0) {
         if (!cmdOverlayMode) document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.WORKSPACE;
+        document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
     }
     if (!isMobileStableInputMode()) return;
     updateTerminalInputPanelMetrics();
+    // Re-pin after metrics so aux height is accurate once bars are laid out.
+    if (open && safeInset > 0) {
+        requestAnimationFrame(() => pinMobileImeChrome(true, safeInset));
+    }
     document.documentElement.classList.remove('viewport-updating');
     setStableViewportHeight();
     const actualInputReason = isMobileStableActualInputReason(reason);
@@ -7339,9 +7396,11 @@ function assertKeyboardLayoutSettled(reason = 'keyboard-settled') {
             mobileKeyboardInset = 0;
         }
         document.documentElement.style.setProperty('--keyboard-inset', '0px');
+        document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
         document.documentElement.classList.remove('keyboard-open', 'viewport-updating');
         terminalContainer?.classList.remove('mobile-keyboard-open');
         document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
+        pinMobileImeChrome(false, 0);
         notifyParentKeyboardMetrics({
             keyboardOpen: false,
             keyboardInset: 0,
@@ -8327,7 +8386,10 @@ function ensureSshSoftKeyboard() {
             // Do NOT wait for assertKeyboardLayoutSettled delay.
             document.documentElement.classList.remove('keyboard-open');
             terminalContainer?.classList.remove('mobile-keyboard-open');
+            document.documentElement.style.setProperty('--keyboard-inset', '0px');
+            document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
             document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.WORKSPACE;
+            pinMobileImeChrome(false, 0);
             // Give CSS a frame to apply static before calling settled assertions.
             requestAnimationFrame(() => {
                 assertKeyboardLayoutSettled(`${reason}:controller-close`);

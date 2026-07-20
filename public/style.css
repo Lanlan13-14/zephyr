@@ -2952,9 +2952,10 @@ html.keyboard-open .terminal-page {
 .tool-btn:hover { transform: translate3d(0, -1px, 0) scale(1.01); background: color-mix(in srgb, var(--text) 5%, transparent); border-color: color-mix(in srgb, var(--text-secondary) 28%, var(--border)); }
 .tool-btn:active {
     transform: scale(0.97);
-    background: var(--accent-soft-bg);
-    color: var(--accent-hover);
-    border-color: var(--accent-soft-border);
+    background: color-mix(in srgb, var(--text) 8%, var(--bg)) !important;
+    color: var(--text) !important;
+    border-color: var(--border) !important;
+    box-shadow: none !important;
 }
 .modifier.active {
     background: var(--accent-soft-bg);
@@ -7354,17 +7355,21 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         box-shadow: 0 -2px 12px rgba(0,0,0,0.18);
     }
 
-    /* Pin tools + aux to the keyboard top while IME is open. */
+    /* Pin tools + aux flush to IME top. --ime-chrome-bottom is measured from
+       visualViewport (layoutH - vv.offsetTop - vv.height), NOT inflated baseline. */
     html.mobile-stable-input.keyboard-open .terminal-bottom-bar {
         position: fixed !important;
         left: 0 !important;
         right: 0 !important;
-        /* keyboard-inset is keyboard height; pin bar flush with keyboard top */
-        bottom: var(--keyboard-inset, 0px) !important;
+        bottom: var(--ime-chrome-bottom, var(--keyboard-inset, 0px)) !important;
         z-index: 40 !important;
-        padding-bottom: max(2px, env(safe-area-inset-bottom)) !important;
+        /* NO safe-area while IME open — it creates the black seam above the keyboard */
+        padding-bottom: 0 !important;
+        margin: 0 !important;
         transform: none !important;
-        transition: bottom 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        transition: none !important;
+        box-shadow: none !important;
+        border-bottom: 0 !important;
     }
     /* When keyboard closes, immediately return to static in flow. */
     html.mobile-stable-input:not(.keyboard-open) .terminal-bottom-bar {
@@ -7400,17 +7405,34 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         position: fixed !important;
         left: 0 !important;
         right: 0 !important;
-        /* Pin above aux bar (44px typical + safe-area) */
-        bottom: calc(var(--keyboard-inset, 0px) + 44px + max(2px, env(safe-area-inset-bottom))) !important;
+        /* Sit directly on top of aux bar — height measured live into --mobile-aux-keys-height */
+        bottom: calc(var(--ime-chrome-bottom, var(--keyboard-inset, 0px)) + var(--mobile-aux-keys-height, 44px)) !important;
         z-index: 41 !important;
+        margin: 0 !important;
+        border-bottom: 0 !important;
+        box-shadow: none !important;
         transform: none !important;
-        transition: bottom 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        transition: none !important;
     }
     html.mobile-stable-input:not(.keyboard-open) .topbar-actions {
         position: static !important;
         bottom: auto !important;
         transform: none !important;
         transition: none !important;
+    }
+    /* Kill any residual blue press flash on mobile chrome (tools are .btn-sm) */
+    html.mobile-stable-input .topbar-actions .btn-sm:active,
+    html.mobile-stable-input .topbar-actions .btn-sm:focus,
+    html.mobile-stable-input .topbar-actions .btn-sm:focus-visible,
+    html.mobile-stable-input .topbar-actions .btn-sm.active,
+    html.mobile-stable-input .tool-btn:active,
+    html.mobile-stable-input .btn-sm:active {
+        background: color-mix(in srgb, var(--text) 8%, var(--bg)) !important;
+        color: var(--text) !important;
+        border-color: var(--border) !important;
+        box-shadow: none !important;
+        outline: none !important;
+        -webkit-tap-highlight-color: transparent !important;
     }
 
     /* ── Mobile auxiliary keys: compact horizontal bar, always on top ── */
@@ -7452,19 +7474,20 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     }
     html.mobile-stable-input .aux-key:active,
     html.mobile-stable-input .aux-key.aux-pressing {
-        background: var(--accent);
-        color: #fff;
-        border-color: var(--accent);
+        background: color-mix(in srgb, var(--text) 10%, var(--bg)) !important;
+        color: var(--text) !important;
+        border-color: var(--border) !important;
         transform: scale(0.94);
         transition: transform 0.08s ease, background 0.08s ease, color 0.08s ease;
     }
     html.mobile-stable-input .aux-key {
         transition: transform 0.12s ease, background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
     }
+    /* sticky modifiers: neutral gray, never system blue */
     html.mobile-stable-input .aux-key.aux-active {
-        background: var(--accent);
-        color: #fff;
-        border-color: var(--accent);
+        background: color-mix(in srgb, var(--text) 14%, var(--bg)) !important;
+        color: var(--text) !important;
+        border-color: color-mix(in srgb, var(--text) 28%, var(--border)) !important;
     }
     html.mobile-stable-input .aux-arrow {
         font-size: 14px;
@@ -10272,7 +10295,13 @@ textarea,
 .icon-btn:active,
 .ui-btn:active,
 .color-panel-actions button:active,
-.mini-item button:active { transform: scale(.985); }
+.mini-item button:active {
+    transform: scale(.985);
+    background: color-mix(in srgb, var(--text) 8%, var(--bg)) !important;
+    color: var(--text) !important;
+    border-color: var(--border) !important;
+    box-shadow: none !important;
+}
 .protocol-badge,
 .tag-row span,
 .ai-capability-strip span,
