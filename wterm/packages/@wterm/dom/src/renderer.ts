@@ -16,6 +16,8 @@ function rgbToCSS(packed: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
+const ANSI_16 = ['#000000','#cd3131','#0dbc79','#e5e510','#2472c8','#bc3fbc','#11a8cd','#e5e5e5','#666666','#f14c4c','#23d18b','#f5f543','#3b8eea','#d670d6','#29b8db','#ffffff'];
+
 function colorToCSS(index: number): string | null {
   if (index === DEFAULT_COLOR) return null;
   if (index < 16) return `var(--term-color-${index})`;
@@ -28,6 +30,19 @@ function colorToCSS(index: number): string | null {
   }
   const level = (index - 232) * 10 + 8;
   return `rgb(${level},${level},${level})`;
+}
+
+export function resolveQueryColor(element: HTMLElement, kind: number, index: number): [number, number, number] {
+  let value: string | null = kind === 10 ? 'var(--term-fg)' : kind === 11 ? 'var(--term-bg)' : colorToCSS(index);
+  if (kind === 4 && index < 16) {
+    const configured = getComputedStyle(element).getPropertyValue(`--term-color-${index}`).trim();
+    if (!configured) value = ANSI_16[index] || '#000000';
+  }
+  if (!value) value = kind === 11 ? '#000000' : '#ffffff';
+  const probe = document.createElement('span'); probe.style.color = value; probe.style.display = 'none'; element.appendChild(probe);
+  const resolved = getComputedStyle(probe).color; probe.remove();
+  const match = resolved.match(/rgba?\(\s*(\d+)\D+(\d+)\D+(\d+)/);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : [255,255,255];
 }
 
 function cellFgCSS(fg: number, fgRgb: number | undefined): string | null {

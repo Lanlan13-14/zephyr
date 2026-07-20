@@ -2,7 +2,7 @@ var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 import { WasmBridge } from "./core/index.js";
-import { Renderer } from "./renderer.js";
+import { Renderer, resolveQueryColor } from "./renderer.js";
 import { InputHandler } from "./input.js";
 import { DebugAdapter } from "./debug.js";
 class WTerm {
@@ -338,6 +338,15 @@ class WTerm {
     if (this.bridge.bellPending()) {
       this.bridge.clearBell();
       if (this.onBell) this.onBell();
+    }
+    const colorQueries = this.bridge.takeColorQueries();
+    if (colorQueries.length && this.onData) {
+      for (const query of colorQueries) {
+        const [r, g, b] = resolveQueryColor(this.element, query.kind, query.index);
+        const hex = (value) => (value * 257).toString(16).padStart(4, "0");
+        const selector = query.kind === 4 ? `4;${query.index}` : String(query.kind);
+        this.onData(`\x1B]${selector};rgb:${hex(r)}/${hex(g)}/${hex(b)}\x1B\\`);
+      }
     }
     const clipboard = this.bridge.takeClipboardRequest();
     if (clipboard && this.onClipboard) this.onClipboard(clipboard);

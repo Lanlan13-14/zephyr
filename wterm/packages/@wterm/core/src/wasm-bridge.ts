@@ -42,6 +42,10 @@ interface WasmExports {
   clearClipboard(): void;
   getGraphemePtr(id: number): number;
   getGraphemeLen(id: number): number;
+  getColorQueryCount(): number;
+  getColorQueryKind(): number;
+  getColorQueryIndex(): number;
+  shiftColorQuery(): void;
   getTitleChanged(): number;
   getScrollbackCount(): number;
   getScrollbackLine(offset: number): number;
@@ -237,6 +241,15 @@ export class WasmBridge implements TerminalCore {
     const len = this.exports.getHyperlinkLen(id);
     if (!len) return null;
     return this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getHyperlinkPtr(id), len));
+  }
+
+  takeColorQueries(): Array<{ kind: number; index: number }> {
+    const out: Array<{ kind: number; index: number }> = [];
+    while (this.exports.getColorQueryCount() > 0 && out.length < 32) {
+      out.push({ kind: this.exports.getColorQueryKind(), index: this.exports.getColorQueryIndex() });
+      this.exports.shiftColorQuery();
+    }
+    return out;
   }
 
   getGrapheme(char: number): string | null {

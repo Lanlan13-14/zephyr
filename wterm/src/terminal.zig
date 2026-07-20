@@ -124,6 +124,9 @@ pub const Terminal = struct {
     grapheme_lens: [MAX_GRAPHEMES]u8 = [_]u8{0} ** MAX_GRAPHEMES,
     graphemes: [MAX_GRAPHEMES][MAX_GRAPHEME_BYTES]u8 = undefined,
     join_next_grapheme: bool = false,
+    color_query_count: u8 = 0,
+    color_query_kind: [32]u8 = [_]u8{0} ** 32,
+    color_query_index: [32]u16 = [_]u16{0} ** 32,
 
     // Response buffer for DSR and similar host-to-application replies
     response_buf: [64]u8 = undefined,
@@ -220,6 +223,7 @@ pub const Terminal = struct {
         self.grapheme_count = 0;
         self.grapheme_lens = [_]u8{0} ** MAX_GRAPHEMES;
         self.join_next_grapheme = false;
+        self.color_query_count = 0;
         self.response_len = 0;
         self.tab_stops = initTabStops();
     }
@@ -1271,6 +1275,23 @@ pub const Terminal = struct {
             return;
         }
 
+        // OSC 4 palette queries may contain multiple index;? pairs.
+        if (data.len >= 4 and data[0] == '4' and data[1] == ';') {
+            var pos: usize = 2;
+            while (pos < data.len) {
+                var index: u16 = 0; var has_digit = false;
+                while (pos < data.len and data[pos] >= '0' and data[pos] <= '9') : (pos += 1) { has_digit = true; index = index * 10 + (data[pos] - '0'); }
+                if (!has_digit or pos >= data.len or data[pos] != ';') break;
+                pos += 1; if (pos < data.len and data[pos] == '?') self.enqueueColorQuery(4, index);
+                while (pos < data.len and data[pos] != ';') : (pos += 1) {}
+                if (pos < data.len) pos += 1;
+            }
+            return;
+        }
+        if (data.len == 4 and data[2] == ';' and data[3] == '?' and data[0] == '1' and (data[1] == '0' or data[1] == '1')) {
+            self.enqueueColorQuery(if (data[1] == '0') 10 else 11, 0); return;
+        }
+
         // OSC 8 ; params ; URI ST. An empty URI closes the current link.
         if (data.len >= 3 and data[0] == '8' and data[1] == ';') {
             var sep: usize = 2;
@@ -1296,6 +1317,18 @@ pub const Terminal = struct {
             self.clipboard_len = @intCast(len);
             self.clipboard_pending = true;
         }
+    }
+
+    fn enqueueColorQuery(self: *Terminal, kind: u8, index: u16) void {
+        if (self.color_query_count >= self.color_query_kind.len) return;
+        const slot: usize = self.color_query_count;
+        self.color_query_kind[slot] = kind; self.color_query_index[slot] = index; self.color_query_count += 1;
+    }
+
+    pub fn shiftColorQuery(self: *Terminal) void {
+        if (self.color_query_count == 0) return;
+        var i: usize = 1; while (i < self.color_query_count) : (i += 1) { self.color_query_kind[i - 1] = self.color_query_kind[i]; self.color_query_index[i - 1] = self.color_query_index[i]; }
+        self.color_query_count -= 1;
     }
 
     fn internLink(self: *Terminal, uri: []const u8) u16 {

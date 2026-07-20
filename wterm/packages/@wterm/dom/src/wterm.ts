@@ -1,5 +1,5 @@
 import { WasmBridge, type TerminalCore } from "@wterm/core";
-import { Renderer } from "./renderer.js";
+import { Renderer, resolveQueryColor } from "./renderer.js";
 import { InputHandler } from "./input.js";
 import { DebugAdapter } from "./debug.js";
 
@@ -443,6 +443,16 @@ export class WTerm {
     if (this.bridge.bellPending()) {
       this.bridge.clearBell();
       if (this.onBell) this.onBell();
+    }
+
+    const colorQueries = this.bridge.takeColorQueries();
+    if (colorQueries.length && this.onData) {
+      for (const query of colorQueries) {
+        const [r,g,b] = resolveQueryColor(this.element, query.kind, query.index);
+        const hex = (value: number) => (value * 257).toString(16).padStart(4, "0");
+        const selector = query.kind === 4 ? `4;${query.index}` : String(query.kind);
+        this.onData(`\x1b]${selector};rgb:${hex(r)}/${hex(g)}/${hex(b)}\x1b\\`);
+      }
     }
 
     const clipboard = this.bridge.takeClipboardRequest();
