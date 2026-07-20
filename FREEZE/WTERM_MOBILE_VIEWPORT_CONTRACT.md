@@ -48,13 +48,17 @@
 
 几何（`computeCursorAboveChromeScrollTop`）：
 
+- 光标坐标必须是 **viewport-relative**（`cursorBottomInViewport`）
+  - 来源：overlay `getBoundingClientRect` 或 `bridge.getCursor().row * lineHeight`
+  - **禁止** `contentY = scrollTop + row*lh`（会正反馈，光标乱飞）
+- 校正用 **delta**：`nextScrollTop = scrollTop + (cursorBottomVisible - visibleBottom)`
 - `--ime-chrome-bottom` 来自父页 `frameRect.bottom - keyboardTop`
-- keyboard-open：`padding-bottom` **只**含 tools+aux，**不含** `keyboard-inset`（bars 已 fixed）
-- 少内容 `maxScroll<=0`：`scrollTop=0`，允许光标偏上，禁止造黑洞
-- 铺满 + following：`scrollTop = cursorBottom - (scrollportHeight - chromeHeight - pad)`，**禁止** chase `maxScroll`
-- 同行可打印输入：`sameLineInput` 且 fully visible → **0** scroll
-- 移动端关闭 WTerm 内部 `_shouldScrollToBottom`（其实现 chase maxScroll）
-- 入口：`applyCursorAboveChromeScroll`（terminal.js）
+- keyboard-open：`padding-bottom` **只**含 tools+aux，**不含** `keyboard-inset`
+- 少内容 `maxScroll<=0`：`scrollTop=0`
+- fully visible → **0** scroll（force 也不能动）
+- 移动端关闭 WTerm `_shouldScrollToBottom`；render 路径 **不** pin
+- **唯一写 scrollTop**：`applyCursorAboveChromeScroll`（rAF 合并 + 32ms 限速）
+- 旧 `ensureMobileStableCursorVisible` 步进器禁用，只转调唯一写入口
 
 ## 光标
 

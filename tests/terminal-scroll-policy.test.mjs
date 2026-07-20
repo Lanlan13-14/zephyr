@@ -183,7 +183,7 @@ test('sparse content: maxScroll 0 forces scrollTop 0 (no black void)', () => {
         scrollTop: 40,
         maxScroll: 0,
         scrollportHeight: 400,
-        cursorBottomInContent: 80,
+        cursorBottomInViewport: 80,
         chromeHeight: 90,
         lineHeight: 20,
     });
@@ -193,13 +193,13 @@ test('sparse content: maxScroll 0 forces scrollTop 0 (no black void)', () => {
 });
 
 test('cursor already above chrome: same-line typing does not scroll', () => {
-    // viewport 400, chrome 90 → visible 310; cursor bottom at 200 with scroll 0
+    // viewport 400, chrome 90 → visible ~310; cursor bottom at 200 in viewport
     const d = computeCursorAboveChromeScrollTop({
         scrollTop: 0,
         maxScroll: 500,
         scrollportHeight: 400,
-        cursorBottomInContent: 200,
-        cursorTopInContent: 180,
+        cursorBottomInViewport: 200,
+        cursorTopInViewport: 180,
         chromeHeight: 90,
         lineHeight: 20,
         sameLineInput: true,
@@ -209,15 +209,15 @@ test('cursor already above chrome: same-line typing does not scroll', () => {
     assert.equal(allowScrollDuringTyping(d), false);
 });
 
-test('cursor clipped by chrome: scroll just enough to unclip', () => {
-    // scrollport 400, chrome 100, visibleBottom≈300-pad; cursor at content 500
-    // with scrollTop 100 → visible at 400 which is below visibleBottom
+test('viewport-relative clip: scroll by delta only (no feedback loop)', () => {
+    // scrollport 400, chrome 100, visibleBottom = 296; cursor bottom in viewport = 350
+    // delta = 350-296 = 54 → scrollTop 100+54=154 → align 140 (lh 20)
     const d = computeCursorAboveChromeScrollTop({
         scrollTop: 100,
         maxScroll: 800,
         scrollportHeight: 400,
-        cursorBottomInContent: 500,
-        cursorTopInContent: 480,
+        cursorBottomInViewport: 350,
+        cursorTopInViewport: 330,
         chromeHeight: 100,
         lineHeight: 20,
         padPx: 4,
@@ -225,29 +225,39 @@ test('cursor clipped by chrome: scroll just enough to unclip', () => {
     });
     assert.equal(d.changed, true);
     assert.ok(d.scrollTop > 100, `expected scroll down, got ${d.scrollTop}`);
-    // cursor bottom should land near visibleBottom = 400-100-4 = 296
-    // scrollTop ≈ 500 - 296 = 204 → aligned 200
-    assert.ok(d.scrollTop <= 220, `must not overscroll into void, got ${d.scrollTop}`);
+    assert.ok(d.scrollTop <= 160, `must only unclip, got ${d.scrollTop}`);
+    // Critical: applying again with same viewport cursor at new scroll must not
+    // keep growing — simulate post-scroll viewport cursor moved up by delta.
+    const movedUp = 350 - (d.scrollTop - 100);
+    const d2 = computeCursorAboveChromeScrollTop({
+        scrollTop: d.scrollTop,
+        maxScroll: 800,
+        scrollportHeight: 400,
+        cursorBottomInViewport: movedUp,
+        cursorTopInViewport: movedUp - 20,
+        chromeHeight: 100,
+        lineHeight: 20,
+        padPx: 4,
+        sameLineInput: true,
+    });
+    assert.equal(d2.changed, false, 'second pin must be no-op (no fly)');
     assert.equal(allowScrollDuringTyping(d), true);
 });
 
-test('never chase maxScroll past cursor-useful scroll (fig.3 void)', () => {
-    // Cursor BELOW visible band with huge maxScroll blank padding
-    // visibleBottom = 400-90-4 = 306; cursor at 900 → need scroll ~594, NOT 2000
+test('never jump toward maxScroll when cursor only slightly clipped', () => {
     const d = computeCursorAboveChromeScrollTop({
         scrollTop: 0,
         maxScroll: 2000,
         scrollportHeight: 400,
-        cursorBottomInContent: 900,
-        cursorTopInContent: 880,
+        cursorBottomInViewport: 360,
+        cursorTopInViewport: 340,
         chromeHeight: 90,
         lineHeight: 20,
         padPx: 4,
         force: true,
     });
     assert.equal(d.changed, true);
-    assert.ok(d.scrollTop < 800, `must not approach maxScroll, got ${d.scrollTop}`);
-    assert.ok(d.scrollTop >= 500, `must scroll enough to reveal cursor, got ${d.scrollTop}`);
+    assert.ok(d.scrollTop < 120, `must not approach maxScroll, got ${d.scrollTop}`);
 });
 
 test('force does not move scroll when cursor already fully visible', () => {
@@ -255,8 +265,8 @@ test('force does not move scroll when cursor already fully visible', () => {
         scrollTop: 0,
         maxScroll: 500,
         scrollportHeight: 400,
-        cursorBottomInContent: 200,
-        cursorTopInContent: 180,
+        cursorBottomInViewport: 200,
+        cursorTopInViewport: 180,
         chromeHeight: 90,
         lineHeight: 20,
         force: true,
@@ -265,7 +275,34 @@ test('force does not move scroll when cursor already fully visible', () => {
     assert.equal(d.scrollTop, 0);
 });
 
+test('forged contentY=scrollTop+row would fly — viewport path must not', () => {
+    // Bug reproduction: if we had used contentY = scrollTop + row*lh, each pin
+    // increases scrollTop and contentY, chasing forever. Viewport path is immune.
+    let scrollTop = 0;
+    for (let i = 0; i < 5; i += 1) {
+        // cursor fixed at viewport row 10 * 20 = 200 (bridge semantics)
+        const d = computeCursorAboveChromeScrollTop({
+            scrollTop,
+            maxScroll: 5000,
+            scrollportHeight: 400,
+            cursorBottomInViewport: 200,
+            cursorTopInViewport: 180,
+            chromeHeight: 90,
+            lineHeight: 20,
+            force: true,
+        });
+        assert.equal(d.changed, false, `iteration ${i} must not scroll`);
+        scrollTop = d.scrollTop;
+    }
+});
+
 test('contract: terminal.js uses computeCursorAboveChromeScrollTop', () => {
     assert.match(terminalJs, /computeCursorAboveChromeScrollTop/);
     assert.match(terminalJs, /applyCursorAboveChromeScroll/);
+    assert.match(terminalJs, /cursorBottomInViewport|bridge-viewport|overlay-viewport/);
+    // Must not forge contentY from scrollTop + row (feedback loop).
+    assert.doesNotMatch(
+        terminalJs,
+        /scrollTop \+ \(cursor\.row \* lineHeight\)/,
+    );
 });

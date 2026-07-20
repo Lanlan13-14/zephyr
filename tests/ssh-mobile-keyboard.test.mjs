@@ -236,7 +236,7 @@ test('wiring contract: terminal imports controller; button removed', () => {
     assert.match(terminalJs, /assertKeyboardLayoutSettled/);
     assert.match(terminalJs, /liftMode:\s*SoftKeyboardLiftMode\.NONE/);
     assert.doesNotMatch(terminalHtml, /id="cmdKeyboardBtn"/);
-    assert.match(terminalHtml, /20260721-wterm-scroll2/);
+    assert.match(terminalHtml, /20260721-wterm-scroll3/);
     assert.match(styleCss, /\.cmd-keyboard-btn \{ display: none !important/);
 });
 

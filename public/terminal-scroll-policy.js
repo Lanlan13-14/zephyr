@@ -209,42 +209,35 @@ export function scrollSettlePhases(kind = 'none') {
 }
 
 /**
- * Zephyr product geometry: pin the cursor line just above bottom chrome
- * (tools + aux / keyboard bars). NEVER chase DOM maxScroll into bottom blank.
+ * Zephyr product geometry: pin the cursor line just above bottom chrome.
+ * NEVER chase DOM maxScroll into bottom blank.
  *
- * @param {object} p
- * @param {number} p.scrollTop current scrollTop
- * @param {number} p.maxScroll el.scrollHeight - el.clientHeight
- * @param {number} p.scrollportHeight el.clientHeight
- * @param {number} p.cursorBottomInContent distance from content top to cursor bottom (px)
- * @param {number} [p.cursorTopInContent] distance from content top to cursor top (px)
- * @param {number} p.chromeHeight overlay height covering bottom of scrollport (tools+aux)
- * @param {number} [p.lineHeight=17]
- * @param {number} [p.padPx] gap between cursor bottom and chrome top (default ~0.2 line)
- * @param {boolean} [p.sameLineInput=false] plain typing on same line: only scroll if clipped
- * @returns {{ scrollTop: number, changed: boolean, reason: string }}
+ * CRITICAL: WTerm `cursor.row` is VIEWPORT-relative. Never invent content Y as
+ * `scrollTop + row*lh` — that feedback-loops and makes the cursor "fly".
+ *
+ * Prefer one of:
+ *   A) cursorBottomInViewport / cursorTopInViewport  (px from scrollport top NOW)
+ *   B) cursorBottomInContent / cursorTopInContent    (px from content top, stable;
+ *      only from overlay getBoundingClientRect, never from row+scrollTop)
+ *
+ * @returns {{ scrollTop: number, changed: boolean, reason: string, delta?: number }}
  */
 export function computeCursorAboveChromeScrollTop(p = {}) {
     const scrollTop = Math.max(0, Number(p.scrollTop) || 0);
     const maxScroll = Math.max(0, Number(p.maxScroll) || 0);
     const scrollportHeight = Math.max(0, Number(p.scrollportHeight) || 0);
-    const cursorBottom = Number(p.cursorBottomInContent);
-    const cursorTop = Number.isFinite(p.cursorTopInContent)
-        ? Number(p.cursorTopInContent)
-        : (Number.isFinite(cursorBottom) ? cursorBottom - (Number(p.lineHeight) || 17) : NaN);
     const chromeHeight = Math.max(0, Number(p.chromeHeight) || 0);
     const lineHeight = Math.max(1, Number(p.lineHeight) || 17);
     const padPx = Number.isFinite(p.padPx) ? Math.max(0, p.padPx) : Math.round(lineHeight * 0.2);
     const sameLineInput = !!p.sameLineInput;
 
-    if (!scrollportHeight || !Number.isFinite(cursorBottom)) {
+    if (!scrollportHeight) {
         return { scrollTop, changed: false, reason: 'missing-metrics' };
     }
 
     // Visible band inside the scrollport, above chrome overlay.
-    const visibleHeight = Math.max(lineHeight, scrollportHeight - chromeHeight);
     const visibleTop = 0;
-    const visibleBottom = visibleHeight - padPx;
+    const visibleBottom = Math.max(lineHeight, scrollportHeight - chromeHeight) - padPx;
 
     // Sparse content / no overflow: never invent a black void under the prompt.
     if (maxScroll <= 0) {
@@ -255,48 +248,68 @@ export function computeCursorAboveChromeScrollTop(p = {}) {
         };
     }
 
-    // Cursor edges relative to current scrollport top.
-    const cursorBottomVisible = cursorBottom - scrollTop;
-    const cursorTopVisible = cursorTop - scrollTop;
+    // Resolve cursor edges in VIEWPORT coordinates (relative to scrollport top).
+    let cursorBottomVisible = NaN;
+    let cursorTopVisible = NaN;
+
+    if (Number.isFinite(p.cursorBottomInViewport)) {
+        // Path A — viewport-relative (bridge cursor.row * lh). Stable across scrollTop writes.
+        cursorBottomVisible = Number(p.cursorBottomInViewport);
+        cursorTopVisible = Number.isFinite(p.cursorTopInViewport)
+            ? Number(p.cursorTopInViewport)
+            : cursorBottomVisible - lineHeight;
+    } else if (Number.isFinite(p.cursorBottomInContent)) {
+        // Path B — content-absolute (overlay rect). Convert once; must NOT be derived
+        // from scrollTop+row or it will chase itself.
+        const cursorBottom = Number(p.cursorBottomInContent);
+        const cursorTop = Number.isFinite(p.cursorTopInContent)
+            ? Number(p.cursorTopInContent)
+            : cursorBottom - lineHeight;
+        cursorBottomVisible = cursorBottom - scrollTop;
+        cursorTopVisible = cursorTop - scrollTop;
+    } else {
+        return { scrollTop, changed: false, reason: 'missing-metrics' };
+    }
+
     const clippedBottom = cursorBottomVisible > visibleBottom + 1;
     const clippedTop = cursorTopVisible < visibleTop - 1;
     const fullyVisible = !clippedBottom && !clippedTop;
 
-    // Fully visible ⇒ never touch scrollTop (force only bypasses caller locks,
-    // not "already correct geometry"). This is what stops per-keystroke jitter.
+    // Fully visible ⇒ never touch scrollTop. force only bypasses caller locks.
     if (fullyVisible) {
         return {
             scrollTop,
             changed: false,
             reason: sameLineInput ? 'same-line-visible' : 'already-visible',
+            delta: 0,
         };
     }
 
-    // Desire: cursor bottom sits on visibleBottom (just above chrome).
-    // scrollTop = cursorBottom - visibleBottom
-    let next = cursorBottom - visibleBottom;
-
-    // Also never hide cursor above the top of the scrollport.
-    if (cursorTop - next < visibleTop) {
-        next = cursorTop - visibleTop;
+    // Delta in viewport space — does not re-encode scrollTop into cursor Y.
+    let delta = 0;
+    if (clippedBottom) {
+        delta = Math.ceil(cursorBottomVisible - visibleBottom);
+    } else if (clippedTop) {
+        delta = -Math.ceil(visibleTop - cursorTopVisible);
     }
 
-    // Hard cap: do not scroll past "cursor at bottom of useful viewport".
-    // This is what kills the mid-screen prompt + huge black void (user fig.3).
-    const maxUseful = Math.max(0, cursorBottom - visibleBottom);
-    next = Math.min(next, maxUseful);
+    if (Math.abs(delta) < 2) {
+        return { scrollTop, changed: false, reason: 'within-slop', delta: 0 };
+    }
 
+    let next = scrollTop + delta;
     next = Math.max(0, Math.min(maxScroll, next));
     // Row-height align to avoid fighting WTerm grid snap.
     next = Math.floor(next / lineHeight) * lineHeight;
 
     if (Math.abs(next - scrollTop) < 2) {
-        return { scrollTop, changed: false, reason: 'within-slop' };
+        return { scrollTop, changed: false, reason: 'within-slop', delta: 0 };
     }
     return {
         scrollTop: next,
         changed: true,
-        reason: clippedBottom ? 'unclip-bottom' : (clippedTop ? 'unclip-top' : 'cursor-above-chrome'),
+        reason: clippedBottom ? 'unclip-bottom' : 'unclip-top',
+        delta: next - scrollTop,
     };
 }
 
