@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {WasmBridge} from '../public/vendor/wterm-fork/core/index.js';
+const text=(b,r,n)=>{let s='';for(let c=0;c<n;c++)s+=String.fromCodePoint(b.getCell(r,c).char||32);return s};
+test('CSI REP repeats preceding styled character',async()=>{const b=await WasmBridge.load();b.init(20,4);b.writeString('\x1b[31mX\x1b[0m\x1b[3b');assert.equal(text(b,0,4),'XXXX');for(let c=0;c<4;c++)assert.equal(b.getCell(0,c).fg,1);});
+test('ICH and DCH do not leave orphan wide cells',async()=>{const b=await WasmBridge.load();b.init(10,3);b.writeString('A你B');b.writeString('\r\x1b[C\x1b[@');for(let c=0;c<10;c++){const w=b.getCell(0,c).wide;if(w===1)assert.equal(b.getCell(0,c+1).wide,2);if(w===2)assert.equal(b.getCell(0,c-1).wide,1);}b.writeString('\x1b[P');for(let c=0;c<10;c++){const w=b.getCell(0,c).wide;if(w===1)assert.equal(b.getCell(0,c+1).wide,2);if(w===2)assert.equal(b.getCell(0,c-1).wide,1);}});

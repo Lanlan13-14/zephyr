@@ -106,6 +106,8 @@ pub const Terminal = struct {
     title_len: u16 = 0,
     title_changed: bool = false,
     current_link_id: u16 = 0,
+    last_printed_cell: Cell = Cell{},
+    has_last_printed: bool = false,
     link_count: u16 = 0,
     link_lens: [MAX_LINKS]u16 = [_]u16{0} ** MAX_LINKS,
     link_uris: [MAX_LINKS][MAX_LINK_URI]u8 = undefined,
@@ -201,6 +203,7 @@ pub const Terminal = struct {
         self.title_len = 0;
         self.title_changed = false;
         self.current_link_id = 0;
+        self.has_last_printed = false;
         self.link_count = 0;
         self.link_lens = [_]u16{0} ** MAX_LINKS;
         self.clipboard_pending = false;
@@ -486,15 +489,18 @@ pub const Terminal = struct {
             }
         }
 
-        // Write the wide lead cell
-        self.grid.setCell(self.cursor_row, self.cursor_col, Cell{
+        // Write the wide lead cell and retain it for CSI REP.
+        const printed = Cell{
             .char = @intCast(codepoint),
             .fg = self.current_fg,
             .bg = self.current_bg, .fg_rgb = self.current_fg_rgb, .bg_rgb = self.current_bg_rgb,
             .flags = self.current_flags,
             .link_id = self.current_link_id,
             .wide = if (is_wide) cell_mod.WIDE_LEAD else cell_mod.WIDE_NARROW,
-        });
+        };
+        self.grid.setCell(self.cursor_row, self.cursor_col, printed);
+        self.last_printed_cell = printed;
+        self.has_last_printed = true;
 
         if (is_wide and self.cursor_col < self.cols - 1) {
             // Write the continuation cell (placeholder, not rendered)
@@ -704,6 +710,7 @@ pub const Terminal = struct {
             'T' => self.scrollDownN(self.parser.getParam(0, 1)),
             'X' => self.eraseChars(self.parser.getParam(0, 1)),
             'a' => self.cursorForward(self.parser.getParam(0, 1)),
+            'b' => self.repeatPreceding(self.parser.getParam(0, 1)),
             'd' => self.cursorToRow(self.parser.getParam(0, 1)),
             'e' => self.cursorDown(self.parser.getParam(0, 1)),
             'g' => self.clearTabStop(self.parser.getParam(0, 0)),
@@ -1015,6 +1022,32 @@ pub const Terminal = struct {
             self.grid.cells[self.cursor_row][col] = blank;
         }
         self.grid.dirty[self.cursor_row] = 1;
+        self.sanitizeWideRow(self.cursor_row);
+    }
+
+    fn repeatPreceding(self: *Terminal, count: u16) void {
+        if (!self.has_last_printed) return;
+        const saved_fg = self.current_fg; const saved_bg = self.current_bg;
+        const saved_fg_rgb = self.current_fg_rgb; const saved_bg_rgb = self.current_bg_rgb;
+        const saved_flags = self.current_flags; const saved_link = self.current_link_id;
+        const cell = self.last_printed_cell;
+        self.current_fg = cell.fg; self.current_bg = cell.bg;
+        self.current_fg_rgb = cell.fg_rgb; self.current_bg_rgb = cell.bg_rgb;
+        self.current_flags = cell.flags; self.current_link_id = cell.link_id;
+        var i: u16 = 0; const bounded = @min(count, 4096);
+        while (i < bounded) : (i += 1) self.printChar(@intCast(cell.char));
+        self.current_fg = saved_fg; self.current_bg = saved_bg;
+        self.current_fg_rgb = saved_fg_rgb; self.current_bg_rgb = saved_bg_rgb;
+        self.current_flags = saved_flags; self.current_link_id = saved_link;
+    }
+
+    fn sanitizeWideRow(self: *Terminal, row: u16) void {
+        var col: u16 = 0;
+        while (col < self.cols) : (col += 1) {
+            const cell = self.grid.getCell(row, col);
+            if (cell.wide == cell_mod.WIDE_LEAD and (col + 1 >= self.cols or self.grid.getCell(row, col + 1).wide != cell_mod.WIDE_CONT)) self.grid.setCell(row, col, Cell{});
+            if (cell.wide == cell_mod.WIDE_CONT and (col == 0 or self.grid.getCell(row, col - 1).wide != cell_mod.WIDE_LEAD)) self.grid.setCell(row, col, Cell{});
+        }
     }
 
     fn insertBlanks(self: *Terminal, n: u16) void {
@@ -1022,6 +1055,7 @@ pub const Terminal = struct {
         const blank = self.blankCell();
         if (self.cursor_col + count >= self.cols) {
             self.grid.clearRangeAs(self.cursor_row, self.cursor_col, self.cols, blank);
+            self.sanitizeWideRow(self.cursor_row);
             return;
         }
         var col = self.cols - 1;
@@ -1035,6 +1069,7 @@ pub const Terminal = struct {
             self.grid.cells[self.cursor_row][c] = blank;
         }
         self.grid.dirty[self.cursor_row] = 1;
+        self.sanitizeWideRow(self.cursor_row);
     }
 
     fn scrollUpN(self: *Terminal, n: u16) void {
