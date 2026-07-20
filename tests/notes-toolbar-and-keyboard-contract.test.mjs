@@ -25,20 +25,13 @@ test('notes button is gated by notes.enabled and hidden when off', () => {
   assert.match(terminalJs, /\/api\/me\/settings/);
 });
 
-test('stable mobile keyboard scheme A lifts workspace for terminal-ime only', () => {
+test('stable mobile keyboard uses parent overlay without workspace clip', () => {
   const start = appJs.indexOf('if (isStableInput && isCompact)');
   assert.ok(start > 0, 'stable-input branch missing');
   const end = appJs.indexOf('if (!keyboardOpen || !isFullscreenTerminalSurface)', start);
   const body = appJs.slice(start, end);
-  // Scheme A: clip workspace to usableHeight above keyboard when lifting.
-  assert.match(body, /\busableHeight\b/);
-  assert.match(body, /shouldLift/);
-  assert.match(body, /parent-keyboard-stable-lift-open/);
-  assert.match(body, /workspace\.style\.height = `\$\{usableHeight\}px`/);
-  // Command bar must not lift the page.
-  assert.match(body, /liftMode === 'none'/);
-  assert.match(body, /parent-keyboard-stable-cmd-no-lift/);
-  assert.match(body, /fullHeight/);
-  // No shell translate — only height clip.
+  assert.match(body, /stable-overlay/);
   assert.match(body, /--app-keyboard-shift',\s*'0px'/);
+  assert.doesNotMatch(body, /\busableHeight\b/);
+  assert.doesNotMatch(body, /workspace\.style\.height = `\$\{usableHeight\}px`/);
 });

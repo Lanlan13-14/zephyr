@@ -60,10 +60,14 @@ parent `keyboard-metrics` 字段：`liftMode`, `inputSource` (`cmd` | `terminal-
 
 IME 仍走隐藏 `#mobileTerminalImeProxy` textarea。WTerm grid 在键盘开合时冻结，不 resize 行列。
 
-cache-bust: `20260720-ssh-kb-lift3`
+cache-bust: `20260720-ssh-kb-lift4`
 
-## 方案 A 实现注意（灰屏回归）
+## 实现注意（灰屏 / 自收回归）
 
-**禁止** `transform: translateY(-keyboardInset)` 作用于 `.app-shell`。
-抬升只改 workspace 的 `height/maxHeight` 裁到 visualViewport 底边；`--app-keyboard-shift` 恒为 `0`。
-关闭路径带 hysteresis（≥16 保持 open）+ 180ms debounce，避免 open/close 闪。
+1. **禁止** `translateY(-keyboardInset)` 于 `.app-shell`。
+2. **禁止** 父页裁剪 workspace height（会把 iframe 内 flex 终端挤成 0 → 灰/空洞）。
+3. 终端 IME：iframe 内 `position:fixed` 把 tools/aux 钉在 `--keyboard-inset` 上；终端区保持 `flex:1`。
+4. 命令栏：`cmd-overlay`，零布局。
+5. 父页 soft reset **不得** `postMessage reset-mobile-keyboard`（会 blur IME → 1s 自收）。
+6. focus 仍在 editable 时 controller **禁止** system-dismiss。
+7. 键盘按钮已删除。

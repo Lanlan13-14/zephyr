@@ -54,10 +54,17 @@ export const SoftKeyboardLiftMode = Object.freeze({
 
 const OPEN_INSET_THRESHOLD = 80;
 const CLOSE_INSET_THRESHOLD = 12;
-const GESTURE_FOCUS_MS = 900;
-const REFOCUS_GUARD_MS = 420;
-const OPEN_HOLD_MS = 1400;
+const GESTURE_FOCUS_MS = 2400;
+const REFOCUS_GUARD_MS = 600;
+const OPEN_HOLD_MS = 3200;
 const PHYSICAL_DEBOUNCE_MS = 48;
+
+function isEditableElement(el) {
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'TEXTAREA' || tag === 'INPUT' || !!el.isContentEditable
+        || !!el.classList?.contains?.('mobile-terminal-ime-proxy');
+}
 
 /**
  * @param {SoftKeyboardHost} host
@@ -218,21 +225,23 @@ export function createSshMobileSoftKeyboard(host) {
     function syncFromViewport(reason = 'viewport') {
         if (!host.isTouchDevice?.()) return snapshot();
         const { open, inset } = measurePhysical();
+        const active = getActiveElement();
+        const stillOnEditable = isEditableElement(active);
+
+        // CRITICAL: while an editable still has focus, NEVER auto-close from
+        // visualViewport noise / parent layout resize. Only blur/close() dismisses.
+        // This kills the "keyboard opens then dies in ~1s" loop.
+        if (state.intent === SoftKeyboardIntent.OPEN && stillOnEditable) {
+            if (open) commitPhysical(true, inset, `${reason}:open-focused`);
+            else log('keep-open-while-focused', { reason, inset });
+            return snapshot();
+        }
 
         // System dismissed keyboard (Android back) while we still desired open.
-        // Only accept when we are past the open-hold window — not mid-IME animation.
-        // focusLikely alone must NOT block forever: some WebViews keep a stale focus
-        // flag after the IME is gone.
+        // Accept only when: past open-hold, AND no editable focused, AND physical closed.
         if (state.intent === SoftKeyboardIntent.OPEN && state.physicalOpen && !open) {
-            const active = getActiveElement();
-            const stillOnEditable = !!(active
-                && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT' || active.isContentEditable));
-            if (withinOpenHold()) {
+            if (withinOpenHold() || state.focusLikely) {
                 log('await-system-dismiss-hold', { reason, inset });
-                return snapshot();
-            }
-            if (stillOnEditable && inset > 0) {
-                log('await-system-dismiss-focus', { reason, inset });
                 return snapshot();
             }
             setIntent(SoftKeyboardIntent.CLOSED, `${reason}:system-dismiss`);
@@ -246,14 +255,14 @@ export function createSshMobileSoftKeyboard(host) {
             if (!open) commitPhysical(false, 0, `${reason}:closed`);
             else if (inset < OPEN_INSET_THRESHOLD) commitPhysical(false, 0, `${reason}:noise`);
             // If physical is open but intent closed (race), force blur path again.
-            else if (Date.now() - lastOpenGestureAt > GESTURE_FOCUS_MS) {
+            else if (Date.now() - lastOpenGestureAt > GESTURE_FOCUS_MS && !stillOnEditable) {
                 blurProxy(`${reason}:intent-closed-but-physical`);
                 commitPhysical(false, 0, `${reason}:force-closed`);
             }
             return snapshot();
         }
 
-        // Intent open
+        // Intent open, not on editable (focus already lost)
         if (open) {
             commitPhysical(true, inset, `${reason}:open`);
         } else if (state.focusLikely || withinOpenHold()) {
@@ -262,7 +271,7 @@ export function createSshMobileSoftKeyboard(host) {
         } else if (state.physicalOpen) {
             // Lost physical without focus/hold: treat as system dismiss only if
             // we have not seen a healthy inset recently.
-            if (Date.now() - lastPhysicalAboveCloseAt < 320) {
+            if (Date.now() - lastPhysicalAboveCloseAt < 480) {
                 log('ignore-lost-physical-jitter', { reason, inset });
                 return snapshot();
             }
@@ -418,8 +427,8 @@ export function createSshMobileSoftKeyboard(host) {
             scheduleSync(`${reason}:suppressed`);
             return;
         }
-        // If intent is still open, a chrome button may have stolen focus for one frame.
-        // Give a short window to recover; if viewport says closed, accept dismiss.
+        // If intent is still open, a chrome button / layout thrash may have stolen
+        // focus for one frame. Always try to recover before accepting dismiss.
         if (state.intent === SoftKeyboardIntent.OPEN) {
             window.clearTimeout(refocusTimer);
             refocusTimer = window.setTimeout(() => {
@@ -427,20 +436,19 @@ export function createSshMobileSoftKeyboard(host) {
                 if (Date.now() < suppressRefocusUntil) return;
                 const { open } = measurePhysical();
                 const active = getActiveElement();
-                const stillOnEditable = active
-                    && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT' || active.isContentEditable);
-                if (stillOnEditable) {
+                if (isEditableElement(active)) {
                     state.focusLikely = true;
                     return;
                 }
-                if (open || withinOpenHold()) {
+                // Prefer recover while we still want open — parent layout must not kill IME.
+                if (open || withinOpenHold() || state.physicalOpen) {
                     focusProxy(`${reason}:recover`);
                     return;
                 }
-                // Physical closed → user dismissed via system UI.
+                // Only now accept system dismiss: no focus, no physical, past hold.
                 setIntent(SoftKeyboardIntent.CLOSED, `${reason}:system`);
                 commitPhysical(false, 0, `${reason}:system`);
-            }, 180);
+            }, 220);
         } else {
             scheduleSync(reason);
         }

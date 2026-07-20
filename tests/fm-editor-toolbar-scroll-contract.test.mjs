@@ -51,5 +51,7 @@ test('keyboard lift CSS never translates app-shell by inset', () => {
         styleCss,
         /terminal-keyboard-lift[^{]*\{[^}]*translate3d\(0,\s*calc\(-1 \* var\(--app-keyboard-shift/s,
     );
-    assert.match(styleCss, /terminal-keyboard-lift \.app-shell[\s\S]{0,120}transform:\s*none/s);
+    assert.match(styleCss, /body\.app-body\.terminal-mode \.app-shell[\s\S]{0,80}transform:\s*none/s);
+    // Never paint the light-gray void behind a collapsed terminal.
+    assert.doesNotMatch(styleCss, /\.terminal-workspace\.compact \{[^}]*background:\s*#d1d5db/s);
 });

@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift3';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift4';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 
 const $ = (sel) => document.querySelector(sel);
@@ -1245,6 +1245,22 @@ window.addEventListener('message', (e) => {
         return;
     }
     if (e.data.type === 'reset-mobile-keyboard') {
+        // Parent geometry reset must NOT kill a live IME session. The old path
+        // blurred the proxy on every layout tick → keyboard open/close loop.
+        const active = document.activeElement;
+        const imeAlive = !!(
+            sshSoftKeyboard?.desiredOpen?.()
+            || active === mobileImeProxy
+            || active === cmdInput
+            || cmdOverlayMode
+            || (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT' || active.isContentEditable))
+        );
+        if (imeAlive) {
+            logTerminalLayoutDiagnostics?.('parent-reset-ignored-ime-alive', { reason: e.data.reason || '' });
+            // Keep layout frozen for cmd; for terminal-ime just ignore the blur.
+            if (cmdOverlayMode || active === cmdInput) enterCmdOverlayMode('parent-reset-ignored');
+            return;
+        }
         keyboardFocusLikely = false;
         mobileKeyboardUserControlled = false;
         if (sshSoftKeyboard) {
@@ -1255,12 +1271,6 @@ window.addEventListener('message', (e) => {
             finalizeKeyboardClose({ force: true });
         }
         updateMobileKeyboardButtonUi();
-        [80, 220, 520, 900].forEach((delay) => window.setTimeout(() => {
-            if (keyboardFocusLikely || mobileKeyboardUserControlled || document.activeElement === mobileImeProxy || document.activeElement === cmdInput) return;
-            if (sshSoftKeyboard?.desiredOpen?.()) return;
-            finalizeKeyboardClose({ force: true });
-            updateMobileKeyboardButtonUi();
-        }, delay));
         return;
     }
     if (e.data.type === 'keyboard-freeze') {
@@ -1298,7 +1308,15 @@ window.addEventListener('message', (e) => {
             } else if (parentKeyboardOpen && parentInset >= 80) {
                 applyMobileStableKeyboardInset(parentInset, true, `parent-layout:${reason}`);
             } else if (!parentKeyboardOpen && mobileKeyboardOpen) {
-                finalizeKeyboardClose({ force: true });
+                // Parent may report closed during scheme-A clip noise; never kill live IME.
+                if (sshSoftKeyboard?.desiredOpen?.()
+                    || document.activeElement === mobileImeProxy
+                    || document.activeElement === cmdInput
+                    || cmdOverlayMode) {
+                    logTerminalLayoutDiagnostics?.('parent-layout-close-ignored-ime-alive', { reason });
+                } else {
+                    finalizeKeyboardClose({ force: true });
+                }
             }
         }
         const keyboardRelated = isTouchKeyboardDevice() && (
@@ -7640,15 +7658,7 @@ function dismissMobileStableImeProxy(reason = 'mobile-ime-dismiss') {
 }
 
 function updateMobileKeyboardButtonUi() {
-    const btn = document.getElementById('cmdKeyboardBtn');
-    if (!btn) return;
-    const open = !!(sshSoftKeyboard?.isActive?.()
-        || mobileKeyboardOpen
-        || document.documentElement.classList.contains('keyboard-open'));
-    btn.classList.toggle('keyboard-visible', open);
-    btn.setAttribute('aria-pressed', open ? 'true' : 'false');
-    btn.title = open ? '收起软键盘' : '打开软键盘';
-    btn.setAttribute('aria-label', open ? '收起软键盘' : '打开软键盘');
+    // cmdKeyboardBtn removed — terminal body tap / cmdInput open IME directly.
 }
 
 function rememberMobileStableKeyboardGrid(reason = 'mobile-keyboard-open-grid') {
@@ -8325,38 +8335,8 @@ function ensureSshSoftKeyboard() {
 }
 
 function setupMobileKeyboardButton() {
-    if (sshSoftKeyboardUiBound) return;
-    const btn = document.getElementById('cmdKeyboardBtn');
-    if (!btn) return;
+    // Button removed from DOM. Keep function so callers stay valid.
     sshSoftKeyboardUiBound = true;
-    btn.type = 'button';
-    btn.tabIndex = -1;
-    const fire = (reason) => {
-        ensureSshSoftKeyboard();
-        if (!sshSoftKeyboard) return;
-        // Toggle must run inside the gesture turn so iOS will present IME.
-        sshSoftKeyboard.toggle(reason);
-        mobileKeyboardUserControlled = sshSoftKeyboard.desiredOpen();
-        keyboardFocusLikely = sshSoftKeyboard.desiredOpen();
-        updateMobileKeyboardButtonUi();
-        [60, 160, 320].forEach((delay) => window.setTimeout(() => {
-            updateViewportInsets();
-            updateMobileKeyboardButtonUi();
-        }, delay));
-    };
-    btn.addEventListener('pointerdown', (e) => {
-        // Keep focus path under our control; prevent button focus steal.
-        e.preventDefault();
-        e.stopPropagation();
-        fire('keyboard-button-pointerdown');
-    }, { passive: false });
-    btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        // pointerdown already handled on capable browsers; click is fallback.
-        if (e.detail === 0 || e.pointerType === '') fire('keyboard-button-click');
-    });
-    updateMobileKeyboardButtonUi();
 }
 
 function setupMobileKeyboardAvoidance() {

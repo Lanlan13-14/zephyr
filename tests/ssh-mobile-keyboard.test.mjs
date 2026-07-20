@@ -198,20 +198,16 @@ test('close commits zero inset to parent', () => {
     assert.ok(host.applied.some((a) => a.open === false && a.i === 0));
 });
 
-test('wiring contract: terminal imports controller and exposes button', () => {
+test('wiring contract: terminal imports controller; button removed', () => {
     assert.match(terminalJs, /createSshMobileSoftKeyboard/);
     assert.match(terminalJs, /SoftKeyboardLiftMode/);
     assert.match(terminalJs, /ensureSshSoftKeyboard/);
-    assert.match(terminalJs, /setupMobileKeyboardButton/);
     assert.match(terminalJs, /handleTerminalTap/);
-    assert.match(terminalJs, /updateMobileKeyboardButtonUi/);
     assert.match(terminalJs, /assertKeyboardLayoutSettled/);
     assert.match(terminalJs, /liftMode:\s*SoftKeyboardLiftMode\.NONE/);
-    assert.match(terminalHtml, /id="cmdKeyboardBtn"/);
-    assert.match(terminalHtml, /ssh-kb-lift3/);
-    assert.match(styleCss, /cmd-keyboard-btn/);
-    // Must not hard-hide the button forever.
-    assert.doesNotMatch(styleCss, /\.cmd-keyboard-btn,\s*\.mobile-secure-keyboard-proxy \{ display: none !important; \}/);
+    assert.doesNotMatch(terminalHtml, /id="cmdKeyboardBtn"/);
+    assert.match(terminalHtml, /ssh-kb-lift4/);
+    assert.match(styleCss, /\.cmd-keyboard-btn \{ display: none !important/);
 });
 
 test('wiring contract: body tap does not blur/dismiss', () => {
@@ -233,27 +229,25 @@ test('enableMobileStableInputMode does not force userControlled open', () => {
     assert.doesNotMatch(block, /mobileKeyboardUserControlled = true/);
 });
 
-test('parent stable path lifts workspace height for terminal-ime', () => {
+test('parent stable path does not clip workspace height (overlay model)', () => {
     const start = appJs.indexOf('if (isStableInput && isCompact)');
     assert.ok(start > 0, 'stable-input branch missing');
     const end = appJs.indexOf('if (!keyboardOpen || !isFullscreenTerminalSurface)', start);
     const body = appJs.slice(start, end);
-    assert.match(body, /shouldLift/);
-    assert.match(body, /usableHeight/);
-    assert.match(body, /parent-keyboard-stable-lift-open/);
-    assert.match(body, /liftMode === 'none'/);
-    assert.match(body, /parent-keyboard-stable-cmd-no-lift/);
-    assert.match(body, /terminal-keyboard-lift/);
-    assert.match(body, /workspace\.style\.height = `\$\{usableHeight\}px`/);
-    // Must never shell-translate by keyboard inset (causes gray void).
+    // Overlay model: parent keeps full geometry; no usableHeight clip.
+    assert.match(body, /stable-overlay/);
     assert.match(body, /--app-keyboard-shift',\s*'0px'/);
-    assert.doesNotMatch(body, /const shift = isFullscreenTerminalSurface/);
+    assert.doesNotMatch(body, /usableHeight/);
+    assert.doesNotMatch(body, /workspace\.style\.height = `\$\{usableHeight\}px`/);
+    assert.match(body, /classList\.remove\('terminal-keyboard-lift'\)/);
 });
 
 test('parent closed metrics debounced reset and open hysteresis', () => {
     assert.match(appJs, /resetTerminalWorkspaceKeyboard\(\{ force: false \}\)/);
     assert.match(appJs, /_closeDebounce/);
     assert.match(appJs, /appKeyboardOpen && inset >= 16/);
+    // Soft reset must not post reset-mobile-keyboard by default.
+    assert.match(appJs, /notifyIframe = false/);
 });
 
 test('cmd overlay freezes layout and parent ignores cmd metrics', () => {
@@ -261,6 +255,7 @@ test('cmd overlay freezes layout and parent ignores cmd metrics', () => {
     assert.match(terminalJs, /function leaveCmdOverlayMode/);
     assert.match(terminalJs, /cmd-overlay-keyboard/);
     assert.match(terminalJs, /isCmdOverlayMode\(\)/);
+    assert.match(terminalJs, /parent-reset-ignored-ime-alive/);
     // focusin must not blur cmdInput anymore.
     assert.doesNotMatch(
         terminalJs,
@@ -269,4 +264,13 @@ test('cmd overlay freezes layout and parent ignores cmd metrics', () => {
     assert.match(styleCss, /html\.cmd-overlay-keyboard \.terminal-input-panel/);
     assert.match(styleCss, /--keyboard-inset:\s*0px !important/);
     assert.match(appJs, /liftMode === 'none' \|\| e\.data\.inputSource === 'cmd'/);
+});
+
+test('keyboard toggle button removed; stable chrome pins above IME', () => {
+    assert.doesNotMatch(terminalHtml, /id="cmdKeyboardBtn"/);
+    assert.match(styleCss, /\.cmd-keyboard-btn \{ display: none !important/);
+    assert.match(styleCss, /html\.mobile-stable-input\.keyboard-open \.terminal-bottom-bar/);
+    assert.match(styleCss, /position:\s*fixed !important/);
+    assert.match(styleCss, /html\.mobile-stable-input\.keyboard-open \.terminal-container/);
+    assert.match(styleCss, /min-height:\s*120px !important/);
 });
