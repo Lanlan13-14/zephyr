@@ -7290,6 +7290,13 @@ function bindEvents() {
             const tabId = String(e.data.tabId || '');
             if (tabId && tabId !== activeTerminalTab) return;
             if (e.data.fallback && e.data.stableInput) return;
+            // Top command bar: system IME only. Parent must not clip/lift/reset thrash.
+            if (e.data.liftMode === 'none' || e.data.inputSource === 'cmd' || e.data.source === 'cmd') {
+                window.clearTimeout(applyTerminalWorkspaceKeyboard._closeDebounce);
+                // Ensure any previous terminal-ime lift is cleared once, then stay put.
+                if (appKeyboardOpen) resetTerminalWorkspaceKeyboard({ force: false });
+                return;
+            }
             const inset = Number(e.data.keyboardInset) || 0;
             // Hysteresis: open at ≥80, stay open until <16. Prevents open/close thrash flash.
             if (e.data.keyboardOpen || inset >= 80 || (appKeyboardOpen && inset >= 16)) {

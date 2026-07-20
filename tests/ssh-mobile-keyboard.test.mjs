@@ -154,18 +154,23 @@ test('hysteresis keeps open through small inset jitter', () => {
     assert.equal(kb.desiredOpen(), true);
 });
 
-test('cmd open uses liftMode none and reports source cmd', () => {
+test('cmd open uses liftMode none and freezes layout (no inset to parent)', () => {
     const host = createHost();
     const kb = createSshMobileSoftKeyboard(host);
     kb.open('cmd-input-focus', { gesture: true, liftMode: SoftKeyboardLiftMode.NONE });
     assert.equal(kb.getLiftMode(), SoftKeyboardLiftMode.NONE);
+    // Must not steal focus onto the IME proxy — command textarea owns focus.
+    assert.notEqual(documentActive, host.proxy);
     host.setInset(280);
     kb.syncFromViewport('cmd-open');
-    assert.equal(kb.physicalOpen(), true);
+    // Physical may track open, but parent/applyInset must stay layout-closed.
     const last = host.parentMsgs.at(-1);
     assert.equal(last.liftMode, SoftKeyboardLiftMode.NONE);
     assert.equal(last.source, 'cmd');
-    assert.ok(host.applied.some((a) => a.meta?.liftMode === SoftKeyboardLiftMode.NONE));
+    assert.equal(last.keyboardOpen, false);
+    assert.equal(last.keyboardInset, 0);
+    assert.ok(host.applied.every((a) => a.open === false && a.i === 0));
+    assert.ok(host.applied.some((a) => a.meta?.layoutFrozen === true || a.meta?.liftMode === SoftKeyboardLiftMode.NONE));
 });
 
 test('terminal tap uses workspace lift mode', () => {
@@ -203,7 +208,7 @@ test('wiring contract: terminal imports controller and exposes button', () => {
     assert.match(terminalJs, /assertKeyboardLayoutSettled/);
     assert.match(terminalJs, /liftMode:\s*SoftKeyboardLiftMode\.NONE/);
     assert.match(terminalHtml, /id="cmdKeyboardBtn"/);
-    assert.match(terminalHtml, /ssh-kb-lift2/);
+    assert.match(terminalHtml, /ssh-kb-lift3/);
     assert.match(styleCss, /cmd-keyboard-btn/);
     // Must not hard-hide the button forever.
     assert.doesNotMatch(styleCss, /\.cmd-keyboard-btn,\s*\.mobile-secure-keyboard-proxy \{ display: none !important; \}/);
@@ -249,4 +254,19 @@ test('parent closed metrics debounced reset and open hysteresis', () => {
     assert.match(appJs, /resetTerminalWorkspaceKeyboard\(\{ force: false \}\)/);
     assert.match(appJs, /_closeDebounce/);
     assert.match(appJs, /appKeyboardOpen && inset >= 16/);
+});
+
+test('cmd overlay freezes layout and parent ignores cmd metrics', () => {
+    assert.match(terminalJs, /function enterCmdOverlayMode/);
+    assert.match(terminalJs, /function leaveCmdOverlayMode/);
+    assert.match(terminalJs, /cmd-overlay-keyboard/);
+    assert.match(terminalJs, /isCmdOverlayMode\(\)/);
+    // focusin must not blur cmdInput anymore.
+    assert.doesNotMatch(
+        terminalJs,
+        /e\.target === cmdInput && !mobileKeyboardUserControlled && !sshSoftKeyboard\?\.desiredOpen/,
+    );
+    assert.match(styleCss, /html\.cmd-overlay-keyboard \.terminal-input-panel/);
+    assert.match(styleCss, /--keyboard-inset:\s*0px !important/);
+    assert.match(appJs, /liftMode === 'none' \|\| e\.data\.inputSource === 'cmd'/);
 });

@@ -20,7 +20,7 @@
 |------|------|----------|
 | 终端正文单击 | **只 open / retain**，绝不 dismiss | `workspace`（整页抬到键盘上） |
 | 命令行旁键盘按钮 | **toggle** open↔closed | `workspace` |
-| 顶部 `#cmdInput` 聚焦 | open，**画面不抬** | `none` |
+| 顶部 `#cmdInput` 聚焦 | **系统 IME 覆盖**，画面零改动（不裁高、不平移、不 inset） | `none` + `cmd-overlay-keyboard` |
 | 系统返回/手势收键盘 | viewport inset→0 且过 open-hold → intent closed | — |
 | 父页 `reset-mobile-keyboard` | force close + 原子清零 | — |
 | 辅助键 Ctrl/Esc/方向 | 仅 retain focus | 保持 |
@@ -60,7 +60,7 @@ parent `keyboard-metrics` 字段：`liftMode`, `inputSource` (`cmd` | `terminal-
 
 IME 仍走隐藏 `#mobileTerminalImeProxy` textarea。WTerm grid 在键盘开合时冻结，不 resize 行列。
 
-cache-bust: `20260720-ssh-kb-lift2`
+cache-bust: `20260720-ssh-kb-lift3`
 
 ## 方案 A 实现注意（灰屏回归）
 

@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift2';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260720-ssh-kb-lift3';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 
 const $ = (sel) => document.querySelector(sel);
@@ -738,15 +738,56 @@ function getEstimatedKeyboardInset() {
     return Math.round(Math.min(380, Math.max(230, baseline * 0.33)));
 }
 
+/** Top command bar owns IME; page layout must not move at all. */
+let cmdOverlayMode = false;
+
+function isCmdOverlayMode() {
+    return cmdOverlayMode
+        || document.activeElement === cmdInput
+        || document.documentElement.dataset.keyboardLiftMode === SoftKeyboardLiftMode.NONE;
+}
+
+function enterCmdOverlayMode(reason = 'cmd-overlay') {
+    cmdOverlayMode = true;
+    document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
+    document.documentElement.classList.add('cmd-overlay-keyboard');
+    // Hard zero layout side-effects from the terminal keyboard path.
+    mobileKeyboardInset = 0;
+    document.documentElement.style.setProperty('--keyboard-inset', '0px');
+    document.documentElement.classList.remove('keyboard-open', 'viewport-updating');
+    terminalContainer?.classList.remove('mobile-keyboard-open');
+    notifyParentKeyboardMetrics({
+        keyboardOpen: false,
+        keyboardInset: 0,
+        viewportHeight: Math.round(window.visualViewport?.height || window.innerHeight || 0),
+        layoutHeight: Math.round(window.innerHeight || document.documentElement.clientHeight || 0),
+        offsetTop: 0,
+        liftMode: SoftKeyboardLiftMode.NONE,
+        source: 'cmd',
+        reason: `${reason}:layout-frozen`,
+    });
+    logTerminalLayoutDiagnostics?.('cmd-overlay:enter', { reason });
+}
+
+function leaveCmdOverlayMode(reason = 'cmd-overlay-leave') {
+    if (!cmdOverlayMode && document.documentElement.dataset.keyboardLiftMode !== SoftKeyboardLiftMode.NONE) return;
+    cmdOverlayMode = false;
+    document.documentElement.classList.remove('cmd-overlay-keyboard');
+    if (document.documentElement.dataset.keyboardLiftMode === SoftKeyboardLiftMode.NONE) {
+        document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.WORKSPACE;
+    }
+    logTerminalLayoutDiagnostics?.('cmd-overlay:leave', { reason });
+}
+
 function getActiveKeyboardLiftMode(metrics = {}) {
     if (metrics.liftMode === SoftKeyboardLiftMode.NONE || metrics.liftMode === SoftKeyboardLiftMode.WORKSPACE) {
         return metrics.liftMode;
     }
     if (metrics.source === 'cmd') return SoftKeyboardLiftMode.NONE;
+    if (cmdOverlayMode || document.activeElement === cmdInput) return SoftKeyboardLiftMode.NONE;
     try {
         if (sshSoftKeyboard?.getLiftMode) return sshSoftKeyboard.getLiftMode();
     } catch (_) {}
-    if (document.activeElement === cmdInput) return SoftKeyboardLiftMode.NONE;
     return SoftKeyboardLiftMode.WORKSPACE;
 }
 
@@ -810,7 +851,8 @@ function isViewportVisuallyRestored(metrics, tolerance = 8) {
 
 function isKeyboardAvoidanceTarget(element = document.activeElement) {
     if (!element) return false;
-    if (element === cmdInput) return mobileKeyboardUserControlled || !isTouchKeyboardDevice();
+    // Top command bar is layout-frozen: never counts as avoidance target.
+    if (element === cmdInput || cmdOverlayMode) return false;
     const tag = element.tagName?.toLowerCase();
     const editable = tag === 'textarea'
         || (tag === 'input' && !['button', 'checkbox', 'radio', 'submit', 'reset', 'file', 'range', 'color'].includes((element.type || '').toLowerCase()))
@@ -7235,6 +7277,15 @@ function scheduleTerminalBottomFollow(reason = 'bottom-follow', { force = false,
 }
 
 function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason = 'keyboard-inset') {
+    // Command bar overlay: absolute zero layout mutation.
+    if (isCmdOverlayMode() || String(reason || '').includes('cmd')) {
+        mobileKeyboardInset = 0;
+        document.documentElement.style.setProperty('--keyboard-inset', '0px');
+        document.documentElement.classList.remove('keyboard-open', 'viewport-updating');
+        terminalContainer?.classList.remove('mobile-keyboard-open');
+        document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
+        return;
+    }
     const el = getTerminalScrollElement();
     const wasFollowing = Boolean(el && (terminalAutoFollowEnabled || mobileStableLastBottomIntent || isMobileStableAtVisualBottom(el)));
     const previousTop = wtermWrapper?.scrollTop ?? el?.scrollTop ?? 0;
@@ -7244,7 +7295,7 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     document.documentElement.classList.toggle('keyboard-open', !!keyboardOpen && safeInset > 0);
     terminalContainer?.classList.toggle('mobile-keyboard-open', !!keyboardOpen && safeInset > 0);
     if (!keyboardOpen || safeInset <= 0) {
-        document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
+        if (!cmdOverlayMode) document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.WORKSPACE;
     }
     if (!isMobileStableInputMode()) return;
     updateTerminalInputPanelMetrics();
@@ -7982,6 +8033,22 @@ function updateViewportInsets() {
     if (mobileTerminalSelectionMode && !mobileClipboardActionInProgress) return;
     if (mobileClipboardActionInProgress) return;
     if (!isTouchKeyboardDevice()) return;
+    // Top command bar: system IME overlays only — no inset, no parent lift, no flash.
+    if (isCmdOverlayMode()) {
+        applyMobileStableKeyboardInset(0, false, 'cmd-overlay-freeze');
+        notifyParentKeyboardMetrics({
+            keyboardOpen: false,
+            keyboardInset: 0,
+            viewportHeight: Math.round(window.visualViewport?.height || window.innerHeight || 0),
+            layoutHeight: Math.round(window.innerHeight || document.documentElement.clientHeight || 0),
+            offsetTop: 0,
+            liftMode: SoftKeyboardLiftMode.NONE,
+            source: 'cmd',
+            reason: 'cmd-overlay-freeze',
+        });
+        updateMobileKeyboardButtonUi();
+        return;
+    }
     const wasKeyboardOpen = mobileKeyboardOpen;
     const viewport = window.visualViewport;
     if (!viewport && !navigator.virtualKeyboard) return;
@@ -8199,6 +8266,20 @@ function ensureSshSoftKeyboard() {
         isSelectionMode: () => !!(mobileTerminalSelectionMode || hasLiveTerminalSelection?.()),
         isGestureSuppressed: () => !!(terminalTouchMoved || Date.now() < (mobileStableSuppressScrollUntil || 0)),
         applyInset: (inset, open, reason, meta = {}) => {
+            const layoutFrozen = !!meta.layoutFrozen
+                || meta.liftMode === SoftKeyboardLiftMode.NONE
+                || meta.source === 'cmd'
+                || isCmdOverlayMode();
+            if (layoutFrozen) {
+                mobileKeyboardOpen = false;
+                mobileKeyboardInset = 0;
+                applyMobileStableKeyboardInset(0, false, reason || 'controller-cmd-frozen');
+                document.documentElement.classList.remove('keyboard-open');
+                terminalContainer?.classList.remove('mobile-keyboard-open');
+                document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
+                updateMobileKeyboardButtonUi();
+                return;
+            }
             mobileKeyboardOpen = !!open;
             mobileKeyboardInset = open ? inset : 0;
             applyMobileStableKeyboardInset(open ? inset : 0, !!open, reason || 'controller');
@@ -8206,7 +8287,7 @@ function ensureSshSoftKeyboard() {
             terminalContainer?.classList.toggle('mobile-keyboard-open', !!open && inset > 0);
             document.documentElement.dataset.keyboardLiftMode = open
                 ? (meta.liftMode || SoftKeyboardLiftMode.WORKSPACE)
-                : SoftKeyboardLiftMode.NONE;
+                : SoftKeyboardLiftMode.WORKSPACE;
             updateMobileKeyboardButtonUi();
             if (!open) assertKeyboardLayoutSettled(reason || 'controller-close');
         },
@@ -8307,13 +8388,17 @@ function setupMobileKeyboardAvoidance() {
     navigator.virtualKeyboard?.addEventListener?.('geometrychange', () => onViewport('vk-geometry'));
 
     document.addEventListener('focusin', (e) => {
-        // Command box on mobile only receives focus when user explicitly taps it
-        // and controller allows editable focus (desired open or non-stable path).
-        if (isTouchKeyboardDevice() && e.target === cmdInput && !mobileKeyboardUserControlled && !sshSoftKeyboard?.desiredOpen?.()) {
-            cmdInput.blur();
+        // Top command bar: always allow native focus. Never steal/blur it.
+        if (e.target === cmdInput) {
+            enterCmdOverlayMode('focusin-cmd');
             return;
         }
         if (e.target === mobileImeProxy) {
+            // While command bar owns focus, ignore proxy focus races.
+            if (isCmdOverlayMode() || document.activeElement === cmdInput) {
+                try { e.target.blur?.(); } catch (_) {}
+                return;
+            }
             sshSoftKeyboard?.onProxyFocus?.('focusin-proxy');
             return;
         }
@@ -8321,7 +8406,9 @@ function setupMobileKeyboardAvoidance() {
     }, true);
     document.addEventListener('focusout', (e) => {
         if (mobileClipboardActionInProgress) return;
+        if (e.target === cmdInput) return; // handled by cmdInput blur
         if (e.target === mobileImeProxy) {
+            if (isCmdOverlayMode()) return;
             sshSoftKeyboard?.onProxyBlur?.('focusout-proxy');
             return;
         }
@@ -8332,44 +8419,48 @@ function setupMobileKeyboardAvoidance() {
         mobileTerminalSelectionMode = false;
         document.documentElement.classList.remove('terminal-selection-mode');
         window.clearTimeout(mobileTerminalSelectionRestoreTimer);
-        keyboardViewportBaseline = Math.max(
-            window.innerHeight || 0,
-            document.documentElement.clientHeight || 0,
-            window.visualViewport?.height || 0,
-            getCssPxVar('--stable-vh'),
-        );
-        // Explicit command-box focus counts as open intent on mobile.
-        // liftMode=none: do not raise the whole terminal surface (scheme A exception).
+        // Layout-frozen overlay: only show system IME above the page. Zero geometry change.
         if (isTouchKeyboardDevice()) {
-            mobileKeyboardUserControlled = true;
+            enterCmdOverlayMode('cmd-input-focus');
             ensureSshSoftKeyboard();
+            // Intent tracking only — controller must not focus proxy or apply inset.
             sshSoftKeyboard?.open?.('cmd-input-focus', {
                 gesture: true,
                 liftMode: SoftKeyboardLiftMode.NONE,
             });
-            document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
+            // Keep real focus on the command textarea (open() no longer steals it).
+            try {
+                if (document.activeElement !== cmdInput) cmdInput.focus({ preventScroll: true });
+            } catch (_) {
+                try { cmdInput.focus(); } catch (__) {}
+            }
+            try { mobileImeProxy?.blur?.(); } catch (_) {}
         }
-        markKeyboardFocusActive();
-        updateViewportInsets();
         updateMobileKeyboardButtonUi();
-        window.setTimeout(updateViewportInsets, 80);
-        window.setTimeout(updateViewportInsets, 260);
-        window.setTimeout(updateViewportInsets, 520);
-    });
-    cmdInput?.addEventListener('blur', () => {
-        markKeyboardFocusInactive();
-        // 不在 blur 立即复位。iOS/Android 标准键盘收起时 visualViewport 仍在动画中，
-        // 过早恢复 100vh 会造成页面先下坠再回弹；改为继续跟随到接近全高后再释放。
-        [80, 180, 320, 520].forEach((delay) => window.setTimeout(() => {
-            updateViewportInsets();
-            updateMobileKeyboardButtonUi();
-        }, delay));
-        window.setTimeout(() => {
-            if (!keyboardFocusLikely && !isKeyboardAvoidanceTarget() && !sshSoftKeyboard?.desiredOpen?.()) {
-                finalizeKeyboardClose();
+        // Re-assert frozen layout after any async viewport tick.
+        [0, 80, 200, 480].forEach((delay) => window.setTimeout(() => {
+            if (document.activeElement === cmdInput || cmdOverlayMode) {
+                enterCmdOverlayMode(`cmd-input-focus:t${delay}`);
                 updateMobileKeyboardButtonUi();
             }
-        }, 680);
+        }, delay));
+    });
+    cmdInput?.addEventListener('blur', () => {
+        // Leave overlay after a short settle so IME dismiss animation does not thrash.
+        window.setTimeout(() => {
+            if (document.activeElement === cmdInput) return;
+            leaveCmdOverlayMode('cmd-input-blur');
+            // Close controller intent without forcing another layout path.
+            if (sshSoftKeyboard?.getLiftMode?.() === SoftKeyboardLiftMode.NONE
+                || sshSoftKeyboard?.desiredOpen?.()) {
+                sshSoftKeyboard?.close?.('cmd-input-blur', { force: false, blurCmd: false });
+            }
+            updateMobileKeyboardButtonUi();
+            // Only re-enter terminal keyboard path if IME proxy is actually focused.
+            if (document.activeElement === mobileImeProxy) {
+                updateViewportInsets();
+            }
+        }, 120);
     });
     updateViewportInsets();
     updateMobileKeyboardButtonUi();

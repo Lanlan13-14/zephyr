@@ -4811,6 +4811,22 @@ html.keyboard-open .terminal-page {
         transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
+    /* Top command bar: IME overlays content; never move the input panel or page. */
+    html.cmd-overlay-keyboard .terminal-input-panel,
+    html.cmd-overlay-keyboard.keyboard-open .terminal-input-panel {
+        transform: none !important;
+        transition: none !important;
+        will-change: auto !important;
+    }
+    html.cmd-overlay-keyboard {
+        --keyboard-inset: 0px !important;
+    }
+    html.cmd-overlay-keyboard .terminal-page,
+    html.cmd-overlay-keyboard .terminal-container,
+    html.cmd-overlay-keyboard .wterm-wrapper {
+        transform: none !important;
+    }
+
     .file-manager,
     .info-modal,
     .docker-panel {

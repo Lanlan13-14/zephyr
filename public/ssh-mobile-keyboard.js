@@ -163,24 +163,37 @@ export function createSshMobileSoftKeyboard(host) {
 
     function commitPhysical(open, inset, reason) {
         const nextInset = Math.max(0, Math.round(inset || 0));
+        const layoutFrozen = state.liftMode === SoftKeyboardLiftMode.NONE;
+        // liftMode=none (top command bar): track physical open for diagnostics only.
+        // Never apply non-zero inset / never ask parent to change layout.
+        const appliedOpen = layoutFrozen ? false : open;
+        const appliedInset = layoutFrozen ? 0 : (open ? nextInset : 0);
         const changed = state.physicalOpen !== open
-            || Math.abs(state.inset - nextInset) >= 4
-            || signature !== `${open}:${state.inset}:${state.liftMode}`;
+            || Math.abs(state.inset - (open ? nextInset : 0)) >= 4
+            || signature !== `${open}:${open ? nextInset : 0}:${state.liftMode}`;
         state.physicalOpen = open;
         state.inset = open ? nextInset : 0;
         if (!changed && signature === `${open}:${state.inset}:${state.liftMode}`) return false;
         signature = `${open}:${state.inset}:${state.liftMode}`;
         try {
-            host.applyInset?.(state.inset, open, reason, {
+            host.applyInset?.(appliedInset, appliedOpen, reason, {
                 liftMode: state.liftMode,
-                source: state.liftMode === SoftKeyboardLiftMode.NONE ? 'cmd' : 'terminal-ime',
+                source: layoutFrozen ? 'cmd' : 'terminal-ime',
+                layoutFrozen,
             });
         } catch (_) {}
-        try { host.notifyParent?.(parentPayload(open, state.inset, reason)); } catch (_) {}
+        try {
+            host.notifyParent?.(parentPayload(
+                // Parent must treat cmd bar as layout-closed even if IME is up.
+                layoutFrozen ? false : open,
+                layoutFrozen ? 0 : state.inset,
+                reason,
+            ));
+        } catch (_) {}
         emit();
-        if (open) host.onOpenCommitted?.(reason);
-        else host.onCloseCommitted?.(reason);
-        log('physical', { reason, open, inset: state.inset, liftMode: state.liftMode });
+        if (open && !layoutFrozen) host.onOpenCommitted?.(reason);
+        else if (!open) host.onCloseCommitted?.(reason);
+        log('physical', { reason, open, inset: state.inset, liftMode: state.liftMode, layoutFrozen });
         return true;
     }
 
@@ -291,39 +304,59 @@ export function createSshMobileSoftKeyboard(host) {
         } else {
             state.liftMode = SoftKeyboardLiftMode.WORKSPACE;
         }
+        const layoutFrozen = state.liftMode === SoftKeyboardLiftMode.NONE;
         setIntent(SoftKeyboardIntent.OPEN, reason);
         state.focusLikely = true;
         state.lastGestureAt = Date.now();
         if (gesture) lastOpenGestureAt = Date.now();
         openHoldUntil = Date.now() + OPEN_HOLD_MS;
         suppressRefocusUntil = 0;
-        const focused = focusProxy(reason);
+        // Command bar owns the real focus — do NOT steal it with the IME proxy.
+        let focused = true;
+        if (!layoutFrozen) {
+            focused = focusProxy(reason);
+        } else {
+            // Ensure proxy is not holding focus over the command textarea.
+            try {
+                const proxy = host.ensureProxy?.();
+                if (proxy && getActiveElement() === proxy) proxy.blur?.();
+            } catch (_) {}
+        }
         // Immediate optimistic UI so aux bar / button react before viewport settles.
         if (!state.physicalOpen) {
             emit();
-            try { host.notifyParent?.(parentPayload(false, 0, `${reason}:intent-open`)); } catch (_) {}
+            try {
+                // Always report layout-closed for cmd; parent must not clip/lift.
+                host.notifyParent?.(parentPayload(false, 0, `${reason}:intent-open`));
+            } catch (_) {}
         }
-        scheduleSync(reason);
-        log('open', { reason, focused, liftMode: state.liftMode });
+        if (!layoutFrozen) scheduleSync(reason);
+        else scheduleSync(reason, [0, 120, 320]);
+        log('open', { reason, focused, liftMode: state.liftMode, layoutFrozen });
         return focused;
     }
 
-    function close(reason = 'close', { force = false } = {}) {
+    function close(reason = 'close', { force = false, blurCmd = true } = {}) {
+        const wasCmd = state.liftMode === SoftKeyboardLiftMode.NONE;
         setIntent(SoftKeyboardIntent.CLOSED, reason);
         state.focusLikely = false;
         openHoldUntil = 0;
         suppressRefocusUntil = Date.now() + REFOCUS_GUARD_MS;
         window.clearTimeout(refocusTimer);
         blurProxy(reason);
-        // Also blur cmd input if it was holding IME.
-        try {
-            const active = getActiveElement();
-            const tag = active?.tagName?.toLowerCase?.();
-            if (tag === 'textarea' || tag === 'input') active.blur?.();
-        } catch (_) {}
+        // Blur cmd only when explicitly closing the command bar (or force).
+        // Terminal IME close must not yank focus from an unrelated field.
+        if (blurCmd && (force || wasCmd || reason.includes('cmd'))) {
+            try {
+                const active = getActiveElement();
+                const tag = active?.tagName?.toLowerCase?.();
+                if (tag === 'textarea' || tag === 'input') active.blur?.();
+            } catch (_) {}
+        }
+        state.liftMode = SoftKeyboardLiftMode.WORKSPACE;
         commitPhysical(false, 0, reason);
         scheduleSync(reason, force ? [0, 80, 200, 480] : [0, 120, 320, 680]);
-        log('close', { reason, force });
+        log('close', { reason, force, wasCmd });
         return true;
     }
 
