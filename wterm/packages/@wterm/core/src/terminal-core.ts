@@ -65,6 +65,7 @@ export interface TerminalCore {
   syncOutput(): boolean;
   focusReporting(): boolean;
   reverseScreen(): boolean;
+  kittyKeyboardFlags(): number;
   usingAltScreen(): boolean;
 
   // -- Side outputs --

@@ -29,6 +29,7 @@ interface WasmExports {
   getSyncOutput(): number;
   getFocusReporting(): number;
   getReverseScreen(): number;
+  getKittyKeyboardFlags(): number;
   getUsingAltScreen(): number;
   getTitlePtr(): number;
   getTitleLen(): number;
@@ -230,6 +231,7 @@ export class WasmBridge implements TerminalCore {
   }
   focusReporting(): boolean { return this.exports.getFocusReporting() !== 0; }
   reverseScreen(): boolean { return this.exports.getReverseScreen() !== 0; }
+  kittyKeyboardFlags(): number { return this.exports.getKittyKeyboardFlags(); }
   usingAltScreen(): boolean {
     return this.exports.getUsingAltScreen() !== 0;
   }

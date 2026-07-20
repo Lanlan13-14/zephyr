@@ -145,6 +145,9 @@ class WasmBridge {
   reverseScreen() {
     return this.exports.getReverseScreen() !== 0;
   }
+  kittyKeyboardFlags() {
+    return this.exports.getKittyKeyboardFlags();
+  }
   usingAltScreen() {
     return this.exports.getUsingAltScreen() !== 0;
   }

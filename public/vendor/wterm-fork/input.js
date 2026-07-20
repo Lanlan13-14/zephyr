@@ -39,6 +39,65 @@ const FIXED_KEYS = {
   F11: "\x1B[23~",
   F12: "\x1B[24~"
 };
+const KITTY_PRIVATE = {
+  CapsLock: 57358,
+  ScrollLock: 57359,
+  NumLock: 57360,
+  PrintScreen: 57361,
+  Pause: 57362,
+  ContextMenu: 57363,
+  F13: 57376,
+  F14: 57377,
+  F15: 57378,
+  F16: 57379,
+  F17: 57380,
+  F18: 57381,
+  F19: 57382,
+  F20: 57383,
+  F21: 57384,
+  F22: 57385,
+  F23: 57386,
+  F24: 57387,
+  F25: 57388,
+  F26: 57389,
+  F27: 57390,
+  F28: 57391,
+  F29: 57392,
+  F30: 57393,
+  F31: 57394,
+  F32: 57395,
+  F33: 57396,
+  F34: 57397,
+  F35: 57398,
+  Numpad0: 57399,
+  Numpad1: 57400,
+  Numpad2: 57401,
+  Numpad3: 57402,
+  Numpad4: 57403,
+  Numpad5: 57404,
+  Numpad6: 57405,
+  Numpad7: 57406,
+  Numpad8: 57407,
+  Numpad9: 57408,
+  NumpadDecimal: 57409,
+  NumpadDivide: 57410,
+  NumpadMultiply: 57411,
+  NumpadSubtract: 57412,
+  NumpadAdd: 57413,
+  NumpadEnter: 57414,
+  NumpadEqual: 57415,
+  NumpadSeparator: 57416,
+  ShiftLeft: 57441,
+  ControlLeft: 57442,
+  AltLeft: 57443,
+  MetaLeft: 57444,
+  ShiftRight: 57447,
+  ControlRight: 57448,
+  AltRight: 57449,
+  MetaRight: 57450
+};
+const KITTY_TILDE = { Insert: 2, Delete: 3, PageUp: 5, PageDown: 6, F5: 15, F6: 17, F7: 18, F8: 19, F9: 20, F10: 21, F11: 23, F12: 24 };
+const KITTY_FINAL = { ArrowUp: "A", ArrowDown: "B", ArrowRight: "C", ArrowLeft: "D", Home: "H", End: "F", F1: "P", F2: "Q", F3: "R", F4: "S" };
 class InputHandler {
   constructor(element, onData, getBridge) {
     __publicField(this, "element");
@@ -47,6 +106,7 @@ class InputHandler {
     __publicField(this, "getBridge");
     __publicField(this, "composing", false);
     __publicField(this, "_onKeyDown");
+    __publicField(this, "_onKeyUp");
     __publicField(this, "_onPaste");
     __publicField(this, "_onCompositionStart");
     __publicField(this, "_onCompositionEnd");
@@ -98,6 +158,7 @@ class InputHandler {
     s.background = "transparent";
     element.appendChild(this.textarea);
     this._onKeyDown = this.handleKeyDown.bind(this);
+    this._onKeyUp = this.handleKeyUp.bind(this);
     this._onPaste = this.handlePaste.bind(this);
     this._onCompositionStart = this.handleCompositionStart.bind(this);
     this._onCompositionEnd = this.handleCompositionEnd.bind(this);
@@ -105,6 +166,7 @@ class InputHandler {
     this._onFocus = () => this.element.classList.add("focused");
     this._onBlur = () => this.element.classList.remove("focused");
     this.textarea.addEventListener("keydown", this._onKeyDown);
+    this.textarea.addEventListener("keyup", this._onKeyUp);
     this.textarea.addEventListener("paste", this._onPaste);
     this.textarea.addEventListener(
       "compositionstart",
@@ -295,6 +357,7 @@ class InputHandler {
   }
   destroy() {
     this.textarea.removeEventListener("keydown", this._onKeyDown);
+    this.textarea.removeEventListener("keyup", this._onKeyUp);
     this.textarea.removeEventListener("paste", this._onPaste);
     this.textarea.removeEventListener(
       "compositionstart",
@@ -315,6 +378,16 @@ class InputHandler {
     window.removeEventListener("focus", this._onWindowFocus);
     window.removeEventListener("blur", this._onWindowBlur);
     this.textarea.remove();
+  }
+  handleKeyUp(e) {
+    const flags = this.getBridge()?.kittyKeyboardFlags() || 0;
+    if ((flags & 2) === 0) return;
+    const seq = this.kittySequence(e, 3, flags);
+    if (seq !== null) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.onData(seq);
+    }
   }
   handleKeyDown(e) {
     if (this.composing) return;
@@ -346,7 +419,7 @@ class InputHandler {
       return;
     }
     e.preventDefault();
-    const seq = this.keyToSequence(e);
+    const seq = this.keyToSequence(e, e.repeat ? 2 : 1);
     if (seq) this.onData(seq);
   }
   handlePaste(e) {
@@ -380,7 +453,38 @@ class InputHandler {
       this.textarea.value = "";
     }
   }
-  keyToSequence(e) {
+  kittySequence(e, eventType, flags) {
+    if (!flags) return null;
+    const mods = 1 + (e.shiftKey ? 1 : 0) + (e.altKey ? 2 : 0) + (e.ctrlKey ? 4 : 0) + (e.metaKey ? 8 : 0) + (e.getModifierState("CapsLock") ? 64 : 0) + (e.getModifierState("NumLock") ? 128 : 0);
+    const event = flags & 2 ? `:${eventType}` : "";
+    const text = flags & 16 && eventType !== 3 && e.key.length === 1 ? `;${[...e.key].map((ch) => ch.codePointAt(0)).join(":")}` : "";
+    const suffix = `${mods}${event}${text}`;
+    const privateCode = KITTY_PRIVATE[e.code] || KITTY_PRIVATE[e.key];
+    if (privateCode) return `\x1B[${privateCode};${suffix}u`;
+    const final = KITTY_FINAL[e.key];
+    if (final) return `\x1B[1;${suffix}${final}`;
+    const tilde = KITTY_TILDE[e.key];
+    if (tilde) return `\x1B[${tilde};${suffix}~`;
+    const simple = { Escape: 27, Enter: 13, Tab: 9, Backspace: 127 };
+    if (simple[e.key] !== void 0 && (flags & 9 || mods > 1 || eventType === 3)) return `\x1B[${simple[e.key]};${suffix}u`;
+    if (e.key.length === 1) {
+      if ((flags & 8) === 0 && mods === 1 && eventType !== 3) return e.key;
+      const main = e.key.codePointAt(0);
+      let keyField = String(main);
+      if (flags & 4) {
+        let base = main;
+        if (/^Key[A-Z]$/.test(e.code)) base = e.code.charCodeAt(3) + 32;
+        else if (/^Digit[0-9]$/.test(e.code)) base = e.code.charCodeAt(5);
+        keyField += `:${main}:${base}`;
+      }
+      return `\x1B[${keyField};${suffix}u`;
+    }
+    return null;
+  }
+  keyToSequence(e, eventType = 1) {
+    const kittyFlags = this.getBridge()?.kittyKeyboardFlags() || 0;
+    const kitty = this.kittySequence(e, eventType, kittyFlags);
+    if (kitty !== null) return kitty;
     const mods = (e.shiftKey ? 1 : 0) | (e.altKey ? 2 : 0) | (e.ctrlKey ? 4 : 0) | (e.metaKey ? 8 : 0);
     if (e.ctrlKey && !e.altKey && !e.metaKey) {
       if (e.key.length === 1) {

@@ -132,6 +132,9 @@ pub const Terminal = struct {
     color_change_index: [32]u16 = [_]u16{0} ** 32,
     color_change_lens: [32]u8 = [_]u8{0} ** 32,
     color_change_data: [32][64]u8 = undefined,
+    kitty_flags: u8 = 0,
+    kitty_stack: [16]u8 = [_]u8{0} ** 16,
+    kitty_stack_len: u8 = 0,
 
     // Response buffer for DSR and similar host-to-application replies
     response_buf: [64]u8 = undefined,
@@ -230,6 +233,8 @@ pub const Terminal = struct {
         self.join_next_grapheme = false;
         self.color_query_count = 0;
         self.color_change_count = 0;
+        self.kitty_flags = 0;
+        self.kitty_stack_len = 0;
         self.response_len = 0;
         self.tab_stops = initTabStops();
     }
@@ -710,6 +715,7 @@ pub const Terminal = struct {
     fn handleCsi(self: *Terminal) void {
         const final = self.parser.execute_byte;
 
+        if (self.parser.csi_private == '?' and final == 'u') { self.respondKittyKeyboard(); return; }
         if (self.parser.csi_private == '?') {
             if (final == 'p' and self.parser.intermediate_count > 0 and self.parser.intermediates[0] == '$') {
                 self.handlePrivateModeQuery();
@@ -720,6 +726,10 @@ pub const Terminal = struct {
         }
         if (self.parser.csi_private == '!' and final == 'p') {
             self.softReset();
+            return;
+        }
+        if ((self.parser.csi_private == '>' or self.parser.csi_private == '=' or self.parser.csi_private == '<') and final == 'u') {
+            self.handleKittyKeyboard(self.parser.csi_private);
             return;
         }
         if (self.parser.csi_private == '>') {
@@ -781,6 +791,28 @@ pub const Terminal = struct {
         }
     }
 
+    fn respondKittyKeyboard(self: *Terminal) void {
+        var len: u8 = 0; self.response_buf[len] = 0x1b; len += 1; self.response_buf[len] = '['; len += 1; self.response_buf[len] = '?'; len += 1;
+        len = appendU16(self.response_buf[0..], len, self.kitty_flags); self.response_buf[len] = 'u'; len += 1; self.response_len = len;
+    }
+
+    fn handleKittyKeyboard(self: *Terminal, marker: u8) void {
+        if (marker == '<') {
+            const pops = self.parser.getParam(0, 1); var i: u16 = 0;
+            while (i < pops and self.kitty_stack_len > 0) : (i += 1) { self.kitty_stack_len -= 1; self.kitty_flags = self.kitty_stack[self.kitty_stack_len]; }
+            return;
+        }
+        const flags: u8 = @intCast(@min(self.parser.getParam(0, 0), 31));
+        if (marker == '>') {
+            if (self.kitty_stack_len < self.kitty_stack.len) { self.kitty_stack[self.kitty_stack_len] = self.kitty_flags; self.kitty_stack_len += 1; }
+            self.kitty_flags = flags;
+        } else {
+            const mode = self.parser.getParam(1, 1);
+            if (mode == 1) self.kitty_flags = flags else if (mode == 2) self.kitty_flags |= flags else if (mode == 3) self.kitty_flags &= ~flags;
+        }
+        // CSI ? u is handled separately as a query; =/> set commands are silent.
+    }
+
     fn handlePrivateModeQuery(self: *Terminal) void {
         const mode = self.parser.getParam(0, 0);
         const status: u16 = switch (mode) {
@@ -836,8 +868,8 @@ pub const Terminal = struct {
                 9 => self.mouse_mode = if (enabled) 1 else 0, // X10 mouse
                 1000 => self.mouse_mode = if (enabled) 2 else 0, // normal mouse
                 1004 => self.focus_reporting = enabled,
-                1002 => self.mouse_mode = if (enabled) 2 else 0, // button-event
-                1003 => self.mouse_mode = if (enabled) 3 else 0, // any-event
+                1002 => self.mouse_mode = if (enabled) 3 else 0, // button-event
+                1003 => self.mouse_mode = if (enabled) 4 else 0, // any-event
                 1006 => self.mouse_sgr = enabled, // SGR encoding
                 else => {},
             }
@@ -856,6 +888,8 @@ pub const Terminal = struct {
         } else {
             self.grid = ag.*;
             self.using_alt_screen = false;
+            if (self.kitty_stack_len > 0) self.kitty_flags = self.kitty_stack[0];
+            self.kitty_stack_len = 0;
             if (save_cursor) self.restoreCursorFromAlt();
             var r: u16 = 0;
             while (r < self.rows) : (r += 1) {

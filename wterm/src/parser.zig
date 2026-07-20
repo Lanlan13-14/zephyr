@@ -235,7 +235,7 @@ pub const Parser = struct {
             }
             return .none;
         }
-        if (byte == '?' or byte == '>' or byte == '!') {
+        if (byte == '?' or byte == '>' or byte == '!' or byte == '=' or byte == '<') {
             self.csi_private = byte;
             return .none;
         }
