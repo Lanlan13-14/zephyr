@@ -24,6 +24,9 @@ interface WasmExports {
   getBracketedPaste(): number;
   getMouseMode(): number;
   getMouseSGR(): number;
+  getMouseAltScroll(): number;
+  getReverseWrap(): number;
+  getColumn132(): number;
   getBellPending(): number;
   clearBell(): void;
   getSyncOutput(): number;
@@ -231,6 +234,15 @@ export class WasmBridge implements TerminalCore {
   }
   mouseSGR(): boolean {
     return this.exports.getMouseSGR() !== 0;
+  }
+  mouseAltScroll(): boolean {
+    return this.exports.getMouseAltScroll() !== 0;
+  }
+  reverseWrap(): boolean {
+    return this.exports.getReverseWrap() !== 0;
+  }
+  column132(): boolean {
+    return this.exports.getColumn132() !== 0;
   }
   bellPending(): boolean {
     return this.exports.getBellPending() !== 0;

@@ -59,6 +59,9 @@ export interface TerminalCore {
   bracketedPaste(): boolean;
   mouseMode(): number;
   mouseSGR(): boolean;
+  mouseAltScroll(): boolean;
+  reverseWrap(): boolean;
+  column132(): boolean;
   bellPending(): boolean;
   clearBell(): void;
   /** True while DECSET 2026 synchronized output is active. */

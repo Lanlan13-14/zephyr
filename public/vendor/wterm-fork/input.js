@@ -348,8 +348,16 @@ class InputHandler {
     this.sendMouseEvent(button, col, row, true);
   }
   handleMouseWheel(e) {
-    const bridge = this.getBridge();
-    if (!bridge || bridge.mouseMode() === 0) return;
+    const bridge = this.getBridge?.() || null;
+    const mode = bridge?.mouseMode?.() ?? 0;
+    if (bridge && mode === 0 && bridge.mouseAltScroll?.() && bridge.usingAltScreen?.()) {
+      e.preventDefault();
+      const steps = Math.max(1, Math.min(5, Math.round(Math.abs(e.deltaY) / 40) || 1));
+      const seq = e.deltaY < 0 ? "\x1BOA" : "\x1BOB";
+      for (let i = 0; i < steps; i++) this.onData(seq);
+      return;
+    }
+    if (!bridge || mode === 0) return;
     e.preventDefault();
     const { col, row } = this.mouseToCell(e);
     const button = e.deltaY < 0 ? 64 : 65;

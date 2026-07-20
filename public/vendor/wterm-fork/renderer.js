@@ -30,7 +30,7 @@ function colorToCSS(index) {
   return `rgb(${level},${level},${level})`;
 }
 function resolveQueryColor(element, kind, index) {
-  let value = kind === 10 ? "var(--term-fg)" : kind === 11 ? "var(--term-bg)" : colorToCSS(index);
+  let value = kind === 10 ? "var(--term-fg)" : kind === 11 ? "var(--term-bg)" : kind === 12 ? "var(--term-cursor)" : colorToCSS(index);
   if (kind === 4 && index < 16) {
     const configured = getComputedStyle(element).getPropertyValue(`--term-color-${index}`).trim();
     if (!configured) value = ANSI_16[index] || "#000000";

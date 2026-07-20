@@ -82,6 +82,10 @@ pub const Terminal = struct {
     scroll_bottom: u16 = 0,
 
     auto_wrap: bool = true,
+    reverse_wrap: bool = false,
+    mouse_alt_scroll: bool = false,
+    column_132: bool = false,
+    saved_cols_80: u16 = 80,
     origin_mode: bool = false,
     insert_mode: bool = false,
     keypad_app: bool = false,
@@ -209,6 +213,9 @@ pub const Terminal = struct {
         self.scroll_top = 0;
         self.scroll_bottom = rows;
         self.auto_wrap = true;
+        self.reverse_wrap = false;
+        self.mouse_alt_scroll = false;
+        self.column_132 = false;
         self.origin_mode = false;
         self.insert_mode = false;
         self.keypad_app = false;
@@ -606,9 +613,18 @@ pub const Terminal = struct {
     }
 
     fn backspace(self: *Terminal) void {
+        if (self.wrap_pending) {
+            self.wrap_pending = false;
+            return;
+        }
         if (self.cursor_col > 0) {
             self.cursor_col -= 1;
-            self.wrap_pending = false;
+            return;
+        }
+        // DECSET 45 reverse-wraparound: wrap to previous line end.
+        if (self.reverse_wrap and self.auto_wrap and self.cursor_row > 0) {
+            self.cursor_row -= 1;
+            self.cursor_col = self.cols - 1;
         }
     }
 
@@ -848,15 +864,19 @@ pub const Terminal = struct {
             1 => if (self.cursor_keys_app) 1 else 2,
             5 => if (self.reverse_screen) 1 else 2,
             6 => if (self.origin_mode) 1 else 2,
+            3 => if (self.column_132) 1 else 2,
             7 => if (self.auto_wrap) 1 else 2,
+            45 => if (self.reverse_wrap) 1 else 2,
             9 => if (self.mouse_mode == 1) 1 else 2,
             25 => if (self.cursor_visible) 1 else 2,
             47, 1047, 1049 => if (self.using_alt_screen) 1 else 2,
             1000 => if (self.mouse_mode == 2) 1 else 2,
+            1001 => if (self.mouse_mode == 2) 1 else 2,
             1002 => if (self.mouse_mode == 3) 1 else 2,
             1003 => if (self.mouse_mode == 4) 1 else 2,
             1004 => if (self.focus_reporting) 1 else 2,
             1006 => if (self.mouse_sgr) 1 else 2,
+            1007 => if (self.mouse_alt_scroll) 1 else 2,
             2004 => if (self.bracketed_paste) 1 else 2,
             2026 => if (self.sync_output) 1 else 2,
             else => 0,
@@ -892,6 +912,32 @@ pub const Terminal = struct {
         }
     }
 
+    fn setDeccolm(self: *Terminal, enabled: bool) void {
+        // DECCOLM: switch between 80 and 132 columns, clear screen, home cursor.
+        if (enabled == self.column_132) {
+            self.eraseInDisplay(2);
+            self.cursor_row = 0;
+            self.cursor_col = 0;
+            self.wrap_pending = false;
+            return;
+        }
+        if (enabled) {
+            if (!self.column_132) self.saved_cols_80 = if (self.cols == 0) 80 else self.cols;
+            self.column_132 = true;
+            self.resize(132, self.rows);
+        } else {
+            self.column_132 = false;
+            const cols = if (self.saved_cols_80 == 0) 80 else self.saved_cols_80;
+            self.resize(cols, self.rows);
+        }
+        self.eraseInDisplay(2);
+        self.cursor_row = 0;
+        self.cursor_col = 0;
+        self.wrap_pending = false;
+        self.scroll_top = 0;
+        self.scroll_bottom = self.rows;
+    }
+
     fn setPrivateMode(self: *Terminal, enabled: bool) void {
         var i: u8 = 0;
         const count = if (self.parser.param_count == 0) @as(u8, 1) else self.parser.param_count;
@@ -901,9 +947,11 @@ pub const Terminal = struct {
                 1 => self.cursor_keys_app = enabled,
                 6 => self.origin_mode = enabled,
                 5 => self.reverse_screen = enabled,
+                3 => self.setDeccolm(enabled),
                 7 => self.auto_wrap = enabled,
                 12 => {}, // cursor blink - handled by renderer
                 25 => self.cursor_visible = enabled,
+                45 => self.reverse_wrap = enabled,
                 47 => self.switchScreen(enabled, false),
                 1047 => self.switchScreen(enabled, false),
                 1048 => {
@@ -914,10 +962,12 @@ pub const Terminal = struct {
                 2026 => self.sync_output = enabled, // synchronized output
                 9 => self.mouse_mode = if (enabled) 1 else 0, // X10 mouse
                 1000 => self.mouse_mode = if (enabled) 2 else 0, // normal mouse
+                1001 => self.mouse_mode = if (enabled) 2 else 0, // highlight tracking (treat as normal button events)
                 1004 => self.focus_reporting = enabled,
                 1002 => self.mouse_mode = if (enabled) 3 else 0, // button-event
                 1003 => self.mouse_mode = if (enabled) 4 else 0, // any-event
                 1006 => self.mouse_sgr = enabled, // SGR encoding
+                1007 => self.mouse_alt_scroll = enabled,
                 else => {},
             }
         }
@@ -972,6 +1022,8 @@ pub const Terminal = struct {
         self.cursor_visible = true;
         self.origin_mode = false;
         self.auto_wrap = true;
+        self.reverse_wrap = false;
+        self.mouse_alt_scroll = false;
         self.cursor_keys_app = false;
         self.insert_mode = false;
         self.keypad_app = false;
@@ -1327,9 +1379,16 @@ pub const Terminal = struct {
     }
 
     fn cursorBackward(self: *Terminal, n: u16) void {
-        const amount = if (n == 0) 1 else n;
-        self.cursor_col = if (amount > self.cursor_col) 0 else self.cursor_col - amount;
+        var amount: u16 = if (n == 0) 1 else n;
         self.wrap_pending = false;
+        while (amount > 0) : (amount -= 1) {
+            if (self.cursor_col > 0) {
+                self.cursor_col -= 1;
+            } else if (self.reverse_wrap and self.auto_wrap and self.cursor_row > 0) {
+                self.cursor_row -= 1;
+                self.cursor_col = self.cols - 1;
+            } else break;
+        }
     }
 
     fn cursorPosition(self: *Terminal, row_param: u16, col_param: u16) void {
@@ -1653,11 +1712,13 @@ pub const Terminal = struct {
             }
             return;
         }
-        if (data.len >= 3 and data[0] == '1' and (data[1] == '0' or data[1] == '1') and data[2] == ';') {
-            const kind: u8 = if (data[1] == '0') 10 else 11; const value = data[3..];
+        if (data.len >= 3 and data[0] == '1' and (data[1] == '0' or data[1] == '1' or data[1] == '2') and data[2] == ';') {
+            const kind: u8 = if (data[1] == '0') 10 else if (data[1] == '1') 11 else 12;
+            const value = data[3..];
             if (value.len == 1 and value[0] == '?') self.enqueueColorQuery(kind, 0) else self.enqueueColorChange(kind, 0, value);
             return;
         }
+        if (std.mem.eql(u8, data, "112")) { self.enqueueColorChange(112, 0, ""); return; }
         if (data.len >= 3 and data[0] == '1' and data[1] == '0' and data[2] == '4') {
             if (data.len == 3) self.enqueueColorChange(104, 65535, "") else {
                 var pos: usize = 4;

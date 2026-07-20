@@ -33,7 +33,7 @@ function colorToCSS(index: number): string | null {
 }
 
 export function resolveQueryColor(element: HTMLElement, kind: number, index: number): [number, number, number] {
-  let value: string | null = kind === 10 ? 'var(--term-fg)' : kind === 11 ? 'var(--term-bg)' : colorToCSS(index);
+  let value: string | null = kind === 10 ? 'var(--term-fg)' : kind === 11 ? 'var(--term-bg)' : kind === 12 ? 'var(--term-cursor)' : colorToCSS(index);
   if (kind === 4 && index < 16) {
     const configured = getComputedStyle(element).getPropertyValue(`--term-color-${index}`).trim();
     if (!configured) value = ANSI_16[index] || '#000000';

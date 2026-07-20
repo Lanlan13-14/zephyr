@@ -130,6 +130,15 @@ class WasmBridge {
   mouseSGR() {
     return this.exports.getMouseSGR() !== 0;
   }
+  mouseAltScroll() {
+    return this.exports.getMouseAltScroll() !== 0;
+  }
+  reverseWrap() {
+    return this.exports.getReverseWrap() !== 0;
+  }
+  column132() {
+    return this.exports.getColumn132() !== 0;
+  }
   bellPending() {
     return this.exports.getBellPending() !== 0;
   }

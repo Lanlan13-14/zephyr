@@ -101,6 +101,15 @@ export fn getMouseMode() u32 {
 export fn getMouseSGR() u32 {
     return if (terminal.mouse_sgr) 1 else 0;
 }
+export fn getMouseAltScroll() u32 {
+    return if (terminal.mouse_alt_scroll) 1 else 0;
+}
+export fn getReverseWrap() u32 {
+    return if (terminal.reverse_wrap) 1 else 0;
+}
+export fn getColumn132() u32 {
+    return if (terminal.column_132) 1 else 0;
+}
 
 // P2-4: Bell
 export fn getBellPending() u32 {

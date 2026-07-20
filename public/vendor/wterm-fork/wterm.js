@@ -29,11 +29,16 @@ function applyColorChange(element, change) {
     element.style.removeProperty("--term-bg");
     return true;
   }
+  if (change.kind === 112) {
+    element.style.removeProperty("--term-cursor");
+    return true;
+  }
   const color = parseOscColor(change.value);
   if (!color) return false;
   if (change.kind === 4 && change.index >= 0 && change.index < 256) element.style.setProperty(`--term-color-${change.index}`, color);
   else if (change.kind === 10) element.style.setProperty("--term-fg", color);
   else if (change.kind === 11) element.style.setProperty("--term-bg", color);
+  else if (change.kind === 12) element.style.setProperty("--term-cursor", color);
   else return false;
   return true;
 }
@@ -454,6 +459,87 @@ class WTerm {
       }
     });
     this.resizeObserver.observe(this.element);
+  }
+  /** Return current DOM selection text inside the terminal, if any. */
+  getSelectionText() {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return "";
+    const range = sel.getRangeAt(0);
+    if (!this.element.contains(range.commonAncestorContainer)) return "";
+    return sel.toString();
+  }
+  /** Select all currently rendered terminal text (DOM path). */
+  selectAll() {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(this._container || this.element);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  clearSelection() {
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+  }
+  /**
+   * Search rendered text and optionally highlight the active match.
+   * Returns match offsets in flattened rendered text coordinates.
+   */
+  findMatches(query, { caseSensitive = false } = {}) {
+    if (!query) return [];
+    const hay = this._container?.innerText || this.element.innerText || "";
+    const src = caseSensitive ? hay : hay.toLowerCase();
+    const needle = caseSensitive ? query : query.toLowerCase();
+    const out = [];
+    let from = 0;
+    while (from < src.length) {
+      const idx = src.indexOf(needle, from);
+      if (idx < 0) break;
+      out.push({ start: idx, end: idx + needle.length, text: hay.slice(idx, idx + needle.length) });
+      from = idx + Math.max(1, needle.length);
+    }
+    return out;
+  }
+  /** Highlight the Nth match from findMatches by selecting it in the DOM. */
+  selectMatch(query, index = 0, opts = {}) {
+    const matches = this.findMatches(query, opts);
+    if (!matches.length) return false;
+    const match = matches[(index % matches.length + matches.length) % matches.length];
+    const root = this._container || this.element;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let pos = 0;
+    let startNode = null;
+    let endNode = null;
+    let startOffset = 0;
+    let endOffset = 0;
+    let node;
+    while (node = walker.nextNode()) {
+      const text = node.textContent || "";
+      const next = pos + text.length;
+      if (!startNode && match.start >= pos && match.start <= next) {
+        startNode = node;
+        startOffset = match.start - pos;
+      }
+      if (match.end >= pos && match.end <= next) {
+        endNode = node;
+        endOffset = match.end - pos;
+        break;
+      }
+      pos = next;
+    }
+    if (!startNode || !endNode) return false;
+    const range = document.createRange();
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endOffset);
+    const sel = window.getSelection();
+    if (!sel) return false;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    try {
+      startNode.parentElement?.scrollIntoView?.({ block: "nearest" });
+    } catch {
+    }
+    return true;
   }
   /** Enable/disable font ligatures for same-style runs. */
   setLigatures(enabled) {
