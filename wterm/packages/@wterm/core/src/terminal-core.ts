@@ -9,6 +9,8 @@ export interface CellData {
   bgRgb?: number;
   /** P2-1: Wide character width. 0 = narrow, 1 = wide lead (2 cells), 2 = continuation. */
   wide?: number;
+  /** OSC 8 hyperlink table identifier. */
+  linkId?: number;
 }
 
 export interface CursorState {
@@ -41,6 +43,7 @@ export interface TerminalCore {
 
   // -- Grid --
   getCell(row: number, col: number): CellData;
+  getHyperlink(id: number): string | null;
   isDirtyRow(row: number): boolean;
   clearDirty(): void;
   getCols(): number;

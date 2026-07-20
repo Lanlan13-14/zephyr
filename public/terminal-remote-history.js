@@ -18,9 +18,16 @@ export function runStyle(run) {
   if(flags&64)styles.push('visibility:hidden');
   return styles.join(';');
 }
+function safeHistoryLink(uri){
+  if(!uri)return null;
+  try{const url=new URL(uri,window.location.href);return ['http:','https:','mailto:'].includes(url.protocol)?url.href:null;}catch{return null;}
+}
 function makeRow(line) {
   const row=document.createElement('div'); row.className='term-row term-remote-history-row'; row.dataset.historySeq=String(line.seq);
-  for(const run of line.runs||[]){ const span=document.createElement('span'); span.textContent=run.text||''; const style=runStyle(run); if(style)span.style.cssText=style; row.appendChild(span); }
+  for(const run of line.runs||[]){
+    const span=document.createElement('span'); span.textContent=run.text||''; const style=runStyle(run); if(style)span.style.cssText=style;
+    const href=safeHistoryLink(run.link); if(href){const anchor=document.createElement('a');anchor.className='term-hyperlink';anchor.href=href;anchor.target='_blank';anchor.rel='noopener noreferrer';anchor.appendChild(span);row.appendChild(anchor);}else row.appendChild(span);
+  }
   return row;
 }
 

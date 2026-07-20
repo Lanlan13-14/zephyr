@@ -1,3 +1,4 @@
+const std = @import("std");
 const cell_mod = @import("cell.zig");
 const grid_mod = @import("grid.zig");
 const parser_mod = @import("parser.zig");
@@ -32,6 +33,9 @@ comptime {
     if (@sizeOf(DebugLogEntry) != 12)
         @compileError("DebugLogEntry size changed — update wasm-bridge.ts entrySize");
 }
+
+const MAX_LINKS: usize = 256;
+const MAX_LINK_URI: usize = 512;
 
 pub const Terminal = struct {
     grid: Grid,
@@ -99,6 +103,10 @@ pub const Terminal = struct {
     title_buf: [256]u8 = undefined,
     title_len: u16 = 0,
     title_changed: bool = false,
+    current_link_id: u16 = 0,
+    link_count: u16 = 0,
+    link_lens: [MAX_LINKS]u16 = [_]u16{0} ** MAX_LINKS,
+    link_uris: [MAX_LINKS][MAX_LINK_URI]u8 = undefined,
 
     // Response buffer for DSR and similar host-to-application replies
     response_buf: [64]u8 = undefined,
@@ -183,6 +191,9 @@ pub const Terminal = struct {
         self.sync_output = false;
         self.title_len = 0;
         self.title_changed = false;
+        self.current_link_id = 0;
+        self.link_count = 0;
+        self.link_lens = [_]u16{0} ** MAX_LINKS;
         self.response_len = 0;
         self.tab_stops = initTabStops();
     }
@@ -469,6 +480,7 @@ pub const Terminal = struct {
             .fg = self.current_fg,
             .bg = self.current_bg, .fg_rgb = self.current_fg_rgb, .bg_rgb = self.current_bg_rgb,
             .flags = self.current_flags,
+            .link_id = self.current_link_id,
             .wide = if (is_wide) cell_mod.WIDE_LEAD else cell_mod.WIDE_NARROW,
         });
 
@@ -480,6 +492,7 @@ pub const Terminal = struct {
                 .fg = self.current_fg,
                 .bg = self.current_bg, .fg_rgb = self.current_fg_rgb, .bg_rgb = self.current_bg_rgb,
                 .flags = self.current_flags,
+                .link_id = self.current_link_id,
                 .wide = cell_mod.WIDE_CONT,
             });
         }
@@ -1136,7 +1149,43 @@ pub const Terminal = struct {
             }
             self.title_len = @intCast(len);
             self.title_changed = true;
+            return;
         }
+
+        // OSC 8 ; params ; URI ST. An empty URI closes the current link.
+        if (data.len >= 3 and data[0] == '8' and data[1] == ';') {
+            var sep: usize = 2;
+            while (sep < data.len and data[sep] != ';') : (sep += 1) {}
+            if (sep >= data.len) return;
+            const uri = data[sep + 1 ..];
+            if (uri.len == 0) { self.current_link_id = 0; return; }
+            self.current_link_id = self.internLink(uri);
+        }
+    }
+
+    fn internLink(self: *Terminal, uri: []const u8) u16 {
+        const len = @min(uri.len, MAX_LINK_URI);
+        if (len == 0) return 0;
+        var i: usize = 0;
+        while (i < self.link_count) : (i += 1) {
+            if (self.link_lens[i] == len and std.mem.eql(u8, self.link_uris[i][0..len], uri[0..len])) return @intCast(i + 1);
+        }
+        if (self.link_count >= MAX_LINKS) return 0;
+        const slot: usize = self.link_count;
+        @memcpy(self.link_uris[slot][0..len], uri[0..len]);
+        self.link_lens[slot] = @intCast(len);
+        self.link_count += 1;
+        return @intCast(slot + 1);
+    }
+
+    pub fn getLinkPtr(self: *Terminal, id: u16) [*]const u8 {
+        if (id == 0 or id > self.link_count) return &self.link_uris[0];
+        return &self.link_uris[id - 1];
+    }
+
+    pub fn getLinkLen(self: *Terminal, id: u16) u16 {
+        if (id == 0 or id > self.link_count) return 0;
+        return self.link_lens[id - 1];
     }
 
     // -- Tab stops --

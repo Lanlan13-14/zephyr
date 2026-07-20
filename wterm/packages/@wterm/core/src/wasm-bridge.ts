@@ -30,6 +30,8 @@ interface WasmExports {
   getUsingAltScreen(): number;
   getTitlePtr(): number;
   getTitleLen(): number;
+  getHyperlinkPtr(id: number): number;
+  getHyperlinkLen(id: number): number;
   getTitleChanged(): number;
   getScrollbackCount(): number;
   getScrollbackLine(offset: number): number;
@@ -151,6 +153,7 @@ export class WasmBridge implements TerminalCore {
       bg: dv.getUint16(offset + 6, true),
       flags: dv.getUint8(offset + 8),
       wide: dv.getUint8(offset + 9),
+      linkId: dv.getUint16(offset + 10, true),
       fgRgb: fgRgb || undefined,
       bgRgb: bgRgb || undefined,
     };
@@ -217,6 +220,13 @@ export class WasmBridge implements TerminalCore {
     return this.decoder.decode(bytes);
   }
 
+  getHyperlink(id: number): string | null {
+    if (!id) return null;
+    const len = this.exports.getHyperlinkLen(id);
+    if (!len) return null;
+    return this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getHyperlinkPtr(id), len));
+  }
+
   getResponse(): string | null {
     const len = this.exports.getResponseLen();
     if (len === 0) return null;
@@ -243,6 +253,7 @@ export class WasmBridge implements TerminalCore {
       bg: dv.getUint16(off + 6, true),
       flags: dv.getUint8(off + 8),
       wide: dv.getUint8(off + 9),
+      linkId: dv.getUint16(off + 10, true),
       fgRgb: fgRgb || undefined,
       bgRgb: bgRgb || undefined,
     };

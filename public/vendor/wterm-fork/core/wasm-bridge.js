@@ -90,6 +90,7 @@ class WasmBridge {
       bg: dv.getUint16(offset + 6, true),
       flags: dv.getUint8(offset + 8),
       wide: dv.getUint8(offset + 9),
+      linkId: dv.getUint16(offset + 10, true),
       fgRgb: fgRgb || void 0,
       bgRgb: bgRgb || void 0
     };
@@ -148,6 +149,12 @@ class WasmBridge {
     const bytes = new Uint8Array(this.memory.buffer, ptr, len);
     return this.decoder.decode(bytes);
   }
+  getHyperlink(id) {
+    if (!id) return null;
+    const len = this.exports.getHyperlinkLen(id);
+    if (!len) return null;
+    return this.decoder.decode(new Uint8Array(this.memory.buffer, this.exports.getHyperlinkPtr(id), len));
+  }
   getResponse() {
     const len = this.exports.getResponseLen();
     if (len === 0) return null;
@@ -172,6 +179,7 @@ class WasmBridge {
       bg: dv.getUint16(off + 6, true),
       flags: dv.getUint8(off + 8),
       wide: dv.getUint8(off + 9),
+      linkId: dv.getUint16(off + 10, true),
       fgRgb: fgRgb || void 0,
       bgRgb: bgRgb || void 0
     };

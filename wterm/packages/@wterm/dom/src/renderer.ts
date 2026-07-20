@@ -96,6 +96,18 @@ function escapeHTML(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
+function escapeAttr(text: string): string {
+  return escapeHTML(text).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function safeHyperlink(uri: string | null): string | null {
+  if (!uri) return null;
+  try {
+    const url = new URL(uri, window.location.href);
+    return ["http:", "https:", "mailto:"].includes(url.protocol) ? url.href : null;
+  } catch { return null; }
+}
+
 function resolveColors(
   fg: number,
   bg: number,
@@ -207,13 +219,14 @@ function cellSignature(
   fgRgb?: number,
   bgRgb?: number,
   wide?: number,
+  linkId?: number,
 ): string {
   // Pack into a string. Using | 0 on flags to keep it short.
   // When fgRgb/bgRgb are present, include them; otherwise the 16-bit index suffices.
   if (fgRgb !== undefined || bgRgb !== undefined) {
-    return `${char},${fg},${bg},${flags},${fgRgb ?? -1},${bgRgb ?? -1},${wide ?? 0}`;
+    return `${char},${fg},${bg},${flags},${fgRgb ?? -1},${bgRgb ?? -1},${wide ?? 0},${linkId ?? 0}`;
   }
-  return `${char},${fg},${bg},${flags},${wide ?? 0}`;
+  return `${char},${fg},${bg},${flags},${wide ?? 0},${linkId ?? 0}`;
 }
 
 export class Renderer {
@@ -288,14 +301,17 @@ export class Renderer {
       flags: number;
       fgRgb?: number;
       bgRgb?: number;
+      linkId?: number;
     },
     lineLen: number,
     rowIndex: number,
+    getHyperlink: (id: number) => string | null,
   ): void {
     let html = "";
     let runStyle = "";
     let runText = "";
     let runStart = 0;
+    let runLink: string | null = null;
 
     const flushRun = (endCol: number) => {
       if (!runText) return;
@@ -304,9 +320,10 @@ export class Renderer {
       const isWide = runStyle.includes(" term-wide");
       const pureStyle = isWide ? runStyle.replace(" term-wide", "") : runStyle;
       const cls = isWide ? ' class="term-wide"' : "";
-      html += pureStyle
+      const content = pureStyle
         ? `<span${cls} style="${pureStyle}">${escaped}</span>`
         : (isWide ? `<span${cls}>${escaped}</span>` : `<span>${escaped}</span>`);
+      html += runLink ? `<a class="term-hyperlink" href="${escapeAttr(runLink)}" target="_blank" rel="noopener noreferrer">${content}</a>` : content;
     };
 
     for (let col = 0; col < this.cols; col++) {
@@ -330,6 +347,7 @@ export class Renderer {
 
         runStyle = "";
         runText = "";
+        runLink = null;
         runStart = col + 1;
       } else {
         // P2-1: Skip wide continuation cells (they are placeholders for the
@@ -339,6 +357,7 @@ export class Renderer {
           flushRun(col);
           runStyle = "";
           runText = "";
+          runLink = null;
           runStart = col + 1;
           continue;
         }
@@ -349,10 +368,12 @@ export class Renderer {
         // P2-1: Wide lead cell gets a width override via a data attribute.
         // The CSS .term-wide rule sets width: 2ch for these spans.
         const wideAttr = inBounds && cell.wide === 1 ? " term-wide" : "";
+        const link = inBounds ? safeHyperlink(getHyperlink(cell.linkId || 0)) : null;
 
-        if (style + wideAttr !== runStyle) {
+        if (style + wideAttr !== runStyle || link !== runLink) {
           flushRun(col);
           runStyle = style + wideAttr;
+          runLink = link;
           runText = ch;
           runStart = col;
         } else {
@@ -397,7 +418,7 @@ export class Renderer {
     rowEl.className = "term-row term-scrollback-row";
     const lineLen = core.getScrollbackLineLen(sbOffset);
 
-    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1);
+    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1, (id) => core.getHyperlink(id));
     return rowEl;
   }
 
@@ -506,6 +527,7 @@ export class Renderer {
             cell.fgRgb,
             cell.bgRgb,
             cell.wide,
+            cell.linkId,
           );
           if (sig !== oldSigs[col]) {
             allMatch = false;
@@ -525,6 +547,7 @@ export class Renderer {
         (col) => core.getCell(r, col),
         this.cols,
         r,
+        (id) => core.getHyperlink(id),
       );
 
       // Cache signatures for next frame's diff
@@ -540,6 +563,7 @@ export class Renderer {
             cell.fgRgb,
             cell.bgRgb,
             cell.wide,
+            cell.linkId,
           ),
         );
       }

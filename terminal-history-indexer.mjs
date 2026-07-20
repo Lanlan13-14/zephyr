@@ -6,22 +6,23 @@ import { WasmBridge } from './public/vendor/wterm-fork/core/index.js';
 const { TerminalHistoryService } = historyModule;
 const CHECKPOINT_SCHEMA = 1;
 
-function styleKey(cell) {
-  return [cell.fg, cell.bg, cell.flags, cell.fgRgb ?? '', cell.bgRgb ?? ''].join(',');
+function styleKey(cell, link) {
+  return [cell.fg, cell.bg, cell.flags, cell.fgRgb ?? '', cell.bgRgb ?? '', link || ''].join(',');
 }
-function cellStyle(cell) {
+function cellStyle(cell, link) {
   const out = { fg: cell.fg, bg: cell.bg, flags: cell.flags };
   if (cell.fgRgb !== undefined) out.fgRgb = cell.fgRgb;
   if (cell.bgRgb !== undefined) out.bgRgb = cell.bgRgb;
+  if (link) out.link = link;
   return out;
 }
-function appendCell(pending, cell) {
+function appendCell(pending, cell, link = null) {
   if (cell.wide === 2 || cell.char === 0) return;
   const char = cell.char >= 32 ? String.fromCodePoint(cell.char) : ' ';
-  const key = styleKey(cell);
+  const key = styleKey(cell, link);
   let run = pending.runs[pending.runs.length - 1];
   if (!run || run.key !== key) {
-    run = { key, text: '', ...cellStyle(cell) };
+    run = { key, text: '', ...cellStyle(cell, link) };
     pending.runs.push(run);
   }
   run.text += char;
@@ -78,7 +79,10 @@ export class TerminalHistoryIndexer {
     const output = [];
     while (bridge.getEvictedCount() > 0) {
       const len = bridge.getEvictedLineLen();
-      for (let col = 0; col < len; col++) appendCell(state.pending, bridge.getEvictedCell(col));
+      for (let col = 0; col < len; col++) {
+        const cell = bridge.getEvictedCell(col);
+        appendCell(state.pending, cell, bridge.getHyperlink(cell.linkId || 0));
+      }
       const wrapped = bridge.getEvictedLineWrapped();
       bridge.popEvictedLine();
       if (!wrapped) {

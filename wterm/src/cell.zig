@@ -22,8 +22,8 @@ pub const Cell = extern struct {
     /// P2-1: Wide character width. 0 = narrow (1 cell), 1 = wide lead (2 cells),
     /// 2 = wide continuation (placeholder, not rendered).
     wide: u8 = 0,
-    _pad2: u8 = 0,
-    _pad3: u8 = 0,
+    /// OSC 8 hyperlink table ID. 0 = no hyperlink.
+    link_id: u16 = 0,
     /// P1-4: Packed 24-bit RGB (0xRRGGBB) for true color. 0 = not set (use fg index).
     fg_rgb: u32 = 0,
     /// P1-4: Packed 24-bit RGB (0xRRGGBB) for true color. 0 = not set (use bg index).

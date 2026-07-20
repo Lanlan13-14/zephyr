@@ -251,3 +251,11 @@
   --term-color-14: #0184bc;
   --term-color-15: #ffffff;
 }
+
+.term-hyperlink {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

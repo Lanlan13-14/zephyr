@@ -72,6 +72,18 @@ function appendRun(parent, text, style) {
 function escapeHTML(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+function escapeAttr(text) {
+  return escapeHTML(text).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function safeHyperlink(uri) {
+  if (!uri) return null;
+  try {
+    const url = new URL(uri, window.location.href);
+    return ["http:", "https:", "mailto:"].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
 function resolveColors(fg, bg, flags, fgRgb, bgRgb) {
   let fgIdx = fg, bgIdx = bg, fgR = fgRgb, bgR = bgRgb;
   if (flags & FLAG_REVERSE) {
@@ -161,11 +173,11 @@ function getBlockBackground(cp, fg, bg) {
     }
   }
 }
-function cellSignature(char, fg, bg, flags, fgRgb, bgRgb, wide) {
+function cellSignature(char, fg, bg, flags, fgRgb, bgRgb, wide, linkId) {
   if (fgRgb !== void 0 || bgRgb !== void 0) {
-    return `${char},${fg},${bg},${flags},${fgRgb ?? -1},${bgRgb ?? -1},${wide ?? 0}`;
+    return `${char},${fg},${bg},${flags},${fgRgb ?? -1},${bgRgb ?? -1},${wide ?? 0},${linkId ?? 0}`;
   }
-  return `${char},${fg},${bg},${flags},${wide ?? 0}`;
+  return `${char},${fg},${bg},${flags},${wide ?? 0},${linkId ?? 0}`;
 }
 class Renderer {
   constructor(container) {
@@ -217,18 +229,20 @@ class Renderer {
     this.prevCursorRow = -1;
     this.prevCursorCol = -1;
   }
-  _buildRowContent(rowEl, getCell, lineLen, rowIndex) {
+  _buildRowContent(rowEl, getCell, lineLen, rowIndex, getHyperlink) {
     let html = "";
     let runStyle = "";
     let runText = "";
     let runStart = 0;
+    let runLink = null;
     const flushRun = (endCol) => {
       if (!runText) return;
       const escaped = escapeHTML(runText);
       const isWide = runStyle.includes(" term-wide");
       const pureStyle = isWide ? runStyle.replace(" term-wide", "") : runStyle;
       const cls = isWide ? ' class="term-wide"' : "";
-      html += pureStyle ? `<span${cls} style="${pureStyle}">${escaped}</span>` : isWide ? `<span${cls}>${escaped}</span>` : `<span>${escaped}</span>`;
+      const content = pureStyle ? `<span${cls} style="${pureStyle}">${escaped}</span>` : isWide ? `<span${cls}>${escaped}</span>` : `<span>${escaped}</span>`;
+      html += runLink ? `<a class="term-hyperlink" href="${escapeAttr(runLink)}" target="_blank" rel="noopener noreferrer">${content}</a>` : content;
     };
     for (let col = 0; col < this.cols; col++) {
       const cell = getCell(col);
@@ -248,21 +262,25 @@ class Renderer {
         html += `<span class="term-block" style="background:${bg};${dim}"></span>`;
         runStyle = "";
         runText = "";
+        runLink = null;
         runStart = col + 1;
       } else {
         if (inBounds && cell.wide === 2) {
           flushRun(col);
           runStyle = "";
           runText = "";
+          runLink = null;
           runStart = col + 1;
           continue;
         }
         const ch = inBounds && cp >= 32 ? String.fromCodePoint(cp) : " ";
         const style = inBounds ? buildCellStyle(cell.fg, cell.bg, cell.flags, cell.fgRgb, cell.bgRgb) : "";
         const wideAttr = inBounds && cell.wide === 1 ? " term-wide" : "";
-        if (style + wideAttr !== runStyle) {
+        const link = inBounds ? safeHyperlink(getHyperlink(cell.linkId || 0)) : null;
+        if (style + wideAttr !== runStyle || link !== runLink) {
           flushRun(col);
           runStyle = style + wideAttr;
+          runLink = link;
           runText = ch;
           runStart = col;
         } else {
@@ -300,7 +318,7 @@ class Renderer {
     const rowEl = document.createElement("div");
     rowEl.className = "term-row term-scrollback-row";
     const lineLen = core.getScrollbackLineLen(sbOffset);
-    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1);
+    this._buildRowContent(rowEl, (col) => core.getScrollbackCell(sbOffset, col), lineLen, -1, (id) => core.getHyperlink(id));
     return rowEl;
   }
   syncScrollback(core) {
@@ -376,7 +394,8 @@ class Renderer {
             cell.flags,
             cell.fgRgb,
             cell.bgRgb,
-            cell.wide
+            cell.wide,
+            cell.linkId
           );
           if (sig !== oldSigs[col]) {
             allMatch = false;
@@ -391,7 +410,8 @@ class Renderer {
         this.rowEls[r],
         (col) => core.getCell(r, col),
         this.cols,
-        r
+        r,
+        (id) => core.getHyperlink(id)
       );
       const newSigs = [];
       for (let col = 0; col < this.cols; col++) {
@@ -404,7 +424,8 @@ class Renderer {
             cell.flags,
             cell.fgRgb,
             cell.bgRgb,
-            cell.wide
+            cell.wide,
+            cell.linkId
           )
         );
       }

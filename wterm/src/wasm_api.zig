@@ -124,6 +124,9 @@ export fn getTitleLen() u32 {
     return terminal.title_len;
 }
 
+export fn getHyperlinkPtr(id: u32) [*]const u8 { return terminal.getLinkPtr(@intCast(id)); }
+export fn getHyperlinkLen(id: u32) u32 { return terminal.getLinkLen(@intCast(id)); }
+
 export fn getTitleChanged() u32 {
     if (terminal.title_changed) {
         terminal.title_changed = false;
