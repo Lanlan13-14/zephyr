@@ -448,6 +448,9 @@ export class Renderer {
 
     const ch = cell.char >= 32 ? String.fromCodePoint(cell.char) : " ";
     this.cursorEl.textContent = ch;
+    // DECSCUSR: apply cursor style class (0-6)
+    const styleClass = `term-cursor-style-${cursor.style || 0}`;
+    this.cursorEl.className = `term-cursor-overlay ${styleClass}`;
     this.cursorEl.style.cssText = `display:block;${style}`;
     // Position using CSS custom properties; the CSS rules use these to
     // translate the overlay to the correct cell.

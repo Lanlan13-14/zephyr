@@ -90,8 +90,12 @@ class WasmBridge {
     return {
       row: this.exports.getCursorRow(),
       col: this.exports.getCursorCol(),
-      visible: this.exports.getCursorVisible() !== 0
+      visible: this.exports.getCursorVisible() !== 0,
+      style: this.exports.getCursorStyle()
     };
+  }
+  cursorStyle() {
+    return this.exports.getCursorStyle();
   }
   getCols() {
     return this.exports.getCols();

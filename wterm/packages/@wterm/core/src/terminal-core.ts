@@ -15,6 +15,7 @@ export interface CursorState {
   row: number;
   col: number;
   visible: boolean;
+  style?: number;
 }
 
 export interface UnhandledSequence {
@@ -47,6 +48,7 @@ export interface TerminalCore {
 
   // -- Cursor --
   getCursor(): CursorState;
+  cursorStyle(): number;
 
   // -- Modes --
   cursorKeysApp(): boolean;

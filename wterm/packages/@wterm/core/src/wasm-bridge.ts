@@ -17,6 +17,7 @@ interface WasmExports {
   getCursorRow(): number;
   getCursorCol(): number;
   getCursorVisible(): number;
+  getCursorStyle(): number;
   getCols(): number;
   getRows(): number;
   getCursorKeysApp(): number;
@@ -145,7 +146,12 @@ export class WasmBridge implements TerminalCore {
       row: this.exports.getCursorRow(),
       col: this.exports.getCursorCol(),
       visible: this.exports.getCursorVisible() !== 0,
+      style: this.exports.getCursorStyle(),
     };
+  }
+
+  cursorStyle(): number {
+    return this.exports.getCursorStyle();
   }
 
   getCols(): number {

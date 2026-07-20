@@ -340,6 +340,8 @@ class Renderer {
     );
     const ch = cell.char >= 32 ? String.fromCodePoint(cell.char) : " ";
     this.cursorEl.textContent = ch;
+    const styleClass = `term-cursor-style-${cursor.style || 0}`;
+    this.cursorEl.className = `term-cursor-overlay ${styleClass}`;
     this.cursorEl.style.cssText = `display:block;${style}`;
     this.cursorEl.style.setProperty("--cursor-row", String(cursor.row));
     this.cursorEl.style.setProperty("--cursor-col", String(cursor.col));

@@ -102,6 +102,58 @@
   animation: cursor-blink 1s step-end infinite;
 }
 
+/* DECSCUSR cursor styles (ESC[n q)
+   0,1 = blinking block, 2 = steady block
+   3 = blinking underline, 4 = steady underline
+   5 = blinking bar, 6 = steady bar */
+.term-cursor-style-0, .term-cursor-style-1 {
+  outline: 1px solid var(--term-cursor);
+  outline-offset: -1px;
+}
+.term-cursor-style-2 {
+  background: var(--term-cursor);
+  outline: none;
+}
+.term-cursor-style-3 {
+  border-bottom: 2px solid var(--term-cursor);
+  outline: none;
+  background: transparent;
+}
+.term-cursor-style-4 {
+  border-bottom: 2px solid var(--term-cursor);
+  outline: none;
+  background: transparent;
+}
+.term-cursor-style-5 {
+  border-left: 2px solid var(--term-cursor);
+  outline: none;
+  background: transparent;
+  width: 2px !important;
+}
+.term-cursor-style-6 {
+  border-left: 2px solid var(--term-cursor);
+  outline: none;
+  background: transparent;
+  width: 2px !important;
+}
+.wterm.focused .term-cursor-style-0,
+.wterm.focused .term-cursor-style-1 {
+  background: var(--term-cursor);
+  color: var(--term-bg);
+  outline: none;
+}
+.wterm.focused .term-cursor-style-2 {
+  background: var(--term-cursor);
+  outline: none;
+}
+/* Blinking styles */
+.wterm.focused.cursor-blink .term-cursor-style-0,
+.wterm.focused.cursor-blink .term-cursor-style-1,
+.wterm.focused.cursor-blink .term-cursor-style-3,
+.wterm.focused.cursor-blink .term-cursor-style-5 {
+  animation: cursor-blink 1s step-end infinite;
+}
+
 /* Legacy inline cursor (for scrollback rows that still use it) */
 .term-cursor {
   outline: 1px solid var(--term-cursor);

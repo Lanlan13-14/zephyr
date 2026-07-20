@@ -35,6 +35,9 @@ pub const Terminal = struct {
     cursor_row: u16 = 0,
     cursor_col: u16 = 0,
     cursor_visible: bool = true,
+    /// DECSCUSR cursor style: 0=default(block), 1=blinking block, 2=steady block,
+    /// 3=blinking underline, 4=steady underline, 5=blinking bar, 6=steady bar.
+    cursor_style: u8 = 0,
     wrap_pending: bool = false,
 
     saved_cursor_row: u16 = 0,
@@ -135,6 +138,7 @@ pub const Terminal = struct {
         self.cursor_row = 0;
         self.cursor_col = 0;
         self.cursor_visible = true;
+        self.cursor_style = 0;
         self.wrap_pending = false;
         self.saved_cursor_row = 0;
         self.saved_cursor_col = 0;
@@ -484,7 +488,11 @@ pub const Terminal = struct {
             return;
         }
         if (self.parser.csi_private == '>') {
-            self.logUnhandled(final, '>');
+            if (final == 'c') {
+                self.handleSecondaryDA();
+            } else {
+                self.logUnhandled(final, '>');
+            }
             return;
         }
 
@@ -519,6 +527,8 @@ pub const Terminal = struct {
             'n' => self.handleDeviceStatus(),
             'r' => self.setScrollRegion(self.parser.getParam(0, 1), self.parser.getParam(1, self.rows)),
             's' => self.saveCursor(),
+            'c' => self.handleDeviceAttributes(),
+            'q' => self.handleDecscusr(),
             't' => {}, // window manipulation - ignore
             'u' => self.restoreCursor(),
             '@' => self.insertBlanks(self.parser.getParam(0, 1)),
@@ -639,6 +649,33 @@ pub const Terminal = struct {
             self.response_buf = buf;
             self.response_len = len;
         }
+    }
+
+    // DA1 - Primary Device Attributes (ESC[c or ESC[0c)
+    // Response: ESC[?62;22c  (62=VT220, 22=ANSI color)
+    fn handleDeviceAttributes(self: *Terminal) void {
+        const resp = "\x1b[?62;22c";
+        var i: u8 = 0;
+        while (i < resp.len and i < self.response_buf.len) : (i += 1) {
+            self.response_buf[i] = resp[i];
+        }
+        self.response_len = i;
+    }
+
+    // DA2 - Secondary Device Attributes (ESC[>c)
+    // Response: ESC[>0;0;0c  (0=VT220, 0=firmware, 0=ROM card)
+    fn handleSecondaryDA(self: *Terminal) void {
+        const resp = "\x1b[>0;0;0c";
+        var i: u8 = 0;
+        while (i < resp.len and i < self.response_buf.len) : (i += 1) {
+            self.response_buf[i] = resp[i];
+        }
+        self.response_len = i;
+    }
+
+    // DECSCUSR - Cursor style (ESC[n q)
+    fn handleDecscusr(self: *Terminal) void {
+        self.cursor_style = @intCast(self.parser.getParam(0, 0));
     }
 
     // -- Cursor movement --

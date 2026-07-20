@@ -68,6 +68,10 @@ export fn getCursorVisible() u32 {
     return if (terminal.cursor_visible) 1 else 0;
 }
 
+export fn getCursorStyle() u32 {
+    return terminal.cursor_style;
+}
+
 export fn getCols() u32 {
     return terminal.cols;
 }
