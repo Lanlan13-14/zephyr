@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-kb-flush1';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-kb-pin1';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -2963,24 +2963,29 @@ function postFrameKeyboardOverlap(activeFrame, {
     if (!activeFrame?.contentWindow) return 0;
     const frameRect = activeFrame.getBoundingClientRect?.();
     if (!frameRect) return 0;
-    // iframe-local overlap = how many CSS px of the iframe are covered by the IME.
-    // Child sets .terminal-page height = 100% - overlap so chrome sits on keyboard top.
-    const overlap = open && keyboardTop > 0
+    // iframe-local coverage by IME. If frame math under-reports (some WebViews),
+    // fall back to parentInset (screen keyboard height) so tools never sit under keys.
+    const rawOverlap = open && keyboardTop > 0
         ? Math.max(0, Math.round(frameRect.bottom - keyboardTop))
         : 0;
+    const inset = Math.max(0, Math.round(parentInset || 0));
+    // Prefer the LARGER of frame overlap and physical keyboard height.
+    // Fixed chrome uses bottom: overlap — too-small values bury tools under IME.
+    const overlap = open ? Math.max(rawOverlap, inset >= 64 ? inset : 0) : 0;
     activeFrame.contentWindow.postMessage({
         source: 'zephyr-app',
         type: 'keyboard-overlap',
         keyboardOpen: open && overlap >= 64,
         keyboardOverlap: overlap,
         keyboardTop: Math.round(keyboardTop || 0),
-        parentInset: Math.round(parentInset || 0),
+        parentInset: inset,
+        frameOverlap: rawOverlap,
         heightSource,
         reason,
     }, '*');
     return overlap;
 }
-
+ 
 /** While IME open, keep posting exact overlap every animation frame (throttled). */
 let _sshKbAlignRaf = 0;
 let _sshKbAlignLastPost = 0;

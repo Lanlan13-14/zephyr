@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260721-kb-flush1';
+} from './ssh-keyboard/index.js?v=20260721-kb-pin1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -16,8 +16,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-kb-flush1';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-flush1';
+} from './terminal-scroll-policy.js?v=20260721-kb-pin1';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-pin1';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -8349,23 +8349,70 @@ let _sshKbLastFitSignature = '';
 /** Last time parent-overlap wrote an OPEN geometry (sticky against facade close). */
 let _sshKbParentGeomAt = 0;
 
+function measureSshKbChromeHeights() {
+    let aux = 48;
+    let tools = 52;
+    try {
+        const bar = document.getElementById('terminalBottomBar');
+        const r = bar?.getBoundingClientRect?.();
+        if (r?.height > 20) aux = Math.round(r.height);
+    } catch (_) {}
+    try {
+        const actions = document.getElementById('topbarActions') || topbarActions;
+        const r = actions?.getBoundingClientRect?.();
+        if (r?.height > 20) tools = Math.round(r.height);
+    } catch (_) {}
+    return { aux, tools };
+}
+
 function writeSshKbPageGeometry(safeInset, layoutOpen, { fromParent = false } = {}) {
-    _sshKbInsetCache = safeInset;
-    _sshKbLayoutOpenCache = layoutOpen;
+    const inset = Math.max(0, Math.round(Number(safeInset) || 0));
+    _sshKbInsetCache = inset;
+    _sshKbLayoutOpenCache = !!layoutOpen;
     if (layoutOpen && fromParent) _sshKbParentGeomAt = Date.now();
     if (!layoutOpen && fromParent) _sshKbParentGeomAt = 0;
-    document.documentElement.style.setProperty('--keyboard-inset', `${safeInset}px`);
-    document.documentElement.style.setProperty('--ssh-kb-inset', `${safeInset}px`);
+
+    // Always keep mobile-stable class for the fixed-chrome CSS path.
+    try {
+        document.documentElement.classList.add('mobile-stable-input');
+        document.body?.classList?.add?.('mobile-stable-input');
+    } catch (_) {}
+
+    document.documentElement.style.setProperty('--keyboard-inset', `${inset}px`);
+    document.documentElement.style.setProperty('--ssh-kb-inset', `${inset}px`);
     document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
-    document.documentElement.classList.toggle('ssh-kb-open', layoutOpen);
-    terminalContainer?.classList.toggle('ssh-kb-open', layoutOpen);
+
+    // Measure chrome after toggle so fixed bottom offsets are correct.
+    document.documentElement.classList.toggle('ssh-kb-open', !!layoutOpen);
+    terminalContainer?.classList.toggle('ssh-kb-open', !!layoutOpen);
     document.documentElement.classList.remove('viewport-updating');
-    pinMobileImeChrome(layoutOpen, safeInset, { authoritative: true });
+
+    const heights = measureSshKbChromeHeights();
+    document.documentElement.style.setProperty('--ssh-kb-aux-height', `${heights.aux}px`);
+    document.documentElement.style.setProperty('--ssh-kb-tools-height', `${heights.tools}px`);
+
+    // Re-measure after one frame (fixed layout can change heights).
+    if (layoutOpen) {
+        requestAnimationFrame(() => {
+            const h2 = measureSshKbChromeHeights();
+            document.documentElement.style.setProperty('--ssh-kb-aux-height', `${h2.aux}px`);
+            document.documentElement.style.setProperty('--ssh-kb-tools-height', `${h2.tools}px`);
+        });
+    }
+
+    pinMobileImeChrome(layoutOpen, inset, { authoritative: true });
     if (!cmdOverlayMode) {
         document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.WORKSPACE;
     }
+    logTerminalLayoutDiagnostics?.('ssh-kb-page-geometry', {
+        inset,
+        layoutOpen: !!layoutOpen,
+        fromParent: !!fromParent,
+        aux: heights.aux,
+        tools: heights.tools,
+    });
 }
-
+ 
 /**
  * Keyboard geometry (user model 2026-07-21):
  * - xterm/wterm KEEP the same rows×cols (buffer still renders the same grid).
@@ -11843,7 +11890,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     // Register the Terminal ctor before WTerm.init so XtermBridge.load works
     // without a bare npm resolver in the browser.
     try {
-        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-flush1');
+        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-pin1');
     } catch (err) {
         console.error('[terminal] xterm-headless register failed', err);
         throw err;
@@ -11851,7 +11898,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API. DOM/input/viewport
         // stay wterm; core is XtermBridge over vendored xterm (see /xterm).
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-flush1');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-pin1');
         WTermClass = module.WTerm;
     } catch {
         try {
