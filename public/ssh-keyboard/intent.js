@@ -287,10 +287,12 @@ export function createKeyboardIntentStore(host = {}, thresholds = {}) {
         const lowFor = lowSince ? now - lowSince : 0;
         const sinceOpen = now - state.lastOpenAt;
         const inGuard = sinceOpen < t.openGuardMs;
-        const confirmed = lowFor >= t.dismissConfirmMs && !inGuard && !hasEditableFocus;
+        // Android back often leaves focus on the proxy while IME is gone.
+        // Accept system dismiss after sustained low + open-guard, even if editable still focused.
+        const confirmed = lowFor >= t.dismissConfirmMs && !inGuard;
 
         if (confirmed) {
-            log('system-dismiss', { lowFor, sinceOpen, inset });
+            log('system-dismiss', { lowFor, sinceOpen, inset, hasEditableFocus });
             return close('system-dismiss', { force: true, blurCmd: true, now });
         }
 

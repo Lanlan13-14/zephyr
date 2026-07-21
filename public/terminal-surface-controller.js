@@ -1,14 +1,14 @@
 /**
  * TerminalSurfaceController — single control plane for mobile WTerm × Zephyr.
  *
- * Before: ssh-mobile-keyboard, terminal-scroll-policy, terminal.js flags,
+ * Before: parallel keyboard modules, terminal-scroll-policy, terminal.js flags,
  * WTerm viewport, parent keyboard-metrics, and CSS chrome each fired on their
  * own. terminal.js sprinkled ~90 call sites to glue them.
  *
  * After: every mobile surface event enters HERE. This module is the only writer of:
  *   - scrollTop (via chrome-pin geometry)
  *   - --ime-chrome-bottom / keyboard-open class / ime-active class
- *   - soft-keyboard intent (delegates to ssh-mobile-keyboard)
+ *   - soft-keyboard intent (delegates to ssh-keyboard facade)
  *
  * Other modules are read-only services:
  *   - scroll-policy: pure math
@@ -17,17 +17,16 @@
  */
 
 import {
-    SoftKeyboardIntent,
-    SoftKeyboardLiftMode,
-    createSshMobileSoftKeyboard,
-} from './ssh-mobile-keyboard.js?v=20260721-ssh-kb-root3';
+    Intent as SoftKeyboardIntent,
+    LiftMode as SoftKeyboardLiftMode,
+} from './ssh-keyboard/index.js?v=20260721-ssh-kb-root4';
 import {
     computeCursorAboveChromeScrollTop,
     allowScrollDuringTyping,
     scrollSettlePhases,
     shouldScrollOnTerminalOutput,
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
-} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root3';
+} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root4';
 
 /**
  * @typedef {object} SurfaceHost
@@ -236,10 +235,10 @@ export function createTerminalSurfaceController(host) {
 
     // ─── soft keyboard host bridge ──────────────────────────────────────
 
-    function ensureSoftKeyboard() {
+        function ensureSoftKeyboard() {
         if (softKeyboard) return softKeyboard;
         if (!host.isTouchDevice?.()) return null;
-        // Prefer host-injected keyboard (SshKeyboard facade compat) — single authority.
+        // Sole authority: host must inject SshKeyboard.asSoftKeyboard().
         if (typeof host.getSoftKeyboard === 'function') {
             const external = host.getSoftKeyboard();
             if (external) {
@@ -247,59 +246,8 @@ export function createTerminalSurfaceController(host) {
                 return softKeyboard;
             }
         }
-        softKeyboard = createSshMobileSoftKeyboard({
-            isTouchDevice: () => !!host.isTouchDevice?.(),
-            isStableMode: () => !!host.isMobileStable?.(),
-            ensureProxy: () => host.ensureImeProxy?.() || null,
-            getViewportMetrics: () => host.getViewportMetrics?.() || { keyboardInset: 0 },
-            isSelectionMode: () => !!host.isSelectionMode?.(),
-            isGestureSuppressed: () => !!host.isGestureSuppressed?.(),
-            applyInset: (inset, open, reason, meta = {}) => {
-                const layoutFrozen = !!meta.layoutFrozen
-                    || meta.liftMode === SoftKeyboardLiftMode.NONE
-                    || meta.source === 'cmd';
-                if (layoutFrozen) {
-                    keyboardOpen = false;
-                    keyboardInset = 0;
-                    host.applyChromeLayout?.(false, 0, { ...meta, reason, layoutFrozen: true });
-                    setImeActive(false, `${reason}:cmd-frozen`);
-                    return;
-                }
-                keyboardOpen = !!open;
-                keyboardInset = open ? inset : 0;
-                host.applyChromeLayout?.(!!open && inset > 0, open ? inset : 0, { ...meta, reason });
-                recomputeMode();
-            },
-            notifyParent: (metrics) => host.notifyParent?.(metrics),
-            onStateChange: (state) => {
-                if (state.physicalOpen) {
-                    keyboardOpen = true;
-                    keyboardInset = state.inset;
-                } else if (state.intent === SoftKeyboardIntent.CLOSED) {
-                    keyboardOpen = false;
-                    keyboardInset = 0;
-                }
-                recomputeMode();
-                try { host.onSoftKeyboardState?.(state); } catch (_) {}
-            },
-            onOpenCommitted: (reason) => {
-                setImeActive(true, `${reason}:open`);
-                recomputeMode();
-                // One pin after bars become fixed — never maxScroll.
-                if (followEnabled || mode === 'ime-open' || mode === 'idle') {
-                    schedulePin(`${reason}:open-chrome`, { force: true }, [0]);
-                }
-            },
-            onCloseCommitted: (reason) => {
-                setImeActive(false, `${reason}:close`);
-                keyboardOpen = false;
-                keyboardInset = 0;
-                host.applyChromeLayout?.(false, 0, { reason: `${reason}:close` });
-                recomputeMode();
-            },
-            log: (event, details) => host.log?.(`soft-kb:${event}`, details),
-        });
-        return softKeyboard;
+        host.log?.('soft-kb:missing-inject', {});
+        return null;
     }
 
     // ─── public event API (only entries terminal.js should call) ────────

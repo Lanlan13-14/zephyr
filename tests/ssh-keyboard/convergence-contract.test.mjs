@@ -85,6 +85,6 @@ test('finalizeKeyboardClose delegates to facade close', () => {
     assert.match(body, /kb\.close|ensureSshKeyboard/);
 });
 
-test('cache bust root3', () => {
-    assert.match(terminalHtml, /ssh-kb-root3/);
+test('cache bust root4', () => {
+    assert.match(terminalHtml, /ssh-kb-root4/);
 });

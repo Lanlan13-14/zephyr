@@ -32,7 +32,10 @@ test('contract: soft keyboard owned by SshKeyboard facade; surface reuses inject
     assert.match(block, /ensureSshKeyboard/);
     assert.match(block, /asSoftKeyboard/);
     // Must NOT rebuild a second createSshMobileSoftKeyboard host here.
-    assert.doesNotMatch(block, /createSshMobileSoftKeyboard\(\{/);
+    assert.doesNotMatch(block, /createSshMobileSoftKeyboard/);
+    assert.doesNotMatch(surfaceSrc, /createSshMobileSoftKeyboard/);
+    assert.match(surfaceSrc, /ssh-keyboard\/index/);
+    assert.match(surfaceSrc, /missing-inject|getSoftKeyboard/);
     assert.match(surfaceSrc, /host\.getSoftKeyboard/);
     assert.match(terminalJs, /getSoftKeyboard:\s*\(\)\s*=>/);
 });
@@ -68,8 +71,8 @@ test('contract: mobile fork path disables internal maxScroll stick via public AP
     assert.doesNotMatch(body, /term\._doRender\s*=/);
 });
 
-test('contract: cache-bust ssh-kb-root3', () => {
-    assert.match(terminalHtml, /20260721-ssh-kb-root3/);
+test('contract: cache-bust ssh-kb-root4', () => {
+    assert.match(terminalHtml, /20260721-ssh-kb-root4/);
 });
 
 test('surface: pinScroll host is called; no direct scroll without host', () => {

@@ -165,9 +165,9 @@ test('contract: ime-active cursor CSS exists in wterm source and vendor', () => 
 test('contract: keyboard-open padding does not double-count keyboard-inset', () => {
     // bars are position:fixed above IME; padding only reserves tools+aux height
     const block = styleCss.match(
-        /html\.mobile-stable-input\.keyboard-open\s+\.terminal-container\s*\{[\s\S]*?padding-bottom\s*:\s*calc\(([\s\S]*?)\)\s*!important/,
+        /html\.mobile-stable-input\.ssh-kb-open\s+\.terminal-container\s*\{[\s\S]*?padding-bottom\s*:\s*calc\(([\s\S]*?)\)\s*!important/,
     );
-    assert.ok(block, 'keyboard-open terminal-container padding-bottom calc missing');
+    assert.ok(block, 'ssh-kb-open terminal-container padding-bottom calc missing');
     assert.doesNotMatch(block[1], /keyboard-inset/);
     assert.match(block[1], /mobile-bottom-actions-height/);
     assert.match(block[1], /mobile-aux-keys-height/);
@@ -319,7 +319,7 @@ test('contract: authoritative mobile CSS overrides historical grid/static chrome
     assert.ok(marker > 0, 'last authoritative surface block missing');
     const tail = css.slice(marker);
     assert.match(tail, /terminal-page\s*\{[\s\S]{0,400}display:\s*flex\s*!important/);
-    assert.match(tail, /keyboard-open \.topbar-actions\s*\{[\s\S]{0,300}position:\s*fixed\s*!important/);
-    assert.match(tail, /keyboard-open \.terminal-bottom-bar\s*\{[\s\S]{0,300}position:\s*fixed\s*!important/);
+    assert.match(tail, /ssh-kb-open \.topbar-actions\s*\{[\s\S]{0,300}position:\s*fixed\s*!important/);
+    assert.match(tail, /ssh-kb-open \.terminal-bottom-bar\s*\{[\s\S]{0,300}position:\s*fixed\s*!important/);
     assert.doesNotMatch(tail, /grid-template-areas/);
 });

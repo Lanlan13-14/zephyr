@@ -1822,22 +1822,22 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     min-height: calc(100dvh - 12px);
     border-radius: var(--radius);
 }
-.terminal-workspace.compact.keyboard-open {
+.terminal-workspace.compact.ssh-kb-open {
     min-height: 0 !important;
     overflow: hidden;
 }
-.terminal-workspace.compact.keyboard-open .terminal-window,
-.terminal-workspace.compact.keyboard-open .terminal-window-body,
-.terminal-workspace.compact.keyboard-open .terminal-frame {
+.terminal-workspace.compact.ssh-kb-open .terminal-window,
+.terminal-workspace.compact.ssh-kb-open .terminal-window-body,
+.terminal-workspace.compact.ssh-kb-open .terminal-frame {
     min-height: 0 !important;
     height: 100% !important;
     max-height: 100% !important;
 }
-.terminal-workspace.compact.keyboard-open .terminal-window {
+.terminal-workspace.compact.ssh-kb-open .terminal-window {
     grid-column: 1 !important;
     grid-row: 1 !important;
 }
-.terminal-workspace.compact.keyboard-open .terminal-window-body {
+.terminal-workspace.compact.ssh-kb-open .terminal-window-body {
     flex: 1 1 auto;
     overflow: hidden;
 }
@@ -1893,17 +1893,17 @@ body.terminal-custom-fullscreen-open .main-nav {
     height: 100%;
 }
 .terminal-workspace:fullscreen .terminal-frame.active { width: 100%; height: 100%; }
-.terminal-workspace:fullscreen.keyboard-open {
+.terminal-workspace:fullscreen.ssh-kb-open {
     height: var(--app-visual-vh) !important;
     min-height: var(--app-visual-vh) !important;
     max-height: var(--app-visual-vh) !important;
     transform: translate3d(0, var(--app-visual-offset-top), 0);
 }
-.terminal-workspace.keyboard-settling,
-.terminal-workspace.keyboard-settling * {
+.terminal-workspace.ssh-kb-settling,
+.terminal-workspace.ssh-kb-settling * {
     transition: none !important;
 }
-.terminal-workspace:fullscreen.keyboard-open .terminal-frame.active {
+.terminal-workspace:fullscreen.ssh-kb-open .terminal-frame.active {
     height: 100% !important;
     max-height: 100% !important;
 }
@@ -2761,7 +2761,7 @@ html.viewport-updating .terminal-page {
         border-color 0.24s ease;
 }
 
-html.keyboard-open .terminal-page {
+html.ssh-kb-open .terminal-page {
     transform: translate3d(0, var(--visual-offset-top, 0px), 0);
 }
 
@@ -4799,7 +4799,7 @@ html.keyboard-open .terminal-page {
         transition: background-color 0.24s ease, border-color 0.24s ease;
     }
 
-    html.keyboard-open .terminal-page {
+    html.ssh-kb-open .terminal-page {
         transform: translate3d(0, 0, 0);
     }
 
@@ -4817,23 +4817,23 @@ html.keyboard-open .terminal-page {
         box-shadow: 0 -1px 0 var(--border);
     }
 
-    html.keyboard-open .terminal-input-panel {
+    html.ssh-kb-open .terminal-input-panel {
         transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     /* Top command bar: IME overlays content; never move the input panel or page. */
-    html.cmd-overlay-keyboard .terminal-input-panel,
-    html.cmd-overlay-keyboard.keyboard-open .terminal-input-panel {
+    html.ssh-kb-cmd .terminal-input-panel,
+    html.ssh-kb-cmd.ssh-kb-open .terminal-input-panel {
         transform: none !important;
         transition: none !important;
         will-change: auto !important;
     }
-    html.cmd-overlay-keyboard {
+    html.ssh-kb-cmd {
         --keyboard-inset: 0px !important;
     }
-    html.cmd-overlay-keyboard .terminal-page,
-    html.cmd-overlay-keyboard .terminal-container,
-    html.cmd-overlay-keyboard .wterm-wrapper {
+    html.ssh-kb-cmd .terminal-page,
+    html.ssh-kb-cmd .terminal-container,
+    html.ssh-kb-cmd .wterm-wrapper {
         transform: none !important;
     }
 
@@ -5005,7 +5005,7 @@ html.keyboard-open .terminal-page {
     /* Closed: ignore touches so the canvas receives them. */
     pointer-events: none;
 }
-.rdp-mobile-keyboard-input.keyboard-open {
+.rdp-mobile-keyboard-input.ssh-kb-open {
     /* Open: allow the IME host to keep focus; still visually invisible. */
     pointer-events: auto;
     /* Slightly taller host improves CJK candidate bar stability on iOS. */
@@ -5680,11 +5680,11 @@ body.smartbar-trash-hover .smartbar-trash-target {
         max-height: none;
         margin-bottom: 4px;
     }
-    html.keyboard-open .terminal-page .terminal-container {
+    html.ssh-kb-open .terminal-page .terminal-container {
         flex: 0 1 calc(100dvh - var(--keyboard-inset, 0px) - 116px - env(safe-area-inset-top));
         max-height: calc(100dvh - var(--keyboard-inset, 0px) - 116px - env(safe-area-inset-top));
     }
-    html.keyboard-open .terminal-page .wterm-wrapper {
+    html.ssh-kb-open .terminal-page .wterm-wrapper {
         max-height: 100%;
     }
 }
@@ -5808,18 +5808,18 @@ body.smartbar-trash-hover .smartbar-trash-target {
     .terminal-page .topbar-actions .wterm-theme-toggle {
         min-width: 38px;
     }
-    html.keyboard-open .terminal-page {
+    html.ssh-kb-open .terminal-page {
         grid-template-rows: auto minmax(0, calc(100dvh - var(--keyboard-inset, 0px) - 56px)) auto;
         height: 100dvh;
         max-height: 100dvh;
         overflow: hidden;
     }
-    html.keyboard-open .terminal-page .terminal-container {
+    html.ssh-kb-open .terminal-page .terminal-container {
         flex: unset;
         max-height: none;
         height: auto;
     }
-    html.keyboard-open .terminal-page .terminal-topbar {
+    html.ssh-kb-open .terminal-page .terminal-topbar {
         display: none;
     }
 }
@@ -6031,23 +6031,23 @@ body.smartbar-trash-hover .smartbar-trash-target {
 .cmd-keyboard-btn { display: none !important; }
 
 @media (max-width: 700px) and (hover: none) and (pointer: coarse) {
-    html.keyboard-open .terminal-page {
+    html.ssh-kb-open .terminal-page {
         height: 100dvh;
         max-height: 100dvh;
         grid-template-rows: auto minmax(0, 1fr) auto;
     }
-    html.keyboard-open .terminal-page .terminal-topbar {
+    html.ssh-kb-open .terminal-page .terminal-topbar {
         display: flex;
     }
-    html.keyboard-open .terminal-page .terminal-input-panel {
+    html.ssh-kb-open .terminal-page .terminal-input-panel {
         transform: none !important;
     }
-    html.keyboard-open .terminal-page .terminal-container {
+    html.ssh-kb-open .terminal-page .terminal-container {
         height: auto !important;
         max-height: none !important;
         min-height: 0;
     }
-    html.keyboard-open .terminal-page .wterm-wrapper {
+    html.ssh-kb-open .terminal-page .wterm-wrapper {
         max-height: none !important;
     }
 }
@@ -6988,7 +6988,7 @@ body.smartbar-trash-hover .smartbar-trash-target {
     pointer-events: auto;
 }
 
-.rdp-stage.keyboard-open .rdp-display-shell {
+.rdp-stage.ssh-kb-open .rdp-display-shell {
     padding-bottom: 0;
     scroll-padding-bottom: 0;
 }
@@ -7261,7 +7261,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     }
 
     html.mobile-stable-input.viewport-updating .terminal-page,
-    html.mobile-stable-input.keyboard-open .terminal-page {
+    html.mobile-stable-input.ssh-kb-open .terminal-page {
         height: 100% !important;
         max-height: 100% !important;
         transform: none !important;
@@ -7313,7 +7313,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     /* Keyboard open: pin bottom chrome above IME; keep terminal flex height.
        NEVER set terminal-container height:auto / flex:unset — that collapses
        the black terminal into a gray void under the tool strip. */
-    html.mobile-stable-input.keyboard-open .terminal-container {
+    html.mobile-stable-input.ssh-kb-open .terminal-container {
         flex: 1 1 auto !important;
         min-height: 120px !important;
         height: auto !important;
@@ -7326,14 +7326,14 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
             + 8px
         ) !important;
     }
-    html.mobile-stable-input.keyboard-open .terminal-container .wterm-wrapper,
-    html.mobile-stable-input.keyboard-open .terminal-container .wterm-wrapper.wterm {
+    html.mobile-stable-input.ssh-kb-open .terminal-container .wterm-wrapper,
+    html.mobile-stable-input.ssh-kb-open .terminal-container .wterm-wrapper.wterm {
         padding-bottom: 8px;
         min-height: 100% !important;
         height: 100% !important;
     }
-    /* Kill destructive non-stable keyboard-open rules when stable mode is on. */
-    html.mobile-stable-input.keyboard-open .terminal-page {
+    /* Kill destructive non-stable keyboard open rules when stable mode is on. */
+    html.mobile-stable-input.ssh-kb-open .terminal-page {
         height: 100% !important;
         max-height: 100% !important;
         grid-template-rows: none !important;
@@ -7342,7 +7342,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         overflow: hidden !important;
         transform: none !important;
     }
-    html.mobile-stable-input.keyboard-open .terminal-page .terminal-topbar {
+    html.mobile-stable-input.ssh-kb-open .terminal-page .terminal-topbar {
         display: flex !important; /* keep structure; tools move via order/fixed */
     }
 
@@ -7372,7 +7372,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
 
     /* Pin tools + aux flush to IME top. --ime-chrome-bottom is measured from
        visualViewport (layoutH - vv.offsetTop - vv.height), NOT inflated baseline. */
-    html.mobile-stable-input.keyboard-open .terminal-bottom-bar {
+    html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar {
         position: fixed !important;
         left: 0 !important;
         right: 0 !important;
@@ -7387,7 +7387,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         border-bottom: 0 !important;
     }
     /* When keyboard closes, immediately return to static in flow. */
-    html.mobile-stable-input:not(.keyboard-open) .terminal-bottom-bar {
+    html.mobile-stable-input:not(.ssh-kb-open) .terminal-bottom-bar {
         position: static !important;
         bottom: auto !important;
         padding-bottom: max(2px, env(safe-area-inset-bottom)) !important;
@@ -7416,7 +7416,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         transform: none !important;
         transition: none;
     }
-    html.mobile-stable-input.keyboard-open .topbar-actions {
+    html.mobile-stable-input.ssh-kb-open .topbar-actions {
         position: fixed !important;
         left: 0 !important;
         right: 0 !important;
@@ -7429,7 +7429,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         transform: none !important;
         transition: none !important;
     }
-    html.mobile-stable-input:not(.keyboard-open) .topbar-actions {
+    html.mobile-stable-input:not(.ssh-kb-open) .topbar-actions {
         position: static !important;
         bottom: auto !important;
         transform: none !important;
@@ -7586,7 +7586,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         background: var(--bg) !important;
     }
 
-    html.mobile-stable-input.keyboard-open .terminal-page {
+    html.mobile-stable-input.ssh-kb-open .terminal-page {
         /* The parent app shrinks the iframe to the area above the keyboard. */
         height: 100% !important;
         max-height: 100% !important;
@@ -7694,7 +7694,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         min-height: 0 !important;
     }
 
-    body.app-body.terminal-mode:not(.terminal-custom-fullscreen-open) .terminal-workspace.compact:not(.keyboard-open) {
+    body.app-body.terminal-mode:not(.terminal-custom-fullscreen-open) .terminal-workspace.compact:not(.ssh-kb-open) {
         height: 100% !important;
         max-height: 100% !important;
         min-height: 0 !important;
@@ -13406,21 +13406,21 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         grid-area: auto !important;
     }
     /* Only this state pins chrome. Later rules must not convert it back to grid/static. */
-    html.mobile-stable-input.keyboard-open .topbar-actions {
+    html.mobile-stable-input.ssh-kb-open .topbar-actions {
         position: fixed !important;
         left: 0 !important;
         right: 0 !important;
         bottom: calc(var(--ime-chrome-bottom, 0px) + var(--mobile-aux-keys-height, 44px)) !important;
         z-index: 41 !important;
     }
-    html.mobile-stable-input.keyboard-open .terminal-bottom-bar {
+    html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar {
         position: fixed !important;
         left: 0 !important;
         right: 0 !important;
         bottom: var(--ime-chrome-bottom, 0px) !important;
         z-index: 40 !important;
     }
-    html.mobile-stable-input.keyboard-open .terminal-container {
+    html.mobile-stable-input.ssh-kb-open .terminal-container {
         /* fixed chrome overlays; reserve exactly chrome heights, never keyboard inset */
         padding-bottom: calc(var(--mobile-bottom-actions-height, 46px) + var(--mobile-aux-keys-height, 44px) + 8px) !important;
     }

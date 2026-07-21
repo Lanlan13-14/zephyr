@@ -77,23 +77,18 @@ test('syncViewport opens physical without changing intent when closed', () => {
     assert.equal(store.desiredOpen(), false);
 });
 
-test('system dismiss requires low inset + no focus + past guard', () => {
+test('system dismiss requires sustained low inset past open guard (focus may survive Android back)', () => {
     const host = makeHost();
     const store = createKeyboardIntentStore(host, { openGuardMs: 200, dismissConfirmMs: 300 });
     store.open('tap', { now: 1000 });
-    // physical up
     store.syncViewport({ inset: 280, hasEditableFocus: true, now: 1100 });
     assert.equal(store.physicalOpen(), true);
-    // physical down but still in guard + focused → keep open
+    // physical down still in guard → keep open
     store.syncViewport({ inset: 0, hasEditableFocus: true, now: 1150 });
     assert.equal(store.desiredOpen(), true);
-    // past guard, still focused → keep
-    store.syncViewport({ inset: 0, hasEditableFocus: true, now: 1500 });
-    assert.equal(store.desiredOpen(), true);
-    // past guard, no focus, low long enough → close
-    // need continuous low: first mark low at 1600, confirm at 1600+300
-    store.syncViewport({ inset: 0, hasEditableFocus: false, now: 1600 });
-    store.syncViewport({ inset: 0, hasEditableFocus: false, now: 1950 });
+    // past guard + sustained low, even if focus remains → system dismiss
+    store.syncViewport({ inset: 0, hasEditableFocus: true, now: 1600 });
+    store.syncViewport({ inset: 0, hasEditableFocus: true, now: 1950 });
     assert.equal(store.desiredOpen(), false);
     assert.equal(store.physicalOpen(), false);
 });

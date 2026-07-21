@@ -149,7 +149,7 @@ export function createSshKeyboard(host) {
     }
 
     function openTerminal(reason = 'open-terminal') {
-        if (blockedBySelection()) return intent.getState();
+        if (blockedBySelection()) return false;
         return intent.open(reason, { focusOwner: FocusOwner.TERMINAL, liftMode: LiftMode.WORKSPACE });
     }
 
@@ -262,12 +262,19 @@ export function createSshKeyboard(host) {
     // Compatibility shim matching old ssh-mobile-keyboard surface used by terminal-surface-controller
     const softKeyboardCompat = {
         open: (reason, opts = {}) => {
+            if (host.isSelectionMode?.() || host.hasSelection?.()) return false;
+            if (host.isGestureSuppressed?.() && opts.gesture !== false) return false;
             if (opts.liftMode === LiftMode.NONE || opts.liftMode === 'none') return openCmd(reason);
-            return openTerminal(reason);
+            const r = openTerminal(reason);
+            return r === false ? false : true;
         },
         close: (reason, opts) => close(reason, opts),
         toggle: (reason) => buttonClick(reason),
-        handleTerminalTap: (reason) => intent.handleTerminalTap(reason),
+        handleTerminalTap: (reason) => {
+            if (host.isSelectionMode?.() || host.hasSelection?.() || host.isGestureSuppressed?.()) return false;
+            const r = intent.handleTerminalTap(reason);
+            return r === false ? false : true;
+        },
         retainForChrome: (reason) => retainFocus(reason),
         onProxyFocus: (reason) => handleImeFocus(reason),
         onProxyBlur: (reason) => handleImeBlur(reason),

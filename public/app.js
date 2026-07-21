@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-ssh-kb-root3';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-ssh-kb-root4';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -85,15 +85,15 @@ let mobileDockTogglePressState = null;
 let mobileDockToggleLastToggleAt = 0;
 const terminalReconnectFallbackTimers = new Map();
 let fullscreenLoadingTimer = 0;
-let appKeyboardBaseline = 0;
-let appKeyboardOpen = false;
+let sshKbParentBaseline = 0;
+let sshKbParentOpen = false;
 // True only after parent visualViewport itself observed a real IME inset.
 // An overlays-content parent that always reports 0 must never close an iframe-open IME.
-let appKeyboardLastInset = 0;
-let appKeyboardSettleTimer = 0;
-let appKeyboardLastSignature = '';
-let appKeyboardPendingMetrics = null;
-let appKeyboardFreezeReleaseTimer = 0;
+let sshKbParentInset = 0;
+let sshKbParentSettleTimer = 0;
+let sshKbParentLastSignature = '';
+let sshKbParentPendingMetrics = null;
+let sshKbParentFreezeReleaseTimer = 0;
 let closingTerminalTabs = new Set();
 let minimizingTerminalTabs = new Set();
 let securityStatus = { user: {}, passkeys: [] }, ipBans = [], loginEvents = [];
@@ -352,9 +352,9 @@ function postTerminalLayoutStabilize(reason = 'layout-stabilize', { focus = fals
         } : null,
         fullscreen: !!fullscreenElement,
         customFullscreen: !!workspace?.classList.contains('custom-fullscreen'),
-        keyboardOpen: !!workspace?.classList.contains('keyboard-open'),
-        appKeyboardOpen,
-        appKeyboardBaseline,
+        keyboardOpen: !!workspace?.classList.contains('ssh-kb-open'),
+        sshKbParentOpen,
+        sshKbParentBaseline,
         visualViewport: window.visualViewport ? {
             width: Math.round(window.visualViewport.width || 0),
             height: Math.round(window.visualViewport.height || 0),
@@ -368,7 +368,7 @@ function postTerminalLayoutStabilize(reason = 'layout-stabilize', { focus = fals
         type: 'layout-stabilize',
         reason,
         focus,
-        keyboardOpen: !!workspace?.classList.contains('keyboard-open') || appKeyboardOpen,
+        keyboardOpen: !!workspace?.classList.contains('ssh-kb-open') || sshKbParentOpen,
         keyboardInset: Math.round(keyboardInset || 0),
     }, '*'));
 }
@@ -377,16 +377,16 @@ function maybeApplyCompactKeyboardFromViewport(reason = 'compact-keyboard-viewpo
     // Child facade is sole judge; parent only refreshes geometry if already open via child metrics.
     const workspace = $('#terminalWorkspace');
     if (!workspace || !isCompactTerminalWorkspace() || !document.body.classList.contains('terminal-mode') || !window.visualViewport) return false;
-    if (!appKeyboardOpen && !workspace.classList.contains('keyboard-open') && !workspace.classList.contains('ssh-kb-open')) return false;
-    const baseline = Math.max(appKeyboardBaseline || 0, window.innerHeight || 0, document.documentElement.clientHeight || 0);
+    if (!sshKbParentOpen && !workspace.classList.contains('ssh-kb-open') && !workspace.classList.contains('ssh-kb-open')) return false;
+    const baseline = Math.max(sshKbParentBaseline || 0, window.innerHeight || 0, document.documentElement.clientHeight || 0);
     const viewportHeight = Math.round(window.visualViewport.height || 0);
     const offsetTop = Math.round(window.visualViewport.offsetTop || 0);
     const inset = Math.max(0, Math.round(baseline - viewportHeight - offsetTop));
     // Only update inset geometry while child-declared open; never flip open/closed here.
-    if (!appKeyboardOpen) return false;
+    if (!sshKbParentOpen) return false;
     applyTerminalWorkspaceKeyboard({
         keyboardOpen: true,
-        keyboardInset: Math.max(inset, appKeyboardLastInset || 0),
+        keyboardInset: Math.max(inset, sshKbParentInset || 0),
         viewportHeight,
         layoutHeight: baseline,
         offsetTop,
@@ -406,7 +406,7 @@ function scheduleCompactKeyboardViewportCheck(reason = 'compact-keyboard-check')
 }
 function rememberCompactTerminalKeyboardBaseline(reason = 'compact-keyboard-baseline') {
     const workspace = $('#terminalWorkspace');
-    if (!workspace || !isCompactTerminalWorkspace() || appKeyboardOpen || workspace.classList.contains('keyboard-open')) return;
+    if (!workspace || !isCompactTerminalWorkspace() || sshKbParentOpen || workspace.classList.contains('ssh-kb-open')) return;
     const viewport = window.visualViewport;
     const candidates = [
         window.innerHeight || 0,
@@ -416,8 +416,8 @@ function rememberCompactTerminalKeyboardBaseline(reason = 'compact-keyboard-base
     ].map((value) => Math.round(Number(value) || 0)).filter((value) => value > 0);
     if (!candidates.length) return;
     const nextBaseline = Math.max(...candidates);
-    if (nextBaseline > appKeyboardBaseline) appKeyboardBaseline = nextBaseline;
-    console.info('[TerminalLayoutDiagnostics]', { event: 'parent:compact-keyboard-baseline', reason, appKeyboardBaseline });
+    if (nextBaseline > sshKbParentBaseline) sshKbParentBaseline = nextBaseline;
+    console.info('[TerminalLayoutDiagnostics]', { event: 'parent:compact-keyboard-baseline', reason, sshKbParentBaseline });
 }
 function forceCompactTerminalWorkspaceFill(reason = 'compact-terminal-fill') {
     const workspace = $('#terminalWorkspace');
@@ -427,13 +427,13 @@ function forceCompactTerminalWorkspaceFill(reason = 'compact-terminal-fill') {
     rememberCompactTerminalKeyboardBaseline(reason);
     const viewRect = view.getBoundingClientRect?.();
     const viewHeight = Math.round(viewRect?.height || 0);
-    if (!appKeyboardOpen && viewHeight > 0) {
+    if (!sshKbParentOpen && viewHeight > 0) {
         workspace.style.flex = '1 1 auto';
         workspace.style.height = 'auto';
         workspace.style.maxHeight = 'none';
         workspace.style.minHeight = '0px';
         workspace.style.marginBottom = '0px';
-        document.body.classList.remove('terminal-keyboard-lift');
+        document.body.classList.remove('ssh-kb-lift');
         document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
         document.documentElement.style.setProperty('--app-visual-vh', '100vh');
         document.documentElement.style.setProperty('--app-keyboard-top', '100vh');
@@ -454,7 +454,7 @@ function forceCompactTerminalWorkspaceFill(reason = 'compact-terminal-fill') {
             frame.style.minHeight = '0px';
         });
     });
-    console.info('[TerminalLayoutDiagnostics]', { event: 'parent:compact-fill', reason, viewHeight, appKeyboardOpen });
+    console.info('[TerminalLayoutDiagnostics]', { event: 'parent:compact-fill', reason, viewHeight, sshKbParentOpen });
 }
 function scheduleTerminalLayoutStabilize(reason = 'layout-stabilize', options = {}) {
     window.clearTimeout(scheduleTerminalLayoutStabilize._timer);
@@ -462,7 +462,7 @@ function scheduleTerminalLayoutStabilize(reason = 'layout-stabilize', options = 
         [0, 80, 220, 520].forEach((delay, index) => {
             window.setTimeout(() => {
                 forceCompactTerminalWorkspaceFill(`${reason}:phase-${index}`);
-                if (appKeyboardOpen || $('#terminalWorkspace')?.classList.contains('keyboard-open')) maybeApplyCompactKeyboardFromViewport(`${reason}:phase-${index}`);
+                if (sshKbParentOpen || $('#terminalWorkspace')?.classList.contains('ssh-kb-open')) maybeApplyCompactKeyboardFromViewport(`${reason}:phase-${index}`);
                 postTerminalLayoutStabilize(`${reason}:phase-${index}`, options);
             }, delay);
         });
@@ -2550,7 +2550,7 @@ function renderTerminalWorkspace() {
     const keepAliveMinimized = getMinimizedKeepAliveSessions();
     const count = visible.length;
     const workspace = $('#terminalWorkspace');
-    const preservedWorkspaceClasses = ['custom-fullscreen', 'keyboard-open', 'fullscreen-transitioning', 'fullscreen-loading']
+    const preservedWorkspaceClasses = ['custom-fullscreen', 'ssh-kb-open', 'fullscreen-transitioning', 'fullscreen-loading']
         .filter((className) => workspace.classList.contains(className));
     workspace.className = `terminal-workspace terminal-workspace-grid layout-${Math.min(count, 3)} ${isCompactTerminalWorkspace() ? 'compact' : ''} ${preservedWorkspaceClasses.join(' ')}`;
     const visibleIds = new Set(visible.map((t) => t.id));
@@ -2813,20 +2813,20 @@ function animateTerminalWindowLayoutFrom(beforeRects, { reason = 'layout-change'
 
 function resetTerminalWorkspaceKeyboard({ force = false, notifyIframe = false } = {}) {
     const workspace = $('#terminalWorkspace');
-    if (!workspace || (!force && !appKeyboardOpen && !workspace.classList.contains('keyboard-open') && !workspace.classList.contains('keyboard-settling'))) return;
-    const wasOpen = appKeyboardOpen;
-    appKeyboardOpen = false;
-    appKeyboardLastInset = 0;
-    appKeyboardBaseline = 0;
-    appKeyboardPendingMetrics = null;
-    appKeyboardLastSignature = '';
-    window.clearTimeout(appKeyboardSettleTimer);
-    workspace.classList.remove('keyboard-open', 'keyboard-settling', 'ssh-kb-open');
+    if (!workspace || (!force && !sshKbParentOpen && !workspace.classList.contains('ssh-kb-open') && !workspace.classList.contains('ssh-kb-settling'))) return;
+    const wasOpen = sshKbParentOpen;
+    sshKbParentOpen = false;
+    sshKbParentInset = 0;
+    sshKbParentBaseline = 0;
+    sshKbParentPendingMetrics = null;
+    sshKbParentLastSignature = '';
+    window.clearTimeout(sshKbParentSettleTimer);
+    workspace.classList.remove('ssh-kb-open', 'keyboard-settling', 'ssh-kb-open');
     document.documentElement.classList.remove('ssh-kb-open');
     document.documentElement.style.setProperty('--app-keyboard-inset', '0px');
     document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
-    appKeyboardLastInset = 0;
-    document.body.classList.remove('terminal-keyboard-lift');
+    sshKbParentInset = 0;
+    document.body.classList.remove('ssh-kb-lift');
     document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
     document.documentElement.style.setProperty('--app-visual-vh', '100vh');
     document.documentElement.style.setProperty('--app-visual-offset-top', '0px');
@@ -2856,13 +2856,13 @@ function resetTerminalWorkspaceKeyboard({ force = false, notifyIframe = false } 
     if (notifyIframe || force) notifyFrameKeyboardReset('parent-workspace-reset');
     if (force) {
         [80, 220, 520, 900].forEach((delay) => window.setTimeout(() => {
-            appKeyboardOpen = false;
-            appKeyboardBaseline = 0;
-            appKeyboardPendingMetrics = null;
-            appKeyboardLastSignature = '';
-            workspace.classList.remove('keyboard-open', 'keyboard-settling');
+            sshKbParentOpen = false;
+            sshKbParentBaseline = 0;
+            sshKbParentPendingMetrics = null;
+            sshKbParentLastSignature = '';
+            workspace.classList.remove('ssh-kb-open', 'keyboard-settling');
             document.documentElement.style.setProperty('--app-keyboard-inset', '0px');
-            document.body.classList.remove('terminal-keyboard-lift');
+            document.body.classList.remove('ssh-kb-lift');
             document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
             document.documentElement.style.setProperty('--app-visual-vh', '100vh');
             document.documentElement.style.setProperty('--app-visual-offset-top', '0px');
@@ -2877,8 +2877,8 @@ function resetTerminalWorkspaceKeyboard({ force = false, notifyIframe = false } 
         }, delay));
     }
     postTerminalKeyboardFreeze(true, 'parent-keyboard-reset-start', { settleMs: 900 });
-    window.clearTimeout(appKeyboardFreezeReleaseTimer);
-    appKeyboardFreezeReleaseTimer = window.setTimeout(() => postTerminalKeyboardFreeze(false, 'parent-keyboard-reset-settled'), 900);
+    window.clearTimeout(sshKbParentFreezeReleaseTimer);
+    sshKbParentFreezeReleaseTimer = window.setTimeout(() => postTerminalKeyboardFreeze(false, 'parent-keyboard-reset-settled'), 900);
     console.info('[TerminalLayoutDiagnostics]', { event: 'parent:keyboard-reset', wasOpen });
     scheduleTerminalLayoutStabilize('parent-keyboard-reset', { focus: false });
 }
@@ -2890,9 +2890,9 @@ function commitTerminalWorkspaceKeyboard(metrics = {}) {
     const viewportHeight = Math.round(Number(metrics.viewportHeight) || window.visualViewport?.height || window.innerHeight || 0);
     const offsetTop = Math.round(Number(metrics.offsetTop) || window.visualViewport?.offsetTop || 0);
     const height = Math.max(240, viewportHeight);
-    appKeyboardOpen = true;
-    workspace.classList.add('keyboard-open');
-    workspace.classList.remove('keyboard-settling');
+    sshKbParentOpen = true;
+    workspace.classList.add('ssh-kb-open');
+    workspace.classList.remove('ssh-kb-settling');
     postTerminalKeyboardFreeze(true, 'parent-keyboard-commit-lock', { settleMs: 900 });
     document.documentElement.style.setProperty('--app-keyboard-inset', `${inset}px`);
     document.documentElement.style.setProperty('--app-visual-vh', `${height}px`);
@@ -2934,7 +2934,7 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
     const parentVvHeight = Math.round(parentViewport?.height || parentInnerHeight || parentClientHeight || 0);
     const parentOffsetTop = Math.round(parentViewport?.offsetTop || 0);
     const parentKeyboardTop = Math.max(0, parentOffsetTop + parentVvHeight);
-    const parentLayoutHeight = Math.max(parentInnerHeight, parentClientHeight, appKeyboardBaseline || 0, parentKeyboardTop);
+    const parentLayoutHeight = Math.max(parentInnerHeight, parentClientHeight, sshKbParentBaseline || 0, parentKeyboardTop);
     const metricsViewportHeight = Math.round(Number(metrics.viewportHeight) || 0);
     const metricsLayoutHeight = Math.round(Number(metrics.layoutHeight) || 0);
     const metricsOffsetTop = Math.round(Number(metrics.offsetTop) || 0);
@@ -2976,21 +2976,21 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         // Include frame bottom: Android browser chrome / viewport changes can move the
         // iframe without changing keyboard height. We must resend exact overlap then.
         const signature = `stable-overlay:${wantOpen ? 1 : 0}:${Math.round(effectiveInset)}:${Math.round(parentKeyboardTop)}:${Math.round(metricsKeyboardTop)}:${Math.round(activeFrameRect?.bottom || 0)}`;
-        if (signature === appKeyboardLastSignature) {
-            appKeyboardOpen = wantOpen;
+        if (signature === sshKbParentLastSignature) {
+            sshKbParentOpen = wantOpen;
             return;
         }
-        appKeyboardLastSignature = signature;
-        appKeyboardOpen = wantOpen;
-        appKeyboardPendingMetrics = wantOpen
+        sshKbParentLastSignature = signature;
+        sshKbParentOpen = wantOpen;
+        sshKbParentPendingMetrics = wantOpen
             ? { ...metrics, stableInput: true, keyboardOpen: true, keyboardInset: effectiveInset, liftMode }
             : null;
-        workspace.classList.toggle('keyboard-open', wantOpen);
+        workspace.classList.toggle('ssh-kb-open', wantOpen);
         workspace.classList.toggle('ssh-kb-open', wantOpen);
         document.documentElement.classList.toggle('ssh-kb-open', wantOpen);
         document.documentElement.style.setProperty('--ssh-kb-inset', wantOpen ? `${effectiveInset}px` : '0px');
-        if (wantOpen) appKeyboardLastInset = effectiveInset;
-        document.body.classList.remove('terminal-keyboard-lift');
+        if (wantOpen) sshKbParentInset = effectiveInset;
+        document.body.classList.remove('ssh-kb-lift');
         workspace.style.flex = '';
         workspace.style.height = '';
         workspace.style.maxHeight = '';
@@ -3036,19 +3036,19 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
     }
 
     const signature = `${Math.round(inset / 24) * 24}:${Math.round((metricsViewportHeight || parentVvHeight) / 24) * 24}:${Math.round(parentOffsetTop / 8) * 8}`;
-    appKeyboardPendingMetrics = { ...metrics, keyboardInset: inset, viewportHeight: metricsViewportHeight || parentVvHeight, offsetTop: parentOffsetTop, keyboardOpen: true };
-    workspace.classList.add('keyboard-settling');
-    postTerminalKeyboardFreeze(true, 'parent-keyboard-opening', { settleMs: 1200 });
-    window.clearTimeout(appKeyboardFreezeReleaseTimer);
+    sshKbParentPendingMetrics = { ...metrics, keyboardInset: inset, viewportHeight: metricsViewportHeight || parentVvHeight, offsetTop: parentOffsetTop, keyboardOpen: true };
+    workspace.classList.add('ssh-kb-settling');
+    postTerminalKeyboardFreeze(true, 'parent-ssh-kb-opening', { settleMs: 1200 });
+    window.clearTimeout(sshKbParentFreezeReleaseTimer);
     // Android visualViewport 在键盘动画期间会连续抖动多次。不要每一帧改 workspace height/通知 iframe，
     // 等 90ms 无新指标后一次性提交，视觉上像 ServerBox 一样跟随系统键盘而不是网页自己跳动。
-    if (signature === appKeyboardLastSignature && appKeyboardOpen) return;
-    appKeyboardLastSignature = signature;
-    window.clearTimeout(appKeyboardSettleTimer);
-    appKeyboardSettleTimer = window.setTimeout(() => {
-        commitTerminalWorkspaceKeyboard(appKeyboardPendingMetrics || metrics);
-        appKeyboardFreezeReleaseTimer = window.setTimeout(() => postTerminalKeyboardFreeze(false, 'parent-keyboard-open-settled'), 1100);
-    }, appKeyboardOpen ? 70 : 110);
+    if (signature === sshKbParentLastSignature && sshKbParentOpen) return;
+    sshKbParentLastSignature = signature;
+    window.clearTimeout(sshKbParentSettleTimer);
+    sshKbParentSettleTimer = window.setTimeout(() => {
+        commitTerminalWorkspaceKeyboard(sshKbParentPendingMetrics || metrics);
+        sshKbParentFreezeReleaseTimer = window.setTimeout(() => postTerminalKeyboardFreeze(false, 'parent-ssh-kb-open-settled'), 1100);
+    }, sshKbParentOpen ? 70 : 110);
 }
 
 function updateFullscreenKeyboardFromViewport() {
@@ -3063,30 +3063,30 @@ function updateFullscreenKeyboardFromViewport() {
     const layoutHeight = Math.round(window.innerHeight || document.documentElement.clientHeight || 0);
     const vvHeight = Math.round(window.visualViewport.height || layoutHeight);
     // 键盘关闭时重置基线，避免下次打开时基值偏高
-    if (!appKeyboardOpen) {
+    if (!sshKbParentOpen) {
         const currentInset = layoutHeight - vvHeight - Math.round(window.visualViewport.offsetTop || 0);
         if (currentInset < 100) {
             // 键盘已关闭：用当前值直接更新基线，确保下次用正确布局高度
-            appKeyboardBaseline = Math.max(appKeyboardBaseline || 0, layoutHeight, vvHeight);
+            sshKbParentBaseline = Math.max(sshKbParentBaseline || 0, layoutHeight, vvHeight);
         } else {
-            // 键盘可能正在打开但 appKeyboardOpen 尚未设置——尽量用布局高度做基线
-            appKeyboardBaseline = Math.max(appKeyboardBaseline || 0, layoutHeight, vvHeight);
+            // 键盘可能正在打开但 sshKbParentOpen 尚未设置——尽量用布局高度做基线
+            sshKbParentBaseline = Math.max(sshKbParentBaseline || 0, layoutHeight, vvHeight);
         }
     }
-    const baseline = Math.max(appKeyboardBaseline || 0, layoutHeight);
+    const baseline = Math.max(sshKbParentBaseline || 0, layoutHeight);
     const viewportHeight = vvHeight;
     const offsetTop = Math.round(window.visualViewport.offsetTop || 0);
     const inset = Math.max(0, baseline - viewportHeight - offsetTop);
-    if (inset >= 100 || workspace.classList.contains('keyboard-open')) {
-        applyTerminalWorkspaceKeyboard({ keyboardOpen: inset >= 16 || appKeyboardOpen, keyboardInset: inset, viewportHeight, layoutHeight: baseline, offsetTop });
+    if (inset >= 100 || workspace.classList.contains('ssh-kb-open')) {
+        applyTerminalWorkspaceKeyboard({ keyboardOpen: inset >= 16 || sshKbParentOpen, keyboardInset: inset, viewportHeight, layoutHeight: baseline, offsetTop });
     }
 }
 
 function scheduleTerminalKeyboardReflow(reason = 'terminal-keyboard-reflow') {
-    appKeyboardLastSignature = '';
+    sshKbParentLastSignature = '';
     [0, 80, 180, 360, 720].forEach((delay, index) => {
         window.setTimeout(() => {
-            appKeyboardLastSignature = '';
+            sshKbParentLastSignature = '';
             updateFullscreenKeyboardFromViewport();
             scheduleTerminalLayoutStabilize(`${reason}:phase-${index}`, { focus: false });
         }, delay);
@@ -3150,7 +3150,7 @@ async function fullscreenTerminalTab(tabId) {
             resetTerminalWorkspaceKeyboard({ force: true });
             workspace.classList.toggle('custom-fullscreen');
             document.body.classList.toggle('terminal-custom-fullscreen-open', workspace.classList.contains('custom-fullscreen'));
-            appKeyboardLastSignature = '';
+            sshKbParentLastSignature = '';
             scheduleTerminalKeyboardReflow(workspace.classList.contains('custom-fullscreen') ? 'mobile-fullscreen-enter' : 'mobile-fullscreen-exit');
             renderTerminalTabs();
             hideFullscreenLoading({ delay: 360 });
@@ -7253,7 +7253,7 @@ function bindEvents() {
         const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
         const isTerminalFullscreen = fullscreenElement === workspace || fullscreenElement?.classList?.contains('terminal-window');
         if (isTerminalFullscreen) {
-            appKeyboardBaseline = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, window.visualViewport?.height || 0);
+            sshKbParentBaseline = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, window.visualViewport?.height || 0);
             scheduleTerminalKeyboardReflow('native-fullscreen-change');
             hideFullscreenLoading({ delay: 620 });
         } else {
@@ -7292,13 +7292,13 @@ function bindEvents() {
             if (e.data.fallback && e.data.stableInput) return;
             // Single parent hysteresis via reduceParentKeyboardMessage (open≥80, close<12).
             const reduced = reduceParentKeyboardMessage(e.data, {
-                open: !!appKeyboardOpen,
-                inset: appKeyboardLastInset || Number.parseInt(document.documentElement.style.getPropertyValue('--app-keyboard-inset') || '0', 10) || 0,
+                open: !!sshKbParentOpen,
+                inset: sshKbParentInset || Number.parseInt(document.documentElement.style.getPropertyValue('--app-keyboard-inset') || '0', 10) || 0,
             });
-            if (reduced.changed || reduced.open) appKeyboardLastInset = reduced.inset;
+            if (reduced.changed || reduced.open) sshKbParentInset = reduced.inset;
             if (reduced.cmd) {
                 window.clearTimeout(applyTerminalWorkspaceKeyboard._closeDebounce);
-                if (appKeyboardOpen) resetTerminalWorkspaceKeyboard({ force: false });
+                if (sshKbParentOpen) resetTerminalWorkspaceKeyboard({ force: false });
                 return;
             }
             if (!reduced.changed && (e.data.type === 'ssh-kb')) {
