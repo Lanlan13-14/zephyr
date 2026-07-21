@@ -53,7 +53,7 @@ export function createSshKeyboard(host) {
         isEmbedded: () => (host.isEmbedded ? !!host.isEmbedded() : true),
         getTabId: () => host.getTabId?.() || '',
         postToParent: host.postToParent,
-        emitLegacyMetrics: true,
+        emitLegacyMetrics: false,
         log: (e, d) => log(`bridge:${e}`, d),
     });
 

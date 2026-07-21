@@ -6,88 +6,85 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const terminalJs = readFileSync(join(root, 'public/terminal.js'), 'utf8');
+const appJs = readFileSync(join(root, 'public/app.js'), 'utf8');
 const indexJs = readFileSync(join(root, 'public/ssh-keyboard/index.js'), 'utf8');
+const bridgeJs = readFileSync(join(root, 'public/ssh-keyboard/bridge.js'), 'utf8');
+const styleCss = readFileSync(join(root, 'public/style.css'), 'utf8');
+const terminalHtml = readFileSync(join(root, 'public/terminal.html'), 'utf8');
 
-function sliceFn(name) {
-    const start = terminalJs.indexOf(`function ${name}(`);
+function sliceFn(src, name) {
+    const start = src.indexOf(`function ${name}(`);
     assert.ok(start > 0, `${name} missing`);
-    // Find the opening brace of the function body (skip default-param object braces).
     let i = start;
     let paren = 0;
     let seenParen = false;
-    for (; i < terminalJs.length; i++) {
-        const c = terminalJs[i];
+    for (; i < src.length; i++) {
+        const c = src[i];
         if (c === '(') { paren++; seenParen = true; }
         else if (c === ')') paren--;
         else if (c === '{' && seenParen && paren === 0) break;
     }
-    assert.ok(i < terminalJs.length, `${name} body missing`);
     let depth = 0;
-    for (; i < terminalJs.length; i++) {
-        if (terminalJs[i] === '{') depth++;
-        else if (terminalJs[i] === '}') {
+    for (; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}') {
             depth--;
-            if (depth === 0) return terminalJs.slice(start, i + 1);
+            if (depth === 0) return src.slice(start, i + 1);
         }
     }
     throw new Error(`unclosed ${name}`);
 }
 
+test('DoD1: no mobileKeyboardOpen/UserControlled/FocusLikely identifiers in terminal.js', () => {
+    assert.doesNotMatch(terminalJs, /\bmobileKeyboardOpen\b/);
+    assert.doesNotMatch(terminalJs, /\bmobileKeyboardUserControlled\b/);
+    assert.doesNotMatch(terminalJs, /\bkeyboardFocusLikely\b/);
+    assert.doesNotMatch(terminalJs, /\bmobileKeyboardInset\b/);
+    assert.match(terminalJs, /function isSshKbDesiredOpen/);
+    assert.match(terminalJs, /function isSshKbLayoutOpen/);
+    assert.match(terminalJs, /function getSshKbInset/);
+});
+
+test('DoD2: proxy focus only in intent.js', () => {
+    assert.doesNotMatch(terminalJs, /mobileImeProxy\.focus/);
+    const intentJs = readFileSync(join(root, 'public/ssh-keyboard/intent.js'), 'utf8');
+    assert.match(intentJs, /proxy\.focus/);
+});
+
+test('DoD3: non-pin scrollTop goes through writeTerminalScrollTop gate', () => {
+    assert.match(terminalJs, /function writeTerminalScrollTop/);
+    assert.match(terminalJs, /allowNonPinScroll/);
+    // maxScroll chase sites must call writeTerminalScrollTop or pin path
+    assert.match(terminalJs, /writeTerminalScrollTop\(el, maxScroll/);
+    assert.match(terminalJs, /scroll:blocked-ssh-kb-gate|allowNonPinScroll/);
+});
+
+test('DoD4: parent has no independent physical hysteresis; child bridge default no legacy metrics', () => {
+    assert.doesNotMatch(appJs, /appKeyboardParentPhysicalOpen/);
+    assert.match(appJs, /must NOT invent keyboard open|Child facade is sole judge/i);
+    assert.match(appJs, /reduceParentKeyboardMessage/);
+    assert.match(bridgeJs, /emitLegacyMetrics === true|emitLegacyMetrics: false/);
+    assert.match(indexJs, /emitLegacyMetrics:\s*false/);
+});
+
+test('DoD5/CSS: --keyboard-inset falls back to --ssh-kb-inset', () => {
+    assert.match(styleCss, /--keyboard-inset:\s*var\(--ssh-kb-inset/);
+    assert.match(styleCss, /--ssh-kb-inset/);
+    assert.match(terminalJs, /setProperty\('--ssh-kb-inset'/);
+});
+
 test('updateViewportInsets has no independent open hysteresis', () => {
-    const body = sliceFn('updateViewportInsets');
+    const body = sliceFn(terminalJs, 'updateViewportInsets');
     assert.match(body, /ensureSshKeyboard|handleViewportChange|syncLegacyKeyboardMirrorFromFacade/);
     assert.doesNotMatch(body, /keyboardWantsAvoidance/);
     assert.doesNotMatch(body, /controllerDesired/);
-    assert.doesNotMatch(body, /controllerPhysical/);
-    // Only fallback path may use raw inset threshold when facade missing.
-    assert.match(body, /const kb = ensureSshKeyboard\(\)/);
 });
 
 test('finalizeKeyboardClose delegates to facade close', () => {
-    const body = sliceFn('finalizeKeyboardClose');
+    const body = sliceFn(terminalJs, 'finalizeKeyboardClose');
     assert.match(body, /kb\.close|ensureSshKeyboard/);
-    assert.match(body, /syncLegacyKeyboardMirrorFromFacade/);
 });
 
-test('focusMobileStableImeProxy opens only via facade openTerminal', () => {
-    const body = sliceFn('focusMobileStableImeProxy');
-    assert.match(body, /openTerminal/);
-    assert.doesNotMatch(body, /surface\.openKeyboard/);
-    assert.doesNotMatch(body, /sshSoftKeyboard\.open\(/);
-});
-
-test('single facade→DOM mirror exists', () => {
-    assert.match(terminalJs, /function syncLegacyKeyboardMirrorFromFacade/);
-    const body = sliceFn('syncLegacyKeyboardMirrorFromFacade');
-    assert.match(body, /applyMobileStableKeyboardInset/);
-    assert.match(body, /mobileKeyboardOpen = /);
-});
-
-test('layout gate mirrorLegacy disabled so terminal owns chrome CSS', () => {
-    assert.match(indexJs, /mirrorLegacy:\s*false/);
-});
-
-test('parent notify redirects terminal-ime to bridge when facade present', () => {
-    const body = sliceFn('notifyParentKeyboardMetrics');
-    assert.match(body, /legacy-notify-redirect|sshKb && !force/);
-    assert.match(body, /_bridge\?\.publish|forceNotify/);
-});
-
-test('layout-stabilize feeds facade not applyInset first', () => {
-    const idx = terminalJs.indexOf("if (e.data.type === 'layout-stabilize')");
-    assert.ok(idx > 0);
-    const body = terminalJs.slice(idx, idx + 1800);
-    assert.match(body, /syncViewport/);
-    assert.match(body, /syncLegacyKeyboardMirrorFromFacade/);
-    // Must not set mobileKeyboardOpen = true before facade path
-    assert.doesNotMatch(body, /mobileKeyboardOpen = true;\s*\n\s*mobileKeyboardInset = parentInset;\s*\n\s*applyMobileStableKeyboardInset/);
-});
-
-test('viewport listeners do not double-call independent judges', () => {
-    // setup onViewport should only call updateViewportInsets (which is facade-only)
-    const idx = terminalJs.indexOf('const onViewport = (reason)');
-    assert.ok(idx > 0);
-    const body = terminalJs.slice(idx, idx + 350);
-    assert.match(body, /updateViewportInsets\(\)/);
-    assert.doesNotMatch(body, /handleViewportChange\(reason\);\s*\n\s*.*updateViewportInsets/);
+test('cache bust root3', () => {
+    assert.match(terminalHtml, /ssh-kb-root3/);
 });

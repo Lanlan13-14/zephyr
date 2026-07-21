@@ -1,6 +1,6 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260721-ssh-kb-root2';
-import { createSshKeyboard } from './ssh-keyboard/index.js?v=20260721-ssh-kb-root2';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260721-ssh-kb-root3';
+import { createSshKeyboard } from './ssh-keyboard/index.js?v=20260721-ssh-kb-root3';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -13,8 +13,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root2';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-ssh-kb-root2';
+} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root3';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-ssh-kb-root3';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -177,15 +177,8 @@ function ensureTerminalSurface() {
                 syncLegacyKeyboardMirrorFromFacade('surface-soft-state');
                 return;
             }
-            mobileKeyboardUserControlled = state.intent === SoftKeyboardIntent.OPEN;
-            keyboardFocusLikely = !!(state.focusLikely || state.intent === SoftKeyboardIntent.OPEN);
-            if (state.physicalOpen) {
-                mobileKeyboardOpen = true;
-                mobileKeyboardInset = state.inset;
-            } else if (state.intent === SoftKeyboardIntent.CLOSED) {
-                mobileKeyboardOpen = false;
-                mobileKeyboardInset = 0;
-            }
+            _sshKbLayoutOpenCache = !!state.physicalOpen && state.intent === SoftKeyboardIntent.OPEN;
+            _sshKbInsetCache = state.physicalOpen ? (state.inset || 0) : 0;
             updateMobileKeyboardButtonUi?.();
         },
         log: (event, details) => logTerminalLayoutDiagnostics?.(event, details || {}),
@@ -198,8 +191,8 @@ function ensureTerminalSurface() {
 /** Live height of fixed bottom chrome covering the terminal scrollport. */
 function getMobileBottomChromeHeight() {
     if (!isMobileStableInputMode()) return 0;
-    const keyboardOpen = mobileKeyboardOpen
-        || mobileKeyboardInset > 8
+    const keyboardOpen = isSshKbLayoutOpen()
+        || getSshKbInset() > 8
         || document.documentElement.classList.contains('keyboard-open');
     const auxH = Math.max(
         0,
@@ -404,9 +397,9 @@ function flushCursorAboveChromeScroll() {
     cursorPinLastAt = now;
     isProgrammaticTerminalScroll = true;
     try {
-        el.scrollTop = decision.scrollTop;
+        writeTerminalScrollTop(el, decision.scrollTop, reason, { pin: true });
         if (wtermWrapper && wtermWrapper !== el) {
-            wtermWrapper.scrollTop = Math.min(decision.scrollTop, getTerminalMaxScroll(wtermWrapper));
+            writeTerminalScrollTop(wtermWrapper, Math.min(decision.scrollTop, getTerminalMaxScroll(wtermWrapper)), reason, { pin: true });
         }
         if (force || decision.reason !== 'sparse-zero-max') {
             mobileStableLastBottomIntent = true;
@@ -755,12 +748,62 @@ function applyTerminalLigatures(enabled, { persist = true } = {}) {
 
 // Mobile devices get a larger default for readability
 const TERMINAL_FONT_MOBILE_DEFAULT = 16;
-let mobileKeyboardOpen = false;
-let mobileKeyboardUserControlled = false;
+// DoD: no independent open state. These are READ accessors over sshKb only.
+// Cached mirror fields exist solely for applyMobileStableKeyboardInset geometry; never decide intent.
+let _sshKbLayoutOpenCache = false;
+let _sshKbInsetCache = 0;
 let mobileWTermInputGuard = null;
 let mobileClipboardActionInProgress = false;
 let mobileKeyboardResizeFreezeUntil = 0;
-let keyboardFocusLikely = false;
+
+function isSshKbDesiredOpen() {
+    try {
+        if (sshKb) return !!sshKb.desiredOpen?.();
+        if (sshSoftKeyboard) return !!sshSoftKeyboard.desiredOpen?.();
+    } catch (_) {}
+    return false;
+}
+function isSshKbPhysicalOpen() {
+    try {
+        if (sshKb) return !!sshKb.physicalOpen?.();
+        if (sshSoftKeyboard) return !!sshSoftKeyboard.physicalOpen?.();
+    } catch (_) {}
+    return false;
+}
+/** Layout-open: workspace should treat keyboard chrome as raised. */
+function isSshKbLayoutOpen() {
+    if (isCmdOverlayMode?.()) return false;
+    try {
+        if (sshKb) {
+            const phase = sshKb.getPhase?.();
+            if (phase === 'open' || phase === 'opening') return true;
+            return !!(sshKb.desiredOpen?.() && (sshKb.physicalOpen?.() || (sshKb.getInset?.() || 0) > 0));
+        }
+    } catch (_) {}
+    return !!_sshKbLayoutOpenCache;
+}
+function getSshKbInset() {
+    try {
+        if (sshKb) return Math.max(0, Math.round(Number(sshKb.getInset?.() || 0) || 0));
+    } catch (_) {}
+    return Math.max(0, _sshKbInsetCache || 0);
+}
+function isSshKbFocusLikely() {
+    return isSshKbDesiredOpen() || isSshKbPhysicalOpen() || document.activeElement === mobileImeProxy;
+}
+
+/** Pin scrolls always allowed. Non-pin terminal scroll blocked while keyboard phase active. */
+function writeTerminalScrollTop(el, value, reason = 'scroll', { pin = false } = {}) {
+    if (!el) return false;
+    if (!pin && sshKb && !sshKb.allowNonPinScroll?.(reason)) {
+        logTerminalLayoutDiagnostics?.('scroll:blocked-ssh-kb-gate', { reason, phase: sshKb.getPhase?.() });
+        scheduleTerminalScrollbarUpdate?.();
+        return false;
+    }
+    el.scrollTop = value;
+    return true;
+}
+// Backward-compat names used widely: become live getters via defineProperty below after vars removed.
 let keyboardViewportBaseline = 0;
 let keyboardFallbackTimer = 0;
 let keyboardFallbackActive = false;
@@ -784,7 +827,7 @@ const TERMINAL_COPY_DIAGNOSTICS = false;
 const MOBILE_STABLE_INPUT_MODE = isMobileStableInputCandidate();
 const MOBILE_KEYBOARD_RESIZE_REASONS = /keyboard|viewport|visual|ime|focus|input|fallback/i;
 let mobileStableInputEnabled = false;
-let mobileKeyboardInset = 0;
+/* getSshKbInset() → getSshKbInset() */
 let mobileImeProxy = null;
 let mobileImeComposing = false;
 let mobileStableLastBottomIntent = true;
@@ -823,8 +866,8 @@ function logTerminalCopyDiagnostics(event, details = {}) {
             selectionCollapsed: selection?.isCollapsed,
             selectionLength: selection?.toString?.().length || 0,
             cachedSelectionLength: cachedSelectionText.length,
-            mobileKeyboardOpen,
-            keyboardFocusLikely,
+            isSshKbLayoutOpen(),
+            isSshKbFocusLikely(),
             mobileTerminalSelectionMode,
             viewportHeight: Math.round(viewport?.height || 0),
             viewportOffsetTop: Math.round(viewport?.offsetTop || 0),
@@ -854,12 +897,11 @@ function enterMobileTerminalSelectionMode(reason = 'selection') {
     window.clearTimeout(mobileTerminalSelectionTimer);
     const wasActive = mobileTerminalSelectionMode;
     mobileTerminalSelectionMode = true;
-    keyboardFocusLikely = false;
     blurTerminalInputsForSelection();
     // 移动端选择/复制时不强制收键盘，避免布局回弹。
     // 如果用户想收键盘，让系统返回键或键盘按钮自己处理。
     if (!isTouchKeyboardDevice()) {
-        if (mobileKeyboardOpen || getViewportKeyboardMetrics().keyboardInset > 8) {
+        if (isSshKbLayoutOpen() || getViewportKeyboardMetrics().keyboardInset > 8) {
             finalizeKeyboardClose({ force: true });
         }
     }
@@ -1047,8 +1089,8 @@ function logTerminalScrollDiagnostics(event, details = {}) {
         console.info('[TerminalScrollDiagnostics]', {
             event,
             isProgrammaticTerminalScroll,
-            mobileKeyboardOpen,
-            keyboardFocusLikely,
+            isSshKbLayoutOpen(),
+            isSshKbFocusLikely(),
             keyboardFallbackActive,
             activeElement: document.activeElement?.id || document.activeElement?.className || document.activeElement?.tagName,
             scroll: el ? {
@@ -1080,8 +1122,8 @@ function logTerminalLayoutDiagnostics(event, details = {}) {
             event,
             embeddedMode,
             visibility: document.visibilityState,
-            mobileKeyboardOpen,
-            keyboardFocusLikely,
+            isSshKbLayoutOpen(),
+            isSshKbFocusLikely(),
             wrapper: wrapperRect ? {
                 width: Math.round(wrapperRect.width),
                 height: Math.round(wrapperRect.height),
@@ -1213,7 +1255,8 @@ function enterCmdOverlayMode(reason = 'cmd-overlay') {
     document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
     document.documentElement.classList.add('cmd-overlay-keyboard');
     // Hard zero layout side-effects from the terminal keyboard path.
-    mobileKeyboardInset = 0;
+    _sshKbInsetCache = 0;
+    _sshKbLayoutOpenCache = false;
     document.documentElement.style.setProperty('--keyboard-inset', '0px');
     document.documentElement.classList.remove('keyboard-open', 'viewport-updating');
     terminalContainer?.classList.remove('mobile-keyboard-open');
@@ -1310,8 +1353,8 @@ function getViewportKeyboardMetrics() {
     // 直到几乎恢复全高才释放布局，避免出现/消失最后一帧突然跳动。
     const closeThreshold = 8;
     const wantsAvoidance = isKeyboardAvoidanceTarget();
-    const keyboardOpen = (wantsAvoidance || mobileKeyboardOpen)
-        && roundedInset > (mobileKeyboardOpen ? closeThreshold : openThreshold);
+    const keyboardOpen = (wantsAvoidance || isSshKbLayoutOpen())
+        && roundedInset > (isSshKbLayoutOpen() ? closeThreshold : openThreshold);
     return {
         layoutHeight: baselineHeight || layoutHeight,
         viewportHeight,
@@ -1398,7 +1441,7 @@ function animateViewportCssMetricsOld(targetHeight, targetOffsetTop, { immediate
         const state = viewportAnimationState;
         const heightDelta = state.targetHeight - state.currentHeight;
         const offsetDelta = state.targetOffsetTop - state.currentOffsetTop;
-        const stiffness = mobileKeyboardOpen ? 0.24 : 0.20;
+        const stiffness = isSshKbLayoutOpen() ? 0.24 : 0.20;
 
         state.currentHeight += heightDelta * stiffness;
         state.currentOffsetTop += offsetDelta * stiffness;
@@ -1423,7 +1466,7 @@ function animateViewportCssMetricsOld(targetHeight, targetOffsetTop, { immediate
     viewportAnimationResizeTimer = window.setTimeout(() => {
         requestTerminalAutoFollow('viewport-css-animation-old-timer-settled');
         scheduleTerminalResize();
-    }, mobileKeyboardOpen ? 360 : 420);
+    }, isSshKbLayoutOpen() ? 360 : 420);
 }
 
 function setStableViewportHeight({ force = false } = {}) {
@@ -1740,8 +1783,6 @@ window.addEventListener('message', (e) => {
             if (cmdOverlayMode || active === cmdInput) enterCmdOverlayMode('parent-reset-ignored');
             return;
         }
-        keyboardFocusLikely = false;
-        mobileKeyboardUserControlled = false;
         const kb = ensureSshKeyboard();
         if (kb) {
             kb.handleParentMessage({ ...e.data, source: 'zephyr-app', type: 'ssh-kb-reset' });
@@ -1843,7 +1884,7 @@ window.addEventListener('message', (e) => {
                 syncLegacyKeyboardMirrorFromFacade(`parent-layout:${reason}`);
             } else if (parentKeyboardOpen && parentInset >= 80) {
                 applyMobileStableKeyboardInset(parentInset, true, `parent-layout:${reason}`);
-            } else if (!parentKeyboardOpen && mobileKeyboardOpen) {
+            } else if (!parentKeyboardOpen && isSshKbLayoutOpen()) {
                 finalizeKeyboardClose({ force: true });
             }
         }
@@ -2039,7 +2080,7 @@ function repairWTermLayoutAfterVisibilityChange(reason = 'layout-repair', { send
     requestAnimationFrame(() => {
         normalizeWTermContainerLayout(`${reason}:raf`);
         const el = getTerminalScrollElement();
-        if (el && !shouldFollow) el.scrollTop = Math.min(el.scrollTop, getTerminalMaxScroll(el));
+        if (el && !shouldFollow) writeTerminalScrollTop(el, Math.min(el.scrollTop, getTerminalMaxScroll(el)), `${reason}:clamp`, { pin: false });
         if (shouldFollow) requestTerminalAutoFollow(`${reason}:follow`);
         else scheduleTerminalScrollbarUpdate();
     });
@@ -2317,8 +2358,8 @@ function isMobileKeyboardActiveOrSettling() {
     if (!isTouchKeyboardDevice()) return false;
     const metrics = getViewportKeyboardMetrics();
     return Boolean(
-        mobileKeyboardOpen
-        || keyboardFocusLikely
+        isSshKbLayoutOpen()
+        || isSshKbFocusLikely()
         || metrics.keyboardInset > 8
         || document.documentElement.classList.contains('keyboard-open')
     );
@@ -7453,7 +7494,7 @@ function getMobileStableFollowThreshold() {
 }
 
 function isMobileStableKeyboardActive() {
-    return isMobileStableInputMode() && (mobileKeyboardOpen || mobileKeyboardInset > 8 || document.documentElement.classList.contains('keyboard-open'));
+    return isMobileStableInputMode() && (isSshKbLayoutOpen() || getSshKbInset() > 8 || document.documentElement.classList.contains('keyboard-open'));
 }
 
 function isMobileStableAtVisualBottom(el = getTerminalScrollElement()) {
@@ -7582,14 +7623,18 @@ function scrollTerminalToBottom(reason = 'scroll-bottom') {
         scheduleTerminalScrollbarUpdate();
         return;
     }
+    if (sshKb && !sshKb.allowNonPinScroll?.(reason)) {
+        // During keyboard phase use chrome-pin instead of maxScroll chase.
+        return applyCursorAboveChromeScroll(reason, { force: true }) || false;
+    }
     isProgrammaticTerminalScroll = true;
     try {
         const maxScroll = getTerminalMaxScroll(el);
-        el.scrollTop = maxScroll;
+        writeTerminalScrollTop(el, maxScroll, reason, { pin: false });
         const nextMaxScroll = getTerminalMaxScroll(el);
-        el.scrollTop = nextMaxScroll;
+        writeTerminalScrollTop(el, nextMaxScroll, reason, { pin: false });
         if (wtermWrapper && wtermWrapper !== el) {
-            wtermWrapper.scrollTop = getTerminalMaxScroll(wtermWrapper);
+            writeTerminalScrollTop(wtermWrapper, getTerminalMaxScroll(wtermWrapper), reason, { pin: false });
         }
         mobileTerminalAutoFollowLockUntil = 0;
         mobileTerminalAutoFollowLockReason = '';
@@ -7752,9 +7797,7 @@ function mountMobileStableBarsInFlow() {
 function enableMobileStableInputMode() {
     if (!MOBILE_STABLE_INPUT_MODE || mobileStableInputEnabled) return;
     mobileStableInputEnabled = true;
-    // Intent starts closed. Only an explicit user gesture (tap / keyboard button)
-    // may open the soft keyboard. Never force userControlled on mode enable.
-    mobileKeyboardUserControlled = false;
+    // Intent starts closed. Only an explicit user gesture may open the soft keyboard.
     document.documentElement.classList.add('mobile-stable-input');
     document.body?.classList.add('mobile-stable-input');
     try { if (navigator.virtualKeyboard) navigator.virtualKeyboard.overlaysContent = true; } catch (_) {}
@@ -7802,6 +7845,9 @@ function followTerminalBottomNow(reason = 'bottom-follow', { force = false } = {
         return applyCursorAboveChromeScroll(reason, { force: true, sameLineInput: sameLine });
     }
 
+    if (sshKb && !sshKb.allowNonPinScroll?.(reason)) {
+        return applyCursorAboveChromeScroll(reason, { force: true });
+    }
     isProgrammaticTerminalScroll = true;
     try {
         const maxScroll = getTerminalMaxScroll(el);
@@ -7810,9 +7856,9 @@ function followTerminalBottomNow(reason = 'bottom-follow', { force = false } = {
             || terminalFontSize * 1.35
             || 17;
         const aligned = Math.floor(Math.max(0, maxScroll) / rh) * rh;
-        el.scrollTop = aligned;
+        writeTerminalScrollTop(el, aligned, reason, { pin: false });
         if (wtermWrapper && wtermWrapper !== el) {
-            wtermWrapper.scrollTop = Math.max(0, Math.min(getTerminalMaxScroll(wtermWrapper), aligned));
+            writeTerminalScrollTop(wtermWrapper, Math.max(0, Math.min(getTerminalMaxScroll(wtermWrapper), aligned)), reason, { pin: false });
         }
         mobileTerminalAutoFollowLockUntil = 0;
         mobileTerminalAutoFollowLockReason = '';
@@ -7867,7 +7913,8 @@ function scheduleTerminalBottomFollow(reason = 'bottom-follow', { force = false,
 function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason = 'keyboard-inset') {
     // Command bar overlay: absolute zero layout mutation.
     if (isCmdOverlayMode() || String(reason || '').includes('cmd')) {
-        mobileKeyboardInset = 0;
+        _sshKbInsetCache = 0;
+        _sshKbLayoutOpenCache = false;
         document.documentElement.style.setProperty('--keyboard-inset', '0px');
         document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
         document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
@@ -7890,7 +7937,8 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
         ? (parentAuthoritative ? reported : (measured > 40 ? measured : reported))
         : 0;
     const safeInset = pinInset;
-    mobileKeyboardInset = safeInset;
+    _sshKbInsetCache = safeInset;
+    _sshKbLayoutOpenCache = !!(open && safeInset > 0);
     document.documentElement.style.setProperty('--keyboard-inset', `${safeInset}px`);
     document.documentElement.style.setProperty('--ssh-kb-inset', `${safeInset}px`);
     document.documentElement.classList.toggle('keyboard-open', open && safeInset > 0);
@@ -7925,9 +7973,9 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
 function assertKeyboardLayoutSettled(reason = 'keyboard-settled') {
     const forceClear = () => {
         if (sshSoftKeyboard?.desiredOpen?.() || sshSoftKeyboard?.physicalOpen?.()) return;
-        if (mobileKeyboardOpen || mobileKeyboardInset > 0) {
-            mobileKeyboardOpen = false;
-            mobileKeyboardInset = 0;
+        if (_sshKbLayoutOpenCache || _sshKbInsetCache > 0) {
+            _sshKbLayoutOpenCache = false;
+            _sshKbInsetCache = 0;
         }
         document.documentElement.style.setProperty('--keyboard-inset', '0px');
         document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
@@ -8142,15 +8190,10 @@ function focusMobileStableImeProxy(reason = 'mobile-ime-focus') {
     if (el && !mobileStableLastBottomIntent) scheduleTerminalScrollbarUpdate();
     // Single open path — facade only. No surface/soft/proxy cascade.
     const kb = ensureSshKeyboard();
-    if (kb) {
-        kb.openTerminal(reason);
-        syncLegacyKeyboardMirrorFromFacade(reason);
-    } else {
-        // Extreme fallback
-        try { mobileImeProxy.focus({ preventScroll: true }); } catch (_) { try { mobileImeProxy.focus(); } catch (__) {} }
-        mobileKeyboardUserControlled = true;
-        keyboardFocusLikely = true;
-    }
+    if (!kb) return false;
+    // Sole focus owner is intent.js via openTerminal → focusProxy.
+    kb.openTerminal(reason);
+    syncLegacyKeyboardMirrorFromFacade(reason);
     if (mobileStableLastBottomIntent) {
         setWTermImeActive(true, `${reason}:focus`);
         ensureTerminalSurface()?.pinCursorAboveChrome?.(`${reason}:focus-chrome`, { force: true });
@@ -8277,8 +8320,7 @@ function setupMobileStableImeProxy() {
         setWTermImeActive(true, 'ime-proxy-focus');
         // Single authority: facade decides if unsolicited focus opens intent.
         ensureSshKeyboard()?.handleImeFocus?.('ime-proxy-focus');
-        if (sshKb?.desiredOpen?.() || sshSoftKeyboard?.desiredOpen?.() || mobileKeyboardUserControlled) {
-            mobileKeyboardUserControlled = true;
+        if (sshKb?.desiredOpen?.() || sshSoftKeyboard?.desiredOpen?.() || isSshKbDesiredOpen()) {
             markKeyboardFocusActive();
             sshSoftKeyboard?.onProxyFocus?.('ime-proxy-focus');
         } else {
@@ -8479,7 +8521,7 @@ function setupTerminalCustomScrollbar() {
         const ratio = Math.min(1, Math.max(0, (clientY - rect.top - thumbHeight / 2) / Math.max(1, rect.height - thumbHeight)));
         if (isMobileStableInputMode()) terminalUserScrollGestureUntil = Date.now() + 1200;
         isProgrammaticTerminalScroll = true;
-        el.scrollTop = ratio * maxScroll;
+        writeTerminalScrollTop(el, ratio * maxScroll, 'scrollbar-drag', { pin: true });
         scheduleTerminalScrollbarUpdate();
         requestAnimationFrame(() => { isProgrammaticTerminalScroll = false; });
     };
@@ -8520,7 +8562,7 @@ function getFallbackKeyboardMetrics() {
 }
 
 function applyKeyboardFallbackAvoidance() {
-    if (!keyboardFocusLikely || !isTouchKeyboardDevice()) return false;
+    if (!isSshKbFocusLikely() || !isTouchKeyboardDevice()) return false;
     // Stable mobile path never invents open without facade intent.
     if (isMobileStableInputMode()) {
         const kb = ensureSshKeyboard();
@@ -8540,7 +8582,7 @@ function applyKeyboardFallbackAvoidance() {
     const metrics = getFallbackKeyboardMetrics();
     keyboardViewportBaseline = Math.max(metrics.layoutHeight, keyboardViewportBaseline || 0);
     const signature = `fallback:${metrics.keyboardInset}:${metrics.viewportHeight}:${metrics.layoutHeight}`;
-    if (updateViewportInsets._lastSignature === signature && mobileKeyboardOpen) return true;
+    if (updateViewportInsets._lastSignature === signature && isSshKbLayoutOpen()) return true;
     updateViewportInsets._lastSignature = signature;
     keyboardFallbackActive = true;
     keyboardFallbackAppliedAt = performance.now();
@@ -8552,12 +8594,12 @@ function applyKeyboardFallbackAvoidance() {
 }
 
 function scheduleKeyboardFallbackAvoidance() {
-    if (!keyboardFocusLikely || !isTouchKeyboardDevice()) return;
+    if (!isSshKbFocusLikely() || !isTouchKeyboardDevice()) return;
     window.clearTimeout(keyboardFallbackTimer);
     if (isMobileStableInputMode()) return;
     keyboardFallbackTimer = window.setTimeout(() => {
         const metrics = getViewportKeyboardMetrics();
-        if (!keyboardFocusLikely || metrics.keyboardInset >= 100 || mobileKeyboardOpen) return;
+        if (!isSshKbFocusLikely() || metrics.keyboardInset >= 100 || isSshKbLayoutOpen()) return;
         applyKeyboardFallbackAvoidance();
     }, 220);
 }
@@ -8570,15 +8612,11 @@ function markKeyboardFocusActive() {
         keyboardFallbackAppliedAt = 0;
         window.clearTimeout(keyboardFallbackTimer);
         // Read-only mirror from facade.
-        if (sshKb?.desiredOpen?.()) {
-            keyboardFocusLikely = true;
-            mobileKeyboardUserControlled = true;
-        }
+        // intent owned by facade; no flag writes
         ensureSshKeyboard()?.handleViewportChange?.('mark-focus-active');
         syncLegacyKeyboardMirrorFromFacade('mark-focus-active');
         return;
     }
-    keyboardFocusLikely = isTouchKeyboardDevice();
     updateViewportInsets();
     scheduleKeyboardFallbackAvoidance();
 }
@@ -8588,19 +8626,17 @@ function markKeyboardFocusInactive() {
     // Blur alone must not close. Facade decides system-dismiss via viewport sync.
     if (isMobileStableInputMode()) {
         ensureSshKeyboard()?.handleImeBlur?.('mark-focus-inactive');
-        // Keep keyboardFocusLikely true while intent open so aux retain still works.
-        keyboardFocusLikely = !!sshKb?.desiredOpen?.();
-        mobileKeyboardUserControlled = keyboardFocusLikely;
+        // Keep isSshKbFocusLikely() true while intent open so aux retain still works.
+        // intent owned by facade; no flag writes
         ensureSshKeyboard()?.handleViewportChange?.('mark-focus-inactive');
         syncLegacyKeyboardMirrorFromFacade('mark-focus-inactive');
         return;
     }
-    keyboardFocusLikely = false;
     window.clearTimeout(keyboardFallbackTimer);
     if (keyboardFallbackActive) {
         window.clearTimeout(markKeyboardFocusInactive._timer);
         markKeyboardFocusInactive._timer = window.setTimeout(() => {
-            if (!keyboardFocusLikely) finalizeKeyboardClose({ force: true });
+            if (!isSshKbFocusLikely()) finalizeKeyboardClose({ force: true });
         }, 160);
     }
 }
@@ -8631,7 +8667,7 @@ function updateViewportInsets() {
 
     const hiddenEmbeddedFrame = embeddedMode && window.innerWidth > 700 && isMobileStableInputMode();
     if (hiddenEmbeddedFrame) {
-        if (sshKb?.desiredOpen?.() || mobileKeyboardOpen || document.documentElement.classList.contains('keyboard-open')) {
+        if (sshKb?.desiredOpen?.() || isSshKbLayoutOpen() || document.documentElement.classList.contains('keyboard-open')) {
             finalizeKeyboardClose({ force: true });
         }
         return;
@@ -8650,7 +8686,8 @@ function updateViewportInsets() {
     // Non-facade fallback (should be rare on touch devices).
     const metrics = getViewportKeyboardMetrics();
     const open = metrics.keyboardInset >= 80;
-    mobileKeyboardOpen = open;
+    _sshKbLayoutOpenCache = open;
+    _sshKbInsetCache = open ? metrics.keyboardInset : 0;
     applyMobileStableKeyboardInset(open ? metrics.keyboardInset : 0, open, open ? 'keyboard-open-fallback' : 'keyboard-close-fallback');
     notifyParentKeyboardMetrics({
         keyboardOpen: open,
@@ -8676,12 +8713,8 @@ function finalizeKeyboardClose({ force = false } = {}) {
         }
         // Local cleanup for non-touch / residual chrome.
         updateViewportInsets._lastSignature = '';
-        mobileKeyboardOpen = false;
-        mobileKeyboardInset = 0;
-        if (force) {
-            keyboardFocusLikely = false;
-            mobileKeyboardUserControlled = false;
-        }
+        _sshKbLayoutOpenCache = false;
+        _sshKbInsetCache = 0;
         window.clearTimeout(keyboardFallbackTimer);
         keyboardFallbackActive = false;
         keyboardFallbackAppliedAt = 0;
@@ -8763,16 +8796,14 @@ function setupHorizontalScrollbarVisibility(...elements) {
 
 /**
  * Single place that mirrors facade → legacy flags + DOM chrome.
- * Callers must NOT independently set mobileKeyboardOpen / apply inset for IME.
+ * Callers must NOT independently set isSshKbLayoutOpen() / apply inset for IME.
  */
 function syncLegacyKeyboardMirrorFromFacade(reason = 'mirror') {
     const kb = sshKb || ensureSshKeyboard?.();
     if (!kb) return false;
     if (isCmdOverlayMode?.()) {
-        mobileKeyboardOpen = false;
-        mobileKeyboardInset = 0;
-        mobileKeyboardUserControlled = kb.desiredOpen?.() || false;
-        keyboardFocusLikely = mobileKeyboardUserControlled;
+        _sshKbLayoutOpenCache = false;
+        _sshKbInsetCache = 0;
         applyMobileStableKeyboardInset(0, false, `${reason}:cmd-overlay`);
         updateMobileKeyboardButtonUi?.();
         return true;
@@ -8787,9 +8818,8 @@ function syncLegacyKeyboardMirrorFromFacade(reason = 'mirror') {
     const inset = Math.max(0, Math.round(Number(layout.inset ?? intent.inset ?? kb.getInset?.() ?? 0) || 0));
     const open = !liftNone && !!desired && (physical || phase === 'opening' || phase === 'open' || inset >= 80);
 
-    mobileKeyboardUserControlled = !!desired;
-    keyboardFocusLikely = !!(desired || intent.focusLikely);
-    mobileKeyboardOpen = !!open && (inset > 0 || phase === 'opening');
+    _sshKbLayoutOpenCache = !!open && (inset > 0 || phase === 'opening');
+    _sshKbInsetCache = open ? inset : 0;
 
     // Single DOM apply for terminal IME layout (chrome pin + CSS).
     applyMobileStableKeyboardInset(open ? inset : 0, !!open, `${reason}:facade`);
@@ -9515,10 +9545,14 @@ function patchWTermScrollBehavior() {
             }
             isProgrammaticTerminalScroll = true;
             try {
-                originalScrollToBottom();
-                const el = getTerminalScrollElement();
-                if (el) el.scrollTop = getTerminalMaxScroll(el);
-                if (wtermWrapper && wtermWrapper !== el) wtermWrapper.scrollTop = getTerminalMaxScroll(wtermWrapper);
+                if (sshKb && !sshKb.allowNonPinScroll?.(scrollReason)) {
+                    applyCursorAboveChromeScroll(scrollReason, { force: true });
+                } else {
+                    originalScrollToBottom();
+                    const el = getTerminalScrollElement();
+                    if (el) writeTerminalScrollTop(el, getTerminalMaxScroll(el), scrollReason, { pin: false });
+                    if (wtermWrapper && wtermWrapper !== el) writeTerminalScrollTop(wtermWrapper, getTerminalMaxScroll(wtermWrapper), scrollReason, { pin: false });
+                }
                 setTerminalAutoFollow(true, scrollReason);
             } finally {
                 scheduleTerminalScrollbarUpdate();
@@ -10415,7 +10449,7 @@ if (mobileAuxKeys) {
     function keepMobileAuxImeFocused(reason = 'mobile-aux-focus') {
         if (!isMobileStableInputMode()) return false;
         const kb = ensureSshKeyboard();
-        const active = !!(kb?.desiredOpen?.() || kb?.physicalOpen?.() || sshSoftKeyboard?.desiredOpen?.() || mobileKeyboardOpen);
+        const active = !!(kb?.desiredOpen?.() || kb?.physicalOpen?.() || sshSoftKeyboard?.desiredOpen?.() || isSshKbLayoutOpen());
         if (!active) return false;
         // Retain only — never open a closed keyboard from aux chrome.
         if (kb) {
@@ -10801,8 +10835,6 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
             } else if (!mobileTerminalSelectionMode && !hasLiveTerminalSelection() && !terminalTouchMoved) {
                 const result = kb?.handlePointerUp?.(e);
                 if (result?.opened) {
-                    mobileKeyboardUserControlled = true;
-                    keyboardFocusLikely = true;
                     mobileStableLastFocusGestureAt = performance.now();
                     updateMobileKeyboardButtonUi?.();
                     // Surface pin after open
@@ -11046,7 +11078,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API (FREEZE plan
         // §3.8/§5). Falls back to the stock package if the fork is absent.
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-ssh-kb-root2');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-ssh-kb-root3');
         WTermClass = module.WTerm;
     } catch {
         try {

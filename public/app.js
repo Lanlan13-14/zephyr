@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-ssh-kb-root2';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-ssh-kb-root3';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -89,7 +89,7 @@ let appKeyboardBaseline = 0;
 let appKeyboardOpen = false;
 // True only after parent visualViewport itself observed a real IME inset.
 // An overlays-content parent that always reports 0 must never close an iframe-open IME.
-let appKeyboardParentPhysicalOpen = false;
+let appKeyboardLastInset = 0;
 let appKeyboardSettleTimer = 0;
 let appKeyboardLastSignature = '';
 let appKeyboardPendingMetrics = null;
@@ -373,36 +373,30 @@ function postTerminalLayoutStabilize(reason = 'layout-stabilize', { focus = fals
     }, '*'));
 }
 function maybeApplyCompactKeyboardFromViewport(reason = 'compact-keyboard-viewport') {
+    // Parent must NOT invent keyboard open from its own visualViewport.
+    // Child facade is sole judge; parent only refreshes geometry if already open via child metrics.
     const workspace = $('#terminalWorkspace');
     if (!workspace || !isCompactTerminalWorkspace() || !document.body.classList.contains('terminal-mode') || !window.visualViewport) return false;
+    if (!appKeyboardOpen && !workspace.classList.contains('keyboard-open') && !workspace.classList.contains('ssh-kb-open')) return false;
     const baseline = Math.max(appKeyboardBaseline || 0, window.innerHeight || 0, document.documentElement.clientHeight || 0);
     const viewportHeight = Math.round(window.visualViewport.height || 0);
     const offsetTop = Math.round(window.visualViewport.offsetTop || 0);
     const inset = Math.max(0, Math.round(baseline - viewportHeight - offsetTop));
-    const wasOpen = appKeyboardOpen || workspace.classList.contains('keyboard-open');
-    if (inset >= 80) appKeyboardParentPhysicalOpen = true;
-    // Only a parent that previously observed physical open may authoritatively close.
-    // In overlays-content mode parent inset stays 0 while iframe sees the IME; treating
-    // that 0 as close caused the ~1s auto-dismiss loop.
-    if (!appKeyboardParentPhysicalOpen && inset < 80) return false;
-    const keyboardOpen = inset >= 80 || (appKeyboardParentPhysicalOpen && wasOpen && inset >= 16);
-    if (!keyboardOpen && !wasOpen) {
-        appKeyboardParentPhysicalOpen = false;
-        return false;
-    }
+    // Only update inset geometry while child-declared open; never flip open/closed here.
+    if (!appKeyboardOpen) return false;
     applyTerminalWorkspaceKeyboard({
-        keyboardOpen,
-        keyboardInset: keyboardOpen ? inset : 0,
+        keyboardOpen: true,
+        keyboardInset: Math.max(inset, appKeyboardLastInset || 0),
         viewportHeight,
         layoutHeight: baseline,
         offsetTop,
         stableInput: true,
         liftMode: 'workspace',
         inputSource: 'terminal-ime',
-        parentPhysical: true,
         reason,
+        intent: 'open',
+        phase: 'open',
     });
-    if (!keyboardOpen) appKeyboardParentPhysicalOpen = false;
     return true;
 }
 function scheduleCompactKeyboardViewportCheck(reason = 'compact-keyboard-check') {
@@ -2822,13 +2816,16 @@ function resetTerminalWorkspaceKeyboard({ force = false, notifyIframe = false } 
     if (!workspace || (!force && !appKeyboardOpen && !workspace.classList.contains('keyboard-open') && !workspace.classList.contains('keyboard-settling'))) return;
     const wasOpen = appKeyboardOpen;
     appKeyboardOpen = false;
-    appKeyboardParentPhysicalOpen = false;
+    appKeyboardLastInset = 0;
     appKeyboardBaseline = 0;
     appKeyboardPendingMetrics = null;
     appKeyboardLastSignature = '';
     window.clearTimeout(appKeyboardSettleTimer);
-    workspace.classList.remove('keyboard-open', 'keyboard-settling');
+    workspace.classList.remove('keyboard-open', 'keyboard-settling', 'ssh-kb-open');
+    document.documentElement.classList.remove('ssh-kb-open');
     document.documentElement.style.setProperty('--app-keyboard-inset', '0px');
+    document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
+    appKeyboardLastInset = 0;
     document.body.classList.remove('terminal-keyboard-lift');
     document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
     document.documentElement.style.setProperty('--app-visual-vh', '100vh');
@@ -2989,6 +2986,10 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             ? { ...metrics, stableInput: true, keyboardOpen: true, keyboardInset: effectiveInset, liftMode }
             : null;
         workspace.classList.toggle('keyboard-open', wantOpen);
+        workspace.classList.toggle('ssh-kb-open', wantOpen);
+        document.documentElement.classList.toggle('ssh-kb-open', wantOpen);
+        document.documentElement.style.setProperty('--ssh-kb-inset', wantOpen ? `${effectiveInset}px` : '0px');
+        if (wantOpen) appKeyboardLastInset = effectiveInset;
         document.body.classList.remove('terminal-keyboard-lift');
         workspace.style.flex = '';
         workspace.style.height = '';
@@ -7292,8 +7293,9 @@ function bindEvents() {
             // Single parent hysteresis via reduceParentKeyboardMessage (open≥80, close<12).
             const reduced = reduceParentKeyboardMessage(e.data, {
                 open: !!appKeyboardOpen,
-                inset: Number.parseInt(document.documentElement.style.getPropertyValue('--app-keyboard-inset') || '0', 10) || 0,
+                inset: appKeyboardLastInset || Number.parseInt(document.documentElement.style.getPropertyValue('--app-keyboard-inset') || '0', 10) || 0,
             });
+            if (reduced.changed || reduced.open) appKeyboardLastInset = reduced.inset;
             if (reduced.cmd) {
                 window.clearTimeout(applyTerminalWorkspaceKeyboard._closeDebounce);
                 if (appKeyboardOpen) resetTerminalWorkspaceKeyboard({ force: false });

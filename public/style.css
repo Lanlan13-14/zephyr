@@ -35,12 +35,12 @@
     --wterm-bg: #0a0a0a;
     --wterm-fg: #f4f4f6;
     --wterm-selection: rgba(10,132,255,0.24);
-    --keyboard-inset: 0px;
+    --keyboard-inset: var(--ssh-kb-inset, 0px);
     --stable-vh: 100vh;
     --visual-vh: var(--stable-vh, 100vh);
     --visual-offset-top: 0px;
     --vvh: 100dvh;
-    --app-keyboard-inset: 0px;
+    --app-keyboard-inset: var(--ssh-kb-inset, 0px);
     --app-visual-vh: 100vh;
     --app-visual-offset-top: 0px;
     --connection-ios-spring: cubic-bezier(0.32, 0.72, 0, 1);
@@ -13426,7 +13426,11 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     }
 }
 
-/* ===== SSH keyboard root channels (ssh-keyboard facade) ===== */
+/* ===== SSH keyboard root channels (ssh-keyboard facade) — DoD single source ===== */
+html {
+    --ssh-kb-inset: 0px;
+}
+
 html {
     --ssh-kb-inset: 0px;
 }
@@ -13437,4 +13441,11 @@ html.ssh-kb-open {
 html.ssh-kb-open.mobile-stable-input,
 html.ssh-kb-open {
     /* no-op placeholder — concrete layout still uses legacy selectors written by layout gate mirrors */
+}
+
+
+/* DoD CSS convergence: single inset var. Legacy --keyboard-inset reads follow --ssh-kb-inset when unset by JS. */
+html.ssh-kb-open.mobile-stable-input,
+html.ssh-kb-open {
+    /* Keep class as open signal for parent/iframe diagnostics */
 }

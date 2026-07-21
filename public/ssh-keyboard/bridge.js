@@ -18,7 +18,7 @@ export const SSH_KB_FREEZE = 'ssh-kb-freeze';
  * @property {() => string} [getTabId]
  * @property {(message: object) => void} [postToParent]
  * @property {(label: string, details?: object) => void} [log]
- * @property {boolean} [emitLegacyMetrics=true]
+ * @property {boolean} [emitLegacyMetrics=false]
  */
 
 /**
@@ -97,7 +97,7 @@ export function createParentBridge(host = {}) {
         post(msg);
 
         // Legacy path for old parent handlers during migration.
-        if (host.emitLegacyMetrics !== false) {
+        if (host.emitLegacyMetrics === true) {
             let viewportHeight = 0;
             let layoutHeight = 0;
             let offsetTop = 0;

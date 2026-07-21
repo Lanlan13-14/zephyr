@@ -236,7 +236,7 @@ test('wiring contract: terminal imports controller + facade; button removed', ()
     assert.match(terminalJs, /assertKeyboardLayoutSettled/);
     assert.match(terminalJs, /liftMode:\s*SoftKeyboardLiftMode\.NONE|LiftMode\.NONE|openCmd\(/);
     assert.doesNotMatch(terminalHtml, /id="cmdKeyboardBtn"/);
-    assert.match(terminalHtml, /20260721-ssh-kb-root2/);
+    assert.match(terminalHtml, /20260721-ssh-kb-root3/);
     assert.match(styleCss, /\.cmd-keyboard-btn \{ display: none !important/);
 });
 
@@ -255,10 +255,14 @@ test('wiring contract: body tap does not blur/dismiss', () => {
 test('enableMobileStableInputMode does not force userControlled open', () => {
     const block = terminalJs.slice(
         terminalJs.indexOf('function enableMobileStableInputMode()'),
-        terminalJs.indexOf('function enableMobileStableInputMode()') + 500,
+        terminalJs.indexOf('function enableMobileStableInputMode()') + 700,
     );
-    assert.match(block, /mobileKeyboardUserControlled = false/);
-    assert.doesNotMatch(block, /mobileKeyboardUserControlled = true/);
+    // Flag variables removed — intent owned by facade getters.
+    assert.doesNotMatch(block, /mobileKeyboardUserControlled\s*=\s*true/);
+    assert.match(terminalJs, /function isSshKbDesiredOpen/);
+    assert.doesNotMatch(terminalJs, /let mobileKeyboardOpen\s*=/);
+    assert.doesNotMatch(terminalJs, /let mobileKeyboardUserControlled\s*=/);
+    assert.doesNotMatch(terminalJs, /let keyboardFocusLikely\s*=/);
 });
 
 test('parent stable path does not clip workspace height (overlay model)', () => {
@@ -318,7 +322,7 @@ test('large blue pill regression: terminal scrollbar is vertical and hidden on m
     assert.doesNotMatch(styleCss, /\.terminal-scrollbar-thumb\s*\{[^}]*rgba\(10,132,255/s);
 });
 
-test('parent sends exact iframe overlap and physical close is authoritative', () => {
+test('parent sends exact iframe overlap and does not invent open state', () => {
     assert.match(appJs, /frameKeyboardOverlap/);
     assert.match(appJs, /frameRect\.bottom - physicalKeyboardTop/);
     assert.match(appJs, /layoutHeight - effectiveInset/);
@@ -327,10 +331,11 @@ test('parent sends exact iframe overlap and physical close is authoritative', ()
     assert.match(terminalJs, /parent-physical-close/);
     assert.match(terminalJs, /authoritative:\s*parentAuthoritative/);
     assert.doesNotMatch(appJs, /keyboardOpen:\s*inset >= 80 \|\| appKeyboardOpen/);
-    // Parent may close only after its own visualViewport observed physical open.
-    assert.match(appJs, /appKeyboardParentPhysicalOpen/);
-    assert.match(appJs, /if \(!appKeyboardParentPhysicalOpen && inset < 80\) return false/);
-    assert.match(appJs, /const keyboardOpen = inset >= 80 \|\| \(appKeyboardParentPhysicalOpen && wasOpen && inset >= 16\)/);
+    // Parent no longer owns independent physical hysteresis.
+    assert.doesNotMatch(appJs, /appKeyboardParentPhysicalOpen/);
+    assert.match(appJs, /must NOT invent keyboard open|Child facade is sole judge/i);
+    assert.match(appJs, /reduceParentKeyboardMessage/);
+    assert.match(appJs, /appKeyboardLastInset/);
 });
 
 test('IME bars use exact overlap with no safe-area seam', () => {

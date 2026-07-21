@@ -75,7 +75,8 @@ test('bridge dedupes and emits ssh-kb + legacy', () => {
         isEmbedded: () => true,
         getTabId: () => 't1',
         postToParent: (m) => posts.push(m),
-        emitLegacyMetrics: true,
+        emitLegacyMetrics: true, // test still wants legacy path
+
     });
     assert.equal(bridge.publish({ phase: 'open', intent: 'open', inset: 300, liftMode: 'workspace' }), true);
     assert.equal(bridge.publish({ phase: 'open', intent: 'open', inset: 301, liftMode: 'workspace' }), false); // same 4px bucket
@@ -92,6 +93,7 @@ test('bridge cmd lift reports closed layout to parent', () => {
         isEmbedded: () => true,
         getTabId: () => 't1',
         postToParent: (m) => posts.push(m),
+        emitLegacyMetrics: true,
     });
     bridge.publish({ phase: 'closed', intent: 'open', inset: 280, liftMode: 'none' });
     const legacy = posts.find((p) => p.type === 'keyboard-metrics');

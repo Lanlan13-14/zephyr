@@ -20,14 +20,14 @@ import {
     SoftKeyboardIntent,
     SoftKeyboardLiftMode,
     createSshMobileSoftKeyboard,
-} from './ssh-mobile-keyboard.js?v=20260721-ssh-kb-root2';
+} from './ssh-mobile-keyboard.js?v=20260721-ssh-kb-root3';
 import {
     computeCursorAboveChromeScrollTop,
     allowScrollDuringTyping,
     scrollSettlePhases,
     shouldScrollOnTerminalOutput,
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
-} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root2';
+} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root3';
 
 /**
  * @typedef {object} SurfaceHost
