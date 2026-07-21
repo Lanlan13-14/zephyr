@@ -1,5 +1,6 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260721-wterm-scroll5';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260721-ssh-kb-root1';
+import { createSshKeyboard } from './ssh-keyboard/index.js?v=20260721-ssh-kb-root1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -12,8 +13,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-wterm-scroll5';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-wterm-scroll5';
+} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root1';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-ssh-kb-root1';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -129,6 +130,10 @@ function ensureTerminalSurface() {
         ensureImeProxy: () => {
             setupMobileStableImeProxy();
             return mobileImeProxy;
+        },
+        getSoftKeyboard: () => {
+            ensureSshKeyboard();
+            return sshSoftKeyboard;
         },
         getViewportMetrics: () => getViewportKeyboardMetrics(),
         isSelectionMode: () => !!(mobileTerminalSelectionMode || hasLiveTerminalSelection?.()),
@@ -797,6 +802,8 @@ let mobileImeLastSent = { text: '', source: '', at: 0 };
 let mobileImeLastControl = { seq: '', source: '', at: 0 };
 let mobileStableLastFocusGestureAt = 0;
 /** @type {ReturnType<typeof createSshMobileSoftKeyboard> | null} */
+/** @type {ReturnType<typeof createSshKeyboard> | null} */
+let sshKb = null;
 let sshSoftKeyboard = null;
 let sshSoftKeyboardUiBound = false;
 let mobileStableLastActualInputAt = 0;
@@ -1703,12 +1710,13 @@ window.addEventListener('message', (e) => {
         })();
         return;
     }
-    if (e.data.type === 'reset-mobile-keyboard') {
+    if (e.data.type === 'reset-mobile-keyboard' || e.data.type === 'ssh-kb-reset') {
         // Parent geometry reset must NOT kill a live IME session. The old path
         // blurred the proxy on every layout tick → keyboard open/close loop.
         const active = document.activeElement;
         const imeAlive = !!(
-            sshSoftKeyboard?.desiredOpen?.()
+            sshKb?.desiredOpen?.()
+            || sshSoftKeyboard?.desiredOpen?.()
             || active === mobileImeProxy
             || active === cmdInput
             || cmdOverlayMode
@@ -1716,13 +1724,15 @@ window.addEventListener('message', (e) => {
         );
         if (imeAlive) {
             logTerminalLayoutDiagnostics?.('parent-reset-ignored-ime-alive', { reason: e.data.reason || '' });
-            // Keep layout frozen for cmd; for terminal-ime just ignore the blur.
             if (cmdOverlayMode || active === cmdInput) enterCmdOverlayMode('parent-reset-ignored');
             return;
         }
         keyboardFocusLikely = false;
         mobileKeyboardUserControlled = false;
-        if (sshSoftKeyboard) {
+        const kb = ensureSshKeyboard();
+        if (kb) {
+            kb.handleParentMessage({ ...e.data, source: 'zephyr-app', type: 'ssh-kb-reset' });
+        } else if (sshSoftKeyboard) {
             sshSoftKeyboard.reset(`parent-reset:${e.data.reason || ''}`);
         } else {
             try { mobileImeProxy?.blur?.(); } catch (_) {}
@@ -1732,9 +1742,16 @@ window.addEventListener('message', (e) => {
         updateMobileKeyboardButtonUi();
         return;
     }
-    if (e.data.type === 'keyboard-freeze') {
+    if (e.data.type === 'keyboard-freeze' || e.data.type === 'ssh-kb-freeze') {
         const settleMs = Math.max(300, Math.min(2500, Number(e.data.settleMs) || 1000));
         parentKeyboardResizeFreezeUntil = e.data.frozen ? Date.now() + settleMs : 0;
+        ensureSshKeyboard()?.handleParentMessage?.({
+            source: 'zephyr-app',
+            type: 'ssh-kb-freeze',
+            frozen: !!e.data.frozen,
+            settleMs,
+            reason: e.data.reason || '',
+        });
         if (isTouchKeyboardDevice()) {
             if (e.data.frozen) stabilizeWTermAfterViewportOnlyChange(`parent-keyboard-freeze:${e.data.reason || ''}`);
             else scheduleKeyboardCloseFit(`parent-keyboard-freeze-release:${e.data.reason || ''}`, 420);
@@ -2146,6 +2163,10 @@ function requestStableTerminalLayout(reason = 'stable-layout', { includeResize =
 }
 
 function sendTerminalResize(cols, rows, { reason = 'direct', force = false } = {}) {
+    if (sshKb && !sshKb.allowResize?.(reason) && !/force|orientation|font-size/.test(String(reason || ''))) {
+        logTerminalLayoutDiagnostics('send-resize:blocked-ssh-kb-gate', { reason, phase: sshKb.getPhase?.() });
+        return false;
+    }
     if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN || !isConnected) return;
     const explicitCols = Math.floor(Number(cols));
     const explicitRows = Math.floor(Number(rows));
@@ -2586,6 +2607,12 @@ function scheduleKeyboardCloseFit(reason = 'keyboard-close-fit', delay = TERMINA
 }
 
 function scheduleTerminalResize(reason = 'scheduled', delay = 120) {
+    // Hard gate: keyboard opening/open/closing must never refit WTerm grid.
+    if (sshKb && !sshKb.allowResize?.(reason) && !/force|orientation|font-size|settled-fit/.test(String(reason))) {
+        logTerminalLayoutDiagnostics('resize:blocked-ssh-kb-gate', { reason, phase: sshKb.getPhase?.() });
+        sshKb.runOrQueueResize?.(() => scheduleTerminalResize(`${reason}:queued-after-kb`, 0), reason);
+        return;
+    }
     if (shouldIgnoreMobileKeyboardResizeReason(reason)) {
         logTerminalLayoutDiagnostics('resize:blocked-mobile-stable-keyboard', { reason });
         ensureMobileStableCursorVisible(`${reason}:visible-only`);
@@ -8227,9 +8254,9 @@ function setupMobileStableImeProxy() {
         mobileTerminalSelectionMode = false;
         document.documentElement.classList.remove('terminal-selection-mode');
         setWTermImeActive(true, 'ime-proxy-focus');
-        // Only treat focus as intentional open if controller already desires open
-        // or a gesture just requested it. Bare focus must not flip intent.
-        if (sshSoftKeyboard?.desiredOpen?.() || mobileKeyboardUserControlled) {
+        // Single authority: facade decides if unsolicited focus opens intent.
+        ensureSshKeyboard()?.handleImeFocus?.('ime-proxy-focus');
+        if (sshKb?.desiredOpen?.() || sshSoftKeyboard?.desiredOpen?.() || mobileKeyboardUserControlled) {
             mobileKeyboardUserControlled = true;
             markKeyboardFocusActive();
             sshSoftKeyboard?.onProxyFocus?.('ime-proxy-focus');
@@ -8242,6 +8269,7 @@ function setupMobileStableImeProxy() {
         [60, 160, 320, 560].forEach((delay) => window.setTimeout(updateViewportInsets, delay));
     });
     proxy.addEventListener('blur', () => {
+        ensureSshKeyboard()?.handleImeBlur?.('ime-proxy-blur');
         // Keep solid cursor briefly while system IME animates closed; clear if
         // focus did not return to proxy.
         window.setTimeout(() => {
@@ -8266,6 +8294,7 @@ function setupMobileStableImeProxy() {
         ensureTerminalSurface()?.onCompositionStart?.();
     });
     proxy.addEventListener('compositionend', (e) => {
+        ensureSshKeyboard()?.handleCompositionEnd?.();
         mobileImeComposing = false;
         mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 120);
         ensureTerminalSurface()?.onCompositionEnd?.();
@@ -8751,11 +8780,74 @@ function setupHorizontalScrollbarVisibility(...elements) {
     });
 }
 
+function ensureSshKeyboard() {
+    if (sshKb) return sshKb;
+    if (!isTouchKeyboardDevice()) return null;
+    sshKb = createSshKeyboard({
+        isTouchDevice: () => isTouchKeyboardDevice(),
+        isMobileStable: () => isMobileStableInputMode(),
+        ensureProxy: () => {
+            setupMobileStableImeProxy();
+            return mobileImeProxy;
+        },
+        getViewportMetrics: () => getViewportKeyboardMetrics(),
+        hasSelection: () => !!(hasLiveTerminalSelection?.() || mobileTerminalSelectionMode),
+        isSelectionMode: () => !!(mobileTerminalSelectionMode || hasLiveTerminalSelection?.()),
+        getTabId: () => params?.tabId || '',
+        isEmbedded: () => !!embeddedMode,
+        getDocument: () => document,
+        onImeActive: (active, reason) => setWTermImeActive(!!active, reason || 'ssh-kb'),
+        onLayout: (phase, inset, meta = {}) => {
+            // Mirror into legacy flags for remaining call sites during migration.
+            const open = phase === 'open' || phase === 'opening';
+            const liftNone = meta?.liftMode === 'none' || meta?.reason?.includes?.('cmd');
+            if (liftNone) {
+                mobileKeyboardOpen = false;
+                mobileKeyboardInset = 0;
+                mobileKeyboardUserControlled = sshKb?.desiredOpen?.() || false;
+                keyboardFocusLikely = mobileKeyboardUserControlled;
+                updateMobileKeyboardButtonUi?.();
+                return;
+            }
+            mobileKeyboardOpen = open && inset > 0;
+            mobileKeyboardInset = open ? inset : 0;
+            mobileKeyboardUserControlled = !!sshKb?.desiredOpen?.();
+            keyboardFocusLikely = mobileKeyboardUserControlled;
+            if (!open) {
+                pinMobileImeChrome?.(false, 0);
+                scheduleKeyboardCloseFit?.(meta.reason || 'ssh-kb-close', 420);
+            } else if (open && inset > 0) {
+                // Keep chrome pin path via surface if available
+                try { ensureTerminalSurface()?.pinCursorAboveChrome?.(`${meta.reason || 'ssh-kb'}:open`, { force: true }); } catch (_) {}
+            }
+            updateMobileKeyboardButtonUi?.();
+        },
+        onStateChange: (state) => {
+            mobileKeyboardUserControlled = state.intent === 'open';
+            keyboardFocusLikely = !!(state.focusLikely || state.intent === 'open');
+            if (state.physical === 'open') {
+                mobileKeyboardOpen = state.liftMode !== 'none';
+                mobileKeyboardInset = state.liftMode === 'none' ? 0 : (state.layoutInset || state.inset || 0);
+            } else if (state.intent === 'closed') {
+                mobileKeyboardOpen = false;
+                mobileKeyboardInset = 0;
+            }
+            updateMobileKeyboardButtonUi?.();
+        },
+        log: (event, details) => logTerminalLayoutDiagnostics?.(event, details || {}),
+    });
+    // Compat instance for surface / legacy call sites
+    sshSoftKeyboard = sshKb.asSoftKeyboard();
+    return sshKb;
+}
+
 function ensureSshSoftKeyboard() {
-    // Single ownership: soft keyboard lives inside TerminalSurfaceController.
-    const surface = ensureTerminalSurface();
-    if (!surface) return null;
-    sshSoftKeyboard = surface.getSoftKeyboard?.() || sshSoftKeyboard;
+    // Single authority: SshKeyboard facade. Surface reuses the same instance.
+    const kb = ensureSshKeyboard();
+    if (!kb) return null;
+    sshSoftKeyboard = kb.asSoftKeyboard();
+    // Ensure surface exists and picks up injected keyboard
+    ensureTerminalSurface();
     return sshSoftKeyboard;
 }
 
@@ -8766,9 +8858,10 @@ function setupMobileKeyboardButton() {
 
 function setupMobileKeyboardAvoidance() {
     enableMobileStableInputMode();
-    // Boot the unified surface FIRST — owns soft-kb + pin routing.
-    ensureTerminalSurface();
+    // Boot keyboard facade FIRST (single authority), then surface reuses it.
+    ensureSshKeyboard();
     ensureSshSoftKeyboard();
+    ensureTerminalSurface();
     setupMobileKeyboardButton();
     if (embeddedMode && !isMobileStableInputMode()) return;
     if (!window.visualViewport && !navigator.virtualKeyboard && !isTouchKeyboardDevice()) return;
@@ -8777,9 +8870,14 @@ function setupMobileKeyboardAvoidance() {
     } catch (_) {}
 
     const onViewport = (reason) => {
-        const surface = ensureTerminalSurface();
-        if (surface) surface.onViewport(reason);
-        else sshSoftKeyboard?.syncFromViewport?.(reason);
+        const kb = ensureSshKeyboard();
+        if (kb) kb.handleViewportChange(reason);
+        else {
+            const surface = ensureTerminalSurface();
+            if (surface) surface.onViewport(reason);
+            else sshSoftKeyboard?.syncFromViewport?.(reason);
+        }
+        // Legacy path still updates parent chrome metrics during migration.
         updateViewportInsets();
         updateMobileKeyboardButtonUi();
     };
@@ -10654,6 +10752,7 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
  // - 支持 bracketed paste；
  // - 在 onData 前执行 WTerm 内置输入滚动；
  // - 避免外层捕获 paste 后强制滚到底。
+// Mobile keyboard gestures: single facade path (ssh-keyboard). No parallel open chains.
 ['pointerdown', 'touchstart'].forEach((eventName) => {
     wtermWrapper.addEventListener(eventName, (e) => {
         terminalTouchMoved = false;
@@ -10680,80 +10779,10 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
             e.preventDefault();
             return;
         }
+
         if (isMobileStableInputMode() && !mobileTerminalSelectionMode && !hasLiveTerminalSelection()) {
-            const now = performance.now();
-            const surface = ensureTerminalSurface();
-            ensureSshSoftKeyboard();
-            const alreadyOpen = !!(sshSoftKeyboard?.desiredOpen?.() || sshSoftKeyboard?.physicalOpen?.() || mobileKeyboardOpen);
-            // Always retain if already open. If closed, open on gesture — only
-            // throttle duplicate open attempts (not retain) to avoid focus thrash.
-            if (alreadyOpen || now - mobileStableLastFocusGestureAt > 120) {
-                mobileStableLastFocusGestureAt = now;
-                // Never dismisses. Surface owns open/retain + ime-active. Gesture stack only.
-                if (surface) {
-                    surface.onTerminalTap('terminal-touch-immediate');
-                    mobileKeyboardUserControlled = !!sshSoftKeyboard?.desiredOpen?.();
-                    keyboardFocusLikely = mobileKeyboardUserControlled;
-                } else if (sshSoftKeyboard) {
-                    sshSoftKeyboard.handleTerminalTap('terminal-touch-immediate');
-                    setWTermImeActive(true, 'terminal-touch-immediate');
-                    mobileKeyboardUserControlled = sshSoftKeyboard.desiredOpen();
-                    keyboardFocusLikely = sshSoftKeyboard.desiredOpen();
-                } else {
-                    focusMobileStableImeProxy('terminal-touch-immediate');
-                }
-                updateMobileKeyboardButtonUi();
-            }
+            ensureSshKeyboard()?.handlePointerDown?.(e);
         }
-        terminalTouchFocusTimer = window.setTimeout(() => {
-            const hasSelection = hasLiveTerminalSelection();
-            if (mobileTerminalSelectionMode || terminalTouchMoved || hasSelection) {
-                if (hasSelection) enterMobileTerminalSelectionMode('touch-has-selection');
-                // Scroll/selection must not open keyboard after the delayed timer.
-                notifyParentActivity();
-                return;
-            }
-            if (isMobileStableInputMode()) {
-                // Delayed path: only retry open if immediate path failed (still closed).
-                const surface = ensureTerminalSurface();
-                ensureSshSoftKeyboard();
-                if (surface) {
-                    if (!sshSoftKeyboard?.desiredOpen?.() && !sshSoftKeyboard?.physicalOpen?.()) {
-                        surface.onTerminalTap('terminal-touch');
-                    } else {
-                        sshSoftKeyboard?.retainForChrome?.('terminal-touch-retain');
-                        surface.setImeActive?.(true, 'terminal-touch-retain');
-                    }
-                    mobileKeyboardUserControlled = !!sshSoftKeyboard?.desiredOpen?.();
-                    keyboardFocusLikely = mobileKeyboardUserControlled;
-                } else if (sshSoftKeyboard) {
-                    if (!sshSoftKeyboard.desiredOpen() && !sshSoftKeyboard.physicalOpen()) {
-                        sshSoftKeyboard.handleTerminalTap('terminal-touch');
-                        setWTermImeActive(true, 'terminal-touch-retry');
-                    } else {
-                        sshSoftKeyboard.retainForChrome('terminal-touch-retain');
-                        setWTermImeActive(true, 'terminal-touch-retain');
-                    }
-                    mobileKeyboardUserControlled = sshSoftKeyboard.desiredOpen();
-                    keyboardFocusLikely = sshSoftKeyboard.desiredOpen();
-                } else if (!mobileKeyboardOpen && !document.documentElement.classList.contains('keyboard-open')) {
-                    focusMobileStableImeProxy('terminal-touch');
-                }
-                updateMobileKeyboardButtonUi();
-                notifyParentActivity();
-                return;
-            }
-            if (isTouchKeyboardDevice() && !mobileKeyboardUserControlled) {
-                notifyParentActivity();
-                return;
-            }
-            if (isTouchKeyboardDevice()) {
-                notifyParentActivity();
-                return;
-            }
-            try { term?.focus?.(); } catch (_) {}
-            notifyParentActivity();
-        }, 180);
     }, { passive: true });
 });
 
@@ -10770,6 +10799,7 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
             window.clearTimeout(terminalTouchFocusTimer);
             window.clearTimeout(mobileTerminalSelectionTimer);
         }
+        if (isMobileStableInputMode()) ensureSshKeyboard()?.handlePointerMove?.(e);
     }, { passive: true });
 });
 
@@ -10779,10 +10809,32 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
             e.preventDefault();
         }
         window.clearTimeout(mobileTerminalSelectionTimer);
+
+        if (isMobileStableInputMode()) {
+            const kb = ensureSshKeyboard();
+            if (eventName === 'touchcancel' || e.type === 'pointercancel') {
+                kb?.handlePointerCancel?.(e);
+            } else if (!mobileTerminalSelectionMode && !hasLiveTerminalSelection() && !terminalTouchMoved) {
+                const result = kb?.handlePointerUp?.(e);
+                if (result?.opened) {
+                    mobileKeyboardUserControlled = true;
+                    keyboardFocusLikely = true;
+                    mobileStableLastFocusGestureAt = performance.now();
+                    updateMobileKeyboardButtonUi?.();
+                    // Surface pin after open
+                    try { ensureTerminalSurface()?.pinCursorAboveChrome?.('terminal-tap-open', { force: true }); } catch (_) {}
+                }
+            } else if (terminalTouchMoved) {
+                // Consume pan/fling so intent does not open later
+                kb?.handlePointerUp?.(e);
+            }
+        }
+
         window.setTimeout(() => {
             if (hasLiveTerminalSelection()) enterMobileTerminalSelectionMode(eventName);
             else if (mobileTerminalSelectionMode) scheduleExitMobileTerminalSelectionMode(900);
         }, 80);
+        notifyParentActivity();
     }, { passive: true });
 });
 
@@ -11010,7 +11062,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API (FREEZE plan
         // §3.8/§5). Falls back to the stock package if the fork is absent.
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-wterm-scroll5');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-ssh-kb-root1');
         WTermClass = module.WTerm;
     } catch {
         try {

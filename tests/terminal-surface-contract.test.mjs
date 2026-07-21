@@ -23,25 +23,31 @@ test('contract: terminal.js imports and calls ensureTerminalSurface', () => {
     assert.match(terminalJs, /attachTerm\?\.\(['"]term-created['"]\)|attachTerm\(['"]term-created['"]\)/);
 });
 
-test('contract: soft keyboard owned by surface (no parallel createSshMobile host in ensureSsh)', () => {
+test('contract: soft keyboard owned by SshKeyboard facade; surface reuses inject', () => {
+    assert.match(terminalJs, /function ensureSshKeyboard\(/);
+    assert.match(terminalJs, /createSshKeyboard\(/);
     const ensureStart = terminalJs.indexOf('function ensureSshSoftKeyboard()');
     assert.ok(ensureStart > 0);
-    const block = terminalJs.slice(ensureStart, ensureStart + 500);
-    assert.match(block, /ensureTerminalSurface/);
-    assert.match(block, /getSoftKeyboard/);
+    const block = terminalJs.slice(ensureStart, ensureStart + 600);
+    assert.match(block, /ensureSshKeyboard/);
+    assert.match(block, /asSoftKeyboard/);
     // Must NOT rebuild a second createSshMobileSoftKeyboard host here.
     assert.doesNotMatch(block, /createSshMobileSoftKeyboard\(\{/);
+    assert.match(surfaceSrc, /host\.getSoftKeyboard/);
+    assert.match(terminalJs, /getSoftKeyboard:\s*\(\)\s*=>/);
 });
 
-test('contract: IME/tap/output/composition route through surface', () => {
+test('contract: IME/tap/output/composition route through facade + surface', () => {
     assert.match(terminalJs, /surface\.onUserInputCommitted|onUserInputCommitted\(/);
     assert.match(terminalJs, /surface\.onEnterCommitted|onEnterCommitted\(/);
-    assert.match(terminalJs, /surface\.onTerminalTap|onTerminalTap\(/);
+    // Tap open is owned by ssh-keyboard facade gesture path (single authority).
+    assert.match(terminalJs, /handlePointerUp|handlePointerDown/);
+    assert.match(terminalJs, /ensureSshKeyboard\(\)/);
     assert.match(terminalJs, /surface\.onOutput|onOutput\(/);
-    assert.match(terminalJs, /onCompositionStart/);
-    assert.match(terminalJs, /onCompositionEnd/);
-    assert.match(terminalJs, /surface\.onCmdFocus|onCmdFocus\(/);
-    assert.match(terminalJs, /surface\.onViewport|onViewport\(/);
+    assert.match(terminalJs, /onCompositionStart|handleCompositionStart/);
+    assert.match(terminalJs, /onCompositionEnd|handleCompositionEnd/);
+    assert.match(terminalJs, /surface\.onCmdFocus|onCmdFocus\(|openCmd\(/);
+    assert.match(terminalJs, /handleViewportChange|surface\.onViewport|onViewport\(/);
 });
 
 test('contract: host pinScroll is single writer wiring', () => {
@@ -62,8 +68,8 @@ test('contract: mobile fork path disables internal maxScroll stick via public AP
     assert.doesNotMatch(body, /term\._doRender\s*=/);
 });
 
-test('contract: cache-bust scroll4', () => {
-    assert.match(terminalHtml, /20260721-wterm-scroll5/);
+test('contract: cache-bust ssh-kb-root1', () => {
+    assert.match(terminalHtml, /20260721-ssh-kb-root1/);
 });
 
 test('surface: pinScroll host is called; no direct scroll without host', () => {

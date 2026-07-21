@@ -20,14 +20,14 @@ import {
     SoftKeyboardIntent,
     SoftKeyboardLiftMode,
     createSshMobileSoftKeyboard,
-} from './ssh-mobile-keyboard.js?v=20260721-wterm-scroll5';
+} from './ssh-mobile-keyboard.js?v=20260721-ssh-kb-root1';
 import {
     computeCursorAboveChromeScrollTop,
     allowScrollDuringTyping,
     scrollSettlePhases,
     shouldScrollOnTerminalOutput,
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
-} from './terminal-scroll-policy.js?v=20260721-wterm-scroll5';
+} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root1';
 
 /**
  * @typedef {object} SurfaceHost
@@ -239,6 +239,14 @@ export function createTerminalSurfaceController(host) {
     function ensureSoftKeyboard() {
         if (softKeyboard) return softKeyboard;
         if (!host.isTouchDevice?.()) return null;
+        // Prefer host-injected keyboard (SshKeyboard facade compat) — single authority.
+        if (typeof host.getSoftKeyboard === 'function') {
+            const external = host.getSoftKeyboard();
+            if (external) {
+                softKeyboard = external;
+                return softKeyboard;
+            }
+        }
         softKeyboard = createSshMobileSoftKeyboard({
             isTouchDevice: () => !!host.isTouchDevice?.(),
             isStableMode: () => !!host.isMobileStable?.(),

@@ -13425,3 +13425,16 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         padding-bottom: calc(var(--mobile-bottom-actions-height, 46px) + var(--mobile-aux-keys-height, 44px) + 8px) !important;
     }
 }
+
+/* ===== SSH keyboard root channels (ssh-keyboard facade) ===== */
+html {
+    --ssh-kb-inset: 0px;
+}
+/* During migration, keep legacy consumers working off the single source vars. */
+html.ssh-kb-open {
+    /* class presence is the open signal; inset carries height */
+}
+html.ssh-kb-open.mobile-stable-input,
+html.ssh-kb-open {
+    /* no-op placeholder — concrete layout still uses legacy selectors written by layout gate mirrors */
+}

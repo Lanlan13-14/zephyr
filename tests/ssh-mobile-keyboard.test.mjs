@@ -228,15 +228,15 @@ test('close commits zero inset to parent', () => {
     assert.ok(host.applied.some((a) => a.open === false && a.i === 0));
 });
 
-test('wiring contract: terminal imports controller; button removed', () => {
-    assert.match(terminalJs, /createSshMobileSoftKeyboard/);
-    assert.match(terminalJs, /SoftKeyboardLiftMode/);
-    assert.match(terminalJs, /ensureSshSoftKeyboard/);
-    assert.match(terminalJs, /handleTerminalTap/);
+test('wiring contract: terminal imports controller + facade; button removed', () => {
+    assert.match(terminalJs, /createSshMobileSoftKeyboard|createSshKeyboard/);
+    assert.match(terminalJs, /SoftKeyboardLiftMode|LiftMode/);
+    assert.match(terminalJs, /ensureSshSoftKeyboard|ensureSshKeyboard/);
+    assert.match(terminalJs, /handleTerminalTap|handlePointerUp/);
     assert.match(terminalJs, /assertKeyboardLayoutSettled/);
-    assert.match(terminalJs, /liftMode:\s*SoftKeyboardLiftMode\.NONE/);
+    assert.match(terminalJs, /liftMode:\s*SoftKeyboardLiftMode\.NONE|LiftMode\.NONE|openCmd\(/);
     assert.doesNotMatch(terminalHtml, /id="cmdKeyboardBtn"/);
-    assert.match(terminalHtml, /20260721-wterm-scroll5/);
+    assert.match(terminalHtml, /20260721-ssh-kb-root1/);
     assert.match(styleCss, /\.cmd-keyboard-btn \{ display: none !important/);
 });
 
@@ -246,8 +246,10 @@ test('wiring contract: body tap does not blur/dismiss', () => {
         terminalJs,
         /Toggle keyboard: if already open, dismiss; otherwise open/,
     );
-    assert.match(terminalJs, /Never dismisses/);
-    assert.match(terminalJs, /dismissMobileStableImeProxy|sshSoftKeyboard\.close|sshSoftKeyboard\?\.close/);
+    // Facade gesture path: open only on clean tap; never dismiss on body pointerup.
+    assert.match(terminalJs, /handlePointerUp|handleTerminalTap/);
+    assert.doesNotMatch(terminalJs, /result\?\.opened[\s\S]{0,200}close\(/);
+    assert.match(terminalJs, /dismissMobileStableImeProxy|sshSoftKeyboard\.close|sshSoftKeyboard\?\.close|sshKb\?\.close|kb\.close|handleParentMessage/);
 });
 
 test('enableMobileStableInputMode does not force userControlled open', () => {
@@ -275,7 +277,9 @@ test('parent stable path does not clip workspace height (overlay model)', () => 
 test('parent closed metrics debounced reset and open hysteresis', () => {
     assert.match(appJs, /resetTerminalWorkspaceKeyboard\(\{ force: false \}\)/);
     assert.match(appJs, /_closeDebounce/);
-    assert.match(appJs, /appKeyboardOpen && inset >= 16/);
+    // Single parent hysteresis lives in reduceParentKeyboardMessage (open≥80, close<12).
+    assert.match(appJs, /reduceParentKeyboardMessage/);
+    assert.match(appJs, /type === 'ssh-kb'/);
     // Soft reset must not post reset-mobile-keyboard by default.
     assert.match(appJs, /notifyIframe = false/);
 });
@@ -293,7 +297,8 @@ test('cmd overlay freezes layout and parent ignores cmd metrics', () => {
     );
     assert.match(styleCss, /html\.cmd-overlay-keyboard \.terminal-input-panel/);
     assert.match(styleCss, /--keyboard-inset:\s*0px !important/);
-    assert.match(appJs, /liftMode === 'none' \|\| e\.data\.inputSource === 'cmd'/);
+    // Parent treats cmd via reduceParentKeyboardMessage.cmd / lift none.
+    assert.match(appJs, /reduceParentKeyboardMessage|liftMode === 'none'|reduced\.cmd/);
 });
 
 test('keyboard toggle button removed; stable chrome pins above IME', () => {

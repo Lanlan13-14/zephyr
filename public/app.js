@@ -1,3 +1,4 @@
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-ssh-kb-root1';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -7284,30 +7285,41 @@ function bindEvents() {
             if (resolve) resolve(e.data);
             return;
         }
-        if (e.data.type === 'keyboard-metrics') {
+        if (e.data.type === 'keyboard-metrics' || e.data.type === 'ssh-kb') {
             const tabId = String(e.data.tabId || '');
             if (tabId && tabId !== activeTerminalTab) return;
             if (e.data.fallback && e.data.stableInput) return;
-            // Top command bar: system IME only. Parent must not clip/lift/reset thrash.
-            if (e.data.liftMode === 'none' || e.data.inputSource === 'cmd' || e.data.source === 'cmd') {
+            // Single parent hysteresis via reduceParentKeyboardMessage (open≥80, close<12).
+            const reduced = reduceParentKeyboardMessage(e.data, {
+                open: !!appKeyboardOpen,
+                inset: Number.parseInt(document.documentElement.style.getPropertyValue('--app-keyboard-inset') || '0', 10) || 0,
+            });
+            if (reduced.cmd) {
                 window.clearTimeout(applyTerminalWorkspaceKeyboard._closeDebounce);
-                // Ensure any previous terminal-ime lift is cleared once, then stay put.
                 if (appKeyboardOpen) resetTerminalWorkspaceKeyboard({ force: false });
                 return;
             }
-            const inset = Number(e.data.keyboardInset) || 0;
-            // Hysteresis: open at ≥80, stay open until <16. Prevents open/close thrash flash.
-            if (e.data.keyboardOpen || inset >= 80 || (appKeyboardOpen && inset >= 16)) {
-                window.clearTimeout(applyTerminalWorkspaceKeyboard._closeDebounce);
-                applyTerminalWorkspaceKeyboard(e.data);
-            } else {
-                // Debounce close so mid-animation inset=0 blips do not blank the page.
-                window.clearTimeout(applyTerminalWorkspaceKeyboard._closeDebounce);
-                applyTerminalWorkspaceKeyboard._closeDebounce = window.setTimeout(() => {
-                    if (appKeyboardOpen && (Number(e.data.keyboardInset) || 0) >= 16) return;
-                    resetTerminalWorkspaceKeyboard({ force: false });
-                }, 180);
+            if (!reduced.changed && (e.data.type === 'ssh-kb')) {
+                // Still apply if legacy path needs continuous metrics while open.
+                if (!reduced.open) return;
             }
+            window.clearTimeout(applyTerminalWorkspaceKeyboard._closeDebounce);
+            if (reduced.open) {
+                applyTerminalWorkspaceKeyboard({
+                    ...e.data,
+                    keyboardOpen: true,
+                    keyboardInset: reduced.inset,
+                });
+            } else {
+                applyTerminalWorkspaceKeyboard._closeDebounce = window.setTimeout(() => {
+                    resetTerminalWorkspaceKeyboard({ force: false });
+                }, 120);
+            }
+            // Mirror unified CSS class/var on parent document for diagnostics.
+            try {
+                document.documentElement.classList.toggle('ssh-kb-open', !!reduced.open);
+                document.documentElement.style.setProperty('--ssh-kb-inset', `${reduced.open ? reduced.inset : 0}px`);
+            } catch (_) {}
             return;
         }
         if (e.data.type === 'activity') {
