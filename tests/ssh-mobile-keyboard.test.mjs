@@ -217,7 +217,7 @@ test('hysteresis keeps open through small inset jitter', () => {
     assert.equal(kb.desiredOpen(), true);
 });
 
-test('focused proxy accepts real physical close only after sustained low inset', () => {
+test('focused proxy never auto-dismisses on low inset (overlays-safe)', () => {
     const realNow = Date.now;
     let now = 10_000;
     Date.now = () => now;
@@ -229,17 +229,17 @@ test('focused proxy accepts real physical close only after sustained low inset',
         kb.syncFromViewport('open');
         assert.equal(kb.physicalOpen(), true);
         assert.equal(documentActive, host.proxy);
-        // Past open-hold; first zero starts debounce, does not close.
+        // Long zero inset while proxy focused must keep IME intent open.
         now += 4000;
         host.setInset(0);
         kb.syncFromViewport('physical-low-1');
-        assert.equal(kb.desiredOpen(), true);
-        // Sustained low for >480ms is a real system dismiss even if proxy focus survives.
-        now += 520;
+        now += 2000;
         kb.syncFromViewport('physical-low-2');
+        assert.equal(kb.desiredOpen(), true);
+        assert.equal(documentActive, host.proxy);
+        // Explicit close still works.
+        kb.close('user-close', { force: true });
         assert.equal(kb.desiredOpen(), false);
-        assert.equal(kb.physicalOpen(), false);
-        assert.notEqual(documentActive, host.proxy);
     } finally {
         Date.now = realNow;
         documentActive = null;
@@ -298,7 +298,7 @@ test('wiring contract: terminal imports controller + facade; button removed', ()
     assert.match(terminalJs, /assertKeyboardLayoutSettled/);
     assert.match(terminalJs, /openCmd\(|LiftMode\.NONE|liftMode/);
     assert.doesNotMatch(terminalHtml, /id="cmdKeyboardBtn"/);
-    assert.match(terminalHtml, /20260721-cursor-metrics1/);
+    assert.match(terminalHtml, /20260721-kb-xterm-fit2/);
     assert.match(styleCss, /\.cmd-keyboard-btn \{ display: none !important/);
 });
 
@@ -384,35 +384,31 @@ test('large blue pill regression: terminal scrollbar is vertical and hidden on m
     assert.doesNotMatch(styleCss, /\.terminal-scrollbar-thumb\s*\{[^}]*rgba\(10,132,255/s);
 });
 
-test('parent sends exact iframe overlap and does not invent open state', () => {
+test('parent sends exact iframe overlap; open intent child-only; physical close parent', () => {
     assert.match(appJs, /frameKeyboardOverlap/);
     assert.match(appJs, /frameRect\.bottom - physicalKeyboardTop/);
-    assert.match(appJs, /layoutHeight - effectiveInset/);
     assert.match(appJs, /type:\s*'keyboard-overlap'/);
     assert.match(terminalJs, /e\.data\.type === 'keyboard-overlap'/);
-    assert.match(terminalJs, /parent-physical-close/);
-    assert.match(terminalJs, /authoritative:\s*parentAuthoritative/);
+    assert.match(terminalJs, /parent-physical-close|parent-overlap/);
+    assert.match(terminalJs, /applyMobileStableKeyboardInset/);
+    // Never open from bare inset threshold on parent.
     assert.doesNotMatch(appJs, /keyboardOpen:\s*inset >= 80 \|\| sshKbParentOpen/);
-    // Parent no longer owns independent physical hysteresis.
     assert.doesNotMatch(appJs, /appKeyboardParentPhysicalOpen/);
-    assert.match(appJs, /must NOT invent keyboard open|Child facade is sole judge/i);
+    // kb-xterm-fit2: parent forces close when physical inset gone.
+    assert.match(appJs, /parent-physical-close|parent-stable-close|physical height authority/i);
     assert.match(appJs, /reduceParentKeyboardMessage/);
     assert.match(appJs, /sshKbParentInset/);
+    assert.match(appJs, /childOpen/);
 });
 
-test('IME bars use exact overlap with no safe-area seam', () => {
-    assert.match(styleCss, /bottom:\s*var\(--ime-chrome-bottom/);
-    // Authoritative fixed bar block must zero padding while IME open.
-    assert.match(
-        styleCss,
-        /html\.mobile-stable-input\.ssh-kb-open \.terminal-bottom-bar\s*\{[^}]*padding-bottom:\s*0 !important/s,
-    );
-    assert.match(
-        styleCss,
-        /html\.mobile-stable-input\.ssh-kb-open \.terminal-bottom-bar\s*\{[^}]*margin:\s*0 !important/s,
-    );
-    assert.match(
-        styleCss,
-        /html\.mobile-stable-input\.ssh-kb-open \.terminal-bottom-bar\s*\{[^}]*border-bottom:\s*0 !important/s,
-    );
+test('IME bars stay in-flow under terminal (Termux); no fixed overlay seam', () => {
+    const marker = styleCss.lastIndexOf('AUTHORITATIVE MOBILE SSH SURFACE');
+    assert.ok(marker > 0);
+    const tail = styleCss.slice(marker);
+    // kb-xterm-fit2: chrome is static in document flow — never fixed over buffer.
+    assert.match(tail, /ssh-kb-open \.terminal-bottom-bar[\s\S]{0,400}position:\s*static\s*!important/);
+    assert.match(tail, /ssh-kb-open \.topbar-actions[\s\S]{0,400}position:\s*static\s*!important/);
+    assert.match(tail, /padding-bottom:\s*2px\s*!important/);
+    // leftover historical fixed rules may exist above; authoritative tail must not reintroduce them
+    assert.doesNotMatch(tail, /\.terminal-bottom-bar\s*\{[^}]*position:\s*fixed/s);
 });

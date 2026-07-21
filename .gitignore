@@ -47,3 +47,9 @@ zephyr_agent/macos/.symlinks/
 
 # Agent token data
 data/agent-tokens.json
+# xterm.js vendored tree — local toolchain artifacts only
+xterm/node_modules/
+xterm/out/
+xterm/lib/
+xterm/lib-headless/
+xterm/out-test/

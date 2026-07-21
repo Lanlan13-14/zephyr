@@ -1,0 +1,36 @@
+node_modules/
+*.swp
+.lock-wscript
+lib/
+out/
+out-demo/
+out-test/
+out-esbuild/
+out-esbuild-test/
+.nyc_output/
+Makefile.gyp
+*.Makefile
+*.target.gyp.mk
+*.node
+example/*.log
+docs/
+npm-debug.log
+/.idea/
+.env
+mise.toml
+build/
+.DS_Store
+yarn.lock
+test-results/
+
+# Tracing/debug files
+.cursor/nal-trace/
+.cursor/*.log
+
+# Keep bundled code out of Git
+dist/
+demo/dist/
+
+# dont commit benchmark folders
+.benchmark/
+timeline/

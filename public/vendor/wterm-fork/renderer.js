@@ -261,7 +261,94 @@ class Renderer {
     __publicField(this, "_hostCellHeight", 0);
     __publicField(this, "_scrollbackRowEls", []);
     __publicField(this, "_renderedScrollbackCount", 0);
+    /**
+     * Local pre-commit draft (mobile/desktop line editor). Painted IN the grid
+     * starting at the live cursor — not a separate chrome bar. Supports soft
+     * wrap at cols and hard newlines. Long drafts show the tail so the caret
+     * stays on-screen.
+     */
+    __publicField(this, "_localDraft", "");
+    /** Previous draft footprint rows that must be invalidated on change. */
+    __publicField(this, "_draftDirtyRows", /* @__PURE__ */ new Set());
     this.container = container;
+  }
+  /**
+   * Set the in-grid local draft text (pre-Enter). Empty clears.
+   * Returns rows that changed for host diagnostics.
+   */
+  setLocalDraft(text) {
+    const next = String(text || "");
+    if (next === this._localDraft) return;
+    this.invalidateAll();
+    this._localDraft = next;
+    this._draftDirtyRows.clear();
+  }
+  getLocalDraft() {
+    return this._localDraft;
+  }
+  /**
+   * Build overlay cells for draft starting at cursor, wrapped to cols.
+   * Map key = `${row},${col}` → CellData-like for paint.
+   */
+  _buildDraftOverlay(cursor, cols, rows) {
+    const cells = /* @__PURE__ */ new Map();
+    const draft = this._localDraft;
+    if (!draft || cols < 1 || rows < 1) {
+      return {
+        cells,
+        caretRow: cursor.row,
+        caretCol: cursor.col
+      };
+    }
+    const logical = [];
+    let line = {
+      startCol: Math.max(0, Math.min(cols - 1, cursor.col | 0)),
+      chars: []
+    };
+    const flushLine = () => {
+      logical.push(line);
+      line = { startCol: 0, chars: [] };
+    };
+    const room = () => cols - line.startCol - line.chars.length;
+    for (const ch of draft) {
+      if (ch === "\r") continue;
+      if (ch === "\n") {
+        flushLine();
+        continue;
+      }
+      const cp = ch.codePointAt(0) || 32;
+      if (room() <= 0) flushLine();
+      line.chars.push(cp);
+    }
+    logical.push(line);
+    const baseRow = Math.max(0, Math.min(rows - 1, cursor.row | 0));
+    const avail = Math.max(1, rows - baseRow);
+    const visible = logical.length > avail ? logical.slice(logical.length - avail) : logical;
+    const row0 = baseRow;
+    let caretRow = row0;
+    let caretCol = cursor.col | 0;
+    for (let i = 0; i < visible.length; i++) {
+      const dl = visible[i];
+      const r = row0 + i;
+      if (r >= rows) break;
+      let c = dl.startCol;
+      for (const cp of dl.chars) {
+        if (c >= cols) break;
+        cells.set(`${r},${c}`, {
+          char: cp,
+          fg: 14,
+          // cyan-ish draft (palette)
+          bg: 256,
+          flags: 4,
+          // italic — distinguish draft from committed
+          wide: 0
+        });
+        c += 1;
+      }
+      caretRow = r;
+      caretCol = Math.min(cols, c);
+    }
+    return { cells, caretRow, caretCol };
   }
   /** Push authoritative cell metrics from WTerm.refreshCellMetrics(). */
   setCellMetrics(charWidth, rowHeight) {
@@ -565,17 +652,39 @@ class Renderer {
       this.rowSignatures = this.rowSignatures.map(() => null);
       this.prevRowBg.fill("");
     }
-    this.syncScrollback(core);
+    const xtermViewport = core.kind === "xterm" || core.virtualViewport === true;
+    if (!xtermViewport) {
+      this.syncScrollback(core);
+    } else if (this._renderedScrollbackCount > 0) {
+      for (const el of this._scrollbackRowEls) el.remove();
+      this._scrollbackRowEls = [];
+      this._renderedScrollbackCount = 0;
+    }
     const cursor = core.getCursor();
-    const cursorMoved = cursor.row !== this.prevCursorRow || cursor.col !== this.prevCursorCol;
+    const draftOverlay = this._buildDraftOverlay(cursor, this.cols, this.rows);
+    const hasDraft = !!this._localDraft;
+    const paintCursor = hasDraft ? {
+      row: draftOverlay.caretRow,
+      col: draftOverlay.caretCol,
+      visible: cursor.visible,
+      style: cursor.style
+    } : cursor;
+    const cursorMoved = paintCursor.row !== this.prevCursorRow || paintCursor.col !== this.prevCursorCol;
+    const cellAt = (r, col) => {
+      const key = `${r},${col}`;
+      const over = draftOverlay.cells.get(key);
+      if (over) return over;
+      return core.getCell(r, col);
+    };
     for (let r = 0; r < this.rows; r++) {
-      const isDirty = resized || screenReverseChanged || core.isDirtyRow(r);
+      const draftTouchesRow = hasDraft && [...draftOverlay.cells.keys()].some((k) => k.startsWith(`${r},`));
+      const isDirty = resized || screenReverseChanged || core.isDirtyRow(r) || draftTouchesRow || hasDraft && r >= cursor.row;
       if (!isDirty) continue;
       const oldSigs = this.rowSignatures[r];
-      let allMatch = oldSigs !== null && oldSigs.length === this.cols;
+      let allMatch = oldSigs !== null && oldSigs.length === this.cols && !draftTouchesRow;
       if (allMatch) {
         for (let col = 0; col < this.cols; col++) {
-          const cell = core.getCell(r, col);
+          const cell = cellAt(r, col);
           const sig = cellSignature(
             cell.char,
             cell.fg,
@@ -597,7 +706,7 @@ class Renderer {
       }
       this._buildRowContent(
         this.rowEls[r],
-        (col) => core.getCell(r, col),
+        (col) => cellAt(r, col),
         this.cols,
         r,
         (id) => core.getHyperlink(id),
@@ -606,7 +715,7 @@ class Renderer {
       );
       const newSigs = [];
       for (let col = 0; col < this.cols; col++) {
-        const cell = core.getCell(r, col);
+        const cell = cellAt(r, col);
         newSigs.push(
           cellSignature(
             cell.char,
@@ -622,11 +731,11 @@ class Renderer {
       }
       this.rowSignatures[r] = newSigs;
     }
-    if (cursorMoved || resized || cursor.visible !== this.cursorVisible) {
-      this._updateCursorOverlay(core, cursor);
+    if (cursorMoved || resized || paintCursor.visible !== this.cursorVisible || hasDraft) {
+      this._updateCursorOverlay(core, paintCursor);
     }
-    this.prevCursorRow = cursor.row;
-    this.prevCursorCol = cursor.col;
+    this.prevCursorRow = paintCursor.row;
+    this.prevCursorCol = paintCursor.col;
     const lastRowDirty = resized || core.isDirtyRow(this.rows - 1);
     if (lastRowDirty) {
       const bottomRight = core.getCell(this.rows - 1, this.cols - 1);

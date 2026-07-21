@@ -77,20 +77,23 @@ test('syncViewport opens physical without changing intent when closed', () => {
     assert.equal(store.desiredOpen(), false);
 });
 
-test('system dismiss requires sustained low inset past open guard (focus may survive Android back)', () => {
+test('system dismiss never auto-closes while editable focus holds (overlays-safe)', () => {
     const host = makeHost();
     const store = createKeyboardIntentStore(host, { openGuardMs: 200, dismissConfirmMs: 300 });
     store.open('tap', { now: 1000 });
     store.syncViewport({ inset: 280, hasEditableFocus: true, now: 1100 });
     assert.equal(store.physicalOpen(), true);
-    // physical down still in guard → keep open
+    // physical down with focus → keep open forever (no self-retract on overlays)
     store.syncViewport({ inset: 0, hasEditableFocus: true, now: 1150 });
     assert.equal(store.desiredOpen(), true);
-    // past guard + sustained low, even if focus remains → system dismiss
     store.syncViewport({ inset: 0, hasEditableFocus: true, now: 1600 });
-    store.syncViewport({ inset: 0, hasEditableFocus: true, now: 1950 });
+    store.syncViewport({ inset: 0, hasEditableFocus: true, now: 5000 });
+    assert.equal(store.desiredOpen(), true);
+    assert.equal(store.physicalOpen(), true);
+    // Without focus, sustained low may dismiss
+    store.syncViewport({ inset: 0, hasEditableFocus: false, now: 5300 });
+    store.syncViewport({ inset: 0, hasEditableFocus: false, now: 5700 });
     assert.equal(store.desiredOpen(), false);
-    assert.equal(store.physicalOpen(), false);
 });
 
 test('blur alone does not close', () => {

@@ -7,7 +7,11 @@
     "start": "node server.js",
     "dev": "node server.js",
     "build:editor": "esbuild public/editor/src/zephyr-editor.js --bundle --format=esm --target=es2020 --outfile=public/editor/zephyr-editor.bundle.js --minify",
+    "build:terminal": "node scripts/build-xterm-headless.mjs && node scripts/transpile-wterm.mjs core && node scripts/transpile-wterm.mjs dom",
+    "build:terminal:wasm": "BUILD_WASM=1 bash scripts/build-wterm.sh",
     "test": "npm run test:rdp-node",
+    "test:xterm-bridge": "node --test tests/xterm-bridge-contract.test.mjs",
+ 
     "test:rdp-node": "node --test tests/*.test.mjs",
     "test:syntax": "node tests/check-js-syntax.mjs",
     "test:go": "cd rdp-wasm/grdp-patch && GOOS=js GOARCH=wasm go test -exec=\"$(pwd)/../../tests/go-js-wasm-exec-clean.sh\" ./plugin/rdpgfx ./plugin/cliprdr ./protocol/nla && cd .. && GOOS=js GOARCH=wasm go test -exec=\"$(pwd)/../tests/go-js-wasm-exec-clean.sh\" ./...",
@@ -49,7 +53,8 @@
     "@novnc/novnc": "^1.7.0",
     "@simplewebauthn/server": "^13.3.0",
     "@uiw/codemirror-theme-github": "^4.25.10",
-    "@wterm/dom": "^0.1.9",
+    "@xterm/headless": "^6.0.0",
+ 
     "archiver": "^7.0.1",
     "better-sqlite3": "^11.10.0",
     "codemirror": "^6.0.2",

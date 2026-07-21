@@ -59,10 +59,12 @@ test('DoD3: non-pin scrollTop goes through writeTerminalScrollTop gate', () => {
     assert.match(terminalJs, /scroll:blocked-ssh-kb-gate|allowNonPinScroll/);
 });
 
-test('DoD4: parent has no independent physical hysteresis; child bridge default no legacy metrics', () => {
+test('DoD4: parent never invents OPEN; physical CLOSE height is parent-authoritative', () => {
     assert.doesNotMatch(appJs, /appKeyboardParentPhysicalOpen/);
-    assert.match(appJs, /must NOT invent keyboard open|Child facade is sole judge/i);
+    // kb-xterm-fit2: child owns open INTENT; parent owns physical height / close.
+    assert.match(appJs, /OPEN intent: child facade only|childOpen|physical height authority|parent-physical-close/i);
     assert.match(appJs, /reduceParentKeyboardMessage/);
+    assert.doesNotMatch(appJs, /keyboardOpen:\s*inset\s*>=\s*80\s*\|\|\s*sshKbParentOpen/);
     assert.match(bridgeJs, /emitLegacyMetrics === true|emitLegacyMetrics: false/);
     assert.match(indexJs, /emitLegacyMetrics:\s*false/);
 });
@@ -85,14 +87,16 @@ test('finalizeKeyboardClose delegates to facade close', () => {
     assert.match(body, /kb\.close|ensureSshKeyboard/);
 });
 
-test('cache bust root5', () => {
-    assert.match(terminalHtml, /ssh-kb-root6/);
+test('cache bust kb-xterm-fit2', () => {
+    assert.match(terminalHtml, /kb-xterm-fit2/);
 });
 
 test('no bare inset open thresholds in terminal.js', () => {
+    // kb-xterm-fit2: >=80 is allowed only as IME noise floor (geometry), never as
+    // a solo open judge like `keyboardOpen = inset >= 80`.
     assert.doesNotMatch(terminalJs, /keyboardInset\s*>=\s*80/);
     assert.doesNotMatch(terminalJs, /keyboardInset\s*>=\s*100/);
-    assert.doesNotMatch(terminalJs, /inset\s*>=\s*80(?!\s*&&)/); // loose
+    assert.doesNotMatch(terminalJs, /keyboardOpen\s*=\s*[^;]*inset\s*>=\s*80/);
     assert.doesNotMatch(terminalJs, /updateMobileKeyboardButtonUi/);
     assert.doesNotMatch(terminalJs, /setupMobileKeyboardButton/);
     assert.match(terminalJs, /function applyFacadeChrome/);
@@ -108,8 +112,11 @@ test('updateViewportInsets has no non-facade open branch', () => {
 
 test('applyFacadeChrome does not invent open from inset alone', () => {
     const body = sliceFn(terminalJs, 'applyFacadeChrome');
-    assert.doesNotMatch(body, /inset\s*>=\s*80/);
+    // Open still requires phase/desired/proxy — inset>=80 is only a retain/noise gate.
     assert.match(body, /getPhase|desiredOpen|physicalOpen/);
+    assert.match(body, /desired|phase|proxyFocused/);
+    assert.doesNotMatch(body, /const open\s*=\s*inset\s*>=\s*80/);
+    assert.doesNotMatch(body, /const open\s*=\s*\(?\s*inset\s*>/);
 });
 
 test('parent never invents open from inset thresholds', () => {

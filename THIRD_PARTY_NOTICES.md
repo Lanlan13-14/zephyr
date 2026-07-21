@@ -32,7 +32,8 @@ The Zephyr-SSH project itself is licensed under the GNU General Public License v
 | CodeMirror | MIT | Browser-based code editor | <https://codemirror.net/> |
 | Lezer | MIT | Parser system used by CodeMirror | <https://lezer.codemirror.net/> |
 | @uiw/codemirror-theme-github | MIT | GitHub-style CodeMirror themes | <https://github.com/uiwjs/react-codemirror> |
-| @wterm/dom | MIT | Terminal rendering helpers | <https://github.com/vercel-labs/wterm> |
+| @wterm/dom (vendored fork under `wterm/packages/@wterm/dom`) | MIT | Terminal DOM renderer, input, viewport shell | <https://github.com/vercel-labs/wterm> / <https://wterm.dev/> |
+| xterm.js / @xterm/headless (vendored source under `xterm/`, runtime bundle under `public/vendor/wterm-fork/core/`) | MIT | VT parser, buffer, reflow (headless core); DOM paint stays wterm | <https://github.com/xtermjs/xterm.js> | 
 | Prettier | MIT | Code formatting | <https://prettier.io/> |
 | Viewer.js | MIT | Image preview viewer | <https://github.com/fengyuanchen/viewerjs> |
 | Chart.js | MIT | Charts and statistics UI | <https://www.chartjs.org/> |

@@ -1,0 +1,22 @@
+{
+  "name": "xterm.js",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": 22
+    } // yarn
+  },
+  "forwardPorts": [
+    3000
+  ],
+  "postCreateCommand": "npm install && npm run setup",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "editorconfig.editorconfig",
+        "hbenl.vscode-mocha-test-adapter"
+      ]
+    }
+  }
+}

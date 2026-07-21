@@ -162,15 +162,17 @@ test('contract: ime-active cursor CSS exists in wterm source and vendor', () => 
     }
 });
 
-test('contract: keyboard-open padding does not double-count keyboard-inset', () => {
-    // bars are position:fixed above IME; padding only reserves tools+aux height
-    const block = styleCss.match(
-        /html\.mobile-stable-input\.ssh-kb-open\s+\.terminal-container\s*\{[\s\S]*?padding-bottom\s*:\s*calc\(([\s\S]*?)\)\s*!important/,
+test('contract: keyboard-open container has zero overlay padding (in-flow chrome)', () => {
+    // kb-flow1: chrome is in flex flow under the terminal — no padding-bottom reserve.
+    const marker = styleCss.lastIndexOf('AUTHORITATIVE MOBILE SSH SURFACE');
+    assert.ok(marker > 0);
+    const tail = styleCss.slice(marker);
+    const block = tail.match(
+        /html\.mobile-stable-input\.ssh-kb-open\s+\.terminal-container\s*\{([\s\S]*?)\}/,
     );
-    assert.ok(block, 'ssh-kb-open terminal-container padding-bottom calc missing');
+    assert.ok(block, 'ssh-kb-open terminal-container rule missing in authoritative block');
+    assert.match(block[1], /padding-bottom\s*:\s*0\s*!important/);
     assert.doesNotMatch(block[1], /keyboard-inset/);
-    assert.match(block[1], /mobile-bottom-actions-height/);
-    assert.match(block[1], /mobile-aux-keys-height/);
 });
 
 test('contract: active-line rect prefers bridge cursor / overlay class', () => {
@@ -313,13 +315,18 @@ test('contract: external mobile input prevents WTerm IME and self-scroll bypass'
     assert.doesNotMatch(terminal, /\[80, 180, 360\]\.forEach\(\(delay\) => \{[\s\S]{0,500}scrollTop/);
 });
 
-test('contract: authoritative mobile CSS overrides historical grid/static chrome', () => {
+test('contract: authoritative mobile CSS uses Termux in-flow chrome (never fixed overlay)', () => {
     const css = readFileSync(join(root, 'public/style.css'), 'utf8');
     const marker = css.lastIndexOf('AUTHORITATIVE MOBILE SSH SURFACE');
     assert.ok(marker > 0, 'last authoritative surface block missing');
     const tail = css.slice(marker);
     assert.match(tail, /terminal-page\s*\{[\s\S]{0,400}display:\s*flex\s*!important/);
-    assert.match(tail, /ssh-kb-open \.topbar-actions\s*\{[\s\S]{0,300}position:\s*fixed\s*!important/);
-    assert.match(tail, /ssh-kb-open \.terminal-bottom-bar\s*\{[\s\S]{0,300}position:\s*fixed\s*!important/);
+    // kb-flow1: chrome stays static in flex flow; page shrinks by --ssh-kb-inset.
+    assert.match(tail, /ssh-kb-open \.topbar-actions[\s\S]{0,400}position:\s*static\s*!important/);
+    assert.match(tail, /ssh-kb-open \.terminal-bottom-bar[\s\S]{0,400}position:\s*static\s*!important/);
+    assert.match(tail, /ssh-kb-open \.terminal-page\s*\{[\s\S]{0,300}--ssh-kb-inset/);
     assert.doesNotMatch(tail, /grid-template-areas/);
+    // Must not reintroduce fixed chrome in the authoritative tail.
+    assert.doesNotMatch(tail, /\.topbar-actions\s*\{[^}]*position:\s*fixed/s);
+    assert.doesNotMatch(tail, /\.terminal-bottom-bar\s*\{[^}]*position:\s*fixed/s);
 });

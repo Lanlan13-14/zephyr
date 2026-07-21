@@ -1,9 +1,13 @@
-import { WasmBridge, type TerminalCore } from "@wterm/core";
+import {
+  WasmBridge,
+  XtermBridge,
+  type TerminalCore,
+} from "@wterm/core";
 import { Renderer, resolveQueryColor } from "./renderer.js";
 import { CanvasRenderer } from "./canvas-renderer.js";
 import { InputHandler } from "./input.js";
 import { DebugAdapter } from "./debug.js";
-
+ 
 type TermRenderer = {
   setup(cols: number, rows: number): void;
   render(core: any): void;
@@ -47,10 +51,19 @@ export interface WTermOptions {
   cols?: number;
   rows?: number;
   /**
-   * A pre-constructed terminal core. When provided, `wasmUrl` is ignored and
-   * this core is used directly instead of loading the built-in Zig WASM binary.
+   * A pre-constructed terminal core. When provided, engine/wasmUrl are ignored
+   * and this core is used directly.
    */
   core?: TerminalCore;
+  /**
+   * VT/buffer engine.
+   * - "xterm" (default): @xterm/headless via XtermBridge — full reflow, MIT, vendored under /xterm
+   * - "wasm": legacy Zig WASM core (WasmBridge)
+   */
+  engine?: "xterm" | "wasm";
+  /** Scrollback lines for the xterm engine (default 5000). */
+  scrollback?: number;
+  /** Only used when engine === "wasm". */
   wasmUrl?: string;
   autoResize?: boolean;
   cursorBlink?: boolean;
@@ -64,6 +77,7 @@ export interface WTermOptions {
    * - "dom" (default): full selection/history/hyperlink support
    * - "canvas": higher throughput for dense output; limited selection UX
    */
+  renderer?: "dom" | "canvas";
   /**
    * Native: WTerm owns hidden textarea focus and input scroll.
    * External: host owns IME proxy / focus / scroll; WTerm is render+VT only.
@@ -78,7 +92,7 @@ export interface WTermOptions {
   onBell?: () => void;
   onClipboard?: (request: { selection: string; base64: string; query: boolean }) => void;
 }
-
+ 
 /** Viewport snapshot returned by {@link WTerm.getViewportState}. */
 export interface ViewportState {
   atBottom: boolean;
@@ -125,7 +139,9 @@ export class WTerm {
 
   private _coreOption: TerminalCore | undefined;
   private wasmUrl: string | undefined;
-  private _debugEnabled: boolean;
+  private _engine: "xterm" | "wasm" = "xterm";
+  private _scrollback: number = 5000;
+  private _debugEnabled: boolean; 
   private renderer: TermRenderer | null = null;
   private _rendererMode: "dom" | "canvas" = "dom";
   private _inputMode: "native" | "external" = "native";
@@ -160,10 +176,12 @@ export class WTerm {
     this.element = element;
     this._coreOption = options.core;
     this.wasmUrl = options.wasmUrl;
+    this._engine = options.engine === "wasm" ? "wasm" : "xterm";
+    this._scrollback = Math.max(0, Number(options.scrollback) || 5000);
     this.cols = options.cols || 80;
     this.rows = options.rows || 24;
     this.autoResize = options.autoResize !== false;
-    this._debugEnabled = options.debug ?? false;
+    this._debugEnabled = options.debug ?? false; 
 
     this.onData = options.onData || null;
     this.onTitle = options.onTitle || null;
@@ -206,11 +224,20 @@ export class WTerm {
     try {
       if (this._coreOption) {
         this.bridge = this._coreOption;
-      } else {
+      } else if (this._engine === "wasm") {
         this.bridge = await WasmBridge.load(this.wasmUrl);
+      } else {
+        // Default: xterm.js headless core + wterm DOM renderer.
+        this.bridge = await XtermBridge.load({
+          cols: this.cols,
+          rows: this.rows,
+          scrollback: this._scrollback,
+        });
       }
       if (this._destroyed) return this;
       this.bridge.init(this.cols, this.rows);
+      this.element.classList.toggle("engine-xterm", this._engine === "xterm" || !!(this.bridge as { kind?: string }).kind);
+      this.element.classList.toggle("engine-wasm", this._engine === "wasm" && !(this.bridge as { kind?: string }).kind); 
 
       if (this._debugEnabled) {
         this.debug = new DebugAdapter();
@@ -252,6 +279,15 @@ export class WTerm {
       // External/mobile mode has a dedicated IME proxy. Native focus here
       // would steal it and make keyboard opening intermittent.
       if (this._inputMode === "native") this.input.focus();
+
+      // xterm viewport: wheel drives ydisp; DOM does not hold history rows.
+      if (this._isXtermEngine()) {
+        this.element.classList.add("xterm-viewport");
+        this.element.addEventListener("wheel", this._onVirtualWheel, {
+          passive: false,
+        });
+      }
+
       this._initialRender();
     } catch (err) {
       this.destroy();
@@ -262,13 +298,43 @@ export class WTerm {
 
     return this;
   }
-
+ 
+  /** True when the VT core is at bottom (xterm: ydisp===ybase). DOM scroll is not authority. */
   private _isScrolledToBottom(): boolean {
+    const core = this.bridge as {
+      isAtBottom?: () => boolean;
+      kind?: string;
+    } | null;
+    if (core && typeof core.isAtBottom === "function") {
+      return !!core.isAtBottom();
+    }
+    // Legacy WASM/DOM path: physical overflow scroll.
     const el = this.element;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 5;
   }
 
+  private _isXtermEngine(): boolean {
+    const core = this.bridge as { kind?: string; virtualViewport?: boolean } | null;
+    return (
+      this._engine === "xterm" ||
+      core?.kind === "xterm" ||
+      core?.virtualViewport === true
+    );
+  }
+
+  /**
+   * Scroll to bottom. xterm path drives ydisp via bridge; legacy path uses DOM scrollTop.
+   */
   private _scrollToBottom(): void {
+    const core = this.bridge as {
+      scrollToBottom?: () => void;
+    } | null;
+    if (this._isXtermEngine() && core && typeof core.scrollToBottom === "function") {
+      core.scrollToBottom();
+      this._shouldScrollToBottom = true;
+      this._scheduleRender();
+      return;
+    }
     const el = this.element;
     const maxScroll = el.scrollHeight - el.clientHeight;
     if (maxScroll <= 0) {
@@ -279,6 +345,35 @@ export class WTerm {
     el.scrollTop = Math.floor(maxScroll / rh) * rh;
   }
 
+  /** Wheel/touch → xterm scrollLines (negative = into history). */
+  private _wheelAccum = 0;
+  private _onVirtualWheel = (e: WheelEvent): void => {
+    if (!this._isXtermEngine() || !this.bridge) return;
+    // App mouse tracking: let InputHandler / host decide; don't steal.
+    if (this.bridge.mouseMode?.() > 0 && !e.shiftKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rh = Math.max(1, this._rowHeight || 17);
+    // Accumulate pixel deltas; only step whole rows (matches xterm Viewport).
+    let deltaLines = 0;
+    if (e.deltaMode === 1) {
+      deltaLines = e.deltaY;
+    } else if (e.deltaMode === 2) {
+      deltaLines = e.deltaY * Math.max(1, (this.rows || 24) - 1);
+    } else {
+      this._wheelAccum += e.deltaY;
+      if (Math.abs(this._wheelAccum) < rh) return;
+      deltaLines = Math.trunc(this._wheelAccum / rh);
+      this._wheelAccum -= deltaLines * rh;
+    }
+    if (!deltaLines) return;
+    const core = this.bridge as { scrollLines?: (n: number) => void };
+    // onScroll already markAllDirty; one scheduled paint is enough.
+    core.scrollLines?.(deltaLines);
+    this._shouldScrollToBottom = this._isScrolledToBottom();
+    this._scheduleRender();
+  };
+ 
   /* ── Public viewport API (Zephyr fork, FREEZE plan §3.8) ──────────────
    * The stock @wterm/dom keeps these private; the Zephyr fork exposes them
    * so the terminal controller can read and drive the viewport without
@@ -345,20 +440,41 @@ export class WTerm {
   /** Return a serializable snapshot of the current viewport state. */
   getViewportState(): ViewportState {
     const el = this.element;
+    const rh = this._rowHeight || 17;
+    const core = this.bridge as {
+      getViewportY?: () => number;
+      getBaseY?: () => number;
+      isAtBottom?: () => boolean;
+    } | null;
+    if (this._isXtermEngine() && core && typeof core.getViewportY === "function") {
+      const ydisp = core.getViewportY() | 0;
+      const ybase = typeof core.getBaseY === "function" ? core.getBaseY() | 0 : ydisp;
+      return {
+        atBottom: typeof core.isAtBottom === "function" ? !!core.isAtBottom() : ydisp >= ybase,
+        // Expose ydisp in row units as "scrollTop" so host policy can reason without DOM overflow.
+        scrollTop: ydisp * rh,
+        maxScroll: Math.max(0, ybase) * rh,
+        rowHeight: rh,
+        charWidth: this._charWidth || 8,
+        rows: this.rows || 0,
+        cols: this.cols || 0,
+        followEnabled: !!this._shouldScrollToBottom,
+      };
+    }
     return {
       atBottom: this._isScrolledToBottom(),
       scrollTop: el ? el.scrollTop : 0,
       maxScroll: el
         ? Math.max(0, el.scrollHeight - el.clientHeight)
         : 0,
-      rowHeight: this._rowHeight || 17,
+      rowHeight: rh,
       charWidth: this._charWidth || 8,
       rows: this.rows || 0,
       cols: this.cols || 0,
       followEnabled: !!this._shouldScrollToBottom,
     };
   }
-
+ 
   /**
    * Single source of truth for cell geometry.
    * Prefer this over reading CSS vars or probing the DOM from the host.
@@ -422,8 +538,15 @@ export class WTerm {
     }
   }
 
-  /** Scroll to a specific line (0-indexed). Best-effort, clamped, row-aligned. */
+  /** Scroll to a specific absolute buffer line (xterm ydisp) or DOM offset (legacy). */
   scrollToLine(line: number): void {
+    const core = this.bridge as { scrollToLine?: (n: number) => void } | null;
+    if (this._isXtermEngine() && core && typeof core.scrollToLine === "function") {
+      core.scrollToLine(Math.max(0, Math.floor(Number(line) || 0)));
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+      this._scheduleRender();
+      return;
+    }
     const el = this.element;
     if (!el) return;
     const rh = this._rowHeight || 17;
@@ -433,7 +556,7 @@ export class WTerm {
       Math.max(0, el.scrollHeight - el.clientHeight),
     );
   }
-
+ 
   /** Recalculate dimensions after the container resizes (manual trigger). */
   fitToContainer(): void {
     if (typeof this._setupResizeObserver === "function") {
@@ -506,21 +629,53 @@ export class WTerm {
     };
   }
 
+  /**
+   * Local pre-Enter draft painted inside the grid from the live cursor.
+   * Supports multi-line (\\n) and soft-wrap at cols. Does NOT write xterm.
+   */
+  setLocalDraft(text: string): void {
+    const renderer = this.renderer as { setLocalDraft?: (t: string) => void } | null;
+    if (renderer && typeof renderer.setLocalDraft === "function") {
+      renderer.setLocalDraft(String(text || ""));
+    }
+    // Force paint so draft appears without waiting for core dirty bits.
+    try {
+      (this.bridge as { markAllDirty?: () => void } | null)?.markAllDirty?.();
+    } catch {
+      /* ignore */
+    }
+    this._scheduleRender();
+  }
+
+  getLocalDraft(): string {
+    const renderer = this.renderer as { getLocalDraft?: () => string } | null;
+    return renderer?.getLocalDraft?.() || "";
+  }
+
   write(data: string | Uint8Array): void {
     if (!this.bridge) return;
     if (this.debug) this.debug.traceWrite(data);
-    this._shouldScrollToBottom = this._isScrolledToBottom();
+    // xterm: stick-bottom is decided inside BufferService (ydisp tracks ybase).
+    // Do NOT force DOM scrollTop. Only sample atBottom for legacy follow flags.
+    if (!this._isXtermEngine()) {
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+    }
     if (typeof data === "string") {
       this.bridge.writeString(data);
     } else {
       this.bridge.writeRaw(data);
     }
+    if (this._isXtermEngine()) {
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+    }
     this._scheduleRender();
   }
-
+ 
   resize(cols: number, rows: number): void {
     if (!this.bridge) return;
-    this._shouldScrollToBottom = this._isScrolledToBottom();
+    if (!this._isXtermEngine()) {
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+    }
     this.cols = cols;
     this.rows = rows;
     this.bridge.resize(cols, rows);
@@ -528,10 +683,13 @@ export class WTerm {
     // setup() rebuilds the DOM; re-push host metrics so the new cursor overlay
     // does not fall back to 1ch until the next font change.
     this._pushMetricsToRenderer();
+    if (this._isXtermEngine()) {
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+    }
     this._scheduleRender();
     if (this.onResize) this.onResize(cols, rows);
   }
-
+ 
   focus(): void {
     if (this.input) {
       this.input.focus();
@@ -598,13 +756,23 @@ export class WTerm {
 
     const hasScrollback = this.bridge.getScrollbackCount() > 0;
     this.element.classList.toggle("has-scrollback", hasScrollback);
+    this.element.classList.toggle("xterm-viewport", this._isXtermEngine());
 
-    if (this._shouldScrollToBottom) {
+    // Scroll ownership:
+    // - xterm engine: ydisp already updated by core on write/scrollLines.
+    //   Never touch element.scrollTop for history; viewport rows were painted
+    //   from ydisp via getCell. Optional explicit follow only re-asserts ybase.
+    // - legacy wasm: DOM overflow still holds history rows.
+    if (this._isXtermEngine()) {
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+      // Keep the wrapper non-scrolled so chrome/metrics stay stable.
+      if (this.element.scrollTop !== 0) this.element.scrollTop = 0;
+    } else if (this._shouldScrollToBottom) {
       this._scrollToBottom();
     } else if (!hasScrollback && this.element.scrollTop !== 0) {
       this.element.scrollTop = 0;
     }
-
+ 
     const title = this.bridge.getTitle();
     if (title !== null && this.onTitle) {
       this.onTitle(title);
@@ -876,6 +1044,14 @@ export class WTerm {
     if (this.resizeObserver) this.resizeObserver.disconnect();
     if (this.input) this.input.destroy();
     this.element.removeEventListener("click", this._onClickFocus);
+    this.element.removeEventListener("wheel", this._onVirtualWheel as EventListener);
+    // Dispose xterm core if present.
+    try {
+      (this.bridge as { dispose?: () => void } | null)?.dispose?.();
+    } catch {
+      /* ignore */
+    }
+    this.bridge = null;
     this.element.innerHTML = "";
     this._renderCallbacks.clear();
     this._viewportCallbacks.clear();
@@ -888,3 +1064,4 @@ export class WTerm {
     this.debug = null;
   }
 }
+ 

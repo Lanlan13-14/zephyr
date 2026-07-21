@@ -210,6 +210,18 @@
   overflow-y: auto;
 }
 
+/* xterm-owned viewport: history is ydisp, not DOM overflow. Never grow a
+   physical scrollport for scrollback rows — wheel is handled in JS and
+   drives Terminal.scrollLines / ydisp. */
+.wterm.xterm-viewport,
+.wterm.xterm-viewport.has-scrollback {
+  overflow: hidden !important;
+  overflow-y: hidden !important;
+  overscroll-behavior: none;
+  touch-action: pan-y;
+}
+ 
+
 .wterm ::selection {
   background: rgba(86, 156, 214, 0.3);
 }

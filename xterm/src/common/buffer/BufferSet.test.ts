@@ -1,0 +1,126 @@
+/**
+ * Copyright (c) 2017 The xterm.js authors. All rights reserved.
+ * @license MIT
+ */
+
+import { assert } from 'chai';
+import { BufferSet } from './BufferSet';
+import { Buffer } from './Buffer';
+import { MockOptionsService, MockBufferService, MockLogService, createCellData } from '../TestUtils.test';
+
+describe('BufferSet', () => {
+  let bufferSet: BufferSet;
+
+  beforeEach(() => {
+    bufferSet = new BufferSet(
+      new MockOptionsService({ scrollback: 1000 }),
+      new MockBufferService(80, 24),
+      new MockLogService()
+    );
+  });
+
+  describe('constructor', () => {
+    it('should create two different buffers: alt and normal', () => {
+      assert.instanceOf(bufferSet.normal, Buffer);
+      assert.instanceOf(bufferSet.alt, Buffer);
+      assert.notEqual(bufferSet.normal, bufferSet.alt);
+    });
+  });
+
+  describe('activateNormalBuffer', () => {
+    beforeEach(() => {
+      bufferSet.activateNormalBuffer();
+    });
+
+    it('should set the normal buffer as the currently active buffer', () => {
+      assert.equal(bufferSet.active, bufferSet.normal);
+    });
+  });
+
+  describe('activateAltBuffer', () => {
+    beforeEach(() => {
+      bufferSet.activateAltBuffer();
+    });
+
+    it('should set the alt buffer as the currently active buffer', () => {
+      assert.equal(bufferSet.active, bufferSet.alt);
+    });
+  });
+
+  describe('cursor handling when swapping buffers', () => {
+    beforeEach(() => {
+      bufferSet.normal.x = 0;
+      bufferSet.normal.y = 0;
+      bufferSet.alt.x = 0;
+      bufferSet.alt.y = 0;
+    });
+
+    it('should keep the cursor stationary when activating alt buffer', () => {
+      bufferSet.activateNormalBuffer();
+      bufferSet.active.x = 30;
+      bufferSet.active.y = 10;
+      bufferSet.activateAltBuffer();
+      assert.equal(bufferSet.active.x, 30);
+      assert.equal(bufferSet.active.y, 10);
+    });
+    it('should keep the cursor stationary when activating normal buffer', () => {
+      bufferSet.activateAltBuffer();
+      bufferSet.active.x = 30;
+      bufferSet.active.y = 10;
+      bufferSet.activateNormalBuffer();
+      assert.equal(bufferSet.active.x, 30);
+      assert.equal(bufferSet.active.y, 10);
+    });
+  });
+
+  describe('markers', () => {
+    it('should clear the markers when the buffer is switched', () => {
+      bufferSet.activateAltBuffer();
+      bufferSet.alt.addMarker(1);
+      assert.equal(bufferSet.alt.markers.length, 1);
+      bufferSet.activateNormalBuffer();
+      assert.equal(bufferSet.alt.markers.length, 0);
+    });
+  });
+
+  describe('lifecycle', () => {
+    it('should dispose previous buffers on reset', () => {
+      const oldNormal = bufferSet.normal as any;
+      oldNormal.lines.get(0)!.setCell(0, createCellData(0, 'a', 1));
+      oldNormal.translateBufferLineToString(0, false);
+
+      const oldCache = oldNormal._stringCache;
+      assert.equal(oldCache.entries.size, 1);
+      assert.notEqual(oldCache._clearTimeout.value, undefined);
+
+      bufferSet.reset();
+
+      assert.notEqual(bufferSet.normal, oldNormal);
+      assert.equal(oldCache.entries.size, 0);
+      assert.equal(oldCache._clearTimeout.value, undefined);
+    });
+
+    it('should dispose both buffers when disposed', () => {
+      const normal = bufferSet.normal as any;
+      normal.lines.get(0)!.setCell(0, createCellData(0, 'a', 1));
+      normal.translateBufferLineToString(0, false);
+
+      bufferSet.activateAltBuffer();
+      const alt = bufferSet.alt as any;
+      alt.lines.get(0)!.setCell(0, createCellData(0, 'b', 1));
+      alt.translateBufferLineToString(0, false);
+
+      const normalCache = normal._stringCache;
+      const altCache = alt._stringCache;
+      assert.notEqual(normalCache._clearTimeout.value, undefined);
+      assert.notEqual(altCache._clearTimeout.value, undefined);
+
+      bufferSet.dispose();
+
+      assert.equal(normalCache.entries.size, 0);
+      assert.equal(altCache.entries.size, 0);
+      assert.equal(normalCache._clearTimeout.value, undefined);
+      assert.equal(altCache._clearTimeout.value, undefined);
+    });
+  });
+});

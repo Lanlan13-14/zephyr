@@ -429,7 +429,10 @@ pub const Terminal = struct {
             self.grid.cols = cols;
             self.grid.rows = rows;
         } else {
-            // Vertical-only resize: top rows leave the viewport, bottom rows stay.
+            // Vertical-only resize (xterm-compatible):
+            // When shrinking, the TOP rows leave the viewport into scrollback and
+            // remaining rows shift UP. The cursor must shift by the same excess
+            // or it "floats" over empty cells (fullscreen IME black void).
             if (rows < old_rows) {
                 const excess = old_rows - rows;
                 if (!self.using_alt_screen and self.scrollback != null) {
@@ -442,6 +445,19 @@ pub const Terminal = struct {
                 while (r < rows) : (r += 1) {
                     self.grid.cells[r] = self.grid.cells[r + excess];
                     self.row_wrapped[r] = self.row_wrapped[r + excess];
+                }
+                // Clear vacated lower slots (beyond new rows) so stale cells
+                // cannot leak if a future grow reuses them without clearRow.
+                r = rows;
+                while (r < old_rows) : (r += 1) {
+                    self.grid.clearRow(r);
+                    self.row_wrapped[r] = 0;
+                }
+                // Cursor moves with the content shift.
+                if (self.cursor_row >= excess) {
+                    self.cursor_row -= excess;
+                } else {
+                    self.cursor_row = 0;
                 }
             }
             self.cols = cols;
@@ -2027,4 +2043,68 @@ test "scrollback" {
     const line0 = sb.getLine(0).?;
     try testing.expectEqual(@as(u32, 'L'), line0.cells[0].char);
     try testing.expectEqual(@as(u32, '2'), line0.cells[1].char);
+}
+
+test "vertical shrink pushes top rows and shifts cursor with content" {
+    const testing = @import("std").testing;
+    const sb = try testing.allocator.create(Scrollback);
+    defer testing.allocator.destroy(sb);
+    sb.* = .{};
+    var t = Terminal.init(20, 5);
+    t.scrollback = sb;
+    // 5 visible rows of distinct content; cursor on last row.
+    t.write("AAAA\r\nBBBB\r\nCCCC\r\nDDDD\r\nEEEE");
+    try testing.expectEqual(@as(u16, 4), t.cursor_row);
+    try testing.expectEqual(@as(u32, 'E'), t.grid.getCell(4, 0).char);
+
+    // Shrink to 3 rows — xterm: top 2 go to scrollback, bottom 3 stay, cursor shifts.
+    t.resize(20, 3);
+    try testing.expectEqual(@as(u16, 3), t.rows);
+    try testing.expectEqual(@as(u32, 2), sb.count);
+    // Newest scrollback line is BBBB (offset 0 = newest), then AAAA.
+    try testing.expectEqual(@as(u32, 'B'), sb.getLine(0).?.cells[0].char);
+    try testing.expectEqual(@as(u32, 'A'), sb.getLine(1).?.cells[0].char);
+    // Visible: CCCC, DDDD, EEEE
+    try testing.expectEqual(@as(u32, 'C'), t.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u32, 'D'), t.grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u32, 'E'), t.grid.getCell(2, 0).char);
+    // Cursor was on row 4 with EEEE → after shift by 2 → row 2
+    try testing.expectEqual(@as(u16, 2), t.cursor_row);
+}
+
+test "vertical grow appends blank rows and keeps cursor" {
+    const testing = @import("std").testing;
+    var t = Terminal.init(20, 3);
+    t.write("HI");
+    try testing.expectEqual(@as(u16, 0), t.cursor_row);
+    t.resize(20, 6);
+    try testing.expectEqual(@as(u16, 6), t.rows);
+    try testing.expectEqual(@as(u32, 'H'), t.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u16, 0), t.cursor_row);
+    // New rows are blank
+    try testing.expectEqual(@as(u32, ' '), t.grid.getCell(5, 0).char);
+}
+
+test "width reflow preserves newest content on shrink" {
+    const testing = @import("std").testing;
+    const sb = try testing.allocator.create(Scrollback);
+    defer testing.allocator.destroy(sb);
+    sb.* = .{};
+    var t = Terminal.init(10, 3);
+    t.scrollback = sb;
+    t.write("0123456789ABCDEFGHIJ"); // fills row0 + wrap to row1
+    t.write("\r\nEND");
+    // Shrink cols to 5 — must reflow without losing END
+    t.resize(5, 3);
+    try testing.expectEqual(@as(u16, 5), t.cols);
+    // Bottom-most visible content should still include 'E' of END somewhere
+    var found_e = false;
+    var r: u16 = 0;
+    while (r < t.rows) : (r += 1) {
+        var c: u16 = 0;
+        while (c < t.cols) : (c += 1) {
+            if (t.grid.getCell(r, c).char == 'E') found_e = true;
+        }
+    }
+    try testing.expect(found_e);
 }

@@ -74,6 +74,13 @@ export function createKeyboardLayoutGate(host = {}) {
     }
 
     function writeDom(nextInset, open) {
+        // kb-flow2: terminal.js applyMobileStableKeyboardInset is the SOLE writer
+        // of --ssh-kb-inset / .ssh-kb-open. Layout gate only tracks phase state.
+        // Writing DOM here raced parent-overlap (intent closed tick wiped 336px
+        // inset → black flash + gray void on real phones).
+        if (host.mirrorLegacy === false || host.writeDom === false) {
+            return;
+        }
         const d = doc();
         if (!d?.documentElement) return;
         const root = d.documentElement;
@@ -83,23 +90,21 @@ export function createKeyboardLayoutGate(host = {}) {
             root.classList.toggle(SSH_KB_OPEN_CLASS, !!open);
         } catch (_) {}
 
-        if (host.mirrorLegacy !== false) {
-            try {
-                LEGACY_INSET_VARS.forEach((name) => {
-                    // ime-chrome-bottom is chrome height, not full keyboard — only zero on close.
-                    if (name === '--ime-chrome-bottom' && open) return;
-                    root.style.setProperty(name, open ? value : '0px');
-                });
-                if (!open) root.style.setProperty('--ime-chrome-bottom', '0px');
-                LEGACY_OPEN_CLASSES.forEach((cls) => {
-                    if (cls === 'mobile-keyboard-open') {
-                        d.getElementById?.('terminalContainer')?.classList.toggle(cls, !!open);
-                    } else {
-                        root.classList.toggle(cls, !!open);
-                    }
-                });
-            } catch (_) {}
-        }
+        try {
+            LEGACY_INSET_VARS.forEach((name) => {
+                // ime-chrome-bottom is chrome height, not full keyboard — only zero on close.
+                if (name === '--ime-chrome-bottom' && open) return;
+                root.style.setProperty(name, open ? value : '0px');
+            });
+            if (!open) root.style.setProperty('--ime-chrome-bottom', '0px');
+            LEGACY_OPEN_CLASSES.forEach((cls) => {
+                if (cls === 'mobile-keyboard-open') {
+                    d.getElementById?.('terminalContainer')?.classList.toggle(cls, !!open);
+                } else {
+                    root.classList.toggle(cls, !!open);
+                }
+            });
+        } catch (_) {}
     }
 
     function flushQueuedResizes(reason = 'phase-closed') {

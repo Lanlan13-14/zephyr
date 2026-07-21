@@ -1,0 +1,43 @@
+/**
+ * Copyright (c) 2019 The xterm.js authors. All rights reserved.
+ * @license MIT
+ */
+
+const path = require('path');
+
+/**
+ * This webpack config does a production build for xterm.js headless. It works by taking the output
+ * from tsc (via `npm run watch` or `npm run prebuild`) which are put into `out/` and webpacks them
+ * into a production mode umd library module in `lib-headless/`.
+ *
+ * @type {import('webpack').Configuration}
+ */
+const config = {
+  entry: './out/headless/public/Terminal.js',
+  devtool: 'source-map',
+  module: {
+    rules: [
+      {
+        test: /\.js$/,
+        use: ["source-map-loader"],
+        enforce: "pre",
+        exclude: /node_modules/
+      }
+    ]
+  },
+  resolve: {
+    modules: ['./node_modules'],
+    extensions: [ '.js' ],
+  },
+  output: {
+    filename: 'xterm-headless.js',
+    path: path.resolve('./headless/lib-headless'),
+    library: {
+      type: 'commonjs'
+    },
+    // Force usage of globalThis instead of global / self. (This is cross-env compatible)
+    globalObject: 'globalThis',
+  },
+  mode: 'production',
+};
+module.exports = config;

@@ -1,7 +1,10 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-import { WasmBridge } from "./core/index.js";
+import {
+  WasmBridge,
+  XtermBridge
+} from "./core/index.js";
 import { Renderer, resolveQueryColor } from "./renderer.js";
 import { CanvasRenderer } from "./canvas-renderer.js";
 import { InputHandler } from "./input.js";
@@ -54,6 +57,8 @@ class WTerm {
     __publicField(this, "viewport");
     __publicField(this, "_coreOption");
     __publicField(this, "wasmUrl");
+    __publicField(this, "_engine", "xterm");
+    __publicField(this, "_scrollback", 5e3);
     __publicField(this, "_debugEnabled");
     __publicField(this, "renderer", null);
     __publicField(this, "_rendererMode", "dom");
@@ -82,9 +87,36 @@ class WTerm {
     __publicField(this, "onBell", null);
     __publicField(this, "onClipboard", null);
     __publicField(this, "_container");
+    /** Wheel/touch → xterm scrollLines (negative = into history). */
+    __publicField(this, "_wheelAccum", 0);
+    __publicField(this, "_onVirtualWheel", (e) => {
+      if (!this._isXtermEngine() || !this.bridge) return;
+      if (this.bridge.mouseMode?.() > 0 && !e.shiftKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const rh = Math.max(1, this._rowHeight || 17);
+      let deltaLines = 0;
+      if (e.deltaMode === 1) {
+        deltaLines = e.deltaY;
+      } else if (e.deltaMode === 2) {
+        deltaLines = e.deltaY * Math.max(1, (this.rows || 24) - 1);
+      } else {
+        this._wheelAccum += e.deltaY;
+        if (Math.abs(this._wheelAccum) < rh) return;
+        deltaLines = Math.trunc(this._wheelAccum / rh);
+        this._wheelAccum -= deltaLines * rh;
+      }
+      if (!deltaLines) return;
+      const core = this.bridge;
+      core.scrollLines?.(deltaLines);
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+      this._scheduleRender();
+    });
     this.element = element;
     this._coreOption = options.core;
     this.wasmUrl = options.wasmUrl;
+    this._engine = options.engine === "wasm" ? "wasm" : "xterm";
+    this._scrollback = Math.max(0, Number(options.scrollback) || 5e3);
     this.cols = options.cols || 80;
     this.rows = options.rows || 24;
     this.autoResize = options.autoResize !== false;
@@ -121,11 +153,19 @@ class WTerm {
     try {
       if (this._coreOption) {
         this.bridge = this._coreOption;
-      } else {
+      } else if (this._engine === "wasm") {
         this.bridge = await WasmBridge.load(this.wasmUrl);
+      } else {
+        this.bridge = await XtermBridge.load({
+          cols: this.cols,
+          rows: this.rows,
+          scrollback: this._scrollback
+        });
       }
       if (this._destroyed) return this;
       this.bridge.init(this.cols, this.rows);
+      this.element.classList.toggle("engine-xterm", this._engine === "xterm" || !!this.bridge.kind);
+      this.element.classList.toggle("engine-wasm", this._engine === "wasm" && !this.bridge.kind);
       if (this._debugEnabled) {
         this.debug = new DebugAdapter();
         this.debug.setBridge(this.bridge);
@@ -153,6 +193,12 @@ class WTerm {
         this._lockHeight();
       }
       if (this._inputMode === "native") this.input.focus();
+      if (this._isXtermEngine()) {
+        this.element.classList.add("xterm-viewport");
+        this.element.addEventListener("wheel", this._onVirtualWheel, {
+          passive: false
+        });
+      }
       this._initialRender();
     } catch (err) {
       this.destroy();
@@ -162,11 +208,30 @@ class WTerm {
     }
     return this;
   }
+  /** True when the VT core is at bottom (xterm: ydisp===ybase). DOM scroll is not authority. */
   _isScrolledToBottom() {
+    const core = this.bridge;
+    if (core && typeof core.isAtBottom === "function") {
+      return !!core.isAtBottom();
+    }
     const el = this.element;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 5;
   }
+  _isXtermEngine() {
+    const core = this.bridge;
+    return this._engine === "xterm" || core?.kind === "xterm" || core?.virtualViewport === true;
+  }
+  /**
+   * Scroll to bottom. xterm path drives ydisp via bridge; legacy path uses DOM scrollTop.
+   */
   _scrollToBottom() {
+    const core = this.bridge;
+    if (this._isXtermEngine() && core && typeof core.scrollToBottom === "function") {
+      core.scrollToBottom();
+      this._shouldScrollToBottom = true;
+      this._scheduleRender();
+      return;
+    }
     const el = this.element;
     const maxScroll = el.scrollHeight - el.clientHeight;
     if (maxScroll <= 0) {
@@ -236,11 +301,28 @@ class WTerm {
   /** Return a serializable snapshot of the current viewport state. */
   getViewportState() {
     const el = this.element;
+    const rh = this._rowHeight || 17;
+    const core = this.bridge;
+    if (this._isXtermEngine() && core && typeof core.getViewportY === "function") {
+      const ydisp = core.getViewportY() | 0;
+      const ybase = typeof core.getBaseY === "function" ? core.getBaseY() | 0 : ydisp;
+      return {
+        atBottom: typeof core.isAtBottom === "function" ? !!core.isAtBottom() : ydisp >= ybase,
+        // Expose ydisp in row units as "scrollTop" so host policy can reason without DOM overflow.
+        scrollTop: ydisp * rh,
+        maxScroll: Math.max(0, ybase) * rh,
+        rowHeight: rh,
+        charWidth: this._charWidth || 8,
+        rows: this.rows || 0,
+        cols: this.cols || 0,
+        followEnabled: !!this._shouldScrollToBottom
+      };
+    }
     return {
       atBottom: this._isScrolledToBottom(),
       scrollTop: el ? el.scrollTop : 0,
       maxScroll: el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0,
-      rowHeight: this._rowHeight || 17,
+      rowHeight: rh,
       charWidth: this._charWidth || 8,
       rows: this.rows || 0,
       cols: this.cols || 0,
@@ -297,8 +379,15 @@ class WTerm {
       this.renderer.setCellMetrics(cw, rh);
     }
   }
-  /** Scroll to a specific line (0-indexed). Best-effort, clamped, row-aligned. */
+  /** Scroll to a specific absolute buffer line (xterm ydisp) or DOM offset (legacy). */
   scrollToLine(line) {
+    const core = this.bridge;
+    if (this._isXtermEngine() && core && typeof core.scrollToLine === "function") {
+      core.scrollToLine(Math.max(0, Math.floor(Number(line) || 0)));
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+      this._scheduleRender();
+      return;
+    }
     const el = this.element;
     if (!el) return;
     const rh = this._rowHeight || 17;
@@ -373,25 +462,54 @@ class WTerm {
       }
     };
   }
+  /**
+   * Local pre-Enter draft painted inside the grid from the live cursor.
+   * Supports multi-line (\\n) and soft-wrap at cols. Does NOT write xterm.
+   */
+  setLocalDraft(text) {
+    const renderer = this.renderer;
+    if (renderer && typeof renderer.setLocalDraft === "function") {
+      renderer.setLocalDraft(String(text || ""));
+    }
+    try {
+      this.bridge?.markAllDirty?.();
+    } catch {
+    }
+    this._scheduleRender();
+  }
+  getLocalDraft() {
+    const renderer = this.renderer;
+    return renderer?.getLocalDraft?.() || "";
+  }
   write(data) {
     if (!this.bridge) return;
     if (this.debug) this.debug.traceWrite(data);
-    this._shouldScrollToBottom = this._isScrolledToBottom();
+    if (!this._isXtermEngine()) {
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+    }
     if (typeof data === "string") {
       this.bridge.writeString(data);
     } else {
       this.bridge.writeRaw(data);
     }
+    if (this._isXtermEngine()) {
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+    }
     this._scheduleRender();
   }
   resize(cols, rows) {
     if (!this.bridge) return;
-    this._shouldScrollToBottom = this._isScrolledToBottom();
+    if (!this._isXtermEngine()) {
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+    }
     this.cols = cols;
     this.rows = rows;
     this.bridge.resize(cols, rows);
     this.renderer?.setup(cols, rows);
     this._pushMetricsToRenderer();
+    if (this._isXtermEngine()) {
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+    }
     this._scheduleRender();
     if (this.onResize) this.onResize(cols, rows);
   }
@@ -441,7 +559,11 @@ class WTerm {
     }
     const hasScrollback = this.bridge.getScrollbackCount() > 0;
     this.element.classList.toggle("has-scrollback", hasScrollback);
-    if (this._shouldScrollToBottom) {
+    this.element.classList.toggle("xterm-viewport", this._isXtermEngine());
+    if (this._isXtermEngine()) {
+      this._shouldScrollToBottom = this._isScrolledToBottom();
+      if (this.element.scrollTop !== 0) this.element.scrollTop = 0;
+    } else if (this._shouldScrollToBottom) {
       this._scrollToBottom();
     } else if (!hasScrollback && this.element.scrollTop !== 0) {
       this.element.scrollTop = 0;
@@ -664,6 +786,12 @@ class WTerm {
     if (this.resizeObserver) this.resizeObserver.disconnect();
     if (this.input) this.input.destroy();
     this.element.removeEventListener("click", this._onClickFocus);
+    this.element.removeEventListener("wheel", this._onVirtualWheel);
+    try {
+      this.bridge?.dispose?.();
+    } catch {
+    }
+    this.bridge = null;
     this.element.innerHTML = "";
     this._renderCallbacks.clear();
     this._viewportCallbacks.clear();

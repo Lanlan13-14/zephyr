@@ -1,0 +1,24 @@
+{
+  "files": [],
+  "include": [],
+  "references": [
+    { "path": "./demo" },
+    { "path": "./src/browser" },
+    { "path": "./src/headless" },
+    { "path": "./test/benchmark" },
+    { "path": "./test/playwright" },
+    { "path": "./addons/addon-attach" },
+    { "path": "./addons/addon-clipboard" },
+    { "path": "./addons/addon-fit" },
+    { "path": "./addons/addon-image" },
+    { "path": "./addons/addon-ligatures" },
+    { "path": "./addons/addon-progress" },
+    { "path": "./addons/addon-search" },
+    { "path": "./addons/addon-serialize" },
+    { "path": "./addons/addon-unicode11" },
+    { "path": "./addons/addon-unicode-graphemes" },
+    { "path": "./addons/addon-web-fonts" },
+    { "path": "./addons/addon-web-links" },
+    { "path": "./addons/addon-webgl" }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "extends": "../tsconfig-library-base",
+  "compilerOptions": {
+    "lib": [
+      "dom",
+      "es2021"
+    ],
+    "outDir": "../../out",
+    "types": [
+      "../../node_modules/@types/mocha"
+    ],
+    "skipLibCheck": true
+  },
+  "include": [
+    "./**/*",
+    "../../typings/xterm.d.ts"
+  ],
+  "references": [
+    {
+      "path": "../common"
+    }
+  ]
+}

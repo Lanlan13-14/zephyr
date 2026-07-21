@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2021",
+    "rootDir": ".",
+
+    "sourceMap": true,
+    "removeComments": true,
+    "pretty": true,
+
+    "incremental": true,
+    "experimentalDecorators": true
+  }
+}

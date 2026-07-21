@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-cursor-metrics1';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-history-scroll1';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -2939,20 +2939,30 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
     const metricsLayoutHeight = Math.round(Number(metrics.layoutHeight) || 0);
     const metricsOffsetTop = Math.round(Number(metrics.offsetTop) || 0);
     const parentInset = parentViewport ? Math.max(0, parentLayoutHeight - parentKeyboardTop) : 0;
-    const effectiveInset = Math.max(inset, parentInset);
     const layoutHeight = Math.max(parentLayoutHeight, metricsLayoutHeight, parentKeyboardTop, metricsViewportHeight);
-    const metricsKeyboardTop = metricsViewportHeight > 0 ? Math.max(0, metricsOffsetTop + metricsViewportHeight) : 0;
-    const insetKeyboardTop = effectiveInset > 0 && layoutHeight > effectiveInset
-        ? Math.max(0, layoutHeight - effectiveInset)
-        : 0;
-    // OPEN intent: child facade only. Parent never invents open from its own inset.
+    // OPEN intent: child facade only. Parent never invents open from VV alone.
     const childOpen = !!(
         metrics.keyboardOpen
         || metrics.intent === 'open'
         || metrics.phase === 'open'
         || metrics.phase === 'opening'
     );
-    const keyboardOpen = childOpen;
+    // HEIGHT: max(child, parent). On overlays-content parentInset is often 0 while
+    // IME is up — if child also reports 0, use provisional phone-keyboard height
+    // so chrome stays above IME (FitAddon still runs inside iframe).
+    let effectiveInset = 0;
+    if (childOpen) {
+        effectiveInset = Math.max(inset, parentInset, sshKbParentInset || 0);
+        if (effectiveInset < 80) {
+            const baseline = Math.max(parentLayoutHeight, layoutHeight, 640);
+            effectiveInset = Math.round(Math.min(380, Math.max(240, baseline * 0.34)));
+        }
+    }
+    const metricsKeyboardTop = metricsViewportHeight > 0 ? Math.max(0, metricsOffsetTop + metricsViewportHeight) : 0;
+    const insetKeyboardTop = effectiveInset > 0 && layoutHeight > effectiveInset
+        ? Math.max(0, layoutHeight - effectiveInset)
+        : 0;
+    const keyboardOpen = childOpen && effectiveInset >= 80;
     // Geometry only: when child says open, combine insets for chrome placement.
     const keyboardTopCandidates = [];
     if (childOpen && parentInset > 0 && parentKeyboardTop > 0) keyboardTopCandidates.push(parentKeyboardTop);
@@ -2994,6 +3004,7 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         document.documentElement.classList.toggle('ssh-kb-open', wantOpen);
         document.documentElement.style.setProperty('--ssh-kb-inset', wantOpen ? `${effectiveInset}px` : '0px');
         if (wantOpen) sshKbParentInset = effectiveInset;
+        else sshKbParentInset = 0;
         document.body.classList.remove('ssh-kb-lift');
         workspace.style.flex = '';
         workspace.style.height = '';

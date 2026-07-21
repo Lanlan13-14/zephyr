@@ -294,10 +294,126 @@ export class Renderer {
   private _scrollbackRowEls: HTMLDivElement[] = [];
   private _renderedScrollbackCount = 0;
 
+  /**
+   * Local pre-commit draft (mobile/desktop line editor). Painted IN the grid
+   * starting at the live cursor — not a separate chrome bar. Supports soft
+   * wrap at cols and hard newlines. Long drafts show the tail so the caret
+   * stays on-screen.
+   */
+  private _localDraft = "";
+  /** Previous draft footprint rows that must be invalidated on change. */
+  private _draftDirtyRows = new Set<number>();
+
   constructor(container: HTMLElement) {
     this.container = container;
   }
 
+  /**
+   * Set the in-grid local draft text (pre-Enter). Empty clears.
+   * Returns rows that changed for host diagnostics.
+   */
+  setLocalDraft(text: string): void {
+    const next = String(text || "");
+    if (next === this._localDraft) return;
+    // Mark previous + all rows dirty — draft footprint moves with wrap.
+    this.invalidateAll();
+    this._localDraft = next;
+    this._draftDirtyRows.clear();
+  }
+
+  getLocalDraft(): string {
+    return this._localDraft;
+  }
+
+  /**
+   * Build overlay cells for draft starting at cursor, wrapped to cols.
+   * Map key = `${row},${col}` → CellData-like for paint.
+   */
+  private _buildDraftOverlay(
+    cursor: { row: number; col: number },
+    cols: number,
+    rows: number,
+  ): {
+    cells: Map<string, { char: number; fg: number; bg: number; flags: number; wide?: number }>;
+    caretRow: number;
+    caretCol: number;
+  } {
+    const cells = new Map<
+      string,
+      { char: number; fg: number; bg: number; flags: number; wide?: number }
+    >();
+    const draft = this._localDraft;
+    if (!draft || cols < 1 || rows < 1) {
+      return {
+        cells,
+        caretRow: cursor.row,
+        caretCol: cursor.col,
+      };
+    }
+
+    // Soft-wrap draft into logical lines. First line starts at cursor.col;
+    // subsequent lines after hard \\n or soft-wrap start at col 0.
+    // Each JS codepoint occupies 1 cell (stable monospaced draft; wide CJK
+    // may slightly misalign caret but never overflows the grid).
+    type DraftLine = { startCol: number; chars: number[] };
+    const logical: DraftLine[] = [];
+    let line: DraftLine = {
+      startCol: Math.max(0, Math.min(cols - 1, cursor.col | 0)),
+      chars: [],
+    };
+    const flushLine = () => {
+      logical.push(line);
+      line = { startCol: 0, chars: [] };
+    };
+    const room = () => cols - line.startCol - line.chars.length;
+
+    for (const ch of draft) {
+      if (ch === "\r") continue;
+      if (ch === "\n") {
+        flushLine();
+        continue;
+      }
+      const cp = ch.codePointAt(0) || 32;
+      if (room() <= 0) flushLine();
+      line.chars.push(cp);
+    }
+    // Always keep trailing line (even empty) so caret sits after last soft wrap / bare newline.
+    logical.push(line);
+ 
+    // How many viewport rows available from cursor.row downward.
+    const baseRow = Math.max(0, Math.min(rows - 1, cursor.row | 0));
+    const avail = Math.max(1, rows - baseRow);
+    // Show tail of draft so multi-line input keeps caret in view.
+    const visible =
+      logical.length > avail ? logical.slice(logical.length - avail) : logical;
+    const row0 = baseRow;
+
+    let caretRow = row0;
+    let caretCol = cursor.col | 0;
+
+    for (let i = 0; i < visible.length; i++) {
+      const dl = visible[i];
+      const r = row0 + i;
+      if (r >= rows) break;
+      let c = dl.startCol;
+      for (const cp of dl.chars) {
+        if (c >= cols) break;
+        cells.set(`${r},${c}`, {
+          char: cp,
+          fg: 14, // cyan-ish draft (palette)
+          bg: 256,
+          flags: 0x04, // italic — distinguish draft from committed
+          wide: 0,
+        });
+        c += 1;
+      }
+      caretRow = r;
+      caretCol = Math.min(cols, c);
+    }
+
+    return { cells, caretRow, caretCol };
+  }
+ 
   /** Push authoritative cell metrics from WTerm.refreshCellMetrics(). */
   setCellMetrics(charWidth: number, rowHeight: number): void {
     if (Number.isFinite(charWidth) && charWidth > 0) {
@@ -684,28 +800,64 @@ export class Renderer {
       this.prevRowBg.fill("");
     }
 
-    this.syncScrollback(core);
+    // xterm-owned viewport: paint only the current ydisp window (rows×cols).
+    // History is NOT expanded into DOM — scrolling changes ydisp via XtermBridge.
+    const xtermViewport =
+      (core as { kind?: string }).kind === "xterm" ||
+      (core as { virtualViewport?: boolean }).virtualViewport === true;
+    if (!xtermViewport) {
+      this.syncScrollback(core);
+    } else if (this._renderedScrollbackCount > 0) {
+      for (const el of this._scrollbackRowEls) el.remove();
+      this._scrollbackRowEls = [];
+      this._renderedScrollbackCount = 0;
+    }
 
     const cursor = core.getCursor();
+    const draftOverlay = this._buildDraftOverlay(cursor, this.cols, this.rows);
+    const hasDraft = !!this._localDraft;
+    // Caret follows draft end when composing a local line.
+    const paintCursor = hasDraft
+      ? {
+          row: draftOverlay.caretRow,
+          col: draftOverlay.caretCol,
+          visible: cursor.visible,
+          style: cursor.style,
+        }
+      : cursor;
+
     const cursorMoved =
-      cursor.row !== this.prevCursorRow || cursor.col !== this.prevCursorCol;
+      paintCursor.row !== this.prevCursorRow ||
+      paintCursor.col !== this.prevCursorCol;
+
+    const cellAt = (r: number, col: number) => {
+      const key = `${r},${col}`;
+      const over = draftOverlay.cells.get(key);
+      if (over) return over;
+      return core.getCell(r, col);
+    };
 
     // P1-2: cell-level diff. For each dirty row, compare cell signatures
     // against the cached version. If all cells match, skip the rebuild.
-    // Only rebuild rows where actual content changed.
+    // Draft rows are always considered dirty when draft is active.
     for (let r = 0; r < this.rows; r++) {
-      const isDirty = resized || screenReverseChanged || core.isDirtyRow(r);
+      const draftTouchesRow = hasDraft && [...draftOverlay.cells.keys()].some((k) => k.startsWith(`${r},`));
+      const isDirty =
+        resized ||
+        screenReverseChanged ||
+        core.isDirtyRow(r) ||
+        draftTouchesRow ||
+        (hasDraft && r >= cursor.row);
 
       if (!isDirty) continue;
 
       // Build the new signature array and compare
       const oldSigs = this.rowSignatures[r];
-      let allMatch = oldSigs !== null && oldSigs.length === this.cols;
+      let allMatch = oldSigs !== null && oldSigs.length === this.cols && !draftTouchesRow;
 
       if (allMatch) {
-        // Quick check: compare signatures cell by cell
         for (let col = 0; col < this.cols; col++) {
-          const cell = core.getCell(r, col);
+          const cell = cellAt(r, col);
           const sig = cellSignature(
             cell.char,
             cell.fg,
@@ -724,14 +876,12 @@ export class Renderer {
       }
 
       if (allMatch) {
-        // No visual change; skip the DOM rebuild entirely
         continue;
       }
 
-      // Rebuild the row and cache signatures
       this._buildRowContent(
         this.rowEls[r],
-        (col) => core.getCell(r, col),
+        (col) => cellAt(r, col),
         this.cols,
         r,
         (id) => core.getHyperlink(id),
@@ -739,10 +889,9 @@ export class Renderer {
         this.screenReverse,
       );
 
-      // Cache signatures for next frame's diff
       const newSigs: string[] = [];
       for (let col = 0; col < this.cols; col++) {
-        const cell = core.getCell(r, col);
+        const cell = cellAt(r, col);
         newSigs.push(
           cellSignature(
             cell.char,
@@ -759,15 +908,14 @@ export class Renderer {
       this.rowSignatures[r] = newSigs;
     }
 
-    // P1-2: update cursor overlay independently. Cursor movement no longer
-    // forces row rebuilds.
-    if (cursorMoved || resized || cursor.visible !== this.cursorVisible) {
-      this._updateCursorOverlay(core, cursor);
+    // P1-2: update cursor overlay independently. Draft caret uses paintCursor.
+    if (cursorMoved || resized || paintCursor.visible !== this.cursorVisible || hasDraft) {
+      this._updateCursorOverlay(core, paintCursor);
     }
 
-    this.prevCursorRow = cursor.row;
-    this.prevCursorCol = cursor.col;
-
+    this.prevCursorRow = paintCursor.row;
+    this.prevCursorCol = paintCursor.col;
+ 
     const lastRowDirty = resized || core.isDirtyRow(this.rows - 1);
     if (lastRowDirty) {
       const bottomRight = core.getCell(this.rows - 1, this.cols - 1);

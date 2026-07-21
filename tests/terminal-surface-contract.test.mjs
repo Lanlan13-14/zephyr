@@ -58,21 +58,22 @@ test('contract: host pinScroll is single writer wiring', () => {
     assert.match(surfaceSrc, /host\.pinScroll/);
 });
 
-test('contract: mobile fork path disables internal maxScroll stick via public API', () => {
-    assert.match(terminalJs, /_zephyrMobileScrollPinned|_zephyrMobileWriteLocked/);
-    assert.match(terminalJs, /wterm-fork-scroll-to-bottom/);
-    assert.match(terminalJs, /lockBottom/);
-    // Must not assign private methods on the fork path body.
+test('contract: mobile fork uses xterm FitAddon 1:1 (native scrollToBottom, no private patch)', () => {
+    assert.match(terminalJs, /wterm-xterm-fit\.js/);
+    assert.match(terminalJs, /xtermFitWTerm|xterm-fit-applied/);
+    assert.match(terminalJs, /lockBottom|followBottom/);
+    assert.match(terminalJs, /resizeWTermSafely/);
     const forkPathStart = terminalJs.indexOf("term.viewport && typeof term.viewport.follow === 'function'");
     const forkPathEnd = terminalJs.indexOf('// Legacy path:', forkPathStart);
     assert.ok(forkPathStart > 0 && forkPathEnd > forkPathStart);
     const body = terminalJs.slice(forkPathStart, forkPathEnd);
     assert.doesNotMatch(body, /term\._scrollToBottom\s*=/);
     assert.doesNotMatch(body, /term\._doRender\s*=/);
+    assert.doesNotMatch(body, /term\.scrollToBottom\s*=/);
 });
 
-test('contract: cache-bust ssh-kb-root6', () => {
-    assert.match(terminalHtml, /20260721-cursor-metrics1/);
+test('contract: cache-bust kb-xterm-fit2', () => {
+    assert.match(terminalHtml, /20260721-kb-xterm-fit2/);
 });
 
 test('surface: pinScroll host is called; no direct scroll without host', () => {

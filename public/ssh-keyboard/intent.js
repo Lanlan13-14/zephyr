@@ -143,6 +143,13 @@ export function createKeyboardIntentStore(host = {}, thresholds = {}) {
         state.focusLikely = true;
         lowSince = 0;
         suppressRefocusUntil = 0;
+        // Provisional physical open so layout does not wait forever on
+        // overlays-content devices where visualViewport inset stays 0.
+        // Real parent-overlap will replace this with the exact height.
+        if (state.physical !== Intent.OPEN) state.physical = Intent.OPEN;
+        if (!(state.inset >= t.openInset) && Number.isFinite(opts.inset)) {
+            state.inset = Math.max(0, Math.round(Number(opts.inset) || 0));
+        }
 
         // Cmd owns real focus — do not steal with proxy.
         if (focusOwner === FocusOwner.TERMINAL) {
@@ -287,10 +294,22 @@ export function createKeyboardIntentStore(host = {}, thresholds = {}) {
         const lowFor = lowSince ? now - lowSince : 0;
         const sinceOpen = now - state.lastOpenAt;
         const inGuard = sinceOpen < t.openGuardMs;
-        // Android back often leaves focus on the proxy while IME is gone.
-        // Accept system dismiss after sustained low + open-guard, even if editable still focused.
-        const confirmed = lowFor >= t.dismissConfirmMs && !inGuard;
+        // CRITICAL (kb-flow5 / overlays-content): while an editable (IME proxy)
+        // still has DOM focus, NEVER auto-dismiss. On many Android Chrome
+        // builds visualViewport inset stays 0 the entire time the keyboard is
+        // up; treating that as "physical closed" after 480ms was the self-
+        // retracting keyboard (blurProxy → IME gone).
+        // Only real hasEditableFocus holds — focusLikely alone does not
+        // (blur already cleared focus; low inset may then dismiss).
+        if (hasEditableFocus) {
+            state.physical = Intent.OPEN;
+            if (inset >= t.openInset) state.inset = Math.max(state.inset, inset);
+            lowSince = 0;
+            log('await-focus-hold', { lowFor, sinceOpen, inset, hasEditableFocus });
+            return emit('sync:focus-hold');
+        }
 
+        const confirmed = lowFor >= t.dismissConfirmMs && !inGuard;
         if (confirmed) {
             log('system-dismiss', { lowFor, sinceOpen, inset, hasEditableFocus });
             return close('system-dismiss', { force: true, blurCmd: true, now });

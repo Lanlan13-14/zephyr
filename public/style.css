@@ -13356,10 +13356,15 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
   cursor: pointer;
 }
 
-/* ── AUTHORITATIVE MOBILE SSH SURFACE (scroll4) ─────────────────────────
-   This MUST stay last. Earlier historical "final guard" blocks changed the
-   same surface from flex+fixed chrome into grid+static chrome after IME opened.
-   One geometry only: flex terminal surface; bars fixed only while IME is open. */
+/* ── AUTHORITATIVE MOBILE SSH SURFACE (kb-flow1 / Termux model) ─────────
+   MUST stay last. Geometry rule (non-negotiable):
+   - Bottom tools + aux keys are ALWAYS in normal flex flow under the terminal.
+   - NEVER position:fixed chrome over the terminal buffer.
+   - When IME is open, shrink .terminal-page by --ssh-kb-inset so the whole
+     surface (input + terminal + tools + aux) sits above the keyboard.
+   - Terminal content therefore cannot render under the toolbars: the scrollport
+     ends where the toolbars begin. Auto-scroll = plain maxScroll stick.
+   Reference: Termux terminal view height tracks IME; chrome is outside the buffer. */
 @media (max-width: 760px) and (hover: none) and (pointer: coarse) {
     html.mobile-stable-input,
     body.mobile-stable-input {
@@ -13368,15 +13373,35 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         overflow: hidden !important;
     }
     html.mobile-stable-input .terminal-page {
-        position: relative !important;
-        inset: auto !important;
+        /* Pin to top of iframe. NEVER vertical-center a shortened page —
+           that left a dead band above the keyboard and buried chrome. */
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: auto !important;
+        inset: 0 auto auto 0 !important;
         display: flex !important;
         flex-direction: column !important;
+        width: 100% !important;
+        /* Default: fill iframe. IME open: shrink by keyboard inset (Termux). */
         height: 100% !important;
-        min-height: 0 !important;
         max-height: 100% !important;
+        min-height: 0 !important;
         overflow: hidden !important;
         padding: 0 !important;
+        margin: 0 !important;
+        box-sizing: border-box !important;
+        transform: none !important;
+    }
+    /* IME open: page height = visible area above keyboard. Chrome stays in-flow at bottom of page. */
+    html.mobile-stable-input.ssh-kb-open .terminal-page {
+        height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
+        max-height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
+        top: 0 !important;
+        bottom: auto !important;
+        margin: 0 !important;
+        transform: none !important;
     }
     html.mobile-stable-input .terminal-topbar {
         display: flex !important;
@@ -13388,11 +13413,13 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         order: 1 !important;
         flex: 0 0 auto !important;
         grid-area: auto !important;
+        position: static !important;
     }
     html.mobile-stable-input .terminal-container {
-        display: block !important;
+        display: flex !important;
+        flex-direction: column !important;
         order: 2 !important;
-        flex: 1 1 auto !important;
+        flex: 1 1 0 !important;
         grid-area: auto !important;
         width: auto !important;
         height: auto !important;
@@ -13400,58 +13427,150 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         max-height: none !important;
         margin: 6px !important;
         overflow: hidden !important;
+        padding-bottom: 0 !important;
+        position: relative !important;
     }
-    html.mobile-stable-input .topbar-actions {
+    html.mobile-stable-input .terminal-container .wterm-wrapper,
+    html.mobile-stable-input .terminal-container .wterm-wrapper.wterm {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        padding-bottom: 0 !important;
+    }
+    /* xterm owns history via ydisp (not DOM overflow).
+       - Fill the shell top-down (NO flex-end black void above sparse content).
+       - Clip only at .terminal-container so tools never show under-glyphs.
+       - --term-active-line-shift lifts the grid when last content is covered. */
+    html.mobile-stable-input .terminal-container {
+        overflow: hidden !important;
+        isolation: isolate;
+    }
+    html.mobile-stable-input .terminal-container .wterm-wrapper,
+    html.mobile-stable-input .terminal-container .wterm-wrapper.wterm {
+        overflow: hidden !important;
+        overflow-y: hidden !important;
+        overflow-x: hidden !important;
+        overscroll-behavior: none !important;
+        height: 100% !important;
+        max-height: 100% !important;
+        min-height: 0 !important;
+        box-sizing: border-box !important;
+        /* Touch pan is handled in JS → xterm scrollLines; don't rubber-band DOM. */
+        touch-action: none !important;
+    }
+    html.mobile-stable-input .terminal-container .wterm.xterm-viewport,
+    html.mobile-stable-input .wterm.xterm-viewport,
+    html.mobile-stable-input .wterm.xterm-viewport.has-scrollback {
+        overflow: hidden !important;
+        overflow-y: hidden !important;
+        overflow-x: hidden !important;
+        overscroll-behavior: none !important;
+        height: 100% !important;
+        max-height: 100% !important;
+        min-height: 0 !important;
+        display: block !important;
+        box-sizing: border-box !important;
+        touch-action: none !important;
+        /* Match terminal bg so any shortfall isn't a random black slab. */
+        background: var(--term-bg, var(--bg, #0b1220)) !important;
+    }
+    html.mobile-stable-input .terminal-container .wterm.xterm-viewport .term-grid,
+    html.mobile-stable-input .wterm.xterm-viewport .term-grid {
+        display: block !important;
+        max-height: none !important;
+        transform: translate3d(0, var(--term-active-line-shift, 0px), 0) !important;
+        will-change: transform;
+        /* When reading history, shift stays 0; only pin-up when last line covered. */
+    }
+    html.mobile-stable-input .topbar-actions,
+    html.mobile-stable-input .terminal-bottom-bar {
+        position: relative !important;
+        z-index: 30 !important;
+        background: var(--bg, #0b1220) !important;
+        box-shadow: 0 -8px 16px var(--bg, #0b1220) !important;
+    }
+ 
+/* Local line draft: sits in-flow under the terminal, above tools — not a floating ghost. */
+    html.mobile-stable-input .mobile-local-draft {
+        /* Legacy external bar disabled — draft is in-grid via setLocalDraft. */
+        display: none !important;
+        order: 2;
+        flex: 0 0 auto;
+        margin: 0 6px 4px;
+        padding: 6px 10px;
+        border-radius: 8px;
+        font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--term-fg, #e5e7eb);
+        background: color-mix(in srgb, var(--term-bg, #111827) 88%, #3b82f6 12%);
+        border: 1px solid color-mix(in srgb, #3b82f6 45%, transparent);
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 4.5em;
+        overflow: hidden;
+        pointer-events: none;
+    }
+    html.mobile-stable-input .mobile-local-draft.is-active {
+        display: block;
+    }
+    html.mobile-stable-input.ssh-kb-open .mobile-local-draft.is-active {
+        display: block;
+    }
+ 
+/* Tools + aux: ALWAYS document flow under terminal. Never fixed overlay. */
+    html.mobile-stable-input .topbar-actions,
+    html.mobile-stable-input.ssh-kb-open .topbar-actions,
+    html.mobile-stable-input:not(.ssh-kb-open) .topbar-actions {
         display: flex !important;
         order: 3 !important;
+        flex: 0 0 auto !important;
         grid-area: auto !important;
+        position: static !important;
+        left: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        top: auto !important;
+        z-index: 5 !important;
+        margin: 0 !important;
+        transform: none !important;
+        transition: none !important;
+        box-shadow: none !important;
     }
-    html.mobile-stable-input .terminal-bottom-bar {
+    html.mobile-stable-input .terminal-bottom-bar,
+    html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar,
+    html.mobile-stable-input:not(.ssh-kb-open) .terminal-bottom-bar {
         display: block !important;
         order: 4 !important;
+        flex: 0 0 auto !important;
         grid-area: auto !important;
-    }
-    /* Only this state pins chrome. Later rules must not convert it back to grid/static. */
-    html.mobile-stable-input.ssh-kb-open .topbar-actions {
-        position: fixed !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: calc(var(--ime-chrome-bottom, 0px) + var(--mobile-aux-keys-height, 44px)) !important;
-        z-index: 41 !important;
+        position: static !important;
+        left: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        top: auto !important;
+        z-index: 5 !important;
+        margin: 0 !important;
+        transform: none !important;
+        transition: none !important;
+        box-shadow: none !important;
+        /* Closed: keep home-indicator safe area. Open: page already above IME. */
+        padding-bottom: max(2px, env(safe-area-inset-bottom)) !important;
     }
     html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar {
-        position: fixed !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: var(--ime-chrome-bottom, 0px) !important;
-        z-index: 40 !important;
+        padding-bottom: 2px !important;
     }
+    /* Kill any residual fixed-chrome / padding-reserve from earlier blocks. */
     html.mobile-stable-input.ssh-kb-open .terminal-container {
-        /* fixed chrome overlays; reserve exactly chrome heights, never keyboard inset */
-        padding-bottom: calc(var(--mobile-bottom-actions-height, 46px) + var(--mobile-aux-keys-height, 44px) + 8px) !important;
+        padding-bottom: 0 !important;
+        min-height: 80px !important;
     }
 }
 
 /* ===== SSH keyboard root channels (ssh-keyboard facade) — DoD single source ===== */
 html {
     --ssh-kb-inset: 0px;
-}
-
-html {
-    --ssh-kb-inset: 0px;
-}
-/* During migration, keep legacy consumers working off the single source vars. */
-html.ssh-kb-open {
-    /* class presence is the open signal; inset carries height */
-}
-html.ssh-kb-open.mobile-stable-input,
-html.ssh-kb-open {
-    /* no-op placeholder — concrete layout still uses legacy selectors written by layout gate mirrors */
-}
-
-
-/* DoD CSS convergence: single inset var. Legacy --keyboard-inset reads follow --ssh-kb-inset when unset by JS. */
-html.ssh-kb-open.mobile-stable-input,
-html.ssh-kb-open {
-    /* Keep class as open signal for parent/iframe diagnostics */
+    --keyboard-inset: var(--ssh-kb-inset, 0px);
+    --ime-chrome-bottom: 0px;
 }

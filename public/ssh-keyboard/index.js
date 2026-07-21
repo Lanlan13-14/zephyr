@@ -128,7 +128,17 @@ export function createSshKeyboard(host) {
         if (!host.isTouchDevice?.()) return { kind: GestureKind.IDLE, opened: false };
         const result = gesture.pointerUp(pointFromEvent(e));
         if (result.kind === GestureKind.TAP && !result.suppressOpen && !blockedBySelection()) {
-            intent.handleTerminalTap('terminal-tap');
+            // Pass provisional inset so page shrinks immediately on overlays devices.
+            const snap = intent.getState?.() || {};
+            if (snap.intent === 'open' || snap.physical === 'open') {
+                intent.handleTerminalTap('terminal-tap');
+            } else {
+                intent.open('terminal-tap', {
+                    focusOwner: FocusOwner.TERMINAL,
+                    liftMode: LiftMode.WORKSPACE,
+                    inset: provisionalInset(),
+                });
+            }
             return { kind: result.kind, opened: true, result };
         }
         // pan/fling/pinch/longpress: never open
@@ -142,15 +152,42 @@ export function createSshKeyboard(host) {
         return gesture.pointerCancel(pointFromEvent(e || {}));
     }
 
+    function provisionalInset() {
+        try {
+            const m = host.getViewportMetrics?.() || {};
+            const live = Math.max(0, Math.round(Number(m.keyboardInset) || 0));
+            if (live >= 80) return live;
+            // overlays-content: estimate ~33% of baseline, clamp 230–380.
+            const baseline = Math.max(
+                Number(m.layoutHeight) || 0,
+                Number(globalThis.innerHeight) || 0,
+                640,
+            );
+            return Math.round(Math.min(380, Math.max(230, baseline * 0.33)));
+        } catch (_) {
+            return 280;
+        }
+    }
+
     /** Explicit open from button or other UI (must be in user gesture stack). */
     function buttonClick(reason = 'keyboard-button') {
         if (!host.isTouchDevice?.()) return intent.getState();
-        return intent.toggle(reason, { focusOwner: FocusOwner.TERMINAL, liftMode: LiftMode.WORKSPACE });
+        // toggle open needs provisional inset too
+        if (intent.desiredOpen?.()) return intent.close(`${reason}:to-closed`, { force: true });
+        return intent.open(`${reason}:to-open`, {
+            focusOwner: FocusOwner.TERMINAL,
+            liftMode: LiftMode.WORKSPACE,
+            inset: provisionalInset(),
+        });
     }
 
     function openTerminal(reason = 'open-terminal') {
         if (blockedBySelection()) return false;
-        return intent.open(reason, { focusOwner: FocusOwner.TERMINAL, liftMode: LiftMode.WORKSPACE });
+        return intent.open(reason, {
+            focusOwner: FocusOwner.TERMINAL,
+            liftMode: LiftMode.WORKSPACE,
+            inset: provisionalInset(),
+        });
     }
 
     function openCmd(reason = 'open-cmd') {

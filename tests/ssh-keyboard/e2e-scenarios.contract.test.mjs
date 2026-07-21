@@ -125,16 +125,19 @@ test('E2E-7 button toggle closes', () => {
     assert.equal(kb.desiredOpen(), false);
 });
 
-test('E2E-8 system dismiss after sustained low inset', () => {
+test('E2E-8 focus hold blocks system dismiss; unfocused low inset can close', () => {
     const { kb } = makeKb();
     const t0 = Date.now();
     kb._intent.open('tap', { now: t0, focusOwner: 'terminal' });
     kb._intent.syncViewport({ inset: 300, hasEditableFocus: true, now: t0 + 50 });
     assert.equal(kb.desiredOpen(), true);
-    // past openGuard (320) + dismissConfirm (480)
+    // With focus: never auto-dismiss even after long zero inset (overlays).
     kb._intent.syncViewport({ inset: 0, hasEditableFocus: true, now: t0 + 400 });
-    assert.equal(kb.desiredOpen(), true); // still in guard/debounce start
-    kb._intent.syncViewport({ inset: 0, hasEditableFocus: true, now: t0 + 400 + 500 });
+    kb._intent.syncViewport({ inset: 0, hasEditableFocus: true, now: t0 + 400 + 2000 });
+    assert.equal(kb.desiredOpen(), true);
+    // Without focus + sustained low → dismiss
+    kb._intent.syncViewport({ inset: 0, hasEditableFocus: false, now: t0 + 2500 });
+    kb._intent.syncViewport({ inset: 0, hasEditableFocus: false, now: t0 + 3200 });
     assert.equal(kb.desiredOpen(), false);
 });
 
@@ -145,10 +148,11 @@ test('E2E-9 composition routes through facade; legacy module gone', () => {
     assert.doesNotMatch(terminalJs, /ssh-mobile-keyboard\.js/);
 });
 
-test('E2E-10 parent does not invent open; only reduce child metrics', () => {
-    assert.match(appJs, /must NOT invent keyboard open|Child facade is sole judge/i);
+test('E2E-10 parent does not invent open; physical close is parent-authoritative', () => {
+    assert.match(appJs, /OPEN intent: child facade only|childOpen|physical height authority|parent-physical-close/i);
     assert.match(appJs, /reduceParentKeyboardMessage/);
     assert.doesNotMatch(appJs, /appKeyboardParentPhysicalOpen/);
+    assert.doesNotMatch(appJs, /keyboardOpen:\s*inset\s*>=\s*80\s*\|\|\s*sshKbParentOpen/);
 });
 
 test('E2E wiring: legacy module deleted', () => {
