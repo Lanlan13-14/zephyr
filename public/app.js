@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-ssh-kb-root1';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-ssh-kb-root2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';

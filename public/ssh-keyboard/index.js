@@ -42,7 +42,8 @@ export function createSshKeyboard(host) {
     });
     const layout = createKeyboardLayoutGate({
         getDocument: () => host.getDocument?.() || globalThis.document || null,
-        mirrorLegacy: true,
+        // terminal.js applyMobileStableKeyboardInset is the sole chrome CSS writer.
+        mirrorLegacy: false,
         onPhaseChange: (phase, inset, meta) => {
             try { host.onLayout?.(phase, inset, meta); } catch (_) {}
         },
