@@ -7527,8 +7527,11 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     }
     html.mobile-stable-input .terminal-container .wterm-wrapper .term-row,
     html.mobile-stable-input .terminal-container .wterm-wrapper .term-scrollback-row {
-        line-height: 1.35;
-        letter-spacing: 0.005em;
+        /* Must track --term-row-height (WTerm single source). Hard-coded 1.35
+           desynced overlay top = row * var from the real line box. */
+        line-height: var(--term-row-height, 1.35em);
+        height: var(--term-row-height, auto);
+        letter-spacing: 0;
     }
     /* Prevent accidental text selection during active scrolling */
     html.mobile-stable-input .terminal-container .wterm-wrapper.is-scrolling .term-grid,
@@ -7546,16 +7549,19 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         -webkit-touch-callout: default !important;
     }
     html.mobile-stable-input .mobile-terminal-ime-proxy {
+        /* Default is a tiny ghost; JS anchorImeProxyToCursor() overwrites
+           top/left/width/height to the live cursor cell each paint. */
         position: fixed;
         left: max(8px, env(safe-area-inset-left));
-        bottom: calc(var(--keyboard-inset, 0px) + 8px);
+        bottom: auto;
+        top: 0;
         width: 2px;
         height: 2px;
-        min-width: 2px;
-        min-height: 2px;
-        max-width: 2px;
-        max-height: 2px;
-        opacity: 0.02;
+        min-width: 0;
+        min-height: 0;
+        max-width: none;
+        max-height: none;
+        opacity: 0.01;
         border: 0;
         padding: 0;
         margin: 0;

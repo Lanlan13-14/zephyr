@@ -24,6 +24,8 @@
   --term-font-size: 14px;
   --term-line-height: 1.2;
   --term-row-height: 17px;
+  /* Measured cell advance (NOT 1ch). Written by WTerm.refreshCellMetrics(). */
+  --term-cell-width: 8px;
 
   position: relative;
   background: var(--term-bg);
@@ -44,6 +46,10 @@
 }
 
 .term-grid {
+  /* position:relative so .term-cursor-overlay (absolute) shares the same
+     containing block as .term-row flow. Without this, offsetParent walks up
+     to .wterm (which has padding) and the cursor drifts by paddingTop/Left. */
+  position: relative;
   display: block;
   white-space: pre;
   contain: layout paint style;
@@ -76,26 +82,29 @@
 
 .term-wide {
   display: inline-block;
-  width: 2ch;
+  width: calc(2 * var(--term-cell-width, 1ch));
 }
 
 .term-block {
-  width: 1ch;
+  width: var(--term-cell-width, 1ch);
   overflow: hidden;
 }
 
-/* P1-2: Decoupled cursor overlay. Positioned via CSS custom properties
-   --cursor-row and --cursor-col set by the renderer. This avoids rebuilding
-   row content when the cursor moves. */
+/* P1-2: Decoupled cursor overlay.
+   Default geometry uses measured --term-cell-width / --term-row-height.
+   The renderer also writes pixel top/left (and width/height) so font/DPR
+   changes never leave the cursor on a stale 1ch cascade. Containing block
+   is .term-grid (position:relative) — same origin as row flow. */
 .term-cursor-overlay {
   position: absolute;
   top: calc(var(--cursor-row, 0) * var(--term-row-height, 17px));
-  left: calc(var(--cursor-col, 0) * 1ch);
-  width: 1ch;
+  left: calc(var(--cursor-col, 0) * var(--term-cell-width, 1ch));
+  width: var(--term-cell-width, 1ch);
   height: var(--term-row-height, 17px);
   pointer-events: none;
   z-index: 1;
   white-space: pre;
+  box-sizing: border-box;
 }
 
 .term-cursor-overlay {

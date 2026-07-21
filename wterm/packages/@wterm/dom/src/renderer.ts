@@ -286,12 +286,35 @@ export class Renderer {
   private _graphicsIds = new Set<number>();
   private _charWidth = 8;
   private _cellHeight = 16;
+  /** Optional host-provided metrics. When set, cursor overlay uses these
+   *  instead of re-measuring from the first span (avoids 1ch drift). */
+  private _hostCellWidth = 0;
+  private _hostCellHeight = 0;
 
   private _scrollbackRowEls: HTMLDivElement[] = [];
   private _renderedScrollbackCount = 0;
 
   constructor(container: HTMLElement) {
     this.container = container;
+  }
+
+  /** Push authoritative cell metrics from WTerm.refreshCellMetrics(). */
+  setCellMetrics(charWidth: number, rowHeight: number): void {
+    if (Number.isFinite(charWidth) && charWidth > 0) {
+      this._charWidth = charWidth;
+      this._hostCellWidth = charWidth;
+    }
+    if (Number.isFinite(rowHeight) && rowHeight > 0) {
+      this._cellHeight = rowHeight;
+      this._hostCellHeight = rowHeight;
+    }
+  }
+
+  getCellMetrics(): { charWidth: number; rowHeight: number } {
+    return {
+      charWidth: this._hostCellWidth || this._charWidth,
+      rowHeight: this._hostCellHeight || this._cellHeight,
+    };
   }
 
   invalidateAll(): void {
@@ -503,10 +526,16 @@ export class Renderer {
     this._renderedScrollbackCount = scrollbackCount;
   }
 
-  /** Update the decoupled cursor overlay position and visibility (P1-2). */
+  /** Update the decoupled cursor overlay position and visibility (P1-2).
+   *
+   *  Geometry: prefer host-measured cell metrics (setCellMetrics) written as
+   *  absolute px top/left. Falling back to CSS vars alone caused:
+   *    - 1ch ≠ real monospaced advance (measured ~9% wider → right drift)
+   *    - offsetParent = .wterm (padding) when .term-grid was static
+   *  Both are fixed by pixel placement inside position:relative .term-grid. */
   private _updateCursorOverlay(
     core: TerminalCore,
-    cursor: { row: number; col: number; visible: boolean },
+    cursor: { row: number; col: number; visible: boolean; style?: number },
   ): void {
     if (!this.cursorEl) return;
 
@@ -532,9 +561,23 @@ export class Renderer {
     // DECSCUSR: apply cursor style class (0-6)
     const styleClass = `term-cursor-style-${cursor.style || 0}`;
     this.cursorEl.className = `term-cursor-overlay ${styleClass}`;
-    this.cursorEl.style.cssText = `display:block;${style}`;
-    // Position using CSS custom properties; the CSS rules use these to
-    // translate the overlay to the correct cell.
+
+    // Scrollback rows sit above the live grid; the cursor is always in the
+    // live viewport, so its top must skip the rendered scrollback block.
+    const scrollbackOffset =
+      this._renderedScrollbackCount * (this._hostCellHeight || this._cellHeight || 0);
+    const cellW = this._hostCellWidth || this._charWidth || 8;
+    const cellH = this._hostCellHeight || this._cellHeight || 17;
+    const wide = cell.wide === 1 ? 2 : 1;
+    const top = scrollbackOffset + cursor.row * cellH;
+    const left = cursor.col * cellW;
+    const width = cellW * wide;
+
+    // Pixel geometry first, then color style. Keep CSS vars as fallback for
+    // any external CSS that still keys off --cursor-row/col.
+    this.cursorEl.style.cssText =
+      `display:block;position:absolute;top:${top}px;left:${left}px;` +
+      `width:${width}px;height:${cellH}px;box-sizing:border-box;${style}`;
     this.cursorEl.style.setProperty("--cursor-row", String(cursor.row));
     this.cursorEl.style.setProperty("--cursor-col", String(cursor.col));
 
@@ -551,10 +594,27 @@ export class Renderer {
   }
 
   private _measureCellMetrics(): void {
+    // Prefer host metrics when available — they are the single source of truth.
+    if (this._hostCellWidth > 0 && this._hostCellHeight > 0) {
+      this._charWidth = this._hostCellWidth;
+      this._cellHeight = this._hostCellHeight;
+      return;
+    }
     const row = this.rowEls[0];
     if (!row) return;
     const span = row.querySelector("span");
     if (span) {
+      // Measure a single glyph via Range so multi-char runs don't average wrong.
+      const text = span.firstChild;
+      if (text && text.nodeType === Node.TEXT_NODE && (text.textContent || "").length > 0) {
+        const range = document.createRange();
+        range.setStart(text, 0);
+        range.setEnd(text, 1);
+        const rect = range.getBoundingClientRect();
+        if (rect.width > 0) this._charWidth = rect.width;
+        if (rect.height > 0) this._cellHeight = rect.height;
+        return;
+      }
       const rect = span.getBoundingClientRect();
       if (rect.width > 0) this._charWidth = rect.width;
       if (rect.height > 0) this._cellHeight = rect.height;

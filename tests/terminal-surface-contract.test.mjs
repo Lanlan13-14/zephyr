@@ -72,7 +72,7 @@ test('contract: mobile fork path disables internal maxScroll stick via public AP
 });
 
 test('contract: cache-bust ssh-kb-root6', () => {
-    assert.match(terminalHtml, /20260721-ssh-kb-root6/);
+    assert.match(terminalHtml, /20260721-cursor-metrics1/);
 });
 
 test('surface: pinScroll host is called; no direct scroll without host', () => {

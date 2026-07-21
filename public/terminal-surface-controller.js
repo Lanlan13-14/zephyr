@@ -19,14 +19,14 @@
 import {
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260721-ssh-kb-root6';
+} from './ssh-keyboard/index.js?v=20260721-cursor-metrics1';
 import {
     computeCursorAboveChromeScrollTop,
     allowScrollDuringTyping,
     scrollSettlePhases,
     shouldScrollOnTerminalOutput,
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
-} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root6';
+} from './terminal-scroll-policy.js?v=20260721-cursor-metrics1';
 
 /**
  * @typedef {object} SurfaceHost
@@ -283,20 +283,11 @@ export function createTerminalSurfaceController(host) {
     function onRenderComplete(reason = 'render') {
         if (!host.isMobileStable?.()) return;
         recomputeMode();
-        // Typing/composition: input path owns the single scroll.
-        if (composing || Date.now() < typingUntil || Date.now() < suppressScrollUntil) {
-            host.onScrollbar?.();
-            return;
-        }
-        if (mode === 'user-reading' || mode === 'selection') {
-            host.onScrollbar?.();
-            return;
-        }
-        if (followEnabled || mode === 'ime-open') {
-            pinCursorAboveChrome(`${reason}:render`, { force: true });
-        } else {
-            host.onScrollbar?.();
-        }
+        // Render is NOT a scroll writer. Input/output/enter/layout paths own
+        // the single pin. Auto-pinning here raced compositionend + input and
+        // made the cursor jump twice per keystroke.
+        host.onScrollbar?.();
+        host.onCursorGeometry?.(reason);
     }
 
     /** User tapped terminal body — open/retain IME only. */

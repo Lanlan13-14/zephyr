@@ -79,6 +79,8 @@ class CanvasRenderer {
     __publicField(this, "dpr", 1);
     __publicField(this, "screenReverse", false);
     __publicField(this, "_graphicsLayer", null);
+    __publicField(this, "_hostCellWidth", 0);
+    __publicField(this, "_hostCellHeight", 0);
     this.container = container;
     this.canvas = document.createElement("canvas");
     this.canvas.className = "term-canvas";
@@ -88,6 +90,26 @@ class CanvasRenderer {
     const ctx = this.canvas.getContext("2d", { alpha: false });
     if (!ctx) throw new Error("2d canvas unavailable");
     this.ctx = ctx;
+  }
+  /** Push authoritative cell metrics from WTerm.refreshCellMetrics(). */
+  setCellMetrics(charWidth, rowHeight) {
+    if (Number.isFinite(charWidth) && charWidth > 0) {
+      this.charW = charWidth;
+      this._hostCellWidth = charWidth;
+    }
+    if (Number.isFinite(rowHeight) && rowHeight > 0) {
+      this.charH = rowHeight;
+      this._hostCellHeight = rowHeight;
+    }
+    if (this.cols > 0 && this.rows > 0 && this.canvas.isConnected) {
+      this._resizeCanvas();
+    }
+  }
+  getCellMetrics() {
+    return {
+      charWidth: this._hostCellWidth || this.charW,
+      rowHeight: this._hostCellHeight || this.charH
+    };
   }
   invalidateAll() {
   }
@@ -105,16 +127,21 @@ class CanvasRenderer {
     this._resizeCanvas();
   }
   _measure() {
+    if (this._hostCellWidth > 0 && this._hostCellHeight > 0) {
+      this.charW = this._hostCellWidth;
+      this.charH = this._hostCellHeight;
+      return;
+    }
     const probe = document.createElement("span");
-    probe.textContent = "W";
-    probe.style.cssText = "position:absolute;visibility:hidden;font:inherit;line-height:inherit;white-space:pre;";
+    probe.textContent = "W".repeat(32);
+    probe.style.cssText = "position:absolute;visibility:hidden;font:inherit;line-height:inherit;white-space:pre;font-variant-ligatures:none;";
     this.container.appendChild(probe);
     const cs = getComputedStyle(this.container);
     probe.style.fontFamily = cs.fontFamily;
     probe.style.fontSize = cs.fontSize;
     probe.style.lineHeight = cs.lineHeight;
     const rect = probe.getBoundingClientRect();
-    if (rect.width > 0) this.charW = rect.width;
+    if (rect.width > 0) this.charW = rect.width / 32;
     if (rect.height > 0) this.charH = rect.height;
     probe.remove();
   }

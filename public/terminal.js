@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260721-ssh-kb-root6';
+} from './ssh-keyboard/index.js?v=20260721-cursor-metrics1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -16,8 +16,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root6';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-ssh-kb-root6';
+} from './terminal-scroll-policy.js?v=20260721-cursor-metrics1';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-cursor-metrics1';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -172,6 +172,9 @@ function ensureTerminalSurface() {
         },
         notifyParent: (metrics) => notifyParentKeyboardMetrics({ ...metrics, forceNotify: !sshKb }),
         onScrollbar: () => scheduleTerminalScrollbarUpdate(),
+        // After each paint, glue the IME proxy to the real cursor cell so
+        // Android/iOS candidate bars anchor correctly (not the 2px corner box).
+        onCursorGeometry: (reason) => scheduleImeProxyCursorAnchor(reason || 'surface-render'),
         onSoftKeyboardState: (state) => {
             // Read-only mirror; do not invent authority when facade exists.
             if (sshKb) {
@@ -1936,13 +1939,42 @@ function updateFontSizeButtons() {
 }
 
 function getTerminalCharMetrics() {
+    // Single source of truth: WTerm.getCellMetrics() (measured + CSS-var written).
+    // Never Math.max multi-source — that inflated rowHeight, under-counted rows,
+    // and made the cursor pin / resize loop fight itself.
+    try {
+        const m = term?.getCellMetrics?.();
+        if (m && Number.isFinite(m.charWidth) && m.charWidth > 0
+            && Number.isFinite(m.rowHeight) && m.rowHeight > 0) {
+            return { lineHeight: m.rowHeight, charWidth: m.charWidth };
+        }
+    } catch (_) {}
+    try {
+        const st = term?.getViewportState?.();
+        if (st && Number.isFinite(st.rowHeight) && st.rowHeight > 0) {
+            const cw = Number.isFinite(st.charWidth) && st.charWidth > 0
+                ? st.charWidth
+                : (Number(term?.viewport?.charWidth) || 0);
+            if (cw > 0) return { lineHeight: st.rowHeight, charWidth: cw };
+        }
+    } catch (_) {}
+
+    // Fallback only before term is ready.
     const root = getTerminalScrollElement?.() || wtermWrapper;
     const grid = wtermWrapper?.querySelector?.('.term-grid');
-    const computed = getComputedStyle(root);
+    const computed = getComputedStyle(root || document.documentElement);
     const fontSize = terminalFontSize || parseFloat(computed.fontSize) || 14;
     const cssRowHeight = parseFloat(computed.getPropertyValue('--term-row-height')) || 0;
+    const cssCellWidth = parseFloat(computed.getPropertyValue('--term-cell-width')) || 0;
     const existingRow = grid?.querySelector?.('.term-row, .term-scrollback-row');
     const existingRowHeight = existingRow?.getBoundingClientRect?.().height || 0;
+
+    if (cssCellWidth > 0 && (cssRowHeight > 0 || existingRowHeight > 0)) {
+        return {
+            lineHeight: Math.max(1, existingRowHeight || cssRowHeight),
+            charWidth: cssCellWidth,
+        };
+    }
 
     const rowProbe = document.createElement('div');
     rowProbe.className = 'term-row zephyr-measure-row';
@@ -1950,27 +1982,18 @@ function getTerminalCharMetrics() {
     rowProbe.style.visibility = 'hidden';
     rowProbe.style.pointerEvents = 'none';
     rowProbe.style.whiteSpace = 'pre';
-    rowProbe.textContent = 'W';
-    (grid || root).appendChild(rowProbe);
-    const rowProbeRect = rowProbe.getBoundingClientRect();
     const span = document.createElement('span');
-    span.textContent = 'W';
+    span.textContent = 'W'.repeat(32);
     span.style.whiteSpace = 'pre';
-    rowProbe.textContent = '';
+    span.style.fontVariantLigatures = 'none';
     rowProbe.appendChild(span);
+    (grid || root || document.body).appendChild(rowProbe);
+    const rowProbeRect = rowProbe.getBoundingClientRect();
     const spanRect = span.getBoundingClientRect();
     rowProbe.remove();
 
-    // 行高必须跟 wterm renderer 的 .term-row 一致；裸 span 高度会偏小，导致 rows 被算大，出现底部大量空白行。
-    const lineHeight = Math.max(1,
-        Number(term?._rowHeight || 0),
-        existingRowHeight,
-        rowProbeRect.height,
-        cssRowHeight,
-        parseFloat(computed.lineHeight) || 0,
-        fontSize * 1.2,
-    );
-    const charWidth = Math.max(1, spanRect.width || fontSize * 0.62);
+    const lineHeight = Math.max(1, existingRowHeight || rowProbeRect.height || cssRowHeight || fontSize * 1.2);
+    const charWidth = Math.max(1, (spanRect.width > 0 ? spanRect.width / 32 : 0) || cssCellWidth || fontSize * 0.6);
     return { lineHeight, charWidth };
 }
 
@@ -2740,12 +2763,19 @@ function applyTerminalFontSize(size, { persist = true } = {}) {
     wtermWrapper.style.fontSize = `${terminalFontSize}px`;
     try { term?.setOption?.('fontSize', terminalFontSize); } catch (_) {}
     try { term?.options && (term.options.fontSize = terminalFontSize); } catch (_) {}
-    try { term?._setRowHeight?.(); } catch (_) {}
+    // Authoritative remeasure: writes --term-row-height + --term-cell-width and
+    // pushes px metrics into the cursor overlay / canvas renderer.
+    try {
+        if (typeof term?.refreshCellMetrics === 'function') term.refreshCellMetrics();
+        else term?._setRowHeight?.();
+    } catch (_) {}
     if (persist) localStorage.setItem(TERMINAL_FONT_STORAGE_KEY, String(terminalFontSize));
     updateFontSizeButtons();
     if (!isTouchKeyboardDevice()) scheduleTerminalResize('font-size-change', 80);
     if (wasAtBottom) requestAnimationFrame(() => requestTerminalAutoFollow('font-size-change'));
     else scheduleTerminalScrollbarUpdate();
+    // Keep IME proxy glued to the new cell size.
+    if (isMobileStableInputMode()) scheduleImeProxyCursorAnchor('font-size-change');
 }
 
 function getTouchDistance(touches) {
@@ -7996,50 +8026,34 @@ function getMobileStableSafeGap() {
 }
 
 function getMobileStableActiveLineRect() {
+    // Deprecated as a geometry source: always derive from getCursorContentMetrics
+    // so pin / target / IME anchor share one viewport-relative path.
     if (!wtermWrapper) return null;
-    // Prefer decoupled overlay (actual WTerm cursor), not legacy .cursor class.
+    const metrics = getCursorContentMetrics();
+    const scrollEl = getTerminalScrollElement() || wtermWrapper;
+    const hostRect = scrollEl?.getBoundingClientRect?.();
+    if (metrics && hostRect?.height && Number.isFinite(metrics.cursorTopInViewport)) {
+        const top = hostRect.top + metrics.cursorTopInViewport;
+        const height = metrics.lineHeight
+            || (metrics.cursorBottomInViewport - metrics.cursorTopInViewport)
+            || getTerminalCharMetrics()?.lineHeight
+            || 17;
+        return {
+            top,
+            bottom: top + height,
+            left: hostRect.left,
+            right: hostRect.right,
+            height,
+            width: Math.max(1, hostRect.width || 0),
+            _fromMetrics: true,
+            source: metrics.source,
+            scrollTop: scrollEl?.scrollTop || 0,
+        };
+    }
     const overlay = wtermWrapper.querySelector('.term-cursor-overlay');
     if (overlay && overlay.style.display !== 'none') {
         const overlayRect = overlay.getBoundingClientRect?.();
         if (overlayRect?.height) return overlayRect;
-    }
-    // Bridge cursor + row metrics → synthetic rect (no brittle class names).
-    try {
-        const cursor = term?.bridge?.getCursor?.() || term?.getCursor?.();
-        const rh = term?.getViewportState?.()?.rowHeight
-            || term?.viewport?.rowHeight
-            || getTerminalCharMetrics?.()?.lineHeight
-            || terminalFontSize * 1.35
-            || 17;
-        const host = term?.element || wtermWrapper;
-        const hostRect = host?.getBoundingClientRect?.();
-        if (cursor && hostRect && Number.isFinite(cursor.row)) {
-            const scrollEl = getTerminalScrollElement() || wtermWrapper;
-            const scrollTop = scrollEl?.scrollTop || 0;
-            // Approximate: rows above viewport are scrolled away; visible row 0 is at host top.
-            // WTerm paints only the viewport grid — cursor.row is viewport-relative.
-            const top = hostRect.top + (cursor.row * rh);
-            return {
-                top,
-                bottom: top + rh,
-                left: hostRect.left,
-                right: hostRect.right,
-                height: rh,
-                width: Math.max(1, hostRect.width || 0),
-                _fromBridge: true,
-                scrollTop,
-            };
-        }
-    } catch (_) {}
-    const cursor = wtermWrapper.querySelector('.term-cursor, .cursor, .terminal-cursor, [data-cursor="true"], [data-cursor]');
-    const cursorRect = cursor?.getBoundingClientRect?.();
-    if (cursorRect?.height && cursorRect?.width) return cursorRect;
-    const rows = Array.from(wtermWrapper.querySelectorAll('.term-row, .term-scrollback-row'));
-    for (let i = rows.length - 1; i >= 0; i -= 1) {
-        const row = rows[i];
-        if (!String(row.textContent || '').trim()) continue;
-        const rect = row.getBoundingClientRect?.();
-        if (rect?.height && rect.bottom > 0) return rect;
     }
     return null;
 }
@@ -8107,8 +8121,10 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
         if (ctrlBtn) ctrlBtn.classList.remove('aux-active', 'active');
     }
     const now = performance.now();
-    const duplicateWindow = paste ? 260 : 140;
-    if (mobileImeLastSent.text === payload && mobileImeLastSent.source !== source && now - mobileImeLastSent.at < duplicateWindow) {
+    // Dedup by payload content only — source labels differ across proxy /
+    // compositionend / wterm-onData paths and must not re-open the window.
+    const duplicateWindow = paste ? 260 : 80;
+    if (mobileImeLastSent.text === payload && now - mobileImeLastSent.at < duplicateWindow) {
         return false;
     }
     mobileImeLastSent = { text: payload, source, at: now };
@@ -8245,6 +8261,67 @@ function scheduleMobileStableKeyboardGridRepair(reason = 'mobile-stable-grid-rep
     }, delay));
 }
 
+/** rAF-coalesced: keep #mobileTerminalImeProxy over the live cursor cell. */
+let imeProxyAnchorRaf = 0;
+function scheduleImeProxyCursorAnchor(reason = 'cursor-anchor') {
+    if (!isMobileStableInputMode()) return;
+    if (imeProxyAnchorRaf) return;
+    imeProxyAnchorRaf = requestAnimationFrame(() => {
+        imeProxyAnchorRaf = 0;
+        anchorImeProxyToCursor(reason);
+    });
+}
+
+/**
+ * Position the IME proxy over the real cursor so system candidate UI sticks
+ * to the active cell instead of a 2×2 corner ghost.
+ * Geometry is viewport-fixed; pointer-events stay none.
+ */
+function anchorImeProxyToCursor(reason = 'cursor-anchor') {
+    if (!mobileImeProxy || !isMobileStableInputMode()) return;
+    const metrics = getCursorContentMetrics();
+    const scrollEl = getTerminalScrollElement();
+    if (!metrics || !scrollEl) return;
+    const hostRect = scrollEl.getBoundingClientRect?.();
+    if (!hostRect?.height) return;
+    const { lineHeight, charWidth } = getTerminalCharMetrics();
+    const topInViewport = Number.isFinite(metrics.cursorTopInViewport)
+        ? metrics.cursorTopInViewport
+        : 0;
+    // Prefer bridge col when available; overlay path has no col → keep last left.
+    let leftInViewport = 0;
+    try {
+        const cursor = term?.bridge?.getCursor?.() || term?.getCursor?.();
+        if (cursor && Number.isFinite(cursor.col)) {
+            leftInViewport = cursor.col * charWidth;
+        } else {
+            const overlay = wtermWrapper?.querySelector?.('.term-cursor-overlay');
+            const oRect = overlay?.getBoundingClientRect?.();
+            if (oRect?.width) leftInViewport = oRect.left - hostRect.left;
+        }
+    } catch (_) {}
+    const cssTop = Math.round(hostRect.top + topInViewport);
+    const cssLeft = Math.round(hostRect.left + Math.max(0, leftInViewport));
+    const w = Math.max(2, Math.round(charWidth));
+    const h = Math.max(2, Math.round(lineHeight || metrics.lineHeight || 17));
+    const s = mobileImeProxy.style;
+    s.position = 'fixed';
+    s.top = `${cssTop}px`;
+    s.left = `${cssLeft}px`;
+    s.bottom = 'auto';
+    s.width = `${w}px`;
+    s.height = `${h}px`;
+    s.minWidth = `${w}px`;
+    s.minHeight = `${h}px`;
+    s.maxWidth = `${w}px`;
+    s.maxHeight = `${h}px`;
+    // Keep nearly invisible but large enough for IME composition anchors.
+    s.opacity = '0.01';
+    s.pointerEvents = 'none';
+    s.zIndex = '1';
+    mobileImeProxy.dataset.anchorReason = String(reason || '');
+}
+
 function setupMobileStableImeProxy() {
     if (!isMobileStableInputMode() || mobileImeProxy) return;
     const proxy = document.createElement('textarea');
@@ -8378,6 +8455,7 @@ function setupMobileStableImeProxy() {
         textarea.setAttribute('tabindex', '-1');
         textarea.style.pointerEvents = 'none';
     }
+    scheduleImeProxyCursorAnchor('ime-proxy-created');
 }
 
 function setupTerminalScrollHooks({ followOnConnect = true } = {}) {
@@ -10925,7 +11003,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API (FREEZE plan
         // §3.8/§5). Falls back to the stock package if the fork is absent.
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-ssh-kb-root6');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-cursor-metrics1');
         WTermClass = module.WTerm;
     } catch {
         try {
@@ -10987,6 +11065,9 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     applyWtermTheme(getPreferredWtermTheme());
     applyTerminalFontSize(terminalFontSize, { persist: false });
     applyTerminalLigatures(terminalAllowLigatures, { persist: false });
+    // Font/theme may have changed CSS before first paint — force one more
+    // authoritative cell measure so cursor overlay px matches the live font.
+    try { term?.refreshCellMetrics?.(); } catch (_) {}
     patchWTermScrollBehavior();
     // Bind unified surface to this term (mobile scroll/keyboard control plane).
     if (isMobileStableInputMode() || isTouchKeyboardDevice()) {

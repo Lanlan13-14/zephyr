@@ -8,7 +8,16 @@ type TermRenderer = {
   setup(cols: number, rows: number): void;
   render(core: any): void;
   invalidateAll(): void;
+  setCellMetrics?(charWidth: number, rowHeight: number): void;
+  getCellMetrics?(): { charWidth: number; rowHeight: number };
 };
+
+/** Single source of truth for cell geometry (px). */
+export interface CellMetrics {
+  charWidth: number;
+  rowHeight: number;
+  measuredAt: number;
+}
 
 export function parseOscColor(value: string): string | null {
   const input = value.trim();
@@ -76,6 +85,8 @@ export interface ViewportState {
   scrollTop: number;
   maxScroll: number;
   rowHeight: number;
+  /** Measured monospaced cell advance in CSS px (same as getCellMetrics). */
+  charWidth: number;
   rows: number;
   cols: number;
   followEnabled: boolean;
@@ -92,6 +103,7 @@ export interface ViewportFacade {
   readonly maxScroll: number;
   readonly scrollTop: number;
   readonly rowHeight: number;
+  readonly charWidth: number;
   readonly rows: number;
   readonly cols: number;
   follow(): void;
@@ -125,6 +137,10 @@ export class WTerm {
   private _destroyed = false;
   private _shouldScrollToBottom = false;
   private _rowHeight = 0;
+  private _charWidth = 0;
+  private _metricsMeasuredAt = 0;
+  /** After first paint, remeasure from a live cell once (probe may drift). */
+  private _liveMetricsSynced = false;
   private _onClickFocus: () => void;
   /** Render-complete callback set (Zephyr fork §3.8.2). */
   private _renderCallbacks: Set<(state: ViewportState) => void> = new Set();
@@ -202,12 +218,15 @@ export class WTerm {
         (globalThis as Record<string, unknown>).__wterm = this;
       }
 
-      this._setRowHeight();
+      // Measure once before renderer setup so the cursor overlay and grid
+      // share the same cell geometry from the first paint.
+      this.refreshCellMetrics();
 
       this.renderer = this._rendererMode === "canvas"
         ? new CanvasRenderer(this._container)
         : new Renderer(this._container);
       this.renderer.setup(this.cols, this.rows);
+      this._pushMetricsToRenderer();
 
       this.input = new InputHandler(
         this.element,
@@ -333,10 +352,74 @@ export class WTerm {
         ? Math.max(0, el.scrollHeight - el.clientHeight)
         : 0,
       rowHeight: this._rowHeight || 17,
+      charWidth: this._charWidth || 8,
       rows: this.rows || 0,
       cols: this.cols || 0,
       followEnabled: !!this._shouldScrollToBottom,
     };
+  }
+
+  /**
+   * Single source of truth for cell geometry.
+   * Prefer this over reading CSS vars or probing the DOM from the host.
+   */
+  getCellMetrics(): CellMetrics {
+    return {
+      charWidth: this._charWidth || 8,
+      rowHeight: this._rowHeight || 17,
+      measuredAt: this._metricsMeasuredAt || 0,
+    };
+  }
+
+  /**
+   * Re-measure cell size from the live font and write CSS vars + renderer.
+   * Call after font-size / font-family / DPR / theme changes.
+   * Returns the new metrics (or last known if measure failed).
+   */
+  refreshCellMetrics(): CellMetrics {
+    const measured = this._measureCharSize();
+    if (measured) {
+      // Keep sub-pixel precision. Ceil caused rowHeight to grow past the real
+      // line box, which then inflated getMeasuredTerminalSize().rows downward
+      // and left a black void under the prompt.
+      const changed =
+        Math.abs((this._charWidth || 0) - measured.charWidth) > 0.25 ||
+        Math.abs((this._rowHeight || 0) - measured.rowHeight) > 0.25 ||
+        this._charWidth === 0 ||
+        this._rowHeight === 0;
+      this._charWidth = measured.charWidth;
+      this._rowHeight = measured.rowHeight;
+      this._metricsMeasuredAt = performance.now();
+      // Significant change → allow next paint to re-sync from a live cell.
+      // Tiny noise must not thrash the one-shot flag (avoids render loops).
+      if (changed && this._liveMetricsSynced) {
+        this._liveMetricsSynced = false;
+      }
+      this.element.style.setProperty(
+        "--term-row-height",
+        `${measured.rowHeight}px`,
+      );
+      this.element.style.setProperty(
+        "--term-cell-width",
+        `${measured.charWidth}px`,
+      );
+      this._pushMetricsToRenderer();
+    }
+    return this.getCellMetrics();
+  }
+
+  /** @deprecated Use refreshCellMetrics(). Kept for hosts that still call it. */
+  _setRowHeight(): void {
+    this.refreshCellMetrics();
+  }
+
+  private _pushMetricsToRenderer(): void {
+    if (!this.renderer) return;
+    const cw = this._charWidth;
+    const rh = this._rowHeight;
+    if (cw > 0 && rh > 0 && typeof this.renderer.setCellMetrics === "function") {
+      this.renderer.setCellMetrics(cw, rh);
+    }
   }
 
   /** Scroll to a specific line (0-indexed). Best-effort, clamped, row-aligned. */
@@ -396,6 +479,9 @@ export class WTerm {
       get rowHeight() {
         return self._rowHeight || 17;
       },
+      get charWidth() {
+        return self._charWidth || 8;
+      },
       get rows() {
         return self.rows;
       },
@@ -439,6 +525,9 @@ export class WTerm {
     this.rows = rows;
     this.bridge.resize(cols, rows);
     this.renderer?.setup(cols, rows);
+    // setup() rebuilds the DOM; re-push host metrics so the new cursor overlay
+    // does not fall back to 1ch until the next font change.
+    this._pushMetricsToRenderer();
     this._scheduleRender();
     if (this.onResize) this.onResize(cols, rows);
   }
@@ -486,6 +575,22 @@ export class WTerm {
     }
 
     this.renderer.render(this.bridge);
+
+    // First paint: remeasure from a real cell so cursor px matches glyphs
+    // even if the pre-paint space-probe drifted (missing mono face, etc.).
+    if (!this._liveMetricsSynced) {
+      const before = this._charWidth;
+      const m = this.refreshCellMetrics();
+      this._liveMetricsSynced = true;
+      if (
+        m.charWidth > 0 &&
+        before > 0 &&
+        Math.abs(m.charWidth - before) > 0.25
+      ) {
+        // Metrics moved — re-render once so the cursor overlay snaps.
+        this.renderer.render(this.bridge);
+      }
+    }
 
     if (this.debug) {
       this.debug.recordRender(performance.now() - t0, dirtyCount);
@@ -554,57 +659,109 @@ export class WTerm {
     this.element.style.height = `${gridHeight + extra}px`;
   }
 
-  private _setRowHeight(): void {
-    const probe = document.createElement("div");
-    probe.className = "term-row";
-    probe.style.visibility = "hidden";
-    probe.style.position = "absolute";
-    probe.textContent = "W";
-    this._container.appendChild(probe);
-    const h = probe.getBoundingClientRect().height;
-    probe.remove();
-    if (h > 0) {
-      const rh = Math.ceil(h);
-      this._rowHeight = rh;
-      this.element.style.setProperty("--term-row-height", `${rh}px`);
-    }
-  }
-
+  /**
+   * Measure one monospaced cell using a real .term-row > span probe inside the
+   * live grid, so font-family/size/line-height match painted rows.
+   * Does NOT write CSS vars — callers (refreshCellMetrics) own that.
+   *
+   * Prefer measuring a painted grid cell (Range over one glyph) when rows
+   * already exist — that is the ground truth the cursor must match. Fall back
+   * to a 64× space probe (spaces never form ligatures and match mono advance
+   * even when the first font in the stack is missing and a proportional face
+   * is briefly used for letter glyphs like "W").
+   */
   private _measureCharSize(): {
     charWidth: number;
     rowHeight: number;
   } | null {
+    // 1) Live painted cell — best signal.
+    try {
+      const liveRow = this._container.querySelector(
+        ".term-row > span, .term-row",
+      ) as HTMLElement | null;
+      if (liveRow) {
+        const rowEl = liveRow.classList?.contains("term-row")
+          ? liveRow
+          : (liveRow.parentElement as HTMLElement | null);
+        const span =
+          liveRow.tagName === "SPAN"
+            ? liveRow
+            : (liveRow.querySelector("span") as HTMLElement | null);
+        const text = span?.firstChild;
+        if (
+          text &&
+          text.nodeType === Node.TEXT_NODE &&
+          (text.textContent || "").length > 0
+        ) {
+          const range = document.createRange();
+          // Skip wide/emoji lead if possible: take first BMP glyph.
+          range.setStart(text, 0);
+          range.setEnd(text, 1);
+          const cellRect = range.getBoundingClientRect();
+          const rowRect = (rowEl || liveRow).getBoundingClientRect();
+          if (cellRect.width > 0 && rowRect.height > 0) {
+            return { charWidth: cellRect.width, rowHeight: rowRect.height };
+          }
+        }
+        if (rowEl) {
+          const rowRect = rowEl.getBoundingClientRect();
+          // Fall through if we only got height.
+          if (rowRect.height > 0 && this._charWidth > 0) {
+            return { charWidth: this._charWidth, rowHeight: rowRect.height };
+          }
+        }
+      }
+    } catch {
+      /* fall through to probe */
+    }
+
+    // 2) Probe with spaces (mono-stable advance; no ligatures).
+    // Force a monospaced stack so a missing first face does not collapse the
+    // probe onto a proportional fallback and inflate charWidth.
     const row = document.createElement("div");
     row.className = "term-row";
     row.style.visibility = "hidden";
     row.style.position = "absolute";
+    row.style.pointerEvents = "none";
+    row.style.left = "0";
+    row.style.top = "0";
 
     const probe = document.createElement("span");
-    probe.textContent = "W";
+    probe.textContent = " ".repeat(64);
+    probe.style.whiteSpace = "pre";
+    probe.style.fontVariantLigatures = "none";
+    const hostFont = getComputedStyle(this.element).fontFamily || "monospace";
+    probe.style.fontFamily = hostFont.includes("monospace")
+      ? hostFont
+      : `${hostFont}, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
+    probe.style.fontSize = getComputedStyle(this.element).fontSize;
     row.appendChild(probe);
 
     this._container.appendChild(row);
-    const charWidth = probe.getBoundingClientRect().width;
-    const rowHeight = row.getBoundingClientRect().height;
+    const spanRect = probe.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
     row.remove();
 
+    const charWidth = spanRect.width > 0 ? spanRect.width / 64 : 0;
+    // Prefer the fixed row box height (CSS --term-row-height / .term-row height)
+    // over the span content box, which can be taller than the line box on some
+    // fonts and would inflate metrics.
+    const rowHeight = rowRect.height > 0 ? rowRect.height : spanRect.height;
     if (charWidth === 0 || rowHeight === 0) return null;
-    this._rowHeight = rowHeight;
     return { charWidth, rowHeight };
   }
 
   private _setupResizeObserver(): void {
-    const initial = this._measureCharSize();
-    if (!initial) return;
+    const initial = this.refreshCellMetrics();
+    if (!initial.charWidth || !initial.rowHeight) return;
 
-    let { charWidth, rowHeight } = initial;
+    let charWidth = initial.charWidth;
+    let rowHeight = initial.rowHeight;
 
     this.resizeObserver = new ResizeObserver((entries) => {
-      const measured = this._measureCharSize();
-      if (measured) {
-        charWidth = measured.charWidth;
-        rowHeight = measured.rowHeight;
-      }
+      const measured = this.refreshCellMetrics();
+      if (measured.charWidth > 0) charWidth = measured.charWidth;
+      if (measured.rowHeight > 0) rowHeight = measured.rowHeight;
 
       for (const entry of entries) {
         const { width, height } = entry.contentRect;

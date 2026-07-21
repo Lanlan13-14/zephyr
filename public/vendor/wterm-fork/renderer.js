@@ -255,9 +255,30 @@ class Renderer {
     __publicField(this, "_graphicsIds", /* @__PURE__ */ new Set());
     __publicField(this, "_charWidth", 8);
     __publicField(this, "_cellHeight", 16);
+    /** Optional host-provided metrics. When set, cursor overlay uses these
+     *  instead of re-measuring from the first span (avoids 1ch drift). */
+    __publicField(this, "_hostCellWidth", 0);
+    __publicField(this, "_hostCellHeight", 0);
     __publicField(this, "_scrollbackRowEls", []);
     __publicField(this, "_renderedScrollbackCount", 0);
     this.container = container;
+  }
+  /** Push authoritative cell metrics from WTerm.refreshCellMetrics(). */
+  setCellMetrics(charWidth, rowHeight) {
+    if (Number.isFinite(charWidth) && charWidth > 0) {
+      this._charWidth = charWidth;
+      this._hostCellWidth = charWidth;
+    }
+    if (Number.isFinite(rowHeight) && rowHeight > 0) {
+      this._cellHeight = rowHeight;
+      this._hostCellHeight = rowHeight;
+    }
+  }
+  getCellMetrics() {
+    return {
+      charWidth: this._hostCellWidth || this._charWidth,
+      rowHeight: this._hostCellHeight || this._cellHeight
+    };
   }
   invalidateAll() {
     this.rowSignatures = this.rowSignatures.map(() => null);
@@ -413,7 +434,13 @@ class Renderer {
     }
     this._renderedScrollbackCount = scrollbackCount;
   }
-  /** Update the decoupled cursor overlay position and visibility (P1-2). */
+  /** Update the decoupled cursor overlay position and visibility (P1-2).
+   *
+   *  Geometry: prefer host-measured cell metrics (setCellMetrics) written as
+   *  absolute px top/left. Falling back to CSS vars alone caused:
+   *    - 1ch ≠ real monospaced advance (measured ~9% wider → right drift)
+   *    - offsetParent = .wterm (padding) when .term-grid was static
+   *  Both are fixed by pixel placement inside position:relative .term-grid. */
   _updateCursorOverlay(core, cursor) {
     if (!this.cursorEl) return;
     if (!cursor.visible || cursor.row >= this.rows || cursor.col >= this.cols) {
@@ -434,7 +461,14 @@ class Renderer {
     this.cursorEl.textContent = ch;
     const styleClass = `term-cursor-style-${cursor.style || 0}`;
     this.cursorEl.className = `term-cursor-overlay ${styleClass}`;
-    this.cursorEl.style.cssText = `display:block;${style}`;
+    const scrollbackOffset = this._renderedScrollbackCount * (this._hostCellHeight || this._cellHeight || 0);
+    const cellW = this._hostCellWidth || this._charWidth || 8;
+    const cellH = this._hostCellHeight || this._cellHeight || 17;
+    const wide = cell.wide === 1 ? 2 : 1;
+    const top = scrollbackOffset + cursor.row * cellH;
+    const left = cursor.col * cellW;
+    const width = cellW * wide;
+    this.cursorEl.style.cssText = `display:block;position:absolute;top:${top}px;left:${left}px;width:${width}px;height:${cellH}px;box-sizing:border-box;${style}`;
     this.cursorEl.style.setProperty("--cursor-row", String(cursor.row));
     this.cursorEl.style.setProperty("--cursor-col", String(cursor.col));
     this.cursorVisible = true;
@@ -448,10 +482,25 @@ class Renderer {
     this._graphicsLayer = layer;
   }
   _measureCellMetrics() {
+    if (this._hostCellWidth > 0 && this._hostCellHeight > 0) {
+      this._charWidth = this._hostCellWidth;
+      this._cellHeight = this._hostCellHeight;
+      return;
+    }
     const row = this.rowEls[0];
     if (!row) return;
     const span = row.querySelector("span");
     if (span) {
+      const text = span.firstChild;
+      if (text && text.nodeType === Node.TEXT_NODE && (text.textContent || "").length > 0) {
+        const range = document.createRange();
+        range.setStart(text, 0);
+        range.setEnd(text, 1);
+        const rect2 = range.getBoundingClientRect();
+        if (rect2.width > 0) this._charWidth = rect2.width;
+        if (rect2.height > 0) this._cellHeight = rect2.height;
+        return;
+      }
       const rect = span.getBoundingClientRect();
       if (rect.width > 0) this._charWidth = rect.width;
       if (rect.height > 0) this._cellHeight = rect.height;
