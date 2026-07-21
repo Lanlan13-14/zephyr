@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260721-history-scroll1';
+} from './ssh-keyboard/index.js?v=20260721-kb-close1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -16,8 +16,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-history-scroll1';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-history-scroll1';
+} from './terminal-scroll-policy.js?v=20260721-kb-close1';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-close1';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -2093,14 +2093,16 @@ window.addEventListener('message', (e) => {
         if (open && overlap >= 80) {
             applyMobileStableKeyboardInset(overlap, true, `parent-overlap:${e.data.reason || ''}:open`);
         } else {
+            // Physical IME gone in parent: clear shell immediately even if proxy still focused.
             applyMobileStableKeyboardInset(0, false, `parent-overlap:${e.data.reason || ''}:close`);
-            // Geometry only — do not blur IME while proxy focused (self-retract).
-            if (kb?.desiredOpen?.() && !proxyFocused) {
+            if (kb?.desiredOpen?.()) {
                 try { kb.close('parent-physical-close', { force: false, blurCmd: false }); } catch (_) {}
             }
+            try { applyFacadeChrome?.(`parent-overlap:${e.data.reason || ''}:closed`); } catch (_) {}
         }
         return;
     }
+ 
     if (e.data.type === 'layout-stabilize') {
         const reason = e.data.reason || 'parent-layout-stabilize';
         // 如果 parent 发来了 keyboard 指标（parent 的 visualViewport 可靠检测键盘打开），
@@ -2123,11 +2125,27 @@ window.addEventListener('message', (e) => {
                         now: Date.now(),
                     });
                 } else if (!parentKeyboardOpen) {
-                    if (kb.desiredOpen?.() || hasFocus) {
-                        logTerminalLayoutDiagnostics?.('parent-layout-close-ignored-ime-alive', { reason });
-                    } else {
-                        kb._intent?.syncViewport?.({ inset: 0, hasEditableFocus: false, now: Date.now() });
-                        if (kb.desiredOpen?.()) kb.close('parent-layout-close', { force: false, blurCmd: false });
+                    // Parent says IME closed — always sync physical zero and collapse shell.
+                    // Do NOT ignore because proxy focus is still sticky (that left blank gap).
+                    kb._intent?.syncViewport?.({ inset: 0, hasEditableFocus: false, now: Date.now() });
+                    if (kb.desiredOpen?.() && !hasFocus) {
+                        try { kb.close('parent-layout-close', { force: false, blurCmd: false }); } catch (_) {}
+                    } else if (kb.desiredOpen?.() && hasFocus) {
+                        // Soft-close intent only after a short settle if focus remains but parent is closed.
+                        window.clearTimeout(applyFacadeChrome._parentCloseHold);
+                        applyFacadeChrome._parentCloseHold = window.setTimeout(() => {
+                            const stillFocus = !!(
+                                document.activeElement === mobileImeProxy
+                                || document.activeElement === cmdInput
+                            );
+                            const stillParentClosed = !isSshKbLayoutOpen?.() || (getSshKbInset?.() || 0) < 40;
+                            // Prefer parent authority: if shell still open with tiny inset, force clear.
+                            if (!stillFocus || stillParentClosed || (getSshKbInset?.() || 0) < 40) {
+                                try { kb.close('parent-layout-close-settle', { force: false, blurCmd: false }); } catch (_) {}
+                                applyMobileStableKeyboardInset(0, false, `parent-layout:${reason}:settle-close`);
+                                applyFacadeChrome(`parent-layout:${reason}:settle`);
+                            }
+                        }, 220);
                     }
                 }
                 applyFacadeChrome(`parent-layout:${reason}`);
@@ -2137,6 +2155,7 @@ window.addEventListener('message', (e) => {
                 finalizeKeyboardClose({ force: true });
             }
         }
+ 
         const keyboardRelated = isTouchKeyboardDevice() && (
             String(reason).includes('keyboard')
             || String(reason).includes('viewport')
@@ -8428,24 +8447,58 @@ function scheduleSshKbGeometryFit(reason, layoutOpen, wasFollowing) {
     requestAnimationFrame(() => settleViewport(`${reason}:vp-raf`));
 }
  
+/**
+ * Soft-keyboard shell geometry.
+ * Open: shrink page by inset. Close: IMMEDIATELY clear inset/class — never lag.
+ * Stuck "half keyboard" blank under tools is almost always a delayed/blocked close.
+ */
+let _sshKbLowInsetSince = 0;
+let _sshKbForceCloseTimer = 0;
+
+function forceClearSshKbShell(reason = 'force-clear') {
+    window.clearTimeout(_sshKbGeomSettleTimer);
+    window.clearTimeout(_sshKbForceCloseTimer);
+    _sshKbGeomSettleTimer = 0;
+    _sshKbForceCloseTimer = 0;
+    _sshKbGeomPending = null;
+    _sshKbLowInsetSince = 0;
+    _sshKbParentGeomAt = 0;
+    const wasOpen = !!_sshKbLayoutOpenCache || (_sshKbInsetCache || 0) > 0
+        || document.documentElement.classList.contains('ssh-kb-open');
+    writeSshKbPageGeometry(0, false, { fromParent: true });
+    try { updateTerminalInputPanelMetrics(); } catch (_) {}
+    try { assertKeyboardLayoutSettled?.(reason); } catch (_) {}
+    if (wasOpen) {
+        try {
+            const el = getTerminalScrollElement();
+            const wasFollowing = Boolean(el && (terminalAutoFollowEnabled || mobileStableLastBottomIntent || isMobileStableAtVisualBottom?.(el)));
+            if (wasFollowing) scheduleSshKbGeometryFit(`${reason}:close`, false, true);
+            else scheduleEnsureActiveLineAboveChrome?.(`${reason}:close`);
+        } catch (_) {}
+    }
+    logTerminalLayoutDiagnostics?.('ssh-kb-shell-force-clear', { reason, wasOpen });
+    return wasOpen;
+}
+
 function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason = 'keyboard-inset') {
     // DOM geometry only. kb-flow2 (Termux): --ssh-kb-inset shrinks .terminal-page.
     // CRITICAL: never thrash fit/resize on every vv tick — that paints black frames.
-    if (isCmdOverlayMode() || /\bcmd-frozen\b|:cmd\b|cmd-overlay/i.test(String(reason || ''))) {
-        window.clearTimeout(_sshKbGeomSettleTimer);
-        _sshKbGeomPending = null;
-        writeSshKbPageGeometry(0, false);
+    const reasonText = String(reason || '');
+    if (isCmdOverlayMode() || /\bcmd-frozen\b|:cmd\b|cmd-overlay/i.test(reasonText)) {
+        forceClearSshKbShell(`${reasonText || 'cmd-frozen'}:cmd`);
         document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
         return;
     }
 
     const el = getTerminalScrollElement();
     const wasFollowing = Boolean(el && (terminalAutoFollowEnabled || mobileStableLastBottomIntent || isMobileStableAtVisualBottom(el)));
-    const previousTop = wtermWrapper?.scrollTop ?? el?.scrollTop ?? 0;
     const measured = measureImeChromeBottom();
     const reported = Math.max(0, Math.round(Number(inset) || 0));
-    const parentAuthoritative = String(reason || '').includes('parent-overlap');
-    const open = !!keyboardOpen;
+    const parentAuthoritative = /parent-overlap|parent-layout|parent-physical/.test(reasonText);
+    const explicitClose = !keyboardOpen
+        || /:close\b|facade-close|finalize|force-clear|system-dismiss|physical-close|keyboard-close/.test(reasonText);
+    const open = !!keyboardOpen && !explicitClose;
+
     // Parent frame-local overlap is authoritative. Ignore sub-threshold noise.
     let pinInset = 0;
     if (open) {
@@ -8460,40 +8513,37 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     const prevOpen = _sshKbLayoutOpenCache;
     const prevInset = _sshKbInsetCache || 0;
 
-    // Hard close: CSS only. No grid resize, no multi-phase pin thrash.
+    // -------- CLOSE (must be immediate) --------
     if (!layoutOpen) {
-        const fromParent = String(reason || '').includes('parent-overlap')
-            || String(reason || '').includes('parent-layout');
-        // Ignore non-parent closes for 400ms after parent open (facade intent lag).
-        if (!fromParent && Date.now() - (_sshKbParentGeomAt || 0) < 400 && (_sshKbInsetCache || 0) >= 80) {
-            return;
-        }
-        window.clearTimeout(_sshKbGeomSettleTimer);
-        _sshKbGeomPending = null;
-        const edge = !!prevOpen;
-        writeSshKbPageGeometry(0, false, { fromParent });
+        // Physical/parent/facade close is absolute. Never block with "parent fresh"
+        // open-hold — that was the stuck blank after IME retract.
+        forceClearSshKbShell(reasonText || 'close');
         if (!isMobileStableInputMode()) return;
-        try { updateTerminalInputPanelMetrics(); } catch (_) {}
-        // One optional stick if user was following — never restore stale scrollTop.
-        if (edge && wasFollowing) {
-            scheduleSshKbGeometryFit(`${reason}:close`, false, true);
+        if (prevOpen && wasFollowing) {
+            // forceClear already scheduled stick when wasOpen; avoid double work.
         }
         return;
     }
 
+    // -------- OPEN --------
+    _sshKbLowInsetSince = 0;
     // Open / inset update: skip no-ops within 12px (Android vv jitter).
     if (prevOpen && Math.abs(prevInset - safeInset) < 12) {
         return;
     }
 
     const commitOpen = (job, { fromParent = false } = {}) => {
+        // Cancel any pending force-close from a previous low-inset streak.
+        window.clearTimeout(_sshKbForceCloseTimer);
+        _sshKbForceCloseTimer = 0;
+        _sshKbLowInsetSince = 0;
         writeSshKbPageGeometry(job.safeInset, true, { fromParent });
         try { updateTerminalInputPanelMetrics(); } catch (_) {}
         // Viewport shell only + one stick. Never resize rows/cols.
         scheduleSshKbGeometryFit(job.reason, true, job.wasFollowing !== false);
     };
 
-    const job = { safeInset, layoutOpen: true, reason, wasFollowing, previousTop };
+    const job = { safeInset, layoutOpen: true, reason: reasonText, wasFollowing };
 
     // Parent-overlap is exact — commit immediately.
     if (parentAuthoritative) {
@@ -8515,20 +8565,30 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
         commitOpen(pending);
     }, delay);
 }
- 
+  
 /** Force-clear residual keyboard layout so the page never stays half-lifted. */
 function assertKeyboardLayoutSettled(reason = 'keyboard-settled') {
-    // Only clear chrome when facade is closed. No multi-phase thrash.
-    if (sshKb?.desiredOpen?.() || sshKb?.physicalOpen?.() || sshSoftKeyboard?.desiredOpen?.()) return;
+    // Clear whenever intent is closed OR physical is closed with tiny inset.
+    // Stale shell after IME hide is worse than a brief double-clear.
+    const desired = !!(sshKb?.desiredOpen?.() || sshSoftKeyboard?.desiredOpen?.());
+    const physical = !!(sshKb?.physicalOpen?.() || sshSoftKeyboard?.physicalOpen?.());
+    if (desired && physical) return;
+    if (desired && !physical) {
+        // Intent open but physical gone — still clear shell (keyboard already hidden).
+        const inset = Math.max(0, Number(sshKb?.getInset?.() || _sshKbInsetCache || 0));
+        if (inset >= 80) return;
+    }
     _sshKbLayoutOpenCache = false;
     _sshKbInsetCache = 0;
+    _sshKbParentGeomAt = 0;
     document.documentElement.style.setProperty('--keyboard-inset', '0px');
     document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
     document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
     document.documentElement.classList.remove('ssh-kb-open', 'viewport-updating');
     terminalContainer?.classList.remove('ssh-kb-open');
     pinMobileImeChrome(false, 0);
-    // Publish closed via ssh-kb only.
+ 
+// Publish closed via ssh-kb only.
     ensureSshKeyboard()?._bridge?.publish?.({
         phase: 'closed',
         intent: 'closed',
@@ -9350,17 +9410,16 @@ function finalizeKeyboardClose({ force = false } = {}) {
     if (kb) {
         kb.close(force ? 'finalize-force' : 'finalize', { force: !!force });
         applyFacadeChrome(force ? 'finalize-force' : 'finalize');
+        // Always hard-clear shell geometry — do not leave residual inset.
+        forceClearSshKbShell(force ? 'finalize-force' : 'finalize');
         return;
     }
     if (sshSoftKeyboard) {
         try { sshSoftKeyboard.close(force ? 'finalize-force' : 'finalize', { force: !!force }); } catch (_) {}
     }
-    _sshKbLayoutOpenCache = false;
-    _sshKbInsetCache = 0;
-    applyMobileStableKeyboardInset(0, false, 'keyboard-close-final');
-    scheduleKeyboardCloseFit('keyboard-close-final', 500);
+    forceClearSshKbShell('keyboard-close-final');
 }
-
+ 
 
 function restoreMobileWTermNativeInput() {
     if (isMobileStableInputMode()) {
@@ -9414,6 +9473,7 @@ function setupHorizontalScrollbarVisibility(...elements) {
 function applyFacadeChrome(reason = 'mirror') {
     // Project facade → DOM. Parent-overlap is height authority when present.
     // overlays-content: measured inset is often 0 while IME is up — use estimate.
+    // CLOSE is always allowed: never keep a stale inset after physical dismiss.
     const kb = sshKb || ensureSshKeyboard?.();
     if (!kb) return false;
     if (isCmdOverlayMode?.()) {
@@ -9427,40 +9487,68 @@ function applyFacadeChrome(reason = 'mirror') {
     let inset = Math.max(0, Math.round(Number(kb.getInset?.() || 0) || 0));
     const proxyFocused = !!(document.activeElement === mobileImeProxy
         || document.activeElement?.classList?.contains?.('mobile-terminal-ime-proxy'));
-    const parentLive = !!_sshKbLayoutOpenCache && (_sshKbInsetCache || 0) >= 80;
-    const parentFresh = Date.now() - (_sshKbParentGeomAt || 0) < 800;
+    const parentAge = Date.now() - (_sshKbParentGeomAt || 0);
+    const parentLive = !!_sshKbLayoutOpenCache && (_sshKbInsetCache || 0) >= 80 && parentAge < 500;
+    // Only treat parent as "fresh open" for a short window while still desired.
+    const parentFreshOpen = desired && parentAge < 280 && (_sshKbInsetCache || 0) >= 80;
 
     if (liftNone) {
         applyMobileStableKeyboardInset(0, false, `${reason}:facade-lift-none`);
         return true;
     }
 
-    // Parent just opened geometry: NEVER collapse from facade intent=closed lag.
-    if (parentLive || parentFresh) {
+    // Explicit closed phase / undesired: clear shell NOW.
+    // Do NOT require !proxyFocused — Android often leaves focus for a tick after IME hides,
+    // and waiting for blur left the half-height blank under tools.
+    if (phase === 'closed' || (!desired && !physical)) {
+        applyMobileStableKeyboardInset(0, false, `${reason}:facade-close`);
+        return true;
+    }
+
+    // Physical closed while intent still open (system dismiss in progress):
+    // if measured/facade inset is already low, collapse shell immediately.
+    if (desired && !physical && inset < 40) {
+        const measured = (() => { try { return measureImeChromeBottom?.() || 0; } catch (_) { return 0; } })();
+        if (measured < 40) {
+            applyMobileStableKeyboardInset(0, false, `${reason}:facade-physical-zero`);
+            // Also close intent so we don't re-open from retain paths.
+            try { kb.close?.('facade-physical-zero', { force: false, blurCmd: false }); } catch (_) {}
+            return true;
+        }
+    }
+
+    // Parent just opened geometry: only retain briefly while still desired+fresh.
+    // NEVER retain after intent closed (that stuck the blank under tools).
+    if (desired && (parentLive || parentFreshOpen) && physical !== false) {
         const keep = Math.max(_sshKbInsetCache || 0, inset, 240);
         applyMobileStableKeyboardInset(keep, true, `${reason}:facade-retain-parent`);
         return true;
     }
 
-    const open = phase === 'open' || phase === 'opening' || desired
-        || (proxyFocused && (_sshKbLayoutOpenCache || physical));
+    const open = phase === 'open' || phase === 'opening' || (desired && (physical || inset >= 80 || proxyFocused));
 
     if (open) {
         if (inset < 80) inset = Math.max(inset, _sshKbInsetCache || 0);
-        if (inset < 80) {
+        if (inset < 80 && physical) {
             try { inset = getEstimatedKeyboardInset?.() || 280; } catch (_) { inset = 280; }
+        }
+        if (inset < 80) {
+            // Desired open but no real height → don't invent a permanent 280px hole.
+            // Keep previous only if parent geometry is still live; else wait.
+            if (!parentLive) {
+                logTerminalLayoutDiagnostics?.('facade-open-await-inset', { reason, desired, physical, inset });
+                return true;
+            }
+            inset = Math.max(_sshKbInsetCache || 0, 240);
         }
         applyMobileStableKeyboardInset(inset, true, `${reason}:facade-open`);
         return true;
     }
 
-    if (!proxyFocused) {
-        applyMobileStableKeyboardInset(0, false, `${reason}:facade-close`);
-        if (phase === 'closed') scheduleKeyboardCloseFit?.(`${reason}:facade-close`, 360);
-    }
+    applyMobileStableKeyboardInset(0, false, `${reason}:facade-close`);
     return true;
 }
-
+ 
 /** @deprecated alias */
 function syncLegacyKeyboardMirrorFromFacade(reason = 'mirror') {
     return applyFacadeChrome(reason);
@@ -11735,7 +11823,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     // Register the Terminal ctor before WTerm.init so XtermBridge.load works
     // without a bare npm resolver in the browser.
     try {
-        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-history-scroll1');
+        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-close1');
     } catch (err) {
         console.error('[terminal] xterm-headless register failed', err);
         throw err;
@@ -11743,7 +11831,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API. DOM/input/viewport
         // stay wterm; core is XtermBridge over vendored xterm (see /xterm).
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-history-scroll1');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-close1');
         WTermClass = module.WTerm;
     } catch {
         try {

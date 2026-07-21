@@ -29,11 +29,12 @@ export const DEFAULT_INTENT_THRESHOLDS = Object.freeze({
     openInset: 80,
     closeInset: 12,
     /** After open gesture, ignore system-dismiss for this long (ms). */
-    openGuardMs: 320,
-    /** Require continuous low inset this long before accepting system dismiss. */
-    dismissConfirmMs: 480,
+    openGuardMs: 280,
+    /** Require continuous low inset this long before accepting system dismiss.
+     *  Keep short so shell recovers quickly after IME retract (blank gap bug). */
+    dismissConfirmMs: 220,
 });
-
+ 
 /**
  * @typedef {object} IntentHost
  * @property {() => HTMLElement | null} ensureProxy
