@@ -868,8 +868,8 @@ function logTerminalCopyDiagnostics(event, details = {}) {
             selectionCollapsed: selection?.isCollapsed,
             selectionLength: selection?.toString?.().length || 0,
             cachedSelectionLength: cachedSelectionText.length,
-            isSshKbLayoutOpen(),
-            isSshKbFocusLikely(),
+            sshKbLayoutOpen: !!isSshKbLayoutOpen?.(),
+            sshKbFocusLikely: !!isSshKbFocusLikely?.(),
             mobileTerminalSelectionMode,
             viewportHeight: Math.round(viewport?.height || 0),
             viewportOffsetTop: Math.round(viewport?.offsetTop || 0),
@@ -1091,8 +1091,8 @@ function logTerminalScrollDiagnostics(event, details = {}) {
         console.info('[TerminalScrollDiagnostics]', {
             event,
             isProgrammaticTerminalScroll,
-            isSshKbLayoutOpen(),
-            isSshKbFocusLikely(),
+            sshKbLayoutOpen: !!isSshKbLayoutOpen?.(),
+            sshKbFocusLikely: !!isSshKbFocusLikely?.(),
             keyboardFallbackActive,
             activeElement: document.activeElement?.id || document.activeElement?.className || document.activeElement?.tagName,
             scroll: el ? {
@@ -1124,8 +1124,8 @@ function logTerminalLayoutDiagnostics(event, details = {}) {
             event,
             embeddedMode,
             visibility: document.visibilityState,
-            isSshKbLayoutOpen(),
-            isSshKbFocusLikely(),
+            sshKbLayoutOpen: !!isSshKbLayoutOpen?.(),
+            sshKbFocusLikely: !!isSshKbFocusLikely?.(),
             wrapper: wrapperRect ? {
                 width: Math.round(wrapperRect.width),
                 height: Math.round(wrapperRect.height),
