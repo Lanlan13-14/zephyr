@@ -86,7 +86,7 @@ test('finalizeKeyboardClose delegates to facade close', () => {
 });
 
 test('cache bust root5', () => {
-    assert.match(terminalHtml, /ssh-kb-root5/);
+    assert.match(terminalHtml, /ssh-kb-root6/);
 });
 
 test('no bare inset open thresholds in terminal.js', () => {
@@ -110,4 +110,25 @@ test('applyFacadeChrome does not invent open from inset alone', () => {
     const body = sliceFn(terminalJs, 'applyFacadeChrome');
     assert.doesNotMatch(body, /inset\s*>=\s*80/);
     assert.match(body, /getPhase|desiredOpen|physicalOpen/);
+});
+
+test('parent never invents open from inset thresholds', () => {
+    assert.doesNotMatch(appJs, /keyboardOpen:\s*inset\s*>=/);
+    assert.doesNotMatch(appJs, /parentInset\s*>=\s*100/);
+    assert.doesNotMatch(appJs, /inset\s*>=\s*16\s*\|\|\s*sshKbParentOpen/);
+    assert.doesNotMatch(appJs, /const keyboardOpen = \(!\!metrics\.keyboardOpen \|\| parentInset/);
+    assert.match(appJs, /OPEN intent: child facade only|childOpen|metrics\.intent === 'open'/);
+});
+
+test('terminal notifyParent never posts keyboard-metrics', () => {
+    const body = sliceFn(terminalJs, 'notifyParentKeyboardMetrics');
+    assert.doesNotMatch(body, /type:\s*'keyboard-metrics'/);
+    assert.match(body, /type:\s*'ssh-kb'|SSH_KB_MSG|_bridge\.publish|publish\(/);
+});
+
+test('keepMobileAuxImeFocused is single-retain no multi-phase', () => {
+    const body = sliceFn(terminalJs, 'keepMobileAuxImeFocused');
+    assert.match(body, /retainFocus/);
+    assert.doesNotMatch(body, /requestAnimationFrame/);
+    assert.doesNotMatch(body, /setTimeout/);
 });

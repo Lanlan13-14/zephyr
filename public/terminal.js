@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260721-ssh-kb-root5';
+} from './ssh-keyboard/index.js?v=20260721-ssh-kb-root6';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -16,8 +16,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root5';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-ssh-kb-root5';
+} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root6';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-ssh-kb-root6';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -1296,42 +1296,46 @@ function getActiveKeyboardLiftMode(metrics = {}) {
 
 function notifyParentKeyboardMetrics(metrics = {}) {
     if (!(embeddedMode && window.parent && window.parent !== window)) return;
-    // Facade bridge is the sole publisher for terminal-ime metrics.
-    // Legacy callers may still notify only when forceNotify or cmd-overlay / fallback.
-    const force = !!metrics.forceNotify;
     const liftMode = getActiveKeyboardLiftMode(metrics);
     const isCmd = liftMode === SoftKeyboardLiftMode.NONE || metrics.source === 'cmd' || metrics.inputSource === 'cmd';
-    if (sshKb && !force && !isCmd && !metrics.fallback) {
-        // Keep bridge as sole path; optionally refresh publish from current facade state.
+    const kb = ensureSshKeyboard?.() || sshKb;
+    // Sole parent protocol: type ssh-kb (never keyboard-metrics).
+    if (kb?._bridge?.publish) {
         try {
-            const st = sshKb.getState?.() || {};
-            sshKb._bridge?.publish?.({
-                phase: st.layout?.phase || sshKb.getPhase?.() || 'closed',
-                intent: st.intent?.intent || (sshKb.desiredOpen?.() ? 'open' : 'closed'),
-                inset: st.layout?.inset ?? st.intent?.inset ?? sshKb.getInset?.() ?? 0,
-                liftMode: st.intent?.liftMode || sshKb.getLiftMode?.() || 'workspace',
-                physical: st.intent?.physical || (sshKb.physicalOpen?.() ? 'open' : 'closed'),
-                reason: metrics.reason || 'legacy-notify-redirect',
+            const st = kb.getState?.() || {};
+            const phase = isCmd ? 'closed' : (st.layout?.phase || kb.getPhase?.() || 'closed');
+            const intent = isCmd
+                ? (kb.desiredOpen?.() ? 'open' : 'closed')
+                : (st.intent?.intent || (kb.desiredOpen?.() ? 'open' : 'closed'));
+            const inset = isCmd ? 0 : (st.layout?.inset ?? st.intent?.inset ?? kb.getInset?.() ?? metrics.keyboardInset ?? 0);
+            kb._bridge.publish({
+                phase,
+                intent,
+                inset: Math.max(0, Math.round(Number(inset) || 0)),
+                liftMode: isCmd ? 'none' : (st.intent?.liftMode || kb.getLiftMode?.() || 'workspace'),
+                physical: isCmd ? 'closed' : (st.intent?.physical || (kb.physicalOpen?.() ? 'open' : 'closed')),
+                reason: metrics.reason || 'notify-parent',
             });
         } catch (_) {}
         return;
     }
+    // No facade yet: still emit ssh-kb shape only.
     window.parent.postMessage({
         source: 'zephyr-terminal',
-        type: 'keyboard-metrics',
+        type: 'ssh-kb',
         tabId: params?.tabId,
-        keyboardOpen: !!metrics.keyboardOpen,
-        keyboardInset: metrics.keyboardInset || 0,
-        viewportHeight: metrics.viewportHeight || 0,
-        layoutHeight: metrics.layoutHeight || 0,
-        offsetTop: metrics.offsetTop || 0,
-        fallback: !!metrics.fallback,
-        stableInput: isMobileStableInputMode(),
-        liftMode,
-        inputSource: metrics.source || (isCmd ? 'cmd' : 'terminal-ime'),
+        phase: isCmd ? 'closed' : (metrics.keyboardOpen ? 'open' : 'closed'),
+        intent: metrics.keyboardOpen || metrics.intent === 'open' ? 'open' : 'closed',
+        inset: isCmd ? 0 : (metrics.keyboardInset || 0),
+        liftMode: isCmd ? 'none' : (liftMode || 'workspace'),
+        physical: metrics.keyboardOpen ? 'open' : 'closed',
+        keyboardOpen: !isCmd && !!metrics.keyboardOpen,
+        keyboardInset: isCmd ? 0 : (metrics.keyboardInset || 0),
         reason: metrics.reason || '',
+        stableInput: isMobileStableInputMode(),
     }, '*');
 }
+
 
 function getViewportKeyboardMetrics() {
     const viewport = window.visualViewport;
@@ -7965,35 +7969,27 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
 
 /** Force-clear residual keyboard layout so the page never stays half-lifted. */
 function assertKeyboardLayoutSettled(reason = 'keyboard-settled') {
-    const forceClear = () => {
-        if (sshSoftKeyboard?.desiredOpen?.() || sshSoftKeyboard?.physicalOpen?.()) return;
-        if (_sshKbLayoutOpenCache || _sshKbInsetCache > 0) {
-            _sshKbLayoutOpenCache = false;
-            _sshKbInsetCache = 0;
-        }
-        document.documentElement.style.setProperty('--keyboard-inset', '0px');
-        document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
-        document.documentElement.classList.remove('ssh-kb-open', 'viewport-updating');
-        terminalContainer?.classList.remove('ssh-kb-open');
-        document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
-        pinMobileImeChrome(false, 0);
-        notifyParentKeyboardMetrics({
-            keyboardOpen: false,
-            keyboardInset: 0,
-            viewportHeight: Math.round(window.visualViewport?.height || window.innerHeight || 0),
-            layoutHeight: Math.round(window.innerHeight || document.documentElement.clientHeight || 0),
-            offsetTop: 0,
-            liftMode: SoftKeyboardLiftMode.NONE,
-            source: 'terminal-ime',
-            reason: `${reason}:assert-clear`,
-        });
-        logTerminalLayoutDiagnostics?.('keyboard-layout:assert-settled', { reason });
-    };
-    forceClear();
-    window.clearTimeout(assertKeyboardLayoutSettled._timer);
-    assertKeyboardLayoutSettled._timer = window.setTimeout(forceClear, 120);
-    window.setTimeout(forceClear, 360);
+    // Only clear chrome when facade is closed. No multi-phase thrash.
+    if (sshKb?.desiredOpen?.() || sshKb?.physicalOpen?.() || sshSoftKeyboard?.desiredOpen?.()) return;
+    _sshKbLayoutOpenCache = false;
+    _sshKbInsetCache = 0;
+    document.documentElement.style.setProperty('--keyboard-inset', '0px');
+    document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
+    document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
+    document.documentElement.classList.remove('ssh-kb-open', 'viewport-updating');
+    terminalContainer?.classList.remove('ssh-kb-open');
+    pinMobileImeChrome(false, 0);
+    // Publish closed via ssh-kb only.
+    ensureSshKeyboard()?._bridge?.publish?.({
+        phase: 'closed',
+        intent: 'closed',
+        inset: 0,
+        liftMode: 'workspace',
+        physical: 'closed',
+        reason: `${reason}:assert-clear`,
+    });
 }
+
 
 function getMobileStableSafeGap() {
     return Math.max(18, Math.round((getTerminalCharMetrics()?.lineHeight || terminalFontSize * 1.35) * 1.5));
@@ -8540,41 +8536,31 @@ function scheduleKeyboardFallbackAvoidance() {
 }
 
 function markKeyboardFocusActive() {
-    // Do NOT invent open intent here. Only refresh baseline + let facade sync physical.
     keyboardViewportBaseline = Math.max(getKeyboardBaselineHeight(), keyboardViewportBaseline || 0);
+    if (!isTouchKeyboardDevice()) return;
+    // No open invent. Facade owns physical via viewport listeners.
     if (isMobileStableInputMode()) {
         keyboardFallbackActive = false;
-        keyboardFallbackAppliedAt = 0;
         window.clearTimeout(keyboardFallbackTimer);
-        // Read-only mirror from facade.
-        // intent owned by facade; no flag writes
         ensureSshKeyboard()?.handleViewportChange?.('mark-focus-active');
         applyFacadeChrome('mark-focus-active');
         return;
     }
     updateViewportInsets();
-    scheduleKeyboardFallbackAvoidance();
 }
+
 
 function markKeyboardFocusInactive() {
     if (mobileClipboardActionInProgress) return;
-    // Blur alone must not close. Facade decides system-dismiss via viewport sync.
     if (isMobileStableInputMode()) {
         ensureSshKeyboard()?.handleImeBlur?.('mark-focus-inactive');
-        // Keep isSshKbFocusLikely() true while intent open so aux retain still works.
-        // intent owned by facade; no flag writes
         ensureSshKeyboard()?.handleViewportChange?.('mark-focus-inactive');
         applyFacadeChrome('mark-focus-inactive');
         return;
     }
     window.clearTimeout(keyboardFallbackTimer);
-    if (keyboardFallbackActive) {
-        window.clearTimeout(markKeyboardFocusInactive._timer);
-        markKeyboardFocusInactive._timer = window.setTimeout(() => {
-            if (!isSshKbFocusLikely()) finalizeKeyboardClose({ force: true });
-        }, 160);
-    }
 }
+
 
 function updateViewportInsets() {
     if (embeddedMode && !isMobileStableInputMode()) return;
@@ -10324,25 +10310,13 @@ if (mobileAuxKeys) {
     function keepMobileAuxImeFocused(reason = 'mobile-aux-focus') {
         if (!isMobileStableInputMode()) return false;
         const kb = ensureSshKeyboard();
-        const active = !!(kb?.desiredOpen?.() || kb?.physicalOpen?.() || sshSoftKeyboard?.desiredOpen?.() || isSshKbLayoutOpen());
-        if (!active) return false;
-        // Retain only — never open a closed keyboard from aux chrome.
-        if (kb) {
-            kb.retainFocus(reason);
-            requestAnimationFrame(() => kb.retainFocus(`${reason}:raf`));
-            window.setTimeout(() => kb.retainFocus(`${reason}:settle-80`), 80);
-        } else if (sshSoftKeyboard) {
-            sshSoftKeyboard.retainForChrome(reason);
-            requestAnimationFrame(() => sshSoftKeyboard.retainForChrome(`${reason}:raf`));
-            window.setTimeout(() => sshSoftKeyboard.retainForChrome(`${reason}:settle-80`), 80);
-        }
-        applyFacadeChrome(reason);
-        window.setTimeout(() => {
-            ensureSshKeyboard()?.handleViewportChange?.(reason);
-            applyFacadeChrome(`${reason}:settle`);
-        }, 120);
+        if (!kb) return false;
+        if (!kb.desiredOpen?.() && !kb.physicalOpen?.()) return false;
+        // Single retain — no multi-phase raf/timeout thrash.
+        kb.retainFocus(reason);
         return true;
     }
+
 
     function releaseMobileAuxModifiers() {
         if (modifierState.ctrl) {
@@ -10951,7 +10925,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API (FREEZE plan
         // §3.8/§5). Falls back to the stock package if the fork is absent.
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-ssh-kb-root5');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-ssh-kb-root6');
         WTermClass = module.WTerm;
     } catch {
         try {

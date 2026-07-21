@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-ssh-kb-root5';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-ssh-kb-root6';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -2945,19 +2945,23 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
     const insetKeyboardTop = effectiveInset > 0 && layoutHeight > effectiveInset
         ? Math.max(0, layoutHeight - effectiveInset)
         : 0;
+    // OPEN intent: child facade only. Parent never invents open from its own inset.
+    const childOpen = !!(
+        metrics.keyboardOpen
+        || metrics.intent === 'open'
+        || metrics.phase === 'open'
+        || metrics.phase === 'opening'
+    );
+    const keyboardOpen = childOpen;
+    // Geometry only: when child says open, combine insets for chrome placement.
     const keyboardTopCandidates = [];
-    // Only trust a visualViewport bottom as a keyboard boundary when that same side
-    // actually detected an inset. In Android overlays-content/fullscreen, parent
-    // visualViewport can stay at the no-keyboard height; including that full-height
-    // value makes the terminal keep using the old (keyboard-closed) bottom limit.
-    if (parentInset >= 80 && parentKeyboardTop > 0) keyboardTopCandidates.push(parentKeyboardTop);
-    if ((metrics.keyboardOpen || inset >= 80) && metricsKeyboardTop > 0) keyboardTopCandidates.push(metricsKeyboardTop);
-    if (effectiveInset >= 80 && insetKeyboardTop > 0) keyboardTopCandidates.push(insetKeyboardTop);
+    if (childOpen && parentInset > 0 && parentKeyboardTop > 0) keyboardTopCandidates.push(parentKeyboardTop);
+    if (childOpen && metricsKeyboardTop > 0) keyboardTopCandidates.push(metricsKeyboardTop);
+    if (childOpen && effectiveInset > 0 && insetKeyboardTop > 0) keyboardTopCandidates.push(insetKeyboardTop);
     const validKeyboardTopCandidates = keyboardTopCandidates.filter((value) => Number.isFinite(value) && value > 0 && value <= layoutHeight + 2);
     const keyboardTop = validKeyboardTopCandidates.length
         ? Math.max(...validKeyboardTopCandidates)
         : (parentKeyboardTop || metricsKeyboardTop || layoutHeight);
-    const keyboardOpen = (!!metrics.keyboardOpen || parentInset >= 100 || inset >= 100) && effectiveInset >= 80;
 
     // Stable SSH mobile: parent NEVER clips/translates workspace height.
     // Clipping caused gray void (iframe 100dvh + flex:unset collapsed terminal).
@@ -3011,11 +3015,13 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         // Sending raw keyboard height is wrong because the iframe does not start at y=0.
         if (activeFrame?.contentWindow) {
             const frameRect = activeFrame.getBoundingClientRect?.();
-            const physicalKeyboardTop = parentInset >= 80 && parentKeyboardTop > 0
-                ? parentKeyboardTop
-                : (effectiveInset >= 80 && layoutHeight > effectiveInset
-                    ? Math.max(0, layoutHeight - effectiveInset)
-                    : keyboardTop);
+            const physicalKeyboardTop = wantOpen
+                ? (parentKeyboardTop > 0 && parentInset > 0
+                    ? parentKeyboardTop
+                    : (effectiveInset > 0 && layoutHeight > effectiveInset
+                        ? Math.max(0, layoutHeight - effectiveInset)
+                        : keyboardTop))
+                : layoutHeight;
             const frameKeyboardOverlap = wantOpen && frameRect && physicalKeyboardTop > 0
                 ? Math.max(0, Math.round(frameRect.bottom - physicalKeyboardTop))
                 : 0;
@@ -3062,24 +3068,29 @@ function updateFullscreenKeyboardFromViewport() {
     if (!workspace || !isKeyboardRelevant || !window.visualViewport) return;
     const layoutHeight = Math.round(window.innerHeight || document.documentElement.clientHeight || 0);
     const vvHeight = Math.round(window.visualViewport.height || layoutHeight);
-    // 键盘关闭时重置基线，避免下次打开时基值偏高
-    if (!sshKbParentOpen) {
-        const currentInset = layoutHeight - vvHeight - Math.round(window.visualViewport.offsetTop || 0);
-        if (currentInset < 100) {
-            // 键盘已关闭：用当前值直接更新基线，确保下次用正确布局高度
-            sshKbParentBaseline = Math.max(sshKbParentBaseline || 0, layoutHeight, vvHeight);
-        } else {
-            // 键盘可能正在打开但 sshKbParentOpen 尚未设置——尽量用布局高度做基线
-            sshKbParentBaseline = Math.max(sshKbParentBaseline || 0, layoutHeight, vvHeight);
-        }
+    const alreadyOpen = !!(sshKbParentOpen || workspace.classList.contains('ssh-kb-open'));
+    // Closed: only refresh baseline. Never invent open from parent visualViewport inset.
+    if (!alreadyOpen) {
+        sshKbParentBaseline = Math.max(sshKbParentBaseline || 0, layoutHeight, vvHeight);
+        return;
     }
     const baseline = Math.max(sshKbParentBaseline || 0, layoutHeight);
     const viewportHeight = vvHeight;
     const offsetTop = Math.round(window.visualViewport.offsetTop || 0);
     const inset = Math.max(0, baseline - viewportHeight - offsetTop);
-    if (inset >= 100 || workspace.classList.contains('ssh-kb-open')) {
-        applyTerminalWorkspaceKeyboard({ keyboardOpen: inset >= 16 || sshKbParentOpen, keyboardInset: inset, viewportHeight, layoutHeight: baseline, offsetTop });
-    }
+    // Already child-open: refresh geometry only; keep keyboardOpen true from child intent.
+    applyTerminalWorkspaceKeyboard({
+        keyboardOpen: true,
+        intent: 'open',
+        phase: 'open',
+        keyboardInset: Math.max(inset, sshKbParentInset || 0),
+        viewportHeight,
+        layoutHeight: baseline,
+        offsetTop,
+        stableInput: true,
+        liftMode: 'workspace',
+        reason: 'parent-fullscreen-geometry-refresh',
+    });
 }
 
 function scheduleTerminalKeyboardReflow(reason = 'terminal-keyboard-reflow') {
