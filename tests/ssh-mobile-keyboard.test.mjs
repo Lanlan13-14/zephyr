@@ -298,7 +298,7 @@ test('wiring contract: terminal imports controller + facade; button removed', ()
     assert.match(terminalJs, /assertKeyboardLayoutSettled/);
     assert.match(terminalJs, /openCmd\(|LiftMode\.NONE|liftMode/);
     assert.doesNotMatch(terminalHtml, /id="cmdKeyboardBtn"/);
-    assert.match(terminalHtml, /20260721-ssh-kb-root4/);
+    assert.match(terminalHtml, /20260721-ssh-kb-root5/);
     assert.match(styleCss, /\.cmd-keyboard-btn \{ display: none !important/);
 });
 

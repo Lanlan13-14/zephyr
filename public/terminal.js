@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260721-ssh-kb-root4';
+} from './ssh-keyboard/index.js?v=20260721-ssh-kb-root5';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -16,8 +16,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root4';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-ssh-kb-root4';
+} from './terminal-scroll-policy.js?v=20260721-ssh-kb-root5';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-ssh-kb-root5';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -152,7 +152,7 @@ function ensureTerminalSurface() {
             // Facade owns terminal-ime chrome. Surface apply is only a cmd-freeze helper
             // or emergency path when facade is unavailable.
             if (sshKb) {
-                syncLegacyKeyboardMirrorFromFacade(meta.reason || 'surface-apply');
+                applyFacadeChrome(meta.reason || 'surface-apply');
                 return;
             }
             const layoutFrozen = !!meta.layoutFrozen
@@ -161,7 +161,6 @@ function ensureTerminalSurface() {
                 || isCmdOverlayMode?.();
             if (layoutFrozen) {
                 applyMobileStableKeyboardInset(0, false, meta.reason || 'surface-cmd-frozen');
-                updateMobileKeyboardButtonUi?.();
                 return;
             }
             applyMobileStableKeyboardInset(open ? inset : 0, !!open, meta.reason || 'surface');
@@ -170,19 +169,17 @@ function ensureTerminalSurface() {
                 requestAnimationFrame(() => assertKeyboardLayoutSettled?.(meta.reason || 'surface-close'));
                 scheduleKeyboardCloseFit?.(meta.reason || 'surface-close', 420);
             }
-            updateMobileKeyboardButtonUi?.();
         },
         notifyParent: (metrics) => notifyParentKeyboardMetrics({ ...metrics, forceNotify: !sshKb }),
         onScrollbar: () => scheduleTerminalScrollbarUpdate(),
         onSoftKeyboardState: (state) => {
             // Read-only mirror; do not invent authority when facade exists.
             if (sshKb) {
-                syncLegacyKeyboardMirrorFromFacade('surface-soft-state');
+                applyFacadeChrome('surface-soft-state');
                 return;
             }
             _sshKbLayoutOpenCache = !!state.physicalOpen && state.intent === SoftKeyboardIntent.OPEN;
             _sshKbInsetCache = state.physicalOpen ? (state.inset || 0) : 0;
-            updateMobileKeyboardButtonUi?.();
         },
         log: (event, details) => logTerminalLayoutDiagnostics?.(event, details || {}),
     });
@@ -846,7 +843,6 @@ let mobileStableLastFocusGestureAt = 0;
 /** @type {ReturnType<typeof createSshKeyboard> | null} */
 let sshKb = null;
 let sshSoftKeyboard = null;
-let sshSoftKeyboardUiBound = false;
 let mobileStableLastActualInputAt = 0;
 let mobileStableSuppressScrollUntil = 0;
 let mobileStableScrollRestoreToken = 0;
@@ -1796,7 +1792,6 @@ window.addEventListener('message', (e) => {
             try { cmdInput?.blur?.(); } catch (_) {}
             finalizeKeyboardClose({ force: true });
         }
-        updateMobileKeyboardButtonUi();
         return;
     }
     if (e.data.type === 'keyboard-freeze' || e.data.type === 'ssh-kb-freeze') {
@@ -1846,7 +1841,7 @@ window.addEventListener('message', (e) => {
                     now: Date.now(),
                 });
             }
-            syncLegacyKeyboardMirrorFromFacade(`parent-overlap:${e.data.reason || ''}`);
+            applyFacadeChrome(`parent-overlap:${e.data.reason || ''}`);
             return;
         }
         applyMobileStableKeyboardInset(open ? overlap : 0, open, `parent-overlap:${e.data.reason || ''}`);
@@ -1884,7 +1879,7 @@ window.addEventListener('message', (e) => {
                         if (kb.desiredOpen?.()) kb.close('parent-layout-close', { force: false, blurCmd: false });
                     }
                 }
-                syncLegacyKeyboardMirrorFromFacade(`parent-layout:${reason}`);
+                applyFacadeChrome(`parent-layout:${reason}`);
             } else if (parentKeyboardOpen && parentInset >= 80) {
                 applyMobileStableKeyboardInset(parentInset, true, `parent-layout:${reason}`);
             } else if (!parentKeyboardOpen && isSshKbLayoutOpen()) {
@@ -7914,14 +7909,14 @@ function scheduleTerminalBottomFollow(reason = 'bottom-follow', { force = false,
 }
 
 function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason = 'keyboard-inset') {
-    // Command bar overlay: absolute zero layout mutation.
+    // DOM geometry only. Callers pass open from facade — this function does NOT judge intent.
     if (isCmdOverlayMode() || String(reason || '').includes('cmd')) {
         _sshKbInsetCache = 0;
         _sshKbLayoutOpenCache = false;
         document.documentElement.style.setProperty('--keyboard-inset', '0px');
         document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
         document.documentElement.style.setProperty('--ime-chrome-bottom', '0px');
-        document.documentElement.classList.remove('ssh-kb-open', 'ssh-kb-open', 'viewport-updating');
+        document.documentElement.classList.remove('ssh-kb-open', 'viewport-updating');
         terminalContainer?.classList.remove('ssh-kb-open');
         document.documentElement.dataset.keyboardLiftMode = SoftKeyboardLiftMode.NONE;
         pinMobileImeChrome(false, 0);
@@ -7930,12 +7925,11 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     const el = getTerminalScrollElement();
     const wasFollowing = Boolean(el && (terminalAutoFollowEnabled || mobileStableLastBottomIntent || isMobileStableAtVisualBottom(el)));
     const previousTop = wtermWrapper?.scrollTop ?? el?.scrollTop ?? 0;
-    // Prefer live visualViewport chrome bottom for pinning — baseline-inflated
-    // insets leave a black seam between aux bar and IME.
     const measured = measureImeChromeBottom();
     const reported = Math.max(0, Math.round(Number(inset) || 0));
     const parentAuthoritative = String(reason || '').includes('parent-overlap');
-    const open = !!keyboardOpen && (reported > 12 || (!parentAuthoritative && measured > 40));
+    // open is authoritative from facade. Geometry may refine pin inset height only.
+    const open = !!keyboardOpen;
     const pinInset = open
         ? (parentAuthoritative ? reported : (measured > 40 ? measured : reported))
         : 0;
@@ -7945,7 +7939,6 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     document.documentElement.style.setProperty('--keyboard-inset', `${safeInset}px`);
     document.documentElement.style.setProperty('--ssh-kb-inset', `${safeInset}px`);
     document.documentElement.classList.toggle('ssh-kb-open', open && safeInset > 0);
-    document.documentElement.classList.toggle('ssh-kb-open', open && safeInset > 0);
     terminalContainer?.classList.toggle('ssh-kb-open', open && safeInset > 0);
     pinMobileImeChrome(open && safeInset > 0, safeInset, { authoritative: parentAuthoritative });
     if (!open || safeInset <= 0) {
@@ -7954,7 +7947,6 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     }
     if (!isMobileStableInputMode()) return;
     updateTerminalInputPanelMetrics();
-    // Re-pin after metrics so aux height is accurate once bars are laid out.
     if (open && safeInset > 0) {
         requestAnimationFrame(() => pinMobileImeChrome(true, safeInset, { authoritative: parentAuthoritative }));
     }
@@ -7965,7 +7957,6 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
         cancelMobileStableScrollRestore(`${reason}:actual-input`);
         requestAnimationFrame(() => applyCursorAboveChromeScroll(reason, { force: false, sameLineInput: true }));
     } else if (wasFollowing) {
-        // Layout/keyboard geometry change: one chrome-pin, never maxScroll chase.
         requestAnimationFrame(() => applyCursorAboveChromeScroll(`${reason}:keep-bottom`, { force: true }));
     } else {
         restoreMobileStableScrollTop(previousTop, reason);
@@ -8182,9 +8173,6 @@ function restoreMobileStableScrollTop(previousTop = 0, reason = 'restore-scroll'
     scheduleTerminalScrollbarUpdate();
 }
 
-function updateMobileKeyboardButtonUi() {
-    // cmdKeyboardBtn removed — terminal body tap / cmdInput open IME directly.
-}
 
 function rememberMobileStableKeyboardGrid(reason = 'mobile-keyboard-open-grid') {
     if (!isMobileStableInputMode() || !term) return null;
@@ -8288,7 +8276,6 @@ function setupMobileStableImeProxy() {
             sshSoftKeyboard?.onProxyFocus?.('ime-proxy-focus-unowned');
         }
         updateViewportInsets();
-        updateMobileKeyboardButtonUi();
         [60, 160, 320, 560].forEach((delay) => window.setTimeout(updateViewportInsets, delay));
     });
     proxy.addEventListener('blur', () => {
@@ -8300,11 +8287,9 @@ function setupMobileStableImeProxy() {
         }, 200);
         markKeyboardFocusInactive();
         sshSoftKeyboard?.onProxyBlur?.('ime-proxy-blur');
-        updateMobileKeyboardButtonUi();
         [80, 200, 420, 680].forEach((delay) => {
             window.setTimeout(() => {
                 updateViewportInsets();
-                updateMobileKeyboardButtonUi();
             }, delay);
         });
     });
@@ -8523,44 +8508,33 @@ function getFallbackKeyboardMetrics() {
 }
 
 function applyKeyboardFallbackAvoidance() {
-    if (!isSshKbFocusLikely() || !isTouchKeyboardDevice()) return false;
-    // Stable mobile path never invents open without facade intent.
-    if (isMobileStableInputMode()) {
-        const kb = ensureSshKeyboard();
-        if (!kb?.desiredOpen?.()) return false;
-        const metrics = getFallbackKeyboardMetrics();
-        kb._intent?.syncViewport?.({
-            inset: metrics.keyboardInset,
-            hasEditableFocus: true,
-            now: Date.now(),
-        });
-        syncLegacyKeyboardMirrorFromFacade('keyboard-fallback-applied');
-        keyboardFallbackActive = true;
-        keyboardFallbackAppliedAt = performance.now();
-        scheduleTerminalScrollbarUpdate();
-        return true;
-    }
+    if (!isTouchKeyboardDevice()) return false;
+    const kb = ensureSshKeyboard();
+    // Never invent open. Only refine physical inset while facade already desires open.
+    if (!kb?.desiredOpen?.()) return false;
     const metrics = getFallbackKeyboardMetrics();
-    keyboardViewportBaseline = Math.max(metrics.layoutHeight, keyboardViewportBaseline || 0);
-    const signature = `fallback:${metrics.keyboardInset}:${metrics.viewportHeight}:${metrics.layoutHeight}`;
-    if (updateViewportInsets._lastSignature === signature && isSshKbLayoutOpen()) return true;
-    updateViewportInsets._lastSignature = signature;
+    kb._intent?.syncViewport?.({
+        inset: metrics.keyboardInset,
+        hasEditableFocus: true,
+        now: Date.now(),
+    });
+    applyFacadeChrome('keyboard-fallback-applied');
     keyboardFallbackActive = true;
     keyboardFallbackAppliedAt = performance.now();
-    notifyParentKeyboardMetrics({ ...metrics, forceNotify: true });
-    applyMobileStableKeyboardInset(metrics.keyboardInset, true, 'keyboard-fallback-applied');
     scheduleTerminalScrollbarUpdate();
-    scheduleTerminalResize('keyboard-fallback-applied', 650);
     return true;
 }
 
 function scheduleKeyboardFallbackAvoidance() {
-    if (!isSshKbFocusLikely() || !isTouchKeyboardDevice()) return;
-    window.clearTimeout(keyboardFallbackTimer);
+    if (!isTouchKeyboardDevice()) return;
+    // Stable path: facade owns physical detection via visualViewport listeners.
     if (isMobileStableInputMode()) return;
+    if (!isSshKbDesiredOpen()) return;
+    window.clearTimeout(keyboardFallbackTimer);
     keyboardFallbackTimer = window.setTimeout(() => {
-        const metrics = getViewportKeyboardMetrics();
-        if (!isSshKbFocusLikely() || metrics.keyboardInset >= 100 || isSshKbLayoutOpen()) return;
+        if (!isSshKbDesiredOpen()) return;
+        // Only apply estimated inset if facade still has no physical open.
+        if (isSshKbPhysicalOpen() || isSshKbLayoutOpen()) return;
         applyKeyboardFallbackAvoidance();
     }, 220);
 }
@@ -8575,7 +8549,7 @@ function markKeyboardFocusActive() {
         // Read-only mirror from facade.
         // intent owned by facade; no flag writes
         ensureSshKeyboard()?.handleViewportChange?.('mark-focus-active');
-        syncLegacyKeyboardMirrorFromFacade('mark-focus-active');
+        applyFacadeChrome('mark-focus-active');
         return;
     }
     updateViewportInsets();
@@ -8590,7 +8564,7 @@ function markKeyboardFocusInactive() {
         // Keep isSshKbFocusLikely() true while intent open so aux retain still works.
         // intent owned by facade; no flag writes
         ensureSshKeyboard()?.handleViewportChange?.('mark-focus-inactive');
-        syncLegacyKeyboardMirrorFromFacade('mark-focus-inactive');
+        applyFacadeChrome('mark-focus-inactive');
         return;
     }
     window.clearTimeout(keyboardFallbackTimer);
@@ -8608,7 +8582,6 @@ function updateViewportInsets() {
     if (mobileClipboardActionInProgress) return;
     if (!isTouchKeyboardDevice()) return;
 
-    // Cmd overlay: freeze layout, never lift workspace.
     if (isCmdOverlayMode()) {
         applyMobileStableKeyboardInset(0, false, 'cmd-overlay-freeze');
         notifyParentKeyboardMetrics({
@@ -8622,49 +8595,27 @@ function updateViewportInsets() {
             reason: 'cmd-overlay-freeze',
             forceNotify: true,
         });
-        updateMobileKeyboardButtonUi();
         return;
     }
 
     const hiddenEmbeddedFrame = embeddedMode && window.innerWidth > 700 && isMobileStableInputMode();
     if (hiddenEmbeddedFrame) {
-        if (sshKb?.desiredOpen?.() || isSshKbLayoutOpen() || document.documentElement.classList.contains('ssh-kb-open')) {
-            finalizeKeyboardClose({ force: true });
-        }
+        if (sshKb?.desiredOpen?.() || isSshKbLayoutOpen()) finalizeKeyboardClose({ force: true });
         return;
     }
 
-    // Single authority: facade owns open/physical/inset/publish.
+    // Sole path: facade sync + DOM projection. No independent open threshold.
     const kb = ensureSshKeyboard();
-    if (kb) {
-        kb.handleViewportChange('updateViewportInsets');
-        // onStateChange/onLayout already call syncLegacyKeyboardMirrorFromFacade.
-        // Call once more as a safety net if no state transition fired.
-        syncLegacyKeyboardMirrorFromFacade('updateViewportInsets');
-        return;
-    }
-
-    // Non-facade fallback (should be rare on touch devices).
-    const metrics = getViewportKeyboardMetrics();
-    const open = metrics.keyboardInset >= 80;
-    _sshKbLayoutOpenCache = open;
-    _sshKbInsetCache = open ? metrics.keyboardInset : 0;
-    applyMobileStableKeyboardInset(open ? metrics.keyboardInset : 0, open, open ? 'keyboard-open-fallback' : 'keyboard-close-fallback');
-    notifyParentKeyboardMetrics({
-        keyboardOpen: open,
-        keyboardInset: open ? metrics.keyboardInset : 0,
-        viewportHeight: Math.round(window.visualViewport?.height || window.innerHeight || 0),
-        layoutHeight: Math.round(window.innerHeight || document.documentElement.clientHeight || 0),
-        offsetTop: Math.round(window.visualViewport?.offsetTop || 0),
-        forceNotify: true,
-    });
+    if (!kb) return;
+    kb.handleViewportChange('updateViewportInsets');
+    applyFacadeChrome('updateViewportInsets');
 }
 
 function finalizeKeyboardClose({ force = false } = {}) {
     const kb = ensureSshKeyboard();
     if (kb) {
         kb.close(force ? 'finalize-force' : 'finalize', { force: !!force });
-        syncLegacyKeyboardMirrorFromFacade(force ? 'finalize-force' : 'finalize');
+        applyFacadeChrome(force ? 'finalize-force' : 'finalize');
         return;
     }
     if (sshSoftKeyboard) {
@@ -8726,41 +8677,48 @@ function setupHorizontalScrollbarVisibility(...elements) {
  * Single place that mirrors facade → legacy flags + DOM chrome.
  * Callers must NOT independently set isSshKbLayoutOpen() / apply inset for IME.
  */
-function syncLegacyKeyboardMirrorFromFacade(reason = 'mirror') {
+function applyFacadeChrome(reason = 'mirror') {
+    // Pure DOM projection of facade state. NEVER invents open/closed.
     const kb = sshKb || ensureSshKeyboard?.();
     if (!kb) return false;
     if (isCmdOverlayMode?.()) {
         _sshKbLayoutOpenCache = false;
         _sshKbInsetCache = 0;
         applyMobileStableKeyboardInset(0, false, `${reason}:cmd-overlay`);
-        updateMobileKeyboardButtonUi?.();
         return true;
     }
-    const snap = kb.getState?.() || {};
-    const intent = snap.intent || {};
-    const layout = snap.layout || {};
-    const desired = intent.intent === 'open' || kb.desiredOpen?.();
-    const physical = intent.physical === 'open' || kb.physicalOpen?.();
-    const liftNone = intent.liftMode === 'none' || kb.getLiftMode?.() === 'none';
-    const phase = layout.phase || kb.getPhase?.() || 'closed';
-    const inset = Math.max(0, Math.round(Number(layout.inset ?? intent.inset ?? kb.getInset?.() ?? 0) || 0));
-    const open = !liftNone && !!desired && (physical || phase === 'opening' || phase === 'open' || inset >= 80);
+    const phase = kb.getPhase?.() || 'closed';
+    const liftNone = kb.getLiftMode?.() === 'none' || kb.getLiftMode?.() === SoftKeyboardLiftMode.NONE;
+    const desired = !!kb.desiredOpen?.();
+    const physical = !!kb.physicalOpen?.();
+    const inset = Math.max(0, Math.round(Number(kb.getInset?.() || 0) || 0));
+    // Open only from facade phase/intent — never from bare inset thresholds.
+    const open = !liftNone && (
+        phase === 'open'
+        || phase === 'opening'
+        || (desired && physical)
+    );
+    const applyInset = open ? inset : 0;
 
-    _sshKbLayoutOpenCache = !!open && (inset > 0 || phase === 'opening');
-    _sshKbInsetCache = open ? inset : 0;
+    _sshKbLayoutOpenCache = open;
+    _sshKbInsetCache = applyInset;
 
-    // Single DOM apply for terminal IME layout (chrome pin + CSS).
-    applyMobileStableKeyboardInset(open ? inset : 0, !!open, `${reason}:facade`);
+    applyMobileStableKeyboardInset(applyInset, open, `${reason}:facade`);
 
     if (!open) {
         pinMobileImeChrome?.(false, 0);
         if (phase === 'closed') scheduleKeyboardCloseFit?.(`${reason}:facade-close`, 420);
-    } else if (open && inset > 0) {
+    } else if (open && applyInset > 0) {
         try { ensureTerminalSurface()?.pinCursorAboveChrome?.(`${reason}:facade-open`, { force: true }); } catch (_) {}
     }
-    updateMobileKeyboardButtonUi?.();
     return true;
 }
+
+/** @deprecated alias */
+function syncLegacyKeyboardMirrorFromFacade(reason = 'mirror') {
+    return applyFacadeChrome(reason);
+}
+
 
 function ensureSshKeyboard() {
     if (sshKb) return sshKb;
@@ -8781,10 +8739,10 @@ function ensureSshKeyboard() {
         onImeActive: (active, reason) => setWTermImeActive(!!active, reason || 'ssh-kb'),
         // Intent/layout changes → one mirror. No second judgment path.
         onLayout: (phase, inset, meta = {}) => {
-            syncLegacyKeyboardMirrorFromFacade(meta?.reason || `layout:${phase}`);
+            applyFacadeChrome(meta?.reason || `layout:${phase}`);
         },
         onStateChange: (state, reason = 'state') => {
-            syncLegacyKeyboardMirrorFromFacade(reason || 'state');
+            applyFacadeChrome(reason || 'state');
         },
         log: (event, details) => logTerminalLayoutDiagnostics?.(event, details || {}),
     });
@@ -8803,10 +8761,6 @@ function ensureSshSoftKeyboard() {
     return sshSoftKeyboard;
 }
 
-function setupMobileKeyboardButton() {
-    // Button removed from DOM. Keep function so callers stay valid.
-    sshSoftKeyboardUiBound = true;
-}
 
 function setupMobileKeyboardAvoidance() {
     enableMobileStableInputMode();
@@ -8814,7 +8768,6 @@ function setupMobileKeyboardAvoidance() {
     ensureSshKeyboard();
     ensureSshSoftKeyboard();
     ensureTerminalSurface();
-    setupMobileKeyboardButton();
     if (embeddedMode && !isMobileStableInputMode()) return;
     if (!window.visualViewport && !navigator.virtualKeyboard && !isTouchKeyboardDevice()) return;
     try {
@@ -8822,9 +8775,7 @@ function setupMobileKeyboardAvoidance() {
     } catch (_) {}
 
     const onViewport = (reason) => {
-        // One path only. updateViewportInsets now delegates to facade.
         updateViewportInsets();
-        updateMobileKeyboardButtonUi();
     };
 
     // 如果 navigator.virtualKeyboard 不可用，用 window.resize 作为后备
@@ -8853,7 +8804,7 @@ function setupMobileKeyboardAvoidance() {
             }
             ensureSshKeyboard()?.handleImeFocus?.('focusin-proxy');
             sshSoftKeyboard?.onProxyFocus?.('focusin-proxy');
-            syncLegacyKeyboardMirrorFromFacade('focusin-proxy');
+            applyFacadeChrome('focusin-proxy');
             return;
         }
         if (isKeyboardAvoidanceTarget(e.target)) markKeyboardFocusActive();
@@ -8865,7 +8816,7 @@ function setupMobileKeyboardAvoidance() {
             if (isCmdOverlayMode()) return;
             ensureSshKeyboard()?.handleImeBlur?.('focusout-proxy');
             sshSoftKeyboard?.onProxyBlur?.('focusout-proxy');
-            syncLegacyKeyboardMirrorFromFacade('focusout-proxy');
+            applyFacadeChrome('focusout-proxy');
             return;
         }
         if (isKeyboardAvoidanceTarget(e.target)) markKeyboardFocusInactive();
@@ -8895,12 +8846,10 @@ function setupMobileKeyboardAvoidance() {
             }
             try { mobileImeProxy?.blur?.(); } catch (_) {}
         }
-        updateMobileKeyboardButtonUi();
         // Re-assert frozen layout after any async viewport tick.
         [0, 80, 200, 480].forEach((delay) => window.setTimeout(() => {
             if (document.activeElement === cmdInput || cmdOverlayMode) {
                 enterCmdOverlayMode(`cmd-input-focus:t${delay}`);
-                updateMobileKeyboardButtonUi();
             }
         }, delay));
     });
@@ -8915,7 +8864,6 @@ function setupMobileKeyboardAvoidance() {
                 || sshSoftKeyboard?.desiredOpen?.()) {
                 sshSoftKeyboard?.close?.('cmd-input-blur', { force: false, blurCmd: false });
             }
-            updateMobileKeyboardButtonUi();
             // Only re-enter terminal keyboard path if IME proxy is actually focused.
             if (document.activeElement === mobileImeProxy) {
                 updateViewportInsets();
@@ -8923,7 +8871,6 @@ function setupMobileKeyboardAvoidance() {
         }, 120);
     });
     updateViewportInsets();
-    updateMobileKeyboardButtonUi();
 }
 
 function renderProcessRows(processes = []) {
@@ -10389,11 +10336,10 @@ if (mobileAuxKeys) {
             requestAnimationFrame(() => sshSoftKeyboard.retainForChrome(`${reason}:raf`));
             window.setTimeout(() => sshSoftKeyboard.retainForChrome(`${reason}:settle-80`), 80);
         }
-        syncLegacyKeyboardMirrorFromFacade(reason);
+        applyFacadeChrome(reason);
         window.setTimeout(() => {
             ensureSshKeyboard()?.handleViewportChange?.(reason);
-            syncLegacyKeyboardMirrorFromFacade(`${reason}:settle`);
-            updateMobileKeyboardButtonUi();
+            applyFacadeChrome(`${reason}:settle`);
         }, 120);
         return true;
     }
@@ -10764,7 +10710,6 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
                 const result = kb?.handlePointerUp?.(e);
                 if (result?.opened) {
                     mobileStableLastFocusGestureAt = performance.now();
-                    updateMobileKeyboardButtonUi?.();
                     // Surface pin after open
                     try { ensureTerminalSurface()?.pinCursorAboveChrome?.('terminal-tap-open', { force: true }); } catch (_) {}
                 }
@@ -11006,7 +10951,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API (FREEZE plan
         // §3.8/§5). Falls back to the stock package if the fork is absent.
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-ssh-kb-root4');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-ssh-kb-root5');
         WTermClass = module.WTerm;
     } catch {
         try {
@@ -11291,14 +11236,12 @@ reconnectBtn.addEventListener('click', reconnect);
 // ---------- 移动端软键盘处理 ----------
 function handleKeyboardShow() {
     ensureSshKeyboard()?.openTerminal?.('legacy-show');
-    syncLegacyKeyboardMirrorFromFacade('legacy-show');
-    updateMobileKeyboardButtonUi();
+    applyFacadeChrome('legacy-show');
 }
 
 function handleKeyboardHide() {
     ensureSshKeyboard()?.close?.('legacy-hide', { force: true });
-    syncLegacyKeyboardMirrorFromFacade('legacy-hide');
-    updateMobileKeyboardButtonUi();
+    applyFacadeChrome('legacy-hide');
 }
 
 if (typeof visualViewport !== 'undefined') {

@@ -75,7 +75,7 @@ test('DoD5/CSS: --keyboard-inset falls back to --ssh-kb-inset', () => {
 
 test('updateViewportInsets has no independent open hysteresis', () => {
     const body = sliceFn(terminalJs, 'updateViewportInsets');
-    assert.match(body, /ensureSshKeyboard|handleViewportChange|syncLegacyKeyboardMirrorFromFacade/);
+    assert.match(body, /ensureSshKeyboard|handleViewportChange|applyFacadeChrome/);
     assert.doesNotMatch(body, /keyboardWantsAvoidance/);
     assert.doesNotMatch(body, /controllerDesired/);
 });
@@ -85,6 +85,29 @@ test('finalizeKeyboardClose delegates to facade close', () => {
     assert.match(body, /kb\.close|ensureSshKeyboard/);
 });
 
-test('cache bust root4', () => {
-    assert.match(terminalHtml, /ssh-kb-root4/);
+test('cache bust root5', () => {
+    assert.match(terminalHtml, /ssh-kb-root5/);
+});
+
+test('no bare inset open thresholds in terminal.js', () => {
+    assert.doesNotMatch(terminalJs, /keyboardInset\s*>=\s*80/);
+    assert.doesNotMatch(terminalJs, /keyboardInset\s*>=\s*100/);
+    assert.doesNotMatch(terminalJs, /inset\s*>=\s*80(?!\s*&&)/); // loose
+    assert.doesNotMatch(terminalJs, /updateMobileKeyboardButtonUi/);
+    assert.doesNotMatch(terminalJs, /setupMobileKeyboardButton/);
+    assert.match(terminalJs, /function applyFacadeChrome/);
+});
+
+test('updateViewportInsets has no non-facade open branch', () => {
+    const body = sliceFn(terminalJs, 'updateViewportInsets');
+    assert.doesNotMatch(body, /keyboard-open-fallback/);
+    assert.doesNotMatch(body, /const open = /);
+    assert.match(body, /handleViewportChange/);
+    assert.match(body, /applyFacadeChrome/);
+});
+
+test('applyFacadeChrome does not invent open from inset alone', () => {
+    const body = sliceFn(terminalJs, 'applyFacadeChrome');
+    assert.doesNotMatch(body, /inset\s*>=\s*80/);
+    assert.match(body, /getPhase|desiredOpen|physicalOpen/);
 });
