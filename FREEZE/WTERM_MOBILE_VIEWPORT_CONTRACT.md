@@ -85,11 +85,12 @@ tap / IME / composition / enter / output / viewport / cmd focus
 
 ## 文件
 
-- `public/terminal-scroll-policy.js`
+- `public/terminal-surface-controller.js` — event control plane
+- `wterm/packages/@wterm/dom/src/wterm.ts` — `inputMode: external` source
+- `public/vendor/wterm-fork/wterm.js` — generated fork runtime
+- `public/terminal-scroll-policy.js` — pure geometry
+- `tests/terminal-surface-contract.test.mjs`
 - `tests/terminal-scroll-policy.test.mjs`
-- `public/ssh-mobile-keyboard.js`（intent，不拥有 buffer scroll）
-- `public/terminal.js`（接线）
-- `wterm/.../terminal.css` + `public/vendor/wterm-fork/terminal.css`
 
 ## 明确不做
 

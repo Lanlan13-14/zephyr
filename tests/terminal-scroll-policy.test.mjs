@@ -296,13 +296,30 @@ test('forged contentY=scrollTop+row would fly — viewport path must not', () =>
     }
 });
 
-test('contract: terminal.js uses computeCursorAboveChromeScrollTop', () => {
-    assert.match(terminalJs, /computeCursorAboveChromeScrollTop/);
-    assert.match(terminalJs, /applyCursorAboveChromeScroll/);
-    assert.match(terminalJs, /cursorBottomInViewport|bridge-viewport|overlay-viewport/);
-    // Must not forge contentY from scrollTop + row (feedback loop).
-    assert.doesNotMatch(
-        terminalJs,
-        /scrollTop \+ \(cursor\.row \* lineHeight\)/,
-    );
+test('contract: external mobile input prevents WTerm IME and self-scroll bypass', () => {
+    const source = readFileSync(join(root, 'wterm/packages/@wterm/dom/src/wterm.ts'), 'utf8');
+    const vendor = readFileSync(join(root, 'public/vendor/wterm-fork/wterm.js'), 'utf8');
+    const terminal = readFileSync(join(root, 'public/terminal.js'), 'utf8');
+    for (const code of [source, vendor]) {
+        assert.match(code, /inputMode/);
+        assert.match(code, /onExternalInputRequest/);
+        assert.match(code, /this\._inputMode === ["']external["']/);
+        assert.match(code, /this\._inputMode === ["']native["']\) this\._scrollToBottom/);
+    }
+    assert.match(terminal, /inputMode:\s*isTouchKeyboardDevice\(\) \? 'external' : 'native'/);
+    assert.match(terminal, /onExternalInputRequest/);
+    assert.match(terminal, /command-input:resize-only/);
+    assert.doesNotMatch(terminal, /command-input:preserve-after/);
+    assert.doesNotMatch(terminal, /\[80, 180, 360\]\.forEach\(\(delay\) => \{[\s\S]{0,500}scrollTop/);
+});
+
+test('contract: authoritative mobile CSS overrides historical grid/static chrome', () => {
+    const css = readFileSync(join(root, 'public/style.css'), 'utf8');
+    const marker = css.lastIndexOf('AUTHORITATIVE MOBILE SSH SURFACE');
+    assert.ok(marker > 0, 'last authoritative surface block missing');
+    const tail = css.slice(marker);
+    assert.match(tail, /terminal-page\s*\{[\s\S]{0,400}display:\s*flex\s*!important/);
+    assert.match(tail, /keyboard-open \.topbar-actions\s*\{[\s\S]{0,300}position:\s*fixed\s*!important/);
+    assert.match(tail, /keyboard-open \.terminal-bottom-bar\s*\{[\s\S]{0,300}position:\s*fixed\s*!important/);
+    assert.doesNotMatch(tail, /grid-template-areas/);
 });

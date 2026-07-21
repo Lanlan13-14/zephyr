@@ -60,14 +60,17 @@ parent `keyboard-metrics` 字段：`liftMode`, `inputSource` (`cmd` | `terminal-
 
 IME 仍走隐藏 `#mobileTerminalImeProxy` textarea。WTerm grid 在键盘开合时冻结，不 resize 行列。
 
-cache-bust: `20260721-wterm-scroll4`
+## WTerm 外部输入模式（scroll5）
 
-## Scroll coupling (2026-07-21)
+移动端 WTerm 必须以 `inputMode: 'external'` 创建：
 
-Buffer auto-scroll is owned by `terminal-scroll-policy.js` (Netcatty-aligned):
-at-bottom short-circuit, printable-input follow, **output follow OFF by default**,
-composition freeze, ≤1 scroll API call per event. See
-`FREEZE/WTERM_MOBILE_VIEWPORT_CONTRACT.md`.
+- WTerm click 只调用 `onExternalInputRequest` → `TerminalSurface.onTerminalTap`
+- WTerm hidden textarea **不得**获得焦点或在 `onData` 前 `_scrollToBottom()`
+- 唯一 IME 是 `#mobileTerminalImeProxy`
+- 命令栏 resize **不得**写/恢复终端 `scrollTop`
+- CSS 最后 `AUTHORITATIVE MOBILE SSH SURFACE` 块唯一决定 flex surface + keyboard-open fixed chrome
+
+cache-bust: `20260721-wterm-scroll5`
 
 ## 实现注意（灰屏 / 自收回归）
 

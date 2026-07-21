@@ -13349,3 +13349,79 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
   text-underline-offset: 2px;
   cursor: pointer;
 }
+
+/* ── AUTHORITATIVE MOBILE SSH SURFACE (scroll4) ─────────────────────────
+   This MUST stay last. Earlier historical "final guard" blocks changed the
+   same surface from flex+fixed chrome into grid+static chrome after IME opened.
+   One geometry only: flex terminal surface; bars fixed only while IME is open. */
+@media (max-width: 760px) and (hover: none) and (pointer: coarse) {
+    html.mobile-stable-input,
+    body.mobile-stable-input {
+        height: var(--stable-vh, 100svh) !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+    }
+    html.mobile-stable-input .terminal-page {
+        position: relative !important;
+        inset: auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        height: 100% !important;
+        min-height: 0 !important;
+        max-height: 100% !important;
+        overflow: hidden !important;
+        padding: 0 !important;
+    }
+    html.mobile-stable-input .terminal-topbar {
+        display: flex !important;
+        order: 0 !important;
+        flex: 0 0 auto !important;
+    }
+    html.mobile-stable-input .terminal-top-input {
+        display: block !important;
+        order: 1 !important;
+        flex: 0 0 auto !important;
+        grid-area: auto !important;
+    }
+    html.mobile-stable-input .terminal-container {
+        display: block !important;
+        order: 2 !important;
+        flex: 1 1 auto !important;
+        grid-area: auto !important;
+        width: auto !important;
+        height: auto !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        margin: 6px !important;
+        overflow: hidden !important;
+    }
+    html.mobile-stable-input .topbar-actions {
+        display: flex !important;
+        order: 3 !important;
+        grid-area: auto !important;
+    }
+    html.mobile-stable-input .terminal-bottom-bar {
+        display: block !important;
+        order: 4 !important;
+        grid-area: auto !important;
+    }
+    /* Only this state pins chrome. Later rules must not convert it back to grid/static. */
+    html.mobile-stable-input.keyboard-open .topbar-actions {
+        position: fixed !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: calc(var(--ime-chrome-bottom, 0px) + var(--mobile-aux-keys-height, 44px)) !important;
+        z-index: 41 !important;
+    }
+    html.mobile-stable-input.keyboard-open .terminal-bottom-bar {
+        position: fixed !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: var(--ime-chrome-bottom, 0px) !important;
+        z-index: 40 !important;
+    }
+    html.mobile-stable-input.keyboard-open .terminal-container {
+        /* fixed chrome overlays; reserve exactly chrome heights, never keyboard inset */
+        padding-bottom: calc(var(--mobile-bottom-actions-height, 46px) + var(--mobile-aux-keys-height, 44px) + 8px) !important;
+    }
+}

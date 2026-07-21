@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260721-wterm-scroll4';
+import { createSshMobileSoftKeyboard, SoftKeyboardIntent, SoftKeyboardLiftMode } from './ssh-mobile-keyboard.js?v=20260721-wterm-scroll5';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -12,8 +12,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-wterm-scroll4';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-wterm-scroll4';
+} from './terminal-scroll-policy.js?v=20260721-wterm-scroll5';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-wterm-scroll5';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -1626,7 +1626,7 @@ window.addEventListener('message', (e) => {
     if (e.data.type === 'focus-terminal') {
         requestStableTerminalLayout('parent-focus-terminal', { includeResize: true, focus: true });
         if (isMobileStableInputMode() && (terminalAutoFollowEnabled || mobileStableLastBottomIntent || isMobileStableAtVisualBottom())) {
-            scheduleTerminalBottomFollow('parent-focus-terminal', { force: true, phases: scrollSettlePhases('input') });
+            ensureTerminalSurface()?.pinCursorAboveChrome?.('parent-focus-terminal', { force: true });
         }
     }
     if (e.data.type === 'reconnect-terminal') {
@@ -1821,7 +1821,7 @@ window.addEventListener('message', (e) => {
             // ensureMobileStableCursorVisible() and will scroll only if the cursor is covered.
             if (isMobileStableInputMode()) {
                 if (terminalAutoFollowEnabled || mobileStableLastBottomIntent || isMobileStableAtVisualBottom()) {
-                    scheduleTerminalBottomFollow(`parent-layout:${reason}:stable`, { force: true, phases: scrollSettlePhases('layout') });
+                    ensureTerminalSurface()?.pinCursorAboveChrome?.(`parent-layout:${reason}:stable`, { force: true });
                 } else {
                     scheduleTerminalScrollbarUpdate();
                 }
@@ -8069,38 +8069,14 @@ function sendMobileStableControl(seq = '', source = 'mobile-ime-control') {
 }
 
 function restoreMobileStableScrollTop(previousTop = 0, reason = 'restore-scroll') {
-    if (!isMobileStableInputMode() || !Number.isFinite(previousTop)) return;
+    // No delayed scrollTop restore. It was a second writer at 0/80/180/360ms
+    // and directly fought Surface chrome-pin, producing cursor jumps/flicker.
+    // Browser preserves current history position; following state uses surface pin.
+    if (!isMobileStableInputMode()) return;
     if (terminalAutoFollowEnabled || mobileStableLastBottomIntent || isMobileStableAtVisualBottom()) {
-        scheduleTerminalBottomFollow(`${reason}:restore-as-bottom`, { force: true, phases: scrollSettlePhases('input') });
-        return;
+        ensureTerminalSurface()?.pinCursorAboveChrome?.(`${reason}:following`, { force: true });
     }
-    const target = Math.max(0, previousTop);
-    cancelTerminalBottomFollow(`${reason}:restore-history`);
-    cancelMobileStableScrollRestore(reason);
-    const token = mobileStableScrollRestoreToken;
-    const restore = () => {
-        if (token !== mobileStableScrollRestoreToken) return;
-        if (isMobileStableActualInputReason(reason)) {
-            scheduleTerminalScrollbarUpdate();
-            return;
-        }
-        isProgrammaticTerminalScroll = true;
-        try {
-            const primary = getTerminalScrollElement();
-            const clamped = primary ? Math.min(target, getTerminalMaxScroll(primary)) : target;
-            if (primary) primary.scrollTop = clamped;
-            if (wtermWrapper && wtermWrapper !== primary) wtermWrapper.scrollTop = Math.min(clamped, getTerminalMaxScroll(wtermWrapper));
-        } finally {
-            requestAnimationFrame(() => { isProgrammaticTerminalScroll = false; });
-        }
-        scheduleTerminalScrollbarUpdate();
-    };
-    restore();
-    requestAnimationFrame(restore);
-    [80, 180, 360].forEach((delay) => {
-        const timer = window.setTimeout(restore, delay);
-        mobileStableScrollRestoreTimers.push(timer);
-    });
+    scheduleTerminalScrollbarUpdate();
 }
 
 function focusMobileStableImeProxy(reason = 'mobile-ime-focus') {
@@ -8114,7 +8090,9 @@ function focusMobileStableImeProxy(reason = 'mobile-ime-focus') {
     keyboardFocusLikely = true;
     mobileKeyboardUserControlled = true;
     keyboardViewportBaseline = Math.max(getKeyboardBaselineHeight(), keyboardViewportBaseline || 0);
-    if (el && !mobileStableLastBottomIntent) el.scrollTop = previousTop;
+    // Preserve user reading position by NOT writing scrollTop here. A browser
+    // resize retains it; Surface handles only following/cursor visibility.
+    if (el && !mobileStableLastBottomIntent) scheduleTerminalScrollbarUpdate();
     markKeyboardFocusActive();
     // Prefer surface open so intent + ime-active + pin stay one path.
     const surface = ensureTerminalSurface();
@@ -8199,10 +8177,10 @@ function restoreMobileStableKeyboardGrid(reason = 'mobile-stable-grid-restore') 
     requestAnimationFrame(() => {
         normalizeWTermContainerLayout(`${reason}:raf`);
         if (preserveHistory && el) {
-            isProgrammaticTerminalScroll = true;
-            try { el.scrollTop = previousTop; }
-            finally { requestAnimationFrame(() => { isProgrammaticTerminalScroll = false; }); }
+            // Do not restore stale scrollTop after grid/layout work. It races
+            // the Surface pin writer; browser keeps the current history view.
             lockMobileTerminalAutoFollow(`${reason}:preserve-history`, 1800);
+            scheduleTerminalScrollbarUpdate();
         } else if (shouldFollow) {
             requestTerminalAutoFollow(`${reason}:follow`);
         } else {
@@ -10254,25 +10232,14 @@ function sendData(data, { normalizeNewlines = false, source = 'unknown', forceFo
     }
 }
 function preserveTerminalScrollWhileEditingCommandInput(reason = 'command-input-edit', callback = () => {}) {
-    const el = getTerminalScrollElement();
-    const shouldPreserve = Boolean(el && !isTerminalAtBottom(el));
-    const previousTop = shouldPreserve ? el.scrollTop : 0;
+    // Command-bar resizing must never restore a stale terminal scrollTop.
+    // On mobile it previously wrote the old value immediately and again in rAF,
+    // fighting cursor pin / causing the apparent cursor jump.
     try {
         callback();
     } finally {
-        if (shouldPreserve) {
-            const restore = () => {
-                el.scrollTop = previousTop;
-                scheduleTerminalScrollbarUpdate();
-                logTerminalScrollDiagnostics('command-input:preserve-after', {
-                    reason,
-                    scrollTop: Math.round(el.scrollTop),
-                    bottomDistance: Math.round(getTerminalBottomDistance(el)),
-                });
-            };
-            restore();
-            requestAnimationFrame(restore);
-        }
+        scheduleTerminalScrollbarUpdate();
+        logTerminalScrollDiagnostics('command-input:resize-only', { reason });
     }
 }
 
@@ -10293,7 +10260,7 @@ function sendCommand() {
             mobileTerminalAutoFollowLockUntil = 0;
             mobileTerminalAutoFollowLockReason = '';
             setTerminalAutoFollow(true, 'command-box-send:before-send');
-            scheduleTerminalBottomFollow('command-box-send:before-send', { force: true, phases: scrollSettlePhases('enter') });
+            ensureTerminalSurface()?.onEnterCommitted?.('command-box-send');
         }
         sendData(text + '\r', { normalizeNewlines: true, source: 'command-box-send', forceFollow: isMobileStableInputMode() });
     }
@@ -11043,7 +11010,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API (FREEZE plan
         // §3.8/§5). Falls back to the stock package if the fork is absent.
-        const module = await import('/vendor/wterm-fork/index.js?v=20260720-wterm-kitty1');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-wterm-scroll5');
         WTermClass = module.WTerm;
     } catch {
         try {
@@ -11069,6 +11036,13 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
             fontSize: terminalFontSize,
             allowLigatures: getTerminalAllowLigatures(),
             renderer: (localStorage.getItem('zephyr-terminal-renderer') === 'canvas' ? 'canvas' : 'dom'),
+            // Mobile is an EXTERNAL input surface: the only IME is
+            // #mobileTerminalImeProxy → TerminalSurface. WTerm must not focus
+            // its hidden textarea or self-scroll before Zephyr decides.
+            inputMode: isTouchKeyboardDevice() ? 'external' : 'native',
+            onExternalInputRequest: () => {
+                if (isMobileStableInputMode()) ensureTerminalSurface()?.onTerminalTap?.('wterm-external-input');
+            },
             onData: (data) => sendData(data, { source: 'wterm-onData' }),
             onClipboard: (request) => { void handleTerminalClipboardRequest(request); },
             onResize: (cols, rows) => {
@@ -11106,6 +11080,8 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
         surface?.setFollowEnabled?.(!!terminalAutoFollowEnabled, 'term-created');
     }
     restoreMobileWTermNativeInput();
+    // External mode is declared in WTerm source; no readonly/pointer-event
+    // outer guard or focus monkey-patch is allowed on mobile.
     if (isMobileStableInputMode()) {
         rememberMobileStableKeyboardGrid('init-wterm-grid');
     }

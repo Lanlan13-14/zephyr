@@ -57,6 +57,8 @@ class WTerm {
     __publicField(this, "_debugEnabled");
     __publicField(this, "renderer", null);
     __publicField(this, "_rendererMode", "dom");
+    __publicField(this, "_inputMode", "native");
+    __publicField(this, "_onExternalInputRequest", null);
     __publicField(this, "input", null);
     __publicField(this, "rafId", null);
     __publicField(this, "_renderTimer", null);
@@ -95,10 +97,18 @@ class WTerm {
     if (options.cursorBlink) this.element.classList.add("cursor-blink");
     this.setLigatures(options.allowLigatures === true);
     this._rendererMode = options.renderer === "canvas" ? "canvas" : "dom";
+    this._inputMode = options.inputMode === "external" ? "external" : "native";
+    this._onExternalInputRequest = options.onExternalInputRequest || null;
     this.element.classList.toggle("renderer-canvas", this._rendererMode === "canvas");
+    this.element.classList.toggle("external-input", this._inputMode === "external");
     this._onClickFocus = () => {
       const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) this.input?.focus();
+      if (sel && !sel.isCollapsed) return;
+      if (this._inputMode === "external") {
+        this._onExternalInputRequest?.();
+        return;
+      }
+      this.input?.focus();
     };
     this.element.addEventListener("click", this._onClickFocus);
     this.viewport = this._buildViewportFacade();
@@ -123,7 +133,7 @@ class WTerm {
       this.input = new InputHandler(
         this.element,
         (data) => {
-          this._scrollToBottom();
+          if (this._inputMode === "native") this._scrollToBottom();
           if (this.onData) {
             this.onData(data);
           } else {
@@ -137,7 +147,7 @@ class WTerm {
       } else {
         this._lockHeight();
       }
-      this.input.focus();
+      if (this._inputMode === "native") this.input.focus();
       this._initialRender();
     } catch (err) {
       this.destroy();

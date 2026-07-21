@@ -55,7 +55,13 @@ export interface WTermOptions {
    * - "dom" (default): full selection/history/hyperlink support
    * - "canvas": higher throughput for dense output; limited selection UX
    */
-  renderer?: "dom" | "canvas";
+  /**
+   * Native: WTerm owns hidden textarea focus and input scroll.
+   * External: host owns IME proxy / focus / scroll; WTerm is render+VT only.
+   */
+  inputMode?: "native" | "external";
+  /** Called from a real terminal gesture in external input mode. */
+  onExternalInputRequest?: () => void;
   debug?: boolean;
   onData?: (data: string) => void;
   onTitle?: (title: string) => void;
@@ -110,6 +116,8 @@ export class WTerm {
   private _debugEnabled: boolean;
   private renderer: TermRenderer | null = null;
   private _rendererMode: "dom" | "canvas" = "dom";
+  private _inputMode: "native" | "external" = "native";
+  private _onExternalInputRequest: (() => void) | null = null;
   private input: InputHandler | null = null;
   private rafId: number | null = null;
   private _renderTimer: ReturnType<typeof setTimeout> | null = null;
@@ -154,11 +162,21 @@ export class WTerm {
     if (options.cursorBlink) this.element.classList.add("cursor-blink");
     this.setLigatures(options.allowLigatures === true);
     this._rendererMode = options.renderer === "canvas" ? "canvas" : "dom";
+    this._inputMode = options.inputMode === "external" ? "external" : "native";
+    this._onExternalInputRequest = options.onExternalInputRequest || null;
     this.element.classList.toggle("renderer-canvas", this._rendererMode === "canvas");
+    this.element.classList.toggle("external-input", this._inputMode === "external");
 
     this._onClickFocus = () => {
       const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) this.input?.focus();
+      if (sel && !sel.isCollapsed) return;
+      // External mode is Zephyr mobile's one true IME path. Do NOT focus
+      // WTerm's hidden textarea or call _scrollToBottom behind the host.
+      if (this._inputMode === "external") {
+        this._onExternalInputRequest?.();
+        return;
+      }
+      this.input?.focus();
     };
     this.element.addEventListener("click", this._onClickFocus);
 
@@ -194,7 +212,9 @@ export class WTerm {
       this.input = new InputHandler(
         this.element,
         (data) => {
-          this._scrollToBottom();
+          // Native desktop WTerm owns input scroll. In external/mobile mode
+          // Zephyr TerminalSurface owns IME and the single scroll writer.
+          if (this._inputMode === "native") this._scrollToBottom();
           if (this.onData) {
             this.onData(data);
           } else {
@@ -210,7 +230,9 @@ export class WTerm {
         this._lockHeight();
       }
 
-      this.input.focus();
+      // External/mobile mode has a dedicated IME proxy. Native focus here
+      // would steal it and make keyboard opening intermittent.
+      if (this._inputMode === "native") this.input.focus();
       this._initialRender();
     } catch (err) {
       this.destroy();

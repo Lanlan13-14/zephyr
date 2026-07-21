@@ -63,7 +63,7 @@ test('contract: mobile fork path disables internal maxScroll stick via public AP
 });
 
 test('contract: cache-bust scroll4', () => {
-    assert.match(terminalHtml, /20260721-wterm-scroll4/);
+    assert.match(terminalHtml, /20260721-wterm-scroll5/);
 });
 
 test('surface: pinScroll host is called; no direct scroll without host', () => {
