@@ -13394,7 +13394,8 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         box-sizing: border-box !important;
         transform: none !important;
     }
-    /* IME open: page height = visible area above keyboard. Chrome stays in-flow at bottom of page. */
+    /* IME open: page height = visible area above keyboard. Chrome stays in-flow at bottom of page.
+       Use 0 transition when inset jumps so tools snap to keyboard edge (no lag float). */
     html.mobile-stable-input.ssh-kb-open .terminal-page {
         height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
         max-height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
@@ -13402,8 +13403,13 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         bottom: auto !important;
         margin: 0 !important;
         transform: none !important;
+        transition: height 0.12s linear, max-height 0.12s linear !important;
     }
-    html.mobile-stable-input .terminal-topbar {
+    html.mobile-stable-input:not(.ssh-kb-open) .terminal-page {
+        transition: height 0.10s linear, max-height 0.10s linear !important;
+    }
+ 
+html.mobile-stable-input .terminal-topbar {
         display: flex !important;
         order: 0 !important;
         flex: 0 0 auto !important;

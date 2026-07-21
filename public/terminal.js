@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260721-kb-close1';
+} from './ssh-keyboard/index.js?v=20260721-kb-fit2';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -16,8 +16,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-kb-close1';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-close1';
+} from './terminal-scroll-policy.js?v=20260721-kb-fit2';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-fit2';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -2090,11 +2090,17 @@ window.addEventListener('message', (e) => {
             } catch (_) {}
         }
         // Authoritative geometry from parent frame overlap.
-        if (open && overlap >= 80) {
+        // Accept open from 64px up (some devices settle slightly under 80).
+        if (open && overlap >= 64) {
+            // Prefer exact overlap; do not max() with stale larger cache.
             applyMobileStableKeyboardInset(overlap, true, `parent-overlap:${e.data.reason || ''}:open`);
+            // If parent reports a smaller real height than current shell, snap down immediately.
+            if ((_sshKbInsetCache || 0) - overlap > 8) {
+                writeSshKbPageGeometry(Math.round(overlap / 4) * 4, true, { fromParent: true });
+            }
         } else {
             // Physical IME gone in parent: clear shell immediately even if proxy still focused.
-            applyMobileStableKeyboardInset(0, false, `parent-overlap:${e.data.reason || ''}:close`);
+            forceClearSshKbShell(`parent-overlap:${e.data.reason || ''}:close`);
             if (kb?.desiredOpen?.()) {
                 try { kb.close('parent-physical-close', { force: false, blurCmd: false }); } catch (_) {}
             }
@@ -8507,8 +8513,8 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
             : (reported > 40 ? reported : (measured > 40 ? measured : reported));
         pinInset = raw >= 80 ? raw : 0; // <80px is not a real IME on phones
     }
-    // Quantize to 16px to absorb Android vv jitter.
-    const safeInset = pinInset > 0 ? Math.round(pinInset / 16) * 16 : 0;
+    // Quantize to 4px so tools track keyboard edge more tightly (was 16 → ±~8px).
+    const safeInset = pinInset > 0 ? Math.round(pinInset / 4) * 4 : 0;
     const layoutOpen = !!(open && safeInset > 0);
     const prevOpen = _sshKbLayoutOpenCache;
     const prevInset = _sshKbInsetCache || 0;
@@ -8519,19 +8525,16 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
         // open-hold — that was the stuck blank after IME retract.
         forceClearSshKbShell(reasonText || 'close');
         if (!isMobileStableInputMode()) return;
-        if (prevOpen && wasFollowing) {
-            // forceClear already scheduled stick when wasOpen; avoid double work.
-        }
         return;
     }
 
     // -------- OPEN --------
     _sshKbLowInsetSince = 0;
-    // Open / inset update: skip no-ops within 12px (Android vv jitter).
-    if (prevOpen && Math.abs(prevInset - safeInset) < 12) {
+    // Open / inset update: skip no-ops within 4px only (keep toolbar glued).
+    if (prevOpen && Math.abs(prevInset - safeInset) < 4) {
         return;
     }
-
+ 
     const commitOpen = (job, { fromParent = false } = {}) => {
         // Cancel any pending force-close from a previous low-inset streak.
         window.clearTimeout(_sshKbForceCloseTimer);
@@ -9525,21 +9528,20 @@ function applyFacadeChrome(reason = 'mirror') {
         return true;
     }
 
-    const open = phase === 'open' || phase === 'opening' || (desired && (physical || inset >= 80 || proxyFocused));
+    const open = phase === 'open' || phase === 'opening' || (desired && (physical || inset >= 64 || proxyFocused));
 
     if (open) {
-        if (inset < 80) inset = Math.max(inset, _sshKbInsetCache || 0);
-        if (inset < 80 && physical) {
-            try { inset = getEstimatedKeyboardInset?.() || 280; } catch (_) { inset = 280; }
-        }
-        if (inset < 80) {
-            // Desired open but no real height → don't invent a permanent 280px hole.
-            // Keep previous only if parent geometry is still live; else wait.
-            if (!parentLive) {
+        // Prefer real inset. Only fall back to cache, never invent ~280 forever.
+        if (inset < 64) inset = Math.max(inset, _sshKbInsetCache || 0);
+        if (inset < 64) {
+            // No reliable height yet: if parent just opened, keep brief provisional;
+            // otherwise wait for parent-overlap (exact frameBottom - keyboardTop).
+            if (parentLive || parentFreshOpen) {
+                inset = Math.max(_sshKbInsetCache || 0, 260);
+            } else {
                 logTerminalLayoutDiagnostics?.('facade-open-await-inset', { reason, desired, physical, inset });
                 return true;
             }
-            inset = Math.max(_sshKbInsetCache || 0, 240);
         }
         applyMobileStableKeyboardInset(inset, true, `${reason}:facade-open`);
         return true;
@@ -11823,7 +11825,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     // Register the Terminal ctor before WTerm.init so XtermBridge.load works
     // without a bare npm resolver in the browser.
     try {
-        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-close1');
+        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-fit2');
     } catch (err) {
         console.error('[terminal] xterm-headless register failed', err);
         throw err;
@@ -11831,7 +11833,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API. DOM/input/viewport
         // stay wterm; core is XtermBridge over vendored xterm (see /xterm).
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-close1');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-fit2');
         WTermClass = module.WTerm;
     } catch {
         try {
