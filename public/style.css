@@ -13565,9 +13565,17 @@ html.mobile-stable-input .terminal-topbar {
         padding-bottom: max(2px, env(safe-area-inset-bottom)) !important;
     }
     html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar {
+        /* Page already ends at keyboard top — no extra safe-area or padding
+           that would float the aux row above the IME edge. */
+        padding-bottom: 0 !important;
+        margin-bottom: 0 !important;
+    }
+    html.mobile-stable-input.ssh-kb-open .topbar-actions {
+        margin-bottom: 0 !important;
         padding-bottom: 2px !important;
     }
-    /* Kill any residual fixed-chrome / padding-reserve from earlier blocks. */
+ 
+/* Kill any residual fixed-chrome / padding-reserve from earlier blocks. */
     html.mobile-stable-input.ssh-kb-open .terminal-container {
         padding-bottom: 0 !important;
         min-height: 80px !important;

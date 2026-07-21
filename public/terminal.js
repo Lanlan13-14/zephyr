@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260721-kb-fit2';
+} from './ssh-keyboard/index.js?v=20260721-kb-flush1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -16,8 +16,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-kb-fit2';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-fit2';
+} from './terminal-scroll-policy.js?v=20260721-kb-flush1';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-flush1';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -2089,15 +2089,26 @@ window.addEventListener('message', (e) => {
                 });
             } catch (_) {}
         }
-        // Authoritative geometry from parent frame overlap.
-        // Accept open from 64px up (some devices settle slightly under 80).
-        if (open && overlap >= 64) {
-            // Prefer exact overlap; do not max() with stale larger cache.
-            applyMobileStableKeyboardInset(overlap, true, `parent-overlap:${e.data.reason || ''}:open`);
-            // If parent reports a smaller real height than current shell, snap down immediately.
-            if ((_sshKbInsetCache || 0) - overlap > 8) {
-                writeSshKbPageGeometry(Math.round(overlap / 4) * 4, true, { fromParent: true });
-            }
+        // Authoritative geometry from parent: EXACT iframe-local overlap in CSS px.
+        // open threshold 48: tiny keyboards / animation frames still count.
+        if (open && overlap >= 48) {
+            // Integer px, no quantize — tools must flush to keyboard top.
+            const exact = Math.max(0, Math.round(overlap));
+            // Bypass debounce: parent already throttles via rAF align loop.
+            window.clearTimeout(_sshKbGeomSettleTimer);
+            _sshKbGeomPending = null;
+            writeSshKbPageGeometry(exact, true, { fromParent: true });
+            try { updateTerminalInputPanelMetrics(); } catch (_) {}
+            // Keep stick soft; do not refit rows.
+            scheduleSshKbGeometryFit(`parent-overlap:${e.data.reason || ''}:open`, true, true);
+            // Sync facade physical with exact height so it won't re-open with provisional.
+            try {
+                kb?._intent?.syncViewport?.({
+                    inset: exact,
+                    hasEditableFocus: proxyFocused,
+                    now: Date.now(),
+                });
+            } catch (_) {}
         } else {
             // Physical IME gone in parent: clear shell immediately even if proxy still focused.
             forceClearSshKbShell(`parent-overlap:${e.data.reason || ''}:close`);
@@ -9521,13 +9532,20 @@ function applyFacadeChrome(reason = 'mirror') {
     }
 
     // Parent just opened geometry: only retain briefly while still desired+fresh.
-    // NEVER retain after intent closed (that stuck the blank under tools).
+    // NEVER inflate above the last parent-authored exact overlap (min 240 was
+    // floating tools above the real keyboard edge).
     if (desired && (parentLive || parentFreshOpen) && physical !== false) {
-        const keep = Math.max(_sshKbInsetCache || 0, inset, 240);
-        applyMobileStableKeyboardInset(keep, true, `${reason}:facade-retain-parent`);
+        const keep = Math.max(0, _sshKbInsetCache || 0, inset || 0);
+        if (keep >= 48) {
+            // Re-apply exact cached height; do not invent taller shell.
+            writeSshKbPageGeometry(keep, true, { fromParent: true });
+            return true;
+        }
+        // No exact height yet — wait for parent-overlap message.
+        logTerminalLayoutDiagnostics?.('facade-retain-await-parent', { reason, keep, inset });
         return true;
     }
-
+ 
     const open = phase === 'open' || phase === 'opening' || (desired && (physical || inset >= 64 || proxyFocused));
 
     if (open) {
@@ -11825,7 +11843,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     // Register the Terminal ctor before WTerm.init so XtermBridge.load works
     // without a bare npm resolver in the browser.
     try {
-        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-fit2');
+        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-flush1');
     } catch (err) {
         console.error('[terminal] xterm-headless register failed', err);
         throw err;
@@ -11833,7 +11851,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API. DOM/input/viewport
         // stay wterm; core is XtermBridge over vendored xterm (see /xterm).
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-fit2');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-flush1');
         WTermClass = module.WTerm;
     } catch {
         try {
