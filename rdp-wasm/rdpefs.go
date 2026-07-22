@@ -287,9 +287,14 @@ type openHandle struct {
 	Path          string
 	IsDir         bool
 	RemoteHandle  string // handle ID from agent (for agent mode reads)
-	ReadCache     *agentReadCache
-	Volatile      bool   // in-memory placeholder for Office temp/lock files on read-only Agent shares
-	VolatileData  []byte // data written to the volatile placeholder during this RDP session
+	// Writable is true when RemoteHandle was opened with write/writeTruncate.
+	// Explorer often opens existing files with a broad write DesiredAccess even
+	// for pure reads (copy/preview); those are opened as read and upgraded on
+	// the first IRP_MJ_WRITE.
+	Writable  bool
+	ReadCache *agentReadCache
+	Volatile  bool   // in-memory placeholder for Office temp/lock files on read-only Agent shares
+	VolatileData []byte // data written to the volatile placeholder during this RDP session
 	// For local mode compatibility
 	LocalFile *VirtualFile
 }
@@ -863,6 +868,7 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 				Path:          path,
 				IsDir:         false,
 				RemoteHandle:  handle,
+				Writable:      true,
 			}
 			h.mu.Unlock()
 			resp := &bytes.Buffer{}
@@ -903,21 +909,37 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 		return
 	}
 
+	// Existing objects:
+	// - Truncating dispositions → writeTruncate
+	// - FILE_OPEN / FILE_OPEN_IF → always "read" at CREATE time.
+	//   Windows Explorer (and many apps) request GENERIC_WRITE when copying
+	//   multi-GB files from \\tsclient even though they only READ. Forcing
+	//   Agent "write" open on a 4GB file either copies the whole file back
+	//   into place or rejects it, then the drive drops with 0x8007048F.
+	// - Other write dispositions → "write" (in-place, no truncate)
 	mode := "read"
-	if !readOnly && !isDir && (createDispositionTruncatesExisting(createDisposition) || desiredAccessWantsWrite(desiredAccess)) {
-		mode = "write"
+	if !readOnly && !isDir {
 		if createDispositionTruncatesExisting(createDisposition) {
 			mode = "writeTruncate"
+		} else if desiredAccessWantsWrite(desiredAccess) {
+			switch createDisposition {
+			case FILE_OPEN, FILE_OPEN_IF:
+				mode = "read"
+			default:
+				mode = "write"
+			}
 		}
 	}
 
 	remoteHandle := ""
+	writable := false
 	if !isDir {
 		remoteHandle = h.callAgentOpen(agentID, path, mode)
 		if remoteHandle == "" && mode != "read" {
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
 			return
 		}
+		writable = mode == "write" || mode == "writeTruncate"
 	}
 
 	h.mu.Lock()
@@ -929,6 +951,7 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 		Path:          path,
 		IsDir:         isDir,
 		RemoteHandle:  remoteHandle,
+		Writable:      writable,
 	}
 	h.mu.Unlock()
 
@@ -1317,9 +1340,22 @@ func (h *RdpefsHandler) handleWrite(deviceID, completionID, fileID uint32, data 
 
 	if drive.Mode == DriveModeAgent {
 		writeHandle := handle.RemoteHandle
-		if writeHandle == "" {
-			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_WRITE, STATUS_UNSUCCESSFUL, nil)
-			return
+		// CREATE may have opened the file as read because Explorer requested
+		// write access for a pure copy. Upgrade only when a real WRITE arrives.
+		if writeHandle == "" || !handle.Writable {
+			if writeHandle != "" {
+				h.callAgentClose(handle.AgentID, writeHandle)
+			}
+			writeHandle = h.callAgentOpen(handle.AgentID, handle.Path, "write")
+			if writeHandle == "" {
+				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_WRITE, STATUS_UNSUCCESSFUL, nil)
+				return
+			}
+			h.mu.Lock()
+			handle.RemoteHandle = writeHandle
+			handle.Writable = true
+			h.mu.Unlock()
+			invalidateAgentReadCache(handle)
 		}
 		written := h.callAgentWrite(handle.AgentID, writeHandle, offset, writeData)
 		invalidateAgentReadCache(handle)

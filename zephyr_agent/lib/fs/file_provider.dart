@@ -182,56 +182,18 @@ class DesktopFileProvider extends ZephyrFileProvider {
 
   /// Open a file for random-access write WITHOUT truncating existing content.
   ///
-  /// Dart's [io.FileMode.write] always truncates. For RDP overwrite-in-place
-  /// opens we must preserve bytes. POSIX `append` + seek works; on Windows we
-  /// fall back to a temp preserve-copy only for small files, otherwise refuse
-  /// rather than hang the Agent for multi-GB copies.
+  /// Dart's [io.FileMode.write] always truncates. RDP in-place opens must
+  /// preserve bytes. Use [io.FileMode.append] then seek(0): it is O_RDWR-like
+  /// without O_TRUNC on POSIX and does not rewrite multi-GB files on open.
+  /// Never fall back to "copy whole file then rewrite" — that stalls CREATE
+  /// and drops the RDP drive with 0x8007048F on large Agent copies.
   Future<io.RandomAccessFile> _openWritablePreserve(io.File file) async {
     if (!await file.exists()) {
       await file.create(recursive: true);
     }
-    if (!io.Platform.isWindows) {
-      // O_RDWR|O_CREAT without O_TRUNC on POSIX via append then seek(0).
-      final raf = await file.open(mode: io.FileMode.append);
-      await raf.setPosition(0);
-      return raf;
-    }
-
-    final size = await file.length();
-    // 64 MiB ceiling: full preserve-copy above this has caused multi-minute
-    // CREATE stalls and RDP drive drops. Explorer "copy over existing" uses
-    // writeTruncate; in-place random writes on huge files need a native
-    // non-truncating open we do not have yet on Windows dart:io.
-    const maxPreserveBytes = 64 * 1024 * 1024;
-    if (size > maxPreserveBytes) {
-      throw FileProviderException(
-        'too_large',
-        'Windows in-place open of files larger than 64 MiB is not supported; use overwrite/create or a smaller file',
-      );
-    }
-    final preservedCopy = await file.copy(
-      '${file.path}.zephyr-agent-preserve-${_uuid.v4()}',
-    );
-    final raf = await file.open(mode: io.FileMode.write);
-    io.RandomAccessFile? src;
-    try {
-      src = await preservedCopy.open(mode: io.FileMode.read);
-      while (true) {
-        final chunk = await src.read(1024 * 1024);
-        if (chunk.isEmpty) break;
-        await raf.writeFrom(chunk);
-      }
-      await raf.setPosition(0);
-      return raf;
-    } catch (e) {
-      await raf.close();
-      rethrow;
-    } finally {
-      await src?.close();
-      try {
-        await preservedCopy.delete();
-      } catch (_) {}
-    }
+    final raf = await file.open(mode: io.FileMode.append);
+    await raf.setPosition(0);
+    return raf;
   }
 
   @override
