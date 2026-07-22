@@ -1850,7 +1850,7 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     flex: 1 1 auto !important;
 }
  
-Ops.file_edit.terminal-workspace-grid.compact.layout-1,
+.terminal-workspace-grid.compact.layout-1,
 .terminal-workspace-grid.compact.layout-2,
 .terminal-workspace-grid.compact.layout-3 {
     grid-template-columns: 1fr;
@@ -7422,7 +7422,7 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         background: var(--bg, var(--surface)) !important;
     }
  
-Ops.file_edit    /* Kill any residual blue press flash on mobile chrome (tools are .btn-sm) */
+/* Kill any residual blue press flash on mobile chrome (tools are .btn-sm) */
     html.mobile-stable-input .topbar-actions .btn-sm:active,
     html.mobile-stable-input .topbar-actions .btn-sm:focus,
     html.mobile-stable-input .topbar-actions .btn-sm:focus-visible,

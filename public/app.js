@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-kb-crop1';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-kb-syntax1';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -3000,7 +3000,7 @@ function applyParentIframeShellToKeyboard(activeFrame, keyboardTop, open) {
         return { shellH: 0, top: 0, kTop: 0 };
     }
  
-Ops.file_edit    const kTop = Math.round(Number(keyboardTop) || 0);
+const kTop = Math.round(Number(keyboardTop) || 0);
     const target = body || activeFrame;
     if (!target) return { shellH: 0, top: 0, kTop };
     // Use layout top before any previous crop so we measure against the true
