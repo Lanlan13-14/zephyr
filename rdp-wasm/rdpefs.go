@@ -262,7 +262,10 @@ type VirtualFile struct {
 }
 
 const (
-	agentReadAheadChunkBytes = 1024 * 1024
+	// 256 KiB matches the Android MethodChannel/Binder soft cap that Agents
+	// advertise as maxChunkSize. Desktop Agents still accept it; larger
+	// chunks used to make Android large-file copies fail mid-transfer.
+	agentReadAheadChunkBytes = 256 * 1024
 	agentReadAheadParallel   = 4
 	agentReadAheadWindow     = agentReadAheadChunkBytes * agentReadAheadParallel
 	agentReadAheadMaxBytes   = 16 * 1024 * 1024
@@ -1972,19 +1975,27 @@ func (h *RdpefsHandler) callAgentRead(agentID, handle string, offset uint64, len
 }
 
 func (h *RdpefsHandler) callAgentReadWindow(agentID, handle string, offset uint64, length uint32) []byte {
-	if length <= zft2MaxPayloadBytes {
+	// Keep part size at agentReadAheadChunkBytes (256 KiB) so short-read
+	// Agents (Android) return contiguous windows instead of four sparse 1 MiB
+	// offsets that would only keep the first short part.
+	const partSize = agentReadAheadChunkBytes
+	if length <= partSize {
 		return h.callAgentRead(agentID, handle, offset, length)
 	}
 	type part struct {
 		index int
 		data  []byte
 	}
-	parts := int((length + zft2MaxPayloadBytes - 1) / zft2MaxPayloadBytes)
+	parts := int((length + partSize - 1) / partSize)
+	if parts > agentReadAheadParallel {
+		parts = agentReadAheadParallel
+		length = uint32(parts * partSize)
+	}
 	results := make(chan part, parts)
 	for index := 0; index < parts; index++ {
-		partOffset := offset + uint64(index*zft2MaxPayloadBytes)
-		partLength := uint32(zft2MaxPayloadBytes)
-		remaining := int(length) - index*zft2MaxPayloadBytes
+		partOffset := offset + uint64(index*partSize)
+		partLength := uint32(partSize)
+		remaining := int(length) - index*partSize
 		if remaining < int(partLength) {
 			partLength = uint32(remaining)
 		}
@@ -2003,7 +2014,7 @@ func (h *RdpefsHandler) callAgentReadWindow(agentID, handle string, offset uint6
 	window := make([]byte, 0, length)
 	for _, data := range ordered {
 		window = append(window, data...)
-		if len(data) < zft2MaxPayloadBytes {
+		if len(data) < partSize {
 			break
 		}
 	}
@@ -2011,12 +2022,42 @@ func (h *RdpefsHandler) callAgentReadWindow(agentID, handle string, offset uint6
 }
 
 func (h *RdpefsHandler) callAgentWrite(agentID, handle string, offset uint64, data []byte) int {
-	response, err := h.requestAgent(agentID, zft2Write, map[string]any{"handle": handle, "offset": offset}, data)
-	if err != nil {
-		slog.Warn("rdpefs: agent write failed", "handle", handle, "offset", offset, "err", err)
+	// Split oversized writes so Android Agents advertising 256 KiB chunks
+	// (Binder/MethodChannel) can accept Explorer multi-MB IRPs.
+	const maxWriteChunk = 256 * 1024
+	if len(data) == 0 {
 		return 0
 	}
-	return int(int64Meta(response.Meta, "bytesWritten"))
+	if len(data) <= maxWriteChunk {
+		response, err := h.requestAgent(agentID, zft2Write, map[string]any{"handle": handle, "offset": offset}, data)
+		if err != nil {
+			slog.Warn("rdpefs: agent write failed", "handle", handle, "offset", offset, "err", err)
+			return 0
+		}
+		return int(int64Meta(response.Meta, "bytesWritten"))
+	}
+	written := 0
+	for written < len(data) {
+		end := written + maxWriteChunk
+		if end > len(data) {
+			end = len(data)
+		}
+		chunk := data[written:end]
+		response, err := h.requestAgent(agentID, zft2Write, map[string]any{"handle": handle, "offset": offset + uint64(written)}, chunk)
+		if err != nil {
+			slog.Warn("rdpefs: agent write failed", "handle", handle, "offset", offset+uint64(written), "err", err)
+			return written
+		}
+		n := int(int64Meta(response.Meta, "bytesWritten"))
+		if n <= 0 {
+			return written
+		}
+		written += n
+		if n < len(chunk) {
+			return written
+		}
+	}
+	return written
 }
 
 func (h *RdpefsHandler) callAgentClose(agentID, handle string) {

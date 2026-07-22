@@ -99,13 +99,33 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     if (io.Platform.isWindows) {
+      // Prefer the user profile, not C:\. Mapping the system drive root makes
+      // Explorer enumerate protected system objects and historically failed
+      // the entire list RPC on the first AccessDenied entry.
+      final profile = io.Platform.environment['USERPROFILE']
+          ?? io.Platform.environment['HOME'];
+      if (profile != null && profile.isNotEmpty) {
+        config.sharedDirectoryPath = profile;
+        config.sharedDirectoryName =
+            profile.split('\\').where((s) => s.isNotEmpty).last;
+        return;
+      }
       final drive = io.Platform.environment['SystemDrive'] ?? 'C:';
       config.sharedDirectoryPath = drive.endsWith('\\') ? drive : '$drive\\';
       config.sharedDirectoryName = drive.replaceAll(':', '');
       return;
     }
-    config.sharedDirectoryPath = '/';
-    config.sharedDirectoryName = 'Root';
+    if (io.Platform.isMacOS || io.Platform.isLinux) {
+      final home = io.Platform.environment['HOME'];
+      if (home != null && home.isNotEmpty) {
+        config.sharedDirectoryPath = home;
+        config.sharedDirectoryName =
+            home.split('/').where((s) => s.isNotEmpty).last;
+        return;
+      }
+    }
+    config.sharedDirectoryPath = io.Directory.systemTemp.path;
+    config.sharedDirectoryName = 'Temp';
   }
 
   Future<void> _pickDirectory(AgentController ctrl) async {

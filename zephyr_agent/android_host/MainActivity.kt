@@ -255,19 +255,35 @@ class MainActivity : FlutterActivity() {
         val data = call.argument<ByteArray>("data") ?: ByteArray(0)
         val handle = handles[handleId] ?: throw SafException("not_found", "Invalid handle")
         val channel = handle.channel ?: throw SafException("invalid_handle", "Handle is not writable")
-        channel.position(offset)
-        channel.write(ByteBuffer.wrap(data))
-        channel.force(true)
-        result.success(data.size)
+        // Prefer absolute write so concurrent offset writes stay independent.
+        // Do NOT force(true) per chunk — fsync on every ZFT2 write turns large
+        // copies into multi-minute failures and drops the RDP drive.
+        var remaining = data.size
+        var writtenTotal = 0
+        while (remaining > 0) {
+            val n = channel.write(ByteBuffer.wrap(data, writtenTotal, remaining), offset + writtenTotal)
+            if (n <= 0) throw SafException("io_error", "Short write at offset ${offset + writtenTotal}")
+            writtenTotal += n
+            remaining -= n
+        }
+        result.success(writtenTotal)
     }
 
     private fun close(call: MethodCall, result: MethodChannel.Result) {
         val handleId = call.argument<String>("handle") ?: return result.success(null)
         val handle = handles.remove(handleId)
-        handle?.channel?.close()
-        handle?.inputStream?.close()
-        handle?.stream?.close()
-        handle?.pfd?.close()
+        try {
+            // Single fsync on close is enough for durability; per-write force
+            // was killing large-file throughput on SAF providers.
+            if (handle?.channel != null && handle.mode != "read") {
+                handle.channel.force(true)
+            }
+        } catch (_: Exception) {
+        }
+        try { handle?.channel?.close() } catch (_: Exception) {}
+        try { handle?.inputStream?.close() } catch (_: Exception) {}
+        try { handle?.stream?.close() } catch (_: Exception) {}
+        try { handle?.pfd?.close() } catch (_: Exception) {}
         result.success(null)
     }
 

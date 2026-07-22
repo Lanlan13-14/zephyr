@@ -30,14 +30,14 @@ class ZephyrFileStat {
   });
 
   Map<String, dynamic> toJson() => {
-    'name': name,
-    'path': path,
-    'isDir': isDir,
-    'size': size,
-    'mtime': mtime,
-    'canRead': true,
-    'canWrite': true,
-  };
+        'name': name,
+        'path': path,
+        'isDir': isDir,
+        'size': size,
+        'mtime': mtime,
+        'canRead': true,
+        'canWrite': true,
+      };
 }
 
 /// Abstract file provider interface.
@@ -61,13 +61,47 @@ class _DesktopOpenFile {
   _DesktopOpenFile(this.path, this.file, this.writable);
 }
 
-/// Desktop file provider using dart:io
+/// Desktop file provider using dart:io.
+///
+/// Uses a platform-aware path context so Windows drive roots (`C:\`) join and
+/// validate correctly. Directory listings skip entries that throw on stat so a
+/// single protected/system item cannot fail an entire drive enumeration.
 class DesktopFileProvider extends ZephyrFileProvider {
   final String rootDir;
   final Map<String, _DesktopOpenFile> _openFiles = {};
   final _uuid = const Uuid();
+  late final p.Context _path;
+  late final String _normalizedRoot;
 
-  DesktopFileProvider(this.rootDir);
+  DesktopFileProvider(this.rootDir) {
+    _path = p.Context(
+      style: io.Platform.isWindows ? p.Style.windows : p.Style.posix,
+    );
+    _normalizedRoot = _normalizeRoot(rootDir);
+  }
+
+  static String _normalizeRoot(String root) {
+    final raw = root.trim();
+    if (raw.isEmpty) return raw;
+    if (io.Platform.isWindows) {
+      final withSep = raw.replaceAll('/', '\\');
+      // Keep drive roots as `C:\` (not `C:`) so joins stay on the drive.
+      if (RegExp(r'^[A-Za-z]:$').hasMatch(withSep)) {
+        return '$withSep\\';
+      }
+      if (RegExp(r'^[A-Za-z]:\\$').hasMatch(withSep)) {
+        return withSep;
+      }
+      return p.Context(style: p.Style.windows).normalize(withSep);
+    }
+    return p.Context(style: p.Style.posix).normalize(raw);
+  }
+
+  String _virtualJoin(String parent, String name) {
+    final cleanedParent = parent.replaceAll('\\', '/');
+    if (cleanedParent.isEmpty || cleanedParent == '/') return '/$name';
+    return '${cleanedParent.replaceAll(RegExp(r'/+$'), '')}/$name';
+  }
 
   String _resolve(String virtualPath) {
     final cleaned = virtualPath
@@ -75,13 +109,24 @@ class DesktopFileProvider extends ZephyrFileProvider {
         .split('/')
         .where((s) => s.isNotEmpty && s != '.' && s != '..')
         .join('/');
-    if (cleaned.isEmpty) return rootDir;
-    return p.join(rootDir, cleaned);
+    if (cleaned.isEmpty) return _normalizedRoot;
+    final joined = _path.join(_normalizedRoot, cleaned);
+    return _path.normalize(joined);
   }
 
   void _validatePath(String virtualPath) {
     final resolved = _resolve(virtualPath);
-    if (!p.isWithin(rootDir, resolved) && resolved != rootDir) {
+    final root = _normalizedRoot;
+    if (resolved == root) return;
+    // package:path isWithin treats equal paths as false; drive-root siblings
+    // must still be rejected via relative() prefix check.
+    final rel = _path.relative(resolved, from: root);
+    final escaped = rel == '..' ||
+        rel.startsWith('..${_path.separator}') ||
+        rel.startsWith('../') ||
+        rel.startsWith('..\\') ||
+        _path.isAbsolute(rel);
+    if (escaped) {
       throw FileProviderException('invalid_path', 'Path traversal blocked');
     }
   }
@@ -94,17 +139,25 @@ class DesktopFileProvider extends ZephyrFileProvider {
       throw FileProviderException('not_found', 'Directory not found: $path');
     }
     final entries = <ZephyrFileStat>[];
-    await for (final entity in dir.list()) {
-      final s = await entity.stat();
-      final name = p.basename(entity.path);
-      final vPath = path == '/' ? '/$name' : '$path/$name';
-      entries.add(ZephyrFileStat(
-        name: name,
-        path: vPath,
-        isDir: s.type == io.FileSystemEntityType.directory,
-        size: s.size,
-        mtime: s.modified.millisecondsSinceEpoch,
-      ));
+    // followLinks: false avoids cycles and dangling-link crashes on macOS/Windows.
+    await for (final entity in dir.list(followLinks: false)) {
+      try {
+        final s = await entity.stat();
+        final name = _path.basename(entity.path);
+        if (name.isEmpty || name == '.' || name == '..') continue;
+        final vPath = _virtualJoin(path, name);
+        entries.add(ZephyrFileStat(
+          name: name,
+          path: vPath,
+          isDir: s.type == io.FileSystemEntityType.directory,
+          size: s.size,
+          mtime: s.modified.millisecondsSinceEpoch,
+        ));
+      } catch (_) {
+        // Skip unreadable/system entries instead of failing the whole listing.
+        // Mapping C:\ or / otherwise dies on the first protected item.
+        continue;
+      }
     }
     return entries;
   }
@@ -113,18 +166,72 @@ class DesktopFileProvider extends ZephyrFileProvider {
   Future<ZephyrFileStat> stat(String path) async {
     _validatePath(path);
     final resolved = _resolve(path);
-    final type = io.FileSystemEntity.typeSync(resolved);
+    final type = io.FileSystemEntity.typeSync(resolved, followLinks: false);
     if (type == io.FileSystemEntityType.notFound) {
       throw FileProviderException('not_found', 'Not found: $path');
     }
     final s = await io.FileStat.stat(resolved);
     return ZephyrFileStat(
-      name: p.basename(resolved),
+      name: _path.basename(resolved),
       path: path,
       isDir: type == io.FileSystemEntityType.directory,
       size: s.size,
       mtime: s.modified.millisecondsSinceEpoch,
     );
+  }
+
+  /// Open a file for random-access write WITHOUT truncating existing content.
+  ///
+  /// Dart's [io.FileMode.write] always truncates. For RDP overwrite-in-place
+  /// opens we must preserve bytes. POSIX `append` + seek works; on Windows we
+  /// fall back to a temp preserve-copy only for small files, otherwise refuse
+  /// rather than hang the Agent for multi-GB copies.
+  Future<io.RandomAccessFile> _openWritablePreserve(io.File file) async {
+    if (!await file.exists()) {
+      await file.create(recursive: true);
+    }
+    if (!io.Platform.isWindows) {
+      // O_RDWR|O_CREAT without O_TRUNC on POSIX via append then seek(0).
+      final raf = await file.open(mode: io.FileMode.append);
+      await raf.setPosition(0);
+      return raf;
+    }
+
+    final size = await file.length();
+    // 64 MiB ceiling: full preserve-copy above this has caused multi-minute
+    // CREATE stalls and RDP drive drops. Explorer "copy over existing" uses
+    // writeTruncate; in-place random writes on huge files need a native
+    // non-truncating open we do not have yet on Windows dart:io.
+    const maxPreserveBytes = 64 * 1024 * 1024;
+    if (size > maxPreserveBytes) {
+      throw FileProviderException(
+        'too_large',
+        'Windows in-place open of files larger than 64 MiB is not supported; use overwrite/create or a smaller file',
+      );
+    }
+    final preservedCopy = await file.copy(
+      '${file.path}.zephyr-agent-preserve-${_uuid.v4()}',
+    );
+    final raf = await file.open(mode: io.FileMode.write);
+    io.RandomAccessFile? src;
+    try {
+      src = await preservedCopy.open(mode: io.FileMode.read);
+      while (true) {
+        final chunk = await src.read(1024 * 1024);
+        if (chunk.isEmpty) break;
+        await raf.writeFrom(chunk);
+      }
+      await raf.setPosition(0);
+      return raf;
+    } catch (e) {
+      await raf.close();
+      rethrow;
+    } finally {
+      await src?.close();
+      try {
+        await preservedCopy.delete();
+      } catch (_) {}
+    }
   }
 
   @override
@@ -134,39 +241,22 @@ class DesktopFileProvider extends ZephyrFileProvider {
     final file = io.File(resolved);
 
     final wantsWrite = mode == 'write' || mode == 'writeTruncate';
-    io.File? preservedCopy;
+    late final io.RandomAccessFile raf;
+
     if (wantsWrite) {
       await file.parent.create(recursive: true);
-      if (await file.exists()) {
-        if (mode == 'write') {
-          preservedCopy = await file.copy('$resolved.zephyr-agent-preserve-${_uuid.v4()}');
-        }
+      if (mode == 'writeTruncate') {
+        raf = await file.open(mode: io.FileMode.write);
       } else {
-        await file.create();
+        raf = await _openWritablePreserve(file);
       }
+    } else {
+      if (!await file.exists()) {
+        throw FileProviderException('not_found', 'File not found: $path');
+      }
+      raf = await file.open(mode: io.FileMode.read);
     }
 
-    if (!await file.exists()) {
-      throw FileProviderException('not_found', 'File not found: $path');
-    }
-
-    final fileMode = wantsWrite ? io.FileMode.write : io.FileMode.read;
-    final raf = await file.open(mode: fileMode);
-    if (preservedCopy != null) {
-      io.RandomAccessFile? src;
-      try {
-        src = await preservedCopy.open(mode: io.FileMode.read);
-        while (true) {
-          final chunk = await src.read(1024 * 1024);
-          if (chunk.isEmpty) break;
-          await raf.writeFrom(chunk);
-        }
-        await raf.setPosition(0);
-      } finally {
-        await src?.close();
-        try { await preservedCopy.delete(); } catch (_) {}
-      }
-    }
     final handle = 'h_${_uuid.v4().substring(0, 8)}';
     _openFiles[handle] = _DesktopOpenFile(resolved, raf, wantsWrite);
     return handle;
@@ -175,7 +265,10 @@ class DesktopFileProvider extends ZephyrFileProvider {
   @override
   Future<Uint8List> read(String handle, int offset, int length) async {
     final opened = _openFiles[handle];
-    if (opened == null) throw FileProviderException('not_found', 'Invalid handle');
+    if (opened == null) {
+      throw FileProviderException('not_found', 'Invalid handle');
+    }
+    // Independent FD per read so parallel readahead cannot race position.
     final raf = await io.File(opened.path).open(mode: io.FileMode.read);
     try {
       await raf.setPosition(offset);
@@ -188,8 +281,12 @@ class DesktopFileProvider extends ZephyrFileProvider {
   @override
   Future<int> write(String handle, int offset, Uint8List data) async {
     final opened = _openFiles[handle];
-    if (opened == null) throw FileProviderException('not_found', 'Invalid handle');
-    if (!opened.writable) throw FileProviderException('read_only', 'Handle is not writable');
+    if (opened == null) {
+      throw FileProviderException('not_found', 'Invalid handle');
+    }
+    if (!opened.writable) {
+      throw FileProviderException('read_only', 'Handle is not writable');
+    }
     await opened.file.setPosition(offset);
     await opened.file.writeFrom(data);
     return data.length;
@@ -211,7 +308,7 @@ class DesktopFileProvider extends ZephyrFileProvider {
   Future<void> delete(String path, {bool recursive = false}) async {
     _validatePath(path);
     final resolved = _resolve(path);
-    final type = io.FileSystemEntity.typeSync(resolved);
+    final type = io.FileSystemEntity.typeSync(resolved, followLinks: false);
     if (type == io.FileSystemEntityType.directory) {
       await io.Directory(resolved).delete(recursive: recursive);
     } else {
@@ -225,7 +322,7 @@ class DesktopFileProvider extends ZephyrFileProvider {
     _validatePath(newPath);
     final oldResolved = _resolve(oldPath);
     final newResolved = _resolve(newPath);
-    final type = io.FileSystemEntity.typeSync(oldResolved);
+    final type = io.FileSystemEntity.typeSync(oldResolved, followLinks: false);
     if (type == io.FileSystemEntityType.directory) {
       await io.Directory(oldResolved).rename(newResolved);
     } else {
@@ -236,14 +333,17 @@ class DesktopFileProvider extends ZephyrFileProvider {
   @override
   Future<void> truncate(String path, int size) async {
     _validatePath(path);
-    final raf = await io.File(_resolve(path)).open(mode: io.FileMode.writeOnlyAppend);
+    final raf =
+        await io.File(_resolve(path)).open(mode: io.FileMode.writeOnlyAppend);
     await raf.truncate(size);
     await raf.close();
   }
 
   void closeAll() {
     for (final opened in _openFiles.values) {
-      try { opened.file.closeSync(); } catch (_) {}
+      try {
+        opened.file.closeSync();
+      } catch (_) {}
     }
     _openFiles.clear();
   }
@@ -266,7 +366,8 @@ class AndroidStorageAccess {
 
   static Future<String> externalStorageRoot() async {
     try {
-      return await _channel.invokeMethod<String>('externalStorageRoot') ?? '/storage/emulated/0';
+      return await _channel.invokeMethod<String>('externalStorageRoot') ??
+          '/storage/emulated/0';
     } on PlatformException {
       return '/storage/emulated/0';
     }
@@ -274,10 +375,6 @@ class AndroidStorageAccess {
 }
 
 /// Android Storage Access Framework provider.
-///
-/// This is the real Android implementation for the Agent disk mapping:
-/// Zephyr exposes virtual paths (/, /folder/file.txt), while Android keeps
-/// the actual user-granted tree as a persisted content:// URI.
 class AndroidSafFileProvider extends ZephyrFileProvider {
   static const MethodChannel _channel = MethodChannel('com.zephyr.agent/saf');
   final String rootUri;
@@ -285,7 +382,8 @@ class AndroidSafFileProvider extends ZephyrFileProvider {
   AndroidSafFileProvider(this.rootUri);
 
   static Future<({String rootUri, String name})?> selectDirectory() async {
-    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('selectDirectory');
+    final result =
+        await _channel.invokeMethod<Map<dynamic, dynamic>>('selectDirectory');
     if (result == null) return null;
     return (
       rootUri: result['uri'] as String,
@@ -294,9 +392,9 @@ class AndroidSafFileProvider extends ZephyrFileProvider {
   }
 
   Map<String, Object?> _baseArgs([Map<String, Object?>? extra]) => {
-    'rootUri': rootUri,
-    if (extra != null) ...extra,
-  };
+        'rootUri': rootUri,
+        if (extra != null) ...extra,
+      };
 
   ZephyrFileStat _statFromMap(Map<dynamic, dynamic> map) {
     return ZephyrFileStat(
@@ -312,7 +410,10 @@ class AndroidSafFileProvider extends ZephyrFileProvider {
     try {
       final result = await _channel.invokeMethod<T>(method, args);
       if (result == null) {
-        throw FileProviderException('internal_error', 'No result from Android SAF method: $method');
+        throw FileProviderException(
+          'internal_error',
+          'No result from Android SAF method: $method',
+        );
       }
       return result;
     } on PlatformException catch (e) {
@@ -330,39 +431,52 @@ class AndroidSafFileProvider extends ZephyrFileProvider {
 
   @override
   Future<List<ZephyrFileStat>> list(String path) async {
-    final result = await _invoke<List<dynamic>>('list', _baseArgs({'path': path}));
-    return result.map((e) => _statFromMap(e as Map<dynamic, dynamic>)).toList();
+    final result =
+        await _invoke<List<dynamic>>('list', _baseArgs({'path': path}));
+    return result
+        .map((e) => _statFromMap(e as Map<dynamic, dynamic>))
+        .toList();
   }
 
   @override
   Future<ZephyrFileStat> stat(String path) async {
-    final result = await _invoke<Map<dynamic, dynamic>>('stat', _baseArgs({'path': path}));
+    final result =
+        await _invoke<Map<dynamic, dynamic>>('stat', _baseArgs({'path': path}));
     return _statFromMap(result);
   }
 
   @override
   Future<String> open(String path, String mode) async {
-    final handle = await _invoke<String>('open', _baseArgs({'path': path, 'mode': mode}));
+    final handle = await _invoke<String>(
+      'open',
+      _baseArgs({'path': path, 'mode': mode}),
+    );
     return handle;
   }
 
   @override
   Future<Uint8List> read(String handle, int offset, int length) async {
-    final data = await _invoke<Uint8List>('read', _baseArgs({
-      'handle': handle,
-      'offset': offset,
-      'length': length,
-    }));
+    final data = await _invoke<Uint8List>(
+      'read',
+      _baseArgs({
+        'handle': handle,
+        'offset': offset,
+        'length': length,
+      }),
+    );
     return data;
   }
 
   @override
   Future<int> write(String handle, int offset, Uint8List data) async {
-    final written = await _invoke<int>('write', _baseArgs({
-      'handle': handle,
-      'offset': offset,
-      'data': data,
-    }));
+    final written = await _invoke<int>(
+      'write',
+      _baseArgs({
+        'handle': handle,
+        'offset': offset,
+        'data': data,
+      }),
+    );
     return written;
   }
 
@@ -378,12 +492,18 @@ class AndroidSafFileProvider extends ZephyrFileProvider {
 
   @override
   Future<void> delete(String path, {bool recursive = false}) async {
-    await _invokeVoid('delete', _baseArgs({'path': path, 'recursive': recursive}));
+    await _invokeVoid(
+      'delete',
+      _baseArgs({'path': path, 'recursive': recursive}),
+    );
   }
 
   @override
   Future<void> rename(String oldPath, String newPath) async {
-    await _invokeVoid('rename', _baseArgs({'oldPath': oldPath, 'newPath': newPath}));
+    await _invokeVoid(
+      'rename',
+      _baseArgs({'oldPath': oldPath, 'newPath': newPath}),
+    );
   }
 
   @override

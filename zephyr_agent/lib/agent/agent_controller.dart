@@ -206,8 +206,11 @@ class AgentController extends ChangeNotifier {
         'binaryWrite': true,
         'cancel': true,
         'creditFlow': true,
-        'maxInflight': 8,
-        'maxChunkSize': 1 * 1024 * 1024,
+        // Android MethodChannel / Binder soft-caps ~1 MiB per transaction
+        // including frame overhead. Stay at 256 KiB on Android so large-file
+        // readahead (4×chunk) and writes do not TransactionTooLarge.
+        'maxInflight': Platform.isAndroid ? 4 : 8,
+        'maxChunkSize': Platform.isAndroid ? 256 * 1024 : 1 * 1024 * 1024,
       },
       'share': {
         'name': _config.sharedDirectoryName ?? _config.deviceName,
@@ -300,12 +303,32 @@ class AgentController extends ChangeNotifier {
         result = {'handle': await fp.open(meta['path'] as String, meta['mode'] as String? ?? 'read')};
         break;
       case Zft2Op.read:
-        payload = await fp.read(meta['handle'] as String, (meta['offset'] as num?)?.toInt() ?? 0, (meta['length'] as num?)?.toInt() ?? 262144);
+        var length = (meta['length'] as num?)?.toInt() ?? 262144;
+        // Hard safety net for Android Binder/MethodChannel (and any caller
+        // that ignored hello.maxChunkSize). Short reads are valid in RDPDR;
+        // the remote side re-requests the remainder.
+        if (Platform.isAndroid && length > 256 * 1024) length = 256 * 1024;
+        if (length < 0) length = 0;
+        payload = await fp.read(
+          meta['handle'] as String,
+          (meta['offset'] as num?)?.toInt() ?? 0,
+          length,
+        );
         result = {'bytesRead': payload.length, 'eof': payload.isEmpty};
         _recordTransfer(payload.length);
         break;
       case Zft2Op.write:
-        final written = await fp.write(meta['handle'] as String, (meta['offset'] as num?)?.toInt() ?? 0, frame.payload);
+        if (Platform.isAndroid && frame.payload.length > 256 * 1024) {
+          throw FileProviderException(
+            'payload_too_large',
+            'Android write chunk exceeds 256 KiB MethodChannel limit',
+          );
+        }
+        final written = await fp.write(
+          meta['handle'] as String,
+          (meta['offset'] as num?)?.toInt() ?? 0,
+          frame.payload,
+        );
         result = {'bytesWritten': written};
         _recordTransfer(written);
         break;

@@ -23,6 +23,46 @@ void main() {
       }
     });
 
+    test('writeTruncate replaces file contents', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'zephyr_agent_provider_',
+      );
+      try {
+        final file = File('${dir.path}/hello.txt');
+        await file.writeAsString('abcdef');
+        final provider = DesktopFileProvider(dir.path);
+        final handle = await provider.open('/hello.txt', 'writeTruncate');
+        await provider.write(handle, 0, Uint8List.fromList('ZZ'.codeUnits));
+        await provider.close(handle);
+        expect(await file.readAsString(), 'ZZ');
+      } finally {
+        await dir.delete(recursive: true);
+      }
+    });
+
+    test('list skips unreadable entries instead of failing whole directory',
+        () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'zephyr_agent_provider_',
+      );
+      try {
+        await File('${dir.path}/ok.txt').writeAsString('hi');
+        final ghost = File('${dir.path}/ghost-link');
+        // Create a dangling symlink when the platform supports it.
+        try {
+          await Link(ghost.path).create('${dir.path}/does-not-exist');
+        } catch (_) {
+          // Windows without developer mode may not allow symlinks; still
+          // verify normal listing works.
+        }
+        final provider = DesktopFileProvider(dir.path);
+        final entries = await provider.list('/');
+        expect(entries.any((e) => e.name == 'ok.txt'), isTrue);
+      } finally {
+        await dir.delete(recursive: true);
+      }
+    });
+
     test('concurrent offset reads return independent slices', () async {
       final dir = await Directory.systemTemp.createTemp(
         'zephyr_agent_provider_',
@@ -45,6 +85,21 @@ void main() {
           expect(bytes.take(256), List<int>.generate(256, (i) => i));
         }
         await provider.close(handle);
+      } finally {
+        await dir.delete(recursive: true);
+      }
+    });
+
+    test('path traversal outside root is rejected', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'zephyr_agent_provider_',
+      );
+      try {
+        final provider = DesktopFileProvider(dir.path);
+        expect(
+          () => provider.stat('/../outside'),
+          throwsA(isA<FileProviderException>()),
+        );
       } finally {
         await dir.delete(recursive: true);
       }
