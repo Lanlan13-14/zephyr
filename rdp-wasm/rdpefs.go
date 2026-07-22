@@ -935,7 +935,10 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 	writable := false
 	if !isDir {
 		remoteHandle = h.callAgentOpen(agentID, path, mode)
-		if remoteHandle == "" && mode != "read" {
+		// Always fail CREATE when open fails — including mode=read. Leaving an
+		// empty RemoteHandle and failing on the first READ makes Windows drop
+		// the whole \\tsclient drive (0x8007048F) instead of a clean open error.
+		if remoteHandle == "" {
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
 			return
 		}
@@ -1241,9 +1244,19 @@ func (h *RdpefsHandler) readAgentCached(handle *openHandle, offset uint64, lengt
 		ready := cache.ready
 		cache.mu.Unlock()
 
-		fetchLength := uint32(agentReadAheadWindow)
-		if length > fetchLength {
-			fetchLength = length
+		// Readahead at most one extra window beyond the IRP, but never force a
+		// multi-MiB fetch for a small request — that was burning inflight slots
+		// and turning tiny Explorer copies into 0x8007048F.
+		fetchLength := length
+		if fetchLength < agentReadAheadChunkBytes {
+			fetchLength = agentReadAheadChunkBytes
+		} else if fetchLength < agentReadAheadWindow {
+			// round up to next chunk boundary, cap at one readahead window
+			chunks := (fetchLength + agentReadAheadChunkBytes - 1) / agentReadAheadChunkBytes
+			fetchLength = chunks * agentReadAheadChunkBytes
+			if fetchLength > agentReadAheadWindow {
+				fetchLength = agentReadAheadWindow
+			}
 		}
 		if fetchLength > agentReadAheadMaxBytes {
 			fetchLength = agentReadAheadMaxBytes
@@ -2011,13 +2024,36 @@ func (h *RdpefsHandler) callAgentRead(agentID, handle string, offset uint64, len
 }
 
 func (h *RdpefsHandler) callAgentReadWindow(agentID, handle string, offset uint64, length uint32) []byte {
-	// Keep part size at agentReadAheadChunkBytes (256 KiB) so short-read
-	// Agents (Android) return contiguous windows instead of four sparse 1 MiB
-	// offsets that would only keep the first short part.
+	// Prefer a single request for the IRP length when it fits one chunk — this
+	// is the common path for small files and must not fan out 4 parallel RPCs.
 	const partSize = agentReadAheadChunkBytes
 	if length <= partSize {
 		return h.callAgentRead(agentID, handle, offset, length)
 	}
+
+	// Sequential fallback first when only slightly over one chunk, to avoid
+	// busy/timeout storms on constrained Agents.
+	if length <= partSize*2 {
+		first := h.callAgentRead(agentID, handle, offset, partSize)
+		if first == nil {
+			return nil
+		}
+		if uint32(len(first)) < partSize {
+			return first
+		}
+		restLen := length - partSize
+		rest := h.callAgentRead(agentID, handle, offset+uint64(partSize), restLen)
+		if rest == nil {
+			// Partial success is better than failing the whole IRP and dropping
+			// the drive; the next IRP will continue from the new offset.
+			return first
+		}
+		out := make([]byte, 0, len(first)+len(rest))
+		out = append(out, first...)
+		out = append(out, rest...)
+		return out
+	}
+
 	type part struct {
 		index int
 		data  []byte
@@ -2040,12 +2076,21 @@ func (h *RdpefsHandler) callAgentReadWindow(agentID, handle string, offset uint6
 		}(index, partOffset, partLength)
 	}
 	ordered := make([][]byte, parts)
+	failed := false
 	for range parts {
 		result := <-results
 		if result.data == nil {
-			return nil
+			failed = true
+			ordered[result.index] = nil
+			continue
 		}
 		ordered[result.index] = result.data
+	}
+	if failed {
+		// Parallel window failed (busy/timeout). Fall back to one sequential
+		// read of the original IRP length so a single flaky RPC cannot mark
+		// the whole \\tsclient drive disconnected.
+		return h.callAgentRead(agentID, handle, offset, minU32(length, partSize))
 	}
 	window := make([]byte, 0, length)
 	for _, data := range ordered {
@@ -2055,6 +2100,13 @@ func (h *RdpefsHandler) callAgentReadWindow(agentID, handle string, offset uint6
 		}
 	}
 	return window
+}
+
+func minU32(a, b uint32) uint32 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (h *RdpefsHandler) callAgentWrite(agentID, handle string, offset uint64, data []byte) int {

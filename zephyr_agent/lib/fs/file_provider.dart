@@ -119,15 +119,30 @@ class DesktopFileProvider extends ZephyrFileProvider {
     final root = _normalizedRoot;
     if (resolved == root) return;
     // package:path isWithin treats equal paths as false; drive-root siblings
-    // must still be rejected via relative() prefix check.
-    final rel = _path.relative(resolved, from: root);
-    final escaped = rel == '..' ||
-        rel.startsWith('..${_path.separator}') ||
-        rel.startsWith('../') ||
-        rel.startsWith('..\\') ||
-        _path.isAbsolute(rel);
-    if (escaped) {
-      throw FileProviderException('invalid_path', 'Path traversal blocked');
+    // must still be rejected via relative() prefix check. Never let relative()
+    // throw — that used to turn ordinary Windows paths into internal_error and
+    // drop the RDP drive (0x8007048F).
+    try {
+      final rel = _path.relative(resolved, from: root);
+      final escaped = rel == '..' ||
+          rel.startsWith('..${_path.separator}') ||
+          rel.startsWith('../') ||
+          rel.startsWith('..\\') ||
+          _path.isAbsolute(rel);
+      if (escaped) {
+        throw FileProviderException('invalid_path', 'Path traversal blocked');
+      }
+    } on FileProviderException {
+      rethrow;
+    } catch (_) {
+      final rootLower = root.toLowerCase();
+      final resolvedLower = resolved.toLowerCase();
+      final sep = _path.separator;
+      final ok = resolvedLower == rootLower ||
+          resolvedLower.startsWith(rootLower.endsWith(sep) ? rootLower : '$rootLower$sep');
+      if (!ok) {
+        throw FileProviderException('invalid_path', 'Path traversal blocked');
+      }
     }
   }
 
@@ -180,22 +195,6 @@ class DesktopFileProvider extends ZephyrFileProvider {
     );
   }
 
-  /// Open a file for random-access write WITHOUT truncating existing content.
-  ///
-  /// Dart's [io.FileMode.write] always truncates. RDP in-place opens must
-  /// preserve bytes. Use [io.FileMode.append] then seek(0): it is O_RDWR-like
-  /// without O_TRUNC on POSIX and does not rewrite multi-GB files on open.
-  /// Never fall back to "copy whole file then rewrite" — that stalls CREATE
-  /// and drops the RDP drive with 0x8007048F on large Agent copies.
-  Future<io.RandomAccessFile> _openWritablePreserve(io.File file) async {
-    if (!await file.exists()) {
-      await file.create(recursive: true);
-    }
-    final raf = await file.open(mode: io.FileMode.append);
-    await raf.setPosition(0);
-    return raf;
-  }
-
   @override
   Future<String> open(String path, String mode) async {
     _validatePath(path);
@@ -203,20 +202,47 @@ class DesktopFileProvider extends ZephyrFileProvider {
     final file = io.File(resolved);
 
     final wantsWrite = mode == 'write' || mode == 'writeTruncate';
-    late final io.RandomAccessFile raf;
-
+    // Dart FileMode.write always truncates. For mode=write (in-place) we must
+    // preserve existing bytes. Use the known-good preserve-copy path — do NOT
+    // use FileMode.append: on Windows FILE_APPEND_DATA ignores seek offsets and
+    // setPosition can fail, which made Explorer copies of even tiny files drop
+    // the RDP drive with 0x8007048F. Multi-GB pure reads should open as mode
+    // "read" from rdpefs (FILE_OPEN/FILE_OPEN_IF) so this path is avoided.
+    io.File? preservedCopy;
     if (wantsWrite) {
       await file.parent.create(recursive: true);
-      if (mode == 'writeTruncate') {
-        raf = await file.open(mode: io.FileMode.write);
+      if (await file.exists()) {
+        if (mode == 'write') {
+          preservedCopy =
+              await file.copy('$resolved.zephyr-agent-preserve-${_uuid.v4()}');
+        }
       } else {
-        raf = await _openWritablePreserve(file);
+        await file.create();
       }
-    } else {
-      if (!await file.exists()) {
-        throw FileProviderException('not_found', 'File not found: $path');
+    }
+
+    if (!await file.exists()) {
+      throw FileProviderException('not_found', 'File not found: $path');
+    }
+
+    final fileMode = wantsWrite ? io.FileMode.write : io.FileMode.read;
+    final raf = await file.open(mode: fileMode);
+    if (preservedCopy != null) {
+      io.RandomAccessFile? src;
+      try {
+        src = await preservedCopy.open(mode: io.FileMode.read);
+        while (true) {
+          final chunk = await src.read(1024 * 1024);
+          if (chunk.isEmpty) break;
+          await raf.writeFrom(chunk);
+        }
+        await raf.setPosition(0);
+      } finally {
+        await src?.close();
+        try {
+          await preservedCopy.delete();
+        } catch (_) {}
       }
-      raf = await file.open(mode: io.FileMode.read);
     }
 
     final handle = 'h_${_uuid.v4().substring(0, 8)}';
