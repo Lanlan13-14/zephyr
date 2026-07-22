@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-kb-shell1';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-kb-crop1';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -2982,40 +2982,70 @@ function applyParentIframeShellToKeyboard(activeFrame, keyboardTop, open) {
     const body = win?.querySelector?.('.terminal-window-body') || activeFrame?.parentElement;
     const clear = (el) => {
         if (!el?.style) return;
-        el.style.height = '';
-        el.style.maxHeight = '';
-        el.style.minHeight = '';
+        el.style.removeProperty('height');
+        el.style.removeProperty('max-height');
+        el.style.removeProperty('min-height');
+        el.style.removeProperty('flex');
+        el.style.removeProperty('overflow');
+        el.style.removeProperty('box-sizing');
+        try { delete el.dataset.sshKbCropped; } catch (_) {}
     };
     if (!open) {
         clear(activeFrame);
         clear(body);
         if (win?.style) {
-            win.style.height = '';
-            win.style.maxHeight = '';
+            win.style.removeProperty('height');
+            win.style.removeProperty('max-height');
         }
         return { shellH: 0, top: 0, kTop: 0 };
     }
-    const kTop = Math.round(Number(keyboardTop) || 0);
+ 
+Ops.file_edit    const kTop = Math.round(Number(keyboardTop) || 0);
     const target = body || activeFrame;
     if (!target) return { shellH: 0, top: 0, kTop };
+    // Use layout top before any previous crop so we measure against the true
+    // resting position. Clear first if we were already cropped.
+    if (target.dataset.sshKbCropped === '1') {
+        target.style.height = '';
+        target.style.maxHeight = '';
+    }
+    // Force reflow then measure.
+    void target.offsetHeight;
     const top = Math.round(target.getBoundingClientRect().top || 0);
-    const shellH = Math.max(160, kTop - top);
-    target.style.boxSizing = 'border-box';
-    target.style.height = `${shellH}px`;
-    target.style.maxHeight = `${shellH}px`;
-    target.style.minHeight = '0px';
+    // Visible shell ends exactly at keyboard top (1px clamp, never under).
+    const shellH = Math.max(120, kTop - top);
+    target.style.setProperty('box-sizing', 'border-box', 'important');
+    target.style.setProperty('height', `${shellH}px`, 'important');
+    target.style.setProperty('max-height', `${shellH}px`, 'important');
+    target.style.setProperty('min-height', '0px', 'important');
+    target.style.setProperty('flex', '0 0 auto', 'important');
+    target.style.setProperty('overflow', 'hidden', 'important');
+    target.dataset.sshKbCropped = '1';
     if (activeFrame && target !== activeFrame) {
-        activeFrame.style.boxSizing = 'border-box';
-        activeFrame.style.height = '100%';
-        activeFrame.style.maxHeight = '100%';
-        activeFrame.style.minHeight = '0';
-        activeFrame.style.width = '100%';
-        activeFrame.style.display = 'block';
+        activeFrame.style.setProperty('box-sizing', 'border-box', 'important');
+        activeFrame.style.setProperty('height', '100%', 'important');
+        activeFrame.style.setProperty('max-height', '100%', 'important');
+        activeFrame.style.setProperty('min-height', '0', 'important');
+        activeFrame.style.setProperty('width', '100%', 'important');
+        activeFrame.style.setProperty('display', 'block', 'important');
         activeFrame.style.border = '0';
     }
+    // Verify after paint — if still taller than keyboard, force again next frame.
+    requestAnimationFrame(() => {
+        try {
+            const r = target.getBoundingClientRect();
+            const bottom = Math.round(r.bottom || 0);
+            if (bottom - kTop > 2) {
+                const top2 = Math.round(r.top || 0);
+                const h2 = Math.max(120, kTop - top2);
+                target.style.setProperty('height', `${h2}px`, 'important');
+                target.style.setProperty('max-height', `${h2}px`, 'important');
+            }
+        } catch (_) {}
+    });
     return { shellH, top, kTop };
 }
-
+ 
 function postParentShellManaged(activeFrame, {
     open,
     keyboardTop = 0,

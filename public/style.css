@@ -1826,22 +1826,31 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     min-height: 0 !important;
     overflow: hidden;
 }
-.terminal-workspace.compact.ssh-kb-open .terminal-window,
-.terminal-workspace.compact.ssh-kb-open .terminal-window-body,
+/* Keyboard open: parent JS crops window-body height to keyboard top.
+   Do NOT force height:100% !important here — that buried tools under IME. */
+.terminal-workspace.compact.ssh-kb-open .terminal-window {
+    min-height: 0 !important;
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    height: auto !important;
+    max-height: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+.terminal-workspace.compact.ssh-kb-open .terminal-window-body {
+    min-height: 0 !important;
+    /* height/max-height owned by parent JS (applyParentIframeShellToKeyboard) */
+    flex: 0 0 auto !important;
+    overflow: hidden !important;
+}
 .terminal-workspace.compact.ssh-kb-open .terminal-frame {
     min-height: 0 !important;
     height: 100% !important;
     max-height: 100% !important;
+    flex: 1 1 auto !important;
 }
-.terminal-workspace.compact.ssh-kb-open .terminal-window {
-    grid-column: 1 !important;
-    grid-row: 1 !important;
-}
-.terminal-workspace.compact.ssh-kb-open .terminal-window-body {
-    flex: 1 1 auto;
-    overflow: hidden;
-}
-.terminal-workspace-grid.compact.layout-1,
+ 
+Ops.file_edit.terminal-workspace-grid.compact.layout-1,
 .terminal-workspace-grid.compact.layout-2,
 .terminal-workspace-grid.compact.layout-3 {
     grid-template-columns: 1fr;
@@ -11205,14 +11214,26 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         height: auto !important;
         max-height: 100% !important;
     }
-    body.app-body.terminal-mode:not(.terminal-custom-fullscreen-open) .terminal-workspace.compact .terminal-window-body,
-    body.app-body.terminal-mode:not(.terminal-custom-fullscreen-open) .terminal-workspace.compact .terminal-frame.active {
+    body.app-body.terminal-mode:not(.terminal-custom-fullscreen-open) .terminal-workspace.compact:not(.ssh-kb-open) .terminal-window-body,
+    body.app-body.terminal-mode:not(.terminal-custom-fullscreen-open) .terminal-workspace.compact:not(.ssh-kb-open) .terminal-frame.active {
+        min-height: 0 !important;
+        height: 100% !important;
+        max-height: 100% !important;
+    }
+    /* When keyboard open, body height is set by parent JS — only unlock min-height. */
+    body.app-body.terminal-mode:not(.terminal-custom-fullscreen-open) .terminal-workspace.compact.ssh-kb-open .terminal-window-body {
+        min-height: 0 !important;
+        height: auto !important;
+        max-height: none !important;
+        flex: 0 0 auto !important;
+    }
+    body.app-body.terminal-mode:not(.terminal-custom-fullscreen-open) .terminal-workspace.compact.ssh-kb-open .terminal-frame.active {
         min-height: 0 !important;
         height: 100% !important;
         max-height: 100% !important;
     }
 }
-
+ 
 @media (max-width: 700px) and (hover: none) and (pointer: coarse) {
     html.mobile-stable-input,
     body.mobile-stable-input,

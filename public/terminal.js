@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260721-kb-shell1';
+} from './ssh-keyboard/index.js?v=20260721-kb-crop1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -16,8 +16,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-kb-shell1';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-shell1';
+} from './terminal-scroll-policy.js?v=20260721-kb-crop1';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-crop1';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -11900,7 +11900,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     // Register the Terminal ctor before WTerm.init so XtermBridge.load works
     // without a bare npm resolver in the browser.
     try {
-        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-shell1');
+        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-crop1');
     } catch (err) {
         console.error('[terminal] xterm-headless register failed', err);
         throw err;
@@ -11908,7 +11908,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API. DOM/input/viewport
         // stay wterm; core is XtermBridge over vendored xterm (see /xterm).
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-shell1');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-crop1');
         WTermClass = module.WTerm;
     } catch {
         try {
