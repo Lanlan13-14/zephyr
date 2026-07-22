@@ -1,5 +1,5 @@
 // Transpile the vendored @wterm TypeScript sources to browser-ready ESM JS.
-// Uses esbuild-wasm (works under PRoot/aarch64 when native esbuild is broken).
+// Prefer native esbuild; fall back to esbuild-wasm.
 //
 // Usage: node scripts/transpile-wterm.mjs core|dom
 import {
@@ -18,8 +18,6 @@ import { tmpdir } from "os";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
-const esbuild = require("esbuild-wasm");
-
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 const WTERM = join(ROOT, "wterm");
@@ -33,28 +31,38 @@ if (which !== "core" && which !== "dom") {
 
 const TMP = mkdtempSync(join(tmpdir(), "wterm-transpile-"));
 
+let esbuild;
 let esbuildReady;
-async function ensureEsbuild() {
-  if (!esbuildReady) {
-    esbuildReady = esbuild.initialize({
-      wasmURL: undefined,
-      worker: false,
-    }).catch(async () => {
-      // Some versions need wasmModule path
-      const wasmPath = require.resolve("esbuild-wasm/esbuild.wasm");
-      const wasm = readFileSync(wasmPath);
-      return esbuild.initialize({
-        wasmModule: await WebAssembly.compile(wasm),
-        worker: false,
+
+async function loadEsbuild() {
+  if (esbuild) return esbuild;
+  try {
+    esbuild = require("esbuild");
+    await esbuild.transform("export {}", { loader: "js" });
+    console.log("  (native esbuild)");
+    esbuildReady = Promise.resolve();
+    return esbuild;
+  } catch {
+    esbuild = require("esbuild-wasm");
+    console.log("  (esbuild-wasm)");
+    esbuildReady = esbuild
+      .initialize({ worker: false })
+      .catch(async () => {
+        const wasmPath = require.resolve("esbuild-wasm/esbuild.wasm");
+        const wasm = readFileSync(wasmPath);
+        return esbuild.initialize({
+          wasmModule: await WebAssembly.compile(wasm),
+          worker: false,
+        });
       });
-    });
+    return esbuild;
   }
-  return esbuildReady;
 }
 
 async function runEsbuild(infile, outfile) {
-  await ensureEsbuild();
-  const result = await esbuild.build({
+  await loadEsbuild();
+  if (esbuildReady) await esbuildReady;
+  return esbuild.build({
     entryPoints: [infile],
     outfile,
     format: "esm",
@@ -62,7 +70,6 @@ async function runEsbuild(infile, outfile) {
     write: true,
     logLevel: "silent",
   });
-  return result;
 }
 
 function preprocess(infile, isDom) {

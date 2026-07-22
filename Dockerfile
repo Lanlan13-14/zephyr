@@ -8,14 +8,19 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
 
-# 复制 @wterm 前端依赖
-RUN mkdir -p public/vendor/@wterm/dom && \
-    cp -r node_modules/@wterm/dom/dist public/vendor/@wterm/dom/dist && \
-    cp node_modules/@wterm/dom/src/terminal.css public/vendor/@wterm/dom/terminal.css && \
-    mkdir -p public/vendor/@wterm/core && \
-    cp -r node_modules/@wterm/core/dist public/vendor/@wterm/core/dist
-
 COPY . .
+
+# Terminal stack is vendored in-repo under public/vendor/wterm-fork
+# (wterm DOM + XtermBridge + @xterm/headless browser bundle).
+# The old step copied node_modules/@wterm/* which was removed from package.json.
+RUN test -f public/vendor/wterm-fork/wterm.js && \
+    test -f public/vendor/wterm-fork/core/xterm-headless.js && \
+    test -f public/vendor/wterm-fork/core/xterm-bridge.js && \
+    test -f public/vendor/wterm-fork/core/xterm-headless-register.js && \
+    echo "terminal vendor stack present"
+
+# Rebuild browser terminal vendor from TS sources (native esbuild on CI).
+RUN npm run build:terminal
 
 # 构建编辑器 bundle；失败必须阻断镜像，禁止继续打包陈旧产物
 RUN npm run build:editor
@@ -124,6 +129,8 @@ RUN echo "=== runtime diagnostics ===" && \
     test -f /app/public/vendor/rdp-wasm/main.wasm && \
     test -f /app/public/vendor/rdp-wasm/wasm_exec.mjs && \
     test ! -f /app/public/vendor/rdp-wasm/wasm_exec.js && \
+    test -f /app/public/vendor/wterm-fork/wterm.js && \
+    test -f /app/public/vendor/wterm-fork/core/xterm-headless.js && \
     node --input-type=module -e "import('./public/vendor/rdp-wasm/wasm_exec.mjs').then(m => { if (typeof m.Go !== 'function') throw new Error('ESM Go export missing'); if (typeof globalThis.Go !== 'undefined') throw new Error('ESM runtime leaked globalThis.Go') })" && \
     ! grep -R -E "globalThis\\.Go|did not register globalThis\\.Go|wasm_exec\\.js" /app/public/rdp-*.js && \
     wc -c /app/public/vendor/rdp-wasm/main.wasm && \

@@ -2,8 +2,8 @@
 /**
  * Bundle @xterm/headless for the browser into public/vendor/wterm-fork/core/.
  *
- * Source of truth for forking lives at repo-root /xterm (full xterm.js tree).
- * Runtime uses published @xterm/headless (same MIT code, prebuilt).
+ * Prefers native `esbuild` (CI / normal hosts). Falls back to `esbuild-wasm`
+ * when the native binary is missing or broken (e.g. aarch64 PRoot).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from "fs";
 import { join, dirname, resolve } from "path";
@@ -11,8 +11,6 @@ import { fileURLToPath } from "url";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
-const esbuild = require("esbuild-wasm");
-
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 const OUT_DIR = join(ROOT, "public", "vendor", "wterm-fork", "core");
@@ -40,7 +38,29 @@ function resolveHeadlessEntry() {
   process.exit(1);
 }
 
-async function initEsbuild() {
+async function loadEsbuild() {
+  // Prefer native esbuild (works on GHA linux x64).
+  try {
+    const esbuild = require("esbuild");
+    // Touch the binary early so a broken optional platform package fails over.
+    await esbuild.transform("export {}", { loader: "js" });
+    console.log("==> using native esbuild");
+    return { esbuild, needsInit: false };
+  } catch (err) {
+    console.warn("==> native esbuild unavailable:", err.message);
+  }
+  try {
+    const esbuild = require("esbuild-wasm");
+    console.log("==> using esbuild-wasm");
+    return { esbuild, needsInit: true };
+  } catch (err) {
+    console.error("Neither esbuild nor esbuild-wasm is available:", err.message);
+    process.exit(1);
+  }
+}
+
+const { esbuild, needsInit } = await loadEsbuild();
+if (needsInit) {
   try {
     await esbuild.initialize({ worker: false });
   } catch {
@@ -58,7 +78,6 @@ const entry = resolveHeadlessEntry();
 const outfile = join(OUT_DIR, "xterm-headless.js");
 
 console.log("==> bundling xterm headless from", entry);
-await initEsbuild();
 await esbuild.build({
   entryPoints: [entry],
   bundle: true,
