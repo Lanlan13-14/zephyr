@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260722-kb-cjk-cand1';
+} from './ssh-keyboard/index.js?v=20260722-kb-cjk-send1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -8783,23 +8783,21 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
         modifierState.ctrl = false;
         const ctrlBtn = document.querySelector('.aux-key[data-key="ctrl"], .modifier[data-key="ctrl"]');
         if (ctrlBtn) ctrlBtn.classList.remove('aux-active', 'active');
-        // Controls always immediate.
         return sendMobileStableControl(payload, `${source}:ctrl`);
     }
 
     const now = performance.now();
-    // Dedup by payload content only — source labels differ across proxy /
-    // compositionend / beforeinput / input paths and must not re-open the window.
-    // Multi-char commits (compositionend) need a longer window: Android often
-    // re-fires the same word via beforeinput/input immediately after compositionend
-    // → "kimikimi" double. Use 320ms for multi-char, 100ms for single char.
+    const isComposeCommit = forceImmediate || /composition|compose-commit/i.test(source);
+    // Dedup re-deliveries of the *same already-sent* payload (kimikimi).
+    // forceImmediate / composition commits skip the "last composed" pre-check
+    // because commitComposedImeText arms suppress only AFTER a successful send.
     const duplicateWindow = paste ? 320 : (payload.length > 1 ? 320 : 100);
     if (mobileImeLastSent.text === payload && now - mobileImeLastSent.at < duplicateWindow) {
         return false;
     }
-    // Also drop if this is a re-delivery of the last composed commit.
     if (
-        mobileImeLastComposedText
+        !isComposeCommit
+        && mobileImeLastComposedText
         && payload === mobileImeLastComposedText
         && now < mobileImeComposeSuppressUntil
     ) {
@@ -8807,17 +8805,24 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
     }
     mobileImeLastSent = { text: payload, source, at: now };
     mobileStableLastActualInputAt = Date.now();
-    mobileStableTypingUntil = Date.now() + (paste ? 260 : 180);
+    mobileStableTypingUntil = Date.now() + (paste || isComposeCommit ? 260 : 180);
     mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 180);
     cancelTerminalBottomFollow(`${source}:typing`);
     cancelMobileStableScrollRestore(`${source}:typing`);
     clearMobileTerminalHistoryLock(`${source}:input`);
-    sendData(paste ? prepareTerminalPastePayload(payload) : payload, { source, forceFollow: false, applyModifiers: false });
-    // Paste may need one pin; printable mid-line never pins on mobile (draft path).
+    // Composition commit and paste: stick bottom so the user sees the glyphs.
+    sendData(paste ? prepareTerminalPastePayload(payload) : payload, {
+        source,
+        forceFollow: !!(paste || isComposeCommit),
+        applyModifiers: false,
+    });
     const surface = ensureTerminalSurface();
-    if (paste) {
-        if (surface && isMobileStableInputMode()) surface.onUserInputCommitted?.(payload, source, { paste: true });
-        else applyPolicyScrollAfterPaste(`${source}:paste`);
+    if (paste || isComposeCommit) {
+        if (surface && isMobileStableInputMode()) {
+            surface.onUserInputCommitted?.(payload, source, { paste: !!paste });
+        } else if (paste) {
+            applyPolicyScrollAfterPaste(`${source}:paste`);
+        }
     }
     return true;
 }
@@ -8839,9 +8844,6 @@ function clearStuckImeComposition(reason = 'compose-clear', { commit = false } =
     mobileImeComposingAt = 0;
     try { ensureSshKeyboard()?.handleCompositionEnd?.(); } catch (_) {}
     try { ensureTerminalSurface()?.onCompositionEnd?.(); } catch (_) {}
-    try { mobileImeProxy?.classList?.remove?.('composing'); } catch (_) {}
-    // Default: discard leftover (pinyin / kana reading is NOT the committed character).
-    // Only commit when compositionend provided final text or caller opts in.
     if (mobileImeProxy) mobileImeProxy.value = '';
     if (commit && leftover) {
         mobileImeLastComposedText = leftover;
@@ -8857,20 +8859,15 @@ function clearStuckImeComposition(reason = 'compose-clear', { commit = false } =
 
 function armImeComposeWatchdog() {
     if (mobileImeComposeWatchdog) window.clearTimeout(mobileImeComposeWatchdog);
-    // CJK composition can idle a long time while user picks 选词 candidates.
-    // NEVER force-end while proxy is focused — that kills the candidate strip.
-    // Only clean a truly abandoned empty composition after blur.
+    // While focused, keep waiting — user may still be on the OS 选词 strip.
     mobileImeComposeWatchdog = window.setTimeout(() => {
         mobileImeComposeWatchdog = 0;
         if (!mobileImeComposing) return;
         try {
             if (document.activeElement === mobileImeProxy) {
-                // Still focused — user may still be picking candidates. Re-arm.
                 armImeComposeWatchdog();
                 return;
             }
-            // Blurred with empty value: drop stuck flag. Non-empty: leave alone
-            // (browser may still deliver compositionend late).
             if (!(mobileImeProxy?.value || '').length) {
                 clearStuckImeComposition('compose-watchdog-empty', { commit: false });
             }
@@ -8879,27 +8876,40 @@ function armImeComposeWatchdog() {
 }
 
 function commitComposedImeText(text, source = 'mobile-ime-composition') {
-    const payload = String(text || '');
+    // Prefer explicit compositionend data; fall back to proxy buffer if IME
+    // left the final glyphs there with empty e.data (common on some Android IMEs).
+    let payload = String(text || '');
+    if (!payload && mobileImeProxy?.value) {
+        payload = String(mobileImeProxy.value || '');
+    }
     mobileImeComposing = false;
     mobileImeComposingAt = 0;
     if (mobileImeComposeWatchdog) {
         window.clearTimeout(mobileImeComposeWatchdog);
         mobileImeComposeWatchdog = 0;
     }
-    try { mobileImeProxy?.classList?.remove?.('composing'); } catch (_) {}
     if (mobileImeProxy) mobileImeProxy.value = '';
-    if (!payload) return false;
+    if (!payload) {
+        logTerminalLayoutDiagnostics?.('ime-compose-empty', { source });
+        return false;
+    }
+    // CRITICAL: send FIRST, then arm suppress. Setting suppress before send
+    // made sendMobileStableImeText drop the first commit → 选了「你好」终端空白.
+    const ok = sendMobileStableImeText(payload, source, { forceImmediate: true });
     mobileImeLastComposedText = payload;
     mobileImeComposeSuppressUntil = performance.now() + 400;
-    return sendMobileStableImeText(payload, source);
+    logTerminalLayoutDiagnostics?.('ime-compose-commit', {
+        source,
+        len: payload.length,
+        ok: !!ok,
+        preview: payload.slice(0, 16),
+    });
+    return ok;
 }
 
 function isImeCompositionActive(e) {
     if (mobileImeComposing) return true;
     if (e && (e.isComposing || e.keyCode === 229 || e.key === 'Process')) return true;
-    try {
-        if (mobileImeProxy?.classList?.contains?.('composing')) return true;
-    } catch (_) {}
     return false;
 }
 
@@ -8987,14 +8997,20 @@ function scheduleMobileStableKeyboardGridRepair(reason = 'mobile-stable-grid-rep
     logTerminalLayoutDiagnostics?.('mobile-stable-grid:repair-disabled', { reason });
 }
  
-/** rAF-coalesced: keep #mobileTerminalImeProxy over the live cursor cell. */
+/**
+ * Mobile IME host: a normal browser textarea (invisible).
+ * No custom virtual compose UI — system IME owns 拼音/选词 completely.
+ * We only collect final text and send it to the PTY so the terminal shows it.
+ */
 let imeProxyAnchorRaf = 0;
-/** Frozen geometry while CJK/JP IME composition is active (moving the host kills candidates). */
-let imeProxyComposeFreeze = null;
+let imeProxyComposeOrigin = null;
+
 function scheduleImeProxyCursorAnchor(reason = 'cursor-anchor') {
     if (!isMobileStableInputMode()) return;
-    // During composition never thrash geometry — Android IME candidate bar detaches.
-    if (mobileImeComposing && reason !== 'compositionstart' && reason !== 'force') return;
+    // Keep host geometry stable during composition (moving it drops OS candidates).
+    if (mobileImeComposing && reason !== 'compositionstart' && reason !== 'compositionend' && reason !== 'force') {
+        return;
+    }
     if (imeProxyAnchorRaf) return;
     imeProxyAnchorRaf = requestAnimationFrame(() => {
         imeProxyAnchorRaf = 0;
@@ -9002,64 +9018,38 @@ function scheduleImeProxyCursorAnchor(reason = 'cursor-anchor') {
     });
 }
 
-/**
- * Position the IME proxy as a real composition host (not a 2×2 ghost).
- * Android/iOS CJK candidate UI requires a focused element with non-trivial
- * size and stable geometry. Resizing/moving mid-composition kills 选词.
- */
 function anchorImeProxyToCursor(reason = 'cursor-anchor') {
     if (!mobileImeProxy || !isMobileStableInputMode()) return;
-    const metrics = getCursorContentMetrics();
     const scrollEl = getTerminalScrollElement();
-    if (!metrics || !scrollEl) return;
-    const hostRect = scrollEl.getBoundingClientRect?.();
-    if (!hostRect?.height) return;
-    const { lineHeight, charWidth } = getTerminalCharMetrics();
-    const topInViewport = Number.isFinite(metrics.cursorTopInViewport)
-        ? metrics.cursorTopInViewport
-        : 0;
+    const hostRect = scrollEl?.getBoundingClientRect?.()
+        || terminalContainer?.getBoundingClientRect?.()
+        || { top: 0, left: 0, width: window.innerWidth || 320, height: 200 };
+    const metrics = getCursorContentMetrics?.();
+    const { lineHeight, charWidth } = getTerminalCharMetrics?.() || { lineHeight: 20, charWidth: 10 };
+    const topInViewport = Number.isFinite(metrics?.cursorTopInViewport) ? metrics.cursorTopInViewport : Math.max(0, (hostRect.height || 0) - 28);
     let leftInViewport = 0;
     try {
         const cursor = term?.bridge?.getCursor?.() || term?.getCursor?.();
-        if (cursor && Number.isFinite(cursor.col)) {
-            leftInViewport = cursor.col * charWidth;
-        } else {
-            const overlay = wtermWrapper?.querySelector?.('.term-cursor-overlay');
-            const oRect = overlay?.getBoundingClientRect?.();
-            if (oRect?.width) leftInViewport = oRect.left - hostRect.left;
-        }
+        if (cursor && Number.isFinite(cursor.col)) leftInViewport = cursor.col * (charWidth || 10);
     } catch (_) {}
-    let cssTop = Math.round(hostRect.top + topInViewport);
-    let cssLeft = Math.round(hostRect.left + Math.max(0, leftInViewport));
-    const composing = !!mobileImeComposing || mobileImeProxy.classList.contains('composing');
-    const focused = document.activeElement === mobileImeProxy
-        || !!sshKb?.desiredOpen?.()
-        || !!sshSoftKeyboard?.desiredOpen?.();
 
-    // Freeze top/left at compositionstart so candidate UI stays attached.
-    if (composing) {
-        if (!imeProxyComposeFreeze || reason === 'compositionstart' || reason === 'force') {
-            imeProxyComposeFreeze = { top: cssTop, left: cssLeft };
+    let cssTop = Math.round((hostRect.top || 0) + topInViewport);
+    let cssLeft = Math.round((hostRect.left || 0) + Math.max(0, leftInViewport));
+    if (mobileImeComposing) {
+        if (!imeProxyComposeOrigin || reason === 'compositionstart') {
+            imeProxyComposeOrigin = { top: cssTop, left: cssLeft };
         } else {
-            cssTop = imeProxyComposeFreeze.top;
-            cssLeft = imeProxyComposeFreeze.left;
+            cssTop = imeProxyComposeOrigin.top;
+            cssLeft = imeProxyComposeOrigin.left;
         }
     } else {
-        imeProxyComposeFreeze = null;
+        imeProxyComposeOrigin = null;
     }
 
-    // Android IMEs need a real host: ≥1 line tall, several chars wide, font ≥16px.
-    // Tiny 2×2 ghosts never get a candidate strip (选词栏).
-    const lh = Math.max(20, Math.round(lineHeight || metrics.lineHeight || 20));
-    const cw = Math.max(10, Math.round(charWidth || 10));
-    const composeLen = composing
-        ? Math.max(4, Array.from(mobileImeProxy.value || '').length + 2)
-        : 0;
-    // Focused idle: still large enough for IME to start composition on first pinyin key.
-    const w = composing
-        ? Math.min(Math.round(hostRect.width || 280), Math.max(cw * 8, cw * composeLen + 16, 120))
-        : (focused ? Math.max(cw * 6, 72) : Math.max(cw, 16));
-    const h = Math.max(lh, composing || focused ? 22 : 16);
+    // Invisible but real-sized host (browser search field style for the OS IME).
+    // Users never see our box; they only see the system keyboard + 选词.
+    const w = Math.max(160, Math.min(280, Math.round((hostRect.width || 280) * 0.55)));
+    const h = Math.max(24, Math.round(lineHeight || 24));
     const s = mobileImeProxy.style;
     s.position = 'fixed';
     s.top = `${cssTop}px`;
@@ -9070,39 +9060,31 @@ function anchorImeProxyToCursor(reason = 'cursor-anchor') {
     s.height = `${h}px`;
     s.minWidth = `${w}px`;
     s.minHeight = `${h}px`;
-    s.maxWidth = `${Math.max(w, Math.round((hostRect.width || 280) * 0.9))}px`;
+    s.maxWidth = `${w}px`;
     s.maxHeight = `${h}px`;
-    // ≥16px avoids iOS zoom and is the floor many Android IMEs need for candidates.
     s.fontSize = '16px';
     s.lineHeight = `${h}px`;
-    s.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    s.opacity = '0';
+    s.color = 'transparent';
+    s.caretColor = 'transparent';
+    s.background = 'transparent';
+    s.border = '0';
     s.padding = '0';
     s.margin = '0';
-    s.border = '0';
     s.outline = 'none';
     s.resize = 'none';
-    s.overflow = composing ? 'visible' : 'hidden';
+    s.overflow = 'hidden';
     s.pointerEvents = 'none';
+    s.zIndex = '5';
     s.webkitUserSelect = 'text';
     s.userSelect = 'text';
-    if (composing) {
-        // CSS .composing owns color/opacity; keep host measurable for IME.
-        s.opacity = '1';
-        s.zIndex = '50';
-        s.background = 'transparent';
-    } else {
-        // Still non-zero size when focused so first pinyin key starts real composition.
-        s.opacity = '0.01';
-        s.color = 'transparent';
-        s.caretColor = 'transparent';
-        s.background = 'transparent';
-        s.zIndex = focused ? '20' : '1';
-    }
     mobileImeProxy.dataset.anchorReason = String(reason || '');
 }
 
 function setupMobileStableImeProxy() {
     if (!isMobileStableInputMode() || mobileImeProxy) return;
+    // Plain browser textarea — same role as the search box in Chrome address bar.
+    // No custom compose UI. System IME paints 拼音/选词; we only receive final text.
     const proxy = document.createElement('textarea');
     proxy.id = 'mobileTerminalImeProxy';
     proxy.className = 'mobile-terminal-ime-proxy';
@@ -9110,94 +9092,77 @@ function setupMobileStableImeProxy() {
     proxy.autocomplete = 'off';
     proxy.autocorrect = 'off';
     proxy.autocapitalize = 'off';
-    // text + enter: allow full CJK/JP IMEs (search mode often disables candidates).
     proxy.inputMode = 'text';
     proxy.enterKeyHint = 'enter';
     proxy.spellcheck = false;
-    // Do not force lang — let OS IME pick zh/ja. Empty lang is safer than en-US.
-    try { proxy.removeAttribute('lang'); } catch (_) {}
-    proxy.setAttribute('aria-label', '移动端终端输入代理');
-    // Ensure IME can treat this as a real text field (not a password-ish ghost).
-    proxy.setAttribute('inputmode', 'text');
-    proxy.setAttribute('enterkeyhint', 'enter');
-    proxy.setAttribute('autocapitalize', 'off');
-    proxy.setAttribute('autocomplete', 'off');
-    proxy.setAttribute('autocorrect', 'off');
-    proxy.setAttribute('spellcheck', 'false');
-    // Writable — readonly textareas break compositionstart on some Android WebViews.
     proxy.readOnly = false;
     proxy.disabled = false;
+    try { proxy.removeAttribute('lang'); } catch (_) {}
+    proxy.setAttribute('aria-label', '终端输入');
+    proxy.setAttribute('inputmode', 'text');
+    proxy.setAttribute('enterkeyhint', 'enter');
+
     proxy.addEventListener('focus', () => {
         mobileTerminalSelectionMode = false;
         document.documentElement.classList.remove('terminal-selection-mode');
         setWTermImeActive(true, 'ime-proxy-focus');
-        // Single authority: facade decides if unsolicited focus opens intent.
         ensureSshKeyboard()?.handleImeFocus?.('ime-proxy-focus');
-        if (sshKb?.desiredOpen?.() || sshSoftKeyboard?.desiredOpen?.() || isSshKbDesiredOpen()) {
-            markKeyboardFocusActive();
-            sshSoftKeyboard?.onProxyFocus?.('ime-proxy-focus');
-        } else {
-            markKeyboardFocusActive();
-            sshSoftKeyboard?.onProxyFocus?.('ime-proxy-focus-unowned');
-        }
+        markKeyboardFocusActive();
+        try {
+            if (sshKb?.desiredOpen?.() || sshSoftKeyboard?.desiredOpen?.() || isSshKbDesiredOpen()) {
+                sshSoftKeyboard?.onProxyFocus?.('ime-proxy-focus');
+            } else {
+                sshSoftKeyboard?.onProxyFocus?.('ime-proxy-focus-unowned');
+            }
+        } catch (_) {}
         updateViewportInsets();
-        updateViewportInsets();
+        scheduleImeProxyCursorAnchor('focus');
     });
     proxy.addEventListener('blur', () => {
         ensureSshKeyboard()?.handleImeBlur?.('ime-proxy-blur');
-        // Keep solid cursor briefly while system IME animates closed; clear if
-        // focus did not return to proxy.
         window.setTimeout(() => {
             if (document.activeElement !== mobileImeProxy) setWTermImeActive(false, 'ime-proxy-blur');
         }, 200);
         markKeyboardFocusInactive();
-        sshSoftKeyboard?.onProxyBlur?.('ime-proxy-blur');
-        // F6: single viewport sync on blur - no multi-phase polling.
+        try { sshSoftKeyboard?.onProxyBlur?.('ime-proxy-blur'); } catch (_) {}
         updateViewportInsets();
     });
+
+    // ---- System IME owns the whole composition (pinyin → candidates → 汉字) ----
     proxy.addEventListener('compositionstart', () => {
         mobileImeComposing = true;
         mobileImeComposingAt = Date.now();
-        proxy.classList.add('composing');
         ensureSshKeyboard()?.handleCompositionStart?.();
-        // Freeze buffer scroll during IME composition; never write xterm mid-compose.
         cancelTerminalBottomFollow('compositionstart');
         cancelMobileStableScrollRestore('compositionstart');
         mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 8000);
         ensureTerminalSurface()?.onCompositionStart?.();
         armImeComposeWatchdog();
-        // Freeze host geometry ONCE so Android/iOS 选词栏 stays attached.
         anchorImeProxyToCursor('compositionstart');
     });
-    proxy.addEventListener('compositionupdate', (e) => {
-        // DO NOT write proxy.value here — browser owns the composition buffer.
-        // Overwriting mid-compose kills candidate strip on many Android IMEs.
+    proxy.addEventListener('compositionupdate', () => {
         mobileImeComposing = true;
         mobileImeComposingAt = Date.now();
-        proxy.classList.add('composing');
-        void e;
         armImeComposeWatchdog();
-        // Geometry stays frozen (scheduleImeProxyCursorAnchor no-ops while composing).
+        // No value write, no re-anchor — browser + OS IME own the buffer/UI.
     });
     proxy.addEventListener('compositionend', (e) => {
         ensureSshKeyboard()?.handleCompositionEnd?.();
-        imeProxyComposeFreeze = null;
-        mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 120);
         ensureTerminalSurface()?.onCompositionEnd?.();
-        // ONLY commit path for CJK/kana: e.data is the final chosen character(s).
-        // Empty e.data means cancel — do not fall back to proxy.value (pinyin/romaji).
+        mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 120);
+        // Final chosen text only (e.g. "你好"). Empty = cancel.
         const text = (e && e.data != null) ? String(e.data) : '';
         commitComposedImeText(text, 'mobile-ime-composition');
-        // Re-anchor small host after candidates dismiss.
+        imeProxyComposeOrigin = null;
         scheduleImeProxyCursorAnchor('compositionend');
     });
+
+    // Controls only when NOT composing. During 选词, OS owns Space/Enter/Backspace.
     proxy.addEventListener('keydown', (e) => {
         if (isModifierOnlyKeyEvent(e)) return;
-        // CJK/JP IME: while composing, browser must own Enter/Space/Backspace/arrows
-        // for candidate confirm / cancel. Intercepting them kills Chinese/Japanese.
         if (isImeCompositionActive(e)) {
             armImeComposeWatchdog();
-            return;
+            return; // system IME handles candidate confirm
         }
         const seqMap = {
             Enter: '\r',
@@ -9216,63 +9181,76 @@ function setupMobileStableImeProxy() {
         };
         const seq = seqMap[e.key];
         if (!seq) return;
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const leftover = String(proxy.value || '');
+            if (leftover
+                && !(mobileImeLastComposedText
+                    && leftover === mobileImeLastComposedText
+                    && performance.now() < mobileImeComposeSuppressUntil)) {
+                sendMobileStableImeText(leftover, 'mobile-ime-enter-flush');
+            }
+            proxy.value = '';
+            sendMobileStableControl('\r', 'mobile-ime-key:Enter');
+            return;
+        }
+        if (e.key === 'Backspace' && proxy.value) {
+            // Let browser edit local buffer; plain English buffer before flush.
+            return;
+        }
         e.preventDefault();
         sendMobileStableControl(seq, `mobile-ime-key:${e.key}`);
         proxy.value = '';
     });
+
+    // Do NOT preventDefault insertText — that is what lets the OS IME run 选词.
     proxy.addEventListener('beforeinput', (e) => {
         const type = e.inputType || '';
-        // During REAL composition, never preventDefault / never send.
-        // insertCompositionText and insertText while isComposing are IME-owned.
-        if (isImeCompositionActive(e)
+        if (
+            type === 'insertText'
             || type === 'insertCompositionText'
-            || type === 'deleteCompositionText') {
-            armImeComposeWatchdog();
-            return;
+            || type === 'deleteCompositionText'
+            || type === 'insertFromComposition'
+            || type === 'deleteByComposition'
+            || isImeCompositionActive(e)
+        ) {
+            if (isImeCompositionActive(e) || /Composition/i.test(type)) armImeComposeWatchdog();
+            return; // browser keeps the text
         }
-        if (type === 'insertText') {
-            const text = e.data || '';
-            if (text) {
-                e.preventDefault();
-                // Drop re-delivery of the just-committed composition (kimikimi).
-                if (
-                    mobileImeLastComposedText
-                    && text === mobileImeLastComposedText
-                    && performance.now() < mobileImeComposeSuppressUntil
-                ) {
-                    proxy.value = '';
-                    return;
-                }
-                sendMobileStableImeText(text, 'mobile-ime-beforeinput');
-                proxy.value = '';
-            }
-        } else if (type === 'insertFromPaste') {
+        if (type === 'insertFromPaste') {
             const text = e.dataTransfer?.getData?.('text/plain') || e.data || '';
             if (text) {
                 e.preventDefault();
                 sendMobileStableImeText(text, 'mobile-ime-paste', { paste: true });
                 proxy.value = '';
             }
-        } else if (type === 'deleteContentBackward') {
+            return;
+        }
+        if (type === 'deleteContentBackward') {
+            if (proxy.value) return; // browser deletes local buffer
             e.preventDefault();
             sendMobileStableControl('\x7f', 'mobile-ime-backspace');
-            proxy.value = '';
-        } else if (type === 'insertLineBreak' || type === 'insertParagraph') {
+            return;
+        }
+        if (type === 'insertLineBreak' || type === 'insertParagraph') {
             e.preventDefault();
+            const leftover = String(proxy.value || '');
+            if (leftover) {
+                sendMobileStableImeText(leftover, 'mobile-ime-enter-flush');
+                proxy.value = '';
+            }
             sendMobileStableControl('\r', 'mobile-ime-enter');
-            proxy.value = '';
         }
     });
+
+    // After OS finishes (or plain ASCII typing): push to PTY, terminal echo shows it.
     proxy.addEventListener('input', () => {
-        if (isImeCompositionActive() || proxy.classList.contains('composing')) {
-            // Real composition: browser owns value.
+        if (isImeCompositionActive()) {
             armImeComposeWatchdog();
-            scheduleImeProxyCursorAnchor('input-composing');
             return;
         }
         const text = proxy.value || '';
         if (!text) return;
-        // Suppress trailing input event after compositionend (same word re-fire).
         if (
             mobileImeLastComposedText
             && text === mobileImeLastComposedText
@@ -9281,17 +9259,18 @@ function setupMobileStableImeProxy() {
             proxy.value = '';
             return;
         }
-        sendMobileStableImeText(text, 'mobile-ime-input-fallback');
+        sendMobileStableImeText(text, 'mobile-ime-input');
         proxy.value = '';
     });
- 
-proxy.addEventListener('paste', (e) => {
+
+    proxy.addEventListener('paste', (e) => {
         const text = e.clipboardData?.getData?.('text/plain') || '';
         if (!text) return;
         e.preventDefault();
         sendMobileStableImeText(text, 'mobile-ime-paste-event', { paste: true });
         proxy.value = '';
     });
+
     document.body.appendChild(proxy);
     mobileImeProxy = proxy;
     const textarea = term?.input?.textarea;

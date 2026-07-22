@@ -5,39 +5,39 @@ import fs from 'node:fs';
 const terminalJs = fs.readFileSync(new URL('../public/terminal.js', import.meta.url), 'utf8');
 const styleCss = fs.readFileSync(new URL('../public/style.css', import.meta.url), 'utf8');
 
-test('composition active helper exists', () => {
-  assert.match(terminalJs, /function isImeCompositionActive/);
-  assert.match(terminalJs, /keyCode === 229|key === 'Process'/);
+test('IME host is plain invisible textarea (no custom compose UI)', () => {
+  assert.match(terminalJs, /No custom compose UI|plain browser textarea|system IME owns/i);
+  assert.match(styleCss, /opacity:\s*0/);
+  // No visible custom compose paint
+  assert.equal(styleCss.includes('.mobile-terminal-ime-proxy.composing'), false);
 });
 
-test('keydown does not intercept controls while composing', () => {
-  assert.match(terminalJs, /if \(isImeCompositionActive\(e\)\) \{\s*armImeComposeWatchdog\(\);\s*return;/);
+test('keydown leaves composition keys to OS IME', () => {
+  assert.match(terminalJs, /if \(isImeCompositionActive\(e\)\) \{[\s\S]*?return; \/\/ system IME handles candidate confirm/);
 });
 
-test('beforeinput lets composition-owned types through', () => {
-  assert.match(terminalJs, /insertCompositionText/);
-  assert.match(terminalJs, /deleteCompositionText/);
+test('beforeinput never steals insertText (拼音 stays in field)', () => {
+  assert.match(terminalJs, /Do NOT preventDefault insertText|browser keeps the text|insertCompositionText/);
+  assert.match(terminalJs, /type === 'insertText'/);
 });
 
-test('compositionend commits e.data only (not leftover pinyin)', () => {
+test('compositionend is the only CJK commit path', () => {
   assert.match(terminalJs, /commitComposedImeText\(text, 'mobile-ime-composition'\)/);
   assert.match(terminalJs, /\(e && e\.data != null\) \? String\(e\.data\) : ''/);
 });
 
-test('compositionupdate does not overwrite proxy.value', () => {
-  // Writing value mid-compose kills Android 选词栏.
-  assert.equal(/compositionupdate[\s\S]{0,400}proxy\.value\s*=/.test(terminalJs), false);
+test('composition commit sends before arming suppress (no self-drop)', () => {
+  // Regression: setting mobileImeLastComposedText BEFORE sendData made the
+  // first 你好 disappear (dedup ate the real commit).
+  assert.match(terminalJs, /send FIRST, then arm suppress|forceImmediate: true/);
+  assert.match(terminalJs, /sendMobileStableImeText\(payload, source, \{ forceImmediate: true \}\)/);
 });
 
-test('proxy host is large enough for CJK candidates', () => {
+test('compositionupdate does not write proxy.value', () => {
+  assert.equal(/compositionupdate[\s\S]{0,300}proxy\.value\s*=/.test(terminalJs), false);
+});
+
+test('fontSize 16px host for OS IME', () => {
   assert.match(terminalJs, /fontSize = '16px'/);
-  assert.match(terminalJs, /imeProxyComposeFreeze/);
   assert.match(styleCss, /font-size:\s*16px\s*!important/);
-  assert.match(styleCss, /\.mobile-terminal-ime-proxy\.composing/);
-  assert.match(styleCss, /min-width:\s*120px\s*!important/);
-});
-
-test('watchdog re-arms while focused (never kills 选词)', () => {
-  assert.match(terminalJs, /Still focused — user may still be picking candidates/);
-  assert.match(terminalJs, /8000/);
 });

@@ -7533,20 +7533,19 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         -webkit-user-select: text !important;
         -webkit-touch-callout: default !important;
     }
+    /* Invisible browser textarea for the OS IME only — no custom compose UI.
+       Same idea as typing in Chrome search: system keyboard + 选词, we just host focus. */
     html.mobile-stable-input .mobile-terminal-ime-proxy {
-        /* Real IME host — JS sets exact top/left/size. Must stay ≥16px font and
-           non-trivial size when focused so CJK/JP 选词栏 can attach. */
         position: fixed;
-        left: max(8px, env(safe-area-inset-left));
-        bottom: auto;
+        left: 0;
         top: 0;
-        width: 72px;
-        height: 22px;
-        min-width: 16px;
-        min-height: 20px;
+        width: 160px;
+        height: 24px;
+        min-width: 160px;
+        min-height: 24px;
         max-width: 90vw;
-        max-height: 40px;
-        opacity: 0.01;
+        max-height: 32px;
+        opacity: 0;
         border: 0;
         padding: 0;
         margin: 0;
@@ -7557,30 +7556,13 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         outline: none;
         overflow: hidden;
         pointer-events: none;
-        z-index: 20;
+        z-index: 5;
         transform: translateZ(0);
         font-size: 16px !important;
-        line-height: 22px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        line-height: 24px;
         white-space: pre;
         -webkit-user-select: text;
         user-select: text;
-    }
-    /* During CJK/JP composition: visible reading text + large stable host.
-       DO NOT change position via CSS mid-compose — JS freezes geometry. */
-    html.mobile-stable-input .mobile-terminal-ime-proxy.composing {
-        opacity: 1 !important;
-        color: var(--accent, #6cb6ff) !important;
-        background: rgba(0, 0, 0, 0.35) !important;
-        caret-color: var(--accent, #6cb6ff) !important;
-        z-index: 50 !important;
-        min-width: 120px !important;
-        min-height: 22px !important;
-        max-width: 90vw !important;
-        overflow: visible !important;
-        border-radius: 4px;
-        padding: 0 4px !important;
-        box-shadow: 0 0 0 1px rgba(108, 182, 255, 0.35);
     }
 }
 

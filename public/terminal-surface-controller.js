@@ -19,7 +19,7 @@
 import {
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260722-kb-cjk-cand1';
+} from './ssh-keyboard/index.js?v=20260722-kb-cjk-send1';
 import {
     computeCursorAboveChromeScrollTop,
     allowScrollDuringTyping,
