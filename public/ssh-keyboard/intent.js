@@ -29,10 +29,17 @@ export const DEFAULT_INTENT_THRESHOLDS = Object.freeze({
     openInset: 80,
     closeInset: 12,
     /** After open gesture, ignore system-dismiss for this long (ms). */
-    openGuardMs: 280,
-    /** Require continuous low inset this long before accepting system dismiss.
-     *  Keep short so shell recovers quickly after IME retract (blank gap bug). */
-    dismissConfirmMs: 220,
+    openGuardMs: 160,
+    /** Standalone-only: continuous low inset this long before system-dismiss.
+     *  Shell-managed mode closes immediately on parent overlap(close). */
+    dismissConfirmMs: 160,
+    /**
+     * Open without physical height confirmation auto-closes after this (ms),
+     * but ONLY if the IME proxy has also lost focus. Pure height timeout was
+     * killing Android IME while the keyboard was still animating (1–2s) under
+     * overlays-content where parent visualViewport stays 0 until late.
+     */
+    openTimeoutMs: 4000,
 });
  
 /**
@@ -65,6 +72,7 @@ export function createKeyboardIntentStore(host = {}, thresholds = {}) {
     let lowSince = 0;
     let listeners = new Set();
     let suppressRefocusUntil = 0;
+    let openTimeoutTimer = 0;
 
     function log(event, details = {}) {
         try { host.log?.(event, { ...details, state: snapshot() }); } catch (_) {}
@@ -144,13 +152,34 @@ export function createKeyboardIntentStore(host = {}, thresholds = {}) {
         state.focusLikely = true;
         lowSince = 0;
         suppressRefocusUntil = 0;
-        // Provisional physical open so layout does not wait forever on
-        // overlays-content devices where visualViewport inset stays 0.
-        // Real parent-overlap will replace this with the exact height.
-        if (state.physical !== Intent.OPEN) state.physical = Intent.OPEN;
-        if (!(state.inset >= t.openInset) && Number.isFinite(opts.inset)) {
-            state.inset = Math.max(0, Math.round(Number(opts.inset) || 0));
-        }
+        // Physical stays CLOSED until real height arrives via syncViewport.
+        // Provisional physical was the root cause of "fast half-beat" layout jumps.
+        state.physical = Intent.CLOSED;
+        state.inset = 0;
+
+        // Auto-close only if still no physical height AND proxy lost focus.
+        // Never blur a focused IME just because height is late (Android 1–2s).
+        clearTimeout(openTimeoutTimer);
+        openTimeoutTimer = setTimeout(() => {
+            openTimeoutTimer = 0;
+            if (state.intent !== Intent.OPEN || state.physical === Intent.OPEN) return;
+            const stillFocused = isEditable(getActiveElement());
+            if (stillFocused) {
+                // Keep waiting; re-arm once more so a later blur can still recover.
+                log('open-timeout-deferred-focus', { reason, elapsed: Date.now() - now });
+                openTimeoutTimer = setTimeout(() => {
+                    openTimeoutTimer = 0;
+                    if (state.intent === Intent.OPEN && state.physical !== Intent.OPEN
+                        && !isEditable(getActiveElement())) {
+                        log('open-timeout', { reason, elapsed: Date.now() - now, phase: 'rearm' });
+                        close('open-timeout:no-physical', { force: true, blurCmd: true });
+                    }
+                }, t.openTimeoutMs);
+                return;
+            }
+            log('open-timeout', { reason, elapsed: Date.now() - now });
+            close('open-timeout:no-physical', { force: true, blurCmd: true });
+        }, t.openTimeoutMs);
 
         // Cmd owns real focus — do not steal with proxy.
         if (focusOwner === FocusOwner.TERMINAL) {
@@ -183,7 +212,9 @@ export function createKeyboardIntentStore(host = {}, thresholds = {}) {
         state.physical = Intent.CLOSED;
         state.inset = 0;
         lowSince = 0;
-        suppressRefocusUntil = now + 400;
+        suppressRefocusUntil = now + 100;
+        clearTimeout(openTimeoutTimer);
+        openTimeoutTimer = 0;
 
         blurProxy(reason);
         if (opts.blurCmd !== false && (opts.force || wasCmd || /cmd|button|reset|finalize/i.test(reason))) {
@@ -235,11 +266,17 @@ export function createKeyboardIntentStore(host = {}, thresholds = {}) {
 
     /**
      * Viewport sync. Only path that may auto-close (system dismiss).
-     * Conditions (ALL required):
-     *   1) intent === open
-     *   2) physical was open, now inset low continuously >= dismissConfirmMs
-     *   3) no editable focused
-     *   4) past openGuardMs since last open gesture
+     *
+     * F4-fix: In embedded iframe mode the child visualViewport often stays 0
+     * even when the keyboard is really up (overlaysContent / parent crop).
+     * Auto-dismissing based on child-side inset=0 was closing the keyboard
+     * immediately after open ("keyboard won't rise" bug).
+     *
+     * Rule:
+     *   - intent=open + no physical confirm yet → WAIT (don't dismiss on low inset).
+     *     Parent overlap message or openTimeoutMs will resolve it.
+     *   - intent=open + physical was confirmed → standalone dismiss via lowFor >= confirm.
+     *   - intent=closed → physical follows inset.
      *
      * @param {{ inset: number, hasEditableFocus?: boolean, now?: number }} metrics
      */
@@ -274,8 +311,8 @@ export function createKeyboardIntentStore(host = {}, thresholds = {}) {
             } else if (inset < t.openInset) {
                 state.physical = Intent.CLOSED;
                 state.inset = 0;
-            } else if (!hasEditableFocus && now - state.lastCloseAt > t.openGuardMs) {
-                // Physical open but intent closed and no focus — force blur path.
+            } else if (now - state.lastCloseAt > t.openGuardMs) {
+                // Physical open but intent closed — force blur path.
                 blurProxy('intent-closed-but-physical');
                 state.physical = Intent.CLOSED;
                 state.inset = 0;
@@ -283,32 +320,30 @@ export function createKeyboardIntentStore(host = {}, thresholds = {}) {
             return emit('sync:closed');
         }
 
-        // Intent open
+        // Intent open + physical confirmed (by parent overlap or real VV).
         if (physicalOpen) {
+            lowSince = 0;
             state.physical = Intent.OPEN;
             state.inset = inset;
-            state.focusLikely = state.focusLikely || hasEditableFocus;
+            // F4: real height arrived - cancel the open-timeout auto-close.
+            clearTimeout(openTimeoutTimer);
+            openTimeoutTimer = 0;
             return emit('sync:open');
         }
 
-        // Physical low while intent open — maybe system dismiss.
+        // Intent open but physical NOT yet confirmed.
+        // If physical WAS previously confirmed (standalone path), low inset may be system dismiss.
+        // If physical was NEVER confirmed (embedded mode, VV=0), do NOT dismiss -
+        // wait for parent overlap or openTimeoutMs.
+        if (!wasPhysicalOpen) {
+            // Still waiting for first real height. Keep intent open.
+            return emit('sync:await');
+        }
+
+        // Physical was confirmed, now low — standalone system-dismiss path.
         const lowFor = lowSince ? now - lowSince : 0;
         const sinceOpen = now - state.lastOpenAt;
         const inGuard = sinceOpen < t.openGuardMs;
-        // CRITICAL (kb-flow5 / overlays-content): while an editable (IME proxy)
-        // still has DOM focus, NEVER auto-dismiss. On many Android Chrome
-        // builds visualViewport inset stays 0 the entire time the keyboard is
-        // up; treating that as "physical closed" after 480ms was the self-
-        // retracting keyboard (blurProxy → IME gone).
-        // Only real hasEditableFocus holds — focusLikely alone does not
-        // (blur already cleared focus; low inset may then dismiss).
-        if (hasEditableFocus) {
-            state.physical = Intent.OPEN;
-            if (inset >= t.openInset) state.inset = Math.max(state.inset, inset);
-            lowSince = 0;
-            log('await-focus-hold', { lowFor, sinceOpen, inset, hasEditableFocus });
-            return emit('sync:focus-hold');
-        }
 
         const confirmed = lowFor >= t.dismissConfirmMs && !inGuard;
         if (confirmed) {

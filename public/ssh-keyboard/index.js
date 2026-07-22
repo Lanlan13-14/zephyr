@@ -128,7 +128,7 @@ export function createSshKeyboard(host) {
         if (!host.isTouchDevice?.()) return { kind: GestureKind.IDLE, opened: false };
         const result = gesture.pointerUp(pointFromEvent(e));
         if (result.kind === GestureKind.TAP && !result.suppressOpen && !blockedBySelection()) {
-            // Pass provisional inset so page shrinks immediately on overlays devices.
+            // F1: no provisional inset — physical stays CLOSED until real height arrives.
             const snap = intent.getState?.() || {};
             if (snap.intent === 'open' || snap.physical === 'open') {
                 intent.handleTerminalTap('terminal-tap');
@@ -136,7 +136,6 @@ export function createSshKeyboard(host) {
                 intent.open('terminal-tap', {
                     focusOwner: FocusOwner.TERMINAL,
                     liftMode: LiftMode.WORKSPACE,
-                    inset: provisionalInset(),
                 });
             }
             return { kind: result.kind, opened: true, result };
@@ -152,32 +151,13 @@ export function createSshKeyboard(host) {
         return gesture.pointerCancel(pointFromEvent(e || {}));
     }
 
-    function provisionalInset() {
-        try {
-            const m = host.getViewportMetrics?.() || {};
-            const live = Math.max(0, Math.round(Number(m.keyboardInset) || 0));
-            if (live >= 80) return live;
-            // overlays-content: estimate ~33% of baseline, clamp 230–380.
-            const baseline = Math.max(
-                Number(m.layoutHeight) || 0,
-                Number(globalThis.innerHeight) || 0,
-                640,
-            );
-            return Math.round(Math.min(380, Math.max(230, baseline * 0.33)));
-        } catch (_) {
-            return 280;
-        }
-    }
-
     /** Explicit open from button or other UI (must be in user gesture stack). */
     function buttonClick(reason = 'keyboard-button') {
         if (!host.isTouchDevice?.()) return intent.getState();
-        // toggle open needs provisional inset too
         if (intent.desiredOpen?.()) return intent.close(`${reason}:to-closed`, { force: true });
         return intent.open(`${reason}:to-open`, {
             focusOwner: FocusOwner.TERMINAL,
             liftMode: LiftMode.WORKSPACE,
-            inset: provisionalInset(),
         });
     }
 
@@ -186,7 +166,6 @@ export function createSshKeyboard(host) {
         return intent.open(reason, {
             focusOwner: FocusOwner.TERMINAL,
             liftMode: LiftMode.WORKSPACE,
-            inset: provisionalInset(),
         });
     }
 

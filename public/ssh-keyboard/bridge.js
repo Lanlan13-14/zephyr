@@ -79,7 +79,9 @@ export function createParentBridge(host = {}) {
         last = { phase, intent, inset, liftMode, signature };
 
         const tabId = host.getTabId?.() || '';
-        const open = intent === 'open' && liftMode !== 'none' && (phase === 'open' || phase === 'opening' || inset > 0);
+        // Intent alone is enough for parent to start await-physical / align loop.
+        // Requiring phase/inset here delayed parent open when physical lagged.
+        const open = intent === 'open' && liftMode !== 'none';
 
         const msg = {
             source: 'zephyr-terminal',

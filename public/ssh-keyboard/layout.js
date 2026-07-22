@@ -139,7 +139,9 @@ export function createKeyboardLayoutGate(host = {}) {
             return emit(`${reason}:cmd`);
         }
 
-        const layoutOpen = desiredOpen && (physicalOpen || state.inset > 0 || phase === LayoutPhase.OPENING);
+        // F2-fix: desiredOpen alone enters OPENING phase (writeDom class on).
+        // Physical/inset arrive later via syncViewport / parent-overlap.
+        const layoutOpen = desiredOpen;
         const nextInset = layoutOpen ? Math.max(0, Math.round(Number(state.inset) || 0)) : 0;
 
         if (desiredOpen && !physicalOpen && phase === LayoutPhase.CLOSED) {

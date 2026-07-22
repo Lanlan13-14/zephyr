@@ -4820,14 +4820,8 @@ html.ssh-kb-open .terminal-page {
     .terminal-input-panel {
         order: 2;
         padding-bottom: max(4px, env(safe-area-inset-bottom));
-        transform: translate3d(0, calc(-1 * var(--keyboard-inset, 0px)), 0);
-        transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-        will-change: transform;
+        /* F7: no translateY transition — parent iframe crop is the sole executor. */
         box-shadow: 0 -1px 0 var(--border);
-    }
-
-    html.ssh-kb-open .terminal-input-panel {
-        transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     /* Top command bar: IME overlays content; never move the input panel or page. */
@@ -7258,10 +7252,13 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         padding-bottom: 0;
     }
 
+    /* Parent shell-managed crop owns the visible height (iframe already ends at
+       keyboard top). Child page must stay height:100% — never subtract
+       --ssh-kb-inset again or the bottom bar flies up over the terminal. */
     html.mobile-stable-input.viewport-updating .terminal-page,
     html.mobile-stable-input.ssh-kb-open .terminal-page {
-        height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
-        max-height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
+        height: 100% !important;
+        max-height: 100% !important;
         transform: none !important;
         transition: background-color 0.24s ease, border-color 0.24s ease !important;
     }
@@ -7325,10 +7322,11 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         min-height: 100% !important;
         height: 100% !important;
     }
-    /* Kill destructive non-stable keyboard open rules when stable mode is on. */
+    /* Kill destructive non-stable keyboard open rules when stable mode is on.
+       Height stays 100% — parent iframe crop is the only shrink. */
     html.mobile-stable-input.ssh-kb-open .terminal-page {
-        height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
-        max-height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
+        height: 100% !important;
+        max-height: 100% !important;
         grid-template-rows: none !important;
         display: flex !important;
         flex-direction: column !important;
@@ -7536,18 +7534,18 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         -webkit-touch-callout: default !important;
     }
     html.mobile-stable-input .mobile-terminal-ime-proxy {
-        /* Default is a tiny ghost; JS anchorImeProxyToCursor() overwrites
-           top/left/width/height to the live cursor cell each paint. */
+        /* Real IME host — JS sets exact top/left/size. Must stay ≥16px font and
+           non-trivial size when focused so CJK/JP 选词栏 can attach. */
         position: fixed;
         left: max(8px, env(safe-area-inset-left));
         bottom: auto;
         top: 0;
-        width: 2px;
-        height: 2px;
-        min-width: 0;
-        min-height: 0;
-        max-width: none;
-        max-height: none;
+        width: 72px;
+        height: 22px;
+        min-width: 16px;
+        min-height: 20px;
+        max-width: 90vw;
+        max-height: 40px;
         opacity: 0.01;
         border: 0;
         padding: 0;
@@ -7559,8 +7557,30 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         outline: none;
         overflow: hidden;
         pointer-events: none;
-        z-index: 1;
+        z-index: 20;
         transform: translateZ(0);
+        font-size: 16px !important;
+        line-height: 22px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        white-space: pre;
+        -webkit-user-select: text;
+        user-select: text;
+    }
+    /* During CJK/JP composition: visible reading text + large stable host.
+       DO NOT change position via CSS mid-compose — JS freezes geometry. */
+    html.mobile-stable-input .mobile-terminal-ime-proxy.composing {
+        opacity: 1 !important;
+        color: var(--accent, #6cb6ff) !important;
+        background: rgba(0, 0, 0, 0.35) !important;
+        caret-color: var(--accent, #6cb6ff) !important;
+        z-index: 50 !important;
+        min-width: 120px !important;
+        min-height: 22px !important;
+        max-width: 90vw !important;
+        overflow: visible !important;
+        border-radius: 4px;
+        padding: 0 4px !important;
+        box-shadow: 0 0 0 1px rgba(108, 182, 255, 0.35);
     }
 }
 

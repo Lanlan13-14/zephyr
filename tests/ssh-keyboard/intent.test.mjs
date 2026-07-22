@@ -77,23 +77,21 @@ test('syncViewport opens physical without changing intent when closed', () => {
     assert.equal(store.desiredOpen(), false);
 });
 
-test('system dismiss never auto-closes while editable focus holds (overlays-safe)', () => {
+test('system dismiss via low inset only after physical was confirmed (F4: embedded-safe)', () => {
     const host = makeHost();
-    const store = createKeyboardIntentStore(host, { openGuardMs: 200, dismissConfirmMs: 300 });
+    const store = createKeyboardIntentStore(host, { openGuardMs: 160, dismissConfirmMs: 160, openTimeoutMs: 99999 });
     store.open('tap', { now: 1000 });
-    store.syncViewport({ inset: 280, hasEditableFocus: true, now: 1100 });
+    // Embedded mode: child VV stays 0. Must NOT dismiss just because inset=0.
+    store.syncViewport({ inset: 0, hasEditableFocus: false, now: 1200 });
+    store.syncViewport({ inset: 0, hasEditableFocus: false, now: 2000 });
+    assert.equal(store.desiredOpen(), true, 'must stay open while physical never confirmed');
+    // Parent overlap confirms real height
+    store.syncViewport({ inset: 280, hasEditableFocus: false, now: 2100 });
     assert.equal(store.physicalOpen(), true);
-    // physical down with focus → keep open forever (no self-retract on overlays)
-    store.syncViewport({ inset: 0, hasEditableFocus: true, now: 1150 });
-    assert.equal(store.desiredOpen(), true);
-    store.syncViewport({ inset: 0, hasEditableFocus: true, now: 1600 });
-    store.syncViewport({ inset: 0, hasEditableFocus: true, now: 5000 });
-    assert.equal(store.desiredOpen(), true);
-    assert.equal(store.physicalOpen(), true);
-    // Without focus, sustained low may dismiss
-    store.syncViewport({ inset: 0, hasEditableFocus: false, now: 5300 });
-    store.syncViewport({ inset: 0, hasEditableFocus: false, now: 5700 });
-    assert.equal(store.desiredOpen(), false);
+    // Now physical goes low - standalone dismiss proceeds
+    store.syncViewport({ inset: 0, hasEditableFocus: true, now: 2200 });
+    store.syncViewport({ inset: 0, hasEditableFocus: true, now: 2400 });
+    assert.equal(store.desiredOpen(), false, 'must close after physical confirm + low inset');
 });
 
 test('blur alone does not close', () => {

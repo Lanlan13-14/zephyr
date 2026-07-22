@@ -629,29 +629,6 @@ export class WTerm {
     };
   }
 
-  /**
-   * Local pre-Enter draft painted inside the grid from the live cursor.
-   * Supports multi-line (\\n) and soft-wrap at cols. Does NOT write xterm.
-   */
-  setLocalDraft(text: string): void {
-    const renderer = this.renderer as { setLocalDraft?: (t: string) => void } | null;
-    if (renderer && typeof renderer.setLocalDraft === "function") {
-      renderer.setLocalDraft(String(text || ""));
-    }
-    // Force paint so draft appears without waiting for core dirty bits.
-    try {
-      (this.bridge as { markAllDirty?: () => void } | null)?.markAllDirty?.();
-    } catch {
-      /* ignore */
-    }
-    this._scheduleRender();
-  }
-
-  getLocalDraft(): string {
-    const renderer = this.renderer as { getLocalDraft?: () => string } | null;
-    return renderer?.getLocalDraft?.() || "";
-  }
-
   write(data: string | Uint8Array): void {
     if (!this.bridge) return;
     if (this.debug) this.debug.traceWrite(data);

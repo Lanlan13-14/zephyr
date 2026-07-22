@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260721-kb-reopen1';
+} from './ssh-keyboard/index.js?v=20260722-kb-cjk-cand1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -978,9 +978,10 @@ function isSshKbLayoutOpen() {
     if (isCmdOverlayMode?.()) return false;
     try {
         if (sshKb) {
+            // F2: desired open alone is enough — physical height may lag.
+            if (sshKb.desiredOpen?.()) return true;
             const phase = sshKb.getPhase?.();
             if (phase === 'open' || phase === 'opening') return true;
-            return !!(sshKb.desiredOpen?.() && (sshKb.physicalOpen?.() || (sshKb.getInset?.() || 0) > 0));
         }
     } catch (_) {}
     return !!_sshKbLayoutOpenCache;
@@ -1033,6 +1034,12 @@ let mobileStableInputEnabled = false;
 /* getSshKbInset() → getSshKbInset() */
 let mobileImeProxy = null;
 let mobileImeComposing = false;
+/** Last compositionupdate/start time — stuck IME compositions are force-cleared. */
+let mobileImeComposingAt = 0;
+let mobileImeComposeWatchdog = 0;
+/** After compositionend, suppress duplicate beforeinput/input for the same text. */
+let mobileImeComposeSuppressUntil = 0;
+let mobileImeLastComposedText = '';
 let mobileStableLastBottomIntent = true;
 let mobileStableOrientationResizeUntil = 0;
 let mobileTerminalAutoFollowLockUntil = 0;
@@ -1041,15 +1048,6 @@ let mobileStableKeyboardGridRepairTimers = [];
 let mobileStableKeyboardOpenGrid = null;
 let mobileImeLastSent = { text: '', source: '', at: 0 };
 let mobileImeLastControl = { seq: '', source: '', at: 0 };
-/**
- * Mobile local draft: printable keystrokes stay in the host until Enter.
- * Prevents per-keystroke xterm write → full dirty repaint flicker.
- * C0/controls still go through immediately.
- */
-let mobileLocalDraft = '';
-let mobileLocalDraftEl = null;
-let mobileLocalDraftComposing = '';
- 
 let mobileStableLastFocusGestureAt = 0;
 /** @type {ReturnType<typeof createSshKeyboard>['asSoftKeyboard'] extends Function ? any : any} */
 /** @type {ReturnType<typeof createSshKeyboard> | null} */
@@ -1488,8 +1486,13 @@ function getKeyboardBaselineHeight() {
 }
 
 function getEstimatedKeyboardInset() {
-    const baseline = getKeyboardBaselineHeight() || 720;
-    return Math.round(Math.min(380, Math.max(230, baseline * 0.33)));
+    // F2: never invent provisional height (0.33 / 230–380). Fake estimates made
+    // tools fly to a wrong edge then correct ~1s later when live vv arrived.
+    try {
+        const m = getViewportKeyboardMetrics();
+        if (m.keyboardOpen && m.keyboardInset >= 80) return m.keyboardInset;
+    } catch (_) {}
+    return 0;
 }
 
 /** Top command bar owns IME; page layout must not move at all. */
@@ -1603,13 +1606,10 @@ function getViewportKeyboardMetrics() {
         ? Math.max(1, baselineHeight - virtualKeyboardInset - offsetTop)
         : rawViewportHeight;
     const roundedInset = Math.round(keyboardInset);
-    const openThreshold = Math.min(260, Math.max(110, baselineHeight * 0.15));
-    // 关闭阈值刻意低于开启阈值：标准键盘收起时持续跟随 visualViewport，
-    // 直到几乎恢复全高才释放布局，避免出现/消失最后一帧突然跳动。
-    const closeThreshold = 8;
+    // F5: single threshold set (80 open / 12 close) matching intent.js.
     const wantsAvoidance = isKeyboardAvoidanceTarget();
     const keyboardOpen = (wantsAvoidance || isSshKbLayoutOpen())
-        && roundedInset > (isSshKbLayoutOpen() ? closeThreshold : openThreshold);
+        && roundedInset > (isSshKbLayoutOpen() ? 12 : 80);
     return {
         layoutHeight: baselineHeight || layoutHeight,
         viewportHeight,
@@ -2075,46 +2075,65 @@ window.addEventListener('message', (e) => {
         const parentShellManaged = !!e.data.parentShellManaged;
         const overlap = Math.max(0, Math.round(Number(e.data.keyboardOverlap) || 0));
         const parentSaysOpen = !!e.data.keyboardOpen;
+        const heightSource = String(e.data.heightSource || '');
+        const awaitingPhysical = heightSource === 'await-physical';
         const open = parentShellManaged ? parentSaysOpen : (parentSaysOpen && overlap >= 48);
         if (isCmdOverlayMode()) {
             applyMobileStableKeyboardInset(0, false, 'parent-overlap:cmd-frozen');
             return;
         }
         const kb = ensureSshKeyboard();
-        const proxyFocused = !!(document.activeElement === mobileImeProxy
-            || document.activeElement === cmdInput
-            || document.activeElement?.classList?.contains?.('mobile-terminal-ime-proxy'));
 
         if (open) {
-            const prevOpen = !!_sshKbLayoutOpenCache;
-            window.clearTimeout(_sshKbGeomSettleTimer);
-            _sshKbGeomPending = null;
-            // parentShellManaged → inset 0 (iframe already ends at keyboard).
-            const exact = parentShellManaged ? 0 : overlap;
-            writeSshKbPageGeometry(exact, true, { fromParent: true });
+            // F1 CRITICAL: parentShellManaged means parent already cropped the iframe
+            // to the keyboard top. Child page height must stay 100% with inset=0.
+            // NEVER feed shellH into child --ssh-kb-inset (shellH is the visible
+            // terminal height, often 400+, which double-shrinks the page and makes
+            // the bottom bar fly up and cover the whole terminal).
+            writeSshKbPageGeometry(0, true, { fromParent: true });
+            // Keep cache at 0 so applyFacadeChrome / getSshKbInset cannot re-inflate.
+            _sshKbInsetCache = 0;
+            _sshKbLayoutOpenCache = true;
+            _sshKbParentGeomAt = Date.now();
             try { updateTerminalInputPanelMetrics(); } catch (_) {}
-            try {
-                const physicalInset = parentShellManaged
-                    ? Math.max(0, Math.round(Number(e.data.parentInset) || Number(e.data.shellH) || 280))
-                    : exact;
-                kb?._intent?.syncViewport?.({
-                    inset: physicalInset,
-                    hasEditableFocus: proxyFocused || !!kb?.desiredOpen?.(),
-                    now: Date.now(),
-                });
-            } catch (_) {}
-            if (!prevOpen) {
+            if (!awaitingPhysical) {
+                try {
+                    // Physical confirm for intent only — use real keyboard height
+                    // (parentInset / screen keyboard), NEVER shellH (cropped frame h).
+                    const physicalInset = Math.max(
+                        0,
+                        Math.round(Number(e.data.parentInset) || 0),
+                    );
+                    if (physicalInset >= 80) {
+                        kb?._intent?.syncViewport?.({
+                            inset: physicalInset,
+                            hasEditableFocus: true,
+                            now: Date.now(),
+                        });
+                    }
+                } catch (_) {}
                 scheduleSshKbGeometryFit(`parent-overlap:${e.data.reason || ''}:open`, true, true);
             }
             logTerminalLayoutDiagnostics?.('child:parent-shell', {
                 parentShellManaged,
                 exact,
                 parentSaysOpen,
+                awaitingPhysical,
                 shellH: e.data.shellH,
-                heightSource: e.data.heightSource || '',
+                heightSource,
                 keyboardTop: e.data.keyboardTop,
             });
         } else {
+            // Parent says closed. Ignore while awaiting first physical or proxy focused
+            // (Android VV flicker mid-rise must not blur IME).
+            const proxyFocused = !!(
+                document.activeElement === mobileImeProxy
+                || document.activeElement === cmdInput
+                || document.activeElement?.classList?.contains?.('mobile-terminal-ime-proxy')
+            );
+            if (awaitingPhysical || (kb?.desiredOpen?.() && proxyFocused)) {
+                return;
+            }
             forceClearSshKbShell(`parent-overlap:${e.data.reason || ''}:close`);
             try {
                 kb?._intent?.syncViewport?.({
@@ -2123,7 +2142,7 @@ window.addEventListener('message', (e) => {
                     now: Date.now(),
                 });
             } catch (_) {}
-            if (kb?.desiredOpen?.() && !proxyFocused) {
+            if (kb?.desiredOpen?.()) {
                 try { kb.close('parent-physical-close', { force: false, blurCmd: false }); } catch (_) {}
             }
         }
@@ -2152,34 +2171,25 @@ window.addEventListener('message', (e) => {
                         now: Date.now(),
                     });
                 } else if (!parentKeyboardOpen) {
-                    // Parent says IME closed — always sync physical zero and collapse shell.
-                    // Do NOT ignore because proxy focus is still sticky (that left blank gap).
-                    kb._intent?.syncViewport?.({ inset: 0, hasEditableFocus: false, now: Date.now() });
-                    if (kb.desiredOpen?.() && !hasFocus) {
-                        try { kb.close('parent-layout-close', { force: false, blurCmd: false }); } catch (_) {}
-                    } else if (kb.desiredOpen?.() && hasFocus) {
-                        // Soft-close intent only after a short settle if focus remains but parent is closed.
-                        window.clearTimeout(applyFacadeChrome._parentCloseHold);
-                        applyFacadeChrome._parentCloseHold = window.setTimeout(() => {
-                            const stillFocus = !!(
-                                document.activeElement === mobileImeProxy
-                                || document.activeElement === cmdInput
-                            );
-                            const stillParentClosed = !isSshKbLayoutOpen?.() || (getSshKbInset?.() || 0) < 40;
-                            // Prefer parent authority: if shell still open with tiny inset, force clear.
-                            if (!stillFocus || stillParentClosed || (getSshKbInset?.() || 0) < 40) {
-                                try { kb.close('parent-layout-close-settle', { force: false, blurCmd: false }); } catch (_) {}
-                                applyMobileStableKeyboardInset(0, false, `parent-layout:${reason}:settle-close`);
-                                applyFacadeChrome(`parent-layout:${reason}:settle`);
-                            }
-                        }, 220);
+                    const proxyFocused = !!(
+                        document.activeElement === mobileImeProxy
+                        || document.activeElement === cmdInput
+                        || hasFocus
+                    );
+                    if (!(kb.desiredOpen?.() && proxyFocused)) {
+                        kb._intent?.syncViewport?.({ inset: 0, hasEditableFocus: false, now: Date.now() });
+                        if (kb.desiredOpen?.() && !proxyFocused) {
+                            try { kb.close('parent-layout-close', { force: false, blurCmd: false }); } catch (_) {}
+                        }
                     }
                 }
                 applyFacadeChrome(`parent-layout:${reason}`);
             } else if (parentKeyboardOpen && parentInset >= 80) {
-                applyMobileStableKeyboardInset(parentInset, true, `parent-layout:${reason}`);
+                writeSshKbPageGeometry(0, true, { fromParent: true });
             } else if (!parentKeyboardOpen && isSshKbLayoutOpen()) {
-                finalizeKeyboardClose({ force: true });
+                if (!document.documentElement.classList.contains('ssh-kb-open')) {
+                    finalizeKeyboardClose({ force: true });
+                }
             }
         }
  
@@ -8506,7 +8516,7 @@ function scheduleSshKbGeometryFit(reason, layoutOpen, wasFollowing) {
             cols, rows,
             inset: _sshKbInsetCache || 0,
             resized: false,
-            draftLen: (mobileLocalDraft || '').length,
+            draftLen: 0,
         });
         logTerminalLayoutDiagnostics?.('ssh-kb-viewport-only', {
             reason: label, layoutOpen: !!layoutOpen, boxH: h, boxW: w, cols, rows,
@@ -8573,38 +8583,47 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
         || /:close\b|facade-close|finalize|force-clear|system-dismiss|physical-close|keyboard-close/.test(reasonText);
     const open = !!keyboardOpen && !explicitClose;
 
-    // Parent frame-local overlap is authoritative. Ignore sub-threshold noise.
-    let pinInset = 0;
-    if (open) {
-        const raw = parentAuthoritative
-            ? reported
-            : (reported > 40 ? reported : (measured > 40 ? measured : reported));
-        pinInset = raw >= 80 ? raw : 0; // <80px is not a real IME on phones
-    }
-    // Quantize to 4px so tools track keyboard edge more tightly (was 16 → ±~8px).
-    const safeInset = pinInset > 0 ? Math.round(pinInset / 4) * 4 : 0;
-    const layoutOpen = !!(open && safeInset > 0);
-    const prevOpen = _sshKbLayoutOpenCache;
-    const prevInset = _sshKbInsetCache || 0;
-
     // -------- CLOSE (must be immediate) --------
-    if (!layoutOpen) {
-        // Physical/parent/facade close is absolute. Never block with "parent fresh"
-        // open-hold — that was the stuck blank after IME retract.
+    if (!open) {
         forceClearSshKbShell(reasonText || 'close');
         if (!isMobileStableInputMode()) return;
         return;
     }
 
     // -------- OPEN --------
+    // F1/F2: open may arrive with inset=0 (shell-managed parent crop, or
+    // awaiting first physical height). Still toggle ssh-kb-open class.
+    // Never forceClear just because height is not ready — that was why the
+    // keyboard could never open after provisional physical was removed.
+    let pinInset = 0;
+    if (parentAuthoritative) {
+        // Parent already cropped iframe: child inset is 0 by design.
+        // reported is frame-local overlap (often 0 under parentShellManaged).
+        pinInset = Math.max(0, reported);
+    } else if (reported >= 80) {
+        pinInset = reported;
+    } else if (measured >= 80) {
+        pinInset = measured;
+    } else {
+        // Intent open, no real height yet — keep class, inset stays 0.
+        pinInset = 0;
+    }
+    // Quantize to 4px so tools track keyboard edge more tightly.
+    const safeInset = pinInset > 0 ? Math.round(pinInset / 4) * 4 : 0;
+    const prevOpen = _sshKbLayoutOpenCache;
+    const prevInset = _sshKbInsetCache || 0;
+
     _sshKbLowInsetSince = 0;
     // Open / inset update: skip no-ops within 4px only (keep toolbar glued).
     if (prevOpen && Math.abs(prevInset - safeInset) < 4) {
+        // Still ensure class is on (prevOpen may have been true but class dropped).
+        if (!document.documentElement.classList.contains('ssh-kb-open')) {
+            writeSshKbPageGeometry(safeInset, true, { fromParent: parentAuthoritative });
+        }
         return;
     }
- 
+
     const commitOpen = (job, { fromParent = false } = {}) => {
-        // Cancel any pending force-close from a previous low-inset streak.
         window.clearTimeout(_sshKbForceCloseTimer);
         _sshKbForceCloseTimer = 0;
         _sshKbLowInsetSince = 0;
@@ -8616,15 +8635,16 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
 
     const job = { safeInset, layoutOpen: true, reason: reasonText, wasFollowing };
 
-    // Parent-overlap is exact — commit immediately.
-    if (parentAuthoritative) {
+    // Parent-overlap is exact — commit immediately. Open-without-height also
+    // commits immediately (class only); real height will re-commit later.
+    if (parentAuthoritative || safeInset === 0) {
         window.clearTimeout(_sshKbGeomSettleTimer);
         _sshKbGeomPending = null;
-        commitOpen(job, { fromParent: true });
+        commitOpen(job, { fromParent: parentAuthoritative });
         return;
     }
 
-    // Local vv: single debounce. No second settle chain.
+    // Local vv with real height: single debounce.
     _sshKbGeomPending = job;
     window.clearTimeout(_sshKbGeomSettleTimer);
     const delay = prevOpen ? 64 : 96;
@@ -8639,16 +8659,10 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
   
 /** Force-clear residual keyboard layout so the page never stays half-lifted. */
 function assertKeyboardLayoutSettled(reason = 'keyboard-settled') {
-    // Clear whenever intent is closed OR physical is closed with tiny inset.
-    // Stale shell after IME hide is worse than a brief double-clear.
+    // F2: while intent still desires open, never clear shell / publish closed.
+    // Physical may lag behind intent (parent crop not yet delivered).
     const desired = !!(sshKb?.desiredOpen?.() || sshSoftKeyboard?.desiredOpen?.());
-    const physical = !!(sshKb?.physicalOpen?.() || sshSoftKeyboard?.physicalOpen?.());
-    if (desired && physical) return;
-    if (desired && !physical) {
-        // Intent open but physical gone — still clear shell (keyboard already hidden).
-        const inset = Math.max(0, Number(sshKb?.getInset?.() || _sshKbInsetCache || 0));
-        if (inset >= 80) return;
-    }
+    if (desired) return;
     _sshKbLayoutOpenCache = false;
     _sshKbInsetCache = 0;
     _sshKbParentGeomAt = 0;
@@ -8658,8 +8672,8 @@ function assertKeyboardLayoutSettled(reason = 'keyboard-settled') {
     document.documentElement.classList.remove('ssh-kb-open', 'viewport-updating');
     terminalContainer?.classList.remove('ssh-kb-open');
     pinMobileImeChrome(false, 0);
- 
-// Publish closed via ssh-kb only.
+
+    // Publish closed via ssh-kb only.
     ensureSshKeyboard()?._bridge?.publish?.({
         phase: 'closed',
         intent: 'closed',
@@ -8760,106 +8774,6 @@ function ensureMobileStableCursorVisible(reason = 'mobile-stable-visible') {
     });
 }
 
-/**
- * Paint draft INSIDE wterm grid (from live cursor). Not an external bar.
- * Multi-line: '\n' hard breaks; soft-wrap at term.cols handled by renderer.
- */
-function paintMobileLocalDraft() {
-    const shown = mobileLocalDraft + (mobileLocalDraftComposing || '');
-    try {
-        if (typeof term?.setLocalDraft === 'function') {
-            term.setLocalDraft(shown);
-        } else {
-            // Fallback if term not ready: no external bar (user rejected that UX).
-            const renderer = term?.renderer;
-            if (renderer && typeof renderer.setLocalDraft === 'function') {
-                renderer.setLocalDraft(shown);
-                term?._scheduleRender?.();
-            }
-        }
-    } catch (_) {}
-    // Multi-line draft grows downward — hard-guard caret above tools every paint.
-    scheduleEnsureActiveLineAboveChrome('local-draft-paint');
-}
- 
-function clearMobileLocalDraft(reason = 'clear') {
-    mobileLocalDraft = '';
-    mobileLocalDraftComposing = '';
-    paintMobileLocalDraft();
-    // Remove legacy external draft node if any older build left it.
-    try {
-        mobileLocalDraftEl?.remove?.();
-        mobileLocalDraftEl = null;
-        document.querySelectorAll?.('.mobile-local-draft')?.forEach?.((n) => n.remove());
-    } catch (_) {}
-    logTerminalCopyDiagnostics?.('mobile-local-draft-clear', { reason });
-}
-
-function appendMobileLocalDraft(text = '', source = 'draft') {
-    const chunk = String(text || '');
-    if (!chunk) return false;
-    mobileLocalDraft += chunk;
-    mobileLocalDraftComposing = '';
-    paintMobileLocalDraft();
-    // No xterm write → no full dirty repaint from core. Draft paints in-grid only.
-    mobileStableLastActualInputAt = Date.now();
-    mobileStableTypingUntil = Date.now() + 400;
-    mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 400);
-    cancelTerminalBottomFollow?.(`${source}:draft`);
-    cancelMobileStableScrollRestore?.(`${source}:draft`);
-    return true;
-}
-
-function backspaceMobileLocalDraft(source = 'draft-bs') {
-    if (mobileLocalDraftComposing) {
-        mobileLocalDraftComposing = '';
-        paintMobileLocalDraft();
-        return true;
-    }
-    if (!mobileLocalDraft) return false;
-    const chars = Array.from(mobileLocalDraft);
-    chars.pop();
-    mobileLocalDraft = chars.join('');
-    paintMobileLocalDraft();
-    mobileStableTypingUntil = Date.now() + 300;
-    return true;
-}
- 
-/**
- * Flush local draft into the PTY/xterm core (single write). Optional trailing CR.
- * This is the only path that should push printable typing into xterm on mobile.
- */
-function flushMobileLocalDraft(source = 'draft-flush', { enter = false } = {}) {
-    const body = mobileLocalDraft + (mobileLocalDraftComposing || '');
-    mobileLocalDraft = '';
-    mobileLocalDraftComposing = '';
-    paintMobileLocalDraft();
-    if (!body && !enter) return false;
-    const payload = enter ? `${body}\r` : body;
-    if (!payload) return false;
-    const now = performance.now();
-    if (mobileImeLastSent.text === payload && now - mobileImeLastSent.at < 80) return false;
-    mobileImeLastSent = { text: payload, source, at: now };
-    mobileStableLastActualInputAt = Date.now();
-    mobileStableTypingUntil = Date.now() + (enter ? 40 : 120);
-    mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 120);
-    cancelTerminalBottomFollow(`${source}:flush`);
-    cancelMobileStableScrollRestore(`${source}:flush`);
-    clearMobileTerminalHistoryLock(`${source}:flush`);
-    // ONE write into xterm — batch eliminates per-key flicker.
-    sendData(payload, { source, forceFollow: false, applyModifiers: false });
-    const surface = ensureTerminalSurface();
-    if (enter) {
-        clearMobileTerminalHistoryLock(`${source}:enter`);
-        setTerminalAutoFollow(true, `${source}:enter`);
-        if (surface && isMobileStableInputMode()) surface.onEnterCommitted?.(source);
-        else if (typeof term?.bridge?.scrollToBottom === 'function') term.bridge.scrollToBottom();
-        else applyCursorAboveChromeScroll(`${source}:enter`, { force: true, sameLineInput: false });
-    }
-    // Draft typing: no mid-line chrome pin (that was a major flicker source).
-    return true;
-}
-
 function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = false, forceImmediate = false } = {}) {
     let payload = String(text || '');
     if (!payload) return false;
@@ -8873,26 +8787,22 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
         return sendMobileStableControl(payload, `${source}:ctrl`);
     }
 
-    // Mobile default: ALL printable (incl. multi-line paste) stays in-grid draft
-    // until Enter. Paste with trailing CR/LF → flush as one commit.
-    if (isMobileStableInputMode() && !forceImmediate) {
-        if (paste) {
-            // Normalize newlines into draft; if paste ends with Enter, flush.
-            let body = payload.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-            const endsWithEnter = /\n$/.test(body);
-            if (endsWithEnter) body = body.replace(/\n+$/g, '');
-            if (body) appendMobileLocalDraft(body, `${source}:paste-draft`);
-            if (endsWithEnter) return flushMobileLocalDraft(`${source}:paste-enter`, { enter: true });
-            return true;
-        }
-        return appendMobileLocalDraft(payload, source);
-    }
- 
     const now = performance.now();
     // Dedup by payload content only — source labels differ across proxy /
-    // compositionend / wterm-onData paths and must not re-open the window.
-    const duplicateWindow = paste ? 260 : 80;
+    // compositionend / beforeinput / input paths and must not re-open the window.
+    // Multi-char commits (compositionend) need a longer window: Android often
+    // re-fires the same word via beforeinput/input immediately after compositionend
+    // → "kimikimi" double. Use 320ms for multi-char, 100ms for single char.
+    const duplicateWindow = paste ? 320 : (payload.length > 1 ? 320 : 100);
     if (mobileImeLastSent.text === payload && now - mobileImeLastSent.at < duplicateWindow) {
+        return false;
+    }
+    // Also drop if this is a re-delivery of the last composed commit.
+    if (
+        mobileImeLastComposedText
+        && payload === mobileImeLastComposedText
+        && now < mobileImeComposeSuppressUntil
+    ) {
         return false;
     }
     mobileImeLastSent = { text: payload, source, at: now };
@@ -8912,6 +8822,87 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
     return true;
 }
  
+/**
+ * Android IME frequently leaves isComposing/compositionstart stuck after
+ * committing English/Latin words (e.g. "kimi") without compositionend.
+ * While mobileImeComposing is true, keydown Enter and beforeinput are blocked
+ * → user cannot press Enter and further input appears frozen.
+ */
+function clearStuckImeComposition(reason = 'compose-clear', { commit = false } = {}) {
+    if (mobileImeComposeWatchdog) {
+        window.clearTimeout(mobileImeComposeWatchdog);
+        mobileImeComposeWatchdog = 0;
+    }
+    if (!mobileImeComposing && !(mobileImeProxy?.value)) return '';
+    const leftover = String(mobileImeProxy?.value || '');
+    mobileImeComposing = false;
+    mobileImeComposingAt = 0;
+    try { ensureSshKeyboard()?.handleCompositionEnd?.(); } catch (_) {}
+    try { ensureTerminalSurface()?.onCompositionEnd?.(); } catch (_) {}
+    try { mobileImeProxy?.classList?.remove?.('composing'); } catch (_) {}
+    // Default: discard leftover (pinyin / kana reading is NOT the committed character).
+    // Only commit when compositionend provided final text or caller opts in.
+    if (mobileImeProxy) mobileImeProxy.value = '';
+    if (commit && leftover) {
+        mobileImeLastComposedText = leftover;
+        mobileImeComposeSuppressUntil = performance.now() + 400;
+    }
+    logTerminalLayoutDiagnostics?.('ime-compose-clear', {
+        reason,
+        leftoverLen: leftover.length,
+        commit: !!commit,
+    });
+    return commit ? leftover : '';
+}
+
+function armImeComposeWatchdog() {
+    if (mobileImeComposeWatchdog) window.clearTimeout(mobileImeComposeWatchdog);
+    // CJK composition can idle a long time while user picks 选词 candidates.
+    // NEVER force-end while proxy is focused — that kills the candidate strip.
+    // Only clean a truly abandoned empty composition after blur.
+    mobileImeComposeWatchdog = window.setTimeout(() => {
+        mobileImeComposeWatchdog = 0;
+        if (!mobileImeComposing) return;
+        try {
+            if (document.activeElement === mobileImeProxy) {
+                // Still focused — user may still be picking candidates. Re-arm.
+                armImeComposeWatchdog();
+                return;
+            }
+            // Blurred with empty value: drop stuck flag. Non-empty: leave alone
+            // (browser may still deliver compositionend late).
+            if (!(mobileImeProxy?.value || '').length) {
+                clearStuckImeComposition('compose-watchdog-empty', { commit: false });
+            }
+        } catch (_) {}
+    }, 8000);
+}
+
+function commitComposedImeText(text, source = 'mobile-ime-composition') {
+    const payload = String(text || '');
+    mobileImeComposing = false;
+    mobileImeComposingAt = 0;
+    if (mobileImeComposeWatchdog) {
+        window.clearTimeout(mobileImeComposeWatchdog);
+        mobileImeComposeWatchdog = 0;
+    }
+    try { mobileImeProxy?.classList?.remove?.('composing'); } catch (_) {}
+    if (mobileImeProxy) mobileImeProxy.value = '';
+    if (!payload) return false;
+    mobileImeLastComposedText = payload;
+    mobileImeComposeSuppressUntil = performance.now() + 400;
+    return sendMobileStableImeText(payload, source);
+}
+
+function isImeCompositionActive(e) {
+    if (mobileImeComposing) return true;
+    if (e && (e.isComposing || e.keyCode === 229 || e.key === 'Process')) return true;
+    try {
+        if (mobileImeProxy?.classList?.contains?.('composing')) return true;
+    } catch (_) {}
+    return false;
+}
+
 function sendMobileStableControl(seq = '', source = 'mobile-ime-control') {
     const payload = String(seq || '');
     if (!payload) return false;
@@ -8919,31 +8910,21 @@ function sendMobileStableControl(seq = '', source = 'mobile-ime-control') {
     if (mobileImeLastControl.seq === payload && mobileImeLastControl.source !== source && now - mobileImeLastControl.at < 90) {
         return false;
     }
+    // Never invent a commit from leftover composition text here.
+    // Real CJK commit is only compositionend → commitComposedImeText.
+    const isEnterLike = payload === '\r' || /enter|return/i.test(source);
+    if (mobileImeComposing && isEnterLike) {
+        // Clear stuck flag without committing pinyin/kana.
+        clearStuckImeComposition(`${source}:pre-control`, { commit: false });
+    }
     mobileImeLastControl = { seq: payload, source, at: now };
     mobileStableLastActualInputAt = Date.now();
-    const isEnterLike = payload === '\r' || /enter|return/i.test(source);
-    const isBackspace = payload === '\x7f' || /backspace/i.test(source);
-
-    // Enter: flush local draft + CR as one xterm write (no mid-line flicker).
-    if (isEnterLike && isMobileStableInputMode()) {
-        return flushMobileLocalDraft(source, { enter: true });
-    }
-    // Backspace: eat local draft first; only hit PTY when draft empty.
-    if (isBackspace && isMobileStableInputMode()) {
-        if (backspaceMobileLocalDraft(source)) return true;
-    }
 
     mobileStableTypingUntil = Date.now() + (isEnterLike ? 40 : 160);
     mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 160);
     cancelTerminalBottomFollow(`${source}:control`);
     cancelMobileStableScrollRestore(`${source}:control`);
     clearMobileTerminalHistoryLock(`${source}:control`);
-    // If we still have draft and user hits arrow/tab etc., flush draft first so
-    // remote line editing sees committed text.
-    if (isMobileStableInputMode() && (mobileLocalDraft || mobileLocalDraftComposing)
-        && !isBackspace && !isEnterLike) {
-        flushMobileLocalDraft(`${source}:pre-control`, { enter: false });
-    }
     sendData(payload, { source, forceFollow: false, applyModifiers: false });
     const surface = ensureTerminalSurface();
     if (isEnterLike) {
@@ -9008,8 +8989,12 @@ function scheduleMobileStableKeyboardGridRepair(reason = 'mobile-stable-grid-rep
  
 /** rAF-coalesced: keep #mobileTerminalImeProxy over the live cursor cell. */
 let imeProxyAnchorRaf = 0;
+/** Frozen geometry while CJK/JP IME composition is active (moving the host kills candidates). */
+let imeProxyComposeFreeze = null;
 function scheduleImeProxyCursorAnchor(reason = 'cursor-anchor') {
     if (!isMobileStableInputMode()) return;
+    // During composition never thrash geometry — Android IME candidate bar detaches.
+    if (mobileImeComposing && reason !== 'compositionstart' && reason !== 'force') return;
     if (imeProxyAnchorRaf) return;
     imeProxyAnchorRaf = requestAnimationFrame(() => {
         imeProxyAnchorRaf = 0;
@@ -9018,9 +9003,9 @@ function scheduleImeProxyCursorAnchor(reason = 'cursor-anchor') {
 }
 
 /**
- * Position the IME proxy over the real cursor so system candidate UI sticks
- * to the active cell instead of a 2×2 corner ghost.
- * Geometry is viewport-fixed; pointer-events stay none.
+ * Position the IME proxy as a real composition host (not a 2×2 ghost).
+ * Android/iOS CJK candidate UI requires a focused element with non-trivial
+ * size and stable geometry. Resizing/moving mid-composition kills 选词.
  */
 function anchorImeProxyToCursor(reason = 'cursor-anchor') {
     if (!mobileImeProxy || !isMobileStableInputMode()) return;
@@ -9033,7 +9018,6 @@ function anchorImeProxyToCursor(reason = 'cursor-anchor') {
     const topInViewport = Number.isFinite(metrics.cursorTopInViewport)
         ? metrics.cursorTopInViewport
         : 0;
-    // Prefer bridge col when available; overlay path has no col → keep last left.
     let leftInViewport = 0;
     try {
         const cursor = term?.bridge?.getCursor?.() || term?.getCursor?.();
@@ -9045,25 +9029,75 @@ function anchorImeProxyToCursor(reason = 'cursor-anchor') {
             if (oRect?.width) leftInViewport = oRect.left - hostRect.left;
         }
     } catch (_) {}
-    const cssTop = Math.round(hostRect.top + topInViewport);
-    const cssLeft = Math.round(hostRect.left + Math.max(0, leftInViewport));
-    const w = Math.max(2, Math.round(charWidth));
-    const h = Math.max(2, Math.round(lineHeight || metrics.lineHeight || 17));
+    let cssTop = Math.round(hostRect.top + topInViewport);
+    let cssLeft = Math.round(hostRect.left + Math.max(0, leftInViewport));
+    const composing = !!mobileImeComposing || mobileImeProxy.classList.contains('composing');
+    const focused = document.activeElement === mobileImeProxy
+        || !!sshKb?.desiredOpen?.()
+        || !!sshSoftKeyboard?.desiredOpen?.();
+
+    // Freeze top/left at compositionstart so candidate UI stays attached.
+    if (composing) {
+        if (!imeProxyComposeFreeze || reason === 'compositionstart' || reason === 'force') {
+            imeProxyComposeFreeze = { top: cssTop, left: cssLeft };
+        } else {
+            cssTop = imeProxyComposeFreeze.top;
+            cssLeft = imeProxyComposeFreeze.left;
+        }
+    } else {
+        imeProxyComposeFreeze = null;
+    }
+
+    // Android IMEs need a real host: ≥1 line tall, several chars wide, font ≥16px.
+    // Tiny 2×2 ghosts never get a candidate strip (选词栏).
+    const lh = Math.max(20, Math.round(lineHeight || metrics.lineHeight || 20));
+    const cw = Math.max(10, Math.round(charWidth || 10));
+    const composeLen = composing
+        ? Math.max(4, Array.from(mobileImeProxy.value || '').length + 2)
+        : 0;
+    // Focused idle: still large enough for IME to start composition on first pinyin key.
+    const w = composing
+        ? Math.min(Math.round(hostRect.width || 280), Math.max(cw * 8, cw * composeLen + 16, 120))
+        : (focused ? Math.max(cw * 6, 72) : Math.max(cw, 16));
+    const h = Math.max(lh, composing || focused ? 22 : 16);
     const s = mobileImeProxy.style;
     s.position = 'fixed';
     s.top = `${cssTop}px`;
     s.left = `${cssLeft}px`;
     s.bottom = 'auto';
+    s.right = 'auto';
     s.width = `${w}px`;
     s.height = `${h}px`;
     s.minWidth = `${w}px`;
     s.minHeight = `${h}px`;
-    s.maxWidth = `${w}px`;
+    s.maxWidth = `${Math.max(w, Math.round((hostRect.width || 280) * 0.9))}px`;
     s.maxHeight = `${h}px`;
-    // Keep nearly invisible but large enough for IME composition anchors.
-    s.opacity = '0.01';
+    // ≥16px avoids iOS zoom and is the floor many Android IMEs need for candidates.
+    s.fontSize = '16px';
+    s.lineHeight = `${h}px`;
+    s.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    s.padding = '0';
+    s.margin = '0';
+    s.border = '0';
+    s.outline = 'none';
+    s.resize = 'none';
+    s.overflow = composing ? 'visible' : 'hidden';
     s.pointerEvents = 'none';
-    s.zIndex = '1';
+    s.webkitUserSelect = 'text';
+    s.userSelect = 'text';
+    if (composing) {
+        // CSS .composing owns color/opacity; keep host measurable for IME.
+        s.opacity = '1';
+        s.zIndex = '50';
+        s.background = 'transparent';
+    } else {
+        // Still non-zero size when focused so first pinyin key starts real composition.
+        s.opacity = '0.01';
+        s.color = 'transparent';
+        s.caretColor = 'transparent';
+        s.background = 'transparent';
+        s.zIndex = focused ? '20' : '1';
+    }
     mobileImeProxy.dataset.anchorReason = String(reason || '');
 }
 
@@ -9076,10 +9110,23 @@ function setupMobileStableImeProxy() {
     proxy.autocomplete = 'off';
     proxy.autocorrect = 'off';
     proxy.autocapitalize = 'off';
+    // text + enter: allow full CJK/JP IMEs (search mode often disables candidates).
     proxy.inputMode = 'text';
     proxy.enterKeyHint = 'enter';
     proxy.spellcheck = false;
+    // Do not force lang — let OS IME pick zh/ja. Empty lang is safer than en-US.
+    try { proxy.removeAttribute('lang'); } catch (_) {}
     proxy.setAttribute('aria-label', '移动端终端输入代理');
+    // Ensure IME can treat this as a real text field (not a password-ish ghost).
+    proxy.setAttribute('inputmode', 'text');
+    proxy.setAttribute('enterkeyhint', 'enter');
+    proxy.setAttribute('autocapitalize', 'off');
+    proxy.setAttribute('autocomplete', 'off');
+    proxy.setAttribute('autocorrect', 'off');
+    proxy.setAttribute('spellcheck', 'false');
+    // Writable — readonly textareas break compositionstart on some Android WebViews.
+    proxy.readOnly = false;
+    proxy.disabled = false;
     proxy.addEventListener('focus', () => {
         mobileTerminalSelectionMode = false;
         document.documentElement.classList.remove('terminal-selection-mode');
@@ -9094,7 +9141,7 @@ function setupMobileStableImeProxy() {
             sshSoftKeyboard?.onProxyFocus?.('ime-proxy-focus-unowned');
         }
         updateViewportInsets();
-        [60, 160, 320, 560].forEach((delay) => window.setTimeout(updateViewportInsets, delay));
+        updateViewportInsets();
     });
     proxy.addEventListener('blur', () => {
         ensureSshKeyboard()?.handleImeBlur?.('ime-proxy-blur');
@@ -9105,42 +9152,53 @@ function setupMobileStableImeProxy() {
         }, 200);
         markKeyboardFocusInactive();
         sshSoftKeyboard?.onProxyBlur?.('ime-proxy-blur');
-        [80, 200, 420, 680].forEach((delay) => {
-            window.setTimeout(() => {
-                updateViewportInsets();
-            }, delay);
-        });
+        // F6: single viewport sync on blur - no multi-phase polling.
+        updateViewportInsets();
     });
     proxy.addEventListener('compositionstart', () => {
         mobileImeComposing = true;
-        mobileLocalDraftComposing = '';
+        mobileImeComposingAt = Date.now();
+        proxy.classList.add('composing');
         ensureSshKeyboard()?.handleCompositionStart?.();
         // Freeze buffer scroll during IME composition; never write xterm mid-compose.
         cancelTerminalBottomFollow('compositionstart');
         cancelMobileStableScrollRestore('compositionstart');
-        mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 4000);
+        mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 8000);
         ensureTerminalSurface()?.onCompositionStart?.();
-        paintMobileLocalDraft();
+        armImeComposeWatchdog();
+        // Freeze host geometry ONCE so Android/iOS 选词栏 stays attached.
+        anchorImeProxyToCursor('compositionstart');
     });
     proxy.addEventListener('compositionupdate', (e) => {
-        // Show composing text in local draft bar only — never xterm.
-        mobileLocalDraftComposing = String(e.data || proxy.value || '');
-        paintMobileLocalDraft();
+        // DO NOT write proxy.value here — browser owns the composition buffer.
+        // Overwriting mid-compose kills candidate strip on many Android IMEs.
+        mobileImeComposing = true;
+        mobileImeComposingAt = Date.now();
+        proxy.classList.add('composing');
+        void e;
+        armImeComposeWatchdog();
+        // Geometry stays frozen (scheduleImeProxyCursorAnchor no-ops while composing).
     });
     proxy.addEventListener('compositionend', (e) => {
         ensureSshKeyboard()?.handleCompositionEnd?.();
-        mobileImeComposing = false;
+        imeProxyComposeFreeze = null;
         mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 120);
         ensureTerminalSurface()?.onCompositionEnd?.();
-        const text = e.data || proxy.value || '';
-        mobileLocalDraftComposing = '';
-        // Commit composition into local draft (still not xterm until Enter).
-        if (text) appendMobileLocalDraft(text, 'mobile-ime-composition');
-        else paintMobileLocalDraft();
-        proxy.value = '';
+        // ONLY commit path for CJK/kana: e.data is the final chosen character(s).
+        // Empty e.data means cancel — do not fall back to proxy.value (pinyin/romaji).
+        const text = (e && e.data != null) ? String(e.data) : '';
+        commitComposedImeText(text, 'mobile-ime-composition');
+        // Re-anchor small host after candidates dismiss.
+        scheduleImeProxyCursorAnchor('compositionend');
     });
     proxy.addEventListener('keydown', (e) => {
-        if (mobileImeComposing || e.isComposing || isModifierOnlyKeyEvent(e)) return;
+        if (isModifierOnlyKeyEvent(e)) return;
+        // CJK/JP IME: while composing, browser must own Enter/Space/Backspace/arrows
+        // for candidate confirm / cancel. Intercepting them kills Chinese/Japanese.
+        if (isImeCompositionActive(e)) {
+            armImeComposeWatchdog();
+            return;
+        }
         const seqMap = {
             Enter: '\r',
             Backspace: '\x7f',
@@ -9163,13 +9221,28 @@ function setupMobileStableImeProxy() {
         proxy.value = '';
     });
     proxy.addEventListener('beforeinput', (e) => {
-        if (mobileImeComposing || e.isComposing) return;
         const type = e.inputType || '';
-        if (type === 'insertText' || type === 'insertCompositionText') {
+        // During REAL composition, never preventDefault / never send.
+        // insertCompositionText and insertText while isComposing are IME-owned.
+        if (isImeCompositionActive(e)
+            || type === 'insertCompositionText'
+            || type === 'deleteCompositionText') {
+            armImeComposeWatchdog();
+            return;
+        }
+        if (type === 'insertText') {
             const text = e.data || '';
             if (text) {
                 e.preventDefault();
-                // Printable → local draft only (Enter flushes to xterm).
+                // Drop re-delivery of the just-committed composition (kimikimi).
+                if (
+                    mobileImeLastComposedText
+                    && text === mobileImeLastComposedText
+                    && performance.now() < mobileImeComposeSuppressUntil
+                ) {
+                    proxy.value = '';
+                    return;
+                }
                 sendMobileStableImeText(text, 'mobile-ime-beforeinput');
                 proxy.value = '';
             }
@@ -9191,14 +9264,24 @@ function setupMobileStableImeProxy() {
         }
     });
     proxy.addEventListener('input', () => {
-        if (mobileImeComposing) {
-            // Some IMEs only update via input while composing — mirror to draft bar.
-            mobileLocalDraftComposing = proxy.value || mobileLocalDraftComposing;
-            paintMobileLocalDraft();
+        if (isImeCompositionActive() || proxy.classList.contains('composing')) {
+            // Real composition: browser owns value.
+            armImeComposeWatchdog();
+            scheduleImeProxyCursorAnchor('input-composing');
             return;
         }
         const text = proxy.value || '';
-        if (text) sendMobileStableImeText(text, 'mobile-ime-input-fallback');
+        if (!text) return;
+        // Suppress trailing input event after compositionend (same word re-fire).
+        if (
+            mobileImeLastComposedText
+            && text === mobileImeLastComposedText
+            && performance.now() < mobileImeComposeSuppressUntil
+        ) {
+            proxy.value = '';
+            return;
+        }
+        sendMobileStableImeText(text, 'mobile-ime-input-fallback');
         proxy.value = '';
     });
  
@@ -9385,12 +9468,17 @@ function getFallbackKeyboardMetrics() {
 function applyKeyboardFallbackAvoidance() {
     if (!isTouchKeyboardDevice()) return false;
     const kb = ensureSshKeyboard();
-    // Never invent open. Only refine physical inset while facade already desires open.
+    // Never invent open/height. Only refine when live visualViewport reports real inset.
     if (!kb?.desiredOpen?.()) return false;
-    const metrics = getFallbackKeyboardMetrics();
+    let live = 0;
+    try {
+        const m = getViewportKeyboardMetrics();
+        if (m.keyboardOpen && m.keyboardInset >= 80) live = m.keyboardInset;
+    } catch (_) {}
+    if (live < 80) return false;
     kb._intent?.syncViewport?.({
-        inset: metrics.keyboardInset,
-        hasEditableFocus: true,
+        inset: live,
+        hasEditableFocus: isEditableKeyboardTarget(document.activeElement),
         now: Date.now(),
     });
     applyFacadeChrome('keyboard-fallback-applied');
@@ -9576,48 +9664,23 @@ function applyFacadeChrome(reason = 'mirror') {
         return true;
     }
 
-    // Physical closed while intent still open (system dismiss in progress):
-    // if measured/facade inset is already low, collapse shell immediately.
-    if (desired && !physical && inset < 40) {
-        const measured = (() => { try { return measureImeChromeBottom?.() || 0; } catch (_) { return 0; } })();
-        if (measured < 40) {
-            applyMobileStableKeyboardInset(0, false, `${reason}:facade-physical-zero`);
-            // Also close intent so we don't re-open from retain paths.
-            try { kb.close?.('facade-physical-zero', { force: false, blurCmd: false }); } catch (_) {}
+    // F2: desired open without physical yet is the NORMAL open path
+    // (parent shell-managed crop delivers height later). Never self-close here.
+    // Close authority: parent keyboard-overlap(close) or intent.close / system-dismiss.
+    if (desired || phase === 'open' || phase === 'opening' || proxyFocused) {
+        // Parent shell-managed (parentGeom recent OR cache says open with inset 0):
+        // child page inset MUST stay 0. Re-applying intent physical height here
+        // double-shrinks under the already-cropped iframe → bar flies over terminal.
+        const parentShellManagedOpen = !!_sshKbLayoutOpenCache
+            && parentAge < 2000
+            && (_sshKbInsetCache || 0) < 8;
+        if (parentShellManagedOpen || parentLive || parentFreshOpen) {
+            writeSshKbPageGeometry(0, true, { fromParent: true });
+            _sshKbInsetCache = 0;
             return true;
         }
-    }
-
-    // Parent just opened geometry: only retain briefly while still desired+fresh.
-    // NEVER inflate above the last parent-authored exact overlap (min 240 was
-    // floating tools above the real keyboard edge).
-    if (desired && (parentLive || parentFreshOpen) && physical !== false) {
-        const keep = Math.max(0, _sshKbInsetCache || 0, inset || 0);
-        if (keep >= 48) {
-            // Re-apply exact cached height; do not invent taller shell.
-            writeSshKbPageGeometry(keep, true, { fromParent: true });
-            return true;
-        }
-        // No exact height yet — wait for parent-overlap message.
-        logTerminalLayoutDiagnostics?.('facade-retain-await-parent', { reason, keep, inset });
-        return true;
-    }
- 
-    const open = phase === 'open' || phase === 'opening' || (desired && (physical || inset >= 64 || proxyFocused));
-
-    if (open) {
-        // Prefer real inset. Only fall back to cache, never invent ~280 forever.
+        // Standalone (no parent crop): may use real inset.
         if (inset < 64) inset = Math.max(inset, _sshKbInsetCache || 0);
-        if (inset < 64) {
-            // No reliable height yet: if parent just opened, keep brief provisional;
-            // otherwise wait for parent-overlap (exact frameBottom - keyboardTop).
-            if (parentLive || parentFreshOpen) {
-                inset = Math.max(_sshKbInsetCache || 0, 260);
-            } else {
-                logTerminalLayoutDiagnostics?.('facade-open-await-inset', { reason, desired, physical, inset });
-                return true;
-            }
-        }
         applyMobileStableKeyboardInset(inset, true, `${reason}:facade-open`);
         return true;
     }
@@ -11156,28 +11219,6 @@ function logTerminalPasteDiagnostics(source, text = '') {
 function sendData(data, { normalizeNewlines = false, source = 'unknown', forceFollow = false, applyModifiers = true } = {}) {
     if (wsConnection && wsConnection.readyState === WebSocket.OPEN && isConnected) {
         const fromWTerm = source === 'wterm-onData';
-        // Mobile: never let WTerm native textarea leak printable keystrokes into
-        // the PTY one-by-one (that reintroduces per-key xterm paint flicker).
-        // Route printables into local draft; Enter/controls flush.
-        if (fromWTerm && isMobileStableInputMode()) {
-            const raw = String(data || '');
-            if (!raw) return;
-            // Pure CR / control sequences pass through (after flushing draft when needed).
-            if (raw === '\r' || raw === '\n' || raw === '\r\n') {
-                flushMobileLocalDraft('wterm-onData:enter', { enter: true });
-                return;
-            }
-            if (raw === '\x7f' || raw === '\b') {
-                if (backspaceMobileLocalDraft('wterm-onData:bs')) return;
-                // empty draft → fall through to PTY
-            } else if (!/[\x00-\x1f\x7f]/.test(raw)) {
-                appendMobileLocalDraft(raw, 'wterm-onData:draft');
-                return;
-            } else if (mobileLocalDraft || mobileLocalDraftComposing) {
-                // Mixed/control with pending draft: flush text first, then control.
-                flushMobileLocalDraft('wterm-onData:pre-control', { enter: false });
-            }
-        }
         if (forceFollow) setTerminalAutoFollow(true, `${source}:force-follow`);
         // 官方 SSH 示例中 WTerm onData 只负责把数据发给后端，不参与外层滚动状态机。
         // 本项目仍需 JSON 包装以匹配现有 /ssh 协议，但 payload 保持 WTerm 产生的原始字节序列。

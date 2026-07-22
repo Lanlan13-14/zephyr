@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-kb-reopen1';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260722-kb-cjk-cand1';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -99,6 +99,10 @@ let sshKbParentLastGoodInset = 0;
 let sshKbParentLastGoodTop = 0;
 let sshKbParentSeenPhysical = false;
 let sshKbParentLowSince = 0;
+/** Child intent open, waiting for real parent VV/VK height before first crop. */
+let sshKbParentAwaiting = false;
+let sshKbParentAwaitingSince = 0;
+let sshKbParentAwaitingMetrics = null;
 let closingTerminalTabs = new Set();
  
 let minimizingTerminalTabs = new Set();
@@ -2968,10 +2972,12 @@ function measureParentKeyboardTop() {
         const vvTop = Math.round(vv.offsetTop || 0);
         const top = Math.max(0, vvTop + vvH);
         const screenInset = Math.max(0, layoutH - top);
+        // Same open threshold as intent (80). 64 was too eager for status-bar noise
+        // and too strict vs the 80-gate in applyTerminalWorkspaceKeyboard.
         return {
-            top: screenInset >= 64 ? top : layoutH,
-            screenInset: screenInset >= 64 ? screenInset : 0,
-            source: screenInset >= 64 ? 'visualViewport' : 'visualViewport-full',
+            top: screenInset >= 80 ? top : layoutH,
+            screenInset: screenInset >= 80 ? screenInset : 0,
+            source: screenInset >= 80 ? 'visualViewport' : 'visualViewport-full',
             layoutH,
             vvHeight: vvH,
         };
@@ -2983,6 +2989,7 @@ function measureParentKeyboardTop() {
  * PARENT crops the terminal shell so its bottom edge == physical keyboard top.
  * Child iframe is height:100% of that shell. Child must NOT apply a second inset.
  */
+
 function applyParentIframeShellToKeyboard(activeFrame, keyboardTop, open) {
     const win = activeFrame?.closest?.('.terminal-window');
     const body = win?.querySelector?.('.terminal-window-body') || activeFrame?.parentElement;
@@ -3005,7 +3012,6 @@ function applyParentIframeShellToKeyboard(activeFrame, keyboardTop, open) {
     };
 
     if (!open) {
-        // Full uncrop. Keep restingTop so the next open measures against the same origin.
         clearImportant(activeFrame, { keepResting: true });
         clearImportant(body, { keepResting: true });
         if (win?.style) {
@@ -3016,30 +3022,20 @@ function applyParentIframeShellToKeyboard(activeFrame, keyboardTop, open) {
     }
 
     const kTop = Math.round(Number(keyboardTop) || 0);
-    if (!target) return { shellH: 0, top: 0, kTop };
+    if (!target || kTop <= 0) return { shellH: 0, top: 0, kTop: 0 };
 
-    // ALWAYS fully clear previous !important crop before measuring.
-    // Second open bug: style.height='' does NOT remove setProperty(...,'important').
-    clearImportant(target, { keepResting: true });
-    if (activeFrame && activeFrame !== target) clearImportant(activeFrame, { keepResting: true });
-    void target.offsetHeight; // reflow to uncropped layout
-
-    let top = Math.round(target.getBoundingClientRect().top || 0);
-    const restingRaw = Number(target.dataset.sshKbRestingTop || 0);
-    if (!Number.isFinite(restingRaw) || restingRaw <= 0) {
-        // First successful uncropped measure becomes resting origin for this frame/body.
-        target.dataset.sshKbRestingTop = String(top);
-    } else {
-        // If something still leaves us lower on screen than resting, trust resting
-        // (prevents compound crop on 2nd/3rd open).
-        if (top > restingRaw + 4) top = Math.round(restingRaw);
-        // If we're higher (e.g. address bar hide), adopt new resting.
-        if (top + 4 < restingRaw) target.dataset.sshKbRestingTop = String(top);
+    // Prefer resting origin when already cropped — avoid uncrop thrash every frame.
+    const alreadyCropped = target.dataset.sshKbCropped === '1';
+    let originTop = Math.round(Number(target.dataset.sshKbRestingTop) || 0);
+    if (!alreadyCropped || originTop <= 0) {
+        clearImportant(target, { keepResting: true });
+        if (activeFrame && activeFrame !== target) clearImportant(activeFrame, { keepResting: true });
+        void target.offsetHeight;
+        originTop = Math.round(target.getBoundingClientRect().top || 0);
+        if (originTop > 0) target.dataset.sshKbRestingTop = String(originTop);
     }
-    // Prefer resting top as crop origin — stable across open cycles.
-    const originTop = Math.round(Number(target.dataset.sshKbRestingTop) || top);
-    const shellH = Math.max(120, kTop - originTop);
 
+    const shellH = Math.max(120, kTop - originTop);
     target.style.setProperty('box-sizing', 'border-box', 'important');
     target.style.setProperty('height', `${shellH}px`, 'important');
     target.style.setProperty('max-height', `${shellH}px`, 'important');
@@ -3058,22 +3054,6 @@ function applyParentIframeShellToKeyboard(activeFrame, keyboardTop, open) {
         activeFrame.style.border = '0';
         activeFrame.dataset.sshKbCropped = '1';
     }
-
-    // One verification frame: if bottom still past keyboard, snap again from live top
-    // WITHOUT treating that as a new resting origin.
-    requestAnimationFrame(() => {
-        try {
-            if (target.dataset.sshKbCropped !== '1') return;
-            const r = target.getBoundingClientRect();
-            const bottom = Math.round(r.bottom || 0);
-            if (bottom - kTop > 2) {
-                const liveTop = Math.round(r.top || originTop);
-                const h2 = Math.max(120, kTop - liveTop);
-                target.style.setProperty('height', `${h2}px`, 'important');
-                target.style.setProperty('max-height', `${h2}px`, 'important');
-            }
-        } catch (_) {}
-    });
 
     return { shellH, top: originTop, kTop };
 }
@@ -3117,7 +3097,8 @@ function startSshKbAlignLoop() {
     if (_sshKbAlignRaf) return;
     const tick = () => {
         _sshKbAlignRaf = 0;
-        if (!sshKbParentOpen) return;
+        // Keep looping while open OR while waiting for first physical height.
+        if (!sshKbParentOpen && !sshKbParentAwaiting) return;
         const workspace = $('#terminalWorkspace');
         if (!workspace) return;
         const activeFrame = workspace.querySelector(`.terminal-frame[data-frame="${CSS.escape(activeTerminalTab || '')}"]`)
@@ -3127,34 +3108,48 @@ function startSshKbAlignLoop() {
             return;
         }
         const m = measureParentKeyboardTop();
-        if (m.screenInset >= 64) {
+        if (m.screenInset >= 80) {
+            // First real height / track. Quantize lightly via 12px delta to cut thrash.
+            const firstPhysical = !sshKbParentSeenPhysical || sshKbParentAwaiting;
+            const top = Math.round(m.top);
+            const prevTop = Math.round(sshKbParentLastGoodTop || 0);
+            const delta = Math.abs(top - prevTop);
             sshKbParentSeenPhysical = true;
+            sshKbParentAwaiting = false;
+            sshKbParentAwaitingMetrics = null;
             sshKbParentLastGoodInset = m.screenInset;
-            sshKbParentLastGoodTop = m.top;
+            sshKbParentLastGoodTop = top;
             sshKbParentInset = m.screenInset;
             sshKbParentLowSince = 0;
             const now = performance.now();
-            if (now - _sshKbAlignLastPost >= 32) {
+            // First crop immediate; later only if moved >=12px and >=100ms since last post.
+            if (firstPhysical || ((delta >= 12) && (now - _sshKbAlignLastPost >= 100))) {
                 _sshKbAlignLastPost = now;
-                const crop = applyParentIframeShellToKeyboard(activeFrame, m.top, true);
+                const crop = applyParentIframeShellToKeyboard(activeFrame, top, true);
+                sshKbParentOpen = true;
+                workspace.classList.add('ssh-kb-open');
+                document.documentElement.classList.add('ssh-kb-open');
                 postParentShellManaged(activeFrame, {
                     open: true,
-                    keyboardTop: m.top,
+                    keyboardTop: top,
                     screenInset: m.screenInset,
                     shellH: crop.shellH,
                     heightSource: `align-loop:${m.source}`,
-                    reason: 'parent-align-loop',
+                    reason: firstPhysical ? 'parent-align-first-physical' : 'parent-align-loop',
                 });
                 document.documentElement.style.setProperty('--app-keyboard-inset', `${m.screenInset}px`);
-                document.documentElement.style.setProperty('--app-keyboard-top', `${m.top}px`);
-                document.documentElement.style.setProperty('--ssh-kb-inset', `${m.screenInset}px`);
-                sshKbParentLastSignature = `parent-shell:1:${crop.shellH}:${m.top}`;
+                document.documentElement.style.setProperty('--app-keyboard-top', `${top}px`);
+                document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
+                sshKbParentLastSignature = `parent-shell:1:${crop.shellH}:${top}`;
             }
         } else if (sshKbParentSeenPhysical) {
             const now = Date.now();
             if (!sshKbParentLowSince) sshKbParentLowSince = now;
-            if (now - sshKbParentLowSince >= 100) {
+            // 280ms continuous low before close (was 100 — too eager).
+            if (now - sshKbParentLowSince >= 280) {
                 sshKbParentOpen = false;
+                sshKbParentAwaiting = false;
+                sshKbParentAwaitingMetrics = null;
                 sshKbParentInset = 0;
                 sshKbParentLastGoodInset = 0;
                 sshKbParentLastGoodTop = 0;
@@ -3171,6 +3166,12 @@ function startSshKbAlignLoop() {
                     keyboardTop: m.layoutH,
                     reason: 'parent-align-loop-close',
                 });
+                return;
+            }
+        } else if (sshKbParentAwaiting) {
+            if (Date.now() - sshKbParentAwaitingSince > 4000) {
+                sshKbParentAwaiting = false;
+                sshKbParentAwaitingMetrics = null;
                 return;
             }
         }
@@ -3207,12 +3208,15 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         || metrics.phase === 'opening'
     );
 
-    // Screen keyboard height for diagnostics only. Child geometry uses frame overlap.
+    // Screen keyboard height. Child geometry uses frame overlap.
+    // F2 parent: NEVER invent provisional 32%/260–360 crop. That was the
+    // "tools fly up ~1s then drop" bug (normal + custom fullscreen share this).
+    // Crop only with live vv / real child height / brief last-good while already open.
     let effectiveInset = 0;
     let heightSource = 'none';
     let physicalKeyboardTop = layoutHeight;
     if (childOpen) {
-        if (parentInset >= 64) {
+        if (parentInset >= 80) {
             effectiveInset = parentInset;
             physicalKeyboardTop = parentKeyboardTop;
             heightSource = measured.source || 'parent';
@@ -3220,26 +3224,27 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             sshKbParentLastGoodInset = parentInset;
             sshKbParentLastGoodTop = parentKeyboardTop;
             sshKbParentLowSince = 0;
-        } else if (childInset >= 64) {
-            // Child has a height but parent VV is 0 (some overlays builds).
-            // Still place keyboard top from last good parent top if any; else estimate from layout.
+        } else if (childInset >= 80) {
+            // Child has a real height but parent VV is 0 (some overlays builds).
             effectiveInset = childInset;
             physicalKeyboardTop = (sshKbParentLastGoodTop > 0)
                 ? sshKbParentLastGoodTop
                 : Math.max(0, layoutHeight - childInset);
             heightSource = 'child-metrics';
-        } else if (sshKbParentOpen && (sshKbParentLastGoodInset || 0) >= 64) {
-            // Only during continuous open (animation dip). NEVER on a fresh second open —
-            // stale last-good from the previous open makes the 2nd open crop wrong.
+            sshKbParentSeenPhysical = true;
+            sshKbParentLastGoodInset = childInset;
+            sshKbParentLastGoodTop = physicalKeyboardTop;
+        } else if (sshKbParentOpen && sshKbParentSeenPhysical && (sshKbParentLastGoodInset || 0) >= 80) {
+            // Continuous open mid-animation dip only — not first open, not re-open.
             effectiveInset = sshKbParentLastGoodInset;
             physicalKeyboardTop = sshKbParentLastGoodTop || Math.max(0, layoutHeight - effectiveInset);
             heightSource = 'last-good';
         } else {
-            // No physical reading yet: provisional edge so first open isn't zero.
-            // Align loop will replace with real VV within a frame or two.
-            effectiveInset = Math.round(Math.min(360, Math.max(260, layoutHeight * 0.32)));
-            physicalKeyboardTop = Math.max(0, layoutHeight - effectiveInset);
-            heightSource = 'provisional';
+            // No physical reading yet: DO NOT crop. Wait for live vv via align loop.
+            // One settle to real height beats fly-then-correct.
+            effectiveInset = 0;
+            physicalKeyboardTop = layoutHeight;
+            heightSource = 'await-physical';
         }
     } else {
         effectiveInset = 0;
@@ -3255,7 +3260,8 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
     effectiveInset = Math.max(0, Math.round(effectiveInset));
     physicalKeyboardTop = Math.max(0, Math.round(physicalKeyboardTop));
 
-    const keyboardOpen = childOpen && effectiveInset >= 64;
+    // Real height only. Provisional path removed — no fake open crop.
+    const keyboardOpen = childOpen && effectiveInset >= 80;
 
     // Stable SSH mobile: PARENT crops window-body to keyboard top. Child is 100% height.
     if (isStableInput && isCompact) {
@@ -3268,14 +3274,60 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
 
         if (!childOpen) {
             finalOpen = false;
+            sshKbParentAwaiting = false;
+            sshKbParentAwaitingMetrics = null;
             stopSshKbAlignLoop();
+        } else if (heightSource === 'await-physical') {
+            // Intent open, no real height yet: do not crop, do not post close.
+            // Align loop waits for first physical height then crops once.
+            finalOpen = false;
+            sshKbParentAwaiting = true;
+            sshKbParentAwaitingSince = Date.now();
+            sshKbParentAwaitingMetrics = {
+                ...metrics,
+                stableInput: true,
+                keyboardOpen: true,
+                liftMode,
+                heightSource: 'await-physical',
+            };
+            // Uncrop if a previous provisional/stale crop is still applied.
+            if (activeFrame && sshKbParentOpen) {
+                applyParentIframeShellToKeyboard(activeFrame, layoutHeight, false);
+                sshKbParentOpen = false;
+                sshKbParentLastSignature = '';
+            }
+            workspace.classList.remove('ssh-kb-open');
+            document.documentElement.classList.remove('ssh-kb-open');
+            document.documentElement.style.setProperty('--app-keyboard-inset', '0px');
+            document.documentElement.style.setProperty('--app-keyboard-top', '100vh');
+            document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
+            // Tell child intent is still open but no shell crop yet (inset 0).
+            // Do NOT send keyboardOpen:false — that re-closes child intent.
+            postParentShellManaged(activeFrame, {
+                open: true,
+                keyboardTop: layoutHeight,
+                screenInset: 0,
+                shellH: 0,
+                heightSource: 'await-physical',
+                reason: `${metrics.reason || 'parent-shell'}:await-physical`,
+            });
+            startSshKbAlignLoop();
+            console.info('[TerminalLayoutDiagnostics]', {
+                event: 'parent:await-physical',
+                childOpen,
+                parentInset,
+                childInset,
+                layoutHeight,
+            });
+            return;
         } else if (sshKbParentSeenPhysical && parentInset < 40 && parentVvHeight >= (sshKbParentBaseline || layoutHeight) - 16) {
             const now = Date.now();
             if (!sshKbParentLowSince) sshKbParentLowSince = now;
-            if (now - sshKbParentLowSince >= 100) {
+            if (now - sshKbParentLowSince >= 280) {
                 finalOpen = false;
                 sshKbParentLastGoodInset = 0;
                 sshKbParentLastGoodTop = 0;
+                sshKbParentAwaiting = false;
                 stopSshKbAlignLoop();
             }
         } else {
@@ -3286,40 +3338,48 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         // Fresh open after close: bust signature so we never skip re-crop.
         if (finalOpen && !sshKbParentOpen) {
             sshKbParentLastSignature = '';
+            sshKbParentAwaiting = false;
+            sshKbParentAwaitingMetrics = null;
         }
         if (!finalOpen && sshKbParentOpen) {
             // Closing edge: drop last-good so next open cannot reuse old keyboard top.
             sshKbParentLastGoodInset = 0;
             sshKbParentLastGoodTop = 0;
             sshKbParentLastSignature = '';
-        }
-        let crop = { shellH: 0, top: 0, kTop: physicalKeyboardTop };
-        if (activeFrame) {
-            crop = applyParentIframeShellToKeyboard(activeFrame, physicalKeyboardTop, finalOpen);
+            sshKbParentAwaiting = false;
+            sshKbParentAwaitingMetrics = null;
         }
 
-        const signature = `parent-shell:${finalOpen ? 1 : 0}:${crop.shellH || 0}:${physicalKeyboardTop}`;
+        let cropTop = Math.round(physicalKeyboardTop || 0);
+        let cropInset = effectiveInset;
+
+        let crop = { shellH: 0, top: 0, kTop: cropTop };
+        if (activeFrame) {
+            crop = applyParentIframeShellToKeyboard(activeFrame, cropTop, finalOpen);
+        }
+
+        const signature = `parent-shell:${finalOpen ? 1 : 0}:${crop.shellH || 0}:${cropTop}`;
         if (signature === sshKbParentLastSignature) {
             sshKbParentOpen = finalOpen;
-            if (finalOpen) startSshKbAlignLoop();
+            if (finalOpen || sshKbParentAwaiting) startSshKbAlignLoop();
             return;
         }
         sshKbParentLastSignature = signature;
         sshKbParentOpen = finalOpen;
         sshKbParentPendingMetrics = finalOpen
-            ? { ...metrics, stableInput: true, keyboardOpen: true, keyboardInset: effectiveInset, liftMode, heightSource }
+            ? { ...metrics, stableInput: true, keyboardOpen: true, keyboardInset: cropInset, liftMode, heightSource }
             : null;
 
         workspace.classList.toggle('ssh-kb-open', finalOpen);
         document.documentElement.classList.toggle('ssh-kb-open', finalOpen);
-        document.documentElement.style.setProperty('--app-keyboard-inset', finalOpen ? `${effectiveInset}px` : '0px');
-        document.documentElement.style.setProperty('--app-keyboard-top', finalOpen ? `${physicalKeyboardTop}px` : '100vh');
+        document.documentElement.style.setProperty('--app-keyboard-inset', finalOpen ? `${cropInset}px` : '0px');
+        document.documentElement.style.setProperty('--app-keyboard-top', finalOpen ? `${cropTop}px` : '100vh');
         document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
         document.documentElement.style.setProperty('--app-visual-vh', '100vh');
         document.documentElement.style.setProperty('--app-visual-offset-top', '0px');
         // Parent shell managed: child inset channel stays 0 (no double shrink).
         document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
-        if (finalOpen) sshKbParentInset = effectiveInset;
+        if (finalOpen) sshKbParentInset = cropInset;
         else sshKbParentInset = 0;
 
         document.body.classList.remove('ssh-kb-lift');
@@ -3329,8 +3389,8 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
 
         postParentShellManaged(activeFrame, {
             open: finalOpen,
-            keyboardTop: physicalKeyboardTop,
-            screenInset: effectiveInset,
+            keyboardTop: cropTop,
+            screenInset: cropInset,
             shellH: crop.shellH,
             heightSource,
             reason: metrics.reason || 'parent-shell',
@@ -3341,15 +3401,15 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             finalOpen,
             shellH: crop.shellH,
             shellTop: crop.top,
-            physicalKeyboardTop,
-            effectiveInset,
+            physicalKeyboardTop: cropTop,
+            effectiveInset: cropInset,
             parentInset,
             childInset,
             heightSource,
             measureSource: measured.source,
         });
 
-        if (finalOpen) startSshKbAlignLoop();
+        if (finalOpen || sshKbParentAwaiting) startSshKbAlignLoop();
         else stopSshKbAlignLoop();
         return;
     }
@@ -7646,9 +7706,8 @@ function bindEvents() {
                     keyboardInset: reduced.inset,
                 });
             } else {
-                applyTerminalWorkspaceKeyboard._closeDebounce = window.setTimeout(() => {
-                    resetTerminalWorkspaceKeyboard({ force: false });
-                }, 120);
+                // F3: no debounce - align-loop's 160ms low-inset confirm is the sole close gate.
+                resetTerminalWorkspaceKeyboard({ force: false });
             }
             // Mirror unified CSS class/var on parent document for diagnostics.
             try {
