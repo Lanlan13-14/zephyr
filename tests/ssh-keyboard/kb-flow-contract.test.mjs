@@ -1,11 +1,11 @@
 /**
- * Termux-model mobile keyboard geometry contracts (kb-xterm-fit2).
+ * Termux-model mobile keyboard geometry contracts.
  *
  * Rules:
  * 1. Bottom tools + aux NEVER position:fixed over the terminal buffer.
- * 2. IME open shrinks .terminal-page by --ssh-kb-inset.
- * 3. getMobileBottomChromeHeight is always 0 (chrome in-flow).
- * 4. Parent overlap forces --ssh-kb-inset even when intent lags.
+ * 2. Standalone IME open may shrink .terminal-page by --ssh-kb-inset.
+ * 3. Parent-shell-managed (iframe already cropped) forces child inset=0 / height 100%.
+ * 4. getMobileBottomChromeHeight is always 0 (chrome in-flow).
  * 5. Auto-scroll with chrome=0 is plain maxScroll stick.
  */
 import test from 'node:test';
@@ -59,22 +59,29 @@ test('getMobileBottomChromeHeight is hard-zero (in-flow chrome)', () => {
     assert.match(terminalJs, /function getMobileBottomChromeHeight\(\)\s*\{\s*return 0;\s*\}/);
 });
 
-test('parent-overlap writes inset authoritatively', () => {
+test('parent-overlap forces child inset 0 under parentShellManaged', () => {
     assert.match(terminalJs, /type === 'keyboard-overlap'/);
-    assert.match(terminalJs, /applyMobileStableKeyboardInset\([\s\S]*parent-overlap/);
-    // Must not only call applyFacadeChrome (which drops inset when intent closed).
+    assert.match(terminalJs, /parentShellManaged/);
+    assert.match(terminalJs, /setSshKbParentShellManaged/);
     const overlapHandler = terminalJs.slice(
         terminalJs.indexOf("type === 'keyboard-overlap'"),
-        terminalJs.indexOf("type === 'keyboard-overlap'") + 1800,
+        terminalJs.indexOf("type === 'keyboard-overlap'") + 2600,
     );
-    assert.match(overlapHandler, /applyMobileStableKeyboardInset/);
-    assert.match(overlapHandler, /parent-overlap-adopt|proxyFocused/);
+    // Parent-shell path must write geometry with inset 0, not re-apply physical height.
+    assert.match(overlapHandler, /writeSshKbPageGeometry\(0, true/);
+    assert.match(overlapHandler, /setSshKbParentShellManaged\(true/);
+    assert.doesNotMatch(overlapHandler, /applyMobileStableKeyboardInset\(\s*overlap/);
 });
 
-test('applyMobileStableKeyboardInset writes --ssh-kb-inset and toggles ssh-kb-open', () => {
+test('writeSshKbPageGeometry is sole writer of --ssh-kb-inset + ssh-kb-open', () => {
+    assert.match(terminalJs, /function writeSshKbPageGeometry/);
     assert.match(terminalJs, /setProperty\('--ssh-kb-inset'/);
     assert.match(terminalJs, /classList\.toggle\('ssh-kb-open'/);
-    assert.match(terminalJs, /kb-xterm-fit2/);
+    // Parent-shell sticky must zero inset inside the writer.
+    assert.match(
+        terminalJs,
+        /function writeSshKbPageGeometry[\s\S]{0,900}_sshKbParentShellManaged[\s\S]{0,200}inset = 0/,
+    );
 });
 
 test('pin path stick-bottom when chromeHeight is 0', () => {
@@ -106,9 +113,9 @@ test('pin path stick-bottom when chromeHeight is 0', () => {
     assert.equal(mid.changed, false);
 });
 
-test('terminal entry cache-bust kb-xterm-fit2', () => {
-    assert.match(terminalHtml, /kb-xterm-fit2/);
-    assert.match(terminalJs, /kb-xterm-fit2/);
+test('terminal entry cache-bust aux-bar-fly1', () => {
+    assert.match(terminalHtml, /aux-bar-fly1/);
+    assert.match(terminalHtml, /terminal\.js\?v=20260722-aux-bar-fly1/);
 });
 
 test('allowScrollDuringTyping still rejects non-unclip', () => {

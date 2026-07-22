@@ -2090,6 +2090,9 @@ window.addEventListener('message', (e) => {
             // NEVER feed shellH into child --ssh-kb-inset (shellH is the visible
             // terminal height, often 400+, which double-shrinks the page and makes
             // the bottom bar fly up and cover the whole terminal).
+            if (parentShellManaged || e.data.parentShellManaged) {
+                setSshKbParentShellManaged(true, `parent-overlap:${e.data.reason || ''}`);
+            }
             writeSshKbPageGeometry(0, true, { fromParent: true });
             // Keep cache at 0 so applyFacadeChrome / getSshKbInset cannot re-inflate.
             _sshKbInsetCache = 0;
@@ -2100,6 +2103,8 @@ window.addEventListener('message', (e) => {
                 try {
                     // Physical confirm for intent only — use real keyboard height
                     // (parentInset / screen keyboard), NEVER shellH (cropped frame h).
+                    // NOTE: this updates intent.inset for open/close state only;
+                    // writeSshKbPageGeometry must still force child CSS inset to 0.
                     const physicalInset = Math.max(
                         0,
                         Math.round(Number(e.data.parentInset) || 0),
@@ -8368,6 +8373,25 @@ let _sshKbLastFitSignature = '';
 
 /** Last time parent-overlap wrote an OPEN geometry (sticky against facade close). */
 let _sshKbParentGeomAt = 0;
+/**
+ * Sticky: parent app already cropped the iframe to the keyboard top.
+ * While true, child MUST keep --ssh-kb-inset=0 and height:100%.
+ * Re-applying physical keyboard height (e.g. after tapping ↑ / retainFocus)
+ * double-shrinks the page and makes the bottom bar "fly" into the terminal.
+ */
+let _sshKbParentShellManaged = false;
+
+function setSshKbParentShellManaged(active, reason = '') {
+    _sshKbParentShellManaged = !!active;
+    try {
+        document.documentElement.classList.toggle('ssh-kb-parent-shell', !!active);
+    } catch (_) {}
+    if (active) _sshKbParentGeomAt = Date.now();
+    logTerminalLayoutDiagnostics?.('ssh-kb-parent-shell', {
+        active: !!active,
+        reason: String(reason || ''),
+    });
+}
 
 function measureSshKbChromeHeights() {
     let aux = 48;
@@ -8386,7 +8410,18 @@ function measureSshKbChromeHeights() {
 }
 
 function writeSshKbPageGeometry(safeInset, layoutOpen, { fromParent = false } = {}) {
-    const inset = Math.max(0, Math.round(Number(safeInset) || 0));
+    // Parent-shell-managed: iframe already ends at keyboard top → child inset is always 0.
+    // Ignoring this is the root cause of the bottom bar flying up on aux-key taps.
+    let inset = Math.max(0, Math.round(Number(safeInset) || 0));
+    if (layoutOpen && (fromParent || _sshKbParentShellManaged)) {
+        inset = 0;
+        setSshKbParentShellManaged(true, fromParent ? 'write-from-parent' : 'write-sticky');
+    } else if (!layoutOpen) {
+        setSshKbParentShellManaged(false, 'write-close');
+    } else if (inset > 0) {
+        // Standalone (no parent crop): allow real inset, clear sticky flag.
+        setSshKbParentShellManaged(false, 'write-standalone-inset');
+    }
     _sshKbInsetCache = inset;
     _sshKbLayoutOpenCache = !!layoutOpen;
     if (layoutOpen && fromParent) _sshKbParentGeomAt = Date.now();
@@ -8547,6 +8582,7 @@ function forceClearSshKbShell(reason = 'force-clear') {
     _sshKbGeomPending = null;
     _sshKbLowInsetSince = 0;
     _sshKbParentGeomAt = 0;
+    setSshKbParentShellManaged(false, reason || 'force-clear');
     const wasOpen = !!_sshKbLayoutOpenCache || (_sshKbInsetCache || 0) > 0
         || document.documentElement.classList.contains('ssh-kb-open');
     writeSshKbPageGeometry(0, false, { fromParent: true });
@@ -8596,10 +8632,11 @@ function applyMobileStableKeyboardInset(inset = 0, keyboardOpen = false, reason 
     // Never forceClear just because height is not ready — that was why the
     // keyboard could never open after provisional physical was removed.
     let pinInset = 0;
-    if (parentAuthoritative) {
-        // Parent already cropped iframe: child inset is 0 by design.
-        // reported is frame-local overlap (often 0 under parentShellManaged).
-        pinInset = Math.max(0, reported);
+    if (_sshKbParentShellManaged || parentAuthoritative) {
+        // Parent already cropped iframe: child inset is ALWAYS 0.
+        // Intent may hold physical height for state machine; never paint it as
+        // child CSS --ssh-kb-inset (double crop → bottom bar flies).
+        pinInset = 0;
     } else if (reported >= 80) {
         pinInset = reported;
     } else if (measured >= 80) {
@@ -9647,12 +9684,11 @@ function applyFacadeChrome(reason = 'mirror') {
     // (parent shell-managed crop delivers height later). Never self-close here.
     // Close authority: parent keyboard-overlap(close) or intent.close / system-dismiss.
     if (desired || phase === 'open' || phase === 'opening' || proxyFocused) {
-        // Parent shell-managed (parentGeom recent OR cache says open with inset 0):
-        // child page inset MUST stay 0. Re-applying intent physical height here
-        // double-shrinks under the already-cropped iframe → bar flies over terminal.
-        const parentShellManagedOpen = !!_sshKbLayoutOpenCache
-            && parentAge < 2000
-            && (_sshKbInsetCache || 0) < 8;
+        // Parent shell-managed is STICKY until force-clear / parent close.
+        // Aux-key taps (↑ etc.) call retainFocus → applyFacadeChrome; if we then
+        // write intent.physical inset into the child, the bar flies mid-screen.
+        const parentShellManagedOpen = !!_sshKbParentShellManaged
+            || (!!_sshKbLayoutOpenCache && parentAge < 8000 && (_sshKbInsetCache || 0) < 8);
         if (parentShellManagedOpen || parentLive || parentFreshOpen) {
             writeSshKbPageGeometry(0, true, { fromParent: true });
             _sshKbInsetCache = 0;
@@ -11306,8 +11342,20 @@ if (mobileAuxKeys) {
         const kb = ensureSshKeyboard();
         if (!kb) return false;
         if (!kb.desiredOpen?.() && !kb.physicalOpen?.()) return false;
+        // Parent already crops the iframe: keep child geometry at inset=0 before
+        // retainFocus, otherwise facade may briefly re-apply physical height and
+        // the bottom bar jumps mid-screen when tapping ↑/Ctrl/etc.
+        if (_sshKbParentShellManaged || (_sshKbLayoutOpenCache && (_sshKbInsetCache || 0) < 8)) {
+            writeSshKbPageGeometry(0, true, { fromParent: true });
+            _sshKbInsetCache = 0;
+        }
         // Single retain — no multi-phase raf/timeout thrash.
         kb.retainFocus(reason);
+        // Re-assert after retain (state publish → applyFacadeChrome).
+        if (_sshKbParentShellManaged) {
+            writeSshKbPageGeometry(0, true, { fromParent: true });
+            _sshKbInsetCache = 0;
+        }
         return true;
     }
 

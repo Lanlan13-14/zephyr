@@ -13640,7 +13640,9 @@ html {
 
 
 /* ===== FINAL keyboard chrome lock (must be last) =====
-   Shrink page by exact --ssh-kb-inset; tools/aux in-flow; NO fixed; NO blur. */
+   Shrink page by exact --ssh-kb-inset; tools/aux in-flow; NO fixed; NO blur.
+   EXCEPTION: parent-shell-managed (iframe already cropped) → height 100%, never
+   subtract inset again or the bottom bar flies into the terminal mid-interaction. */
 @media (max-width: 760px) and (hover: none) and (pointer: coarse) {
   html.mobile-stable-input.ssh-kb-open .terminal-page {
     height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
@@ -13653,6 +13655,11 @@ html {
     -webkit-backdrop-filter: none !important;
     overflow: hidden !important;
     padding-bottom: 0 !important;
+  }
+  html.mobile-stable-input.ssh-kb-open.ssh-kb-parent-shell .terminal-page,
+  html.mobile-stable-input.ssh-kb-parent-shell.ssh-kb-open .terminal-page {
+    height: 100% !important;
+    max-height: 100% !important;
   }
   html.mobile-stable-input.ssh-kb-open .topbar-actions,
   html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar,
