@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-kb-pin1';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-kb-shell1';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -2856,6 +2856,12 @@ workspace.classList.remove('ssh-kb-open', 'keyboard-settling', 'ssh-kb-open');
             frame.style.height = '';
             frame.style.maxHeight = '';
             frame.style.minHeight = '';
+            const body = frame.closest?.('.terminal-window')?.querySelector?.('.terminal-window-body') || frame.parentElement;
+            if (body?.style) {
+                body.style.height = '';
+                body.style.maxHeight = '';
+                body.style.minHeight = '';
+            }
         });
     };
     const notifyFrameKeyboardReset = (reason = 'parent-workspace-reset') => {
@@ -2927,8 +2933,8 @@ function commitTerminalWorkspaceKeyboard(metrics = {}) {
 }
 
 /**
- * Physical keyboard top Y in parent layout coordinates.
- * Prefer virtualKeyboard.boundingRect (Chrome Android), else visualViewport bottom.
+ * Physical keyboard TOP in layout-viewport CSS px (same as getBoundingClientRect).
+ * Prefer VirtualKeyboard.boundingRect.y; else visualViewport.offsetTop+height (MDN).
  */
 function measureParentKeyboardTop() {
     const layoutH = Math.max(
@@ -2940,52 +2946,102 @@ function measureParentKeyboardTop() {
         const vk = navigator.virtualKeyboard?.boundingRect;
         const top = Math.round(Number(vk?.y) || 0);
         const h = Math.round(Number(vk?.height) || 0);
-        if (h >= 80 && top > 0 && top < layoutH) {
-            return { top, inset: Math.max(0, layoutH - top), source: 'virtualKeyboard', layoutH };
+        if (h >= 64 && top >= 0 && top < layoutH) {
+            return {
+                top,
+                screenInset: Math.max(0, layoutH - top),
+                source: 'virtualKeyboard',
+                layoutH,
+                vvHeight: Math.round(window.visualViewport?.height || layoutH - h),
+            };
         }
     } catch (_) {}
     const vv = window.visualViewport;
     if (vv) {
-        const top = Math.round((vv.offsetTop || 0) + (vv.height || 0));
-        const inset = Math.max(0, layoutH - top);
-        return { top, inset, source: 'visualViewport', layoutH, vvHeight: Math.round(vv.height || 0) };
+        const vvH = Math.round(vv.height || 0);
+        const vvTop = Math.round(vv.offsetTop || 0);
+        const top = Math.max(0, vvTop + vvH);
+        const screenInset = Math.max(0, layoutH - top);
+        return {
+            top: screenInset >= 64 ? top : layoutH,
+            screenInset: screenInset >= 64 ? screenInset : 0,
+            source: screenInset >= 64 ? 'visualViewport' : 'visualViewport-full',
+            layoutH,
+            vvHeight: vvH,
+        };
     }
-    return { top: layoutH, inset: 0, source: 'none', layoutH };
+    return { top: layoutH, screenInset: 0, source: 'none', layoutH, vvHeight: layoutH };
 }
 
-function postFrameKeyboardOverlap(activeFrame, {
-    open,
-    keyboardTop,
-    heightSource = '',
-    reason = 'parent-stable-overlap',
-    parentInset = 0,
-} = {}) {
-    if (!activeFrame?.contentWindow) return 0;
-    const frameRect = activeFrame.getBoundingClientRect?.();
-    if (!frameRect) return 0;
-    // iframe-local coverage by IME. If frame math under-reports (some WebViews),
-    // fall back to parentInset (screen keyboard height) so tools never sit under keys.
-    const rawOverlap = open && keyboardTop > 0
-        ? Math.max(0, Math.round(frameRect.bottom - keyboardTop))
-        : 0;
-    const inset = Math.max(0, Math.round(parentInset || 0));
-    // Prefer the LARGER of frame overlap and physical keyboard height.
-    // Fixed chrome uses bottom: overlap — too-small values bury tools under IME.
-    const overlap = open ? Math.max(rawOverlap, inset >= 64 ? inset : 0) : 0;
-    activeFrame.contentWindow.postMessage({
-        source: 'zephyr-app',
-        type: 'keyboard-overlap',
-        keyboardOpen: open && overlap >= 64,
-        keyboardOverlap: overlap,
-        keyboardTop: Math.round(keyboardTop || 0),
-        parentInset: inset,
-        frameOverlap: rawOverlap,
-        heightSource,
-        reason,
-    }, '*');
-    return overlap;
+/**
+ * PARENT crops the terminal shell so its bottom edge == physical keyboard top.
+ * Child iframe is height:100% of that shell. Child must NOT apply a second inset.
+ */
+function applyParentIframeShellToKeyboard(activeFrame, keyboardTop, open) {
+    const win = activeFrame?.closest?.('.terminal-window');
+    const body = win?.querySelector?.('.terminal-window-body') || activeFrame?.parentElement;
+    const clear = (el) => {
+        if (!el?.style) return;
+        el.style.height = '';
+        el.style.maxHeight = '';
+        el.style.minHeight = '';
+    };
+    if (!open) {
+        clear(activeFrame);
+        clear(body);
+        if (win?.style) {
+            win.style.height = '';
+            win.style.maxHeight = '';
+        }
+        return { shellH: 0, top: 0, kTop: 0 };
+    }
+    const kTop = Math.round(Number(keyboardTop) || 0);
+    const target = body || activeFrame;
+    if (!target) return { shellH: 0, top: 0, kTop };
+    const top = Math.round(target.getBoundingClientRect().top || 0);
+    const shellH = Math.max(160, kTop - top);
+    target.style.boxSizing = 'border-box';
+    target.style.height = `${shellH}px`;
+    target.style.maxHeight = `${shellH}px`;
+    target.style.minHeight = '0px';
+    if (activeFrame && target !== activeFrame) {
+        activeFrame.style.boxSizing = 'border-box';
+        activeFrame.style.height = '100%';
+        activeFrame.style.maxHeight = '100%';
+        activeFrame.style.minHeight = '0';
+        activeFrame.style.width = '100%';
+        activeFrame.style.display = 'block';
+        activeFrame.style.border = '0';
+    }
+    return { shellH, top, kTop };
 }
- 
+
+function postParentShellManaged(activeFrame, {
+    open,
+    keyboardTop = 0,
+    screenInset = 0,
+    shellH = 0,
+    heightSource = '',
+    reason = 'parent-shell',
+} = {}) {
+    if (!activeFrame?.contentWindow) return;
+    try {
+        activeFrame.contentWindow.postMessage({
+            source: 'zephyr-app',
+            type: 'keyboard-overlap',
+            keyboardOpen: !!open,
+            // Parent already cropped iframe: child page is 100% of cropped height.
+            keyboardOverlap: 0,
+            parentShellManaged: true,
+            keyboardTop: Math.round(keyboardTop || 0),
+            parentInset: Math.round(screenInset || 0),
+            shellH: Math.round(shellH || 0),
+            heightSource,
+            reason,
+        }, '*');
+    } catch (_) {}
+}
+
 /** While IME open, keep posting exact overlap every animation frame (throttled). */
 let _sshKbAlignRaf = 0;
 let _sshKbAlignLastPost = 0;
@@ -3004,38 +3060,38 @@ function startSshKbAlignLoop() {
         if (!workspace) return;
         const activeFrame = workspace.querySelector(`.terminal-frame[data-frame="${CSS.escape(activeTerminalTab || '')}"]`)
             || workspace.querySelector('.terminal-frame.active');
+        if (!activeFrame) {
+            _sshKbAlignRaf = requestAnimationFrame(tick);
+            return;
+        }
         const m = measureParentKeyboardTop();
-        if (m.inset >= 64) {
+        if (m.screenInset >= 64) {
             sshKbParentSeenPhysical = true;
-            sshKbParentLastGoodInset = m.inset;
+            sshKbParentLastGoodInset = m.screenInset;
             sshKbParentLastGoodTop = m.top;
-            sshKbParentInset = m.inset;
+            sshKbParentInset = m.screenInset;
             sshKbParentLowSince = 0;
             const now = performance.now();
-            // ~30fps post while open — keeps tools glued through keyboard animation.
             if (now - _sshKbAlignLastPost >= 32) {
                 _sshKbAlignLastPost = now;
-                const overlap = postFrameKeyboardOverlap(activeFrame, {
+                const crop = applyParentIframeShellToKeyboard(activeFrame, m.top, true);
+                postParentShellManaged(activeFrame, {
                     open: true,
                     keyboardTop: m.top,
-                    parentInset: m.inset,
+                    screenInset: m.screenInset,
+                    shellH: crop.shellH,
                     heightSource: `align-loop:${m.source}`,
                     reason: 'parent-align-loop',
                 });
-                document.documentElement.style.setProperty('--ssh-kb-inset', `${m.inset}px`);
-                document.documentElement.style.setProperty('--app-keyboard-inset', `${m.inset}px`);
+                document.documentElement.style.setProperty('--app-keyboard-inset', `${m.screenInset}px`);
                 document.documentElement.style.setProperty('--app-keyboard-top', `${m.top}px`);
-                // Update signature so applyTerminalWorkspaceKeyboard won't fight with stale values.
-                sshKbParentLastSignature = `stable-overlay:1:${m.inset}:${m.top}:${Math.round(activeFrame?.getBoundingClientRect?.()?.bottom || 0)}`;
-                if (overlap > 0 && overlap !== sshKbParentInset) {
-                    /* overlap is iframe-local; parent inset stays screen keyboard height */
-                }
+                document.documentElement.style.setProperty('--ssh-kb-inset', `${m.screenInset}px`);
+                sshKbParentLastSignature = `parent-shell:1:${crop.shellH}:${m.top}`;
             }
         } else if (sshKbParentSeenPhysical) {
             const now = Date.now();
             if (!sshKbParentLowSince) sshKbParentLowSince = now;
-            if (now - sshKbParentLowSince >= 120) {
-                // IME gone — force close path.
+            if (now - sshKbParentLowSince >= 100) {
                 sshKbParentOpen = false;
                 sshKbParentInset = 0;
                 sshKbParentLastGoodInset = 0;
@@ -3047,12 +3103,13 @@ function startSshKbAlignLoop() {
                 document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
                 document.documentElement.style.setProperty('--app-keyboard-inset', '0px');
                 document.documentElement.style.setProperty('--app-keyboard-top', '100vh');
-                postFrameKeyboardOverlap(activeFrame, {
+                applyParentIframeShellToKeyboard(activeFrame, m.layoutH, false);
+                postParentShellManaged(activeFrame, {
                     open: false,
                     keyboardTop: m.layoutH,
                     reason: 'parent-align-loop-close',
                 });
-                return; // stop loop
+                return;
             }
         }
         _sshKbAlignRaf = requestAnimationFrame(tick);
@@ -3075,7 +3132,7 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
     // Physical keyboard edge in PARENT coordinates (single source of truth).
     const measured = measureParentKeyboardTop();
     const parentKeyboardTop = measured.top;
-    const parentInset = measured.inset;
+    const parentInset = measured.screenInset;
     const parentLayoutHeight = measured.layoutH;
     const parentVvHeight = measured.vvHeight || Math.round(window.visualViewport?.height || parentLayoutHeight);
     const layoutHeight = parentLayoutHeight;
@@ -3137,7 +3194,7 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
 
     const keyboardOpen = childOpen && effectiveInset >= 64;
 
-    // Stable SSH mobile: parent NEVER clips workspace. Child shrinks by frame overlap.
+    // Stable SSH mobile: PARENT crops window-body to keyboard top. Child is 100% height.
     if (isStableInput && isCompact) {
         const liftMode = metrics.liftMode === 'none' || metrics.inputSource === 'cmd' || metrics.source === 'cmd'
             ? 'none'
@@ -3145,7 +3202,6 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         let finalOpen = keyboardOpen && liftMode === 'workspace';
         const activeFrame = workspace.querySelector(`.terminal-frame[data-frame="${CSS.escape(activeTerminalTab || '')}"]`)
             || workspace.querySelector('.terminal-frame.active');
-        const activeFrameRect = activeFrame?.getBoundingClientRect?.();
 
         if (!childOpen) {
             finalOpen = false;
@@ -3163,14 +3219,13 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             sshKbParentLowSince = 0;
         }
 
-        // Exact frame-local overlap for THIS frame (tools flush to keyboard).
-        let frameOverlap = 0;
-        if (finalOpen && activeFrameRect && physicalKeyboardTop > 0) {
-            frameOverlap = Math.max(0, Math.round(activeFrameRect.bottom - physicalKeyboardTop));
+        // Crop shell first, then notify child (child does not shrink again).
+        let crop = { shellH: 0, top: 0, kTop: physicalKeyboardTop };
+        if (activeFrame) {
+            crop = applyParentIframeShellToKeyboard(activeFrame, physicalKeyboardTop, finalOpen);
         }
 
-        // Signature includes exact overlap so 1px keyboard moves still propagate.
-        const signature = `stable-overlay:${finalOpen ? 1 : 0}:${frameOverlap}:${physicalKeyboardTop}:${Math.round(activeFrameRect?.bottom || 0)}`;
+        const signature = `parent-shell:${finalOpen ? 1 : 0}:${crop.shellH || 0}:${physicalKeyboardTop}`;
         if (signature === sshKbParentLastSignature) {
             sshKbParentOpen = finalOpen;
             if (finalOpen) startSshKbAlignLoop();
@@ -3184,59 +3239,40 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
 
         workspace.classList.toggle('ssh-kb-open', finalOpen);
         document.documentElement.classList.toggle('ssh-kb-open', finalOpen);
-        // Parent CSS vars are diagnostic only for stable mode (child owns shell height).
-        document.documentElement.style.setProperty('--ssh-kb-inset', finalOpen ? `${frameOverlap || effectiveInset}px` : '0px');
         document.documentElement.style.setProperty('--app-keyboard-inset', finalOpen ? `${effectiveInset}px` : '0px');
         document.documentElement.style.setProperty('--app-keyboard-top', finalOpen ? `${physicalKeyboardTop}px` : '100vh');
         document.documentElement.style.setProperty('--app-keyboard-shift', '0px');
         document.documentElement.style.setProperty('--app-visual-vh', '100vh');
         document.documentElement.style.setProperty('--app-visual-offset-top', '0px');
+        // Parent shell managed: child inset channel stays 0 (no double shrink).
+        document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
         if (finalOpen) sshKbParentInset = effectiveInset;
         else sshKbParentInset = 0;
 
         document.body.classList.remove('ssh-kb-lift');
+        // Do NOT force iframe height:100% of uncropped window — shell crop owns height.
         workspace.style.flex = '';
-        workspace.style.height = '';
-        workspace.style.maxHeight = '';
-        workspace.style.minHeight = '0px';
         workspace.style.marginBottom = '0px';
-        workspace.querySelectorAll('.terminal-frame').forEach((frame) => {
-            frame.style.height = '100%';
-            frame.style.maxHeight = '100%';
-            frame.style.minHeight = '0px';
-        });
 
-        const overlap = postFrameKeyboardOverlap(activeFrame, {
+        postParentShellManaged(activeFrame, {
             open: finalOpen,
             keyboardTop: physicalKeyboardTop,
-            parentInset: effectiveInset,
+            screenInset: effectiveInset,
+            shellH: crop.shellH,
             heightSource,
-            reason: metrics.reason || 'parent-stable-overlap',
+            reason: metrics.reason || 'parent-shell',
         });
-        // Prefer posting the just-computed frameOverlap if post helper got 0 due to race.
-        if (finalOpen && overlap === 0 && frameOverlap > 0 && activeFrame?.contentWindow) {
-            activeFrame.contentWindow.postMessage({
-                source: 'zephyr-app',
-                type: 'keyboard-overlap',
-                keyboardOpen: frameOverlap >= 64,
-                keyboardOverlap: frameOverlap,
-                keyboardTop: physicalKeyboardTop,
-                parentInset: effectiveInset,
-                heightSource,
-                reason: `${metrics.reason || 'parent-stable-overlap'}:exact`,
-            }, '*');
-        }
 
         console.info('[TerminalLayoutDiagnostics]', {
-            event: 'parent:stable-overlap',
+            event: 'parent:shell-crop',
             finalOpen,
-            frameOverlap: frameOverlap || overlap,
+            shellH: crop.shellH,
+            shellTop: crop.top,
             physicalKeyboardTop,
             effectiveInset,
             parentInset,
             childInset,
             heightSource,
-            frameBottom: Math.round(activeFrameRect?.bottom || 0),
             measureSource: measured.source,
         });
 
@@ -3245,7 +3281,7 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         return;
     }
 
-    // Non-stable / fullscreen path: still use measured keyboard top.
+// Non-stable / fullscreen path: still use measured keyboard top.
     if (!keyboardOpen || !isFullscreenTerminalSurface) {
         if (!keyboardOpen) {
             stopSshKbAlignLoop();
@@ -3296,8 +3332,8 @@ function updateFullscreenKeyboardFromViewport() {
         keyboardOpen: true,
         intent: 'open',
         phase: 'open',
-        keyboardInset: Math.max(m.inset, sshKbParentInset || 0),
-        viewportHeight: m.vvHeight || Math.max(0, m.layoutH - m.inset),
+        keyboardInset: Math.max(m.screenInset, sshKbParentInset || 0),
+        viewportHeight: m.vvHeight || Math.max(0, m.layoutH - m.screenInset),
         layoutHeight: m.layoutH,
         offsetTop: Math.round(window.visualViewport?.offsetTop || 0),
         stableInput: true,

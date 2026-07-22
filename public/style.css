@@ -7251,8 +7251,8 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
 
     html.mobile-stable-input.viewport-updating .terminal-page,
     html.mobile-stable-input.ssh-kb-open .terminal-page {
-        height: 100% !important;
-        max-height: 100% !important;
+        height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
+        max-height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
         transform: none !important;
         transition: background-color 0.24s ease, border-color 0.24s ease !important;
     }
@@ -7307,13 +7307,8 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         min-height: 120px !important;
         height: auto !important;
         max-height: none !important;
-        /* bars are position:fixed above IME — only reserve tools+aux height.
-           Do NOT add keyboard-inset here (double-count → floating chrome / black void). */
-        padding-bottom: calc(
-            var(--mobile-bottom-actions-height, 46px)
-            + var(--mobile-aux-keys-height, 44px)
-            + 8px
-        ) !important;
+        /* Chrome is in-flow at bottom of shrunk page — no fixed reserve padding. */
+        padding-bottom: 0 !important;
     }
     html.mobile-stable-input.ssh-kb-open .terminal-container .wterm-wrapper,
     html.mobile-stable-input.ssh-kb-open .terminal-container .wterm-wrapper.wterm {
@@ -7323,8 +7318,8 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     }
     /* Kill destructive non-stable keyboard open rules when stable mode is on. */
     html.mobile-stable-input.ssh-kb-open .terminal-page {
-        height: 100% !important;
-        max-height: 100% !important;
+        height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
+        max-height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
         grid-template-rows: none !important;
         display: flex !important;
         flex-direction: column !important;
@@ -7359,37 +7354,38 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         box-shadow: 0 -2px 12px rgba(0,0,0,0.18);
     }
 
-    /* Pin tools + aux flush to IME top. --ime-chrome-bottom is measured from
-       visualViewport (layoutH - vv.offsetTop - vv.height), NOT inflated baseline. */
-    html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar {
-        position: fixed !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: var(--ime-chrome-bottom, var(--keyboard-inset, 0px)) !important;
-        z-index: 40 !important;
-        /* NO safe-area while IME open — it creates the black seam above the keyboard */
-        padding-bottom: 0 !important;
-        margin: 0 !important;
-        transform: none !important;
-        transition: none !important;
-        box-shadow: none !important;
-        border-bottom: 0 !important;
-    }
-    /* When keyboard closes, immediately return to static in flow. */
+    /* Keyboard open: chrome stays IN FLOW at bottom of shrunk page (Termux).
+       NEVER position:fixed here — fixed + wrong inset buried tools under IME. */
+    html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar,
     html.mobile-stable-input:not(.ssh-kb-open) .terminal-bottom-bar {
         position: static !important;
+        left: auto !important;
+        right: auto !important;
         bottom: auto !important;
-        padding-bottom: max(2px, env(safe-area-inset-bottom)) !important;
+        top: auto !important;
         transform: none !important;
         transition: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        filter: none !important;
+    }
+    html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar {
+        padding-bottom: 0 !important;
+        margin: 0 !important;
+        box-shadow: none !important;
+        border-bottom: 0 !important;
+        background: var(--bg, var(--surface)) !important;
+    }
+    html.mobile-stable-input:not(.ssh-kb-open) .terminal-bottom-bar {
+        padding-bottom: max(2px, env(safe-area-inset-bottom)) !important;
     }
 
-    /* Reuse the original topbar CSS-icon actions row; move it above the aux keys on mobile. */
     html.mobile-stable-input .topbar-actions {
-        position: static;
-        left: auto;
-        right: auto;
-        bottom: auto;
+        position: static !important;
+        left: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        top: auto !important;
         z-index: 22;
         display: flex;
         flex-wrap: nowrap;
@@ -7398,33 +7394,26 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
         padding: 6px 8px;
         flex: 0 0 auto;
         order: 3;
-        background: var(--surface);
+        background: var(--bg, var(--surface)) !important;
         border-top: 1px solid var(--border);
         border-bottom: 1px solid var(--border);
-        box-shadow: 0 -2px 10px rgba(0,0,0,0.12);
-        transform: none !important;
-        transition: none;
-    }
-    html.mobile-stable-input.ssh-kb-open .topbar-actions {
-        position: fixed !important;
-        left: 0 !important;
-        right: 0 !important;
-        /* Sit directly on top of aux bar — height measured live into --mobile-aux-keys-height */
-        bottom: calc(var(--ime-chrome-bottom, var(--keyboard-inset, 0px)) + var(--mobile-aux-keys-height, 44px)) !important;
-        z-index: 41 !important;
-        margin: 0 !important;
-        border-bottom: 0 !important;
         box-shadow: none !important;
         transform: none !important;
         transition: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        filter: none !important;
     }
-    html.mobile-stable-input:not(.ssh-kb-open) .topbar-actions {
+    html.mobile-stable-input.ssh-kb-open .topbar-actions {
         position: static !important;
         bottom: auto !important;
-        transform: none !important;
-        transition: none !important;
+        margin: 0 !important;
+        border-bottom: 0 !important;
+        box-shadow: none !important;
+        background: var(--bg, var(--surface)) !important;
     }
-    /* Kill any residual blue press flash on mobile chrome (tools are .btn-sm) */
+ 
+Ops.file_edit    /* Kill any residual blue press flash on mobile chrome (tools are .btn-sm) */
     html.mobile-stable-input .topbar-actions .btn-sm:active,
     html.mobile-stable-input .topbar-actions .btn-sm:focus,
     html.mobile-stable-input .topbar-actions .btn-sm:focus-visible,
@@ -7583,8 +7572,8 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
 
     html.mobile-stable-input.ssh-kb-open .terminal-page {
         /* The parent app shrinks the iframe to the area above the keyboard. */
-        height: 100% !important;
-        max-height: 100% !important;
+        height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
+        max-height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
     }
 
     .terminal-page .terminal-topbar,
@@ -13553,64 +13542,69 @@ html.mobile-stable-input .terminal-topbar {
         /* Closed: keep home-indicator safe area. Open: page already above IME. */
         padding-bottom: max(2px, env(safe-area-inset-bottom)) !important;
     }
-    html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar {
-        padding-bottom: 0 !important;
-        margin-bottom: 0 !important;
-    }
-
     /*
-     * HARD RULE: when IME is open, pin tools+aux to the physical keyboard top.
-     * bottom = --ssh-kb-inset (iframe-local overlap / keyboard coverage in CSS px).
-     * This does not depend on flex shrink working inside the iframe.
+     * AUTHORITATIVE keyboard geometry (Termux model):
+     * - Shrink .terminal-page by --ssh-kb-inset so the whole column ends at IME top
+     * - tools + aux stay position:static in normal flex flow at the bottom of that column
+     * - NO position:fixed, NO backdrop-filter/blur on chrome
      */
+    html.mobile-stable-input.ssh-kb-open .terminal-page {
+        height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
+        max-height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
+        top: 0 !important;
+        bottom: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        transform: none !important;
+        filter: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        transition: height 0.08s linear, max-height 0.08s linear !important;
+    }
+    html.mobile-stable-input.ssh-kb-open .topbar-actions,
     html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar {
-        position: fixed !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: var(--ssh-kb-inset, var(--keyboard-inset, 0px)) !important;
+        position: static !important;
+        left: auto !important;
+        right: auto !important;
         top: auto !important;
-        z-index: 200 !important;
-        width: 100% !important;
+        bottom: auto !important;
+        width: auto !important;
         margin: 0 !important;
         transform: none !important;
-        background: var(--bg, #0b1220) !important;
-        box-shadow: 0 -1px 0 var(--border, rgba(255,255,255,.08)) !important;
+        filter: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        box-shadow: none !important;
+        background: var(--bg, var(--surface)) !important;
+        opacity: 1 !important;
     }
     html.mobile-stable-input.ssh-kb-open .topbar-actions {
-        position: fixed !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: calc(
-            var(--ssh-kb-inset, var(--keyboard-inset, 0px))
-            + var(--ssh-kb-aux-height, 48px)
-        ) !important;
-        top: auto !important;
-        z-index: 201 !important;
-        width: 100% !important;
-        margin: 0 !important;
-        padding: 6px 8px 4px !important;
-        transform: none !important;
-        background: var(--bg, #0b1220) !important;
-        box-sizing: border-box !important;
-        box-shadow: 0 -8px 18px var(--bg, #0b1220) !important;
-        order: unset !important;
-        flex: none !important;
+        order: 3 !important;
+        flex: 0 0 auto !important;
+        padding: 6px 8px 2px !important;
+        border-top: 1px solid var(--border) !important;
+        border-bottom: 0 !important;
+        z-index: 5 !important;
+    }
+    html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar {
+        order: 4 !important;
+        flex: 0 0 auto !important;
+        padding-bottom: 0 !important;
+        border-top: 1px solid var(--border) !important;
+        z-index: 5 !important;
     }
     html.mobile-stable-input.ssh-kb-open .terminal-container {
-        /* Reserve space so last terminal line is not under fixed chrome. */
-        padding-bottom: calc(
-            var(--ssh-kb-aux-height, 48px)
-            + var(--ssh-kb-tools-height, 52px)
-            + 8px
-        ) !important;
-        min-height: 80px !important;
-        margin-bottom: 0 !important;
-    }
-    html.mobile-stable-input.ssh-kb-open .terminal-page {
-        /* Full iframe height; chrome is fixed above keyboard via bottom offset. */
-        height: 100% !important;
-        max-height: 100% !important;
         padding-bottom: 0 !important;
+        margin-bottom: 0 !important;
+        min-height: 80px !important;
+        filter: none !important;
+    }
+    html.mobile-stable-input.ssh-kb-open .terminal-container .wterm-wrapper,
+    html.mobile-stable-input.ssh-kb-open .wterm,
+    html.mobile-stable-input.ssh-kb-open .wterm * {
+        filter: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
     }
 }
  
@@ -13619,4 +13613,60 @@ html {
     --ssh-kb-inset: 0px;
     --keyboard-inset: var(--ssh-kb-inset, 0px);
     --ime-chrome-bottom: 0px;
+}
+
+
+/* ===== FINAL keyboard chrome lock (must be last) =====
+   Shrink page by exact --ssh-kb-inset; tools/aux in-flow; NO fixed; NO blur. */
+@media (max-width: 760px) and (hover: none) and (pointer: coarse) {
+  html.mobile-stable-input.ssh-kb-open .terminal-page {
+    height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
+    max-height: calc(100% - var(--ssh-kb-inset, var(--keyboard-inset, 0px))) !important;
+    top: 0 !important;
+    bottom: auto !important;
+    transform: none !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    overflow: hidden !important;
+    padding-bottom: 0 !important;
+  }
+  html.mobile-stable-input.ssh-kb-open .topbar-actions,
+  html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar,
+  html.mobile-stable-input.ssh-kb-open .mobile-aux-keys {
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    top: auto !important;
+    bottom: auto !important;
+    transform: none !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    opacity: 1 !important;
+    background: var(--bg, var(--surface)) !important;
+    box-shadow: none !important;
+  }
+  html.mobile-stable-input.ssh-kb-open .topbar-actions {
+    order: 3 !important;
+    flex: 0 0 auto !important;
+    display: flex !important;
+  }
+  html.mobile-stable-input.ssh-kb-open .terminal-bottom-bar {
+    order: 4 !important;
+    flex: 0 0 auto !important;
+    display: block !important;
+    padding-bottom: 0 !important;
+  }
+  html.mobile-stable-input.ssh-kb-open .terminal-container {
+    padding-bottom: 0 !important;
+    filter: none !important;
+  }
+  html.mobile-stable-input.ssh-kb-open .terminal-container .wterm-wrapper,
+  html.mobile-stable-input.ssh-kb-open .wterm,
+  html.mobile-stable-input.ssh-kb-open .wterm * {
+    filter: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
 }

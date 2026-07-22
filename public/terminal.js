@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260721-kb-pin1';
+} from './ssh-keyboard/index.js?v=20260721-kb-shell1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -16,8 +16,8 @@ import {
     scrollTerminalToBottomIfNeeded,
     shouldScrollForInputReason,
     shouldScrollOnTerminalOutput,
-} from './terminal-scroll-policy.js?v=20260721-kb-pin1';
-import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-pin1';
+} from './terminal-scroll-policy.js?v=20260721-kb-shell1';
+import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-shell1';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -2070,8 +2070,12 @@ window.addEventListener('message', (e) => {
         return;
     }
     if (e.data.type === 'keyboard-overlap') {
+        // Parent-shell-managed: parent cropped iframe to keyboard top.
+        // Child page stays height 100% (inset 0). Only toggle ssh-kb-open for chrome CSS.
+        const parentShellManaged = !!e.data.parentShellManaged;
         const overlap = Math.max(0, Math.round(Number(e.data.keyboardOverlap) || 0));
-        const open = !!e.data.keyboardOpen && overlap >= 80;
+        const parentSaysOpen = !!e.data.keyboardOpen;
+        const open = parentShellManaged ? parentSaysOpen : (parentSaysOpen && overlap >= 48);
         if (isCmdOverlayMode()) {
             applyMobileStableKeyboardInset(0, false, 'parent-overlap:cmd-frozen');
             return;
@@ -2080,42 +2084,48 @@ window.addEventListener('message', (e) => {
         const proxyFocused = !!(document.activeElement === mobileImeProxy
             || document.activeElement === cmdInput
             || document.activeElement?.classList?.contains?.('mobile-terminal-ime-proxy'));
-        if (kb) {
-            try {
-                kb._intent?.syncViewport?.({
-                    inset: open ? overlap : 0,
-                    hasEditableFocus: proxyFocused,
-                    now: Date.now(),
-                });
-            } catch (_) {}
-        }
-        // Authoritative geometry from parent: EXACT iframe-local overlap in CSS px.
-        // open threshold 48: tiny keyboards / animation frames still count.
-        if (open && overlap >= 48) {
-            // Integer px, no quantize — tools must flush to keyboard top.
-            const exact = Math.max(0, Math.round(overlap));
-            // Bypass debounce: parent already throttles via rAF align loop.
+
+        if (open) {
+            const prevOpen = !!_sshKbLayoutOpenCache;
             window.clearTimeout(_sshKbGeomSettleTimer);
             _sshKbGeomPending = null;
+            // parentShellManaged → inset 0 (iframe already ends at keyboard).
+            const exact = parentShellManaged ? 0 : overlap;
             writeSshKbPageGeometry(exact, true, { fromParent: true });
             try { updateTerminalInputPanelMetrics(); } catch (_) {}
-            // Keep stick soft; do not refit rows.
-            scheduleSshKbGeometryFit(`parent-overlap:${e.data.reason || ''}:open`, true, true);
-            // Sync facade physical with exact height so it won't re-open with provisional.
             try {
+                const physicalInset = parentShellManaged
+                    ? Math.max(0, Math.round(Number(e.data.parentInset) || Number(e.data.shellH) || 280))
+                    : exact;
                 kb?._intent?.syncViewport?.({
-                    inset: exact,
-                    hasEditableFocus: proxyFocused,
+                    inset: physicalInset,
+                    hasEditableFocus: proxyFocused || !!kb?.desiredOpen?.(),
                     now: Date.now(),
                 });
             } catch (_) {}
+            if (!prevOpen) {
+                scheduleSshKbGeometryFit(`parent-overlap:${e.data.reason || ''}:open`, true, true);
+            }
+            logTerminalLayoutDiagnostics?.('child:parent-shell', {
+                parentShellManaged,
+                exact,
+                parentSaysOpen,
+                shellH: e.data.shellH,
+                heightSource: e.data.heightSource || '',
+                keyboardTop: e.data.keyboardTop,
+            });
         } else {
-            // Physical IME gone in parent: clear shell immediately even if proxy still focused.
             forceClearSshKbShell(`parent-overlap:${e.data.reason || ''}:close`);
-            if (kb?.desiredOpen?.()) {
+            try {
+                kb?._intent?.syncViewport?.({
+                    inset: 0,
+                    hasEditableFocus: false,
+                    now: Date.now(),
+                });
+            } catch (_) {}
+            if (kb?.desiredOpen?.() && !proxyFocused) {
                 try { kb.close('parent-physical-close', { force: false, blurCmd: false }); } catch (_) {}
             }
-            try { applyFacadeChrome?.(`parent-overlap:${e.data.reason || ''}:closed`); } catch (_) {}
         }
         return;
     }
@@ -11890,7 +11900,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     // Register the Terminal ctor before WTerm.init so XtermBridge.load works
     // without a bare npm resolver in the browser.
     try {
-        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-pin1');
+        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-shell1');
     } catch (err) {
         console.error('[terminal] xterm-headless register failed', err);
         throw err;
@@ -11898,7 +11908,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API. DOM/input/viewport
         // stay wterm; core is XtermBridge over vendored xterm (see /xterm).
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-pin1');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-shell1');
         WTermClass = module.WTerm;
     } catch {
         try {
