@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-kb-syntax1';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260721-kb-reopen1';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -2853,15 +2853,21 @@ workspace.classList.remove('ssh-kb-open', 'keyboard-settling', 'ssh-kb-open');
     // explicitly leaving the terminal / force-closing the session keyboard.
     const clearFrameGeometry = () => {
         workspace.querySelectorAll('.terminal-frame').forEach((frame) => {
-            frame.style.height = '';
-            frame.style.maxHeight = '';
-            frame.style.minHeight = '';
             const body = frame.closest?.('.terminal-window')?.querySelector?.('.terminal-window-body') || frame.parentElement;
-            if (body?.style) {
-                body.style.height = '';
-                body.style.maxHeight = '';
-                body.style.minHeight = '';
-            }
+            [frame, body].forEach((el) => {
+                if (!el?.style) return;
+                el.style.removeProperty('height');
+                el.style.removeProperty('max-height');
+                el.style.removeProperty('min-height');
+                el.style.removeProperty('flex');
+                el.style.removeProperty('overflow');
+                el.style.removeProperty('box-sizing');
+                try {
+                    delete el.dataset.sshKbCropped;
+                    // Keep resting top across ordinary keyboard close; only wipe on force below.
+                    if (force) delete el.dataset.sshKbRestingTop;
+                } catch (_) {}
+            });
         });
     };
     const notifyFrameKeyboardReset = (reason = 'parent-workspace-reset') => {
@@ -2980,7 +2986,9 @@ function measureParentKeyboardTop() {
 function applyParentIframeShellToKeyboard(activeFrame, keyboardTop, open) {
     const win = activeFrame?.closest?.('.terminal-window');
     const body = win?.querySelector?.('.terminal-window-body') || activeFrame?.parentElement;
-    const clear = (el) => {
+    const target = body || activeFrame;
+
+    const clearImportant = (el, { keepResting = false } = {}) => {
         if (!el?.style) return;
         el.style.removeProperty('height');
         el.style.removeProperty('max-height');
@@ -2988,32 +2996,50 @@ function applyParentIframeShellToKeyboard(activeFrame, keyboardTop, open) {
         el.style.removeProperty('flex');
         el.style.removeProperty('overflow');
         el.style.removeProperty('box-sizing');
-        try { delete el.dataset.sshKbCropped; } catch (_) {}
+        el.style.removeProperty('width');
+        el.style.removeProperty('display');
+        try {
+            delete el.dataset.sshKbCropped;
+            if (!keepResting) delete el.dataset.sshKbRestingTop;
+        } catch (_) {}
     };
+
     if (!open) {
-        clear(activeFrame);
-        clear(body);
+        // Full uncrop. Keep restingTop so the next open measures against the same origin.
+        clearImportant(activeFrame, { keepResting: true });
+        clearImportant(body, { keepResting: true });
         if (win?.style) {
             win.style.removeProperty('height');
             win.style.removeProperty('max-height');
         }
         return { shellH: 0, top: 0, kTop: 0 };
     }
- 
-const kTop = Math.round(Number(keyboardTop) || 0);
-    const target = body || activeFrame;
+
+    const kTop = Math.round(Number(keyboardTop) || 0);
     if (!target) return { shellH: 0, top: 0, kTop };
-    // Use layout top before any previous crop so we measure against the true
-    // resting position. Clear first if we were already cropped.
-    if (target.dataset.sshKbCropped === '1') {
-        target.style.height = '';
-        target.style.maxHeight = '';
+
+    // ALWAYS fully clear previous !important crop before measuring.
+    // Second open bug: style.height='' does NOT remove setProperty(...,'important').
+    clearImportant(target, { keepResting: true });
+    if (activeFrame && activeFrame !== target) clearImportant(activeFrame, { keepResting: true });
+    void target.offsetHeight; // reflow to uncropped layout
+
+    let top = Math.round(target.getBoundingClientRect().top || 0);
+    const restingRaw = Number(target.dataset.sshKbRestingTop || 0);
+    if (!Number.isFinite(restingRaw) || restingRaw <= 0) {
+        // First successful uncropped measure becomes resting origin for this frame/body.
+        target.dataset.sshKbRestingTop = String(top);
+    } else {
+        // If something still leaves us lower on screen than resting, trust resting
+        // (prevents compound crop on 2nd/3rd open).
+        if (top > restingRaw + 4) top = Math.round(restingRaw);
+        // If we're higher (e.g. address bar hide), adopt new resting.
+        if (top + 4 < restingRaw) target.dataset.sshKbRestingTop = String(top);
     }
-    // Force reflow then measure.
-    void target.offsetHeight;
-    const top = Math.round(target.getBoundingClientRect().top || 0);
-    // Visible shell ends exactly at keyboard top (1px clamp, never under).
-    const shellH = Math.max(120, kTop - top);
+    // Prefer resting top as crop origin — stable across open cycles.
+    const originTop = Math.round(Number(target.dataset.sshKbRestingTop) || top);
+    const shellH = Math.max(120, kTop - originTop);
+
     target.style.setProperty('box-sizing', 'border-box', 'important');
     target.style.setProperty('height', `${shellH}px`, 'important');
     target.style.setProperty('max-height', `${shellH}px`, 'important');
@@ -3021,31 +3047,37 @@ const kTop = Math.round(Number(keyboardTop) || 0);
     target.style.setProperty('flex', '0 0 auto', 'important');
     target.style.setProperty('overflow', 'hidden', 'important');
     target.dataset.sshKbCropped = '1';
-    if (activeFrame && target !== activeFrame) {
+
+    if (activeFrame && activeFrame !== target) {
         activeFrame.style.setProperty('box-sizing', 'border-box', 'important');
         activeFrame.style.setProperty('height', '100%', 'important');
         activeFrame.style.setProperty('max-height', '100%', 'important');
-        activeFrame.style.setProperty('min-height', '0', 'important');
+        activeFrame.style.setProperty('min-height', '0px', 'important');
         activeFrame.style.setProperty('width', '100%', 'important');
         activeFrame.style.setProperty('display', 'block', 'important');
         activeFrame.style.border = '0';
+        activeFrame.dataset.sshKbCropped = '1';
     }
-    // Verify after paint — if still taller than keyboard, force again next frame.
+
+    // One verification frame: if bottom still past keyboard, snap again from live top
+    // WITHOUT treating that as a new resting origin.
     requestAnimationFrame(() => {
         try {
+            if (target.dataset.sshKbCropped !== '1') return;
             const r = target.getBoundingClientRect();
             const bottom = Math.round(r.bottom || 0);
             if (bottom - kTop > 2) {
-                const top2 = Math.round(r.top || 0);
-                const h2 = Math.max(120, kTop - top2);
+                const liveTop = Math.round(r.top || originTop);
+                const h2 = Math.max(120, kTop - liveTop);
                 target.style.setProperty('height', `${h2}px`, 'important');
                 target.style.setProperty('max-height', `${h2}px`, 'important');
             }
         } catch (_) {}
     });
-    return { shellH, top, kTop };
+
+    return { shellH, top: originTop, kTop };
 }
- 
+
 function postParentShellManaged(activeFrame, {
     open,
     keyboardTop = 0,
@@ -3196,8 +3228,9 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
                 ? sshKbParentLastGoodTop
                 : Math.max(0, layoutHeight - childInset);
             heightSource = 'child-metrics';
-        } else if ((sshKbParentLastGoodInset || 0) >= 64) {
-            // Brief animation dip — hold last physical edge only.
+        } else if (sshKbParentOpen && (sshKbParentLastGoodInset || 0) >= 64) {
+            // Only during continuous open (animation dip). NEVER on a fresh second open —
+            // stale last-good from the previous open makes the 2nd open crop wrong.
             effectiveInset = sshKbParentLastGoodInset;
             physicalKeyboardTop = sshKbParentLastGoodTop || Math.max(0, layoutHeight - effectiveInset);
             heightSource = 'last-good';
@@ -3250,6 +3283,16 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         }
 
         // Crop shell first, then notify child (child does not shrink again).
+        // Fresh open after close: bust signature so we never skip re-crop.
+        if (finalOpen && !sshKbParentOpen) {
+            sshKbParentLastSignature = '';
+        }
+        if (!finalOpen && sshKbParentOpen) {
+            // Closing edge: drop last-good so next open cannot reuse old keyboard top.
+            sshKbParentLastGoodInset = 0;
+            sshKbParentLastGoodTop = 0;
+            sshKbParentLastSignature = '';
+        }
         let crop = { shellH: 0, top: 0, kTop: physicalKeyboardTop };
         if (activeFrame) {
             crop = applyParentIframeShellToKeyboard(activeFrame, physicalKeyboardTop, finalOpen);
