@@ -15,6 +15,7 @@
             <a class="brand" href="#dashboard"><span id="brandIcon">🌬️</span><strong id="brandName">Zephyr</strong></a>
             <nav class="nav-tabs" aria-label="主导航">
                 <button class="nav-tab active" data-view="dashboard">仪表盘</button>
+                <button class="nav-tab" data-view="activity">活动</button>
                 <button class="nav-tab" data-view="terminal">终端</button>
                 <button class="nav-tab" data-view="remote">远程执行</button>
                 <button class="nav-tab force-hidden" id="notesNavTab" data-view="notes">笔记</button>
@@ -44,10 +45,37 @@
                     <select id="sortSelect"><option value="createdAt">按创建时间</option><option value="name">按名称</option><option value="lastConnectedAt">按最近连接</option><option value="protocol">按协议</option></select>
                 </div>
                 <div class="connection-grid" id="connectionGrid"></div>
-                <div class="activity-panel">
-                    <div class="panel-title-row"><h2>最近活动</h2><button class="tool-btn danger" id="clearActivityBtn" type="button">清理日志</button></div>
-                    <div id="activityList" class="activity-list"></div>
+            </section>
+
+            <section class="view activity-view" id="view-activity">
+                <div class="section-head activity-section-head">
+                    <div>
+                        <p class="eyebrow">Activity</p>
+                        <h1>活动记录</h1>
+                        <p class="activity-intro">查看连接、账户与系统操作的详细记录。</p>
+                    </div>
+                    <button class="tool-btn danger force-hidden" id="clearActivityBtn" type="button">清理日志</button>
                 </div>
+                <div class="activity-filter-bar" aria-label="活动时间筛选">
+                    <div class="activity-range-tabs" role="group" aria-label="快捷时间范围">
+                        <button class="activity-range-btn" type="button" data-activity-range="today">今天</button>
+                        <button class="activity-range-btn active" type="button" data-activity-range="7d">近 7 天</button>
+                        <button class="activity-range-btn" type="button" data-activity-range="30d">近 30 天</button>
+                        <button class="activity-range-btn" type="button" data-activity-range="all">全部</button>
+                        <button class="activity-range-btn" type="button" data-activity-range="custom">自定义</button>
+                    </div>
+                    <div class="activity-custom-range force-hidden" id="activityCustomRange">
+                        <label>开始日期<input id="activityStartDate" type="date"></label>
+                        <span aria-hidden="true">至</span>
+                        <label>结束日期<input id="activityEndDate" type="date"></label>
+                        <button class="btn btn-primary" id="applyActivityRange" type="button">应用</button>
+                    </div>
+                </div>
+                <div class="activity-summary" aria-live="polite">
+                    <strong id="activityResultCount">0 条记录</strong>
+                    <span id="activityRangeLabel">近 7 天</span>
+                </div>
+                <div id="activityList" class="activity-list activity-detail-list"></div>
             </section>
 
             <section class="view terminal-view" id="view-terminal" aria-label="终端工作台">
@@ -314,22 +342,47 @@
                     </div>
                     <div class="settings-content">
                         <div class="settings-panel active" id="settings-security">
-                            <h2>修改密码</h2>
-                            <form id="passwordForm" class="settings-form">
-                                <input type="password" id="settingsCurrentPassword" placeholder="当前密码" required>
-                                <input type="password" id="settingsNewPassword" placeholder="新密码" minlength="4" required>
-                                <input type="password" id="settingsConfirmPassword" placeholder="确认新密码" minlength="4" required>
-                                <button class="btn btn-primary" type="submit">保存密码</button>
-                            </form>
-                            <h2>账号资料</h2><form id="profileForm" class="settings-form"><input id="profileUsername" placeholder="默认登录用户名"><p class="field-hint">修改后登录页默认用户名与登录账号会同步更新。</p><input id="profileEmail" type="email" placeholder="管理员邮箱（用于重置密码）"><button class="btn btn-primary">保存资料</button></form>
-                             <h2>TOTP 两步验证</h2><div class="mini-list" id="totpBox"></div><form id="totpEnableForm" class="settings-form force-hidden"><div id="totpQrBox"></div><input id="totpEnableCode" placeholder="输入 6 位验证码"><button class="btn btn-primary">确认开启</button></form><form id="totpDisableForm" class="settings-form"><input type="password" id="totpDisablePassword" placeholder="当前密码"><input id="totpDisableCode" placeholder="TOTP 验证码"><button class="btn danger">关闭 TOTP</button></form>
-                             <h2>Passkey</h2><button class="btn" id="addPasskeyBtn">添加 Passkey</button><div class="mini-list" id="passkeyList"></div>
-                             <h2>登录邮件通知</h2><label class="check-line"><input type="checkbox" id="notifyLoginPersonal"> 接收我的登录邮件通知</label>
+                            <div class="security-card-row">
+                                <section class="security-card">
+                                    <h2>修改密码</h2>
+                                    <form id="passwordForm" class="settings-form">
+                                        <div class="security-input-stack">
+                                            <div class="form-group"><label for="settingsCurrentPassword">请输入当前密码</label><input type="password" id="settingsCurrentPassword" placeholder=" " required></div>
+                                            <div class="form-group"><label for="settingsNewPassword">请输入新密码</label><input type="password" id="settingsNewPassword" placeholder=" " minlength="4" required></div>
+                                            <div class="form-group"><label for="settingsConfirmPassword">请确认新密码</label><input type="password" id="settingsConfirmPassword" placeholder=" " minlength="4" required></div>
+                                        </div>
+                                        <button class="btn btn-primary" type="submit">保存密码</button>
+                                    </form>
+                                </section>
+                                <section class="security-card">
+                                    <h2>修改个人信息</h2>
+                                    <form id="profileForm" class="settings-form"><div class="security-input-stack"><div class="form-group"><label for="profileUsername">请输入新用户名</label><input id="profileUsername" placeholder=" "></div><div class="form-group"><label for="profileEmail">请输入新邮箱</label><input id="profileEmail" type="email" placeholder=" "></div></div><button class="btn btn-primary">保存资料</button></form>
+                                </section>
+                            </div>
+                            <div class="security-card-row">
+                                <section class="security-card">
+                                    <div class="security-card-head"><h2>TOTP 两步验证</h2><div id="totpAction"></div></div><div class="mini-list" id="totpBox"></div><form id="totpEnableForm" class="settings-form force-hidden"><div id="totpQrBox"></div><div class="security-input-stack"><div class="form-group"><label for="totpEnableCode">请输入 6 位验证码</label><input id="totpEnableCode" placeholder=" "></div></div><button class="btn btn-primary">确认开启</button></form><form id="totpDisableForm" class="settings-form"><div class="security-input-stack"><div class="form-group"><label for="totpDisablePassword">请输入当前密码</label><input type="password" id="totpDisablePassword" placeholder=" "></div><div class="form-group"><label for="totpDisableCode">请输入 TOTP 验证码</label><input id="totpDisableCode" placeholder=" "></div></div><button class="btn danger">关闭 TOTP</button></form>
+                                </section>
+                                <section class="security-card">
+                                    <div class="security-card-head"><h2>Passkey</h2><button class="security-card-action" id="addPasskeyBtn" type="button">添加 Passkey</button></div><div class="mini-list" id="passkeyList"></div>
+                                </section>
+                            </div>
+                            <div class="security-card-row">
+                                <section class="security-card">
+                                    <h2>登录邮件通知</h2>
+                                    <label class="settings-switch-option" for="notifyLoginPersonal">
+                                        <span class="settings-switch-copy"><strong>接收登录邮件通知</strong><small>检测到我的账号登录时发送邮件提醒</small></span>
+                                        <span class="connection-share-switch"><input type="checkbox" id="notifyLoginPersonal"><span aria-hidden="true"></span></span>
+                                    </label>
+                                </section>
+                                <section class="security-card">
+                                    <div class="panel-title-row"><h2 id="loginEventsTitle">我的登录记录</h2><button class="tool-btn danger" type="button" id="clearLoginEventsBtn">清理日志</button></div><div class="mini-list" id="loginEventList"></div>
+                                </section>
+                            </div>
                              <div id="platformSecuritySettings">
                                  <h2>IP 白名单与防爆破</h2><form id="securityPolicyForm" class="settings-form"><label class="check-line"><input type="checkbox" id="ipWhitelistEnabled"> 启用 IP 白名单</label><textarea id="ipWhitelist" placeholder="每行一个 IP 或 CIDR，例如 192.168.1.0/24"></textarea><label class="check-line"><input type="checkbox" id="bruteForceEnabled"> 启用防爆破封禁</label><input id="bruteForceMaxFailures" type="number" min="1" placeholder="失败次数"><input id="bruteForceBanMinutes" type="number" min="1" placeholder="封禁分钟"><button class="btn btn-primary">保存安全策略</button></form><div class="mini-list" id="ipBanList"></div>
                                  <h2>CAPTCHA</h2><form id="captchaForm" class="settings-form"><label class="check-line"><input type="checkbox" id="captchaEnabled"> 启用 CAPTCHA</label><select id="captchaProvider"><option value="turnstile">Cloudflare Turnstile</option><option value="hcaptcha">hCaptcha</option><option value="google">Google reCAPTCHA v2</option><option value="tencent">腾讯云验证码</option><option value="aliyun">阿里云验证码 2.0</option></select><input id="captchaSiteKey" placeholder="Site Key / AppId / CaptchaId"><div class="form-group password-field"><input id="captchaSecretKey" type="password" placeholder="Secret Key / AppSecretKey"><button type="button" id="toggleCaptchaSecret" title="显示/隐藏 CAPTCHA 密钥">👁️</button></div><button type="button" class="link-btn" id="revealCaptchaSecret">查看已保存 CAPTCHA 密钥</button><p class="field-hint">默认隐藏已保存 CAPTCHA 密钥；留空或保持星号不会覆盖已保存密钥。查看时如已开启 TOTP 需输入动态验证码，否则输入当前登录密码。</p><button class="btn btn-primary">保存 CAPTCHA</button></form>
                              </div>
-                             <div class="panel-title-row"><h2 id="loginEventsTitle">我的登录记录</h2><button class="tool-btn danger" type="button" id="clearLoginEventsBtn">清理日志</button></div><div class="mini-list" id="loginEventList"></div>
                         </div>
                         <div class="settings-panel" id="settings-appearance">
                             <h2>个性化设置</h2>
@@ -446,56 +499,44 @@
                             </form>
                         </div>
                         <div class="settings-panel" id="settings-network">
-                            <h2>代理池</h2>
-                            <form id="proxyForm" class="settings-form inline-form">
-                                <input type="hidden" id="proxyId"><input id="proxyName" placeholder="名称"><select id="proxyType"><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option></select><input id="proxyHost" placeholder="IP / 主机"><input id="proxyPort" type="number" value="1080"><input id="proxyUsername" placeholder="用户名"><input id="proxyPassword" placeholder="密码"><button class="btn btn-primary" type="submit">保存代理</button>
-                            </form>
+                            <div class="panel-title-row proxy-panel-title"><h2>代理池</h2><button class="btn btn-primary proxy-add-btn" type="button" id="addProxyBtn">＋ 新建代理</button></div>
                             <div class="mini-list" id="proxyList"></div>
                         </div>
                         <div class="settings-panel" id="settings-ssh-keys">
-                            <h2>SSH 密钥库</h2>
-                            <form id="sshKeyForm" class="settings-form">
-                                <input type="hidden" id="sshKeyId">
-                                <input id="sshKeyName" placeholder="密钥名称，例如：生产环境 deploy key">
-                                <textarea id="sshKeyPrivateKey" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
-                                <input id="sshKeyPassphrase" type="password" placeholder="私钥口令（可选）">
-                                <input id="sshKeyRemark" placeholder="备注（可选）">
-                                <p class="field-hint">保存后可在添加/编辑 SSH 连接时直接选择；编辑时默认隐藏私钥，查看时如已开启 TOTP 需输入动态验证码，否则输入当前登录密码。</p>
-                                <div class="form-actions"><button class="btn btn-primary" type="submit">保存 SSH 密钥</button><button class="btn" type="button" id="resetSshKeyForm">清空</button></div>
-                            </form>
+                            <div class="panel-title-row proxy-panel-title"><h2>SSH 密钥库</h2><button class="btn btn-primary proxy-add-btn" type="button" id="addSshKeyBtn">＋ 新增 SSH 密钥</button></div>
                             <div class="mini-list" id="sshKeyList"></div>
                         </div>
                         <div class="settings-panel" id="settings-snippets">
-                            <div class="panel-title-row"><h2>SSH 代码片段</h2></div>
-                            <form id="snippetForm" class="settings-form snippet-form">
-                                <input id="snippetId" type="hidden">
-                                <label>名称</label>
-                                <input id="snippetName" maxlength="60" placeholder="例如：查看 Docker 状态">
-                                <label>命令内容</label>
-                                <textarea id="snippetCommand" rows="6" placeholder="docker ps\n# 支持多行命令"></textarea>
-                                <label>分组 / 标签</label>
-                                <input id="snippetGroup" maxlength="40" placeholder="例如：Docker / Linux / 自定义">
-                                <label class="check-line"><input type="checkbox" id="snippetAutoRun"> 点击片段时直接执行（否则填入输入框）</label>
-                                <div class="form-actions"><button class="btn btn-primary" type="submit">保存片段</button><button class="btn" type="button" id="cancelSnippetEditBtn">清空</button></div>
-                            </form>
+                            <div class="panel-title-row proxy-panel-title"><h2>SSH 代码片段</h2><button class="btn btn-primary proxy-add-btn" type="button" id="addSnippetBtn">＋ 新增代码片段</button></div>
                             <div class="snippet-settings-list" id="snippetSettingsList"></div>
                         </div>
                         <div class="settings-panel" id="settings-ai">
-                            <div class="panel-title-row"><h2>AI 助理总开关</h2><button class="btn btn-primary" type="button" id="aiAddProviderBtn">添加模型供应商</button></div>
+                            <div class="panel-title-row ai-settings-title"><h2>AI 助理</h2></div>
                             <form id="aiSettingsForm" class="settings-form ai-settings-form">
-                                <label class="check-line"><input type="checkbox" id="aiEnabled"> 启用 AI 助理</label>
+                                <section class="security-card ai-settings-card">
+                                <h2>基础设置</h2>
+                                <label class="settings-switch-option" for="aiEnabled">
+                                    <span class="settings-switch-copy"><strong>启用 AI 助理</strong><small>在导航和工作区中显示 AI 功能</small></span>
+                                    <span class="connection-share-switch"><input type="checkbox" id="aiEnabled"><span aria-hidden="true"></span></span>
+                                </label>
                                 <label>助理名称</label><input id="aiAssistantName" maxlength="40" placeholder="Zephyr AI">
                                 <label>默认模型供应商</label>
                                 <input type="hidden" id="aiDefaultProvider" value="">
                                 <button type="button" class="ui-btn ai-picker-btn ai-settings-picker" id="aiDefaultProviderBtn" data-ai-field-picker="defaultProvider">自动选择第一个可用供应商</button>
                                 <label>默认模型</label><input id="aiDefaultModel" placeholder="留空自动使用供应商默认/第一个模型">
                                 <label>系统提示词</label><textarea id="aiSystemPrompt" rows="5" placeholder="给 AI 助理的全局行为要求，可留空。"></textarea>
-                                <h3>上下文长度</h3>
+                                <div class="form-actions ai-card-actions"><button class="btn btn-primary" type="submit">保存基础设置</button></div>
+                                </section>
+                                <section class="security-card ai-settings-card">
+                                <h2>上下文长度</h2>
                                 <div class="form-row ai-context-row"><div class="form-group"><label>上下文窗口 Tokens</label><input id="aiContextWindowTokens" type="number" min="1024" step="1024" placeholder="128000"></div><div class="form-group"><label>最大输入字符数</label><input id="aiContextMaxInputChars" type="number" min="8000" step="1000" placeholder="180000"></div></div>
                                 <div class="form-row ai-context-row"><div class="form-group"><label>保留最近消息数</label><input id="aiContextKeepMessages" type="number" min="4" max="160" step="1" placeholder="40"></div><div class="form-group"><label>工具结果注入字符数</label><input id="aiContextToolResultChars" type="number" min="1000" step="1000" placeholder="60000"></div></div>
                                 <div class="form-row ai-context-row"><div class="form-group"><label>AI 工具调用轮次上限</label><input id="aiContextMaxToolRounds" type="number" min="0" step="1" placeholder="0 表示无上限"></div><div class="form-group"><label>说明</label><p class="field-hint">默认 0 = 无上限；如果模型循环调用工具，可设置成 20 / 50 等硬上限。</p></div></div>
                                 <label class="check-line"><input type="checkbox" id="aiCodeCompletionEnabled"> 文件编辑器启用 AI 代码补全</label>
-                                <h3>工具权限</h3>
+                                <div class="form-actions ai-card-actions"><button class="btn btn-primary" type="submit">保存上下文设置</button></div>
+                                </section>
+                                <section class="security-card ai-settings-card">
+                                <h2>工具权限</h2>
                                 <div class="ai-permission-grid">
                                     <label class="check-line"><input type="checkbox" id="aiPermWebSearch"> 网页搜索</label>
                                     <label class="check-line"><input type="checkbox" id="aiPermWebFetch"> 网页正文读取</label>
@@ -509,36 +550,84 @@
                                     <label class="check-line"><input type="checkbox" id="aiPermNotesWrite"> 创建、修改和删除笔记</label>
                                     <label class="check-line"><input type="checkbox" id="aiPermEnv"> AI 环境变量</label>
                                 </div>
-                                <h3>长期 Memory / 任务规划器</h3>
+                                <div class="form-actions ai-card-actions"><button class="btn btn-primary" type="submit">保存工具权限</button></div>
+                                </section>
+                                <section class="security-card ai-settings-card">
+                                <h2>Memory 与规划器</h2>
                                 <label class="check-line"><input type="checkbox" id="aiMemoryEnabled"> 启用长期 Memory / 项目记忆</label>
                                 <label>最多保存 Memory 条数</label><input id="aiMemoryMaxItems" type="number" min="1" max="2000" step="1" placeholder="500">
                                 <label class="check-line"><input type="checkbox" id="aiPlannerEnabled"> 启用任务规划器</label>
                                 <label class="check-line"><input type="checkbox" id="aiRequirePlanBeforeTools"> 复杂任务优先要求先规划</label>
-                                <h3>敏感操作确认</h3>
+                                <div class="form-actions ai-card-actions"><button class="btn btn-primary" type="submit">保存规划设置</button></div>
+                                </section>
+                                <section class="security-card ai-settings-card">
+                                <h2>敏感操作确认</h2>
                                 <label class="check-line"><input type="checkbox" id="aiRequireConfirmation"> 敏感操作需要用户确认</label>
                                 <label class="check-line"><input type="checkbox" id="aiAutoConfirm"> 自动确认敏感操作</label>
                                 <label>自动确认延迟（毫秒）</label><input id="aiAutoConfirmDelayMs" type="number" min="0" max="60000" step="100" placeholder="2500">
                                 <p class="field-hint">敏感操作包括远程执行、远程写文件等。关闭确认或开启自动确认会显著提高风险。</p>
-                                <h3>权限规则（Go Runtime）</h3>
-                                <p class="field-hint">优先级：deny &gt; ask &gt; allow &gt; 模式默认。规则形如 <code>remote_execute(rm -rf*)</code> 或 <code>list_connections</code>。每行一条。</p>
-                                <label>默认模式</label>
-                                <div class="ai-segment ai-segment-block" id="aiPermRuleMode" data-value="ask" data-cols="3" role="tablist" aria-label="权限默认模式">
-                                    <span class="ai-segment-thumb" aria-hidden="true"></span>
-                                    <button type="button" class="ai-segment-btn active" data-value="ask" role="tab" aria-selected="true" title="写操作询问">Ask</button>
-                                    <button type="button" class="ai-segment-btn" data-value="auto" role="tab" aria-selected="false" title="只读自动，写操作询问">Auto</button>
-                                    <button type="button" class="ai-segment-btn" data-value="yolo" role="tab" aria-selected="false" title="除 deny 外全自动（危险）">Yolo</button>
-                                </div>
-                                <p class="field-hint ai-perm-mode-hint" id="aiPermModeHint">Ask：写操作默认询问</p>
-                                <label>Deny（永久拒绝）</label>
-                                <textarea id="aiPermDeny" rows="3" placeholder="remote_execute(rm -rf*)&#10;connection_delete(*)"></textarea>
-                                <label>Allow（永不询问）</label>
-                                <textarea id="aiPermAllow" rows="3" placeholder="remote_execute(systemctl status*)&#10;remote_read_file(*)"></textarea>
-                                <label>Ask（强制询问）</label>
-                                <textarea id="aiPermAsk" rows="2" placeholder="remote_write_file(*)"></textarea>
-                                <button class="btn btn-primary" type="submit">保存 AI 设置</button>
+                                <div class="form-actions ai-card-actions"><button class="btn btn-primary" type="submit">保存确认设置</button></div>
+                                </section>
                             </form>
-                            <h2>模型供应商</h2>
+                                <div class="ai-runtime-grid">
+                                <section class="security-card settings-form ai-settings-card ai-runtime-card">
+                                    <h2>权限规则（Go Runtime）</h2>
+                                    <p class="field-hint">优先级：deny &gt; ask &gt; allow &gt; 模式默认。规则形如 <code>remote_execute(rm -rf*)</code> 或 <code>list_connections</code>。每行一条。</p>
+                                    <label>默认模式</label>
+                                    <div class="ai-segment ai-segment-block" id="aiPermRuleMode" data-value="ask" data-cols="3" role="tablist" aria-label="权限默认模式">
+                                        <span class="ai-segment-thumb" aria-hidden="true"></span>
+                                        <button type="button" class="ai-segment-btn active" data-value="ask" role="tab" aria-selected="true" title="写操作询问">Ask</button>
+                                        <button type="button" class="ai-segment-btn" data-value="auto" role="tab" aria-selected="false" title="只读自动，写操作询问">Auto</button>
+                                        <button type="button" class="ai-segment-btn" data-value="yolo" role="tab" aria-selected="false" title="除 deny 外全自动（危险）">Yolo</button>
+                                    </div>
+                                    <p class="field-hint ai-perm-mode-hint" id="aiPermModeHint">Ask：写操作默认询问</p>
+                                    <label>Deny（永久拒绝）</label>
+                                    <textarea id="aiPermDeny" rows="3" placeholder="remote_execute(rm -rf*)&#10;connection_delete(*)"></textarea>
+                                    <label>Allow（永不询问）</label>
+                                    <textarea id="aiPermAllow" rows="3" placeholder="remote_execute(systemctl status*)&#10;remote_read_file(*)"></textarea>
+                                    <label>Ask（强制询问）</label>
+                                    <textarea id="aiPermAsk" rows="2" placeholder="remote_write_file(*)"></textarea>
+                                    <div class="form-actions ai-card-actions"><button class="btn btn-primary" type="button" data-ai-save-settings>保存权限规则</button></div>
+                                </section>
+                                <section class="security-card ai-resource-card ai-runtime-card">
+                                <h2>MCP 服务器（Go AI Runtime）</h2>
+                                <p class="field-hint">仅在启用 <code>ZEPHYR_AI_URL</code> 时生效。stdio 在服务端执行；http 为远程 MCP。工具名形如 <code>mcp__name__tool</code>。</p>
+                                <form id="aiMcpForm" class="settings-form ai-mcp-form">
+                                    <input type="hidden" id="aiMcpId">
+                                    <div class="form-row">
+                                        <div class="form-group"><label>名称</label><input id="aiMcpName" placeholder="例如 filesystem" maxlength="80"></div>
+                                        <div class="form-group"><label>类型</label>
+                                            <div class="ai-segment ai-segment-block" id="aiMcpType" data-value="stdio" data-cols="2" role="tablist" aria-label="MCP 传输类型">
+                                                <span class="ai-segment-thumb" aria-hidden="true"></span>
+                                                <button type="button" class="ai-segment-btn active" data-value="stdio" role="tab" aria-selected="true">stdio</button>
+                                                <button type="button" class="ai-segment-btn" data-value="http" role="tab" aria-selected="false">http</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="form-group" id="aiMcpStdioFields">
+                                        <label>命令</label><input id="aiMcpCommand" placeholder="npx">
+                                        <label>参数（空格分隔）</label><input id="aiMcpArgs" placeholder="-y @modelcontextprotocol/server-filesystem /data">
+                                        <label>环境变量（KEY=VAL 每行一个）</label><textarea id="aiMcpEnv" rows="3" placeholder="FOO=bar"></textarea>
+                                    </div>
+                                    <div class="form-group force-hidden" id="aiMcpHttpFields">
+                                        <label>URL</label><input id="aiMcpUrl" placeholder="https://mcp.example.com/mcp">
+                                        <label>Headers（Header: value 每行）</label><textarea id="aiMcpHeaders" rows="3" placeholder="Authorization: Bearer …"></textarea>
+                                    </div>
+                                    <label>信任为只读的工具名（逗号分隔，原始 MCP 名）</label>
+                                    <input id="aiMcpTrustedReadOnly" placeholder="read_file, list_dir">
+                                    <label>调用超时（秒）</label><input id="aiMcpTimeout" type="number" min="1" max="7200" value="300">
+                                    <label class="check-line"><input type="checkbox" id="aiMcpEnabled" checked> 启用</label>
+                                    <div class="form-actions"><button class="btn btn-primary" type="submit">保存 MCP</button><button class="btn" type="button" id="aiMcpResetBtn">清空</button></div>
+                                </form>
+                                <div class="ai-mcp-list" id="aiMcpList"></div>
+                                </section>
+                                </div>
+                            <div class="ai-resource-grid">
+                            <section class="security-card ai-resource-card">
+                            <div class="panel-title-row"><h2>模型供应商</h2><button class="btn btn-primary proxy-add-btn" type="button" id="aiAddProviderBtn">添加模型供应商</button></div>
                             <div class="ai-provider-list" id="aiProviderList"></div>
+                            </section>
+                            <section class="security-card ai-resource-card">
                             <h2>AI 环境变量</h2>
                             <form id="aiEnvForm" class="settings-form ai-env-form">
                                 <input type="hidden" id="aiEnvId">
@@ -550,6 +639,8 @@
                                 <p class="field-hint">默认完全不向 AI 暴露变量；可单独允许 AI 看到变量名/说明，或仅对非敏感配置允许直接看到值。未直接暴露的值仍需 get_env_var + 敏感确认。</p>
                             </form>
                             <div class="ai-env-list" id="aiEnvList"></div>
+                            </section>
+                            <section class="security-card ai-resource-card">
                             <h2>长期 Memory / 项目记忆</h2>
                             <form id="aiMemoryForm" class="settings-form ai-memory-form">
                                 <input type="hidden" id="aiMemoryId">
@@ -560,8 +651,12 @@
                                 <div class="form-actions"><button class="btn btn-primary" type="submit">保存 Memory</button><button class="btn" type="button" id="aiMemoryResetBtn">清空</button></div>
                             </form>
                             <div class="ai-memory-list" id="aiMemoryList"></div>
+                            </section>
+                            <section class="security-card ai-resource-card">
                             <h2>任务计划器</h2>
                             <div class="ai-plan-list" id="aiPlanList"></div>
+                            </section>
+                            <section class="security-card ai-resource-card">
                             <h2>Skills 能力包</h2>
                             <form id="aiSkillForm" class="settings-form ai-skill-form">
                                 <input type="hidden" id="aiSkillId">
@@ -572,36 +667,8 @@
                                 <div class="form-actions"><button class="btn btn-primary" type="submit">保存 Skill</button><button class="btn" type="button" id="aiSkillResetBtn">清空</button></div>
                             </form>
                             <div class="ai-skill-list" id="aiSkillList"></div>
-                            <h2>MCP 服务器（Go AI Runtime）</h2>
-                            <p class="field-hint">仅在启用 <code>ZEPHYR_AI_URL</code> 时生效。stdio 在服务端执行；http 为远程 MCP。工具名形如 <code>mcp__name__tool</code>。</p>
-                            <form id="aiMcpForm" class="settings-form ai-mcp-form">
-                                <input type="hidden" id="aiMcpId">
-                                <div class="form-row">
-                                    <div class="form-group"><label>名称</label><input id="aiMcpName" placeholder="例如 filesystem" maxlength="80"></div>
-                                    <div class="form-group"><label>类型</label>
-                                        <div class="ai-segment ai-segment-block" id="aiMcpType" data-value="stdio" data-cols="2" role="tablist" aria-label="MCP 传输类型">
-                                            <span class="ai-segment-thumb" aria-hidden="true"></span>
-                                            <button type="button" class="ai-segment-btn active" data-value="stdio" role="tab" aria-selected="true">stdio</button>
-                                            <button type="button" class="ai-segment-btn" data-value="http" role="tab" aria-selected="false">http</button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="form-group" id="aiMcpStdioFields">
-                                    <label>命令</label><input id="aiMcpCommand" placeholder="npx">
-                                    <label>参数（空格分隔）</label><input id="aiMcpArgs" placeholder="-y @modelcontextprotocol/server-filesystem /data">
-                                    <label>环境变量（KEY=VAL 每行一个）</label><textarea id="aiMcpEnv" rows="3" placeholder="FOO=bar"></textarea>
-                                </div>
-                                <div class="form-group force-hidden" id="aiMcpHttpFields">
-                                    <label>URL</label><input id="aiMcpUrl" placeholder="https://mcp.example.com/mcp">
-                                    <label>Headers（Header: value 每行）</label><textarea id="aiMcpHeaders" rows="3" placeholder="Authorization: Bearer …"></textarea>
-                                </div>
-                                <label>信任为只读的工具名（逗号分隔，原始 MCP 名）</label>
-                                <input id="aiMcpTrustedReadOnly" placeholder="read_file, list_dir">
-                                <label>调用超时（秒）</label><input id="aiMcpTimeout" type="number" min="1" max="7200" value="300">
-                                <label class="check-line"><input type="checkbox" id="aiMcpEnabled" checked> 启用</label>
-                                <div class="form-actions"><button class="btn btn-primary" type="submit">保存 MCP</button><button class="btn" type="button" id="aiMcpResetBtn">清空</button></div>
-                            </form>
-                            <div class="ai-mcp-list" id="aiMcpList"></div>
+                            </section>
+                            </div>
                         </div>
                         <div class="settings-panel" id="settings-agent">
                             <h2>Zephyr Agent Token</h2>
@@ -786,9 +853,15 @@
             <div class="form-group"><label>备注（支持 Markdown）</label><textarea id="connRemark" placeholder="例如：**生产环境**\n`docker ps`"></textarea></div>
             <div class="form-group connection-share-group">
                 <label>共享设置</label>
-                <div style="display:flex;flex-direction:column;gap:6px;padding:8px 0">
-                    <label class="check-line"><input type="checkbox" id="connShareUsers"> 共享给所有用户（可见、可连接）</label>
-                    <label class="check-line"><input type="checkbox" id="connShareAdmins"> 共享给管理员</label>
+                <div class="connection-share-options">
+                    <label class="connection-share-option" for="connShareUsers">
+                        <span class="connection-share-copy"><strong>共享给所有用户</strong><small>所有用户均可查看并连接</small></span>
+                        <span class="connection-share-switch"><input type="checkbox" id="connShareUsers"><span aria-hidden="true"></span></span>
+                    </label>
+                    <label class="connection-share-option" for="connShareAdmins">
+                        <span class="connection-share-copy"><strong>共享给管理员</strong><small>仅管理员可查看并连接</small></span>
+                        <span class="connection-share-switch"><input type="checkbox" id="connShareAdmins"><span aria-hidden="true"></span></span>
+                    </label>
                 </div>
             </div>
             <div class="modal-actions" id="connectionModalActions">
@@ -801,13 +874,52 @@
         </form>
     </div>
 
+    <div class="modal-backdrop" id="proxyModal" aria-hidden="true">
+        <form class="connection-modal proxy-modal" id="proxyForm">
+            <div class="modal-head"><h2 id="proxyModalTitle">新建代理</h2><button type="button" class="icon-btn" id="proxyCloseBtn" aria-label="关闭代理弹窗">✕</button></div>
+            <input type="hidden" id="proxyId">
+            <div class="form-group"><label for="proxyName">名称</label><input id="proxyName" required placeholder="例如：海外 SOCKS5"></div>
+            <div class="form-row"><div class="form-group"><label for="proxyType">类型</label><select id="proxyType"><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option></select></div><div class="form-group"><label for="proxyPort">端口</label><input id="proxyPort" type="number" min="1" max="65535" value="1080" required></div></div>
+            <div class="form-group"><label for="proxyHost">IP / 主机</label><input id="proxyHost" required placeholder="proxy.example.com"></div>
+            <div class="form-row"><div class="form-group"><label for="proxyUsername">用户名</label><input id="proxyUsername" placeholder="可选"></div><div class="form-group"><label for="proxyPassword">密码</label><input id="proxyPassword" type="password" placeholder="可选"></div></div>
+            <p class="field-hint">保存后可在连接的高级选项中选择此代理。编辑时留空密码不会覆盖已保存密码。</p>
+            <div class="modal-actions"><button type="button" class="btn" id="proxyCancelBtn">取消</button><button class="btn btn-primary" type="submit">保存代理</button></div>
+        </form>
+    </div>
+
+    <div class="modal-backdrop" id="sshKeyModal" aria-hidden="true">
+        <form class="connection-modal ssh-key-modal" id="sshKeyForm">
+            <div class="modal-head"><h2 id="sshKeyModalTitle">新增 SSH 密钥</h2><button type="button" class="icon-btn" id="sshKeyCloseBtn" aria-label="关闭 SSH 密钥弹窗">✕</button></div>
+            <input type="hidden" id="sshKeyId">
+            <div class="form-group"><label for="sshKeyName">密钥名称</label><input id="sshKeyName" required placeholder="例如：生产环境 deploy key"></div>
+            <div class="form-group"><label for="sshKeyPrivateKey">SSH 私钥</label><textarea id="sshKeyPrivateKey" required placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></div>
+            <div class="form-group"><label for="sshKeyPassphrase">私钥口令</label><input id="sshKeyPassphrase" type="password" placeholder="可选"></div>
+            <div class="form-group"><label for="sshKeyRemark">备注</label><input id="sshKeyRemark" placeholder="可选"></div>
+            <p class="field-hint">编辑时留空或保留 ****** 不会覆盖已保存的私钥与口令。</p>
+            <div class="modal-actions"><button class="btn" type="button" id="sshKeyCancelBtn">取消</button><button class="btn btn-primary" type="submit" id="saveSshKeyBtn">保存 SSH 密钥</button></div>
+        </form>
+    </div>
+
+    <div class="modal-backdrop" id="snippetModal" aria-hidden="true">
+        <form class="connection-modal snippet-modal" id="snippetForm">
+            <div class="modal-head"><h2 id="snippetModalTitle">新增代码片段</h2><button type="button" class="icon-btn" id="snippetCloseBtn" aria-label="关闭代码片段弹窗">✕</button></div>
+            <input id="snippetId" type="hidden">
+            <div class="form-group"><label for="snippetName">名称</label><input id="snippetName" maxlength="60" required placeholder="例如：查看 Docker 状态"></div>
+            <div class="form-group"><label for="snippetCommand">命令内容</label><textarea id="snippetCommand" rows="6" required placeholder="docker ps\n# 支持多行命令"></textarea></div>
+            <div class="form-group"><label for="snippetGroup">分组 / 标签</label><input id="snippetGroup" maxlength="40" placeholder="例如：Docker / Linux / 自定义"></div>
+            <label class="settings-switch-option snippet-auto-run" for="snippetAutoRun"><span class="settings-switch-copy"><strong>点击后直接执行</strong><small>关闭时仅将命令填入终端输入框</small></span><span class="settings-switch-control"><input type="checkbox" id="snippetAutoRun"><span class="settings-switch-track" aria-hidden="true"></span></span></label>
+            <div class="modal-actions"><button class="btn" type="button" id="cancelSnippetEditBtn">取消</button><button class="btn btn-primary" type="submit" id="saveSnippetBtn">保存代码片段</button></div>
+        </form>
+    </div>
+
     <div class="toast" id="toast"></div>
+    <script src="preview-mock.js?v=20260723-activity1" type="module"></script>
     <script src="app.js?v=20260723-permission-workspace1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {
             var lastView = localStorage.getItem('zephyr.lastView') || '';
-            if (['terminal','remote','notes','settings'].indexOf(lastView) >= 0) {
+            if (['activity','terminal','remote','notes','settings'].indexOf(lastView) >= 0) {
                 document.documentElement.dataset.earlyView = lastView;
                 document.addEventListener('DOMContentLoaded', function () {
                     document.querySelectorAll('.nav-tab').forEach(function (b) {
