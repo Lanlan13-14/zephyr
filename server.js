@@ -128,7 +128,7 @@ const terminalHistory = new TerminalHistoryService({
 });
 const terminalHistoryCleanupTimer = setInterval(() => {
     try { terminalHistory.cleanupExpired(); } catch (error) { console.warn('[TERMINAL-HISTORY] cleanup failed', { error: error.message }); }
-}, 24 * 60 * 60 * 1000);
+}, 6 * 60 * 60 * 1000);
 terminalHistoryCleanupTimer.unref?.();
 const sshTerminalSessions = new Map();
 const sftpDownloadTokens = new Map();
@@ -150,6 +150,7 @@ const MEDIA_CACHE_DIR = path.join(os.tmpdir(), 'zephyr-media-cache');
 /* ─── File Agent Manager ─── */
 const fileAgentManager = new FileAgentManager({
     log: console.log,
+    tokenFile: path.join(DATA_DIR, 'agent-tokens.json'),
 });
 let fileTransferGateway = null;
 
@@ -252,6 +253,18 @@ function destroySshTerminalSession(sessionOrId, reason = 'session-destroy') {
     if (!session || session.closed) return;
     session.closed = true;
     sshTerminalSessions.delete(session.id);
+    for (const entry of session.dockerLogStreams?.values?.() || []) {
+        const stream = entry?.stream || entry;
+        try { stream?.close?.(); } catch {}
+        try { stream?.end?.(); } catch {}
+        try { stream?.destroy?.(); } catch {}
+    }
+    session.dockerLogStreams?.clear?.();
+    for (const upload of session.sftpUploadStreams?.values?.() || []) {
+        try { upload.stream?.end?.(); } catch {}
+        try { upload.stream?.destroy?.(); } catch {}
+    }
+    session.sftpUploadStreams?.clear?.();
     for (const [token, download] of sftpDownloadTokens.entries()) {
         if (download.sessionId === session.id) sftpDownloadTokens.delete(token);
     }
@@ -389,6 +402,7 @@ const aiPolicyService = new AiPolicyService(storage.rawDb(), { storage, userSett
 const aiProviderService = new AiProviderService(storage.rawDb(), { storage, secretCrypto });
 fileTransferGateway = new FileTransferGateway({ fileAgentManager, authz, storage, log: console.log });
 setInterval(() => { try { deepLinkService.gc(); } catch {} }, 5 * 60 * 1000).unref();
+setInterval(() => { try { workspaceService.gcStale(); } catch {} }, 60 * 60 * 1000).unref();
 
 function reopenStorage() {
     storage.close();
@@ -457,16 +471,6 @@ function isPasswordChangeAllowedPath(req) {
     return req.path === '/api/auth/me' || req.path === '/api/auth/change-password' || req.path === '/api/auth/logout';
 }
 
-function requireAuth(req, res, next) {
-    const session = currentSession(req);
-    if (!session) return authError(res, 401, 'app_session_expired', '未登录或会话已过期', false);
-    if (session.mustChangePassword && !isPasswordChangeAllowedPath(req)) {
-        return res.status(403).json({ error: '请先修改默认密码', code: 'must_change_password', mustChangePassword: true, retryable: false });
-    }
-    req.session = session;
-    next();
-}
-
 function requirePageAuth(req, res, next) {
     const session = currentSession(req);
     if (!session || session.mustChangePassword) return res.redirect('/');
@@ -493,6 +497,15 @@ function requireUser(req, res, next) {
 function requireAdmin(req, res, next) {
     requireUser(req, res, () => {
         if (req.user.role !== 'admin') return authError(res, 403, 'forbidden_admin_required', '需要管理员权限', false);
+        next();
+    });
+}
+
+function requireSuperAdmin(req, res, next) {
+    requireUser(req, res, () => {
+        if (req.user.role !== 'admin' || !req.user.isSuperAdmin) {
+            return authError(res, 403, 'super_admin_required', '需要超级管理员权限', false);
+        }
         next();
     });
 }
@@ -1581,6 +1594,50 @@ function normalizeSettingsInput(body) {
     return next;
 }
 
+function publicAppearanceSettings(settings = storage.getSettings()) {
+    const appearance = settings?.appearance || {};
+    return {
+        appearance: {
+            brandName: String(appearance.brandName || 'Zephyr').slice(0, 40) || 'Zephyr',
+            brandIcon: String(appearance.brandIcon || '🌬️'),
+            colorScheme: appearance.colorScheme || 'frost',
+            theme: appearance.theme || 'auto',
+        },
+    };
+}
+
+function updateSettingsSection(req, res, section) {
+    const value = req.body?.[section] ?? req.body ?? {};
+    const normalized = normalizeSettingsInput({ [section]: value });
+    if (section === 'security' && normalized.security?.ipWhitelistEnabled && !ipAllowed(clientIp(req), normalized.security.ipWhitelist)) {
+        return res.status(400).json({ error: '当前 IP 不在白名单内，已阻止启用以避免误锁' });
+    }
+    const patch = { [section]: normalized[section] };
+    if (section === 'beian') {
+        patch.icp = normalized.icp;
+        patch.icpUrl = normalized.icpUrl;
+        patch.policeBeian = normalized.policeBeian;
+        patch.policeBeianUrl = normalized.policeBeianUrl;
+        patch.showBeian = normalized.showBeian;
+    }
+    const settings = storage.updateSettings(patch);
+    addActivity(`更新系统设置：${section}`, req.user.userId);
+    if (req.user.isSuperAdmin) return res.json(safeSettings(settings));
+    if (section === 'appearance') return res.json({ appearance: settings.appearance || {} });
+    if (section === 'notes') return res.json({ notes: settings.notes || {} });
+    if (section === 'beian') {
+        return res.json({
+            beian: settings.beian || {},
+            icp: settings.icp || '',
+            icpUrl: settings.icpUrl || '',
+            policeBeian: settings.policeBeian || '',
+            policeBeianUrl: settings.policeBeianUrl || '',
+            showBeian: settings.showBeian !== false,
+        });
+    }
+    return res.json({ [section]: settings[section] || {} });
+}
+
 function secureCookieFlag(req) {
     const origin = configuredPublicOrigin(req);
     return origin.startsWith('https://') || requestProto(req) === 'https' ? '; Secure' : '';
@@ -1684,9 +1741,35 @@ async function notifyLogin({ username, ip, userAgent, success, reason }) {
     const region = mail.geoLookupEnabled ? await regionOf(ip) : '';
     storage.addLoginEvent({ id: crypto.randomUUID(), username, ip, region, userAgent, success, reason, time: Date.now() });
     if (!mail.enabled || (success && !mail.notifyLoginSuccess) || (!success && !mail.notifyLoginFailure)) return;
+    const recipients = new Set();
+    if (mail.adminEmail) recipients.add(String(mail.adminEmail).trim());
+
+    const user = username ? storage.getUser(username) : null;
+    if (user?.email) {
+        let wantsNotification = mail.notifyLoginToUser !== false || !!user.isSuperAdmin;
+        try {
+            const overrides = userSettingsService.getUserOverrides(user.userId);
+            if (overrides?.mail?.notifyLogin !== undefined) wantsNotification = !!overrides.mail.notifyLogin;
+        } catch {}
+        if (wantsNotification) recipients.add(String(user.email).trim());
+    }
+    recipients.delete('');
+    if (!recipients.size) return;
+
     const title = success ? 'Zephyr 登录成功通知' : 'Zephyr 登录失败通知';
-    const text = `${title}\n\n时间：${new Date().toLocaleString()}\n账号：${username || '-'}\nIP地址：${ip}\n地区：${region || '-'}\n${success ? '' : `失败原因：${reason || '-'}\n`}User-Agent：${userAgent || '-'}`;
-    sendMail(title, text).catch((err) => console.error('[MAIL] 登录通知失败:', err.message));
+    const text = [
+        title,
+        '',
+        `时间：${new Date().toLocaleString()}`,
+        `账号：${username || '-'}`,
+        `IP 地址：${ip}`,
+        `地区：${region || '-'}`,
+        success ? '' : `失败原因：${reason || '-'}`,
+        `User-Agent：${userAgent || '-'}`,
+    ].filter(Boolean).join('\n');
+    for (const to of recipients) {
+        sendMail(title, text, to).catch((err) => console.error('[MAIL] 登录通知发送失败:', { to, error: err.message }));
+    }
 }
 
 function normalizeCaptchaProvider(provider) {
@@ -1994,15 +2077,15 @@ app.post('/api/auth/logout', (req, res) => {
     res.json({ ok: true });
 });
 
-app.get('/api/auth/me', requireAuth, (req, res) => {
+app.get('/api/auth/me', requireUser, (req, res) => {
     res.json({
-        user: { username: req.session.username, userId: req.session.userId, role: storage.getUserById(req.session.userId)?.role || 'user', isSuperAdmin: !!storage.getUserBrief(req.session.userId)?.isSuperAdmin },
+        user: { username: req.user.username, userId: req.user.userId, role: req.user.role, isSuperAdmin: req.user.isSuperAdmin },
         mustChangePassword: !!req.session.mustChangePassword,
         instanceId: INSTANCE_ID,
     });
 });
 
-app.post('/api/auth/change-password', requireAuth, (req, res) => {
+app.post('/api/auth/change-password', requireUser, (req, res) => {
     const { currentPassword, newPassword } = req.body || {};
     if (!newPassword || String(newPassword).length < 4) return res.status(400).json({ error: '新密码至少 4 位' });
     const user = storage.getUserById(req.session.userId) || storage.getUser(req.session.username);
@@ -2018,7 +2101,7 @@ app.post('/api/auth/change-password', requireAuth, (req, res) => {
     res.json({ ok: true });
 });
 
-app.get('/api/me/sessions', requireAuth, (req, res) => {
+app.get('/api/me/sessions', requireUser, (req, res) => {
     const currentHash = sessionTokenHash(parseCookies(req).zephyr_sid || '');
     const sessions = sessionStore.listForUser(req.session.userId).map((s) => ({
         id: s.id,
@@ -2030,7 +2113,7 @@ app.get('/api/me/sessions', requireAuth, (req, res) => {
     res.json({ sessions });
 });
 
-app.delete('/api/me/sessions/:id', requireAuth, (req, res) => {
+app.delete('/api/me/sessions/:id', requireUser, (req, res) => {
     const targetId = String(req.params.id || '');
     const currentHash = sessionTokenHash(parseCookies(req).zephyr_sid || '');
     if (targetId === currentHash) return res.status(400).json({ error: '不能撤销当前会话，请使用退出登录', code: 'cannot_revoke_current' });
@@ -2590,22 +2673,22 @@ app.get('/api/admin/audit', requireAdmin, (req, res) => {
     res.json({ events: authz.listAuditEvents({ limit }) });
 });
 
-app.post('/api/security/totp/setup', requireAuth, async (req, res) => {
+app.post('/api/security/totp/setup', requireUser, async (req, res) => {
     const user = storage.getUser(req.session.username); const secret = generateSecret();
     const otpauth = generateURI({ label: user.username, issuer: 'Zephyr', secret }); const qr = await QRCode.toDataURL(otpauth);
     req.session.pendingTotpSecret = secret; res.json({ secret, qr });
 });
-app.post('/api/security/totp/enable', requireAuth, (req, res) => {
+app.post('/api/security/totp/enable', requireUser, (req, res) => {
     const secret = req.session.pendingTotpSecret; if (!secret || !verifySync({ secret, token: String(req.body?.code || '') }).valid) return res.status(400).json({ error: '动态验证码错误' });
     storage.updateUser(req.session.username, { totpEnabled: true, totpSecret: secret }); delete req.session.pendingTotpSecret; addActivity('开启 TOTP 两步验证'); res.json({ ok: true });
 });
-app.post('/api/security/totp/disable', requireAuth, (req, res) => {
+app.post('/api/security/totp/disable', requireUser, (req, res) => {
     const user = storage.getUser(req.session.username); const { currentPassword, code } = req.body || {};
     if (!verifyPassword(currentPassword, user.passwordHash) || !verifySync({ secret: user.totpSecret || '', token: String(code || '') }).valid) return res.status(400).json({ error: '密码或动态验证码错误' });
     storage.updateUser(user.username, { totpEnabled: false, totpSecret: null }); addActivity('关闭 TOTP 两步验证'); res.json({ ok: true });
 });
-app.get('/api/security/status', requireAuth, (req, res) => { const u = storage.getUser(req.session.username); res.json({ user: { username: u.username, email: u.email || '', totpEnabled: !!u.totpEnabled }, passkeys: storage.listPasskeys(u.username).map((p) => ({ id: p.id, createdAt: p.createdAt, lastUsedAt: p.lastUsedAt })) }); });
-app.put('/api/security/profile', requireAuth, (req, res) => {
+app.get('/api/security/status', requireUser, (req, res) => { const u = storage.getUser(req.user.username); res.json({ user: { username: u.username, email: u.email || '', totpEnabled: !!u.totpEnabled }, passkeys: storage.listPasskeys(u.username).map((p) => ({ id: p.id, createdAt: p.createdAt, lastUsedAt: p.lastUsedAt })) }); });
+app.put('/api/security/profile', requireUser, (req, res) => {
     const nextUsername = String(req.body?.username || '').trim();
     if (!nextUsername) return res.status(400).json({ error: '用户名不能为空' });
     if (!/^[A-Za-z0-9_.@-]{2,32}$/.test(nextUsername)) return res.status(400).json({ error: '用户名需为 2-32 位字母、数字或 ._@-' });
@@ -2808,7 +2891,7 @@ app.post('/api/rdp/credentials', requireUser, (req, res) => {
 /* RDP TLS certificate probe — connects to the target RDP port via TLS,
  * grabs the server certificate details, and returns them so the frontend
  * can show a Windows-style "unable to verify certificate" dialog. */
-app.post('/api/rdp/telemetry', requireAuth, (req, res) => {
+app.post('/api/rdp/telemetry', requireUser, (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const safe = {
         connectionId: String(body.connectionId || '').slice(0, 128),
@@ -2838,7 +2921,7 @@ app.post('/api/rdp/telemetry', requireAuth, (req, res) => {
     res.json({ ok: true });
 });
 
-app.post('/api/rdp/probe-cert', requireAuth, async (req, res) => {
+app.post('/api/rdp/probe-cert', requireUser, async (req, res) => {
     const connectionId = String(req.body?.connectionId || '').trim();
     if (!connectionId) return res.status(400).json({ error: 'connectionId required' });
     const store = readJSON(CONNECTIONS_FILE, { connections: [] });
@@ -2898,17 +2981,31 @@ app.post('/api/rdp/probe-cert', requireAuth, async (req, res) => {
     }
 });
 
-app.get('/api/settings', requireAuth, (req, res) => res.json(safeSettings(storage.getSettings())));
+app.get('/api/settings/public', requireUser, (req, res) => res.json(publicAppearanceSettings()));
+app.get('/api/settings/admin', requireSuperAdmin, (req, res) => res.json(safeSettings(storage.getSettings())));
 
-app.put('/api/settings', requireAuth, (req, res) => {
+app.get('/api/settings', requireUser, (req, res) => {
+    if (req.user.role === 'admin' && req.user.isSuperAdmin) return res.json(safeSettings(storage.getSettings()));
+    return res.json(publicAppearanceSettings());
+});
+
+app.put('/api/settings', requireSuperAdmin, (req, res) => {
     const body = normalizeSettingsInput(req.body || {});
     if (body.security?.ipWhitelistEnabled && !ipAllowed(clientIp(req), body.security.ipWhitelist)) return res.status(400).json({ error: '当前 IP 不在白名单内，已阻止启用以避免误锁' });
     const settings = storage.updateSettings(body);
-    addActivity('更新系统设置');
+    addActivity('更新系统设置', req.user.userId);
     res.json(safeSettings(settings));
 });
 
-app.post('/api/settings/test-mail', requireAuth, async (req, res) => {
+app.put('/api/settings/appearance', requireAdmin, (req, res) => updateSettingsSection(req, res, 'appearance'));
+app.put('/api/settings/notes', requireAdmin, (req, res) => updateSettingsSection(req, res, 'notes'));
+app.put('/api/settings/beian', requireAdmin, (req, res) => updateSettingsSection(req, res, 'beian'));
+app.put('/api/settings/security', requireSuperAdmin, (req, res) => updateSettingsSection(req, res, 'security'));
+app.put('/api/settings/mail', requireSuperAdmin, (req, res) => updateSettingsSection(req, res, 'mail'));
+app.put('/api/settings/captcha', requireSuperAdmin, (req, res) => updateSettingsSection(req, res, 'captcha'));
+app.put('/api/settings/ai', requireSuperAdmin, (req, res) => updateSettingsSection(req, res, 'ai'));
+
+app.post('/api/settings/test-mail', requireSuperAdmin, async (req, res) => {
     const to = String(req.body?.to || storage.getSettings().mail?.adminEmail || '').trim();
     const mail = storage.getSettings().mail || {};
     console.info('[MAIL] 开始发送测试邮件:', publicMailDebug(mail, to));
@@ -2922,7 +3019,7 @@ app.post('/api/settings/test-mail', requireAuth, async (req, res) => {
     }
 });
 
-app.post('/api/settings/mail/open', requireAuth, (req, res) => {
+app.post('/api/settings/mail/open', requireSuperAdmin, (req, res) => {
     try {
         const auth = verifySensitiveAccess(req, req.body?.secret);
         const mail = storage.getSettings().mail || {};
@@ -2933,7 +3030,7 @@ app.post('/api/settings/mail/open', requireAuth, (req, res) => {
     }
 });
 
-app.post('/api/settings/captcha/open', requireAuth, (req, res) => {
+app.post('/api/settings/captcha/open', requireSuperAdmin, (req, res) => {
     try {
         const auth = verifySensitiveAccess(req, req.body?.secret);
         const captcha = storage.getSettings().captcha || {};
@@ -2953,11 +3050,12 @@ app.post('/api/settings/captcha/open', requireAuth, (req, res) => {
     }
 });
 
-app.get('/api/security/ip-bans', requireAuth, (req, res) => res.json({ bans: storage.listIpBans() }));
-app.delete('/api/security/ip-bans/:ip', requireAuth, (req, res) => { storage.clearIpBan(req.params.ip); res.json({ ok: true }); });
-app.get('/api/security/login-events', requireAuth, (req, res) => res.json({ events: storage.listLoginEvents(100) }));
-app.delete('/api/security/login-events', requireAuth, (req, res) => { storage.clearLoginEvents(); addActivity('清理登录事件日志'); res.json({ ok: true }); });
-app.delete('/api/activities', requireAuth, (req, res) => { storage.clearActivities(); res.json({ ok: true }); });
+app.get('/api/security/ip-bans', requireSuperAdmin, (req, res) => res.json({ bans: storage.listIpBans() }));
+app.delete('/api/security/ip-bans/:ip', requireSuperAdmin, (req, res) => { storage.clearIpBan(req.params.ip); res.json({ ok: true }); });
+app.get('/api/security/login-events', requireSuperAdmin, (req, res) => res.json({ events: storage.listLoginEvents(100) }));
+app.get('/api/security/login-events/mine', requireUser, (req, res) => res.json({ events: storage.listLoginEvents(100, req.user.username) }));
+app.delete('/api/security/login-events', requireSuperAdmin, (req, res) => { storage.clearLoginEvents(); addActivity('清理登录事件日志', req.user.userId); res.json({ ok: true }); });
+app.delete('/api/activities', requireSuperAdmin, (req, res) => { storage.clearActivities(); res.json({ ok: true }); });
 
 /* Platform tool host for zephyr-ai (Go). Must stay on control plane.
  * deps must match registerAiRoutes so executeAiToolForHost can run the full tool surface. */
@@ -3247,7 +3345,6 @@ app.get('/api/ai/runtime/runs/:id/events', requireUser, async (req, res) => {
 });
 
 registerAiRoutes(app, {
-    requireAuth,
     requireUser,
     storage,
     authz,
@@ -3315,13 +3412,13 @@ app.get('/api/public/settings', (req, res) => {
     });
 });
 
-app.get('/api/passkeys', requireAuth, (req, res) => res.json({ passkeys: storage.listPasskeys(req.session.username).map((p) => ({ id: p.id, createdAt: p.createdAt, lastUsedAt: p.lastUsedAt })) }));
-app.post('/api/passkeys/register/options', requireAuth, async (req, res) => {
+app.get('/api/passkeys', requireUser, (req, res) => res.json({ passkeys: storage.listPasskeys(req.user.username).map((p) => ({ id: p.id, createdAt: p.createdAt, lastUsedAt: p.lastUsedAt })) }));
+app.post('/api/passkeys/register/options', requireUser, async (req, res) => {
     const origin = publicOrigin(req), rpID = rpIdFromOrigin(origin), user = storage.getUser(req.session.username);
     const options = await generateRegistrationOptions({ rpName: 'Zephyr', rpID, userID: Buffer.from(user.username), userName: user.username, attestationType: 'none', excludeCredentials: storage.listPasskeys(user.username).map((p) => ({ id: p.credentialId, transports: p.transports })) });
     webauthnChallenges.set(`reg:${user.username}`, { challenge: options.challenge, origin, rpID }); res.json(options);
 });
-app.post('/api/passkeys/register/verify', requireAuth, async (req, res) => {
+app.post('/api/passkeys/register/verify', requireUser, async (req, res) => {
     const state = webauthnChallenges.get(`reg:${req.session.username}`); if (!state) return res.status(400).json({ error: '注册会话已过期' });
     try {
         const result = await verifyRegistrationResponse({ response: req.body, expectedChallenge: state.challenge, expectedOrigin: state.origin, expectedRPID: state.rpID });
@@ -3331,7 +3428,7 @@ app.post('/api/passkeys/register/verify', requireAuth, async (req, res) => {
         webauthnChallenges.delete(`reg:${req.session.username}`); addActivity('绑定 Passkey'); res.json({ ok: true });
     } catch (err) { res.status(400).json({ error: err.message || 'Passkey 注册失败' }); }
 });
-app.delete('/api/passkeys/:id', requireAuth, (req, res) => { storage.deletePasskey(req.session.username, req.params.id); addActivity('删除 Passkey'); res.json({ ok: true }); });
+app.delete('/api/passkeys/:id', requireUser, (req, res) => { storage.deletePasskey(req.user.username, req.params.id); addActivity('删除 Passkey', req.user.userId); res.json({ ok: true }); });
 app.post('/api/passkeys/login/options', async (req, res) => {
     const origin = publicOrigin(req), rpID = rpIdFromOrigin(origin), user = storage.getFirstUser(), passkeys = user ? storage.listPasskeys(user.username) : [];
     if (!passkeys.length) return res.status(400).json({ error: '当前账号尚未绑定 Passkey' });
@@ -3350,7 +3447,7 @@ app.post('/api/passkeys/login/verify', async (req, res) => {
     } catch (err) { res.status(400).json({ error: err.message || 'Passkey 登录失败' }); }
 });
 
-app.get('/api/data/export', requireAuth, async (req, res) => {
+app.get('/api/data/export', requireSuperAdmin, async (req, res) => {
     try { storage.rawDb().pragma('wal_checkpoint(FULL)'); } catch (err) { console.error('[DB] WAL checkpoint failed:', err.message); }
     const files = { 'zephyr.db': fs.readFileSync(path.join(DATA_DIR, 'zephyr.db')), 'manifest.json': JSON.stringify({ app: 'Zephyr', version: APP_VERSION, exportedAt: Date.now(), dataEncryption: secretCrypto.ALG }, null, 2) };
     const keyBackup = secretCrypto.getKeyBackupFile();
@@ -3359,7 +3456,7 @@ app.get('/api/data/export', requireAuth, async (req, res) => {
     const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12);
     res.setHeader('Content-Type', 'application/octet-stream'); res.setHeader('Content-Disposition', `attachment; filename="zephyr-backup-${stamp}.zip.enc"`); res.end(encrypted);
 });
-app.post('/api/data/import', requireAuth, upload.single('backup'), async (req, res) => {
+app.post('/api/data/import', requireSuperAdmin, upload.single('backup'), async (req, res) => {
     try {
         const { loginPassword, backupPassword } = req.body || {}; const user = storage.getUser(req.session.username);
         if (!verifyPassword(loginPassword, user.passwordHash)) return res.status(403).json({ error: '登录密码错误' });
@@ -4466,7 +4563,7 @@ function dockerServiceRestartCommand() {
 }
 
 // 提供静态文件
-app.get('/api/sftp/preview/:token', requireAuth, async (req, res) => {
+app.get('/api/sftp/preview/:token', requireUser, async (req, res) => {
     const token = String(req.params.token || '');
     const previewTask = sftpPreviewTokens.get(token);
     if (!previewTask || previewTask.username !== req.session.username || previewTask.expiresAt < Date.now()) {
@@ -4657,7 +4754,7 @@ function cacheSftpMediaToFile(sftp, mediaTask, ext) {
     });
 }
 
-app.get('/api/sftp/media/stream/:token', requireAuth, async (req, res) => {
+app.get('/api/sftp/media/stream/:token', requireUser, async (req, res) => {
     const mediaTask = getMediaTask(req.params.token, req, res);
     if (!mediaTask) return;
     if (!isMediaExt(getMediaExt(mediaTask.path))) return res.status(415).json({ error: '当前文件不是已知媒体格式' });
@@ -4724,7 +4821,7 @@ app.get('/api/sftp/media/stream/:token', requireAuth, async (req, res) => {
     }
 });
 
-app.get('/api/sftp/media/subtitle/:token/:index.vtt', requireAuth, async (req, res) => {
+app.get('/api/sftp/media/subtitle/:token/:index.vtt', requireUser, async (req, res) => {
     const mediaTask = getMediaTask(req.params.token, req, res);
     if (!mediaTask) return;
     let routed = null;
@@ -4857,7 +4954,7 @@ function destroyUploadSession(token) {
 
 // 分片上传：每个分片一个 POST，URL query ?offset=N 指定写入位置
 // 使用 query 参数而非自定义头，避免 CORS 预检（自定义头+非简单 content-type 触发 OPTIONS）
-app.post('/api/sftp/upload/:token', requireAuth, async (req, res) => {
+app.post('/api/sftp/upload/:token', requireUser, async (req, res) => {
     const token = String(req.params.token || '');
     const uploadTask = sftpUploadTokens.get(token);
 
@@ -4945,7 +5042,7 @@ app.post('/api/sftp/upload/:token', requireAuth, async (req, res) => {
 });
 
 // 完成上传：关闭句柄并校验
-app.post('/api/sftp/upload/:token/complete', requireAuth, async (req, res) => {
+app.post('/api/sftp/upload/:token/complete', requireUser, async (req, res) => {
     const token = String(req.params.token || '');
     const uploadTask = sftpUploadTokens.get(token);
     if (!uploadTask || uploadTask.username !== req.session.username) {
@@ -5012,7 +5109,7 @@ app.post('/api/sftp/upload/:token/complete', requireAuth, async (req, res) => {
     }
 });
 
-app.get('/api/sftp/hash/:token', requireAuth, async (req, res) => {
+app.get('/api/sftp/hash/:token', requireUser, async (req, res) => {
     const token = String(req.params.token || '');
     const download = sftpDownloadTokens.get(token);
     if (!download || download.username !== req.session.username || download.expiresAt < Date.now()) {
@@ -5031,7 +5128,7 @@ app.get('/api/sftp/hash/:token', requireAuth, async (req, res) => {
     }
 });
 
-app.get('/api/sftp/download-progress/:token', requireAuth, (req, res) => {
+app.get('/api/sftp/download-progress/:token', requireUser, (req, res) => {
     const token = String(req.params.token || '');
     const download = sftpDownloadTokens.get(token);
     if (!download || download.username !== req.session.username || download.expiresAt < Date.now()) {
@@ -5046,7 +5143,7 @@ app.get('/api/sftp/download-progress/:token', requireAuth, (req, res) => {
     });
 });
 
-app.post('/api/sftp/download-control/:token', requireAuth, (req, res) => {
+app.post('/api/sftp/download-control/:token', requireUser, (req, res) => {
     const token = String(req.params.token || '');
     const action = String(req.body?.action || '').toLowerCase();
     const download = sftpDownloadTokens.get(token);
@@ -5080,7 +5177,7 @@ app.post('/api/sftp/download-control/:token', requireAuth, (req, res) => {
     res.status(400).json({ error: '不支持的操作' });
 });
 
-app.get('/api/sftp/download/:token', requireAuth, async (req, res) => {
+app.get('/api/sftp/download/:token', requireUser, async (req, res) => {
     const token = String(req.params.token || '');
     const download = sftpDownloadTokens.get(token);
     if (!download || download.username !== req.session.username || download.expiresAt < Date.now()) {
@@ -5372,7 +5469,7 @@ const clipboardTransitTokens = new Map(); // token → { path, name, size, usern
 const CLIPBOARD_TRANSIT_TTL = 5 * 60 * 1000; // 5 minutes
 
 // Upload: RDP/SSH tab sends file to server temp storage, gets a download token.
-app.post('/api/clipboard/upload', requireAuth, (req, res) => {
+app.post('/api/clipboard/upload', requireUser, (req, res) => {
     const name = String(req.query.name || 'file').replace(/[/\\]/g, '_').slice(0, 255);
     const token = crypto.randomUUID();
     const dir = path.join(CLIPBOARD_TRANSIT_DIR, req.session.username || 'anon');
@@ -5391,7 +5488,7 @@ app.post('/api/clipboard/upload', requireAuth, (req, res) => {
 });
 
 // Download: other tab fetches file by token (streamed).
-app.get('/api/clipboard/download/:token', requireAuth, (req, res) => {
+app.get('/api/clipboard/download/:token', requireUser, (req, res) => {
     const token = String(req.params.token || '');
     const entry = clipboardTransitTokens.get(token);
     if (!entry || entry.username !== req.session.username || entry.expiresAt < Date.now()) {
@@ -5420,18 +5517,18 @@ setInterval(() => {
 
 // 健康检查
 let _h264DebugLog = null;
-app.post('/api/rdp/h264-debug', (req, res) => {
+app.post('/api/rdp/h264-debug', requireAdmin, (req, res) => {
     _h264DebugLog = req.body;
     console.info('[h264-debug]', JSON.stringify(req.body, null, 2));
     res.json({ ok: true });
 });
-app.get('/api/rdp/h264-debug', (req, res) => {
+app.get('/api/rdp/h264-debug', requireAdmin, (req, res) => {
     res.json(_h264DebugLog || { empty: true });
 });
 
 /* Mount file-agent REST API routes before the SPA catch-all. GET routes like
  * /api/rdp/file-agent-tokens must not be swallowed by app.get('*'). */
-fileAgentManager.mountRoutes(app, requireAuth, (req) => req.session, verifySensitiveAccess);
+fileAgentManager.mountRoutes(app, requireUser, (req) => req.user, verifySensitiveAccess);
 
 app.get('/healthz', (req, res) => res.status(200).json({ ok: true, instanceId: INSTANCE_ID, version: APP_VERSION }));
 
@@ -5718,8 +5815,8 @@ wss.on('connection', (ws, req) => {
     let statsTimer = null;
     let statsRunning = false;
     let remoteStatsState = {};
-    const dockerLogStreams = new Map();
-    const sftpUploadStreams = new Map();
+    let dockerLogStreams = new Map();
+    let sftpUploadStreams = new Map();
     const closeTelnetSocket = (reason = 'cleanup') => {
         if (!telnetSocket) return;
         try { telnetSocket.destroy(); } catch {}
@@ -5801,7 +5898,8 @@ wss.on('connection', (ws, req) => {
     }
 
     function stopDockerLogStreams() {
-        for (const stream of dockerLogStreams.values()) {
+        for (const entry of dockerLogStreams.values()) {
+            const stream = entry?.stream || entry;
             try { stream.close?.(); } catch {}
             try { stream.end?.(); } catch {}
             try { stream.destroy?.(); } catch {}
@@ -5819,8 +5917,6 @@ wss.on('connection', (ws, req) => {
 
     const detachSshSession = (reason = 'ws-detach') => {
         stopStatsPush();
-        stopDockerLogStreams();
-        stopSftpUploadStreams();
         if (attachedSshSession) {
             attachedSshSession.attachedWs?.delete(ws);
             attachedSshSession.lastDetachedAt = Date.now();
@@ -5879,6 +5975,8 @@ wss.on('connection', (ws, req) => {
         sshClients = session.sshClients || [session.sshClient].filter(Boolean);
         sshStream = session.sshStream;
         sftpStream = session.sftpStream || null;
+        dockerLogStreams = session.dockerLogStreams || (session.dockerLogStreams = new Map());
+        sftpUploadStreams = session.sftpUploadStreams || (session.sftpUploadStreams = new Map());
         session.attachedWs.add(ws);
         session.lastActive = Date.now();
         session.lastDetachedAt = 0;
@@ -5928,23 +6026,37 @@ wss.on('connection', (ws, req) => {
             sendJSON({ type: 'docker-log-error', message: '缺少容器 ID/名称' });
             return;
         }
-        if (dockerLogStreams.has(key)) {
-            try { dockerLogStreams.get(key).close?.(); } catch {}
-            dockerLogStreams.delete(key);
+        const existing = dockerLogStreams.get(key);
+        if (existing) {
+            sendJSON({ type: 'docker-log-start', container: key, resumed: true });
+            for (const data of existing.buffer || []) sendJSON({ type: 'docker-log-data', container: key, data });
+            return;
         }
         const command = `docker logs --tail 200 --timestamps -f ${shellQuote(key)}`;
+        const ownerSession = attachedSshSession;
+        const emit = (payload) => {
+            if (ownerSession) broadcastSshSession(ownerSession, payload);
+            else sendJSON(payload);
+        };
         sshClient.exec(`sh -lc ${JSON.stringify(command)}`, (err, stream) => {
             if (err) {
-                sendJSON({ type: 'docker-log-error', container: key, message: err.message });
+                emit({ type: 'docker-log-error', container: key, message: err.message });
                 return;
             }
-            dockerLogStreams.set(key, stream);
-            sendJSON({ type: 'docker-log-start', container: key });
-            stream.on('data', (chunk) => sendJSON({ type: 'docker-log-data', container: key, data: chunk.toString('utf8') }));
-            stream.stderr.on('data', (chunk) => sendJSON({ type: 'docker-log-data', container: key, data: chunk.toString('utf8') }));
+            const entry = { stream, buffer: [] };
+            dockerLogStreams.set(key, entry);
+            emit({ type: 'docker-log-start', container: key });
+            const publish = (chunk) => {
+                const data = chunk.toString('utf8');
+                entry.buffer.push(data);
+                while (entry.buffer.length > 200) entry.buffer.shift();
+                emit({ type: 'docker-log-data', container: key, data });
+            };
+            stream.on('data', publish);
+            stream.stderr.on('data', publish);
             stream.on('close', (code) => {
-                dockerLogStreams.delete(key);
-                sendJSON({ type: 'docker-log-end', container: key, code });
+                if (dockerLogStreams.get(key) === entry) dockerLogStreams.delete(key);
+                emit({ type: 'docker-log-end', container: key, code });
             });
         });
     }
@@ -6031,7 +6143,8 @@ wss.on('connection', (ws, req) => {
 
             if (msg.type === 'docker-logs-stop') {
                 const key = String(msg.id || msg.name || '').trim();
-                const stream = dockerLogStreams.get(key);
+                const entry = dockerLogStreams.get(key);
+                const stream = entry?.stream || entry;
                 if (stream) {
                     try { stream.close?.(); } catch {}
                     try { stream.end?.(); } catch {}
@@ -6344,6 +6457,8 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         username: sessionUser.username || '',
                         userId: sessionUser.userId || '',
                         connectionConfig: conn,
+                        dockerLogStreams,
+                        sftpUploadStreams,
                         closed: false,
                     };
                     attachedSshSession = session;

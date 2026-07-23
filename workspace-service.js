@@ -12,6 +12,8 @@ const crypto = require('crypto');
 const { HttpError } = require('./authz');
 
 const MAX_STATE_BYTES = 256 * 1024;
+const MAX_WORKSPACES_PER_USER = 20;
+const DEFAULT_WORKSPACE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const FORBIDDEN_STATE_KEYS = new Set([
     'password', 'privateKey', 'passphrase', 'apiKey', 'token', 'totpSecret',
     'jmsToken', 'secret', 'credential', 'credentials',
@@ -54,6 +56,14 @@ class WorkspaceService {
             ON CONFLICT(user_id, client_id, workspace_id) DO UPDATE SET
               name = @name, state_json = @stateJson, revision = @revision, updated_at = @updatedAt`);
         this.stmtDelete = db.prepare('DELETE FROM workspaces WHERE workspace_id = ? AND user_id = ?');
+        this.stmtCountUser = db.prepare('SELECT COUNT(*) AS count FROM workspaces WHERE user_id = ?');
+        this.stmtPruneUser = db.prepare(`DELETE FROM workspaces WHERE rowid IN (
+            SELECT rowid FROM workspaces
+            WHERE user_id = ? AND workspace_id != ?
+            ORDER BY updated_at ASC
+            LIMIT ?
+        )`);
+        this.stmtGcStale = db.prepare('DELETE FROM workspaces WHERE updated_at < ?');
     }
 
     list(userId, { clientId = null } = {}) {
@@ -98,6 +108,10 @@ class WorkspaceService {
             updatedAt: this.now(),
         };
         this.stmtUpsert.run(record);
+        const count = Number(this.stmtCountUser.get(String(user.userId))?.count || 0);
+        if (count > MAX_WORKSPACES_PER_USER) {
+            this.stmtPruneUser.run(String(user.userId), id, count - MAX_WORKSPACES_PER_USER);
+        }
         return this.get(user.userId, id);
     }
 
@@ -105,6 +119,11 @@ class WorkspaceService {
         const changed = this.stmtDelete.run(String(workspaceId), String(userId)).changes;
         if (!changed) throw new HttpError(404, 'workspace_not_found', '工作区不存在');
         return true;
+    }
+
+    gcStale(maxAgeMs = DEFAULT_WORKSPACE_MAX_AGE_MS) {
+        const age = Math.max(24 * 60 * 60 * 1000, Number(maxAgeMs) || DEFAULT_WORKSPACE_MAX_AGE_MS);
+        return this.stmtGcStale.run(this.now() - age).changes;
     }
 
     /**
@@ -169,4 +188,4 @@ class WorkspaceService {
     }
 }
 
-module.exports = { WorkspaceService, scrubState, MAX_STATE_BYTES };
+module.exports = { WorkspaceService, scrubState, MAX_STATE_BYTES, MAX_WORKSPACES_PER_USER, DEFAULT_WORKSPACE_MAX_AGE_MS };

@@ -29,7 +29,7 @@ const RPC_DEFAULT_TIMEOUT_MS = 30000;
 const RPC_READ_TIMEOUT_MS = 60000;
 const BINARY_READ_PREFETCH_CHUNKS = 1;
 const BINARY_READ_MAX_CACHE_BYTES = 64 * 1024 * 1024;
-const TOKEN_FILE = path.join(__dirname, 'data', 'agent-tokens.json');
+const DEFAULT_TOKEN_FILE = path.join(__dirname, 'data', 'agent-tokens.json');
 
 class FileAgentConnection {
     constructor(ws, agentId, hello) {
@@ -291,6 +291,7 @@ class FileAgentManager {
         this.resolveSession = options.resolveSession || (() => null);
         /** @type {Function} logger */
         this.log = options.log || console.log;
+        this.tokenFile = path.resolve(options.tokenFile || DEFAULT_TOKEN_FILE);
 
         this._loadTokens();
     }
@@ -299,8 +300,8 @@ class FileAgentManager {
 
     _loadTokens() {
         try {
-            if (!fs.existsSync(TOKEN_FILE)) return;
-            const data = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
+            if (!fs.existsSync(this.tokenFile)) return;
+            const data = JSON.parse(fs.readFileSync(this.tokenFile, 'utf8'));
             if (data && Array.isArray(data.tokens)) {
                 for (const item of data.tokens) {
                     if (!item || !item.token || !item.ownerId) continue;
@@ -348,8 +349,8 @@ class FileAgentManager {
                 updatedAt: t.updatedAt,
                 lastUsedAt: t.lastUsedAt || null,
             }));
-            fs.mkdirSync(path.dirname(TOKEN_FILE), { recursive: true });
-            fs.writeFileSync(TOKEN_FILE, JSON.stringify({ version: 2, tokens }, null, 2));
+            fs.mkdirSync(path.dirname(this.tokenFile), { recursive: true });
+            fs.writeFileSync(this.tokenFile, JSON.stringify({ version: 2, tokens }, null, 2));
         } catch (err) {
             this.log('[file-agent] failed to save tokens:', err.message);
         }
@@ -918,26 +919,26 @@ class FileAgentManager {
     /**
      * Mount REST API routes onto an Express app.
      * @param {import('express').Application} app
-     * @param {Function} requireAuth - middleware that ensures req.session exists
+     * @param {Function} requireUser - middleware that resolves an active user
      * @param {Function} getSessionUser - (req) => { username, ... }
      */
-    mountRoutes(app, requireAuth, getSessionUser, verifySensitiveAccess = null) {
+    mountRoutes(app, requireUser, getSessionUser, verifySensitiveAccess = null) {
         // GET /api/rdp/file-agents — list online agents for current user
-        app.get('/api/rdp/file-agents', requireAuth, (req, res) => {
+        app.get('/api/rdp/file-agents', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             res.json({ ok: true, agents: this.listAgentsForUser(user.username) });
         });
 
         // GET /api/rdp/file-agent-tokens — list named agent tokens
-        app.get('/api/rdp/file-agent-tokens', requireAuth, (req, res) => {
+        app.get('/api/rdp/file-agent-tokens', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             res.json({ ok: true, tokens: this.listTokens(user.username) });
         });
 
         // POST /api/rdp/file-agent-tokens — create named token
-        app.post('/api/rdp/file-agent-tokens', requireAuth, (req, res) => {
+        app.post('/api/rdp/file-agent-tokens', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             const record = this.createToken(user.username, req.body?.name || 'Zephyr Agent Token', req.body?.length || 50);
@@ -945,7 +946,7 @@ class FileAgentManager {
         });
 
         // PATCH /api/rdp/file-agent-tokens/:tokenId — rename token
-        app.patch('/api/rdp/file-agent-tokens/:tokenId', requireAuth, (req, res) => {
+        app.patch('/api/rdp/file-agent-tokens/:tokenId', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             try {
@@ -957,7 +958,7 @@ class FileAgentManager {
         });
 
         // POST /api/rdp/file-agent-tokens/:tokenId/regenerate — rotate one token
-        app.post('/api/rdp/file-agent-tokens/:tokenId/regenerate', requireAuth, (req, res) => {
+        app.post('/api/rdp/file-agent-tokens/:tokenId/regenerate', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             try {
@@ -969,7 +970,7 @@ class FileAgentManager {
         });
 
         // POST /api/rdp/file-agent-tokens/:tokenId/open — reveal token after password/TOTP check
-        app.post('/api/rdp/file-agent-tokens/:tokenId/open', requireAuth, (req, res) => {
+        app.post('/api/rdp/file-agent-tokens/:tokenId/open', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             try {
@@ -984,7 +985,7 @@ class FileAgentManager {
         });
 
         // POST /api/rdp/file-agent-tokens/reset-all — delete all tokens and create one fresh token
-        app.post('/api/rdp/file-agent-tokens/reset-all', requireAuth, (req, res) => {
+        app.post('/api/rdp/file-agent-tokens/reset-all', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             try {
@@ -1003,7 +1004,7 @@ class FileAgentManager {
         });
 
         // DELETE /api/rdp/file-agent-tokens/:tokenId — delete one token
-        app.delete('/api/rdp/file-agent-tokens/:tokenId', requireAuth, (req, res) => {
+        app.delete('/api/rdp/file-agent-tokens/:tokenId', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             try {
@@ -1015,7 +1016,7 @@ class FileAgentManager {
         });
 
         // GET /api/rdp/file-agent-token — legacy endpoint: ensure default token exists, but do not reveal it.
-        app.get('/api/rdp/file-agent-token', requireAuth, (req, res) => {
+        app.get('/api/rdp/file-agent-token', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             this.getOrCreateToken(user.username);
@@ -1023,7 +1024,7 @@ class FileAgentManager {
         });
 
         // POST /api/rdp/file-agent-token/regenerate — legacy reset endpoint, requires password/TOTP
-        app.post('/api/rdp/file-agent-token/regenerate', requireAuth, (req, res) => {
+        app.post('/api/rdp/file-agent-token/regenerate', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             try {
@@ -1037,7 +1038,7 @@ class FileAgentManager {
         });
 
         // GET /api/rdp/file-agents/events — SSE stream
-        app.get('/api/rdp/file-agents/events', requireAuth, (req, res) => {
+        app.get('/api/rdp/file-agents/events', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             res.writeHead(200, {
@@ -1051,7 +1052,7 @@ class FileAgentManager {
         });
 
         // POST /api/rdp/file-agents/:agentId/rpc/read-binary — binary fast path for reads
-        app.post('/api/rdp/file-agents/:agentId/rpc/read-binary', requireAuth, async (req, res) => {
+        app.post('/api/rdp/file-agents/:agentId/rpc/read-binary', requireUser, async (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).end();
 
@@ -1082,7 +1083,7 @@ class FileAgentManager {
         });
 
         // POST /api/rdp/file-agents/:agentId/rpc — forward RPC to agent
-        app.post('/api/rdp/file-agents/:agentId/rpc', requireAuth, async (req, res) => {
+        app.post('/api/rdp/file-agents/:agentId/rpc', requireUser, async (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
 

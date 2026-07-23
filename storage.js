@@ -176,7 +176,7 @@ function defaultSettings(legacySettings = {}) {
             bruteForceBanMinutes: 15,
         },
         captcha: { enabled: false, provider: 'turnstile', siteKey: '', secretKey: '', tencentCaptchaAppId: '', tencentAppSecretKey: '' },
-        mail: { enabled: false, host: '', port: 465, secure: true, user: '', pass: '', from: '', adminEmail: '', notifyLoginSuccess: true, notifyLoginFailure: true, geoLookupEnabled: true },
+        mail: { enabled: false, host: '', port: 465, secure: true, user: '', pass: '', from: '', adminEmail: '', notifyLoginSuccess: true, notifyLoginFailure: true, notifyLoginToUser: true, geoLookupEnabled: true },
         beian: { show: legacySettings.showBeian !== false, icp: legacySettings.icp || '', policeBeian: legacySettings.policeBeian || '', policeBeianUrl: legacySettings.policeBeianUrl || 'https://www.beian.gov.cn/portal/registerSystemInfo' },
         dataManage: { exportEncryptHint: true },
         appearance: {
@@ -796,7 +796,11 @@ function saveJumpHost(j) {
 function deleteJumpHost(id) { db.prepare('DELETE FROM jump_hosts WHERE id=?').run(id); }
 
 function addLoginEvent(e) { db.prepare('INSERT INTO login_events (id,username,ip,region,userAgent,success,reason,time) VALUES (@id,@username,@ip,@region,@userAgent,@success,@reason,@time)').run({ ...e, success: e.success ? 1 : 0 }); }
-function listLoginEvents(limit = 100) { return db.prepare('SELECT * FROM login_events ORDER BY time DESC LIMIT ?').all(limit); }
+function listLoginEvents(limit = 100, username = '') {
+    const max = Math.min(Math.max(Number(limit) || 100, 1), 1000);
+    if (username) return db.prepare('SELECT * FROM login_events WHERE username = ? ORDER BY time DESC LIMIT ?').all(String(username), max);
+    return db.prepare('SELECT * FROM login_events ORDER BY time DESC LIMIT ?').all(max);
+}
 function clearLoginEvents() { db.prepare('DELETE FROM login_events').run(); }
 function getIpBan(ip) { return db.prepare('SELECT * FROM ip_bans WHERE ip=?').get(ip); }
 function saveIpBan(b) { db.prepare('INSERT OR REPLACE INTO ip_bans (ip,failedCount,bannedUntil,updatedAt) VALUES (@ip,@failedCount,@bannedUntil,@updatedAt)').run(b); return getIpBan(b.ip); }

@@ -20,10 +20,13 @@ const USER_ALLOWED_KEYS = new Set([
     'appearance.customCss',
     'appearance.terminalBackground',
     'appearance.terminalFontColor',
+    'appearance.terminalFontColors',
+    'appearance.rdp',
     'terminal.maxWindows',
     'terminal.minimizedKeepAlive',
     'terminal.smartbarOrder',
     'terminal.shortcutPlatform',
+    'terminal.allowLigatures',
     'snippets',
     'notes.enabled',
     'notes.editorMode',
@@ -31,6 +34,7 @@ const USER_ALLOWED_KEYS = new Set([
     'workspace.defaultView',
     'ai.panelLayout',
     'ai.assistantName',
+    'mail.notifyLogin',
 ]);
 
 /* Platform security / system keys ordinary users must never write. */
@@ -113,13 +117,12 @@ class UserSettingsService {
         const flat = flatten(patch);
         const rejected = [];
         for (const key of Object.keys(flat)) {
-            if (SYSTEM_ONLY_KEYS.has(key) || SYSTEM_ONLY_KEYS.has(key.split('.')[0])) {
+            const allowed = USER_ALLOWED_KEYS.has(key)
+                || [...USER_ALLOWED_KEYS].some((a) => key === a || key.startsWith(`${a}.`));
+            if (!allowed && (SYSTEM_ONLY_KEYS.has(key) || SYSTEM_ONLY_KEYS.has(key.split('.')[0]))) {
                 rejected.push(key);
                 continue;
             }
-            // allow exact match or a prefix of an allowed key path (e.g. appearance.customColors.primary)
-            const allowed = USER_ALLOWED_KEYS.has(key)
-                || [...USER_ALLOWED_KEYS].some((a) => key === a || key.startsWith(`${a}.`));
             if (!allowed) {
                 rejected.push(key);
                 continue;
@@ -143,26 +146,22 @@ class UserSettingsService {
     effective(user) {
         const global = this.storage.getSettings() || {};
         const overrides = this.getUserOverrides(user.userId);
-        // Users never receive other users' secrets; strip AI provider keys for non-owners.
+        // Personal settings never carry platform infrastructure or secret values.
         const base = { ...global };
-        if (user.role !== 'admin') {
-            // Drop system-only surfaces from the personal view.
-            delete base.security;
-            delete base.captcha;
-            delete base.mail;
-            delete base.dataManage;
-            if (base.ai) {
-                base.ai = {
-                    ...base.ai,
-                    providers: (base.ai.providers || []).map((p) => ({
-                        id: p.id, name: p.name, enabled: p.enabled, models: p.models, baseUrl: p.baseUrl,
-                        // never return apiKey to non-admin
-                        hasApiKey: !!p.apiKey,
-                        apiKey: '',
-                    })),
-                    envVars: (base.ai.envVars || []).map((e) => ({ id: e.id, name: e.name, hasValue: !!e.value, value: '' })),
-                };
-            }
+        delete base.security;
+        delete base.captcha;
+        delete base.mail;
+        delete base.dataManage;
+        if (base.ai) {
+            base.ai = {
+                ...base.ai,
+                providers: (base.ai.providers || []).map((p) => ({
+                    id: p.id, name: p.name, enabled: p.enabled, models: p.models, baseUrl: p.baseUrl,
+                    hasApiKey: !!p.apiKey,
+                    apiKey: '',
+                })),
+                envVars: (base.ai.envVars || []).map((e) => ({ id: e.id, name: e.name, hasValue: !!e.value, value: '' })),
+            };
         }
         return deepMerge(base, overrides);
     }
