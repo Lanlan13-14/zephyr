@@ -12,8 +12,16 @@ test('IME host is plain invisible textarea (no custom compose UI)', () => {
   assert.equal(styleCss.includes('.mobile-terminal-ime-proxy.composing'), false);
 });
 
-test('keydown leaves composition keys to OS IME', () => {
-  assert.match(terminalJs, /if \(isImeCompositionActive\(e\)\) \{[\s\S]*?return; \/\/ system IME handles candidate confirm/);
+test('keydown leaves non-Enter composition keys to OS IME', () => {
+  // Space / 数字键 still return to OS. Enter is the stuck-Latin escape hatch.
+  assert.match(
+    terminalJs,
+    /if \(isImeCompositionActive\(e\)\) \{[\s\S]*?return; \/\/ system IME handles candidate confirm/,
+  );
+  assert.match(
+    terminalJs,
+    /if \(isImeCompositionActive\(e\)\) \{[\s\S]*?e\.key === 'Enter'[\s\S]*?flushMobileImeEnter/,
+  );
 });
 
 test('beforeinput never steals insertText (拼音 stays in field)', () => {

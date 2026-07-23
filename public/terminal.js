@@ -3,7 +3,7 @@ import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
-} from './ssh-keyboard/index.js?v=20260722-kb-cjk-send1';
+} from './ssh-keyboard/index.js?v=20260723-sync2';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
@@ -1041,6 +1041,8 @@ let mobileImeComposeWatchdog = 0;
 /** After compositionend, suppress duplicate beforeinput/input for the same text. */
 let mobileImeComposeSuppressUntil = 0;
 let mobileImeLastComposedText = '';
+/** After Enter unsticks a stuck Latin composition, drop late compositionend (kimikimi). */
+let mobileImeEnterSuppressCompositionEndUntil = 0;
 let mobileStableLastBottomIntent = true;
 let mobileStableOrientationResizeUntil = 0;
 let mobileTerminalAutoFollowLockUntil = 0;
@@ -1049,6 +1051,12 @@ let mobileStableKeyboardGridRepairTimers = [];
 let mobileStableKeyboardOpenGrid = null;
 let mobileImeLastSent = { text: '', source: '', at: 0 };
 let mobileImeLastControl = { seq: '', source: '', at: 0 };
+/**
+ * Text already delivered to PTY on the current pre-Enter line (progressive
+ * keystrokes or composition commits). Enter leftover flush must not re-send
+ * when English IME re-fills the proxy with the same word (first-word kimikimi).
+ */
+let mobileImeLineAcc = '';
 let mobileStableLastFocusGestureAt = 0;
 /** @type {ReturnType<typeof createSshKeyboard>['asSoftKeyboard'] extends Function ? any : any} */
 /** @type {ReturnType<typeof createSshKeyboard> | null} */
@@ -7964,6 +7972,34 @@ function isTerminalAtBottom(el = getTerminalScrollElement(), threshold = TERMINA
     return getTerminalBottomDistance(el) <= threshold;
 }
 
+/** Coalesce follow/lock side-effects across multi-line touch pans (one per frame). */
+let _historyScrollUiRaf = 0;
+let _historyScrollUiPending = null;
+
+function _flushHistoryScrollUi() {
+    _historyScrollUiRaf = 0;
+    const pending = _historyScrollUiPending;
+    _historyScrollUiPending = null;
+    if (!pending || !term) return;
+    const { reason } = pending;
+    const atBottom = isTerminalAtBottom(undefined, TERMINAL_XTERM_SCROLL_LOCK_THRESHOLD);
+    if (atBottom) {
+        clearMobileTerminalHistoryLock?.(`${reason}:at-bottom`);
+        setTerminalAutoFollow?.(true, `${reason}:at-bottom`);
+        scheduleEnsureActiveLineAboveChrome?.(`${reason}:follow`);
+    } else {
+        try {
+            const root = term?.element || wtermWrapper?.querySelector?.('.wterm');
+            root?.style?.setProperty?.('--term-active-line-shift', '0px');
+        } catch (_) {}
+        lockMobileTerminalAutoFollow?.(`${reason}:history`, 2400);
+        setTerminalAutoFollow?.(false, `${reason}:history`);
+        terminalUserScrolledAway = true;
+        if (isMobileStableInputMode()) terminalUserScrollGestureUntil = Date.now() + 1400;
+    }
+    scheduleTerminalScrollbarUpdate?.();
+}
+
 /** Drive xterm history by N rows (negative = into history / up). */
 function scrollTerminalHistoryLines(amount, reason = 'history-scroll') {
     const n = Math.trunc(Number(amount) || 0);
@@ -7980,29 +8016,15 @@ function scrollTerminalHistoryLines(amount, reason = 'history-scroll') {
     } catch (_) {
         return false;
     }
-    const atBottom = isTerminalAtBottom(undefined, TERMINAL_XTERM_SCROLL_LOCK_THRESHOLD);
-    if (atBottom) {
-        clearMobileTerminalHistoryLock?.(`${reason}:at-bottom`);
-        setTerminalAutoFollow?.(true, `${reason}:at-bottom`);
-        // Only when following may we lift last-content above tools.
-        scheduleEnsureActiveLineAboveChrome?.(`${reason}:follow`);
-    } else {
-        // Reading history: never keep a sticky upward shift (that made a black void).
-        try {
-            const root = term?.element || wtermWrapper?.querySelector?.('.wterm');
-            root?.style?.setProperty?.('--term-active-line-shift', '0px');
-        } catch (_) {}
-        lockMobileTerminalAutoFollow?.(`${reason}:history`, 2400);
-        setTerminalAutoFollow?.(false, `${reason}:history`);
-        terminalUserScrolledAway = true;
-        if (isMobileStableInputMode()) terminalUserScrollGestureUntil = Date.now() + 1400;
+    // Defer lock/follow/chrome work to one rAF — touch pans fire many times/frame.
+    _historyScrollUiPending = { reason: String(reason || 'history-scroll') };
+    if (!_historyScrollUiRaf) {
+        _historyScrollUiRaf = requestAnimationFrame(_flushHistoryScrollUi);
     }
-    scheduleTerminalScrollbarUpdate?.();
     logTerminalScrollDiagnostics?.('history-scroll-lines', {
         reason,
         amount: n,
         ...((() => { try { return getXtermHistoryMetrics(); } catch (_) { return {}; } })() || {}),
-        atBottom,
     });
     return true;
 }
@@ -8892,6 +8914,77 @@ function ensureMobileStableCursorVisible(reason = 'mobile-stable-visible') {
     });
 }
 
+function imeTextEqual(a, b) {
+    // Case-insensitive: Android Chinese IME often re-delivers Latin via
+    // compositionend as "Kimi" after we already flushed "kimi" on Enter.
+    return String(a || '').toLowerCase() === String(b || '').toLowerCase();
+}
+
+function imeLineAccNoteSent(text = '') {
+    const payload = String(text || '');
+    if (!payload) return;
+    mobileImeLineAcc = `${mobileImeLineAcc || ''}${payload}`;
+}
+
+function imeLineAccClear(reason = '') {
+    if (!mobileImeLineAcc) return;
+    logTerminalLayoutDiagnostics?.('ime-line-acc-clear', {
+        reason: String(reason || ''),
+        len: mobileImeLineAcc.length,
+    });
+    mobileImeLineAcc = '';
+}
+
+/**
+ * True when leftover is already fully on the current line (progressive
+ * k+i+m+i or a prior full-word commit). English IME often re-inserts the
+ * whole word into the proxy on first Enter → kimikimi without this check.
+ *
+ * Only exact / already-suffix matches. Do NOT treat leftover.endsWith(lineAcc)
+ * as "already sent" — that would drop "kimi" after only "ki" was typed.
+ */
+function imeLeftoverAlreadyOnLine(leftover = '') {
+    const b = String(leftover || '').toLowerCase();
+    if (!b) return true;
+    const a = String(mobileImeLineAcc || '').toLowerCase();
+    if (!a) return false;
+    return a === b || a.endsWith(b);
+}
+
+/**
+ * Unsent suffix of leftover relative to lineAcc.
+ * "kimi" after progressive "ki" → "mi"; after full "kimi" → "".
+ */
+function imeLeftoverDelta(leftover = '') {
+    const raw = String(leftover || '');
+    if (!raw) return '';
+    const b = raw.toLowerCase();
+    const a = String(mobileImeLineAcc || '').toLowerCase();
+    if (!a) return raw;
+    if (a === b || a.endsWith(b)) return '';
+    if (b.startsWith(a)) return raw.slice(String(mobileImeLineAcc || '').length);
+    return raw;
+}
+
+function imeTextAlreadySent(text, windowMs = 900) {
+    const payload = String(text || '');
+    if (!payload) return false;
+    const now = performance.now();
+    if (mobileImeLastSent.text
+        && imeTextEqual(mobileImeLastSent.text, payload)
+        && now - mobileImeLastSent.at < windowMs) {
+        return true;
+    }
+    if (mobileImeLastComposedText
+        && imeTextEqual(mobileImeLastComposedText, payload)
+        && now < mobileImeComposeSuppressUntil) {
+        return true;
+    }
+    // Progressive "kimi" then Enter leftover "kimi" (IME re-fill).
+    if (imeLeftoverAlreadyOnLine(payload)) return true;
+    return false;
+}
+
 function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = false, forceImmediate = false } = {}) {
     let payload = String(text || '');
     if (!payload) return false;
@@ -8909,14 +9002,17 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
     // Dedup re-deliveries of the *same already-sent* payload (kimikimi).
     // forceImmediate / composition commits skip the "last composed" pre-check
     // because commitComposedImeText arms suppress only AFTER a successful send.
+    // Case-insensitive: compositionend "Kimi" after Enter flush "kimi".
     const duplicateWindow = paste ? 320 : (payload.length > 1 ? 320 : 100);
-    if (mobileImeLastSent.text === payload && now - mobileImeLastSent.at < duplicateWindow) {
+    if (mobileImeLastSent.text
+        && imeTextEqual(mobileImeLastSent.text, payload)
+        && now - mobileImeLastSent.at < duplicateWindow) {
         return false;
     }
     if (
         !isComposeCommit
         && mobileImeLastComposedText
-        && payload === mobileImeLastComposedText
+        && imeTextEqual(payload, mobileImeLastComposedText)
         && now < mobileImeComposeSuppressUntil
     ) {
         return false;
@@ -8934,6 +9030,8 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
         forceFollow: !!(paste || isComposeCommit),
         applyModifiers: false,
     });
+    // Track pre-Enter line so leftover flush cannot re-send progressive text.
+    if (!paste) imeLineAccNoteSent(payload);
     const surface = ensureTerminalSurface();
     if (paste || isComposeCommit) {
         if (surface && isMobileStableInputMode()) {
@@ -8950,8 +9048,12 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
  * committing English/Latin words (e.g. "kimi") without compositionend.
  * While mobileImeComposing is true, keydown Enter and beforeinput are blocked
  * → user cannot press Enter and further input appears frozen.
+ *
+ * quiet=true: clear local flags only. Do NOT call handleCompositionEnd /
+ * onCompositionEnd — those publish facade state and can re-apply physical
+ * keyboard height → bottom bar flies mid-screen (especially on Enter).
  */
-function clearStuckImeComposition(reason = 'compose-clear', { commit = false } = {}) {
+function clearStuckImeComposition(reason = 'compose-clear', { commit = false, quiet = false, keepValue = false } = {}) {
     if (mobileImeComposeWatchdog) {
         window.clearTimeout(mobileImeComposeWatchdog);
         mobileImeComposeWatchdog = 0;
@@ -8960,19 +9062,61 @@ function clearStuckImeComposition(reason = 'compose-clear', { commit = false } =
     const leftover = String(mobileImeProxy?.value || '');
     mobileImeComposing = false;
     mobileImeComposingAt = 0;
-    try { ensureSshKeyboard()?.handleCompositionEnd?.(); } catch (_) {}
-    try { ensureTerminalSurface()?.onCompositionEnd?.(); } catch (_) {}
-    if (mobileImeProxy) mobileImeProxy.value = '';
+    if (!quiet) {
+        try { ensureSshKeyboard()?.handleCompositionEnd?.(); } catch (_) {}
+        try { ensureTerminalSurface()?.onCompositionEnd?.(); } catch (_) {}
+    }
+    // keepValue: only drop the stuck flag so a following input event can flush.
+    if (!keepValue && mobileImeProxy) mobileImeProxy.value = '';
     if (commit && leftover) {
         mobileImeLastComposedText = leftover;
-        mobileImeComposeSuppressUntil = performance.now() + 400;
+        mobileImeComposeSuppressUntil = performance.now() + 900;
     }
     logTerminalLayoutDiagnostics?.('ime-compose-clear', {
         reason,
         leftoverLen: leftover.length,
         commit: !!commit,
+        quiet: !!quiet,
+        keepValue: !!keepValue,
     });
     return commit ? leftover : '';
+}
+
+/**
+ * Single Enter path while IME is (or was) composing.
+ * - Unsticks mobileImeComposing without chrome publish (quiet).
+ * - Flushes leftover only if not already on the current line (prevents first
+ *   English-word kimikimi when IME re-fills proxy after progressive send).
+ * - Sends one CR. Never double-sends text or CR.
+ * - Does not touch facade / aux / parent shell geometry.
+ */
+function flushMobileImeEnter(source = 'mobile-ime-enter') {
+    const leftover = String(mobileImeProxy?.value || '');
+    const wasComposing = !!mobileImeComposing;
+    // Quiet clear: no handleCompositionEnd → no applyFacadeChrome (bar fly).
+    clearStuckImeComposition(`${source}:stuck-clear`, { commit: false, quiet: true });
+    // English first-word: progressive k+i+m+i already on PTY; IME re-fills
+    // proxy with "kimi" → send only unsent delta (usually empty).
+    const delta = imeLeftoverDelta(leftover);
+    if (delta && !imeTextAlreadySent(delta, 900)) {
+        sendMobileStableImeText(delta, `${source}:flush`);
+        mobileImeLastComposedText = leftover || delta;
+        mobileImeComposeSuppressUntil = performance.now() + 900;
+    } else if (leftover) {
+        logTerminalLayoutDiagnostics?.('ime-enter-leftover-skip', {
+            source,
+            leftoverLen: leftover.length,
+            deltaLen: delta.length,
+            wasComposing,
+            lineAccLen: (mobileImeLineAcc || '').length,
+            preview: leftover.slice(0, 16),
+        });
+    }
+    if (mobileImeProxy) mobileImeProxy.value = '';
+    // Swallow a late compositionend that Android may still fire after Enter.
+    mobileImeEnterSuppressCompositionEndUntil = performance.now() + 900;
+    sendMobileStableControl('\r', source);
+    return true;
 }
 
 function armImeComposeWatchdog() {
@@ -9011,11 +9155,21 @@ function commitComposedImeText(text, source = 'mobile-ime-composition') {
         logTerminalLayoutDiagnostics?.('ime-compose-empty', { source });
         return false;
     }
+    // Late compositionend after Enter already flushed the same Latin word → drop.
+    if (imeTextAlreadySent(payload, 900)) {
+        logTerminalLayoutDiagnostics?.('ime-compose-dup-drop', {
+            source,
+            preview: payload.slice(0, 16),
+        });
+        mobileImeLastComposedText = payload;
+        mobileImeComposeSuppressUntil = performance.now() + 900;
+        return false;
+    }
     // CRITICAL: send FIRST, then arm suppress. Setting suppress before send
     // made sendMobileStableImeText drop the first commit → 选了「你好」终端空白.
     const ok = sendMobileStableImeText(payload, source, { forceImmediate: true });
     mobileImeLastComposedText = payload;
-    mobileImeComposeSuppressUntil = performance.now() + 400;
+    mobileImeComposeSuppressUntil = performance.now() + 900;
     logTerminalLayoutDiagnostics?.('ime-compose-commit', {
         source,
         len: payload.length,
@@ -9040,10 +9194,11 @@ function sendMobileStableControl(seq = '', source = 'mobile-ime-control') {
     }
     // Never invent a commit from leftover composition text here.
     // Real CJK commit is only compositionend → commitComposedImeText.
+    // Enter leftover flush is owned by flushMobileImeEnter (quiet, single path).
     const isEnterLike = payload === '\r' || /enter|return/i.test(source);
     if (mobileImeComposing && isEnterLike) {
-        // Clear stuck flag without committing pinyin/kana.
-        clearStuckImeComposition(`${source}:pre-control`, { commit: false });
+        // Quiet: no handleCompositionEnd → no facade re-apply (bar fly).
+        clearStuckImeComposition(`${source}:pre-control`, { commit: false, quiet: true });
     }
     mobileImeLastControl = { seq: payload, source, at: now };
     mobileStableLastActualInputAt = Date.now();
@@ -9054,8 +9209,14 @@ function sendMobileStableControl(seq = '', source = 'mobile-ime-control') {
     cancelMobileStableScrollRestore(`${source}:control`);
     clearMobileTerminalHistoryLock(`${source}:control`);
     sendData(payload, { source, forceFollow: false, applyModifiers: false });
+    // Keep lineAcc aligned with PTY: BS pops one code unit (Latin path).
+    if (payload === '\x7f' || payload === '\b') {
+        if (mobileImeLineAcc) mobileImeLineAcc = mobileImeLineAcc.slice(0, -1);
+    }
     const surface = ensureTerminalSurface();
     if (isEnterLike) {
+        // New shell line — progressive buffer no longer applies.
+        imeLineAccClear(`${source}:enter`);
         clearMobileTerminalHistoryLock(`${source}:enter`);
         setTerminalAutoFollow(true, `${source}:enter`);
         if (surface && isMobileStableInputMode()) surface.onEnterCommitted?.(source);
@@ -9265,6 +9426,19 @@ function setupMobileStableImeProxy() {
         // No value write, no re-anchor — browser + OS IME own the buffer/UI.
     });
     proxy.addEventListener('compositionend', (e) => {
+        // Enter already unstuck + flushed Latin (kimi) — drop late end (kimikimi).
+        // Real CJK 选词 always lands here first; Enter-after-选词 does not re-enter compose.
+        if (performance.now() < mobileImeEnterSuppressCompositionEndUntil) {
+            mobileImeComposing = false;
+            mobileImeComposingAt = 0;
+            if (mobileImeProxy) mobileImeProxy.value = '';
+            imeProxyComposeOrigin = null;
+            logTerminalLayoutDiagnostics?.('ime-compose-end-swallowed', {
+                reason: 'post-enter-suppress',
+                dataLen: e?.data != null ? String(e.data).length : 0,
+            });
+            return;
+        }
         ensureSshKeyboard()?.handleCompositionEnd?.();
         ensureTerminalSurface()?.onCompositionEnd?.();
         mobileStableSuppressScrollUntil = Math.max(mobileStableSuppressScrollUntil, Date.now() + 120);
@@ -9275,12 +9449,29 @@ function setupMobileStableImeProxy() {
         scheduleImeProxyCursorAnchor('compositionend');
     });
 
-    // Controls only when NOT composing. During 选词, OS owns Space/Enter/Backspace.
+    // Controls: during 选词 Space/Backspace stay with OS IME.
+    // Enter escapes ONLY when our compose flag is stuck but the key event is
+    // not a live IME composition (isComposing/229/Process). Live 选词 Enter
+    // must stay with the OS so candidate confirm is not turned into pinyin+CR.
     proxy.addEventListener('keydown', (e) => {
         if (isModifierOnlyKeyEvent(e)) return;
         if (isImeCompositionActive(e)) {
+            if (e.key === 'Enter') {
+                const liveCompose = !!(e.isComposing || e.keyCode === 229 || e.key === 'Process');
+                // Stuck flag after Latin (kimi) without compositionend: event is a
+                // normal Enter (keyCode 13), but mobileImeComposing stayed true.
+                if (mobileImeComposing && !liveCompose) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    flushMobileImeEnter('mobile-ime-key:Enter');
+                    return;
+                }
+                // Live OS composition / 选词: do not steal Enter.
+                armImeComposeWatchdog();
+                return;
+            }
             armImeComposeWatchdog();
-            return; // system IME handles candidate confirm
+            return; // system IME handles candidate confirm (Space / 数字键)
         }
         const seqMap = {
             Enter: '\r',
@@ -9301,15 +9492,8 @@ function setupMobileStableImeProxy() {
         if (!seq) return;
         if (e.key === 'Enter') {
             e.preventDefault();
-            const leftover = String(proxy.value || '');
-            if (leftover
-                && !(mobileImeLastComposedText
-                    && leftover === mobileImeLastComposedText
-                    && performance.now() < mobileImeComposeSuppressUntil)) {
-                sendMobileStableImeText(leftover, 'mobile-ime-enter-flush');
-            }
-            proxy.value = '';
-            sendMobileStableControl('\r', 'mobile-ime-key:Enter');
+            // Single path (same as stuck-compose Enter) — one flush + one CR.
+            flushMobileImeEnter('mobile-ime-key:Enter');
             return;
         }
         if (e.key === 'Backspace' && proxy.value) {
@@ -9324,6 +9508,13 @@ function setupMobileStableImeProxy() {
     // Do NOT preventDefault insertText — that is what lets the OS IME run 选词.
     proxy.addEventListener('beforeinput', (e) => {
         const type = e.inputType || '';
+        const liveCompose = !!(e && (e.isComposing || e.keyCode === 229 || /Composition/i.test(type)));
+        // Stuck flag but event is plain typing → quiet unstick so input is not frozen.
+        // keepValue: do not wipe proxy; following input/enter will flush leftover.
+        if (mobileImeComposing && !liveCompose && (type === 'insertText' || type === 'deleteContentBackward'
+            || type === 'insertLineBreak' || type === 'insertParagraph')) {
+            clearStuckImeComposition('beforeinput:unstick', { commit: false, quiet: true, keepValue: true });
+        }
         if (
             type === 'insertText'
             || type === 'insertCompositionText'
@@ -9352,28 +9543,26 @@ function setupMobileStableImeProxy() {
         }
         if (type === 'insertLineBreak' || type === 'insertParagraph') {
             e.preventDefault();
-            const leftover = String(proxy.value || '');
-            if (leftover) {
-                sendMobileStableImeText(leftover, 'mobile-ime-enter-flush');
-                proxy.value = '';
-            }
-            sendMobileStableControl('\r', 'mobile-ime-enter');
+            // Same single Enter path as keydown (stuck compose + leftover + one CR).
+            flushMobileImeEnter('mobile-ime-enter');
         }
     });
 
     // After OS finishes (or plain ASCII typing): push to PTY, terminal echo shows it.
-    proxy.addEventListener('input', () => {
+    proxy.addEventListener('input', (e) => {
+        const liveCompose = !!(e && e.isComposing);
+        if (mobileImeComposing && !liveCompose) {
+            // Flag stuck after Latin without compositionend — quiet unstick, keep buffer.
+            clearStuckImeComposition('input:unstick', { commit: false, quiet: true, keepValue: true });
+        }
         if (isImeCompositionActive()) {
             armImeComposeWatchdog();
             return;
         }
         const text = proxy.value || '';
         if (!text) return;
-        if (
-            mobileImeLastComposedText
-            && text === mobileImeLastComposedText
-            && performance.now() < mobileImeComposeSuppressUntil
-        ) {
+        // Case-insensitive: drop re-delivery after Enter flush / compositionend.
+        if (imeTextAlreadySent(text, 900)) {
             proxy.value = '';
             return;
         }
@@ -9428,8 +9617,16 @@ function setupTerminalScrollHooks({ followOnConnect = true } = {}) {
             e.preventDefault();
             return;
         }
-        // xterm-owned history: always drive ydisp from the host (wrapper may be
-        // the event target; .wterm also listens — stopPropagation there).
+        // xterm-owned history: wterm._onVirtualWheel already scrolls + stopPropagation
+        // on the .wterm element. Only drive ydisp from the host when the event did
+        // NOT originate inside .wterm (wrapper/chrome), or wterm listener is absent.
+        const fromWtermEl = !!(e.target && term?.element && (term.element === e.target || term.element.contains?.(e.target)));
+        if (fromWtermEl && term?.element?.classList?.contains('xterm-viewport')
+            && typeof term.bridge?.scrollLines === 'function') {
+            // wterm owns this path — do not double-scroll (double mark dirty → jank).
+            terminalLastWheelAt = Date.now();
+            return;
+        }
         if (term?.element?.classList?.contains('xterm-viewport') || term?.bridge?.virtualViewport
             || typeof term?.bridge?.scrollLines === 'function') {
             e.preventDefault();
@@ -12049,7 +12246,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     // Register the Terminal ctor before WTerm.init so XtermBridge.load works
     // without a bare npm resolver in the browser.
     try {
-        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260721-kb-reopen1');
+        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260723-sync2');
     } catch (err) {
         console.error('[terminal] xterm-headless register failed', err);
         throw err;
@@ -12057,7 +12254,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API. DOM/input/viewport
         // stay wterm; core is XtermBridge over vendored xterm (see /xterm).
-        const module = await import('/vendor/wterm-fork/index.js?v=20260721-kb-reopen1');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260723-sync2');
         WTermClass = module.WTerm;
     } catch {
         try {
@@ -12160,24 +12357,32 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
             panMoved = false;
             panAccum = 0;
         };
-        wtermWrapper.addEventListener('touchstart', onPanStart, { passive: true });
-        wtermWrapper.addEventListener('touchmove', onPanMove, { passive: false });
-        wtermWrapper.addEventListener('touchend', onPanEnd, { passive: true });
-        wtermWrapper.addEventListener('touchcancel', onPanEnd, { passive: true });
-        // Pointer events path (some Android WebViews).
-        wtermWrapper.addEventListener('pointerdown', (e) => {
-            if (e.pointerType === 'touch') onPanStart(e);
-        }, { passive: true });
-        wtermWrapper.addEventListener('pointermove', (e) => {
-            if (e.pointerType === 'touch' && panActive) onPanMove(e);
-        }, { passive: false });
-        wtermWrapper.addEventListener('pointerup', onPanEnd, { passive: true });
-        wtermWrapper.addEventListener('pointercancel', onPanEnd, { passive: true });
+        // Prefer PointerEvent when available (one path). Dual touch+pointer on
+        // Android doubles every scrollLines → 2× full paint jank.
+        const usePointer = typeof window.PointerEvent === 'function';
+        if (usePointer) {
+            wtermWrapper.addEventListener('pointerdown', (e) => {
+                if (e.pointerType === 'touch' || e.pointerType === 'pen') onPanStart(e);
+            }, { passive: true });
+            wtermWrapper.addEventListener('pointermove', (e) => {
+                if ((e.pointerType === 'touch' || e.pointerType === 'pen') && panActive) onPanMove(e);
+            }, { passive: false });
+            wtermWrapper.addEventListener('pointerup', onPanEnd, { passive: true });
+            wtermWrapper.addEventListener('pointercancel', onPanEnd, { passive: true });
+        } else {
+            wtermWrapper.addEventListener('touchstart', onPanStart, { passive: true });
+            wtermWrapper.addEventListener('touchmove', onPanMove, { passive: false });
+            wtermWrapper.addEventListener('touchend', onPanEnd, { passive: true });
+            wtermWrapper.addEventListener('touchcancel', onPanEnd, { passive: true });
+        }
     }
     if (typeof term.init === 'function') await term.init();
     // After every paint, enforce last-content above tools ONLY while following.
+    // Skip while reading history — measure+layout every frame during touch pan is jank.
     try {
         term?.onRenderComplete?.(() => {
+            if (!terminalAutoFollowEnabled || isTerminalUserReadingHistory?.()) return;
+            if (!isTerminalAtBottom(undefined, TERMINAL_XTERM_SCROLL_LOCK_THRESHOLD)) return;
             scheduleEnsureActiveLineAboveChrome('wterm-render-complete');
         });
     } catch (_) {}

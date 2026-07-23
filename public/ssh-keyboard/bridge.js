@@ -64,14 +64,21 @@ export function createParentBridge(host = {}) {
      * @param {{ phase: string, intent: string, inset: number, liftMode?: string, physical?: string, reason?: string }} state
      */
     function publish(state = {}) {
-        if (Date.now() < freezeUntil) {
-            log('publish-frozen', { state });
-            return false;
-        }
         const phase = String(state.phase || 'closed');
         const intent = String(state.intent || 'closed');
         const inset = Math.max(0, Math.round(Number(state.inset) || 0));
         const liftMode = state.liftMode === 'none' ? 'none' : 'workspace';
+        // Intent open must NEVER be blocked by close-settle freeze — that was why
+        // the second keyboard open left the bottom bar stuck (parent never cropped).
+        const isOpenIntent = intent === 'open' && liftMode !== 'none';
+        if (Date.now() < freezeUntil && !isOpenIntent) {
+            log('publish-frozen', { state });
+            return false;
+        }
+        if (isOpenIntent && Date.now() < freezeUntil) {
+            freezeUntil = 0;
+            log('freeze-cleared-by-open', { reason: state.reason || '' });
+        }
         const rounded = Math.round(inset / 4) * 4;
         const signature = `${phase}|${intent}|${rounded}|${liftMode}`;
         if (signature === last.signature) return false;
@@ -137,6 +144,20 @@ export function createParentBridge(host = {}) {
     function unfreeze(reason = 'unfreeze') {
         freezeUntil = 0;
         log('unfreeze', { reason });
+        // Close-settle freeze often ate the reopen publish. Re-deliver open intent
+        // once the freeze ends so parent can crop and lift the bottom bar again.
+        if (last.intent === 'open' && last.liftMode !== 'none') {
+            const pending = {
+                phase: last.phase || 'opening',
+                intent: 'open',
+                inset: last.inset || 0,
+                liftMode: last.liftMode || 'workspace',
+                physical: last.inset >= 80 ? 'open' : 'closed',
+                reason: `unfreeze-republish:${reason}`,
+            };
+            last.signature = '';
+            publish(pending);
+        }
     }
 
     function isFrozen() {

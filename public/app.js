@@ -1,4 +1,4 @@
-import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260722-kb-cjk-send1';
+import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
@@ -1097,6 +1097,152 @@ function bufferToBase64url(buffer) { return btoa(String.fromCharCode(...new Uint
 
 function allTags() { return [...new Set(connections.flatMap((c) => c.tags || []))].sort(); }
 const CONNECTION_FILTER_KEY = 'zephyr.connection.filters.v1';
+
+/**
+ * Custom single-select that toggles closed when the trigger is clicked again.
+ * Native <select> on mobile cannot be dismissed by re-tapping the control.
+ * Keeps the original <select> as the value source of truth (forms/filters unchanged).
+ */
+const TOGGLE_SELECT_IDS = [
+    // Dashboard filters
+    'protocolFilter', 'tagFilter', 'sortSelect',
+    // Settings / appearance / terminal prefs (same UI pattern)
+    'captchaProvider', 'colorSchemeSelect', 'themeModeSelect',
+    'terminalBgSource', 'terminalBgFit', 'terminalMaxWindows',
+    'terminalSmartbarOrder', 'terminalShortcutPlatform',
+    // Proxy modal
+    'proxyType',
+    // Connection modal / RDP (when opened)
+    'connProtocol', 'connSshKey', 'connRoute',
+    'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
+];
+let _toggleSelectDocBound = false;
+
+function closeAllToggleSelects(exceptShell = null) {
+    document.querySelectorAll('.ui-toggle-select.open').forEach((shell) => {
+        if (exceptShell && shell === exceptShell) return;
+        shell.classList.remove('open');
+        const btn = shell.querySelector('.ui-toggle-select-trigger');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+    });
+}
+
+function syncToggleSelectFace(select) {
+    if (!select?.closest) return;
+    const shell = select.closest('.ui-toggle-select');
+    if (!shell) return;
+    const trigger = shell.querySelector('.ui-toggle-select-trigger');
+    const menu = shell.querySelector('.ui-toggle-select-menu');
+    if (!trigger || !menu) return;
+    const opts = Array.from(select.options || []);
+    const current = opts.find((o) => o.value === select.value) || opts[0];
+    trigger.textContent = current ? (current.textContent || current.value || '') : '';
+    menu.innerHTML = opts.map((o) => {
+        const selected = o.value === select.value;
+        return `<button type="button" class="ui-toggle-select-option${selected ? ' is-selected' : ''}" role="option" data-value="${escapeAttr(o.value)}" aria-selected="${selected ? 'true' : 'false'}">${escapeHtml(o.textContent || o.value || '')}</button>`;
+    }).join('');
+}
+
+function enhanceToggleSelect(select) {
+    if (!select || select.tagName !== 'SELECT' || select.multiple || select.dataset.toggleSelect === '1') return null;
+    if (select.disabled) return null;
+    // Already wrapped
+    if (select.parentElement?.classList?.contains('ui-toggle-select')) {
+        select.dataset.toggleSelect = '1';
+        syncToggleSelectFace(select);
+        return select.parentElement;
+    }
+    const shell = document.createElement('div');
+    shell.className = 'ui-toggle-select';
+    shell.dataset.selectId = select.id || '';
+    select.parentNode.insertBefore(shell, select);
+    shell.appendChild(select);
+    select.classList.add('ui-toggle-select-native');
+    select.dataset.toggleSelect = '1';
+    select.tabIndex = -1;
+    select.setAttribute('aria-hidden', 'true');
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'ui-toggle-select-trigger';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+    if (select.id) trigger.id = `${select.id}ToggleTrigger`;
+
+    const menu = document.createElement('div');
+    menu.className = 'ui-toggle-select-menu';
+    menu.setAttribute('role', 'listbox');
+    menu.hidden = false;
+
+    shell.appendChild(trigger);
+    shell.appendChild(menu);
+    syncToggleSelectFace(select);
+
+    trigger.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const willOpen = !shell.classList.contains('open');
+        closeAllToggleSelects(willOpen ? shell : null);
+        shell.classList.toggle('open', willOpen);
+        trigger.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        if (willOpen) {
+            // Keep menu in view on mobile.
+            try { menu.scrollTop = 0; } catch (_) {}
+        }
+    });
+
+    menu.addEventListener('click', (e) => {
+        const opt = e.target.closest?.('.ui-toggle-select-option');
+        if (!opt) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const value = opt.getAttribute('data-value') ?? '';
+        if (select.value !== value) {
+            select.value = value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            select.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        syncToggleSelectFace(select);
+        shell.classList.remove('open');
+        trigger.setAttribute('aria-expanded', 'false');
+    });
+
+    select.addEventListener('change', () => syncToggleSelectFace(select));
+    return shell;
+}
+
+function enhanceAllToggleSelects() {
+    TOGGLE_SELECT_IDS.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) enhanceToggleSelect(el);
+    });
+    // Settings / dashboard / modals: wrap remaining single selects with toggle UX
+    document.querySelectorAll(
+        '.action-bar select:not([multiple]), .settings-form select:not([multiple]), .appearance-form select:not([multiple]), .connection-modal select:not([multiple]), .proxy-modal select:not([multiple]), #proxyForm select:not([multiple]), #connectionForm select:not([multiple])',
+    ).forEach((el) => {
+        enhanceToggleSelect(el);
+    });
+    if (!_toggleSelectDocBound) {
+        _toggleSelectDocBound = true;
+        document.addEventListener('click', (e) => {
+            if (e.target.closest?.('.ui-toggle-select')) return;
+            closeAllToggleSelects();
+        }, true);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeAllToggleSelects();
+        });
+        // Re-sync when options mutate (tag filter rebuild).
+        const mo = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                if (m.type === 'childList' && m.target?.tagName === 'SELECT' && m.target.dataset.toggleSelect === '1') {
+                    syncToggleSelectFace(m.target);
+                }
+            }
+        });
+        mo.observe(document.documentElement, { childList: true, subtree: true });
+    }
+}
+
 function readConnectionFilters() {
     try { return JSON.parse(localStorage.getItem(CONNECTION_FILTER_KEY) || '{}') || {}; } catch { return {}; }
 }
@@ -1115,14 +1261,21 @@ function restoreConnectionFilters() {
     if ($('#protocolFilter')) $('#protocolFilter').value = data.protocol || 'all';
     if ($('#sortSelect')) $('#sortSelect').value = data.sort || 'createdAt';
     if ($('#tagFilter')) $('#tagFilter').dataset.savedValue = data.tag || 'all';
+    // Faces after restore (native value already set).
+    ['protocolFilter', 'tagFilter', 'sortSelect'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) syncToggleSelectFace(el);
+    });
 }
 function refreshTagFilter() {
     const select = $('#tagFilter');
+    if (!select) return;
     const old = select.dataset.savedValue || select.value || 'all';
-    select.innerHTML = '<option value="all">全部标签</option>' + allTags().map((t) => `<option ${old === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('');
+    select.innerHTML = '<option value="all">全部标签</option>' + allTags().map((t) => `<option value="${escapeAttr(t)}" ${old === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('');
     if (old === 'all' || allTags().includes(old)) select.value = old;
     else select.value = 'all';
     delete select.dataset.savedValue;
+    syncToggleSelectFace(select);
 }
 function filteredConnections() {
     const q = $('#searchInput').value.trim().toLowerCase(), proto = $('#protocolFilter').value, tag = $('#tagFilter').value, sort = $('#sortSelect').value;
@@ -1606,6 +1759,12 @@ function prepareConnectionModalForm(conn = null, options = {}) {
     updateRdpTouchSettingsUi();
     if ($('#rdpDomain')) $('#rdpDomain').value = conn?.rdpDomain || '';
     updateProtocolFields({ preservePort: !!conn });
+    // Connection/RDP selects: toggle-select so re-tap closes the menu.
+    enhanceAllToggleSelects();
+    ['connProtocol', 'connSshKey', 'connRoute', 'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) syncToggleSelectFace(el);
+    });
 }
 function openModal(conn = null, trigger = null, options = {}) {
     const modal = $('#connectionModal');
@@ -2932,7 +3091,7 @@ function animateTerminalWindowLayoutFrom(beforeRects, { reason = 'layout-change'
 
 function resetTerminalWorkspaceKeyboard({ force = false, notifyIframe = false } = {}) {
     const workspace = $('#terminalWorkspace');
-    if (!workspace || (!force && !sshKbParentOpen && !workspace.classList.contains('ssh-kb-open') && !workspace.classList.contains('ssh-kb-settling'))) return;
+    if (!workspace || (!force && !sshKbParentOpen && !workspace.classList.contains('ssh-kb-open') && !workspace.classList.contains('ssh-kb-settling') && !sshKbParentAwaiting)) return;
     const wasOpen = sshKbParentOpen;
     stopSshKbAlignLoop();
     sshKbParentOpen = false;
@@ -2944,9 +3103,13 @@ function resetTerminalWorkspaceKeyboard({ force = false, notifyIframe = false } 
     sshKbParentLastGoodTop = 0;
     sshKbParentSeenPhysical = false;
     sshKbParentLowSince = 0;
+    // Stale awaiting after close left second open without align loop / crop.
+    sshKbParentAwaiting = false;
+    sshKbParentAwaitingSince = 0;
+    sshKbParentAwaitingMetrics = null;
     window.clearTimeout(sshKbParentSettleTimer);
- 
-workspace.classList.remove('ssh-kb-open', 'keyboard-settling', 'ssh-kb-open');
+
+    workspace.classList.remove('ssh-kb-open', 'keyboard-settling', 'ssh-kb-open');
     document.documentElement.classList.remove('ssh-kb-open');
     document.documentElement.style.setProperty('--app-keyboard-inset', '0px');
     document.documentElement.style.setProperty('--ssh-kb-inset', '0px');
@@ -2997,6 +3160,8 @@ workspace.classList.remove('ssh-kb-open', 'keyboard-settling', 'ssh-kb-open');
             sshKbParentBaseline = 0;
             sshKbParentPendingMetrics = null;
             sshKbParentLastSignature = '';
+            sshKbParentAwaiting = false;
+            sshKbParentAwaitingMetrics = null;
             workspace.classList.remove('ssh-kb-open', 'keyboard-settling');
             document.documentElement.style.setProperty('--app-keyboard-inset', '0px');
             document.body.classList.remove('ssh-kb-lift');
@@ -3013,9 +3178,19 @@ workspace.classList.remove('ssh-kb-open', 'keyboard-settling', 'ssh-kb-open');
             if (notifyIframe) notifyFrameKeyboardReset(`parent-workspace-reset:${delay}`);
         }, delay));
     }
-    postTerminalKeyboardFreeze(true, 'parent-keyboard-reset-start', { settleMs: 900 });
+    // Ordinary close: do NOT freeze child publish for 900ms.
+    // That freeze swallowed the next open intent → second open no parent crop → bar stuck.
     window.clearTimeout(sshKbParentFreezeReleaseTimer);
-    sshKbParentFreezeReleaseTimer = window.setTimeout(() => postTerminalKeyboardFreeze(false, 'parent-keyboard-reset-settled'), 900);
+    if (force) {
+        postTerminalKeyboardFreeze(true, 'parent-keyboard-reset-start', { settleMs: 220 });
+        sshKbParentFreezeReleaseTimer = window.setTimeout(
+            () => postTerminalKeyboardFreeze(false, 'parent-keyboard-reset-settled'),
+            220,
+        );
+    } else {
+        postTerminalKeyboardFreeze(false, 'parent-keyboard-reset-soft-unfreeze');
+    }
+    void wasOpen;
     console.info('[TerminalLayoutDiagnostics]', { event: 'parent:keyboard-reset', wasOpen });
     scheduleTerminalLayoutStabilize('parent-keyboard-reset', { focus: false });
 }
@@ -4307,6 +4482,14 @@ function setAiFieldPickerValue(kind, value) {
 }
 
 function openAiFieldPicker(kind = '', anchor = null) {
+    // Re-tap same trigger closes (native/mobile picker trap).
+    const existing = document.querySelector('.ai-picker-popover');
+    if (existing && existing.dataset.pickerKind === kind && existing.dataset.pickerAnchorId
+        && (anchor?.id && existing.dataset.pickerAnchorId === anchor.id
+            || existing._anchorEl === anchor)) {
+        closeAiPickerPopover();
+        return;
+    }
     closeAiPickerPopover();
     const choices = AI_FIELD_PICKER_CHOICES[kind]?.() || [];
     if (!choices.length || !anchor) return;
@@ -4314,6 +4497,9 @@ function openAiFieldPicker(kind = '', anchor = null) {
     const current = input?.value ?? '';
     const pop = document.createElement('div');
     pop.className = 'ai-picker-popover';
+    pop.dataset.pickerKind = String(kind || '');
+    pop.dataset.pickerAnchorId = anchor.id || '';
+    pop._anchorEl = anchor;
     pop.innerHTML = choices.map((item) => `<button type="button" class="ai-picker-option${item.value === current ? ' active' : ''}" data-field-kind="${escapeHtml(kind)}" data-value="${escapeHtml(item.value)}"><span>${escapeHtml(item.label)}</span>${item.value === current ? '<b>✓</b>' : ''}</button>`).join('');
     document.body.appendChild(pop);
     const rect = anchor.getBoundingClientRect();
@@ -4441,12 +4627,21 @@ function openAiInlineConfirm({ title = '确认', body = '', confirmLabel = '确�
     mask.querySelector('[data-ai-inline-ok]')?.focus?.();
 }
 function openAiPicker(kind = '', anchor = null) {
+    const existing = document.querySelector('.ai-picker-popover');
+    if (existing && existing.dataset.pickerKind === kind
+        && (existing._anchorEl === anchor || (anchor?.id && existing.dataset.pickerAnchorId === anchor.id))) {
+        closeAiPickerPopover();
+        return;
+    }
     closeAiPickerPopover();
     const choices = aiHeaderChoices(kind);
     if (!choices.length || !anchor) return;
     const current = kind === 'provider' ? $('#aiProviderSelect')?.value : kind === 'model' ? $('#aiModelSelect')?.value : $('#aiThinkIntensity')?.value;
     const pop = document.createElement('div');
     pop.className = 'ai-picker-popover';
+    pop.dataset.pickerKind = String(kind || '');
+    pop.dataset.pickerAnchorId = anchor.id || '';
+    pop._anchorEl = anchor;
     pop.innerHTML = choices.map((item) => `<button type="button" class="ai-picker-option${item.value === current ? ' active' : ''}" data-kind="${escapeHtml(kind)}" data-value="${escapeHtml(item.value)}"><span>${escapeHtml(item.label)}</span>${item.value === current ? '<b>✓</b>' : ''}</button>`).join('');
     document.body.appendChild(pop);
     const rect = anchor.getBoundingClientRect();
@@ -7267,6 +7462,12 @@ async function loadSettings() {
     renderAiSettingsForm();
     renderNotesToggle();
     await loadSecurityStatus(); await loadSecurityLists();
+    // Settings values filled into native selects — refresh toggle faces / wrap new ones.
+    enhanceAllToggleSelects();
+    TOGGLE_SELECT_IDS.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) syncToggleSelectFace(el);
+    });
 }
 
 function isNotesEnabled() {
@@ -7571,6 +7772,9 @@ function openProxyModal(proxy = null, trigger = null) {
     $('#proxyPort').value = proxy?.port || 1080;
     $('#proxyUsername').value = proxy?.username || '';
     $('#proxyPassword').value = proxy?.hasPassword ? '******' : '';
+    // Proxy type uses toggle-select (re-tap to close).
+    enhanceToggleSelect($('#proxyType'));
+    syncToggleSelectFace($('#proxyType'));
     const modal = $('#proxyModal');
     const layer = $('#connectionTransitionLayer');
     if (!modal || !layer || modal.classList.contains('show')) return;
@@ -7821,7 +8025,19 @@ function bindEvents() {
     $('#connProtocol').addEventListener('change', () => updateProtocolFields({ preservePort: false }));
     $('#rdpTouchMode')?.addEventListener('change', updateRdpTouchSettingsUi);
     $('#rdpTouchSensitivity')?.addEventListener('input', updateRdpTouchSettingsUi);
-    $('#connectionForm').addEventListener('submit', saveConnection); restoreConnectionFilters(); ['searchInput', 'protocolFilter', 'tagFilter', 'sortSelect'].forEach((id) => { const el = $(`#${id}`); const handler = () => { saveConnectionFilters(); renderConnections(); }; el.addEventListener('input', handler); el.addEventListener('change', handler); });
+    $('#connectionForm').addEventListener('submit', saveConnection);
+    // Toggle-select shells before restore so faces pick up saved values.
+    enhanceAllToggleSelects();
+    restoreConnectionFilters();
+    ['searchInput', 'protocolFilter', 'tagFilter', 'sortSelect'].forEach((id) => {
+        const el = $(`#${id}`);
+        if (!el) return;
+        const handler = () => { saveConnectionFilters(); renderConnections(); };
+        el.addEventListener('input', handler);
+        el.addEventListener('change', handler);
+    });
+    // Settings/appearance selects may mount later with settings HTML — re-enhance after loadSettings.
+    window.__zephyrEnhanceToggleSelects = enhanceAllToggleSelects;
     $$('[data-activity-range]').forEach((button) => button.addEventListener('click', async () => {
         activityRange = button.dataset.activityRange || '7d';
         $$('[data-activity-range]').forEach((item) => item.classList.toggle('active', item === button));
@@ -8099,10 +8315,15 @@ function bindEvents() {
             }
             window.clearTimeout(applyTerminalWorkspaceKeyboard._closeDebounce);
             if (reduced.open) {
+                // Reopen must never wait out a residual close freeze.
+                postTerminalKeyboardFreeze(false, 'parent-child-open-intent');
                 applyTerminalWorkspaceKeyboard({
                     ...e.data,
                     keyboardOpen: true,
                     keyboardInset: reduced.inset,
+                    intent: e.data.intent || 'open',
+                    phase: e.data.phase || 'opening',
+                    stableInput: e.data.stableInput !== false,
                 });
             } else {
                 // F3: no debounce - align-loop's 160ms low-inset confirm is the sole close gate.

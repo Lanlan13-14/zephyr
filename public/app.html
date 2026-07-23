@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="modulepreload" href="app.js?v=20260723-permission-workspace1">
-    <link rel="modulepreload" href="theme-runtime.js?v=20260615-visual-color-picker">
-    <link rel="stylesheet" href="style.css?v=20260722-aux-bar-fly1">
+    <link rel="modulepreload" href="app.js?v=20260723-toggle-select2">
+    <link rel="modulepreload" href="theme-runtime.js?v=20260723-sync2">
+    <link rel="stylesheet" href="style.css?v=20260723-toggle-select2">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -913,8 +913,8 @@
     </div>
 
     <div class="toast" id="toast"></div>
-    <script src="preview-mock.js?v=20260723-activity1" type="module"></script>
-    <script src="app.js?v=20260723-permission-workspace1" type="module"></script>
+    <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
+    <script src="app.js?v=20260723-toggle-select2" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {
@@ -933,6 +933,6 @@
             }
         } catch (e) {}
     </script>
-    <script src="vendor/zephyr-anim/zephyr-anim-init.js?v=20260709-minimal" type="module"></script>
+    <script src="vendor/zephyr-anim/zephyr-anim-init.js?v=20260723-sync2" type="module"></script>
 </body>
 </html>

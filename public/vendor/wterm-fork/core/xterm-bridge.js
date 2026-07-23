@@ -126,6 +126,13 @@ class XtermBridge {
     __publicField(this, "_rows", 24);
     __publicField(this, "_dirty", new Uint8Array(256));
     __publicField(this, "_allDirty", true);
+    /**
+     * Net ydisp delta since last paint (positive = toward bottom / newer).
+     * Renderer recycles row DOM by this and only rebuilds the incoming edge.
+     * Avoids full-viewport markAllDirty on every history scroll line (mobile jank).
+     */
+    __publicField(this, "_pendingScrollDelta", 0);
+    __publicField(this, "_scrollSuppressDirty", false);
     __publicField(this, "_bellPending", false);
     __publicField(this, "_title", null);
     __publicField(this, "_titleChanged", false);
@@ -179,12 +186,17 @@ class XtermBridge {
     );
     this._disposables.push(
       this._term.onWriteParsed(() => {
+        // Write may change any cell; full rebuild. Scroll alone must NOT go through here.
         this.markAllDirty();
       })
     );
     if (typeof this._term.onScroll === "function") {
       this._disposables.push(
         this._term.onScroll(() => {
+          // scrollLines / scrollTo* already track _pendingScrollDelta.
+          // A full markAllDirty here forced 40-row DOM rebuild every finger move.
+          if (this._scrollSuppressDirty) return;
+          // External/unknown scroll source: fall back to full dirty.
           this.markAllDirty();
         })
       );
@@ -288,49 +300,114 @@ class XtermBridge {
   getBaseY() {
     return this._active().baseY | 0;
   }
+  /**
+   * Record ydisp movement for row-recycle paint. Large jumps → full dirty.
+   * amount = after - before (positive toward bottom).
+   */
+  _noteViewportScroll(delta) {
+    const d = Math.trunc(Number(delta) || 0);
+    if (!d) return;
+    const rows = this._rows | 0;
+    this._pendingScrollDelta = (this._pendingScrollDelta | 0) + d;
+    if (Math.abs(this._pendingScrollDelta) >= Math.max(1, rows)) {
+      this.markAllDirty();
+      return;
+    }
+    // Edge rows that will enter the viewport after recycle.
+    this._allDirty = false;
+    if (d > 0) {
+      const start = Math.max(0, rows - Math.abs(this._pendingScrollDelta));
+      for (let r = start; r < rows; r++) this._dirty[r] = 1;
+    } else {
+      const end = Math.min(rows, Math.abs(this._pendingScrollDelta));
+      for (let r = 0; r < end; r++) this._dirty[r] = 1;
+    }
+  }
+  /** Renderer consumes net scroll since last paint (then recycles DOM rows). */
+  consumeViewportScrollDelta() {
+    const d = this._pendingScrollDelta | 0;
+    this._pendingScrollDelta = 0;
+    return d;
+  }
   /** Drive xterm buffer scroll. amount is in rows (negative = up into history). */
   scrollLines(amount) {
     const n = Math.trunc(Number(amount) || 0);
     if (!n) return;
     const before = this.getViewportY();
-    if (typeof this._term.scrollLines === "function") {
-      this._term.scrollLines(n);
+    this._scrollSuppressDirty = true;
+    try {
+      if (typeof this._term.scrollLines === "function") {
+        this._term.scrollLines(n);
+      }
+    } finally {
+      this._scrollSuppressDirty = false;
     }
-    if (this.getViewportY() !== before) this.markAllDirty();
+    const after = this.getViewportY();
+    if (after !== before) this._noteViewportScroll(after - before);
   }
   scrollToBottom() {
     if (this.isAtBottom()) return;
-    if (typeof this._term.scrollToBottom === "function") {
-      this._term.scrollToBottom();
-    } else {
-      const buf = this._active();
-      const delta = (buf.baseY | 0) - (buf.viewportY | 0);
-      if (delta && typeof this._term.scrollLines === "function") {
-        this._term.scrollLines(delta);
+    const before = this.getViewportY();
+    this._scrollSuppressDirty = true;
+    try {
+      if (typeof this._term.scrollToBottom === "function") {
+        this._term.scrollToBottom();
+      } else {
+        const buf = this._active();
+        const delta = (buf.baseY | 0) - (buf.viewportY | 0);
+        if (delta && typeof this._term.scrollLines === "function") {
+          this._term.scrollLines(delta);
+        }
       }
+    } finally {
+      this._scrollSuppressDirty = false;
     }
-    this.markAllDirty();
+    const after = this.getViewportY();
+    if (after !== before) {
+      if (Math.abs(after - before) >= (this._rows | 0)) this.markAllDirty();
+      else this._noteViewportScroll(after - before);
+    }
   }
   scrollToTop() {
     if (this.getViewportY() === 0) return;
-    if (typeof this._term.scrollToTop === "function") {
-      this._term.scrollToTop();
-    } else if (typeof this._term.scrollLines === "function") {
-      this._term.scrollLines(-(this._active().viewportY | 0));
+    const before = this.getViewportY();
+    this._scrollSuppressDirty = true;
+    try {
+      if (typeof this._term.scrollToTop === "function") {
+        this._term.scrollToTop();
+      } else if (typeof this._term.scrollLines === "function") {
+        this._term.scrollLines(-(this._active().viewportY | 0));
+      }
+    } finally {
+      this._scrollSuppressDirty = false;
     }
-    this.markAllDirty();
+    const after = this.getViewportY();
+    if (after !== before) {
+      if (Math.abs(after - before) >= (this._rows | 0)) this.markAllDirty();
+      else this._noteViewportScroll(after - before);
+    }
   }
   /** Absolute buffer line index → ydisp. */
   scrollToLine(line) {
     const target = Math.max(0, Math.floor(Number(line) || 0));
     if (target === this.getViewportY()) return;
-    if (typeof this._term.scrollToLine === "function") {
-      this._term.scrollToLine(target);
-    } else if (typeof this._term.scrollLines === "function") {
-      const delta = target - (this._active().viewportY | 0);
-      if (delta) this._term.scrollLines(delta);
+    const before = this.getViewportY();
+    this._scrollSuppressDirty = true;
+    try {
+      if (typeof this._term.scrollToLine === "function") {
+        this._term.scrollToLine(target);
+      } else if (typeof this._term.scrollLines === "function") {
+        const delta = target - (this._active().viewportY | 0);
+        if (delta) this._term.scrollLines(delta);
+      }
+    } finally {
+      this._scrollSuppressDirty = false;
     }
-    this.markAllDirty();
+    const after = this.getViewportY();
+    if (after !== before) {
+      if (Math.abs(after - before) >= (this._rows | 0)) this.markAllDirty();
+      else this._noteViewportScroll(after - before);
+    }
   }
   getCell(row, col) {
     const buf = this._active();
@@ -344,15 +421,9 @@ class XtermBridge {
       out.char = this._registerGrapheme(g);
       delete out._grapheme;
     }
-    if (line) {
-      try {
-        const raw = line.getCell(col);
-        const urlId = raw?.extended?.urlId | 0;
-        if (urlId) out.linkId = urlId;
-      } catch {
-      }
-    }
-    return { ...out };
+    // Zero-copy: single-threaded paint reads fields immediately. Cloning every
+    // cell (cols×rows×dirty) was a major GC cost during history scroll.
+    return out;
   }
   getHyperlink(id) {
     if (!id) return null;
@@ -388,10 +459,13 @@ class XtermBridge {
   clearDirty() {
     this._dirty.fill(0);
     this._allDirty = false;
+    this._pendingScrollDelta = 0;
   }
   markAllDirty() {
     this._allDirty = true;
     this._dirty.fill(1);
+    // Full rebuild supersedes row-recycle scroll delta.
+    this._pendingScrollDelta = 0;
   }
   getCols() {
     return this._term.cols || this._cols;
