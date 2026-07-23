@@ -1711,7 +1711,20 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
             0 0 0 1px rgba(255,255,255,.08);
     }
 }
-.terminal-window-body { flex: 1; min-height: 0; overflow: hidden; transition: filter .28s ease, opacity .28s ease; }
+.terminal-window-body { position: relative; flex: 1; min-height: 0; overflow: hidden; transition: filter .28s ease, opacity .28s ease; }
+.terminal-snapshot {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    margin: 0;
+    padding: 12px;
+    overflow: hidden;
+    pointer-events: none;
+    background: #090b0f;
+    color: #d8dee9;
+    font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+}
 .terminal-window-body .terminal-frame,
 .terminal-window .terminal-frame.active {
     display: block;

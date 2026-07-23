@@ -633,6 +633,7 @@ function getParams() {
 const params = getParams();
 let terminalHistorySessionId = String(params?.tabId || params?.sessionId || params?.connectionId || '');
 let terminalRemoteHistory = null;
+let pendingWorkspaceRestoreState = null;
 const embeddedMode = new URLSearchParams(location.search).get('embed') === '1' || !!params?.embedded;
 function notifyParentStatus(status) {
     if (embeddedMode && window.parent && window.parent !== window) {
@@ -1926,6 +1927,11 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e)
 
 window.addEventListener('message', (e) => {
     if (e.data?.source !== 'zephyr-app') return;
+    if (e.data.type === 'restore-workspace-state') {
+        pendingWorkspaceRestoreState = e.data.state && typeof e.data.state === 'object' ? e.data.state : null;
+        applyTerminalWorkspaceState();
+        return;
+    }
     if (e.data.type === 'notes-enabled') {
         applyNotesFeatureEnabled(!!e.data.enabled);
         return;
@@ -2849,6 +2855,86 @@ function collectWTermBufferLines() {
     }
     return lines;
 }
+
+function floatingPanelWorkspaceState(panel) {
+    if (!panel) return { open: false };
+    return {
+        open: panel.classList.contains('open'),
+        left: panel.style.left || '',
+        top: panel.style.top || '',
+        width: panel.style.width || '',
+        height: panel.style.height || '',
+    };
+}
+
+function getTerminalWorkspaceState() {
+    const viewport = term?.getViewportState?.() || {};
+    const rowHeight = Math.max(1, Number(viewport.rowHeight) || getTerminalCharMetrics?.()?.lineHeight || terminalFontSize * 1.35);
+    return {
+        viewport: {
+            atBottom: viewport.atBottom !== false,
+            scrollLine: Math.max(0, Math.round((Number(viewport.scrollTop) || 0) / rowHeight)),
+        },
+        fontSize: terminalFontSize,
+        panels: {
+            fileManager: { ...floatingPanelWorkspaceState(fileManager), path: currentPath || '.' },
+            docker: { ...floatingPanelWorkspaceState(dockerPanel), logContainer: dockerCurrentLogContainer || '', logTitle: dockerLogTitle?.textContent || '' },
+            info: floatingPanelWorkspaceState(infoModal),
+        },
+    };
+}
+
+function applyFloatingPanelWorkspaceState(panel, state = {}) {
+    if (!panel || !state) return;
+    ['left', 'top', 'width', 'height'].forEach((key) => {
+        if (typeof state[key] === 'string' && state[key]) panel.style[key] = state[key];
+    });
+    clampPanel?.(panel);
+}
+
+function applyTerminalWorkspaceState(state = pendingWorkspaceRestoreState) {
+    if (!state || typeof state !== 'object') return false;
+    pendingWorkspaceRestoreState = state;
+    if (Number.isFinite(Number(state.fontSize))) applyTerminalFontSize(Number(state.fontSize), { persist: false });
+    if (!term || !isConnected) return false;
+
+    const panels = state.panels || {};
+    if (panels.fileManager?.open) {
+        currentPath = String(panels.fileManager.path || '.');
+        if (fmPathInput) fmPathInput.value = currentPath;
+        showFileManager();
+        applyFloatingPanelWorkspaceState(fileManager, panels.fileManager);
+    }
+    if (panels.docker?.open) {
+        showDockerPanel();
+        applyFloatingPanelWorkspaceState(dockerPanel, panels.docker);
+        if (panels.docker.logContainer) openDockerLogs(panels.docker.logContainer, String(panels.docker.logTitle || '').replace(/^容器日志\s*·\s*/, ''));
+    }
+    if (panels.info?.open) {
+        showInfoModal();
+        applyFloatingPanelWorkspaceState(infoModal, panels.info);
+    }
+
+    const restoreViewport = () => {
+        if (state.viewport?.atBottom !== false) {
+            term?.scrollToBottom?.();
+            setTerminalAutoFollow?.(true, 'workspace-restore-bottom');
+            return;
+        }
+        const line = Math.max(0, Number(state.viewport?.scrollLine) || 0);
+        term?.scrollToLine?.(line);
+        setTerminalAutoFollow?.(false, 'workspace-restore-history');
+    };
+    [0, 120, 360].forEach((delay) => window.setTimeout(restoreViewport, delay));
+    pendingWorkspaceRestoreState = null;
+    return true;
+}
+
+window.__zephyrGetWorkspaceState = getTerminalWorkspaceState;
+window.__zephyrGetScreenText = () => {
+    const rows = Math.max(1, Number(term?.bridge?.getRows?.() || term?.rows || 24));
+    return collectWTermBufferLines().slice(-rows).join('\n').slice(-64 * 1024);
+};
 
 function normalizeTerminalSnapshotLines(lines = []) {
     return lines.map((line) => String(line || '').replace(/\s+$/g, ''));
@@ -4605,9 +4691,10 @@ function shortcutLabel(action) {
 }
 async function loadTerminalSettings() {
     try {
-        const res = await fetch('/api/settings', { credentials: 'same-origin', cache: 'no-store' });
+        const res = await fetch('/api/me/settings', { credentials: 'same-origin', cache: 'no-store' });
         if (!res.ok) return;
-        const data = await res.json();
+        const payload = await res.json();
+        const data = payload?.settings || {};
         terminalShortcutPlatform = data?.terminal?.shortcutPlatform || localStorage.getItem('zephyr-shortcut-platform') || 'auto';
         terminalAppearance = data?.appearance || {};
         localStorage.setItem('zephyr-shortcut-platform', terminalShortcutPlatform);
@@ -4618,13 +4705,7 @@ async function loadTerminalSettings() {
         applyTheme(getPreferredTheme());
         applyWtermTheme(getPreferredWtermTheme());
         applyTerminalLigatures(terminalAllowLigatures, { persist: false });
-    } catch (_) {}
-    try {
-        const personal = await fetch('/api/me/settings', { credentials: 'same-origin', cache: 'no-store' });
-        if (personal.ok) {
-            const payload = await personal.json();
-            applyNotesFeatureEnabled(!!payload?.settings?.notes?.enabled);
-        }
+        applyNotesFeatureEnabled(!!data?.notes?.enabled);
     } catch (_) {
         applyNotesFeatureEnabled(false);
     }
@@ -12240,6 +12321,7 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                             }
                         }
                         setStatus('connected', msg.attached ? '已恢复会话' : '已连接');
+                        applyTerminalWorkspaceState();
                         if (!isMobileStableInputMode()) {
                             window.setTimeout(() => repairOversizedWTermRows('ready-oversized-rows', { force: true }), 120);
                         }

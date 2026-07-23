@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { NotesService } from '../notes-service.js';
-import { WorkspaceService, scrubState } from '../workspace-service.js';
+import { WorkspaceService, scrubState, MAX_WORKSPACES_PER_USER } from '../workspace-service.js';
 import { Authz } from '../authz.js';
 
 let tmpDir;
@@ -80,4 +80,15 @@ test('workspace optimistic concurrency', () => {
         () => workspaces.put(user, { workspaceId: ws.workspaceId, clientId: 'c1', name: 'desk', state: {}, expectedRevision: 1 }),
         (err) => err.status === 409,
     );
+});
+
+test('workspace retention caps per-user records and collects stale rows', () => {
+    const admin = storage.getUser('admin');
+    const user = { userId: admin.userId, username: admin.username, role: 'admin', status: 'active' };
+    for (let index = 0; index < MAX_WORKSPACES_PER_USER + 4; index += 1) {
+        workspaces.put(user, { workspaceId: `retention-${index}`, clientId: `client-${index}`, state: { index } });
+    }
+    assert.ok(workspaces.list(user.userId).length <= MAX_WORKSPACES_PER_USER);
+    db.prepare('UPDATE workspaces SET updated_at = 1').run();
+    assert.ok(workspaces.gcStale(24 * 60 * 60 * 1000) >= 1);
 });

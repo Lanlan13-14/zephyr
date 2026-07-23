@@ -17,7 +17,7 @@ function installClosestFallback() {
 installClosestFallback();
 document.documentElement.dataset.appModule = 'loaded';
 
-let connections = [], activities = [], proxies = [], jumpHosts = [], sshKeys = [], settings = {};
+let connections = [], activities = [], proxies = [], jumpHosts = [], sshKeys = [], settings = {}, personalSettingsOverrides = {};
 let zephyrSharedClipboard = { type: '', text: '', files: [], sourceTabId: '', sourcePage: '', updatedAt: 0 };
 let aiSettingsState = null;
 let aiProviderShareTargetsState = [];
@@ -517,8 +517,7 @@ function applyTheme(theme, { persist = false } = {}) {
 async function toggleTheme() {
     const nextTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
     localStorage.setItem('zephyr-theme', nextTheme);
-    const appearance = { ...getAppearance(), colorScheme: 'frost', theme: nextTheme, autoThemeEnabled: false };
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ appearance }) }).catch((err) => { toast(err.message); return settings; });
+    settings = await savePersonalSettings({ appearance: { colorScheme: 'frost', theme: nextTheme, autoThemeEnabled: false } }).catch((err) => { toast(err.message); return settings; });
     $('#autoThemeEnabled').checked = false;
     applyTheme(nextTheme, { persist: true });
     console.debug('[appearance-client]', 'manual theme selected', { theme: nextTheme, autoThemeEnabled: false });
@@ -621,7 +620,12 @@ async function saveAppearance(e) {
             defaultFps: Number($('#rdpDefaultFps')?.value || previous.rdp?.defaultFps || 30),
         },
     };
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ appearance }) });
+    if (myIdentity.role === 'admin') {
+        settings = await savePlatformSettings('appearance', { appearance });
+    } else {
+        const { brandName, brandIcon, customJs, ...personalAppearance } = appearance;
+        settings = await savePersonalSettings({ appearance: personalAppearance });
+    }
     localStorage.removeItem('zephyr-theme');
     if (!autoThemeEnabled) localStorage.setItem('zephyr-theme', theme);
     applyAppearance(settings.appearance || appearance);
@@ -631,7 +635,12 @@ async function saveAppearance(e) {
 }
 async function resetAppearance() {
     const appearance = { ...getAppearance(), brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ appearance }) });
+    if (myIdentity.role === 'admin') {
+        settings = await savePlatformSettings('appearance', { appearance });
+    } else {
+        const { brandName, brandIcon, customJs, ...personalAppearance } = appearance;
+        settings = await savePersonalSettings({ appearance: personalAppearance });
+    }
     $('#brandIconFile').value = '';
     applyAppearance(settings.appearance || appearance);
     applyTheme(getPreferredTheme());
@@ -1969,7 +1978,7 @@ async function openConnection(id, options = {}) {
     }
     if (protocol === 'RDP' || protocol === 'VNC') {
         sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({ connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol, tabId, sessionId: tabId, embedded: true, timestamp: Date.now(), rdpResolution: c.rdpResolution || '1080p', quality: c.rdpQuality || 'balanced', rdpFps: Number(c.rdpFps || 30), rdpPipeline: 'worker-gpu-v2', rdpTouchMode: c.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(c.rdpTouchSensitivity) || 1.5)), rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false, rdpDomain: c.rdpDomain || '', rdpMicrophone: !!c.rdpMicrophone, rdpLocation: !!c.rdpLocation, rdpStorage: !!c.rdpStorage, rdpCamera: !!c.rdpCamera }));
-        terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: protocol === 'VNC' ? 'novnc' : 'rdp', connectionId: c.id, sessionId: tabId, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
+        terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: protocol === 'VNC' ? 'novnc' : 'rdp', connectionId: c.id, sessionId: tabId, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false, snapshotText: options.snapshotText || '', workspaceState: options.workspaceState || null });
         console.debug(protocol === 'VNC' ? '[novnc-client]' : '[rdp-client]', 'open remote desktop tab', { protocol, tabId, connectionId: c.id, host: c.host, port: c.port });
     } else {
         // SSH and TELNET share the terminal page; protocol is carried on the tab
@@ -1988,7 +1997,7 @@ async function openConnection(id, options = {}) {
             snippets: settings?.snippets || [],
         };
         sessionStorage.setItem(`zephyr_ssh_params_${tabId}`, JSON.stringify(sshParams));
-        terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: 'terminal', connectionId: c.id, sessionId: tabId, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
+        terminalTabs.push({ id: tabId, name: c.name, protocol, status: 'connecting', iframe: true, page: 'terminal', connectionId: c.id, sessionId: tabId, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false, snapshotText: options.snapshotText || '', workspaceState: options.workspaceState || null });
     }
     if (!openOrderStack.includes(tabId)) openOrderStack.push(tabId);
     activeTerminalTab = tabId;
@@ -2000,7 +2009,7 @@ async function openConnection(id, options = {}) {
     if (isCompactTerminalWorkspace() && document.body.classList.contains('terminal-custom-fullscreen-open')) {
         window.setTimeout(() => renderTerminalTabs({ rebuildWorkspace: true }), 80);
     }
-    await loadConnections();
+    if (!options.skipConnectionsReload) await loadConnections();
     scheduleWorkspaceSave('open-connection', { immediate: true });
     return tabId;
 }
@@ -2532,9 +2541,19 @@ function createTerminalWindowElement(t) {
                     type: 'notes-enabled',
                     enabled: isNotesEnabled(),
                 }, '*');
+                if (t.workspaceState) {
+                    frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'restore-workspace-state', state: t.workspaceState }, '*');
+                }
             } catch (_) {}
         }, { once: true });
         body.appendChild(frame);
+        if (t.snapshotText && t.page === 'terminal') {
+            const snapshot = document.createElement('pre');
+            snapshot.className = 'terminal-snapshot';
+            snapshot.dataset.snapshotFor = t.id;
+            snapshot.textContent = t.snapshotText;
+            body.appendChild(snapshot);
+        }
     } else {
         const placeholder = document.createElement('div');
         placeholder.className = 'terminal-placeholder active';
@@ -2707,6 +2726,7 @@ function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
         }
         sessionStorage.removeItem(`zephyr_ssh_params_${tabId}`);
         sessionStorage.removeItem(`zephyr_remote_desktop_params_${tabId}`);
+        removeTerminalSnapshot(tabId);
         if (activeTerminalTab === tabId) activeTerminalTab = visualLayout[0] || terminalTabs.find((t) => !t.minimized)?.id || terminalTabs[0]?.id || null;
         if (!terminalTabs.length) {
             activeTerminalTab = null;
@@ -4049,6 +4069,7 @@ function startWorkspaceSplitterDrag(e, axis) {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', cleanup);
         window.removeEventListener('pointercancel', cleanup);
+        scheduleWorkspaceSave('workspace-split');
     };
 
     splitter?.setPointerCapture?.(e.pointerId);
@@ -4553,7 +4574,7 @@ async function saveAiMcpFromForm(e) {
     const list = Array.isArray(ai.mcpServers) ? ai.mcpServers.slice() : [];
     const idx = list.findIndex((x) => x.id === id);
     if (idx >= 0) list[idx] = next; else list.push(next);
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai: { ...ai, mcpServers: list } }) });
+    settings = await savePlatformSettings('ai', { ai: { ...ai, mcpServers: list } });
     aiSettingsState = normalizeAiSettings(settings.ai || {});
     renderAiMcpList();
     resetAiMcpForm();
@@ -4562,7 +4583,7 @@ async function saveAiMcpFromForm(e) {
 async function deleteAiMcp(id) {
     const ai = normalizeAiSettings(settings.ai || {});
     const list = (ai.mcpServers || []).filter((s) => s.id !== id);
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai: { ...ai, mcpServers: list } }) });
+    settings = await savePlatformSettings('ai', { ai: { ...ai, mcpServers: list } });
     aiSettingsState = normalizeAiSettings(settings.ai || {});
     renderAiMcpList();
     toast('已删除');
@@ -4610,7 +4631,7 @@ function collectAiSettingsForm() {
 async function saveAiSettings(e) {
     e?.preventDefault?.();
     const ai = collectAiSettingsForm();
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
+    settings = await savePlatformSettings('ai', { ai });
     settings.ai = normalizeAiSettings(settings.ai || ai);
     renderAiSettingsForm();
     toast('AI 助理设置已保存');
@@ -4821,7 +4842,7 @@ async function saveAiEnv(e) {
     };
     if (!item.name) return toast('请填写变量名');
     if (idx >= 0) ai.envVars[idx] = item; else ai.envVars.unshift(item);
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
+    settings = await savePlatformSettings('ai', { ai });
     resetAiEnvForm(); renderAiSettingsForm(); toast('AI 环境变量已保存');
 }
 async function deleteAiEnv(id) {
@@ -4833,7 +4854,7 @@ async function deleteAiEnv(id) {
         onConfirm: async () => {
             const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
             ai.envVars = ai.envVars.filter((x) => x.id !== id);
-            settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
+            settings = await savePlatformSettings('ai', { ai });
             renderAiSettingsForm(); toast('AI 环境变量已删除');
         },
     });
@@ -4881,7 +4902,7 @@ async function saveAiMemory(e) {
     if (old) item.createdAt = old.createdAt || item.createdAt;
     const idx = ai.memories.findIndex((x) => x.id === id);
     if (idx >= 0) ai.memories[idx] = item; else ai.memories.unshift(item);
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
+    settings = await savePlatformSettings('ai', { ai });
     resetAiMemoryForm(); renderAiSettingsForm(); toast('Memory 已保存');
 }
 async function deleteAiMemory(id) {
@@ -4898,7 +4919,7 @@ async function deleteAiMemory(id) {
 async function deleteAiMemoryConfirmed(id) {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     ai.memories = ai.memories.filter((x) => x.id !== id);
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
+    settings = await savePlatformSettings('ai', { ai });
     renderAiSettingsForm(); toast('Memory 已删除');
 }
 function renderAiPlanList() {
@@ -4933,7 +4954,7 @@ async function saveAiSkill(e) {
     if (!skill.name && !skill.prompt.trim()) return toast('请填写 Skill 名称或指令内容');
     const idx = ai.skills.findIndex((s) => s.id === id);
     if (idx >= 0) ai.skills[idx] = skill; else ai.skills.unshift(skill);
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
+    settings = await savePlatformSettings('ai', { ai });
     resetAiSkillForm();
     renderAiSettingsForm();
     toast('Skill 已保存');
@@ -4947,7 +4968,7 @@ async function deleteAiSkill(id) {
         onConfirm: async () => {
             const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
             ai.skills = ai.skills.filter((s) => s.id !== id);
-            settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ai }) });
+            settings = await savePlatformSettings('ai', { ai });
             renderAiSettingsForm();
             toast('Skill 已删除');
         },
@@ -6474,6 +6495,7 @@ function openAiAssistantPanel(trigger = null) {
         aiPanelState = 'open';
     }
     startAiPanelWatchdog();
+    scheduleWorkspaceSave('ai-panel-open');
     if (window.innerWidth > 760) setTimeout(() => $('#aiUserInput')?.focus?.(), 80);
 }
 function toggleAiAssistantPanel(trigger = null) {
@@ -6517,6 +6539,7 @@ function closeAiAssistantPanel() {
         restoreAiMorphButton($('#aiNavTab'));
         aiPanelState = 'closed';
         stopAiPanelWatchdog();
+        scheduleWorkspaceSave('ai-panel-close');
     };
     const didAnimate = animateAiPanelFromButton(p, aiPanelMorphOriginButton || $('#aiFloatingBtn') || $('#aiNavTab'), false, finishClose);
     if (!didAnimate) aiPanelCloseTimer = window.setTimeout(finishClose, 20);
@@ -7105,10 +7128,33 @@ function setupAiAssistant() {
 function renderRemoteServers() { const ssh = connections.filter((c) => c.protocol === 'SSH'); $('#remoteServerList').innerHTML = ssh.length ? ssh.map((c) => `<label class="server-check"><input type="checkbox" value="${c.id}"> <span>${escapeHtml(c.name)}</span><em>${escapeHtml(c.host)}</em></label>`).join('') : '<div class="empty-card">暂无 SSH 连接</div>'; }
 async function remoteExecute(e) { e.preventDefault(); const ids = $$('#remoteServerList input:checked').map((i) => i.value); try { $('#remoteResults').innerHTML = '<div class="empty-card">执行中...</div>'; const data = await api('/api/remote-execute', { method: 'POST', body: JSON.stringify({ connectionIds: ids, command: $('#remoteCommand').value, timeoutSeconds: Number($('#remoteTimeout').value) || 30 }) }); $('#remoteResults').innerHTML = data.results.map((r) => `<article class="result-card ${r.success ? 'ok' : 'fail'}"><h3>${escapeHtml(r.name)} <span>${escapeHtml(r.status)} · ${r.durationMs}ms</span></h3>${r.error ? `<p class="error-text">${escapeHtml(r.error)}</p>` : ''}<pre>${escapeHtml(r.stdout || '')}</pre>${r.stderr ? `<pre class="stderr">${escapeHtml(r.stderr)}</pre>` : ''}</article>`).join(''); await loadConnections(); } catch (err) { toast(err.message); } }
 
+async function savePersonalSettings(patch) {
+    const result = await api('/api/me/settings', { method: 'PUT', body: JSON.stringify(patch) });
+    personalSettingsOverrides = result.overrides || personalSettingsOverrides;
+    return result.settings || settings;
+}
+
+async function savePlatformSettings(section, patch) {
+    const result = await api(`/api/settings/${encodeURIComponent(section)}`, { method: 'PUT', body: JSON.stringify(patch) });
+    return { ...settings, ...result, _admin: result };
+}
+
 async function loadSettings() {
-    settings = await api('/api/settings').catch(() => ({}));
-    const personal = await api('/api/me/settings').catch(() => null);
-    if (personal?.settings?.notes) settings.notes = { ...(settings.notes || {}), ...personal.settings.notes };
+    const personal = await api('/api/me/settings');
+    personalSettingsOverrides = personal.overrides || {};
+    settings = personal.settings || {};
+    if (myIdentity.isSuperAdmin) {
+        const admin = await api('/api/settings/admin');
+        settings = {
+            ...admin,
+            ...settings,
+            appearance: { ...(admin.appearance || {}), ...(settings.appearance || {}) },
+            terminal: { ...(admin.terminal || {}), ...(settings.terminal || {}) },
+            ai: { ...(admin.ai || {}), ...(settings.ai || {}) },
+            mail: { ...(admin.mail || {}), ...(settings.mail || {}) },
+            _admin: admin,
+        };
+    }
     const aiProvidersData = await api('/api/ai/providers').catch(() => null);
     if (aiProvidersData?.providers) {
         settings.ai = { ...(settings.ai || {}), providers: aiProvidersData.providers };
@@ -7117,7 +7163,8 @@ async function loadSettings() {
     $('#versionText').textContent = settings.version || '--'; $('#icpInput').value = beian.icp ?? settings.icp ?? ''; $('#icpUrlInput').value = beian.icpUrl ?? settings.icpUrl ?? ''; $('#policeInput').value = beian.policeBeian ?? settings.policeBeian ?? ''; $('#policeUrlInput').value = beian.policeBeianUrl ?? settings.policeBeianUrl ?? ''; $('#showBeianInput').checked = (beian.show ?? settings.showBeian) !== false;
     $('#ipWhitelistEnabled').checked = !!sec.ipWhitelistEnabled; $('#ipWhitelist').value = sec.ipWhitelist || ''; $('#bruteForceEnabled').checked = sec.bruteForceEnabled !== false; $('#bruteForceMaxFailures').value = sec.bruteForceMaxFailures || 5; $('#bruteForceBanMinutes').value = sec.bruteForceBanMinutes || 15;
     $('#captchaEnabled').checked = !!cap.enabled; $('#captchaProvider').value = cap.provider || 'turnstile'; $('#captchaSiteKey').value = cap.siteKey || cap.tencentCaptchaAppId || cap.aliyunCaptchaId || cap.aliyunSceneId || ''; $('#captchaSecretKey').value = cap.secretKey || cap.tencentAppSecretKey || cap.aliyunAccessKeySecret || '';
-    $('#mailEnabled').checked = !!mail.enabled; $('#mailHost').value = mail.host || ''; $('#mailPort').value = mail.port || 465; $('#mailSecure').checked = mail.secure !== false; $('#mailUser').value = mail.user || ''; $('#mailPass').value = mail.pass || ''; $('#mailFrom').value = mail.from || ''; $('#mailAdminEmail').value = mail.adminEmail || ''; $('#notifyLoginSuccess').checked = mail.notifyLoginSuccess !== false; $('#notifyLoginFailure').checked = mail.notifyLoginFailure !== false; $('#geoLookupEnabled').checked = mail.geoLookupEnabled !== false;
+    $('#mailEnabled').checked = !!mail.enabled; $('#mailHost').value = mail.host || ''; $('#mailPort').value = mail.port || 465; $('#mailSecure').checked = mail.secure !== false; $('#mailUser').value = mail.user || ''; $('#mailPass').value = mail.pass || ''; $('#mailFrom').value = mail.from || ''; $('#mailAdminEmail').value = mail.adminEmail || ''; $('#notifyLoginSuccess').checked = mail.notifyLoginSuccess !== false; $('#notifyLoginFailure').checked = mail.notifyLoginFailure !== false; $('#notifyLoginToUser').checked = mail.notifyLoginToUser !== false; $('#geoLookupEnabled').checked = mail.geoLookupEnabled !== false;
+    $('#notifyLoginPersonal').checked = personalSettingsOverrides?.mail?.notifyLogin !== false;
     $('#terminalMaxWindows').value = String(getConfiguredTerminalMaxWindows());
     if ($('#terminalAllowLigatures')) $('#terminalAllowLigatures').checked = !!(settings?.terminal?.allowLigatures);
     $('#terminalMinimizedKeepAlive').value = String(getConfiguredMinimizedKeepAlive());
@@ -7165,18 +7212,36 @@ function renderNotesToggle() {
 async function saveNotesSettings(e) {
     e.preventDefault();
     const enabled = document.getElementById('notesEnabledInput')?.checked || false;
-    const result = await api('/api/me/settings', { method: 'PUT', body: JSON.stringify({ 'notes.enabled': enabled }) });
-    settings.notes = { ...(settings.notes || {}), enabled: !!result?.settings?.notes?.enabled };
+    if (myIdentity.role === 'admin') {
+        settings = await savePlatformSettings('notes', { notes: { enabled } });
+    } else {
+        const result = await api('/api/me/settings', { method: 'PUT', body: JSON.stringify({ 'notes.enabled': enabled }) });
+        settings.notes = { ...(settings.notes || {}), enabled: !!result?.settings?.notes?.enabled };
+    }
     renderNotesToggle();
     toast(enabled ? '已为当前用户开启笔记功能' : '已为当前用户关闭笔记功能');
 }
-async function saveBeian(e) { e.preventDefault(); settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ beian: { icp: $('#icpInput').value, icpUrl: $('#icpUrlInput').value, policeBeian: $('#policeInput').value, policeBeianUrl: $('#policeUrlInput').value, show: $('#showBeianInput').checked } }) }); toast('备案信息已保存'); }
+async function savePersonalLoginNotification() {
+    const enabled = !!$('#notifyLoginPersonal')?.checked;
+    settings = await savePersonalSettings({ mail: { notifyLogin: enabled } });
+    toast(enabled ? '已开启个人登录邮件通知' : '已关闭个人登录邮件通知');
+}
+async function saveBeian(e) { e.preventDefault(); settings = await savePlatformSettings('beian', { beian: { icp: $('#icpInput').value, icpUrl: $('#icpUrlInput').value, policeBeian: $('#policeInput').value, policeBeianUrl: $('#policeUrlInput').value, show: $('#showBeianInput').checked } }); toast('备案信息已保存'); }
 async function loadSecurityStatus() { securityStatus = await api('/api/security/status').catch(() => ({ user: {}, passkeys: [] })); $('#profileUsername').value = securityStatus.user.username || ''; $('#profileEmail').value = securityStatus.user.email || ''; renderTotp(); renderPasskeys(); }
-async function loadSecurityLists() { ipBans = (await api('/api/security/ip-bans').catch(() => ({ bans: [] }))).bans || []; loginEvents = (await api('/api/security/login-events').catch(() => ({ events: [] }))).events || []; renderSecurityLists(); }
+async function loadSecurityLists() {
+    const loginPath = myIdentity.isSuperAdmin ? '/api/security/login-events' : '/api/security/login-events/mine';
+    const [banData, eventData] = await Promise.all([
+        myIdentity.isSuperAdmin ? api('/api/security/ip-bans') : Promise.resolve({ bans: [] }),
+        api(loginPath).catch(() => ({ events: [] })),
+    ]);
+    ipBans = banData.bans || [];
+    loginEvents = eventData.events || [];
+    renderSecurityLists();
+}
 function renderTotp() { $('#totpBox').innerHTML = `<div class="mini-item"><b>TOTP 状态</b><span>${securityStatus.user.totpEnabled ? '已开启' : '未开启'}</span><button id="setupTotpBtn">${securityStatus.user.totpEnabled ? '重新绑定' : '开启 TOTP'}</button></div>`; $('#totpDisableForm').classList.toggle('force-hidden', !securityStatus.user.totpEnabled); }
 function renderPasskeys() { $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">删除</button></div>`).join('') || '<p class="muted">暂无 Passkey</p>'; }
 function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>失败 ${b.failedCount} · 解封 ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">解除</button></div>`).join('') || '<p class="muted">暂无封禁 IP</p>'; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? '成功' : '失败'} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason || '')} · ${fmtTime(e.time)}</span></div>`).join('') || '<p class="muted">暂无登录事件</p>'; }
-async function saveSecurityPolicy(e) { e.preventDefault(); settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ security: { ipWhitelistEnabled: $('#ipWhitelistEnabled').checked, ipWhitelist: $('#ipWhitelist').value, bruteForceEnabled: $('#bruteForceEnabled').checked, bruteForceMaxFailures: Number($('#bruteForceMaxFailures').value) || 5, bruteForceBanMinutes: Number($('#bruteForceBanMinutes').value) || 15 } }) }); toast('安全策略已保存'); }
+async function saveSecurityPolicy(e) { e.preventDefault(); settings = await savePlatformSettings('security', { security: { ipWhitelistEnabled: $('#ipWhitelistEnabled').checked, ipWhitelist: $('#ipWhitelist').value, bruteForceEnabled: $('#bruteForceEnabled').checked, bruteForceMaxFailures: Number($('#bruteForceMaxFailures').value) || 5, bruteForceBanMinutes: Number($('#bruteForceBanMinutes').value) || 15 } }); toast('安全策略已保存'); }
 async function saveCaptcha(e) {
     e.preventDefault();
     const provider = $('#captchaProvider').value;
@@ -7194,7 +7259,7 @@ async function saveCaptcha(e) {
         aliyunAccessKeySecret: provider === 'aliyun' ? secretKey : ''
     };
     console.debug('[captcha-client]', 'save captcha settings', { provider, enabled: captcha.enabled, hasSiteKey: !!siteKey, hasSecretKey: !!secretKey });
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ captcha }) });
+    settings = await savePlatformSettings('captcha', { captcha });
     toast('CAPTCHA 已保存');
 }
 async function revealCaptchaSecret() {
@@ -7209,7 +7274,7 @@ async function revealCaptchaSecret() {
 async function saveMail(e) {
     e.preventDefault();
     try {
-        settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ mail: { enabled: $('#mailEnabled').checked, host: $('#mailHost').value.trim(), port: Number($('#mailPort').value) || 465, secure: $('#mailSecure').checked, user: $('#mailUser').value.trim(), pass: $('#mailPass').value, from: $('#mailFrom').value.trim(), adminEmail: $('#mailAdminEmail').value.trim(), notifyLoginSuccess: $('#notifyLoginSuccess').checked, notifyLoginFailure: $('#notifyLoginFailure').checked, geoLookupEnabled: $('#geoLookupEnabled').checked } }) });
+        settings = await savePlatformSettings('mail', { mail: { enabled: $('#mailEnabled').checked, host: $('#mailHost').value.trim(), port: Number($('#mailPort').value) || 465, secure: $('#mailSecure').checked, user: $('#mailUser').value.trim(), pass: $('#mailPass').value, from: $('#mailFrom').value.trim(), adminEmail: $('#mailAdminEmail').value.trim(), notifyLoginSuccess: $('#notifyLoginSuccess').checked, notifyLoginFailure: $('#notifyLoginFailure').checked, notifyLoginToUser: $('#notifyLoginToUser').checked, geoLookupEnabled: $('#geoLookupEnabled').checked } });
         $('#mailPass').type = 'password';
         $('#toggleMailPassword').textContent = '👁️';
         toast('邮件设置已保存');
@@ -7255,7 +7320,7 @@ async function saveTerminalLayout(e) {
     localStorage.setItem('zephyr-shortcut-platform', shortcutPlatform);
     const allowLigatures = !!$('#terminalAllowLigatures')?.checked;
     localStorage.setItem('zephyr-terminal-allow-ligatures', allowLigatures ? '1' : '0');
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ terminal: { ...(settings.terminal || {}), maxWindows, minimizedKeepAlive, smartbarOrder, shortcutPlatform, allowLigatures } }) });
+    settings = await savePersonalSettings({ terminal: { maxWindows, minimizedKeepAlive, smartbarOrder, shortcutPlatform, allowLigatures } });
     enforceTerminalWorkspaceLimit(activeTerminalTab);
     renderTerminalTabs();
     const keepAliveText = minimizedKeepAlive === -1 ? '最小化无限保活' : `最小化保活 ${minimizedKeepAlive} 个`;
@@ -7279,7 +7344,7 @@ function getSnippets() {
 }
 async function persistSnippets(list) {
     const snippets = normalizeSnippets(list);
-    settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ snippets }) });
+    settings = await savePersonalSettings({ snippets });
     settings.snippets = normalizeSnippets(settings.snippets || snippets);
     return settings.snippets;
 }
@@ -7420,9 +7485,11 @@ function bindEvents() {
     document.documentElement.dataset.appBindEvents = 'start';
     bindConnectionPressFeedback();
     $$('.nav-tab').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view)));
-    $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => { $$('.settings-tab').forEach((b) => b.classList.remove('active')); btn.classList.add('active'); $$('.settings-panel').forEach((p) => p.classList.remove('active')); $(`#settings-${btn.dataset.settings}`).classList.add('active'); }));
+    $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => { $$('.settings-tab').forEach((b) => b.classList.remove('active')); btn.classList.add('active'); $$('.settings-panel').forEach((p) => p.classList.remove('active')); $(`#settings-${btn.dataset.settings}`).classList.add('active'); scheduleWorkspaceSave('settings-tab'); }));
+    ['view-settings', 'view-dashboard'].forEach((id) => document.getElementById(id)?.addEventListener('scroll', () => scheduleWorkspaceSave(`${id}-scroll`), { passive: true }));
     $('#appThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#settingsThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#logoutBtn').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/'; });
     $('#notesSettingsForm')?.addEventListener('submit', saveNotesSettings);
+    $('#notifyLoginPersonal')?.addEventListener('change', () => savePersonalLoginNotification().catch((err) => toast(err.message || '保存通知设置失败')));
     $('#adminAddUserBtn')?.addEventListener('click', openAdminAddUserDialog);
     document.getElementById('adminUserList')?.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-admin-action]');
@@ -7758,6 +7825,10 @@ function bindEvents() {
                 terminalReconnectFallbackTimers.delete(t.id);
             }
             t.status = e.data.status || t.status;
+            if (e.data.status === 'connected') {
+                t.snapshotText = '';
+                document.querySelector(`.terminal-snapshot[data-snapshot-for="${CSS.escape(t.id)}"]`)?.remove();
+            }
             renderTerminalTabs({ rebuildWorkspace: false });
         }
     });
@@ -7807,7 +7878,56 @@ function automaticWorkspaceId() {
     return `auto-${String(workspaceClientId || 'default').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80)}`;
 }
 
+const TERMINAL_SNAPSHOT_STORAGE_KEY = 'zephyr.workspace.terminal-snapshots.v1';
+
+function readTerminalSnapshots() {
+    try {
+        const saved = JSON.parse(sessionStorage.getItem(TERMINAL_SNAPSHOT_STORAGE_KEY) || '{}');
+        if (!saved || Date.now() - Number(saved.capturedAt || 0) > 24 * 60 * 60 * 1000) {
+            sessionStorage.removeItem(TERMINAL_SNAPSHOT_STORAGE_KEY);
+            return {};
+        }
+        return saved.snapshots || {};
+    } catch {
+        return {};
+    }
+}
+
+function captureTerminalSnapshots() {
+    const snapshots = {};
+    terminalTabs.forEach((tab) => {
+        if (tab.page !== 'terminal' || tab.minimized) return;
+        const frame = terminalFrameById(tab.id);
+        try {
+            const text = frame?.contentWindow?.__zephyrGetScreenText?.();
+            if (text) snapshots[tab.id] = String(text).slice(-64 * 1024);
+        } catch {}
+    });
+    try { sessionStorage.setItem(TERMINAL_SNAPSHOT_STORAGE_KEY, JSON.stringify({ capturedAt: Date.now(), snapshots })); } catch {}
+    return snapshots;
+}
+
+function removeTerminalSnapshot(tabId) {
+    const snapshots = readTerminalSnapshots();
+    if (!Object.hasOwn(snapshots, tabId)) return;
+    delete snapshots[tabId];
+    try { sessionStorage.setItem(TERMINAL_SNAPSHOT_STORAGE_KEY, JSON.stringify({ capturedAt: Date.now(), snapshots })); } catch {}
+}
+
+function collectTerminalFrameStates() {
+    const states = {};
+    terminalTabs.forEach((tab) => {
+        const frame = terminalFrameById(tab.id);
+        try {
+            const state = frame?.contentWindow?.__zephyrGetWorkspaceState?.();
+            if (state && typeof state === 'object') states[tab.id] = state;
+        } catch {}
+    });
+    return states;
+}
+
 function collectWorkspaceState() {
+    const workspace = $('#terminalWorkspace');
     const tabs = terminalTabs
         .filter((t) => t.connectionId && !t.transient)
         .map((t, index) => ({
@@ -7818,11 +7938,41 @@ function collectWorkspaceState() {
             minimized: !!t.minimized,
             order: index,
             active: t.id === activeTerminalTab,
+            page: t.page || 'terminal',
         }));
     return {
-        version: 1,
+        version: 2,
         tabs,
-        ui: { activeView: currentAppView },
+        ui: {
+            activeView: currentAppView,
+            settingsSubTab: document.querySelector('.settings-tab.active')?.dataset.settings || 'security',
+            settingsScrollY: $('#view-settings')?.scrollTop || 0,
+            dashboardScrollY: $('#view-dashboard')?.scrollTop || 0,
+        },
+        terminal: {
+            openOrderStack: [...openOrderStack],
+            visualLayout: [...visualLayout],
+            recentUseStack: [...recentUseStack],
+            splitX: workspace?.style.getPropertyValue('--workspace-split-x') || '',
+            splitY: workspace?.style.getPropertyValue('--workspace-split-y') || '',
+            smartbarOpen: !!terminalSmartbarOpen,
+            smartbarSide: terminalSmartbarSide,
+            activeTerminalTab,
+            tabs: collectTerminalFrameStates(),
+        },
+        panels: {
+            ai: aiPanelState !== 'closed' ? { open: true, sessionId: aiCurrentSessionId || '' } : { open: false },
+        },
+        notes: {
+            selectedId: notesController?.state?.selectedId || '',
+            mode: notesController?.state?.mode || 'edit',
+        },
+        clipboard: {
+            type: zephyrSharedClipboard.type || '',
+            text: zephyrSharedClipboard.text || '',
+            sourceTabId: zephyrSharedClipboard.sourceTabId || '',
+            sourcePage: zephyrSharedClipboard.sourcePage || '',
+        },
         activeConnectionId: terminalTabs.find((t) => t.id === activeTerminalTab)?.connectionId || '',
         activeSessionId: terminalTabs.find((t) => t.id === activeTerminalTab)?.sessionId
             || terminalTabs.find((t) => t.id === activeTerminalTab)?.id
@@ -7901,10 +8051,11 @@ async function restoreLastWorkspace() {
         if (savedTabs.length && (allowedView === 'terminal' || savedTabs.some((t) => t.active))) {
             switchView('terminal');
         }
+        const snapshots = readTerminalSnapshots();
         const opened = new Map();
-        for (const saved of savedTabs) {
+        const restoreTab = async (saved) => {
             const conn = connections.find((c) => c.id === saved.connectionId);
-            if (!conn) continue;
+            if (!conn) return;
             try {
                 const sessionId = String(saved.sessionId || saved.tabId || '').trim()
                     || stableTerminalSessionId(conn.id, saved.protocol || conn.protocol || 'SSH');
@@ -7912,6 +8063,9 @@ async function restoreLastWorkspace() {
                     sessionId,
                     tabId: sessionId,
                     skipViewSwitch: true,
+                    skipConnectionsReload: true,
+                    snapshotText: snapshots[sessionId] || snapshots[saved.tabId] || '',
+                    workspaceState: state.terminal?.tabs?.[sessionId] || state.terminal?.tabs?.[saved.tabId] || null,
                 });
                 const tab = terminalTabs.find((t) => t.id === tabId && !opened.has(t.id));
                 if (tab) {
@@ -7922,7 +8076,17 @@ async function restoreLastWorkspace() {
             } catch (err) {
                 console.warn('[workspace-restore] skip connection', conn.id, err);
             }
-        }
+        };
+        await Promise.allSettled(savedTabs.map(restoreTab));
+
+        const restoredIds = new Set(terminalTabs.map((tab) => tab.id));
+        const savedTerminal = state.terminal || {};
+        const restoreOrder = (list, fallback) => Array.isArray(list)
+            ? [...list.filter((id) => restoredIds.has(id)), ...fallback.filter((id) => !list.includes(id))]
+            : fallback;
+        openOrderStack = restoreOrder(savedTerminal.openOrderStack, terminalTabs.map((tab) => tab.id));
+        visualLayout = restoreOrder(savedTerminal.visualLayout, terminalTabs.filter((tab) => !tab.minimized).map((tab) => tab.id));
+        recentUseStack = restoreOrder(savedTerminal.recentUseStack, terminalTabs.map((tab) => tab.id));
         const activeConnectionId = state.activeConnectionId || savedTabs.find((t) => t.active)?.connectionId || '';
         const activeSessionId = state.activeSessionId || savedTabs.find((t) => t.active)?.sessionId || savedTabs.find((t) => t.active)?.tabId || '';
         const active = terminalTabs.find((t) => activeSessionId && (t.sessionId === activeSessionId || t.id === activeSessionId))
@@ -7934,9 +8098,39 @@ async function restoreLastWorkspace() {
             activeTerminalTab = active.id;
         }
         renderTerminalTabs({ rebuildWorkspace: true });
-        // If any session was restored, prefer terminal so refresh matches the last live session.
-        const preferTerminal = terminalTabs.length > 0 && (allowedView === 'terminal' || !!activeConnectionId || savedTabs.some((t) => t.active));
-        switchView(preferTerminal ? 'terminal' : (terminalTabs.length && allowedView === 'terminal' ? 'terminal' : allowedView));
+        const terminalWorkspace = $('#terminalWorkspace');
+        if (savedTerminal.splitX) terminalWorkspace?.style.setProperty('--workspace-split-x', savedTerminal.splitX);
+        if (savedTerminal.splitY) terminalWorkspace?.style.setProperty('--workspace-split-y', savedTerminal.splitY);
+        terminalSmartbarSide = savedTerminal.smartbarSide || terminalSmartbarSide;
+        switchView(allowedView);
+        if (allowedView === 'terminal') setTerminalSmartbarOpen(!!savedTerminal.smartbarOpen);
+
+        if (allowedView === 'settings') {
+            const settingsKey = String(state.ui?.settingsSubTab || 'security');
+            const settingsTab = document.querySelector(`.settings-tab[data-settings="${CSS.escape(settingsKey)}"]:not(.force-hidden)`)
+                || document.querySelector('.settings-tab[data-settings="security"]');
+            settingsTab?.click();
+        }
+        requestAnimationFrame(() => {
+            if ($('#view-settings')) $('#view-settings').scrollTop = Number(state.ui?.settingsScrollY || 0);
+            if ($('#view-dashboard')) $('#view-dashboard').scrollTop = Number(state.ui?.dashboardScrollY || 0);
+        });
+
+        if (state.clipboard?.text || state.clipboard?.type) updateZephyrSharedClipboard(state.clipboard);
+        if (state.notes?.selectedId && allowedView === 'notes') {
+            try {
+                await notesController?.activate?.();
+                await notesController?.selectNote?.(state.notes.selectedId);
+            } catch (err) {
+                console.warn('[workspace-restore] note unavailable', err);
+            }
+        }
+        if (state.panels?.ai?.open) {
+            if (state.panels.ai.sessionId && aiChatSessions.some((session) => session.id === state.panels.ai.sessionId)) {
+                aiCurrentSessionId = state.panels.ai.sessionId;
+            }
+            openAiAssistantPanel();
+        }
     } catch (err) {
         if (err.status !== 404) console.warn('[workspace-restore]', err);
     } finally {
@@ -8034,13 +8228,29 @@ function adminIcon(name, size = 16) {
 
 let myIdentity = { userId: '', role: 'user', isSuperAdmin: false };
 
+function initSettingsVisibility() {
+    const isAdmin = myIdentity.role === 'admin';
+    const isSuperAdmin = isAdmin && myIdentity.isSuperAdmin;
+    ['mail', 'data'].forEach((key) => {
+        document.querySelector(`.settings-tab[data-settings="${key}"]`)?.classList.toggle('force-hidden', !isSuperAdmin);
+        document.getElementById(`settings-${key}`)?.classList.toggle('force-hidden', !isSuperAdmin);
+    });
+    document.querySelector('.settings-tab[data-settings="beian"]')?.classList.toggle('force-hidden', !isAdmin);
+    document.getElementById('settings-beian')?.classList.toggle('force-hidden', !isAdmin);
+    document.getElementById('platformSecuritySettings')?.classList.toggle('force-hidden', !isSuperAdmin);
+    document.getElementById('clearLoginEventsBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
+    document.getElementById('clearActivityBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
+    const title = document.getElementById('loginEventsTitle');
+    if (title) title.textContent = isSuperAdmin ? '全部登录事件' : '我的登录记录';
+    const activeSettingsTab = document.querySelector('.settings-tab.active');
+    if (activeSettingsTab?.classList.contains('force-hidden')) {
+        document.querySelector('.settings-tab[data-settings="security"]')?.click();
+    }
+}
+
 async function loadAdminUsers() {
     const panel = document.getElementById('settings-admin');
     if (!panel) return;
-    try {
-        const me = await api('/api/auth/me');
-        myIdentity = { userId: me.user?.userId || '', role: me.user?.role || 'user', isSuperAdmin: !!me.user?.isSuperAdmin };
-    } catch { myIdentity = { userId: '', role: 'user', isSuperAdmin: false }; }
     const adminTab = document.getElementById('adminSettingsTab');
     if (myIdentity.role !== 'admin') { panel.classList.add('force-hidden'); adminTab?.classList.add('force-hidden'); return; }
     panel.classList.remove('force-hidden');
@@ -8174,6 +8384,13 @@ async function handleAdminAction(action, userId) {
     }
 }
 
+function registerStaticAssetWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((err) => {
+        console.warn('[service-worker] registration failed', err);
+    });
+}
+
 async function init() {
     document.documentElement.dataset.appInit = 'start';
     try {
@@ -8182,6 +8399,10 @@ async function init() {
         const me = await api('/api/auth/me');
         document.documentElement.dataset.appInitAuth = 'ok';
         if (me.mustChangePassword) { location.href = '/'; return; }
+        myIdentity = { userId: me.user?.userId || '', role: me.user?.role || 'user', isSuperAdmin: !!me.user?.isSuperAdmin };
+        window.__zephyrMyUserId = myIdentity.userId;
+        window.__zephyrRole = myIdentity.role;
+        window.__zephyrIsSuperAdmin = myIdentity.isSuperAdmin;
         ensureWorkspaceClientId();
         // Early shell switch: if last view was terminal, paint that shell before
         // network restore so refresh does not flash the dashboard first.
@@ -8203,7 +8424,12 @@ async function init() {
         });
         bindEvents();
         bindDeepLinkChannel();
+        initSettingsVisibility();
         document.documentElement.dataset.appBindEvents = 'done';
+        const backgroundLoads = Promise.allSettled([
+            loadNetwork(),
+            loadAdminUsers(),
+        ]);
         await loadSettings();
         document.documentElement.dataset.appLoadSettings = 'ok';
         await migrateLocalSnippetsToServer();
@@ -8211,18 +8437,19 @@ async function init() {
         await loadConnections();
         document.documentElement.dataset.appLoadConnections = 'ok';
         await restoreLastWorkspace();
-        await loadNetwork();
-        await loadAdminUsers();
+        await backgroundLoads;
         // Deep Link hand-off from /open (token only — never the raw URI).
         handleTransientHash();
         document.documentElement.dataset.appReady = '1';
         window.__zephyrAppReady = true;
-        window.__zephyrMyUserId = (await api("/api/auth/me"))?.user?.userId || "";
         window.openConnectionModal = openConnectionModal;
         window.openTransientFromUri = openTransientFromUri;
-        const flushWorkspace = () => { saveWorkspaceNow({ keepalive: true, reason: 'page-exit' }).catch(() => {}); };
+        registerStaticAssetWorker();
+        const flushWorkspace = () => {
+            captureTerminalSnapshots();
+            saveWorkspaceNow({ keepalive: true, reason: 'page-exit' }).catch(() => {});
+        };
         window.addEventListener('pagehide', flushWorkspace);
-        window.addEventListener('beforeunload', flushWorkspace);
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') flushWorkspace();
         });
