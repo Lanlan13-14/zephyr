@@ -18,6 +18,7 @@ installClosestFallback();
 document.documentElement.dataset.appModule = 'loaded';
 
 let connections = [], activities = [], proxies = [], jumpHosts = [], sshKeys = [], settings = {}, personalSettingsOverrides = {};
+let activityRange = '7d';
 let zephyrSharedClipboard = { type: '', text: '', files: [], sourceTabId: '', sourcePage: '', updatedAt: 0 };
 let aiSettingsState = null;
 let aiProviderShareTargetsState = [];
@@ -57,6 +58,12 @@ let transientToken = '';
 let transientHasCredential = false;
 let connectionModalTrigger = null;
 let connectionModalOriginRect = null;
+let proxyModalTrigger = null;
+let proxyModalOriginRect = null;
+let sshKeyModalTrigger = null;
+let sshKeyModalCycle = 0;
+let snippetModalTrigger = null;
+let snippetModalCycle = 0;
 let notesController = null;
 let workspaceClientId = '';
 let workspaceRevision = null;
@@ -1139,10 +1146,75 @@ function renderConnections() {
         <div class="tag-row">${(c.tags || []).map((t) => `<span>${escapeHtml(t)}</span>`).join('')}</div><div class="remark-md">${renderMarkdown(c.remark || '暂无备注')}</div>
         <div class="card-actions">${canEdit ? `<button class="tool-btn" data-edit="${c.id}">编辑</button>` : ''}${canDelete ? `<button class="tool-btn danger" data-delete="${c.id}">删除</button>` : ''}${canUse ? `<button class="btn btn-primary" data-connect="${c.id}">连接</button>` : '<button class="btn btn-primary" disabled title="仅观察">只读</button>'}</div></article>`;
     }).join('') : '<div class="empty-card">暂无连接，点击右上角添加新连接。</div>';
-    $('#activityList').innerHTML = activities.length ? activities.map((a) => `<div class="activity-item"><span>${fmtTime(a.time)}</span><b>${escapeHtml(a.message)}</b></div>`).join('') : '<div class="muted">暂无活动</div>';
     renderRemoteServers(); renderJumpOptions();
 }
-async function loadConnections() { const data = await api('/api/connections'); connections = data.connections || []; activities = data.activities || []; renderConnections(); }
+function activityRangeBounds(range = activityRange) {
+    const end = new Date();
+    if (range === 'all') return { from: 0, to: 0, label: '全部时间' };
+    if (range === 'custom') {
+        const startValue = $('#activityStartDate')?.value || '';
+        const endValue = $('#activityEndDate')?.value || '';
+        const from = startValue ? new Date(`${startValue}T00:00:00`).getTime() : 0;
+        const to = endValue ? new Date(`${endValue}T23:59:59.999`).getTime() : 0;
+        return { from, to, label: startValue || endValue ? `${startValue || '最早'} 至 ${endValue || '现在'}` : '自定义范围' };
+    }
+    const fromDate = new Date(end);
+    if (range === 'today') fromDate.setHours(0, 0, 0, 0);
+    else fromDate.setDate(fromDate.getDate() - (range === '30d' ? 30 : 7));
+    return { from: fromDate.getTime(), to: 0, label: range === 'today' ? '今天' : (range === '30d' ? '近 30 天' : '近 7 天') };
+}
+function activityDetails(activity) {
+    const message = String(activity.message || '未知活动');
+    const connection = connections.find((item) => message.includes(item.name) || activity.connectionId === item.id);
+    const category = activity.category || (/登录|密码|TOTP|Passkey|用户/.test(message) ? '账户' : (/连接|服务器|跳板机|代理|SSH 密钥/.test(message) ? '连接' : (/设置|邮件|导入|日志/.test(message) ? '系统' : '操作')));
+    const outcome = activity.outcome || (/失败|拒绝|错误|超时/.test(message) ? '失败' : '成功');
+    return {
+        category,
+        outcome,
+        actor: activity.actor || (activity.userId === myIdentity.userId ? '当前用户' : (activity.userId || '系统')),
+        protocol: activity.protocol || connection?.protocol || '—',
+        target: activity.target || (connection ? `${connection.host}:${connection.port}` : '—'),
+        sourceIp: activity.sourceIp || '—',
+        duration: Number.isFinite(Number(activity.durationMs)) ? `${Number(activity.durationMs)} ms` : '—',
+    };
+}
+function renderActivities() {
+    const list = $('#activityList');
+    if (!list) return;
+    const bounds = activityRangeBounds();
+    $('#activityResultCount').textContent = `${activities.length} 条记录`;
+    $('#activityRangeLabel').textContent = bounds.label;
+    list.innerHTML = activities.length ? activities.map((activity) => {
+        const detail = activityDetails(activity);
+        const outcomeClass = detail.outcome === '失败' ? 'failed' : 'success';
+        return `<article class="activity-detail-item">
+            <div class="activity-detail-head">
+                <div class="activity-event-mark" data-category="${escapeHtml(detail.category)}" aria-hidden="true"></div>
+                <div class="activity-event-title"><h2>${escapeHtml(activity.message || '未知活动')}</h2><span class="activity-status ${outcomeClass}">${escapeHtml(detail.outcome)}</span></div>
+                <time datetime="${new Date(Number(activity.time || 0)).toISOString()}">${escapeHtml(fmtTime(activity.time))}</time>
+            </div>
+            <dl class="activity-meta-grid">
+                <div><dt>事件类型</dt><dd>${escapeHtml(detail.category)}</dd></div>
+                <div><dt>操作者</dt><dd>${escapeHtml(detail.actor)}</dd></div>
+                <div><dt>协议</dt><dd>${escapeHtml(detail.protocol)}</dd></div>
+                <div><dt>目标地址</dt><dd>${escapeHtml(detail.target)}</dd></div>
+                <div><dt>来源 IP</dt><dd>${escapeHtml(detail.sourceIp)}</dd></div>
+                <div><dt>耗时</dt><dd>${escapeHtml(detail.duration)}</dd></div>
+            </dl>
+            <div class="activity-event-id"><span>事件 ID</span><code>${escapeHtml(activity.id || '—')}</code></div>
+        </article>`;
+    }).join('') : '<div class="activity-empty"><strong>此时间范围内没有活动</strong><span>尝试扩大时间范围查看更早的记录。</span></div>';
+}
+async function loadActivities() {
+    const { from, to } = activityRangeBounds();
+    const params = new URLSearchParams();
+    if (from) params.set('from', String(from));
+    if (to) params.set('to', String(to));
+    const data = await api(`/api/activities${params.size ? `?${params}` : ''}`);
+    activities = data.activities || [];
+    renderActivities();
+}
+async function loadConnections() { const data = await api('/api/connections'); connections = data.connections || []; renderConnections(); }
 function waitForConnectionCardExit(card, connectionId) {
     if (!card) return Promise.resolve();
     card.querySelectorAll('button').forEach((btn) => { btn.disabled = true; });
@@ -1158,6 +1230,22 @@ function waitForConnectionCardExit(card, connectionId) {
             resolve();
         };
         card.addEventListener('animationend', finish, { once: true });
+        window.setTimeout(finish, 380);
+    });
+}
+function waitForMiniItemExit(item, itemId) {
+    if (!item) return Promise.resolve();
+    item.querySelectorAll('button').forEach((btn) => { btn.disabled = true; });
+    item.classList.add('deleting');
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            item.removeEventListener('animationend', finish);
+            resolve();
+        };
+        item.addEventListener('animationend', finish, { once: true });
         window.setTimeout(finish, 380);
     });
 }
@@ -1448,7 +1536,7 @@ function resetConnectionTransitionLayer(layer) {
     layer.style.whiteSpace = '';
     layer.innerHTML = '';
     layer.removeAttribute('data-has-source-visual');
-    layer.classList.remove('source-visual-hidden');
+    layer.classList.remove('source-visual-hidden', 'expanded-material');
 }
 function setConnectionModalMode(mode = 'create', { source = 'dashboard', draft = null, token = '' } = {}) {
     connectionModalMode = mode === 'transient' ? 'transient' : (mode === 'edit' || draft?.id ? 'edit' : 'create');
@@ -1554,7 +1642,7 @@ function openModal(conn = null, trigger = null, options = {}) {
     requestAnimationFrame(() => {
         document.body.classList.add('connection-home-blur');
         modal.classList.add('app-visible');
-        layer.classList.add('source-visual-hidden');
+        layer.classList.add('source-visual-hidden', 'expanded-material');
         layer.style.transition = `
             top var(--connection-app-duration) var(--connection-ios-spring),
             left var(--connection-app-duration) var(--connection-ios-spring),
@@ -1611,6 +1699,7 @@ function closeModal() {
 
     document.body.classList.add('disable-interaction', 'connection-transition-closing');
     document.body.classList.remove('connection-transition-opening', 'connection-home-blur');
+    layer.classList.remove('expanded-material');
 
     const sourceEl = currentRect.source || connectionModalTrigger;
     const sourceStyle = sourceEl?.isConnected ? getComputedStyle(sourceEl) : null;
@@ -7002,6 +7091,7 @@ function setupAiAssistant() {
     normalizeAiProviderModalLayout();
     setupAiPanelChrome();
     $('#aiSettingsForm')?.addEventListener('submit', saveAiSettings);
+    $('[data-ai-save-settings]')?.addEventListener('click', saveAiSettings);
     $('#aiAddProviderBtn')?.addEventListener('click', () => openAiProviderModal());
     $('#aiProviderForm')?.addEventListener('submit', saveAiProvider);
     $('#aiFetchModelsBtn')?.addEventListener('click', () => fetchAiModelsForProvider());
@@ -7238,7 +7328,7 @@ async function loadSecurityLists() {
     loginEvents = eventData.events || [];
     renderSecurityLists();
 }
-function renderTotp() { $('#totpBox').innerHTML = `<div class="mini-item"><b>TOTP 状态</b><span>${securityStatus.user.totpEnabled ? '已开启' : '未开启'}</span><button id="setupTotpBtn">${securityStatus.user.totpEnabled ? '重新绑定' : '开启 TOTP'}</button></div>`; $('#totpDisableForm').classList.toggle('force-hidden', !securityStatus.user.totpEnabled); }
+function renderTotp() { $('#totpBox').innerHTML = securityStatus.user.totpEnabled ? '<div class="mini-item"><b>TOTP 状态</b><span>已开启</span></div>' : '<p class="muted">暂无 TOTP</p>'; $('#totpAction').innerHTML = `<button class="security-card-action" id="setupTotpBtn" type="button">${securityStatus.user.totpEnabled ? '重新绑定' : '开启 TOTP'}</button>`; $('#totpDisableForm').classList.toggle('force-hidden', !securityStatus.user.totpEnabled); }
 function renderPasskeys() { $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">删除</button></div>`).join('') || '<p class="muted">暂无 Passkey</p>'; }
 function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>失败 ${b.failedCount} · 解封 ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">解除</button></div>`).join('') || '<p class="muted">暂无封禁 IP</p>'; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? '成功' : '失败'} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason || '')} · ${fmtTime(e.time)}</span></div>`).join('') || '<p class="muted">暂无登录事件</p>'; }
 async function saveSecurityPolicy(e) { e.preventDefault(); settings = await savePlatformSettings('security', { security: { ipWhitelistEnabled: $('#ipWhitelistEnabled').checked, ipWhitelist: $('#ipWhitelist').value, bruteForceEnabled: $('#bruteForceEnabled').checked, bruteForceMaxFailures: Number($('#bruteForceMaxFailures').value) || 5, bruteForceBanMinutes: Number($('#bruteForceBanMinutes').value) || 15 } }); toast('安全策略已保存'); }
@@ -7365,11 +7455,50 @@ function resetSnippetForm() {
     $('#snippetGroup').value = '';
     $('#snippetAutoRun').checked = false;
 }
+function openSnippetModal(item = null, trigger = null) {
+    window.clearTimeout(closeSnippetModal._timer);
+    ++snippetModalCycle;
+    const modal = $('#snippetModal');
+    if (!modal || (modal.classList.contains('show') && !modal.classList.contains('closing'))) return;
+    modal.classList.remove('show', 'closing', 'app-visible');
+    resetSnippetForm();
+    $('#snippetModalTitle').textContent = item ? '编辑代码片段' : '新增代码片段';
+    $('#saveSnippetBtn').textContent = item ? '保存修改' : '保存代码片段';
+    $('#snippetId').value = item?.id || '';
+    $('#snippetName').value = item?.name || '';
+    $('#snippetCommand').value = item?.command || '';
+    $('#snippetGroup').value = item?.group || '';
+    $('#snippetAutoRun').checked = !!item?.autoRun;
+    snippetModalTrigger = trigger || $('#addSnippetBtn');
+    modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('connection-home-blur');
+    void modal.offsetWidth;
+    modal.classList.add('app-visible');
+    $('#snippetName')?.focus({ preventScroll: true });
+}
+function closeSnippetModal() {
+    const modal = $('#snippetModal');
+    if (!modal?.classList.contains('show') || modal.classList.contains('closing')) return;
+    modal.classList.add('closing');
+    modal.classList.remove('app-visible');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('connection-home-blur');
+    window.clearTimeout(closeSnippetModal._timer);
+    const cycle = ++snippetModalCycle;
+    closeSnippetModal._timer = window.setTimeout(() => {
+        if (cycle !== snippetModalCycle) return;
+        modal.classList.remove('show', 'closing');
+        resetSnippetForm();
+        snippetModalTrigger?.focus?.();
+        snippetModalTrigger = null;
+    }, 180);
+}
 function renderSnippetSettings() {
     const list = $('#snippetSettingsList');
     if (!list) return;
     const snippets = getSnippets();
-    list.innerHTML = snippets.length ? snippets.map((item) => `<div class="snippet-settings-item" data-id="${escapeHtml(item.id)}"><div><strong>${escapeHtml(item.name || '未命名片段')}</strong><em>${escapeHtml(item.group || '未分组')} · ${item.autoRun ? '直接执行' : '填入输入框'}</em><code>${escapeHtml(item.command || '')}</code></div><button class="tool-btn" data-edit-snippet="${escapeHtml(item.id)}">编辑</button><button class="tool-btn danger" data-delete-snippet="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<p class="empty-state">暂无代码片段。</p>';
+    list.innerHTML = snippets.length ? snippets.map((item) => `<div class="mini-item snippet-settings-item" data-id="${escapeHtml(item.id)}"><span class="resource-tag resource-tag-name" title="${escapeHtml(item.name || '未命名片段')}">${escapeHtml(item.name || '未命名片段')}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml(item.group || '未分组')}</span><span class="resource-tag ${item.autoRun ? 'resource-tag-host' : 'resource-tag-auth'}">${item.autoRun ? '直接执行' : '填入输入框'}</span></div><button class="tool-btn" data-edit-snippet="${escapeHtml(item.id)}">编辑</button><button class="tool-btn danger" data-delete-snippet="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<p class="empty-state">暂无代码片段。</p>';
 }
 async function saveSnippet(e) {
     e.preventDefault();
@@ -7382,26 +7511,33 @@ async function saveSnippet(e) {
     const idx = snippets.findIndex((x) => x.id === id);
     if (idx >= 0) snippets[idx] = item; else snippets.unshift(item);
     await persistSnippets(snippets);
-    resetSnippetForm();
+    closeSnippetModal();
     renderSnippetSettings();
     toast('代码片段已保存到服务端');
 }
 function setupSnippetSettings() {
     $('#snippetForm')?.addEventListener('submit', saveSnippet);
-    $('#cancelSnippetEditBtn')?.addEventListener('click', resetSnippetForm);
-    $('#snippetSettingsList')?.addEventListener('click', (e) => {
+    $('#addSnippetBtn')?.addEventListener('click', (e) => openSnippetModal(null, e.currentTarget));
+    $('#snippetCloseBtn')?.addEventListener('click', closeSnippetModal);
+    $('#cancelSnippetEditBtn')?.addEventListener('click', closeSnippetModal);
+    $('#snippetModal')?.addEventListener('click', (e) => { if (e.target.id === 'snippetModal') closeSnippetModal(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#snippetModal')?.classList.contains('show')) closeSnippetModal(); });
+    $('#snippetSettingsList')?.addEventListener('click', async (e) => {
         const editId = e.target.closest?.('[data-edit-snippet]')?.dataset.editSnippet;
         const deleteId = e.target.closest?.('[data-delete-snippet]')?.dataset.deleteSnippet;
         const snippets = getSnippets();
         if (editId) {
             const item = snippets.find((x) => x.id === editId); if (!item) return;
-            $('#snippetId').value = item.id; $('#snippetName').value = item.name || ''; $('#snippetCommand').value = item.command || ''; $('#snippetGroup').value = item.group || ''; $('#snippetAutoRun').checked = !!item.autoRun;
+            openSnippetModal(item, e.target.closest('[data-edit-snippet]'));
         }
         if (deleteId) {
-            persistSnippets(snippets.filter((x) => x.id !== deleteId)).then(() => {
+            if (!confirm('删除该代码片段？')) return;
+            await waitForMiniItemExit(e.target.closest('.mini-item'), deleteId);
+            try {
+                await persistSnippets(snippets.filter((x) => x.id !== deleteId));
                 renderSnippetSettings();
                 toast('代码片段已从服务端删除');
-            }).catch((err) => toast(err.message || '删除失败'));
+            } catch (err) { toast(err.message || '删除失败'); }
         }
     });
     renderSnippetSettings();
@@ -7420,12 +7556,155 @@ async function loadNetwork() {
     renderSshKeyOptions($('#connSshKey')?.value || '');
 }
 function renderNetwork() {
-    $('#proxyList').innerHTML = proxies.map((p) => `<div class="mini-item"><b>${escapeHtml(p.name)}</b><span>${escapeHtml((p.type || 'socks5').toUpperCase())} · ${escapeHtml(p.host)}:${p.port}</span><button data-edit-proxy="${p.id}">编辑</button><button data-open-proxy="${p.id}">查看</button><button data-del-proxy="${p.id}">删除</button></div>`).join('') || '<p class="muted">暂无代理</p>';
-    $('#sshKeyList').innerHTML = sshKeys.map((k) => `<div class="mini-item"><b>${escapeHtml(k.name)}</b><span>${k.hasPrivateKey ? '已保存私钥' : '无私钥'}${k.hasPassphrase ? ' · 有口令' : ''}${k.remark ? ` · ${escapeHtml(k.remark)}` : ''}</span><button data-edit-ssh-key="${k.id}">编辑</button><button data-open-ssh-key="${k.id}">查看</button><button data-del-ssh-key="${k.id}">删除</button></div>`).join('') || '<p class="muted">暂无 SSH 密钥</p>';
+    $('#proxyList').innerHTML = proxies.map((p) => `<div class="mini-item proxy-item"><span class="resource-tag resource-tag-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml((p.type || 'socks5').toUpperCase())}</span><span class="resource-tag resource-tag-host" title="${escapeHtml(p.host)}">${escapeHtml(p.host)}</span><span class="resource-tag resource-tag-port">${Number(p.port) || 1080}</span>${p.username ? `<span class="resource-tag resource-tag-auth">${escapeHtml(p.username)}</span>` : ''}${p.hasPassword ? '<span class="resource-tag resource-tag-secret">有密码</span>' : ''}</div><button data-edit-proxy="${p.id}">编辑</button><button data-open-proxy="${p.id}">查看</button><button data-del-proxy="${p.id}">删除</button></div>`).join('') || '<p class="muted">暂无代理</p>';
+    $('#sshKeyList').innerHTML = sshKeys.map((k) => `<div class="mini-item ssh-key-item"><span class="ssh-key-tag ssh-key-tag-name" title="${escapeHtml(k.name)}">${escapeHtml(k.name)}</span><div class="ssh-key-meta"><span class="ssh-key-tag ssh-key-tag-private">${k.hasPrivateKey ? '已保存私钥' : '无私钥'}</span>${k.hasPassphrase ? '<span class="ssh-key-tag ssh-key-tag-passphrase">有口令</span>' : ''}${k.remark ? `<span class="ssh-key-tag ssh-key-tag-remark" title="${escapeHtml(k.remark)}">${escapeHtml(k.remark)}</span>` : ''}</div><button data-edit-ssh-key="${k.id}">编辑</button><button data-open-ssh-key="${k.id}">查看</button><button data-del-ssh-key="${k.id}">删除</button></div>`).join('') || '<p class="muted">暂无 SSH 密钥</p>';
 }
 function renderJumpOptions() { if ($('#jumpRouteConfig') && $('#connMode')?.value === 'jump') updateRouteOptions('jump', $$('#jumpRouteList [data-jump-route-select]').map((el) => el.value).filter(Boolean)); }
-async function saveProxy(e) { e.preventDefault(); const id = $('#proxyId').value, payload = { name: $('#proxyName').value, type: $('#proxyType').value, host: $('#proxyHost').value, port: Number($('#proxyPort').value), username: $('#proxyUsername').value, password: $('#proxyPassword').value }; console.debug('[route-ui]', 'save proxy payload', { id, ...payload, password: payload.password ? '******' : '' }); await api(id ? `/api/proxies/${id}` : '/api/proxies', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); e.target.reset(); $('#proxyId').value = ''; $('#proxyType').value = 'socks5'; await loadNetwork(); toast('代理已保存'); }
-async function openProxySecret(id) {
+function resetProxyForm() { $('#proxyForm')?.reset(); $('#proxyId').value = ''; $('#proxyType').value = 'socks5'; $('#proxyPort').value = '1080'; }
+function openProxyModal(proxy = null, trigger = null) {
+    resetProxyForm();
+    $('#proxyModalTitle').textContent = proxy ? '编辑代理' : '新建代理';
+    $('#proxyId').value = proxy?.id || '';
+    $('#proxyName').value = proxy?.name || '';
+    $('#proxyType').value = proxy?.type || 'socks5';
+    $('#proxyHost').value = proxy?.host || '';
+    $('#proxyPort').value = proxy?.port || 1080;
+    $('#proxyUsername').value = proxy?.username || '';
+    $('#proxyPassword').value = proxy?.hasPassword ? '******' : '';
+    const modal = $('#proxyModal');
+    const layer = $('#connectionTransitionLayer');
+    if (!modal || !layer || modal.classList.contains('show')) return;
+    window.clearTimeout(closeProxyModal._timer);
+    window.clearTimeout(openProxyModal._finishTimer);
+    resetConnectionTransitionLayer(layer);
+    modal.classList.remove('closing', 'app-visible');
+    modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
+    proxyModalTrigger = trigger || $('#addProxyBtn');
+    const sourceRect = connectionTransitionTargetRect(proxyModalTrigger);
+    const viewport = viewportMetrics();
+    proxyModalOriginRect = { left: sourceRect.left, top: sourceRect.top, width: sourceRect.width, height: sourceRect.height };
+    syncConnectionLayerVisual(layer, sourceRect.source);
+    setConnectionLayerRect(layer, proxyModalOriginRect);
+    layer.style.transition = 'none';
+    layer.style.borderRadius = getComputedStyle(sourceRect.source || proxyModalTrigger || layer).borderRadius || '18px';
+    layer.style.boxShadow = 'none';
+    layer.style.visibility = 'visible';
+    layer.style.pointerEvents = 'auto';
+    proxyModalTrigger?.style?.setProperty('opacity', '0');
+    document.body.classList.add('disable-interaction', 'connection-transition-opening');
+    void layer.offsetHeight;
+    requestAnimationFrame(() => {
+        document.body.classList.add('connection-home-blur');
+        modal.classList.add('app-visible');
+        layer.classList.add('source-visual-hidden', 'expanded-material');
+        layer.style.transition = `
+            top var(--connection-app-duration) var(--connection-ios-spring),
+            left var(--connection-app-duration) var(--connection-ios-spring),
+            width var(--connection-app-duration) var(--connection-ios-spring),
+            height var(--connection-app-duration) var(--connection-ios-spring),
+            border-radius var(--connection-app-duration) var(--connection-ios-spring)
+        `;
+        setConnectionLayerRect(layer, viewport);
+        layer.style.borderRadius = '0px';
+    });
+    openProxyModal._finishTimer = window.setTimeout(() => {
+        document.body.classList.remove('disable-interaction', 'connection-transition-opening');
+        modal.classList.add('app-visible');
+        $('#proxyName')?.focus();
+    }, 520);
+}
+function closeProxyModal() {
+    const modal = $('#proxyModal');
+    const layer = $('#connectionTransitionLayer');
+    if (!modal?.classList.contains('show') || modal.classList.contains('closing')) return;
+    window.clearTimeout(closeProxyModal._timer);
+    window.clearTimeout(openProxyModal._finishTimer);
+    modal.classList.add('closing');
+    modal.classList.remove('app-visible');
+    modal.setAttribute('aria-hidden', 'true');
+    const viewport = viewportMetrics();
+    const sourceRect = proxyModalOriginRect || connectionTransitionTargetRect(proxyModalTrigger);
+    const source = proxyModalTrigger?.isConnected ? proxyModalTrigger : $('#addProxyBtn');
+    const sourceRadius = getComputedStyle(source || layer).borderRadius || '18px';
+    const shadowLayer = getConnectionTransitionShadowLayer();
+    document.body.classList.add('disable-interaction', 'connection-transition-closing');
+    document.body.classList.remove('connection-transition-opening', 'connection-home-blur');
+    layer.classList.remove('expanded-material');
+    applyConnectionLayerSourceChrome(layer, source, { revealVisual: true });
+    layer.style.visibility = 'visible';
+    layer.style.pointerEvents = 'auto';
+    layer.style.transition = 'none';
+    setConnectionLayerRect(layer, viewport);
+    layer.style.borderRadius = '0px';
+    layer.classList.remove('source-visual-hidden');
+    shadowLayer.style.visibility = 'visible';
+    shadowLayer.style.pointerEvents = 'none';
+    shadowLayer.style.transition = 'none';
+    shadowLayer.style.left = `${viewport.left}px`;
+    shadowLayer.style.top = `${viewport.top}px`;
+    shadowLayer.style.width = `${viewport.width}px`;
+    shadowLayer.style.height = `${viewport.height}px`;
+    shadowLayer.style.borderRadius = '0px';
+    shadowLayer.style.boxShadow = 'var(--connection-shadow-active)';
+    shadowLayer.style.opacity = '1';
+    shadowLayer.style.zIndex = '99';
+    void layer.offsetHeight;
+    void shadowLayer.offsetHeight;
+    requestAnimationFrame(() => {
+        layer.style.transition = `
+            top var(--connection-app-duration) var(--connection-ios-spring),
+            left var(--connection-app-duration) var(--connection-ios-spring),
+            width var(--connection-app-duration) var(--connection-ios-spring),
+            height var(--connection-app-duration) var(--connection-ios-spring),
+            border-radius var(--connection-app-duration) var(--connection-ios-spring)
+        `;
+        setConnectionLayerRect(layer, sourceRect);
+        layer.style.borderRadius = sourceRadius;
+        shadowLayer.style.transition = `
+            left var(--connection-app-duration) var(--connection-ios-spring),
+            top var(--connection-app-duration) var(--connection-ios-spring),
+            width var(--connection-app-duration) var(--connection-ios-spring),
+            height var(--connection-app-duration) var(--connection-ios-spring),
+            border-radius var(--connection-app-duration) var(--connection-ios-spring),
+            opacity 0.72s cubic-bezier(.16, 1, .3, 1),
+            box-shadow 0.72s cubic-bezier(.16, 1, .3, 1)
+        `;
+        setConnectionLayerRect(shadowLayer, sourceRect);
+        shadowLayer.style.borderRadius = sourceRadius;
+        shadowLayer.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)';
+        shadowLayer.style.opacity = '0';
+    });
+
+    const restoreTriggerWithoutTransition = () => {
+        const trigger = proxyModalTrigger;
+        if (!trigger?.style) return;
+        const oldTransition = trigger.style.transition;
+        trigger.style.transition = 'none';
+        trigger.style.removeProperty('opacity');
+        void trigger.offsetHeight;
+        requestAnimationFrame(() => oldTransition ? trigger.style.transition = oldTransition : trigger.style.removeProperty('transition'));
+    };
+    let done = false;
+    const finish = () => {
+        if (done) return;
+        done = true;
+        layer.removeEventListener('transitionend', onEnd);
+        modal.classList.remove('show', 'closing', 'app-visible');
+        resetConnectionTransitionLayer(layer);
+        restoreTriggerWithoutTransition();
+        closeProxyModal._shadowTimer = window.setTimeout(() => resetConnectionTransitionShadow(shadowLayer), 180);
+        document.body.classList.remove('disable-interaction', 'connection-transition-closing', 'connection-home-blur');
+        proxyModalTrigger = null;
+        proxyModalOriginRect = null;
+        resetProxyForm();
+    };
+    const onEnd = (ev) => { if (ev.propertyName === 'top') finish(); };
+    layer.addEventListener('transitionend', onEnd);
+    closeProxyModal._timer = window.setTimeout(finish, 560);
+}
+async function saveProxy(e) { e.preventDefault(); const id = $('#proxyId').value, payload = { name: $('#proxyName').value, type: $('#proxyType').value, host: $('#proxyHost').value, port: Number($('#proxyPort').value), username: $('#proxyUsername').value, password: $('#proxyPassword').value }; console.debug('[route-ui]', 'save proxy payload', { id, ...payload, password: payload.password ? '******' : '' }); await api(id ? `/api/proxies/${id}` : '/api/proxies', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); closeProxyModal(); await loadNetwork(); toast('代理已保存'); }
+async function openProxySecret(id, trigger = null) {
     const secret = requestSensitiveSecret('查看已保存代理密码');
     const data = await api(`/api/proxies/${id}/open`, { method: 'POST', body: JSON.stringify({ secret }) });
     const p = data.proxy || {};
@@ -7436,24 +7715,66 @@ async function openProxySecret(id) {
     $('#proxyPort').value = p.port || '';
     $('#proxyUsername').value = p.username || '';
     $('#proxyPassword').value = p.password || '';
+    openProxyModal(p, trigger);
+    $('#proxyPassword').value = p.password || '';
     console.debug('[proxy-ui]', 'proxy secret loaded', { id, hasPassword: !!p.password });
     toast('已载入代理密码');
 }
 function resetSshKeyForm() { $('#sshKeyForm').reset(); $('#sshKeyId').value = ''; $('#sshKeyPrivateKey').value = ''; $('#sshKeyPassphrase').value = ''; }
+function openSshKeyModal(sshKey = null, trigger = null) {
+    window.clearTimeout(closeSshKeyModal._timer);
+    ++sshKeyModalCycle;
+    const modal = $('#sshKeyModal');
+    if (!modal || (modal.classList.contains('show') && !modal.classList.contains('closing'))) return;
+    modal.classList.remove('show', 'closing', 'app-visible');
+    resetSshKeyForm();
+    $('#sshKeyModalTitle').textContent = sshKey ? '编辑 SSH 密钥' : '新增 SSH 密钥';
+    $('#saveSshKeyBtn').textContent = sshKey ? '保存修改' : '保存 SSH 密钥';
+    $('#sshKeyId').value = sshKey?.id || '';
+    $('#sshKeyName').value = sshKey?.name || '';
+    $('#sshKeyPrivateKey').value = sshKey?.hasPrivateKey ? '******' : '';
+    $('#sshKeyPassphrase').value = sshKey?.hasPassphrase ? '******' : '';
+    $('#sshKeyRemark').value = sshKey?.remark || '';
+    sshKeyModalTrigger = trigger || $('#addSshKeyBtn');
+    modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('connection-home-blur');
+    void modal.offsetWidth;
+    modal.classList.add('app-visible');
+    $('#sshKeyName')?.focus({ preventScroll: true });
+}
+function closeSshKeyModal() {
+    const modal = $('#sshKeyModal');
+    if (!modal?.classList.contains('show') || modal.classList.contains('closing')) return;
+    modal.classList.add('closing');
+    modal.classList.remove('app-visible');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('connection-home-blur');
+    window.clearTimeout(closeSshKeyModal._timer);
+    const cycle = ++sshKeyModalCycle;
+    closeSshKeyModal._timer = window.setTimeout(() => {
+        if (cycle !== sshKeyModalCycle) return;
+        modal.classList.remove('show', 'closing');
+        resetSshKeyForm();
+        sshKeyModalTrigger?.focus?.();
+        sshKeyModalTrigger = null;
+    }, 180);
+}
 async function saveSshKey(e) {
     e.preventDefault();
     const id = $('#sshKeyId').value;
     const payload = { name: $('#sshKeyName').value.trim(), privateKey: $('#sshKeyPrivateKey').value, passphrase: $('#sshKeyPassphrase').value, remark: $('#sshKeyRemark').value.trim() };
     console.debug('[ssh-key-ui]', 'save ssh key payload', { id, name: payload.name, hasPrivateKey: !!payload.privateKey && payload.privateKey !== '******', hasPassphrase: !!payload.passphrase && payload.passphrase !== '******' });
     await api(id ? `/api/ssh-keys/${id}` : '/api/ssh-keys', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
-    resetSshKeyForm();
+    closeSshKeyModal();
     await loadNetwork();
     toast('SSH 密钥已保存');
 }
-async function openSshKeySecret(id) {
+async function openSshKeySecret(id, trigger = null) {
     const secret = requestSensitiveSecret('查看已保存 SSH 密钥');
     const data = await api(`/api/ssh-keys/${id}/open`, { method: 'POST', body: JSON.stringify({ secret }) });
     const k = data.sshKey || {};
+    openSshKeyModal(k, trigger);
     $('#sshKeyId').value = k.id || '';
     $('#sshKeyName').value = k.name || '';
     $('#sshKeyPrivateKey').value = k.privateKey || '';
@@ -7486,7 +7807,7 @@ function bindEvents() {
     bindConnectionPressFeedback();
     $$('.nav-tab').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view)));
     $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => { $$('.settings-tab').forEach((b) => b.classList.remove('active')); btn.classList.add('active'); $$('.settings-panel').forEach((p) => p.classList.remove('active')); $(`#settings-${btn.dataset.settings}`).classList.add('active'); scheduleWorkspaceSave('settings-tab'); }));
-    ['view-settings', 'view-dashboard'].forEach((id) => document.getElementById(id)?.addEventListener('scroll', () => scheduleWorkspaceSave(`${id}-scroll`), { passive: true }));
+    ['view-settings', 'view-dashboard', 'view-activity'].forEach((id) => document.getElementById(id)?.addEventListener('scroll', () => scheduleWorkspaceSave(`${id}-scroll`), { passive: true }));
     $('#appThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#settingsThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#logoutBtn').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/'; });
     $('#notesSettingsForm')?.addEventListener('submit', saveNotesSettings);
     $('#notifyLoginPersonal')?.addEventListener('change', () => savePersonalLoginNotification().catch((err) => toast(err.message || '保存通知设置失败')));
@@ -7501,6 +7822,17 @@ function bindEvents() {
     $('#rdpTouchMode')?.addEventListener('change', updateRdpTouchSettingsUi);
     $('#rdpTouchSensitivity')?.addEventListener('input', updateRdpTouchSettingsUi);
     $('#connectionForm').addEventListener('submit', saveConnection); restoreConnectionFilters(); ['searchInput', 'protocolFilter', 'tagFilter', 'sortSelect'].forEach((id) => { const el = $(`#${id}`); const handler = () => { saveConnectionFilters(); renderConnections(); }; el.addEventListener('input', handler); el.addEventListener('change', handler); });
+    $$('[data-activity-range]').forEach((button) => button.addEventListener('click', async () => {
+        activityRange = button.dataset.activityRange || '7d';
+        $$('[data-activity-range]').forEach((item) => item.classList.toggle('active', item === button));
+        $('#activityCustomRange').classList.toggle('force-hidden', activityRange !== 'custom');
+        if (activityRange !== 'custom') await loadActivities();
+    }));
+    $('#applyActivityRange')?.addEventListener('click', async () => {
+        const bounds = activityRangeBounds('custom');
+        if (bounds.from && bounds.to && bounds.from > bounds.to) return toast('开始日期不能晚于结束日期');
+        await loadActivities();
+    });
     $('#connectionGrid').addEventListener('click', async (e) => {
         const edit = e.target.closest?.('[data-edit]')?.dataset.edit, del = e.target.closest?.('[data-delete]')?.dataset.delete, connect = e.target.closest?.('[data-connect]')?.dataset.connect;
         if (edit) openModal(connections.find((c) => c.id === edit), e.target.closest?.('[data-edit]'));
@@ -7848,17 +8180,17 @@ function bindEvents() {
         enforceTerminalWorkspaceLimit(activeTerminalTab);
         renderTerminalTabs();
     });
-    $('#remoteExecForm').addEventListener('submit', remoteExecute); $('#beianForm').addEventListener('submit', saveBeian); $('#proxyForm').addEventListener('submit', saveProxy); $('#sshKeyForm').addEventListener('submit', saveSshKey); $('#resetSshKeyForm').addEventListener('click', resetSshKeyForm);
+    $('#remoteExecForm').addEventListener('submit', remoteExecute); $('#beianForm').addEventListener('submit', saveBeian); $('#proxyForm').addEventListener('submit', saveProxy); $('#addProxyBtn')?.addEventListener('click', (e) => openProxyModal(null, e.currentTarget)); $('#proxyCloseBtn')?.addEventListener('click', closeProxyModal); $('#proxyCancelBtn')?.addEventListener('click', closeProxyModal); $('#proxyModal')?.addEventListener('click', (e) => { if (e.target.id === 'proxyModal') closeProxyModal(); }); $('#sshKeyForm').addEventListener('submit', saveSshKey); $('#addSshKeyBtn')?.addEventListener('click', (e) => openSshKeyModal(null, e.currentTarget)); $('#sshKeyCloseBtn')?.addEventListener('click', closeSshKeyModal); $('#sshKeyCancelBtn')?.addEventListener('click', closeSshKeyModal); $('#sshKeyModal')?.addEventListener('click', (e) => { if (e.target.id === 'sshKeyModal') closeSshKeyModal(); }); document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#sshKeyModal')?.classList.contains('show')) closeSshKeyModal(); });
     setupAiAssistant();
     $('#brandIconFile').addEventListener('change', async (e) => { try { const dataUrl = await readImageAsDataUrl(e.target.files?.[0]); if (!dataUrl) return; pendingBrandIcon = dataUrl; $('#brandIconPreview').innerHTML = iconHtml(dataUrl); console.debug('[appearance-client]', 'brand icon file loaded', { size: e.target.files?.[0]?.size || 0, type: e.target.files?.[0]?.type || '' }); } catch (err) { e.target.value = ''; toast(err.message); } });
     setupAppearanceControls();
     $('#resetAppearanceBtn').addEventListener('click', () => resetAppearance().catch((err) => toast(err.message)));
-    $('#proxyList').addEventListener('click', async (e) => { const id = e.target.dataset.editProxy || e.target.dataset.openProxy || e.target.dataset.delProxy; if (!id) return; const p = proxies.find((x) => x.id === id); if (e.target.dataset.editProxy) { $('#proxyId').value = p.id; $('#proxyName').value = p.name; $('#proxyType').value = p.type || 'socks5'; $('#proxyHost').value = p.host; $('#proxyPort').value = p.port; $('#proxyUsername').value = p.username || ''; $('#proxyPassword').value = p.hasPassword ? '******' : ''; } else if (e.target.dataset.openProxy) { await openProxySecret(id); } else if (confirm('删除代理？')) { await api(`/api/proxies/${id}`, { method: 'DELETE' }); await loadNetwork(); } });
-    $('#sshKeyList').addEventListener('click', async (e) => { const editId = e.target.dataset.editSshKey, openId = e.target.dataset.openSshKey, delId = e.target.dataset.delSshKey; if (editId) { const k = sshKeys.find((x) => x.id === editId); if (!k) return; $('#sshKeyId').value = k.id; $('#sshKeyName').value = k.name || ''; $('#sshKeyPrivateKey').value = k.hasPrivateKey ? '******' : ''; $('#sshKeyPassphrase').value = k.hasPassphrase ? '******' : ''; $('#sshKeyRemark').value = k.remark || ''; return; } if (openId) { await openSshKeySecret(openId); return; } if (delId && confirm('删除该 SSH 密钥？已选择它的连接将无法再使用该密钥。')) { await api(`/api/ssh-keys/${delId}`, { method: 'DELETE' }); await loadNetwork(); toast('SSH 密钥已删除'); } });
+    $('#proxyList').addEventListener('click', async (e) => { const id = e.target.dataset.editProxy || e.target.dataset.openProxy || e.target.dataset.delProxy; if (!id) return; const p = proxies.find((x) => x.id === id); if (e.target.dataset.editProxy) openProxyModal(p, e.target); else if (e.target.dataset.openProxy) { await openProxySecret(id, e.target); } else if (confirm('删除代理？')) { await waitForMiniItemExit(e.target.closest('.mini-item'), id); await api(`/api/proxies/${id}`, { method: 'DELETE' }); await loadNetwork(); toast('代理已删除'); } });
+    $('#sshKeyList').addEventListener('click', async (e) => { const editId = e.target.dataset.editSshKey, openId = e.target.dataset.openSshKey, delId = e.target.dataset.delSshKey; if (editId) { const k = sshKeys.find((x) => x.id === editId); if (k) openSshKeyModal(k, e.target); return; } if (openId) { await openSshKeySecret(openId, e.target); return; } if (delId && confirm('删除该 SSH 密钥？已选择它的连接将无法再使用该密钥。')) { await waitForMiniItemExit(e.target.closest('.mini-item'), delId); await api(`/api/ssh-keys/${delId}`, { method: 'DELETE' }); await loadNetwork(); toast('SSH 密钥已删除'); } });
     $('#passwordForm').addEventListener('submit', async (e) => { e.preventDefault(); const currentPassword = $('#settingsCurrentPassword').value, newPassword = $('#settingsNewPassword').value, confirmPassword = $('#settingsConfirmPassword').value; if (newPassword !== confirmPassword) return toast('两次输入的新密码不一致'); await api('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }); e.target.reset(); toast('密码已更新'); });
     $('#profileForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/profile', { method: 'PUT', body: JSON.stringify({ username: $('#profileUsername').value.trim(), email: $('#profileEmail').value }) }); toast('资料已保存'); await loadSecurityStatus(); });
     $('#securityPolicyForm').addEventListener('submit', saveSecurityPolicy); $('#captchaForm').addEventListener('submit', saveCaptcha); $('#mailForm').addEventListener('submit', saveMail); $('#appearanceForm').addEventListener('submit', saveAppearance); $('#terminalLayoutForm').addEventListener('submit', saveTerminalLayout); setupSnippetSettings(); setupAgentTokenSettings();
-    $('#totpBox').addEventListener('click', (e) => { if (e.target.id === 'setupTotpBtn') setupTotp().catch((err) => toast(err.message)); });
+    $('#totpAction').addEventListener('click', (e) => { if (e.target.id === 'setupTotpBtn') setupTotp().catch((err) => toast(err.message)); });
     $('#totpEnableForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/totp/enable', { method: 'POST', body: JSON.stringify({ code: $('#totpEnableCode').value }) }); toast('TOTP 已开启'); $('#totpEnableForm').classList.add('force-hidden'); await loadSecurityStatus(); });
     $('#totpDisableForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm('确定关闭 TOTP？')) return; await api('/api/security/totp/disable', { method: 'POST', body: JSON.stringify({ currentPassword: $('#totpDisablePassword').value, code: $('#totpDisableCode').value }) }); e.target.reset(); toast('TOTP 已关闭'); await loadSecurityStatus(); });
     $('#addPasskeyBtn').addEventListener('click', () => registerPasskey().catch((err) => toast(err.message)));
@@ -7870,7 +8202,7 @@ function bindEvents() {
     $('#revealMailPass').addEventListener('click', () => revealMailPass().catch((err) => toast(err.message || '读取 SMTP 密码失败')));
     $('#testMailBtn').addEventListener('click', () => testMail());
     $('#exportDataBtn').addEventListener('click', () => { location.href = '/api/data/export'; });
-    $('#clearActivityBtn').addEventListener('click', async () => { if (!confirm('确定清理最近活动日志？')) return; await api('/api/activities', { method: 'DELETE' }); await loadConnections(); toast('活动日志已清理'); });
+    $('#clearActivityBtn').addEventListener('click', async () => { if (!confirm('确定清理活动日志？')) return; await api('/api/activities', { method: 'DELETE' }); await loadActivities(); toast('活动日志已清理'); });
     $('#clearLoginEventsBtn').addEventListener('click', async () => { if (!confirm('确定清理登录事件日志？')) return; await api('/api/security/login-events', { method: 'DELETE' }); await loadSecurityLists(); toast('登录事件已清理'); });
     $('#importDataForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm('导入会覆盖当前数据库，系统会先生成本地备份。继续？')) return; const fd = new FormData(); fd.append('backup', $('#backupFile').files[0]); fd.append('loginPassword', $('#importLoginPassword').value); fd.append('backupPassword', $('#backupPassword').value); const res = await fetch('/api/data/import', { method: 'POST', body: fd, credentials: 'same-origin' }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || '导入失败'); toast(data.message || '导入完成'); });
 }
@@ -8045,7 +8377,7 @@ async function restoreLastWorkspace() {
                 .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
             : [];
         const view = String(state.ui?.activeView || 'dashboard');
-        const allowedView = ['dashboard', 'terminal', 'remote', 'notes', 'settings'].includes(view) ? view : 'dashboard';
+        const allowedView = ['dashboard', 'activity', 'terminal', 'remote', 'notes', 'settings'].includes(view) ? view : 'dashboard';
         // Switch view first so the user lands on the terminal shell immediately,
         // then re-attach sessions underneath (with history replay).
         if (savedTabs.length && (allowedView === 'terminal' || savedTabs.some((t) => t.active))) {
@@ -8385,6 +8717,7 @@ async function handleAdminAction(action, userId) {
 }
 
 function registerStaticAssetWorker() {
+    if (window.__zephyrPreviewMode) return;
     if (!('serviceWorker' in navigator)) return;
     navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((err) => {
         console.warn('[service-worker] registration failed', err);
@@ -8408,7 +8741,7 @@ async function init() {
         // network restore so refresh does not flash the dashboard first.
         try {
             const lastView = localStorage.getItem('zephyr.lastView') || '';
-            if (['terminal', 'remote', 'notes', 'settings', 'dashboard'].includes(lastView) && lastView !== 'dashboard') {
+            if (['activity', 'terminal', 'remote', 'notes', 'settings', 'dashboard'].includes(lastView) && lastView !== 'dashboard') {
                 currentAppView = lastView;
                 $$('.nav-tab').forEach((b) => b.classList.toggle('active', b.dataset.view === lastView));
                 $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${lastView}`));
@@ -8436,6 +8769,7 @@ async function init() {
         renderSnippetSettings();
         await loadConnections();
         document.documentElement.dataset.appLoadConnections = 'ok';
+        await loadActivities();
         await restoreLastWorkspace();
         await backgroundLoads;
         // Deep Link hand-off from /open (token only — never the raw URI).

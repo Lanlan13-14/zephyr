@@ -18,11 +18,11 @@
         <form id="loginForm" autocomplete="off">
             <div class="form-group">
                 <label for="username">账号</label>
-                <input type="text" id="username" autocomplete="username" required>
+                <input type="text" id="username" autocomplete="username" placeholder=" " required>
             </div>
             <div class="form-group">
                 <label for="password">密码</label>
-                <input type="password" id="password" autocomplete="current-password" required>
+                <input type="password" id="password" autocomplete="current-password" placeholder=" " required>
             </div>
             <div class="auth-options">
                 <label class="remember-me"><input type="checkbox" id="rememberMe"> 记住我</label>
@@ -44,8 +44,8 @@
         <button class="theme-btn-login" id="themeToggleForgot" title="切换主题">🌓</button>
         <div class="logo">🌬️</div><h1>重置密码</h1><p class="auth-subtitle">通过管理员邮箱验证码重置</p>
         <div id="forgotErrorBanner" class="error-banner"></div>
-        <form id="forgotRequestForm"><div class="form-group"><label>管理员邮箱</label><input type="email" id="forgotEmail" required></div><button class="btn btn-primary" type="submit">发送验证码</button></form>
-        <form id="forgotResetForm" class="force-hidden"><div class="form-group"><label>验证码</label><input id="resetCode" inputmode="numeric" maxlength="6" required></div><div class="form-group"><label>新密码</label><input type="password" id="resetPassword" minlength="4" required></div><button class="btn btn-primary" type="submit">重置密码</button></form>
+        <form id="forgotRequestForm"><div class="form-group"><label for="forgotEmail">管理员邮箱</label><input type="email" id="forgotEmail" autocomplete="email" placeholder=" " required></div><button class="btn btn-primary" type="submit">发送验证码</button></form>
+        <form id="forgotResetForm" class="force-hidden"><div class="form-group"><label for="resetCode">验证码</label><input id="resetCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder=" " required></div><div class="form-group"><label for="resetPassword">新密码</label><input type="password" id="resetPassword" minlength="4" autocomplete="new-password" placeholder=" " required></div><button class="btn btn-primary" type="submit">重置密码</button></form>
         <p class="auth-link"><a href="#" id="backLoginLink">返回登录</a></p>
     </div>
 
@@ -72,6 +72,7 @@
         </form>
     </div>
     <div class="beian-footer" id="beianFooter"></div>
+    <script src="preview-mock.js?v=20260723-activity1" type="module"></script>
     <script src="client.js?v=20260615-visual-color-picker" type="module"></script>
 </body>
 </html>

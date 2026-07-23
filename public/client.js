@@ -279,8 +279,9 @@ async function loadBeian() {
         captchaConfig = publicSettings.captcha || { enabled: false, provider: 'turnstile', siteKey: '' };
         defaultUsername = s.defaultUsername || 'admin';
         const usernameInput = $('#username');
-        if (usernameInput) usernameInput.removeAttribute('placeholder');
-        $('#password')?.removeAttribute('placeholder');
+        if (usernameInput) usernameInput.placeholder = ' ';
+        const passwordInput = $('#password');
+        if (passwordInput) passwordInput.placeholder = ' ';
         const hint = $('.auth-hint');
         if (hint) hint.textContent = '';
         initRememberMe();

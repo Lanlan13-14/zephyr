@@ -763,6 +763,15 @@ function listAllConnectionRows() { return db.prepare('SELECT * FROM connections 
 
 function getActivities(limit = 50) { return db.prepare('SELECT * FROM activities ORDER BY time DESC LIMIT ?').all(limit); }
 function getActivitiesForUser(userId, limit = 50) { return db.prepare('SELECT * FROM activities WHERE userId = ? ORDER BY time DESC LIMIT ?').all(String(userId), limit); }
+function queryActivities({ userId = '', from = 0, to = 0, limit = 500 } = {}) {
+    const conditions = [];
+    const params = { limit: Math.max(1, Math.min(500, Number(limit) || 500)) };
+    if (userId) { conditions.push('userId = @userId'); params.userId = String(userId); }
+    if (from > 0) { conditions.push('time >= @from'); params.from = Number(from); }
+    if (to > 0) { conditions.push('time <= @to'); params.to = Number(to); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    return db.prepare(`SELECT * FROM activities ${where} ORDER BY time DESC LIMIT @limit`).all(params);
+}
 function addActivity(activity) { db.prepare('INSERT INTO activities (id,time,message,type,userId) VALUES (@id,@time,@message,@type,@userId)').run({ ...activity, userId: activity.userId || null }); }
 function clearActivities() { db.prepare('DELETE FROM activities').run(); }
 
@@ -817,4 +826,4 @@ function deletePasskey(username, id) { db.prepare('DELETE FROM passkeys WHERE us
 function rawDb() { return db; }
 function close() { if (db) { db.close(); db = null; } }
 
-module.exports = { init, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close };
+module.exports = { init, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, queryActivities, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close };

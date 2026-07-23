@@ -2720,6 +2720,13 @@ app.get('/api/connections', requireUser, (req, res) => {
     }
 });
 
+app.get('/api/activities', requireUser, (req, res) => {
+    const from = Number(req.query.from) || 0;
+    const to = Number(req.query.to) || 0;
+    const userId = req.user.role === 'admin' ? '' : req.user.userId;
+    res.json({ activities: storage.queryActivities({ userId, from, to, limit: 500 }) });
+});
+
 app.post('/api/connections', requireUser, (req, res) => {
     const body = req.body || {};
     const protocol = String(body.protocol || 'SSH').toUpperCase();
