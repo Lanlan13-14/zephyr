@@ -1826,11 +1826,52 @@ function resolveTerminalFontColors(appearance = {}) {
     const light = normalizeTerminalHexColor(colors.light || '') || (dark ? invertTerminalHexColor(dark) : '');
     return { dark, light };
 }
+function resolveTerminalSolidBgColors(appearance = {}) {
+    const colors = appearance.terminalSolidBgColors || appearance.terminalBgColors || {};
+    const dark = normalizeTerminalHexColor(colors.dark || '');
+    const light = normalizeTerminalHexColor(colors.light || '') || (dark ? invertTerminalHexColor(dark) : '');
+    return { dark, light };
+}
+function resolveTerminalSelectionColors(appearance = {}) {
+    const sel = appearance.terminalSelection || {};
+    const bgIn = sel.bg || {};
+    const fgIn = sel.fg || {};
+    const bgDark = normalizeTerminalHexColor(bgIn.dark || sel.bgDark || '');
+    const bgLight = normalizeTerminalHexColor(bgIn.light || sel.bgLight || '') || bgDark;
+    const fgDark = normalizeTerminalHexColor(fgIn.dark || sel.fgDark || '');
+    const fgLight = normalizeTerminalHexColor(fgIn.light || sel.fgLight || '') || fgDark;
+    return { bg: { dark: bgDark, light: bgLight }, fg: { dark: fgDark, light: fgLight } };
+}
+function isWtermLightTheme(themeAttr = '') {
+    const theme = themeAttr || document.documentElement.getAttribute('data-wterm-theme') || getPreferredWtermTheme();
+    return theme === 'light' || theme === 'custom-light';
+}
 function currentTerminalFontColor(appearance = terminalAppearance) {
     const colors = resolveTerminalFontColors(appearance || {});
-    const theme = document.documentElement.getAttribute('data-wterm-theme') || getPreferredWtermTheme();
-    const isLight = theme === 'light' || theme === 'custom-light';
-    return isLight ? (colors.light || colors.dark) : colors.dark;
+    return isWtermLightTheme() ? (colors.light || colors.dark) : colors.dark;
+}
+function currentTerminalSolidBg(appearance = terminalAppearance) {
+    const colors = resolveTerminalSolidBgColors(appearance || {});
+    return isWtermLightTheme() ? (colors.light || colors.dark) : colors.dark;
+}
+function currentTerminalSelection(appearance = terminalAppearance) {
+    const sel = resolveTerminalSelectionColors(appearance || {});
+    const light = isWtermLightTheme();
+    return {
+        bg: light ? (sel.bg.light || sel.bg.dark) : sel.bg.dark,
+        fg: light ? (sel.fg.light || sel.fg.dark) : sel.fg.dark,
+    };
+}
+/** Solid hex → rgba for ::selection background (wterm uses DOM selection). */
+function terminalHexToRgba(hex, alpha = 0.28) {
+    const raw = normalizeTerminalHexColor(hex);
+    if (!raw) return '';
+    const n = parseInt(raw.slice(1), 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    const a = Math.max(0, Math.min(1, Number(alpha) || 0));
+    return `rgba(${r},${g},${b},${a})`;
 }
 function applyTerminalAppearance(appearance = {}) {
     terminalAppearance = appearance || {};
@@ -1863,11 +1904,64 @@ function applyTerminalAppearance(appearance = {}) {
     if (fontColor) {
         root.style.setProperty('--wterm-custom-fg', fontColor);
         root.style.setProperty('--wterm-fg', fontColor);
+        root.style.setProperty('--term-fg', fontColor);
         root.setAttribute('data-wterm-font-custom', '1');
     } else {
         root.style.removeProperty('--wterm-custom-fg');
+        // Do not strip --wterm-fg permanently; theme CSS owns it when no custom font.
         root.style.removeProperty('--wterm-fg');
+        root.style.removeProperty('--term-fg');
         root.removeAttribute('data-wterm-font-custom');
+    }
+
+    // Solid canvas background — all data-wterm-theme modes (default/light/custom-*).
+    // wterm DOM paints default cells with transparent bg → container uses --wterm-bg.
+    const solidBg = currentTerminalSolidBg(terminalAppearance);
+    if (solidBg) {
+        root.style.setProperty('--wterm-custom-solid-bg', solidBg);
+        root.style.setProperty('--wterm-bg', solidBg);
+        root.style.setProperty('--term-bg', solidBg);
+        root.setAttribute('data-wterm-solid-bg', '1');
+        // When image bg is also on, build overlay from solid color instead of fixed black/white.
+        if (hasBg) {
+            const bgOpacity = Math.max(0, Math.min(1, Number((terminalAppearance.terminalBackground || {}).opacity ?? 0.35)));
+            const overlayA = 1 - bgOpacity;
+            root.style.setProperty('--wterm-custom-bg-overlay-from-solid', terminalHexToRgba(solidBg, overlayA) || solidBg);
+        } else {
+            root.style.removeProperty('--wterm-custom-bg-overlay-from-solid');
+        }
+    } else {
+        root.style.removeProperty('--wterm-custom-solid-bg');
+        root.style.removeProperty('--wterm-custom-bg-overlay-from-solid');
+        root.removeAttribute('data-wterm-solid-bg');
+        // Let CSS theme vars reclaim --wterm-bg (inline style would pin it).
+        root.style.removeProperty('--wterm-bg');
+        root.style.removeProperty('--term-bg');
+    }
+
+    // Selection: DOM ::selection (see FREEZE/XTERM_DOM_STACK — wterm DOM is paint/selection shell).
+    // Not xterm self-drawn selection; CSS --wterm-selection is the correct hook.
+    const sel = currentTerminalSelection(terminalAppearance);
+    if (sel.bg || sel.fg) {
+        root.setAttribute('data-wterm-selection-custom', '1');
+        if (sel.bg) {
+            const fill = terminalHexToRgba(sel.bg, isWtermLightTheme() ? 0.28 : 0.32) || sel.bg;
+            root.style.setProperty('--wterm-selection', fill);
+            root.style.setProperty('--wterm-selection-solid', sel.bg);
+        } else {
+            root.style.removeProperty('--wterm-selection');
+            root.style.removeProperty('--wterm-selection-solid');
+        }
+        if (sel.fg) {
+            root.style.setProperty('--wterm-selection-fg', sel.fg);
+        } else {
+            root.style.removeProperty('--wterm-selection-fg');
+        }
+    } else {
+        root.removeAttribute('data-wterm-selection-custom');
+        root.style.removeProperty('--wterm-selection');
+        root.style.removeProperty('--wterm-selection-solid');
+        root.style.removeProperty('--wterm-selection-fg');
     }
 }
 
@@ -1879,7 +1973,14 @@ function getPreferredWtermTheme() {
 function hasCustomTerminalAppearance() {
     const bg = terminalAppearance?.terminalBackground || {};
     const colors = resolveTerminalFontColors(terminalAppearance || {});
-    return !!(((bg.type === 'upload' || bg.type === 'url') && bg.url) || colors.dark || colors.light);
+    const solid = resolveTerminalSolidBgColors(terminalAppearance || {});
+    const sel = resolveTerminalSelectionColors(terminalAppearance || {});
+    return !!(
+        ((bg.type === 'upload' || bg.type === 'url') && bg.url)
+        || colors.dark || colors.light
+        || solid.dark || solid.light
+        || sel.bg.dark || sel.bg.light || sel.fg.dark || sel.fg.light
+    );
 }
 
 function applyWtermTheme(theme) {

@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="modulepreload" href="app.js?v=20260723-toggle-select2">
-    <link rel="modulepreload" href="theme-runtime.js?v=20260723-sync2">
-    <link rel="stylesheet" href="style.css?v=20260723-toggle-select2">
+    <link rel="modulepreload" href="app.js?v=20260723-term-colors1">
+    <link rel="modulepreload" href="theme-runtime.js?v=20260723-term-colors1">
+    <link rel="stylesheet" href="style.css?v=20260723-term-colors1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -451,7 +451,39 @@
                                         <p class="field-hint">留空时会自动使用深色终端字体的反色，例如白色 → 黑色。</p>
                                     </div>
                                 </div>
-                                <p class="field-hint">上传图片最高 12MB；URL 适合使用 CDN/对象存储图片。</p>
+                                <label class="check-line"><input type="checkbox" id="terminalSolidBgEnabled"> 启用自定义终端背景色（所有配色模式生效）</label>
+                                <div class="form-row terminal-solid-bg-row">
+                                    <div class="form-group">
+                                        <label>深色终端背景色</label>
+                                        <div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#0a0a0a" aria-label="选择深色终端背景色"></button><input id="terminalSolidBgDark" class="color-hex-input" value="#0a0a0a" maxlength="7" spellcheck="false" inputmode="text" placeholder="#0a0a0a"></div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>浅色终端背景色</label>
+                                        <div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#f5f5f7" aria-label="选择浅色终端背景色"></button><input id="terminalSolidBgLight" class="color-hex-input" value="" maxlength="7" spellcheck="false" inputmode="text" placeholder="留空自动取反色"></div>
+                                    </div>
+                                </div>
+                                <label class="check-line"><input type="checkbox" id="terminalSelectionEnabled"> 启用自定义选中色（选中背景 + 选中文字，所有配色模式生效）</label>
+                                <div class="form-row terminal-selection-row">
+                                    <div class="form-group">
+                                        <label>深色 · 选中背景</label>
+                                        <div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#0a84ff" aria-label="选择深色选中背景"></button><input id="terminalSelectionBgDark" class="color-hex-input" value="#0a84ff" maxlength="7" spellcheck="false" inputmode="text" placeholder="#0a84ff"></div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>深色 · 选中文字</label>
+                                        <div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#ffffff" aria-label="选择深色选中文字色"></button><input id="terminalSelectionFgDark" class="color-hex-input" value="#ffffff" maxlength="7" spellcheck="false" inputmode="text" placeholder="#ffffff"></div>
+                                    </div>
+                                </div>
+                                <div class="form-row terminal-selection-row">
+                                    <div class="form-group">
+                                        <label>浅色 · 选中背景</label>
+                                        <div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#007aff" aria-label="选择浅色选中背景"></button><input id="terminalSelectionBgLight" class="color-hex-input" value="" maxlength="7" spellcheck="false" inputmode="text" placeholder="留空沿用深色"></div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>浅色 · 选中文字</label>
+                                        <div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#ffffff" aria-label="选择浅色选中文字色"></button><input id="terminalSelectionFgLight" class="color-hex-input" value="" maxlength="7" spellcheck="false" inputmode="text" placeholder="留空沿用深色"></div>
+                                    </div>
+                                </div>
+                                <p class="field-hint">上传图片最高 12MB；URL 适合使用 CDN/对象存储图片。背景色/选中色与配色方案（凝霜/熔岩/自定义等）独立，在任意模式下均可覆盖终端默认。</p>
                                 <div class="form-row">
                                 </div>
                                 <div class="form-actions">
@@ -914,7 +946,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260723-toggle-select2" type="module"></script>
+    <script src="app.js?v=20260723-term-colors1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

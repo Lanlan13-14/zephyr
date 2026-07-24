@@ -35,6 +35,10 @@
     --wterm-bg: #0a0a0a;
     --wterm-fg: #f4f4f6;
     --wterm-selection: rgba(10,132,255,0.24);
+    --wterm-selection-fg: inherit;
+    --term-bg: var(--wterm-bg);
+    --term-fg: var(--wterm-fg);
+    --term-cursor: var(--wterm-fg);
     --keyboard-inset: var(--ssh-kb-inset, 0px);
     --stable-vh: 100vh;
     --visual-vh: var(--stable-vh, 100vh);
@@ -3470,6 +3474,11 @@ html.ssh-kb-open .terminal-page {
 }
 :root[data-wterm-theme] .terminal-container .wterm-wrapper ::selection {
     background: var(--wterm-selection);
+    color: var(--wterm-selection-fg, inherit);
+}
+:root[data-wterm-theme] .terminal-container .wterm-wrapper ::-moz-selection {
+    background: var(--wterm-selection);
+    color: var(--wterm-selection-fg, inherit);
 }
 .terminal-container.wterm-theme-animating .wterm-wrapper { filter: saturate(1.08); }
 :root[data-wterm-theme="light"] .terminal-container .wterm-wrapper,
@@ -3482,6 +3491,11 @@ html.ssh-kb-open .terminal-page {
 }
 :root[data-wterm-theme="light"] .terminal-container .wterm-wrapper ::selection {
     background: var(--wterm-selection);
+    color: var(--wterm-selection-fg, inherit);
+}
+:root[data-wterm-theme="light"] .terminal-container .wterm-wrapper ::-moz-selection {
+    background: var(--wterm-selection);
+    color: var(--wterm-selection-fg, inherit);
 }
 .terminal-container .wterm-wrapper::-webkit-scrollbar {
     width: auto;
@@ -14388,4 +14402,28 @@ html {
 @media (max-width: 760px) {
     .ui-toggle-select-trigger { min-height: 44px; }
     .ui-toggle-select-option { min-height: 44px; padding: 12px; }
+}
+
+
+/* Terminal solid background / selection overrides — independent of colorScheme */
+:root[data-wterm-solid-bg="1"] {
+    --wterm-bg: var(--wterm-custom-solid-bg) !important;
+    --term-bg: var(--wterm-custom-solid-bg);
+}
+:root[data-wterm-solid-bg="1"] .terminal-container,
+:root[data-wterm-solid-bg="1"] .terminal-container .wterm-wrapper,
+:root[data-wterm-solid-bg="1"] .terminal-container .wterm-wrapper.wterm {
+    background: var(--wterm-custom-solid-bg) !important;
+    background-color: var(--wterm-custom-solid-bg) !important;
+}
+/* Image custom theme + solid: solid becomes the dimming overlay base */
+:root[data-wterm-theme^="custom-"][data-wterm-solid-bg="1"] .terminal-container .wterm-wrapper,
+:root[data-wterm-theme^="custom-"][data-wterm-solid-bg="1"] .terminal-container .wterm-wrapper.wterm {
+    background: var(--wterm-custom-bg-overlay-from-solid, var(--wterm-custom-solid-bg)) !important;
+    background-color: var(--wterm-custom-bg-overlay-from-solid, var(--wterm-custom-solid-bg)) !important;
+}
+:root[data-wterm-selection-custom="1"] .terminal-container .wterm-wrapper ::selection,
+:root[data-wterm-selection-custom="1"] .terminal-container .wterm-wrapper ::-moz-selection {
+    background: var(--wterm-selection) !important;
+    color: var(--wterm-selection-fg, inherit) !important;
 }

@@ -1,5 +1,5 @@
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
-import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
+import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
 
@@ -579,6 +579,30 @@ function normalizeTerminalFontColors(appearance = {}) {
     const lightRaw = normalizeHexInputClient(colors.light || '', '');
     return { dark, light: lightRaw || (dark ? invertHexColorClient(dark) : '') };
 }
+/** Solid terminal canvas color (independent of frost/lava/custom colorScheme). */
+function normalizeTerminalSolidBgColors(appearance = {}) {
+    const colors = appearance.terminalSolidBgColors || appearance.terminalBgColors || {};
+    const dark = normalizeHexInputClient(colors.dark || '', '');
+    const lightRaw = normalizeHexInputClient(colors.light || '', '');
+    return { dark, light: lightRaw || (dark ? invertHexColorClient(dark) : '') };
+}
+/**
+ * Selection highlight: background + foreground (DOM ::selection / --wterm-selection).
+ * Works on every wterm theme (default/light/custom-*), not only colorScheme=custom.
+ */
+function normalizeTerminalSelectionColors(appearance = {}) {
+    const sel = appearance.terminalSelection || {};
+    const bgIn = sel.bg || {};
+    const fgIn = sel.fg || {};
+    const bgDark = normalizeHexInputClient(bgIn.dark || sel.bgDark || '', '');
+    const bgLight = normalizeHexInputClient(bgIn.light || sel.bgLight || '', '') || bgDark;
+    const fgDark = normalizeHexInputClient(fgIn.dark || sel.fgDark || '', '');
+    const fgLight = normalizeHexInputClient(fgIn.light || sel.fgLight || '', '') || fgDark;
+    return {
+        bg: { dark: bgDark, light: bgLight },
+        fg: { dark: fgDark, light: fgLight },
+    };
+}
 function setColorPickerEnabled(input, enabled) {
     if (!input) return;
     input.disabled = !enabled;
@@ -600,6 +624,23 @@ async function saveAppearance(e) {
     const terminalFontDark = terminalFontEnabled ? normalizeHexInputClient($('#terminalFontColor')?.value || '', '') : '';
     const terminalFontLightRaw = terminalFontEnabled ? normalizeHexInputClient($('#terminalFontColorLight')?.value || '', '') : '';
     const terminalFontColors = terminalFontEnabled && terminalFontDark ? { dark: terminalFontDark, light: terminalFontLightRaw || invertHexColorClient(terminalFontDark) } : { dark: '', light: '' };
+    const terminalSolidBgEnabled = !!$('#terminalSolidBgEnabled')?.checked;
+    const solidDark = terminalSolidBgEnabled ? normalizeHexInputClient($('#terminalSolidBgDark')?.value || '', '') : '';
+    const solidLightRaw = terminalSolidBgEnabled ? normalizeHexInputClient($('#terminalSolidBgLight')?.value || '', '') : '';
+    const terminalSolidBgColors = terminalSolidBgEnabled && solidDark
+        ? { dark: solidDark, light: solidLightRaw || invertHexColorClient(solidDark) }
+        : { dark: '', light: '' };
+    const terminalSelectionEnabled = !!$('#terminalSelectionEnabled')?.checked;
+    const selBgDark = terminalSelectionEnabled ? normalizeHexInputClient($('#terminalSelectionBgDark')?.value || '', '') : '';
+    const selBgLight = terminalSelectionEnabled ? normalizeHexInputClient($('#terminalSelectionBgLight')?.value || '', '') : '';
+    const selFgDark = terminalSelectionEnabled ? normalizeHexInputClient($('#terminalSelectionFgDark')?.value || '', '') : '';
+    const selFgLight = terminalSelectionEnabled ? normalizeHexInputClient($('#terminalSelectionFgLight')?.value || '', '') : '';
+    const terminalSelection = terminalSelectionEnabled && (selBgDark || selFgDark)
+        ? {
+            bg: { dark: selBgDark, light: selBgLight || selBgDark },
+            fg: { dark: selFgDark, light: selFgLight || selFgDark },
+        }
+        : { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } };
     const appearance = {
         ...previous,
         brandName: $('#brandNameInput').value.trim() || DEFAULT_BRAND_NAME,
@@ -620,6 +661,8 @@ async function saveAppearance(e) {
         },
         terminalFontColor: terminalFontColors.dark,
         terminalFontColors,
+        terminalSolidBgColors,
+        terminalSelection,
         rdp: {
             ...(previous.rdp || {}),
             defaultResolution: $('#rdpDefaultResolution')?.value || previous.rdp?.defaultResolution || '1920x1080',
@@ -641,7 +684,7 @@ async function saveAppearance(e) {
     toast('个性化设置已保存');
 }
 async function resetAppearance() {
-    const appearance = { ...getAppearance(), brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
+    const appearance = { ...getAppearance(), brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
     if (myIdentity.role === 'admin') {
         settings = await savePlatformSettings('appearance', { appearance });
     } else {
@@ -698,6 +741,38 @@ function syncAppearanceSchemeControls(appearance = getAppearance()) {
         if (!lightRaw) $('#terminalFontColorLight').value = '';
         setColorPickerEnabled($('#terminalFontColorLight'), terminalFontEnabled);
     }
+    // Solid terminal background (all color schemes)
+    const solidBg = normalizeTerminalSolidBgColors(appearance);
+    const solidEnabled = !!(solidBg.dark || solidBg.light);
+    if ($('#terminalSolidBgEnabled')) $('#terminalSolidBgEnabled').checked = solidEnabled;
+    if ($('#terminalSolidBgDark')) {
+        $('#terminalSolidBgDark').value = solidBg.dark || '#0a0a0a';
+        setColorPickerValue($('#terminalSolidBgDark'), solidBg.dark || '#0a0a0a');
+        setColorPickerEnabled($('#terminalSolidBgDark'), solidEnabled);
+    }
+    if ($('#terminalSolidBgLight')) {
+        $('#terminalSolidBgLight').value = solidBg.light || (solidBg.dark ? invertHexColorClient(solidBg.dark) : '');
+        setColorPickerValue($('#terminalSolidBgLight'), $('#terminalSolidBgLight').value || '#f5f5f7');
+        setColorPickerEnabled($('#terminalSolidBgLight'), solidEnabled);
+    }
+    // Selection bg + fg (all color schemes / all wterm themes)
+    const sel = normalizeTerminalSelectionColors(appearance);
+    const selEnabled = !!(sel.bg.dark || sel.bg.light || sel.fg.dark || sel.fg.light);
+    if ($('#terminalSelectionEnabled')) $('#terminalSelectionEnabled').checked = selEnabled;
+    const selFields = [
+        ['terminalSelectionBgDark', sel.bg.dark || '#0a84ff'],
+        ['terminalSelectionBgLight', sel.bg.light || sel.bg.dark || '#007aff'],
+        ['terminalSelectionFgDark', sel.fg.dark || '#ffffff'],
+        ['terminalSelectionFgLight', sel.fg.light || sel.fg.dark || '#ffffff'],
+    ];
+    selFields.forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.value = val;
+        setColorPickerValue(el, val);
+        setColorPickerEnabled(el, selEnabled);
+    });
+
     const rdp = appearance.rdp || {};
     if ($('#rdpDefaultResolution')) $('#rdpDefaultResolution').value = rdp.defaultResolution || '1920x1080';
     if ($('#rdpDefaultQuality')) $('#rdpDefaultQuality').value = normalizeRdpDefaultQuality(rdp.defaultQuality || 'balanced');
@@ -937,6 +1012,18 @@ function setupAppearanceControls() {
         setColorPickerEnabled($('#terminalFontColor'), enabled);
         setColorPickerEnabled($('#terminalFontColorLight'), enabled);
     });
+    const bindTerminalColorEnable = (checkId, inputIds) => {
+        $(`#${checkId}`)?.addEventListener('change', () => {
+            const enabled = !!$(`#${checkId}`)?.checked;
+            inputIds.forEach((id) => setColorPickerEnabled(document.getElementById(id), enabled));
+        });
+    };
+    bindTerminalColorEnable('terminalSolidBgEnabled', ['terminalSolidBgDark', 'terminalSolidBgLight']);
+    bindTerminalColorEnable('terminalSelectionEnabled', [
+        'terminalSelectionBgDark', 'terminalSelectionBgLight',
+        'terminalSelectionFgDark', 'terminalSelectionFgLight',
+    ]);
+
     $('#terminalBgOpacity')?.addEventListener('input', () => { if ($('#terminalBgOpacityValue')) $('#terminalBgOpacityValue').textContent = `${Math.round(Number($('#terminalBgOpacity').value || 0.35) * 100)}%`; });
     $('#terminalBgBlur')?.addEventListener('input', () => { if ($('#terminalBgBlurValue')) $('#terminalBgBlurValue').textContent = `${Math.round(Number($('#terminalBgBlur').value || 0))}px`; });
     $('#terminalBgFile')?.addEventListener('change', async (e) => { try { const dataUrl = await readTerminalBackgroundAsDataUrl(e.target.files?.[0]); if (!dataUrl) return; $('#terminalBgDataUrl').value = dataUrl; $('#terminalBgSource').value = 'upload'; syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { type: 'upload', url: dataUrl, fit: $('#terminalBgFit')?.value || 'cover', opacity: Number($('#terminalBgOpacity')?.value || 0.35), blur: Number($('#terminalBgBlur')?.value || 0) } }); toast('终端背景已载入，保存外观后生效'); } catch (err) { e.target.value = ''; toast(err.message); } });
@@ -7455,7 +7542,7 @@ async function loadSettings() {
     $('#terminalMinimizedKeepAlive').value = String(getConfiguredMinimizedKeepAlive());
     $('#terminalSmartbarOrder').value = getTerminalSmartbarOrder();
     $('#terminalShortcutPlatform').value = getTerminalShortcutPlatform();
-    settings.appearance = { brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, theme: 'auto', autoThemeEnabled: true, colorScheme: 'frost', customThemeMode: 'dark', customColors: normalizeCustomThemeColors(), customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, ...(settings.appearance || {}) };
+    settings.appearance = { brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, theme: 'auto', autoThemeEnabled: true, colorScheme: 'frost', customThemeMode: 'dark', customColors: normalizeCustomThemeColors(), customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, ...(settings.appearance || {}) };
     settings.ai = normalizeAiSettings(settings.ai || {});
     applyAppearance(settings.appearance);
     applyTheme(getPreferredTheme());
