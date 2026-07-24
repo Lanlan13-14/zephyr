@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="modulepreload" href="app.js?v=20260724-ephemeral3">
-    <link rel="modulepreload" href="theme-runtime.js?v=20260724-ephemeral3">
-    <link rel="stylesheet" href="style.css?v=20260724-ephemeral3">
+    <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260724-sshkey2">
+    <link rel="modulepreload" href="app.js?v=20260724-sshkey2">
+    <link rel="modulepreload" href="theme-runtime.js?v=20260724-sshkey2">
+    <link rel="stylesheet" href="style.css?v=20260724-sshkey2">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -928,8 +929,11 @@
         </form>
     </div>
 
+    <!-- SSH 密钥弹窗专用遮罩：背景缓慢虚化由 zephyr-motion 驱动 --sshkey-scrim-blur -->
+    <div id="sshKeyModalScrim" aria-hidden="true"></div>
     <div class="modal-backdrop" id="sshKeyModal" aria-hidden="true">
         <form class="connection-modal ssh-key-modal" id="sshKeyForm">
+            <div id="sshKeyModalInner" class="ssh-key-modal-inner">
             <div class="modal-head"><h2 id="sshKeyModalTitle">新增 SSH 密钥</h2><button type="button" class="icon-btn" id="sshKeyCloseBtn" aria-label="关闭 SSH 密钥弹窗">✕</button></div>
             <input type="hidden" id="sshKeyId">
             <div class="form-group"><label for="sshKeyName">密钥名称</label><input id="sshKeyName" required placeholder="例如：生产环境 deploy key"></div>
@@ -938,6 +942,7 @@
             <div class="form-group"><label for="sshKeyRemark">备注</label><input id="sshKeyRemark" placeholder="可选"></div>
             <p class="field-hint">编辑时留空或保留 ****** 不会覆盖已保存的私钥与口令。</p>
             <div class="modal-actions"><button class="btn" type="button" id="sshKeyCancelBtn">取消</button><button class="btn btn-primary" type="submit" id="saveSshKeyBtn">保存 SSH 密钥</button></div>
+            </div>
         </form>
     </div>
 
@@ -955,7 +960,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260724-ephemeral3" type="module"></script>
+    <script src="app.js?v=20260724-sshkey2" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

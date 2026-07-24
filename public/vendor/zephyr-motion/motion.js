@@ -100,15 +100,19 @@ function defaultFor(ch) {
   return CHANNEL_DEFAULTS[ch] ?? 0;
 }
 
-/** Apply radius compensate: keep VISUAL corner radius continuous under FLIP scale. */
+/** Apply radius compensate: keep VISUAL corner radius continuous under FLIP scale.
+ *  Non-uniform scaleX ≠ scaleY (button→card) MUST use elliptical CSS radius
+ *  (rx / ry). Compensating only by scaleX is what made the last frame jump
+ *  from pill to rectangle when the surface landed on the button. */
 function paintRadius(st) {
   const el = st.el;
   const visual = st.visualRadius;
   if (visual == null) return;
   if (st.radiusCompensate) {
     const sx = Math.max(0.001, Math.abs(st.tv.scaleX ?? st.tv.scale ?? 1));
-    // CSS radius is in pre-transform space; divide so painted corner ≈ visual px.
-    el.style.borderRadius = `${visual / sx}px`;
+    const sy = Math.max(0.001, Math.abs(st.tv.scaleY ?? st.tv.scale ?? 1));
+    // CSS: border-radius: <horizontal> / <vertical> — screen-space corner ≈ visual px
+    el.style.borderRadius = `${visual / sx}px / ${visual / sy}px`;
   } else {
     el.style.borderRadius = `${visual}px`;
   }
@@ -202,7 +206,17 @@ export const Motion = {
   /** Boot the engine (idempotent). Await before first frame-critical use. */
   init({ capacity = 256 } = {}) {
     pool.capacity = capacity;
-    return engine.init(capacity);
+    return engine.init(capacity).then(() => {
+      // Auto-boot may have already initialized the engine with a different
+      // capacity (index.js uses 256). pool.alloc must never hand out ids the
+      // backend's frame buffer can't hold — clamp to the live capacity.
+      const ex = engine._b?.ex;
+      const actual = typeof ex?.engine_capacity === 'function' ? ex.engine_capacity() : capacity;
+      if (Number.isFinite(actual) && actual > 0) {
+        pool.capacity = Math.min(pool.capacity, actual);
+      }
+      return engine;
+    });
   },
 
   get ready() { return engine.ready; },
@@ -1914,8 +1928,19 @@ export const Motion = {
    *   elevVar, shapePreset, contentPreset, scrimPreset, homePreset, iconPreset
    */
   /**
-   * Clone icon face into surface. Glyph uses inverse scale via --motion-sx/sy
-   * so non-uniform FLIP never stretches the emoji (elegant continuous surface).
+   * Pixel-perfect twin of the source icon/button, planted as a continuous
+   * surface over the morphing card. iOS SpringBoard does NOT morph a vaguely
+   * similar blob — it morphs a surface that IS the icon until chrome crossfades.
+   *
+   * Structure:
+   *   [data-motion-source-visual]  absolute inset 0, inherits surface radius
+   *     └ twin (cloneNode of icon)  fixed to icon's layout size, inverse-scaled
+   *                                 so non-uniform FLIP never stretches glyphs
+   *
+   * Full computed paint (bg / color / font / padding / shadow / border) is
+   * copied so the twin is indistinguishable from the live button.
+   * Margin is forced to 0 — theme classes like .btn-primary { margin-top: 8px }
+   * would otherwise shift the twin off the true button rect and flash at handoff.
    */
   _ensureSourceVisual(surfaceEl, iconEl) {
     if (!surfaceEl || !iconEl) return null;
@@ -1926,44 +1951,97 @@ export const Motion = {
       surfaceEl.insertBefore(layer, surfaceEl.firstChild);
     }
     const cs = getComputedStyle(iconEl);
-    // z-index 1 under app chrome (contentEl) so it never covers UI after open.
-    // pointer-events none — never blocks taps on the app surface.
+    const ir = iconEl.getBoundingClientRect();
+    // Use subpixel-accurate rect size so twin covers the live button exactly.
+    const iw = Math.max(1, ir.width);
+    const ih = Math.max(1, ir.height);
+    const bg = (cs.backgroundImage && cs.backgroundImage !== 'none')
+      ? cs.background
+      : (cs.backgroundColor || 'transparent');
+
+    // Layer fills the morphing surface; radius inherits compensated surface radius.
+    // Background matches button so any 1px peek under twin never flashes card chrome.
     layer.style.cssText = [
       'position:absolute', 'inset:0', 'z-index:1', 'pointer-events:none',
       'display:flex', 'align-items:center', 'justify-content:center',
       'overflow:hidden', 'border-radius:inherit',
       'will-change:opacity',
+      `background:${bg}`,
     ].join(';');
-    layer.style.background = (cs.backgroundImage && cs.backgroundImage !== 'none')
-      ? cs.background
-      : (cs.backgroundColor || 'transparent');
-    layer.innerHTML = '';
-    const face = document.createElement('div');
-    face.dataset.motionSourceFace = '1';
-    // Inverse scale: glyph keeps screen-space size while surface FLIPs
-    face.style.cssText = [
-      'display:flex', 'flex-direction:column', 'align-items:center',
-      'justify-content:center', 'gap:2px',
+
+    // Twin: exact DOM + paint of the source control
+    let twin = layer.querySelector(':scope > [data-motion-source-face]');
+    if (!twin) {
+      twin = iconEl.cloneNode(true);
+      twin.dataset.motionSourceFace = '1';
+      // Strip interactive / a11y so it never steals focus or fire events
+      twin.removeAttribute('id');
+      twin.removeAttribute('name');
+      twin.removeAttribute('href');
+      twin.tabIndex = -1;
+      twin.setAttribute('aria-hidden', 'true');
+      twin.querySelectorAll?.('button,a,input,textarea,select,[tabindex]').forEach((n) => {
+        n.removeAttribute('id');
+        n.tabIndex = -1;
+        n.setAttribute('aria-hidden', 'true');
+      });
+      layer.innerHTML = '';
+      layer.appendChild(twin);
+    } else if (twin.innerHTML !== iconEl.innerHTML) {
+      twin.innerHTML = iconEl.innerHTML;
+    }
+
+    // Keep theme classes for token resolution, but paint is driven by inline
+    // computed styles so cascade order (e.g. .btn-primary margin-top) can't
+    // pull the twin off the true button box.
+    if (iconEl.className && typeof iconEl.className === 'string') {
+      twin.className = iconEl.className;
+    }
+
+    twin.style.cssText = [
+      'box-sizing:border-box',
+      `width:${iw}px`, `height:${ih}px`,
+      'flex:0 0 auto', 'max-width:none', 'max-height:none',
+      // CRITICAL: kill margin from theme classes (.btn-primary { margin-top: 8px })
+      'margin:0', 'margin-top:0', 'margin-bottom:0', 'margin-left:0', 'margin-right:0',
+      // Inverse scale keeps the twin unstretched while surface FLIPs non-uniformly
       'transform:scale(calc(1 / max(var(--motion-sx, 1), 0.001)), calc(1 / max(var(--motion-sy, 1), 0.001)))',
       'transform-origin:center center',
-      `font-size:${cs.fontSize || '26px'}`,
-      'line-height:1', 'color:inherit',
+      'pointer-events:none', 'cursor:default',
+      // Full paint copy — pixel match, not "roughly similar"
+      `background:${bg}`,
+      `background-color:${cs.backgroundColor}`,
+      `color:${cs.color}`,
+      `font:${cs.font}`,
+      `font-size:${cs.fontSize}`,
+      `font-weight:${cs.fontWeight}`,
+      `font-family:${cs.fontFamily}`,
+      `letter-spacing:${cs.letterSpacing}`,
+      `line-height:${cs.lineHeight}`,
+      `text-align:${cs.textAlign}`,
+      `padding:${cs.paddingTop} ${cs.paddingRight} ${cs.paddingBottom} ${cs.paddingLeft}`,
+      `border-style:${cs.borderStyle}`,
+      `border-width:${cs.borderTopWidth} ${cs.borderRightWidth} ${cs.borderBottomWidth} ${cs.borderLeftWidth}`,
+      `border-color:${cs.borderTopColor} ${cs.borderRightColor} ${cs.borderBottomColor} ${cs.borderLeftColor}`,
+      `border-radius:${cs.borderRadius}`,
+      `box-shadow:${cs.boxShadow}`,
+      `display:${cs.display === 'inline' ? 'inline-flex' : (cs.display || 'flex')}`,
+      `align-items:${cs.alignItems || 'center'}`,
+      `justify-content:${cs.justifyContent || 'center'}`,
+      `gap:${cs.gap || '0px'}`,
+      `white-space:${cs.whiteSpace || 'nowrap'}`,
+      'overflow:hidden',
+      // Kill transitions / press scale so twin never fights the spring
+      'transition:none !important', 'animation:none !important',
+      'opacity:1', 'filter:none', 'outline:none',
+      // Avoid iOS tap highlight / selection flash on the twin
+      '-webkit-tap-highlight-color:transparent', 'user-select:none',
     ].join(';');
-    // Copy only text/emoji children, not nested interactive chrome
-    face.textContent = (iconEl.innerText || iconEl.textContent || '').trim().slice(0, 8) || iconEl.textContent || '';
-    // Prefer first emoji-like char nodes
-    if (iconEl.childNodes.length) {
-      face.innerHTML = '';
-      iconEl.childNodes.forEach((n) => {
-        if (n.nodeType === 3) face.appendChild(document.createTextNode(n.textContent));
-        else if (n.nodeType === 1 && !n.closest?.('button')) {
-          const c = n.cloneNode(true);
-          if (c.style) c.style.transform = '';
-          face.appendChild(c);
-        }
-      });
-    }
-    layer.appendChild(face);
+    // Re-assert margin after class-driven stylesheet could race
+    twin.style.setProperty('margin', '0', 'important');
+    twin.style.setProperty('margin-top', '0', 'important');
+    twin.style.setProperty('transform',
+      'scale(calc(1 / max(var(--motion-sx, 1), 0.001)), calc(1 / max(var(--motion-sy, 1), 0.001)))');
     layer.style.opacity = '1';
     return layer;
   },
@@ -2173,7 +2251,9 @@ export const Motion = {
     if (sourceVisual) {
       jobs.push(this.to(sourceVisual, { opacity: 1 }, {
         preset: contentPreset,
-        delay: 0.06,
+        // 源面（像素级 twin）在几何中段就接回——落点时 twin 已完全盖住表面，
+        // release 交换时零跳变。0.12 太晚，最后一帧才露脸会"突然变圆角"。
+        delay: Number.isFinite(Number(opts.faceInDelay)) ? Number(opts.faceInDelay) : 0.04,
       }));
     }
     if (scrim) jobs.push(this.to(scrim, { opacity: 0 }, { preset: scrimPreset }));

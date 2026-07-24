@@ -597,11 +597,14 @@ function iosOpts(icon) {
     homeBlur: 0,
     contentDelay: 0.16,
     faceDelay: 0.05,
+    faceInDelay: 0.04, // twin 中段接回，落点前已盖满
     radiusFrom: side * 0.225,
     radiusTo: 0,
     hideSource: true,
-    restoreSource: true,
-    hideSurface: true,
+    // 交接放 close 收尾做：restore 先于 hide，避免 clearSourceVisual 先删 twin 闪一下
+    restoreSource: false,
+    hideSurface: false,
+    clearSourceVisual: false,
     cloneSource: true,
   };
 }
@@ -619,6 +622,19 @@ function restoreAllAppIcons() {
   });
 }
 
+/** 原子交接：先还原图标，reflow，再卸 surface/twin —— 无 both-gone 空窗帧 */
+function finishIosClose() {
+  restoreAllAppIcons();
+  void iosSurface.offsetHeight;
+  iosSurface.querySelector?.(':scope > [data-motion-source-visual]')?.remove();
+  try { Motion.release?.(iosSurface); if (iosChrome) Motion.release?.(iosChrome); } catch {}
+  if (!iosOpen) {
+    iosSurface.style.display = 'none';
+    iosSurface.style.visibility = 'hidden';
+    iosSurface.style.pointerEvents = 'none';
+  }
+}
+
 function openIosApp(icon) {
   if (!icon) icon = document.querySelector('.app-icon');
   // If another icon was mid-open, restore everyone first
@@ -628,25 +644,27 @@ function openIosApp(icon) {
     'linear-gradient(180deg, rgba(255,255,255,.08), transparent 28%), linear-gradient(165deg,#1c1c1e 0%,#0c0c0e 100%)';
   iosSurface.style.display = 'block';
   iosSurface.hidden = false;
+  iosSurface.style.visibility = 'visible';
+  iosSurface.style.pointerEvents = 'auto';
   if (iosChrome) {
     Motion.stop(iosChrome);
     Motion.set(iosChrome, { opacity: 0 });
   }
   void iosSurface.offsetWidth;
   iosOpen = true;
+  // 打开按压（Apple/Emil scale 0.96）—— 点击当帧反馈
+  try { Motion.press?.(icon, { scale: 0.96, preset: 'snappy' }); } catch {}
   Motion.iosAppOpen(iosSurface, icon, iosOpts(icon));
 }
 async function closeIosApp() {
   if (!activeIcon) activeIcon = document.querySelector('.app-icon');
   iosOpen = false;
+  const icon = activeIcon;
   try {
-    await Motion.iosAppClose(iosSurface, activeIcon, iosOpts(activeIcon));
+    await Motion.iosAppClose(iosSurface, icon, iosOpts(icon));
   } finally {
-    // Guaranteed: icons never stay opacity:0 after close / interrupt
-    restoreAllAppIcons();
-  }
-  if (!iosOpen) {
-    iosSurface.style.display = 'none';
+    // 同帧交接：图标先亮，再卸 twin/surface（与产线 sshkey finish 一致）
+    requestAnimationFrame(() => finishIosClose());
   }
 }
 

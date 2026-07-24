@@ -36,7 +36,10 @@ class WasmBackend {
   }
   frameBuffer() {
     // Go/TinyGo may grow memory, detaching the old ArrayBuffer.
-    if (this._buf.buffer !== this.mem.buffer) this._rebuf();
+    // ALSO: the constructor runs _rebuf() before engine_init() allocates the
+    // frame buffer, so the cached view can be zero-length forever (identity
+    // check alone never fires — same ArrayBuffer). Detect that and re-buffer.
+    if (this._buf.buffer !== this.mem.buffer || this._buf.length === 0) this._rebuf();
     return this._buf;
   }
   configure(id, r, d) { this.ex.engine_configure(id, r, d); }
@@ -186,7 +189,12 @@ export class Engine {
       }
       this._b = backend;
       if (backend.kind === 'js') backend.init(capacity);
-      else backend.ex.engine_init(capacity);
+      else {
+        backend.ex.engine_init(capacity);
+        // engine_init allocates the frame buffer — refresh the cached view so
+        // frameBuffer() reads live spring state from frame one.
+        backend._rebuf?.();
+      }
       this._ready = true;
       this._queue.splice(0).forEach(fn => fn());
       return this;

@@ -295,6 +295,7 @@ body.app-body.theme-ripple-active::before {
         filter 260ms ease;
 }
 #addConnectionBtn.connection-pressing,
+#addSshKeyBtn.connection-pressing,
 .connection-list [data-edit].connection-pressing {
     --connection-press-scale: 0.965;
     transition:
@@ -2342,6 +2343,48 @@ body.app-body::after {
     content: none;
     display: none;
 }
+
+/* ── sshkey1：SSH 密钥弹窗接入 zephyr-motion ─────────────────────────── */
+/* 背景：缓慢虚化 + 轻压暗。模糊量由引擎逐帧写 --sshkey-scrim-blur；
+   压暗（opacity）由 CSS 慢过渡兜底 —— 两条通道都刻意拉长到 ~0.7-0.9s。 */
+#sshKeyModalScrim {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    visibility: hidden;
+    pointer-events: none;
+    background: rgba(0, 0, 0, .16);
+    -webkit-backdrop-filter: blur(var(--sshkey-scrim-blur, 0px));
+    backdrop-filter: blur(var(--sshkey-scrim-blur, 0px));
+    opacity: 0;
+    transition:
+        opacity 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+        -webkit-backdrop-filter 0.55s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+        backdrop-filter 0.55s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* 引擎接管卡片几何：杀掉 CSS 过渡（否则每帧 transform 被浏览器二次平滑）。
+   注意：transform/opacity 不能用 !important —— 引擎靠 inline style 覆盖。
+   position:relative 给 iosAppOpen 的 clone 源面（absolute inset:0）做锚点。 */
+#sshKeyModal.sshkey1 .ssh-key-modal {
+    position: relative;
+    opacity: 1;
+    transform: none;
+    filter: none;
+    transition: none !important;
+    will-change: transform, border-radius;
+    backface-visibility: hidden;
+}
+/* contentEl：iosAppOpen 里 opacity 0 → 延迟淡入（分轨） */
+.ssh-key-modal-inner { display: block; }
+/* 虚化进行中：遮罩吃掉点击，防止误触底部 */
+body.sshkey1-blurring #sshKeyModalScrim { pointer-events: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+    #sshKeyModalScrim { transition-duration: 0.01s; }
+}
+/* ── /sshkey1 ─────────────────────────────────────────────────────────── */
+
 body.connection-home-blur .app-shell {
     transform: scale(.92) translateZ(0);
 }

@@ -8204,12 +8204,100 @@ async function openProxySecret(id, trigger = null) {
     toast('已载入代理密码');
 }
 function resetSshKeyForm() { $('#sshKeyForm').reset(); $('#sshKeyId').value = ''; $('#sshKeyPrivateKey').value = ''; $('#sshKeyPassphrase').value = ''; }
+/* ── sshkey1：SSH 密钥弹窗接入 zephyr-motion ─────────────────────────── */
+/* 演示页（/motion-feel.html）里 iOS 打开动画用的就是 Motion.morph / morphTo
+   这条 FLIP 弹簧路径；生产里只把「＋ 新增 SSH 密钥」按钮接到这条路径上，
+   范围严格限定在 SSH 密钥弹窗：连接弹窗 / proxy / snippet 全部不动。
+   引擎走动态 import 且 try/catch 兜底，挂了自动回退老 class 路径。 */
+const sshKeyMotion = {
+    engine: null,
+    failed: false,
+    animating: false,
+    _pressBound: false,
+    _ensure() {
+        if (this.engine || this.failed) return Promise.resolve(this.engine);
+        return import('./vendor/zephyr-motion/index.js?v=20260724-sshkey2')
+            .then(async (mod) => {
+                const Motion = mod?.Motion || window.Motion;
+                if (!Motion) throw new Error('Motion missing from zephyr-motion module');
+                // index.js 已 auto-boot；await 让 wasm 就绪（幂等）。
+                try { await Motion.init({ capacity: 256 }); } catch {}
+                this.engine = Motion;
+                // 打开按压反馈（Apple/Emil：scale 0.97 on pointerdown）
+                if (!this._pressBound) {
+                    const btn = document.getElementById('addSshKeyBtn');
+                    if (btn && Motion.press) {
+                        Motion.press(btn, { scale: 0.96, preset: 'snappy' });
+                        this._pressBound = true;
+                    }
+                }
+                console.debug('[sshkey1]', 'motion ready', { wasm: !!Motion.usingWasm });
+                return Motion;
+            })
+            .catch((err) => {
+                console.warn('[sshkey1] motion engine unavailable, CSS fallback:', err?.message || err);
+                this.failed = true;
+                return null;
+            });
+    },
+    reset() { this.engine = null; this.failed = false; this.animating = false; this._pressBound = false; },
+};
+
+/* 背景缓慢虚化：opacity 走 CSS 慢过渡兜底（0.72s），blur 由引擎逐帧写
+   --sshkey-scrim-blur。引擎不在则 CSS 过渡接管 blur（0.88s），仍"缓慢"。 */
+let sshKeyScrimGen = 0;
+function sshKeyScrimSet(open, Motion) {
+    const scrim = document.getElementById('sshKeyModalScrim');
+    if (!scrim) return;
+    const gen = ++sshKeyScrimGen;
+    document.body.classList.toggle('sshkey1-blurring', !!open);
+    if (open) {
+        scrim.style.visibility = 'visible';
+        void scrim.offsetWidth;
+        scrim.style.opacity = '1';
+        if (Motion?.cssVars) {
+            // 引擎逐帧覆盖 --sshkey-scrim-blur；CSS transition 自动失活。
+            // 对齐参考时长：进 0.42 / 出 0.30，不再拖 0.55-0.88s
+            Motion.cssVars(scrim, { '--sshkey-scrim-blur': 7 }, {
+                units: { '--sshkey-scrim-blur': 'px' },
+                preset: { response: 0.42, damping: 1 },
+            }).catch(() => { scrim.style.setProperty('--sshkey-scrim-blur', '7px'); });
+        } else {
+            // 触发 CSS backdrop-filter 慢过渡（0.55s）
+            scrim.style.setProperty('--sshkey-scrim-blur', '7px');
+        }
+    } else {
+        scrim.style.opacity = '0';
+        if (Motion?.cssVars) {
+            Motion.cssVars(scrim, { '--sshkey-scrim-blur': 0 }, {
+                units: { '--sshkey-scrim-blur': 'px' },
+                preset: { response: 0.30, damping: 1 },
+            }).catch(() => { scrim.style.setProperty('--sshkey-scrim-blur', '0px'); });
+        } else {
+            scrim.style.setProperty('--sshkey-scrim-blur', '0px');
+        }
+        // 等过渡收尾再藏 scrim（visibility 不参与 transition，避免截断）
+        window.setTimeout(() => {
+            if (gen !== sshKeyScrimGen) return; // 被新一次 open/close 抢占
+            if (scrim.style.opacity === '0') scrim.style.visibility = 'hidden';
+            document.body.classList.remove('sshkey1-blurring');
+        }, 560);
+    }
+}
+
+/* 按钮圆角：优先取真值，取不到退回胶囊半径 */
+function sshKeyBtnRadius(el, rect) {
+    const r = parseFloat(getComputedStyle(el)?.borderRadius);
+    if (Number.isFinite(r) && r > 0) return r;
+    return Math.min(rect.width, rect.height) / 2;
+}
+
 function openSshKeyModal(sshKey = null, trigger = null) {
     window.clearTimeout(closeSshKeyModal._timer);
-    ++sshKeyModalCycle;
+    const cycle = ++sshKeyModalCycle;
     const modal = $('#sshKeyModal');
     if (!modal || (modal.classList.contains('show') && !modal.classList.contains('closing'))) return;
-    modal.classList.remove('show', 'closing', 'app-visible');
+    const card = $('#sshKeyForm');
     resetSshKeyForm();
     $('#sshKeyModalTitle').textContent = sshKey ? '编辑 SSH 密钥' : '新增 SSH 密钥';
     $('#saveSshKeyBtn').textContent = sshKey ? '保存修改' : '保存 SSH 密钥';
@@ -8219,29 +8307,173 @@ function openSshKeyModal(sshKey = null, trigger = null) {
     $('#sshKeyPassphrase').value = sshKey?.hasPassphrase ? '******' : '';
     $('#sshKeyRemark').value = sshKey?.remark || '';
     sshKeyModalTrigger = trigger || $('#addSshKeyBtn');
-    modal.classList.add('show');
-    modal.setAttribute('aria-hidden', 'false');
-    document.body.classList.add('connection-home-blur');
-    void modal.offsetWidth;
-    modal.classList.add('app-visible');
-    $('#sshKeyName')?.focus({ preventScroll: true });
+    const btnRect = sshKeyModalTrigger?.getBoundingClientRect?.() || null;
+
+    sshKeyMotion._ensure().then((Motion) => {
+        if (cycle !== sshKeyModalCycle) return; // 已被新一次 open/close 抢占
+        const useMotion = !!Motion && !!btnRect && btnRect.width > 2 && btnRect.height > 2;
+
+        if (!useMotion) {
+            // ── CSS 回退：原老路径，保留可用 ──
+            modal.classList.remove('show', 'closing', 'app-visible', 'sshkey1');
+            modal.classList.add('show');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('connection-home-blur');
+            void modal.offsetWidth;
+            modal.classList.add('app-visible');
+            sshKeyScrimSet(true, null);
+            $('#sshKeyName')?.focus({ preventScroll: true });
+            return;
+        }
+
+        // ── 引擎路径：与演示页 §B 完全同源（iosAppOpen：clone 源面 + shape/content 分轨） ──
+        modal.classList.remove('closing', 'app-visible');
+        document.body.classList.remove('connection-home-blur');
+        modal.classList.add('show', 'sshkey1');
+        modal.setAttribute('aria-hidden', 'false');
+        void modal.offsetWidth;
+        modal.classList.add('app-visible');
+
+        sshKeyScrimSet(true, Motion);
+
+        // 上次 close 的收尾溶解可能在按钮上留了 opacity 通道；先清再 hideSource
+        try { Motion.stop(sshKeyModalTrigger); Motion.release(sshKeyModalTrigger); } catch {}
+
+        const inner = $('#sshKeyModalInner');
+        Motion.iosAppOpen(card, sshKeyModalTrigger, {
+            contentEl: inner,      // 表单内容延迟淡入（content 轨）
+            scrim: null,           // scrim 模糊量走 sshKeyScrimSet（用户要缓慢虚化）
+            home: null,            // 不缩放 app-shell —— 动画只覆盖弹窗
+            cloneSource: true,     // 像素级 twin clone（引擎 _ensureSourceVisual）
+            hideSource: true,      // 飞行期间藏真按钮，关闭时 restore
+            radiusFrom: sshKeyBtnRadius(sshKeyModalTrigger, btnRect),
+            radiusTo: 22,          // var(--radius-xl)
+            contentDelay: 0.16,
+            faceDelay: 0.05,
+            faceInDelay: 0.04,     // close 时 twin 中段接回（见 iosAppClose）
+            shapePreset: 'shape',
+            contentPreset: 'content',
+        }).then(() => {
+            if (cycle !== sshKeyModalCycle) return;
+            card.style.overflow = ''; // 飞行期 hidden 裁剪，落地后恢复滚动
+        }).catch((err) => console.warn('[sshkey1] iosAppOpen failed', err));
+
+        // 输入焦点延迟到几何飞行 ~40% 处，避免动画期间键盘弹出抢节奏
+        window.setTimeout(() => {
+            if (cycle === sshKeyModalCycle && modal.classList.contains('show')) {
+                $('#sshKeyName')?.focus({ preventScroll: true });
+            }
+        }, 220);
+    });
 }
+
 function closeSshKeyModal() {
     const modal = $('#sshKeyModal');
     if (!modal?.classList.contains('show') || modal.classList.contains('closing')) return;
+    const card = $('#sshKeyForm');
+    const inner = $('#sshKeyModalInner');
+    const cycle = ++sshKeyModalCycle;
+    window.clearTimeout(closeSshKeyModal._timer);
+
+    // 抢占式：先标记 closing，禁止重复触发；aria 立刻置 true
     modal.classList.add('closing');
     modal.classList.remove('app-visible');
     modal.setAttribute('aria-hidden', 'true');
-    document.body.classList.remove('connection-home-blur');
-    window.clearTimeout(closeSshKeyModal._timer);
-    const cycle = ++sshKeyModalCycle;
-    closeSshKeyModal._timer = window.setTimeout(() => {
+
+    const Motion = sshKeyMotion.engine;
+    const trigger = sshKeyModalTrigger;
+    const btnRect = trigger?.getBoundingClientRect?.() || null;
+    const useMotion = !!Motion && !sshKeyMotion.failed
+        && modal.classList.contains('sshkey1')
+        && !!btnRect && btnRect.width > 2 && btnRect.height > 2;
+
+    const finish = () => {
         if (cycle !== sshKeyModalCycle) return;
-        modal.classList.remove('show', 'closing');
+        // 原子交接（同一次 paint，参考 iOS True Morph transitionend）：
+        // 1) 先把真按钮 opacity 还原（twin 仍盖在上面，用户看不到按钮出现）
+        // 2) 强制 reflow，让浏览器提交 opacity:1
+        // 3) 再卸 .show（display:none 掉卡片+twin）—— 底下按钮已可见
+        // 旧 bug：clearSourceVisual / remove show 先于 restoreSource → 一帧按钮=0 且 twin 没了 → 闪一下
+        if (Motion) {
+            try {
+                if (trigger) Motion.restoreSource(trigger);
+                Motion.restoreSources(card);
+            } catch {}
+        } else if (trigger?.style) {
+            trigger.style.opacity = '';
+            trigger.style.pointerEvents = '';
+            delete trigger.dataset.motionHidden;
+        }
+        // 强制提交「按钮已可见」样式，再卸 twin
+        void (trigger?.offsetHeight);
+        void card.offsetHeight;
+
+        modal.classList.remove('show', 'closing', 'sshkey1');
+
+        if (Motion) {
+            try {
+                // twin 随 modal 隐藏后再清，避免中途露底
+                card.querySelector?.(':scope > [data-motion-source-visual]')?.remove();
+                Motion.release(card);
+                if (inner) Motion.release(inner);
+            } catch {}
+        }
+        card.style.overflow = '';
+        card.style.visibility = '';
+        card.style.opacity = '';
+        card.style.filter = '';
+        card.style.transform = '';
+        card.style.borderRadius = '';
         resetSshKeyForm();
-        sshKeyModalTrigger?.focus?.();
+        // focus 延后一帧，避免 restore 当帧再触发一次 outline/闪动
+        const focusEl = trigger;
         sshKeyModalTrigger = null;
-    }, 180);
+        if (focusEl) {
+            requestAnimationFrame(() => {
+                try { focusEl.focus?.({ preventScroll: true }); } catch {}
+            });
+        }
+    };
+
+    if (useMotion) {
+        // 引擎路径：参考 iOS True Morph —— 快几何 + 像素 twin 盖到落点 +
+        // 同帧 restore 按钮再卸 surface。clearSourceVisual 必须 false：
+        // 否则 iosAppClose finally 先删 twin，finish 才 restore 按钮 → 闪一下。
+        sshKeyScrimSet(false, Motion);
+        // 关闭前确保 twin 已在且不透明通道干净（防止二次 close 时 twin 残留 opacity 0）
+        try {
+            const twinLayer = card.querySelector(':scope > [data-motion-source-visual]');
+            if (twinLayer) Motion.set(twinLayer, { opacity: Number(twinLayer.style.opacity) || 0 });
+        } catch {}
+        const closed = Motion.iosAppClose(card, trigger, {
+            contentEl: inner,
+            scrim: null,
+            home: null,
+            restoreSource: false,    // finish 原子交接
+            hideSurface: false,      // display 由 .show 控制
+            clearSourceVisual: false, // 关键：twin 留到 finish，覆盖到最后一帧
+            release: false,
+            radiusTo: sshKeyBtnRadius(trigger, btnRect),
+            shapePreset: 'shapeClose',
+            contentPreset: 'contentClose',
+            faceInDelay: 0.04,
+        });
+        // epsilon + 轻回弹尾巴 —— 封顶 900ms；finish 内做原子交接
+        const cap = new Promise(r => window.setTimeout(r, 900));
+        Promise.race([closed, cap]).then(() => {
+            // 下一帧交接：保证 twin 的最后一帧 opacity 已 paint
+            requestAnimationFrame(() => finish());
+        }).catch((err) => {
+            console.warn('[sshkey1] iosAppClose failed', err);
+            finish();
+        });
+        return;
+    }
+
+    // ── CSS 回退路径 ──
+    document.body.classList.remove('connection-home-blur');
+    sshKeyScrimSet(false, null);
+    closeSshKeyModal._timer = window.setTimeout(finish, 200);
 }
 async function saveSshKey(e) {
     e.preventDefault();
@@ -8268,7 +8500,7 @@ async function openSshKeySecret(id, trigger = null) {
 }
 
 function bindConnectionPressFeedback(root = document) {
-    const pressableSelector = '#addConnectionBtn, [data-edit]';
+    const pressableSelector = '#addConnectionBtn, #addSshKeyBtn, [data-edit]';
     const clearPress = (el) => el?.classList?.remove('connection-pressing');
     root.addEventListener('pointerdown', (e) => {
         const target = e.target.closest?.(pressableSelector);
@@ -8283,6 +8515,8 @@ function bindConnectionPressFeedback(root = document) {
         if (!target) return;
         window.setTimeout(() => clearPress(target), 120);
     }, true);
+    // 预热引擎（绑 Motion.press 按压）——不阻塞
+    try { sshKeyMotion._ensure(); } catch {}
 }
 
 function bindEvents() {
@@ -8681,7 +8915,9 @@ function bindEvents() {
         enforceTerminalWorkspaceLimit(activeTerminalTab);
         renderTerminalTabs();
     });
-    $('#remoteExecForm').addEventListener('submit', remoteExecute); $('#beianForm').addEventListener('submit', saveBeian); $('#proxyForm').addEventListener('submit', saveProxy); $('#addProxyBtn')?.addEventListener('click', (e) => openProxyModal(null, e.currentTarget)); $('#proxyCloseBtn')?.addEventListener('click', closeProxyModal); $('#proxyCancelBtn')?.addEventListener('click', closeProxyModal); $('#proxyModal')?.addEventListener('click', (e) => { if (e.target.id === 'proxyModal') closeProxyModal(); }); $('#sshKeyForm').addEventListener('submit', saveSshKey); $('#addSshKeyBtn')?.addEventListener('click', (e) => openSshKeyModal(null, e.currentTarget)); $('#sshKeyCloseBtn')?.addEventListener('click', closeSshKeyModal); $('#sshKeyCancelBtn')?.addEventListener('click', closeSshKeyModal); $('#sshKeyModal')?.addEventListener('click', (e) => { if (e.target.id === 'sshKeyModal') closeSshKeyModal(); }); document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#sshKeyModal')?.classList.contains('show')) closeSshKeyModal(); });
+    $('#remoteExecForm').addEventListener('submit', remoteExecute); $('#beianForm').addEventListener('submit', saveBeian); $('#proxyForm').addEventListener('submit', saveProxy); $('#addProxyBtn')?.addEventListener('click', (e) => openProxyModal(null, e.currentTarget)); $('#proxyCloseBtn')?.addEventListener('click', closeProxyModal); $('#proxyCancelBtn')?.addEventListener('click', closeProxyModal); $('#proxyModal')?.addEventListener('click', (e) => { if (e.target.id === 'proxyModal') closeProxyModal(); }); $('#sshKeyForm').addEventListener('submit', saveSshKey); $('#addSshKeyBtn')?.addEventListener('click', (e) => openSshKeyModal(null, e.currentTarget)); $('#sshKeyCloseBtn')?.addEventListener('click', closeSshKeyModal); $('#sshKeyCancelBtn')?.addEventListener('click', closeSshKeyModal); // 点模糊遮罩关闭（仅 target 为 backdrop 本身，点表单不关）。可打断飞行中动画。
+$('#sshKeyModal')?.addEventListener('click', (e) => { if (e.target.id === 'sshKeyModal') closeSshKeyModal(); });
+$('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?.classList.contains('show')) closeSshKeyModal(); }); document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#sshKeyModal')?.classList.contains('show')) closeSshKeyModal(); });
     setupAiAssistant();
     $('#brandIconFile').addEventListener('change', async (e) => { try { const dataUrl = await readImageAsDataUrl(e.target.files?.[0]); if (!dataUrl) return; pendingBrandIcon = dataUrl; $('#brandIconPreview').innerHTML = iconHtml(dataUrl); console.debug('[appearance-client]', 'brand icon file loaded', { size: e.target.files?.[0]?.size || 0, type: e.target.files?.[0]?.type || '' }); } catch (err) { e.target.value = ''; toast(err.message); } });
     setupAppearanceControls();
