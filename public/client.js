@@ -352,7 +352,11 @@ forgotResetForm.addEventListener('submit', async (e) => {
 $('#passkeyLoginBtn').addEventListener('click', async () => {
     try {
         if (!window.PublicKeyCredential) throw new Error('当前浏览器不支持 Passkey');
-        const options = await api('/api/passkeys/login/options', { method: 'POST', body: '{}' });
+        const username = ($('#username')?.value || '').trim();
+        const options = await api('/api/passkeys/login/options', {
+            method: 'POST',
+            body: JSON.stringify(username ? { username } : {}),
+        });
         options.challenge = base64urlToBuffer(options.challenge);
         (options.allowCredentials || []).forEach((c) => { c.id = base64urlToBuffer(c.id); });
         const cred = await navigator.credentials.get({ publicKey: options });

@@ -327,7 +327,8 @@ function init({ hashPassword }) {
             codeHash TEXT NOT NULL,
             expiresAt INTEGER NOT NULL,
             used INTEGER DEFAULT 0,
-            createdAt INTEGER
+            createdAt INTEGER,
+            attemptCount INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY,
@@ -439,6 +440,7 @@ function init({ hashPassword }) {
     addColumnIfMissing('users', 'status', 'TEXT');
     addColumnIfMissing('passkeys', 'userId', 'TEXT');
     addColumnIfMissing('password_reset_codes', 'userId', 'TEXT');
+    addColumnIfMissing('password_reset_codes', 'attemptCount', 'INTEGER DEFAULT 0');
     // Resource ownership (FREEZE plan §12.1, §18.3)
     addColumnIfMissing('connections', 'ownerUserId', 'TEXT');
     addColumnIfMissing('connections', 'visibility', 'TEXT');
@@ -676,7 +678,19 @@ function updateSettings(values) {
     return getSettings();
 }
 
-function normalizeUser(u) { const plain = decryptUser(u); return { ...plain, defaultPassword: !!plain.defaultPassword, totpEnabled: !!plain.totpEnabled, role: plain.role || 'user', status: plain.status || 'active', isSuperAdmin: !!plain.isSuperAdmin }; }
+function normalizeUser(u) {
+    const plain = decryptUser(u);
+    return {
+        ...plain,
+        defaultPassword: !!plain.defaultPassword,
+        totpEnabled: !!plain.totpEnabled,
+        role: plain.role || 'user',
+        status: plain.status || 'active',
+        isSuperAdmin: !!plain.isSuperAdmin,
+        failedLoginCount: Number(plain.failedLoginCount) || 0,
+        lockedUntil: plain.lockedUntil ? Number(plain.lockedUntil) : null,
+    };
+}
 function getUsersStore() { return { users: db.prepare('SELECT * FROM users ORDER BY createdAt').all().map(normalizeUser) }; }
 /* Legacy whole-store rewrite (used by writeJSON(USERS_FILE)). Preserves the
  * immutable identity fields (userId/role/status) of existing rows and assigns
@@ -825,9 +839,25 @@ function getIpBan(ip) { return db.prepare('SELECT * FROM ip_bans WHERE ip=?').ge
 function saveIpBan(b) { db.prepare('INSERT OR REPLACE INTO ip_bans (ip,failedCount,bannedUntil,updatedAt) VALUES (@ip,@failedCount,@bannedUntil,@updatedAt)').run(b); return getIpBan(b.ip); }
 function clearIpBan(ip) { db.prepare('DELETE FROM ip_bans WHERE ip=?').run(ip); }
 function listIpBans() { return db.prepare('SELECT * FROM ip_bans ORDER BY updatedAt DESC').all(); }
-function createResetCode(c) { db.prepare('INSERT INTO password_reset_codes (id,username,email,codeHash,expiresAt,used,createdAt) VALUES (@id,@username,@email,@codeHash,@expiresAt,0,@createdAt)').run(c); }
-function findResetCode(username, email) { return db.prepare('SELECT * FROM password_reset_codes WHERE username=? AND email=? AND used=0 ORDER BY createdAt DESC LIMIT 1').get(username, email); }
+function invalidateResetCodesForUser(username) {
+    return db.prepare('UPDATE password_reset_codes SET used=1 WHERE username=? AND used=0').run(String(username || '')).changes;
+}
+function createResetCode(c) {
+    if (c?.username) invalidateResetCodesForUser(c.username);
+    db.prepare('INSERT INTO password_reset_codes (id,username,email,codeHash,expiresAt,used,createdAt,attemptCount) VALUES (@id,@username,@email,@codeHash,@expiresAt,0,@createdAt,0)').run(c);
+}
+function findResetCode(username, email) {
+    return db.prepare('SELECT * FROM password_reset_codes WHERE username=? AND email=? AND used=0 ORDER BY createdAt DESC LIMIT 1').get(username, email);
+}
 function markResetCodeUsed(id) { db.prepare('UPDATE password_reset_codes SET used=1 WHERE id=?').run(id); }
+/** Increment failed verify attempts for a reset token. Returns the new count. */
+function recordResetCodeAttempt(id) {
+    const row = db.prepare('SELECT attemptCount FROM password_reset_codes WHERE id=? AND used=0').get(id);
+    if (!row) return 0;
+    const next = (Number(row.attemptCount) || 0) + 1;
+    db.prepare('UPDATE password_reset_codes SET attemptCount=? WHERE id=?').run(next, id);
+    return next;
+}
 function listPasskeys(username) { return db.prepare('SELECT * FROM passkeys WHERE username=? ORDER BY createdAt DESC').all(username).map((p) => ({ ...p, transports: json(p.transports, []) })); }
 function savePasskey(p) { db.prepare('INSERT OR REPLACE INTO passkeys (id,username,credentialId,publicKey,counter,transports,createdAt,lastUsedAt) VALUES (@id,@username,@credentialId,@publicKey,@counter,@transports,@createdAt,@lastUsedAt)').run({ ...p, transports: JSON.stringify(p.transports || []) }); }
 function getPasskeyByCredentialId(credentialId) { const p = db.prepare('SELECT * FROM passkeys WHERE credentialId=?').get(credentialId); return p ? { ...p, transports: json(p.transports, []) } : null; }
@@ -836,4 +866,4 @@ function deletePasskey(username, id) { db.prepare('DELETE FROM passkeys WHERE us
 function rawDb() { return db; }
 function close() { if (db) { db.close(); db = null; } }
 
-module.exports = { init, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, cleanupExpiredEphemeralConnections, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, queryActivities, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close };
+module.exports = { init, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, cleanupExpiredEphemeralConnections, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, queryActivities, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, recordResetCodeAttempt, invalidateResetCodesForUser, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close };

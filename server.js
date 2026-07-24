@@ -184,6 +184,16 @@ const SFTP_UPLOAD_KEEPALIVE_INTERVAL = 30 * 1000;
 const tempTotpTokens = new Map();
 const webauthnChallenges = new Map();
 const resetRequestHits = new Map();
+const resetVerifyHits = new Map();
+/** Max failed TOTP checks per tempToken before the token is burned. */
+const TOTP_TEMP_MAX_FAILURES = 5;
+/** Max failed reset-token checks before the token is burned. */
+const RESET_TOKEN_MAX_ATTEMPTS = 5;
+/** Sliding window for reset verify rate limit (per IP). */
+const RESET_VERIFY_WINDOW_MS = 10 * 60 * 1000;
+const RESET_VERIFY_MAX_PER_WINDOW = 20;
+/** WebAuthn login challenge TTL. */
+const WEBAUTHN_LOGIN_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 /* Short-lived RDP proxy grants for "临时连接" forms that never hit the host library.
  * Keyed by userId → [{ host, port, expiresAt }]. Max TTL 2 minutes. */
 const ephemeralRdpTargetGrants = new Map();
@@ -2008,6 +2018,79 @@ function recordLoginFailure(ip) {
 }
 function recordLoginSuccess(ip) { if (ip && ip !== 'unknown') storage.clearIpBan(ip); }
 
+function securityLockParams() {
+    const sec = storage.getSettings().security || {};
+    return {
+        enabled: sec.bruteForceEnabled !== false,
+        maxFailures: Math.max(1, Number(sec.bruteForceMaxFailures) || 5),
+        banMs: Math.max(60 * 1000, (Number(sec.bruteForceBanMinutes) || 15) * 60000),
+    };
+}
+
+function isAccountLocked(user) {
+    return !!(user && user.lockedUntil && Number(user.lockedUntil) > Date.now());
+}
+
+/** Account-level lockout (users.failedLoginCount / lockedUntil). Complements IP bans. */
+function recordAccountLoginFailure(user) {
+    if (!user?.username) return null;
+    const { enabled, maxFailures, banMs } = securityLockParams();
+    if (!enabled) return user;
+    const failedLoginCount = (Number(user.failedLoginCount) || 0) + 1;
+    const lockedUntil = failedLoginCount >= maxFailures ? Date.now() + banMs : null;
+    return storage.updateUser(user.username, { failedLoginCount, lockedUntil });
+}
+
+function clearAccountLoginFailure(user) {
+    if (!user?.username) return null;
+    if (!(Number(user.failedLoginCount) > 0) && !user.lockedUntil) return user;
+    return storage.updateUser(user.username, { failedLoginCount: 0, lockedUntil: null });
+}
+
+function timingSafeEqualStr(a, b) {
+    const left = Buffer.from(String(a || ''), 'utf8');
+    const right = Buffer.from(String(b || ''), 'utf8');
+    if (left.length !== right.length) {
+        const dummy = crypto.createHash('sha256').update(left).digest();
+        crypto.timingSafeEqual(dummy, dummy);
+        return false;
+    }
+    return crypto.timingSafeEqual(left, right);
+}
+
+function pruneWebauthnLoginChallenges(nowTs = Date.now()) {
+    for (const [key, state] of webauthnChallenges.entries()) {
+        if (!String(key).startsWith('login:')) continue;
+        if (!state?.createdAt || nowTs - state.createdAt > WEBAUTHN_LOGIN_CHALLENGE_TTL_MS) {
+            webauthnChallenges.delete(key);
+        }
+    }
+}
+
+function webauthnChallengeFromBody(body) {
+    try {
+        const raw = body?.response?.clientDataJSON;
+        if (!raw) return '';
+        const json = JSON.parse(Buffer.from(String(raw), 'base64url').toString('utf8'));
+        return String(json.challenge || '');
+    } catch {
+        return '';
+    }
+}
+
+function takeResetVerifySlot(ip) {
+    const nowTs = Date.now();
+    const key = String(ip || 'unknown');
+    const hits = (resetVerifyHits.get(key) || []).filter((t) => nowTs - t < RESET_VERIFY_WINDOW_MS);
+    if (hits.length >= RESET_VERIFY_MAX_PER_WINDOW) {
+        resetVerifyHits.set(key, hits);
+        return false;
+    }
+    hits.push(nowTs);
+    resetVerifyHits.set(key, hits);
+    return true;
+}
+
 function defaultPasswordRemoteLoginAllowed(req, user) {
     if (!user?.defaultPassword) return true;
     if (process.env.ALLOW_DEFAULT_PASSWORD_REMOTE_LOGIN === 'true') return true;
@@ -2038,13 +2121,20 @@ app.post('/api/auth/login', async (req, res) => {
     const s = storage.getSettings();
     if (!(await verifyCaptcha(s.captcha?.provider, captchaToken, guard.ip))) { recordLoginFailure(guard.ip); await notifyLogin({ username, ip: guard.ip, userAgent: ua, success: false, reason: 'CAPTCHA 错误' }); return res.status(400).json({ error: '人机验证失败' }); }
     const user = storage.getUser(username);
+    if (user && isAccountLocked(user)) {
+        recordLoginFailure(guard.ip);
+        await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: false, reason: '账号临时锁定' });
+        return res.status(429).json({ error: '登录失败次数过多，账号已临时锁定，请稍后再试', code: 'account_locked' });
+    }
     if (!user || !verifyPassword(password, user.passwordHash)) {
         recordLoginFailure(guard.ip);
-        await notifyLogin({ username, ip: guard.ip, userAgent: ua, success: false, reason: '密码错误' });
+        if (user) recordAccountLoginFailure(user);
+        await notifyLogin({ username: username || '', ip: guard.ip, userAgent: ua, success: false, reason: '密码错误' });
         return res.status(401).json({ error: '账号或密码错误' });
     }
     if (user.status === 'suspended') {
         recordLoginFailure(guard.ip);
+        recordAccountLoginFailure(user);
         await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: false, reason: '账号已停用' });
         return authError(res, 403, 'account_suspended', '账号已被停用，请联系管理员', false);
     }
@@ -2054,14 +2144,24 @@ app.post('/api/auth/login', async (req, res) => {
     }
     if (!defaultPasswordRemoteLoginAllowed(req, user)) {
         recordLoginFailure(guard.ip);
+        recordAccountLoginFailure(user);
         await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: false, reason: '默认密码禁止公网登录' });
         return res.status(403).json({ error: '默认密码只允许从本机或内网登录，请先在安全环境修改默认密码' });
     }
     if (user.totpEnabled) {
         const tempToken = crypto.randomUUID();
-        tempTotpTokens.set(tempToken, { username: user.username, createdAt: Date.now(), ip: guard.ip, userAgent: ua, remember: !!remember });
+        tempTotpTokens.set(tempToken, {
+            username: user.username,
+            userId: user.userId,
+            createdAt: Date.now(),
+            ip: guard.ip,
+            userAgent: ua,
+            remember: !!remember,
+            failures: 0,
+        });
         return res.json({ ok: true, requireTotp: true, tempToken });
     }
+    clearAccountLoginFailure(user);
     recordLoginSuccess(guard.ip);
     createSession(req, res, user, { remember: !!remember });
     try { storage.rawDb().prepare('UPDATE users SET lastLoginAt = ? WHERE userId = ?').run(Date.now(), user.userId); } catch {}
@@ -2072,47 +2172,122 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.post('/api/auth/totp/verify', async (req, res) => {
     const { tempToken, code } = req.body || {};
+    const guard = checkLoginGuards(req);
+    if (!guard.ok) return res.status(403).json({ error: guard.reason, code: 'login_guard_blocked' });
     const tmp = tempTotpTokens.get(tempToken);
-    if (!tmp || Date.now() - tmp.createdAt > 5 * 60000) return res.status(400).json({ error: '验证会话已过期' });
+    if (!tmp || Date.now() - tmp.createdAt > 5 * 60000) {
+        if (tempToken) tempTotpTokens.delete(tempToken);
+        return res.status(400).json({ error: '验证会话已过期' });
+    }
     const user = storage.getUser(tmp.username);
-    if (!user?.totpSecret || !verifySync({ secret: user.totpSecret, token: String(code || '') }).valid) { recordLoginFailure(tmp.ip); await notifyLogin({ username: tmp.username, ip: tmp.ip, userAgent: tmp.userAgent, success: false, reason: 'TOTP 错误' }); return res.status(401).json({ error: '动态验证码错误' }); }
-    tempTotpTokens.delete(tempToken); recordLoginSuccess(tmp.ip); createSession(req, res, user, { remember: !!tmp.remember }); addActivity(`用户登录：${user.username}`); await notifyLogin({ username: user.username, ip: tmp.ip, userAgent: tmp.userAgent, success: true, reason: '' });
+    if (!user || user.status === 'deleted') {
+        tempTotpTokens.delete(tempToken);
+        return res.status(401).json({ error: '动态验证码错误' });
+    }
+    if (user.status === 'suspended') {
+        tempTotpTokens.delete(tempToken);
+        recordLoginFailure(guard.ip);
+        recordAccountLoginFailure(user);
+        return authError(res, 403, 'account_suspended', '账号已被停用，请联系管理员', false);
+    }
+    if (isAccountLocked(user)) {
+        tempTotpTokens.delete(tempToken);
+        recordLoginFailure(guard.ip);
+        return res.status(429).json({ error: '登录失败次数过多，账号已临时锁定，请稍后再试', code: 'account_locked' });
+    }
+    if (!user.totpSecret || !verifySync({ secret: user.totpSecret, token: String(code || '') }).valid) {
+        tmp.failures = (Number(tmp.failures) || 0) + 1;
+        recordLoginFailure(guard.ip);
+        recordAccountLoginFailure(user);
+        await notifyLogin({ username: tmp.username, ip: guard.ip, userAgent: tmp.userAgent, success: false, reason: 'TOTP 错误' });
+        if (tmp.failures >= TOTP_TEMP_MAX_FAILURES) {
+            tempTotpTokens.delete(tempToken);
+            return res.status(401).json({ error: '动态验证码错误次数过多，请重新登录', code: 'totp_temp_exhausted' });
+        }
+        tempTotpTokens.set(tempToken, tmp);
+        return res.status(401).json({ error: '动态验证码错误' });
+    }
+    tempTotpTokens.delete(tempToken);
+    clearAccountLoginFailure(user);
+    recordLoginSuccess(guard.ip);
+    createSession(req, res, user, { remember: !!tmp.remember });
+    try { storage.rawDb().prepare('UPDATE users SET lastLoginAt = ? WHERE userId = ?').run(Date.now(), user.userId); } catch {}
+    addActivity(`用户登录：${user.username}`, user.userId);
+    await notifyLogin({ username: user.username, ip: guard.ip, userAgent: tmp.userAgent, success: true, reason: '' });
     res.json({ ok: true, user: { username: user.username }, mustChangePassword: !!user.defaultPassword });
 });
 
 app.post('/api/auth/forgot-password/request', async (req, res) => {
     const ip = clientIp(req), nowTs = Date.now();
     const hits = (resetRequestHits.get(ip) || []).filter((t) => nowTs - t < 10 * 60000);
-    if (hits.length >= 5) return res.json({ ok: true, message: '如果邮箱匹配，验证码将发送到邮箱' });
+    if (hits.length >= 5) return res.json({ ok: true, message: '如果邮箱匹配，重置令牌将发送到邮箱' });
     resetRequestHits.set(ip, [...hits, nowTs]);
     const { email, captchaToken } = req.body || {}, s = storage.getSettings();
-    if (!(await verifyCaptcha(s.captcha?.provider, captchaToken, ip))) return res.json({ ok: true, message: '如果邮箱匹配，验证码将发送到邮箱' });
+    if (!(await verifyCaptcha(s.captcha?.provider, captchaToken, ip))) return res.json({ ok: true, message: '如果邮箱匹配，重置令牌将发送到邮箱' });
     /* Per-user reset (FREEZE plan §11.3): match the target user by their own
      * email; the response is uniform either way so account existence is not
-     * leaked. The code is bound to that user's userId + email. */
+     * leaked. Token is 128-bit random and bound to that user's userId + email. */
     const wanted = String(email || '').trim().toLowerCase();
     const target = wanted ? storage.listUsers().find((u) => u.email && String(u.email).toLowerCase() === wanted && u.status === 'active') : null;
     if (target) {
-        const code = String(Math.floor(100000 + Math.random() * 900000));
-        storage.createResetCode({ id: crypto.randomUUID(), username: target.username, email: target.email, codeHash: sha256(code), expiresAt: Date.now() + 10 * 60000, createdAt: Date.now() });
-        try { storage.rawDb().prepare('UPDATE password_reset_codes SET userId = ? WHERE username = ? AND userId IS NULL').run(target.userId, target.username); } catch {}
-        sendMail('Zephyr 密码重置验证码', `Zephyr 密码重置验证码：${code}\n有效期：10 分钟。`, target.email).catch((err) => console.error('[MAIL] 重置验证码发送失败:', err.message));
+        const token = crypto.randomBytes(16).toString('base64url');
+        storage.createResetCode({
+            id: crypto.randomUUID(),
+            username: target.username,
+            email: target.email,
+            codeHash: sha256(token),
+            expiresAt: Date.now() + 10 * 60000,
+            createdAt: Date.now(),
+        });
+        try { storage.rawDb().prepare('UPDATE password_reset_codes SET userId = ? WHERE username = ? AND (userId IS NULL OR userId = \'\')').run(target.userId, target.username); } catch {}
+        sendMail(
+            'Zephyr 密码重置令牌',
+            `Zephyr 密码重置令牌：${token}\n有效期：10 分钟。\n请在重置页粘贴完整令牌。令牌仅可尝试有限次数，用后作废。`,
+            target.email,
+        ).catch((err) => console.error('[MAIL] 重置令牌发送失败:', err.message));
     }
-    res.json({ ok: true, message: '如果邮箱匹配，验证码将发送到邮箱' });
+    res.json({ ok: true, message: '如果邮箱匹配，重置令牌将发送到邮箱' });
 });
 
 app.post('/api/auth/forgot-password/reset', (req, res) => {
     const { email, code, newPassword } = req.body || {};
+    const ip = clientIp(req);
     if (!newPassword || String(newPassword).length < 4) return res.status(400).json({ error: '新密码至少 4 位' });
+    if (!takeResetVerifySlot(ip)) {
+        recordLoginFailure(ip);
+        return res.status(429).json({ error: '重置尝试过于频繁，请稍后再试', code: 'reset_rate_limited' });
+    }
     const wanted = String(email || '').trim().toLowerCase();
     const user = wanted ? storage.listUsers().find((u) => u.email && String(u.email).toLowerCase() === wanted) : null;
     const rec = user ? storage.findResetCode(user.username, user.email) : null;
-    if (!user || !rec || rec.expiresAt < Date.now() || rec.codeHash !== sha256(code)) return res.status(400).json({ error: '验证码无效或已过期' });
-    storage.updateUser(user.username, { passwordHash: hashPassword(newPassword), defaultPassword: false });
+    const presented = String(code || '').trim();
+    const hashOk = !!(rec && timingSafeEqualStr(rec.codeHash, sha256(presented)));
+    if (!user || !rec || rec.expiresAt < Date.now() || !hashOk) {
+        recordLoginFailure(ip);
+        if (rec && rec.expiresAt >= Date.now()) {
+            const attempts = storage.recordResetCodeAttempt(rec.id);
+            if (attempts >= RESET_TOKEN_MAX_ATTEMPTS) storage.markResetCodeUsed(rec.id);
+        }
+        if (user) recordAccountLoginFailure(user);
+        return res.status(400).json({ error: '重置令牌无效或已过期' });
+    }
+    if ((Number(rec.attemptCount) || 0) >= RESET_TOKEN_MAX_ATTEMPTS) {
+        storage.markResetCodeUsed(rec.id);
+        recordLoginFailure(ip);
+        return res.status(400).json({ error: '重置令牌无效或已过期' });
+    }
+    storage.updateUser(user.username, {
+        passwordHash: hashPassword(newPassword),
+        defaultPassword: false,
+        failedLoginCount: 0,
+        lockedUntil: null,
+    });
     storage.markResetCodeUsed(rec.id);
+    storage.invalidateResetCodesForUser(user.username);
     sessionStore.revokeAllForUser(user.userId, 'password-reset');
     sessionStore.setMustChangePassword(user.userId, false);
-    addActivity('通过邮箱验证码重置密码');
+    recordLoginSuccess(ip);
+    addActivity('通过邮箱重置令牌重置密码', user.userId);
     res.json({ ok: true });
 });
 
@@ -3511,21 +3686,119 @@ app.post('/api/passkeys/register/verify', requireUser, async (req, res) => {
 });
 app.delete('/api/passkeys/:id', requireUser, (req, res) => { storage.deletePasskey(req.user.username, req.params.id); addActivity('删除 Passkey', req.user.userId); res.json({ ok: true }); });
 app.post('/api/passkeys/login/options', async (req, res) => {
-    const origin = publicOrigin(req), rpID = rpIdFromOrigin(origin), user = storage.getFirstUser(), passkeys = user ? storage.listPasskeys(user.username) : [];
+    const guard = checkLoginGuards(req);
+    if (!guard.ok) return res.status(403).json({ error: guard.reason });
+    const origin = publicOrigin(req);
+    const rpID = rpIdFromOrigin(origin);
+    const requestedUsername = String(req.body?.username || '').trim();
+    /* Prefer explicit username; otherwise fall back to every active user's
+     * passkeys so multi-user installs are not stuck on getFirstUser(). */
+    let passkeys = [];
+    if (requestedUsername) {
+        const user = storage.getUser(requestedUsername);
+        if (!user || user.status !== 'active') return res.status(400).json({ error: '当前账号尚未绑定 Passkey' });
+        if (isAccountLocked(user)) return res.status(429).json({ error: '登录失败次数过多，账号已临时锁定，请稍后再试', code: 'account_locked' });
+        passkeys = storage.listPasskeys(user.username);
+    } else {
+        for (const u of storage.listUsers()) {
+            if (u.status !== 'active' || isAccountLocked(u)) continue;
+            passkeys.push(...storage.listPasskeys(u.username));
+        }
+    }
     if (!passkeys.length) return res.status(400).json({ error: '当前账号尚未绑定 Passkey' });
-    const options = await generateAuthenticationOptions({ rpID, allowCredentials: passkeys.map((p) => ({ id: p.credentialId, transports: p.transports })) });
-    webauthnChallenges.set('login', { challenge: options.challenge, origin, rpID }); res.json(options);
+    pruneWebauthnLoginChallenges();
+    const options = await generateAuthenticationOptions({
+        rpID,
+        allowCredentials: passkeys.map((p) => ({ id: p.credentialId, transports: p.transports })),
+    });
+    const challengeKey = `login:${options.challenge}`;
+    webauthnChallenges.set(challengeKey, {
+        challenge: options.challenge,
+        origin,
+        rpID,
+        createdAt: Date.now(),
+        username: requestedUsername || '',
+    });
+    res.json(options);
 });
 app.post('/api/passkeys/login/verify', async (req, res) => {
-    const credId = req.body?.id; const passkey = storage.getPasskeyByCredentialId(credId); if (!passkey) return res.status(400).json({ error: 'Passkey 不存在' });
-    const state = webauthnChallenges.get('login');
+    const guard = checkLoginGuards(req);
+    const ua = req.headers['user-agent'] || '';
+    if (!guard.ok) return res.status(403).json({ error: guard.reason });
+    const credId = req.body?.id;
+    const passkey = storage.getPasskeyByCredentialId(credId);
+    if (!passkey) {
+        recordLoginFailure(guard.ip);
+        return res.status(400).json({ error: 'Passkey 不存在' });
+    }
+    pruneWebauthnLoginChallenges();
+    const challenge = webauthnChallengeFromBody(req.body) || String(req.body?.challenge || '');
+    const challengeKey = challenge ? `login:${challenge}` : '';
+    const state = challengeKey ? webauthnChallenges.get(challengeKey) : null;
     if (!state) return res.status(400).json({ error: 'Passkey 登录会话已过期' });
-    const origin = publicOrigin(req), rpID = rpIdFromOrigin(origin);
+    if (Date.now() - Number(state.createdAt || 0) > WEBAUTHN_LOGIN_CHALLENGE_TTL_MS) {
+        webauthnChallenges.delete(challengeKey);
+        return res.status(400).json({ error: 'Passkey 登录会话已过期' });
+    }
+    const user = storage.getUser(passkey.username);
+    if (!user || user.status === 'deleted') {
+        webauthnChallenges.delete(challengeKey);
+        recordLoginFailure(guard.ip);
+        return res.status(401).json({ error: '账号或密码错误' });
+    }
+    if (user.status === 'suspended') {
+        webauthnChallenges.delete(challengeKey);
+        recordLoginFailure(guard.ip);
+        recordAccountLoginFailure(user);
+        return authError(res, 403, 'account_suspended', '账号已被停用，请联系管理员', false);
+    }
+    if (isAccountLocked(user)) {
+        webauthnChallenges.delete(challengeKey);
+        recordLoginFailure(guard.ip);
+        return res.status(429).json({ error: '登录失败次数过多，账号已临时锁定，请稍后再试', code: 'account_locked' });
+    }
+    if (!defaultPasswordRemoteLoginAllowed(req, user)) {
+        webauthnChallenges.delete(challengeKey);
+        recordLoginFailure(guard.ip);
+        recordAccountLoginFailure(user);
+        await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: false, reason: '默认密码禁止公网登录' });
+        return res.status(403).json({ error: '默认密码只允许从本机或内网登录，请先在安全环境修改默认密码' });
+    }
+    const origin = publicOrigin(req);
+    const rpID = rpIdFromOrigin(origin);
     try {
-        const result = await verifyAuthenticationResponse({ response: req.body, expectedChallenge: state?.challenge || req.body?.challenge, expectedOrigin: state?.origin || origin, expectedRPID: state?.rpID || rpID, credential: { id: passkey.credentialId, publicKey: Buffer.from(passkey.publicKey, 'base64'), counter: passkey.counter || 0, transports: passkey.transports } });
-        if (!result.verified) return res.status(400).json({ error: 'Passkey 登录失败' });
-        webauthnChallenges.delete('login'); storage.updatePasskeyCounter(passkey.id, result.authenticationInfo.newCounter); const user = storage.getUser(passkey.username); createSession(req, res, user); addActivity(`Passkey 登录：${user.username}`); res.json({ ok: true, mustChangePassword: !!user.defaultPassword });
-    } catch (err) { res.status(400).json({ error: err.message || 'Passkey 登录失败' }); }
+        const result = await verifyAuthenticationResponse({
+            response: req.body,
+            expectedChallenge: state.challenge,
+            expectedOrigin: state.origin || origin,
+            expectedRPID: state.rpID || rpID,
+            credential: {
+                id: passkey.credentialId,
+                publicKey: Buffer.from(passkey.publicKey, 'base64'),
+                counter: passkey.counter || 0,
+                transports: passkey.transports,
+            },
+        });
+        if (!result.verified) {
+            recordLoginFailure(guard.ip);
+            recordAccountLoginFailure(user);
+            await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: false, reason: 'Passkey 验证失败' });
+            return res.status(400).json({ error: 'Passkey 登录失败' });
+        }
+        webauthnChallenges.delete(challengeKey);
+        storage.updatePasskeyCounter(passkey.id, result.authenticationInfo.newCounter);
+        clearAccountLoginFailure(user);
+        recordLoginSuccess(guard.ip);
+        createSession(req, res, user);
+        try { storage.rawDb().prepare('UPDATE users SET lastLoginAt = ? WHERE userId = ?').run(Date.now(), user.userId); } catch {}
+        addActivity(`Passkey 登录：${user.username}`, user.userId);
+        await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: true, reason: 'passkey' });
+        res.json({ ok: true, mustChangePassword: !!user.defaultPassword });
+    } catch (err) {
+        recordLoginFailure(guard.ip);
+        recordAccountLoginFailure(user);
+        res.status(400).json({ error: err.message || 'Passkey 登录失败' });
+    }
 });
 
 app.get('/api/data/export', requireSuperAdmin, async (req, res) => {
