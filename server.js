@@ -126,6 +126,17 @@ const terminalHistory = new TerminalHistoryService({
     maxUserBytes: Number(process.env.TERMINAL_HISTORY_USER_BYTES) || undefined,
     retentionMs: Number(process.env.TERMINAL_HISTORY_RETENTION_MS) || undefined,
 });
+const ephemeralConnectionCleanupTimer = setInterval(() => {
+    try {
+        const removed = storage.cleanupExpiredEphemeralConnections?.() || 0;
+        if (removed) console.info('[ephemeral] cleaned orphan one-shot connections', { removed });
+    } catch (error) {
+        console.warn('[ephemeral] cleanup failed', { error: error.message });
+    }
+}, 30 * 60 * 1000);
+ephemeralConnectionCleanupTimer.unref?.();
+try { storage.cleanupExpiredEphemeralConnections?.(); } catch {}
+
 const terminalHistoryCleanupTimer = setInterval(() => {
     try { terminalHistory.cleanupExpired(); } catch (error) { console.warn('[TERMINAL-HISTORY] cleanup failed', { error: error.message }); }
 }, 6 * 60 * 60 * 1000);
@@ -173,6 +184,41 @@ const SFTP_UPLOAD_KEEPALIVE_INTERVAL = 30 * 1000;
 const tempTotpTokens = new Map();
 const webauthnChallenges = new Map();
 const resetRequestHits = new Map();
+/* Short-lived RDP proxy grants for "临时连接" forms that never hit the host library.
+ * Keyed by userId → [{ host, port, expiresAt }]. Max TTL 2 minutes. */
+const ephemeralRdpTargetGrants = new Map();
+const EPHEMERAL_RDP_GRANT_TTL_MS = 2 * 60 * 1000;
+
+function pruneEphemeralRdpGrants(userId) {
+    const list = ephemeralRdpTargetGrants.get(userId);
+    if (!list?.length) {
+        ephemeralRdpTargetGrants.delete(userId);
+        return [];
+    }
+    const now = Date.now();
+    const next = list.filter((g) => g && g.expiresAt > now);
+    if (next.length) ephemeralRdpTargetGrants.set(userId, next);
+    else ephemeralRdpTargetGrants.delete(userId);
+    return next;
+}
+
+function grantEphemeralRdpTarget(userId, host, port) {
+    const cleanHost = String(host || '').trim().toLowerCase();
+    const cleanPort = Number(port) || 3389;
+    if (!userId || !cleanHost) throw new Error('临时 RDP 目标无效');
+    const next = pruneEphemeralRdpGrants(userId).filter(
+        (g) => !(g.host === cleanHost && g.port === cleanPort)
+    );
+    next.push({ host: cleanHost, port: cleanPort, expiresAt: Date.now() + EPHEMERAL_RDP_GRANT_TTL_MS });
+    ephemeralRdpTargetGrants.set(userId, next);
+    return { host: cleanHost, port: cleanPort, ttlMs: EPHEMERAL_RDP_GRANT_TTL_MS };
+}
+
+function hasEphemeralRdpTargetGrant(userId, host, port) {
+    const cleanHost = String(host || '').trim().toLowerCase();
+    const cleanPort = Number(port) || 3389;
+    return pruneEphemeralRdpGrants(userId).some((g) => g.host === cleanHost && g.port === cleanPort);
+}
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 function wsSendJSON(targetWs, obj) {
@@ -2730,10 +2776,15 @@ app.get('/api/activities', requireUser, (req, res) => {
 app.post('/api/connections', requireUser, (req, res) => {
     const body = req.body || {};
     const protocol = String(body.protocol || 'SSH').toUpperCase();
-    if (!body.name || !body.host || (protocol === 'SSH' && !body.username)) return res.status(400).json({ error: protocol === 'SSH' ? '名称、主机、用户名不能为空' : '名称、主机不能为空' });
+    const ephemeralCreate = !!body.ephemeral;
+    // Ephemeral one-shots may omit display name (auto-filled below).
+    if ((!ephemeralCreate && !body.name) || !body.host || (protocol === 'SSH' && !body.username)) {
+        return res.status(400).json({ error: protocol === 'SSH' ? '名称、主机、用户名不能为空' : '名称、主机不能为空' });
+    }
+    const ephemeral = !!body.ephemeral;
     const conn = {
         id: crypto.randomUUID(),
-        name: String(body.name).trim(),
+        name: String(body.name || '').trim() || `${protocol} ${String(body.host || '').trim()}`,
         host: String(body.host).trim(),
         port: Number(body.port) || protocolDefaultPort(protocol),
         protocol,
@@ -2746,8 +2797,9 @@ app.post('/api/connections', requireUser, (req, res) => {
         connectionMode: ['direct', 'proxy', 'jump'].includes(body.connectionMode) ? body.connectionMode : 'direct',
         proxyId: body.proxyId || null,
         jumpHostId: body.jumpHostId || null,
-        shareWithUsers: !!body.shareWithUsers,
-        shareWithAdmins: !!body.shareWithAdmins,
+        shareWithUsers: ephemeral ? false : !!body.shareWithUsers,
+        shareWithAdmins: ephemeral ? false : !!body.shareWithAdmins,
+        ephemeral,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         lastConnectedAt: null,
@@ -2866,6 +2918,28 @@ app.post('/api/connections/:id/open', requireUser, (req, res) => {
         res.json({ connection: resourceService.getConnection(req.user, req.params.id) });
     } catch (err) {
         handleServiceError(res, err, 403);
+    }
+});
+
+/* Mint a short-lived RDP proxy target grant for ad-hoc temporary connects.
+ * Password never leaves the browser form → WASM path; this only authorizes TCP
+ * bridging for host:port so /rdp-proxy does not require a saved connection. */
+app.post('/api/rdp/ephemeral-grant', requireUser, (req, res) => {
+    const host = String(req.body?.host || '').trim();
+    const port = Number(req.body?.port) || 3389;
+    if (!host) return res.status(400).json({ error: '主机不能为空' });
+    try {
+        const grant = grantEphemeralRdpTarget(req.user.userId, host, port);
+        authz.audit?.({
+            actorUserId: req.user.userId,
+            action: 'rdp.ephemeral_grant',
+            outcome: 'success',
+            metadata: { host: grant.host, port: grant.port },
+        });
+        addActivity(`临时 RDP 连接授权：${grant.host}:${grant.port}`, req.user.userId);
+        res.json({ ok: true, ...grant });
+    } catch (err) {
+        res.status(400).json({ error: err.message || '无法授权临时 RDP 目标' });
     }
 });
 
@@ -5716,14 +5790,28 @@ rdpProxyWss.on('connection', async (ws, req) => {
         const authUser = userFromAuthSession(req);
         if (!authUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
 
-        const visible = resourceService.listConnections(authUser).filter((c) => {
+        const visible = resourceService.listConnections(authUser, { includeEphemeral: true }).filter((c) => {
             if (String(c.protocol || 'SSH').toUpperCase() !== 'RDP') return false;
             if (!Array.isArray(c.capabilities) || !c.capabilities.includes(CAP.USE)) return false;
             const cHost = String(c.host || '').toLowerCase();
             const cPort = Number(c.port) || 3389;
             return cHost === targetHost.toLowerCase() && cPort === targetPort;
         });
-        const conn = visible[0] || null;
+        let conn = visible[0] || null;
+        let ephemeralGrant = false;
+        if (!conn && hasEphemeralRdpTargetGrant(authUser.userId, targetHost, targetPort)) {
+            ephemeralGrant = true;
+            conn = {
+                host: targetHost,
+                port: targetPort,
+                protocol: 'RDP',
+                connectionMode: 'direct',
+                name: `${targetHost}:${targetPort}`,
+                transient: true,
+                ephemeral: true,
+            };
+            console.info('[rdp-proxy] accepted ephemeral grant', { target, user: sessionUser.username });
+        }
 
         if (!conn) {
             console.warn('[rdp-proxy] target not found in authorized connections', { target, user: sessionUser.username });
@@ -5747,8 +5835,9 @@ rdpProxyWss.on('connection', async (ws, req) => {
             },
         });
 
-        /* Resolve routing (jump hosts, proxies) */
-        routedForward = await createRoutedTcpForward(conn, targetPort, 15000);
+        /* Resolve routing (jump hosts, proxies). Pure grant path is direct-only;
+         * saved ephemeral rows still honour their configured route. */
+        routedForward = ephemeralGrant ? null : await createRoutedTcpForward(conn, targetPort, 15000);
         const effectiveHost = routedForward ? routedForward.host : targetHost;
         const effectivePort = routedForward ? routedForward.port : targetPort;
 
@@ -5809,6 +5898,177 @@ rdpProxyWss.on('connection', async (ws, req) => {
         cleanup('connect-error');
     }
 });
+
+/* ====================================================================
+ * noVNC PROXY — browser RFB over WebSocket, server-side VNCAuth
+ *
+ * Browser never receives the VNC password. Zephyr resolves the saved
+ * (or ephemeral) connection, dials host/proxy/jump, completes RFB
+ * version + None/VNCAuth against the real server, then presents a
+ * passwordless "None" security handshake to noVNC and pipes bytes.
+ * ==================================================================== */
+noVncWss.on('connection', async (ws, req) => {
+    const url = new URL(req.url || '/novnc', `http://${req.headers.host || 'localhost'}`);
+    const connectionId = String(url.searchParams.get('connectionId') || '').trim();
+    const tabId = String(url.searchParams.get('tabId') || '').trim();
+    let routed = null;
+    let reader = null;
+    let closed = false;
+    let piping = false;
+    const pendingFromBrowser = [];
+
+    const cleanup = (reason = 'cleanup') => {
+        if (closed) return;
+        closed = true;
+        try { reader?.close?.(); } catch {}
+        try { routed?.socket?.destroy?.(); } catch {}
+        (routed?.clients || []).reverse().forEach((client) => { try { client.end(); } catch {} });
+        closeWebSocketSafe(ws, 1000, reason);
+        console.info('[novnc-ws] closed', { connectionId, tabId, reason });
+    };
+
+    ws.binaryType = 'nodebuffer';
+    ws.on('close', () => cleanup('browser-close'));
+    ws.on('error', (err) => {
+        console.warn('[novnc-ws] ws error', err.message);
+        cleanup('ws-error');
+    });
+    // Buffer early client frames until the server-side handshake finishes.
+    ws.on('message', (data, isBinary) => {
+        if (closed) return;
+        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        if (piping && routed?.socket) {
+            try { routed.socket.write(buf); } catch (err) {
+                console.warn('[novnc-ws] write to vnc failed', err.message);
+                cleanup('tcp-write-error');
+            }
+            return;
+        }
+        if (pendingFromBrowser.length < 64) pendingFromBrowser.push(buf);
+    });
+
+    try {
+        const sessionUser = req.authSession;
+        if (!sessionUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
+        startSessionWatchdog(ws, req);
+        const authUser = userFromAuthSession(req);
+        if (!authUser) { closeWebSocketSafe(ws, 1008, 'unauthorized'); return; }
+        if (!connectionId) {
+            closeWebSocketSafe(ws, 1008, 'missing connectionId');
+            return;
+        }
+
+        let conn;
+        try {
+            conn = resourceService.resolveForConnect(authUser, connectionId);
+        } catch (err) {
+            console.warn('[novnc-ws] resolve failed', { connectionId, user: sessionUser.username, error: err.message });
+            closeWebSocketSafe(ws, 1008, 'forbidden');
+            return;
+        }
+        if (String(conn.protocol || 'SSH').toUpperCase() !== 'VNC') {
+            closeWebSocketSafe(ws, 1008, 'not a VNC connection');
+            return;
+        }
+        // Decrypt password for VNCAuth (never forwarded to browser).
+        const raw = storage.getConnectionById(connectionId);
+        if (raw?.password) conn.password = raw.password;
+
+        console.info('[novnc-ws] connecting', {
+            connectionId,
+            tabId,
+            target: `${conn.host}:${Number(conn.port) || 5900}`,
+            mode: conn.connectionMode || 'direct',
+            user: sessionUser.username,
+            ephemeral: !!conn.ephemeral,
+        });
+
+        routed = await openRoutedTcpConnection(conn, Number(conn.port) || 5900, 15000);
+        if (closed || ws.readyState !== ws.OPEN) { cleanup('closed-before-ready'); return; }
+
+        reader = new ByteQueue('VNC 服务端');
+        const onServerData = (chunk) => {
+            if (piping) {
+                if (ws.readyState === ws.OPEN) {
+                    try { ws.send(chunk, { binary: true }); } catch { cleanup('ws-send-error'); }
+                }
+                return;
+            }
+            reader.push(chunk);
+        };
+        routed.socket.on('data', onServerData);
+        routed.socket.on('error', (err) => {
+            console.warn('[novnc-ws] tcp error', err.message);
+            cleanup('tcp-error');
+        });
+        routed.socket.on('close', () => cleanup('tcp-close'));
+
+        // ── Server-side RFB handshake + VNCAuth ──────────────────────
+        const version = parseRfbVersion(await reader.read(12, 15000, 'VNC 协议版本'));
+        routed.socket.write(rfbVersionBytes(Math.min(version.minor || 8, 8)));
+        await authenticateVncServer(routed.socket, reader, conn, version, 15000);
+        if (closed || ws.readyState !== ws.OPEN) { cleanup('closed-during-auth'); return; }
+
+        // ── Present passwordless RFB to browser noVNC ────────────────
+        // Browser sees RFB 003.008 + security type None; password stays server-side.
+        const clientQueue = new ByteQueue('noVNC 客户端');
+        // Move frames that arrived during the server-side handshake into the
+        // structured queue, then rebind so further messages feed the queue
+        // (or the TCP socket once piping starts).
+        pendingFromBrowser.splice(0).forEach((b) => clientQueue.push(b));
+        ws.removeAllListeners('message');
+        ws.on('message', (data) => {
+            if (closed) return;
+            const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+            if (piping && routed?.socket) {
+                try { routed.socket.write(buf); } catch { cleanup('tcp-write-error'); }
+                return;
+            }
+            clientQueue.push(buf);
+        });
+        const sendClient = (buf) => {
+            if (ws.readyState === ws.OPEN) ws.send(buf, { binary: true });
+        };
+        const readClient = (size, label) => clientQueue.read(size, 15000, label);
+
+        sendClient(rfbVersionBytes(8));
+        parseRfbVersion(await readClient(12, '客户端 RFB 版本')); // validate only
+        // security-types: count=1, type=None(1)
+        sendClient(Buffer.from([1, 1]));
+        const picked = await readClient(1, '客户端安全类型');
+        if (picked[0] !== 1) throw new Error(`客户端选择了不支持的安全类型：${picked[0]}`);
+        // SecurityResult OK
+        sendClient(Buffer.from([0, 0, 0, 0]));
+        // ClientInit (1 byte shared-flag) → forward to real server
+        const clientInit = await readClient(1, 'ClientInit');
+        routed.socket.write(clientInit);
+
+        // ServerInit + everything after: flush any bytes already buffered from
+        // the real server, then enter pure bidirectional pipe.
+        const buffered = reader.takeBuffered();
+        piping = true;
+        if (buffered.length && ws.readyState === ws.OPEN) {
+            try { ws.send(buffered, { binary: true }); } catch { cleanup('ws-send-error'); return; }
+        }
+        // Drain any client bytes that arrived between ClientInit and pipe.
+        const leftover = clientQueue.takeBuffered();
+        if (leftover.length) {
+            try { routed.socket.write(leftover); } catch { cleanup('tcp-write-error'); return; }
+        }
+
+        console.info('[novnc-ws] ready', {
+            connectionId,
+            tabId,
+            route: routed.route || conn.host,
+            user: sessionUser.username,
+        });
+    } catch (err) {
+        console.error('[novnc-ws] connection error', { connectionId, tabId, error: err.message });
+        closeWebSocketSafe(ws, 1011, String(err.message || 'vnc proxy error').slice(0, 120));
+        cleanup('connect-error');
+    }
+});
+
 wss.on('connection', (ws, req) => {
     console.log(`[WS] 客户端连接 ${req.socket.remoteAddress}`);
     startSessionWatchdog(ws, req);
@@ -6312,6 +6572,11 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     connectionSource = 'acl-resolved';
                     storeConnectionCount = 1;
                 } else {
+                    /* Ad-hoc / ephemeral connect: form credentials only, never
+                     * written to the connection store. Routes and owned SSH
+                     * keys are resolved server-side for this session alone. */
+                    const authUser = userFromAuthSession(req);
+                    if (!authUser) throw new Error('未登录或会话已过期');
                     const fallbackProtocol = String(msg.protocol || 'SSH').toUpperCase();
                     conn = {
                         host,
@@ -6321,7 +6586,35 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         privateKey: privateKey || '',
                         protocol: fallbackProtocol,
                         connectionMode: 'direct',
+                        sshKeyId: String(msg.sshKeyId || ''),
+                        proxyId: msg.proxyId || null,
+                        jumpHostId: msg.jumpHostId || null,
+                        jumpHostIds: Array.isArray(msg.jumpHostIds) ? msg.jumpHostIds : [],
+                        transient: true,
+                        ephemeral: true,
+                        ownerUserId: authUser.userId,
                     };
+                    applyConnectionRouteFields(conn, {
+                        connectionMode: msg.connectionMode,
+                        proxyId: msg.proxyId,
+                        jumpHostId: msg.jumpHostId,
+                        jumpHostIds: msg.jumpHostIds,
+                    });
+                    if (fallbackProtocol === 'TELNET') {
+                        conn.connectionMode = 'direct';
+                        conn.proxyId = null;
+                        conn.jumpHostId = null;
+                        conn.jumpHostIds = [];
+                        conn.sshKeyId = '';
+                        conn.privateKey = '';
+                        conn.password = '';
+                    }
+                    if (conn.sshKeyId || conn.connectionMode === 'proxy' || conn.connectionMode === 'jump') {
+                        // Reuse dependency ACL checks against the caller's owned/shared deps.
+                        resourceService._assertDependenciesUsable(authUser, conn);
+                        conn = resourceService._resolveDependencySecrets(authUser, conn);
+                    }
+                    connectionSource = 'ephemeral-form';
                 }
                 const protocol = String(conn.protocol || msg.protocol || 'SSH').toUpperCase();
                 conn.protocol = protocol;

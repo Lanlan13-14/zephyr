@@ -1778,16 +1778,47 @@ function resetConnectionTransitionLayer(layer) {
     layer.removeAttribute('data-has-source-visual');
     layer.classList.remove('source-visual-hidden', 'expanded-material');
 }
-function setConnectionModalMode(mode = 'create', { source = 'dashboard', draft = null, token = '' } = {}) {
-    connectionModalMode = mode === 'transient' ? 'transient' : (mode === 'edit' || draft?.id ? 'edit' : 'create');
+function isTransientConnectionMode(mode = connectionModalMode) {
+    return mode === 'transient' || mode === 'ephemeral';
+}
+
+function setConnectionModalMode(mode = 'create', { source = 'dashboard', draft = null, token = '', ephemeral = false } = {}) {
+    if (mode === 'transient') connectionModalMode = 'transient';
+    else if (mode === 'ephemeral' || (mode === 'create' && ephemeral)) connectionModalMode = 'ephemeral';
+    else if (mode === 'edit' || draft?.id) connectionModalMode = 'edit';
+    else connectionModalMode = 'create';
     connectionModalSource = source || 'dashboard';
     transientToken = connectionModalMode === 'transient' ? String(token || '') : '';
     transientHasCredential = connectionModalMode === 'transient' && !!(draft?.hasTransientCredential);
     const form = $('#connectionForm');
-    form?.classList.toggle('transient-mode', connectionModalMode === 'transient');
+    const isOneShot = isTransientConnectionMode(connectionModalMode);
+    form?.classList.toggle('transient-mode', isOneShot);
     form?.setAttribute('data-mode', connectionModalMode);
     $('#transientToken') && ($('#transientToken').value = transientToken);
-    $('#transientConnectionBanner')?.classList.toggle('force-hidden', connectionModalMode !== 'transient');
+    const banner = $('#transientConnectionBanner');
+    if (banner) {
+        const showBanner = isOneShot;
+        banner.classList.toggle('force-hidden', !showBanner);
+        if (connectionModalMode === 'ephemeral') {
+            banner.innerHTML = '<strong>临时连接</strong><span>· 本次参数不会保存到主机库，直接连接</span>';
+        } else if (connectionModalMode === 'transient') {
+            banner.innerHTML = '<strong>临时连接</strong><span>· 本次参数不会保存到主机库</span>';
+        }
+    }
+    const ephemeralGroup = $('#connectionEphemeralGroup');
+    if (ephemeralGroup) {
+        const showToggle = connectionModalMode === 'create' || connectionModalMode === 'ephemeral';
+        ephemeralGroup.classList.toggle('force-hidden', !showToggle);
+    }
+    const ephemeralToggle = $('#connEphemeral');
+    if (ephemeralToggle) {
+        ephemeralToggle.checked = connectionModalMode === 'ephemeral';
+        ephemeralToggle.disabled = connectionModalMode === 'edit' || connectionModalMode === 'transient';
+    }
+    // Real share settings only — the top ephemeral toggle also uses
+    // connection-share-group for identical card chrome and must stay visible.
+    const shareGroup = document.querySelector('#connectionForm .connection-share-group:not(.connection-ephemeral-group)');
+    if (shareGroup) shareGroup.classList.toggle('force-hidden', isOneShot);
     const cred = $('#transientCredentialState');
     if (cred) {
         cred.classList.toggle('force-hidden', !(connectionModalMode === 'transient' && transientHasCredential));
@@ -1796,22 +1827,45 @@ function setConnectionModalMode(mode = 'create', { source = 'dashboard', draft =
     const connectBtn = $('#connectTransientBtn');
     if (connectBtn) {
         connectBtn.disabled = false;
-        connectBtn.title = '';
+        connectBtn.title = connectionModalMode === 'ephemeral' ? '使用当前表单参数直接连接，不会写入主机库' : '';
         connectBtn.textContent = '连接';
     }
+    // Name is only mandatory when persisting to the host library.
+    if ($('#connName')) $('#connName').required = !isOneShot;
+}
+
+function applyEphemeralToggleFromUi() {
+    if (connectionModalMode === 'edit' || connectionModalMode === 'transient') return;
+    const on = !!$('#connEphemeral')?.checked;
+    setConnectionModalMode(on ? 'ephemeral' : 'create', {
+        source: connectionModalSource || 'dashboard',
+        draft: null,
+        token: '',
+        ephemeral: on,
+    });
+    $('#modalTitle').textContent = on ? '临时连接' : '添加服务器';
+    editingId = null;
+    $('#connectionId') && ($('#connectionId').value = '');
 }
 
 function prepareConnectionModalForm(conn = null, options = {}) {
     const mode = options.mode || (conn?.id ? 'edit' : 'create');
-    setConnectionModalMode(mode, { source: options.source || 'dashboard', draft: conn, token: options.transientToken || '' });
-    editingId = mode === 'transient' ? null : (conn?.id || null);
+    setConnectionModalMode(mode, {
+        source: options.source || 'dashboard',
+        draft: conn,
+        token: options.transientToken || '',
+        ephemeral: mode === 'ephemeral' || !!options.ephemeral,
+    });
+    editingId = isTransientConnectionMode(connectionModalMode) ? null : (conn?.id || null);
     editingSecretLoaded = false;
     editingConnectionSecretState = {
-        hasPassword: !!conn?.hasPassword || !!(mode === 'transient' && conn?.hasTransientCredential),
+        hasPassword: !!conn?.hasPassword || !!(connectionModalMode === 'transient' && conn?.hasTransientCredential),
         hasPrivateKey: !!conn?.hasPrivateKey,
         sshKeyId: conn?.sshKeyId || '',
     };
-    $('#modalTitle').textContent = mode === 'transient' ? '临时连接' : (editingId ? '编辑服务器' : '添加服务器');
+    $('#modalTitle').textContent = isTransientConnectionMode(connectionModalMode)
+        ? '临时连接'
+        : (editingId ? '编辑服务器' : '添加服务器');
     $('#connectionId').value = editingId || '';
     setConnectionTestLatency();
     $('#connName').value = conn?.name || ''; $('#connProtocol').value = conn?.protocol || 'SSH'; $('#connHost').value = conn?.host || ''; $('#connPort').value = conn?.port || ($('#connProtocol').value === 'RDP' ? 3389 : $('#connProtocol').value === 'VNC' ? 5900 : $('#connProtocol').value === 'TELNET' ? 23 : 22); $('#connUsername').value = conn?.username || '';
@@ -1819,7 +1873,7 @@ function prepareConnectionModalForm(conn = null, options = {}) {
     $('#connTags').value = (conn?.tags || []).join(', '); setRouteMode(conn?.connectionMode || 'direct', conn?.connectionMode === 'jump' ? (conn?.jumpHostIds || (conn?.jumpHostId ? [conn.jumpHostId] : [])) : (conn?.proxyId || ''));
     $('#connPassword').type = 'password'; $('#toggleConnPassword').textContent = '👁️';
     // Transient credentials must never be written as a readable DOM value.
-    if (mode === 'transient' && conn?.hasTransientCredential) {
+    if (connectionModalMode === 'transient' && conn?.hasTransientCredential) {
         $('#connPassword').value = '';
         $('#connPassword').placeholder = '已载入一次性凭据（可覆盖）';
     } else {
@@ -1828,9 +1882,9 @@ function prepareConnectionModalForm(conn = null, options = {}) {
     }
     $('#connPrivateKey').value = conn?.hasPrivateKey ? '******' : '';
     $('#connRemark').value = conn?.remark || '';
-    // Sharing flags (non-transient only)
-    if ($('#connShareUsers')) $('#connShareUsers').checked = !!conn?.shareWithUsers;
-    if ($('#connShareAdmins')) $('#connShareAdmins').checked = !!conn?.shareWithAdmins;
+    // Sharing flags (saved connections only)
+    if ($('#connShareUsers')) $('#connShareUsers').checked = isTransientConnectionMode(connectionModalMode) ? false : !!conn?.shareWithUsers;
+    if ($('#connShareAdmins')) $('#connShareAdmins').checked = isTransientConnectionMode(connectionModalMode) ? false : !!conn?.shareWithAdmins;
     /* RDP settings */
     if ($('#rdpSoundMode')) $('#rdpSoundMode').value = conn?.rdpSoundMode || 'local';
     if ($('#rdpClipboard')) $('#rdpClipboard').checked = conn?.rdpClipboard !== false;
@@ -1939,7 +1993,20 @@ function closeModal() {
     connectionModalMode = 'create';
     $('#transientToken') && ($('#transientToken').value = '');
     $('#connectionForm')?.classList.remove('transient-mode');
+    $('#connectionForm')?.setAttribute('data-mode', 'create');
+    if ($('#connEphemeral')) {
+        $('#connEphemeral').checked = false;
+        $('#connEphemeral').disabled = false;
+    }
+    if ($('#connName')) $('#connName').required = true;
+    $('#connectionEphemeralGroup')?.classList.add('force-hidden');
+    document.querySelector('#connectionForm .connection-share-group:not(.connection-ephemeral-group)')?.classList.remove('force-hidden');
     $('#connPassword') && ($('#connPassword').placeholder = '');
+    const banner = $('#transientConnectionBanner');
+    if (banner) {
+        banner.classList.add('force-hidden');
+        banner.innerHTML = '<strong>临时连接</strong><span>· 本次参数不会保存到主机库</span>';
+    }
 
     setConnectionTestLatency();
 
@@ -2107,8 +2174,12 @@ function connectionPayload({ forTest = false } = {}) {
 }
 async function saveConnection(e) {
     e.preventDefault();
-    // Hard guard: transient mode must never hit POST /api/connections.
-    if (connectionModalMode === 'transient') {
+    // Hard guard: one-shot modes must never hit POST /api/connections.
+    if (isTransientConnectionMode()) {
+        if (connectionModalMode === 'ephemeral') {
+            await connectEphemeral().catch((err) => toast(err.message || '连接失败'));
+            return;
+        }
         toast('临时连接不会保存到主机库');
         return;
     }
@@ -2144,7 +2215,15 @@ async function testConnection() {
                 body: JSON.stringify({ overrides, credentialOverride, timeoutSeconds: 10 }),
             });
         } else {
-            result = await api('/api/connections/test', { method: 'POST', body: JSON.stringify({ ...payload, connectionId: editingId || '', timeoutSeconds: 10 }) });
+            // create / edit / ephemeral all exercise the ad-hoc test path with form payload
+            result = await api('/api/connections/test', {
+                method: 'POST',
+                body: JSON.stringify({
+                    ...payload,
+                    connectionId: connectionModalMode === 'ephemeral' ? '' : (editingId || ''),
+                    timeoutSeconds: 10,
+                }),
+            });
         }
         setConnectionTestLatency(`连接延迟：${result.durationMs}ms`, 'success');
         toast(result.message || '连接测试成功');
@@ -2154,13 +2233,117 @@ async function testConnection() {
     } finally {
         btn.disabled = false;
         btn.textContent = oldText;
-        if (connectBtn && connectionModalMode === 'transient') {
+        if (connectBtn && isTransientConnectionMode()) {
             connectBtn.disabled = false;
         }
     }
 }
 
+function sanitizeCredentialValue(value) {
+    const text = String(value || '');
+    if (!text || text === '******') return '';
+    return text;
+}
+
+/**
+ * Temporary connect strategy (all protocols, including VNC):
+ *  1) POST /api/connections with ephemeral:true  — row hidden from host library
+ *  2) openConnection(id) — normal saved-connection path (VNC/RDP/SSH all work)
+ *  3) tab.ephemeralConnectionId set so closeTerminalTab DELETEs the row
+ * If open fails after create, the row is deleted immediately.
+ */
+async function openEphemeralSession(payload) {
+    const protocol = String(payload.protocol || 'SSH').toUpperCase();
+    if (!payload.host) throw new Error('主机不能为空');
+    if (protocol === 'SSH' && !payload.username) throw new Error('主机和用户名不能为空');
+
+    const createBody = {
+        ...payload,
+        name: String(payload.name || '').trim() || `${protocol} ${payload.host}`,
+        // Never share a one-shot row into the library visibility graph.
+        shareWithUsers: false,
+        shareWithAdmins: false,
+        ephemeral: true,
+    };
+    // Strip placeholder secrets so we don't store "******".
+    if (createBody.password === '******') createBody.password = '';
+    if (createBody.privateKey === '******') createBody.privateKey = '';
+
+    const created = await api('/api/connections', {
+        method: 'POST',
+        body: JSON.stringify(createBody),
+    });
+    const connId = created?.connection?.id;
+    if (!connId) throw new Error('临时连接创建失败');
+
+    try {
+        // skipConnectionsReload: ephemeral rows are filtered server-side and
+        // must not flash into the host grid even briefly.
+        const tabId = await openConnection(connId, {
+            skipConnectionsReload: true,
+            forceNew: true,
+        });
+        const tab = terminalTabs.find((t) => t.id === tabId);
+        if (tab) {
+            tab.transient = true;
+            tab.ephemeral = true;
+            tab.ephemeralConnectionId = connId;
+            if (!String(tab.name || '').includes('临时')) {
+                tab.name = `${tab.name || created.connection?.name || payload.host} · 临时`;
+            }
+        }
+        // Open path already switched view / rendered tabs.
+        scheduleWorkspaceSave?.('open-ephemeral-connection', { immediate: true });
+        return tabId;
+    } catch (err) {
+        // Open failed — don't leave an orphan ephemeral row in the DB.
+        try {
+            await api(`/api/connections/${encodeURIComponent(connId)}`, { method: 'DELETE' });
+        } catch (delErr) {
+            console.warn('[ephemeral]', 'rollback delete failed', delErr);
+        }
+        throw err;
+    }
+}
+
+async function disposeEphemeralConnection(connectionId, { reason = 'tab-close' } = {}) {
+    const id = String(connectionId || '').trim();
+    if (!id) return;
+    try {
+        await api(`/api/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        console.info('[ephemeral]', 'deleted one-shot connection', { connectionId: id, reason });
+    } catch (err) {
+        // 404 is fine (already gone / GC'd). Anything else is logged only —
+        // never block tab close on cleanup failure.
+        if (!/404|不存在|not found/i.test(String(err?.message || ''))) {
+            console.warn('[ephemeral]', 'delete failed', { connectionId: id, reason, error: err.message });
+        }
+    }
+}
+
+async function connectEphemeral() {
+    if (connectionModalMode !== 'ephemeral') return;
+    const btn = $('#connectTransientBtn');
+    const testBtn = $('#testConnectionBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '正在连接…'; }
+    if (testBtn) testBtn.disabled = true;
+    try {
+        const payload = connectionPayload({ forTest: true });
+        await openEphemeralSession(payload);
+        closeModal();
+        toast('正在建立临时连接…');
+    } catch (err) {
+        toast(err.message || '连接失败');
+        if (btn) { btn.disabled = false; btn.textContent = '连接'; }
+        if (testBtn) testBtn.disabled = false;
+    }
+}
+
 async function connectTransient() {
+    if (connectionModalMode === 'ephemeral') {
+        await connectEphemeral();
+        return;
+    }
     if (connectionModalMode !== 'transient') return;
     if (!transientToken) {
         toast('临时凭据已失效，请重新打开链接');
@@ -3038,16 +3221,25 @@ function exitTerminalFullscreen() {
 function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
     if (!terminalTabs.some((t) => t.id === tabId) || closingTerminalTabs.has(tabId)) return;
     const willBeLastTab = terminalTabs.length <= 1;
+    const closingTab = terminalTabs.find((t) => t.id === tabId);
+    const ephemeralConnectionId = closingTab?.ephemeralConnectionId
+        || (closingTab?.ephemeral || closingTab?.transient ? closingTab?.connectionId : '')
+        || '';
     console.info('[terminal-layout]', 'close terminal tab requested', {
         tabId,
         reason,
         willBeLastTab,
         activeTerminalTab,
+        ephemeralConnectionId: ephemeralConnectionId || '',
         customFullscreen: $('#terminalWorkspace')?.classList.contains('custom-fullscreen'),
     });
     if (activeTerminalTab === tabId || willBeLastTab) exitTerminalFullscreen();
     closingTerminalTabs.add(tabId);
     renderTerminalTabs({ rebuildWorkspace: false });
+    // Fire-and-forget: delete the one-shot host row so it never lingers in the library.
+    if (ephemeralConnectionId) {
+        disposeEphemeralConnection(ephemeralConnectionId, { reason: `tab-close:${reason}` });
+    }
     window.setTimeout(() => {
         terminalTabs = terminalTabs.filter((t) => t.id !== tabId);
         openOrderStack = openOrderStack.filter((id) => id !== tabId);
@@ -8109,6 +8301,7 @@ function bindEvents() {
         handleAdminAction(btn.dataset.adminAction, btn.dataset.userId);
     });
     $('#addConnectionBtn').addEventListener('click', (e) => openModal(null, e.currentTarget, { mode: 'create', source: 'dashboard' })); $('#closeModalBtn').addEventListener('click', closeModal); $('#cancelModalBtn').addEventListener('click', closeModal); $('#toggleConnPassword').addEventListener('click', () => { const el = $('#connPassword'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleConnPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; }); $('#revealConnSecrets').addEventListener('click', () => revealConnectionSecrets().catch((err) => toast(err.message))); $$('.route-type-tab').forEach((btn) => btn.addEventListener('click', () => setRouteMode($('#connMode').value === btn.dataset.routeMode ? 'direct' : btn.dataset.routeMode))); $('#addJumpRouteBtn').addEventListener('click', addJumpRouteRow); $('#jumpRouteList').addEventListener('click', (e) => { if (!e.target.closest?.('[data-remove-jump-route]')) return; const ids = $$('#jumpRouteList [data-jump-route-select]').filter((el) => !el.closest('[data-jump-route-row]').contains(e.target)).map((el) => el.value).filter(Boolean); renderJumpRouteRows(ids); }); $('#testConnectionBtn').addEventListener('click', testConnection); $('#connectTransientBtn')?.addEventListener('click', () => connectTransient().catch((err) => toast(err.message)));
+    $('#connEphemeral')?.addEventListener('change', applyEphemeralToggleFromUi);
     $('#connProtocol').addEventListener('change', () => updateProtocolFields({ preservePort: false }));
     $('#rdpTouchMode')?.addEventListener('change', updateRdpTouchSettingsUi);
     $('#rdpTouchSensitivity')?.addEventListener('input', updateRdpTouchSettingsUi);
@@ -9090,6 +9283,12 @@ async function init() {
         const flushWorkspace = () => {
             captureTerminalSnapshots();
             saveWorkspaceNow({ keepalive: true, reason: 'page-exit' }).catch(() => {});
+            // Best-effort: drop any open one-shot rows so a hard refresh does not
+            // leave orphan ephemeral hosts until the 6h GC runs.
+            terminalTabs.forEach((t) => {
+                const id = t.ephemeralConnectionId || ((t.ephemeral || t.transient) ? t.connectionId : '');
+                if (id) disposeEphemeralConnection(id, { reason: 'page-exit' });
+            });
         };
         window.addEventListener('pagehide', flushWorkspace);
         document.addEventListener('visibilitychange', () => {

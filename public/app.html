@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="modulepreload" href="app.js?v=20260723-term-colors1">
-    <link rel="modulepreload" href="theme-runtime.js?v=20260723-term-colors1">
-    <link rel="stylesheet" href="style.css?v=20260723-term-colors1">
+    <link rel="modulepreload" href="app.js?v=20260724-ephemeral3">
+    <link rel="modulepreload" href="theme-runtime.js?v=20260724-ephemeral3">
+    <link rel="stylesheet" href="style.css?v=20260724-ephemeral3">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -821,6 +821,15 @@
     <div class="modal-backdrop" id="connectionModal" aria-hidden="true">
         <form class="connection-modal" id="connectionForm" data-mode="create">
             <div class="modal-head"><h2 id="modalTitle">添加服务器</h2><button type="button" class="icon-btn" id="closeModalBtn">✕</button></div>
+            <div class="form-group connection-share-group connection-ephemeral-group force-hidden" id="connectionEphemeralGroup">
+                <label>连接选项</label>
+                <div class="connection-share-options">
+                    <label class="connection-share-option" for="connEphemeral">
+                        <span class="connection-share-copy"><strong>临时连接</strong><small>不保存到主机库，直接用当前参数连接一次</small></span>
+                        <span class="connection-share-switch"><input type="checkbox" id="connEphemeral"><span aria-hidden="true"></span></span>
+                    </label>
+                </div>
+            </div>
             <div class="transient-connection-banner force-hidden" id="transientConnectionBanner" role="status">
                 <strong>临时连接</strong>
                 <span>· 本次参数不会保存到主机库</span>
@@ -946,7 +955,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260723-term-colors1" type="module"></script>
+    <script src="app.js?v=20260724-ephemeral3" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

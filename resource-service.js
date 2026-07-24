@@ -51,12 +51,15 @@ class ResourceService {
 
     /* ── connections ────────────────────────────────────────────── */
 
-    /** Sanitized list the user can see: owned + shared-with-discover. */
-    listConnections(user) {
+    /** Sanitized list the user can see: owned + shared-with-discover.
+     *  Ephemeral one-shot rows stay out of the host library by default; pass
+     *  `includeEphemeral: true` for server-side ACL (e.g. rdp-proxy host match). */
+    listConnections(user, { includeEphemeral = false } = {}) {
         const all = this.storage.listAllConnectionRows();
         const visible = this.authz.visibleIds(user, 'connection', all);
         return all
             .filter((c) => visible.has(c.id))
+            .filter((c) => includeEphemeral || !c.ephemeral)
             .map((c) => this._toPublicConnection(user, c));
     }
 
@@ -72,6 +75,7 @@ class ResourceService {
         copy.capabilities = [...caps];
         copy.shareWithUsers = conn.visibility === 'shared_users' || conn.visibility === 'shared_all';
         copy.shareWithAdmins = conn.visibility === 'shared_admins' || conn.visibility === 'shared_all';
+        copy.ephemeral = !!conn.ephemeral;
         if (!caps.has(CAP.REVEAL_SECRET)) {
             delete copy.ownerUserId; // do not leak owner identity fields to non-privileged viewers
         }
@@ -87,18 +91,32 @@ class ResourceService {
     }
 
     createConnection(user, data) {
-        const visibility = data.shareWithUsers
-            ? (data.shareWithAdmins ? 'shared_all' : 'shared_users')
-            : (data.shareWithAdmins ? 'shared_admins' : 'private');
+        const ephemeral = !!data.ephemeral;
+        // One-shot rows are never shared into the host library visibility graph.
+        const visibility = ephemeral
+            ? 'private'
+            : (data.shareWithUsers
+                ? (data.shareWithAdmins ? 'shared_all' : 'shared_users')
+                : (data.shareWithAdmins ? 'shared_admins' : 'private'));
         const conn = {
             ...data,
+            ephemeral: ephemeral ? 1 : 0,
+            shareWithUsers: ephemeral ? false : !!data.shareWithUsers,
+            shareWithAdmins: ephemeral ? false : !!data.shareWithAdmins,
             ownerUserId: user.userId,
             createdByUserId: user.userId,
             visibility,
         };
         this._assertDependenciesUsable(user, conn);
         const saved = this.storage.insertConnection(conn);
-        this.authz.audit({ actorUserId: user.userId, resourceType: 'connection', resourceId: conn.id, action: 'resource.create', outcome: 'success', metadata: { name: conn.name, host: conn.host, port: conn.port, protocol: conn.protocol } });
+        this.authz.audit({
+            actorUserId: user.userId,
+            resourceType: 'connection',
+            resourceId: conn.id,
+            action: ephemeral ? 'resource.create_ephemeral' : 'resource.create',
+            outcome: 'success',
+            metadata: { name: conn.name, host: conn.host, port: conn.port, protocol: conn.protocol, ephemeral },
+        });
         return this._toPublicConnection(user, saved);
     }
 

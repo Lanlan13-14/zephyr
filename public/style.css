@@ -13823,10 +13823,23 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     }
 }
 
-/* Transient connection modal */
+/* Transient / ephemeral connection modal */
 .connection-modal.transient-mode .connection-action-normal { display: none !important; }
 .connection-modal.transient-mode .connection-action-transient { display: inline-flex !important; }
 .connection-modal:not(.transient-mode) .connection-action-transient { display: none !important; }
+/* Share rows are reused for the top "临时连接" toggle; hide real share only
+ * when the modal is in a one-shot mode (deeplink / ephemeral). */
+.connection-modal.transient-mode .connection-share-group:not(.connection-ephemeral-group) {
+    display: none !important;
+}
+/* Top-of-form placement only — keep share-group card / switch chrome intact. */
+.connection-ephemeral-group {
+    margin: 0 0 10px;
+}
+.connection-modal[data-mode="edit"] .connection-ephemeral-group,
+.connection-modal[data-mode="transient"] .connection-ephemeral-group {
+    display: none !important;
+}
 .transient-connection-banner {
     display: flex;
     gap: 6px;

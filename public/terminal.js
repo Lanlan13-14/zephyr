@@ -12559,11 +12559,18 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                 username: params.username,
                 password: params.password || '',
                 privateKey: params.privateKey || '',
+                sshKeyId: params.sshKeyId || '',
+                connectionMode: params.connectionMode || 'direct',
+                proxyId: params.proxyId || '',
+                jumpHostId: params.jumpHostId || '',
+                jumpHostIds: Array.isArray(params.jumpHostIds) ? params.jumpHostIds : [],
                 protocol: params.protocol || params.transientOverrides?.protocol || 'SSH',
                 // One-time Deep Link credential (FREEZE plan §5.4); server
                 // consumes it atomically and never writes it to assets.
                 transientToken: params.transientToken || '',
                 transientOverrides: params.transientOverrides || null,
+                // Ad-hoc temporary connect from "新建连接 → 临时连接" — never saved.
+                ephemeral: !!params.ephemeral || !!params.transient,
                 init: params.init || '',
                 cols: initialSize.cols,
                 rows: initialSize.rows
