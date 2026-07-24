@@ -28,7 +28,10 @@ public/vendor/zephyr-motion/     JS runtime (what app code imports)
   runtime.js                     backend selection (wasm → JS), rAF loop,
                                  bindings, onRest, reduced-motion
   motion.js                      high-level API: to/set/stop/morph/morphTo/
-                                 track/drag/press/stagger
+                                 track/drag/press/stagger + semantic recipes
+                                 (present/dismiss/popover/sheet/sequence/
+                                 cssVars/sharedElement). Production CSS is
+                                 NOT migrated yet — call sites opt in later.
   spring.js                      pure-JS mirror of the Go physics (fallback)
   presets.js                     Apple response/damping presets
   index.js                       entry; exposes window.Motion
@@ -51,14 +54,28 @@ emerges, which is exactly why retargeting mid-flight stays smooth.
 | island  | 0.34 | 0.86 | dynamic-island fluidity |
 | bouncy  | 0.40 | 0.72 | ONLY after a flick/throw |
 
+## High-level API (full wiring guide)
+
+**→ [`public/vendor/zephyr-motion/API.md`](../public/vendor/zephyr-motion/API.md)**  
+Product APIs: `connectionOpen`, `macPanel`, `islandExpand`, `toastPush`,
+`dockMagnifyPointer`, `aiPanelOpen`, `shelf`, `clipInset`, `play` / recipes, etc.
+
+**Status: API layer complete · production not wired.**  
+Demo: `/motion-feel.html` · Contract: `tests/motion-semantic-api-contract.test.mjs`  
+Audit: `plans/MOTION-AUDIT-2026-07-24.md`
+
+Do **not** wire into `app.js` / `floating-panel.js` until the API.md §6 sequence
+is followed (unify runtime → connection → macPanel → toast/press → dock).
+
 ## Rules for call sites
 
-1. Interactive motion = `Motion.to/set/stop` — never `el.style.transition`.
+1. Interactive motion = `Motion.to/set/stop` (or semantic recipes above) — never `el.style.transition` for gesture UI.
 2. Gestures: `Motion.track` / `Motion.drag` (1:1 follow → project → snap →
    velocity handoff). No input lockouts during any animation.
 3. Only transform / opacity / filter / CSS custom properties are driven.
    `w`/`h` channels exist for special cases (layout cost — prefer FLIP).
 4. Reduced motion is honored inside the engine; call sites get it for free.
+5. Production CSS animations stay as-is until explicitly migrated.
 
 ## Build & test
 

@@ -11,14 +11,29 @@
  *   drawer / sheet          damping 0.8  response 0.3
  */
 export const PRESETS = {
-  snappy: { response: 0.28, damping: 1.0 },  // buttons, small popovers, press feedback
-  ui:     { response: 0.40, damping: 1.0 },  // default repositioning
-  gentle: { response: 0.55, damping: 1.0 },  // large surfaces, slow pans
-  sheet:  { response: 0.30, damping: 0.80 }, // drawers / sheets (gesture-driven)
-  morph:  { response: 0.45, damping: 0.92 }, // shared-element transitions, hint of overshoot
-  dock:   { response: 0.22, damping: 0.95 }, // dock magnification follow
-  island: { response: 0.34, damping: 0.86 }, // dynamic-island style fluidity
-  bouncy: { response: 0.40, damping: 0.72 }, // ONLY after a flick/throw
+  snappy:  { response: 0.28, damping: 1.0 },  // buttons, small popovers, press feedback
+  ui:      { response: 0.40, damping: 1.0 },  // default repositioning (Apple PiP move)
+  gentle:  { response: 0.55, damping: 1.0 },  // large surfaces, slow pans
+  sheet:   { response: 0.30, damping: 0.80 }, // drawers / sheets (gesture-driven)
+  morph:   { response: 0.45, damping: 0.92 }, // shared-element / generic morph
+  // iOS SpringBoard — prefer critically damped (no bounce). Slightly long response
+  // reads as "heavy glass" rather than snappy web UI.
+  shape:   { response: 0.55, damping: 1.0 }, // icon→app geometry (critically damped)
+  shapeClose: { response: 0.48, damping: 1.0 }, // dismiss still decisive, no overshoot
+  content: { response: 0.40, damping: 1.0 },  // chrome fade after geometry leads
+  contentClose: { response: 0.32, damping: 1.0 },
+  scrim:   { response: 0.50, damping: 1.0 },  // dim with home
+  home:    { response: 0.55, damping: 1.0 },  // wallpaper recede (matches shape time)
+  icon:    { response: 0.45, damping: 1.0 },
+  dock:    { response: 0.18, damping: 0.95 },
+  // macOS panel / popover / toolbar window — snappy, critically damped
+  // (shorter than SpringBoard app open; similar to menu/popover ~250–320ms feel)
+  mac:     { response: 0.32, damping: 1.0 },
+  macClose:{ response: 0.28, damping: 1.0 },
+  // Island: less bouncy than before — liquid via non-uniform scale, not bounce
+  island:  { response: 0.42, damping: 0.92 },
+  islandPress: { response: 0.22, damping: 0.95 },
+  bouncy:  { response: 0.40, damping: 0.72 },
 };
 
 /** Resolve a preset name or {response, damping} object to numbers. */
