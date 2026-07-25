@@ -43,9 +43,35 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Resolve latest Agent release tag
+        id: agent_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Prefer the newest agent-* tag so Docker release notes and the
+          # image-baked public/agent-release.json stay in sync.
+          AGENT_TAG=$(gh api "repos/${{ github.repository }}/releases" --jq '[.[] | select(.draft==false and (.tag_name|startswith("agent-")))] | sort_by(.published_at) | reverse | .[0].tag_name // empty' 2>/dev/null || true)
+          if [ -z "$AGENT_TAG" ]; then
+            AGENT_TAG=$(git tag --sort=-creatordate | grep '^agent-' | head -n 1 || true)
+          fi
+          echo "AGENT_TAG=${AGENT_TAG}" >> "$GITHUB_ENV"
+          echo "tag=${AGENT_TAG}" >> "$GITHUB_OUTPUT"
+          if [ -n "$AGENT_TAG" ]; then
+            echo "url=https://github.com/${{ github.repository }}/releases/tag/${AGENT_TAG}" >> "$GITHUB_OUTPUT"
+            echo "Resolved Agent release: ${AGENT_TAG}"
+          else
+            echo "url=https://github.com/${{ github.repository }}/releases" >> "$GITHUB_OUTPUT"
+            echo "No agent-* release found yet"
+          fi
+
       - name: Build Docker image
         run: |
-          docker build --build-arg ZEPHYR_VERSION="${VERSION_TAG}" -t $IMAGE_TAG -t $IMAGE_LATEST .
+          docker build \
+            --build-arg ZEPHYR_VERSION="${VERSION_TAG}" \
+            --build-arg GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            --build-arg GITHUB_REPOSITORY="${{ github.repository }}" \
+            --build-arg ZEPHYR_AGENT_RELEASE_TAG="${AGENT_TAG}" \
+            -t $IMAGE_TAG -t $IMAGE_LATEST .
 
       - name: Push Docker image
         run: |
@@ -58,7 +84,9 @@ jobs:
 
           CURRENT_TAG=${{ env.VERSION_TAG }}
 
-          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${CURRENT_TAG}$" | head -n 1)
+          # Docker tags are v*; Agent tags are agent-v*. Never mix them when
+          # computing the previous Docker release for the changelog.
+          PREV_TAG=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | grep -v "^${CURRENT_TAG}$" | head -n 1 || true)
 
           {
             echo "CHANGELOG<<EOF"
@@ -73,6 +101,16 @@ jobs:
               echo "**对比**: \`$PREV_TAG\` → \`$CURRENT_TAG\`"
               echo ""
               git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)"
+            fi
+            echo ""
+            echo "## Zephyr Agent"
+            echo ""
+            if [ -n "${AGENT_TAG}" ]; then
+              echo "本镜像绑定的最新 Agent Release：[\`${AGENT_TAG}\`](https://github.com/${{ github.repository }}/releases/tag/${AGENT_TAG})"
+              echo ""
+              echo "App 内「设置 → 关于 / Zephyr Agent」也指向同一链接，无需再在 Docker \`v*\` 与 Agent \`agent-v*\` 页面来回切换。"
+            else
+              echo "尚未找到 \`agent-*\` Release；发布 Agent 后重新构建镜像即可自动写入下载链接。"
             fi
             echo ""
             echo "EOF"

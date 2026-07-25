@@ -217,9 +217,30 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        // Open a descriptor per offset read. ZFT2 intentionally runs up to four
-        // reads for the same handle in parallel; mutating one shared
-        // FileChannel.position would corrupt those ranges.
+        // Prefer the persistent FileChannel opened at handle creation. Absolute
+        // (positioned) reads do not mutate channel.position, so parallel
+        // readahead on the same handle is safe and we avoid reopening a SAF
+        // descriptor per 256 KiB chunk.
+        //
+        // The old skip()-from-zero fallback turned multi-GB copies into O(n²)
+        // and hit the 60s RPC timeout mid-file. Non-seekable providers now
+        // surface a retryable error so the WASM layer can reissue instead of
+        // silently burning the whole IRP budget on skip.
+        val channel = handle.channel
+        if (channel != null) {
+            try {
+                val buffer = ByteArray(length)
+                val read = channel.read(ByteBuffer.wrap(buffer), offset)
+                result.success(if (read <= 0) ByteArray(0) else buffer.copyOf(read))
+                return
+            } catch (e: Exception) {
+                throw SafException("io_error", e.message ?: "Positioned read failed at offset $offset")
+            }
+        }
+
+        // Last-ditch: reopen once for this read (no shared channel — exotic
+        // providers that refused open-time PFD). Still absolute-positioned;
+        // never skip-from-zero.
         try {
             val pfd = contentResolver.openFileDescriptor(handle.uri, "r")
                 ?: throw SafException("io_error", "Cannot open file for read")
@@ -228,24 +249,15 @@ class MainActivity : FlutterActivity() {
                     val buffer = ByteArray(length)
                     val read = stream.channel.read(ByteBuffer.wrap(buffer), offset)
                     result.success(if (read <= 0) ByteArray(0) else buffer.copyOf(read))
-                    return
                 }
             }
-        } catch (_: Exception) {
-            // Some exotic DocumentProviders expose non-seekable descriptors.
-        }
-
-        val input = contentResolver.openInputStream(handle.uri) ?: throw SafException("io_error", "Cannot open input stream")
-        input.use { stream ->
-            var skipped = 0L
-            while (skipped < offset) {
-                val step = stream.skip(offset - skipped)
-                if (step <= 0) break
-                skipped += step
-            }
-            val buffer = ByteArray(length)
-            val read = stream.read(buffer)
-            result.success(if (read <= 0) ByteArray(0) else buffer.copyOf(read))
+        } catch (e: SafException) {
+            throw e
+        } catch (e: Exception) {
+            throw SafException(
+                "io_error",
+                "Non-seekable document provider cannot serve offset $offset: ${e.message ?: e.javaClass.simpleName}",
+            )
         }
     }
 

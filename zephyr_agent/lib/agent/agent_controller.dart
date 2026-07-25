@@ -43,7 +43,11 @@ class AgentController extends ChangeNotifier {
   // File provider
   ZephyrFileProvider? _fileProvider;
   final Map<int, Future<void>> _zft2Tasks = {};
-  final Map<String, Future<void>> _zft2HandleQueues = {};
+  /// Per-path serial queues for mutating ops. Write/close/truncate/open on the
+  /// same file must not race — Explorer issues FileEndOfFileInformation
+  /// (truncate) while WRITE IRPs are still in flight.
+  final Map<String, Future<void>> _zft2PathQueues = {};
+  final Map<String, String> _handlePaths = {};
   final Set<int> _zft2Cancelled = {};
   Timer? _transferUiTimer;
   bool _transferUiDirty = false;
@@ -264,30 +268,62 @@ class AgentController extends ChangeNotifier {
       _sendBytes(encodeZft2Error(frame, 'busy', 'Agent request window is full', retryable: true));
       return;
     }
-    final handle = frame.meta['handle']?.toString() ?? '';
     Future<void> run() async {
       try {
         final response = await _dispatchZft2(frame);
         if (!_zft2Cancelled.contains(frame.requestId)) _sendBytes(response);
       } catch (e) {
         final code = e is FileProviderException ? e.code : 'internal_error';
-        if (!_zft2Cancelled.contains(frame.requestId)) _sendBytes(encodeZft2Error(frame, code, e.toString()));
+        if (!_zft2Cancelled.contains(frame.requestId)) {
+          _sendBytes(encodeZft2Error(frame, code, e.toString()));
+        }
       } finally {
         _zft2Tasks.remove(frame.requestId);
         _zft2Cancelled.remove(frame.requestId);
       }
     }
-    Future<void> task;
-    if (handle.isNotEmpty && [Zft2Op.write, Zft2Op.close].contains(frame.type)) {
-      final previous = _zft2HandleQueues[handle] ?? Future.value();
+
+    // Serialize mutating ops that touch the same path. Reads stay concurrent.
+    final queueKey = _zft2QueueKey(frame);
+    late final Future<void> task;
+    if (queueKey != null) {
+      final previous = _zft2PathQueues[queueKey] ?? Future.value();
       task = previous.catchError((_) {}).then((_) => run());
-      _zft2HandleQueues[handle] = task.whenComplete(() {
-        if (identical(_zft2HandleQueues[handle], task)) _zft2HandleQueues.remove(handle);
+      _zft2PathQueues[queueKey] = task.whenComplete(() {
+        if (identical(_zft2PathQueues[queueKey], task)) {
+          _zft2PathQueues.remove(queueKey);
+        }
       });
     } else {
       task = run();
     }
     _zft2Tasks[frame.requestId] = task;
+  }
+
+  /// Returns a path-keyed queue id for ops that must not race, or null for
+  /// concurrent-safe ops (read/stat/list/ping).
+  String? _zft2QueueKey(Zft2Frame frame) {
+    final meta = frame.meta;
+    switch (frame.type) {
+      case Zft2Op.write:
+      case Zft2Op.close:
+        final handle = meta['handle']?.toString() ?? '';
+        if (handle.isEmpty) return null;
+        return _handlePaths[handle] ?? 'handle:$handle';
+      case Zft2Op.open:
+      case Zft2Op.truncate:
+      case Zft2Op.mkdir:
+      case Zft2Op.delete:
+        final path = meta['path']?.toString() ?? '';
+        return path.isEmpty ? null : path;
+      case Zft2Op.rename:
+        // Queue on the source path; cross-directory rename is rare and already
+        // rejected on Android SAF. dest is created only after source moves.
+        final oldPath = meta['oldPath']?.toString() ?? '';
+        return oldPath.isEmpty ? null : oldPath;
+      default:
+        return null;
+    }
   }
 
   Future<Uint8List> _dispatchZft2(Zft2Frame frame) async {
@@ -300,7 +336,10 @@ class AgentController extends ChangeNotifier {
     Uint8List payload = Uint8List(0);
     switch (frame.type) {
       case Zft2Op.open:
-        result = {'handle': await fp.open(meta['path'] as String, meta['mode'] as String? ?? 'read')};
+        final openPath = meta['path'] as String;
+        final handle = await fp.open(openPath, meta['mode'] as String? ?? 'read');
+        _handlePaths[handle] = openPath;
+        result = {'handle': handle};
         break;
       case Zft2Op.read:
         var length = (meta['length'] as num?)?.toInt() ?? 262144;
@@ -333,7 +372,12 @@ class AgentController extends ChangeNotifier {
         _recordTransfer(written);
         break;
       case Zft2Op.close:
-        await fp.close(meta['handle'] as String);
+        final closeHandle = meta['handle'] as String;
+        try {
+          await fp.close(closeHandle);
+        } finally {
+          _handlePaths.remove(closeHandle);
+        }
         break;
       case Zft2Op.stat:
         result = (await fp.stat(meta['path'] as String? ?? '/')).toJson();
@@ -633,7 +677,8 @@ class AgentController extends ChangeNotifier {
   void dispose() {
     _transferUiTimer?.cancel();
     _zft2Tasks.clear();
-    _zft2HandleQueues.clear();
+    _zft2PathQueues.clear();
+    _handlePaths.clear();
     _zft2Cancelled.clear();
     _cancelShutdownTimer();
     _cancelHeartbeat();

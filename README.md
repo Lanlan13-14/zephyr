@@ -454,7 +454,7 @@ Windows RDP 会话
 
 ### 安装包与 Release
 
-Zephyr Agent 由独立 GitHub Actions workflow 构建，默认发布 tag 为 `agent-v1.0.0`。Release 会生成：
+Zephyr Agent 由独立 GitHub Actions workflow 构建，发布 tag 形如 `agent-v1.0.12`。Release 会生成：
 
 - Android：`.apk`、`.aab`
 - Windows：安装包 `.exe`、便携版 `.zip`
@@ -463,6 +463,12 @@ Zephyr Agent 由独立 GitHub Actions workflow 构建，默认发布 tag 为 `ag
 - iOS：unsigned `.ipa`、`.zip`
 
 Agent Release 会像服务端 Docker Release 一样生成更新日志；Agent tag 使用 `agent-*` 前缀，避免和服务端镜像 `v*` tag 混在一起。
+
+**不用再在 `v*` 与 `agent-v*` 发布页来回切：**
+
+1. 每次构建 Zephyr Docker 镜像时，CI / Dockerfile 会解析最新的 `agent-v*` Release，写入 `public/agent-release.json`。
+2. 服务端把该元数据注入设置接口；Web 端「设置 → 关于」和「设置 → Zephyr Agent」自动显示「下载 Zephyr Agent vX.Y.Z」直达链接。
+3. Agent App 底部居中灰色小字显示编译期版本（`agent-v1.0.12` → `v1.0.12`）。
 
 Agent 构建产物不会被打进 Zephyr 服务端 Docker 镜像；`.dockerignore` 已排除 `zephyr_agent/`。
 

@@ -7905,6 +7905,32 @@ async function savePlatformSettings(section, patch) {
     return { ...settings, ...result, _admin: result };
 }
 
+function applyAgentReleaseLinks(agentRelease) {
+    const rel = agentRelease && typeof agentRelease === 'object' ? agentRelease : {};
+    const fallbackUrl = 'https://github.com/Lanlan13-14/zephyr-ssh/releases';
+    const url = String(rel.url || fallbackUrl).trim() || fallbackUrl;
+    const tag = String(rel.tag || '').trim();
+    const display = String(rel.display || '').trim() || (tag ? tag.replace(/^agent-/, '') : '');
+    const available = rel.available === true || Boolean(tag && rel.url);
+    const label = available
+        ? `下载 Zephyr Agent ${display || tag}`
+        : '查看 Zephyr Agent 发布页';
+    const hint = available
+        ? `当前镜像绑定最新 Agent Release：<code>${escapeHtml(tag || display)}</code>`
+        : '尚未解析到 <code>agent-v*</code> Release；构建镜像时会自动拉取最新标签。';
+
+    for (const id of ['aboutAgentReleaseLink', 'agentReleaseLink']) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        el.href = url;
+        el.textContent = label;
+        el.target = '_blank';
+        el.rel = 'noopener noreferrer';
+    }
+    const hintEl = document.getElementById('agentReleaseHint');
+    if (hintEl) hintEl.innerHTML = hint;
+}
+
 async function loadSettings() {
     const personal = await api('/api/me/settings');
     personalSettingsOverrides = personal.overrides || {};
@@ -7926,7 +7952,9 @@ async function loadSettings() {
         settings.ai = { ...(settings.ai || {}), providers: aiProvidersData.providers };
     }
     const sec = settings.security || {}, cap = settings.captcha || {}, mail = settings.mail || {}, beian = settings.beian || {};
-    $('#versionText').textContent = settings.version || '--'; $('#icpInput').value = beian.icp ?? settings.icp ?? ''; $('#icpUrlInput').value = beian.icpUrl ?? settings.icpUrl ?? ''; $('#policeInput').value = beian.policeBeian ?? settings.policeBeian ?? ''; $('#policeUrlInput').value = beian.policeBeianUrl ?? settings.policeBeianUrl ?? ''; $('#showBeianInput').checked = (beian.show ?? settings.showBeian) !== false;
+    $('#versionText').textContent = settings.version || '--';
+    applyAgentReleaseLinks(settings.agentRelease);
+    $('#icpInput').value = beian.icp ?? settings.icp ?? ''; $('#icpUrlInput').value = beian.icpUrl ?? settings.icpUrl ?? ''; $('#policeInput').value = beian.policeBeian ?? settings.policeBeian ?? ''; $('#policeUrlInput').value = beian.policeBeianUrl ?? settings.policeBeianUrl ?? ''; $('#showBeianInput').checked = (beian.show ?? settings.showBeian) !== false;
     $('#ipWhitelistEnabled').checked = !!sec.ipWhitelistEnabled; $('#ipWhitelist').value = sec.ipWhitelist || ''; $('#bruteForceEnabled').checked = sec.bruteForceEnabled !== false; $('#bruteForceMaxFailures').value = sec.bruteForceMaxFailures || 5; $('#bruteForceBanMinutes').value = sec.bruteForceBanMinutes || 15;
     $('#captchaEnabled').checked = !!cap.enabled; $('#captchaProvider').value = cap.provider || 'turnstile'; $('#captchaSiteKey').value = cap.siteKey || cap.tencentCaptchaAppId || cap.aliyunCaptchaId || cap.aliyunSceneId || ''; $('#captchaSecretKey').value = cap.secretKey || cap.tencentAppSecretKey || cap.aliyunAccessKeySecret || '';
     $('#mailEnabled').checked = !!mail.enabled; $('#mailHost').value = mail.host || ''; $('#mailPort').value = mail.port || 465; $('#mailSecure').checked = mail.secure !== false; $('#mailUser').value = mail.user || ''; $('#mailPass').value = mail.pass || ''; $('#mailFrom').value = mail.from || ''; $('#mailAdminEmail').value = mail.adminEmail || ''; $('#notifyLoginSuccess').checked = mail.notifyLoginSuccess !== false; $('#notifyLoginFailure').checked = mail.notifyLoginFailure !== false; $('#notifyLoginToUser').checked = mail.notifyLoginToUser !== false; $('#geoLookupEnabled').checked = mail.geoLookupEnabled !== false;

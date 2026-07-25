@@ -314,3 +314,54 @@ func TestAgentReadAheadCacheServesSequentialIRPs(t *testing.T) {
 		t.Fatal("cached data mismatch")
 	}
 }
+
+func TestRequestAgentRetriesTransientErrors(t *testing.T) {
+	transfer := &flakyFileTransfer{failCount: 2, payload: []byte{1, 2, 3}, code: "busy"}
+	h := NewRdpefsHandler(true)
+	h.SetFileTransfer(transfer)
+
+	resp, err := h.requestAgent("agent", zft2Read, map[string]any{"handle": "h", "offset": 0, "length": 3}, nil)
+	if err != nil {
+		t.Fatalf("requestAgent after retries: %v", err)
+	}
+	if string(resp.Payload) != "\x01\x02\x03" {
+		t.Fatalf("payload = %v", resp.Payload)
+	}
+	transfer.mu.Lock()
+	attempts := transfer.attempts
+	transfer.mu.Unlock()
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3 (2 fail + 1 success)", attempts)
+	}
+}
+
+func TestRequestAgentDoesNotRetryPermanentErrors(t *testing.T) {
+	transfer := &stickyErrorTransfer{err: &zft2Error{Code: "not_found", Message: "gone", Retryable: false}}
+	h := NewRdpefsHandler(true)
+	h.SetFileTransfer(transfer)
+
+	_, err := h.requestAgent("agent", zft2Stat, map[string]any{"path": "/x"}, nil)
+	if err == nil {
+		t.Fatal("expected permanent error")
+	}
+	if zerr, ok := err.(*zft2Error); !ok || zerr.Code != "not_found" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCallAgentStatDistinguishesNotFoundFromTransient(t *testing.T) {
+	h := NewRdpefsHandler(true)
+
+	h.SetFileTransfer(&stickyErrorTransfer{err: &zft2Error{Code: "not_found", Message: "gone"}})
+	stat, err := h.callAgentStat("agent", "/missing")
+	if err != nil || stat != nil {
+		t.Fatalf("not_found should be (nil,nil), got (%v,%v)", stat, err)
+	}
+
+	h.SetFileTransfer(&stickyErrorTransfer{err: &zft2Error{Code: "timeout", Message: "slow", Retryable: true}})
+	// Exhaust retries so requestAgent surfaces the error.
+	stat, err = h.callAgentStat("agent", "/flaky")
+	if err == nil || stat != nil {
+		t.Fatalf("transient should be (nil,err), got (%v,%v)", stat, err)
+	}
+}

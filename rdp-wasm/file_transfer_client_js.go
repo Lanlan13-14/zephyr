@@ -12,8 +12,15 @@ import (
 const (
 	fileTransferMaxInflight = 8
 	fileTransferTimeout     = 60 * time.Second
-	fileTransferSendHigh    = 8 * 1024 * 1024
-	fileTransferSendLow     = 2 * 1024 * 1024
+	// Backpressure waits for the browser socket to drain instead of failing
+	// the IRP. Explorer tolerates long IRP latency; a hard error aborts the
+	// whole multi-GB copy. Budget matches the request timeout.
+	fileTransferSendWait = 60 * time.Second
+	fileTransferSendHigh = 8 * 1024 * 1024
+	fileTransferSendLow  = 2 * 1024 * 1024
+	// Poll interval when the in-flight window is full. Short enough that a
+	// free slot is claimed quickly; long enough not to spin the WASM thread.
+	fileTransferSlotPoll = 4 * time.Millisecond
 )
 
 type pendingFileTransfer struct {
@@ -147,20 +154,32 @@ func (t *wsFileTransfer) Request(agentID string, op byte, meta map[string]any, p
 }
 
 func (c *agentTransferConn) request(op byte, meta map[string]any, payload []byte) (fileTransferResponse, error) {
-	c.mu.Lock()
-	if c.closed || c.ws.Get("readyState").Int() != 1 {
+	// Wait for an in-flight slot instead of returning busy. Concurrent IRPs
+	// (READ+WRITE+SET_INFO) used to collide on the 8-slot window and abort
+	// even tiny Explorer copies.
+	deadline := time.Now().Add(fileTransferTimeout)
+	var id uint32
+	var pending *pendingFileTransfer
+	for {
+		c.mu.Lock()
+		if c.closed || c.ws.Get("readyState").Int() != 1 {
+			c.mu.Unlock()
+			return fileTransferResponse{}, fmt.Errorf("file transfer websocket is closed")
+		}
+		if len(c.pending) < fileTransferMaxInflight {
+			id = c.nextID
+			c.nextID++
+			pending = &pendingFileTransfer{result: make(chan fileTransferResult, 1)}
+			c.pending[id] = pending
+			c.mu.Unlock()
+			break
+		}
 		c.mu.Unlock()
-		return fileTransferResponse{}, fmt.Errorf("file transfer websocket is closed")
+		if time.Now().After(deadline) {
+			return fileTransferResponse{}, &zft2Error{Code: "busy", Message: "file transfer request window is full", Retryable: true}
+		}
+		time.Sleep(fileTransferSlotPoll)
 	}
-	if len(c.pending) >= fileTransferMaxInflight {
-		c.mu.Unlock()
-		return fileTransferResponse{}, &zft2Error{Code: "busy", Message: "file transfer request window is full", Retryable: true}
-	}
-	id := c.nextID
-	c.nextID++
-	pending := &pendingFileTransfer{result: make(chan fileTransferResult, 1)}
-	c.pending[id] = pending
-	c.mu.Unlock()
 	frame, err := encodeZft2Frame(zft2Frame{Type: op, RequestID: id, Meta: meta, Payload: payload})
 	if err != nil {
 		c.removePending(id)
@@ -173,10 +192,15 @@ func (c *agentTransferConn) request(op byte, meta map[string]any, payload []byte
 	arr := js.Global().Get("Uint8Array").New(len(frame))
 	js.CopyBytesToJS(arr, frame)
 	c.ws.Call("send", arr)
+	// Remaining wait budget: total request timeout from entry, not from send.
+	remaining := time.Until(deadline)
+	if remaining < time.Second {
+		remaining = time.Second
+	}
 	select {
 	case result := <-pending.result:
 		return result.response, result.err
-	case <-time.After(fileTransferTimeout):
+	case <-time.After(remaining):
 		c.removePending(id)
 		c.sendCancel(id)
 		return fileTransferResponse{}, &zft2Error{Code: "timeout", Message: "file transfer request timed out", Retryable: true}
@@ -184,10 +208,11 @@ func (c *agentTransferConn) request(op byte, meta map[string]any, payload []byte
 }
 
 func (c *agentTransferConn) waitSendBudget(frameBytes int) error {
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(fileTransferSendWait)
 	for c.ws.Get("bufferedAmount").Int()+frameBytes > fileTransferSendHigh {
 		if time.Now().After(deadline) {
-			return fmt.Errorf("file transfer websocket backpressure timeout")
+			// Retryable so requestAgent can re-issue after drain.
+			return &zft2Error{Code: "backpressure", Message: "file transfer websocket backpressure timeout", Retryable: true}
 		}
 		time.Sleep(4 * time.Millisecond)
 		if c.ws.Get("bufferedAmount").Int() <= fileTransferSendLow {

@@ -714,6 +714,9 @@
                                 <div class="copy-line"><code id="agentServerUrlText">--</code><button class="tool-btn" type="button" id="agentCopyServerUrlBtn">复制</button></div>
                                 <p class="field-hint">Agent App 里主端地址填写当前 Zephyr 的 HTTPS 地址，例如 <code>https://ssh.example.com</code>；不要手动填写 <code>wss://</code>。</p>
                             </div>
+                            <h2>下载 Agent</h2>
+                            <p class="muted" id="agentReleaseHint">镜像构建时自动解析最新 <code>agent-v*</code> Release。</p>
+                            <p id="agentReleaseLine"><a class="muted-link" id="agentReleaseLink" href="https://github.com/Lanlan13-14/zephyr-ssh/releases" target="_blank" rel="noopener noreferrer">查看 Zephyr Agent 发布页</a></p>
                         </div>
                         <div class="settings-panel" id="settings-data"><h2>数据导入导出</h2><p class="muted">导出文件使用 data/.env 中 ENCRYPTION_KEY 加密；敏感字段在数据库中使用 ML-KEM-768 + AES-256-GCM 混合加密保存。</p><button class="btn btn-primary" id="exportDataBtn">开始导出</button><form id="importDataForm" class="settings-form"><input type="file" id="backupFile" accept=".enc"><input type="password" id="importLoginPassword" placeholder="当前登录密码"><input type="password" id="backupPassword" placeholder="备份解密密码（ENCRYPTION_KEY）"><button class="btn danger">导入备份</button></form></div>
                         <div class="settings-panel" id="settings-mail"><h2>邮件通知</h2><form id="mailForm" class="settings-form"><label class="check-line"><input type="checkbox" id="mailEnabled"> 启用邮件通知</label><input id="mailHost" placeholder="SMTP Host"><input id="mailPort" type="number" placeholder="SMTP Port"><label class="check-line"><input type="checkbox" id="mailSecure"> SSL/TLS</label><input id="mailUser" placeholder="SMTP 用户名"><div class="form-group password-field"><input id="mailPass" type="password" placeholder="SMTP 密码"><button type="button" id="toggleMailPassword" title="显示/隐藏 SMTP 密码">👁️</button></div><button type="button" class="link-btn" id="revealMailPass">查看已保存 SMTP 密码</button><p class="field-hint">默认隐藏已保存 SMTP 密码；留空或保持星号不会覆盖已保存密码。</p><input id="mailFrom" placeholder="发件人"><input id="mailAdminEmail" type="email" placeholder="后台管理员邮箱"><label class="check-line"><input type="checkbox" id="notifyLoginSuccess"> 登录成功通知</label><label class="check-line"><input type="checkbox" id="notifyLoginFailure"> 登录失败通知</label><label class="check-line"><input type="checkbox" id="notifyLoginToUser"> 给登录用户发送通知</label><label class="check-line"><input type="checkbox" id="geoLookupEnabled"> IP 地区查询</label><button class="btn btn-primary" type="submit">保存邮件设置</button><button class="btn" type="button" id="testMailBtn">测试邮件</button></form></div>
@@ -723,6 +726,9 @@
                             <h2>关于 Zephyr</h2>
                             <p>版本：<strong id="versionText">--</strong></p>
                             <p class="muted"><a class="muted-link" href="https://github.com/Lanlan13-14/zephyr-ssh" target="_blank" rel="noopener noreferrer">GitHub 地址</a></p>
+                            <h2>Zephyr Agent</h2>
+                            <p class="muted">跨平台文件磁盘映射客户端。镜像构建时写入最新 Release，无需再在 Docker <code>v*</code> 与 Agent <code>agent-v*</code> tag 之间来回切。</p>
+                            <p id="aboutAgentReleaseLine"><a class="muted-link" id="aboutAgentReleaseLink" href="https://github.com/Lanlan13-14/zephyr-ssh/releases" target="_blank" rel="noopener noreferrer">查看 Zephyr Agent 发布页</a></p>
                         </div>
                     </div>
                 </div>

@@ -41,19 +41,6 @@ type zft2Frame struct {
 	Payload   []byte
 }
 
-type zft2Error struct {
-	Code      string
-	Message   string
-	Retryable bool
-}
-
-func (e *zft2Error) Error() string {
-	if e == nil {
-		return "file transfer failed"
-	}
-	return e.Message
-}
-
 func encodeZft2Frame(frame zft2Frame) ([]byte, error) {
 	meta := frame.Meta
 	if meta == nil {

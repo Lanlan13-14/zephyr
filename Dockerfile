@@ -19,6 +19,21 @@ RUN test -f public/vendor/wterm-fork/wterm.js && \
     test -f public/vendor/wterm-fork/core/xterm-headless-register.js && \
     echo "terminal vendor stack present"
 
+# Bake the latest Zephyr Agent release (agent-v*) into public/agent-release.json
+# so the About / Agent settings pages link straight to the current Agent tag
+# without users hopping between Docker v* and Agent agent-v* release pages.
+# Network failure is non-fatal — the UI falls back to the releases index.
+ARG GITHUB_TOKEN=
+ARG GITHUB_REPOSITORY=Lanlan13-14/zephyr-ssh
+ARG ZEPHYR_AGENT_RELEASE_TAG=
+ENV GITHUB_TOKEN=${GITHUB_TOKEN}
+ENV GITHUB_REPOSITORY=${GITHUB_REPOSITORY}
+ENV ZEPHYR_AGENT_RELEASE_TAG=${ZEPHYR_AGENT_RELEASE_TAG}
+RUN node scripts/resolve-latest-agent-release.mjs \
+    && test -f public/agent-release.json \
+    && echo "agent-release metadata present" \
+    && cat public/agent-release.json
+
 # Rebuild browser terminal vendor from TS sources (native esbuild on CI).
 RUN npm run build:terminal
 

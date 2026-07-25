@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { readAgentReleaseMeta } = require('./agent-release');
 
 function normalizeVersion(value) {
     const version = String(value || '').trim().replace(/^refs\/tags\//, '');
@@ -25,4 +26,8 @@ function getAppVersion() {
     ) || '3.0.0';
 }
 
-module.exports = { getAppVersion };
+function getAgentRelease() {
+    return readAgentReleaseMeta();
+}
+
+module.exports = { getAppVersion, getAgentRelease };

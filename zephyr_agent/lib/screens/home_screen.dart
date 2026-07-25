@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../agent/agent_controller.dart';
 import '../agent/agent_state.dart';
+import '../app/agent_version.dart';
 import '../fs/file_provider.dart';
 import '../storage/local_settings.dart';
 import '../theme/zephyr_colors.dart';
@@ -315,6 +316,24 @@ class _HomeScreenState extends State<HomeScreen> {
                 )).toList(),
               ),
             ],
+          ),
+          // Bottom-center grey version from compile-time release tag
+          // (agent-v1.0.12 → v1.0.12). Not interactive.
+          bottomNavigationBar: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 10, top: 4),
+              child: Text(
+                AgentVersion.tag,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w400,
+                  letterSpacing: 0.2,
+                  color: _palette.textSecondary.withValues(alpha: 0.72),
+                ),
+              ),
+            ),
           ),
           body: SingleChildScrollView(
             padding: const EdgeInsets.all(16),

@@ -12,7 +12,9 @@ const MAX_INFLIGHT_BYTES = 32 * 1024 * 1024;
 const SEND_HIGH_WATER = 8 * 1024 * 1024;
 const SEND_LOW_WATER = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 60000;
-const SEND_WAIT_TIMEOUT_MS = 30000;
+// Match browser-side budget: block the IRP on backpressure instead of failing
+// a multi-GB copy after 30s of socket drain.
+const SEND_WAIT_TIMEOUT_MS = 60000;
 
 function wsOpen(ws) {
     return ws && ws.readyState === WebSocket.OPEN;

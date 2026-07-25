@@ -291,9 +291,9 @@ type openHandle struct {
 	// Explorer often opens existing files with a broad write DesiredAccess even
 	// for pure reads (copy/preview); those are opened as read and upgraded on
 	// the first IRP_MJ_WRITE.
-	Writable  bool
-	ReadCache *agentReadCache
-	Volatile  bool   // in-memory placeholder for Office temp/lock files on read-only Agent shares
+	Writable     bool
+	ReadCache    *agentReadCache
+	Volatile     bool   // in-memory placeholder for Office temp/lock files on read-only Agent shares
 	VolatileData []byte // data written to the volatile placeholder during this RDP session
 	// For local mode compatibility
 	LocalFile *VirtualFile
@@ -819,7 +819,13 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 	// mask even when they only intend to read.  Treating FILE_OPEN_IF as a
 	// write/create unconditionally causes ACCESS_DENIED on read-only Agent
 	// shares when users simply double-click files.
-	statResult := h.callAgentStat(agentID, path)
+	statResult, statErr := h.callAgentStat(agentID, path)
+	if statErr != nil {
+		// Transient failure — do NOT invent NO_SUCH_FILE; that turns a flaky
+		// network hop into a permanent "path not found" for Explorer.
+		h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
+		return
+	}
 	exists := statResult != nil
 
 	if !exists {
@@ -843,8 +849,8 @@ func (h *RdpefsHandler) handleCreateAgent(drive *DriveState, completionID uint32
 				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
 				return
 			}
-			statResult = h.callAgentStat(agentID, path)
-			if statResult == nil {
+			statResult, statErr = h.callAgentStat(agentID, path)
+			if statErr != nil || statResult == nil {
 				h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_CREATE, STATUS_UNSUCCESSFUL, nil)
 				return
 			}
@@ -1594,9 +1600,14 @@ func (h *RdpefsHandler) handleQueryInformation(deviceID, completionID, fileID ui
 	var mtime time.Time
 
 	if drive.Mode == DriveModeAgent {
-		stat := h.callAgentStat(handle.AgentID, handle.Path)
-		if stat == nil {
+		stat, statErr := h.callAgentStat(handle.AgentID, handle.Path)
+		if statErr != nil {
 			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_UNSUCCESSFUL, nil)
+			return
+		}
+		if stat == nil {
+			// Definitive not_found after open — report cleanly, not as generic failure.
+			h.sendIOCompletionMajor(deviceID, completionID, IRP_MJ_QUERY_INFORMATION, STATUS_NO_SUCH_FILE, nil)
 			return
 		}
 		isDir = stat.IsDir
@@ -1986,23 +1997,40 @@ func (h *RdpefsHandler) requestAgent(agentID string, op byte, meta map[string]an
 	if transfer == nil {
 		return fileTransferResponse{}, fmt.Errorf("file transfer is unavailable")
 	}
-	return transfer.Request(agentID, op, meta, payload)
+	var lastErr error
+	for attempt := 1; attempt <= agentRequestMaxAttempts; attempt++ {
+		resp, err := transfer.Request(agentID, op, meta, payload)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if attempt == agentRequestMaxAttempts || !isRetryableAgentError(err) {
+			break
+		}
+		// Exponential backoff: 25ms, 50ms, 100ms. Caps storming a full window.
+		sleep := agentRequestRetryBase << (attempt - 1)
+		slog.Debug("rdpefs: retrying agent request", "op", op, "attempt", attempt, "err", err)
+		time.Sleep(sleep)
+	}
+	return fileTransferResponse{}, lastErr
 }
 
-func (h *RdpefsHandler) callAgentStat(agentID, path string) *agentFileStat {
+// callAgentStat returns (nil, nil) only for a definitive not_found.
+// Transient errors return (nil, err) so CREATE does not invent NO_SUCH_FILE.
+func (h *RdpefsHandler) callAgentStat(agentID, path string) (*agentFileStat, error) {
 	response, err := h.requestAgent(agentID, zft2Stat, map[string]any{"path": path}, nil)
 	if err != nil {
 		if zerr, ok := err.(*zft2Error); ok && zerr.Code == "not_found" {
-			return nil
+			return nil, nil
 		}
 		slog.Warn("rdpefs: agent stat failed", "agent", agentID, "path", path, "err", err)
-		return nil
+		return nil, err
 	}
 	return &agentFileStat{
 		Name: stringMeta(response.Meta, "name"), Path: stringMeta(response.Meta, "path"),
 		IsDir: boolMeta(response.Meta, "isDir"), Size: int64Meta(response.Meta, "size"),
 		Mtime: int64Meta(response.Meta, "mtime"),
-	}
+	}, nil
 }
 
 func (h *RdpefsHandler) callAgentOpen(agentID, path, mode string) string {

@@ -43,7 +43,7 @@ const { AiPolicyService } = require('./ai-policy');
 const { AiProviderService } = require('./ai-provider-service');
 const secretCrypto = require('./secret-crypto');
 const { handleEditorLspConnection } = require('./editor-lsp-server');
-const { getAppVersion } = require('./version');
+const { getAppVersion, getAgentRelease } = require('./version');
 const {
     dialTelnet,
     filterIac,
@@ -98,6 +98,7 @@ const HTTPS_ENABLED = process.env.HTTPS_ENABLED !== 'false';
 const HTTPS_PORT = Number(process.env.HTTPS_PORT || process.env.ZEPHYR_HTTPS_PORT || 3443);
 const SSH_STATS_ENABLED = process.env.SSH_STATS_ENABLED !== 'false';
 const APP_VERSION = getAppVersion();
+const AGENT_RELEASE = getAgentRelease();
 const app = express();
 
 function applyCrossOriginIsolationHeaders(req, res, next) {
@@ -1555,6 +1556,10 @@ function requireSameOrigin(req, res, next) {
 function safeSettings(s = storage.getSettings()) {
     const copy = JSON.parse(JSON.stringify(s || {}));
     copy.version = APP_VERSION;
+    // Latest Zephyr Agent release link, baked at image build time from the
+    // newest agent-v* GitHub release so the About/Agent settings pages do not
+    // force users to jump between Docker (v*) and Agent (agent-v*) tags.
+    copy.agentRelease = AGENT_RELEASE;
     if (copy.mail?.pass) copy.mail.pass = '******';
     if (copy.captcha?.secretKey) copy.captcha.secretKey = '******';
     if (copy.captcha?.tencentAppSecretKey) copy.captcha.tencentAppSecretKey = '******';
@@ -2405,14 +2410,29 @@ app.get('/api/me/bootstrap', requireUser, (req, res) => {
 });
 
 /* ─── Personal settings (FREEZE plan §15) ─── */
+function withRuntimeMeta(settings) {
+    return {
+        ...settings,
+        version: APP_VERSION,
+        agentRelease: AGENT_RELEASE,
+    };
+}
+
 app.get('/api/me/settings', requireUser, (req, res) => {
-    res.json({ settings: userSettingsService.effective(req.user), overrides: userSettingsService.getUserOverrides(req.user.userId) });
+    res.json({
+        settings: withRuntimeMeta(userSettingsService.effective(req.user)),
+        overrides: userSettingsService.getUserOverrides(req.user.userId),
+    });
 });
 
 app.put('/api/me/settings', requireUser, (req, res) => {
     try {
         const overrides = userSettingsService.putUserOverrides(req.user.userId, req.body || {});
-        res.json({ ok: true, overrides, settings: userSettingsService.effective(req.user) });
+        res.json({
+            ok: true,
+            overrides,
+            settings: withRuntimeMeta(userSettingsService.effective(req.user)),
+        });
     } catch (err) {
         handleServiceError(res, err, 400);
     }
