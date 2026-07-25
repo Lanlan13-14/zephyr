@@ -38,6 +38,12 @@
 - **约束**：SSE、服务端会话、权限规则、MCP、真 resume；禁止为省 token 改 system 拼装
 - **续作**：archive 回查、Plan/Goal UI、权限规则编辑器
 
+### 2c. AI 全能力标准化改造（优先级：高 · 🚧 进行中）
+- **状态**：Capability Registry + 连接/代理/SSH 密钥资产域标准化已完成；SSH/TELNET/RDP/VNC 会话闭环待继续
+- **进度文档**：[AI_PROGRESS_2026-07-25.md](./AI_PROGRESS_2026-07-25.md)
+- **代码**：`ai-capability-registry.js`、`ai-capabilities.js`、`ai-tool-executor.js`、`ai-connection-tools.js`、`ai-proxy-tools.js`、`ai-ssh-key-tools.js`、`ai-playbooks.js`
+- **约束**：接口完整 + 接口标准 + AI 通过 Playbook + capability_search 真会用；批量小、每批独立验证
+
 ### 3. Agent 内嵌 WebView + 本地设备管理（优先级：低）
 - **状态**：完整方案已写，未开始实施
 - **方案文档**：[AGENT_WEBAPP_PLAN.md](./AGENT_WEBAPP_PLAN.md)（1687 行）
