@@ -61,7 +61,7 @@
     "iconv-lite": "^0.7.3",
     "ipaddr.js": "^2.3.0",
     "multer": "^2.1.1",
-    "nodemailer": "^8.0.7",
+    "nodemailer": "^9.0.1",
     "otplib": "^13.4.0",
     "prettier": "^3.8.3",
     "qrcode": "^1.5.4",
