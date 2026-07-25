@@ -8447,10 +8447,9 @@ function openProxyModal(proxy = null, trigger = null) {
         if (cycle !== proxyModalCycle) return;
         // 先清场再量尺寸：停 press 弹簧 / 中断中的 close morph，避免量到 scale 中的按钮
         armMotionModalOpen(Motion, modal, card, inner, proxyModalTrigger, 'proxy1');
-        // toggle-select 在卡片 visibility:hidden 时改 DOM，不会 paint
+        // 代理类型只写原生 select 值；飞行中不 enhance/sync toggle-select，避免
+        // 二次 DOM 同步与菜单动画在 FLIP 首帧抢 paint。
         try { closeAllToggleSelects(); } catch {}
-        enhanceToggleSelect($('#proxyType'));
-        syncToggleSelectFace($('#proxyType'));
         const btnRect = proxyModalTrigger?.getBoundingClientRect?.() || null;
         proxyScrimSet(true, Motion || null);
         const useMotion = !!Motion && !!btnRect && btnRect.width > 2 && btnRect.height > 2;
@@ -8466,6 +8465,10 @@ function openProxyModal(proxy = null, trigger = null) {
                 proxyModalTrigger.style.pointerEvents = '';
                 delete proxyModalTrigger.dataset.motionHidden;
             }
+            try {
+                enhanceToggleSelect($('#proxyType'));
+                syncToggleSelectFace($('#proxyType'));
+            } catch {}
             $('#proxyName')?.focus({ preventScroll: true });
             return;
         }
@@ -8484,7 +8487,19 @@ function openProxyModal(proxy = null, trigger = null) {
             contentPreset: 'content',
         }).then(() => {
             if (cycle !== proxyModalCycle) return;
-            card.style.overflow = '';
+            // 完整展开：iosAppOpen 飞行中会写 overflow:hidden；落地后必须清掉，
+            // 否则卡片仍表现为内部滚动而不是内容完整外展。
+            card.style.overflow = 'visible';
+            card.style.maxHeight = 'none';
+            card.style.height = 'auto';
+            if (inner?.style) {
+                inner.style.overflow = 'visible';
+                inner.style.maxHeight = 'none';
+            }
+            try {
+                enhanceToggleSelect($('#proxyType'));
+                syncToggleSelectFace($('#proxyType'));
+            } catch {}
         }).catch((err) => console.warn('[proxy1] iosAppOpen failed', err));
         window.setTimeout(() => {
             if (cycle === proxyModalCycle && modal.classList.contains('show')) {
@@ -8692,7 +8707,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260725-source-handoff1')
+        return import('./vendor/zephyr-motion/index.js?v=20260725-proxy-fullopen1')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -8700,8 +8715,10 @@ const sshKeyMotion = {
                 try { await Motion.init({ capacity: 256 }); } catch {}
                 this.engine = Motion;
                 // 打开按压反馈（Apple/Emil：scale 0.96 on pointerdown）
+                // 代理新建按钮不绑 Motion.press：任何源按钮 scale 都会和 iosAppOpen
+                // 的 clone 首帧抢 transform，造成“闪一下/曲线不对”。
                 if (!this._pressBound) {
-                    for (const id of ['addSshKeyBtn', 'addSnippetBtn', 'addProxyBtn', 'aiAddProviderBtn']) {
+                    for (const id of ['addSshKeyBtn', 'addSnippetBtn', 'aiAddProviderBtn']) {
                         const btn = document.getElementById(id);
                         if (btn && Motion.press) Motion.press(btn, { scale: 0.96, preset: 'snappy' });
                     }
@@ -8918,7 +8935,8 @@ async function openSshKeySecret(id, trigger = null) {
 }
 
 function bindConnectionPressFeedback(root = document) {
-    const pressableSelector = '#addConnectionBtn, #addSshKeyBtn, #addSnippetBtn, #addProxyBtn, #aiAddProviderBtn, [data-edit]';
+    // 故意不含 #addProxyBtn：代理弹窗只保留 iosAppOpen 路径，不叠加 CSS press。
+    const pressableSelector = '#addConnectionBtn, #addSshKeyBtn, #addSnippetBtn, #aiAddProviderBtn, [data-edit]';
     const clearPress = (el) => el?.classList?.remove('connection-pressing');
     root.addEventListener('pointerdown', (e) => {
         const target = e.target.closest?.(pressableSelector);

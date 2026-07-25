@@ -59,7 +59,7 @@ test('ai provider open/close use iosApp* identical to SSH key', () => {
     assert.match(appJs, /function aiProviderBtnRadius/);
     assert.match(appJs, /armMotionModalOpen\(Motion, modal, card, inner, aiProviderModalTrigger, 'aiprovider1'\)/);
     assert.match(appJs, /Motion\.iosAppOpen\(card, aiProviderModalTrigger/);
-    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'addProxyBtn', 'aiAddProviderBtn'\]\)/);
+    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'aiAddProviderBtn'\]\)/);
     assert.match(appJs, /#aiAddProviderBtn/);
     assert.match(appJs, /aiProviderModalScrim/);
     const openFn = extractFn(appJs, 'openAiProviderModal');

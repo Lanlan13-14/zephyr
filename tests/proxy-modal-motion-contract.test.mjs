@@ -65,7 +65,8 @@ test('proxy open/close use iosApp* only — no home-blur or transition layer', (
     // form.reset 已从 open 路径移除（易触发 layout 闪）
     const openFnCheck = extractFn(appJs, 'openProxyModal');
     assert.doesNotMatch(openFnCheck, /resetProxyForm|form\.reset|\$\('#proxyForm'\)\?\.reset/);
-    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'addProxyBtn', 'aiAddProviderBtn'\]\)/);
+    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'aiAddProviderBtn'\]\)/);
+    assert.doesNotMatch(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'addProxyBtn', 'aiAddProviderBtn'\]\)/);
     const openFn = extractFn(appJs, 'openProxyModal');
     const closeFn = extractFn(appJs, 'closeProxyModal');
     assert.doesNotMatch(openFn, /connection-home-blur/);
@@ -91,7 +92,24 @@ test('proxy CSS is motion-only card', () => {
     assert.match(styleCss, /body\.proxy1-blurring #proxyModalScrim/);
     assert.match(styleCss, /#proxyModal \.proxy-modal[\s\S]*?transition:\s*none\s*!important/);
     assert.doesNotMatch(styleCss, /#proxyModal:not\(\.proxy1\)/);
-    assert.match(styleCss, /#addProxyBtn\.connection-pressing/);
+    // 代理按钮禁止 CSS press/hover/active transform，只允许引擎动画
+    assert.match(styleCss, /#addProxyBtn,\s*\n#addProxyBtn:hover/);
+    assert.match(styleCss, /#addProxyBtn[\s\S]*?transform:\s*none\s*!important/);
+    assert.doesNotMatch(styleCss, /#addProxyBtn\.connection-pressing,\s*\n#aiAddProviderBtn\.connection-pressing/);
+});
+
+test('proxy modal expands full content without internal max-height scroll lock', () => {
+    // 移动端不再把 proxy 锁成 86vh 内滚；滚动交给 backdrop
+    assert.match(styleCss, /#proxyModal \.proxy-modal[\s\S]*?max-height:\s*none\s*!important/);
+    assert.match(styleCss, /#proxyModal \.proxy-modal[\s\S]*?overflow:\s*visible\s*!important/);
+    assert.match(styleCss, /#proxyModal\.proxy1[\s\S]*?overflow-y:\s*auto/);
+    const openFn = extractFn(appJs, 'openProxyModal');
+    assert.doesNotMatch(openFn, /enhanceToggleSelect\(\$\('#proxyType'\)\);\s*\n\s*syncToggleSelectFace\(\$\('#proxyType'\)\);\s*\n\s*const btnRect/);
+    assert.match(openFn, /card\.style\.overflow = 'visible'/);
+    assert.match(openFn, /card\.style\.maxHeight = 'none'/);
+    // 代理按钮不进 Motion.press 名单
+    assert.doesNotMatch(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'addProxyBtn', 'aiAddProviderBtn'\]\)/);
+    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'aiAddProviderBtn'\]\)/);
 });
 
 test('proxy finish path keeps atomic twin handoff', () => {
