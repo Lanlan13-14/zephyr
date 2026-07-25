@@ -1366,6 +1366,39 @@ function refreshTagFilter() {
     delete select.dataset.savedValue;
     syncToggleSelectFace(select);
 }
+// 首页搜索空结果：命中危机/自伤意图词时展示援助信息，而不是“暂无连接”。
+// 故意收窄关键词，避免「抑郁」「压力」等日常词误触发；只有明确危机意图才替换空状态。
+const CRISIS_HELP_HOTLINE = '010-82951332';
+const CRISIS_HELP_HOTLINE_TEL = '01082951332';
+const CRISIS_SEARCH_PATTERNS = [
+    /自杀/, /轻生/, /自尽/, /寻死/, /想死/, /不想活/, /结束生命/, /结束自己/,
+    /自残/, /割腕/, /跳楼/, /跳河/, /上吊/, /服毒/, /烧炭/,
+    /suicide/i, /suicidal/i, /\bkill myself\b/i, /\bwant to die\b/i,
+    /self[-\s]?harm/i, /\bend my life\b/i, /\bend it all\b/i,
+];
+function isCrisisSearchQuery(q) {
+    const raw = String(q || '').trim();
+    if (!raw) return false;
+    return CRISIS_SEARCH_PATTERNS.some((re) => re.test(raw));
+}
+function renderCrisisHelpEmptyCard() {
+    const phone = escapeHtml(CRISIS_HELP_HOTLINE);
+    const tel = escapeAttr(CRISIS_HELP_HOTLINE_TEL);
+    return `<div class="empty-card crisis-help-card" role="region" aria-label="心理援助信息">
+        <div class="crisis-help-inner">
+            <h2 class="crisis-help-title">你不孤单，我们都在</h2>
+            <p class="crisis-help-lead">如果需要帮助，请拨打全国24小时免费心理咨询热线</p>
+            <a class="crisis-help-phone" href="tel:${tel}">${phone}</a>
+            <p class="crisis-help-en">24/7 Free Psychological Counseling</p>
+            <button type="button" class="btn crisis-help-copy" data-copy-hotline="${phone}">复制热线</button>
+        </div>
+    </div>`;
+}
+function connectionListEmptyHtml() {
+    const q = $('#searchInput')?.value || '';
+    if (isCrisisSearchQuery(q)) return renderCrisisHelpEmptyCard();
+    return '<div class="empty-card">暂无连接，点击右上角添加新连接。</div>';
+}
 function filteredConnections() {
     const q = $('#searchInput').value.trim().toLowerCase(), proto = $('#protocolFilter').value, tag = $('#tagFilter').value, sort = $('#sortSelect').value;
     const list = connections.filter((c) => [c.name, c.host, c.remark, c.username, (c.tags || []).join(' ')].join(' ').toLowerCase().includes(q) && (proto === 'all' || c.protocol === proto) && (tag === 'all' || (c.tags || []).includes(tag)));
@@ -1387,7 +1420,7 @@ function renderConnections() {
         <h2>${escapeHtml(c.name)}</h2><p class="host-line">${escapeHtml(c.host)}:${escapeHtml(c.port)} · ${c.connectionMode === 'proxy' ? '代理' : c.connectionMode === 'jump' ? '跳板机' : '直连'}</p>
         <div class="tag-row">${(c.tags || []).map((t) => `<span>${escapeHtml(t)}</span>`).join('')}</div><div class="remark-md">${renderMarkdown(c.remark || '暂无备注')}</div>
         <div class="card-actions">${canEdit ? `<button class="tool-btn" data-edit="${c.id}">编辑</button>` : ''}${canDelete ? `<button class="tool-btn danger" data-delete="${c.id}">删除</button>` : ''}${canUse ? `<button class="btn btn-primary" data-connect="${c.id}">连接</button>` : '<button class="btn btn-primary" disabled title="仅观察">只读</button>'}</div></article>`;
-    }).join('') : '<div class="empty-card">暂无连接，点击右上角添加新连接。</div>';
+    }).join('') : connectionListEmptyHtml();
     renderRemoteServers(); renderJumpOptions();
 }
 function activityRangeBounds(range = activityRange) {
@@ -8899,6 +8932,12 @@ function bindEvents() {
         await loadActivities();
     });
     $('#connectionGrid').addEventListener('click', async (e) => {
+        const hotline = e.target.closest?.('[data-copy-hotline]')?.dataset.copyHotline;
+        if (hotline) {
+            e.preventDefault();
+            await copyTextToClipboard(hotline, '热线号码已复制');
+            return;
+        }
         const edit = e.target.closest?.('[data-edit]')?.dataset.edit, del = e.target.closest?.('[data-delete]')?.dataset.delete, connect = e.target.closest?.('[data-connect]')?.dataset.connect;
         if (edit) openModal(connections.find((c) => c.id === edit), e.target.closest?.('[data-edit]'));
         if (del && confirm('确定删除该连接？')) {

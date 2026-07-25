@@ -739,6 +739,87 @@ body.terminal-mode .terminal-view.active { animation: none; }
 .activity-empty { display: grid; place-items: center; gap: 6px; min-height: 220px; border: 1px dashed var(--border); border-radius: 8px; color: var(--text-secondary); text-align: center; }
 .activity-empty strong { color: var(--text); font-size: 15px; }
 .empty-card, .terminal-placeholder { padding: 28px; text-align: center; color: var(--text-secondary); }
+/* 首页搜索命中危机词时的援助空状态（非“暂无连接”） */
+.crisis-help-card {
+    grid-column: 1 / -1;
+    position: relative;
+    overflow: hidden;
+    padding: 36px 28px 32px;
+    text-align: left;
+    color: var(--text);
+    border-color: color-mix(in srgb, #f472b6 28%, var(--border));
+    background:
+        radial-gradient(120% 90% at 100% 100%, color-mix(in srgb, #f9a8d4 22%, transparent) 0%, transparent 55%),
+        radial-gradient(90% 70% at 0% 0%, color-mix(in srgb, #93c5fd 18%, transparent) 0%, transparent 50%),
+        linear-gradient(165deg, color-mix(in srgb, var(--surface) 92%, #fff) 0%, var(--surface) 100%);
+    box-shadow: var(--shadow-soft);
+}
+:root[data-theme="dark"] .crisis-help-card {
+    border-color: color-mix(in srgb, #f472b6 22%, var(--border));
+    background:
+        radial-gradient(120% 90% at 100% 100%, color-mix(in srgb, #be185d 18%, transparent) 0%, transparent 55%),
+        radial-gradient(90% 70% at 0% 0%, color-mix(in srgb, #1d4ed8 16%, transparent) 0%, transparent 50%),
+        var(--surface);
+}
+.crisis-help-inner {
+    position: relative;
+    z-index: 1;
+    max-width: 520px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+}
+.crisis-help-title {
+    margin: 0;
+    font-size: clamp(26px, 5vw, 34px);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.25;
+    color: var(--text);
+}
+.crisis-help-lead {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+}
+.crisis-help-phone {
+    display: inline-flex;
+    align-items: center;
+    margin-top: 4px;
+    font-size: clamp(22px, 4vw, 28px);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+    color: #db2777;
+    text-decoration: none;
+}
+.crisis-help-phone:hover { color: #be185d; text-decoration: underline; text-underline-offset: 4px; }
+:root[data-theme="dark"] .crisis-help-phone { color: #f9a8d4; }
+:root[data-theme="dark"] .crisis-help-phone:hover { color: #fbcfe8; }
+.crisis-help-en {
+    margin: 18px 0 0;
+    font-size: 15px;
+    line-height: 1.45;
+    color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+}
+.crisis-help-copy {
+    margin-top: 6px;
+    min-width: 112px;
+    padding: 10px 22px;
+    border: none;
+    border-radius: 999px;
+    background: #f472b6;
+    color: #fff;
+    font-weight: 600;
+    box-shadow: 0 8px 20px -10px color-mix(in srgb, #f472b6 80%, transparent);
+}
+.crisis-help-copy:hover {
+    background: #ec4899;
+    filter: none;
+}
+.crisis-help-copy:active { transform: scale(0.97); }
 .browser-tabs { min-height: 50px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); padding: 10px; margin-bottom: 14px; overflow-x: auto; }
 
 /* ===== 终端工作台：顶部智能悬浮栏 ===== */
