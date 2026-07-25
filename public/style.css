@@ -296,6 +296,9 @@ body.app-body.theme-ripple-active::before {
 }
 #addConnectionBtn.connection-pressing,
 #addSshKeyBtn.connection-pressing,
+#addSnippetBtn.connection-pressing,
+#addProxyBtn.connection-pressing,
+#aiAddProviderBtn.connection-pressing,
 .connection-list [data-edit].connection-pressing {
     --connection-press-scale: 0.965;
     transition:
@@ -2344,46 +2347,91 @@ body.app-body::after {
     display: none;
 }
 
-/* ── sshkey1：SSH 密钥弹窗接入 zephyr-motion ─────────────────────────── */
-/* 背景：缓慢虚化 + 轻压暗。模糊量由引擎逐帧写 --sshkey-scrim-blur；
-   压暗（opacity）由 CSS 慢过渡兜底 —— 两条通道都刻意拉长到 ~0.7-0.9s。 */
-#sshKeyModalScrim {
+/* ── sshkey / snippet / proxy / aiprovider：仅 zephyr-motion ─────────── */
+/* 旧 connection-home-blur / scale(.97) / CSS slide 一律不作用于此四窗。 */
+/* scrim 只做纯压暗 + opacity 过渡。
+   不用 backdrop-filter：移动端常为软件模糊，动画每帧重算全屏 = 飞行期闪烁。 */
+#sshKeyModalScrim,
+#snippetModalScrim,
+#proxyModalScrim,
+#aiProviderModalScrim {
     position: fixed;
     inset: 0;
     z-index: 100;
     visibility: hidden;
     pointer-events: none;
-    background: rgba(0, 0, 0, .16);
-    -webkit-backdrop-filter: blur(var(--sshkey-scrim-blur, 0px));
-    backdrop-filter: blur(var(--sshkey-scrim-blur, 0px));
+    background: rgba(0, 0, 0, .30);
     opacity: 0;
-    transition:
-        opacity 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-        -webkit-backdrop-filter 0.55s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-        backdrop-filter 0.55s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    transition: opacity 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+#aiProviderModalScrim {
+    z-index: 10089; /* 在 #aiProviderModal(10090) 下 */
 }
 
-/* 引擎接管卡片几何：杀掉 CSS 过渡（否则每帧 transform 被浏览器二次平滑）。
-   注意：transform/opacity 不能用 !important —— 引擎靠 inline style 覆盖。
-   position:relative 给 iosAppOpen 的 clone 源面（absolute inset:0）做锚点。 */
-#sshKeyModal.sshkey1 .ssh-key-modal {
+/* 卡片：CSS 永不驱动 opacity/transform；引擎 inline 全权。
+   position:relative 给 iosAppOpen twin（absolute inset:0）做锚点。 */
+#sshKeyModal .ssh-key-modal,
+#snippetModal .snippet-modal,
+#proxyModal .proxy-modal,
+#aiProviderModal .ai-provider-modal {
     position: relative;
+    /* 覆盖 .connection-modal 默认 opacity:0，避免 display:grid 后 CSS 再 fade */
     opacity: 1;
     transform: none;
     filter: none;
     transition: none !important;
-    will-change: transform, border-radius;
+    animation: none !important;
+    /* 只 hint 合成属性；border-radius 每帧写但靠引擎，别进 will-change */
+    will-change: transform, opacity;
     backface-visibility: hidden;
 }
-/* contentEl：iosAppOpen 里 opacity 0 → 延迟淡入（分轨） */
-.ssh-key-modal-inner { display: block; }
-/* 虚化进行中：遮罩吃掉点击，防止误触底部 */
-body.sshkey1-blurring #sshKeyModalScrim { pointer-events: auto; }
+/* 致命：AI 供应商表单给 input/check/btn 写了 transition:transform。
+   父级 iosAppOpen 每帧 scale 时，子元素 CSS 过渡会跟抢 transform → 每帧闪。
+   飞行/关闭全程掐死子树 transition/animation。 */
+#sshKeyModal.sshkey1 .ssh-key-modal *,
+#sshKeyModal.sshkey1.closing .ssh-key-modal *,
+#snippetModal.snippet1 .snippet-modal *,
+#snippetModal.snippet1.closing .snippet-modal *,
+#proxyModal.proxy1 .proxy-modal *,
+#proxyModal.proxy1.closing .proxy-modal *,
+#aiProviderModal.aiprovider1 .ai-provider-modal *,
+#aiProviderModal.aiprovider1.closing .ai-provider-modal * {
+    transition: none !important;
+    animation: none !important;
+}
+/* 飞行中不要让 focus 的 translate/scale 叠在 FLIP 上 */
+#aiProviderModal.aiprovider1 .ai-provider-modal input:focus,
+#aiProviderModal.aiprovider1 .ai-provider-modal select:focus,
+#aiProviderModal.aiprovider1 .ai-provider-modal textarea:focus,
+#aiProviderModal.aiprovider1 .ai-provider-modal .check-line:hover,
+#aiProviderModal.aiprovider1 .ai-provider-modal .btn:hover,
+#aiProviderModal.aiprovider1.closing .ai-provider-modal input:focus,
+#aiProviderModal.aiprovider1.closing .ai-provider-modal .btn:hover {
+    transform: none !important;
+    box-shadow: none !important;
+    filter: none !important;
+}
+/* 内容独立合成层：飞行中文字只栅格化一次，不随父级 scale 每帧重绘 */
+.ssh-key-modal-inner,
+.snippet-modal-inner,
+.proxy-modal-inner,
+.ai-provider-modal-inner {
+    display: block;
+    will-change: opacity;
+    transform: translateZ(0);
+}
+body.sshkey1-blurring #sshKeyModalScrim,
+body.snippet1-blurring #snippetModalScrim,
+body.proxy1-blurring #proxyModalScrim,
+body.aiprovider1-blurring #aiProviderModalScrim { pointer-events: auto; }
 
 @media (prefers-reduced-motion: reduce) {
-    #sshKeyModalScrim { transition-duration: 0.01s; }
+    #sshKeyModalScrim,
+    #snippetModalScrim,
+    #proxyModalScrim,
+    #aiProviderModalScrim { transition-duration: 0.01s; }
 }
-/* ── /sshkey1 ─────────────────────────────────────────────────────────── */
+/* ── /sshkey / snippet / proxy / aiprovider motion-only ──────────────── */
 
 body.connection-home-blur .app-shell {
     transform: scale(.92) translateZ(0);
@@ -2517,21 +2565,21 @@ body.connection-transition-closing .app-shell {
 .ssh-key-modal textarea { min-height: 132px; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; resize: vertical; }
 .ssh-key-modal .field-hint { margin: 2px 0 14px; }
 .ssh-key-modal .modal-actions { margin-top: 4px; }
-#sshKeyModal .connection-modal { transform: scale(.97); transition: opacity .16s ease-out, transform .22s cubic-bezier(.23,1,.32,1); }
-#sshKeyModal.show.app-visible .connection-modal { transform: scale(1); }
-#sshKeyModal.closing .connection-modal { transform: scale(.985); transition: opacity .14s ease-in, transform .14s ease-in; }
-.modal-backdrop.show.app-visible .connection-modal {
+/* 仅连接弹窗等非 motion 窗走 CSS fade；密钥/片段/代理/AI供应商永远 transition:none。 */
+.modal-backdrop.show.app-visible .connection-modal:not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal) {
     opacity: 1;
     transition: opacity 0.3s ease-out 0.1s;
 }
-.modal-backdrop.closing .connection-modal {
+.modal-backdrop.closing .connection-modal:not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal) {
     opacity: 0;
     transition: opacity 0.15s cubic-bezier(0.4, 0, 1, 1);
 }
 @media (prefers-reduced-motion: reduce) {
-    .modal-backdrop .connection-modal,
-    .modal-backdrop.show.app-visible .connection-modal,
-    .modal-backdrop.closing .connection-modal { transition: opacity .01ms linear; }
+    .modal-backdrop .connection-modal:not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal),
+    .modal-backdrop.show.app-visible .connection-modal:not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal),
+    .modal-backdrop.closing .connection-modal:not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal) {
+        transition: opacity .01ms linear;
+    }
 }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .icon-btn { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; }
@@ -2994,6 +3042,17 @@ body.app-body > .toast.show { opacity: 1; transform: translate3d(0,0,0) scale(1)
     .activity-item { flex-direction: column; }
     .modal-backdrop { align-items: start; place-items: start center; overflow-y: auto; padding: 10px; -webkit-overflow-scrolling: touch; }
     .connection-modal { max-height: none; margin: 10px 0 calc(24px + env(safe-area-inset-bottom)); overflow: visible; border-radius: var(--radius-lg); }
+    /* motion 四窗必须封顶 + 内滚：整页高的 FLIP 面会让 GPU 每帧重栅格 → 疯狂闪 */
+    #sshKeyModal .ssh-key-modal,
+    #snippetModal .snippet-modal,
+    #proxyModal .proxy-modal,
+    #aiProviderModal .ai-provider-modal {
+        max-height: min(86vh, 760px);
+        overflow-y: auto;
+        overflow-x: hidden;
+        margin: 10px 0;
+        -webkit-overflow-scrolling: touch;
+    }
     .proxy-modal .form-row { flex-direction: column; gap: 0; }
     .terminal-view.active { min-height: calc(100dvh - 2px); }
     .terminal-workspace { min-height: calc(100dvh - 2px); }
@@ -9125,21 +9184,10 @@ body.app-body:not(.terminal-mode) .app-main {
 .ai-env-item:active,
 .ai-memory-item:active,
 .ai-plan-item:active { transform: scale(.992); }
-#aiProviderModal.show .ai-provider-modal,
-#aiProviderModal.app-visible .ai-provider-modal {
-    animation: aiIosSlideSheet .52s var(--ios-open) both;
-    transform-origin: center bottom;
+/* AI 供应商弹窗动画改走 zephyr-motion iosAppOpen/Close；旧 CSS slide/fade 已移除 */
+#aiAddProviderBtn.connection-pressing {
+    transform: scale(0.96);
 }
-.ai-provider-modal .form-row,
-.ai-provider-modal .form-group,
-.ai-provider-modal h3,
-.ai-provider-modal .modal-actions {
-    animation: aiIosFadeLift .42s var(--ios-open) both;
-}
-.ai-provider-modal .form-row:nth-of-type(2n),
-.ai-provider-modal .form-group:nth-of-type(2n) { animation-delay: 24ms; }
-.ai-provider-modal .form-row:nth-of-type(3n),
-.ai-provider-modal .form-group:nth-of-type(3n) { animation-delay: 48ms; }
 .ai-agent-panel.open .ai-agent-window { animation: aiIosPopIn .48s var(--ios-open) both; }
 .ai-agent-panel.open .ai-title-bar,
 .ai-agent-panel.open .ai-browser-preview,

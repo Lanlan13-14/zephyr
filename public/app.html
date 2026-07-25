@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260724-sshkey2">
-    <link rel="modulepreload" href="app.js?v=20260724-sshkey2">
-    <link rel="modulepreload" href="theme-runtime.js?v=20260724-sshkey2">
-    <link rel="stylesheet" href="style.css?v=20260724-sshkey2">
+    <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260725-flashfix3">
+    <link rel="modulepreload" href="app.js?v=20260725-flashfix3">
+    <link rel="modulepreload" href="theme-runtime.js?v=20260725-flashfix3">
+    <link rel="stylesheet" href="style.css?v=20260725-flashfix3">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -786,8 +786,11 @@
         <div class="panel-resize-handle right" data-ai-agent-resize="right" title="拖动调整大小"></div>
     </div>
 
+    <!-- AI 供应商弹窗专用遮罩：与 SSH 密钥 / 片段 / 代理同源（zephyr-motion） -->
+    <div id="aiProviderModalScrim" aria-hidden="true"></div>
     <div class="modal-backdrop" id="aiProviderModal" aria-hidden="true">
         <form class="connection-modal ai-provider-modal" id="aiProviderForm">
+            <div id="aiProviderModalInner" class="ai-provider-modal-inner">
             <div class="modal-head"><h2 id="aiProviderModalTitle">添加模型供应商</h2><button type="button" class="icon-btn" id="aiProviderCloseBtn">✕</button></div>
             <input type="hidden" id="aiProviderId">
             <div class="form-row"><div class="form-group"><label>名称</label><input id="aiProviderName" required placeholder="OpenAI / DeepSeek / Claude / Gemini"></div><div class="form-group"><label>类型</label>
@@ -816,6 +819,7 @@
             <div class="form-group"><label>供应商原生额外参数 JSON</label><textarea id="aiProviderExtraJson" rows="4" placeholder='OpenAI: {"response_format":{"type":"json_object"}}；Claude: {"thinking":{"type":"adaptive","display":"omitted"}}；Gemini: {"thinkingConfig":{"thinkingLevel":"low"}}'></textarea></div>
             <label class="check-line"><input type="checkbox" id="aiProviderEnabled" checked> 启用此供应商</label>
             <div class="modal-actions"><button type="button" class="btn" id="aiProviderCancelBtn">取消</button><button class="btn btn-primary" type="submit">保存供应商</button></div>
+            </div>
         </form>
     </div>
 
@@ -916,8 +920,11 @@
         </form>
     </div>
 
+    <!-- 代理池弹窗专用遮罩：与 SSH 密钥 / 代码片段同源（zephyr-motion 驱动虚化） -->
+    <div id="proxyModalScrim" aria-hidden="true"></div>
     <div class="modal-backdrop" id="proxyModal" aria-hidden="true">
         <form class="connection-modal proxy-modal" id="proxyForm">
+            <div id="proxyModalInner" class="proxy-modal-inner">
             <div class="modal-head"><h2 id="proxyModalTitle">新建代理</h2><button type="button" class="icon-btn" id="proxyCloseBtn" aria-label="关闭代理弹窗">✕</button></div>
             <input type="hidden" id="proxyId">
             <div class="form-group"><label for="proxyName">名称</label><input id="proxyName" required placeholder="例如：海外 SOCKS5"></div>
@@ -926,6 +933,7 @@
             <div class="form-row"><div class="form-group"><label for="proxyUsername">用户名</label><input id="proxyUsername" placeholder="可选"></div><div class="form-group"><label for="proxyPassword">密码</label><input id="proxyPassword" type="password" placeholder="可选"></div></div>
             <p class="field-hint">保存后可在连接的高级选项中选择此代理。编辑时留空密码不会覆盖已保存密码。</p>
             <div class="modal-actions"><button type="button" class="btn" id="proxyCancelBtn">取消</button><button class="btn btn-primary" type="submit">保存代理</button></div>
+            </div>
         </form>
     </div>
 
@@ -946,8 +954,11 @@
         </form>
     </div>
 
+    <!-- 代码片段弹窗专用遮罩：与 SSH 密钥同源（zephyr-motion 驱动虚化） -->
+    <div id="snippetModalScrim" aria-hidden="true"></div>
     <div class="modal-backdrop" id="snippetModal" aria-hidden="true">
         <form class="connection-modal snippet-modal" id="snippetForm">
+            <div id="snippetModalInner" class="snippet-modal-inner">
             <div class="modal-head"><h2 id="snippetModalTitle">新增代码片段</h2><button type="button" class="icon-btn" id="snippetCloseBtn" aria-label="关闭代码片段弹窗">✕</button></div>
             <input id="snippetId" type="hidden">
             <div class="form-group"><label for="snippetName">名称</label><input id="snippetName" maxlength="60" required placeholder="例如：查看 Docker 状态"></div>
@@ -958,12 +969,13 @@
                 <span class="connection-share-switch"><input type="checkbox" id="snippetAutoRun"><span aria-hidden="true"></span></span>
             </label>
             <div class="modal-actions"><button class="btn" type="button" id="cancelSnippetEditBtn">取消</button><button class="btn btn-primary" type="submit" id="saveSnippetBtn">保存代码片段</button></div>
+            </div>
         </form>
     </div>
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260724-sshkey2" type="module"></script>
+    <script src="app.js?v=20260725-flashfix3" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

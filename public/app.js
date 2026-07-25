@@ -59,11 +59,13 @@ let transientHasCredential = false;
 let connectionModalTrigger = null;
 let connectionModalOriginRect = null;
 let proxyModalTrigger = null;
-let proxyModalOriginRect = null;
+let proxyModalCycle = 0;
 let sshKeyModalTrigger = null;
 let sshKeyModalCycle = 0;
 let snippetModalTrigger = null;
 let snippetModalCycle = 0;
+let aiProviderModalTrigger = null;
+let aiProviderModalCycle = 0;
 let notesController = null;
 let workspaceClientId = '';
 let workspaceRevision = null;
@@ -5199,9 +5201,24 @@ async function saveAiSettings(e) {
     renderAiSettingsForm();
     toast('AI 助理设置已保存');
 }
-async function openAiProviderModal(provider = null) {
+function aiProviderScrimSet(open, _Motion) {
+    motionScrimSet('aiProviderModalScrim', 'aiprovider1-blurring', open);
+}
+
+function aiProviderBtnRadius(el, rect) {
+    const r = parseFloat(getComputedStyle(el)?.borderRadius);
+    if (Number.isFinite(r) && r > 0) return r;
+    return Math.min(rect.width, rect.height) / 2;
+}
+
+async function openAiProviderModal(provider = null, trigger = null) {
     if (provider && provider.owned === false) { toast('共享 Provider 只能调用，不能编辑'); return; }
+    window.clearTimeout(closeAiProviderModal._timer);
+    const cycle = ++aiProviderModalCycle;
     const modal = $('#aiProviderModal');
+    if (!modal || (modal.classList.contains('show') && !modal.classList.contains('closing'))) return;
+    const card = $('#aiProviderForm');
+    const inner = $('#aiProviderModalInner');
     $('#aiProviderModalTitle').textContent = provider ? '编辑模型供应商' : '添加模型供应商';
     $('#aiProviderId').value = provider?.id || '';
     $('#aiProviderName').value = provider?.name || '';
@@ -5228,11 +5245,67 @@ async function openAiProviderModal(provider = null) {
     $('#aiProviderShareUsers').checked = !!provider?.shareWithUsers;
     $('#aiProviderShareAdmins').checked = !!provider?.shareWithAdmins;
     aiProviderSelectedUserIds = new Set(provider?.sharedUserIds || []);
-    aiProviderShareTargetsState = (await api('/api/ai/share-targets').catch(() => ({ users: [] }))).users || [];
-    renderAiProviderShareTargets();
-    $('#aiProviderShareSearch').oninput = renderAiProviderShareTargets;
-    modal.classList.add('show', 'app-visible');
-    modal.setAttribute('aria-hidden', 'false');
+    // 先开窗（与按钮 FLIP 同源），共享用户列表异步补上，避免 await 拖到动画后
+    aiProviderModalTrigger = trigger || $('#aiAddProviderBtn');
+
+    const fillShareTargets = async () => {
+        aiProviderShareTargetsState = (await api('/api/ai/share-targets').catch(() => ({ users: [] }))).users || [];
+        if (cycle !== aiProviderModalCycle) return;
+        renderAiProviderShareTargets();
+        const search = $('#aiProviderShareSearch');
+        if (search) search.oninput = renderAiProviderShareTargets;
+    };
+
+    sshKeyMotion._ensure().then((Motion) => {
+        if (cycle !== aiProviderModalCycle) return;
+        armMotionModalOpen(Motion, modal, card, inner, aiProviderModalTrigger, 'aiprovider1');
+        const btnRect = aiProviderModalTrigger?.getBoundingClientRect?.() || null;
+        aiProviderScrimSet(true, Motion || null);
+        const useMotion = !!Motion && !!btnRect && btnRect.width > 2 && btnRect.height > 2;
+        if (!useMotion) {
+            if (card?.style) {
+                card.style.visibility = '';
+                card.style.opacity = '';
+                card.style.pointerEvents = '';
+            }
+            if (inner?.style) inner.style.opacity = '';
+            if (aiProviderModalTrigger?.style) {
+                aiProviderModalTrigger.style.opacity = '';
+                aiProviderModalTrigger.style.pointerEvents = '';
+                delete aiProviderModalTrigger.dataset.motionHidden;
+            }
+            $('#aiProviderName')?.focus({ preventScroll: true });
+            fillShareTargets();
+            return;
+        }
+        Motion.iosAppOpen(card, aiProviderModalTrigger, {
+            contentEl: inner,
+            scrim: null,
+            home: null,
+            cloneSource: true,
+            hideSource: true,
+            radiusFrom: aiProviderBtnRadius(aiProviderModalTrigger, btnRect),
+            radiusTo: 22,
+            contentDelay: 0.16,
+            faceDelay: 0.05,
+            faceInDelay: 0.04,
+            shapePreset: 'shape',
+            contentPreset: 'content',
+        }).then(() => {
+            if (cycle !== aiProviderModalCycle) return;
+            card.style.overflow = '';
+            // 动画落地后再灌共享用户列表，飞行中改 DOM 会每帧重 layout → 闪
+            fillShareTargets();
+        }).catch((err) => {
+            console.warn('[aiprovider1] iosAppOpen failed', err);
+            fillShareTargets();
+        });
+        window.setTimeout(() => {
+            if (cycle === aiProviderModalCycle && modal.classList.contains('show')) {
+                $('#aiProviderName')?.focus({ preventScroll: true });
+            }
+        }, 220);
+    });
 }
 function renderAiProviderShareTargets() {
     const root = $('#aiProviderShareTargets');
@@ -5247,8 +5320,91 @@ function renderAiProviderShareTargets() {
 }
 function closeAiProviderModal() {
     const modal = $('#aiProviderModal');
-    modal.classList.remove('show', 'app-visible');
+    if (!modal?.classList.contains('show') || modal.classList.contains('closing')) return;
+    const card = $('#aiProviderForm');
+    const inner = $('#aiProviderModalInner');
+    const cycle = ++aiProviderModalCycle;
+    window.clearTimeout(closeAiProviderModal._timer);
+
+    modal.classList.add('closing');
+    modal.classList.remove('app-visible');
     modal.setAttribute('aria-hidden', 'true');
+
+    const Motion = sshKeyMotion.engine;
+    const trigger = aiProviderModalTrigger;
+    const btnRect = trigger?.getBoundingClientRect?.() || null;
+    const useMotion = !!Motion && !sshKeyMotion.failed
+        && modal.classList.contains('aiprovider1')
+        && !!btnRect && btnRect.width > 2 && btnRect.height > 2;
+
+    const finish = () => {
+        if (cycle !== aiProviderModalCycle) return;
+        if (Motion) {
+            try {
+                if (trigger) Motion.restoreSource(trigger);
+                Motion.restoreSources(card);
+            } catch {}
+        } else if (trigger?.style) {
+            trigger.style.opacity = '';
+            trigger.style.pointerEvents = '';
+            delete trigger.dataset.motionHidden;
+        }
+        void (trigger?.offsetHeight);
+        void card.offsetHeight;
+
+        modal.classList.remove('show', 'closing', 'aiprovider1');
+
+        if (Motion) {
+            try {
+                card.querySelector?.(':scope > [data-motion-source-visual]')?.remove();
+                Motion.release(card);
+                if (inner) Motion.release(inner);
+            } catch {}
+        }
+        card.style.overflow = '';
+        card.style.visibility = '';
+        card.style.opacity = '';
+        card.style.filter = '';
+        card.style.transform = '';
+        card.style.borderRadius = '';
+        const focusEl = trigger;
+        aiProviderModalTrigger = null;
+        if (focusEl) {
+            requestAnimationFrame(() => {
+                try { focusEl.focus?.({ preventScroll: true }); } catch {}
+            });
+        }
+    };
+
+    aiProviderScrimSet(false, Motion || null);
+    if (!useMotion) {
+        closeAiProviderModal._timer = window.setTimeout(finish, 0);
+        return;
+    }
+    try {
+        const twinLayer = card.querySelector(':scope > [data-motion-source-visual]');
+        if (twinLayer) Motion.set(twinLayer, { opacity: Number(twinLayer.style.opacity) || 0 });
+    } catch {}
+    const closed = Motion.iosAppClose(card, trigger, {
+        contentEl: inner,
+        scrim: null,
+        home: null,
+        restoreSource: false,
+        hideSurface: false,
+        clearSourceVisual: false,
+        release: false,
+        radiusTo: aiProviderBtnRadius(trigger, btnRect),
+        shapePreset: 'shapeClose',
+        contentPreset: 'contentClose',
+        faceInDelay: 0.04,
+    });
+    const cap = new Promise(r => window.setTimeout(r, 900));
+    Promise.race([closed, cap]).then(() => {
+        requestAnimationFrame(() => finish());
+    }).catch((err) => {
+        console.warn('[aiprovider1] iosAppClose failed', err);
+        finish();
+    });
 }
 async function saveAiProvider(e) {
     e.preventDefault();
@@ -7566,7 +7722,10 @@ function setupAiAssistant() {
     setupAiPanelChrome();
     $('#aiSettingsForm')?.addEventListener('submit', saveAiSettings);
     $('[data-ai-save-settings]')?.addEventListener('click', saveAiSettings);
-    $('#aiAddProviderBtn')?.addEventListener('click', () => openAiProviderModal());
+    $('#aiAddProviderBtn')?.addEventListener('click', (e) => openAiProviderModal(null, e.currentTarget));
+    $('#aiProviderModal')?.addEventListener('click', (e) => { if (e.target.id === 'aiProviderModal') closeAiProviderModal(); });
+    $('#aiProviderModalScrim')?.addEventListener('click', () => { if ($('#aiProviderModal')?.classList.contains('show')) closeAiProviderModal(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#aiProviderModal')?.classList.contains('show')) closeAiProviderModal(); });
     $('#aiProviderForm')?.addEventListener('submit', saveAiProvider);
     $('#aiFetchModelsBtn')?.addEventListener('click', () => fetchAiModelsForProvider());
     document.addEventListener('click', (e) => {
@@ -7935,12 +8094,22 @@ function resetSnippetForm() {
     $('#snippetGroup').value = '';
     $('#snippetAutoRun').checked = false;
 }
+function snippetScrimSet(open, _Motion) {
+    motionScrimSet('snippetModalScrim', 'snippet1-blurring', open);
+}
+
+function snippetBtnRadius(el, rect) {
+    const r = parseFloat(getComputedStyle(el)?.borderRadius);
+    if (Number.isFinite(r) && r > 0) return r;
+    return Math.min(rect.width, rect.height) / 2;
+}
+
 function openSnippetModal(item = null, trigger = null) {
     window.clearTimeout(closeSnippetModal._timer);
-    ++snippetModalCycle;
+    const cycle = ++snippetModalCycle;
     const modal = $('#snippetModal');
     if (!modal || (modal.classList.contains('show') && !modal.classList.contains('closing'))) return;
-    modal.classList.remove('show', 'closing', 'app-visible');
+    const card = $('#snippetForm');
     resetSnippetForm();
     $('#snippetModalTitle').textContent = item ? '编辑代码片段' : '新增代码片段';
     $('#saveSnippetBtn').textContent = item ? '保存修改' : '保存代码片段';
@@ -7950,29 +8119,143 @@ function openSnippetModal(item = null, trigger = null) {
     $('#snippetGroup').value = item?.group || '';
     $('#snippetAutoRun').checked = !!item?.autoRun;
     snippetModalTrigger = trigger || $('#addSnippetBtn');
-    modal.classList.add('show');
-    modal.setAttribute('aria-hidden', 'false');
-    document.body.classList.add('connection-home-blur');
-    void modal.offsetWidth;
-    modal.classList.add('app-visible');
-    $('#snippetName')?.focus({ preventScroll: true });
+    const btnRect = snippetModalTrigger?.getBoundingClientRect?.() || null;
+
+    sshKeyMotion._ensure().then((Motion) => {
+        if (cycle !== snippetModalCycle) return;
+        const inner = $('#snippetModalInner');
+        armMotionModalOpen(Motion, modal, card, inner, snippetModalTrigger, 'snippet1');
+        const liveRect = snippetModalTrigger?.getBoundingClientRect?.() || btnRect;
+        snippetScrimSet(true, Motion || null);
+        const useMotion = !!Motion && !!liveRect && liveRect.width > 2 && liveRect.height > 2;
+        if (!useMotion) {
+            if (card?.style) {
+                card.style.visibility = '';
+                card.style.opacity = '';
+                card.style.pointerEvents = '';
+            }
+            if (inner?.style) inner.style.opacity = '';
+            if (snippetModalTrigger?.style) {
+                snippetModalTrigger.style.opacity = '';
+                snippetModalTrigger.style.pointerEvents = '';
+                delete snippetModalTrigger.dataset.motionHidden;
+            }
+            $('#snippetName')?.focus({ preventScroll: true });
+            return;
+        }
+        Motion.iosAppOpen(card, snippetModalTrigger, {
+            contentEl: inner,
+            scrim: null,
+            home: null,
+            cloneSource: true,
+            hideSource: true,
+            radiusFrom: snippetBtnRadius(snippetModalTrigger, liveRect),
+            radiusTo: 22,
+            contentDelay: 0.16,
+            faceDelay: 0.05,
+            faceInDelay: 0.04,
+            shapePreset: 'shape',
+            contentPreset: 'content',
+        }).then(() => {
+            if (cycle !== snippetModalCycle) return;
+            card.style.overflow = '';
+        }).catch((err) => console.warn('[snippet1] iosAppOpen failed', err));
+        window.setTimeout(() => {
+            if (cycle === snippetModalCycle && modal.classList.contains('show')) {
+                $('#snippetName')?.focus({ preventScroll: true });
+            }
+        }, 220);
+    });
 }
+
 function closeSnippetModal() {
     const modal = $('#snippetModal');
     if (!modal?.classList.contains('show') || modal.classList.contains('closing')) return;
+    const card = $('#snippetForm');
+    const inner = $('#snippetModalInner');
+    const cycle = ++snippetModalCycle;
+    window.clearTimeout(closeSnippetModal._timer);
+
     modal.classList.add('closing');
     modal.classList.remove('app-visible');
     modal.setAttribute('aria-hidden', 'true');
-    document.body.classList.remove('connection-home-blur');
-    window.clearTimeout(closeSnippetModal._timer);
-    const cycle = ++snippetModalCycle;
-    closeSnippetModal._timer = window.setTimeout(() => {
+
+    const Motion = sshKeyMotion.engine;
+    const trigger = snippetModalTrigger;
+    const btnRect = trigger?.getBoundingClientRect?.() || null;
+    const useMotion = !!Motion && !sshKeyMotion.failed
+        && modal.classList.contains('snippet1')
+        && !!btnRect && btnRect.width > 2 && btnRect.height > 2;
+
+    const finish = () => {
         if (cycle !== snippetModalCycle) return;
-        modal.classList.remove('show', 'closing');
+        if (Motion) {
+            try {
+                if (trigger) Motion.restoreSource(trigger);
+                Motion.restoreSources(card);
+            } catch {}
+        } else if (trigger?.style) {
+            trigger.style.opacity = '';
+            trigger.style.pointerEvents = '';
+            delete trigger.dataset.motionHidden;
+        }
+        void (trigger?.offsetHeight);
+        void card.offsetHeight;
+
+        modal.classList.remove('show', 'closing', 'snippet1');
+
+        if (Motion) {
+            try {
+                card.querySelector?.(':scope > [data-motion-source-visual]')?.remove();
+                Motion.release(card);
+                if (inner) Motion.release(inner);
+            } catch {}
+        }
+        card.style.overflow = '';
+        card.style.visibility = '';
+        card.style.opacity = '';
+        card.style.filter = '';
+        card.style.transform = '';
+        card.style.borderRadius = '';
         resetSnippetForm();
-        snippetModalTrigger?.focus?.();
+        const focusEl = trigger;
         snippetModalTrigger = null;
-    }, 180);
+        if (focusEl) {
+            requestAnimationFrame(() => {
+                try { focusEl.focus?.({ preventScroll: true }); } catch {}
+            });
+        }
+    };
+
+    snippetScrimSet(false, Motion || null);
+    if (!useMotion) {
+        closeSnippetModal._timer = window.setTimeout(finish, 0);
+        return;
+    }
+    try {
+        const twinLayer = card.querySelector(':scope > [data-motion-source-visual]');
+        if (twinLayer) Motion.set(twinLayer, { opacity: Number(twinLayer.style.opacity) || 0 });
+    } catch {}
+    const closed = Motion.iosAppClose(card, trigger, {
+        contentEl: inner,
+        scrim: null,
+        home: null,
+        restoreSource: false,
+        hideSurface: false,
+        clearSourceVisual: false,
+        release: false,
+        radiusTo: snippetBtnRadius(trigger, btnRect),
+        shapePreset: 'shapeClose',
+        contentPreset: 'contentClose',
+        faceInDelay: 0.04,
+    });
+    const cap = new Promise(r => window.setTimeout(r, 900));
+    Promise.race([closed, cap]).then(() => {
+        requestAnimationFrame(() => finish());
+    }).catch((err) => {
+        console.warn('[snippet1] iosAppClose failed', err);
+        finish();
+    });
 }
 function renderSnippetSettings() {
     const list = $('#snippetSettingsList');
@@ -8000,7 +8283,9 @@ function setupSnippetSettings() {
     $('#addSnippetBtn')?.addEventListener('click', (e) => openSnippetModal(null, e.currentTarget));
     $('#snippetCloseBtn')?.addEventListener('click', closeSnippetModal);
     $('#cancelSnippetEditBtn')?.addEventListener('click', closeSnippetModal);
+    // 点模糊遮罩关闭（仅 target 为 backdrop 本身，点表单不关）。可打断飞行中动画。
     $('#snippetModal')?.addEventListener('click', (e) => { if (e.target.id === 'snippetModal') closeSnippetModal(); });
+    $('#snippetModalScrim')?.addEventListener('click', () => { if ($('#snippetModal')?.classList.contains('show')) closeSnippetModal(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#snippetModal')?.classList.contains('show')) closeSnippetModal(); });
     $('#snippetSettingsList')?.addEventListener('click', async (e) => {
         const editId = e.target.closest?.('[data-edit-snippet]')?.dataset.editSnippet;
@@ -8041,8 +8326,25 @@ function renderNetwork() {
 }
 function renderJumpOptions() { if ($('#jumpRouteConfig') && $('#connMode')?.value === 'jump') updateRouteOptions('jump', $$('#jumpRouteList [data-jump-route-select]').map((el) => el.value).filter(Boolean)); }
 function resetProxyForm() { $('#proxyForm')?.reset(); $('#proxyId').value = ''; $('#proxyType').value = 'socks5'; $('#proxyPort').value = '1080'; }
+function proxyScrimSet(open, _Motion) {
+    motionScrimSet('proxyModalScrim', 'proxy1-blurring', open);
+}
+
+function proxyBtnRadius(el, rect) {
+    const r = parseFloat(getComputedStyle(el)?.borderRadius);
+    if (Number.isFinite(r) && r > 0) return r;
+    return Math.min(rect.width, rect.height) / 2;
+}
+
 function openProxyModal(proxy = null, trigger = null) {
-    resetProxyForm();
+    window.clearTimeout(closeProxyModal._timer);
+    const cycle = ++proxyModalCycle;
+    const modal = $('#proxyModal');
+    // 允许打断 closing 中的动画；禁止重复打开已完全 show 的窗
+    if (!modal || (modal.classList.contains('show') && !modal.classList.contains('closing'))) return;
+    const card = $('#proxyForm');
+    const inner = $('#proxyModalInner');
+    // 字段手写赋值，避免原生 reset 触发布局 + toggle-select 二次同步导致闪
     $('#proxyModalTitle').textContent = proxy ? '编辑代理' : '新建代理';
     $('#proxyId').value = proxy?.id || '';
     $('#proxyName').value = proxy?.name || '';
@@ -8050,141 +8352,148 @@ function openProxyModal(proxy = null, trigger = null) {
     $('#proxyHost').value = proxy?.host || '';
     $('#proxyPort').value = proxy?.port || 1080;
     $('#proxyUsername').value = proxy?.username || '';
-    $('#proxyPassword').value = proxy?.hasPassword ? '******' : '';
-    // Proxy type uses toggle-select (re-tap to close).
-    enhanceToggleSelect($('#proxyType'));
-    syncToggleSelectFace($('#proxyType'));
-    const modal = $('#proxyModal');
-    const layer = $('#connectionTransitionLayer');
-    if (!modal || !layer || modal.classList.contains('show')) return;
-    window.clearTimeout(closeProxyModal._timer);
-    window.clearTimeout(openProxyModal._finishTimer);
-    resetConnectionTransitionLayer(layer);
-    modal.classList.remove('closing', 'app-visible');
-    modal.classList.add('show');
-    modal.setAttribute('aria-hidden', 'false');
+    $('#proxyPassword').value = proxy?.hasPassword ? '******' : (proxy?.password || '');
     proxyModalTrigger = trigger || $('#addProxyBtn');
-    const sourceRect = connectionTransitionTargetRect(proxyModalTrigger);
-    const viewport = viewportMetrics();
-    proxyModalOriginRect = { left: sourceRect.left, top: sourceRect.top, width: sourceRect.width, height: sourceRect.height };
-    syncConnectionLayerVisual(layer, sourceRect.source);
-    setConnectionLayerRect(layer, proxyModalOriginRect);
-    layer.style.transition = 'none';
-    layer.style.borderRadius = getComputedStyle(sourceRect.source || proxyModalTrigger || layer).borderRadius || '18px';
-    layer.style.boxShadow = 'none';
-    layer.style.visibility = 'visible';
-    layer.style.pointerEvents = 'auto';
-    proxyModalTrigger?.style?.setProperty('opacity', '0');
-    document.body.classList.add('disable-interaction', 'connection-transition-opening');
-    void layer.offsetHeight;
-    requestAnimationFrame(() => {
-        document.body.classList.add('connection-home-blur');
-        modal.classList.add('app-visible');
-        layer.classList.add('source-visual-hidden', 'expanded-material');
-        layer.style.transition = `
-            top var(--connection-app-duration) var(--connection-ios-spring),
-            left var(--connection-app-duration) var(--connection-ios-spring),
-            width var(--connection-app-duration) var(--connection-ios-spring),
-            height var(--connection-app-duration) var(--connection-ios-spring),
-            border-radius var(--connection-app-duration) var(--connection-ios-spring)
-        `;
-        setConnectionLayerRect(layer, viewport);
-        layer.style.borderRadius = '0px';
+
+    sshKeyMotion._ensure().then((Motion) => {
+        if (cycle !== proxyModalCycle) return;
+        // 先清场再量尺寸：停 press 弹簧 / 中断中的 close morph，避免量到 scale 中的按钮
+        armMotionModalOpen(Motion, modal, card, inner, proxyModalTrigger, 'proxy1');
+        // toggle-select 在卡片 visibility:hidden 时改 DOM，不会 paint
+        try { closeAllToggleSelects(); } catch {}
+        enhanceToggleSelect($('#proxyType'));
+        syncToggleSelectFace($('#proxyType'));
+        const btnRect = proxyModalTrigger?.getBoundingClientRect?.() || null;
+        proxyScrimSet(true, Motion || null);
+        const useMotion = !!Motion && !!btnRect && btnRect.width > 2 && btnRect.height > 2;
+        if (!useMotion) {
+            if (card?.style) {
+                card.style.visibility = '';
+                card.style.opacity = '';
+                card.style.pointerEvents = '';
+            }
+            if (inner?.style) inner.style.opacity = '';
+            if (proxyModalTrigger?.style) {
+                proxyModalTrigger.style.opacity = '';
+                proxyModalTrigger.style.pointerEvents = '';
+                delete proxyModalTrigger.dataset.motionHidden;
+            }
+            $('#proxyName')?.focus({ preventScroll: true });
+            return;
+        }
+        Motion.iosAppOpen(card, proxyModalTrigger, {
+            contentEl: inner,
+            scrim: null,
+            home: null,
+            cloneSource: true,
+            hideSource: true,
+            radiusFrom: proxyBtnRadius(proxyModalTrigger, btnRect),
+            radiusTo: 22,
+            contentDelay: 0.16,
+            faceDelay: 0.05,
+            faceInDelay: 0.04,
+            shapePreset: 'shape',
+            contentPreset: 'content',
+        }).then(() => {
+            if (cycle !== proxyModalCycle) return;
+            card.style.overflow = '';
+        }).catch((err) => console.warn('[proxy1] iosAppOpen failed', err));
+        window.setTimeout(() => {
+            if (cycle === proxyModalCycle && modal.classList.contains('show')) {
+                $('#proxyName')?.focus({ preventScroll: true });
+            }
+        }, 220);
     });
-    openProxyModal._finishTimer = window.setTimeout(() => {
-        document.body.classList.remove('disable-interaction', 'connection-transition-opening');
-        modal.classList.add('app-visible');
-        $('#proxyName')?.focus();
-    }, 520);
 }
+
 function closeProxyModal() {
     const modal = $('#proxyModal');
-    const layer = $('#connectionTransitionLayer');
     if (!modal?.classList.contains('show') || modal.classList.contains('closing')) return;
+    const card = $('#proxyForm');
+    const inner = $('#proxyModalInner');
+    const cycle = ++proxyModalCycle;
     window.clearTimeout(closeProxyModal._timer);
-    window.clearTimeout(openProxyModal._finishTimer);
+
     modal.classList.add('closing');
     modal.classList.remove('app-visible');
     modal.setAttribute('aria-hidden', 'true');
-    const viewport = viewportMetrics();
-    const sourceRect = proxyModalOriginRect || connectionTransitionTargetRect(proxyModalTrigger);
-    const source = proxyModalTrigger?.isConnected ? proxyModalTrigger : $('#addProxyBtn');
-    const sourceRadius = getComputedStyle(source || layer).borderRadius || '18px';
-    const shadowLayer = getConnectionTransitionShadowLayer();
-    document.body.classList.add('disable-interaction', 'connection-transition-closing');
-    document.body.classList.remove('connection-transition-opening', 'connection-home-blur');
-    layer.classList.remove('expanded-material');
-    applyConnectionLayerSourceChrome(layer, source, { revealVisual: true });
-    layer.style.visibility = 'visible';
-    layer.style.pointerEvents = 'auto';
-    layer.style.transition = 'none';
-    setConnectionLayerRect(layer, viewport);
-    layer.style.borderRadius = '0px';
-    layer.classList.remove('source-visual-hidden');
-    shadowLayer.style.visibility = 'visible';
-    shadowLayer.style.pointerEvents = 'none';
-    shadowLayer.style.transition = 'none';
-    shadowLayer.style.left = `${viewport.left}px`;
-    shadowLayer.style.top = `${viewport.top}px`;
-    shadowLayer.style.width = `${viewport.width}px`;
-    shadowLayer.style.height = `${viewport.height}px`;
-    shadowLayer.style.borderRadius = '0px';
-    shadowLayer.style.boxShadow = 'var(--connection-shadow-active)';
-    shadowLayer.style.opacity = '1';
-    shadowLayer.style.zIndex = '99';
-    void layer.offsetHeight;
-    void shadowLayer.offsetHeight;
-    requestAnimationFrame(() => {
-        layer.style.transition = `
-            top var(--connection-app-duration) var(--connection-ios-spring),
-            left var(--connection-app-duration) var(--connection-ios-spring),
-            width var(--connection-app-duration) var(--connection-ios-spring),
-            height var(--connection-app-duration) var(--connection-ios-spring),
-            border-radius var(--connection-app-duration) var(--connection-ios-spring)
-        `;
-        setConnectionLayerRect(layer, sourceRect);
-        layer.style.borderRadius = sourceRadius;
-        shadowLayer.style.transition = `
-            left var(--connection-app-duration) var(--connection-ios-spring),
-            top var(--connection-app-duration) var(--connection-ios-spring),
-            width var(--connection-app-duration) var(--connection-ios-spring),
-            height var(--connection-app-duration) var(--connection-ios-spring),
-            border-radius var(--connection-app-duration) var(--connection-ios-spring),
-            opacity 0.72s cubic-bezier(.16, 1, .3, 1),
-            box-shadow 0.72s cubic-bezier(.16, 1, .3, 1)
-        `;
-        setConnectionLayerRect(shadowLayer, sourceRect);
-        shadowLayer.style.borderRadius = sourceRadius;
-        shadowLayer.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)';
-        shadowLayer.style.opacity = '0';
-    });
 
-    const restoreTriggerWithoutTransition = () => {
-        const trigger = proxyModalTrigger;
-        if (!trigger?.style) return;
-        const oldTransition = trigger.style.transition;
-        trigger.style.transition = 'none';
-        trigger.style.removeProperty('opacity');
-        void trigger.offsetHeight;
-        requestAnimationFrame(() => oldTransition ? trigger.style.transition = oldTransition : trigger.style.removeProperty('transition'));
-    };
-    let done = false;
+    const Motion = sshKeyMotion.engine;
+    const trigger = proxyModalTrigger;
+    const btnRect = trigger?.getBoundingClientRect?.() || null;
+    const useMotion = !!Motion && !sshKeyMotion.failed
+        && modal.classList.contains('proxy1')
+        && !!btnRect && btnRect.width > 2 && btnRect.height > 2;
+
     const finish = () => {
-        if (done) return;
-        done = true;
-        layer.removeEventListener('transitionend', onEnd);
-        modal.classList.remove('show', 'closing', 'app-visible');
-        resetConnectionTransitionLayer(layer);
-        restoreTriggerWithoutTransition();
-        closeProxyModal._shadowTimer = window.setTimeout(() => resetConnectionTransitionShadow(shadowLayer), 180);
-        document.body.classList.remove('disable-interaction', 'connection-transition-closing', 'connection-home-blur');
+        if (cycle !== proxyModalCycle) return;
+        if (Motion) {
+            try {
+                if (trigger) Motion.restoreSource(trigger);
+                Motion.restoreSources(card);
+            } catch {}
+        } else if (trigger?.style) {
+            trigger.style.opacity = '';
+            trigger.style.pointerEvents = '';
+            delete trigger.dataset.motionHidden;
+        }
+        void (trigger?.offsetHeight);
+        void card.offsetHeight;
+
+        modal.classList.remove('show', 'closing', 'proxy1');
+
+        if (Motion) {
+            try {
+                card.querySelector?.(':scope > [data-motion-source-visual]')?.remove();
+                Motion.release(card);
+                if (inner) Motion.release(inner);
+            } catch {}
+        }
+        card.style.overflow = '';
+        card.style.visibility = '';
+        card.style.opacity = '';
+        card.style.filter = '';
+        card.style.transform = '';
+        card.style.borderRadius = '';
+        // 不在 finish 里 form.reset：交接同一帧改 DOM 会闪一下
+        const focusEl = trigger;
         proxyModalTrigger = null;
-        proxyModalOriginRect = null;
-        resetProxyForm();
+        if (focusEl) {
+            requestAnimationFrame(() => {
+                try { focusEl.focus?.({ preventScroll: true }); } catch {}
+            });
+        }
     };
-    const onEnd = (ev) => { if (ev.propertyName === 'top') finish(); };
-    layer.addEventListener('transitionend', onEnd);
-    closeProxyModal._timer = window.setTimeout(finish, 560);
+
+    proxyScrimSet(false, Motion || null);
+    if (!useMotion) {
+        closeProxyModal._timer = window.setTimeout(finish, 0);
+        return;
+    }
+    try {
+        const twinLayer = card.querySelector(':scope > [data-motion-source-visual]');
+        if (twinLayer) Motion.set(twinLayer, { opacity: Number(twinLayer.style.opacity) || 0 });
+    } catch {}
+    const closed = Motion.iosAppClose(card, trigger, {
+        contentEl: inner,
+        scrim: null,
+        home: null,
+        restoreSource: false,
+        hideSurface: false,
+        clearSourceVisual: false,
+        release: false,
+        radiusTo: proxyBtnRadius(trigger, btnRect),
+        shapePreset: 'shapeClose',
+        contentPreset: 'contentClose',
+        faceInDelay: 0.04,
+    });
+    const cap = new Promise(r => window.setTimeout(r, 900));
+    Promise.race([closed, cap]).then(() => {
+        requestAnimationFrame(() => finish());
+    }).catch((err) => {
+        console.warn('[proxy1] iosAppClose failed', err);
+        finish();
+    });
 }
 async function saveProxy(e) { e.preventDefault(); const id = $('#proxyId').value, payload = { name: $('#proxyName').value, type: $('#proxyType').value, host: $('#proxyHost').value, port: Number($('#proxyPort').value), username: $('#proxyUsername').value, password: $('#proxyPassword').value }; console.debug('[route-ui]', 'save proxy payload', { id, ...payload, password: payload.password ? '******' : '' }); await api(id ? `/api/proxies/${id}` : '/api/proxies', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); closeProxyModal(); await loadNetwork(); toast('代理已保存'); }
 async function openProxySecret(id, trigger = null) {
@@ -8204,10 +8513,84 @@ async function openProxySecret(id, trigger = null) {
     toast('已载入代理密码');
 }
 function resetSshKeyForm() { $('#sshKeyForm').reset(); $('#sshKeyId').value = ''; $('#sshKeyPrivateKey').value = ''; $('#sshKeyPassphrase').value = ''; }
-/* ── sshkey1：SSH 密钥弹窗接入 zephyr-motion ─────────────────────────── */
-/* 演示页（/motion-feel.html）里 iOS 打开动画用的就是 Motion.morph / morphTo
-   这条 FLIP 弹簧路径；生产里只把「＋ 新增 SSH 密钥」按钮接到这条路径上，
-   范围严格限定在 SSH 密钥弹窗：连接弹窗 / proxy / snippet 全部不动。
+/* scrim：只拨 opacity + is-open 类。禁止 Motion.cssVars 每帧改 backdrop-filter
+   （会触发全屏 layer 重绘 → 开合每一帧闪）。blur 瞬时切换，opacity 走 CSS 过渡。 */
+const _motionScrimGen = new WeakMap();
+function motionScrimSet(scrimId, bodyClass, open) {
+    const scrim = document.getElementById(scrimId);
+    if (!scrim) return;
+    const gen = (_motionScrimGen.get(scrim) || 0) + 1;
+    _motionScrimGen.set(scrim, gen);
+    document.body.classList.toggle(bodyClass, !!open);
+    if (open) {
+        scrim.style.visibility = 'visible';
+        // 先挂 blur 类再淡入 opacity，避免 opacity 动画期间每帧改 filter
+        scrim.classList.add('is-open');
+        // 下一帧再抬 opacity，确保 is-open 的 blur 已提交
+        requestAnimationFrame(() => {
+            if (_motionScrimGen.get(scrim) !== gen) return;
+            scrim.style.opacity = '1';
+        });
+    } else {
+        scrim.style.opacity = '0';
+        // blur 等 opacity 收完再卸，避免关窗时整屏 filter 突变
+        window.setTimeout(() => {
+            if (_motionScrimGen.get(scrim) !== gen) return;
+            scrim.classList.remove('is-open');
+            if (scrim.style.opacity === '0') scrim.style.visibility = 'hidden';
+            document.body.classList.remove(bodyClass);
+        }, 340);
+    }
+}
+
+/* 开弹窗前：停掉卡片/按钮/inner 上一切残留弹簧与 twin，再藏卡片 display。
+   代理窗闪一下的主因：上一次 close 未 finish 的 morph 通道还在写 transform，
+   与 arm 清 style / 新一次 iosAppOpen seed 抢帧 → 多闪。三窗统一清场。 */
+function armMotionModalOpen(Motion, modal, card, inner, trigger, motionClass) {
+    if (Motion) {
+        try {
+            if (trigger) { Motion.stop(trigger); Motion.release(trigger); }
+            if (card) { Motion.stop(card); Motion.release(card); }
+            if (inner) { Motion.stop(inner); Motion.release(inner); }
+            card?.querySelector?.(':scope > [data-motion-source-visual]')?.remove();
+        } catch {}
+    }
+    // 按压 CSS 类也会 scale，量尺寸前清掉
+    trigger?.classList?.remove('connection-pressing');
+    if (trigger?.style) {
+        trigger.style.opacity = '0';
+        trigger.style.pointerEvents = 'none';
+        trigger.style.transform = '';
+        trigger.style.filter = '';
+        trigger.style.visibility = '';
+        trigger.dataset.motionHidden = '1';
+    }
+    if (card?.style) {
+        card.style.visibility = 'hidden';
+        card.style.opacity = '0';
+        card.style.pointerEvents = 'none';
+        card.style.transform = '';
+        card.style.filter = '';
+        card.style.borderRadius = '';
+        card.style.overflow = '';
+        card.style.willChange = '';
+        card.style.zIndex = '';
+    }
+    if (inner?.style) {
+        // iosAppOpen 会重新 seed content opacity；清残留避免首帧露出表单
+        inner.style.opacity = '0';
+        inner.style.position = '';
+        inner.style.zIndex = '';
+    }
+    modal.classList.remove('closing', 'app-visible', 'sshkey1', 'snippet1', 'proxy1', 'aiprovider1');
+    modal.classList.add('show', motionClass);
+    modal.setAttribute('aria-hidden', 'false');
+    modal.classList.add('app-visible');
+}
+
+/* ── sshkey1 / snippet1 / proxy1：弹窗接入 zephyr-motion ─────────────── */
+/* 演示页（/motion-feel.html）里 iOS 打开动画用的就是 Motion.iosAppOpen/Close
+   这条 FLIP 弹簧路径；生产里 SSH 密钥 / 代码片段 / 代理池 同源接线。
    引擎走动态 import 且 try/catch 兜底，挂了自动回退老 class 路径。 */
 const sshKeyMotion = {
     engine: null,
@@ -8216,20 +8599,20 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260724-sshkey2')
+        return import('./vendor/zephyr-motion/index.js?v=20260725-flashfix3')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
                 // index.js 已 auto-boot；await 让 wasm 就绪（幂等）。
                 try { await Motion.init({ capacity: 256 }); } catch {}
                 this.engine = Motion;
-                // 打开按压反馈（Apple/Emil：scale 0.97 on pointerdown）
+                // 打开按压反馈（Apple/Emil：scale 0.96 on pointerdown）
                 if (!this._pressBound) {
-                    const btn = document.getElementById('addSshKeyBtn');
-                    if (btn && Motion.press) {
-                        Motion.press(btn, { scale: 0.96, preset: 'snappy' });
-                        this._pressBound = true;
+                    for (const id of ['addSshKeyBtn', 'addSnippetBtn', 'addProxyBtn', 'aiAddProviderBtn']) {
+                        const btn = document.getElementById(id);
+                        if (btn && Motion.press) Motion.press(btn, { scale: 0.96, preset: 'snappy' });
                     }
+                    this._pressBound = true;
                 }
                 console.debug('[sshkey1]', 'motion ready', { wasm: !!Motion.usingWasm });
                 return Motion;
@@ -8243,46 +8626,8 @@ const sshKeyMotion = {
     reset() { this.engine = null; this.failed = false; this.animating = false; this._pressBound = false; },
 };
 
-/* 背景缓慢虚化：opacity 走 CSS 慢过渡兜底（0.72s），blur 由引擎逐帧写
-   --sshkey-scrim-blur。引擎不在则 CSS 过渡接管 blur（0.88s），仍"缓慢"。 */
-let sshKeyScrimGen = 0;
-function sshKeyScrimSet(open, Motion) {
-    const scrim = document.getElementById('sshKeyModalScrim');
-    if (!scrim) return;
-    const gen = ++sshKeyScrimGen;
-    document.body.classList.toggle('sshkey1-blurring', !!open);
-    if (open) {
-        scrim.style.visibility = 'visible';
-        void scrim.offsetWidth;
-        scrim.style.opacity = '1';
-        if (Motion?.cssVars) {
-            // 引擎逐帧覆盖 --sshkey-scrim-blur；CSS transition 自动失活。
-            // 对齐参考时长：进 0.42 / 出 0.30，不再拖 0.55-0.88s
-            Motion.cssVars(scrim, { '--sshkey-scrim-blur': 7 }, {
-                units: { '--sshkey-scrim-blur': 'px' },
-                preset: { response: 0.42, damping: 1 },
-            }).catch(() => { scrim.style.setProperty('--sshkey-scrim-blur', '7px'); });
-        } else {
-            // 触发 CSS backdrop-filter 慢过渡（0.55s）
-            scrim.style.setProperty('--sshkey-scrim-blur', '7px');
-        }
-    } else {
-        scrim.style.opacity = '0';
-        if (Motion?.cssVars) {
-            Motion.cssVars(scrim, { '--sshkey-scrim-blur': 0 }, {
-                units: { '--sshkey-scrim-blur': 'px' },
-                preset: { response: 0.30, damping: 1 },
-            }).catch(() => { scrim.style.setProperty('--sshkey-scrim-blur', '0px'); });
-        } else {
-            scrim.style.setProperty('--sshkey-scrim-blur', '0px');
-        }
-        // 等过渡收尾再藏 scrim（visibility 不参与 transition，避免截断）
-        window.setTimeout(() => {
-            if (gen !== sshKeyScrimGen) return; // 被新一次 open/close 抢占
-            if (scrim.style.opacity === '0') scrim.style.visibility = 'hidden';
-            document.body.classList.remove('sshkey1-blurring');
-        }, 560);
-    }
+function sshKeyScrimSet(open, _Motion) {
+    motionScrimSet('sshKeyModalScrim', 'sshkey1-blurring', open);
 }
 
 /* 按钮圆角：优先取真值，取不到退回胶囊半径 */
@@ -8310,55 +8655,44 @@ function openSshKeyModal(sshKey = null, trigger = null) {
     const btnRect = sshKeyModalTrigger?.getBoundingClientRect?.() || null;
 
     sshKeyMotion._ensure().then((Motion) => {
-        if (cycle !== sshKeyModalCycle) return; // 已被新一次 open/close 抢占
-        const useMotion = !!Motion && !!btnRect && btnRect.width > 2 && btnRect.height > 2;
-
+        if (cycle !== sshKeyModalCycle) return;
+        const inner = $('#sshKeyModalInner');
+        armMotionModalOpen(Motion, modal, card, inner, sshKeyModalTrigger, 'sshkey1');
+        const liveRect = sshKeyModalTrigger?.getBoundingClientRect?.() || btnRect;
+        sshKeyScrimSet(true, Motion || null);
+        const useMotion = !!Motion && !!liveRect && liveRect.width > 2 && liveRect.height > 2;
         if (!useMotion) {
-            // ── CSS 回退：原老路径，保留可用 ──
-            modal.classList.remove('show', 'closing', 'app-visible', 'sshkey1');
-            modal.classList.add('show');
-            modal.setAttribute('aria-hidden', 'false');
-            document.body.classList.add('connection-home-blur');
-            void modal.offsetWidth;
-            modal.classList.add('app-visible');
-            sshKeyScrimSet(true, null);
+            if (card?.style) {
+                card.style.visibility = '';
+                card.style.opacity = '';
+                card.style.pointerEvents = '';
+            }
+            if (inner?.style) inner.style.opacity = '';
+            if (sshKeyModalTrigger?.style) {
+                sshKeyModalTrigger.style.opacity = '';
+                sshKeyModalTrigger.style.pointerEvents = '';
+                delete sshKeyModalTrigger.dataset.motionHidden;
+            }
             $('#sshKeyName')?.focus({ preventScroll: true });
             return;
         }
-
-        // ── 引擎路径：与演示页 §B 完全同源（iosAppOpen：clone 源面 + shape/content 分轨） ──
-        modal.classList.remove('closing', 'app-visible');
-        document.body.classList.remove('connection-home-blur');
-        modal.classList.add('show', 'sshkey1');
-        modal.setAttribute('aria-hidden', 'false');
-        void modal.offsetWidth;
-        modal.classList.add('app-visible');
-
-        sshKeyScrimSet(true, Motion);
-
-        // 上次 close 的收尾溶解可能在按钮上留了 opacity 通道；先清再 hideSource
-        try { Motion.stop(sshKeyModalTrigger); Motion.release(sshKeyModalTrigger); } catch {}
-
-        const inner = $('#sshKeyModalInner');
         Motion.iosAppOpen(card, sshKeyModalTrigger, {
-            contentEl: inner,      // 表单内容延迟淡入（content 轨）
-            scrim: null,           // scrim 模糊量走 sshKeyScrimSet（用户要缓慢虚化）
-            home: null,            // 不缩放 app-shell —— 动画只覆盖弹窗
-            cloneSource: true,     // 像素级 twin clone（引擎 _ensureSourceVisual）
-            hideSource: true,      // 飞行期间藏真按钮，关闭时 restore
-            radiusFrom: sshKeyBtnRadius(sshKeyModalTrigger, btnRect),
-            radiusTo: 22,          // var(--radius-xl)
+            contentEl: inner,
+            scrim: null,
+            home: null,
+            cloneSource: true,
+            hideSource: true,
+            radiusFrom: sshKeyBtnRadius(sshKeyModalTrigger, liveRect),
+            radiusTo: 22,
             contentDelay: 0.16,
             faceDelay: 0.05,
-            faceInDelay: 0.04,     // close 时 twin 中段接回（见 iosAppClose）
+            faceInDelay: 0.04,
             shapePreset: 'shape',
             contentPreset: 'content',
         }).then(() => {
             if (cycle !== sshKeyModalCycle) return;
-            card.style.overflow = ''; // 飞行期 hidden 裁剪，落地后恢复滚动
+            card.style.overflow = '';
         }).catch((err) => console.warn('[sshkey1] iosAppOpen failed', err));
-
-        // 输入焦点延迟到几何飞行 ~40% 处，避免动画期间键盘弹出抢节奏
         window.setTimeout(() => {
             if (cycle === sshKeyModalCycle && modal.classList.contains('show')) {
                 $('#sshKeyName')?.focus({ preventScroll: true });
@@ -8435,45 +8769,36 @@ function closeSshKeyModal() {
         }
     };
 
-    if (useMotion) {
-        // 引擎路径：参考 iOS True Morph —— 快几何 + 像素 twin 盖到落点 +
-        // 同帧 restore 按钮再卸 surface。clearSourceVisual 必须 false：
-        // 否则 iosAppClose finally 先删 twin，finish 才 restore 按钮 → 闪一下。
-        sshKeyScrimSet(false, Motion);
-        // 关闭前确保 twin 已在且不透明通道干净（防止二次 close 时 twin 残留 opacity 0）
-        try {
-            const twinLayer = card.querySelector(':scope > [data-motion-source-visual]');
-            if (twinLayer) Motion.set(twinLayer, { opacity: Number(twinLayer.style.opacity) || 0 });
-        } catch {}
-        const closed = Motion.iosAppClose(card, trigger, {
-            contentEl: inner,
-            scrim: null,
-            home: null,
-            restoreSource: false,    // finish 原子交接
-            hideSurface: false,      // display 由 .show 控制
-            clearSourceVisual: false, // 关键：twin 留到 finish，覆盖到最后一帧
-            release: false,
-            radiusTo: sshKeyBtnRadius(trigger, btnRect),
-            shapePreset: 'shapeClose',
-            contentPreset: 'contentClose',
-            faceInDelay: 0.04,
-        });
-        // epsilon + 轻回弹尾巴 —— 封顶 900ms；finish 内做原子交接
-        const cap = new Promise(r => window.setTimeout(r, 900));
-        Promise.race([closed, cap]).then(() => {
-            // 下一帧交接：保证 twin 的最后一帧 opacity 已 paint
-            requestAnimationFrame(() => finish());
-        }).catch((err) => {
-            console.warn('[sshkey1] iosAppClose failed', err);
-            finish();
-        });
+    sshKeyScrimSet(false, Motion || null);
+    if (!useMotion) {
+        closeSshKeyModal._timer = window.setTimeout(finish, 0);
         return;
     }
-
-    // ── CSS 回退路径 ──
-    document.body.classList.remove('connection-home-blur');
-    sshKeyScrimSet(false, null);
-    closeSshKeyModal._timer = window.setTimeout(finish, 200);
+    // clearSourceVisual 必须 false：否则 finally 先删 twin，finish 才 restore → 闪一下
+    try {
+        const twinLayer = card.querySelector(':scope > [data-motion-source-visual]');
+        if (twinLayer) Motion.set(twinLayer, { opacity: Number(twinLayer.style.opacity) || 0 });
+    } catch {}
+    const closed = Motion.iosAppClose(card, trigger, {
+        contentEl: inner,
+        scrim: null,
+        home: null,
+        restoreSource: false,
+        hideSurface: false,
+        clearSourceVisual: false,
+        release: false,
+        radiusTo: sshKeyBtnRadius(trigger, btnRect),
+        shapePreset: 'shapeClose',
+        contentPreset: 'contentClose',
+        faceInDelay: 0.04,
+    });
+    const cap = new Promise(r => window.setTimeout(r, 900));
+    Promise.race([closed, cap]).then(() => {
+        requestAnimationFrame(() => finish());
+    }).catch((err) => {
+        console.warn('[sshkey1] iosAppClose failed', err);
+        finish();
+    });
 }
 async function saveSshKey(e) {
     e.preventDefault();
@@ -8500,7 +8825,7 @@ async function openSshKeySecret(id, trigger = null) {
 }
 
 function bindConnectionPressFeedback(root = document) {
-    const pressableSelector = '#addConnectionBtn, #addSshKeyBtn, [data-edit]';
+    const pressableSelector = '#addConnectionBtn, #addSshKeyBtn, #addSnippetBtn, #addProxyBtn, #aiAddProviderBtn, [data-edit]';
     const clearPress = (el) => el?.classList?.remove('connection-pressing');
     root.addEventListener('pointerdown', (e) => {
         const target = e.target.closest?.(pressableSelector);
@@ -8915,7 +9240,7 @@ function bindEvents() {
         enforceTerminalWorkspaceLimit(activeTerminalTab);
         renderTerminalTabs();
     });
-    $('#remoteExecForm').addEventListener('submit', remoteExecute); $('#beianForm').addEventListener('submit', saveBeian); $('#proxyForm').addEventListener('submit', saveProxy); $('#addProxyBtn')?.addEventListener('click', (e) => openProxyModal(null, e.currentTarget)); $('#proxyCloseBtn')?.addEventListener('click', closeProxyModal); $('#proxyCancelBtn')?.addEventListener('click', closeProxyModal); $('#proxyModal')?.addEventListener('click', (e) => { if (e.target.id === 'proxyModal') closeProxyModal(); }); $('#sshKeyForm').addEventListener('submit', saveSshKey); $('#addSshKeyBtn')?.addEventListener('click', (e) => openSshKeyModal(null, e.currentTarget)); $('#sshKeyCloseBtn')?.addEventListener('click', closeSshKeyModal); $('#sshKeyCancelBtn')?.addEventListener('click', closeSshKeyModal); // 点模糊遮罩关闭（仅 target 为 backdrop 本身，点表单不关）。可打断飞行中动画。
+    $('#remoteExecForm').addEventListener('submit', remoteExecute); $('#beianForm').addEventListener('submit', saveBeian); $('#proxyForm').addEventListener('submit', saveProxy); $('#addProxyBtn')?.addEventListener('click', (e) => openProxyModal(null, e.currentTarget)); $('#proxyCloseBtn')?.addEventListener('click', closeProxyModal); $('#proxyCancelBtn')?.addEventListener('click', closeProxyModal); $('#proxyModal')?.addEventListener('click', (e) => { if (e.target.id === 'proxyModal') closeProxyModal(); }); $('#proxyModalScrim')?.addEventListener('click', () => { if ($('#proxyModal')?.classList.contains('show')) closeProxyModal(); }); document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#proxyModal')?.classList.contains('show')) closeProxyModal(); }); $('#sshKeyForm').addEventListener('submit', saveSshKey); $('#addSshKeyBtn')?.addEventListener('click', (e) => openSshKeyModal(null, e.currentTarget)); $('#sshKeyCloseBtn')?.addEventListener('click', closeSshKeyModal); $('#sshKeyCancelBtn')?.addEventListener('click', closeSshKeyModal); // 点模糊遮罩关闭（仅 target 为 backdrop 本身，点表单不关）。可打断飞行中动画。
 $('#sshKeyModal')?.addEventListener('click', (e) => { if (e.target.id === 'sshKeyModal') closeSshKeyModal(); });
 $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?.classList.contains('show')) closeSshKeyModal(); }); document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#sshKeyModal')?.classList.contains('show')) closeSshKeyModal(); });
     setupAiAssistant();

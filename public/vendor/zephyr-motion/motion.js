@@ -2092,7 +2092,8 @@ export const Motion = {
     surfaceEl.style.pointerEvents = 'none';
     surfaceEl.style.zIndex = surfaceEl.style.zIndex || '6';
     surfaceEl.style.overflow = 'hidden';
-    surfaceEl.style.willChange = 'transform, opacity, filter, border-radius';
+    // border-radius 每帧写但不进 will-change（提示会迫使主线程每帧栅格化）
+    surfaceEl.style.willChange = 'transform, opacity';
     surfaceEl.style.transformOrigin = '0 0';
 
     // App material under the icon face (crossfade later)
