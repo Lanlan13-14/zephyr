@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260725-crisis-search2">
-    <link rel="modulepreload" href="app.js?v=20260725-crisis-search2">
-    <link rel="modulepreload" href="theme-runtime.js?v=20260725-crisis-search2">
-    <link rel="stylesheet" href="style.css?v=20260725-crisis-search2">
+    <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260725-ai-picker3">
+    <link rel="modulepreload" href="app.js?v=20260725-ai-picker3">
+    <link rel="modulepreload" href="theme-runtime.js?v=20260725-ai-picker3">
+    <link rel="stylesheet" href="style.css?v=20260725-ai-picker3">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -554,8 +554,7 @@
                                 </label>
                                 <label>助理名称</label><input id="aiAssistantName" maxlength="40" placeholder="Zephyr AI">
                                 <label>默认模型供应商</label>
-                                <input type="hidden" id="aiDefaultProvider" value="">
-                                <button type="button" class="ui-btn ai-picker-btn ai-settings-picker" id="aiDefaultProviderBtn" data-ai-field-picker="defaultProvider">自动选择第一个可用供应商</button>
+                                <select id="aiDefaultProvider"><option value="">自动选择第一个可用供应商</option></select>
                                 <label>默认模型</label><input id="aiDefaultModel" placeholder="留空自动使用供应商默认/第一个模型">
                                 <label>系统提示词</label><textarea id="aiSystemPrompt" rows="5" placeholder="给 AI 助理的全局行为要求，可留空。"></textarea>
                                 <div class="form-actions ai-card-actions"><button class="btn btn-primary" type="submit">保存基础设置</button></div>
@@ -800,13 +799,19 @@
             <div class="modal-head"><h2 id="aiProviderModalTitle">添加模型供应商</h2><button type="button" class="icon-btn" id="aiProviderCloseBtn">✕</button></div>
             <input type="hidden" id="aiProviderId">
             <div class="form-row"><div class="form-group"><label>名称</label><input id="aiProviderName" required placeholder="OpenAI / DeepSeek / Claude / Gemini"></div><div class="form-group"><label>类型</label>
-                <input type="hidden" id="aiProviderType" value="openai-compatible">
-                <button type="button" class="ui-btn ai-picker-btn ai-settings-picker" id="aiProviderTypeBtn" data-ai-field-picker="providerType">OpenAI 兼容</button>
+                <select id="aiProviderType">
+                    <option value="openai-compatible">OpenAI 兼容</option>
+                    <option value="anthropic">Anthropic Claude</option>
+                    <option value="gemini">Google Gemini</option>
+                </select>
             </div></div>
             <div class="form-row"><div class="form-group"><label>API Base URL</label><input id="aiProviderBaseUrl" placeholder="https://api.openai.com/v1 / https://api.openai.com/v1/responses / https://api.deepseek.com/v1"></div><div class="form-group"><label>API Key</label><input id="aiProviderApiKey" type="password" placeholder="留 ****** 表示不修改"></div></div>
             <div class="form-row"><div class="form-group"><label>接口模式（仅 OpenAI / OpenAI 兼容）</label>
-                <input type="hidden" id="aiProviderApiMode" value="auto">
-                <button type="button" class="ui-btn ai-picker-btn ai-settings-picker" id="aiProviderApiModeBtn" data-ai-field-picker="providerApiMode">自动识别</button>
+                <select id="aiProviderApiMode">
+                    <option value="auto">自动识别</option>
+                    <option value="chat">OpenAI Chat Completions</option>
+                    <option value="responses">OpenAI Responses API</option>
+                </select>
                 <p class="field-hint">Claude 固定使用 Anthropic Messages API；Gemini 固定使用 generateContent，不使用此项。</p>
             </div><div class="form-group ai-model-actions"><label>模型列表</label><button class="btn" type="button" id="aiFetchModelsBtn">获取模型</button></div></div>
             <div class="form-row"><div class="form-group"><label>模型列表</label><textarea id="aiProviderModels" rows="3" placeholder="保存 API Key/Base URL 后可点获取模型；也可手动填写，逗号或换行分隔"></textarea></div><div class="form-group"><label>默认模型</label><input id="aiProviderDefaultModel" placeholder="留空自动选择第一个可用模型"></div></div>
@@ -817,8 +822,15 @@
             <div class="form-row"><div class="form-group"><label>temperature（-1 不发送）</label><input id="aiProviderTemperature" type="number" step="0.1" min="-1" max="2" value="-1"></div><div class="form-group"><label>top_p（-1 不发送）</label><input id="aiProviderTopP" type="number" step="0.05" min="-1" max="1" value="-1"></div></div>
             <div class="form-row"><div class="form-group"><label>max_tokens / max_output_tokens</label><input id="aiProviderMaxTokens" type="number" min="1" value="4096"></div><div class="form-group"><label>上下文窗口 Tokens（可选）</label><input id="aiProviderContextWindow" type="number" min="1024" step="1024" placeholder="留空使用全局"></div></div>
             <div class="form-row"><div class="form-group"><label>推理强度（按供应商映射）</label>
-                <input type="hidden" id="aiProviderReasoningEffort" value="">
-                <button type="button" class="ui-btn ai-picker-btn ai-settings-picker" id="aiProviderReasoningEffortBtn" data-ai-field-picker="providerReasoning">默认 / 不发送</button>
+                <select id="aiProviderReasoningEffort">
+                    <option value="">默认 / 不发送</option>
+                    <option value="none">none / 关闭（仅部分模型）</option>
+                    <option value="minimal">minimal</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                    <option value="xhigh">xhigh（仅部分模型）</option>
+                </select>
                 <p class="field-hint">OpenAI Responses: reasoning.effort；Claude: thinking/output_config；Gemini: thinkingLevel/thinkingBudget。各模型支持值不同，默认不发送。</p>
             </div><div class="form-group"><label class="check-line"><input type="checkbox" id="aiProviderUsePreviousResponse"> OpenAI Responses 使用 previous_response_id（兼容接口慎开）</label></div></div>
             <div class="form-row"><div class="form-group"><label>presence_penalty</label><input id="aiProviderPresencePenalty" type="number" step="0.1" value="0"></div><div class="form-group"><label>frequency_penalty</label><input id="aiProviderFrequencyPenalty" type="number" step="0.1" value="0"></div></div>
@@ -982,7 +994,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260725-crisis-search2" type="module"></script>
+    <script src="app.js?v=20260725-ai-picker3" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

@@ -64,9 +64,10 @@ test('crisis card styles span full grid and keep pink CTA', () => {
     assert.match(styleCss, /:root\[data-theme="dark"\]\s*\.crisis-help-card/);
 });
 
-test('cache bust includes crisis-search marker', () => {
-    assert.match(appHtml, /app\.js\?v=20260725-crisis-search2/);
-    assert.match(appHtml, /style\.css\?v=20260725-crisis-search2/);
+test('cache bust is a dated marker (crisis-search2 or later)', () => {
+    // cache 版本随后续功能迭代递增，只要求存在日期化版本串。
+    assert.match(appHtml, /app\.js\?v=\d{8}-[a-z0-9-]+/);
+    assert.match(appHtml, /style\.css\?v=\d{8}-[a-z0-9-]+/);
 });
 
 // Runtime unit checks without DOM: extract the pattern list and evaluate.

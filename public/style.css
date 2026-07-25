@@ -2368,7 +2368,8 @@ body.terminal-custom-fullscreen-open .main-nav {
 .settings-switch-copy strong { color: var(--text); font-size: 13px; line-height: 1.35; }
 .settings-switch-copy small { color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
 .mini-list { display: grid; gap: 8px; margin: 10px 0 20px; }
-.mini-list > .muted:only-child {
+.mini-list > .muted:only-child,
+.snippet-settings-list > .muted:only-child {
     display: grid;
     place-items: center;
     min-height: 72px;
@@ -12029,47 +12030,6 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
 
 /* AI header custom pickers: avoid native browser select UI and add usage sheet. */
 .ai-picker-btn { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ai-settings-picker {
-    display: inline-flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    width: 100%;
-    max-width: none;
-    min-height: 38px;
-    padding: 8px 12px;
-    text-align: left;
-    border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--surface) 88%, var(--bg));
-    color: var(--text);
-    font: inherit;
-    font-size: 13px;
-    font-weight: 550;
-    cursor: pointer;
-    transition: background 140ms ease, border-color 140ms ease, transform 100ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-.ai-settings-picker::after {
-    content: '';
-    width: 0.45em;
-    height: 0.45em;
-    border-right: 1.5px solid var(--text-secondary);
-    border-bottom: 1.5px solid var(--text-secondary);
-    transform: rotate(45deg) translateY(-25%);
-    opacity: 0.7;
-    flex: 0 0 auto;
-}
-.ai-settings-picker:hover {
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-    background: color-mix(in srgb, var(--surface) 96%, var(--bg));
-}
-.ai-settings-picker:active { transform: scale(0.98); }
-.ai-settings-picker.is-disabled,
-.ai-settings-picker:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-    transform: none;
-}
 .ai-picker-popover {
     position: fixed;
     z-index: 10120;
@@ -12100,19 +12060,22 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 9px 10px;
+    padding: 10px 12px;
     border: 0;
     border-radius: 10px;
     background: transparent;
     color: var(--text);
     text-align: left;
     font: inherit;
+    font-size: 14px;
+    font-weight: 500;
     cursor: pointer;
-    transition: background 140ms ease, transform 100ms cubic-bezier(0.23, 1, 0.32, 1);
+    transition: background 140ms ease;
 }
-.ai-picker-option:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.ai-picker-option:active { transform: scale(0.98); }
-.ai-picker-option.active { background: var(--accent); color: #fff; }
+.ai-picker-option:hover,
+.ai-picker-option:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); outline: none; }
+.ai-picker-option.active { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.ai-picker-option.active b { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
     .ai-picker-popover { transition: none; transform: none; opacity: 1; }
 }
@@ -14556,6 +14519,14 @@ html {
     -webkit-overflow-scrolling: touch;
 }
 .ui-toggle-select.open .ui-toggle-select-menu { display: grid; gap: 2px; }
+/* 首页筛选菜单接 zephyr-motion：关闭动画期间保持显示，菜单不响应点击 */
+.ui-toggle-select.menu-closing .ui-toggle-select-menu {
+    display: grid;
+    gap: 2px;
+    pointer-events: none;
+    will-change: transform, opacity;
+    transform-origin: 0 0;
+}
 .ui-toggle-select-option {
     display: block;
     width: 100%;
@@ -14580,7 +14551,8 @@ html {
     color: var(--accent);
 }
 :root[data-theme="light"] .ui-toggle-select-trigger,
-:root[data-theme="light"] .ui-toggle-select-menu {
+:root[data-theme="light"] .ui-toggle-select-menu,
+:root[data-theme="light"] .ai-picker-popover {
     background-color: #fff;
 }
 .action-bar .ui-toggle-select { min-width: 0; }

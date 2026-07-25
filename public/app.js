@@ -1199,6 +1199,8 @@ const TOGGLE_SELECT_IDS = [
     'captchaProvider', 'colorSchemeSelect', 'themeModeSelect',
     'terminalBgSource', 'terminalBgFit', 'terminalMaxWindows',
     'terminalSmartbarOrder', 'terminalShortcutPlatform',
+    // AI 助理设置 / 供应商弹窗（与 CAPTCHA 同源 toggle-select）
+    'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
     // Proxy modal
     'proxyType',
     // Connection modal / RDP (when opened)
@@ -1207,12 +1209,96 @@ const TOGGLE_SELECT_IDS = [
 ];
 let _toggleSelectDocBound = false;
 
+/* 首页三个筛选（全部协议 / 全部标签 / 按创建时间）接 zephyr-motion：
+   与演示页 motion-feel.html §3 同一套“从按钮向下 FLIP 展开菜单”；
+   打开 Motion.morph（preset 'mac'），关闭 setOriginFromAnchor + macClose
+   缩回淡出。引擎不可用时退回原 instant class 路径。 */
+const MOTION_FILTER_SELECT_IDS = [
+    // 首页筛选
+    'protocolFilter', 'tagFilter', 'sortSelect',
+    // 设置 → 安全 → CAPTCHA
+    'captchaProvider',
+    // 设置 → 个性化
+    'colorSchemeSelect', 'themeModeSelect', 'terminalBgSource', 'terminalBgFit',
+    // 设置 → 终端工作台
+    'terminalMaxWindows', 'terminalSmartbarOrder', 'terminalShortcutPlatform',
+    // AI 助理 / 供应商弹窗（与 CAPTCHA 完全同一套 open/close 动画）
+    'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
+];
+function isMotionFilterShell(shell) {
+    return !!shell && MOTION_FILTER_SELECT_IDS.includes(shell.dataset?.selectId || '');
+}
+
+async function openToggleSelectMenu(shell) {
+    const trigger = shell.querySelector('.ui-toggle-select-trigger');
+    const menu = shell.querySelector('.ui-toggle-select-menu');
+    if (!trigger || !menu) return;
+    shell.classList.remove('menu-closing');
+    shell.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+    if (!isMotionFilterShell(shell)) {
+        try { menu.scrollTop = 0; } catch (_) {}
+        return;
+    }
+    const Motion = await sshKeyMotion._ensure();
+    if (!Motion) { try { menu.scrollTop = 0; } catch (_) {} return; }
+    const token = (shell._menuToken = (shell._menuToken || 0) + 1);
+    const midFlight = Motion.isAnimating(menu); // 必须先查；morph 自身处理飞行中重定向
+    // display:grid 已由 .open 生效；飞行中重开不藏（防闪），冷启动先藏再 reflow 防终态闪一帧。
+    if (!midFlight) {
+        menu.style.visibility = 'hidden';
+        void menu.offsetWidth;
+    }
+    const from = trigger.getBoundingClientRect();
+    menu.style.visibility = 'visible';
+    try { menu.scrollTop = 0; } catch (_) {}
+    const radiusFrom = parseFloat(getComputedStyle(trigger)?.borderRadius) || 12;
+    try {
+        await Motion.morph(menu, from, {
+            preset: 'mac',
+            radiusFrom,
+            radiusTo: 14,
+            radiusCompensate: true,
+            opacityFrom: 0.92,
+            opacityTo: 1,
+            forceFrom: !midFlight,
+        });
+    } catch (err) {
+        console.debug('[filter-menu]', 'open morph failed', err?.message || err);
+    }
+    if (token !== shell._menuToken) return;
+}
+
+function closeToggleSelectMenu(shell) {
+    const trigger = shell.querySelector('.ui-toggle-select-trigger');
+    const menu = shell.querySelector('.ui-toggle-select-menu');
+    if (!trigger || !menu) return;
+    const wasOpen = shell.classList.contains('open');
+    shell.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+    if (!wasOpen || !isMotionFilterShell(shell)) return;
+    const Motion = sshKeyMotion.engine; // close 不懒加载引擎；没加载过就 instant
+    if (!Motion || sshKeyMotion.failed) return;
+    const token = (shell._menuToken = (shell._menuToken || 0) + 1);
+    shell.classList.add('menu-closing'); // 动画期间保持 display:grid
+    Motion.setOriginFromAnchor?.(menu, trigger);
+    Promise.resolve()
+        .then(() => Motion.to(menu, { opacity: 0, scale: 0.94, y: -8, x: 0, blur: 0 }, { preset: 'macClose' }))
+        .catch(() => {})
+        .then(() => {
+            if (token !== shell._menuToken) return;
+            shell.classList.remove('menu-closing');
+            Motion.stop(menu);
+            Motion.set(menu, { x: 0, y: 0, scaleX: 1, scaleY: 1, scale: 1, opacity: 1, blur: 0, radius: 0 });
+            menu.style.transform = '';
+            menu.style.opacity = '';
+        });
+}
+
 function closeAllToggleSelects(exceptShell = null) {
     document.querySelectorAll('.ui-toggle-select.open').forEach((shell) => {
         if (exceptShell && shell === exceptShell) return;
-        shell.classList.remove('open');
-        const btn = shell.querySelector('.ui-toggle-select-trigger');
-        if (btn) btn.setAttribute('aria-expanded', 'false');
+        closeToggleSelectMenu(shell);
     });
 }
 
@@ -1272,12 +1358,8 @@ function enhanceToggleSelect(select) {
         e.stopPropagation();
         const willOpen = !shell.classList.contains('open');
         closeAllToggleSelects(willOpen ? shell : null);
-        shell.classList.toggle('open', willOpen);
-        trigger.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-        if (willOpen) {
-            // Keep menu in view on mobile.
-            try { menu.scrollTop = 0; } catch (_) {}
-        }
+        if (willOpen) openToggleSelectMenu(shell);
+        else closeToggleSelectMenu(shell);
     });
 
     menu.addEventListener('click', (e) => {
@@ -1292,8 +1374,7 @@ function enhanceToggleSelect(select) {
             select.dispatchEvent(new Event('input', { bubbles: true }));
         }
         syncToggleSelectFace(select);
-        shell.classList.remove('open');
-        trigger.setAttribute('aria-expanded', 'false');
+        closeToggleSelectMenu(shell);
     });
 
     select.addEventListener('change', () => syncToggleSelectFace(select));
@@ -4747,91 +4828,29 @@ function applyAiVisibility() {
     renderAiHeaderSelectors();
 }
 function renderAiProviderOptions() {
+    // 与 CAPTCHA 同源：真实 <select> + enhanceToggleSelect；动态填供应商列表。
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     const providers = ai.providers || [];
-    const hidden = $('#aiDefaultProvider');
-    const btn = $('#aiDefaultProviderBtn');
-    if (hidden) hidden.value = ai.defaultProviderId || '';
-    if (btn) {
-        const p = providers.find((x) => x.id === (ai.defaultProviderId || ''));
-        btn.textContent = p ? (p.name || p.type || '供应商') : '自动选择第一个可用供应商';
-    }
+    const select = $('#aiDefaultProvider');
+    if (!select) return;
+    const current = ai.defaultProviderId || select.value || '';
+    select.innerHTML = '<option value="">自动选择第一个可用供应商</option>'
+        + providers.map((p) => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.name || p.type || '供应商')}</option>`).join('');
+    if (current && providers.some((p) => p.id === current)) select.value = current;
+    else select.value = '';
+    enhanceToggleSelect(select);
+    syncToggleSelectFace(select);
 }
 
-const AI_FIELD_PICKER_CHOICES = {
-    defaultProvider: () => {
-        const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-        return [
-            { value: '', label: '自动选择第一个可用供应商' },
-            ...(ai.providers || []).map((p) => ({ value: p.id, label: p.name || p.type || '供应商' })),
-        ];
-    },
-    providerType: () => [
-        { value: 'openai-compatible', label: 'OpenAI 兼容' },
-        { value: 'anthropic', label: 'Anthropic Claude' },
-        { value: 'gemini', label: 'Google Gemini' },
-    ],
-    providerApiMode: () => [
-        { value: 'auto', label: '自动识别' },
-        { value: 'chat', label: 'OpenAI Chat Completions' },
-        { value: 'responses', label: 'OpenAI Responses API' },
-    ],
-    providerReasoning: () => [
-        { value: '', label: '默认 / 不发送' },
-        { value: 'none', label: 'none / 关闭（仅部分模型）' },
-        { value: 'minimal', label: 'minimal' },
-        { value: 'low', label: 'low' },
-        { value: 'medium', label: 'medium' },
-        { value: 'high', label: 'high' },
-        { value: 'xhigh', label: 'xhigh（仅部分模型）' },
-    ],
-};
-
-function aiFieldPickerTargets(kind = '') {
-    if (kind === 'defaultProvider') return { input: $('#aiDefaultProvider'), button: $('#aiDefaultProviderBtn') };
-    if (kind === 'providerType') return { input: $('#aiProviderType'), button: $('#aiProviderTypeBtn') };
-    if (kind === 'providerApiMode') return { input: $('#aiProviderApiMode'), button: $('#aiProviderApiModeBtn') };
-    if (kind === 'providerReasoning') return { input: $('#aiProviderReasoningEffort'), button: $('#aiProviderReasoningEffortBtn') };
-    return { input: null, button: null };
-}
-
-function setAiFieldPickerValue(kind, value) {
-    const { input, button } = aiFieldPickerTargets(kind);
-    const choices = (AI_FIELD_PICKER_CHOICES[kind]?.() || []);
-    const match = choices.find((c) => c.value === value) || choices[0];
-    const resolved = match ? match.value : value;
-    if (input) input.value = resolved ?? '';
-    if (button) button.textContent = match?.label || String(resolved || '选择');
-    if (kind === 'providerType' || kind === 'providerApiMode') updateAiProviderModalHints?.();
-}
-
-function openAiFieldPicker(kind = '', anchor = null) {
-    // Re-tap same trigger closes (native/mobile picker trap).
-    const existing = document.querySelector('.ai-picker-popover');
-    if (existing && existing.dataset.pickerKind === kind && existing.dataset.pickerAnchorId
-        && (anchor?.id && existing.dataset.pickerAnchorId === anchor.id
-            || existing._anchorEl === anchor)) {
-        closeAiPickerPopover();
-        return;
-    }
-    closeAiPickerPopover();
-    const choices = AI_FIELD_PICKER_CHOICES[kind]?.() || [];
-    if (!choices.length || !anchor) return;
-    const { input } = aiFieldPickerTargets(kind);
-    const current = input?.value ?? '';
-    const pop = document.createElement('div');
-    pop.className = 'ai-picker-popover';
-    pop.dataset.pickerKind = String(kind || '');
-    pop.dataset.pickerAnchorId = anchor.id || '';
-    pop._anchorEl = anchor;
-    pop.innerHTML = choices.map((item) => `<button type="button" class="ai-picker-option${item.value === current ? ' active' : ''}" data-field-kind="${escapeHtml(kind)}" data-value="${escapeHtml(item.value)}"><span>${escapeHtml(item.label)}</span>${item.value === current ? '<b>✓</b>' : ''}</button>`).join('');
-    document.body.appendChild(pop);
-    const rect = anchor.getBoundingClientRect();
-    const pr = pop.getBoundingClientRect();
-    pop.style.transformOrigin = 'top left';
-    pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pr.width - 8, rect.left))}px`;
-    pop.style.top = `${Math.max(8, Math.min(window.innerHeight - pr.height - 8, rect.bottom + 8))}px`;
-    requestAnimationFrame(() => pop.classList.add('open'));
+/** 设置 AI 供应商弹窗里的 <select> 值（已 enhance 的会同步 trigger 文案） */
+function setAiFieldSelectValue(selectId, value) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    const next = value ?? '';
+    if ([...select.options].some((o) => o.value === next)) select.value = next;
+    else if (select.options.length) select.selectedIndex = 0;
+    enhanceToggleSelect(select);
+    syncToggleSelectFace(select);
 }
 function renderAiHeaderSelectors() {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
@@ -4918,7 +4937,10 @@ function bindAiSegmentControls(root = document) {
         setAiSegmentValue(seg, seg.dataset.value || seg.querySelector('.ai-segment-btn.active')?.dataset.value || '', { silent: true });
     });
 }
-function closeAiPickerPopover() { document.querySelector('.ai-picker-popover')?.remove(); }
+function closeAiPickerPopover() {
+    // 聊天头部 picker（provider/model/thinking）仍走 body popover + CSS；字段选择器已迁到 toggle-select。
+    document.querySelector('.ai-picker-popover')?.remove();
+}
 /** In-app confirm sheet — never window.confirm. */
 function openAiInlineConfirm({ title = '确认', body = '', confirmLabel = '确认', cancelLabel = '取消', danger = false, onConfirm } = {}) {
     document.querySelector('.ai-inline-confirm')?.remove();
@@ -5265,10 +5287,10 @@ async function openAiProviderModal(provider = null, trigger = null) {
     $('#aiProviderModalTitle').textContent = provider ? '编辑模型供应商' : '添加模型供应商';
     $('#aiProviderId').value = provider?.id || '';
     $('#aiProviderName').value = provider?.name || '';
-    setAiFieldPickerValue('providerType', provider?.type || 'openai-compatible');
+    setAiFieldSelectValue('aiProviderType', provider?.type || 'openai-compatible');
     $('#aiProviderBaseUrl').value = provider?.baseUrl || '';
     $('#aiProviderApiKey').value = provider?.hasApiKey ? '******' : '';
-    setAiFieldPickerValue('providerApiMode', provider?.apiMode || provider?.options?.apiMode || 'auto');
+    setAiFieldSelectValue('aiProviderApiMode', provider?.apiMode || provider?.options?.apiMode || 'auto');
     $('#aiProviderModels').value = Array.isArray(provider?.models) ? provider.models.join('\n') : (provider?.models || '');
     $('#aiProviderDefaultModel').value = provider?.defaultModel || '';
     if ($('#aiProviderModelUserAgents')) $('#aiProviderModelUserAgents').value = provider?.modelUserAgents || '';
@@ -5279,7 +5301,7 @@ async function openAiProviderModal(provider = null, trigger = null) {
     $('#aiProviderMaxTokens').value = provider?.options?.max_tokens ?? provider?.options?.max_output_tokens ?? 4096;
     if ($('#aiProviderContextWindow')) $('#aiProviderContextWindow').value = provider?.options?.context?.windowTokens ?? '';
     if ($('#aiProviderUsePreviousResponse')) $('#aiProviderUsePreviousResponse').checked = !!provider?.options?.use_previous_response_id;
-    setAiFieldPickerValue('providerReasoning', provider?.options?.reasoning_effort || '');
+    setAiFieldSelectValue('aiProviderReasoningEffort', provider?.options?.reasoning_effort || '');
     $('#aiProviderPresencePenalty').value = provider?.options?.presence_penalty ?? 0;
     $('#aiProviderFrequencyPenalty').value = provider?.options?.frequency_penalty ?? 0;
     $('#aiProviderExtraJson').value = provider?.options?.extraJson || '';
@@ -7726,17 +7748,21 @@ function setupAiPanelChrome() {
 }
 function updateAiProviderModalHints() {
     const type = $('#aiProviderType')?.value || 'openai-compatible';
-    const modeInput = $('#aiProviderApiMode');
-    const modeBtn = $('#aiProviderApiModeBtn');
-    let mode = modeInput?.value || 'auto';
+    const modeSelect = $('#aiProviderApiMode');
+    let mode = modeSelect?.value || 'auto';
     const isOpenAiLike = type === 'openai-compatible' || type === 'openai';
-    if (modeBtn) {
-        modeBtn.disabled = !isOpenAiLike;
-        modeBtn.classList.toggle('is-disabled', !isOpenAiLike);
-        modeBtn.setAttribute('aria-disabled', isOpenAiLike ? 'false' : 'true');
+    if (modeSelect) {
+        modeSelect.disabled = !isOpenAiLike;
+        const shell = modeSelect.closest?.('.ui-toggle-select');
+        const trigger = shell?.querySelector?.('.ui-toggle-select-trigger');
+        if (trigger) {
+            trigger.disabled = !isOpenAiLike;
+            trigger.classList.toggle('is-disabled', !isOpenAiLike);
+            trigger.setAttribute('aria-disabled', isOpenAiLike ? 'false' : 'true');
+        }
     }
-    if (!isOpenAiLike && modeInput) {
-        setAiFieldPickerValue('providerApiMode', 'auto');
+    if (!isOpenAiLike && modeSelect) {
+        setAiFieldSelectValue('aiProviderApiMode', 'auto');
         mode = 'auto';
     }
     const base = $('#aiProviderBaseUrl');
@@ -7771,13 +7797,9 @@ function setupAiAssistant() {
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#aiProviderModal')?.classList.contains('show')) closeAiProviderModal(); });
     $('#aiProviderForm')?.addEventListener('submit', saveAiProvider);
     $('#aiFetchModelsBtn')?.addEventListener('click', () => fetchAiModelsForProvider());
-    document.addEventListener('click', (e) => {
-        const fieldBtn = e.target.closest?.('[data-ai-field-picker]');
-        if (!fieldBtn || fieldBtn.disabled || fieldBtn.getAttribute('aria-disabled') === 'true') return;
-        e.preventDefault();
-        e.stopPropagation();
-        openAiFieldPicker(fieldBtn.dataset.aiFieldPicker, fieldBtn);
-    });
+    // AI 字段选择器已改为真实 <select> + enhanceToggleSelect（与 CAPTCHA 同源）。
+    $('#aiProviderType')?.addEventListener('change', () => updateAiProviderModalHints());
+    $('#aiProviderApiMode')?.addEventListener('change', () => updateAiProviderModalHints());
     $('#aiProviderCloseBtn')?.addEventListener('click', closeAiProviderModal);
     $('#aiProviderCancelBtn')?.addEventListener('click', closeAiProviderModal);
     $('#aiProviderList')?.addEventListener('click', (e) => { const edit = e.target.dataset.aiEditProvider, del = e.target.dataset.aiDeleteProvider, fetchModels = e.target.dataset.aiFetchProviderModels, reveal = e.target.dataset.aiRevealProviderKey; const ai = normalizeAiSettings(settings.ai || {}); if (fetchModels) fetchAiModelsForProvider(fetchModels); if (reveal) revealAiProviderKey(reveal).catch((err) => toast(err.message || '读取 API Key 失败')); if (edit) openAiProviderModal(ai.providers.find((p) => p.id === edit)); if (del) deleteAiProvider(del); });
@@ -7845,15 +7867,10 @@ function setupAiAssistant() {
     document.addEventListener('click', (e) => {
         const option = e.target.closest?.('.ai-picker-option');
         if (option) {
-            if (option.dataset.fieldKind) {
-                setAiFieldPickerValue(option.dataset.fieldKind, option.dataset.value || '');
-                closeAiPickerPopover();
-            } else {
-                applyAiPickerChoice(option.dataset.kind, option.dataset.value || '');
-            }
+            applyAiPickerChoice(option.dataset.kind, option.dataset.value || '');
             return;
         }
-        if (!e.target.closest?.('.ai-picker-popover,.ai-picker-btn,[data-ai-field-picker]')) closeAiPickerPopover();
+        if (!e.target.closest?.('.ai-picker-popover,.ai-picker-btn')) closeAiPickerPopover();
         if (!e.target.closest?.('.ai-usage-popover,#aiUsageBtn')) document.querySelector('.ai-usage-popover')?.remove();
     }, true);
     $('#aiBrowserPreviewToggleBtn')?.addEventListener('click', () => { const state = aiBrowserPreviewStateForSession(aiCurrentSessionId); state.visible = !state.visible; renderAiBrowserPreview(); });
@@ -8332,7 +8349,7 @@ function renderSnippetSettings() {
     const list = $('#snippetSettingsList');
     if (!list) return;
     const snippets = getSnippets();
-    list.innerHTML = snippets.length ? snippets.map((item) => `<div class="mini-item snippet-settings-item" data-id="${escapeHtml(item.id)}"><span class="resource-tag resource-tag-name" title="${escapeHtml(item.name || '未命名片段')}">${escapeHtml(item.name || '未命名片段')}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml(item.group || '未分组')}</span><span class="resource-tag ${item.autoRun ? 'resource-tag-host' : 'resource-tag-auth'}">${item.autoRun ? '直接执行' : '填入输入框'}</span></div><button class="tool-btn" data-edit-snippet="${escapeHtml(item.id)}">编辑</button><button class="tool-btn danger" data-delete-snippet="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<p class="empty-state">暂无代码片段。</p>';
+    list.innerHTML = snippets.length ? snippets.map((item) => `<div class="mini-item snippet-settings-item" data-id="${escapeHtml(item.id)}"><span class="resource-tag resource-tag-name" title="${escapeHtml(item.name || '未命名片段')}">${escapeHtml(item.name || '未命名片段')}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml(item.group || '未分组')}</span><span class="resource-tag ${item.autoRun ? 'resource-tag-host' : 'resource-tag-auth'}">${item.autoRun ? '直接执行' : '填入输入框'}</span></div><button class="tool-btn" data-edit-snippet="${escapeHtml(item.id)}">编辑</button><button class="tool-btn danger" data-delete-snippet="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<p class="muted">暂无代码片段</p>';
 }
 async function saveSnippet(e) {
     e.preventDefault();
