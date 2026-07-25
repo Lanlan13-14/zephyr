@@ -16,6 +16,7 @@ const {
     DEFAULT_ZEPHYR_SKILLS,
     cloneDefaultZephyrSkills,
 } = require('./ai-defaults');
+const { PLAYBOOKS } = require('./ai-playbooks');
 
 const AI_URL = process.env.ZEPHYR_AI_URL || '';
 const AI_ADMIN = process.env.ZEPHYR_AI_ADMIN_TOKEN || '';
@@ -148,18 +149,23 @@ class AiRuntimeBridge {
 
 function mergeSkills(skills) {
     const list = Array.isArray(skills) ? skills.slice() : [];
-    const hasDefault = list.some((s) => s && s.id === 'zephyr-local-operator');
-    if (!hasDefault) {
-        return [...cloneDefaultZephyrSkills(), ...list];
-    }
-    // Ensure default skill body stays complete if user disabled incorrectly
-    const defaults = cloneDefaultZephyrSkills();
-    return list.map((s) => {
-        if (s.id === 'zephyr-local-operator' && !(s.prompt || '').trim()) {
-            return { ...defaults[0], ...s, prompt: defaults[0].prompt };
-        }
-        return s;
+    const defaults = [
+        ...cloneDefaultZephyrSkills(),
+        ...PLAYBOOKS.map((playbook) => ({
+            id: `playbook:${playbook.id}`,
+            name: playbook.title,
+            description: `运行时标准操作规程：${playbook.id}`,
+            prompt: playbook.prompt,
+            enabled: true,
+        })),
+    ];
+    const merged = list.slice();
+    defaults.forEach((fallback) => {
+        const index = merged.findIndex((item) => item && (item.id === fallback.id || item.name === fallback.name));
+        if (index < 0) merged.unshift(fallback);
+        else if (!(merged[index].prompt || '').trim()) merged[index] = { ...fallback, ...merged[index], prompt: fallback.prompt, enabled: merged[index].enabled !== false };
     });
+    return merged;
 }
 
 /**
@@ -203,7 +209,7 @@ function registerAiHostRoutes(app, deps) {
             const result = await executePlatformTool(toolName, args || {}, {
                 user: actor,
                 context: context || {},
-                confirmed: !!confirmed,
+                confirmedToolId: confirmed ? String(toolName) : '',
                 sessionId,
                 runId,
                 deps,

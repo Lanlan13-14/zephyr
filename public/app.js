@@ -6539,19 +6539,20 @@ async function handleAiClientCapture(data = {}, { providerId = '', model = '', o
 async function syncAiToolSideEffects(toolResults = [], { sessionId = '' } = {}) {
     for (const r of toolResults) {
         updateAiBrowserPreviewFromToolResult(r, { sessionId });
-        if (r.result?.uiAction === 'open_connection' && r.result?.connectionId) {
+        const toolData = r.result?.ok === true && r.result?.data && typeof r.result.data === 'object' ? r.result.data : r.result;
+        if ((toolData?.uiAction === 'open_connection' || r.tool === 'connection_open_v1') && toolData?.connectionId) {
             try {
-                const openedTabId = await openConnection(r.result.connectionId);
-                if (openedTabId) r.result.openedTabId = openedTabId;
-                const protocol = String(r.result?.connection?.protocol || '').toUpperCase();
-                if (['RDP', 'VNC'].includes(protocol)) r.result.remoteDesktopScreenshot = await waitForFreshRemoteDesktopSnapshot(openedTabId, { maxWidth: 640, timeoutMs: 5200 });
+                const openedTabId = await openConnection(toolData.connectionId);
+                if (openedTabId) toolData.openedTabId = openedTabId;
+                const protocol = String(toolData?.connection?.protocol || '').toUpperCase();
+                if (['RDP', 'VNC'].includes(protocol)) toolData.remoteDesktopScreenshot = await waitForFreshRemoteDesktopSnapshot(openedTabId, { maxWidth: 640, timeoutMs: 5200 });
             } catch (err) { toast(err.message || 'AI 打开连接失败'); }
         }
-        if (r.result?.uiAction === 'ui_action' && r.result?.action) {
+        if (toolData?.uiAction === 'ui_action' && toolData?.action) {
             try {
-                const clientResult = await performAiUiAction(r.result.action);
-                if (clientResult && typeof clientResult === 'object') Object.assign(r.result, clientResult);
-            } catch (err) { toast(err.message || 'AI UI 操作失败'); r.result.clientError = err.message || 'AI UI 操作失败'; }
+                const clientResult = await performAiUiAction(toolData.action);
+                if (clientResult && typeof clientResult === 'object') Object.assign(toolData, clientResult);
+            } catch (err) { toast(err.message || 'AI UI 操作失败'); toolData.clientError = err.message || 'AI UI 操作失败'; }
         }
         if (r.tool === 'plan_task' || r.tool === 'plan_update') mergeAiPlan(r.result?.plan);
         if (r.tool === 'memory_save') mergeAiMemory(r.result?.memory);
@@ -6614,6 +6615,24 @@ function maskAiSensitive(value, tool = '') {
     return walk(value);
 }
 function summarizeAiToolResult(tool, result = {}) {
+    const data = result?.ok === true && result?.data && typeof result.data === 'object' ? result.data : result;
+    if (tool === 'connection_list_v1') return `发现 ${(data.connections || []).length} 个连接`;
+    if (tool === 'connection_get_v1') return `读取连接 ${data.connection?.name || data.connection?.id || ''}`;
+    if (tool === 'connection_create_v1') return `已新增连接 ${data.connection?.name || ''}`;
+    if (tool === 'connection_update_v1' || tool === 'connection_rename_v1') return `已修改连接 ${data.connection?.name || ''}`;
+    if (tool === 'connection_delete_v1') return `已删除连接 ${data.connectionId || ''}`;
+    if (tool === 'connection_test_v1') return data.result?.ok ? '连接测试成功' : (data.result?.message || '连接测试完成');
+    if (tool === 'connection_open_v1') return `准备打开连接 ${data.connection?.name || data.connectionId || ''}`;
+    if (tool === 'proxy_list_v1') return `发现 ${(data.proxies || []).length} 个代理`;
+    if (tool === 'proxy_get_v1') return `读取代理 ${data.proxy?.name || data.proxy?.id || ''}`;
+    if (tool === 'proxy_create_v1') return `已新增代理 ${data.proxy?.name || ''}`;
+    if (tool === 'proxy_update_v1') return `已修改代理 ${data.proxy?.name || ''}`;
+    if (tool === 'proxy_delete_v1') return `已删除代理 ${data.proxyId || ''}`;
+    if (tool === 'ssh_key_list_v1') return `发现 ${(data.sshKeys || []).length} 个 SSH 密钥`;
+    if (tool === 'ssh_key_get_v1') return `读取 SSH 密钥 ${data.sshKey?.name || data.sshKey?.id || ''}`;
+    if (tool === 'ssh_key_validate_v1') return data.validation?.valid ? `SSH 密钥格式有效，${data.validation.algorithm || ''}` : 'SSH 密钥格式无效';
+    if (tool === 'ssh_key_rename_v1' || tool === 'ssh_key_update_metadata_v1') return `已修改 SSH 密钥 ${data.sshKey?.name || ''}`;
+    if (tool === 'ssh_key_delete_v1') return `已删除 SSH 密钥 ${data.sshKeyId || ''}`;
     if (tool === 'list_connections') {
         const list = result.connections || [];
         const byProto = list.reduce((acc, c) => { acc[c.protocol || 'SSH'] = (acc[c.protocol || 'SSH'] || 0) + 1; return acc; }, {});
@@ -6647,7 +6666,7 @@ function formatAiToolResult(r = {}) {
     const detail = JSON.stringify(maskAiSensitive({ args: r.args || {}, result }, r.tool), null, 2);
     const shot = browserShotFromResult(result);
     const titleMap = {
-        list_connections: '列出连接', web_search: '网页搜索', fetch_url: '网页读取', browser_navigate: '浏览器打开', browser_inspect: '检查页面元素', browser_screenshot: '浏览器截图', browser_click: '浏览器点击', browser_type: '浏览器输入', browser_scroll: '浏览器滚动', browser_text: '读取浏览器文本', browser_key: '浏览器按键', browser_wait: '等待页面', open_connection: '打开连接', terminal_read_output: '读取终端输出', remote_desktop_screenshot: '读取远程桌面画面', ui_action: '页面/终端代操作', memory_search: '搜索 Memory', memory_save: '保存 Memory', plan_task: '创建计划', plan_update: '更新计划', plan_delete: '删除计划', remote_execute: '远程执行', remote_read_file: '读取远程文件', remote_write_file: '写入远程文件', confirmed: '敏感操作结果'
+        list_connections: '列出连接', connection_list_v1: '列出连接', connection_get_v1: '读取连接', connection_rename_v1: '重命名连接', connection_create_v1: '新增连接', connection_update_v1: '修改连接', connection_delete_v1: '删除连接', connection_test_v1: '测试连接', connection_open_v1: '打开连接', proxy_list_v1: '列出代理', proxy_get_v1: '读取代理', proxy_create_v1: '新增代理', proxy_update_v1: '修改代理', proxy_delete_v1: '删除代理', ssh_key_list_v1: '列出 SSH 密钥', ssh_key_get_v1: '读取 SSH 密钥', ssh_key_validate_v1: '校验 SSH 密钥', ssh_key_rename_v1: '重命名 SSH 密钥', ssh_key_update_metadata_v1: '修改 SSH 密钥备注', ssh_key_delete_v1: '删除 SSH 密钥', web_search: '网页搜索', fetch_url: '网页读取', browser_navigate: '浏览器打开', browser_inspect: '检查页面元素', browser_screenshot: '浏览器截图', browser_click: '浏览器点击', browser_type: '浏览器输入', browser_scroll: '浏览器滚动', browser_text: '读取浏览器文本', browser_key: '浏览器按键', browser_wait: '等待页面', open_connection: '打开连接', terminal_read_output: '读取终端输出', remote_desktop_screenshot: '读取远程桌面画面', ui_action: '页面/终端代操作', memory_search: '搜索 Memory', memory_save: '保存 Memory', plan_task: '创建计划', plan_update: '更新计划', plan_delete: '删除计划', remote_execute: '远程执行', remote_read_file: '读取远程文件', remote_write_file: '写入远程文件', confirmed: '敏感操作结果'
     };
     const title = titleMap[r.tool] || `工具 ${r.tool || 'unknown'}`;
     const duration = Number.isFinite(Number(r.durationMs)) ? `${(Number(r.durationMs) / 1000).toFixed(1)}s` : '';
@@ -7157,7 +7176,7 @@ async function resolveAiConfirmation(id, approve) {
         const data = await api(`/api/ai/confirm/${encodeURIComponent(id)}`, { method: 'POST', signal: abortController.signal, body: JSON.stringify({ approve }) });
         if (approve && data.result) {
             await syncAiToolSideEffects([{ tool: data.toolName || (data.result?.plan ? 'plan_update' : ''), args: data.args || {}, result: data.result }], { sessionId });
-            appendAiMessage(formatAiToolResult({ tool: 'confirmed', result: data.result, args: data.args || {}, durationMs: data.durationMs }), 'trace', { rawHtml: true, sessionId });
+            appendAiMessage(formatAiToolResult({ tool: data.toolName || 'confirmed', result: data.result, args: data.args || {}, durationMs: data.durationMs }), 'trace', { rawHtml: true, sessionId });
             clearAiSessionRun(sessionId, abortController);
             await continueAiAfterConfirmation(id, true, data);
         } else {

@@ -1,0 +1,222 @@
+'use strict';
+
+const {
+    defineCapabilities,
+    capabilityCoverageReport,
+    searchCapabilities,
+} = require('./ai-capability-registry');
+
+/*
+ * This is deliberately small at first. A capability becomes "implemented"
+ * only after its canonical tool, authorization, playbook and tests land.
+ */
+const CAPABILITIES = defineCapabilities([
+    {
+        id: 'capability.search',
+        title: 'Discover available AI capabilities and playbooks',
+        mode: 'ai',
+        state: 'implemented',
+        risk: 'R0',
+        confirmation: 'never',
+        toolIds: ['capability_search'],
+        keywords: ['能力', '接口', '工具', '能做什么', '帮助', 'capability', 'tool', 'help'],
+        playbookId: 'capability-discovery-v1',
+    },
+    {
+        id: 'connection.list',
+        title: 'List visible connections',
+        mode: 'ai',
+        state: 'implemented',
+        risk: 'R0',
+        confirmation: 'never',
+        toolIds: ['connection_list_v1'],
+        keywords: ['连接', '服务器', '设备', '列表', '查找', 'search', 'list'],
+        playbookId: 'asset-management-v1',
+    },
+    {
+        id: 'connection.get',
+        title: 'Read visible connection metadata',
+        mode: 'ai',
+        state: 'implemented',
+        risk: 'R0',
+        confirmation: 'never',
+        toolIds: ['connection_get_v1'],
+        keywords: ['连接', '详情', '查看', '读取', 'get'],
+        playbookId: 'asset-management-v1',
+    },
+    {
+        id: 'connection.rename',
+        title: 'Rename a connection with revision protection',
+        mode: 'ai',
+        state: 'implemented',
+        risk: 'R1',
+        confirmation: 'always',
+        toolIds: ['connection_rename_v1'],
+        keywords: ['连接', '改名', '重命名', 'rename'],
+        playbookId: 'asset-management-v1',
+    },
+    {
+        id: 'connection.create',
+        title: 'Create a connection without revealing credentials',
+        mode: 'ai',
+        state: 'implemented',
+        risk: 'R2',
+        confirmation: 'always',
+        toolIds: ['connection_create_v1'],
+        keywords: ['连接', '新增', '创建', '设备', '服务器', 'create'],
+        playbookId: 'asset-management-v1',
+    },
+    {
+        id: 'connection.update',
+        title: 'Update connection metadata with revision protection',
+        mode: 'ai',
+        state: 'implemented',
+        risk: 'R2',
+        confirmation: 'always',
+        toolIds: ['connection_update_v1'],
+        keywords: ['连接', '修改', '更新', 'update'],
+        playbookId: 'asset-management-v1',
+    },
+    {
+        id: 'connection.delete',
+        title: 'Delete a connection with revision protection',
+        mode: 'ai',
+        state: 'implemented',
+        risk: 'R3',
+        confirmation: 'always',
+        toolIds: ['connection_delete_v1'],
+        keywords: ['连接', '删除', '移除', 'delete'],
+        playbookId: 'asset-management-v1',
+    },
+    {
+        id: 'connection.test',
+        title: 'Test a saved connection without exposing credentials',
+        mode: 'ai',
+        state: 'implemented',
+        risk: 'R0',
+        confirmation: 'never',
+        toolIds: ['connection_test_v1'],
+        keywords: ['连接', '测试', '连通性', '诊断', 'test'],
+        playbookId: 'asset-management-v1',
+    },
+    {
+        id: 'connection.open',
+        title: 'Open a saved connection in the current workspace',
+        mode: 'ai',
+        state: 'implemented',
+        risk: 'R2',
+        confirmation: 'always',
+        toolIds: ['connection_open_v1'],
+        keywords: ['连接', '打开', '进入', '登录', 'open'],
+        playbookId: 'asset-management-v1',
+    },
+    {
+        id: 'proxy.list',
+        title: 'List visible proxy metadata',
+        mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['proxy_list_v1'], keywords: ['代理', 'proxy', '列表', '查找'], playbookId: 'proxy-management-v1',
+    },
+    {
+        id: 'proxy.get',
+        title: 'Read proxy metadata without password',
+        mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['proxy_get_v1'], keywords: ['代理', 'proxy', '详情', '查看'], playbookId: 'proxy-management-v1',
+    },
+    {
+        id: 'proxy.create',
+        title: 'Create proxy metadata without password',
+        mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['proxy_create_v1'], keywords: ['代理', 'proxy', '新增', '创建'], playbookId: 'proxy-management-v1',
+    },
+    {
+        id: 'proxy.update',
+        title: 'Update proxy metadata with revision protection',
+        mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['proxy_update_v1'], keywords: ['代理', 'proxy', '修改', '更新'], playbookId: 'proxy-management-v1',
+    },
+    {
+        id: 'proxy.delete',
+        title: 'Delete proxy with revision protection',
+        mode: 'ai', state: 'implemented', risk: 'R3', confirmation: 'always',
+        toolIds: ['proxy_delete_v1'], keywords: ['代理', 'proxy', '删除', '移除'], playbookId: 'proxy-management-v1',
+    },
+    {
+        id: 'sshkey.list', title: 'List SSH key metadata', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['ssh_key_list_v1'], keywords: ['SSH 密钥', '私钥', '密钥库', 'key', '列表'], playbookId: 'ssh-key-management-v1',
+    },
+    {
+        id: 'sshkey.get', title: 'Read SSH key metadata and fingerprint', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['ssh_key_get_v1'], keywords: ['SSH 密钥', '指纹', '详情', '查看'], playbookId: 'ssh-key-management-v1',
+    },
+    {
+        id: 'sshkey.validate', title: 'Validate SSH key format server-side', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['ssh_key_validate_v1'], keywords: ['SSH 密钥', '校验', '验证', '指纹'], playbookId: 'ssh-key-management-v1',
+    },
+    {
+        id: 'sshkey.rename', title: 'Rename SSH key metadata', mode: 'ai', state: 'implemented', risk: 'R1', confirmation: 'always',
+        toolIds: ['ssh_key_rename_v1'], keywords: ['SSH 密钥', '改名', '重命名'], playbookId: 'ssh-key-management-v1',
+    },
+    {
+        id: 'sshkey.metadata_update', title: 'Update SSH key remark metadata', mode: 'ai', state: 'implemented', risk: 'R1', confirmation: 'always',
+        toolIds: ['ssh_key_update_metadata_v1'], keywords: ['SSH 密钥', '备注', '修改'], playbookId: 'ssh-key-management-v1',
+    },
+    {
+        id: 'sshkey.delete', title: 'Delete SSH key metadata', mode: 'ai', state: 'implemented', risk: 'R3', confirmation: 'always',
+        toolIds: ['ssh_key_delete_v1'], keywords: ['SSH 密钥', '删除', '移除'], playbookId: 'ssh-key-management-v1',
+    },
+    {
+        id: 'sshkey.secret_manage', title: 'Import generate or reveal SSH private key material', mode: 'humanOnly', state: 'implemented', risk: 'R4', confirmation: 'always',
+        humanOnlyReason: 'Private keys and passphrases must never enter model context; import, generation and reveal require a direct human-only secret flow.',
+    },
+    {
+        id: 'security.password.change',
+        title: 'Change account password',
+        mode: 'humanOnly',
+        state: 'implemented',
+        risk: 'R4',
+        confirmation: 'always',
+        humanOnlyReason: 'Requires direct human reauthentication and must never expose a password to a model.',
+    },
+    {
+        id: 'security.secret.reveal',
+        title: 'Reveal stored secrets',
+        mode: 'humanOnly',
+        state: 'implemented',
+        risk: 'R4',
+        confirmation: 'always',
+        humanOnlyReason: 'Passwords, private keys, API keys and tokens must never enter an AI tool result or model context.',
+    },
+]);
+
+function reportCapabilityCoverage(toolCatalog = []) {
+    const toolIds = toolCatalog.map((tool) => tool?.name || tool?.function?.name).filter(Boolean);
+    return capabilityCoverageReport(CAPABILITIES, toolIds);
+}
+
+function searchAvailableCapabilities(query = '', options = {}) {
+    return searchCapabilities(CAPABILITIES, query, options);
+}
+
+function capabilityForTool(toolId = '') {
+    const name = String(toolId || '');
+    return CAPABILITIES.find((capability) => capability.mode === 'ai' && capability.state === 'implemented' && capability.toolIds.includes(name)) || null;
+}
+
+function executionPolicyForTool(toolId = '') {
+    const capability = capabilityForTool(toolId);
+    if (!capability) return null;
+    return Object.freeze({
+        capabilityId: capability.id,
+        risk: capability.risk,
+        confirmation: capability.confirmation,
+        playbookId: capability.playbookId,
+    });
+}
+
+module.exports = {
+    CAPABILITIES,
+    reportCapabilityCoverage,
+    searchAvailableCapabilities,
+    capabilityForTool,
+    executionPolicyForTool,
+};

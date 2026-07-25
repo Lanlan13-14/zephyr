@@ -135,13 +135,13 @@ function encryptSettingsValue(key, value) {
 function rowToConnection(row) {
     if (!row) return null;
     const plain = decryptConnection(row);
-    return { ...plain, port: Number(plain.port) || 22, tags: json(plain.tags, []), jumpHostIds: json(plain.jumpHostIds, plain.jumpHostId ? [plain.jumpHostId] : []), sshKeyId: plain.sshKeyId || '', lastConnectedAt: plain.lastConnectedAt || null, rdpSoundMode: plain.rdpSoundMode || 'local', rdpClipboard: plain.rdpClipboard === 0 ? false : true, rdpMicrophone: !!plain.rdpMicrophone, rdpCamera: !!plain.rdpCamera, rdpStorage: !!plain.rdpStorage, rdpLocation: !!plain.rdpLocation, rdpResolution: plain.rdpResolution || '1080p', rdpQuality: plain.rdpQuality || 'balanced', rdpFps: Number(plain.rdpFps) || 30, rdpPipeline: 'worker-gpu-v2', rdpTouchMode: plain.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(plain.rdpTouchSensitivity) || 1.5)), rdpDomain: plain.rdpDomain || '', ephemeral: !!plain.ephemeral, encoding: plain.encoding || 'utf-8' };
+    return { ...plain, port: Number(plain.port) || 22, revision: Math.max(1, Number(plain.revision) || 1), tags: json(plain.tags, []), jumpHostIds: json(plain.jumpHostIds, plain.jumpHostId ? [plain.jumpHostId] : []), sshKeyId: plain.sshKeyId || '', lastConnectedAt: plain.lastConnectedAt || null, rdpSoundMode: plain.rdpSoundMode || 'local', rdpClipboard: plain.rdpClipboard === 0 ? false : true, rdpMicrophone: !!plain.rdpMicrophone, rdpCamera: !!plain.rdpCamera, rdpStorage: !!plain.rdpStorage, rdpLocation: !!plain.rdpLocation, rdpResolution: plain.rdpResolution || '1080p', rdpQuality: plain.rdpQuality || 'balanced', rdpFps: Number(plain.rdpFps) || 30, rdpPipeline: 'worker-gpu-v2', rdpTouchMode: plain.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(plain.rdpTouchSensitivity) || 1.5)), rdpDomain: plain.rdpDomain || '', ephemeral: !!plain.ephemeral, encoding: plain.encoding || 'utf-8' };
 }
 
 function rowToSshKey(row, { includeSecret = false } = {}) {
     if (!row) return null;
     const plain = decryptSshKey(row);
-    const out = { ...plain, hasPrivateKey: hasSecretValue(plain.privateKey), hasPassphrase: hasSecretValue(plain.passphrase), privateKey: plain.privateKey ? '******' : '', passphrase: plain.passphrase ? '******' : '' };
+    const out = { ...plain, revision: Math.max(1, Number(plain.revision) || 1), hasPrivateKey: hasSecretValue(plain.privateKey), hasPassphrase: hasSecretValue(plain.passphrase), privateKey: plain.privateKey ? '******' : '', passphrase: plain.passphrase ? '******' : '' };
     if (includeSecret) {
         out.privateKey = plain.privateKey || '';
         out.passphrase = plain.passphrase || '';
@@ -152,7 +152,7 @@ function rowToSshKey(row, { includeSecret = false } = {}) {
 function rowToProxy(row) {
     if (!row) return null;
     const plain = decryptProxy(row);
-    return { ...plain, type: plain.type || 'socks5', port: Number(plain.port) || 1080, hasPassword: hasSecretValue(plain.password), password: plain.password ? '******' : '' };
+    return { ...plain, type: plain.type || 'socks5', port: Number(plain.port) || 1080, revision: Math.max(1, Number(plain.revision) || 1), hasPassword: hasSecretValue(plain.password), password: plain.password ? '******' : '' };
 }
 
 function rowToJumpHost(row) { return row ? { ...row } : null; }
@@ -255,6 +255,7 @@ function init({ hashPassword }) {
             sshKeyId TEXT,
             createdAt INTEGER,
             updatedAt INTEGER,
+            revision INTEGER DEFAULT 1,
             lastConnectedAt INTEGER
         );
         CREATE TABLE IF NOT EXISTS ssh_keys (
@@ -264,7 +265,8 @@ function init({ hashPassword }) {
             passphrase TEXT,
             remark TEXT,
             createdAt INTEGER,
-            updatedAt INTEGER
+            updatedAt INTEGER,
+            revision INTEGER DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS activities (
             id TEXT PRIMARY KEY,
@@ -285,7 +287,8 @@ function init({ hashPassword }) {
             username TEXT,
             password TEXT,
             createdAt INTEGER,
-            updatedAt INTEGER
+            updatedAt INTEGER,
+            revision INTEGER DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS jump_hosts (
             id TEXT PRIMARY KEY,
@@ -486,7 +489,13 @@ function init({ hashPassword }) {
     /* One-shot "临时连接": saved only for the active tab lifetime, then deleted. */
     addColumnIfMissing('connections', 'ephemeral', 'INTEGER DEFAULT 0');
     addColumnIfMissing('connections', 'encoding', "TEXT DEFAULT 'utf-8'");
+    addColumnIfMissing('connections', 'revision', 'INTEGER DEFAULT 1');
+    db.prepare('UPDATE connections SET revision=1 WHERE revision IS NULL OR revision < 1').run();
     addColumnIfMissing('proxies', 'type', "TEXT DEFAULT 'socks5'");
+    addColumnIfMissing('proxies', 'revision', 'INTEGER DEFAULT 1');
+    db.prepare('UPDATE proxies SET revision=1 WHERE revision IS NULL OR revision < 1').run();
+    addColumnIfMissing('ssh_keys', 'revision', 'INTEGER DEFAULT 1');
+    db.prepare('UPDATE ssh_keys SET revision=1 WHERE revision IS NULL OR revision < 1').run();
     secretCrypto.ensureKeyPair();
 
     if (db.prepare('SELECT COUNT(*) AS c FROM users').get().c === 0) {
@@ -497,9 +506,9 @@ function init({ hashPassword }) {
     }
     if (db.prepare('SELECT COUNT(*) AS c FROM connections').get().c === 0) {
         const legacy = readJSONFile(CONNECTIONS_FILE, { connections: [], activities: [] });
-        const cstmt = db.prepare(`INSERT OR REPLACE INTO connections (id,name,host,port,protocol,username,password,privateKey,remark,tags,connectionMode,proxyId,jumpHostId,jumpHostIds,sshKeyId,createdAt,updatedAt,lastConnectedAt)
-            VALUES (@id,@name,@host,@port,@protocol,@username,@password,@privateKey,@remark,@tags,@connectionMode,@proxyId,@jumpHostId,@jumpHostIds,@sshKeyId,@createdAt,@updatedAt,@lastConnectedAt)`);
-        (legacy.connections || []).forEach((c) => { const safe = encryptConnection({ id: c.id, name: c.name, host: c.host, port: c.port || 22, protocol: c.protocol || 'SSH', username: c.username || '', password: c.password || '', privateKey: c.privateKey || '', remark: c.remark || '', tags: JSON.stringify(c.tags || []), connectionMode: c.connectionMode || 'direct', proxyId: c.proxyId || null, jumpHostId: c.jumpHostId || null, jumpHostIds: JSON.stringify(Array.isArray(c.jumpHostIds) && c.jumpHostIds.length ? c.jumpHostIds : (c.jumpHostId ? [c.jumpHostId] : [])), sshKeyId: c.sshKeyId || null, createdAt: c.createdAt || now(), updatedAt: c.updatedAt || now(), lastConnectedAt: c.lastConnectedAt || null }); cstmt.run(safe); });
+        const cstmt = db.prepare(`INSERT OR REPLACE INTO connections (id,name,host,port,protocol,username,password,privateKey,remark,tags,connectionMode,proxyId,jumpHostId,jumpHostIds,sshKeyId,createdAt,updatedAt,revision,lastConnectedAt)
+            VALUES (@id,@name,@host,@port,@protocol,@username,@password,@privateKey,@remark,@tags,@connectionMode,@proxyId,@jumpHostId,@jumpHostIds,@sshKeyId,@createdAt,@updatedAt,@revision,@lastConnectedAt)`);
+        (legacy.connections || []).forEach((c) => { const safe = encryptConnection({ id: c.id, name: c.name, host: c.host, port: c.port || 22, protocol: c.protocol || 'SSH', username: c.username || '', password: c.password || '', privateKey: c.privateKey || '', remark: c.remark || '', tags: JSON.stringify(c.tags || []), connectionMode: c.connectionMode || 'direct', proxyId: c.proxyId || null, jumpHostId: c.jumpHostId || null, jumpHostIds: JSON.stringify(Array.isArray(c.jumpHostIds) && c.jumpHostIds.length ? c.jumpHostIds : (c.jumpHostId ? [c.jumpHostId] : [])), sshKeyId: c.sshKeyId || null, createdAt: c.createdAt || now(), updatedAt: c.updatedAt || now(), revision: Math.max(1, Number(c.revision) || 1), lastConnectedAt: c.lastConnectedAt || null }); cstmt.run(safe); });
         const astmt = db.prepare('INSERT OR REPLACE INTO activities (id,time,message,type) VALUES (@id,@time,@message,@type)');
         (legacy.activities || []).forEach((a) => astmt.run({ id: a.id, time: a.time || now(), message: a.message || '', type: a.type || 'info' }));
     }
@@ -754,8 +763,8 @@ function saveConnectionsStore(store) {
         const existing = new Map(db.prepare('SELECT id, ownerUserId, visibility, createdByUserId FROM connections').all().map((r) => [r.id, r]));
         const fallbackOwner = db.prepare("SELECT userId FROM users WHERE role='admin' ORDER BY createdAt LIMIT 1").get()?.userId || '';
         db.prepare('DELETE FROM connections').run();
-        const cstmt = db.prepare(`INSERT INTO connections (id,name,host,port,protocol,username,password,privateKey,remark,tags,connectionMode,proxyId,jumpHostId,jumpHostIds,sshKeyId,rdpSoundMode,rdpClipboard,rdpMicrophone,rdpCamera,rdpStorage,rdpLocation,rdpResolution,rdpQuality,rdpFps,rdpPipeline,rdpTouchMode,rdpTouchSensitivity,rdpDomain,ephemeral,encoding,createdAt,updatedAt,lastConnectedAt,ownerUserId,visibility,createdByUserId) VALUES (@id,@name,@host,@port,@protocol,@username,@password,@privateKey,@remark,@tags,@connectionMode,@proxyId,@jumpHostId,@jumpHostIds,@sshKeyId,@rdpSoundMode,@rdpClipboard,@rdpMicrophone,@rdpCamera,@rdpStorage,@rdpLocation,@rdpResolution,@rdpQuality,@rdpFps,@rdpPipeline,@rdpTouchMode,@rdpTouchSensitivity,@rdpDomain,@ephemeral,@encoding,@createdAt,@updatedAt,@lastConnectedAt,@ownerUserId,@visibility,@createdByUserId)`);
-        (store.connections || []).forEach((c) => { const prior = existing.get(c.id); const safe = encryptConnection({ ...c, tags: JSON.stringify(c.tags || []), jumpHostIds: JSON.stringify(Array.isArray(c.jumpHostIds) && c.jumpHostIds.length ? c.jumpHostIds : (c.jumpHostId ? [c.jumpHostId] : [])), connectionMode: c.connectionMode || 'direct', proxyId: c.proxyId || null, jumpHostId: c.jumpHostId || null, sshKeyId: c.sshKeyId || null, rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false ? 1 : 0, rdpMicrophone: c.rdpMicrophone ? 1 : 0, rdpCamera: c.rdpCamera ? 1 : 0, rdpStorage: c.rdpStorage ? 1 : 0, rdpLocation: c.rdpLocation ? 1 : 0, rdpResolution: c.rdpResolution || '1080p', rdpQuality: c.rdpQuality || 'balanced', rdpFps: c.rdpFps || 30, rdpPipeline: 'worker-gpu-v2', rdpTouchMode: c.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(c.rdpTouchSensitivity) || 1.5)), rdpDomain: c.rdpDomain || '', ephemeral: c.ephemeral ? 1 : 0, encoding: c.encoding || 'utf-8', ownerUserId: c.ownerUserId || prior?.ownerUserId || fallbackOwner, visibility: c.visibility || prior?.visibility || 'private', createdByUserId: c.createdByUserId || prior?.createdByUserId || c.ownerUserId || prior?.ownerUserId || fallbackOwner }); cstmt.run(safe); });
+        const cstmt = db.prepare(`INSERT INTO connections (id,name,host,port,protocol,username,password,privateKey,remark,tags,connectionMode,proxyId,jumpHostId,jumpHostIds,sshKeyId,rdpSoundMode,rdpClipboard,rdpMicrophone,rdpCamera,rdpStorage,rdpLocation,rdpResolution,rdpQuality,rdpFps,rdpPipeline,rdpTouchMode,rdpTouchSensitivity,rdpDomain,ephemeral,encoding,createdAt,updatedAt,revision,lastConnectedAt,ownerUserId,visibility,createdByUserId) VALUES (@id,@name,@host,@port,@protocol,@username,@password,@privateKey,@remark,@tags,@connectionMode,@proxyId,@jumpHostId,@jumpHostIds,@sshKeyId,@rdpSoundMode,@rdpClipboard,@rdpMicrophone,@rdpCamera,@rdpStorage,@rdpLocation,@rdpResolution,@rdpQuality,@rdpFps,@rdpPipeline,@rdpTouchMode,@rdpTouchSensitivity,@rdpDomain,@ephemeral,@encoding,@createdAt,@updatedAt,@revision,@lastConnectedAt,@ownerUserId,@visibility,@createdByUserId)`);
+        (store.connections || []).forEach((c) => { const prior = existing.get(c.id); const safe = encryptConnection({ ...c, tags: JSON.stringify(c.tags || []), jumpHostIds: JSON.stringify(Array.isArray(c.jumpHostIds) && c.jumpHostIds.length ? c.jumpHostIds : (c.jumpHostId ? [c.jumpHostId] : [])), connectionMode: c.connectionMode || 'direct', proxyId: c.proxyId || null, jumpHostId: c.jumpHostId || null, sshKeyId: c.sshKeyId || null, rdpSoundMode: c.rdpSoundMode || 'local', rdpClipboard: c.rdpClipboard !== false ? 1 : 0, rdpMicrophone: c.rdpMicrophone ? 1 : 0, rdpCamera: c.rdpCamera ? 1 : 0, rdpStorage: c.rdpStorage ? 1 : 0, rdpLocation: c.rdpLocation ? 1 : 0, rdpResolution: c.rdpResolution || '1080p', rdpQuality: c.rdpQuality || 'balanced', rdpFps: c.rdpFps || 30, rdpPipeline: 'worker-gpu-v2', rdpTouchMode: c.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(c.rdpTouchSensitivity) || 1.5)), rdpDomain: c.rdpDomain || '', ephemeral: c.ephemeral ? 1 : 0, encoding: c.encoding || 'utf-8', revision: Math.max(1, Number(c.revision) || 1), ownerUserId: c.ownerUserId || prior?.ownerUserId || fallbackOwner, visibility: c.visibility || prior?.visibility || 'private', createdByUserId: c.createdByUserId || prior?.createdByUserId || c.ownerUserId || prior?.ownerUserId || fallbackOwner }); cstmt.run(safe); });
         db.prepare('DELETE FROM activities').run();
         const astmt = db.prepare('INSERT INTO activities (id,time,message,type) VALUES (@id,@time,@message,@type)');
         (store.activities || []).slice(0, 100).forEach((a) => astmt.run({ id: a.id, time: a.time, message: a.message, type: a.type || 'info' }));
@@ -766,13 +775,13 @@ function saveConnectionsStore(store) {
  * whole-store read/modify/write and uses these instead). */
 function getConnectionById(id) { return rowToConnection(db.prepare('SELECT * FROM connections WHERE id=?').get(String(id || ''))); }
 function insertConnection(conn) {
-    const safe = encryptConnection({ ...conn, tags: JSON.stringify(conn.tags || []), jumpHostIds: JSON.stringify(Array.isArray(conn.jumpHostIds) ? conn.jumpHostIds : []), connectionMode: conn.connectionMode || 'direct', proxyId: conn.proxyId || null, jumpHostId: conn.jumpHostId || null, sshKeyId: conn.sshKeyId || null, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false ? 1 : 0, rdpMicrophone: conn.rdpMicrophone ? 1 : 0, rdpCamera: conn.rdpCamera ? 1 : 0, rdpStorage: conn.rdpStorage ? 1 : 0, rdpLocation: conn.rdpLocation ? 1 : 0, rdpResolution: conn.rdpResolution || '1080p', rdpQuality: conn.rdpQuality || 'balanced', rdpFps: conn.rdpFps || 30, rdpPipeline: 'worker-gpu-v2', rdpTouchMode: conn.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(conn.rdpTouchSensitivity) || 1.5)), rdpDomain: conn.rdpDomain || '', ephemeral: conn.ephemeral ? 1 : 0, encoding: conn.encoding || 'utf-8', ownerUserId: conn.ownerUserId || '', visibility: conn.visibility || 'private', createdByUserId: conn.createdByUserId || conn.ownerUserId || '' });
-    db.prepare(`INSERT INTO connections (id,name,host,port,protocol,username,password,privateKey,remark,tags,connectionMode,proxyId,jumpHostId,jumpHostIds,sshKeyId,rdpSoundMode,rdpClipboard,rdpMicrophone,rdpCamera,rdpStorage,rdpLocation,rdpResolution,rdpQuality,rdpFps,rdpPipeline,rdpTouchMode,rdpTouchSensitivity,rdpDomain,ephemeral,encoding,createdAt,updatedAt,lastConnectedAt,ownerUserId,visibility,createdByUserId) VALUES (@id,@name,@host,@port,@protocol,@username,@password,@privateKey,@remark,@tags,@connectionMode,@proxyId,@jumpHostId,@jumpHostIds,@sshKeyId,@rdpSoundMode,@rdpClipboard,@rdpMicrophone,@rdpCamera,@rdpStorage,@rdpLocation,@rdpResolution,@rdpQuality,@rdpFps,@rdpPipeline,@rdpTouchMode,@rdpTouchSensitivity,@rdpDomain,@ephemeral,@encoding,@createdAt,@updatedAt,@lastConnectedAt,@ownerUserId,@visibility,@createdByUserId)`).run(safe);
+    const safe = encryptConnection({ ...conn, revision: Math.max(1, Number(conn.revision) || 1), tags: JSON.stringify(conn.tags || []), jumpHostIds: JSON.stringify(Array.isArray(conn.jumpHostIds) ? conn.jumpHostIds : []), connectionMode: conn.connectionMode || 'direct', proxyId: conn.proxyId || null, jumpHostId: conn.jumpHostId || null, sshKeyId: conn.sshKeyId || null, rdpSoundMode: conn.rdpSoundMode || 'local', rdpClipboard: conn.rdpClipboard !== false ? 1 : 0, rdpMicrophone: conn.rdpMicrophone ? 1 : 0, rdpCamera: conn.rdpCamera ? 1 : 0, rdpStorage: conn.rdpStorage ? 1 : 0, rdpLocation: conn.rdpLocation ? 1 : 0, rdpResolution: conn.rdpResolution || '1080p', rdpQuality: conn.rdpQuality || 'balanced', rdpFps: conn.rdpFps || 30, rdpPipeline: 'worker-gpu-v2', rdpTouchMode: conn.rdpTouchMode === 'relative' ? 'relative' : 'direct', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(conn.rdpTouchSensitivity) || 1.5)), rdpDomain: conn.rdpDomain || '', ephemeral: conn.ephemeral ? 1 : 0, encoding: conn.encoding || 'utf-8', ownerUserId: conn.ownerUserId || '', visibility: conn.visibility || 'private', createdByUserId: conn.createdByUserId || conn.ownerUserId || '' });
+    db.prepare(`INSERT INTO connections (id,name,host,port,protocol,username,password,privateKey,remark,tags,connectionMode,proxyId,jumpHostId,jumpHostIds,sshKeyId,rdpSoundMode,rdpClipboard,rdpMicrophone,rdpCamera,rdpStorage,rdpLocation,rdpResolution,rdpQuality,rdpFps,rdpPipeline,rdpTouchMode,rdpTouchSensitivity,rdpDomain,ephemeral,encoding,createdAt,updatedAt,revision,lastConnectedAt,ownerUserId,visibility,createdByUserId) VALUES (@id,@name,@host,@port,@protocol,@username,@password,@privateKey,@remark,@tags,@connectionMode,@proxyId,@jumpHostId,@jumpHostIds,@sshKeyId,@rdpSoundMode,@rdpClipboard,@rdpMicrophone,@rdpCamera,@rdpStorage,@rdpLocation,@rdpResolution,@rdpQuality,@rdpFps,@rdpPipeline,@rdpTouchMode,@rdpTouchSensitivity,@rdpDomain,@ephemeral,@encoding,@createdAt,@updatedAt,@revision,@lastConnectedAt,@ownerUserId,@visibility,@createdByUserId)`).run(safe);
     return getConnectionById(conn.id);
 }
 function updateConnectionRow(conn) {
-    const safe = encryptConnection({ ...conn, tags: JSON.stringify(conn.tags || []), jumpHostIds: JSON.stringify(Array.isArray(conn.jumpHostIds) ? conn.jumpHostIds : []), rdpClipboard: conn.rdpClipboard !== false ? 1 : 0, rdpMicrophone: conn.rdpMicrophone ? 1 : 0, rdpCamera: conn.rdpCamera ? 1 : 0, rdpStorage: conn.rdpStorage ? 1 : 0, rdpLocation: conn.rdpLocation ? 1 : 0, rdpPipeline: 'worker-gpu-v2', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(conn.rdpTouchSensitivity) || 1.5)), ephemeral: conn.ephemeral ? 1 : 0, encoding: conn.encoding || 'utf-8' });
-    db.prepare(`UPDATE connections SET name=@name, host=@host, port=@port, protocol=@protocol, username=@username, password=@password, privateKey=@privateKey, remark=@remark, tags=@tags, connectionMode=@connectionMode, proxyId=@proxyId, jumpHostId=@jumpHostId, jumpHostIds=@jumpHostIds, sshKeyId=@sshKeyId, rdpSoundMode=@rdpSoundMode, rdpClipboard=@rdpClipboard, rdpMicrophone=@rdpMicrophone, rdpCamera=@rdpCamera, rdpStorage=@rdpStorage, rdpLocation=@rdpLocation, rdpResolution=@rdpResolution, rdpQuality=@rdpQuality, rdpFps=@rdpFps, rdpPipeline=@rdpPipeline, rdpTouchMode=@rdpTouchMode, rdpTouchSensitivity=@rdpTouchSensitivity, rdpDomain=@rdpDomain, ephemeral=@ephemeral, encoding=@encoding, visibility=@visibility, updatedAt=@updatedAt, lastConnectedAt=@lastConnectedAt WHERE id=@id`).run(safe);
+    const safe = encryptConnection({ ...conn, revision: Math.max(1, Number(conn.revision) || 1), tags: JSON.stringify(conn.tags || []), jumpHostIds: JSON.stringify(Array.isArray(conn.jumpHostIds) ? conn.jumpHostIds : []), rdpClipboard: conn.rdpClipboard !== false ? 1 : 0, rdpMicrophone: conn.rdpMicrophone ? 1 : 0, rdpCamera: conn.rdpCamera ? 1 : 0, rdpStorage: conn.rdpStorage ? 1 : 0, rdpLocation: conn.rdpLocation ? 1 : 0, rdpPipeline: 'worker-gpu-v2', rdpTouchSensitivity: Math.max(0.5, Math.min(3, Number(conn.rdpTouchSensitivity) || 1.5)), ephemeral: conn.ephemeral ? 1 : 0, encoding: conn.encoding || 'utf-8' });
+    db.prepare(`UPDATE connections SET name=@name, host=@host, port=@port, protocol=@protocol, username=@username, password=@password, privateKey=@privateKey, remark=@remark, tags=@tags, connectionMode=@connectionMode, proxyId=@proxyId, jumpHostId=@jumpHostId, jumpHostIds=@jumpHostIds, sshKeyId=@sshKeyId, rdpSoundMode=@rdpSoundMode, rdpClipboard=@rdpClipboard, rdpMicrophone=@rdpMicrophone, rdpCamera=@rdpCamera, rdpStorage=@rdpStorage, rdpLocation=@rdpLocation, rdpResolution=@rdpResolution, rdpQuality=@rdpQuality, rdpFps=@rdpFps, rdpPipeline=@rdpPipeline, rdpTouchMode=@rdpTouchMode, rdpTouchSensitivity=@rdpTouchSensitivity, rdpDomain=@rdpDomain, ephemeral=@ephemeral, encoding=@encoding, visibility=@visibility, updatedAt=@updatedAt, revision=@revision, lastConnectedAt=@lastConnectedAt WHERE id=@id`).run(safe);
     return getConnectionById(conn.id);
 }
 function deleteConnectionRow(id) { db.prepare('DELETE FROM connections WHERE id=?').run(String(id || '')); }
@@ -803,20 +812,20 @@ function clearActivities() { db.prepare('DELETE FROM activities').run(); }
 function listProxies() { return db.prepare('SELECT * FROM proxies ORDER BY createdAt DESC').all().map(rowToProxy); }
 function getProxyRaw(id) { return decryptProxy(db.prepare('SELECT * FROM proxies WHERE id=?').get(id)); }
 function saveProxy(p) {
-    const prior = db.prepare('SELECT ownerUserId, visibility, createdAt FROM proxies WHERE id=?').get(p.id);
+    const prior = db.prepare('SELECT ownerUserId, visibility, createdAt, revision FROM proxies WHERE id=?').get(p.id);
     const safe = encryptProxy(p);
-    db.prepare(`INSERT OR REPLACE INTO proxies (id,name,host,port,type,username,password,createdAt,updatedAt,ownerUserId,visibility) VALUES (@id,@name,@host,@port,@type,@username,@password,@createdAt,@updatedAt,@ownerUserId,@visibility)`)
-        .run({ ...safe, type: safe.type || 'socks5', createdAt: safe.createdAt || prior?.createdAt || now(), ownerUserId: safe.ownerUserId || prior?.ownerUserId || '', visibility: safe.visibility || prior?.visibility || 'private' });
+    db.prepare(`INSERT OR REPLACE INTO proxies (id,name,host,port,type,username,password,createdAt,updatedAt,revision,ownerUserId,visibility) VALUES (@id,@name,@host,@port,@type,@username,@password,@createdAt,@updatedAt,@revision,@ownerUserId,@visibility)`)
+        .run({ ...safe, type: safe.type || 'socks5', revision: Math.max(1, Number(safe.revision ?? prior?.revision) || 1), createdAt: safe.createdAt || prior?.createdAt || now(), ownerUserId: safe.ownerUserId || prior?.ownerUserId || '', visibility: safe.visibility || prior?.visibility || 'private' });
     return rowToProxy(db.prepare('SELECT * FROM proxies WHERE id=?').get(p.id));
 }
 function deleteProxy(id) { db.prepare('DELETE FROM proxies WHERE id=?').run(id); }
 function listSshKeys() { return db.prepare('SELECT * FROM ssh_keys ORDER BY createdAt DESC').all().map((row) => rowToSshKey(row)); }
 function getSshKeyRaw(id) { return decryptSshKey(db.prepare('SELECT * FROM ssh_keys WHERE id=?').get(id)); }
 function saveSshKey(k) {
-    const prior = db.prepare('SELECT ownerUserId, visibility, createdAt FROM ssh_keys WHERE id=?').get(k.id);
+    const prior = db.prepare('SELECT ownerUserId, visibility, createdAt, revision FROM ssh_keys WHERE id=?').get(k.id);
     const safe = encryptSshKey(k);
-    db.prepare(`INSERT OR REPLACE INTO ssh_keys (id,name,privateKey,passphrase,remark,createdAt,updatedAt,ownerUserId,visibility) VALUES (@id,@name,@privateKey,@passphrase,@remark,@createdAt,@updatedAt,@ownerUserId,@visibility)`)
-        .run({ ...safe, passphrase: safe.passphrase || '', remark: safe.remark || '', createdAt: safe.createdAt || prior?.createdAt || now(), ownerUserId: safe.ownerUserId || prior?.ownerUserId || '', visibility: safe.visibility || prior?.visibility || 'private' });
+    db.prepare(`INSERT OR REPLACE INTO ssh_keys (id,name,privateKey,passphrase,remark,createdAt,updatedAt,revision,ownerUserId,visibility) VALUES (@id,@name,@privateKey,@passphrase,@remark,@createdAt,@updatedAt,@revision,@ownerUserId,@visibility)`)
+        .run({ ...safe, passphrase: safe.passphrase || '', remark: safe.remark || '', revision: Math.max(1, Number(safe.revision ?? prior?.revision) || 1), createdAt: safe.createdAt || prior?.createdAt || now(), ownerUserId: safe.ownerUserId || prior?.ownerUserId || '', visibility: safe.visibility || prior?.visibility || 'private' });
     return rowToSshKey(db.prepare('SELECT * FROM ssh_keys WHERE id=?').get(k.id));
 }
 function deleteSshKey(id) { db.prepare('DELETE FROM ssh_keys WHERE id=?').run(id); }

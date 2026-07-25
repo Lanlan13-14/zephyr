@@ -616,7 +616,7 @@ function handleServiceError(res, err, fallbackStatus = 500) {
         return res.status(err.status).json({ error: err.message, code: err.code, retryable: err.retryable });
     }
     console.error('[service-error]', err);
-    return res.status(fallbackStatus).json({ error: err.message || '服务器内部错误', code: 'internal_error', retryable: false });
+    return res.status(fallbackStatus).json({ error: err.message || '服务器内部错误', code: err?.code || 'internal_error', retryable: !!err?.retryable, field: err?.field || '' });
 }
 
 /** req.user equivalent for WebSocket handlers (identity bound at upgrade). */
@@ -3041,6 +3041,7 @@ app.post('/api/connections', requireUser, (req, res) => {
         ephemeral,
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        revision: 1,
         lastConnectedAt: null,
     };
     /* RDP-specific settings */

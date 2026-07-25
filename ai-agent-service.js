@@ -2,8 +2,15 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
+const { HttpError } = require('./authz');
 const { browserService, SHOT_DIR } = require('./ai-browser-service');
 const { DEFAULT_ZEPHYR_SYSTEM_PROMPT, DEFAULT_ZEPHYR_SKILLS } = require('./ai-defaults');
+const { reportCapabilityCoverage, executionPolicyForTool, searchAvailableCapabilities } = require('./ai-capabilities');
+const { executeCanonicalTool } = require('./ai-tool-executor');
+const connectionTools = require('./ai-connection-tools');
+const proxyTools = require('./ai-proxy-tools');
+const sshKeyTools = require('./ai-ssh-key-tools');
+const { PLAYBOOKS } = require('./ai-playbooks');
 
 const DEFAULT_TOOL_CALL_LIMIT = 0;
 const DEFAULT_AI_CONTEXT = { windowTokens: 64000, maxInputChars: 90000, keepMessages: 18, toolResultChars: 30000, memoryItems: 16, maxToolRounds: 0, summaryChars: 18000, recentChars: 42000 };
@@ -18,6 +25,29 @@ const AI_CONVERSATION_SUMMARY_PREFIX = '高轮次对话压缩摘要';
 const MAX_REMOTE_READ = 512 * 1024;
 const MAX_REMOTE_WRITE = 1024 * 1024;
 const pendingActions = new Map();
+const CAPABILITY_SEARCH_SCHEMA = Object.freeze({ type: 'object', properties: { query: { type: 'string', maxLength: 200 }, limit: { type: 'number', minimum: 1, maximum: 20 } }, additionalProperties: false });
+const CANONICAL_TOOL_SCHEMAS = Object.freeze({
+    capability_search: CAPABILITY_SEARCH_SCHEMA,
+    connection_list_v1: Object.freeze({ type: 'object', properties: { protocol: { type: 'string', enum: ['SSH', 'TELNET', 'RDP', 'VNC'] }, query: { type: 'string' }, limit: { type: 'number', minimum: 1, maximum: 200 } }, additionalProperties: false }),
+    connection_get_v1: Object.freeze({ type: 'object', properties: { connectionId: { type: 'string', minLength: 1 } }, required: ['connectionId'], additionalProperties: false }),
+    connection_rename_v1: Object.freeze({ type: 'object', properties: { connectionId: { type: 'string', minLength: 1 }, name: { type: 'string', minLength: 1, maxLength: 120 }, expectedRevision: { type: 'number', exclusiveMinimum: 0 } }, required: ['connectionId', 'name', 'expectedRevision'], additionalProperties: false }),
+    connection_create_v1: connectionTools.CONNECTION_CREATE_SCHEMA,
+    connection_update_v1: connectionTools.CONNECTION_UPDATE_SCHEMA,
+    connection_delete_v1: connectionTools.CONNECTION_DELETE_SCHEMA,
+    connection_test_v1: connectionTools.CONNECTION_TEST_SCHEMA,
+    connection_open_v1: connectionTools.CONNECTION_OPEN_SCHEMA,
+    proxy_list_v1: proxyTools.PROXY_LIST_SCHEMA,
+    proxy_get_v1: proxyTools.PROXY_GET_SCHEMA,
+    proxy_create_v1: proxyTools.PROXY_CREATE_SCHEMA,
+    proxy_update_v1: proxyTools.PROXY_UPDATE_SCHEMA,
+    proxy_delete_v1: proxyTools.PROXY_DELETE_SCHEMA,
+    ssh_key_list_v1: sshKeyTools.SSH_KEY_LIST_SCHEMA,
+    ssh_key_get_v1: sshKeyTools.SSH_KEY_GET_SCHEMA,
+    ssh_key_rename_v1: sshKeyTools.SSH_KEY_RENAME_SCHEMA,
+    ssh_key_update_metadata_v1: sshKeyTools.SSH_KEY_UPDATE_METADATA_SCHEMA,
+    ssh_key_validate_v1: sshKeyTools.SSH_KEY_VALIDATE_SCHEMA,
+    ssh_key_delete_v1: sshKeyTools.SSH_KEY_DELETE_SCHEMA,
+});
 
 function aiAbortError() {
     const err = new Error('AI 请求已停止');
@@ -534,7 +564,14 @@ async function fetchJson(url, options = {}) {
 }
 function mergeZephyrDefaultSkills(skills = []) {
     const list = Array.isArray(skills) ? skills.slice() : [];
-    DEFAULT_ZEPHYR_SKILLS.forEach((skill) => {
+    const defaults = [...DEFAULT_ZEPHYR_SKILLS, ...PLAYBOOKS.map((playbook) => ({
+        id: `playbook:${playbook.id}`,
+        name: playbook.title,
+        description: `运行时标准操作规程：${playbook.id}`,
+        prompt: playbook.prompt,
+        enabled: true,
+    }))];
+    defaults.forEach((skill) => {
         const exists = list.some((item) => item?.id === skill.id || item?.name === skill.name);
         if (!exists) list.unshift({ ...skill, updatedAt: Date.now() });
     });
@@ -572,7 +609,29 @@ function buildSystemPrompt(ai = {}, context = {}, limits = {}) {
 function toolDefinitions(ai = {}) {
     const p = ai.permissions || {};
     const tools = [];
-    tools.push({ type: 'function', function: { name: 'list_connections', description: '列出 Zephyr 中可用的 SSH/RDP/VNC 连接（不含密码/私钥）；只有 SSH 支持远程命令和文件工具。', parameters: { type: 'object', properties: {}, additionalProperties: false } } });
+    // Canonical v1 tools. Their narrow schemas make discovery and evaluation
+    // reliable; execution validates the exact same schema object.
+    tools.push({ type: 'function', function: { name: 'capability_search', description: '检索 Zephyr 当前已实现的 AI 能力、所需工具、风险、确认方式和对应操作规程。遇到不知道该用哪个接口时先调用；不会返回秘密操作能力。', parameters: CAPABILITY_SEARCH_SCHEMA } });
+    tools.push({ type: 'function', function: { name: 'connection_list_v1', description: '列出当前用户可发现的 SSH、TELNET、RDP、VNC 连接元数据；绝不返回密码、私钥或口令。', parameters: CANONICAL_TOOL_SCHEMAS.connection_list_v1 } });
+    tools.push({ type: 'function', function: { name: 'connection_get_v1', description: '读取一条当前用户可查看的连接元数据及版本号；不返回任何凭据。需要 connectionId。', parameters: CANONICAL_TOOL_SCHEMAS.connection_get_v1 } });
+    tools.push({ type: 'function', function: { name: 'connection_rename_v1', description: '只修改连接显示名称。必须先用 connection_get_v1 取得 revision，再传 expectedRevision 防止覆盖并发修改。可逆日常操作，会产生审计记录。', parameters: CANONICAL_TOOL_SCHEMAS.connection_rename_v1 } });
+    tools.push({ type: 'function', function: { name: 'connection_create_v1', description: '创建 SSH、TELNET、RDP 或 VNC 连接。凭据仅用于服务端保存，结果永不返回凭据。创建前需要用户确认。', parameters: CANONICAL_TOOL_SCHEMAS.connection_create_v1 } });
+    tools.push({ type: 'function', function: { name: 'connection_update_v1', description: '修改一条连接。必须先用 connection_get_v1 取得 revision 并传 expectedRevision；未提供的字段不修改，结果永不返回凭据。修改前需要用户确认。', parameters: CANONICAL_TOOL_SCHEMAS.connection_update_v1 } });
+    tools.push({ type: 'function', function: { name: 'connection_delete_v1', description: '删除一条连接。必须先读取 revision 并传 expectedRevision。删除不可逆，需要用户确认。', parameters: CANONICAL_TOOL_SCHEMAS.connection_delete_v1 } });
+    tools.push({ type: 'function', function: { name: 'connection_test_v1', description: '测试一条已保存 SSH、TELNET、RDP 或 VNC 连接的连通性；服务端使用保存凭据但不会返回凭据。', parameters: CANONICAL_TOOL_SCHEMAS.connection_test_v1 } });
+    tools.push({ type: 'function', function: { name: 'connection_open_v1', description: '在当前 Zephyr 工作区打开一条已保存 SSH、TELNET、RDP 或 VNC 连接。前端会实际执行打开；操作前需要用户确认。', parameters: CANONICAL_TOOL_SCHEMAS.connection_open_v1 } });
+    tools.push({ type: 'function', function: { name: 'proxy_list_v1', description: '列出当前用户可发现的代理元数据；绝不返回代理密码。', parameters: CANONICAL_TOOL_SCHEMAS.proxy_list_v1 } });
+    tools.push({ type: 'function', function: { name: 'proxy_get_v1', description: '读取一条代理元数据和 revision；绝不返回代理密码。', parameters: CANONICAL_TOOL_SCHEMAS.proxy_get_v1 } });
+    tools.push({ type: 'function', function: { name: 'proxy_create_v1', description: '创建 SOCKS5 或 HTTP 代理元数据。AI 接口不接收密码；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.proxy_create_v1 } });
+    tools.push({ type: 'function', function: { name: 'proxy_update_v1', description: '修改代理元数据。必须先读取 revision 并传 expectedRevision；AI 接口不接收密码；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.proxy_update_v1 } });
+    tools.push({ type: 'function', function: { name: 'proxy_delete_v1', description: '删除代理。必须先读取 revision 并传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.proxy_delete_v1 } });
+    tools.push({ type: 'function', function: { name: 'ssh_key_list_v1', description: '列出当前用户可发现的 SSH 密钥元数据、是否有口令与 revision；不返回私钥或口令。', parameters: CANONICAL_TOOL_SCHEMAS.ssh_key_list_v1 } });
+    tools.push({ type: 'function', function: { name: 'ssh_key_get_v1', description: '读取 SSH 密钥元数据与服务端计算的指纹；不返回私钥或口令。', parameters: CANONICAL_TOOL_SCHEMAS.ssh_key_get_v1 } });
+    tools.push({ type: 'function', function: { name: 'ssh_key_validate_v1', description: '服务端校验保存的 SSH 私钥格式并返回算法和指纹；不返回私钥或口令。', parameters: CANONICAL_TOOL_SCHEMAS.ssh_key_validate_v1 } });
+    tools.push({ type: 'function', function: { name: 'ssh_key_rename_v1', description: '重命名 SSH 密钥元数据。必须先读取 revision 并传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.ssh_key_rename_v1 } });
+    tools.push({ type: 'function', function: { name: 'ssh_key_update_metadata_v1', description: '修改 SSH 密钥备注。必须先读取 revision 并传 expectedRevision；不接收私钥或口令；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.ssh_key_update_metadata_v1 } });
+    tools.push({ type: 'function', function: { name: 'ssh_key_delete_v1', description: '删除 SSH 密钥。必须先读取 revision 并传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.ssh_key_delete_v1 } });
+    tools.push({ type: 'function', function: { name: 'list_connections', description: '列出 Zephyr 中可用的 SSH/RDP/VNC 连接（不含密码/私钥）；只有 SSH 支持远程命令和文件工具。兼容旧接口，新增功能请优先使用 connection_list_v1。', parameters: { type: 'object', properties: {}, additionalProperties: false } } });
     tools.push({ type: 'function', function: { name: 'list_zephyr_resources', description: '列出 Zephyr 本地资源：连接、代理、SSH 密钥库、跳板机、代码片段。只返回脱敏信息。', parameters: { type: 'object', properties: { resources: { type: 'array', items: { type: 'string', enum: ['connections', 'proxies', 'sshKeys', 'jumpHosts', 'snippets'] } } } } } });
     tools.push({ type: 'function', function: { name: 'connection_create', description: '新增 SSH/RDP/VNC 连接资产。可填写密码/私钥/标签/代理/跳板链；属于修改本地资源的敏感操作，需要确认。', parameters: { type: 'object', properties: { name: { type: 'string' }, protocol: { type: 'string', enum: ['SSH', 'RDP', 'VNC'] }, host: { type: 'string' }, port: { type: 'number' }, username: { type: 'string' }, password: { type: 'string' }, privateKey: { type: 'string' }, sshKeyId: { type: 'string' }, remark: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, connectionMode: { type: 'string', enum: ['direct', 'proxy', 'jump'] }, proxyId: { type: 'string' }, jumpHostId: { type: 'string' }, jumpHostIds: { type: 'array', items: { type: 'string' } } }, required: ['name', 'protocol', 'host'] } } });
     tools.push({ type: 'function', function: { name: 'connection_update', description: '修改已有 SSH/RDP/VNC 连接资产。未传字段保持不变；密码/私钥传 ****** 或不传表示不修改。敏感操作，需要确认。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, name: { type: 'string' }, protocol: { type: 'string', enum: ['SSH', 'RDP', 'VNC'] }, host: { type: 'string' }, port: { type: 'number' }, username: { type: 'string' }, password: { type: 'string' }, privateKey: { type: 'string' }, sshKeyId: { type: 'string' }, remark: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, connectionMode: { type: 'string', enum: ['direct', 'proxy', 'jump'] }, proxyId: { type: 'string' }, jumpHostId: { type: 'string' }, jumpHostIds: { type: 'array', items: { type: 'string' } } }, required: ['connectionId'] } } });
@@ -1496,7 +1555,7 @@ function listFileSnapshots(deps, userId, { connectionId, path: filePath, limit =
 function isSensitiveTool(name, args = {}) {
     const value = String(name || '');
     if (value === 'ui_action') return String(args.action || '') === 'terminal_send_input' && args.run !== false;
-    return ['remote_execute', 'remote_write_file', 'remote_file_rollback', 'get_env_var', 'connection_create', 'connection_update', 'connection_delete', 'proxy_save', 'proxy_delete', 'ssh_key_save', 'ssh_key_delete', 'jump_host_save', 'jump_host_delete'].includes(value);
+    return ['remote_execute', 'remote_write_file', 'remote_file_rollback', 'get_env_var', 'connection_create', 'connection_update', 'connection_delete', 'connection_rename_v1', 'proxy_save', 'proxy_delete', 'ssh_key_save', 'ssh_key_delete', 'jump_host_save', 'jump_host_delete'].includes(value);
 }
 function maskToolPayload(value, key = '') {
     const sensitiveKeys = /password|passwd|private[_-]?key|passphrase|secret|token|authorization|cookie|api[_-]?key/i;
@@ -1516,6 +1575,17 @@ function publicToolArgs(toolName, args) {
 function confirmationSummary(toolName, args, deps) {
     if (toolName === 'connection_create') return `新增连接：${args.protocol || 'SSH'} ${args.name || args.host || ''}`;
     if (toolName === 'connection_update') return `修改连接：${args.connectionId || ''}`;
+    if (toolName === 'connection_rename_v1') return `重命名连接：${args.connectionId || ''} → ${String(args.name || '').slice(0, 120)}`;
+    if (toolName === 'connection_create_v1') return `新增连接：${args.protocol || ''} ${String(args.name || args.host || '').slice(0, 120)}`;
+    if (toolName === 'connection_update_v1') return `修改连接：${args.connectionId || ''}`;
+    if (toolName === 'connection_delete_v1') return `删除连接：${args.connectionId || ''}`;
+    if (toolName === 'connection_open_v1') return `打开连接：${args.connectionId || ''}`;
+    if (toolName === 'proxy_create_v1') return `新增代理：${String(args.name || args.host || '').slice(0, 120)}`;
+    if (toolName === 'proxy_update_v1') return `修改代理：${args.proxyId || ''}`;
+    if (toolName === 'proxy_delete_v1') return `删除代理：${args.proxyId || ''}`;
+    if (toolName === 'ssh_key_rename_v1') return `重命名 SSH 密钥：${args.sshKeyId || ''} → ${String(args.name || '').slice(0, 120)}`;
+    if (toolName === 'ssh_key_update_metadata_v1') return `修改 SSH 密钥备注：${args.sshKeyId || ''}`;
+    if (toolName === 'ssh_key_delete_v1') return `删除 SSH 密钥：${args.sshKeyId || ''}`;
     if (toolName === 'connection_delete') return `删除连接：${args.connectionId || ''}`;
     if (toolName === 'proxy_save') return `${args.proxyId ? '修改' : '新增'}代理：${args.name || args.host || ''}`;
     if (toolName === 'proxy_delete') return `删除代理：${args.proxyId || ''}`;
@@ -1574,6 +1644,12 @@ function inferPlanStatus(plan = {}) {
     if (steps.some((s) => ['completed', 'skipped'].includes(s.status))) return 'running';
     return plan.status || 'planned';
 }
+function createPendingConfirmation(toolName, args, ctx, deps) {
+    const id = crypto.randomUUID();
+    const confirmation = { id, toolName, summary: confirmationSummary(toolName, args, deps), args: publicToolArgs(toolName, args), createdAt: Date.now(), expiresAt: Date.now() + 10 * 60 * 1000 };
+    pendingActions.set(id, { ...confirmation, userId: ctx.user?.userId || ctx.req?.session?.userId || '', username: ctx.req?.session?.username || '', rawArgs: args, context: ctx.context || {} });
+    return { confirmationRequired: true, confirmation };
+}
 async function maybeRequireConfirmation(toolName, args, ctx, run, deps) {
     const ai = deps.storage.getSettings().ai || {};
     const sensitive = ai.sensitive || {};
@@ -1582,11 +1658,45 @@ async function maybeRequireConfirmation(toolName, args, ctx, run, deps) {
         await delay(clampNumber(sensitive.autoConfirmDelayMs, 0, 60000, 2500), ctx.signal);
         return run();
     }
-    const id = crypto.randomUUID();
-    const confirmation = { id, toolName, summary: confirmationSummary(toolName, args, deps), args: publicToolArgs(toolName, args), createdAt: Date.now(), expiresAt: Date.now() + 10 * 60 * 1000 };
-    pendingActions.set(id, { ...confirmation, userId: ctx.user?.userId || ctx.req?.session?.userId || '', username: ctx.req?.session?.username || '', rawArgs: args, context: ctx.context || {} });
-    return { confirmationRequired: true, confirmation };
+    return createPendingConfirmation(toolName, args, ctx, deps);
 }
+function requireCanonicalConfirmation(toolName, args, ctx, deps) {
+    return createPendingConfirmation(toolName, args, ctx, deps);
+}
+function canonicalToolAuthorization(toolName, args, ctx) {
+    if (!ctx?.resourceService || !ctx?.user) return;
+    const connectionId = String(args?.connectionId || '');
+    if (connectionId) {
+        if (toolName === 'connection_get_v1') {
+            ctx.resourceService.getConnection(ctx.user, connectionId);
+        } else if (toolName === 'connection_test_v1' || toolName === 'connection_open_v1') {
+            ctx.resourceService.resolveForConnect(ctx.user, connectionId);
+        } else if (toolName === 'connection_rename_v1' || toolName === 'connection_update_v1') {
+            ctx.resourceService.getRawAuthorized(ctx.user, 'connection', connectionId, 'edit');
+        } else if (toolName === 'connection_delete_v1') {
+            ctx.resourceService.getRawAuthorized(ctx.user, 'connection', connectionId, 'delete');
+        }
+    }
+    const proxyId = String(args?.proxyId || '');
+    if (proxyId && toolName === 'proxy_get_v1') ctx.resourceService.getRawAuthorized(ctx.user, 'proxy', proxyId, 'view');
+    else if (proxyId && toolName === 'proxy_update_v1') ctx.resourceService.getRawAuthorized(ctx.user, 'proxy', proxyId, 'edit');
+    else if (proxyId && toolName === 'proxy_delete_v1') ctx.resourceService.getRawAuthorized(ctx.user, 'proxy', proxyId, 'delete');
+    const sshKeyId = String(args?.sshKeyId || '');
+    if (sshKeyId && (toolName === 'ssh_key_get_v1' || toolName === 'ssh_key_validate_v1')) ctx.resourceService.getRawAuthorized(ctx.user, 'sshKey', sshKeyId, 'view');
+    else if (sshKeyId && (toolName === 'ssh_key_rename_v1' || toolName === 'ssh_key_update_metadata_v1')) ctx.resourceService.getRawAuthorized(ctx.user, 'sshKey', sshKeyId, 'edit');
+    else if (sshKeyId && toolName === 'ssh_key_delete_v1') ctx.resourceService.getRawAuthorized(ctx.user, 'sshKey', sshKeyId, 'delete');
+}
+function executeCanonicalAiTool(toolName, args, ctx, deps, execute) {
+    return executeCanonicalTool({
+        toolId: toolName,
+        schema: CANONICAL_TOOL_SCHEMAS[toolName],
+        args,
+        ctx: { ...ctx, requireConfirmation: () => requireCanonicalConfirmation(toolName, args, ctx, deps) },
+        authorize: () => canonicalToolAuthorization(toolName, args, ctx),
+        execute,
+    });
+}
+
 async function executeAiTool(toolName, args = {}, ctx, deps) {
     const ai = deps.storage.getSettings().ai || {};
     const p = ai.permissions || {};
@@ -1595,6 +1705,164 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
         if (!effective?.notes?.enabled) throw new Error('当前用户未启用笔记功能');
     }
     switch (toolName) {
+        case 'capability_search':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => ({
+                capabilities: searchAvailableCapabilities(args.query || '', { limit: args.limit || 10 }),
+            }));
+        case 'connection_list_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const protocol = String(args.protocol || '').toUpperCase();
+                const query = String(args.query || '').trim().toLowerCase();
+                const limit = clampNumber(args.limit, 1, 200, 100);
+                const connections = getAllConnections(deps, ctx)
+                    .filter((connection) => !protocol || String(connection.protocol || '').toUpperCase() === protocol)
+                    .filter((connection) => !query || [connection.name, connection.host, connection.username, connection.remark, ...(connection.tags || [])]
+                        .some((value) => String(value || '').toLowerCase().includes(query)))
+                    .slice(0, limit)
+                    .map((connection) => ({ ...connectionSummary(connection), revision: Math.max(1, Number(connection.revision) || 1) }));
+                return { connections };
+            });
+        case 'connection_get_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const connectionId = String(args.connectionId || '').trim();
+                const connection = ctx.resourceService && ctx.user
+                    ? ctx.resourceService.getConnection(ctx.user, connectionId)
+                    : findConnectionByIdOrName(deps, connectionId, ctx);
+                if (!connection || connection.id !== connectionId) throw new Error('连接不存在或无权访问');
+                return { connection: { ...publicConnectionForAi(connection), revision: Math.max(1, Number(connection.revision) || 1) } };
+            });
+        case 'connection_rename_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const connectionId = String(args.connectionId || '').trim();
+                const expectedRevision = Number(args.expectedRevision);
+                const name = String(args.name || '').trim();
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const saved = ctx.resourceService.updateConnection(ctx.user, connectionId, (current) => {
+                    const revision = Math.max(1, Number(current.revision) || 1);
+                    if (revision !== expectedRevision) {
+                        const err = new HttpError(409, 'revision_conflict', '连接已被其他操作修改，请重新读取后再重试', true);
+                        throw err;
+                    }
+                    return { ...current, name };
+                });
+                return {
+                    connection: { ...publicConnectionForAi(saved), revision: Math.max(1, Number(saved.revision) || 1) },
+                    verification: 'resource_read_after_write',
+                };
+            });
+        case 'connection_create_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const connection = connectionTools.createConnection(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 新增连接：${connection.name}`, ctx.user.userId);
+                return { connection, verification: 'resource_read_after_write' };
+            });
+        case 'connection_update_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const connection = connectionTools.updateConnection(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 修改连接：${connection.name}`, ctx.user.userId);
+                return { connection, verification: 'resource_read_after_write' };
+            });
+        case 'connection_delete_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const deleted = connectionTools.deleteConnection(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 删除连接：${deleted.connectionId}`, ctx.user.userId);
+                return { ...deleted, verification: 'resource_absent_after_write' };
+            });
+        case 'connection_test_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                if (typeof deps.testConnection !== 'function') throw new Error('连接测试接口不可用');
+                const connection = ctx.resourceService.resolveForConnect(ctx.user, String(args.connectionId));
+                const result = await deps.testConnection(connection, clampNumber(args.timeoutSeconds, 1, 30, 10));
+                return { connection: connectionTools.publicConnection(ctx.resourceService.getConnection(ctx.user, String(args.connectionId))), result };
+            });
+        case 'connection_open_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const connectionId = String(args.connectionId);
+                const connection = ctx.resourceService.getConnection(ctx.user, connectionId);
+                deps.addActivity?.(`AI 请求打开连接：${connection.name || connection.id}`, ctx.user.userId);
+                return { uiAction: 'open_connection', connectionId, connection: connectionTools.publicConnection(connection) };
+            });
+        case 'proxy_list_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const query = String(args.query || '').trim().toLowerCase();
+                const type = String(args.type || '').toLowerCase();
+                const limit = clampNumber(args.limit, 1, 200, 100);
+                const proxies = ctx.resourceService.listOwned(ctx.user, 'proxy')
+                    .filter((proxy) => !type || String(proxy.type || '').toLowerCase() === type)
+                    .filter((proxy) => !query || [proxy.name, proxy.host, proxy.username, proxy.type].some((value) => String(value || '').toLowerCase().includes(query)))
+                    .slice(0, limit).map(proxyTools.publicProxy);
+                return { proxies };
+            });
+        case 'proxy_get_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                return { proxy: proxyTools.publicProxy(ctx.resourceService.getRawAuthorized(ctx.user, 'proxy', String(args.proxyId), 'view')) };
+            });
+        case 'proxy_create_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const proxy = proxyTools.createProxy(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 新增代理：${proxy.name}`, ctx.user.userId);
+                return { proxy, verification: 'resource_read_after_write' };
+            });
+        case 'proxy_update_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const proxy = proxyTools.updateProxy(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 修改代理：${proxy.name}`, ctx.user.userId);
+                return { proxy, verification: 'resource_read_after_write' };
+            });
+        case 'proxy_delete_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const deleted = proxyTools.deleteProxy(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 删除代理：${deleted.proxyId}`, ctx.user.userId);
+                return { ...deleted, verification: 'resource_absent_after_write' };
+            });
+        case 'ssh_key_list_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                return { sshKeys: sshKeyTools.listKeys(ctx.user, args, ctx.resourceService) };
+            });
+        case 'ssh_key_get_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const key = ctx.resourceService.getRawAuthorized(ctx.user, 'sshKey', String(args.sshKeyId), 'view');
+                return { sshKey: sshKeyTools.publicKey(key) };
+            });
+        case 'ssh_key_validate_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const key = ctx.resourceService.getRawAuthorized(ctx.user, 'sshKey', String(args.sshKeyId), 'view');
+                return { sshKeyId: String(args.sshKeyId), validation: sshKeyTools.validateKey(key) };
+            });
+        case 'ssh_key_rename_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const sshKey = sshKeyTools.renameKey(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 重命名 SSH 密钥：${sshKey.name}`, ctx.user.userId);
+                return { sshKey, verification: 'resource_read_after_write' };
+            });
+        case 'ssh_key_update_metadata_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const sshKey = sshKeyTools.updateMetadata(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 修改 SSH 密钥备注：${sshKey.name}`, ctx.user.userId);
+                return { sshKey, verification: 'resource_read_after_write' };
+            });
+        case 'ssh_key_delete_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const deleted = sshKeyTools.deleteKey(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 删除 SSH 密钥：${deleted.sshKeyId}`, ctx.user.userId);
+                return { ...deleted, verification: 'resource_absent_after_write' };
+            });
         case 'list_connections':
             return { connections: getAllConnections(deps, ctx).map(connectionSummary) };
         case 'list_zephyr_resources':
@@ -2364,8 +2632,8 @@ function cleanupPendingActions() {
 function registerAiRoutes(app, deps) {
     const requireUser = deps.requireUser || requireUser;
     const handleServiceError = deps.handleServiceError || ((res, err, fb = 500) => {
-        if (err?.status) return res.status(err.status).json({ error: err.message, code: err.code || 'ai_error' });
-        res.status(fb).json({ error: err.message || 'AI 错误' });
+        if (err?.status) return res.status(err.status).json({ error: err.message, code: err.code || 'ai_error', retryable: !!err.retryable, field: err.field || '' });
+        res.status(fb).json({ error: err.message || 'AI 错误', code: err?.code || 'ai_error', retryable: !!err?.retryable, field: err?.field || '' });
     });
     const authz = deps.authz;
     const resourceService = deps.resourceService;
@@ -2505,7 +2773,6 @@ function registerAiRoutes(app, deps) {
             const toolCtx = {
                 req,
                 user: req.user,
-                confirmed: !!req.body?.confirmed,
                 signal: abortController.signal,
                 context,
                 authz,
@@ -2534,7 +2801,7 @@ function registerAiRoutes(app, deps) {
                     let result;
                     let status = 'success';
                     try {
-                        result = await executeAiTool(call.name, call.args, { req, user: req.user, context, responseMode: openAiApiMode(provider), signal: abortController.signal, authz, resourceService, aiPolicy, confirmed: !!req.body?.confirmed }, deps);
+                        result = await executeAiTool(call.name, call.args, { req, user: req.user, context, responseMode: openAiApiMode(provider), signal: abortController.signal, authz, resourceService, aiPolicy }, deps);
                     } catch (toolErr) {
                         if (toolErr?.name === 'AbortError' || abortController.signal.aborted) throw toolErr;
                         status = 'error';
@@ -2625,7 +2892,7 @@ function registerAiRoutes(app, deps) {
             if (req.body?.approve === false) return res.json({ ok: true, cancelled: true });
             const startedAt = Date.now();
             throwIfAborted(abortController.signal);
-            const result = await executeAiTool(item.toolName, item.rawArgs || item.args || {}, { req, user: req.user, confirmed: true, context: item.context || {}, signal: abortController.signal, authz, resourceService, aiPolicy }, deps);
+            const result = await executeAiTool(item.toolName, item.rawArgs || item.args || {}, { req, user: req.user, confirmed: true, confirmedToolId: item.toolName, context: item.context || {}, signal: abortController.signal, authz, resourceService, aiPolicy }, deps);
             throwIfAborted(abortController.signal);
             const endedAt = Date.now();
             res.json({ ok: true, toolName: item.toolName, args: publicToolArgs(item.toolName, item.rawArgs || item.args || {}), result, status: 'success', startedAt, endedAt, durationMs: endedAt - startedAt });
@@ -2635,7 +2902,7 @@ function registerAiRoutes(app, deps) {
                 if (!res.headersSent && !res.destroyed && !res.writableEnded) return res.status(499).json({ error: 'AI 请求已停止' });
                 return;
             }
-            res.status(400).json({ error: publicError(err) });
+            handleServiceError(res, err, 400);
         } finally {
             req.off?.('aborted', abortRequest);
             res.off?.('close', abortRequest);
@@ -2665,7 +2932,7 @@ async function executeAiToolForHost(toolName, args = {}, hostCtx = {}) {
         user: hostCtx.user,
         req: { user: hostCtx.user },
         context: hostCtx.context || {},
-        confirmed: !!hostCtx.confirmed,
+        confirmedToolId: hostCtx.confirmedToolId || '',
         signal: hostCtx.signal || null,
         authz: deps.authz,
         resourceService: deps.resourceService || deps.resources,
@@ -2680,27 +2947,36 @@ async function executeAiToolForHost(toolName, args = {}, hostCtx = {}) {
 /** Dynamic tool catalog for platform host (schemas + risk flags). */
 function listToolCatalog(ai = {}) {
     const defs = toolDefinitions(ai || {});
-    return defs.map((d) => {
+    const catalog = defs.map((d) => {
         const name = d.function?.name || d.name;
         const description = d.function?.description || d.description || '';
         const parameters = d.function?.parameters || d.parameters || { type: 'object', properties: {} };
         const readOnly = isReadOnlyToolName(name);
         const risk = riskForToolName(name, readOnly);
+        const canonicalPolicy = executionPolicyForTool(name);
         return {
             name,
             description,
             parameters,
-            readOnly,
-            risk,
-            parallelSafe: readOnly,
+            readOnly: canonicalPolicy ? canonicalPolicy.risk === 'R0' : readOnly,
+            risk: canonicalPolicy ? canonicalPolicy.risk : risk,
+            confirmation: canonicalPolicy ? canonicalPolicy.confirmation : (readOnly ? 'never' : 'legacy'),
+            capabilityId: canonicalPolicy?.capabilityId || '',
+            parallelSafe: canonicalPolicy ? canonicalPolicy.risk === 'R0' : readOnly,
         };
     });
+    const coverage = reportCapabilityCoverage(catalog);
+    if (!coverage.ok) {
+        const missing = coverage.missingToolBindings.map((item) => `${item.id}: ${item.missingTools.join(', ')}`).join('; ');
+        throw new Error(`AI capability registry references missing canonical tools: ${missing}`);
+    }
+    return catalog;
 }
 
 function isReadOnlyToolName(name) {
     const n = String(name || '');
     if (!n) return false;
-    if (/^(list_|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read|remote_desktop_screenshot|remote_read|browser_inspect|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
+    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read|remote_desktop_screenshot|remote_read|browser_inspect|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
     if (n.endsWith('_list') || n.endsWith('_search') || n.endsWith('_get') || n.endsWith('_status')) return true;
     return false;
 }
@@ -2719,6 +2995,7 @@ module.exports = {
     executeAiToolForHost,
     listToolCatalog,
     toolDefinitions,
+    CANONICAL_TOOL_SCHEMAS,
     formatAiContextForPrompt,
     selectPromptMemories,
     rankMemories,

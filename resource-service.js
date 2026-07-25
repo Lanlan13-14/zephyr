@@ -134,6 +134,7 @@ class ResourceService {
          * editor may not use (§13.1). */
         this._assertDependenciesUsable(user, next);
         next.updatedAt = Date.now();
+        next.revision = Math.max(1, Number(conn.revision) || 1) + 1;
         const saved = this.storage.updateConnectionRow(next);
         this.authz.audit({ actorUserId: user.userId, resourceType: 'connection', resourceId: id, action: 'resource.update', outcome: 'success', metadata: { name: saved.name } });
         return this._toPublicConnection(user, saved);
@@ -277,8 +278,24 @@ class ResourceService {
     }
 
     updateOwned(user, resourceType, id, data) {
-        this.getRawAuthorized(user, resourceType, id, CAP.EDIT);
-        return this.createOwned(user, resourceType, { ...data, id, ownerUserId: this._ownerOf(resourceType, id)?.ownerUserId || user.userId });
+        const current = this.getRawAuthorized(user, resourceType, id, CAP.EDIT);
+        const revision = ['proxy', 'sshKey'].includes(resourceType) ? Math.max(1, Number(current.revision) || 1) + 1 : undefined;
+        const payload = {
+            ...current,
+            ...data,
+            id,
+            ...(revision ? { revision } : {}),
+            ownerUserId: current.ownerUserId || user.userId,
+            visibility: current.visibility || 'private',
+            createdAt: current.createdAt,
+        };
+        let saved;
+        if (resourceType === 'proxy') saved = this.storage.saveProxy(payload);
+        else if (resourceType === 'sshKey') saved = this.storage.saveSshKey(payload);
+        else if (resourceType === 'jumpHost') saved = this.storage.saveJumpHost(payload);
+        else throw new HttpError(400, 'invalid_resource_type', '未知资源类型');
+        this.authz.audit({ actorUserId: user.userId, resourceType, resourceId: id, action: 'resource.update', outcome: 'success', metadata: { name: saved.name || '' } });
+        return saved;
     }
 
     deleteOwned(user, resourceType, id) {
