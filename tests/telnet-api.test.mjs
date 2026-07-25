@@ -71,7 +71,7 @@ test('deeplink prepare + test for telnet:// works', async () => {
     assert.equal(testRes.body.ok, true);
 });
 
-test('PUT forces TELNET connections back to direct and clears secrets', async () => {
+test('PUT forces TELNET connections back to direct; keeps password, clears privateKey/route', async () => {
     const created = await server.api(adminCookie, 'POST', '/api/connections', {
         name: 'telnet-edit',
         host: '10.1.1.1',
@@ -86,15 +86,40 @@ test('PUT forces TELNET connections back to direct and clears secrets', async ()
         protocol: 'TELNET',
         host: '10.1.1.1',
         name: 'telnet-edit',
-        username: '',
-        password: 'still-clear',
+        username: 'admin',
+        password: 'inband-secret',
         privateKey: '-----BEGIN FAKE-----',
         connectionMode: 'proxy',
         proxyId: 'whatever',
+        encoding: 'gbk',
     });
     assert.equal(updated.status, 200, JSON.stringify(updated.body));
     assert.equal(updated.body.connection.protocol, 'TELNET');
     assert.equal(updated.body.connection.connectionMode, 'direct');
-    assert.equal(updated.body.connection.password || '', '');
+    // Password is stored (masked in API response as ****** or hasPassword).
+    assert.ok(
+        updated.body.connection.hasPassword === true
+        || updated.body.connection.password === '******'
+        || updated.body.connection.password === 'inband-secret',
+        'password should be kept for in-band auto-login',
+    );
     assert.equal(updated.body.connection.privateKey || '', '');
+    assert.equal(updated.body.connection.encoding || 'utf-8', 'gbk');
+});
+
+test('POST /api/connections stores TELNET password for auto-login', async () => {
+    const res = await server.api(adminCookie, 'POST', '/api/connections', {
+        name: 'telnet-with-creds',
+        host: '10.2.2.2',
+        protocol: 'TELNET',
+        username: 'root',
+        password: 'plain-but-stored',
+        encoding: 'utf-8',
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.ok(
+        res.body.connection.hasPassword === true
+        || res.body.connection.password === '******'
+        || res.body.connection.password === 'plain-but-stored',
+    );
 });

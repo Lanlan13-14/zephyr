@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
+    <title>Zephyr - Telnet 终端</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
+    <link rel="modulepreload" href="telnet-terminal.js?v=20260725-telnet-page-split1">
+    <link rel="modulepreload" href="theme-runtime.js?v=20260725-telnet-page-split1">
+    <link rel="stylesheet" href="/vendor/wterm-fork/terminal.css?v=20260725-telnet-page-split1">
+    <link rel="stylesheet" href="style.css?v=20260725-telnet-page-split1">
+    <script type="importmap">
+        {
+            "imports": {
+                "@wterm/core": "/vendor/@wterm/core/dist/index.js",
+                "@wterm/core/": "/vendor/@wterm/core/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div class="terminal-page">
+        <!-- 顶栏 -->
+        <div class="terminal-topbar">
+            <div class="status">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">连接中...</span>
+            </div>
+            <span class="info" id="connInfo"></span>
+            <div class="topbar-actions" id="topbarActions">
+                <button class="btn-sm" id="snippetBtn" title="代码片段" aria-label="代码片段" data-mobile-icon="snippet">片段</button>
+                <button class="btn-sm" id="notesBtn" title="笔记（当前连接）" aria-label="笔记" data-mobile-icon="notes">笔记</button>
+                <button class="btn-sm" id="shortcutBtn" title="快捷键" aria-label="快捷键" data-mobile-icon="keyboard">快捷键</button>
+                <button class="btn-sm" id="copyBtn" title="复制选中内容" aria-label="复制选中内容" data-mobile-icon="copy">复制</button>
+                <button class="btn-sm" id="pasteBtn" title="粘贴剪贴板" aria-label="粘贴剪贴板" data-mobile-icon="paste">粘贴</button>
+                <button class="btn-sm wterm-theme-toggle" id="wtermThemeToggle" title="独立切换 wterm 终端主题，不跟随全局深浅色模式" aria-label="切换终端主题" data-mobile-icon="term-theme">终端: 默认</button>
+                <button class="btn-sm" id="themeToggle" title="切换主题" aria-label="切换主题" data-mobile-icon="theme">主题</button>
+                <button class="btn-sm" id="reconnectBtn" title="重新连接" aria-label="重新连接" data-mobile-icon="reconnect">重连</button>
+                <button class="btn-sm danger" id="disconnectBtn" title="断开连接" aria-label="断开连接" data-mobile-icon="disconnect">断开</button>
+            </div>
+        </div>
+
+        <div class="snippet-panel" id="snippetPanel">
+            <div class="panel-drag-handle" data-drag-panel="snippetPanel" title="拖动移动窗口">
+                <button class="panel-traffic-btn" data-layout-panel="snippetPanel" title="窗口布局"><span></span></button>
+            </div>
+            <div class="snippet-panel-header panel-titlebar">
+                <strong>⚡ 代码片段</strong>
+            </div>
+            <div class="snippet-panel-body">
+                <input class="snippet-search" id="snippetSearch" placeholder="搜索片段...">
+                <div class="snippet-list" id="snippetList"></div>
+                <p class="snippet-empty" id="snippetEmpty">暂无代码片段，请到首页 设置 → 代码片段 添加。</p>
+            </div>
+            <div class="panel-resize-handle left" data-resize-panel="snippetPanel" data-resize-edge="left" title="拖动调整大小"></div>
+            <div class="panel-resize-handle right" data-resize-panel="snippetPanel" data-resize-edge="right" title="拖动调整大小"></div>
+        </div>
+
+        <div class="shortcut-panel" id="shortcutPanel">
+            <div class="panel-drag-handle" data-drag-panel="shortcutPanel" title="拖动移动窗口">
+                <button class="panel-traffic-btn" data-layout-panel="shortcutPanel" title="窗口布局"><span></span></button>
+            </div>
+            <div class="snippet-panel-header panel-titlebar">
+                <strong>⌨️ 快捷键</strong>
+            </div>
+            <div class="shortcut-grid" id="shortcutGrid">
+                <button class="tool-btn modifier" data-key="ctrl">Ctrl</button>
+                <button class="tool-btn modifier" data-key="alt">Alt</button>
+                <button class="tool-btn modifier" data-key="shift">Shift</button>
+                <button class="tool-btn func" data-key="esc">Esc</button>
+                <button class="tool-btn func" data-key="tab">Tab</button>
+                <button class="tool-btn func" data-key="home">Home</button>
+                <button class="tool-btn func" data-key="end">End</button>
+                <button class="tool-btn arrow" data-key="up">↑</button>
+                <button class="tool-btn arrow" data-key="down">↓</button>
+                <button class="tool-btn arrow" data-key="left">←</button>
+                <button class="tool-btn arrow" data-key="right">→</button>
+                <button class="tool-btn combo" data-key="ctrl-a">Ctrl+A</button>
+                <button class="tool-btn combo" data-key="ctrl-b">Ctrl+B</button>
+                <button class="tool-btn combo" data-key="ctrl-c">Ctrl+C</button>
+                <button class="tool-btn combo" data-key="ctrl-d">Ctrl+D</button>
+                <button class="tool-btn combo" data-key="ctrl-e">Ctrl+E</button>
+                <button class="tool-btn combo" data-key="ctrl-f">Ctrl+F</button>
+                <button class="tool-btn combo" data-key="ctrl-g">Ctrl+G</button>
+                <button class="tool-btn combo" data-key="ctrl-h">Ctrl+H</button>
+                <button class="tool-btn combo" data-key="ctrl-i">Ctrl+I</button>
+                <button class="tool-btn combo" data-key="ctrl-j">Ctrl+J</button>
+                <button class="tool-btn combo" data-key="ctrl-k">Ctrl+K</button>
+                <button class="tool-btn combo" data-key="ctrl-l">Ctrl+L</button>
+                <button class="tool-btn combo" data-key="ctrl-m">Ctrl+M</button>
+                <button class="tool-btn combo" data-key="ctrl-n">Ctrl+N</button>
+                <button class="tool-btn combo" data-key="ctrl-o">Ctrl+O</button>
+                <button class="tool-btn combo" data-key="ctrl-p">Ctrl+P</button>
+                <button class="tool-btn combo" data-key="ctrl-q">Ctrl+Q</button>
+                <button class="tool-btn combo" data-key="ctrl-r">Ctrl+R</button>
+                <button class="tool-btn combo" data-key="ctrl-s">Ctrl+S</button>
+                <button class="tool-btn combo" data-key="ctrl-t">Ctrl+T</button>
+                <button class="tool-btn combo" data-key="ctrl-u">Ctrl+U</button>
+                <button class="tool-btn combo" data-key="ctrl-v">Ctrl+V</button>
+                <button class="tool-btn combo" data-key="ctrl-w">Ctrl+W</button>
+                <button class="tool-btn combo" data-key="ctrl-x">Ctrl+X</button>
+                <button class="tool-btn combo" data-key="ctrl-y">Ctrl+Y</button>
+                <button class="tool-btn combo" data-key="ctrl-z">Ctrl+Z</button>
+                <button class="tool-btn func fn-key" data-key="f1">F1</button>
+                <button class="tool-btn func fn-key" data-key="f2">F2</button>
+                <button class="tool-btn func fn-key" data-key="f3">F3</button>
+                <button class="tool-btn func fn-key" data-key="f4">F4</button>
+                <button class="tool-btn func fn-key" data-key="f5">F5</button>
+                <button class="tool-btn func fn-key" data-key="f6">F6</button>
+                <button class="tool-btn func fn-key" data-key="f7">F7</button>
+                <button class="tool-btn func fn-key" data-key="f8">F8</button>
+                <button class="tool-btn func fn-key" data-key="f9">F9</button>
+                <button class="tool-btn func fn-key" data-key="f10">F10</button>
+                <button class="tool-btn func fn-key" data-key="f11">F11</button>
+                <button class="tool-btn func fn-key" data-key="f12">F12</button>
+                <button class="tool-btn font-size-btn" id="fontDecreaseBtn" title="缩小终端字体">A−</button>
+                <button class="tool-btn font-size-btn" id="fontIncreaseBtn" title="放大终端字体">A+</button>
+            </div>
+            <div class="panel-resize-handle left" data-resize-panel="shortcutPanel" data-resize-edge="left" title="拖动调整大小"></div>
+            <div class="panel-resize-handle right" data-resize-panel="shortcutPanel" data-resize-edge="right" title="拖动调整大小"></div>
+        </div>
+
+        <!-- 顶部命令输入栏（移动端始终可见） -->
+        <div class="terminal-top-input" id="terminalTopInput">
+            <div class="cmd-input-row">
+                <textarea class="cmd-input" id="cmdInput" rows="1" placeholder="在此输入命令，Enter 发送，Shift+Enter 换行..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+                <button class="cmd-send-btn" id="cmdSendBtn">发送</button>
+            </div>
+        </div>
+
+        <!-- 终端容器 -->
+        <div class="terminal-container" id="terminalContainer">
+            <div class="terminal-overlay" id="terminalOverlay">
+                <div class="spinner"></div>
+                <span class="msg" id="overlayMsg">正在建立 SSH 连接...</span>
+            </div>
+            <div class="wterm-wrapper" id="wtermWrapper"></div>
+            <div class="terminal-scrollbar" id="terminalScrollbar" aria-hidden="true">
+                <div class="terminal-scrollbar-track">
+                    <div class="terminal-scrollbar-thumb" id="terminalScrollbarThumb"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 移动端底部固定栏：辅助键，位于原 CSS 图标栏和键盘之间 -->
+        <div class="terminal-bottom-bar" id="terminalBottomBar" aria-label="移动端辅助键栏">
+            <div class="mobile-aux-keys" id="mobileAuxKeys" aria-label="移动端辅助键">
+                <button class="aux-key" data-key="ctrl" title="Ctrl">Ctrl</button>
+                <button class="aux-key" data-key="esc" title="Esc">Esc</button>
+                <button class="aux-key" data-key="tab" title="Tab">Tab</button>
+                <span class="aux-sep"></span>
+                <button class="aux-key aux-arrow" data-key="up" title="↑">↑</button>
+                <button class="aux-key aux-arrow" data-key="down" title="↓">↓</button>
+                <button class="aux-key aux-arrow" data-key="left" title="←">←</button>
+                <button class="aux-key aux-arrow" data-key="right" title="→">→</button>
+                <span class="aux-sep"></span>
+                <button class="aux-key" data-key="home" title="Home">Home</button>
+                <button class="aux-key" data-key="end" title="End">End</button>
+                <button class="aux-key" data-key="pgup" title="PgUp">PgUp</button>
+                <button class="aux-key" data-key="pgdn" title="PgDn">PgDn</button>
+                <span class="aux-sep"></span>
+                <button class="aux-key" data-key="/" title="/">/</button>
+                <button class="aux-key" data-key="|" title="|">|</button>
+            </div>
+        </div>
+    </div>
+    <script src="telnet-terminal.js?v=20260725-telnet-page-split1" type="module"></script>
+</body>
+</html>

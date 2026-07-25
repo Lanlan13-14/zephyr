@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260725-flashfix3">
-    <link rel="modulepreload" href="app.js?v=20260725-flashfix3">
-    <link rel="modulepreload" href="theme-runtime.js?v=20260725-flashfix3">
-    <link rel="stylesheet" href="style.css?v=20260725-flashfix3">
+    <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260725-telnet-page-split1">
+    <link rel="modulepreload" href="app.js?v=20260725-telnet-page-split1">
+    <link rel="modulepreload" href="theme-runtime.js?v=20260725-telnet-page-split1">
+    <link rel="stylesheet" href="style.css?v=20260725-telnet-page-split1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -848,7 +848,8 @@
             <input type="hidden" id="transientToken">
             <div class="form-row"><div class="form-group"><label>名称</label><input id="connName" required></div><div class="form-group port-group"><label>协议</label><select id="connProtocol"><option>SSH</option><option>TELNET</option><option>RDP</option><option>VNC</option></select></div></div>
             <div class="form-row"><div class="form-group"><label>IP / 主机</label><input id="connHost" required></div><div class="form-group port-group"><label>端口</label><input id="connPort" type="number" value="22" min="1" max="65535"></div></div>
-            <div class="form-group"><label>用户名</label><input id="connUsername" required><p class="field-hint force-hidden" id="telnetUsernameHint">Telnet 认证在终端内完成；此处用户名仅用于显示，可留空。</p></div>
+            <div class="form-group"><label>用户名</label><input id="connUsername" required><p class="field-hint force-hidden" id="telnetUsernameHint">Telnet 认证在终端内完成。填写用户名/密码后将自动应答 login/password 提示（明文传输）。</p></div>
+            <div class="form-group force-hidden" id="connEncodingGroup"><label>终端编码</label><select id="connEncoding"><option value="utf-8">UTF-8</option><option value="gbk">GBK / GB2312</option><option value="big5">Big5</option><option value="latin1">Latin-1</option></select><p class="field-hint">老设备/中文路由器常用 GBK。仅 Telnet 生效。</p></div>
             <div class="form-group force-hidden" id="rdpDomainGroup"><label>Windows 域（可选）</label><input id="rdpDomain" placeholder="例如 CORP 或 WORKGROUP"><p class="field-hint">Active Directory 域名。家庭/工作组环境可留空。等同于 DOMAIN\username 中的 DOMAIN。</p></div>
             <div class="form-group"><label>选择已保存 SSH 密钥</label><select id="connSshKey"><option value="">不使用密钥库</option></select><p class="field-hint">选择后连接时会自动使用该私钥；下方手动填写的密码/私钥会优先生效或作为私钥口令。</p></div>
             <div class="form-group"><label>标签（逗号分隔）</label><input id="connTags" placeholder="生产, 数据库, 海外"></div>
@@ -975,7 +976,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260725-flashfix3" type="module"></script>
+    <script src="app.js?v=20260725-telnet-page-split1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

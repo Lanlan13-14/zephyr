@@ -1,3 +1,4 @@
+/* Telnet terminal page — no SFTP / Docker / remote stats. Fork of terminal.js. */
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 import {
     createSshKeyboard,
@@ -700,9 +701,9 @@ const terminalInputPanel = $('#terminalBottomBar');  // mobile: bottom aux-key b
 const cmdSendBtn = $('#cmdSendBtn');
 const copyBtn = $('#copyBtn');
 const pasteBtn = $('#pasteBtn');
-const fileBtn = $('#fileBtn');
-const infoBtn = $('#infoBtn');
-const dockerBtn = $('#dockerBtn');
+const fileBtn = null; // Telnet: no SFTP
+const infoBtn = null; // Telnet: no remote stats
+const dockerBtn = null; // Telnet: no docker exec
 const snippetBtn = $('#snippetBtn');
 const shortcutBtn = $('#shortcutBtn');
 
@@ -716,21 +717,21 @@ const fontDecreaseBtn = $('#fontDecreaseBtn');
 const fontIncreaseBtn = $('#fontIncreaseBtn');
 
 // 文件管理器 DOM
-const fmTransferBtn = $('#fmTransferBtn');
-const fileManager = $('#fileManager');
-const fmBackBtn = $('#fmBackBtn');
-const fmPathInput = $('#fmPathInput');
-const fmGoBtn = $('#fmGoBtn');
-const fmRefreshBtn = $('#fmRefreshBtn');
-const fmCloseBtn = $('#fmCloseBtn');
-const fmNewFolderBtn = $('#fmNewFolderBtn');
-const fmNewFileBtn = $('#fmNewFileBtn');
-const fmSelectBtn = $('#fmSelectBtn');
-const fmPasteBtn = $('#fmPasteBtn');
-const fmUploadInput = $('#fmUploadInput');
-const fmDropOverlay = $('#fmDropOverlay');
-const fmSearchInput = $('#fmSearchInput');
-const fmList = $('#fmList');
+const fmTransferBtn = null;
+const fileManager = null;
+const fmBackBtn = null;
+const fmPathInput = null;
+const fmGoBtn = null;
+const fmRefreshBtn = null;
+const fmCloseBtn = null;
+const fmNewFolderBtn = null;
+const fmNewFileBtn = null;
+const fmSelectBtn = null;
+const fmPasteBtn = null;
+const fmUploadInput = null;
+const fmDropOverlay = null;
+const fmSearchInput = null;
+const fmList = null;
 let selectedFilePaths = new Set();
 let fileManagerWindowSeq = 0;
 const fileManagerWindowsByRequestId = new Map();
@@ -2068,7 +2069,7 @@ window.addEventListener('message', (e) => {
         reconnectBtn?.click?.();
     }
     if (e.data.type === 'ai-terminal-toolbar') {
-        const controls = { file: fileBtn, info: infoBtn, docker: dockerBtn, snippet: snippetBtn, shortcut: shortcutBtn, copy: copyBtn, paste: pasteBtn, theme: themeToggle, 'wterm-theme': wtermThemeToggle, reconnect: reconnectBtn, disconnect: disconnectBtn };
+        const controls = { snippet: snippetBtn, shortcut: shortcutBtn, copy: copyBtn, paste: pasteBtn, theme: themeToggle, 'wterm-theme': wtermThemeToggle, reconnect: reconnectBtn, disconnect: disconnectBtn };
         const btn = controls[String(e.data.control || '')];
         if (btn) btn.click?.();
         else showToast(`未知 AI 工具栏动作：${e.data.control || ''}`, 'error');
@@ -4608,6 +4609,7 @@ function handleExtraFileManagerListMessage(msg) {
 
 // ---------- 文件管理器 ----------
 function showFileManager() {
+    return; // Telnet has no SFTP
     ensureFloatingPanel(fileManager, getDefaultPanelOptions(fileManager));
     fileManager.classList.add('open');
     updateFileButtonActiveState();
@@ -4630,11 +4632,11 @@ function hideFileManager() {
     updateMobileFileActions();
     window.setTimeout(() => clearPanelMotion(fileManager), 320);
 }
-fileBtn.addEventListener('click', () => {
+fileBtn?.addEventListener('click', () => {
     if (!fileManager.classList.contains('open') && extraFileManagerWindows.size === 0) showFileManager();
     else createFileManagerWindow({ path: currentPath });
 });
-fmCloseBtn.addEventListener('click', hideFileManager);
+fmCloseBtn?.addEventListener('click', hideFileManager);
 
 const SNIPPET_STORAGE_KEY = 'zephyr-ssh-snippets';
 function loadTerminalSnippets() {
@@ -7580,6 +7582,7 @@ function checkDockerStatus({ force = false } = {}) {
 }
 
 function showDockerPanel() {
+    return; // Telnet has no Docker
     if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN || !isConnected) {
         showToast('请先连接 SSH', 'error');
         return;
@@ -10646,6 +10649,7 @@ function renderStatsSoon(data) {
 }
 
 function showInfoModal() {
+    return; // Telnet has no remote stats
     if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN || !isConnected) {
         showToast('请先连接 SSH', 'error');
         return;
@@ -11048,7 +11052,7 @@ function toggleInfoModal() {
     else showInfoModal();
 }
 
-infoBtn.addEventListener('click', toggleInfoModal);
+infoBtn?.addEventListener('click', toggleInfoModal);
 
 infoCloseBtn.addEventListener('click', hideInfoModal);
 
@@ -12131,7 +12135,7 @@ function setStatus(state, msg) {
     if (state === 'connecting') {
         statusText.textContent = msg || '连接中...';
         terminalOverlay.classList.remove('hidden');
-        overlayMsg.textContent = msg || '正在建立 SSH 连接...';
+        overlayMsg.textContent = msg || '正在建立 Telnet 连接...';
     } else if (state === 'connected') {
         statusDot.classList.add('connected');
         statusText.textContent = msg || '已连接';
@@ -12283,7 +12287,7 @@ function sleep(ms) {
     return new Promise((resolve) => { reconnectTimer = window.setTimeout(resolve, ms); });
 }
 
-async function startFreshConnection({ message = '正在建立 SSH 连接...', resetAttempts = false, followOnConnect = true } = {}) {
+async function startFreshConnection({ message = '正在建立 Telnet 连接...', resetAttempts = false, followOnConnect = true } = {}) {
     clearReconnectTimer();
     userClosedConnection = false;
     activeConnectionToken += 1;
@@ -12572,7 +12576,7 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                 proxyId: params.proxyId || '',
                 jumpHostId: params.jumpHostId || '',
                 jumpHostIds: Array.isArray(params.jumpHostIds) ? params.jumpHostIds : [],
-                protocol: params.protocol || params.transientOverrides?.protocol || 'SSH',
+                protocol: params.protocol || params.transientOverrides?.protocol || 'TELNET',
                 encoding: params.encoding || params.transientOverrides?.encoding || 'utf-8',
                 // One-time Deep Link credential (FREEZE plan §5.4); server
                 // consumes it atomically and never writes it to assets.

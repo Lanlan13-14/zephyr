@@ -16,7 +16,7 @@ test('websocket close detaches SSH instead of destroying the PTY', () => {
 test('attach replays output buffer before ready', () => {
   const start = server.indexOf('function attachSshSession');
   assert.ok(start > 0);
-  const body = server.slice(start, start + 1800);
+  const body = server.slice(start, start + 3200);
   const replayIdx = body.indexOf("type: 'data'");
   const readyIdx = body.indexOf("type: 'ready'");
   assert.ok(replayIdx > 0 && readyIdx > replayIdx, 'replay data must be sent before ready');

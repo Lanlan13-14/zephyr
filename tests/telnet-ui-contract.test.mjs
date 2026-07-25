@@ -17,6 +17,17 @@ test('connection modal exposes TELNET in protocol select and filter', () => {
     assert.match(appHtml, /id="protocolFilter"[\s\S]*?<option value="TELNET">TELNET<\/option>/);
     assert.match(appHtml, /id="telnetPlaintextBanner"/);
     assert.match(appHtml, /Telnet 未加密/);
+    assert.match(appHtml, /id="connEncoding"/);
+    assert.match(appHtml, /id="connEncodingGroup"/);
+});
+
+test('frontend keeps password field for TELNET auto-login and submits encoding', () => {
+    // Password must NOT be force-hidden for TELNET any more.
+    assert.doesNotMatch(appJs, /connPassword.*force-hidden.*TELNET|protocol === 'TELNET' \? '' : \$\{?#connPassword/);
+    assert.match(appJs, /connEncodingGroup/);
+    assert.match(appJs, /payload\.encoding/);
+    assert.match(appJs, /encoding: c\.encoding/);
+    assert.match(terminalJs, /encoding: params\.encoding/);
 });
 
 test('frontend no longer hard-blocks Telnet connect', () => {

@@ -48,6 +48,10 @@ const {
     dialTelnet,
     filterIac,
     sendNaws,
+    attachIacEngine,
+    createTelnetAutoLogin,
+    createTelnetDecoder,
+    classifyTerminalClose,
     defaultPort: protocolDefaultPort,
 } = require('./telnet-transport');
 const {
@@ -344,7 +348,16 @@ function destroySshTerminalSession(sessionOrId, reason = 'session-destroy') {
     });
     flushSshSessionHistory(session);
     try { terminalHistory.close(session.userId, session.id, reason); } catch {}
-    broadcastSshSession(session, { type: 'close', message: reason === 'client-disconnect' ? '会话已断开' : 'SSH 会话已关闭' });
+    const protocol = String(session.protocol || 'SSH').toUpperCase();
+    const classified = classifyTerminalClose(reason, protocol);
+    broadcastSshSession(session, {
+        type: 'close',
+        message: classified.message,
+        code: classified.code,
+        remote: classified.remote,
+        protocol,
+        reason: String(reason || ''),
+    });
     for (const targetWs of [...(session.attachedWs || [])]) {
         try { targetWs._sshTerminalSession = null; } catch {}
     }
@@ -357,7 +370,21 @@ function destroySshTerminalSession(sessionOrId, reason = 'session-destroy') {
     if (session.sshClient && !(session.sshClients || []).includes(session.sshClient)) {
         try { session.sshClient.end?.(); } catch {}
     }
+    // Telnet: stop auto-login + IAC engine (keepalive) then destroy TCP.
+    if (session.telnetAutoLogin) {
+        try { session.telnetAutoLogin.cancel?.(); } catch {}
+        session.telnetAutoLogin = null;
+    }
+    if (session.telnetIac) {
+        try { session.telnetIac.destroy?.(); } catch {}
+        session.telnetIac = null;
+    }
+    if (session.telnetSocket) {
+        try { session.telnetSocket.destroy?.(); } catch {}
+        session.telnetSocket = null;
+    }
 }
+
 
 function loadDataEnv() {
     const envFile = path.join(DATA_DIR, '.env');
@@ -2996,17 +3023,20 @@ app.post('/api/connections', requireUser, (req, res) => {
         conn.rdpDomain = String(body.rdpDomain || '').trim();
     }
     if (protocol === 'TELNET') {
-        // Telnet is direct-only: no jump/proxy, no SSH key, no password store
-        // for out-of-band auth (auth is in-band after connect).
+        // Telnet is direct-only: no jump/proxy/SSH key. Username/password are
+        // still stored (encrypted) for in-band auto-login after TCP connect.
         conn.connectionMode = 'direct';
         conn.proxyId = null;
         conn.jumpHostId = null;
         conn.jumpHostIds = [];
         conn.sshKeyId = '';
         conn.privateKey = '';
-        conn.password = '';
+        // keep conn.password / conn.username
+        if (body.encoding !== undefined) conn.encoding = String(body.encoding || 'utf-8');
+        else if (!conn.encoding) conn.encoding = 'utf-8';
     } else {
         applyConnectionRouteFields(conn, body);
+        if (body.encoding !== undefined) conn.encoding = String(body.encoding || 'utf-8');
     }
     try {
         const saved = resourceService.createConnection(req.user, conn);
@@ -3035,11 +3065,14 @@ app.put('/api/connections/:id', requireUser, (req, res) => {
                 conn.jumpHostIds = [];
                 conn.sshKeyId = '';
                 conn.privateKey = '';
-                conn.password = '';
+                // Telnet password is in-band auto-login material — allow update.
+                if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
+                if (body.encoding !== undefined) conn.encoding = String(body.encoding || 'utf-8');
             } else {
                 applyConnectionRouteFields(conn, body);
                 if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
                 if (body.privateKey !== undefined && body.privateKey !== '******') conn.privateKey = String(body.privateKey || '');
+                if (body.encoding !== undefined) conn.encoding = String(body.encoding || 'utf-8');
             }
             if (String(conn.protocol || '').toUpperCase() === 'RDP') {
                 if (body.rdpSoundMode !== undefined) conn.rdpSoundMode = ['local', 'remote', 'off'].includes(body.rdpSoundMode) ? body.rdpSoundMode : 'local';
@@ -6462,6 +6495,7 @@ wss.on('connection', (ws, req) => {
             attachedSshSession.lastDetachedAt = Date.now();
             console.info('[SSH-SESSION]', 'detach websocket', {
                 sessionId: attachedSshSession.id,
+                protocol: attachedSshSession.protocol || 'SSH',
                 reason,
                 remaining: attachedSshSession.attachedWs?.size || 0,
             });
@@ -6469,6 +6503,9 @@ wss.on('connection', (ws, req) => {
             sshClient = null;
             sshClients = [];
             sshStream = null;
+            // Keep telnet TCP alive for resume; only drop the WS-local handle.
+            telnetSocket = null;
+            telnetProtocol = false;
         }
         ws._sshTerminalSession = null;
     };
@@ -6477,7 +6514,6 @@ wss.on('connection', (ws, req) => {
         stopStatsPush();
         stopDockerLogStreams();
         stopSftpUploadStreams();
-        closeTelnetSocket(reason);
         if (sftpStream) {
             const closingSftp = sftpStream;
             try { closingSftp.end(); } catch {}
@@ -6486,9 +6522,17 @@ wss.on('connection', (ws, req) => {
         }
         if (destroySsh) {
             if (attachedSshSession) {
+                // Session owns both SSH PTY and Telnet TCP; destroy closes them.
                 destroySshTerminalSession(attachedSshSession, reason);
                 attachedSshSession = null;
+                sshClient = null;
+                sshClients = [];
+                sshStream = null;
+                telnetSocket = null;
+                telnetProtocol = false;
             } else {
+                // No session object yet (pre-ready failure / ad-hoc) — close local telnet.
+                closeTelnetSocket(reason);
                 if (sshStream) {
                     try { sshStream.end(); } catch {}
                     sshStream = null;
@@ -6503,6 +6547,7 @@ wss.on('connection', (ws, req) => {
                 }
             }
         } else {
+            // Detach only: keep remote session (SSH PTY / Telnet TCP) for resume.
             detachSshSession(reason);
         }
     };
@@ -6511,9 +6556,11 @@ wss.on('connection', (ws, req) => {
         if (!session || session.closed) return false;
         cleanup({ destroySsh: false, reason: 'attach-existing-session' });
         attachedSshSession = session;
-        sshClient = session.sshClient;
+        sshClient = session.sshClient || null;
         sshClients = session.sshClients || [session.sshClient].filter(Boolean);
-        sshStream = session.sshStream;
+        sshStream = session.sshStream || null;
+        telnetSocket = session.telnetSocket || null;
+        telnetProtocol = String(session.protocol || '').toUpperCase() === 'TELNET' || !!session.telnetSocket;
         sftpStream = session.sftpStream || null;
         dockerLogStreams = session.dockerLogStreams || (session.dockerLogStreams = new Map());
         sftpUploadStreams = session.sftpUploadStreams || (session.sftpUploadStreams = new Map());
@@ -6524,6 +6571,7 @@ wss.on('connection', (ws, req) => {
         console.info('[SSH-SESSION]', 'attach websocket', {
             sessionId: session.id,
             connectionId: session.connectionId || '',
+            protocol: session.protocol || 'SSH',
             attached: session.attachedWs.size,
             replay,
             bufferChunks: session.outputBuffer?.length || 0,
@@ -6537,8 +6585,19 @@ wss.on('connection', (ws, req) => {
             if (!replayData && session.outputBuffer.length) replayData = session.outputBuffer.join('');
             if (replayData) sendJSON({ type: 'data', data: replayData, replay: true });
         }
-        sendJSON({ type: 'ready', sessionId: session.id, attached: true, cols: pty.cols, rows: pty.rows, replayed: !!replayData });
-        startStatsPush();
+        const protocol = String(session.protocol || 'SSH').toUpperCase();
+        sendJSON({
+            type: 'ready',
+            sessionId: session.id,
+            attached: true,
+            cols: pty.cols,
+            rows: pty.rows,
+            replayed: !!replayData,
+            protocol,
+            ...(protocol === 'TELNET' ? { warning: 'Telnet 未加密；凭据以明文传输' } : {}),
+        });
+        // Remote stats require an SSH client; Telnet has no remote exec channel.
+        if (sshClient) startStatsPush();
         return true;
     }
 
@@ -6826,7 +6885,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         host: consumed.draft.host,
                         port: consumed.draft.port || protocolDefaultPort(draftProtocol),
                         username: consumed.draft.username || '',
-                        password: draftProtocol === 'TELNET' ? '' : (consumed.credential?.password || ''),
+                        password: consumed.credential?.password || '',
                         privateKey: '',
                         protocol: draftProtocol,
                         connectionMode: 'direct',
@@ -6880,7 +6939,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         conn.jumpHostIds = [];
                         conn.sshKeyId = '';
                         conn.privateKey = '';
-                        conn.password = '';
+                        // keep password for in-band auto-login
                     }
                     if (conn.sshKeyId || conn.connectionMode === 'proxy' || conn.connectionMode === 'jump') {
                         // Reuse dependency ACL checks against the caller's owned/shared deps.
@@ -6926,38 +6985,137 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
                 if (protocol === 'TELNET') {
                     // FREEZE plan §5.6: Node /ssh is the default Telnet path.
-                    // Auth is in-band; we only open TCP + IAC negotiate.
+                    // Auth is in-band; we open TCP + IAC negotiate, then wrap
+                    // the socket in the same session object SSH uses so attach /
+                    // detach / history / detached-TTL all work unchanged.
                     if (connectionId) console.log(`[TELNET] 使用已保存连接 ${conn.name || conn.host}`);
                     const socket = await dialTelnet(conn, { timeout: 10000, cols: initialCols, rows: initialRows });
                     telnetSocket = socket;
                     telnetProtocol = true;
                     socket.setTimeout(0); // live session — no idle timeout kill
                     console.log(`[TELNET] 已连接: ${conn.host}:${Number(conn.port) || 23}`);
-                    sendJSON({
-                        type: 'ready',
-                        sessionId: requestedSessionId,
+                    const telnetIac = attachIacEngine(socket, {
+                        termType: 'xterm-256color',
+                        keepaliveMs: 60000,
                         cols: initialCols,
                         rows: initialRows,
-                        protocol: 'TELNET',
-                        warning: 'Telnet 未加密；凭据以明文传输',
                     });
+                    const encoding = String(conn.encoding || msg.encoding || 'utf-8');
+                    const telnetDecoder = createTelnetDecoder(encoding);
+                    const autoLogin = createTelnetAutoLogin({
+                        write: (s) => {
+                            if (socket && !socket.destroyed) {
+                                try { socket.write(telnetDecoder.encode(String(s))); } catch {}
+                            }
+                        },
+                        username: conn.username || '',
+                        password: conn.password || '',
+                        timeoutMs: 15000,
+                        onDone: (reason) => {
+                            console.info('[TELNET]', 'auto-login', { sessionId: requestedSessionId, reason, encoding: telnetDecoder.encoding });
+                            // Init command after login attempt (ok or timeout).
+                            if (init && typeof init === 'string' && init.trim().length > 0) {
+                                try { socket.write(telnetDecoder.encode(init + '\n')); } catch {}
+                            }
+                        },
+                    });
+                    const session = {
+                        id: requestedSessionId,
+                        connectionId: conn.id || connectionId || '',
+                        protocol: 'TELNET',
+                        encoding: telnetDecoder.encoding,
+                        telnetSocket: socket,
+                        telnetIac,
+                        telnetDecoder,
+                        telnetAutoLogin: autoLogin,
+                        sshClient: null,
+                        sshClients: [],
+                        sshStream: null,
+                        attachedWs: new Set([ws]),
+                        pty: { rows: initialRows, cols: initialCols },
+                        outputBuffer: [],
+                        createdAt: Date.now(),
+                        lastActive: Date.now(),
+                        lastDetachedAt: 0,
+                        username: sessionUser.username || '',
+                        userId: sessionUser.userId || '',
+                        connectionConfig: conn,
+                        dockerLogStreams,
+                        sftpUploadStreams,
+                        closed: false,
+                    };
+                    attachedSshSession = session;
+                    ws._sshTerminalSession = session;
+                    sshTerminalSessions.set(session.id, session);
+                    try {
+                        terminalHistory.open({
+                            userId: session.userId,
+                            sessionId: session.id,
+                            connectionId: session.connectionId,
+                            cols: initialCols,
+                            rows: initialRows,
+                        });
+                    } catch (err) {
+                        console.warn('[TERMINAL-HISTORY] open failed', { sessionId: session.id, error: err.message });
+                    }
+                    // Register stream handlers BEFORE ready so any already-buffered
+                    // peer banner (e.g. "login: ") is not lost relative to the
+                    // client message race after awaiting ready.
                     socket.on('data', (chunk) => {
-                        const filtered = filterIac(chunk);
+                        if (session.closed) return;
+                        const engine = session.telnetIac;
+                        const filtered = engine ? engine.feed(chunk) : filterIac(chunk);
                         if (!filtered.length) return;
-                        sendJSON({ type: 'data', data: filtered.toString('utf-8') });
+                        const decoder = session.telnetDecoder;
+                        const text = decoder ? decoder.decode(filtered) : filtered.toString('utf-8');
+                        if (!text) return;
+                        try { session.telnetAutoLogin?.feed?.(text); } catch {}
+                        // History journal stores utf-8 text bytes for search/replay.
+                        appendSshSessionBuffer(session, Buffer.from(text, 'utf8'));
+                        broadcastSshSession(session, { type: 'data', data: text });
                     });
                     socket.on('error', (err) => {
                         console.error(`[TELNET] 错误: ${err.message}`);
-                        sendJSON({ type: 'error', message: `Telnet 连接失败: ${err.message}` });
-                        cleanup({ reason: 'telnet-error' });
+                        if (session.closed) return;
+                        // Surface a live error frame, then destroy (which emits classified close).
+                        broadcastSshSession(session, {
+                            type: 'error',
+                            message: `Telnet 连接异常: ${err.message}`,
+                            code: 'remote_error',
+                            protocol: 'TELNET',
+                        });
+                        destroySshTerminalSession(session, 'telnet-error');
+                        if (attachedSshSession === session) {
+                            attachedSshSession = null;
+                            telnetSocket = null;
+                            telnetProtocol = false;
+                        }
                     });
                     socket.on('close', () => {
                         console.log('[TELNET] 连接关闭');
-                        sendJSON({ type: 'close', message: 'Telnet 连接已关闭' });
-                        cleanup({ reason: 'telnet-close' });
+                        if (session.closed) return;
+                        // destroy broadcasts the classified close frame; avoid double emit.
+                        destroySshTerminalSession(session, 'telnet-close');
+                        if (attachedSshSession === session) {
+                            attachedSshSession = null;
+                            telnetSocket = null;
+                            telnetProtocol = false;
+                        }
                     });
-                    if (init && typeof init === 'string' && init.trim().length > 0) {
-                        try { socket.write(init + '\n'); } catch {}
+                    sendJSON({
+                        type: 'ready',
+                        sessionId: session.id,
+                        cols: initialCols,
+                        rows: initialRows,
+                        protocol: 'TELNET',
+                        encoding: session.encoding || 'utf-8',
+                        warning: 'Telnet 未加密；凭据以明文传输',
+                    });
+                    // When credentials are present, init is deferred to auto-login onDone
+                    // so it does not type into the login/password prompt.
+                    const hasCreds = !!(conn.username || conn.password);
+                    if (!hasCreds && init && typeof init === 'string' && init.trim().length > 0) {
+                        try { socket.write(telnetDecoder.encode(init + '\n')); } catch {}
                     }
                     return;
                 }
@@ -7018,9 +7176,11 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     const session = {
                         id: requestedSessionId,
                         connectionId: conn.id || connectionId || '',
+                        protocol: 'SSH',
                         sshClient,
                         sshClients,
                         sshStream,
+                        telnetSocket: null,
                         attachedWs: new Set([ws]),
                         pty: { rows: initialRows, cols: initialCols },
                         outputBuffer: [],
@@ -7082,11 +7242,22 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
         // 输入
         if (msg.type === 'input') {
-            if (telnetSocket && !telnetSocket.destroyed) {
-                try { telnetSocket.write(String(msg.data || ''), 'utf-8'); } catch {}
+            const liveTelnet = (attachedSshSession?.telnetSocket && !attachedSshSession.telnetSocket.destroyed)
+                ? attachedSshSession.telnetSocket
+                : (telnetSocket && !telnetSocket.destroyed ? telnetSocket : null);
+            if (liveTelnet) {
+                try {
+                    const decoder = attachedSshSession?.telnetDecoder;
+                    if (decoder) liveTelnet.write(decoder.encode(String(msg.data || '')));
+                    else liveTelnet.write(String(msg.data || ''), 'utf-8');
+                } catch {}
+                if (attachedSshSession) attachedSshSession.lastActive = Date.now();
                 return;
             }
-            if (sshStream && sshStream.writable) sshStream.write(msg.data);
+            if (sshStream && sshStream.writable) {
+                sshStream.write(msg.data);
+                if (attachedSshSession) attachedSshSession.lastActive = Date.now();
+            }
             return;
         }
 
@@ -7098,8 +7269,17 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 console.warn('[SSH] 忽略异常 PTY resize', { rows: msg.rows, cols: msg.cols });
                 return;
             }
-            if (telnetSocket && !telnetSocket.destroyed) {
-                try { sendNaws(telnetSocket, cols, rows); } catch {}
+            const liveTelnet = (attachedSshSession?.telnetSocket && !attachedSshSession.telnetSocket.destroyed)
+                ? attachedSshSession.telnetSocket
+                : (telnetSocket && !telnetSocket.destroyed ? telnetSocket : null);
+            if (liveTelnet) {
+                try { sendNaws(liveTelnet, cols, rows); } catch {}
+                if (attachedSshSession) {
+                    attachedSshSession.pty = { rows, cols };
+                    attachedSshSession.lastActive = Date.now();
+                    flushSshSessionHistory(attachedSshSession);
+                    try { terminalHistory.appendResize(attachedSshSession.userId, attachedSshSession.id, cols, rows); } catch {}
+                }
                 return;
             }
             if (sshStream && sshStream.setWindow) {

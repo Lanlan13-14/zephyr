@@ -66,10 +66,44 @@ function waitFor(ws, type, timeoutMs = 5000) {
                 clearTimeout(timer);
                 ws.off('message', onMsg);
                 resolve(msg);
-            } else if (msg.type === 'error') {
+            } else if (msg.type === 'error' && type !== 'error') {
                 clearTimeout(timer);
                 ws.off('message', onMsg);
                 reject(new Error(msg.message || 'error'));
+            }
+        };
+        ws.on('message', onMsg);
+    });
+}
+
+/** Wait for ready and any early data frames that raced ahead of the await. */
+function waitReadyAndMaybeData(ws, timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+        let ready = null;
+        let data = null;
+        const timer = setTimeout(() => {
+            ws.off('message', onMsg);
+            if (ready) resolve({ ready, data });
+            else reject(new Error('timeout waiting for ready'));
+        }, timeoutMs);
+        const onMsg = (raw) => {
+            let msg;
+            try { msg = JSON.parse(String(raw)); } catch { return; }
+            if (msg.type === 'error') {
+                clearTimeout(timer);
+                ws.off('message', onMsg);
+                reject(new Error(msg.message || 'error'));
+                return;
+            }
+            if (msg.type === 'ready') ready = msg;
+            if (msg.type === 'data' && !data) data = msg;
+            if (ready) {
+                // Give a short grace window for a concurrent banner frame.
+                clearTimeout(timer);
+                setTimeout(() => {
+                    ws.off('message', onMsg);
+                    resolve({ ready, data });
+                }, 40);
             }
         };
         ws.on('message', onMsg);
@@ -83,7 +117,8 @@ test('WS /ssh connects a TELNET target and pumps data both ways', async () => {
         ws.once('open', resolve);
         ws.once('error', reject);
     });
-    const readyP = waitFor(ws, 'ready');
+    // Attach collector BEFORE connect so a fast banner cannot race past us.
+    const readyBag = waitReadyAndMaybeData(ws);
     ws.send(JSON.stringify({
         type: 'connect',
         protocol: 'TELNET',
@@ -94,12 +129,12 @@ test('WS /ssh connects a TELNET target and pumps data both ways', async () => {
         rows: 24,
         sessionId: `telnet-ws-${Date.now()}`,
     }));
-    const ready = await readyP;
+    const { ready, data: earlyData } = await readyBag;
     assert.equal(ready.protocol, 'TELNET');
     assert.match(ready.warning || '', /未加密|unencrypted|cleartext/i);
 
-    // Server should have already sent "login: "
-    const loginPrompt = await waitFor(ws, 'data');
+    // Server should have already sent "login: " (may have arrived with ready).
+    const loginPrompt = earlyData || await waitFor(ws, 'data');
     assert.match(loginPrompt.data, /login:/);
 
     // Client input should reach the TCP peer (after negotiation bytes).
@@ -130,7 +165,7 @@ test('saved TELNET connection can open through /api/connections + WS', async () 
         ws.once('open', resolve);
         ws.once('error', reject);
     });
-    const readyP = waitFor(ws, 'ready');
+    const readyBag = waitReadyAndMaybeData(ws);
     ws.send(JSON.stringify({
         type: 'connect',
         connectionId: id,
@@ -138,9 +173,9 @@ test('saved TELNET connection can open through /api/connections + WS', async () 
         cols: 80,
         rows: 24,
     }));
-    const ready = await readyP;
+    const { ready, data: earlyData } = await readyBag;
     assert.equal(ready.protocol, 'TELNET');
-    const prompt = await waitFor(ws, 'data');
+    const prompt = earlyData || await waitFor(ws, 'data');
     assert.match(prompt.data, /login:/);
     ws.close();
 });
