@@ -953,7 +953,10 @@
             <div class="form-group"><label for="snippetName">名称</label><input id="snippetName" maxlength="60" required placeholder="例如：查看 Docker 状态"></div>
             <div class="form-group"><label for="snippetCommand">命令内容</label><textarea id="snippetCommand" rows="6" required placeholder="docker ps\n# 支持多行命令"></textarea></div>
             <div class="form-group"><label for="snippetGroup">分组 / 标签</label><input id="snippetGroup" maxlength="40" placeholder="例如：Docker / Linux / 自定义"></div>
-            <label class="settings-switch-option snippet-auto-run" for="snippetAutoRun"><span class="settings-switch-copy"><strong>点击后直接执行</strong><small>关闭时仅将命令填入终端输入框</small></span><span class="settings-switch-control"><input type="checkbox" id="snippetAutoRun"><span class="settings-switch-track" aria-hidden="true"></span></span></label>
+            <label class="settings-switch-option snippet-auto-run" for="snippetAutoRun">
+                <span class="settings-switch-copy"><strong>点击后直接执行</strong><small>关闭时仅将命令填入终端输入框</small></span>
+                <span class="connection-share-switch"><input type="checkbox" id="snippetAutoRun"><span aria-hidden="true"></span></span>
+            </label>
             <div class="modal-actions"><button class="btn" type="button" id="cancelSnippetEditBtn">取消</button><button class="btn btn-primary" type="submit" id="saveSnippetBtn">保存代码片段</button></div>
         </form>
     </div>
