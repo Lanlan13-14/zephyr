@@ -1650,6 +1650,29 @@ export const Motion = {
    * WeakMap: surfaceEl → Set<sourceEl>
    */
   _hiddenBySurface: new WeakMap(),
+  // Source controls frequently have CSS opacity/transform transitions. A plain
+  // `style.opacity = '0'` therefore crossfades the live source while its clone
+  // is already flying, producing a double-image flash. Preserve inline paint
+  // so hide and handoff can be one composited state change.
+  _sourcePaint: new WeakMap(),
+  _sourcePaintGeneration: new WeakMap(),
+
+  _captureSourcePaint(el) {
+    const read = (name) => ({
+      value: el.style.getPropertyValue(name),
+      priority: el.style.getPropertyPriority(name),
+    });
+    return {
+      opacity: read('opacity'), pointerEvents: read('pointer-events'),
+      visibility: read('visibility'), transform: read('transform'), filter: read('filter'),
+      transition: read('transition'), animation: read('animation'),
+    };
+  },
+
+  _restoreInlinePaint(el, name, saved) {
+    if (saved?.value) el.style.setProperty(name, saved.value, saved.priority);
+    else el.style.removeProperty(name);
+  },
 
   hideSource(surfaceEl, sourceEl) {
     if (!sourceEl?.style) return;
@@ -1659,25 +1682,49 @@ export const Motion = {
       this._hiddenBySurface.set(surfaceEl, set);
     }
     set.add(sourceEl);
-    sourceEl.style.opacity = '0';
-    sourceEl.style.pointerEvents = 'none';
+    if (!this._sourcePaint.has(sourceEl)) this._sourcePaint.set(sourceEl, this._captureSourcePaint(sourceEl));
+    const generation = (this._sourcePaintGeneration.get(sourceEl) || 0) + 1;
+    this._sourcePaintGeneration.set(sourceEl, generation);
+
+    // Disable authored transitions BEFORE setting opacity. This must be
+    // synchronous: the clone is made visible in the same call stack.
+    sourceEl.style.setProperty('transition', 'none', 'important');
+    sourceEl.style.setProperty('animation', 'none', 'important');
+    sourceEl.style.setProperty('opacity', '0', 'important');
+    sourceEl.style.setProperty('pointer-events', 'none', 'important');
     sourceEl.dataset.motionHidden = '1';
+    // Commit the invisible source before iosAppOpen exposes the clone/surface.
+    void sourceEl.offsetWidth;
   },
 
   restoreSource(sourceEl) {
-    if (!sourceEl) return;
+    if (!sourceEl?.style) return;
     // CRITICAL: release motion slots first. If we only clear style.opacity,
     // the engine's next frame re-writes opacity:0 from the bound channel —
     // icons/buttons appear permanently gone after close.
     try { this.release(sourceEl); } catch { /* noop */ }
-    if (sourceEl.style) {
-      sourceEl.style.opacity = '';
-      sourceEl.style.pointerEvents = '';
-      sourceEl.style.visibility = '';
-      sourceEl.style.transform = '';
-      sourceEl.style.filter = '';
+    const saved = this._sourcePaint.get(sourceEl);
+    const generation = (this._sourcePaintGeneration.get(sourceEl) || 0) + 1;
+    this._sourcePaintGeneration.set(sourceEl, generation);
+
+    // Restore the target paint while transitions remain disabled. The close
+    // caller can now atomically reveal the real control under the twin.
+    for (const name of ['opacity', 'pointer-events', 'visibility', 'transform', 'filter']) {
+      this._restoreInlinePaint(sourceEl, name, saved?.[name]);
     }
+    sourceEl.style.setProperty('transition', 'none', 'important');
+    sourceEl.style.setProperty('animation', 'none', 'important');
     delete sourceEl.dataset.motionHidden;
+    void sourceEl.offsetWidth;
+
+    // Re-enable authored motion only after the restored source has painted.
+    // A rapid reopen increments generation, leaving the new hide authoritative.
+    requestAnimationFrame(() => {
+      if (this._sourcePaintGeneration.get(sourceEl) !== generation || sourceEl.dataset.motionHidden) return;
+      this._restoreInlinePaint(sourceEl, 'transition', saved?.transition);
+      this._restoreInlinePaint(sourceEl, 'animation', saved?.animation);
+      this._sourcePaint.delete(sourceEl);
+    });
   },
 
   /** Restore every source ever hidden for this surface (or one specific). */

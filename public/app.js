@@ -8646,12 +8646,17 @@ function armMotionModalOpen(Motion, modal, card, inner, trigger, motionClass) {
     // 按压 CSS 类也会 scale，量尺寸前清掉
     trigger?.classList?.remove('connection-pressing');
     if (trigger?.style) {
-        trigger.style.opacity = '0';
-        trigger.style.pointerEvents = 'none';
+        // Do not pre-hide here. iosAppOpen.hideSource() owns the single-frame
+        // handoff: it disables authored opacity transitions, hides the real
+        // control, forces a paint, then exposes the pixel-identical twin.
+        // Pre-hiding here made hideSource capture opacity:0 as its “original”
+        // state and let AI button transitions cross-fade a second source image.
+        trigger.style.opacity = '';
+        trigger.style.pointerEvents = '';
         trigger.style.transform = '';
         trigger.style.filter = '';
         trigger.style.visibility = '';
-        trigger.dataset.motionHidden = '1';
+        delete trigger.dataset.motionHidden;
     }
     if (card?.style) {
         card.style.visibility = 'hidden';
@@ -8687,7 +8692,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260725-flashfix3')
+        return import('./vendor/zephyr-motion/index.js?v=20260725-source-handoff1')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');

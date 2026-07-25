@@ -9266,10 +9266,9 @@ body.app-body:not(.terminal-mode) .app-main {
 .ai-env-item:active,
 .ai-memory-item:active,
 .ai-plan-item:active { transform: scale(.992); }
-/* AI 供应商弹窗动画改走 zephyr-motion iosAppOpen/Close；旧 CSS slide/fade 已移除 */
-#aiAddProviderBtn.connection-pressing {
-    transform: scale(0.96);
-}
+/* AI 供应商弹窗动画改走 zephyr-motion iosAppOpen/Close；旧 CSS slide/fade 已移除。 */
+/* #aiAddProviderBtn 的按压只由 Motion.press 驱动；额外 CSS transform 会在
+   clone 接管前和引擎通道争抢同一个 transform，造成首帧跳变。 */
 .ai-agent-panel.open .ai-agent-window { animation: aiIosPopIn .48s var(--ios-open) both; }
 .ai-agent-panel.open .ai-title-bar,
 .ai-agent-panel.open .ai-browser-preview,
