@@ -17,7 +17,23 @@ const nodemailer = require('nodemailer');
 const { TOTP, generateSecret, generateURI, verifySync } = require('otplib');
 const QRCode = require('qrcode');
 const multer = require('multer');
-const archiver = require('archiver');
+// archiver@8 is ESM-only and replaces the archiver(format, options) factory
+// with per-format classes (ZipArchive/TarArchive/JsonArchive). Load lazily
+// via dynamic import from CJS and expose a compatible factory.
+let archiverModulePromise = null;
+function loadArchiver() {
+    if (!archiverModulePromise) {
+        archiverModulePromise = import('archiver').then((m) => {
+            const ctors = { zip: m.ZipArchive, tar: m.TarArchive, json: m.JsonArchive };
+            return (format, options) => {
+                const Ctor = ctors[format];
+                if (!Ctor) throw new Error(`不支持的压缩格式: ${format}`);
+                return new Ctor(options);
+            };
+        });
+    }
+    return archiverModulePromise;
+}
 const unzipper = require('unzipper');
 const ipaddr = require('ipaddr.js');
 const {
@@ -2134,6 +2150,7 @@ function encryptionKey(password = process.env.ENCRYPTION_KEY || 'please-change-t
 function encryptBuffer(buffer, password) { const iv = crypto.randomBytes(12); const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey(password), iv); const enc = Buffer.concat([cipher.update(buffer), cipher.final()]); return Buffer.concat([Buffer.from('ZEPHYR3'), iv, cipher.getAuthTag(), enc]); }
 function decryptBuffer(buffer, password) { const b = Buffer.from(buffer); if (b.slice(0, 7).toString() !== 'ZEPHYR3') throw new Error('备份格式不正确'); const iv = b.slice(7, 19), tag = b.slice(19, 35), enc = b.slice(35); const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey(password), iv); decipher.setAuthTag(tag); return Buffer.concat([decipher.update(enc), decipher.final()]); }
 async function zipBuffer(files) {
+    const archiver = await loadArchiver();
     return new Promise((resolve, reject) => {
         const chunks = []; const archive = archiver('zip', { zlib: { level: 9 } });
         archive.on('data', (c) => chunks.push(c)); archive.on('error', reject); archive.on('end', () => resolve(Buffer.concat(chunks)));
@@ -4361,6 +4378,7 @@ async function uploadLocalPathToRemote(sftp, localPath, remotePath, progress = n
 }
 
 async function createZipArchiveFromLocal(sourceDir, rootNames, outputPath, transfer = null) {
+    const archiver = await loadArchiver();
     await new Promise((resolve, reject) => {
         try { throwIfArchiveTransferCancelled(transfer); } catch (err) { reject(err); return; }
         const output = trackArchiveStream(transfer, fs.createWriteStream(outputPath));
