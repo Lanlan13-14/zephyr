@@ -895,10 +895,10 @@ function ensureColorPickerPanel() {
             <span class="color-panel-current-value" data-color-value>#0a84ff</span>
         </div>
         <div class="color-palette-sv" data-color-sv aria-label="拖动选择饱和度和明度" role="slider"><span class="color-palette-cursor" aria-hidden="true"></span></div>
-        <label class="color-hue-row"><span>色相</span><input type="range" min="0" max="360" step="1" value="210" data-color-hue aria-label="色相"></label>
-        <div class="color-panel-hint">拖动色盘/色相，或继续直接输入色号。</div>
+        <label class="color-hue-row"><span>${t('色相')}</span><input type="range" min="0" max="360" step="1" value="210" data-color-hue aria-label="${t('色相')}"></label>
+        <div class="color-panel-hint">${t('拖动色盘/色相，或继续直接输入色号。')}</div>
         <div class="color-panel-grid" aria-label="常用颜色">${COLOR_PICKER_PRESETS.map((color) => `<button type="button" data-color-preset="${color}" style="--preset-color:${color}" aria-label="选择 ${color}"></button>`).join('')}</div>
-        <div class="color-panel-actions"><button type="button" data-color-close>关闭</button></div>`;
+        <div class="color-panel-actions"><button type="button" data-color-close>${t('关闭')}</button></div>`;
     document.body.appendChild(panel);
     panel.addEventListener('click', (event) => {
         const preset = event.target.closest?.('[data-color-preset]')?.dataset.colorPreset;
@@ -1470,13 +1470,13 @@ function isCrisisSearchQuery(q) {
 function renderCrisisHelpEmptyCard() {
     const phone = escapeHtml(CRISIS_HELP_HOTLINE);
     const tel = escapeAttr(CRISIS_HELP_HOTLINE_TEL);
-    return `<div class="empty-card crisis-help-card" role="region" aria-label="心理援助信息">
+    return `<div class="empty-card crisis-help-card" role="region" aria-label="${t('心理援助信息')}">
         <div class="crisis-help-inner">
-            <h2 class="crisis-help-title">你不孤单，我们都在</h2>
-            <p class="crisis-help-lead">如果需要帮助，请拨打全国24小时免费心理咨询热线</p>
+            <h2 class="crisis-help-title">${t('你不孤单，我们都在')}</h2>
+            <p class="crisis-help-lead">${t('如果需要帮助，请拨打全国24小时免费心理咨询热线')}</p>
             <a class="crisis-help-phone" href="tel:${tel}">${phone}</a>
             <p class="crisis-help-en">24/7 Free Psychological Counseling</p>
-            <button type="button" class="btn crisis-help-copy" data-copy-hotline="${phone}">复制热线</button>
+            <button type="button" class="btn crisis-help-copy" data-copy-hotline="${phone}">${t('复制热线')}</button>
         </div>
     </div>`;
 }
@@ -1555,16 +1555,16 @@ function renderActivities() {
                 <time datetime="${new Date(Number(activity.time || 0)).toISOString()}">${escapeHtml(fmtTime(activity.time))}</time>
             </div>
             <dl class="activity-meta-grid">
-                <div><dt>事件类型</dt><dd>${escapeHtml(detail.category)}</dd></div>
-                <div><dt>操作者</dt><dd>${escapeHtml(detail.actor)}</dd></div>
-                <div><dt>协议</dt><dd>${escapeHtml(detail.protocol)}</dd></div>
-                <div><dt>目标地址</dt><dd>${escapeHtml(detail.target)}</dd></div>
-                <div><dt>来源 IP</dt><dd>${escapeHtml(detail.sourceIp)}</dd></div>
-                <div><dt>耗时</dt><dd>${escapeHtml(detail.duration)}</dd></div>
+                <div><dt>${t('事件类型')}</dt><dd>${escapeHtml(detail.category)}</dd></div>
+                <div><dt>${t('操作者')}</dt><dd>${escapeHtml(detail.actor)}</dd></div>
+                <div><dt>${t('协议')}</dt><dd>${escapeHtml(detail.protocol)}</dd></div>
+                <div><dt>${t('目标地址')}</dt><dd>${escapeHtml(detail.target)}</dd></div>
+                <div><dt>${t('来源 IP')}</dt><dd>${escapeHtml(detail.sourceIp)}</dd></div>
+                <div><dt>${t('耗时')}</dt><dd>${escapeHtml(detail.duration)}</dd></div>
             </dl>
-            <div class="activity-event-id"><span>事件 ID</span><code>${escapeHtml(activity.id || '—')}</code></div>
+            <div class="activity-event-id"><span>${t('事件 ID')}</span><code>${escapeHtml(activity.id || '—')}</code></div>
         </article>`;
-    }).join('') : '<div class="activity-empty"><strong>此时间范围内没有活动</strong><span>尝试扩大时间范围查看更早的记录。</span></div>';
+    }).join('') : `<div class="activity-empty"><strong>${t('此时间范围内没有活动')}</strong><span>${t('尝试扩大时间范围查看更早的记录。')}</span></div>`;
 }
 async function loadActivities() {
     const { from, to } = activityRangeBounds();
@@ -1622,15 +1622,15 @@ function jumpConnectionOptions(selected = '') {
     const selectedId = String(selected || '');
     const currentEditingId = String(editingId || '');
     const list = connections.filter((c) => String(c.protocol || 'SSH').toUpperCase() === 'SSH' && String(c.id) !== currentEditingId);
-    return '<option value="">请选择跳板机</option>' + list.map((c) => `<option value="${c.id}" ${selectedId === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.host)}:${escapeHtml(c.port)})</option>`).join('');
+    return `<option value="">${t('请选择跳板机')}</option>` + list.map((c) => `<option value="${c.id}" ${selectedId === String(c.id) ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.host)}:${escapeHtml(c.port)})</option>`).join('');
 }
 function renderJumpRouteRows(selectedIds = []) {
     const list = normalizeRouteRowIds(selectedIds);
     $('#jumpRouteList').innerHTML = list.map((id, index) => `
         <div class="jump-route-row" data-jump-route-row>
-            <label>跳板机 ${index + 1}:</label>
+            <label>${t('跳板机 {index}:', { index: index + 1 })}</label>
             <select data-jump-route-select>${jumpConnectionOptions(id)}</select>
-            <button type="button" class="jump-route-remove" data-remove-jump-route title="移除跳板机">×</button>
+            <button type="button" class="jump-route-remove" data-remove-jump-route title="${t('移除跳板机')}">×</button>
         </div>`).join('');
     console.debug('[route-ui]', 'render jump rows', { selectedIds: list, availableSshConnections: connections.filter((c) => String(c.protocol || 'SSH').toUpperCase() === 'SSH' && String(c.id) !== String(editingId || '')).length });
 }
@@ -2930,9 +2930,9 @@ function renderTerminalSmartbar() {
     const launchableConnections = connections.filter((c) => ['SSH', 'RDP', 'VNC'].includes(String(c.protocol || 'SSH').toUpperCase()));
     const picker = terminalSmartbarPickerOpen ? `
         <div class="smartbar-picker" role="dialog" aria-label="选择服务器连接">
-            <div class="smartbar-picker-head"><strong>选择服务器</strong><button data-smartbar-picker-close title="关闭">×</button></div>
+            <div class="smartbar-picker-head"><strong>${t('选择服务器')}</strong><button data-smartbar-picker-close title="${t('关闭')}">×</button></div>
             <div class="smartbar-picker-list">
-                ${launchableConnections.length ? launchableConnections.map((c) => `<button data-smartbar-connect="${c.id}"><span class="proto-dot ${terminalProtocolClass(c.protocol)}"></span><strong>${escapeHtml(c.name)}</strong><em>${escapeHtml(c.protocol)} · ${escapeHtml(c.host)}:${escapeHtml(c.port)}</em></button>`).join('') : '<div class="smartbar-empty">暂无 SSH/RDP/VNC 服务器</div>'}
+                ${launchableConnections.length ? launchableConnections.map((c) => `<button data-smartbar-connect="${c.id}"><span class="proto-dot ${terminalProtocolClass(c.protocol)}"></span><strong>${escapeHtml(c.name)}</strong><em>${escapeHtml(c.protocol)} · ${escapeHtml(c.host)}:${escapeHtml(c.port)}</em></button>`).join('') : `<div class="smartbar-empty">${t('暂无 SSH/RDP/VNC 服务器')}</div>`}
             </div>
         </div>` : '';
     const pickerMount = document.getElementById('smartbarPickerLayer') || (() => {
@@ -2951,7 +2951,7 @@ function renderTerminalSmartbar() {
         <button class="smartbar-handle" data-smartbar-toggle title="展开/收回 Dock"><span></span></button>
         <div class="smartbar-panel">
             <div class="smartbar-dock" aria-label="终端 Dock">
-                ${sessions.map(icon).join('') || '<span class="smartbar-empty">暂无会话</span>'}
+                ${sessions.map(icon).join('') || `<span class="smartbar-empty">${t('暂无会话')}</span>`}
                 <button class="smartbar-add" style="--dock-index:${sessions.length}" data-smartbar-add title="选择服务器连接" aria-label="选择服务器连接">${smartbarPlusHtml()}</button>
             </div>
         </div>`;
@@ -5030,24 +5030,24 @@ async function openAiUsageSheet(messageMetrics = null, anchor = null) {
     const totals = samples.reduce((acc, s) => { acc.inputChars += Number(s.inputCharsBeforeCompact || 0); acc.rounds += Number(s.providerCalls || 0); return acc; }, { inputChars: 0, rounds: 0 });
     const pop = document.createElement('div');
     pop.className = 'ai-usage-popover';
-    pop.innerHTML = `<div class="ai-usage-head"><h2>会话 Token 用量</h2><button class="ai-usage-close" type="button" aria-label="关闭">×</button></div>
+    pop.innerHTML = `<div class="ai-usage-head"><h2>${t('会话 Token 用量')}</h2><button class="ai-usage-close" type="button" aria-label="${t('关闭')}">×</button></div>
         <div class="ai-usage-body">
-            <div class="ai-usage-section">上下文</div>
-            <div class="ai-usage-row"><span>已用上下文</span><b>${formatTokenValue(Math.round((samples[0]?.inputCharsBeforeCompact || totals.inputChars || 0) / 2.4))}</b></div>
-            <div class="ai-usage-row"><span>上下文窗口</span><b>${formatTokenValue(opts.context?.windowTokens || context.windowTokens || 0)}</b></div>
-            <div class="ai-usage-row"><span>最大输出</span><b>${formatTokenValue(opts.max_output_tokens || opts.max_tokens || 0)}</b></div>
-            <div class="ai-usage-row"><span>本轮耗时</span><b>${msg.durationMs ? (Number(msg.durationMs) / 1000).toFixed(1) + 's' : '—'}</b></div>
-            <div class="ai-usage-section">思考</div>
-            <div class="ai-usage-row"><span>思考</span><b>${thinking ? t('开') : '默认'}</b></div>
-            <div class="ai-usage-row"><span>级别</span><b>${escapeHtml(thinking || '默认')}</b></div>
-            <div class="ai-usage-row"><span>已支持</span><b>${escapeHtml(aiProviderKind(provider) === 'openai' ? '视模型而定' : t('是'))}</b></div>
-            <div class="ai-usage-section">TOKEN（近期总计）</div>
-            <div class="ai-usage-row"><span>输入（估算）</span><b>${formatTokenValue(Math.round(totals.inputChars / 2.4))}</b></div>
-            <div class="ai-usage-row"><span>输出</span><b>—</b></div>
-            <div class="ai-usage-section">AGENT 循环</div>
-            <div class="ai-usage-row"><span>本轮循环次数</span><b>${formatTokenValue(msg.providerCalls || 0)}</b></div>
-            <div class="ai-usage-row"><span>总循环次数</span><b>${formatTokenValue(totals.rounds)}</b></div>
-            <div class="ai-usage-row"><span>近期请求数</span><b>${formatTokenValue(metrics.count || samples.length || 0)}</b></div>
+            <div class="ai-usage-section">${t('上下文')}</div>
+            <div class="ai-usage-row"><span>${t('已用上下文')}</span><b>${formatTokenValue(Math.round((samples[0]?.inputCharsBeforeCompact || totals.inputChars || 0) / 2.4))}</b></div>
+            <div class="ai-usage-row"><span>${t('上下文窗口')}</span><b>${formatTokenValue(opts.context?.windowTokens || context.windowTokens || 0)}</b></div>
+            <div class="ai-usage-row"><span>${t('最大输出')}</span><b>${formatTokenValue(opts.max_output_tokens || opts.max_tokens || 0)}</b></div>
+            <div class="ai-usage-row"><span>${t('本轮耗时')}</span><b>${msg.durationMs ? (Number(msg.durationMs) / 1000).toFixed(1) + 's' : '—'}</b></div>
+            <div class="ai-usage-section">${t('思考')}</div>
+            <div class="ai-usage-row"><span>${t('思考')}</span><b>${thinking ? t('开') : t('默认')}</b></div>
+            <div class="ai-usage-row"><span>${t('级别')}</span><b>${escapeHtml(thinking || t('默认'))}</b></div>
+            <div class="ai-usage-row"><span>${t('已支持')}</span><b>${escapeHtml(aiProviderKind(provider) === 'openai' ? t('视模型而定') : t('是'))}</b></div>
+            <div class="ai-usage-section">TOKEN（${t('近期总计')}）</div>
+            <div class="ai-usage-row"><span>${t('输入（估算）')}</span><b>${formatTokenValue(Math.round(totals.inputChars / 2.4))}</b></div>
+            <div class="ai-usage-row"><span>${t('输出')}</span><b>—</b></div>
+            <div class="ai-usage-section">AGENT ${t('循环')}</div>
+            <div class="ai-usage-row"><span>${t('本轮循环次数')}</span><b>${formatTokenValue(msg.providerCalls || 0)}</b></div>
+            <div class="ai-usage-row"><span>${t('总循环次数')}</span><b>${formatTokenValue(totals.rounds)}</b></div>
+            <div class="ai-usage-row"><span>${t('近期请求数')}</span><b>${formatTokenValue(metrics.count || samples.length || 0)}</b></div>
         </div>`;
     document.body.appendChild(pop);
     const rect = anchor?.getBoundingClientRect?.() || document.querySelector('#aiUsageBtn')?.getBoundingClientRect?.() || null;
@@ -5145,8 +5145,8 @@ function renderAiMcpList() {
             <span class="muted">${escapeHtml(s.type)} · ${s.enabled === false ? t('停用') : t('启用')}</span>
             <div class="muted mono">${detail}</div></div>
             <div class="ai-list-actions">
-                <button type="button" class="tool-btn" data-ai-mcp-edit="${escapeHtml(s.id)}">编辑</button>
-                <button type="button" class="tool-btn danger" data-ai-mcp-del="${escapeHtml(s.id)}">删除</button>
+                <button type="button" class="tool-btn" data-ai-mcp-edit="${escapeHtml(s.id)}">${t('编辑')}</button>
+                <button type="button" class="tool-btn danger" data-ai-mcp-del="${escapeHtml(s.id)}">${t('删除')}</button>
             </div></div>`;
     }).join('');
 }
@@ -5539,7 +5539,7 @@ function renderAiProviderList() {
         if (Array.isArray(p.sharedUserIds) && p.sharedUserIds.length) sharedLabels.push(`指定用户 ${p.sharedUserIds.length}`);
         const source = owned ? t('我的 Provider') : `由 ${p.ownerUsername || t('其他用户')} 共享`;
         return `<div class="ai-provider-item" data-provider-id="${escapeHtml(p.id)}"><div><strong>${escapeHtml(p.name || t('未命名供应商'))}</strong><span>${escapeHtml(p.type || 'openai-compatible')} · ${p.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(modelText)} · ${escapeHtml(source)}${sharedLabels.length ? ` · 共享：${escapeHtml(sharedLabels.join('、'))}` : ''}</span><code>${escapeHtml(p.baseUrl || t('默认 API 地址'))}</code></div><button class="tool-btn" data-ai-fetch-provider-models="${escapeHtml(p.id)}">获取模型</button>${owned ? `<button class="tool-btn" data-ai-reveal-provider-key="${escapeHtml(p.id)}">查看 Key</button><button class="tool-btn" data-ai-edit-provider="${escapeHtml(p.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-provider="${escapeHtml(p.id)}">删除</button>` : '<span class="muted">仅可调用</span>'}</div>`;
-    }).join('') : '<p class="empty-state">暂无可用模型供应商。创建自己的 Provider，或让其他用户共享给你。</p>';
+    }).join('') : `<p class="empty-state">${t('暂无可用模型供应商。创建自己的 Provider，或让其他用户共享给你。')}</p>`;
 }
 async function fetchAiModelsForProvider(id = '') {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
@@ -5610,7 +5610,7 @@ function renderAiEnvList() {
     const list = $('#aiEnvList');
     if (!list) return;
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    list.innerHTML = ai.envVars.length ? ai.envVars.map((item) => `<div class="ai-env-item" data-env-id="${escapeHtml(item.id)}"><div><strong>${escapeHtml(item.name || 'UNNAMED')}</strong><span>${item.enabled === false ? t('已停用') : t('已启用')} · ${item.hasValue || item.value ? t('已保存值') : t('无值')} · ${item.visibleToAi ? t('AI可见') : t('AI屏蔽')}${item.valueVisibleToAi ? '/值可见' : ''} · ${escapeHtml(item.description || '')}</span></div><button class="tool-btn" data-ai-edit-env="${escapeHtml(item.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-env="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<p class="empty-state">暂无 AI 环境变量。变量值会加密保存，AI 读取时需要敏感确认。</p>';
+    list.innerHTML = ai.envVars.length ? ai.envVars.map((item) => `<div class="ai-env-item" data-env-id="${escapeHtml(item.id)}"><div><strong>${escapeHtml(item.name || 'UNNAMED')}</strong><span>${item.enabled === false ? t('已停用') : t('已启用')} · ${item.hasValue || item.value ? t('已保存值') : t('无值')} · ${item.visibleToAi ? t('AI可见') : t('AI屏蔽')}${item.valueVisibleToAi ? '/值可见' : ''} · ${escapeHtml(item.description || '')}</span></div><button class="tool-btn" data-ai-edit-env="${escapeHtml(item.id)}">${t('编辑')}</button><button class="tool-btn danger" data-ai-delete-env="${escapeHtml(item.id)}">${t('删除')}</button></div>`).join('') : '<p class="empty-state">暂无 AI 环境变量。变量值会加密保存，AI 读取时需要敏感确认。</p>';
 }
 async function saveAiEnv(e) {
     e.preventDefault();
@@ -5665,8 +5665,8 @@ function renderAiMemoryList() {
         const tags = Array.isArray(m.tags) ? m.tags : splitCsv(m.tags);
         const connIds = Array.isArray(m.connectionIds) ? m.connectionIds : splitCsv(m.connectionIds);
         const meta = [m.enabled === false ? t('已停用') : t('已启用'), m.scope || 'global', m.project || '', tags.length ? `标签:${tags.join(',')}` : '', connIds.length ? `连接:${connIds.length}` : ''].filter(Boolean).join(' · ');
-        return `<div class="ai-memory-item" data-memory-id="${escapeHtml(m.id)}"><div><strong>${escapeHtml(m.title || 'Memory')}</strong><span>${escapeHtml(meta)}</span><code>${escapeHtml((m.content || '').slice(0, 300))}</code></div><button class="tool-btn" data-ai-edit-memory="${escapeHtml(m.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-memory="${escapeHtml(m.id)}">删除</button></div>`;
-    }).join('') : '<p class="empty-state">暂无长期 Memory。AI 也可通过 memory_save 工具主动记录项目记忆，并按连接、项目、标签自动关联。</p>';
+        return `<div class="ai-memory-item" data-memory-id="${escapeHtml(m.id)}"><div><strong>${escapeHtml(m.title || 'Memory')}</strong><span>${escapeHtml(meta)}</span><code>${escapeHtml((m.content || '').slice(0, 300))}</code></div><button class="tool-btn" data-ai-edit-memory="${escapeHtml(m.id)}">${t('编辑')}</button><button class="tool-btn danger" data-ai-delete-memory="${escapeHtml(m.id)}">${t('删除')}</button></div>`;
+    }).join('') : `<p class="empty-state">${t('暂无长期 Memory。AI 也可通过 memory_save 工具主动记录项目记忆，并按连接、项目、标签自动关联。')}</p>`;
 }
 async function saveAiMemory(e) {
     e.preventDefault();
@@ -5717,9 +5717,9 @@ function renderAiPlanList() {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     list.innerHTML = ai.plans.length ? ai.plans.slice(0, 30).map((plan) => {
         const steps = Array.isArray(plan.steps) ? plan.steps : [];
-        const actions = `<div class="ai-plan-actions"><button class="tool-btn" data-ai-plan-pause="${escapeHtml(plan.id)}">暂停</button><button class="tool-btn" data-ai-plan-resume="${escapeHtml(plan.id)}">继续</button><button class="tool-btn" data-ai-plan-retry="${escapeHtml(plan.id)}">重试失败</button><button class="tool-btn danger" data-ai-plan-delete="${escapeHtml(plan.id)}">删除</button></div>`;
+        const actions = `<div class="ai-plan-actions"><button class="tool-btn" data-ai-plan-pause="${escapeHtml(plan.id)}">${t('暂停')}</button><button class="tool-btn" data-ai-plan-resume="${escapeHtml(plan.id)}">${t('继续')}</button><button class="tool-btn" data-ai-plan-retry="${escapeHtml(plan.id)}">${t('重试失败')}</button><button class="tool-btn danger" data-ai-plan-delete="${escapeHtml(plan.id)}">${t('删除')}</button></div>`;
         return `<div class="ai-plan-item" data-plan-id="${escapeHtml(plan.id)}"><div><strong>${escapeHtml(plan.title || t('任务计划'))}</strong><span><b class="ai-status ai-status-${escapeHtml(plan.status || 'planned')}">${escapeHtml(plan.status || 'planned')}</b> · ${fmtTime(plan.updatedAt || plan.createdAt)}</span>${plan.risk ? `<p>${escapeHtml(plan.risk)}</p>` : ''}<ol>${steps.map((s, index) => `<li><em class="ai-status ai-status-${escapeHtml(s.status || 'pending')}">${escapeHtml(s.status || 'pending')}</em> ${escapeHtml(s.text || '')}${s.note ? `<small>${escapeHtml(s.note)}</small>` : ''}${s.error ? `<small class="error-text">${escapeHtml(s.error)}</small>` : ''}<div class="ai-step-actions"><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="running">执行中</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="completed">完成</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="failed">失败</button></div></li>`).join('')}</ol>${actions}</div></div>`;
-    }).join('') : '<p class="empty-state">暂无任务计划。AI 可通过 plan_task 工具为复杂任务创建计划，并持续更新步骤状态。</p>';
+    }).join('') : `<p class="empty-state">${t('暂无任务计划。AI 可通过 plan_task 工具为复杂任务创建计划，并持续更新步骤状态。')}</p>`;
 }
 
 function resetAiSkillForm() {
@@ -5733,7 +5733,7 @@ function renderAiSkillList() {
     const list = $('#aiSkillList');
     if (!list) return;
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    list.innerHTML = ai.skills.length ? ai.skills.map((s) => `<div class="ai-skill-item" data-skill-id="${escapeHtml(s.id)}"><div><strong>${escapeHtml(s.name || t('未命名 Skill'))}</strong><span>${s.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(s.description || '')}</span><code>${escapeHtml((s.prompt || '').slice(0, 260))}</code></div><button class="tool-btn" data-ai-edit-skill="${escapeHtml(s.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-skill="${escapeHtml(s.id)}">删除</button></div>`).join('') : '<p class="empty-state">暂无 Skill。可以把工作流、工具使用规则、专用提示词保存成能力包。</p>';
+    list.innerHTML = ai.skills.length ? ai.skills.map((s) => `<div class="ai-skill-item" data-skill-id="${escapeHtml(s.id)}"><div><strong>${escapeHtml(s.name || t('未命名 Skill'))}</strong><span>${s.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(s.description || '')}</span><code>${escapeHtml((s.prompt || '').slice(0, 260))}</code></div><button class="tool-btn" data-ai-edit-skill="${escapeHtml(s.id)}">${t('编辑')}</button><button class="tool-btn danger" data-ai-delete-skill="${escapeHtml(s.id)}">${t('删除')}</button></div>`).join('') : '<p class="empty-state">暂无 Skill。可以把工作流、工具使用规则、专用提示词保存成能力包。</p>';
 }
 async function saveAiSkill(e) {
     e.preventDefault();
@@ -5968,7 +5968,7 @@ function ensureAiMessageMenu() {
     menu = document.createElement('div');
     menu.id = 'aiMessageContextMenu';
     menu.className = 'ai-message-menu hidden';
-    menu.innerHTML = `<button type="button" data-ai-msg-action="copy"><span>⧉</span>复制文本</button><button type="button" data-ai-msg-action="edit"><span>✎</span>编辑消息</button><button type="button" data-ai-msg-action="regen"><span>↻</span>重新回答</button><button type="button" data-ai-msg-action="select"><span>T</span>选择文本</button><button type="button" data-ai-msg-action="usage"><span>◷</span>查看用量</button>`;
+    menu.innerHTML = `<button type="button" data-ai-msg-action="copy"><span>⧉</span>${t('复制文本')}</button><button type="button" data-ai-msg-action="edit"><span>✎</span>${t('编辑消息')}</button><button type="button" data-ai-msg-action="regen"><span>↻</span>${t('重新回答')}</button><button type="button" data-ai-msg-action="select"><span>T</span>${t('选择文本')}</button><button type="button" data-ai-msg-action="usage"><span>◷</span>${t('查看用量')}</button>`;
     document.body.appendChild(menu);
     return menu;
 }
@@ -6679,7 +6679,7 @@ function formatAiToolResult(r = {}) {
         <div class="ai-tool-trace-head"><span class="ai-tool-icon">${String(r.tool || '').startsWith('remote_') ? '▣' : String(r.tool || '').startsWith('browser_') ? '◉' : '◇'}</span><strong>${escapeHtml(title)}</strong>${duration ? `<em>${escapeHtml(duration)}</em>` : ''}</div>
         <div class="ai-tool-summary">${escapeHtml(summarizeAiToolResult(r.tool, result))}</div>
         ${shot?.url ? `<a href="${escapeHtml(shot.url)}" target="_blank" rel="noopener"><img class="ai-inline-shot" src="${escapeHtml(shot.url)}" alt="浏览器截图"></a>` : ''}
-        <details class="ai-tool-details"><summary>查看完整参数和结果</summary><pre><code>${escapeHtml(detail)}</code></pre></details>
+        <details class="ai-tool-details"><summary>${t('查看完整参数和结果')}</summary><pre><code>${escapeHtml(detail)}</code></pre></details>
     </div>`;
 }
 async function deleteAiPlan(planId) {
@@ -7090,7 +7090,7 @@ function insertAiConfirmationCard(confirmation, messageIndex = -1) {
     div.dataset.aiMessageRole = 'confirmation';
     if (messageIndex >= 0) div.dataset.aiMessageIndex = String(messageIndex);
     div.dataset.aiMessageText = `需要确认敏感操作：${confirmation?.summary || ''}`;
-    div.innerHTML = `<strong>需要确认敏感操作</strong><p>${escapeHtml(confirmation?.summary || '')}</p><pre>${escapeHtml(JSON.stringify(confirmation?.args || {}, null, 2))}</pre><div class="form-actions"><button class="btn btn-primary" data-ai-confirm-approve="${escapeHtml(confirmation?.id || '')}">确认执行</button><button class="btn danger" data-ai-confirm-deny="${escapeHtml(confirmation?.id || '')}">拒绝</button></div>`;
+    div.innerHTML = `<strong>${t('需要确认敏感操作')}</strong><p>${escapeHtml(confirmation?.summary || '')}</p><pre>${escapeHtml(JSON.stringify(confirmation?.args || {}, null, 2))}</pre><div class="form-actions"><button class="btn btn-primary" data-ai-confirm-approve="${escapeHtml(confirmation?.id || '')}">${t('确认执行')}</button><button class="btn danger" data-ai-confirm-deny="${escapeHtml(confirmation?.id || '')}">${t('拒绝')}</button></div>`;
     div.title = '';
     area.insertBefore(div, typing);
 }
@@ -7932,7 +7932,7 @@ function setupAiAssistant() {
     document.addEventListener('visibilitychange', () => { if (!document.hidden && aiPanelState === 'open') startAiPanelWatchdog(); });
 }
 
-function renderRemoteServers() { const ssh = connections.filter((c) => c.protocol === 'SSH'); $('#remoteServerList').innerHTML = ssh.length ? ssh.map((c) => `<label class="server-check"><input type="checkbox" value="${c.id}"> <span>${escapeHtml(c.name)}</span><em>${escapeHtml(c.host)}</em></label>`).join('') : '<div class="empty-card">暂无 SSH 连接</div>'; }
+function renderRemoteServers() { const ssh = connections.filter((c) => c.protocol === 'SSH'); $('#remoteServerList').innerHTML = ssh.length ? ssh.map((c) => `<label class="server-check"><input type="checkbox" value="${c.id}"> <span>${escapeHtml(c.name)}</span><em>${escapeHtml(c.host)}</em></label>`).join('') : `<div class="empty-card">${t('暂无 SSH 连接')}</div>`; }
 async function remoteExecute(e) { e.preventDefault(); const ids = $$('#remoteServerList input:checked').map((i) => i.value); try { $('#remoteResults').innerHTML = `<div class="empty-card">${t('执行中...')}</div>`; const data = await api('/api/remote-execute', { method: 'POST', body: JSON.stringify({ connectionIds: ids, command: $('#remoteCommand').value, timeoutSeconds: Number($('#remoteTimeout').value) || 30 }) }); $('#remoteResults').innerHTML = data.results.map((r) => `<article class="result-card ${r.success ? 'ok' : 'fail'}"><h3>${escapeHtml(r.name)} <span>${escapeHtml(r.status)} · ${r.durationMs}ms</span></h3>${r.error ? `<p class="error-text">${escapeHtml(r.error)}</p>` : ''}<pre>${escapeHtml(r.stdout || '')}</pre>${r.stderr ? `<pre class="stderr">${escapeHtml(r.stderr)}</pre>` : ''}</article>`).join(''); await loadConnections(); } catch (err) { toast(err.message); } }
 
 async function savePersonalSettings(patch) {
@@ -8079,8 +8079,8 @@ async function loadSecurityLists() {
     loginEvents = eventData.events || [];
     renderSecurityLists();
 }
-function renderTotp() { $('#totpBox').innerHTML = securityStatus.user.totpEnabled ? '<div class="mini-item"><b>TOTP 状态</b><span>已开启</span></div>' : '<p class="muted">暂无 TOTP</p>'; $('#totpAction').innerHTML = `<button class="security-card-action" id="setupTotpBtn" type="button">${securityStatus.user.totpEnabled ? '重新绑定' : '开启 TOTP'}</button>`; $('#totpDisableForm').classList.toggle('force-hidden', !securityStatus.user.totpEnabled); }
-function renderPasskeys() { $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">删除</button></div>`).join('') || '<p class="muted">暂无 Passkey</p>'; }
+function renderTotp() { $('#totpBox').innerHTML = securityStatus.user.totpEnabled ? '<div class="mini-item"><b>${t('TOTP 状态')}</b><span>${t('已开启')}</span></div>' : `<p class="muted">${t('暂无 TOTP')}</p>`; $('#totpAction').innerHTML = `<button class="security-card-action" id="setupTotpBtn" type="button">${securityStatus.user.totpEnabled ? '重新绑定' : '开启 TOTP'}</button>`; $('#totpDisableForm').classList.toggle('force-hidden', !securityStatus.user.totpEnabled); }
+function renderPasskeys() { $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无 Passkey')}</p>`; }
 function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>失败 ${b.failedCount} · 解封 ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">解除</button></div>`).join('') || '<p class="muted">暂无封禁 IP</p>'; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason || '')} · ${fmtTime(e.time)}</span></div>`).join('') || '<p class="muted">暂无登录事件</p>'; }
 async function saveSecurityPolicy(e) { e.preventDefault(); settings = await savePlatformSettings('security', { security: { ipWhitelistEnabled: $('#ipWhitelistEnabled').checked, ipWhitelist: $('#ipWhitelist').value, bruteForceEnabled: $('#bruteForceEnabled').checked, bruteForceMaxFailures: Number($('#bruteForceMaxFailures').value) || 5, bruteForceBanMinutes: Number($('#bruteForceBanMinutes').value) || 15 } }); toast(t('安全策略已保存')); }
 async function saveCaptcha(e) {
@@ -8419,7 +8419,7 @@ function setupSnippetSettings() {
     });
     renderSnippetSettings();
 }
-async function setupTotp() { const r = await api('/api/security/totp/setup', { method: 'POST', body: '{}' }); $('#totpEnableForm').classList.remove('force-hidden'); $('#totpQrBox').innerHTML = `<img class="qr-img" src="${r.qr}"><p class="muted">密钥：${escapeHtml(r.secret)}</p>`; }
+async function setupTotp() { const r = await api('/api/security/totp/setup', { method: 'POST', body: '{}' }); $('#totpEnableForm').classList.remove('force-hidden'); $('#totpQrBox').innerHTML = `<img class="qr-img" src="${r.qr}"><p class="muted">${t('密钥：')}${escapeHtml(r.secret)}</p>`; }
 async function registerPasskey() { try { if (!window.PublicKeyCredential) return toast(t('当前浏览器不支持 Passkey')); const options = await api('/api/passkeys/register/options', { method: 'POST', body: '{}' }); options.challenge = base64urlToBuffer(options.challenge); options.user.id = base64urlToBuffer(options.user.id); (options.excludeCredentials || []).forEach((c) => { c.id = base64urlToBuffer(c.id); }); const cred = await navigator.credentials.create({ publicKey: options }); if (!cred) return toast(t('Passkey 创建被取消')); const payload = { id: cred.id, rawId: bufferToBase64url(cred.rawId), type: cred.type, response: { clientDataJSON: bufferToBase64url(cred.response.clientDataJSON), attestationObject: bufferToBase64url(cred.response.attestationObject), transports: cred.response.getTransports ? cred.response.getTransports() : [] } }; await api('/api/passkeys/register/verify', { method: 'POST', body: JSON.stringify(payload) }); toast(t('Passkey 已绑定')); await loadSecurityStatus(); } catch (err) { toast(t('Passkey 注册失败：') + err.message); } }
 async function loadNetwork() {
     const [proxyData, keyData] = await Promise.all([
@@ -8433,8 +8433,8 @@ async function loadNetwork() {
     renderSshKeyOptions($('#connSshKey')?.value || '');
 }
 function renderNetwork() {
-    $('#proxyList').innerHTML = proxies.map((p) => `<div class="mini-item proxy-item"><span class="resource-tag resource-tag-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml((p.type || 'socks5').toUpperCase())}</span><span class="resource-tag resource-tag-host" title="${escapeHtml(p.host)}">${escapeHtml(p.host)}</span><span class="resource-tag resource-tag-port">${Number(p.port) || 1080}</span>${p.username ? `<span class="resource-tag resource-tag-auth">${escapeHtml(p.username)}</span>` : ''}${p.hasPassword ? '<span class="resource-tag resource-tag-secret">有密码</span>' : ''}</div><button data-edit-proxy="${p.id}">编辑</button><button data-open-proxy="${p.id}">查看</button><button data-del-proxy="${p.id}">删除</button></div>`).join('') || '<p class="muted">暂无代理</p>';
-    $('#sshKeyList').innerHTML = sshKeys.map((k) => `<div class="mini-item ssh-key-item"><span class="ssh-key-tag ssh-key-tag-name" title="${escapeHtml(k.name)}">${escapeHtml(k.name)}</span><div class="ssh-key-meta"><span class="ssh-key-tag ssh-key-tag-private">${k.hasPrivateKey ? '已保存私钥' : '无私钥'}</span>${k.hasPassphrase ? '<span class="ssh-key-tag ssh-key-tag-passphrase">有口令</span>' : ''}${k.remark ? `<span class="ssh-key-tag ssh-key-tag-remark" title="${escapeHtml(k.remark)}">${escapeHtml(k.remark)}</span>` : ''}</div><button data-edit-ssh-key="${k.id}">编辑</button><button data-open-ssh-key="${k.id}">查看</button><button data-del-ssh-key="${k.id}">删除</button></div>`).join('') || '<p class="muted">暂无 SSH 密钥</p>';
+    $('#proxyList').innerHTML = proxies.map((p) => `<div class="mini-item proxy-item"><span class="resource-tag resource-tag-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml((p.type || 'socks5').toUpperCase())}</span><span class="resource-tag resource-tag-host" title="${escapeHtml(p.host)}">${escapeHtml(p.host)}</span><span class="resource-tag resource-tag-port">${Number(p.port) || 1080}</span>${p.username ? `<span class="resource-tag resource-tag-auth">${escapeHtml(p.username)}</span>` : ''}${p.hasPassword ? `<span class="resource-tag resource-tag-secret">${t('有密码')}</span>` : ''}</div><button data-edit-proxy="${p.id}">${t('编辑')}</button><button data-open-proxy="${p.id}">${t('查看')}</button><button data-del-proxy="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无代理')}</p>`;
+    $('#sshKeyList').innerHTML = sshKeys.map((k) => `<div class="mini-item ssh-key-item"><span class="ssh-key-tag ssh-key-tag-name" title="${escapeHtml(k.name)}">${escapeHtml(k.name)}</span><div class="ssh-key-meta"><span class="ssh-key-tag ssh-key-tag-private">${k.hasPrivateKey ? t('已保存私钥') : t('无私钥')}</span>${k.hasPassphrase ? `<span class="ssh-key-tag ssh-key-tag-passphrase">${t('有口令')}</span>` : ''}${k.remark ? `<span class="ssh-key-tag ssh-key-tag-remark" title="${escapeHtml(k.remark)}">${escapeHtml(k.remark)}</span>` : ''}</div><button data-edit-ssh-key="${k.id}">${t('编辑')}</button><button data-open-ssh-key="${k.id}">${t('查看')}</button><button data-del-ssh-key="${k.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无 SSH 密钥')}</p>`;
 }
 function renderJumpOptions() { if ($('#jumpRouteConfig') && $('#connMode')?.value === 'jump') updateRouteOptions('jump', $$('#jumpRouteList [data-jump-route-select]').map((el) => el.value).filter(Boolean)); }
 function resetProxyForm() { $('#proxyForm')?.reset(); $('#proxyId').value = ''; $('#proxyType').value = 'socks5'; $('#proxyPort').value = '1080'; }
@@ -9820,9 +9820,9 @@ function renderAdminUsers(users) {
             : u.role === 'admin'
                 ? `<span class="admin-badge admin">${adminIcon('shield', 12)} 管理员</span>`
                 : `<span class="admin-badge user">${adminIcon('user', 12)} 普通用户</span>`;
-        const statusBadge = u.status === 'active' ? '<span class="admin-badge ok">正常</span>'
-            : u.status === 'suspended' ? '<span class="admin-badge warn">已停用</span>'
-            : u.status === 'invited' ? '<span class="admin-badge warn">已邀请</span>'
+        const statusBadge = u.status === 'active' ? '<span class="admin-badge ok">${t('正常')}</span>'
+            : u.status === 'suspended' ? '<span class="admin-badge warn">${t('已停用')}</span>'
+            : u.status === 'invited' ? '<span class="admin-badge warn">${t('已邀请')}</span>'
             : `<span class="admin-badge">${escapeHtml(u.status || '未知')}</span>`;
         let actions = '';
         // Suspend / reactivate
@@ -10064,7 +10064,7 @@ async function loadAgentTokens() {
         const data = await api('/api/rdp/file-agent-tokens');
         renderAgentTokens(data.tokens || [], agentRevealedTokens);
     } catch (err) {
-        list.innerHTML = `<p class="empty-state">加载失败：${escapeHtml(err.message || 'unknown')}</p>`;
+        list.innerHTML = `<p class="empty-state">${t('加载失败：')}${escapeHtml(err.message || 'unknown')}</p>`;
     }
 }
 

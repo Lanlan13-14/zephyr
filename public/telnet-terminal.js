@@ -7058,7 +7058,7 @@ function showEditorSidepanel(panel, kind, items = [], meta = {}) {
     if (!items.length) {
         body.innerHTML = `<div class="empty-state" style="padding:12px;font-size:12px">${
             kind === 'search' ? t('无匹配') : kind === 'problems' ? t('暂无问题') : t('暂无符号')
-        }${meta.filesScanned != null ? `<br><small>已扫描 ${meta.filesScanned} 个文件</small>` : ''}</div>`;
+        }${meta.filesScanned != null ? `<br><small>${t('已扫描 {count} 个文件', { count: meta.filesScanned })}</small>` : ''}</div>`;
     } else if (kind === 'problems') {
         body.innerHTML = items.map((d, i) => {
             const line = p._codeEditor?.view ? p._codeEditor.view.state.doc.lineAt(Math.min(p._codeEditor.view.state.doc.length, d.from || 0)).number : '?';
@@ -10258,7 +10258,7 @@ function renderProcessRows(processes = []) {
         if (processSort === 'pid') return safeVal(a.pid) - safeVal(b.pid);
         return safeVal(b.cpu) - safeVal(a.cpu);
     }).slice(0, 60);
-    if (!sorted.length) return '<div class="process-empty">暂无进程数据</div>';
+    if (!sorted.length) return `<div class="process-empty">${t('暂无进程数据')}</div>`;
     return sorted.map((p) => `
         <div class="process-row" data-pid="${p.pid}">
             <div class="process-main">
@@ -10267,8 +10267,8 @@ function renderProcessRows(processes = []) {
                 <div class="process-meta"><span>${escapeHtml(p.user || '-')}</span><span>${escapeHtml(p.stat || '-')}</span><span>CPU ${safeVal(p.cpu).toFixed(1)}%</span><span>MEM ${safeVal(p.mem).toFixed(1)}%</span></div>
             </div>
             <div class="process-actions">
-                <button class="tool-btn" data-process-signal="TERM" data-pid="${p.pid}" ${processBusyPid === p.pid ? 'disabled' : ''}>结束</button>
-                <button class="tool-btn danger" data-process-signal="KILL" data-pid="${p.pid}" ${processBusyPid === p.pid ? 'disabled' : ''}>强制</button>
+                <button class="tool-btn" data-process-signal="TERM" data-pid="${p.pid}" ${processBusyPid === p.pid ? 'disabled' : ''}>${t('结束')}</button>
+                <button class="tool-btn danger" data-process-signal="KILL" data-pid="${p.pid}" ${processBusyPid === p.pid ? 'disabled' : ''}>${t('强制')}</button>
             </div>
         </div>
     `).join('');
@@ -10277,13 +10277,13 @@ function renderProcessesPage(d = latestStatsData) {
     const processes = Array.isArray(d?.processes) ? d.processes : [];
     return `
         <div class="monitor-process-toolbar">
-            <input id="processSearch" class="snippet-search process-search" placeholder="搜索 PID / 用户 / 命令" value="${escapeHtml(processSearch)}">
+            <input id="processSearch" class="snippet-search process-search" placeholder="${t('搜索 PID / 用户 / 命令')}" value="${escapeHtml(processSearch)}">
             <select id="processSort" class="process-sort">
-                <option value="cpu" ${processSort === 'cpu' ? 'selected' : ''}>CPU 优先</option>
-                <option value="mem" ${processSort === 'mem' ? 'selected' : ''}>内存优先</option>
+                <option value="cpu" ${processSort === 'cpu' ? 'selected' : ''}>CPU</option>
+                <option value="mem" ${processSort === 'mem' ? 'selected' : ''}>${t('内存优先')}</option>
                 <option value="pid" ${processSort === 'pid' ? 'selected' : ''}>PID</option>
             </select>
-            <button class="tool-btn" id="processRefreshBtn">刷新</button>
+            <button class="tool-btn" id="processRefreshBtn">${t('刷新')}</button>
         </div>
         <div class="process-summary"><span>${processes.length} 个进程</span></div>
         <div class="process-list">${renderProcessRows(processes)}</div>
@@ -10439,8 +10439,8 @@ function ensureStatsSkeleton(d) {
                 <div class="doughnut-label">${device.mountpoint}</div>
                 <div class="doughnut-text" data-disk-text="${device.id}">${device.usedGB} / ${device.totalGB} GB</div>
                 <div class="doughnut-sub" data-disk-fs="${device.id}">${device.filesystem}</div>
-                <div class="doughnut-sub" data-disk-pct="${device.id}">已用 ${device.usageLabel}</div>
-                <div class="doughnut-sub" data-disk-rw="${device.id}">读 ${device.readKBps} KB/s · 写 ${device.writeKBps} KB/s</div>
+                <div class="doughnut-sub" data-disk-pct="${device.id}">${t('已用 {usage}', { usage: device.usageLabel })}</div>
+                <div class="doughnut-sub" data-disk-rw="${device.id}"${t('读 {read} KB/s · 写 {write} KB/s', { read: device.readKBps, write: device.writeKBps })}</div>
             </div>
             <div class="doughnut-wrap"><canvas id="${device.id}"></canvas></div>
         </div>
@@ -10457,15 +10457,15 @@ function ensureStatsSkeleton(d) {
     infoBody.innerHTML = `
         <div class="monitor-tabs" role="tablist" aria-label="监控分页" data-monitor-page="${monitorPage}">
             <span class="monitor-tab-thumb" aria-hidden="true"></span>
-            <button class="monitor-tab ${monitorPage === 0 ? 'active' : ''}" data-monitor-page="0" type="button" role="tab" aria-selected="${monitorPage === 0 ? 'true' : 'false'}" tabindex="${monitorPage === 0 ? '0' : '-1'}">概览</button>
-            <button class="monitor-tab ${monitorPage === 1 ? 'active' : ''}" data-monitor-page="1" type="button" role="tab" aria-selected="${monitorPage === 1 ? 'true' : 'false'}" tabindex="${monitorPage === 1 ? '0' : '-1'}">进程</button>
+            <button class="monitor-tab ${monitorPage === 0 ? 'active' : ''}" data-monitor-page="0" type="button" role="tab" aria-selected="${monitorPage === 0 ? 'true' : 'false'}" tabindex="${monitorPage === 0 ? '0' : '-1'}">${t('概览')}</button>
+            <button class="monitor-tab ${monitorPage === 1 ? 'active' : ''}" data-monitor-page="1" type="button" role="tab" aria-selected="${monitorPage === 1 ? 'true' : 'false'}" tabindex="${monitorPage === 1 ? '0' : '-1'}">${t('进程')}</button>
         </div>
         <div class="monitor-pages-viewport" data-monitor-page="${monitorPage}">
             <section class="${monitorPageClass(0)}" ${monitorPageHidden(0)}>
         <div class="doughnut-row">
             <div class="doughnut-item disk-card full-width">
                 <div class="disk-card-meta">
-                    <div class="doughnut-label">主机</div>
+                    <div class="doughnut-label">${t('主机')}</div>
                     <div class="doughnut-text" data-stat="hostName">N/A</div>
                     <div class="doughnut-sub" data-stat="hostOS">N/A</div>
                 </div>
@@ -10477,14 +10477,14 @@ function ensureStatsSkeleton(d) {
                     <div class="doughnut-label">CPU</div>
                     <div class="doughnut-text" data-stat="cpuModel">N/A</div>
                     <div class="doughnut-sub" data-stat="cpuFreq">N/A</div>
-                    <div class="doughnut-sub" data-stat="cpuCores">0 核心</div>
+                    <div class="doughnut-sub" data-stat="cpuCores">0 ${t('核心')}</div>
                 </div>
                 <div class="doughnut-wrap"><canvas id="cpuDoughnut"></canvas></div>
             </div>
         </div>
         <div class="doughnut-row two-col">
             <div class="doughnut-item">
-                <div class="doughnut-label">内存</div>
+                <div class="doughnut-label">${t('内存')}</div>
                 <div class="doughnut-wrap"><canvas id="ramDoughnut"></canvas></div>
                 <div class="doughnut-text" data-stat="memText">0 / 0 GB</div>
             </div>
@@ -10499,14 +10499,14 @@ function ensureStatsSkeleton(d) {
         </div>
         <div class="doughnut-row two-col">
             <div class="doughnut-item">
-                <div class="doughnut-label">下载</div>
+                <div class="doughnut-label">${t('下载')}</div>
                 <div class="doughnut-text" data-stat="rxText">0 Mbps</div>
                 <div class="sparkline-row">
                     <canvas id="rxLine" data-color="#3fb950" class="line-canvas" height="30"></canvas>
                 </div>
             </div>
             <div class="doughnut-item">
-                <div class="doughnut-label">上传</div>
+                <div class="doughnut-label">${t('上传')}</div>
                 <div class="doughnut-text" data-stat="txText">0 Mbps</div>
                 <div class="sparkline-row">
                     <canvas id="txLine" data-color="#0a84ff" class="line-canvas" height="30"></canvas>
