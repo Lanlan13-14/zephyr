@@ -1404,5 +1404,21 @@
   "已选择 {count} 项": "Selected {count} items",
   "会话已断开，正在关闭此终端窗口...": "Session disconnected; closing this terminal window...",
   "AI 打开网页后，会在这里持续显示它正在代操作的页面。": "After AI opens a web page, it will keep showing the page it is operating on here.",
-  "暂无用户": "No users"
+  "暂无用户": "No users",
+  "会话 Token 用量": "Session token usage",
+  "管理员": "Admin",
+  "普通用户": "User",
+  "已停用": "Disabled",
+  "已启用": "Enabled",
+  "已保存值": "Has value",
+  "无值": "No value",
+  "AI可见": "AI visible",
+  "AI屏蔽": "AI hidden",
+  "值可见": "Value visible",
+  "复制文本": "Copy text",
+  "编辑消息": "Edit message",
+  "重新回答": "Re-answer",
+  "选择文本": "Select text",
+  "查看用量": "View usage",
+  "本地 Blob 沙箱预览": "Local blob sandbox preview"
 }

@@ -5382,7 +5382,7 @@ function renderAiProviderShareTargets() {
     if (!root) return;
     const q = String($('#aiProviderShareSearch')?.value || '').trim().toLowerCase();
     const users = aiProviderShareTargetsState.filter((u) => !q || String(u.username || '').toLowerCase().includes(q));
-    root.innerHTML = users.length ? users.map((u) => `<label class="check-line ai-provider-share-user"><input type="checkbox" data-ai-share-user="${escapeHtml(u.userId)}" ${aiProviderSelectedUserIds.has(u.userId) ? 'checked' : ''}><span>${escapeHtml(u.username)}</span><small>${u.role === 'admin' ? '管理员' : '普通用户'}</small></label>`).join('') : '<span class="muted">没有匹配用户</span>';
+    root.innerHTML = users.length ? users.map((u) => `<label class="check-line ai-provider-share-user"><input type="checkbox" data-ai-share-user="${escapeHtml(u.userId)}" ${aiProviderSelectedUserIds.has(u.userId) ? 'checked' : ''}><span>${escapeHtml(u.username)}</span><small>${u.role === 'admin' ? t('管理员') : t('普通用户')}</small></label>`).join('') : '<span class="muted">没有匹配用户</span>';
     root.querySelectorAll('[data-ai-share-user]').forEach((input) => input.addEventListener('change', () => {
         if (input.checked) aiProviderSelectedUserIds.add(input.dataset.aiShareUser);
         else aiProviderSelectedUserIds.delete(input.dataset.aiShareUser);
@@ -5538,7 +5538,7 @@ function renderAiProviderList() {
         if (p.shareWithAdmins) sharedLabels.push(t('所有管理员'));
         if (Array.isArray(p.sharedUserIds) && p.sharedUserIds.length) sharedLabels.push(`指定用户 ${p.sharedUserIds.length}`);
         const source = owned ? t('我的 Provider') : `由 ${p.ownerUsername || t('其他用户')} 共享`;
-        return `<div class="ai-provider-item" data-provider-id="${escapeHtml(p.id)}"><div><strong>${escapeHtml(p.name || t('未命名供应商'))}</strong><span>${escapeHtml(p.type || 'openai-compatible')} · ${p.enabled === false ? '已停用' : '已启用'} · ${escapeHtml(modelText)} · ${escapeHtml(source)}${sharedLabels.length ? ` · 共享：${escapeHtml(sharedLabels.join('、'))}` : ''}</span><code>${escapeHtml(p.baseUrl || t('默认 API 地址'))}</code></div><button class="tool-btn" data-ai-fetch-provider-models="${escapeHtml(p.id)}">获取模型</button>${owned ? `<button class="tool-btn" data-ai-reveal-provider-key="${escapeHtml(p.id)}">查看 Key</button><button class="tool-btn" data-ai-edit-provider="${escapeHtml(p.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-provider="${escapeHtml(p.id)}">删除</button>` : '<span class="muted">仅可调用</span>'}</div>`;
+        return `<div class="ai-provider-item" data-provider-id="${escapeHtml(p.id)}"><div><strong>${escapeHtml(p.name || t('未命名供应商'))}</strong><span>${escapeHtml(p.type || 'openai-compatible')} · ${p.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(modelText)} · ${escapeHtml(source)}${sharedLabels.length ? ` · 共享：${escapeHtml(sharedLabels.join('、'))}` : ''}</span><code>${escapeHtml(p.baseUrl || t('默认 API 地址'))}</code></div><button class="tool-btn" data-ai-fetch-provider-models="${escapeHtml(p.id)}">获取模型</button>${owned ? `<button class="tool-btn" data-ai-reveal-provider-key="${escapeHtml(p.id)}">查看 Key</button><button class="tool-btn" data-ai-edit-provider="${escapeHtml(p.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-provider="${escapeHtml(p.id)}">删除</button>` : '<span class="muted">仅可调用</span>'}</div>`;
     }).join('') : '<p class="empty-state">暂无可用模型供应商。创建自己的 Provider，或让其他用户共享给你。</p>';
 }
 async function fetchAiModelsForProvider(id = '') {
@@ -5610,7 +5610,7 @@ function renderAiEnvList() {
     const list = $('#aiEnvList');
     if (!list) return;
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    list.innerHTML = ai.envVars.length ? ai.envVars.map((item) => `<div class="ai-env-item" data-env-id="${escapeHtml(item.id)}"><div><strong>${escapeHtml(item.name || 'UNNAMED')}</strong><span>${item.enabled === false ? '已停用' : '已启用'} · ${item.hasValue || item.value ? '已保存值' : '无值'} · ${item.visibleToAi ? 'AI可见' : 'AI屏蔽'}${item.valueVisibleToAi ? '/值可见' : ''} · ${escapeHtml(item.description || '')}</span></div><button class="tool-btn" data-ai-edit-env="${escapeHtml(item.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-env="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<p class="empty-state">暂无 AI 环境变量。变量值会加密保存，AI 读取时需要敏感确认。</p>';
+    list.innerHTML = ai.envVars.length ? ai.envVars.map((item) => `<div class="ai-env-item" data-env-id="${escapeHtml(item.id)}"><div><strong>${escapeHtml(item.name || 'UNNAMED')}</strong><span>${item.enabled === false ? t('已停用') : t('已启用')} · ${item.hasValue || item.value ? t('已保存值') : t('无值')} · ${item.visibleToAi ? t('AI可见') : t('AI屏蔽')}${item.valueVisibleToAi ? '/值可见' : ''} · ${escapeHtml(item.description || '')}</span></div><button class="tool-btn" data-ai-edit-env="${escapeHtml(item.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-env="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<p class="empty-state">暂无 AI 环境变量。变量值会加密保存，AI 读取时需要敏感确认。</p>';
 }
 async function saveAiEnv(e) {
     e.preventDefault();
@@ -5664,7 +5664,7 @@ function renderAiMemoryList() {
     list.innerHTML = ai.memories.length ? ai.memories.slice(0, 80).map((m) => {
         const tags = Array.isArray(m.tags) ? m.tags : splitCsv(m.tags);
         const connIds = Array.isArray(m.connectionIds) ? m.connectionIds : splitCsv(m.connectionIds);
-        const meta = [m.enabled === false ? '已停用' : '已启用', m.scope || 'global', m.project || '', tags.length ? `标签:${tags.join(',')}` : '', connIds.length ? `连接:${connIds.length}` : ''].filter(Boolean).join(' · ');
+        const meta = [m.enabled === false ? t('已停用') : t('已启用'), m.scope || 'global', m.project || '', tags.length ? `标签:${tags.join(',')}` : '', connIds.length ? `连接:${connIds.length}` : ''].filter(Boolean).join(' · ');
         return `<div class="ai-memory-item" data-memory-id="${escapeHtml(m.id)}"><div><strong>${escapeHtml(m.title || 'Memory')}</strong><span>${escapeHtml(meta)}</span><code>${escapeHtml((m.content || '').slice(0, 300))}</code></div><button class="tool-btn" data-ai-edit-memory="${escapeHtml(m.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-memory="${escapeHtml(m.id)}">删除</button></div>`;
     }).join('') : '<p class="empty-state">暂无长期 Memory。AI 也可通过 memory_save 工具主动记录项目记忆，并按连接、项目、标签自动关联。</p>';
 }
@@ -5733,7 +5733,7 @@ function renderAiSkillList() {
     const list = $('#aiSkillList');
     if (!list) return;
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    list.innerHTML = ai.skills.length ? ai.skills.map((s) => `<div class="ai-skill-item" data-skill-id="${escapeHtml(s.id)}"><div><strong>${escapeHtml(s.name || t('未命名 Skill'))}</strong><span>${s.enabled === false ? '已停用' : '已启用'} · ${escapeHtml(s.description || '')}</span><code>${escapeHtml((s.prompt || '').slice(0, 260))}</code></div><button class="tool-btn" data-ai-edit-skill="${escapeHtml(s.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-skill="${escapeHtml(s.id)}">删除</button></div>`).join('') : '<p class="empty-state">暂无 Skill。可以把工作流、工具使用规则、专用提示词保存成能力包。</p>';
+    list.innerHTML = ai.skills.length ? ai.skills.map((s) => `<div class="ai-skill-item" data-skill-id="${escapeHtml(s.id)}"><div><strong>${escapeHtml(s.name || t('未命名 Skill'))}</strong><span>${s.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(s.description || '')}</span><code>${escapeHtml((s.prompt || '').slice(0, 260))}</code></div><button class="tool-btn" data-ai-edit-skill="${escapeHtml(s.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-skill="${escapeHtml(s.id)}">删除</button></div>`).join('') : '<p class="empty-state">暂无 Skill。可以把工作流、工具使用规则、专用提示词保存成能力包。</p>';
 }
 async function saveAiSkill(e) {
     e.preventDefault();
