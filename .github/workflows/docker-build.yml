@@ -107,8 +107,6 @@ jobs:
             echo ""
             if [ -n "${AGENT_TAG}" ]; then
               echo "本镜像绑定的最新 Agent Release：[\`${AGENT_TAG}\`](https://github.com/${{ github.repository }}/releases/tag/${AGENT_TAG})"
-              echo ""
-              echo "App 内「设置 → 关于 / Zephyr Agent」也指向同一链接，无需再在 Docker \`v*\` 与 Agent \`agent-v*\` 页面来回切换。"
             else
               echo "尚未找到 \`agent-*\` Release；发布 Agent 后重新构建镜像即可自动写入下载链接。"
             fi
