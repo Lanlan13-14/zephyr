@@ -17,6 +17,7 @@ const {
     cloneDefaultZephyrSkills,
 } = require('./ai-defaults');
 const { PLAYBOOKS } = require('./ai-playbooks');
+const { inferModelWindowTokens } = require('./ai-context-budget');
 
 const AI_URL = process.env.ZEPHYR_AI_URL || '';
 const AI_ADMIN = process.env.ZEPHYR_AI_ADMIN_TOKEN || '';
@@ -89,6 +90,8 @@ class AiRuntimeBridge {
             mcpServers: payload.mcpServers || [],
             hourlyLimit: payload.hourlyLimit || 0,
             dailyLimit: payload.dailyLimit || 0,
+            contextWindowTokens: payload.contextWindowTokens || inferModelWindowTokens(payload.provider || {}, payload.model || '', 0),
+            outputReserveTokens: payload.outputReserveTokens || Number(payload.options?.max_tokens || payload.options?.maxTokens || 0),
         };
         return this._fetch('/admin/runs', { method: 'POST', body });
     }

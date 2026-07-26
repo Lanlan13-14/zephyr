@@ -74,8 +74,10 @@ type Config struct {
 	Options       map[string]any
 	MaxSteps      int
 	Parallelism   int
-	// CompactCfg optional; zero → compact.Defaults().
-	CompactCfg compact.Config
+	// CompactCfg optional; zero → dynamic budget from model window.
+	CompactCfg          compact.Config
+	ContextWindowTokens int
+	OutputReserveTokens int
 	// SkipCompact disables history compaction for this run.
 	SkipCompact bool
 	// Archive stores compacted fragments for history_search (optional).
@@ -155,7 +157,14 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 	}
 	compCfg := cfg.CompactCfg
 	if compCfg.MaxChars <= 0 {
-		compCfg = compact.Defaults()
+		budget := compact.ComputeBudget(compact.BudgetInput{
+			Model:               cfg.Model,
+			WindowTokens:        cfg.ContextWindowTokens,
+			OutputReserveTokens: cfg.OutputReserveTokens,
+			SystemPrompt:        cfg.SystemPrompt,
+			Tools:               toProviderTools(cfg.Tools),
+		})
+		compCfg = compact.ConfigForBudget(budget)
 	}
 
 	isResume := cfg.Resume != nil && cfg.Decision != nil
@@ -447,8 +456,8 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				}
 				_ = r.emit(cfg, event.TypePermissionAsk, ask)
 				pe := &PauseError{
-					Kind: PausePermission,
-					Data: ask,
+					Kind:  PausePermission,
+					Data:  ask,
 					State: r.makeResumeState(cfg, metrics, PausePermission, toolCalls, i, &ask, nil),
 				}
 				return r.persistPause(cfg, metrics, pe)
@@ -505,21 +514,23 @@ func (r *Runner) makeResumeState(cfg Config, metrics Metrics, kind PauseKind, ca
 	pc.APIKey = "" // never persist secrets
 	pol := cfg.PermissionPolicy
 	st := ResumeState{
-		Kind:           kind,
-		PendingCalls:   calls,
-		WaitingIndex:   waitIdx,
-		Ask:            ask,
-		Capture:        cap,
-		Model:          cfg.Model,
-		SystemPrompt:   cfg.SystemPrompt,
-		Options:        cfg.Options,
-		MaxSteps:       cfg.MaxSteps,
-		StepsDone:      metrics.Steps,
-		Provider:       pc,
-		PermissionMode: string(pol.Mode),
-		MCPServers:     cfg.MCPServersJSON,
-		Context:        cfg.ContextJSON,
-		Metrics:        metrics,
+		Kind:                kind,
+		PendingCalls:        calls,
+		WaitingIndex:        waitIdx,
+		Ask:                 ask,
+		Capture:             cap,
+		Model:               cfg.Model,
+		SystemPrompt:        cfg.SystemPrompt,
+		Options:             cfg.Options,
+		MaxSteps:            cfg.MaxSteps,
+		StepsDone:           metrics.Steps,
+		Provider:            pc,
+		PermissionMode:      string(pol.Mode),
+		MCPServers:          cfg.MCPServersJSON,
+		Context:             cfg.ContextJSON,
+		ContextWindowTokens: cfg.ContextWindowTokens,
+		OutputReserveTokens: cfg.OutputReserveTokens,
+		Metrics:             metrics,
 	}
 	for _, d := range pol.Deny {
 		st.Deny = append(st.Deny, string(d))
@@ -633,7 +644,7 @@ func (r *Runner) runOneTool(ctx context.Context, cfg Config, w *callWork, metric
 	if err != nil {
 		_ = r.emit(cfg, event.TypeToolError, event.ToolResult{
 			CallID: w.call.ID, Name: w.call.Name,
-			Result: map[string]any{"ok": false, "error": err.Error()},
+			Result:     map[string]any{"ok": false, "error": err.Error()},
 			DurationMs: ms, Status: "error",
 		})
 		return nil
@@ -644,8 +655,8 @@ func (r *Runner) runOneTool(ctx context.Context, cfg Config, w *callWork, metric
 		_ = r.emit(cfg, event.TypeClientCapture, capture)
 		// Find index later via call id
 		pe := &PauseError{
-			Kind: PauseCapture,
-			Data: capture,
+			Kind:  PauseCapture,
+			Data:  capture,
 			State: r.makeResumeState(cfg, *metrics, PauseCapture, nil, 0, nil, &capture),
 		}
 		// waiting index filled by caller if pending set; set by call id match
@@ -662,8 +673,8 @@ func (r *Runner) runOneTool(ctx context.Context, cfg Config, w *callWork, metric
 		}
 		_ = r.emit(cfg, event.TypePermissionAsk, conf)
 		return &PauseError{
-			Kind: PausePermission,
-			Data: conf,
+			Kind:  PausePermission,
+			Data:  conf,
 			State: r.makeResumeState(cfg, *metrics, PausePermission, nil, 0, &conf, nil),
 		}
 	}

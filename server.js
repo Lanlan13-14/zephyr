@@ -3631,6 +3631,8 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
                 })),
             hourlyLimit: policy.quota?.hourlyRequests || 0,
             dailyLimit: policy.quota?.dailyRequests || 0,
+            contextWindowTokens: Number(provider.options?.context?.windowTokens || provider.config?.context?.windowTokens || ai.context?.windowTokens || 0),
+            outputReserveTokens: Number(req.body?.options?.max_tokens || req.body?.options?.maxTokens || 0),
         });
         // Rewrite SSE path through Node proxy if public AI URL not set
         const ssePath = data.ssePath || `/api/ai/runtime/runs/${data.runId}/events?ticket=${encodeURIComponent(data.ticket || '')}`;

@@ -56,8 +56,10 @@ type ResumeState struct {
 	Allow          []string `json:"allow,omitempty"`
 	AskRules       []string `json:"askRules,omitempty"`
 	// MCP servers to re-attach.
-	MCPServers json.RawMessage `json:"mcpServers,omitempty"`
-	Context    json.RawMessage `json:"context,omitempty"`
+	MCPServers          json.RawMessage `json:"mcpServers,omitempty"`
+	Context             json.RawMessage `json:"context,omitempty"`
+	ContextWindowTokens int             `json:"contextWindowTokens,omitempty"`
+	OutputReserveTokens int             `json:"outputReserveTokens,omitempty"`
 
 	// Metrics so far.
 	Metrics Metrics `json:"metrics"`

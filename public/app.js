@@ -4768,7 +4768,7 @@ function defaultAiSettings() {
         defaultSystemPrompt: DEFAULT_AI_GUIDANCE_TEXT,
         guidanceVersion: 1,
         codeCompletionEnabled: true,
-        context: { windowTokens: 64000, maxInputChars: 90000, keepMessages: 18, toolResultChars: 30000, memoryItems: 16, maxToolRounds: 0 },
+        context: { windowTokens: 64000, maxInputChars: 90000, toolResultChars: 30000, memoryItems: 16, maxToolRounds: 0 },
         sensitive: { requireConfirmation: true, autoConfirm: false, autoConfirmDelayMs: 2500 },
         permissions: { webSearch: true, webFetch: true, browser: true, remoteExecute: true, fileRead: true, fileWrite: true, codeEdit: true, memory: true, env: true },
         planner: { enabled: true, requirePlanBeforeTools: false },
@@ -5072,7 +5072,7 @@ function renderAiSettingsForm() {
     $('#aiCodeCompletionEnabled').checked = ai.codeCompletionEnabled !== false;
     if ($('#aiContextWindowTokens')) $('#aiContextWindowTokens').value = ai.context?.windowTokens ?? 64000;
     if ($('#aiContextMaxInputChars')) $('#aiContextMaxInputChars').value = ai.context?.maxInputChars ?? 90000;
-    if ($('#aiContextKeepMessages')) $('#aiContextKeepMessages').value = ai.context?.keepMessages ?? 18;
+    // Message-count truncation was removed; budgets are model-window based.
     if ($('#aiContextToolResultChars')) $('#aiContextToolResultChars').value = ai.context?.toolResultChars ?? 30000;
     if ($('#aiContextMaxToolRounds')) $('#aiContextMaxToolRounds').value = ai.context?.maxToolRounds ?? 0;
     $('#aiRequireConfirmation').checked = ai.sensitive?.requireConfirmation !== false;
@@ -5236,7 +5236,7 @@ function collectAiSettingsForm() {
         context: {
             windowTokens: Number($('#aiContextWindowTokens')?.value) || 64000,
             maxInputChars: Number($('#aiContextMaxInputChars')?.value) || 90000,
-            keepMessages: Number($('#aiContextKeepMessages')?.value) || 18,
+            // No fixed message count: server derives budget from model window.
             toolResultChars: Number($('#aiContextToolResultChars')?.value) || 30000,
             memoryItems: old.context?.memoryItems ?? 16,
             maxToolRounds: Math.max(0, Number($('#aiContextMaxToolRounds')?.value) || 0),

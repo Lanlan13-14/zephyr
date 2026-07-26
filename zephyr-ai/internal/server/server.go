@@ -199,22 +199,24 @@ func (s *Server) handleArchiveSession(w http.ResponseWriter, r *http.Request) {
 
 // startRunReq is the full run kickoff payload from Node.
 type startRunReq struct {
-	UserID         string            `json:"userId"`
-	SessionID      string            `json:"sessionId"`
-	Provider       provider.Config   `json:"provider"`
-	Model          string            `json:"model"`
-	Message        string            `json:"message"`
-	Messages       []provider.Message `json:"messages,omitempty"` // optional multi-part user content
-	Options        map[string]any    `json:"options"`
-	MaxSteps       int               `json:"maxSteps"`
-	Permission     permission.Policy `json:"permission"`
-	Mode           string            `json:"mode"` // standard|plan|goal
-	SystemCompose  compose.Input     `json:"systemCompose"`
-	ContextJSON    json.RawMessage   `json:"context"`
-	MCPServers     []mcp.ServerConfig `json:"mcpServers,omitempty"`
+	UserID        string             `json:"userId"`
+	SessionID     string             `json:"sessionId"`
+	Provider      provider.Config    `json:"provider"`
+	Model         string             `json:"model"`
+	Message       string             `json:"message"`
+	Messages      []provider.Message `json:"messages,omitempty"` // optional multi-part user content
+	Options       map[string]any     `json:"options"`
+	MaxSteps      int                `json:"maxSteps"`
+	Permission    permission.Policy  `json:"permission"`
+	Mode          string             `json:"mode"` // standard|plan|goal
+	SystemCompose compose.Input      `json:"systemCompose"`
+	ContextJSON   json.RawMessage    `json:"context"`
+	MCPServers    []mcp.ServerConfig `json:"mcpServers,omitempty"`
 	// Quota limits (0 = unlimited)
-	HourlyLimit int `json:"hourlyLimit"`
-	DailyLimit  int `json:"dailyLimit"`
+	HourlyLimit         int `json:"hourlyLimit"`
+	DailyLimit          int `json:"dailyLimit"`
+	ContextWindowTokens int `json:"contextWindowTokens"`
+	OutputReserveTokens int `json:"outputReserveTokens"`
 }
 
 func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
@@ -317,25 +319,27 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 
 	mcpJSON, _ := json.Marshal(req.MCPServers)
 	runCfg := agent.Config{
-		RunID:            run.ID,
-		SessionID:        req.SessionID,
-		UserID:           req.UserID,
-		Provider:         p,
-		Model:            model,
-		Tools:            reg,
-		Permission:       eng,
-		Store:            s.store,
-		Emitter:          hub,
-		SystemPrompt:     system,
-		ExtraMessages:    extra,
-		Options:          req.Options,
-		MaxSteps:         maxSteps,
-		ProviderConfig:   req.Provider,
-		PermissionPolicy: req.Permission,
-		MCPServersJSON:   mcpJSON,
-		ContextJSON:      req.ContextJSON,
-		Archive:          s.archive,
-		Mode:             req.Mode,
+		RunID:               run.ID,
+		SessionID:           req.SessionID,
+		UserID:              req.UserID,
+		Provider:            p,
+		Model:               model,
+		Tools:               reg,
+		Permission:          eng,
+		Store:               s.store,
+		Emitter:             hub,
+		SystemPrompt:        system,
+		ExtraMessages:       extra,
+		Options:             req.Options,
+		MaxSteps:            maxSteps,
+		ProviderConfig:      req.Provider,
+		PermissionPolicy:    req.Permission,
+		MCPServersJSON:      mcpJSON,
+		ContextJSON:         req.ContextJSON,
+		ContextWindowTokens: req.ContextWindowTokens,
+		OutputReserveTokens: req.OutputReserveTokens,
+		Archive:             s.archive,
+		Mode:                req.Mode,
 	}
 
 	s.launchRun(run.ID, hub, runCfg)
@@ -451,7 +455,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		CallID    string          `json:"callId"`
 		Tool      string          `json:"tool"`
 		Approve   bool            `json:"approve"`
-		Scope     string          `json:"scope"` // once|session|user
+		Scope     string          `json:"scope"`    // once|session|user
 		Provider  provider.Config `json:"provider"` // Node re-injects API key
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -565,23 +569,25 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := agent.Config{
-		RunID:            runID,
-		SessionID:        sessionID,
-		UserID:           userID,
-		Provider:         p,
-		Model:            st.Model,
-		Tools:            reg,
-		Permission:       eng,
-		Store:            s.store,
-		Emitter:          hub,
-		SystemPrompt:     st.SystemPrompt,
-		Options:          st.Options,
-		MaxSteps:         st.MaxSteps,
-		ProviderConfig:   pcfg,
-		PermissionPolicy: pol,
-		MCPServersJSON:   st.MCPServers,
-		ContextJSON:      st.Context,
-		Resume:           &st,
+		RunID:               runID,
+		SessionID:           sessionID,
+		UserID:              userID,
+		Provider:            p,
+		Model:               st.Model,
+		Tools:               reg,
+		Permission:          eng,
+		Store:               s.store,
+		Emitter:             hub,
+		SystemPrompt:        st.SystemPrompt,
+		Options:             st.Options,
+		MaxSteps:            st.MaxSteps,
+		ProviderConfig:      pcfg,
+		PermissionPolicy:    pol,
+		MCPServersJSON:      st.MCPServers,
+		ContextJSON:         st.Context,
+		ContextWindowTokens: st.ContextWindowTokens,
+		OutputReserveTokens: st.OutputReserveTokens,
+		Resume:              &st,
 		Decision: &agent.ResumeDecision{
 			Approve:   true,
 			CallID:    callID,
@@ -656,23 +662,25 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := agent.Config{
-		RunID:            runID,
-		SessionID:        sessionID,
-		UserID:           userID,
-		Provider:         p,
-		Model:            st.Model,
-		Tools:            reg,
-		Permission:       eng,
-		Store:            s.store,
-		Emitter:          hub,
-		SystemPrompt:     st.SystemPrompt,
-		Options:          st.Options,
-		MaxSteps:         st.MaxSteps,
-		ProviderConfig:   pcfg,
-		PermissionPolicy: pol,
-		MCPServersJSON:   st.MCPServers,
-		ContextJSON:      st.Context,
-		Resume:           &st,
+		RunID:               runID,
+		SessionID:           sessionID,
+		UserID:              userID,
+		Provider:            p,
+		Model:               st.Model,
+		Tools:               reg,
+		Permission:          eng,
+		Store:               s.store,
+		Emitter:             hub,
+		SystemPrompt:        st.SystemPrompt,
+		Options:             st.Options,
+		MaxSteps:            st.MaxSteps,
+		ProviderConfig:      pcfg,
+		PermissionPolicy:    pol,
+		MCPServersJSON:      st.MCPServers,
+		ContextJSON:         st.Context,
+		ContextWindowTokens: st.ContextWindowTokens,
+		OutputReserveTokens: st.OutputReserveTokens,
+		Resume:              &st,
 		Decision: &agent.ResumeDecision{
 			Approve:       true,
 			CallID:        body.CallID,

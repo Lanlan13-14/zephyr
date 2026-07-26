@@ -15,10 +15,11 @@ const snippetTools = require('./ai-snippet-tools');
 const remoteDesktopTools = require('./ai-remote-desktop-tools');
 const agentDeviceTools = require('./ai-agent-device-tools');
 const secretRefs = require('./ai-secret-refs');
+const contextBudget = require('./ai-context-budget');
 const { PLAYBOOKS } = require('./ai-playbooks');
 
 const DEFAULT_TOOL_CALL_LIMIT = 0;
-const DEFAULT_AI_CONTEXT = { windowTokens: 64000, maxInputChars: 90000, keepMessages: 18, toolResultChars: 30000, memoryItems: 16, maxToolRounds: 0, summaryChars: 18000, recentChars: 42000 };
+const DEFAULT_AI_CONTEXT = { windowTokens: 64000, maxInputChars: 90000, toolResultChars: 30000, memoryItems: 16, maxToolRounds: 0, summaryChars: 18000, recentChars: 42000 };
 const MAX_TOOL_TEXT = 60 * 1024;
 const AI_TOOL_CACHE = new Map();
 const AI_OPENAI_TOOL_CACHE = new WeakMap();
@@ -241,7 +242,6 @@ function normalizeContextLimits(ai = {}, provider = {}) {
     const windowTokens = clampNumber(raw.windowTokens, 1024, 1000000, DEFAULT_AI_CONTEXT.windowTokens);
     return {
         windowTokens,
-        keepMessages: clampNumber(raw.keepMessages, 4, 160, DEFAULT_AI_CONTEXT.keepMessages),
         maxInputChars: clampNumber(raw.maxInputChars || Math.floor(windowTokens * 2.4), 8000, 1200000, DEFAULT_AI_CONTEXT.maxInputChars),
         perMessageChars: clampNumber(raw.perMessageChars || Math.floor(windowTokens * 0.85), 1000, 300000, 36000),
         toolResultChars: clampNumber(raw.toolResultChars, 1000, 240000, DEFAULT_AI_CONTEXT.toolResultChars),
@@ -271,7 +271,7 @@ function compactConversationHistory(messages = [], limits = {}) {
         .map((item) => normalizeConversationMessage(item, { ...limits, perMessageChars }))
         .filter((item) => item.content || item.role === 'assistant');
     let total = items.reduce((sum, item) => sum + contentTextLength(item.content), 0);
-    if (total <= maxInputChars && items.length <= clampNumber(limits.keepMessages, 4, 160, 40)) return { messages: items, summary: '', originalCount: items.length, compactedCount: 0, totalChars: total };
+    if (total <= maxInputChars) return { messages: items, summary: '', originalCount: items.length, compactedCount: 0, totalChars: total };
     const recent = [];
     let recentTotal = 0;
     for (let i = items.length - 1; i >= 0; i -= 1) {
@@ -433,7 +433,7 @@ function normalizeOptions(provider = {}, requestOptions = {}, mode = 'chat') {
     }
     const merged = { ...out, ...extra };
     const apiMode = String(mode || 'chat').toLowerCase();
-    ['context', 'windowTokens', 'maxInputChars', 'keepMessages', 'toolResultChars', 'memoryItems', 'timeoutMs', 'timeout_ms', 'retries', 'retryCount'].forEach((key) => delete merged[key]);
+    ['context', 'windowTokens', 'maxInputChars', 'toolResultChars', 'memoryItems', 'timeoutMs', 'timeout_ms', 'retries', 'retryCount'].forEach((key) => delete merged[key]);
     if (apiMode === 'responses') {
         if (merged.max_tokens && !merged.max_output_tokens) merged.max_output_tokens = merged.max_tokens;
         delete merged.max_tokens;
@@ -2693,7 +2693,6 @@ function normalizeAiSettingsInput(currentAi = {}, ai = {}) {
     next.context = {
         windowTokens: clampNumber(contextIn.windowTokens, 1024, 1000000, DEFAULT_AI_CONTEXT.windowTokens),
         maxInputChars: clampNumber(contextIn.maxInputChars, 8000, 1200000, DEFAULT_AI_CONTEXT.maxInputChars),
-        keepMessages: clampNumber(contextIn.keepMessages, 4, 160, DEFAULT_AI_CONTEXT.keepMessages),
         toolResultChars: clampNumber(contextIn.toolResultChars, 1000, 240000, DEFAULT_AI_CONTEXT.toolResultChars),
         memoryItems: clampNumber(contextIn.memoryItems, 0, 80, DEFAULT_AI_CONTEXT.memoryItems),
         maxToolRounds: clampNumber(contextIn.maxToolRounds, 0, 100000, DEFAULT_TOOL_CALL_LIMIT),
@@ -2769,7 +2768,6 @@ function normalizeAiSettingsInput(currentAi = {}, ai = {}) {
                     context: {
                         windowTokens: clampNumber(p.options?.context?.windowTokens ?? old.options?.context?.windowTokens ?? next.context.windowTokens, 1024, 1000000, next.context.windowTokens),
                         maxInputChars: clampNumber(p.options?.context?.maxInputChars ?? old.options?.context?.maxInputChars ?? next.context.maxInputChars, 8000, 1200000, next.context.maxInputChars),
-                        keepMessages: clampNumber(p.options?.context?.keepMessages ?? old.options?.context?.keepMessages ?? next.context.keepMessages, 4, 160, next.context.keepMessages),
                         toolResultChars: clampNumber(p.options?.context?.toolResultChars ?? old.options?.context?.toolResultChars ?? next.context.toolResultChars, 1000, 240000, next.context.toolResultChars),
                     },
                     extraJson: String(p.options?.extraJson ?? old.options?.extraJson ?? '').slice(0, 12000),
@@ -3011,20 +3009,21 @@ function registerAiRoutes(app, deps) {
                 model = sel.model;
             }
             const context = normalizeAiContext(req.body?.context || {});
-            const limits = normalizeContextLimits(ai, provider);
+            const configuredLimits = normalizeContextLimits(ai, provider);
+            const systemPrompt = buildSystemPrompt(ai, context, configuredLimits);
+            let tools = providerSupportsTools(provider) ? cachedToolDefinitions(ai) : [];
+            if (deps.userSettingsService && req.user) {
+                const effectiveUserSettings = deps.userSettingsService.effective(req.user);
+                if (!effectiveUserSettings?.notes?.enabled) tools = tools.filter((t) => !String(t?.function?.name || '').startsWith('note_'));
+            }
+            const dynamicBudget = contextBudget.computeContextBudget({ provider, model, explicitWindowTokens: configuredLimits.windowTokens, systemPrompt, tools, requestedOutputTokens: req.body?.options?.max_tokens || req.body?.options?.maxTokens });
+            const limits = { ...configuredLimits, ...dynamicBudget };
             const requestStartedAt = Date.now();
             let providerMs = 0;
             let toolMs = 0;
             let providerCalls = 0;
-            const baseMessages = convertMessagesForProvider(req.body?.messages || [], buildSystemPrompt(ai, context, limits), limits);
-            const contextStats = baseMessages._contextStats || {};
-            let tools = providerSupportsTools(provider) ? cachedToolDefinitions(ai) : [];
-            if (deps.userSettingsService && req.user) {
-                const effectiveUserSettings = deps.userSettingsService.effective(req.user);
-                if (!effectiveUserSettings?.notes?.enabled) {
-                    tools = tools.filter((t) => !String(t?.function?.name || '').startsWith('note_'));
-                }
-            }
+            const baseMessages = convertMessagesForProvider(req.body?.messages || [], systemPrompt, limits);
+            const contextStats = { ...(baseMessages._contextStats || {}), contextBudget: dynamicBudget };
             let messages = baseMessages;
             const toolResults = [];
             const maxToolRounds = toolRoundLimit(ai, provider);
@@ -3258,4 +3257,5 @@ module.exports = {
     formatAiContextForPrompt,
     selectPromptMemories,
     rankMemories,
+    compactConversationHistory,
 };
