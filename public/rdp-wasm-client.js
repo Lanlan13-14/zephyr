@@ -1856,6 +1856,20 @@ function initToolbar() {
         });
     }
 
+    /* Notes button: postMessage to parent (app.js) to open notes filtered
+     * by the current connection, same as SSH terminal. */
+    const notesBtn = $('#notesBtn');
+    notesBtn?.addEventListener('click', () => {
+        if (embeddedMode && window.parent && window.parent !== window) {
+            window.parent.postMessage({
+                source: 'zephyr-terminal',
+                type: 'open-notes-for-connection',
+                tabId: params?.tabId || tabId,
+                connectionId: params?.connectionId || urlParams.get('connectionId') || '',
+            }, '*');
+        }
+    });
+
     /* Shortcut grid buttons */
     const shortcutGrid = $('#shortcutGrid');
     if (shortcutGrid) {

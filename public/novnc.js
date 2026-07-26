@@ -881,6 +881,19 @@ function bindEvents() {
     cadBtn.addEventListener('click', () => rfb?.sendCtrlAltDel?.());
     reconnectBtn.addEventListener('click', reconnect);
     disconnectBtn.addEventListener('click', () => disconnect({ closeTab: true }));
+    /* Notes button: postMessage to parent (app.js) to open notes filtered
+     * by the current connection, same as SSH terminal. */
+    const notesBtn = $('#notesBtn');
+    notesBtn?.addEventListener('click', () => {
+        if (embeddedMode && window.parent && window.parent !== window) {
+            window.parent.postMessage({
+                source: 'zephyr-terminal',
+                type: 'open-notes-for-connection',
+                tabId: params?.tabId || tabId,
+                connectionId: params?.connectionId || urlParams.get('connectionId') || '',
+            }, '*');
+        }
+    });
     shortcutGrid.addEventListener('click', (event) => {
         const btn = event.target.closest('[data-keyseq]');
         if (btn) sendSequence(btn.dataset.keyseq);
@@ -902,6 +915,13 @@ function bindEvents() {
         if (event.data.type === 'theme-change') applyFrameTheme(event.data.theme, event.data.appearance || {});
         if (event.data.type === 'reconnect-terminal') reconnect();
         if (event.data.type === 'focus-terminal') rfb?.focus?.();
+        if (event.data.type === 'notes-enabled') {
+            const notesBtn = $('#notesBtn');
+            if (notesBtn) {
+                notesBtn.classList.toggle('force-hidden', !event.data.enabled);
+                notesBtn.hidden = !event.data.enabled;
+            }
+        }
         if (event.data.type === 'ai-remote-desktop-action') {
             const actionId = String(event.data.actionId || '');
             performAiRemoteDesktopAction(event.data).then((result = {}) => {
