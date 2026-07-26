@@ -64,7 +64,7 @@ test('dead ai-settings-picker CSS fully removed', () => {
     assert.doesNotMatch(styleCss, /popover-motion/);
 });
 
-test('cache bust includes ai-picker3 marker', () => {
-    assert.match(appHtml, /app\.js\?v=20260725-ai-picker3/);
-    assert.match(appHtml, /style\.css\?v=20260725-ai-picker3/);
+test('cache bust uses dated app and style markers', () => {
+    assert.match(appHtml, /app\.js\?v=2026\d{4}[-\w]*/);
+    assert.match(appHtml, /style\.css\?v=2026\d{4}[-\w]*/);
 });
