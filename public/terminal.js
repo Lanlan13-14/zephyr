@@ -677,7 +677,7 @@ function consumeParentSharedFileClipboard(files = [], sourceTabId = '') {
 });
 if (!params) {
     if (!embeddedMode) window.location.href = '/';
-    throw new Error('缺少连接参数');
+    throw new Error(t('缺少连接参数'));
 }
 // Glyph defs are inserted after DOM bindings are ready.
 
@@ -868,9 +868,9 @@ function zephyrGlyph(name, className = 'zephyr-glyph', label = '') {
 }
 function zephyrFileGlyph(file) {
     ensureZephyrGlyphDefs();
-    if (file?.type === 'd') return zephyrGlyph('folder', 'zephyr-glyph fm-file-glyph', '文件夹');
-    if (isSftpArchiveFile(file?.name || '')) return zephyrGlyph('archive', 'zephyr-glyph fm-file-glyph', '压缩包');
-    if (isSftpMediaFile(file?.name || '')) return zephyrGlyph(isSftpVideoFile(file.name) ? 'video' : 'audio', 'zephyr-glyph fm-file-glyph', isSftpVideoFile(file.name) ? '视频' : '音乐');
+    if (file?.type === 'd') return zephyrGlyph('folder', 'zephyr-glyph fm-file-glyph', t('文件夹'));
+    if (isSftpArchiveFile(file?.name || '')) return zephyrGlyph('archive', 'zephyr-glyph fm-file-glyph', t('压缩包'));
+    if (isSftpMediaFile(file?.name || '')) return zephyrGlyph(isSftpVideoFile(file.name) ? 'video' : 'audio', 'zephyr-glyph fm-file-glyph', isSftpVideoFile(file.name) ? t('视频') : t('音乐'));
     return zephyrGlyph('file', 'zephyr-glyph fm-file-glyph', t('文件'));
 }
 function zephyrButtonGlyph(name, label = '') {
@@ -3339,7 +3339,7 @@ setupTerminalPinchZoom();
 copyBtn.addEventListener('click', async () => {
     const text = getCopyableSelectionText();
     if (!text) {
-        toast?.('请先选择要复制的终端内容');
+        toast?.(t('请先选择要复制的终端内容'));
         return;
     }
     mobileClipboardActionInProgress = true;
@@ -3374,7 +3374,7 @@ pasteBtn?.addEventListener('click', async () => {
     mobileClipboardActionInProgress = true;
     try {
         const pasted = await pasteClipboardIntoTerminal('mobile-paste-button');
-        if (!pasted) toast?.('剪贴板为空或浏览器未授权');
+        if (!pasted) toast?.(t('剪贴板为空或浏览器未授权'));
     } finally {
         window.setTimeout(() => { mobileClipboardActionInProgress = false; }, 220);
     }
@@ -3844,7 +3844,7 @@ function updateProgressDisplay(id) {
     const metaEl = el.querySelector('.transfer-meta-text');
     if (metaEl) {
         const speedText = item.speed && item.status === 'active' ? ' · ' + formatTransferSpeed(item.speed) : '';
-        metaEl.textContent = formatTransferSize(loaded) + ' / ' + (total ? formatTransferSize(total) : '未知大小') + speedText;
+        metaEl.textContent = formatTransferSize(loaded) + ' / ' + (total ? formatTransferSize(total) : t('未知大小')) + speedText;
     }
 
     // Update action buttons when status changes
@@ -3909,33 +3909,33 @@ function updateTransferItemElement(el, item) {
 }
 
 function transferStatusText(item) {
-    if (item.status === 'done') return '已完成';
-    if (item.status === 'error') return item.cancelled ? '已取消' : t('失败');
-    if (item.status === 'cancelling') return '取消中';
-    if (item.status === 'paused') return '已暂停';
-    if (item.status === 'pending') return '等待中';
-    if (item.direction === 'copy') return '复制中';
-    if (item.direction === 'move') return '移动中';
+    if (item.status === 'done') return t('已完成');
+    if (item.status === 'error') return item.cancelled ? t('已取消') : t('失败');
+    if (item.status === 'cancelling') return t('取消中');
+    if (item.status === 'paused') return t('已暂停');
+    if (item.status === 'pending') return t('等待中');
+    if (item.direction === 'copy') return t('复制中');
+    if (item.direction === 'move') return t('移动中');
     if (item.direction === 'archive') {
         const phase = item.phase || '';
-        if (phase === 'scan') return '扫描中';
-        if (phase === 'download') return '拉取到主端';
-        if (phase === 'compress') return '主端压缩中';
-        if (phase === 'extract') return '主端解压中';
-        if (phase === 'upload') return '传回远端';
-        return '处理中';
+        if (phase === 'scan') return t('扫描中');
+        if (phase === 'download') return t('拉取到主端');
+        if (phase === 'compress') return t('主端压缩中');
+        if (phase === 'extract') return t('主端解压中');
+        if (phase === 'upload') return t('传回远端');
+        return t('处理中');
     }
     const loaded = Number(item.loaded ?? 0) || 0;
     const total = Number(item.size ?? 0) || 0;
-    if (!total && (item.status === 'active' || item.status === 'pending')) return '准备中';
-    return total > 0 ? (Math.min(100, (loaded / total) * 100)).toFixed(0) + '%' : '传输中';
+    if (!total && (item.status === 'active' || item.status === 'pending')) return t('准备中');
+    return total > 0 ? (Math.min(100, (loaded / total) * 100)).toFixed(0) + '%' : t('传输中');
 }
 
 function metaText(item) {
     const loaded = Number(item.loaded ?? 0) || 0;
     const total = Number(item.size ?? 0) || 0;
     const speedText = item.status === 'active' && item.speed ? ' · ' + formatTransferSpeed(item.speed) : '';
-    return formatTransferSize(loaded) + ' / ' + (total ? formatTransferSize(total) : '未知大小') + speedText;
+    return formatTransferSize(loaded) + ' / ' + (total ? formatTransferSize(total) : t('未知大小')) + speedText;
 }
 
 function actionButtons(item) {
@@ -4025,7 +4025,7 @@ function markDownloadProgress(id, patch) {
 }
 
 async function sha256HexFromBlob(blob) {
-    if (!window.crypto?.subtle) throw new Error('当前浏览器不支持 SHA-256 校验');
+    if (!window.crypto?.subtle) throw new Error(t('当前浏览器不支持 SHA-256 校验'));
     const buffer = await blob.arrayBuffer();
     const digest = await window.crypto.subtle.digest('SHA-256', buffer);
     return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -4107,7 +4107,7 @@ async function verifiedChunkedDownload(id, fileName, url, totalSize, hashUrl) {
     if (!hashRes.ok) throw new Error(`获取远端 SHA-256 失败：HTTP ${hashRes.status}`);
     const hashData = await hashRes.json();
     const expectedHash = String(hashData.sha256 || '').toLowerCase();
-    if (!expectedHash) throw new Error('远端 SHA-256 为空');
+    if (!expectedHash) throw new Error(t('远端 SHA-256 为空'));
     const chunkSize = 8 * 1024 * 1024;
     const chunks = [];
     let loaded = 0;
@@ -4463,7 +4463,7 @@ function createFileManagerWindow({ path = currentPath } = {}) {
             const nameSpan = document.createElement('span');
             nameSpan.className = 'fm-item-name';
             nameSpan.innerHTML = `${zephyrFileGlyph(file)}<span class="fm-item-filename">${escapeHtml(file.name)}</span>`;
-            nameSpan.title = file.type === 'd' ? '打开文件夹' : '打开文件';
+            nameSpan.title = file.type === 'd' ? t('打开文件夹') : t('打开文件');
             nameSpan.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); selectSingle(itemPath); });
             nameSpan.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); openItem(itemPath, file.type); });
             const actions = document.createElement('div');
@@ -4590,7 +4590,7 @@ function handleExtraFileManagerListMessage(msg) {
                 item.className = 'fm-item';
                 const itemPath = state.currentPath.replace(/\/+$/, '') + '/' + file.name;
                 item.dataset.fileName = file.name; item.dataset.fileType = file.type; item.dataset.filePath = itemPath;
-                const nameSpan = document.createElement('span'); nameSpan.className = 'fm-item-name'; nameSpan.innerHTML = `${zephyrFileGlyph(file)}<span class="fm-item-filename">${escapeHtml(file.name)}</span>`; nameSpan.title = file.type === 'd' ? '打开文件夹' : '打开文件';
+                const nameSpan = document.createElement('span'); nameSpan.className = 'fm-item-name'; nameSpan.innerHTML = `${zephyrFileGlyph(file)}<span class="fm-item-filename">${escapeHtml(file.name)}</span>`; nameSpan.title = file.type === 'd' ? t('打开文件夹') : t('打开文件');
                 nameSpan.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); state.selectedFilePaths = new Set([itemPath]); listEl.querySelectorAll('.fm-item').forEach((el) => el.classList.toggle('selected', el.dataset.filePath === itemPath)); });
                 nameSpan.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); if (file.type === 'd') { state.currentPath = itemPath; state.searchQuery = ''; const si = state.panel.querySelector('.fm-search-input'); if (si) si.value = ''; const rid = `${state.requestPrefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`; fileManagerWindowsByRequestId.set(rid, state); wsConnection.send(JSON.stringify({ type: 'sftp-list', requestId: rid, path: state.currentPath })); } else openFileItem(itemPath, file.type); });
                 const actions = document.createElement('div'); actions.className = 'fm-item-actions';
@@ -4982,16 +4982,16 @@ function showFileContextMenu(x, y, onItem) {
     let html = '';
     if (selected.length) {
         html += menuButton('copy', t('复制'), 'copy', shortcutLabel('copy'));
-        html += menuButton('cut', '剪切', 'cut', shortcutLabel('cut'));
+        html += menuButton('cut', t('剪切'), 'cut', shortcutLabel('cut'));
         html += menuButton('paste', t('粘贴'), 'paste', shortcutLabel('paste'));
         html += '<div class="fm-context-divider"></div>';
-        if (single && single.type !== 'd' && isArchiveFile(single.name)) html += menuButton('extract', '解压', 'unzip');
-        if (!single || single.type === 'd' || !isArchiveFile(single.name)) html += menuButton('compress', '压缩', 'zip');
+        if (single && single.type !== 'd' && isArchiveFile(single.name)) html += menuButton('extract', t('解压'), 'unzip');
+        if (!single || single.type === 'd' || !isArchiveFile(single.name)) html += menuButton('compress', t('压缩'), 'zip');
         if (single) html += menuButton('rename', t('重命名'), 'rename', shortcutLabel('rename'));
         html += menuButton('delete', t('删除'), 'delete', shortcutLabel('delete'), true);
         html += '<div class="fm-context-divider"></div>';
-        html += menuButton('download', selected.length > 1 ? '打包下载' : t('下载'), 'download');
-        html += menuButton('properties', '属性', 'info', shortcutLabel('properties'));
+        html += menuButton('download', selected.length > 1 ? t('打包下载') : t('下载'), 'download');
+        html += menuButton('properties', t('属性'), 'info', shortcutLabel('properties'));
     } else {
         html += menuButton('refresh', t('刷新'), 'refresh', shortcutLabel('refresh'));
         html += menuButton('newFolder', t('新建文件夹'), 'newFolder');
@@ -5032,11 +5032,11 @@ function chooseArchiveTargetPath(defaultName) {
 }
 function checkPasteTargetConflicts(targetDir) {
     return new Promise((resolve) => {
-        if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) return resolve({ success: false, error: '连接未就绪' });
+        if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) return resolve({ success: false, error: t('连接未就绪') });
         const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const timer = window.setTimeout(() => {
             pendingSftpConflictChecks.delete(requestId);
-            resolve({ success: false, error: '同名检查超时' });
+            resolve({ success: false, error: t('同名检查超时') });
         }, 12000);
         pendingSftpConflictChecks.set(requestId, (msg) => {
             window.clearTimeout(timer);
@@ -5163,16 +5163,16 @@ function renderFilePropertiesModal(selected, extra = null) {
     const dirCount = Number(extra?.dirCount ?? remoteSingle?.dirCount ?? 0) || 0;
     const rows = single ? [
         [t('名称'), single.name || '-'],
-        ['路径', single.path || '-'],
+        [t('路径'), single.path || '-'],
         [t('大小'), extra ? formatTransferSize(totalSize) : `${formatTransferSize(single.size || 0)}（正在统计真实大小...）`],
-        ...(single.type === 'd' && extra ? [['内容', `${fileCount} 个文件，${Math.max(0, dirCount - 1)} 个子文件夹`]] : []),
-        ['修改时间', single.modifyTime ? new Date(single.modifyTime).toLocaleString() : '-'],
-        ['权限', single.rights || '-'],
+        ...(single.type === 'd' && extra ? [[t('内容'), `${fileCount} 个文件，${Math.max(0, dirCount - 1)} 个子文件夹`]] : []),
+        [t('修改时间'), single.modifyTime ? new Date(single.modifyTime).toLocaleString() : '-'],
+        [t('权限'), single.rights || '-'],
     ] : [
-        ['已选择', `${selected.length} 项`],
-        ['总大小', extra ? formatTransferSize(totalSize) : `${formatTransferSize(fallbackTotal)}（正在统计真实大小...）`],
-        ...(extra ? [['内容', `${fileCount} 个文件，${dirCount} 个文件夹`]] : []),
-        ['当前路径', currentPath],
+        [t('已选择'), `${selected.length} 项`],
+        [t('总大小'), extra ? formatTransferSize(totalSize) : `${formatTransferSize(fallbackTotal)}（正在统计真实大小...）`],
+        ...(extra ? [[t('内容'), `${fileCount} 个文件，${dirCount} 个文件夹`]] : []),
+        [t('当前路径'), currentPath],
     ];
     const mode = single ? rightsToMode(single.rights) : '';
     filePropertiesModal.innerHTML = `
@@ -5213,7 +5213,7 @@ function handleFileMenuAction(action) {
     if (action === 'copy' || action === 'cut') {
         if (!selected.length) return;
         wsConnection.send(JSON.stringify({ type: 'sftp-clipboard-set', mode: action, items: selected }));
-        showToast(`正在${action === 'copy' ? t('复制') : '剪切'} ${selected.length} 项...`, 'info');
+        showToast(`正在${action === 'copy' ? t('复制') : t('剪切')} ${selected.length} 项...`, 'info');
         return;
     }
     if (action === 'paste') {
@@ -5223,7 +5223,7 @@ function handleFileMenuAction(action) {
             choose.then((choice) => {
                 if (!choice) return;
                 wsConnection.send(JSON.stringify({ type: 'sftp-clipboard-paste', targetDir: currentPath, conflict: choice.mode }));
-                const label = choice.mode === 'overwrite' ? t('覆盖') : choice.mode === 'skip' ? '跳过' : result.hasConflict ? '兼容命名' : '无同名';
+                const label = choice.mode === 'overwrite' ? t('覆盖') : choice.mode === 'skip' ? t('跳过') : result.hasConflict ? t('兼容命名') : t('无同名');
                 showToast(`正在粘贴（同名：${label}），进度可在传输面板查看`, 'info');
             });
         });
@@ -5246,7 +5246,7 @@ function handleFileMenuAction(action) {
         const targetPath = chooseArchiveTargetPath(defaultName);
         if (!targetPath) return;
         const transferId = `archive-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        markDownloadProgress(transferId, { name: `压缩: ${targetPath.split('/').pop() || '压缩包'}`, path: targetPath, direction: 'archive', phase: 'prepare', size: 0, loaded: 0, status: 'pending', cancellable: true });
+        markDownloadProgress(transferId, { name: `压缩: ${targetPath.split('/').pop() || t('压缩包')}`, path: targetPath, direction: 'archive', phase: 'prepare', size: 0, loaded: 0, status: 'pending', cancellable: true });
         showTransferPopover({ autoHide: true });
         wsConnection.send(JSON.stringify({ type: 'sftp-compress', items: selected, targetPath, transferId }));
         showToast('正在压缩，进度可在传输面板查看', 'info');
@@ -5256,7 +5256,7 @@ function handleFileMenuAction(action) {
         const targetDir = prompt('解压到:', currentPath);
         if (!targetDir) return;
         const transferId = `archive-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        markDownloadProgress(transferId, { name: `解压: ${single.name || '压缩包'}`, path: single.path, direction: 'archive', phase: 'prepare', size: 0, loaded: 0, status: 'pending', cancellable: true });
+        markDownloadProgress(transferId, { name: `解压: ${single.name || t('压缩包')}`, path: single.path, direction: 'archive', phase: 'prepare', size: 0, loaded: 0, status: 'pending', cancellable: true });
         showTransferPopover({ autoHide: true });
         wsConnection.send(JSON.stringify({ type: 'sftp-extract', path: single.path, targetDir, transferId }));
         showToast('正在解压，进度可在传输面板查看', 'info');
@@ -5320,7 +5320,7 @@ function renderFileList(files) {
         const nameSpan = document.createElement('span');
         nameSpan.className = 'fm-item-name';
         nameSpan.innerHTML = `${zephyrFileGlyph(file)}<span class="fm-item-filename">${escapeHtml(file.name)}</span>`;
-        nameSpan.title = file.type === 'd' ? '打开文件夹' : '打开文件';
+        nameSpan.title = file.type === 'd' ? t('打开文件夹') : t('打开文件');
         nameSpan.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -5857,7 +5857,7 @@ function updateEditorStatus() {
         fmEditorCompactBtn?.classList.toggle('active', !!instance.compact);
         return;
     }
-    if (fmEditorStatus) fmEditorStatus.textContent = 'CodeMirror 初始化中...';
+    if (fmEditorStatus) fmEditorStatus.textContent = t('CodeMirror 初始化中...');
 }
 
 const EDITOR_LANGUAGE_BY_EXT = {
@@ -6627,11 +6627,11 @@ function setupEditorPanel(panel) {
         const leftHandle = document.createElement('div');
         leftHandle.className = 'panel-resize-handle left';
         leftHandle.dataset.editorResizeEdge = 'left';
-        leftHandle.title = '拖动调整大小';
+        leftHandle.title = t('拖动调整大小');
         const rightHandle = document.createElement('div');
         rightHandle.className = 'panel-resize-handle right';
         rightHandle.dataset.editorResizeEdge = 'right';
-        rightHandle.title = '拖动调整大小';
+        rightHandle.title = t('拖动调整大小');
         panel.append(leftHandle, rightHandle);
     }
     panel.addEventListener('pointerdown', (e) => {
@@ -6973,17 +6973,17 @@ function readRemoteSubtitleFile(filePath) {
     return new Promise((resolve, reject) => {
         if (!filePath) { resolve(null); return; }
         if (!/\.(vtt|srt|ass|ssa|sub)$/i.test(filePath)) {
-            reject(new Error('仅支持 .vtt/.srt/.ass/.ssa/.sub 字幕'));
+            reject(new Error(t('仅支持 .vtt/.srt/.ass/.ssa/.sub 字幕')));
             return;
         }
         if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
-            reject(new Error('SSH 尚未连接，无法读取路径字幕'));
+            reject(new Error(t('SSH 尚未连接，无法读取路径字幕')));
             return;
         }
         const requestId = `subtitle-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const timer = window.setTimeout(() => {
             pendingRemoteSubtitleReads.delete(requestId);
-            reject(new Error('读取路径字幕超时'));
+            reject(new Error(t('读取路径字幕超时')));
         }, 15000);
         pendingRemoteSubtitleReads.set(requestId, { resolve, reject, timer, path: filePath });
         wsConnection.send(JSON.stringify({ type: 'sftp-readfile', path: filePath, requestId, purpose: 'subtitle' }));
@@ -7006,7 +7006,7 @@ function handleEditorSaveConflict(panel, msg = {}) {
     const body = p.querySelector('[data-editor-role="sidepanelBody"]');
     const title = p.querySelector('[data-editor-role="sidepanelTitle"]');
     const side = p.querySelector('[data-editor-role="sidepanel"]');
-    if (title) title.textContent = '保存冲突';
+    if (title) title.textContent = t('保存冲突');
     if (body) {
         body.innerHTML = `
             <p style="margin:6px 8px 10px;font-size:12px;line-height:1.45;color:var(--text-secondary)">
@@ -7028,7 +7028,7 @@ function handleEditorSaveConflict(panel, msg = {}) {
                     const requestId = `${p.dataset.editorId || path}-reload-${Date.now()}`;
                     pendingEditorReads.set(requestId, p);
                     wsConnection.send(JSON.stringify({ type: 'sftp-readfile', path, requestId }));
-                    if (fmEditorStatus) fmEditorStatus.textContent = '重新加载中...';
+                    if (fmEditorStatus) fmEditorStatus.textContent = t('重新加载中...');
                 } else {
                     if (remoteMtime) p._editorMtimeMs = remoteMtime;
                     closeEditorSidepanel(p);
@@ -7051,11 +7051,11 @@ function showEditorSidepanel(panel, kind, items = [], meta = {}) {
     const title = p.querySelector('[data-editor-role="sidepanelTitle"]');
     const body = p.querySelector('[data-editor-role="sidepanelBody"]');
     if (!side || !body) return;
-    const label = kind === 'outline' ? t('大纲') : kind === 'problems' ? t('问题') : kind === 'search' ? '搜索结果' : t('面板');
+    const label = kind === 'outline' ? t('大纲') : kind === 'problems' ? t('问题') : kind === 'search' ? t('搜索结果') : t('面板');
     if (title) title.textContent = label + (meta.query ? ` · ${meta.query}` : '');
     if (!items.length) {
         body.innerHTML = `<div class="empty-state" style="padding:12px;font-size:12px">${
-            kind === 'search' ? '无匹配' : kind === 'problems' ? '暂无问题' : '暂无符号'
+            kind === 'search' ? t('无匹配') : kind === 'problems' ? t('暂无问题') : t('暂无符号')
         }${meta.filesScanned != null ? `<br><small>已扫描 ${meta.filesScanned} 个文件</small>` : ''}</div>`;
     } else if (kind === 'problems') {
         body.innerHTML = items.map((d, i) => {
@@ -7199,7 +7199,7 @@ function openEditor(filePath) {
     panel.classList.remove('closing');
     requestAnimationFrame(() => panel.classList.add('open'));
     if (fmEditorTitle) fmEditorTitle.textContent = `编辑: ${filePath}`;
-    if (fmEditorStatus) fmEditorStatus.textContent = '读取中...';
+    if (fmEditorStatus) fmEditorStatus.textContent = t('读取中...');
     if (fmEditorMain) fmEditorMain.innerHTML = '';
     updateEditorZIndex(panel);
     bringPanelToFront(panel);
@@ -7375,12 +7375,12 @@ function handleSFTPMessage(msg) {
                     if (msg.status === 'error') markDownloadProgress(id, { status: 'error', cancelled: true });
                     break;
                 }
-                const label = msg.direction === 'move' ? '移动' : t('复制');
+                const label = msg.direction === 'move' ? t('移动') : t('复制');
                 markDownloadProgress(id, { name: `${label}: ${(msg.path || '').split('/').pop() || t('文件')}`, path: msg.path, direction: msg.direction, size: Number(msg.size) || 0, loaded: Number(msg.loaded) || 0, status: msg.status || 'active', cancellable: msg.cancellable !== false });
                 if (msg.status === 'done' || msg.status === 'error') window.setTimeout(() => { activeSftpDownloads.delete(id); scheduleTransferRender(); }, msg.status === 'done' ? 5000 : 8000);
             } else if (msg.direction === 'archive') {
-                const label = msg.phase === 'upload' ? '传回远端' : msg.phase === 'download' ? '拉取到主端' : msg.phase === 'extract' ? '主端解压' : msg.phase === 'compress' ? '主端压缩' : '归档处理';
-                markDownloadProgress(id, { name: `${label}: ${(msg.path || '').split('/').pop() || '压缩包'}`, path: msg.path, direction: 'archive', phase: msg.phase || '', size: Number(msg.size) || 0, loaded: Number(msg.loaded) || 0, status: msg.status || 'active', cancellable: msg.cancellable !== false });
+                const label = msg.phase === 'upload' ? t('传回远端') : msg.phase === 'download' ? t('拉取到主端') : msg.phase === 'extract' ? t('主端解压') : msg.phase === 'compress' ? t('主端压缩') : t('归档处理');
+                markDownloadProgress(id, { name: `${label}: ${(msg.path || '').split('/').pop() || t('压缩包')}`, path: msg.path, direction: 'archive', phase: msg.phase || '', size: Number(msg.size) || 0, loaded: Number(msg.loaded) || 0, status: msg.status || 'active', cancellable: msg.cancellable !== false });
                 if (msg.status === 'done' || msg.status === 'error') window.setTimeout(() => { activeSftpDownloads.delete(id); scheduleTransferRender(); }, msg.status === 'done' ? 5000 : 8000);
             } else if (msg.direction === 'upload') {
                 markUploadProgress(id, { path: msg.path, size: Number(msg.size) || 0, loaded: Number(msg.loaded) || 0, status: msg.status || 'active' });
@@ -7426,7 +7426,7 @@ function handleSFTPMessage(msg) {
         }
         case 'sftp-clipboard-set':
             if (msg.success) {
-                const mode = msg.mode === 'cut' ? '剪切' : t('复制');
+                const mode = msg.mode === 'cut' ? t('剪切') : t('复制');
                 const count = msg.count || 0;
                 sftpClipboardAvailable = true;
                 updateMobileFileActions();
@@ -7488,7 +7488,7 @@ function handleSFTPMessage(msg) {
                 else {
                     const bytes = msg.encoding === 'base64' ? base64ToBytes(msg.data) : new TextEncoder().encode(msg.data || '');
                     const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-                    pendingSubtitle.resolve({ path: msg.path || pendingSubtitle.path, name: String(msg.path || pendingSubtitle.path || '').split('/').pop() || '路径字幕', text });
+                    pendingSubtitle.resolve({ path: msg.path || pendingSubtitle.path, name: String(msg.path || pendingSubtitle.path || '').split('/').pop() || t('路径字幕'), text });
                 }
                 break;
             }
@@ -7497,7 +7497,7 @@ function handleSFTPMessage(msg) {
             if (panel) updateActiveEditorRefs(panel);
             if (msg.error) {
                 showToast('读取失败: ' + msg.error, 'error');
-                if (fmEditorStatus) fmEditorStatus.textContent = '读取失败';
+                if (fmEditorStatus) fmEditorStatus.textContent = t('读取失败');
             } else {
                 const bytes = msg.encoding === 'base64' ? base64ToBytes(msg.data) : new TextEncoder().encode(msg.data || '');
                 if (panel) {
@@ -7574,7 +7574,7 @@ function checkDockerStatus({ force = false } = {}) {
         if (dockerInstalled) dockerRefreshAll();
         return;
     }
-    setDockerStatus('正在检测 Docker...', true);
+    setDockerStatus(t('正在检测 Docker...'), true);
     dockerInstallHint.style.display = 'none';
     dockerContent.style.display = 'none';
     dockerSend({ type: 'docker-check' });
@@ -7653,10 +7653,10 @@ function renderDockerContainers(containers = []) {
         `;
         const actions = tr.querySelector('.docker-actions');
         const actionButtons = [
-            ['start', '启动'],
+            ['start', t('启动')],
             ['stop', t('停止')],
-            ['restart', '重启'],
-            ['logs', '日志'],
+            ['restart', t('重启')],
+            ['logs', t('日志')],
             ['remove', t('删除')],
         ];
         actionButtons.forEach(([action, label]) => {
@@ -7698,7 +7698,7 @@ function renderDockerImages(images = []) {
         deleteBtn.innerHTML = `${dockerActionGlyph('remove', t('删除'))}<span>删除</span>`;
         deleteBtn.addEventListener('click', () => {
             if (!confirm(`确认删除镜像 ${imageRef}?`)) return;
-            setDockerStatus('正在检查镜像使用情况...', true);
+            setDockerStatus(t('正在检查镜像使用情况...'), true);
             dockerSend({ type: 'docker-delete-image', image: imageRef, id: image.id });
         });
         tr.querySelector('.docker-actions').appendChild(deleteBtn);
@@ -7712,7 +7712,7 @@ function renderDockerMirrors() {
     if (!dockerMirrors.length) {
         const empty = document.createElement('div');
         empty.className = 'docker-empty-row';
-        empty.textContent = '尚未配置镜像加速器';
+        empty.textContent = t('尚未配置镜像加速器');
         dockerMirrorList.appendChild(empty);
         return;
     }
@@ -7769,7 +7769,7 @@ function handleDockerMessage(msg) {
                 dockerInstallHint.style.display = 'flex';
                 dockerContent.style.display = 'none';
             } else {
-                setDockerStatus(msg.version || 'Docker 已安装，正在加载资源...', true, 'success');
+                setDockerStatus(msg.version || t('Docker 已安装，正在加载资源...'), true, 'success');
                 dockerInstallHint.style.display = 'none';
                 dockerContent.style.display = 'flex';
                 dockerRefreshAll();
@@ -7778,7 +7778,7 @@ function handleDockerMessage(msg) {
         case 'docker-containers':
             if (msg.error) { setDockerStatus(`容器列表加载失败：${msg.error}`, false, 'error'); return; }
             renderDockerContainers(msg.containers || []);
-            setDockerStatus('容器列表已更新', false, 'success');
+            setDockerStatus(t('容器列表已更新'), false, 'success');
             break;
         case 'docker-images':
             if (msg.error) { setDockerStatus(`镜像列表加载失败：${msg.error}`, false, 'error'); return; }
@@ -7792,7 +7792,7 @@ function handleDockerMessage(msg) {
             if (msg.requiresForce) {
                 const ok = confirm(`该镜像正在被以下容器使用：\n${msg.usedBy}\n\n是否强制删除？`);
                 if (ok) dockerSend({ type: 'docker-delete-image', image: msg.image, force: true });
-                else setDockerStatus('已取消删除镜像', false);
+                else setDockerStatus(t('已取消删除镜像'), false);
                 return;
             }
             if (msg.success) { showToast('镜像已删除', 'success'); dockerRefreshAll(); }
@@ -7801,7 +7801,7 @@ function handleDockerMessage(msg) {
         case 'docker-pull-start':
             dockerPullBtn.disabled = true;
             dockerPullLog.textContent = `开始拉取 ${msg.image}...\n`;
-            setDockerStatus('正在拉取镜像...', true);
+            setDockerStatus(t('正在拉取镜像...'), true);
             break;
         case 'docker-pull-log':
             dockerPullLog.textContent += msg.data || '';
@@ -7809,8 +7809,8 @@ function handleDockerMessage(msg) {
             break;
         case 'docker-pull-complete':
             dockerPullBtn.disabled = false;
-            setDockerStatus(msg.success ? '镜像拉取完成' : `镜像拉取失败（code=${msg.code ?? 'N/A'}）`, false, msg.success ? 'success' : 'error');
-            showToast(msg.success ? '镜像拉取完成' : '镜像拉取失败', msg.success ? 'success' : 'error');
+            setDockerStatus(msg.success ? t('镜像拉取完成') : `镜像拉取失败（code=${msg.code ?? 'N/A'}）`, false, msg.success ? 'success' : 'error');
+            showToast(msg.success ? t('镜像拉取完成') : t('镜像拉取失败'), msg.success ? 'success' : 'error');
             dockerRefreshAll();
             break;
         case 'docker-mirrors':
@@ -7821,10 +7821,10 @@ function handleDockerMessage(msg) {
             showToast('镜像加速器配置已保存，请重启 Docker 服务', 'success', 4200);
             dockerMirrors = Array.isArray(msg.mirrors) ? msg.mirrors : dockerMirrors;
             renderDockerMirrors();
-            setDockerStatus('配置已保存，请重启 Docker 服务', false, 'success');
+            setDockerStatus(t('配置已保存，请重启 Docker 服务'), false, 'success');
             break;
         case 'docker-service-restart':
-            setDockerStatus('Docker 服务已重启，正在刷新资源...', true, 'success');
+            setDockerStatus(t('Docker 服务已重启，正在刷新资源...'), true, 'success');
             showToast('Docker 服务已重启', 'success');
             window.setTimeout(() => checkDockerStatus({ force: true }), 1200);
             break;
@@ -7839,8 +7839,8 @@ function handleDockerMessage(msg) {
             break;
         case 'docker-log-error':
         case 'docker-error':
-            setDockerStatus(msg.message || msg.error || 'Docker 操作失败', false, 'error');
-            showToast(msg.message || msg.error || 'Docker 操作失败', 'error');
+            setDockerStatus(msg.message || msg.error || t('Docker 操作失败'), false, 'error');
+            showToast(msg.message || msg.error || t('Docker 操作失败'), 'error');
             dockerPullBtn.disabled = false;
             break;
     }
@@ -7870,7 +7870,7 @@ dockerCloseBtn?.addEventListener('click', hideDockerPanel);
 dockerRefreshBtn?.addEventListener('click', () => checkDockerStatus({ force: true }));
 dockerRestartBtn?.addEventListener('click', () => {
     if (!confirm('确认重启目标主机 Docker 服务？运行中的容器通常会继续运行，但 Docker API 会短暂不可用。')) return;
-    setDockerStatus('正在重启 Docker 服务...', true);
+    setDockerStatus(t('正在重启 Docker 服务...'), true);
     dockerSend({ type: 'docker-restart-service' });
 });
 document.querySelectorAll('[data-docker-tab]').forEach((tab) => {
