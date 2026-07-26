@@ -6,10 +6,10 @@
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="app.js?v=20260726-i18n-fix2">
+    <link rel="modulepreload" href="app.js?v=20260726-i18n-fix6">
     <link rel="modulepreload" href="theme-runtime.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-i18n-fix2">
-    <link rel="stylesheet" href="style.css?v=20260726-i18n-fix2">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-i18n-fix6">
+    <link rel="stylesheet" href="style.css?v=20260726-i18n-fix6">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -100,95 +100,95 @@
                 <div class="remote-results" id="remoteResults"></div>
             </section>
 
-            <section class="view notes-view" id="view-notes" aria-label="笔记工作区">
+            <section class="view notes-view" id="view-notes" aria-label="笔记工作区" data-i18n-aria-label="笔记工作区">
                 <div class="notes-shell" id="notesShell">
-                    <aside class="notes-sidebar" id="notesGroups" aria-label="笔记分组">
+                    <aside class="notes-sidebar" id="notesGroups" aria-label="笔记分组" data-i18n-aria-label="笔记分组">
                         <div class="notes-sidebar-head">
                             <div class="notes-sidebar-brand">
                                 <span class="notes-sidebar-kicker">Notes</span>
-                                <h1 class="notes-sidebar-title">笔记</h1>
+                                <h1 class="notes-sidebar-title" data-i18n="笔记">笔记</h1>
                             </div>
                             <div class="notes-sidebar-actions">
-                                <button type="button" class="notes-icon-btn" id="notesImportBtn" title="导入 Markdown" aria-label="导入 Markdown">
+                                <button type="button" class="notes-icon-btn" id="notesImportBtn" title="导入 Markdown" data-i18n-title="导入 Markdown" aria-label="导入 Markdown" data-i18n-aria-label="导入 Markdown">
                                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14.5V5M8.5 11 12 14.5 15.5 11M5.5 16.5v1.2A1.3 1.3 0 0 0 6.8 19h10.4a1.3 1.3 0 0 0 1.3-1.3v-1.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                 </button>
-                                <button type="button" class="notes-icon-btn notes-icon-btn-accent" id="notesNewBtn" title="新建笔记 (⌘N)" aria-label="新建笔记">
+                                <button type="button" class="notes-icon-btn notes-icon-btn-accent" id="notesNewBtn" title="新建笔记 (⌘N)" data-i18n-title="新建笔记 (⌘N)" aria-label="新建笔记" data-i18n-aria-label="新建笔记">
                                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                                 </button>
                             </div>
                         </div>
-                        <nav class="notes-nav" aria-label="笔记库">
+                        <nav class="notes-nav" aria-label="笔记库" data-i18n-aria-label="笔记库">
                             <button type="button" class="notes-group-item active" data-group="__all">
                                 <span class="notes-group-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3.8h7.2L19 8.6V20.2a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 3.8V9h5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
-                                <span class="notes-group-label">全部笔记</span>
+                                <span class="notes-group-label" data-i18n="全部笔记">全部笔记</span>
                                 <span class="notes-group-count" id="notesCountAll">0</span>
                             </button>
                             <button type="button" class="notes-group-item" data-group="">
                                 <span class="notes-group-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l1.5 1.8h7.5a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></span>
-                                <span class="notes-group-label">未分组</span>
+                                <span class="notes-group-label" data-i18n="未分组">未分组</span>
                                 <span class="notes-group-count" id="notesCountUngrouped">0</span>
                             </button>
                             <button type="button" class="notes-group-item notes-group-trash" data-group="__trash">
                                 <span class="notes-group-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M9 10.5v7M12 10.5v7M15 10.5v7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                                <span class="notes-group-label">回收站</span>
+                                <span class="notes-group-label" data-i18n="回收站">回收站</span>
                                 <span class="notes-group-count" id="notesCountTrash">0</span>
                             </button>
                         </nav>
                         <div class="notes-groups-divider" role="separator"></div>
-                        <div class="notes-groups-label">分组</div>
+                        <div class="notes-groups-label" data-i18n="分组">分组</div>
                         <div id="notesGroupTree" class="notes-group-tree"></div>
                         <button type="button" class="notes-group-new" id="notesNewGroupBtn">
                             <span class="notes-group-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
-                            <span>新建分组</span>
+                            <span data-i18n="新建分组">新建分组</span>
                         </button>
                     </aside>
 
-                    <section class="notes-list-pane" aria-label="笔记列表">
+                    <section class="notes-list-pane" aria-label="笔记列表" data-i18n-aria-label="笔记列表">
                         <div class="notes-list-toolbar">
                             <div class="notes-search-field">
                                 <span class="notes-search-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16.2 16.2 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>
-                                <input class="notes-search-input" id="notesSearchInput" placeholder="搜索标题、正文、标签…" autocomplete="off" aria-label="搜索笔记">
+                                <input class="notes-search-input" id="notesSearchInput" placeholder="搜索标题、正文、标签…" data-i18n-placeholder="搜索标题、正文、标签…" autocomplete="off" aria-label="搜索笔记" data-i18n-aria-label="搜索笔记">
                             </div>
                             <div class="notes-list-heading-row">
                                 <div class="notes-list-heading">
-                                    <h2 id="notesListHeading">全部笔记</h2>
+                                    <h2 id="notesListHeading" data-i18n="全部笔记">全部笔记</h2>
                                     <span class="notes-list-count" id="notesListCount">0</span>
                                 </div>
                                 <div class="notes-list-filters">
-                                    <button type="button" class="notes-icon-btn" id="notesSelectModeBtn" title="多选" aria-label="多选" aria-pressed="false">
+                                    <button type="button" class="notes-icon-btn" id="notesSelectModeBtn" title="多选" data-i18n-title="多选" aria-label="多选" data-i18n-aria-label="多选" aria-pressed="false">
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="10.5" height="10.5" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9.5 15.5h7.3A1.7 1.7 0 0 0 18.5 13.8V6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7.6 10.2l1.8 1.8 3.4-3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                     </button>
                                     <button type="button" class="notes-filter-trigger" id="notesSortTrigger" aria-haspopup="menu" aria-expanded="false" aria-controls="notesSortMenu">
-                                        <span class="notes-filter-label">最近更新</span>
+                                        <span class="notes-filter-label" data-i18n="最近更新">最近更新</span>
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 9.5 12 13l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                     </button>
                                     <button type="button" class="notes-filter-trigger" id="notesTagTrigger" aria-haspopup="menu" aria-expanded="false" aria-controls="notesTagMenu">
-                                        <span class="notes-filter-label">全部标签</span>
+                                        <span class="notes-filter-label" data-i18n="全部标签">全部标签</span>
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 9.5 12 13l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                     </button>
                                 </div>
                             </div>
-                            <div class="notes-selection-bar force-hidden" id="notesSelectionBar" role="toolbar" aria-label="批量操作">
+                            <div class="notes-selection-bar force-hidden" id="notesSelectionBar" role="toolbar" aria-label="批量操作" data-i18n-aria-label="批量操作">
                                 <div class="notes-selection-meta">
-                                    <span class="notes-selection-count">已选 <strong data-sel-count>0</strong></span>
+                                    <span class="notes-selection-count"><span data-i18n="已选">已选</span> <strong data-sel-count>0</strong></span>
                                 </div>
                                 <div class="notes-selection-actions">
-                                    <button type="button" class="notes-icon-btn" data-sel-action="all" title="全选" aria-label="全选">
+                                    <button type="button" class="notes-icon-btn" data-sel-action="all" title="全选" data-i18n-title="全选" aria-label="全选" data-i18n-aria-label="全选">
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 12.2l2.4 2.4L16.2 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                     </button>
-                                    <button type="button" class="notes-icon-btn" data-sel-action="restore" title="恢复" aria-label="恢复所选">
+                                    <button type="button" class="notes-icon-btn" data-sel-action="restore" title="恢复" data-i18n-title="恢复" aria-label="恢复所选" data-i18n-aria-label="恢复所选">
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 10.2V7.6A1.1 1.1 0 0 1 8.6 6.5h6.8A1.1 1.1 0 0 1 16.5 7.6v2.6M9.2 6.5V5.3A1 1 0 0 1 10.2 4.3h3.6a1 1 0 0 1 1 1v1.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.2 14.2a4.3 4.3 0 1 0 1.3-3.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M7.2 9.4h3.4v3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                     </button>
-                                    <button type="button" class="notes-icon-btn notes-icon-btn-danger" data-sel-action="trash" title="移到回收站" aria-label="移到回收站">
+                                    <button type="button" class="notes-icon-btn notes-icon-btn-danger" data-sel-action="trash" title="移到回收站" data-i18n-title="移到回收站" aria-label="移到回收站" data-i18n-aria-label="移到回收站">
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M9 10.5v7M12 10.5v7M15 10.5v7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                     </button>
-                                    <button type="button" class="notes-icon-btn notes-icon-btn-danger" data-sel-action="purge" title="彻底删除" aria-label="彻底删除所选">
+                                    <button type="button" class="notes-icon-btn notes-icon-btn-danger" data-sel-action="purge" title="彻底删除" data-i18n-title="彻底删除" aria-label="彻底删除所选" data-i18n-aria-label="彻底删除所选">
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 12.2 14 16.2M14 12.2 10 16.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
                                     </button>
-                                    <button type="button" class="notes-icon-btn notes-icon-btn-danger" data-sel-action="purge_permanent" title="直接删除（不进回收站）" aria-label="直接删除所选">
+                                    <button type="button" class="notes-icon-btn notes-icon-btn-danger" data-sel-action="purge_permanent" title="直接删除（不进回收站）" data-i18n-title="直接删除（不进回收站）" aria-label="直接删除所选" data-i18n-aria-label="直接删除所选">
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 12.2 14 16.2M14 12.2 10 16.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
                                     </button>
-                                    <button type="button" class="notes-icon-btn" data-sel-action="exit" title="退出多选" aria-label="退出多选">
+                                    <button type="button" class="notes-icon-btn" data-sel-action="exit" title="退出多选" data-i18n-title="退出多选" aria-label="退出多选" data-i18n-aria-label="退出多选">
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
                                     </button>
                                 </div>
@@ -196,93 +196,93 @@
                             <div id="notesConnectionFilterBar" class="force-hidden"></div>
                             <!-- hidden native selects kept for compatibility / tests -->
                             <select id="notesSortSelect" class="force-hidden" aria-hidden="true" tabindex="-1">
-                                <option value="updated">按更新时间</option>
-                                <option value="created">按创建时间</option>
-                                <option value="title">按标题</option>
+                                <option value="updated" data-i18n="按更新时间">按更新时间</option>
+                                <option value="created" data-i18n="按创建时间">按创建时间</option>
+                                <option value="title" data-i18n="按标题">按标题</option>
                             </select>
-                            <select id="notesTagFilter" class="force-hidden" aria-hidden="true" tabindex="-1"><option value="all">全部标签</option></select>
+                            <select id="notesTagFilter" class="force-hidden" aria-hidden="true" tabindex="-1"><option value="all" data-i18n="全部标签">全部标签</option></select>
                         </div>
-                        <div class="notes-list" id="notesList" role="listbox" aria-label="笔记"></div>
+                        <div class="notes-list" id="notesList" role="listbox" aria-label="笔记" data-i18n-aria-label="笔记"></div>
                         <div class="notes-list-empty force-hidden" id="notesListEmpty">
                             <div class="notes-empty-illustration" aria-hidden="true">
                                 <svg viewBox="0 0 24 24"><path d="M7 3.8h7.2L19 8.6V20.2a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M14 3.8V9h5M8.5 12.5h7M8.5 15.5h7M8.5 18.5h4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
                             </div>
-                            <h3 data-empty-title>还没有笔记</h3>
-                            <p data-empty-desc>从左侧新建一条，或导入 Markdown 文件。</p>
+                            <h3 data-empty-title data-i18n="还没有笔记">还没有笔记</h3>
+                            <p data-empty-desc data-i18n="从左侧新建一条，或导入 Markdown 文件。">从左侧新建一条，或导入 Markdown 文件。</p>
                         </div>
-                        <div class="notes-menu force-hidden" id="notesSortMenu" role="menu" aria-label="排序"></div>
-                        <div class="notes-menu force-hidden" id="notesTagMenu" role="menu" aria-label="标签筛选"></div>
+                        <div class="notes-menu force-hidden" id="notesSortMenu" role="menu" aria-label="排序" data-i18n-aria-label="排序"></div>
+                        <div class="notes-menu force-hidden" id="notesTagMenu" role="menu" aria-label="标签筛选" data-i18n-aria-label="标签筛选"></div>
                     </section>
 
-                    <section class="notes-editor-pane" id="notesEditorPane" aria-label="笔记编辑器">
+                    <section class="notes-editor-pane" id="notesEditorPane" aria-label="笔记编辑器" data-i18n-aria-label="笔记编辑器">
                         <div class="notes-editor-empty" id="notesEditorEmpty">
                             <div class="notes-empty-card">
                                 <div class="notes-empty-illustration" aria-hidden="true">
                                     <svg viewBox="0 0 24 24"><path d="M7 3.8h7.2L19 8.6V20.2a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M14 3.8V9h5M8.5 12.5h7M8.5 15.5h7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
                                 </div>
-                                <h2>选择或新建笔记</h2>
-                                <p>默认私有。可关联连接、按标签归档，并在权限允许时供 AI 按需读写。</p>
+                                <h2 data-i18n="选择或新建笔记">选择或新建笔记</h2>
+                                <p data-i18n="默认私有。可关联连接、按标签归档，并在权限允许时供 AI 按需读写。">默认私有。可关联连接、按标签归档，并在权限允许时供 AI 按需读写。</p>
                                 <div class="notes-empty-hints">
-                                    <span><kbd>⌘</kbd><kbd>N</kbd> 新建</span>
-                                    <span><kbd>⌘</kbd><kbd>S</kbd> 保存</span>
-                                    <span><kbd>⌘</kbd><kbd>E</kbd> 切换预览</span>
+                                    <span><kbd>⌘</kbd><kbd>N</kbd> <span data-i18n="新建">新建</span></span>
+                                    <span><kbd>⌘</kbd><kbd>S</kbd> <span data-i18n="保存">保存</span></span>
+                                    <span><kbd>⌘</kbd><kbd>E</kbd> <span data-i18n="切换预览">切换预览</span></span>
                                 </div>
                             </div>
                         </div>
                         <div class="notes-editor force-hidden" id="notesEditor">
                             <div class="notes-editor-chrome">
                                 <div class="notes-editor-top">
-                                    <button type="button" class="notes-icon-btn notes-back-btn" id="notesBackBtn" title="返回列表" aria-label="返回列表">
+                                    <button type="button" class="notes-icon-btn notes-back-btn" id="notesBackBtn" title="返回列表" data-i18n-title="返回列表" aria-label="返回列表" data-i18n-aria-label="返回列表">
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5.5 8.5 12 15 18.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                     </button>
-                                    <div class="notes-mode-switch" id="notesModeSwitch" data-mode="edit" role="tablist" aria-label="编辑模式">
+                                    <div class="notes-mode-switch" id="notesModeSwitch" data-mode="edit" role="tablist" aria-label="编辑模式" data-i18n-aria-label="编辑模式">
                                         <span class="notes-mode-thumb" aria-hidden="true"></span>
-                                        <button type="button" class="notes-mode-btn active" data-notes-mode="edit" role="tab" aria-selected="true">编辑</button>
-                                        <button type="button" class="notes-mode-btn" data-notes-mode="split" role="tab" aria-selected="false">分屏</button>
-                                        <button type="button" class="notes-mode-btn" data-notes-mode="preview" role="tab" aria-selected="false">预览</button>
+                                        <button type="button" class="notes-mode-btn active" data-notes-mode="edit" role="tab" aria-selected="true" data-i18n="编辑">编辑</button>
+                                        <button type="button" class="notes-mode-btn" data-notes-mode="split" role="tab" aria-selected="false" data-i18n="分屏">分屏</button>
+                                        <button type="button" class="notes-mode-btn" data-notes-mode="preview" role="tab" aria-selected="false" data-i18n="预览">预览</button>
                                     </div>
                                     <div class="notes-editor-actions" id="notesEditorActions">
-                                        <span class="notes-save-state" id="notesSaveState" data-state="saved" aria-live="polite">已保存</span>
-                                        <button type="button" class="notes-icon-btn" id="notesLinkConnBtn" title="关联连接" aria-label="关联连接">
+                                        <span class="notes-save-state" id="notesSaveState" data-state="saved" aria-live="polite" data-i18n="已保存">已保存</span>
+                                        <button type="button" class="notes-icon-btn" id="notesLinkConnBtn" title="关联连接" data-i18n-title="关联连接" aria-label="关联连接" data-i18n-aria-label="关联连接">
                                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.5 14.5 9.5M8.2 12.2l-1.4 1.4a3.2 3.2 0 1 0 4.5 4.5l1.4-1.4M15.8 11.8l1.4-1.4a3.2 3.2 0 0 0-4.5-4.5l-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
                                         </button>
-                                        <button type="button" class="notes-icon-btn" id="notesShareBtn" title="共享设置" aria-label="共享设置">
+                                        <button type="button" class="notes-icon-btn" id="notesShareBtn" title="共享设置" data-i18n-title="共享设置" aria-label="共享设置" data-i18n-aria-label="共享设置">
                                             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.5" cy="12" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="6.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="17.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 11.1 14.8 7.6M8.6 13 14.8 16.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
                                         </button>
-                                        <button type="button" class="notes-icon-btn" id="notesExportBtn" title="导出 Markdown" aria-label="导出">
+                                        <button type="button" class="notes-icon-btn" id="notesExportBtn" title="导出 Markdown" data-i18n-title="导出 Markdown" aria-label="导出" data-i18n-aria-label="导出">
                                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5v9.5M8.5 8 12 4.5 15.5 8M5.5 14.5v3.2A1.3 1.3 0 0 0 6.8 19h10.4a1.3 1.3 0 0 0 1.3-1.3v-3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                         </button>
-                                        <button type="button" class="notes-icon-btn" id="notesMoreBtn" title="更多" aria-label="更多" aria-haspopup="menu" aria-expanded="false" aria-controls="notesMoreMenu">
+                                        <button type="button" class="notes-icon-btn" id="notesMoreBtn" title="更多" data-i18n-title="更多" aria-label="更多" data-i18n-aria-label="更多" aria-haspopup="menu" aria-expanded="false" aria-controls="notesMoreMenu">
                                             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="18" cy="12" r="1.5" fill="currentColor"/></svg>
                                         </button>
-                                        <button type="button" class="notes-icon-btn force-hidden" id="notesRestoreBtn" title="恢复笔记" aria-label="恢复">
+                                        <button type="button" class="notes-icon-btn force-hidden" id="notesRestoreBtn" title="恢复笔记" data-i18n-title="恢复笔记" aria-label="恢复" data-i18n-aria-label="恢复">
                                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 10.2V7.6A1.1 1.1 0 0 1 8.6 6.5h6.8A1.1 1.1 0 0 1 16.5 7.6v2.6M9.2 6.5V5.3A1 1 0 0 1 10.2 4.3h3.6a1 1 0 0 1 1 1v1.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.2 14.2a4.3 4.3 0 1 0 1.3-3.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M7.2 9.4h3.4v3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                         </button>
-                                        <button type="button" class="notes-icon-btn notes-icon-btn-danger" id="notesDeleteBtn" title="移到回收站" aria-label="移到回收站">
+                                        <button type="button" class="notes-icon-btn notes-icon-btn-danger" id="notesDeleteBtn" title="移到回收站" data-i18n-title="移到回收站" aria-label="移到回收站" data-i18n-aria-label="移到回收站">
                                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M9 10.5v7M12 10.5v7M15 10.5v7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                         </button>
-                                        <button type="button" class="notes-icon-btn notes-icon-btn-danger force-hidden" id="notesPurgePermanentBtn" title="直接删除（不进回收站）" aria-label="直接删除">
+                                        <button type="button" class="notes-icon-btn notes-icon-btn-danger force-hidden" id="notesPurgePermanentBtn" title="直接删除（不进回收站）" data-i18n-title="直接删除（不进回收站）" aria-label="直接删除" data-i18n-aria-label="直接删除">
                                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 12.2 14 16.2M14 12.2 10 16.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
                                         </button>
-                                        <button type="button" class="notes-icon-btn notes-icon-btn-danger force-hidden" id="notesPurgeBtn" title="彻底删除（不可恢复）" aria-label="彻底删除">
+                                        <button type="button" class="notes-icon-btn notes-icon-btn-danger force-hidden" id="notesPurgeBtn" title="彻底删除（不可恢复）" data-i18n-title="彻底删除（不可恢复）" aria-label="彻底删除" data-i18n-aria-label="彻底删除">
                                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7.5h14M9.5 7.5V5.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M7.5 7.5l.7 11.2a1.2 1.2 0 0 0 1.2 1.1h5.2a1.2 1.2 0 0 0 1.2-1.1L16.5 7.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 12.2 14 16.2M14 12.2 10 16.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
                                         </button>
-                                        <button type="button" class="notes-text-btn notes-text-btn-danger force-hidden" id="notesEmptyTrashBtn" title="清空回收站">清空</button>
+                                        <button type="button" class="notes-text-btn notes-text-btn-danger force-hidden" id="notesEmptyTrashBtn" title="清空回收站" data-i18n-title="清空回收站" data-i18n="清空">清空</button>
                                     </div>
                                 </div>
-                                <div class="notes-menu force-hidden" id="notesMoreMenu" role="menu" aria-label="更多操作">
-                                    <button type="button" class="notes-menu-item" data-more-action="share" role="menuitem"><span>共享设置</span></button>
-                                    <button type="button" class="notes-menu-item" data-more-action="link" role="menuitem"><span>关联连接</span></button>
-                                    <button type="button" class="notes-menu-item" data-more-action="export" role="menuitem"><span>导出 Markdown</span></button>
-                                    <button type="button" class="notes-menu-item" data-more-action="import" role="menuitem"><span>导入 Markdown</span></button>
-                                    <button type="button" class="notes-menu-item" data-more-action="select" role="menuitem"><span>多选管理</span></button>
+                                <div class="notes-menu force-hidden" id="notesMoreMenu" role="menu" aria-label="更多操作" data-i18n-aria-label="更多操作">
+                                    <button type="button" class="notes-menu-item" data-more-action="share" role="menuitem"><span data-i18n="共享设置">共享设置</span></button>
+                                    <button type="button" class="notes-menu-item" data-more-action="link" role="menuitem"><span data-i18n="关联连接">关联连接</span></button>
+                                    <button type="button" class="notes-menu-item" data-more-action="export" role="menuitem"><span data-i18n="导出 Markdown">导出 Markdown</span></button>
+                                    <button type="button" class="notes-menu-item" data-more-action="import" role="menuitem"><span data-i18n="导入 Markdown">导入 Markdown</span></button>
+                                    <button type="button" class="notes-menu-item" data-more-action="select" role="menuitem"><span data-i18n="多选管理">多选管理</span></button>
                                     <div class="notes-menu-sep"></div>
-                                    <button type="button" class="notes-menu-item" data-more-action="restore" role="menuitem"><span>恢复</span></button>
-                                    <button type="button" class="notes-menu-item danger" data-more-action="delete" role="menuitem"><span>移到回收站</span></button>
-                                    <button type="button" class="notes-menu-item danger" data-more-action="purge_permanent" role="menuitem"><span>直接删除</span></button>
-                                    <button type="button" class="notes-menu-item danger" data-more-action="purge" role="menuitem"><span>彻底删除</span></button>
+                                    <button type="button" class="notes-menu-item" data-more-action="restore" role="menuitem"><span data-i18n="恢复">恢复</span></button>
+                                    <button type="button" class="notes-menu-item danger" data-more-action="delete" role="menuitem"><span data-i18n="移到回收站">移到回收站</span></button>
+                                    <button type="button" class="notes-menu-item danger" data-more-action="purge_permanent" role="menuitem"><span data-i18n="直接删除">直接删除</span></button>
+                                    <button type="button" class="notes-menu-item danger" data-more-action="purge" role="menuitem"><span data-i18n="彻底删除">彻底删除</span></button>
                                 </div>
-                                <input class="notes-title-input" id="notesTitleInput" placeholder="无标题" maxlength="200" aria-label="笔记标题">
+                                <input class="notes-title-input" id="notesTitleInput" placeholder="无标题" data-i18n-placeholder="无标题" maxlength="200" aria-label="笔记标题" data-i18n-aria-label="笔记标题">
                                 <div class="notes-meta-row" id="notesMetaRow">
                                     <div class="notes-meta-group" id="notesGroupChip"></div>
                                     <div class="notes-meta-tags" id="notesTagsChips"></div>
@@ -290,27 +290,27 @@
                                 <!-- hidden inputs keep save path stable -->
                                 <input type="hidden" id="notesTagsInput" value="" aria-hidden="true">
                                 <input type="hidden" id="notesGroupInput" value="" aria-hidden="true">
-                                <div class="notes-toolbar" id="notesToolbar" aria-label="Markdown 工具栏">
-                                    <button type="button" data-md="h2" title="标题" aria-label="标题"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 5.5v13M17.5 5.5v13M6.5 12h11" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></button>
-                                    <button type="button" data-md="bold" title="粗体" aria-label="粗体"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 5.5h5.2a3.4 3.4 0 0 1 0 6.8H7.5zm0 6.8h5.8a3.5 3.5 0 0 1 0 7H7.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>
-                                    <button type="button" data-md="italic" title="斜体" aria-label="斜体"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5.5h6M7 18.5h6M13.5 5.5 10.5 18.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
-                                    <button type="button" data-md="strike" title="删除线" aria-label="删除线"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M9 7.5c.8-1.6 2-2.3 3.6-2.3 2.2 0 3.6 1.3 3.6 3.1 0 1.1-.4 1.9-1.2 2.5M8.4 14.2c.3 2.1 1.8 3.6 4 3.6 2.3 0 4-1.4 4-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+                                <div class="notes-toolbar" id="notesToolbar" aria-label="Markdown 工具栏" data-i18n-aria-label="Markdown 工具栏">
+                                    <button type="button" data-md="h2" title="标题" data-i18n-title="标题" aria-label="标题" data-i18n-aria-label="标题"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 5.5v13M17.5 5.5v13M6.5 12h11" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></button>
+                                    <button type="button" data-md="bold" title="粗体" data-i18n-title="粗体" aria-label="粗体" data-i18n-aria-label="粗体"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 5.5h5.2a3.4 3.4 0 0 1 0 6.8H7.5zm0 6.8h5.8a3.5 3.5 0 0 1 0 7H7.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>
+                                    <button type="button" data-md="italic" title="斜体" data-i18n-title="斜体" aria-label="斜体" data-i18n-aria-label="斜体"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5.5h6M7 18.5h6M13.5 5.5 10.5 18.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+                                    <button type="button" data-md="strike" title="删除线" data-i18n-title="删除线" aria-label="删除线" data-i18n-aria-label="删除线"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M9 7.5c.8-1.6 2-2.3 3.6-2.3 2.2 0 3.6 1.3 3.6 3.1 0 1.1-.4 1.9-1.2 2.5M8.4 14.2c.3 2.1 1.8 3.6 4 3.6 2.3 0 4-1.4 4-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
                                     <span class="notes-toolbar-sep" aria-hidden="true"></span>
-                                    <button type="button" data-md="code" title="行内代码" aria-label="行内代码"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.5 4.5 12 9 16.5M15 7.5 19.5 12 15 16.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-                                    <button type="button" data-md="codeblock" title="代码块" aria-label="代码块"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5.5" width="15" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 10 7 12l1.5 2M15.5 10 17 12l-1.5 2M12.4 9.5l-1.2 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
-                                    <button type="button" data-md="link" title="链接" aria-label="链接"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.5 14.5 9.5M8.2 12.2l-1.4 1.4a3.2 3.2 0 1 0 4.5 4.5l1.4-1.4M15.8 11.8l1.4-1.4a3.2 3.2 0 0 0-4.5-4.5l-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+                                    <button type="button" data-md="code" title="行内代码" data-i18n-title="行内代码" aria-label="行内代码" data-i18n-aria-label="行内代码"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.5 4.5 12 9 16.5M15 7.5 19.5 12 15 16.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                                    <button type="button" data-md="codeblock" title="代码块" data-i18n-title="代码块" aria-label="代码块" data-i18n-aria-label="代码块"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5.5" width="15" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 10 7 12l1.5 2M15.5 10 17 12l-1.5 2M12.4 9.5l-1.2 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+                                    <button type="button" data-md="link" title="链接" data-i18n-title="链接" aria-label="链接" data-i18n-aria-label="链接"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.5 14.5 9.5M8.2 12.2l-1.4 1.4a3.2 3.2 0 1 0 4.5 4.5l1.4-1.4M15.8 11.8l1.4-1.4a3.2 3.2 0 0 0-4.5-4.5l-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
                                     <span class="notes-toolbar-sep" aria-hidden="true"></span>
-                                    <button type="button" data-md="quote" title="引用" aria-label="引用"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 17.5c-2.2 0-3.8-1.7-3.8-4.1 0-3.2 2.3-5.9 5.3-7.1l.7 1.4c-1.8.9-3 2.5-3.1 4.2.5-.3 1.1-.5 1.8-.5 1.7 0 3 1.2 3 3 0 1.7-1.3 3.1-3.9 3.1zm9 0c-2.2 0-3.8-1.7-3.8-4.1 0-3.2 2.3-5.9 5.3-7.1l.7 1.4c-1.8.9-3 2.5-3.1 4.2.5-.3 1.1-.5 1.8-.5 1.7 0 3 1.2 3 3 0 1.7-1.3 3.1-3.9 3.1z" fill="currentColor"/></svg></button>
-                                    <button type="button" data-md="ul" title="无序列表" aria-label="无序列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 7h9M9.5 12h9M9.5 17h9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="6" cy="7" r="1.1" fill="currentColor"/><circle cx="6" cy="12" r="1.1" fill="currentColor"/><circle cx="6" cy="17" r="1.1" fill="currentColor"/></svg></button>
-                                    <button type="button" data-md="ol" title="有序列表" aria-label="有序列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7h9M10 12h9M10 17h9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><text x="4.2" y="8.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">1</text><text x="4.2" y="13.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">2</text><text x="4.2" y="18.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">3</text></svg></button>
-                                    <button type="button" data-md="task" title="任务列表" aria-label="任务列表"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 12.2l2.4 2.4L16.2 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                                    <button type="button" data-md="quote" title="引用" data-i18n-title="引用" aria-label="引用" data-i18n-aria-label="引用"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 17.5c-2.2 0-3.8-1.7-3.8-4.1 0-3.2 2.3-5.9 5.3-7.1l.7 1.4c-1.8.9-3 2.5-3.1 4.2.5-.3 1.1-.5 1.8-.5 1.7 0 3 1.2 3 3 0 1.7-1.3 3.1-3.9 3.1zm9 0c-2.2 0-3.8-1.7-3.8-4.1 0-3.2 2.3-5.9 5.3-7.1l.7 1.4c-1.8.9-3 2.5-3.1 4.2.5-.3 1.1-.5 1.8-.5 1.7 0 3 1.2 3 3 0 1.7-1.3 3.1-3.9 3.1z" fill="currentColor"/></svg></button>
+                                    <button type="button" data-md="ul" title="无序列表" data-i18n-title="无序列表" aria-label="无序列表" data-i18n-aria-label="无序列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 7h9M9.5 12h9M9.5 17h9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="6" cy="7" r="1.1" fill="currentColor"/><circle cx="6" cy="12" r="1.1" fill="currentColor"/><circle cx="6" cy="17" r="1.1" fill="currentColor"/></svg></button>
+                                    <button type="button" data-md="ol" title="有序列表" data-i18n-title="有序列表" aria-label="有序列表" data-i18n-aria-label="有序列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7h9M10 12h9M10 17h9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><text x="4.2" y="8.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">1</text><text x="4.2" y="13.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">2</text><text x="4.2" y="18.2" font-size="6.2" fill="currentColor" font-family="system-ui,sans-serif">3</text></svg></button>
+                                    <button type="button" data-md="task" title="任务列表" data-i18n-title="任务列表" aria-label="任务列表" data-i18n-aria-label="任务列表"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 12.2l2.4 2.4L16.2 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                                 </div>
                             </div>
                             <div class="notes-body" id="notesBody" data-mode="edit">
-                                <textarea id="notesContentInput" class="notes-content-input" spellcheck="false" aria-label="Markdown 正文" placeholder="开始写点什么… 支持 Markdown。不要保存密码、私钥或 token。"></textarea>
-                                <article class="notes-preview" id="notesPreview" aria-label="预览"></article>
+                                <textarea id="notesContentInput" class="notes-content-input" spellcheck="false" aria-label="Markdown 正文" data-i18n-aria-label="Markdown 正文" placeholder="开始写点什么… 支持 Markdown。不要保存密码、私钥或 token。" data-i18n-placeholder="开始写点什么… 支持 Markdown。不要保存密码、私钥或 token。"></textarea>
+                                <article class="notes-preview" id="notesPreview" aria-label="预览" data-i18n-aria-label="预览"></article>
                             </div>
-                            <div class="notes-security-hint">不要在笔记中保存密码、私钥或 token。预览会转义 HTML 并限制链接协议。</div>
+                            <div class="notes-security-hint" data-i18n="不要在笔记中保存密码、私钥或 token。预览会转义 HTML 并限制链接协议。">不要在笔记中保存密码、私钥或 token。预览会转义 HTML 并限制链接协议。</div>
                         </div>
                     </section>
                 </div>
@@ -319,9 +319,9 @@
 
             <section class="view" id="view-ai">
                 <div class="ai-empty-card">
-                    <h2>AI 面板</h2>
-                    <p>顶部 AI 按钮会直接打开浮窗；模型、工具和敏感确认在设置里管理。</p>
-                    <div class="form-actions"><button class="btn" type="button" id="aiJumpSettingsBtn">前往 AI 设置</button><button class="btn btn-primary" type="button" id="openAiAssistantBtn2">打开浮窗</button></div>
+                    <h2 data-i18n="AI 面板">AI 面板</h2>
+                    <p data-i18n="顶部 AI 按钮会直接打开浮窗；模型、工具和敏感确认在设置里管理。">顶部 AI 按钮会直接打开浮窗；模型、工具和敏感确认在设置里管理。</p>
+                    <div class="form-actions"><button class="btn" type="button" id="aiJumpSettingsBtn" data-i18n="前往 AI 设置">前往 AI 设置</button><button class="btn btn-primary" type="button" id="openAiAssistantBtn2" data-i18n="打开浮窗">打开浮窗</button></div>
                 </div>
             </section>
 
@@ -443,7 +443,7 @@
                                     <label data-i18n="自定义 CSS">自定义 CSS</label>
                                     <textarea id="customCssInput" rows="6" spellcheck="false" placeholder=":root { --accent: #0a84ff; }\n.connection-card { border-radius: 22px; }"></textarea>
                                     <label data-i18n="自定义 JS">自定义 JS</label>
-                                    <textarea id="customJsInput" rows="5" spellcheck="false" placeholder="// 保存后在前端页面执行；请只填写可信代码"></textarea>
+                                    <textarea id="customJsInput" rows="5" spellcheck="false" placeholder="// 保存后在前端页面执行；请只填写可信代码" data-i18n-placeholder="// 保存后在前端页面执行；请只填写可信代码"></textarea>
                                     <p class="field-hint" data-i18n="自定义 CSS/JS 只在选择“自定义”配色时生效；JS 会在登录页、后台和远程窗口前端执行，请只保存你信任的代码。">自定义 CSS/JS 只在选择“自定义”配色时生效；JS 会在登录页、后台和远程窗口前端执行，请只保存你信任的代码。</p>
                                 </div>
                                 <h3 data-i18n="SSH 终端自定义">SSH 终端自定义</h3>
@@ -622,7 +622,7 @@
                                 <div class="ai-runtime-grid">
                                 <section class="security-card settings-form ai-settings-card ai-runtime-card">
                                     <h2 data-i18n="权限规则（Go Runtime）">权限规则（Go Runtime）</h2>
-                                    <p class="field-hint">优先级：deny &gt; ask &gt; allow &gt; 模式默认。规则形如 <code>remote_execute(rm -rf*)</code> 或 <code>list_connections</code>。每行一条。</p>
+                                    <p class="field-hint"><span data-i18n="优先级：deny > ask > allow > 模式默认。规则形如">优先级：deny &gt; ask &gt; allow &gt; 模式默认。规则形如</span> <code>remote_execute(rm -rf*)</code> <span data-i18n="或">或</span> <code>list_connections</code><span data-i18n="。每行一条。">。每行一条。</span></p>
                                     <label data-i18n="默认模式">默认模式</label>
                                     <div class="ai-segment ai-segment-block" id="aiPermRuleMode" data-value="ask" data-cols="3" role="tablist" aria-label="权限默认模式" data-i18n-aria-label="权限默认模式">
                                         <span class="ai-segment-thumb" aria-hidden="true"></span>
@@ -641,13 +641,13 @@
                                 </section>
                                 <section class="security-card ai-resource-card ai-runtime-card">
                                 <h2 data-i18n="MCP 服务器（Go AI Runtime）">MCP 服务器（Go AI Runtime）</h2>
-                                <p class="field-hint">仅在启用 <code>ZEPHYR_AI_URL</code> 时生效。stdio 在服务端执行；http 为远程 MCP。工具名形如 <code>mcp__name__tool</code>。</p>
+                                <p class="field-hint"><span data-i18n="仅在启用">仅在启用</span> <code>ZEPHYR_AI_URL</code> <span data-i18n="时生效。stdio 在服务端执行；http 为远程 MCP。工具名形如">时生效。stdio 在服务端执行；http 为远程 MCP。工具名形如</span> <code>mcp__name__tool</code>。</p>
                                 <form id="aiMcpForm" class="settings-form ai-mcp-form">
                                     <input type="hidden" id="aiMcpId">
                                     <div class="form-row">
                                         <div class="form-group"><label data-i18n="名称">名称</label><input id="aiMcpName" placeholder="例如 filesystem" data-i18n-placeholder="例如 filesystem" maxlength="80"></div>
                                         <div class="form-group"><label data-i18n="类型">类型</label>
-                                            <div class="ai-segment ai-segment-block" id="aiMcpType" data-value="stdio" data-cols="2" role="tablist" aria-label="MCP 传输类型">
+                                            <div class="ai-segment ai-segment-block" id="aiMcpType" data-value="stdio" data-cols="2" role="tablist" aria-label="MCP 传输类型" data-i18n-aria-label="MCP 传输类型">
                                                 <span class="ai-segment-thumb" aria-hidden="true"></span>
                                                 <button type="button" class="ai-segment-btn active" data-value="stdio" role="tab" aria-selected="true">stdio</button>
                                                 <button type="button" class="ai-segment-btn" data-value="http" role="tab" aria-selected="false">http</button>
@@ -723,22 +723,22 @@
                         <div class="settings-panel" id="settings-agent">
                             <h2>Zephyr Agent Token</h2>
                             <p class="muted" data-i18n="Token 用于 Zephyr Agent 主动连接主端并注册文件系统代理。可为不同设备创建多个 Token，分别命名、复制、重命名、重新生成或删除。">Token 用于 Zephyr Agent 主动连接主端并注册文件系统代理。可为不同设备创建多个 Token，分别命名、复制、重命名、重新生成或删除。</p>
-                            <div class="agent-token-actions"><button class="btn btn-primary" type="button" id="agentCreateTokenBtn" data-i18n="新增 Token">新增 Token</button><button class="btn" type="button" id="agentRefreshTokenBtn" data-i18n="刷新">刷新</button><button class="btn danger" type="button" id="agentResetAllTokenBtn" data-i18n="重置全部 Token">重置全部 Token</button><label class="inline-field">长度 <input id="agentTokenLengthInput" type="number" min="16" max="256" value="50"></label></div>
+                            <div class="agent-token-actions"><button class="btn btn-primary" type="button" id="agentCreateTokenBtn" data-i18n="新增 Token">新增 Token</button><button class="btn" type="button" id="agentRefreshTokenBtn" data-i18n="刷新">刷新</button><button class="btn danger" type="button" id="agentResetAllTokenBtn" data-i18n="重置全部 Token">重置全部 Token</button><label class="inline-field"><span data-i18n="长度">长度</span> <input id="agentTokenLengthInput" type="number" min="16" max="256" value="50"></label></div>
                             <div class="agent-token-list" id="agentTokenList"><p class="empty-state" data-i18n="正在加载...">正在加载...</p></div>
                             <h2 data-i18n="连接信息">连接信息</h2>
                             <div class="agent-connect-info">
                                 <label data-i18n="主端地址">主端地址</label>
                                 <div class="copy-line"><code id="agentServerUrlText">--</code><button class="tool-btn" type="button" id="agentCopyServerUrlBtn" data-i18n="复制">复制</button></div>
-                                <p class="field-hint">Agent App 里主端地址填写当前 Zephyr 的 HTTPS 地址，例如 <code>https://ssh.example.com</code>；不要手动填写 <code>wss://</code>。</p>
+                                <p class="field-hint"><span data-i18n="Agent App 里主端地址填写当前 Zephyr 的 HTTPS 地址，例如">Agent App 里主端地址填写当前 Zephyr 的 HTTPS 地址，例如</span> <code>https://ssh.example.com</code><span data-i18n="；不要手动填写">；不要手动填写</span> <code>wss://</code>。</p>
                             </div>
                             <h2 data-i18n="下载 Agent">下载 Agent</h2>
-                            <p class="muted" id="agentReleaseHint">镜像构建时自动解析最新 <code>agent-v*</code> Release。</p>
+                            <p class="muted" id="agentReleaseHint"><span data-i18n="镜像构建时自动解析最新">镜像构建时自动解析最新</span> <code>agent-v*</code> Release。</p>
                             <p id="agentReleaseLine"><a class="muted-link" id="agentReleaseLink" href="https://github.com/Lanlan13-14/zephyr-ssh/releases" target="_blank" rel="noopener noreferrer" data-i18n="查看 Zephyr Agent 发布页">查看 Zephyr Agent 发布页</a></p>
                         </div>
                         <div class="settings-panel" id="settings-data"><h2 data-i18n="数据导入导出">数据导入导出</h2><p class="muted" data-i18n="导出文件使用 data/.env 中 ENCRYPTION_KEY 加密；敏感字段在数据库中使用 ML-KEM-768 + AES-256-GCM 混合加密保存。">导出文件使用 data/.env 中 ENCRYPTION_KEY 加密；敏感字段在数据库中使用 ML-KEM-768 + AES-256-GCM 混合加密保存。</p><button class="btn btn-primary" id="exportDataBtn" data-i18n="开始导出">开始导出</button><form id="importDataForm" class="settings-form"><input type="file" id="backupFile" accept=".enc"><input type="password" id="importLoginPassword" placeholder="当前登录密码" data-i18n-placeholder="当前登录密码"><input type="password" id="backupPassword" placeholder="备份解密密码（ENCRYPTION_KEY）" data-i18n-placeholder="备份解密密码（ENCRYPTION_KEY）"><button class="btn danger" data-i18n="导入备份">导入备份</button></form></div>
                         <div class="settings-panel" id="settings-mail"><h2 data-i18n="邮件通知">邮件通知</h2><form id="mailForm" class="settings-form"><label class="check-line"><input type="checkbox" id="mailEnabled"> <span data-i18n="启用邮件通知">启用邮件通知</span></label><input id="mailHost" placeholder="SMTP Host"><input id="mailPort" type="number" placeholder="SMTP Port"><label class="check-line"><input type="checkbox" id="mailSecure"> SSL/TLS</label><input id="mailUser" placeholder="SMTP 用户名" data-i18n-placeholder="SMTP 用户名"><div class="form-group password-field"><input id="mailPass" type="password" placeholder="SMTP 密码" data-i18n-placeholder="SMTP 密码"><button type="button" id="toggleMailPassword" title="显示/隐藏 SMTP 密码" data-i18n-title="显示/隐藏 SMTP 密码">👁️</button></div><button type="button" class="link-btn" id="revealMailPass" data-i18n="查看已保存 SMTP 密码">查看已保存 SMTP 密码</button><p class="field-hint" data-i18n="默认隐藏已保存 SMTP 密码；留空或保持星号不会覆盖已保存密码。">默认隐藏已保存 SMTP 密码；留空或保持星号不会覆盖已保存密码。</p><input id="mailFrom" placeholder="发件人" data-i18n-placeholder="发件人"><input id="mailAdminEmail" type="email" placeholder="后台管理员邮箱" data-i18n-placeholder="后台管理员邮箱"><label class="check-line"><input type="checkbox" id="notifyLoginSuccess"> <span data-i18n="登录成功通知">登录成功通知</span></label><label class="check-line"><input type="checkbox" id="notifyLoginFailure"> <span data-i18n="登录失败通知">登录失败通知</span></label><label class="check-line"><input type="checkbox" id="notifyLoginToUser"> <span data-i18n="给登录用户发送通知">给登录用户发送通知</span></label><label class="check-line"><input type="checkbox" id="geoLookupEnabled"> <span data-i18n="IP 地区查询">IP 地区查询</span></label><button class="btn btn-primary" type="submit" data-i18n="保存邮件设置">保存邮件设置</button><button class="btn" type="button" id="testMailBtn" data-i18n="测试邮件">测试邮件</button></form></div>
                         <div class="settings-panel" id="settings-notes"><h2 data-i18n="笔记功能">笔记功能</h2><form id="notesSettingsForm" class="settings-form"><label class="check-line"><input type="checkbox" id="notesEnabledInput"> <span data-i18n="启用笔记功能">启用笔记功能</span></label><p class="field-hint" data-i18n="关闭后导航栏不显示笔记入口，AI 笔记工具也一并禁用。">关闭后导航栏不显示笔记入口，AI 笔记工具也一并禁用。</p><button class="btn btn-primary" type="submit" data-i18n="保存">保存</button></form></div>
-                        <div class="settings-panel force-hidden" id="settings-admin"><h2 id="adminPanelTitle" data-i18n="多用户管理">多用户管理</h2><div class="admin-toolbar"><button class="btn btn-primary admin-add-btn" type="button" id="adminAddUserBtn"><span class="admin-icon-inline"></span>添加用户</button></div><div class="admin-user-list" id="adminUserList"></div></div>
+                        <div class="settings-panel force-hidden" id="settings-admin"><h2 id="adminPanelTitle" data-i18n="多用户管理">多用户管理</h2><div class="admin-toolbar"><button class="btn btn-primary admin-add-btn" type="button" id="adminAddUserBtn"><span class="admin-icon-inline"></span><span data-i18n="添加用户">添加用户</span></button></div><div class="admin-user-list" id="adminUserList"></div></div>
                         <div class="settings-panel" id="settings-about">
                             <h2 data-i18n="关于 Zephyr">关于 Zephyr</h2>
                             <p><span data-i18n="版本：">版本：</span><strong id="versionText">--</strong></p>
@@ -755,14 +755,14 @@
     <div id="connectionTransitionLayer" class="connection-transition-layer" aria-hidden="true"></div>
 
     <div class="ai-agent-panel file-manager" id="aiAgentPanel" style="display:none;" aria-hidden="true">
-        <div class="panel-drag-handle" data-ai-agent-drag title="拖动移动窗口">
-            <button class="panel-traffic-btn" data-ai-agent-layout title="窗口布局"><span></span></button>
+        <div class="panel-drag-handle" data-ai-agent-drag title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+            <button class="panel-traffic-btn" data-ai-agent-layout title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
         </div>
         <div class="ai-agent-window">
             <aside class="ai-agent-sidebar">
-                <div class="ai-sidebar-header"><span>全部对话</span><button class="new-chat-btn" type="button" id="aiNewChatBtn">＋</button></div>
+                <div class="ai-sidebar-header"><span data-i18n="全部对话">全部对话</span><button class="new-chat-btn" type="button" id="aiNewChatBtn">＋</button></div>
                 <div class="ai-chat-list" id="aiChatList"></div>
-                <div class="ai-sidebar-footer"><button class="ui-btn" type="button" id="aiRefreshStatusBtn">刷新配置</button></div>
+                <div class="ai-sidebar-footer"><button class="ui-btn" type="button" id="aiRefreshStatusBtn" data-i18n="刷新配置">刷新配置</button></div>
             </aside>
             <section class="ai-agent-main">
                 <div class="ai-title-bar panel-titlebar">
@@ -771,41 +771,41 @@
                         <input id="aiProviderSelect" type="hidden">
                         <input id="aiModelSelect" type="hidden">
                         <input id="aiThinkIntensity" type="hidden">
-                        <button class="ui-btn ai-picker-btn" type="button" id="aiProviderPickerBtn">供应商</button>
-                        <button class="ui-btn ai-picker-btn" type="button" id="aiModelPickerBtn">模型</button>
-                        <div class="ai-segment ai-collab-segment" id="aiCollabMode" data-value="standard" data-cols="3" role="tablist" aria-label="协作模式">
+                        <button class="ui-btn ai-picker-btn" type="button" id="aiProviderPickerBtn" data-i18n="供应商">供应商</button>
+                        <button class="ui-btn ai-picker-btn" type="button" id="aiModelPickerBtn" data-i18n="模型">模型</button>
+                        <div class="ai-segment ai-collab-segment" id="aiCollabMode" data-value="standard" data-cols="3" role="tablist" aria-label="协作模式" data-i18n-aria-label="协作模式">
                             <span class="ai-segment-thumb" aria-hidden="true"></span>
-                            <button type="button" class="ai-segment-btn active" data-value="standard" role="tab" aria-selected="true">标准</button>
-                            <button type="button" class="ai-segment-btn" data-value="plan" role="tab" aria-selected="false">计划</button>
+                            <button type="button" class="ai-segment-btn active" data-value="standard" role="tab" aria-selected="true" data-i18n="标准">标准</button>
+                            <button type="button" class="ai-segment-btn" data-value="plan" role="tab" aria-selected="false" data-i18n="计划">计划</button>
                             <button type="button" class="ai-segment-btn" data-value="goal" role="tab" aria-selected="false">Goal</button>
                         </div>
-                        <button class="ui-btn ai-picker-btn" type="button" id="aiThinkPickerBtn">推理</button>
-                        <button class="ui-btn" type="button" id="aiUsageBtn">用量</button>
-                        <button class="ui-btn" type="button" id="aiBrowserPreviewToggleBtn">浏览器预览</button>
-                        <button class="ui-btn" type="button" id="aiCompressChatBtn">压缩摘要</button>
-                        <button class="ui-btn danger" type="button" id="aiClearChatBtn">清空</button>
-                        <button class="ui-btn danger" type="button" id="aiClosePanelBtn">关闭</button>
+                        <button class="ui-btn ai-picker-btn" type="button" id="aiThinkPickerBtn" data-i18n="推理">推理</button>
+                        <button class="ui-btn" type="button" id="aiUsageBtn" data-i18n="用量">用量</button>
+                        <button class="ui-btn" type="button" id="aiBrowserPreviewToggleBtn" data-i18n="浏览器预览">浏览器预览</button>
+                        <button class="ui-btn" type="button" id="aiCompressChatBtn" data-i18n="压缩摘要">压缩摘要</button>
+                        <button class="ui-btn danger" type="button" id="aiClearChatBtn" data-i18n="清空">清空</button>
+                        <button class="ui-btn danger" type="button" id="aiClosePanelBtn" data-i18n="关闭">关闭</button>
                     </div>
                 </div>
                 <div class="ai-capability-strip force-hidden" id="aiCapabilityStrip" aria-hidden="true"></div>
                 <div class="ai-browser-preview" id="aiBrowserPreview" aria-live="polite">
-                    <div class="ai-browser-preview-head"><span id="aiBrowserPreviewTitle">AI 代操作页面</span><button class="ui-btn" type="button" id="aiBrowserPreviewRefreshBtn">刷新截图</button></div>
-                    <div class="ai-browser-preview-body" id="aiBrowserPreviewBody"><span>AI 打开网页后，会在这里持续显示它正在代操作的页面。</span></div>
+                    <div class="ai-browser-preview-head"><span id="aiBrowserPreviewTitle" data-i18n="AI 代操作页面">AI 代操作页面</span><button class="ui-btn" type="button" id="aiBrowserPreviewRefreshBtn" data-i18n="刷新截图">刷新截图</button></div>
+                    <div class="ai-browser-preview-body" id="aiBrowserPreviewBody"><span data-i18n="AI 打开网页后，会在这里持续显示它正在代操作的页面。">AI 打开网页后，会在这里持续显示它正在代操作的页面。</span></div>
                 </div>
                 <div class="ai-chat-area" id="aiChatArea"><div class="ai-typing-indicator" id="aiTypingIndicator"><span></span><span></span><span></span></div></div>
                 <div class="ai-input-area">
                     <input type="file" id="aiFileUpload" style="display:none;" multiple>
-                    <button class="ai-tool-btn" type="button" id="aiUploadBtn" title="添加附件" aria-label="添加附件"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></button>
+                    <button class="ai-tool-btn" type="button" id="aiUploadBtn" title="添加附件" data-i18n-title="添加附件" aria-label="添加附件" data-i18n-aria-label="添加附件"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></button>
                     <!-- 语音输入已移除：保留附件上传与文本输入 -->
                     <span class="ai-md-toggle-removed" hidden></span>
-                    <textarea class="ai-input-box" id="aiUserInput" rows="1" placeholder="输入指令，可让 AI 搜索网页、分析连接、执行远程命令..."></textarea>
-                    <button class="ai-send-btn" type="button" id="aiSendBtn" title="发送" aria-label="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg></button>
+                    <textarea class="ai-input-box" id="aiUserInput" rows="1" placeholder="输入指令，可让 AI 搜索网页、分析连接、执行远程命令..." data-i18n-placeholder="输入指令，可让 AI 搜索网页、分析连接、执行远程命令..."></textarea>
+                    <button class="ai-send-btn" type="button" id="aiSendBtn" title="发送" data-i18n-title="发送" aria-label="发送" data-i18n-aria-label="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg></button>
                     <div class="ai-input-preview" id="aiInputPreview" hidden></div>
                 </div>
             </section>
         </div>
-        <div class="panel-resize-handle left" data-ai-agent-resize="left" title="拖动调整大小"></div>
-        <div class="panel-resize-handle right" data-ai-agent-resize="right" title="拖动调整大小"></div>
+        <div class="panel-resize-handle left" data-ai-agent-resize="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+        <div class="panel-resize-handle right" data-ai-agent-resize="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
     </div>
 
     <!-- AI 供应商弹窗专用遮罩：与 SSH 密钥 / 片段 / 代理同源（zephyr-motion） -->
@@ -813,145 +813,145 @@
     <div class="modal-backdrop" id="aiProviderModal" aria-hidden="true">
         <form class="connection-modal ai-provider-modal" id="aiProviderForm">
             <div id="aiProviderModalInner" class="ai-provider-modal-inner">
-            <div class="modal-head"><h2 id="aiProviderModalTitle">添加模型供应商</h2><button type="button" class="icon-btn" id="aiProviderCloseBtn">✕</button></div>
+            <div class="modal-head"><h2 id="aiProviderModalTitle" data-i18n="添加模型供应商">添加模型供应商</h2><button type="button" class="icon-btn" id="aiProviderCloseBtn">✕</button></div>
             <input type="hidden" id="aiProviderId">
-            <div class="form-row"><div class="form-group"><label>名称</label><input id="aiProviderName" required placeholder="OpenAI / DeepSeek / Claude / Gemini"></div><div class="form-group"><label>类型</label>
+            <div class="form-row"><div class="form-group"><label data-i18n="名称">名称</label><input id="aiProviderName" required placeholder="OpenAI / DeepSeek / Claude / Gemini"></div><div class="form-group"><label data-i18n="类型">类型</label>
                 <select id="aiProviderType">
-                    <option value="openai-compatible">OpenAI 兼容</option>
+                    <option value="openai-compatible" data-i18n="OpenAI 兼容">OpenAI 兼容</option>
                     <option value="anthropic">Anthropic Claude</option>
                     <option value="gemini">Google Gemini</option>
                 </select>
             </div></div>
-            <div class="form-row"><div class="form-group"><label>API Base URL</label><input id="aiProviderBaseUrl" placeholder="https://api.openai.com/v1 / https://api.openai.com/v1/responses / https://api.deepseek.com/v1"></div><div class="form-group"><label>API Key</label><input id="aiProviderApiKey" type="password" placeholder="留 ****** 表示不修改"></div></div>
-            <div class="form-row"><div class="form-group"><label>接口模式（仅 OpenAI / OpenAI 兼容）</label>
+            <div class="form-row"><div class="form-group"><label>API Base URL</label><input id="aiProviderBaseUrl" placeholder="https://api.openai.com/v1 / https://api.openai.com/v1/responses / https://api.deepseek.com/v1"></div><div class="form-group"><label>API Key</label><input id="aiProviderApiKey" type="password" placeholder="留 ****** 表示不修改" data-i18n-placeholder="留 ****** 表示不修改"></div></div>
+            <div class="form-row"><div class="form-group"><label data-i18n="接口模式（仅 OpenAI / OpenAI 兼容）">接口模式（仅 OpenAI / OpenAI 兼容）</label>
                 <select id="aiProviderApiMode">
-                    <option value="auto">自动识别</option>
+                    <option value="auto" data-i18n="自动识别">自动识别</option>
                     <option value="chat">OpenAI Chat Completions</option>
                     <option value="responses">OpenAI Responses API</option>
                 </select>
-                <p class="field-hint">Claude 固定使用 Anthropic Messages API；Gemini 固定使用 generateContent，不使用此项。</p>
-            </div><div class="form-group ai-model-actions"><label>模型列表</label><button class="btn" type="button" id="aiFetchModelsBtn">获取模型</button></div></div>
-            <div class="form-row"><div class="form-group"><label>模型列表</label><textarea id="aiProviderModels" rows="3" placeholder="保存 API Key/Base URL 后可点获取模型；也可手动填写，逗号或换行分隔"></textarea></div><div class="form-group"><label>默认模型</label><input id="aiProviderDefaultModel" placeholder="留空自动选择第一个可用模型"></div></div>
-            <div class="form-group ai-provider-share-box" id="aiProviderShareBox"><label>共享设置</label><label class="check-line"><input type="checkbox" id="aiProviderShareUsers"> 共享给所有用户</label><label class="check-line"><input type="checkbox" id="aiProviderShareAdmins"> 共享给所有管理员</label><label>指定用户（可多选）</label><input id="aiProviderShareSearch" placeholder="搜索用户名"><div id="aiProviderShareTargets" class="ai-provider-share-targets"></div><p class="field-hint">共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。以上选项可以同时开启。</p></div>
-            <div class="form-group"><label>模型请求 User-Agent（可选，逐模型）</label><textarea id="aiProviderModelUserAgents" rows="3" placeholder="每行一个：模型名=User-Agent\ngpt-4.1=Mozilla/5.0 ...\nclaude-sonnet-4-5=MyClient/1.0"></textarea><p class="field-hint">只对聊天/生成时匹配的模型请求生效；未配置的模型不发送自定义 User-Agent，保持默认请求行为。</p></div>
-            <div class="form-row"><div class="form-group"><label>Organization / Project（可选）</label><input id="aiProviderOrganization" placeholder="org... 或 proj..."></div><div class="form-group"><label>额外请求头 JSON（可选）</label><textarea id="aiProviderExtraHeaders" rows="3" placeholder='{"X-Request-From":"Zephyr"}'></textarea></div></div>
-            <h3>模型参数</h3>
-            <div class="form-row"><div class="form-group"><label>temperature（-1 不发送）</label><input id="aiProviderTemperature" type="number" step="0.1" min="-1" max="2" value="-1"></div><div class="form-group"><label>top_p（-1 不发送）</label><input id="aiProviderTopP" type="number" step="0.05" min="-1" max="1" value="-1"></div></div>
-            <div class="form-row"><div class="form-group"><label>max_tokens / max_output_tokens</label><input id="aiProviderMaxTokens" type="number" min="1" value="4096"></div><div class="form-group"><label>上下文窗口 Tokens（可选）</label><input id="aiProviderContextWindow" type="number" min="1024" step="1024" placeholder="留空使用全局"></div></div>
-            <div class="form-row"><div class="form-group"><label>推理强度（按供应商映射）</label>
+                <p class="field-hint" data-i18n="Claude 固定使用 Anthropic Messages API；Gemini 固定使用 generateContent，不使用此项。">Claude 固定使用 Anthropic Messages API；Gemini 固定使用 generateContent，不使用此项。</p>
+            </div><div class="form-group ai-model-actions"><label data-i18n="模型列表">模型列表</label><button class="btn" type="button" id="aiFetchModelsBtn" data-i18n="获取模型">获取模型</button></div></div>
+            <div class="form-row"><div class="form-group"><label data-i18n="模型列表">模型列表</label><textarea id="aiProviderModels" rows="3" placeholder="保存 API Key/Base URL 后可点获取模型；也可手动填写，逗号或换行分隔" data-i18n-placeholder="保存 API Key/Base URL 后可点获取模型；也可手动填写，逗号或换行分隔"></textarea></div><div class="form-group"><label data-i18n="默认模型">默认模型</label><input id="aiProviderDefaultModel" placeholder="留空自动选择第一个可用模型" data-i18n-placeholder="留空自动选择第一个可用模型"></div></div>
+            <div class="form-group ai-provider-share-box" id="aiProviderShareBox"><label data-i18n="共享设置">共享设置</label><label class="check-line"><input type="checkbox" id="aiProviderShareUsers"> <span data-i18n="共享给所有用户">共享给所有用户</span></label><label class="check-line"><input type="checkbox" id="aiProviderShareAdmins"> <span data-i18n="共享给所有管理员">共享给所有管理员</span></label><label data-i18n="指定用户（可多选）">指定用户（可多选）</label><input id="aiProviderShareSearch" placeholder="搜索用户名" data-i18n-placeholder="搜索用户名"><div id="aiProviderShareTargets" class="ai-provider-share-targets"></div><p class="field-hint" data-i18n="共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。以上选项可以同时开启。">共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。以上选项可以同时开启。</p></div>
+            <div class="form-group"><label data-i18n="模型请求 User-Agent（可选，逐模型）">模型请求 User-Agent（可选，逐模型）</label><textarea id="aiProviderModelUserAgents" rows="3" placeholder="每行一个：模型名=User-Agent\ngpt-4.1=Mozilla/5.0 ...\nclaude-sonnet-4-5=MyClient/1.0" data-i18n-placeholder="每行一个：模型名=User-Agent\ngpt-4.1=Mozilla/5.0 ...\nclaude-sonnet-4-5=MyClient/1.0"></textarea><p class="field-hint" data-i18n="只对聊天/生成时匹配的模型请求生效；未配置的模型不发送自定义 User-Agent，保持默认请求行为。">只对聊天/生成时匹配的模型请求生效；未配置的模型不发送自定义 User-Agent，保持默认请求行为。</p></div>
+            <div class="form-row"><div class="form-group"><label data-i18n="Organization / Project（可选）">Organization / Project（可选）</label><input id="aiProviderOrganization" placeholder="org... 或 proj..." data-i18n-placeholder="org... 或 proj..."></div><div class="form-group"><label data-i18n="额外请求头 JSON（可选）">额外请求头 JSON（可选）</label><textarea id="aiProviderExtraHeaders" rows="3" placeholder='{"X-Request-From":"Zephyr"}'></textarea></div></div>
+            <h3 data-i18n="模型参数">模型参数</h3>
+            <div class="form-row"><div class="form-group"><label data-i18n="temperature（-1 不发送）">temperature（-1 不发送）</label><input id="aiProviderTemperature" type="number" step="0.1" min="-1" max="2" value="-1"></div><div class="form-group"><label data-i18n="top_p（-1 不发送）">top_p（-1 不发送）</label><input id="aiProviderTopP" type="number" step="0.05" min="-1" max="1" value="-1"></div></div>
+            <div class="form-row"><div class="form-group"><label>max_tokens / max_output_tokens</label><input id="aiProviderMaxTokens" type="number" min="1" value="4096"></div><div class="form-group"><label data-i18n="上下文窗口 Tokens（可选）">上下文窗口 Tokens（可选）</label><input id="aiProviderContextWindow" type="number" min="1024" step="1024" placeholder="留空使用全局" data-i18n-placeholder="留空使用全局"></div></div>
+            <div class="form-row"><div class="form-group"><label data-i18n="推理强度（按供应商映射）">推理强度（按供应商映射）</label>
                 <select id="aiProviderReasoningEffort">
-                    <option value="">默认 / 不发送</option>
-                    <option value="none">none / 关闭（仅部分模型）</option>
+                    <option value="" data-i18n="默认 / 不发送">默认 / 不发送</option>
+                    <option value="none" data-i18n="none / 关闭（仅部分模型）">none / 关闭（仅部分模型）</option>
                     <option value="minimal">minimal</option>
                     <option value="low">low</option>
                     <option value="medium">medium</option>
                     <option value="high">high</option>
-                    <option value="xhigh">xhigh（仅部分模型）</option>
+                    <option value="xhigh" data-i18n="xhigh（仅部分模型）">xhigh（仅部分模型）</option>
                 </select>
-                <p class="field-hint">OpenAI Responses: reasoning.effort；Claude: thinking/output_config；Gemini: thinkingLevel/thinkingBudget。各模型支持值不同，默认不发送。</p>
-            </div><div class="form-group"><label class="check-line"><input type="checkbox" id="aiProviderUsePreviousResponse"> OpenAI Responses 使用 previous_response_id（兼容接口慎开）</label></div></div>
+                <p class="field-hint" data-i18n="OpenAI Responses: reasoning.effort；Claude: thinking/output_config；Gemini: thinkingLevel/thinkingBudget。各模型支持值不同，默认不发送。">OpenAI Responses: reasoning.effort；Claude: thinking/output_config；Gemini: thinkingLevel/thinkingBudget。各模型支持值不同，默认不发送。</p>
+            </div><div class="form-group"><label class="check-line"><input type="checkbox" id="aiProviderUsePreviousResponse"> <span data-i18n="OpenAI Responses 使用 previous_response_id（兼容接口慎开）">OpenAI Responses 使用 previous_response_id（兼容接口慎开）</span></label></div></div>
             <div class="form-row"><div class="form-group"><label>presence_penalty</label><input id="aiProviderPresencePenalty" type="number" step="0.1" value="0"></div><div class="form-group"><label>frequency_penalty</label><input id="aiProviderFrequencyPenalty" type="number" step="0.1" value="0"></div></div>
-            <div class="form-group"><label>供应商原生额外参数 JSON</label><textarea id="aiProviderExtraJson" rows="4" placeholder='OpenAI: {"response_format":{"type":"json_object"}}；Claude: {"thinking":{"type":"adaptive","display":"omitted"}}；Gemini: {"thinkingConfig":{"thinkingLevel":"low"}}'></textarea></div>
-            <label class="check-line"><input type="checkbox" id="aiProviderEnabled" checked> 启用此供应商</label>
-            <div class="modal-actions"><button type="button" class="btn" id="aiProviderCancelBtn">取消</button><button class="btn btn-primary" type="submit">保存供应商</button></div>
+            <div class="form-group"><label data-i18n="供应商原生额外参数 JSON">供应商原生额外参数 JSON</label><textarea id="aiProviderExtraJson" rows="4" placeholder='OpenAI: {"response_format":{"type":"json_object"}}；Claude: {"thinking":{"type":"adaptive","display":"omitted"}}；Gemini: {"thinkingConfig":{"thinkingLevel":"low"}}'></textarea></div>
+            <label class="check-line"><input type="checkbox" id="aiProviderEnabled" checked> <span data-i18n="启用此供应商">启用此供应商</span></label>
+            <div class="modal-actions"><button type="button" class="btn" id="aiProviderCancelBtn" data-i18n="取消">取消</button><button class="btn btn-primary" type="submit" data-i18n="保存供应商">保存供应商</button></div>
             </div>
         </form>
     </div>
 
     <div class="modal-backdrop" id="connectionModal" aria-hidden="true">
         <form class="connection-modal" id="connectionForm" data-mode="create">
-            <div class="modal-head"><h2 id="modalTitle">添加服务器</h2><button type="button" class="icon-btn" id="closeModalBtn">✕</button></div>
+            <div class="modal-head"><h2 id="modalTitle" data-i18n="添加服务器">添加服务器</h2><button type="button" class="icon-btn" id="closeModalBtn">✕</button></div>
             <div class="form-group connection-share-group connection-ephemeral-group force-hidden" id="connectionEphemeralGroup">
-                <label>连接选项</label>
+                <label data-i18n="连接选项">连接选项</label>
                 <div class="connection-share-options">
                     <label class="connection-share-option" for="connEphemeral">
-                        <span class="connection-share-copy"><strong>临时连接</strong><small>不保存到主机库，直接用当前参数连接一次</small></span>
+                        <span class="connection-share-copy"><strong data-i18n="临时连接">临时连接</strong><small data-i18n="不保存到主机库，直接用当前参数连接一次">不保存到主机库，直接用当前参数连接一次</small></span>
                         <span class="connection-share-switch"><input type="checkbox" id="connEphemeral"><span aria-hidden="true"></span></span>
                     </label>
                 </div>
             </div>
             <div class="transient-connection-banner force-hidden" id="transientConnectionBanner" role="status">
-                <strong>临时连接</strong>
-                <span>· 本次参数不会保存到主机库</span>
+                <strong data-i18n="临时连接">临时连接</strong>
+                <span data-i18n="· 本次参数不会保存到主机库">· 本次参数不会保存到主机库</span>
             </div>
-            <div class="transient-credential-state force-hidden" id="transientCredentialState">已载入一次性凭据</div>
+            <div class="transient-credential-state force-hidden" id="transientCredentialState" data-i18n="已载入一次性凭据">已载入一次性凭据</div>
             <div class="telnet-plaintext-banner force-hidden" id="telnetPlaintextBanner" role="alert">
-                <strong>Telnet 未加密</strong>
-                <span>· 账号口令与终端内容以明文传输，仅用于可信内网或设备 console</span>
+                <strong data-i18n="Telnet 未加密">Telnet 未加密</strong>
+                <span data-i18n="· 账号口令与终端内容以明文传输，仅用于可信内网或设备 console">· 账号口令与终端内容以明文传输，仅用于可信内网或设备 console</span>
             </div>
             <input type="hidden" id="connectionId">
             <input type="hidden" id="transientToken">
-            <div class="form-row"><div class="form-group"><label>名称</label><input id="connName" required></div><div class="form-group port-group"><label>协议</label><select id="connProtocol"><option>SSH</option><option>TELNET</option><option>RDP</option><option>VNC</option></select></div></div>
-            <div class="form-row"><div class="form-group"><label>IP / 主机</label><input id="connHost" required></div><div class="form-group port-group"><label>端口</label><input id="connPort" type="number" value="22" min="1" max="65535"></div></div>
-            <div class="form-group"><label>用户名</label><input id="connUsername" required><p class="field-hint force-hidden" id="telnetUsernameHint">Telnet 认证在终端内完成。填写用户名/密码后将自动应答 login/password 提示（明文传输）。</p></div>
-            <div class="form-group force-hidden" id="connEncodingGroup"><label>终端编码</label><select id="connEncoding"><option value="utf-8">UTF-8</option><option value="gbk">GBK / GB2312</option><option value="big5">Big5</option><option value="latin1">Latin-1</option></select><p class="field-hint">老设备/中文路由器常用 GBK。仅 Telnet 生效。</p></div>
-            <div class="form-group force-hidden" id="rdpDomainGroup"><label>Windows 域（可选）</label><input id="rdpDomain" placeholder="例如 CORP 或 WORKGROUP"><p class="field-hint">Active Directory 域名。家庭/工作组环境可留空。等同于 DOMAIN\username 中的 DOMAIN。</p></div>
-            <div class="form-group"><label>选择已保存 SSH 密钥</label><select id="connSshKey"><option value="">不使用密钥库</option></select><p class="field-hint">选择后连接时会自动使用该私钥；下方手动填写的密码/私钥会优先生效或作为私钥口令。</p></div>
-            <div class="form-group"><label>标签（逗号分隔）</label><input id="connTags" placeholder="生产, 数据库, 海外"></div>
-            <section class="advanced-route-panel" aria-label="高级选项">
-                <h3>高级选项</h3>
+            <div class="form-row"><div class="form-group"><label data-i18n="名称">名称</label><input id="connName" required></div><div class="form-group port-group"><label data-i18n="协议">协议</label><select id="connProtocol"><option>SSH</option><option>TELNET</option><option>RDP</option><option>VNC</option></select></div></div>
+            <div class="form-row"><div class="form-group"><label data-i18n="IP / 主机">IP / 主机</label><input id="connHost" required></div><div class="form-group port-group"><label data-i18n="端口">端口</label><input id="connPort" type="number" value="22" min="1" max="65535"></div></div>
+            <div class="form-group"><label data-i18n="用户名">用户名</label><input id="connUsername" required><p class="field-hint force-hidden" id="telnetUsernameHint" data-i18n="Telnet 认证在终端内完成。填写用户名/密码后将自动应答 login/password 提示（明文传输）。">Telnet 认证在终端内完成。填写用户名/密码后将自动应答 login/password 提示（明文传输）。</p></div>
+            <div class="form-group force-hidden" id="connEncodingGroup"><label data-i18n="终端编码">终端编码</label><select id="connEncoding"><option value="utf-8">UTF-8</option><option value="gbk">GBK / GB2312</option><option value="big5">Big5</option><option value="latin1">Latin-1</option></select><p class="field-hint" data-i18n="老设备/中文路由器常用 GBK。仅 Telnet 生效。">老设备/中文路由器常用 GBK。仅 Telnet 生效。</p></div>
+            <div class="form-group force-hidden" id="rdpDomainGroup"><label data-i18n="Windows 域（可选）">Windows 域（可选）</label><input id="rdpDomain" placeholder="例如 CORP 或 WORKGROUP" data-i18n-placeholder="例如 CORP 或 WORKGROUP"><p class="field-hint" data-i18n="Active Directory 域名。家庭/工作组环境可留空。等同于 DOMAIN\username 中的 DOMAIN。">Active Directory 域名。家庭/工作组环境可留空。等同于 DOMAIN\username 中的 DOMAIN。</p></div>
+            <div class="form-group"><label data-i18n="选择已保存 SSH 密钥">选择已保存 SSH 密钥</label><select id="connSshKey"><option value="" data-i18n="不使用密钥库">不使用密钥库</option></select><p class="field-hint" data-i18n="选择后连接时会自动使用该私钥；下方手动填写的密码/私钥会优先生效或作为私钥口令。">选择后连接时会自动使用该私钥；下方手动填写的密码/私钥会优先生效或作为私钥口令。</p></div>
+            <div class="form-group"><label data-i18n="标签（逗号分隔）">标签（逗号分隔）</label><input id="connTags" placeholder="生产, 数据库, 海外" data-i18n-placeholder="生产, 数据库, 海外"></div>
+            <section class="advanced-route-panel" aria-label="高级选项" data-i18n-aria-label="高级选项">
+                <h3 data-i18n="高级选项">高级选项</h3>
                 <div class="advanced-route-divider"></div>
-                <label class="advanced-route-label">代理类型:</label>
+                <label class="advanced-route-label" data-i18n="代理类型:">代理类型:</label>
                 <input type="hidden" id="connMode" value="direct">
-                <div class="route-type-tabs" role="tablist" aria-label="代理类型">
-                    <button type="button" class="route-type-tab" data-route-mode="proxy" role="tab">代理服务器</button>
-                    <button type="button" class="route-type-tab" data-route-mode="jump" role="tab">跳板机</button>
+                <div class="route-type-tabs" role="tablist" aria-label="代理类型" data-i18n-aria-label="代理类型">
+                    <button type="button" class="route-type-tab" data-route-mode="proxy" role="tab" data-i18n="代理服务器">代理服务器</button>
+                    <button type="button" class="route-type-tab" data-route-mode="jump" role="tab" data-i18n="跳板机">跳板机</button>
                 </div>
                 <div class="route-proxy-config force-hidden" id="proxyRouteConfig">
-                    <label class="advanced-route-label" for="connRoute">代理服务器配置</label>
-                    <select id="connRoute"><option value="">请选择代理服务器</option></select>
-                    <p class="field-hint">代理服务器需在“设置 → 代理池”中单独配置。</p>
+                    <label class="advanced-route-label" for="connRoute" data-i18n="代理服务器配置">代理服务器配置</label>
+                    <select id="connRoute"><option value="" data-i18n="请选择代理服务器">请选择代理服务器</option></select>
+                    <p class="field-hint" data-i18n="代理服务器需在“设置 → 代理池”中单独配置。">代理服务器需在“设置 → 代理池”中单独配置。</p>
                 </div>
                 <div class="jump-route-config force-hidden" id="jumpRouteConfig">
-                    <label class="advanced-route-label">跳板机链配置</label>
+                    <label class="advanced-route-label" data-i18n="跳板机链配置">跳板机链配置</label>
                     <div class="jump-route-list" id="jumpRouteList"></div>
-                    <button type="button" class="add-jump-route-btn" id="addJumpRouteBtn">＋ 添加跳板机</button>
-                    <p class="field-hint">服务器列表中的 SSH 连接都可作为跳板机，按上方顺序依次建立多级 SSH 隧道。</p>
+                    <button type="button" class="add-jump-route-btn" id="addJumpRouteBtn" data-i18n="＋ 添加跳板机">＋ 添加跳板机</button>
+                    <p class="field-hint" data-i18n="服务器列表中的 SSH 连接都可作为跳板机，按上方顺序依次建立多级 SSH 隧道。">服务器列表中的 SSH 连接都可作为跳板机，按上方顺序依次建立多级 SSH 隧道。</p>
                 </div>
             </section>
-            <div class="form-group password-field"><label>密码</label><input id="connPassword" type="password"><button type="button" id="toggleConnPassword">👁️</button></div>
-            <div class="form-group connection-secret-reveal" id="connSecretRevealGroup"><button type="button" class="link-btn" id="revealConnSecrets">查看已保存密码/私钥</button><p class="field-hint" id="connSecretRevealHint">编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。</p></div>
-            <div class="form-group"><label>私钥</label><textarea id="connPrivateKey" placeholder="-----BEGIN RSA PRIVATE KEY-----"></textarea></div>
-            <section class="rdp-settings-panel force-hidden" id="rdpSettingsPanel" aria-label="RDP 设置">
-                <h3>设备和音频重定向</h3>
+            <div class="form-group password-field"><label data-i18n="密码">密码</label><input id="connPassword" type="password"><button type="button" id="toggleConnPassword">👁️</button></div>
+            <div class="form-group connection-secret-reveal" id="connSecretRevealGroup"><button type="button" class="link-btn" id="revealConnSecrets" data-i18n="查看已保存密码/私钥">查看已保存密码/私钥</button><p class="field-hint" id="connSecretRevealHint" data-i18n="编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。">编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。</p></div>
+            <div class="form-group"><label data-i18n="私钥">私钥</label><textarea id="connPrivateKey" placeholder="-----BEGIN RSA PRIVATE KEY-----"></textarea></div>
+            <section class="rdp-settings-panel force-hidden" id="rdpSettingsPanel" aria-label="RDP 设置" data-i18n-aria-label="RDP 设置">
+                <h3 data-i18n="设备和音频重定向">设备和音频重定向</h3>
                 <div class="advanced-route-divider"></div>
-                <div class="form-group rdp-select-group"><label for="rdpSoundMode">音频播放</label><select id="rdpSoundMode"><option value="local">在此设备上播放声音</option><option value="remote">在远程计算机上播放</option><option value="off">不播放</option></select></div>
-                <div class="rdp-toggle-row"><span>剪贴板</span><label class="rdp-toggle"><input type="checkbox" id="rdpClipboard" checked><span class="rdp-toggle-slider"></span></label></div>
-                <div class="rdp-toggle-row"><span>麦克风</span><label class="rdp-toggle"><input type="checkbox" id="rdpMicrophone"><span class="rdp-toggle-slider"></span></label></div>
-                <div class="rdp-toggle-row"><span>摄像头</span><label class="rdp-toggle"><input type="checkbox" id="rdpCamera"><span class="rdp-toggle-slider"></span></label></div>
-                <div class="rdp-toggle-row"><span>Zephyr Agent 存储（磁盘映射）<em style="font-size:0.8em;color:var(--text-secondary,#888);margin-left:6px">需 Agent 在线</em></span><label class="rdp-toggle"><input type="checkbox" id="rdpStorage"><span class="rdp-toggle-slider"></span></label></div>
-                <div class="rdp-toggle-row"><span>位置</span><label class="rdp-toggle"><input type="checkbox" id="rdpLocation"><span class="rdp-toggle-slider"></span></label></div>
-                <h3 style="margin-top:16px">显示</h3>
+                <div class="form-group rdp-select-group"><label for="rdpSoundMode" data-i18n="音频播放">音频播放</label><select id="rdpSoundMode"><option value="local" data-i18n="在此设备上播放声音">在此设备上播放声音</option><option value="remote" data-i18n="在远程计算机上播放">在远程计算机上播放</option><option value="off" data-i18n="不播放">不播放</option></select></div>
+                <div class="rdp-toggle-row"><span data-i18n="剪贴板">剪贴板</span><label class="rdp-toggle"><input type="checkbox" id="rdpClipboard" checked><span class="rdp-toggle-slider"></span></label></div>
+                <div class="rdp-toggle-row"><span data-i18n="麦克风">麦克风</span><label class="rdp-toggle"><input type="checkbox" id="rdpMicrophone"><span class="rdp-toggle-slider"></span></label></div>
+                <div class="rdp-toggle-row"><span data-i18n="摄像头">摄像头</span><label class="rdp-toggle"><input type="checkbox" id="rdpCamera"><span class="rdp-toggle-slider"></span></label></div>
+                <div class="rdp-toggle-row"><span><span data-i18n="Zephyr Agent 存储（磁盘映射）">Zephyr Agent 存储（磁盘映射）</span><em style="font-size:0.8em;color:var(--text-secondary,#888);margin-left:6px" data-i18n="需 Agent 在线">需 Agent 在线</em></span><label class="rdp-toggle"><input type="checkbox" id="rdpStorage"><span class="rdp-toggle-slider"></span></label></div>
+                <div class="rdp-toggle-row"><span data-i18n="位置">位置</span><label class="rdp-toggle"><input type="checkbox" id="rdpLocation"><span class="rdp-toggle-slider"></span></label></div>
+                <h3 style="margin-top:16px" data-i18n="显示">显示</h3>
                 <div class="advanced-route-divider"></div>
-                <div class="form-group rdp-select-group"><label for="rdpResolution">分辨率</label><select id="rdpResolution"><option value="auto">自动（匹配此设备）</option><option value="1080p">1080p</option><option value="2K">2K</option><option value="4K">4K</option><option value="8K">8K</option></select></div>
-                <div class="form-group rdp-select-group"><label for="rdpQuality">画质</label><select id="rdpQuality"><option value="balanced">平衡</option><option value="performance">性能</option><option value="quality">画质</option></select></div>
-                <div class="form-group rdp-select-group"><label for="rdpFps">帧率</label><select id="rdpFps"><option value="30">30 FPS</option><option value="45">45 FPS</option><option value="60">60 FPS</option><option value="120">120 FPS</option><option value="144">144 FPS</option></select></div>
-                <div class="form-group rdp-select-group"><label for="rdpTouchMode">触控方式</label><select id="rdpTouchMode"><option value="direct">直接触控</option><option value="relative">触控板模式</option></select></div>
+                <div class="form-group rdp-select-group"><label for="rdpResolution" data-i18n="分辨率">分辨率</label><select id="rdpResolution"><option value="auto" data-i18n="自动（匹配此设备）">自动（匹配此设备）</option><option value="1080p">1080p</option><option value="2K">2K</option><option value="4K">4K</option><option value="8K">8K</option></select></div>
+                <div class="form-group rdp-select-group"><label for="rdpQuality" data-i18n="画质">画质</label><select id="rdpQuality"><option value="balanced" data-i18n="平衡">平衡</option><option value="performance" data-i18n="性能">性能</option><option value="quality" data-i18n="画质">画质</option></select></div>
+                <div class="form-group rdp-select-group"><label for="rdpFps" data-i18n="帧率">帧率</label><select id="rdpFps"><option value="30">30 FPS</option><option value="45">45 FPS</option><option value="60">60 FPS</option><option value="120">120 FPS</option><option value="144">144 FPS</option></select></div>
+                <div class="form-group rdp-select-group"><label for="rdpTouchMode" data-i18n="触控方式">触控方式</label><select id="rdpTouchMode"><option value="direct" data-i18n="直接触控">直接触控</option><option value="relative" data-i18n="触控板模式">触控板模式</option></select></div>
                 <div class="form-group rdp-range-group" id="rdpTouchSensitivityGroup">
-                    <label for="rdpTouchSensitivity"><span>触控板灵敏度</span><output id="rdpTouchSensitivityValue">1.5×</output></label>
+                    <label for="rdpTouchSensitivity"><span data-i18n="触控板灵敏度">触控板灵敏度</span><output id="rdpTouchSensitivityValue">1.5×</output></label>
                     <input id="rdpTouchSensitivity" type="range" min="0.5" max="3" step="0.1" value="1.5">
                 </div>
             </section>
-            <div class="form-group"><label>备注（支持 Markdown）</label><textarea id="connRemark" placeholder="例如：**生产环境**\n`docker ps`"></textarea></div>
+            <div class="form-group"><label data-i18n="备注（支持 Markdown）">备注（支持 Markdown）</label><textarea id="connRemark" placeholder="例如：**生产环境**\n`docker ps`" data-i18n-placeholder="例如：**生产环境**\n`docker ps`"></textarea></div>
             <div class="form-group connection-share-group">
-                <label>共享设置</label>
+                <label data-i18n="共享设置">共享设置</label>
                 <div class="connection-share-options">
                     <label class="connection-share-option" for="connShareUsers">
-                        <span class="connection-share-copy"><strong>共享给所有用户</strong><small>所有用户均可查看并连接</small></span>
+                        <span class="connection-share-copy"><strong data-i18n="共享给所有用户">共享给所有用户</strong><small data-i18n="所有用户均可查看并连接">所有用户均可查看并连接</small></span>
                         <span class="connection-share-switch"><input type="checkbox" id="connShareUsers"><span aria-hidden="true"></span></span>
                     </label>
                     <label class="connection-share-option" for="connShareAdmins">
-                        <span class="connection-share-copy"><strong>共享给管理员</strong><small>仅管理员可查看并连接</small></span>
+                        <span class="connection-share-copy"><strong data-i18n="共享给管理员">共享给管理员</strong><small data-i18n="仅管理员可查看并连接">仅管理员可查看并连接</small></span>
                         <span class="connection-share-switch"><input type="checkbox" id="connShareAdmins"><span aria-hidden="true"></span></span>
                     </label>
                 </div>
             </div>
             <div class="modal-actions" id="connectionModalActions">
-                <button type="button" class="btn" id="testConnectionBtn">测试连接</button>
+                <button type="button" class="btn" id="testConnectionBtn" data-i18n="测试连接">测试连接</button>
                 <span class="connection-test-latency" id="connectionTestLatency" aria-live="polite"></span>
-                <button type="button" class="btn connection-action-normal" id="cancelModalBtn">取消</button>
-                <button class="btn btn-primary connection-action-normal" type="submit" id="saveConnectionBtn">保存</button>
-                <button type="button" class="btn btn-primary connection-action-transient force-hidden" id="connectTransientBtn">连接</button>
+                <button type="button" class="btn connection-action-normal" id="cancelModalBtn" data-i18n="取消">取消</button>
+                <button class="btn btn-primary connection-action-normal" type="submit" id="saveConnectionBtn" data-i18n="保存">保存</button>
+                <button type="button" class="btn btn-primary connection-action-transient force-hidden" id="connectTransientBtn" data-i18n="连接">连接</button>
             </div>
         </form>
     </div>
@@ -961,14 +961,14 @@
     <div class="modal-backdrop" id="proxyModal" aria-hidden="true">
         <form class="connection-modal proxy-modal" id="proxyForm">
             <div id="proxyModalInner" class="proxy-modal-inner">
-            <div class="modal-head"><h2 id="proxyModalTitle">新建代理</h2><button type="button" class="icon-btn" id="proxyCloseBtn" aria-label="关闭代理弹窗">✕</button></div>
+            <div class="modal-head"><h2 id="proxyModalTitle" data-i18n="新建代理">新建代理</h2><button type="button" class="icon-btn" id="proxyCloseBtn" aria-label="关闭代理弹窗" data-i18n-aria-label="关闭代理弹窗">✕</button></div>
             <input type="hidden" id="proxyId">
-            <div class="form-group"><label for="proxyName">名称</label><input id="proxyName" required placeholder="例如：海外 SOCKS5"></div>
-            <div class="form-row"><div class="form-group"><label for="proxyType">类型</label><select id="proxyType"><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option></select></div><div class="form-group"><label for="proxyPort">端口</label><input id="proxyPort" type="number" min="1" max="65535" value="1080" required></div></div>
-            <div class="form-group"><label for="proxyHost">IP / 主机</label><input id="proxyHost" required placeholder="proxy.example.com"></div>
-            <div class="form-row"><div class="form-group"><label for="proxyUsername">用户名</label><input id="proxyUsername" placeholder="可选"></div><div class="form-group"><label for="proxyPassword">密码</label><input id="proxyPassword" type="password" placeholder="可选"></div></div>
-            <p class="field-hint">保存后可在连接的高级选项中选择此代理。编辑时留空密码不会覆盖已保存密码。</p>
-            <div class="modal-actions"><button type="button" class="btn" id="proxyCancelBtn">取消</button><button class="btn btn-primary" type="submit">保存代理</button></div>
+            <div class="form-group"><label for="proxyName" data-i18n="名称">名称</label><input id="proxyName" required placeholder="例如：海外 SOCKS5" data-i18n-placeholder="例如：海外 SOCKS5"></div>
+            <div class="form-row"><div class="form-group"><label for="proxyType" data-i18n="类型">类型</label><select id="proxyType"><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option></select></div><div class="form-group"><label for="proxyPort" data-i18n="端口">端口</label><input id="proxyPort" type="number" min="1" max="65535" value="1080" required></div></div>
+            <div class="form-group"><label for="proxyHost" data-i18n="IP / 主机">IP / 主机</label><input id="proxyHost" required placeholder="proxy.example.com"></div>
+            <div class="form-row"><div class="form-group"><label for="proxyUsername" data-i18n="用户名">用户名</label><input id="proxyUsername" placeholder="可选" data-i18n-placeholder="可选"></div><div class="form-group"><label for="proxyPassword" data-i18n="密码">密码</label><input id="proxyPassword" type="password" placeholder="可选" data-i18n-placeholder="可选"></div></div>
+            <p class="field-hint" data-i18n="保存后可在连接的高级选项中选择此代理。编辑时留空密码不会覆盖已保存密码。">保存后可在连接的高级选项中选择此代理。编辑时留空密码不会覆盖已保存密码。</p>
+            <div class="modal-actions"><button type="button" class="btn" id="proxyCancelBtn" data-i18n="取消">取消</button><button class="btn btn-primary" type="submit" data-i18n="保存代理">保存代理</button></div>
             </div>
         </form>
     </div>
@@ -978,14 +978,14 @@
     <div class="modal-backdrop" id="sshKeyModal" aria-hidden="true">
         <form class="connection-modal ssh-key-modal" id="sshKeyForm">
             <div id="sshKeyModalInner" class="ssh-key-modal-inner">
-            <div class="modal-head"><h2 id="sshKeyModalTitle">新增 SSH 密钥</h2><button type="button" class="icon-btn" id="sshKeyCloseBtn" aria-label="关闭 SSH 密钥弹窗">✕</button></div>
+            <div class="modal-head"><h2 id="sshKeyModalTitle" data-i18n="新增 SSH 密钥">新增 SSH 密钥</h2><button type="button" class="icon-btn" id="sshKeyCloseBtn" aria-label="关闭 SSH 密钥弹窗" data-i18n-aria-label="关闭 SSH 密钥弹窗">✕</button></div>
             <input type="hidden" id="sshKeyId">
-            <div class="form-group"><label for="sshKeyName">密钥名称</label><input id="sshKeyName" required placeholder="例如：生产环境 deploy key"></div>
-            <div class="form-group"><label for="sshKeyPrivateKey">SSH 私钥</label><textarea id="sshKeyPrivateKey" required placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></div>
-            <div class="form-group"><label for="sshKeyPassphrase">私钥口令</label><input id="sshKeyPassphrase" type="password" placeholder="可选"></div>
-            <div class="form-group"><label for="sshKeyRemark">备注</label><input id="sshKeyRemark" placeholder="可选"></div>
-            <p class="field-hint">编辑时留空或保留 ****** 不会覆盖已保存的私钥与口令。</p>
-            <div class="modal-actions"><button class="btn" type="button" id="sshKeyCancelBtn">取消</button><button class="btn btn-primary" type="submit" id="saveSshKeyBtn">保存 SSH 密钥</button></div>
+            <div class="form-group"><label for="sshKeyName" data-i18n="密钥名称">密钥名称</label><input id="sshKeyName" required placeholder="例如：生产环境 deploy key" data-i18n-placeholder="例如：生产环境 deploy key"></div>
+            <div class="form-group"><label for="sshKeyPrivateKey" data-i18n="SSH 私钥">SSH 私钥</label><textarea id="sshKeyPrivateKey" required placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></div>
+            <div class="form-group"><label for="sshKeyPassphrase" data-i18n="私钥口令">私钥口令</label><input id="sshKeyPassphrase" type="password" placeholder="可选" data-i18n-placeholder="可选"></div>
+            <div class="form-group"><label for="sshKeyRemark" data-i18n="备注">备注</label><input id="sshKeyRemark" placeholder="可选" data-i18n-placeholder="可选"></div>
+            <p class="field-hint" data-i18n="编辑时留空或保留 ****** 不会覆盖已保存的私钥与口令。">编辑时留空或保留 ****** 不会覆盖已保存的私钥与口令。</p>
+            <div class="modal-actions"><button class="btn" type="button" id="sshKeyCancelBtn" data-i18n="取消">取消</button><button class="btn btn-primary" type="submit" id="saveSshKeyBtn" data-i18n="保存 SSH 密钥">保存 SSH 密钥</button></div>
             </div>
         </form>
     </div>
@@ -995,23 +995,23 @@
     <div class="modal-backdrop" id="snippetModal" aria-hidden="true">
         <form class="connection-modal snippet-modal" id="snippetForm">
             <div id="snippetModalInner" class="snippet-modal-inner">
-            <div class="modal-head"><h2 id="snippetModalTitle">新增代码片段</h2><button type="button" class="icon-btn" id="snippetCloseBtn" aria-label="关闭代码片段弹窗">✕</button></div>
+            <div class="modal-head"><h2 id="snippetModalTitle" data-i18n="新增代码片段">新增代码片段</h2><button type="button" class="icon-btn" id="snippetCloseBtn" aria-label="关闭代码片段弹窗" data-i18n-aria-label="关闭代码片段弹窗">✕</button></div>
             <input id="snippetId" type="hidden">
-            <div class="form-group"><label for="snippetName">名称</label><input id="snippetName" maxlength="60" required placeholder="例如：查看 Docker 状态"></div>
-            <div class="form-group"><label for="snippetCommand">命令内容</label><textarea id="snippetCommand" rows="6" required placeholder="docker ps\n# 支持多行命令"></textarea></div>
-            <div class="form-group"><label for="snippetGroup">分组 / 标签</label><input id="snippetGroup" maxlength="40" placeholder="例如：Docker / Linux / 自定义"></div>
+            <div class="form-group"><label for="snippetName" data-i18n="名称">名称</label><input id="snippetName" maxlength="60" required placeholder="例如：查看 Docker 状态" data-i18n-placeholder="例如：查看 Docker 状态"></div>
+            <div class="form-group"><label for="snippetCommand" data-i18n="命令内容">命令内容</label><textarea id="snippetCommand" rows="6" required placeholder="docker ps\n# 支持多行命令" data-i18n-placeholder="docker ps\n# 支持多行命令"></textarea></div>
+            <div class="form-group"><label for="snippetGroup" data-i18n="分组 / 标签">分组 / 标签</label><input id="snippetGroup" maxlength="40" placeholder="例如：Docker / Linux / 自定义" data-i18n-placeholder="例如：Docker / Linux / 自定义"></div>
             <label class="settings-switch-option snippet-auto-run" for="snippetAutoRun">
-                <span class="settings-switch-copy"><strong>点击后直接执行</strong><small>关闭时仅将命令填入终端输入框</small></span>
+                <span class="settings-switch-copy"><strong data-i18n="点击后直接执行">点击后直接执行</strong><small data-i18n="关闭时仅将命令填入终端输入框">关闭时仅将命令填入终端输入框</small></span>
                 <span class="connection-share-switch"><input type="checkbox" id="snippetAutoRun"><span aria-hidden="true"></span></span>
             </label>
-            <div class="modal-actions"><button class="btn" type="button" id="cancelSnippetEditBtn">取消</button><button class="btn btn-primary" type="submit" id="saveSnippetBtn">保存代码片段</button></div>
+            <div class="modal-actions"><button class="btn" type="button" id="cancelSnippetEditBtn" data-i18n="取消">取消</button><button class="btn btn-primary" type="submit" id="saveSnippetBtn" data-i18n="保存代码片段">保存代码片段</button></div>
             </div>
         </form>
     </div>
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260726-i18n-fix2" type="module"></script>
+    <script src="app.js?v=20260726-i18n-fix6" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

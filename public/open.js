@@ -10,7 +10,7 @@
  * Never writes passwords into localStorage, draft DOM values, or logs.
  */
 
-import { t, initI18n, applyDomI18n } from './i18n/runtime.js?v=20260726-i18n-fix2';
+import { t, initI18n, applyDomI18n } from './i18n/runtime.js?v=20260726-i18n-fix6';
 
 const STORAGE_KEY = 'zephyr:deeplink:pending';
 const channel = ('BroadcastChannel' in window) ? new BroadcastChannel('zephyr-deeplink') : null;
@@ -77,7 +77,7 @@ function takePending() {
 async function authMe() {
     const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
     if (res.status === 401) return null;
-    if (!res.ok) throw new Error('无法验证登录状态');
+    if (!res.ok) throw new Error(t('无法验证登录状态'));
     return res.json();
 }
 
@@ -89,7 +89,7 @@ async function prepare(uri) {
         body: JSON.stringify({ uri }),
     });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || '准备临时连接失败');
+    if (!res.ok) throw new Error(body.error || t('准备临时连接失败'));
     return body;
 }
 
@@ -103,10 +103,10 @@ function handOff(token, draft) {
     } catch {}
     // Always land in the app with a non-sensitive token reference.
     const target = `/app.html#transient=${encodeURIComponent(token)}`;
-    el.title.textContent = draft?.name ? `连接 ${draft.name}` : t('临时连接已就绪');
+    el.title.textContent = draft?.name ? t('连接 {name}', { name: draft.name }) : t('临时连接已就绪');
     el.sub.textContent = draft?.hasTransientCredential
-        ? '已载入一次性凭据。打开应用后可检查参数，再测试或连接。'
-        : '打开应用后可检查参数，再测试或连接。';
+        ? t('已载入一次性凭据。打开应用后可检查参数，再测试或连接。')
+        : t('打开应用后可检查参数，再测试或连接。');
     el.banner.hidden = false;
     setStatus(t('正在打开应用…'), { spinning: true });
     // Small delay so the status text is readable; under reduced-motion skip.
@@ -150,14 +150,14 @@ async function run() {
         return;
     }
 
-    setStatus('准备一次性凭据…');
+    setStatus(t('准备一次性凭据…'));
     try {
         const prepared = await prepare(uri);
         // Wipe hash so the sensitive URI does not linger in history.
         history.replaceState(null, '', location.pathname + location.search);
         handOff(prepared.token, prepared.draft);
     } catch (err) {
-        showError(err.message || '准备失败');
+        showError(err.message || t('准备失败'));
         el.retry.onclick = () => run();
         el.openApp.onclick = () => { location.href = '/app.html'; };
     }

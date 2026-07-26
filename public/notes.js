@@ -5,7 +5,7 @@
  */
 
 import { renderMarkdown as renderMarkdownFull, escapeHtml as mdEscapeHtml } from './markdown.js?v=20260720-notes-md1';
-import { t } from './i18n/runtime.js?v=20260726-i18n-fix2';
+import { t } from './i18n/runtime.js?v=20260726-i18n-fix6';
 
 const NOTES_DEBOUNCE_MS = 800;
 const NOTES_SEARCH_MS = 180;
@@ -36,9 +36,9 @@ function formatRelativeTime(ts) {
     const delta = Date.now() - Number(ts || 0);
     if (!Number.isFinite(delta) || delta < 0) return '';
     if (delta < 60_000) return t('刚刚');
-    if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} 分钟前`;
-    if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)} 小时前`;
-    if (delta < 7 * 86_400_000) return `${Math.floor(delta / 86_400_000)} 天前`;
+    if (delta < 3_600_000) return t('{count} 分钟前', { count: Math.floor(delta / 60_000) });
+    if (delta < 86_400_000) return t('{count} 小时前', { count: Math.floor(delta / 3_600_000) });
+    if (delta < 7 * 86_400_000) return t('{count} 天前', { count: Math.floor(delta / 86_400_000) });
     try {
         return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     } catch {
@@ -126,7 +126,7 @@ function openNativeDialog({
         panel.innerHTML = `
             <div class="notes-dialog-head">
                 <h2 class="notes-dialog-title">${escapeHtml(title)}</h2>
-                <button type="button" class="notes-icon-btn notes-dialog-close" data-notes-dialog="cancel" aria-label="关闭">${icon('close')}</button>
+                <button type="button" class="notes-icon-btn notes-dialog-close" data-notes-dialog="cancel" aria-label="${t('关闭')}">${icon('close')}</button>
             </div>
             ${message ? `<p class="notes-dialog-message">${escapeHtml(message)}</p>` : ''}
             ${input ? `
@@ -411,7 +411,7 @@ export function createNotesController({
                 if (action === 'rename') {
                     const newName = await nativePrompt({
                         title: t('重命名分组'),
-                        message: `将「${groupPath}」重命名为：`,
+                        message: t('将「{group}」重命名为：', { group: groupPath }),
                         value: groupPath,
                         placeholder: 'ops/runbooks',
                         confirmLabel: t('重命名'),
@@ -433,7 +433,7 @@ export function createNotesController({
                 } else if (action === 'delete') {
                     const ok = await nativeConfirm({
                         title: t('删除分组'),
-                        message: `确定删除分组「${groupPath}」？该分组下的笔记会移到未分组。`,
+                        message: t('确定删除分组「{group}」？该分组下的笔记会移到未分组。', { group: groupPath }),
                         confirmLabel: t('删除分组'),
                         danger: true,
                     });
@@ -494,7 +494,7 @@ export function createNotesController({
             const tags = (n.tags || []).slice(0, 3).map((t) => `<span class="notes-chip">${escapeHtml(t)}</span>`).join('');
             const links = (n.linkedConnectionIds || []).length;
             const connChip = links
-                ? `<span class="notes-chip notes-chip-accent">${links} 连接</span>`
+                ? `<span class="notes-chip notes-chip-accent">${t('{count} 连接', { count: links })}</span>`
                 : '';
             const dirtyBadge = n.noteId === state.selectedId && state.dirty
                 ? `<span class="notes-chip notes-chip-warn">${t('未保存')}</span>`
@@ -535,7 +535,7 @@ export function createNotesController({
         if (tagsHost) {
             const tags = note?.tags || [];
             tagsHost.innerHTML = tags.map((t) => (
-                `<button type="button" class="notes-meta-chip" data-tag-chip="${escapeHtml(t)}" title="移除标签">
+                `<button type="button" class="notes-meta-chip" data-tag-chip="${escapeHtml(t)}" title="${t('移除标签')}">
                     <span>${escapeHtml(t)}</span>${icon('x')}
                 </button>`
             )).join('') + `<button type="button" class="notes-meta-chip notes-meta-chip-add" id="notesAddTagBtn" title="${t('添加标签')}">${icon('plus')}<span>${t('标签')}</span></button>`;
@@ -543,7 +543,7 @@ export function createNotesController({
         if (groupHost) {
             const g = note?.groupPath || '';
             groupHost.innerHTML = g
-                ? `<button type="button" class="notes-meta-chip notes-meta-chip-group" id="notesEditGroupBtn" title="修改分组">${icon('folder')}<span>${escapeHtml(g)}</span></button>`
+                ? `<button type="button" class="notes-meta-chip notes-meta-chip-group" id="notesEditGroupBtn" title="${t('修改分组')}">${icon('folder')}<span>${escapeHtml(g)}</span></button>`
                 : `<button type="button" class="notes-meta-chip notes-meta-chip-add" id="notesEditGroupBtn" title="${t('设置分组')}">${icon('folder')}<span>${t('分组')}</span></button>`;
         }
         // keep hidden inputs in sync for save path
@@ -846,19 +846,19 @@ export function createNotesController({
         let apiAction = action;
         if (action === 'trash') {
             title = t('移到回收站');
-            message = `将 ${ids.length} 条笔记移到回收站？可稍后恢复。`;
+            message = t('将 {count} 条笔记移到回收站？可稍后恢复。', { count: ids.length });
             confirmLabel = t('移到回收站');
         } else if (action === 'restore') {
             title = t('恢复笔记');
-            message = `恢复 ${ids.length} 条笔记？`;
+            message = t('恢复 {count} 条笔记？', { count: ids.length });
             confirmLabel = t('恢复');
         } else if (action === 'purge') {
             title = t('彻底删除');
-            message = `彻底删除回收站中的 ${ids.length} 条笔记？此操作不可撤销。`;
+            message = t('彻底删除回收站中的 {count} 条笔记？此操作不可撤销。', { count: ids.length });
             confirmLabel = t('彻底删除');
         } else if (action === 'purge_permanent') {
             title = t('直接删除');
-            message = `永久删除 ${ids.length} 条笔记？不会进入回收站，此操作不可撤销。`;
+            message = t('永久删除 {count} 条笔记？不会进入回收站，此操作不可撤销。', { count: ids.length });
             confirmLabel = t('永久删除');
             apiAction = 'purge_permanent';
         } else {
@@ -884,9 +884,9 @@ export function createNotesController({
             state.selectedIds = new Set();
             await loadList();
             const n = result?.affected ?? ids.length;
-            if (action === 'trash') toast?.(`已移到回收站（${n}）`);
-            else if (action === 'restore') toast?.(`已恢复（${n}）`);
-            else toast?.(`已永久删除（${n}）`);
+            if (action === 'trash') toast?.(t('已移到回收站（{count}）', { count: n }));
+            else if (action === 'restore') toast?.(t('已恢复（{count}）', { count: n }));
+            else toast?.(t('已永久删除（{count}）', { count: n }));
         } catch (err) {
             toast?.(err.message || t('批量操作失败'));
         }
@@ -962,7 +962,7 @@ export function createNotesController({
         state.selectedId = null;
         fillEditor(null);
         await loadList();
-        toast?.(result?.purged ? `已清空回收站（${result.purged} 条）` : t('回收站已空'));
+        toast?.(result?.purged ? t('已清空回收站（{count} 条）', { count: result.purged }) : t('回收站已空'));
     }
 
     async function restoreCurrent() {
@@ -1057,10 +1057,10 @@ export function createNotesController({
             modal.id = 'notesShareModal';
             modal.className = 'notes-dialog-backdrop notes-modal-backdrop';
             modal.innerHTML = `
-                <div class="notes-dialog notes-dialog-md" role="dialog" aria-modal="true" aria-label="共享设置">
+                <div class="notes-dialog notes-dialog-md" role="dialog" aria-modal="true" aria-label="${t('共享设置')}">
                     <div class="notes-dialog-head">
                         <h2 class="notes-dialog-title">${t('共享设置')}</h2>
-                        <button type="button" class="notes-icon-btn" id="notesShareModalClose" aria-label="关闭">${icon('close')}</button>
+                        <button type="button" class="notes-icon-btn" id="notesShareModalClose" aria-label="${t('关闭')}">${icon('close')}</button>
                     </div>
                     <p class="notes-dialog-message">${t('共享后其他用户可读此笔记，不可编辑。默认私有。')}</p>
                     <div class="notes-share-options">
@@ -1115,14 +1115,14 @@ export function createNotesController({
             modal.id = 'notesLinkModal';
             modal.className = 'notes-dialog-backdrop notes-modal-backdrop';
             modal.innerHTML = `
-                <div class="notes-dialog notes-dialog-lg" role="dialog" aria-modal="true" aria-label="关联连接">
+                <div class="notes-dialog notes-dialog-lg" role="dialog" aria-modal="true" aria-label="${t('关联连接')}">
                     <div class="notes-dialog-head">
                         <h2 class="notes-dialog-title">${t('关联连接')}</h2>
-                        <button type="button" class="notes-icon-btn" id="notesLinkModalClose" aria-label="关闭">${icon('close')}</button>
+                        <button type="button" class="notes-icon-btn" id="notesLinkModalClose" aria-label="${t('关闭')}">${icon('close')}</button>
                     </div>
                     <div class="notes-link-search-wrap">
                         <span class="notes-search-icon">${icon('search')}</span>
-                        <input class="notes-dialog-input" id="notesLinkSearch" placeholder="搜索连接名称或主机…" autocomplete="off">
+                        <input class="notes-dialog-input" id="notesLinkSearch" placeholder="${t('搜索连接名称或主机…')}" autocomplete="off">
                     </div>
                     <div id="notesLinkList" class="notes-link-list" role="listbox"></div>
                     <div class="notes-dialog-actions">
@@ -1283,7 +1283,7 @@ export function createNotesController({
                 const created = await api('/api/notes', {
                     method: 'POST',
                     body: JSON.stringify({
-                        title: `${full.note.title} (副本)`,
+                        title: t('{title} (副本)', { title: full.note.title }),
                         content: full.note.content,
                         tags: full.note.tags,
                         groupPath: full.note.groupPath,
@@ -1361,10 +1361,10 @@ export function createNotesController({
             modal.id = 'notesConflictModal';
             modal.className = 'notes-dialog-backdrop notes-modal-backdrop';
             modal.innerHTML = `
-                <div class="notes-dialog notes-dialog-xl" role="dialog" aria-modal="true" aria-label="笔记冲突">
+                <div class="notes-dialog notes-dialog-xl" role="dialog" aria-modal="true" aria-label="${t('笔记冲突')}">
                     <div class="notes-dialog-head">
                         <h2 class="notes-dialog-title">${t('版本冲突')}</h2>
-                        <button type="button" class="notes-icon-btn" id="notesConflictClose" aria-label="关闭">${icon('close')}</button>
+                        <button type="button" class="notes-icon-btn" id="notesConflictClose" aria-label="${t('关闭')}">${icon('close')}</button>
                     </div>
                     <p class="notes-dialog-message">${t('该笔记在其他地方被修改。选择保留你的编辑，或载入服务器版本。')}</p>
                     <div class="notes-conflict-grid">

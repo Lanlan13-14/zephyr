@@ -1,6 +1,11 @@
 (function () {
     'use strict';
 
+    const t = (key, vars = {}) => {
+        const translated = window.__zephyrT ? window.__zephyrT(key, vars) : key;
+        return String(translated).replace(/\{([A-Za-z0-9_]+)\}/g, (_, name) => vars[name] ?? `{${name}}`);
+    };
+
     const VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'flv', 'f4v', 'mpeg', 'mpg', 'mpe', 'ts', 'mts', 'm2ts', 'vob', 'ogv', '3gp', '3g2', 'asf', 'rm', 'rmvb', 'divx', 'mxf']);
     const AUDIO_EXTENSIONS = new Set(['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'opus', 'weba', 'wma', 'alac', 'aiff', 'aif', 'ape', 'amr', 'mid', 'midi', 'mka', 'caf', 'ac3', 'dts', 'm4b']);
 
@@ -64,23 +69,23 @@
             modal.style.display = 'none';
             modal.innerHTML = `
                 <div class="media-preview-titlebar panel-titlebar">
-                    <button class="panel-traffic-btn" type="button" data-action="layout" title="窗口布局"><span></span></button>
+                    <button class="panel-traffic-btn" type="button" data-action="layout" title="${t('窗口布局')}"><span></span></button>
                 </div>
                 <div class="media-preview-header">
-                    <div class="media-preview-title" data-role="title">媒体预览</div>
+                    <div class="media-preview-title" data-role="title">${t('媒体预览')}</div>
                     <div class="media-preview-actions">
-                        <button class="tool-btn" type="button" data-action="remote-subtitle" title="从当前终端/SFTP 路径选择字幕">路径字幕</button>
-                        <label class="tool-btn" data-action="subtitle-label" title="上传本地字幕文件">本地字幕<input type="file" data-role="subtitle-input" accept=".vtt,.srt,.ass,.ssa,.sub,text/vtt,text/plain" style="display:none;"></label>
-                        <button class="tool-btn" type="button" data-action="refresh" title="重新加载播放">刷新</button>
+                        <button class="tool-btn" type="button" data-action="remote-subtitle" title="${t('从当前终端/SFTP 路径选择字幕')}">${t('路径字幕')}</button>
+                        <label class="tool-btn" data-action="subtitle-label" title="${t('上传本地字幕文件')}">${t('本地字幕')}<input type="file" data-role="subtitle-input" accept=".vtt,.srt,.ass,.ssa,.sub,text/vtt,text/plain" style="display:none;"></label>
+                        <button class="tool-btn" type="button" data-action="refresh" title="${t('重新加载播放')}">${t('刷新')}</button>
                     </div>
                 </div>
                 <div class="media-preview-body" data-role="body">
-                    <div class="media-preview-state" data-role="state">准备播放...</div>
+                    <div class="media-preview-state" data-role="state">${t('准备播放...')}</div>
                     <div class="media-preview-stage" data-role="stage" style="display:none;"></div>
                 </div>
                 <div class="media-preview-meta" data-role="meta"></div>
-                <div class="panel-resize-handle left" data-role="resize-left" title="拖动调整窗口大小"></div>
-                <div class="panel-resize-handle right" data-role="resize-right" title="拖动调整窗口大小"></div>`;
+                <div class="panel-resize-handle left" data-role="resize-left" title="${t('拖动调整窗口大小')}"></div>
+                <div class="panel-resize-handle right" data-role="resize-right" title="${t('拖动调整窗口大小')}"></div>`;
             modal.addEventListener('pointerdown', () => this.focus());
             modal.querySelector('[data-action="refresh"]')?.addEventListener('click', () => this.open(this.currentPath, { force: true }));
             modal.querySelector('[data-action="remote-subtitle"]')?.addEventListener('click', () => this.pickRemoteSubtitle());
@@ -224,7 +229,7 @@
             if (title) title.textContent = filePath;
             const meta = this.modal.querySelector('[data-role="meta"]');
             if (meta) meta.textContent = '';
-            this.setState('正在准备媒体流...', 'loading');
+            this.setState(t('正在准备媒体流...'), 'loading');
             this.modal.style.display = 'flex';
             this.modal.classList.remove('open', 'closing', 'panel-opening', 'panel-closing');
             requestAnimationFrame(() => {
@@ -272,12 +277,12 @@
         }
         async pickRemoteSubtitle() {
             try {
-                if (!this.remoteSubtitlePicker) throw new Error('当前页面不支持从终端路径选择字幕');
+                if (!this.remoteSubtitlePicker) throw new Error(t('当前页面不支持从终端路径选择字幕'));
                 const item = await this.remoteSubtitlePicker(this.currentPath);
                 if (!item) return;
-                const name = item.name || String(item.path || '').split(/[\\/]/).pop() || '远程字幕';
+                const name = item.name || String(item.path || '').split(/[\\/]/).pop() || t('远程字幕');
                 const ext = extname(name);
-                if (!['vtt', 'srt', 'ass', 'ssa', 'sub'].includes(ext)) throw new Error('仅支持 .vtt/.srt/.ass/.ssa/.sub 字幕');
+                if (!['vtt', 'srt', 'ass', 'ssa', 'sub'].includes(ext)) throw new Error(t('仅支持 .vtt/.srt/.ass/.ssa/.sub 字幕'));
                 let text = String(item.text || '');
                 if (ext !== 'vtt') text = this.convertSubtitleTextToVtt(text, ext);
                 else if (!/^WEBVTT/i.test(text.trim())) text = `WEBVTT\n\n${text}`;
@@ -285,17 +290,17 @@
                 this.objectTracks.push(url);
                 this.manualSubtitles.push({ url, language: name.replace(/\.[^.]+$/, ''), manual: true, remotePath: item.path || '' });
                 this.applySubtitles();
-                this.notify(`已挂载路径字幕：${name}`, 'success');
+                this.notify(t('已挂载路径字幕：{name}', { name }), 'success');
             } catch (err) {
-                this.notify(err.message || '路径字幕挂载失败', 'error');
+                this.notify(err.message || t('路径字幕挂载失败'), 'error');
             }
         }
         async mountManualSubtitle(file, input) {
             if (!file) return;
             try {
-                const name = file.name || '字幕';
+                const name = file.name || t('字幕');
                 const ext = extname(name);
-                if (!['vtt', 'srt', 'ass', 'ssa', 'sub'].includes(ext)) throw new Error('仅支持 .vtt/.srt/.ass/.ssa/.sub 字幕');
+                if (!['vtt', 'srt', 'ass', 'ssa', 'sub'].includes(ext)) throw new Error(t('仅支持 .vtt/.srt/.ass/.ssa/.sub 字幕'));
                 let text = await file.text();
                 if (ext !== 'vtt') text = this.convertSubtitleTextToVtt(text, ext);
                 else if (!/^WEBVTT/i.test(text.trim())) text = `WEBVTT\n\n${text}`;
@@ -303,9 +308,9 @@
                 this.objectTracks.push(url);
                 this.manualSubtitles.push({ url, language: name.replace(/\.[^.]+$/, ''), manual: true });
                 this.applySubtitles();
-                this.notify(`已挂载字幕：${name}`, 'success');
+                this.notify(t('已挂载字幕：{name}', { name }), 'success');
             } catch (err) {
-                this.notify(err.message || '字幕挂载失败', 'error');
+                this.notify(err.message || t('字幕挂载失败'), 'error');
             } finally {
                 if (input) input.value = '';
             }
@@ -341,7 +346,7 @@
                 const track = document.createElement('track');
                 track.kind = 'subtitles';
                 track.src = sub.url;
-                track.label = sub.language || `字幕 ${index + 1}`;
+                track.label = sub.language || t('字幕 {count}', { count: index + 1 });
                 track.srclang = sub.language || 'und';
                 if (index === 0 || sub.manual) track.default = true;
                 media.appendChild(track);
@@ -370,15 +375,15 @@
             media.load?.();
             media.addEventListener('error', () => {
                 const err = media.error;
-                this.notify(`媒体播放失败${err?.message ? `：${err.message}` : ''}，可点刷新尝试转码`, 'error');
+                this.notify(t('媒体播放失败{detail}，可点刷新尝试转码', { detail: err?.message ? `：${err.message}` : '' }), 'error');
             });
             if (message.kind === 'audio') {
                 const audioWrap = document.createElement('div');
                 audioWrap.className = 'media-audio-card';
                 audioWrap.innerHTML = `
                     <div class="media-audio-info">
-                        <div class="media-audio-name">${escapeHtml((message.path || '').split(/[\\/]/).pop() || '音频')}</div>
-                        <div class="media-audio-hint">点击下方控件播放 / 暂停</div>
+                        <div class="media-audio-name">${escapeHtml((message.path || '').split(/[\\/]/).pop() || t('音频'))}</div>
+                        <div class="media-audio-hint">${t('点击下方控件播放 / 暂停')}</div>
                     </div>`;
                 audioWrap.appendChild(media);
                 stage.appendChild(audioWrap);

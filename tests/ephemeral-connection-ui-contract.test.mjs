@@ -27,7 +27,7 @@ test('connection modal exposes temporary-connect toggle at top of create form', 
 test('share-style switch markup and styles are reused for temporary toggle', () => {
     // Same card chrome as 共享设置: share-group + option + switch (grid + radius + track).
     assert.match(appHtml, /connection-share-group connection-ephemeral-group[\s\S]*?connEphemeral[\s\S]*?connection-share-switch/);
-    assert.match(appHtml, /connection-share-copy[^>]*>\s*<strong>临时连接<\/strong>\s*<small>/);
+    assert.match(appHtml, /connection-share-copy[^>]*>\s*<strong[^>]*data-i18n="临时连接"[^>]*>临时连接<\/strong>\s*<small/);
     assert.match(styleCss, /\.connection-ephemeral-group\s*\{/);
     assert.match(styleCss, /\.connection-share-group \.connection-share-option\s*\{/);
     assert.match(styleCss, /border-radius:\s*8px/);

@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / "public"
 EXCLUDED = {"vendor", "editor"}
-PAGE_AUDIT_PAGES = ("terminal.html", "telnet-terminal.html", "rdp.html", "index.html", "open.html")
+PAGE_AUDIT_PAGES = ("app.html", "terminal.html", "telnet-terminal.html", "rdp.html", "index.html", "open.html")
 
 
 def frontend_files():

@@ -1,6 +1,11 @@
 (function () {
     'use strict';
 
+    const t = (key, vars = {}) => {
+        const translated = window.__zephyrT ? window.__zephyrT(key, vars) : key;
+        return String(translated).replace(/\{([A-Za-z0-9_]+)\}/g, (_, name) => vars[name] ?? `{${name}}`);
+    };
+
     const IMAGE_EXTENSIONS = new Set([
         'jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'avif',
         'tif', 'tiff', 'heic', 'heif', 'jxl', 'jp2', 'j2k', 'bmp', 'dib', 'ico', 'cur', 'icns',
@@ -60,22 +65,22 @@
             modal.style.display = 'none';
             modal.innerHTML = `
                 <div class="image-preview-titlebar panel-titlebar">
-                    <button class="panel-traffic-btn" type="button" data-action="layout" title="窗口布局"><span></span></button>
+                    <button class="panel-traffic-btn" type="button" data-action="layout" title="${t('窗口布局')}"><span></span></button>
                 </div>
                 <div class="image-preview-header">
-                    <div class="image-preview-title" data-role="title">图片预览</div>
+                    <div class="image-preview-title" data-role="title">${t('图片预览')}</div>
                     <div class="image-preview-actions">
-                        <button class="tool-btn" type="button" data-action="refresh" title="重新加载预览">刷新</button>
-                        <button class="tool-btn" type="button" data-action="open-viewer" title="打开 Viewer.js 查看器">查看</button>
+                        <button class="tool-btn" type="button" data-action="refresh" title="${t('重新加载预览')}">${t('刷新')}</button>
+                        <button class="tool-btn" type="button" data-action="open-viewer" title="${t('打开 Viewer.js 查看器')}">${t('查看')}</button>
                     </div>
                 </div>
                 <div class="image-preview-body" data-role="body">
-                    <div class="image-preview-state" data-role="state">准备预览...</div>
-                    <div class="image-preview-stage" data-role="stage" style="display:none;"><img data-role="image" alt="图片预览"></div>
+                    <div class="image-preview-state" data-role="state">${t('准备预览...')}</div>
+                    <div class="image-preview-stage" data-role="stage" style="display:none;"><img data-role="image" alt="${t('图片预览')}"></div>
                 </div>
                 <div class="image-preview-meta" data-role="meta"></div>
-                <div class="panel-resize-handle left" data-role="resize-left" title="拖动调整大小"></div>
-                <div class="panel-resize-handle right" data-role="resize-right" title="拖动调整大小"></div>`;
+                <div class="panel-resize-handle left" data-role="resize-left" title="${t('拖动调整大小')}"></div>
+                <div class="panel-resize-handle right" data-role="resize-right" title="${t('拖动调整大小')}"></div>`;
             modal.addEventListener('pointerdown', () => this.focus());
             modal.querySelector('[data-action="refresh"]')?.addEventListener('click', () => this.open(this.currentPath, { force: true }));
             modal.querySelector('[data-action="open-viewer"]')?.addEventListener('click', () => this.showViewer());
@@ -305,9 +310,9 @@
             const stage = this.modal.querySelector('[data-role="stage"]');
             const meta = this.modal.querySelector('[data-role="meta"]');
             const image = this.modal.querySelector('[data-role="image"]');
-            title.textContent = `图片预览: ${filePath.split('/').pop() || filePath}`;
+            title.textContent = t('图片预览: {name}', { name: filePath.split('/').pop() || filePath });
             state.className = 'image-preview-state loading';
-            state.textContent = '正在准备图片预览...';
+            state.textContent = t('正在准备图片预览...');
             state.style.display = 'grid';
             stage.style.display = 'none';
             image.onload = null;
@@ -320,14 +325,14 @@
             const state = this.modal.querySelector('[data-role="state"]');
             const stage = this.modal.querySelector('[data-role="stage"]');
             state.className = 'image-preview-state error';
-            state.innerHTML = `<strong>预览失败</strong><span>${escapeHtml(error || '未知错误')}</span>`;
+            state.innerHTML = `<strong>${t('预览失败')}</strong><span>${escapeHtml(error || t('未知错误'))}</span>`;
             state.style.display = 'grid';
             stage.style.display = 'none';
-            this.notify(`图片预览失败：${error || '未知错误'}`, 'error');
+            this.notify(t('图片预览失败：{error}', { error: error || t('未知错误') }), 'error');
         }
 
         renderImage(message) {
-            if (!message?.url) return this.setError(message?.path || this.currentPath, '缺少预览地址');
+            if (!message?.url) return this.setError(message?.path || this.currentPath, t('缺少预览地址'));
             this.currentPath = message.path || this.currentPath;
             const state = this.modal.querySelector('[data-role="state"]');
             const stage = this.modal.querySelector('[data-role="stage"]');
@@ -340,7 +345,7 @@
                 this.initViewer(image);
             };
             image.onerror = () => this.setError(this.currentPath, '浏览器加载预览图片失败');
-            image.alt = this.currentPath.split('/').pop() || '图片预览';
+            image.alt = this.currentPath.split('/').pop() || t('图片预览');
             image.src = `${message.url}${message.url.includes('?') ? '&' : '?'}inline=1${cacheBust}`;
             meta.innerHTML = `<span title="${escapeHtml(this.currentPath)}">${escapeHtml(this.currentPath)}</span><b>${message.converted ? '已转 WebP' : '原图直出'}</b><em>${this.formatSize(message.size)}</em>`;
         }
@@ -352,7 +357,7 @@
                 inline: false,
                 navbar: false,
                 fullscreen: false,
-                title: [1, () => this.currentPath.split('/').pop() || '图片预览'],
+                title: [1, () => this.currentPath.split('/').pop() || t('图片预览')],
                 toolbar: {
                     zoomIn: 1,
                     zoomOut: 1,

@@ -1,5 +1,5 @@
 import RFB from '/vendor/novnc/core/rfb.js';
-import { t, initI18n } from './i18n/runtime.js?v=20260726-i18n-fix2';
+import { t, initI18n } from './i18n/runtime.js?v=20260726-i18n-fix6';
 import KeyTable from '/vendor/novnc/core/input/keysym.js';
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 
@@ -181,7 +181,7 @@ function applyDisplayOptions() {
     const q = qualityConfig();
     qualityLabel.textContent = q.label;
     fitLabel.textContent = fitLabelText();
-    qualityBtn.title = `当前：${q.label}模式，点击切换性能/画质模式`;
+    qualityBtn.title = t('当前：{mode}模式，点击切换性能/画质模式', { mode: q.label });
     qualityBtn.dataset.qualityMode = qualityMode;
     qualityBtn.classList.toggle('active', qualityMode !== 'balanced');
     dragBtn.classList.toggle('active', joystickPanel && !joystickPanel.hidden);
@@ -520,7 +520,7 @@ function openPanelLayoutMenu(button, panel) {
     menu.className = 'panel-layout-menu';
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', t('窗口布局'));
-    menu.innerHTML = '<button data-layout="full" title="全屏" aria-label="全屏"><span class="panel-layout-icon full"></span></button><button data-layout="half" title="半屏" aria-label="半屏"><span class="panel-layout-icon half"></span></button><button data-layout="left-quarter" title="左侧四分之一" aria-label="左侧四分之一"><span class="panel-layout-icon left"></span></button><button data-layout="right-quarter" title="右侧四分之一" aria-label="右侧四分之一"><span class="panel-layout-icon right"></span></button><button data-layout="close" class="panel-layout-close" title="关闭窗口" aria-label="关闭窗口"><span class="panel-layout-icon close"></span></button>';
+    menu.innerHTML = `<button data-layout="full" title="${t('全屏')}" aria-label="${t('全屏')}"><span class="panel-layout-icon full"></span></button><button data-layout="half" title="${t('半屏')}" aria-label="${t('半屏')}"><span class="panel-layout-icon half"></span></button><button data-layout="left-quarter" title="${t('左侧四分之一')}" aria-label="${t('左侧四分之一')}"><span class="panel-layout-icon left"></span></button><button data-layout="right-quarter" title="${t('右侧四分之一')}" aria-label="${t('右侧四分之一')}"><span class="panel-layout-icon right"></span></button><button data-layout="close" class="panel-layout-close" title="${t('关闭窗口')}" aria-label="${t('关闭窗口')}"><span class="panel-layout-icon close"></span></button>`;
     menu.style.transition = 'none';
     document.body.appendChild(menu);
     panelLayoutMenu = menu;
@@ -747,7 +747,7 @@ function sendText(text) {
     const value = String(text);
     if (/[^\u0008\u0009\u000a\u000d\u0020-\u00ff]/.test(value) || value.length > 24) {
         rfb.clipboardPasteFrom(value);
-        clipboardHint.textContent = `已发送 ${value.length} 字符到远程剪贴板，请在远程粘贴`;
+        clipboardHint.textContent = t('已发送 {count} 字符到远程剪贴板，请在远程粘贴', { count: value.length });
         return;
     }
     for (const ch of value) {
@@ -789,7 +789,7 @@ function setupMobileInput() {
     mobileKeyboardInput.addEventListener('input', () => { if (mobileComposing) return; const value = mobileKeyboardInput.value; if (value) sendText(value); mobileKeyboardInput.value = ''; });
 }
 function setupClipboard() {
-    clipboardSendBtn.addEventListener('click', () => { if (!rfb || !connected) return; const text = clipboardText.value || ''; rfb.clipboardPasteFrom(text); clipboardHint.textContent = `已发送 ${text.length} 字符到远程剪贴板`; });
+    clipboardSendBtn.addEventListener('click', () => { if (!rfb || !connected) return; const text = clipboardText.value || ''; rfb.clipboardPasteFrom(text); clipboardHint.textContent = t('已发送 {count} 字符到远程剪贴板', { count: text.length }); });
     clipboardReadLocalBtn.addEventListener('click', async () => { try { clipboardText.value = await navigator.clipboard.readText(); } catch (err) { clipboardHint.textContent = err.message || t('读取本机剪贴板失败'); } });
     clipboardCopyRemoteBtn.addEventListener('click', async () => { try { await navigator.clipboard.writeText(remoteClipboardText.value || lastRemoteClipboard || ''); clipboardHint.textContent = t('已复制到本机剪贴板'); } catch (err) { clipboardHint.textContent = err.message || t('复制失败'); } });
     window.addEventListener('paste', (event) => { if (!connected || document.activeElement === clipboardText || document.activeElement === remoteClipboardText) return; const text = event.clipboardData?.getData('text/plain') || ''; if (text) { event.preventDefault(); sendText(text); } });
@@ -844,7 +844,7 @@ async function performAiRemoteDesktopAction(data = {}) {
         const value = text || clipboardText?.value || '';
         if (!value) throw new Error(t('VNC 剪贴板文本为空'));
         rfb.clipboardPasteFrom(value);
-        clipboardHint.textContent = `已发送 ${value.length} 字符到远程剪贴板`;
+        clipboardHint.textContent = t('已发送 {count} 字符到远程剪贴板', { count: value.length });
         if (data.paste !== false) { await sleep(80); sendSequence('ctrl-v'); }
         return { ok: true, control, length: value.length, paste: data.paste !== false };
     }
@@ -858,7 +858,7 @@ async function performAiRemoteDesktopAction(data = {}) {
         if (!text) throw new Error(t('VNC 输入文本为空'));
         if (data.paste !== false) {
             rfb?.clipboardPasteFrom?.(text);
-            clipboardHint.textContent = `已发送 ${text.length} 字符到远程剪贴板`;
+            clipboardHint.textContent = t('已发送 {count} 字符到远程剪贴板', { count: text.length });
             await sleep(80);
             sendSequence('ctrl-v');
         } else sendText(text);
@@ -871,10 +871,10 @@ async function performAiRemoteDesktopAction(data = {}) {
         if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(t('AI 远程桌面点击缺少 x/y'));
         const ok = await clickRemotePoint(x, y, button);
         if (!ok) throw new Error(t('远程画面尚未准备好，无法点击坐标'));
-        clipboardHint.textContent = `AI 已点击 ${x}, ${y}`;
+        clipboardHint.textContent = t('AI 已点击 {x}, {y}', { x, y });
         return { ok: true, control, x, y, button };
     }
-    throw new Error(`未知远程桌面 UI 动作：${control}`);
+    throw new Error(t('未知远程桌面 UI 动作：{action}', { action: control }));
 }
 
 function bindEvents() {

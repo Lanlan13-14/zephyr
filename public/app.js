@@ -2,7 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange } from './i18n/runtime.js?v=20260726-i18n-fix2';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange } from './i18n/runtime.js?v=20260726-i18n-fix6';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260726-i18n-fix6';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -174,11 +175,11 @@ function apiMaybeForm(path, options = {}) {
 function toast(message) { const el = $('#toast'); if (!el) { console.warn('[toast]', message); return; } el.textContent = message; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2600); }
 window.addEventListener('error', (event) => {
     console.error('[app-runtime]', event.error || event.message);
-    if (document.readyState === 'complete') toast(`前端错误：${event.message || t('未知错误')}`);
+    if (document.readyState === 'complete') toast(t('前端错误：{error}', { error: event.message || t('未知错误') }));
 });
 window.addEventListener('unhandledrejection', (event) => {
     console.error('[app-runtime]', event.reason);
-    if (document.readyState === 'complete') toast(`前端异步错误：${event.reason?.message || event.reason || t('未知错误')}`);
+    if (document.readyState === 'complete') toast(t('前端异步错误：{error}', { error: event.reason?.message || event.reason || t('未知错误') }));
 });
 function terminalFrameById(tabId = '') {
     const id = String(tabId || '').trim();
@@ -917,10 +918,10 @@ function ensureColorPickerPanel() {
             <span class="color-panel-current-swatch" data-color-current aria-hidden="true"></span>
             <span class="color-panel-current-value" data-color-value>#0a84ff</span>
         </div>
-        <div class="color-palette-sv" data-color-sv aria-label="拖动选择饱和度和明度" role="slider"><span class="color-palette-cursor" aria-hidden="true"></span></div>
+        <div class="color-palette-sv" data-color-sv aria-label="${t('拖动选择饱和度和明度')}" role="slider"><span class="color-palette-cursor" aria-hidden="true"></span></div>
         <label class="color-hue-row"><span>${t('色相')}</span><input type="range" min="0" max="360" step="1" value="210" data-color-hue aria-label="${t('色相')}"></label>
         <div class="color-panel-hint">${t('拖动色盘/色相，或继续直接输入色号。')}</div>
-        <div class="color-panel-grid" aria-label="常用颜色">${COLOR_PICKER_PRESETS.map((color) => `<button type="button" data-color-preset="${color}" style="--preset-color:${color}" aria-label="选择 ${color}"></button>`).join('')}</div>
+        <div class="color-panel-grid" aria-label="${t('常用颜色')}">${COLOR_PICKER_PRESETS.map((color) => `<button type="button" data-color-preset="${color}" style="--preset-color:${color}" aria-label="${t('选择 {color}', { color })}"></button>`).join('')}</div>
         <div class="color-panel-actions"><button type="button" data-color-close>${t('关闭')}</button></div>`;
     document.body.appendChild(panel);
     panel.addEventListener('click', (event) => {
@@ -1105,7 +1106,7 @@ function renderCodeBlockHtml(code = '', info = '', enhanced = false) {
     const id = `ai-code-${++aiCodeBlockSeq}`;
     aiCodeBlockStore.set(id, { code: cleanCode, lang: meta.lang, filename: meta.filename });
     const isHtml = meta.lang === 'html' || /\.html?$/i.test(meta.filename);
-    return `<div class="ai-code-block" data-ai-code-id="${escapeAttr(id)}"><div class="ai-code-toolbar"><span class="ai-code-name"><i>⌘</i>${escapeHtml(meta.filename || meta.lang || 'code')}</span><div class="ai-code-actions">${isHtml ? `<button type="button" data-ai-code-preview="${escapeAttr(id)}">▶ 预览</button>` : ''}<button type="button" data-ai-code-copy="${escapeAttr(id)}">⧉ 复制</button><button type="button" data-ai-code-download="${escapeAttr(id)}">⇩ 下载</button></div></div><pre><code class="language-${escapeAttr(meta.lang)}">${escapedCode}</code></pre></div>`;
+    return `<div class="ai-code-block" data-ai-code-id="${escapeAttr(id)}"><div class="ai-code-toolbar"><span class="ai-code-name"><i>⌘</i>${escapeHtml(meta.filename || meta.lang || 'code')}</span><div class="ai-code-actions">${isHtml ? `<button type="button" data-ai-code-preview="${escapeAttr(id)}">▶ ${t('预览')}</button>` : ''}<button type="button" data-ai-code-copy="${escapeAttr(id)}">⧉ ${t('复制')}</button><button type="button" data-ai-code-download="${escapeAttr(id)}">⇩ ${t('下载')}</button></div></div><pre><code class="language-${escapeAttr(meta.lang)}">${escapedCode}</code></pre></div>`;
 }
 function renderMarkdown(md, options = {}) {
     const enhanced = !!options.enhancedCode;
@@ -1566,7 +1567,7 @@ function renderActivities() {
     const list = $('#activityList');
     if (!list) return;
     const bounds = activityRangeBounds();
-    $('#activityResultCount').textContent = `${activities.length} 条记录`;
+    $('#activityResultCount').textContent = t('{count} 条记录', { count: activities.length });
     $('#activityRangeLabel').textContent = bounds.label;
     list.innerHTML = activities.length ? activities.map((activity) => {
         const detail = activityDetails(activity);
@@ -1574,7 +1575,7 @@ function renderActivities() {
         return `<article class="activity-detail-item">
             <div class="activity-detail-head">
                 <div class="activity-event-mark" data-category="${escapeHtml(detail.category)}" aria-hidden="true"></div>
-                <div class="activity-event-title"><h2>${escapeHtml(activity.message || t('未知活动'))}</h2><span class="activity-status ${outcomeClass}">${escapeHtml(detail.outcome)}</span></div>
+                <div class="activity-event-title"><h2>${escapeHtml(localizeActivityMessage(activity.message || t('未知活动')))}</h2><span class="activity-status ${outcomeClass}">${escapeHtml(detail.outcome)}</span></div>
                 <time datetime="${new Date(Number(activity.time || 0)).toISOString()}">${escapeHtml(fmtTime(activity.time))}</time>
             </div>
             <dl class="activity-meta-grid">
@@ -2952,7 +2953,7 @@ function renderTerminalSmartbar() {
     const icon = (t, index) => `<button class="smartbar-session ${t.id === activeTerminalTab ? 'active' : ''} ${t.minimized ? 'minimized' : ''}" style="--dock-index:${index}" data-smartbar-tab="${t.id}" title="${escapeHtml(t.protocol)} · ${escapeHtml(t.name)} · ${escapeHtml(t.status)}" aria-label="${escapeHtml(t.name || 'Terminal')}"><span class="smartbar-session-icon"><span class="proto-dot ${terminalProtocolClass(t.protocol)}"></span>${smartbarSessionInitialsHtml(t.name)}</span><span class="smartbar-session-label" aria-hidden="true">${smartbarSessionLabelHtml(t.name || 'Terminal')}</span></button>`;
     const launchableConnections = connections.filter((c) => ['SSH', 'RDP', 'VNC'].includes(String(c.protocol || 'SSH').toUpperCase()));
     const picker = terminalSmartbarPickerOpen ? `
-        <div class="smartbar-picker" role="dialog" aria-label="选择服务器连接">
+        <div class="smartbar-picker" role="dialog" aria-label="${t('选择服务器连接')}">
             <div class="smartbar-picker-head"><strong>${t('选择服务器')}</strong><button data-smartbar-picker-close title="${t('关闭')}">×</button></div>
             <div class="smartbar-picker-list">
                 ${launchableConnections.length ? launchableConnections.map((c) => `<button data-smartbar-connect="${c.id}"><span class="proto-dot ${terminalProtocolClass(c.protocol)}"></span><strong>${escapeHtml(c.name)}</strong><em>${escapeHtml(c.protocol)} · ${escapeHtml(c.host)}:${escapeHtml(c.port)}</em></button>`).join('') : `<div class="smartbar-empty">${t('暂无 SSH/RDP/VNC 服务器')}</div>`}
@@ -2971,11 +2972,11 @@ function renderTerminalSmartbar() {
     smartbarRoot.className = `terminal-smartbar ${terminalSmartbarOpen ? 'open' : ''} ${terminalSmartbarClosing ? 'closing' : ''}`;
     syncTerminalShelfLineState();
     smartbarRoot.innerHTML = `
-        <button class="smartbar-handle" data-smartbar-toggle title="展开/收回 Dock"><span></span></button>
+        <button class="smartbar-handle" data-smartbar-toggle title="${t('展开/收回 Dock')}"><span></span></button>
         <div class="smartbar-panel">
-            <div class="smartbar-dock" aria-label="终端 Dock">
+            <div class="smartbar-dock" aria-label="${t('终端 Dock')}">
                 ${sessions.map(icon).join('') || `<span class="smartbar-empty">${t('暂无会话')}</span>`}
-                <button class="smartbar-add" style="--dock-index:${sessions.length}" data-smartbar-add title="选择服务器连接" aria-label="选择服务器连接">${smartbarPlusHtml()}</button>
+                <button class="smartbar-add" style="--dock-index:${sessions.length}" data-smartbar-add title="${t('选择服务器连接')}" aria-label="${t('选择服务器连接')}">${smartbarPlusHtml()}</button>
             </div>
         </div>`;
     requestAnimationFrame(() => {
@@ -2988,7 +2989,7 @@ function renderTerminalSmartbar() {
         positionSmartbarPicker();
     });
 }
-function terminalWindowMenu(t) {
+function terminalWindowMenu(session) {
     const maxWindows = getEffectiveTerminalMaxWindows();
     const visibleCount = visibleTerminalTabs().length;
     const compact = isCompactTerminalWorkspace();
@@ -3005,10 +3006,10 @@ function terminalWindowMenu(t) {
     } else {
         items = [fullscreenItem, ['left-half', t('左半屏')], ['right-half', t('右半屏')], ['right-top', t('右侧 1/3 上半部')], ['right-bottom', t('右侧 1/3 下半部')], ['left-two-thirds', t('左侧 2/3')], ['right-two-thirds', t('右侧 2/3')], ['minimize', t('最小化')], ['close', t('关闭')]];
     }
-    return `<div class="terminal-window-menu" role="menu" style="--island-action-count:${items.length}">${items.map(([action, label]) => `<button data-window-action="${action}" data-window="${t.id}" title="${label}" aria-label="${label}">${label}</button>`).join('')}</div>`;
+    return `<div class="terminal-window-menu" role="menu" style="--island-action-count:${items.length}">${items.map(([action, label]) => `<button data-window-action="${action}" data-window="${session.id}" title="${label}" aria-label="${label}">${label}</button>`).join('')}</div>`;
 }
-function terminalWindowTitlebarHtml(t) {
-    return `<button class="terminal-grip terminal-window-center-dots" data-window-control="${t.id}" title="短按打开窗口操作，长按拖动交换位置" aria-label="窗口操作与拖动"><span></span></button><button class="mobile-fullscreen-dock-toggle" data-mobile-dock-toggle data-smartbar-toggle title="展开/收回移动端 Dock" aria-label="展开/收回移动端 Dock"><span></span></button><span class="proto-dot ${terminalProtocolClass(t.protocol)}"></span><strong>${escapeHtml(terminalShortName(t.name))}</strong>${terminalWindowMenu(t)}`;
+function terminalWindowTitlebarHtml(session) {
+    return `<button class="terminal-grip terminal-window-center-dots" data-window-control="${session.id}" title="${t('短按打开窗口操作，长按拖动交换位置')}" aria-label="${t('窗口操作与拖动')}"><span></span></button><button class="mobile-fullscreen-dock-toggle" data-mobile-dock-toggle data-smartbar-toggle title="${t('展开/收回移动端 Dock')}" aria-label="${t('展开/收回移动端 Dock')}"><span></span></button><span class="proto-dot ${terminalProtocolClass(session.protocol)}"></span><strong>${escapeHtml(terminalShortName(session.name))}</strong>${terminalWindowMenu(session)}`;
 }
 function positionTerminalWindowMenu(titlebar, { collapsed = false, force = false } = {}) {
     if (!force && !titlebar?.classList.contains('menu-open')) return;
@@ -3172,7 +3173,7 @@ function reconnectTerminalSession(tabId) {
         renderTerminalTabs({ rebuildWorkspace: true });
     }, 2400);
     terminalReconnectFallbackTimers.set(tabId, timer);
-    toast(`${t.protocol || t('终端')} 正在重连...`);
+    toast(t('{protocol} 正在重连...', { protocol: t.protocol || t('终端') }));
     return true;
 }
 function getMinimizedKeepAliveSessions() {
@@ -3184,27 +3185,27 @@ function getMinimizedKeepAliveSessions() {
     if (limit <= 0) return minimized;
     return minimized.slice(0, limit);
 }
-function createTerminalWindowElement(t) {
+function createTerminalWindowElement(session) {
     const article = document.createElement('article');
     article.className = 'terminal-window';
-    article.dataset.window = t.id;
+    article.dataset.window = session.id;
     article.draggable = false;
     const titlebar = document.createElement('div');
     titlebar.className = 'terminal-window-titlebar';
-    titlebar.innerHTML = terminalWindowTitlebarHtml(t);
+    titlebar.innerHTML = terminalWindowTitlebarHtml(session);
     const body = document.createElement('div');
     body.className = 'terminal-window-body';
-    if (t.iframe) {
+    if (session.iframe) {
         const frame = document.createElement('iframe');
         frame.className = 'terminal-frame';
-        frame.dataset.frame = t.id;
-        frame.src = t.page === 'rdp'
-            ? `/rdp.html?embed=1&tabId=${encodeURIComponent(t.id)}&connectionId=${encodeURIComponent(t.connectionId || '')}`
-            : t.page === 'novnc'
-                ? `/novnc.html?embed=1&tabId=${encodeURIComponent(t.id)}&connectionId=${encodeURIComponent(t.connectionId || '')}`
-                : t.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(t.id)}`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(t.id)}`;
+        frame.dataset.frame = session.id;
+        frame.src = session.page === 'rdp'
+            ? `/rdp.html?embed=1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            : session.page === 'novnc'
+                ? `/novnc.html?embed=1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+                : session.page === 'telnet-terminal'
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -3213,24 +3214,24 @@ function createTerminalWindowElement(t) {
                     type: 'notes-enabled',
                     enabled: isNotesEnabled(),
                 }, '*');
-                if (t.workspaceState) {
-                    frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'restore-workspace-state', state: t.workspaceState }, '*');
+                if (session.workspaceState) {
+                    frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'restore-workspace-state', state: session.workspaceState }, '*');
                 }
             } catch (_) {}
         }, { once: true });
         body.appendChild(frame);
-        if (t.snapshotText && (t.page === 'terminal' || t.page === 'telnet-terminal')) {
+        if (session.snapshotText && (session.page === 'terminal' || session.page === 'telnet-terminal')) {
             const snapshot = document.createElement('pre');
             snapshot.className = 'terminal-snapshot';
-            snapshot.dataset.snapshotFor = t.id;
-            snapshot.textContent = t.snapshotText;
+            snapshot.dataset.snapshotFor = session.id;
+            snapshot.textContent = session.snapshotText;
             body.appendChild(snapshot);
         }
     } else {
         const placeholder = document.createElement('div');
         placeholder.className = 'terminal-placeholder active';
-        placeholder.dataset.frame = t.id;
-        placeholder.textContent = `${t.protocol} 协议将在后续版本接入。`;
+        placeholder.dataset.frame = session.id;
+        placeholder.textContent = t('{protocol} 协议将在后续版本接入。', { protocol: session.protocol });
         body.appendChild(placeholder);
     }
     article.append(titlebar, body);
@@ -4835,12 +4836,12 @@ function aiThinkingOptionsForProvider(provider = {}, model = '') {
     const m = String(model || provider.defaultModel || '').toLowerCase();
     if (kind === 'gemini') {
         if (/gemini-2\.5/i.test(m)) return [
-            ['', '默认'], ['0', '关闭思考'], ['-1', '动态思考'], ['1024', '浅度思考'], ['8192', '深度思考'],
+            ['', t('默认')], ['0', '关闭思考'], ['-1', '动态思考'], ['1024', '浅度思考'], ['8192', '深度思考'],
         ];
-        return [['', '默认'], ['minimal', 'minimal'], ['low', 'low'], ['medium', 'medium'], ['high', 'high']];
+        return [['', t('默认')], ['minimal', 'minimal'], ['low', 'low'], ['medium', 'medium'], ['high', 'high']];
     }
-    if (kind === 'anthropic') return [['', '默认'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']];
-    return [['', '默认'], ['none', 'none'], ['minimal', 'minimal'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']];
+    if (kind === 'anthropic') return [['', t('默认')], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']];
+    return [['', t('默认')], ['none', 'none'], ['minimal', 'minimal'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']];
 }
 function aiCurrentSession() {
     if (!aiChatSessions.length) createAiChat({ silent: true });
@@ -4903,8 +4904,8 @@ function renderAiThinkingSelector(provider = null, model = '') {
     const previous = select.value;
     const options = aiThinkingOptionsForProvider(provider || {}, model);
     select.value = options.some(([value]) => value === previous) ? previous : '';
-    const label = options.find(([value]) => value === select.value)?.[1] || '默认';
-    $('#aiThinkPickerBtn') && ($('#aiThinkPickerBtn').textContent = `推理：${label}`);
+    const label = options.find(([value]) => value === select.value)?.[1] || t('默认');
+    $('#aiThinkPickerBtn') && ($('#aiThinkPickerBtn').textContent = t('推理：{label}', { label }));
 }
 function aiHeaderChoices(kind = '') {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
@@ -5405,7 +5406,7 @@ function renderAiProviderShareTargets() {
     if (!root) return;
     const q = String($('#aiProviderShareSearch')?.value || '').trim().toLowerCase();
     const users = aiProviderShareTargetsState.filter((u) => !q || String(u.username || '').toLowerCase().includes(q));
-    root.innerHTML = users.length ? users.map((u) => `<label class="check-line ai-provider-share-user"><input type="checkbox" data-ai-share-user="${escapeHtml(u.userId)}" ${aiProviderSelectedUserIds.has(u.userId) ? 'checked' : ''}><span>${escapeHtml(u.username)}</span><small>${u.role === 'admin' ? t('管理员') : t('普通用户')}</small></label>`).join('') : '<span class="muted">没有匹配用户</span>';
+    root.innerHTML = users.length ? users.map((u) => `<label class="check-line ai-provider-share-user"><input type="checkbox" data-ai-share-user="${escapeHtml(u.userId)}" ${aiProviderSelectedUserIds.has(u.userId) ? 'checked' : ''}><span>${escapeHtml(u.username)}</span><small>${u.role === 'admin' ? t('管理员') : t('普通用户')}</small></label>`).join('') : `<span class="muted">${t('没有匹配用户')}</span>`;
     root.querySelectorAll('[data-ai-share-user]').forEach((input) => input.addEventListener('change', () => {
         if (input.checked) aiProviderSelectedUserIds.add(input.dataset.aiShareUser);
         else aiProviderSelectedUserIds.delete(input.dataset.aiShareUser);
@@ -5559,9 +5560,10 @@ function renderAiProviderList() {
         const sharedLabels = [];
         if (p.shareWithUsers) sharedLabels.push(t('所有用户'));
         if (p.shareWithAdmins) sharedLabels.push(t('所有管理员'));
-        if (Array.isArray(p.sharedUserIds) && p.sharedUserIds.length) sharedLabels.push(`指定用户 ${p.sharedUserIds.length}`);
-        const source = owned ? t('我的 Provider') : `由 ${p.ownerUsername || t('其他用户')} 共享`;
-        return `<div class="ai-provider-item" data-provider-id="${escapeHtml(p.id)}"><div><strong>${escapeHtml(p.name || t('未命名供应商'))}</strong><span>${escapeHtml(p.type || 'openai-compatible')} · ${p.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(modelText)} · ${escapeHtml(source)}${sharedLabels.length ? ` · 共享：${escapeHtml(sharedLabels.join('、'))}` : ''}</span><code>${escapeHtml(p.baseUrl || t('默认 API 地址'))}</code></div><button class="tool-btn" data-ai-fetch-provider-models="${escapeHtml(p.id)}">获取模型</button>${owned ? `<button class="tool-btn" data-ai-reveal-provider-key="${escapeHtml(p.id)}">查看 Key</button><button class="tool-btn" data-ai-edit-provider="${escapeHtml(p.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-provider="${escapeHtml(p.id)}">删除</button>` : '<span class="muted">仅可调用</span>'}</div>`;
+        if (Array.isArray(p.sharedUserIds) && p.sharedUserIds.length) sharedLabels.push(t('指定用户 {count}', { count: p.sharedUserIds.length }));
+        const source = owned ? t('我的 Provider') : t('由 {user} 共享', { user: p.ownerUsername || t('其他用户') });
+        const sharedText = sharedLabels.length ? ` · ${t('共享：{targets}', { targets: sharedLabels.join('、') })}` : '';
+        return `<div class="ai-provider-item" data-provider-id="${escapeHtml(p.id)}"><div><strong>${escapeHtml(p.name || t('未命名供应商'))}</strong><span>${escapeHtml(p.type || 'openai-compatible')} · ${p.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(modelText)} · ${escapeHtml(source)}${escapeHtml(sharedText)}</span><code>${escapeHtml(p.baseUrl || t('默认 API 地址'))}</code></div><button class="tool-btn" data-ai-fetch-provider-models="${escapeHtml(p.id)}">${t('获取模型')}</button>${owned ? `<button class="tool-btn" data-ai-reveal-provider-key="${escapeHtml(p.id)}">${t('查看 Key')}</button><button class="tool-btn" data-ai-edit-provider="${escapeHtml(p.id)}">${t('编辑')}</button><button class="tool-btn danger" data-ai-delete-provider="${escapeHtml(p.id)}">${t('删除')}</button>` : `<span class="muted">${t('仅可调用')}</span>`}</div>`;
     }).join('') : `<p class="empty-state">${t('暂无可用模型供应商。创建自己的 Provider，或让其他用户共享给你。')}</p>`;
 }
 async function fetchAiModelsForProvider(id = '') {
@@ -5587,7 +5589,7 @@ async function fetchAiModelsForProvider(id = '') {
         const uniqueNames = Array.from(new Set(names));
         if (!uniqueNames.length) return toast(t('没有获取到模型'));
         if (id) {
-            if (provider.owned === false) return toast(`已获取 ${uniqueNames.length} 个模型（共享 Provider 不能修改）`);
+            if (provider.owned === false) return toast(t('已获取 {count} 个模型（共享 Provider 不能修改）', { count: uniqueNames.length }));
             await api(`/api/ai/providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ models: uniqueNames, defaultModel: provider.defaultModel || uniqueNames[0] }) });
             const visible = await api('/api/ai/providers');
             settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
@@ -5597,7 +5599,7 @@ async function fetchAiModelsForProvider(id = '') {
             $('#aiProviderModels').value = uniqueNames.join('\n');
             if (!$('#aiProviderDefaultModel').value) $('#aiProviderDefaultModel').value = uniqueNames[0] || '';
         }
-        toast(`已获取 ${uniqueNames.length} 个模型`);
+        toast(t('已获取 {count} 个模型', { count: uniqueNames.length }));
     } catch (err) { toast(err.message || t('获取模型失败')); }
 }
 
@@ -5633,7 +5635,7 @@ function renderAiEnvList() {
     const list = $('#aiEnvList');
     if (!list) return;
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    list.innerHTML = ai.envVars.length ? ai.envVars.map((item) => `<div class="ai-env-item" data-env-id="${escapeHtml(item.id)}"><div><strong>${escapeHtml(item.name || 'UNNAMED')}</strong><span>${item.enabled === false ? t('已停用') : t('已启用')} · ${item.hasValue || item.value ? t('已保存值') : t('无值')} · ${item.visibleToAi ? t('AI可见') : t('AI屏蔽')}${item.valueVisibleToAi ? '/值可见' : ''} · ${escapeHtml(item.description || '')}</span></div><button class="tool-btn" data-ai-edit-env="${escapeHtml(item.id)}">${t('编辑')}</button><button class="tool-btn danger" data-ai-delete-env="${escapeHtml(item.id)}">${t('删除')}</button></div>`).join('') : '<p class="empty-state">暂无 AI 环境变量。变量值会加密保存，AI 读取时需要敏感确认。</p>';
+    list.innerHTML = ai.envVars.length ? ai.envVars.map((item) => `<div class="ai-env-item" data-env-id="${escapeHtml(item.id)}"><div><strong>${escapeHtml(item.name || 'UNNAMED')}</strong><span>${item.enabled === false ? t('已停用') : t('已启用')} · ${item.hasValue || item.value ? t('已保存值') : t('无值')} · ${item.visibleToAi ? t('AI可见') : t('AI屏蔽')}${item.valueVisibleToAi ? `/${t('值可见')}` : ''} · ${escapeHtml(item.description || '')}</span></div><button class="tool-btn" data-ai-edit-env="${escapeHtml(item.id)}">${t('编辑')}</button><button class="tool-btn danger" data-ai-delete-env="${escapeHtml(item.id)}">${t('删除')}</button></div>`).join('') : `<p class="empty-state">${t('暂无 AI 环境变量。变量值会加密保存，AI 读取时需要敏感确认。')}</p>`;
 }
 async function saveAiEnv(e) {
     e.preventDefault();
@@ -5741,7 +5743,7 @@ function renderAiPlanList() {
     list.innerHTML = ai.plans.length ? ai.plans.slice(0, 30).map((plan) => {
         const steps = Array.isArray(plan.steps) ? plan.steps : [];
         const actions = `<div class="ai-plan-actions"><button class="tool-btn" data-ai-plan-pause="${escapeHtml(plan.id)}">${t('暂停')}</button><button class="tool-btn" data-ai-plan-resume="${escapeHtml(plan.id)}">${t('继续')}</button><button class="tool-btn" data-ai-plan-retry="${escapeHtml(plan.id)}">${t('重试失败')}</button><button class="tool-btn danger" data-ai-plan-delete="${escapeHtml(plan.id)}">${t('删除')}</button></div>`;
-        return `<div class="ai-plan-item" data-plan-id="${escapeHtml(plan.id)}"><div><strong>${escapeHtml(plan.title || t('任务计划'))}</strong><span><b class="ai-status ai-status-${escapeHtml(plan.status || 'planned')}">${escapeHtml(plan.status || 'planned')}</b> · ${fmtTime(plan.updatedAt || plan.createdAt)}</span>${plan.risk ? `<p>${escapeHtml(plan.risk)}</p>` : ''}<ol>${steps.map((s, index) => `<li><em class="ai-status ai-status-${escapeHtml(s.status || 'pending')}">${escapeHtml(s.status || 'pending')}</em> ${escapeHtml(s.text || '')}${s.note ? `<small>${escapeHtml(s.note)}</small>` : ''}${s.error ? `<small class="error-text">${escapeHtml(s.error)}</small>` : ''}<div class="ai-step-actions"><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="running">执行中</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="completed">完成</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="failed">失败</button></div></li>`).join('')}</ol>${actions}</div></div>`;
+        return `<div class="ai-plan-item" data-plan-id="${escapeHtml(plan.id)}"><div><strong>${escapeHtml(plan.title || t('任务计划'))}</strong><span><b class="ai-status ai-status-${escapeHtml(plan.status || 'planned')}">${escapeHtml(plan.status || 'planned')}</b> · ${fmtTime(plan.updatedAt || plan.createdAt)}</span>${plan.risk ? `<p>${escapeHtml(plan.risk)}</p>` : ''}<ol>${steps.map((s, index) => `<li><em class="ai-status ai-status-${escapeHtml(s.status || 'pending')}">${escapeHtml(s.status || 'pending')}</em> ${escapeHtml(s.text || '')}${s.note ? `<small>${escapeHtml(s.note)}</small>` : ''}${s.error ? `<small class="error-text">${escapeHtml(s.error)}</small>` : ''}<div class="ai-step-actions"><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="running">${t('执行中')}</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="completed">${t('完成')}</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="failed">${t('失败')}</button></div></li>`).join('')}</ol>${actions}</div></div>`;
     }).join('') : `<p class="empty-state">${t('暂无任务计划。AI 可通过 plan_task 工具为复杂任务创建计划，并持续更新步骤状态。')}</p>`;
 }
 
@@ -5756,7 +5758,10 @@ function renderAiSkillList() {
     const list = $('#aiSkillList');
     if (!list) return;
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    list.innerHTML = ai.skills.length ? ai.skills.map((s) => `<div class="ai-skill-item" data-skill-id="${escapeHtml(s.id)}"><div><strong>${escapeHtml(s.name || t('未命名 Skill'))}</strong><span>${s.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(s.description || '')}</span><code>${escapeHtml((s.prompt || '').slice(0, 260))}</code></div><button class="tool-btn" data-ai-edit-skill="${escapeHtml(s.id)}">${t('编辑')}</button><button class="tool-btn danger" data-ai-delete-skill="${escapeHtml(s.id)}">${t('删除')}</button></div>`).join('') : '<p class="empty-state">暂无 Skill。可以把工作流、工具使用规则、专用提示词保存成能力包。</p>';
+    const displaySkill = (skill) => skill.id === 'zephyr-local-operator'
+        ? { ...skill, name: t('Zephyr 本地运维操作流'), description: t('让 AI 按 Zephyr 的连接、终端、文件、Memory、浏览器预览和敏感确认机制工作，而不是泛泛聊天。'), prompt: t('内置中文运维提示词；模型回复语言仍跟随当前界面语言。') }
+        : skill;
+    list.innerHTML = ai.skills.length ? ai.skills.map((raw) => { const s = displaySkill(raw); return `<div class="ai-skill-item" data-skill-id="${escapeHtml(s.id)}"><div><strong>${escapeHtml(s.name || t('未命名 Skill'))}</strong><span>${s.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(s.description || '')}</span><code>${escapeHtml((s.prompt || '').slice(0, 260))}</code></div><button class="tool-btn" data-ai-edit-skill="${escapeHtml(s.id)}">${t('编辑')}</button><button class="tool-btn danger" data-ai-delete-skill="${escapeHtml(s.id)}">${t('删除')}</button></div>`; }).join('') : `<p class="empty-state">${t('暂无 Skill。可以把工作流、工具使用规则、专用提示词保存成能力包。')}</p>`;
 }
 async function saveAiSkill(e) {
     e.preventDefault();
@@ -5795,7 +5800,7 @@ function loadAiChats() {
         aiChatSessions = Array.isArray(data.sessions)
             ? data.sessions.slice(0, 20).filter((s) => s?.id && Array.isArray(s.messages)).map((s) => ({
                 ...s,
-                title: s.title === '新沙箱' ? '新对话' : s.title,
+                title: s.title === '新沙箱' ? t('新对话') : s.title,
                 messages: s.messages.filter((m) => !(/^.*已就绪。可搜索网页、调用工具、读写远程文件、辅助代码编辑。$/.test(String(m.content || '')))),
             }))
             : [];
@@ -5804,7 +5809,7 @@ function loadAiChats() {
 }
 function createAiChat({ silent = false } = {}) {
     const id = `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    aiChatSessions.unshift({ id, title: '新对话', messages: [] });
+    aiChatSessions.unshift({ id, title: t('新对话'), messages: [] });
     aiCurrentSessionId = id;
     aiEditingMessageIndex = -1;
     aiEditingSessionId = '';
@@ -5816,13 +5821,13 @@ function renderAiChatList() {
     if (!list) return;
     list.innerHTML = aiChatSessions.map((s) => {
         const running = aiIsSessionRunning(s.id);
-        return `<div class="ai-chat-row ${s.id === aiCurrentSessionId ? 'active' : ''} ${running ? 'running' : ''}" data-ai-chat-row="${escapeHtml(s.id)}"><button class="ai-chat-item" data-ai-chat="${escapeHtml(s.id)}"><span class="ai-chat-title-text">${escapeHtml(s.title || '新对话')}</span>${running ? '<span class="ai-chat-running-dot" title="AI 正在回复"></span>' : ''}</button><button class="ai-chat-delete" type="button" data-ai-delete-chat="${escapeHtml(s.id)}" title="删除对话" aria-label="删除对话">×</button></div>`;
+        return `<div class="ai-chat-row ${s.id === aiCurrentSessionId ? 'active' : ''} ${running ? 'running' : ''}" data-ai-chat-row="${escapeHtml(s.id)}"><button class="ai-chat-item" data-ai-chat="${escapeHtml(s.id)}"><span class="ai-chat-title-text">${escapeHtml(s.title || t('新对话'))}</span>${running ? `<span class="ai-chat-running-dot" title="${t('AI 正在回复')}"></span>` : ''}</button><button class="ai-chat-delete" type="button" data-ai-delete-chat="${escapeHtml(s.id)}" title="${t('删除对话')}" aria-label="${t('删除对话')}">×</button></div>`;
     }).join('');
 }
 function renderAiChat() {
     if (!aiChatSessions.length) createAiChat({ silent: true });
     const session = aiCurrentSession();
-    $('#aiCurrentChatTitle').textContent = session.title || '新对话';
+    $('#aiCurrentChatTitle').textContent = session.title || t('新对话');
     setAiSegmentValue('aiCollabMode', session.collabMode || 'standard', { silent: true });
     renderAiBrowserPreview();
     const area = $('#aiChatArea');
@@ -5865,7 +5870,7 @@ function appendAiMessage(text, role = 'assistant', { store = true, meta = '', ra
         if (metrics && typeof metrics === 'object') record.metrics = metrics;
         session.messages.push(record);
         storedIndex = session.messages.length - 1;
-        if (role === 'user' && (!session.title || session.title === '新对话' || session.title === '新沙箱')) {
+        if (role === 'user' && (!session.title || session.title === '新对话' || session.title === t('新对话') || session.title === '新沙箱')) {
             session.title = String(text || '').slice(0, 14) + (String(text || '').length > 14 ? '...' : '');
             if (session.id === aiCurrentSessionId) $('#aiCurrentChatTitle').textContent = session.title;
         }
@@ -5931,7 +5936,7 @@ async function copyTextToClipboard(text = '', successMessage = t('已复制')) {
         try { copied = document.execCommand('copy'); } catch (_) { copied = false; }
         ta.remove();
     }
-    if (!copied) throw new Error('浏览器拒绝剪贴板写入，请手动长按复制');
+    if (!copied) throw new Error(t('浏览器拒绝剪贴板写入，请手动长按复制'));
     toast(successMessage);
 }
 
@@ -5949,7 +5954,7 @@ function aiDownloadTextFile(item) {
     a.click();
     a.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1200);
-    toast(`已下载 ${a.download}`);
+    toast(t('已下载 {name}', { name: a.download }));
 }
 function aiPreviewCode(item) {
     if (!item) return;
@@ -5960,13 +5965,13 @@ function aiPreviewCode(item) {
     $('#aiBrowserPreview')?.classList.remove('force-hidden');
     const title = $('#aiBrowserPreviewTitle'), body = $('#aiBrowserPreviewBody'), toggle = $('#aiBrowserPreviewToggleBtn');
     if (toggle) toggle.textContent = t('隐藏预览');
-    if (title) title.textContent = `代码调试沙箱 · ${item.filename || 'snippet'}`;
-    if (body) body.innerHTML = `<iframe class="ai-code-preview-frame" sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock" src="${escapeAttr(aiCodePreviewObjectUrl)}"></iframe><small>${escapeHtml(item.filename || '')} · 本地 Blob 沙箱预览</small>`;
+    if (title) title.textContent = t('代码调试沙箱 · {name}', { name: item.filename || 'snippet' });
+    if (body) body.innerHTML = `<iframe class="ai-code-preview-frame" sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock" src="${escapeAttr(aiCodePreviewObjectUrl)}"></iframe><small>${escapeHtml(item.filename || '')} · ${t('本地 Blob 沙箱预览')}</small>`;
     toast(t('已打开代码预览'));
 }
 function renderAiAttachmentChips() {
     if (!aiPendingInputAttachments.length) return '';
-    return `<div class="ai-attachment-strip">${aiPendingInputAttachments.map((a, idx) => `<span class="ai-attachment-chip" title="${escapeAttr(a.name || '')}"><span class="ai-attachment-icon fm-button-icon" data-glyph="file" aria-hidden="true"></span><span class="ai-attachment-name">${escapeHtml(a.name || '附件')}</span><button type="button" data-ai-remove-attachment="${idx}" aria-label="移除附件">×</button></span>`).join('')}</div>`;
+    return `<div class="ai-attachment-strip">${aiPendingInputAttachments.map((a, idx) => `<span class="ai-attachment-chip" title="${escapeAttr(a.name || '')}"><span class="ai-attachment-icon fm-button-icon" data-glyph="file" aria-hidden="true"></span><span class="ai-attachment-name">${escapeHtml(a.name || t('附件'))}</span><button type="button" data-ai-remove-attachment="${idx}" aria-label="${t('移除附件')}">×</button></span>`).join('')}</div>`;
 }
 function updateAiInputPreview() {
     const preview = $('#aiInputPreview');
@@ -6116,8 +6121,8 @@ function closeAiBrowserForSession(id) {
 function deleteAiChat(id) {
     if (!id) return;
     openAiInlineConfirm({
-        title: '删除对话',
-        body: '将删除此会话的本地消息记录（服务端会话若已创建不会自动清档）。',
+        title: t('删除对话'),
+        body: t('将删除此会话的本地消息记录（服务端会话若已创建不会自动清档）。'),
         confirmLabel: t('删除'),
         danger: true,
         onConfirm: () => deleteAiChatConfirmed(id),
@@ -6160,8 +6165,8 @@ function setAiTyping(show) {
         send.innerHTML = show
             ? '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect></svg>'
             : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>';
-        send.title = show ? '停止 AI 回复' : t('发送');
-        send.setAttribute('aria-label', show ? '停止 AI 回复' : t('发送'));
+        send.title = show ? t('停止 AI 回复') : t('发送');
+        send.setAttribute('aria-label', show ? t('停止 AI 回复') : t('发送'));
     }
     scrollAiChat();
 }
@@ -6176,7 +6181,7 @@ function stopAiResponse(sessionId = aiCurrentSessionId) {
     if (sess?.runtimeRunId) {
         api(`/api/ai/runtime/runs/${encodeURIComponent(sess.runtimeRunId)}/abort`, { method: 'POST', body: '{}' }).catch(() => {});
     }
-    appendAiMessage('已停止 AI 回复/操作。', 'system', { sessionId: id });
+    appendAiMessage(t('已停止 AI 回复/操作。'), 'system', { sessionId: id });
     return true;
 }
 
@@ -6237,14 +6242,14 @@ function renderAiBrowserPreview() {
     if (!box || !body) return;
     const state = aiBrowserPreviewStateForSession(aiCurrentSessionId);
     box.classList.toggle('force-hidden', !state.visible);
-    if (toggle) toggle.textContent = state.visible ? t('隐藏预览') : '浏览器预览';
+    if (toggle) toggle.textContent = state.visible ? t('隐藏预览') : t('浏览器预览');
     const shot = state.preview;
     if (!shot?.url) {
         title && (title.textContent = t('AI 代操作页面'));
         body.innerHTML = `<span>${t('AI 打开网页后，会在这里持续显示它正在代操作的页面。')}</span>`;
         return;
     }
-    title && (title.textContent = `AI 代操作页面 · ${shot.tool || 'browser'} · ${state.session || 'default'} · ${new Date(shot.updatedAt || Date.now()).toLocaleTimeString()}`);
+    title && (title.textContent = t('AI 代操作页面 · {tool} · {session} · {time}', { tool: shot.tool || 'browser', session: state.session || 'default', time: new Date(shot.updatedAt || Date.now()).toLocaleTimeString() }));
     body.innerHTML = `<a href="${escapeHtml(shot.url)}" target="_blank" rel="noopener"><img src="${escapeHtml(shot.url)}" alt="${escapeHtml(t('浏览器截图'))}"></a>${shot.pageUrl ? `<small>${escapeHtml(shot.pageUrl)}</small>` : ''}`;
 }
 async function refreshAiBrowserPreview() {
@@ -6480,12 +6485,12 @@ async function readTerminalOutputAfterAiAction(action = {}) {
 function clickSettingsSection(section = '') {
     const key = String(section || '').toLowerCase();
     if (!key) return;
-    if (['security', 'data'].includes(key)) throw new Error('AI 不允许代操作安全/数据管理设置页');
+    if (['security', 'data'].includes(key)) throw new Error(t('AI 不允许代操作安全/数据管理设置页'));
     const btn = document.querySelector(`.settings-tab[data-settings="${CSS.escape(key)}"]`);
     if (btn) btn.click();
 }
 function waitForTerminalFrameReady(frame, timeoutMs = 1800) {
-    if (!frame) return Promise.reject(new Error('当前终端页面还没准备好'));
+    if (!frame) return Promise.reject(new Error(t('当前终端页面还没准备好')));
     try {
         const doc = frame.contentDocument;
         if (doc && doc.readyState !== 'loading') return Promise.resolve(frame);
@@ -6504,24 +6509,24 @@ async function performAiUiAction(action = {}) {
         const view = ['dashboard', 'terminal', 'remote', 'settings'].includes(action.view) ? action.view : 'dashboard';
         switchView(view);
         if (view === 'settings') clickSettingsSection(action.settingsSection || 'ai');
-        toast(`AI 已切换到${view}`);
+        toast(t('AI 已切换到{view}', { view }));
         return;
     }
     if (a === 'open_add_connection') { switchView('dashboard'); openModal(null, $('#addConnectionBtn')); return; }
     if (a === 'open_edit_connection') {
         switchView('dashboard');
         const conn = connections.find((c) => c.id === String(action.connectionId || ''));
-        if (!conn) throw new Error('连接不存在或尚未刷新');
+        if (!conn) throw new Error(t('连接不存在或尚未刷新'));
         openModal(conn, document.querySelector(`[data-edit="${CSS.escape(conn.id)}"]`) || $('#addConnectionBtn'));
         return;
     }
-    if (a === 'terminal_fullscreen') { const id = currentOrRequestedTerminalTab(action.tabId); if (!id) throw new Error('暂无终端会话'); fullscreenTerminalTab(id).catch((err) => toast(err.message)); return; }
+    if (a === 'terminal_fullscreen') { const id = currentOrRequestedTerminalTab(action.tabId); if (!id) throw new Error(t('暂无终端会话')); fullscreenTerminalTab(id).catch((err) => toast(err.message)); return; }
     if (a === 'terminal_exit_fullscreen') { exitTerminalFullscreen(); return; }
-    if (a === 'terminal_window_action') { const id = currentOrRequestedTerminalTab(action.tabId); if (!id) throw new Error('暂无终端会话'); applyTerminalWindowPreset(id, action.windowAction || 'fullscreen'); return; }
+    if (a === 'terminal_window_action') { const id = currentOrRequestedTerminalTab(action.tabId); if (!id) throw new Error(t('暂无终端会话')); applyTerminalWindowPreset(id, action.windowAction || 'fullscreen'); return; }
     if (a === 'terminal_toolbar') {
         switchView('terminal');
         const frame = await waitForTerminalFrameReady(terminalFrameForAi(action.tabId));
-        if (!frame?.contentWindow) throw new Error('当前终端页面还没准备好');
+        if (!frame?.contentWindow) throw new Error(t('当前终端页面还没准备好'));
         frame.contentWindow.postMessage({ source: 'zephyr-app', type: 'ai-terminal-toolbar', control: action.control || '' }, '*');
         return;
     }
@@ -6529,7 +6534,7 @@ async function performAiUiAction(action = {}) {
         switchView('terminal');
         const id = currentOrRequestedTerminalTab(action.tabId);
         const frame = await waitForTerminalFrameReady(terminalFrameByIdForAi(id));
-        if (!frame?.contentWindow) throw new Error('当前终端页面还没准备好');
+        if (!frame?.contentWindow) throw new Error(t('当前终端页面还没准备好'));
         frame.contentWindow.postMessage({ source: 'zephyr-app', type: 'ai-terminal-send-input', text: action.text || '', run: action.run !== false }, '*');
         return { terminalOutput: await readTerminalOutputAfterAiAction({ ...action, tabId: id }) };
     }
@@ -6542,9 +6547,9 @@ async function performAiUiAction(action = {}) {
     if (a === 'remote_desktop_toolbar' || a === 'remote_desktop_send_text' || a === 'remote_desktop_mouse') {
         switchView('terminal');
         const id = currentOrRequestedRemoteDesktopTab(action.tabId);
-        if (!id) throw new Error('暂无 RDP/VNC 远程桌面会话');
+        if (!id) throw new Error(t('暂无 RDP/VNC 远程桌面会话'));
         const frame = await waitForTerminalFrameReady(terminalFrameByIdForAi(id));
-        if (!frame?.contentWindow) throw new Error('当前远程桌面页面还没准备好');
+        if (!frame?.contentWindow) throw new Error(t('当前远程桌面页面还没准备好'));
         const actionId = `rdp-${Date.now().toString(36)}-${++aiRemoteDesktopActionSeq}`;
         const actionForMessage = normalizeAiRemoteDesktopMouseAction(action, id);
         const msg = publicAiRemoteDesktopAction({
@@ -6564,8 +6569,8 @@ async function performAiUiAction(action = {}) {
         if (ack && ack.ok === false) result.clientError = ack.error || t('AI 远程桌面操作失败');
         return result;
     }
-    if (a === 'toast') { toast(action.text || 'AI 已执行操作'); return; }
-    throw new Error(`未知 UI 动作：${a}`);
+    if (a === 'toast') { toast(action.text || t('AI 已执行操作')); return; }
+    throw new Error(t('未知 UI 动作：{action}', { action: a }));
 }
 async function handleAiClientCapture(data = {}, { providerId = '', model = '', options = {}, signal = null, original = '', depth = 0, sessionId = '' } = {}) {
     const targetSessionId = sessionId || aiCurrentSessionId;
@@ -6720,11 +6725,11 @@ function summarizeAiToolResult(tool, result = {}) {
         const count = (data.screenshots || []).length || (data.capture ? 1 : 0);
         return count ? t('读取 {count} 个远程桌面画面，captureId={captureId}', { count, captureId: data.capture?.captureId || data.screenshots?.[0]?.captureId || '' }) : (data.message || t('没有可读取的远程桌面画面'));
     }
-    if (tool === 'remote_desktop_action_v1') return data.clientError ? t('远程桌面操作失败：{error}', { error: data.clientError }) : t(data.captureChanged ? '远程桌面操作已返回新画面' : '远程桌面操作等待闭环验证');
-    if (tool === 'remote_desktop_verify_v1') return t(data.verified ? '远程桌面动作闭环已验证' : '远程桌面画面未变化，不能确认操作成功');
+    if (tool === 'remote_desktop_action_v1') return data.clientError ? t('远程桌面操作失败：{error}', { error: data.clientError }) : (data.captureChanged ? t('远程桌面操作已返回新画面') : t('远程桌面操作等待闭环验证'));
+    if (tool === 'remote_desktop_verify_v1') return data.verified ? t('远程桌面动作闭环已验证') : t('远程桌面画面未变化，不能确认操作成功');
     if (tool === 'ui_action' && result.clientError) return t('操作失败：{error}', { error: result.clientError });
     if (tool === 'ui_action' && result.remoteDesktopScreenshot) return t('远程桌面操作完成：{protocol} {status}', { protocol: result.remoteDesktopScreenshot.protocol || '', status: result.remoteDesktopScreenshot.status || '' });
-    if (tool === 'ui_action' && result.terminalOutput) return t(result.terminalOutput.truncated ? '终端输出 {count} 行（已截断）' : '终端输出 {count} 行', { count: result.terminalOutput.lineCount || 0 });
+    if (tool === 'ui_action' && result.terminalOutput) return result.terminalOutput.truncated ? t('终端输出 {count} 行（已截断）', { count: result.terminalOutput.lineCount || 0 }) : t('终端输出 {count} 行', { count: result.terminalOutput.lineCount || 0 });
     if (tool === 'browser_inspect_v1') return t('发现 {count} 个可操作元素（DOM v{revision}）：{elements}', { count: (data.elements || []).length, revision: data.domRevision || 0, elements: (data.elements || []).slice(0, 5).map((e) => e.text || e.elementRef).filter(Boolean).join(t('、')) });
     if (String(tool || '').startsWith('browser_')) return t('AI 正在页面代操作：{target}', { target: data.title || data.url || t('浏览器操作完成') });
     return t('执行完成');
@@ -6734,9 +6739,9 @@ function formatAiToolResult(r = {}) {
     const detail = JSON.stringify(maskAiSensitive({ args: r.args || {}, result }, r.tool), null, 2);
     const shot = browserShotFromResult(result);
     const titleMap = {
-        list_connections: '列出连接', connection_list_v1: '列出连接', connection_get_v1: '读取连接', connection_rename_v1: '重命名连接', connection_create_v1: '新增连接', connection_update_v1: '修改连接', connection_delete_v1: '删除连接', connection_test_v1: '测试连接', connection_open_v1: '打开连接', proxy_list_v1: '列出代理', proxy_get_v1: '读取代理', proxy_create_v1: '新增代理', proxy_update_v1: '修改代理', proxy_delete_v1: '删除代理', ssh_key_list_v1: '列出 SSH 密钥', ssh_key_get_v1: '读取 SSH 密钥', ssh_key_validate_v1: '校验 SSH 密钥', ssh_key_rename_v1: '重命名 SSH 密钥', ssh_key_update_metadata_v1: '修改 SSH 密钥备注', ssh_key_delete_v1: '删除 SSH 密钥', web_search: t('网页搜索'), fetch_url: '网页读取', browser_navigate: '浏览器打开', browser_inspect_v1: '检查页面元素', browser_screenshot: '浏览器截图', browser_click_v1: '浏览器点击', browser_type_v1: '浏览器输入', browser_scroll: '浏览器滚动', browser_text: '读取浏览器文本', browser_key: '浏览器按键', browser_wait: '等待页面', open_connection: '打开连接', terminal_read_output: '读取终端输出', remote_desktop_capture_v1: '读取远程桌面画面', remote_desktop_action_v1: '操作远程桌面', remote_desktop_verify_v1: '验证远程桌面操作', ui_action: '页面/终端代操作', memory_search: '搜索 Memory', memory_save: t('保存 Memory'), plan_task: '创建计划', plan_update: '更新计划', plan_delete: '删除计划', remote_execute: t('远程执行'), remote_read_file: '读取远程文件', remote_write_file: '写入远程文件', confirmed: '敏感操作结果'
+        list_connections: t('列出连接'), connection_list_v1: t('列出连接'), connection_get_v1: t('读取连接'), connection_rename_v1: t('重命名连接'), connection_create_v1: t('新增连接'), connection_update_v1: t('修改连接'), connection_delete_v1: t('删除连接'), connection_test_v1: t('测试连接'), connection_open_v1: t('打开连接'), proxy_list_v1: t('列出代理'), proxy_get_v1: t('读取代理'), proxy_create_v1: t('新增代理'), proxy_update_v1: t('修改代理'), proxy_delete_v1: t('删除代理'), ssh_key_list_v1: t('列出 SSH 密钥'), ssh_key_get_v1: t('读取 SSH 密钥'), ssh_key_validate_v1: t('校验 SSH 密钥'), ssh_key_rename_v1: t('重命名 SSH 密钥'), ssh_key_update_metadata_v1: t('修改 SSH 密钥备注'), ssh_key_delete_v1: t('删除 SSH 密钥'), web_search: t('网页搜索'), fetch_url: t('网页读取'), browser_navigate: t('浏览器打开'), browser_inspect_v1: t('检查页面元素'), browser_screenshot: t('浏览器截图'), browser_click_v1: t('浏览器点击'), browser_type_v1: t('浏览器输入'), browser_scroll: t('浏览器滚动'), browser_text: t('读取浏览器文本'), browser_key: t('浏览器按键'), browser_wait: t('等待页面'), open_connection: t('打开连接'), terminal_read_output: t('读取终端输出'), remote_desktop_capture_v1: t('读取远程桌面画面'), remote_desktop_action_v1: t('操作远程桌面'), remote_desktop_verify_v1: t('验证远程桌面操作'), ui_action: t('页面/终端代操作'), memory_search: t('搜索 Memory'), memory_save: t('保存 Memory'), plan_task: t('创建计划'), plan_update: t('更新计划'), plan_delete: t('删除计划'), remote_execute: t('远程执行'), remote_read_file: t('读取远程文件'), remote_write_file: t('写入远程文件'), confirmed: t('敏感操作结果')
     };
-    const title = t(titleMap[r.tool] || '工具 {name}', { name: r.tool || 'unknown' });
+    const title = titleMap[r.tool] || t('工具 {name}', { name: r.tool || 'unknown' });
     const duration = Number.isFinite(Number(r.durationMs)) ? `${(Number(r.durationMs) / 1000).toFixed(1)}s` : '';
     return `<div class="ai-tool-trace" data-tool="${escapeHtml(r.tool || '')}">
         <div class="ai-tool-trace-head"><span class="ai-tool-icon">${String(r.tool || '').startsWith('remote_') ? '▣' : String(r.tool || '').startsWith('browser_') ? '◉' : '◇'}</span><strong>${escapeHtml(title)}</strong>${duration ? `<em>${escapeHtml(duration)}</em>` : ''}</div>
@@ -6748,8 +6753,8 @@ function formatAiToolResult(r = {}) {
 async function deleteAiPlan(planId) {
     if (!planId) return;
     openAiInlineConfirm({
-        title: '删除任务计划',
-        body: '删除后计划步骤与日志不可恢复。',
+        title: t('删除任务计划'),
+        body: t('删除后计划步骤与日志不可恢复。'),
         confirmLabel: t('删除'),
         danger: true,
         onConfirm: () => deleteAiPlanConfirmed(planId),
@@ -6761,11 +6766,11 @@ async function deleteAiPlanConfirmed(planId) {
         const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
         ai.plans = (ai.plans || []).filter((p) => p.id !== planId);
         settings.ai = ai; aiSettingsState = ai; renderAiPlanList();
-        toast(data.result?.deleted ? '计划已删除' : '计划删除完成');
-    } catch (err) { toast(err.message || '计划删除失败'); }
+        toast(data.result?.deleted ? t('计划已删除') : t('计划删除完成'));
+    } catch (err) { toast(err.message || t('计划删除失败')); }
 }
 async function revealAiProviderKey(id) {
-    const secret = requestSensitiveSecret('查看已保存 AI API Key');
+    const secret = requestSensitiveSecret(t('查看已保存 AI API Key'));
     const data = await api(`/api/ai/providers/${encodeURIComponent(id)}/open`, { method: 'POST', body: JSON.stringify({ secret }) });
     const provider = normalizeAiSettings(settings.ai || aiSettingsState || {}).providers.find((p) => p.id === id);
     if (provider) openAiProviderModal(provider);
@@ -6852,7 +6857,7 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
     if (!serverSessionId) {
         const created = await api('/api/ai/runtime/sessions', {
             method: 'POST',
-            body: JSON.stringify({ title: session.title || '新对话', metadata: { clientSessionId: sessionId } }),
+            body: JSON.stringify({ title: session.title || t('新对话'), metadata: { clientSessionId: sessionId } }),
         });
         serverSessionId = created.session?.id || created.sessionId;
         session.runtimeSessionId = serverSessionId;
@@ -7120,7 +7125,7 @@ async function appendAiFiles(files = []) {
     aiPendingInputAttachments = aiPendingInputAttachments.concat(next).slice(0, 6);
     updateAiAttachmentDraftUi();
     $('#aiUserInput')?.focus?.();
-    toast(`已添加 ${next.length} 个附件，可继续输入文字后发送`);
+    toast(t('已添加 {count} 个附件，可继续输入文字后发送', { count: next.length }));
 }
 async function continueAiAfterConfirmation(id, approve, data) {
     const pending = aiPendingConfirmations.get(id);
@@ -7304,7 +7309,7 @@ function compressAiMessagesForRequest(messages = [], latest = '') {
     let summary = `高轮次对话压缩摘要（前端自动生成；不是限制轮次，最近 ${recent.length} 条仍保留原文）：\n`;
     for (const m of older) {
         if (summary.length > 18000) break;
-        const role = m.role === 'assistant' ? 'AI' : '用户';
+        const role = m.role === 'assistant' ? 'AI' : t('用户');
         const text = m.content.replace(/data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+/g, '[图片]').replace(/\s+/g, ' ').trim().slice(0, 700);
         if (text) summary += `- ${role}: ${text}\n`;
     }
@@ -7706,13 +7711,13 @@ function openAiPanelLayoutMenu(button, panel) {
     const menu = document.createElement('div');
     menu.className = 'panel-layout-menu ai-layout-menu';
     menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', 'AI 浮窗布局');
+    menu.setAttribute('aria-label', t('AI 浮窗布局'));
     menu.innerHTML = `
-        <button data-layout="full" title="全屏" aria-label="全屏"><span class="panel-layout-icon full"></span></button>
-        <button data-layout="half" title="半屏" aria-label="半屏"><span class="panel-layout-icon half"></span></button>
-        <button data-layout="left-quarter" title="左侧四分之一" aria-label="左侧四分之一"><span class="panel-layout-icon left"></span></button>
-        <button data-layout="right-quarter" title="右侧四分之一" aria-label="右侧四分之一"><span class="panel-layout-icon right"></span></button>
-        <button data-layout="close" class="panel-layout-close" title="关闭窗口" aria-label="关闭窗口"><span class="panel-layout-icon close"></span></button>
+        <button data-layout="full" title="${t('全屏')}" aria-label="${t('全屏')}"><span class="panel-layout-icon full"></span></button>
+        <button data-layout="half" title="${t('半屏')}" aria-label="${t('半屏')}"><span class="panel-layout-icon half"></span></button>
+        <button data-layout="left-quarter" title="${t('左侧四分之一')}" aria-label="${t('左侧四分之一')}"><span class="panel-layout-icon left"></span></button>
+        <button data-layout="right-quarter" title="${t('右侧四分之一')}" aria-label="${t('右侧四分之一')}"><span class="panel-layout-icon right"></span></button>
+        <button data-layout="close" class="panel-layout-close" title="${t('关闭窗口')}" aria-label="${t('关闭窗口')}"><span class="panel-layout-icon close"></span></button>
     `;
     menu.style.transition = 'none';
     document.body.appendChild(menu);
@@ -7753,11 +7758,11 @@ function normalizeAiProviderModalLayout() {
         aiProviderBaseUrl: 'API Base URL',
         aiProviderApiKey: 'API Key',
         aiProviderApiMode: '接口模式',
-        aiProviderModels: '模型列表',
+        aiProviderModels: t('模型列表'),
         aiProviderDefaultModel: t('默认模型'),
-        aiProviderModelUserAgents: '模型请求 User-Agent（可选，逐模型）',
-        aiProviderOrganization: 'Organization / Project（可选）',
-        aiProviderExtraHeaders: '额外请求头 JSON（可选）',
+        aiProviderModelUserAgents: t('模型请求 User-Agent（可选，逐模型）'),
+        aiProviderOrganization: t('Organization / Project（可选）'),
+        aiProviderExtraHeaders: t('额外请求头 JSON（可选）'),
         aiProviderExtraJson: 'response_format / 其他参数 JSON',
     };
     Object.entries(labels).forEach(([id, label]) => aiProviderFieldWrap(id, label));
@@ -7940,8 +7945,8 @@ function setupAiAssistant() {
         if (del) {
             // craft confirm card instead of window.confirm
             openAiInlineConfirm({
-                title: '删除 MCP 服务器',
-                body: '删除后需重新配置才能连接该 MCP。',
+                title: t('删除 MCP 服务器'),
+                body: t('删除后需重新配置才能连接该 MCP。'),
                 confirmLabel: t('删除'),
                 danger: true,
                 onConfirm: () => deleteAiMcp(del).catch((err) => toast(err.message)),
@@ -8032,11 +8037,11 @@ function applyAgentReleaseLinks(agentRelease) {
     const display = String(rel.display || '').trim() || (tag ? tag.replace(/^agent-/, '') : '');
     const available = rel.available === true || Boolean(tag && rel.url);
     const label = available
-        ? `下载 Zephyr Agent ${display || tag}`
+        ? t('下载 Zephyr Agent {version}', { version: display || tag })
         : t('查看 Zephyr Agent 发布页');
     const hint = available
-        ? `当前镜像绑定最新 Agent Release：<code>${escapeHtml(tag || display)}</code>`
-        : '尚未解析到 <code>agent-v*</code> Release；构建镜像时会自动拉取最新标签。';
+        ? t('当前镜像绑定最新 Agent Release：{tag}', { tag: `<code>${escapeHtml(tag || display)}</code>` })
+        : t('尚未解析到 agent-v* Release；构建镜像时会自动拉取最新标签。').replace('agent-v*', '<code>agent-v*</code>');
 
     for (const id of ['aboutAgentReleaseLink', 'agentReleaseLink']) {
         const el = document.getElementById(id);
@@ -8192,7 +8197,7 @@ async function saveCaptcha(e) {
     toast(t('CAPTCHA 已保存'));
 }
 async function revealCaptchaSecret() {
-    const secret = requestSensitiveSecret('查看已保存 CAPTCHA 密钥');
+    const secret = requestSensitiveSecret(t('查看已保存 CAPTCHA 密钥'));
     const data = await api('/api/settings/captcha/open', { method: 'POST', body: JSON.stringify({ secret }) });
     $('#captchaSecretKey').value = data.secretKey || '';
     $('#captchaSecretKey').type = 'text';
@@ -8212,7 +8217,7 @@ async function saveMail(e) {
     }
 }
 async function revealMailPass() {
-    const secret = requestSensitiveSecret('查看已保存 SMTP 密码');
+    const secret = requestSensitiveSecret(t('查看已保存 SMTP 密码'));
     const data = await api('/api/settings/mail/open', { method: 'POST', body: JSON.stringify({ secret }) });
     $('#mailPass').value = data.pass || '';
     $('#mailPass').type = 'text';
@@ -8253,7 +8258,7 @@ async function saveTerminalLayout(e) {
     enforceTerminalWorkspaceLimit(activeTerminalTab);
     renderTerminalTabs();
     const keepAliveText = minimizedKeepAlive === -1 ? '最小化无限保活' : `最小化保活 ${minimizedKeepAlive} 个`;
-    toast(`终端布局已保存：最多 ${maxWindows} 窗，${keepAliveText}`);
+    toast(t('终端布局已保存：最多 {count} 窗，{keepAlive}', { count: maxWindows, keepAlive: keepAliveText }));
     broadcastTerminalSettings({ allowLigatures });
 }
 
@@ -8313,8 +8318,8 @@ function openSnippetModal(item = null, trigger = null) {
     if (!modal || (modal.classList.contains('show') && !modal.classList.contains('closing'))) return;
     const card = $('#snippetForm');
     resetSnippetForm();
-    $('#snippetModalTitle').textContent = item ? '编辑代码片段' : '新增代码片段';
-    $('#saveSnippetBtn').textContent = item ? '保存修改' : '保存代码片段';
+    $('#snippetModalTitle').textContent = item ? '编辑代码片段' : t('新增代码片段');
+    $('#saveSnippetBtn').textContent = item ? '保存修改' : t('保存代码片段');
     $('#snippetId').value = item?.id || '';
     $('#snippetName').value = item?.name || '';
     $('#snippetCommand').value = item?.command || '';
@@ -8463,7 +8468,7 @@ function renderSnippetSettings() {
     const list = $('#snippetSettingsList');
     if (!list) return;
     const snippets = getSnippets();
-    list.innerHTML = snippets.length ? snippets.map((item) => `<div class="mini-item snippet-settings-item" data-id="${escapeHtml(item.id)}"><span class="resource-tag resource-tag-name" title="${escapeHtml(item.name || t('未命名片段'))}">${escapeHtml(item.name || t('未命名片段'))}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml(item.group || t('未分组'))}</span><span class="resource-tag ${item.autoRun ? 'resource-tag-host' : 'resource-tag-auth'}">${item.autoRun ? t('直接执行') : t('填入输入框')}</span></div><button class="tool-btn" data-edit-snippet="${escapeHtml(item.id)}">编辑</button><button class="tool-btn danger" data-delete-snippet="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<p class="muted">暂无代码片段</p>';
+    list.innerHTML = snippets.length ? snippets.map((item) => `<div class="mini-item snippet-settings-item" data-id="${escapeHtml(item.id)}"><span class="resource-tag resource-tag-name" title="${escapeHtml(item.name || t('未命名片段'))}">${escapeHtml(item.name || t('未命名片段'))}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml(item.group || t('未分组'))}</span><span class="resource-tag ${item.autoRun ? 'resource-tag-host' : 'resource-tag-auth'}">${item.autoRun ? t('直接执行') : t('填入输入框')}</span></div><button class="tool-btn" data-edit-snippet="${escapeHtml(item.id)}">${t('编辑')}</button><button class="tool-btn danger" data-delete-snippet="${escapeHtml(item.id)}">${t('删除')}</button></div>`).join('') : `<p class="muted">${t('暂无代码片段')}</p>`;
 }
 async function saveSnippet(e) {
     e.preventDefault();
@@ -8548,7 +8553,7 @@ function openProxyModal(proxy = null, trigger = null) {
     const card = $('#proxyForm');
     const inner = $('#proxyModalInner');
     // 字段手写赋值，避免原生 reset 触发布局 + toggle-select 二次同步导致闪
-    $('#proxyModalTitle').textContent = proxy ? '编辑代理' : '新建代理';
+    $('#proxyModalTitle').textContent = proxy ? '编辑代理' : t('新建代理');
     $('#proxyId').value = proxy?.id || '';
     $('#proxyName').value = proxy?.name || '';
     $('#proxyType').value = proxy?.type || 'socks5';
@@ -8869,8 +8874,8 @@ function openSshKeyModal(sshKey = null, trigger = null) {
     if (!modal || (modal.classList.contains('show') && !modal.classList.contains('closing'))) return;
     const card = $('#sshKeyForm');
     resetSshKeyForm();
-    $('#sshKeyModalTitle').textContent = sshKey ? '编辑 SSH 密钥' : '新增 SSH 密钥';
-    $('#saveSshKeyBtn').textContent = sshKey ? '保存修改' : '保存 SSH 密钥';
+    $('#sshKeyModalTitle').textContent = sshKey ? '编辑 SSH 密钥' : t('新增 SSH 密钥');
+    $('#saveSshKeyBtn').textContent = sshKey ? '保存修改' : t('保存 SSH 密钥');
     $('#sshKeyId').value = sshKey?.id || '';
     $('#sshKeyName').value = sshKey?.name || '';
     $('#sshKeyPrivateKey').value = sshKey?.hasPrivateKey ? '******' : '';
@@ -9901,7 +9906,7 @@ function initSettingsVisibility() {
     document.getElementById('clearLoginEventsBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
     document.getElementById('clearActivityBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
     const title = document.getElementById('loginEventsTitle');
-    if (title) title.textContent = isSuperAdmin ? '全部登录事件' : t('我的登录记录');
+    if (title) title.textContent = isSuperAdmin ? t('全部登录事件') : t('我的登录记录');
     const activeSettingsTab = document.querySelector('.settings-tab.active');
     if (activeSettingsTab?.classList.contains('force-hidden')) {
         document.querySelector('.settings-tab[data-settings="security"]')?.click();
@@ -9917,7 +9922,7 @@ async function loadAdminUsers() {
     adminTab?.classList.remove('force-hidden');
     // Inject SVG icons into title and add button
     const title = document.getElementById('adminPanelTitle');
-    if (title && !title.dataset.iconInjected) { title.innerHTML = adminIcon('shield', 18) + ' 多用户管理'; title.dataset.iconInjected = '1'; }
+    if (title && !title.dataset.iconInjected) { title.innerHTML = adminIcon('shield', 18) + ` ${t('多用户管理')}`; title.dataset.iconInjected = '1'; }
     const addBtn = document.getElementById('adminAddUserBtn');
     if (addBtn && !addBtn.dataset.iconInjected) { const span = addBtn.querySelector('.admin-icon-inline'); if (span) span.innerHTML = adminIcon('plus', 15); addBtn.dataset.iconInjected = '1'; }
     try {
@@ -9940,10 +9945,10 @@ function renderAdminUsers(users) {
         const isSelf = u.userId === myIdentity.userId;
         const isLastActiveAdmin = u.role === 'admin' && u.status === 'active' && activeAdmins.length <= 1;
         const roleBadge = u.isSuperAdmin
-            ? `<span class="admin-badge super">${adminIcon('crown', 12)} 超级管理员</span>`
+            ? `<span class="admin-badge super">${adminIcon('crown', 12)} ${t('超级管理员')}</span>`
             : u.role === 'admin'
-                ? `<span class="admin-badge admin">${adminIcon('shield', 12)} 管理员</span>`
-                : `<span class="admin-badge user">${adminIcon('user', 12)} 普通用户</span>`;
+                ? `<span class="admin-badge admin">${adminIcon('shield', 12)} ${t('管理员')}</span>`
+                : `<span class="admin-badge user">${adminIcon('user', 12)} ${t('普通用户')}</span>`;
         const statusBadge = u.status === 'active' ? `<span class="admin-badge ok">${t('正常')}</span>`
             : u.status === 'suspended' ? `<span class="admin-badge warn">${t('已停用')}</span>`
             : u.status === 'invited' ? `<span class="admin-badge warn">${t('已邀请')}</span>`
@@ -9951,42 +9956,42 @@ function renderAdminUsers(users) {
         let actions = '';
         // Suspend / reactivate
         if (u.status === 'active' && !u.isSuperAdmin && !isLastActiveAdmin) {
-            actions += `<button class="admin-action-btn" data-admin-action="suspend" data-user-id="${escapeHtml(u.userId)}" title="停用">${adminIcon('pause', 14)} 停用</button>`;
+            actions += `<button class="admin-action-btn" data-admin-action="suspend" data-user-id="${escapeHtml(u.userId)}" title="${t('停用')}">${adminIcon('pause', 14)} ${t('停用')}</button>`;
         }
         if (u.status === 'suspended') {
-            actions += `<button class="admin-action-btn" data-admin-action="reactivate" data-user-id="${escapeHtml(u.userId)}" title="启用">${adminIcon('play', 14)} 启用</button>`;
+            actions += `<button class="admin-action-btn" data-admin-action="reactivate" data-user-id="${escapeHtml(u.userId)}" title="${t('启用')}">${adminIcon('play', 14)} ${t('启用')}</button>`;
         }
         // Reset password (not for super admin unless self)
         if (!u.isSuperAdmin || isSelf) {
-            actions += `<button class="admin-action-btn" data-admin-action="reset-pw" data-user-id="${escapeHtml(u.userId)}" title="重置密码">${adminIcon('key', 14)} 重置密码</button>`;
+            actions += `<button class="admin-action-btn" data-admin-action="reset-pw" data-user-id="${escapeHtml(u.userId)}" title="${t('重置密码')}">${adminIcon('key', 14)} ${t('重置密码')}</button>`;
         }
         // Revoke sessions (not for self)
         if (!isSelf && !u.isSuperAdmin) {
-            actions += `<button class="admin-action-btn" data-admin-action="revoke-sessions" data-user-id="${escapeHtml(u.userId)}" title="强制下线">${adminIcon('logout', 14)} 踢下线</button>`;
+            actions += `<button class="admin-action-btn" data-admin-action="revoke-sessions" data-user-id="${escapeHtml(u.userId)}" title="${t('强制下线')}">${adminIcon('logout', 14)} ${t('踢下线')}</button>`;
         }
         // Promote to admin (only super admin can, target must be non-admin)
         if (myIdentity.isSuperAdmin && u.role !== 'admin' && !isSelf) {
-            actions += `<button class="admin-action-btn" data-admin-action="promote" data-user-id="${escapeHtml(u.userId)}" title="授予管理员">${adminIcon('promote', 14)} 授权管理员</button>`;
+            actions += `<button class="admin-action-btn" data-admin-action="promote" data-user-id="${escapeHtml(u.userId)}" title="${t('授予管理员')}">${adminIcon('promote', 14)} ${t('授权管理员')}</button>`;
         }
         // Demote admin (only super admin, not self, not super admin target)
         if (myIdentity.isSuperAdmin && u.role === 'admin' && !u.isSuperAdmin && !isSelf && !isLastActiveAdmin) {
-            actions += `<button class="admin-action-btn" data-admin-action="demote" data-user-id="${escapeHtml(u.userId)}" title="撤销管理员">${adminIcon('promote', 14)} 撤销管理员</button>`;
+            actions += `<button class="admin-action-btn" data-admin-action="demote" data-user-id="${escapeHtml(u.userId)}" title="${t('撤销管理员')}">${adminIcon('promote', 14)} ${t('撤销管理员')}</button>`;
         }
         // Transfer super admin (only current super admin, target is admin and not self)
         if (myIdentity.isSuperAdmin && u.role === 'admin' && !isSelf) {
-            actions += `<button class="admin-action-btn" data-admin-action="transfer-super" data-user-id="${escapeHtml(u.userId)}" title="转移超级管理员">${adminIcon('transfer', 14)} 转移超管</button>`;
+            actions += `<button class="admin-action-btn" data-admin-action="transfer-super" data-user-id="${escapeHtml(u.userId)}" title="${t('转移超级管理员')}">${adminIcon('transfer', 14)} ${t('转移超管')}</button>`;
         }
         // Delete (not for self, not for super admin, not last admin)
         if (!isSelf && !u.isSuperAdmin && !isLastActiveAdmin) {
-            actions += `<button class="admin-action-btn danger" data-admin-action="delete" data-user-id="${escapeHtml(u.userId)}" title="删除">${adminIcon('trash', 14)} 删除</button>`;
+            actions += `<button class="admin-action-btn danger" data-admin-action="delete" data-user-id="${escapeHtml(u.userId)}" title="${t('删除')}">${adminIcon('trash', 14)} ${t('删除')}</button>`;
         }
         return `<div class="admin-user-row" data-user-id="${escapeHtml(u.userId)}">
             <div class="admin-user-info">
                 <span class="admin-user-name">${adminIcon(u.isSuperAdmin ? 'crown' : (u.role === 'admin' ? 'shield' : 'user'), 18)}</span>
-                <b>${escapeHtml(u.username)}</b>${isSelf ? ' <span class="muted">(你)</span>' : ''}
-                <span class="muted">${escapeHtml(u.email || '无邮箱')}</span>
+                <b>${escapeHtml(u.username)}</b>${isSelf ? ` <span class="muted">${t('(你)')}</span>` : ''}
+                <span class="muted">${escapeHtml(u.email || t('无邮箱'))}</span>
                 ${roleBadge}${statusBadge}
-                <span class="muted">${u.lastLoginAt ? '最后登录 ' + fmtTime(u.lastLoginAt) : '从未登录'}</span>
+                <span class="muted">${u.lastLoginAt ? t('最后登录 {time}', { time: fmtTime(u.lastLoginAt) }) : t('从未登录')}</span>
             </div>
             <div class="admin-user-actions">${actions}</div>
         </div>`;
@@ -9994,13 +9999,13 @@ function renderAdminUsers(users) {
 }
 
 function openAdminAddUserDialog() {
-    const name = prompt('新用户用户名：');
+    const name = prompt(t('新用户用户名：'));
     if (!name) return;
-    const password = prompt(`为 ${name} 设置初始密码：`);
+    const password = prompt(t('为 {name} 设置初始密码：', { name }));
     if (!password) return;
     let role = 'user';
     if (myIdentity.isSuperAdmin) {
-        role = confirm(`${name} 设为管理员吗？\n确定 = 管理员，取消 = 普通用户`) ? 'admin' : 'user';
+        role = confirm(t('{name} 设为管理员吗？\n确定 = 管理员，取消 = 普通用户', { name })) ? 'admin' : 'user';
     }
     api('/api/admin/users', { method: 'POST', body: JSON.stringify({ username: name, password, role }) })
         .then(() => { toast(t('用户已创建')); loadAdminUsers(); })
@@ -10015,7 +10020,7 @@ async function handleAdminAction(action, userId) {
         } else if (action === 'reactivate') {
             await api(`/api/admin/users/${userId}/reactivate`, { method: 'POST' });
         } else if (action === 'reset-pw') {
-            const pw = prompt('输入新密码：');
+            const pw = prompt(t('输入新密码：'));
             if (!pw) return;
             await api(`/api/admin/users/${userId}/force-password-reset`, { method: 'POST', body: JSON.stringify({ newPassword: pw }) });
         } else if (action === 'revoke-sessions') {
@@ -10040,7 +10045,7 @@ async function handleAdminAction(action, userId) {
         toast(t('操作成功'));
         await loadAdminUsers();
     } catch (err) {
-        toast(err.message || '操作失败');
+        toast(err.message || t('操作失败'));
     }
 }
 
@@ -10188,15 +10193,15 @@ async function init() {
     } catch (err) {
         console.error('[app-init]', err);
         document.documentElement.dataset.appInitError = err?.message || String(err || 'unknown');
-        toast(`初始化失败：${err?.message || err || t('未知错误')}`);
+        toast(t('初始化失败：{error}', { error: err?.message || err || t('未知错误') }));
     }
 }
 init();
 
 // ─── Zephyr Agent Token Settings ─────────────────────────────────
 function formatAgentTokenTime(ms) {
-    if (!ms) return '从未';
-    try { return new Date(Number(ms)).toLocaleString(); } catch { return '未知'; }
+    if (!ms) return t('从未');
+    try { return new Date(Number(ms)).toLocaleString(); } catch { return t('未知'); }
 }
 
 const agentRevealedTokens = new Map();
@@ -10267,23 +10272,23 @@ async function refreshAgentTokensKeeping(tokenRecord) {
         renderAgentTokens(list, agentRevealedTokens);
     } catch (err) {
         if (!tokenRecord?.id) throw err;
-        toast(`列表刷新失败，已显示新 Token：${err.message || 'unknown'}`);
+        toast(t('列表刷新失败，已显示新 Token：{error}', { error: err.message || 'unknown' }));
     }
 }
 
 async function createAgentToken() {
-    const name = prompt('Token 名称，例如：我的手机 / 办公室 Windows / Pad', 'Zephyr Agent Token');
+    const name = prompt(t('Token 名称，例如：我的手机 / 办公室 Windows / Pad'), 'Zephyr Agent Token');
     if (name === null) return;
     const data = await api('/api/rdp/file-agent-tokens', { method: 'POST', body: JSON.stringify({ name, length: currentAgentTokenLength() }) });
     const tokenRecord = data.token;
-    if (!tokenRecord?.token) throw new Error('服务端未返回新 Token');
+    if (!tokenRecord?.token) throw new Error(t('服务端未返回新 Token'));
     await refreshAgentTokensKeeping(tokenRecord);
     toast(t('Token 已创建并显示'));
 }
 
 async function renameAgentToken(id) {
     const item = document.querySelector(`[data-token-id="${CSS.escape(id)}"] .agent-token-title strong`);
-    const name = prompt('新的 Token 名称', item?.textContent || 'Zephyr Agent Token');
+    const name = prompt(t('新的 Token 名称'), item?.textContent || 'Zephyr Agent Token');
     if (name === null) return;
     await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
     await loadAgentTokens();
@@ -10294,7 +10299,7 @@ async function regenerateAgentToken(id) {
     if (!confirm(t('重新生成后，使用旧 Token 的 Agent 会断开，需要在 Agent App 中填写新 Token。继续？'))) return;
     const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/regenerate`, { method: 'POST', body: JSON.stringify({ length: currentAgentTokenLength() }) });
     const tokenRecord = data.token;
-    if (!tokenRecord?.token) throw new Error('服务端未返回新 Token');
+    if (!tokenRecord?.token) throw new Error(t('服务端未返回新 Token'));
     await refreshAgentTokensKeeping(tokenRecord);
     toast(t('Token 已重新生成并显示'));
 }
@@ -10309,19 +10314,19 @@ async function deleteAgentToken(id) {
 async function revealAgentToken(id, { copy = false } = {}) {
     let token = agentRevealedTokens.get(id) || '';
     if (!token) {
-        const secret = requestSensitiveSecret(copy ? '复制 Zephyr Agent Token' : '查看 Zephyr Agent Token');
+        const secret = requestSensitiveSecret(copy ? t('复制 Zephyr Agent Token') : t('查看 Zephyr Agent Token'));
         const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/open`, {
             method: 'POST',
             body: JSON.stringify({ secret }),
         });
         token = data.token?.token || '';
-        if (!token) throw new Error('Token 为空');
+        if (!token) throw new Error(t('Token 为空'));
         agentRevealedTokens.set(id, token);
     }
     const code = document.querySelector(`[data-token-id="${CSS.escape(id)}"] .agent-token-value code`);
     if (code) code.textContent = token;
     if (copy) {
-        await copyTextToClipboard(token, 'Token 已复制');
+        await copyTextToClipboard(token, t('Token 已复制'));
     } else {
         toast(t('Token 已显示'));
     }
@@ -10333,15 +10338,15 @@ async function copyAgentToken(id) {
 
 async function resetAllAgentTokens() {
     if (!confirm(t('这会删除当前账号所有 Zephyr Agent Token，并断开所有已连接 Agent。继续？'))) return;
-    const secret = requestSensitiveSecret('重置全部 Zephyr Agent Token');
-    const name = prompt('新 Token 名称', '默认 Token');
+    const secret = requestSensitiveSecret(t('重置全部 Zephyr Agent Token'));
+    const name = prompt(t('新 Token 名称'), t('默认 Token'));
     if (name === null) return;
     const data = await api('/api/rdp/file-agent-tokens/reset-all', {
         method: 'POST',
         body: JSON.stringify({ secret, name, length: currentAgentTokenLength() }),
     });
     const tokenRecord = data.token;
-    if (!tokenRecord?.token) throw new Error('服务端未返回新 Token');
+    if (!tokenRecord?.token) throw new Error(t('服务端未返回新 Token'));
     await refreshAgentTokensKeeping(tokenRecord);
     toast(t('全部 Token 已重置，新 Token 已显示'));
 }

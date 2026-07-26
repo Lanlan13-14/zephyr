@@ -9,7 +9,7 @@ let panelLayoutMenu = null;
 let panelLayoutButton = null;
 let suppressNextLayoutClick = false;
 
-import { t } from './i18n/runtime.js?v=20260726-i18n-fix2';
+import { t } from './i18n/runtime.js?v=20260726-i18n-fix6';
 
 export function detectInteractionEnvironment() {
     const ua = String(navigator.userAgent || '').toLowerCase();
@@ -272,11 +272,11 @@ export function openPanelLayoutMenu(button, panel, { onClosePanel } = {}) {
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', t('窗口布局'));
     menu.innerHTML = `
-        <button data-layout="full" title="全屏" aria-label="全屏"><span class="panel-layout-icon full"></span></button>
-        <button data-layout="half" title="半屏" aria-label="半屏"><span class="panel-layout-icon half"></span></button>
-        <button data-layout="left-quarter" title="左侧四分之一" aria-label="左侧四分之一"><span class="panel-layout-icon left"></span></button>
-        <button data-layout="right-quarter" title="右侧四分之一" aria-label="右侧四分之一"><span class="panel-layout-icon right"></span></button>
-        <button data-layout="close" class="panel-layout-close" title="关闭窗口" aria-label="关闭窗口"><span class="panel-layout-icon close"></span></button>
+        <button data-layout="full" title="${t('全屏')}" aria-label="${t('全屏')}"><span class="panel-layout-icon full"></span></button>
+        <button data-layout="half" title="${t('半屏')}" aria-label="${t('半屏')}"><span class="panel-layout-icon half"></span></button>
+        <button data-layout="left-quarter" title="${t('左侧四分之一')}" aria-label="${t('左侧四分之一')}"><span class="panel-layout-icon left"></span></button>
+        <button data-layout="right-quarter" title="${t('右侧四分之一')}" aria-label="${t('右侧四分之一')}"><span class="panel-layout-icon right"></span></button>
+        <button data-layout="close" class="panel-layout-close" title="${t('关闭窗口')}" aria-label="${t('关闭窗口')}"><span class="panel-layout-icon close"></span></button>
     `;
     menu.style.transition = 'none';
     menu.style.zIndex = String(Math.max(10000, allocateFloatingPanelZIndex(panel) + 20));

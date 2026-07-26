@@ -55,6 +55,8 @@ class Audit(HTMLParser):
         value = " ".join(data.split())
         if not value or not HAN.search(value) or any(node["tag"] in IGNORED_TAGS for node in self.stack):
             return
+        if self.stack and self.stack[-1]["tag"] == "option":
+            return
         if self.stack and (((self.stack[-1]["attrs"] or {}).get("data-i18n")) or ((self.stack[-1]["attrs"] or {}).get("data-i18n-html"))):
             return
         line, _ = self.getpos()

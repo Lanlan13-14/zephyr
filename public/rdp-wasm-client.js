@@ -11,7 +11,7 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { t, initI18n } from './i18n/runtime.js?v=20260726-i18n-fix2';
+import { t, initI18n } from './i18n/runtime.js?v=20260726-i18n-fix6';
 import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260720-zft2';
 import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260720-zft2';
 import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260720-zft2';
@@ -2156,7 +2156,7 @@ function initFilePanel() {
             '<div class="rdp-file-item">' +
             '<span class="rdp-file-name">' + escapeHtml(f.name) + '</span>' +
             '<span class="rdp-file-size">' + formatBytes(f.size) + '</span>' +
-            '<button class="rdp-file-remove" data-idx="' + i + '" title="移除">×</button>' +
+            '<button class="rdp-file-remove" data-idx="' + i + '" title="' + t('移除') + '">×</button>' +
             '</div>'
         ).join('');
         rdpPendingFileList.querySelectorAll('.rdp-file-remove').forEach((btn) => {
@@ -2415,7 +2415,7 @@ function initFilePanel() {
             div.className = 'rdp-file-item';
             div.innerHTML = '<span class="rdp-file-name">' + escapeHtml(f.name || '') + '</span>' +
                 '<span class="rdp-file-size">' + formatBytes(Number(f.size) || 0) + '</span>' +
-                '<button class="rdp-file-download-btn" data-idx="' + i + '" title="下载">⬇</button>';
+                '<button class="rdp-file-download-btn" data-idx="' + i + '" title="' + t('下载') + '">⬇</button>';
             rdpRemoteFileList.appendChild(div);
         }
         rdpRemoteFileList.querySelectorAll('.rdp-file-download-btn').forEach((btn) => {
