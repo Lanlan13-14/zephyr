@@ -104,6 +104,7 @@ const {
     cleanupMediaProbeCache,
 } = require('./preview/media/media-service');
 const { FileAgentManager } = require('./file-agent-manager');
+const terminalSessionTools = require('./ai-terminal-session-tools');
 const { FileTransferGateway } = require('./file-transfer-ws');
 const { attachRdpProxyBridge } = require('./server/rdp-proxy-bridge');
 const { negotiateRdpTls } = require('./server/rdp-cert-probe');
@@ -3471,6 +3472,10 @@ const aiHostDeps = {
     aiProviderService,
     userSettingsService,
     notesService,
+    terminalSessions: sshTerminalSessions,
+    terminalHistory,
+    terminalSessionTools,
+    fileAgentManager,
     readJSON,
     writeJSON,
     DATA_DIR,
@@ -3756,6 +3761,10 @@ registerAiRoutes(app, {
     aiProviderService,
     userSettingsService,
     notesService,
+    terminalSessions: sshTerminalSessions,
+    terminalHistory,
+    terminalSessionTools,
+    fileAgentManager,
     readJSON,
     writeJSON,
     DATA_DIR,

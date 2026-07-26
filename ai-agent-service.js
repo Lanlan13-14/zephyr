@@ -59,6 +59,9 @@ const CANONICAL_TOOL_SCHEMAS = Object.freeze({
     snippet_create_v1: snippetTools.SNIPPET_CREATE_SCHEMA,
     snippet_update_v1: snippetTools.SNIPPET_UPDATE_SCHEMA,
     snippet_delete_v1: snippetTools.SNIPPET_DELETE_SCHEMA,
+    terminal_read_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160 }, maxChars: { type: 'number', minimum: 1000, maximum: 120000 } }, required: ['sessionId'], additionalProperties: false }),
+    terminal_send_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160 }, text: { type: 'string', minLength: 1, maxLength: 20000 }, appendNewline: { type: 'boolean' } }, required: ['sessionId', 'text'], additionalProperties: false }),
+    terminal_wait_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160 }, pattern: { type: 'string', minLength: 1, maxLength: 500 }, regex: { type: 'boolean' }, caseSensitive: { type: 'boolean' }, timeoutMs: { type: 'number', minimum: 100, maximum: 120000 }, pollMs: { type: 'number', minimum: 50, maximum: 2000 }, maxChars: { type: 'number', minimum: 1000, maximum: 120000 } }, required: ['sessionId', 'pattern'], additionalProperties: false }),
 });
 
 function aiAbortError() {
@@ -653,6 +656,9 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'snippet_create_v1', description: '为当前用户创建代码片段；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.snippet_create_v1 } });
     tools.push({ type: 'function', function: { name: 'snippet_update_v1', description: '修改当前用户的代码片段。必须传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.snippet_update_v1 } });
     tools.push({ type: 'function', function: { name: 'snippet_delete_v1', description: '删除当前用户的代码片段。必须传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.snippet_delete_v1 } });
+    tools.push({ type: 'function', function: { name: 'terminal_read_v1', description: '从服务端权威 SSH/TELNET 会话历史读取指定 sessionId 的最新输出，不依赖当前页面是否可见。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_read_v1 } });
+    tools.push({ type: 'function', function: { name: 'terminal_send_v1', description: '向指定 SSH/TELNET 活跃会话发送文本，可选择是否追加换行。会实际影响远程会话，需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_send_v1 } });
+    tools.push({ type: 'function', function: { name: 'terminal_wait_v1', description: '等待指定 SSH/TELNET 会话输出出现文本或正则模式，直到匹配或超时。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_wait_v1 } });
     tools.push({ type: 'function', function: { name: 'list_connections', description: '列出 Zephyr 中可用的 SSH/RDP/VNC 连接（不含密码/私钥）；只有 SSH 支持远程命令和文件工具。兼容旧接口，新增功能请优先使用 connection_list_v1。', parameters: { type: 'object', properties: {}, additionalProperties: false } } });
     tools.push({ type: 'function', function: { name: 'list_zephyr_resources', description: '列出 Zephyr 本地资源：连接、代理、SSH 密钥库、跳板机、代码片段。只返回脱敏信息。', parameters: { type: 'object', properties: { resources: { type: 'array', items: { type: 'string', enum: ['connections', 'proxies', 'sshKeys', 'jumpHosts', 'snippets'] } } } } } });
     // Legacy mutating asset tools intentionally stay out of the model catalog.
@@ -1295,7 +1301,7 @@ function formatAiContextForPrompt(context = {}) {
             const input = t.currentInput ? `\n当前输入框：${String(t.currentInput).slice(0, 1000)}` : '';
             return `${label}${t.truncated ? '（输出已截断为尾部）' : ''}${input}\n~~~text\n${text}\n~~~`;
         }).join('\n');
-        lines.push(`当前 SSH 终端输出快照（来自用户当前活动/可见终端；需要指定终端或更长文本时调用 terminal_read_output）：\n${rendered}`);
+        lines.push(`当前 SSH/TELNET 终端输出快照（sessionId 可用于 terminal_read_v1/send_v1/wait_v1；需要服务端权威历史时优先 canonical v1）：\n${rendered}`);
     }
     const remoteDesktopSnapshots = Array.isArray(c.remoteDesktopSnapshots) ? c.remoteDesktopSnapshots : [];
     const rdps = remoteDesktopSnapshots.filter((r) => ['RDP', 'VNC'].includes(String(r.protocol || '').toUpperCase()));
@@ -1389,6 +1395,7 @@ ${text.slice(-limit)}` : text;
 function publicTerminalOutput(item = {}, maxChars = 30000) {
     return {
         tabId: item.tabId || '',
+        sessionId: item.sessionId || item.tabId || '',
         connectionId: item.connectionId || '',
         name: item.name || '',
         protocol: item.protocol || 'SSH',
@@ -1606,6 +1613,7 @@ function confirmationSummary(toolName, args, deps) {
     if (toolName === 'snippet_create_v1') return `新增代码片段：${String(args.name || '').slice(0, 120)}`;
     if (toolName === 'snippet_update_v1') return `修改代码片段：${args.snippetId || ''}`;
     if (toolName === 'snippet_delete_v1') return `删除代码片段：${args.snippetId || ''}`;
+    if (toolName === 'terminal_send_v1') return `向终端会话 ${args.sessionId || ''} 发送：${String(args.text || '').slice(0, 160)}`;
     if (toolName === 'connection_delete') return `删除连接：${args.connectionId || ''}`;
     if (toolName === 'proxy_save') return `${args.proxyId ? '修改' : '新增'}代理：${args.name || args.host || ''}`;
     if (toolName === 'proxy_delete') return `删除代理：${args.proxyId || ''}`;
@@ -1962,6 +1970,23 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 deps.addActivity?.(`AI 删除代码片段：${deleted.snippetId}`, ctx.user.userId);
                 return { ...deleted, verification: 'resource_absent_after_write' };
             });
+        case 'terminal_read_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.terminalSessionTools || !deps.terminalSessions || !deps.terminalHistory || !ctx.user) throw new Error('终端会话服务不可用');
+                return { session: deps.terminalSessionTools.readSession(deps.terminalSessions, deps.terminalHistory, ctx.user, args) };
+            });
+        case 'terminal_send_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.terminalSessionTools || !deps.terminalSessions || !deps.terminalHistory || !ctx.user) throw new Error('终端会话服务不可用');
+                const result = deps.terminalSessionTools.sendSession(deps.terminalSessions, deps.terminalHistory, ctx.user, args);
+                deps.addActivity?.(`AI 向 ${result.session.protocol} 会话发送输入：${result.session.name || result.session.sessionId}`, ctx.user.userId);
+                return result;
+            });
+        case 'terminal_wait_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.terminalSessionTools || !deps.terminalSessions || !deps.terminalHistory || !ctx.user) throw new Error('终端会话服务不可用');
+                return deps.terminalSessionTools.waitSession(deps.terminalSessions, deps.terminalHistory, ctx.user, args, ctx.signal);
+            });
         case 'list_connections':
             return { connections: getAllConnections(deps, ctx).map(connectionSummary) };
         case 'list_zephyr_resources':
@@ -2096,8 +2121,8 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             const maxChars = clampNumber(args.maxChars, 1000, 60000, 30000);
             const outputs = Array.isArray(ctx.context?.terminalOutputs) ? ctx.context.terminalOutputs : [];
             const tabId = String(args.tabId || '').trim();
-            const selected = (args.allVisible ? outputs : (tabId ? outputs.filter((t) => String(t.tabId || '') === tabId) : outputs.slice(0, 1))).filter((t) => String(t.protocol || 'SSH').toUpperCase() === 'SSH');
-            return { activeTerminalTab: ctx.context?.activeTerminalTab || '', terminalOutputs: selected.map((t) => publicTerminalOutput(t, maxChars)), message: selected.length ? '已读取终端输出快照' : '当前没有可读取的 SSH 终端输出；请先打开 SSH 连接或切到终端页。' };
+            const selected = (args.allVisible ? outputs : (tabId ? outputs.filter((t) => String(t.tabId || '') === tabId) : outputs.slice(0, 1))).filter((t) => ['SSH', 'TELNET'].includes(String(t.protocol || 'SSH').toUpperCase()));
+            return { activeTerminalTab: ctx.context?.activeTerminalTab || '', terminalOutputs: selected.map((t) => publicTerminalOutput(t, maxChars)), message: selected.length ? '已读取终端输出快照' : '当前没有可读取的 SSH/TELNET 终端输出；请先打开终端连接。' };
         }
         case 'ui_action':
             return maybeRequireConfirmation(toolName, args, ctx, async () => ({ uiAction: 'ui_action', action: safeUiActionArgs(args), message: '已请求前端执行可见 UI 代操作' }), deps);
@@ -3075,7 +3100,7 @@ function listToolCatalog(ai = {}) {
 function isReadOnlyToolName(name) {
     const n = String(name || '');
     if (!n) return false;
-    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read|remote_desktop_screenshot|remote_read|browser_inspect|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
+    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read_v1|terminal_wait_v1|terminal_read|remote_desktop_screenshot|remote_read|browser_inspect|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
     if (n.endsWith('_list') || n.endsWith('_search') || n.endsWith('_get') || n.endsWith('_status')) return true;
     return false;
 }

@@ -6276,6 +6276,7 @@ function readTerminalOutputForAi(tabId = '', maxChars = 24000) {
     const protocol = String(tab?.protocol || conn?.protocol || '').toUpperCase();
     return {
         tabId: id,
+        sessionId: snapshot?.sessionId || tab?.sessionId || id,
         name: tab?.name || conn?.name || '',
         protocol,
         connectionId: tab?.connectionId || conn?.id || '',
@@ -6283,7 +6284,7 @@ function readTerminalOutputForAi(tabId = '', maxChars = 24000) {
         port: snapshot?.port || conn?.port || '',
         username: snapshot?.username || conn?.username || '',
         status: snapshot?.status || tab?.status || '',
-        available: Boolean(snapshot && !snapshot.error && (snapshot.text || snapshot.currentInput || protocol === 'SSH')),
+        available: Boolean(snapshot && !snapshot.error && (snapshot.text || snapshot.currentInput || ['SSH', 'TELNET'].includes(protocol))),
         error: snapshot?.error || (!frame ? '终端 iframe 未加载或已被最小化释放' : ''),
         text: clipAiTerminalText(snapshot?.text || '', maxChars),
         currentInput: snapshot?.currentInput || '',
@@ -6299,7 +6300,7 @@ function readTerminalOutputForAi(tabId = '', maxChars = 24000) {
 function collectAiTerminalOutputs() {
     const ids = uniq([activeTerminalTab, ...visualLayout, ...terminalTabs.filter((t) => !t.minimized).map((t) => t.id), ...terminalTabs.map((t) => t.id)]).slice(0, 4);
     return ids.map((id, index) => readTerminalOutputForAi(id, index === 0 ? 60000 : 16000))
-        .filter((item) => item.protocol === 'SSH' && (item.available || item.text || item.currentInput))
+        .filter((item) => ['SSH', 'TELNET'].includes(item.protocol) && (item.available || item.text || item.currentInput))
         .slice(0, 3);
 }
 function readRemoteDesktopSnapshotForAi(tabId = '', maxWidth = 960) {

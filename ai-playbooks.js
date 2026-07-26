@@ -63,6 +63,19 @@ const PLAYBOOKS = Object.freeze([
 - revision_conflict 时重新 snippet_get_v1；不要盲目重试。`,
     }),
     Object.freeze({
+        id: 'terminal-session-ops-v1',
+        title: 'SSH/TELNET 实际会话操作',
+        capabilityIds: Object.freeze(['terminal.read', 'terminal.send', 'terminal.wait']),
+        triggers: Object.freeze(['当前终端', 'SSH 会话', 'TELNET 会话', '发送输入', '等待提示符', '终端输出']),
+        prompt: `# SSH/TELNET 实际会话操作 Playbook
+
+- 使用 terminal_read_v1 读取指定 sessionId 的服务端权威输出；它同时支持 SSH 和 TELNET，不依赖终端 iframe 是否当前可见。
+- 使用 terminal_send_v1 向活跃会话发送文本；默认追加换行，会实际影响远端，必须等待确认。只填入而不发送的纯 UI 行为仍用 ui_action run:false。
+- 发送后用 terminal_wait_v1 等待明确提示符、成功标志或错误文本；超时时根据返回的最新输出判断，不能声称成功。
+- TELNET 不支持 remote_execute/SFTP；必须使用 terminal_send_v1 + terminal_wait_v1。SSH 后台非交互命令仍优先 remote_execute；用户明确要求在当前可见 shell 中操作时才用 terminal_send_v1。
+- 不猜 sessionId：从当前 Zephyr 上下文里的 terminalOutputs/sessionId 选择；歧义时先 terminal_read_v1 验证目标。`,
+    }),
+    Object.freeze({
         id: 'asset-management-v1',
         title: '连接资产操作',
         capabilityIds: Object.freeze([

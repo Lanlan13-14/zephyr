@@ -205,6 +205,18 @@ const CAPABILITIES = defineCapabilities([
         toolIds: ['snippet_delete_v1'], keywords: ['代码片段', '删除', '移除', 'snippet'], playbookId: 'snippet-management-v1',
     },
     {
+        id: 'terminal.read', title: 'Read authoritative SSH or TELNET session output', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['terminal_read_v1'], keywords: ['终端', 'SSH', 'TELNET', '输出', '读取', 'screen', 'scrollback'], playbookId: 'terminal-session-ops-v1',
+    },
+    {
+        id: 'terminal.send', title: 'Send text to an active SSH or TELNET session', mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['terminal_send_v1'], keywords: ['终端', 'SSH', 'TELNET', '发送', '输入', '执行'], playbookId: 'terminal-session-ops-v1',
+    },
+    {
+        id: 'terminal.wait', title: 'Wait for SSH or TELNET session output pattern', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['terminal_wait_v1'], keywords: ['终端', 'SSH', 'TELNET', '等待', '匹配', 'prompt', 'pattern'], playbookId: 'terminal-session-ops-v1',
+    },
+    {
         id: 'sshkey.secret_manage', title: 'Import generate or reveal SSH private key material', mode: 'humanOnly', state: 'implemented', risk: 'R4', confirmation: 'always',
         humanOnlyReason: 'Private keys and passphrases must never enter model context; import, generation and reveal require a direct human-only secret flow.',
     },
