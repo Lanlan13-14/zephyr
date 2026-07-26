@@ -766,7 +766,7 @@ function showCertDialog(certInfo, connectionId) {
         /* Create fresh buttons to guarantee no stale listeners */
         const actionsDiv = dialog.querySelector('.rdp-cert-actions');
         if (!actionsDiv) { resolve(true); return; }
-        actionsDiv.innerHTML = '<button class="rdp-cert-btn rdp-cert-btn-cancel" id="certCancelBtn">取消</button><button class="rdp-cert-btn rdp-cert-btn-connect" id="certConnectBtn">连接</button>';
+        actionsDiv.innerHTML = `<button class="rdp-cert-btn rdp-cert-btn-cancel" id="certCancelBtn">${t('取消')}</button><button class="rdp-cert-btn rdp-cert-btn-connect" id="certConnectBtn">${t('连接')}</button>`;
         const cancelBtn = document.getElementById('certCancelBtn');
         const connectBtn = document.getElementById('certConnectBtn');
 
@@ -2049,7 +2049,7 @@ function initFilePanel() {
     function updatePendingFileList() {
         if (!rdpPendingFileList) return;
         if (!rdpStorageFiles.length) {
-            rdpPendingFileList.innerHTML = '<div class="rdp-file-empty">暂无待粘贴文件</div>';
+            rdpPendingFileList.innerHTML = `<div class="rdp-file-empty">${t('暂无待粘贴文件')}</div>`;
             return;
         }
         rdpPendingFileList.innerHTML = rdpStorageFiles.map((f, i) =>
@@ -2305,7 +2305,7 @@ function initFilePanel() {
         if (!rdpRemoteFileList) return;
         window.__rdpRemoteFilesCache = Array.isArray(filesArr) ? filesArr : [];
         if (!filesArr || !filesArr.length) {
-            rdpRemoteFileList.innerHTML = '<div class="rdp-file-empty">远程剪贴板暂无文件</div>';
+            rdpRemoteFileList.innerHTML = `<div class="rdp-file-empty">${t('远程剪贴板暂无文件')}</div>`;
             return;
         }
         rdpRemoteFileList.innerHTML = '';

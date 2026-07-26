@@ -1485,5 +1485,7 @@
   "有口令": "Has passphrase",
   "暂无 SSH 密钥": "No SSH keys",
   "清除": "Clear",
-  "已筛选关联连接": "Filtered by linked connection"
+  "已筛选关联连接": "Filtered by linked connection",
+  "共享后其他用户可读此笔记，不可编辑。默认私有。": "When shared, other users can read but not edit this note. Private by default.",
+  "关联连接": "Linked connections"
 }

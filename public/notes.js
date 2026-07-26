@@ -1062,14 +1062,14 @@ export function createNotesController({
                         <h2 class="notes-dialog-title">${t('共享设置')}</h2>
                         <button type="button" class="notes-icon-btn" id="notesShareModalClose" aria-label="关闭">${icon('close')}</button>
                     </div>
-                    <p class="notes-dialog-message">共享后其他用户可读此笔记，不可编辑。默认私有。</p>
+                    <p class="notes-dialog-message">${t('共享后其他用户可读此笔记，不可编辑。默认私有。')}</p>
                     <div class="notes-share-options">
-                        <label class="notes-check"><input type="checkbox" id="notesShareUsers"><span>共享给所有用户</span></label>
-                        <label class="notes-check"><input type="checkbox" id="notesShareAdmins"><span>共享给管理员</span></label>
+                        <label class="notes-check"><input type="checkbox" id="notesShareUsers"><span>${t('共享给所有用户')}</span></label>
+                        <label class="notes-check"><input type="checkbox" id="notesShareAdmins"><span>${t('共享给管理员')}</span></label>
                     </div>
                     <div class="notes-dialog-actions">
-                        <button class="btn" type="button" id="notesShareCancel">取消</button>
-                        <button class="btn btn-primary" type="button" id="notesShareSave">保存</button>
+                        <button class="btn" type="button" id="notesShareCancel">${t('取消')}</button>
+                        <button class="btn btn-primary" type="button" id="notesShareSave">${t('保存')}</button>
                     </div>
                 </div>`;
             document.body.appendChild(modal);
@@ -1117,7 +1117,7 @@ export function createNotesController({
             modal.innerHTML = `
                 <div class="notes-dialog notes-dialog-lg" role="dialog" aria-modal="true" aria-label="关联连接">
                     <div class="notes-dialog-head">
-                        <h2 class="notes-dialog-title">关联连接</h2>
+                        <h2 class="notes-dialog-title">${t('关联连接')}</h2>
                         <button type="button" class="notes-icon-btn" id="notesLinkModalClose" aria-label="关闭">${icon('close')}</button>
                     </div>
                     <div class="notes-link-search-wrap">
@@ -1126,8 +1126,8 @@ export function createNotesController({
                     </div>
                     <div id="notesLinkList" class="notes-link-list" role="listbox"></div>
                     <div class="notes-dialog-actions">
-                        <button class="btn" type="button" id="notesLinkCancel">取消</button>
-                        <button class="btn btn-primary" type="button" id="notesLinkSave">保存</button>
+                        <button class="btn" type="button" id="notesLinkCancel">${t('取消')}</button>
+                        <button class="btn btn-primary" type="button" id="notesLinkSave">${t('保存')}</button>
                     </div>
                 </div>`;
             document.body.appendChild(modal);
@@ -1159,7 +1159,7 @@ export function createNotesController({
                         </span>
                     </label>`;
                 }).join('')
-                : '<p class="notes-empty-inline">无匹配连接</p>';
+                : `<p class="notes-empty-inline">${t('无匹配连接')}</p>`;
             listEl.querySelectorAll('[data-conn-id]').forEach((cb) => {
                 cb.addEventListener('change', () => {
                     if (cb.checked) selected.add(cb.dataset.connId);
@@ -1205,13 +1205,13 @@ export function createNotesController({
         menu.dataset.ephemeral = '1';
         const inTrash = state.trash || state.groupFilter === '__trash';
         menu.innerHTML = inTrash ? `
-            <button type="button" class="notes-menu-item" data-ctx-action="restore" data-note-id="${escapeHtml(noteId)}">${icon('restore')}<span>恢复</span></button>
-            <button type="button" class="notes-menu-item danger" data-ctx-action="purge" data-note-id="${escapeHtml(noteId)}">${icon('purge')}<span>彻底删除</span></button>
+            <button type="button" class="notes-menu-item" data-ctx-action="restore" data-note-id="${escapeHtml(noteId)}">${icon('restore')}<span>${t('恢复')}</span></button>
+            <button type="button" class="notes-menu-item danger" data-ctx-action="purge" data-note-id="${escapeHtml(noteId)}">${icon('purge')}<span>${t('彻底删除')}</span></button>
         ` : `
-            <button type="button" class="notes-menu-item" data-ctx-action="rename" data-note-id="${escapeHtml(noteId)}"><span>重命名</span></button>
-            <button type="button" class="notes-menu-item" data-ctx-action="move" data-note-id="${escapeHtml(noteId)}">${icon('folder')}<span>移动分组</span></button>
-            <button type="button" class="notes-menu-item" data-ctx-action="copy" data-note-id="${escapeHtml(noteId)}"><span>复制</span></button>
-            <button type="button" class="notes-menu-item" data-ctx-action="export" data-note-id="${escapeHtml(noteId)}">${icon('export')}<span>导出 Markdown</span></button>
+            <button type="button" class="notes-menu-item" data-ctx-action="rename" data-note-id="${escapeHtml(noteId)}"><span>${t('重命名')}</span></button>
+            <button type="button" class="notes-menu-item" data-ctx-action="move" data-note-id="${escapeHtml(noteId)}">${icon('folder')}<span>${t('移动分组')}</span></button>
+            <button type="button" class="notes-menu-item" data-ctx-action="copy" data-note-id="${escapeHtml(noteId)}"><span>${t('复制')}</span></button>
+            <button type="button" class="notes-menu-item" data-ctx-action="export" data-note-id="${escapeHtml(noteId)}">${icon('export')}<span>${t('导出 Markdown')}</span></button>
             <button type="button" class="notes-menu-item" data-ctx-action="select" data-note-id="${escapeHtml(noteId)}">${icon('multi')}<span>多选</span></button>
             <div class="notes-menu-sep"></div>
             <button type="button" class="notes-menu-item danger" data-ctx-action="delete" data-note-id="${escapeHtml(noteId)}">${icon('trash')}<span>移到回收站</span></button>

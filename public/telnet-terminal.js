@@ -3750,7 +3750,7 @@ function ensureTransferPopover() {
     if (transferPopover) return transferPopover;
     transferPopover = document.createElement('div');
     transferPopover.className = 'transfer-popover';
-    transferPopover.innerHTML = '<div class="transfer-popover-head"><strong>文件传输</strong><button type="button" class="transfer-popover-close" aria-label="关闭">×</button></div><div class="transfer-popover-body"></div>';
+    transferPopover.innerHTML = `<div class="transfer-popover-head"><strong>${t('文件传输')}</strong><button type="button" class="transfer-popover-close" aria-label="${t('关闭')}">×</button></div><div class="transfer-popover-body"></div>`;
     document.body.appendChild(transferPopover);
     transferPopover.querySelector('.transfer-popover-close')?.addEventListener('click', (e) => { e.stopPropagation(); hideTransferPopover(true); });
     transferPopover.addEventListener('pointerdown', (e) => {
@@ -3813,7 +3813,7 @@ function renderTransferPopover() {
     // Empty state (only when truly empty)
     if (!items.length) {
         if (!body.querySelector('.transfer-empty')) {
-            body.innerHTML = '<div class="transfer-empty">暂无上传或下载任务</div>';
+            body.innerHTML = `<div class="transfer-empty">${t('暂无上传或下载任务')}</div>`;
         }
     }
 }
