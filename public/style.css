@@ -690,7 +690,7 @@ body.terminal-mode .terminal-view.active { animation: none; }
     margin-bottom: 18px;
     padding: 12px;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     background: var(--surface);
     box-shadow: var(--shadow-soft);
 }
@@ -730,7 +730,7 @@ body.terminal-mode .terminal-view.active { animation: none; }
 .activity-detail-item {
     padding: 16px 18px;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     background: var(--surface);
     box-shadow: 0 5px 18px -16px rgba(0,0,0,.35);
     animation: fadeIn .28s ease-out both;
@@ -751,7 +751,7 @@ body.terminal-mode .terminal-view.active { animation: none; }
 .activity-meta-grid dd { overflow: hidden; color: var(--text); font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .activity-event-id { display: flex; align-items: center; gap: 9px; margin-left: 22px; padding-top: 11px; border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent); color: var(--text-secondary); font-size: 11px; }
 .activity-event-id code { overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.activity-empty { display: grid; place-items: center; gap: 6px; min-height: 220px; border: 1px dashed var(--border); border-radius: 8px; color: var(--text-secondary); text-align: center; }
+.activity-empty { display: grid; place-items: center; gap: 6px; min-height: 220px; border: 1px dashed var(--border); border-radius: var(--radius-lg); color: var(--text-secondary); text-align: center; }
 .activity-empty strong { color: var(--text); font-size: 15px; }
 .empty-card, .terminal-placeholder { padding: 28px; text-align: center; color: var(--text-secondary); }
 /* 首页搜索命中危机词时的援助空状态（非“暂无连接”） */
@@ -13909,7 +13909,7 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     .notes-workspace {
         grid-template-columns: 1fr;
         grid-template-rows: auto minmax(0, 1fr);
-        border-radius: var(--radius);
+        border-radius: var(--radius-lg);
     }
     .notes-sidebar,
     .notes-groups {
