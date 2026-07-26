@@ -38,7 +38,8 @@ class Audit(HTMLParser):
                 value = (attr.get(name) or "").strip()
                 if HAN.search(value) and not attr.get(i18n_name):
                     self.items.append((line, "attr:" + name, tag, value))
-        self.stack.append({"tag": tag, "attrs": attr})
+        if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+            self.stack.append({"tag": tag, "attrs": attr})
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.handle_starttag(tag, attrs)

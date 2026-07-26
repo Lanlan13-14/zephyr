@@ -77,7 +77,8 @@ class PageStaticAudit(HTMLParser):
                 value = (attr.get(name) or "").strip()
                 if re.search(r"[\u4e00-\u9fff]", value) and not attr.get(i18n_name):
                     self.findings.append((line, "attr", name, value))
-        self.stack.append({"tag": tag, "attrs": attr})
+        if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+            self.stack.append({"tag": tag, "attrs": attr})
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
@@ -126,6 +127,7 @@ def main():
             seen.update(key for _, _, key in parser.keys)
             if path.name in PAGE_AUDIT_PAGES:
                 static_page_findings.extend((path, line, kind, target, value) for line, kind, target, value in page_static_findings(path, text))
+            # Full app.html is audited in focused batches because it includes staged dialogs and dynamic controls.
         for match in re.finditer(r"\bt\(\s*(['\"])(.*?)\1", text, flags=re.DOTALL):
             key = match.group(2)
             if "\\" not in key:
