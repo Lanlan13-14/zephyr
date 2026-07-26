@@ -63,6 +63,19 @@ const PLAYBOOKS = Object.freeze([
 - revision_conflict 时重新 snippet_get_v1；不要盲目重试。`,
     }),
     Object.freeze({
+        id: 'browser-automation-v1',
+        title: '外部网页 elementRef 自动化',
+        capabilityIds: Object.freeze(['browser.inspect', 'browser.click', 'browser.type']),
+        triggers: Object.freeze(['网页代操作', '浏览器点击', '填写表单', 'elementRef', 'DOM']),
+        prompt: `# 外部网页 elementRef 自动化 Playbook
+
+- 导航后先 browser_inspect_v1；它返回 elementRef 和 domRevision。点击用 browser_click_v1，输入用 browser_type_v1，必须原样传这两个字段。
+- 不再让模型拼 CSS selector 或依赖截图坐标点击普通 DOM。页面导航、等待、滚动或重新检查后，旧 elementRef 视为失效。
+- stale_dom_revision / stale_element_ref 时重新 browser_inspect_v1，不猜新引用，不盲目重试旧引用。
+- 输入、点击都可能提交数据或触发状态变化，按 Tool 风险等待确认；不得在网页表单中输入密码、Token、私钥或其他模型不可见秘密。
+- 每次操作后根据返回的预览和页面文本验证结果；必要时 browser_wait 后重新 inspect。`,
+    }),
+    Object.freeze({
         id: 'terminal-session-ops-v1',
         title: 'SSH/TELNET 实际会话操作',
         capabilityIds: Object.freeze(['terminal.read', 'terminal.send', 'terminal.wait']),

@@ -6192,17 +6192,19 @@ function aiBrowserPreviewStateForSession(sessionId = aiCurrentSessionId) {
 }
 function browserShotFromResult(result = {}) {
     if (!result || typeof result !== 'object') return null;
-    if (result.preview?.url) return result.preview;
-    if (result.url && /\/api\/ai\/browser\/screenshots\//.test(result.url)) return result;
+    const data = result?.ok === true && result?.data && typeof result.data === 'object' ? result.data : result;
+    if (data.preview?.url) return data.preview;
+    if (data.url && /\/api\/ai\/browser\/screenshots\//.test(data.url)) return data;
     return null;
 }
 function updateAiBrowserPreviewFromToolResult(item = {}, { sessionId = aiCurrentSessionId } = {}) {
     if (!String(item.tool || '').startsWith('browser_')) return;
-    const shot = browserShotFromResult(item.result || {});
+    const resultData = item.result?.ok === true && item.result?.data && typeof item.result.data === 'object' ? item.result.data : (item.result || {});
+    const shot = browserShotFromResult(resultData);
     if (shot) {
         const state = aiBrowserPreviewStateForSession(sessionId);
-        state.preview = { ...shot, tool: item.tool, updatedAt: Date.now(), pageUrl: item.result?.url || item.result?.pageUrl || '' };
-        state.session = item.result?.session || item.args?.session || state.session || (sessionId ? `chat-${sessionId}` : 'default');
+        state.preview = { ...shot, tool: item.tool, updatedAt: Date.now(), pageUrl: resultData.url || resultData.pageUrl || '' };
+        state.session = resultData.session || item.args?.session || state.session || (sessionId ? `chat-${sessionId}` : 'default');
         state.visible = true;
         if (sessionId === aiCurrentSessionId) renderAiBrowserPreview();
     }
@@ -6663,8 +6665,8 @@ function summarizeAiToolResult(tool, result = {}) {
     if (tool === 'ui_action' && result.clientError) return `操作失败：${result.clientError}`;
     if (tool === 'ui_action' && result.remoteDesktopScreenshot) return `远程桌面操作完成：${result.remoteDesktopScreenshot.protocol || ''} ${result.remoteDesktopScreenshot.status || ''}`;
     if (tool === 'ui_action' && result.terminalOutput) return `终端输出 ${result.terminalOutput.lineCount || 0} 行${result.terminalOutput.truncated ? '（已截断）' : ''}`;
-    if (tool === 'browser_inspect') return `发现 ${(result.elements || []).length} 个可操作元素：${(result.elements || []).slice(0, 5).map((e) => e.text || e.selector).filter(Boolean).join('、')}`;
-    if (String(tool || '').startsWith('browser_')) return `AI 正在页面代操作：${result.title || result.url || '浏览器操作完成'}`;
+    if (tool === 'browser_inspect_v1') return `发现 ${(data.elements || []).length} 个可操作元素（DOM v${data.domRevision || 0}）：${(data.elements || []).slice(0, 5).map((e) => e.text || e.elementRef).filter(Boolean).join('、')}`;
+    if (String(tool || '').startsWith('browser_')) return `AI 正在页面代操作：${data.title || data.url || '浏览器操作完成'}`;
     return '执行完成';
 }
 function formatAiToolResult(r = {}) {
@@ -6672,7 +6674,7 @@ function formatAiToolResult(r = {}) {
     const detail = JSON.stringify(maskAiSensitive({ args: r.args || {}, result }, r.tool), null, 2);
     const shot = browserShotFromResult(result);
     const titleMap = {
-        list_connections: '列出连接', connection_list_v1: '列出连接', connection_get_v1: '读取连接', connection_rename_v1: '重命名连接', connection_create_v1: '新增连接', connection_update_v1: '修改连接', connection_delete_v1: '删除连接', connection_test_v1: '测试连接', connection_open_v1: '打开连接', proxy_list_v1: '列出代理', proxy_get_v1: '读取代理', proxy_create_v1: '新增代理', proxy_update_v1: '修改代理', proxy_delete_v1: '删除代理', ssh_key_list_v1: '列出 SSH 密钥', ssh_key_get_v1: '读取 SSH 密钥', ssh_key_validate_v1: '校验 SSH 密钥', ssh_key_rename_v1: '重命名 SSH 密钥', ssh_key_update_metadata_v1: '修改 SSH 密钥备注', ssh_key_delete_v1: '删除 SSH 密钥', web_search: t('网页搜索'), fetch_url: '网页读取', browser_navigate: '浏览器打开', browser_inspect: '检查页面元素', browser_screenshot: '浏览器截图', browser_click: '浏览器点击', browser_type: '浏览器输入', browser_scroll: '浏览器滚动', browser_text: '读取浏览器文本', browser_key: '浏览器按键', browser_wait: '等待页面', open_connection: '打开连接', terminal_read_output: '读取终端输出', remote_desktop_screenshot: '读取远程桌面画面', ui_action: '页面/终端代操作', memory_search: '搜索 Memory', memory_save: t('保存 Memory'), plan_task: '创建计划', plan_update: '更新计划', plan_delete: '删除计划', remote_execute: t('远程执行'), remote_read_file: '读取远程文件', remote_write_file: '写入远程文件', confirmed: '敏感操作结果'
+        list_connections: '列出连接', connection_list_v1: '列出连接', connection_get_v1: '读取连接', connection_rename_v1: '重命名连接', connection_create_v1: '新增连接', connection_update_v1: '修改连接', connection_delete_v1: '删除连接', connection_test_v1: '测试连接', connection_open_v1: '打开连接', proxy_list_v1: '列出代理', proxy_get_v1: '读取代理', proxy_create_v1: '新增代理', proxy_update_v1: '修改代理', proxy_delete_v1: '删除代理', ssh_key_list_v1: '列出 SSH 密钥', ssh_key_get_v1: '读取 SSH 密钥', ssh_key_validate_v1: '校验 SSH 密钥', ssh_key_rename_v1: '重命名 SSH 密钥', ssh_key_update_metadata_v1: '修改 SSH 密钥备注', ssh_key_delete_v1: '删除 SSH 密钥', web_search: t('网页搜索'), fetch_url: '网页读取', browser_navigate: '浏览器打开', browser_inspect_v1: '检查页面元素', browser_screenshot: '浏览器截图', browser_click_v1: '浏览器点击', browser_type_v1: '浏览器输入', browser_scroll: '浏览器滚动', browser_text: '读取浏览器文本', browser_key: '浏览器按键', browser_wait: '等待页面', open_connection: '打开连接', terminal_read_output: '读取终端输出', remote_desktop_screenshot: '读取远程桌面画面', ui_action: '页面/终端代操作', memory_search: '搜索 Memory', memory_save: t('保存 Memory'), plan_task: '创建计划', plan_update: '更新计划', plan_delete: '删除计划', remote_execute: t('远程执行'), remote_read_file: '读取远程文件', remote_write_file: '写入远程文件', confirmed: '敏感操作结果'
     };
     const title = titleMap[r.tool] || `工具 ${r.tool || 'unknown'}`;
     const duration = Number.isFinite(Number(r.durationMs)) ? `${(Number(r.durationMs) / 1000).toFixed(1)}s` : '';

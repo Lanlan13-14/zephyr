@@ -163,7 +163,7 @@ class AiBrowserService {
         if (cached?.sessionId) return cached;
         const target = await this.client.send('Target.createTarget', { url: 'about:blank' });
         const attach = await this.client.send('Target.attachToTarget', { targetId: target.targetId, flatten: true });
-        const page = { targetId: target.targetId, sessionId: attach.sessionId, url: 'about:blank' };
+        const page = { targetId: target.targetId, sessionId: attach.sessionId, url: 'about:blank', domRevision: 1, refs: new Map() };
         await this.client.send('Page.enable', {}, page.sessionId);
         await this.client.send('Runtime.enable', {}, page.sessionId);
         await this.client.send('DOM.enable', {}, page.sessionId);
@@ -183,7 +183,9 @@ class AiBrowserService {
         await this.client.send('Page.navigate', { url: href }, page.sessionId);
         await delay(clamp(waitMs, 0, 8000, 1000));
         page.url = href;
-        return { session, url: href, title: await this.title(session), text: await this.text(session, 4000) };
+        page.domRevision += 1;
+        page.refs.clear();
+        return { session, url: href, domRevision: page.domRevision, title: await this.title(session), text: await this.text(session, 4000) };
     }
     async title(session = 'default') {
         const page = await this.getPage(session);
@@ -255,13 +257,29 @@ class AiBrowserService {
             });
         })()`;
         const result = await this.client.send('Runtime.evaluate', { expression, returnByValue: true }, page.sessionId);
-        return { session, url: page.url, title: await this.title(session), elements: result?.result?.value || [] };
+        page.domRevision += 1;
+        page.refs.clear();
+        const elements = (result?.result?.value || []).map((item, index) => {
+            const elementRef = `el_${page.domRevision}_${index + 1}`;
+            page.refs.set(elementRef, { selector: String(item.selector || ''), domRevision: page.domRevision });
+            return { ...item, elementRef, domRevision: page.domRevision };
+        });
+        return { session, url: page.url, domRevision: page.domRevision, title: await this.title(session), elements };
     }
-    async click({ session = 'default', selector = '', x = null, y = null }) {
+    resolveElementRef(page, elementRef = '', domRevision = 0) {
+        const ref = String(elementRef || '').trim();
+        if (!ref) return '';
+        if (Number(domRevision) !== Number(page.domRevision)) throw Object.assign(new Error('页面 DOM 已变化，请重新 browser_inspect_v1'), { code: 'stale_dom_revision' });
+        const entry = page.refs.get(ref);
+        if (!entry || entry.domRevision !== page.domRevision) throw Object.assign(new Error('elementRef 已失效，请重新 browser_inspect_v1'), { code: 'stale_element_ref' });
+        return entry.selector;
+    }
+    async click({ session = 'default', selector = '', elementRef = '', domRevision = 0, x = null, y = null }) {
         const page = await this.getPage(session);
+        const resolvedSelector = elementRef ? this.resolveElementRef(page, elementRef, domRevision) : String(selector || '');
         let px = Number(x), py = Number(y), meta = {};
-        if (selector) {
-            const expression = `(function(){const el=document.querySelector(${JSON.stringify(selector)}); if(!el) return {ok:false,error:'selector not found'}; el.scrollIntoView({block:'center',inline:'center'}); const r=el.getBoundingClientRect(); return {ok:true,x:r.left+r.width/2,y:r.top+r.height/2,text:el.innerText||el.value||el.getAttribute('aria-label')||'',tag:el.tagName};})()`;
+        if (resolvedSelector) {
+            const expression = `(function(){const el=document.querySelector(${JSON.stringify(resolvedSelector)}); if(!el) return {ok:false,error:'selector not found'}; el.scrollIntoView({block:'center',inline:'center'}); const r=el.getBoundingClientRect(); return {ok:true,x:r.left+r.width/2,y:r.top+r.height/2,text:el.innerText||el.value||el.getAttribute('aria-label')||'',tag:el.tagName};})()`;
             const result = await this.client.send('Runtime.evaluate', { expression, returnByValue: true }, page.sessionId);
             const value = result?.result?.value || {};
             if (!value.ok) throw new Error(value.error || '点击失败');
@@ -272,19 +290,20 @@ class AiBrowserService {
         await this.client.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: px, y: py, button: 'left', clickCount: 1 }, page.sessionId);
         await this.client.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: px, y: py, button: 'left', clickCount: 1 }, page.sessionId);
         await delay(250);
-        return { ok: true, ...meta, x: px, y: py, title: await this.title(session), url: page.url };
+        return { ok: true, ...meta, x: px, y: py, elementRef: elementRef || '', domRevision: page.domRevision, title: await this.title(session), url: page.url };
     }
-    async type({ session = 'default', selector = '', text = '', clear = false }) {
+    async type({ session = 'default', selector = '', elementRef = '', domRevision = 0, text = '', clear = false }) {
         const page = await this.getPage(session);
-        if (!selector) throw new Error('请输入表单 selector');
-        const expression = `(function(){const el=document.querySelector(${JSON.stringify(selector)}); if(!el) return {ok:false,error:'selector not found'}; el.scrollIntoView({block:'center',inline:'center'}); el.focus(); if(${clear ? 'true' : 'false'}){ if('value' in el){ el.value=''; el.dispatchEvent(new Event('input',{bubbles:true})); } else { el.textContent=''; } } const r=el.getBoundingClientRect(); return {ok:true,x:r.left+r.width/2,y:r.top+r.height/2,tag:el.tagName,value:el.value||el.textContent||''};})()`;
+        const resolvedSelector = elementRef ? this.resolveElementRef(page, elementRef, domRevision) : String(selector || '');
+        if (!resolvedSelector) throw new Error('请输入 elementRef 或表单 selector');
+        const expression = `(function(){const el=document.querySelector(${JSON.stringify(resolvedSelector)}); if(!el) return {ok:false,error:'selector not found'}; el.scrollIntoView({block:'center',inline:'center'}); el.focus(); if(${clear ? 'true' : 'false'}){ if('value' in el){ el.value=''; el.dispatchEvent(new Event('input',{bubbles:true})); } else { el.textContent=''; } } const r=el.getBoundingClientRect(); return {ok:true,x:r.left+r.width/2,y:r.top+r.height/2,tag:el.tagName,value:el.value||el.textContent||''};})()`;
         const result = await this.client.send('Runtime.evaluate', { expression, returnByValue: true }, page.sessionId);
         const focused = result?.result?.value || {};
         if (!focused.ok) throw new Error(focused.error || '输入失败');
         await this.client.send('Input.insertText', { text: String(text || '') }, page.sessionId);
         await delay(120);
-        const read = await this.client.send('Runtime.evaluate', { expression: `(function(){const el=document.querySelector(${JSON.stringify(selector)}); return el ? {ok:true,value:el.value||el.textContent||''} : {ok:false};})()`, returnByValue: true }, page.sessionId).catch(() => null);
-        return { ...focused, ...(read?.result?.value || {}), title: await this.title(session), url: page.url };
+        const read = await this.client.send('Runtime.evaluate', { expression: `(function(){const el=document.querySelector(${JSON.stringify(resolvedSelector)}); return el ? {ok:true,value:el.value||el.textContent||''} : {ok:false};})()`, returnByValue: true }, page.sessionId).catch(() => null);
+        return { ...focused, ...(read?.result?.value || {}), elementRef: elementRef || '', domRevision: page.domRevision, title: await this.title(session), url: page.url };
     }
     async key({ session = 'default', key = 'Enter' }) {
         const page = await this.getPage(session);
@@ -303,7 +322,9 @@ class AiBrowserService {
     async wait({ session = 'default', ms = 1000 } = {}) {
         const page = await this.getPage(session);
         await delay(clamp(ms, 0, 15000, 1000));
-        return { ok: true, session, url: page.url, title: await this.title(session), text: await this.text(session, 2000) };
+        page.domRevision += 1;
+        page.refs.clear();
+        return { ok: true, session, url: page.url, domRevision: page.domRevision, title: await this.title(session), text: await this.text(session, 2000) };
     }
     async scroll({ session = 'default', direction = 'down', amount = 800 }) {
         const page = await this.getPage(session);
@@ -311,7 +332,9 @@ class AiBrowserService {
         const px = clamp(amount, 1, 8000, 800) * sign;
         const expression = `window.scrollBy({top:${px},left:0,behavior:'instant'}); ({x:window.scrollX,y:window.scrollY,height:document.documentElement.scrollHeight})`;
         const result = await this.client.send('Runtime.evaluate', { expression, returnByValue: true }, page.sessionId);
-        return result?.result?.value || { ok: true };
+        page.domRevision += 1;
+        page.refs.clear();
+        return { ...(result?.result?.value || { ok: true }), session, domRevision: page.domRevision };
     }
     async evaluate({ session = 'default', script = '' }) {
         const page = await this.getPage(session);
@@ -323,6 +346,7 @@ class AiBrowserService {
         const key = String(session || 'default');
         const page = this.pages.get(key);
         if (page?.targetId) await this.client?.send('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+        page?.refs?.clear?.();
         this.pages.delete(key);
         return { ok: true, session: key };
     }
@@ -333,4 +357,4 @@ class AiBrowserService {
 function clamp(value, min, max, fallback) { const n = Number(value); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback; }
 
 const browserService = new AiBrowserService();
-module.exports = { browserService, SHOT_DIR };
+module.exports = { AiBrowserService, browserService, SHOT_DIR };

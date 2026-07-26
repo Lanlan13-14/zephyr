@@ -62,6 +62,9 @@ const CANONICAL_TOOL_SCHEMAS = Object.freeze({
     terminal_read_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160 }, maxChars: { type: 'number', minimum: 1000, maximum: 120000 } }, required: ['sessionId'], additionalProperties: false }),
     terminal_send_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160 }, text: { type: 'string', minLength: 1, maxLength: 20000 }, appendNewline: { type: 'boolean' } }, required: ['sessionId', 'text'], additionalProperties: false }),
     terminal_wait_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160 }, pattern: { type: 'string', minLength: 1, maxLength: 500 }, regex: { type: 'boolean' }, caseSensitive: { type: 'boolean' }, timeoutMs: { type: 'number', minimum: 100, maximum: 120000 }, pollMs: { type: 'number', minimum: 50, maximum: 2000 }, maxChars: { type: 'number', minimum: 1000, maximum: 120000 } }, required: ['sessionId', 'pattern'], additionalProperties: false }),
+    browser_inspect_v1: Object.freeze({ type: 'object', properties: { session: { type: 'string', maxLength: 120 }, max: { type: 'number', minimum: 1, maximum: 200 } }, additionalProperties: false }),
+    browser_click_v1: Object.freeze({ type: 'object', properties: { session: { type: 'string', maxLength: 120 }, elementRef: { type: 'string', minLength: 1, maxLength: 120 }, domRevision: { type: 'number', exclusiveMinimum: 0 } }, required: ['elementRef', 'domRevision'], additionalProperties: false }),
+    browser_type_v1: Object.freeze({ type: 'object', properties: { session: { type: 'string', maxLength: 120 }, elementRef: { type: 'string', minLength: 1, maxLength: 120 }, domRevision: { type: 'number', exclusiveMinimum: 0 }, text: { type: 'string', maxLength: 20000 }, clear: { type: 'boolean' } }, required: ['elementRef', 'domRevision', 'text'], additionalProperties: false }),
 });
 
 function aiAbortError() {
@@ -684,10 +687,10 @@ function toolDefinitions(ai = {}) {
     if (p.webFetch !== false) tools.push({ type: 'function', function: { name: 'fetch_url', description: '读取一个网页 URL 的正文文本。', parameters: { type: 'object', properties: { url: { type: 'string' }, maxChars: { type: 'number' } }, required: ['url'] } } });
     if (p.browser !== false) {
         tools.push({ type: 'function', function: { name: 'browser_navigate', description: '用内置 Chromium 打开 URL，并在 AI 浮窗里显示页面预览，像用户打开网页一样继续代操作。浏览器会话默认按当前 AI 对话隔离；通常不要填写 session，除非要在本对话内开多个网页上下文。', parameters: { type: 'object', properties: { url: { type: 'string' }, session: { type: 'string' }, waitMs: { type: 'number' } }, required: ['url'] } } });
-        tools.push({ type: 'function', function: { name: 'browser_inspect', description: '列出当前页面可见的按钮、链接、输入框等可交互元素及 selector/坐标。点击或输入前优先调用它，避免盲点。会话默认按当前 AI 对话隔离，通常不要填写 session。', parameters: { type: 'object', properties: { session: { type: 'string' }, max: { type: 'number' } } } } });
+        tools.push({ type: 'function', function: { name: 'browser_inspect_v1', description: '列出当前页面可见交互元素，返回短期 elementRef 和 domRevision。后续点击/输入必须使用同一版本引用；页面变化后重新检查。', parameters: CANONICAL_TOOL_SCHEMAS.browser_inspect_v1 } });
         tools.push({ type: 'function', function: { name: 'browser_screenshot', description: '截取内置 Chromium 当前页面截图。', parameters: { type: 'object', properties: { session: { type: 'string' }, fullPage: { type: 'boolean' } } } } });
-        tools.push({ type: 'function', function: { name: 'browser_click', description: '点击当前页面中的 CSS 选择器或坐标。', parameters: { type: 'object', properties: { session: { type: 'string' }, selector: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } } } });
-        tools.push({ type: 'function', function: { name: 'browser_type', description: '向当前页面表单元素输入文本。', parameters: { type: 'object', properties: { session: { type: 'string' }, selector: { type: 'string' }, text: { type: 'string' }, clear: { type: 'boolean' } }, required: ['selector', 'text'] } } });
+        tools.push({ type: 'function', function: { name: 'browser_click_v1', description: '使用 browser_inspect_v1 返回的 elementRef + domRevision 点击元素。DOM 已变化时会拒绝并要求重新检查。', parameters: CANONICAL_TOOL_SCHEMAS.browser_click_v1 } });
+        tools.push({ type: 'function', function: { name: 'browser_type_v1', description: '使用 browser_inspect_v1 返回的 elementRef + domRevision 向表单输入文本。DOM 已变化时会拒绝并要求重新检查。', parameters: CANONICAL_TOOL_SCHEMAS.browser_type_v1 } });
         tools.push({ type: 'function', function: { name: 'browser_scroll', description: '滚动当前页面。', parameters: { type: 'object', properties: { session: { type: 'string' }, direction: { type: 'string', enum: ['up', 'down'] }, amount: { type: 'number' } } } } });
         tools.push({ type: 'function', function: { name: 'browser_text', description: '读取当前浏览器页面可见/正文文本。', parameters: { type: 'object', properties: { session: { type: 'string' }, maxChars: { type: 'number' } } } } });
         tools.push({ type: 'function', function: { name: 'browser_key', description: '向当前页面发送键盘按键（Enter/Tab/Escape/方向键等），用于像用户一样操作页面。', parameters: { type: 'object', properties: { session: { type: 'string' }, key: { type: 'string' } }, required: ['key'] } } });
@@ -2142,21 +2145,24 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             const session = aiBrowserSession(args, ctx);
             return browserService.screenshot({ session, fullPage: !!args.fullPage });
         }
-        case 'browser_inspect': {
-            if (p.browser === false) throw new Error('浏览器自动化权限未开启');
-            const session = aiBrowserSession(args, ctx);
-            return browserResultWithPreview('inspect', await browserService.inspect({ session, max: args.max || 80 }), session);
-        }
-        case 'browser_click': {
-            if (p.browser === false) throw new Error('浏览器自动化权限未开启');
-            const session = aiBrowserSession(args, ctx);
-            return browserResultWithPreview('click', await browserService.click({ session, selector: args.selector || '', x: args.x, y: args.y }), session);
-        }
-        case 'browser_type': {
-            if (p.browser === false) throw new Error('浏览器自动化权限未开启');
-            const session = aiBrowserSession(args, ctx);
-            return browserResultWithPreview('type', await browserService.type({ session, selector: args.selector || '', text: args.text || '', clear: !!args.clear }), session);
-        }
+        case 'browser_inspect_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.browser === false) throw new Error('浏览器自动化权限未开启');
+                const session = aiBrowserSession(args, ctx);
+                return browserResultWithPreview('inspect', await browserService.inspect({ session, max: args.max || 80 }), session);
+            });
+        case 'browser_click_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.browser === false) throw new Error('浏览器自动化权限未开启');
+                const session = aiBrowserSession(args, ctx);
+                return browserResultWithPreview('click', await browserService.click({ session, elementRef: args.elementRef, domRevision: args.domRevision }), session);
+            });
+        case 'browser_type_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.browser === false) throw new Error('浏览器自动化权限未开启');
+                const session = aiBrowserSession(args, ctx);
+                return browserResultWithPreview('type', await browserService.type({ session, elementRef: args.elementRef, domRevision: args.domRevision, text: args.text || '', clear: !!args.clear }), session);
+            });
         case 'browser_scroll': {
             if (p.browser === false) throw new Error('浏览器自动化权限未开启');
             const session = aiBrowserSession(args, ctx);
@@ -3100,7 +3106,7 @@ function listToolCatalog(ai = {}) {
 function isReadOnlyToolName(name) {
     const n = String(name || '');
     if (!n) return false;
-    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read_v1|terminal_wait_v1|terminal_read|remote_desktop_screenshot|remote_read|browser_inspect|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
+    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read_v1|terminal_wait_v1|terminal_read|remote_desktop_screenshot|remote_read|browser_inspect_v1|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
     if (n.endsWith('_list') || n.endsWith('_search') || n.endsWith('_get') || n.endsWith('_status')) return true;
     return false;
 }

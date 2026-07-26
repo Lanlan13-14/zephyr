@@ -205,6 +205,18 @@ const CAPABILITIES = defineCapabilities([
         toolIds: ['snippet_delete_v1'], keywords: ['代码片段', '删除', '移除', 'snippet'], playbookId: 'snippet-management-v1',
     },
     {
+        id: 'browser.inspect', title: 'Inspect page elements and issue versioned element references', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['browser_inspect_v1'], keywords: ['浏览器', '网页', '元素', 'inspect', 'elementRef', 'DOM'], playbookId: 'browser-automation-v1',
+    },
+    {
+        id: 'browser.click', title: 'Click a versioned browser element reference', mode: 'ai', state: 'implemented', risk: 'R1', confirmation: 'always',
+        toolIds: ['browser_click_v1'], keywords: ['浏览器', '网页', '点击', 'elementRef'], playbookId: 'browser-automation-v1',
+    },
+    {
+        id: 'browser.type', title: 'Type into a versioned browser element reference', mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['browser_type_v1'], keywords: ['浏览器', '网页', '输入', '表单', 'elementRef'], playbookId: 'browser-automation-v1',
+    },
+    {
         id: 'terminal.read', title: 'Read authoritative SSH or TELNET session output', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
         toolIds: ['terminal_read_v1'], keywords: ['终端', 'SSH', 'TELNET', '输出', '读取', 'screen', 'scrollback'], playbookId: 'terminal-session-ops-v1',
     },
