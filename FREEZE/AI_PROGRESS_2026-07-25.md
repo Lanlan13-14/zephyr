@@ -56,10 +56,10 @@ AI 覆盖项目所有非人类专属操作；人类专属操作显式标记 `hum
 
 - AI 串行回归：**107/107 passed**。
 - Go Runtime：`go test ./...` 通过。
-- JavaScript 语法：46 个文件通过。
+- JavaScript 语法：**47 个文件通过**。
 - 模型 Tool 目录：**76 total / 0 unbound / 0 loose schema**。
 - RDP 核心 renderer/worker/input/touch/wasm 定向回归通过。
-- 全项目 Node 基线对照：当前 720 pass / 25 fail；origin/main 为 672 pass / 30 fail。当前分支没有新增失败，并额外修复 5 个 AI 集成失败。
+- 最终远程树全项目 Node：**762 tests / 735 pass / 27 fail**；合入前最新主线基线为 **719 tests / 691 pass / 28 fail**。失败名称集合没有新增项，并修复 1 个过期缓存契约；剩余失败均为主线既有基线项。
 - 并行拉起多台真实测试服务在 Android PRoot 会产生资源争用；完整服务集成门禁固定使用 `--test-concurrency=1`，覆盖不减少。
 
 ## 状态
