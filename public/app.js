@@ -3248,7 +3248,7 @@ function renderTerminalWorkspace() {
             }
         });
         if (!workspace.querySelector(':scope > .terminal-placeholder')) {
-            workspace.insertAdjacentHTML('afterbegin', '<div class="terminal-placeholder active">暂无可见会话。最小化会话可从终端栏恢复。</div>');
+            workspace.insertAdjacentHTML('afterbegin', `<div class="terminal-placeholder active">${t('暂无可见会话。最小化会话可从终端栏恢复。')}</div>`);
         }
         keepAliveMinimized.forEach((t) => {
             let win = workspace.querySelector(`:scope > .terminal-window[data-window="${CSS.escape(t.id)}"]`);

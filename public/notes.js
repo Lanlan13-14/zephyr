@@ -400,8 +400,8 @@ export function createNotesController({
         menu.id = 'notesContextMenu';
         menu.className = 'notes-menu notes-context-menu';
         menu.innerHTML = `
-            <button type="button" class="notes-menu-item" data-g-action="rename">${icon('note')}<span>重命名分组</span></button>
-            <button type="button" class="notes-menu-item danger" data-g-action="delete">${icon('trash')}<span>删除分组</span></button>`;
+            <button type="button" class="notes-menu-item" data-g-action="rename">${icon('note')}<span>${t('重命名分组')}</span></button>
+            <button type="button" class="notes-menu-item danger" data-g-action="delete">${icon('trash')}<span>${t('删除分组')}</span></button>`;
         placeMenu(menu, x, y);
         requestAnimationFrame(() => menu.classList.add('show'));
         menu.querySelectorAll('[data-g-action]').forEach((btn) => {
@@ -497,10 +497,10 @@ export function createNotesController({
                 ? `<span class="notes-chip notes-chip-accent">${links} 连接</span>`
                 : '';
             const dirtyBadge = n.noteId === state.selectedId && state.dirty
-                ? '<span class="notes-chip notes-chip-warn">未保存</span>'
+                ? `<span class="notes-chip notes-chip-warn">${t('未保存')}</span>`
                 : '';
             const shared = n.shareWithUsers || n.shareWithAdmins || n.visibility === 'shared'
-                ? '<span class="notes-chip">共享</span>'
+                ? `<span class="notes-chip">${t('共享')}</span>`
                 : '';
             const delay = prefersReducedMotion() ? 0 : Math.min(i, 12) * 18;
             const checked = state.selectedIds.has(n.noteId);
@@ -538,13 +538,13 @@ export function createNotesController({
                 `<button type="button" class="notes-meta-chip" data-tag-chip="${escapeHtml(t)}" title="移除标签">
                     <span>${escapeHtml(t)}</span>${icon('x')}
                 </button>`
-            )).join('') + `<button type="button" class="notes-meta-chip notes-meta-chip-add" id="notesAddTagBtn" title="添加标签">${icon('plus')}<span>标签</span></button>`;
+            )).join('') + `<button type="button" class="notes-meta-chip notes-meta-chip-add" id="notesAddTagBtn" title="${t('添加标签')}">${icon('plus')}<span>${t('标签')}</span></button>`;
         }
         if (groupHost) {
             const g = note?.groupPath || '';
             groupHost.innerHTML = g
                 ? `<button type="button" class="notes-meta-chip notes-meta-chip-group" id="notesEditGroupBtn" title="修改分组">${icon('folder')}<span>${escapeHtml(g)}</span></button>`
-                : `<button type="button" class="notes-meta-chip notes-meta-chip-add" id="notesEditGroupBtn" title="设置分组">${icon('folder')}<span>分组</span></button>`;
+                : `<button type="button" class="notes-meta-chip notes-meta-chip-add" id="notesEditGroupBtn" title="${t('设置分组')}">${icon('folder')}<span>${t('分组')}</span></button>`;
         }
         // keep hidden inputs in sync for save path
         if ($('#notesTagsInput')) $('#notesTagsInput').value = (note?.tags || []).join(', ');
@@ -623,7 +623,7 @@ export function createNotesController({
         if (!menu) return;
         const tags = state.allTags;
         menu.innerHTML = `
-            <button type="button" class="notes-menu-item${state.tagFilter === 'all' ? ' active' : ''}" data-tag-value="all"><span>全部标签</span></button>
+            <button type="button" class="notes-menu-item${state.tagFilter === 'all' ? ' active' : ''}" data-tag-value="all"><span>${t('全部标签')}</span></button>
             ${tags.map((t) => `<button type="button" class="notes-menu-item${state.tagFilter === t ? ' active' : ''}" data-tag-value="${escapeHtml(t)}"><span>${escapeHtml(t)}</span></button>`).join('')}`;
     }
 
@@ -646,8 +646,8 @@ export function createNotesController({
         bar.classList.remove('force-hidden');
         bar.innerHTML = `
             <div class="notes-filter-banner">
-                <span>已筛选关联连接 <code>${escapeHtml(state.connectionFilter)}</code></span>
-                <button type="button" class="notes-text-btn" id="notesClearConnectionFilter">清除</button>
+                <span>${t('已筛选关联连接')} <code>${escapeHtml(state.connectionFilter)}</code></span>
+                <button type="button" class="notes-text-btn" id="notesClearConnectionFilter">${t('清除')}</button>
             </div>`;
         $('#notesClearConnectionFilter')?.addEventListener('click', () => {
             state.connectionFilter = '';
@@ -1059,7 +1059,7 @@ export function createNotesController({
             modal.innerHTML = `
                 <div class="notes-dialog notes-dialog-md" role="dialog" aria-modal="true" aria-label="共享设置">
                     <div class="notes-dialog-head">
-                        <h2 class="notes-dialog-title">共享设置</h2>
+                        <h2 class="notes-dialog-title">${t('共享设置')}</h2>
                         <button type="button" class="notes-icon-btn" id="notesShareModalClose" aria-label="关闭">${icon('close')}</button>
                     </div>
                     <p class="notes-dialog-message">共享后其他用户可读此笔记，不可编辑。默认私有。</p>

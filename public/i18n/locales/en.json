@@ -1483,5 +1483,7 @@
   "已保存私钥": "Private key saved",
   "无私钥": "No private key",
   "有口令": "Has passphrase",
-  "暂无 SSH 密钥": "No SSH keys"
+  "暂无 SSH 密钥": "No SSH keys",
+  "清除": "Clear",
+  "已筛选关联连接": "Filtered by linked connection"
 }
