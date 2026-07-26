@@ -13,6 +13,7 @@ const REPO = path.resolve(import.meta.dirname, '..');
 let tmpDir;
 let child = null;
 let port = 39100 + Math.floor(Math.random() * 500);
+let aiHostPort = port + 1000;
 
 function startServer() {
     return new Promise((resolve, reject) => {
@@ -21,6 +22,8 @@ function startServer() {
             HTTP_ENABLED: 'true',
             HTTPS_ENABLED: 'false',
             PORT: String(port),
+            ZEPHYR_AI_HOST_LISTEN: `127.0.0.1:${aiHostPort}`,
+            ZEPHYR_AI_PLATFORM_HOST_URL: `http://127.0.0.1:${aiHostPort}`,
             ZEPHYR_DATA_DIR: tmpDir,
             ZEPHYR_DATA_MLKEM768_KEY_FILE: path.join(tmpDir, 'crypto', 'key.json'),
             ENCRYPTION_KEY: 'session-restart-test-key',

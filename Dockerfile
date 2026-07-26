@@ -156,7 +156,7 @@ RUN echo "=== runtime diagnostics ===" && \
 ENV ZEPHYR_AI_LISTEN=127.0.0.1:8450
 ENV ZEPHYR_AI_URL=http://127.0.0.1:8450
 ENV ZEPHYR_AI_DATA=/app/data/zephyr-ai
-ENV ZEPHYR_AI_PLATFORM_HOST_URL=https://127.0.0.1:3443
+ENV ZEPHYR_AI_PLATFORM_HOST_URL=http://127.0.0.1:3080
 # ZEPHYR_AI_ADMIN_TOKEN / ZEPHYR_AI_PLATFORM_HOST_TOKEN: set via env_file or -e
 # (same value). If empty, entrypoint generates a per-boot token into the data dir.
 

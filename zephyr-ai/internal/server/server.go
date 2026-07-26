@@ -284,12 +284,15 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 
 	ticket := s.issueTicket(req.UserID, run.ID, req.SessionID)
 
-	// Build tools
-	reg := s.buildToolRegistry(r.Context(), req.UserID, req.SessionID, run.ID, req.MCPServers, req.ContextJSON)
+	// Build tools. Platform catalog is mandatory: running without it makes the
+	// model falsely claim that Zephyr tools do not exist.
+	reg, err := s.buildToolRegistry(r.Context(), req.UserID, req.SessionID, run.ID, req.MCPServers, req.ContextJSON)
+	if err != nil {
+		_ = s.store.UpdateRunStatus(run.ID, "failed", err.Error(), nil)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "code": "platform_tools_unavailable", "error": err.Error()})
+		return
+	}
 	reg = agent.FilterToolsForMode(reg, req.Mode)
-	_ = builtin.RegisterHistoryTools(reg, &builtin.HistoryDeps{
-		Archive: s.archive, UserID: req.UserID, SessionID: req.SessionID,
-	})
 
 	// Permission engine + session grants as allow
 	eng := permission.NewEngine(req.Permission)
@@ -398,7 +401,7 @@ func (s *Server) launchRun(runID string, hub *sseHub, cfg agent.Config) {
 }
 
 // buildToolRegistry reconstructs registry (MCP + platform host + history).
-func (s *Server) buildToolRegistry(ctx context.Context, userID, sessionID, runID string, servers []mcp.ServerConfig, contextJSON json.RawMessage) *tool.Registry {
+func (s *Server) buildToolRegistry(ctx context.Context, userID, sessionID, runID string, servers []mcp.ServerConfig, contextJSON json.RawMessage) (*tool.Registry, error) {
 	reg := tool.NewRegistry()
 	for _, mc := range servers {
 		if _, err := s.mcp.Connect(ctx, mc); err != nil {
@@ -409,17 +412,17 @@ func (s *Server) buildToolRegistry(ctx context.Context, userID, sessionID, runID
 	_ = s.mcp.RegisterAll(ctx, reg)
 	if s.host != nil {
 		if err := platform.RegisterFromHost(ctx, reg, s.host, userID, sessionID, runID, contextJSON); err != nil {
-			s.log.Warn("platform tools register failed", "err", err)
+			return nil, fmt.Errorf("platform_tools_unavailable: %w", err)
 		}
 	}
 	_ = builtin.RegisterHistoryTools(reg, &builtin.HistoryDeps{
 		Archive: s.archive, UserID: userID, SessionID: sessionID,
 	})
-	return reg
+	return reg, nil
 }
 
 // rebuildTools reconstructs registry for resume from raw MCP JSON.
-func (s *Server) rebuildTools(ctx context.Context, userID, sessionID, runID string, mcpRaw, contextJSON json.RawMessage) *tool.Registry {
+func (s *Server) rebuildTools(ctx context.Context, userID, sessionID, runID string, mcpRaw, contextJSON json.RawMessage) (*tool.Registry, error) {
 	var servers []mcp.ServerConfig
 	if len(mcpRaw) > 0 {
 		_ = json.Unmarshal(mcpRaw, &servers)
@@ -551,7 +554,11 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 	// one-shot: allow this exact tool for the resume decision via Resume path (not rule)
 	eng := permission.NewEngine(pol)
 
-	reg := s.rebuildTools(r.Context(), userID, sessionID, runID, st.MCPServers, st.Context)
+	reg, err := s.rebuildTools(r.Context(), userID, sessionID, runID, st.MCPServers, st.Context)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "code": "platform_tools_unavailable", "error": err.Error()})
+		return
+	}
 
 	s.mu.Lock()
 	hub := s.emitters[runID]
@@ -652,7 +659,11 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		pol.Allow = append(pol.Allow, permission.Rule(a))
 	}
 	eng := permission.NewEngine(pol)
-	reg := s.rebuildTools(r.Context(), userID, sessionID, runID, st.MCPServers, st.Context)
+	reg, err := s.rebuildTools(r.Context(), userID, sessionID, runID, st.MCPServers, st.Context)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "code": "platform_tools_unavailable", "error": err.Error()})
+		return
+	}
 
 	s.mu.Lock()
 	hub := s.emitters[runID]

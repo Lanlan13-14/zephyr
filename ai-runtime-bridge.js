@@ -169,12 +169,13 @@ function mergeSkills(skills) {
  */
 function registerAiHostRoutes(app, deps) {
     const checkHost = (req, res, next) => {
+        const remote = String(req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+        if (!['127.0.0.1', '::1'].includes(remote)) {
+            return res.status(403).json({ ok: false, error: 'loopback_only' });
+        }
         const tok = req.headers['x-ai-host-admin'] || '';
-        if (!HOST_TOKEN || tok !== HOST_TOKEN) {
-            // allow loopback without token only if HOST_TOKEN empty (dev)
-            if (HOST_TOKEN) {
-                return res.status(401).json({ ok: false, error: 'unauthorized' });
-            }
+        if (HOST_TOKEN && tok !== HOST_TOKEN) {
+            return res.status(401).json({ ok: false, error: 'unauthorized' });
         }
         next();
     };

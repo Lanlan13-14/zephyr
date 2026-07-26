@@ -83,6 +83,7 @@ const {
     registerAiHostRoutes,
 } = require('./ai-runtime-bridge');
 const { buildIntentRoutingHint } = require('./ai-intent-routing');
+const { parseLoopbackListen } = require('./ai-host-listener');
 const {
     getImageExt,
     isBrowserImageExt,
@@ -119,6 +120,9 @@ const SSH_STATS_ENABLED = process.env.SSH_STATS_ENABLED !== 'false';
 const APP_VERSION = getAppVersion();
 const AGENT_RELEASE = getAgentRelease();
 const app = express();
+const aiHostApp = express();
+const AI_HOST_LISTEN = String(process.env.ZEPHYR_AI_HOST_LISTEN || '127.0.0.1:3080');
+let aiHostServer = null;
 
 function applyCrossOriginIsolationHeaders(req, res, next) {
     // rdp-wasm WASM client uses SharedArrayBuffer for Go runtime.
@@ -2192,6 +2196,7 @@ async function zipBuffer(files) {
 initData();
 app.use(express.json({ limit: '24mb' }));
 app.use(requireSameOrigin);
+aiHostApp.use(express.json({ limit: '24mb' }));
 
 app.post('/api/auth/login', async (req, res) => {
     const { username, password, captchaToken, remember } = req.body || {};
@@ -3645,7 +3650,7 @@ const aiHostDeps = {
     upload,
     handleServiceError,
 };
-registerAiHostRoutes(app, aiHostDeps);
+registerAiHostRoutes(aiHostApp, aiHostDeps);
 
 /* Go AI runtime control API (sessions/runs). Legacy /api/ai/chat remains. */
 function handleAiRuntimeError(res, err) {
@@ -6192,6 +6197,9 @@ app.get('/healthz', (req, res) => res.status(200).json({ ok: true, instanceId: I
 
 // 兜底路由
 app.get('*', (req, res) => {
+    if (req.url.startsWith('/internal/')) {
+        return res.status(404).json({ ok: false, error: { code: 'not_found', message: 'Endpoint not found' } });
+    }
     if (req.url.startsWith('/api/')) {
         return res.status(404).json({ ok: false, error: { code: 'not_found', message: 'API endpoint not found' } });
     }
@@ -8461,10 +8469,17 @@ async function startServer() {
         entries: dataDirEntries,
         dockerHint: 'Docker 部署请确认宿主机数据卷已挂载到 /app/data，否则连接数据会随容器重建而丢失。',
     });
+    const aiHostListen = parseLoopbackListen(AI_HOST_LISTEN);
+    aiHostServer = http.createServer(aiHostApp);
     await Promise.all([
         HTTP_ENABLED ? new Promise((resolve) => server.listen(PORT, resolve)) : Promise.resolve(),
         httpsServer ? new Promise((resolve) => httpsServer.listen(HTTPS_PORT, resolve)) : Promise.resolve(),
+        new Promise((resolve, reject) => {
+            aiHostServer.once('error', reject);
+            aiHostServer.listen(aiHostListen.port, aiHostListen.host, resolve);
+        }),
     ]);
+    console.log(`🔒 Zephyr AI Tool Host 运行在 http://${aiHostListen.host}:${aiHostListen.port}（仅 loopback）`);
     if (HTTP_ENABLED) console.log(`🌬️  Zephyr HTTP 服务运行在 http://localhost:${PORT}`);
     else console.log('🔒 Zephyr HTTP 服务已禁用（设置 HTTP_ENABLED=true 可重新启用）');
     if (httpsServer) console.log(`🔐 Zephyr HTTPS 服务运行在 https://localhost:${HTTPS_PORT}`);

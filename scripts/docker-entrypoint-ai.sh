@@ -24,17 +24,10 @@ export ZEPHYR_AI_PLATFORM_HOST_TOKEN="${ZEPHYR_AI_PLATFORM_HOST_TOKEN:-$ZEPHYR_A
 export ZEPHYR_AI_URL="${ZEPHYR_AI_URL:-http://127.0.0.1:8450}"
 export ZEPHYR_AI_LISTEN="$AI_LISTEN"
 export ZEPHYR_AI_DATA="$AI_DATA"
-# Platform host must reach Node. Prefer loopback HTTPS only if Node listens there;
-# default HTTP internal is set by Dockerfile; override when Node port differs.
-# Platform tool RPC target (Node). Prefer explicit env. Defaults try HTTPS :3443
-# then HTTP :3080 — Go client skips TLS verify only for loopback HTTPS.
-if [ -z "${ZEPHYR_AI_PLATFORM_HOST_URL:-}" ]; then
-  if [ "${HTTPS_ENABLED:-true}" != "false" ]; then
-    export ZEPHYR_AI_PLATFORM_HOST_URL="https://127.0.0.1:${HTTPS_PORT:-3443}"
-  else
-    export ZEPHYR_AI_PLATFORM_HOST_URL="http://127.0.0.1:${PORT:-3080}"
-  fi
-fi
+# Node exposes platform Tool RPC on a dedicated loopback-only listener. It is
+# deliberately separate from public HTTP/HTTPS and is never published by Docker.
+export ZEPHYR_AI_HOST_LISTEN="${ZEPHYR_AI_HOST_LISTEN:-127.0.0.1:3080}"
+export ZEPHYR_AI_PLATFORM_HOST_URL="${ZEPHYR_AI_PLATFORM_HOST_URL:-http://127.0.0.1:3080}"
 
 echo "[entrypoint] starting zephyr-ai on $AI_LISTEN data=$AI_DATA"
 /usr/local/bin/zephyr-ai &

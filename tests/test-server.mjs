@@ -13,6 +13,7 @@ export class TestServer {
     constructor() {
         this.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zephyr-test-'));
         this.port = nextPort++;
+        this.aiHostPort = nextPort++;
         this.proc = null;
         this.instanceId = null;
     }
@@ -23,6 +24,8 @@ export class TestServer {
             HTTP_ENABLED: 'true',
             HTTPS_ENABLED: 'false',
             PORT: String(this.port),
+            ZEPHYR_AI_HOST_LISTEN: `127.0.0.1:${this.aiHostPort}`,
+            ZEPHYR_AI_PLATFORM_HOST_URL: `http://127.0.0.1:${this.aiHostPort}`,
             ZEPHYR_DATA_DIR: this.dir,
             ZEPHYR_DATA_MLKEM768_KEY_FILE: path.join(this.dir, 'crypto', 'key.json'),
             ENCRYPTION_KEY: 'integration-test-key',
