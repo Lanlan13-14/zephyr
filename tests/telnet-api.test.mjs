@@ -71,7 +71,7 @@ test('deeplink prepare + test for telnet:// works', async () => {
     assert.equal(testRes.body.ok, true);
 });
 
-test('PUT forces TELNET connections back to direct; keeps password, clears privateKey/route', async () => {
+test('PUT keeps TELNET proxy route and password while clearing SSH target credentials', async () => {
     const created = await server.api(adminCookie, 'POST', '/api/connections', {
         name: 'telnet-edit',
         host: '10.1.1.1',
@@ -82,6 +82,10 @@ test('PUT forces TELNET connections back to direct; keeps password, clears priva
     });
     assert.equal(created.status, 200);
     const id = created.body.connection.id;
+    const proxy = await server.api(adminCookie, 'POST', '/api/proxies', {
+        name: 'telnet-test-proxy', type: 'socks5', host: '127.0.0.1', port: 1080,
+    });
+    assert.equal(proxy.status, 200, JSON.stringify(proxy.body));
     const updated = await server.api(adminCookie, 'PUT', `/api/connections/${id}`, {
         protocol: 'TELNET',
         host: '10.1.1.1',
@@ -90,12 +94,13 @@ test('PUT forces TELNET connections back to direct; keeps password, clears priva
         password: 'inband-secret',
         privateKey: '-----BEGIN FAKE-----',
         connectionMode: 'proxy',
-        proxyId: 'whatever',
+        proxyId: proxy.body.proxy.id,
         encoding: 'gbk',
     });
     assert.equal(updated.status, 200, JSON.stringify(updated.body));
     assert.equal(updated.body.connection.protocol, 'TELNET');
-    assert.equal(updated.body.connection.connectionMode, 'direct');
+    assert.equal(updated.body.connection.connectionMode, 'proxy');
+    assert.equal(updated.body.connection.proxyId, proxy.body.proxy.id);
     // Password is stored (masked in API response as ****** or hasPassword).
     assert.ok(
         updated.body.connection.hasPassword === true

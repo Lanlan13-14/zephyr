@@ -35,7 +35,7 @@ test('canonical connection lifecycle supports TELNET without credential leaks', 
         args: {
             name: 'ai-telnet-lifecycle', protocol: 'TELNET', host: '127.0.0.1', port: 1,
             username: 'ops', encoding: 'gbk',
-            connectionMode: 'jump', jumpHostIds: ['must-be-cleared-for-telnet'],
+            connectionMode: 'direct',
         },
     });
     assert.equal(pendingCreate.status, 200);

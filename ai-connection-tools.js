@@ -103,17 +103,12 @@ function applyProtocolRules(connection) {
     connection.connectionMode = CONNECTION_MODES.includes(connection.connectionMode) ? connection.connectionMode : 'direct';
     connection.sshKeyId = String(connection.sshKeyId || '');
     connection.encoding = String(connection.encoding || 'utf-8').slice(0, 80);
+    connection.proxyId = connection.connectionMode === 'proxy' ? (connection.proxyId || null) : null;
+    connection.jumpHostIds = connection.connectionMode === 'jump' ? strings(connection.jumpHostIds, 12) : [];
+    connection.jumpHostId = connection.jumpHostIds[0] || null;
     if (protocol === 'TELNET') {
-        connection.connectionMode = 'direct';
-        connection.proxyId = null;
-        connection.jumpHostId = null;
-        connection.jumpHostIds = [];
         connection.sshKeyId = '';
         connection.privateKey = '';
-    } else {
-        connection.proxyId = connection.connectionMode === 'proxy' ? (connection.proxyId || null) : null;
-        connection.jumpHostIds = connection.connectionMode === 'jump' ? strings(connection.jumpHostIds, 12) : [];
-        connection.jumpHostId = connection.jumpHostIds[0] || null;
     }
     if (!String(connection.name || '').trim() || !String(connection.host || '').trim() || (protocol === 'SSH' && !String(connection.username || '').trim())) {
         throw new HttpError(400, 'invalid_connection', protocol === 'SSH' ? '名称、主机、用户名不能为空' : '名称、主机不能为空');

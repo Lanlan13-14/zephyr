@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260726-password-code-layout1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260726-password-code-layout1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260726-telnet-routes1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260726-telnet-routes1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -1728,7 +1728,8 @@ function updateProtocolFields({ preservePort = true } = {}) {
     }
     $('#connSshKey')?.closest('.form-group')?.classList.toggle('force-hidden', protocol !== 'SSH');
     $('#connPrivateKey')?.closest('.form-group')?.classList.toggle('force-hidden', protocol !== 'SSH');
-    // Telnet is cleartext and has no SSH jump/proxy chain support.
+    // Telnet remains cleartext end-to-end, but its TCP transport can use the
+    // same proxy or SSH jump route selector as SSH/RDP/VNC.
     // Password is kept visible for in-band auto-login (still plaintext on wire).
     $('#connPassword')?.closest('.form-group')?.classList.toggle('force-hidden', false);
     $('#connEncodingGroup')?.classList.toggle('force-hidden', protocol !== 'TELNET');
@@ -1736,8 +1737,7 @@ function updateProtocolFields({ preservePort = true } = {}) {
     $('#telnetUsernameHint')?.classList.toggle('force-hidden', protocol !== 'TELNET');
     $('#rdpSettingsPanel')?.classList.toggle('force-hidden', protocol !== 'RDP');
     $('#rdpDomainGroup')?.classList.toggle('force-hidden', protocol !== 'RDP');
-    $('.advanced-route-panel')?.classList.toggle('force-hidden', protocol === 'TELNET');
-    if (protocol === 'TELNET') setRouteMode?.('direct');
+    $('.advanced-route-panel')?.classList.remove('force-hidden');
     updateConnectionSecretRevealChrome(protocol);
     console.debug('[conn-protocol]', 'protocol fields updated', { protocol, defaultPort, usernameRequired: protocol === 'SSH' });
 }
@@ -2295,8 +2295,7 @@ function updateRdpTouchSettingsUi() {
 
 function connectionPayload({ forTest = false } = {}) {
     const protocol = String($('#connProtocol').value || 'SSH').toUpperCase();
-    // Telnet has no jump/proxy chain yet — force direct.
-    const mode = protocol === 'TELNET' ? 'direct' : ($('#connMode').value || 'direct');
+    const mode = $('#connMode').value || 'direct';
     const proxyId = mode === 'proxy' ? ($('#connRoute')?.value || '') : '';
     const jumpHostIds = mode === 'jump' ? [...new Set($$('#jumpRouteList [data-jump-route-select]').map((el) => el.value).filter(Boolean))] : [];
     const defaultPort = protocol === 'RDP' ? 3389 : protocol === 'VNC' ? 5900 : protocol === 'TELNET' ? 23 : 22;
