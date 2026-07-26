@@ -4,8 +4,8 @@ import {
     fitWTerm as xtermFitWTerm,
     proposeDimensions as xtermProposeDimensions,
     getWTermCellMetrics as xtermGetCellMetrics,
-} from './wterm-xterm-fit.js?v=20260726-telnet-routes1';
-import { t, initI18n } from './i18n/runtime.js?v=20260726-telnet-routes1';
+} from './wterm-xterm-fit.js?v=20260726-history-feel1';
+import { t, initI18n } from './i18n/runtime.js?v=20260726-history-feel1';
 window.__zephyrT = t;
 import {
     createSshKeyboard,
