@@ -39,15 +39,17 @@ test('listToolCatalog exposes platform tools with risk flags', () => {
     const catalog = listToolCatalog({ permissions: { notesRead: true, notesWrite: true, browser: true, memory: true, webSearch: true, webFetch: true, remoteExecute: true, fileRead: true, fileWrite: true } });
     assert.ok(catalog.length >= 15);
     const names = new Set(catalog.map((t) => t.name));
-    for (const n of ['list_connections', 'remote_execute', 'note_search', 'ui_action']) {
+    for (const n of ['connection_list_v1', 'remote_execute', 'note_search', 'ui_action']) {
         assert.ok(names.has(n), `missing ${n}`);
     }
     const remote = catalog.find((t) => t.name === 'remote_execute');
     assert.equal(remote.readOnly, false);
-    assert.ok(remote.risk === 'high' || remote.risk === 'destructive');
-    const list = catalog.find((t) => t.name === 'list_connections');
+    assert.equal(remote.risk, 'R2');
+    assert.equal(remote.confirmation, 'always');
+    const list = catalog.find((t) => t.name === 'connection_list_v1');
     assert.equal(list.readOnly, true);
-    assert.equal(list.risk, 'low');
+    assert.equal(list.risk, 'R0');
+    assert.equal(list.confirmation, 'never');
 });
 
 test('STATIC_PLATFORM_CATALOG names are unique', () => {
@@ -61,5 +63,5 @@ test('listPlatformToolCatalog prefers dynamic catalog', () => {
 });
 
 test('executeAiToolForHost requires deps', async () => {
-    await assert.rejects(() => executeAiToolForHost('list_connections', {}, {}), /deps required/);
+    await assert.rejects(() => executeAiToolForHost('connection_list_v1', {}, {}), /deps required/);
 });

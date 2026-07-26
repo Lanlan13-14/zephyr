@@ -50,8 +50,8 @@ function toToolResult(toolId, policy, value, durationMs) {
     };
 }
 
-async function executeCanonicalTool({ toolId, schema, args, ctx, authorize, execute }) {
-    const policy = executionPolicyForTool(toolId);
+async function executeCanonicalTool({ toolId, schema, args, ctx, authorize, execute, policy: explicitPolicy }) {
+    const policy = explicitPolicy || executionPolicyForTool(toolId);
     if (!policy) return execute();
 
     const input = args === undefined ? {} : args;

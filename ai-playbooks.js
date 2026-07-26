@@ -1,6 +1,9 @@
 'use strict';
 
+const { OPERATIONS_PLAYBOOKS } = require('./ai-operations-playbooks');
+
 const PLAYBOOKS = Object.freeze([
+    ...OPERATIONS_PLAYBOOKS,
     Object.freeze({
         id: 'capability-discovery-v1',
         title: '能力发现与工具选择',

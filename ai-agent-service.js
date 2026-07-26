@@ -16,6 +16,7 @@ const remoteDesktopTools = require('./ai-remote-desktop-tools');
 const agentDeviceTools = require('./ai-agent-device-tools');
 const secretRefs = require('./ai-secret-refs');
 const contextBudget = require('./ai-context-budget');
+const { policyForExtendedTool, EXTENDED_CAPABILITIES } = require('./ai-extended-capabilities');
 const { PLAYBOOKS } = require('./ai-playbooks');
 
 const DEFAULT_TOOL_CALL_LIMIT = 0;
@@ -686,8 +687,8 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'agent_file_rename_v1', description: '在非只读 Agent 共享目录重命名或移动路径；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_rename_v1 } });
     tools.push({ type: 'function', function: { name: 'agent_file_delete_v1', description: '删除 Agent 共享目录中的路径；递归删除风险更高，需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_delete_v1 } });
     tools.push({ type: 'function', function: { name: 'secret_ref_list_v1', description: '为当前用户可使用且已保存秘密的 SSH 密钥或代理签发短期不透明 secretRef。只返回引用和元数据，绝不返回秘密值。', parameters: CANONICAL_TOOL_SCHEMAS.secret_ref_list_v1 } });
-    tools.push({ type: 'function', function: { name: 'list_connections', description: '列出 Zephyr 中可用的 SSH/RDP/VNC 连接（不含密码/私钥）；只有 SSH 支持远程命令和文件工具。兼容旧接口，新增功能请优先使用 connection_list_v1。', parameters: { type: 'object', properties: {}, additionalProperties: false } } });
-    tools.push({ type: 'function', function: { name: 'list_zephyr_resources', description: '列出 Zephyr 本地资源：连接、代理、SSH 密钥库、跳板机、代码片段。只返回脱敏信息。', parameters: { type: 'object', properties: { resources: { type: 'array', items: { type: 'string', enum: ['connections', 'proxies', 'sshKeys', 'jumpHosts', 'snippets'] } } } } } });
+    // Legacy aggregate/list aliases are not exposed to the model. Use the
+    // canonical resource-specific list/get v1 tools above.
     // Legacy mutating asset tools intentionally stay out of the model catalog.
     // Their broad schemas accepted passwords/private keys and bypassed revision
     // protection. Human UI routes remain available; AI must use canonical _v1
@@ -704,7 +705,7 @@ function toolDefinitions(ai = {}) {
         tools.push({ type: 'function', function: { name: 'note_update', description: '修改当前用户拥有的笔记。需要 noteId 和 expectedRevision；未传字段保持不变。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' }, title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } }, expectedRevision: { type: 'number' } }, required: ['noteId'] } } });
         tools.push({ type: 'function', function: { name: 'note_delete', description: '删除当前用户拥有的笔记（软删除，移入回收站）。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
     }
-    tools.push({ type: 'function', function: { name: 'terminal_read_output', description: '读取用户当前 Zephyr SSH 终端输出快照（屏幕/scrollback 文本、当前输入框内容、连接信息）。当用户问“终端里显示什么/刚才命令输出/当前屏幕结果”时优先调用。', parameters: { type: 'object', properties: { tabId: { type: 'string' }, maxChars: { type: 'number' }, allVisible: { type: 'boolean' } } } } });
+    // terminal_read_output was replaced by authoritative terminal_read_v1.
     tools.push({ type: 'function', function: { name: 'remote_desktop_capture_v1', description: '获取 RDP/VNC 最新画面并签发 captureId。后续鼠标/键盘/文本操作必须绑定该 captureId；需要前端实时采集时会暂停并恢复同一运行。', parameters: CANONICAL_TOOL_SCHEMAS.remote_desktop_capture_v1 } });
     tools.push({ type: 'function', function: { name: 'remote_desktop_action_v1', description: '基于 captureId 对 RDP/VNC 执行工具栏、文本、快捷键或鼠标操作。操作后前端必须返回新的截图和 actionId；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.remote_desktop_action_v1 } });
     tools.push({ type: 'function', function: { name: 'remote_desktop_verify_v1', description: '验证远程桌面操作前后的 captureId 不同且与 actionId 对应，形成闭环证据。', parameters: CANONICAL_TOOL_SCHEMAS.remote_desktop_verify_v1 } });
@@ -731,7 +732,7 @@ function toolDefinitions(ai = {}) {
         tools.push({ type: 'function', function: { name: 'list_env_vars', description: '列出 AI 专用环境变量名称和说明，不返回值。', parameters: { type: 'object', properties: {} } } });
         tools.push({ type: 'function', function: { name: 'get_env_var', description: '读取 AI 专用环境变量的值。敏感操作，需要用户确认。', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } });
     }
-    tools.push({ type: 'function', function: { name: 'open_connection', description: '在用户当前 Zephyr 页面里直接打开一个已存在的 SSH/RDP/VNC 连接，相当于用户点击连接卡片。必须传 connectionId；如果用户给的是连接名称（如 hytron），先用 list_connections 获取并匹配 id。不要用 connection_create / connection_update 来打开已有连接。', parameters: { type: 'object', properties: { connectionId: { type: 'string', description: '已有连接的 id，不是名称；名称需先 list_connections 匹配。' } }, required: ['connectionId'] } } });
+    // open_connection was replaced by connection_open_v1.
     tools.push({ type: 'function', function: { name: 'plan_task', description: '创建执行计划，返回 planId；后续用 plan_update 更新步骤状态。', parameters: { type: 'object', properties: { title: { type: 'string' }, steps: { type: 'array', items: { type: 'string' } }, risk: { type: 'string' } }, required: ['title', 'steps'] } } });
     tools.push({ type: 'function', function: { name: 'plan_update', description: '更新任务计划：步骤状态、暂停/继续、失败重试、追加日志。', parameters: { type: 'object', properties: { planId: { type: 'string' }, status: { type: 'string', enum: ['planned', 'running', 'paused', 'completed', 'failed', 'cancelled'] }, pause: { type: 'boolean' }, resume: { type: 'boolean' }, retryFailed: { type: 'boolean' }, note: { type: 'string' }, steps: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, index: { type: 'number' }, status: { type: 'string', enum: ['pending', 'running', 'paused', 'completed', 'failed', 'skipped', 'retrying'] }, note: { type: 'string' }, error: { type: 'string' } } } } }, required: ['planId'] } } });
     tools.push({ type: 'function', function: { name: 'plan_delete', description: '删除一个任务计划。', parameters: { type: 'object', properties: { planId: { type: 'string' } }, required: ['planId'] } } });
@@ -742,7 +743,12 @@ function toolDefinitions(ai = {}) {
         tools.push({ type: 'function', function: { name: 'remote_file_rollback', description: '用 remote_write_file 返回的 snapshotId 回滚远程文件到写入前内容；若原路径不存在则删除新文件。敏感操作需要确认。', parameters: { type: 'object', properties: { snapshotId: { type: 'string' } }, required: ['snapshotId'] } } });
         tools.push({ type: 'function', function: { name: 'remote_file_snapshot_list', description: '列出当前用户最近的远程文件写前快照（不含全文）。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, path: { type: 'string' }, limit: { type: 'number' } } } } });
     }
-    return tools;
+    return tools.map((tool) => {
+        if (!tool.function) return tool;
+        const parameters = tool.function.parameters || { type: 'object', properties: {} };
+        const strict = parameters.additionalProperties === false ? parameters : closeJsonSchema(parameters);
+        return strict === parameters ? tool : { ...tool, function: { ...tool.function, parameters: strict } };
+    });
 }
 function convertMessagesForProvider(messages = [], systemPrompt = '', limits = {}) {
     const compacted = compactConversationHistory(messages, limits);
@@ -1606,6 +1612,8 @@ function listFileSnapshots(deps, userId, { connectionId, path: filePath, limit =
 
 function isSensitiveTool(name, args = {}) {
     const value = String(name || '');
+    const extended = policyForExtendedTool(value);
+    if (extended) return extended.confirmation === 'always';
     if (value === 'ui_action') return String(args.action || '') === 'terminal_send_input' && args.run !== false;
     return ['remote_execute', 'remote_write_file', 'remote_file_rollback', 'get_env_var', 'connection_create', 'connection_update', 'connection_delete', 'connection_rename_v1', 'proxy_save', 'proxy_delete', 'ssh_key_save', 'ssh_key_delete', 'jump_host_save', 'jump_host_delete'].includes(value);
 }
@@ -1726,7 +1734,15 @@ async function maybeRequireConfirmation(toolName, args, ctx, run, deps) {
 function requireCanonicalConfirmation(toolName, args, ctx, deps) {
     return createPendingConfirmation(toolName, args, ctx, deps);
 }
-function canonicalToolAuthorization(toolName, args, ctx) {
+function canonicalToolAuthorization(toolName, args, ctx, deps = {}) {
+    if (String(toolName || '').startsWith('note_') && deps.userSettingsService && ctx?.user) {
+        const effective = deps.userSettingsService.effective(ctx.user);
+        if (!effective?.notes?.enabled) throw new HttpError(403, 'notes_disabled', '当前用户未启用笔记功能');
+    }
+    if (toolName === 'note_update' || toolName === 'note_delete') {
+        if (!deps.notesService || !ctx?.user) throw new Error('笔记服务未配置');
+        deps.notesService.get(ctx.user, String(args?.noteId || ''));
+    }
     if (!ctx?.resourceService || !ctx?.user) return;
     if (args?.sshKeySecretRef && ['connection_create_v1', 'connection_update_v1'].includes(toolName)) {
         secretRefs.resolveResourceId(args.sshKeySecretRef, ctx.user, 'ssh_key', ctx.resourceService);
@@ -1762,12 +1778,24 @@ function executeCanonicalAiTool(toolName, args, ctx, deps, execute) {
         schema: CANONICAL_TOOL_SCHEMAS[toolName],
         args,
         ctx: { ...ctx, requireConfirmation: () => requireCanonicalConfirmation(toolName, args, ctx, deps) },
-        authorize: () => canonicalToolAuthorization(toolName, args, ctx),
+        authorize: () => canonicalToolAuthorization(toolName, args, ctx, deps),
         execute,
     });
 }
 
 async function executeAiTool(toolName, args = {}, ctx, deps) {
+    const extendedPolicy = policyForExtendedTool(toolName);
+    if (extendedPolicy && !ctx?._extendedCanonical) {
+        return executeCanonicalTool({
+            toolId: toolName,
+            schema: toolDefinitions(deps.storage.getSettings().ai || {}).find((item) => item.function?.name === toolName)?.function?.parameters,
+            args,
+            ctx: { ...ctx, requireConfirmation: () => requireCanonicalConfirmation(toolName, args, ctx, deps) },
+            authorize: () => canonicalToolAuthorization(toolName, args, ctx, deps),
+            execute: () => executeAiTool(toolName, args, { ...ctx, _extendedCanonical: true }, deps),
+            policy: extendedPolicy,
+        });
+    }
     const ai = deps.storage.getSettings().ai || {};
     const p = ai.permissions || {};
     if (String(toolName || '').startsWith('note_') && deps.userSettingsService && ctx?.user) {
@@ -1776,9 +1804,19 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
     }
     switch (toolName) {
         case 'capability_search':
-            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => ({
-                capabilities: searchAvailableCapabilities(args.query || '', { limit: args.limit || 10 }),
-            }));
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const query = String(args.query || '').trim().toLowerCase();
+                const base = searchAvailableCapabilities(args.query || '', { limit: args.limit || 10 });
+                const terms = query.split(/\s+/).filter(Boolean);
+                const extended = EXTENDED_CAPABILITIES
+                    .filter((item) => {
+                        if (!terms.length) return true;
+                        const haystack = [item.id, item.title, item.playbookId, ...item.toolIds].join(' ').toLowerCase();
+                        return terms.every((term) => haystack.includes(term));
+                    })
+                    .map((item) => ({ capabilityId: item.id, title: item.title, mode: 'ai', state: 'implemented', risk: item.risk, confirmation: item.confirmation, toolIds: [...item.toolIds], playbookId: item.playbookId }));
+                return { capabilities: [...base, ...extended].slice(0, clampNumber(args.limit, 1, 20, 10)) };
+            });
         case 'connection_list_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 const protocol = String(args.protocol || '').toUpperCase();
@@ -3212,15 +3250,17 @@ function listToolCatalog(ai = {}) {
         const readOnly = isReadOnlyToolName(name);
         const risk = riskForToolName(name, readOnly);
         const canonicalPolicy = executionPolicyForTool(name);
+        const extendedPolicy = policyForExtendedTool(name);
+        const policy = canonicalPolicy || extendedPolicy;
         return {
             name,
             description,
             parameters,
-            readOnly: canonicalPolicy ? canonicalPolicy.risk === 'R0' : readOnly,
-            risk: canonicalPolicy ? canonicalPolicy.risk : risk,
-            confirmation: canonicalPolicy ? canonicalPolicy.confirmation : (readOnly ? 'never' : 'legacy'),
-            capabilityId: canonicalPolicy?.capabilityId || '',
-            parallelSafe: canonicalPolicy ? canonicalPolicy.risk === 'R0' : readOnly,
+            readOnly: policy ? policy.readOnly : readOnly,
+            risk: policy ? policy.risk : risk,
+            confirmation: policy ? policy.confirmation : (readOnly ? 'never' : 'legacy'),
+            capabilityId: policy?.capabilityId || '',
+            parallelSafe: policy ? policy.parallelSafe : readOnly,
         };
     });
     const coverage = reportCapabilityCoverage(catalog);

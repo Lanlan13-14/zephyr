@@ -314,6 +314,8 @@ function executionPolicyForTool(toolId = '') {
         risk: capability.risk,
         confirmation: capability.confirmation,
         playbookId: capability.playbookId,
+        readOnly: capability.risk === 'R0',
+        parallelSafe: capability.risk === 'R0',
     });
 }
 

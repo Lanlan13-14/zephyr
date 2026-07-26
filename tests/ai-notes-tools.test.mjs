@@ -11,6 +11,12 @@ let aCookie;
 let bCookie;
 let aNoteId;
 
+async function runTool(cookie, tool, args = {}) {
+    const first = await server.api(cookie, 'POST', '/api/ai/tools/run', { tool, args, context: {} });
+    if (!first.body?.result?.confirmationRequired) return first;
+    return server.api(cookie, 'POST', `/api/ai/confirm/${first.body.result.confirmation.id}`, { approve: true });
+}
+
 before(async () => {
     server = new TestServer();
     await server.start();
@@ -37,14 +43,10 @@ after(async () => {
 });
 
 test('note_create via tools/run creates a note owned by the calling user', async () => {
-    const res = await server.api(aCookie, 'POST', '/api/ai/tools/run', {
-        tool: 'note_create',
-        args: { title: 'AI Created', content: 'hello from AI', tags: ['ai'], group: 'ops' },
-        context: {},
-    });
+    const res = await runTool(aCookie, 'note_create', { title: 'AI Created', content: 'hello from AI', tags: ['ai'], group: 'ops' });
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.ok(res.body.result?.note?.noteId, 'must return noteId');
-    aNoteId = res.body.result.note.noteId;
+    assert.ok(res.body.result?.data?.note?.noteId, 'must return noteId');
+    aNoteId = res.body.result.data.note.noteId;
 });
 
 test('note_search finds notes by keyword; returns summary not full content', async () => {
@@ -54,7 +56,7 @@ test('note_search finds notes by keyword; returns summary not full content', asy
         context: {},
     });
     assert.equal(res.status, 200);
-    const notes = res.body.result?.notes || [];
+    const notes = res.body.result?.data?.notes || [];
     assert.ok(notes.some((n) => n.noteId === aNoteId), 'must find the created note');
     // Summary must not contain the full content
     const found = notes.find((n) => n.noteId === aNoteId);
@@ -69,7 +71,7 @@ test('note_get returns full content for the owner', async () => {
         context: {},
     });
     assert.equal(res.status, 200);
-    assert.equal(res.body.result.note.content, 'hello from AI');
+    assert.equal(res.body.result.data.note.content, 'hello from AI');
 });
 
 test('user B cannot read user A note via note_get (cross-user isolation)', async () => {
