@@ -8103,6 +8103,11 @@ async function loadSettings() {
         const el = document.getElementById(id);
         if (el) syncToggleSelectFace(el);
     });
+    /* 空闲预热动画引擎：懒加载会让首次展开先静态弹出、引擎就绪后再补一遍
+     * FLIP（首次与后续动画不一致）。预热后首次点击即与后续完全一致。 */
+    const warmSelectMotion = () => sshKeyMotion._ensure();
+    if ('requestIdleCallback' in window) window.requestIdleCallback(warmSelectMotion, { timeout: 4000 });
+    else window.setTimeout(warmSelectMotion, 2000);
 }
 
 function isNotesEnabled() {

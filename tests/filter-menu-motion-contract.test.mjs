@@ -85,6 +85,9 @@ test('trigger/menu click routes through open/close helpers; no direct classList.
 test('non-motion shells keep instant behavior via isMotionFilterShell guard', () => {
     assert.match(appJs, /function isMotionFilterShell\(shell\)/);
     assert.match(appJs, /MOTION_FILTER_SELECT_IDS\.includes\(shell\.dataset\?\.selectId/);
+    /* Engine warmed at idle: first open animates like later ones. */
+    assert.match(appJs, /requestIdleCallback\(warmSelectMotion, \{ timeout: 4000 \}\)/);
+    assert.match(appJs, /setTimeout\(warmSelectMotion, 2000\)/);
     const openFn = extractFn(appJs, 'openToggleSelectMenu');
     const closeFn = extractFn(appJs, 'closeToggleSelectMenu');
     assert.match(openFn, /if \(!isMotionFilterShell\(shell\)\)/);

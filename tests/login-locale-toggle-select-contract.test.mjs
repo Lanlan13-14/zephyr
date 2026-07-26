@@ -20,6 +20,10 @@ test('login locale selects become toggle-selects with motion open/close', () => 
     assert.match(js, /shell\.className = 'ui-toggle-select login-locale-select';/);
     /* All four login-page cards get enhanced at boot. */
     assert.match(js, /enhanceLoginLocaleSelects\(\);/);
+    /* Engine is warmed at idle so the FIRST open animates identically to
+     * later ones (lazy import would pop statically, then restart the FLIP). */
+    assert.match(js, /requestIdleCallback\(warmLoginMotion, \{ timeout: 2500 \}\)/);
+    assert.match(js, /setTimeout\(warmLoginMotion, 800\)/);
     for (const id of ['#localeSelectLogin', '#localeSelectTotp', '#localeSelectForgot', '#localeSelectChange']) {
         assert.ok(js.includes(`'${id}'`), id);
     }

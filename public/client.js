@@ -502,6 +502,12 @@ async function bootLoginPage() {
     await initI18n({ applyDom: true });
     enhanceLoginLocaleSelects();
     syncLocaleSelects(getLocale());
+    /* Warm the motion engine at idle: lazy import would otherwise pop the
+     * menu statically on first open, then restart with the FLIP once the
+     * engine arrives — first open must animate identically to later ones. */
+    const warmLoginMotion = () => loginSelectMotion._ensure();
+    if ('requestIdleCallback' in window) window.requestIdleCallback(warmLoginMotion, { timeout: 2500 });
+    else window.setTimeout(warmLoginMotion, 800);
     api('/api/auth/me').then((data) => {
         if (data.mustChangePassword) showChangePassword();
         else window.location.href = '/app.html';
