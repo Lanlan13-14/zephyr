@@ -1,4 +1,5 @@
 import { applyZephyrColorScheme, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
+import { t, initI18n, setLocale, getLocale, applyDomI18n } from './i18n/runtime.js?v=20260726-i18n1';
 
 const $ = (sel) => document.querySelector(sel);
 const errorBanner = $('#errorBanner');
@@ -52,7 +53,7 @@ function loadScriptOnce(id, src) {
     if (existing?.dataset.loaded === 'true') return Promise.resolve();
     if (existing?.dataset.loading === 'true') return new Promise((resolve, reject) => {
         existing.addEventListener('load', resolve, { once: true });
-        existing.addEventListener('error', () => reject(new Error('CAPTCHA 脚本加载失败')), { once: true });
+        existing.addEventListener('error', () => reject(new Error(t('CAPTCHA 脚本加载失败'))), { once: true });
     });
     return new Promise((resolve, reject) => {
         const script = document.createElement('script');
@@ -62,7 +63,7 @@ function loadScriptOnce(id, src) {
         script.defer = true;
         script.dataset.loading = 'true';
         script.onload = () => { script.dataset.loaded = 'true'; script.dataset.loading = 'false'; resolve(); };
-        script.onerror = () => reject(new Error('CAPTCHA 脚本加载失败'));
+        script.onerror = () => reject(new Error(t('CAPTCHA 脚本加载失败')));
         document.head.appendChild(script);
     });
 }
@@ -92,7 +93,7 @@ async function renderCaptcha(config = captchaConfig) {
         return;
     }
     if (!captchaConfig.siteKey) {
-        markCaptchaError('CAPTCHA 已启用但未配置 Site Key / AppId');
+        markCaptchaError(t('CAPTCHA 已启用但未配置 Site Key / AppId'));
         return;
     }
     box.className = 'captcha-box loading';
@@ -110,7 +111,7 @@ async function renderCaptcha(config = captchaConfig) {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'btn';
-            button.textContent = '点击完成人机验证';
+            button.textContent = t('点击完成人机验证');
             button.addEventListener('click', () => {
                 const captcha = new window.TencentCaptcha(captchaConfig.siteKey, (res) => {
                     if (res.ret === 0) setCaptchaToken(JSON.stringify({ ticket: res.ticket, randstr: res.randstr }));
@@ -127,7 +128,7 @@ async function renderCaptcha(config = captchaConfig) {
             trigger.id = 'aliyunCaptchaBtn';
             trigger.type = 'button';
             trigger.className = 'btn';
-            trigger.textContent = '点击完成人机验证';
+            trigger.textContent = t('点击完成人机验证');
             box.append(target, trigger);
             window.initAliyunCaptcha({
                 SceneId: captchaConfig.siteKey,
@@ -143,10 +144,10 @@ async function renderCaptcha(config = captchaConfig) {
                 getInstance: (instance) => { captchaState.widgetId = instance; }
             });
         } else {
-            markCaptchaError(`不支持的 CAPTCHA provider：${captchaConfig.provider}`);
+            markCaptchaError(t('不支持的 CAPTCHA provider：{provider}', { provider: captchaConfig.provider }));
         }
     } catch (err) {
-        markCaptchaError(err.message || 'CAPTCHA 初始化失败');
+        markCaptchaError(err.message || t('CAPTCHA 初始化失败'));
     }
 }
 
@@ -165,7 +166,7 @@ function resetCaptcha() {
 
 function getCaptchaTokenOrThrow() {
     if (!captchaConfig.enabled) return '';
-    if (!captchaState.token) throw new Error('请先完成人机验证');
+    if (!captchaState.token) throw new Error(t('请先完成人机验证'));
     return captchaState.token;
 }
 
@@ -193,7 +194,7 @@ function setFavicon(icon = DEFAULT_BRAND_ICON) {
 function applyBrand(appearance = {}) {
     const brandName = String(appearance.brandName || DEFAULT_BRAND_NAME).trim() || DEFAULT_BRAND_NAME;
     const brandIcon = String(appearance.brandIcon || DEFAULT_BRAND_ICON).trim() || DEFAULT_BRAND_ICON;
-    document.title = `${brandName} - 登录`;
+    document.title = t('{brand} - 登录', { brand: brandName });
     applyZephyrColorScheme(appearance || {}, { theme: getPreferredTheme(), page: 'login', executeCustomJs: false });
     setFavicon(brandIcon);
     document.querySelectorAll('.login-card .logo').forEach((el) => { el.innerHTML = iconHtml(brandIcon); });
@@ -235,7 +236,7 @@ function api(path, options = {}) {
         ...options,
     }).then(async (res) => {
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || '请求失败');
+        if (!res.ok) throw new Error(data.error || t('请求失败'));
         return data;
     });
 }
@@ -296,11 +297,44 @@ async function loadBeian() {
     } catch { beianFooter.innerHTML = ''; }
 }
 
-api('/api/auth/me').then((data) => {
-    if (data.mustChangePassword) showChangePassword();
-    else window.location.href = '/app.html';
-}).catch(() => {});
-loadBeian();
+function syncLocaleSelects(locale = getLocale()) {
+    ['#localeSelectLogin', '#localeSelectTotp', '#localeSelectForgot', '#localeSelectChange'].forEach((sel) => {
+        const el = $(sel);
+        if (el) el.value = locale === 'en' ? 'en' : 'zh-CN';
+    });
+}
+
+async function changeLocale(next) {
+    await setLocale(next, { persist: true, applyDom: true });
+    syncLocaleSelects(getLocale());
+    applyBrand(publicSettings.appearance || {});
+    applyDomI18n(document);
+}
+
+['#localeSelectLogin', '#localeSelectTotp', '#localeSelectForgot', '#localeSelectChange'].forEach((sel) => {
+    $(sel)?.addEventListener('change', (e) => {
+        changeLocale(e.target.value).catch((err) => console.warn('[i18n]', err));
+    });
+});
+
+async function bootLoginPage() {
+    await initI18n({ applyDom: true });
+    syncLocaleSelects(getLocale());
+    api('/api/auth/me').then((data) => {
+        if (data.mustChangePassword) showChangePassword();
+        else window.location.href = '/app.html';
+    }).catch(() => {});
+    loadBeian();
+}
+
+bootLoginPage().catch((err) => {
+    console.warn('[i18n] init failed, continuing with source strings', err);
+    api('/api/auth/me').then((data) => {
+        if (data.mustChangePassword) showChangePassword();
+        else window.location.href = '/app.html';
+    }).catch(() => {});
+    loadBeian();
+});
 
 function initRememberMe() {
     const remembered = localStorage.getItem(REMEMBER_USERNAME_KEY) || '';
@@ -340,18 +374,18 @@ $('#forgotLink').addEventListener('click', (e) => { e.preventDefault(); showForg
 $('#backLoginLink').addEventListener('click', (e) => { e.preventDefault(); showLogin(); });
 forgotRequestForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { const captchaToken = getCaptchaTokenOrThrow(); await api('/api/auth/forgot-password/request', { method: 'POST', body: JSON.stringify({ email: $('#forgotEmail').value, captchaToken }) }); forgotRequestForm.classList.add('force-hidden'); forgotResetForm.classList.remove('force-hidden'); showError(forgotErrorBanner, '如果邮箱匹配，验证码已发送'); }
+    try { const captchaToken = getCaptchaTokenOrThrow(); await api('/api/auth/forgot-password/request', { method: 'POST', body: JSON.stringify({ email: $('#forgotEmail').value, captchaToken }) }); forgotRequestForm.classList.add('force-hidden'); forgotResetForm.classList.remove('force-hidden'); showError(forgotErrorBanner, t('如果邮箱匹配，验证码已发送')); }
     catch (err) { resetCaptcha(); showError(forgotErrorBanner, err.message); }
 });
 forgotResetForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { await api('/api/auth/forgot-password/reset', { method: 'POST', body: JSON.stringify({ email: $('#forgotEmail').value, code: $('#resetCode').value, newPassword: $('#resetPassword').value }) }); showLogin(); showError(errorBanner, '密码已重置，请重新登录'); }
+    try { await api('/api/auth/forgot-password/reset', { method: 'POST', body: JSON.stringify({ email: $('#forgotEmail').value, code: $('#resetCode').value, newPassword: $('#resetPassword').value }) }); showLogin(); showError(errorBanner, t('密码已重置，请重新登录')); }
     catch (err) { showError(forgotErrorBanner, err.message); }
 });
 
 $('#passkeyLoginBtn').addEventListener('click', async () => {
     try {
-        if (!window.PublicKeyCredential) throw new Error('当前浏览器不支持 Passkey');
+        if (!window.PublicKeyCredential) throw new Error(t('当前浏览器不支持 Passkey'));
         const username = ($('#username')?.value || '').trim();
         const options = await api('/api/passkeys/login/options', {
             method: 'POST',
@@ -371,7 +405,7 @@ changePasswordForm.addEventListener('submit', async (e) => {
     const currentPassword = $('#currentPassword').value;
     const newPassword = $('#newPassword').value;
     const confirmPassword = $('#confirmPassword').value;
-    if (newPassword !== confirmPassword) return showError(changeErrorBanner, '两次输入的新密码不一致');
+    if (newPassword !== confirmPassword) return showError(changeErrorBanner, t('两次输入的新密码不一致'));
     try {
         await api('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
         window.location.href = '/app.html';

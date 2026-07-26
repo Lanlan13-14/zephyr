@@ -2,6 +2,7 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange } from './i18n/runtime.js?v=20260726-i18n1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -150,11 +151,11 @@ function apiMaybeForm(path, options = {}) {
 function toast(message) { const el = $('#toast'); if (!el) { console.warn('[toast]', message); return; } el.textContent = message; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2600); }
 window.addEventListener('error', (event) => {
     console.error('[app-runtime]', event.error || event.message);
-    if (document.readyState === 'complete') toast(`前端错误：${event.message || '未知错误'}`);
+    if (document.readyState === 'complete') toast(`前端错误：${event.message || t('未知错误')}`);
 });
 window.addEventListener('unhandledrejection', (event) => {
     console.error('[app-runtime]', event.reason);
-    if (document.readyState === 'complete') toast(`前端异步错误：${event.reason?.message || event.reason || '未知错误'}`);
+    if (document.readyState === 'complete') toast(`前端异步错误：${event.reason?.message || event.reason || t('未知错误')}`);
 });
 function terminalFrameById(tabId = '') {
     const id = String(tabId || '').trim();
@@ -205,18 +206,18 @@ function offerSharedClipboardToSshTargets(sourceTabId = '', files = []) {
     const names = fileClipboardNames(files);
     const targets = terminalTabs.filter((t) => !closingTerminalTabs.has(t.id) && t.id !== sourceTabId && t.page !== 'rdp' && t.page !== 'novnc' && t.iframe);
     if (!targets.length) {
-        toast(names ? `已复制远程文件：${names}；打开 SSH 文件管理器后可粘贴` : '已复制远程文件');
+        toast(names ? `已复制远程文件：${names}；打开 SSH 文件管理器后可粘贴` : t('已复制远程文件'));
         return;
     }
     targets.forEach((target) => postToTerminalTab(target.id, { type: 'shared-file-clipboard-available', files, sourceTabId, sourcePage: terminalPageForTab(sourceTabId) || 'rdp' }));
-    toast(names ? `已复制 RDP 文件：${names}，可到 SSH 文件管理器粘贴` : '已复制 RDP 文件，可到 SSH 文件管理器粘贴');
+    toast(names ? `已复制 RDP 文件：${names}，可到 SSH 文件管理器粘贴` : t('已复制 RDP 文件，可到 SSH 文件管理器粘贴'));
 }
 function offerSharedClipboardToRdpTargets(sourceTabId = '', files = [], sourcePage = '') {
     const names = fileClipboardNames(files);
     const page = sourcePage || terminalPageForTab(sourceTabId) || 'rdp';
     const targets = terminalTabs.filter((t) => !closingTerminalTabs.has(t.id) && t.id !== sourceTabId && (t.page === 'rdp' || t.page === 'novnc') && t.iframe);
     if (!targets.length) {
-        toast(names ? `已复制文件：${names}；打开 RDP 后可粘贴` : '已复制文件');
+        toast(names ? `已复制文件：${names}；打开 RDP 后可粘贴` : t('已复制文件'));
         return;
     }
     targets.forEach((target) => postToTerminalTab(target.id, {
@@ -225,7 +226,7 @@ function offerSharedClipboardToRdpTargets(sourceTabId = '', files = [], sourcePa
         sourceTabId,
         sourcePage: page,
     }));
-    toast(names ? `已复制文件：${names}，可到 RDP 远程桌面粘贴` : '已复制文件，可到 RDP 粘贴');
+    toast(names ? `已复制文件：${names}，可到 RDP 远程桌面粘贴` : t('已复制文件，可到 RDP 粘贴'));
 }
 function handleSharedClipboardMessage(data = {}) {
     const sourceTabId = String(data.tabId || '');
@@ -560,11 +561,11 @@ function applyAppearance(appearance = getAppearance()) {
 function readImageAsDataUrl(file) {
     return new Promise((resolve, reject) => {
         if (!file) return resolve('');
-        if (!/^image\/(png|jpeg|gif|webp|svg\+xml)$/i.test(file.type)) return reject(new Error('仅支持 PNG/JPEG/GIF/WebP/SVG 图标'));
-        if (file.size > 512 * 1024) return reject(new Error('图标文件不能超过 512KB'));
+        if (!/^image\/(png|jpeg|gif|webp|svg\+xml)$/i.test(file.type)) return reject(new Error(t('仅支持 PNG/JPEG/GIF/WebP/SVG 图标')));
+        if (file.size > 512 * 1024) return reject(new Error(t('图标文件不能超过 512KB')));
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(new Error('读取图标失败'));
+        reader.onerror = () => reject(new Error(t('读取图标失败')));
         reader.readAsDataURL(file);
     });
 }
@@ -683,7 +684,7 @@ async function saveAppearance(e) {
     applyAppearance(settings.appearance || appearance);
     applyTheme(getPreferredTheme());
     console.info('[appearance-client]', 'appearance saved', { brandName: appearance.brandName, customIcon: appearance.brandIcon !== DEFAULT_BRAND_ICON, autoThemeEnabled, theme });
-    toast('个性化设置已保存');
+    toast(t('个性化设置已保存'));
 }
 async function resetAppearance() {
     const appearance = { ...getAppearance(), brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
@@ -697,7 +698,7 @@ async function resetAppearance() {
     applyAppearance(settings.appearance || appearance);
     applyTheme(getPreferredTheme());
     console.info('[appearance-client]', 'brand reset to defaults');
-    toast('名称和图标已重置');
+    toast(t('名称和图标已重置'));
 }
 
 function syncAppearanceSchemeControls(appearance = getAppearance()) {
@@ -783,7 +784,7 @@ function syncAppearanceSchemeControls(appearance = getAppearance()) {
         const url = bg.type === 'url' ? ($('#terminalBgUrl')?.value.trim() || bg.url || '') : (bg.url || '');
         const hasBg = (bg.type === 'upload' || bg.type === 'url') && url;
         $('#terminalBgPreview').style.backgroundImage = hasBg ? `linear-gradient(rgba(0,0,0,.16), rgba(0,0,0,.16)), url("${String(url).replace(/"/g, '%22')}")` : '';
-        $('#terminalBgPreview').textContent = hasBg ? '已选择背景' : '未设置背景';
+        $('#terminalBgPreview').textContent = hasBg ? t('已选择背景') : t('未设置背景');
     }
 }
 function readCustomThemeColors() {
@@ -983,11 +984,11 @@ function setupColorPickers() {
 function readTerminalBackgroundAsDataUrl(file) {
     return new Promise((resolve, reject) => {
         if (!file) return resolve('');
-        if (!/^image\/(png|jpeg|jpg|gif|webp|svg\+xml|avif)$/i.test(file.type)) return reject(new Error('终端背景仅支持 PNG/JPEG/GIF/WebP/AVIF/SVG'));
-        if (file.size > 12 * 1024 * 1024) return reject(new Error('终端背景图片不能超过 12MB'));
+        if (!/^image\/(png|jpeg|jpg|gif|webp|svg\+xml|avif)$/i.test(file.type)) return reject(new Error(t('终端背景仅支持 PNG/JPEG/GIF/WebP/AVIF/SVG')));
+        if (file.size > 12 * 1024 * 1024) return reject(new Error(t('终端背景图片不能超过 12MB')));
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(new Error('读取终端背景失败'));
+        reader.onerror = () => reject(new Error(t('读取终端背景失败')));
         reader.readAsDataURL(file);
     });
 }
@@ -1028,7 +1029,7 @@ function setupAppearanceControls() {
 
     $('#terminalBgOpacity')?.addEventListener('input', () => { if ($('#terminalBgOpacityValue')) $('#terminalBgOpacityValue').textContent = `${Math.round(Number($('#terminalBgOpacity').value || 0.35) * 100)}%`; });
     $('#terminalBgBlur')?.addEventListener('input', () => { if ($('#terminalBgBlurValue')) $('#terminalBgBlurValue').textContent = `${Math.round(Number($('#terminalBgBlur').value || 0))}px`; });
-    $('#terminalBgFile')?.addEventListener('change', async (e) => { try { const dataUrl = await readTerminalBackgroundAsDataUrl(e.target.files?.[0]); if (!dataUrl) return; $('#terminalBgDataUrl').value = dataUrl; $('#terminalBgSource').value = 'upload'; syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { type: 'upload', url: dataUrl, fit: $('#terminalBgFit')?.value || 'cover', opacity: Number($('#terminalBgOpacity')?.value || 0.35), blur: Number($('#terminalBgBlur')?.value || 0) } }); toast('终端背景已载入，保存外观后生效'); } catch (err) { e.target.value = ''; toast(err.message); } });
+    $('#terminalBgFile')?.addEventListener('change', async (e) => { try { const dataUrl = await readTerminalBackgroundAsDataUrl(e.target.files?.[0]); if (!dataUrl) return; $('#terminalBgDataUrl').value = dataUrl; $('#terminalBgSource').value = 'upload'; syncAppearanceSchemeControls({ ...getAppearance(), terminalBackground: { type: 'upload', url: dataUrl, fit: $('#terminalBgFit')?.value || 'cover', opacity: Number($('#terminalBgOpacity')?.value || 0.35), blur: Number($('#terminalBgBlur')?.value || 0) } }); toast(t('终端背景已载入，保存外观后生效')); } catch (err) { e.target.value = ''; toast(err.message); } });
 }
 function safeJsonParseClient(value, fallback = null) { try { return JSON.parse(String(value || '').trim()); } catch (_) { return fallback; } }
 function escapeAttr(str) { return escapeHtml(str).replace(/'/g, '&#39;'); }
@@ -1094,15 +1095,15 @@ function renderMarkdown(md, options = {}) {
 // Expose for any non-module consumers / notes fallback.
 try { window.renderMarkdown = renderMarkdown; } catch (_) {}
 function splitCsv(value) { return String(value || '').split(/[\n,，]+/).map((x) => x.trim()).filter(Boolean); }
-function fmtTime(ts) { return ts ? new Date(ts).toLocaleString() : '从未连接'; }
-function requestSensitiveSecret(actionText = '查看已保存敏感信息') {
+function fmtTime(ts) { return ts ? new Date(ts).toLocaleString() : t('从未连接'); }
+function requestSensitiveSecret(actionText = t('查看已保存敏感信息')) {
     const usingTotp = !!securityStatus.user?.totpEnabled;
     const message = usingTotp
         ? `${actionText}\n请输入 6 位 TOTP 动态验证码：`
         : `${actionText}\n请输入当前登录密码：`;
     const secret = prompt(message);
-    if (secret === null) throw new Error('已取消验证');
-    if (!String(secret).trim()) throw new Error(usingTotp ? '请输入动态验证码' : '请输入当前登录密码');
+    if (secret === null) throw new Error(t('已取消验证'));
+    if (!String(secret).trim()) throw new Error(usingTotp ? t('请输入动态验证码') : t('请输入当前登录密码'));
     console.debug('[secret-open]', 'sensitive reveal requested', { actionText, authType: usingTotp ? 'totp' : 'password' });
     return secret;
 }
@@ -1176,7 +1177,7 @@ function switchView(name) {
         if (leavingTerminal) scheduleTerminalSmartbarTopSync('switch-leave-terminal');
     }
     if (target === 'notes') {
-        notesController?.activate?.().catch((err) => toast(err.message || '加载笔记失败'));
+        notesController?.activate?.().catch((err) => toast(err.message || t('加载笔记失败')));
     }
     scheduleWorkspaceSave('view-change');
 }
@@ -1199,6 +1200,10 @@ const TOGGLE_SELECT_IDS = [
     'captchaProvider', 'colorSchemeSelect', 'themeModeSelect',
     'terminalBgSource', 'terminalBgFit', 'terminalMaxWindows',
     'terminalSmartbarOrder', 'terminalShortcutPlatform',
+    // Settings → 语言（与其它设置同源 toggle-select）
+    'languageSelect',
+    // 设置 → 语言（与其它设置同源 toggle-select）
+    'languageSelect',
     // AI 助理设置 / 供应商弹窗（与 CAPTCHA 同源 toggle-select）
     'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
     // Proxy modal
@@ -1478,7 +1483,7 @@ function renderCrisisHelpEmptyCard() {
 function connectionListEmptyHtml() {
     const q = $('#searchInput')?.value || '';
     if (isCrisisSearchQuery(q)) return renderCrisisHelpEmptyCard();
-    return '<div class="empty-card">暂无连接，点击右上角添加新连接。</div>';
+    return `<div class="empty-card">${t('暂无连接，点击右上角添加新连接。')}</div>`;
 }
 function filteredConnections() {
     const q = $('#searchInput').value.trim().toLowerCase(), proto = $('#protocolFilter').value, tag = $('#tagFilter').value, sort = $('#sortSelect').value;
@@ -1487,7 +1492,7 @@ function filteredConnections() {
 }
 function renderConnections() {
     refreshTagFilter();
-    $('#connectionTitle').textContent = `连接列表 (${connections.length})`;
+    $('#connectionTitle').textContent = t('连接列表 ({count})', { count: connections.length });
     const list = filteredConnections();
     $('#connectionGrid').innerHTML = list.length ? list.map((c) => {
         const caps = Array.isArray(c.capabilities) ? c.capabilities : [];
@@ -1495,39 +1500,39 @@ function renderConnections() {
         const canDelete = !caps.length || caps.includes('delete');
         const canUse = !caps.length || caps.includes('use') || caps.includes('control');
         const sourceBadge = c.owner === 'shared'
-            ? '<span class="connection-source-badge shared">共享</span>'
-            : (c.owner === 'own' ? '<span class="connection-source-badge">我的</span>' : '');
+            ? `<span class="connection-source-badge shared">${t('共享')}</span>`
+            : (c.owner === 'own' ? `<span class="connection-source-badge">${t('我的')}</span>` : '');
         return `<article class="connection-card"><div class="card-top"><span class="protocol-badge">${escapeHtml(c.protocol)}</span><div class="card-top-meta">${sourceBadge}<span class="last-time">${fmtTime(c.lastConnectedAt)}</span></div></div>
-        <h2>${escapeHtml(c.name)}</h2><p class="host-line">${escapeHtml(c.host)}:${escapeHtml(c.port)} · ${c.connectionMode === 'proxy' ? '代理' : c.connectionMode === 'jump' ? '跳板机' : '直连'}</p>
-        <div class="tag-row">${(c.tags || []).map((t) => `<span>${escapeHtml(t)}</span>`).join('')}</div><div class="remark-md">${renderMarkdown(c.remark || '暂无备注')}</div>
-        <div class="card-actions">${canEdit ? `<button class="tool-btn" data-edit="${c.id}">编辑</button>` : ''}${canDelete ? `<button class="tool-btn danger" data-delete="${c.id}">删除</button>` : ''}${canUse ? `<button class="btn btn-primary" data-connect="${c.id}">连接</button>` : '<button class="btn btn-primary" disabled title="仅观察">只读</button>'}</div></article>`;
+        <h2>${escapeHtml(c.name)}</h2><p class="host-line">${escapeHtml(c.host)}:${escapeHtml(c.port)} · ${c.connectionMode === 'proxy' ? t('代理') : c.connectionMode === 'jump' ? t('跳板机') : t('直连')}</p>
+        <div class="tag-row">${(c.tags || []).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="remark-md">${renderMarkdown(c.remark || t('暂无备注'))}</div>
+        <div class="card-actions">${canEdit ? `<button class="tool-btn" data-edit="${c.id}">${t('编辑')}</button>` : ''}${canDelete ? `<button class="tool-btn danger" data-delete="${c.id}">${t('删除')}</button>` : ''}${canUse ? `<button class="btn btn-primary" data-connect="${c.id}">${t('连接')}</button>` : `<button class="btn btn-primary" disabled title="${t('仅观察')}">${t('只读')}</button>`}</div></article>`;
     }).join('') : connectionListEmptyHtml();
     renderRemoteServers(); renderJumpOptions();
 }
 function activityRangeBounds(range = activityRange) {
     const end = new Date();
-    if (range === 'all') return { from: 0, to: 0, label: '全部时间' };
+    if (range === 'all') return { from: 0, to: 0, label: t('全部时间') };
     if (range === 'custom') {
         const startValue = $('#activityStartDate')?.value || '';
         const endValue = $('#activityEndDate')?.value || '';
         const from = startValue ? new Date(`${startValue}T00:00:00`).getTime() : 0;
         const to = endValue ? new Date(`${endValue}T23:59:59.999`).getTime() : 0;
-        return { from, to, label: startValue || endValue ? `${startValue || '最早'} 至 ${endValue || '现在'}` : '自定义范围' };
+        return { from, to, label: startValue || endValue ? `${startValue || t('最早')} 至 ${endValue || t('现在')}` : t('自定义范围') };
     }
     const fromDate = new Date(end);
     if (range === 'today') fromDate.setHours(0, 0, 0, 0);
     else fromDate.setDate(fromDate.getDate() - (range === '30d' ? 30 : 7));
-    return { from: fromDate.getTime(), to: 0, label: range === 'today' ? '今天' : (range === '30d' ? '近 30 天' : '近 7 天') };
+    return { from: fromDate.getTime(), to: 0, label: range === 'today' ? t('今天') : (range === '30d' ? t('近 30 天') : t('近 7 天')) };
 }
 function activityDetails(activity) {
-    const message = String(activity.message || '未知活动');
+    const message = String(activity.message || t('未知活动'));
     const connection = connections.find((item) => message.includes(item.name) || activity.connectionId === item.id);
-    const category = activity.category || (/登录|密码|TOTP|Passkey|用户/.test(message) ? '账户' : (/连接|服务器|跳板机|代理|SSH 密钥/.test(message) ? '连接' : (/设置|邮件|导入|日志/.test(message) ? '系统' : '操作')));
-    const outcome = activity.outcome || (/失败|拒绝|错误|超时/.test(message) ? '失败' : '成功');
+    const category = activity.category || (/登录|密码|TOTP|Passkey|用户/.test(message) ? t('账户') : (/连接|服务器|跳板机|代理|SSH 密钥/.test(message) ? t('连接') : (/设置|邮件|导入|日志/.test(message) ? t('系统') : t('操作'))));
+    const outcome = activity.outcome || (/失败|拒绝|错误|超时/.test(message) ? t('失败') : t('成功'));
     return {
         category,
         outcome,
-        actor: activity.actor || (activity.userId === myIdentity.userId ? '当前用户' : (activity.userId || '系统')),
+        actor: activity.actor || (activity.userId === myIdentity.userId ? t('当前用户') : (activity.userId || t('系统'))),
         protocol: activity.protocol || connection?.protocol || '—',
         target: activity.target || (connection ? `${connection.host}:${connection.port}` : '—'),
         sourceIp: activity.sourceIp || '—',
@@ -1542,11 +1547,11 @@ function renderActivities() {
     $('#activityRangeLabel').textContent = bounds.label;
     list.innerHTML = activities.length ? activities.map((activity) => {
         const detail = activityDetails(activity);
-        const outcomeClass = detail.outcome === '失败' ? 'failed' : 'success';
+        const outcomeClass = detail.outcome === t('失败') ? 'failed' : 'success';
         return `<article class="activity-detail-item">
             <div class="activity-detail-head">
                 <div class="activity-event-mark" data-category="${escapeHtml(detail.category)}" aria-hidden="true"></div>
-                <div class="activity-event-title"><h2>${escapeHtml(activity.message || '未知活动')}</h2><span class="activity-status ${outcomeClass}">${escapeHtml(detail.outcome)}</span></div>
+                <div class="activity-event-title"><h2>${escapeHtml(activity.message || t('未知活动'))}</h2><span class="activity-status ${outcomeClass}">${escapeHtml(detail.outcome)}</span></div>
                 <time datetime="${new Date(Number(activity.time || 0)).toISOString()}">${escapeHtml(fmtTime(activity.time))}</time>
             </div>
             <dl class="activity-meta-grid">
@@ -1645,7 +1650,7 @@ function renderSshKeyOptions(selected = '') {
     const select = $('#connSshKey');
     if (!select) return;
     const selectedId = String(selected || '');
-    select.innerHTML = '<option value="">不使用密钥库</option>' + sshKeys.map((k) => `<option value="${k.id}" ${selectedId === String(k.id) ? 'selected' : ''}>${escapeHtml(k.name)}${k.hasPassphrase ? '（有口令）' : ''}</option>`).join('');
+    select.innerHTML = '<option value="">不使用密钥库</option>' + sshKeys.map((k) => `<option value="${k.id}" ${selectedId === String(k.id) ? 'selected' : ''}>${escapeHtml(k.name)}${k.hasPassphrase ? t('（有口令）') : ''}</option>`).join('');
     select.value = selectedId;
     console.debug('[ssh-key-ui]', 'render connection key options', { selectedId, keyCount: sshKeys.length });
 }
@@ -1676,10 +1681,10 @@ function updateConnectionSecretRevealChrome(protocol = $('#connProtocol')?.value
         || (isSsh && (!!editingConnectionSecretState.hasPrivateKey || !!editingConnectionSecretState.sshKeyId))
     );
     revealGroup?.classList.toggle('force-hidden', !hasSavedSecret);
-    if (revealBtn) revealBtn.textContent = isSsh ? '查看已保存密码/私钥' : '查看已保存密码';
+    if (revealBtn) revealBtn.textContent = isSsh ? t('查看已保存密码/私钥') : t('查看已保存密码');
     if (hint) hint.textContent = isSsh
-        ? '编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。'
-        : '编辑时默认隐藏已保存密码；留空或保持星号不会覆盖已保存密码。';
+        ? t('编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。')
+        : t('编辑时默认隐藏已保存密码；留空或保持星号不会覆盖已保存密码。');
 }
 function updateProtocolFields({ preservePort = true } = {}) {
     const protocol = String($('#connProtocol')?.value || 'SSH').toUpperCase();
@@ -1690,10 +1695,10 @@ function updateProtocolFields({ preservePort = true } = {}) {
     if (usernameInput) {
         usernameInput.required = protocol === 'SSH';
         usernameInput.placeholder = protocol === 'TELNET'
-            ? '用户名（可选，终端内认证）'
+            ? t('用户名（可选，终端内认证）')
             : protocol === 'VNC'
-                ? '用户名（可选，取决于 VNC 服务）'
-                : '用户名';
+                ? t('用户名（可选，取决于 VNC 服务）')
+                : t('用户名');
     }
     $('#connSshKey')?.closest('.form-group')?.classList.toggle('force-hidden', protocol !== 'SSH');
     $('#connPrivateKey')?.closest('.form-group')?.classList.toggle('force-hidden', protocol !== 'SSH');
@@ -1938,13 +1943,13 @@ function setConnectionModalMode(mode = 'create', { source = 'dashboard', draft =
     const cred = $('#transientCredentialState');
     if (cred) {
         cred.classList.toggle('force-hidden', !(connectionModalMode === 'transient' && transientHasCredential));
-        cred.textContent = transientHasCredential ? '已载入一次性凭据' : '';
+        cred.textContent = transientHasCredential ? t('已载入一次性凭据') : '';
     }
     const connectBtn = $('#connectTransientBtn');
     if (connectBtn) {
         connectBtn.disabled = false;
-        connectBtn.title = connectionModalMode === 'ephemeral' ? '使用当前表单参数直接连接，不会写入主机库' : '';
-        connectBtn.textContent = '连接';
+        connectBtn.title = connectionModalMode === 'ephemeral' ? t('使用当前表单参数直接连接，不会写入主机库') : '';
+        connectBtn.textContent = t('连接');
     }
     // Name is only mandatory when persisting to the host library.
     if ($('#connName')) $('#connName').required = !isOneShot;
@@ -1959,7 +1964,7 @@ function applyEphemeralToggleFromUi() {
         token: '',
         ephemeral: on,
     });
-    $('#modalTitle').textContent = on ? '临时连接' : '添加服务器';
+    $('#modalTitle').textContent = on ? t('临时连接') : t('添加服务器');
     editingId = null;
     $('#connectionId') && ($('#connectionId').value = '');
 }
@@ -1980,8 +1985,8 @@ function prepareConnectionModalForm(conn = null, options = {}) {
         sshKeyId: conn?.sshKeyId || '',
     };
     $('#modalTitle').textContent = isTransientConnectionMode(connectionModalMode)
-        ? '临时连接'
-        : (editingId ? '编辑服务器' : '添加服务器');
+        ? t('临时连接')
+        : (editingId ? t('编辑服务器') : t('添加服务器'));
     $('#connectionId').value = editingId || '';
     setConnectionTestLatency();
     $('#connName').value = conn?.name || ''; $('#connProtocol').value = conn?.protocol || 'SSH'; $('#connHost').value = conn?.host || ''; $('#connPort').value = conn?.port || ($('#connProtocol').value === 'RDP' ? 3389 : $('#connProtocol').value === 'VNC' ? 5900 : $('#connProtocol').value === 'TELNET' ? 23 : 22); $('#connUsername').value = conn?.username || '';
@@ -1992,7 +1997,7 @@ function prepareConnectionModalForm(conn = null, options = {}) {
     // Transient credentials must never be written as a readable DOM value.
     if (connectionModalMode === 'transient' && conn?.hasTransientCredential) {
         $('#connPassword').value = '';
-        $('#connPassword').placeholder = '已载入一次性凭据（可覆盖）';
+        $('#connPassword').placeholder = t('已载入一次性凭据（可覆盖）');
     } else {
         $('#connPassword').placeholder = '';
         $('#connPassword').value = conn?.hasPassword ? '******' : '';
@@ -2299,17 +2304,17 @@ async function saveConnection(e) {
     // Hard guard: one-shot modes must never hit POST /api/connections.
     if (isTransientConnectionMode()) {
         if (connectionModalMode === 'ephemeral') {
-            await connectEphemeral().catch((err) => toast(err.message || '连接失败'));
+            await connectEphemeral().catch((err) => toast(err.message || t('连接失败')));
             return;
         }
-        toast('临时连接不会保存到主机库');
+        toast(t('临时连接不会保存到主机库'));
         return;
     }
     const payload = connectionPayload();
     if (editingId) await api(`/api/connections/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) });
     else await api('/api/connections', { method: 'POST', body: JSON.stringify(payload) });
     closeModal();
-    toast('连接已保存');
+    toast(t('连接已保存'));
     await loadConnections();
 }
 async function testConnection() {
@@ -2318,13 +2323,13 @@ async function testConnection() {
     const oldText = btn.textContent;
     btn.disabled = true;
     if (connectBtn) connectBtn.disabled = true;
-    btn.textContent = '测试中...';
-    setConnectionTestLatency('测试中...', 'pending');
+    btn.textContent = t('测试中...');
+    setConnectionTestLatency(t('测试中...'), 'pending');
     try {
         const payload = connectionPayload({ forTest: true });
         let result;
         if (connectionModalMode === 'transient') {
-            if (!transientToken) throw new Error('临时凭据已失效，请重新打开链接');
+            if (!transientToken) throw new Error(t('临时凭据已失效，请重新打开链接'));
             const overrides = {
                 name: payload.name, host: payload.host, port: payload.port,
                 username: payload.username, protocol: payload.protocol,
@@ -2348,9 +2353,9 @@ async function testConnection() {
             });
         }
         setConnectionTestLatency(`连接延迟：${result.durationMs}ms`, 'success');
-        toast(result.message || '连接测试成功');
+        toast(result.message || t('连接测试成功'));
     } catch (err) {
-        setConnectionTestLatency('测试失败', 'error');
+        setConnectionTestLatency(t('测试失败'), 'error');
         toast(err.message);
     } finally {
         btn.disabled = false;
@@ -2376,8 +2381,8 @@ function sanitizeCredentialValue(value) {
  */
 async function openEphemeralSession(payload) {
     const protocol = String(payload.protocol || 'SSH').toUpperCase();
-    if (!payload.host) throw new Error('主机不能为空');
-    if (protocol === 'SSH' && !payload.username) throw new Error('主机和用户名不能为空');
+    if (!payload.host) throw new Error(t('主机不能为空'));
+    if (protocol === 'SSH' && !payload.username) throw new Error(t('主机和用户名不能为空'));
 
     const createBody = {
         ...payload,
@@ -2396,7 +2401,7 @@ async function openEphemeralSession(payload) {
         body: JSON.stringify(createBody),
     });
     const connId = created?.connection?.id;
-    if (!connId) throw new Error('临时连接创建失败');
+    if (!connId) throw new Error(t('临时连接创建失败'));
 
     try {
         // skipConnectionsReload: ephemeral rows are filtered server-side and
@@ -2410,7 +2415,7 @@ async function openEphemeralSession(payload) {
             tab.transient = true;
             tab.ephemeral = true;
             tab.ephemeralConnectionId = connId;
-            if (!String(tab.name || '').includes('临时')) {
+            if (!String(tab.name || '').includes(t('临时'))) {
                 tab.name = `${tab.name || created.connection?.name || payload.host} · 临时`;
             }
         }
@@ -2447,16 +2452,16 @@ async function connectEphemeral() {
     if (connectionModalMode !== 'ephemeral') return;
     const btn = $('#connectTransientBtn');
     const testBtn = $('#testConnectionBtn');
-    if (btn) { btn.disabled = true; btn.textContent = '正在连接…'; }
+    if (btn) { btn.disabled = true; btn.textContent = t('正在连接…'); }
     if (testBtn) testBtn.disabled = true;
     try {
         const payload = connectionPayload({ forTest: true });
         await openEphemeralSession(payload);
         closeModal();
-        toast('正在建立临时连接…');
+        toast(t('正在建立临时连接…'));
     } catch (err) {
-        toast(err.message || '连接失败');
-        if (btn) { btn.disabled = false; btn.textContent = '连接'; }
+        toast(err.message || t('连接失败'));
+        if (btn) { btn.disabled = false; btn.textContent = t('连接'); }
         if (testBtn) testBtn.disabled = false;
     }
 }
@@ -2468,12 +2473,12 @@ async function connectTransient() {
     }
     if (connectionModalMode !== 'transient') return;
     if (!transientToken) {
-        toast('临时凭据已失效，请重新打开链接');
+        toast(t('临时凭据已失效，请重新打开链接'));
         return;
     }
     const btn = $('#connectTransientBtn');
     const testBtn = $('#testConnectionBtn');
-    if (btn) { btn.disabled = true; btn.textContent = '正在连接…'; }
+    if (btn) { btn.disabled = true; btn.textContent = t('正在连接…'); }
     if (testBtn) testBtn.disabled = true;
     try {
         const payload = connectionPayload({ forTest: true });
@@ -2529,10 +2534,10 @@ async function connectTransient() {
         renderTerminalTabs();
         switchView('terminal');
         renderTerminalTabs({ rebuildWorkspace: true });
-        toast('正在建立临时连接…');
+        toast(t('正在建立临时连接…'));
     } catch (err) {
-        toast(err.message || '连接失败');
-        if (btn) { btn.disabled = false; btn.textContent = '连接'; }
+        toast(err.message || t('连接失败'));
+        if (btn) { btn.disabled = false; btn.textContent = t('连接'); }
         if (testBtn) testBtn.disabled = false;
     }
 }
@@ -2547,7 +2552,7 @@ async function openTransientFromUri(uri) {
             transientToken: prepared.token,
         });
     } catch (err) {
-        toast(err.message || '无法打开临时连接');
+        toast(err.message || t('无法打开临时连接'));
     }
 }
 
@@ -2565,7 +2570,7 @@ async function openTransientFromToken(token) {
             transientToken: token,
         });
     } catch (err) {
-        toast(err.message || '临时凭据无效或已过期');
+        toast(err.message || t('临时凭据无效或已过期'));
     }
 }
 
@@ -2573,14 +2578,14 @@ async function revealConnectionSecrets() {
     if (!editingId || editingSecretLoaded) return;
     const protocol = String($('#connProtocol')?.value || 'SSH').toUpperCase();
     const isSsh = protocol === 'SSH';
-    const actionText = isSsh ? '查看已保存连接密码/私钥' : '查看已保存连接密码';
+    const actionText = isSsh ? t('查看已保存连接密码/私钥') : t('查看已保存连接密码');
     const secret = requestSensitiveSecret(actionText);
     const data = await api(`/api/connections/${editingId}/open`, { method: 'POST', body: JSON.stringify({ purpose: 'reveal', secret }) });
     $('#connPassword').value = data.connection?.password || '';
     if (isSsh) $('#connPrivateKey').value = data.connection?.privateKey || '';
     editingSecretLoaded = true;
     console.debug('[secret-open]', 'connection secrets loaded', { connectionId: editingId, protocol, hasPassword: !!data.connection?.password, hasPrivateKey: !!data.connection?.privateKey });
-    toast(isSsh ? '已载入保存的密码/私钥' : '已载入保存的密码');
+    toast(isSsh ? t('已载入保存的密码/私钥') : t('已载入保存的密码'));
 }
 
 function stableTerminalSessionId(connectionId, protocol = 'SSH') {
@@ -2657,7 +2662,7 @@ async function openConnection(id, options = {}) {
 }
 function openPlaceholderTab(c) {
     const tabId = `tab_${Date.now()}`;
-    terminalTabs.push({ id: tabId, name: c.name, protocol: c.protocol, status: '占位', iframe: false, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
+    terminalTabs.push({ id: tabId, name: c.name, protocol: c.protocol, status: t('占位'), iframe: false, createdAt: Date.now(), lastUsedAt: Date.now(), minimized: false });
     openOrderStack.push(tabId);
     activeTerminalTab = tabId;
     touchTerminalSession(tabId);
@@ -2968,14 +2973,14 @@ function terminalWindowMenu(t) {
     const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
     const winFullscreen = fullscreenElement?.classList?.contains('terminal-window') || fullscreenElement === workspace;
     const customFullscreen = workspace?.classList.contains('custom-fullscreen');
-    const fullscreenItem = (customFullscreen || winFullscreen) ? ['exit-fullscreen', '退出全屏'] : ['fullscreen', '全屏'];
+    const fullscreenItem = (customFullscreen || winFullscreen) ? ['exit-fullscreen', t('退出全屏')] : ['fullscreen', t('全屏')];
     let items;
     if (maxWindows <= 1 || visibleCount <= 1) {
-        items = compact ? [fullscreenItem, ['reconnect-mobile', '重连'], ['minimize', '最小化'], ['close', '关闭']] : [['minimize', '最小化'], ['close', '关闭']];
+        items = compact ? [fullscreenItem, ['reconnect-mobile', t('重连')], ['minimize', t('最小化')], ['close', t('关闭')]] : [['minimize', t('最小化')], ['close', t('关闭')]];
     } else if (maxWindows === 2 || visibleCount === 2) {
-        items = [fullscreenItem, ['left-half', '左半屏'], ['right-half', '右半屏'], ['minimize', '最小化'], ['close', '关闭']];
+        items = [fullscreenItem, ['left-half', t('左半屏')], ['right-half', t('右半屏')], ['minimize', t('最小化')], ['close', t('关闭')]];
     } else {
-        items = [fullscreenItem, ['left-half', '左半屏'], ['right-half', '右半屏'], ['right-top', '右侧 1/3 上半部'], ['right-bottom', '右侧 1/3 下半部'], ['left-two-thirds', '左侧 2/3'], ['right-two-thirds', '右侧 2/3'], ['minimize', '最小化'], ['close', '关闭']];
+        items = [fullscreenItem, ['left-half', t('左半屏')], ['right-half', t('右半屏')], ['right-top', t('右侧 1/3 上半部')], ['right-bottom', t('右侧 1/3 下半部')], ['left-two-thirds', t('左侧 2/3')], ['right-two-thirds', t('右侧 2/3')], ['minimize', t('最小化')], ['close', t('关闭')]];
     }
     return `<div class="terminal-window-menu" role="menu" style="--island-action-count:${items.length}">${items.map(([action, label]) => `<button data-window-action="${action}" data-window="${t.id}" title="${label}" aria-label="${label}">${label}</button>`).join('')}</div>`;
 }
@@ -3113,7 +3118,7 @@ function reconnectTerminalSession(tabId) {
     const t = getTerminalSession(tabId);
     if (!t) return false;
     restoreTerminalSession(tabId);
-    t.status = '重连中';
+    t.status = t('重连中');
     renderTerminalTabs({ rebuildWorkspace: false });
     let frame = document.querySelector(`#terminalWorkspace .terminal-frame[data-frame="${CSS.escape(tabId)}"]`);
     if (!frame?.contentWindow) {
@@ -3131,7 +3136,7 @@ function reconnectTerminalSession(tabId) {
     const timer = window.setTimeout(() => {
         terminalReconnectFallbackTimers.delete(tabId);
         const session = getTerminalSession(tabId);
-        if (!session || !session.iframe || session.status !== '重连中') return;
+        if (!session || !session.iframe || session.status !== t('重连中')) return;
         session.status = 'connecting';
         const liveFrame = document.querySelector(`#terminalWorkspace .terminal-frame[data-frame="${CSS.escape(tabId)}"]`);
         if (liveFrame?.src) {
@@ -3144,7 +3149,7 @@ function reconnectTerminalSession(tabId) {
         renderTerminalTabs({ rebuildWorkspace: true });
     }, 2400);
     terminalReconnectFallbackTimers.set(tabId, timer);
-    toast(`${t.protocol || '终端'} 正在重连...`);
+    toast(`${t.protocol || t('终端')} 正在重连...`);
     return true;
 }
 function getMinimizedKeepAliveSessions() {
@@ -4189,7 +4194,7 @@ function ensureFullscreenLoader() {
     return loader;
 }
 
-function showFullscreenLoading(text = '正在切换全屏...') {
+function showFullscreenLoading(text = t('正在切换全屏...')) {
     const workspace = $('#terminalWorkspace');
     const loader = ensureFullscreenLoader();
     if (!workspace || !loader) return;
@@ -4226,7 +4231,7 @@ async function fullscreenTerminalTab(tabId) {
     const workspace = $('#terminalWorkspace');
     const win = workspace?.querySelector(`.terminal-window[data-window="${CSS.escape(tabId)}"]`);
     if (!workspace || !win) return;
-    showFullscreenLoading(compact ? '正在进入移动端全屏...' : '正在切换为单窗口...');
+    showFullscreenLoading(compact ? t('正在进入移动端全屏...') : t('正在切换为单窗口...'));
     try {
         if (compact) {
             resetTerminalWorkspaceKeyboard({ force: true });
@@ -4835,7 +4840,7 @@ function renderAiProviderOptions() {
     if (!select) return;
     const current = ai.defaultProviderId || select.value || '';
     select.innerHTML = '<option value="">自动选择第一个可用供应商</option>'
-        + providers.map((p) => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.name || p.type || '供应商')}</option>`).join('');
+        + providers.map((p) => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.name || p.type || t('供应商'))}</option>`).join('');
     if (current && providers.some((p) => p.id === current)) select.value = current;
     else select.value = '';
     enhanceToggleSelect(select);
@@ -4864,8 +4869,8 @@ function renderAiHeaderSelectors() {
     const models = aiModelNames(p);
     const chosen = ((p?.id === ai.defaultProviderId ? ai.defaultModel : '') || p?.defaultModel || models[0] || ai.defaultModel || '').trim();
     modelSelect.value = chosen;
-    $('#aiProviderPickerBtn') && ($('#aiProviderPickerBtn').textContent = p ? (p.name || p.type || '供应商') : '未配置模型');
-    $('#aiModelPickerBtn') && ($('#aiModelPickerBtn').textContent = chosen || '自动选择模型');
+    $('#aiProviderPickerBtn') && ($('#aiProviderPickerBtn').textContent = p ? (p.name || p.type || t('供应商')) : t('未配置模型'));
+    $('#aiModelPickerBtn') && ($('#aiModelPickerBtn').textContent = chosen || t('自动选择模型'));
     renderAiThinkingSelector(p, modelSelect.value || chosen);
     renderAiCapabilityStrip();
 }
@@ -4882,7 +4887,7 @@ function aiHeaderChoices(kind = '') {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     const providers = (ai.providers || []).filter((p) => p.enabled !== false);
     const provider = providers.find((p) => p.id === $('#aiProviderSelect')?.value) || providers[0] || {};
-    if (kind === 'provider') return providers.map((p) => ({ value: p.id, label: p.name || p.type || '供应商' }));
+    if (kind === 'provider') return providers.map((p) => ({ value: p.id, label: p.name || p.type || t('供应商') }));
     if (kind === 'model') return (aiModelNames(provider).length ? aiModelNames(provider) : [$('#aiModelSelect')?.value || provider.defaultModel || ai.defaultModel || '']).filter(Boolean).map((m) => ({ value: m, label: m }));
     if (kind === 'thinking') return aiThinkingOptionsForProvider(provider, $('#aiModelSelect')?.value || provider.defaultModel || '').map(([value, label]) => ({ value, label }));
     return [];
@@ -4926,7 +4931,7 @@ function updateAiPermModeHint() {
         ? 'Auto：只读工具自动通过，写操作仍询问'
         : mode === 'yolo'
             ? 'Yolo：除 Deny 规则外全部自动执行（高风险）'
-            : 'Ask：写操作默认询问';
+            : t('Ask：写操作默认询问');
 }
 function bindAiSegmentControls(root = document) {
     root.querySelectorAll?.('.ai-segment').forEach((seg) => {
@@ -4942,7 +4947,7 @@ function closeAiPickerPopover() {
     document.querySelector('.ai-picker-popover')?.remove();
 }
 /** In-app confirm sheet — never window.confirm. */
-function openAiInlineConfirm({ title = '确认', body = '', confirmLabel = '确认', cancelLabel = '取消', danger = false, onConfirm } = {}) {
+function openAiInlineConfirm({ title = t('确认'), body = '', confirmLabel = t('确认'), cancelLabel = t('取消'), danger = false, onConfirm } = {}) {
     document.querySelector('.ai-inline-confirm')?.remove();
     const mask = document.createElement('div');
     mask.className = 'ai-inline-confirm';
@@ -5000,7 +5005,7 @@ function openAiPicker(kind = '', anchor = null) {
 }
 function applyAiPickerChoice(kind = '', value = '') {
     if (kind === 'provider') { $('#aiProviderSelect').value = value; renderAiHeaderSelectors(); }
-    if (kind === 'model') { $('#aiModelSelect').value = value; const ai = normalizeAiSettings(settings.ai || aiSettingsState || {}); const p = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {}; $('#aiModelPickerBtn').textContent = value || '自动选择模型'; renderAiThinkingSelector(p, value); }
+    if (kind === 'model') { $('#aiModelSelect').value = value; const ai = normalizeAiSettings(settings.ai || aiSettingsState || {}); const p = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {}; $('#aiModelPickerBtn').textContent = value || t('自动选择模型'); renderAiThinkingSelector(p, value); }
     if (kind === 'thinking') { $('#aiThinkIntensity').value = value; const ai = normalizeAiSettings(settings.ai || aiSettingsState || {}); const p = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {}; renderAiThinkingSelector(p, $('#aiModelSelect')?.value || ''); }
     closeAiPickerPopover();
 }
@@ -5033,9 +5038,9 @@ async function openAiUsageSheet(messageMetrics = null, anchor = null) {
             <div class="ai-usage-row"><span>最大输出</span><b>${formatTokenValue(opts.max_output_tokens || opts.max_tokens || 0)}</b></div>
             <div class="ai-usage-row"><span>本轮耗时</span><b>${msg.durationMs ? (Number(msg.durationMs) / 1000).toFixed(1) + 's' : '—'}</b></div>
             <div class="ai-usage-section">思考</div>
-            <div class="ai-usage-row"><span>思考</span><b>${thinking ? '开' : '默认'}</b></div>
+            <div class="ai-usage-row"><span>思考</span><b>${thinking ? t('开') : '默认'}</b></div>
             <div class="ai-usage-row"><span>级别</span><b>${escapeHtml(thinking || '默认')}</b></div>
-            <div class="ai-usage-row"><span>已支持</span><b>${escapeHtml(aiProviderKind(provider) === 'openai' ? '视模型而定' : '是')}</b></div>
+            <div class="ai-usage-row"><span>已支持</span><b>${escapeHtml(aiProviderKind(provider) === 'openai' ? '视模型而定' : t('是'))}</b></div>
             <div class="ai-usage-section">TOKEN（近期总计）</div>
             <div class="ai-usage-row"><span>输入（估算）</span><b>${formatTokenValue(Math.round(totals.inputChars / 2.4))}</b></div>
             <div class="ai-usage-row"><span>输出</span><b>—</b></div>
@@ -5137,7 +5142,7 @@ function renderAiMcpList() {
         const detail = s.type === 'http' ? escapeHtml(s.url || '') : escapeHtml([s.command, ...(s.args || [])].filter(Boolean).join(' '));
         return `<div class="ai-list-row" data-ai-mcp-id="${escapeHtml(s.id)}">
             <div class="ai-list-main"><strong>${escapeHtml(s.name)}</strong>
-            <span class="muted">${escapeHtml(s.type)} · ${s.enabled === false ? '停用' : '启用'}</span>
+            <span class="muted">${escapeHtml(s.type)} · ${s.enabled === false ? t('停用') : t('启用')}</span>
             <div class="muted mono">${detail}</div></div>
             <div class="ai-list-actions">
                 <button type="button" class="tool-btn" data-ai-mcp-edit="${escapeHtml(s.id)}">编辑</button>
@@ -5198,9 +5203,9 @@ async function saveAiMcpFromForm(e) {
         enabled: $('#aiMcpEnabled').checked,
         updatedAt: Date.now(),
     };
-    if (!next.name) return toast('MCP 名称不能为空');
-    if (type === 'http' && !next.url) return toast('HTTP MCP 需要 URL');
-    if (type === 'stdio' && !next.command) return toast('stdio MCP 需要命令');
+    if (!next.name) return toast(t('MCP 名称不能为空'));
+    if (type === 'http' && !next.url) return toast(t('HTTP MCP 需要 URL'));
+    if (type === 'stdio' && !next.command) return toast(t('stdio MCP 需要命令'));
     const list = Array.isArray(ai.mcpServers) ? ai.mcpServers.slice() : [];
     const idx = list.findIndex((x) => x.id === id);
     if (idx >= 0) list[idx] = next; else list.push(next);
@@ -5208,7 +5213,7 @@ async function saveAiMcpFromForm(e) {
     aiSettingsState = normalizeAiSettings(settings.ai || {});
     renderAiMcpList();
     resetAiMcpForm();
-    toast('MCP 已保存');
+    toast(t('MCP 已保存'));
 }
 async function deleteAiMcp(id) {
     const ai = normalizeAiSettings(settings.ai || {});
@@ -5216,7 +5221,7 @@ async function deleteAiMcp(id) {
     settings = await savePlatformSettings('ai', { ai: { ...ai, mcpServers: list } });
     aiSettingsState = normalizeAiSettings(settings.ai || {});
     renderAiMcpList();
-    toast('已删除');
+    toast(t('已删除'));
 }
 function collectAiSettingsForm() {
     const old = normalizeAiSettings(settings.ai || aiSettingsState || {});
@@ -5264,7 +5269,7 @@ async function saveAiSettings(e) {
     settings = await savePlatformSettings('ai', { ai });
     settings.ai = normalizeAiSettings(settings.ai || ai);
     renderAiSettingsForm();
-    toast('AI 助理设置已保存');
+    toast(t('AI 助理设置已保存'));
 }
 function aiProviderScrimSet(open, _Motion) {
     motionScrimSet('aiProviderModalScrim', 'aiprovider1-blurring', open);
@@ -5277,14 +5282,14 @@ function aiProviderBtnRadius(el, rect) {
 }
 
 async function openAiProviderModal(provider = null, trigger = null) {
-    if (provider && provider.owned === false) { toast('共享 Provider 只能调用，不能编辑'); return; }
+    if (provider && provider.owned === false) { toast(t('共享 Provider 只能调用，不能编辑')); return; }
     window.clearTimeout(closeAiProviderModal._timer);
     const cycle = ++aiProviderModalCycle;
     const modal = $('#aiProviderModal');
     if (!modal || (modal.classList.contains('show') && !modal.classList.contains('closing'))) return;
     const card = $('#aiProviderForm');
     const inner = $('#aiProviderModalInner');
-    $('#aiProviderModalTitle').textContent = provider ? '编辑模型供应商' : '添加模型供应商';
+    $('#aiProviderModalTitle').textContent = provider ? '编辑模型供应商' : t('添加模型供应商');
     $('#aiProviderId').value = provider?.id || '';
     $('#aiProviderName').value = provider?.name || '';
     setAiFieldSelectValue('aiProviderType', provider?.type || 'openai-compatible');
@@ -5477,7 +5482,7 @@ async function saveAiProvider(e) {
     const providerTypeValue = $('#aiProviderType').value;
     const apiKeyValue = $('#aiProviderApiKey').value;
     const payload = {
-        name: $('#aiProviderName').value.trim() || '未命名供应商',
+        name: $('#aiProviderName').value.trim() || t('未命名供应商'),
         type: providerTypeValue,
         enabled: $('#aiProviderEnabled').checked,
         baseUrl: $('#aiProviderBaseUrl').value.trim(),
@@ -5515,9 +5520,9 @@ async function saveAiProvider(e) {
     renderAiSettingsForm();
     const shouldAutoFetchModels = !aiModelNames(result.provider).length && result.provider.enabled !== false && (result.provider.hasApiKey || !!payload.apiKey);
     if (shouldAutoFetchModels) {
-        toast('模型供应商已保存，正在获取模型...');
+        toast(t('模型供应商已保存，正在获取模型...'));
         await fetchAiModelsForProvider(savedId);
-    } else toast('模型供应商已保存');
+    } else toast(t('模型供应商已保存'));
     // Provider persistence is handled by the per-user API above.
 }
 function renderAiProviderList() {
@@ -5526,14 +5531,14 @@ function renderAiProviderList() {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     list.innerHTML = ai.providers.length ? ai.providers.map((p) => {
         const models = aiModelNames(p);
-        const modelText = p.defaultModel || models[0] || (p.modelsPending ? '可点击获取模型' : '未获取模型');
+        const modelText = p.defaultModel || models[0] || (p.modelsPending ? t('可点击获取模型') : t('未获取模型'));
         const owned = p.owned !== false;
         const sharedLabels = [];
-        if (p.shareWithUsers) sharedLabels.push('所有用户');
-        if (p.shareWithAdmins) sharedLabels.push('所有管理员');
+        if (p.shareWithUsers) sharedLabels.push(t('所有用户'));
+        if (p.shareWithAdmins) sharedLabels.push(t('所有管理员'));
         if (Array.isArray(p.sharedUserIds) && p.sharedUserIds.length) sharedLabels.push(`指定用户 ${p.sharedUserIds.length}`);
-        const source = owned ? '我的 Provider' : `由 ${p.ownerUsername || '其他用户'} 共享`;
-        return `<div class="ai-provider-item" data-provider-id="${escapeHtml(p.id)}"><div><strong>${escapeHtml(p.name || '未命名供应商')}</strong><span>${escapeHtml(p.type || 'openai-compatible')} · ${p.enabled === false ? '已停用' : '已启用'} · ${escapeHtml(modelText)} · ${escapeHtml(source)}${sharedLabels.length ? ` · 共享：${escapeHtml(sharedLabels.join('、'))}` : ''}</span><code>${escapeHtml(p.baseUrl || '默认 API 地址')}</code></div><button class="tool-btn" data-ai-fetch-provider-models="${escapeHtml(p.id)}">获取模型</button>${owned ? `<button class="tool-btn" data-ai-reveal-provider-key="${escapeHtml(p.id)}">查看 Key</button><button class="tool-btn" data-ai-edit-provider="${escapeHtml(p.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-provider="${escapeHtml(p.id)}">删除</button>` : '<span class="muted">仅可调用</span>'}</div>`;
+        const source = owned ? t('我的 Provider') : `由 ${p.ownerUsername || t('其他用户')} 共享`;
+        return `<div class="ai-provider-item" data-provider-id="${escapeHtml(p.id)}"><div><strong>${escapeHtml(p.name || t('未命名供应商'))}</strong><span>${escapeHtml(p.type || 'openai-compatible')} · ${p.enabled === false ? '已停用' : '已启用'} · ${escapeHtml(modelText)} · ${escapeHtml(source)}${sharedLabels.length ? ` · 共享：${escapeHtml(sharedLabels.join('、'))}` : ''}</span><code>${escapeHtml(p.baseUrl || t('默认 API 地址'))}</code></div><button class="tool-btn" data-ai-fetch-provider-models="${escapeHtml(p.id)}">获取模型</button>${owned ? `<button class="tool-btn" data-ai-reveal-provider-key="${escapeHtml(p.id)}">查看 Key</button><button class="tool-btn" data-ai-edit-provider="${escapeHtml(p.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-provider="${escapeHtml(p.id)}">删除</button>` : '<span class="muted">仅可调用</span>'}</div>`;
     }).join('') : '<p class="empty-state">暂无可用模型供应商。创建自己的 Provider，或让其他用户共享给你。</p>';
 }
 async function fetchAiModelsForProvider(id = '') {
@@ -5542,7 +5547,7 @@ async function fetchAiModelsForProvider(id = '') {
         ? ai.providers.find((p) => p.id === id)
         : {
             id: $('#aiProviderId').value || 'modal',
-            name: $('#aiProviderName').value.trim() || '临时供应商',
+            name: $('#aiProviderName').value.trim() || t('临时供应商'),
             type: $('#aiProviderType').value,
             baseUrl: $('#aiProviderBaseUrl').value.trim(),
             apiMode: $('#aiProviderApiMode').value || 'auto',
@@ -5551,13 +5556,13 @@ async function fetchAiModelsForProvider(id = '') {
             extraHeaders: $('#aiProviderExtraHeaders').value.trim(),
             modelUserAgents: $('#aiProviderModelUserAgents')?.value.trim() || '',
         };
-    if (!provider) return toast('供应商不存在');
-    if (!id && (!provider.apiKey || provider.apiKey === '******')) return toast('请先填写 API Key，或保存后再获取模型');
+    if (!provider) return toast(t('供应商不存在'));
+    if (!id && (!provider.apiKey || provider.apiKey === '******')) return toast(t('请先填写 API Key，或保存后再获取模型'));
     try {
         const data = await api('/api/ai/models', { method: 'POST', body: JSON.stringify(id ? { providerId: id } : { provider }) });
         const names = (data.models || []).map((m) => m.id || m.name).filter(Boolean);
         const uniqueNames = Array.from(new Set(names));
-        if (!uniqueNames.length) return toast('没有获取到模型');
+        if (!uniqueNames.length) return toast(t('没有获取到模型'));
         if (id) {
             if (provider.owned === false) return toast(`已获取 ${uniqueNames.length} 个模型（共享 Provider 不能修改）`);
             await api(`/api/ai/providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ models: uniqueNames, defaultModel: provider.defaultModel || uniqueNames[0] }) });
@@ -5570,14 +5575,14 @@ async function fetchAiModelsForProvider(id = '') {
             if (!$('#aiProviderDefaultModel').value) $('#aiProviderDefaultModel').value = uniqueNames[0] || '';
         }
         toast(`已获取 ${uniqueNames.length} 个模型`);
-    } catch (err) { toast(err.message || '获取模型失败'); }
+    } catch (err) { toast(err.message || t('获取模型失败')); }
 }
 
 async function deleteAiProvider(id) {
     openAiInlineConfirm({
-        title: '删除模型供应商',
-        body: '删除后需重新配置 API Key 与模型列表。',
-        confirmLabel: '删除',
+        title: t('删除模型供应商'),
+        body: t('删除后需重新配置 API Key 与模型列表。'),
+        confirmLabel: t('删除'),
         danger: true,
         onConfirm: async () => {
             await api(`/api/ai/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -5585,7 +5590,7 @@ async function deleteAiProvider(id) {
             settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
             aiSettingsState = normalizeAiSettings(settings.ai);
             renderAiSettingsForm();
-            toast('模型供应商已删除');
+            toast(t('模型供应商已删除'));
         },
     });
 }
@@ -5624,22 +5629,22 @@ async function saveAiEnv(e) {
         valueVisibleToAi: $('#aiEnvValueVisibleToAi').checked,
         updatedAt: Date.now(),
     };
-    if (!item.name) return toast('请填写变量名');
+    if (!item.name) return toast(t('请填写变量名'));
     if (idx >= 0) ai.envVars[idx] = item; else ai.envVars.unshift(item);
     settings = await savePlatformSettings('ai', { ai });
-    resetAiEnvForm(); renderAiSettingsForm(); toast('AI 环境变量已保存');
+    resetAiEnvForm(); renderAiSettingsForm(); toast(t('AI 环境变量已保存'));
 }
 async function deleteAiEnv(id) {
     openAiInlineConfirm({
-        title: '删除环境变量',
-        body: '删除后 AI 将无法再通过此变量名读取对应密钥。',
-        confirmLabel: '删除',
+        title: t('删除环境变量'),
+        body: t('删除后 AI 将无法再通过此变量名读取对应密钥。'),
+        confirmLabel: t('删除'),
         danger: true,
         onConfirm: async () => {
             const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
             ai.envVars = ai.envVars.filter((x) => x.id !== id);
             settings = await savePlatformSettings('ai', { ai });
-            renderAiSettingsForm(); toast('AI 环境变量已删除');
+            renderAiSettingsForm(); toast(t('AI 环境变量已删除'));
         },
     });
 }
@@ -5681,19 +5686,19 @@ async function saveAiMemory(e) {
         createdAt: Date.now(),
         updatedAt: Date.now(),
     };
-    if (!item.content.trim()) return toast('请填写 Memory 内容');
+    if (!item.content.trim()) return toast(t('请填写 Memory 内容'));
     const old = ai.memories.find((x) => x.id === id);
     if (old) item.createdAt = old.createdAt || item.createdAt;
     const idx = ai.memories.findIndex((x) => x.id === id);
     if (idx >= 0) ai.memories[idx] = item; else ai.memories.unshift(item);
     settings = await savePlatformSettings('ai', { ai });
-    resetAiMemoryForm(); renderAiSettingsForm(); toast('Memory 已保存');
+    resetAiMemoryForm(); renderAiSettingsForm(); toast(t('Memory 已保存'));
 }
 async function deleteAiMemory(id) {
     openAiInlineConfirm({
-        title: '删除 Memory',
-        body: '删除后无法恢复该条长期记忆。',
-        confirmLabel: '删除',
+        title: t('删除 Memory'),
+        body: t('删除后无法恢复该条长期记忆。'),
+        confirmLabel: t('删除'),
         danger: true,
         onConfirm: async () => {
             await deleteAiMemoryConfirmed(id);
@@ -5704,7 +5709,7 @@ async function deleteAiMemoryConfirmed(id) {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     ai.memories = ai.memories.filter((x) => x.id !== id);
     settings = await savePlatformSettings('ai', { ai });
-    renderAiSettingsForm(); toast('Memory 已删除');
+    renderAiSettingsForm(); toast(t('Memory 已删除'));
 }
 function renderAiPlanList() {
     const list = $('#aiPlanList');
@@ -5713,7 +5718,7 @@ function renderAiPlanList() {
     list.innerHTML = ai.plans.length ? ai.plans.slice(0, 30).map((plan) => {
         const steps = Array.isArray(plan.steps) ? plan.steps : [];
         const actions = `<div class="ai-plan-actions"><button class="tool-btn" data-ai-plan-pause="${escapeHtml(plan.id)}">暂停</button><button class="tool-btn" data-ai-plan-resume="${escapeHtml(plan.id)}">继续</button><button class="tool-btn" data-ai-plan-retry="${escapeHtml(plan.id)}">重试失败</button><button class="tool-btn danger" data-ai-plan-delete="${escapeHtml(plan.id)}">删除</button></div>`;
-        return `<div class="ai-plan-item" data-plan-id="${escapeHtml(plan.id)}"><div><strong>${escapeHtml(plan.title || '任务计划')}</strong><span><b class="ai-status ai-status-${escapeHtml(plan.status || 'planned')}">${escapeHtml(plan.status || 'planned')}</b> · ${fmtTime(plan.updatedAt || plan.createdAt)}</span>${plan.risk ? `<p>${escapeHtml(plan.risk)}</p>` : ''}<ol>${steps.map((s, index) => `<li><em class="ai-status ai-status-${escapeHtml(s.status || 'pending')}">${escapeHtml(s.status || 'pending')}</em> ${escapeHtml(s.text || '')}${s.note ? `<small>${escapeHtml(s.note)}</small>` : ''}${s.error ? `<small class="error-text">${escapeHtml(s.error)}</small>` : ''}<div class="ai-step-actions"><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="running">执行中</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="completed">完成</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="failed">失败</button></div></li>`).join('')}</ol>${actions}</div></div>`;
+        return `<div class="ai-plan-item" data-plan-id="${escapeHtml(plan.id)}"><div><strong>${escapeHtml(plan.title || t('任务计划'))}</strong><span><b class="ai-status ai-status-${escapeHtml(plan.status || 'planned')}">${escapeHtml(plan.status || 'planned')}</b> · ${fmtTime(plan.updatedAt || plan.createdAt)}</span>${plan.risk ? `<p>${escapeHtml(plan.risk)}</p>` : ''}<ol>${steps.map((s, index) => `<li><em class="ai-status ai-status-${escapeHtml(s.status || 'pending')}">${escapeHtml(s.status || 'pending')}</em> ${escapeHtml(s.text || '')}${s.note ? `<small>${escapeHtml(s.note)}</small>` : ''}${s.error ? `<small class="error-text">${escapeHtml(s.error)}</small>` : ''}<div class="ai-step-actions"><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="running">执行中</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="completed">完成</button><button data-ai-plan-step="${escapeHtml(plan.id)}" data-step-index="${index + 1}" data-step-status="failed">失败</button></div></li>`).join('')}</ol>${actions}</div></div>`;
     }).join('') : '<p class="empty-state">暂无任务计划。AI 可通过 plan_task 工具为复杂任务创建计划，并持续更新步骤状态。</p>';
 }
 
@@ -5728,33 +5733,33 @@ function renderAiSkillList() {
     const list = $('#aiSkillList');
     if (!list) return;
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    list.innerHTML = ai.skills.length ? ai.skills.map((s) => `<div class="ai-skill-item" data-skill-id="${escapeHtml(s.id)}"><div><strong>${escapeHtml(s.name || '未命名 Skill')}</strong><span>${s.enabled === false ? '已停用' : '已启用'} · ${escapeHtml(s.description || '')}</span><code>${escapeHtml((s.prompt || '').slice(0, 260))}</code></div><button class="tool-btn" data-ai-edit-skill="${escapeHtml(s.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-skill="${escapeHtml(s.id)}">删除</button></div>`).join('') : '<p class="empty-state">暂无 Skill。可以把工作流、工具使用规则、专用提示词保存成能力包。</p>';
+    list.innerHTML = ai.skills.length ? ai.skills.map((s) => `<div class="ai-skill-item" data-skill-id="${escapeHtml(s.id)}"><div><strong>${escapeHtml(s.name || t('未命名 Skill'))}</strong><span>${s.enabled === false ? '已停用' : '已启用'} · ${escapeHtml(s.description || '')}</span><code>${escapeHtml((s.prompt || '').slice(0, 260))}</code></div><button class="tool-btn" data-ai-edit-skill="${escapeHtml(s.id)}">编辑</button><button class="tool-btn danger" data-ai-delete-skill="${escapeHtml(s.id)}">删除</button></div>`).join('') : '<p class="empty-state">暂无 Skill。可以把工作流、工具使用规则、专用提示词保存成能力包。</p>';
 }
 async function saveAiSkill(e) {
     e.preventDefault();
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     const id = $('#aiSkillId').value || `skill-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const skill = { id, name: $('#aiSkillName').value.trim(), description: $('#aiSkillDescription').value.trim(), prompt: $('#aiSkillPrompt').value, enabled: $('#aiSkillEnabled').checked, updatedAt: Date.now() };
-    if (!skill.name && !skill.prompt.trim()) return toast('请填写 Skill 名称或指令内容');
+    if (!skill.name && !skill.prompt.trim()) return toast(t('请填写 Skill 名称或指令内容'));
     const idx = ai.skills.findIndex((s) => s.id === id);
     if (idx >= 0) ai.skills[idx] = skill; else ai.skills.unshift(skill);
     settings = await savePlatformSettings('ai', { ai });
     resetAiSkillForm();
     renderAiSettingsForm();
-    toast('Skill 已保存');
+    toast(t('Skill 已保存'));
 }
 async function deleteAiSkill(id) {
     openAiInlineConfirm({
-        title: '删除 Skill',
-        body: '删除后该能力包不会再注入 AI 系统提示。',
-        confirmLabel: '删除',
+        title: t('删除 Skill'),
+        body: t('删除后该能力包不会再注入 AI 系统提示。'),
+        confirmLabel: t('删除'),
         danger: true,
         onConfirm: async () => {
             const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
             ai.skills = ai.skills.filter((s) => s.id !== id);
             settings = await savePlatformSettings('ai', { ai });
             renderAiSettingsForm();
-            toast('Skill 已删除');
+            toast(t('Skill 已删除'));
         },
     });
 }
@@ -5880,7 +5885,7 @@ function clearAiSessionRun(sessionId, controller = null) {
 }
 function updateAiRunUiForCurrentSession() { setAiTyping(aiIsSessionRunning(aiCurrentSessionId)); }
 function aiCodeItem(id = '') { return aiCodeBlockStore.get(String(id || '')) || null; }
-async function copyTextToClipboard(text = '', successMessage = '已复制') {
+async function copyTextToClipboard(text = '', successMessage = t('已复制')) {
     const value = String(text || '');
     let copied = false;
     if (navigator.clipboard?.writeText && window.isSecureContext) {
@@ -5908,7 +5913,7 @@ async function copyTextToClipboard(text = '', successMessage = '已复制') {
 }
 
 async function aiCopyText(text = '') {
-    await copyTextToClipboard(text, '已复制');
+    await copyTextToClipboard(text, t('已复制'));
 }
 function aiDownloadTextFile(item) {
     if (!item) return;
@@ -5934,7 +5939,7 @@ function aiPreviewCode(item) {
     if (toggle) toggle.textContent = '隐藏预览';
     if (title) title.textContent = `代码调试沙箱 · ${item.filename || 'snippet'}`;
     if (body) body.innerHTML = `<iframe class="ai-code-preview-frame" sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock" src="${escapeAttr(aiCodePreviewObjectUrl)}"></iframe><small>${escapeHtml(item.filename || '')} · 本地 Blob 沙箱预览</small>`;
-    toast('已打开代码预览');
+    toast(t('已打开代码预览'));
 }
 function renderAiAttachmentChips() {
     if (!aiPendingInputAttachments.length) return '';
@@ -6013,10 +6018,10 @@ function editAiMessageFromMenu() {
     autoResizeAiInput(input);
     updateAiInputPreview();
     input.focus?.();
-    toast('已载入原消息，修改后发送会从此处重新回答');
+    toast(t('已载入原消息，修改后发送会从此处重新回答'));
 }
 function regenerateAiMessageFromMenu() {
-    if (aiIsSessionRunning(aiCurrentSessionId)) return toast('请先停止当前对话的 AI 回复');
+    if (aiIsSessionRunning(aiCurrentSessionId)) return toast(t('请先停止当前对话的 AI 回复'));
     const input = $('#aiUserInput');
     if (!input) return;
     aiEditingMessageIndex = aiMessageMenuState.index;
@@ -6090,7 +6095,7 @@ function deleteAiChat(id) {
     openAiInlineConfirm({
         title: '删除对话',
         body: '将删除此会话的本地消息记录（服务端会话若已创建不会自动清档）。',
-        confirmLabel: '删除',
+        confirmLabel: t('删除'),
         danger: true,
         onConfirm: () => deleteAiChatConfirmed(id),
     });
@@ -6621,7 +6626,7 @@ function summarizeAiToolResult(tool, result = {}) {
     if (tool === 'connection_create_v1') return `已新增连接 ${data.connection?.name || ''}`;
     if (tool === 'connection_update_v1' || tool === 'connection_rename_v1') return `已修改连接 ${data.connection?.name || ''}`;
     if (tool === 'connection_delete_v1') return `已删除连接 ${data.connectionId || ''}`;
-    if (tool === 'connection_test_v1') return data.result?.ok ? '连接测试成功' : (data.result?.message || '连接测试完成');
+    if (tool === 'connection_test_v1') return data.result?.ok ? t('连接测试成功') : (data.result?.message || '连接测试完成');
     if (tool === 'connection_open_v1') return `准备打开连接 ${data.connection?.name || data.connectionId || ''}`;
     if (tool === 'proxy_list_v1') return `发现 ${(data.proxies || []).length} 个代理`;
     if (tool === 'proxy_get_v1') return `读取代理 ${data.proxy?.name || data.proxy?.id || ''}`;
@@ -6666,7 +6671,7 @@ function formatAiToolResult(r = {}) {
     const detail = JSON.stringify(maskAiSensitive({ args: r.args || {}, result }, r.tool), null, 2);
     const shot = browserShotFromResult(result);
     const titleMap = {
-        list_connections: '列出连接', connection_list_v1: '列出连接', connection_get_v1: '读取连接', connection_rename_v1: '重命名连接', connection_create_v1: '新增连接', connection_update_v1: '修改连接', connection_delete_v1: '删除连接', connection_test_v1: '测试连接', connection_open_v1: '打开连接', proxy_list_v1: '列出代理', proxy_get_v1: '读取代理', proxy_create_v1: '新增代理', proxy_update_v1: '修改代理', proxy_delete_v1: '删除代理', ssh_key_list_v1: '列出 SSH 密钥', ssh_key_get_v1: '读取 SSH 密钥', ssh_key_validate_v1: '校验 SSH 密钥', ssh_key_rename_v1: '重命名 SSH 密钥', ssh_key_update_metadata_v1: '修改 SSH 密钥备注', ssh_key_delete_v1: '删除 SSH 密钥', web_search: '网页搜索', fetch_url: '网页读取', browser_navigate: '浏览器打开', browser_inspect: '检查页面元素', browser_screenshot: '浏览器截图', browser_click: '浏览器点击', browser_type: '浏览器输入', browser_scroll: '浏览器滚动', browser_text: '读取浏览器文本', browser_key: '浏览器按键', browser_wait: '等待页面', open_connection: '打开连接', terminal_read_output: '读取终端输出', remote_desktop_screenshot: '读取远程桌面画面', ui_action: '页面/终端代操作', memory_search: '搜索 Memory', memory_save: '保存 Memory', plan_task: '创建计划', plan_update: '更新计划', plan_delete: '删除计划', remote_execute: '远程执行', remote_read_file: '读取远程文件', remote_write_file: '写入远程文件', confirmed: '敏感操作结果'
+        list_connections: '列出连接', connection_list_v1: '列出连接', connection_get_v1: '读取连接', connection_rename_v1: '重命名连接', connection_create_v1: '新增连接', connection_update_v1: '修改连接', connection_delete_v1: '删除连接', connection_test_v1: '测试连接', connection_open_v1: '打开连接', proxy_list_v1: '列出代理', proxy_get_v1: '读取代理', proxy_create_v1: '新增代理', proxy_update_v1: '修改代理', proxy_delete_v1: '删除代理', ssh_key_list_v1: '列出 SSH 密钥', ssh_key_get_v1: '读取 SSH 密钥', ssh_key_validate_v1: '校验 SSH 密钥', ssh_key_rename_v1: '重命名 SSH 密钥', ssh_key_update_metadata_v1: '修改 SSH 密钥备注', ssh_key_delete_v1: '删除 SSH 密钥', web_search: t('网页搜索'), fetch_url: '网页读取', browser_navigate: '浏览器打开', browser_inspect: '检查页面元素', browser_screenshot: '浏览器截图', browser_click: '浏览器点击', browser_type: '浏览器输入', browser_scroll: '浏览器滚动', browser_text: '读取浏览器文本', browser_key: '浏览器按键', browser_wait: '等待页面', open_connection: '打开连接', terminal_read_output: '读取终端输出', remote_desktop_screenshot: '读取远程桌面画面', ui_action: '页面/终端代操作', memory_search: '搜索 Memory', memory_save: t('保存 Memory'), plan_task: '创建计划', plan_update: '更新计划', plan_delete: '删除计划', remote_execute: t('远程执行'), remote_read_file: '读取远程文件', remote_write_file: '写入远程文件', confirmed: '敏感操作结果'
     };
     const title = titleMap[r.tool] || `工具 ${r.tool || 'unknown'}`;
     const duration = Number.isFinite(Number(r.durationMs)) ? `${(Number(r.durationMs) / 1000).toFixed(1)}s` : '';
@@ -6682,7 +6687,7 @@ async function deleteAiPlan(planId) {
     openAiInlineConfirm({
         title: '删除任务计划',
         body: '删除后计划步骤与日志不可恢复。',
-        confirmLabel: '删除',
+        confirmLabel: t('删除'),
         danger: true,
         onConfirm: () => deleteAiPlanConfirmed(planId),
     });
@@ -6709,11 +6714,11 @@ async function updateAiPlan(planId, action = {}) {
     try {
         const data = await api('/api/ai/tools/run', { method: 'POST', body: JSON.stringify({ tool: 'plan_update', args: { planId, ...action }, context: collectAiContext() }) });
         mergeAiPlan(data.result?.plan);
-        toast('计划已更新');
+        toast(t('计划已更新'));
     } catch (err) { toast(err.message || '计划更新失败'); }
 }
 function formatAiRequestFailure(err) {
-    const message = String(err?.message || '请求失败');
+    const message = String(err?.message || t('请求失败'));
     const transient = !!err?.transient || /网络请求失败|网络连接中断|请求超时|fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|502|503|504/i.test(message);
     if (transient) {
         return `请求失败：${message}\n\n我已在服务端对上游 AI fetch failed / 断连 / 超时做自动重试；如果仍出现，多半是当前供应商线路或模型临时不稳。你可以直接重试，或切换模型/供应商。`;
@@ -6900,7 +6905,7 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                     const conf = {
                         id: body?.askId || body?.callId || `ask_${Date.now()}`,
                         tool: body?.name || '',
-                        summary: body?.summary || `允许执行 ${body?.name || '操作'}？`,
+                        summary: body?.summary || `允许执行 ${body?.name || t('操作')}？`,
                         args: body?.args || {},
                     };
                     appendAiConfirmation(conf, {
@@ -7253,7 +7258,7 @@ function startAiPanelWatchdog() {
 function stopAiPanelWatchdog() { window.clearInterval(aiPanelWatchdogTimer); aiPanelWatchdogTimer = 0; }
 function openAiAssistantPanel(trigger = null) {
     const ai = normalizeAiSettings(settings.ai || {});
-    if (!ai.enabled) { toast('请先在设置中启用 AI 助理'); return; }
+    if (!ai.enabled) { toast(t('请先在设置中启用 AI 助理')); return; }
     const panel = $('#aiAgentPanel');
     if (!panel) return;
     const wasClosing = aiPanelState === 'closing';
@@ -7671,7 +7676,7 @@ function normalizeAiProviderModalLayout() {
         aiProviderApiKey: 'API Key',
         aiProviderApiMode: '接口模式',
         aiProviderModels: '模型列表',
-        aiProviderDefaultModel: '默认模型',
+        aiProviderDefaultModel: t('默认模型'),
         aiProviderModelUserAgents: '模型请求 User-Agent（可选，逐模型）',
         aiProviderOrganization: 'Organization / Project（可选）',
         aiProviderExtraHeaders: '额外请求头 JSON（可选）',
@@ -7859,7 +7864,7 @@ function setupAiAssistant() {
             openAiInlineConfirm({
                 title: '删除 MCP 服务器',
                 body: '删除后需重新配置才能连接该 MCP。',
-                confirmLabel: '删除',
+                confirmLabel: t('删除'),
                 danger: true,
                 onConfirm: () => deleteAiMcp(del).catch((err) => toast(err.message)),
             });
@@ -7877,8 +7882,8 @@ function setupAiAssistant() {
     $('#aiUserInput')?.addEventListener('input', (e) => { autoResizeAiInput(e.target); updateAiInputPreview(); });
     $('#aiUserInput')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendAiMessage(); } });
     // Markdown preview toggle removed; messages are rendered as Markdown directly.
-    $('#aiClearChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast('请先停止当前对话的 AI 回复'); s.messages = []; renderAiChat(); });
-    $('#aiCompressChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast('请先停止当前对话的 AI 回复'); if (s.messages.length > 2) s.messages = [{ role: 'system', content: `历史已压缩：此前共有 ${s.messages.length} 条消息。` }, s.messages[s.messages.length - 1]]; renderAiChat(); });
+    $('#aiClearChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast(t('请先停止当前对话的 AI 回复')); s.messages = []; renderAiChat(); });
+    $('#aiCompressChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast(t('请先停止当前对话的 AI 回复')); if (s.messages.length > 2) s.messages = [{ role: 'system', content: `历史已压缩：此前共有 ${s.messages.length} 条消息。` }, s.messages[s.messages.length - 1]]; renderAiChat(); });
     $('#aiProviderPickerBtn')?.addEventListener('click', (e) => openAiPicker('provider', e.currentTarget));
     $('#aiModelPickerBtn')?.addEventListener('click', (e) => openAiPicker('model', e.currentTarget));
     $('#aiThinkPickerBtn')?.addEventListener('click', (e) => openAiPicker('thinking', e.currentTarget));
@@ -7894,7 +7899,7 @@ function setupAiAssistant() {
     }, true);
     $('#aiBrowserPreviewToggleBtn')?.addEventListener('click', () => { const state = aiBrowserPreviewStateForSession(aiCurrentSessionId); state.visible = !state.visible; renderAiBrowserPreview(); });
     $('#aiBrowserPreviewRefreshBtn')?.addEventListener('click', refreshAiBrowserPreview);
-    $('#aiRefreshStatusBtn')?.addEventListener('click', async () => { const r = await api('/api/ai/status'); settings.ai = normalizeAiSettings(r.ai || {}); renderAiSettingsForm(); toast('AI 配置已刷新'); });
+    $('#aiRefreshStatusBtn')?.addEventListener('click', async () => { const r = await api('/api/ai/status'); settings.ai = normalizeAiSettings(r.ai || {}); renderAiSettingsForm(); toast(t('AI 配置已刷新')); });
     $('#aiChatArea')?.addEventListener('click', handleAiChatAreaClick);
     $('#aiChatArea')?.addEventListener('contextmenu', handleAiMessageContextMenu);
     $('#aiChatArea')?.addEventListener('touchstart', handleAiMessageTouchStart, { passive: true });
@@ -7950,7 +7955,7 @@ function applyAgentReleaseLinks(agentRelease) {
     const available = rel.available === true || Boolean(tag && rel.url);
     const label = available
         ? `下载 Zephyr Agent ${display || tag}`
-        : '查看 Zephyr Agent 发布页';
+        : t('查看 Zephyr Agent 发布页');
     const hint = available
         ? `当前镜像绑定最新 Agent Release：<code>${escapeHtml(tag || display)}</code>`
         : '尚未解析到 <code>agent-v*</code> Release；构建镜像时会自动拉取最新标签。';
@@ -8062,7 +8067,7 @@ async function savePersonalLoginNotification() {
     settings = await savePersonalSettings({ mail: { notifyLogin: enabled } });
     toast(enabled ? '已开启个人登录邮件通知' : '已关闭个人登录邮件通知');
 }
-async function saveBeian(e) { e.preventDefault(); settings = await savePlatformSettings('beian', { beian: { icp: $('#icpInput').value, icpUrl: $('#icpUrlInput').value, policeBeian: $('#policeInput').value, policeBeianUrl: $('#policeUrlInput').value, show: $('#showBeianInput').checked } }); toast('备案信息已保存'); }
+async function saveBeian(e) { e.preventDefault(); settings = await savePlatformSettings('beian', { beian: { icp: $('#icpInput').value, icpUrl: $('#icpUrlInput').value, policeBeian: $('#policeInput').value, policeBeianUrl: $('#policeUrlInput').value, show: $('#showBeianInput').checked } }); toast(t('备案信息已保存')); }
 async function loadSecurityStatus() { securityStatus = await api('/api/security/status').catch(() => ({ user: {}, passkeys: [] })); $('#profileUsername').value = securityStatus.user.username || ''; $('#profileEmail').value = securityStatus.user.email || ''; renderTotp(); renderPasskeys(); }
 async function loadSecurityLists() {
     const loginPath = myIdentity.isSuperAdmin ? '/api/security/login-events' : '/api/security/login-events/mine';
@@ -8076,8 +8081,8 @@ async function loadSecurityLists() {
 }
 function renderTotp() { $('#totpBox').innerHTML = securityStatus.user.totpEnabled ? '<div class="mini-item"><b>TOTP 状态</b><span>已开启</span></div>' : '<p class="muted">暂无 TOTP</p>'; $('#totpAction').innerHTML = `<button class="security-card-action" id="setupTotpBtn" type="button">${securityStatus.user.totpEnabled ? '重新绑定' : '开启 TOTP'}</button>`; $('#totpDisableForm').classList.toggle('force-hidden', !securityStatus.user.totpEnabled); }
 function renderPasskeys() { $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">删除</button></div>`).join('') || '<p class="muted">暂无 Passkey</p>'; }
-function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>失败 ${b.failedCount} · 解封 ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">解除</button></div>`).join('') || '<p class="muted">暂无封禁 IP</p>'; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? '成功' : '失败'} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason || '')} · ${fmtTime(e.time)}</span></div>`).join('') || '<p class="muted">暂无登录事件</p>'; }
-async function saveSecurityPolicy(e) { e.preventDefault(); settings = await savePlatformSettings('security', { security: { ipWhitelistEnabled: $('#ipWhitelistEnabled').checked, ipWhitelist: $('#ipWhitelist').value, bruteForceEnabled: $('#bruteForceEnabled').checked, bruteForceMaxFailures: Number($('#bruteForceMaxFailures').value) || 5, bruteForceBanMinutes: Number($('#bruteForceBanMinutes').value) || 15 } }); toast('安全策略已保存'); }
+function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>失败 ${b.failedCount} · 解封 ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">解除</button></div>`).join('') || '<p class="muted">暂无封禁 IP</p>'; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason || '')} · ${fmtTime(e.time)}</span></div>`).join('') || '<p class="muted">暂无登录事件</p>'; }
+async function saveSecurityPolicy(e) { e.preventDefault(); settings = await savePlatformSettings('security', { security: { ipWhitelistEnabled: $('#ipWhitelistEnabled').checked, ipWhitelist: $('#ipWhitelist').value, bruteForceEnabled: $('#bruteForceEnabled').checked, bruteForceMaxFailures: Number($('#bruteForceMaxFailures').value) || 5, bruteForceBanMinutes: Number($('#bruteForceBanMinutes').value) || 15 } }); toast(t('安全策略已保存')); }
 async function saveCaptcha(e) {
     e.preventDefault();
     const provider = $('#captchaProvider').value;
@@ -8096,7 +8101,7 @@ async function saveCaptcha(e) {
     };
     console.debug('[captcha-client]', 'save captcha settings', { provider, enabled: captcha.enabled, hasSiteKey: !!siteKey, hasSecretKey: !!secretKey });
     settings = await savePlatformSettings('captcha', { captcha });
-    toast('CAPTCHA 已保存');
+    toast(t('CAPTCHA 已保存'));
 }
 async function revealCaptchaSecret() {
     const secret = requestSensitiveSecret('查看已保存 CAPTCHA 密钥');
@@ -8113,7 +8118,7 @@ async function saveMail(e) {
         settings = await savePlatformSettings('mail', { mail: { enabled: $('#mailEnabled').checked, host: $('#mailHost').value.trim(), port: Number($('#mailPort').value) || 465, secure: $('#mailSecure').checked, user: $('#mailUser').value.trim(), pass: $('#mailPass').value, from: $('#mailFrom').value.trim(), adminEmail: $('#mailAdminEmail').value.trim(), notifyLoginSuccess: $('#notifyLoginSuccess').checked, notifyLoginFailure: $('#notifyLoginFailure').checked, notifyLoginToUser: $('#notifyLoginToUser').checked, geoLookupEnabled: $('#geoLookupEnabled').checked } });
         $('#mailPass').type = 'password';
         $('#toggleMailPassword').textContent = '👁️';
-        toast('邮件设置已保存');
+        toast(t('邮件设置已保存'));
     } catch (err) {
         toast(err.message || '邮件设置保存失败');
     }
@@ -8191,7 +8196,7 @@ async function migrateLocalSnippetsToServer() {
         if (!local.length) return;
         await persistSnippets(local);
         localStorage.removeItem(SNIPPET_STORAGE_KEY);
-        toast('已将本地代码片段迁移到服务端');
+        toast(t('已将本地代码片段迁移到服务端'));
     } catch (_) {}
 }
 function resetSnippetForm() {
@@ -8374,7 +8379,7 @@ async function saveSnippet(e) {
     e.preventDefault();
     const name = $('#snippetName').value.trim();
     const command = $('#snippetCommand').value;
-    if (!name || !command.trim()) return toast('请填写片段名称和命令');
+    if (!name || !command.trim()) return toast(t('请填写片段名称和命令'));
     const id = $('#snippetId').value || `snippet-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const item = { id, name, command, group: $('#snippetGroup').value.trim(), autoRun: $('#snippetAutoRun').checked, updatedAt: Date.now() };
     const snippets = getSnippets();
@@ -8383,7 +8388,7 @@ async function saveSnippet(e) {
     await persistSnippets(snippets);
     closeSnippetModal();
     renderSnippetSettings();
-    toast('代码片段已保存到服务端');
+    toast(t('代码片段已保存到服务端'));
 }
 function setupSnippetSettings() {
     $('#snippetForm')?.addEventListener('submit', saveSnippet);
@@ -8403,19 +8408,19 @@ function setupSnippetSettings() {
             openSnippetModal(item, e.target.closest('[data-edit-snippet]'));
         }
         if (deleteId) {
-            if (!confirm('删除该代码片段？')) return;
+            if (!confirm(t('删除该代码片段？'))) return;
             await waitForMiniItemExit(e.target.closest('.mini-item'), deleteId);
             try {
                 await persistSnippets(snippets.filter((x) => x.id !== deleteId));
                 renderSnippetSettings();
-                toast('代码片段已从服务端删除');
+                toast(t('代码片段已从服务端删除'));
             } catch (err) { toast(err.message || '删除失败'); }
         }
     });
     renderSnippetSettings();
 }
 async function setupTotp() { const r = await api('/api/security/totp/setup', { method: 'POST', body: '{}' }); $('#totpEnableForm').classList.remove('force-hidden'); $('#totpQrBox').innerHTML = `<img class="qr-img" src="${r.qr}"><p class="muted">密钥：${escapeHtml(r.secret)}</p>`; }
-async function registerPasskey() { try { if (!window.PublicKeyCredential) return toast('当前浏览器不支持 Passkey'); const options = await api('/api/passkeys/register/options', { method: 'POST', body: '{}' }); options.challenge = base64urlToBuffer(options.challenge); options.user.id = base64urlToBuffer(options.user.id); (options.excludeCredentials || []).forEach((c) => { c.id = base64urlToBuffer(c.id); }); const cred = await navigator.credentials.create({ publicKey: options }); if (!cred) return toast('Passkey 创建被取消'); const payload = { id: cred.id, rawId: bufferToBase64url(cred.rawId), type: cred.type, response: { clientDataJSON: bufferToBase64url(cred.response.clientDataJSON), attestationObject: bufferToBase64url(cred.response.attestationObject), transports: cred.response.getTransports ? cred.response.getTransports() : [] } }; await api('/api/passkeys/register/verify', { method: 'POST', body: JSON.stringify(payload) }); toast('Passkey 已绑定'); await loadSecurityStatus(); } catch (err) { toast('Passkey 注册失败：' + err.message); } }
+async function registerPasskey() { try { if (!window.PublicKeyCredential) return toast(t('当前浏览器不支持 Passkey')); const options = await api('/api/passkeys/register/options', { method: 'POST', body: '{}' }); options.challenge = base64urlToBuffer(options.challenge); options.user.id = base64urlToBuffer(options.user.id); (options.excludeCredentials || []).forEach((c) => { c.id = base64urlToBuffer(c.id); }); const cred = await navigator.credentials.create({ publicKey: options }); if (!cred) return toast(t('Passkey 创建被取消')); const payload = { id: cred.id, rawId: bufferToBase64url(cred.rawId), type: cred.type, response: { clientDataJSON: bufferToBase64url(cred.response.clientDataJSON), attestationObject: bufferToBase64url(cred.response.attestationObject), transports: cred.response.getTransports ? cred.response.getTransports() : [] } }; await api('/api/passkeys/register/verify', { method: 'POST', body: JSON.stringify(payload) }); toast(t('Passkey 已绑定')); await loadSecurityStatus(); } catch (err) { toast(t('Passkey 注册失败：') + err.message); } }
 async function loadNetwork() {
     const [proxyData, keyData] = await Promise.all([
         api('/api/proxies'),
@@ -8617,7 +8622,7 @@ function closeProxyModal() {
         finish();
     });
 }
-async function saveProxy(e) { e.preventDefault(); const id = $('#proxyId').value, payload = { name: $('#proxyName').value, type: $('#proxyType').value, host: $('#proxyHost').value, port: Number($('#proxyPort').value), username: $('#proxyUsername').value, password: $('#proxyPassword').value }; console.debug('[route-ui]', 'save proxy payload', { id, ...payload, password: payload.password ? '******' : '' }); await api(id ? `/api/proxies/${id}` : '/api/proxies', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); closeProxyModal(); await loadNetwork(); toast('代理已保存'); }
+async function saveProxy(e) { e.preventDefault(); const id = $('#proxyId').value, payload = { name: $('#proxyName').value, type: $('#proxyType').value, host: $('#proxyHost').value, port: Number($('#proxyPort').value), username: $('#proxyUsername').value, password: $('#proxyPassword').value }; console.debug('[route-ui]', 'save proxy payload', { id, ...payload, password: payload.password ? '******' : '' }); await api(id ? `/api/proxies/${id}` : '/api/proxies', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); closeProxyModal(); await loadNetwork(); toast(t('代理已保存')); }
 async function openProxySecret(id, trigger = null) {
     const secret = requestSensitiveSecret('查看已保存代理密码');
     const data = await api(`/api/proxies/${id}/open`, { method: 'POST', body: JSON.stringify({ secret }) });
@@ -8632,7 +8637,7 @@ async function openProxySecret(id, trigger = null) {
     openProxyModal(p, trigger);
     $('#proxyPassword').value = p.password || '';
     console.debug('[proxy-ui]', 'proxy secret loaded', { id, hasPassword: !!p.password });
-    toast('已载入代理密码');
+    toast(t('已载入代理密码'));
 }
 function resetSshKeyForm() { $('#sshKeyForm').reset(); $('#sshKeyId').value = ''; $('#sshKeyPrivateKey').value = ''; $('#sshKeyPassphrase').value = ''; }
 /* scrim：只拨 opacity + is-open 类。禁止 Motion.cssVars 每帧改 backdrop-filter
@@ -8937,7 +8942,7 @@ async function saveSshKey(e) {
     await api(id ? `/api/ssh-keys/${id}` : '/api/ssh-keys', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
     closeSshKeyModal();
     await loadNetwork();
-    toast('SSH 密钥已保存');
+    toast(t('SSH 密钥已保存'));
 }
 async function openSshKeySecret(id, trigger = null) {
     const secret = requestSensitiveSecret('查看已保存 SSH 密钥');
@@ -8950,7 +8955,7 @@ async function openSshKeySecret(id, trigger = null) {
     $('#sshKeyPassphrase').value = k.passphrase || '';
     $('#sshKeyRemark').value = k.remark || '';
     console.debug('[ssh-key-ui]', 'ssh key secret loaded', { id, hasPrivateKey: !!k.privateKey, hasPassphrase: !!k.passphrase });
-    toast('已载入 SSH 密钥内容');
+    toast(t('已载入 SSH 密钥内容'));
 }
 
 function bindConnectionPressFeedback(root = document) {
@@ -8981,6 +8986,7 @@ function bindEvents() {
     $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => { $$('.settings-tab').forEach((b) => b.classList.remove('active')); btn.classList.add('active'); $$('.settings-panel').forEach((p) => p.classList.remove('active')); $(`#settings-${btn.dataset.settings}`).classList.add('active'); scheduleWorkspaceSave('settings-tab'); }));
     ['view-settings', 'view-dashboard', 'view-activity'].forEach((id) => document.getElementById(id)?.addEventListener('scroll', () => scheduleWorkspaceSave(`${id}-scroll`), { passive: true }));
     $('#appThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#settingsThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#logoutBtn').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/'; });
+    bindLocaleSelects();
     $('#notesSettingsForm')?.addEventListener('submit', saveNotesSettings);
     $('#notifyLoginPersonal')?.addEventListener('change', () => savePersonalLoginNotification().catch((err) => toast(err.message || '保存通知设置失败')));
     $('#adminAddUserBtn')?.addEventListener('click', openAdminAddUserDialog);
@@ -9015,7 +9021,7 @@ function bindEvents() {
     }));
     $('#applyActivityRange')?.addEventListener('click', async () => {
         const bounds = activityRangeBounds('custom');
-        if (bounds.from && bounds.to && bounds.from > bounds.to) return toast('开始日期不能晚于结束日期');
+        if (bounds.from && bounds.to && bounds.from > bounds.to) return toast(t('开始日期不能晚于结束日期'));
         await loadActivities();
     });
     $('#connectionGrid').addEventListener('click', async (e) => {
@@ -9027,13 +9033,13 @@ function bindEvents() {
         }
         const edit = e.target.closest?.('[data-edit]')?.dataset.edit, del = e.target.closest?.('[data-delete]')?.dataset.delete, connect = e.target.closest?.('[data-connect]')?.dataset.connect;
         if (edit) openModal(connections.find((c) => c.id === edit), e.target.closest?.('[data-edit]'));
-        if (del && confirm('确定删除该连接？')) {
+        if (del && confirm(t('确定删除该连接？'))) {
             const card = e.target.closest?.('.connection-card');
             try {
                 await waitForConnectionCardExit(card, del);
                 await api(`/api/connections/${del}`, { method: 'DELETE' });
                 await loadConnections();
-                toast('连接已删除');
+                toast(t('连接已删除'));
             } catch (err) {
                 card?.classList.remove('deleting');
                 card?.querySelectorAll('button').forEach((btn) => { btn.disabled = false; });
@@ -9383,26 +9389,26 @@ $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?
     $('#brandIconFile').addEventListener('change', async (e) => { try { const dataUrl = await readImageAsDataUrl(e.target.files?.[0]); if (!dataUrl) return; pendingBrandIcon = dataUrl; $('#brandIconPreview').innerHTML = iconHtml(dataUrl); console.debug('[appearance-client]', 'brand icon file loaded', { size: e.target.files?.[0]?.size || 0, type: e.target.files?.[0]?.type || '' }); } catch (err) { e.target.value = ''; toast(err.message); } });
     setupAppearanceControls();
     $('#resetAppearanceBtn').addEventListener('click', () => resetAppearance().catch((err) => toast(err.message)));
-    $('#proxyList').addEventListener('click', async (e) => { const id = e.target.dataset.editProxy || e.target.dataset.openProxy || e.target.dataset.delProxy; if (!id) return; const p = proxies.find((x) => x.id === id); if (e.target.dataset.editProxy) openProxyModal(p, e.target); else if (e.target.dataset.openProxy) { await openProxySecret(id, e.target); } else if (confirm('删除代理？')) { await waitForMiniItemExit(e.target.closest('.mini-item'), id); await api(`/api/proxies/${id}`, { method: 'DELETE' }); await loadNetwork(); toast('代理已删除'); } });
-    $('#sshKeyList').addEventListener('click', async (e) => { const editId = e.target.dataset.editSshKey, openId = e.target.dataset.openSshKey, delId = e.target.dataset.delSshKey; if (editId) { const k = sshKeys.find((x) => x.id === editId); if (k) openSshKeyModal(k, e.target); return; } if (openId) { await openSshKeySecret(openId, e.target); return; } if (delId && confirm('删除该 SSH 密钥？已选择它的连接将无法再使用该密钥。')) { await waitForMiniItemExit(e.target.closest('.mini-item'), delId); await api(`/api/ssh-keys/${delId}`, { method: 'DELETE' }); await loadNetwork(); toast('SSH 密钥已删除'); } });
-    $('#passwordForm').addEventListener('submit', async (e) => { e.preventDefault(); const currentPassword = $('#settingsCurrentPassword').value, newPassword = $('#settingsNewPassword').value, confirmPassword = $('#settingsConfirmPassword').value; if (newPassword !== confirmPassword) return toast('两次输入的新密码不一致'); await api('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }); e.target.reset(); toast('密码已更新'); });
-    $('#profileForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/profile', { method: 'PUT', body: JSON.stringify({ username: $('#profileUsername').value.trim(), email: $('#profileEmail').value }) }); toast('资料已保存'); await loadSecurityStatus(); });
+    $('#proxyList').addEventListener('click', async (e) => { const id = e.target.dataset.editProxy || e.target.dataset.openProxy || e.target.dataset.delProxy; if (!id) return; const p = proxies.find((x) => x.id === id); if (e.target.dataset.editProxy) openProxyModal(p, e.target); else if (e.target.dataset.openProxy) { await openProxySecret(id, e.target); } else if (confirm(t('删除代理？'))) { await waitForMiniItemExit(e.target.closest('.mini-item'), id); await api(`/api/proxies/${id}`, { method: 'DELETE' }); await loadNetwork(); toast(t('代理已删除')); } });
+    $('#sshKeyList').addEventListener('click', async (e) => { const editId = e.target.dataset.editSshKey, openId = e.target.dataset.openSshKey, delId = e.target.dataset.delSshKey; if (editId) { const k = sshKeys.find((x) => x.id === editId); if (k) openSshKeyModal(k, e.target); return; } if (openId) { await openSshKeySecret(openId, e.target); return; } if (delId && confirm(t('删除该 SSH 密钥？已选择它的连接将无法再使用该密钥。'))) { await waitForMiniItemExit(e.target.closest('.mini-item'), delId); await api(`/api/ssh-keys/${delId}`, { method: 'DELETE' }); await loadNetwork(); toast(t('SSH 密钥已删除')); } });
+    $('#passwordForm').addEventListener('submit', async (e) => { e.preventDefault(); const currentPassword = $('#settingsCurrentPassword').value, newPassword = $('#settingsNewPassword').value, confirmPassword = $('#settingsConfirmPassword').value; if (newPassword !== confirmPassword) return toast(t('两次输入的新密码不一致')); await api('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }); e.target.reset(); toast(t('密码已更新')); });
+    $('#profileForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/profile', { method: 'PUT', body: JSON.stringify({ username: $('#profileUsername').value.trim(), email: $('#profileEmail').value }) }); toast(t('资料已保存')); await loadSecurityStatus(); });
     $('#securityPolicyForm').addEventListener('submit', saveSecurityPolicy); $('#captchaForm').addEventListener('submit', saveCaptcha); $('#mailForm').addEventListener('submit', saveMail); $('#appearanceForm').addEventListener('submit', saveAppearance); $('#terminalLayoutForm').addEventListener('submit', saveTerminalLayout); setupSnippetSettings(); setupAgentTokenSettings();
     $('#totpAction').addEventListener('click', (e) => { if (e.target.id === 'setupTotpBtn') setupTotp().catch((err) => toast(err.message)); });
-    $('#totpEnableForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/totp/enable', { method: 'POST', body: JSON.stringify({ code: $('#totpEnableCode').value }) }); toast('TOTP 已开启'); $('#totpEnableForm').classList.add('force-hidden'); await loadSecurityStatus(); });
-    $('#totpDisableForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm('确定关闭 TOTP？')) return; await api('/api/security/totp/disable', { method: 'POST', body: JSON.stringify({ currentPassword: $('#totpDisablePassword').value, code: $('#totpDisableCode').value }) }); e.target.reset(); toast('TOTP 已关闭'); await loadSecurityStatus(); });
+    $('#totpEnableForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/totp/enable', { method: 'POST', body: JSON.stringify({ code: $('#totpEnableCode').value }) }); toast(t('TOTP 已开启')); $('#totpEnableForm').classList.add('force-hidden'); await loadSecurityStatus(); });
+    $('#totpDisableForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm(t('确定关闭 TOTP？'))) return; await api('/api/security/totp/disable', { method: 'POST', body: JSON.stringify({ currentPassword: $('#totpDisablePassword').value, code: $('#totpDisableCode').value }) }); e.target.reset(); toast(t('TOTP 已关闭')); await loadSecurityStatus(); });
     $('#addPasskeyBtn').addEventListener('click', () => registerPasskey().catch((err) => toast(err.message)));
-    $('#passkeyList').addEventListener('click', async (e) => { const id = e.target.dataset.delPasskey; if (id && confirm('删除该 Passkey？')) { await api(`/api/passkeys/${id}`, { method: 'DELETE' }); await loadSecurityStatus(); } });
-    $('#ipBanList').addEventListener('click', async (e) => { const ip = e.target.dataset.unban; if (ip) { await api(`/api/security/ip-bans/${encodeURIComponent(ip)}`, { method: 'DELETE' }); await loadSecurityLists(); toast('已解除封禁'); } });
+    $('#passkeyList').addEventListener('click', async (e) => { const id = e.target.dataset.delPasskey; if (id && confirm(t('删除该 Passkey？'))) { await api(`/api/passkeys/${id}`, { method: 'DELETE' }); await loadSecurityStatus(); } });
+    $('#ipBanList').addEventListener('click', async (e) => { const ip = e.target.dataset.unban; if (ip) { await api(`/api/security/ip-bans/${encodeURIComponent(ip)}`, { method: 'DELETE' }); await loadSecurityLists(); toast(t('已解除封禁')); } });
     $('#toggleCaptchaSecret').addEventListener('click', () => { const el = $('#captchaSecretKey'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleCaptchaSecret').textContent = el.type === 'password' ? '👁️' : '🙈'; });
     $('#revealCaptchaSecret').addEventListener('click', () => revealCaptchaSecret().catch((err) => toast(err.message || '读取 CAPTCHA 密钥失败')));
     $('#toggleMailPassword').addEventListener('click', () => { const el = $('#mailPass'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleMailPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; });
     $('#revealMailPass').addEventListener('click', () => revealMailPass().catch((err) => toast(err.message || '读取 SMTP 密码失败')));
     $('#testMailBtn').addEventListener('click', () => testMail());
     $('#exportDataBtn').addEventListener('click', () => { location.href = '/api/data/export'; });
-    $('#clearActivityBtn').addEventListener('click', async () => { if (!confirm('确定清理活动日志？')) return; await api('/api/activities', { method: 'DELETE' }); await loadActivities(); toast('活动日志已清理'); });
-    $('#clearLoginEventsBtn').addEventListener('click', async () => { if (!confirm('确定清理登录事件日志？')) return; await api('/api/security/login-events', { method: 'DELETE' }); await loadSecurityLists(); toast('登录事件已清理'); });
-    $('#importDataForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm('导入会覆盖当前数据库，系统会先生成本地备份。继续？')) return; const fd = new FormData(); fd.append('backup', $('#backupFile').files[0]); fd.append('loginPassword', $('#importLoginPassword').value); fd.append('backupPassword', $('#backupPassword').value); const res = await fetch('/api/data/import', { method: 'POST', body: fd, credentials: 'same-origin' }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || '导入失败'); toast(data.message || '导入完成'); });
+    $('#clearActivityBtn').addEventListener('click', async () => { if (!confirm(t('确定清理活动日志？'))) return; await api('/api/activities', { method: 'DELETE' }); await loadActivities(); toast(t('活动日志已清理')); });
+    $('#clearLoginEventsBtn').addEventListener('click', async () => { if (!confirm(t('确定清理登录事件日志？'))) return; await api('/api/security/login-events', { method: 'DELETE' }); await loadSecurityLists(); toast(t('登录事件已清理')); });
+    $('#importDataForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm(t('导入会覆盖当前数据库，系统会先生成本地备份。继续？'))) return; const fd = new FormData(); fd.append('backup', $('#backupFile').files[0]); fd.append('loginPassword', $('#importLoginPassword').value); fd.append('backupPassword', $('#backupPassword').value); const res = await fetch('/api/data/import', { method: 'POST', body: fd, credentials: 'same-origin' }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || t('导入失败')); toast(data.message || t('导入完成')); });
 }
 function automaticWorkspaceId() {
     return `auto-${String(workspaceClientId || 'default').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80)}`;
@@ -9728,7 +9734,7 @@ function bindDeepLinkChannel() {
         const data = event.data || {};
         if (data.source !== 'zephyr-terminal' || data.type !== 'open-notes-for-connection') return;
         if (!isNotesEnabled()) {
-            toast('笔记功能未开启，请在设置中启用');
+            toast(t('笔记功能未开启，请在设置中启用'));
             return;
         }
         switchView('notes');
@@ -9771,7 +9777,7 @@ function initSettingsVisibility() {
     document.getElementById('clearLoginEventsBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
     document.getElementById('clearActivityBtn')?.classList.toggle('force-hidden', !isSuperAdmin);
     const title = document.getElementById('loginEventsTitle');
-    if (title) title.textContent = isSuperAdmin ? '全部登录事件' : '我的登录记录';
+    if (title) title.textContent = isSuperAdmin ? '全部登录事件' : t('我的登录记录');
     const activeSettingsTab = document.querySelector('.settings-tab.active');
     if (activeSettingsTab?.classList.contains('force-hidden')) {
         document.querySelector('.settings-tab[data-settings="security"]')?.click();
@@ -9873,14 +9879,14 @@ function openAdminAddUserDialog() {
         role = confirm(`${name} 设为管理员吗？\n确定 = 管理员，取消 = 普通用户`) ? 'admin' : 'user';
     }
     api('/api/admin/users', { method: 'POST', body: JSON.stringify({ username: name, password, role }) })
-        .then(() => { toast('用户已创建'); loadAdminUsers(); })
-        .catch((err) => toast(err.message || '创建失败'));
+        .then(() => { toast(t('用户已创建')); loadAdminUsers(); })
+        .catch((err) => toast(err.message || t('创建失败')));
 }
 
 async function handleAdminAction(action, userId) {
     try {
         if (action === 'suspend') {
-            if (!confirm('确定停用此用户？停用后该用户无法登录。')) return;
+            if (!confirm(t('确定停用此用户？停用后该用户无法登录。'))) return;
             await api(`/api/admin/users/${userId}/suspend`, { method: 'POST' });
         } else if (action === 'reactivate') {
             await api(`/api/admin/users/${userId}/reactivate`, { method: 'POST' });
@@ -9890,24 +9896,24 @@ async function handleAdminAction(action, userId) {
             await api(`/api/admin/users/${userId}/force-password-reset`, { method: 'POST', body: JSON.stringify({ newPassword: pw }) });
         } else if (action === 'revoke-sessions') {
             await api(`/api/admin/users/${userId}/revoke-sessions`, { method: 'POST' });
-            toast('已强制下线');
+            toast(t('已强制下线'));
         } else if (action === 'promote') {
-            if (!confirm('确定授予此用户管理员角色？')) return;
+            if (!confirm(t('确定授予此用户管理员角色？'))) return;
             await api(`/api/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ role: 'admin' }) });
         } else if (action === 'demote') {
-            if (!confirm('确定撤销此用户的管理员角色？')) return;
+            if (!confirm(t('确定撤销此用户的管理员角色？'))) return;
             await api(`/api/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ role: 'user' }) });
         } else if (action === 'transfer-super') {
-            if (!confirm('确定将超级管理员转移给此用户？\n转移后你将变为普通管理员。此操作不可撤销。')) return;
+            if (!confirm(t('确定将超级管理员转移给此用户？\n转移后你将变为普通管理员。此操作不可撤销。'))) return;
             await api(`/api/admin/users/${userId}/transfer-super-admin`, { method: 'POST' });
-            toast('超级管理员已转移，请重新登录');
+            toast(t('超级管理员已转移，请重新登录'));
             setTimeout(() => location.href = '/', 1500);
             return;
         } else if (action === 'delete') {
-            if (!confirm('确定删除此用户？其资源将转移给管理员。此操作不可撤销。')) return;
+            if (!confirm(t('确定删除此用户？其资源将转移给管理员。此操作不可撤销。'))) return;
             await api(`/api/admin/users/${userId}`, { method: 'DELETE', body: JSON.stringify({ resourcePolicy: 'transfer-to-admin' }) });
         }
-        toast('操作成功');
+        toast(t('操作成功'));
         await loadAdminUsers();
     } catch (err) {
         toast(err.message || '操作失败');
@@ -9922,9 +9928,52 @@ function registerStaticAssetWorker() {
     });
 }
 
+function syncLocaleSelectsValue(locale = getLocale()) {
+    const value = locale === 'en' ? 'en' : 'zh-CN';
+    ['#languageSelect'].forEach((sel) => {
+        const el = document.querySelector(sel);
+        if (el && el.value !== value) {
+            el.value = value;
+            const shell = el.closest('.ui-toggle-select');
+            if (shell) {
+                try { syncToggleSelectFace(el); } catch {}
+            }
+        }
+    });
+}
+
+async function changeAppLocale(next) {
+    await setLocale(next, { persist: true, applyDom: true });
+    syncLocaleSelectsValue(getLocale());
+    try { renderConnections(); } catch {}
+    try { applyDomI18n(document); } catch {}
+}
+
+function openLanguageSettings() {
+    const tab = document.querySelector('.settings-tab[data-settings="language"]');
+    if (tab && !tab.classList.contains('active')) tab.click();
+    document.querySelector('#languageSelect')?.focus?.({ preventScroll: true });
+}
+
+function bindLocaleSelects() {
+    document.querySelector('#appLocaleBtn')?.addEventListener('click', openLanguageSettings);
+    ['#languageSelect'].forEach((sel) => {
+        document.querySelector(sel)?.addEventListener('change', (e) => {
+            changeAppLocale(e.target.value).catch((err) => console.warn('[i18n]', err));
+        });
+    });
+}
+
 async function init() {
     document.documentElement.dataset.appInit = 'start';
     try {
+        await initI18n({ applyDom: true });
+        syncLocaleSelectsValue(getLocale());
+        onLocaleChange(() => {
+            syncLocaleSelectsValue(getLocale());
+            try { renderConnections(); } catch {}
+            try { applyDomI18n(document); } catch {}
+        });
         applyTheme(getPreferredTheme());
         document.documentElement.dataset.appInitTheme = 'ok';
         const me = await api('/api/auth/me');
@@ -9994,7 +10043,7 @@ async function init() {
     } catch (err) {
         console.error('[app-init]', err);
         document.documentElement.dataset.appInitError = err?.message || String(err || 'unknown');
-        toast(`初始化失败：${err?.message || err || '未知错误'}`);
+        toast(`初始化失败：${err?.message || err || t('未知错误')}`);
     }
 }
 init();
@@ -10023,25 +10072,25 @@ function renderAgentTokens(tokens, revealedTokens = new Map()) {
     const list = $('#agentTokenList');
     if (!list) return;
     if (!tokens.length) {
-        list.innerHTML = '<p class="empty-state">暂无 Token。点击“新增 Token”为设备创建连接凭据。</p>';
+        list.innerHTML = `<p class="empty-state">${t('暂无 Token。点击“新增 Token”为设备创建连接凭据。')}</p>`;
         return;
     }
     const revealMap = revealedTokens instanceof Map ? revealedTokens : new Map(Object.entries(revealedTokens || {}));
-    list.innerHTML = tokens.map((t) => {
-        const revealed = t.token || revealMap.get(t.id) || '';
+    list.innerHTML = tokens.map((tok) => {
+        const revealed = tok.token || revealMap.get(tok.id) || '';
         return `
-        <div class="agent-token-item" data-token-id="${escapeHtml(t.id)}">
+        <div class="agent-token-item" data-token-id="${escapeHtml(tok.id)}">
             <div class="agent-token-main">
-                <div class="agent-token-title"><strong>${escapeHtml(t.name || '未命名 Token')}</strong><span>${escapeHtml(t.id || '')}</span></div>
+                <div class="agent-token-title"><strong>${escapeHtml(tok.name || t('未命名 Token'))}</strong><span>${escapeHtml(tok.id || '')}</span></div>
                 <div class="agent-token-value"><code>${revealed ? escapeHtml(revealed) : '••••••••••••••••••••••••••••••••'}</code></div>
-                <div class="agent-token-meta">创建：${escapeHtml(formatAgentTokenTime(t.createdAt))} · 更新：${escapeHtml(formatAgentTokenTime(t.updatedAt))} · 最后使用：${escapeHtml(formatAgentTokenTime(t.lastUsedAt))}</div>
+                <div class="agent-token-meta">${t('创建：')}${escapeHtml(formatAgentTokenTime(tok.createdAt))} · ${t('更新：')}${escapeHtml(formatAgentTokenTime(tok.updatedAt))} · ${t('最后使用：')}${escapeHtml(formatAgentTokenTime(tok.lastUsedAt))}</div>
             </div>
             <div class="agent-token-buttons">
-                <button class="tool-btn" type="button" data-agent-reveal-token="${escapeHtml(t.id)}">查看</button>
-                <button class="tool-btn" type="button" data-agent-copy-token="${escapeHtml(t.id)}">复制</button>
-                <button class="tool-btn" type="button" data-agent-rename-token="${escapeHtml(t.id)}">重命名</button>
-                <button class="tool-btn" type="button" data-agent-regen-token="${escapeHtml(t.id)}">重新生成</button>
-                <button class="tool-btn danger" type="button" data-agent-delete-token="${escapeHtml(t.id)}">删除</button>
+                <button class="tool-btn" type="button" data-agent-reveal-token="${escapeHtml(tok.id)}">${t('查看')}</button>
+                <button class="tool-btn" type="button" data-agent-copy-token="${escapeHtml(tok.id)}">${t('复制')}</button>
+                <button class="tool-btn" type="button" data-agent-rename-token="${escapeHtml(tok.id)}">${t('重命名')}</button>
+                <button class="tool-btn" type="button" data-agent-regen-token="${escapeHtml(tok.id)}">${t('重新生成')}</button>
+                <button class="tool-btn danger" type="button" data-agent-delete-token="${escapeHtml(tok.id)}">${t('删除')}</button>
             </div>
         </div>`;
     }).join('');
@@ -10084,7 +10133,7 @@ async function createAgentToken() {
     const tokenRecord = data.token;
     if (!tokenRecord?.token) throw new Error('服务端未返回新 Token');
     await refreshAgentTokensKeeping(tokenRecord);
-    toast('Token 已创建并显示');
+    toast(t('Token 已创建并显示'));
 }
 
 async function renameAgentToken(id) {
@@ -10093,23 +10142,23 @@ async function renameAgentToken(id) {
     if (name === null) return;
     await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
     await loadAgentTokens();
-    toast('Token 已重命名');
+    toast(t('Token 已重命名'));
 }
 
 async function regenerateAgentToken(id) {
-    if (!confirm('重新生成后，使用旧 Token 的 Agent 会断开，需要在 Agent App 中填写新 Token。继续？')) return;
+    if (!confirm(t('重新生成后，使用旧 Token 的 Agent 会断开，需要在 Agent App 中填写新 Token。继续？'))) return;
     const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/regenerate`, { method: 'POST', body: JSON.stringify({ length: currentAgentTokenLength() }) });
     const tokenRecord = data.token;
     if (!tokenRecord?.token) throw new Error('服务端未返回新 Token');
     await refreshAgentTokensKeeping(tokenRecord);
-    toast('Token 已重新生成并显示');
+    toast(t('Token 已重新生成并显示'));
 }
 
 async function deleteAgentToken(id) {
-    if (!confirm('删除后，使用此 Token 的 Agent 会断开。继续删除？')) return;
+    if (!confirm(t('删除后，使用此 Token 的 Agent 会断开。继续删除？'))) return;
     await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' });
     await loadAgentTokens();
-    toast('Token 已删除');
+    toast(t('Token 已删除'));
 }
 
 async function revealAgentToken(id, { copy = false } = {}) {
@@ -10129,7 +10178,7 @@ async function revealAgentToken(id, { copy = false } = {}) {
     if (copy) {
         await copyTextToClipboard(token, 'Token 已复制');
     } else {
-        toast('Token 已显示');
+        toast(t('Token 已显示'));
     }
 }
 
@@ -10138,7 +10187,7 @@ async function copyAgentToken(id) {
 }
 
 async function resetAllAgentTokens() {
-    if (!confirm('这会删除当前账号所有 Zephyr Agent Token，并断开所有已连接 Agent。继续？')) return;
+    if (!confirm(t('这会删除当前账号所有 Zephyr Agent Token，并断开所有已连接 Agent。继续？'))) return;
     const secret = requestSensitiveSecret('重置全部 Zephyr Agent Token');
     const name = prompt('新 Token 名称', '默认 Token');
     if (name === null) return;
@@ -10149,16 +10198,16 @@ async function resetAllAgentTokens() {
     const tokenRecord = data.token;
     if (!tokenRecord?.token) throw new Error('服务端未返回新 Token');
     await refreshAgentTokensKeeping(tokenRecord);
-    toast('全部 Token 已重置，新 Token 已显示');
+    toast(t('全部 Token 已重置，新 Token 已显示'));
 }
 
 function setupAgentTokenSettings() {
-    $('#agentCreateTokenBtn')?.addEventListener('click', () => createAgentToken().catch((err) => toast(err.message || '创建失败')));
+    $('#agentCreateTokenBtn')?.addEventListener('click', () => createAgentToken().catch((err) => toast(err.message || t('创建失败'))));
     $('#agentRefreshTokenBtn')?.addEventListener('click', () => loadAgentTokens());
-    $('#agentResetAllTokenBtn')?.addEventListener('click', () => resetAllAgentTokens().catch((err) => toast(err.message || '重置失败')));
+    $('#agentResetAllTokenBtn')?.addEventListener('click', () => resetAllAgentTokens().catch((err) => toast(err.message || t('重置失败'))));
     $('#agentCopyServerUrlBtn')?.addEventListener('click', async () => {
         try {
-            await copyTextToClipboard(currentAgentServerUrl(), '主端地址已复制');
+            await copyTextToClipboard(currentAgentServerUrl(), t('主端地址已复制'));
         } catch (err) {
             toast(err.message || '复制失败');
         }
@@ -10169,10 +10218,10 @@ function setupAgentTokenSettings() {
         const rename = e.target.dataset.agentRenameToken;
         const regen = e.target.dataset.agentRegenToken;
         const del = e.target.dataset.agentDeleteToken;
-        if (reveal) revealAgentToken(reveal).catch((err) => toast(err.message || '查看失败'));
+        if (reveal) revealAgentToken(reveal).catch((err) => toast(err.message || t('查看失败')));
         if (copy) copyAgentToken(copy).catch((err) => toast(err.message || '复制失败'));
-        if (rename) renameAgentToken(rename).catch((err) => toast(err.message || '重命名失败'));
-        if (regen) regenerateAgentToken(regen).catch((err) => toast(err.message || '重新生成失败'));
+        if (rename) renameAgentToken(rename).catch((err) => toast(err.message || t('重命名失败')));
+        if (regen) regenerateAgentToken(regen).catch((err) => toast(err.message || t('重新生成失败')));
         if (del) deleteAgentToken(del).catch((err) => toast(err.message || '删除失败'));
     });
     updateAgentServerInfo();

@@ -5,74 +5,127 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Zephyr - 登录</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260615-visual-color-picker">
+    <link rel="stylesheet" href="style.css?v=20260726-i18n1">
 </head>
 <body>
     <div class="login-card auth-card" id="loginCard">
-        <!-- 主题切换按钮 -->
-        <button class="theme-btn-login" id="themeToggleLogin" title="切换主题">🌓</button>
+        <label class="locale-switch-login" title="语言" data-i18n-title="语言">
+            <span class="sr-only" data-i18n="语言">语言</span>
+            <select id="localeSelectLogin" aria-label="语言" data-i18n-aria-label="语言">
+                <option value="zh-CN">中文</option>
+                <option value="en">English</option>
+            </select>
+        </label>
+        <button class="theme-btn-login" id="themeToggleLogin" title="切换主题" data-i18n-title="切换主题">🌓</button>
         <div class="logo">🌬️</div>
         <h1>Zephyr</h1>
-        <p class="auth-subtitle">终端管理系统</p>
+        <p class="auth-subtitle" data-i18n="终端管理系统">终端管理系统</p>
         <div id="errorBanner" class="error-banner"></div>
         <form id="loginForm" autocomplete="off">
             <div class="form-group">
-                <label for="username">账号</label>
+                <label for="username" data-i18n="账号">账号</label>
                 <input type="text" id="username" autocomplete="username" placeholder=" " required>
             </div>
             <div class="form-group">
-                <label for="password">密码</label>
+                <label for="password" data-i18n="密码">密码</label>
                 <input type="password" id="password" autocomplete="current-password" placeholder=" " required>
             </div>
             <div class="auth-options">
-                <label class="remember-me"><input type="checkbox" id="rememberMe"> 记住我</label>
-                <a href="#" id="forgotLink">忘记密码？</a>
+                <label class="remember-me"><input type="checkbox" id="rememberMe"> <span data-i18n="记住我">记住我</span></label>
+                <a href="#" id="forgotLink" data-i18n="忘记密码？">忘记密码？</a>
             </div>
-            <button type="submit" class="btn btn-primary" id="loginBtn">登录</button>
-            <button type="button" class="btn" id="passkeyLoginBtn">使用 Passkey 登录</button>
+            <button type="submit" class="btn btn-primary" id="loginBtn" data-i18n="登录">登录</button>
+            <button type="button" class="btn" id="passkeyLoginBtn" data-i18n="使用 Passkey 登录">使用 Passkey 登录</button>
         </form>
     </div>
 
     <div class="login-card auth-card force-hidden" id="totpCard">
-        <button class="theme-btn-login" id="themeToggleTotp" title="切换主题">🌓</button>
-        <div class="logo">🌬️</div><h1>两步验证</h1><p class="auth-subtitle">请输入 6 位动态验证码</p>
+        <label class="locale-switch-login" title="语言" data-i18n-title="语言">
+            <span class="sr-only" data-i18n="语言">语言</span>
+            <select id="localeSelectTotp" aria-label="语言" data-i18n-aria-label="语言">
+                <option value="zh-CN">中文</option>
+                <option value="en">English</option>
+            </select>
+        </label>
+        <button class="theme-btn-login" id="themeToggleTotp" title="切换主题" data-i18n-title="切换主题">🌓</button>
+        <div class="logo">🌬️</div>
+        <h1 data-i18n="两步验证">两步验证</h1>
+        <p class="auth-subtitle" data-i18n="请输入 6 位动态验证码">请输入 6 位动态验证码</p>
         <div id="totpErrorBanner" class="error-banner"></div>
-        <form id="totpForm"><div class="form-group"><label for="totpCode">动态验证码</label><input id="totpCode" inputmode="numeric" maxlength="6" required></div><button class="btn btn-primary" type="submit">验证并登录</button></form>
+        <form id="totpForm">
+            <div class="form-group">
+                <label for="totpCode" data-i18n="动态验证码">动态验证码</label>
+                <input id="totpCode" inputmode="numeric" maxlength="6" required>
+            </div>
+            <button class="btn btn-primary" type="submit" data-i18n="验证并登录">验证并登录</button>
+        </form>
     </div>
 
     <div class="login-card auth-card force-hidden" id="forgotCard">
-        <button class="theme-btn-login" id="themeToggleForgot" title="切换主题">🌓</button>
-        <div class="logo">🌬️</div><h1>重置密码</h1><p class="auth-subtitle">通过管理员邮箱验证码重置</p>
+        <label class="locale-switch-login" title="语言" data-i18n-title="语言">
+            <span class="sr-only" data-i18n="语言">语言</span>
+            <select id="localeSelectForgot" aria-label="语言" data-i18n-aria-label="语言">
+                <option value="zh-CN">中文</option>
+                <option value="en">English</option>
+            </select>
+        </label>
+        <button class="theme-btn-login" id="themeToggleForgot" title="切换主题" data-i18n-title="切换主题">🌓</button>
+        <div class="logo">🌬️</div>
+        <h1 data-i18n="重置密码">重置密码</h1>
+        <p class="auth-subtitle" data-i18n="通过管理员邮箱验证码重置">通过管理员邮箱验证码重置</p>
         <div id="forgotErrorBanner" class="error-banner"></div>
-        <form id="forgotRequestForm"><div class="form-group"><label for="forgotEmail">管理员邮箱</label><input type="email" id="forgotEmail" autocomplete="email" placeholder=" " required></div><button class="btn btn-primary" type="submit">发送验证码</button></form>
-        <form id="forgotResetForm" class="force-hidden"><div class="form-group"><label for="resetCode">重置令牌</label><input id="resetCode" autocomplete="one-time-code" maxlength="128" spellcheck="false" placeholder="粘贴邮件中的完整令牌" required></div><div class="form-group"><label for="resetPassword">新密码</label><input type="password" id="resetPassword" minlength="4" autocomplete="new-password" placeholder=" " required></div><button class="btn btn-primary" type="submit">重置密码</button></form>
-        <p class="auth-link"><a href="#" id="backLoginLink">返回登录</a></p>
+        <form id="forgotRequestForm">
+            <div class="form-group">
+                <label for="forgotEmail" data-i18n="管理员邮箱">管理员邮箱</label>
+                <input type="email" id="forgotEmail" autocomplete="email" placeholder=" " required>
+            </div>
+            <button class="btn btn-primary" type="submit" data-i18n="发送验证码">发送验证码</button>
+        </form>
+        <form id="forgotResetForm" class="force-hidden">
+            <div class="form-group">
+                <label for="resetCode" data-i18n="重置令牌">重置令牌</label>
+                <input id="resetCode" autocomplete="one-time-code" maxlength="128" spellcheck="false" placeholder="粘贴邮件中的完整令牌" data-i18n-placeholder="粘贴邮件中的完整令牌" required>
+            </div>
+            <div class="form-group">
+                <label for="resetPassword" data-i18n="新密码">新密码</label>
+                <input type="password" id="resetPassword" minlength="4" autocomplete="new-password" placeholder=" " required>
+            </div>
+            <button class="btn btn-primary" type="submit" data-i18n="重置密码">重置密码</button>
+        </form>
+        <p class="auth-link"><a href="#" id="backLoginLink" data-i18n="返回登录">返回登录</a></p>
     </div>
 
     <div class="login-card auth-card force-hidden" id="changePasswordCard">
-        <button class="theme-btn-login" id="themeToggleChange" title="切换主题">🌓</button>
+        <label class="locale-switch-login" title="语言" data-i18n-title="语言">
+            <span class="sr-only" data-i18n="语言">语言</span>
+            <select id="localeSelectChange" aria-label="语言" data-i18n-aria-label="语言">
+                <option value="zh-CN">中文</option>
+                <option value="en">English</option>
+            </select>
+        </label>
+        <button class="theme-btn-login" id="themeToggleChange" title="切换主题" data-i18n-title="切换主题">🌓</button>
         <div class="logo">🌬️</div>
-        <h1>修改默认密码</h1>
-        <p class="auth-subtitle">为了安全，首次登录后必须修改密码</p>
+        <h1 data-i18n="修改默认密码">修改默认密码</h1>
+        <p class="auth-subtitle" data-i18n="为了安全，首次登录后必须修改密码">为了安全，首次登录后必须修改密码</p>
         <div id="changeErrorBanner" class="error-banner"></div>
         <form id="changePasswordForm" autocomplete="off">
             <div class="form-group">
-                <label for="currentPassword">当前密码</label>
+                <label for="currentPassword" data-i18n="当前密码">当前密码</label>
                 <input type="password" id="currentPassword" value="admin" autocomplete="current-password" required>
             </div>
             <div class="form-group">
-                <label for="newPassword">新密码</label>
+                <label for="newPassword" data-i18n="新密码">新密码</label>
                 <input type="password" id="newPassword" minlength="4" autocomplete="new-password" required>
             </div>
             <div class="form-group">
-                <label for="confirmPassword">确认新密码</label>
+                <label for="confirmPassword" data-i18n="确认新密码">确认新密码</label>
                 <input type="password" id="confirmPassword" minlength="4" autocomplete="new-password" required>
             </div>
-            <button type="submit" class="btn btn-primary">保存并进入系统</button>
+            <button type="submit" class="btn btn-primary" data-i18n="保存并进入系统">保存并进入系统</button>
         </form>
     </div>
     <div class="beian-footer" id="beianFooter"></div>
     <script src="preview-mock.js?v=20260723-activity1" type="module"></script>
-    <script src="client.js?v=20260615-visual-color-picker" type="module"></script>
+    <script src="client.js?v=20260726-i18n1" type="module"></script>
 </body>
 </html>
