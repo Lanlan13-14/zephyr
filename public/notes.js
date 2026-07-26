@@ -1046,9 +1046,9 @@ export function createNotesController({
 
     /* ── Share modal ── */
     async function openNoteShareModal() {
-        if (!state.current) { toast?.('请先选择一条笔记'); return; }
+        if (!state.current) { toast?.(t('请先选择一条笔记')); return; }
         if (state.current.ownerUserId && state.current.ownerUserId !== window.__zephyrMyUserId) {
-            toast?.('只有笔记所有者可以修改共享设置');
+            toast?.(t('只有笔记所有者可以修改共享设置'));
             return;
         }
         let modal = document.getElementById('notesShareModal');
@@ -1099,7 +1099,7 @@ export function createNotesController({
                 state.dirty = false;
                 fillEditor(updated.note);
                 close();
-                toast?.(shareWithUsers ? '已共享给所有用户' : shareWithAdmins ? '已共享给管理员' : '已设为私有');
+                toast?.(shareWithUsers ? t('已共享给所有用户') : shareWithAdmins ? t('已共享给管理员') : t('已设为私有'));
                 await loadList();
             } catch (err) {
                 toast?.(err.message || t('保存失败'));
@@ -1108,7 +1108,7 @@ export function createNotesController({
     }
 
     async function openLinkConnectionModal() {
-        if (!state.current) { toast?.('请先选择一条笔记'); return; }
+        if (!state.current) { toast?.(t('请先选择一条笔记')); return; }
         let modal = document.getElementById('notesLinkModal');
         if (!modal) {
             modal = document.createElement('div');
@@ -1185,7 +1185,7 @@ export function createNotesController({
                 state.current = updated.note;
                 state.dirty = false;
                 fillEditor(updated.note);
-                toast?.('关联连接已保存');
+                toast?.(t('关联连接已保存'));
                 await loadList();
             } catch (err) {
                 toast?.(err.message || t('保存失败'));
@@ -1234,7 +1234,7 @@ export function createNotesController({
             const name = await nativePrompt({
                 title: t('重命名'),
                 value: note.title || '',
-                placeholder: '笔记标题',
+                placeholder: t('笔记标题'),
                 maxLength: 200,
                 confirmLabel: t('保存'),
             });
@@ -1245,7 +1245,7 @@ export function createNotesController({
                     method: 'PUT',
                     body: JSON.stringify({ title: name, expectedRevision: cur.note.revision }),
                 });
-                toast?.('已重命名');
+                toast?.(t('已重命名'));
                 if (state.current?.noteId === noteId) {
                     state.current.title = name;
                     if ($('#notesTitleInput')) $('#notesTitleInput').value = name;
@@ -1256,8 +1256,8 @@ export function createNotesController({
             }
         } else if (action === 'move') {
             const group = await nativePrompt({
-                title: '移动分组',
-                message: '留空则移到未分组',
+                title: t('移动分组'),
+                message: t('留空则移到未分组'),
                 value: note.groupPath || '',
                 placeholder: 'ops/runbooks',
                 confirmLabel: t('移动'),
@@ -1272,7 +1272,7 @@ export function createNotesController({
                         expectedRevision: cur.note.revision,
                     }),
                 });
-                toast?.('已移动');
+                toast?.(t('已移动'));
                 await loadList();
             } catch (err) {
                 toast?.(err.message);
@@ -1395,7 +1395,7 @@ export function createNotesController({
             state.dirty = false;
             fillEditor(serverNote);
             close();
-            toast?.('已载入服务器版本');
+            toast?.(t('已载入服务器版本'));
         };
         modal.querySelector('#conflictKeepMine').onclick = async () => {
             try {
@@ -1413,7 +1413,7 @@ export function createNotesController({
                 state.dirty = false;
                 fillEditor(updated.note);
                 close();
-                toast?.('已保留我的版本');
+                toast?.(t('已保留我的版本'));
             } catch (err) {
                 toast?.(err.message || t('保存失败'));
             }
@@ -1432,7 +1432,7 @@ export function createNotesController({
                     } else if (typeof window.openTransientFromUri === 'function') {
                         window.openTransientFromUri(href);
                     } else {
-                        toast?.('请在应用主界面打开此链接');
+                        toast?.(t('请在应用主界面打开此链接'));
                     }
                 });
             }
@@ -1457,7 +1457,7 @@ export function createNotesController({
     async function addTagInteractive() {
         const tag = await nativePrompt({
             title: t('添加标签'),
-            placeholder: '例如 runbook',
+            placeholder: t('例如 runbook'),
             maxLength: 40,
             confirmLabel: t('添加'),
         });
@@ -1480,7 +1480,7 @@ export function createNotesController({
     async function editGroupInteractive() {
         const group = await nativePrompt({
             title: t('设置分组'),
-            message: '使用 / 表示层级，例如 ops/runbooks。留空表示未分组。',
+            message: t('使用 / 表示层级，例如 ops/runbooks。留空表示未分组。'),
             value: $('#notesGroupInput')?.value || '',
             placeholder: 'ops/runbooks',
             confirmLabel: t('保存'),
@@ -1673,7 +1673,7 @@ export function createNotesController({
                 });
                 await loadList();
                 await selectNote(data.note.noteId);
-                toast?.('已导入');
+                toast?.(t('已导入'));
             } catch (err) {
                 toast?.(err.message || t('导入失败'));
             } finally {
@@ -1682,16 +1682,16 @@ export function createNotesController({
         });
 
         $('#notesExportBtn')?.addEventListener('click', () => {
-            if (!state.current) return toast?.('请先选择笔记');
+            if (!state.current) return toast?.(t('请先选择笔记'));
             window.open(`/api/notes/${encodeURIComponent(state.current.noteId)}/export.md`, '_blank');
         });
 
         $('#notesNewGroupBtn')?.addEventListener('click', async () => {
             const name = await nativePrompt({
-                title: '新建分组',
-                message: '使用 / 表示层级，例如 ops/runbooks',
+                title: t('新建分组'),
+                message: t('使用 / 表示层级，例如 ops/runbooks'),
                 placeholder: 'ops/runbooks',
-                confirmLabel: '创建并写笔记',
+                confirmLabel: t('创建并写笔记'),
             });
             if (name == null) return;
             const path = String(name).trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
@@ -1722,7 +1722,7 @@ export function createNotesController({
             if (action === 'share') openNoteShareModal().catch((err) => toast?.(err.message));
             else if (action === 'link') openLinkConnectionModal().catch((err) => toast?.(err.message));
             else if (action === 'export') {
-                if (!state.current) return toast?.('请先选择笔记');
+                if (!state.current) return toast?.(t('请先选择笔记'));
                 window.open(`/api/notes/${encodeURIComponent(state.current.noteId)}/export.md`, '_blank');
             } else if (action === 'delete') deleteCurrent().catch((err) => toast?.(err.message));
             else if (action === 'purge_permanent') purgeCurrent({ permanent: true }).catch((err) => toast?.(err.message));
