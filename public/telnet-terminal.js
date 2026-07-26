@@ -5056,12 +5056,12 @@ function requestPasteConflictChoice() {
         const modal = document.createElement('div');
         modal.className = 'fm-conflict-modal show';
         modal.innerHTML = `
-            <div class="fm-conflict-head"><strong>目标已存在同名项目</strong><button type="button" class="fm-conflict-close" data-conflict-cancel>×</button></div>
+            <div class="fm-conflict-head"><strong>${t('目标已存在同名项目')}</strong><button type="button" class="fm-conflict-close" data-conflict-cancel>×</button></div>
             <div class="fm-conflict-body">
-                <button type="button" class="fm-conflict-choice" data-conflict-mode="overwrite"><b>覆盖</b><span>删除目标同名文件/文件夹后粘贴</span></button>
-                <button type="button" class="fm-conflict-choice" data-conflict-mode="skip"><b>跳过</b><span>保留目标已有项目，只粘贴未冲突项目</span></button>
-                <button type="button" class="fm-conflict-choice primary" data-conflict-mode="compatible"><b>兼容</b><span>自动追加“-复制”“-复制2”…，可重复粘贴</span></button>
-                <label class="fm-conflict-remember"><input type="checkbox" data-conflict-remember> <span>记住选择（仅本次网页连接有效）</span></label>
+                <button type="button" class="fm-conflict-choice" data-conflict-mode="overwrite"><b>${t('覆盖')}</b><span>${t('删除目标同名文件/文件夹后粘贴')}</span></button>
+                <button type="button" class="fm-conflict-choice" data-conflict-mode="skip"><b>${t('跳过')}</b><span>${t('保留目标已有项目，只粘贴未冲突项目')}</span></button>
+                <button type="button" class="fm-conflict-choice primary" data-conflict-mode="compatible"><b>${t('兼容')}</b><span>${t('自动追加“-复制”“-复制2”…，可重复粘贴')}</span></button>
+                <label class="fm-conflict-remember"><input type="checkbox" data-conflict-remember> <span>${t('记住选择（仅本次网页连接有效）')}</span></label>
             </div>`;
         const cleanup = (choice) => {
             overlay.remove();
@@ -5089,11 +5089,11 @@ function requestEditorCloseChoice() {
         const modal = document.createElement('div');
         modal.className = 'fm-conflict-modal show';
         modal.innerHTML = `
-            <div class="fm-conflict-head"><strong>文件有未保存修改</strong><button type="button" class="fm-conflict-close" data-editor-close-choice="cancel">×</button></div>
+            <div class="fm-conflict-head"><strong>${t('文件有未保存修改')}</strong><button type="button" class="fm-conflict-close" data-editor-close-choice="cancel">×</button></div>
             <div class="fm-conflict-body">
-                <button type="button" class="fm-conflict-choice primary" data-editor-close-choice="save"><b>保存并关闭</b><span>先保存当前内容，然后关闭编辑窗口</span></button>
-                <button type="button" class="fm-conflict-choice" data-editor-close-choice="discard"><b>放弃修改</b><span>不保存本次修改，直接关闭窗口</span></button>
-                <button type="button" class="fm-conflict-choice" data-editor-close-choice="cancel"><b>取消关闭</b><span>返回编辑器继续编辑</span></button>
+                <button type="button" class="fm-conflict-choice primary" data-editor-close-choice="save"><b>${t('保存并关闭')}</b><span>${t('先保存当前内容，然后关闭编辑窗口')}</span></button>
+                <button type="button" class="fm-conflict-choice" data-editor-close-choice="discard"><b>${t('放弃修改')}</b><span>${t('不保存本次修改，直接关闭窗口')}</span></button>
+                <button type="button" class="fm-conflict-choice" data-editor-close-choice="cancel"><b>${t('取消关闭')}</b><span>${t('返回编辑器继续编辑')}</span></button>
             </div>`;
         const cleanup = (choice) => { overlay.remove(); modal.remove(); resolve(choice || 'cancel'); };
         overlay.addEventListener('click', () => cleanup('cancel'));
