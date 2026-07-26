@@ -54,7 +54,7 @@ AI 覆盖项目所有非人类专属操作；人类专属操作显式标记 `hum
 
 ## 验证门禁
 
-- AI 串行回归：**106/106 passed**。
+- AI 串行回归：**107/107 passed**。
 - Go Runtime：`go test ./...` 通过。
 - JavaScript 语法：46 个文件通过。
 - 模型 Tool 目录：**76 total / 0 unbound / 0 loose schema**。

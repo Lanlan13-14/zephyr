@@ -1724,7 +1724,7 @@ function createPendingConfirmation(toolName, args, ctx, deps) {
 async function maybeRequireConfirmation(toolName, args, ctx, run, deps) {
     const ai = deps.storage.getSettings().ai || {};
     const sensitive = ai.sensitive || {};
-    if (!isSensitiveTool(toolName, args) || ctx.confirmed || sensitive.requireConfirmation === false) return run();
+    if (!isSensitiveTool(toolName, args) || ctx.confirmed || ctx.confirmedToolId === toolName || sensitive.requireConfirmation === false) return run();
     if (sensitive.autoConfirm) {
         await delay(clampNumber(sensitive.autoConfirmDelayMs, 0, 60000, 2500), ctx.signal);
         return run();

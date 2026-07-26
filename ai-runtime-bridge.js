@@ -248,56 +248,11 @@ async function executePlatformTool(toolName, args, ctx) {
     return agent.executeAiToolForHost(toolName, args, ctx);
 }
 
-// Static catalog covers tools that must exist even before dynamic export.
-// Schemas intentionally match legacy names so models keep working.
-const STATIC_PLATFORM_CATALOG = [
-    toolDef('list_connections', '列出 Zephyr 中可用的 SSH/RDP/VNC 连接（不含密码/私钥）', {}, true, 'low'),
-    toolDef('list_zephyr_resources', '列出 Zephyr 本地资源', { resources: { type: 'array', items: { type: 'string' } } }, true, 'low'),
-    toolDef('note_list', '列出笔记摘要', { group: { type: 'string' }, tag: { type: 'string' }, limit: { type: 'number' } }, true, 'low'),
-    toolDef('note_search', '搜索笔记', { query: { type: 'string' } }, true, 'low', ['query']),
-    toolDef('note_get', '读取笔记全文', { noteId: { type: 'string' } }, true, 'low', ['noteId']),
-    toolDef('memory_search', '搜索 Memory', { query: { type: 'string' } }, true, 'low'),
-    toolDef('web_search', '网页搜索', { query: { type: 'string' } }, true, 'low', ['query']),
-    toolDef('fetch_url', '读取 URL 正文', { url: { type: 'string' } }, true, 'low', ['url']),
-    toolDef('terminal_read_output', '读取 SSH 终端输出', { tabId: { type: 'string' } }, true, 'low'),
-    toolDef('remote_desktop_screenshot', '读取 RDP/VNC 画面', { tabId: { type: 'string' } }, true, 'low'),
-    toolDef('remote_execute', '在 SSH 连接上执行命令', { connectionId: { type: 'string' }, command: { type: 'string' } }, false, 'high', ['command']),
-    toolDef('remote_read_file', '读取远程文件', { connectionId: { type: 'string' }, path: { type: 'string' } }, true, 'low', ['path']),
-    toolDef('remote_write_file', '写入远程文件', { connectionId: { type: 'string' }, path: { type: 'string' }, content: { type: 'string' } }, false, 'high', ['path']),
-    toolDef('open_connection', '打开连接会话', { connectionId: { type: 'string' } }, false, 'high', ['connectionId']),
-    toolDef('ui_action', '页面/终端/远程桌面代操作', { action: { type: 'string' } }, false, 'high', ['action']),
-    toolDef('plan_task', '创建任务计划', { title: { type: 'string' }, steps: { type: 'array' } }, false, 'low'),
-    toolDef('plan_update', '更新任务计划', { planId: { type: 'string' } }, false, 'low', ['planId']),
-    toolDef('browser_navigate', '内置浏览器打开 URL', { url: { type: 'string' } }, false, 'high', ['url']),
-    toolDef('browser_inspect', '检查页面元素', {}, true, 'low'),
-    toolDef('browser_screenshot', '浏览器截图', {}, true, 'low'),
-    toolDef('browser_click', '浏览器点击', { selector: { type: 'string' } }, false, 'high'),
-    toolDef('browser_type', '浏览器输入', { selector: { type: 'string' }, text: { type: 'string' } }, false, 'high'),
-    toolDef('connection_create', '新增连接资产', { name: { type: 'string' }, host: { type: 'string' } }, false, 'destructive'),
-    toolDef('connection_update', '修改连接资产', { connectionId: { type: 'string' } }, false, 'destructive'),
-    toolDef('connection_delete', '删除连接资产', { connectionId: { type: 'string' } }, false, 'destructive'),
-    toolDef('connection_test', '测试连接', { connectionId: { type: 'string' } }, true, 'low'),
-    toolDef('memory_save', '保存 Memory', { content: { type: 'string' } }, false, 'high'),
-    toolDef('note_create', '创建笔记', { title: { type: 'string' } }, false, 'high'),
-    toolDef('note_update', '更新笔记', { noteId: { type: 'string' } }, false, 'high'),
-    toolDef('note_delete', '删除笔记', { noteId: { type: 'string' } }, false, 'destructive'),
-];
+// Fail closed if the dynamic catalog is unavailable. A stale fallback catalog
+// previously re-exposed credential-bearing legacy tools during partial startup.
+const STATIC_PLATFORM_CATALOG = Object.freeze([]);
 
-function toolDef(name, description, properties, readOnly, risk, required = []) {
-    return {
-        name,
-        description,
-        parameters: {
-            type: 'object',
-            properties: properties || {},
-            required,
-            additionalProperties: true,
-        },
-        readOnly: !!readOnly,
-        risk: risk || (readOnly ? 'low' : 'high'),
-        parallelSafe: !!readOnly,
-    };
-}
+// No static Tool definitions by design.
 
 module.exports = {
     AiRuntimeBridge,

@@ -52,9 +52,8 @@ test('listToolCatalog exposes platform tools with risk flags', () => {
     assert.equal(list.confirmation, 'never');
 });
 
-test('STATIC_PLATFORM_CATALOG names are unique', () => {
-    const names = STATIC_PLATFORM_CATALOG.map((t) => t.name);
-    assert.equal(names.length, new Set(names).size);
+test('STATIC_PLATFORM_CATALOG fails closed instead of exposing stale legacy tools', () => {
+    assert.deepEqual(STATIC_PLATFORM_CATALOG, []);
 });
 
 test('listPlatformToolCatalog prefers dynamic catalog', () => {
