@@ -5936,7 +5936,7 @@ function aiPreviewCode(item) {
     state.visible = true;
     $('#aiBrowserPreview')?.classList.remove('force-hidden');
     const title = $('#aiBrowserPreviewTitle'), body = $('#aiBrowserPreviewBody'), toggle = $('#aiBrowserPreviewToggleBtn');
-    if (toggle) toggle.textContent = '隐藏预览';
+    if (toggle) toggle.textContent = t('隐藏预览');
     if (title) title.textContent = `代码调试沙箱 · ${item.filename || 'snippet'}`;
     if (body) body.innerHTML = `<iframe class="ai-code-preview-frame" sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock" src="${escapeAttr(aiCodePreviewObjectUrl)}"></iframe><small>${escapeHtml(item.filename || '')} · 本地 Blob 沙箱预览</small>`;
     toast(t('已打开代码预览'));
@@ -6137,8 +6137,8 @@ function setAiTyping(show) {
         send.innerHTML = show
             ? '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect></svg>'
             : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>';
-        send.title = show ? '停止 AI 回复' : '发送';
-        send.setAttribute('aria-label', show ? '停止 AI 回复' : '发送');
+        send.title = show ? '停止 AI 回复' : t('发送');
+        send.setAttribute('aria-label', show ? '停止 AI 回复' : t('发送'));
     }
     scrollAiChat();
 }
@@ -6212,10 +6212,10 @@ function renderAiBrowserPreview() {
     if (!box || !body) return;
     const state = aiBrowserPreviewStateForSession(aiCurrentSessionId);
     box.classList.toggle('force-hidden', !state.visible);
-    if (toggle) toggle.textContent = state.visible ? '隐藏预览' : '浏览器预览';
+    if (toggle) toggle.textContent = state.visible ? t('隐藏预览') : '浏览器预览';
     const shot = state.preview;
     if (!shot?.url) {
-        title && (title.textContent = 'AI 代操作页面');
+        title && (title.textContent = t('AI 代操作页面'));
         body.innerHTML = '<span>AI 打开网页后，会在这里持续显示它正在代操作的页面。</span>';
         return;
     }
@@ -6515,7 +6515,7 @@ async function performAiUiAction(action = {}) {
         const ack = await ackPromise;
         await delayMs(action.waitMs ?? 2000);
         const result = { remoteDesktopAction: ack || { ok: false, timeout: true }, remoteDesktopScreenshot: await waitForFreshRemoteDesktopSnapshot(id, { maxWidth: action.maxWidth || 640, afterFrameAt: beforeFrameAt, timeoutMs: action.freshTimeoutMs || 2600 }) };
-        if (ack && ack.ok === false) result.clientError = ack.error || 'AI 远程桌面操作失败';
+        if (ack && ack.ok === false) result.clientError = ack.error || t('AI 远程桌面操作失败');
         return result;
     }
     if (a === 'toast') { toast(action.text || 'AI 已执行操作'); return; }
@@ -6644,8 +6644,8 @@ function summarizeAiToolResult(tool, result = {}) {
         return `发现 ${list.length} 个连接：${Object.entries(byProto).map(([k, v]) => `${k} ${v}`).join('、') || '无'}`;
     }
     if (tool === 'remote_execute') return `远程命令完成，目标 ${(result.results || []).length} 台`;
-    if (tool === 'remote_read_file') return `读取 ${result.path || '文件'}，${result.size || 0} bytes`;
-    if (tool === 'remote_write_file') return `写入 ${result.path || '文件'}，${result.bytes || 0} bytes`;
+    if (tool === 'remote_read_file') return `读取 ${result.path || t('文件')}，${result.size || 0} bytes`;
+    if (tool === 'remote_write_file') return `写入 ${result.path || t('文件')}，${result.bytes || 0} bytes`;
     if (tool === 'web_search') return `搜索返回 ${(result.results || []).length} 条结果`;
     if (tool === 'fetch_url') return `读取网页 ${result.url || ''}`;
     if (tool === 'memory_search') return `Memory 命中 ${(result.memories || []).length} 条`;
@@ -6950,10 +6950,10 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                     break;
                 }
                 case 'run.failed':
-                    appendAiMessage(body?.error || 'AI 运行失败', 'system', { sessionId });
+                    appendAiMessage(body?.error || t('AI 运行失败'), 'system', { sessionId });
                     break;
                 case 'run.aborted':
-                    appendAiMessage('AI 回复已中断。', 'system', { sessionId });
+                    appendAiMessage(t('AI 回复已中断。'), 'system', { sessionId });
                     break;
                 default:
                     break;
@@ -7014,7 +7014,7 @@ async function sendAiMessage() {
         }
     } catch (err) {
         if (err.name === 'AbortError' || /aborted|abort|已停止/i.test(String(err.message || ''))) {
-            if (!aiStoppedControllers.has(abortController)) appendAiMessage('AI 回复已中断。', 'system', { sessionId });
+            if (!aiStoppedControllers.has(abortController)) appendAiMessage(t('AI 回复已中断。'), 'system', { sessionId });
         } else appendAiMessage(formatAiRequestFailure(err), 'system', { sessionId });
     } finally {
         clearAiSessionRun(sessionId, abortController);
@@ -8136,7 +8136,7 @@ async function testMail() {
     const btn = $('#testMailBtn');
     const oldText = btn.textContent;
     btn.disabled = true;
-    btn.textContent = '发送中...';
+    btn.textContent = t('发送中...');
     try {
         const result = await api('/api/settings/test-mail', { method: 'POST', body: JSON.stringify({ to: $('#mailAdminEmail').value.trim() }) });
         toast(result.message || '测试邮件已发送');
@@ -8373,7 +8373,7 @@ function renderSnippetSettings() {
     const list = $('#snippetSettingsList');
     if (!list) return;
     const snippets = getSnippets();
-    list.innerHTML = snippets.length ? snippets.map((item) => `<div class="mini-item snippet-settings-item" data-id="${escapeHtml(item.id)}"><span class="resource-tag resource-tag-name" title="${escapeHtml(item.name || '未命名片段')}">${escapeHtml(item.name || '未命名片段')}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml(item.group || '未分组')}</span><span class="resource-tag ${item.autoRun ? 'resource-tag-host' : 'resource-tag-auth'}">${item.autoRun ? '直接执行' : '填入输入框'}</span></div><button class="tool-btn" data-edit-snippet="${escapeHtml(item.id)}">编辑</button><button class="tool-btn danger" data-delete-snippet="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<p class="muted">暂无代码片段</p>';
+    list.innerHTML = snippets.length ? snippets.map((item) => `<div class="mini-item snippet-settings-item" data-id="${escapeHtml(item.id)}"><span class="resource-tag resource-tag-name" title="${escapeHtml(item.name || t('未命名片段'))}">${escapeHtml(item.name || t('未命名片段'))}</span><div class="resource-meta"><span class="resource-tag resource-tag-protocol">${escapeHtml(item.group || t('未分组'))}</span><span class="resource-tag ${item.autoRun ? 'resource-tag-host' : 'resource-tag-auth'}">${item.autoRun ? t('直接执行') : t('填入输入框')}</span></div><button class="tool-btn" data-edit-snippet="${escapeHtml(item.id)}">编辑</button><button class="tool-btn danger" data-delete-snippet="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<p class="muted">暂无代码片段</p>';
 }
 async function saveSnippet(e) {
     e.preventDefault();
@@ -8414,7 +8414,7 @@ function setupSnippetSettings() {
                 await persistSnippets(snippets.filter((x) => x.id !== deleteId));
                 renderSnippetSettings();
                 toast(t('代码片段已从服务端删除'));
-            } catch (err) { toast(err.message || '删除失败'); }
+            } catch (err) { toast(err.message || t('删除失败')); }
         }
     });
     renderSnippetSettings();
@@ -10209,7 +10209,7 @@ function setupAgentTokenSettings() {
         try {
             await copyTextToClipboard(currentAgentServerUrl(), t('主端地址已复制'));
         } catch (err) {
-            toast(err.message || '复制失败');
+            toast(err.message || t('复制失败'));
         }
     });
     $('#agentTokenList')?.addEventListener('click', (e) => {
@@ -10219,10 +10219,10 @@ function setupAgentTokenSettings() {
         const regen = e.target.dataset.agentRegenToken;
         const del = e.target.dataset.agentDeleteToken;
         if (reveal) revealAgentToken(reveal).catch((err) => toast(err.message || t('查看失败')));
-        if (copy) copyAgentToken(copy).catch((err) => toast(err.message || '复制失败'));
+        if (copy) copyAgentToken(copy).catch((err) => toast(err.message || t('复制失败')));
         if (rename) renameAgentToken(rename).catch((err) => toast(err.message || t('重命名失败')));
         if (regen) regenerateAgentToken(regen).catch((err) => toast(err.message || t('重新生成失败')));
-        if (del) deleteAgentToken(del).catch((err) => toast(err.message || '删除失败'));
+        if (del) deleteAgentToken(del).catch((err) => toast(err.message || t('删除失败')));
     });
     updateAgentServerInfo();
     loadAgentTokens().catch(() => {});
