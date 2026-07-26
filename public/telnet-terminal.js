@@ -5178,11 +5178,11 @@ function renderFilePropertiesModal(selected, extra = null) {
     ];
     const mode = single ? rightsToMode(single.rights) : '';
     filePropertiesModal.innerHTML = `
-        <div class="fm-props-head"><strong>属性</strong><button type="button" class="fm-props-close" data-props-close>×</button></div>
+        <div class="fm-props-head"><strong>${t('属性')}</strong><button type="button" class="fm-props-close" data-props-close>×</button></div>
         <div class="fm-props-body">${rows.map(([label, value]) => `<div class="fm-props-row"><span>${escapeHtml(label)}</span><code title="${escapeHtml(value)}">${escapeHtml(value)}</code></div>`).join('')}</div>
         <div class="fm-props-actions">
             ${single ? `<button type="button" class="tool-btn fm-props-action" data-props-copy-path data-path="${escapeHtml(single.path || '')}">${svgIcon('copy')}复制路径</button><button type="button" class="tool-btn fm-props-action" data-props-chmod data-path="${escapeHtml(single.path || '')}" data-mode="${escapeHtml(mode)}">${svgIcon('chmod')}修改权限</button>` : ''}
-            <button type="button" class="tool-btn fm-props-action primary" data-props-close>确定</button>
+            <button type="button" class="tool-btn fm-props-action primary" data-props-close>${t('确定')}</button>
         </div>`;
 }
 function requestRemoteProperties(selected) {
@@ -7014,9 +7014,9 @@ function handleEditorSaveConflict(panel, msg = {}) {
             <p style="margin:6px 8px 10px;font-size:12px;line-height:1.45;color:var(--text-secondary)">
               远端文件在打开后已被修改（mtime 冲突）。可覆盖远端，或重新加载丢弃本地未保存修改。
             </p>
-            <button type="button" class="fm-editor-sidepanel-item" data-conflict-act="overwrite"><strong>覆盖远端</strong><small>用当前编辑器内容强制写入</small></button>
-            <button type="button" class="fm-editor-sidepanel-item" data-conflict-act="reload"><strong>重新加载远端</strong><small>丢弃本地未保存修改</small></button>
-            <button type="button" class="fm-editor-sidepanel-item" data-conflict-act="cancel"><strong>取消</strong><small>继续编辑，稍后再保存</small></button>
+            <button type="button" class="fm-editor-sidepanel-item" data-conflict-act="overwrite"><strong>${t('覆盖远端')}</strong><small>${t('用当前编辑器内容强制写入')}</small></button>
+            <button type="button" class="fm-editor-sidepanel-item" data-conflict-act="reload"><strong>${t('重新加载远端')}</strong><small>${t('丢弃本地未保存修改')}</small></button>
+            <button type="button" class="fm-editor-sidepanel-item" data-conflict-act="cancel"><strong>${t('取消')}</strong><small>${t('继续编辑，稍后再保存')}</small></button>
         `;
         body.querySelectorAll('[data-conflict-act]').forEach((btn) => {
             btn.addEventListener('click', () => {
