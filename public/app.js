@@ -127,9 +127,32 @@ const DEFAULT_BRAND_ICON = '🌬️';
 let pendingBrandIcon = DEFAULT_BRAND_ICON;
 const SMARTBAR_TEXT_IMAGE_CACHE = new Map();
 
+function localizedAiError(error = {}) {
+    const code = String(error?.code || error?.errorCode || '').trim();
+    const field = String(error?.field || '').trim();
+    const byCode = {
+        invalid_tool_arguments: field ? t('AI 工具参数无效：{field}', { field }) : t('AI 工具参数无效'),
+        revision_conflict: t('资源已被其他操作修改，请重新读取后再试'),
+        resource_not_found_or_inaccessible: t('资源不存在或无权访问'),
+        notes_disabled: t('当前用户未启用笔记功能'),
+        stale_dom_revision: t('页面 DOM 已变化，请重新检查页面元素'),
+        stale_element_ref: t('页面元素引用已失效，请重新检查页面元素'),
+        stale_capture: t('远程桌面画面已变化，请重新截图后再操作'),
+        agent_read_only: t('Agent 共享为只读'),
+        agent_offline: t('Agent 当前离线'),
+        invalid_secret_ref: t('secretRef 无效'),
+        secret_ref_forbidden: t('secretRef 不属于当前用户'),
+        secret_ref_expired: t('secretRef 已过期，请重新发现'),
+        secret_ref_kind_mismatch: t('secretRef 类型不匹配'),
+        invalid_terminal_protocol: t('标准终端操作仅支持 SSH 或 TELNET 会话'),
+        terminal_not_writable: t('终端会话已断开或不可写'),
+        invalid_wait_pattern: t('等待正则表达式无效'),
+    };
+    return byCode[code] || error?.message || error?.error || t('操作失败');
+}
 function apiErrorFromResponse(res, data = {}) {
     const raw = data.error || data.message;
-    const message = typeof raw === 'string' ? raw : (raw?.message || raw?.code || `请求失败（HTTP ${res.status}）`);
+    const message = data.code ? localizedAiError({ code: data.code, field: data.field, error: typeof raw === 'string' ? raw : raw?.message }) : (typeof raw === 'string' ? raw : (raw?.message || raw?.code || `请求失败（HTTP ${res.status}）`));
     const err = new Error(message);
     err.status = res.status;
     err.code = data.code || raw?.code || '';
@@ -6658,6 +6681,7 @@ function maskAiSensitive(value, tool = '') {
 }
 function summarizeAiToolResult(tool, result = {}) {
     const data = result?.ok === true && result?.data && typeof result.data === 'object' ? result.data : result;
+    if (result?.ok === false || result?.code || result?.errorCode) return localizedAiError(result);
     if (tool === 'connection_list_v1') return `发现 ${(data.connections || []).length} 个连接`;
     if (tool === 'connection_get_v1') return `读取连接 ${data.connection?.name || data.connection?.id || ''}`;
     if (tool === 'connection_create_v1') return `已新增连接 ${data.connection?.name || ''}`;

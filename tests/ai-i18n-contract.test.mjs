@@ -48,6 +48,9 @@ test('new AI UI paths call t() instead of hardcoding Chinese', () => {
   assert.match(rdp, /t\('RDP Worker 尚未就绪'\)/);
   assert.match(rdp, /t\('未知 RDP AI 动作：\{control\}'/);
   assert.match(service, /summaryKey: '确认执行工具：\{tool\}'/);
+  assert.match(app, /function localizedAiError/);
+  assert.match(app, /invalid_tool_arguments:/);
+  assert.match(app, /secret_ref_expired:/);
   assert.match(app, /localizedAiConfirmationSummary/);
   assert.doesNotMatch(app, /confirmation\?\.summary \|\| ''/);
 });
