@@ -10,6 +10,8 @@ const { executeCanonicalTool } = require('./ai-tool-executor');
 const connectionTools = require('./ai-connection-tools');
 const proxyTools = require('./ai-proxy-tools');
 const sshKeyTools = require('./ai-ssh-key-tools');
+const jumpHostTools = require('./ai-jump-host-tools');
+const snippetTools = require('./ai-snippet-tools');
 const { PLAYBOOKS } = require('./ai-playbooks');
 
 const DEFAULT_TOOL_CALL_LIMIT = 0;
@@ -47,6 +49,16 @@ const CANONICAL_TOOL_SCHEMAS = Object.freeze({
     ssh_key_update_metadata_v1: sshKeyTools.SSH_KEY_UPDATE_METADATA_SCHEMA,
     ssh_key_validate_v1: sshKeyTools.SSH_KEY_VALIDATE_SCHEMA,
     ssh_key_delete_v1: sshKeyTools.SSH_KEY_DELETE_SCHEMA,
+    jump_host_list_v1: jumpHostTools.JUMP_HOST_LIST_SCHEMA,
+    jump_host_get_v1: jumpHostTools.JUMP_HOST_GET_SCHEMA,
+    jump_host_create_v1: jumpHostTools.JUMP_HOST_CREATE_SCHEMA,
+    jump_host_update_v1: jumpHostTools.JUMP_HOST_UPDATE_SCHEMA,
+    jump_host_delete_v1: jumpHostTools.JUMP_HOST_DELETE_SCHEMA,
+    snippet_list_v1: snippetTools.SNIPPET_LIST_SCHEMA,
+    snippet_get_v1: snippetTools.SNIPPET_GET_SCHEMA,
+    snippet_create_v1: snippetTools.SNIPPET_CREATE_SCHEMA,
+    snippet_update_v1: snippetTools.SNIPPET_UPDATE_SCHEMA,
+    snippet_delete_v1: snippetTools.SNIPPET_DELETE_SCHEMA,
 });
 
 function aiAbortError() {
@@ -631,20 +643,22 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'ssh_key_rename_v1', description: '重命名 SSH 密钥元数据。必须先读取 revision 并传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.ssh_key_rename_v1 } });
     tools.push({ type: 'function', function: { name: 'ssh_key_update_metadata_v1', description: '修改 SSH 密钥备注。必须先读取 revision 并传 expectedRevision；不接收私钥或口令；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.ssh_key_update_metadata_v1 } });
     tools.push({ type: 'function', function: { name: 'ssh_key_delete_v1', description: '删除 SSH 密钥。必须先读取 revision 并传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.ssh_key_delete_v1 } });
+    tools.push({ type: 'function', function: { name: 'jump_host_list_v1', description: '列出当前用户可发现的跳板机元数据和其引用的 SSH 连接摘要。', parameters: CANONICAL_TOOL_SCHEMAS.jump_host_list_v1 } });
+    tools.push({ type: 'function', function: { name: 'jump_host_get_v1', description: '读取跳板机元数据、SSH 连接摘要与 revision。', parameters: CANONICAL_TOOL_SCHEMAS.jump_host_get_v1 } });
+    tools.push({ type: 'function', function: { name: 'jump_host_create_v1', description: '基于当前用户可使用的 SSH 连接创建跳板机；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.jump_host_create_v1 } });
+    tools.push({ type: 'function', function: { name: 'jump_host_update_v1', description: '修改跳板机名称或引用的 SSH 连接。必须传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.jump_host_update_v1 } });
+    tools.push({ type: 'function', function: { name: 'jump_host_delete_v1', description: '删除跳板机。必须传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.jump_host_delete_v1 } });
+    tools.push({ type: 'function', function: { name: 'snippet_list_v1', description: '列出当前用户的代码片段，可按名称、命令、分组和自动执行属性筛选。', parameters: CANONICAL_TOOL_SCHEMAS.snippet_list_v1 } });
+    tools.push({ type: 'function', function: { name: 'snippet_get_v1', description: '读取当前用户的一条代码片段及 revision。', parameters: CANONICAL_TOOL_SCHEMAS.snippet_get_v1 } });
+    tools.push({ type: 'function', function: { name: 'snippet_create_v1', description: '为当前用户创建代码片段；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.snippet_create_v1 } });
+    tools.push({ type: 'function', function: { name: 'snippet_update_v1', description: '修改当前用户的代码片段。必须传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.snippet_update_v1 } });
+    tools.push({ type: 'function', function: { name: 'snippet_delete_v1', description: '删除当前用户的代码片段。必须传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.snippet_delete_v1 } });
     tools.push({ type: 'function', function: { name: 'list_connections', description: '列出 Zephyr 中可用的 SSH/RDP/VNC 连接（不含密码/私钥）；只有 SSH 支持远程命令和文件工具。兼容旧接口，新增功能请优先使用 connection_list_v1。', parameters: { type: 'object', properties: {}, additionalProperties: false } } });
     tools.push({ type: 'function', function: { name: 'list_zephyr_resources', description: '列出 Zephyr 本地资源：连接、代理、SSH 密钥库、跳板机、代码片段。只返回脱敏信息。', parameters: { type: 'object', properties: { resources: { type: 'array', items: { type: 'string', enum: ['connections', 'proxies', 'sshKeys', 'jumpHosts', 'snippets'] } } } } } });
-    tools.push({ type: 'function', function: { name: 'connection_create', description: '新增 SSH/RDP/VNC 连接资产。可填写密码/私钥/标签/代理/跳板链；属于修改本地资源的敏感操作，需要确认。', parameters: { type: 'object', properties: { name: { type: 'string' }, protocol: { type: 'string', enum: ['SSH', 'RDP', 'VNC'] }, host: { type: 'string' }, port: { type: 'number' }, username: { type: 'string' }, password: { type: 'string' }, privateKey: { type: 'string' }, sshKeyId: { type: 'string' }, remark: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, connectionMode: { type: 'string', enum: ['direct', 'proxy', 'jump'] }, proxyId: { type: 'string' }, jumpHostId: { type: 'string' }, jumpHostIds: { type: 'array', items: { type: 'string' } } }, required: ['name', 'protocol', 'host'] } } });
-    tools.push({ type: 'function', function: { name: 'connection_update', description: '修改已有 SSH/RDP/VNC 连接资产。未传字段保持不变；密码/私钥传 ****** 或不传表示不修改。敏感操作，需要确认。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, name: { type: 'string' }, protocol: { type: 'string', enum: ['SSH', 'RDP', 'VNC'] }, host: { type: 'string' }, port: { type: 'number' }, username: { type: 'string' }, password: { type: 'string' }, privateKey: { type: 'string' }, sshKeyId: { type: 'string' }, remark: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, connectionMode: { type: 'string', enum: ['direct', 'proxy', 'jump'] }, proxyId: { type: 'string' }, jumpHostId: { type: 'string' }, jumpHostIds: { type: 'array', items: { type: 'string' } } }, required: ['connectionId'] } } });
-    tools.push({ type: 'function', function: { name: 'connection_delete', description: '删除连接资产。敏感操作，需要确认。', parameters: { type: 'object', properties: { connectionId: { type: 'string' } }, required: ['connectionId'] } } });
-    tools.push({ type: 'function', function: { name: 'connection_test', description: '测试 SSH/RDP/VNC 连接连通性。可用现有 connectionId，也可临时传入连接字段进行测试。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, name: { type: 'string' }, protocol: { type: 'string', enum: ['SSH', 'RDP', 'VNC'] }, host: { type: 'string' }, port: { type: 'number' }, username: { type: 'string' }, password: { type: 'string' }, privateKey: { type: 'string' }, sshKeyId: { type: 'string' }, connectionMode: { type: 'string', enum: ['direct', 'proxy', 'jump'] }, proxyId: { type: 'string' }, jumpHostId: { type: 'string' }, jumpHostIds: { type: 'array', items: { type: 'string' } }, timeoutSeconds: { type: 'number' } } } } });
-    tools.push({ type: 'function', function: { name: 'proxy_save', description: '新增或修改代理池条目。传 proxyId 为修改，不传为新增。敏感操作，需要确认。', parameters: { type: 'object', properties: { proxyId: { type: 'string' }, name: { type: 'string' }, host: { type: 'string' }, port: { type: 'number' }, type: { type: 'string', enum: ['socks5', 'http'] }, username: { type: 'string' }, password: { type: 'string' } }, required: ['name', 'host', 'port'] } } });
-    tools.push({ type: 'function', function: { name: 'proxy_delete', description: '删除代理池条目。敏感操作，需要确认。', parameters: { type: 'object', properties: { proxyId: { type: 'string' } }, required: ['proxyId'] } } });
-    tools.push({ type: 'function', function: { name: 'ssh_key_save', description: '新增或修改 SSH 密钥库条目。传 sshKeyId 为修改，不传为新增。私钥/口令属于敏感信息，需要确认。', parameters: { type: 'object', properties: { sshKeyId: { type: 'string' }, name: { type: 'string' }, privateKey: { type: 'string' }, passphrase: { type: 'string' }, remark: { type: 'string' } }, required: ['name'] } } });
-    tools.push({ type: 'function', function: { name: 'ssh_key_delete', description: '删除 SSH 密钥库条目。敏感操作，需要确认。', parameters: { type: 'object', properties: { sshKeyId: { type: 'string' } }, required: ['sshKeyId'] } } });
-    tools.push({ type: 'function', function: { name: 'jump_host_save', description: '新增或修改跳板机配置。传 jumpHostId 为修改，不传为新增；connectionId 必须指向 SSH 连接。敏感操作，需要确认。', parameters: { type: 'object', properties: { jumpHostId: { type: 'string' }, name: { type: 'string' }, connectionId: { type: 'string' } }, required: ['name', 'connectionId'] } } });
-    tools.push({ type: 'function', function: { name: 'jump_host_delete', description: '删除跳板机配置。敏感操作，需要确认。', parameters: { type: 'object', properties: { jumpHostId: { type: 'string' } }, required: ['jumpHostId'] } } });
-    tools.push({ type: 'function', function: { name: 'snippet_save', description: '新增或修改代码片段。传 snippetId 为修改，不传为新增。', parameters: { type: 'object', properties: { snippetId: { type: 'string' }, name: { type: 'string' }, command: { type: 'string' }, group: { type: 'string' }, autoRun: { type: 'boolean' } }, required: ['name', 'command'] } } });
-    tools.push({ type: 'function', function: { name: 'snippet_delete', description: '删除代码片段。', parameters: { type: 'object', properties: { snippetId: { type: 'string' } }, required: ['snippetId'] } } });
+    // Legacy mutating asset tools intentionally stay out of the model catalog.
+    // Their broad schemas accepted passwords/private keys and bypassed revision
+    // protection. Human UI routes remain available; AI must use canonical _v1
+    // tools above, whose schemas are strict and credential-free.
     // Note tools (FREEZE plan §6.5 / §10): AI searches first, reads on demand,
     // never auto-injects all note content into context.
     if (p.notesRead !== false) {
@@ -1586,6 +1600,12 @@ function confirmationSummary(toolName, args, deps) {
     if (toolName === 'ssh_key_rename_v1') return `重命名 SSH 密钥：${args.sshKeyId || ''} → ${String(args.name || '').slice(0, 120)}`;
     if (toolName === 'ssh_key_update_metadata_v1') return `修改 SSH 密钥备注：${args.sshKeyId || ''}`;
     if (toolName === 'ssh_key_delete_v1') return `删除 SSH 密钥：${args.sshKeyId || ''}`;
+    if (toolName === 'jump_host_create_v1') return `新增跳板机：${String(args.name || args.connectionId || '').slice(0, 120)}`;
+    if (toolName === 'jump_host_update_v1') return `修改跳板机：${args.jumpHostId || ''}`;
+    if (toolName === 'jump_host_delete_v1') return `删除跳板机：${args.jumpHostId || ''}`;
+    if (toolName === 'snippet_create_v1') return `新增代码片段：${String(args.name || '').slice(0, 120)}`;
+    if (toolName === 'snippet_update_v1') return `修改代码片段：${args.snippetId || ''}`;
+    if (toolName === 'snippet_delete_v1') return `删除代码片段：${args.snippetId || ''}`;
     if (toolName === 'connection_delete') return `删除连接：${args.connectionId || ''}`;
     if (toolName === 'proxy_save') return `${args.proxyId ? '修改' : '新增'}代理：${args.name || args.host || ''}`;
     if (toolName === 'proxy_delete') return `删除代理：${args.proxyId || ''}`;
@@ -1685,6 +1705,10 @@ function canonicalToolAuthorization(toolName, args, ctx) {
     if (sshKeyId && (toolName === 'ssh_key_get_v1' || toolName === 'ssh_key_validate_v1')) ctx.resourceService.getRawAuthorized(ctx.user, 'sshKey', sshKeyId, 'view');
     else if (sshKeyId && (toolName === 'ssh_key_rename_v1' || toolName === 'ssh_key_update_metadata_v1')) ctx.resourceService.getRawAuthorized(ctx.user, 'sshKey', sshKeyId, 'edit');
     else if (sshKeyId && toolName === 'ssh_key_delete_v1') ctx.resourceService.getRawAuthorized(ctx.user, 'sshKey', sshKeyId, 'delete');
+    const jumpHostId = String(args?.jumpHostId || '');
+    if (jumpHostId && toolName === 'jump_host_get_v1') ctx.resourceService.getRawAuthorized(ctx.user, 'jumpHost', jumpHostId, 'view');
+    else if (jumpHostId && toolName === 'jump_host_update_v1') ctx.resourceService.getRawAuthorized(ctx.user, 'jumpHost', jumpHostId, 'edit');
+    else if (jumpHostId && toolName === 'jump_host_delete_v1') ctx.resourceService.getRawAuthorized(ctx.user, 'jumpHost', jumpHostId, 'delete');
 }
 function executeCanonicalAiTool(toolName, args, ctx, deps, execute) {
     return executeCanonicalTool({
@@ -1861,6 +1885,81 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
                 const deleted = sshKeyTools.deleteKey(ctx.user, args, ctx.resourceService);
                 deps.addActivity?.(`AI 删除 SSH 密钥：${deleted.sshKeyId}`, ctx.user.userId);
+                return { ...deleted, verification: 'resource_absent_after_write' };
+            });
+        case 'jump_host_list_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const query = String(args.query || '').trim().toLowerCase();
+                const limit = clampNumber(args.limit, 1, 200, 100);
+                const jumpHosts = ctx.resourceService.listOwned(ctx.user, 'jumpHost')
+                    .map((item) => {
+                        let connection = null;
+                        try { connection = ctx.resourceService.getConnection(ctx.user, String(item.connectionId)); } catch {}
+                        return jumpHostTools.publicJumpHost(item, connection);
+                    })
+                    .filter((item) => !query || [item.name, item.connectionId, item.connection?.name, item.connection?.host].some((value) => String(value || '').toLowerCase().includes(query)))
+                    .slice(0, limit);
+                return { jumpHosts };
+            });
+        case 'jump_host_get_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const item = ctx.resourceService.getRawAuthorized(ctx.user, 'jumpHost', String(args.jumpHostId), 'view');
+                let connection = null;
+                try { connection = ctx.resourceService.getConnection(ctx.user, String(item.connectionId)); } catch {}
+                return { jumpHost: jumpHostTools.publicJumpHost(item, connection) };
+            });
+        case 'jump_host_create_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const jumpHost = jumpHostTools.createJumpHost(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 新增跳板机：${jumpHost.name}`, ctx.user.userId);
+                return { jumpHost, verification: 'resource_read_after_write' };
+            });
+        case 'jump_host_update_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const jumpHost = jumpHostTools.updateJumpHost(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 修改跳板机：${jumpHost.name}`, ctx.user.userId);
+                return { jumpHost, verification: 'resource_read_after_write' };
+            });
+        case 'jump_host_delete_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                const deleted = jumpHostTools.deleteJumpHost(ctx.user, args, ctx.resourceService);
+                deps.addActivity?.(`AI 删除跳板机：${deleted.jumpHostId}`, ctx.user.userId);
+                return { ...deleted, verification: 'resource_absent_after_write' };
+            });
+        case 'snippet_list_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.userSettingsService || !ctx.user) throw new Error('个人设置服务不可用');
+                return { snippets: snippetTools.listSnippets(ctx.user, args, deps.userSettingsService) };
+            });
+        case 'snippet_get_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.userSettingsService || !ctx.user) throw new Error('个人设置服务不可用');
+                return { snippet: snippetTools.getSnippet(ctx.user, args.snippetId, deps.userSettingsService) };
+            });
+        case 'snippet_create_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.userSettingsService || !ctx.user) throw new Error('个人设置服务不可用');
+                const snippet = snippetTools.createSnippet(ctx.user, args, deps.userSettingsService);
+                deps.addActivity?.(`AI 新增代码片段：${snippet.name}`, ctx.user.userId);
+                return { snippet, verification: 'resource_read_after_write' };
+            });
+        case 'snippet_update_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.userSettingsService || !ctx.user) throw new Error('个人设置服务不可用');
+                const snippet = snippetTools.updateSnippet(ctx.user, args, deps.userSettingsService);
+                deps.addActivity?.(`AI 修改代码片段：${snippet.name}`, ctx.user.userId);
+                return { snippet, verification: 'resource_read_after_write' };
+            });
+        case 'snippet_delete_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.userSettingsService || !ctx.user) throw new Error('个人设置服务不可用');
+                const deleted = snippetTools.deleteSnippet(ctx.user, args, deps.userSettingsService);
+                deps.addActivity?.(`AI 删除代码片段：${deleted.snippetId}`, ctx.user.userId);
                 return { ...deleted, verification: 'resource_absent_after_write' };
             });
         case 'list_connections':
@@ -2976,7 +3075,7 @@ function listToolCatalog(ai = {}) {
 function isReadOnlyToolName(name) {
     const n = String(name || '');
     if (!n) return false;
-    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read|remote_desktop_screenshot|remote_read|browser_inspect|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
+    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read|remote_desktop_screenshot|remote_read|browser_inspect|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
     if (n.endsWith('_list') || n.endsWith('_search') || n.endsWith('_get') || n.endsWith('_status')) return true;
     return false;
 }

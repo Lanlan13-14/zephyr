@@ -37,6 +37,32 @@ const PLAYBOOKS = Object.freeze([
 - revision_conflict 时重新 proxy_get_v1，不盲目重试。`,
     }),
     Object.freeze({
+        id: 'jump-host-management-v1',
+        title: '跳板机资产操作',
+        capabilityIds: Object.freeze(['jumphost.list', 'jumphost.get', 'jumphost.create', 'jumphost.update', 'jumphost.delete']),
+        triggers: Object.freeze(['跳板机', '堡垒机', 'jump host', 'bastion']),
+        prompt: `# 跳板机资产操作 Playbook
+
+- 查找跳板机先 jump_host_list_v1；查看、修改或删除先 jump_host_get_v1 获取 jumpHostId 和 revision。
+- 创建用 jump_host_create_v1；它只能引用当前用户可使用的 SSH 连接，不能引用 TELNET/RDP/VNC。
+- 修改用 jump_host_update_v1，删除用 jump_host_delete_v1；必须传刚读取的 expectedRevision。
+- 跳板机本身不保存密码；引用连接的凭据始终由服务端解析，绝不进入模型上下文。
+- revision_conflict 时重新 jump_host_get_v1；不要盲目重试。`,
+    }),
+    Object.freeze({
+        id: 'snippet-management-v1',
+        title: '个人代码片段操作',
+        capabilityIds: Object.freeze(['snippet.list', 'snippet.get', 'snippet.create', 'snippet.update', 'snippet.delete']),
+        triggers: Object.freeze(['代码片段', '命令片段', 'snippet', '常用命令']),
+        prompt: `# 个人代码片段操作 Playbook
+
+- 查找片段用 snippet_list_v1；查看、修改或删除先 snippet_get_v1 获取 snippetId 和 revision。
+- 创建用 snippet_create_v1；修改用 snippet_update_v1；删除用 snippet_delete_v1。所有写操作需要确认，修改/删除必须传 expectedRevision。
+- autoRun=true 仅表示用户在终端选择该片段时默认执行；创建或修改片段本身不会执行命令。
+- 片段是当前用户私有设置，不能跨用户读取或修改。
+- revision_conflict 时重新 snippet_get_v1；不要盲目重试。`,
+    }),
+    Object.freeze({
         id: 'asset-management-v1',
         title: '连接资产操作',
         capabilityIds: Object.freeze([

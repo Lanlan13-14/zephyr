@@ -155,7 +155,7 @@ function rowToProxy(row) {
     return { ...plain, type: plain.type || 'socks5', port: Number(plain.port) || 1080, revision: Math.max(1, Number(plain.revision) || 1), hasPassword: hasSecretValue(plain.password), password: plain.password ? '******' : '' };
 }
 
-function rowToJumpHost(row) { return row ? { ...row } : null; }
+function rowToJumpHost(row) { return row ? { ...row, revision: Math.max(1, Number(row.revision) || 1) } : null; }
 
 function columnExists(table, column) {
     return db.prepare(`PRAGMA table_info(${table})`).all().some((r) => r.name === column);
@@ -295,7 +295,8 @@ function init({ hashPassword }) {
             name TEXT NOT NULL,
             connectionId TEXT NOT NULL,
             createdAt INTEGER,
-            updatedAt INTEGER
+            updatedAt INTEGER,
+            revision INTEGER DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS passkeys (
             id TEXT PRIMARY KEY,
@@ -496,6 +497,8 @@ function init({ hashPassword }) {
     db.prepare('UPDATE proxies SET revision=1 WHERE revision IS NULL OR revision < 1').run();
     addColumnIfMissing('ssh_keys', 'revision', 'INTEGER DEFAULT 1');
     db.prepare('UPDATE ssh_keys SET revision=1 WHERE revision IS NULL OR revision < 1').run();
+    addColumnIfMissing('jump_hosts', 'revision', 'INTEGER DEFAULT 1');
+    db.prepare('UPDATE jump_hosts SET revision=1 WHERE revision IS NULL OR revision < 1').run();
     secretCrypto.ensureKeyPair();
 
     if (db.prepare('SELECT COUNT(*) AS c FROM users').get().c === 0) {
@@ -831,9 +834,9 @@ function saveSshKey(k) {
 function deleteSshKey(id) { db.prepare('DELETE FROM ssh_keys WHERE id=?').run(id); }
 function listJumpHosts() { return db.prepare('SELECT * FROM jump_hosts ORDER BY createdAt DESC').all().map(rowToJumpHost); }
 function saveJumpHost(j) {
-    const prior = db.prepare('SELECT ownerUserId, visibility, createdAt FROM jump_hosts WHERE id=?').get(j.id);
-    db.prepare(`INSERT OR REPLACE INTO jump_hosts (id,name,connectionId,createdAt,updatedAt,ownerUserId,visibility) VALUES (@id,@name,@connectionId,@createdAt,@updatedAt,@ownerUserId,@visibility)`)
-        .run({ ...j, createdAt: j.createdAt || prior?.createdAt || now(), ownerUserId: j.ownerUserId || prior?.ownerUserId || '', visibility: j.visibility || prior?.visibility || 'private' });
+    const prior = db.prepare('SELECT ownerUserId, visibility, createdAt, revision FROM jump_hosts WHERE id=?').get(j.id);
+    db.prepare(`INSERT OR REPLACE INTO jump_hosts (id,name,connectionId,createdAt,updatedAt,revision,ownerUserId,visibility) VALUES (@id,@name,@connectionId,@createdAt,@updatedAt,@revision,@ownerUserId,@visibility)`)
+        .run({ ...j, revision: Math.max(1, Number(j.revision ?? prior?.revision) || 1), createdAt: j.createdAt || prior?.createdAt || now(), ownerUserId: j.ownerUserId || prior?.ownerUserId || '', visibility: j.visibility || prior?.visibility || 'private' });
     return rowToJumpHost(db.prepare('SELECT * FROM jump_hosts WHERE id=?').get(j.id));
 }
 function deleteJumpHost(id) { db.prepare('DELETE FROM jump_hosts WHERE id=?').run(id); }

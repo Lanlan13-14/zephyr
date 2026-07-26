@@ -279,7 +279,7 @@ class ResourceService {
 
     updateOwned(user, resourceType, id, data) {
         const current = this.getRawAuthorized(user, resourceType, id, CAP.EDIT);
-        const revision = ['proxy', 'sshKey'].includes(resourceType) ? Math.max(1, Number(current.revision) || 1) + 1 : undefined;
+        const revision = ['proxy', 'sshKey', 'jumpHost'].includes(resourceType) ? Math.max(1, Number(current.revision) || 1) + 1 : undefined;
         const payload = {
             ...current,
             ...data,

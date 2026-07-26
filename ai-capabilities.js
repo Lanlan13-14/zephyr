@@ -165,6 +165,46 @@ const CAPABILITIES = defineCapabilities([
         toolIds: ['ssh_key_delete_v1'], keywords: ['SSH 密钥', '删除', '移除'], playbookId: 'ssh-key-management-v1',
     },
     {
+        id: 'jumphost.list', title: 'List visible jump-host metadata', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['jump_host_list_v1'], keywords: ['跳板机', '堡垒机', 'jump host', 'bastion', '列表'], playbookId: 'jump-host-management-v1',
+    },
+    {
+        id: 'jumphost.get', title: 'Read jump-host metadata and revision', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['jump_host_get_v1'], keywords: ['跳板机', '详情', '查看', 'jump host'], playbookId: 'jump-host-management-v1',
+    },
+    {
+        id: 'jumphost.create', title: 'Create a jump host from a usable SSH connection', mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['jump_host_create_v1'], keywords: ['跳板机', '新增', '创建', '堡垒机'], playbookId: 'jump-host-management-v1',
+    },
+    {
+        id: 'jumphost.update', title: 'Update jump-host metadata with revision protection', mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['jump_host_update_v1'], keywords: ['跳板机', '修改', '更新'], playbookId: 'jump-host-management-v1',
+    },
+    {
+        id: 'jumphost.delete', title: 'Delete a jump host with revision protection', mode: 'ai', state: 'implemented', risk: 'R3', confirmation: 'always',
+        toolIds: ['jump_host_delete_v1'], keywords: ['跳板机', '删除', '移除'], playbookId: 'jump-host-management-v1',
+    },
+    {
+        id: 'snippet.list', title: 'List personal command snippets', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['snippet_list_v1'], keywords: ['代码片段', '命令片段', 'snippet', '列表'], playbookId: 'snippet-management-v1',
+    },
+    {
+        id: 'snippet.get', title: 'Read a personal command snippet and revision', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['snippet_get_v1'], keywords: ['代码片段', '命令', '详情', 'snippet'], playbookId: 'snippet-management-v1',
+    },
+    {
+        id: 'snippet.create', title: 'Create a personal command snippet', mode: 'ai', state: 'implemented', risk: 'R1', confirmation: 'always',
+        toolIds: ['snippet_create_v1'], keywords: ['代码片段', '新增', '创建', 'snippet'], playbookId: 'snippet-management-v1',
+    },
+    {
+        id: 'snippet.update', title: 'Update a personal command snippet with revision protection', mode: 'ai', state: 'implemented', risk: 'R1', confirmation: 'always',
+        toolIds: ['snippet_update_v1'], keywords: ['代码片段', '修改', '更新', 'snippet'], playbookId: 'snippet-management-v1',
+    },
+    {
+        id: 'snippet.delete', title: 'Delete a personal command snippet with revision protection', mode: 'ai', state: 'implemented', risk: 'R3', confirmation: 'always',
+        toolIds: ['snippet_delete_v1'], keywords: ['代码片段', '删除', '移除', 'snippet'], playbookId: 'snippet-management-v1',
+    },
+    {
         id: 'sshkey.secret_manage', title: 'Import generate or reveal SSH private key material', mode: 'humanOnly', state: 'implemented', risk: 'R4', confirmation: 'always',
         humanOnlyReason: 'Private keys and passphrases must never enter model context; import, generation and reveal require a direct human-only secret flow.',
     },

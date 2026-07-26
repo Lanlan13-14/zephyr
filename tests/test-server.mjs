@@ -7,7 +7,7 @@ import path from 'node:path';
  * dir for HTTP-level integration tests. */
 
 const REPO = path.resolve(import.meta.dirname, '..');
-let nextPort = 39200 + Math.floor(Math.random() * 400);
+let nextPort = 30000 + ((process.pid * 977 + Date.now()) % 20000);
 
 export class TestServer {
     constructor() {

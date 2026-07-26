@@ -6565,7 +6565,7 @@ async function syncAiToolSideEffects(toolResults = [], { sessionId = '' } = {}) 
             await Promise.all([loadConnections().catch(() => {}), loadNetwork().catch(() => {})]);
         }
         if (/^snippet_/.test(String(r.tool || ''))) {
-            const snippets = r.result?.resources?.snippets;
+            const snippets = toolData?.snippets || toolData?.resources?.snippets;
             if (Array.isArray(snippets)) { settings.snippets = normalizeSnippets(snippets); renderSnippetSettings(); }
             else await loadSettings().then(() => renderSnippetSettings()).catch(() => {});
         }
@@ -8187,6 +8187,8 @@ function normalizeSnippets(list) {
         command: String(item.command || ''),
         group: String(item.group || '').slice(0, 40),
         autoRun: !!item.autoRun,
+        revision: Math.max(1, Number(item.revision) || 1),
+        createdAt: Number(item.createdAt || item.updatedAt || Date.now()),
         updatedAt: Number(item.updatedAt || Date.now()),
     })) : [];
 }
@@ -8391,9 +8393,10 @@ async function saveSnippet(e) {
     const command = $('#snippetCommand').value;
     if (!name || !command.trim()) return toast(t('请填写片段名称和命令'));
     const id = $('#snippetId').value || `snippet-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const item = { id, name, command, group: $('#snippetGroup').value.trim(), autoRun: $('#snippetAutoRun').checked, updatedAt: Date.now() };
     const snippets = getSnippets();
     const idx = snippets.findIndex((x) => x.id === id);
+    const old = idx >= 0 ? snippets[idx] : null;
+    const item = { id, name, command, group: $('#snippetGroup').value.trim(), autoRun: $('#snippetAutoRun').checked, revision: old ? Math.max(1, Number(old.revision) || 1) + 1 : 1, createdAt: old?.createdAt || Date.now(), updatedAt: Date.now() };
     if (idx >= 0) snippets[idx] = item; else snippets.unshift(item);
     await persistSnippets(snippets);
     closeSnippetModal();
