@@ -4657,7 +4657,7 @@ function renderSnippetPanel() {
         const btn = document.createElement('button');
         btn.className = 'snippet-item';
         btn.type = 'button';
-        btn.innerHTML = `<strong>${escapeHtml(item.name || '未命名片段')}</strong><em>${escapeHtml(item.group || '未分组')} · ${item.autoRun ? '直接执行' : '填入输入框'}</em><code>${escapeHtml(item.command || '')}</code>`;
+        btn.innerHTML = `<strong>${escapeHtml(item.name || t('未命名片段'))}</strong><em>${escapeHtml(item.group || t('未分组'))} · ${item.autoRun ? t('直接执行') : '填入输入框'}</em><code>${escapeHtml(item.command || '')}</code>`;
         btn.addEventListener('click', () => {
             const command = String(item.command || '');
             if (item.autoRun) sendData(command.endsWith('\n') || command.endsWith('\r') ? command : command + '\r', { normalizeNewlines: true, source: 'snippet-run', forceFollow: true });
@@ -7869,7 +7869,7 @@ dockerBtn?.addEventListener('click', () => {
 dockerCloseBtn?.addEventListener('click', hideDockerPanel);
 dockerRefreshBtn?.addEventListener('click', () => checkDockerStatus({ force: true }));
 dockerRestartBtn?.addEventListener('click', () => {
-    if (!confirm('确认重启目标主机 Docker 服务？运行中的容器通常会继续运行，但 Docker API 会短暂不可用。')) return;
+    if (!confirm(t('确认重启目标主机 Docker 服务？运行中的容器通常会继续运行，但 Docker API 会短暂不可用。'))) return;
     setDockerStatus(t('正在重启 Docker 服务...'), true);
     dockerSend({ type: 'docker-restart-service' });
 });
@@ -7896,20 +7896,20 @@ dockerMirrorAddBtn?.addEventListener('click', () => {
 });
 dockerMirrorSaveBtn?.addEventListener('click', () => {
     dockerMirrors = dockerMirrors.map((item) => item.trim()).filter(Boolean);
-    setDockerStatus('正在保存镜像加速器配置...', true);
+    setDockerStatus(t('正在保存镜像加速器配置...'), true);
     dockerSend({ type: 'docker-mirrors-set', mirrors: dockerMirrors });
 });
 dockerLogCloseBtn?.addEventListener('click', closeDockerLogs);
 dockerLogPauseBtn?.addEventListener('click', () => {
     dockerAutoScrollLog = !dockerAutoScrollLog;
-    dockerLogPauseBtn.textContent = dockerAutoScrollLog ? t('暂停滚动') : '继续滚动';
+    dockerLogPauseBtn.textContent = dockerAutoScrollLog ? t('暂停滚动') : t('继续滚动');
     if (dockerAutoScrollLog) dockerContainerLog.scrollTop = dockerContainerLog.scrollHeight;
 });
 dockerContainerLog?.addEventListener('scroll', () => {
     const atBottom = dockerContainerLog.scrollHeight - dockerContainerLog.scrollTop - dockerContainerLog.clientHeight < 24;
     if (!atBottom) {
         dockerAutoScrollLog = false;
-        dockerLogPauseBtn.textContent = '继续滚动';
+        dockerLogPauseBtn.textContent = t('继续滚动');
     }
 }, { passive: true });
 dockerLogDownloadBtn?.addEventListener('click', () => {
@@ -9481,7 +9481,7 @@ function setupMobileStableImeProxy() {
     proxy.readOnly = false;
     proxy.disabled = false;
     try { proxy.removeAttribute('lang'); } catch (_) {}
-    proxy.setAttribute('aria-label', '终端输入');
+    proxy.setAttribute('aria-label', t('终端输入'));
     proxy.setAttribute('inputmode', 'text');
     proxy.setAttribute('enterkeyhint', 'enter');
 
@@ -10532,7 +10532,7 @@ function ensureStatsSkeleton(d) {
         });
     });
     requestAnimationFrame(() => updateMonitorTabThumb({ immediate: true }));
-    try { initCharts(); } catch (err) { console.warn('[Stats] 图表初始化失败:', err); }
+    try { initCharts(); } catch (err) { console.warn(t('[Stats] 图表初始化失败:'), err); }
 }
 
 function setTextStat(name, value) {
@@ -10597,7 +10597,7 @@ function renderStats(d) {
         updateLine('rxLine', rxMbps);
         updateLine('txLine', txMbps);
     } catch (err) {
-        console.warn('[Stats] 图表更新失败:', err);
+        console.warn(t('[Stats] 图表更新失败:'), err);
     }
 }
 
@@ -12746,7 +12746,7 @@ async function reconnect() {
     reconnectInProgress = true;
     reconnectBtn.disabled = true;
     try {
-        await startFreshConnection({ message: '正在重连...', resetAttempts: true });
+        await startFreshConnection({ message: t('正在重连...'), resetAttempts: true });
         showToast('重连成功', 'success');
     } catch (err) {
         setStatus('error', err.message);
