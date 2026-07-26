@@ -30,11 +30,14 @@ test('frontend keeps password field for TELNET auto-login and submits encoding',
     assert.match(terminalJs, /encoding: params\.encoding/);
 });
 
-test('frontend no longer hard-blocks Telnet connect', () => {
+test('frontend no longer hard-blocks Telnet connect and keeps route UI available', () => {
     assert.doesNotMatch(appJs, /当前版本尚未启用 Telnet transport/);
     assert.doesNotMatch(appJs, /telnetBlocked\s*=\s*String\(\$\('#connProtocol'\)/);
     assert.match(appJs, /protocol === 'TELNET'/);
     assert.match(appJs, /telnetPlaintextBanner/);
+    assert.match(appHtml, /data-route-mode="proxy"[\s\S]*?data-route-mode="jump"/);
+    assert.doesNotMatch(appJs, /protocol === 'TELNET' \? 'direct' : \(\$\('#connMode'\)/);
+    assert.doesNotMatch(appJs, /advanced-route-panel[^\n]*force-hidden[^\n]*protocol === 'TELNET'/);
 });
 
 test('style defines plaintext Telnet banner', () => {
@@ -45,6 +48,8 @@ test('server wires TELNET on create/test/ws and no longer rejects transient Teln
     assert.match(serverJs, /require\('\.\/telnet-transport'\)/);
     assert.match(serverJs, /protocol === 'TELNET'/);
     assert.match(serverJs, /dialTelnet\(/);
+    assert.match(serverJs, /createRoutedTcpForward\(conn, Number\(conn\.port\) \|\| 23/);
+    assert.match(serverJs, /routedTcpForward: routedForward/);
     assert.match(serverJs, /filterIac\(/);
     assert.match(serverJs, /sendNaws\(/);
     assert.doesNotMatch(serverJs, /Telnet 临时连接请使用 worker ticket 路径/);

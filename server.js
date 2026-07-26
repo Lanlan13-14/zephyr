@@ -408,6 +408,10 @@ function destroySshTerminalSession(sessionOrId, reason = 'session-destroy') {
         try { session.telnetSocket.destroy?.(); } catch {}
         session.telnetSocket = null;
     }
+    if (session.routedTcpForward) {
+        try { session.routedTcpForward.close?.(); } catch {}
+        session.routedTcpForward = null;
+    }
 }
 
 
@@ -988,8 +992,7 @@ function forwardOut(client, host, port) {
 }
 
 function resolveRoutePlan(conn) {
-    const store = readJSON(CONNECTIONS_FILE, { connections: [] });
-    const connections = store.connections || [];
+    const connections = storage.listAllConnectionRows();
     const mode = conn.connectionMode || 'direct';
     if (mode === 'proxy') {
         const proxy = storage.getProxyRaw(conn.proxyId);
@@ -1430,36 +1433,35 @@ function classifySSHError(err) {
     return { code: 'unknown', message: msg };
 }
 
-/* Telnet connectivity test (FREEZE plan §5.6): TCP connect to host:port and
- * send a minimal IAC DO TERMINAL-TYPE to confirm a Telnet server is listening.
- * Full IAC negotiation happens on the live /ssh session; this just verifies
- * reachability. */
-function testTelnetConnection(conn, timeout = 10000) {
-    return new Promise((resolve) => {
-        const started = Date.now();
-        const socket = new net.Socket();
-        let done = false;
-        const finish = (result) => {
-            if (done) return;
-            done = true;
-            socket.destroy();
-            resolve({ ...result, durationMs: Date.now() - started });
+/* Telnet connectivity test (FREEZE plan §5.6): open the configured direct,
+ * proxy, or SSH-jump TCP route and perform the normal initial IAC negotiation.
+ * The probe closes immediately after reachability is confirmed. */
+async function testTelnetConnection(conn, timeout = 10000) {
+    const started = Date.now();
+    let routedForward = null;
+    let socket = null;
+    try {
+        routedForward = await createRoutedTcpForward(conn, Number(conn.port) || 23, timeout);
+        const effectiveHost = routedForward?.host || String(conn.host || '');
+        const effectivePort = routedForward?.port || Number(conn.port) || 23;
+        socket = await dialTelnet({ host: effectiveHost, port: effectivePort }, { timeout });
+        return {
+            ok: true,
+            code: 'success',
+            message: routedForward?.route ? `Telnet 端口可达（${routedForward.route}）` : 'Telnet 端口可达',
+            durationMs: Date.now() - started,
         };
-        const timer = setTimeout(() => finish({ ok: false, code: 'timeout', message: 'Telnet 连接超时', durationMs: 0 }), timeout + 1000);
-        socket.setTimeout(timeout);
-        socket.once('connect', () => {
-            clearTimeout(timer);
-            // Send IAC DO TERMINAL-TYPE (255 253 24) to probe for a Telnet server
-            try { socket.write(Buffer.from([255, 253, 24])); } catch {}
-            finish({ ok: true, code: 'success', message: 'Telnet 端口可达' });
-        });
-        socket.once('timeout', () => finish({ ok: false, code: 'timeout', message: 'Telnet 连接超时' }));
-        socket.once('error', (err) => {
-            clearTimeout(timer);
-            finish({ ok: false, code: 'connect_failed', message: err.message || 'Telnet 连接失败' });
-        });
-        socket.connect(Number(conn.port) || 23, String(conn.host || ''));
-    });
+    } catch (err) {
+        return {
+            ok: false,
+            code: /timeout|超时/i.test(String(err?.message || '')) ? 'timeout' : 'connect_failed',
+            message: err?.message || 'Telnet 连接失败',
+            durationMs: Date.now() - started,
+        };
+    } finally {
+        try { socket?.destroy?.(); } catch {}
+        try { routedForward?.close?.(); } catch {}
+    }
 }
 
 function testSSHConnection(conn, timeout = 10000) {    return new Promise((resolve) => {
@@ -3279,22 +3281,16 @@ app.post('/api/connections', requireUser, (req, res) => {
         conn.rdpTouchSensitivity = Math.max(0.5, Math.min(3, Number(body.rdpTouchSensitivity) || 1.5));
         conn.rdpDomain = String(body.rdpDomain || '').trim();
     }
+    applyConnectionRouteFields(conn, body);
     if (protocol === 'TELNET') {
-        // Telnet is direct-only: no jump/proxy/SSH key. Username/password are
-        // still stored (encrypted) for in-band auto-login after TCP connect.
-        conn.connectionMode = 'direct';
-        conn.proxyId = null;
-        conn.jumpHostId = null;
-        conn.jumpHostIds = [];
+        // Telnet cannot use SSH target credentials, but its raw TCP connection
+        // may travel through a proxy or an SSH jump chain. Username/password
+        // remain encrypted at rest and are used only for in-band auto-login.
         conn.sshKeyId = '';
         conn.privateKey = '';
-        // keep conn.password / conn.username
-        if (body.encoding !== undefined) conn.encoding = String(body.encoding || 'utf-8');
-        else if (!conn.encoding) conn.encoding = 'utf-8';
-    } else {
-        applyConnectionRouteFields(conn, body);
-        if (body.encoding !== undefined) conn.encoding = String(body.encoding || 'utf-8');
     }
+    if (body.encoding !== undefined) conn.encoding = String(body.encoding || 'utf-8');
+    else if (protocol === 'TELNET' && !conn.encoding) conn.encoding = 'utf-8';
     try {
         const saved = resourceService.createConnection(req.user, conn);
         addActivity(`新增连接：${conn.name}`, req.user.userId);
@@ -3315,19 +3311,14 @@ app.put('/api/connections/:id', requireUser, (req, res) => {
             if (body.sshKeyId !== undefined) conn.sshKeyId = String(body.sshKeyId || '');
             if (body.shareWithUsers !== undefined) conn.shareWithUsers = !!body.shareWithUsers;
             if (body.shareWithAdmins !== undefined) conn.shareWithAdmins = !!body.shareWithAdmins;
+            applyConnectionRouteFields(conn, body);
+            if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
             if (String(conn.protocol || '').toUpperCase() === 'TELNET') {
-                conn.connectionMode = 'direct';
-                conn.proxyId = null;
-                conn.jumpHostId = null;
-                conn.jumpHostIds = [];
                 conn.sshKeyId = '';
                 conn.privateKey = '';
                 // Telnet password is in-band auto-login material — allow update.
-                if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
                 if (body.encoding !== undefined) conn.encoding = String(body.encoding || 'utf-8');
             } else {
-                applyConnectionRouteFields(conn, body);
-                if (body.password !== undefined && body.password !== '******') conn.password = String(body.password || '');
                 if (body.privateKey !== undefined && body.privateKey !== '******') conn.privateKey = String(body.privateKey || '');
                 if (body.encoding !== undefined) conn.encoding = String(body.encoding || 'utf-8');
             }
@@ -4163,13 +4154,6 @@ app.post('/api/connections/test', requireUser, async (req, res) => {
     }
     const protocol = String(conn.protocol || 'SSH').toUpperCase();
     if (!conn.host || (protocol === 'SSH' && !conn.username)) return res.status(400).json({ error: protocol === 'SSH' ? '主机和用户名不能为空' : '主机不能为空' });
-    // Telnet is direct-only; ignore proxy/jump for connectivity tests.
-    if (protocol === 'TELNET') {
-        conn.connectionMode = 'direct';
-        conn.proxyId = null;
-        conn.jumpHostId = null;
-        conn.jumpHostIds = [];
-    }
     const timeoutMs = Math.max(1000, Math.min(Number(body.timeoutSeconds || 10) * 1000, 30000));
     const result = protocol === 'SSH'
         ? await testSSHConnection(conn, timeoutMs)
@@ -7206,13 +7190,10 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         jumpHostIds: msg.jumpHostIds,
                     });
                     if (fallbackProtocol === 'TELNET') {
-                        conn.connectionMode = 'direct';
-                        conn.proxyId = null;
-                        conn.jumpHostId = null;
-                        conn.jumpHostIds = [];
                         conn.sshKeyId = '';
                         conn.privateKey = '';
-                        // keep password for in-band auto-login
+                        // keep password for in-band auto-login; proxy/jump routes
+                        // are resolved above with the same dependency ACLs.
                     }
                     if (conn.sshKeyId || conn.connectionMode === 'proxy' || conn.connectionMode === 'jump') {
                         // Reuse dependency ACL checks against the caller's owned/shared deps.
@@ -7226,12 +7207,6 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 // Telnet: host is enough; username is display-only / in-band.
                 if (!conn.host) throw new Error('主机不能为空');
                 if (protocol !== 'TELNET' && !conn.username) throw new Error('主机和用户名不能为空');
-                if (protocol === 'TELNET') {
-                    conn.connectionMode = 'direct';
-                    conn.proxyId = null;
-                    conn.jumpHostId = null;
-                    conn.jumpHostIds = [];
-                }
                 console.info('[SSH-DIAG] resolved connection config', {
                     connectionId: conn.id || connectionId || '',
                     requestedConnectionId: connectionId || '',
@@ -7262,11 +7237,21 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     // the socket in the same session object SSH uses so attach /
                     // detach / history / detached-TTL all work unchanged.
                     if (connectionId) console.log(`[TELNET] 使用已保存连接 ${conn.name || conn.host}`);
-                    const socket = await dialTelnet(conn, { timeout: 10000, cols: initialCols, rows: initialRows });
+                    const routedForward = await createRoutedTcpForward(conn, Number(conn.port) || 23, 10000);
+                    let socket;
+                    try {
+                        socket = await dialTelnet({
+                            host: routedForward?.host || conn.host,
+                            port: routedForward?.port || Number(conn.port) || 23,
+                        }, { timeout: 10000, cols: initialCols, rows: initialRows });
+                    } catch (err) {
+                        try { routedForward?.close?.(); } catch {}
+                        throw err;
+                    }
                     telnetSocket = socket;
                     telnetProtocol = true;
                     socket.setTimeout(0); // live session — no idle timeout kill
-                    console.log(`[TELNET] 已连接: ${conn.host}:${Number(conn.port) || 23}`);
+                    console.log(`[TELNET] 已连接: ${conn.host}:${Number(conn.port) || 23}${routedForward?.route ? ` (${routedForward.route})` : ''}`);
                     const telnetIac = attachIacEngine(socket, {
                         termType: 'xterm-256color',
                         keepaliveMs: 60000,
@@ -7298,6 +7283,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         protocol: 'TELNET',
                         encoding: telnetDecoder.encoding,
                         telnetSocket: socket,
+                        routedTcpForward: routedForward,
                         telnetIac,
                         telnetDecoder,
                         telnetAutoLogin: autoLogin,
