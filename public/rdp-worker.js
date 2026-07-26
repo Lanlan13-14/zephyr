@@ -11,6 +11,8 @@ let initialized = false;
 let wasmReady = false;
 let localFiles = [];
 const frameScheduler = createWorkerFrameScheduler(globalThis, { fallbackMs: 34 });
+let lastPresentedAt = 0;
+
 const workerDiag = {
     semanticEvents: 0,
     classicBitmaps: 0,
@@ -155,6 +157,7 @@ function setupRenderer(canvas) {
         cancelFrame: frameScheduler.cancel,
         diagnostics: workerDiag,
         onFramesPresented(frameIds) {
+            lastPresentedAt = Date.now();
             workerDiag.presentedFrames += frameIds.length;
             for (const frameId of frameIds) globalThis.rdpGfxCompleteFrame(frameId, decoderBacklog());
         },
@@ -237,6 +240,20 @@ function dispatchInput(envelope) {
 }
 
 async function invokeMethod(method, args) {
+    if (method === 'rdpCaptureFrame') {
+        if (!compositor?.gl || !compositor.width || !compositor.height) throw new Error('RDP renderer is not ready');
+        const gl = compositor.gl;
+        const width = compositor.width;
+        const height = compositor.height;
+        const pixels = new Uint8Array(width * height * 4);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.finish();
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        const flipped = new Uint8Array(pixels.length);
+        const row = width * 4;
+        for (let y = 0; y < height; y++) flipped.set(pixels.subarray((height - 1 - y) * row, (height - y) * row), y * row);
+        return { width, height, frameAt: lastPresentedAt || Date.now(), pixels: flipped };
+    }
     if (method === 'rdpGetWorkerDiagnostics') {
         const protocol = typeof globalThis.rdpGetProtocolDiagnostics === 'function'
             ? globalThis.rdpGetProtocolDiagnostics()
@@ -293,7 +310,10 @@ onmessage = async ({ data: message }) => {
         if (message.type === 'input') { dispatchInput(message.envelope); return; }
         if (message.type === 'call' || message.type === 'request') {
             const value = await invokeMethod(message.method, message.args || []);
-            if (message.type === 'request') postMessage({ type: 'response', id: message.id, ok: true, value });
+            if (message.type === 'request') {
+                const transfer = message.method === 'rdpCaptureFrame' && value?.pixels?.buffer ? [value.pixels.buffer] : [];
+                postMessage({ type: 'response', id: message.id, ok: true, value }, transfer);
+            }
         }
     } catch (error) {
         if (message.type === 'request') {

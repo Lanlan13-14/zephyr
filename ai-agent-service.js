@@ -12,6 +12,7 @@ const proxyTools = require('./ai-proxy-tools');
 const sshKeyTools = require('./ai-ssh-key-tools');
 const jumpHostTools = require('./ai-jump-host-tools');
 const snippetTools = require('./ai-snippet-tools');
+const remoteDesktopTools = require('./ai-remote-desktop-tools');
 const { PLAYBOOKS } = require('./ai-playbooks');
 
 const DEFAULT_TOOL_CALL_LIMIT = 0;
@@ -65,6 +66,9 @@ const CANONICAL_TOOL_SCHEMAS = Object.freeze({
     browser_inspect_v1: Object.freeze({ type: 'object', properties: { session: { type: 'string', maxLength: 120 }, max: { type: 'number', minimum: 1, maximum: 200 } }, additionalProperties: false }),
     browser_click_v1: Object.freeze({ type: 'object', properties: { session: { type: 'string', maxLength: 120 }, elementRef: { type: 'string', minLength: 1, maxLength: 120 }, domRevision: { type: 'number', exclusiveMinimum: 0 } }, required: ['elementRef', 'domRevision'], additionalProperties: false }),
     browser_type_v1: Object.freeze({ type: 'object', properties: { session: { type: 'string', maxLength: 120 }, elementRef: { type: 'string', minLength: 1, maxLength: 120 }, domRevision: { type: 'number', exclusiveMinimum: 0 }, text: { type: 'string', maxLength: 20000 }, clear: { type: 'boolean' } }, required: ['elementRef', 'domRevision', 'text'], additionalProperties: false }),
+    remote_desktop_capture_v1: remoteDesktopTools.REMOTE_DESKTOP_CAPTURE_SCHEMA,
+    remote_desktop_action_v1: remoteDesktopTools.REMOTE_DESKTOP_ACTION_SCHEMA,
+    remote_desktop_verify_v1: remoteDesktopTools.REMOTE_DESKTOP_VERIFY_SCHEMA,
 });
 
 function aiAbortError() {
@@ -681,7 +685,9 @@ function toolDefinitions(ai = {}) {
         tools.push({ type: 'function', function: { name: 'note_delete', description: '删除当前用户拥有的笔记（软删除，移入回收站）。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
     }
     tools.push({ type: 'function', function: { name: 'terminal_read_output', description: '读取用户当前 Zephyr SSH 终端输出快照（屏幕/scrollback 文本、当前输入框内容、连接信息）。当用户问“终端里显示什么/刚才命令输出/当前屏幕结果”时优先调用。', parameters: { type: 'object', properties: { tabId: { type: 'string' }, maxChars: { type: 'number' }, allVisible: { type: 'boolean' } } } } });
-    tools.push({ type: 'function', function: { name: 'remote_desktop_screenshot', description: '实时读取用户当前 Zephyr RDP/VNC 远程桌面最新画面快照（JPEG 截图）。RDP/VNC 没有文本终端输出；当你需要确认刚才操作是否生效、页面是否加载完成、当前画面是什么时调用本工具。策略：先使用 ui_action 返回的 remoteDesktopScreenshot；若状态仍不确定，等待约 2 秒后再截图；允许必要的多次截图，但不要连续秒截或为了找按钮反复截图。', parameters: { type: 'object', properties: { tabId: { type: 'string' }, maxWidth: { type: 'number' } } } } });
+    tools.push({ type: 'function', function: { name: 'remote_desktop_capture_v1', description: '获取 RDP/VNC 最新画面并签发 captureId。后续鼠标/键盘/文本操作必须绑定该 captureId；需要前端实时采集时会暂停并恢复同一运行。', parameters: CANONICAL_TOOL_SCHEMAS.remote_desktop_capture_v1 } });
+    tools.push({ type: 'function', function: { name: 'remote_desktop_action_v1', description: '基于 captureId 对 RDP/VNC 执行工具栏、文本、快捷键或鼠标操作。操作后前端必须返回新的截图和 actionId；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.remote_desktop_action_v1 } });
+    tools.push({ type: 'function', function: { name: 'remote_desktop_verify_v1', description: '验证远程桌面操作前后的 captureId 不同且与 actionId 对应，形成闭环证据。', parameters: CANONICAL_TOOL_SCHEMAS.remote_desktop_verify_v1 } });
     tools.push({ type: 'function', function: { name: 'ui_action', description: '在用户当前 Zephyr 页面执行可见 UI 代操作：切换视图、打开新增/编辑连接弹窗、打开/全屏/排列终端、点击 SSH 终端工具栏、以及点击/调整 RDP/VNC 远程桌面工具栏（画质、视图/适应、缩放、剪贴板、键盘、快捷键、视区/拖拽、Ctrl+Alt+Del、重连、断开、发送快捷键/文本）。RDP/VNC 动作执行后通常会返回 remoteDesktopScreenshot，可直接依据该截图继续，不要重复截图。打开远程网页优先 shortcut:win 或 ctrl-l + remote_desktop_send_text 粘贴 URL。terminal_send_input 且 run=true 会像用户按发送一样执行命令，需要确认；run=false 只填入输入框。不要用于安全/数据管理设置页。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['switch_view', 'open_add_connection', 'open_edit_connection', 'terminal_fullscreen', 'terminal_exit_fullscreen', 'terminal_window_action', 'terminal_toolbar', 'terminal_send_input', 'remote_desktop_toolbar', 'remote_desktop_send_text', 'remote_desktop_mouse', 'toast'] }, view: { type: 'string', enum: ['dashboard', 'terminal', 'remote', 'settings'] }, settingsSection: { type: 'string', enum: ['ai', 'appearance', 'terminal', 'network', 'profile', 'snippets'] }, connectionId: { type: 'string' }, tabId: { type: 'string' }, windowAction: { type: 'string', enum: ['fullscreen', 'exit-fullscreen', 'left-half', 'right-half', 'right-top', 'right-bottom', 'left-two-thirds', 'right-two-thirds', 'minimize', 'close', 'reconnect-mobile'] }, control: { type: 'string', enum: ['file', 'info', 'docker', 'snippet', 'shortcut', 'copy', 'paste', 'theme', 'wterm-theme', 'reconnect', 'disconnect', 'quality', 'fit', 'zoom', 'clipboard', 'keyboard', 'shortcuts', 'joystick', 'drag', 'ctrl_alt_del', 'clipboard_send', 'clipboard_read_local', 'clipboard_copy_remote'] }, desktopControl: { type: 'string', enum: ['quality', 'fit', 'zoom', 'clipboard', 'keyboard', 'shortcuts', 'joystick', 'drag', 'ctrl_alt_del', 'reconnect', 'disconnect', 'clipboard_send', 'clipboard_read_local', 'clipboard_copy_remote', 'shortcut', 'text', 'mouse_click'] }, text: { type: 'string' }, run: { type: 'boolean' }, maxChars: { type: 'number' }, maxWidth: { type: 'number' }, qualityMode: { type: 'string', enum: ['balanced', 'performance', 'quality'] }, fitMode: { type: 'string', enum: ['fit', '1:1', '16:9', '4:3', 'original', 'drag'] }, zoomPercent: { type: 'number' }, sequence: { type: 'string' }, paste: { type: 'boolean' }, x: { type: 'number' }, y: { type: 'number' }, button: { type: 'number' }, coordinateSpace: { type: 'string', enum: ['remote', 'screenshot'] } }, required: ['action'] } } });
     if (p.webSearch !== false) tools.push({ type: 'function', function: { name: 'web_search', description: '在网页上搜索实时信息，返回标题、链接和摘要。', parameters: { type: 'object', properties: { query: { type: 'string' }, maxResults: { type: 'number' } }, required: ['query'] } } });
     if (p.webFetch !== false) tools.push({ type: 'function', function: { name: 'fetch_url', description: '读取一个网页 URL 的正文文本。', parameters: { type: 'object', properties: { url: { type: 'string' }, maxChars: { type: 'number' } }, required: ['url'] } } });
@@ -1448,7 +1454,9 @@ function publicRemoteDesktopScreenshot(r = {}, maxWidth = 960) {
         dataUrlTruncated: false,
         hasScreenshot: dataUrlOk,
         error: String(r.error || (dataUrl && !dataUrlOk ? `截图数据过大（${dataUrl.length} chars），前端需降低 maxWidth 后重试` : '')),
+        frameAt: Number(r.frameAt || r.at || Date.now()),
         at: Number(r.at || Date.now()),
+        captureId: remoteDesktopTools.captureIdFor(r),
     };
 }
 function cachedToolDefinitions(ai = {}) {
@@ -1617,6 +1625,7 @@ function confirmationSummary(toolName, args, deps) {
     if (toolName === 'snippet_update_v1') return `修改代码片段：${args.snippetId || ''}`;
     if (toolName === 'snippet_delete_v1') return `删除代码片段：${args.snippetId || ''}`;
     if (toolName === 'terminal_send_v1') return `向终端会话 ${args.sessionId || ''} 发送：${String(args.text || '').slice(0, 160)}`;
+    if (toolName === 'remote_desktop_action_v1') return `操作远程桌面 ${args.tabId || ''}：${args.action || ''}/${args.control || ''}`;
     if (toolName === 'connection_delete') return `删除连接：${args.connectionId || ''}`;
     if (toolName === 'proxy_save') return `${args.proxyId ? '修改' : '新增'}代理：${args.name || args.host || ''}`;
     if (toolName === 'proxy_delete') return `删除代理：${args.proxyId || ''}`;
@@ -2487,22 +2496,41 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                     limit: clampNumber(args.limit, 1, 50, 20),
                 }),
             };
-        case 'remote_desktop_screenshot': {
-            const raw = Array.isArray(ctx.context?.remoteDesktopSnapshots) ? ctx.context.remoteDesktopSnapshots : [];
-            const tabId = String(args.tabId || '').trim();
-            const maxWidth = clampNumber(args.maxWidth, 320, 1600, 640);
-            const targets = (tabId ? raw.filter((r) => String(r.tabId || '') === tabId) : raw)
-                .filter((r) => ['RDP', 'VNC'].includes(String(r.protocol || '').toUpperCase()) && (r.connected || r.hasScreenshot || r.dataUrl || r.error))
-                .slice(0, 3)
-                .map((r) => ({ tabId: r.tabId || '', protocol: r.protocol || '', title: r.title || r.name || '', host: r.host || '', port: r.port || '', status: r.status || '', connected: !!r.connected, width: r.width || 0, height: r.height || 0, originalWidth: r.originalWidth || 0, originalHeight: r.originalHeight || 0, at: r.at || 0 }));
-            const screenshots = (tabId ? raw.filter((r) => String(r.tabId || '') === tabId) : raw)
-                .filter((r) => ['RDP', 'VNC'].includes(String(r.protocol || '').toUpperCase()) && r.dataUrl)
-                .slice(0, 1)
-                .map((r) => ({ ...r, hasScreenshot: true }));
-            if (screenshots.length) return { screenshots, targets, clientCaptureRequired: false, tabId, maxWidth, message: '已读取当前上下文中的最新远程桌面画面' };
-            if (!targets.length) return { screenshots: [], clientCaptureRequired: false, message: '当前没有可读取的 RDP/VNC 远程桌面画面；请先打开 RDP 或 VNC 连接。' };
-            return { screenshots: [], targets, clientCaptureRequired: true, tabId, maxWidth, message: '需要前端实时截取最新远程桌面画面' };
-        }
+        case 'remote_desktop_capture_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const raw = Array.isArray(ctx.context?.remoteDesktopSnapshots) ? ctx.context.remoteDesktopSnapshots : [];
+                const tabId = String(args.tabId || '').trim();
+                const maxWidth = clampNumber(args.maxWidth, 320, 1600, 640);
+                const candidates = (tabId ? raw.filter((r) => String(r.tabId || '') === tabId) : raw)
+                    .filter((r) => ['RDP', 'VNC'].includes(String(r.protocol || '').toUpperCase()) && (r.connected || r.hasScreenshot || r.dataUrl || r.error));
+                const targets = candidates.slice(0, 3).map((r) => ({ tabId: r.tabId || '', protocol: r.protocol || '', title: r.title || r.name || '', host: r.host || '', port: r.port || '', status: r.status || '', connected: !!r.connected, width: r.width || 0, height: r.height || 0, originalWidth: r.originalWidth || 0, originalHeight: r.originalHeight || 0, frameAt: r.frameAt || r.at || 0, captureId: remoteDesktopTools.captureIdFor(r) }));
+                const capture = candidates.filter((r) => r.dataUrl).slice(0, 1).map((r) => remoteDesktopTools.publicCapture({ ...r, hasScreenshot: true }))[0] || null;
+                const stale = capture && args.afterCaptureId && capture.captureId === String(args.afterCaptureId);
+                if (capture && !args.requireFresh && !stale) return { screenshots: [capture], capture, targets, clientCaptureRequired: false, tabId: capture.tabId || tabId, maxWidth, message: '已读取绑定 captureId 的远程桌面画面' };
+                if (!targets.length) return { screenshots: [], capture: null, clientCaptureRequired: false, message: '当前没有可读取的 RDP/VNC 远程桌面画面；请先打开连接。' };
+                return { screenshots: [], capture: null, targets, clientCaptureRequired: true, clientCapture: { type: 'remote_desktop_capture_v1', tabId, maxWidth, afterCaptureId: String(args.afterCaptureId || capture?.captureId || ''), requireFresh: true }, tabId, maxWidth, message: '需要前端实时截取并签发新 captureId' };
+            });
+        case 'remote_desktop_action_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const raw = Array.isArray(ctx.context?.remoteDesktopSnapshots) ? ctx.context.remoteDesktopSnapshots : [];
+                const snapshot = raw.find((item) => String(item.tabId || '') === String(args.tabId || ''));
+                const capture = remoteDesktopTools.validateActionAgainstCapture(args, snapshot || {});
+                const clientAction = remoteDesktopTools.clientAction({ ...args, screenshotWidth: capture.width, screenshotHeight: capture.height, originalWidth: capture.originalWidth, originalHeight: capture.originalHeight });
+                return {
+                    clientActionRequired: true,
+                    clientAction,
+                    clientCaptureRequired: true,
+                    clientCapture: { type: 'remote_desktop_action_v1', tabId: String(args.tabId), maxWidth: Number(args.maxWidth) || 640, action: clientAction, beforeCaptureId: String(args.captureId) },
+                    beforeCaptureId: String(args.captureId),
+                    verificationRequired: 'remote_desktop_verify_v1',
+                    message: '需要前端执行远程桌面操作并返回新 captureId',
+                };
+            });
+        case 'remote_desktop_verify_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const changed = String(args.beforeCaptureId) !== String(args.afterCaptureId);
+                return { verified: changed, changed, tabId: String(args.tabId), actionId: String(args.actionId || ''), beforeCaptureId: String(args.beforeCaptureId), afterCaptureId: String(args.afterCaptureId), evidence: changed ? 'capture_id_changed_after_action' : 'capture_id_unchanged' };
+            });
         default:
             throw new Error(`未知工具：${toolName}`);
     }
@@ -2513,7 +2541,7 @@ function parseToolCall(call = {}) {
 }
 function toolResultMessage(call, result, mode = 'chat', limits = {}, providerType = '') {
     const max = clampNumber(limits.toolResultChars, 1000, 240000, 60000);
-    const screenshots = call.name === 'remote_desktop_screenshot' ? (result?.screenshots || []).filter((r) => r.hasScreenshot && r.dataUrl) : [];
+    const screenshots = ['remote_desktop_capture_v1', 'remote_desktop_screenshot'].includes(call.name) ? (result?.screenshots || []).filter((r) => r.hasScreenshot && r.dataUrl) : [];
     const safeJson = () => clipText(JSON.stringify(result, (key, value) => {
         if (key === 'dataUrl' && typeof value === 'string') return value ? `[image data omitted ${value.length} chars]` : '';
         return value;
@@ -2946,7 +2974,7 @@ function registerAiRoutes(app, deps) {
                     const publicArgs = publicToolArgs(call.name, call.args);
                     toolResults.push({ tool: call.name, args: publicArgs, result, status, startedAt, endedAt, durationMs: endedAt - startedAt });
                     if (result?.clientCaptureRequired) {
-                        return res.json({ ok: true, message: { role: 'assistant', content: message.content || '正在读取最新远程桌面画面。' }, toolResults, clientCaptureRequired: true, clientCapture: { tool: call.name, args: publicArgs, toolCallId: call.id, tabId: result.tabId || publicArgs.tabId || '', maxWidth: result.maxWidth || publicArgs.maxWidth || 640, targets: result.targets || [] }, provider: { id: provider.id, name: provider.name, type: provider.type }, model });
+                        return res.json({ ok: true, message: { role: 'assistant', content: message.content || '正在读取最新远程桌面画面。' }, toolResults, clientCaptureRequired: true, clientCapture: { ...(result.clientCapture || {}), tool: call.name, args: publicArgs, toolCallId: call.id, tabId: result.clientCapture?.tabId || result.tabId || publicArgs.tabId || '', maxWidth: result.clientCapture?.maxWidth || result.maxWidth || publicArgs.maxWidth || 640, targets: result.targets || [] }, provider: { id: provider.id, name: provider.name, type: provider.type }, model });
                     }
                     const toolMessage = toolResultMessage(call, result, openAiApiMode(provider), limits, provider.type || '');
                     const toolMessages = Array.isArray(toolMessage) ? toolMessage : [toolMessage];
@@ -3106,7 +3134,7 @@ function listToolCatalog(ai = {}) {
 function isReadOnlyToolName(name) {
     const n = String(name || '');
     if (!n) return false;
-    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read_v1|terminal_wait_v1|terminal_read|remote_desktop_screenshot|remote_read|browser_inspect_v1|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
+    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read_v1|terminal_wait_v1|terminal_read|remote_desktop_capture_v1|remote_desktop_verify_v1|remote_read|browser_inspect_v1|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
     if (n.endsWith('_list') || n.endsWith('_search') || n.endsWith('_get') || n.endsWith('_status')) return true;
     return false;
 }

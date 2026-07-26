@@ -137,6 +137,31 @@ func TestLoopToolThenAnswer(t *testing.T) {
 	}
 }
 
+func TestDetectCanonicalClientCapture(t *testing.T) {
+	capture, ok := detectClientCapture(map[string]any{
+		"ok": true,
+		"data": map[string]any{
+			"clientCaptureRequired": true,
+			"clientCapture": map[string]any{
+				"type": "remote_desktop_capture_v1",
+				"tabId": "rdp-1",
+				"maxWidth": float64(720),
+				"afterCaptureId": "old-cap",
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("canonical wrapped capture was not detected")
+	}
+	if capture.TabID != "rdp-1" || capture.MaxWidth != 720 {
+		t.Fatalf("capture %+v", capture)
+	}
+	args, ok := capture.Args.(map[string]any)
+	if !ok || args["afterCaptureId"] != "old-cap" {
+		t.Fatalf("capture args %+v", capture.Args)
+	}
+}
+
 func TestPermissionPauseAndResume(t *testing.T) {
 	dir := t.TempDir()
 	st, err := session.Open(filepath.Join(dir, "b.sqlite"))

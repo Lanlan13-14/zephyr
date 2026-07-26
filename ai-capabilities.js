@@ -205,6 +205,18 @@ const CAPABILITIES = defineCapabilities([
         toolIds: ['snippet_delete_v1'], keywords: ['代码片段', '删除', '移除', 'snippet'], playbookId: 'snippet-management-v1',
     },
     {
+        id: 'remotedesktop.capture', title: 'Capture RDP or VNC frame with a stable capture id', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['remote_desktop_capture_v1'], keywords: ['RDP', 'VNC', '远程桌面', '截图', 'captureId', '画面'], playbookId: 'remote-desktop-closed-loop-v1',
+    },
+    {
+        id: 'remotedesktop.action', title: 'Act on RDP or VNC using a validated capture id', mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['remote_desktop_action_v1'], keywords: ['RDP', 'VNC', '远程桌面', '点击', '输入', '快捷键', 'captureId'], playbookId: 'remote-desktop-closed-loop-v1',
+    },
+    {
+        id: 'remotedesktop.verify', title: 'Verify RDP or VNC action with before and after captures', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['remote_desktop_verify_v1'], keywords: ['RDP', 'VNC', '验证', '闭环', 'captureId'], playbookId: 'remote-desktop-closed-loop-v1',
+    },
+    {
         id: 'browser.inspect', title: 'Inspect page elements and issue versioned element references', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
         toolIds: ['browser_inspect_v1'], keywords: ['浏览器', '网页', '元素', 'inspect', 'elementRef', 'DOM'], playbookId: 'browser-automation-v1',
     },

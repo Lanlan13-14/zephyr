@@ -798,17 +798,29 @@ func detectClientCapture(res any) (event.ClientCapture, bool) {
 	if m == nil {
 		return event.ClientCapture{}, false
 	}
-	if v, ok := m["clientCaptureRequired"].(bool); !ok || !v {
+	// Canonical tool results are wrapped as {ok,data,meta}; inspect the data
+	// payload without discarding the outer result used by non-capture tools.
+	payload := m
+	if data, ok := m["data"].(map[string]any); ok {
+		payload = data
+	}
+	if v, ok := payload["clientCaptureRequired"].(bool); !ok || !v {
 		return event.ClientCapture{}, false
 	}
-	cap := event.ClientCapture{Name: str(m["tool"])}
-	if c, ok := m["clientCapture"].(map[string]any); ok {
+	cap := event.ClientCapture{Name: str(payload["tool"])}
+	if c, ok := payload["clientCapture"].(map[string]any); ok {
 		cap.CallID = str(c["toolCallId"])
 		cap.TabID = str(c["tabId"])
 		if n, ok := c["maxWidth"].(float64); ok {
 			cap.MaxWidth = int(n)
 		}
 		cap.Args = c
+	} else {
+		cap.TabID = str(payload["tabId"])
+		if n, ok := payload["maxWidth"].(float64); ok {
+			cap.MaxWidth = int(n)
+		}
+		cap.Args = payload
 	}
 	return cap, true
 }

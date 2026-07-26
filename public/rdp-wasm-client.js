@@ -424,6 +424,38 @@ function cleanupAudio() {
     if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; audioNextAt = 0; }
 }
 
+async function getRemoteDesktopSnapshotForAi(options = {}) {
+    if (!rdpWorkerBridge) return { protocol: 'RDP', tabId: params?.tabId || tabId, connected, error: 'RDP Worker 尚未就绪', at: Date.now(), frameAt: 0 };
+    try {
+        const frame = await rdpWorkerBridge.request('rdpCaptureFrame', []);
+        const sourceWidth = Number(frame?.width || 0);
+        const sourceHeight = Number(frame?.height || 0);
+        const pixels = frame?.pixels instanceof Uint8Array ? frame.pixels : new Uint8Array(frame?.pixels || []);
+        if (!sourceWidth || !sourceHeight || pixels.length !== sourceWidth * sourceHeight * 4) throw new Error('RDP 截图像素无效');
+        const source = document.createElement('canvas');
+        source.width = sourceWidth;
+        source.height = sourceHeight;
+        source.getContext('2d', { alpha: false }).putImageData(new ImageData(new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength), sourceWidth, sourceHeight), 0, 0);
+        const maxWidth = Math.max(320, Math.min(1600, Number(options.maxWidth) || 960));
+        const scale = Math.min(1, maxWidth / Math.max(1, sourceWidth));
+        const width = Math.max(1, Math.round(sourceWidth * scale));
+        const height = Math.max(1, Math.round(sourceHeight * scale));
+        const out = document.createElement('canvas');
+        out.width = width;
+        out.height = height;
+        const ctx = out.getContext('2d', { alpha: false });
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(source, 0, 0, width, height);
+        const frameAt = Number(frame?.frameAt || Date.now());
+        const captureId = [params?.tabId || tabId || 'rdp', frameAt, width, height].map((part) => String(part || 0).replace(/[^A-Za-z0-9_.-]/g, '_')).join(':');
+        return { protocol: 'RDP', tabId: params?.tabId || tabId, connectionId: activeConnectionId || params?.connectionId || '', host: params?.host || '', port: params?.port || 3389, status: statusText?.textContent || '', title: connInfo?.textContent || '', connected, dataUrl: out.toDataURL('image/jpeg', Math.max(0.28, Math.min(0.86, Number(options.quality) || 0.55))), width, height, originalWidth: sourceWidth, originalHeight: sourceHeight, frameAt, captureId, at: Date.now() };
+    } catch (err) {
+        return { protocol: 'RDP', tabId: params?.tabId || tabId, connectionId: activeConnectionId || params?.connectionId || '', connected, error: err.message || String(err), at: Date.now(), frameAt: 0 };
+    }
+}
+window.__zephyrGetRemoteDesktopSnapshot = getRemoteDesktopSnapshotForAi;
+
 /* ═══════════════════════════════════════════════════════════════════════
  * MICROPHONE INPUT (AUDIN) — browser getUserMedia → Go WASM → RDP server
  * ═══════════════════════════════════════════════════════════════════════ */
@@ -1458,6 +1490,10 @@ function notifyParentSharedClipboardText(text = '') {
         window.parent.postMessage({ source: 'zephyr-terminal', type: 'shared-clipboard-text', tabId: params?.tabId || tabId, text }, '*');
     }
 }
+function notifyParentAiActionResult(actionId, payload = {}) {
+    if (!embeddedMode || !window.parent || window.parent === window || !actionId) return;
+    window.parent.postMessage({ source: 'zephyr-terminal', type: 'ai-remote-desktop-action-result', tabId: params?.tabId || tabId, actionId, ...payload }, '*');
+}
 
 /* ─── Theme ────────────────────────────────────────────────────────── */
 function initialTheme() {
@@ -1568,6 +1604,56 @@ function sendKeySequence(seq) {
     if (!codes) return;
     for (const code of codes) rdpKeyDown(code);
     setTimeout(() => { for (const code of codes.slice().reverse()) rdpKeyUp(code); }, 40);
+}
+
+async function performAiRemoteDesktopAction(data = {}) {
+    if (data.captureId) {
+        const current = await getRemoteDesktopSnapshotForAi({ maxWidth: Number(data.screenshotWidth) || 960, quality: 0.42 });
+        if (String(data.captureId) !== String(current.captureId || '')) throw Object.assign(new Error('RDP 画面已变化，请重新截图后再操作'), { code: 'stale_capture' });
+    }
+    const control = String(data.control || '').toLowerCase().replace(/-/g, '_');
+    if (control === 'quality') { $('#qualityBtn')?.click?.(); return { ok: true, control, qualityMode }; }
+    if (control === 'fit') { $('#fitBtn')?.click?.(); return { ok: true, control, fitMode: fitModes[fitModeIdx] }; }
+    if (control === 'zoom') {
+        const slider = $('#zoomSlider');
+        if (slider && Number.isFinite(Number(data.zoomPercent))) { slider.value = String(Math.max(50, Math.min(250, Number(data.zoomPercent)))); slider.dispatchEvent(new Event('input', { bubbles: true })); }
+        return { ok: true, control, zoomPercent: Math.round(rdpScaleZoom * 100) };
+    }
+    if (control === 'clipboard') { $('#clipboardBtn')?.click?.(); return { ok: true, control }; }
+    if (control === 'keyboard') { $('#keyboardBtn')?.click?.(); return { ok: true, control }; }
+    if (control === 'shortcuts') { $('#shortcutsBtn')?.click?.(); return { ok: true, control }; }
+    if (control === 'joystick' || control === 'drag') { $('#joystickBtn')?.click?.(); return { ok: true, control }; }
+    if (control === 'ctrl_alt_del') { $('#ctrlAltDelBtn')?.click?.(); return { ok: true, control }; }
+    if (control === 'reconnect') { $('#reconnectBtn')?.click?.(); return { ok: true, control }; }
+    if (control === 'disconnect') { $('#disconnectBtn')?.click?.(); return { ok: true, control }; }
+    if (control === 'shortcut') {
+        const sequence = String(data.sequence || '');
+        if (!KEY_SEQ_MAP[sequence]) throw new Error(`未知 RDP 快捷键：${sequence}`);
+        sendKeySequence(sequence);
+        return { ok: true, control, sequence };
+    }
+    if (control === 'text' || control === 'clipboard_send') {
+        const text = String(data.text || '');
+        if (!text) throw new Error('AI 远程桌面输入为空');
+        await sendTextViaClipboard(text);
+        return { ok: true, control, length: text.length };
+    }
+    if (control === 'mouse_click') {
+        const x = Math.round(Number(data.x));
+        const y = Math.round(Number(data.y));
+        const button = Math.max(0, Math.min(2, (Number(data.button) || 1) - 1));
+        if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('AI 远程桌面点击缺少 x/y');
+        if (selectedPipeline === 'worker-gpu-v2') {
+            rdpWorkerBridge.input.push('mouse-move', { x, y });
+            rdpWorkerBridge.input.push('mouse-down', { button, x, y });
+            await new Promise((resolve) => setTimeout(resolve, 45));
+            rdpWorkerBridge.input.push('mouse-up', { button, x, y });
+        } else {
+            rdpMouseMove(x, y); rdpMouseDown(button, x, y); await new Promise((resolve) => setTimeout(resolve, 45)); rdpMouseUp(button, x, y);
+        }
+        return { ok: true, control, x, y, button: button + 1 };
+    }
+    throw new Error(`未知 RDP AI 动作：${control}`);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -2370,6 +2456,17 @@ function initFilePanel() {
 window.addEventListener('message', (e) => {
     if (!e.data || e.data.source !== 'zephyr-app') return;
     const msg = e.data;
+    if (msg.type === 'ai-remote-desktop-action') {
+        const actionId = String(msg.actionId || '');
+        performAiRemoteDesktopAction(msg).then((result = {}) => {
+            notifyParentAiActionResult(actionId, { ok: true, control: msg.control || '', result });
+        }).catch((err) => {
+            console.warn('[rdp-client]', 'AI remote desktop action failed', { error: err.message, control: msg.control });
+            setClipboardHint(err.message || 'AI 远程桌面操作失败', 'error');
+            notifyParentAiActionResult(actionId, { ok: false, control: msg.control || '', error: err.message || 'AI 远程桌面操作失败', code: err.code || '' });
+        });
+        return;
+    }
     if (msg.type === 'theme-change') {
         applyFrameTheme(msg.theme, msg.appearance);
     } else if (msg.type === 'shared-clipboard-text' && msg.text && connected) {

@@ -91,7 +91,9 @@ export class RdpGpuSurfaceCompositor {
             depth: false,
             stencil: false,
             desynchronized: true,
-            preserveDrawingBuffer: false,
+            // AI captureId closed-loop needs a readable, exact last-presented
+            // frame. This changes memory behavior, not rendering semantics.
+            preserveDrawingBuffer: true,
         });
         if (!this.gl) throw new Error('WebGL2 is unavailable');
         this._initGl();

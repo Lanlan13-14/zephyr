@@ -227,6 +227,7 @@ function getRemoteDesktopSnapshotForAi(options = {}) {
     const frameAt = source ? Date.now() : 0;
     if (source) vncLastFrameAt = frameAt;
     const shot = captureCanvasSnapshotForAi(source, options);
+    const captureId = [params?.tabId || tabId || 'vnc', frameAt, shot.width || 0, shot.height || 0].map((part) => String(part || 0).replace(/[^A-Za-z0-9_.-]/g, '_')).join(':');
     return {
         protocol: 'VNC',
         tabId: params?.tabId || tabId,
@@ -238,6 +239,7 @@ function getRemoteDesktopSnapshotForAi(options = {}) {
         connected,
         at: Date.now(),
         frameAt,
+        captureId,
         ...shot,
     };
 }
@@ -815,6 +817,10 @@ async function clickRemotePoint(x, y, button = 1) {
 async function performAiRemoteDesktopAction(data = {}) {
     const control = String(data.control || '').toLowerCase().replace(/-/g, '_');
     const text = String(data.text || '');
+    if (data.captureId) {
+        const current = getRemoteDesktopSnapshotForAi({ maxWidth: Number(data.screenshotWidth) || 960, quality: 0.42 });
+        if (String(data.captureId) !== String(current.captureId || '')) throw Object.assign(new Error('VNC 画面已变化，请重新截图后再操作'), { code: 'stale_capture' });
+    }
     if (control === 'quality') { cycleQuality(data.qualityMode || ''); return { ok: true, control, qualityMode }; }
     if (control === 'fit') { cycleFit(data.fitMode || ''); return { ok: true, control, fitMode }; }
     if (control === 'joystick' || control === 'drag') { togglePanel(joystickPanel, true, dragBtn); return { ok: true, control, panel: 'joystick' }; }

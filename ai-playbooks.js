@@ -63,6 +63,19 @@ const PLAYBOOKS = Object.freeze([
 - revision_conflict 时重新 snippet_get_v1；不要盲目重试。`,
     }),
     Object.freeze({
+        id: 'remote-desktop-closed-loop-v1',
+        title: 'RDP/VNC captureId 闭环操作',
+        capabilityIds: Object.freeze(['remotedesktop.capture', 'remotedesktop.action', 'remotedesktop.verify']),
+        triggers: Object.freeze(['RDP', 'VNC', '远程桌面', '截图', '点击桌面', 'captureId']),
+        prompt: `# RDP/VNC captureId 闭环操作 Playbook
+
+- 每次观察先 remote_desktop_capture_v1，取得 captureId、截图尺寸和 frameAt。不得对 RDP/VNC 使用终端文本 Tool。
+- 操作用 remote_desktop_action_v1，必须绑定同一 tabId 的最新 captureId；鼠标坐标必须基于该截图像素。stale_capture 时重新截图，不能继续点击旧画面。
+- 前端执行动作后会返回 actionId、beforeCaptureId 和新的 afterCaptureId/截图。随后调用 remote_desktop_verify_v1；只有 verified=true 才能说画面确实发生变化。
+- captureId 变化只能证明画面更新，不自动证明业务目标成功；仍需观察新截图中的成功/错误状态。若状态不明确，等待稳定后用 afterCaptureId 请求 fresh capture。
+- 禁止连续秒截、盲点坐标或把操作请求当作已完成。任何 clientError、action ack 失败、截图不可用或 verify=false 都必须如实报告。`,
+    }),
+    Object.freeze({
         id: 'browser-automation-v1',
         title: '外部网页 elementRef 自动化',
         capabilityIds: Object.freeze(['browser.inspect', 'browser.click', 'browser.type']),
