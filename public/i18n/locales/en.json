@@ -1420,5 +1420,14 @@
   "重新回答": "Re-answer",
   "选择文本": "Select text",
   "查看用量": "View usage",
-  "本地 Blob 沙箱预览": "Local blob sandbox preview"
+  "本地 Blob 沙箱预览": "Local blob sandbox preview",
+  "结束": "End",
+  "强制": "Force",
+  "内存优先": "By memory",
+  "主机": "Host",
+  "内存": "Memory",
+  "进程": "Processes",
+  "已用 {usage}": "Used {usage}",
+  "读 {read} KB/s · 写 {write} KB/s": "Read {read} KB/s · Write {write} KB/s",
+  "继续编辑，稍后再保存": "Keep editing; save later"
 }
