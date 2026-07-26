@@ -1212,10 +1212,10 @@ export function createNotesController({
             <button type="button" class="notes-menu-item" data-ctx-action="move" data-note-id="${escapeHtml(noteId)}">${icon('folder')}<span>${t('移动分组')}</span></button>
             <button type="button" class="notes-menu-item" data-ctx-action="copy" data-note-id="${escapeHtml(noteId)}"><span>${t('复制')}</span></button>
             <button type="button" class="notes-menu-item" data-ctx-action="export" data-note-id="${escapeHtml(noteId)}">${icon('export')}<span>${t('导出 Markdown')}</span></button>
-            <button type="button" class="notes-menu-item" data-ctx-action="select" data-note-id="${escapeHtml(noteId)}">${icon('multi')}<span>多选</span></button>
+            <button type="button" class="notes-menu-item" data-ctx-action="select" data-note-id="${escapeHtml(noteId)}">${icon('multi')}<span>${t('多选')}</span></button>
             <div class="notes-menu-sep"></div>
-            <button type="button" class="notes-menu-item danger" data-ctx-action="delete" data-note-id="${escapeHtml(noteId)}">${icon('trash')}<span>移到回收站</span></button>
-            <button type="button" class="notes-menu-item danger" data-ctx-action="purge_permanent" data-note-id="${escapeHtml(noteId)}">${icon('purge')}<span>直接删除</span></button>
+            <button type="button" class="notes-menu-item danger" data-ctx-action="delete" data-note-id="${escapeHtml(noteId)}">${icon('trash')}<span>${t('移到回收站')}</span></button>
+            <button type="button" class="notes-menu-item danger" data-ctx-action="purge_permanent" data-note-id="${escapeHtml(noteId)}">${icon('purge')}<span>${t('直接删除')}</span></button>
         `;
         placeMenu(menu, x, y);
         requestAnimationFrame(() => menu.classList.add('show'));
@@ -1363,23 +1363,23 @@ export function createNotesController({
             modal.innerHTML = `
                 <div class="notes-dialog notes-dialog-xl" role="dialog" aria-modal="true" aria-label="笔记冲突">
                     <div class="notes-dialog-head">
-                        <h2 class="notes-dialog-title">版本冲突</h2>
+                        <h2 class="notes-dialog-title">${t('版本冲突')}</h2>
                         <button type="button" class="notes-icon-btn" id="notesConflictClose" aria-label="关闭">${icon('close')}</button>
                     </div>
-                    <p class="notes-dialog-message">该笔记在其他地方被修改。选择保留你的编辑，或载入服务器版本。</p>
+                    <p class="notes-dialog-message">${t('该笔记在其他地方被修改。选择保留你的编辑，或载入服务器版本。')}</p>
                     <div class="notes-conflict-grid">
                         <div>
-                            <h3>我的版本</h3>
+                            <h3>${t('我的版本')}</h3>
                             <pre id="conflictMyVersion" class="notes-conflict-pre"></pre>
                         </div>
                         <div>
-                            <h3>服务器版本</h3>
+                            <h3>${t('服务器版本')}</h3>
                             <pre id="conflictServerVersion" class="notes-conflict-pre"></pre>
                         </div>
                     </div>
                     <div class="notes-dialog-actions">
-                        <button class="btn" type="button" id="conflictLoadServer">载入服务器版本</button>
-                        <button class="btn btn-primary" type="button" id="conflictKeepMine">保留我的版本</button>
+                        <button class="btn" type="button" id="conflictLoadServer">${t('载入服务器版本')}</button>
+                        <button class="btn btn-primary" type="button" id="conflictKeepMine">${t('保留我的版本')}</button>
                     </div>
                 </div>`;
             document.body.appendChild(modal);

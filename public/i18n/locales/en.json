@@ -1487,5 +1487,11 @@
   "清除": "Clear",
   "已筛选关联连接": "Filtered by linked connection",
   "共享后其他用户可读此笔记，不可编辑。默认私有。": "When shared, other users can read but not edit this note. Private by default.",
-  "关联连接": "Linked connections"
+  "关联连接": "Linked connections",
+  "多选": "Multi-select",
+  "该笔记在其他地方被修改。选择保留你的编辑，或载入服务器版本。": "This note was modified elsewhere. Keep your edits or load the server version.",
+  "我的版本": "My version",
+  "服务器版本": "Server version",
+  "载入服务器版本": "Load server version",
+  "保留我的版本": "Keep my version"
 }
