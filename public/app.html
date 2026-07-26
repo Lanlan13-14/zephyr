@@ -6,10 +6,10 @@
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="app.js?v=20260726-i18n-fix7">
+    <link rel="modulepreload" href="app.js?v=20260726-pw-rollback2">
     <link rel="modulepreload" href="theme-runtime.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-i18n-fix7">
-    <link rel="stylesheet" href="style.css?v=20260726-i18n-fix7">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-pw-rollback2">
+    <link rel="stylesheet" href="style.css?v=20260726-pw-rollback2">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -369,6 +369,7 @@
                                             <div class="form-group"><label for="settingsConfirmPassword" data-i18n="请确认新密码">请确认新密码</label><input type="password" id="settingsConfirmPassword" placeholder=" " minlength="4" required></div>
                                             <div class="form-group force-hidden" id="settingsTotpRow"><label for="settingsTotpCode" data-i18n="两步验证动态码">两步验证动态码</label><input id="settingsTotpCode" inputmode="numeric" maxlength="6" placeholder=" "></div>
                                             <div class="form-group force-hidden" id="settingsEmailCodeRow"><label for="settingsEmailCode" data-i18n="邮箱验证码">邮箱验证码</label><div class="form-row-inline"><input id="settingsEmailCode" inputmode="text" placeholder=" "><button type="button" class="btn btn-sm" id="settingsSendCodeBtn" data-i18n="发送验证码">发送验证码</button></div></div>
+                                            <p class="field-hint" id="passwordPolicyHint" aria-live="polite"></p>
                                         </div>
                                         <button class="btn btn-primary" type="submit" data-i18n="保存密码">保存密码</button>
                                     </form>
@@ -1009,9 +1010,22 @@
         </form>
     </div>
 
+    <div class="modal-backdrop" id="passwordChangedModal" aria-hidden="true">
+        <div class="connection-modal password-changed-modal" role="dialog" aria-modal="true" aria-labelledby="passwordChangedTitle">
+            <div class="modal-head"><h2 id="passwordChangedTitle" data-i18n="密码已修改">密码已修改</h2><button type="button" class="icon-btn" id="passwordChangedCloseBtn" data-i18n-aria-label="关闭">✕</button></div>
+            <p class="field-hint force-hidden" id="passwordChangedEmailHint" data-i18n="我们已向您的邮箱发送了通知邮件，其中包含一个恢复链接（24 小时内有效，仅可使用一次）。如果本次修改不是您本人操作，请通过邮件中的链接恢复之前的密码。">我们已向您的邮箱发送了通知邮件，其中包含一个恢复链接（24 小时内有效，仅可使用一次）。如果本次修改不是您本人操作，请通过邮件中的链接恢复之前的密码。</p>
+            <div class="force-hidden" id="passwordChangedLinkBox">
+                <p class="field-hint" data-i18n="当前账号未绑定邮箱，无法发送通知邮件。请立即妥善保存以下恢复链接：如果本次修改不是您本人操作，可在 24 小时内通过该链接恢复之前的密码。链接仅可使用一次，关闭本窗口后将无法再次查看。">当前账号未绑定邮箱，无法发送通知邮件。请立即妥善保存以下恢复链接：如果本次修改不是您本人操作，可在 24 小时内通过该链接恢复之前的密码。链接仅可使用一次，关闭本窗口后将无法再次查看。</p>
+                <div class="form-group"><label for="passwordChangedRollbackUrl" data-i18n="恢复链接">恢复链接</label><div class="form-row-inline"><input id="passwordChangedRollbackUrl" type="text" readonly><button type="button" class="btn btn-sm" id="passwordChangedCopyBtn" data-i18n="复制链接">复制链接</button></div></div>
+                <p class="field-hint" id="passwordChangedExpiry"></p>
+            </div>
+            <div class="modal-actions"><button class="btn btn-primary" type="button" id="passwordChangedOkBtn" data-i18n="我知道了">我知道了</button></div>
+        </div>
+    </div>
+
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260726-i18n-fix7" type="module"></script>
+    <script src="app.js?v=20260726-pw-rollback2" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

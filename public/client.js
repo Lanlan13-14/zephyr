@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { t, initI18n, setLocale, getLocale, applyDomI18n } from './i18n/runtime.js?v=20260726-i18n-fix7';
+import { t, initI18n, setLocale, getLocale, applyDomI18n } from './i18n/runtime.js?v=20260726-pw-rollback2';
 
 const $ = (sel) => document.querySelector(sel);
 const errorBanner = $('#errorBanner');
@@ -407,8 +407,23 @@ changePasswordForm.addEventListener('submit', async (e) => {
     const confirmPassword = $('#confirmPassword').value;
     if (newPassword !== confirmPassword) return showError(changeErrorBanner, t('两次输入的新密码不一致'));
     try {
-        await api('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
-        window.location.href = '/app.html';
+        const result = await api('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
+        /* Accounts without a mailbox get the one-time rollback link here —
+         * the only notification channel they have. Everyone else already
+         * received it by email and goes straight in. */
+        if (result?.rollbackUrl) {
+            changePasswordForm.classList.add('force-hidden');
+            const notice = $('#changeRollbackNotice');
+            notice.classList.remove('force-hidden');
+            $('#changeRollbackUrl').value = result.rollbackUrl;
+            $('#changeRollbackCopyBtn').onclick = async () => {
+                try { await navigator.clipboard.writeText(result.rollbackUrl); $('#changeRollbackCopyBtn').textContent = t('链接已复制'); }
+                catch { $('#changeRollbackUrl').select(); }
+            };
+            $('#changeRollbackContinueBtn').onclick = () => { window.location.href = '/app.html'; };
+        } else {
+            window.location.href = '/app.html';
+        }
     } catch (err) {
         showError(changeErrorBanner, err.message);
     }

@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange } from './i18n/runtime.js?v=20260726-i18n-fix7';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260726-i18n-fix7';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260726-pw-rollback2';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260726-pw-rollback2';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -8172,6 +8172,45 @@ function updatePasswordFormFields() {
     /* Email code shown whenever user has email (both TOTP-on and TOTP-off).
      * Only hidden when no email at all. */
     if (emailRow) emailRow.classList.toggle('force-hidden', !hasEmail);
+    /* Policy hint: mirror the server-side factor matrix so users know what a
+     * change will require before submitting (and notice the degraded mode). */
+    const hint = $('#passwordPolicyHint');
+    if (hint) {
+        if (usingTotp && hasEmail) hint.textContent = t('当前账号已开启 TOTP 并绑定邮箱：修改密码需要当前密码 + TOTP 动态码 + 邮箱验证码。');
+        else if (usingTotp) hint.textContent = t('当前账号已开启 TOTP：修改密码需要当前密码 + TOTP 动态码。');
+        else if (hasEmail) hint.textContent = t('当前账号已绑定邮箱：修改密码需要当前密码 + 邮箱验证码。');
+        else hint.textContent = t('当前账号未开启 TOTP 且未绑定邮箱：仅验证当前密码。建议开启 TOTP 或绑定邮箱以提升安全性。');
+    }
+}
+/* Post-change notification dialog. Email-bound accounts only get a pointer to
+ * the mailbox (the rollback link travels by email); accounts without email get
+ * the link in-app — the only remaining notification channel. */
+function openPasswordChangedModal({ notifiedByEmail, rollbackUrl, rollbackExpiresAt } = {}) {
+    const modal = $('#passwordChangedModal');
+    if (!modal) return;
+    const emailHint = $('#passwordChangedEmailHint');
+    const linkBox = $('#passwordChangedLinkBox');
+    const urlInput = $('#passwordChangedRollbackUrl');
+    const expiry = $('#passwordChangedExpiry');
+    const showEmail = !!notifiedByEmail;
+    if (emailHint) emailHint.classList.toggle('force-hidden', !showEmail);
+    if (linkBox) linkBox.classList.toggle('force-hidden', showEmail);
+    if (!showEmail) {
+        if (urlInput) urlInput.value = rollbackUrl || '';
+        if (expiry) expiry.textContent = rollbackExpiresAt ? t('有效期至：{time}', { time: formatDateTime(Number(rollbackExpiresAt)) }) : '';
+    }
+    modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
+    $('#passwordChangedOkBtn')?.focus();
+}
+function closePasswordChangedModal() {
+    const modal = $('#passwordChangedModal');
+    if (!modal || !modal.classList.contains('show')) return;
+    modal.classList.remove('show');
+    modal.setAttribute('aria-hidden', 'true');
+    /* Never keep the one-time link in the DOM once dismissed. */
+    const urlInput = $('#passwordChangedRollbackUrl');
+    if (urlInput) urlInput.value = '';
 }
 function renderPasskeys() { $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无 Passkey')}</p>`; }
 function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>${t('失败')} ${b.failedCount} · ${t('解封')} ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">${t('解除')}</button></div>`).join('') || `<p class="muted">${t('暂无封禁 IP')}</p>`; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason ? t(e.reason) : '')} · ${fmtTime(e.time)}</span></div>`).join('') || `<p class="muted">${t('暂无登录事件')}</p>`; }
@@ -9496,12 +9535,28 @@ $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?
         const totpCode = $('#settingsTotpCode')?.value || '';
         const emailCode = $('#settingsEmailCode')?.value || '';
         try {
-            await api('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword, totpCode, emailCode }) });
+            const result = await api('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword, totpCode, emailCode }) });
             e.target.reset();
             updatePasswordFormFields();
             toast(t('密码已更新'));
+            openPasswordChangedModal(result || {});
         } catch (err) {
             toast(err.message);
+        }
+    });
+    $('#passwordChangedCloseBtn')?.addEventListener('click', closePasswordChangedModal);
+    $('#passwordChangedOkBtn')?.addEventListener('click', closePasswordChangedModal);
+    $('#passwordChangedModal')?.addEventListener('click', (e) => { if (e.target.id === 'passwordChangedModal') closePasswordChangedModal(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePasswordChangedModal(); });
+    $('#passwordChangedCopyBtn')?.addEventListener('click', async () => {
+        const value = $('#passwordChangedRollbackUrl')?.value || '';
+        if (!value) return;
+        try {
+            await navigator.clipboard.writeText(value);
+            toast(t('链接已复制'));
+        } catch {
+            $('#passwordChangedRollbackUrl')?.select();
+            toast(t('复制失败，请手动复制'));
         }
     });
     $('#settingsSendCodeBtn')?.addEventListener('click', async () => {

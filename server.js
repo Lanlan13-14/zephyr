@@ -214,6 +214,13 @@ const RESET_TOKEN_MAX_ATTEMPTS = 5;
 /** Sliding window for reset verify rate limit (per IP). */
 const RESET_VERIFY_WINDOW_MS = 10 * 60 * 1000;
 const RESET_VERIFY_MAX_PER_WINDOW = 20;
+/* Password rollback (notification link) — one-time token restores the hash
+ * captured before a password change. Dedicated fixed-window limiter so a
+ * leaked-link guessing burst can't burn the forgot-password budget. */
+const PASSWORD_ROLLBACK_TTL_MS = 24 * 60 * 60 * 1000;
+const rollbackVerifyHits = new Map();
+const ROLLBACK_VERIFY_WINDOW_MS = 10 * 60 * 1000;
+const ROLLBACK_VERIFY_MAX_PER_WINDOW = 10;
 /** WebAuthn login challenge TTL. */
 const WEBAUTHN_LOGIN_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 /* Short-lived RDP proxy grants for "临时连接" forms that never hit the host library.
@@ -2143,6 +2150,19 @@ function takeResetVerifySlot(ip) {
     return true;
 }
 
+function takeRollbackVerifySlot(ip) {
+    const nowTs = Date.now();
+    const key = String(ip || 'unknown');
+    const hits = (rollbackVerifyHits.get(key) || []).filter((t) => nowTs - t < ROLLBACK_VERIFY_WINDOW_MS);
+    if (hits.length >= ROLLBACK_VERIFY_MAX_PER_WINDOW) {
+        rollbackVerifyHits.set(key, hits);
+        return false;
+    }
+    hits.push(nowTs);
+    rollbackVerifyHits.set(key, hits);
+    return true;
+}
+
 function defaultPasswordRemoteLoginAllowed(req, user) {
     if (!user?.defaultPassword) return true;
     if (process.env.ALLOW_DEFAULT_PASSWORD_REMOTE_LOGIN === 'true') return true;
@@ -2440,6 +2460,23 @@ app.post('/api/auth/change-password', requireUser, async (req, res) => {
         console.warn('[security] change-password without 2FA or email (no email on account)', { username: user.username });
     }
 
+    /* Rollback token: capture the pre-change hash so the notification link can
+     * restore it if this change wasn't made by the account owner. One live
+     * token per user, single use, 24h expiry. */
+    const rollbackToken = crypto.randomBytes(24).toString('base64url');
+    const rollbackExpiresAt = Date.now() + PASSWORD_ROLLBACK_TTL_MS;
+    storage.createPasswordRollbackToken({
+        id: crypto.randomUUID(),
+        userId: user.userId,
+        username: user.username,
+        tokenHash: sha256(rollbackToken),
+        oldPasswordHash: user.passwordHash,
+        expiresAt: rollbackExpiresAt,
+        createdAt: Date.now(),
+        createdIp: clientIp(req),
+    });
+    const rollbackUrl = `${publicOrigin(req)}/password-rollback?token=${rollbackToken}`;
+
     storage.updateUser(user.username, { passwordHash: hashPassword(newPassword), defaultPassword: false });
     /* Password change invalidates every other session (FREEZE plan §11.3);
      * the current session survives and its must-change flag clears. */
@@ -2448,6 +2485,108 @@ app.post('/api/auth/change-password', requireUser, async (req, res) => {
     sessionStore.setMustChangePassword(user.userId, false);
     req.session.mustChangePassword = false;
     addActivity('修改登录密码');
+
+    /* Success notification. With a bound mailbox the rollback link travels by
+     * email only; without one the response carries it so the UI can show it
+     * in-app (the only remaining notification channel). Server has no
+     * per-user locale (UI language lives in localStorage), so the email is
+     * bilingual zh-CN/en. */
+    let notifiedByEmail = false;
+    const s3 = storage.getSettings();
+    const mail3 = s3.mail || {};
+    if (user.email && mail3.enabled && mail3.host) {
+        const changedAt = new Date().toLocaleString('zh-CN', { hour12: false });
+        const expiresAtText = new Date(rollbackExpiresAt).toLocaleString('zh-CN', { hour12: false });
+        const text = [
+            '您的 Zephyr 账号密码刚刚被修改。',
+            '如果这是您本人的操作，请忽略此邮件。',
+            '如果这不是您本人的操作，请立即点击以下链接恢复到修改前的密码（链接仅可使用一次）：',
+            rollbackUrl,
+            `链接有效期至：${expiresAtText}（24 小时）`,
+            '',
+            `账号：${user.username}`,
+            `操作时间：${changedAt}`,
+            `IP 地址：${clientIp(req)}`,
+            '',
+            '---',
+            '',
+            'Your Zephyr account password was just changed.',
+            'If this was you, you can ignore this email.',
+            'If this was NOT you, click the link below immediately to restore your previous password (the link can be used only once):',
+            rollbackUrl,
+            `Link valid until: ${expiresAtText} (24 hours)`,
+            '',
+            `Account: ${user.username}`,
+            `Time: ${changedAt}`,
+            `IP address: ${clientIp(req)}`,
+        ].join('\n');
+        try {
+            await sendMail('Zephyr 密码修改通知 / Password Change Notification', text, user.email);
+            notifiedByEmail = true;
+        } catch (err) {
+            console.error('[MAIL] 密码修改通知发送失败:', { username: user.username, error: err.message });
+        }
+    }
+    res.json({
+        ok: true,
+        notifiedByEmail,
+        rollbackExpiresAt,
+        ...(notifiedByEmail ? {} : { rollbackUrl }),
+    });
+});
+
+/* One-time rollback link from the password-change notification. Public: the
+ * whole point is that the owner may be locked out while an attacker holds the
+ * new password, so the token itself is the capability. */
+app.post('/api/auth/password-rollback', async (req, res) => {
+    const ip = clientIp(req);
+    if (!takeRollbackVerifySlot(ip)) {
+        return res.status(429).json({ error: '尝试过于频繁，请稍后再试', code: 'rollback_rate_limited' });
+    }
+    const token = String(req.body?.token || '').trim();
+    const rec = token ? storage.findPasswordRollbackTokenByHash(sha256(token)) : null;
+    if (!rec || rec.expiresAt < Date.now()) {
+        return res.status(400).json({ error: '恢复链接无效或已过期', code: 'rollback_invalid' });
+    }
+    const user = storage.getUserById(rec.userId) || storage.getUser(rec.username);
+    if (!user) {
+        return res.status(400).json({ error: '恢复链接无效或已过期', code: 'rollback_invalid' });
+    }
+    storage.updateUser(user.username, { passwordHash: rec.oldPasswordHash, defaultPassword: false });
+    storage.markPasswordRollbackTokenUsed(rec.id);
+    storage.invalidateResetCodesForUser(user.username);
+    /* A rollback means the change was hostile: kill EVERY session, including
+     * the attacker's, and clear any forced must-change flag. */
+    sessionStore.revokeAllForUser(user.userId, 'password-rollback');
+    sessionStore.setMustChangePassword(user.userId, false);
+    addActivity('通过恢复链接回滚密码', user.userId);
+    console.warn('[security] password rolled back via notification link', { username: user.username, ip });
+
+    const s = storage.getSettings();
+    const mail = s.mail || {};
+    if (user.email && mail.enabled && mail.host) {
+        const text = [
+            '您的 Zephyr 账号密码已通过恢复链接恢复到修改前的状态，所有会话均已退出。',
+            '请使用之前的密码重新登录，并建议尽快开启 TOTP 两步验证。',
+            '如果这次恢复不是您本人的操作，请立即联系管理员。',
+            '',
+            `账号：${user.username}`,
+            `操作时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`,
+            `IP 地址：${ip}`,
+            '',
+            '---',
+            '',
+            'Your Zephyr account password was restored to its previous state via the recovery link. All sessions have been signed out.',
+            'Please sign in with your previous password. Enabling TOTP two-factor authentication is recommended.',
+            'If you did not perform this recovery, contact your administrator immediately.',
+            '',
+            `Account: ${user.username}`,
+            `Time: ${new Date().toLocaleString('zh-CN', { hour12: false })}`,
+            `IP address: ${ip}`,
+        ].join('\n');
+        sendMail('Zephyr 密码已恢复 / Password Restored', text, user.email)
+            .catch((err) => console.error('[MAIL] 密码恢复确认邮件发送失败:', { username: user.username, error: err.message }));
+    }
     res.json({ ok: true });
 });
 
@@ -5960,6 +6099,11 @@ app.get('/player.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'pla
  * redirects to login and keeps the sensitive URI in sessionStorage. */
 app.get('/open', (req, res) => sendNoStorePage(res, 'open.html'));
 app.get('/open.html', (req, res) => sendNoStorePage(res, 'open.html'));
+/* Password rollback landing page: reached from the change notification email
+ * while the owner may be logged out, so it must stay public. The token in the
+ * query string is the only capability; the page itself just POSTs it. */
+app.get('/password-rollback', (req, res) => sendNoStorePage(res, 'password-rollback.html'));
+app.get('/password-rollback.html', (req, res) => sendNoStorePage(res, 'password-rollback.html'));
 app.use(express.static(path.join(__dirname, 'public'), {
     index: 'index.html',
     setHeaders: (res, filePath) => {

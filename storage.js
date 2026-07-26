@@ -334,6 +334,17 @@ function init({ hashPassword }) {
             createdAt INTEGER,
             attemptCount INTEGER DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS password_rollback_tokens (
+            id TEXT PRIMARY KEY,
+            userId TEXT NOT NULL,
+            username TEXT NOT NULL,
+            tokenHash TEXT NOT NULL,
+            oldPasswordHash TEXT NOT NULL,
+            expiresAt INTEGER NOT NULL,
+            used INTEGER DEFAULT 0,
+            createdAt INTEGER,
+            createdIp TEXT
+        );
         CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY,
             value TEXT
@@ -863,6 +874,22 @@ function findResetCode(username, email) {
     return db.prepare('SELECT * FROM password_reset_codes WHERE username=? AND email=? AND used=0 ORDER BY createdAt DESC LIMIT 1').get(username, email);
 }
 function markResetCodeUsed(id) { db.prepare('UPDATE password_reset_codes SET used=1 WHERE id=?').run(id); }
+
+/* Password rollback tokens (change-password notification link). A token is a
+ * one-time capability that restores the password hash captured right before a
+ * successful password change. Only one live token per user: issuing a new one
+ * invalidates the previous. */
+function invalidatePasswordRollbackTokensForUser(username) {
+    return db.prepare('UPDATE password_rollback_tokens SET used=1 WHERE username=? AND used=0').run(String(username || '')).changes;
+}
+function createPasswordRollbackToken(rec) {
+    if (rec?.username) invalidatePasswordRollbackTokensForUser(rec.username);
+    db.prepare('INSERT INTO password_rollback_tokens (id,userId,username,tokenHash,oldPasswordHash,expiresAt,used,createdAt,createdIp) VALUES (@id,@userId,@username,@tokenHash,@oldPasswordHash,@expiresAt,0,@createdAt,@createdIp)').run(rec);
+}
+function findPasswordRollbackTokenByHash(tokenHash) {
+    return db.prepare('SELECT * FROM password_rollback_tokens WHERE tokenHash=? AND used=0 ORDER BY createdAt DESC LIMIT 1').get(String(tokenHash || ''));
+}
+function markPasswordRollbackTokenUsed(id) { db.prepare('UPDATE password_rollback_tokens SET used=1 WHERE id=?').run(id); }
 /** Increment failed verify attempts for a reset token. Returns the new count. */
 function recordResetCodeAttempt(id) {
     const row = db.prepare('SELECT attemptCount FROM password_reset_codes WHERE id=? AND used=0').get(id);
@@ -879,4 +906,4 @@ function deletePasskey(username, id) { db.prepare('DELETE FROM passkeys WHERE us
 function rawDb() { return db; }
 function close() { if (db) { db.close(); db = null; } }
 
-module.exports = { init, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, cleanupExpiredEphemeralConnections, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, queryActivities, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, recordResetCodeAttempt, invalidateResetCodesForUser, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close };
+module.exports = { init, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, cleanupExpiredEphemeralConnections, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, queryActivities, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, recordResetCodeAttempt, invalidateResetCodesForUser, createPasswordRollbackToken, findPasswordRollbackTokenByHash, markPasswordRollbackTokenUsed, invalidatePasswordRollbackTokensForUser, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close };

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title data-i18n="Zephyr - 登录">Zephyr - 登录</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260726-i18n-fix7">
+    <link rel="stylesheet" href="style.css?v=20260726-pw-rollback2">
 </head>
 <body>
     <div class="login-card auth-card" id="loginCard">
@@ -123,9 +123,18 @@
             </div>
             <button type="submit" class="btn btn-primary" data-i18n="保存并进入系统">保存并进入系统</button>
         </form>
+        <div id="changeRollbackNotice" class="force-hidden">
+            <p class="auth-subtitle" data-i18n="当前账号未绑定邮箱，无法发送通知邮件。请立即妥善保存以下恢复链接：如果本次修改不是您本人操作，可在 24 小时内通过该链接恢复之前的密码。链接仅可使用一次，关闭本窗口后将无法再次查看。">当前账号未绑定邮箱，无法发送通知邮件。请立即妥善保存以下恢复链接：如果本次修改不是您本人操作，可在 24 小时内通过该链接恢复之前的密码。链接仅可使用一次，关闭本窗口后将无法再次查看。</p>
+            <div class="form-group">
+                <label for="changeRollbackUrl" data-i18n="恢复链接">恢复链接</label>
+                <input type="text" id="changeRollbackUrl" readonly>
+            </div>
+            <button type="button" class="btn" id="changeRollbackCopyBtn" data-i18n="复制链接">复制链接</button>
+            <button type="button" class="btn btn-primary" id="changeRollbackContinueBtn" data-i18n="进入系统">进入系统</button>
+        </div>
     </div>
     <div class="beian-footer" id="beianFooter"></div>
     <script src="preview-mock.js?v=20260723-activity1" type="module"></script>
-    <script src="client.js?v=20260726-i18n-fix7" type="module"></script>
+    <script src="client.js?v=20260726-pw-rollback2" type="module"></script>
 </body>
 </html>
