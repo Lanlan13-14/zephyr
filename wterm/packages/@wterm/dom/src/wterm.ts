@@ -3,7 +3,7 @@ import {
   XtermBridge,
   type TerminalCore,
 } from "@wterm/core";
-import { Renderer, resolveQueryColor } from "./renderer.js";
+import { Renderer, resolveQueryColor } from "./renderer.js?v=20260726-url-wrap1";
 import { CanvasRenderer } from "./canvas-renderer.js";
 import { InputHandler } from "./input.js";
 import { DebugAdapter } from "./debug.js";
