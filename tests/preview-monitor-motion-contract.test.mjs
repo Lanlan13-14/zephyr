@@ -44,7 +44,7 @@ test('monitor thumb geometry is CSS-driven and shadow-free', () => {
 
 test('preview and monitor assets carry their current cache-busts', () => {
     for (const asset of ['style.css', 'terminal.js']) {
-        assert.match(html, new RegExp(`${asset.replaceAll('.', '\\.')}\\?v=20260726-ai-context1`), `${asset} app cache version`);
+        assert.match(html, new RegExp(`${asset.replaceAll('.', '\\.')}\\?v=20260726-ai-unified-skill1`), `${asset} app cache version`);
     }
     for (const asset of ['image-preview.css', 'media-preview.css', 'image-preview.js', 'media-preview.js']) {
         assert.match(html, new RegExp(`${asset.replaceAll('.', '\\.')}\\?v=20260725-telnet-page-split1`), `${asset} preview cache version`);

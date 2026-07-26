@@ -14,6 +14,7 @@ const { HttpError } = require('./authz');
 const {
     DEFAULT_ZEPHYR_SYSTEM_PROMPT,
     DEFAULT_ZEPHYR_SKILLS,
+    buildUnifiedZephyrSkill,
     cloneDefaultZephyrSkills,
 } = require('./ai-defaults');
 const { PLAYBOOKS } = require('./ai-playbooks');
@@ -152,24 +153,14 @@ class AiRuntimeBridge {
 }
 
 function mergeSkills(skills) {
-    const list = Array.isArray(skills) ? skills.slice() : [];
-    const defaults = [
-        ...cloneDefaultZephyrSkills(),
-        ...PLAYBOOKS.map((playbook) => ({
-            id: `playbook:${playbook.id}`,
-            name: playbook.title,
-            description: `运行时标准操作规程：${playbook.id}`,
-            prompt: playbook.prompt,
-            enabled: true,
-        })),
-    ];
-    const merged = list.slice();
-    defaults.forEach((fallback) => {
-        const index = merged.findIndex((item) => item && (item.id === fallback.id || item.name === fallback.name));
-        if (index < 0) merged.unshift(fallback);
-        else if (!(merged[index].prompt || '').trim()) merged[index] = { ...fallback, ...merged[index], prompt: fallback.prompt, enabled: merged[index].enabled !== false };
-    });
-    return merged;
+    const source = Array.isArray(skills) ? skills : cloneDefaultZephyrSkills();
+    const builtinIds = new Set([
+        ...DEFAULT_ZEPHYR_SKILLS.map((item) => String(item.id || '')),
+        ...PLAYBOOKS.map((item) => `playbook:${item.id}`),
+        'zephyr-unified-operator',
+    ]);
+    const customSkills = source.filter((item) => item?.id && !builtinIds.has(String(item.id)));
+    return [buildUnifiedZephyrSkill(PLAYBOOKS), ...customSkills];
 }
 
 /**

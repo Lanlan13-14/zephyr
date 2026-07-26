@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { URL } = require('url');
 const { HttpError } = require('./authz');
 const { browserService, SHOT_DIR } = require('./ai-browser-service');
-const { DEFAULT_ZEPHYR_SYSTEM_PROMPT, DEFAULT_ZEPHYR_SKILLS } = require('./ai-defaults');
+const { DEFAULT_ZEPHYR_SYSTEM_PROMPT, DEFAULT_ZEPHYR_SKILLS, buildUnifiedZephyrSkill } = require('./ai-defaults');
 const { reportCapabilityCoverage, executionPolicyForTool, searchAvailableCapabilities } = require('./ai-capabilities');
 const { executeCanonicalTool } = require('./ai-tool-executor');
 const connectionTools = require('./ai-connection-tools');
@@ -18,6 +18,7 @@ const secretRefs = require('./ai-secret-refs');
 const contextBudget = require('./ai-context-budget');
 const { policyForExtendedTool, EXTENDED_CAPABILITIES } = require('./ai-extended-capabilities');
 const { PLAYBOOKS } = require('./ai-playbooks');
+const { buildIntentRoutingHint } = require('./ai-intent-routing');
 
 const DEFAULT_TOOL_CALL_LIMIT = 0;
 const DEFAULT_AI_CONTEXT = { windowTokens: 64000, maxInputChars: 90000, toolResultChars: 30000, memoryItems: 16, maxToolRounds: 0, summaryChars: 18000, recentChars: 42000 };
@@ -596,20 +597,17 @@ async function fetchJson(url, options = {}) {
         if (parentSignal && abortListener) parentSignal.removeEventListener?.('abort', abortListener);
     }
 }
+const LEGACY_BUILTIN_SKILL_IDS = new Set([
+    ...DEFAULT_ZEPHYR_SKILLS.map((item) => item.id),
+    ...PLAYBOOKS.map((item) => `playbook:${item.id}`),
+    'zephyr-unified-operator',
+]);
 function mergeZephyrDefaultSkills(skills = []) {
-    const list = Array.isArray(skills) ? skills.slice() : [];
-    const defaults = [...DEFAULT_ZEPHYR_SKILLS, ...PLAYBOOKS.map((playbook) => ({
-        id: `playbook:${playbook.id}`,
-        name: playbook.title,
-        description: `运行时标准操作规程：${playbook.id}`,
-        prompt: playbook.prompt,
-        enabled: true,
-    }))];
-    defaults.forEach((skill) => {
-        const exists = list.some((item) => item?.id === skill.id || item?.name === skill.name);
-        if (!exists) list.unshift({ ...skill, updatedAt: Date.now() });
-    });
-    return list;
+    const source = Array.isArray(skills) ? skills : [];
+    // Inject exactly one ordered built-in Skill. Weak models were treating the
+    // old 1 + 19 fragments as alternatives instead of one complete workflow.
+    const customSkills = source.filter((item) => item?.id && !LEGACY_BUILTIN_SKILL_IDS.has(item.id));
+    return [buildUnifiedZephyrSkill(PLAYBOOKS), ...customSkills];
 }
 function buildSystemPrompt(ai = {}, context = {}, limits = {}) {
     const enabledSkills = mergeZephyrDefaultSkills(ai.skills).filter((s) => s?.enabled !== false && (s.prompt || s.description || s.name));
@@ -2824,16 +2822,16 @@ function normalizeAiSettingsInput(currentAi = {}, ai = {}) {
         }
     }
     if (Array.isArray(ai.skills)) {
-        next.skills = mergeZephyrDefaultSkills(ai.skills.slice(0, 200).map((s) => ({
+        next.skills = ai.skills.slice(0, 200).map((s) => ({
             id: String(s.id || crypto.randomUUID()).slice(0, 120),
             name: String(s.name || '').slice(0, 80),
             description: String(s.description || '').slice(0, 500),
             prompt: String(s.prompt || '').slice(0, 30000),
             enabled: s.enabled !== false,
             updatedAt: Number(s.updatedAt || Date.now()),
-        })).filter((s) => s.name || s.prompt)).slice(0, 200);
+        })).filter((s) => (s.name || s.prompt) && !LEGACY_BUILTIN_SKILL_IDS.has(s.id)).slice(0, 200);
     } else {
-        next.skills = mergeZephyrDefaultSkills(next.skills || []).slice(0, 200);
+        next.skills = (next.skills || []).filter((s) => s?.id && !LEGACY_BUILTIN_SKILL_IDS.has(s.id)).slice(0, 200);
     }
     if (Array.isArray(ai.memories)) {
         next.memories = ai.memories.slice(0, 2000).map((m) => ({
@@ -2946,6 +2944,9 @@ function registerAiRoutes(app, deps) {
             ? deps.aiProviderService.listVisible(req.user)
             : (safeAiSettings(rawAi).providers || []);
         const ai = safeAiSettings(rawAi);
+        // Expose the immutable unified built-in Skill for inspection in UI;
+        // normalizeAiSettingsInput strips it before persisting user settings.
+        ai.skills = mergeZephyrDefaultSkills(ai.skills || []);
         res.json({ ai: { ...ai, providers }, pending: pendingActions.size, policy });
     });
 
@@ -3053,7 +3054,11 @@ function registerAiRoutes(app, deps) {
             }
             const context = normalizeAiContext(req.body?.context || {});
             const configuredLimits = normalizeContextLimits(ai, provider);
-            const systemPrompt = buildSystemPrompt(ai, context, configuredLimits);
+            const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+            const latestUserMessage = [...rawMessages].reverse().find((item) => item?.role === 'user')?.content || '';
+            const intentHint = buildIntentRoutingHint(latestUserMessage);
+            const baseSystemPrompt = buildSystemPrompt(ai, context, configuredLimits);
+            const systemPrompt = intentHint ? `${baseSystemPrompt}\n\n${intentHint}` : baseSystemPrompt;
             let tools = providerSupportsTools(provider) ? cachedToolDefinitions(ai) : [];
             if (deps.userSettingsService && req.user) {
                 const effectiveUserSettings = deps.userSettingsService.effective(req.user);
@@ -3293,6 +3298,7 @@ function riskForToolName(name, readOnly) {
 
 module.exports = {
     registerAiRoutes,
+    mergeZephyrDefaultSkills,
     normalizeAiSettingsInput,
     safeAiSettings,
     executeAiToolForHost,

@@ -2024,5 +2024,11 @@
   "恢复后所有设备上的会话都会退出，请使用之前的密码重新登录。": "Restoring signs out every session on all devices — sign back in with your previous password.",
   "恢复链接无效、已使用或已过期。如需要，请重新修改密码。": "This recovery link is invalid, already used, or expired. Change your password again if needed.",
   "密码已恢复：所有会话已退出，请使用之前的密码重新登录。": "Password restored: all sessions have been signed out. Sign in with your previous password.",
-  "进入系统": "Enter the app"
+  "进入系统": "Enter the app",
+  "Zephyr AI 全能力总控": "Zephyr AI Unified Operator",
+  "统一连接资产、终端命令、文件、远程桌面、浏览器、Memory 与 UI 操作的内置 Skill。": "Built-in Skill unifying assets, terminal commands, files, remote desktops, browser, Memory, and UI operations.",
+  "内置完整操作规程；模型回复语言仍跟随当前界面语言。": "Built-in complete operating guide; model responses still follow the current UI language.",
+  "内置只读": "Built-in, read-only",
+  "内置 Skill 不可修改": "Built-in Skill cannot be edited",
+  "内置 Skill 不可删除": "Built-in Skill cannot be deleted"
 }

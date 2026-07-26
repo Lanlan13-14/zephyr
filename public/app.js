@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260726-ai-context1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260726-ai-context1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260726-ai-unified-skill1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260726-ai-unified-skill1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -5770,15 +5770,22 @@ function renderAiSkillList() {
     const list = $('#aiSkillList');
     if (!list) return;
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    const displaySkill = (skill) => skill.id === 'zephyr-local-operator'
-        ? { ...skill, name: t('Zephyr 本地运维操作流'), description: t('让 AI 按 Zephyr 的连接、终端、文件、Memory、浏览器预览和敏感确认机制工作，而不是泛泛聊天。'), prompt: t('内置中文运维提示词；模型回复语言仍跟随当前界面语言。') }
+    const displaySkill = (skill) => skill.id === 'zephyr-unified-operator'
+        ? { ...skill, name: t('Zephyr AI 全能力总控'), description: t('统一连接资产、终端命令、文件、远程桌面、浏览器、Memory 与 UI 操作的内置 Skill。'), prompt: t('内置完整操作规程；模型回复语言仍跟随当前界面语言。') }
         : skill;
-    list.innerHTML = ai.skills.length ? ai.skills.map((raw) => { const s = displaySkill(raw); return `<div class="ai-skill-item" data-skill-id="${escapeHtml(s.id)}"><div><strong>${escapeHtml(s.name || t('未命名 Skill'))}</strong><span>${s.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(s.description || '')}</span><code>${escapeHtml((s.prompt || '').slice(0, 260))}</code></div><button class="tool-btn" data-ai-edit-skill="${escapeHtml(s.id)}">${t('编辑')}</button><button class="tool-btn danger" data-ai-delete-skill="${escapeHtml(s.id)}">${t('删除')}</button></div>`; }).join('') : `<p class="empty-state">${t('暂无 Skill。可以把工作流、工具使用规则、专用提示词保存成能力包。')}</p>`;
+    list.innerHTML = ai.skills.length ? ai.skills.map((raw) => {
+        const s = displaySkill(raw);
+        const actions = s.builtin
+            ? `<span class="muted">${t('内置只读')}</span>`
+            : `<button class="tool-btn" data-ai-edit-skill="${escapeHtml(s.id)}">${t('编辑')}</button><button class="tool-btn danger" data-ai-delete-skill="${escapeHtml(s.id)}">${t('删除')}</button>`;
+        return `<div class="ai-skill-item" data-skill-id="${escapeHtml(s.id)}"><div><strong>${escapeHtml(s.name || t('未命名 Skill'))}</strong><span>${s.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(s.description || '')}</span><code>${escapeHtml((s.prompt || '').slice(0, 260))}</code></div>${actions}</div>`;
+    }).join('') : `<p class="empty-state">${t('暂无 Skill。可以把工作流、工具使用规则、专用提示词保存成能力包。')}</p>`;
 }
 async function saveAiSkill(e) {
     e.preventDefault();
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     const id = $('#aiSkillId').value || `skill-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    if (id === 'zephyr-unified-operator') return toast(t('内置 Skill 不可修改'));
     const skill = { id, name: $('#aiSkillName').value.trim(), description: $('#aiSkillDescription').value.trim(), prompt: $('#aiSkillPrompt').value, enabled: $('#aiSkillEnabled').checked, updatedAt: Date.now() };
     if (!skill.name && !skill.prompt.trim()) return toast(t('请填写 Skill 名称或指令内容'));
     const idx = ai.skills.findIndex((s) => s.id === id);
@@ -5789,6 +5796,7 @@ async function saveAiSkill(e) {
     toast(t('Skill 已保存'));
 }
 async function deleteAiSkill(id) {
+    if (id === 'zephyr-unified-operator') return toast(t('内置 Skill 不可删除'));
     openAiInlineConfirm({
         title: t('删除 Skill'),
         body: t('删除后该能力包不会再注入 AI 系统提示。'),
@@ -7970,7 +7978,7 @@ function setupAiAssistant() {
         }
     });
     $('#aiSkillResetBtn')?.addEventListener('click', resetAiSkillForm);
-    $('#aiSkillList')?.addEventListener('click', (e) => { const edit = e.target.dataset.aiEditSkill, del = e.target.dataset.aiDeleteSkill; const ai = normalizeAiSettings(settings.ai || {}); if (edit) { const s = ai.skills.find((x) => x.id === edit); if (!s) return; $('#aiSkillId').value = s.id; $('#aiSkillName').value = s.name || ''; $('#aiSkillDescription').value = s.description || ''; $('#aiSkillPrompt').value = s.prompt || ''; $('#aiSkillEnabled').checked = s.enabled !== false; } if (del) deleteAiSkill(del); });
+    $('#aiSkillList')?.addEventListener('click', (e) => { const edit = e.target.dataset.aiEditSkill, del = e.target.dataset.aiDeleteSkill; const ai = normalizeAiSettings(settings.ai || {}); if (edit) { const s = ai.skills.find((x) => x.id === edit); if (!s || s.builtin) return; $('#aiSkillId').value = s.id; $('#aiSkillName').value = s.name || ''; $('#aiSkillDescription').value = s.description || ''; $('#aiSkillPrompt').value = s.prompt || ''; $('#aiSkillEnabled').checked = s.enabled !== false; } if (del) deleteAiSkill(del); });
     $('#openAiAssistantBtn')?.addEventListener('click', (e) => openAiAssistantPanel(e.currentTarget)); $('#openAiAssistantBtn2')?.addEventListener('click', (e) => openAiAssistantPanel(e.currentTarget));
     $('#aiNavTab')?.addEventListener('click', (e) => { e.preventDefault(); openAiAssistantPanel(e.currentTarget); });
     $('#aiFloatingBtn')?.addEventListener('click', (e) => toggleAiAssistantPanel(e.currentTarget));

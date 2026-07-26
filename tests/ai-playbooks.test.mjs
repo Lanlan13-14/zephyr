@@ -25,11 +25,13 @@ test('connection asset playbook exists and covers canonical lifecycle', () => {
     assert.match(keyPlaybook.prompt, /humanOnly/);
 });
 
-test('legacy and Go runtime prompt assembly include connection asset playbook', () => {
+test('legacy and Go runtime prompt assembly include connection playbook inside one unified Skill', () => {
     const bridge = new AiRuntimeBridge();
     const compose = bridge.buildSystemCompose({ skills: [] }, '', []);
-    const playbook = compose.skills.find((item) => item.id === 'playbook:asset-management-v1');
+    assert.equal(compose.skills.length, 1);
+    const playbook = compose.skills.find((item) => item.id === 'zephyr-unified-operator');
     assert.ok(playbook);
+    assert.match(playbook.prompt, /asset-management-v1/);
     assert.match(playbook.prompt, /connection_update_v1/);
     const visibleTools = new Set(toolDefinitions({}).map((tool) => tool.function.name));
     assert.ok(visibleTools.has('capability_search'));

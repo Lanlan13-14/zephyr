@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { getAppVersion } = require('./version');
-const { DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, DEFAULT_ZEPHYR_SYSTEM_PROMPT, cloneDefaultZephyrSkills } = require('./ai-defaults');
+const { DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, DEFAULT_ZEPHYR_SYSTEM_PROMPT, DEFAULT_ZEPHYR_SKILLS } = require('./ai-defaults');
 const secretCrypto = require('./secret-crypto');
 
 const DATA_DIR = process.env.ZEPHYR_DATA_DIR ? path.resolve(process.env.ZEPHYR_DATA_DIR) : path.join(__dirname, 'data');
@@ -214,7 +214,7 @@ function defaultSettings(legacySettings = {}) {
             planner: { enabled: true, requirePlanBeforeTools: false },
             memory: { enabled: true, maxItems: 500 },
             providers: [],
-            skills: cloneDefaultZephyrSkills(),
+            skills: [],
             envVars: [],
         },
         icp: legacySettings.icp || '',
@@ -628,16 +628,17 @@ function ensureAiGuidanceDefaults() {
         if (context[key] === undefined || context[key] === oldDefaultContext[key]) { context[key] = value; contextChanged = true; }
     });
     if (contextChanged) { next.context = context; changed = true; }
-    const skills = Array.isArray(next.skills) ? next.skills.slice() : [];
-    cloneDefaultZephyrSkills().forEach((skill) => {
-        const idx = skills.findIndex((item) => item?.id === skill.id || item?.name === skill.name);
-        if (idx < 0) { skills.unshift(skill); changed = true; }
-        else if (shouldUpgradeGuidance && skill.id === 'zephyr-local-operator') {
-            skills[idx] = { ...skills[idx], name: skill.name, description: skill.description, prompt: skill.prompt, updatedAt: Date.now() };
-            changed = true;
-        }
-    });
+    const legacyBuiltinIds = new Set([
+        ...DEFAULT_ZEPHYR_SKILLS.map((item) => item.id),
+        ...require('./ai-playbooks').PLAYBOOKS.map((item) => `playbook:${item.id}`),
+        'zephyr-unified-operator',
+    ]);
+    const storedSkills = Array.isArray(next.skills) ? next.skills.slice() : [];
+    const skills = storedSkills.filter((item) => item?.id && !legacyBuiltinIds.has(item.id));
+    if (skills.length !== storedSkills.length) changed = true;
+    // Runtime injects one immutable built-in Skill; database stores only user Skills.
     if (changed) updateSettings({ ai: { ...next, skills } });
+    return changed ? { ...next, skills } : ai;
 }
 
 function migratePlaintextSecrets() {
@@ -906,4 +907,4 @@ function deletePasskey(username, id) { db.prepare('DELETE FROM passkeys WHERE us
 function rawDb() { return db; }
 function close() { if (db) { db.close(); db = null; } }
 
-module.exports = { init, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, cleanupExpiredEphemeralConnections, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, queryActivities, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, recordResetCodeAttempt, invalidateResetCodesForUser, createPasswordRollbackToken, findPasswordRollbackTokenByHash, markPasswordRollbackTokenUsed, invalidatePasswordRollbackTokensForUser, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close };
+module.exports = { init, ensureAiGuidanceDefaults, getUsersStore, saveUsersStore, getUser, getUserById, getUserBrief, getFirstUser, listUsers, createUser, updateUser, updateUserById, renameUser, getConnectionsStore, saveConnectionsStore, getConnectionById, insertConnection, updateConnectionRow, deleteConnectionRow, listAllConnectionRows, cleanupExpiredEphemeralConnections, getSettings, updateSettings, addActivity, getActivities, getActivitiesForUser, queryActivities, clearActivities, listProxies, getProxyRaw, saveProxy, deleteProxy, listSshKeys, getSshKeyRaw, saveSshKey, deleteSshKey, listJumpHosts, saveJumpHost, deleteJumpHost, addLoginEvent, listLoginEvents, clearLoginEvents, getIpBan, saveIpBan, clearIpBan, listIpBans, createResetCode, findResetCode, markResetCodeUsed, recordResetCodeAttempt, invalidateResetCodesForUser, createPasswordRollbackToken, findPasswordRollbackTokenByHash, markPasswordRollbackTokenUsed, invalidatePasswordRollbackTokensForUser, listPasskeys, savePasskey, getPasskeyByCredentialId, updatePasskeyCounter, deletePasskey, rawDb, close };

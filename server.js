@@ -72,6 +72,7 @@ const {
 } = require('./telnet-transport');
 const {
     registerAiRoutes,
+    mergeZephyrDefaultSkills,
     normalizeAiSettingsInput,
     safeAiSettings,
     formatAiContextForPrompt,
@@ -81,6 +82,7 @@ const {
     AiRuntimeBridge,
     registerAiHostRoutes,
 } = require('./ai-runtime-bridge');
+const { buildIntentRoutingHint } = require('./ai-intent-routing');
 const {
     getImageExt,
     isBrowserImageExt,
@@ -1594,7 +1596,10 @@ function safeSettings(s = storage.getSettings()) {
     if (copy.captcha?.tencentAppSecretKey) copy.captcha.tencentAppSecretKey = '******';
     if (copy.captcha?.tencentSecretKey) copy.captcha.tencentSecretKey = '******';
     if (copy.captcha?.aliyunAccessKeySecret) copy.captcha.aliyunAccessKeySecret = '******';
-    if (copy.ai) copy.ai = safeAiSettings(copy.ai);
+    if (copy.ai) {
+        copy.ai = safeAiSettings(copy.ai);
+        copy.ai.skills = mergeZephyrDefaultSkills(copy.ai.skills || []);
+    }
     return copy;
 }
 function mergeSecret(oldValue, newValue) { return newValue === '******' ? oldValue : (newValue ?? oldValue ?? ''); }
@@ -3717,6 +3722,8 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
             ? req.body.memories
             : selectPromptMemories(ai, contextObj, Number(ai.context?.memoryItems) || 28);
         const systemCompose = aiRuntimeBridge.buildSystemCompose(ai, contextText, memories, contextObj.locale || 'zh-CN');
+        const intentHint = buildIntentRoutingHint(req.body?.message || '');
+        if (intentHint) systemCompose.prompt = `${systemCompose.prompt}\n\n${intentHint}`;
 
         const bodyPerm = req.body?.permission && typeof req.body.permission === 'object' ? req.body.permission : {};
         const aiPerm = ai.permissions || {};

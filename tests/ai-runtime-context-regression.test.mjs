@@ -29,6 +29,11 @@ test('runtime run route reads locale from the declared contextObj', () => {
     assert.doesNotMatch(server, /buildSystemCompose\(ai, contextText, memories, context\.locale/);
 });
 
+test('runtime run route appends deterministic tool routing for common machine intents', () => {
+    assert.match(server, /buildIntentRoutingHint\(req\.body\?\.message \|\| ''\)/);
+    assert.match(server, /systemCompose\.prompt = `\$\{systemCompose\.prompt\}/);
+});
+
 test('generic ReferenceError is not mislabeled as context-window overflow', () => {
     const source = `${extractFunction(app, 'formatAiRequestFailure')}\nthis.formatAiRequestFailure = formatAiRequestFailure;`;
     const sandbox = { t: (value) => value };

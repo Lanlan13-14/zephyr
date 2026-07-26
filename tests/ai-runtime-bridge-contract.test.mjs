@@ -27,11 +27,11 @@ test('buildSystemCompose keeps full skill body and timestamp fields', () => {
     assert.ok(String(compose.defaultSystemPrompt || DEFAULT_ZEPHYR_SYSTEM_PROMPT).length > 100);
     assert.equal(compose.customSystemPrompt, 'CUSTOM');
     assert.equal(compose.contextText, 'CTX_BLOCK');
-    assert.ok(compose.skills.some((s) => s.prompt === 'FULL_BODY_XYZ' || (s.id === 'zephyr-local-operator' && s.prompt)));
-    // default skill must be merged in with full prompt when missing
-    const def = compose.skills.find((s) => s.id === 'zephyr-local-operator');
-    assert.ok(def, 'default skill present');
-    assert.ok((def.prompt || '').includes('Zephyr'), 'default skill full body');
+    assert.ok(compose.skills.some((s) => s.prompt === 'FULL_BODY_XYZ'));
+    // all built-in guidance must be merged into one full body
+    const def = compose.skills.find((s) => s.id === 'zephyr-unified-operator');
+    assert.ok(def, 'unified default skill present');
+    assert.ok((def.prompt || '').includes('Zephyr 全能力内置规程'), 'unified skill full body');
     assert.ok(compose.envVars.some((e) => e.name === 'E1' && e.value === 'secret'));
 });
 

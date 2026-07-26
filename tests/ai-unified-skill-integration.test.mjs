@@ -1,0 +1,22 @@
+import test,{before,after}from'node:test';
+import assert from'node:assert/strict';
+import{TestServer}from'./test-server.mjs';
+let server,cookie;
+before(async()=>{server=await new TestServer().start();({cookie}=await server.bootstrapAdmin())});
+after(async()=>{await server.cleanup()});
+test('status exposes one built-in unified Skill and tool chain works',async()=>{
+ const status=await server.api(cookie,'GET','/api/ai/status');
+ assert.equal(status.status,200);
+ const builtins=status.body.ai.skills.filter(s=>s.builtin);
+ assert.deepEqual(builtins.map(s=>s.id),['zephyr-unified-operator']);
+ assert.match(builtins[0].prompt,/connection_list_v1\(\{\}\)/);
+ assert.match(builtins[0].prompt,/remote_execute/);
+ const saved=await server.api(cookie,'PUT','/api/settings/ai',{enabled:true});
+ assert.equal(saved.status,200);
+ const created=await server.api(cookie,'POST','/api/connections',{name:'skill-host',protocol:'SSH',host:'127.0.0.1',port:22,username:'root'});
+ assert.equal(created.status,200);
+ const listed=await server.api(cookie,'POST','/api/ai/tools/run',{tool:'connection_list_v1',args:{query:'skill-host',protocol:'SSH'}});
+ assert.equal(listed.status,200);
+ assert.equal(listed.body.result.data.connections.length,1);
+ assert.equal(listed.body.result.data.connections[0].id,created.body.connection.id);
+});

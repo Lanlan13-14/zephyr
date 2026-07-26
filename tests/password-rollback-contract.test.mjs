@@ -72,9 +72,9 @@ test('rollback landing page markup and client follow i18n and post the token', (
     assert.match(html, /id="rollbackConfirmBtn" data-i18n="恢复密码"/);
     assert.match(html, /href="\/" data-i18n="返回登录"/);
     assert.match(html, /id="rollbackError" role="alert"/);
-    assert.match(html, /src="\/password-rollback\.js\?v=20260726-ai-context1" type="module"/);
+    assert.match(html, /src="\/password-rollback\.js\?v=20260726-ai-unified-skill1" type="module"/);
     const js = read('public/password-rollback.js');
-    assert.match(js, /import \{ t, initI18n \} from '\.\/i18n\/runtime\.js\?v=20260726-ai-context1';/);
+    assert.match(js, /import \{ t, initI18n \} from '\.\/i18n\/runtime\.js\?v=20260726-ai-unified-skill1';/);
     assert.match(js, /new URLSearchParams\(location\.search\)\.get\('token'\)/);
     assert.match(js, /fetch\('\/api\/auth\/password-rollback'/);
     assert.match(js, /JSON\.stringify\(\{ token \}\)/);
