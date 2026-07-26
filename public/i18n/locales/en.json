@@ -1493,5 +1493,16 @@
   "我的版本": "My version",
   "服务器版本": "Server version",
   "载入服务器版本": "Load server version",
-  "保留我的版本": "Keep my version"
+  "保留我的版本": "Keep my version",
+  "两步验证动态码": "TOTP code",
+  "邮箱验证码": "Email verification code",
+  "验证码已发送": "Code sent",
+  "验证码已发送到您的邮箱": "Code sent to your email",
+  "请输入两步验证动态码": "Please enter the TOTP code",
+  "两步验证动态码错误": "Invalid TOTP code",
+  "请输入邮箱验证码": "Please enter the email verification code",
+  "邮箱验证码无效或已过期": "Email code invalid or expired",
+  "邮件通知未启用，请联系管理员": "Email notifications are not enabled. Contact the admin.",
+  "当前账号未设置邮箱，请先在个人信息中填写": "This account has no email set. Set one in Profile first.",
+  "请求过于频繁，请稍后再试": "Too many requests. Try again later."
 }

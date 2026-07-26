@@ -505,6 +505,9 @@ body.app-body.terminal-mode {
 }
 :is(#loginForm, #forgotRequestForm, #forgotResetForm) > .form-group input:hover,
 .security-input-stack > .form-group input:hover { border-color: color-mix(in srgb, var(--text-secondary) 88%, var(--border)); }
+.form-row-inline { display: flex; gap: 8px; align-items: stretch; }
+.form-row-inline input { flex: 1; min-width: 0; }
+.form-row-inline .btn-sm { flex-shrink: 0; white-space: nowrap; align-self: stretch; }
 :is(#loginForm, #forgotRequestForm, #forgotResetForm) > .form-group input:focus,
 .security-input-stack > .form-group input:focus {
     border-color: var(--accent);

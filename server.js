@@ -2355,11 +2355,78 @@ app.get('/api/auth/me', requireUser, (req, res) => {
     });
 });
 
-app.post('/api/auth/change-password', requireUser, (req, res) => {
-    const { currentPassword, newPassword } = req.body || {};
+app.post('/api/auth/change-password/request-code', requireUser, async (req, res) => {
+    const user = storage.getUserById(req.session.userId) || storage.getUser(req.session.username);
+    if (!user) return res.status(400).json({ error: '用户不存在' });
+    const s = storage.getSettings();
+    const mail = s.mail || {};
+    if (!mail.enabled || !mail.host) return res.status(400).json({ error: '邮件通知未启用，请联系管理员' });
+    if (!user.email) return res.status(400).json({ error: '当前账号未设置邮箱，请先在个人信息中填写' });
+
+    const ip = clientIp(req);
+    const hits = (resetRequestHits.get(ip) || []).filter((t) => Date.now() - t < 10 * 60000);
+    if (hits.length >= 5) return res.status(429).json({ error: '请求过于频繁，请稍后再试' });
+    resetRequestHits.set(ip, [...hits, Date.now()]);
+
+    const token = crypto.randomBytes(16).toString('base64url');
+    storage.createResetCode({
+        id: crypto.randomUUID(),
+        username: user.username,
+        email: user.email,
+        codeHash: sha256(token),
+        expiresAt: Date.now() + 10 * 60000,
+        createdAt: Date.now(),
+    });
+    try { storage.rawDb().prepare('UPDATE password_reset_codes SET userId = ? WHERE username = ? AND (userId IS NULL OR userId = \'\')').run(user.userId, user.username); } catch {}
+    sendMail(
+        'Zephyr 修改密码验证码',
+        `您正在修改登录密码。\n验证码：${token}\n有效期：10 分钟。\n如非本人操作，请立即修改密码。`,
+        user.email,
+    ).catch((err) => console.error('[MAIL] 改密码验证码发送失败:', err.message));
+    res.json({ ok: true, message: '验证码已发送到您的邮箱' });
+});
+
+app.post('/api/auth/change-password', requireUser, async (req, res) => {
+    const { currentPassword, newPassword, totpCode, emailCode } = req.body || {};
     if (!newPassword || String(newPassword).length < 4) return res.status(400).json({ error: '新密码至少 4 位' });
     const user = storage.getUserById(req.session.userId) || storage.getUser(req.session.username);
     if (!user || !verifyPassword(currentPassword, user.passwordHash)) return res.status(400).json({ error: '当前密码错误' });
+
+    /* Security gate (FREEZE plan §11.3 enhanced):
+     * - TOTP enabled: must provide a valid TOTP code (second factor).
+     * - TOTP disabled + email configured: must provide an email verification
+     *   code (proving control of the account's email, like forgot-password).
+     * - TOTP disabled + no email: degrade to currentPassword-only, but log
+     *   a warning so admins can identify accounts without 2FA. */
+    if (user.totpEnabled) {
+        const code = String(totpCode || '').trim();
+        if (!code) return res.status(400).json({ error: '请输入两步验证动态码', code: 'totp_required' });
+        if (!verifySync({ secret: user.totpSecret || '', token: code }).valid) {
+            return res.status(400).json({ error: '两步验证动态码错误', code: 'totp_invalid' });
+        }
+    } else if (user.email) {
+        const s = storage.getSettings();
+        const mail = s.mail || {};
+        if (mail.enabled && mail.host) {
+            const code = String(emailCode || '').trim();
+            if (!code) return res.status(400).json({ error: '请输入邮箱验证码', code: 'email_code_required' });
+            const rec = storage.findResetCode(user.username, user.email);
+            const hashOk = !!(rec && rec.expiresAt >= Date.now() && timingSafeEqualStr(rec.codeHash, sha256(code)));
+            if (!rec || !hashOk) {
+                if (rec && rec.expiresAt >= Date.now()) {
+                    const attempts = storage.recordResetCodeAttempt(rec.id);
+                    if (attempts >= RESET_TOKEN_MAX_ATTEMPTS) storage.markResetCodeUsed(rec.id);
+                }
+                return res.status(400).json({ error: '邮箱验证码无效或已过期', code: 'email_code_invalid' });
+            }
+            storage.markResetCodeUsed(rec.id);
+        } else {
+            console.warn('[security] change-password without 2FA or email (mail disabled)', { username: user.username });
+        }
+    } else {
+        console.warn('[security] change-password without 2FA or email (no email on account)', { username: user.username });
+    }
+
     storage.updateUser(user.username, { passwordHash: hashPassword(newPassword), defaultPassword: false });
     /* Password change invalidates every other session (FREEZE plan §11.3);
      * the current session survives and its must-change flag clears. */
