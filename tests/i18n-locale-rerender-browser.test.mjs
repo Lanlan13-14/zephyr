@@ -18,12 +18,12 @@ after(async () => {
 test('app HTML ships the current i18n cache-busting revision', async () => {
     const response = await fetch(server.url('/app.html'), { headers: { cookie } });
     const html = await response.text();
-    assert.match(html, /app\.js\?v=20260726-history-feel1/);
-    assert.match(html, /i18n\/runtime\.js\?v=20260726-history-feel1/);
+    assert.match(html, /app\.js\?v=20260726-ai-context1/);
+    assert.match(html, /i18n\/runtime\.js\?v=20260726-ai-context1/);
 });
 
 test('locale switch hook repaints state-derived security fragments', async () => {
-    const source = await (await fetch(server.url('/app.js?v=20260726-history-feel1'))).text();
+    const source = await (await fetch(server.url('/app.js?v=20260726-ai-context1'))).text();
     for (const renderer of ['renderTotp', 'renderPasskeys', 'renderSecurityLists', 'renderAiProviderList']) {
         assert.match(source, new RegExp(`rerenderLocaleSensitiveContent[\\s\\S]{0,1800}${renderer}`));
     }

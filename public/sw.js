@@ -1,9 +1,9 @@
-const CACHE_NAME = 'zephyr-static-20260726-history-feel1';
+const CACHE_NAME = 'zephyr-static-20260726-ai-context1';
 const PRECACHE = [
-    '/app.js?v=20260726-history-feel1',
-    '/style.css?v=20260726-history-feel1',
+    '/app.js?v=20260726-ai-context1',
+    '/style.css?v=20260726-ai-context1',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260726-history-feel1',
+    '/terminal.js?v=20260726-ai-context1',
     '/notes.js',
     '/markdown.js',
 ];
