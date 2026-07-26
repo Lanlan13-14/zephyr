@@ -508,6 +508,20 @@ body.app-body.terminal-mode {
 .form-row-inline { display: flex; gap: 8px; align-items: stretch; }
 .form-row-inline input { flex: 1; min-width: 0; }
 .form-row-inline .btn-sm { flex-shrink: 0; white-space: nowrap; align-self: stretch; }
+.verification-code-row {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+}
+.verification-code-row input,
+.verification-code-row .btn-sm {
+    width: 100%;
+    min-width: 0;
+}
+.verification-code-row .btn-sm {
+    padding-inline: 8px;
+    white-space: normal;
+    text-align: center;
+}
 :is(#loginForm, #forgotRequestForm, #forgotResetForm) > .form-group input:focus,
 .security-input-stack > .form-group input:focus {
     border-color: var(--accent);
