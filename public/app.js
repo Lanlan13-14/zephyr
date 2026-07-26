@@ -9944,10 +9944,10 @@ function renderAdminUsers(users) {
             : u.role === 'admin'
                 ? `<span class="admin-badge admin">${adminIcon('shield', 12)} 管理员</span>`
                 : `<span class="admin-badge user">${adminIcon('user', 12)} 普通用户</span>`;
-        const statusBadge = u.status === 'active' ? '<span class="admin-badge ok">${t('正常')}</span>'
-            : u.status === 'suspended' ? '<span class="admin-badge warn">${t('已停用')}</span>'
-            : u.status === 'invited' ? '<span class="admin-badge warn">${t('已邀请')}</span>'
-            : `<span class="admin-badge">${escapeHtml(u.status || '未知')}</span>`;
+        const statusBadge = u.status === 'active' ? `<span class="admin-badge ok">${t('正常')}</span>`
+            : u.status === 'suspended' ? `<span class="admin-badge warn">${t('已停用')}</span>`
+            : u.status === 'invited' ? `<span class="admin-badge warn">${t('已邀请')}</span>`
+            : `<span class="admin-badge">${escapeHtml(u.status || t('未知'))}</span>`;
         let actions = '';
         // Suspend / reactivate
         if (u.status === 'active' && !u.isSuperAdmin && !isLastActiveAdmin) {
