@@ -124,20 +124,87 @@ function safeHyperlink(uri: string | null): string | null {
   } catch { return null; }
 }
 
-export function linkifyRow(row: HTMLElement): void {
-  if (row.querySelector('a.term-hyperlink')) return;
-  const text = row.textContent || '';
-  const matches = [...text.matchAll(/https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)}\]]/g)];
-  for (let i = matches.length - 1; i >= 0; i--) {
-    const match = matches[i], start = match.index || 0, end = start + match[0].length;
-    const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-    let node: Node | null, offset = 0, startNode: Text | null = null, endNode: Text | null = null, startOffset = 0, endOffset = 0;
-    while ((node = walker.nextNode())) { const len = node.textContent?.length || 0; if (!startNode && start >= offset && start <= offset + len) { startNode = node as Text; startOffset = start - offset; } if (end >= offset && end <= offset + len) { endNode = node as Text; endOffset = end - offset; break; } offset += len; }
-    if (!startNode || !endNode) continue;
-    const href = safeHyperlink(match[0]); if (!href) continue;
-    const range = document.createRange(); range.setStart(startNode, startOffset); range.setEnd(endNode, endOffset);
-    const anchor = document.createElement('a'); anchor.className = 'term-hyperlink term-auto-link'; anchor.href = href; anchor.target = '_blank'; anchor.rel = 'noopener noreferrer'; anchor.appendChild(range.extractContents()); range.insertNode(anchor);
+const URL_CONT_RE = /^[A-Za-z0-9/._~%&=+\-?#]+/;
+const URL_START_RE = /https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)}\]]?/g;
+const URL_LOOKS_COMPLETE_RE = /(?:\/|[.](?:html?|php|aspx?|jsp|json|xml|pdf|png|jpe?g|gif|webp|svg|css|js|mjs|ts|md|txt|zip|tar|gz|tgz|bz2|xz|7z|rar|mp[34]|wav|avi|mov|webm|ico|woff2?|ttf|eot|csv|tsv|yaml|yml|toml|ini|cfg|log|sh|py|go|rs|java|c|cpp|h|rb|pl|lua))(?:[?#][^\s]*)?$/i;
+
+function trimUrlTrailingPunct(url: string): string {
+  return String(url || '').replace(/[.,;:!?)}\]]+$/g, '');
+}
+function isShellPromptLine(text = ''): boolean {
+  const s = String(text || '').trimStart();
+  return !!s && (/^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:/.test(s) || /^[#$%❯➜]\s?/.test(s) || /^~?[\/\w.-]*[%#]\s*$/.test(s));
+}
+function isUrlSoftWrapContinuation(url: string, nextLine: string): boolean {
+  const next = String(nextLine || '');
+  if (!next || /^https?:\/\//i.test(next.trimStart()) || isShellPromptLine(next) || /^\s/.test(next) || !URL_CONT_RE.test(next)) return false;
+  if (URL_LOOKS_COMPLETE_RE.test(url)) return /^[/?#&]/.test(next);
+  return !/^[A-Za-z0-9_.-]+@/.test(next);
+}
+export function resolveWrappedUrl(texts: string[], startRow: number, startIdx: number, matchLen: number): { url: string; segments: { row: number; start: number; end: number }[] } {
+  let url = String(texts[startRow] || '').slice(startIdx, startIdx + matchLen);
+  const segments = [{ row: startRow, start: startIdx, end: startIdx + matchLen }];
+  let row = startRow, end = startIdx + matchLen;
+  while (row + 1 < texts.length) {
+    const current = String(texts[row] || '');
+    if (/\S/.test(current.slice(end))) break;
+    const next = String(texts[row + 1] || '');
+    if (!isUrlSoftWrapContinuation(url, next)) break;
+    const match = next.match(URL_CONT_RE);
+    const piece = trimUrlTrailingPunct(match?.[0] || '');
+    if (!piece) break;
+    url += piece;
+    row += 1;
+    end = piece.length;
+    segments.push({ row, start: 0, end });
+    if (/\S/.test(next.slice(end))) break;
   }
+  return { url: trimUrlTrailingPunct(url), segments };
+}
+function unwrapAutoLinks(row: HTMLElement): void {
+  row.querySelectorAll('a.term-auto-link').forEach((anchor) => {
+    const parent = anchor.parentNode;
+    if (!parent) return;
+    while (anchor.firstChild) parent.insertBefore(anchor.firstChild, anchor);
+    parent.removeChild(anchor);
+    parent.normalize?.();
+  });
+}
+function wrapTextRangeInRow(row: HTMLElement, start: number, end: number, href: string): boolean {
+  const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+  let node: Node | null, offset = 0, startNode: Text | null = null, endNode: Text | null = null, startOffset = 0, endOffset = 0;
+  while ((node = walker.nextNode())) {
+    const len = node.textContent?.length || 0;
+    if (offset + len > start && offset < end && (node as Text).parentElement?.closest?.('a.term-hyperlink')) return false;
+    if (!startNode && start >= offset && start <= offset + len) { startNode = node as Text; startOffset = start - offset; }
+    if (end >= offset && end <= offset + len) { endNode = node as Text; endOffset = end - offset; break; }
+    offset += len;
+  }
+  if (!startNode || !endNode) return false;
+  const range = document.createRange(); range.setStart(startNode, startOffset); range.setEnd(endNode, endOffset);
+  const anchor = document.createElement('a'); anchor.className = 'term-hyperlink term-auto-link'; anchor.href = href; anchor.target = '_blank'; anchor.rel = 'noopener noreferrer'; anchor.appendChild(range.extractContents()); range.insertNode(anchor);
+  return true;
+}
+export function linkifyViewport(rowEls: HTMLElement[]): void {
+  if (!rowEls?.length) return;
+  const texts = rowEls.map((row) => row?.textContent || '');
+  rowEls.forEach(unwrapAutoLinks);
+  const jobs: { row: number; start: number; end: number; href: string }[] = [];
+  texts.forEach((text, row) => {
+    URL_START_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = URL_START_RE.exec(text))) {
+      const resolved = resolveWrappedUrl(texts, row, match.index, match[0].length);
+      const href = safeHyperlink(resolved.url);
+      if (href) resolved.segments.forEach((segment) => jobs.push({ ...segment, href }));
+      URL_START_RE.lastIndex = match.index + Math.max(1, match[0].length);
+    }
+  });
+  jobs.sort((a, b) => (b.row - a.row) || (b.start - a.start));
+  jobs.forEach((job) => wrapTextRangeInRow(rowEls[job.row], job.start, job.end, job.href));
+}
+export function linkifyRow(row: HTMLElement): void {
+  linkifyViewport([row]);
 }
 
 function resolveColors(
@@ -459,7 +526,6 @@ export class Renderer {
     flushRun(this.cols);
 
     rowEl.innerHTML = html;
-    linkifyRow(rowEl);
 
     let bgCss = "";
     if (lineLen >= this.cols && this.cols > 0) {
@@ -800,6 +866,8 @@ export class Renderer {
     }
 
     this._syncGraphics(core);
+    // One href is shared by every visual segment of a soft-wrapped URL.
+    try { linkifyViewport(this.rowEls); } catch {}
     core.clearDirty();
   }
 }

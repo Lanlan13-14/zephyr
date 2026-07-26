@@ -11,12 +11,22 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const rendererSrc = fs.readFileSync(join(ROOT, 'public/vendor/wterm-fork/renderer.js'), 'utf8');
+const rendererTs = fs.readFileSync(join(ROOT, 'wterm/packages/@wterm/dom/src/renderer.ts'), 'utf8');
 
 test('source: cross-row linkifyViewport exists and is used in render', () => {
   assert.match(rendererSrc, /function linkifyViewport/);
   assert.match(rendererSrc, /function resolveWrappedUrl/);
   assert.match(rendererSrc, /function unwrapAutoLinks/);
   assert.match(rendererSrc, /linkifyViewport\(this\.rowEls\)/);
+  assert.match(rendererTs, /export function linkifyViewport/);
+  assert.match(rendererTs, /export function resolveWrappedUrl/);
+  assert.match(rendererTs, /linkifyViewport\(this\.rowEls\)/);
+  const terminalJs = fs.readFileSync(join(ROOT, 'public/terminal.js'), 'utf8');
+  const telnetJs = fs.readFileSync(join(ROOT, 'public/telnet-terminal.js'), 'utf8');
+  const wtermJs = fs.readFileSync(join(ROOT, 'public/vendor/wterm-fork/wterm.js'), 'utf8');
+  assert.match(terminalJs, /wterm-fork\/index\.js\?v=20260726-url-wrap1/);
+  assert.match(telnetJs, /wterm-fork\/index\.js\?v=20260726-url-wrap1/);
+  assert.match(wtermJs, /renderer\.js\?v=20260726-url-wrap1/);
   // Per-row linkify after paint is removed (viewport path owns auto-links).
   assert.equal(
     /rowEl\.innerHTML = html;\s*linkifyRow\(rowEl\)/.test(rendererSrc),
@@ -125,8 +135,22 @@ test('resolveWrappedUrl joins soft-wrapped path', async () => {
   assert.equal(r5.segments.length, 1);
 });
 
-test('module exports linkifyViewport', async () => {
+test('nxtrace UUID split after first group resolves to the complete href', async () => {
+  const mod = await import(pathToFileURL(join(ROOT, 'public/vendor/wterm-fork/renderer.js')).href);
+  assert.equal(typeof mod.resolveWrappedUrl, 'function');
+  const first = 'https://assets.nxtrace.org/tracemap/3989ab80';
+  const second = '-92d1-5734-a765-1b6121eea9b3.html';
+  const resolved = mod.resolveWrappedUrl([first, second], 0, 0, first.length);
+  assert.equal(resolved.url, `${first}${second}`);
+  assert.deepEqual(resolved.segments, [
+    { row: 0, start: 0, end: first.length },
+    { row: 1, start: 0, end: second.length },
+  ]);
+});
+
+test('module exports viewport and wrapped URL helpers', async () => {
   const mod = await import(pathToFileURL(join(ROOT, 'public/vendor/wterm-fork/renderer.js')).href);
   assert.equal(typeof mod.linkifyViewport, 'function');
   assert.equal(typeof mod.linkifyRow, 'function');
+  assert.equal(typeof mod.resolveWrappedUrl, 'function');
 });

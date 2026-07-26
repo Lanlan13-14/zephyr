@@ -12377,7 +12377,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API. DOM/input/viewport
         // stay wterm; core is XtermBridge over vendored xterm (see /xterm).
-        const module = await import('/vendor/wterm-fork/index.js?v=20260723-sync2');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260726-url-wrap1');
         WTermClass = module.WTerm;
     } catch {
         try {
