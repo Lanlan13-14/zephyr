@@ -9,6 +9,8 @@ let panelLayoutMenu = null;
 let panelLayoutButton = null;
 let suppressNextLayoutClick = false;
 
+import { t } from './i18n/runtime.js?v=20260726-i18n1';
+
 export function detectInteractionEnvironment() {
     const ua = String(navigator.userAgent || '').toLowerCase();
     const mobileUA = /android|iphone|ipod|blackberry|iemobile|opera mini/i.test(ua);
@@ -268,7 +270,7 @@ export function openPanelLayoutMenu(button, panel, { onClosePanel } = {}) {
     const menu = document.createElement('div');
     menu.className = 'panel-layout-menu';
     menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', '窗口布局');
+    menu.setAttribute('aria-label', t('窗口布局'));
     menu.innerHTML = `
         <button data-layout="full" title="全屏" aria-label="全屏"><span class="panel-layout-icon full"></span></button>
         <button data-layout="half" title="半屏" aria-label="半屏"><span class="panel-layout-icon half"></span></button>
