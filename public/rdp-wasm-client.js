@@ -159,7 +159,7 @@ async function reportWorkerTelemetry(elapsedMs) {
 window.rdpOnReady = function () {
     clearConnectWatchdog();
     connectionFailureReported = false;
-    setStatus('connected', 'RDP 已连接');
+    setStatus('connected', t('RDP 已连接'));
     connected = true;
     rdpHaptic('connect');
     rdpReconnectAttempts = 0;
@@ -267,7 +267,7 @@ window.rdpOnClose = function () {
         maybeAutoReconnect({ reason: t('连接已断开') });
     } else if (!rdpManualDisconnect && !rdpReconnecting) {
         cleanupAudio();
-        maybeAutoReconnect({ reason: '连接中断' });
+        maybeAutoReconnect({ reason: t('连接中断') });
     }
 };
 
@@ -277,7 +277,7 @@ window.rdpOnClipboard = function (text) {
     lastRemoteClipboard = text || '';
     if (remoteClipboardText) remoteClipboardText.value = text || '';
     if (clipboardHint) {
-        clipboardHint.textContent = '已收到远程剪贴板';
+        clipboardHint.textContent = t('已收到远程剪贴板');
         clipboardHint.dataset.level = 'success';
     }
     notifyParentSharedClipboardText(text);
@@ -753,9 +753,9 @@ function showCertDialog(certInfo, connectionId) {
         const rememberEl = document.getElementById('certRemember');
 
         if (hostEl) hostEl.textContent = (certInfo.host || '') + ':' + (certInfo.port || 3389);
-        if (subjectEl) subjectEl.textContent = certInfo.subject || certInfo.host || '(未知)';
+        if (subjectEl) subjectEl.textContent = certInfo.subject || certInfo.host || t('(未知)');
         if (reasonsEl) {
-            const reasons = (certInfo.reasons && certInfo.reasons.length) ? certInfo.reasons : ['不是来自受信任的认证机构'];
+            const reasons = (certInfo.reasons && certInfo.reasons.length) ? certInfo.reasons : [t('不是来自受信任的认证机构')];
             reasonsEl.innerHTML = reasons.map((r) => '<li>' + escapeHtml(r) + '</li>').join('');
         }
         if (rememberEl) rememberEl.checked = false;
@@ -911,7 +911,7 @@ async function connect() {
 
     rdpDiag.codec = 'semantic-webcodecs';
 
-    setStatus('connecting', '正在获取 RDP 凭据...');
+    setStatus('connecting', t('正在获取 RDP 凭据...'));
 
     /* Fetch credentials from server (password never stored on client) */
     const connectionId = params.connectionId || urlParams.get('connectionId') || '';
@@ -985,7 +985,7 @@ async function connect() {
 
     /* ── Certificate verification dialog ── */
     if (connectionId && !isCertTrusted(connectionId)) {
-        setStatus('connecting', '正在验证远程证书...');
+        setStatus('connecting', t('正在验证远程证书...'));
         try {
             const certResp = await fetch('/api/rdp/probe-cert', {
                 method: 'POST',
@@ -996,7 +996,7 @@ async function connect() {
             if (certInfo.hasCert && !certInfo.authorized) {
                 const accepted = await showCertDialog(certInfo, connectionId);
                 if (!accepted) {
-                    setStatus('disconnected', '已取消连接');
+                    setStatus('disconnected', t('已取消连接'));
                     stopAgentDriveBridge();
                     cleanupAudio();
                                     notifyParentCloseRequest('cert-rejected');
@@ -1012,7 +1012,7 @@ async function connect() {
     reportRdpEvent('connect-start', { host, port });
     lastConnectError = '';
     connectionFailureReported = false;
-    setStatus('connecting', '正在连接 RDP...');
+    setStatus('connecting', t('正在连接 RDP...'));
 
     /* rdpConnect is exposed by Go WASM.
      * qualityMode → ClientInfo PERF flags; fps → RDPGFX queueDepth hint. */
@@ -1044,7 +1044,7 @@ function disconnect() {
     rdpAudinStopInternal();
     rdpLocationStopInternal();
     rdpCameraStopInternal();
-    setStatus('disconnected', '已断开 RDP 连接');
+    setStatus('disconnected', t('已断开 RDP 连接'));
     notifyParentStatus('closed');
 }
 
@@ -1075,7 +1075,7 @@ function maybeAutoReconnect({ reason = t('连接已断开') } = {}) {
         connect().catch((e) => {
             console.warn('[rdp-wasm] reconnect failed:', e);
             rdpReconnecting = false;
-            if (!rdpManualDisconnect && !connected) maybeAutoReconnect({ reason: e?.message || '重连失败' });
+            if (!rdpManualDisconnect && !connected) maybeAutoReconnect({ reason: e?.message || t('重连失败') });
         });
     }, delay);
 }
@@ -1599,7 +1599,7 @@ function initToolbar() {
             qualityBtn.textContent = qualityMode === 'performance' ? t('性能') : qualityMode === 'quality' ? t('画质') : t('平衡');
             persistSessionParams({ quality: qualityMode });
             if (connected) {
-                setStatus('connecting', '正在应用画质设置...');
+                setStatus('connecting', t('正在应用画质设置...'));
                 reconnectWithSettings();
             }
         });
@@ -1613,7 +1613,7 @@ function initToolbar() {
             fpsBtn.textContent = fpsValue + 'FPS';
             persistSessionParams({ rdpFps: fpsValue });
             if (connected) {
-                setStatus('connecting', '正在应用帧率设置...');
+                setStatus('connecting', t('正在应用帧率设置...'));
                 reconnectWithSettings();
             }
         });
@@ -1623,7 +1623,7 @@ function initToolbar() {
         fitBtn.addEventListener('click', () => {
             fitModeIdx = (fitModeIdx + 1) % fitModes.length;
             const newMode = fitModes[fitModeIdx];
-            fitBtn.textContent = newMode === 'original' ? '原始' : newMode === 'adapt' ? t('适应') : '填充';
+            fitBtn.textContent = newMode === 'original' ? t('原始') : newMode === 'adapt' ? t('适应') : t('填充');
             applyFitMode();
         });
     }
@@ -1918,7 +1918,7 @@ function initToolbar() {
                 const size = computeRdpSize();
                 rdpWidth = size.width;
                 rdpHeight = size.height;
-                setStatus('connecting', '正在应用分辨率设置...');
+                setStatus('connecting', t('正在应用分辨率设置...'));
                 reconnectWithSettings();
             }
         });
@@ -2040,7 +2040,7 @@ function initFilePanel() {
     }
 
         async function syncLocalFilesToRemote({ advertise = false } = {}) {
-        if (!rdpWorkerBridge) throw new Error('RDP Worker 未就绪');
+        if (!rdpWorkerBridge) throw new Error(t('RDP Worker 未就绪'));
         await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, {
             notify: !!advertise && connected,
         });
@@ -2089,7 +2089,7 @@ function initFilePanel() {
     function downloadServerFileBytes(index) {
         return new Promise((resolve, reject) => {
             if (typeof rdpDownloadServerFile !== 'function') {
-                reject(new Error('WASM 未就绪'));
+                reject(new Error(t('WASM 未就绪')));
                 return;
             }
             let settled = false;
