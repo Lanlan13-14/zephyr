@@ -2654,11 +2654,18 @@ app.get('/api/me/bootstrap', requireUser, (req, res) => {
 
 /* ─── Personal settings (FREEZE plan §15) ─── */
 function withRuntimeMeta(settings) {
-    return {
+    const result = {
         ...settings,
         version: APP_VERSION,
         agentRelease: AGENT_RELEASE,
     };
+    if (result.ai) {
+        result.ai = {
+            ...result.ai,
+            skills: mergeZephyrDefaultSkills(result.ai.skills || []),
+        };
+    }
+    return result;
 }
 
 app.get('/api/me/settings', requireUser, (req, res) => {

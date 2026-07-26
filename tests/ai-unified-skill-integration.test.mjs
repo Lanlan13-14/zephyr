@@ -11,6 +11,10 @@ test('status exposes one built-in unified Skill and tool chain works',async()=>{
  assert.deepEqual(builtins.map(s=>s.id),['zephyr-unified-operator']);
  assert.match(builtins[0].prompt,/connection_list_v1\(\{\}\)/);
  assert.match(builtins[0].prompt,/remote_execute/);
+ const personal=await server.api(cookie,'GET','/api/me/settings');
+ assert.equal(personal.status,200);
+ const personalBuiltins=(personal.body.settings.ai.skills||[]).filter(s=>s.builtin);
+ assert.deepEqual(personalBuiltins.map(s=>s.id),['zephyr-unified-operator']);
  const saved=await server.api(cookie,'PUT','/api/settings/ai',{enabled:true});
  assert.equal(saved.status,200);
  const created=await server.api(cookie,'POST','/api/connections',{name:'skill-host',protocol:'SSH',host:'127.0.0.1',port:22,username:'root'});
