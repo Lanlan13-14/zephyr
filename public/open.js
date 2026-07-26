@@ -10,6 +10,8 @@
  * Never writes passwords into localStorage, draft DOM values, or logs.
  */
 
+import { t, initI18n, applyDomI18n } from './i18n/runtime.js?v=20260726-i18n1';
+
 const STORAGE_KEY = 'zephyr:deeplink:pending';
 const channel = ('BroadcastChannel' in window) ? new BroadcastChannel('zephyr-deeplink') : null;
 
@@ -35,7 +37,7 @@ function showError(message) {
     el.error.textContent = message;
     el.error.classList.add('show');
     el.actions.hidden = false;
-    setStatus('无法继续', { spinning: false });
+    setStatus(t('无法继续'), { spinning: false });
 }
 
 function clearError() {
@@ -101,18 +103,20 @@ function handOff(token, draft) {
     } catch {}
     // Always land in the app with a non-sensitive token reference.
     const target = `/app.html#transient=${encodeURIComponent(token)}`;
-    el.title.textContent = draft?.name ? `连接 ${draft.name}` : '临时连接已就绪';
+    el.title.textContent = draft?.name ? `连接 ${draft.name}` : t('临时连接已就绪');
     el.sub.textContent = draft?.hasTransientCredential
         ? '已载入一次性凭据。打开应用后可检查参数，再测试或连接。'
         : '打开应用后可检查参数，再测试或连接。';
     el.banner.hidden = false;
-    setStatus('正在打开应用…', { spinning: true });
+    setStatus(t('正在打开应用…'), { spinning: true });
     // Small delay so the status text is readable; under reduced-motion skip.
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     setTimeout(() => { location.replace(target); }, reduce ? 0 : 180);
 }
 
 async function run() {
+    await initI18n({ applyDom: true });
+    applyDomI18n(document);
     clearError();
     el.actions.hidden = true;
     // enter animation
@@ -124,22 +128,22 @@ async function run() {
         uri = pending?.uri || '';
     }
     if (!uri) {
-        showError('链接中没有可识别的连接参数。');
-        el.title.textContent = '无效的 Deep Link';
-        el.sub.textContent = '请从笔记、JumpServer 或系统协议处理器重新打开。';
+        showError(t('链接中没有可识别的连接参数。'));
+        el.title.textContent = t('无效的 Deep Link');
+        el.sub.textContent = t('请从笔记、JumpServer 或系统协议处理器重新打开。');
         return;
     }
 
-    setStatus('检查登录状态…');
+    setStatus(t('检查登录状态…'));
     let me;
     try {
         me = await authMe();
     } catch (err) {
-        showError(err.message || '网络错误');
+        showError(err.message || t('网络错误'));
         return;
     }
     if (!me) {
-        setStatus('需要登录，正在跳转…');
+        setStatus(t('需要登录，正在跳转…'));
         stashPending(uri);
         // returnTo is non-sensitive; the raw URI stays in sessionStorage.
         location.replace(`/?returnTo=${encodeURIComponent('/open')}`);

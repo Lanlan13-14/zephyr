@@ -5,10 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
     <title>Zephyr - Telnet 终端</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="modulepreload" href="telnet-terminal.js?v=20260725-telnet-page-split1">
+    <link rel="modulepreload" href="telnet-terminal.js?v=20260726-i18n1">
     <link rel="modulepreload" href="theme-runtime.js?v=20260725-telnet-page-split1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-i18n1">
     <link rel="stylesheet" href="/vendor/wterm-fork/terminal.css?v=20260725-telnet-page-split1">
-    <link rel="stylesheet" href="style.css?v=20260725-telnet-page-split1">
+    <link rel="stylesheet" href="style.css?v=20260726-i18n1">
     <script type="importmap">
         {
             "imports": {
@@ -24,25 +25,25 @@
         <div class="terminal-topbar">
             <div class="status">
                 <span class="status-dot" id="statusDot"></span>
-                <span id="statusText">连接中...</span>
+                <span id="statusText" data-i18n="连接中...">连接中...</span>
             </div>
             <span class="info" id="connInfo"></span>
             <div class="topbar-actions" id="topbarActions">
-                <button class="btn-sm" id="snippetBtn" title="代码片段" aria-label="代码片段" data-mobile-icon="snippet">片段</button>
-                <button class="btn-sm" id="notesBtn" title="笔记（当前连接）" aria-label="笔记" data-mobile-icon="notes">笔记</button>
-                <button class="btn-sm" id="shortcutBtn" title="快捷键" aria-label="快捷键" data-mobile-icon="keyboard">快捷键</button>
-                <button class="btn-sm" id="copyBtn" title="复制选中内容" aria-label="复制选中内容" data-mobile-icon="copy">复制</button>
-                <button class="btn-sm" id="pasteBtn" title="粘贴剪贴板" aria-label="粘贴剪贴板" data-mobile-icon="paste">粘贴</button>
-                <button class="btn-sm wterm-theme-toggle" id="wtermThemeToggle" title="独立切换 wterm 终端主题，不跟随全局深浅色模式" aria-label="切换终端主题" data-mobile-icon="term-theme">终端: 默认</button>
-                <button class="btn-sm" id="themeToggle" title="切换主题" aria-label="切换主题" data-mobile-icon="theme">主题</button>
-                <button class="btn-sm" id="reconnectBtn" title="重新连接" aria-label="重新连接" data-mobile-icon="reconnect">重连</button>
-                <button class="btn-sm danger" id="disconnectBtn" title="断开连接" aria-label="断开连接" data-mobile-icon="disconnect">断开</button>
+                <button class="btn-sm" id="snippetBtn" title="代码片段" data-i18n-title="代码片段" aria-label="代码片段" data-i18n-aria-label="代码片段" data-mobile-icon="snippet" data-i18n="片段">片段</button>
+                <button class="btn-sm" id="notesBtn" title="笔记（当前连接）" data-i18n-title="笔记（当前连接）" aria-label="笔记" data-i18n-aria-label="笔记" data-mobile-icon="notes" data-i18n="笔记">笔记</button>
+                <button class="btn-sm" id="shortcutBtn" title="快捷键" data-i18n-title="快捷键" aria-label="快捷键" data-i18n-aria-label="快捷键" data-mobile-icon="keyboard" data-i18n="快捷键">快捷键</button>
+                <button class="btn-sm" id="copyBtn" title="复制选中内容" data-i18n-title="复制选中内容" aria-label="复制选中内容" data-i18n-aria-label="复制选中内容" data-mobile-icon="copy" data-i18n="复制">复制</button>
+                <button class="btn-sm" id="pasteBtn" title="粘贴剪贴板" data-i18n-title="粘贴剪贴板" aria-label="粘贴剪贴板" data-i18n-aria-label="粘贴剪贴板" data-mobile-icon="paste" data-i18n="粘贴">粘贴</button>
+                <button class="btn-sm wterm-theme-toggle" id="wtermThemeToggle" title="独立切换 wterm 终端主题，不跟随全局深浅色模式" data-i18n-title="独立切换 wterm 终端主题，不跟随全局深浅色模式" aria-label="切换终端主题" data-i18n-aria-label="切换终端主题" data-mobile-icon="term-theme" data-i18n="终端: 默认">终端: 默认</button>
+                <button class="btn-sm" id="themeToggle" title="切换主题" data-i18n-title="切换主题" aria-label="切换主题" data-i18n-aria-label="切换主题" data-mobile-icon="theme" data-i18n="主题">主题</button>
+                <button class="btn-sm" id="reconnectBtn" title="重新连接" data-i18n-title="重新连接" aria-label="重新连接" data-i18n-aria-label="重新连接" data-mobile-icon="reconnect" data-i18n="重连">重连</button>
+                <button class="btn-sm danger" id="disconnectBtn" title="断开连接" data-i18n-title="断开连接" aria-label="断开连接" data-i18n-aria-label="断开连接" data-mobile-icon="disconnect" data-i18n="断开">断开</button>
             </div>
         </div>
 
         <div class="snippet-panel" id="snippetPanel">
-            <div class="panel-drag-handle" data-drag-panel="snippetPanel" title="拖动移动窗口">
-                <button class="panel-traffic-btn" data-layout-panel="snippetPanel" title="窗口布局"><span></span></button>
+            <div class="panel-drag-handle" data-drag-panel="snippetPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                <button class="panel-traffic-btn" data-layout-panel="snippetPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
             </div>
             <div class="snippet-panel-header panel-titlebar">
                 <strong>⚡ 代码片段</strong>
@@ -50,15 +51,15 @@
             <div class="snippet-panel-body">
                 <input class="snippet-search" id="snippetSearch" placeholder="搜索片段...">
                 <div class="snippet-list" id="snippetList"></div>
-                <p class="snippet-empty" id="snippetEmpty">暂无代码片段，请到首页 设置 → 代码片段 添加。</p>
+                <p class="snippet-empty" id="snippetEmpty" data-i18n="暂无代码片段，请到首页 设置 → 代码片段 添加。">暂无代码片段，请到首页 设置 → 代码片段 添加。</p>
             </div>
-            <div class="panel-resize-handle left" data-resize-panel="snippetPanel" data-resize-edge="left" title="拖动调整大小"></div>
-            <div class="panel-resize-handle right" data-resize-panel="snippetPanel" data-resize-edge="right" title="拖动调整大小"></div>
+            <div class="panel-resize-handle left" data-resize-panel="snippetPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+            <div class="panel-resize-handle right" data-resize-panel="snippetPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
         </div>
 
         <div class="shortcut-panel" id="shortcutPanel">
-            <div class="panel-drag-handle" data-drag-panel="shortcutPanel" title="拖动移动窗口">
-                <button class="panel-traffic-btn" data-layout-panel="shortcutPanel" title="窗口布局"><span></span></button>
+            <div class="panel-drag-handle" data-drag-panel="shortcutPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                <button class="panel-traffic-btn" data-layout-panel="shortcutPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
             </div>
             <div class="snippet-panel-header panel-titlebar">
                 <strong>⌨️ 快捷键</strong>
@@ -116,15 +117,15 @@
                 <button class="tool-btn font-size-btn" id="fontDecreaseBtn" title="缩小终端字体">A−</button>
                 <button class="tool-btn font-size-btn" id="fontIncreaseBtn" title="放大终端字体">A+</button>
             </div>
-            <div class="panel-resize-handle left" data-resize-panel="shortcutPanel" data-resize-edge="left" title="拖动调整大小"></div>
-            <div class="panel-resize-handle right" data-resize-panel="shortcutPanel" data-resize-edge="right" title="拖动调整大小"></div>
+            <div class="panel-resize-handle left" data-resize-panel="shortcutPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+            <div class="panel-resize-handle right" data-resize-panel="shortcutPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
         </div>
 
         <!-- 顶部命令输入栏（移动端始终可见） -->
         <div class="terminal-top-input" id="terminalTopInput">
             <div class="cmd-input-row">
                 <textarea class="cmd-input" id="cmdInput" rows="1" placeholder="在此输入命令，Enter 发送，Shift+Enter 换行..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
-                <button class="cmd-send-btn" id="cmdSendBtn">发送</button>
+                <button class="cmd-send-btn" id="cmdSendBtn" data-i18n="发送">发送</button>
             </div>
         </div>
 
@@ -132,7 +133,7 @@
         <div class="terminal-container" id="terminalContainer">
             <div class="terminal-overlay" id="terminalOverlay">
                 <div class="spinner"></div>
-                <span class="msg" id="overlayMsg">正在建立 SSH 连接...</span>
+                <span class="msg" id="overlayMsg" data-i18n="正在建立 SSH 连接...">正在建立 SSH 连接...</span>
             </div>
             <div class="wterm-wrapper" id="wtermWrapper"></div>
             <div class="terminal-scrollbar" id="terminalScrollbar" aria-hidden="true">
@@ -164,6 +165,6 @@
             </div>
         </div>
     </div>
-    <script src="telnet-terminal.js?v=20260725-telnet-page-split1" type="module"></script>
+    <script src="telnet-terminal.js?v=20260726-i18n1" type="module"></script>
 </body>
 </html>
