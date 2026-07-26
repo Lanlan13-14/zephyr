@@ -8,6 +8,8 @@ const app = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const vnc = fs.readFileSync(path.join(root, 'public/novnc.js'), 'utf8');
 const rdp = fs.readFileSync(path.join(root, 'public/rdp-wasm-client.js'), 'utf8');
 const service = fs.readFileSync(path.join(root, 'ai-agent-service.js'), 'utf8');
+const defaults = fs.readFileSync(path.join(root, 'ai-defaults.js'), 'utf8');
+const runtimeBridge = fs.readFileSync(path.join(root, 'ai-runtime-bridge.js'), 'utf8');
 const zh = JSON.parse(fs.readFileSync(path.join(root, 'public/i18n/locales/zh-CN.json'), 'utf8'));
 const en = JSON.parse(fs.readFileSync(path.join(root, 'public/i18n/locales/en.json'), 'utf8'));
 
@@ -51,6 +53,11 @@ test('new AI UI paths call t() instead of hardcoding Chinese', () => {
   assert.match(app, /function localizedAiError/);
   assert.match(app, /invalid_tool_arguments:/);
   assert.match(app, /secret_ref_expired:/);
+  assert.match(app, /locale: getLocale\(\)/);
+  assert.match(service, /Response language: English/);
+  assert.match(service, /回复语言：简体中文/);
+  assert.match(runtimeBridge, /locale: String\(locale \|\| 'zh-CN'\)/);
+  assert.doesNotMatch(defaults, /输出保持中文/);
   assert.match(app, /localizedAiConfirmationSummary/);
   assert.doesNotMatch(app, /confirmation\?\.summary \|\| ''/);
 });

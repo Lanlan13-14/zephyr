@@ -116,7 +116,7 @@ class AiRuntimeBridge {
      * Build systemCompose from current AI settings + context.
      * HARD RULE: keep full skills text + memories + env + timestamp — no token-saving thinning.
      */
-    buildSystemCompose(ai = {}, contextText = '', selectedMemories = []) {
+    buildSystemCompose(ai = {}, contextText = '', selectedMemories = [], locale = 'zh-CN') {
         const skills = mergeSkills(ai.skills).filter((s) => s && s.enabled !== false);
         const envVars = Array.isArray(ai.envVars)
             ? ai.envVars.filter((e) => e?.enabled !== false && e.name && e.visibleToAi === true).map((e) => ({
@@ -131,6 +131,7 @@ class AiRuntimeBridge {
             defaultSystemPrompt: String(ai.defaultSystemPrompt || DEFAULT_ZEPHYR_SYSTEM_PROMPT || ''),
             customSystemPrompt: String(ai.systemPrompt || ''),
             contextText: String(contextText || ''),
+            locale: String(locale || 'zh-CN'),
             skills: skills.map((s) => ({
                 id: s.id,
                 name: s.name || '',

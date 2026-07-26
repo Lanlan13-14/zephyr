@@ -3583,7 +3583,7 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
         const memories = Array.isArray(req.body?.memories) && req.body.memories.length
             ? req.body.memories
             : selectPromptMemories(ai, contextObj, Number(ai.context?.memoryItems) || 28);
-        const systemCompose = aiRuntimeBridge.buildSystemCompose(ai, contextText, memories);
+        const systemCompose = aiRuntimeBridge.buildSystemCompose(ai, contextText, memories, context.locale || 'zh-CN');
 
         const bodyPerm = req.body?.permission && typeof req.body.permission === 'object' ? req.body.permission : {};
         const aiPerm = ai.permissions || {};

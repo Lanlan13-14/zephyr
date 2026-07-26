@@ -6205,7 +6205,7 @@ function collectAiContext(options = {}) {
     const view = document.querySelector('.nav-tab.active')?.dataset.view || '';
     const terminalOutputs = collectAiTerminalOutputs();
     const remoteDesktopSnapshots = collectAiRemoteDesktopSnapshots({ includeImage: !!options.includeRemoteDesktopImages });
-    return { view, aiChatSessionId: contextSession?.id || '', activeChatTitle: contextSession?.title || '', activeTerminalTab, activeConnectionIds, connections: contextConnections, tags, terminalOutputs, remoteDesktopSnapshots };
+    return { locale: getLocale(), view, aiChatSessionId: contextSession?.id || '', activeChatTitle: contextSession?.title || '', activeTerminalTab, activeConnectionIds, connections: contextConnections, tags, terminalOutputs, remoteDesktopSnapshots };
 }
 function aiBrowserPreviewStateForSession(sessionId = aiCurrentSessionId) {
     const key = String(sessionId || 'default');

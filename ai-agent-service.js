@@ -629,8 +629,13 @@ function buildSystemPrompt(ai = {}, context = {}, limits = {}) {
     }).join('\n')}` : '';
     const defaultPrompt = String(ai.defaultSystemPrompt || DEFAULT_ZEPHYR_SYSTEM_PROMPT || '').trim();
     const customPrompt = String(ai.systemPrompt || '').trim();
+    const locale = String(context?.locale || 'zh-CN').toLowerCase().startsWith('en') ? 'en' : 'zh-CN';
+    const languageInstruction = locale === 'en'
+        ? 'Response language: English. Reply in concise, direct English unless the user explicitly requests another language.'
+        : '回复语言：简体中文。除非用户明确要求其他语言，否则使用简洁、直接的中文。';
     return [
         `你是 ${ai.assistantName || 'Zephyr AI 助理'}，运行在 Zephyr SSH 管理平台内。`,
+        languageInstruction,
         defaultPrompt,
         `当前时间：${new Date().toISOString()}`,
         contextText,

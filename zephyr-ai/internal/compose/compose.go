@@ -3,8 +3,10 @@
 // HARD CONSTRAINT (user decision 2026-07-20):
 // Do NOT change system prompt assembly to save tokens.
 // Keep the same structure as the Node ai-agent-service buildSystemPrompt:
-//   assistant intro + default guidance + current time + context + custom
-//   prompt + full enabled skills text + related memories + env vars.
+//
+//	assistant intro + default guidance + current time + context + custom
+//	prompt + full enabled skills text + related memories + env vars.
+//
 // Compaction may still operate on conversation history (messages), never on
 // stripping this standing system assembly for cost reasons.
 package compose
@@ -26,10 +28,10 @@ type Skill struct {
 
 // Memory is a standing memory item eligible for prompt injection.
 type Memory struct {
-	Title   string `json:"title"`
-	Content string `json:"content"`
-	Scope   string `json:"scope"`
-	Project string `json:"project"`
+	Title   string   `json:"title"`
+	Content string   `json:"content"`
+	Scope   string   `json:"scope"`
+	Project string   `json:"project"`
 	Tags    []string `json:"tags"`
 }
 
@@ -47,6 +49,7 @@ type Input struct {
 	DefaultSystemPrompt string
 	CustomSystemPrompt  string
 	ContextText         string // pre-formatted Zephyr context block
+	Locale              string
 	Skills              []Skill
 	Memories            []Memory // already ranked/selected by caller
 	EnvVars             []EnvVar
@@ -67,6 +70,11 @@ func SystemPrompt(in Input) string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "你是 %s，运行在 Zephyr SSH 管理平台内。\n", name)
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(in.Locale)), "en") {
+		b.WriteString("Response language: English. Reply in concise, direct English unless the user explicitly requests another language.\n")
+	} else {
+		b.WriteString("回复语言：简体中文。除非用户明确要求其他语言，否则使用简洁、直接的中文。\n")
+	}
 
 	if d := strings.TrimSpace(in.DefaultSystemPrompt); d != "" {
 		b.WriteString(d)

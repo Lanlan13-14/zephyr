@@ -6,6 +6,17 @@ import (
 	"time"
 )
 
+func TestSystemPromptFollowsUILocale(t *testing.T) {
+	en := SystemPrompt(Input{AssistantName: "Zephyr", Locale: "en", DefaultSystemPrompt: "rules", Now: time.Unix(0, 0).UTC()})
+	if !strings.Contains(en, "Response language: English") {
+		t.Fatalf("missing English language instruction: %s", en)
+	}
+	zh := SystemPrompt(Input{AssistantName: "Zephyr", Locale: "zh-CN", DefaultSystemPrompt: "rules", Now: time.Unix(0, 0).UTC()})
+	if !strings.Contains(zh, "回复语言：简体中文") {
+		t.Fatalf("missing Chinese language instruction: %s", zh)
+	}
+}
+
 func TestSystemPromptKeepsFullAssembly(t *testing.T) {
 	fixed := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	out := SystemPrompt(Input{
