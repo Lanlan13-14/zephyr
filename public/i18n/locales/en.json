@@ -1504,5 +1504,7 @@
   "邮箱验证码无效或已过期": "Email code invalid or expired",
   "邮件通知未启用，请联系管理员": "Email notifications are not enabled. Contact the admin.",
   "当前账号未设置邮箱，请先在个人信息中填写": "This account has no email set. Set one in Profile first.",
-  "请求过于频繁，请稍后再试": "Too many requests. Try again later."
+  "请求过于频繁，请稍后再试": "Too many requests. Try again later.",
+  "历史预算策略": "History budget policy",
+  "按模型上下文窗口、系统提示、工具目录、输出预留和安全余量动态计算，不再按固定消息数截断。": "Calculated dynamically from the model context window, system prompt, tool catalog, output reserve, and safety margin; no fixed message-count truncation."
 }
