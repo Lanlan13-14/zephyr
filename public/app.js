@@ -6803,7 +6803,11 @@ function formatAiRequestFailure(err) {
     if (transient) {
         return `请求失败：${message}\n\n我已在服务端对上游 AI fetch failed / 断连 / 超时做自动重试；如果仍出现，多半是当前供应商线路或模型临时不稳。你可以直接重试，或切换模型/供应商。`;
     }
-    return `请求失败：${message}\n\n建议：如果这是长对话或 RDP 操作后失败，点“压缩摘要”后重试；我已减少默认上下文和截图大小以降低这类失败。`;
+    const contextTooLarge = /context length|context window|maximum context|max(?:imum)? tokens|token limit|too many tokens|上下文.*(?:过长|超限)|请求内容过长|413/i.test(message);
+    if (contextTooLarge) {
+        return `请求失败：${message}\n\n建议：点“压缩摘要”后重试，或减少截图和附件。`;
+    }
+    return `请求失败：${message}`;
 }
 let aiRuntimeEnabledCache = null;
 async function aiRuntimeIsEnabled() {
