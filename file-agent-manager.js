@@ -65,6 +65,7 @@ class FileAgentConnection {
             deviceId: this.deviceId,
             deviceName: this.deviceName,
             platform: this.platform,
+            appVersion: this.appVersion,
             online: this.online,
             readOnly: this.share.readOnly !== false,
             shareName: this.share.name || this.deviceName,

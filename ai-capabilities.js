@@ -205,6 +205,22 @@ const CAPABILITIES = defineCapabilities([
         toolIds: ['snippet_delete_v1'], keywords: ['代码片段', '删除', '移除', 'snippet'], playbookId: 'snippet-management-v1',
     },
     {
+        id: 'agent.list', title: 'List online Zephyr Agent devices', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['agent_list_v1'], keywords: ['Agent', '设备', '手机', '文件共享', '在线'], playbookId: 'agent-device-files-v1',
+    },
+    {
+        id: 'agent.get', title: 'Read one online Agent device metadata', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['agent_get_v1'], keywords: ['Agent', '设备', '详情', '版本', '只读'], playbookId: 'agent-device-files-v1',
+    },
+    {
+        id: 'agent.files_read', title: 'List stat and read text files from an owned Agent', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['agent_file_list_v1', 'agent_file_stat_v1', 'agent_file_read_text_v1'], keywords: ['Agent', '文件', '目录', '读取', '手机'], playbookId: 'agent-device-files-v1',
+    },
+    {
+        id: 'agent.files_write', title: 'Create rename or delete paths on a writable Agent share', mode: 'ai', state: 'implemented', risk: 'R3', confirmation: 'always',
+        toolIds: ['agent_file_mkdir_v1', 'agent_file_rename_v1', 'agent_file_delete_v1'], keywords: ['Agent', '文件', '创建目录', '重命名', '删除'], playbookId: 'agent-device-files-v1',
+    },
+    {
         id: 'remotedesktop.capture', title: 'Capture RDP or VNC frame with a stable capture id', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
         toolIds: ['remote_desktop_capture_v1'], keywords: ['RDP', 'VNC', '远程桌面', '截图', 'captureId', '画面'], playbookId: 'remote-desktop-closed-loop-v1',
     },
@@ -239,6 +255,10 @@ const CAPABILITIES = defineCapabilities([
     {
         id: 'terminal.wait', title: 'Wait for SSH or TELNET session output pattern', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
         toolIds: ['terminal_wait_v1'], keywords: ['终端', 'SSH', 'TELNET', '等待', '匹配', 'prompt', 'pattern'], playbookId: 'terminal-session-ops-v1',
+    },
+    {
+        id: 'agent.token_manage', title: 'Create reveal regenerate or revoke Agent enrollment tokens', mode: 'humanOnly', state: 'implemented', risk: 'R4', confirmation: 'always',
+        humanOnlyReason: 'Agent enrollment tokens grant device access and must be managed by a reauthenticated human-only security flow.',
     },
     {
         id: 'sshkey.secret_manage', title: 'Import generate or reveal SSH private key material', mode: 'humanOnly', state: 'implemented', risk: 'R4', confirmation: 'always',

@@ -63,6 +63,19 @@ const PLAYBOOKS = Object.freeze([
 - revision_conflict 时重新 snippet_get_v1；不要盲目重试。`,
     }),
     Object.freeze({
+        id: 'agent-device-files-v1',
+        title: 'Zephyr Agent 设备文件操作',
+        capabilityIds: Object.freeze(['agent.list', 'agent.get', 'agent.files_read', 'agent.files_write']),
+        triggers: Object.freeze(['Zephyr Agent', '手机文件', '设备文件', 'Agent 共享目录', '本地设备']),
+        prompt: `# Zephyr Agent 设备文件操作 Playbook
+
+- 先 agent_list_v1 找在线设备；再 agent_get_v1 确认 agentId、shareName、platform、appVersion、readOnly 和 capabilities。
+- 浏览用 agent_file_list_v1，元数据用 agent_file_stat_v1；读取文本用 agent_file_read_text_v1，单次最多 256 KiB，二进制内容不进入模型上下文。
+- 创建目录、重命名、删除分别用 agent_file_mkdir_v1 / agent_file_rename_v1 / agent_file_delete_v1；写操作需要确认，readOnly=true 时不得尝试绕过。
+- 路径必须是 Agent 共享根内的规范绝对路径；禁止删除根目录，递归删除前明确范围和影响。
+- Agent Token 的生成、查看、重置和撤销属于人类安全配置，不向模型暴露；设备离线时不要把离线误报为文件不存在。`,
+    }),
+    Object.freeze({
         id: 'remote-desktop-closed-loop-v1',
         title: 'RDP/VNC captureId 闭环操作',
         capabilityIds: Object.freeze(['remotedesktop.capture', 'remotedesktop.action', 'remotedesktop.verify']),

@@ -78,8 +78,9 @@ const DEFAULT_ZEPHYR_SKILLS = [
 - 修改前能备份就备份：cp file file.bak.$(date +%Y%m%d%H%M%S)。
 
 ## 5. 文件读写规范
-- 写文件前必须知道原内容或用户明确给完整内容。
-- 小改动：说明改了哪几行；写完后用 cat/grep 或应用自身校验命令验证。
+- 写 SSH 远程文件前必须知道原内容或用户明确给完整内容；小改动写完后用 cat/grep 或应用自身校验命令验证。
+- 操作 Zephyr Agent 设备文件时先 agent_list_v1/agent_get_v1，再用 agent_file_list_v1/stat_v1/read_text_v1；创建目录、重命名、删除用对应 agent_file_*_v1 且需确认。readOnly=true 不得绕过。
+- Agent Token 的创建、查看、重置、撤销属于 humanOnly；不得要求用户把 Token 发给模型。
 - 配置类：优先检查语法，例如 nginx -t、apachectl configtest、docker compose config、node --check。
 
 ## 6. Memory 规范

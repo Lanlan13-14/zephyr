@@ -13,6 +13,7 @@ const sshKeyTools = require('./ai-ssh-key-tools');
 const jumpHostTools = require('./ai-jump-host-tools');
 const snippetTools = require('./ai-snippet-tools');
 const remoteDesktopTools = require('./ai-remote-desktop-tools');
+const agentDeviceTools = require('./ai-agent-device-tools');
 const { PLAYBOOKS } = require('./ai-playbooks');
 
 const DEFAULT_TOOL_CALL_LIMIT = 0;
@@ -69,6 +70,14 @@ const CANONICAL_TOOL_SCHEMAS = Object.freeze({
     remote_desktop_capture_v1: remoteDesktopTools.REMOTE_DESKTOP_CAPTURE_SCHEMA,
     remote_desktop_action_v1: remoteDesktopTools.REMOTE_DESKTOP_ACTION_SCHEMA,
     remote_desktop_verify_v1: remoteDesktopTools.REMOTE_DESKTOP_VERIFY_SCHEMA,
+    agent_list_v1: agentDeviceTools.AGENT_LIST_SCHEMA,
+    agent_get_v1: agentDeviceTools.AGENT_GET_SCHEMA,
+    agent_file_list_v1: agentDeviceTools.AGENT_FILE_LIST_SCHEMA,
+    agent_file_stat_v1: agentDeviceTools.AGENT_FILE_STAT_SCHEMA,
+    agent_file_read_text_v1: agentDeviceTools.AGENT_FILE_READ_TEXT_SCHEMA,
+    agent_file_mkdir_v1: agentDeviceTools.AGENT_FILE_MKDIR_SCHEMA,
+    agent_file_rename_v1: agentDeviceTools.AGENT_FILE_RENAME_SCHEMA,
+    agent_file_delete_v1: agentDeviceTools.AGENT_FILE_DELETE_SCHEMA,
 });
 
 function aiAbortError() {
@@ -666,6 +675,14 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'terminal_read_v1', description: '从服务端权威 SSH/TELNET 会话历史读取指定 sessionId 的最新输出，不依赖当前页面是否可见。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_read_v1 } });
     tools.push({ type: 'function', function: { name: 'terminal_send_v1', description: '向指定 SSH/TELNET 活跃会话发送文本，可选择是否追加换行。会实际影响远程会话，需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_send_v1 } });
     tools.push({ type: 'function', function: { name: 'terminal_wait_v1', description: '等待指定 SSH/TELNET 会话输出出现文本或正则模式，直到匹配或超时。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_wait_v1 } });
+    tools.push({ type: 'function', function: { name: 'agent_list_v1', description: '列出当前用户在线的 Zephyr Agent 设备及只读、协议、文件能力元数据。', parameters: CANONICAL_TOOL_SCHEMAS.agent_list_v1 } });
+    tools.push({ type: 'function', function: { name: 'agent_get_v1', description: '读取当前用户一台在线 Agent 设备的公开元数据。', parameters: CANONICAL_TOOL_SCHEMAS.agent_get_v1 } });
+    tools.push({ type: 'function', function: { name: 'agent_file_list_v1', description: '列出 Agent 共享目录中的文件和文件夹。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_list_v1 } });
+    tools.push({ type: 'function', function: { name: 'agent_file_stat_v1', description: '读取 Agent 文件或目录元数据。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_stat_v1 } });
+    tools.push({ type: 'function', function: { name: 'agent_file_read_text_v1', description: '从 Agent 安全读取受限大小的 UTF-8 文本文件；不支持二进制内容回传。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_read_text_v1 } });
+    tools.push({ type: 'function', function: { name: 'agent_file_mkdir_v1', description: '在非只读 Agent 共享目录创建文件夹；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_mkdir_v1 } });
+    tools.push({ type: 'function', function: { name: 'agent_file_rename_v1', description: '在非只读 Agent 共享目录重命名或移动路径；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_rename_v1 } });
+    tools.push({ type: 'function', function: { name: 'agent_file_delete_v1', description: '删除 Agent 共享目录中的路径；递归删除风险更高，需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_delete_v1 } });
     tools.push({ type: 'function', function: { name: 'list_connections', description: '列出 Zephyr 中可用的 SSH/RDP/VNC 连接（不含密码/私钥）；只有 SSH 支持远程命令和文件工具。兼容旧接口，新增功能请优先使用 connection_list_v1。', parameters: { type: 'object', properties: {}, additionalProperties: false } } });
     tools.push({ type: 'function', function: { name: 'list_zephyr_resources', description: '列出 Zephyr 本地资源：连接、代理、SSH 密钥库、跳板机、代码片段。只返回脱敏信息。', parameters: { type: 'object', properties: { resources: { type: 'array', items: { type: 'string', enum: ['connections', 'proxies', 'sshKeys', 'jumpHosts', 'snippets'] } } } } } });
     // Legacy mutating asset tools intentionally stay out of the model catalog.
@@ -1626,6 +1643,9 @@ function confirmationSummary(toolName, args, deps) {
     if (toolName === 'snippet_delete_v1') return `删除代码片段：${args.snippetId || ''}`;
     if (toolName === 'terminal_send_v1') return `向终端会话 ${args.sessionId || ''} 发送：${String(args.text || '').slice(0, 160)}`;
     if (toolName === 'remote_desktop_action_v1') return `操作远程桌面 ${args.tabId || ''}：${args.action || ''}/${args.control || ''}`;
+    if (toolName === 'agent_file_mkdir_v1') return `在 Agent ${args.agentId || ''} 创建目录：${args.path || ''}`;
+    if (toolName === 'agent_file_rename_v1') return `在 Agent ${args.agentId || ''} 重命名：${args.oldPath || ''} → ${args.newPath || ''}`;
+    if (toolName === 'agent_file_delete_v1') return `从 Agent ${args.agentId || ''} 删除：${args.path || ''}`;
     if (toolName === 'connection_delete') return `删除连接：${args.connectionId || ''}`;
     if (toolName === 'proxy_save') return `${args.proxyId ? '修改' : '新增'}代理：${args.name || args.host || ''}`;
     if (toolName === 'proxy_delete') return `删除代理：${args.proxyId || ''}`;
@@ -1998,6 +2018,70 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 if (!deps.terminalSessionTools || !deps.terminalSessions || !deps.terminalHistory || !ctx.user) throw new Error('终端会话服务不可用');
                 return deps.terminalSessionTools.waitSession(deps.terminalSessions, deps.terminalHistory, ctx.user, args, ctx.signal);
+            });
+        case 'agent_list_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.fileAgentManager || !ctx.user) throw new Error('Agent 管理服务不可用');
+                const query = String(args.query || '').trim().toLowerCase();
+                const agents = deps.fileAgentManager.listAgentsForUser(ctx.user.userId)
+                    .concat(deps.fileAgentManager.listAgentsForUser(ctx.user.username))
+                    .filter((item, index, all) => all.findIndex((other) => other.agentId === item.agentId) === index)
+                    .map(agentDeviceTools.publicAgent)
+                    .filter((item) => !query || [item.agentId, item.deviceName, item.shareName, item.platform].some((value) => String(value || '').toLowerCase().includes(query)));
+                return { agents };
+            });
+        case 'agent_get_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.fileAgentManager || !ctx.user) throw new Error('Agent 管理服务不可用');
+                return { agent: agentDeviceTools.publicAgent(agentDeviceTools.requireOwnedAgent(deps.fileAgentManager, ctx.user, args.agentId)) };
+            });
+        case 'agent_file_list_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.fileAgentManager || !ctx.user) throw new Error('Agent 管理服务不可用');
+                const agent = agentDeviceTools.requireOwnedAgent(deps.fileAgentManager, ctx.user, args.agentId);
+                const agentPath = agentDeviceTools.normalizeAgentPath(args.path || '/');
+                const result = await deps.fileAgentManager.callAgent(args.agentId, 'list', { path: agentPath });
+                return { agent: agentDeviceTools.publicAgent(agent), path: agentPath, entries: Array.isArray(result?.entries) ? result.entries.slice(0, 1000) : [] };
+            });
+        case 'agent_file_stat_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.fileAgentManager || !ctx.user) throw new Error('Agent 管理服务不可用');
+                const agent = agentDeviceTools.requireOwnedAgent(deps.fileAgentManager, ctx.user, args.agentId);
+                const agentPath = agentDeviceTools.normalizeAgentPath(args.path, { allowRoot: false });
+                return { agent: agentDeviceTools.publicAgent(agent), path: agentPath, stat: await deps.fileAgentManager.callAgent(args.agentId, 'stat', { path: agentPath }) };
+            });
+        case 'agent_file_read_text_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.fileAgentManager || !ctx.user) throw new Error('Agent 管理服务不可用');
+                return agentDeviceTools.readText(deps.fileAgentManager, ctx.user, args);
+            });
+        case 'agent_file_mkdir_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.fileAgentManager || !ctx.user) throw new Error('Agent 管理服务不可用');
+                const agent = agentDeviceTools.requireOwnedAgent(deps.fileAgentManager, ctx.user, args.agentId);
+                if (agent.readOnly) throw new HttpError(403, 'agent_read_only', 'Agent 共享为只读');
+                const agentPath = agentDeviceTools.normalizeAgentPath(args.path, { allowRoot: false });
+                await deps.fileAgentManager.callAgent(args.agentId, 'mkdir', { path: agentPath });
+                return { agent: agentDeviceTools.publicAgent(agent), path: agentPath, created: true };
+            });
+        case 'agent_file_rename_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.fileAgentManager || !ctx.user) throw new Error('Agent 管理服务不可用');
+                const agent = agentDeviceTools.requireOwnedAgent(deps.fileAgentManager, ctx.user, args.agentId);
+                if (agent.readOnly) throw new HttpError(403, 'agent_read_only', 'Agent 共享为只读');
+                const oldPath = agentDeviceTools.normalizeAgentPath(args.oldPath, { allowRoot: false });
+                const newPath = agentDeviceTools.normalizeAgentPath(args.newPath, { allowRoot: false });
+                await deps.fileAgentManager.callAgent(args.agentId, 'rename', { oldPath, newPath });
+                return { agent: agentDeviceTools.publicAgent(agent), oldPath, newPath, renamed: true };
+            });
+        case 'agent_file_delete_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.fileAgentManager || !ctx.user) throw new Error('Agent 管理服务不可用');
+                const agent = agentDeviceTools.requireOwnedAgent(deps.fileAgentManager, ctx.user, args.agentId);
+                if (agent.readOnly) throw new HttpError(403, 'agent_read_only', 'Agent 共享为只读');
+                const agentPath = agentDeviceTools.normalizeAgentPath(args.path, { allowRoot: false });
+                await deps.fileAgentManager.callAgent(args.agentId, 'delete', { path: agentPath, recursive: !!args.recursive });
+                return { agent: agentDeviceTools.publicAgent(agent), path: agentPath, recursive: !!args.recursive, deleted: true };
             });
         case 'list_connections':
             return { connections: getAllConnections(deps, ctx).map(connectionSummary) };
@@ -3134,7 +3218,7 @@ function listToolCatalog(ai = {}) {
 function isReadOnlyToolName(name) {
     const n = String(name || '');
     if (!n) return false;
-    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|terminal_read_v1|terminal_wait_v1|terminal_read|remote_desktop_capture_v1|remote_desktop_verify_v1|remote_read|browser_inspect_v1|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
+    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|agent_list_v1|agent_get_v1|agent_file_list_v1|agent_file_stat_v1|agent_file_read_text_v1|terminal_read_v1|terminal_wait_v1|terminal_read|remote_desktop_capture_v1|remote_desktop_verify_v1|remote_read|browser_inspect_v1|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
     if (n.endsWith('_list') || n.endsWith('_search') || n.endsWith('_get') || n.endsWith('_status')) return true;
     return false;
 }
