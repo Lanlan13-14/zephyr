@@ -137,7 +137,7 @@ function setStatus(state, message = '') {
     } else if (state === 'disconnected') {
         connected = false;
         statusDot.classList.add('disconnected');
-        statusText.textContent = message || '已断开';
+        statusText.textContent = message || t('已断开');
         overlayTitle.textContent = t('连接已断开');
         overlayMsg.textContent = message || t('VNC 连接已断开');
         overlay.classList.remove('hidden');
