@@ -1446,7 +1446,7 @@ function refreshTagFilter() {
     const select = $('#tagFilter');
     if (!select) return;
     const old = select.dataset.savedValue || select.value || 'all';
-    select.innerHTML = '<option value="all">全部标签</option>' + allTags().map((t) => `<option value="${escapeAttr(t)}" ${old === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('');
+    select.innerHTML = `<option value="all">${t('全部标签')}</option>` + allTags().map((tag) => `<option value="${escapeAttr(tag)}" ${old === tag ? 'selected' : ''}>${escapeHtml(tag)}</option>`).join('');
     if (old === 'all' || allTags().includes(old)) select.value = old;
     else select.value = 'all';
     delete select.dataset.savedValue;
@@ -1650,7 +1650,7 @@ function renderSshKeyOptions(selected = '') {
     const select = $('#connSshKey');
     if (!select) return;
     const selectedId = String(selected || '');
-    select.innerHTML = '<option value="">不使用密钥库</option>' + sshKeys.map((k) => `<option value="${k.id}" ${selectedId === String(k.id) ? 'selected' : ''}>${escapeHtml(k.name)}${k.hasPassphrase ? t('（有口令）') : ''}</option>`).join('');
+    select.innerHTML = `<option value="">${t('不使用密钥库')}</option>` + sshKeys.map((k) => `<option value="${k.id}" ${selectedId === String(k.id) ? 'selected' : ''}>${escapeHtml(k.name)}${k.hasPassphrase ? t('（有口令）') : ''}</option>`).join('');
     select.value = selectedId;
     console.debug('[ssh-key-ui]', 'render connection key options', { selectedId, keyCount: sshKeys.length });
 }
@@ -1659,7 +1659,7 @@ function updateRouteOptions(mode = $('#connMode').value, selected = '') {
     const selectedIds = normalizeSelectedRouteIds(selected);
     const route = $('#connRoute');
     if (route) {
-        route.innerHTML = '<option value="">请选择代理服务器</option>' + proxies.map((p) => `<option value="${p.id}" ${selectedIds.includes(String(p.id)) ? 'selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(p.host)}:${escapeHtml(p.port)})</option>`).join('');
+        route.innerHTML = `<option value="">${t('请选择代理服务器')}</option>` + proxies.map((p) => `<option value="${p.id}" ${selectedIds.includes(String(p.id)) ? 'selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(p.host)}:${escapeHtml(p.port)})</option>`).join('');
         route.value = mode === 'proxy' ? (selectedIds[0] || '') : '';
     }
     if (mode === 'jump') renderJumpRouteRows(selectedIds);
@@ -1921,9 +1921,9 @@ function setConnectionModalMode(mode = 'create', { source = 'dashboard', draft =
         const showBanner = isOneShot;
         banner.classList.toggle('force-hidden', !showBanner);
         if (connectionModalMode === 'ephemeral') {
-            banner.innerHTML = '<strong>临时连接</strong><span>· 本次参数不会保存到主机库，直接连接</span>';
+            banner.innerHTML = `<strong>${t('临时连接')}</strong><span>· ${t('本次参数不会保存到主机库，直接连接')}</span>`;
         } else if (connectionModalMode === 'transient') {
-            banner.innerHTML = '<strong>临时连接</strong><span>· 本次参数不会保存到主机库</span>';
+            banner.innerHTML = `<strong>${t('临时连接')}</strong><span>· ${t('本次参数不会保存到主机库')}</span>`;
         }
     }
     const ephemeralGroup = $('#connectionEphemeralGroup');
@@ -2127,7 +2127,7 @@ function closeModal() {
     const banner = $('#transientConnectionBanner');
     if (banner) {
         banner.classList.add('force-hidden');
-        banner.innerHTML = '<strong>临时连接</strong><span>· 本次参数不会保存到主机库</span>';
+        banner.innerHTML = `<strong>${t('临时连接')}</strong><span>· ${t('本次参数不会保存到主机库')}</span>`;
     }
 
     setConnectionTestLatency();
@@ -4188,7 +4188,7 @@ function ensureFullscreenLoader() {
         loader = document.createElement('div');
         loader.className = 'terminal-fullscreen-loader';
         loader.setAttribute('aria-live', 'polite');
-        loader.innerHTML = '<div class="terminal-fullscreen-spinner"></div><span>正在切换全屏...</span>';
+        loader.innerHTML = `<div class="terminal-fullscreen-spinner"></div><span>${t('正在切换全屏...')}</span>`;
         workspace.appendChild(loader);
     }
     return loader;
@@ -4839,7 +4839,7 @@ function renderAiProviderOptions() {
     const select = $('#aiDefaultProvider');
     if (!select) return;
     const current = ai.defaultProviderId || select.value || '';
-    select.innerHTML = '<option value="">自动选择第一个可用供应商</option>'
+    select.innerHTML = `<option value="">${t('自动选择第一个可用供应商')}</option>`
         + providers.map((p) => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.name || p.type || t('供应商'))}</option>`).join('');
     if (current && providers.some((p) => p.id === current)) select.value = current;
     else select.value = '';
@@ -5135,7 +5135,7 @@ function renderAiMcpList() {
     if (!list) return;
     const servers = Array.isArray(aiSettingsState?.mcpServers) ? aiSettingsState.mcpServers : (settings.ai?.mcpServers || []);
     if (!servers.length) {
-        list.innerHTML = '<p class="empty-state">暂无 MCP 服务器。配置后由 Go AI Runtime 在每次 run 时连接。</p>';
+        list.innerHTML = `<p class="empty-state">${t('暂无 MCP 服务器。配置后由 Go AI Runtime 在每次 run 时连接。')}</p>`;
         return;
     }
     list.innerHTML = servers.map((s) => {
@@ -6216,7 +6216,7 @@ function renderAiBrowserPreview() {
     const shot = state.preview;
     if (!shot?.url) {
         title && (title.textContent = t('AI 代操作页面'));
-        body.innerHTML = '<span>AI 打开网页后，会在这里持续显示它正在代操作的页面。</span>';
+        body.innerHTML = `<span>${t('AI 打开网页后，会在这里持续显示它正在代操作的页面。')}</span>`;
         return;
     }
     title && (title.textContent = `AI 代操作页面 · ${shot.tool || 'browser'} · ${state.session || 'default'} · ${new Date(shot.updatedAt || Date.now()).toLocaleTimeString()}`);
@@ -7933,7 +7933,7 @@ function setupAiAssistant() {
 }
 
 function renderRemoteServers() { const ssh = connections.filter((c) => c.protocol === 'SSH'); $('#remoteServerList').innerHTML = ssh.length ? ssh.map((c) => `<label class="server-check"><input type="checkbox" value="${c.id}"> <span>${escapeHtml(c.name)}</span><em>${escapeHtml(c.host)}</em></label>`).join('') : '<div class="empty-card">暂无 SSH 连接</div>'; }
-async function remoteExecute(e) { e.preventDefault(); const ids = $$('#remoteServerList input:checked').map((i) => i.value); try { $('#remoteResults').innerHTML = '<div class="empty-card">执行中...</div>'; const data = await api('/api/remote-execute', { method: 'POST', body: JSON.stringify({ connectionIds: ids, command: $('#remoteCommand').value, timeoutSeconds: Number($('#remoteTimeout').value) || 30 }) }); $('#remoteResults').innerHTML = data.results.map((r) => `<article class="result-card ${r.success ? 'ok' : 'fail'}"><h3>${escapeHtml(r.name)} <span>${escapeHtml(r.status)} · ${r.durationMs}ms</span></h3>${r.error ? `<p class="error-text">${escapeHtml(r.error)}</p>` : ''}<pre>${escapeHtml(r.stdout || '')}</pre>${r.stderr ? `<pre class="stderr">${escapeHtml(r.stderr)}</pre>` : ''}</article>`).join(''); await loadConnections(); } catch (err) { toast(err.message); } }
+async function remoteExecute(e) { e.preventDefault(); const ids = $$('#remoteServerList input:checked').map((i) => i.value); try { $('#remoteResults').innerHTML = `<div class="empty-card">${t('执行中...')}</div>`; const data = await api('/api/remote-execute', { method: 'POST', body: JSON.stringify({ connectionIds: ids, command: $('#remoteCommand').value, timeoutSeconds: Number($('#remoteTimeout').value) || 30 }) }); $('#remoteResults').innerHTML = data.results.map((r) => `<article class="result-card ${r.success ? 'ok' : 'fail'}"><h3>${escapeHtml(r.name)} <span>${escapeHtml(r.status)} · ${r.durationMs}ms</span></h3>${r.error ? `<p class="error-text">${escapeHtml(r.error)}</p>` : ''}<pre>${escapeHtml(r.stdout || '')}</pre>${r.stderr ? `<pre class="stderr">${escapeHtml(r.stderr)}</pre>` : ''}</article>`).join(''); await loadConnections(); } catch (err) { toast(err.message); } }
 
 async function savePersonalSettings(patch) {
     const result = await api('/api/me/settings', { method: 'PUT', body: JSON.stringify(patch) });
@@ -9808,7 +9808,7 @@ function renderAdminUsers(users) {
     const list = document.getElementById('adminUserList');
     if (!list) return;
     if (!users.length) {
-        list.innerHTML = '<p class="muted">暂无用户</p>';
+        list.innerHTML = `<p class="muted">${t('暂无用户')}</p>`;
         return;
     }
     const activeAdmins = users.filter((u) => u.role === 'admin' && u.status === 'active');
@@ -10059,7 +10059,7 @@ const agentRevealedTokens = new Map();
 async function loadAgentTokens() {
     const list = $('#agentTokenList');
     if (!list) return;
-    list.innerHTML = '<p class="empty-state">正在加载...</p>';
+    list.innerHTML = `<p class="empty-state">${t('正在加载...')}</p>`;
     try {
         const data = await api('/api/rdp/file-agent-tokens');
         renderAgentTokens(data.tokens || [], agentRevealedTokens);
