@@ -27,7 +27,15 @@ export ZEPHYR_AI_DATA="$AI_DATA"
 # Node exposes platform Tool RPC on a dedicated loopback-only listener. It is
 # deliberately separate from public HTTP/HTTPS and is never published by Docker.
 export ZEPHYR_AI_HOST_LISTEN="${ZEPHYR_AI_HOST_LISTEN:-127.0.0.1:3080}"
-export ZEPHYR_AI_PLATFORM_HOST_URL="${ZEPHYR_AI_PLATFORM_HOST_URL:-http://127.0.0.1:3080}"
+case "${ZEPHYR_AI_PLATFORM_HOST_URL:-}" in
+  ""|https://127.0.0.1:3443|http://127.0.0.1:3000)
+    # Migrate legacy same-container targets to the dedicated loopback listener.
+    export ZEPHYR_AI_PLATFORM_HOST_URL="http://127.0.0.1:3080"
+    ;;
+  *)
+    export ZEPHYR_AI_PLATFORM_HOST_URL
+    ;;
+esac
 
 echo "[entrypoint] starting zephyr-ai on $AI_LISTEN data=$AI_DATA"
 /usr/local/bin/zephyr-ai &
