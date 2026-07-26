@@ -14,6 +14,7 @@ const jumpHostTools = require('./ai-jump-host-tools');
 const snippetTools = require('./ai-snippet-tools');
 const remoteDesktopTools = require('./ai-remote-desktop-tools');
 const agentDeviceTools = require('./ai-agent-device-tools');
+const secretRefs = require('./ai-secret-refs');
 const { PLAYBOOKS } = require('./ai-playbooks');
 
 const DEFAULT_TOOL_CALL_LIMIT = 0;
@@ -78,6 +79,7 @@ const CANONICAL_TOOL_SCHEMAS = Object.freeze({
     agent_file_mkdir_v1: agentDeviceTools.AGENT_FILE_MKDIR_SCHEMA,
     agent_file_rename_v1: agentDeviceTools.AGENT_FILE_RENAME_SCHEMA,
     agent_file_delete_v1: agentDeviceTools.AGENT_FILE_DELETE_SCHEMA,
+    secret_ref_list_v1: secretRefs.SECRET_REF_LIST_SCHEMA,
 });
 
 function aiAbortError() {
@@ -683,6 +685,7 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'agent_file_mkdir_v1', description: '在非只读 Agent 共享目录创建文件夹；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_mkdir_v1 } });
     tools.push({ type: 'function', function: { name: 'agent_file_rename_v1', description: '在非只读 Agent 共享目录重命名或移动路径；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_rename_v1 } });
     tools.push({ type: 'function', function: { name: 'agent_file_delete_v1', description: '删除 Agent 共享目录中的路径；递归删除风险更高，需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_delete_v1 } });
+    tools.push({ type: 'function', function: { name: 'secret_ref_list_v1', description: '为当前用户可使用且已保存秘密的 SSH 密钥或代理签发短期不透明 secretRef。只返回引用和元数据，绝不返回秘密值。', parameters: CANONICAL_TOOL_SCHEMAS.secret_ref_list_v1 } });
     tools.push({ type: 'function', function: { name: 'list_connections', description: '列出 Zephyr 中可用的 SSH/RDP/VNC 连接（不含密码/私钥）；只有 SSH 支持远程命令和文件工具。兼容旧接口，新增功能请优先使用 connection_list_v1。', parameters: { type: 'object', properties: {}, additionalProperties: false } } });
     tools.push({ type: 'function', function: { name: 'list_zephyr_resources', description: '列出 Zephyr 本地资源：连接、代理、SSH 密钥库、跳板机、代码片段。只返回脱敏信息。', parameters: { type: 'object', properties: { resources: { type: 'array', items: { type: 'string', enum: ['connections', 'proxies', 'sshKeys', 'jumpHosts', 'snippets'] } } } } } });
     // Legacy mutating asset tools intentionally stay out of the model catalog.
@@ -1725,6 +1728,9 @@ function requireCanonicalConfirmation(toolName, args, ctx, deps) {
 }
 function canonicalToolAuthorization(toolName, args, ctx) {
     if (!ctx?.resourceService || !ctx?.user) return;
+    if (args?.sshKeySecretRef && ['connection_create_v1', 'connection_update_v1'].includes(toolName)) {
+        secretRefs.resolveResourceId(args.sshKeySecretRef, ctx.user, 'ssh_key', ctx.resourceService);
+    }
     const connectionId = String(args?.connectionId || '');
     if (connectionId) {
         if (toolName === 'connection_get_v1') {
@@ -1817,14 +1823,20 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
         case 'connection_create_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
-                const connection = connectionTools.createConnection(ctx.user, args, ctx.resourceService);
+                const safeArgs = { ...args };
+                if (safeArgs.sshKeySecretRef) safeArgs.sshKeyId = secretRefs.resolveResourceId(safeArgs.sshKeySecretRef, ctx.user, 'ssh_key', ctx.resourceService);
+                delete safeArgs.sshKeySecretRef;
+                const connection = connectionTools.createConnection(ctx.user, safeArgs, ctx.resourceService);
                 deps.addActivity?.(`AI 新增连接：${connection.name}`, ctx.user.userId);
                 return { connection, verification: 'resource_read_after_write' };
             });
         case 'connection_update_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
-                const connection = connectionTools.updateConnection(ctx.user, args, ctx.resourceService);
+                const safeArgs = { ...args };
+                if (safeArgs.sshKeySecretRef) safeArgs.sshKeyId = secretRefs.resolveResourceId(safeArgs.sshKeySecretRef, ctx.user, 'ssh_key', ctx.resourceService);
+                delete safeArgs.sshKeySecretRef;
+                const connection = connectionTools.updateConnection(ctx.user, safeArgs, ctx.resourceService);
                 deps.addActivity?.(`AI 修改连接：${connection.name}`, ctx.user.userId);
                 return { connection, verification: 'resource_read_after_write' };
             });
@@ -2082,6 +2094,11 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 const agentPath = agentDeviceTools.normalizeAgentPath(args.path, { allowRoot: false });
                 await deps.fileAgentManager.callAgent(args.agentId, 'delete', { path: agentPath, recursive: !!args.recursive });
                 return { agent: agentDeviceTools.publicAgent(agent), path: agentPath, recursive: !!args.recursive, deleted: true };
+            });
+        case 'secret_ref_list_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
+                return { secretRefs: secretRefs.listSecretRefs(ctx.user, args, ctx.resourceService) };
             });
         case 'list_connections':
             return { connections: getAllConnections(deps, ctx).map(connectionSummary) };
@@ -3218,7 +3235,7 @@ function listToolCatalog(ai = {}) {
 function isReadOnlyToolName(name) {
     const n = String(name || '');
     if (!n) return false;
-    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|agent_list_v1|agent_get_v1|agent_file_list_v1|agent_file_stat_v1|agent_file_read_text_v1|terminal_read_v1|terminal_wait_v1|terminal_read|remote_desktop_capture_v1|remote_desktop_verify_v1|remote_read|browser_inspect_v1|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
+    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|secret_ref_list_v1|agent_list_v1|agent_get_v1|agent_file_list_v1|agent_file_stat_v1|agent_file_read_text_v1|terminal_read_v1|terminal_wait_v1|terminal_read|remote_desktop_capture_v1|remote_desktop_verify_v1|remote_read|browser_inspect_v1|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
     if (n.endsWith('_list') || n.endsWith('_search') || n.endsWith('_get') || n.endsWith('_status')) return true;
     return false;
 }

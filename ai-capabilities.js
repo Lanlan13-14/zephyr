@@ -205,6 +205,14 @@ const CAPABILITIES = defineCapabilities([
         toolIds: ['snippet_delete_v1'], keywords: ['代码片段', '删除', '移除', 'snippet'], playbookId: 'snippet-management-v1',
     },
     {
+        id: 'secretref.list', title: 'Issue short-lived opaque references to usable stored credentials', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['secret_ref_list_v1'], keywords: ['secretRef', '凭据引用', 'SSH 密钥', '代理密码', '不透明引用'], playbookId: 'secret-ref-binding-v1',
+    },
+    {
+        id: 'secretref.bind_ssh_key', title: 'Bind an opaque SSH-key reference to a connection without revealing it', mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['connection_create_v1', 'connection_update_v1'], keywords: ['secretRef', '绑定', 'SSH 密钥', '连接凭据'], playbookId: 'secret-ref-binding-v1',
+    },
+    {
         id: 'agent.list', title: 'List online Zephyr Agent devices', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
         toolIds: ['agent_list_v1'], keywords: ['Agent', '设备', '手机', '文件共享', '在线'], playbookId: 'agent-device-files-v1',
     },

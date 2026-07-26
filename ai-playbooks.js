@@ -63,6 +63,19 @@ const PLAYBOOKS = Object.freeze([
 - revision_conflict 时重新 snippet_get_v1；不要盲目重试。`,
     }),
     Object.freeze({
+        id: 'secret-ref-binding-v1',
+        title: '不透明凭据引用绑定',
+        capabilityIds: Object.freeze(['secretref.list', 'secretref.bind_ssh_key']),
+        triggers: Object.freeze(['secretRef', '已保存密钥', '绑定 SSH 密钥', '不透露凭据']),
+        prompt: `# 不透明凭据引用绑定 Playbook
+
+- 当创建/修改 SSH 连接需要使用已保存密钥时，先 secret_ref_list_v1({kind:'ssh_key', query})；返回的 secretRef 是短期、不透明、用户绑定的引用，不包含私钥或口令。
+- 把返回的 secretRef 作为 sshKeySecretRef 传给 connection_create_v1 或 connection_update_v1；服务端验证签名、有效期、用户和 use 权限后只保存资源 ID，模型永远看不到秘密。
+- 不得解析、记录、猜测或向用户复述 secretRef 内部内容；过期或权限变化时重新 secret_ref_list_v1。
+- secretRef 只能用于允许的目标字段，当前仅支持 SSH 密钥绑定。代理 secretRef 只用于能力发现，不能把代理密码复制进连接字段。
+- 创建、修改连接仍需确认和 revision 保护；secretRef 不会绕过确认、ACL 或 humanOnly 的秘密查看边界。`,
+    }),
+    Object.freeze({
         id: 'agent-device-files-v1',
         title: 'Zephyr Agent 设备文件操作',
         capabilityIds: Object.freeze(['agent.list', 'agent.get', 'agent.files_read', 'agent.files_write']),
@@ -127,7 +140,7 @@ const PLAYBOOKS = Object.freeze([
 ## 工具选择
 - 用户说“找/列出/哪个连接”：调用 connection_list_v1；按 name、host、tag、remark 过滤。不要要求用户提供 ID。
 - 要查看、改名、修改或删除时：先 connection_get_v1 获取 connectionId 和 revision。
-- 新建连接：用 connection_create_v1。它支持 SSH、TELNET、RDP、VNC，但不能接收密码、私钥、API Key 或 Token；秘密凭据只能走人类专属界面。
+- 新建连接：用 connection_create_v1。它支持 SSH、TELNET、RDP、VNC，但不能接收密码、私钥、API Key 或 Token；要绑定已保存 SSH 密钥时先 secret_ref_list_v1，再传 sshKeySecretRef。
 - 修改连接：用 connection_update_v1，必须传刚读取的 expectedRevision；未提供字段保持不变。
 - 仅改名：优先 connection_rename_v1，必须传刚读取的 expectedRevision。
 - 删除：用 connection_delete_v1，必须传刚读取的 expectedRevision；先明确目标名称、主机和删除影响。

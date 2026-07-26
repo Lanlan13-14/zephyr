@@ -45,7 +45,7 @@ const DEFAULT_ZEPHYR_SKILLS = [
 ## 2. Zephyr 本地资源操作速查
 优先使用这些工具直接操作本地数据，工具会自动脱敏、刷新前端，并按敏感确认策略执行：
 - 查看资产：list_zephyr_resources({ resources: ['connections','proxies','sshKeys','jumpHosts','snippets'] })；只看连接时可用 list_connections。
-- 连接：先 connection_list_v1 / connection_get_v1；创建 connection_create_v1，修改 connection_update_v1，删除 connection_delete_v1，测试 connection_test_v1，打开 connection_open_v1。修改/删除先读 revision 并传 expectedRevision；标准接口不接收密码/私钥。
+- 连接：先 connection_list_v1 / connection_get_v1；创建 connection_create_v1，修改 connection_update_v1，删除 connection_delete_v1，测试 connection_test_v1，打开 connection_open_v1。修改/删除先读 revision 并传 expectedRevision；标准接口不接收密码/私钥。绑定已保存 SSH 密钥时先 secret_ref_list_v1，再传短期 sshKeySecretRef。
 - 代理：先 proxy_list_v1 / proxy_get_v1；创建 proxy_create_v1，修改 proxy_update_v1，删除 proxy_delete_v1。标准接口不接收或返回代理密码。
 - SSH 密钥元数据：ssh_key_list_v1 / ssh_key_get_v1 / ssh_key_validate_v1 / ssh_key_rename_v1 / ssh_key_update_metadata_v1 / ssh_key_delete_v1。导入、生成、查看和替换私钥/口令是 humanOnly。
 - 跳板机：jump_host_list_v1 / jump_host_get_v1 / jump_host_create_v1 / jump_host_update_v1 / jump_host_delete_v1；connectionId 必须是可使用的 SSH 连接。
