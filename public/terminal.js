@@ -12,6 +12,7 @@ import {
     LiftMode as SoftKeyboardLiftMode,
 } from './ssh-keyboard/index.js?v=20260723-sync2';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
+import { createTerminalHistoryGesture } from './terminal-history-gesture.js?v=20260726-history-feel1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
     allowScrollDuringTyping,
@@ -8124,7 +8125,8 @@ function _flushHistoryScrollUi() {
 /** Drive xterm history by N rows (negative = into history / up). */
 function scrollTerminalHistoryLines(amount, reason = 'history-scroll') {
     const n = Math.trunc(Number(amount) || 0);
-    if (!n || !term) return false;
+    if (!n || !term) return 0;
+    const before = getXtermHistoryMetrics();
     try {
         if (typeof term.bridge?.scrollLines === 'function') {
             term.bridge.scrollLines(n);
@@ -8132,11 +8134,14 @@ function scrollTerminalHistoryLines(amount, reason = 'history-scroll') {
         } else if (typeof term.scrollLines === 'function') {
             term.scrollLines(n);
         } else {
-            return false;
+            return 0;
         }
     } catch (_) {
-        return false;
+        return 0;
     }
+    const after = getXtermHistoryMetrics();
+    const moved = Math.trunc((after?.ydisp || 0) - (before?.ydisp || 0));
+    if (!moved) return 0;
     // Defer lock/follow/chrome work to one rAF — touch pans fire many times/frame.
     _historyScrollUiPending = { reason: String(reason || 'history-scroll') };
     if (!_historyScrollUiRaf) {
@@ -8145,9 +8150,10 @@ function scrollTerminalHistoryLines(amount, reason = 'history-scroll') {
     logTerminalScrollDiagnostics?.('history-scroll-lines', {
         reason,
         amount: n,
-        ...((() => { try { return getXtermHistoryMetrics(); } catch (_) { return {}; } })() || {}),
+        moved,
+        ...(after || {}),
     });
-    return true;
+    return moved;
 }
  
 function getMobileStableFollowThreshold() {
@@ -12435,50 +12441,47 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     // Touch vertical pan → xterm ydisp history (DOM scroll is disabled).
     if (!wtermWrapper._zephyrHistoryPanBound) {
         wtermWrapper._zephyrHistoryPanBound = true;
-        let panY0 = 0;
-        let panAccum = 0;
-        let panActive = false;
-        let panMoved = false;
         const rhOf = () => Math.max(1, term?.getViewportState?.()?.rowHeight
             || getTerminalCharMetrics?.()?.lineHeight || 17);
+        const historyGesture = createTerminalHistoryGesture({
+            scrollLines: (lines, reason) => scrollTerminalHistoryLines(lines, reason),
+            getRowHeight: rhOf,
+            onGestureStart: () => {
+                cancelTerminalBottomFollow('touch-history-start');
+                lockMobileTerminalAutoFollow('touch-history-start', 12000);
+                setTerminalAutoFollow(false, 'touch-history-start');
+                terminalUserScrolledAway = true;
+                terminalUserScrollGestureUntil = Date.now() + 12000;
+                wtermWrapper.classList.add('is-scrolling');
+            },
+            onGestureEnd: () => {
+                window.setTimeout(() => wtermWrapper.classList.remove('is-scrolling'), 140);
+            },
+        });
+        let panActive = false;
         const onPanStart = (e) => {
             if (!term?.bridge?.scrollLines) return;
             // One finger only; ignore multi-touch pinch.
             if (e.touches && e.touches.length !== 1) return;
-            if (e.pointerType && e.pointerType !== 'touch') return;
+            if (e.pointerType && e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
             if (mobileTerminalSelectionMode || hasLiveTerminalSelection?.()) return;
-            panY0 = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
-            panAccum = 0;
+            const y = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
             panActive = true;
-            panMoved = false;
+            historyGesture.start(y, e.timeStamp || performance.now());
+            try { if (e.pointerId != null) wtermWrapper.setPointerCapture?.(e.pointerId); } catch (_) {}
         };
         const onPanMove = (e) => {
             if (!panActive || !term?.bridge?.scrollLines) return;
             if (e.touches && e.touches.length !== 1) return;
-            const y = e.clientY ?? e.touches?.[0]?.clientY ?? panY0;
-            const dy = y - panY0;
-            if (!panMoved && Math.abs(dy) < 6) return;
-            panMoved = true;
-            // Finger up → content follows finger → show older history (negative lines).
-            // dy>0 (finger down) ⇒ scrollLines negative.
-            panAccum += -dy;
-            panY0 = y;
-            const rh = rhOf();
-            if (Math.abs(panAccum) < rh) {
-                if (panMoved) e.preventDefault?.();
-                return;
-            }
-            const lines = Math.trunc(panAccum / rh);
-            panAccum -= lines * rh;
-            if (lines) {
-                e.preventDefault?.();
-                scrollTerminalHistoryLines(lines, 'touch-pan');
-            }
+            const y = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
+            const result = historyGesture.move(y, e.timeStamp || performance.now());
+            if (result.moved) e.preventDefault?.();
         };
-        const onPanEnd = () => {
+        const onPanEnd = (e) => {
+            if (!panActive) return;
             panActive = false;
-            panMoved = false;
-            panAccum = 0;
+            historyGesture.end({ cancel: e?.type === 'pointercancel' || e?.type === 'touchcancel' });
+            try { if (e?.pointerId != null) wtermWrapper.releasePointerCapture?.(e.pointerId); } catch (_) {}
         };
         // Prefer PointerEvent when available (one path). Dual touch+pointer on
         // Android doubles every scrollLines → 2× full paint jank.

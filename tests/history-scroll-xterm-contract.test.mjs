@@ -10,7 +10,7 @@ describe('xterm history scroll (no black slab)', () => {
   it('uses ydisp metrics not DOM scrollTop', () => {
     assert.match(js, /getXtermHistoryMetrics/);
     assert.match(js, /scrollTerminalHistoryLines/);
-    assert.match(js, /touch-pan/);
+    assert.match(js, /createTerminalHistoryGesture/);
     assert.match(js, /ybase - ydisp|rowsAbove/);
   });
   it('does not flex-end black void on mobile xterm viewport', () => {

@@ -108,7 +108,12 @@ class WTerm {
       }
       if (!deltaLines) return;
       const core = this.bridge;
+      const before = Number(core.getViewportY?.());
       core.scrollLines?.(deltaLines);
+      const after = Number(core.getViewportY?.());
+      if (Number.isFinite(before) && Number.isFinite(after) && after === before) {
+        this._wheelAccum = 0;
+      }
       this._shouldScrollToBottom = this._isScrolledToBottom();
       this._scheduleRender();
     });
