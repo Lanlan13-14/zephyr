@@ -14396,7 +14396,9 @@ html.mobile-stable-input .terminal-topbar {
         transform: none !important;
         transition: none !important;
         box-shadow: none !important;
-        /* Closed: keep home-indicator safe area. Open: page already above IME. */
+        /* Closed: keep a deterministic 2px floor; the final open override
+           removes safe-area padding because the page already ends above IME. */
+        padding-bottom: 2px !important;
         padding-bottom: max(2px, env(safe-area-inset-bottom)) !important;
     }
     /*

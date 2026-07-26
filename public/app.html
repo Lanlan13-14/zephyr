@@ -914,6 +914,7 @@
             <div class="form-group connection-secret-reveal" id="connSecretRevealGroup"><button type="button" class="link-btn" id="revealConnSecrets" data-i18n="查看已保存密码/私钥">查看已保存密码/私钥</button><p class="field-hint" id="connSecretRevealHint" data-i18n="编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。">编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。</p></div>
             <div class="form-group"><label data-i18n="私钥">私钥</label><textarea id="connPrivateKey" placeholder="-----BEGIN RSA PRIVATE KEY-----"></textarea></div>
             <section class="rdp-settings-panel force-hidden" id="rdpSettingsPanel" aria-label="RDP 设置" data-i18n-aria-label="RDP 设置">
+                <select id="rdpPipeline" class="force-hidden" aria-hidden="true" tabindex="-1"><option value="worker-gpu-v2" selected>Worker GPU v2</option></select>
                 <h3 data-i18n="设备和音频重定向">设备和音频重定向</h3>
                 <div class="advanced-route-divider"></div>
                 <div class="form-group rdp-select-group"><label for="rdpSoundMode" data-i18n="音频播放">音频播放</label><select id="rdpSoundMode"><option value="local" data-i18n="在此设备上播放声音">在此设备上播放声音</option><option value="remote" data-i18n="在远程计算机上播放">在远程计算机上播放</option><option value="off" data-i18n="不播放">不播放</option></select></div>

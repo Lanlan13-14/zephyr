@@ -23,7 +23,7 @@ test('workspace autosaves and excludes transient tabs', () => {
   assert.match(js, /filter\(\(t\) => t\.connectionId && !t\.transient\)/);
   assert.match(js, /scheduleWorkspaceSave\('terminal-tabs'\)/);
   assert.match(js, /addEventListener\('pagehide'/);
-  assert.match(js, /addEventListener\('beforeunload'/);
+  assert.doesNotMatch(js, /addEventListener\('beforeunload'/);
   assert.match(js, /visibilitychange/);
   assert.match(js, /keepalive:\s*true/);
   assert.match(js, /scheduleWorkspaceSave\('open-connection',\s*\{\s*immediate:\s*true\s*\}\)/);

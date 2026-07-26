@@ -1,5 +1,10 @@
 /* Telnet terminal page — no SFTP / Docker / remote stats. Fork of terminal.js. */
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
+import {
+    fitWTerm as xtermFitWTerm,
+    proposeDimensions as xtermProposeDimensions,
+    getWTermCellMetrics as xtermGetCellMetrics,
+} from './wterm-xterm-fit.js?v=20260726-telnet-routes1';
 import { t, initI18n } from './i18n/runtime.js?v=20260726-telnet-routes1';
 window.__zephyrT = t;
 import {
@@ -2428,13 +2433,24 @@ function getMeasuredTerminalSize() {
     const style = getComputedStyle(wtermWrapper);
     const paddingX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
     const paddingY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
-    const { lineHeight, charWidth } = getTerminalCharMetrics();
-    let effectiveHeight = Math.max(0, rect.height - paddingY);
-    const effectiveWidth = Math.max(0, rect.width - paddingX);
-    const measuredRows = Math.max(2, Math.floor(effectiveHeight / Math.max(1, lineHeight)));
-    const measuredCols = Math.max(20, Math.floor(effectiveWidth / Math.max(1, charWidth)));
-    const rows = Math.min(200, measuredRows);
-    const cols = Math.min(500, measuredCols);
+    const fallback = getTerminalCharMetrics();
+    const fitMetrics = xtermGetCellMetrics(term, wtermWrapper);
+    const charWidth = fitMetrics.cellWidth || fallback.charWidth;
+    const lineHeight = fitMetrics.cellHeight || fallback.lineHeight;
+    const termEl = term?.element || wtermWrapper;
+    const fit = xtermProposeDimensions({
+        element: termEl,
+        parentElement: termEl?.parentElement || terminalContainer || wtermWrapper,
+        cellWidth: charWidth,
+        cellHeight: lineHeight,
+        scrollbarWidth: 0,
+    });
+    const effectiveHeight = Math.max(0, fit?.availableHeight ?? (rect.height - paddingY));
+    const effectiveWidth = Math.max(0, fit?.availableWidth ?? (rect.width - paddingX));
+    const measuredRows = fit?.rows ?? Math.floor(effectiveHeight / Math.max(1, lineHeight));
+    const measuredCols = fit?.cols ?? Math.floor(effectiveWidth / Math.max(1, charWidth));
+    const rows = Math.min(200, Math.max(2, measuredRows));
+    const cols = Math.min(500, Math.max(20, measuredCols));
     return {
         cols,
         rows,
@@ -8693,6 +8709,12 @@ function scheduleSshKbGeometryFit(reason, layoutOpen, wasFollowing) {
     if (sig === _sshKbLastFitSignature && now - _sshKbLastFitAt < 80) return;
     _sshKbLastFitSignature = sig;
     _sshKbLastFitAt = now;
+    const fitCurrentGeometry = (label) => xtermFitWTerm({
+        term,
+        wrapper: wtermWrapper,
+        reason: label,
+        resize: (cols, rows, resizeReason) => resizeWTermSafely(cols, rows, resizeReason),
+    });
 
     const hardStickBottom = (label) => {
         if (!wasFollowing && !layoutOpen) {
@@ -8744,24 +8766,25 @@ function scheduleSshKbGeometryFit(reason, layoutOpen, wasFollowing) {
         });
     };
 
-    // Viewport-only settle: CSS already applied --ssh-kb-inset. Do NOT resize grid.
-    // Single rAF + one stick. No multi-phase normalize/fit (that flashed the page).
+    // Container geometry has committed: use the xterm FitAddon port as the
+    // single cols/rows writer, then restore bottom-follow intent.
     const settleViewport = (label) => {
         if (_sshKbLastFitSignature !== sig) return null;
         if (!term || !wtermWrapper) return null;
+        const fit = fitCurrentGeometry(label);
         const box = terminalContainer || wtermWrapper;
         const rect = box.getBoundingClientRect?.() || { width: 0, height: 0 };
         const h = Math.round(rect.height || 0);
         const w = Math.round(rect.width || 0);
-        const rows = Number(term.rows ?? term.bridge?.getRows?.() ?? 0);
-        const cols = Number(term.cols ?? term.bridge?.getCols?.() ?? 0);
+        const rows = Number(fit.rows || term.rows || term.bridge?.getRows?.() || 0);
+        const cols = Number(fit.cols || term.cols || term.bridge?.getCols?.() || 0);
         console.info('[ssh-kb-viewport-only]', {
             reason: label,
             layoutOpen: !!layoutOpen,
             boxH: h, boxW: w,
             cols, rows,
             inset: _sshKbInsetCache || 0,
-            resized: false,
+            resized: !!fit.changed,
             draftLen: 0,
         });
         logTerminalLayoutDiagnostics?.('ssh-kb-viewport-only', {
@@ -8771,7 +8794,7 @@ function scheduleSshKbGeometryFit(reason, layoutOpen, wasFollowing) {
         hardStickBottom(`${label}:stick`);
         // Keyboard shell changed height — re-pin caret above tools (clip + shift).
         scheduleEnsureActiveLineAboveChrome(`${label}:kb-shell`);
-        return { cols, rows, resized: false };
+        return { cols, rows, resized: !!fit.changed };
     };
 
     requestAnimationFrame(() => settleViewport(`${reason}:vp-raf`));
@@ -9112,8 +9135,10 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
     // because commitComposedImeText arms suppress only AFTER a successful send.
     // Case-insensitive: compositionend "Kimi" after Enter flush "kimi".
     const duplicateWindow = paste ? 320 : (payload.length > 1 ? 320 : 100);
+    // Dedup by payload content only: browser input/composition sources can
+    // deliver the same committed text through different event paths.
     if (mobileImeLastSent.text
-        && imeTextEqual(mobileImeLastSent.text, payload)
+        && mobileImeLastSent.text === payload
         && now - mobileImeLastSent.at < duplicateWindow) {
         return false;
     }
@@ -10702,14 +10727,10 @@ function patchWTermScrollBehavior() {
                 };
             },
             follow(reason = 'viewport-follow', opts = {}) {
-                // Mobile: chrome-pin only. Do NOT ask fork to maxScroll-stick.
                 followTerminalBottomNow(reason, { force: true, ...opts });
                 setTerminalAutoFollow(true, reason);
                 if (!isMobileStableInputMode()) forkViewport.follow();
-                else {
-                    try { term.lockBottom?.(); } catch (_) {}
-                    try { term._shouldScrollToBottom = false; } catch (_) {}
-                }
+                else { term.lockBottom?.(); term._shouldScrollToBottom = false; }
             },
             lock(reason = 'viewport-lock') {
                 setTerminalAutoFollow(false, reason);
@@ -10731,11 +10752,13 @@ function patchWTermScrollBehavior() {
         if (typeof term.resize === 'function' && !term._zephyrOriginalResize) {
             term._zephyrOriginalResize = term.resize.bind(term);
         }
-        if (typeof term.scrollToBottom === 'function' && !term._zephyrOriginalScrollToBottom) {
-            term._zephyrOriginalScrollToBottom = term.scrollToBottom.bind(term);
+        const publicScrollToBottom = term['scrollToBottom'];
+        if (typeof publicScrollToBottom === 'function' && !term._zephyrOriginalScrollToBottom) {
+            term._zephyrOriginalScrollToBottom = publicScrollToBottom.bind(term);
         }
-        if (typeof term._scrollToBottom === 'function' && !term._zephyrOriginal_scrollToBottom) {
-            term._zephyrOriginal_scrollToBottom = term._scrollToBottom.bind(term);
+        const privateScrollToBottom = term['_scrollToBottom'];
+        if (typeof privateScrollToBottom === 'function' && !term._zephyrOriginal_scrollToBottom) {
+            term._zephyrOriginal_scrollToBottom = privateScrollToBottom.bind(term);
         }
 
         // Mobile fork (xterm model):
@@ -10749,20 +10772,8 @@ function patchWTermScrollBehavior() {
                 if (terminalAutoFollowEnabled || mobileStableLastBottomIntent) term.followBottom?.();
                 else term.lockBottom?.();
             } catch (_) {}
-            if (typeof term._doRender === 'function' && !term._zephyrDoRenderPinned) {
-                term._zephyrDoRenderPinned = true;
-                const originalDoRenderFork = term._doRender.bind(term);
-                term._doRender = () => {
-                    const el = term.element || wtermWrapper;
-                    const keepTop = isProgrammaticTerminalScroll ? (el?.scrollTop ?? null) : null;
-                    const result = originalDoRenderFork();
-                    // WTerm forces scrollTop=0 when !hasScrollback; restore after IME stick.
-                    if (keepTop != null && el && Math.abs((el.scrollTop || 0) - keepTop) > 1) {
-                        el.scrollTop = keepTop;
-                    }
-                    return result;
-                };
-            }
+            // The fork owns rendering and native xterm viewport state. Do not
+            // replace _doRender or scrollToBottom on the public-viewport path.
         }
         return;
     }
@@ -10858,8 +10869,9 @@ function patchWTermScrollBehavior() {
 
     if (originalResize) {
         term._zephyrOriginalResize = originalResize;
-        if (typeof term.scrollToBottom === 'function' && !term._zephyrOriginalScrollToBottom) {
-            term._zephyrOriginalScrollToBottom = term.scrollToBottom.bind(term);
+        const publicScrollToBottom = term['scrollToBottom'];
+        if (typeof publicScrollToBottom === 'function' && !term._zephyrOriginalScrollToBottom) {
+            term._zephyrOriginalScrollToBottom = publicScrollToBottom.bind(term);
         }
         term.resize = (cols, rows) => {
             // FitAddon IME path sets runWithMobileStableResizeBypass.active — must shrink.

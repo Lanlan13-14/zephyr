@@ -111,13 +111,17 @@ class SmtpStub {
             }
         });
     }
-    async waitForMessage(count, timeoutMs = 8000) {
+    async waitForMessage(count, timeoutMs = 8000, predicate = null) {
         const deadline = Date.now() + timeoutMs;
-        while (this.messages.length < count && Date.now() < deadline) {
+        while (Date.now() < deadline) {
+            if (this.messages.length >= count) {
+                const candidates = this.messages.slice(Math.max(0, count - 1)).map(decodeMail);
+                const match = predicate ? candidates.find(predicate) : candidates[0];
+                if (match) return match;
+            }
             await new Promise((r) => setTimeout(r, 100));
         }
-        assert.ok(this.messages.length >= count, `expected ${count} mails, got ${this.messages.length}`);
-        return decodeMail(this.messages[this.messages.length - 1]);
+        assert.fail(`expected matching mail from ${count}, got ${this.messages.length}`);
     }
     async close() { await new Promise((r) => this.server.close(r)); }
 }
@@ -265,7 +269,7 @@ test('TOTP + email: both factors required, notification email carries the rollba
     mailSeq = smtp.messages.length;
     const req = await server.api(cookie, 'POST', '/api/auth/change-password/request-code', {});
     assert.equal(req.status, 200, JSON.stringify(req.body));
-    const codeMail = await smtp.waitForMessage(mailSeq + 1);
+    const codeMail = await smtp.waitForMessage(mailSeq + 1, 8000, (mail) => /验证码：[A-Za-z0-9_-]+/.test(mail));
     const emailCode = extractCode(codeMail);
 
     const emailOnly = await changePassword({ currentPassword: 'admin', newPassword: 'pw-both-1', emailCode });
@@ -278,7 +282,7 @@ test('TOTP + email: both factors required, notification email carries the rollba
     assert.equal(ok.body.notifiedByEmail, true);
     assert.equal(ok.body.rollbackUrl, undefined, 'link must travel by email only');
 
-    const notify = await smtp.waitForMessage(mailSeq + 1);
+    const notify = await smtp.waitForMessage(mailSeq + 1, 8000, (mail) => /password-rollback\?token=/.test(mail));
     assert.match(notify, /您的 Zephyr 账号密码刚刚被修改。/);
     assert.match(notify, /Your Zephyr account password was just changed\./);
     assert.match(notify, /链接有效期至/);
@@ -303,7 +307,7 @@ test('email-only (TOTP disabled): email code required, code single-use', async (
 
     mailSeq = smtp.messages.length;
     await server.api(cookie, 'POST', '/api/auth/change-password/request-code', {});
-    const codeMail = await smtp.waitForMessage(mailSeq + 1);
+    const codeMail = await smtp.waitForMessage(mailSeq + 1, 8000, (mail) => /验证码：[A-Za-z0-9_-]+/.test(mail));
     const emailCode = extractCode(codeMail);
 
     const wrong = await changePassword({ currentPassword: 'admin', newPassword: 'pw-mail-1', emailCode: 'wrong-code' });

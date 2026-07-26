@@ -82,7 +82,7 @@ test('terminal.html loads fork terminal.css (not stock @wterm/dom)', () => {
         'must load fork terminal.css');
     assert.ok(!/\/vendor\/@wterm\/dom\/terminal\.css/.test(terminalHtml),
         'must not load stock terminal.css as primary');
-    assert.ok(/20260721-cursor-metrics1/.test(terminalHtml), 'cache-bust present');
+    assert.ok(/20260726-telnet-routes1/.test(terminalHtml), 'current cache-bust present');
 });
 
 test('getTerminalCharMetrics prefers term.getCellMetrics (no Math.max multi-source)', () => {
@@ -143,6 +143,6 @@ test('mobile CSS does not hard-code line-height:1.35 on term-row', () => {
     );
 });
 
-test('wterm fork import uses cursor-metrics cache-bust', () => {
-    assert.ok(/wterm-fork\/index\.js\?v=20260721-cursor-metrics1/.test(terminalJs));
+test('wterm fork import uses the current cache-bust', () => {
+    assert.ok(/wterm-fork\/index\.js\?v=20260723-sync2/.test(terminalJs));
 });

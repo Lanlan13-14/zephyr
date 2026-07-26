@@ -3782,6 +3782,7 @@ function postParentShellManaged(activeFrame, {
     keyboardTop = 0,
     screenInset = 0,
     shellH = 0,
+    frameKeyboardOverlap = 0,
     heightSource = '',
     reason = 'parent-shell',
 } = {}) {
@@ -3791,8 +3792,10 @@ function postParentShellManaged(activeFrame, {
             source: 'zephyr-app',
             type: 'keyboard-overlap',
             keyboardOpen: !!open,
-            // Parent already cropped iframe: child page is 100% of cropped height.
+            // Parent already cropped iframe: child layout overlap stays zero;
+            // frameKeyboardOverlap records the exact pre-crop physical overlap.
             keyboardOverlap: 0,
+            frameKeyboardOverlap: Math.round(frameKeyboardOverlap || 0),
             parentShellManaged: true,
             keyboardTop: Math.round(keyboardTop || 0),
             parentInset: Math.round(screenInset || 0),
@@ -3982,7 +3985,8 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
     // Real height only. Provisional path removed — no fake open crop.
     const keyboardOpen = childOpen && effectiveInset >= 80;
 
-    // Stable SSH mobile: PARENT crops window-body to keyboard top. Child is 100% height.
+    // Stable SSH mobile (stable-overlay): parent owns the shell crop and keeps
+    // workspace geometry unclipped; child receives the exact iframe overlap.
     if (isStableInput && isCompact) {
         const liftMode = metrics.liftMode === 'none' || metrics.inputSource === 'cmd' || metrics.source === 'cmd'
             ? 'none'
@@ -4043,6 +4047,8 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             const now = Date.now();
             if (!sshKbParentLowSince) sshKbParentLowSince = now;
             if (now - sshKbParentLowSince >= 280) {
+                // Physical height authority: parent-physical-close owns the
+                // final close after visualViewport remains at baseline.
                 finalOpen = false;
                 sshKbParentLastGoodInset = 0;
                 sshKbParentLastGoodTop = 0;
@@ -4073,11 +4079,15 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
         let cropInset = effectiveInset;
 
         let crop = { shellH: 0, top: 0, kTop: cropTop };
+        const frameRect = activeFrame?.getBoundingClientRect?.();
+        const frameKeyboardOverlap = finalOpen && frameRect
+            ? Math.max(0, Math.round(frameRect.bottom - physicalKeyboardTop))
+            : 0;
         if (activeFrame) {
             crop = applyParentIframeShellToKeyboard(activeFrame, cropTop, finalOpen);
         }
 
-        const signature = `parent-shell:${finalOpen ? 1 : 0}:${crop.shellH || 0}:${cropTop}`;
+        const signature = `stable-overlay:${finalOpen ? 1 : 0}:${crop.shellH || 0}:${cropTop}:${frameKeyboardOverlap}`;
         if (signature === sshKbParentLastSignature) {
             sshKbParentOpen = finalOpen;
             if (finalOpen || sshKbParentAwaiting) startSshKbAlignLoop();
@@ -4111,6 +4121,7 @@ function applyTerminalWorkspaceKeyboard(metrics = {}) {
             keyboardTop: cropTop,
             screenInset: cropInset,
             shellH: crop.shellH,
+            frameKeyboardOverlap,
             heightSource,
             reason: metrics.reason || 'parent-shell',
         });
@@ -9772,11 +9783,11 @@ async function restoreLastWorkspace() {
             : [];
         const view = String(state.ui?.activeView || 'dashboard');
         const allowedView = ['dashboard', 'activity', 'terminal', 'remote', 'notes', 'settings'].includes(view) ? view : 'dashboard';
+        const preferTerminal = savedTabs.length > 0
+            && (allowedView === 'terminal' || savedTabs.some((t) => t.active));
         // Switch view first so the user lands on the terminal shell immediately,
         // then re-attach sessions underneath (with history replay).
-        if (savedTabs.length && (allowedView === 'terminal' || savedTabs.some((t) => t.active))) {
-            switchView('terminal');
-        }
+        if (preferTerminal) switchView('terminal');
         const snapshots = readTerminalSnapshots();
         const opened = new Map();
         const restoreTab = async (saved) => {
@@ -9828,8 +9839,9 @@ async function restoreLastWorkspace() {
         if (savedTerminal.splitX) terminalWorkspace?.style.setProperty('--workspace-split-x', savedTerminal.splitX);
         if (savedTerminal.splitY) terminalWorkspace?.style.setProperty('--workspace-split-y', savedTerminal.splitY);
         terminalSmartbarSide = savedTerminal.smartbarSide || terminalSmartbarSide;
-        switchView(allowedView);
-        if (allowedView === 'terminal') setTerminalSmartbarOpen(!!savedTerminal.smartbarOpen);
+        const restoredView = preferTerminal && terminalTabs.length ? 'terminal' : allowedView;
+        switchView(restoredView);
+        if (restoredView === 'terminal') setTerminalSmartbarOpen(!!savedTerminal.smartbarOpen);
 
         if (allowedView === 'settings') {
             const settingsKey = String(state.ui?.settingsSubTab || 'security');
