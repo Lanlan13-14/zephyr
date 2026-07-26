@@ -12407,7 +12407,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
             rows: 24,
             // xterm headless = VT/buffer/reflow; wterm DOM = paint/selection/IME shell.
             engine: 'xterm',
-            scrollback: 5000,
+            scrollback: 20000,
             // 滚动逻辑完全交给 DOM 层 write()/InputHandler；
             // resize 仍由项目层在“可见且尺寸稳定”时手动转发到 ssh2，避免隐藏 iframe/iOS 恢复时的 0px 瞬时尺寸破坏 PTY。
             autoResize: false,

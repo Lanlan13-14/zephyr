@@ -17,6 +17,7 @@ test('SSH and Telnet share the inertial history gesture controller', () => {
         assert.match(source, /historyGesture\.move\(y, e\.timeStamp/);
         assert.match(source, /historyGesture\.end\(\{ cancel:/);
         assert.doesNotMatch(source, /scrollRemainder \+= -dy/);
+        assert.match(source, /scrollback:\s*20000/);
     }
 });
 
