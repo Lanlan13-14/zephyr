@@ -120,7 +120,7 @@ class AiProviderService {
             hasApiKey: !!row.api_key_enc,
             createdAt: Number(row.created_at), updatedAt: Number(row.updated_at),
         };
-        if (includeSecret) out.apiKey = this._decryptKey(row);
+        if (includeSecret) Object.defineProperty(out, 'apiKey', { value: this._decryptKey(row), enumerable: false, configurable: true, writable: true });
         return out;
     }
 
