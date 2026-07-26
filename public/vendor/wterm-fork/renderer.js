@@ -904,5 +904,6 @@ export {
   buildCellStyle,
   linkifyRow,
   linkifyViewport,
+  resolveWrappedUrl,
   resolveQueryColor
 };

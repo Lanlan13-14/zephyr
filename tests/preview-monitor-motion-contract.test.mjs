@@ -42,9 +42,11 @@ test('monitor thumb geometry is CSS-driven and shadow-free', () => {
     assert.match(style, /\.monitor-tabs\.switching \.monitor-tab-thumb\s*\{\s*box-shadow:\s*none;/);
 });
 
-test('preview and monitor cache-bust versions advance together', () => {
-    const version = '20260720-telnet-ui-motion2';
-    for (const asset of ['style.css', 'image-preview.css', 'media-preview.css', 'image-preview.js', 'media-preview.js', 'terminal.js']) {
-        assert.match(html, new RegExp(`${asset.replaceAll('.', '\\.')}\\?v=${version}`), `${asset} cache version`);
+test('preview and monitor assets carry their current cache-busts', () => {
+    for (const asset of ['style.css', 'terminal.js']) {
+        assert.match(html, new RegExp(`${asset.replaceAll('.', '\\.')}\\?v=20260726-history-feel1`), `${asset} app cache version`);
+    }
+    for (const asset of ['image-preview.css', 'media-preview.css', 'image-preview.js', 'media-preview.js']) {
+        assert.match(html, new RegExp(`${asset.replaceAll('.', '\\.')}\\?v=20260725-telnet-page-split1`), `${asset} preview cache version`);
     }
 });

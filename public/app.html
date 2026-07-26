@@ -6,10 +6,10 @@
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="app.js?v=20260726-telnet-routes1">
+    <link rel="modulepreload" href="app.js?v=20260726-history-feel1">
     <link rel="modulepreload" href="theme-runtime.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-telnet-routes1">
-    <link rel="stylesheet" href="style.css?v=20260726-telnet-routes1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-history-feel1">
+    <link rel="stylesheet" href="style.css?v=20260726-history-feel1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -914,6 +914,7 @@
             <div class="form-group connection-secret-reveal" id="connSecretRevealGroup"><button type="button" class="link-btn" id="revealConnSecrets" data-i18n="查看已保存密码/私钥">查看已保存密码/私钥</button><p class="field-hint" id="connSecretRevealHint" data-i18n="编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。">编辑时默认隐藏敏感信息；留空或保持星号不会覆盖已保存凭据。</p></div>
             <div class="form-group"><label data-i18n="私钥">私钥</label><textarea id="connPrivateKey" placeholder="-----BEGIN RSA PRIVATE KEY-----"></textarea></div>
             <section class="rdp-settings-panel force-hidden" id="rdpSettingsPanel" aria-label="RDP 设置" data-i18n-aria-label="RDP 设置">
+                <select id="rdpPipeline" class="force-hidden" aria-hidden="true" tabindex="-1"><option value="worker-gpu-v2" selected>Worker GPU v2</option></select>
                 <h3 data-i18n="设备和音频重定向">设备和音频重定向</h3>
                 <div class="advanced-route-divider"></div>
                 <div class="form-group rdp-select-group"><label for="rdpSoundMode" data-i18n="音频播放">音频播放</label><select id="rdpSoundMode"><option value="local" data-i18n="在此设备上播放声音">在此设备上播放声音</option><option value="remote" data-i18n="在远程计算机上播放">在远程计算机上播放</option><option value="off" data-i18n="不播放">不播放</option></select></div>
@@ -1025,7 +1026,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260726-telnet-routes1" type="module"></script>
+    <script src="app.js?v=20260726-history-feel1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

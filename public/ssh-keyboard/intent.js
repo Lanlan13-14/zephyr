@@ -341,6 +341,17 @@ export function createKeyboardIntentStore(host = {}, thresholds = {}) {
         }
 
         // Physical was confirmed, now low — standalone system-dismiss path.
+        // A focused editable proxy is still authoritative open intent. Android
+        // overlays-content can report zero visual inset while the IME remains
+        // attached to that focused proxy; closing here makes the keyboard
+        // disappear under transient viewport jitter.
+        if (hasEditableFocus) {
+            state.physical = Intent.OPEN;
+            state.inset = Math.max(state.inset, inset);
+            lowSince = 0;
+            log('low-inset-focused-proxy', { inset });
+            return emit('sync:focused');
+        }
         const lowFor = lowSince ? now - lowSince : 0;
         const sinceOpen = now - state.lastOpenAt;
         const inGuard = sinceOpen < t.openGuardMs;

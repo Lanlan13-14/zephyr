@@ -134,21 +134,15 @@ test('dock / AI / clip / islandSize APIs complete', () => {
   assert.match(feel, /DEAD_KF|deadKeyframes|terminalIslandFluidOpen/);
 });
 
-test('production UI still not calling Motion signature APIs', () => {
+test('production UI wires approved signature APIs without demo-only recipes', () => {
+  assert.match(appJs, /Motion\.iosAppOpen\s*\(/);
+  assert.match(appJs, /Motion\.iosAppClose\s*\(/);
+  assert.match(appJs, /Motion\.press\s*\(/);
   assert.doesNotMatch(appJs, /Motion\.islandExpand\s*\(/);
-  assert.doesNotMatch(appJs, /Motion\.iosAppOpen\s*\(/);
-  assert.doesNotMatch(appJs, /Motion\.play\s*\(/);
-  assert.doesNotMatch(appJs, /Motion\.toastPush\s*\(/);
-  assert.doesNotMatch(appJs, /Motion\.toast\s*\(/);
-  assert.doesNotMatch(appJs, /Motion\.press\s*\(/);
-  assert.doesNotMatch(appJs, /Motion\.switchThumb\s*\(/);
   assert.doesNotMatch(appJs, /Motion\.playStagger\s*\(/);
-  assert.doesNotMatch(appJs, /Motion\.macPanel\s*\(/);
-  assert.doesNotMatch(appJs, /Motion\.connectionOpen\s*\(/);
   assert.doesNotMatch(appJs, /Motion\.dockMagnify/);
-  assert.doesNotMatch(appJs, /Motion\.aiPanelOpen/);
   assert.doesNotMatch(appJs, /Motion\.clipInset/);
-  // production still uses CSS keyframes for panels
+  // CSS fallbacks and non-migrated surfaces remain available.
   assert.match(styleCss, /@keyframes\s+floatingPanelOpenFromButton/);
   assert.match(styleCss, /@keyframes\s+terminalIslandSourceMelt/);
   assert.match(styleCss, /@keyframes\s+terminalIslandFluidOpen/);

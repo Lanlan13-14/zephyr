@@ -44,5 +44,5 @@ test('terminal wires tabs, conflict, workspace search', () => {
     assert.match(html, /fmEditorTabs|data-editor-role="tabs"/);
     assert.match(html, /workspace-search/);
     assert.match(html, /data-editor-role="sidepanel"/);
-    assert.match(html, /20260720-editor-p0p1/);
+    assert.match(html, /editor\/zephyr-editor\.(?:css|bundle\.js)\?v=20260725-telnet-page-split1/);
 });

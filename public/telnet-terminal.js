@@ -1,6 +1,11 @@
 /* Telnet terminal page — no SFTP / Docker / remote stats. Fork of terminal.js. */
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { t, initI18n } from './i18n/runtime.js?v=20260726-telnet-routes1';
+import {
+    fitWTerm as xtermFitWTerm,
+    proposeDimensions as xtermProposeDimensions,
+    getWTermCellMetrics as xtermGetCellMetrics,
+} from './wterm-xterm-fit.js?v=20260726-history-feel1';
+import { t, initI18n } from './i18n/runtime.js?v=20260726-history-feel1';
 window.__zephyrT = t;
 import {
     createSshKeyboard,
@@ -8,6 +13,7 @@ import {
     LiftMode as SoftKeyboardLiftMode,
 } from './ssh-keyboard/index.js?v=20260723-sync2';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
+import { createTerminalHistoryGesture } from './terminal-history-gesture.js?v=20260726-history-feel1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
     allowScrollDuringTyping,
@@ -2428,13 +2434,24 @@ function getMeasuredTerminalSize() {
     const style = getComputedStyle(wtermWrapper);
     const paddingX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
     const paddingY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
-    const { lineHeight, charWidth } = getTerminalCharMetrics();
-    let effectiveHeight = Math.max(0, rect.height - paddingY);
-    const effectiveWidth = Math.max(0, rect.width - paddingX);
-    const measuredRows = Math.max(2, Math.floor(effectiveHeight / Math.max(1, lineHeight)));
-    const measuredCols = Math.max(20, Math.floor(effectiveWidth / Math.max(1, charWidth)));
-    const rows = Math.min(200, measuredRows);
-    const cols = Math.min(500, measuredCols);
+    const fallback = getTerminalCharMetrics();
+    const fitMetrics = xtermGetCellMetrics(term, wtermWrapper);
+    const charWidth = fitMetrics.cellWidth || fallback.charWidth;
+    const lineHeight = fitMetrics.cellHeight || fallback.lineHeight;
+    const termEl = term?.element || wtermWrapper;
+    const fit = xtermProposeDimensions({
+        element: termEl,
+        parentElement: termEl?.parentElement || terminalContainer || wtermWrapper,
+        cellWidth: charWidth,
+        cellHeight: lineHeight,
+        scrollbarWidth: 0,
+    });
+    const effectiveHeight = Math.max(0, fit?.availableHeight ?? (rect.height - paddingY));
+    const effectiveWidth = Math.max(0, fit?.availableWidth ?? (rect.width - paddingX));
+    const measuredRows = fit?.rows ?? Math.floor(effectiveHeight / Math.max(1, lineHeight));
+    const measuredCols = fit?.cols ?? Math.floor(effectiveWidth / Math.max(1, charWidth));
+    const rows = Math.min(200, Math.max(2, measuredRows));
+    const cols = Math.min(500, Math.max(20, measuredCols));
     return {
         cols,
         rows,
@@ -8111,7 +8128,8 @@ function _flushHistoryScrollUi() {
 /** Drive xterm history by N rows (negative = into history / up). */
 function scrollTerminalHistoryLines(amount, reason = 'history-scroll') {
     const n = Math.trunc(Number(amount) || 0);
-    if (!n || !term) return false;
+    if (!n || !term) return 0;
+    const before = getXtermHistoryMetrics();
     try {
         if (typeof term.bridge?.scrollLines === 'function') {
             term.bridge.scrollLines(n);
@@ -8119,11 +8137,14 @@ function scrollTerminalHistoryLines(amount, reason = 'history-scroll') {
         } else if (typeof term.scrollLines === 'function') {
             term.scrollLines(n);
         } else {
-            return false;
+            return 0;
         }
     } catch (_) {
-        return false;
+        return 0;
     }
+    const after = getXtermHistoryMetrics();
+    const moved = Math.trunc((after?.ydisp || 0) - (before?.ydisp || 0));
+    if (!moved) return 0;
     // Defer lock/follow/chrome work to one rAF — touch pans fire many times/frame.
     _historyScrollUiPending = { reason: String(reason || 'history-scroll') };
     if (!_historyScrollUiRaf) {
@@ -8132,9 +8153,10 @@ function scrollTerminalHistoryLines(amount, reason = 'history-scroll') {
     logTerminalScrollDiagnostics?.('history-scroll-lines', {
         reason,
         amount: n,
-        ...((() => { try { return getXtermHistoryMetrics(); } catch (_) { return {}; } })() || {}),
+        moved,
+        ...(after || {}),
     });
-    return true;
+    return moved;
 }
  
 function getMobileStableFollowThreshold() {
@@ -8693,6 +8715,12 @@ function scheduleSshKbGeometryFit(reason, layoutOpen, wasFollowing) {
     if (sig === _sshKbLastFitSignature && now - _sshKbLastFitAt < 80) return;
     _sshKbLastFitSignature = sig;
     _sshKbLastFitAt = now;
+    const fitCurrentGeometry = (label) => xtermFitWTerm({
+        term,
+        wrapper: wtermWrapper,
+        reason: label,
+        resize: (cols, rows, resizeReason) => resizeWTermSafely(cols, rows, resizeReason),
+    });
 
     const hardStickBottom = (label) => {
         if (!wasFollowing && !layoutOpen) {
@@ -8744,24 +8772,25 @@ function scheduleSshKbGeometryFit(reason, layoutOpen, wasFollowing) {
         });
     };
 
-    // Viewport-only settle: CSS already applied --ssh-kb-inset. Do NOT resize grid.
-    // Single rAF + one stick. No multi-phase normalize/fit (that flashed the page).
+    // Container geometry has committed: use the xterm FitAddon port as the
+    // single cols/rows writer, then restore bottom-follow intent.
     const settleViewport = (label) => {
         if (_sshKbLastFitSignature !== sig) return null;
         if (!term || !wtermWrapper) return null;
+        const fit = fitCurrentGeometry(label);
         const box = terminalContainer || wtermWrapper;
         const rect = box.getBoundingClientRect?.() || { width: 0, height: 0 };
         const h = Math.round(rect.height || 0);
         const w = Math.round(rect.width || 0);
-        const rows = Number(term.rows ?? term.bridge?.getRows?.() ?? 0);
-        const cols = Number(term.cols ?? term.bridge?.getCols?.() ?? 0);
+        const rows = Number(fit.rows || term.rows || term.bridge?.getRows?.() || 0);
+        const cols = Number(fit.cols || term.cols || term.bridge?.getCols?.() || 0);
         console.info('[ssh-kb-viewport-only]', {
             reason: label,
             layoutOpen: !!layoutOpen,
             boxH: h, boxW: w,
             cols, rows,
             inset: _sshKbInsetCache || 0,
-            resized: false,
+            resized: !!fit.changed,
             draftLen: 0,
         });
         logTerminalLayoutDiagnostics?.('ssh-kb-viewport-only', {
@@ -8771,7 +8800,7 @@ function scheduleSshKbGeometryFit(reason, layoutOpen, wasFollowing) {
         hardStickBottom(`${label}:stick`);
         // Keyboard shell changed height — re-pin caret above tools (clip + shift).
         scheduleEnsureActiveLineAboveChrome(`${label}:kb-shell`);
-        return { cols, rows, resized: false };
+        return { cols, rows, resized: !!fit.changed };
     };
 
     requestAnimationFrame(() => settleViewport(`${reason}:vp-raf`));
@@ -9112,8 +9141,10 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
     // because commitComposedImeText arms suppress only AFTER a successful send.
     // Case-insensitive: compositionend "Kimi" after Enter flush "kimi".
     const duplicateWindow = paste ? 320 : (payload.length > 1 ? 320 : 100);
+    // Dedup by payload content only: browser input/composition sources can
+    // deliver the same committed text through different event paths.
     if (mobileImeLastSent.text
-        && imeTextEqual(mobileImeLastSent.text, payload)
+        && mobileImeLastSent.text === payload
         && now - mobileImeLastSent.at < duplicateWindow) {
         return false;
     }
@@ -10702,14 +10733,10 @@ function patchWTermScrollBehavior() {
                 };
             },
             follow(reason = 'viewport-follow', opts = {}) {
-                // Mobile: chrome-pin only. Do NOT ask fork to maxScroll-stick.
                 followTerminalBottomNow(reason, { force: true, ...opts });
                 setTerminalAutoFollow(true, reason);
                 if (!isMobileStableInputMode()) forkViewport.follow();
-                else {
-                    try { term.lockBottom?.(); } catch (_) {}
-                    try { term._shouldScrollToBottom = false; } catch (_) {}
-                }
+                else { term.lockBottom?.(); term._shouldScrollToBottom = false; }
             },
             lock(reason = 'viewport-lock') {
                 setTerminalAutoFollow(false, reason);
@@ -10731,11 +10758,13 @@ function patchWTermScrollBehavior() {
         if (typeof term.resize === 'function' && !term._zephyrOriginalResize) {
             term._zephyrOriginalResize = term.resize.bind(term);
         }
-        if (typeof term.scrollToBottom === 'function' && !term._zephyrOriginalScrollToBottom) {
-            term._zephyrOriginalScrollToBottom = term.scrollToBottom.bind(term);
+        const publicScrollToBottom = term['scrollToBottom'];
+        if (typeof publicScrollToBottom === 'function' && !term._zephyrOriginalScrollToBottom) {
+            term._zephyrOriginalScrollToBottom = publicScrollToBottom.bind(term);
         }
-        if (typeof term._scrollToBottom === 'function' && !term._zephyrOriginal_scrollToBottom) {
-            term._zephyrOriginal_scrollToBottom = term._scrollToBottom.bind(term);
+        const privateScrollToBottom = term['_scrollToBottom'];
+        if (typeof privateScrollToBottom === 'function' && !term._zephyrOriginal_scrollToBottom) {
+            term._zephyrOriginal_scrollToBottom = privateScrollToBottom.bind(term);
         }
 
         // Mobile fork (xterm model):
@@ -10749,20 +10778,8 @@ function patchWTermScrollBehavior() {
                 if (terminalAutoFollowEnabled || mobileStableLastBottomIntent) term.followBottom?.();
                 else term.lockBottom?.();
             } catch (_) {}
-            if (typeof term._doRender === 'function' && !term._zephyrDoRenderPinned) {
-                term._zephyrDoRenderPinned = true;
-                const originalDoRenderFork = term._doRender.bind(term);
-                term._doRender = () => {
-                    const el = term.element || wtermWrapper;
-                    const keepTop = isProgrammaticTerminalScroll ? (el?.scrollTop ?? null) : null;
-                    const result = originalDoRenderFork();
-                    // WTerm forces scrollTop=0 when !hasScrollback; restore after IME stick.
-                    if (keepTop != null && el && Math.abs((el.scrollTop || 0) - keepTop) > 1) {
-                        el.scrollTop = keepTop;
-                    }
-                    return result;
-                };
-            }
+            // The fork owns rendering and native xterm viewport state. Do not
+            // replace _doRender or scrollToBottom on the public-viewport path.
         }
         return;
     }
@@ -10858,8 +10875,9 @@ function patchWTermScrollBehavior() {
 
     if (originalResize) {
         term._zephyrOriginalResize = originalResize;
-        if (typeof term.scrollToBottom === 'function' && !term._zephyrOriginalScrollToBottom) {
-            term._zephyrOriginalScrollToBottom = term.scrollToBottom.bind(term);
+        const publicScrollToBottom = term['scrollToBottom'];
+        if (typeof publicScrollToBottom === 'function' && !term._zephyrOriginalScrollToBottom) {
+            term._zephyrOriginalScrollToBottom = publicScrollToBottom.bind(term);
         }
         term.resize = (cols, rows) => {
             // FitAddon IME path sets runWithMobileStableResizeBypass.active — must shrink.
@@ -12369,7 +12387,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API. DOM/input/viewport
         // stay wterm; core is XtermBridge over vendored xterm (see /xterm).
-        const module = await import('/vendor/wterm-fork/index.js?v=20260723-sync2');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260726-url-wrap1');
         WTermClass = module.WTerm;
     } catch {
         try {
@@ -12389,7 +12407,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
             rows: 24,
             // xterm headless = VT/buffer/reflow; wterm DOM = paint/selection/IME shell.
             engine: 'xterm',
-            scrollback: 5000,
+            scrollback: 20000,
             // 滚动逻辑完全交给 DOM 层 write()/InputHandler；
             // resize 仍由项目层在“可见且尺寸稳定”时手动转发到 ssh2，避免隐藏 iframe/iOS 恢复时的 0px 瞬时尺寸破坏 PTY。
             autoResize: false,
@@ -12427,50 +12445,47 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     // Touch vertical pan → xterm ydisp history (DOM scroll is disabled).
     if (!wtermWrapper._zephyrHistoryPanBound) {
         wtermWrapper._zephyrHistoryPanBound = true;
-        let panY0 = 0;
-        let panAccum = 0;
-        let panActive = false;
-        let panMoved = false;
         const rhOf = () => Math.max(1, term?.getViewportState?.()?.rowHeight
             || getTerminalCharMetrics?.()?.lineHeight || 17);
+        const historyGesture = createTerminalHistoryGesture({
+            scrollLines: (lines, reason) => scrollTerminalHistoryLines(lines, reason),
+            getRowHeight: rhOf,
+            onGestureStart: () => {
+                cancelTerminalBottomFollow('touch-history-start');
+                lockMobileTerminalAutoFollow('touch-history-start', 12000);
+                setTerminalAutoFollow(false, 'touch-history-start');
+                terminalUserScrolledAway = true;
+                terminalUserScrollGestureUntil = Date.now() + 12000;
+                wtermWrapper.classList.add('is-scrolling');
+            },
+            onGestureEnd: () => {
+                window.setTimeout(() => wtermWrapper.classList.remove('is-scrolling'), 140);
+            },
+        });
+        let panActive = false;
         const onPanStart = (e) => {
             if (!term?.bridge?.scrollLines) return;
             // One finger only; ignore multi-touch pinch.
             if (e.touches && e.touches.length !== 1) return;
-            if (e.pointerType && e.pointerType !== 'touch') return;
+            if (e.pointerType && e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
             if (mobileTerminalSelectionMode || hasLiveTerminalSelection?.()) return;
-            panY0 = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
-            panAccum = 0;
+            const y = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
             panActive = true;
-            panMoved = false;
+            historyGesture.start(y, e.timeStamp || performance.now());
+            try { if (e.pointerId != null) wtermWrapper.setPointerCapture?.(e.pointerId); } catch (_) {}
         };
         const onPanMove = (e) => {
             if (!panActive || !term?.bridge?.scrollLines) return;
             if (e.touches && e.touches.length !== 1) return;
-            const y = e.clientY ?? e.touches?.[0]?.clientY ?? panY0;
-            const dy = y - panY0;
-            if (!panMoved && Math.abs(dy) < 6) return;
-            panMoved = true;
-            // Finger up → content follows finger → show older history (negative lines).
-            // dy>0 (finger down) ⇒ scrollLines negative.
-            panAccum += -dy;
-            panY0 = y;
-            const rh = rhOf();
-            if (Math.abs(panAccum) < rh) {
-                if (panMoved) e.preventDefault?.();
-                return;
-            }
-            const lines = Math.trunc(panAccum / rh);
-            panAccum -= lines * rh;
-            if (lines) {
-                e.preventDefault?.();
-                scrollTerminalHistoryLines(lines, 'touch-pan');
-            }
+            const y = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
+            const result = historyGesture.move(y, e.timeStamp || performance.now());
+            if (result.moved) e.preventDefault?.();
         };
-        const onPanEnd = () => {
+        const onPanEnd = (e) => {
+            if (!panActive) return;
             panActive = false;
-            panMoved = false;
-            panAccum = 0;
+            historyGesture.end({ cancel: e?.type === 'pointercancel' || e?.type === 'touchcancel' });
+            try { if (e?.pointerId != null) wtermWrapper.releasePointerCapture?.(e.pointerId); } catch (_) {}
         };
         // Prefer PointerEvent when available (one path). Dual touch+pointer on
         // Android doubles every scrollLines → 2× full paint jank.

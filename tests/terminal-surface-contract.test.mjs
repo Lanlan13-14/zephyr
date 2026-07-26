@@ -72,8 +72,8 @@ test('contract: mobile fork uses xterm FitAddon 1:1 (native scrollToBottom, no p
     assert.doesNotMatch(body, /term\.scrollToBottom\s*=/);
 });
 
-test('contract: cache-bust kb-xterm-fit2', () => {
-    assert.match(terminalHtml, /20260721-kb-xterm-fit2/);
+test('contract: terminal assets use current cache-bust', () => {
+    assert.match(terminalHtml, /20260726-history-feel1/);
 });
 
 test('surface: pinScroll host is called; no direct scroll without host', () => {

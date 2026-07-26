@@ -3,7 +3,7 @@ import {
   XtermBridge,
   type TerminalCore,
 } from "@wterm/core";
-import { Renderer, resolveQueryColor } from "./renderer.js";
+import { Renderer, resolveQueryColor } from "./renderer.js?v=20260726-url-wrap1";
 import { CanvasRenderer } from "./canvas-renderer.js";
 import { InputHandler } from "./input.js";
 import { DebugAdapter } from "./debug.js";
@@ -367,9 +367,19 @@ export class WTerm {
       this._wheelAccum -= deltaLines * rh;
     }
     if (!deltaLines) return;
-    const core = this.bridge as { scrollLines?: (n: number) => void };
-    // onScroll already markAllDirty; one scheduled paint is enough.
+    const core = this.bridge as {
+      scrollLines?: (n: number) => void;
+      getViewportY?: () => number;
+    };
+    const before = Number(core.getViewportY?.());
+    // onScroll already marks only recycled edge rows; one paint is enough.
     core.scrollLines?.(deltaLines);
+    const after = Number(core.getViewportY?.());
+    // At a boundary, discard fractional pressure so reversing direction reacts
+    // immediately instead of first paying back a stale wheel accumulator.
+    if (Number.isFinite(before) && Number.isFinite(after) && after === before) {
+      this._wheelAccum = 0;
+    }
     this._shouldScrollToBottom = this._isScrolledToBottom();
     this._scheduleRender();
   };

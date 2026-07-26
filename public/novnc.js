@@ -1,5 +1,5 @@
 import RFB from '/vendor/novnc/core/rfb.js';
-import { t, initI18n } from './i18n/runtime.js?v=20260726-telnet-routes1';
+import { t, initI18n } from './i18n/runtime.js?v=20260726-history-feel1';
 import KeyTable from '/vendor/novnc/core/input/keysym.js';
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 
