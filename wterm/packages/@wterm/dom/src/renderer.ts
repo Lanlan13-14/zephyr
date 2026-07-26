@@ -124,89 +124,212 @@ function safeHyperlink(uri: string | null): string | null {
   } catch { return null; }
 }
 
+/**
+ * Soft-wrap continuation of a URL path/query (no scheme on later rows).
+ * Intentionally stricter than "non-space": shell prompts like
+ * `root@zephyr-ssh:~#` must NOT be glued onto the previous URL.
+ */
 const URL_CONT_RE = /^[A-Za-z0-9/._~%&=+\-?#]+/;
+/** Start of a URL on a row (scheme required). */
 const URL_START_RE = /https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)}\]]?/g;
+/** URL that already ends like a finished resource (file/query/hash). */
 const URL_LOOKS_COMPLETE_RE = /(?:\/|[.](?:html?|php|aspx?|jsp|json|xml|pdf|png|jpe?g|gif|webp|svg|css|js|mjs|ts|md|txt|zip|tar|gz|tgz|bz2|xz|7z|rar|mp[34]|wav|avi|mov|webm|ico|woff2?|ttf|eot|csv|tsv|yaml|yml|toml|ini|cfg|log|sh|py|go|rs|java|c|cpp|h|rb|pl|lua))(?:[?#][^\s]*)?$/i;
 
-function trimUrlTrailingPunct(url: string): string {
-  return String(url || '').replace(/[.,;:!?)}\]]+$/g, '');
-}
-function isShellPromptLine(text = ''): boolean {
-  const s = String(text || '').trimStart();
-  return !!s && (/^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:/.test(s) || /^[#$%❯➜]\s?/.test(s) || /^~?[\/\w.-]*[%#]\s*$/.test(s));
-}
-function isUrlSoftWrapContinuation(url: string, nextLine: string): boolean {
-  const next = String(nextLine || '');
-  if (!next || /^https?:\/\//i.test(next.trimStart()) || isShellPromptLine(next) || /^\s/.test(next) || !URL_CONT_RE.test(next)) return false;
-  if (URL_LOOKS_COMPLETE_RE.test(url)) return /^[/?#&]/.test(next);
-  return !/^[A-Za-z0-9_.-]+@/.test(next);
-}
-export function resolveWrappedUrl(texts: string[], startRow: number, startIdx: number, matchLen: number): { url: string; segments: { row: number; start: number; end: number }[] } {
-  let url = String(texts[startRow] || '').slice(startIdx, startIdx + matchLen);
-  const segments = [{ row: startRow, start: startIdx, end: startIdx + matchLen }];
-  let row = startRow, end = startIdx + matchLen;
-  while (row + 1 < texts.length) {
-    const current = String(texts[row] || '');
-    if (/\S/.test(current.slice(end))) break;
-    const next = String(texts[row + 1] || '');
-    if (!isUrlSoftWrapContinuation(url, next)) break;
-    const match = next.match(URL_CONT_RE);
-    const piece = trimUrlTrailingPunct(match?.[0] || '');
-    if (!piece) break;
-    url += piece;
-    row += 1;
-    end = piece.length;
-    segments.push({ row, start: 0, end });
-    if (/\S/.test(next.slice(end))) break;
-  }
-  return { url: trimUrlTrailingPunct(url), segments };
-}
-function unwrapAutoLinks(row: HTMLElement): void {
-  row.querySelectorAll('a.term-auto-link').forEach((anchor) => {
-    const parent = anchor.parentNode;
+function unwrapAutoLinks(row) {
+  if (!row) return;
+  row.querySelectorAll("a.term-auto-link").forEach((a) => {
+    const parent = a.parentNode;
     if (!parent) return;
-    while (anchor.firstChild) parent.insertBefore(anchor.firstChild, anchor);
-    parent.removeChild(anchor);
+    while (a.firstChild) parent.insertBefore(a.firstChild, a);
+    parent.removeChild(a);
     parent.normalize?.();
   });
 }
-function wrapTextRangeInRow(row: HTMLElement, start: number, end: number, href: string): boolean {
+
+/**
+ * Map a [start, end) char range in row.textContent onto text nodes and wrap
+ * with <a class="term-hyperlink term-auto-link" href=...>.
+ */
+function wrapTextRangeInRow(row, start, end, href) {
+  if (!row || end <= start || !href) return false;
+  // Skip if any part of the range is already inside a hyperlink (OSC8 / prior).
+  const walker0 = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+  let node0, off0 = 0;
+  while ((node0 = walker0.nextNode())) {
+    const len = node0.textContent?.length || 0;
+    const nStart = off0;
+    const nEnd = off0 + len;
+    if (nEnd > start && nStart < end) {
+      if (node0.parentElement?.closest?.("a.term-hyperlink")) return false;
+    }
+    off0 += len;
+  }
   const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-  let node: Node | null, offset = 0, startNode: Text | null = null, endNode: Text | null = null, startOffset = 0, endOffset = 0;
+  let node, offset = 0, startNode = null, endNode = null, startOffset = 0, endOffset = 0;
   while ((node = walker.nextNode())) {
     const len = node.textContent?.length || 0;
-    if (offset + len > start && offset < end && (node as Text).parentElement?.closest?.('a.term-hyperlink')) return false;
-    if (!startNode && start >= offset && start <= offset + len) { startNode = node as Text; startOffset = start - offset; }
-    if (end >= offset && end <= offset + len) { endNode = node as Text; endOffset = end - offset; break; }
+    if (!startNode && start >= offset && start <= offset + len) {
+      startNode = node;
+      startOffset = start - offset;
+    }
+    if (end >= offset && end <= offset + len) {
+      endNode = node;
+      endOffset = end - offset;
+      break;
+    }
     offset += len;
   }
   if (!startNode || !endNode) return false;
-  const range = document.createRange(); range.setStart(startNode, startOffset); range.setEnd(endNode, endOffset);
-  const anchor = document.createElement('a'); anchor.className = 'term-hyperlink term-auto-link'; anchor.href = href; anchor.target = '_blank'; anchor.rel = 'noopener noreferrer'; anchor.appendChild(range.extractContents()); range.insertNode(anchor);
-  return true;
-}
-export function linkifyViewport(rowEls: HTMLElement[]): void {
-  if (!rowEls?.length) return;
-  const texts = rowEls.map((row) => row?.textContent || '');
-  rowEls.forEach(unwrapAutoLinks);
-  const jobs: { row: number; start: number; end: number; href: string }[] = [];
-  texts.forEach((text, row) => {
-    URL_START_RE.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = URL_START_RE.exec(text))) {
-      const resolved = resolveWrappedUrl(texts, row, match.index, match[0].length);
-      const href = safeHyperlink(resolved.url);
-      if (href) resolved.segments.forEach((segment) => jobs.push({ ...segment, href }));
-      URL_START_RE.lastIndex = match.index + Math.max(1, match[0].length);
-    }
-  });
-  jobs.sort((a, b) => (b.row - a.row) || (b.start - a.start));
-  jobs.forEach((job) => wrapTextRangeInRow(rowEls[job.row], job.start, job.end, job.href));
-}
-export function linkifyRow(row: HTMLElement): void {
-  linkifyViewport([row]);
+  try {
+    const range = document.createRange();
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endOffset);
+    const anchor = document.createElement("a");
+    anchor.className = "term-hyperlink term-auto-link";
+    anchor.href = href;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.appendChild(range.extractContents());
+    range.insertNode(anchor);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
+/**
+ * Strip trailing URL punctuation that is usually not part of the link.
+ */
+function trimUrlTrailingPunct(url) {
+  return String(url || "").replace(/[.,;:!?)}\]]+$/g, "");
+}
+
+/**
+ * Next terminal line is a shell prompt / new command, not a soft-wrapped URL tail.
+ * Examples: `root@zephyr-ssh:~#`, `user@host:~$`, `$ `, `# `, `❯ `
+ */
+function isShellPromptLine(text = "") {
+  const s = String(text || "").trimStart();
+  if (!s) return false;
+  // user@host:…# / user@host:…$  (common bash/zsh PS1)
+  if (/^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:/.test(s)) return true;
+  // bare prompt markers
+  if (/^[#$%❯➜]\s?/.test(s)) return true;
+  // zsh/fish-ish: path followed by %#
+  if (/^~?[\/\w.-]*[%#]\s*$/.test(s)) return true;
+  return false;
+}
+
+/**
+ * Soft-wrap path continuation only (not a new shell line).
+ * Real wrap: mid-path `…/wterm-fo` + `rk/renderer.js`
+ * Not wrap:  `….html` + `root@host:~#`
+ */
+function isUrlSoftWrapContinuation(urlSoFar, nextLine) {
+  const next = String(nextLine || "");
+  if (!next) return false;
+  if (/^https?:\/\//i.test(next.trimStart())) return false;
+  if (isShellPromptLine(next)) return false;
+  // Leading whitespace ⇒ new visual line / indent, not soft wrap of URL.
+  if (/^\s/.test(next)) return false;
+  // Must start with path/query-ish characters.
+  if (!URL_CONT_RE.test(next)) return false;
+  // Finished resource (.html, .json, /…) — only continue for query/hash/path slash.
+  if (URL_LOOKS_COMPLETE_RE.test(urlSoFar)) {
+    return /^[/?#&]/.test(next);
+  }
+  // Mid-token wrap: next should look like path continuation, not user@host.
+  if (/^[A-Za-z0-9_.-]+@/.test(next)) return false;
+  return true;
+}
+
+/**
+ * Given texts[startRow] has a URL match at startIdx of length matchLen,
+ * extend across soft-wrapped following rows until whitespace.
+ * Returns { href, segments: [{row, start, end}, ...] }.
+ */
+export function resolveWrappedUrl(texts, startRow, startIdx, matchLen) {
+  const n = texts.length;
+  let url = String(texts[startRow] || "").slice(startIdx, startIdx + matchLen);
+  const segments = [{ row: startRow, start: startIdx, end: startIdx + matchLen }];
+  let r = startRow;
+  let end = startIdx + matchLen;
+  const line = () => String(texts[r] || "");
+  // Extend only when this row ends mid-URL (soft wrap) AND next row is path tail.
+  while (r < n) {
+    const t = line();
+    const trailing = t.slice(end);
+    // Non-empty non-space after match on this row → URL finished mid-line.
+    if (trailing && /\S/.test(trailing)) break;
+    if (r + 1 >= n) break;
+    const next = String(texts[r + 1] || "");
+    if (!isUrlSoftWrapContinuation(url, next)) break;
+    const m = next.match(URL_CONT_RE);
+    if (!m) break;
+    let piece = m[0];
+    const trimmed = trimUrlTrailingPunct(piece);
+    if (!trimmed) break;
+    piece = trimmed;
+    url += piece;
+    r += 1;
+    end = piece.length;
+    segments.push({ row: r, start: 0, end: piece.length });
+    if (next.length > piece.length && /\S/.test(next.slice(piece.length))) break;
+  }
+  url = trimUrlTrailingPunct(url);
+  return { url, segments };
+}
+
+/**
+ * Auto-link plain URLs across soft-wrapped terminal rows.
+ * Single-row linkify misses "https://…/long" when the path continues on the next row.
+ */
+export function linkifyViewport(rowEls) {
+  if (!rowEls?.length) return;
+  const texts = rowEls.map((el) => el?.textContent || "");
+  // Drop previous auto-links so scroll/recycle can re-bind full hrefs.
+  for (const el of rowEls) unwrapAutoLinks(el);
+
+  // Collect jobs first (wrap mutates DOM / textContent). Process bottom-up per row.
+  /** @type {{ row: number, start: number, end: number, href: string }[]} */
+  const jobs = [];
+  for (let r = 0; r < texts.length; r++) {
+    const text = texts[r];
+    if (!text) continue;
+    URL_START_RE.lastIndex = 0;
+    let m;
+    while ((m = URL_START_RE.exec(text))) {
+      // Skip if this start sits inside a row that already has OSC8 covering it —
+      // resolveWrappedUrl + wrapTextRangeInRow will no-op on OSC8 parents.
+      const matchLen = m[0].length;
+      if (!matchLen) {
+        URL_START_RE.lastIndex = m.index + 1;
+        continue;
+      }
+      const resolved = resolveWrappedUrl(texts, r, m.index, matchLen);
+      const href = safeHyperlink(resolved.url);
+      if (!href) continue;
+      for (const seg of resolved.segments) {
+        jobs.push({ row: seg.row, start: seg.start, end: seg.end, href });
+      }
+      // Advance past this match on the start row only; continuations have no scheme.
+      URL_START_RE.lastIndex = m.index + matchLen;
+    }
+  }
+  // Apply from bottom rows / right ranges so offsets stay stable within a row.
+  jobs.sort((a, b) => (b.row - a.row) || (b.start - a.start));
+  for (const job of jobs) {
+    const el = rowEls[job.row];
+    if (!el) continue;
+    wrapTextRangeInRow(el, job.start, job.end, job.href);
+  }
+}
+
+/** @deprecated single-row; use linkifyViewport after paint */
+export function linkifyRow(row) {
+  if (!row) return;
+  linkifyViewport([row]);
+}
 function resolveColors(
   fg: number,
   bg: number,
