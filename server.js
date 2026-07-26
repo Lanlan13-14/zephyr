@@ -569,7 +569,10 @@ function authError(res, status, code, message, retryable = false) {
 }
 
 function isPasswordChangeAllowedPath(req) {
-    return req.path === '/api/auth/me' || req.path === '/api/auth/change-password' || req.path === '/api/auth/logout';
+    return req.path === '/api/auth/me'
+        || req.path === '/api/auth/change-password'
+        || req.path === '/api/auth/change-password/request-code'
+        || req.path === '/api/auth/logout';
 }
 
 function requirePageAuth(req, res, next) {

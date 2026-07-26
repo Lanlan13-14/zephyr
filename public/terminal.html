@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
     <title data-i18n="Zephyr - 终端">Zephyr - 终端</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="modulepreload" href="terminal.js?v=20260726-i18n1">
+    <link rel="modulepreload" href="terminal.js?v=20260726-i18n-fix2">
     <link rel="modulepreload" href="theme-runtime.js?v=20260725-telnet-page-split1">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-i18n1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-i18n-fix2">
     <link rel="stylesheet" href="/vendor/wterm-fork/terminal.css?v=20260725-telnet-page-split1">
-    <link rel="stylesheet" href="style.css?v=20260726-i18n1">
+    <link rel="stylesheet" href="style.css?v=20260726-i18n-fix2">
     <link rel="stylesheet" href="/vendor/viewerjs/viewer.min.css">
     <link rel="stylesheet" href="preview/image/image-preview.css?v=20260725-telnet-page-split1">
     <link rel="stylesheet" href="preview/media/media-preview.css?v=20260725-telnet-page-split1">
@@ -34,38 +34,38 @@
             </div>
             <span class="info" id="connInfo"></span>
             <div class="topbar-actions" id="topbarActions">
-                <button class="btn-sm" id="fileBtn" title="文件管理" data-i18n-title="文件管理" data-i18n-title="文件管理" aria-label="文件管理" data-i18n-aria-label="文件管理" data-i18n-aria-label="文件管理" data-mobile-icon="file" data-i18n="文件">文件</button>
-                <button class="btn-sm" id="infoBtn" title="实时监控" data-i18n-title="实时监控" data-i18n-title="实时监控" aria-label="实时监控" data-i18n-aria-label="实时监控" data-i18n-aria-label="实时监控" data-mobile-icon="stats" data-i18n="监控">监控</button>
-                <button class="btn-sm" id="dockerBtn" title="Docker 容器与镜像管理" data-i18n-title="Docker 容器与镜像管理" data-i18n-title="Docker 容器与镜像管理" aria-label="Docker" data-mobile-icon="docker">Docker</button>
-                <button class="btn-sm" id="snippetBtn" title="代码片段" data-i18n-title="代码片段" data-i18n-title="代码片段" aria-label="代码片段" data-i18n-aria-label="代码片段" data-i18n-aria-label="代码片段" data-mobile-icon="snippet" data-i18n="片段">片段</button>
+                <button class="btn-sm" id="fileBtn" title="文件管理" data-i18n-title="文件管理" aria-label="文件管理" data-i18n-aria-label="文件管理" data-mobile-icon="file" data-i18n="文件">文件</button>
+                <button class="btn-sm" id="infoBtn" title="实时监控" data-i18n-title="实时监控" aria-label="实时监控" data-i18n-aria-label="实时监控" data-mobile-icon="stats" data-i18n="监控">监控</button>
+                <button class="btn-sm" id="dockerBtn" title="Docker 容器与镜像管理" data-i18n-title="Docker 容器与镜像管理" aria-label="Docker" data-mobile-icon="docker">Docker</button>
+                <button class="btn-sm" id="snippetBtn" title="代码片段" data-i18n-title="代码片段" aria-label="代码片段" data-i18n-aria-label="代码片段" data-mobile-icon="snippet" data-i18n="片段">片段</button>
                 <button class="btn-sm" id="notesBtn" title="笔记" data-i18n-title="笔记" aria-label="笔记" data-i18n-aria-label="笔记" data-mobile-icon="notes" data-i18n="笔记">笔记</button>
-                <button class="btn-sm" id="shortcutBtn" title="快捷键" data-i18n-title="快捷键" data-i18n-title="快捷键" aria-label="快捷键" data-i18n-aria-label="快捷键" data-i18n-aria-label="快捷键" data-mobile-icon="keyboard" data-i18n="快捷键">快捷键</button>
-                <button class="btn-sm" id="copyBtn" title="复制选中内容" data-i18n-title="复制选中内容" data-i18n-title="复制选中内容" aria-label="复制选中内容" data-i18n-aria-label="复制选中内容" data-i18n-aria-label="复制选中内容" data-mobile-icon="copy" data-i18n="复制">复制</button>
-                <button class="btn-sm" id="pasteBtn" title="粘贴剪贴板" data-i18n-title="粘贴剪贴板" data-i18n-title="粘贴剪贴板" aria-label="粘贴剪贴板" data-i18n-aria-label="粘贴剪贴板" data-i18n-aria-label="粘贴剪贴板" data-mobile-icon="paste" data-i18n="粘贴">粘贴</button>
-                <button class="btn-sm wterm-theme-toggle" id="wtermThemeToggle" title="独立切换 wterm 终端主题，不跟随全局深浅色模式" data-i18n-title="独立切换 wterm 终端主题，不跟随全局深浅色模式" data-i18n-title="独立切换 wterm 终端主题，不跟随全局深浅色模式" aria-label="切换终端主题" data-i18n-aria-label="切换终端主题" data-i18n-aria-label="切换终端主题" data-mobile-icon="term-theme" data-i18n="终端: 默认">终端: 默认</button>
-                <button class="btn-sm" id="themeToggle" title="切换主题" data-i18n-title="切换主题" data-i18n-title="切换主题" aria-label="切换主题" data-i18n-aria-label="切换主题" data-i18n-aria-label="切换主题" data-mobile-icon="theme" data-i18n="主题">主题</button>
-                <button class="btn-sm" id="reconnectBtn" title="重新连接" data-i18n-title="重新连接" data-i18n-title="重新连接" aria-label="重新连接" data-i18n-aria-label="重新连接" data-i18n-aria-label="重新连接" data-mobile-icon="reconnect" data-i18n="重连">重连</button>
-                <button class="btn-sm danger" id="disconnectBtn" title="断开连接" data-i18n-title="断开连接" data-i18n-title="断开连接" aria-label="断开连接" data-i18n-aria-label="断开连接" data-i18n-aria-label="断开连接" data-mobile-icon="disconnect" data-i18n="断开">断开</button>
+                <button class="btn-sm" id="shortcutBtn" title="快捷键" data-i18n-title="快捷键" aria-label="快捷键" data-i18n-aria-label="快捷键" data-mobile-icon="keyboard" data-i18n="快捷键">快捷键</button>
+                <button class="btn-sm" id="copyBtn" title="复制选中内容" data-i18n-title="复制选中内容" aria-label="复制选中内容" data-i18n-aria-label="复制选中内容" data-mobile-icon="copy" data-i18n="复制">复制</button>
+                <button class="btn-sm" id="pasteBtn" title="粘贴剪贴板" data-i18n-title="粘贴剪贴板" aria-label="粘贴剪贴板" data-i18n-aria-label="粘贴剪贴板" data-mobile-icon="paste" data-i18n="粘贴">粘贴</button>
+                <button class="btn-sm wterm-theme-toggle" id="wtermThemeToggle" title="独立切换 wterm 终端主题，不跟随全局深浅色模式" data-i18n-title="独立切换 wterm 终端主题，不跟随全局深浅色模式" aria-label="切换终端主题" data-i18n-aria-label="切换终端主题" data-mobile-icon="term-theme" data-i18n="终端: 默认">终端: 默认</button>
+                <button class="btn-sm" id="themeToggle" title="切换主题" data-i18n-title="切换主题" aria-label="切换主题" data-i18n-aria-label="切换主题" data-mobile-icon="theme" data-i18n="主题">主题</button>
+                <button class="btn-sm" id="reconnectBtn" title="重新连接" data-i18n-title="重新连接" aria-label="重新连接" data-i18n-aria-label="重新连接" data-mobile-icon="reconnect" data-i18n="重连">重连</button>
+                <button class="btn-sm danger" id="disconnectBtn" title="断开连接" data-i18n-title="断开连接" aria-label="断开连接" data-i18n-aria-label="断开连接" data-mobile-icon="disconnect" data-i18n="断开">断开</button>
             </div>
         </div>
 
         <!-- 文件管理器覆盖层 -->
         <div class="file-manager" id="fileManager">
-            <div class="panel-drag-handle" data-drag-panel="fileManager" title="拖动移动窗口" data-i18n-title="拖动移动窗口" data-i18n-title="拖动移动窗口">
-                <button class="panel-traffic-btn" data-layout-panel="fileManager" title="窗口布局" data-i18n-title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
+            <div class="panel-drag-handle" data-drag-panel="fileManager" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                <button class="panel-traffic-btn" data-layout-panel="fileManager" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
             </div>
             <div class="fm-header panel-titlebar">
-                <button class="tool-btn fm-back-btn" id="fmBackBtn" title="返回上级" data-i18n-title="返回上级" data-i18n-title="返回上级" data-i18n="上级">上级</button>
-                <button class="tool-btn fm-transfer-btn" id="fmTransferBtn" title="上传/下载进度" data-i18n-title="上传/下载进度" data-i18n-title="上传/下载进度" aria-label="上传/下载进度" data-i18n-aria-label="上传/下载进度" data-i18n-aria-label="上传/下载进度" aria-expanded="false"><span aria-hidden="true"><i></i><b></b></span></button>
+                <button class="tool-btn fm-back-btn" id="fmBackBtn" title="返回上级" data-i18n-title="返回上级" data-i18n="上级">上级</button>
+                <button class="tool-btn fm-transfer-btn" id="fmTransferBtn" title="上传/下载进度" data-i18n-title="上传/下载进度" aria-label="上传/下载进度" data-i18n-aria-label="上传/下载进度" aria-expanded="false"><span aria-hidden="true"><i></i><b></b></span></button>
                 <div class="fm-path-box">
-                    <input type="text" class="fm-path-input" id="fmPathInput" placeholder="输入路径" data-i18n-placeholder="输入路径" data-i18n-placeholder="输入路径">
+                    <input type="text" class="fm-path-input" id="fmPathInput" placeholder="输入路径" data-i18n-placeholder="输入路径">
                     <button class="tool-btn" id="fmGoBtn" data-i18n="跳转">跳转</button>
                 </div>
-                <button class="tool-btn fm-refresh-btn" id="fmRefreshBtn" title="刷新" data-i18n-title="刷新" data-i18n-title="刷新" data-i18n="刷新">刷新</button>
-                <button class="tool-btn fm-close-btn" id="fmCloseBtn" title="关闭" data-i18n-title="关闭" data-i18n-title="关闭">✕</button>
+                <button class="tool-btn fm-refresh-btn" id="fmRefreshBtn" title="刷新" data-i18n-title="刷新" data-i18n="刷新">刷新</button>
+                <button class="tool-btn fm-close-btn" id="fmCloseBtn" title="关闭" data-i18n-title="关闭">✕</button>
             </div>
             <div class="fm-header">
-                <input type="text" class="fm-search-input" id="fmSearchInput" placeholder="搜索当前目录...">
+                <input type="text" class="fm-search-input" id="fmSearchInput" placeholder="搜索当前目录..." data-i18n-placeholder="搜索当前目录...">
             </div>
             <div class="fm-toolbar">
                 <button class="tool-btn fm-glyph-action" id="fmNewFolderBtn"><span class="fm-button-icon" data-glyph="folder" aria-hidden="true"></span><span data-i18n="新建文件夹">新建文件夹</span></button>
@@ -79,33 +79,33 @@
             <div class="fm-list" id="fmList"></div>
             <div class="fm-editor-modal" id="fmEditorModal" style="display:none;">
                 <div class="fm-editor-window-titlebar panel-titlebar">
-                    <button class="panel-traffic-btn" data-layout-panel="editor" title="窗口布局" data-i18n-title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
+                    <button class="panel-traffic-btn" data-layout-panel="editor" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
                 </div>
                 <div class="fm-editor-header">
                     <span id="fmEditorTitle" data-editor-role="title" data-i18n="编辑文件">编辑文件</span>
-                    <div class="fm-editor-tabs" id="fmEditorTabs" data-editor-role="tabs" aria-label="打开的文件"></div>
+                    <div class="fm-editor-tabs" id="fmEditorTabs" data-editor-role="tabs" aria-label="打开的文件" data-i18n-aria-label="打开的文件"></div>
                     <div class="fm-editor-header-actions">
-                        <button class="tool-btn" data-editor-action="workspace-search" id="fmEditorSearchWsBtn" title="当前目录搜索（有界）" data-i18n="搜目录">搜目录</button>
-                        <button class="tool-btn" data-editor-action="outline" id="fmEditorOutlineBtn" title="大纲" data-i18n-title="大纲" data-i18n-title="大纲" data-i18n="大纲">大纲</button>
-                        <button class="tool-btn" data-editor-action="problems" id="fmEditorProblemsBtn" title="问题" data-i18n-title="问题" data-i18n-title="问题" data-i18n="问题">问题</button>
-                        <button class="tool-btn fm-editor-compact-btn" id="fmEditorCompactBtn" data-editor-action="compact" title="切换紧凑布局" data-i18n="紧凑">紧凑</button>
-                        <button class="tool-btn" id="fmEditorMinimapToggle" data-editor-action="minimap" title="显示/隐藏代码概览" data-i18n="概览">概览</button>
-                        <button class="tool-btn fm-editor-palette-btn" id="fmEditorPaletteBtn" data-editor-action="palette" title="打开/关闭命令面板" data-i18n="命令">命令</button>
-                        <button class="tool-btn fm-editor-ai-btn" id="fmEditorAiBtn" data-editor-action="ai" title="AI 代码补全（Ctrl/⌘+Shift+Space）" data-i18n="AI补全">AI补全</button>
-                        <button class="tool-btn fm-editor-format-btn" id="fmEditorFormatBtn" data-editor-action="format" title="格式化" data-i18n-title="格式化" data-i18n-title="格式化" data-i18n="格式化">格式化</button>
-                        <button class="tool-btn" id="fmEditorUndoBtn" data-editor-action="undo" title="撤回">↶</button>
-                        <button class="tool-btn" id="fmEditorRedoBtn" data-editor-action="redo" title="前进">↷</button>
-                        <button class="tool-btn fm-editor-save-icon" id="fmEditorSaveBtn" data-editor-action="save" title="保存" data-i18n-title="保存" data-i18n-title="保存" aria-label="保存" data-i18n-aria-label="保存" data-i18n-aria-label="保存"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg></button>
-                        <button class="tool-btn fm-editor-close-icon" id="fmEditorCloseBtn" data-editor-action="close" title="关闭" data-i18n-title="关闭" data-i18n-title="关闭" aria-label="关闭" data-i18n-aria-label="关闭" data-i18n-aria-label="关闭">×</button>
+                        <button class="tool-btn" data-editor-action="workspace-search" id="fmEditorSearchWsBtn" title="当前目录搜索（有界）" data-i18n-title="当前目录搜索（有界）" data-i18n="搜目录">搜目录</button>
+                        <button class="tool-btn" data-editor-action="outline" id="fmEditorOutlineBtn" title="大纲" data-i18n-title="大纲" data-i18n="大纲">大纲</button>
+                        <button class="tool-btn" data-editor-action="problems" id="fmEditorProblemsBtn" title="问题" data-i18n-title="问题" data-i18n="问题">问题</button>
+                        <button class="tool-btn fm-editor-compact-btn" id="fmEditorCompactBtn" data-editor-action="compact" title="切换紧凑布局" data-i18n-title="切换紧凑布局" data-i18n="紧凑">紧凑</button>
+                        <button class="tool-btn" id="fmEditorMinimapToggle" data-editor-action="minimap" title="显示/隐藏代码概览" data-i18n-title="显示/隐藏代码概览" data-i18n="概览">概览</button>
+                        <button class="tool-btn fm-editor-palette-btn" id="fmEditorPaletteBtn" data-editor-action="palette" title="打开/关闭命令面板" data-i18n-title="打开/关闭命令面板" data-i18n="命令">命令</button>
+                        <button class="tool-btn fm-editor-ai-btn" id="fmEditorAiBtn" data-editor-action="ai" title="AI 代码补全（Ctrl/⌘+Shift+Space）" data-i18n-title="AI 代码补全（Ctrl/⌘+Shift+Space）" data-i18n="AI补全">AI补全</button>
+                        <button class="tool-btn fm-editor-format-btn" id="fmEditorFormatBtn" data-editor-action="format" title="格式化" data-i18n-title="格式化" data-i18n="格式化">格式化</button>
+                        <button class="tool-btn" id="fmEditorUndoBtn" data-editor-action="undo" title="撤回" data-i18n-title="撤回">↶</button>
+                        <button class="tool-btn" id="fmEditorRedoBtn" data-editor-action="redo" title="前进" data-i18n-title="前进">↷</button>
+                        <button class="tool-btn fm-editor-save-icon" id="fmEditorSaveBtn" data-editor-action="save" title="保存" data-i18n-title="保存" aria-label="保存" data-i18n-aria-label="保存"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg></button>
+                        <button class="tool-btn fm-editor-close-icon" id="fmEditorCloseBtn" data-editor-action="close" title="关闭" data-i18n-title="关闭" aria-label="关闭" data-i18n-aria-label="关闭">×</button>
                     </div>
                 </div>
                 <div class="fm-editor-workspace-search" id="fmEditorWorkspaceSearch" data-editor-role="workspaceSearch">
-                    <input type="search" id="fmEditorWorkspaceSearchInput" placeholder="在当前 SFTP 目录搜索文本…" autocomplete="off">
+                    <input type="search" id="fmEditorWorkspaceSearchInput" placeholder="在当前 SFTP 目录搜索文本…" data-i18n-placeholder="在当前 SFTP 目录搜索文本…" autocomplete="off">
                     <button type="button" class="tool-btn" data-editor-action="workspace-search-run" data-i18n="搜索">搜索</button>
                     <button type="button" class="tool-btn" data-editor-action="workspace-search-close" data-i18n="关闭">关闭</button>
                 </div>
                 <div class="fm-editor-toolbar">
-                    <label>编码
+                    <label><span data-i18n="编码">编码</span>
                         <select id="fmEditorEncoding" class="fm-editor-select">
                             <option value="utf-8">UTF-8</option>
                             <option value="utf-16le">UTF-16 LE</option>
@@ -113,7 +113,7 @@
                             <option value="latin1">Latin-1 / ISO-8859-1</option>
                         </select>
                     </label>
-                    <label>换行
+                    <label><span data-i18n="换行">换行</span>
                         <select id="fmEditorLineEnding" class="fm-editor-select">
                             <option value="lf">LF</option>
                             <option value="crlf">CRLF</option>
@@ -126,34 +126,34 @@
                             <option value="8">8</option>
                         </select>
                     </label>
-                    <label class="fm-editor-check"><input type="checkbox" id="fmEditorWrap" checked> 自动换行</label>
+                    <label class="fm-editor-check"><input type="checkbox" id="fmEditorWrap" checked> <span data-i18n="自动换行">自动换行</span></label>
                     <span class="fm-editor-status" id="fmEditorStatus">Ready</span>
                 </div>
                 <div class="fm-editor-code-shell cm-ide-shell">
                     <div class="fm-editor-main cm-editor-host wrap-enabled" id="fmEditorMain" data-editor-role="main"></div>
-                    <aside class="fm-editor-sidepanel" id="fmEditorSidepanel" data-editor-role="sidepanel" aria-label="侧栏">
+                    <aside class="fm-editor-sidepanel" id="fmEditorSidepanel" data-editor-role="sidepanel" aria-label="侧栏" data-i18n-aria-label="侧栏">
                         <div class="fm-editor-sidepanel-head">
                             <span data-editor-role="sidepanelTitle" data-i18n="面板">面板</span>
-                            <button type="button" class="tool-btn" data-editor-action="sidepanel-close" title="关闭" data-i18n-title="关闭" data-i18n-title="关闭">×</button>
+                            <button type="button" class="tool-btn" data-editor-action="sidepanel-close" title="关闭" data-i18n-title="关闭">×</button>
                         </div>
                         <div class="fm-editor-sidepanel-body" data-editor-role="sidepanelBody"></div>
                     </aside>
                 </div>
                 <div class="fm-editor-actions" hidden></div>
             </div>
-            <div class="panel-resize-handle left" data-resize-panel="fileManager" data-resize-edge="left" title="拖动调整大小"></div>
-            <div class="panel-resize-handle right" data-resize-panel="fileManager" data-resize-edge="right" title="拖动调整大小"></div>
+            <div class="panel-resize-handle left" data-resize-panel="fileManager" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+            <div class="panel-resize-handle right" data-resize-panel="fileManager" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
         </div>
 
         <!-- Docker 管理面板 -->
         <div class="docker-panel" id="dockerPanel" style="display:none;">
-            <div class="panel-drag-handle" data-drag-panel="dockerPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口" data-i18n-title="拖动移动窗口">
-                <button class="panel-traffic-btn" data-layout-panel="dockerPanel" title="窗口布局" data-i18n-title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
+            <div class="panel-drag-handle" data-drag-panel="dockerPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                <button class="panel-traffic-btn" data-layout-panel="dockerPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
             </div>
             <div class="docker-header panel-titlebar">
                 <div class="docker-title" data-i18n="🐳 Docker 管理">🐳 Docker 管理</div>
                 <div class="docker-header-actions">
-                    <button class="tool-btn" id="dockerRestartBtn" title="重启目标主机 Docker 服务" data-i18n="重启 Docker">重启 Docker</button>
+                    <button class="tool-btn" id="dockerRestartBtn" title="重启目标主机 Docker 服务" data-i18n-title="重启目标主机 Docker 服务" data-i18n="重启 Docker">重启 Docker</button>
                     <button class="tool-btn" id="dockerRefreshBtn" data-i18n="刷新">刷新</button>
                     <button class="tool-btn" id="dockerCloseBtn">✕</button>
                 </div>
@@ -181,7 +181,7 @@
                 </div>
                 <div class="docker-tab-panel" id="dockerImagesPanel">
                     <div class="docker-pull-row">
-                        <input type="text" id="dockerPullInput" placeholder="镜像名，例如 nginx:alpine">
+                        <input type="text" id="dockerPullInput" placeholder="镜像名，例如 nginx:alpine" data-i18n-placeholder="镜像名，例如 nginx:alpine">
                         <button class="tool-btn" id="dockerPullBtn" data-i18n="拉取">拉取</button>
                     </div>
                     <pre class="docker-log-box" id="dockerPullLog" aria-live="polite"></pre>
@@ -193,7 +193,7 @@
                     </div>
                 </div>
                 <div class="docker-tab-panel" id="dockerSettingsPanel">
-                    <p class="docker-settings-desc">配置 Docker registry-mirrors 后，请重启 Docker 服务使配置生效。</p>
+                    <p class="docker-settings-desc" data-i18n="配置 Docker registry-mirrors 后，请重启 Docker 服务使配置生效。">配置 Docker registry-mirrors 后，请重启 Docker 服务使配置生效。</p>
                     <div class="docker-mirror-list" id="dockerMirrorList"></div>
                     <div class="docker-pull-row">
                         <input type="url" id="dockerMirrorInput" placeholder="https://mirror.ccs.tencentyun.com">
@@ -213,14 +213,14 @@
                 </div>
                 <pre class="docker-container-log" id="dockerContainerLog"></pre>
             </div>
-            <div class="panel-resize-handle left" data-resize-panel="dockerPanel" data-resize-edge="left" title="拖动调整大小"></div>
-            <div class="panel-resize-handle right" data-resize-panel="dockerPanel" data-resize-edge="right" title="拖动调整大小"></div>
+            <div class="panel-resize-handle left" data-resize-panel="dockerPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+            <div class="panel-resize-handle right" data-resize-panel="dockerPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
         </div>
 
         <!-- 实时监控覆盖层 -->
         <div class="info-modal" id="infoModal" style="display:none;">
-            <div class="panel-drag-handle" data-drag-panel="infoModal" title="拖动移动窗口" data-i18n-title="拖动移动窗口" data-i18n-title="拖动移动窗口">
-                <button class="panel-traffic-btn" data-layout-panel="infoModal" title="窗口布局" data-i18n-title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
+            <div class="panel-drag-handle" data-drag-panel="infoModal" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                <button class="panel-traffic-btn" data-layout-panel="infoModal" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
             </div>
             <div class="info-modal-header panel-titlebar">
                 <span class="monitor-title"><span class="monitor-title-icon" data-glyph="status" aria-hidden="true"></span><span data-i18n="服务器实时监控">服务器实时监控</span></span>
@@ -232,32 +232,32 @@
             <div class="chart-container" id="chartContainer">
                 <!-- 小折线图将由 JS 插入 -->
             </div>
-            <div class="panel-resize-handle left" data-resize-panel="infoModal" data-resize-edge="left" title="拖动调整大小"></div>
-            <div class="panel-resize-handle right" data-resize-panel="infoModal" data-resize-edge="right" title="拖动调整大小"></div>
+            <div class="panel-resize-handle left" data-resize-panel="infoModal" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+            <div class="panel-resize-handle right" data-resize-panel="infoModal" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
         </div>
 
         <div class="snippet-panel" id="snippetPanel">
-            <div class="panel-drag-handle" data-drag-panel="snippetPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口" data-i18n-title="拖动移动窗口">
-                <button class="panel-traffic-btn" data-layout-panel="snippetPanel" title="窗口布局" data-i18n-title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
+            <div class="panel-drag-handle" data-drag-panel="snippetPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                <button class="panel-traffic-btn" data-layout-panel="snippetPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
             </div>
             <div class="snippet-panel-header panel-titlebar">
-                <strong>⚡ 代码片段</strong>
+                <strong data-i18n="⚡ 代码片段">⚡ 代码片段</strong>
             </div>
             <div class="snippet-panel-body">
-                <input class="snippet-search" id="snippetSearch" placeholder="搜索片段...">
+                <input class="snippet-search" id="snippetSearch" placeholder="搜索片段..." data-i18n-placeholder="搜索片段...">
                 <div class="snippet-list" id="snippetList"></div>
                 <p class="snippet-empty" id="snippetEmpty" data-i18n="暂无代码片段，请到首页 设置 → 代码片段 添加。">暂无代码片段，请到首页 设置 → 代码片段 添加。</p>
             </div>
-            <div class="panel-resize-handle left" data-resize-panel="snippetPanel" data-resize-edge="left" title="拖动调整大小"></div>
-            <div class="panel-resize-handle right" data-resize-panel="snippetPanel" data-resize-edge="right" title="拖动调整大小"></div>
+            <div class="panel-resize-handle left" data-resize-panel="snippetPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+            <div class="panel-resize-handle right" data-resize-panel="snippetPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
         </div>
 
         <div class="shortcut-panel" id="shortcutPanel">
-            <div class="panel-drag-handle" data-drag-panel="shortcutPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口" data-i18n-title="拖动移动窗口">
-                <button class="panel-traffic-btn" data-layout-panel="shortcutPanel" title="窗口布局" data-i18n-title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
+            <div class="panel-drag-handle" data-drag-panel="shortcutPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                <button class="panel-traffic-btn" data-layout-panel="shortcutPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
             </div>
             <div class="snippet-panel-header panel-titlebar">
-                <strong>⌨️ 快捷键</strong>
+                <strong data-i18n="⌨️ 快捷键">⌨️ 快捷键</strong>
             </div>
             <div class="shortcut-grid" id="shortcutGrid">
                 <button class="tool-btn modifier" data-key="ctrl">Ctrl</button>
@@ -309,17 +309,17 @@
                 <button class="tool-btn func fn-key" data-key="f10">F10</button>
                 <button class="tool-btn func fn-key" data-key="f11">F11</button>
                 <button class="tool-btn func fn-key" data-key="f12">F12</button>
-                <button class="tool-btn font-size-btn" id="fontDecreaseBtn" title="缩小终端字体">A−</button>
-                <button class="tool-btn font-size-btn" id="fontIncreaseBtn" title="放大终端字体">A+</button>
+                <button class="tool-btn font-size-btn" id="fontDecreaseBtn" title="缩小终端字体" data-i18n-title="缩小终端字体">A−</button>
+                <button class="tool-btn font-size-btn" id="fontIncreaseBtn" title="放大终端字体" data-i18n-title="放大终端字体">A+</button>
             </div>
-            <div class="panel-resize-handle left" data-resize-panel="shortcutPanel" data-resize-edge="left" title="拖动调整大小"></div>
-            <div class="panel-resize-handle right" data-resize-panel="shortcutPanel" data-resize-edge="right" title="拖动调整大小"></div>
+            <div class="panel-resize-handle left" data-resize-panel="shortcutPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+            <div class="panel-resize-handle right" data-resize-panel="shortcutPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
         </div>
 
         <!-- 顶部命令输入栏（移动端始终可见） -->
         <div class="terminal-top-input" id="terminalTopInput">
             <div class="cmd-input-row">
-                <textarea class="cmd-input" id="cmdInput" rows="1" placeholder="在此输入命令，Enter 发送，Shift+Enter 换行..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+                <textarea class="cmd-input" id="cmdInput" rows="1" placeholder="在此输入命令，Enter 发送，Shift+Enter 换行..." data-i18n-placeholder="在此输入命令，Enter 发送，Shift+Enter 换行..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
                 <button class="cmd-send-btn" id="cmdSendBtn" data-i18n="发送">发送</button>
             </div>
         </div>
@@ -339,8 +339,8 @@
         </div>
 
         <!-- 移动端底部固定栏：辅助键，位于原 CSS 图标栏和键盘之间 -->
-        <div class="terminal-bottom-bar" id="terminalBottomBar" aria-label="移动端辅助键栏">
-            <div class="mobile-aux-keys" id="mobileAuxKeys" aria-label="移动端辅助键">
+        <div class="terminal-bottom-bar" id="terminalBottomBar" aria-label="移动端辅助键栏" data-i18n-aria-label="移动端辅助键栏">
+            <div class="mobile-aux-keys" id="mobileAuxKeys" aria-label="移动端辅助键" data-i18n-aria-label="移动端辅助键">
                 <button class="aux-key" data-key="ctrl" title="Ctrl">Ctrl</button>
                 <button class="aux-key" data-key="esc" title="Esc">Esc</button>
                 <button class="aux-key" data-key="tab" title="Tab">Tab</button>
@@ -364,6 +364,6 @@
     <script src="preview/image/image-preview.js?v=20260725-telnet-page-split1"></script>
     <script src="preview/media/media-preview.js?v=20260725-telnet-page-split1"></script>
     <script src="editor/zephyr-editor.bundle.js?v=20260725-telnet-page-split1" type="module"></script>
-    <script src="terminal.js?v=20260726-i18n1" type="module"></script>
+    <script src="terminal.js?v=20260726-i18n-fix2" type="module"></script>
 </body>
 </html>

@@ -2,7 +2,7 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange } from './i18n/runtime.js?v=20260726-i18n1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange } from './i18n/runtime.js?v=20260726-i18n-fix2';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -8169,7 +8169,7 @@ function updatePasswordFormFields() {
     if (emailRow) emailRow.classList.toggle('force-hidden', !hasEmail);
 }
 function renderPasskeys() { $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无 Passkey')}</p>`; }
-function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>失败 ${b.failedCount} · 解封 ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">解除</button></div>`).join('') || '<p class="muted">暂无封禁 IP</p>'; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason || '')} · ${fmtTime(e.time)}</span></div>`).join('') || '<p class="muted">暂无登录事件</p>'; }
+function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>${t('失败')} ${b.failedCount} · ${t('解封')} ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">${t('解除')}</button></div>`).join('') || `<p class="muted">${t('暂无封禁 IP')}</p>`; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason || '')} · ${fmtTime(e.time)}</span></div>`).join('') || `<p class="muted">${t('暂无登录事件')}</p>`; }
 async function saveSecurityPolicy(e) { e.preventDefault(); settings = await savePlatformSettings('security', { security: { ipWhitelistEnabled: $('#ipWhitelistEnabled').checked, ipWhitelist: $('#ipWhitelist').value, bruteForceEnabled: $('#bruteForceEnabled').checked, bruteForceMaxFailures: Number($('#bruteForceMaxFailures').value) || 5, bruteForceBanMinutes: Number($('#bruteForceBanMinutes').value) || 15 } }); toast(t('安全策略已保存')); }
 async function saveCaptcha(e) {
     e.preventDefault();
@@ -10066,21 +10066,42 @@ function syncLocaleSelectsValue(locale = getLocale()) {
     });
 }
 
-async function changeAppLocale(next) {
-    await setLocale(next, { persist: true, applyDom: true });
-    syncLocaleSelectsValue(getLocale());
-    try { renderConnections(); } catch {}
-    try { applyDomI18n(document); } catch {}
+function rerenderLocaleSensitiveContent() {
+    /* Static DOM is handled by applyDomI18n(). Repaint state-derived fragments
+     * separately: their text was produced before the locale switch and has no
+     * data-i18n attributes for the runtime to revisit. */
+    for (const render of [
+        renderConnections,
+        renderActivities,
+        renderRemoteServers,
+        renderTotp,
+        renderPasskeys,
+        renderSecurityLists,
+        renderAiSettingsForm,
+        renderAiMcpList,
+        renderAiProviderList,
+        renderAiEnvList,
+        renderAiMemoryList,
+        renderAiPlanList,
+        renderAiSkillList,
+        renderSnippetSettings,
+        renderNetwork,
+    ]) {
+        try { render?.(); } catch (err) { console.warn('[i18n] dynamic rerender failed', err); }
+    }
+    if (myIdentity.role === 'admin') loadAdminUsers().catch((err) => console.warn('[i18n] admin rerender failed', err));
 }
 
-function openLanguageSettings() {
-    const tab = document.querySelector('.settings-tab[data-settings="language"]');
-    if (tab && !tab.classList.contains('active')) tab.click();
-    document.querySelector('#languageSelect')?.focus?.({ preventScroll: true });
+async function changeAppLocale(next) {
+    const before = getLocale();
+    await setLocale(next, { persist: true, applyDom: true });
+    /* A real change is repainted by onLocaleChange(). If the user selects the
+     * already-active value, there is no event, so refresh state-derived text
+     * here exactly once. */
+    if (getLocale() === before) rerenderLocaleSensitiveContent();
 }
 
 function bindLocaleSelects() {
-    document.querySelector('#appLocaleBtn')?.addEventListener('click', openLanguageSettings);
     ['#languageSelect'].forEach((sel) => {
         document.querySelector(sel)?.addEventListener('change', (e) => {
             changeAppLocale(e.target.value).catch((err) => console.warn('[i18n]', err));
@@ -10095,7 +10116,7 @@ async function init() {
         syncLocaleSelectsValue(getLocale());
         onLocaleChange(() => {
             syncLocaleSelectsValue(getLocale());
-            try { renderConnections(); } catch {}
+            rerenderLocaleSensitiveContent();
             try { applyDomI18n(document); } catch {}
         });
         applyTheme(getPreferredTheme());

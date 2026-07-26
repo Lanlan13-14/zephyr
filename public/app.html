@@ -6,10 +6,10 @@
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="app.js?v=20260726-i18n1">
+    <link rel="modulepreload" href="app.js?v=20260726-i18n-fix2">
     <link rel="modulepreload" href="theme-runtime.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-i18n1">
-    <link rel="stylesheet" href="style.css?v=20260726-i18n1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-i18n-fix2">
+    <link rel="stylesheet" href="style.css?v=20260726-i18n-fix2">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -26,7 +26,7 @@
             </nav>
             <div class="nav-actions">
                 <button class="btn-sm ai-floating-btn force-hidden" id="aiFloatingBtn" title="打开 AI 助理" data-i18n-title="打开 AI 助理">AI</button>
-                <button class="btn-sm" id="appLocaleBtn" title="语言" data-i18n-title="语言" aria-label="语言" data-i18n-aria-label="语言">🌐</button>
+                <!-- Locale selection lives in Settings → Language. -->
                 <button class="btn-sm" id="appThemeToggle" title="切换深浅色" data-i18n-title="切换深浅色">🌓</button>
                 <button class="btn-sm danger" id="logoutBtn" data-i18n="登出">登出</button>
             </div>
@@ -68,9 +68,9 @@
                         <button class="activity-range-btn" type="button" data-activity-range="custom" data-i18n="自定义">自定义</button>
                     </div>
                     <div class="activity-custom-range force-hidden" id="activityCustomRange">
-                        <label data-i18n="开始日期">开始日期<input id="activityStartDate" type="date"></label>
+                        <label><span data-i18n="开始日期">开始日期</span><input id="activityStartDate" type="date"></label>
                         <span aria-hidden="true" data-i18n="至">至</span>
-                        <label data-i18n="结束日期">结束日期<input id="activityEndDate" type="date"></label>
+                        <label><span data-i18n="结束日期">结束日期</span><input id="activityEndDate" type="date"></label>
                         <button class="btn btn-primary" id="applyActivityRange" type="button" data-i18n="应用">应用</button>
                     </div>
                 </div>
@@ -429,16 +429,16 @@
                                 <div class="custom-theme-panel force-hidden" id="customThemePanel">
                                     <input id="customThemeMode" type="hidden" value="dark">
                                     <div class="custom-color-grid">
-                                        <label data-i18n="大背景">大背景<div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#101114" aria-label="选择大背景颜色" data-i18n-aria-label="选择大背景颜色"></button><input class="color-hex-input" data-custom-color="bgMain" value="#101114" maxlength="7" spellcheck="false" inputmode="text"></div></label>
-                                        <label data-i18n="卡片背景">卡片背景<div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#1b1c20" aria-label="选择卡片背景颜色" data-i18n-aria-label="选择卡片背景颜色"></button><input class="color-hex-input" data-custom-color="bgCard" value="#1b1c20" maxlength="7" spellcheck="false" inputmode="text"></div></label>
-                                        <label data-i18n="主按钮">主按钮<div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#0a84ff" aria-label="选择主按钮颜色" data-i18n-aria-label="选择主按钮颜色"></button><input class="color-hex-input" data-custom-color="primary" value="#0a84ff" maxlength="7" spellcheck="false" inputmode="text"></div></label>
-                                        <label data-i18n="按钮 Hover">按钮 Hover<div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#2997ff" aria-label="选择按钮 Hover颜色" data-i18n-aria-label="选择按钮 Hover颜色"></button><input class="color-hex-input" data-custom-color="primaryHover" value="#2997ff" maxlength="7" spellcheck="false" inputmode="text"></div></label>
-                                        <label data-i18n="文字">文字<div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#f4f4f6" aria-label="选择文字颜色" data-i18n-aria-label="选择文字颜色"></button><input class="color-hex-input" data-custom-color="text" value="#f4f4f6" maxlength="7" spellcheck="false" inputmode="text"></div></label>
-                                        <label data-i18n="次级文字">次级文字<div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#9a9ca3" aria-label="选择次级文字颜色" data-i18n-aria-label="选择次级文字颜色"></button><input class="color-hex-input" data-custom-color="textSecondary" value="#9a9ca3" maxlength="7" spellcheck="false" inputmode="text"></div></label>
-                                        <label data-i18n="边框">边框<div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#303237" aria-label="选择边框颜色" data-i18n-aria-label="选择边框颜色"></button><input class="color-hex-input" data-custom-color="border" value="#303237" maxlength="7" spellcheck="false" inputmode="text"></div></label>
-                                        <label data-i18n="危险色">危险色<div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#ff453a" aria-label="选择危险色颜色" data-i18n-aria-label="选择危险色颜色"></button><input class="color-hex-input" data-custom-color="danger" value="#ff453a" maxlength="7" spellcheck="false" inputmode="text"></div></label>
-                                        <label data-i18n="成功色">成功色<div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#32d74b" aria-label="选择成功色颜色" data-i18n-aria-label="选择成功色颜色"></button><input class="color-hex-input" data-custom-color="success" value="#32d74b" maxlength="7" spellcheck="false" inputmode="text"></div></label>
-                                        <label data-i18n="警告色">警告色<div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#ffd60a" aria-label="选择警告色颜色" data-i18n-aria-label="选择警告色颜色"></button><input class="color-hex-input" data-custom-color="warning" value="#ffd60a" maxlength="7" spellcheck="false" inputmode="text"></div></label>
+                                        <label><span data-i18n="大背景">大背景</span><div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#101114" aria-label="选择大背景颜色" data-i18n-aria-label="选择大背景颜色"></button><input class="color-hex-input" data-custom-color="bgMain" value="#101114" maxlength="7" spellcheck="false" inputmode="text"></div></label>
+                                        <label><span data-i18n="卡片背景">卡片背景</span><div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#1b1c20" aria-label="选择卡片背景颜色" data-i18n-aria-label="选择卡片背景颜色"></button><input class="color-hex-input" data-custom-color="bgCard" value="#1b1c20" maxlength="7" spellcheck="false" inputmode="text"></div></label>
+                                        <label><span data-i18n="主按钮">主按钮</span><div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#0a84ff" aria-label="选择主按钮颜色" data-i18n-aria-label="选择主按钮颜色"></button><input class="color-hex-input" data-custom-color="primary" value="#0a84ff" maxlength="7" spellcheck="false" inputmode="text"></div></label>
+                                        <label><span data-i18n="按钮 Hover">按钮 Hover</span><div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#2997ff" aria-label="选择按钮 Hover颜色" data-i18n-aria-label="选择按钮 Hover颜色"></button><input class="color-hex-input" data-custom-color="primaryHover" value="#2997ff" maxlength="7" spellcheck="false" inputmode="text"></div></label>
+                                        <label><span data-i18n="文字">文字</span><div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#f4f4f6" aria-label="选择文字颜色" data-i18n-aria-label="选择文字颜色"></button><input class="color-hex-input" data-custom-color="text" value="#f4f4f6" maxlength="7" spellcheck="false" inputmode="text"></div></label>
+                                        <label><span data-i18n="次级文字">次级文字</span><div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#9a9ca3" aria-label="选择次级文字颜色" data-i18n-aria-label="选择次级文字颜色"></button><input class="color-hex-input" data-custom-color="textSecondary" value="#9a9ca3" maxlength="7" spellcheck="false" inputmode="text"></div></label>
+                                        <label><span data-i18n="边框">边框</span><div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#303237" aria-label="选择边框颜色" data-i18n-aria-label="选择边框颜色"></button><input class="color-hex-input" data-custom-color="border" value="#303237" maxlength="7" spellcheck="false" inputmode="text"></div></label>
+                                        <label><span data-i18n="危险色">危险色</span><div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#ff453a" aria-label="选择危险色颜色" data-i18n-aria-label="选择危险色颜色"></button><input class="color-hex-input" data-custom-color="danger" value="#ff453a" maxlength="7" spellcheck="false" inputmode="text"></div></label>
+                                        <label><span data-i18n="成功色">成功色</span><div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#32d74b" aria-label="选择成功色颜色" data-i18n-aria-label="选择成功色颜色"></button><input class="color-hex-input" data-custom-color="success" value="#32d74b" maxlength="7" spellcheck="false" inputmode="text"></div></label>
+                                        <label><span data-i18n="警告色">警告色</span><div class="zephyr-color-picker" data-color-picker><button type="button" class="color-swatch" data-color-swatch style="--picker-color:#ffd60a" aria-label="选择警告色颜色" data-i18n-aria-label="选择警告色颜色"></button><input class="color-hex-input" data-custom-color="warning" value="#ffd60a" maxlength="7" spellcheck="false" inputmode="text"></div></label>
                                     </div>
                                     <label data-i18n="自定义 CSS">自定义 CSS</label>
                                     <textarea id="customCssInput" rows="6" spellcheck="false" placeholder=":root { --accent: #0a84ff; }\n.connection-card { border-radius: 22px; }"></textarea>
@@ -455,8 +455,8 @@
                                 <div class="terminal-bg-preview" id="terminalBgPreview" data-i18n="未设置背景">未设置背景</div>
                                 <div class="form-row">
                                     <div class="form-group"><label data-i18n="背景适配">背景适配</label><select id="terminalBgFit"><option value="cover" data-i18n="覆盖">覆盖</option><option value="contain" data-i18n="完整显示">完整显示</option><option value="auto" data-i18n="原始尺寸">原始尺寸</option></select></div>
-                                    <div class="form-group"><label data-i18n="背景强度">背景强度 <span id="terminalBgOpacityValue">35%</span></label><input id="terminalBgOpacity" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="1" step="any" value="0.35"></div>
-                                    <div class="form-group"><label data-i18n="模糊强度">模糊强度 <span id="terminalBgBlurValue">0px</span></label><input id="terminalBgBlur" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="20" step="any" value="0"></div>
+                                    <div class="form-group"><label><span data-i18n="背景强度">背景强度</span> <span id="terminalBgOpacityValue">35%</span></label><input id="terminalBgOpacity" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="1" step="any" value="0.35"></div>
+                                    <div class="form-group"><label><span data-i18n="模糊强度">模糊强度</span> <span id="terminalBgBlurValue">0px</span></label><input id="terminalBgBlur" class="edge-range terminal-bg-opacity-range" type="range" min="0" max="20" step="any" value="0"></div>
                                 </div>
                                 <label class="check-line"><input type="checkbox" id="terminalFontColorEnabled"> <span data-i18n="启用自定义 SSH 终端字体颜色">启用自定义 SSH 终端字体颜色</span></label>
                                 <div class="form-row terminal-font-color-row">
@@ -573,8 +573,8 @@
                                 <label data-i18n="助理名称">助理名称</label><input id="aiAssistantName" maxlength="40" placeholder="Zephyr AI">
                                 <label data-i18n="默认模型供应商">默认模型供应商</label>
                                 <select id="aiDefaultProvider"><option value="" data-i18n="自动选择第一个可用供应商">自动选择第一个可用供应商</option></select>
-                                <label data-i18n="默认模型">默认模型</label><input id="aiDefaultModel" placeholder="留空自动使用供应商默认/第一个模型" data-i18n-placeholder="留空自动使用供应商默认/第一个模型" data-i18n-placeholder="留空自动使用供应商默认/第一个模型">
-                                <label data-i18n="系统提示词">系统提示词</label><textarea id="aiSystemPrompt" rows="5" placeholder="给 AI 助理的全局行为要求，可留空。" data-i18n-placeholder="给 AI 助理的全局行为要求，可留空。" data-i18n-placeholder="给 AI 助理的全局行为要求，可留空。"></textarea>
+                                <label data-i18n="默认模型">默认模型</label><input id="aiDefaultModel" placeholder="留空自动使用供应商默认/第一个模型" data-i18n-placeholder="留空自动使用供应商默认/第一个模型">
+                                <label data-i18n="系统提示词">系统提示词</label><textarea id="aiSystemPrompt" rows="5" placeholder="给 AI 助理的全局行为要求，可留空。" data-i18n-placeholder="给 AI 助理的全局行为要求，可留空。"></textarea>
                                 <div class="form-actions ai-card-actions"><button class="btn btn-primary" type="submit" data-i18n="保存基础设置">保存基础设置</button></div>
                                 </section>
                                 <section class="security-card ai-settings-card">
@@ -624,11 +624,11 @@
                                     <h2 data-i18n="权限规则（Go Runtime）">权限规则（Go Runtime）</h2>
                                     <p class="field-hint">优先级：deny &gt; ask &gt; allow &gt; 模式默认。规则形如 <code>remote_execute(rm -rf*)</code> 或 <code>list_connections</code>。每行一条。</p>
                                     <label data-i18n="默认模式">默认模式</label>
-                                    <div class="ai-segment ai-segment-block" id="aiPermRuleMode" data-value="ask" data-cols="3" role="tablist" aria-label="权限默认模式" data-i18n-aria-label="权限默认模式" data-i18n-aria-label="权限默认模式">
+                                    <div class="ai-segment ai-segment-block" id="aiPermRuleMode" data-value="ask" data-cols="3" role="tablist" aria-label="权限默认模式" data-i18n-aria-label="权限默认模式">
                                         <span class="ai-segment-thumb" aria-hidden="true"></span>
-                                        <button type="button" class="ai-segment-btn active" data-value="ask" role="tab" aria-selected="true" title="写操作询问" data-i18n-title="写操作询问" data-i18n-title="写操作询问">Ask</button>
-                                        <button type="button" class="ai-segment-btn" data-value="auto" role="tab" aria-selected="false" title="只读自动，写操作询问" data-i18n-title="只读自动，写操作询问" data-i18n-title="只读自动，写操作询问">Auto</button>
-                                        <button type="button" class="ai-segment-btn" data-value="yolo" role="tab" aria-selected="false" title="除 deny 外全自动（危险）" data-i18n-title="除 deny 外全自动（危险）" data-i18n-title="除 deny 外全自动（危险）">Yolo</button>
+                                        <button type="button" class="ai-segment-btn active" data-value="ask" role="tab" aria-selected="true" title="写操作询问" data-i18n-title="写操作询问">Ask</button>
+                                        <button type="button" class="ai-segment-btn" data-value="auto" role="tab" aria-selected="false" title="只读自动，写操作询问" data-i18n-title="只读自动，写操作询问">Auto</button>
+                                        <button type="button" class="ai-segment-btn" data-value="yolo" role="tab" aria-selected="false" title="除 deny 外全自动（危险）" data-i18n-title="除 deny 外全自动（危险）">Yolo</button>
                                     </div>
                                     <p class="field-hint ai-perm-mode-hint" id="aiPermModeHint" data-i18n="Ask：写操作默认询问">Ask：写操作默认询问</p>
                                     <label data-i18n="Deny（永久拒绝）">Deny（永久拒绝）</label>
@@ -645,7 +645,7 @@
                                 <form id="aiMcpForm" class="settings-form ai-mcp-form">
                                     <input type="hidden" id="aiMcpId">
                                     <div class="form-row">
-                                        <div class="form-group"><label data-i18n="名称">名称</label><input id="aiMcpName" placeholder="例如 filesystem" data-i18n-placeholder="例如 filesystem" data-i18n-placeholder="例如 filesystem" maxlength="80"></div>
+                                        <div class="form-group"><label data-i18n="名称">名称</label><input id="aiMcpName" placeholder="例如 filesystem" data-i18n-placeholder="例如 filesystem" maxlength="80"></div>
                                         <div class="form-group"><label data-i18n="类型">类型</label>
                                             <div class="ai-segment ai-segment-block" id="aiMcpType" data-value="stdio" data-cols="2" role="tablist" aria-label="MCP 传输类型">
                                                 <span class="ai-segment-thumb" aria-hidden="true"></span>
@@ -681,9 +681,9 @@
                             <h2 data-i18n="AI 环境变量">AI 环境变量</h2>
                             <form id="aiEnvForm" class="settings-form ai-env-form">
                                 <input type="hidden" id="aiEnvId">
-                                <input id="aiEnvName" placeholder="变量名，例如 OPENAI_ADMIN_TOKEN" data-i18n-placeholder="变量名，例如 OPENAI_ADMIN_TOKEN" data-i18n-placeholder="变量名，例如 OPENAI_ADMIN_TOKEN">
-                                <input id="aiEnvDescription" placeholder="说明，例如：调用内部 API 的 Bearer Token" data-i18n-placeholder="说明，例如：调用内部 API 的 Bearer Token" data-i18n-placeholder="说明，例如：调用内部 API 的 Bearer Token">
-                                <div class="form-group password-field"><input id="aiEnvValue" type="password" placeholder="变量值；留 ****** 表示不修改" data-i18n-placeholder="变量值；留 ****** 表示不修改" data-i18n-placeholder="变量值；留 ****** 表示不修改"><button type="button" id="toggleAiEnvValue" title="显示/隐藏变量值" data-i18n-title="显示/隐藏变量值" data-i18n-title="显示/隐藏变量值">👁️</button></div>
+                                <input id="aiEnvName" placeholder="变量名，例如 OPENAI_ADMIN_TOKEN" data-i18n-placeholder="变量名，例如 OPENAI_ADMIN_TOKEN">
+                                <input id="aiEnvDescription" placeholder="说明，例如：调用内部 API 的 Bearer Token" data-i18n-placeholder="说明，例如：调用内部 API 的 Bearer Token">
+                                <div class="form-group password-field"><input id="aiEnvValue" type="password" placeholder="变量值；留 ****** 表示不修改" data-i18n-placeholder="变量值；留 ****** 表示不修改"><button type="button" id="toggleAiEnvValue" title="显示/隐藏变量值" data-i18n-title="显示/隐藏变量值">👁️</button></div>
                                 <label class="check-line"><input type="checkbox" id="aiEnvEnabled" checked> <span data-i18n="启用变量">启用变量</span></label><label class="check-line"><input type="checkbox" id="aiEnvVisibleToAi"> <span data-i18n="允许 AI 看到变量名/说明">允许 AI 看到变量名/说明</span></label><label class="check-line"><input type="checkbox" id="aiEnvValueVisibleToAi"> <span data-i18n="允许 AI 直接看到变量值（仅用于非敏感配置）">允许 AI 直接看到变量值（仅用于非敏感配置）</span></label>
                                 <div class="form-actions"><button class="btn btn-primary" type="submit" data-i18n="保存环境变量">保存环境变量</button><button class="btn" type="button" id="aiEnvResetBtn" data-i18n="清空">清空</button></div>
                                 <p class="field-hint" data-i18n="默认完全不向 AI 暴露变量；可单独允许 AI 看到变量名/说明，或仅对非敏感配置允许直接看到值。未直接暴露的值仍需 get_env_var + 敏感确认。">默认完全不向 AI 暴露变量；可单独允许 AI 看到变量名/说明，或仅对非敏感配置允许直接看到值。未直接暴露的值仍需 get_env_var + 敏感确认。</p>
@@ -694,9 +694,9 @@
                             <h2 data-i18n="长期 Memory / 项目记忆">长期 Memory / 项目记忆</h2>
                             <form id="aiMemoryForm" class="settings-form ai-memory-form">
                                 <input type="hidden" id="aiMemoryId">
-                                <div class="form-row"><div class="form-group"><label data-i18n="标题">标题</label><input id="aiMemoryTitle" placeholder="例如：生产服务器约定" data-i18n-placeholder="例如：生产服务器约定" data-i18n-placeholder="例如：生产服务器约定"></div><div class="form-group"><label>Scope / Project</label><input id="aiMemoryScope" placeholder="global / zephyr-ssh / prod"></div></div>
-                                <div class="form-row"><div class="form-group"><label data-i18n="关联连接 ID（逗号分隔）">关联连接 ID（逗号分隔）</label><input id="aiMemoryConnectionIds" placeholder="自动关联到指定 SSH 连接" data-i18n-placeholder="自动关联到指定 SSH 连接" data-i18n-placeholder="自动关联到指定 SSH 连接"></div><div class="form-group"><label data-i18n="标签（逗号分隔）">标签（逗号分隔）</label><input id="aiMemoryTags" placeholder="生产, 数据库, zephyr" data-i18n-placeholder="生产, 数据库, zephyr" data-i18n-placeholder="生产, 数据库, zephyr"></div></div>
-                                <textarea id="aiMemoryContent" rows="5" placeholder="需要长期记住的项目规则、服务器约定、用户偏好、排障结论..." data-i18n-placeholder="需要长期记住的项目规则、服务器约定、用户偏好、排障结论..." data-i18n-placeholder="需要长期记住的项目规则、服务器约定、用户偏好、排障结论..."></textarea>
+                                <div class="form-row"><div class="form-group"><label data-i18n="标题">标题</label><input id="aiMemoryTitle" placeholder="例如：生产服务器约定" data-i18n-placeholder="例如：生产服务器约定"></div><div class="form-group"><label>Scope / Project</label><input id="aiMemoryScope" placeholder="global / zephyr-ssh / prod"></div></div>
+                                <div class="form-row"><div class="form-group"><label data-i18n="关联连接 ID（逗号分隔）">关联连接 ID（逗号分隔）</label><input id="aiMemoryConnectionIds" placeholder="自动关联到指定 SSH 连接" data-i18n-placeholder="自动关联到指定 SSH 连接"></div><div class="form-group"><label data-i18n="标签（逗号分隔）">标签（逗号分隔）</label><input id="aiMemoryTags" placeholder="生产, 数据库, zephyr" data-i18n-placeholder="生产, 数据库, zephyr"></div></div>
+                                <textarea id="aiMemoryContent" rows="5" placeholder="需要长期记住的项目规则、服务器约定、用户偏好、排障结论..." data-i18n-placeholder="需要长期记住的项目规则、服务器约定、用户偏好、排障结论..."></textarea>
                                 <label class="check-line"><input type="checkbox" id="aiMemoryItemEnabled" checked> <span data-i18n="启用此 Memory">启用此 Memory</span></label>
                                 <div class="form-actions"><button class="btn btn-primary" type="submit" data-i18n="保存 Memory">保存 Memory</button><button class="btn" type="button" id="aiMemoryResetBtn" data-i18n="清空">清空</button></div>
                             </form>
@@ -710,9 +710,9 @@
                             <h2 data-i18n="Skills 能力包">Skills 能力包</h2>
                             <form id="aiSkillForm" class="settings-form ai-skill-form">
                                 <input type="hidden" id="aiSkillId">
-                                <input id="aiSkillName" placeholder="Skill 名称，例如：资深 Linux 运维" data-i18n-placeholder="Skill 名称，例如：资深 Linux 运维" data-i18n-placeholder="Skill 名称，例如：资深 Linux 运维">
-                                <input id="aiSkillDescription" placeholder="简短说明" data-i18n-placeholder="简短说明" data-i18n-placeholder="简短说明">
-                                <textarea id="aiSkillPrompt" rows="7" placeholder="Skill 指令内容：规则、工作流、偏好、工具使用方法..." data-i18n-placeholder="Skill 指令内容：规则、工作流、偏好、工具使用方法..." data-i18n-placeholder="Skill 指令内容：规则、工作流、偏好、工具使用方法..."></textarea>
+                                <input id="aiSkillName" placeholder="Skill 名称，例如：资深 Linux 运维" data-i18n-placeholder="Skill 名称，例如：资深 Linux 运维">
+                                <input id="aiSkillDescription" placeholder="简短说明" data-i18n-placeholder="简短说明">
+                                <textarea id="aiSkillPrompt" rows="7" placeholder="Skill 指令内容：规则、工作流、偏好、工具使用方法..." data-i18n-placeholder="Skill 指令内容：规则、工作流、偏好、工具使用方法..."></textarea>
                                 <label class="check-line"><input type="checkbox" id="aiSkillEnabled" checked> <span data-i18n="启用 Skill">启用 Skill</span></label>
                                 <div class="form-actions"><button class="btn btn-primary" type="submit" data-i18n="保存 Skill">保存 Skill</button><button class="btn" type="button" id="aiSkillResetBtn" data-i18n="清空">清空</button></div>
                             </form>
@@ -1011,7 +1011,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260726-i18n1" type="module"></script>
+    <script src="app.js?v=20260726-i18n-fix2" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

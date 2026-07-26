@@ -15,7 +15,7 @@ test('app.html marks navigation, dashboard, settings tabs with data-i18n', () =>
     assert.match(html, /data-i18n="个性化设置"/);
     assert.match(html, /data-i18n="连接列表 \(0\)"/);
     assert.match(html, /data-i18n-placeholder="搜索名称、IP、备注\.\.\."/);
-    assert.match(html, /id="appLocaleBtn"/);
+    assert.doesNotMatch(html, /id="appLocaleBtn"/);
     assert.match(html, /data-settings="language"/);
     assert.match(html, /id="languageSelect"/);
     assert.doesNotMatch(html, /id="appLocaleSelect"/);
@@ -24,16 +24,24 @@ test('app.html marks navigation, dashboard, settings tabs with data-i18n', () =>
 
 test('app.js imports i18n runtime and bootstraps in init()', () => {
     const js = read('public/app.js');
-    assert.match(js, /from '\.\/i18n\/runtime\.js\?v=20260726-i18n1'/);
+    assert.match(js, /from '\.\/i18n\/runtime\.js\?v=20260726-i18n-fix2'/);
     assert.match(js, /await initI18n\(\{ applyDom: true \}\);/);
     assert.match(js, /onLocaleChange\(/);
     assert.match(js, /function bindLocaleSelects\(\)/);
+    assert.match(js, /function rerenderLocaleSensitiveContent\(\)/);
+    assert.match(js, /const before = getLocale\(\);/);
+    assert.match(js, /if \(getLocale\(\) === before\) rerenderLocaleSensitiveContent\(\);/);
+    assert.match(js, /onLocaleChange\(\(\) => \{[\s\S]*?rerenderLocaleSensitiveContent\(\)/);
+    assert.match(js, /renderSecurityLists,/);
+    assert.match(js, /t\('暂无封禁 IP'\)/);
+    assert.match(js, /t\('暂无登录事件'\)/);
+    assert.match(js, /renderAiProviderList,/);
     assert.match(js, /t\('连接列表 \(\{count\}\)', \{ count: connections\.length \}\)/);
     assert.match(js, /t\('个性化设置已保存'\)/);
     assert.match(js, /t\('名称和图标已重置'\)/);
     assert.match(js, /t\('暂无连接，点击右上角添加新连接。'\)/);
-    assert.match(js, /#appLocaleBtn/);
-    assert.match(js, /openLanguageSettings/);
+    assert.doesNotMatch(js, /#appLocaleBtn/);
+    assert.doesNotMatch(js, /openLanguageSettings/);
     assert.doesNotMatch(js, /`连接列表 \(\$\{connections\.length\}\)`/);
 });
 
@@ -63,11 +71,11 @@ test('catalogs include batch 2 keys with en translations', () => {
     }
 });
 
-test('app.html cache busts include i18n1 version', () => {
+test('app.html cache busts include current i18n fix revision', () => {
     const html = read('public/app.html');
-    assert.match(html, /app\.js\?v=20260726-i18n1/);
-    assert.match(html, /style\.css\?v=20260726-i18n1/);
-    assert.match(html, /i18n\/runtime\.js\?v=20260726-i18n1/);
+    assert.match(html, /app\.js\?v=20260726-i18n-fix2/);
+    assert.match(html, /style\.css\?v=20260726-i18n-fix2/);
+    assert.match(html, /i18n\/runtime\.js\?v=20260726-i18n-fix2/);
 });
 
 test('app.html marks security settings panel with data-i18n', () => {

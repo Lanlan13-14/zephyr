@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { t, initI18n, setLocale, getLocale, applyDomI18n } from './i18n/runtime.js?v=20260726-i18n1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n } from './i18n/runtime.js?v=20260726-i18n-fix2';
 
 const $ = (sel) => document.querySelector(sel);
 const errorBanner = $('#errorBanner');

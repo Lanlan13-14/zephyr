@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
-    <title>Zephyr - Telnet 终端</title>
+    <title data-i18n="Zephyr - Telnet 终端">Zephyr - Telnet 终端</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="modulepreload" href="telnet-terminal.js?v=20260726-i18n1">
+    <link rel="modulepreload" href="telnet-terminal.js?v=20260726-i18n-fix2">
     <link rel="modulepreload" href="theme-runtime.js?v=20260725-telnet-page-split1">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-i18n1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-i18n-fix2">
     <link rel="stylesheet" href="/vendor/wterm-fork/terminal.css?v=20260725-telnet-page-split1">
-    <link rel="stylesheet" href="style.css?v=20260726-i18n1">
+    <link rel="stylesheet" href="style.css?v=20260726-i18n-fix2">
     <script type="importmap">
         {
             "imports": {
@@ -46,10 +46,10 @@
                 <button class="panel-traffic-btn" data-layout-panel="snippetPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
             </div>
             <div class="snippet-panel-header panel-titlebar">
-                <strong>⚡ 代码片段</strong>
+                <strong data-i18n="⚡ 代码片段">⚡ 代码片段</strong>
             </div>
             <div class="snippet-panel-body">
-                <input class="snippet-search" id="snippetSearch" placeholder="搜索片段...">
+                <input class="snippet-search" id="snippetSearch" placeholder="搜索片段..." data-i18n-placeholder="搜索片段...">
                 <div class="snippet-list" id="snippetList"></div>
                 <p class="snippet-empty" id="snippetEmpty" data-i18n="暂无代码片段，请到首页 设置 → 代码片段 添加。">暂无代码片段，请到首页 设置 → 代码片段 添加。</p>
             </div>
@@ -62,7 +62,7 @@
                 <button class="panel-traffic-btn" data-layout-panel="shortcutPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
             </div>
             <div class="snippet-panel-header panel-titlebar">
-                <strong>⌨️ 快捷键</strong>
+                <strong data-i18n="⌨️ 快捷键">⌨️ 快捷键</strong>
             </div>
             <div class="shortcut-grid" id="shortcutGrid">
                 <button class="tool-btn modifier" data-key="ctrl">Ctrl</button>
@@ -114,8 +114,8 @@
                 <button class="tool-btn func fn-key" data-key="f10">F10</button>
                 <button class="tool-btn func fn-key" data-key="f11">F11</button>
                 <button class="tool-btn func fn-key" data-key="f12">F12</button>
-                <button class="tool-btn font-size-btn" id="fontDecreaseBtn" title="缩小终端字体">A−</button>
-                <button class="tool-btn font-size-btn" id="fontIncreaseBtn" title="放大终端字体">A+</button>
+                <button class="tool-btn font-size-btn" id="fontDecreaseBtn" title="缩小终端字体" data-i18n-title="缩小终端字体">A−</button>
+                <button class="tool-btn font-size-btn" id="fontIncreaseBtn" title="放大终端字体" data-i18n-title="放大终端字体">A+</button>
             </div>
             <div class="panel-resize-handle left" data-resize-panel="shortcutPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
             <div class="panel-resize-handle right" data-resize-panel="shortcutPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
@@ -124,7 +124,7 @@
         <!-- 顶部命令输入栏（移动端始终可见） -->
         <div class="terminal-top-input" id="terminalTopInput">
             <div class="cmd-input-row">
-                <textarea class="cmd-input" id="cmdInput" rows="1" placeholder="在此输入命令，Enter 发送，Shift+Enter 换行..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+                <textarea class="cmd-input" id="cmdInput" rows="1" placeholder="在此输入命令，Enter 发送，Shift+Enter 换行..." data-i18n-placeholder="在此输入命令，Enter 发送，Shift+Enter 换行..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
                 <button class="cmd-send-btn" id="cmdSendBtn" data-i18n="发送">发送</button>
             </div>
         </div>
@@ -144,8 +144,8 @@
         </div>
 
         <!-- 移动端底部固定栏：辅助键，位于原 CSS 图标栏和键盘之间 -->
-        <div class="terminal-bottom-bar" id="terminalBottomBar" aria-label="移动端辅助键栏">
-            <div class="mobile-aux-keys" id="mobileAuxKeys" aria-label="移动端辅助键">
+        <div class="terminal-bottom-bar" id="terminalBottomBar" aria-label="移动端辅助键栏" data-i18n-aria-label="移动端辅助键栏">
+            <div class="mobile-aux-keys" id="mobileAuxKeys" aria-label="移动端辅助键" data-i18n-aria-label="移动端辅助键">
                 <button class="aux-key" data-key="ctrl" title="Ctrl">Ctrl</button>
                 <button class="aux-key" data-key="esc" title="Esc">Esc</button>
                 <button class="aux-key" data-key="tab" title="Tab">Tab</button>
@@ -165,6 +165,6 @@
             </div>
         </div>
     </div>
-    <script src="telnet-terminal.js?v=20260726-i18n1" type="module"></script>
+    <script src="telnet-terminal.js?v=20260726-i18n-fix2" type="module"></script>
 </body>
 </html>

@@ -38,12 +38,12 @@ test('index.html marks login strings with data-i18n and locale switch', () => {
     assert.match(html, /data-i18n="登录"/);
     assert.match(html, /data-i18n="使用 Passkey 登录"/);
     assert.match(html, /id="localeSelectLogin"/);
-    assert.match(html, /client\.js\?v=20260726-i18n1/);
+    assert.match(html, /client\.js\?v=20260726-i18n-fix2/);
 });
 
 test('client.js uses i18n runtime for user-facing strings', () => {
     const js = read('public/client.js');
-    assert.match(js, /from '\.\/i18n\/runtime\.js\?v=20260726-i18n1'/);
+    assert.match(js, /from '\.\/i18n\/runtime\.js\?v=20260726-i18n-fix2'/);
     assert.match(js, /t\('请求失败'\)/);
     assert.match(js, /t\('请先完成人机验证'\)/);
     assert.match(js, /t\('\{brand\} - 登录'/);
@@ -51,6 +51,26 @@ test('client.js uses i18n runtime for user-facing strings', () => {
     assert.match(js, /setLocale\(/);
     assert.doesNotMatch(js, /throw new Error\('请先完成人机验证'\)/);
     assert.doesNotMatch(js, /document\.title = `\$\{brandName\} - 登录`/);
+});
+
+test('failed catalog loads are retried instead of freezing the locale runtime', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+        calls += 1;
+        if (calls <= 2) throw new Error('temporary network failure');
+        return { ok: true, json: async () => ({ '请求失败': 'Request failed after retry' }) };
+    };
+    try {
+        const mod = await import(pathToFileURL(path.join(root, 'public/i18n/runtime.js')).href + `?retry=${Date.now()}`);
+        await mod.setLocale('en', { persist: false, applyDom: false });
+        assert.equal(mod.t('请求失败'), '请求失败');
+        await mod.setLocale('en', { persist: false, applyDom: false });
+        assert.equal(mod.t('请求失败'), 'Request failed after retry');
+        assert.ok(calls >= 3);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
 });
 
 test('t() interpolates and falls back correctly', async () => {

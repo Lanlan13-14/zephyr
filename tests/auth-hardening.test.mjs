@@ -137,6 +137,25 @@ after(async () => {
     await server?.cleanup();
 });
 
+test('forced password-change session can request its required email code', async () => {
+    const created = await server.api(adminCookie, 'POST', '/api/admin/users', {
+        username: 'must-change-email',
+        password: 'must-change-temp-1',
+        email: 'must-change-email@example.test',
+        role: 'user',
+        mustChangePassword: true,
+    });
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const login = await server.login('must-change-email', 'must-change-temp-1');
+    const requested = await server.api(login.cookie, 'POST', '/api/auth/change-password/request-code', {});
+    /* Mail is deliberately disabled in this isolated test server. A 400 here
+     * proves the must-change gate admitted the route; a blocked gate returns
+     * 403/must_change_password before the route's own mail validation runs. */
+    assert.equal(requested.status, 400, JSON.stringify(requested.body));
+    assert.match(requested.body.error, /邮件通知未启用/);
+    assert.notEqual(requested.body.code, 'must_change_password');
+});
+
 test('account lockout after repeated wrong passwords', async () => {
     unlockAccount(VICTIM);
 

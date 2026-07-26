@@ -1,6 +1,6 @@
 /* Telnet terminal page — no SFTP / Docker / remote stats. Fork of terminal.js. */
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { t, initI18n } from './i18n/runtime.js?v=20260726-i18n1';
+import { t, initI18n } from './i18n/runtime.js?v=20260726-i18n-fix2';
 import {
     createSshKeyboard,
     Intent as SoftKeyboardIntent,

@@ -112,7 +112,7 @@ async function fetchCatalog(locale) {
     const loc = normalizeLocale(locale);
     if (catalogs[loc] && Object.keys(catalogs[loc]).length) return catalogs[loc];
     const url = new URL(`./locales/${loc}.json`, import.meta.url);
-    url.searchParams.set('v', '20260726-i18n1');
+    url.searchParams.set('v', '20260726-i18n-fix2');
     const res = await fetch(url.href, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`i18n catalog ${loc} HTTP ${res.status}`);
     const dict = await res.json();
@@ -121,19 +121,24 @@ async function fetchCatalog(locale) {
 }
 
 export async function ensureCatalogs(locales = SUPPORTED) {
+    /* A failed first fetch must not permanently poison the module: pages can
+     * load before a service worker/network transition settles. Keep a promise
+     * only for the in-flight batch, then clear it so a later locale change can
+     * retry catalogs that are still empty. */
     if (loadPromise) return loadPromise;
-    loadPromise = Promise.all(
-        locales.map((loc) => fetchCatalog(loc).catch((err) => {
+    const requested = [...new Set(locales.map(normalizeLocale))];
+    const pending = Promise.all(
+        requested.map((loc) => fetchCatalog(loc).catch((err) => {
             console.warn('[i18n] failed to load', loc, err);
-            registerCatalog(loc, {});
+            return null;
         })),
     ).then(() => undefined);
+    loadPromise = pending;
     try {
-        await loadPromise;
+        await pending;
     } finally {
-        // allow reload after setLocale if needed
+        if (loadPromise === pending) loadPromise = null;
     }
-    return loadPromise;
 }
 
 function setDocumentLang(locale) {
