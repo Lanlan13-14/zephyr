@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260726-i18n-fix6';
+import { t } from './i18n/runtime.js?v=20260726-i18n-fix7';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 

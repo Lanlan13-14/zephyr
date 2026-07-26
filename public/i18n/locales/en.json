@@ -1993,5 +1993,12 @@
   "Zephyr 本地运维操作流": "Zephyr local operations workflow",
   "让 AI 按 Zephyr 的连接、终端、文件、Memory、浏览器预览和敏感确认机制工作，而不是泛泛聊天。": "Make AI work through Zephyr connections, terminals, files, memory, browser previews, and sensitive confirmations instead of generic chat.",
   "内置中文运维提示词；模型回复语言仍跟随当前界面语言。": "Built-in operations prompt; model replies still follow the current interface language.",
-  "全部登录事件": "All sign-in events"
+  "全部登录事件": "All sign-in events",
+  "CAPTCHA 错误": "CAPTCHA error",
+  "账号临时锁定": "Account temporarily locked",
+  "密码错误": "Incorrect password",
+  "账号已停用": "Account disabled",
+  "默认密码禁止公网登录": "Default password cannot be used for public sign-in",
+  "TOTP 错误": "Incorrect TOTP code",
+  "Passkey 验证失败": "Passkey verification failed"
 }

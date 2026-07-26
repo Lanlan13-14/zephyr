@@ -11,7 +11,7 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { t, initI18n } from './i18n/runtime.js?v=20260726-i18n-fix6';
+import { t, initI18n } from './i18n/runtime.js?v=20260726-i18n-fix7';
 import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260720-zft2';
 import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260720-zft2';
 import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260720-zft2';

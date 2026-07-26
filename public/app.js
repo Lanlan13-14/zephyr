@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange } from './i18n/runtime.js?v=20260726-i18n-fix6';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260726-i18n-fix6';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange } from './i18n/runtime.js?v=20260726-i18n-fix7';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260726-i18n-fix7';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -8174,7 +8174,7 @@ function updatePasswordFormFields() {
     if (emailRow) emailRow.classList.toggle('force-hidden', !hasEmail);
 }
 function renderPasskeys() { $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无 Passkey')}</p>`; }
-function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>${t('失败')} ${b.failedCount} · ${t('解封')} ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">${t('解除')}</button></div>`).join('') || `<p class="muted">${t('暂无封禁 IP')}</p>`; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason || '')} · ${fmtTime(e.time)}</span></div>`).join('') || `<p class="muted">${t('暂无登录事件')}</p>`; }
+function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>${t('失败')} ${b.failedCount} · ${t('解封')} ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">${t('解除')}</button></div>`).join('') || `<p class="muted">${t('暂无封禁 IP')}</p>`; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason ? t(e.reason) : '')} · ${fmtTime(e.time)}</span></div>`).join('') || `<p class="muted">${t('暂无登录事件')}</p>`; }
 async function saveSecurityPolicy(e) { e.preventDefault(); settings = await savePlatformSettings('security', { security: { ipWhitelistEnabled: $('#ipWhitelistEnabled').checked, ipWhitelist: $('#ipWhitelist').value, bruteForceEnabled: $('#bruteForceEnabled').checked, bruteForceMaxFailures: Number($('#bruteForceMaxFailures').value) || 5, bruteForceBanMinutes: Number($('#bruteForceBanMinutes').value) || 15 } }); toast(t('安全策略已保存')); }
 async function saveCaptcha(e) {
     e.preventDefault();

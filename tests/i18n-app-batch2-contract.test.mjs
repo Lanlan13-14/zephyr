@@ -24,7 +24,7 @@ test('app.html marks navigation, dashboard, settings tabs with data-i18n', () =>
 
 test('app.js imports i18n runtime and bootstraps in init()', () => {
     const js = read('public/app.js');
-    assert.match(js, /from '\.\/i18n\/runtime\.js\?v=20260726-i18n-fix6'/);
+    assert.match(js, /from '\.\/i18n\/runtime\.js\?v=20260726-i18n-fix7'/);
     assert.match(js, /await initI18n\(\{ applyDom: true \}\);/);
     assert.match(js, /onLocaleChange\(/);
     assert.match(js, /function bindLocaleSelects\(\)/);
@@ -73,9 +73,9 @@ test('catalogs include batch 2 keys with en translations', () => {
 
 test('app.html cache busts include current i18n fix revision', () => {
     const html = read('public/app.html');
-    assert.match(html, /app\.js\?v=20260726-i18n-fix6/);
-    assert.match(html, /style\.css\?v=20260726-i18n-fix6/);
-    assert.match(html, /i18n\/runtime\.js\?v=20260726-i18n-fix6/);
+    assert.match(html, /app\.js\?v=20260726-i18n-fix7/);
+    assert.match(html, /style\.css\?v=20260726-i18n-fix7/);
+    assert.match(html, /i18n\/runtime\.js\?v=20260726-i18n-fix7/);
 });
 
 test('app.html marks security settings panel with data-i18n', () => {

@@ -9,7 +9,7 @@ let panelLayoutMenu = null;
 let panelLayoutButton = null;
 let suppressNextLayoutClick = false;
 
-import { t } from './i18n/runtime.js?v=20260726-i18n-fix6';
+import { t } from './i18n/runtime.js?v=20260726-i18n-fix7';
 
 export function detectInteractionEnvironment() {
     const ua = String(navigator.userAgent || '').toLowerCase();
