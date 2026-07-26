@@ -1717,7 +1717,7 @@ function inferPlanStatus(plan = {}) {
 }
 function createPendingConfirmation(toolName, args, ctx, deps) {
     const id = crypto.randomUUID();
-    const confirmation = { id, toolName, summary: confirmationSummary(toolName, args, deps), args: publicToolArgs(toolName, args), createdAt: Date.now(), expiresAt: Date.now() + 10 * 60 * 1000 };
+    const confirmation = { id, toolName, summary: confirmationSummary(toolName, args, deps), summaryKey: '确认执行工具：{tool}', summaryParams: { tool: toolName }, args: publicToolArgs(toolName, args), createdAt: Date.now(), expiresAt: Date.now() + 10 * 60 * 1000 };
     pendingActions.set(id, { ...confirmation, userId: ctx.user?.userId || ctx.req?.session?.userId || '', username: ctx.req?.session?.username || '', rawArgs: args, context: ctx.context || {} });
     return { confirmationRequired: true, confirmation };
 }

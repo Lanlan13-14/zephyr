@@ -819,7 +819,7 @@ async function performAiRemoteDesktopAction(data = {}) {
     const text = String(data.text || '');
     if (data.captureId) {
         const current = getRemoteDesktopSnapshotForAi({ maxWidth: Number(data.screenshotWidth) || 960, quality: 0.42 });
-        if (String(data.captureId) !== String(current.captureId || '')) throw Object.assign(new Error('VNC 画面已变化，请重新截图后再操作'), { code: 'stale_capture' });
+        if (String(data.captureId) !== String(current.captureId || '')) throw Object.assign(new Error(t('VNC 画面已变化，请重新截图后再操作')), { code: 'stale_capture' });
     }
     if (control === 'quality') { cycleQuality(data.qualityMode || ''); return { ok: true, control, qualityMode }; }
     if (control === 'fit') { cycleFit(data.fitMode || ''); return { ok: true, control, fitMode }; }

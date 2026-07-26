@@ -425,13 +425,13 @@ function cleanupAudio() {
 }
 
 async function getRemoteDesktopSnapshotForAi(options = {}) {
-    if (!rdpWorkerBridge) return { protocol: 'RDP', tabId: params?.tabId || tabId, connected, error: 'RDP Worker 尚未就绪', at: Date.now(), frameAt: 0 };
+    if (!rdpWorkerBridge) return { protocol: 'RDP', tabId: params?.tabId || tabId, connected, error: t('RDP Worker 尚未就绪'), at: Date.now(), frameAt: 0 };
     try {
         const frame = await rdpWorkerBridge.request('rdpCaptureFrame', []);
         const sourceWidth = Number(frame?.width || 0);
         const sourceHeight = Number(frame?.height || 0);
         const pixels = frame?.pixels instanceof Uint8Array ? frame.pixels : new Uint8Array(frame?.pixels || []);
-        if (!sourceWidth || !sourceHeight || pixels.length !== sourceWidth * sourceHeight * 4) throw new Error('RDP 截图像素无效');
+        if (!sourceWidth || !sourceHeight || pixels.length !== sourceWidth * sourceHeight * 4) throw new Error(t('RDP 截图像素无效'));
         const source = document.createElement('canvas');
         source.width = sourceWidth;
         source.height = sourceHeight;
@@ -1609,7 +1609,7 @@ function sendKeySequence(seq) {
 async function performAiRemoteDesktopAction(data = {}) {
     if (data.captureId) {
         const current = await getRemoteDesktopSnapshotForAi({ maxWidth: Number(data.screenshotWidth) || 960, quality: 0.42 });
-        if (String(data.captureId) !== String(current.captureId || '')) throw Object.assign(new Error('RDP 画面已变化，请重新截图后再操作'), { code: 'stale_capture' });
+        if (String(data.captureId) !== String(current.captureId || '')) throw Object.assign(new Error(t('RDP 画面已变化，请重新截图后再操作')), { code: 'stale_capture' });
     }
     const control = String(data.control || '').toLowerCase().replace(/-/g, '_');
     if (control === 'quality') { $('#qualityBtn')?.click?.(); return { ok: true, control, qualityMode }; }
@@ -1628,13 +1628,13 @@ async function performAiRemoteDesktopAction(data = {}) {
     if (control === 'disconnect') { $('#disconnectBtn')?.click?.(); return { ok: true, control }; }
     if (control === 'shortcut') {
         const sequence = String(data.sequence || '');
-        if (!KEY_SEQ_MAP[sequence]) throw new Error(`未知 RDP 快捷键：${sequence}`);
+        if (!KEY_SEQ_MAP[sequence]) throw new Error(t('未知 RDP 快捷键：{sequence}', { sequence }));
         sendKeySequence(sequence);
         return { ok: true, control, sequence };
     }
     if (control === 'text' || control === 'clipboard_send') {
         const text = String(data.text || '');
-        if (!text) throw new Error('AI 远程桌面输入为空');
+        if (!text) throw new Error(t('AI 远程桌面输入为空'));
         await sendTextViaClipboard(text);
         return { ok: true, control, length: text.length };
     }
@@ -1642,7 +1642,7 @@ async function performAiRemoteDesktopAction(data = {}) {
         const x = Math.round(Number(data.x));
         const y = Math.round(Number(data.y));
         const button = Math.max(0, Math.min(2, (Number(data.button) || 1) - 1));
-        if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('AI 远程桌面点击缺少 x/y');
+        if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(t('AI 远程桌面点击缺少 x/y'));
         if (selectedPipeline === 'worker-gpu-v2') {
             rdpWorkerBridge.input.push('mouse-move', { x, y });
             rdpWorkerBridge.input.push('mouse-down', { button, x, y });
@@ -1653,7 +1653,7 @@ async function performAiRemoteDesktopAction(data = {}) {
         }
         return { ok: true, control, x, y, button: button + 1 };
     }
-    throw new Error(`未知 RDP AI 动作：${control}`);
+    throw new Error(t('未知 RDP AI 动作：{control}', { control }));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -2462,8 +2462,8 @@ window.addEventListener('message', (e) => {
             notifyParentAiActionResult(actionId, { ok: true, control: msg.control || '', result });
         }).catch((err) => {
             console.warn('[rdp-client]', 'AI remote desktop action failed', { error: err.message, control: msg.control });
-            setClipboardHint(err.message || 'AI 远程桌面操作失败', 'error');
-            notifyParentAiActionResult(actionId, { ok: false, control: msg.control || '', error: err.message || 'AI 远程桌面操作失败', code: err.code || '' });
+            setClipboardHint(err.message || t('AI 远程桌面操作失败'), 'error');
+            notifyParentAiActionResult(actionId, { ok: false, control: msg.control || '', error: err.message || t('AI 远程桌面操作失败'), code: err.code || '' });
         });
         return;
     }

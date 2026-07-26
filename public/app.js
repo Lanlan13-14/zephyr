@@ -6222,7 +6222,7 @@ function renderAiBrowserPreview() {
         return;
     }
     title && (title.textContent = `AI 代操作页面 · ${shot.tool || 'browser'} · ${state.session || 'default'} · ${new Date(shot.updatedAt || Date.now()).toLocaleTimeString()}`);
-    body.innerHTML = `<a href="${escapeHtml(shot.url)}" target="_blank" rel="noopener"><img src="${escapeHtml(shot.url)}" alt="浏览器截图"></a>${shot.pageUrl ? `<small>${escapeHtml(shot.pageUrl)}</small>` : ''}`;
+    body.innerHTML = `<a href="${escapeHtml(shot.url)}" target="_blank" rel="noopener"><img src="${escapeHtml(shot.url)}" alt="${escapeHtml(t('浏览器截图'))}"></a>${shot.pageUrl ? `<small>${escapeHtml(shot.pageUrl)}</small>` : ''}`;
 }
 async function refreshAiBrowserPreview() {
     if (aiBrowserPreviewTimer) return;
@@ -6233,7 +6233,7 @@ async function refreshAiBrowserPreview() {
         state.preview = { ...(data.result || {}), tool: 'browser_screenshot', updatedAt: Date.now() };
         state.visible = true;
         renderAiBrowserPreview();
-    } catch (err) { toast(err.message || '刷新浏览器截图失败'); }
+    } catch (err) { toast(err.message || t('刷新浏览器截图失败')); }
 }
 function mergeAiPlan(plan) {
     if (!plan?.id) return;
@@ -6341,7 +6341,7 @@ function readRemoteDesktopSnapshotForAi(tabId = '', maxWidth = 960) {
         height: shot?.height || 0,
         originalWidth: shot?.originalWidth || 0,
         originalHeight: shot?.originalHeight || 0,
-        error: shot?.error || (!frame ? '远程桌面 iframe 未加载或已被最小化释放' : ''),
+        error: shot?.error || (!frame ? t('远程桌面 iframe 未加载或已被最小化释放') : ''),
         frameAt,
         captureId,
         at: shot?.at || Date.now(),
@@ -6392,7 +6392,7 @@ function normalizeAiRemoteDesktopMouseAction(action = {}, tabId = '') {
     const y = Number(action.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return action;
     const shot = readRemoteDesktopSnapshotForAi(tabId, action.maxWidth || 960);
-    if (!shot?.pending && action.captureId && String(action.captureId) !== String(shot?.captureId || '')) throw new Error('远程桌面画面已变化，请重新截图后再点击');
+    if (!shot?.pending && action.captureId && String(action.captureId) !== String(shot?.captureId || '')) throw new Error(t('远程桌面画面已变化，请重新截图后再点击'));
     const screenshotWidth = Number(action.screenshotWidth || shot?.width || 0);
     const screenshotHeight = Number(action.screenshotHeight || shot?.height || 0);
     const remoteWidth = Number(action.originalWidth || shot?.originalWidth || screenshotWidth || 0);
@@ -6559,7 +6559,7 @@ async function handleAiClientCapture(data = {}, { providerId = '', model = '', o
     } else {
         shot = await waitForFreshRemoteDesktopSnapshot(targetTabId, { maxWidth, timeoutMs: 2200 });
     }
-    const result = { ...(actionResult || {}), screenshots: shot ? [shot] : [], capture: shot || null, captureId: shot?.captureId || '', beforeCaptureId: capture.beforeCaptureId || actionResult?.beforeCaptureId || '', afterCaptureId: shot?.captureId || actionResult?.afterCaptureId || '', message: shot?.dataUrl ? '已实时截取最新远程桌面画面并签发 captureId' : (shot?.error || '实时截图不可用'), clientCaptured: true, capturedAt: Date.now() };
+    const result = { ...(actionResult || {}), screenshots: shot ? [shot] : [], capture: shot || null, captureId: shot?.captureId || '', beforeCaptureId: capture.beforeCaptureId || actionResult?.beforeCaptureId || '', afterCaptureId: shot?.captureId || actionResult?.afterCaptureId || '', message: shot?.dataUrl ? t('已实时截取最新远程桌面画面并签发 captureId') : (shot?.error || t('实时截图不可用')), clientCaptured: true, capturedAt: Date.now() };
     const trace = { tool: capture.tool || capture.type || 'remote_desktop_capture_v1', args: capture.args || { tabId: targetTabId, maxWidth }, result, status: shot?.dataUrl && !result.clientError ? 'success' : 'error' };
     appendAiMessage(formatAiToolResult(trace), 'trace', { rawHtml: true, sessionId: targetSessionId });
     const imagePart = shot?.dataUrl ? `\n\n最新远程桌面截图（实时截取）：\n${shot.dataUrl}` : '';
@@ -6581,19 +6581,19 @@ async function syncAiToolSideEffects(toolResults = [], { sessionId = '' } = {}) 
                 if (openedTabId) toolData.openedTabId = openedTabId;
                 const protocol = String(toolData?.connection?.protocol || '').toUpperCase();
                 if (['RDP', 'VNC'].includes(protocol)) toolData.remoteDesktopScreenshot = await waitForFreshRemoteDesktopSnapshot(openedTabId, { maxWidth: 640, timeoutMs: 5200 });
-            } catch (err) { toast(err.message || 'AI 打开连接失败'); }
+            } catch (err) { toast(err.message || t('AI 打开连接失败')); }
         }
         if (toolData?.clientActionRequired && toolData?.clientAction && !toolData?.clientCaptureRequired) {
             try {
                 const clientResult = await performAiUiAction(toolData.clientAction);
                 if (clientResult && typeof clientResult === 'object') Object.assign(toolData, clientResult);
-            } catch (err) { toast(err.message || 'AI 远程桌面操作失败'); toolData.clientError = err.message || 'AI 远程桌面操作失败'; }
+            } catch (err) { toast(err.message || t('AI 远程桌面操作失败')); toolData.clientError = err.message || t('AI 远程桌面操作失败'); }
         }
         if (toolData?.uiAction === 'ui_action' && toolData?.action) {
             try {
                 const clientResult = await performAiUiAction(toolData.action);
                 if (clientResult && typeof clientResult === 'object') Object.assign(toolData, clientResult);
-            } catch (err) { toast(err.message || 'AI UI 操作失败'); toolData.clientError = err.message || 'AI UI 操作失败'; }
+            } catch (err) { toast(err.message || t('AI UI 操作失败')); toolData.clientError = err.message || t('AI UI 操作失败'); }
         }
         if (r.tool === 'plan_task' || r.tool === 'plan_update') mergeAiPlan(r.result?.plan);
         if (r.tool === 'memory_save') mergeAiMemory(r.result?.memory);
@@ -6692,18 +6692,18 @@ function summarizeAiToolResult(tool, result = {}) {
     if (tool === 'open_connection') return result.message || `打开连接 ${result.connection?.name || result.connectionId || ''}`;
     if (tool === 'terminal_read_output') return `读取 ${(result.terminalOutputs || []).length || (result.terminalOutput ? 1 : 0)} 个终端输出快照`;
     if (tool === 'remote_desktop_capture_v1') {
-        if (data.clientCaptureRequired) return '请求前端实时截取并签发新 captureId';
+        if (data.clientCaptureRequired) return t('请求前端实时截取并签发新 captureId');
         const count = (data.screenshots || []).length || (data.capture ? 1 : 0);
-        return count ? `读取 ${count} 个远程桌面画面，captureId=${data.capture?.captureId || data.screenshots?.[0]?.captureId || ''}` : (data.message || '没有可读取的远程桌面画面');
+        return count ? t('读取 {count} 个远程桌面画面，captureId={captureId}', { count, captureId: data.capture?.captureId || data.screenshots?.[0]?.captureId || '' }) : (data.message || t('没有可读取的远程桌面画面'));
     }
-    if (tool === 'remote_desktop_action_v1') return data.clientError ? `远程桌面操作失败：${data.clientError}` : `远程桌面操作${data.captureChanged ? '已返回新画面' : '等待闭环验证'}`;
-    if (tool === 'remote_desktop_verify_v1') return data.verified ? '远程桌面动作闭环已验证' : '远程桌面画面未变化，不能确认操作成功';
-    if (tool === 'ui_action' && result.clientError) return `操作失败：${result.clientError}`;
-    if (tool === 'ui_action' && result.remoteDesktopScreenshot) return `远程桌面操作完成：${result.remoteDesktopScreenshot.protocol || ''} ${result.remoteDesktopScreenshot.status || ''}`;
-    if (tool === 'ui_action' && result.terminalOutput) return `终端输出 ${result.terminalOutput.lineCount || 0} 行${result.terminalOutput.truncated ? '（已截断）' : ''}`;
-    if (tool === 'browser_inspect_v1') return `发现 ${(data.elements || []).length} 个可操作元素（DOM v${data.domRevision || 0}）：${(data.elements || []).slice(0, 5).map((e) => e.text || e.elementRef).filter(Boolean).join('、')}`;
-    if (String(tool || '').startsWith('browser_')) return `AI 正在页面代操作：${data.title || data.url || '浏览器操作完成'}`;
-    return '执行完成';
+    if (tool === 'remote_desktop_action_v1') return data.clientError ? t('远程桌面操作失败：{error}', { error: data.clientError }) : t(data.captureChanged ? '远程桌面操作已返回新画面' : '远程桌面操作等待闭环验证');
+    if (tool === 'remote_desktop_verify_v1') return t(data.verified ? '远程桌面动作闭环已验证' : '远程桌面画面未变化，不能确认操作成功');
+    if (tool === 'ui_action' && result.clientError) return t('操作失败：{error}', { error: result.clientError });
+    if (tool === 'ui_action' && result.remoteDesktopScreenshot) return t('远程桌面操作完成：{protocol} {status}', { protocol: result.remoteDesktopScreenshot.protocol || '', status: result.remoteDesktopScreenshot.status || '' });
+    if (tool === 'ui_action' && result.terminalOutput) return t(result.terminalOutput.truncated ? '终端输出 {count} 行（已截断）' : '终端输出 {count} 行', { count: result.terminalOutput.lineCount || 0 });
+    if (tool === 'browser_inspect_v1') return t('发现 {count} 个可操作元素（DOM v{revision}）：{elements}', { count: (data.elements || []).length, revision: data.domRevision || 0, elements: (data.elements || []).slice(0, 5).map((e) => e.text || e.elementRef).filter(Boolean).join(t('、')) });
+    if (String(tool || '').startsWith('browser_')) return t('AI 正在页面代操作：{target}', { target: data.title || data.url || t('浏览器操作完成') });
+    return t('执行完成');
 }
 function formatAiToolResult(r = {}) {
     const result = r.result || {};
@@ -6712,12 +6712,12 @@ function formatAiToolResult(r = {}) {
     const titleMap = {
         list_connections: '列出连接', connection_list_v1: '列出连接', connection_get_v1: '读取连接', connection_rename_v1: '重命名连接', connection_create_v1: '新增连接', connection_update_v1: '修改连接', connection_delete_v1: '删除连接', connection_test_v1: '测试连接', connection_open_v1: '打开连接', proxy_list_v1: '列出代理', proxy_get_v1: '读取代理', proxy_create_v1: '新增代理', proxy_update_v1: '修改代理', proxy_delete_v1: '删除代理', ssh_key_list_v1: '列出 SSH 密钥', ssh_key_get_v1: '读取 SSH 密钥', ssh_key_validate_v1: '校验 SSH 密钥', ssh_key_rename_v1: '重命名 SSH 密钥', ssh_key_update_metadata_v1: '修改 SSH 密钥备注', ssh_key_delete_v1: '删除 SSH 密钥', web_search: t('网页搜索'), fetch_url: '网页读取', browser_navigate: '浏览器打开', browser_inspect_v1: '检查页面元素', browser_screenshot: '浏览器截图', browser_click_v1: '浏览器点击', browser_type_v1: '浏览器输入', browser_scroll: '浏览器滚动', browser_text: '读取浏览器文本', browser_key: '浏览器按键', browser_wait: '等待页面', open_connection: '打开连接', terminal_read_output: '读取终端输出', remote_desktop_capture_v1: '读取远程桌面画面', remote_desktop_action_v1: '操作远程桌面', remote_desktop_verify_v1: '验证远程桌面操作', ui_action: '页面/终端代操作', memory_search: '搜索 Memory', memory_save: t('保存 Memory'), plan_task: '创建计划', plan_update: '更新计划', plan_delete: '删除计划', remote_execute: t('远程执行'), remote_read_file: '读取远程文件', remote_write_file: '写入远程文件', confirmed: '敏感操作结果'
     };
-    const title = titleMap[r.tool] || `工具 ${r.tool || 'unknown'}`;
+    const title = t(titleMap[r.tool] || '工具 {name}', { name: r.tool || 'unknown' });
     const duration = Number.isFinite(Number(r.durationMs)) ? `${(Number(r.durationMs) / 1000).toFixed(1)}s` : '';
     return `<div class="ai-tool-trace" data-tool="${escapeHtml(r.tool || '')}">
         <div class="ai-tool-trace-head"><span class="ai-tool-icon">${String(r.tool || '').startsWith('remote_') ? '▣' : String(r.tool || '').startsWith('browser_') ? '◉' : '◇'}</span><strong>${escapeHtml(title)}</strong>${duration ? `<em>${escapeHtml(duration)}</em>` : ''}</div>
         <div class="ai-tool-summary">${escapeHtml(summarizeAiToolResult(r.tool, result))}</div>
-        ${shot?.url ? `<a href="${escapeHtml(shot.url)}" target="_blank" rel="noopener"><img class="ai-inline-shot" src="${escapeHtml(shot.url)}" alt="浏览器截图"></a>` : ''}
+        ${shot?.url ? `<a href="${escapeHtml(shot.url)}" target="_blank" rel="noopener"><img class="ai-inline-shot" src="${escapeHtml(shot.url)}" alt="${escapeHtml(t('浏览器截图'))}"></a>` : ''}
         <details class="ai-tool-details"><summary>${t('查看完整参数和结果')}</summary><pre><code>${escapeHtml(detail)}</code></pre></details>
     </div>`;
 }
@@ -6970,7 +6970,7 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                         shot = actionResult?.remoteDesktopScreenshot || null;
                     }
                     if (!shot) shot = await waitForFreshRemoteDesktopSnapshot(targetTabId, { maxWidth, timeoutMs: 3200, afterFrameAt: Number(captureArgs?.afterFrameAt || 0) });
-                    const captureResult = { ...(actionResult || {}), screenshots: shot ? [shot] : [], capture: shot || null, captureId: shot?.captureId || '', beforeCaptureId: captureArgs?.beforeCaptureId || actionResult?.beforeCaptureId || '', afterCaptureId: shot?.captureId || actionResult?.afterCaptureId || '', clientCaptured: true, capturedAt: Date.now(), message: shot?.dataUrl ? '已实时截取最新远程桌面画面并签发 captureId' : (shot?.error || '实时截图不可用') };
+                    const captureResult = { ...(actionResult || {}), screenshots: shot ? [shot] : [], capture: shot || null, captureId: shot?.captureId || '', beforeCaptureId: captureArgs?.beforeCaptureId || actionResult?.beforeCaptureId || '', afterCaptureId: shot?.captureId || actionResult?.afterCaptureId || '', clientCaptured: true, capturedAt: Date.now(), message: shot?.dataUrl ? t('已实时截取最新远程桌面画面并签发 captureId') : (shot?.error || t('实时截图不可用')) };
                     await api(`/api/ai/runtime/runs/${encodeURIComponent(start.runId)}/capture`, {
                         method: 'POST',
                         signal: abortController.signal,
@@ -7129,6 +7129,10 @@ async function continueAiAfterConfirmation(id, approve, data) {
         aiStoppedControllers.delete(abortController);
     }
 }
+function localizedAiConfirmationSummary(confirmation = {}) {
+    if (confirmation.summaryKey) return t(confirmation.summaryKey, confirmation.summaryParams || {});
+    return confirmation.summary || '';
+}
 function insertAiConfirmationCard(confirmation, messageIndex = -1) {
     const area = $('#aiChatArea');
     const typing = $('#aiTypingIndicator');
@@ -7137,18 +7141,20 @@ function insertAiConfirmationCard(confirmation, messageIndex = -1) {
     div.className = 'ai-message system ai-confirm-card';
     div.dataset.aiMessageRole = 'confirmation';
     if (messageIndex >= 0) div.dataset.aiMessageIndex = String(messageIndex);
-    div.dataset.aiMessageText = `需要确认敏感操作：${confirmation?.summary || ''}`;
-    div.innerHTML = `<strong>${t('需要确认敏感操作')}</strong><p>${escapeHtml(confirmation?.summary || '')}</p><pre>${escapeHtml(JSON.stringify(confirmation?.args || {}, null, 2))}</pre><div class="form-actions"><button class="btn btn-primary" data-ai-confirm-approve="${escapeHtml(confirmation?.id || '')}">${t('确认执行')}</button><button class="btn danger" data-ai-confirm-deny="${escapeHtml(confirmation?.id || '')}">${t('拒绝')}</button></div>`;
+    const summary = localizedAiConfirmationSummary(confirmation);
+    div.dataset.aiMessageText = t('需要确认敏感操作：{summary}', { summary });
+    div.innerHTML = `<strong>${t('需要确认敏感操作')}</strong><p>${escapeHtml(summary)}</p><pre>${escapeHtml(JSON.stringify(confirmation?.args || {}, null, 2))}</pre><div class="form-actions"><button class="btn btn-primary" data-ai-confirm-approve="${escapeHtml(confirmation?.id || '')}">${t('确认执行')}</button><button class="btn danger" data-ai-confirm-deny="${escapeHtml(confirmation?.id || '')}">${t('拒绝')}</button></div>`;
     div.title = '';
     area.insertBefore(div, typing);
 }
 function appendAiConfirmation(confirmation, pending = {}) {
     const sessionId = pending.sessionId || aiCurrentSessionId;
-    const text = `需要确认敏感操作：${confirmation.summary || ''}`;
+    const summary = localizedAiConfirmationSummary(confirmation);
+    const text = t('需要确认敏感操作：{summary}', { summary });
     if (confirmation?.id) aiPendingConfirmations.set(confirmation.id, { ...pending, sessionId, confirmation });
     const session = aiChatSessions.find((s) => s.id === sessionId) || aiCurrentSession();
     if (!session) return;
-    session.messages.push({ role: 'confirmation', content: text, confirmationId: confirmation?.id || '', summary: confirmation?.summary || '' });
+    session.messages.push({ role: 'confirmation', content: text, confirmationId: confirmation?.id || '', summary });
     const messageIndex = session.messages.length - 1;
     saveAiChats();
     renderAiChatList();
