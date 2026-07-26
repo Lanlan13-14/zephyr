@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260726-motion-login1';
+import { t } from './i18n/runtime.js?v=20260726-password-code-layout1';
 
 const exact = new Set([
     '修改登录密码', '通过邮箱重置令牌重置密码', '开启 TOTP 两步验证', '关闭 TOTP 两步验证',
