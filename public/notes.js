@@ -5,6 +5,7 @@
  */
 
 import { renderMarkdown as renderMarkdownFull, escapeHtml as mdEscapeHtml } from './markdown.js?v=20260720-notes-md1';
+import { t } from './i18n/runtime.js?v=20260726-i18n1';
 
 const NOTES_DEBOUNCE_MS = 800;
 const NOTES_SEARCH_MS = 180;
@@ -34,7 +35,7 @@ function safeMarkdown(src) {
 function formatRelativeTime(ts) {
     const delta = Date.now() - Number(ts || 0);
     if (!Number.isFinite(delta) || delta < 0) return '';
-    if (delta < 60_000) return '刚刚';
+    if (delta < 60_000) return t('刚刚');
     if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} 分钟前`;
     if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)} 小时前`;
     if (delta < 7 * 86_400_000) return `${Math.floor(delta / 86_400_000)} 天前`;
@@ -106,8 +107,8 @@ function openNativeDialog({
     title = '',
     message = '',
     input = null, // { value, placeholder, maxLength, label }
-    confirmLabel = '确定',
-    cancelLabel = '取消',
+    confirmLabel = t('确定'),
+    cancelLabel = t('取消'),
     danger = false,
     hideCancel = false,
 } = {}) {
@@ -120,7 +121,7 @@ function openNativeDialog({
         panel.className = 'notes-dialog';
         panel.setAttribute('role', 'dialog');
         panel.setAttribute('aria-modal', 'true');
-        panel.setAttribute('aria-label', title || '对话框');
+        panel.setAttribute('aria-label', title || t('对话框'));
         const inputId = `notesDialogInput-${Math.random().toString(36).slice(2, 8)}`;
         panel.innerHTML = `
             <div class="notes-dialog-head">
@@ -204,10 +205,10 @@ function openNativeDialog({
 
 function nativeConfirm(opts) {
     return openNativeDialog({
-        title: opts.title || '确认',
+        title: opts.title || t('确认'),
         message: opts.message || '',
-        confirmLabel: opts.confirmLabel || '确定',
-        cancelLabel: opts.cancelLabel || '取消',
+        confirmLabel: opts.confirmLabel || t('确定'),
+        cancelLabel: opts.cancelLabel || t('取消'),
         danger: !!opts.danger,
     }).then((v) => v === true);
 }
@@ -222,8 +223,8 @@ function nativePrompt(opts) {
             maxLength: opts.maxLength || 200,
             label: opts.label || '',
         },
-        confirmLabel: opts.confirmLabel || '确定',
-        cancelLabel: opts.cancelLabel || '取消',
+        confirmLabel: opts.confirmLabel || t('确定'),
+        cancelLabel: opts.cancelLabel || t('取消'),
     });
 }
 
@@ -261,9 +262,9 @@ export function createNotesController({
     };
 
     const SORT_LABELS = {
-        updated: '最近更新',
-        created: '最近创建',
-        title: '标题',
+        updated: t('最近更新'),
+        created: t('最近创建'),
+        title: t('标题'),
     };
 
     function setSaveState(kind, text) {
@@ -275,9 +276,9 @@ export function createNotesController({
     }
 
     function headingForFilter() {
-        if (state.trash || state.groupFilter === '__trash') return '回收站';
-        if (state.groupFilter === '__all') return '全部笔记';
-        if (state.groupFilter === '' || state.groupFilter == null) return '未分组';
+        if (state.trash || state.groupFilter === '__trash') return t('回收站');
+        if (state.groupFilter === '__all') return t('全部笔记');
+        if (state.groupFilter === '' || state.groupFilter == null) return t('未分组');
         return state.groupFilter;
     }
 
@@ -293,7 +294,7 @@ export function createNotesController({
         }
         const tagBtn = $('#notesTagTrigger');
         if (tagBtn) {
-            const label = state.tagFilter === 'all' ? '全部标签' : state.tagFilter;
+            const label = state.tagFilter === 'all' ? t('全部标签') : state.tagFilter;
             const span = tagBtn.querySelector('.notes-filter-label');
             if (span) span.textContent = label;
         }
@@ -409,11 +410,11 @@ export function createNotesController({
                 const action = btn.dataset.gAction;
                 if (action === 'rename') {
                     const newName = await nativePrompt({
-                        title: '重命名分组',
+                        title: t('重命名分组'),
                         message: `将「${groupPath}」重命名为：`,
                         value: groupPath,
                         placeholder: 'ops/runbooks',
-                        confirmLabel: '重命名',
+                        confirmLabel: t('重命名'),
                     });
                     if (newName == null) return;
                     const trimmed = String(newName).trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
@@ -424,16 +425,16 @@ export function createNotesController({
                             body: JSON.stringify({ oldPath: groupPath, newPath: trimmed }),
                         });
                         if (state.groupFilter === groupPath) state.groupFilter = trimmed;
-                        toast?.('已重命名分组');
+                        toast?.(t('已重命名分组'));
                         await loadList();
                     } catch (err) {
-                        toast?.(err.message || '重命名失败');
+                        toast?.(err.message || t('重命名失败'));
                     }
                 } else if (action === 'delete') {
                     const ok = await nativeConfirm({
-                        title: '删除分组',
+                        title: t('删除分组'),
                         message: `确定删除分组「${groupPath}」？该分组下的笔记会移到未分组。`,
-                        confirmLabel: '删除分组',
+                        confirmLabel: t('删除分组'),
                         danger: true,
                     });
                     if (!ok) return;
@@ -443,10 +444,10 @@ export function createNotesController({
                             body: JSON.stringify({ groupPath }),
                         });
                         if (state.groupFilter === groupPath) state.groupFilter = '__all';
-                        toast?.('已删除分组');
+                        toast?.(t('已删除分组'));
                         await loadList();
                     } catch (err) {
-                        toast?.(err.message || '删除失败');
+                        toast?.(err.message || t('删除失败'));
                     }
                 }
             });
@@ -471,14 +472,14 @@ export function createNotesController({
             const emptyTitle = empty?.querySelector('[data-empty-title]');
             const emptyDesc = empty?.querySelector('[data-empty-desc]');
             if (state.trash) {
-                if (emptyTitle) emptyTitle.textContent = '回收站是空的';
-                if (emptyDesc) emptyDesc.textContent = '删除的笔记会出现在这里，可恢复或彻底清除。';
+                if (emptyTitle) emptyTitle.textContent = t('回收站是空的');
+                if (emptyDesc) emptyDesc.textContent = t('删除的笔记会出现在这里，可恢复或彻底清除。');
             } else if (state.query) {
-                if (emptyTitle) emptyTitle.textContent = '没有匹配的笔记';
-                if (emptyDesc) emptyDesc.textContent = '试试换个关键词，或清除筛选条件。';
+                if (emptyTitle) emptyTitle.textContent = t('没有匹配的笔记');
+                if (emptyDesc) emptyDesc.textContent = t('试试换个关键词，或清除筛选条件。');
             } else {
-                if (emptyTitle) emptyTitle.textContent = '还没有笔记';
-                if (emptyDesc) emptyDesc.textContent = '从左侧新建一条，或导入 Markdown 文件。';
+                if (emptyTitle) emptyTitle.textContent = t('还没有笔记');
+                if (emptyDesc) emptyDesc.textContent = t('从左侧新建一条，或导入 Markdown 文件。');
             }
             return;
         }
@@ -505,13 +506,13 @@ export function createNotesController({
             const checked = state.selectedIds.has(n.noteId);
             const active = n.noteId === state.selectedId && !state.selectMode;
             return `<div class="notes-list-item${active ? ' active' : ''}${checked ? ' is-checked' : ''}${state.selectMode ? ' is-selecting' : ''}" data-note-id="${escapeHtml(n.noteId)}" role="option" aria-selected="${active || checked ? 'true' : 'false'}" style="--notes-stagger:${delay}ms">
-                <button type="button" class="notes-list-check" data-note-check="${escapeHtml(n.noteId)}" aria-label="${checked ? '取消选择' : '选择'}" aria-pressed="${checked ? 'true' : 'false'}">
+                <button type="button" class="notes-list-check" data-note-check="${escapeHtml(n.noteId)}" aria-label="${checked ? t('取消选择') : t('选择')}" aria-pressed="${checked ? 'true' : 'false'}">
                     <span class="notes-list-check-box" aria-hidden="true">${checked ? icon('check') : ''}</span>
                 </button>
                 <button type="button" class="notes-list-body" data-note-open="${escapeHtml(n.noteId)}">
                     <div class="notes-list-item-main">
-                        <div class="notes-list-title">${escapeHtml(n.title || '未命名笔记')}</div>
-                        <div class="notes-list-preview">${escapeHtml(n.preview || n.summary || '暂无内容')}</div>
+                        <div class="notes-list-title">${escapeHtml(n.title || t('未命名笔记'))}</div>
+                        <div class="notes-list-preview">${escapeHtml(n.preview || n.summary || t('暂无内容'))}</div>
                     </div>
                     <div class="notes-list-meta">
                         <time datetime="${escapeHtml(String(n.updatedAt || ''))}" title="${escapeHtml(formatAbsoluteTime(n.updatedAt))}">${escapeHtml(formatRelativeTime(n.updatedAt))}</time>
@@ -559,7 +560,7 @@ export function createNotesController({
         $('#notesTitleInput').value = note.title || '';
         $('#notesContentInput').value = note.content || '';
         renderMetaChips(note);
-        setSaveState('saved', '已保存');
+        setSaveState('saved', t('已保存'));
         state.dirty = false;
         if (state.mode !== 'edit') setMode(state.mode);
         updateTrashButtons();
@@ -657,7 +658,7 @@ export function createNotesController({
     async function selectNote(noteId) {
         if (state.dirty && state.current) {
             try { await flushSave(); } catch (err) {
-                toast?.(err.message || '保存失败');
+                toast?.(err.message || t('保存失败'));
                 return;
             }
         }
@@ -677,10 +678,10 @@ export function createNotesController({
     function markDirty() {
         if (!state.current) return;
         state.dirty = true;
-        setSaveState('dirty', '未保存');
+        setSaveState('dirty', t('未保存'));
         window.clearTimeout(state.saveTimer);
         state.saveTimer = window.setTimeout(() => {
-            flushSave().catch((err) => toast?.(err.message || '自动保存失败'));
+            flushSave().catch((err) => toast?.(err.message || t('自动保存失败')));
         }, NOTES_DEBOUNCE_MS);
         // live preview
         if (state.mode === 'split' || state.mode === 'preview') {
@@ -697,7 +698,7 @@ export function createNotesController({
     async function flushSave() {
         if (!state.current || !state.dirty || state.saving) return state.current;
         state.saving = true;
-        setSaveState('saving', '保存中…');
+        setSaveState('saving', t('保存中…'));
         try {
             const tags = String($('#notesTagsInput')?.value || '')
                 .split(',')
@@ -716,7 +717,7 @@ export function createNotesController({
             });
             state.current = data.note;
             state.dirty = false;
-            setSaveState('saved', '已保存');
+            setSaveState('saved', t('已保存'));
             const idx = state.notes.findIndex((n) => n.noteId === data.note.noteId);
             if (idx >= 0) {
                 state.notes[idx] = {
@@ -739,15 +740,15 @@ export function createNotesController({
             return data.note;
         } catch (err) {
             if (String(err?.code || err?.message || '').includes('revision') || err?.status === 409) {
-                setSaveState('error', '版本冲突');
+                setSaveState('error', t('版本冲突'));
                 try {
                     const serverData = await api(`/api/notes/${encodeURIComponent(state.current.noteId)}`);
                     await showConflictWindow(state.current.noteId, serverData.note);
                 } catch {
-                    toast?.('笔记已被更新，请重新加载后再编辑');
+                    toast?.(t('笔记已被更新，请重新加载后再编辑'));
                 }
             } else {
-                setSaveState('error', '保存失败');
+                setSaveState('error', t('保存失败'));
             }
             throw err;
         } finally {
@@ -764,7 +765,7 @@ export function createNotesController({
             : '';
         const data = await api('/api/notes', {
             method: 'POST',
-            body: JSON.stringify({ title: '未命名笔记', content: '', groupPath }),
+            body: JSON.stringify({ title: t('未命名笔记'), content: '', groupPath }),
         });
         state.trash = false;
         if (state.groupFilter === '__trash') state.groupFilter = '__all';
@@ -772,7 +773,7 @@ export function createNotesController({
         await selectNote(data.note.noteId);
         $('#notesTitleInput')?.focus();
         $('#notesTitleInput')?.select?.();
-        toast?.('已新建笔记');
+        toast?.(t('已新建笔记'));
     }
 
     function selectedIdList() {
@@ -831,7 +832,7 @@ export function createNotesController({
         if (allBtn) {
             const allSelected = state.notes.length > 0 && state.selectedIds.size >= state.notes.length;
             allBtn.setAttribute('aria-pressed', allSelected ? 'true' : 'false');
-            allBtn.title = allSelected ? '取消全选' : '全选当前列表';
+            allBtn.title = allSelected ? t('取消全选') : t('全选当前列表');
         }
     }
 
@@ -841,30 +842,30 @@ export function createNotesController({
         const inTrash = state.trash || state.groupFilter === '__trash';
         let title = '';
         let message = '';
-        let confirmLabel = '确定';
+        let confirmLabel = t('确定');
         let apiAction = action;
         if (action === 'trash') {
-            title = '移到回收站';
+            title = t('移到回收站');
             message = `将 ${ids.length} 条笔记移到回收站？可稍后恢复。`;
-            confirmLabel = '移到回收站';
+            confirmLabel = t('移到回收站');
         } else if (action === 'restore') {
-            title = '恢复笔记';
+            title = t('恢复笔记');
             message = `恢复 ${ids.length} 条笔记？`;
-            confirmLabel = '恢复';
+            confirmLabel = t('恢复');
         } else if (action === 'purge') {
-            title = '彻底删除';
+            title = t('彻底删除');
             message = `彻底删除回收站中的 ${ids.length} 条笔记？此操作不可撤销。`;
-            confirmLabel = '彻底删除';
+            confirmLabel = t('彻底删除');
         } else if (action === 'purge_permanent') {
-            title = '直接删除';
+            title = t('直接删除');
             message = `永久删除 ${ids.length} 条笔记？不会进入回收站，此操作不可撤销。`;
-            confirmLabel = '永久删除';
+            confirmLabel = t('永久删除');
             apiAction = 'purge_permanent';
         } else {
             return;
         }
         if (action === 'purge' && !inTrash) {
-            toast?.('只能彻底删除回收站中的笔记');
+            toast?.(t('只能彻底删除回收站中的笔记'));
             return;
         }
         const ok = await nativeConfirm({ title, message, confirmLabel, danger: action !== 'restore' });
@@ -887,7 +888,7 @@ export function createNotesController({
             else if (action === 'restore') toast?.(`已恢复（${n}）`);
             else toast?.(`已永久删除（${n}）`);
         } catch (err) {
-            toast?.(err.message || '批量操作失败');
+            toast?.(err.message || t('批量操作失败'));
         }
     }
 
@@ -895,9 +896,9 @@ export function createNotesController({
         if (!state.current) return;
         if (state.trash || state.groupFilter === '__trash') {
             const ok = await nativeConfirm({
-                title: '彻底删除',
-                message: '彻底删除这条笔记？此操作不可撤销。',
-                confirmLabel: '彻底删除',
+                title: t('彻底删除'),
+                message: t('彻底删除这条笔记？此操作不可撤销。'),
+                confirmLabel: t('彻底删除'),
                 danger: true,
             });
             if (!ok) return;
@@ -907,12 +908,12 @@ export function createNotesController({
             state.dirty = false;
             fillEditor(null);
             await loadList();
-            toast?.('已彻底删除');
+            toast?.(t('已彻底删除'));
         } else {
             const ok = await nativeConfirm({
-                title: '删除笔记',
-                message: '将笔记移到回收站？可稍后恢复。',
-                confirmLabel: '移到回收站',
+                title: t('删除笔记'),
+                message: t('将笔记移到回收站？可稍后恢复。'),
+                confirmLabel: t('移到回收站'),
                 danger: true,
             });
             if (!ok) return;
@@ -922,7 +923,7 @@ export function createNotesController({
             state.dirty = false;
             fillEditor(null);
             await loadList();
-            toast?.('已移到回收站');
+            toast?.(t('已移到回收站'));
         }
     }
 
@@ -930,11 +931,11 @@ export function createNotesController({
         if (!state.current) return;
         const inTrash = state.trash || state.groupFilter === '__trash';
         const ok = await nativeConfirm({
-            title: permanent && !inTrash ? '直接删除' : '彻底删除',
+            title: permanent && !inTrash ? t('直接删除') : t('彻底删除'),
             message: permanent && !inTrash
-                ? '永久删除这条笔记？不会进入回收站，此操作不可撤销。'
-                : '彻底删除这条笔记？此操作不可撤销。',
-            confirmLabel: permanent && !inTrash ? '永久删除' : '彻底删除',
+                ? t('永久删除这条笔记？不会进入回收站，此操作不可撤销。')
+                : t('彻底删除这条笔记？此操作不可撤销。'),
+            confirmLabel: permanent && !inTrash ? t('永久删除') : t('彻底删除'),
             danger: true,
         });
         if (!ok) return;
@@ -945,14 +946,14 @@ export function createNotesController({
         state.dirty = false;
         fillEditor(null);
         await loadList();
-        toast?.(permanent && !inTrash ? '已永久删除' : '已彻底删除');
+        toast?.(permanent && !inTrash ? t('已永久删除') : t('已彻底删除'));
     }
 
     async function emptyTrash() {
         const ok = await nativeConfirm({
-            title: '清空回收站',
-            message: '清空回收站？所有已删除笔记将被永久移除。',
-            confirmLabel: '清空',
+            title: t('清空回收站'),
+            message: t('清空回收站？所有已删除笔记将被永久移除。'),
+            confirmLabel: t('清空'),
             danger: true,
         });
         if (!ok) return;
@@ -961,20 +962,20 @@ export function createNotesController({
         state.selectedId = null;
         fillEditor(null);
         await loadList();
-        toast?.(result?.purged ? `已清空回收站（${result.purged} 条）` : '回收站已空');
+        toast?.(result?.purged ? `已清空回收站（${result.purged} 条）` : t('回收站已空'));
     }
 
     async function restoreCurrent() {
         if (!state.current) return;
         try {
             await api(`/api/notes/${encodeURIComponent(state.current.noteId)}/restore`, { method: 'POST' });
-            toast?.('已恢复');
+            toast?.(t('已恢复'));
             state.current = null;
             state.selectedId = null;
             fillEditor(null);
             await loadList();
         } catch (err) {
-            toast?.(err.message || '恢复失败');
+            toast?.(err.message || t('恢复失败'));
         }
     }
 
@@ -1101,7 +1102,7 @@ export function createNotesController({
                 toast?.(shareWithUsers ? '已共享给所有用户' : shareWithAdmins ? '已共享给管理员' : '已设为私有');
                 await loadList();
             } catch (err) {
-                toast?.(err.message || '保存失败');
+                toast?.(err.message || t('保存失败'));
             }
         };
     }
@@ -1187,7 +1188,7 @@ export function createNotesController({
                 toast?.('关联连接已保存');
                 await loadList();
             } catch (err) {
-                toast?.(err.message || '保存失败');
+                toast?.(err.message || t('保存失败'));
             }
             closeLinkModal();
         };
@@ -1231,11 +1232,11 @@ export function createNotesController({
         if (!note && action !== 'purge' && action !== 'restore') return;
         if (action === 'rename') {
             const name = await nativePrompt({
-                title: '重命名',
+                title: t('重命名'),
                 value: note.title || '',
                 placeholder: '笔记标题',
                 maxLength: 200,
-                confirmLabel: '保存',
+                confirmLabel: t('保存'),
             });
             if (name == null) return;
             try {
@@ -1259,7 +1260,7 @@ export function createNotesController({
                 message: '留空则移到未分组',
                 value: note.groupPath || '',
                 placeholder: 'ops/runbooks',
-                confirmLabel: '移动',
+                confirmLabel: t('移动'),
             });
             if (group === null) return;
             try {
@@ -1288,7 +1289,7 @@ export function createNotesController({
                         groupPath: full.note.groupPath,
                     }),
                 });
-                toast?.('已复制');
+                toast?.(t('已复制'));
                 await loadList();
                 await selectNote(created.note.noteId);
             } catch (err) {
@@ -1298,9 +1299,9 @@ export function createNotesController({
             window.open(`/api/notes/${encodeURIComponent(noteId)}/export.md`, '_blank');
         } else if (action === 'delete') {
             const ok = await nativeConfirm({
-                title: '删除笔记',
-                message: '将笔记移到回收站？可稍后恢复。',
-                confirmLabel: '移到回收站',
+                title: t('删除笔记'),
+                message: t('将笔记移到回收站？可稍后恢复。'),
+                confirmLabel: t('移到回收站'),
                 danger: true,
             });
             if (!ok) return;
@@ -1311,15 +1312,15 @@ export function createNotesController({
                 fillEditor(null);
             }
             await loadList();
-            toast?.('已移到回收站');
+            toast?.(t('已移到回收站'));
         } else if (action === 'purge' || action === 'purge_permanent') {
             const permanent = action === 'purge_permanent';
             const ok = await nativeConfirm({
-                title: permanent ? '直接删除' : '彻底删除',
+                title: permanent ? t('直接删除') : t('彻底删除'),
                 message: permanent
-                    ? '永久删除这条笔记？不会进入回收站，此操作不可撤销。'
-                    : '彻底删除这条笔记？此操作不可撤销。',
-                confirmLabel: permanent ? '永久删除' : '彻底删除',
+                    ? t('永久删除这条笔记？不会进入回收站，此操作不可撤销。')
+                    : t('彻底删除这条笔记？此操作不可撤销。'),
+                confirmLabel: permanent ? t('永久删除') : t('彻底删除'),
                 danger: true,
             });
             if (!ok) return;
@@ -1332,7 +1333,7 @@ export function createNotesController({
             }
             state.selectedIds.delete(noteId);
             await loadList();
-            toast?.(permanent ? '已永久删除' : '已彻底删除');
+            toast?.(permanent ? t('已永久删除') : t('已彻底删除'));
         } else if (action === 'select') {
             setSelectMode(true, { render: false });
             toggleNoteChecked(noteId, true);
@@ -1346,7 +1347,7 @@ export function createNotesController({
                 }
                 state.selectedIds.delete(noteId);
                 await loadList();
-                toast?.('已恢复');
+                toast?.(t('已恢复'));
             } catch (err) {
                 toast?.(err.message);
             }
@@ -1414,7 +1415,7 @@ export function createNotesController({
                 close();
                 toast?.('已保留我的版本');
             } catch (err) {
-                toast?.(err.message || '保存失败');
+                toast?.(err.message || t('保存失败'));
             }
         };
     }
@@ -1455,10 +1456,10 @@ export function createNotesController({
 
     async function addTagInteractive() {
         const tag = await nativePrompt({
-            title: '添加标签',
+            title: t('添加标签'),
             placeholder: '例如 runbook',
             maxLength: 40,
-            confirmLabel: '添加',
+            confirmLabel: t('添加'),
         });
         if (tag == null) return;
         const t = String(tag).trim();
@@ -1478,11 +1479,11 @@ export function createNotesController({
 
     async function editGroupInteractive() {
         const group = await nativePrompt({
-            title: '设置分组',
+            title: t('设置分组'),
             message: '使用 / 表示层级，例如 ops/runbooks。留空表示未分组。',
             value: $('#notesGroupInput')?.value || '',
             placeholder: 'ops/runbooks',
-            confirmLabel: '保存',
+            confirmLabel: t('保存'),
         });
         if (group === null) return;
         const g = String(group || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
@@ -1674,7 +1675,7 @@ export function createNotesController({
                 await selectNote(data.note.noteId);
                 toast?.('已导入');
             } catch (err) {
-                toast?.(err.message || '导入失败');
+                toast?.(err.message || t('导入失败'));
             } finally {
                 e.target.value = '';
             }
