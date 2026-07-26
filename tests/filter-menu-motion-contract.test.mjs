@@ -36,11 +36,12 @@ test('motion opt-in set covers dashboard filters + settings/appearance/terminal 
         'colorSchemeSelect', 'themeModeSelect', 'terminalBgSource', 'terminalBgFit',
         'terminalMaxWindows', 'terminalSmartbarOrder', 'terminalShortcutPlatform',
         'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
+        // 设置 → 语言 与 代理弹窗 → 类型（2026-07-26 起与首页筛选同一套动画）
+        'languageSelect', 'proxyType',
     ];
     assert.deepEqual(ids.sort(), expected.sort());
-    // Connection / proxy modal selects must NOT opt in.
+    // Connection modal selects must NOT opt in.
     assert.ok(!ids.includes('connProtocol'));
-    assert.ok(!ids.includes('proxyType'));
     assert.ok(!ids.includes('connSshKey'));
 });
 
@@ -102,8 +103,8 @@ test('cache bust includes dated motion marker', () => {
 });
 
 test('snippet empty state mirrors ssh-key dashed muted card', () => {
-    assert.match(appJs, /'<p class="muted">暂无代码片段<\/p>'/);
-    assert.match(appJs, /'<p class="muted">暂无 SSH 密钥<\/p>'/);
+    assert.match(appJs, /<p class="muted">\$\{t\('暂无代码片段'\)\}<\/p>/);
+    assert.match(appJs, /<p class="muted">\$\{t\('暂无 SSH 密钥'\)\}<\/p>/);
     assert.doesNotMatch(appJs, /暂无代码片段。/);
     assert.match(styleCss, /\.snippet-settings-list > \.muted:only-child/);
     assert.match(styleCss, /\.mini-list > \.muted:only-child,\s*\n\.snippet-settings-list > \.muted:only-child\s*\{[\s\S]*?1px dashed/);

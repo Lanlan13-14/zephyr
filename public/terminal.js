@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { t, initI18n } from './i18n/runtime.js?v=20260726-pw-rollback2';
+import { t, initI18n } from './i18n/runtime.js?v=20260726-motion-login1';
 window.__zephyrT = t;
 import {
     createSshKeyboard,

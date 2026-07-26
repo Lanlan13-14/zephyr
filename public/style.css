@@ -3277,6 +3277,11 @@ body.app-body > .toast.show { opacity: 1; transform: translate3d(0,0,0) scale(1)
     outline: 2px solid color-mix(in srgb, var(--color-primary, #0a84ff) 55%, transparent);
     outline-offset: 2px;
 }
+/* Login page locale toggle-select: identical to the in-app toggle-selects
+ * (same trigger, same 12px control radius, same divider chevron, same menu).
+ * The class only scopes JS behavior; visuals come from the global rules. */
+.login-locale-select.ui-toggle-select { width: auto; }
+.login-locale-select .ui-toggle-select-menu { min-width: 132px; }
 .sr-only {
     position: absolute;
     width: 1px;

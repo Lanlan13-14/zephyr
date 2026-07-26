@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260726-pw-rollback2';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260726-pw-rollback2';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260726-motion-login1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260726-motion-login1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -1253,6 +1253,8 @@ const MOTION_FILTER_SELECT_IDS = [
     'terminalMaxWindows', 'terminalSmartbarOrder', 'terminalShortcutPlatform',
     // AI 助理 / 供应商弹窗（与 CAPTCHA 完全同一套 open/close 动画）
     'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
+    // 设置 → 语言 与 代理弹窗 → 类型（与首页筛选同一套 FLIP 展开/收起）
+    'languageSelect', 'proxyType',
 ];
 function isMotionFilterShell(shell) {
     return !!shell && MOTION_FILTER_SELECT_IDS.includes(shell.dataset?.selectId || '');

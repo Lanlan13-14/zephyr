@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { t, initI18n, setLocale, getLocale, applyDomI18n } from './i18n/runtime.js?v=20260726-pw-rollback2';
+import { t, initI18n, setLocale, getLocale, applyDomI18n } from './i18n/runtime.js?v=20260726-motion-login1';
 
 const $ = (sel) => document.querySelector(sel);
 const errorBanner = $('#errorBanner');
@@ -297,10 +297,191 @@ async function loadBeian() {
     } catch { beianFooter.innerHTML = ''; }
 }
 
+/* Login page locale selects → same toggle-select + zephyr-motion open/close
+ * as the app (motion-feel §3: menu FLIPs down from the trigger, mac open /
+ * macClose retract). Re-clicking the trigger while open closes the menu,
+ * exactly like the in-app selects. Engine falls back to instant class path. */
+const loginSelectMotion = {
+    engine: null,
+    failed: false,
+    _ensure() {
+        if (this.engine || this.failed) return Promise.resolve(this.engine);
+        return import('./vendor/zephyr-motion/index.js?v=20260726-motion-login1')
+            .then(async (mod) => {
+                const Motion = mod?.Motion || window.Motion;
+                if (!Motion) throw new Error('Motion missing from zephyr-motion module');
+                try { await Motion.init({ capacity: 256 }); } catch {}
+                this.engine = Motion;
+                return Motion;
+            })
+            .catch((err) => {
+                console.debug('[login-select]', 'motion engine unavailable, instant fallback:', err?.message || err);
+                this.failed = true;
+                return null;
+            });
+    },
+};
+
+function escLoginHtml(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+function syncLoginToggleFace(select) {
+    const shell = select?.closest?.('.ui-toggle-select');
+    if (!shell) return;
+    const trigger = shell.querySelector('.ui-toggle-select-trigger');
+    const menu = shell.querySelector('.ui-toggle-select-menu');
+    if (!trigger || !menu) return;
+    const opts = Array.from(select.options || []);
+    const current = opts.find((o) => o.value === select.value) || opts[0];
+    trigger.textContent = current ? (current.textContent || current.value || '') : '';
+    menu.innerHTML = opts.map((o) => {
+        const selected = o.value === select.value;
+        return `<button type="button" class="ui-toggle-select-option${selected ? ' is-selected' : ''}" role="option" data-value="${escLoginHtml(o.value)}" aria-selected="${selected ? 'true' : 'false'}">${escLoginHtml(o.textContent || o.value || '')}</button>`;
+    }).join('');
+}
+
+async function openLoginToggleMenu(shell) {
+    const trigger = shell.querySelector('.ui-toggle-select-trigger');
+    const menu = shell.querySelector('.ui-toggle-select-menu');
+    if (!trigger || !menu) return;
+    shell.classList.remove('menu-closing');
+    shell.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+    const Motion = await loginSelectMotion._ensure();
+    if (!Motion) { try { menu.scrollTop = 0; } catch (_) {} return; }
+    const token = (shell._menuToken = (shell._menuToken || 0) + 1);
+    const midFlight = Motion.isAnimating(menu);
+    if (!midFlight) {
+        menu.style.visibility = 'hidden';
+        void menu.offsetWidth;
+    }
+    const from = trigger.getBoundingClientRect();
+    menu.style.visibility = 'visible';
+    try { menu.scrollTop = 0; } catch (_) {}
+    const radiusFrom = parseFloat(getComputedStyle(trigger)?.borderRadius) || 18;
+    try {
+        await Motion.morph(menu, from, {
+            preset: 'mac',
+            radiusFrom,
+            radiusTo: 14,
+            radiusCompensate: true,
+            opacityFrom: 0.92,
+            opacityTo: 1,
+            forceFrom: !midFlight,
+        });
+    } catch (err) {
+        console.debug('[login-select]', 'open morph failed', err?.message || err);
+    }
+    if (token !== shell._menuToken) return;
+}
+
+function closeLoginToggleMenu(shell) {
+    const trigger = shell.querySelector('.ui-toggle-select-trigger');
+    const menu = shell.querySelector('.ui-toggle-select-menu');
+    if (!trigger || !menu) return;
+    const wasOpen = shell.classList.contains('open');
+    shell.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+    if (!wasOpen) return;
+    const Motion = loginSelectMotion.engine; // close 不懒加载引擎
+    if (!Motion || loginSelectMotion.failed) return;
+    const token = (shell._menuToken = (shell._menuToken || 0) + 1);
+    shell.classList.add('menu-closing');
+    Motion.setOriginFromAnchor?.(menu, trigger);
+    Promise.resolve()
+        .then(() => Motion.to(menu, { opacity: 0, scale: 0.94, y: -8, x: 0, blur: 0 }, { preset: 'macClose' }))
+        .catch(() => {})
+        .then(() => {
+            if (token !== shell._menuToken) return;
+            shell.classList.remove('menu-closing');
+            Motion.stop(menu);
+            Motion.set(menu, { x: 0, y: 0, scaleX: 1, scaleY: 1, scale: 1, opacity: 1, blur: 0, radius: 0 });
+            menu.style.transform = '';
+            menu.style.opacity = '';
+        });
+}
+
+function closeAllLoginToggleSelects(exceptShell = null) {
+    document.querySelectorAll('.login-locale-select.ui-toggle-select.open').forEach((shell) => {
+        if (exceptShell && shell === exceptShell) return;
+        closeLoginToggleMenu(shell);
+    });
+}
+
+function enhanceLoginToggleSelect(select) {
+    if (!select || select.tagName !== 'SELECT' || select.dataset.toggleSelect === '1') return null;
+    const shell = document.createElement('div');
+    shell.className = 'ui-toggle-select login-locale-select';
+    shell.dataset.selectId = select.id || '';
+    select.parentNode.insertBefore(shell, select);
+    shell.appendChild(select);
+    select.classList.add('ui-toggle-select-native');
+    select.dataset.toggleSelect = '1';
+    select.tabIndex = -1;
+    select.setAttribute('aria-hidden', 'true');
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'ui-toggle-select-trigger';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+    if (select.id) trigger.id = `${select.id}ToggleTrigger`;
+    if (select.getAttribute('aria-label')) trigger.setAttribute('aria-label', select.getAttribute('aria-label'));
+
+    const menu = document.createElement('div');
+    menu.className = 'ui-toggle-select-menu';
+    menu.setAttribute('role', 'listbox');
+
+    shell.appendChild(trigger);
+    shell.appendChild(menu);
+    syncLoginToggleFace(select);
+
+    trigger.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const willOpen = !shell.classList.contains('open');
+        closeAllLoginToggleSelects(willOpen ? shell : null);
+        if (willOpen) openLoginToggleMenu(shell);
+        else closeLoginToggleMenu(shell);
+    });
+    menu.addEventListener('click', (e) => {
+        const opt = e.target.closest?.('.ui-toggle-select-option');
+        if (!opt) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const value = opt.getAttribute('data-value') ?? '';
+        if (select.value !== value) {
+            select.value = value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            select.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        syncLoginToggleFace(select);
+        closeLoginToggleMenu(shell);
+    });
+    select.addEventListener('change', () => syncLoginToggleFace(select));
+    return shell;
+}
+
+let _loginToggleDocBound = false;
+function enhanceLoginLocaleSelects() {
+    ['#localeSelectLogin', '#localeSelectTotp', '#localeSelectForgot', '#localeSelectChange'].forEach((sel) => {
+        const el = $(sel);
+        if (el) enhanceLoginToggleSelect(el);
+    });
+    if (_loginToggleDocBound) return;
+    _loginToggleDocBound = true;
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest?.('.login-locale-select.ui-toggle-select')) closeAllLoginToggleSelects();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllLoginToggleSelects(); });
+}
+
 function syncLocaleSelects(locale = getLocale()) {
     ['#localeSelectLogin', '#localeSelectTotp', '#localeSelectForgot', '#localeSelectChange'].forEach((sel) => {
         const el = $(sel);
-        if (el) el.value = locale === 'en' ? 'en' : 'zh-CN';
+        if (el) {
+            el.value = locale === 'en' ? 'en' : 'zh-CN';
+            syncLoginToggleFace(el);
+        }
     });
 }
 
@@ -319,6 +500,7 @@ async function changeLocale(next) {
 
 async function bootLoginPage() {
     await initI18n({ applyDom: true });
+    enhanceLoginLocaleSelects();
     syncLocaleSelects(getLocale());
     api('/api/auth/me').then((data) => {
         if (data.mustChangePassword) showChangePassword();

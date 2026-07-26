@@ -1,9 +1,9 @@
-const CACHE_NAME = 'zephyr-static-20260723-permission-workspace1';
+const CACHE_NAME = 'zephyr-static-20260726-motion-login1';
 const PRECACHE = [
-    '/app.js?v=20260723-permission-workspace1',
-    '/style.css?v=20260722-aux-bar-fly1',
+    '/app.js?v=20260726-motion-login1',
+    '/style.css?v=20260726-motion-login1',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260723-workspace-state1',
+    '/terminal.js?v=20260726-motion-login1',
     '/notes.js',
     '/markdown.js',
 ];
