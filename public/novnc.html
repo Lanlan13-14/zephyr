@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
-    <title>Zephyr - VNC 远程桌面</title>
+    <title data-i18n="Zephyr - VNC 远程桌面">Zephyr - VNC 远程桌面</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
     <link rel="stylesheet" href="style.css?v=20260621-rdp-joystick-corners">
 </head>
@@ -12,65 +12,65 @@
         <div class="terminal-topbar rdp-topbar novnc-topbar">
             <div class="status">
                 <span class="status-dot" id="statusDot"></span>
-                <span id="statusText">连接中...</span>
+                <span id="statusText" data-i18n="连接中...">连接中...</span>
             </div>
-            <span class="info" id="connInfo"><strong id="connTitle">VNC 远程桌面</strong></span>
-            <div class="topbar-actions novnc-toolbar" role="toolbar" aria-label="VNC 控制栏">
-                <button class="btn-sm" id="qualityBtn" data-vnc-icon="quality" type="button" title="切换性能/画质模式"><span id="qualityLabel">平衡</span></button>
-                <button class="btn-sm" id="fitBtn" data-vnc-icon="fit" type="button" title="切换适应/原始/拖拽视区"><span id="fitLabel">适应</span></button>
-                <button class="btn-sm" id="dragBtn" data-vnc-icon="joystick" type="button" title="打开视区摇杆">视区</button>
-                <button class="btn-sm" id="clipboardBtn" data-vnc-icon="clipboard" type="button" title="打开跨设备剪贴板面板">剪贴板</button>
-                <button class="btn-sm" id="keyboardBtn" data-vnc-icon="keyboard" type="button" title="手机软键盘输入">键盘</button>
-                <button class="btn-sm" id="shortcutsBtn" data-vnc-icon="shortcuts" type="button" title="打开常用快捷键">快捷键</button>
-                <button class="btn-sm" id="cadBtn" data-vnc-icon="security" type="button" title="发送 Ctrl+Alt+Del">Ctrl+Alt+Del</button>
-                <button class="btn-sm" id="reconnectBtn" data-vnc-icon="reconnect" type="button" title="重新连接">重连</button>
-                <button class="btn-sm danger" id="disconnectBtn" data-vnc-icon="disconnect" type="button" title="断开连接">断开</button>
+            <span class="info" id="connInfo"><strong id="connTitle" data-i18n="VNC 远程桌面">VNC 远程桌面</strong></span>
+            <div class="topbar-actions novnc-toolbar" role="toolbar" aria-label="VNC 控制栏" data-i18n-aria-label="VNC 控制栏">
+                <button class="btn-sm" id="qualityBtn" data-vnc-icon="quality" type="button" title="切换性能/画质模式" data-i18n-title="切换性能/画质模式"><span id="qualityLabel" data-i18n="平衡">平衡</span></button>
+                <button class="btn-sm" id="fitBtn" data-vnc-icon="fit" type="button" title="切换适应/原始/拖拽视区" data-i18n-title="切换适应/原始/拖拽视区"><span id="fitLabel" data-i18n="适应">适应</span></button>
+                <button class="btn-sm" id="dragBtn" data-vnc-icon="joystick" type="button" title="打开视区摇杆" data-i18n-title="打开视区摇杆" data-i18n="视区">视区</button>
+                <button class="btn-sm" id="clipboardBtn" data-vnc-icon="clipboard" type="button" title="打开跨设备剪贴板面板" data-i18n-title="打开跨设备剪贴板面板" data-i18n="剪贴板">剪贴板</button>
+                <button class="btn-sm" id="keyboardBtn" data-vnc-icon="keyboard" type="button" title="手机软键盘输入" data-i18n-title="手机软键盘输入" data-i18n="键盘">键盘</button>
+                <button class="btn-sm" id="shortcutsBtn" data-vnc-icon="shortcuts" type="button" title="打开常用快捷键" data-i18n-title="打开常用快捷键" data-i18n="快捷键">快捷键</button>
+                <button class="btn-sm" id="cadBtn" data-vnc-icon="security" type="button" title="发送 Ctrl+Alt+Del" data-i18n-title="发送 Ctrl+Alt+Del">Ctrl+Alt+Del</button>
+                <button class="btn-sm" id="reconnectBtn" data-vnc-icon="reconnect" type="button" title="重新连接" data-i18n-title="重新连接" data-i18n="重连">重连</button>
+                <button class="btn-sm danger" id="disconnectBtn" data-vnc-icon="disconnect" type="button" title="断开连接" data-i18n-title="断开连接" data-i18n="断开">断开</button>
             </div>
         </div>
 
         <main class="novnc-stage rdp-stage" id="novncStage" tabindex="0">
-            <textarea id="mobileKeyboardInput" class="novnc-mobile-input rdp-mobile-keyboard-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" enterkeyhint="done" aria-label="VNC 软键盘输入"></textarea>
+            <textarea id="mobileKeyboardInput" class="novnc-mobile-input rdp-mobile-keyboard-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" enterkeyhint="done" aria-label="VNC 软键盘输入" data-i18n-aria-label="VNC 软键盘输入"></textarea>
 
-            <section class="novnc-screen-shell rdp-display-shell" id="screenShell" aria-label="VNC 画面区域">
+            <section class="novnc-screen-shell rdp-display-shell" id="screenShell" aria-label="VNC 画面区域" data-i18n-aria-label="VNC 画面区域">
                 <div class="novnc-screen-bg" aria-hidden="true"></div>
                 <div class="novnc-screen rdp-display" id="screen"></div>
             </section>
 
             <div class="terminal-overlay novnc-overlay" id="novncOverlay">
                 <div class="spinner"></div>
-                <span class="msg" id="overlayTitle">正在建立 VNC 连接</span>
-                <span class="msg subtle" id="overlayMsg">通过 Zephyr 安全代理连接 VNC，密码不会发送到浏览器。</span>
+                <span class="msg" id="overlayTitle" data-i18n="正在建立 VNC 连接">正在建立 VNC 连接</span>
+                <span class="msg subtle" id="overlayMsg" data-i18n="通过 Zephyr 安全代理连接 VNC，密码不会发送到浏览器。">通过 Zephyr 安全代理连接 VNC，密码不会发送到浏览器。</span>
             </div>
 
             <div class="rdp-floating-panel novnc-panel clipboard-panel" id="clipboardPanel" hidden>
-                <div class="panel-drag-handle" data-drag-panel="clipboardPanel" title="拖动移动窗口">
-                    <button class="panel-traffic-btn" data-layout-panel="clipboardPanel" title="窗口布局"><span></span></button>
+                <div class="panel-drag-handle" data-drag-panel="clipboardPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                    <button class="panel-traffic-btn" data-layout-panel="clipboardPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
                 </div>
                 <div class="rdp-panel-content">
-                    <div class="rdp-panel-head panel-titlebar"><strong>跨设备剪贴板</strong></div>
-                    <label class="rdp-panel-label" for="clipboardText">本机 → 远程</label>
-                    <textarea id="clipboardText" class="rdp-panel-textarea" placeholder="输入或粘贴文本，然后发送到 VNC 剪贴板"></textarea>
+                    <div class="rdp-panel-head panel-titlebar"><strong data-i18n="跨设备剪贴板">跨设备剪贴板</strong></div>
+                    <label class="rdp-panel-label" for="clipboardText" data-i18n="本机 → 远程">本机 → 远程</label>
+                    <textarea id="clipboardText" class="rdp-panel-textarea" placeholder="输入或粘贴文本，然后发送到 VNC 剪贴板" data-i18n-placeholder="输入或粘贴文本，然后发送到 VNC 剪贴板"></textarea>
                     <div class="rdp-panel-actions">
-                        <button class="btn-sm" id="clipboardReadLocalBtn" type="button">读取本机</button>
-                        <button class="btn-sm active" id="clipboardSendBtn" type="button">发送到远程</button>
+                        <button class="btn-sm" id="clipboardReadLocalBtn" type="button" data-i18n="读取本机">读取本机</button>
+                        <button class="btn-sm active" id="clipboardSendBtn" type="button" data-i18n="发送到远程">发送到远程</button>
                     </div>
-                    <label class="rdp-panel-label" for="remoteClipboardText">远程 → 本机</label>
-                    <textarea id="remoteClipboardText" class="rdp-panel-textarea" readonly placeholder="远程复制文本后会显示在这里"></textarea>
+                    <label class="rdp-panel-label" for="remoteClipboardText" data-i18n="远程 → 本机">远程 → 本机</label>
+                    <textarea id="remoteClipboardText" class="rdp-panel-textarea" readonly placeholder="远程复制文本后会显示在这里" data-i18n-placeholder="远程复制文本后会显示在这里"></textarea>
                     <div class="rdp-panel-actions">
-                        <button class="btn-sm" id="clipboardCopyRemoteBtn" type="button">复制到本机</button>
-                        <span class="rdp-panel-hint" id="clipboardHint">等待远程剪贴板...</span>
+                        <button class="btn-sm" id="clipboardCopyRemoteBtn" type="button" data-i18n="复制到本机">复制到本机</button>
+                        <span class="rdp-panel-hint" id="clipboardHint" data-i18n="等待远程剪贴板...">等待远程剪贴板...</span>
                     </div>
                 </div>
-                <div class="panel-resize-handle left" data-resize-panel="clipboardPanel" data-resize-edge="left" title="拖动调整大小"></div>
-                <div class="panel-resize-handle right" data-resize-panel="clipboardPanel" data-resize-edge="right" title="拖动调整大小"></div>
+                <div class="panel-resize-handle left" data-resize-panel="clipboardPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+                <div class="panel-resize-handle right" data-resize-panel="clipboardPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
             </div>
 
             <div class="rdp-floating-panel novnc-panel shortcuts-panel" id="shortcutsPanel" hidden>
-                <div class="panel-drag-handle" data-drag-panel="shortcutsPanel" title="拖动移动窗口">
-                    <button class="panel-traffic-btn" data-layout-panel="shortcutsPanel" title="窗口布局"><span></span></button>
+                <div class="panel-drag-handle" data-drag-panel="shortcutsPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                    <button class="panel-traffic-btn" data-layout-panel="shortcutsPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
                 </div>
                 <div class="rdp-panel-content">
-                    <div class="rdp-panel-head panel-titlebar"><strong>快捷键 / 手机辅助</strong></div>
+                    <div class="rdp-panel-head panel-titlebar"><strong data-i18n="快捷键 / 手机辅助">快捷键 / 手机辅助</strong></div>
                     <div class="rdp-shortcut-grid novnc-shortcut-grid" id="shortcutGrid">
                         <button class="tool-btn" data-keyseq="esc">Esc</button><button class="tool-btn" data-keyseq="tab">Tab</button><button class="tool-btn" data-keyseq="enter">Enter</button><button class="tool-btn" data-keyseq="backspace">Backspace</button>
                         <button class="tool-btn" data-keyseq="ctrl-alt-del">Ctrl+Alt+Del</button><button class="tool-btn" data-keyseq="super">Win</button><button class="tool-btn" data-keyseq="alt-tab">Alt+Tab</button><button class="tool-btn" data-keyseq="delete">Delete</button>
@@ -81,18 +81,18 @@
                         <button class="tool-btn" data-keyseq="f5">F5</button><button class="tool-btn" data-keyseq="f6">F6</button><button class="tool-btn" data-keyseq="f7">F7</button><button class="tool-btn" data-keyseq="f8">F8</button>
                         <button class="tool-btn" data-keyseq="f9">F9</button><button class="tool-btn" data-keyseq="f10">F10</button><button class="tool-btn" data-keyseq="f11">F11</button><button class="tool-btn" data-keyseq="f12">F12</button>
                     </div>
-                    <div class="rdp-panel-hint novnc-panel-note">提示：中文/长文本会优先发送到远程剪贴板；普通 ASCII 字符会直接按键输入。</div>
+                    <div class="rdp-panel-hint novnc-panel-note" data-i18n="提示：中文/长文本会优先发送到远程剪贴板；普通 ASCII 字符会直接按键输入。">提示：中文/长文本会优先发送到远程剪贴板；普通 ASCII 字符会直接按键输入。</div>
                 </div>
-                <div class="panel-resize-handle left" data-resize-panel="shortcutsPanel" data-resize-edge="left" title="拖动调整大小"></div>
-                <div class="panel-resize-handle right" data-resize-panel="shortcutsPanel" data-resize-edge="right" title="拖动调整大小"></div>
+                <div class="panel-resize-handle left" data-resize-panel="shortcutsPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+                <div class="panel-resize-handle right" data-resize-panel="shortcutsPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
             </div>
 
             <div class="rdp-floating-panel novnc-panel joystick-panel" id="joystickPanel" hidden>
-                <div class="panel-drag-handle" data-drag-panel="joystickPanel" title="拖动移动窗口">
-                    <button class="panel-traffic-btn" data-layout-panel="joystickPanel" title="窗口布局"><span></span></button>
+                <div class="panel-drag-handle" data-drag-panel="joystickPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                    <button class="panel-traffic-btn" data-layout-panel="joystickPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
                 </div>
                 <div class="rdp-panel-content joystick-panel-content">
-                    <div class="rdp-joystick" id="joystickContainer" aria-label="拖动画面区域摇杆">
+                    <div class="rdp-joystick" id="joystickContainer" aria-label="拖动画面区域摇杆" data-i18n-aria-label="拖动画面区域摇杆">
                         <div class="rdp-joystick-around">
                             <div class="rdp-joystick-handle">
                                 <div class="rdp-joystick-knob" id="joystickKnob">
@@ -105,14 +105,14 @@
                                 </div>
                             </div>
                         </div>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 1024 1024" aria-label="向上图标"><path d="M512 330.666667c14.933333 0 29.866667 4.266667 40.533333 14.933333l277.33333399 234.666667c27.733333 23.466667 29.866667 64 8.53333301 89.6-23.466667 27.733333-64 29.866667-89.6 8.53333299L512 477.866667l-236.8 200.53333299c-27.733333 23.466667-68.266667 19.19999999-89.6-8.53333299-23.466667-27.733333-19.19999999-68.266667 8.53333301-89.6l277.33333399-234.666667c10.666667-10.666667 25.6-14.933333 40.533333-14.933333z"/></svg>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-label="向右图标"><path d="M135.417 100C135.417 102.917 134.583 105.833 132.5 107.917L86.6667 162.083C82.0833 167.5 74.1667 167.917 69.1667 163.75C63.75 159.167 63.3333 151.25 67.5 146.25L106.667 100L67.5 53.75C62.9167 48.3333 63.75 40.4167 69.1667 36.25C74.5833 31.6667 82.5 32.5 86.6667 37.9167L132.5 92.0833C134.583 94.1667 135.417 97.0833 135.417 100Z"/></svg>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-label="向下图标"><path d="M100 135.417C97.0833 135.417 94.1667 134.583 92.0833 132.5L37.9167 86.6667C32.5 82.0833 32.0833 74.1667 36.25 69.1667C40.8333 63.75 48.75 63.3333 53.75 67.5L100 106.667L146.25 67.5C151.667 62.9167 159.583 63.75 163.75 69.1667C168.333 74.5833 167.5 82.5 162.083 86.6667L107.917 132.5C105.833 134.583 102.917 135.417 100 135.417Z"/></svg>
-                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-label="向左图标"><path d="M64.5833 100C64.5833 97.0833 65.4167 94.1667 67.5 92.0833L113.333 37.9167C117.917 32.5 125.833 32.0833 130.833 36.25C136.25 40.8333 136.667 48.75 132.5 53.75L93.3333 100L132.5 146.25C137.083 151.667 136.25 159.583 130.833 163.75C125.417 168.333 117.5 167.5 113.333 162.083L67.5 107.917C65.4167 105.833 64.5833 102.917 64.5833 100Z"/></svg>
+                        <svg class="rdp-joystick-icon" viewBox="0 0 1024 1024" aria-label="向上图标" data-i18n-aria-label="向上图标"><path d="M512 330.666667c14.933333 0 29.866667 4.266667 40.533333 14.933333l277.33333399 234.666667c27.733333 23.466667 29.866667 64 8.53333301 89.6-23.466667 27.733333-64 29.866667-89.6 8.53333299L512 477.866667l-236.8 200.53333299c-27.733333 23.466667-68.266667 19.19999999-89.6-8.53333299-23.466667-27.733333-19.19999999-68.266667 8.53333301-89.6l277.33333399-234.666667c10.666667-10.666667 25.6-14.933333 40.533333-14.933333z"/></svg>
+                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-label="向右图标" data-i18n-aria-label="向右图标"><path d="M135.417 100C135.417 102.917 134.583 105.833 132.5 107.917L86.6667 162.083C82.0833 167.5 74.1667 167.917 69.1667 163.75C63.75 159.167 63.3333 151.25 67.5 146.25L106.667 100L67.5 53.75C62.9167 48.3333 63.75 40.4167 69.1667 36.25C74.5833 31.6667 82.5 32.5 86.6667 37.9167L132.5 92.0833C134.583 94.1667 135.417 97.0833 135.417 100Z"/></svg>
+                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-label="向下图标" data-i18n-aria-label="向下图标"><path d="M100 135.417C97.0833 135.417 94.1667 134.583 92.0833 132.5L37.9167 86.6667C32.5 82.0833 32.0833 74.1667 36.25 69.1667C40.8333 63.75 48.75 63.3333 53.75 67.5L100 106.667L146.25 67.5C151.667 62.9167 159.583 63.75 163.75 69.1667C168.333 74.5833 167.5 82.5 162.083 86.6667L107.917 132.5C105.833 134.583 102.917 135.417 100 135.417Z"/></svg>
+                        <svg class="rdp-joystick-icon" viewBox="0 0 200 200" aria-label="向左图标" data-i18n-aria-label="向左图标"><path d="M64.5833 100C64.5833 97.0833 65.4167 94.1667 67.5 92.0833L113.333 37.9167C117.917 32.5 125.833 32.0833 130.833 36.25C136.25 40.8333 136.667 48.75 132.5 53.75L93.3333 100L132.5 146.25C137.083 151.667 136.25 159.583 130.833 163.75C125.417 168.333 117.5 167.5 113.333 162.083L67.5 107.917C65.4167 105.833 64.5833 102.917 64.5833 100Z"/></svg>
                     </div>
                 </div>
-                <div class="panel-resize-handle left" data-resize-panel="joystickPanel" data-resize-edge="left" title="拖动调整大小"></div>
-                <div class="panel-resize-handle right" data-resize-panel="joystickPanel" data-resize-edge="right" title="拖动调整大小"></div>
+                <div class="panel-resize-handle left" data-resize-panel="joystickPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+                <div class="panel-resize-handle right" data-resize-panel="joystickPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
             </div>
         </main>
     </div>

@@ -3,101 +3,102 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
-    <title>Zephyr - 远程桌面</title>
+    <title data-i18n="Zephyr - 远程桌面">Zephyr - 远程桌面</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260710-rdp-touch2">
+    <link rel="stylesheet" href="style.css?v=20260726-i18n1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-i18n1">
 </head>
 <body>
     <div class="novnc-page rdp-page">
         <div class="terminal-topbar rdp-topbar novnc-topbar">
             <div class="status">
                 <span class="status-dot" id="statusDot"></span>
-                <span id="statusText">连接中...</span>
+                <span id="statusText" data-i18n="连接中...">连接中...</span>
             </div>
             <span class="info" id="connInfo"></span>
             <div class="topbar-actions novnc-toolbar">
-                <button class="btn-sm" id="qualityBtn" data-rdp-icon="quality" title="切换性能/画质模式">平衡</button>
-                <button class="btn-sm" id="resolutionBtn" data-rdp-icon="quality" title="切换远程桌面分辨率：自动 / 1080p / 2K / 4K">自动</button>
-                <button class="btn-sm" id="fpsBtn" data-rdp-icon="quality" title="切换远程桌面帧率：30 / 45 / 60 / 120 / 144 FPS">30FPS</button>
-                <button class="btn-sm" id="fitBtn" data-rdp-icon="fit" title="适应窗口">适应</button>
-                <button class="btn-sm zoom-control" id="zoomBtn" data-rdp-icon="zoom" title="拖动无极缩放远程画面"><input id="zoomSlider" type="range" min="50" max="250" step="1" value="100" aria-label="远程画面无极缩放"><em id="zoomValue">100%</em></button>
-                <button class="btn-sm" id="clipboardBtn" data-rdp-icon="clipboard" title="打开跨设备剪贴板面板">剪贴板</button>
-                <button class="btn-sm" id="rdpFilesBtn" data-rdp-icon="file" title="打开 RDP 文件剪贴板/下载面板">文件</button>
-                <button class="btn-sm" id="keyboardBtn" data-rdp-icon="keyboard" title="打开/关闭手机软键盘" aria-pressed="false">键盘</button>
-                <button class="btn-sm" id="shortcutsBtn" data-rdp-icon="shortcuts" title="打开常用快捷键">快捷键</button>
-                <button class="btn-sm" id="joystickBtn" data-rdp-icon="joystick" aria-label="视区">视区</button>
-                <button class="btn-sm" id="ctrlAltDelBtn" data-rdp-icon="security" title="发送 Ctrl+Alt+Del">Ctrl+Alt+Del</button>
-                <button class="btn-sm" id="reconnectBtn" data-rdp-icon="reconnect" title="重新连接">重连</button>
-                <button class="btn-sm danger" id="disconnectBtn" data-rdp-icon="disconnect" title="断开连接">断开</button>
+                <button class="btn-sm" id="qualityBtn" data-rdp-icon="quality" title="切换性能/画质模式" data-i18n-title="切换性能/画质模式" data-i18n="平衡">平衡</button>
+                <button class="btn-sm" id="resolutionBtn" data-rdp-icon="quality" title="切换远程桌面分辨率：自动 / 1080p / 2K / 4K" data-i18n-title="切换远程桌面分辨率：自动 / 1080p / 2K / 4K" data-i18n="自动">自动</button>
+                <button class="btn-sm" id="fpsBtn" data-rdp-icon="quality" title="切换远程桌面帧率：30 / 45 / 60 / 120 / 144 FPS" data-i18n-title="切换远程桌面帧率：30 / 45 / 60 / 120 / 144 FPS">30FPS</button>
+                <button class="btn-sm" id="fitBtn" data-rdp-icon="fit" title="适应窗口" data-i18n-title="适应窗口" data-i18n="适应">适应</button>
+                <button class="btn-sm zoom-control" id="zoomBtn" data-rdp-icon="zoom" title="拖动无极缩放远程画面" data-i18n-title="拖动无极缩放远程画面"><input id="zoomSlider" type="range" min="50" max="250" step="1" value="100" aria-label="远程画面无极缩放" data-i18n-aria-label="远程画面无极缩放"><em id="zoomValue">100%</em></button>
+                <button class="btn-sm" id="clipboardBtn" data-rdp-icon="clipboard" title="打开跨设备剪贴板面板" data-i18n-title="打开跨设备剪贴板面板" data-i18n="剪贴板">剪贴板</button>
+                <button class="btn-sm" id="rdpFilesBtn" data-rdp-icon="file" title="打开 RDP 文件剪贴板/下载面板" data-i18n-title="打开 RDP 文件剪贴板/下载面板" data-i18n="文件">文件</button>
+                <button class="btn-sm" id="keyboardBtn" data-rdp-icon="keyboard" title="打开/关闭手机软键盘" data-i18n-title="打开/关闭手机软键盘" aria-pressed="false" data-i18n="键盘">键盘</button>
+                <button class="btn-sm" id="shortcutsBtn" data-rdp-icon="shortcuts" title="打开常用快捷键" data-i18n-title="打开常用快捷键" data-i18n="快捷键">快捷键</button>
+                <button class="btn-sm" id="joystickBtn" data-rdp-icon="joystick" aria-label="视区" data-i18n-aria-label="视区" data-i18n="视区">视区</button>
+                <button class="btn-sm" id="ctrlAltDelBtn" data-rdp-icon="security" title="发送 Ctrl+Alt+Del" data-i18n-title="发送 Ctrl+Alt+Del">Ctrl+Alt+Del</button>
+                <button class="btn-sm" id="reconnectBtn" data-rdp-icon="reconnect" title="重新连接" data-i18n-title="重新连接" data-i18n="重连">重连</button>
+                <button class="btn-sm danger" id="disconnectBtn" data-rdp-icon="disconnect" title="断开连接" data-i18n-title="断开连接" data-i18n="断开">断开</button>
             </div>
         </div>
         <div class="rdp-stage novnc-stage" id="rdpStage" tabindex="0">
-            <textarea id="mobileKeyboardInput" class="rdp-mobile-keyboard-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" enterkeyhint="enter" lang="" aria-label="远程桌面软键盘输入"></textarea>
+            <textarea id="mobileKeyboardInput" class="rdp-mobile-keyboard-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" enterkeyhint="enter" lang="" aria-label="远程桌面软键盘输入" data-i18n-aria-label="远程桌面软键盘输入"></textarea>
             <!-- debug HUD removed -->
 
             <div class="rdp-floating-panel clipboard-panel" id="clipboardPanel" hidden>
-                <div class="panel-drag-handle" data-drag-panel="clipboardPanel" title="拖动移动窗口">
-                    <button class="panel-traffic-btn" data-layout-panel="clipboardPanel" title="窗口布局"><span></span></button>
+                <div class="panel-drag-handle" data-drag-panel="clipboardPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                    <button class="panel-traffic-btn" data-layout-panel="clipboardPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
                 </div>
                 <div class="rdp-panel-content">
                     <div class="rdp-panel-head panel-titlebar">
-                        <strong>跨设备剪贴板</strong>
+                        <strong data-i18n="跨设备剪贴板">跨设备剪贴板</strong>
                     </div>
-                    <label class="rdp-panel-label" for="clipboardText">本机 → 远程</label>
-                    <textarea id="clipboardText" class="rdp-panel-textarea" placeholder="输入或粘贴要发送到远程桌面的文本"></textarea>
+                    <label class="rdp-panel-label" for="clipboardText" data-i18n="本机 → 远程">本机 → 远程</label>
+                    <textarea id="clipboardText" class="rdp-panel-textarea" placeholder="输入或粘贴要发送到远程桌面的文本" data-i18n-placeholder="输入或粘贴要发送到远程桌面的文本"></textarea>
                     <div class="rdp-panel-actions">
-                        <button class="btn-sm" id="clipboardReadLocalBtn">读取本机</button>
-                        <button class="btn-sm active" id="clipboardSendBtn">发送到远程</button>
+                        <button class="btn-sm" id="clipboardReadLocalBtn" data-i18n="读取本机">读取本机</button>
+                        <button class="btn-sm active" id="clipboardSendBtn" data-i18n="发送到远程">发送到远程</button>
                     </div>
-                    <label class="rdp-panel-label" for="remoteClipboardText">远程 → 本机</label>
-                    <textarea id="remoteClipboardText" class="rdp-panel-textarea" readonly placeholder="远程复制文本后会显示在这里"></textarea>
+                    <label class="rdp-panel-label" for="remoteClipboardText" data-i18n="远程 → 本机">远程 → 本机</label>
+                    <textarea id="remoteClipboardText" class="rdp-panel-textarea" readonly placeholder="远程复制文本后会显示在这里" data-i18n-placeholder="远程复制文本后会显示在这里"></textarea>
                     <div class="rdp-panel-actions">
-                        <button class="btn-sm" id="clipboardCopyRemoteBtn">复制到本机</button>
-                        <span class="rdp-panel-hint" id="clipboardHint">等待远程剪贴板...</span>
+                        <button class="btn-sm" id="clipboardCopyRemoteBtn" data-i18n="复制到本机">复制到本机</button>
+                        <span class="rdp-panel-hint" id="clipboardHint" data-i18n="等待远程剪贴板...">等待远程剪贴板...</span>
                     </div>
                 </div>
-                <div class="panel-resize-handle left" data-resize-panel="clipboardPanel" data-resize-edge="left" title="拖动调整大小"></div>
-                <div class="panel-resize-handle right" data-resize-panel="clipboardPanel" data-resize-edge="right" title="拖动调整大小"></div>
+                <div class="panel-resize-handle left" data-resize-panel="clipboardPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+                <div class="panel-resize-handle right" data-resize-panel="clipboardPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
             </div>
 
             <div class="rdp-floating-panel files-panel" id="filesPanel" hidden>
-                <div class="panel-drag-handle" data-drag-panel="filesPanel" title="拖动移动窗口">
-                    <button class="panel-traffic-btn" data-layout-panel="filesPanel" title="窗口布局"><span></span></button>
+                <div class="panel-drag-handle" data-drag-panel="filesPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                    <button class="panel-traffic-btn" data-layout-panel="filesPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
                 </div>
                 <div class="rdp-panel-content">
                     <div class="rdp-panel-head panel-titlebar">
-                        <strong>远程文件剪贴板</strong>
+                        <strong data-i18n="远程文件剪贴板">远程文件剪贴板</strong>
                     </div>
-                    <label class="rdp-panel-label">从 Windows 复制的文件</label>
+                    <label class="rdp-panel-label" data-i18n="从 Windows 复制的文件">从 Windows 复制的文件</label>
                     <div class="rdp-remote-file-list" id="rdpRemoteFileList">
-                        <div class="rdp-file-empty">远程剪贴板暂无文件</div>
+                        <div class="rdp-file-empty" data-i18n="远程剪贴板暂无文件">远程剪贴板暂无文件</div>
                     </div>
                     <div class="rdp-panel-actions">
-                        <button class="btn-sm" id="rdpFilePasteToRemoteBtn">粘贴到远程</button>
-                        <button class="btn-sm" id="rdpFileDownloadAllBtn">全部下载到本机</button>
+                        <button class="btn-sm" id="rdpFilePasteToRemoteBtn" data-i18n="粘贴到远程">粘贴到远程</button>
+                        <button class="btn-sm" id="rdpFileDownloadAllBtn" data-i18n="全部下载到本机">全部下载到本机</button>
                     </div>
-                    <label class="rdp-panel-label">发送到 Windows</label>
+                    <label class="rdp-panel-label" data-i18n="发送到 Windows">发送到 Windows</label>
                     <div class="rdp-remote-file-list" id="rdpPendingFileList">
-                        <div class="rdp-file-empty">暂无待粘贴文件</div>
+                        <div class="rdp-file-empty" data-i18n="暂无待粘贴文件">暂无待粘贴文件</div>
                     </div>
                     <div class="rdp-panel-actions">
-                        <button class="btn-sm active" id="rdpFileSelectBtn">上传文件</button>
-                        <button class="btn-sm" id="rdpPendingPasteBtn">粘贴到远程</button>
+                        <button class="btn-sm active" id="rdpFileSelectBtn" data-i18n="上传文件">上传文件</button>
+                        <button class="btn-sm" id="rdpPendingPasteBtn" data-i18n="粘贴到远程">粘贴到远程</button>
                         <input type="file" id="rdpFileInput" multiple hidden>
                     </div>
-                    <span class="rdp-panel-hint" id="filesHint">点击“上传文件”只会加入待粘贴列表；真正粘贴时才上传到主端</span>
+                    <span class="rdp-panel-hint" id="filesHint" data-i18n="点击“上传文件”只会加入待粘贴列表；真正粘贴时才上传到主端">点击“上传文件”只会加入待粘贴列表；真正粘贴时才上传到主端</span>
                 </div>
-                <div class="panel-resize-handle left" data-resize-panel="filesPanel" data-resize-edge="left" title="拖动调整大小"></div>
-                <div class="panel-resize-handle right" data-resize-panel="filesPanel" data-resize-edge="right" title="拖动调整大小"></div>
+                <div class="panel-resize-handle left" data-resize-panel="filesPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+                <div class="panel-resize-handle right" data-resize-panel="filesPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
             </div>
 
             <div class="rdp-floating-panel shortcuts-panel" id="shortcutsPanel" hidden>
-                <div class="panel-drag-handle" data-drag-panel="shortcutsPanel" title="拖动移动窗口">
-                    <button class="panel-traffic-btn" data-layout-panel="shortcutsPanel" title="窗口布局"><span></span></button>
+                <div class="panel-drag-handle" data-drag-panel="shortcutsPanel" title="拖动移动窗口" data-i18n-title="拖动移动窗口">
+                    <button class="panel-traffic-btn" data-layout-panel="shortcutsPanel" title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
                 </div>
                 <div class="rdp-panel-content">
                     <div class="rdp-panel-head panel-titlebar">
-                        <strong>快捷键 / 手机辅助</strong>
+                        <strong data-i18n="快捷键 / 手机辅助">快捷键 / 手机辅助</strong>
                     </div>
                     <div class="rdp-shortcut-grid" id="shortcutGrid">
                         <button class="tool-btn" data-keyseq="esc">Esc</button>
@@ -153,15 +154,15 @@
                         <button class="tool-btn" data-keyseq="f11">F11</button>
                         <button class="tool-btn" data-keyseq="f12">F12</button>
                     </div>
-                    <div class="rdp-panel-hint">提示：单指点远程桌面会发送鼠标左键点击；点“⌨ 键盘”可唤起手机输入法。</div>
+                    <div class="rdp-panel-hint" data-i18n="提示：单指点远程桌面会发送鼠标左键点击；点“⌨ 键盘”可唤起手机输入法。">提示：单指点远程桌面会发送鼠标左键点击；点“⌨ 键盘”可唤起手机输入法。</div>
                 </div>
-                <div class="panel-resize-handle left" data-resize-panel="shortcutsPanel" data-resize-edge="left" title="拖动调整大小"></div>
-                <div class="panel-resize-handle right" data-resize-panel="shortcutsPanel" data-resize-edge="right" title="拖动调整大小"></div>
+                <div class="panel-resize-handle left" data-resize-panel="shortcutsPanel" data-resize-edge="left" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
+                <div class="panel-resize-handle right" data-resize-panel="shortcutsPanel" data-resize-edge="right" title="拖动调整大小" data-i18n-title="拖动调整大小"></div>
             </div>
 
             <div class="rdp-floating-panel joystick-panel" id="joystickPanel" hidden>
                 <div class="panel-drag-handle" data-drag-panel="joystickPanel">
-                    <button class="panel-traffic-btn" data-layout-panel="joystickPanel" aria-label="窗口布局"><span></span></button>
+                    <button class="panel-traffic-btn" data-layout-panel="joystickPanel" aria-label="窗口布局" data-i18n-aria-label="窗口布局"><span></span></button>
                 </div>
                 <div class="rdp-panel-content joystick-panel-content">
                     <div class="rdp-joystick" id="joystickContainer">
@@ -189,23 +190,23 @@
 
             <div class="terminal-overlay" id="rdpOverlay">
                 <div class="spinner"></div>
-                <span class="msg" id="overlayMsg">正在建立 RDP 连接...</span>
+                <span class="msg" id="overlayMsg" data-i18n="正在建立 RDP 连接...">正在建立 RDP 连接...</span>
             </div>
 
             <!-- Certificate verification dialog -->
             <div class="rdp-cert-dialog-backdrop" id="rdpCertDialog">
                 <div class="rdp-cert-dialog">
-                    <h2>无法验证证书。是否仍要连接？</h2>
+                    <h2 data-i18n="无法验证证书。是否仍要连接？">无法验证证书。是否仍要连接？</h2>
                     <p class="rdp-cert-field">你将连接到：<br><strong id="certHost"></strong></p>
                     <p class="rdp-cert-field">来自远程电脑的证书中的名称：<br><strong id="certSubject"></strong></p>
-                    <p class="rdp-cert-reasons-label">由于以下原因，连接到这台电脑可能不安全：</p>
+                    <p class="rdp-cert-reasons-label" data-i18n="由于以下原因，连接到这台电脑可能不安全：">由于以下原因，连接到这台电脑可能不安全：</p>
                     <ul class="rdp-cert-reasons" id="certReasons"></ul>
                     <div class="rdp-cert-remember">
                         <label><input type="checkbox" id="certRemember"> 忽略提示</label>
                     </div>
                     <div class="rdp-cert-actions" id="rdpCertActions">
-                        <button class="rdp-cert-btn rdp-cert-btn-cancel" id="certCancelBtn">取消</button>
-                        <button class="rdp-cert-btn rdp-cert-btn-connect" id="certConnectBtn">连接</button>
+                        <button class="rdp-cert-btn rdp-cert-btn-cancel" id="certCancelBtn" data-i18n="取消">取消</button>
+                        <button class="rdp-cert-btn rdp-cert-btn-connect" id="certConnectBtn" data-i18n="连接">连接</button>
                     </div>
                 </div>
             </div>
@@ -214,7 +215,7 @@
             </div>
         </div>
     </div>
-    <script src="rdp-wasm-client.js?v=20260720-zft2" type="module"></script>
+    <script src="rdp-wasm-client.js?v=20260726-i18n1" type="module"></script>
     <script>
     /* Auto-report H264 debug logs to server after 8 seconds */
     setTimeout(async () => {

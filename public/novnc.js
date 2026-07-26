@@ -1,4 +1,5 @@
 import RFB from '/vendor/novnc/core/rfb.js';
+import { t, initI18n } from './i18n/runtime.js?v=20260726-i18n1';
 import KeyTable from '/vendor/novnc/core/input/keysym.js';
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 
@@ -123,29 +124,29 @@ function setStatus(state, message = '') {
         connected = true;
         statusDot.classList.add('connected');
         statusCard?.classList.add('connected');
-        statusText.textContent = message || 'VNC 已连接';
+        statusText.textContent = message || t('VNC 已连接');
         overlay.classList.add('hidden');
     } else if (state === 'error') {
         connected = false;
         statusDot.classList.add('disconnected');
         statusCard?.classList.add('error');
-        statusText.textContent = '连接失败';
-        overlayTitle.textContent = 'noVNC 连接失败';
-        overlayMsg.textContent = message || '无法建立 VNC 连接';
+        statusText.textContent = t('连接失败');
+        overlayTitle.textContent = t('noVNC 连接失败');
+        overlayMsg.textContent = message || t('无法建立 VNC 连接');
         overlay.classList.remove('hidden');
     } else if (state === 'disconnected') {
         connected = false;
         statusDot.classList.add('disconnected');
         statusText.textContent = message || '已断开';
-        overlayTitle.textContent = '连接已断开';
-        overlayMsg.textContent = message || 'VNC 连接已断开';
+        overlayTitle.textContent = t('连接已断开');
+        overlayMsg.textContent = message || t('VNC 连接已断开');
         overlay.classList.remove('hidden');
     } else {
         connected = false;
         statusCard?.classList.add('connecting');
-        statusText.textContent = message || '连接中...';
-        overlayTitle.textContent = '正在建立 noVNC 连接';
-        overlayMsg.textContent = message || '通过 Zephyr 安全代理连接 VNC，密码不会发送到浏览器。';
+        statusText.textContent = message || t('连接中...');
+        overlayTitle.textContent = t('正在建立 noVNC 连接');
+        overlayMsg.textContent = message || t('通过 Zephyr 安全代理连接 VNC，密码不会发送到浏览器。');
         overlay.classList.remove('hidden');
     }
 }
@@ -157,15 +158,15 @@ function wsUrl() {
 }
 
 function qualityConfig(mode = qualityMode) {
-    if (mode === 'performance') return { label: '性能', quality: 4, compression: 1 };
-    if (mode === 'quality') return { label: '画质', quality: 9, compression: 6 };
-    return { label: '平衡', quality: 6, compression: 2 };
+    if (mode === 'performance') return { label: t('性能'), quality: 4, compression: 1 };
+    if (mode === 'quality') return { label: t('画质'), quality: 9, compression: 6 };
+    return { label: t('平衡'), quality: 6, compression: 2 };
 }
 
 function fitLabelText(mode = fitMode) {
-    if (mode === 'original') return '原始';
-    if (mode === 'drag') return '拖拽';
-    return '适应';
+    if (mode === 'original') return t('原始');
+    if (mode === 'drag') return t('拖拽');
+    return t('适应');
 }
 
 function refreshDisplaySize() {
@@ -202,7 +203,7 @@ function clearScreen() {
 }
 
 function captureCanvasSnapshotForAi(source, options = {}) {
-    if (!source || !source.width || !source.height) return { error: '当前远程桌面画面还没有可读取的 canvas' };
+    if (!source || !source.width || !source.height) return { error: t('当前远程桌面画面还没有可读取的 canvas') };
     const maxWidth = Math.max(320, Math.min(1600, Number(options.maxWidth) || 960));
     const quality = Math.max(0.28, Math.min(0.86, Number(options.quality) || 0.55));
     const scale = Math.min(1, maxWidth / Math.max(1, source.width));
@@ -246,12 +247,12 @@ async function connect() {
     manualClose = false;
     reconnecting = false;
     params = loadParams();
-    if (params.host) connTitle.textContent = `${params.name || 'VNC 远程桌面'} · ${connectionLabel()}`;
+    if (params.host) connTitle.textContent = `${params.name || t('VNC 远程桌面')} · ${connectionLabel()}`;
     setStatus('connecting', `正在连接 ${connectionLabel()}...`);
     clearScreen();
     try {
         if (rfb) { try { rfb.disconnect(); } catch {} rfb = null; }
-        if (!params.connectionId && !urlParams.get('connectionId')) throw new Error('缺少 VNC 连接 ID，请从连接列表重新打开');
+        if (!params.connectionId && !urlParams.get('connectionId')) throw new Error(t('缺少 VNC 连接 ID，请从连接列表重新打开'));
         screen.style.width = '100%';
         screen.style.height = '100%';
         rfb = new RFB(screen, wsUrl(), { shared: true, credentials: { password: '' } });
@@ -260,7 +261,7 @@ async function connect() {
         rfb.focusOnClick = true;
         applyDisplayOptions();
         rfb.addEventListener('connect', () => {
-            setStatus('connected', 'VNC 已连接');
+            setStatus('connected', t('VNC 已连接'));
             notifyParentActivity();
             window.setTimeout(() => { refreshDisplaySize(); installDirectTouchFallback(); rfb?.focus?.(); }, 80);
             window.setTimeout(() => { refreshDisplaySize(); installDirectTouchFallback(); }, 320);
@@ -268,20 +269,20 @@ async function connect() {
         rfb.addEventListener('disconnect', (event) => {
             const clean = event?.detail?.clean;
             const detail = event?.detail?.reason || event?.detail?.message || '';
-            const message = clean ? 'VNC 已断开' : (detail ? `VNC 异常断开：${detail}` : 'VNC 异常断开');
+            const message = clean ? t('VNC 已断开') : (detail ? `VNC 异常断开：${detail}` : t('VNC 异常断开'));
             if (manualClose) {
-                setStatus('disconnected', 'VNC 已断开');
+                setStatus('disconnected', t('VNC 已断开'));
                 notifyParentCloseRequest('novnc-disconnect-button');
                 return;
             }
             setStatus(clean ? 'disconnected' : 'error', message);
         });
         rfb.addEventListener('securityfailure', (event) => {
-            const reason = event?.detail?.reason || 'VNC 安全协商失败';
+            const reason = event?.detail?.reason || t('VNC 安全协商失败');
             setStatus('error', reason);
         });
         rfb.addEventListener('error', (event) => {
-            const reason = event?.detail?.message || event?.message || 'noVNC 客户端错误';
+            const reason = event?.detail?.message || event?.message || t('noVNC 客户端错误');
             setStatus('error', reason);
         });
         rfb.addEventListener('credentialsrequired', () => {
@@ -292,7 +293,7 @@ async function connect() {
             const text = event?.detail?.text || '';
             lastRemoteClipboard = text;
             remoteClipboardText.value = text;
-            clipboardHint.textContent = text ? `收到 ${text.length} 字符` : '收到空剪贴板';
+            clipboardHint.textContent = text ? `收到 ${text.length} 字符` : t('收到空剪贴板');
             navigator.clipboard?.writeText?.(text).catch(() => {});
         });
         rfb.addEventListener('desktopname', (event) => {
@@ -304,7 +305,7 @@ async function connect() {
             window.setTimeout(() => stage.classList.remove('bell'), 280);
         });
     } catch (err) {
-        setStatus('error', err.message || 'noVNC 初始化失败');
+        setStatus('error', err.message || t('noVNC 初始化失败'));
     }
 }
 
@@ -312,7 +313,7 @@ function disconnect({ closeTab = false } = {}) {
     manualClose = closeTab;
     try { rfb?.disconnect?.(); } catch {}
     if (closeTab) {
-        setStatus('disconnected', 'VNC 已断开');
+        setStatus('disconnected', t('VNC 已断开'));
         notifyParentCloseRequest('novnc-disconnect-button');
     }
 }
@@ -516,7 +517,7 @@ function openPanelLayoutMenu(button, panel) {
     const menu = document.createElement('div');
     menu.className = 'panel-layout-menu';
     menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', '窗口布局');
+    menu.setAttribute('aria-label', t('窗口布局'));
     menu.innerHTML = '<button data-layout="full" title="全屏" aria-label="全屏"><span class="panel-layout-icon full"></span></button><button data-layout="half" title="半屏" aria-label="半屏"><span class="panel-layout-icon half"></span></button><button data-layout="left-quarter" title="左侧四分之一" aria-label="左侧四分之一"><span class="panel-layout-icon left"></span></button><button data-layout="right-quarter" title="右侧四分之一" aria-label="右侧四分之一"><span class="panel-layout-icon right"></span></button><button data-layout="close" class="panel-layout-close" title="关闭窗口" aria-label="关闭窗口"><span class="panel-layout-icon close"></span></button>';
     menu.style.transition = 'none';
     document.body.appendChild(menu);
@@ -787,8 +788,8 @@ function setupMobileInput() {
 }
 function setupClipboard() {
     clipboardSendBtn.addEventListener('click', () => { if (!rfb || !connected) return; const text = clipboardText.value || ''; rfb.clipboardPasteFrom(text); clipboardHint.textContent = `已发送 ${text.length} 字符到远程剪贴板`; });
-    clipboardReadLocalBtn.addEventListener('click', async () => { try { clipboardText.value = await navigator.clipboard.readText(); } catch (err) { clipboardHint.textContent = err.message || '读取本机剪贴板失败'; } });
-    clipboardCopyRemoteBtn.addEventListener('click', async () => { try { await navigator.clipboard.writeText(remoteClipboardText.value || lastRemoteClipboard || ''); clipboardHint.textContent = '已复制到本机剪贴板'; } catch (err) { clipboardHint.textContent = err.message || '复制失败'; } });
+    clipboardReadLocalBtn.addEventListener('click', async () => { try { clipboardText.value = await navigator.clipboard.readText(); } catch (err) { clipboardHint.textContent = err.message || t('读取本机剪贴板失败'); } });
+    clipboardCopyRemoteBtn.addEventListener('click', async () => { try { await navigator.clipboard.writeText(remoteClipboardText.value || lastRemoteClipboard || ''); clipboardHint.textContent = t('已复制到本机剪贴板'); } catch (err) { clipboardHint.textContent = err.message || t('复制失败'); } });
     window.addEventListener('paste', (event) => { if (!connected || document.activeElement === clipboardText || document.activeElement === remoteClipboardText) return; const text = event.clipboardData?.getData('text/plain') || ''; if (text) { event.preventDefault(); sendText(text); } });
 }
 
@@ -824,31 +825,31 @@ async function performAiRemoteDesktopAction(data = {}) {
     if (control === 'reconnect') { reconnect(); return { ok: true, control }; }
     if (control === 'disconnect') { disconnect({ closeTab: true }); return { ok: true, control }; }
     if (control === 'clipboard_read_local') {
-        try { clipboardText.value = await navigator.clipboard.readText(); clipboardHint.textContent = '已读取本机剪贴板'; return { ok: true, control, length: clipboardText.value.length }; }
-        catch (err) { clipboardHint.textContent = err.message || '读取本机剪贴板失败'; throw err; }
+        try { clipboardText.value = await navigator.clipboard.readText(); clipboardHint.textContent = t('已读取本机剪贴板'); return { ok: true, control, length: clipboardText.value.length }; }
+        catch (err) { clipboardHint.textContent = err.message || t('读取本机剪贴板失败'); throw err; }
     }
     if (control === 'clipboard_copy_remote') {
-        try { const value = remoteClipboardText.value || lastRemoteClipboard || ''; await navigator.clipboard.writeText(value); clipboardHint.textContent = '已复制到本机剪贴板'; return { ok: true, control, length: value.length }; }
-        catch (err) { clipboardHint.textContent = err.message || '复制失败'; throw err; }
+        try { const value = remoteClipboardText.value || lastRemoteClipboard || ''; await navigator.clipboard.writeText(value); clipboardHint.textContent = t('已复制到本机剪贴板'); return { ok: true, control, length: value.length }; }
+        catch (err) { clipboardHint.textContent = err.message || t('复制失败'); throw err; }
     }
     if (control === 'clipboard_send') {
-        if (!rfb || !connected) throw new Error('VNC 尚未连接，无法发送剪贴板');
+        if (!rfb || !connected) throw new Error(t('VNC 尚未连接，无法发送剪贴板'));
         if (clipboardText && text) clipboardText.value = text;
         const value = text || clipboardText?.value || '';
-        if (!value) throw new Error('VNC 剪贴板文本为空');
+        if (!value) throw new Error(t('VNC 剪贴板文本为空'));
         rfb.clipboardPasteFrom(value);
         clipboardHint.textContent = `已发送 ${value.length} 字符到远程剪贴板`;
         if (data.paste !== false) { await sleep(80); sendSequence('ctrl-v'); }
         return { ok: true, control, length: value.length, paste: data.paste !== false };
     }
     if (control === 'shortcut') {
-        if (!rfb || !connected) throw new Error('VNC 尚未连接，无法发送快捷键');
+        if (!rfb || !connected) throw new Error(t('VNC 尚未连接，无法发送快捷键'));
         sendSequence(data.sequence || text);
         return { ok: true, control, sequence: data.sequence || text || '' };
     }
     if (control === 'text') {
-        if (!rfb || !connected) throw new Error('VNC 尚未连接，无法输入文本');
-        if (!text) throw new Error('VNC 输入文本为空');
+        if (!rfb || !connected) throw new Error(t('VNC 尚未连接，无法输入文本'));
+        if (!text) throw new Error(t('VNC 输入文本为空'));
         if (data.paste !== false) {
             rfb?.clipboardPasteFrom?.(text);
             clipboardHint.textContent = `已发送 ${text.length} 字符到远程剪贴板`;
@@ -861,9 +862,9 @@ async function performAiRemoteDesktopAction(data = {}) {
         const x = Math.round(Number(data.x));
         const y = Math.round(Number(data.y));
         const button = Number(data.button) || 1;
-        if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('AI 远程桌面点击缺少 x/y');
+        if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(t('AI 远程桌面点击缺少 x/y'));
         const ok = await clickRemotePoint(x, y, button);
-        if (!ok) throw new Error('远程画面尚未准备好，无法点击坐标');
+        if (!ok) throw new Error(t('远程画面尚未准备好，无法点击坐标'));
         clipboardHint.textContent = `AI 已点击 ${x}, ${y}`;
         return { ok: true, control, x, y, button };
     }
@@ -907,8 +908,8 @@ function bindEvents() {
                 notifyParentAiActionResult(actionId, { ok: true, control: event.data?.control || '', result });
             }).catch((err) => {
                 console.warn('[novnc-client]', 'AI remote desktop action failed', { error: err.message, control: event.data?.control });
-                clipboardHint.textContent = err.message || 'AI 远程桌面操作失败';
-                notifyParentAiActionResult(actionId, { ok: false, control: event.data?.control || '', error: err.message || 'AI 远程桌面操作失败' });
+                clipboardHint.textContent = err.message || t('AI 远程桌面操作失败');
+                notifyParentAiActionResult(actionId, { ok: false, control: event.data?.control || '', error: err.message || t('AI 远程桌面操作失败') });
             });
         }
     });

@@ -11,6 +11,7 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
+import { t, initI18n } from './i18n/runtime.js?v=20260726-i18n1';
 import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260720-zft2';
 import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260720-zft2';
 import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260720-zft2';
@@ -260,10 +261,10 @@ window.rdpOnClose = function () {
         return;
     }
     if (wasConnected) {
-        setStatus('disconnected', '连接已断开');
+        setStatus('disconnected', t('连接已断开'));
         notifyParentStatus('closed');
         cleanupAudio();
-        maybeAutoReconnect({ reason: '连接已断开' });
+        maybeAutoReconnect({ reason: t('连接已断开') });
     } else if (!rdpManualDisconnect && !rdpReconnecting) {
         cleanupAudio();
         maybeAutoReconnect({ reason: '连接中断' });
@@ -1047,7 +1048,7 @@ function disconnect() {
     notifyParentStatus('closed');
 }
 
-function maybeAutoReconnect({ reason = '连接已断开' } = {}) {
+function maybeAutoReconnect({ reason = t('连接已断开') } = {}) {
     if (rdpManualDisconnect) return;
     if (rdpReconnecting) return;
     if (rdpReconnectAttempts >= 5) {
@@ -1591,11 +1592,11 @@ function initToolbar() {
     const joystickPanel = $('#joystickPanel');
 
     if (qualityBtn) {
-        qualityBtn.textContent = qualityMode === 'performance' ? '性能' : qualityMode === 'quality' ? '画质' : '平衡';
+        qualityBtn.textContent = qualityMode === 'performance' ? t('性能') : qualityMode === 'quality' ? t('画质') : t('平衡');
         qualityBtn.addEventListener('click', () => {
             const idx = qualityModes.indexOf(qualityMode);
             qualityMode = qualityModes[(idx + 1) % qualityModes.length];
-            qualityBtn.textContent = qualityMode === 'performance' ? '性能' : qualityMode === 'quality' ? '画质' : '平衡';
+            qualityBtn.textContent = qualityMode === 'performance' ? t('性能') : qualityMode === 'quality' ? t('画质') : t('平衡');
             persistSessionParams({ quality: qualityMode });
             if (connected) {
                 setStatus('connecting', '正在应用画质设置...');
@@ -1622,7 +1623,7 @@ function initToolbar() {
         fitBtn.addEventListener('click', () => {
             fitModeIdx = (fitModeIdx + 1) % fitModes.length;
             const newMode = fitModes[fitModeIdx];
-            fitBtn.textContent = newMode === 'original' ? '原始' : newMode === 'adapt' ? '适应' : '填充';
+            fitBtn.textContent = newMode === 'original' ? '原始' : newMode === 'adapt' ? t('适应') : '填充';
             applyFitMode();
         });
     }
@@ -1899,14 +1900,14 @@ function initToolbar() {
 
     /* Resolution button — density tiers (aspect always follows the screen). */
     const resolutions = ['auto', '1080p', '2K', '4K', '8K'];
-    const resLabels = { 'auto': '自动', '1080p': '1080p', '2K': '2K', '4K': '4K', '8K': '8K' };
+    const resLabels = { 'auto': t('自动'), '1080p': '1080p', '2K': '2K', '4K': '4K', '8K': '8K' };
     /* Map legacy WxH values from old saved sessions to new tier names. */
     const legacyMap = { '1920x1080': '1080p', '2560x1440': '2K', '3840x2160': '4K', '7680x4320': '8K' };
     const currentRes = legacyMap[params.rdpResolution] || params.rdpResolution || '1080p';
     let resIdx = resolutions.indexOf(currentRes);
     if (resIdx < 0) resIdx = 1; /* default 1080p */
     if (resolutionBtn) {
-        resolutionBtn.textContent = resLabels[resolutions[resIdx]] || '自动';
+        resolutionBtn.textContent = resLabels[resolutions[resIdx]] || t('自动');
         resolutionBtn.addEventListener('click', () => {
             resIdx = (resIdx + 1) % resolutions.length;
             resolutionBtn.textContent = resLabels[resolutions[resIdx]] || resolutions[resIdx];
