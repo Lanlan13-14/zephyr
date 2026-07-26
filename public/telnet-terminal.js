@@ -7118,7 +7118,7 @@ function runWorkspaceSearch(panel) {
     pendingWorkspaceSearches.set(requestId, p);
     showEditorSidepanel(p, 'search', [], { query });
     const body = p.querySelector('[data-editor-role="sidepanelBody"]');
-    if (body) body.innerHTML = '<div class="empty-state" style="padding:12px;font-size:12px">搜索中…</div>';
+    if (body) body.innerHTML = `<div class="empty-state" style="padding:12px;font-size:12px">${t('搜索中…')}</div>`;
     wsConnection.send(JSON.stringify({
         type: 'sftp-workspace-search',
         requestId,
@@ -7639,7 +7639,7 @@ function renderDockerContainers(containers = []) {
     if (!dockerContainersBody) return;
     dockerContainersBody.innerHTML = '';
     if (!containers.length) {
-        dockerContainersBody.innerHTML = '<tr><td colspan="6">暂无容器</td></tr>';
+        dockerContainersBody.innerHTML = `<tr><td colspan="6">${t('暂无容器')}</td></tr>`;
         return;
     }
     containers.map(normalizeContainer).forEach((container) => {
@@ -7683,7 +7683,7 @@ function renderDockerImages(images = []) {
     if (!dockerImagesBody) return;
     dockerImagesBody.innerHTML = '';
     if (!images.length) {
-        dockerImagesBody.innerHTML = '<tr><td colspan="5">暂无镜像</td></tr>';
+        dockerImagesBody.innerHTML = `<tr><td colspan="5">${t('暂无镜像')}</td></tr>`;
         return;
     }
     images.map(normalizeImage).forEach((image) => {
@@ -10662,7 +10662,7 @@ function showInfoModal() {
     if (latestStatsData) {
         renderStats(latestStatsData);
     } else if (infoBody) {
-        infoBody.innerHTML = '<div class="info-loading">正在加载服务器实时监控数据...</div>';
+        infoBody.innerHTML = `<div class="info-loading">${t('正在加载服务器实时监控数据...')}</div>`;
     }
     if (wsConnection?.readyState === WebSocket.OPEN) {
         wsConnection.send(JSON.stringify({ type: 'stats-request' }));
@@ -11042,7 +11042,7 @@ function hideInfoModal() {
             try { destroyCharts(); } catch (_) {}
             if (infoBody) {
                 delete infoBody.dataset.statsSkeleton;
-                infoBody.innerHTML = '<div class="info-loading">正在加载服务器实时监控数据...</div>';
+                infoBody.innerHTML = `<div class="info-loading">${t('正在加载服务器实时监控数据...')}</div>`;
             }
         }
     }, 320);
@@ -12804,7 +12804,7 @@ disconnectBtn.addEventListener('click', () => {
     if (embeddedMode) {
         notifyParentStatus('closed');
         notifyParentCloseRequest('user-disconnect-button');
-        document.body.innerHTML = '<div class="terminal-placeholder" style="padding:24px;color:#9a9ca3">会话已断开，正在关闭此终端窗口...</div>';
+        document.body.innerHTML = `<div class="terminal-placeholder" style="padding:24px;color:#9a9ca3">${t('会话已断开，正在关闭此终端窗口...')}</div>`;
     } else {
         window.location.href = '/';
     }
