@@ -4659,7 +4659,7 @@ function renderSnippetPanel() {
         const btn = document.createElement('button');
         btn.className = 'snippet-item';
         btn.type = 'button';
-        btn.innerHTML = `<strong>${escapeHtml(item.name || '未命名片段')}</strong><em>${escapeHtml(item.group || t('未分组'))} · ${item.autoRun ? '直接执行' : '填入输入框'}</em><code>${escapeHtml(item.command || '')}</code>`;
+        btn.innerHTML = `<strong>${escapeHtml(item.name || t('未命名片段'))}</strong><em>${escapeHtml(item.group || t('未分组'))} · ${item.autoRun ? t('直接执行') : t('填入输入框')}</em><code>${escapeHtml(item.command || '')}</code>`;
         btn.addEventListener('click', () => {
             const command = String(item.command || '');
             if (item.autoRun) sendData(command.endsWith('\n') || command.endsWith('\r') ? command : command + '\r', { normalizeNewlines: true, source: 'snippet-run', forceFollow: true });
@@ -6922,7 +6922,7 @@ async function openMediaPreview(filePath) {
         const loaded = await ensureMediaPreviewModule();
         if (!loaded || !window.ZephyrMediaPreview) {
             const script = document.querySelector('script[src*="preview/media/media-preview.js"]');
-            showToast(`媒体预览模块未加载${script ? '，请强制刷新页面后重试' : '，当前页面缺少 media-preview.js'}`, 'error');
+            showToast(`媒体预览模块未加载${script ? t('，请强制刷新页面后重试') : t('，当前页面缺少 media-preview.js')}`, 'error');
             console.error('[SFTP-MEDIA]', 'ZephyrMediaPreview missing', { filePath, scriptPresent: !!script });
             return;
         }
@@ -7872,7 +7872,7 @@ dockerBtn?.addEventListener('click', () => {
 dockerCloseBtn?.addEventListener('click', hideDockerPanel);
 dockerRefreshBtn?.addEventListener('click', () => checkDockerStatus({ force: true }));
 dockerRestartBtn?.addEventListener('click', () => {
-    if (!confirm('确认重启目标主机 Docker 服务？运行中的容器通常会继续运行，但 Docker API 会短暂不可用。')) return;
+    if (!confirm(t('确认重启目标主机 Docker 服务？运行中的容器通常会继续运行，但 Docker API 会短暂不可用。'))) return;
     setDockerStatus(t('正在重启 Docker 服务...'), true);
     dockerSend({ type: 'docker-restart-service' });
 });
@@ -7899,20 +7899,20 @@ dockerMirrorAddBtn?.addEventListener('click', () => {
 });
 dockerMirrorSaveBtn?.addEventListener('click', () => {
     dockerMirrors = dockerMirrors.map((item) => item.trim()).filter(Boolean);
-    setDockerStatus('正在保存镜像加速器配置...', true);
+    setDockerStatus(t('正在保存镜像加速器配置...'), true);
     dockerSend({ type: 'docker-mirrors-set', mirrors: dockerMirrors });
 });
 dockerLogCloseBtn?.addEventListener('click', closeDockerLogs);
 dockerLogPauseBtn?.addEventListener('click', () => {
     dockerAutoScrollLog = !dockerAutoScrollLog;
-    dockerLogPauseBtn.textContent = dockerAutoScrollLog ? t('暂停滚动') : '继续滚动';
+    dockerLogPauseBtn.textContent = dockerAutoScrollLog ? t('暂停滚动') : t('继续滚动');
     if (dockerAutoScrollLog) dockerContainerLog.scrollTop = dockerContainerLog.scrollHeight;
 });
 dockerContainerLog?.addEventListener('scroll', () => {
     const atBottom = dockerContainerLog.scrollHeight - dockerContainerLog.scrollTop - dockerContainerLog.clientHeight < 24;
     if (!atBottom) {
         dockerAutoScrollLog = false;
-        dockerLogPauseBtn.textContent = '继续滚动';
+        dockerLogPauseBtn.textContent = t('继续滚动');
     }
 }, { passive: true });
 dockerLogDownloadBtn?.addEventListener('click', () => {
@@ -9484,7 +9484,7 @@ function setupMobileStableImeProxy() {
     proxy.readOnly = false;
     proxy.disabled = false;
     try { proxy.removeAttribute('lang'); } catch (_) {}
-    proxy.setAttribute('aria-label', '终端输入');
+    proxy.setAttribute('aria-label', t('终端输入'));
     proxy.setAttribute('inputmode', 'text');
     proxy.setAttribute('enterkeyhint', 'enter');
 
@@ -10535,7 +10535,7 @@ function ensureStatsSkeleton(d) {
         });
     });
     requestAnimationFrame(() => updateMonitorTabThumb({ immediate: true }));
-    try { initCharts(); } catch (err) { console.warn('[Stats] 图表初始化失败:', err); }
+    try { initCharts(); } catch (err) { console.warn(t('[Stats] 图表初始化失败:'), err); }
 }
 
 function setTextStat(name, value) {
@@ -10600,7 +10600,7 @@ function renderStats(d) {
         updateLine('rxLine', rxMbps);
         updateLine('txLine', txMbps);
     } catch (err) {
-        console.warn('[Stats] 图表更新失败:', err);
+        console.warn(t('[Stats] 图表更新失败:'), err);
     }
 }
 
@@ -12040,7 +12040,7 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
     }
     e.preventDefault();
     const ok = await pasteClipboardIntoTerminal('terminal-right-click-paste');
-    if (!ok) console.info('[terminal-paste]', '右键粘贴需要浏览器剪贴板权限或非空文本剪贴板');
+    if (!ok) console.info('[terminal-paste]', t('右键粘贴需要浏览器剪贴板权限或非空文本剪贴板'));
 });
  // 粘贴交给 @wterm/dom 官方 InputHandler 处理：
  // - 支持 bracketed paste；
@@ -12139,21 +12139,21 @@ function setStatus(state, msg) {
         overlayMsg.textContent = msg || '正在建立 Telnet 连接...';
     } else if (state === 'connected') {
         statusDot.classList.add('connected');
-        statusText.textContent = msg || '已连接';
+        statusText.textContent = msg || t('已连接');
         terminalOverlay.classList.add('hidden');
         isConnected = true;
     } else if (state === 'disconnected') {
         statusDot.classList.add('disconnected');
-        statusText.textContent = msg || '已断开';
+        statusText.textContent = msg || t('已断开');
         isConnected = false;
         terminalOverlay.classList.remove('hidden');
         overlayMsg.textContent = msg || t('连接已断开');
     } else if (state === 'error') {
         statusDot.classList.add('disconnected');
-        statusText.textContent = '错误';
+        statusText.textContent = t('错误');
         isConnected = false;
         terminalOverlay.classList.remove('hidden');
-        overlayMsg.textContent = msg || '连接出错';
+        overlayMsg.textContent = msg || t('连接出错');
     }
 }
 {
@@ -12233,7 +12233,7 @@ function destroyTerminalInstance({ clear = true } = {}) {
     if (clear) wtermWrapper.innerHTML = '';
 }
 
-function closeWebSocketOnly(reason = '重建连接', { sendDisconnect = false } = {}) {
+function closeWebSocketOnly(reason = t('重建连接'), { sendDisconnect = false } = {}) {
     const ws = wsConnection;
     wsConnection = null;
     if (!ws) return;
@@ -12250,11 +12250,11 @@ function disconnect({ userInitiated = true, updateStatus = true, destroyTerminal
     reconnectInProgress = false;
     clearReconnectTimer();
     activeConnectionToken += 1;
-    closeWebSocketOnly(userInitiated ? '用户主动断开' : '重建连接', { sendDisconnect: userInitiated });
+    closeWebSocketOnly(userInitiated ? t('用户主动断开') : t('重建连接'), { sendDisconnect: userInitiated });
     if (destroyTerminal) destroyTerminalInstance();
     isConnected = false;
     sftpReady = false;
-    if (updateStatus) setStatus('disconnected', '已断开');
+    if (updateStatus) setStatus('disconnected', t('已断开'));
 }
 
 function syncFeaturePanelsAfterConnection() {
@@ -12293,13 +12293,13 @@ async function startFreshConnection({ message = '正在建立 Telnet 连接...',
     userClosedConnection = false;
     activeConnectionToken += 1;
     const token = activeConnectionToken;
-    closeWebSocketOnly('重建连接');
+    closeWebSocketOnly(t('重建连接'));
     destroyTerminalInstance();
     setStatus('connecting', message);
     if (resetAttempts) reconnectAttempts = 0;
     await initWTerm(token, { followOnConnect });
     await connectWebSocket(token, { followOnConnect });
-    if (token !== activeConnectionToken) throw new Error('连接已被新的会话替换');
+    if (token !== activeConnectionToken) throw new Error(t('连接已被新的会话替换'));
     syncFeaturePanelsAfterConnection();
     if (!isTouchKeyboardDevice()) scheduleTerminalResize();
 }
@@ -12324,7 +12324,7 @@ async function startAutoReconnect(reason = t('连接已断开')) {
         } catch (err) {
             reconnectTimer = 0;
             if (userClosedConnection || isConnected) break;
-            console.warn('[SSH] 自动重连失败:', err.message);
+            console.warn(t('[SSH] 自动重连失败:'), err.message);
         }
     }
     reconnectInProgress = false;
@@ -12379,7 +12379,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
             WTermClass = module.WTerm || module.default;
         }
     }
-    if (connectionToken !== activeConnectionToken) throw new Error('终端初始化已取消');
+    if (connectionToken !== activeConnectionToken) throw new Error(t('终端初始化已取消'));
     wtermWrapper.innerHTML = '';
     normalizeWTermContainerLayout('init-before-create');
     try {
@@ -12509,7 +12509,7 @@ terminalRemoteHistory?.destroy?.();
         pageSize: 200,
     });
     normalizeWTermContainerLayout('init-after-wterm-init');
-    if (connectionToken !== activeConnectionToken) throw new Error('终端初始化已取消');
+    if (connectionToken !== activeConnectionToken) throw new Error(t('终端初始化已取消'));
     lastSentTerminalSize = { cols: Number(term.cols || 80), rows: Number(term.rows || 24) };
     rememberTerminalFitSnapshot('init-wterm');
     applyWtermTheme(getPreferredWtermTheme());
@@ -12556,7 +12556,7 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
         };
         const timeout = setTimeout(() => {
             try { ws.close(); } catch (_) {}
-            fail(new Error('连接超时'));
+            fail(new Error(t('连接超时')));
         }, 10000);
 
         ws.addEventListener('open', () => {
@@ -12604,7 +12604,7 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                 }
                 if (msg.type === 'process-action-result') {
                     processBusyPid = 0;
-                    showToast(msg.message || (msg.ok ? '进程操作已发送' : '进程操作失败'), msg.ok ? 'success' : 'error');
+                    showToast(msg.message || (msg.ok ? t('进程操作已发送') : t('进程操作失败')), msg.ok ? 'success' : 'error');
                     wsConnection?.send?.(JSON.stringify({ type: 'stats-request' }));
                     return;
                 }
@@ -12661,7 +12661,7 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                                 rememberTerminalFitSnapshot('ready-pty');
                             }
                         }
-                        setStatus('connected', msg.attached ? '已恢复会话' : '已连接');
+                        setStatus('connected', msg.attached ? t('已恢复会话') : t('已连接'));
                         applyTerminalWorkspaceState();
                         if (!isMobileStableInputMode()) {
                             window.setTimeout(() => repairOversizedWTermRows('ready-oversized-rows', { force: true }), 120);
@@ -12699,10 +12699,10 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                     case 'close': {
                         const closeCode = String(msg.code || '');
                         const closeMsg = msg.message
-                            || (closeCode === 'remote_close' ? '对端关闭了连接'
-                                : closeCode === 'remote_error' ? '连接异常断开'
-                                : closeCode === 'detached_ttl' ? '会话因空闲超时已关闭'
-                                : '会话已关闭');
+                            || (closeCode === 'remote_close' ? t('对端关闭了连接')
+                                : closeCode === 'remote_error' ? t('连接异常断开')
+                                : closeCode === 'detached_ttl' ? t('会话因空闲超时已关闭')
+                                : t('会话已关闭'));
                         setStatus('disconnected', closeMsg);
                         // Remote peer close/error: allow auto-reconnect. Client-initiated / TTL: do not thrash.
                         const allowReconnect = !userClosedConnection && closeCode !== 'detached_ttl' && closeCode !== 'client_disconnect';
@@ -12750,7 +12750,7 @@ async function reconnect() {
     reconnectInProgress = true;
     reconnectBtn.disabled = true;
     try {
-        await startFreshConnection({ message: '正在重连...', resetAttempts: true });
+        await startFreshConnection({ message: t('正在重连...'), resetAttempts: true });
         showToast('重连成功', 'success');
     } catch (err) {
         setStatus('error', err.message);
@@ -12812,7 +12812,7 @@ disconnectBtn.addEventListener('click', () => {
 window.addEventListener('beforeunload', () => {
     userClosedConnection = true;
     clearReconnectTimer();
-    closeWebSocketOnly('页面卸载', { sendDisconnect: false });
+    closeWebSocketOnly(t('页面卸载'), { sendDisconnect: false });
 });
 
 main();
