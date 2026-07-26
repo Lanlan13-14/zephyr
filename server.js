@@ -2393,7 +2393,9 @@ app.post('/api/auth/change-password', requireUser, async (req, res) => {
     if (!user || !verifyPassword(currentPassword, user.passwordHash)) return res.status(400).json({ error: '当前密码错误' });
 
     /* Security gate (FREEZE plan §11.3 enhanced):
-     * - TOTP enabled: must provide a valid TOTP code (second factor).
+     * - TOTP enabled: must provide a valid TOTP code.
+     *   If email is also configured + mail enabled: must ALSO provide an
+     *   email verification code (both factors required).
      * - TOTP disabled + email configured: must provide an email verification
      *   code (proving control of the account's email, like forgot-password).
      * - TOTP disabled + no email: degrade to currentPassword-only, but log
@@ -2404,10 +2406,17 @@ app.post('/api/auth/change-password', requireUser, async (req, res) => {
         if (!verifySync({ secret: user.totpSecret || '', token: code }).valid) {
             return res.status(400).json({ error: '两步验证动态码错误', code: 'totp_invalid' });
         }
-    } else if (user.email) {
-        const s = storage.getSettings();
-        const mail = s.mail || {};
-        if (mail.enabled && mail.host) {
+    }
+    if (!user.totpEnabled && !user.email) {
+        console.warn('[security] change-password without 2FA or email (no email on account)', { username: user.username });
+    }
+    /* Email verification: required when TOTP is off (as the sole second factor),
+     * OR when TOTP is on AND the account has email (defense-in-depth: both factors). */
+    const needEmailCode = !!user.email;
+    if (needEmailCode) {
+        const s2 = storage.getSettings();
+        const mail2 = s2.mail || {};
+        if (mail2.enabled && mail2.host) {
             const code = String(emailCode || '').trim();
             if (!code) return res.status(400).json({ error: '请输入邮箱验证码', code: 'email_code_required' });
             const rec = storage.findResetCode(user.username, user.email);
@@ -2420,10 +2429,10 @@ app.post('/api/auth/change-password', requireUser, async (req, res) => {
                 return res.status(400).json({ error: '邮箱验证码无效或已过期', code: 'email_code_invalid' });
             }
             storage.markResetCodeUsed(rec.id);
-        } else {
+        } else if (!user.totpEnabled) {
             console.warn('[security] change-password without 2FA or email (mail disabled)', { username: user.username });
         }
-    } else {
+    } else if (!user.totpEnabled) {
         console.warn('[security] change-password without 2FA or email (no email on account)', { username: user.username });
     }
 

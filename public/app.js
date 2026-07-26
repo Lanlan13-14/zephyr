@@ -8086,7 +8086,9 @@ function updatePasswordFormFields() {
     const totpRow = $('#settingsTotpRow');
     const emailRow = $('#settingsEmailCodeRow');
     if (totpRow) totpRow.classList.toggle('force-hidden', !usingTotp);
-    if (emailRow) emailRow.classList.toggle('force-hidden', usingTotp || !hasEmail);
+    /* Email code shown whenever user has email (both TOTP-on and TOTP-off).
+     * Only hidden when no email at all. */
+    if (emailRow) emailRow.classList.toggle('force-hidden', !hasEmail);
 }
 function renderPasskeys() { $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无 Passkey')}</p>`; }
 function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>失败 ${b.failedCount} · 解封 ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">解除</button></div>`).join('') || '<p class="muted">暂无封禁 IP</p>'; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason || '')} · ${fmtTime(e.time)}</span></div>`).join('') || '<p class="muted">暂无登录事件</p>'; }
