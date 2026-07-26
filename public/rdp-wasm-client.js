@@ -2365,6 +2365,12 @@ window.addEventListener('message', (e) => {
         rdpClipboardChanged(msg.text);
     } else if (msg.type === 'params-update') {
         params = { ...params, ...msg.params };
+    } else if (msg.type === 'notes-enabled') {
+        const notesBtn = document.getElementById('notesBtn');
+        if (notesBtn) {
+            notesBtn.classList.toggle('force-hidden', !msg.enabled);
+            notesBtn.hidden = !msg.enabled;
+        }
     }
 });
 

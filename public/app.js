@@ -1557,10 +1557,10 @@ function renderActivities() {
             <dl class="activity-meta-grid">
                 <div><dt>${t('事件类型')}</dt><dd>${escapeHtml(detail.category)}</dd></div>
                 <div><dt>${t('操作者')}</dt><dd>${escapeHtml(detail.actor)}</dd></div>
-                <div><dt>${t('协议')}</dt><dd>${escapeHtml(detail.protocol)}</dd></div>
-                <div><dt>${t('目标地址')}</dt><dd>${escapeHtml(detail.target)}</dd></div>
-                <div><dt>${t('来源 IP')}</dt><dd>${escapeHtml(detail.sourceIp)}</dd></div>
-                <div><dt>${t('耗时')}</dt><dd>${escapeHtml(detail.duration)}</dd></div>
+                ${detail.protocol !== '-' ? `<div><dt>${t('协议')}</dt><dd>${escapeHtml(detail.protocol)}</dd></div>` : ''}
+                ${detail.target !== '-' ? `<div><dt>${t('目标地址')}</dt><dd>${escapeHtml(detail.target)}</dd></div>` : ''}
+                ${detail.sourceIp !== '-' ? `<div><dt>${t('来源 IP')}</dt><dd>${escapeHtml(detail.sourceIp)}</dd></div>` : ''}
+                ${detail.duration !== '-' ? `<div><dt>${t('耗时')}</dt><dd>${escapeHtml(detail.duration)}</dd></div>` : ''}
             </dl>
             <div class="activity-event-id"><span>${t('事件 ID')}</span><code>${escapeHtml(activity.id || '—')}</code></div>
         </article>`;
