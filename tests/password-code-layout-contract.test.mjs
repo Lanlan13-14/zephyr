@@ -23,4 +23,12 @@ test('password email verification row gives input three quarters and button one 
         css,
         /\.verification-code-row input,\s*\n\.verification-code-row \.btn-sm\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-width:\s*0;/,
     );
+    assert.match(html, /class="btn btn-sm verification-code-send-btn" id="settingsSendCodeBtn"/);
+    assert.match(
+        css,
+        /\.verification-code-row \.verification-code-send-btn\s*\{[\s\S]*?min-height:\s*56px;[\s\S]*?border:\s*1px solid[\s\S]*?border-radius:\s*var\(--radius-control\);[\s\S]*?background:/,
+    );
+    assert.match(css, /\.verification-code-row \.verification-code-send-btn:hover:not\(:disabled\)/);
+    assert.match(css, /\.verification-code-row \.verification-code-send-btn:active:not\(:disabled\)[\s\S]*?scale\(\.97\)/);
+    assert.match(css, /\.verification-code-row \.verification-code-send-btn:disabled\s*\{/);
 });

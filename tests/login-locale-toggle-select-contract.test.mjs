@@ -13,7 +13,7 @@ test('login locale selects become toggle-selects with motion open/close', () => 
     assert.match(js, /function openLoginToggleMenu\(shell\)/);
     assert.match(js, /function closeLoginToggleMenu\(shell\)/);
     assert.match(js, /function syncLoginToggleFace\(select\)/);
-    assert.match(js, /import\('\.\/vendor\/zephyr-motion\/index\.js\?v=20260727-ai-settings-fix1'\)/);
+    assert.match(js, /import\('\.\/vendor\/zephyr-motion\/index\.js\?v=20260727-password-code-button1'\)/);
     assert.match(js, /preset: 'mac',/);
     assert.match(js, /\{ preset: 'macClose' \}/);
     assert.match(js, /Motion\.setOriginFromAnchor\?\.\(menu, trigger\)/);
@@ -64,5 +64,5 @@ test('settings language select and proxy type select join the motion open/close 
 
 test('rollback page contract test revision stays in sync', () => {
     const js = read('public/password-rollback.js');
-    assert.match(js, /i18n\/runtime\.js\?v=20260727-ai-settings-fix1/);
+    assert.match(js, /i18n\/runtime\.js\?v=20260727-password-code-button1/);
 });

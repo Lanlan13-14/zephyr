@@ -6,10 +6,10 @@
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="app.js?v=20260727-ai-settings-fix1">
+    <link rel="modulepreload" href="app.js?v=20260727-password-code-button1">
     <link rel="modulepreload" href="theme-runtime.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260727-ai-settings-fix1">
-    <link rel="stylesheet" href="style.css?v=20260727-ai-settings-fix1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260727-password-code-button1">
+    <link rel="stylesheet" href="style.css?v=20260727-password-code-button1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -368,7 +368,7 @@
                                             <div class="form-group"><label for="settingsNewPassword" data-i18n="请输入新密码">请输入新密码</label><input type="password" id="settingsNewPassword" placeholder=" " minlength="4" required></div>
                                             <div class="form-group"><label for="settingsConfirmPassword" data-i18n="请确认新密码">请确认新密码</label><input type="password" id="settingsConfirmPassword" placeholder=" " minlength="4" required></div>
                                             <div class="form-group force-hidden" id="settingsTotpRow"><label for="settingsTotpCode" data-i18n="两步验证动态码">两步验证动态码</label><input id="settingsTotpCode" inputmode="numeric" maxlength="6" placeholder=" "></div>
-                                            <div class="form-group force-hidden" id="settingsEmailCodeRow"><label for="settingsEmailCode" data-i18n="邮箱验证码">邮箱验证码</label><div class="form-row-inline verification-code-row"><input id="settingsEmailCode" inputmode="text" placeholder=" "><button type="button" class="btn btn-sm" id="settingsSendCodeBtn" data-i18n="发送验证码">发送验证码</button></div></div>
+                                            <div class="form-group force-hidden" id="settingsEmailCodeRow"><label for="settingsEmailCode" data-i18n="邮箱验证码">邮箱验证码</label><div class="form-row-inline verification-code-row"><input id="settingsEmailCode" inputmode="text" placeholder=" "><button type="button" class="btn btn-sm verification-code-send-btn" id="settingsSendCodeBtn" data-i18n="发送验证码">发送验证码</button></div></div>
                                             <p class="field-hint" id="passwordPolicyHint" aria-live="polite"></p>
                                         </div>
                                         <button class="btn btn-primary" type="submit" data-i18n="保存密码">保存密码</button>
@@ -1034,7 +1034,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260727-ai-settings-fix1" type="module"></script>
+    <script src="app.js?v=20260727-password-code-button1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {
