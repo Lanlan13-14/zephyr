@@ -3726,6 +3726,9 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
         };
 
         const contextObj = req.body?.context || {};
+        if (contextObj?.activeSurface?.kind === 'remote-desktop' && providerPayload.options?.vision === false) {
+            return res.status(400).json({ error: '当前模型供应商未启用图片输入，无法读取 RDP/VNC 画面', code: 'vision_required' });
+        }
         const contextText = typeof req.body?.contextText === 'string' && req.body.contextText
             ? req.body.contextText
             : formatAiContextForPrompt(contextObj);
@@ -3840,6 +3843,17 @@ app.post('/api/ai/runtime/runs/:id/permission', requireUser, async (req, res) =>
         });
         res.json(data);
     } catch (err) { handleAiRuntimeError(res, err); }
+});
+
+app.post('/api/ai/runtime/runs/:id/capture-image', requireUser, express.raw({ type: ['image/png', 'image/jpeg', 'image/webp'], limit: '8mb' }), async (req, res) => {
+    try {
+        const callId = String(req.query?.callId || '').trim();
+        if (!callId || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'callId and image body required' });
+        const result = await aiRuntimeBridge.uploadCaptureImage(req.user, req.params.id, callId, req.body, req.headers['content-type']);
+        res.json(result);
+    } catch (err) {
+        handleAiRuntimeError(res, err);
+    }
 });
 
 app.post('/api/ai/runtime/runs/:id/capture', requireUser, async (req, res) => {

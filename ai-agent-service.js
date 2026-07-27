@@ -1331,6 +1331,10 @@ function formatAiContextForPrompt(context = {}) {
     if (c.projects.length) lines.push(`关联项目：${c.projects.join(', ')}`);
     if (c.tags.length) lines.push(`关联标签：${c.tags.join(', ')}`);
     if (c.connections.length) lines.push(`当前连接上下文：${c.connections.slice(0, 12).map((x) => `${x.protocol || 'SSH'}:${x.name || x.id}(${x.username || '-'}@${x.host || '-'})${Array.isArray(x.tags) && x.tags.length ? `[${x.tags.join(',')}]` : ''}`).join('; ')}`);
+    const activeSurface = c.activeSurface && typeof c.activeSurface === 'object' ? c.activeSurface : null;
+    if (activeSurface?.kind === 'remote-desktop') {
+        lines.push(`当前操作表面：${String(activeSurface.protocol || 'RDP/VNC').toUpperCase()} 远程桌面，tabId=${activeSurface.tabId || '[缺失]'}。本轮在该远程桌面内进行的网页、点击、输入或桌面任务必须使用 remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1；禁止调用 browser_*，因为内置浏览器不是远端桌面。`);
+    }
     const terminalOutputs = Array.isArray(c.terminalOutputs) ? c.terminalOutputs : [];
     const activeTerminalSessionId = String(c.activeTerminalSessionId || terminalOutputs[0]?.sessionId || terminalOutputs[0]?.tabId || '').trim();
     if (activeTerminalSessionId) {
@@ -1792,6 +1796,12 @@ function executeCanonicalAiTool(toolName, args, ctx, deps, execute) {
 }
 
 async function executeAiTool(toolName, args = {}, ctx, deps) {
+    if (ctx?.context?.activeSurface?.kind === 'remote-desktop' && String(toolName || '').startsWith('browser_')) {
+        const err = new Error('当前目标是 RDP/VNC 远程桌面；请使用 remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1');
+        err.code = 'wrong_surface';
+        err.status = 409;
+        throw err;
+    }
     const extendedPolicy = policyForExtendedTool(toolName);
     if (extendedPolicy && !ctx?._extendedCanonical) {
         return executeCanonicalTool({
@@ -3065,6 +3075,9 @@ function registerAiRoutes(app, deps) {
             const baseSystemPrompt = buildSystemPrompt(ai, context, configuredLimits);
             const systemPrompt = intentHint ? `${baseSystemPrompt}\n\n${intentHint}` : baseSystemPrompt;
             let tools = providerSupportsTools(provider) ? cachedToolDefinitions(ai) : [];
+            if (context?.activeSurface?.kind === 'remote-desktop') {
+                throw new HttpError(409, 'runtime_required_for_remote_desktop', 'RDP/VNC AI 视觉操作必须使用 Go Runtime；Legacy Chat 不会接收远程桌面截图');
+            }
             if (deps.userSettingsService && req.user) {
                 const effectiveUserSettings = deps.userSettingsService.effective(req.user);
                 if (!effectiveUserSettings?.notes?.enabled) tools = tools.filter((t) => !String(t?.function?.name || '').startsWith('note_'));
@@ -3239,6 +3252,12 @@ function registerAiRoutes(app, deps) {
 async function executeAiToolForHost(toolName, args = {}, hostCtx = {}) {
     const deps = hostCtx.deps;
     if (!deps) throw new Error('executeAiToolForHost: deps required');
+    if (hostCtx?.context?.activeSurface?.kind === 'remote-desktop' && String(toolName || '').startsWith('browser_')) {
+        const err = new Error('当前目标是 RDP/VNC 远程桌面；请使用 remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1');
+        err.code = 'wrong_surface';
+        err.status = 409;
+        throw err;
+    }
     const ctx = {
         user: hostCtx.user,
         req: { user: hostCtx.user },

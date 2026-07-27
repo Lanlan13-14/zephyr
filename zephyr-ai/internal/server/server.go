@@ -10,8 +10,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -35,14 +37,17 @@ import (
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool/platform"
 )
 
+const maxCaptureUploadBytes = (8 << 20) + 1
+
 type Server struct {
-	cfg     config.Config
-	store   *session.Store
-	log     *slog.Logger
-	mcp     *mcp.Manager
-	host    *platform.Host
-	runner  *agent.Runner
-	archive *archive.Store
+	cfg      config.Config
+	store    *session.Store
+	log      *slog.Logger
+	mcp      *mcp.Manager
+	host     *platform.Host
+	runner   *agent.Runner
+	archive  *archive.Store
+	captures *agent.CaptureStore
 
 	mu       sync.Mutex
 	tickets  map[string]*runTicket
@@ -78,10 +83,15 @@ func New(cfg config.Config, store *session.Store, log *slog.Logger) *Server {
 		host:     host,
 		runner:   agent.NewRunner(),
 		archive:  arch,
+		captures: agent.NewCaptureStore(filepath.Join(os.TempDir(), "zephyr-ai-captures")),
 		tickets:  make(map[string]*runTicket),
 		cancels:  make(map[string]context.CancelFunc),
 		emitters: make(map[string]*sseHub),
 	}
+}
+
+func (s *Server) Close() {
+	if s.captures != nil { s.captures.Clear() }
 }
 
 func (s *Server) Handler() http.Handler {
@@ -95,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/runs", s.admin(s.handleStartRun))
 	mux.HandleFunc("POST /admin/runs/{id}/abort", s.admin(s.handleAbortRun))
 	mux.HandleFunc("POST /admin/runs/{id}/permission", s.admin(s.handlePermission))
+	mux.HandleFunc("POST /admin/runs/{id}/capture-image", s.admin(s.handleCaptureImage))
 	mux.HandleFunc("POST /admin/runs/{id}/capture", s.admin(s.handleCapture))
 	mux.HandleFunc("GET /admin/runs/{id}", s.admin(s.handleGetRun))
 	mux.HandleFunc("POST /admin/mcp/connect", s.admin(s.handleMCPConnect))
@@ -346,6 +357,7 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		ContextWindowTokens: req.ContextWindowTokens,
 		OutputReserveTokens: req.OutputReserveTokens,
 		Archive:             s.archive,
+		Captures:            s.captures,
 		Mode:                req.Mode,
 	}
 
@@ -600,6 +612,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		ContextJSON:         st.Context,
 		ContextWindowTokens: st.ContextWindowTokens,
 		OutputReserveTokens: st.OutputReserveTokens,
+		Captures:            s.captures,
 		Resume:              &st,
 		Decision: &agent.ResumeDecision{
 			Approve:   true,
@@ -615,12 +628,50 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleCaptureImage(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("id")
+	callID := strings.TrimSpace(r.URL.Query().Get("callId"))
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	if callID == "" || userID == "" {
+		writeJSON(w, 400, map[string]any{"ok": false, "error": "callId and userId required"})
+		return
+	}
+	run, err := s.store.GetRun(runID)
+	if err != nil || run.UserID != userID {
+		writeJSON(w, 404, map[string]any{"ok": false, "error": "run_not_found"})
+		return
+	}
+	var state agent.ResumeState
+	if err := s.store.LoadRunResume(runID, &state); err != nil || state.Kind != agent.PauseCapture {
+		writeJSON(w, 409, map[string]any{"ok": false, "error": "capture_not_expected"})
+		return
+	}
+	waiting, ok := state.WaitingCall()
+	if !ok || waiting.ID != callID {
+		writeJSON(w, 409, map[string]any{"ok": false, "error": "capture_call_mismatch"})
+		return
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCaptureUploadBytes))
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"ok": false, "error": "capture image too large or unreadable"})
+		return
+	}
+	asset, err := s.captures.Put(userID, runID, callID, mimeType, data)
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "captureAssetId": asset.ID, "mimeType": asset.MIMEType, "size": asset.Size})
+}
+
 func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		UserID   string          `json:"userId"`
-		CallID   string          `json:"callId"`
-		Result   json.RawMessage `json:"result"`
-		Provider provider.Config `json:"provider"`
+		UserID         string          `json:"userId"`
+		CallID         string          `json:"callId"`
+		Result         json.RawMessage `json:"result"`
+		CaptureAssetID string          `json:"captureAssetId"`
+		Provider       provider.Config `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.CallID == "" {
 		writeJSON(w, 400, map[string]any{"ok": false, "error": "callId and result required"})
@@ -640,6 +691,14 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 	userID := body.UserID
 	if userID == "" {
 		userID = run.UserID
+	}
+	if userID != run.UserID || st.Kind != agent.PauseCapture || st.Capture == nil || st.Capture.CallID != body.CallID {
+		writeJSON(w, 409, map[string]any{"ok": false, "error": "capture_mismatch"})
+		return
+	}
+	if body.CaptureAssetID == "" || !s.captures.Owns(body.CaptureAssetID, userID, runID, body.CallID) {
+		writeJSON(w, 409, map[string]any{"ok": false, "error": "capture_asset_mismatch"})
+		return
 	}
 	sessionID := run.SessionID
 
@@ -700,11 +759,13 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		ContextJSON:         st.Context,
 		ContextWindowTokens: st.ContextWindowTokens,
 		OutputReserveTokens: st.OutputReserveTokens,
+		Captures:            s.captures,
 		Resume:              &st,
 		Decision: &agent.ResumeDecision{
-			Approve:       true,
-			CallID:        body.CallID,
-			CaptureResult: body.Result,
+			Approve:        true,
+			CallID:         body.CallID,
+			CaptureResult:  body.Result,
+			CaptureAssetID: body.CaptureAssetID,
 		},
 	}
 	s.launchRun(runID, hub, cfg)

@@ -73,7 +73,7 @@ test('contract: mobile fork uses xterm FitAddon 1:1 (native scrollToBottom, no p
 });
 
 test('contract: terminal assets use current cache-bust', () => {
-    assert.match(terminalHtml, /20260727-ai-terminal-session1/);
+    assert.match(terminalHtml, /20260727-ai-rdp-vision1/);
 });
 
 test('surface: pinScroll host is called; no direct scroll without host', () => {

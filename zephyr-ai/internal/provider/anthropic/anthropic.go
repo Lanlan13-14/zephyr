@@ -115,7 +115,25 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		if m.Role == provider.RoleAssistant {
 			role = "assistant"
 		}
-		msgs = append(msgs, map[string]any{"role": role, "content": m.Content})
+		if len(m.Parts) > 0 {
+			content := make([]map[string]any, 0, len(m.Parts))
+			for _, part := range m.Parts {
+				switch part.Type {
+				case "text":
+					if part.Text != "" {
+						content = append(content, map[string]any{"type": "text", "text": part.Text})
+					}
+				case "image_url":
+					mimeType, data, ok := provider.DecodeDataURL(part.ImageURL)
+					if ok {
+						content = append(content, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": mimeType, "data": data}})
+					}
+				}
+			}
+			msgs = append(msgs, map[string]any{"role": role, "content": content})
+		} else {
+			msgs = append(msgs, map[string]any{"role": role, "content": m.Content})
+		}
 	}
 	if len(msgs) == 0 {
 		msgs = []map[string]any{{"role": "user", "content": "你好"}}

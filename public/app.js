@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260727-ai-terminal-session1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260727-ai-terminal-session1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260727-ai-rdp-vision1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260727-ai-rdp-vision1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -5409,6 +5409,7 @@ async function openAiProviderModal(provider = null, trigger = null) {
     $('#aiProviderTopP').value = provider?.options?.top_p ?? -1;
     $('#aiProviderMaxTokens').value = provider?.options?.max_tokens ?? provider?.options?.max_output_tokens ?? 4096;
     if ($('#aiProviderContextWindow')) $('#aiProviderContextWindow').value = provider?.options?.context?.windowTokens ?? '';
+    if ($('#aiProviderVision')) $('#aiProviderVision').checked = provider ? provider?.options?.vision !== false : true;
     if ($('#aiProviderUsePreviousResponse')) $('#aiProviderUsePreviousResponse').checked = !!provider?.options?.use_previous_response_id;
     setAiFieldSelectValue('aiProviderReasoningEffort', provider?.options?.reasoning_effort || '');
     $('#aiProviderPresencePenalty').value = provider?.options?.presence_penalty ?? 0;
@@ -5617,6 +5618,7 @@ async function saveAiProvider(e) {
             max_tokens: Number($('#aiProviderMaxTokens').value) || 4096,
             max_output_tokens: Number($('#aiProviderMaxTokens').value) || 4096,
             reasoning_effort: $('#aiProviderReasoningEffort').value,
+            vision: !!$('#aiProviderVision')?.checked,
             use_previous_response_id: !!$('#aiProviderUsePreviousResponse')?.checked,
             context: { windowTokens: Number($('#aiProviderContextWindow')?.value) || undefined },
             presence_penalty: Number($('#aiProviderPresencePenalty').value) || 0,
@@ -6340,11 +6342,22 @@ function collectAiContext(options = {}) {
     const terminalOutputs = collectAiTerminalOutputs();
     const remoteDesktopSnapshots = collectAiRemoteDesktopSnapshots({ includeImage: !!options.includeRemoteDesktopImages });
     const activeTerminal = terminalOutputs.find((item) => item.tabId === activeTerminalTab) || terminalOutputs[0] || null;
+    const activeRemoteDesktop = remoteDesktopSnapshots.find((item) => item.tabId === activeTerminalTab)
+        || remoteDesktopSnapshots.find((item) => ['RDP', 'VNC'].includes(String(item.protocol || '').toUpperCase()))
+        || null;
+    const activeSurface = activeRemoteDesktop
+        ? { kind: 'remote-desktop', protocol: activeRemoteDesktop.protocol || active?.protocol || '', tabId: activeRemoteDesktop.tabId || activeTerminalTab || '', connectionId: activeRemoteDesktop.connectionId || active?.connectionId || '' }
+        : activeTerminal
+            ? { kind: 'terminal', protocol: activeTerminal.protocol || active?.protocol || '', tabId: activeTerminal.tabId || activeTerminalTab || '', sessionId: activeTerminal.sessionId || activeTerminalTab || '', connectionId: activeTerminal.connectionId || active?.connectionId || '' }
+            : { kind: String(view || 'workspace'), protocol: '', tabId: '', connectionId: '' };
     return {
         locale: getLocale(),
         view,
         aiChatSessionId: contextSession?.id || '',
         activeChatTitle: contextSession?.title || '',
+        activeSurface,
+        activeRemoteDesktopTabId: activeRemoteDesktop?.tabId || '',
+        activeRemoteDesktopProtocol: activeRemoteDesktop?.protocol || '',
         activeTerminalTab,
         activeTerminalSessionId: activeTerminal?.sessionId || activeTerminalTab || '',
         activeTerminalConnectionId: activeTerminal?.connectionId || active?.connectionId || '',
@@ -6498,7 +6511,7 @@ function readRemoteDesktopSnapshotForAi(tabId = '', maxWidth = 960) {
         shot = frame?.contentWindow?.__zephyrGetRemoteDesktopSnapshot?.({ maxWidth });
         if (shot && typeof shot.then === 'function') return { pending: true, promise: shot, tabId: id, protocol, connectionId: tab?.connectionId || conn?.id || '' };
     } catch (err) { shot = { error: err.message || String(err) }; }
-    if (shot?.dataUrl && shot.dataUrl.length > 1800000 && Number(maxWidth) > 520) {
+    if (shot?.dataUrl && shot.dataUrl.length > 6000000 && Number(maxWidth) > 520) {
         try {
             const smallerWidth = Math.max(420, Math.round(Number(maxWidth) * 0.62));
             const smaller = frame?.contentWindow?.__zephyrGetRemoteDesktopSnapshot?.({ maxWidth: smallerWidth, quality: 0.58 });
@@ -6530,7 +6543,7 @@ function readRemoteDesktopSnapshotForAi(tabId = '', maxWidth = 960) {
 }
 function collectAiRemoteDesktopSnapshots({ includeImage = false } = {}) {
     const ids = uniq([activeTerminalTab, ...visualLayout, ...terminalTabs.filter((t) => !t.minimized).map((t) => t.id), ...terminalTabs.map((t) => t.id)]).slice(0, includeImage ? 3 : 5);
-    const list = ids.map((id, index) => includeImage ? readRemoteDesktopSnapshotForAi(id, index === 0 ? 640 : 520) : readRemoteDesktopSnapshotForAi(id, 360))
+    const list = ids.map((id, index) => includeImage ? readRemoteDesktopSnapshotForAi(id, index === 0 ? 960 : 720) : readRemoteDesktopSnapshotForAi(id, 360))
         .filter((item) => item && ['RDP', 'VNC'].includes(item.protocol) && (item.dataUrl || item.error || item.connected))
         .slice(0, includeImage ? 1 : 2);
     if (includeImage) return list;
@@ -7008,6 +7021,15 @@ async function consumeAiRuntimeSse(path, { signal, onEvent } = {}) {
     flush();
 }
 
+function aiCaptureDataUrlToBlob(dataUrl) {
+    const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/i.exec(String(dataUrl || ''));
+    if (!match) throw new Error(t('远程桌面截图格式无效'));
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: match[1].toLowerCase() });
+}
+
 async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, model, options, context, abortController }) {
     // Bind browser chat id → server session id (stored on session object).
     let serverSessionId = session.runtimeSessionId || '';
@@ -7168,11 +7190,22 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                         shot = actionResult?.remoteDesktopScreenshot || null;
                     }
                     if (!shot) shot = await waitForFreshRemoteDesktopSnapshot(targetTabId, { maxWidth, timeoutMs: 3200, afterFrameAt: Number(captureArgs?.afterFrameAt || 0) });
-                    const captureResult = { ...(actionResult || {}), screenshots: shot ? [shot] : [], capture: shot || null, captureId: shot?.captureId || '', beforeCaptureId: captureArgs?.beforeCaptureId || actionResult?.beforeCaptureId || '', afterCaptureId: shot?.captureId || actionResult?.afterCaptureId || '', clientCaptured: true, capturedAt: Date.now(), message: shot?.dataUrl ? t('已实时截取最新远程桌面画面并签发 captureId') : (shot?.error || t('实时截图不可用')) };
+                    const callId = body?.callId || captureArgs?.toolCallId || '';
+                    if (!shot?.dataUrl) throw new Error(shot?.error || t('实时截图不可用'));
+                    const imageBlob = aiCaptureDataUrlToBlob(shot.dataUrl);
+                    const uploaded = await api(`/api/ai/runtime/runs/${encodeURIComponent(start.runId)}/capture-image?callId=${encodeURIComponent(callId)}`, {
+                        method: 'POST',
+                        signal: abortController.signal,
+                        headers: { 'Content-Type': imageBlob.type },
+                        body: imageBlob,
+                    });
+                    const safeShot = { ...shot };
+                    delete safeShot.dataUrl;
+                    const captureResult = { ...(actionResult || {}), screenshots: [safeShot], capture: safeShot, captureId: safeShot.captureId || '', beforeCaptureId: captureArgs?.beforeCaptureId || actionResult?.beforeCaptureId || '', afterCaptureId: safeShot.captureId || actionResult?.afterCaptureId || '', clientCaptured: true, capturedAt: Date.now(), mimeType: imageBlob.type, imageBytes: imageBlob.size, message: t('已实时截取最新远程桌面画面并签发 captureId') };
                     await api(`/api/ai/runtime/runs/${encodeURIComponent(start.runId)}/capture`, {
                         method: 'POST',
                         signal: abortController.signal,
-                        body: JSON.stringify({ callId: body?.callId || captureArgs?.toolCallId || '', result: captureResult, providerId, model }),
+                        body: JSON.stringify({ callId, captureAssetId: uploaded.captureAssetId, result: captureResult, providerId, model }),
                     });
                     break;
                 }
@@ -7239,6 +7272,9 @@ async function sendAiMessage() {
         const model = $('#aiModelSelect').value;
         const options = aiIntensityOptions();
         const useRuntime = await aiRuntimeIsEnabled();
+        if (context?.activeSurface?.kind === 'remote-desktop' && !useRuntime) {
+            throw new Error(t('RDP/VNC AI 视觉操作需要 Go Runtime'));
+        }
         if (useRuntime) {
             await sendAiMessageViaRuntime({ session, sessionId, text, providerId, model, options, context, abortController });
             return;
@@ -8928,7 +8964,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260727-ai-terminal-session1')
+        return import('./vendor/zephyr-motion/index.js?v=20260727-ai-rdp-vision1')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');

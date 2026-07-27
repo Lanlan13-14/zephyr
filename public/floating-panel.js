@@ -9,7 +9,7 @@ let panelLayoutMenu = null;
 let panelLayoutButton = null;
 let suppressNextLayoutClick = false;
 
-import { t } from './i18n/runtime.js?v=20260727-ai-terminal-session1';
+import { t } from './i18n/runtime.js?v=20260727-ai-rdp-vision1';
 
 export function detectInteractionEnvironment() {
     const ua = String(navigator.userAgent || '').toLowerCase();

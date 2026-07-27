@@ -115,10 +115,25 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		if m.Role == provider.RoleAssistant {
 			role = "model"
 		}
-		contents = append(contents, map[string]any{
-			"role":  role,
-			"parts": []map[string]any{{"text": m.Content}},
-		})
+		parts := make([]map[string]any, 0, len(m.Parts))
+		if len(m.Parts) > 0 {
+			for _, part := range m.Parts {
+				switch part.Type {
+				case "text":
+					if part.Text != "" {
+						parts = append(parts, map[string]any{"text": part.Text})
+					}
+				case "image_url":
+					mimeType, data, ok := provider.DecodeDataURL(part.ImageURL)
+					if ok {
+						parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": mimeType, "data": data}})
+					}
+				}
+			}
+		} else {
+			parts = append(parts, map[string]any{"text": m.Content})
+		}
+		contents = append(contents, map[string]any{"role": role, "parts": parts})
 	}
 	if len(contents) == 0 {
 		contents = []map[string]any{{"role": "user", "parts": []map[string]any{{"text": "你好"}}}}
@@ -157,7 +172,7 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 			decls = append(decls, map[string]any{
 				"name":        t.Name,
 				"description": t.Description,
-				"parameters":   schema,
+				"parameters":  schema,
 			})
 		}
 		body["tools"] = []map[string]any{{"functionDeclarations": decls}}

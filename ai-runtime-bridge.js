@@ -111,6 +111,23 @@ class AiRuntimeBridge {
         return this._fetch(`/admin/runs/${encodeURIComponent(runId)}/permission`, { method: 'POST', body });
     }
 
+    async uploadCaptureImage(user, runId, callId, bytes, mimeType) {
+        const userId = String(user?.userId || '').trim();
+        if (!userId) throw new HttpError(401, 'app_session_expired', '未登录或会话已过期');
+        const query = new URLSearchParams({ userId, callId: String(callId || '') });
+        if (!this.enabled) throw new HttpError(503, 'ai_runtime_unavailable', 'Go AI 运行时未启用 (ZEPHYR_AI_URL)', true);
+        const response = await fetch(`${AI_URL}/admin/runs/${encodeURIComponent(runId)}/capture-image?${query}`, {
+            method: 'POST',
+            headers: { 'X-AI-Admin': AI_ADMIN, 'Content-Type': mimeType || 'application/octet-stream' },
+            body: bytes,
+        });
+        const text = await response.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { error: text }; }
+        if (!response.ok || data.ok === false) throw new Error(data.error || `zephyr-ai ${response.status}`);
+        return data;
+    }
+
     async submitCapture(runId, body) {
         return this._fetch(`/admin/runs/${encodeURIComponent(runId)}/capture`, { method: 'POST', body });
     }
@@ -184,7 +201,9 @@ function registerAiHostRoutes(app, deps) {
 
     app.get('/internal/ai-host/v1/tools', checkHost, (req, res) => {
         try {
-            const tools = listPlatformToolCatalog(deps);
+            let context = {};
+            try { context = req.query?.context ? JSON.parse(String(req.query.context)) : {}; } catch (_) {}
+            const tools = listPlatformToolCatalog(deps, context);
             res.json({ ok: true, v: 1, tools });
         } catch (err) {
             res.status(500).json({ ok: false, error: err.message });
@@ -224,14 +243,17 @@ function registerAiHostRoutes(app, deps) {
  * Tool catalog: names/schemas must stay aligned with legacy toolDefinitions().
  * Implementation executes via ai-agent-service executeAiTool until fully ported.
  */
-function listPlatformToolCatalog(deps) {
+function listPlatformToolCatalog(deps, context = {}) {
     // Lazy require to avoid circular init
     const agent = require('./ai-agent-service');
     // Prefer exported catalog if present; else static minimal set
-    if (typeof agent.listToolCatalog === 'function') {
-        return agent.listToolCatalog(deps.storage?.getSettings?.().ai || {});
+    const tools = typeof agent.listToolCatalog === 'function'
+        ? agent.listToolCatalog(deps.storage?.getSettings?.().ai || {})
+        : STATIC_PLATFORM_CATALOG;
+    if (context?.activeSurface?.kind === 'remote-desktop') {
+        return tools.filter((tool) => !String(tool?.name || '').startsWith('browser_'));
     }
-    return STATIC_PLATFORM_CATALOG;
+    return tools;
 }
 
 async function executePlatformTool(toolName, args, ctx) {

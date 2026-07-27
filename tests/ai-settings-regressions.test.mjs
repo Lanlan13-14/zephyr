@@ -33,7 +33,7 @@ test('provider modal uses flattened visible provider fields', () => {
 });
 
 test('requested AI checkboxes use the shared switch control', () => {
-    for (const id of ['aiProviderUsePreviousResponse', 'aiProviderShareUsers', 'aiProviderShareAdmins', 'aiProviderEnabled']) {
+    for (const id of ['aiProviderVision', 'aiProviderUsePreviousResponse', 'aiProviderShareUsers', 'aiProviderShareAdmins', 'aiProviderEnabled']) {
         assert.match(appHtml, new RegExp(`<input type="checkbox" id="${id}"`));
         assert.match(appHtml, new RegExp(`settings-switch-option[^>]*for="${id}"`));
         assert.match(appHtml, new RegExp(`connection-share-switch[^>]*><input type="checkbox" id="${id}"`));
@@ -43,6 +43,7 @@ test('requested AI checkboxes use the shared switch control', () => {
 
 test('provider sharing and previous-response switches use regular text with right-aligned toggles', () => {
     for (const [id, label] of [
+        ['aiProviderVision', '支持图片输入（RDP/VNC AI 必需）'],
         ['aiProviderShareUsers', '共享给所有用户'],
         ['aiProviderShareAdmins', '共享给所有管理员'],
         ['aiProviderUsePreviousResponse', 'OpenAI Responses 使用 previous_response_id（兼容接口慎开）'],

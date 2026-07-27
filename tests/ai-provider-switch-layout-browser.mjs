@@ -8,6 +8,7 @@ const root = path.resolve(import.meta.dirname, '..');
 const html = `<!doctype html><html><head><link rel="stylesheet" href="/public/style.css"></head><body><form class="ai-provider-modal">
 <div class="form-group ai-provider-share-box"><label class="settings-switch-option" for="aiProviderShareUsers"><span class="settings-switch-copy"><span class="settings-switch-label">共享给所有用户</span></span><span class="connection-share-switch"><input type="checkbox" id="aiProviderShareUsers"><span></span></span></label>
 <label class="settings-switch-option" for="aiProviderShareAdmins"><span class="settings-switch-copy"><span class="settings-switch-label">共享给所有管理员</span></span><span class="connection-share-switch"><input type="checkbox" id="aiProviderShareAdmins"><span></span></span></label></div>
+<div class="form-group ai-provider-switch-group"><label class="settings-switch-option" for="aiProviderVision"><span class="settings-switch-copy"><span class="settings-switch-label">支持图片输入（RDP/VNC AI 必需）</span></span><span class="connection-share-switch"><input type="checkbox" id="aiProviderVision"><span></span></span></label></div>
 <div class="form-group ai-provider-switch-group"><label class="settings-switch-option" for="aiProviderUsePreviousResponse"><span class="settings-switch-copy"><span class="settings-switch-label">OpenAI Responses 使用 previous_response_id（兼容接口慎开）</span></span><span class="connection-share-switch"><input type="checkbox" id="aiProviderUsePreviousResponse"><span></span></span></label></div>
 </form></body></html>`;
 const server = createServer(async (req, res) => {
@@ -27,7 +28,7 @@ try {
     const rr = row.getBoundingClientRect(), lr = label.getBoundingClientRect(), tr = toggle.getBoundingClientRect();
     return { display: getComputedStyle(row).display, weight: getComputedStyle(label).fontWeight, rowRight: rr.right, labelRight: lr.right, toggleLeft: tr.left, toggleRight: tr.right, rowTop: rr.top, toggleTop: tr.top, rowBottom: rr.bottom, toggleBottom: tr.bottom };
   }));
-  assert.equal(rows.length, 3);
+  assert.equal(rows.length, 4);
   for (const row of rows) {
     assert.equal(row.display, 'flex');
     assert.equal(row.weight, '400');

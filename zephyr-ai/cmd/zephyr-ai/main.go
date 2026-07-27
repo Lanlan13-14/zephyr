@@ -28,6 +28,7 @@ func main() {
 	defer store.Close()
 
 	srv := server.New(cfg, store, log)
+	defer srv.Close()
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           srv.Handler(),

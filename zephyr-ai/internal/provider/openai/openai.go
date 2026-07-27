@@ -43,7 +43,7 @@ func New(cfg provider.Config) *Client {
 	}
 }
 
-func (c *Client) Name() string       { return c.cfg.Name }
+func (c *Client) Name() string        { return c.cfg.Name }
 func (c *Client) Kind() provider.Kind { return provider.NormalizeKind(c.cfg.Kind) }
 
 func (c *Client) apiMode() string {
@@ -88,11 +88,11 @@ func (c *Client) headers() http.Header {
 }
 
 type chatMessage struct {
-	Role       string          `json:"role"`
-	Content    any             `json:"content,omitempty"`
-	ToolCalls  []chatToolCall  `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	Name       string          `json:"name,omitempty"`
+	Role       string         `json:"role"`
+	Content    any            `json:"content,omitempty"`
+	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Name       string         `json:"name,omitempty"`
 }
 
 type chatToolCall struct {
@@ -122,7 +122,7 @@ func toChatMessages(msgs []provider.Message) []chatMessage {
 			for _, p := range m.Parts {
 				if p.Type == "image_url" && p.ImageURL != "" {
 					parts = append(parts, map[string]any{
-						"type": "image_url",
+						"type":      "image_url",
 						"image_url": map[string]any{"url": p.ImageURL},
 					})
 					continue
@@ -507,7 +507,24 @@ func (c *Client) streamResponses(ctx context.Context, req provider.Request) (<-c
 		if m.Role == provider.RoleAssistant {
 			role = "assistant"
 		}
-		input = append(input, map[string]any{"role": role, "content": m.Content})
+		if len(m.Parts) > 0 {
+			content := make([]map[string]any, 0, len(m.Parts))
+			for _, part := range m.Parts {
+				switch part.Type {
+				case "text":
+					if part.Text != "" {
+						content = append(content, map[string]any{"type": "input_text", "text": part.Text})
+					}
+				case "image_url":
+					if part.ImageURL != "" {
+						content = append(content, map[string]any{"type": "input_image", "image_url": part.ImageURL})
+					}
+				}
+			}
+			input = append(input, map[string]any{"role": role, "content": content})
+		} else {
+			input = append(input, map[string]any{"role": role, "content": m.Content})
+		}
 	}
 
 	payload := map[string]any{
@@ -534,7 +551,7 @@ func (c *Client) streamResponses(ctx context.Context, req provider.Request) (<-c
 				"type":        "function",
 				"name":        t.Name,
 				"description": t.Description,
-				"parameters":   params,
+				"parameters":  params,
 			})
 		}
 		payload["tools"] = tools
@@ -574,12 +591,12 @@ func (c *Client) streamResponses(ctx context.Context, req provider.Request) (<-c
 		var data struct {
 			ID     string `json:"id"`
 			Output []struct {
-				Type    string `json:"type"`
-				Name    string `json:"name"`
-				CallID  string `json:"call_id"`
-				ID      string `json:"id"`
+				Type      string `json:"type"`
+				Name      string `json:"name"`
+				CallID    string `json:"call_id"`
+				ID        string `json:"id"`
 				Arguments string `json:"arguments"`
-				Content []struct {
+				Content   []struct {
 					Type string `json:"type"`
 					Text string `json:"text"`
 				} `json:"content"`

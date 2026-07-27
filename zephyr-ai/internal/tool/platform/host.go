@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -142,11 +143,15 @@ type ToolDef struct {
 }
 
 // ListTools fetches tool catalog from Node (optional; can use static catalog).
-func (h *Host) ListTools(ctx context.Context) ([]ToolDef, error) {
+func (h *Host) ListTools(ctx context.Context, contextJSON json.RawMessage) ([]ToolDef, error) {
 	if h == nil || h.BaseURL == "" {
 		return nil, fmt.Errorf("platform host not configured")
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, h.BaseURL+"/internal/ai-host/v1/tools", nil)
+	endpoint := h.BaseURL + "/internal/ai-host/v1/tools"
+	if len(contextJSON) > 0 && string(contextJSON) != "null" && string(contextJSON) != "{}" {
+		endpoint += "?context=" + url.QueryEscape(string(contextJSON))
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +179,7 @@ func (h *Host) ListTools(ctx context.Context) ([]ToolDef, error) {
 
 // RegisterFromHost pulls catalog and registers proxy tools.
 func RegisterFromHost(ctx context.Context, reg *tool.Registry, h *Host, userID, sessionID, runID string, contextJSON json.RawMessage) error {
-	defs, err := h.ListTools(ctx)
+	defs, err := h.ListTools(ctx, contextJSON)
 	if err != nil {
 		return err
 	}

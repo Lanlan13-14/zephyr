@@ -32,6 +32,7 @@ test('provider API persists and returns all editable config fields', async () =>
       max_tokens: 8192,
       max_output_tokens: 8192,
       reasoning_effort: 'high',
+      vision: true,
       use_previous_response_id: true,
       context: { windowTokens: 196608 },
       presence_penalty: 0.2,
@@ -51,6 +52,7 @@ test('provider API persists and returns all editable config fields', async () =>
   assert.equal(provider.config.extraHeaders, '{"X-Test":"1"}');
   assert.equal(provider.config.modelUserAgents, 'model-a=Zephyr-Test/1');
   assert.equal(provider.config.options.reasoning_effort, 'high');
+  assert.equal(provider.config.options.vision, true);
   assert.equal(provider.config.options.use_previous_response_id, true);
   assert.equal(provider.config.options.context.windowTokens, 196608);
 });
@@ -64,6 +66,7 @@ test('provider PATCH keeps updated model parameters after reload', async () => {
       max_tokens: 12288,
       max_output_tokens: 12288,
       reasoning_effort: 'minimal',
+      vision: false,
       use_previous_response_id: false,
       context: { windowTokens: 262144 },
       presence_penalty: 0,
@@ -77,6 +80,7 @@ test('provider PATCH keeps updated model parameters after reload', async () => {
   const provider = listed.body.providers.find((item) => item.id === providerId);
   assert.equal(provider.config.apiMode, 'chat');
   assert.equal(provider.config.options.reasoning_effort, 'minimal');
+  assert.equal(provider.config.options.vision, false);
   assert.equal(provider.config.options.use_previous_response_id, false);
   assert.equal(provider.config.options.context.windowTokens, 262144);
   assert.equal(provider.config.options.max_tokens, 12288);

@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -51,8 +52,9 @@ type ResumeDecision struct {
 	Approve bool
 	// CallID must match the waiting call.
 	CallID string
-	// CaptureResult for PauseCapture.
-	CaptureResult json.RawMessage
+	// CaptureResult contains metadata only; image bytes live in CaptureStore.
+	CaptureResult  json.RawMessage
+	CaptureAssetID string
 	// OnceGrant: if true, only this callId is allowed (not a standing rule).
 	OnceGrant bool
 }
@@ -83,6 +85,8 @@ type Config struct {
 	SkipCompact bool
 	// Archive stores compacted fragments for history_search (optional).
 	Archive *archive.Store
+	// Captures stores short-lived client-rendered RDP/VNC frames outside SQLite.
+	Captures *CaptureStore
 	// Mode: standard | plan | goal
 	Mode string
 
@@ -124,6 +128,7 @@ type callWork struct {
 	ms                 int64
 	skip               bool // already resolved (capture inject)
 	permissionApproved bool // runtime gate approved; platform host must not ask again
+	observation        *provider.Message
 }
 
 func NewRunner() *Runner { return &Runner{} }
@@ -274,9 +279,29 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 			}
 			var data any
 			_ = json.Unmarshal(cfg.Decision.CaptureResult, &data)
+			data = stripCaptureImageData(data)
 			works[wi].result = data
 			works[wi].skip = true
 			works[wi].err = nil
+			if strings.HasPrefix(works[wi].call.Name, "remote_desktop_") && cfg.Decision.CaptureAssetID == "" {
+				return metrics, fmt.Errorf("vision capture asset required")
+			}
+			if cfg.Decision.CaptureAssetID != "" {
+				if cfg.Captures == nil {
+					return metrics, fmt.Errorf("capture store unavailable")
+				}
+				asset, imageBytes, err := cfg.Captures.Take(cfg.Decision.CaptureAssetID, cfg.UserID, cfg.RunID, works[wi].call.ID)
+				if err != nil {
+					return metrics, err
+				}
+				dataURL := "data:" + asset.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(imageBytes)
+				meta := remoteDesktopObservationText(works[wi].call, cfg.Decision.CaptureResult)
+				works[wi].observation = &provider.Message{
+					Role:    provider.RoleUser,
+					Content: meta,
+					Parts:   []provider.ContentPart{{Type: "text", Text: meta}, {Type: "image_url", ImageURL: dataURL}},
+				}
+			}
 		}
 		// Permission approve: clear skip so waiting tool executes (if not already completed)
 		if st.Kind == PausePermission && cfg.Decision.Approve {
@@ -306,6 +331,10 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 					return metrics, err
 				}
 			}
+			if w.observation != nil {
+				messages = withoutVisualParts(messages)
+				messages = append(messages, *w.observation)
+			}
 		}
 		// continue into model loop from stepsDone
 		metrics.Steps = st.StepsDone
@@ -322,10 +351,17 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 		}
 		metrics.Steps = step + 1
 
-		// Compaction on conversation history only (never system assembly).
-		modelMessages := messages
+		// Compaction on text/history only. Ephemeral RDP/VNC image observations
+		// stay outside SQLite and are appended after compaction for this step.
+		visualObservations := make([]provider.Message, 0, 1)
+		textMessages := make([]provider.Message, 0, len(messages))
+		for _, msg := range messages {
+			if len(msg.Parts) > 0 { visualObservations = append(visualObservations, msg); continue }
+			textMessages = append(textMessages, msg)
+		}
+		modelMessages := append([]provider.Message(nil), textMessages...)
 		if !cfg.SkipCompact {
-			cr := compact.Apply(messages, compCfg)
+			cr := compact.Apply(textMessages, compCfg)
 			modelMessages = cr.Messages
 			if cr.Snipped > 0 || cr.Pruned > 0 || cr.Compacted {
 				_ = r.emit(cfg, event.TypeStepCompacted, event.Compacted{
@@ -343,6 +379,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				}
 			}
 		}
+		modelMessages = append(modelMessages, visualObservations...)
 
 		req := provider.Request{
 			Model:    cfg.Model,
@@ -511,6 +548,10 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				if _, err := cfg.Store.AppendMessage(cfg.SessionID, cfg.RunID, tm); err != nil {
 					return metrics, err
 				}
+			}
+			if w.observation != nil {
+				messages = withoutVisualParts(messages)
+				messages = append(messages, *w.observation)
 			}
 		}
 	}
@@ -812,6 +853,41 @@ func normalizeArgs(raw json.RawMessage) json.RawMessage {
 		return b
 	}
 	return raw
+}
+
+func withoutVisualParts(messages []provider.Message) []provider.Message {
+	out := make([]provider.Message, 0, len(messages))
+	for _, msg := range messages {
+		if len(msg.Parts) == 0 { out = append(out, msg) }
+	}
+	return out
+}
+
+func stripCaptureImageData(value any) any {
+	switch item := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(item))
+		for key, child := range item {
+			if key == "dataUrl" || key == "imageData" || key == "base64" { continue }
+			out[key] = stripCaptureImageData(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(item))
+		for i, child := range item { out[i] = stripCaptureImageData(child) }
+		return out
+	default:
+		return value
+	}
+}
+
+func remoteDesktopObservationText(call provider.ToolCall, raw json.RawMessage) string {
+	var meta map[string]any
+	_ = json.Unmarshal(raw, &meta)
+	captureID, _ := meta["captureId"].(string)
+	tabID, _ := meta["tabId"].(string)
+	protocol, _ := meta["protocol"].(string)
+	return fmt.Sprintf("客户端渲染的 %s 远程桌面视觉观察。toolCallId=%s tabId=%s captureId=%s。请直接观察随附图片；不要调用 browser_* 代替远程桌面。", strings.ToUpper(protocol), call.ID, tabID, captureID)
 }
 
 func toolResultMessage(w callWork) provider.Message {

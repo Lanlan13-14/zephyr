@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260727-ai-terminal-session1';
+import { t } from './i18n/runtime.js?v=20260727-ai-rdp-vision1';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 

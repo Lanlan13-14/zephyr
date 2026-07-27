@@ -18,12 +18,29 @@ func TestListTools(t *testing.T) {
 	}))
 	defer srv.Close()
 	h := NewHost(srv.URL, "")
-	tools, err := h.ListTools(context.Background())
+	tools, err := h.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(tools) != 1 || tools[0].Name != "connection_list_v1" {
 		t.Fatalf("unexpected tools: %#v", tools)
+	}
+}
+
+func TestListToolsCarriesRemoteDesktopContext(t *testing.T) {
+	var gotContext string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContext = r.URL.Query().Get("context")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "tools": []map[string]any{}})
+	}))
+	defer srv.Close()
+	h := NewHost(srv.URL, "")
+	contextJSON := json.RawMessage(`{"activeSurface":{"kind":"remote-desktop","tabId":"rdp-1"}}`)
+	if _, err := h.ListTools(context.Background(), contextJSON); err != nil {
+		t.Fatal(err)
+	}
+	if gotContext != string(contextJSON) {
+		t.Fatalf("context mismatch: %q", gotContext)
 	}
 }
 
