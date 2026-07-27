@@ -3765,6 +3765,8 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
             options: req.body?.options || {},
             maxSteps: req.body?.maxSteps || ai.context?.maxToolRounds || 0,
             permission: perm,
+            autoConfirm: !!ai.sensitive?.autoConfirm && req.body?.autoConfirm !== false,
+            autoConfirmDelayMs: Number(req.body?.autoConfirmDelayMs ?? ai.sensitive?.autoConfirmDelayMs ?? 2500),
             mode: req.body?.mode || 'standard',
             systemCompose,
             context: req.body?.context || null,

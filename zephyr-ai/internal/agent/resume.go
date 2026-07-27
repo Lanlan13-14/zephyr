@@ -51,10 +51,12 @@ type ResumeState struct {
 	// Provider skeleton without key — Node fills apiKey on resume.
 	Provider provider.Config `json:"provider"`
 	// Permission policy snapshot.
-	PermissionMode string   `json:"permissionMode,omitempty"`
-	Deny           []string `json:"deny,omitempty"`
-	Allow          []string `json:"allow,omitempty"`
-	AskRules       []string `json:"askRules,omitempty"`
+	PermissionMode     string   `json:"permissionMode,omitempty"`
+	Deny               []string `json:"deny,omitempty"`
+	Allow              []string `json:"allow,omitempty"`
+	AskRules           []string `json:"askRules,omitempty"`
+	AutoConfirm        bool     `json:"autoConfirm,omitempty"`
+	AutoConfirmDelayMS int      `json:"autoConfirmDelayMs,omitempty"`
 	// MCP servers to re-attach.
 	MCPServers          json.RawMessage `json:"mcpServers,omitempty"`
 	Context             json.RawMessage `json:"context,omitempty"`

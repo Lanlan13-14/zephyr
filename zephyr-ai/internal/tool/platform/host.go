@@ -28,6 +28,20 @@ type Host struct {
 	HTTP       *http.Client
 }
 
+type confirmedCallKey struct{}
+
+// WithConfirmedCall marks exactly one platform tool call as already approved by
+// the runtime permission engine. Node still validates that the approved tool id
+// matches before bypassing its canonical confirmation gate.
+func WithConfirmedCall(ctx context.Context, toolName string) context.Context {
+	return context.WithValue(ctx, confirmedCallKey{}, strings.TrimSpace(toolName))
+}
+
+func confirmedCallFromContext(ctx context.Context, toolName string) bool {
+	approved, _ := ctx.Value(confirmedCallKey{}).(string)
+	return approved != "" && approved == toolName
+}
+
 func NewHost(baseURL, adminToken string) *Host {
 	h := &Host{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
@@ -57,10 +71,10 @@ type CallRequest struct {
 }
 
 type CallResponse struct {
-	OK      bool            `json:"ok"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   string          `json:"error,omitempty"`
-	Code    string          `json:"code,omitempty"`
+	OK     bool            `json:"ok"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  string          `json:"error,omitempty"`
+	Code   string          `json:"code,omitempty"`
 }
 
 func (h *Host) Call(ctx context.Context, req CallRequest) (any, error) {
@@ -113,12 +127,12 @@ func (h *Host) Call(ctx context.Context, req CallRequest) (any, error) {
 
 // ToolDef describes a platform tool the host advertises.
 type ToolDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters"`
-	ReadOnly    bool            `json:"readOnly"`
-	Risk        string          `json:"risk"`
-	ParallelSafe bool           `json:"parallelSafe"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	Parameters   json.RawMessage `json:"parameters"`
+	ReadOnly     bool            `json:"readOnly"`
+	Risk         string          `json:"risk"`
+	ParallelSafe bool            `json:"parallelSafe"`
 }
 
 // ListTools fetches tool catalog from Node (optional; can use static catalog).
@@ -186,6 +200,7 @@ func RegisterFromHost(ctx context.Context, reg *tool.Registry, h *Host, userID, 
 					SessionID: sessionID,
 					RunID:     runID,
 					Context:   contextJSON,
+					Confirmed: confirmedCallFromContext(ctx, d.Name),
 				})
 			},
 		}

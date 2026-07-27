@@ -6,10 +6,10 @@
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="app.js?v=20260726-ai-unified-skill1">
+    <link rel="modulepreload" href="app.js?v=20260727-ai-settings-fix1">
     <link rel="modulepreload" href="theme-runtime.js?v=20260725-ai-picker3">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260726-ai-unified-skill1">
-    <link rel="stylesheet" href="style.css?v=20260726-ai-unified-skill1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260727-ai-settings-fix1">
+    <link rel="stylesheet" href="style.css?v=20260727-ai-settings-fix1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -774,11 +774,19 @@
                         <input id="aiThinkIntensity" type="hidden">
                         <button class="ui-btn ai-picker-btn" type="button" id="aiProviderPickerBtn" data-i18n="供应商">供应商</button>
                         <button class="ui-btn ai-picker-btn" type="button" id="aiModelPickerBtn" data-i18n="模型">模型</button>
+                        <span class="ai-header-mode-label" data-i18n="协作模式">协作模式</span>
                         <div class="ai-segment ai-collab-segment" id="aiCollabMode" data-value="standard" data-cols="3" role="tablist" aria-label="协作模式" data-i18n-aria-label="协作模式">
                             <span class="ai-segment-thumb" aria-hidden="true"></span>
                             <button type="button" class="ai-segment-btn active" data-value="standard" role="tab" aria-selected="true" data-i18n="标准">标准</button>
                             <button type="button" class="ai-segment-btn" data-value="plan" role="tab" aria-selected="false" data-i18n="计划">计划</button>
                             <button type="button" class="ai-segment-btn" data-value="goal" role="tab" aria-selected="false">Goal</button>
+                        </div>
+                        <span class="ai-header-mode-label" data-i18n="权限模式">权限模式</span>
+                        <div class="ai-segment ai-chat-permission-segment" id="aiChatPermissionMode" data-value="ask" data-cols="3" role="tablist" aria-label="当前对话权限模式" data-i18n-aria-label="当前对话权限模式">
+                            <span class="ai-segment-thumb" aria-hidden="true"></span>
+                            <button type="button" class="ai-segment-btn active" data-value="ask" role="tab" aria-selected="true" title="写操作询问" data-i18n-title="写操作询问">Ask</button>
+                            <button type="button" class="ai-segment-btn" data-value="auto" role="tab" aria-selected="false" title="只读自动，写操作询问" data-i18n-title="只读自动，写操作询问">Auto</button>
+                            <button type="button" class="ai-segment-btn" data-value="yolo" role="tab" aria-selected="false" title="除 deny 外全自动（危险）" data-i18n-title="除 deny 外全自动（危险）">Yolo</button>
                         </div>
                         <button class="ui-btn ai-picker-btn" type="button" id="aiThinkPickerBtn" data-i18n="推理">推理</button>
                         <button class="ui-btn" type="button" id="aiUsageBtn" data-i18n="用量">用量</button>
@@ -833,7 +841,7 @@
                 <p class="field-hint" data-i18n="Claude 固定使用 Anthropic Messages API；Gemini 固定使用 generateContent，不使用此项。">Claude 固定使用 Anthropic Messages API；Gemini 固定使用 generateContent，不使用此项。</p>
             </div><div class="form-group ai-model-actions"><label data-i18n="模型列表">模型列表</label><button class="btn" type="button" id="aiFetchModelsBtn" data-i18n="获取模型">获取模型</button></div></div>
             <div class="form-row"><div class="form-group"><label data-i18n="模型列表">模型列表</label><textarea id="aiProviderModels" rows="3" placeholder="保存 API Key/Base URL 后可点获取模型；也可手动填写，逗号或换行分隔" data-i18n-placeholder="保存 API Key/Base URL 后可点获取模型；也可手动填写，逗号或换行分隔"></textarea></div><div class="form-group"><label data-i18n="默认模型">默认模型</label><input id="aiProviderDefaultModel" placeholder="留空自动选择第一个可用模型" data-i18n-placeholder="留空自动选择第一个可用模型"></div></div>
-            <div class="form-group ai-provider-share-box" id="aiProviderShareBox"><label data-i18n="共享设置">共享设置</label><label class="check-line"><input type="checkbox" id="aiProviderShareUsers"> <span data-i18n="共享给所有用户">共享给所有用户</span></label><label class="check-line"><input type="checkbox" id="aiProviderShareAdmins"> <span data-i18n="共享给所有管理员">共享给所有管理员</span></label><label data-i18n="指定用户（可多选）">指定用户（可多选）</label><input id="aiProviderShareSearch" placeholder="搜索用户名" data-i18n-placeholder="搜索用户名"><div id="aiProviderShareTargets" class="ai-provider-share-targets"></div><p class="field-hint" data-i18n="共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。以上选项可以同时开启。">共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。以上选项可以同时开启。</p></div>
+            <div class="form-group ai-provider-share-box" id="aiProviderShareBox"><label data-i18n="共享设置">共享设置</label><label class="settings-switch-option" for="aiProviderShareUsers"><span class="settings-switch-copy"><strong data-i18n="共享给所有用户">共享给所有用户</strong></span><span class="connection-share-switch"><input type="checkbox" id="aiProviderShareUsers"><span aria-hidden="true"></span></span></label><label class="settings-switch-option" for="aiProviderShareAdmins"><span class="settings-switch-copy"><strong data-i18n="共享给所有管理员">共享给所有管理员</strong></span><span class="connection-share-switch"><input type="checkbox" id="aiProviderShareAdmins"><span aria-hidden="true"></span></span></label><label data-i18n="指定用户（可多选）">指定用户（可多选）</label><input id="aiProviderShareSearch" placeholder="搜索用户名" data-i18n-placeholder="搜索用户名"><div id="aiProviderShareTargets" class="ai-provider-share-targets"></div><p class="field-hint" data-i18n="共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。以上选项可以同时开启。">共享者只能调用模型，不能查看 API Key、编辑、删除或再次共享。以上选项可以同时开启。</p></div>
             <div class="form-group"><label data-i18n="模型请求 User-Agent（可选，逐模型）">模型请求 User-Agent（可选，逐模型）</label><textarea id="aiProviderModelUserAgents" rows="3" placeholder="每行一个：模型名=User-Agent\ngpt-4.1=Mozilla/5.0 ...\nclaude-sonnet-4-5=MyClient/1.0" data-i18n-placeholder="每行一个：模型名=User-Agent\ngpt-4.1=Mozilla/5.0 ...\nclaude-sonnet-4-5=MyClient/1.0"></textarea><p class="field-hint" data-i18n="只对聊天/生成时匹配的模型请求生效；未配置的模型不发送自定义 User-Agent，保持默认请求行为。">只对聊天/生成时匹配的模型请求生效；未配置的模型不发送自定义 User-Agent，保持默认请求行为。</p></div>
             <div class="form-row"><div class="form-group"><label data-i18n="Organization / Project（可选）">Organization / Project（可选）</label><input id="aiProviderOrganization" placeholder="org... 或 proj..." data-i18n-placeholder="org... 或 proj..."></div><div class="form-group"><label data-i18n="额外请求头 JSON（可选）">额外请求头 JSON（可选）</label><textarea id="aiProviderExtraHeaders" rows="3" placeholder='{"X-Request-From":"Zephyr"}'></textarea></div></div>
             <h3 data-i18n="模型参数">模型参数</h3>
@@ -850,10 +858,10 @@
                     <option value="xhigh" data-i18n="xhigh（仅部分模型）">xhigh（仅部分模型）</option>
                 </select>
                 <p class="field-hint" data-i18n="OpenAI Responses: reasoning.effort；Claude: thinking/output_config；Gemini: thinkingLevel/thinkingBudget。各模型支持值不同，默认不发送。">OpenAI Responses: reasoning.effort；Claude: thinking/output_config；Gemini: thinkingLevel/thinkingBudget。各模型支持值不同，默认不发送。</p>
-            </div><div class="form-group"><label class="check-line"><input type="checkbox" id="aiProviderUsePreviousResponse"> <span data-i18n="OpenAI Responses 使用 previous_response_id（兼容接口慎开）">OpenAI Responses 使用 previous_response_id（兼容接口慎开）</span></label></div></div>
+            </div><div class="form-group"><label class="settings-switch-option" for="aiProviderUsePreviousResponse"><span class="settings-switch-copy"><strong data-i18n="OpenAI Responses 使用 previous_response_id（兼容接口慎开）">OpenAI Responses 使用 previous_response_id（兼容接口慎开）</strong></span><span class="connection-share-switch"><input type="checkbox" id="aiProviderUsePreviousResponse"><span aria-hidden="true"></span></span></label></div></div>
             <div class="form-row"><div class="form-group"><label>presence_penalty</label><input id="aiProviderPresencePenalty" type="number" step="0.1" value="0"></div><div class="form-group"><label>frequency_penalty</label><input id="aiProviderFrequencyPenalty" type="number" step="0.1" value="0"></div></div>
             <div class="form-group"><label data-i18n="供应商原生额外参数 JSON">供应商原生额外参数 JSON</label><textarea id="aiProviderExtraJson" rows="4" placeholder='OpenAI: {"response_format":{"type":"json_object"}}；Claude: {"thinking":{"type":"adaptive","display":"omitted"}}；Gemini: {"thinkingConfig":{"thinkingLevel":"low"}}'></textarea></div>
-            <label class="check-line"><input type="checkbox" id="aiProviderEnabled" checked> <span data-i18n="启用此供应商">启用此供应商</span></label>
+            <label class="settings-switch-option" for="aiProviderEnabled"><span class="settings-switch-copy"><strong data-i18n="启用此供应商">启用此供应商</strong></span><span class="connection-share-switch"><input type="checkbox" id="aiProviderEnabled" checked><span aria-hidden="true"></span></span></label>
             <div class="modal-actions"><button type="button" class="btn" id="aiProviderCancelBtn" data-i18n="取消">取消</button><button class="btn btn-primary" type="submit" data-i18n="保存供应商">保存供应商</button></div>
             </div>
         </form>
@@ -1026,7 +1034,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260726-ai-unified-skill1" type="module"></script>
+    <script src="app.js?v=20260727-ai-settings-fix1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

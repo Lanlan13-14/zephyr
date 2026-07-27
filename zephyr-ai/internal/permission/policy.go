@@ -74,6 +74,11 @@ func (e *Engine) Get() Policy {
 	return e.policy
 }
 
+func HasExplicitAsk(p Policy, req Request) bool {
+	fp := fingerprint(req.Tool, req.Args)
+	return matchAny(p.Ask, req.Tool, fp)
+}
+
 func (e *Engine) Decide(req Request) Decision {
 	e.mu.RLock()
 	p := e.policy
