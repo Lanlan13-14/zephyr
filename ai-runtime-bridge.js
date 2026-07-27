@@ -85,6 +85,8 @@ class AiRuntimeBridge {
             options: payload.options || {},
             maxSteps: payload.maxSteps || 0,
             permission: payload.permission || { mode: 'ask' },
+            autoConfirm: !!payload.autoConfirm,
+            autoConfirmDelayMs: Math.max(0, Math.min(Number(payload.autoConfirmDelayMs) || 0, 60000)),
             mode: payload.mode || 'standard',
             systemCompose: payload.systemCompose,
             context: payload.context || null,

@@ -8648,9 +8648,27 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
 .ai-segment-block .ai-segment-thumb {
     border-radius: 10px;
 }
-.ai-collab-segment {
+.ai-header-mode-label {
+    flex: 0 0 auto;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.ai-header-actions .ui-btn,
+.ai-collab-segment,
+.ai-chat-permission-segment {
+    border-radius: var(--radius-control);
+}
+.ai-collab-segment,
+.ai-chat-permission-segment {
     min-width: 148px;
     flex: 0 0 auto;
+    border-radius: var(--radius-control);
+}
+.ai-collab-segment .ai-segment-thumb,
+.ai-chat-permission-segment .ai-segment-thumb {
+    border-radius: calc(var(--radius-control) - 2px);
 }
 .ai-segment-thumb {
     position: absolute;

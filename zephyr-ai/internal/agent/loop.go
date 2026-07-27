@@ -21,6 +21,7 @@ import (
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/provider"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/session"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool"
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool/platform"
 )
 
 const (
@@ -92,9 +93,11 @@ type Config struct {
 	// ProviderConfig is stored into ResumeState (api key stripped by server).
 	ProviderConfig provider.Config
 	// Permission policy snapshot for resume state.
-	PermissionPolicy permission.Policy
-	MCPServersJSON   json.RawMessage
-	ContextJSON      json.RawMessage
+	PermissionPolicy   permission.Policy
+	AutoConfirm        bool
+	AutoConfirmDelayMS int
+	MCPServersJSON     json.RawMessage
+	ContextJSON        json.RawMessage
 }
 
 type Metrics struct {
@@ -279,6 +282,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 			works[wi].skip = false
 			works[wi].err = nil
 			works[wi].result = nil
+			ctx = platform.WithConfirmedCall(ctx, works[wi].call.Name)
 		}
 		if err := r.executeWorks(ctx, cfg, works, parallel, &metrics); err != nil {
 			if pe, ok := err.(*PauseError); ok {
@@ -448,6 +452,22 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				w.err = fmt.Errorf("permission denied for tool %s", w.call.Name)
 				continue
 			}
+			if dec == permission.Ask && cfg.AutoConfirm && !permission.HasExplicitAsk(cfg.PermissionPolicy, permission.Request{
+				Tool: w.call.Name, Args: w.args, ReadOnly: w.t.ReadOnly(), Risk: string(w.t.Risk()),
+			}) {
+				if delay := time.Duration(cfg.AutoConfirmDelayMS) * time.Millisecond; delay > 0 {
+					timer := time.NewTimer(delay)
+					select {
+					case <-ctx.Done():
+						if !timer.Stop() {
+							<-timer.C
+						}
+						return metrics, ctx.Err()
+					case <-timer.C:
+					}
+				}
+				dec = permission.Allow
+			}
 			if dec == permission.Ask {
 				ask := event.PermissionAsk{
 					AskID: w.call.ID, CallID: w.call.ID, Name: w.call.Name,
@@ -526,6 +546,8 @@ func (r *Runner) makeResumeState(cfg Config, metrics Metrics, kind PauseKind, ca
 		StepsDone:           metrics.Steps,
 		Provider:            pc,
 		PermissionMode:      string(pol.Mode),
+		AutoConfirm:         cfg.AutoConfirm,
+		AutoConfirmDelayMS:  cfg.AutoConfirmDelayMS,
 		MCPServers:          cfg.MCPServersJSON,
 		Context:             cfg.ContextJSON,
 		ContextWindowTokens: cfg.ContextWindowTokens,

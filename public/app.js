@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260726-ai-unified-skill1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260726-ai-unified-skill1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260727-ai-settings-fix1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260727-ai-settings-fix1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -4816,6 +4816,17 @@ function defaultAiSettings() {
         plans: [],
     };
 }
+function normalizeVisibleAiProvider(provider = {}) {
+    const config = provider?.config && typeof provider.config === 'object' ? provider.config : {};
+    return {
+        ...provider,
+        apiMode: provider.apiMode ?? config.apiMode ?? 'auto',
+        options: provider.options && typeof provider.options === 'object' ? provider.options : (config.options || {}),
+        organization: provider.organization ?? config.organization ?? '',
+        extraHeaders: provider.extraHeaders ?? config.extraHeaders ?? '',
+        modelUserAgents: provider.modelUserAgents ?? config.modelUserAgents ?? '',
+    };
+}
 function normalizeAiSettings(ai = {}) {
     const base = defaultAiSettings();
     return {
@@ -4826,7 +4837,7 @@ function normalizeAiSettings(ai = {}) {
         planner: { ...base.planner, ...(ai.planner || {}) },
         memory: { ...base.memory, ...(ai.memory || {}) },
         context: { ...base.context, ...(ai.context || {}) },
-        providers: Array.isArray(ai.providers) ? ai.providers : [],
+        providers: Array.isArray(ai.providers) ? ai.providers.map(normalizeVisibleAiProvider) : [],
         skills: Array.isArray(ai.skills) ? ai.skills : [],
         envVars: Array.isArray(ai.envVars) ? ai.envVars : [],
         memories: Array.isArray(ai.memories) ? ai.memories : [],
@@ -4834,7 +4845,8 @@ function normalizeAiSettings(ai = {}) {
     };
 }
 function aiModelNames(provider = {}) {
-    return String(provider.models || '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+    const raw = Array.isArray(provider.models) ? provider.models : String(provider.models || '').split(/[\n,]+/);
+    return raw.map((x) => typeof x === 'string' ? x.trim() : String(x?.id || '').trim()).filter(Boolean);
 }
 function aiProviderKind(provider = {}) {
     const type = String(provider?.type || '').toLowerCase();
@@ -4956,6 +4968,10 @@ function setAiSegmentValue(id, value, { silent = false } = {}) {
         if (el.id === 'aiCollabMode') {
             const s = aiCurrentSession();
             if (s) { s.collabMode = resolved; saveAiChats(); }
+        }
+        if (el.id === 'aiChatPermissionMode') {
+            const s = aiCurrentSession();
+            if (s) { s.permissionMode = resolved; saveAiChats(); }
         }
     }
 }
@@ -5548,13 +5564,14 @@ async function saveAiProvider(e) {
     const result = existingId
         ? await api(`/api/ai/providers/${encodeURIComponent(existingId)}`, { method: 'PATCH', body: JSON.stringify(payload) })
         : await api('/api/ai/providers', { method: 'POST', body: JSON.stringify(payload) });
-    const savedId = result.provider.id;
+    const savedProvider = normalizeVisibleAiProvider(result.provider || {});
+    const savedId = savedProvider.id;
     const visible = await api('/api/ai/providers');
     settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
     aiSettingsState = normalizeAiSettings(settings.ai);
     closeAiProviderModal();
     renderAiSettingsForm();
-    const shouldAutoFetchModels = !aiModelNames(result.provider).length && result.provider.enabled !== false && (result.provider.hasApiKey || !!payload.apiKey);
+    const shouldAutoFetchModels = !aiModelNames(savedProvider).length && savedProvider.enabled !== false && (savedProvider.hasApiKey || !!payload.apiKey);
     if (shouldAutoFetchModels) {
         toast(t('模型供应商已保存，正在获取模型...'));
         await fetchAiModelsForProvider(savedId);
@@ -5849,6 +5866,8 @@ function renderAiChat() {
     const session = aiCurrentSession();
     $('#aiCurrentChatTitle').textContent = session.title || t('新对话');
     setAiSegmentValue('aiCollabMode', session.collabMode || 'standard', { silent: true });
+    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+    setAiSegmentValue('aiChatPermissionMode', session.permissionMode || ai.permissions?.mode || (ai.sensitive?.autoConfirm ? 'yolo' : 'ask'), { silent: true });
     renderAiBrowserPreview();
     const area = $('#aiChatArea');
     const typing = $('#aiTypingIndicator');
@@ -6892,7 +6911,10 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
     session.collabMode = collabMode;
     setAiSegmentValue('aiCollabMode', collabMode, { silent: true });
     const perm = aiCfg.permissions || {};
-    const permissionMode = perm.mode || (aiCfg.sensitive?.autoConfirm ? 'auto' : 'ask');
+    const chatPermissionMode = getAiSegmentValue('aiChatPermissionMode', session.permissionMode || perm.mode || (aiCfg.sensitive?.autoConfirm ? 'yolo' : 'ask'));
+    session.permissionMode = chatPermissionMode;
+    setAiSegmentValue('aiChatPermissionMode', chatPermissionMode, { silent: true });
+    const permissionMode = chatPermissionMode;
     const start = await api('/api/ai/runtime/runs', {
         method: 'POST',
         signal: abortController.signal,
@@ -6911,6 +6933,8 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                 allow: perm.allow || [],
                 ask: perm.ask || [],
             },
+            autoConfirm: !!aiCfg.sensitive?.autoConfirm,
+            autoConfirmDelayMs: Number(aiCfg.sensitive?.autoConfirmDelayMs) || 0,
         }),
     });
     session.runtimeRunId = start.runId;

@@ -1711,7 +1711,7 @@
   "全部对话": "All chats",
   "刷新配置": "Refresh configuration",
   "模型": "Model",
-  "协作模式": "Collaboration mode",
+  "协作模式": "Collaboration",
   "标准": "Standard",
   "计划": "Plan",
   "推理": "Reasoning",
@@ -2030,5 +2030,7 @@
   "内置完整操作规程；模型回复语言仍跟随当前界面语言。": "Built-in complete operating guide; model responses still follow the current UI language.",
   "内置只读": "Built-in, read-only",
   "内置 Skill 不可修改": "Built-in Skill cannot be edited",
-  "内置 Skill 不可删除": "Built-in Skill cannot be deleted"
+  "内置 Skill 不可删除": "Built-in Skill cannot be deleted",
+  "当前对话权限模式": "Current chat permission mode",
+  "权限模式": "Permission"
 }

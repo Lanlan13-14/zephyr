@@ -199,19 +199,21 @@ func (s *Server) handleArchiveSession(w http.ResponseWriter, r *http.Request) {
 
 // startRunReq is the full run kickoff payload from Node.
 type startRunReq struct {
-	UserID        string             `json:"userId"`
-	SessionID     string             `json:"sessionId"`
-	Provider      provider.Config    `json:"provider"`
-	Model         string             `json:"model"`
-	Message       string             `json:"message"`
-	Messages      []provider.Message `json:"messages,omitempty"` // optional multi-part user content
-	Options       map[string]any     `json:"options"`
-	MaxSteps      int                `json:"maxSteps"`
-	Permission    permission.Policy  `json:"permission"`
-	Mode          string             `json:"mode"` // standard|plan|goal
-	SystemCompose compose.Input      `json:"systemCompose"`
-	ContextJSON   json.RawMessage    `json:"context"`
-	MCPServers    []mcp.ServerConfig `json:"mcpServers,omitempty"`
+	UserID             string             `json:"userId"`
+	SessionID          string             `json:"sessionId"`
+	Provider           provider.Config    `json:"provider"`
+	Model              string             `json:"model"`
+	Message            string             `json:"message"`
+	Messages           []provider.Message `json:"messages,omitempty"` // optional multi-part user content
+	Options            map[string]any     `json:"options"`
+	MaxSteps           int                `json:"maxSteps"`
+	Permission         permission.Policy  `json:"permission"`
+	AutoConfirm        bool               `json:"autoConfirm"`
+	AutoConfirmDelayMS int                `json:"autoConfirmDelayMs"`
+	Mode               string             `json:"mode"` // standard|plan|goal
+	SystemCompose      compose.Input      `json:"systemCompose"`
+	ContextJSON        json.RawMessage    `json:"context"`
+	MCPServers         []mcp.ServerConfig `json:"mcpServers,omitempty"`
 	// Quota limits (0 = unlimited)
 	HourlyLimit         int `json:"hourlyLimit"`
 	DailyLimit          int `json:"dailyLimit"`
@@ -337,6 +339,8 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		MaxSteps:            maxSteps,
 		ProviderConfig:      req.Provider,
 		PermissionPolicy:    req.Permission,
+		AutoConfirm:         req.AutoConfirm,
+		AutoConfirmDelayMS:  req.AutoConfirmDelayMS,
 		MCPServersJSON:      mcpJSON,
 		ContextJSON:         req.ContextJSON,
 		ContextWindowTokens: req.ContextWindowTokens,
@@ -590,6 +594,8 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		MaxSteps:            st.MaxSteps,
 		ProviderConfig:      pcfg,
 		PermissionPolicy:    pol,
+		AutoConfirm:         st.AutoConfirm,
+		AutoConfirmDelayMS:  st.AutoConfirmDelayMS,
 		MCPServersJSON:      st.MCPServers,
 		ContextJSON:         st.Context,
 		ContextWindowTokens: st.ContextWindowTokens,
@@ -687,6 +693,8 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		MaxSteps:            st.MaxSteps,
 		ProviderConfig:      pcfg,
 		PermissionPolicy:    pol,
+		AutoConfirm:         st.AutoConfirm,
+		AutoConfirmDelayMS:  st.AutoConfirmDelayMS,
 		MCPServersJSON:      st.MCPServers,
 		ContextJSON:         st.Context,
 		ContextWindowTokens: st.ContextWindowTokens,
