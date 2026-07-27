@@ -1,9 +1,9 @@
-const CACHE_NAME = 'zephyr-static-20260727-ai-settings-fix1';
+const CACHE_NAME = 'zephyr-static-20260727-password-code-button1';
 const PRECACHE = [
-    '/app.js?v=20260727-ai-settings-fix1',
-    '/style.css?v=20260727-ai-settings-fix1',
+    '/app.js?v=20260727-password-code-button1',
+    '/style.css?v=20260727-password-code-button1',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260727-ai-settings-fix1',
+    '/terminal.js?v=20260727-password-code-button1',
     '/notes.js',
     '/markdown.js',
 ];

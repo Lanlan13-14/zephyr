@@ -522,6 +522,43 @@ body.app-body.terminal-mode {
     white-space: normal;
     text-align: center;
 }
+.verification-code-row .verification-code-send-btn {
+    min-height: 56px;
+    margin: 0;
+    border: 1px solid color-mix(in srgb, var(--text-secondary) 72%, var(--border));
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.25;
+    box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent);
+    transition: transform 140ms cubic-bezier(.23,1,.32,1), background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+.verification-code-row .verification-code-send-btn:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+    color: var(--accent-hover);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+    transform: translateY(-1px);
+}
+.verification-code-row .verification-code-send-btn:active:not(:disabled) {
+    transform: scale(.97);
+}
+.verification-code-row .verification-code-send-btn:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+}
+.verification-code-row .verification-code-send-btn:disabled {
+    cursor: not-allowed;
+    border-color: color-mix(in srgb, var(--border) 88%, transparent);
+    background: color-mix(in srgb, var(--surface) 76%, var(--bg));
+    color: var(--text-secondary);
+    opacity: .72;
+    transform: none;
+    box-shadow: none;
+}
 :is(#loginForm, #forgotRequestForm, #forgotResetForm) > .form-group input:focus,
 .security-input-stack > .form-group input:focus {
     border-color: var(--accent);
