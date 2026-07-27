@@ -35,7 +35,7 @@ test('signature APIs: island expand/collapse + iOS app open/close', () => {
 
 test('recipe catalog covers cards, AI, island, windows', () => {
   for (const r of [
-    'connectionCardIn', 'aiIosPopIn', 'terminalWindowIn',
+    'connectionCardIn', 'floatingPanelOpenFromButton', 'terminalWindowIn',
     'floatingPanelOpenFromButton', 'terminalIslandSourceMelt',
     'terminalIslandDotMelt', 'iosAppOpen',
   ]) {

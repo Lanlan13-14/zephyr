@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260727-password-code-button1';
+import { t } from './i18n/runtime.js?v=20260727-ai-motion-engine1';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 

@@ -53,12 +53,6 @@
     --connection-app-duration: 0.5s;
     --connection-shadow-idle: 0 4px 12px rgba(0,0,0,0.2);
     --connection-shadow-active: 0 40px 100px rgba(0,0,0,0.5);
-    --ai-morph-spring-open: cubic-bezier(0.32, 0.72, 0, 1);
-    --ai-morph-spring-close: cubic-bezier(0.4, 0, 0.6, 1);
-    --ai-morph-dur-open: 0.52s;
-    --ai-morph-dur-close: 0.42s;
-    --ai-morph-shadow-idle: 0 4px 12px rgba(0,0,0,0.22);
-    --ai-morph-shadow-active: 0 24px 80px rgba(0,0,0,0.45);
     --terminal-shelf-duration: .56s;
     --terminal-shelf-ease: cubic-bezier(.32, .72, 0, 1);
     --terminal-shelf-line-bottom: 29px;
@@ -297,7 +291,6 @@ body.app-body.theme-ripple-active::before {
 #addConnectionBtn.connection-pressing,
 #addSshKeyBtn.connection-pressing,
 #addSnippetBtn.connection-pressing,
-#aiAddProviderBtn.connection-pressing,
 .connection-list [data-edit].connection-pressing {
     --connection-press-scale: 0.965;
     transition:
@@ -3190,17 +3183,17 @@ body.app-body > .toast.show { opacity: 1; transform: translate3d(0,0,0) scale(1)
     .activity-item { flex-direction: column; }
     .modal-backdrop { align-items: start; place-items: start center; overflow-y: auto; padding: 10px; -webkit-overflow-scrolling: touch; }
     .connection-modal { max-height: none; margin: 10px 0 calc(24px + env(safe-area-inset-bottom)); overflow: visible; border-radius: var(--radius-lg); }
-    /* motion 窗：SSH/片段/AI 仍封顶内滚；代理按完整内容展开，不在卡片内再套一层滚动。 */
+    /* Long motion forms expand completely; the backdrop owns the single scroll surface. */
     #sshKeyModal .ssh-key-modal,
-    #snippetModal .snippet-modal,
-    #aiProviderModal .ai-provider-modal {
+    #snippetModal .snippet-modal {
         max-height: min(86vh, 760px);
         overflow-y: auto;
         overflow-x: hidden;
         margin: 10px 0;
         -webkit-overflow-scrolling: touch;
     }
-    #proxyModal .proxy-modal {
+    #proxyModal .proxy-modal,
+    #aiProviderModal .ai-provider-modal {
         max-height: none !important;
         height: auto !important;
         overflow: visible !important;
@@ -3208,7 +3201,9 @@ body.app-body > .toast.show { opacity: 1; transform: translate3d(0,0,0) scale(1)
         -webkit-overflow-scrolling: auto;
     }
     #proxyModal.proxy1,
-    #proxyModal.proxy1.closing {
+    #proxyModal.proxy1.closing,
+    #aiProviderModal.aiprovider1,
+    #aiProviderModal.aiprovider1.closing {
         overflow-y: auto;
         overflow-x: hidden;
         align-items: start;
@@ -3216,7 +3211,9 @@ body.app-body > .toast.show { opacity: 1; transform: translate3d(0,0,0) scale(1)
         -webkit-overflow-scrolling: touch;
     }
     #proxyModal.proxy1 .proxy-modal-inner,
-    #proxyModal.proxy1.closing .proxy-modal-inner {
+    #proxyModal.proxy1.closing .proxy-modal-inner,
+    #aiProviderModal.aiprovider1 .ai-provider-modal-inner,
+    #aiProviderModal.aiprovider1.closing .ai-provider-modal-inner {
         overflow: visible !important;
         max-height: none !important;
     }
@@ -6081,7 +6078,6 @@ body.smartbar-trash-hover .smartbar-trash-target {
     transform-origin: var(--panel-origin-x) var(--panel-origin-y);
 }
 .file-manager.panel-opening,
-.ai-agent-panel.panel-opening,
 .docker-panel.panel-opening,
 .info-modal.panel-opening,
 .rdp-floating-panel.panel-opening,
@@ -6092,7 +6088,6 @@ body.smartbar-trash-hover .smartbar-trash-target {
     animation: floatingPanelOpenFromButton .36s cubic-bezier(.16, 1, .3, 1) both;
 }
 .file-manager.panel-closing,
-.ai-agent-panel.panel-closing,
 .docker-panel.panel-closing,
 .info-modal.panel-closing,
 .rdp-floating-panel.panel-closing,
@@ -8543,6 +8538,13 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     -webkit-backdrop-filter: blur(28px) saturate(1.35);
 }
 .ai-agent-panel.file-manager.front { z-index: var(--panel-z, 10080); }
+/* AI panel open/close geometry is exclusively owned by zephyr-motion. */
+.ai-agent-panel.file-manager,
+.ai-agent-panel.file-manager.open {
+    transition: none !important;
+    animation: none !important;
+    filter: none;
+}
 .ai-agent-panel.file-manager.dragging,
 .ai-agent-panel.file-manager.resizing { transition: none; user-select: none; touch-action: none; }
 .ai-agent-panel.file-manager.layout-animating {
@@ -8788,11 +8790,9 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     background: color-mix(in srgb, #000 36%, transparent);
     backdrop-filter: blur(10px) saturate(1.05);
     -webkit-backdrop-filter: blur(10px) saturate(1.05);
-    opacity: 0;
-    transition: opacity 180ms cubic-bezier(0.23, 1, 0.32, 1);
+    opacity: 1;
+    transition: none;
 }
-.ai-inline-confirm.open { opacity: 1; }
-.ai-inline-confirm.closing { opacity: 0; }
 .ai-inline-confirm-card {
     width: min(360px, 100%);
     padding: 18px 18px 14px;
@@ -8800,19 +8800,10 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
     background: color-mix(in srgb, var(--surface) 96%, var(--bg));
     box-shadow: var(--shadow-lift, 0 24px 48px rgba(0,0,0,.28));
-    transform: scale(0.96) translateY(6px);
-    opacity: 0.92;
-    transition:
-        transform 200ms cubic-bezier(0.23, 1, 0.32, 1),
-        opacity 180ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-.ai-inline-confirm.open .ai-inline-confirm-card {
-    transform: scale(1) translateY(0);
+    transform: none;
     opacity: 1;
-}
-.ai-inline-confirm.closing .ai-inline-confirm-card {
-    transform: scale(0.97) translateY(4px);
-    opacity: 0;
+    transition: none;
+    will-change: transform, opacity;
 }
 .ai-inline-confirm-title {
     font-size: 16px;
@@ -9187,8 +9178,7 @@ body.app-body:not(.terminal-mode) .app-main {
         transform: none;
         opacity: 1;
     }
-    .ai-agent-panel.panel-opening,
-    .ai-agent-panel.panel-closing { animation: none !important; }
+    /* AI panel open/close is owned by zephyr-motion. */
     .ai-agent-panel .panel-drag-handle { height: 18px; touch-action: none; }
     .ai-title-bar.panel-titlebar {
         touch-action: pan-x;
@@ -9237,49 +9227,8 @@ body.app-body:not(.terminal-mode) .app-main {
 }
 
 
-/* 20260608: AI iOS-style motion system */
-@keyframes aiIosFadeLift {
-    0% { opacity: 0; transform: translate3d(0, 14px, 0) scale(.965); filter: blur(8px) saturate(.9); }
-    62% { opacity: 1; transform: translate3d(0, -2px, 0) scale(1.012); filter: blur(0) saturate(1.04); }
-    100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0) saturate(1); }
-}
-@keyframes aiIosPopIn {
-    0% { opacity: 0; transform: scale(.92) translate3d(0, 8px, 0); filter: blur(10px); }
-    64% { opacity: 1; transform: scale(1.018) translate3d(0, -1px, 0); filter: blur(0); }
-    100% { opacity: 1; transform: scale(1) translate3d(0, 0, 0); filter: blur(0); }
-}
-@keyframes aiIosSlideSheet {
-    0% { opacity: 0; transform: translate3d(0, 18px, 0) scale(.975); filter: blur(10px); }
-    70% { opacity: 1; transform: translate3d(0, -2px, 0) scale(1.006); filter: blur(0); }
-    100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
-}
-@keyframes aiIosTraceGlow {
-    0% { box-shadow: 0 0 0 rgba(10,132,255,0), 0 8px 22px rgba(0,0,0,.08); }
-    45% { box-shadow: 0 0 0 4px rgba(10,132,255,.10), 0 14px 32px rgba(0,0,0,.14); }
-    100% { box-shadow: 0 8px 22px rgba(0,0,0,.08); }
-}
-#settings-ai .settings-form > label,
-#settings-ai .settings-form > h3,
-#settings-ai .settings-form > input,
-#settings-ai .settings-form > textarea,
-#settings-ai .settings-form > select,
-#settings-ai .settings-form > .form-row,
-#settings-ai .settings-form > .ai-permission-grid,
-#settings-ai .settings-form > .field-hint,
-#settings-ai .settings-form > .btn,
-#settings-ai .ai-env-form > *,
-#settings-ai .ai-memory-form > *,
-#settings-ai .ai-skill-form > * {
-    animation: aiIosFadeLift .46s var(--ios-open) both;
-}
-#settings-ai .settings-form > *:nth-child(2n),
-#settings-ai .ai-env-form > *:nth-child(2n),
-#settings-ai .ai-memory-form > *:nth-child(2n),
-#settings-ai .ai-skill-form > *:nth-child(2n) { animation-delay: 24ms; }
-#settings-ai .settings-form > *:nth-child(3n),
-#settings-ai .ai-env-form > *:nth-child(3n),
-#settings-ai .ai-memory-form > *:nth-child(3n),
-#settings-ai .ai-skill-form > *:nth-child(3n) { animation-delay: 48ms; }
+/* AI interaction motion: zephyr-motion owns panel/modal/popover transforms.
+   CSS keeps only lightweight state feedback and color transitions. */
 #settings-ai input,
 #settings-ai select,
 #settings-ai textarea,
@@ -9288,12 +9237,7 @@ body.app-body:not(.terminal-mode) .app-main {
 .ai-provider-modal textarea,
 .ai-header-actions .ui-select,
 .ai-input-box {
-    transition:
-        transform .34s var(--ios-bounce),
-        border-color .26s ease,
-        background .26s ease,
-        box-shadow .34s var(--ios-open),
-        filter .24s ease;
+    transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
 }
 #settings-ai input:focus,
 #settings-ai select:focus,
@@ -9303,191 +9247,58 @@ body.app-body:not(.terminal-mode) .app-main {
 .ai-provider-modal textarea:focus,
 .ai-header-actions .ui-select:focus,
 .ai-input-box:focus {
-    transform: translate3d(0, -1px, 0) scale(1.006);
-    box-shadow: 0 0 0 4px rgba(10,132,255,.13), 0 10px 26px rgba(0,0,0,.10);
+    box-shadow: 0 0 0 4px rgba(10,132,255,.13);
 }
 #settings-ai .check-line,
 .ai-provider-modal .check-line {
     border-radius: 14px;
     padding: 7px 9px;
-    transition:
-        transform .34s var(--ios-bounce),
-        background .28s ease,
-        border-color .28s ease,
-        box-shadow .34s var(--ios-open),
-        color .24s ease;
+    transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
 }
 #settings-ai .check-line:hover,
-.ai-provider-modal .check-line:hover {
-    transform: translate3d(0, -1px, 0);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
-#settings-ai .check-line:active,
-.ai-provider-modal .check-line:active {
-    transform: scale(.985);
-}
+.ai-provider-modal .check-line:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 #settings-ai .check-line:has(input:checked),
 .ai-provider-modal .check-line:has(input:checked) {
     background: color-mix(in srgb, var(--accent) 13%, transparent);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 #settings-ai input[type="checkbox"],
-.ai-provider-modal input[type="checkbox"] {
-    accent-color: var(--accent);
-    transition: transform .26s var(--ios-bounce), filter .24s ease;
-}
-#settings-ai input[type="checkbox"]:active,
-.ai-provider-modal input[type="checkbox"]:active { transform: scale(.82); }
-#settings-ai .btn,
-#settings-ai .tool-btn,
-.ai-provider-modal .btn,
-.ai-provider-modal .tool-btn,
-.ai-header-actions .ui-btn,
-.ai-tool-btn,
-.ai-send-btn,
-.new-chat-btn,
-.ai-chat-delete {
-    transition:
-        transform .30s var(--ios-bounce),
-        background .24s ease,
-        border-color .24s ease,
-        color .24s ease,
-        box-shadow .32s var(--ios-open),
-        opacity .22s ease,
-        filter .22s ease;
-    -webkit-tap-highlight-color: transparent;
-}
-#settings-ai .btn:hover,
-#settings-ai .tool-btn:hover,
-.ai-provider-modal .btn:hover,
-.ai-provider-modal .tool-btn:hover,
-.ai-header-actions .ui-btn:hover,
-.ai-tool-btn:hover,
-.ai-send-btn:hover,
-.new-chat-btn:hover,
-.ai-chat-delete:hover {
-    transform: translate3d(0, -1px, 0) scale(1.018);
-    box-shadow: 0 10px 24px rgba(0,0,0,.12);
-}
-#settings-ai .btn:active,
-#settings-ai .tool-btn:active,
-.ai-provider-modal .btn:active,
-.ai-provider-modal .tool-btn:active,
-.ai-header-actions .ui-btn:active,
-.ai-tool-btn:active,
-.ai-send-btn:active,
-.new-chat-btn:active,
-.ai-chat-delete:active {
-    transform: scale(.94);
-    filter: brightness(.96);
-}
+.ai-provider-modal input[type="checkbox"] { accent-color: var(--accent); }
 .ai-provider-item,
 .ai-skill-item,
 .ai-env-item,
 .ai-memory-item,
 .ai-plan-item {
-    animation: aiIosFadeLift .46s var(--ios-open) both;
-    transition:
-        transform .34s var(--ios-bounce),
-        background .28s ease,
-        border-color .28s ease,
-        box-shadow .34s var(--ios-open),
-        filter .24s ease;
-    transform-origin: center;
+    transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
-.ai-provider-item:nth-child(2n),
-.ai-skill-item:nth-child(2n),
-.ai-env-item:nth-child(2n),
-.ai-memory-item:nth-child(2n),
-.ai-plan-item:nth-child(2n) { animation-delay: 32ms; }
-.ai-provider-item:nth-child(3n),
-.ai-skill-item:nth-child(3n),
-.ai-env-item:nth-child(3n),
-.ai-memory-item:nth-child(3n),
-.ai-plan-item:nth-child(3n) { animation-delay: 64ms; }
-.ai-provider-item:hover,
-.ai-skill-item:hover,
-.ai-env-item:hover,
-.ai-memory-item:hover,
-.ai-plan-item:hover {
-    transform: translate3d(0, -2px, 0) scale(1.006);
-    border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
-    box-shadow: 0 14px 34px rgba(0,0,0,.14);
-}
-.ai-provider-item:active,
-.ai-skill-item:active,
-.ai-env-item:active,
-.ai-memory-item:active,
-.ai-plan-item:active { transform: scale(.992); }
-/* AI 供应商弹窗动画改走 zephyr-motion iosAppOpen/Close；旧 CSS slide/fade 已移除。 */
-/* #aiAddProviderBtn 的按压只由 Motion.press 驱动；额外 CSS transform 会在
-   clone 接管前和引擎通道争抢同一个 transform，造成首帧跳变。 */
-.ai-agent-panel.open .ai-agent-window { animation: aiIosPopIn .48s var(--ios-open) both; }
-.ai-agent-panel.open .ai-title-bar,
-.ai-agent-panel.open .ai-browser-preview,
-.ai-agent-panel.open .ai-input-area { animation: aiIosFadeLift .44s var(--ios-open) both; }
-.ai-chat-row {
-    animation: aiIosFadeLift .38s var(--ios-open) both;
-    will-change: transform;
-}
-.ai-chat-row:hover { transform: translate3d(0, -1px, 0) scale(1.012); }
-.ai-chat-row:active { transform: scale(.97); }
-.ai-chat-row.active {
-    transform: translate3d(0, -1px, 0) scale(1.018);
-    box-shadow: 0 10px 24px rgba(0,122,255,.20);
-}
-.ai-message.ai,
-.ai-message.user,
-.ai-message.system:not(.ai-trace-message) {
-    animation: aiIosFadeLift .34s var(--ios-open) both;
-}
-.ai-tool-trace {
-    animation: aiIosFadeLift .42s var(--ios-open) both, aiIosTraceGlow .8s var(--ios-open) .06s both;
-    transition:
-        transform .34s var(--ios-bounce),
-        border-color .28s ease,
-        background .28s ease,
-        box-shadow .34s var(--ios-open),
-        filter .24s ease;
-}
-.ai-tool-trace:hover {
-    transform: translate3d(0, -2px, 0) scale(1.004);
-    border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
-    box-shadow: 0 16px 38px rgba(0,0,0,.16);
-}
-.ai-tool-trace:active { transform: scale(.992); }
-.ai-tool-details summary {
-    transition: transform .28s var(--ios-bounce), color .22s ease, opacity .22s ease;
-}
-.ai-tool-details summary:hover { transform: translateX(2px); }
-.ai-tool-details[open] pre { animation: aiIosFadeLift .32s var(--ios-open) both; }
-.ai-browser-preview,
-.ai-browser-preview-body img {
-    transition:
-        transform .34s var(--ios-bounce),
-        box-shadow .34s var(--ios-open),
-        border-color .28s ease,
-        filter .24s ease;
-}
-.ai-browser-preview:hover { transform: translate3d(0, -1px, 0); }
-.ai-browser-preview-body img:hover { transform: scale(1.006); }
-@media (max-width: 760px) {
-    #settings-ai .check-line:hover,
+@media (hover: hover) and (pointer: fine) {
     .ai-provider-item:hover,
     .ai-skill-item:hover,
     .ai-env-item:hover,
     .ai-memory-item:hover,
-    .ai-plan-item:hover,
-    .ai-tool-trace:hover,
-    .ai-browser-preview:hover { transform: none; }
-    #settings-ai .btn:active,
-    #settings-ai .tool-btn:active,
-    .ai-provider-modal .btn:active,
-    .ai-provider-modal .tool-btn:active,
-    .ai-header-actions .ui-btn:active,
-    .ai-tool-btn:active,
-    .ai-send-btn:active { transform: scale(.94); }
+    .ai-plan-item:hover {
+        border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+        box-shadow: 0 10px 28px rgba(0,0,0,.12);
+    }
 }
+#aiAddProviderBtn,
+#aiAddProviderBtn:hover,
+#aiAddProviderBtn:active,
+#aiAddProviderBtn.btn-primary:hover,
+#aiAddProviderBtn.btn-primary:active,
+.ai-provider-item [data-ai-edit-provider],
+.ai-provider-item [data-ai-edit-provider]:hover,
+.ai-provider-item [data-ai-edit-provider]:active,
+.ai-provider-item [data-ai-reveal-provider-key],
+.ai-provider-item [data-ai-reveal-provider-key]:hover,
+.ai-provider-item [data-ai-reveal-provider-key]:active {
+    transform: none !important;
+}
+.ai-chat-row,
+.ai-tool-trace,
+.ai-browser-preview,
+.ai-browser-preview-body img,
+.ai-tool-details summary { transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, color 160ms ease, opacity 160ms ease; }
 @media (prefers-reduced-motion: reduce) {
     #settings-ai *,
     .ai-provider-modal *,
@@ -9495,13 +9306,8 @@ body.app-body:not(.terminal-mode) .app-main {
     .ai-tool-trace,
     .ai-chat-row,
     .ai-chat-running-dot,
-    .ai-message {
-        animation: none !important;
-        transition-duration: .01ms !important;
-        scroll-behavior: auto !important;
-    }
+    .ai-message { scroll-behavior: auto !important; }
 }
-
 
 /* 20260608: AI stop response button */
 .ai-send-btn.ai-stop-mode {
@@ -9856,12 +9662,6 @@ body.app-body:not(.terminal-mode) .app-main {
 /* 20260608: align AI floating panel chrome with SSH file-manager */
 .ai-agent-panel.file-manager {
     border-radius: var(--radius-lg) !important;
-    transform-origin: var(--panel-origin-x, 50%) var(--panel-origin-y, 0%);
-    transition:
-        transform 0.42s cubic-bezier(0.16, 1, 0.3, 1),
-        opacity 0.28s ease,
-        filter 0.32s ease,
-        visibility 0.36s;
 }
 .ai-agent-panel .panel-drag-handle {
     height: 28px !important;
@@ -9901,13 +9701,6 @@ body.app-body:not(.terminal-mode) .app-main {
 @media (max-width: 760px) {
     .ai-agent-panel.file-manager {
         border-radius: var(--radius-lg) !important;
-        will-change: transform, opacity, filter;
-    }
-    .ai-agent-panel.panel-opening {
-        animation: floatingPanelOpenFromButton .36s cubic-bezier(.16, 1, .3, 1) both !important;
-    }
-    .ai-agent-panel.panel-closing {
-        animation: floatingPanelCloseToButton .28s cubic-bezier(.4, 0, .2, 1) both !important;
     }
     .ai-agent-panel .panel-drag-handle { height: 28px !important; }
     .ai-agent-panel .panel-resize-handle {
@@ -10058,7 +9851,7 @@ body.app-body:not(.terminal-mode) .app-main {
     .ai-agent-panel .ai-send-btn { width: 32px !important; height: 32px !important; }
 }
 
-/* 20260609: AI true morph open/close. Floating window only; background stays interactive and unfiltered. */
+/* AI panel matched geometry is implemented only by Motion.aiPanelOpen/Close. */
 .nav-actions .ai-floating-btn {
     display: inline-grid;
     place-items: center;
@@ -10068,93 +9861,7 @@ body.app-body:not(.terminal-mode) .app-main {
     padding: 0;
     overflow: hidden;
     border-radius: var(--radius-sm);
-    transform: translateZ(0);
-    will-change: transform, opacity, box-shadow;
-    transition:
-        transform .10s ease,
-        opacity .15s ease,
-        background .18s ease,
-        border-color .18s ease,
-        box-shadow .18s ease !important;
 }
-.nav-actions .ai-floating-btn[data-ai-morph-source="1"] {
-    opacity: .74 !important;
-    color: var(--accent-hover) !important;
-    -webkit-text-fill-color: currentColor !important;
-}
-.nav-actions .ai-floating-btn[data-ai-morph-source="1"]::before {
-    opacity: .28;
-}
-.nav-actions .ai-floating-btn:active {
-    transform: scale(.92);
-    box-shadow: 0 2px 6px rgba(0,0,0,.18) !important;
-}
-.ai-agent-panel.ai-morphing {
-    min-width: 0 !important;
-    min-height: 0 !important;
-    max-width: none !important;
-    max-height: none !important;
-    overflow: hidden !important;
-    transform-origin: center center;
-    will-change: top, left, width, height, border-radius, box-shadow;
-    contain: layout paint style;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-}
-.ai-agent-panel.ai-morphing .panel-drag-handle,
-.ai-agent-panel.ai-morphing .ai-agent-window,
-.ai-agent-panel.ai-morphing .panel-resize-handle {
-    transition: opacity .12s cubic-bezier(.4, 0, 1, 1), transform .12s ease !important;
-}
-.ai-agent-panel.ai-morphing::before {
-    content: 'AI';
-    position: absolute;
-    inset: 0;
-    z-index: 20;
-    display: grid;
-    place-items: center;
-    color: #fff;
-    font-weight: 900;
-    font-size: 12px;
-    line-height: 1;
-    pointer-events: none;
-    opacity: 1;
-    transition: opacity .10s ease;
-}
-.ai-agent-panel.ai-morphing.ai-morph-open::before,
-.ai-agent-panel.ai-morphing.ai-morph-closing::before {
-    opacity: 0;
-}
-.ai-agent-panel.ai-morphing .panel-drag-handle,
-.ai-agent-panel.ai-morphing .ai-agent-window,
-.ai-agent-panel.ai-morphing .panel-resize-handle {
-    opacity: 0;
-    transform: scale(.985);
-    pointer-events: none;
-}
-.ai-agent-panel.ai-morphing.ai-morph-open .panel-drag-handle,
-.ai-agent-panel.ai-morphing.ai-morph-open .ai-agent-window,
-.ai-agent-panel.ai-morphing.ai-morph-open .panel-resize-handle {
-    opacity: 1;
-    transform: scale(1);
-    pointer-events: auto;
-    transition: opacity .28s ease-out .14s, transform .45s var(--ai-morph-spring-open) .14s !important;
-}
-.ai-agent-panel.ai-morphing.ai-morph-closing .panel-drag-handle,
-.ai-agent-panel.ai-morphing.ai-morph-closing .ai-agent-window,
-.ai-agent-panel.ai-morphing.ai-morph-closing .panel-resize-handle {
-    opacity: 0;
-    transform: scale(.985);
-    transition: opacity .12s ease, transform .12s ease !important;
-}
-.ai-agent-panel.ai-morphing .ai-agent-window,
-.ai-agent-panel.ai-morphing.open .ai-agent-window,
-.ai-agent-panel.ai-morphing.open .ai-title-bar,
-.ai-agent-panel.ai-morphing.open .ai-browser-preview,
-.ai-agent-panel.ai-morphing.open .ai-input-area {
-    animation: none !important;
-}
-/* AI floating morph has no backdrop transform, even in reduced-motion mode. */
 
 /* ===== AI Markdown / code blocks / message context menu ===== */
 .ai-message { user-select: text; -webkit-user-select: text; }
@@ -12196,15 +11903,10 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     box-shadow: var(--shadow-lift);
     backdrop-filter: blur(16px) saturate(1.1);
     -webkit-backdrop-filter: blur(16px) saturate(1.1);
-    opacity: 0;
-    transform: scale(0.96) translateY(-4px);
-    transition:
-        opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
-        transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-.ai-picker-popover.open {
     opacity: 1;
-    transform: scale(1) translateY(0);
+    transform: none;
+    transition: none;
+    will-change: transform, opacity;
 }
 .ai-picker-option {
     width: 100%;
@@ -12243,6 +11945,7 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     overflow: hidden;
     backdrop-filter: blur(18px) saturate(1.12);
     -webkit-backdrop-filter: blur(18px) saturate(1.12);
+    will-change: transform, opacity;
 }
 .ai-usage-body { max-height: min(488px, calc(100vh - 84px)); overflow: auto; padding: 4px 14px 12px; }
 .ai-usage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }

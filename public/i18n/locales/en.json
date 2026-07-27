@@ -305,6 +305,7 @@
   "清空": "Clear",
   "模型供应商": "Model providers",
   "添加模型供应商": "Add model provider",
+  "编辑模型供应商": "Edit model provider",
   "启用变量": "Enable variable",
   "允许 AI 看到变量名/说明": "Allow AI to see variable name/description",
   "允许 AI 直接看到变量值（仅用于非敏感配置）": "Allow AI to see variable value directly (non-sensitive only)",

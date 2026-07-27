@@ -12,7 +12,7 @@ import { Motion, engine, PRESETS, resolvePreset } from './vendor/zephyr-motion/i
 await Motion.init({ capacity: 512 }); // 幂等
 ```
 
-演示验收页：`/motion-feel.html`（或 `tests/motion-feel.html` 本地）  
+演示验收页默认关闭；容器内执行 `touch /tmp/zephyr-motion-demo.enabled` 后，超级管理员会话可访问 `/motion-feel.html`。容器重启自动关闭。离线可直接使用 `tests/motion-feel.html`。
 合同测试：`tests/motion-semantic-api-contract.test.mjs`  
 审计：`plans/MOTION-AUDIT-2026-07-24.md` · `plans/README.md`
 
@@ -249,7 +249,7 @@ public/vendor/zephyr-motion/
   API.md            ← 本文件
 
 tests/motion-feel.html              中文验收演示
-public/motion-feel.html             同内容（import 路径适配静态根）
+internal/motion-feel.html           受容器临时开关 + 超级管理员会话保护的在线验收页
 tests/motion-semantic-api-contract.test.mjs
 plans/MOTION-AUDIT-2026-07-24.md
 plans/001-unify-motion-runtime.md

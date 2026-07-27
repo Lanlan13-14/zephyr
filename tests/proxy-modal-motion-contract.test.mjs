@@ -65,8 +65,9 @@ test('proxy open/close use iosApp* only — no home-blur or transition layer', (
     // form.reset 已从 open 路径移除（易触发 layout 闪）
     const openFnCheck = extractFn(appJs, 'openProxyModal');
     assert.doesNotMatch(openFnCheck, /resetProxyForm|form\.reset|\$\('#proxyForm'\)\?\.reset/);
-    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'aiAddProviderBtn'\]\)/);
-    assert.doesNotMatch(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'addProxyBtn', 'aiAddProviderBtn'\]\)/);
+    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn'\]\)/);
+    assert.doesNotMatch(appJs, /for \(const id of \[[^\]]*'addProxyBtn'/);
+    assert.doesNotMatch(appJs, /for \(const id of \[[^\]]*'aiAddProviderBtn'/);
     const openFn = extractFn(appJs, 'openProxyModal');
     const closeFn = extractFn(appJs, 'closeProxyModal');
     assert.doesNotMatch(openFn, /connection-home-blur/);
@@ -108,8 +109,9 @@ test('proxy modal expands full content without internal max-height scroll lock',
     assert.match(openFn, /card\.style\.overflow = 'visible'/);
     assert.match(openFn, /card\.style\.maxHeight = 'none'/);
     // 代理按钮不进 Motion.press 名单
-    assert.doesNotMatch(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'addProxyBtn', 'aiAddProviderBtn'\]\)/);
-    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'aiAddProviderBtn'\]\)/);
+    assert.doesNotMatch(appJs, /for \(const id of \[[^\]]*'addProxyBtn'/);
+    assert.doesNotMatch(appJs, /for \(const id of \[[^\]]*'aiAddProviderBtn'/);
+    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn'\]\)/);
 });
 
 test('proxy finish path keeps atomic twin handoff', () => {

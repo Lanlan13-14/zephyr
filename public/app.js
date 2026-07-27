@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260727-password-code-button1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260727-password-code-button1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260727-ai-motion-engine1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260727-ai-motion-engine1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -4994,9 +4994,21 @@ function bindAiSegmentControls(root = document) {
         setAiSegmentValue(seg, seg.dataset.value || seg.querySelector('.ai-segment-btn.active')?.dataset.value || '', { silent: true });
     });
 }
-function closeAiPickerPopover() {
-    // 聊天头部 picker（provider/model/thinking）仍走 body popover + CSS；字段选择器已迁到 toggle-select。
-    document.querySelector('.ai-picker-popover')?.remove();
+function closeAiPickerPopover({ instant = false } = {}) {
+    const pop = document.querySelector('.ai-picker-popover');
+    if (!pop || pop.dataset.closing === '1') return;
+    pop.dataset.closing = '1';
+    const remove = () => {
+        const Motion = sshKeyMotion.engine;
+        if (Motion) { try { Motion.release(pop); } catch {} }
+        pop.remove();
+    };
+    const Motion = sshKeyMotion.engine;
+    if (instant || !Motion || sshKeyMotion.failed) { remove(); return; }
+    Motion.dismiss(pop, {
+        to: { opacity: 0, scale: 0.96, y: -4, x: 0 },
+        preset: 'macClose',
+    }).then(remove).catch(remove);
 }
 /** In-app confirm sheet — never window.confirm. */
 function openAiInlineConfirm({ title = t('确认'), body = '', confirmLabel = t('确认'), cancelLabel = t('取消'), danger = false, onConfirm } = {}) {
@@ -5013,10 +5025,21 @@ function openAiInlineConfirm({ title = t('确认'), body = '', confirmLabel = t(
         </div>
       </div>`;
     const close = () => {
-        mask.classList.add('closing');
-        const done = () => mask.remove();
-        mask.addEventListener('animationend', done, { once: true });
-        setTimeout(done, 220);
+        if (mask.dataset.closing === '1') return;
+        mask.dataset.closing = '1';
+        const card = mask.querySelector('.ai-inline-confirm-card');
+        const Motion = sshKeyMotion.engine;
+        const done = () => {
+            if (Motion) {
+                try { Motion.release(card); Motion.release(mask); } catch {}
+            }
+            mask.remove();
+        };
+        if (!Motion || sshKeyMotion.failed) { done(); return; }
+        Promise.all([
+            Motion.dismiss(card, { to: { opacity: 0, scale: 0.97, y: 4 }, preset: 'macClose' }),
+            Motion.to(mask, { opacity: 0 }, { preset: 'macClose' }),
+        ]).then(done).catch(done);
     };
     mask.addEventListener('click', (e) => {
         if (e.target === mask || e.target.closest?.('[data-ai-inline-cancel]')) close();
@@ -5026,7 +5049,16 @@ function openAiInlineConfirm({ title = t('确认'), body = '', confirmLabel = t(
         }
     });
     document.body.appendChild(mask);
-    requestAnimationFrame(() => mask.classList.add('open'));
+    const card = mask.querySelector('.ai-inline-confirm-card');
+    sshKeyMotion._ensure().then((Motion) => {
+        if (!mask.isConnected || !Motion) return;
+        Motion.set(mask, { opacity: 0 });
+        Motion.set(card, { opacity: 0, scale: 0.96, y: 6 });
+        Promise.all([
+            Motion.to(mask, { opacity: 1 }, { preset: 'mac' }),
+            Motion.present(card, { from: { opacity: 0, scale: 0.96, y: 6 }, preset: 'mac' }),
+        ]).catch(() => {});
+    });
     mask.querySelector('[data-ai-inline-ok]')?.focus?.();
 }
 function openAiPicker(kind = '', anchor = null) {
@@ -5053,7 +5085,10 @@ function openAiPicker(kind = '', anchor = null) {
     pop.style.transformOrigin = 'top left';
     pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pr.width - 8, rect.left))}px`;
     pop.style.top = `${Math.max(8, Math.min(window.innerHeight - pr.height - 8, rect.bottom + 8))}px`;
-    requestAnimationFrame(() => pop.classList.add('open'));
+    sshKeyMotion._ensure().then((Motion) => {
+        if (!pop.isConnected || !Motion) return;
+        Motion.popover(pop, anchor, { fromScale: 0.96, preset: 'mac' }).catch(() => {});
+    });
 }
 function applyAiPickerChoice(kind = '', value = '') {
     if (kind === 'provider') { $('#aiProviderSelect').value = value; renderAiHeaderSelectors(); }
@@ -5108,7 +5143,24 @@ async function openAiUsageSheet(messageMetrics = null, anchor = null) {
         pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pr.width - 8, rect.right - pr.width))}px`;
         pop.style.top = `${Math.max(8, Math.min(window.innerHeight - pr.height - 8, rect.bottom + 8))}px`;
     }
-    pop.querySelector('.ai-usage-close')?.addEventListener('click', () => pop.remove());
+    const closeUsage = () => {
+        if (!pop.isConnected || pop.dataset.closing === '1') return;
+        pop.dataset.closing = '1';
+        const Motion = sshKeyMotion.engine;
+        const remove = () => {
+            if (Motion) { try { Motion.release(pop); } catch {} }
+            pop.remove();
+        };
+        if (!Motion || sshKeyMotion.failed) { remove(); return; }
+        Motion.dismiss(pop, { to: { opacity: 0, scale: 0.97, y: -4 }, preset: 'macClose' }).then(remove).catch(remove);
+    };
+    pop._closeAiUsage = closeUsage;
+    pop.querySelector('.ai-usage-close')?.addEventListener('click', closeUsage);
+    const usageAnchor = anchor || document.querySelector('#aiUsageBtn');
+    sshKeyMotion._ensure().then((Motion) => {
+        if (!pop.isConnected || !Motion) return;
+        Motion.popover(pop, usageAnchor, { fromScale: 0.97, preset: 'mac' }).catch(() => {});
+    });
 }
 function renderAiCapabilityStrip() {
     const strip = $('#aiCapabilityStrip');
@@ -5341,7 +5393,7 @@ async function openAiProviderModal(provider = null, trigger = null) {
     if (!modal || (modal.classList.contains('show') && !modal.classList.contains('closing'))) return;
     const card = $('#aiProviderForm');
     const inner = $('#aiProviderModalInner');
-    $('#aiProviderModalTitle').textContent = provider ? '编辑模型供应商' : t('添加模型供应商');
+    $('#aiProviderModalTitle').textContent = provider ? t('编辑模型供应商') : t('添加模型供应商');
     $('#aiProviderId').value = provider?.id || '';
     $('#aiProviderName').value = provider?.name || '';
     setAiFieldSelectValue('aiProviderType', provider?.type || 'openai-compatible');
@@ -5367,8 +5419,9 @@ async function openAiProviderModal(provider = null, trigger = null) {
     $('#aiProviderShareUsers').checked = !!provider?.shareWithUsers;
     $('#aiProviderShareAdmins').checked = !!provider?.shareWithAdmins;
     aiProviderSelectedUserIds = new Set(provider?.sharedUserIds || []);
-    // 先开窗（与按钮 FLIP 同源），共享用户列表异步补上，避免 await 拖到动画后
-    aiProviderModalTrigger = trigger || $('#aiAddProviderBtn');
+    // Only the exact control that launched this modal may own its matched geometry.
+    // Add uses the header button; edit/reveal use the clicked provider-row action.
+    aiProviderModalTrigger = trigger?.isConnected ? trigger : null;
 
     const fillShareTargets = async () => {
         aiProviderShareTargetsState = (await api('/api/ai/share-targets').catch(() => ({ users: [] }))).users || [];
@@ -5389,12 +5442,14 @@ async function openAiProviderModal(provider = null, trigger = null) {
                 card.style.visibility = '';
                 card.style.opacity = '';
                 card.style.pointerEvents = '';
+                card.style.overflow = 'visible';
+                card.style.maxHeight = 'none';
+                card.style.height = 'auto';
             }
-            if (inner?.style) inner.style.opacity = '';
-            if (aiProviderModalTrigger?.style) {
-                aiProviderModalTrigger.style.opacity = '';
-                aiProviderModalTrigger.style.pointerEvents = '';
-                delete aiProviderModalTrigger.dataset.motionHidden;
+            if (inner?.style) {
+                inner.style.opacity = '';
+                inner.style.overflow = 'visible';
+                inner.style.maxHeight = 'none';
             }
             $('#aiProviderName')?.focus({ preventScroll: true });
             fillShareTargets();
@@ -5415,8 +5470,14 @@ async function openAiProviderModal(provider = null, trigger = null) {
             contentPreset: 'content',
         }).then(() => {
             if (cycle !== aiProviderModalCycle) return;
-            card.style.overflow = '';
-            // 动画落地后再灌共享用户列表，飞行中改 DOM 会每帧重 layout → 闪
+            card.style.overflow = 'visible';
+            card.style.maxHeight = 'none';
+            card.style.height = 'auto';
+            if (inner?.style) {
+                inner.style.overflow = 'visible';
+                inner.style.maxHeight = 'none';
+            }
+            // Fill after the shape settles: no DOM reflow while FLIP is running.
             fillShareTargets();
         }).catch((err) => {
             console.warn('[aiprovider1] iosAppOpen failed', err);
@@ -5484,6 +5545,12 @@ function closeAiProviderModal() {
             } catch {}
         }
         card.style.overflow = '';
+        card.style.maxHeight = '';
+        card.style.height = '';
+        if (inner?.style) {
+            inner.style.overflow = '';
+            inner.style.maxHeight = '';
+        }
         card.style.visibility = '';
         card.style.opacity = '';
         card.style.filter = '';
@@ -5570,7 +5637,16 @@ async function saveAiProvider(e) {
     settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
     aiSettingsState = normalizeAiSettings(settings.ai);
     closeAiProviderModal();
-    renderAiSettingsForm();
+    const refreshProviderSurfaces = () => {
+        renderAiProviderOptions();
+        renderAiHeaderSelectors();
+        renderAiProviderList();
+    };
+    if ($('#aiProviderModal')?.classList.contains('closing')) {
+        window.setTimeout(refreshProviderSurfaces, 920);
+    } else {
+        refreshProviderSurfaces();
+    }
     const shouldAutoFetchModels = !aiModelNames(savedProvider).length && savedProvider.enabled !== false && (savedProvider.hasApiKey || !!payload.apiKey);
     if (shouldAutoFetchModels) {
         toast(t('模型供应商已保存，正在获取模型...'));
@@ -5623,7 +5699,9 @@ async function fetchAiModelsForProvider(id = '') {
             const visible = await api('/api/ai/providers');
             settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
             aiSettingsState = normalizeAiSettings(settings.ai);
-            renderAiSettingsForm();
+            renderAiProviderOptions();
+            renderAiHeaderSelectors();
+            renderAiProviderList();
         } else {
             $('#aiProviderModels').value = uniqueNames.join('\n');
             if (!$('#aiProviderDefaultModel').value) $('#aiProviderDefaultModel').value = uniqueNames[0] || '';
@@ -5643,7 +5721,9 @@ async function deleteAiProvider(id) {
             const visible = await api('/api/ai/providers');
             settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
             aiSettingsState = normalizeAiSettings(settings.ai);
-            renderAiSettingsForm();
+            renderAiProviderOptions();
+            renderAiHeaderSelectors();
+            renderAiProviderList();
             toast(t('模型供应商已删除'));
         },
     });
@@ -6808,11 +6888,11 @@ async function deleteAiPlanConfirmed(planId) {
         toast(data.result?.deleted ? t('计划已删除') : t('计划删除完成'));
     } catch (err) { toast(err.message || t('计划删除失败')); }
 }
-async function revealAiProviderKey(id) {
+async function revealAiProviderKey(id, trigger = null) {
     const secret = requestSensitiveSecret(t('查看已保存 AI API Key'));
     const data = await api(`/api/ai/providers/${encodeURIComponent(id)}/open`, { method: 'POST', body: JSON.stringify({ secret }) });
     const provider = normalizeAiSettings(settings.ai || aiSettingsState || {}).providers.find((p) => p.id === id);
-    if (provider) openAiProviderModal(provider);
+    if (provider) openAiProviderModal(provider, trigger);
     $('#aiProviderApiKey').value = data.apiKey || '';
     $('#aiProviderApiKey').type = 'text';
     toast(data.hasApiKey ? '已载入保存的 API Key' : '当前未保存 API Key');
@@ -7371,117 +7451,165 @@ function aiMessagesForRequest(session, latestText = '') {
 function startAiPanelWatchdog() {
     window.clearInterval(aiPanelWatchdogTimer);
     aiPanelWatchdogTimer = window.setInterval(() => {
-        const p = $('#aiAgentPanel');
-        if (!p || aiPanelState !== 'open') return;
-        const rect = p.getBoundingClientRect();
-        const bad = p.style.display === 'none' || p.getAttribute('aria-hidden') === 'true' || rect.width < 120 || rect.height < 160 || getComputedStyle(p).opacity === '0';
-        if (bad) {
-            p.style.display = 'flex';
-            p.style.opacity = '1';
-            p.style.transform = 'none';
-            p.style.filter = 'none';
-            p.classList.remove('panel-opening', 'panel-closing');
-            p.setAttribute('aria-hidden', 'false');
-            clampAiPanel(p);
+        const panel = $('#aiAgentPanel');
+        if (!panel || aiPanelState !== 'open') return;
+        const rect = panel.getBoundingClientRect();
+        const bad = panel.style.display === 'none' || panel.getAttribute('aria-hidden') === 'true' || rect.width < 120 || rect.height < 160 || getComputedStyle(panel).opacity === '0';
+        if (!bad) return;
+        const Motion = sshKeyMotion.engine;
+        if (Motion) {
+            try { Motion.stop(panel); Motion.release(panel); } catch {}
         }
+        panel.style.display = 'flex';
+        panel.style.visibility = 'visible';
+        panel.style.pointerEvents = 'auto';
+        panel.style.opacity = '1';
+        panel.style.transform = 'none';
+        panel.style.filter = 'none';
+        panel.style.willChange = '';
+        panel.classList.add('open');
+        panel.setAttribute('aria-hidden', 'false');
+        clampAiPanel(panel);
     }, 1200);
 }
 function stopAiPanelWatchdog() { window.clearInterval(aiPanelWatchdogTimer); aiPanelWatchdogTimer = 0; }
+function prepareAiPanelLayout(panel) {
+    if (!panel || panel.dataset.positioned) return;
+    const compact = window.innerWidth <= 760;
+    const vvWidth = window.visualViewport?.width || window.innerWidth;
+    const vvHeight = window.visualViewport?.height || window.innerHeight;
+    const width = compact ? Math.max(300, Math.min(vvWidth - 40, Math.round(vvWidth * 0.88))) : Math.min(980, window.innerWidth - 40);
+    const height = compact ? Math.max(360, Math.min(vvHeight - 96, Math.round(vvHeight * 0.78))) : Math.min(780, window.innerHeight - 80);
+    panel.style.left = compact ? `${Math.max(16, Math.round((vvWidth - width) / 2))}px` : `${Math.max(16, (window.innerWidth - width) / 2)}px`;
+    panel.style.top = compact ? `${Math.max(18, Math.round((vvHeight - height) * 0.16))}px` : '52px';
+    panel.style.width = `${width}px`;
+    panel.style.height = `${height}px`;
+    panel.dataset.positioned = '1';
+}
+function resetAiPanelMotionStyles(panel) {
+    if (!panel?.style) return;
+    panel.style.opacity = '';
+    panel.style.transform = '';
+    panel.style.filter = '';
+    panel.style.transition = '';
+    panel.style.visibility = '';
+    panel.style.pointerEvents = '';
+    panel.style.willChange = '';
+    panel.style.transformOrigin = '';
+}
 function openAiAssistantPanel(trigger = null) {
     const ai = normalizeAiSettings(settings.ai || {});
     if (!ai.enabled) { toast(t('请先在设置中启用 AI 助理')); return; }
     const panel = $('#aiAgentPanel');
     if (!panel) return;
-    const wasClosing = aiPanelState === 'closing';
-    const wasHidden = panel.style.display === 'none' || panel.getAttribute('aria-hidden') === 'true' || aiPanelState === 'closed' || wasClosing;
+    const wasHidden = panel.style.display === 'none' || panel.getAttribute('aria-hidden') === 'true' || aiPanelState === 'closed';
     const sourceButton = trigger || aiPanelMorphOriginButton || $('#aiFloatingBtn') || $('#openAiAssistantBtn') || $('#openAiAssistantBtn2') || $('#aiNavTab');
     aiPanelMorphOriginButton = sourceButton || aiPanelMorphOriginButton;
     window.clearTimeout(aiPanelCloseTimer);
-    window.clearTimeout(panel._aiPanelMotionTimer);
     aiPanelState = 'opening';
     panel.style.display = 'flex';
-    panel.style.visibility = 'visible';
-    panel.style.pointerEvents = 'auto';
-    panel.style.opacity = '1';
-    panel.style.transform = 'none';
-    panel.style.filter = 'none';
-    panel.classList.remove('panel-closing', 'ai-morph-closing', 'ai-morph-settled');
+    panel.style.visibility = 'hidden';
+    panel.style.pointerEvents = 'none';
     panel.classList.add('open');
     panel.setAttribute('aria-hidden', 'false');
     $('#aiFloatingBtn')?.classList.add('active');
-    if (wasHidden && panel._aiMorphFinalStyle) Object.assign(panel.style, panel._aiMorphFinalStyle);
-    if (!panel.dataset.positioned) {
-        const compact = window.innerWidth <= 760;
-        const vvWidth = window.visualViewport?.width || window.innerWidth;
-        const vvHeight = window.visualViewport?.height || window.innerHeight;
-        const width = compact ? Math.max(300, Math.min(vvWidth - 40, Math.round(vvWidth * 0.88))) : Math.min(980, window.innerWidth - 40);
-        const height = compact ? Math.max(360, Math.min(vvHeight - 96, Math.round(vvHeight * 0.78))) : Math.min(780, window.innerHeight - 80);
-        panel.style.left = compact ? `${Math.max(16, Math.round((vvWidth - width) / 2))}px` : `${Math.max(16, (window.innerWidth - width) / 2)}px`;
-        panel.style.top = compact ? `${Math.max(18, Math.round((vvHeight - height) * 0.16))}px` : '52px';
-        panel.style.width = `${width}px`;
-        panel.style.height = `${height}px`;
-        panel.dataset.positioned = '1';
-    }
+    prepareAiPanelLayout(panel);
     bringAiPanelToFront();
     updateAiPanelResponsiveState();
     if (!aiChatSessions.length) { loadAiChats(); if (!aiChatSessions.length) createAiChat({ silent: true }); }
     renderAiHeaderSelectors(); renderAiBrowserPreview(); renderAiChat();
-    if (wasHidden) {
-        requestAnimationFrame(() => animateAiPanelFromButton(panel, sourceButton, true, () => {
-            if (aiPanelState === 'opening') aiPanelState = 'open';
-        }));
-    } else {
+    if (!wasHidden) {
+        panel.style.visibility = 'visible';
+        panel.style.pointerEvents = 'auto';
         aiPanelState = 'open';
+        startAiPanelWatchdog();
+        scheduleWorkspaceSave('ai-panel-open');
+        return;
     }
-    startAiPanelWatchdog();
+    const cycle = ++openAiAssistantPanel._cycle;
+    sshKeyMotion._ensure().then(async (Motion) => {
+        if (cycle !== openAiAssistantPanel._cycle || aiPanelState !== 'opening') return;
+        if (!Motion) {
+            resetAiPanelMotionStyles(panel);
+            panel.style.visibility = 'visible';
+            panel.style.pointerEvents = 'auto';
+            aiPanelState = 'open';
+            return;
+        }
+        try {
+            Motion.stop(panel);
+            Motion.release(panel);
+            await Motion.aiPanelOpen(panel, sourceButton, {
+                contentEl: null,
+                mode: sourceButton ? 'flip' : 'origin',
+                hideSource: false,
+                contentWithPanel: true,
+                radiusTo: parseFloat(getComputedStyle(panel).borderRadius) || 18,
+                preset: 'mac',
+            });
+        } catch (err) {
+            console.warn('[ai-panel-motion] open failed, using instant state:', err?.message || err);
+        }
+        if (cycle !== openAiAssistantPanel._cycle || aiPanelState !== 'opening') return;
+        resetAiPanelMotionStyles(panel);
+        panel.style.visibility = 'visible';
+        panel.style.pointerEvents = 'auto';
+        aiPanelState = 'open';
+        startAiPanelWatchdog();
+        if (window.innerWidth > 760) $('#aiUserInput')?.focus?.({ preventScroll: true });
+    });
     scheduleWorkspaceSave('ai-panel-open');
-    if (window.innerWidth > 760) setTimeout(() => $('#aiUserInput')?.focus?.(), 80);
 }
+openAiAssistantPanel._cycle = 0;
 function toggleAiAssistantPanel(trigger = null) {
     const panel = $('#aiAgentPanel');
     const visible = panel && panel.style.display !== 'none' && aiPanelState !== 'closed';
     if (visible) {
-        aiPanelMorphOriginButton = trigger || aiPanelMorphOriginButton || $('#aiFloatingBtn');
+        if (trigger) aiPanelMorphOriginButton = trigger;
         closeAiAssistantPanel();
         return;
     }
     openAiAssistantPanel(trigger);
 }
 function closeAiAssistantPanel() {
-    const p = $('#aiAgentPanel');
-    if (!p || p.style.display === 'none') return;
+    const panel = $('#aiAgentPanel');
+    if (!panel || panel.style.display === 'none' || aiPanelState === 'closed') return;
     closeAiPanelLayoutMenu({ instant: true });
     window.clearTimeout(aiPanelCloseTimer);
-    window.clearTimeout(p._aiPanelMotionTimer);
     aiPanelState = 'closing';
-    p.classList.remove('panel-opening', 'ai-morph-open', 'ai-morph-settled');
-    p.setAttribute('aria-hidden', 'true');
+    const cycle = ++openAiAssistantPanel._cycle;
+    panel.setAttribute('aria-hidden', 'true');
     closeAiBrowserForSession(aiCurrentSessionId);
     $('#aiFloatingBtn')?.classList.remove('active');
-    const finishClose = () => {
-        if (aiPanelState !== 'closing') return;
-        p.style.display = 'none';
-        p.style.visibility = '';
-        p.style.pointerEvents = '';
-        p.style.opacity = '';
-        p.style.transform = '';
-        p.style.filter = '';
-        p.style.transition = '';
-        p.style.boxShadow = '';
-        p.style.borderRadius = '';
-        p.style.background = '';
-        p.style.borderColor = '';
-        p.style.color = '';
-        p.classList.remove('panel-opening', 'panel-closing', 'ai-morphing', 'ai-morph-open', 'ai-morph-closing');
-        restoreAiMorphButton(aiPanelMorphOriginButton);
-        restoreAiMorphButton($('#aiFloatingBtn'));
-        restoreAiMorphButton($('#aiNavTab'));
+    const trigger = aiPanelMorphOriginButton?.isConnected ? aiPanelMorphOriginButton : ($('#aiFloatingBtn') || $('#aiNavTab'));
+    const finishClose = (Motion = null) => {
+        if (cycle !== openAiAssistantPanel._cycle || aiPanelState !== 'closing') return;
+        if (Motion) {
+            try { Motion.stop(panel); Motion.release(panel); } catch {}
+        }
+        panel.style.display = 'none';
+        resetAiPanelMotionStyles(panel);
+        panel.classList.remove('open');
         aiPanelState = 'closed';
         stopAiPanelWatchdog();
         scheduleWorkspaceSave('ai-panel-close');
     };
-    const didAnimate = animateAiPanelFromButton(p, aiPanelMorphOriginButton || $('#aiFloatingBtn') || $('#aiNavTab'), false, finishClose);
-    if (!didAnimate) aiPanelCloseTimer = window.setTimeout(finishClose, 20);
+    const Motion = sshKeyMotion.engine;
+    if (!Motion || sshKeyMotion.failed) {
+        finishClose(null);
+        return;
+    }
+    Motion.aiPanelClose(panel, trigger, {
+        contentEl: null,
+        mode: trigger ? 'flip' : 'origin',
+        hideSource: false,
+        contentWithPanel: true,
+        thenHide: false,
+        preset: 'macClose',
+    }).then(() => finishClose(Motion)).catch((err) => {
+        console.warn('[ai-panel-motion] close failed, using instant state:', err?.message || err);
+        finishClose(Motion);
+    });
 }
 function bringAiPanelToFront() { const p = $('#aiAgentPanel'); if (!p) return; p.style.zIndex = String(10080 + Math.floor(Date.now() % 40)); p.style.setProperty('--panel-z', p.style.zIndex); }
 function applyAiPanelLayout(layout) {
@@ -7501,194 +7629,6 @@ function applyAiPanelLayout(layout) {
     Object.assign(p.style, { left: `${left}px`, top: `${top}px`, right: 'auto', bottom: 'auto', width: `${width}px`, height: `${height}px` });
     bringAiPanelToFront();
     p._layoutAnimationTimer = window.setTimeout(() => { p.classList.remove('layout-animating'); clampAiPanel(p); updateAiPanelResponsiveState(); }, 480);
-}
-function aiMorphCssTimeToMs(value, fallback = 0) {
-    const text = String(value || '').trim();
-    if (!text) return fallback;
-    const first = text.split(',')[0].trim();
-    const n = parseFloat(first);
-    if (!Number.isFinite(n)) return fallback;
-    return first.endsWith('ms') ? n : n * 1000;
-}
-function captureAiMorphButton(button) {
-    if (!button?.getBoundingClientRect) return null;
-    const rect = button.getBoundingClientRect();
-    if (rect.width <= 1 || rect.height <= 1) return null;
-    const style = getComputedStyle(button);
-    return {
-        left: rect.left,
-        top: rect.top,
-        width: rect.width,
-        height: rect.height,
-        radius: style.borderRadius || `${Math.round(rect.height / 2)}px`,
-        background: style.backgroundColor || style.background || 'var(--accent)',
-        borderColor: style.borderColor || 'transparent',
-        color: style.color || '#fff',
-    };
-}
-function ghostAiMorphButton(button) {
-    if (!button) return;
-    if (button.dataset.aiMorphOpacity == null) button.dataset.aiMorphOpacity = button.style.opacity || '';
-    button.setAttribute('data-ai-morph-source', '1');
-}
-function restoreAiMorphButton(button = null) {
-    const target = button || aiPanelMorphOriginButton || $('#aiFloatingBtn');
-    if (!target) return;
-    if (target.dataset.aiMorphOpacity != null) {
-        target.style.opacity = target.dataset.aiMorphOpacity;
-        delete target.dataset.aiMorphOpacity;
-    } else {
-        target.style.removeProperty('opacity');
-    }
-    target.removeAttribute('data-ai-morph-source');
-}
-function animateAiPanelFromButton(panel, button, opening = true, onDone = null) {
-    if (!panel) return false;
-    const rootStyle = getComputedStyle(document.documentElement);
-    const openDur = rootStyle.getPropertyValue('--ai-morph-dur-open') || '0.52s';
-    const closeDur = rootStyle.getPropertyValue('--ai-morph-dur-close') || '0.42s';
-    const openSpring = rootStyle.getPropertyValue('--ai-morph-spring-open') || 'cubic-bezier(0.32, 0.72, 0, 1)';
-    const closeSpring = rootStyle.getPropertyValue('--ai-morph-spring-close') || 'cubic-bezier(0.4, 0, 0.6, 1)';
-    const liveSource = captureAiMorphButton(button);
-    const source = liveSource || panel._aiMorphSourceRect;
-    const currentRect = panel.getBoundingClientRect?.();
-    if (!source || !currentRect || currentRect.width <= 1 || currentRect.height <= 1) {
-        // Floating AI panel must not transform or blur the background.
-        restoreAiMorphButton(button);
-        if (onDone) onDone();
-        return false;
-    }
-    const sourceRadius = source.radius || `${Math.round(source.height / 2)}px`;
-    const measuredStyle = {
-        left: panel.style.left || `${currentRect.left}px`,
-        top: panel.style.top || `${currentRect.top}px`,
-        width: panel.style.width || `${currentRect.width}px`,
-        height: panel.style.height || `${currentRect.height}px`,
-        right: panel.style.right || 'auto',
-        bottom: panel.style.bottom || 'auto',
-    };
-    if (!opening) {
-        panel._aiMorphFinalStyle = { ...measuredStyle };
-        panel._aiMorphFinalRect = { left: currentRect.left, top: currentRect.top, width: currentRect.width, height: currentRect.height };
-    }
-    const finalStyle = opening ? (panel._aiMorphFinalStyle || measuredStyle) : measuredStyle;
-    const finalRect = opening ? currentRect : (panel._aiMorphFinalRect || currentRect);
-    const finalRadius = opening ? (getComputedStyle(panel).borderRadius || '18px') : (panel._aiMorphFinalRadius || getComputedStyle(panel).borderRadius || '18px');
-    const finalLeft = opening ? (finalStyle.left || `${finalRect.left}px`) : `${source.left}px`;
-    const finalTop = opening ? (finalStyle.top || `${finalRect.top}px`) : `${source.top}px`;
-    const finalWidth = opening ? (finalStyle.width || `${finalRect.width}px`) : `${source.width}px`;
-    const finalHeight = opening ? (finalStyle.height || `${finalRect.height}px`) : `${source.height}px`;
-    const startLeft = opening ? `${source.left}px` : `${currentRect.left}px`;
-    const startTop = opening ? `${source.top}px` : `${currentRect.top}px`;
-    const startWidth = opening ? `${source.width}px` : `${currentRect.width}px`;
-    const startHeight = opening ? `${source.height}px` : `${currentRect.height}px`;
-    const startRadius = opening ? sourceRadius : finalRadius;
-    const endRadius = opening ? finalRadius : sourceRadius;
-    const dur = opening ? openDur.trim() : closeDur.trim();
-    const spring = opening ? openSpring.trim() : closeSpring.trim();
-    const fallbackMs = aiMorphCssTimeToMs(dur, opening ? 520 : 420) + 110;
-    if (opening) {
-        panel._aiMorphSourceRect = { ...source };
-        panel._aiMorphFinalRect = { left: finalRect.left, top: finalRect.top, width: finalRect.width, height: finalRect.height };
-        panel._aiMorphFinalStyle = { ...finalStyle };
-        panel._aiMorphFinalRadius = finalRadius;
-    }
-    const originX = ((source.left + source.width / 2 - (opening ? finalRect.left : currentRect.left)) / (opening ? finalRect.width : currentRect.width)) * 100;
-    const originY = ((source.top + source.height / 2 - (opening ? finalRect.top : currentRect.top)) / (opening ? finalRect.height : currentRect.height)) * 100;
-    panel.style.setProperty('--panel-origin-x', `${Math.max(4, Math.min(96, originX))}%`);
-    panel.style.setProperty('--panel-origin-y', `${Math.max(4, Math.min(96, originY))}%`);
-    panel.classList.remove('panel-opening', 'panel-closing', 'ai-morph-open', 'ai-morph-closing');
-    if (panel._aiMorphTransitionEnd) {
-        panel.removeEventListener('transitionend', panel._aiMorphTransitionEnd);
-        panel._aiMorphTransitionEnd = null;
-    }
-    const motionId = (panel._aiMorphMotionId || 0) + 1;
-    panel._aiMorphMotionId = motionId;
-    panel.classList.add('ai-morphing');
-    if (opening) panel.classList.remove('ai-morph-open'); else panel.classList.add('ai-morph-open');
-    panel.style.transition = 'none';
-    Object.assign(panel.style, {
-        left: startLeft,
-        top: startTop,
-        right: 'auto',
-        bottom: 'auto',
-        width: startWidth,
-        height: startHeight,
-        borderRadius: startRadius,
-        boxShadow: opening ? 'var(--ai-morph-shadow-idle)' : 'var(--ai-morph-shadow-active)',
-        background: opening ? source.background : '',
-        borderColor: opening ? source.borderColor : '',
-        color: opening ? source.color : '',
-        visibility: 'visible',
-        pointerEvents: 'auto',
-        opacity: '1',
-        transform: 'translateZ(0)',
-        filter: 'none',
-    });
-    if (opening) ghostAiMorphButton(button);
-    void panel.offsetHeight;
-    const finish = () => {
-        if (panel._aiMorphMotionId !== motionId) return;
-        window.clearTimeout(panel._aiPanelMotionTimer);
-        panel.removeEventListener('transitionend', onEnd);
-        panel._aiMorphTransitionEnd = null;
-        if (opening) {
-            Object.assign(panel.style, finalStyle);
-            panel.style.transition = '';
-            panel.style.boxShadow = '';
-            panel.style.borderRadius = '';
-            panel.style.background = '';
-            panel.style.borderColor = '';
-            panel.style.color = '';
-            panel.style.transform = '';
-            panel.style.filter = '';
-            panel.classList.remove('ai-morphing', 'ai-morph-open', 'ai-morph-closing');
-        } else {
-            panel.style.transition = '';
-            panel.style.boxShadow = '';
-            panel.style.borderRadius = '';
-            panel.style.background = '';
-            panel.style.borderColor = '';
-            panel.style.color = '';
-            panel.style.transform = '';
-            panel.style.filter = '';
-            panel.classList.remove('ai-morphing', 'ai-morph-open', 'ai-morph-closing');
-            restoreAiMorphButton(button);
-        }
-        if (onDone) onDone();
-    };
-    const onEnd = (ev) => {
-        if (ev.target !== panel || ev.propertyName !== 'width') return;
-        finish();
-    };
-    panel._aiMorphTransitionEnd = onEnd;
-    panel.addEventListener('transitionend', onEnd);
-    requestAnimationFrame(() => {
-        if (panel._aiMorphMotionId !== motionId) return;
-        panel.classList.toggle('ai-morph-open', opening);
-        panel.classList.toggle('ai-morph-closing', !opening);
-        panel.style.transition = `
-            top ${dur} ${spring},
-            left ${dur} ${spring},
-            width ${dur} ${spring},
-            height ${dur} ${spring},
-            border-radius ${dur} ${spring},
-            box-shadow ${opening ? '0.35s ease-out' : '0.18s ease-in'}
-        `;
-        Object.assign(panel.style, {
-            left: finalLeft,
-            top: finalTop,
-            width: finalWidth,
-            height: finalHeight,
-            borderRadius: endRadius,
-            boxShadow: opening ? 'var(--ai-morph-shadow-active)' : 'var(--ai-morph-shadow-idle)',
-            background: opening ? '' : source.background,
-            borderColor: opening ? '' : source.borderColor,
-            color: opening ? '' : source.color,
-        });
-    });
-    panel._aiPanelMotionTimer = window.setTimeout(finish, fallbackMs);
-    return true;
 }
 function aiPanelParentRect(panel) {
     const viewport = window.visualViewport;
@@ -7957,7 +7897,16 @@ function setupAiAssistant() {
     $('#aiProviderApiMode')?.addEventListener('change', () => updateAiProviderModalHints());
     $('#aiProviderCloseBtn')?.addEventListener('click', closeAiProviderModal);
     $('#aiProviderCancelBtn')?.addEventListener('click', closeAiProviderModal);
-    $('#aiProviderList')?.addEventListener('click', (e) => { const edit = e.target.dataset.aiEditProvider, del = e.target.dataset.aiDeleteProvider, fetchModels = e.target.dataset.aiFetchProviderModels, reveal = e.target.dataset.aiRevealProviderKey; const ai = normalizeAiSettings(settings.ai || {}); if (fetchModels) fetchAiModelsForProvider(fetchModels); if (reveal) revealAiProviderKey(reveal).catch((err) => toast(err.message || '读取 API Key 失败')); if (edit) openAiProviderModal(ai.providers.find((p) => p.id === edit)); if (del) deleteAiProvider(del); });
+    $('#aiProviderList')?.addEventListener('click', (e) => {
+        const action = e.target.closest?.('[data-ai-fetch-provider-models],[data-ai-reveal-provider-key],[data-ai-edit-provider],[data-ai-delete-provider]');
+        if (!action) return;
+        const edit = action.dataset.aiEditProvider, del = action.dataset.aiDeleteProvider, fetchModels = action.dataset.aiFetchProviderModels, reveal = action.dataset.aiRevealProviderKey;
+        const ai = normalizeAiSettings(settings.ai || {});
+        if (fetchModels) fetchAiModelsForProvider(fetchModels);
+        if (reveal) revealAiProviderKey(reveal, action).catch((err) => toast(err.message || '读取 API Key 失败'));
+        if (edit) openAiProviderModal(ai.providers.find((p) => p.id === edit), action);
+        if (del) deleteAiProvider(del);
+    });
     $('#aiEnvForm')?.addEventListener('submit', saveAiEnv);
     $('#aiEnvResetBtn')?.addEventListener('click', resetAiEnvForm);
     $('#toggleAiEnvValue')?.addEventListener('click', () => { const el = $('#aiEnvValue'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleAiEnvValue').textContent = el.type === 'password' ? '👁️' : '🙈'; });
@@ -8026,7 +7975,11 @@ function setupAiAssistant() {
             return;
         }
         if (!e.target.closest?.('.ai-picker-popover,.ai-picker-btn')) closeAiPickerPopover();
-        if (!e.target.closest?.('.ai-usage-popover,#aiUsageBtn')) document.querySelector('.ai-usage-popover')?.remove();
+        if (!e.target.closest?.('.ai-usage-popover,#aiUsageBtn')) {
+            const usage = document.querySelector('.ai-usage-popover');
+            if (typeof usage?._closeAiUsage === 'function') usage._closeAiUsage();
+            else usage?.remove();
+        }
     }, true);
     $('#aiBrowserPreviewToggleBtn')?.addEventListener('click', () => { const state = aiBrowserPreviewStateForSession(aiCurrentSessionId); state.visible = !state.visible; renderAiBrowserPreview(); });
     $('#aiBrowserPreviewRefreshBtn')?.addEventListener('click', refreshAiBrowserPreview);
@@ -8919,7 +8872,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260725-proxy-fullopen1')
+        return import('./vendor/zephyr-motion/index.js?v=20260727-ai-motion-engine1')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -8930,7 +8883,7 @@ const sshKeyMotion = {
                 // 代理新建按钮不绑 Motion.press：任何源按钮 scale 都会和 iosAppOpen
                 // 的 clone 首帧抢 transform，造成“闪一下/曲线不对”。
                 if (!this._pressBound) {
-                    for (const id of ['addSshKeyBtn', 'addSnippetBtn', 'aiAddProviderBtn']) {
+                    for (const id of ['addSshKeyBtn', 'addSnippetBtn']) {
                         const btn = document.getElementById(id);
                         if (btn && Motion.press) Motion.press(btn, { scale: 0.96, preset: 'snappy' });
                     }
@@ -9148,7 +9101,7 @@ async function openSshKeySecret(id, trigger = null) {
 
 function bindConnectionPressFeedback(root = document) {
     // 故意不含 #addProxyBtn：代理弹窗只保留 iosAppOpen 路径，不叠加 CSS press。
-    const pressableSelector = '#addConnectionBtn, #addSshKeyBtn, #addSnippetBtn, #aiAddProviderBtn, [data-edit]';
+    const pressableSelector = '#addConnectionBtn, #addSshKeyBtn, #addSnippetBtn, [data-edit]';
     const clearPress = (el) => el?.classList?.remove('connection-pressing');
     root.addEventListener('pointerdown', (e) => {
         const target = e.target.closest?.(pressableSelector);

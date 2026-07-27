@@ -479,7 +479,7 @@
 <div id="selftest">自检：运行中…</div>
 
 <script type="module">
-import { Motion, engine, PRESETS } from './vendor/zephyr-motion/index.js';
+import { Motion, engine, PRESETS } from '/vendor/zephyr-motion/index.js?v=20260727-ai-motion-engine1';
 
 const $ = s => document.querySelector(s);
 const results = [];
@@ -694,7 +694,7 @@ const GROUPS = {
   '连接': ['connectionCardIn', 'connectionCardDelete'],
   '视图 / 淡入': ['fadeIn', 'fadeInItem', 'notesListItemIn', 'terminalThemeFade'],
   '面板 / 菜单': ['floatingPanelOpenFromButton', 'floatingPanelCloseToButton', 'panelFrontSwitch', 'panelMenuPopIn', 'panelMenuIn', 'panelMenuItemIn', 'transferPopoverIn'],
-  'AI': ['aiIosFadeLift', 'aiIosPopIn', 'aiIosSlideSheet'],
+  'AI': ['fadeIn', 'floatingPanelOpenFromButton', 'floatingPanelCloseToButton'],
   '终端 / Dock': ['terminalWindowIn', 'terminalDockSwapIn', 'dockerDrawerIn', 'dockItemBloom', 'dockGhostFloat', 'smartbarPickerFloat', 'smartbarPanelMacClose'],
   '灵动岛': ['terminalIslandTapBounce', 'terminalIslandFluidOpen', 'terminalIslandFluidClose', 'terminalIslandSourceMelt', 'terminalIslandDotsReturn', 'terminalIslandSourceDotsToPanel', 'terminalIslandDotMelt'],
   '反馈': ['shake', 'attention'],

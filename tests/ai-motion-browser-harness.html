@@ -1,0 +1,35 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AI motion harness</title>
+<style>
+  html,body{margin:0;width:100%;height:100%;font:14px system-ui;background:#f4f5f7}
+  #stage{position:relative;width:100%;height:100%;overflow:auto;padding:24px;box-sizing:border-box}
+  button{min-height:40px;padding:8px 14px;border:1px solid #ccd1d8;border-radius:10px;background:white}
+  #aiAgentPanel{position:absolute;left:180px;top:90px;width:640px;height:480px;display:none;visibility:hidden;border:1px solid #ccd1d8;border-radius:18px;background:white;overflow:hidden;box-shadow:0 20px 56px #0003}
+  .ai-agent-window{height:100%;display:flex;flex-direction:column}.ai-title-bar{height:48px;border-bottom:1px solid #ddd}.ai-chat-area{flex:1}.ai-input-area{height:56px;border-top:1px solid #ddd}
+  #settings{margin-top:560px;width:min(860px,calc(100% - 48px));padding:16px;border:1px solid #ccd1d8;border-radius:16px;background:white}
+  .ai-provider-item{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:14px;border:1px solid #ddd;border-radius:14px;margin:10px 0}
+  #aiProviderModal{position:fixed;inset:0;display:none;place-items:start center;padding:10px;overflow-y:auto;z-index:10}
+  #aiProviderModal.show{display:grid}#aiProviderModalScrim{position:fixed;inset:0;background:#0006;opacity:0;pointer-events:none}
+  #aiProviderForm{width:min(720px,calc(100vw - 20px));padding:18px;border:1px solid #ddd;border-radius:22px;background:white;overflow:visible;max-height:none;height:auto}
+  #aiProviderModalInner{display:grid;gap:12px}.field{height:44px;border:1px solid #ddd;border-radius:10px}.long{height:160px}
+</style>
+<div id="stage">
+  <button id="aiFloatingBtn">AI</button>
+  <div id="aiAgentPanel" aria-hidden="true"><div class="ai-agent-window"><div class="ai-title-bar"></div><div class="ai-chat-area"></div><div class="ai-input-area"></div></div></div>
+  <section id="settings"><button id="aiAddProviderBtn">添加模型供应商</button><div id="aiProviderList"><div class="ai-provider-item" data-provider-id="p1"><div><b>Provider 1</b><div>https://example.test/v1</div></div><button data-ai-reveal-provider-key="p1">查看 Key</button><button data-ai-edit-provider="p1">编辑</button></div></div></section>
+  <div id="aiProviderModalScrim"></div><div id="aiProviderModal" aria-hidden="true"><form id="aiProviderForm"><div id="aiProviderModalInner"><h2 id="aiProviderModalTitle">供应商</h2><div class="field"></div><div class="field"></div><div class="field long"></div><div class="field long"></div><button type="button" id="aiProviderCloseBtn">关闭</button></div></form></div>
+</div>
+<script type="module">
+import { Motion } from '../public/vendor/zephyr-motion/index.js';
+await Motion.init({capacity:128});
+window.Motion=Motion;
+const $=s=>document.querySelector(s);
+const panel=$('#aiAgentPanel');
+let panelOrigin=$('#aiFloatingBtn');
+window.openPanel=async()=>{panel.style.display='flex';panel.style.visibility='hidden';panel.classList.add('open');await Motion.aiPanelOpen(panel,panelOrigin,{contentEl:null,mode:'flip',hideSource:false,contentWithPanel:true,radiusTo:18,preset:'mac'});panel.style.visibility='visible'};
+window.closePanel=async()=>{await Motion.aiPanelClose(panel,panelOrigin,{contentEl:null,mode:'flip',hideSource:false,contentWithPanel:true,thenHide:false,preset:'macClose'});panel.style.display='none';Motion.release(panel)};
+const modal=$('#aiProviderModal'), form=$('#aiProviderForm'), inner=$('#aiProviderModalInner');
+window.openProvider=async(trigger)=>{modal.classList.add('show');modal.setAttribute('aria-hidden','false');const rect=trigger.getBoundingClientRect();await Motion.iosAppOpen(form,trigger,{contentEl:inner,cloneSource:true,hideSource:true,radiusFrom:Math.min(rect.width,rect.height)*.225,radiusTo:22,shapePreset:'shape',contentPreset:'content'});form.style.overflow='visible';form.style.maxHeight='none';form.style.height='auto';inner.style.overflow='visible';inner.style.maxHeight='none';window.lastProviderTrigger=trigger};
+window.closeProvider=async()=>{const trigger=window.lastProviderTrigger;await Motion.iosAppClose(form,trigger,{contentEl:inner,restoreSource:false,hideSurface:false,clearSourceVisual:false,release:false,radiusTo:10,shapePreset:'shapeClose',contentPreset:'contentClose'});Motion.restoreSource(trigger);Motion.restoreSources(form);form.querySelector(':scope > [data-motion-source-visual]')?.remove();Motion.release(form);Motion.release(inner);modal.classList.remove('show')};
+</script>

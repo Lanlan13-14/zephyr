@@ -6095,6 +6095,23 @@ function sendNoStorePage(res, file) {
     res.setHeader('Expires', '0');
     return res.sendFile(path.join(__dirname, 'public', file));
 }
+const MOTION_DEMO_ENABLE_FILE = '/tmp/zephyr-motion-demo.enabled';
+const MOTION_DEMO_FILE = path.join(__dirname, 'internal', 'motion-feel.html');
+function requireMotionDemoEnabled(req, res, next) {
+    if (!fs.existsSync(MOTION_DEMO_ENABLE_FILE)) return res.status(404).type('text/plain').send('Not Found');
+    next();
+}
+function serveMotionDemo(req, res) {
+    if (!fs.existsSync(MOTION_DEMO_ENABLE_FILE)) return res.status(404).type('text/plain').send('Not Found');
+    res.set({
+        'Cache-Control': 'no-store, private',
+        'Pragma': 'no-cache',
+        'X-Robots-Tag': 'noindex, nofollow, noarchive',
+    });
+    return res.sendFile(MOTION_DEMO_FILE);
+}
+app.get('/motion-feel.html', requireMotionDemoEnabled, requireSuperAdmin, serveMotionDemo);
+app.get('/motion-feel', requireMotionDemoEnabled, requireSuperAdmin, serveMotionDemo);
 app.get('/app.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'app.html'));
 app.get('/terminal.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'terminal.html'));
 app.get('/rdp.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'rdp.html'));

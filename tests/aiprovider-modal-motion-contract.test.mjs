@@ -59,7 +59,8 @@ test('ai provider open/close use iosApp* identical to SSH key', () => {
     assert.match(appJs, /function aiProviderBtnRadius/);
     assert.match(appJs, /armMotionModalOpen\(Motion, modal, card, inner, aiProviderModalTrigger, 'aiprovider1'\)/);
     assert.match(appJs, /Motion\.iosAppOpen\(card, aiProviderModalTrigger/);
-    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'aiAddProviderBtn'\]\)/);
+    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn'\]\)/);
+    assert.doesNotMatch(appJs, /for \(const id of \[[^\]]*'aiAddProviderBtn'/);
     assert.match(appJs, /#aiAddProviderBtn/);
     assert.match(appJs, /aiProviderModalScrim/);
     const openFn = extractFn(appJs, 'openAiProviderModal');
@@ -90,10 +91,10 @@ test('ai provider CSS is motion-only — old slide/fade removed', () => {
     assert.match(styleCss, /#aiProviderModal\.aiprovider1 \.ai-provider-modal \*/);
     assert.match(styleCss, /#aiProviderModal\.aiprovider1 \.ai-provider-modal \*[\s\S]*?transition:\s*none\s*!important/);
     // old CSS sheet animation must not target the motion modal
-    assert.doesNotMatch(styleCss, /#aiProviderModal\.show \.ai-provider-modal\s*\{[^}]*aiIosSlideSheet/);
-    assert.doesNotMatch(styleCss, /#aiProviderModal\.app-visible \.ai-provider-modal\s*\{[^}]*aiIosSlideSheet/);
-    assert.doesNotMatch(styleCss, /\.ai-provider-modal \.form-row\s*,[\s\S]{0,200}?aiIosFadeLift/);
-    assert.match(styleCss, /#aiAddProviderBtn\.connection-pressing/);
+    assert.doesNotMatch(styleCss, /#aiProviderModal\.show \.ai-provider-modal\s*\{[^}]*legacyAiSlideSheet/);
+    assert.doesNotMatch(styleCss, /#aiProviderModal\.app-visible \.ai-provider-modal\s*\{[^}]*legacyAiSlideSheet/);
+    assert.doesNotMatch(styleCss, /\.ai-provider-modal \.form-row\s*,[\s\S]{0,200}?legacyAiFadeLift/);
+    assert.doesNotMatch(styleCss, /#aiAddProviderBtn\.connection-pressing/);
     // generic fade excludes ai-provider-modal
     assert.match(styleCss, /\.connection-modal:not\(\.ssh-key-modal\):not\(\.snippet-modal\):not\(\.proxy-modal\):not\(\.ai-provider-modal\)/);
 });

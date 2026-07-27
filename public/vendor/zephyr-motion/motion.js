@@ -868,22 +868,7 @@ export const Motion = {
       from: { opacity: 0, y: -6, scale: 0.98 }, to: { opacity: 1, y: 0, scale: 1 },
       preset: 'snappy', css: 'transferPopoverIn',
     },
-    // ── AI ──────────────────────────────────────────────────────────────
-    aiIosFadeLift: {
-      from: { opacity: 0, y: 14, scale: 0.965, blur: 8, saturate: 0.9 },
-      to: { opacity: 1, y: 0, scale: 1, blur: 0, saturate: 1 },
-      preset: 'ui', css: 'aiIosFadeLift',
-    },
-    aiIosPopIn: {
-      from: { opacity: 0, scale: 0.92, y: 8, blur: 10 },
-      to: { opacity: 1, scale: 1, y: 0, blur: 0 },
-      preset: 'morph', css: 'aiIosPopIn',
-    },
-    aiIosSlideSheet: {
-      from: { opacity: 0, y: 18, scale: 0.975, blur: 10 },
-      to: { opacity: 1, y: 0, scale: 1, blur: 0 },
-      preset: 'sheet', css: 'aiIosSlideSheet',
-    },
+    // AI uses semantic panel/popover APIs below; legacy named recipes removed.
     // ── terminal / dock / smartbar ──────────────────────────────────────
     terminalWindowIn: {
       from: { opacity: 0, y: 18, scale: 0.965, blur: 10 },
@@ -992,7 +977,7 @@ export const Motion = {
     'novncLoader', 'novncBell', 'transferIndeterminate',
     'dockActivePulse', 'dockDropTargetPulse', 'panelTrafficIslandBreath',
     'terminalIslandBreath', 'terminalIslandDotBreath', 'terminalIslandLiquidGlow',
-    'aiIosTraceGlow', 'appThemeRipple', 'themeToggleRipple',
+    'appThemeRipple', 'themeToggleRipple',
   ]),
 
   /** Look up a recipe by name (css keyframe name or short alias). */
@@ -1063,14 +1048,14 @@ export const Motion = {
     return this.play(el, opts.subtle ? 'notesListItemIn' : 'fadeIn', opts);
   },
 
-  /** Blurred lift enter — aiIosFadeLift / terminalWindowIn class. */
+  /** Blurred lift enter — terminalWindowIn or generic fadeIn. */
   fadeLiftBlur(el, opts = {}) {
-    return this.play(el, opts.kind === 'window' ? 'terminalWindowIn' : 'aiIosFadeLift', opts);
+    return this.play(el, opts.kind === 'window' ? 'terminalWindowIn' : 'fadeIn', opts);
   },
 
-  /** Pop scale enter — aiIosPopIn / panel menus. */
+  /** Pop scale enter through the semantic present API. */
   popIn(el, opts = {}) {
-    return this.play(el, 'aiIosPopIn', opts);
+    return this.present(el, { from: { opacity: 0, scale: opts.fromScale ?? 0.96, y: opts.travel ?? 6 }, preset: opts.preset ?? 'snappy' });
   },
 
   /** Connection card enter/exit. */
@@ -2550,11 +2535,11 @@ export const Motion = {
     })));
   },
 
-  // ── AI assistant panel (production aiIos* keyframes) ───────────────────
+  // ── AI assistant panel semantic API (no legacy CSS/keyframe dependency) ─
 
   /**
    * AI panel open — product name for openAiAssistantPanel wiring later.
-   * Uses macPanel when a trigger button is provided; else play aiIosPopIn.
+   * Uses macPanel when a trigger button is provided; otherwise present().
    *
    *   Motion.aiPanelOpen(panel, triggerBtn, { contentEl })
    */
@@ -2570,11 +2555,14 @@ export const Motion = {
         ...opts,
       });
     }
-    // No trigger: recipe pop-in
+    // No trigger: use the same semantic spring without any legacy AI recipe.
     panel.hidden = false;
     panel.style.visibility = 'visible';
     panel.style.display = panel.style.display === 'none' ? 'flex' : (panel.style.display || 'flex');
-    return this.play(panel, opts.recipe || 'aiIosPopIn', opts);
+    return this.present(panel, {
+      from: { opacity: 0, scale: opts.fromScale ?? 0.96, y: opts.travel ?? 8, x: 0 },
+      preset: opts.preset ?? 'mac',
+    });
   },
 
   /**
@@ -2592,7 +2580,10 @@ export const Motion = {
         ...opts,
       });
     }
-    await this.play(panel, opts.recipe || 'floatingPanelCloseToButton', { ...opts, exit: true });
+    await this.dismiss(panel, {
+      to: { opacity: 0, scale: opts.fromScale ?? 0.96, y: opts.travel ?? 8, x: 0 },
+      preset: opts.preset ?? 'macClose',
+    });
     if (opts.thenHide !== false) {
       panel.style.visibility = 'hidden';
     }

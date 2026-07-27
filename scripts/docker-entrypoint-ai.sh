@@ -2,6 +2,11 @@
 # Start zephyr-ai (Go) then Node control plane. Same container, loopback AI.
 set -eu
 
+# The motion feel/demo page is deliberately disabled on every container start.
+# Enable it only for the current running container with:
+#   docker exec <container> touch /tmp/zephyr-motion-demo.enabled
+rm -f /tmp/zephyr-motion-demo.enabled
+
 DATA_DIR="${ZEPHYR_DATA_DIR:-/app/data}"
 AI_DATA="${ZEPHYR_AI_DATA:-$DATA_DIR/zephyr-ai}"
 AI_LISTEN="${ZEPHYR_AI_LISTEN:-127.0.0.1:8450}"

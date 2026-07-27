@@ -7,7 +7,7 @@
  * States: confirm → working → done | error (invalid/expired/missing token).
  */
 
-import { t, initI18n } from './i18n/runtime.js?v=20260727-password-code-button1';
+import { t, initI18n } from './i18n/runtime.js?v=20260727-ai-motion-engine1';
 
 const el = {
     warning: document.getElementById('rollbackWarning'),
