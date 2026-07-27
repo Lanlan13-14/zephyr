@@ -608,9 +608,10 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	s.launchRun(runID, hub, cfg)
+	ticket := s.issueTicket(userID, runID, sessionID)
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "approved": true, "resumed": true,
-		"runId": runID, "callId": callID, "sessionId": sessionID,
+		"runId": runID, "callId": callID, "sessionId": sessionID, "ticket": ticket,
 	})
 }
 

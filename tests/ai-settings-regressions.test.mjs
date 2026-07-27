@@ -41,6 +41,22 @@ test('requested AI checkboxes use the shared switch control', () => {
     }
 });
 
+test('provider sharing and previous-response switches use regular text with right-aligned toggles', () => {
+    for (const [id, label] of [
+        ['aiProviderShareUsers', '共享给所有用户'],
+        ['aiProviderShareAdmins', '共享给所有管理员'],
+        ['aiProviderUsePreviousResponse', 'OpenAI Responses 使用 previous_response_id（兼容接口慎开）'],
+    ]) {
+        const row = new RegExp(`<label class="settings-switch-option" for="${id}">([\\s\\S]*?)</label>`).exec(appHtml)?.[1] || '';
+        assert.match(row, new RegExp(`settings-switch-label[^>]*data-i18n="${label.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}"`));
+        assert.doesNotMatch(row, /<strong/);
+        assert.match(row, new RegExp(`connection-share-switch[^>]*><input type="checkbox" id="${id}"`));
+    }
+    assert.match(styleCss, /\.ai-provider-modal \.form-group > label\.settings-switch-option\s*\{[\s\S]*?display:\s*flex[\s\S]*?justify-content:\s*space-between/);
+    assert.match(styleCss, /\.ai-provider-modal \.settings-switch-label\s*\{[\s\S]*?font-weight:\s*400/);
+    assert.match(styleCss, /\.ai-provider-modal \.settings-switch-option > \.connection-share-switch\s*\{[^}]*margin-left:\s*auto/);
+});
+
 test('chat mode segments share control radius with adjacent UI buttons', () => {
     assert.match(styleCss, /\.ai-header-actions \.ui-btn,\s*\.ai-collab-segment,\s*\.ai-chat-permission-segment\s*\{\s*border-radius:\s*var\(--radius-control\)/);
     assert.doesNotMatch(styleCss, /\.ai-collab-segment[^{]*\{[^}]*radius-pill/);

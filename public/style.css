@@ -8861,6 +8861,25 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
 .ai-provider-modal .form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
 .ai-provider-modal .form-group { min-width: 0; margin-bottom: 0; }
 .ai-provider-modal .form-group label { display: block; margin: 0 0 6px; font-size: 12px; line-height: 1.25; color: var(--text-secondary); text-transform: none; }
+.ai-provider-modal .form-group > label.settings-switch-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    width: 100%;
+    margin: 0;
+}
+.ai-provider-modal .settings-switch-copy { min-width: 0; flex: 1 1 auto; }
+.ai-provider-modal .settings-switch-label {
+    display: block;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.35;
+}
+.ai-provider-modal .settings-switch-option > .connection-share-switch { flex: 0 0 auto; margin-left: auto; }
+.ai-provider-switch-group { display: flex; align-items: stretch; }
+.ai-provider-switch-group > .settings-switch-option { min-height: 100%; }
 .ai-provider-modal input, .ai-provider-modal select, .ai-provider-modal textarea {
     width: 100%; min-width: 0; box-sizing: border-box; padding: 11px 13px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font: inherit;
 }

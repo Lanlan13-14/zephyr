@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260727-ai-motion-engine1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260727-ai-motion-engine1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260727-ai-confirm-fix1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260727-ai-confirm-fix1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -4980,9 +4980,9 @@ function updateAiPermModeHint() {
     if (!hint) return;
     const mode = getAiSegmentValue('aiPermRuleMode', 'ask');
     hint.textContent = mode === 'auto'
-        ? 'Auto：只读工具自动通过，写操作仍询问'
+        ? t('Auto：只读工具自动通过，写操作仍询问')
         : mode === 'yolo'
-            ? 'Yolo：除 Deny 规则外全部自动执行（高风险）'
+            ? t('Yolo：除 Deny 规则外全部自动执行（高风险）')
             : t('Ask：写操作默认询问');
 }
 function bindAiSegmentControls(root = document) {
@@ -6224,9 +6224,19 @@ function handleAiCodeActionClick(event) {
 }
 function handleAiChatAreaClick(event) {
     if (handleAiCodeActionClick(event)) return;
-    const approve = event.target.dataset.aiConfirmApprove, deny = event.target.dataset.aiConfirmDeny;
-    if (approve) resolveAiConfirmation(approve, true);
-    if (deny) resolveAiConfirmation(deny, false);
+    const button = event.target.closest?.('[data-ai-confirm-approve],[data-ai-confirm-deny]');
+    if (!button || button.disabled) return;
+    const approveId = button.dataset.aiConfirmApprove;
+    const denyId = button.dataset.aiConfirmDeny;
+    const id = approveId || denyId || '';
+    if (!id) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const card = button.closest('.ai-confirm-card');
+    card?.querySelectorAll?.('[data-ai-confirm-approve],[data-ai-confirm-deny]').forEach((item) => { item.disabled = true; });
+    resolveAiConfirmation(id, !!approveId).catch(() => {
+        card?.querySelectorAll?.('[data-ai-confirm-approve],[data-ai-confirm-deny]').forEach((item) => { item.disabled = false; });
+    });
 }
 function closeAiBrowserForSession(id) {
     const sessionId = String(id || '').trim();
@@ -7114,6 +7124,13 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                         context,
                         sessionId,
                     });
+                    // Go has paused at the permission gate. Close only this SSE
+                    // listener (not the server run) so resume does not create a
+                    // second subscriber and the first Approve click cannot be
+                    // intercepted by stopAiResponse().
+                    aiStoppedControllers.add(abortController);
+                    abortController.abort();
+                    clearAiSessionRun(sessionId, abortController);
                     break;
                 }
                 case 'client.capture': {
@@ -7323,13 +7340,24 @@ function appendAiConfirmation(confirmation, pending = {}) {
 async function resolveAiConfirmation(id, approve) {
     const pending = aiPendingConfirmations.get(id);
     const sessionId = pending?.sessionId || aiCurrentSessionId;
-    if (aiIsSessionRunning(sessionId)) { stopAiResponse(sessionId); return; }
+    // A permission ask is a paused run, not an active response to abort. Stale
+    // SSE/controller bookkeeping must never turn the first Approve click into
+    // stop/deny; release only the local listener and resume the same run below.
+    const activeController = aiRunForSession(sessionId);
+    if (pending && activeController) {
+        aiStoppedControllers.add(activeController);
+        activeController.abort();
+        clearAiSessionRun(sessionId, activeController);
+    } else if (aiIsSessionRunning(sessionId)) {
+        stopAiResponse(sessionId);
+        return;
+    }
     const abortController = new AbortController();
     registerAiSessionRun(sessionId, abortController);
     try {
         // Go runtime permission path (grant + optional follow-up).
         if (pending?.runtime && pending.runId) {
-            await api(`/api/ai/runtime/runs/${encodeURIComponent(pending.runId)}/permission`, {
+            const permissionResult = await api(`/api/ai/runtime/runs/${encodeURIComponent(pending.runId)}/permission`, {
                 method: 'POST',
                 signal: abortController.signal,
                 body: JSON.stringify({
@@ -7358,7 +7386,11 @@ async function resolveAiConfirmation(id, approve) {
                 const contController = new AbortController();
                 registerAiSessionRun(sessionId, contController);
                 try {
-                    const ticket = session?.runtimeTicket || '';
+                    const ticket = permissionResult?.ticket || session?.runtimeTicket || '';
+                    if (session && permissionResult?.ticket) {
+                        session.runtimeTicket = permissionResult.ticket;
+                        saveAiChats();
+                    }
                     const ssePath = `/api/ai/runtime/runs/${encodeURIComponent(pending.runId)}/events?ticket=${encodeURIComponent(ticket)}`;
                     // If ticket missing, status poll only — user still sees tool traces on next message.
                     if (ticket) {
@@ -8872,7 +8904,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260727-ai-motion-engine1')
+        return import('./vendor/zephyr-motion/index.js?v=20260727-ai-confirm-fix1')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');

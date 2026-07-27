@@ -288,6 +288,8 @@
   "只读自动，写操作询问": "Auto for reads, ask for writes",
   "除 deny 外全自动（危险）": "Full auto except deny (dangerous)",
   "Ask：写操作默认询问": "Ask: prompt on writes by default",
+  "Auto：只读工具自动通过，写操作仍询问": "Auto: allow read-only tools; prompt on writes",
+  "Yolo：除 Deny 规则外全部自动执行（高风险）": "Yolo: automatically run everything except Deny rules (high risk)",
   "Deny（永久拒绝）": "Deny (always)",
   "Allow（永不询问）": "Allow (never ask)",
   "Ask（强制询问）": "Ask (force prompt)",

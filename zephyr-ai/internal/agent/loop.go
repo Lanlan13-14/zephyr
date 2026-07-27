@@ -116,13 +116,14 @@ type Runner struct {
 }
 
 type callWork struct {
-	call   provider.ToolCall
-	t      tool.Tool
-	args   json.RawMessage
-	result any
-	err    error
-	ms     int64
-	skip   bool // already resolved (capture inject)
+	call               provider.ToolCall
+	t                  tool.Tool
+	args               json.RawMessage
+	result             any
+	err                error
+	ms                 int64
+	skip               bool // already resolved (capture inject)
+	permissionApproved bool // runtime gate approved; platform host must not ask again
 }
 
 func NewRunner() *Runner { return &Runner{} }
@@ -282,7 +283,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 			works[wi].skip = false
 			works[wi].err = nil
 			works[wi].result = nil
-			ctx = platform.WithConfirmedCall(ctx, works[wi].call.Name)
+			works[wi].permissionApproved = true
 		}
 		if err := r.executeWorks(ctx, cfg, works, parallel, &metrics); err != nil {
 			if pe, ok := err.(*PauseError); ok {
@@ -452,6 +453,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				w.err = fmt.Errorf("permission denied for tool %s", w.call.Name)
 				continue
 			}
+			autoApproved := false
 			if dec == permission.Ask && cfg.AutoConfirm && !permission.HasExplicitAsk(cfg.PermissionPolicy, permission.Request{
 				Tool: w.call.Name, Args: w.args, ReadOnly: w.t.ReadOnly(), Risk: string(w.t.Risk()),
 			}) {
@@ -467,6 +469,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 					}
 				}
 				dec = permission.Allow
+				autoApproved = true
 			}
 			if dec == permission.Ask {
 				ask := event.PermissionAsk{
@@ -482,6 +485,11 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				}
 				return r.persistPause(cfg, metrics, pe)
 			}
+			// The runtime permission engine is authoritative. Carry the approval to
+			// the Node platform host so its canonical/legacy gate does not ask a
+			// second time. Auto-confirm and YOLO both land here; explicit Ask never
+			// does because it returned above. Read-only calls need no confirmation.
+			w.permissionApproved = !w.t.ReadOnly() && (autoApproved || dec == permission.Allow)
 		}
 
 		if err := r.executeWorks(ctx, cfg, works, parallel, &metrics); err != nil {
@@ -649,8 +657,12 @@ func (r *Runner) runOneTool(ctx context.Context, cfg Config, w *callWork, metric
 	_ = r.emit(cfg, event.TypeToolStart, event.ToolStart{
 		CallID: w.call.ID, Name: w.call.Name, Args: json.RawMessage(w.args),
 	})
+	execCtx := ctx
+	if w.permissionApproved {
+		execCtx = platform.WithConfirmedCall(ctx, w.call.Name)
+	}
 	st := time.Now()
-	res, err := w.t.Execute(ctx, w.args)
+	res, err := w.t.Execute(execCtx, w.args)
 	ms := time.Since(st).Milliseconds()
 	if mu != nil {
 		mu.Lock()

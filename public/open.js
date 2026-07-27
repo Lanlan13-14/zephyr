@@ -10,7 +10,7 @@
  * Never writes passwords into localStorage, draft DOM values, or logs.
  */
 
-import { t, initI18n, applyDomI18n } from './i18n/runtime.js?v=20260727-ai-motion-engine1';
+import { t, initI18n, applyDomI18n } from './i18n/runtime.js?v=20260727-ai-confirm-fix1';
 
 const STORAGE_KEY = 'zephyr:deeplink:pending';
 const channel = ('BroadcastChannel' in window) ? new BroadcastChannel('zephyr-deeplink') : null;

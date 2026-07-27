@@ -42,6 +42,12 @@ func confirmedCallFromContext(ctx context.Context, toolName string) bool {
 	return approved != "" && approved == toolName
 }
 
+// IsConfirmedCall reports whether the runtime approved this exact platform tool.
+// It is intentionally tool-scoped: approval for one tool never covers another.
+func IsConfirmedCall(ctx context.Context, toolName string) bool {
+	return confirmedCallFromContext(ctx, toolName)
+}
+
 func NewHost(baseURL, adminToken string) *Host {
 	h := &Host{
 		BaseURL:    strings.TrimRight(baseURL, "/"),

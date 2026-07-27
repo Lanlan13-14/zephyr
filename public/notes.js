@@ -5,7 +5,7 @@
  */
 
 import { renderMarkdown as renderMarkdownFull, escapeHtml as mdEscapeHtml } from './markdown.js?v=20260720-notes-md1';
-import { t } from './i18n/runtime.js?v=20260727-ai-motion-engine1';
+import { t } from './i18n/runtime.js?v=20260727-ai-confirm-fix1';
 
 const NOTES_DEBOUNCE_MS = 800;
 const NOTES_SEARCH_MS = 180;

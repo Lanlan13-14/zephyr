@@ -31,6 +31,6 @@ test('container restart always removes the temporary enable marker', () => {
 });
 
 test('internal demo imports only the public motion runtime', () => {
-  assert.match(demo, /from '\/vendor\/zephyr-motion\/index\.js\?v=20260727-ai-motion-engine1'/);
+  assert.match(demo, /from '\/vendor\/zephyr-motion\/index\.js\?v=20260727-ai-confirm-fix1'/);
   assert.doesNotMatch(demo, /fetch\(|WebSocket|XMLHttpRequest|document\.cookie/);
 });

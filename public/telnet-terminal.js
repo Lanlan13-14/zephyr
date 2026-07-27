@@ -4,8 +4,8 @@ import {
     fitWTerm as xtermFitWTerm,
     proposeDimensions as xtermProposeDimensions,
     getWTermCellMetrics as xtermGetCellMetrics,
-} from './wterm-xterm-fit.js?v=20260727-ai-motion-engine1';
-import { t, initI18n } from './i18n/runtime.js?v=20260727-ai-motion-engine1';
+} from './wterm-xterm-fit.js?v=20260727-ai-confirm-fix1';
+import { t, initI18n } from './i18n/runtime.js?v=20260727-ai-confirm-fix1';
 window.__zephyrT = t;
 import {
     createSshKeyboard,
@@ -13,7 +13,7 @@ import {
     LiftMode as SoftKeyboardLiftMode,
 } from './ssh-keyboard/index.js?v=20260723-sync2';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
-import { createTerminalHistoryGesture } from './terminal-history-gesture.js?v=20260727-ai-motion-engine1';
+import { createTerminalHistoryGesture } from './terminal-history-gesture.js?v=20260727-ai-confirm-fix1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
     allowScrollDuringTyping,
