@@ -128,7 +128,7 @@ const PLAYBOOKS = Object.freeze([
 - 使用 terminal_send_v1 向活跃会话发送文本；默认追加换行，会实际影响远端，必须等待确认。只填入而不发送的纯 UI 行为仍用 ui_action run:false。
 - 发送后用 terminal_wait_v1 等待明确提示符、成功标志或错误文本；超时时根据返回的最新输出判断，不能声称成功。
 - TELNET 不支持 remote_execute/SFTP；必须使用 terminal_send_v1 + terminal_wait_v1。SSH 后台非交互命令仍优先 remote_execute；用户明确要求在当前可见 shell 中操作时才用 terminal_send_v1。
-- 不猜 sessionId：从当前 Zephyr 上下文里的 terminalOutputs/sessionId 选择；歧义时先 terminal_read_v1 验证目标。`,
+- 不猜 sessionId：优先使用当前 Zephyr 上下文里的 activeTerminalSessionId，或省略 sessionId 让 terminal_*_v1 默认选当前活跃会话；也可用 terminalOutputs 中明确列出的真实 sessionId。禁止把 connectionId 当成 sessionId 或自行添加 ssh:/telnet: 前缀。歧义时先 terminal_read_v1 验证目标。`,
     }),
     Object.freeze({
         id: 'asset-management-v1',

@@ -38,12 +38,12 @@ test('index.html marks login strings with data-i18n and locale switch', () => {
     assert.match(html, /data-i18n="登录"/);
     assert.match(html, /data-i18n="使用 Passkey 登录"/);
     assert.match(html, /id="localeSelectLogin"/);
-    assert.match(html, /client\.js\?v=20260727-ai-confirm-fix1/);
+    assert.match(html, /client\.js\?v=20260727-ai-terminal-session1/);
 });
 
 test('client.js uses i18n runtime for user-facing strings', () => {
     const js = read('public/client.js');
-    assert.match(js, /from '\.\/i18n\/runtime\.js\?v=20260727-ai-confirm-fix1'/);
+    assert.match(js, /from '\.\/i18n\/runtime\.js\?v=20260727-ai-terminal-session1'/);
     assert.match(js, /t\('请求失败'\)/);
     assert.match(js, /t\('请先完成人机验证'\)/);
     assert.match(js, /t\('\{brand\} - 登录'/);

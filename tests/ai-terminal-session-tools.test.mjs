@@ -51,3 +51,29 @@ test('invalid wait regex is rejected before polling', async () => {
   const h = harness('SSH');
   await assert.rejects(() => terminalTools.waitSession(h.sessions, h.history, h.user, { sessionId: 'session-1', pattern: '[', regex: true }), (error) => error.code === 'invalid_wait_pattern');
 });
+
+
+test('terminal tools resolve active context, tab, connection id, name and prefixed aliases', () => {
+  const h = harness('SSH');
+  const context = {
+    activeTerminalSessionId: 'session-1',
+    activeTerminalTab: 'tab-1',
+    activeTerminalConnectionId: 'conn-1',
+    terminalOutputs: [{ sessionId: 'session-1', tabId: 'tab-1', connectionId: 'conn-1', name: 'box' }],
+  };
+  for (const sessionId of [undefined, 'active', 'tab-1', 'conn-1', 'box', 'ssh:session-1', 'ssh:conn-1']) {
+    const result = terminalTools.readSession(h.sessions, h.history, h.user, { sessionId, maxChars: 4000 }, context);
+    assert.equal(result.sessionId, 'session-1');
+  }
+  const sent = terminalTools.sendSession(h.sessions, h.history, h.user, { text: 'uptime' }, context);
+  assert.equal(sent.session.sessionId, 'session-1');
+  assert.deepEqual(h.writes, ['uptime\n']);
+});
+
+test('terminal alias fallback remains owner-scoped and rejects ambiguous connections', () => {
+  const h = harness('SSH');
+  const second = { ...h.session, id: 'session-2', sshStream: h.session.sshStream };
+  h.sessions.set(second.id, second);
+  assert.throws(() => terminalTools.readSession(h.sessions, h.history, h.user, { sessionId: 'conn-1' }), (error) => error.status === 404);
+  assert.throws(() => terminalTools.readSession(h.sessions, h.history, { userId: 'u2', username: 'bob' }, { sessionId: 'session-1' }), (error) => error.status === 404);
+});

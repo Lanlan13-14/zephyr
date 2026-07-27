@@ -65,9 +65,9 @@ const CANONICAL_TOOL_SCHEMAS = Object.freeze({
     snippet_create_v1: snippetTools.SNIPPET_CREATE_SCHEMA,
     snippet_update_v1: snippetTools.SNIPPET_UPDATE_SCHEMA,
     snippet_delete_v1: snippetTools.SNIPPET_DELETE_SCHEMA,
-    terminal_read_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160 }, maxChars: { type: 'number', minimum: 1000, maximum: 120000 } }, required: ['sessionId'], additionalProperties: false }),
-    terminal_send_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160 }, text: { type: 'string', minLength: 1, maxLength: 20000 }, appendNewline: { type: 'boolean' } }, required: ['sessionId', 'text'], additionalProperties: false }),
-    terminal_wait_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160 }, pattern: { type: 'string', minLength: 1, maxLength: 500 }, regex: { type: 'boolean' }, caseSensitive: { type: 'boolean' }, timeoutMs: { type: 'number', minimum: 100, maximum: 120000 }, pollMs: { type: 'number', minimum: 50, maximum: 2000 }, maxChars: { type: 'number', minimum: 1000, maximum: 120000 } }, required: ['sessionId', 'pattern'], additionalProperties: false }),
+    terminal_read_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160, description: '可省略；默认使用当前活跃 SSH/TELNET 会话。也可传真实 sessionId、tabId、唯一 connectionId 或连接名。' }, maxChars: { type: 'number', minimum: 1000, maximum: 120000 } }, required: [], additionalProperties: false }),
+    terminal_send_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160, description: '可省略；默认使用当前活跃 SSH/TELNET 会话。也可传真实 sessionId、tabId、唯一 connectionId 或连接名。' }, text: { type: 'string', minLength: 1, maxLength: 20000 }, appendNewline: { type: 'boolean' } }, required: ['text'], additionalProperties: false }),
+    terminal_wait_v1: Object.freeze({ type: 'object', properties: { sessionId: { type: 'string', minLength: 1, maxLength: 160, description: '可省略；默认使用当前活跃 SSH/TELNET 会话。也可传真实 sessionId、tabId、唯一 connectionId 或连接名。' }, pattern: { type: 'string', minLength: 1, maxLength: 500 }, regex: { type: 'boolean' }, caseSensitive: { type: 'boolean' }, timeoutMs: { type: 'number', minimum: 100, maximum: 120000 }, pollMs: { type: 'number', minimum: 50, maximum: 2000 }, maxChars: { type: 'number', minimum: 1000, maximum: 120000 } }, required: ['pattern'], additionalProperties: false }),
     browser_inspect_v1: Object.freeze({ type: 'object', properties: { session: { type: 'string', maxLength: 120 }, max: { type: 'number', minimum: 1, maximum: 200 } }, additionalProperties: false }),
     browser_click_v1: Object.freeze({ type: 'object', properties: { session: { type: 'string', maxLength: 120 }, elementRef: { type: 'string', minLength: 1, maxLength: 120 }, domRevision: { type: 'number', exclusiveMinimum: 0 } }, required: ['elementRef', 'domRevision'], additionalProperties: false }),
     browser_type_v1: Object.freeze({ type: 'object', properties: { session: { type: 'string', maxLength: 120 }, elementRef: { type: 'string', minLength: 1, maxLength: 120 }, domRevision: { type: 'number', exclusiveMinimum: 0 }, text: { type: 'string', maxLength: 20000 }, clear: { type: 'boolean' } }, required: ['elementRef', 'domRevision', 'text'], additionalProperties: false }),
@@ -678,9 +678,9 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'snippet_create_v1', description: '为当前用户创建代码片段；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.snippet_create_v1 } });
     tools.push({ type: 'function', function: { name: 'snippet_update_v1', description: '修改当前用户的代码片段。必须传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.snippet_update_v1 } });
     tools.push({ type: 'function', function: { name: 'snippet_delete_v1', description: '删除当前用户的代码片段。必须传 expectedRevision；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.snippet_delete_v1 } });
-    tools.push({ type: 'function', function: { name: 'terminal_read_v1', description: '从服务端权威 SSH/TELNET 会话历史读取指定 sessionId 的最新输出，不依赖当前页面是否可见。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_read_v1 } });
-    tools.push({ type: 'function', function: { name: 'terminal_send_v1', description: '向指定 SSH/TELNET 活跃会话发送文本，可选择是否追加换行。会实际影响远程会话，需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_send_v1 } });
-    tools.push({ type: 'function', function: { name: 'terminal_wait_v1', description: '等待指定 SSH/TELNET 会话输出出现文本或正则模式，直到匹配或超时。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_wait_v1 } });
+    tools.push({ type: 'function', function: { name: 'terminal_read_v1', description: '从服务端权威 SSH/TELNET 会话历史读取最新输出。sessionId 可省略以使用当前活跃终端，也可传上下文列出的真实 sessionId/tabId/唯一 connectionId/连接名；禁止猜测。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_read_v1 } });
+    tools.push({ type: 'function', function: { name: 'terminal_send_v1', description: '向 SSH/TELNET 活跃会话发送文本。sessionId 可省略以使用当前活跃终端；会实际影响远程会话，需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_send_v1 } });
+    tools.push({ type: 'function', function: { name: 'terminal_wait_v1', description: '等待 SSH/TELNET 会话输出出现文本或正则模式。sessionId 可省略以使用当前活跃终端，直到匹配或超时。', parameters: CANONICAL_TOOL_SCHEMAS.terminal_wait_v1 } });
     tools.push({ type: 'function', function: { name: 'agent_list_v1', description: '列出当前用户在线的 Zephyr Agent 设备及只读、协议、文件能力元数据。', parameters: CANONICAL_TOOL_SCHEMAS.agent_list_v1 } });
     tools.push({ type: 'function', function: { name: 'agent_get_v1', description: '读取当前用户一台在线 Agent 设备的公开元数据。', parameters: CANONICAL_TOOL_SCHEMAS.agent_get_v1 } });
     tools.push({ type: 'function', function: { name: 'agent_file_list_v1', description: '列出 Agent 共享目录中的文件和文件夹。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_list_v1 } });
@@ -1332,14 +1332,19 @@ function formatAiContextForPrompt(context = {}) {
     if (c.tags.length) lines.push(`关联标签：${c.tags.join(', ')}`);
     if (c.connections.length) lines.push(`当前连接上下文：${c.connections.slice(0, 12).map((x) => `${x.protocol || 'SSH'}:${x.name || x.id}(${x.username || '-'}@${x.host || '-'})${Array.isArray(x.tags) && x.tags.length ? `[${x.tags.join(',')}]` : ''}`).join('; ')}`);
     const terminalOutputs = Array.isArray(c.terminalOutputs) ? c.terminalOutputs : [];
+    const activeTerminalSessionId = String(c.activeTerminalSessionId || terminalOutputs[0]?.sessionId || terminalOutputs[0]?.tabId || '').trim();
+    if (activeTerminalSessionId) {
+        lines.push(`当前活跃终端真实 sessionId：${activeTerminalSessionId}（直接用于 terminal_read_v1 / terminal_send_v1 / terminal_wait_v1；不要改写、加 ssh: 前缀或用 connectionId 猜测）`);
+    }
     if (terminalOutputs.length) {
         const rendered = terminalOutputs.slice(0, 3).map((t) => {
-            const label = `${t.name || t.tabId || '终端'} ${t.username || '-'}@${t.host || '-'} ${t.status ? `(${t.status})` : ''}`.trim();
+            const sid = String(t.sessionId || t.tabId || '').trim();
+            const label = `${t.name || t.tabId || '终端'} sessionId=${sid || '[缺失]'} connectionId=${t.connectionId || '-'} ${t.username || '-'}@${t.host || '-'} ${t.status ? `(${t.status})` : ''}`.trim();
             const text = tailText(t.text || '', 6000) || '[无可见输出]';
             const input = t.currentInput ? `\n当前输入框：${String(t.currentInput).slice(0, 1000)}` : '';
             return `${label}${t.truncated ? '（输出已截断为尾部）' : ''}${input}\n~~~text\n${text}\n~~~`;
         }).join('\n');
-        lines.push(`当前 SSH/TELNET 终端输出快照（sessionId 可用于 terminal_read_v1/send_v1/wait_v1；需要服务端权威历史时优先 canonical v1）：\n${rendered}`);
+        lines.push(`当前 SSH/TELNET 终端输出快照（每项已列出真实 sessionId；需要服务端权威历史时优先 canonical v1）：\n${rendered}`);
     }
     const remoteDesktopSnapshots = Array.isArray(c.remoteDesktopSnapshots) ? c.remoteDesktopSnapshots : [];
     const rdps = remoteDesktopSnapshots.filter((r) => ['RDP', 'VNC'].includes(String(r.protocol || '').toUpperCase()));
@@ -2058,19 +2063,19 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
         case 'terminal_read_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 if (!deps.terminalSessionTools || !deps.terminalSessions || !deps.terminalHistory || !ctx.user) throw new Error('终端会话服务不可用');
-                return { session: deps.terminalSessionTools.readSession(deps.terminalSessions, deps.terminalHistory, ctx.user, args) };
+                return { session: deps.terminalSessionTools.readSession(deps.terminalSessions, deps.terminalHistory, ctx.user, args, ctx.context || {}) };
             });
         case 'terminal_send_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 if (!deps.terminalSessionTools || !deps.terminalSessions || !deps.terminalHistory || !ctx.user) throw new Error('终端会话服务不可用');
-                const result = deps.terminalSessionTools.sendSession(deps.terminalSessions, deps.terminalHistory, ctx.user, args);
+                const result = deps.terminalSessionTools.sendSession(deps.terminalSessions, deps.terminalHistory, ctx.user, args, ctx.context || {});
                 deps.addActivity?.(`AI 向 ${result.session.protocol} 会话发送输入：${result.session.name || result.session.sessionId}`, ctx.user.userId);
                 return result;
             });
         case 'terminal_wait_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 if (!deps.terminalSessionTools || !deps.terminalSessions || !deps.terminalHistory || !ctx.user) throw new Error('终端会话服务不可用');
-                return deps.terminalSessionTools.waitSession(deps.terminalSessions, deps.terminalHistory, ctx.user, args, ctx.signal);
+                return deps.terminalSessionTools.waitSession(deps.terminalSessions, deps.terminalHistory, ctx.user, args, ctx.signal, ctx.context || {});
             });
         case 'agent_list_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {

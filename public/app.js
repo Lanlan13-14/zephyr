@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260727-ai-confirm-fix1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260727-ai-confirm-fix1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260727-ai-terminal-session1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260727-ai-terminal-session1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -6339,7 +6339,31 @@ function collectAiContext(options = {}) {
     const view = document.querySelector('.nav-tab.active')?.dataset.view || '';
     const terminalOutputs = collectAiTerminalOutputs();
     const remoteDesktopSnapshots = collectAiRemoteDesktopSnapshots({ includeImage: !!options.includeRemoteDesktopImages });
-    return { locale: getLocale(), view, aiChatSessionId: contextSession?.id || '', activeChatTitle: contextSession?.title || '', activeTerminalTab, activeConnectionIds, connections: contextConnections, tags, terminalOutputs, remoteDesktopSnapshots };
+    const activeTerminal = terminalOutputs.find((item) => item.tabId === activeTerminalTab) || terminalOutputs[0] || null;
+    return {
+        locale: getLocale(),
+        view,
+        aiChatSessionId: contextSession?.id || '',
+        activeChatTitle: contextSession?.title || '',
+        activeTerminalTab,
+        activeTerminalSessionId: activeTerminal?.sessionId || activeTerminalTab || '',
+        activeTerminalConnectionId: activeTerminal?.connectionId || active?.connectionId || '',
+        activeTerminalProtocol: activeTerminal?.protocol || active?.protocol || '',
+        terminalSessions: terminalOutputs.map((item) => ({
+            sessionId: item.sessionId || item.tabId || '',
+            tabId: item.tabId || '',
+            connectionId: item.connectionId || '',
+            name: item.name || '',
+            protocol: item.protocol || '',
+            status: item.status || '',
+            available: item.available !== false,
+        })),
+        activeConnectionIds,
+        connections: contextConnections,
+        tags,
+        terminalOutputs,
+        remoteDesktopSnapshots,
+    };
 }
 function aiBrowserPreviewStateForSession(sessionId = aiCurrentSessionId) {
     const key = String(sessionId || 'default');
@@ -8904,7 +8928,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260727-ai-confirm-fix1')
+        return import('./vendor/zephyr-motion/index.js?v=20260727-ai-terminal-session1')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');

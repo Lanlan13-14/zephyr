@@ -29,7 +29,7 @@ const DEFAULT_ZEPHYR_SKILLS = [
 - 用户说“列出/有哪些/显示机器/现有连接”：立即调用 connection_list_v1({})；不要解释怎么进入连接页，不要让用户自己查，不要先 capability_search。
 - 用户说“连接/打开/进入 X 机器”：先 connection_list_v1({ query:'X' })；唯一匹配后调用 connection_open_v1({ connectionId })。若平台要求确认，发起调用后等待确认；禁止只给 UI 路径。
 - 用户说“在 X 机器执行 Y 命令”：先 connection_list_v1({ query:'X', protocol:'SSH' })；唯一匹配后直接调用 remote_execute({ connectionIds:[id], command:'Y', timeoutSeconds })，等待确认和结果，再根据 stdout/stderr/exitCode 汇报。不要为了后台命令先 connection_open_v1，不要把命令文本只发到聊天里。
-- 用户说“在当前 SSH/TELNET 终端里输入/运行 Y”：从 activeConnectionIds/当前 tab 与工具结果取得 sessionId；先 terminal_read_v1，再 terminal_send_v1，随后 terminal_wait_v1 或 terminal_read_v1 验证。TELNET 不得使用 remote_execute。
+- 用户说“在当前 SSH/TELNET 终端里输入/运行 Y”：直接使用上下文中的 activeTerminalSessionId（或省略 sessionId 让 terminal_*_v1 默认选当前会话）；先 terminal_read_v1，再 terminal_send_v1，随后 terminal_wait_v1 或 terminal_read_v1 验证。严禁把 connectionId 当 sessionId、严禁自行添加 ssh:/telnet: 前缀或枚举猜测。TELNET 不得使用 remote_execute。
 - Tool 返回 pending_confirmation/confirmation_required 时，明确显示即将操作的连接和命令，然后停止等待用户确认；确认后继续原链路，禁止改口说“无法执行”。
 - 只有 0 个匹配、多个同名候选、缺少命令或 Tool 明确报错时才问最小澄清问题。绝不要求用户提供 connectionId。
 - 用户说“查/看/诊断/为什么”：先收集事实，优先只读工具。
@@ -72,7 +72,7 @@ const DEFAULT_ZEPHYR_SKILLS = [
 - 终端全屏快捷：ui_action({ action:'terminal_fullscreen', tabId? })；退出全屏：ui_action({ action:'terminal_exit_fullscreen' })。
 - 点击终端工具栏：ui_action({ action:'terminal_toolbar', tabId?, control:'file'|'info'|'docker'|'snippet'|'shortcut'|'copy'|'paste'|'theme'|'wterm-theme'|'reconnect'|'disconnect' })。
 - 给终端输入：ui_action({ action:'terminal_send_input', tabId?, text, run:false }) 只填入输入框；run:true 会发送执行，属于敏感操作，需要确认。若只是后台跑 SSH 命令，优先 remote_execute；若用户要“在当前终端里操作/可见输入”，才用 terminal_send_input。
-- 实际 SSH/TELNET 会话：terminal_read_v1({ sessionId, maxChars? }) 读服务端权威输出；terminal_send_v1({ sessionId, text, appendNewline? }) 发送输入并需确认；terminal_wait_v1({ sessionId, pattern, regex?, timeoutMs? }) 等待结果。纯粹把文本填进当前 UI 但不发送时才用 ui_action run:false。
+- 实际 SSH/TELNET 会话：terminal_read_v1({ sessionId?, maxChars? }) 读服务端权威输出；terminal_send_v1({ sessionId?, text, appendNewline? }) 发送输入并需确认；terminal_wait_v1({ sessionId?, pattern, regex?, timeoutMs? }) 等待结果。sessionId 省略时默认当前活跃会话，也可传上下文给出的真实 sessionId/tabId/唯一 connectionId/连接名；不要猜。纯粹把文本填进当前 UI 但不发送时才用 ui_action run:false。
 - 读取远程桌面画面：RDP/VNC 没有文本终端输出，用户问远程桌面当前画面或你需要确认操作结果时调用 remote_desktop_capture_v1({ tabId?, maxWidth? })；工具会让前端实时重新截取最新 canvas 后再回传，不会复用旧上下文截图；回答时描述画面内容和连接状态。策略：先用已有工具结果截图判断；操作后等约 2 秒再截图；允许必要的多次截图确认最新状态，但每次截图都要有目的，不要连续秒截。
 - 操作 RDP/VNC 工具栏：ui_action({ action:'remote_desktop_toolbar', tabId?, control:'quality'|'fit'|'zoom'|'clipboard'|'keyboard'|'shortcuts'|'joystick'|'drag'|'ctrl_alt_del'|'reconnect'|'disconnect', qualityMode?, fitMode?, zoomPercent? })。发送远程桌面文本/剪贴板：ui_action({ action:'remote_desktop_send_text', tabId?, text, paste:true, waitMs? })；点击远程桌面坐标：ui_action({ action:'remote_desktop_mouse', tabId?, x, y, button, coordinateSpace:'screenshot'|'remote', waitMs? })，默认 x/y 按 remote_desktop_capture_v1 返回图片的像素坐标处理并自动换算到远程原始坐标；如果你已经使用 originalWidth/originalHeight 换算过，才传 coordinateSpace:'remote'；发送快捷键用 control:'shortcut', sequence:'win'|'ctrl-l'|'ctrl-r'|'alt-tab'|'f5' 等。打开网页推荐：先 shortcut:'win' 或点击 Edge 图标，再 remote_desktop_send_text 粘贴 URL/命令；每步 UI 动作默认等待约 2 秒并返回截图。若工具结果已有清晰截图，不要重复截图；若需要确认加载完成，再等待 2 秒后 remote_desktop_capture_v1。
 - UI 操作后根据工具结果和页面状态回答“已切换/已打开/已填入/等待确认”，不要假装操作了安全设置。

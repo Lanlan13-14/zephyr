@@ -5,28 +5,28 @@ const { HttpError } = require('./authz');
 const TERMINAL_READ_SCHEMA = Object.freeze({
     type: 'object',
     properties: {
-        sessionId: { type: 'string', minLength: 1, maxLength: 160 },
+        sessionId: { type: 'string', minLength: 1, maxLength: 160, description: '可省略；默认使用 AI 上下文中的当前活跃 SSH/TELNET 会话。也可传真实 sessionId、tabId、唯一 connectionId 或连接名。' },
         maxChars: { type: 'number', minimum: 1000, maximum: 120000 },
     },
-    required: ['sessionId'],
+    required: [],
     additionalProperties: false,
 });
 
 const TERMINAL_SEND_SCHEMA = Object.freeze({
     type: 'object',
     properties: {
-        sessionId: { type: 'string', minLength: 1, maxLength: 160 },
+        sessionId: { type: 'string', minLength: 1, maxLength: 160, description: '可省略；默认使用 AI 上下文中的当前活跃 SSH/TELNET 会话。也可传真实 sessionId、tabId、唯一 connectionId 或连接名。' },
         text: { type: 'string', minLength: 1, maxLength: 20000 },
         appendNewline: { type: 'boolean' },
     },
-    required: ['sessionId', 'text'],
+    required: ['text'],
     additionalProperties: false,
 });
 
 const TERMINAL_WAIT_SCHEMA = Object.freeze({
     type: 'object',
     properties: {
-        sessionId: { type: 'string', minLength: 1, maxLength: 160 },
+        sessionId: { type: 'string', minLength: 1, maxLength: 160, description: '可省略；默认使用 AI 上下文中的当前活跃 SSH/TELNET 会话。也可传真实 sessionId、tabId、唯一 connectionId 或连接名。' },
         pattern: { type: 'string', minLength: 1, maxLength: 500 },
         regex: { type: 'boolean' },
         caseSensitive: { type: 'boolean' },
@@ -34,7 +34,7 @@ const TERMINAL_WAIT_SCHEMA = Object.freeze({
         pollMs: { type: 'number', minimum: 50, maximum: 2000 },
         maxChars: { type: 'number', minimum: 1000, maximum: 120000 },
     },
-    required: ['sessionId', 'pattern'],
+    required: ['pattern'],
     additionalProperties: false,
 });
 
@@ -66,17 +66,64 @@ function publicSession(session = {}, text = '', maxChars = 30000) {
     };
 }
 
-function findOwnedSession(sessions, user, sessionId) {
-    const session = sessions.get(String(sessionId || ''));
-    const owned = session && user && (session.userId ? session.userId === user.userId : session.username === user.username);
-    if (!session || session.closed || !owned) throw new HttpError(404, 'resource_not_found_or_inaccessible', '终端会话不存在或无权访问');
+function contextTerminalCandidates(context = {}) {
+    const outputs = Array.isArray(context?.terminalOutputs) ? context.terminalOutputs : [];
+    const listed = Array.isArray(context?.terminalSessions) ? context.terminalSessions : [];
+    const candidates = [...outputs, ...listed]
+        .map((item) => ({
+            sessionId: String(item?.sessionId || item?.tabId || '').trim(),
+            tabId: String(item?.tabId || '').trim(),
+            connectionId: String(item?.connectionId || '').trim(),
+            name: String(item?.name || '').trim(),
+        }))
+        .filter((item) => item.sessionId);
+    const activeId = String(context?.activeTerminalSessionId || context?.activeTerminalTab || '').trim();
+    if (activeId && !candidates.some((item) => item.sessionId === activeId)) {
+        candidates.unshift({
+            sessionId: activeId,
+            tabId: String(context?.activeTerminalTab || activeId),
+            connectionId: String(context?.activeTerminalConnectionId || ''),
+            name: '',
+        });
+    }
+    return candidates;
+}
+
+function resolveSessionIdFromContext(requested, context = {}) {
+    const raw = String(requested || '').trim();
+    const candidates = contextTerminalCandidates(context);
+    if (!raw || ['active', 'current', '当前', '当前终端'].includes(raw.toLowerCase())) {
+        return String(context?.activeTerminalSessionId || candidates[0]?.sessionId || '').trim();
+    }
+    const unprefixed = raw.replace(/^(?:ssh|telnet|terminal):/i, '');
+    const exact = candidates.find((item) => [item.sessionId, item.tabId, item.connectionId, item.name]
+        .some((value) => value && (value === raw || value === unprefixed)));
+    return exact?.sessionId || raw;
+}
+
+function findOwnedSession(sessions, user, sessionId, context = {}) {
+    const requested = String(sessionId || '').trim();
+    const resolvedId = resolveSessionIdFromContext(requested, context);
+    let session = sessions.get(resolvedId);
+    const isOwned = (item) => item && user && (item.userId ? item.userId === user.userId : item.username === user.username);
+    if (!session && requested) {
+        const unprefixed = requested.replace(/^(?:ssh|telnet|terminal):/i, '');
+        const matches = [...sessions.values()].filter((item) => {
+            if (item?.closed || !isOwned(item)) return false;
+            const cfg = item.connectionConfig || {};
+            return [item.id, item.connectionId, cfg.id, cfg.name]
+                .some((value) => String(value || '') === requested || String(value || '') === unprefixed);
+        });
+        if (matches.length === 1) session = matches[0];
+    }
+    if (!session || session.closed || !isOwned(session)) throw new HttpError(404, 'resource_not_found_or_inaccessible', '终端会话不存在或无权访问');
     const protocol = String(session.protocol || 'SSH').toUpperCase();
     if (!['SSH', 'TELNET'].includes(protocol)) throw new HttpError(400, 'invalid_terminal_protocol', '标准终端操作仅支持 SSH 或 TELNET 会话');
     return session;
 }
 
-function readSession(sessions, history, user, args) {
-    const session = findOwnedSession(sessions, user, args.sessionId);
+function readSession(sessions, history, user, args, context = {}) {
+    const session = findOwnedSession(sessions, user, args.sessionId, context);
     let text = '';
     try { text = history.replayTail(session.userId || user.userId, session.id, Math.max(4096, Math.min(256000, Number(args.maxChars) * 4 || 120000))).data || ''; } catch {}
     if (!text && Array.isArray(session.outputBuffer)) text = session.outputBuffer.join('');
@@ -96,12 +143,12 @@ function writeSession(session, text) {
     session.lastActive = Date.now();
 }
 
-function sendSession(sessions, history, user, args) {
-    const session = findOwnedSession(sessions, user, args.sessionId);
+function sendSession(sessions, history, user, args, context = {}) {
+    const session = findOwnedSession(sessions, user, args.sessionId, context);
     const text = String(args.text || '') + (args.appendNewline === false ? '' : '\n');
     writeSession(session, text);
     return {
-        session: readSession(sessions, history, user, { sessionId: session.id, maxChars: 12000 }),
+        session: readSession(sessions, history, user, { sessionId: session.id, maxChars: 12000 }, context),
         sentChars: text.length,
         appendNewline: args.appendNewline !== false,
         verification: 'terminal_read_or_wait_required',
@@ -118,12 +165,12 @@ function matcherFor(args) {
     return { test(value) { const haystack = args.caseSensitive ? String(value) : String(value).toLowerCase(); return haystack.includes(needle); } };
 }
 
-async function waitSession(sessions, history, user, args, signal = null) {
+async function waitSession(sessions, history, user, args, signal = null, context = {}) {
     const timeoutMs = Math.max(100, Math.min(120000, Number(args.timeoutMs) || 15000));
     const pollMs = Math.max(50, Math.min(2000, Number(args.pollMs) || 250));
     const matcher = matcherFor(args);
     const deadline = Date.now() + timeoutMs;
-    let snapshot = readSession(sessions, history, user, args);
+    let snapshot = readSession(sessions, history, user, args, context);
     while (true) {
         if (matcher.test(snapshot.text)) return { matched: true, pattern: String(args.pattern), waitedMs: timeoutMs - Math.max(0, deadline - Date.now()), session: snapshot };
         if (Date.now() >= deadline) return { matched: false, pattern: String(args.pattern), waitedMs: timeoutMs, session: snapshot };
@@ -136,7 +183,7 @@ async function waitSession(sessions, history, user, args, signal = null) {
             timer = setTimeout(done, Math.min(pollMs, Math.max(1, deadline - Date.now())));
             if (signal) signal.addEventListener('abort', abort, { once: true });
         });
-        snapshot = readSession(sessions, history, user, args);
+        snapshot = readSession(sessions, history, user, args, context);
     }
 }
 
@@ -144,6 +191,8 @@ module.exports = {
     TERMINAL_READ_SCHEMA,
     TERMINAL_SEND_SCHEMA,
     TERMINAL_WAIT_SCHEMA,
+    contextTerminalCandidates,
+    resolveSessionIdFromContext,
     findOwnedSession,
     readSession,
     sendSession,

@@ -17,3 +17,11 @@ test('remote command intent uses list then remote_execute',()=>{
 test('generic chat does not force a tool route',()=>{
  assert.deepEqual(preferredToolsForUserMessage('你好，解释一下 SSH 是什么'),[]);
 });
+
+test('current terminal command uses read send wait without guessing ids',()=>{
+ const result=preferredToolsForUserMessage('在当前 SSH 终端执行 nexttrace cf');
+ assert.deepEqual(result.map(x=>x.name),['terminal_read_v1','terminal_send_v1','terminal_wait_v1']);
+ const hint=buildIntentRoutingHint('在当前 SSH 终端执行 nexttrace cf');
+ assert.match(hint,/sessionId 可省略/);
+ assert.match(hint,/绝对不要枚举、猜 connectionId/);
+});

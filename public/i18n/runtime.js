@@ -112,7 +112,7 @@ async function fetchCatalog(locale) {
     const loc = normalizeLocale(locale);
     if (catalogs[loc] && Object.keys(catalogs[loc]).length) return catalogs[loc];
     const url = new URL(`./locales/${loc}.json`, import.meta.url);
-    url.searchParams.set('v', '20260727-ai-confirm-fix1');
+    url.searchParams.set('v', '20260727-ai-terminal-session1');
     const res = await fetch(url.href, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`i18n catalog ${loc} HTTP ${res.status}`);
     const dict = await res.json();

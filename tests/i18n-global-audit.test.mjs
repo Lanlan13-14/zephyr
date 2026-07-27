@@ -56,7 +56,7 @@ test('frontend user-visible calls contain no untranslated Chinese literals', () 
 });
 
 test('every frontend module that imports i18n uses the current cache revision', () => {
-    const current = '20260727-ai-confirm-fix1';
+    const current = '20260727-ai-terminal-session1';
     const publicDir = path.join(root, 'public');
     const files = [];
     const walk = (dir) => {
