@@ -1,9 +1,9 @@
-const CACHE_NAME = 'zephyr-static-20260728-ai-panel-edge-stop1';
+const CACHE_NAME = 'zephyr-static-20260728-ai-handle-only-drag1';
 const PRECACHE = [
-    '/app.js?v=20260728-ai-panel-edge-stop1',
-    '/style.css?v=20260728-ai-panel-edge-stop1',
+    '/app.js?v=20260728-ai-handle-only-drag1',
+    '/style.css?v=20260728-ai-handle-only-drag1',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260728-ai-panel-edge-stop1',
+    '/terminal.js?v=20260728-ai-handle-only-drag1',
     '/notes.js',
     '/markdown.js',
 ];

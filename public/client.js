@@ -1,5 +1,5 @@
 import { applyZephyrColorScheme, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260615-visual-color-picker';
-import { t, initI18n, setLocale, getLocale, applyDomI18n } from './i18n/runtime.js?v=20260728-ai-panel-edge-stop1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
 
 const $ = (sel) => document.querySelector(sel);
 const errorBanner = $('#errorBanner');
@@ -306,7 +306,7 @@ const loginSelectMotion = {
     failed: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260728-ai-panel-edge-stop1')
+        return import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');

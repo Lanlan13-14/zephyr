@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260728-ai-panel-edge-stop1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260728-ai-panel-edge-stop1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260728-ai-handle-only-drag1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -8726,8 +8726,10 @@ function setupAiPanelChrome() {
             try { aiPanelDragController.destroy(); } catch { /* ignore */ }
         }
 
-        // Listen on the panel; filter accepts handle strip + non-interactive title bar.
+        // Only the top gray .panel-drag-handle owns physical dragging.
+        // The title/content/sidebar/input areas never receive drag listeners.
         aiPanelDragController = Motion.drag(panel, {
+            handle: dragHandle,
             activationThreshold: 4,
             // Light rubber only while dragging; release settles to the release
             // point (hard-clamped), not a fatter dock snap.
@@ -8751,18 +8753,17 @@ function setupAiPanelChrome() {
                 return hardClampDragDelta(tx, ty);
             },
             filter: (e) => {
-                if (!e) return false;
+                if (!e || !dragHandle) return false;
                 if (e.button != null && e.button !== 0) return false;
-                // Traffic-light opens the layout menu — never drag from it.
+                // Three-dot traffic light is separately wired to precise hard drag.
                 if (e.target?.closest?.('[data-ai-agent-layout]')) return false;
                 const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-                const fromHandle = dragHandle && (path.includes?.(dragHandle) || dragHandle === e.target || dragHandle.contains?.(e.target));
-                const fromTitle = titleBar && (path.includes?.(titleBar) || titleBar === e.target || titleBar.contains?.(e.target));
-                if (!fromHandle && !fromTitle) return false;
-                // Title bar: keep real controls clickable.
-                if (fromTitle && e.target?.closest?.('button, a, input, textarea, select, [role="button"], .ai-segment, label')) return false;
-                // Handle strip: allow empty chrome only (layout button filtered above).
-                if (fromHandle && e.target?.closest?.('input, select, textarea, a')) return false;
+                const fromHandle = path.includes?.(dragHandle)
+                    || dragHandle === e.target
+                    || dragHandle.contains?.(e.target);
+                if (!fromHandle) return false;
+                // Nothing interactive inside the gray strip may start physics.
+                if (e.target?.closest?.('button, a, input, textarea, select, [role="button"], label')) return false;
                 return true;
             },
             onActivate: () => {
@@ -8874,17 +8875,13 @@ function setupAiPanelChrome() {
         window.addEventListener('pointerup', up, { once: true });
         window.addEventListener('pointercancel', up, { once: true });
     });
-    // Physics drag for handle strip + title bar (engine). Hard drag remains for ⋯.
+    // Physics drag only for the top gray handle strip. Hard drag remains for ⋯.
     void ensureAiPanelPhysicsDrag().then((ok) => {
         if (ok || !panel) return;
-        // Engine unavailable: fall back to hard drag on handle/title as well.
+        // Engine unavailable: hard-drag fallback is still limited to gray strip.
         const startFallback = (e) => startAiPanelHardDrag(e, { suppressLayoutClick: false, threshold: 4 });
         panel.querySelector('.panel-drag-handle')?.addEventListener('pointerdown', (e) => {
-            if (e.target.closest?.('[data-ai-agent-layout]')) return;
-            startFallback(e);
-        });
-        panel.querySelector('.panel-titlebar')?.addEventListener('pointerdown', (e) => {
-            if (e.target.closest?.('button, a, input, textarea, select, [role="button"], .ai-segment, label')) return;
+            if (e.target.closest?.('[data-ai-agent-layout], button, a, input, textarea, select, [role="button"], label')) return;
             startFallback(e);
         });
     });
@@ -9995,7 +9992,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260728-ai-panel-edge-stop1')
+        return import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');

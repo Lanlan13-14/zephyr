@@ -9,7 +9,7 @@ let panelLayoutMenu = null;
 let panelLayoutButton = null;
 let suppressNextLayoutClick = false;
 
-import { t } from './i18n/runtime.js?v=20260728-ai-panel-edge-stop1';
+import { t } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
 
 export function detectInteractionEnvironment() {
     const ua = String(navigator.userAgent || '').toLowerCase();

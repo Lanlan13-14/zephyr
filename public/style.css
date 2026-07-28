@@ -9704,6 +9704,12 @@ body.app-body:not(.terminal-mode) .app-main {
 .ai-agent-panel .panel-drag-handle {
     height: 28px !important;
     background: color-mix(in srgb, var(--border) 34%, transparent) !important;
+    /* Exclusive floating-window drag surface. Everything below keeps native
+       scroll/tap/selection and cannot move the panel. */
+    touch-action: none !important;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: grab;
 }
 .ai-agent-panel .panel-traffic-btn {
     --panel-island-w: 58px;

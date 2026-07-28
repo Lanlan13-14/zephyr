@@ -17,8 +17,10 @@ test('Motion.drag supports handle threshold dynamic bounds and filter veto', () 
   assert.match(motion, /if \(handlers\.onStart\?\.\(startInfo\) === false\) return;/);
 });
 
-test('AI panel uses Motion.drag physics on non-dot surfaces', () => {
+test('AI panel uses Motion.drag only on top gray handle', () => {
   assert.match(app, /Motion\.drag\(panel/);
+  assert.match(app, /handle:\s*dragHandle/);
+  assert.match(app, /Only the top gray \.panel-drag-handle owns physical dragging/);
   assert.match(app, /activationThreshold:\s*4/);
   assert.match(app, /rubberband:\s*true/);
   assert.match(app, /bounds:\s*aiPanelDragBounds/);
@@ -26,10 +28,17 @@ test('AI panel uses Motion.drag physics on non-dot surfaces', () => {
   assert.match(app, /ensureAiPanelPhysicsDrag/);
 });
 
-test('traffic-light hard drag is precise; other surfaces use physics', () => {
+test('traffic-light hard drag is precise; gray strip uses physics', () => {
   assert.match(app, /startAiPanelHardDrag/);
   assert.match(app, /Hold-and-drag on ⋯ = precise hard drag/);
   assert.match(app, /Motion\.drag\(panel/);
-  assert.match(app, /Traffic-light opens the layout menu/);
+  assert.match(app, /handle:\s*dragHandle/);
+  assert.match(app, /Only the top gray \.panel-drag-handle owns physical dragging/);
+  assert.match(app, /Three-dot traffic light is separately wired to precise hard drag/);
   assert.match(app, /data-ai-agent-layout/);
+});
+
+test('title bar and content are not bound as drag fallbacks', () => {
+  assert.doesNotMatch(app, /panel\.querySelector\('\.panel-titlebar'\)\?\.addEventListener\('pointerdown'/);
+  assert.match(app, /fallback is still limited to gray strip/);
 });
