@@ -1,9 +1,9 @@
-const CACHE_NAME = 'zephyr-static-20260728-ai-panel-close2';
+const CACHE_NAME = 'zephyr-static-20260728-ai-models-scroll1';
 const PRECACHE = [
-    '/app.js?v=20260728-ai-panel-close2',
-    '/style.css?v=20260728-ai-panel-close2',
+    '/app.js?v=20260728-ai-models-scroll1',
+    '/style.css?v=20260728-ai-models-scroll1',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260728-ai-panel-close2',
+    '/terminal.js?v=20260728-ai-models-scroll1',
     '/notes.js',
     '/markdown.js',
 ];

@@ -14495,6 +14495,7 @@ body.settings-subpage-open {
   width: 100%;
   height: 100%;
   height: 100dvh;
+  max-height: 100dvh;
   z-index: 120;
   display: flex;
   flex-direction: column;
@@ -14502,23 +14503,36 @@ body.settings-subpage-open {
   color: var(--text);
   visibility: hidden;
   pointer-events: none;
-  will-change: transform, opacity;
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-  padding: 0 0 calc(20px + env(safe-area-inset-bottom));
+  /* Outer page does NOT scroll — inner .settings-subpage-scroll does.
+     Motion transform on this layer must not own overflow or iOS touch-scroll dies. */
+  overflow: hidden;
+  touch-action: manipulation;
+  padding: 0;
   box-sizing: border-box;
 }
 .settings-subpage.is-open {
   visibility: visible;
   pointer-events: auto;
 }
+.settings-subpage-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding: 0 0 calc(24px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
 .settings-subpage-l3 {
   z-index: 121;
   background: var(--bg, #f4f5f7);
 }
 .settings-subpage-head {
-  position: sticky;
-  top: 0;
+  position: relative;
+  flex: 0 0 auto;
   z-index: 2;
   display: grid;
   grid-template-columns: 44px 1fr 72px;
@@ -14526,7 +14540,8 @@ body.settings-subpage-open {
   gap: 8px;
   min-height: 52px;
   padding: 10px 12px;
-  background: color-mix(in srgb, var(--bg, #f4f5f7) 92%, transparent);
+  padding-top: calc(10px + env(safe-area-inset-top));
+  background: color-mix(in srgb, var(--bg, #f4f5f7) 96%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
@@ -14606,6 +14621,15 @@ body.settings-subpage-open {
   box-shadow: none;
 }
 .settings-subpage-save-btn { justify-self: end; }
+.settings-subpage-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  margin: 0;
+  height: 100%;
+}
 .settings-subpage-body {
   display: block;
   padding: 12px 14px 28px;
@@ -14613,6 +14637,30 @@ body.settings-subpage-open {
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
+}
+/* When body is also the scroll container (L3), keep max-width content centered */
+.settings-subpage-scroll.settings-subpage-body {
+  max-width: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+.settings-subpage-scroll.settings-subpage-body > .ai-model-section-label,
+.settings-subpage-scroll.settings-subpage-body > .ai-model-card,
+.settings-subpage-scroll.settings-subpage-body > .ai-model-quick-test,
+.settings-subpage-scroll.settings-subpage-body > .ai-model-quick-test-hint {
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+  width: calc(100% - 28px);
+  box-sizing: border-box;
+}
+.settings-subpage-scroll.settings-subpage-body > .ai-model-section-label {
+  width: calc(100% - 28px);
+  margin-left: auto;
+  margin-right: auto;
+}
+.settings-subpage-scroll.settings-subpage-body > .ai-model-quick-test-hint {
+  text-align: center;
 }
 
 .ai-models-refresh-row {

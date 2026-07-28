@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260728-ai-panel-close2">
-    <link rel="modulepreload" href="app.js?v=20260728-ai-panel-close2">
-    <link rel="modulepreload" href="theme-runtime.js?v=20260728-ai-panel-close2">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260728-ai-panel-close2">
-    <link rel="stylesheet" href="style.css?v=20260728-ai-panel-close2">
+    <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260728-ai-models-scroll1">
+    <link rel="modulepreload" href="app.js?v=20260728-ai-models-scroll1">
+    <link rel="modulepreload" href="theme-runtime.js?v=20260728-ai-models-scroll1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260728-ai-models-scroll1">
+    <link rel="stylesheet" href="style.css?v=20260728-ai-models-scroll1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -758,23 +758,26 @@
                             </div>
                             <span class="settings-subpage-head-spacer" aria-hidden="true"></span>
                         </header>
-                        <button type="button" class="ai-models-refresh-row" id="aiModelsRefreshRow">
-                            <span data-i18n="刷新模型列表">刷新模型列表</span>
-                            <span class="ai-models-refresh-icon" aria-hidden="true">↻</span>
-                        </button>
-                        <div class="ai-models-search-wrap">
-                            <input type="search" id="aiModelsSearchInput" class="ai-models-search-input" enterkeyhint="search" autocomplete="off" spellcheck="false" placeholder="搜索模型 ID 或显示名称" data-i18n-placeholder="搜索模型 ID 或显示名称" aria-label="搜索模型" data-i18n-aria-label="搜索模型">
+                        <div class="settings-subpage-scroll" id="aiModelsPageScroll">
+                            <button type="button" class="ai-models-refresh-row" id="aiModelsRefreshRow">
+                                <span data-i18n="刷新模型列表">刷新模型列表</span>
+                                <span class="ai-models-refresh-icon" aria-hidden="true">↻</span>
+                            </button>
+                            <div class="ai-models-search-wrap">
+                                <input type="search" id="aiModelsSearchInput" class="ai-models-search-input" enterkeyhint="search" autocomplete="off" spellcheck="false" placeholder="搜索模型 ID 或显示名称" data-i18n-placeholder="搜索模型 ID 或显示名称" aria-label="搜索模型" data-i18n-aria-label="搜索模型">
+                            </div>
+                            <div class="ai-models-list-card" id="aiModelsListCard"></div>
                         </div>
-                        <div class="ai-models-list-card" id="aiModelsListCard"></div>
                     </div>
                     <!-- AI 模型三级页：模型详情（截图 1000067616） -->
                     <div class="settings-subpage settings-subpage-l3" id="settingsAiModelDetailPage" aria-hidden="true">
-                        <form id="aiModelDetailForm" class="settings-subpage-body">
+                        <form id="aiModelDetailForm" class="settings-subpage-form">
                             <header class="settings-subpage-head ai-model-detail-head">
                                 <button type="button" class="btn settings-subpage-text-btn" id="aiModelDetailCancelBtn" data-i18n="取消">取消</button>
                                 <h2 id="aiModelDetailTitle" data-i18n="模型详情">模型详情</h2>
                                 <button type="submit" class="btn btn-primary settings-subpage-save-btn" data-i18n="保存">保存</button>
                             </header>
+                            <div class="settings-subpage-scroll settings-subpage-body">
                             <input type="hidden" id="aiModelDetailProviderId">
                             <input type="hidden" id="aiModelDetailId">
 
@@ -848,6 +851,7 @@
                                 <span data-i18n="快速测试">快速测试</span>
                             </button>
                             <p class="field-hint ai-model-quick-test-hint" data-i18n="针对该模型的主要能力运行一次快速测试。">针对该模型的主要能力运行一次快速测试。</p>
+                            </div>
                         </form>
                     </div>
                     <!-- 快速测试结果页（对齐参考截图） -->
@@ -859,7 +863,7 @@
                                 <button type="button" class="btn settings-subpage-text-btn" id="aiQuickTestDoneBtn" data-i18n="完成">完成</button>
                             </div>
                         </header>
-                        <div class="ai-quick-test-body">
+                        <div class="settings-subpage-scroll ai-quick-test-body">
                             <div class="ai-quick-test-model-row">
                                 <span class="ai-quick-test-bolt" aria-hidden="true">⚡</span>
                                 <div class="ai-quick-test-model-text">
@@ -1165,7 +1169,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260728-ai-panel-close2" type="module"></script>
+    <script src="app.js?v=20260728-ai-models-scroll1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

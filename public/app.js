@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260728-ai-panel-close2';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260728-ai-panel-close2';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260728-ai-models-scroll1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260728-ai-models-scroll1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -4990,12 +4990,21 @@ async function animateSettingsSubpage(el, open, { edge = 'right' } = {}) {
             el.style.opacity = '1';
             el.style.visibility = 'visible';
             el.style.pointerEvents = 'auto';
+            el.style.overflow = 'hidden';
+            el.style.display = 'flex';
+            const scroller = el.querySelector('.settings-subpage-scroll');
+            if (scroller) {
+                scroller.scrollTop = 0;
+                scroller.style.overflowY = 'auto';
+                scroller.style.touchAction = 'pan-y';
+            }
             el.scrollTop = 0;
         } else {
             el.style.visibility = 'hidden';
             el.style.pointerEvents = 'none';
             el.style.transform = '';
             el.style.opacity = '';
+            el.style.overflow = '';
         }
         syncSettingsSubpageBodyLock();
         return;
@@ -5007,6 +5016,7 @@ async function animateSettingsSubpage(el, open, { edge = 'right' } = {}) {
         el.style.pointerEvents = 'auto';
         el.style.display = 'flex';
         el.style.opacity = '1';
+        el.style.overflow = 'hidden'; // outer shell never scrolls
         // Force layout so Motion.sheet gets non-zero width/height (else travel=0).
         void el.offsetWidth;
         const rect = el.getBoundingClientRect();
@@ -5015,12 +5025,23 @@ async function animateSettingsSubpage(el, open, { edge = 'right' } = {}) {
             el.style.height = `${window.innerHeight || 640}px`;
             void el.offsetWidth;
         }
+        const scroller = el.querySelector('.settings-subpage-scroll');
+        if (scroller) scroller.scrollTop = 0;
         el.scrollTop = 0;
         syncSettingsSubpageBodyLock();
         await Motion.sheet(el, { edge, open: true, preset: 'sheet' });
-        // Ensure final pose is identity even if sheet measured poorly mid-flight.
-        try { Motion.set(el, { x: 0, y: 0, opacity: 1 }); } catch { /* ignore */ }
-        el.style.transform = el.style.transform || '';
+        // Critical for iOS: a leftover transform on the fixed shell breaks
+        // touch scrolling of the inner scroller. Release channels + clear.
+        try { Motion.stop(el); Motion.set(el, { x: 0, y: 0, opacity: 1 }); Motion.release(el); } catch { /* ignore */ }
+        el.style.transform = 'none';
+        el.style.opacity = '1';
+        el.style.willChange = 'auto';
+        el.style.overflow = 'hidden';
+        if (scroller) {
+            scroller.style.overflowY = 'auto';
+            scroller.style.webkitOverflowScrolling = 'touch';
+            scroller.style.touchAction = 'pan-y';
+        }
     } else {
         await Motion.sheet(el, { edge, open: false, preset: 'sheet' });
         el.classList.remove('is-open');
@@ -5032,6 +5053,8 @@ async function animateSettingsSubpage(el, open, { edge = 'right' } = {}) {
         el.style.opacity = '';
         el.style.width = '';
         el.style.height = '';
+        el.style.willChange = '';
+        el.style.overflow = '';
         syncSettingsSubpageBodyLock();
     }
 }
@@ -9746,7 +9769,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260728-ai-panel-close2')
+        return import('./vendor/zephyr-motion/index.js?v=20260728-ai-models-scroll1')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
