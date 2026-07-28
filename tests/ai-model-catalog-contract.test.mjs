@@ -45,6 +45,8 @@ test('provider UI exposes model catalog via settings subpages', () => {
 });
 
 test('fetch models merges capabilities instead of wiping them', () => {
-  assert.match(app, /mergeAiModelEntries\(provider\.models, uniqueNames/);
+  // Saved-provider list path names the resolved provider `saved`.
+  assert.match(app, /mergeAiModelEntries\(saved\.models, uniqueNames/);
+  // Modal draft path still merges into the in-memory ModelEntry draft.
   assert.match(app, /mergeAiModelEntries\(aiProviderModelEntriesDraft, uniqueNames/);
 });

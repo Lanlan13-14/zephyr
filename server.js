@@ -3713,6 +3713,10 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
         if (!model) throw Object.assign(new Error('未配置默认模型'), { status: 400 });
 
         // Provider payload for Go — includes secret; never returned to browser.
+        // Node persists rich ModelEntry objects; Go provider.Config.Models is
+        // []string, so only model IDs may cross this boundary.
+        const { runtimeModelIds } = require('./ai-model-catalog');
+        const providerModelIds = runtimeModelIds(provider.models);
         const providerPayload = {
             id: provider.id,
             name: provider.name,
@@ -3720,7 +3724,7 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
             baseUrl: provider.baseUrl || '',
             apiKey: provider.apiKey || '',
             defaultModel: provider.defaultModel || model,
-            models: provider.models || [],
+            models: providerModelIds,
             apiMode: provider.config?.apiMode || provider.apiMode || 'auto',
             organization: provider.config?.organization || provider.organization || '',
             options: provider.config?.options || provider.options || {},

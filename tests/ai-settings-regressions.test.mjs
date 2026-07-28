@@ -59,6 +59,6 @@ test('provider sharing and previous-response switches use regular text with righ
 });
 
 test('chat mode segments share control radius with adjacent UI buttons', () => {
-    assert.match(styleCss, /\.ai-header-actions \.ui-btn,\s*\.ai-collab-segment,\s*\.ai-chat-permission-segment\s*\{\s*border-radius:\s*var\(--radius-control\)/);
-    assert.doesNotMatch(styleCss, /\.ai-collab-segment[^{]*\{[^}]*radius-pill/);
+    assert.match(styleCss, /\.ai-header-actions \.ui-btn,\s*\.ai-collab-segment,\s*\.ai-chat-permission-segment,\s*\.ai-run-profile-segment\s*\{\s*border-radius:\s*var\(--radius-control\)/);
+    assert.doesNotMatch(styleCss, /\.ai-(?:collab|chat-permission|run-profile)-segment[^{]*\{[^}]*radius-pill/);
 });

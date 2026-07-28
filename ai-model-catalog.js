@@ -195,6 +195,23 @@ function selectableModelIds(provider) {
         .map((m) => m.id);
 }
 
+/**
+ * Serialize rich Node ModelEntry[] to the legacy Go provider.Config []string.
+ * Hidden models remain included: hidden affects UI selection, not provider auth.
+ */
+function runtimeModelIds(models) {
+    const list = Array.isArray(models) ? models : [];
+    const seen = new Set();
+    const out = [];
+    for (const item of list) {
+        const id = cleanId(typeof item === 'string' ? item : item?.id);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        out.push(id);
+    }
+    return out;
+}
+
 module.exports = {
     normalizeModelEntry,
     normalizeModels,
@@ -203,5 +220,6 @@ module.exports = {
     modelAcceptsImage,
     modelIsHidden,
     selectableModelIds,
+    runtimeModelIds,
     defaultModalities,
 };
