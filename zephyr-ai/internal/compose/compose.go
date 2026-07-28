@@ -1,18 +1,21 @@
 // Package compose builds the model-facing prompt.
 //
-// HARD CONSTRAINT (user decision 2026-07-20):
-// Do NOT change system prompt assembly to save tokens.
-// Keep the same structure as the Node ai-agent-service buildSystemPrompt:
+// HARD CONSTRAINT:
+// Do NOT thin skills/guidance/memories/env to save tokens.
+// Variable blocks (time/context/routing) MUST leave the stable prefix (S1).
 //
-//	assistant intro + default guidance + current time + context + custom
-//	prompt + full enabled skills text + related memories + env vars.
+//	StablePrefix  = identity + language + guidance + custom + skills + memories + env
+//	VolatileTail  = current time + zephyr context + routing/goal hints
 //
 // Compaction may still operate on conversation history (messages), never on
-// stripping this standing system assembly for cost reasons.
+// stripping the standing stable assembly for cost reasons.
 package compose
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -48,21 +51,57 @@ type Input struct {
 	AssistantName       string
 	DefaultSystemPrompt string
 	CustomSystemPrompt  string
-	ContextText         string // pre-formatted Zephyr context block
+	ContextText         string // pre-formatted Zephyr context block (volatile)
 	Locale              string
 	Skills              []Skill
 	Memories            []Memory // already ranked/selected by caller
 	EnvVars             []EnvVar
-	// Now overrides clock for tests; zero → time.Now().
+	// RoutingHint / GoalContract ride the volatile tail (per turn).
+	RoutingHint  string `json:"routingHint,omitempty"`
+	GoalContract string `json:"goalContract,omitempty"`
+	// Now overrides clock for tests; zero → time.Now(). Volatile only.
 	Now time.Time
 }
 
-// SystemPrompt builds the standing system message. DO NOT thin this out.
+// Result is the split assembly used by the agent loop / server.
+type Result struct {
+	// Stable is the cache-stable system prefix (no wall clock / live context).
+	Stable string
+	// Volatile is the per-turn context block (time + surface + routing).
+	Volatile string
+	// StableHash is sha256 hex of Stable (for diagnostics / session freeze).
+	StableHash string
+	// Full is Stable + "\n\n" + Volatile for legacy single-system callers.
+	Full string
+}
+
+// SystemPrompt builds the standing system message (stable + volatile joined).
+// Prefer Build() for cache-aware runs.
 func SystemPrompt(in Input) string {
-	now := in.Now
-	if now.IsZero() {
-		now = time.Now().UTC()
+	return Build(in).Full
+}
+
+// Build returns cache-stable prefix and volatile tail separately.
+func Build(in Input) Result {
+	stable := StablePrefix(in)
+	volatile := VolatileTail(in)
+	full := stable
+	if strings.TrimSpace(volatile) != "" {
+		if full != "" {
+			full += "\n\n"
+		}
+		full += volatile
 	}
+	return Result{
+		Stable:     stable,
+		Volatile:   volatile,
+		StableHash: HashText(stable),
+		Full:       strings.TrimRight(full, "\n"),
+	}
+}
+
+// StablePrefix is frozen across turns until skills/guidance/memories/env/mode change.
+func StablePrefix(in Input) string {
 	name := strings.TrimSpace(in.AssistantName)
 	if name == "" {
 		name = "Zephyr AI 助理"
@@ -81,15 +120,6 @@ func SystemPrompt(in Input) string {
 		b.WriteByte('\n')
 	}
 
-	fmt.Fprintf(&b, "当前时间：%s\n", now.Format(time.RFC3339))
-
-	if ctx := strings.TrimSpace(in.ContextText); ctx != "" {
-		b.WriteString(ctx)
-		if !strings.HasSuffix(ctx, "\n") {
-			b.WriteByte('\n')
-		}
-	}
-
 	if custom := strings.TrimSpace(in.CustomSystemPrompt); custom != "" {
 		b.WriteString("\n用户自定义系统提示：\n")
 		b.WriteString(custom)
@@ -97,12 +127,23 @@ func SystemPrompt(in Input) string {
 	}
 
 	// Full skill bodies — not name-only indexes (token-saving forbidden here).
-	var enabled []Skill
+	// Sort by id for byte-stable order across runs.
+	enabled := make([]Skill, 0, len(in.Skills))
 	for _, s := range in.Skills {
 		if s.Enabled && (strings.TrimSpace(s.Prompt) != "" || strings.TrimSpace(s.Description) != "" || strings.TrimSpace(s.Name) != "") {
 			enabled = append(enabled, s)
 		}
 	}
+	sort.SliceStable(enabled, func(i, j int) bool {
+		ai, aj := strings.TrimSpace(enabled[i].ID), strings.TrimSpace(enabled[j].ID)
+		if ai == "" {
+			ai = enabled[i].Name
+		}
+		if aj == "" {
+			aj = enabled[j].Name
+		}
+		return ai < aj
+	})
 	if len(enabled) > 0 {
 		b.WriteString("\n已启用 Skills：\n")
 		for i, s := range enabled {
@@ -154,6 +195,48 @@ func SystemPrompt(in Input) string {
 	}
 
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// VolatileTail changes every turn (time, live surface context, routing).
+func VolatileTail(in Input) string {
+	now := in.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	var b strings.Builder
+	b.WriteString("<zephyr-context>\n")
+	fmt.Fprintf(&b, "当前时间：%s\n", now.Format(time.RFC3339))
+	if ctx := strings.TrimSpace(in.ContextText); ctx != "" {
+		b.WriteString(ctx)
+		if !strings.HasSuffix(ctx, "\n") {
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteString("</zephyr-context>")
+	if hint := strings.TrimSpace(in.RoutingHint); hint != "" {
+		b.WriteString("\n\n<routing-hint>\n")
+		b.WriteString(hint)
+		b.WriteString("\n</routing-hint>")
+	}
+	if goal := strings.TrimSpace(in.GoalContract); goal != "" {
+		b.WriteString("\n\n<goal-contract>\n")
+		b.WriteString(goal)
+		b.WriteString("\n</goal-contract>")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// HashText returns sha256 hex of text for prefix diagnostics.
+func HashText(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
+// HashTools returns a stable hash of tool schemas (name-sorted, raw params).
+func HashTools(namesAndParams []string) string {
+	sorted := append([]string(nil), namesAndParams...)
+	sort.Strings(sorted)
+	return HashText(strings.Join(sorted, "\n"))
 }
 
 func orDefault(s, d string) string {

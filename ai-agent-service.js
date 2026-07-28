@@ -746,6 +746,20 @@ function toolDefinitions(ai = {}) {
         tools.push({ type: 'function', function: { name: 'remote_file_rollback', description: '用 remote_write_file 返回的 snapshotId 回滚远程文件到写入前内容；若原路径不存在则删除新文件。敏感操作需要确认。', parameters: { type: 'object', properties: { snapshotId: { type: 'string' } }, required: ['snapshotId'] } } });
         tools.push({ type: 'function', function: { name: 'remote_file_snapshot_list', description: '列出当前用户最近的远程文件写前快照（不含全文）。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, path: { type: 'string' }, limit: { type: 'number' } } } } });
     }
+    // S3: session workspace L1 (local to Zephyr server, not remote SSH).
+    tools.push({ type: 'function', function: { name: 'workspace_list_v1', description: '列出当前 AI 会话工作区目录（uploads/workspace/outputs）。无远端连接时用于加工用户附件与草稿。', parameters: { type: 'object', properties: { sessionId: { type: 'string' }, dir: { type: 'string', description: '相对路径，如 uploads 或 workspace/notes' } }, additionalProperties: false } } });
+    tools.push({ type: 'function', function: { name: 'workspace_read_v1', description: '读取会话工作区中的文本文件（支持 offset/limit）。路径相对于会话根，如 workspace/report.md。', parameters: { type: 'object', properties: { sessionId: { type: 'string' }, path: { type: 'string' }, offset: { type: 'number' }, limit: { type: 'number' } }, required: ['path'], additionalProperties: false } } });
+    tools.push({ type: 'function', function: { name: 'workspace_write_v1', description: '写入会话工作区文件（仅 workspace/ 与 outputs/）。写操作需要确认。', parameters: { type: 'object', properties: { sessionId: { type: 'string' }, path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'], additionalProperties: false } } });
+    tools.push({ type: 'function', function: { name: 'user_attachment_read_v1', description: '按 attachmentId 读取用户上传附件的文本内容或元数据。', parameters: { type: 'object', properties: { sessionId: { type: 'string' }, attachmentId: { type: 'string' }, offset: { type: 'number' }, limit: { type: 'number' } }, required: ['attachmentId'], additionalProperties: false } } });
+    tools.push({ type: 'function', function: { name: 'user_attachment_view_v1', description: '查看用户附件图片元数据；返回 attachmentId/mime/size 供模型结合视觉消息使用（图片本身由运行时注入）。', parameters: { type: 'object', properties: { sessionId: { type: 'string' }, attachmentId: { type: 'string' } }, required: ['attachmentId'], additionalProperties: false } } });
+    // S6/S7 subagents — profiles via list tool; do not dump profile list into every schema description.
+    tools.push({ type: 'function', function: { name: 'subagent_list_profiles_v1', description: '列出可用子代理 profile（id/标题/是否只读）。派发任务前可先调用。', parameters: { type: 'object', properties: {}, additionalProperties: false } } });
+    tools.push({ type: 'function', function: { name: 'subagent_task_v1', description: '派发单个子代理任务。返回 final 摘要，不污染父上下文。参数：profileId、prompt、可选 connectionId/resourceClaims。', parameters: { type: 'object', properties: { profileId: { type: 'string' }, prompt: { type: 'string' }, connectionId: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } }, tabId: { type: 'string' }, workspacePath: { type: 'string' }, maxSteps: { type: 'number' }, resourceClaims: { type: 'array', items: { type: 'object' } }, readOnly: { type: 'boolean' } }, required: ['prompt'], additionalProperties: false } } });
+    tools.push({ type: 'function', function: { name: 'subagent_parallel_v1', description: '≥2 个只读子任务并行勘察。tasks: [{prompt, profileId?, connectionId?}]。写 profile 会被拒绝。', parameters: { type: 'object', properties: { profileId: { type: 'string' }, tasks: { type: 'array', items: { type: 'object', properties: { prompt: { type: 'string' }, profileId: { type: 'string' }, connectionId: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } } }, required: ['prompt'] } } }, required: ['tasks'], additionalProperties: false } } });
+    tools.push({ type: 'function', function: { name: 'subagent_fleet_v1', description: '多任务舰队：先预检 resource_claims，只读并行、写任务串行。tasks 同 parallel，可含写 profile。', parameters: { type: 'object', properties: { tasks: { type: 'array', items: { type: 'object', properties: { prompt: { type: 'string' }, profileId: { type: 'string' }, connectionId: { type: 'string' }, tabId: { type: 'string' }, workspacePath: { type: 'string' }, resourceClaims: { type: 'array', items: { type: 'object' } } }, required: ['prompt'] } } }, required: ['tasks'], additionalProperties: false } } });
+    // L2 conversation sandbox — whitelist exec only; never shell.
+    tools.push({ type: 'function', function: { name: 'session_exec_v1', description: '会话隔离沙箱执行。文本：jq/grep/sed/…。Python 完全支持（workspace/*.py 或 -m；推荐 uv run/sync）。Node 部分支持（仅 .js/.mjs，禁 -e）。Go/Rust：go/cargo build|run|test。FFmpeg/ffprobe 内置（本地媒体路径）。无 shell、禁 python/node -c/-e。默认无网；依赖安装需 network:true+策略。需要确认。', parameters: { type: 'object', properties: { sessionId: { type: 'string' }, command: { type: 'string', minLength: 1, maxLength: 64 }, args: { type: 'array', items: { type: 'string', maxLength: 8192 }, maxItems: 128 }, cwd: { type: 'string', maxLength: 512, description: '相对会话根，默认 workspace' }, timeoutMs: { type: 'number', minimum: 1000, maximum: 300000 }, network: { type: 'boolean', description: '默认 false；uv/npm/go mod 拉包时需 true+策略' } }, required: ['command'], additionalProperties: false } } });
+    tools.push({ type: 'function', function: { name: 'session_sandbox_status_v1', description: '查看会话沙箱：隔离模式、环境矩阵（Python/Node/Go/Rust/FFmpeg）、白名单、配额。', parameters: { type: 'object', properties: {}, additionalProperties: false } } });
     return tools.map((tool) => {
         if (!tool.function) return tool;
         const parameters = tool.function.parameters || { type: 'object', properties: {} };
@@ -2688,6 +2702,159 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 const changed = String(args.beforeCaptureId) !== String(args.afterCaptureId);
                 return { verified: changed, changed, tabId: String(args.tabId), actionId: String(args.actionId || ''), beforeCaptureId: String(args.beforeCaptureId), afterCaptureId: String(args.afterCaptureId), evidence: changed ? 'capture_id_changed_after_action' : 'capture_id_unchanged' };
             });
+        case 'workspace_list_v1': {
+            if (!deps.sessionFs) throw new Error('会话工作区服务不可用');
+            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || '').trim();
+            if (!sessionId) throw new Error('sessionId required');
+            return deps.sessionFs.listWorkspace(ctx.user.userId, sessionId, { dir: args.dir || '' });
+        }
+        case 'workspace_read_v1': {
+            if (!deps.sessionFs) throw new Error('会话工作区服务不可用');
+            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || '').trim();
+            if (!sessionId) throw new Error('sessionId required');
+            return deps.sessionFs.readWorkspaceFile(ctx.user.userId, sessionId, args.path, {
+                offset: args.offset,
+                limit: args.limit,
+            });
+        }
+        case 'workspace_write_v1': {
+            if (!deps.sessionFs) throw new Error('会话工作区服务不可用');
+            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || '').trim();
+            if (!sessionId) throw new Error('sessionId required');
+            return deps.sessionFs.writeWorkspaceFile(ctx.user.userId, sessionId, args.path, args.content);
+        }
+        case 'user_attachment_read_v1': {
+            if (!deps.sessionFs) throw new Error('会话工作区服务不可用');
+            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || '').trim();
+            if (!sessionId) throw new Error('sessionId required');
+            const attachmentId = String(args.attachmentId || '').trim();
+            const { item, data } = await deps.sessionFs.readAttachmentBytes(ctx.user.userId, sessionId, attachmentId);
+            if (item.kind === 'image') {
+                return { attachment: item, note: '图片请结合视觉消息观察；文本内容不适用' };
+            }
+            const start = Math.max(0, Number(args.offset) || 0);
+            const max = Math.min(Math.max(1, Number(args.limit) || 120000), 200000);
+            const slice = data.subarray(start, start + max);
+            return {
+                attachment: item,
+                offset: start,
+                bytes: slice.length,
+                truncated: start + slice.length < data.length,
+                content: slice.toString('utf8'),
+            };
+        }
+        case 'user_attachment_view_v1': {
+            if (!deps.sessionFs) throw new Error('会话工作区服务不可用');
+            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || '').trim();
+            if (!sessionId) throw new Error('sessionId required');
+            const item = await deps.sessionFs.getAttachment(ctx.user.userId, sessionId, String(args.attachmentId || ''));
+            // S4: if model cannot take images and OCR is configured, attempt OCR text.
+            if (item.kind === 'image' && args.ocr === true) {
+                try {
+                    const { runOcr } = require('./ai-ocr-service');
+                    const { data } = await deps.sessionFs.readAttachmentBytes(ctx.user.userId, sessionId, item.id);
+                    const spill = require('path').join(
+                        deps.sessionFs.root(ctx.user.userId, sessionId),
+                        'ocr',
+                        `${item.id}.txt`
+                    );
+                    const ocr = await runOcr({ buffer: data, mimeType: item.mime, spillPath: spill });
+                    return { attachment: item, viewable: false, ocr: ocr.text, engine: ocr.engine };
+                } catch (err) {
+                    return {
+                        attachment: item,
+                        viewable: true,
+                        ocrError: err.message,
+                        code: err.code || 'ocr_failed',
+                    };
+                }
+            }
+            return {
+                attachment: item,
+                viewable: item.kind === 'image',
+                hint: item.kind === 'image'
+                    ? '图片附件：若本轮请求含对应 vision part 请直接观察；否则请用户重新发送附件或使用 OCR 回退（ocr:true）'
+                    : '非图片附件：使用 user_attachment_read_v1 读取文本',
+            };
+        }
+        case 'subagent_list_profiles_v1': {
+            const { listProfiles } = require('./ai-subagent-service');
+            return { profiles: listProfiles() };
+        }
+        case 'subagent_task_v1': {
+            const { runSubagentTask } = require('./ai-subagent-service');
+            if (ctx?._subagent) {
+                throw Object.assign(new Error('子代理不可再嵌套派发'), { code: 'subagent_nested_forbidden', status: 400 });
+            }
+            return runSubagentTask({
+                profileId: args.profileId || 'readonly-scout',
+                prompt: args.prompt,
+                args,
+                ctx,
+                deps,
+                executeTool: (name, a, childCtx) => executeAiTool(name, a, childCtx, deps),
+                completeTurn: typeof deps.completeSubagentTurn === 'function' ? deps.completeSubagentTurn : null,
+            });
+        }
+        case 'subagent_parallel_v1': {
+            const { runParallelReadonly } = require('./ai-subagent-service');
+            if (ctx?._subagent) {
+                throw Object.assign(new Error('子代理不可再嵌套派发'), { code: 'subagent_nested_forbidden', status: 400 });
+            }
+            return runParallelReadonly({
+                tasks: args.tasks,
+                profileId: args.profileId || 'readonly-scout',
+                ctx,
+                deps,
+                executeTool: (name, a, childCtx) => executeAiTool(name, a, childCtx, deps),
+                completeTurn: typeof deps.completeSubagentTurn === 'function' ? deps.completeSubagentTurn : null,
+            });
+        }
+        case 'subagent_fleet_v1': {
+            const { runFleet } = require('./ai-subagent-service');
+            if (ctx?._subagent) {
+                throw Object.assign(new Error('子代理不可再嵌套派发'), { code: 'subagent_nested_forbidden', status: 400 });
+            }
+            return runFleet({
+                tasks: args.tasks,
+                ctx,
+                deps,
+                executeTool: (name, a, childCtx) => executeAiTool(name, a, childCtx, deps),
+                completeTurn: typeof deps.completeSubagentTurn === 'function' ? deps.completeSubagentTurn : null,
+            });
+        }
+        case 'session_sandbox_status_v1': {
+            const { getSandboxStatus } = require('./ai-session-exec');
+            return getSandboxStatus();
+        }
+        case 'session_exec_v1': {
+            // L2: never allow nested subagent YOLO or unconfirmed network.
+            if (ctx?._subagent) {
+                throw Object.assign(new Error('子代理禁止调用 session_exec_v1；请回主代理确认后执行'), {
+                    code: 'subagent_exec_forbidden',
+                    status: 403,
+                });
+            }
+            if (!deps.sessionFs && !deps.DATA_DIR) throw new Error('会话沙箱服务不可用');
+            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || ctx?.context?.runtimeSessionId || '').trim();
+            if (!sessionId) throw new Error('sessionId required');
+            const network = !!args.network;
+            const ai = deps.storage?.getSettings?.().ai || {};
+            const allowNetworkPolicy = ai.sandbox?.allowNetwork === true || ai.permissions?.sessionExecNetwork === true;
+            const { sessionExec } = require('./ai-session-exec');
+            return sessionExec({
+                userId: ctx.user.userId,
+                sessionId,
+                dataDir: deps.DATA_DIR,
+                sessionFs: deps.sessionFs,
+                command: args.command,
+                args: Array.isArray(args.args) ? args.args : [],
+                cwd: args.cwd || 'workspace',
+                timeoutMs: args.timeoutMs,
+                network,
+                allowNetworkPolicy,
+            });
+        }
         default:
             throw new Error(`未知工具：${toolName}`);
     }
@@ -2951,6 +3118,15 @@ function registerAiRoutes(app, deps) {
     const authz = deps.authz;
     const resourceService = deps.resourceService;
     const aiPolicy = deps.aiPolicyService;
+    const sessionFs = deps.sessionFs || null;
+    let multerUpload = null;
+    try {
+        const multer = require('multer');
+        multerUpload = multer({
+            storage: multer.memoryStorage(),
+            limits: { fileSize: 12 * 1024 * 1024, files: 1 },
+        });
+    } catch (_) { multerUpload = null; }
 
     app.get('/api/ai/status', requireUser, (req, res) => {
         const rawAi = deps.storage.getSettings().ai || {};
@@ -2968,6 +3144,55 @@ function registerAiRoutes(app, deps) {
     app.get('/api/ai/providers', requireUser, (req, res) => {
         if (!deps.aiProviderService) return res.json({ providers: [] });
         res.json({ providers: deps.aiProviderService.listVisible(req.user) });
+    });
+
+    // S2: session-scoped user attachments (disk + ref; never base64 in chat history).
+    app.get('/api/ai/attachments', requireUser, async (req, res) => {
+        try {
+            if (!sessionFs) throw new HttpError(503, 'session_fs_unavailable', '附件服务不可用');
+            const sessionId = String(req.query?.sessionId || '').trim();
+            if (!sessionId) throw new HttpError(400, 'session_required', 'sessionId required');
+            const items = await sessionFs.listAttachments(req.user.userId, sessionId);
+            res.json({ ok: true, attachments: items });
+        } catch (err) { handleServiceError(res, err, 400); }
+    });
+    app.post('/api/ai/attachments', requireUser, (req, res, next) => {
+        if (!multerUpload) return res.status(503).json({ error: 'upload middleware unavailable', code: 'upload_unavailable' });
+        multerUpload.single('file')(req, res, (err) => {
+            if (err) return res.status(400).json({ error: err.message || 'upload failed', code: err.code || 'upload_failed' });
+            next();
+        });
+    }, async (req, res) => {
+        try {
+            if (!sessionFs) throw new HttpError(503, 'session_fs_unavailable', '附件服务不可用');
+            const sessionId = String(req.body?.sessionId || req.query?.sessionId || '').trim();
+            if (!sessionId) throw new HttpError(400, 'session_required', 'sessionId required');
+            if (!req.file) throw new HttpError(400, 'file_required', '缺少文件');
+            const item = await sessionFs.putAttachment(req.user.userId, sessionId, {
+                name: req.file.originalname || req.body?.name || 'file',
+                mime: req.file.mimetype || req.body?.mime || 'application/octet-stream',
+                buffer: req.file.buffer,
+            });
+            res.json({ ok: true, attachment: item });
+        } catch (err) { handleServiceError(res, err, 400); }
+    });
+    app.get('/api/ai/attachments/:id', requireUser, async (req, res) => {
+        try {
+            if (!sessionFs) throw new HttpError(503, 'session_fs_unavailable', '附件服务不可用');
+            const sessionId = String(req.query?.sessionId || '').trim();
+            if (!sessionId) throw new HttpError(400, 'session_required', 'sessionId required');
+            const item = await sessionFs.getAttachment(req.user.userId, sessionId, String(req.params.id || ''));
+            res.json({ ok: true, attachment: item });
+        } catch (err) { handleServiceError(res, err, 400); }
+    });
+    app.delete('/api/ai/attachments/:id', requireUser, async (req, res) => {
+        try {
+            if (!sessionFs) throw new HttpError(503, 'session_fs_unavailable', '附件服务不可用');
+            const sessionId = String(req.query?.sessionId || req.body?.sessionId || '').trim();
+            if (!sessionId) throw new HttpError(400, 'session_required', 'sessionId required');
+            await sessionFs.deleteAttachment(req.user.userId, sessionId, String(req.params.id || ''));
+            res.json({ ok: true });
+        } catch (err) { handleServiceError(res, err, 400); }
     });
 
     app.get('/api/ai/share-targets', requireUser, (req, res) => {
@@ -3019,21 +3244,218 @@ function registerAiRoutes(app, deps) {
         try {
             const ai = deps.storage.getSettings().ai || {};
             const providerId = String(req.body?.providerId || '').trim();
+            const draft = req.body?.provider && typeof req.body.provider === 'object' ? req.body.provider : null;
+            const draftKey = draft?.apiKey != null ? String(draft.apiKey) : '';
+            const useDraftKey = draftKey && draftKey !== '******';
+
             let provider;
             if (deps.aiProviderService) {
-                provider = deps.aiProviderService.resolveForUse(req.user, providerId || null).provider;
-            } else if (aiPolicy) {
-                const resolved = aiPolicy.resolveProvider(req.user, providerId || null, null);
+                if (providerId) {
+                    // Owner: full secret. Shared user: resolveForUse with secret.
+                    try {
+                        provider = deps.aiProviderService.getOwned(req.user.userId, providerId, { includeSecret: true });
+                    } catch {
+                        const resolved = deps.aiProviderService.resolveForUse(req.user, providerId, null);
+                        provider = resolved.provider;
+                    }
+                } else if (draft) {
+                    provider = { ...draft };
+                } else {
+                    throw new HttpError(400, 'provider_required', '请提供 providerId 或临时供应商配置');
+                }
+            } else if (aiPolicy && providerId) {
+                const resolved = aiPolicy.resolveProvider(req.user, providerId, null);
                 provider = resolved.provider;
-            } else {
-                provider = providerId
-                    ? (Array.isArray(ai.providers) ? ai.providers : []).find((p) => p.id === providerId)
-                    : req.body?.provider;
+            } else if (providerId) {
+                provider = (Array.isArray(ai.providers) ? ai.providers : []).find((p) => p.id === providerId);
+            } else if (draft) {
+                provider = { ...draft };
             }
             if (!provider) return res.status(404).json({ error: '模型供应商不存在' });
+
+            // Overlay form draft on saved provider so "获取模型" works without saving first.
+            if (draft && providerId) {
+                provider = {
+                    ...provider,
+                    name: draft.name != null && String(draft.name).trim() ? String(draft.name).trim() : provider.name,
+                    type: draft.type || provider.type,
+                    baseUrl: draft.baseUrl != null ? String(draft.baseUrl).trim() : provider.baseUrl,
+                    apiMode: draft.apiMode || provider.apiMode || provider.config?.apiMode,
+                    organization: draft.organization != null ? draft.organization : (provider.organization || provider.config?.organization),
+                    extraHeaders: draft.extraHeaders != null ? draft.extraHeaders : (provider.extraHeaders || provider.config?.extraHeaders),
+                    modelUserAgents: draft.modelUserAgents != null ? draft.modelUserAgents : (provider.modelUserAgents || provider.config?.modelUserAgents),
+                    apiKey: useDraftKey ? draftKey : (provider.apiKey || ''),
+                    config: {
+                        ...(provider.config || {}),
+                        ...(draft.apiMode ? { apiMode: draft.apiMode } : {}),
+                        ...(draft.organization != null ? { organization: draft.organization } : {}),
+                        ...(draft.extraHeaders != null ? { extraHeaders: draft.extraHeaders } : {}),
+                        ...(draft.modelUserAgents != null ? { modelUserAgents: draft.modelUserAgents } : {}),
+                    },
+                };
+            } else if (draft && !providerId) {
+                provider = { ...provider, apiKey: useDraftKey ? draftKey : (provider.apiKey || '') };
+            }
+
             const models = await listProviderModels(provider);
             res.json({ ok: true, models: models.slice(0, 300) });
         } catch (err) { res.status(err?.status || (isTransientAiFetchError(err) ? 502 : 400)).json({ error: publicError(err), code: err?.code || '', transient: isTransientAiFetchError(err) }); }
+    });
+
+    /**
+     * Real quick-test: one-shot provider call (no tools, no agent loop).
+     * Returns structured modality results for the settings UI sheet.
+     */
+    app.post('/api/ai/models/quick-test', requireUser, async (req, res) => {
+        const abortController = new AbortController();
+        const abortRequest = () => { if (!res.writableEnded) abortController.abort(); };
+        req.on('aborted', abortRequest);
+        res.on('close', abortRequest);
+        try {
+            const ai = deps.storage.getSettings().ai || {};
+            if (!ai.enabled) return res.status(403).json({ error: 'AI 助理未启用', code: 'ai_disabled' });
+            if (aiPolicy) {
+                const policy = aiPolicy.policyFor(req.user);
+                if (policy.mode === 'disabled') return res.status(403).json({ error: 'AI 助理未启用', code: 'ai_disabled' });
+            }
+            const providerId = String(req.body?.providerId || '').trim();
+            const modelId = String(req.body?.model || req.body?.modelId || '').trim();
+            if (!providerId || !modelId) throw new HttpError(400, 'bad_request', 'providerId 与 model 必填');
+
+            let provider;
+            if (deps.aiProviderService) {
+                // Allow testing hidden models (still must be listed on a visible provider).
+                const visible = deps.aiProviderService.listVisible(req.user).find((p) => p.id === providerId);
+                if (!visible) throw new HttpError(404, 'provider_not_found_or_inaccessible', 'AI Provider 不存在或无权访问');
+                // Need secret: owner path or resolveForUse without model gate
+                try {
+                    provider = deps.aiProviderService.getOwned(req.user.userId, providerId, { includeSecret: true });
+                } catch {
+                    const resolved = deps.aiProviderService.resolveForUse(req.user, providerId, null);
+                    provider = resolved.provider;
+                }
+                const ids = (Array.isArray(provider.models) ? provider.models : [])
+                    .map((m) => (typeof m === 'string' ? m : m?.id)).filter(Boolean);
+                if (ids.length && !ids.includes(modelId)) {
+                    throw new HttpError(403, 'model_not_allowed', '该模型未被 Provider 授权');
+                }
+            } else {
+                provider = (Array.isArray(ai.providers) ? ai.providers : []).find((p) => p.id === providerId);
+                if (!provider) throw new HttpError(404, 'provider_not_found', '模型供应商不存在');
+            }
+
+            const entry = (Array.isArray(provider.models) ? provider.models : [])
+                .map((m) => (typeof m === 'string' ? { id: m } : m))
+                .find((m) => m && m.id === modelId) || { id: modelId };
+            const wantImage = req.body?.testImage === true
+                || (entry.input && entry.input.image === true)
+                || req.body?.modalities?.includes?.('image');
+
+            const results = [];
+            // 1) Text modality — always
+            {
+                const started = Date.now();
+                try {
+                    const message = await callProvider(
+                        provider,
+                        modelId,
+                        [
+                            { role: 'system', content: 'You are a friendly assistant. Reply in one short natural sentence. No markdown.' },
+                            { role: 'user', content: 'Say a brief friendly hello.' },
+                        ],
+                        {
+                            temperature: 0.6,
+                            max_tokens: 120,
+                            max_output_tokens: 120,
+                            ...(provider.options || provider.config?.options || {}),
+                        },
+                        [], // no tools
+                        abortController.signal,
+                    );
+                    results.push({
+                        modality: 'text',
+                        ok: true,
+                        durationMs: Date.now() - started,
+                        content: String(message?.content || '').trim(),
+                    });
+                } catch (err) {
+                    results.push({
+                        modality: 'text',
+                        ok: false,
+                        durationMs: Date.now() - started,
+                        error: publicError(err),
+                        code: err?.code || '',
+                    });
+                }
+            }
+
+            // 2) Optional image probe (1×1 PNG) when model entry claims image input
+            if (wantImage) {
+                const started = Date.now();
+                // 1x1 transparent PNG
+                const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+                try {
+                    // content must be multimodal array — callProvider reads m.content, not m.parts
+                    const message = await callProvider(
+                        provider,
+                        modelId,
+                        [
+                            {
+                                role: 'user',
+                                content: [
+                                    { type: 'text', text: 'Describe this image in one short sentence. If you cannot see images, say so.' },
+                                    { type: 'image_url', image_url: { url: tinyPng, detail: 'low' } },
+                                ],
+                            },
+                        ],
+                        {
+                            temperature: 0.2,
+                            max_tokens: 120,
+                            max_output_tokens: 120,
+                            ...(provider.options || provider.config?.options || {}),
+                        },
+                        [],
+                        abortController.signal,
+                    );
+                    results.push({
+                        modality: 'image',
+                        ok: true,
+                        durationMs: Date.now() - started,
+                        content: String(message?.content || '').trim(),
+                    });
+                } catch (err) {
+                    results.push({
+                        modality: 'image',
+                        ok: false,
+                        durationMs: Date.now() - started,
+                        error: publicError(err),
+                        code: err?.code || '',
+                    });
+                }
+            }
+
+            deps.addActivity?.(`AI 模型快速测试：${provider.name || provider.type}/${modelId}`, req.user?.userId);
+            res.json({
+                ok: results.every((r) => r.ok),
+                provider: { id: provider.id, name: provider.name || provider.type || providerId },
+                model: modelId,
+                label: entry.label || modelId,
+                results,
+            });
+        } catch (err) {
+            if (err?.name === 'AbortError' || abortController.signal.aborted) {
+                if (!res.headersSent) return res.status(499).json({ error: '已取消', code: 'aborted' });
+                return;
+            }
+            res.status(err?.status || (isTransientAiFetchError(err) ? 502 : 400)).json({
+                error: publicError(err),
+                code: err?.code || '',
+                transient: isTransientAiFetchError(err),
+            });
+        } finally {
+            req.off?.('aborted', abortRequest);
+            res.off?.('close', abortRequest);
+        }
     });
 
     app.post('/api/ai/chat', requireUser, async (req, res) => {

@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
-test('guidance v11 removes legacy built-ins and preserves user Skills', () => {
+test('guidance v16 removes legacy built-ins and preserves user Skills', () => {
   const dir = mkdtempSync(join(tmpdir(), 'zephyr-ai-skill-migrate-'));
   process.env.ZEPHYR_DATA_DIR = dir;
   const storagePath = require.resolve('../storage.js');
@@ -24,7 +24,7 @@ test('guidance v11 removes legacy built-ins and preserves user Skills', () => {
       ],
     } });
     const migrated = storage.ensureAiGuidanceDefaults();
-    assert.equal(migrated.guidanceVersion, 11);
+    assert.equal(migrated.guidanceVersion, 16);
     assert.deepEqual(migrated.skills.map((item) => item.id), ['custom-user-skill']);
   } finally {
     storage.close();

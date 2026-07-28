@@ -31,6 +31,27 @@ test('unified Skill teaches deterministic list, open, remote_execute and termina
     assert.match(prompt, /禁止只回复步骤、命令示例、按钮位置/);
 });
 
+test('unified Skill covers workspace L1, L2 sandbox matrix, and subagents', () => {
+    const prompt = defaults.buildUnifiedZephyrSkill(playbooks.PLAYBOOKS).prompt;
+    assert.match(prompt, /会话工作区 L1/);
+    assert.match(prompt, /workspace_list_v1/);
+    assert.match(prompt, /workspace_write_v1/);
+    assert.match(prompt, /user_attachment_read_v1/);
+    assert.match(prompt, /会话沙箱 L2/);
+    assert.match(prompt, /session_sandbox_status_v1/);
+    assert.match(prompt, /session_exec_v1/);
+    assert.match(prompt, /Python[\s\S]*完全支持|完全支持[\s\S]*Python/);
+    assert.match(prompt, /Node\.js[\s\S]*部分支持|部分支持[\s\S]*Node/);
+    assert.match(prompt, /FFmpeg|ffmpeg/);
+    assert.match(prompt, /禁止 -c/);
+    assert.match(prompt, /subagent_list_profiles_v1/);
+    assert.match(prompt, /subagent_parallel_v1/);
+    assert.match(prompt, /subagent_fleet_v1/);
+    assert.match(prompt, /readonly-scout/);
+    assert.match(prompt, /Economy|economy/);
+    assert.match(prompt, /与 remote_execute 分工/);
+});
+
 test('legacy and Runtime paths inject exactly one built-in Skill plus user Skills', () => {
     const legacy = agentService.mergeZephyrDefaultSkills([
         { id: 'zephyr-local-operator', prompt: 'old' },
@@ -67,5 +88,5 @@ test('settings persist only user Skills and UI renders built-in Skill read-only'
 });
 
 test('guidance version advances for existing installations', () => {
-    assert.equal(defaults.DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, 11);
+    assert.equal(defaults.DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, 16);
 });

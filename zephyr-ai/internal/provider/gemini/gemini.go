@@ -125,9 +125,10 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 					}
 				case "image_url":
 					mimeType, data, ok := provider.DecodeDataURL(part.ImageURL)
-					if ok {
-						parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": mimeType, "data": data}})
+					if !ok {
+						return nil, fmt.Errorf("vision_payload_invalid: gemini image part is not a supported data URL")
 					}
+					parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": mimeType, "data": data}})
 				}
 			}
 		} else {

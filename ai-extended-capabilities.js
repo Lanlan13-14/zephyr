@@ -28,6 +28,15 @@ const EXTENDED_CAPABILITIES = Object.freeze([
     cap('ssh.file_write', 'Write a file on an authorized SSH connection', 'R3', 'always', ['remote_write_file'], 'ssh-file-operations-v1'),
     cap('ssh.file_rollback', 'Restore an SSH file snapshot', 'R2', 'always', ['remote_file_rollback'], 'ssh-file-operations-v1'),
     cap('ssh.file_snapshots', 'List SSH file snapshots', 'R0', 'never', ['remote_file_snapshot_list'], 'ssh-file-operations-v1'),
+    cap('workspace.list', 'List AI session workspace files', 'R0', 'never', ['workspace_list_v1'], 'asset-management-v1'),
+    cap('workspace.read', 'Read AI session workspace or upload files', 'R0', 'never', ['workspace_read_v1', 'user_attachment_read_v1', 'user_attachment_view_v1'], 'asset-management-v1'),
+    cap('workspace.write', 'Write AI session workspace drafts/outputs', 'R1', 'always', ['workspace_write_v1'], 'asset-management-v1'),
+    cap('subagent.list', 'List subagent profiles', 'R0', 'never', ['subagent_list_profiles_v1'], 'capability-discovery-v1'),
+    cap('subagent.task', 'Run one nested subagent task', 'R1', 'never', ['subagent_task_v1'], 'capability-discovery-v1'),
+    cap('subagent.parallel', 'Run parallel readonly subagent tasks', 'R1', 'never', ['subagent_parallel_v1'], 'capability-discovery-v1'),
+    cap('subagent.fleet', 'Run subagent fleet with resource lock preflight', 'R2', 'never', ['subagent_fleet_v1'], 'capability-discovery-v1'),
+    cap('sandbox.status', 'Inspect session sandbox isolation capabilities', 'R0', 'never', ['session_sandbox_status_v1'], 'asset-management-v1'),
+    cap('sandbox.exec', 'Run whitelist command in conversation sandbox', 'R2', 'always', ['session_exec_v1'], 'asset-management-v1'),
 ]);
 
 const TOOL_TO_CAPABILITY = new Map();

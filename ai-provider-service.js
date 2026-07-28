@@ -3,6 +3,13 @@
 const crypto = require('crypto');
 const secretCrypto = require('./secret-crypto');
 const { HttpError } = require('./authz');
+const {
+    normalizeModels,
+    mergeModelList,
+    findModelEntry,
+    modelAcceptsImage,
+    selectableModelIds,
+} = require('./ai-model-catalog');
 
 const TYPES = new Set(['openai', 'openai-compatible', 'anthropic', 'gemini', 'ollama']);
 const VIS = new Set(['private', 'shared_users', 'shared_admins', 'shared_all', 'selected']);
@@ -12,6 +19,15 @@ function json(value, fallback = []) {
 }
 function cleanIds(values) {
     return [...new Set((Array.isArray(values) ? values : []).map(String).filter(Boolean))].slice(0, 200);
+}
+
+function providerVisionDefault(input = {}) {
+    const opts = input.options || input.config?.options || {};
+    return opts.vision !== false;
+}
+
+function parseModelsInput(models, input = {}) {
+    return normalizeModels(models, { providerVisionDefault: providerVisionDefault(input) });
 }
 
 class AiProviderService {
@@ -86,8 +102,8 @@ class AiProviderService {
         const now = this.now();
         const type = TYPES.has(String(input.type || '').toLowerCase()) ? String(input.type).toLowerCase() : 'openai-compatible';
         const shared = cleanIds(input.sharedUserIds);
-        const models = Array.isArray(input.models) ? input.models : String(input.models || '').split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
         const config = { ...(input.config || {}), apiMode: input.apiMode || input.config?.apiMode || 'auto', options: input.options || input.config?.options || {}, organization: input.organization || '', extraHeaders: input.extraHeaders || '', modelUserAgents: input.modelUserAgents || '' };
+        const models = parseModelsInput(input.models, { options: config.options, config });
         this.db.prepare(`INSERT INTO ai_providers
             (provider_id,owner_user_id,name,type,base_url,api_key_enc,default_model,models_json,config_json,visibility,share_with_users,share_with_admins,shared_user_ids_json,enabled,created_at,updated_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
@@ -103,6 +119,8 @@ class AiProviderService {
 
     _row(row, { includeSecret = false } = {}) {
         if (!row) return null;
+        const config = json(row.config_json, {});
+        const visionDefault = config?.options?.vision !== false;
         const out = {
             id: row.provider_id,
             ownerUserId: row.owner_user_id,
@@ -110,8 +128,8 @@ class AiProviderService {
             type: row.type,
             baseUrl: row.base_url || '',
             defaultModel: row.default_model || '',
-            models: json(row.models_json, []),
-            config: json(row.config_json, {}),
+            models: normalizeModels(json(row.models_json, []), { providerVisionDefault: visionDefault }),
+            config,
             visibility: row.visibility || 'private',
             shareWithUsers: !!row.share_with_users,
             shareWithAdmins: !!row.share_with_admins,
@@ -158,15 +176,20 @@ class AiProviderService {
             : this.db.prepare('SELECT * FROM ai_providers WHERE enabled=1 ORDER BY updated_at DESC').all().find((r) => this._canUse(user, r));
         if (!row || !this._canUse(user, row)) throw new HttpError(404, 'provider_not_found_or_inaccessible', 'AI Provider 不存在或无权访问');
         const provider = this._row(row, { includeSecret: true });
-        const allowedModels = provider.models.map((m) => typeof m === 'string' ? m : m?.id).filter(Boolean);
-        if (model && allowedModels.length && !allowedModels.includes(model)) throw new HttpError(403, 'model_not_allowed', '该模型未被 Provider 所有者授权');
-        return { provider, model: model || provider.defaultModel || allowedModels[0] || '' };
+        const allowedModels = selectableModelIds(provider);
+        const allIds = provider.models.map((m) => m.id);
+        if (model && allIds.length && !allIds.includes(model)) throw new HttpError(403, 'model_not_allowed', '该模型未被 Provider 所有者授权');
+        if (model && allIds.includes(model) && !allowedModels.includes(model)) {
+            throw new HttpError(403, 'model_hidden', '该模型已对选择器隐藏');
+        }
+        const resolvedModel = model || (allowedModels.includes(provider.defaultModel) ? provider.defaultModel : '') || allowedModels[0] || '';
+        const modelEntry = findModelEntry(provider.models, resolvedModel);
+        return { provider, model: resolvedModel, modelEntry };
     }
 
     create(user, input) { return this._insert(user.userId, input || {}); }
     update(user, id, patch = {}) {
         const current = this.getOwned(user.userId, id, { includeSecret: true });
-        const parsedModels = patch.models === undefined ? current.models : (Array.isArray(patch.models) ? patch.models : String(patch.models || '').split(/[\n,]/).map((x) => x.trim()).filter(Boolean));
         const mergedConfig = {
             ...(current.config || {}),
             ...(patch.config || {}),
@@ -176,6 +199,9 @@ class AiProviderService {
             ...(patch.extraHeaders !== undefined ? { extraHeaders: patch.extraHeaders } : {}),
             ...(patch.modelUserAgents !== undefined ? { modelUserAgents: patch.modelUserAgents } : {}),
         };
+        const parsedModels = patch.models === undefined
+            ? normalizeModels(current.models, { providerVisionDefault: mergedConfig?.options?.vision !== false })
+            : parseModelsInput(patch.models, { options: mergedConfig.options, config: mergedConfig });
         const next = { ...current, ...patch, id: current.id, models: parsedModels, config: mergedConfig };
         const key = patch.apiKey === undefined || patch.apiKey === '******' ? current.apiKey : String(patch.apiKey || '');
         const visibility = this._visibility(next);
@@ -187,6 +213,19 @@ class AiProviderService {
             next.enabled === false ? 0 : 1, this.now(), current.id, user.userId
         );
         return this.getOwned(user.userId, current.id);
+    }
+
+    /** Merge a refreshed remote model id list while preserving per-model capabilities. */
+    mergeFetchedModels(user, id, remoteModels = []) {
+        const current = this.getOwned(user.userId, id);
+        const merged = mergeModelList(current.models, remoteModels, {
+            providerVisionDefault: current.config?.options?.vision !== false,
+        });
+        return this.update(user, id, { models: merged });
+    }
+
+    modelAcceptsImage(provider, modelId) {
+        return modelAcceptsImage(provider, modelId);
     }
     remove(user, id) {
         const result = this.db.prepare('DELETE FROM ai_providers WHERE provider_id=? AND owner_user_id=?').run(String(id), user.userId);
@@ -202,4 +241,11 @@ class AiProviderService {
     }
 }
 
-module.exports = { AiProviderService };
+module.exports = {
+    AiProviderService,
+    normalizeModels,
+    mergeModelList,
+    findModelEntry,
+    modelAcceptsImage,
+    selectableModelIds,
+};

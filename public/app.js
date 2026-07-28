@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260727-ai-rdp-vision1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260727-ai-rdp-vision1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260728-ai-panel-close2';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260728-ai-panel-close2';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -4818,14 +4818,521 @@ function defaultAiSettings() {
 }
 function normalizeVisibleAiProvider(provider = {}) {
     const config = provider?.config && typeof provider.config === 'object' ? provider.config : {};
+    const options = provider.options && typeof provider.options === 'object' ? provider.options : (config.options || {});
     return {
         ...provider,
         apiMode: provider.apiMode ?? config.apiMode ?? 'auto',
-        options: provider.options && typeof provider.options === 'object' ? provider.options : (config.options || {}),
+        options: options && typeof options === 'object' ? options : (config.options || {}),
         organization: provider.organization ?? config.organization ?? '',
         extraHeaders: provider.extraHeaders ?? config.extraHeaders ?? '',
         modelUserAgents: provider.modelUserAgents ?? config.modelUserAgents ?? '',
+        models: normalizeAiModelEntries(provider.models, { providerVisionDefault: options?.vision !== false }),
     };
+}
+function defaultAiModelModalities(providerVisionDefault = true) {
+    return {
+        input: { image: !!providerVisionDefault, pdf: false, audio: false, video: false },
+        output: { image: false, audio: false },
+    };
+}
+function normalizeAiModelEntry(raw, { providerVisionDefault = true } = {}) {
+    if (raw == null) return null;
+    if (typeof raw === 'string') {
+        const id = String(raw).trim();
+        if (!id) return null;
+        const mods = defaultAiModelModalities(providerVisionDefault);
+        return {
+            id, label: id, hidden: false,
+            contextWindowTokens: null, maxOutputTokens: null,
+            temperature: null, topP: null, reasoning: false, reasoningEffort: null,
+            input: mods.input, output: mods.output,
+            tools: true, parallelToolCalls: true, promptCache: 'auto',
+            maxImagesPerRequest: null, maxImageBytes: null, apiMode: null, userAgent: null, extra: {},
+        };
+    }
+    if (typeof raw !== 'object') return null;
+    const id = String(raw.id || raw.model || raw.name || '').trim();
+    if (!id) return null;
+    const mods = defaultAiModelModalities(providerVisionDefault);
+    const input = raw.input && typeof raw.input === 'object' ? raw.input : {};
+    const output = raw.output && typeof raw.output === 'object' ? raw.output : {};
+    return {
+        id,
+        label: String(raw.label || raw.displayName || id).trim() || id,
+        hidden: !!raw.hidden,
+        contextWindowTokens: raw.contextWindowTokens == null || raw.contextWindowTokens === '' ? null : Number(raw.contextWindowTokens) || null,
+        maxOutputTokens: raw.maxOutputTokens == null || raw.maxOutputTokens === '' ? null : Number(raw.maxOutputTokens) || null,
+        temperature: raw.temperature == null || raw.temperature === '' ? null : Number(raw.temperature),
+        topP: raw.topP == null && raw.top_p == null ? null : Number(raw.topP ?? raw.top_p),
+        reasoning: !!raw.reasoning,
+        reasoningEffort: raw.reasoningEffort || null,
+        input: {
+            image: input.image === undefined ? mods.input.image : !!input.image,
+            pdf: !!input.pdf, audio: !!input.audio, video: !!input.video,
+        },
+        output: { image: !!output.image, audio: !!output.audio },
+        tools: raw.tools === undefined ? true : !!raw.tools,
+        parallelToolCalls: raw.parallelToolCalls === undefined ? true : !!raw.parallelToolCalls,
+        promptCache: raw.promptCache || 'auto',
+        maxImagesPerRequest: raw.maxImagesPerRequest == null ? null : Number(raw.maxImagesPerRequest) || null,
+        maxImageBytes: raw.maxImageBytes == null ? null : Number(raw.maxImageBytes) || null,
+        apiMode: raw.apiMode || null,
+        userAgent: raw.userAgent || null,
+        extra: raw.extra && typeof raw.extra === 'object' ? raw.extra : {},
+    };
+}
+function normalizeAiModelEntries(models, opts = {}) {
+    const list = Array.isArray(models) ? models : String(models || '').split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+    const byId = new Map();
+    for (const item of list) {
+        const entry = normalizeAiModelEntry(item, opts);
+        if (entry) byId.set(entry.id, entry);
+    }
+    return [...byId.values()];
+}
+function mergeAiModelEntries(existing, nextIds, opts = {}) {
+    const current = normalizeAiModelEntries(existing, opts);
+    const byId = new Map(current.map((m) => [m.id, m]));
+    const ids = normalizeAiModelEntries(nextIds, opts).map((m) => m.id);
+    const out = [];
+    const seen = new Set();
+    for (const id of ids) {
+        if (seen.has(id)) continue;
+        out.push(byId.get(id) || normalizeAiModelEntry(id, opts));
+        seen.add(id);
+    }
+    return out;
+}
+/** In-memory draft of model entries while the provider modal is open. */
+let aiProviderModelEntriesDraft = [];
+let aiModelDetailSource = 'provider'; // provider | draft
+let aiModelDetailProviderId = '';
+let aiModelsPageProviderId = '';
+let aiSettingsSubpageDepth = 0; // 0 root · 1 models list · 2 model detail
+
+function aiModelGlyphIcons(entry = {}) {
+    // Screenshot-style monochrome glyphs (image / document)
+    const icons = [];
+    if (entry?.input?.image) icons.push({ key: 'image', title: t('图片输入'), html: '<span class="ai-cap-glyph ai-cap-image" aria-hidden="true"></span>' });
+    if (entry?.input?.pdf) icons.push({ key: 'pdf', title: t('PDF 输入'), html: '<span class="ai-cap-glyph ai-cap-doc" aria-hidden="true"></span>' });
+    return icons;
+}
+
+function renderAiProviderModelCatalog() {
+    // Provider modal no longer hosts the full catalog UI (moved to L2 page).
+    const root = $('#aiProviderModelCatalog');
+    if (!root) return;
+    aiProviderModelEntriesDraft = mergeAiModelEntries(aiProviderModelEntriesDraft, $('#aiProviderModels')?.value || '', {
+        providerVisionDefault: !!$('#aiProviderVision')?.checked,
+    });
+    root.innerHTML = '';
+}
+
+function settingsSubpageEls() {
+    return {
+        layout: document.querySelector('#view-settings .settings-layout'),
+        content: document.querySelector('#view-settings .settings-content'),
+        menu: document.querySelector('#view-settings .settings-menu'),
+        models: $('#settingsAiModelsPage'),
+        detail: $('#settingsAiModelDetailPage'),
+    };
+}
+
+/**
+ * Freeze the page under fixed L2/L3: body position:fixed + top:-scrollY.
+ * Unfreeze restores that same scrollY once. No multi-rAF gymnastics.
+ */
+let settingsAiFrozenScrollY = null;
+
+function syncSettingsSubpageBodyLock() {
+    const open = !!($('#settingsAiModelsPage')?.classList.contains('is-open')
+        || $('#settingsAiModelDetailPage')?.classList.contains('is-open')
+        || $('#settingsAiQuickTestPage')?.classList.contains('is-open'));
+    const frozen = settingsAiFrozenScrollY != null;
+
+    if (open && !frozen) {
+        const y = window.scrollY
+            || document.scrollingElement?.scrollTop
+            || document.documentElement.scrollTop
+            || 0;
+        settingsAiFrozenScrollY = y;
+        document.body.classList.add('settings-subpage-open');
+        document.body.style.position = 'fixed';
+        document.body.style.top = `-${y}px`;
+        document.body.style.left = '0';
+        document.body.style.right = '0';
+        document.body.style.width = '100%';
+        return;
+    }
+
+    if (!open && frozen) {
+        const y = settingsAiFrozenScrollY || 0;
+        settingsAiFrozenScrollY = null;
+        document.body.classList.remove('settings-subpage-open');
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.left = '';
+        document.body.style.right = '';
+        document.body.style.width = '';
+        // Body was visually parked at y via top:-y; unlock then put window back there.
+        window.scrollTo(0, y);
+    }
+}
+
+async function animateSettingsSubpage(el, open, { edge = 'right' } = {}) {
+    if (!el) return;
+    const Motion = await sshKeyMotion._ensure().catch(() => null);
+    if (!Motion || sshKeyMotion.failed) {
+        el.classList.toggle('is-open', open);
+        el.setAttribute('aria-hidden', open ? 'false' : 'true');
+        if (open) {
+            el.style.transform = 'none';
+            el.style.opacity = '1';
+            el.style.visibility = 'visible';
+            el.style.pointerEvents = 'auto';
+            el.scrollTop = 0;
+        } else {
+            el.style.visibility = 'hidden';
+            el.style.pointerEvents = 'none';
+            el.style.transform = '';
+            el.style.opacity = '';
+        }
+        syncSettingsSubpageBodyLock();
+        return;
+    }
+    if (open) {
+        el.classList.add('is-open');
+        el.setAttribute('aria-hidden', 'false');
+        el.style.visibility = 'visible';
+        el.style.pointerEvents = 'auto';
+        el.style.display = 'flex';
+        el.style.opacity = '1';
+        // Force layout so Motion.sheet gets non-zero width/height (else travel=0).
+        void el.offsetWidth;
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 2 || rect.height < 2) {
+            el.style.width = `${window.innerWidth || 360}px`;
+            el.style.height = `${window.innerHeight || 640}px`;
+            void el.offsetWidth;
+        }
+        el.scrollTop = 0;
+        syncSettingsSubpageBodyLock();
+        await Motion.sheet(el, { edge, open: true, preset: 'sheet' });
+        // Ensure final pose is identity even if sheet measured poorly mid-flight.
+        try { Motion.set(el, { x: 0, y: 0, opacity: 1 }); } catch { /* ignore */ }
+        el.style.transform = el.style.transform || '';
+    } else {
+        await Motion.sheet(el, { edge, open: false, preset: 'sheet' });
+        el.classList.remove('is-open');
+        el.setAttribute('aria-hidden', 'true');
+        el.style.visibility = 'hidden';
+        el.style.pointerEvents = 'none';
+        try { Motion.release(el); } catch { /* ignore */ }
+        el.style.transform = '';
+        el.style.opacity = '';
+        el.style.width = '';
+        el.style.height = '';
+        syncSettingsSubpageBodyLock();
+    }
+}
+
+function getAiModelsSearchQuery() {
+    return String($('#aiModelsSearchInput')?.value || '').trim().toLowerCase();
+}
+
+function renderAiModelsListPage() {
+    const card = $('#aiModelsListCard');
+    if (!card) return;
+    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+    const provider = (ai.providers || []).find((p) => p.id === aiModelsPageProviderId);
+    if (!provider) {
+        card.innerHTML = `<p class="empty-state">${t('供应商不存在')}</p>`;
+        return;
+    }
+    const entries = normalizeAiModelEntries(provider.models, {
+        providerVisionDefault: provider?.options?.vision !== false,
+    });
+    const q = getAiModelsSearchQuery();
+    const filtered = !q ? entries : entries.filter((m) => {
+        const id = String(m.id || '').toLowerCase();
+        const label = String(m.label || '').toLowerCase();
+        return id.includes(q) || label.includes(q);
+    });
+    // Title shows filtered/total when searching
+    $('#aiModelsPageTitle').textContent = q
+        ? t('模型（{shown}/{total}）', { shown: filtered.length, total: entries.length })
+        : t('模型（{count}）', { count: entries.length });
+    $('#aiModelsPageSubtitle').textContent = provider.name || provider.type || '';
+    if (!entries.length) {
+        card.innerHTML = `<p class="empty-state">${t('暂无模型。点击上方刷新模型列表，或在编辑供应商时手动填写。')}</p>`;
+        return;
+    }
+    if (!filtered.length) {
+        card.innerHTML = `<p class="empty-state">${t('没有匹配「{query}」的模型', { query: getAiModelsSearchQuery() })}</p>`;
+        return;
+    }
+    card.innerHTML = filtered.map((m) => {
+        const glyphs = aiModelGlyphIcons(m).map((g) => g.html).join('');
+        const hidden = m.hidden ? `<span class="muted">${t('已隐藏')}</span>` : '';
+        return `<button type="button" class="ai-models-list-row" data-ai-model-open="${escapeAttr(m.id)}">
+            <span class="ai-models-list-text"><strong>${escapeHtml(m.label || m.id)}</strong><small>${escapeHtml(m.id)}</small>${hidden}</span>
+            <span class="ai-models-list-trailing">${glyphs}<span class="ai-models-chevron" aria-hidden="true">›</span></span>
+        </button>`;
+    }).join('');
+}
+
+function ensureAiSettingsTabActive() {
+    // Prefer direct class toggles — re-clicking the AI tab can race with subpage open.
+    if (!document.getElementById('view-settings')?.classList.contains('active')) {
+        try { switchView('settings'); } catch { /* ignore */ }
+    }
+    const tab = document.querySelector('.settings-tab[data-settings="ai"]');
+    const panel = document.getElementById('settings-ai');
+    if (tab && !tab.classList.contains('active')) {
+        document.querySelectorAll('.settings-tab').forEach((b) => b.classList.remove('active'));
+        tab.classList.add('active');
+    }
+    if (panel && !panel.classList.contains('active')) {
+        document.querySelectorAll('.settings-panel').forEach((p) => p.classList.remove('active'));
+        panel.classList.add('active');
+    }
+}
+
+async function openAiModelsPage(providerId = '', trigger = null) {
+    const { layout, models } = settingsSubpageEls();
+    if (!models) {
+        toast(t('模型列表页未加载，请硬刷新后重试'));
+        return;
+    }
+    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+    const provider = (ai.providers || []).find((p) => p.id === providerId);
+    if (!provider) return toast(t('供应商不存在'));
+    ensureAiSettingsTabActive();
+    aiModelsPageProviderId = providerId;
+    const search = $('#aiModelsSearchInput');
+    if (search) search.value = '';
+    renderAiModelsListPage();
+    layout?.classList.add('has-subpage');
+    aiSettingsSubpageDepth = Math.max(aiSettingsSubpageDepth, 1);
+    // Freeze background at current scroll; only the overlay moves.
+    await animateSettingsSubpage(models, true, { edge: 'right' });
+}
+
+async function closeAiModelsPage() {
+    const { layout, models, detail } = settingsSubpageEls();
+    if (detail?.classList.contains('is-open')) await closeAiModelDetailPage({ skipParent: true });
+    await animateSettingsSubpage(models, false, { edge: 'right' });
+    aiModelsPageProviderId = '';
+    aiSettingsSubpageDepth = 0;
+    layout?.classList.remove('has-subpage');
+}
+
+async function openAiModelDetailPage({ providerId = '', modelId = '', source = 'provider' } = {}) {
+    const { layout, detail } = settingsSubpageEls();
+    if (!detail) return;
+    let entry = null;
+    let provider = null;
+    aiModelDetailSource = source;
+    aiModelDetailProviderId = providerId || aiModelsPageProviderId || '';
+    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+    provider = (ai.providers || []).find((p) => p.id === aiModelDetailProviderId) || null;
+    if (source === 'provider' && provider) {
+        entry = normalizeAiModelEntries(provider.models, {
+            providerVisionDefault: provider?.options?.vision !== false,
+        }).find((m) => m.id === modelId) || null;
+    } else {
+        entry = aiProviderModelEntriesDraft.find((m) => m.id === modelId) || null;
+    }
+    if (!entry) return toast(t('模型不存在'));
+    // Ensure L2 is open first when coming from provider list
+    if (provider && (!$('#settingsAiModelsPage')?.classList.contains('is-open'))) {
+        await openAiModelsPage(provider.id);
+    }
+    $('#aiModelDetailProviderId').value = aiModelDetailProviderId || '';
+    $('#aiModelDetailId').value = entry.id;
+    $('#aiModelDetailIdDisplay').value = entry.id;
+    $('#aiModelDetailLabel').value = entry.label && entry.label !== entry.id ? entry.label : '';
+    $('#aiModelDetailContextWindow').value = entry.contextWindowTokens || '';
+    $('#aiModelDetailMaxOutput').value = entry.maxOutputTokens || '';
+    $('#aiModelDetailReasoning').checked = !!entry.reasoning;
+    $('#aiModelDetailHidden').checked = !!entry.hidden;
+    $('#aiModelDetailInputImage').checked = !!entry.input?.image;
+    $('#aiModelDetailInputPdf').checked = !!entry.input?.pdf;
+    $('#aiModelDetailInputAudio').checked = !!entry.input?.audio;
+    $('#aiModelDetailInputVideo').checked = !!entry.input?.video;
+    $('#aiModelDetailOutputImage').checked = !!entry.output?.image;
+    $('#aiModelDetailOutputAudio').checked = !!entry.output?.audio;
+    $('#aiModelDetailProviderName').textContent = provider?.name || provider?.type || '—';
+    $('#aiModelDetailTitle').textContent = t('模型详情');
+    layout?.classList.add('has-subpage', 'has-subpage-l3');
+    aiSettingsSubpageDepth = 2;
+    await animateSettingsSubpage(detail, true, { edge: 'right' });
+}
+
+// Back-compat alias used by older listeners
+function openAiModelDetailModal(opts) { return openAiModelDetailPage(opts); }
+
+async function closeAiModelDetailPage({ skipParent = false } = {}) {
+    const { layout, detail } = settingsSubpageEls();
+    await animateSettingsSubpage(detail, false, { edge: 'right' });
+    aiSettingsSubpageDepth = $('#settingsAiModelsPage')?.classList.contains('is-open') ? 1 : 0;
+    layout?.classList.remove('has-subpage-l3');
+    if (!skipParent && aiSettingsSubpageDepth === 0) layout?.classList.remove('has-subpage');
+}
+
+function closeAiModelDetailModal() { return closeAiModelDetailPage(); }
+
+async function saveAiModelDetail(e) {
+    e?.preventDefault?.();
+    const modelId = $('#aiModelDetailId')?.value || '';
+    if (!modelId) return;
+    const patch = {
+        id: modelId,
+        label: ($('#aiModelDetailLabel')?.value || '').trim() || modelId,
+        contextWindowTokens: Number($('#aiModelDetailContextWindow')?.value) || null,
+        maxOutputTokens: Number($('#aiModelDetailMaxOutput')?.value) || null,
+        reasoning: !!$('#aiModelDetailReasoning')?.checked,
+        hidden: !!$('#aiModelDetailHidden')?.checked,
+        input: {
+            image: !!$('#aiModelDetailInputImage')?.checked,
+            pdf: !!$('#aiModelDetailInputPdf')?.checked,
+            audio: !!$('#aiModelDetailInputAudio')?.checked,
+            video: !!$('#aiModelDetailInputVideo')?.checked,
+        },
+        output: {
+            image: !!$('#aiModelDetailOutputImage')?.checked,
+            audio: !!$('#aiModelDetailOutputAudio')?.checked,
+        },
+    };
+    if (aiModelDetailSource === 'provider' && aiModelDetailProviderId) {
+        const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+        const provider = (ai.providers || []).find((p) => p.id === aiModelDetailProviderId);
+        if (!provider || provider.owned === false) {
+            toast(t('共享 Provider 只能调用，不能编辑'));
+            return;
+        }
+        const models = normalizeAiModelEntries(provider.models, {
+            providerVisionDefault: provider?.options?.vision !== false,
+        }).map((m) => (m.id === modelId ? { ...m, ...patch, input: { ...m.input, ...patch.input }, output: { ...m.output, ...patch.output } } : m));
+        await api(`/api/ai/providers/${encodeURIComponent(aiModelDetailProviderId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ models }),
+        });
+        const visible = await api('/api/ai/providers');
+        settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
+        aiSettingsState = normalizeAiSettings(settings.ai);
+        renderAiProviderList();
+        renderAiHeaderSelectors();
+        renderAiModelsListPage();
+        toast(t('模型能力已保存'));
+    } else {
+        aiProviderModelEntriesDraft = aiProviderModelEntriesDraft.map((m) => (
+            m.id === modelId ? { ...m, ...patch, input: { ...m.input, ...patch.input }, output: { ...m.output, ...patch.output } } : m
+        ));
+        if (!aiProviderModelEntriesDraft.some((m) => m.id === modelId)) {
+            aiProviderModelEntriesDraft.push(normalizeAiModelEntry(patch, {
+                providerVisionDefault: !!$('#aiProviderVision')?.checked,
+            }));
+        }
+        if ($('#aiProviderModels')) $('#aiProviderModels').value = aiProviderModelEntriesDraft.map((m) => m.id).join('\n');
+        toast(t('模型能力已写入草稿，保存供应商后生效'));
+    }
+    await closeAiModelDetailPage();
+}
+
+function formatQuickTestDuration(ms) {
+    const n = Number(ms) || 0;
+    if (n < 1000) return `${Math.max(1, Math.round(n))}ms`;
+    return `${(n / 1000).toFixed(1)}s`;
+}
+
+function renderQuickTestResults(payload = {}, { loading = false } = {}) {
+    const root = $('#aiQuickTestResults');
+    if (!root) return;
+    if (loading) {
+        root.innerHTML = `<div class="ai-quick-test-item is-loading">
+            <div class="ai-quick-test-item-head">
+                <span class="ai-quick-test-mod"><span class="ai-quick-test-tt">Tt</span> ${escapeHtml(t('文本'))}</span>
+                <span class="ai-quick-test-status muted">${escapeHtml(t('测试中…'))}</span>
+            </div>
+            <p class="ai-quick-test-content muted">${escapeHtml(t('正在向模型发送真实请求…'))}</p>
+        </div>`;
+        return;
+    }
+    const results = Array.isArray(payload.results) ? payload.results : [];
+    if (!results.length) {
+        root.innerHTML = `<p class="empty-state">${escapeHtml(payload.error || t('快速测试失败'))}</p>`;
+        return;
+    }
+    const modLabel = { text: t('文本'), image: t('图片'), pdf: t('PDF'), audio: t('音频'), video: t('视频') };
+    root.innerHTML = results.map((r) => {
+        const ok = r.ok !== false && !r.error;
+        const label = modLabel[r.modality] || r.modality || t('文本');
+        const status = ok
+            ? `<span class="ai-quick-test-status is-ok">✓ ${escapeHtml(formatQuickTestDuration(r.durationMs))}</span>`
+            : `<span class="ai-quick-test-status is-err">✕ ${escapeHtml(formatQuickTestDuration(r.durationMs))}</span>`;
+        const body = ok
+            ? (r.content || t('（无文本回复）'))
+            : (r.error || t('请求失败'));
+        return `<div class="ai-quick-test-item ${ok ? 'is-ok' : 'is-err'}">
+            <div class="ai-quick-test-item-head">
+                <span class="ai-quick-test-mod"><span class="ai-quick-test-tt">Tt</span> ${escapeHtml(label)}</span>
+                ${status}
+            </div>
+            <p class="ai-quick-test-content">${escapeHtml(String(body))}</p>
+        </div>`;
+    }).join('');
+}
+
+async function openAiQuickTestPage() {
+    const page = $('#settingsAiQuickTestPage');
+    if (!page) return;
+    const layout = document.querySelector('#view-settings .settings-layout');
+    layout?.classList.add('has-subpage', 'has-subpage-l3');
+    await animateSettingsSubpage(page, true, { edge: 'right' });
+}
+
+async function closeAiQuickTestPage() {
+    const page = $('#settingsAiQuickTestPage');
+    await animateSettingsSubpage(page, false, { edge: 'right' });
+}
+
+async function quickTestAiModel() {
+    const providerId = $('#aiModelDetailProviderId')?.value || aiModelDetailProviderId;
+    const modelId = $('#aiModelDetailId')?.value || '';
+    const label = ($('#aiModelDetailLabel')?.value || '').trim() || modelId;
+    if (!providerId || !modelId) return toast(t('模型不存在'));
+    const btn = $('#aiModelDetailQuickTestBtn');
+    if (btn) btn.disabled = true;
+    const imageOn = !!$('#aiModelDetailInputImage')?.checked;
+    const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
+    const provider = (ai.providers || []).find((p) => p.id === providerId);
+    const displayId = provider?.name ? `${provider.name}/${modelId}` : modelId;
+    $('#aiQuickTestModelLabel').textContent = label || modelId;
+    $('#aiQuickTestModelId').textContent = displayId;
+    renderQuickTestResults({}, { loading: true });
+    await openAiQuickTestPage();
+    try {
+        const data = await api('/api/ai/models/quick-test', {
+            method: 'POST',
+            body: JSON.stringify({
+                providerId,
+                model: modelId,
+                testImage: imageOn,
+            }),
+        });
+        $('#aiQuickTestModelLabel').textContent = data.label || label || modelId;
+        $('#aiQuickTestModelId').textContent = data.provider?.name
+            ? `${data.provider.name}/${data.model || modelId}`
+            : displayId;
+        renderQuickTestResults(data);
+        if (!data.ok) toast(t('部分能力测试失败'));
+    } catch (err) {
+        renderQuickTestResults({ results: [{ modality: 'text', ok: false, durationMs: 0, error: err.message || t('快速测试失败') }] });
+        toast(err.message || t('快速测试失败'));
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 function normalizeAiSettings(ai = {}) {
     const base = defaultAiSettings();
@@ -4844,9 +5351,24 @@ function normalizeAiSettings(ai = {}) {
         plans: Array.isArray(ai.plans) ? ai.plans : [],
     };
 }
-function aiModelNames(provider = {}) {
-    const raw = Array.isArray(provider.models) ? provider.models : String(provider.models || '').split(/[\n,]+/);
-    return raw.map((x) => typeof x === 'string' ? x.trim() : String(x?.id || '').trim()).filter(Boolean);
+function aiModelNames(provider = {}, { includeHidden = false } = {}) {
+    const entries = normalizeAiModelEntries(provider.models, {
+        providerVisionDefault: provider?.options?.vision !== false,
+    });
+    return entries
+        .filter((m) => includeHidden || !m.hidden)
+        .map((m) => m.id)
+        .filter(Boolean);
+}
+function aiModelCapabilityIcons(entry = {}) {
+    const icons = [];
+    if (entry?.input?.image) icons.push({ key: 'image', label: '🖼️', title: t('图片输入') });
+    if (entry?.input?.pdf) icons.push({ key: 'pdf', label: '📄', title: t('PDF 输入') });
+    if (entry?.input?.audio) icons.push({ key: 'audio', label: '🔊', title: t('音频输入') });
+    if (entry?.input?.video) icons.push({ key: 'video', label: '🎬', title: t('视频输入') });
+    if (entry?.reasoning) icons.push({ key: 'think', label: '💭', title: t('思考') });
+    if (entry?.hidden) icons.push({ key: 'hidden', label: '🙈', title: t('已隐藏') });
+    return icons;
 }
 function aiProviderKind(provider = {}) {
     const type = String(provider?.type || '').toLowerCase();
@@ -4968,6 +5490,10 @@ function setAiSegmentValue(id, value, { silent = false } = {}) {
         if (el.id === 'aiCollabMode') {
             const s = aiCurrentSession();
             if (s) { s.collabMode = resolved; saveAiChats(); }
+        }
+        if (el.id === 'aiRunProfile') {
+            const s = aiCurrentSession();
+            if (s) { s.runProfile = resolved; saveAiChats(); }
         }
         if (el.id === 'aiChatPermissionMode') {
             const s = aiCurrentSession();
@@ -5400,8 +5926,12 @@ async function openAiProviderModal(provider = null, trigger = null) {
     $('#aiProviderBaseUrl').value = provider?.baseUrl || '';
     $('#aiProviderApiKey').value = provider?.hasApiKey ? '******' : '';
     setAiFieldSelectValue('aiProviderApiMode', provider?.apiMode || provider?.options?.apiMode || 'auto');
-    $('#aiProviderModels').value = Array.isArray(provider?.models) ? provider.models.join('\n') : (provider?.models || '');
+    aiProviderModelEntriesDraft = normalizeAiModelEntries(provider?.models || [], {
+        providerVisionDefault: provider ? provider?.options?.vision !== false : true,
+    });
+    $('#aiProviderModels').value = aiProviderModelEntriesDraft.map((m) => m.id).join('\n');
     $('#aiProviderDefaultModel').value = provider?.defaultModel || '';
+    renderAiProviderModelCatalog();
     if ($('#aiProviderModelUserAgents')) $('#aiProviderModelUserAgents').value = provider?.modelUserAgents || '';
     $('#aiProviderOrganization').value = provider?.organization || provider?.options?.organization || '';
     $('#aiProviderExtraHeaders').value = provider?.extraHeaders || '';
@@ -5607,7 +6137,9 @@ async function saveAiProvider(e) {
         enabled: $('#aiProviderEnabled').checked,
         baseUrl: $('#aiProviderBaseUrl').value.trim(),
         apiMode: ['openai-compatible', 'openai'].includes(providerTypeValue) ? ($('#aiProviderApiMode').value || 'auto') : 'native',
-        models: $('#aiProviderModels').value,
+        models: mergeAiModelEntries(aiProviderModelEntriesDraft, $('#aiProviderModels').value, {
+            providerVisionDefault: !!$('#aiProviderVision')?.checked,
+        }),
         defaultModel: $('#aiProviderDefaultModel').value.trim(),
         modelUserAgents: $('#aiProviderModelUserAgents')?.value.trim() || '',
         organization: $('#aiProviderOrganization').value.trim(),
@@ -5661,7 +6193,8 @@ function renderAiProviderList() {
     if (!list) return;
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     list.innerHTML = ai.providers.length ? ai.providers.map((p) => {
-        const models = aiModelNames(p);
+        const models = aiModelNames(p, { includeHidden: true });
+        const visibleCount = aiModelNames(p).length;
         const modelText = p.defaultModel || models[0] || (p.modelsPending ? t('可点击获取模型') : t('未获取模型'));
         const owned = p.owned !== false;
         const sharedLabels = [];
@@ -5670,46 +6203,128 @@ function renderAiProviderList() {
         if (Array.isArray(p.sharedUserIds) && p.sharedUserIds.length) sharedLabels.push(t('指定用户 {count}', { count: p.sharedUserIds.length }));
         const source = owned ? t('我的 Provider') : t('由 {user} 共享', { user: p.ownerUsername || t('其他用户') });
         const sharedText = sharedLabels.length ? ` · ${t('共享：{targets}', { targets: sharedLabels.join('、') })}` : '';
-        return `<div class="ai-provider-item" data-provider-id="${escapeHtml(p.id)}"><div><strong>${escapeHtml(p.name || t('未命名供应商'))}</strong><span>${escapeHtml(p.type || 'openai-compatible')} · ${p.enabled === false ? t('已停用') : t('已启用')} · ${escapeHtml(modelText)} · ${escapeHtml(source)}${escapeHtml(sharedText)}</span><code>${escapeHtml(p.baseUrl || t('默认 API 地址'))}</code></div><button class="tool-btn" data-ai-fetch-provider-models="${escapeHtml(p.id)}">${t('获取模型')}</button>${owned ? `<button class="tool-btn" data-ai-reveal-provider-key="${escapeHtml(p.id)}">${t('查看 Key')}</button><button class="tool-btn" data-ai-edit-provider="${escapeHtml(p.id)}">${t('编辑')}</button><button class="tool-btn danger" data-ai-delete-provider="${escapeHtml(p.id)}">${t('删除')}</button>` : `<span class="muted">${t('仅可调用')}</span>`}</div>`;
+        const capHints = normalizeAiModelEntries(p.models, { providerVisionDefault: p?.options?.vision !== false })
+            .filter((m) => !m.hidden)
+            .slice(0, 6)
+            .map((m) => aiModelGlyphIcons(m).map((g) => g.html).join(''))
+            .filter(Boolean)
+            .join('');
+        const meta = [
+            p.type || 'openai-compatible',
+            p.enabled === false ? t('已停用') : t('已启用'),
+            source + sharedText,
+            models.length ? t('默认：{model}', { model: modelText }) : '',
+        ].filter(Boolean).join(' · ');
+        return `<div class="ai-provider-item" data-provider-id="${escapeHtml(p.id)}">
+            <div class="ai-provider-item-main">
+                <strong class="ai-provider-item-name">${escapeHtml(p.name || t('未命名供应商'))}</strong>
+                <p class="ai-provider-item-meta">${escapeHtml(meta)}</p>
+                <p class="ai-provider-item-url" title="${escapeAttr(p.baseUrl || '')}">${escapeHtml(p.baseUrl || t('默认 API 地址'))}</p>
+                <button type="button" class="ai-provider-models-link" data-ai-open-models="${escapeAttr(p.id)}">
+                    <span class="ai-provider-models-link-label">${escapeHtml(t('模型（{count}）', { count: visibleCount || models.length }))}</span>
+                    <span class="ai-models-list-trailing">${capHints}<span class="ai-models-chevron" aria-hidden="true">›</span></span>
+                </button>
+            </div>
+            <div class="ai-provider-item-actions">
+                <button type="button" class="tool-btn" data-ai-fetch-provider-models="${escapeHtml(p.id)}">${t('获取模型')}</button>
+                ${owned ? `<button type="button" class="tool-btn" data-ai-reveal-provider-key="${escapeHtml(p.id)}">${t('查看 Key')}</button><button type="button" class="tool-btn" data-ai-edit-provider="${escapeHtml(p.id)}">${t('编辑')}</button><button type="button" class="tool-btn danger" data-ai-delete-provider="${escapeHtml(p.id)}">${t('删除')}</button>` : `<span class="muted ai-provider-readonly">${t('仅可调用')}</span>`}
+            </div>
+        </div>`;
     }).join('') : `<p class="empty-state">${t('暂无可用模型供应商。创建自己的 Provider，或让其他用户共享给你。')}</p>`;
 }
+function readAiProviderFormDraft() {
+    const apiKey = $('#aiProviderApiKey')?.value || '';
+    return {
+        id: ($('#aiProviderId')?.value || '').trim(),
+        name: ($('#aiProviderName')?.value || '').trim() || t('临时供应商'),
+        type: $('#aiProviderType')?.value || 'openai-compatible',
+        baseUrl: ($('#aiProviderBaseUrl')?.value || '').trim(),
+        apiMode: $('#aiProviderApiMode')?.value || 'auto',
+        apiKey,
+        organization: ($('#aiProviderOrganization')?.value || '').trim(),
+        extraHeaders: ($('#aiProviderExtraHeaders')?.value || '').trim(),
+        modelUserAgents: ($('#aiProviderModelUserAgents')?.value || '').trim(),
+    };
+}
+
+/**
+ * @param {string} [id] saved provider id (list/card/L2). Empty = use edit modal form as-is.
+ */
 async function fetchAiModelsForProvider(id = '') {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
-    const provider = id
-        ? ai.providers.find((p) => p.id === id)
-        : {
-            id: $('#aiProviderId').value || 'modal',
-            name: $('#aiProviderName').value.trim() || t('临时供应商'),
-            type: $('#aiProviderType').value,
-            baseUrl: $('#aiProviderBaseUrl').value.trim(),
-            apiMode: $('#aiProviderApiMode').value || 'auto',
-            apiKey: $('#aiProviderApiKey').value,
-            organization: $('#aiProviderOrganization').value.trim(),
-            extraHeaders: $('#aiProviderExtraHeaders').value.trim(),
-            modelUserAgents: $('#aiProviderModelUserAgents')?.value.trim() || '',
+    const modalOpen = !!$('#aiProviderModal')?.classList.contains('show');
+    const formDraft = modalOpen ? readAiProviderFormDraft() : null;
+    const formId = formDraft?.id || '';
+    // List/card path uses saved provider; modal path uses current form (saved key if ******).
+    const fromList = !!id;
+    const saved = fromList ? ai.providers.find((p) => p.id === id) : (formId ? ai.providers.find((p) => p.id === formId) : null);
+    if (fromList && !saved) return toast(t('供应商不存在'));
+
+    let body;
+    if (fromList) {
+        body = { providerId: id };
+    } else if (formDraft) {
+        const key = formDraft.apiKey;
+        const hasLiveKey = key && key !== '******';
+        if (!formId && !hasLiveKey) {
+            return toast(t('请先填写 API Key'));
+        }
+        // Always send form draft so baseUrl/type edits apply without saving.
+        // Server merges draft onto saved secret when providerId is set and key is ******.
+        body = {
+            providerId: formId || undefined,
+            provider: {
+                ...formDraft,
+                apiKey: hasLiveKey ? key : undefined,
+            },
         };
-    if (!provider) return toast(t('供应商不存在'));
-    if (!id && (!provider.apiKey || provider.apiKey === '******')) return toast(t('请先填写 API Key，或保存后再获取模型'));
+    } else {
+        return toast(t('供应商不存在'));
+    }
+
+    const btn = modalOpen ? $('#aiFetchModelsBtn') : null;
+    if (btn) btn.disabled = true;
     try {
-        const data = await api('/api/ai/models', { method: 'POST', body: JSON.stringify(id ? { providerId: id } : { provider }) });
+        const data = await api('/api/ai/models', { method: 'POST', body: JSON.stringify(body) });
         const names = (data.models || []).map((m) => m.id || m.name).filter(Boolean);
         const uniqueNames = Array.from(new Set(names));
         if (!uniqueNames.length) return toast(t('没有获取到模型'));
-        if (id) {
-            if (provider.owned === false) return toast(t('已获取 {count} 个模型（共享 Provider 不能修改）', { count: uniqueNames.length }));
-            await api(`/api/ai/providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ models: uniqueNames, defaultModel: provider.defaultModel || uniqueNames[0] }) });
+
+        if (fromList) {
+            if (saved.owned === false) return toast(t('已获取 {count} 个模型（共享 Provider 不能修改）', { count: uniqueNames.length }));
+            const merged = mergeAiModelEntries(saved.models, uniqueNames, {
+                providerVisionDefault: saved?.options?.vision !== false,
+            });
+            await api(`/api/ai/providers/${encodeURIComponent(id)}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ models: merged, defaultModel: saved.defaultModel || uniqueNames[0] }),
+            });
             const visible = await api('/api/ai/providers');
             settings.ai = { ...(settings.ai || {}), providers: visible.providers || [] };
             aiSettingsState = normalizeAiSettings(settings.ai);
             renderAiProviderOptions();
             renderAiHeaderSelectors();
             renderAiProviderList();
+            if (aiModelsPageProviderId === id) renderAiModelsListPage();
         } else {
-            $('#aiProviderModels').value = uniqueNames.join('\n');
-            if (!$('#aiProviderDefaultModel').value) $('#aiProviderDefaultModel').value = uniqueNames[0] || '';
+            // Modal: write into form only — user still clicks 保存供应商 to persist.
+            aiProviderModelEntriesDraft = mergeAiModelEntries(aiProviderModelEntriesDraft, uniqueNames, {
+                providerVisionDefault: !!$('#aiProviderVision')?.checked,
+            });
+            if ($('#aiProviderModels')) {
+                $('#aiProviderModels').value = aiProviderModelEntriesDraft.map((m) => m.id).join('\n');
+            }
+            if ($('#aiProviderDefaultModel') && !$('#aiProviderDefaultModel').value) {
+                $('#aiProviderDefaultModel').value = uniqueNames[0] || '';
+            }
+            renderAiProviderModelCatalog();
         }
         toast(t('已获取 {count} 个模型', { count: uniqueNames.length }));
-    } catch (err) { toast(err.message || t('获取模型失败')); }
+    } catch (err) {
+        toast(err.message || t('获取模型失败'));
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 async function deleteAiProvider(id) {
@@ -5910,14 +6525,37 @@ async function deleteAiSkill(id) {
         },
     });
 }
+function stripAiHistoryBase64(content = '') {
+    return String(content || '')
+        .replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+/g, '[image omitted]')
+        .replace(/附件图片：([^\n]+)\n\s*\[image omitted\]/g, '附件图片：$1\n[图片已发送]');
+}
+function sanitizeAiChatSessionsForStorage(sessions = []) {
+    return (Array.isArray(sessions) ? sessions : []).slice(0, 20).map((s) => ({
+        ...s,
+        messages: (Array.isArray(s.messages) ? s.messages : []).map((m) => ({
+            ...m,
+            content: stripAiHistoryBase64(m.content),
+            // Keep attachment refs only — drop any accidental content blobs.
+            attachments: Array.isArray(m.attachments)
+                ? m.attachments.map((a) => ({ id: a.id, name: a.name, kind: a.kind, mime: a.mime, size: a.size })).filter((a) => a.id)
+                : undefined,
+        })),
+    }));
+}
 function saveAiChats() {
-    try { localStorage.setItem(AI_CHAT_STORAGE_KEY, JSON.stringify({ current: aiCurrentSessionId, sessions: aiChatSessions.slice(0, 20) })); } catch (_) {}
+    try {
+        localStorage.setItem(AI_CHAT_STORAGE_KEY, JSON.stringify({
+            current: aiCurrentSessionId,
+            sessions: sanitizeAiChatSessionsForStorage(aiChatSessions),
+        }));
+    } catch (_) {}
 }
 function loadAiChats() {
     try {
         const data = JSON.parse(localStorage.getItem(AI_CHAT_STORAGE_KEY) || '{}');
         aiChatSessions = Array.isArray(data.sessions)
-            ? data.sessions.slice(0, 20).filter((s) => s?.id && Array.isArray(s.messages)).map((s) => ({
+            ? sanitizeAiChatSessionsForStorage(data.sessions).filter((s) => s?.id && Array.isArray(s.messages)).map((s) => ({
                 ...s,
                 title: s.title === '新沙箱' ? t('新对话') : s.title,
                 messages: s.messages.filter((m) => !(/^.*已就绪。可搜索网页、调用工具、读写远程文件、辅助代码编辑。$/.test(String(m.content || '')))),
@@ -5948,6 +6586,7 @@ function renderAiChat() {
     const session = aiCurrentSession();
     $('#aiCurrentChatTitle').textContent = session.title || t('新对话');
     setAiSegmentValue('aiCollabMode', session.collabMode || 'standard', { silent: true });
+    setAiSegmentValue('aiRunProfile', session.runProfile || 'balanced', { silent: true });
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     setAiSegmentValue('aiChatPermissionMode', session.permissionMode || ai.permissions?.mode || (ai.sensitive?.autoConfirm ? 'yolo' : 'ask'), { silent: true });
     renderAiBrowserPreview();
@@ -6092,7 +6731,11 @@ function aiPreviewCode(item) {
 }
 function renderAiAttachmentChips() {
     if (!aiPendingInputAttachments.length) return '';
-    return `<div class="ai-attachment-strip">${aiPendingInputAttachments.map((a, idx) => `<span class="ai-attachment-chip" title="${escapeAttr(a.name || '')}"><span class="ai-attachment-icon fm-button-icon" data-glyph="file" aria-hidden="true"></span><span class="ai-attachment-name">${escapeHtml(a.name || t('附件'))}</span><button type="button" data-ai-remove-attachment="${idx}" aria-label="${t('移除附件')}">×</button></span>`).join('')}</div>`;
+    return `<div class="ai-attachment-strip">${aiPendingInputAttachments.map((a, idx) => {
+        const status = a.status === 'uploading' ? t('上传中') : (a.status === 'error' ? t('失败') : (a.kind === 'image' ? '🖼️' : ''));
+        const title = a.error || a.name || '';
+        return `<span class="ai-attachment-chip" title="${escapeAttr(title)}"><span class="ai-attachment-icon fm-button-icon" data-glyph="file" aria-hidden="true"></span><span class="ai-attachment-name">${escapeHtml(a.name || t('附件'))}</span>${status ? `<small class="ai-attachment-status">${escapeHtml(status)}</small>` : ''}<button type="button" data-ai-remove-attachment="${idx}" aria-label="${t('移除附件')}">×</button></span>`;
+    }).join('')}</div>`;
 }
 function updateAiInputPreview() {
     const preview = $('#aiInputPreview');
@@ -6739,31 +7382,18 @@ async function performAiUiAction(action = {}) {
     throw new Error(t('未知 UI 动作：{action}', { action: a }));
 }
 async function handleAiClientCapture(data = {}, { providerId = '', model = '', options = {}, signal = null, original = '', depth = 0, sessionId = '' } = {}) {
+    // Legacy Chat must never embed data:image into message content. Remote-desktop
+    // vision is Runtime-only (capture-image → Go Parts). Fail closed instead of
+    // poisoning the model with base64 text.
     const targetSessionId = sessionId || aiCurrentSessionId;
     if (!data?.clientCaptureRequired || !data.clientCapture) return false;
-    if (depth > 0) await delayMs(2000);
-    const capture = data.clientCapture || {};
-    const targetTabId = String(capture.tabId || capture.targets?.[0]?.tabId || '').trim();
-    const maxWidth = Number(capture.maxWidth || 640) || 640;
-    let actionResult = null;
-    let shot = null;
-    if (capture.type === 'remote_desktop_action_v1' && capture.action) {
-        actionResult = await performAiUiAction(capture.action);
-        shot = actionResult?.remoteDesktopScreenshot || await waitForFreshRemoteDesktopSnapshot(targetTabId, { maxWidth, timeoutMs: 3200 });
-    } else {
-        shot = await waitForFreshRemoteDesktopSnapshot(targetTabId, { maxWidth, timeoutMs: 2200 });
+    const context = collectAiContext({ includeRemoteDesktopImages: false, sessionId: targetSessionId });
+    if (context?.activeSurface?.kind === 'remote-desktop') {
+        appendAiMessage(t('RDP/VNC AI 视觉操作需要 Go Runtime'), 'system', { sessionId: targetSessionId });
+        throw new Error(t('RDP/VNC AI 视觉操作需要 Go Runtime'));
     }
-    const result = { ...(actionResult || {}), screenshots: shot ? [shot] : [], capture: shot || null, captureId: shot?.captureId || '', beforeCaptureId: capture.beforeCaptureId || actionResult?.beforeCaptureId || '', afterCaptureId: shot?.captureId || actionResult?.afterCaptureId || '', message: shot?.dataUrl ? t('已实时截取最新远程桌面画面并签发 captureId') : (shot?.error || t('实时截图不可用')), clientCaptured: true, capturedAt: Date.now() };
-    const trace = { tool: capture.tool || capture.type || 'remote_desktop_capture_v1', args: capture.args || { tabId: targetTabId, maxWidth }, result, status: shot?.dataUrl && !result.clientError ? 'success' : 'error' };
-    appendAiMessage(formatAiToolResult(trace), 'trace', { rawHtml: true, sessionId: targetSessionId });
-    const imagePart = shot?.dataUrl ? `\n\n最新远程桌面截图（实时截取）：\n${shot.dataUrl}` : '';
-    const followup = `原问题：${original || '继续处理远程桌面操作'}\n\n你刚才请求实时读取远程桌面画面。前端已在此刻重新截取最新画面，截图结果摘要如下：\n${JSON.stringify(maskAiSensitive(result), null, 2).slice(0, 7000)}${imagePart}\n\n请根据这个最新画面继续判断是否完成，或给出下一步操作。不要说你看到的是旧截图；如果截图不可用，直接说明原因。`;
-    const next = await api('/api/ai/chat', { method: 'POST', signal, body: JSON.stringify({ messages: [{ role: 'user', content: followup }], providerId, model, options: { ...(options || {}), max_tokens: 900, max_output_tokens: 900 }, context: collectAiContext({ includeRemoteDesktopImages: false, sessionId: targetSessionId }) }) });
-    if (next.toolResults?.length) { await syncAiToolSideEffects(next.toolResults, { sessionId: targetSessionId }); appendAiMessage(next.toolResults.map(formatAiToolResult).join(''), 'trace', { rawHtml: true, sessionId: targetSessionId }); }
-    if (next.clientCaptureRequired) return handleAiClientCapture(next, { providerId, model, options, signal, original, depth: depth + 1, sessionId: targetSessionId });
-    if (next.confirmationRequired) appendAiConfirmation(next.confirmation, { messages: [{ role: 'user', content: followup }], providerId, model, options, context: collectAiContext({ sessionId: targetSessionId }), sessionId: targetSessionId });
-    else appendAiMessage(next.message?.content || '执行完成。', 'assistant', { meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId: targetSessionId, metrics: { ...(next.metrics || {}), provider: next.provider, model: next.model } });
-    return true;
+    appendAiMessage(t('远程桌面截图 followup 已禁用 Legacy 路径，请启用 Go Runtime'), 'system', { sessionId: targetSessionId });
+    throw new Error(t('远程桌面截图 followup 已禁用 Legacy 路径，请启用 Go Runtime'));
 }
 async function syncAiToolSideEffects(toolResults = [], { sessionId = '' } = {}) {
     for (const r of toolResults) {
@@ -6821,6 +7451,11 @@ function needsRemoteDesktopClientFollowup(toolResults = []) {
 }
 async function continueAiAfterRemoteDesktopClientActions({ original = '', providerId = '', model = '', options = {}, signal = null, toolResults = [], sessionId = '' } = {}) {
     const targetSessionId = sessionId || aiCurrentSessionId;
+    // Legacy followup never carries vision Parts. Remote-desktop must stay on Runtime.
+    const rdContext = collectAiContext({ includeRemoteDesktopImages: false, sessionId: targetSessionId });
+    if (rdContext?.activeSurface?.kind === 'remote-desktop') {
+        throw new Error(t('RDP/VNC AI 视觉操作需要 Go Runtime'));
+    }
     const sideEffectSummary = JSON.stringify(maskAiSensitive((Array.isArray(toolResults) ? toolResults : []).map((r) => ({ tool: r.tool, args: r.args, result: r.result }))), null, 2).slice(0, 7000);
     const followup = `原问题：${original}\n\n前端已经尝试执行 RDP/VNC 打开或远程桌面操作。工具/前端执行结果摘要如下：\n${sideEffectSummary || '（无工具结果）'}\n\n现在请基于最新 Zephyr 上下文继续回答；如果结果里有 clientError 或 remoteDesktopAction.ok=false，必须直接告诉用户该操作失败和失败原因，不要声称已经完成；如果工具结果已经包含 remoteDesktopScreenshot/截图摘要，可直接依据它回答，不要重复截图；只有缺少截图且原问题确实询问当前画面时，才调用 remote_desktop_screenshot。不要重复打开同一连接或重复点击刚才的按钮。`;
     const nextOptions = { ...(options || {}), max_tokens: Math.min(Number(options?.max_tokens || 900), 900), max_output_tokens: Math.min(Number(options?.max_output_tokens || 900), 900) };
@@ -7030,38 +7665,47 @@ function aiCaptureDataUrlToBlob(dataUrl) {
     return new Blob([bytes], { type: match[1].toLowerCase() });
 }
 
-async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, model, options, context, abortController }) {
+async function ensureAiRuntimeSessionId(session, sessionId) {
+    if (session.runtimeSessionId) return session.runtimeSessionId;
+    const created = await api('/api/ai/runtime/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ title: session.title || t('新对话'), metadata: { clientSessionId: sessionId } }),
+    });
+    session.runtimeSessionId = created.session?.id || created.sessionId;
+    saveAiChats();
+    return session.runtimeSessionId;
+}
+
+async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, model, options, context, abortController, attachments = [] }) {
     // Bind browser chat id → server session id (stored on session object).
-    let serverSessionId = session.runtimeSessionId || '';
-    if (!serverSessionId) {
-        const created = await api('/api/ai/runtime/sessions', {
-            method: 'POST',
-            body: JSON.stringify({ title: session.title || t('新对话'), metadata: { clientSessionId: sessionId } }),
-        });
-        serverSessionId = created.session?.id || created.sessionId;
-        session.runtimeSessionId = serverSessionId;
-        saveAiChats();
-    }
+    const serverSessionId = await ensureAiRuntimeSessionId(session, sessionId);
     const aiCfg = normalizeAiSettings(settings.ai || {});
     const collabMode = getAiSegmentValue('aiCollabMode', session.collabMode || 'standard');
     session.collabMode = collabMode;
     setAiSegmentValue('aiCollabMode', collabMode, { silent: true });
+    // S8 run profile (economy/balanced/delivery). Collab plan/goal wins when not standard.
+    const runProfile = getAiSegmentValue('aiRunProfile', session.runProfile || 'balanced');
+    session.runProfile = runProfile;
+    setAiSegmentValue('aiRunProfile', runProfile, { silent: true });
+    const effectiveMode = (collabMode && collabMode !== 'standard') ? collabMode : runProfile;
     const perm = aiCfg.permissions || {};
     const chatPermissionMode = getAiSegmentValue('aiChatPermissionMode', session.permissionMode || perm.mode || (aiCfg.sensitive?.autoConfirm ? 'yolo' : 'ask'));
     session.permissionMode = chatPermissionMode;
     setAiSegmentValue('aiChatPermissionMode', chatPermissionMode, { silent: true });
     const permissionMode = chatPermissionMode;
+    const attachmentIds = (attachments || []).map((a) => a.id).filter(Boolean);
     const start = await api('/api/ai/runtime/runs', {
         method: 'POST',
         signal: abortController.signal,
         body: JSON.stringify({
             sessionId: serverSessionId,
             message: text,
+            attachments: attachmentIds,
             providerId,
             model,
             options,
             context,
-            mode: collabMode,
+            mode: effectiveMode,
             permissionMode,
             permission: {
                 mode: permissionMode,
@@ -7193,12 +7837,25 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                     const callId = body?.callId || captureArgs?.toolCallId || '';
                     if (!shot?.dataUrl) throw new Error(shot?.error || t('实时截图不可用'));
                     const imageBlob = aiCaptureDataUrlToBlob(shot.dataUrl);
-                    const uploaded = await api(`/api/ai/runtime/runs/${encodeURIComponent(start.runId)}/capture-image?callId=${encodeURIComponent(callId)}`, {
-                        method: 'POST',
-                        signal: abortController.signal,
-                        headers: { 'Content-Type': imageBlob.type },
-                        body: imageBlob,
-                    });
+                    if (!imageBlob) throw new Error(t('截图格式无效，无法上传视觉帧'));
+                    let uploaded;
+                    try {
+                        uploaded = await api(`/api/ai/runtime/runs/${encodeURIComponent(start.runId)}/capture-image?callId=${encodeURIComponent(callId)}`, {
+                            method: 'POST',
+                            signal: abortController.signal,
+                            headers: { 'Content-Type': imageBlob.type },
+                            body: imageBlob,
+                        });
+                    } catch (uploadErr) {
+                        toast(uploadErr?.message || t('视觉帧上传失败'));
+                        throw Object.assign(uploadErr instanceof Error ? uploadErr : new Error(String(uploadErr?.message || uploadErr || t('视觉帧上传失败'))), { code: uploadErr?.code || 'vision_upload_failed' });
+                    }
+                    if (!uploaded?.captureAssetId) {
+                        const err = new Error(t('视觉帧上传失败：缺少 captureAssetId'));
+                        err.code = 'vision_upload_failed';
+                        toast(err.message);
+                        throw err;
+                    }
                     const safeShot = { ...shot };
                     delete safeShot.dataUrl;
                     const captureResult = { ...(actionResult || {}), screenshots: [safeShot], capture: safeShot, captureId: safeShot.captureId || '', beforeCaptureId: captureArgs?.beforeCaptureId || actionResult?.beforeCaptureId || '', afterCaptureId: safeShot.captureId || actionResult?.afterCaptureId || '', clientCaptured: true, capturedAt: Date.now(), mimeType: imageBlob.type, imageBytes: imageBlob.size, message: t('已实时截取最新远程桌面画面并签发 captureId') };
@@ -7248,9 +7905,18 @@ async function sendAiMessage() {
     if (aiIsSessionRunning(sessionId)) { stopAiResponse(sessionId); return; }
     const input = $('#aiUserInput');
     const typedText = input.value.trim();
-    const attachmentText = aiPendingInputAttachments.map((a) => a.content || '').filter(Boolean).join('\n\n');
-    const text = [typedText, attachmentText].filter(Boolean).join('\n\n');
-    if (!text) return;
+    const pending = aiPendingInputAttachments.slice();
+    if (pending.some((a) => a.status === 'uploading')) {
+        toast(t('附件仍在上传，请稍候'));
+        return;
+    }
+    const readyAttachments = pending.filter((a) => a.id && a.status !== 'error');
+    if (!typedText && !readyAttachments.length) return;
+    const displayBits = [typedText];
+    if (readyAttachments.length) {
+        displayBits.push(readyAttachments.map((a) => `[附件] ${a.name || a.id}${a.kind === 'image' ? ' 🖼️' : ''}`).join('\n'));
+    }
+    const text = displayBits.filter(Boolean).join('\n\n');
     const editingIndex = aiEditingSessionId && aiEditingSessionId !== sessionId ? -1 : aiEditingMessageIndex;
     aiEditingMessageIndex = -1;
     aiEditingSessionId = '';
@@ -7263,7 +7929,11 @@ async function sendAiMessage() {
     autoResizeAiInput(input);
     updateAiInputPreview();
     input.focus?.();
-    appendAiMessage(text, 'user', { sessionId });
+    // Persist only attachment refs in local history — never base64 payloads.
+    appendAiMessage(text, 'user', {
+        sessionId,
+        attachments: readyAttachments.map((a) => ({ id: a.id, name: a.name, kind: a.kind, mime: a.mime, size: a.size })),
+    });
     const abortController = new AbortController();
     registerAiSessionRun(sessionId, abortController);
     try {
@@ -7275,22 +7945,28 @@ async function sendAiMessage() {
         if (context?.activeSurface?.kind === 'remote-desktop' && !useRuntime) {
             throw new Error(t('RDP/VNC AI 视觉操作需要 Go Runtime'));
         }
+        if (readyAttachments.length && !useRuntime) {
+            throw new Error(t('发送附件需要 Go Runtime'));
+        }
         if (useRuntime) {
-            await sendAiMessageViaRuntime({ session, sessionId, text, providerId, model, options, context, abortController });
+            await sendAiMessageViaRuntime({
+                session, sessionId, text: typedText || (readyAttachments.length ? t('（用户发送了附件）') : ''),
+                providerId, model, options, context, abortController, attachments: readyAttachments,
+            });
             return;
         }
-        const requestMessages = aiMessagesForRequest(session, text);
+        const requestMessages = aiMessagesForRequest(session, typedText);
         const data = await api('/api/ai/chat', { method: 'POST', signal: abortController.signal, body: JSON.stringify({ messages: requestMessages, providerId, model, options, context }) });
         if (data.toolResults?.length) {
             await syncAiToolSideEffects(data.toolResults, { sessionId });
             appendAiMessage(data.toolResults.map(formatAiToolResult).join(''), 'trace', { rawHtml: true, sessionId });
         }
         if (data.clientCaptureRequired) {
-            await handleAiClientCapture(data, { providerId, model, options, signal: abortController.signal, original: text, sessionId });
+            await handleAiClientCapture(data, { providerId, model, options, signal: abortController.signal, original: typedText, sessionId });
         } else if (data.confirmationRequired) {
             appendAiConfirmation(data.confirmation, { messages: requestMessages.slice(), providerId, model, options, context, sessionId });
         } else if (needsRemoteDesktopClientFollowup(data.toolResults || [])) {
-            await continueAiAfterRemoteDesktopClientActions({ original: text, providerId, model, options, signal: abortController.signal, toolResults: data.toolResults || [], sessionId });
+            await continueAiAfterRemoteDesktopClientActions({ original: typedText, providerId, model, options, signal: abortController.signal, toolResults: data.toolResults || [], sessionId });
         } else {
             appendAiMessage(data.message?.content || '执行完成。', 'assistant', { meta: [data.provider?.name, data.model].filter(Boolean).join(' / '), sessionId, metrics: { ...(data.metrics || {}), provider: data.provider, model: data.model } });
         }
@@ -7303,34 +7979,63 @@ async function sendAiMessage() {
         aiStoppedControllers.delete(abortController);
     }
 }
-function readFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
-        reader.readAsDataURL(file);
-    });
-}
 async function appendAiFiles(files = []) {
-    const next = [];
-    for (const file of files.slice(0, Math.max(0, 6 - aiPendingInputAttachments.length))) {
-        if (file.size > 8 * 1024 * 1024) { next.push({ kind: 'skipped', name: file.name, content: `[附件过大已跳过] ${file.name} (${file.size} bytes)` }); continue; }
-        const isText = /^text\//i.test(file.type) || /\.(txt|md|json|yaml|yml|csv|log|conf|ini|js|ts|jsx|tsx|py|sh|css|html|xml)$/i.test(file.name);
-        if (isText) {
-            const text = await file.text();
-            next.push({ kind: 'text', name: file.name, content: `附件：${file.name}\n\`\`\`\n${text.slice(0, 24000)}${text.length > 24000 ? '\n...[已截断]' : ''}\n\`\`\`` });
-        } else if (/^image\//i.test(file.type)) {
-            const dataUrl = await readFileAsDataUrl(file);
-            next.push({ kind: 'image', name: file.name, content: `附件图片：${file.name}\n${dataUrl}` });
-        } else {
-            next.push({ kind: 'file', name: file.name, content: `附件：${file.name} (${file.type || 'unknown'}, ${file.size} bytes)；当前仅文本和图片会发送给 AI。` });
-        }
+    const session = aiCurrentSession();
+    const sessionId = session?.id || aiCurrentSessionId || '';
+    if (!sessionId) {
+        toast(t('请先打开一个 AI 对话'));
+        return;
     }
-    if (!next.length) return;
-    aiPendingInputAttachments = aiPendingInputAttachments.concat(next).slice(0, 6);
-    updateAiAttachmentDraftUi();
+    // Attachments require a server runtime session for disk storage.
+    let serverSessionId = '';
+    try {
+        serverSessionId = await ensureAiRuntimeSessionId(session, sessionId);
+    } catch (err) {
+        toast(err.message || t('无法创建运行时会话以上传附件'));
+        return;
+    }
+    const room = Math.max(0, 6 - aiPendingInputAttachments.length);
+    const picked = Array.from(files || []).slice(0, room);
+    if (!picked.length) return;
+    let added = 0;
+    for (const file of picked) {
+        if (file.size > 12 * 1024 * 1024) {
+            toast(t('附件过大已跳过：{name}', { name: file.name }));
+            continue;
+        }
+        const draft = {
+            kind: /^image\//i.test(file.type) ? 'image' : (/^text\//i.test(file.type) ? 'text' : 'file'),
+            name: file.name,
+            mime: file.type || 'application/octet-stream',
+            size: file.size,
+            status: 'uploading',
+            id: '',
+            previewUrl: /^image\//i.test(file.type) ? URL.createObjectURL(file) : '',
+        };
+        aiPendingInputAttachments = aiPendingInputAttachments.concat([draft]).slice(0, 6);
+        updateAiAttachmentDraftUi();
+        try {
+            const form = new FormData();
+            form.append('file', file, file.name);
+            form.append('sessionId', serverSessionId);
+            // FormData must not force application/json Content-Type.
+            const res = await apiMaybeForm('/api/ai/attachments', { method: 'POST', body: form });
+            const item = res.attachment || res;
+            draft.id = item.id;
+            draft.kind = item.kind || draft.kind;
+            draft.mime = item.mime || draft.mime;
+            draft.size = item.size || draft.size;
+            draft.status = 'ready';
+            added += 1;
+        } catch (err) {
+            draft.status = 'error';
+            draft.error = err.message || t('上传失败');
+            toast(draft.error);
+        }
+        updateAiAttachmentDraftUi();
+    }
     $('#aiUserInput')?.focus?.();
-    toast(t('已添加 {count} 个附件，可继续输入文字后发送', { count: next.length }));
+    if (added) toast(t('已添加 {count} 个附件，可继续输入文字后发送', { count: added }));
 }
 async function continueAiAfterConfirmation(id, approve, data) {
     const pending = aiPendingConfirmations.get(id);
@@ -7349,10 +8054,15 @@ async function continueAiAfterConfirmation(id, approve, data) {
     const abortController = new AbortController();
     registerAiSessionRun(sessionId, abortController);
     try {
-        const next = await api('/api/ai/chat', { method: 'POST', signal: abortController.signal, body: JSON.stringify({ messages: [{ role: 'user', content: followup }], providerId: pending.providerId, model: pending.model, options: pending.options || aiIntensityOptions(), context: collectAiContext({ includeRemoteDesktopImages: false, sessionId }) }) });
+        const context = collectAiContext({ includeRemoteDesktopImages: false, sessionId });
+        // Never re-enter Legacy Chat for remote-desktop (no dataUrl content path).
+        if (context?.activeSurface?.kind === 'remote-desktop') {
+            throw new Error(t('RDP/VNC AI 视觉操作需要 Go Runtime'));
+        }
+        const next = await api('/api/ai/chat', { method: 'POST', signal: abortController.signal, body: JSON.stringify({ messages: [{ role: 'user', content: followup }], providerId: pending.providerId, model: pending.model, options: pending.options || aiIntensityOptions(), context }) });
         if (next.toolResults?.length) { await syncAiToolSideEffects(next.toolResults, { sessionId }); appendAiMessage(next.toolResults.map(formatAiToolResult).join(''), 'trace', { rawHtml: true, sessionId }); }
         if (next.clientCaptureRequired) await handleAiClientCapture(next, { providerId: pending.providerId, model: pending.model, options: pending.options || aiIntensityOptions(), signal: abortController.signal, original, sessionId });
-        else if (next.confirmationRequired) appendAiConfirmation(next.confirmation, { messages: [{ role: 'user', content: followup }], providerId: pending.providerId, model: pending.model, options: pending.options, context: pending.context, sessionId });
+        else if (next.confirmationRequired) appendAiConfirmation(next.confirmation, { messages: [{ role: 'user', content: followup }], providerId: pending.providerId, model: pending.model, options: pending.options, context: pending.context || context, sessionId });
         else appendAiMessage(next.message?.content || '执行完成。', 'assistant', { meta: [next.provider?.name, next.model].filter(Boolean).join(' / '), sessionId, metrics: { ...(next.metrics || {}), provider: next.provider, model: next.model } });
     } catch (err) {
         if (err.name === 'AbortError' || /aborted|abort|已停止/i.test(String(err.message || ''))) {
@@ -7631,10 +8341,16 @@ function openAiAssistantPanel(trigger = null) {
         try {
             Motion.stop(panel);
             Motion.release(panel);
+            const contentEl = panel.querySelector('.ai-agent-window');
+            if (contentEl) {
+                try { Motion.stop(contentEl); Motion.set(contentEl, { opacity: 1 }); } catch { /* ignore */ }
+                contentEl.style.opacity = '';
+            }
             await Motion.aiPanelOpen(panel, sourceButton, {
-                contentEl: null,
+                contentEl,
                 mode: sourceButton ? 'flip' : 'origin',
                 hideSource: false,
+                // Grow as one surface; content stays visible during expand.
                 contentWithPanel: true,
                 radiusTo: parseFloat(getComputedStyle(panel).borderRadius) || 18,
                 preset: 'mac',
@@ -7691,15 +8407,34 @@ function closeAiAssistantPanel() {
         finishClose(null);
         return;
     }
+    const contentEl = panel.querySelector('.ai-agent-window');
+    // Hide chrome instantly (also done in engine) so shrink is never a mini chat UI.
+    panel.classList.add('ai-panel-motion-closing');
     Motion.aiPanelClose(panel, trigger, {
-        contentEl: null,
+        contentEl,
         mode: trigger ? 'flip' : 'origin',
         hideSource: false,
-        contentWithPanel: true,
-        thenHide: false,
+        contentWithPanel: false,
+        // Engine hides before identity reset; we still display:none in finishClose.
+        thenHide: true,
+        thenDisplayNone: false,
         preset: 'macClose',
-    }).then(() => finishClose(Motion)).catch((err) => {
+    }).then(() => {
+        panel.classList.remove('ai-panel-motion-closing');
+        if (contentEl) {
+            try { Motion.set(contentEl, { opacity: 1 }); } catch { /* ignore */ }
+            contentEl.style.opacity = '';
+            contentEl.style.visibility = '';
+        }
+        finishClose(Motion);
+    }).catch((err) => {
         console.warn('[ai-panel-motion] close failed, using instant state:', err?.message || err);
+        panel.classList.remove('ai-panel-motion-closing');
+        if (contentEl) {
+            try { Motion.set(contentEl, { opacity: 1 }); } catch { /* ignore */ }
+            contentEl.style.opacity = '';
+            contentEl.style.visibility = '';
+        }
         finishClose(Motion);
     });
 }
@@ -7987,9 +8722,56 @@ function setupAiAssistant() {
     // AI 字段选择器已改为真实 <select> + enhanceToggleSelect（与 CAPTCHA 同源）。
     $('#aiProviderType')?.addEventListener('change', () => updateAiProviderModalHints());
     $('#aiProviderApiMode')?.addEventListener('change', () => updateAiProviderModalHints());
+    $('#aiProviderModels')?.addEventListener('change', () => renderAiProviderModelCatalog());
+    $('#aiProviderModels')?.addEventListener('blur', () => renderAiProviderModelCatalog());
+    $('#aiProviderVision')?.addEventListener('change', () => renderAiProviderModelCatalog());
     $('#aiProviderCloseBtn')?.addEventListener('click', closeAiProviderModal);
     $('#aiProviderCancelBtn')?.addEventListener('click', closeAiProviderModal);
+    $('#aiModelDetailForm')?.addEventListener('submit', (e) => { saveAiModelDetail(e).catch((err) => toast(err.message || t('保存模型能力失败'))); });
+    $('#aiModelDetailCancelBtn')?.addEventListener('click', () => { closeAiModelDetailPage().catch(() => {}); });
+    $('#aiModelDetailQuickTestBtn')?.addEventListener('click', () => { quickTestAiModel().catch((err) => toast(err.message || t('快速测试失败'))); });
+    $('#aiQuickTestDoneBtn')?.addEventListener('click', () => { closeAiQuickTestPage().catch(() => {}); });
+    $('#aiQuickTestRerunBtn')?.addEventListener('click', () => { quickTestAiModel().catch((err) => toast(err.message || t('快速测试失败'))); });
+    $('#aiModelsPageBackBtn')?.addEventListener('click', () => { closeAiModelsPage().catch(() => {}); });
+    const refreshModels = () => {
+        if (!aiModelsPageProviderId) return;
+        fetchAiModelsForProvider(aiModelsPageProviderId).then(() => renderAiModelsListPage()).catch((err) => toast(err.message || t('获取模型失败')));
+    };
+    $('#aiModelsRefreshRow')?.addEventListener('click', refreshModels);
+    $('#aiModelsSearchInput')?.addEventListener('input', () => { renderAiModelsListPage(); });
+    $('#aiModelsSearchInput')?.addEventListener('search', () => { renderAiModelsListPage(); });
+    $('#aiModelsListCard')?.addEventListener('click', (e) => {
+        const row = e.target.closest?.('[data-ai-model-open]');
+        if (!row) return;
+        openAiModelDetailPage({
+            providerId: aiModelsPageProviderId,
+            modelId: row.dataset.aiModelOpen,
+            source: 'provider',
+        }).catch((err) => toast(err.message || t('模型不存在')));
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        if ($('#settingsAiQuickTestPage')?.classList.contains('is-open')) {
+            e.preventDefault();
+            closeAiQuickTestPage().catch(() => {});
+            return;
+        }
+        if ($('#settingsAiModelDetailPage')?.classList.contains('is-open')) {
+            e.preventDefault();
+            closeAiModelDetailPage().catch(() => {});
+            return;
+        }
+        if ($('#settingsAiModelsPage')?.classList.contains('is-open')) {
+            e.preventDefault();
+            closeAiModelsPage().catch(() => {});
+        }
+    });
     $('#aiProviderList')?.addEventListener('click', (e) => {
+        const openModels = e.target.closest?.('[data-ai-open-models]');
+        if (openModels) {
+            openAiModelsPage(openModels.dataset.aiOpenModels, openModels).catch((err) => toast(err.message || t('供应商不存在')));
+            return;
+        }
         const action = e.target.closest?.('[data-ai-fetch-provider-models],[data-ai-reveal-provider-key],[data-ai-edit-provider],[data-ai-delete-provider]');
         if (!action) return;
         const edit = action.dataset.aiEditProvider, del = action.dataset.aiDeleteProvider, fetchModels = action.dataset.aiFetchProviderModels, reveal = action.dataset.aiRevealProviderKey;
@@ -8964,7 +9746,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260727-ai-rdp-vision1')
+        return import('./vendor/zephyr-motion/index.js?v=20260728-ai-panel-close2')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -9216,7 +9998,18 @@ function bindEvents() {
     document.documentElement.dataset.appBindEvents = 'start';
     bindConnectionPressFeedback();
     $$('.nav-tab').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view)));
-    $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => { $$('.settings-tab').forEach((b) => b.classList.remove('active')); btn.classList.add('active'); $$('.settings-panel').forEach((p) => p.classList.remove('active')); $(`#settings-${btn.dataset.settings}`).classList.add('active'); scheduleWorkspaceSave('settings-tab'); }));
+    $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => {
+        $$('.settings-tab').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        $$('.settings-panel').forEach((p) => p.classList.remove('active'));
+        $(`#settings-${btn.dataset.settings}`).classList.add('active');
+        // Leaving AI settings collapses model subpages without trapping navigation.
+        if (btn.dataset.settings !== 'ai') {
+            if ($('#settingsAiModelDetailPage')?.classList.contains('is-open')) closeAiModelDetailPage({ skipParent: true }).catch(() => {});
+            if ($('#settingsAiModelsPage')?.classList.contains('is-open')) closeAiModelsPage().catch(() => {});
+        }
+        scheduleWorkspaceSave('settings-tab');
+    }));
     ['view-settings', 'view-dashboard', 'view-activity'].forEach((id) => document.getElementById(id)?.addEventListener('scroll', () => scheduleWorkspaceSave(`${id}-scroll`), { passive: true }));
     $('#appThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#settingsThemeToggle').addEventListener('click', () => toggleTheme().catch((err) => toast(err.message))); $('#logoutBtn').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/'; });
     bindLocaleSelects();

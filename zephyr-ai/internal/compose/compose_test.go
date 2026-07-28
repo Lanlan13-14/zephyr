@@ -52,3 +52,44 @@ func TestSystemPromptKeepsFullAssembly(t *testing.T) {
 		t.Fatal("skills must be full body injection")
 	}
 }
+
+func TestStablePrefixIgnoresTimeAndContext(t *testing.T) {
+	base := Input{
+		AssistantName:       "Zephyr AI",
+		DefaultSystemPrompt: "GUIDANCE",
+		CustomSystemPrompt:  "CUSTOM",
+		Skills:              []Skill{{ID: "s1", Name: "ops", Prompt: "BODY", Enabled: true}},
+		Memories:            []Memory{{Title: "m", Content: "fact"}},
+		EnvVars:             []EnvVar{{Name: "E", Value: "1", ValueVisibleToAI: true}},
+		Locale:              "zh-CN",
+	}
+	a := base
+	a.ContextText = "CTX_A"
+	a.Now = time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	b := base
+	b.ContextText = "CTX_B"
+	b.Now = time.Date(2026, 7, 20, 13, 0, 0, 0, time.UTC)
+	b.RoutingHint = "route-me"
+
+	ra, rb := Build(a), Build(b)
+	if ra.StableHash != rb.StableHash {
+		t.Fatalf("stable hash must ignore time/context/routing: %s vs %s", ra.StableHash, rb.StableHash)
+	}
+	if strings.Contains(ra.Stable, "CTX_A") || strings.Contains(ra.Stable, "2026-07-20T12:00:00Z") {
+		t.Fatalf("stable must not include volatile context/time: %s", ra.Stable)
+	}
+	if !strings.Contains(rb.Volatile, "CTX_B") || !strings.Contains(rb.Volatile, "route-me") {
+		t.Fatalf("volatile missing context/routing: %s", rb.Volatile)
+	}
+	if !strings.Contains(ra.Full, "GUIDANCE") || !strings.Contains(ra.Full, "BODY") {
+		t.Fatalf("full assembly lost skills/guidance")
+	}
+}
+
+func TestStableHashChangesWhenSkillChanges(t *testing.T) {
+	a := Build(Input{DefaultSystemPrompt: "G", Skills: []Skill{{ID: "s1", Name: "a", Prompt: "P1", Enabled: true}}})
+	b := Build(Input{DefaultSystemPrompt: "G", Skills: []Skill{{ID: "s1", Name: "a", Prompt: "P2", Enabled: true}}})
+	if a.StableHash == b.StableHash {
+		t.Fatal("skill body change must change stable hash")
+	}
+}

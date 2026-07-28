@@ -125,9 +125,10 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 					}
 				case "image_url":
 					mimeType, data, ok := provider.DecodeDataURL(part.ImageURL)
-					if ok {
-						content = append(content, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": mimeType, "data": data}})
+					if !ok {
+						return nil, fmt.Errorf("vision_payload_invalid: anthropic image part is not a supported data URL")
 					}
+					content = append(content, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": mimeType, "data": data}})
 				}
 			}
 			msgs = append(msgs, map[string]any{"role": role, "content": content})

@@ -7,7 +7,7 @@
  * States: confirm → working → done | error (invalid/expired/missing token).
  */
 
-import { t, initI18n } from './i18n/runtime.js?v=20260727-ai-rdp-vision1';
+import { t, initI18n } from './i18n/runtime.js?v=20260728-ai-panel-close2';
 
 const el = {
     warning: document.getElementById('rollbackWarning'),

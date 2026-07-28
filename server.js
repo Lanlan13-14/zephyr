@@ -518,6 +518,8 @@ const aiRuntimeBridge = new AiRuntimeBridge({
 });
 const aiPolicyService = new AiPolicyService(storage.rawDb(), { storage, userSettings: userSettingsService });
 const aiProviderService = new AiProviderService(storage.rawDb(), { storage, secretCrypto });
+const { AiSessionFs } = require('./ai-session-fs');
+const aiSessionFs = new AiSessionFs({ dataDir: DATA_DIR });
 fileTransferGateway = new FileTransferGateway({ fileAgentManager, authz, storage, log: console.log });
 setInterval(() => { try { deepLinkService.gc(); } catch {} }, 5 * 60 * 1000).unref();
 setInterval(() => { try { workspaceService.gcStale(); } catch {} }, 60 * 60 * 1000).unref();
@@ -3622,6 +3624,7 @@ const aiHostDeps = {
     aiProviderService,
     userSettingsService,
     notesService,
+    sessionFs: aiSessionFs,
     terminalSessions: sshTerminalSessions,
     terminalHistory,
     terminalSessionTools,
@@ -3726,8 +3729,18 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
         };
 
         const contextObj = req.body?.context || {};
-        if (contextObj?.activeSurface?.kind === 'remote-desktop' && providerPayload.options?.vision === false) {
-            return res.status(400).json({ error: '当前模型供应商未启用图片输入，无法读取 RDP/VNC 画面', code: 'vision_required' });
+        if (contextObj?.activeSurface?.kind === 'remote-desktop') {
+            // Prefer per-model input.image (S0); fall back to provider-level vision.
+            let modelImageOk = providerPayload.options?.vision !== false;
+            try {
+                const { modelAcceptsImage } = require('./ai-model-catalog');
+                if (Array.isArray(provider.models) && provider.models.length) {
+                    modelImageOk = modelAcceptsImage(provider, model);
+                }
+            } catch (_) { /* keep provider fallback */ }
+            if (!modelImageOk) {
+                return res.status(400).json({ error: '当前模型未启用图片输入，无法读取 RDP/VNC 画面', code: 'vision_required' });
+            }
         }
         const contextText = typeof req.body?.contextText === 'string' && req.body.contextText
             ? req.body.contextText
@@ -3737,8 +3750,9 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
             ? req.body.memories
             : selectPromptMemories(ai, contextObj, Number(ai.context?.memoryItems) || 28);
         const systemCompose = aiRuntimeBridge.buildSystemCompose(ai, contextText, memories, contextObj.locale || 'zh-CN');
+        // Routing belongs in the volatile tail (compose.RoutingHint), not the stable prefix.
         const intentHint = buildIntentRoutingHint(req.body?.message || '');
-        if (intentHint) systemCompose.prompt = `${systemCompose.prompt}\n\n${intentHint}`;
+        if (intentHint) systemCompose.routingHint = intentHint;
 
         const bodyPerm = req.body?.permission && typeof req.body.permission === 'object' ? req.body.permission : {};
         const aiPerm = ai.permissions || {};
@@ -3759,12 +3773,82 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
         }
 
         const policy = aiPolicyService ? aiPolicyService.policyFor(req.user) : {};
+        // S2: resolve attachment refs → multimodal Parts (no base64 in client history).
+        let runMessages = Array.isArray(req.body?.messages) ? req.body.messages.slice() : undefined;
+        const attachmentIds = Array.isArray(req.body?.attachments)
+            ? req.body.attachments.map((a) => (typeof a === 'string' ? a : a?.id)).filter(Boolean)
+            : [];
+        let modelEntry = null;
+        try {
+            const { findModelEntry, modelAcceptsImage } = require('./ai-model-catalog');
+            modelEntry = findModelEntry(provider.models, model);
+            void modelAcceptsImage;
+        } catch (_) { /* optional */ }
+        if (attachmentIds.length) {
+            let allowImage = providerPayload.options?.vision !== false;
+            try {
+                const { modelAcceptsImage } = require('./ai-model-catalog');
+                if (Array.isArray(provider.models) && provider.models.length) {
+                    allowImage = modelAcceptsImage(provider, model);
+                }
+            } catch (_) { /* keep provider fallback */ }
+            let { parts } = await aiSessionFs.buildUserParts(req.user.userId, sessionId, attachmentIds, { allowImage });
+            // S4: OCR fallback when model cannot take images.
+            if (!allowImage) {
+                const { runOcr, ocrConfigured } = require('./ai-ocr-service');
+                const ocrParts = [];
+                for (const id of attachmentIds) {
+                    try {
+                        const { item, data } = await aiSessionFs.readAttachmentBytes(req.user.userId, sessionId, id);
+                        if (item.kind !== 'image') continue;
+                        if (!ocrConfigured() && !process.env.ZEPHYR_OCR_COMMAND) {
+                            ocrParts.push({
+                                type: 'text',
+                                text: `[OCR unavailable for ${item.name}: 模型不支持图片且未配置 OCR（ZEPHYR_OCR_URL / tesseract）]`,
+                            });
+                            continue;
+                        }
+                        const spill = require('path').join(aiSessionFs.root(req.user.userId, sessionId), 'ocr', `${item.id}.txt`);
+                        const ocr = await runOcr({ buffer: data, mimeType: item.mime, spillPath: spill });
+                        ocrParts.push({ type: 'text', text: `[OCR ${item.name} via ${ocr.engine}]\n${ocr.text}` });
+                    } catch (err) {
+                        ocrParts.push({ type: 'text', text: `[OCR failed: ${err.message}]` });
+                    }
+                }
+                // Drop image_url parts; keep text inventory + OCR.
+                parts = [
+                    ...parts.filter((p) => p.type !== 'image_url'),
+                    ...ocrParts,
+                ];
+            }
+            const caption = String(req.body?.message || '').trim();
+            const contentParts = [];
+            if (caption) contentParts.push({ type: 'text', text: caption });
+            contentParts.push(...parts.map((p) => ({
+                type: p.type,
+                text: p.text,
+                imageUrl: p.imageUrl || p.ImageURL,
+                mimeType: p.mimeType,
+            })));
+            // S4 ImageBudget elide
+            try {
+                const { applyImageBudget } = require('./ai-image-budget');
+                const budgeted = applyImageBudget([{ role: 'user', content: caption || '（用户发送了附件）', parts: contentParts }], { modelEntry });
+                runMessages = budgeted.messages;
+            } catch (_) {
+                runMessages = [{
+                    role: 'user',
+                    content: caption || '（用户发送了附件）',
+                    parts: contentParts,
+                }];
+            }
+        }
         const data = await aiRuntimeBridge.startRun(req.user, {
             sessionId,
             provider: providerPayload,
             model,
-            message: req.body?.message || '',
-            messages: req.body?.messages,
+            message: attachmentIds.length ? '' : (req.body?.message || ''),
+            messages: runMessages,
             options: req.body?.options || {},
             maxSteps: req.body?.maxSteps || ai.context?.maxToolRounds || 0,
             permission: perm,
@@ -3788,8 +3872,20 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
                 })),
             hourlyLimit: policy.quota?.hourlyRequests || 0,
             dailyLimit: policy.quota?.dailyRequests || 0,
-            contextWindowTokens: Number(provider.options?.context?.windowTokens || provider.config?.context?.windowTokens || ai.context?.windowTokens || 0),
-            outputReserveTokens: Number(req.body?.options?.max_tokens || req.body?.options?.maxTokens || 0),
+            // S5: prefer per-model context window when configured.
+            contextWindowTokens: Number(
+                modelEntry?.contextWindowTokens
+                || provider.options?.context?.windowTokens
+                || provider.config?.context?.windowTokens
+                || ai.context?.windowTokens
+                || 0
+            ),
+            outputReserveTokens: Number(
+                modelEntry?.maxOutputTokens
+                || req.body?.options?.max_tokens
+                || req.body?.options?.maxTokens
+                || 0
+            ),
         });
         // Rewrite SSE path through Node proxy if public AI URL not set
         const ssePath = data.ssePath || `/api/ai/runtime/runs/${data.runId}/events?ticket=${encodeURIComponent(data.ticket || '')}`;
@@ -3931,6 +4027,7 @@ registerAiRoutes(app, {
     aiProviderService,
     userSettingsService,
     notesService,
+    sessionFs: aiSessionFs,
     terminalSessions: sshTerminalSessions,
     terminalHistory,
     terminalSessionTools,

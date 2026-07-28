@@ -2538,24 +2538,32 @@ export const Motion = {
   // ── AI assistant panel semantic API (no legacy CSS/keyframe dependency) ─
 
   /**
-   * AI panel open — product name for openAiAssistantPanel wiring later.
-   * Uses macPanel when a trigger button is provided; otherwise present().
+   * AI panel open — product name for openAiAssistantPanel wiring.
+   * FLIP from trigger button (continuous surface), content rides with panel.
    *
    *   Motion.aiPanelOpen(panel, triggerBtn, { contentEl })
    */
   async aiPanelOpen(panel, trigger = null, opts = {}) {
     if (!panel) return false;
+    const contentEl = opts.contentEl
+      || panel.querySelector?.('.ai-agent-window')
+      || null;
     if (trigger) {
       return this.macPanel(panel, trigger, {
         open: true,
         mode: opts.mode || 'flip',
         hideSource: false,
-        contentEl: opts.contentEl,
+        // Content stays with the growing surface (readable expand).
+        contentEl,
+        contentWithPanel: opts.contentWithPanel !== false,
         preset: opts.preset ?? 'mac',
+        radiusTo: opts.radiusTo,
         ...opts,
+        // Force after spread so callers cannot accidentally blank contentEl.
+        contentEl,
+        contentWithPanel: opts.contentWithPanel !== false,
       });
     }
-    // No trigger: use the same semantic spring without any legacy AI recipe.
     panel.hidden = false;
     panel.style.visibility = 'visible';
     panel.style.display = panel.style.display === 'none' ? 'flex' : (panel.style.display || 'flex');
@@ -2566,27 +2574,111 @@ export const Motion = {
   },
 
   /**
-   * AI panel close — reverse of aiPanelOpen.
+   * AI panel close — reverse of open without a readable “mini AI window”.
+   *
+   * Open = opaque FLIP grow from the trigger (content rides along).
+   * Close = content/chrome vanish immediately, then the surface FLIPs back to
+   * the trigger while fading out. Never reset opacity/transform while still
+   * visible (that flash is what looked like a stuck postage-stamp panel).
    */
   async aiPanelClose(panel, trigger = null, opts = {}) {
     if (!panel) return false;
-    if (trigger) {
-      return this.macPanel(panel, trigger, {
-        open: false,
-        mode: opts.mode || 'flip',
-        hideSource: false,
-        contentEl: opts.contentEl,
-        preset: opts.preset ?? 'macClose',
-        ...opts,
-      });
+    const token = this._bump(panel);
+    const contentEl = opts.contentEl
+      || panel.querySelector?.('.ai-agent-window')
+      || null;
+    const btn = trigger && typeof trigger.getBoundingClientRect === 'function'
+      ? trigger
+      : null;
+    // Measure trigger BEFORE any style changes.
+    const btnRect = btn?.getBoundingClientRect?.() || null;
+    const preset = opts.preset ?? 'macClose';
+    const contentPreset = opts.contentPreset ?? 'contentClose';
+
+    panel.style.pointerEvents = 'none';
+    panel.style.overflow = 'hidden';
+    panel.style.willChange = 'transform, opacity, filter, border-radius';
+    panel.classList.add('ai-panel-motion-closing');
+
+    // 1) Kill readability first — content + traffic light / resize chrome.
+    const chrome = [
+      contentEl,
+      panel.querySelector?.('.panel-drag-handle'),
+      ...Array.from(panel.querySelectorAll?.('.panel-resize-handle') || []),
+    ].filter(Boolean);
+    for (const el of chrome) {
+      try {
+        this.stop(el);
+        this.set(el, { opacity: 0 });
+      } catch { /* ignore */ }
+      if (el?.style) {
+        el.style.opacity = '0';
+        el.style.visibility = 'hidden';
+      }
     }
-    await this.dismiss(panel, {
-      to: { opacity: 0, scale: opts.fromScale ?? 0.96, y: opts.travel ?? 8, x: 0 },
-      preset: opts.preset ?? 'macClose',
+
+    try {
+      if (btnRect && btnRect.width > 2 && btnRect.height > 2) {
+        const rTo = Number(opts.radiusFrom)
+          || Math.min(btnRect.width, btnRect.height) / 2
+          || 12;
+        // Parallel: geometry shrinks to trigger, surface opacity → 0 (snappy).
+        // Two jobs so opacity can finish slightly ahead of geometry.
+        await Promise.all([
+          this.morphTo(panel, btnRect, {
+            preset,
+            radiusTo: rTo,
+            radiusCompensate: true,
+            opacityTo: 0,
+            blurTo: 0,
+          }),
+          this.to(panel, { opacity: 0 }, { preset: 'snappy' }),
+        ]);
+      } else {
+        if (btn) this.setOriginFromAnchor(panel, btn);
+        const fromScale = this._clampEnterScale(opts.fromScale ?? 0.94, 0.92);
+        await this.to(panel, {
+          opacity: 0,
+          scale: fromScale,
+          y: Number.isFinite(Number(opts.travel)) ? Number(opts.travel) : 6,
+          x: 0,
+          blur: 0,
+        }, { preset });
+      }
+    } finally {
+      this.restoreSources(panel);
+      if (btn) this.restoreSource(btn);
+    }
+    if (this._genOf(panel) !== token) {
+      panel.classList.remove('ai-panel-motion-closing');
+      return false;
+    }
+
+    // 2) Hide BEFORE identity reset — otherwise one frame of full-size / mini panel.
+    panel.style.visibility = 'hidden';
+    panel.style.pointerEvents = 'none';
+    if (opts.thenDisplayNone || opts.thenHide !== false) {
+      // Caller may set display:none; keep hidden regardless.
+      if (opts.thenDisplayNone) panel.style.display = 'none';
+    }
+
+    // 3) Reset channels only while invisible.
+    this.stop(panel);
+    this.set(panel, {
+      x: 0, y: 0, scaleX: 1, scaleY: 1, scale: 1,
+      opacity: 1, blur: 0, radius: 0,
     });
-    if (opts.thenHide !== false) {
-      panel.style.visibility = 'hidden';
+    for (const el of chrome) {
+      try { this.stop(el); this.set(el, { opacity: 1 }); } catch { /* ignore */ }
+      if (el?.style) {
+        el.style.opacity = '';
+        el.style.visibility = '';
+      }
     }
+    panel.classList.remove('ai-panel-motion-closing');
+    panel.style.willChange = '';
+    panel.style.overflow = '';
+    if (opts.release) this.release(panel);
     return true;
   },
 

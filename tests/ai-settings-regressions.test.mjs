@@ -43,7 +43,7 @@ test('requested AI checkboxes use the shared switch control', () => {
 
 test('provider sharing and previous-response switches use regular text with right-aligned toggles', () => {
     for (const [id, label] of [
-        ['aiProviderVision', '支持图片输入（RDP/VNC AI 必需）'],
+        ['aiProviderVision', '新建模型默认支持图片输入（RDP/VNC）'],
         ['aiProviderShareUsers', '共享给所有用户'],
         ['aiProviderShareAdmins', '共享给所有管理员'],
         ['aiProviderUsePreviousResponse', 'OpenAI Responses 使用 previous_response_id（兼容接口慎开）'],

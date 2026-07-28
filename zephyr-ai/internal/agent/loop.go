@@ -70,8 +70,11 @@ type Config struct {
 	Permission *permission.Engine
 	Store      *session.Store
 	Emitter    Emitter
-	// SystemPrompt is the fully composed standing system message.
+	// SystemPrompt is the cache-stable standing system message (identity/skills/…).
 	SystemPrompt string
+	// VolatilePrompt is the per-turn context (time/surface/routing). Injected as a
+	// named user meta message so the stable system prefix stays cache-friendly.
+	VolatilePrompt string
 	// ExtraMessages appended after loaded history (fresh user turn only).
 	ExtraMessages []provider.Message
 	Options       map[string]any
@@ -208,6 +211,16 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 		messages = hist
 	}
 	messages = prependSystem(messages, cfg.SystemPrompt)
+	// Strip prior volatile context meta messages so only the current turn's
+	// surface/time/routing ride the request tail (stable system stays pinned).
+	messages = withoutVolatileContext(messages)
+	if vp := strings.TrimSpace(cfg.VolatilePrompt); vp != "" {
+		messages = append(messages, provider.Message{
+			Role:    provider.RoleUser,
+			Name:    volatileContextName,
+			Content: vp,
+		})
+	}
 
 	if !isResume {
 		messages = append(messages, cfg.ExtraMessages...)
@@ -298,6 +311,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				meta := remoteDesktopObservationText(works[wi].call, cfg.Decision.CaptureResult)
 				works[wi].observation = &provider.Message{
 					Role:    provider.RoleUser,
+					Name:    visualObservationName,
 					Content: meta,
 					Parts:   []provider.ContentPart{{Type: "text", Text: meta}, {Type: "image_url", ImageURL: dataURL}},
 				}
@@ -351,35 +365,33 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 		}
 		metrics.Steps = step + 1
 
-		// Compaction on text/history only. Ephemeral RDP/VNC image observations
-		// stay outside SQLite and are appended after compaction for this step.
-		visualObservations := make([]provider.Message, 0, 1)
-		textMessages := make([]provider.Message, 0, len(messages))
-		for _, msg := range messages {
-			if len(msg.Parts) > 0 { visualObservations = append(visualObservations, msg); continue }
-			textMessages = append(textMessages, msg)
-		}
-		modelMessages := append([]provider.Message(nil), textMessages...)
-		if !cfg.SkipCompact {
-			cr := compact.Apply(textMessages, compCfg)
-			modelMessages = cr.Messages
-			if cr.Snipped > 0 || cr.Pruned > 0 || cr.Compacted {
-				_ = r.emit(cfg, event.TypeStepCompacted, event.Compacted{
-					OriginalCount:  cr.OriginalChars,
-					CompactedCount: cr.FinalChars,
-					TotalChars:     cr.FinalChars,
-				})
-				if cfg.Archive != nil {
-					if len(cr.SnipOriginals) > 0 {
-						_, _ = cfg.Archive.PutMessages(cfg.UserID, cfg.SessionID, cfg.RunID, "tool_snip", cr.SnipOriginals)
-					}
-					if len(cr.Archived) > 0 {
-						_, _ = cfg.Archive.PutMessages(cfg.UserID, cfg.SessionID, cfg.RunID, "fold", cr.Archived)
-					}
+		// Compaction must not move vision observations to the global end.
+		// Pin image messages in-place (placeholder → compact → rehydrate).
+		var compactMeta *compact.Result
+		modelMessages := buildModelMessages(messages, compCfg, cfg.SkipCompact, &compactMeta)
+		if compactMeta != nil && (compactMeta.Snipped > 0 || compactMeta.Pruned > 0 || compactMeta.Compacted) {
+			_ = r.emit(cfg, event.TypeStepCompacted, event.Compacted{
+				OriginalCount:  compactMeta.OriginalChars,
+				CompactedCount: compactMeta.FinalChars,
+				TotalChars:     compactMeta.FinalChars,
+			})
+			if cfg.Archive != nil {
+				if len(compactMeta.SnipOriginals) > 0 {
+					_, _ = cfg.Archive.PutMessages(cfg.UserID, cfg.SessionID, cfg.RunID, "tool_snip", compactMeta.SnipOriginals)
+				}
+				if len(compactMeta.Archived) > 0 {
+					_, _ = cfg.Archive.PutMessages(cfg.UserID, cfg.SessionID, cfg.RunID, "fold", compactMeta.Archived)
 				}
 			}
 		}
-		modelMessages = append(modelMessages, visualObservations...)
+		if messagesHaveVisualObservation(messages) && !requestHasImagePart(modelMessages) {
+			err := fmt.Errorf("vision_missing_in_request: capture observation present but image part absent after compact")
+			_ = r.emit(cfg, event.TypeRunFailed, event.RunTerminal{Error: err.Error(), Code: "vision_missing_in_request"})
+			if cfg.Store != nil {
+				_ = cfg.Store.UpdateRunStatus(cfg.RunID, "failed", err.Error(), metrics)
+			}
+			return metrics, err
+		}
 
 		req := provider.Request{
 			Model:    cfg.Model,
@@ -590,6 +602,7 @@ func (r *Runner) makeResumeState(cfg Config, metrics Metrics, kind PauseKind, ca
 		Capture:             cap,
 		Model:               cfg.Model,
 		SystemPrompt:        cfg.SystemPrompt,
+		VolatilePrompt:      cfg.VolatilePrompt,
 		Options:             cfg.Options,
 		MaxSteps:            cfg.MaxSteps,
 		StepsDone:           metrics.Steps,
@@ -855,12 +868,197 @@ func normalizeArgs(raw json.RawMessage) json.RawMessage {
 	return raw
 }
 
+const visualObservationName = "zephyr.visual_observation"
+const visualPinPrefix = "[visual-pin:"
+const volatileContextName = "zephyr.context"
+
+func withoutVolatileContext(messages []provider.Message) []provider.Message {
+	out := make([]provider.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Name == volatileContextName {
+			continue
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
+func hasImagePart(msg provider.Message) bool {
+	for _, part := range msg.Parts {
+		if part.Type == "image_url" && strings.TrimSpace(part.ImageURL) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// isRemoteDesktopVisualObservation identifies ephemeral RDP/VNC frames.
+// User attachment multimodal messages must NOT match this (S2).
+func isRemoteDesktopVisualObservation(msg provider.Message) bool {
+	if msg.Name == visualObservationName {
+		return true
+	}
+	// Back-compat for in-flight observations created before Name was set.
+	return hasImagePart(msg) && strings.Contains(msg.Content, "远程桌面视觉观察")
+}
+
+func messagesHaveVisualObservation(messages []provider.Message) bool {
+	for _, msg := range messages {
+		if isRemoteDesktopVisualObservation(msg) {
+			return true
+		}
+	}
+	return false
+}
+
+func requestHasImagePart(messages []provider.Message) bool {
+	for _, msg := range messages {
+		if hasImagePart(msg) {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutVisualParts removes prior remote-desktop visual observations only.
+// Multimodal user attachments (future) with image Parts are preserved.
 func withoutVisualParts(messages []provider.Message) []provider.Message {
 	out := make([]provider.Message, 0, len(messages))
 	for _, msg := range messages {
-		if len(msg.Parts) == 0 { out = append(out, msg) }
+		if isRemoteDesktopVisualObservation(msg) {
+			continue
+		}
+		out = append(out, msg)
 	}
 	return out
+}
+
+func parseVisualPin(content string) (int, bool) {
+	s := strings.TrimSpace(content)
+	if !strings.HasPrefix(s, visualPinPrefix) || !strings.HasSuffix(s, "]") {
+		return -1, false
+	}
+	inner := strings.TrimSuffix(strings.TrimPrefix(s, visualPinPrefix), "]")
+	var id int
+	if _, err := fmt.Sscanf(inner, "%d", &id); err != nil {
+		return -1, false
+	}
+	return id, true
+}
+
+// findVisualPinID accepts exact placeholder content or compact summaries that
+// still embed the pin token.
+func findVisualPinID(content string) (int, bool) {
+	if id, ok := parseVisualPin(content); ok {
+		return id, true
+	}
+	idx := strings.Index(content, visualPinPrefix)
+	if idx < 0 {
+		return -1, false
+	}
+	rest := content[idx:]
+	end := strings.IndexByte(rest, ']')
+	if end < 0 {
+		return -1, false
+	}
+	return parseVisualPin(rest[:end+1])
+}
+
+// maxPinnedVisualFrames is the ImageBudget default for RDP/VNC pins (S4).
+const maxPinnedVisualFrames = 2
+
+// limitVisualPins keeps only the newest N image messages full; older pins
+// become short text placeholders so total vision payload stays bounded.
+func limitVisualPins(messages []provider.Message, keep int) []provider.Message {
+	if keep <= 0 {
+		keep = maxPinnedVisualFrames
+	}
+	// indices of image messages oldest→newest
+	idxs := make([]int, 0)
+	for i, m := range messages {
+		if hasImagePart(m) {
+			idxs = append(idxs, i)
+		}
+	}
+	if len(idxs) <= keep {
+		return messages
+	}
+	drop := map[int]bool{}
+	for _, i := range idxs[:len(idxs)-keep] {
+		drop[i] = true
+	}
+	out := make([]provider.Message, len(messages))
+	copy(out, messages)
+	for i := range out {
+		if !drop[i] {
+			continue
+		}
+		meta := strings.TrimSpace(out[i].Content)
+		if meta == "" {
+			meta = "visual observation"
+		}
+		out[i] = provider.Message{
+			Role:    out[i].Role,
+			Name:    out[i].Name,
+			Content: "[image elided by budget; earlier frame] " + meta,
+		}
+	}
+	return out
+}
+
+// buildModelMessages keeps vision pins in relative order through compact.
+// Algorithm: replace pin messages with short placeholders → compact text →
+// rehydrate full pin messages (including image Parts) at placeholder sites.
+func buildModelMessages(messages []provider.Message, compCfg compact.Config, skipCompact bool, meta **compact.Result) []provider.Message {
+	messages = limitVisualPins(messages, maxPinnedVisualFrames)
+	type item struct {
+		msg provider.Message
+		pin bool
+	}
+	seq := make([]item, 0, len(messages))
+	for _, m := range messages {
+		seq = append(seq, item{msg: m, pin: hasImagePart(m)})
+	}
+
+	textIn := make([]provider.Message, len(seq))
+	for i, it := range seq {
+		if it.pin {
+			textIn[i] = provider.Message{
+				Role:    it.msg.Role,
+				Name:    it.msg.Name,
+				Content: fmt.Sprintf("%s%d]", visualPinPrefix, i),
+			}
+			continue
+		}
+		textIn[i] = it.msg
+	}
+
+	out := textIn
+	if !skipCompact {
+		cr := compact.Apply(textIn, compCfg)
+		out = cr.Messages
+		if meta != nil {
+			*meta = &cr
+		}
+	}
+
+	rehydrated := make([]provider.Message, 0, len(out)+2)
+	used := map[int]bool{}
+	for _, m := range out {
+		if id, ok := findVisualPinID(m.Content); ok && id >= 0 && id < len(seq) && seq[id].pin && !used[id] {
+			rehydrated = append(rehydrated, seq[id].msg)
+			used[id] = true
+			continue
+		}
+		rehydrated = append(rehydrated, m)
+	}
+	// Any pin lost by compact: last-resort append (metric-worthy; should be rare).
+	for i, it := range seq {
+		if it.pin && !used[i] {
+			rehydrated = append(rehydrated, it.msg)
+		}
+	}
+	return rehydrated
 }
 
 func stripCaptureImageData(value any) any {

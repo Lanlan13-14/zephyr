@@ -37,11 +37,12 @@ type Config struct {
 }
 
 func Defaults() Config {
+	// S5: Reasonix-aligned tiers (snip 0.6 / prune 0.8 / compact 0.9).
 	return Config{
 		MaxChars:      180000,
 		SnipRatio:     0.60,
-		PruneRatio:    0.75,
-		CompactRatio:  0.85,
+		PruneRatio:    0.80,
+		CompactRatio:  0.90,
 		RecentChars:   42000,
 		ToolHeadChars: 2000,
 		ToolTailChars: 2000,
@@ -86,10 +87,10 @@ func Apply(msgs []provider.Message, cfg Config) Result {
 		cfg.SnipRatio = 0.6
 	}
 	if cfg.PruneRatio <= 0 {
-		cfg.PruneRatio = 0.75
+		cfg.PruneRatio = 0.8
 	}
 	if cfg.CompactRatio <= 0 {
-		cfg.CompactRatio = 0.85
+		cfg.CompactRatio = 0.9
 	}
 	if cfg.RecentChars <= 0 {
 		cfg.RecentChars = 42000

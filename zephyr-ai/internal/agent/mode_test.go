@@ -46,4 +46,29 @@ func TestFilterToolsForPlan(t *testing.T) {
 	if ModeSystemSuffix("plan") == "" || ModeSystemSuffix("goal") == "" {
 		t.Fatal("suffixes")
 	}
+
+	// economy keeps only allowlisted tools
+	_ = reg.Register(&tool.FuncTool{
+		ToolName: "browser_navigate", ToolDescription: "b", ToolSchema: json.RawMessage(`{}`),
+		IsReadOnly: false, Fn: func(ctx context.Context, args json.RawMessage) (any, error) { return nil, nil },
+	})
+	_ = reg.Register(&tool.FuncTool{
+		ToolName: "connection_list_v1", ToolDescription: "c", ToolSchema: json.RawMessage(`{}`),
+		IsReadOnly: true, Fn: func(ctx context.Context, args json.RawMessage) (any, error) { return nil, nil },
+	})
+	eco := FilterToolsForMode(reg, "economy")
+	ecoNames := map[string]bool{}
+	for _, t := range eco.List() {
+		ecoNames[t.Name()] = true
+	}
+	if !ecoNames["connection_list_v1"] || ecoNames["browser_navigate"] {
+		t.Fatalf("economy filter wrong: %v", ecoNames)
+	}
+	if ModeSystemSuffix("economy") == "" || ModeSystemSuffix("delivery") == "" {
+		t.Fatal("economy/delivery suffixes required")
+	}
+	// balanced == full
+	if len(FilterToolsForMode(reg, "balanced").List()) != len(reg.List()) {
+		t.Fatal("balanced should keep all tools")
+	}
 }

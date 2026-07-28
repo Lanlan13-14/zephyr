@@ -31,7 +31,8 @@ test('runtime run route reads locale from the declared contextObj', () => {
 
 test('runtime run route appends deterministic tool routing for common machine intents', () => {
     assert.match(server, /buildIntentRoutingHint\(req\.body\?\.message \|\| ''\)/);
-    assert.match(server, /systemCompose\.prompt = `\$\{systemCompose\.prompt\}/);
+    // S1: routing rides volatile tail (routingHint), not stable systemCompose.prompt
+    assert.match(server, /systemCompose\.routingHint = intentHint/);
 });
 
 test('generic ReferenceError is not mislabeled as context-window overflow', () => {

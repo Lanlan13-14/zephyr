@@ -317,7 +317,9 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		eng.Set(pol)
 	}
 
-	system := compose.SystemPrompt(req.SystemCompose) + agent.ModeSystemSuffix(req.Mode)
+	assembled := compose.Build(req.SystemCompose)
+	system := assembled.Stable + agent.ModeSystemSuffix(req.Mode)
+	volatile := assembled.Volatile
 
 	extra := req.Messages
 	if req.Message != "" {
@@ -345,6 +347,7 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		Store:               s.store,
 		Emitter:             hub,
 		SystemPrompt:        system,
+		VolatilePrompt:      volatile,
 		ExtraMessages:       extra,
 		Options:             req.Options,
 		MaxSteps:            maxSteps,
@@ -602,6 +605,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		Store:               s.store,
 		Emitter:             hub,
 		SystemPrompt:        st.SystemPrompt,
+		VolatilePrompt:      st.VolatilePrompt,
 		Options:             st.Options,
 		MaxSteps:            st.MaxSteps,
 		ProviderConfig:      pcfg,
@@ -749,6 +753,7 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		Store:               s.store,
 		Emitter:             hub,
 		SystemPrompt:        st.SystemPrompt,
+		VolatilePrompt:      st.VolatilePrompt,
 		Options:             st.Options,
 		MaxSteps:            st.MaxSteps,
 		ProviderConfig:      pcfg,

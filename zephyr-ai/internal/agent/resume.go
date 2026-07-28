@@ -43,9 +43,10 @@ type ResumeState struct {
 	Capture *event.ClientCapture `json:"capture,omitempty"`
 
 	// Snapshot of loop knobs (provider secret is NOT stored; Node re-injects).
-	Model        string         `json:"model"`
-	SystemPrompt string         `json:"systemPrompt"`
-	Options      map[string]any `json:"options,omitempty"`
+	Model          string         `json:"model"`
+	SystemPrompt   string         `json:"systemPrompt"`
+	VolatilePrompt string         `json:"volatilePrompt,omitempty"`
+	Options        map[string]any `json:"options,omitempty"`
 	MaxSteps     int            `json:"maxSteps"`
 	StepsDone    int            `json:"stepsDone"`
 	// Provider skeleton without key — Node fills apiKey on resume.
