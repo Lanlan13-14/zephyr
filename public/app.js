@@ -2,8 +2,8 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
 import { createNotesController } from './notes.js?v=20260720-notes-select1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260728-ai-models-scroll1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20260728-ai-models-scroll1';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260728-ai-panel-edge-stop1';
+import { localizeActivityMessage } from './activity-i18n.js?v=20260728-ai-panel-edge-stop1';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -8462,9 +8462,21 @@ function closeAiAssistantPanel() {
     });
 }
 function bringAiPanelToFront() { const p = $('#aiAgentPanel'); if (!p) return; p.style.zIndex = String(10080 + Math.floor(Date.now() % 40)); p.style.setProperty('--panel-z', p.style.zIndex); }
-function applyAiPanelLayout(layout) {
+let aiPanelLayoutMotionToken = 0;
+
+async function applyAiPanelLayout(layout, { animate = true } = {}) {
     const p = $('#aiAgentPanel');
-    if (!p) return;
+    if (!p) return false;
+    const token = ++aiPanelLayoutMotionToken;
+    const Motion = animate ? await sshKeyMotion._ensure().catch(() => null) : null;
+    // Measure exactly what is painted now. Rapid clicks can therefore retarget
+    // from an in-flight rectangle rather than snapping to the previous target.
+    const fromRect = p.getBoundingClientRect();
+    const fromRadius = parseFloat(getComputedStyle(p).borderTopLeftRadius) || 0;
+    if (Motion && !sshKeyMotion.failed) {
+        try { Motion.stop(p); Motion.release(p); } catch { /* ignore */ }
+    }
+
     const parentRect = aiPanelParentRect(p);
     const compact = window.innerWidth <= 760;
     const margin = compact ? 6 : 12;
@@ -8474,11 +8486,44 @@ function applyAiPanelLayout(layout) {
     else if (layout === 'half') { width = parentRect.width; height = Math.max(compact ? 260 : 360, parentRect.height / 2); left = 0; top = parentRect.height - height; }
     else if (layout === 'left-quarter') { width = Math.max(compact ? 260 : 340, parentRect.width / 4); height = parentRect.height - topbar; left = 0; top = topbar; }
     else if (layout === 'right-quarter') { width = Math.max(compact ? 260 : 340, parentRect.width / 4); height = parentRect.height - topbar; left = parentRect.width - width; top = topbar; }
+
     p.classList.add('layout-animating');
-    window.clearTimeout(p._layoutAnimationTimer);
-    Object.assign(p.style, { left: `${left}px`, top: `${top}px`, right: 'auto', bottom: 'auto', width: `${width}px`, height: `${height}px` });
+    p.style.pointerEvents = 'none';
+    p.style.willChange = 'transform, border-radius';
+    Object.assign(p.style, { left: `${left}px`, top: `${top}px`, right: 'auto', bottom: 'auto', width: `${width}px`, height: `${height}px`, transform: '' });
     bringAiPanelToFront();
-    p._layoutAnimationTimer = window.setTimeout(() => { p.classList.remove('layout-animating'); clampAiPanel(p); updateAiPanelResponsiveState(); }, 480);
+    updateAiPanelResponsiveState();
+    void p.offsetWidth;
+
+    if (!Motion || sshKeyMotion.failed || fromRect.width < 2 || fromRect.height < 2) {
+        p.classList.remove('layout-animating');
+        p.style.pointerEvents = '';
+        p.style.willChange = '';
+        clampAiPanel(p);
+        return true;
+    }
+
+    const toRadius = parseFloat(getComputedStyle(p).borderTopLeftRadius) || 0;
+    try {
+        await Motion.morph(p, fromRect, {
+            forceFrom: true,
+            preset: 'shape',
+            radiusVisualFrom: fromRadius,
+            radiusTo: toRadius,
+            radiusCompensate: true,
+        });
+    } finally {
+        if (token === aiPanelLayoutMotionToken) {
+            try { Motion.stop(p); Motion.release(p); } catch { /* ignore */ }
+            p.classList.remove('layout-animating');
+            p.style.pointerEvents = '';
+            p.style.willChange = '';
+            p.style.transform = '';
+            clampAiPanel(p);
+            updateAiPanelResponsiveState();
+        }
+    }
+    return true;
 }
 function aiPanelParentRect(panel) {
     const viewport = window.visualViewport;
@@ -8490,11 +8535,18 @@ function aiPanelParentRect(panel) {
         height: viewport?.height || window.innerHeight || document.documentElement.clientHeight || fallback.height,
     };
 }
+/** Keep only enough chrome on-screen to grab again (traffic light / title). */
+function aiPanelMinVisiblePx(panel) {
+    const width = panel?.offsetWidth || panel?.getBoundingClientRect?.().width || 320;
+    // Thin edge strip is intentional (park mostly off-screen). Do NOT use 160px —
+    // that caused a post-release jump from "almost gone" back to a fat dock.
+    return Math.min(56, Math.max(44, Math.round(width * 0.12)));
+}
 function clampAiPanel(panel) {
     if (!panel) return;
     const rect = panel.getBoundingClientRect();
     const parentRect = aiPanelParentRect(panel);
-    const minVisible = window.innerWidth <= 760 ? 160 : 90;
+    const minVisible = aiPanelMinVisiblePx(panel);
     const left = Math.min(Math.max(rect.left - parentRect.left, -rect.width + minVisible), parentRect.width - minVisible);
     const top = Math.min(Math.max(rect.top - parentRect.top, 8), parentRect.height - minVisible);
     panel.style.left = `${left}px`;
@@ -8576,9 +8628,11 @@ function openAiPanelLayoutMenu(button, panel) {
     menu.addEventListener('click', (ev) => {
         const item = ev.target.closest?.('[data-layout]');
         if (!item) return;
-        if (item.dataset.layout === 'close') { closeAiAssistantPanel(); closeAiPanelLayoutMenu({ instant: true }); return; }
-        applyAiPanelLayout(item.dataset.layout);
+        const layout = item.dataset.layout;
+        if (layout === 'close') { closeAiAssistantPanel(); closeAiPanelLayoutMenu({ instant: true }); return; }
+        // Menu collapses independently; the AI surface uses Motion.morph FLIP.
         closeAiPanelLayoutMenu();
+        void applyAiPanelLayout(layout, { animate: true });
     });
 }
 function aiProviderFieldWrap(id, labelText) {
@@ -8608,40 +8662,177 @@ function normalizeAiProviderModalLayout() {
 function setupAiPanelChrome() {
     const panel = $('#aiAgentPanel');
     const layoutBtn = panel?.querySelector('[data-ai-agent-layout]');
-    panel?.addEventListener('pointerdown', bringAiPanelToFront);
-    layoutBtn?.addEventListener('pointerdown', (e) => {
-        e.stopPropagation();
-        layoutBtn.classList.add('pressing');
-        startAiPanelDrag(e, { allowButtons: true, suppressLayoutClick: true });
-        const up = () => { layoutBtn.classList.remove('pressing'); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
-        window.addEventListener('pointerup', up, { once: true });
-        window.addEventListener('pointercancel', up, { once: true });
-    });
-    const startAiPanelDrag = (e, { allowButtons = false, suppressLayoutClick = false } = {}) => {
+    const dragHandle = panel?.querySelector('.panel-drag-handle');
+    const titleBar = panel?.querySelector('.panel-titlebar, .ai-title-bar');
+    let aiPanelDragController = null;
+    let aiPanelPhysicsReady = false;
+
+    const bakeAiPanelTransform = () => {
+        if (!panel) return;
+        const parent = aiPanelParentRect(panel);
+        const rect = panel.getBoundingClientRect();
+        Object.assign(panel.style, {
+            left: `${rect.left - parent.left}px`,
+            top: `${rect.top - parent.top}px`,
+            right: 'auto',
+            bottom: 'auto',
+            transform: '',
+        });
+    };
+
+    const aiPanelDragBounds = () => {
+        // Bounds are Motion x/y deltas relative to the baked left/top.
+        const parent = aiPanelParentRect(panel);
+        const width = panel.offsetWidth || panel.getBoundingClientRect().width;
+        const height = panel.offsetHeight || panel.getBoundingClientRect().height;
+        const left = parseFloat(panel.style.left) || 0;
+        const top = parseFloat(panel.style.top) || 0;
+        const minVisible = aiPanelMinVisiblePx(panel);
+        return {
+            minX: (minVisible - width) - left,
+            maxX: (parent.width - minVisible) - left,
+            minY: (0) - top,
+            maxY: (Math.max(0, parent.height - Math.min(56, height * 0.25))) - top,
+        };
+    };
+
+    const hardClampDragDelta = (x, y) => {
+        const b = aiPanelDragBounds();
+        return {
+            x: Math.min(b.maxX ?? Infinity, Math.max(b.minX ?? -Infinity, x)),
+            y: Math.min(b.maxY ?? Infinity, Math.max(b.minY ?? -Infinity, y)),
+        };
+    };
+
+    const finishAiPanelPhysicsDrag = (Motion) => {
+        // Bake the painted rect first, then clear transform channels. Never
+        // re-clamp to a larger minVisible afterward — that was the 图一→图二 jump.
+        bakeAiPanelTransform();
+        try { Motion?.stop?.(panel, ['x', 'y']); Motion?.set?.(panel, { x: 0, y: 0 }); Motion?.release?.(panel); } catch { /* ignore */ }
+        panel.classList.remove('dragging');
+        panel.style.willChange = '';
+        panel.style.transform = '';
+        // Soft safety only (same minVisible as drag bounds — no extra pull-in).
+        clampAiPanel(panel);
+        updateAiPanelResponsiveState();
+        window.setTimeout(() => { aiPanelSuppressLayoutClick = false; }, 320);
+    };
+
+    const ensureAiPanelPhysicsDrag = async () => {
+        if (!panel || aiPanelPhysicsReady) return true;
+        const Motion = await sshKeyMotion._ensure().catch(() => null);
+        if (!Motion || sshKeyMotion.failed || typeof Motion.drag !== 'function') return false;
+        if (aiPanelDragController?.destroy) {
+            try { aiPanelDragController.destroy(); } catch { /* ignore */ }
+        }
+
+        // Listen on the panel; filter accepts handle strip + non-interactive title bar.
+        aiPanelDragController = Motion.drag(panel, {
+            activationThreshold: 4,
+            // Light rubber only while dragging; release settles to the release
+            // point (hard-clamped), not a fatter dock snap.
+            rubberband: true,
+            decelRate: 0.997,
+            preset: 'ui',
+            bounds: aiPanelDragBounds,
+            // If already past the hard edge (rubber-band), stop there — do not
+            // project inertia further on-screen (图一 must not become 图二).
+            snap: (tx, ty, ctx) => {
+                const b = aiPanelDragBounds();
+                const cx = Number(ctx?.x);
+                const cy = Number(ctx?.y);
+                const pastEdge = Number.isFinite(cx) && (
+                    cx < (b.minX ?? -Infinity) - 0.5
+                    || cx > (b.maxX ?? Infinity) + 0.5
+                    || (Number.isFinite(cy) && (cy < (b.minY ?? -Infinity) - 0.5 || cy > (b.maxY ?? Infinity) + 0.5))
+                );
+                if (pastEdge) return hardClampDragDelta(cx, cy);
+                // Free space: allow inertia projection, still hard-clamped.
+                return hardClampDragDelta(tx, ty);
+            },
+            filter: (e) => {
+                if (!e) return false;
+                if (e.button != null && e.button !== 0) return false;
+                // Traffic-light opens the layout menu — never drag from it.
+                if (e.target?.closest?.('[data-ai-agent-layout]')) return false;
+                const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+                const fromHandle = dragHandle && (path.includes?.(dragHandle) || dragHandle === e.target || dragHandle.contains?.(e.target));
+                const fromTitle = titleBar && (path.includes?.(titleBar) || titleBar === e.target || titleBar.contains?.(e.target));
+                if (!fromHandle && !fromTitle) return false;
+                // Title bar: keep real controls clickable.
+                if (fromTitle && e.target?.closest?.('button, a, input, textarea, select, [role="button"], .ai-segment, label')) return false;
+                // Handle strip: allow empty chrome only (layout button filtered above).
+                if (fromHandle && e.target?.closest?.('input, select, textarea, a')) return false;
+                return true;
+            },
+            onActivate: () => {
+                bringAiPanelToFront();
+                closeAiPanelLayoutMenu({ instant: true });
+                aiPanelSuppressLayoutClick = true;
+                panel._suppressHeaderClick = true;
+                // Interrupt layout morphs; bake residual transform to left/top.
+                try { Motion.stop(panel); } catch { /* ignore */ }
+                bakeAiPanelTransform();
+                try { Motion.set(panel, { x: 0, y: 0 }); } catch { /* ignore */ }
+                panel.classList.add('dragging');
+                panel.style.willChange = 'transform';
+            },
+            onMove: () => {
+                // Do not call updateAiPanelResponsiveState while dragging —
+                // toggling ai-narrow/sidebar-collapsed mid-gesture resizes
+                // content and makes the parked edge strip "pop" wider.
+            },
+            onEnd: ({ settled }) => {
+                if (settled && typeof settled.then === 'function') {
+                    settled.then(() => finishAiPanelPhysicsDrag(Motion)).catch(() => finishAiPanelPhysicsDrag(Motion));
+                } else {
+                    finishAiPanelPhysicsDrag(Motion);
+                }
+            },
+            onCancel: () => {
+                // Sub-threshold: leave clicks alone.
+                panel.classList.remove('dragging');
+            },
+        });
+        aiPanelPhysicsReady = true;
+        return true;
+    };
+
+    // Precise 1:1 hard drag from the traffic-light (⋯) only — no rubberband/inertia.
+    // Title bar / empty handle strip use Motion.drag physics instead.
+    const startAiPanelHardDrag = (e, { suppressLayoutClick = false, threshold = 4 } = {}) => {
+        if (!panel) return;
         if (e.button !== undefined && e.button !== 0) return;
-        const interactive = e.target.closest?.('input,select,textarea,label,a');
-        if (interactive) return;
-        if (!allowButtons && e.target.closest?.('button')) return;
         bringAiPanelToFront();
-        const startedOnTopGrip = !!e.target.closest?.('.panel-drag-handle');
-        const dragThreshold = startedOnTopGrip ? 4 : (window.innerWidth <= 760 ? 12 : 6);
-        const sx = e.clientX, sy = e.clientY, sl = panel.offsetLeft, st = panel.offsetTop;
+        // Kill any in-flight physics settle so hard drag owns left/top immediately.
+        void sshKeyMotion._ensure().then((Motion) => {
+            try { Motion?.stop?.(panel); Motion?.set?.(panel, { x: 0, y: 0 }); } catch { /* ignore */ }
+        }).catch(() => {});
+        bakeAiPanelTransform();
+        const sx = e.clientX, sy = e.clientY;
+        const sl = panel.offsetLeft, st = panel.offsetTop;
         let dragging = false, raf = 0, lastX = sx, lastY = sy;
         const commit = () => {
             raf = 0;
             panel.style.left = `${sl + lastX - sx}px`;
             panel.style.top = `${st + lastY - sy}px`;
-            panel.style.right = 'auto'; panel.style.bottom = 'auto';
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+            panel.style.transform = '';
             clampAiPanel(panel);
         };
         const move = (ev) => {
-            lastX = ev.clientX; lastY = ev.clientY;
+            lastX = ev.clientX;
+            lastY = ev.clientY;
             const dist = Math.hypot(lastX - sx, lastY - sy);
-            if (!dragging && dist > dragThreshold) {
+            if (!dragging && dist > threshold) {
                 dragging = true;
                 panel.classList.add('dragging');
                 panel._suppressHeaderClick = true;
-                if (suppressLayoutClick) { aiPanelSuppressLayoutClick = true; closeAiPanelLayoutMenu({ instant: true }); }
+                if (suppressLayoutClick) {
+                    aiPanelSuppressLayoutClick = true;
+                    closeAiPanelLayoutMenu({ instant: true });
+                }
             }
             if (!dragging) return;
             ev.preventDefault();
@@ -8651,22 +8842,57 @@ function setupAiPanelChrome() {
             const wasDragging = dragging;
             if (raf) cancelAnimationFrame(raf);
             if (dragging) commit();
-            if (suppressLayoutClick && wasDragging) window.setTimeout(() => { aiPanelSuppressLayoutClick = false; }, 700);
-            panel.classList.remove('dragging'); updateAiPanelResponsiveState();
-            window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+            panel.classList.remove('dragging');
+            updateAiPanelResponsiveState();
+            if (suppressLayoutClick && wasDragging) {
+                window.setTimeout(() => { aiPanelSuppressLayoutClick = false; }, 700);
+            }
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            window.removeEventListener('pointercancel', up);
         };
         window.addEventListener('pointermove', move, { passive: false });
         window.addEventListener('pointerup', up, { once: true });
         window.addEventListener('pointercancel', up, { once: true });
     };
-    panel?.querySelector('.panel-drag-handle')?.addEventListener('pointerdown', (e) => startAiPanelDrag(e, { allowButtons: true }));
-    panel?.querySelector('.panel-titlebar')?.addEventListener('pointerdown', (e) => startAiPanelDrag(e, { allowButtons: true }));
+
+    panel?.addEventListener('pointerdown', () => {
+        bringAiPanelToFront();
+        // Lazy-bind physics on first interaction if engine was still booting.
+        void ensureAiPanelPhysicsDrag();
+    });
+    layoutBtn?.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        layoutBtn.classList.add('pressing');
+        // Hold-and-drag on ⋯ = precise hard drag; short click still opens layout menu.
+        startAiPanelHardDrag(e, { suppressLayoutClick: true, threshold: 4 });
+        const up = () => {
+            layoutBtn.classList.remove('pressing');
+            window.removeEventListener('pointerup', up);
+            window.removeEventListener('pointercancel', up);
+        };
+        window.addEventListener('pointerup', up, { once: true });
+        window.addEventListener('pointercancel', up, { once: true });
+    });
+    // Physics drag for handle strip + title bar (engine). Hard drag remains for ⋯.
+    void ensureAiPanelPhysicsDrag().then((ok) => {
+        if (ok || !panel) return;
+        // Engine unavailable: fall back to hard drag on handle/title as well.
+        const startFallback = (e) => startAiPanelHardDrag(e, { suppressLayoutClick: false, threshold: 4 });
+        panel.querySelector('.panel-drag-handle')?.addEventListener('pointerdown', (e) => {
+            if (e.target.closest?.('[data-ai-agent-layout]')) return;
+            startFallback(e);
+        });
+        panel.querySelector('.panel-titlebar')?.addEventListener('pointerdown', (e) => {
+            if (e.target.closest?.('button, a, input, textarea, select, [role="button"], .ai-segment, label')) return;
+            startFallback(e);
+        });
+    });
     panel?.querySelector('.panel-titlebar')?.addEventListener('click', (e) => {
         if (!panel._suppressHeaderClick) return;
         e.preventDefault();
         e.stopPropagation();
         panel._suppressHeaderClick = false;
-        console.debug('[ai-panel]', 'header click suppressed after drag');
     }, true);
     panel?.querySelectorAll('[data-ai-agent-resize]').forEach((h) => h.addEventListener('pointerdown', (e) => {
         e.preventDefault(); bringAiPanelToFront(); panel.classList.add('resizing'); h.setPointerCapture?.(e.pointerId);
@@ -9769,7 +9995,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260728-ai-models-scroll1')
+        return import('./vendor/zephyr-motion/index.js?v=20260728-ai-panel-edge-stop1')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');

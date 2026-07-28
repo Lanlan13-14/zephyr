@@ -8556,8 +8556,12 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
 }
 .ai-agent-panel.file-manager.dragging,
 .ai-agent-panel.file-manager.resizing { transition: none; user-select: none; touch-action: none; }
+/* AI layout rectangles are animated exclusively by Motion.morph (FLIP).
+   CSS left/width transitions would double-interpolate against the engine. */
 .ai-agent-panel.file-manager.layout-animating {
-    transition: left .62s var(--ios-open), top .62s var(--ios-open), width .62s var(--ios-open), height .62s var(--ios-open), border-radius .42s ease, transform .72s var(--ios-bounce), opacity .28s ease, filter .32s ease;
+    transition: none !important;
+    animation: none !important;
+    contain: layout style;
 }
 .ai-agent-panel .panel-drag-handle {
     position: relative;

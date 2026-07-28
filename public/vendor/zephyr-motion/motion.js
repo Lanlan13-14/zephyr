@@ -430,6 +430,9 @@ export const Motion = {
 
     const down = e => {
       if (st.active) return;
+      // Allow onStart to veto (filter/handle checks) before we claim the pointer.
+      const startInfo = { x: e.clientX, y: e.clientY, event: e };
+      if (handlers.onStart?.(startInfo) === false) return;
       st.active = true;
       st.pid = e.pointerId;
       // May throw for synthetic/invalid pointer ids — capture is a
@@ -439,7 +442,6 @@ export const Motion = {
       engine.trackerPush(id, now(), e.clientX, e.clientY);
       st.sx = st.lx = e.clientX;
       st.sy = st.ly = e.clientY;
-      handlers.onStart?.({ x: e.clientX, y: e.clientY, event: e });
     };
     const move = e => {
       if (!st.active || e.pointerId !== st.pid) return;
@@ -484,28 +486,44 @@ export const Motion = {
    * projection → snap → spring with the release velocity.
    *
    *   Motion.drag(el, {
-   *     bounds: { minX: 0, maxX: 300 },
-   *     snap: { x: [0, 150, 300] },
+   *     bounds: { minX: 0, maxX: 300 },          // or () => bounds
+   *     snap: { x: [0, 150, 300] },              // or (x,y,ctx) => ({x,y})
+   *     handle,                                  // only start from this node
+   *     activationThreshold: 4,                  // px before drag claims gesture
+   *     filter: (e) => true,                     // return false to ignore down
+   *     rubberband: true,
+   *     preset: 'ui',
+   *     onActivate / onMove / onRelease / onEnd
    *   })
    */
   drag(el, opts = {}) {
     const {
-      bounds = null,
       snap = null,
       preset = 'ui',
       rubberband: rb = true,
       decelRate = 0.998,
+      activationThreshold = 0,
+      handle = null,
+      filter = null,
     } = opts;
+    const threshold = Math.max(0, Number(activationThreshold) || 0);
     let grab = { x: 0, y: 0 };
+    let active = threshold <= 0;
+    let liveBounds = null;
+    let last = { x: 0, y: 0 };
 
-    const clampH = (v, hard) => {
+    const readBounds = () => {
+      const b = typeof opts.bounds === 'function' ? opts.bounds() : opts.bounds;
+      return b || null;
+    };
+    const clampH = (v, hard, bounds) => {
       if (!bounds) return v;
       const mn = bounds.minX ?? -Infinity, mx = bounds.maxX ?? Infinity;
       if (hard) return Math.min(mx, Math.max(mn, v));
       const dim = isFinite(mx - mn) ? (mx - mn) : 300;
       return rb ? engine.rubberbandClamp(v, mn, mx, dim, 0.55) : Math.min(mx, Math.max(mn, v));
     };
-    const clampV = (v, hard) => {
+    const clampV = (v, hard, bounds) => {
       if (!bounds) return v;
       const mn = bounds.minY ?? -Infinity, mx = bounds.maxY ?? Infinity;
       if (hard) return Math.min(mx, Math.max(mn, v));
@@ -514,34 +532,89 @@ export const Motion = {
     };
     const nearest = (pts, v) => pts.reduce((a, b) => Math.abs(b - v) < Math.abs(a - v) ? b : a, pts[0]);
 
-    return this.track(el, {
+    // track() always binds the listener target. Prefer handle so nested
+    // controls outside it never start a drag, while the transformed element
+    // remains `el` (the panel surface).
+    const target = handle || el;
+    return this.track(target, {
       onStart: pt => {
-        grab = { x: this.value(el, 'x'), y: this.value(el, 'y') };
+        if (typeof filter === 'function' && filter(pt.event) === false) {
+          active = false;
+          return false;
+        }
+        // If a handle is used, ensure the down really came from it / its kids.
+        if (handle && pt.event) {
+          const path = typeof pt.event.composedPath === 'function' ? pt.event.composedPath() : [];
+          const ok = path.includes?.(handle) || handle === pt.event.target || handle.contains?.(pt.event.target);
+          if (!ok) { active = false; return false; }
+        }
         this.stop(el, ['x', 'y']);
+        grab = { x: this.value(el, 'x') || 0, y: this.value(el, 'y') || 0 };
+        last = { ...grab };
+        liveBounds = readBounds();
+        active = threshold <= 0;
+        if (active) opts.onActivate?.({ ...pt, x: grab.x, y: grab.y });
         opts.onStart?.(pt);
+        return true;
       },
       onMove: p => {
-        const nx = clampH(grab.x + p.dx, false);
-        const ny = clampV(grab.y + p.dy, false);
+        // Ignore moves for gestures that filter rejected.
+        if (grab == null) return;
+        if (!active) {
+          if (Math.hypot(p.dx, p.dy) < threshold) return;
+          active = true;
+          // Re-sample grab at activation so threshold travel is not a jump.
+          this.stop(el, ['x', 'y']);
+          grab = { x: this.value(el, 'x') || 0, y: this.value(el, 'y') || 0 };
+          liveBounds = readBounds();
+          opts.onActivate?.({ ...p, x: grab.x, y: grab.y });
+        }
+        // Refresh bounds each frame so resize/viewport changes stay correct.
+        liveBounds = readBounds();
+        const nx = clampH(grab.x + p.dx, false, liveBounds);
+        const ny = clampV(grab.y + p.dy, false, liveBounds);
+        last = { x: nx, y: ny };
         this.set(el, { x: nx, y: ny });
-        opts.onMove?.({ ...p, x: nx, y: ny });
+        opts.onMove?.({ ...p, x: nx, y: ny, active: true });
       },
       onEnd: p => {
+        if (!active) {
+          // Sub-threshold: leave clicks alone; no settle spring.
+          opts.onCancel?.(p);
+          liveBounds = null;
+          return;
+        }
         const rx = this.value(el, 'x');
         const ry = this.value(el, 'y');
+        liveBounds = readBounds();
         // Project the resting point from the release velocity, THEN snap —
         // animate to where the gesture is going, not where it stopped.
         let tx = rx + engine.project(p.vx, decelRate);
         let ty = ry + engine.project(p.vy, decelRate);
-        if (snap?.x?.length) tx = nearest(snap.x, tx);
-        if (snap?.y?.length) ty = nearest(snap.y, ty);
-        tx = clampH(tx, true);
-        ty = clampV(ty, true);
+        if (typeof snap === 'function') {
+          const s = snap(tx, ty, { x: rx, y: ry, vx: p.vx, vy: p.vy }) || {};
+          if (Number.isFinite(s.x)) tx = s.x;
+          if (Number.isFinite(s.y)) ty = s.y;
+        } else {
+          if (snap?.x?.length) tx = nearest(snap.x, tx);
+          if (snap?.y?.length) ty = nearest(snap.y, ty);
+        }
+        tx = clampH(tx, true, liveBounds);
+        ty = clampV(ty, true, liveBounds);
+        opts.onRelease?.({ ...p, x: rx, y: ry, targetX: tx, targetY: ty });
         const promise = this.to(el, { x: tx, y: ty }, {
           preset,
           velocity: { x: p.vx, y: p.vy },
         });
-        opts.onEnd?.({ ...p, targetX: tx, targetY: ty, settled: promise });
+        const done = Promise.resolve(promise).then(() => {
+          last = { x: tx, y: ty };
+          liveBounds = null;
+          active = false;
+        }).catch(() => {
+          liveBounds = null;
+          active = false;
+        });
+        opts.onEnd?.({ ...p, x: rx, y: ry, targetX: tx, targetY: ty, settled: done });
       },
     });
   },

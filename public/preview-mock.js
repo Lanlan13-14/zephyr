@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20260728-ai-models-scroll1';
+import { t } from './i18n/runtime.js?v=20260728-ai-panel-edge-stop1';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 
