@@ -1933,7 +1933,7 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
     const p = ai.permissions || {};
     if (String(toolName || '').startsWith('note_') && deps.userSettingsService && ctx?.user) {
         const effective = deps.userSettingsService.effective(ctx.user);
-        if (!effective?.notes?.enabled) throw new Error('当前用户未启用笔记功能');
+        if (!effective?.notes?.enabled) throw new HttpError(403, 'notes_disabled', '当前用户未启用笔记功能');
     }
     switch (toolName) {
         case 'capability_search':

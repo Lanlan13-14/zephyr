@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -41,6 +42,42 @@ func TestListToolsCarriesRemoteDesktopContext(t *testing.T) {
 	}
 	if gotContext != string(contextJSON) {
 		t.Fatalf("context mismatch: %q", gotContext)
+	}
+}
+
+func TestCallPropagatesBusiness403FromNotesGate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":    false,
+			"error": "当前用户未启用笔记功能",
+			"code":  "notes_disabled",
+		})
+	}))
+	defer srv.Close()
+	h := NewHost(srv.URL, "token")
+	_, err := h.Call(context.Background(), CallRequest{Tool: "note_list", UserID: "u1"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); got == "platform host unauthorized: 403 Forbidden" || !strings.Contains(got, "未启用笔记") {
+		t.Fatalf("business 403 must surface notes message, got %q", got)
+	}
+	if strings.Contains(err.Error(), "platform host unauthorized") {
+		t.Fatalf("must not mask notes_disabled as host unauthorized: %v", err)
+	}
+}
+
+func TestCallKeepsUnauthorizedForHostAuth403(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "unauthorized"})
+	}))
+	defer srv.Close()
+	h := NewHost(srv.URL, "token")
+	_, err := h.Call(context.Background(), CallRequest{Tool: "note_list", UserID: "u1"})
+	if err == nil || !strings.Contains(err.Error(), "platform host unauthorized") {
+		t.Fatalf("expected host unauthorized, got %v", err)
 	}
 }
 

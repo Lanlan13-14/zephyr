@@ -43,6 +43,29 @@ func confirmedCallFromContext(ctx context.Context, toolName string) bool {
 	return approved != "" && approved == toolName
 }
 
+// isPlatformHostAuthFailure distinguishes Node checkHost rejections from tool ACL/business 403.
+func isPlatformHostAuthFailure(status int, cr CallResponse, raw []byte) bool {
+	if status != 403 {
+		return false
+	}
+	code := strings.ToLower(strings.TrimSpace(cr.Code))
+	errMsg := strings.ToLower(strings.TrimSpace(cr.Error))
+	if code == "unauthorized" || code == "loopback_only" {
+		return true
+	}
+	if errMsg == "unauthorized" || errMsg == "loopback_only" {
+		return true
+	}
+	// Empty or non-JSON 403 from a proxy/middleware is treated as host auth failure.
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return true
+	}
+	if cr.Error == "" && cr.Code == "" && !json.Valid(raw) {
+		return true
+	}
+	return false
+}
+
 // IsConfirmedCall reports whether the runtime approved this exact platform tool.
 // It is intentionally tool-scoped: approval for one tool never covers another.
 func IsConfirmedCall(ctx context.Context, toolName string) bool {
@@ -108,17 +131,33 @@ func (h *Host) Call(ctx context.Context, req CallRequest) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if res.StatusCode == 401 || res.StatusCode == 403 {
-		return nil, fmt.Errorf("platform host unauthorized: %s", res.Status)
-	}
 	var cr CallResponse
-	if err := json.Unmarshal(b, &cr); err != nil {
-		return nil, fmt.Errorf("platform host bad json: %w (%s)", err, strings.TrimSpace(string(b)))
+	_ = json.Unmarshal(b, &cr)
+	// Only real host-auth failures are "unauthorized". Business 403 from tools
+	// (notes_disabled, note_ai_read_disabled, ACL, etc.) must surface their message.
+	if res.StatusCode == 401 || isPlatformHostAuthFailure(res.StatusCode, cr, b) {
+		msg := strings.TrimSpace(cr.Error)
+		if msg == "" {
+			msg = res.Status
+		}
+		return nil, fmt.Errorf("platform host unauthorized: %s", msg)
+	}
+	if len(b) > 0 && cr.Error == "" && cr.Result == nil && !cr.OK && res.StatusCode < 300 {
+		// Non-empty body that did not decode as CallResponse.
+		if err := json.Unmarshal(b, &cr); err != nil {
+			return nil, fmt.Errorf("platform host bad json: %w (%s)", err, strings.TrimSpace(string(b)))
+		}
 	}
 	if res.StatusCode >= 300 || !cr.OK {
-		msg := cr.Error
+		msg := strings.TrimSpace(cr.Error)
 		if msg == "" {
 			msg = strings.TrimSpace(string(b))
+		}
+		if msg == "" {
+			msg = res.Status
+		}
+		if code := strings.TrimSpace(cr.Code); code != "" && !strings.Contains(msg, code) {
+			return nil, fmt.Errorf("%s (%s)", msg, code)
 		}
 		return nil, fmt.Errorf("%s", msg)
 	}
