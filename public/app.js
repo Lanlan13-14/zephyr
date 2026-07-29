@@ -6887,6 +6887,7 @@ function collectAiContext(options = {}) {
         locale: getLocale(),
         view,
         aiChatSessionId: contextSession?.id || '',
+        runtimeSessionId: contextSession?.runtimeSessionId || '',
         activeChatTitle: contextSession?.title || '',
         activeSurface,
         activeRemoteDesktopTabId: activeRemoteDesktop?.tabId || '',

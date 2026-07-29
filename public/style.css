@@ -991,12 +991,14 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     padding: 10px 12px 12px;
     border: 1px solid rgba(139,148,158,.24);
     border-radius: 30px;
+    /* 材质与原先完全一致；子元素天然画在父背景之上，放大图标靠 overflow + 负 margin 露头 */
     background:
         radial-gradient(ellipse 70% 45% at 50% 0%, rgba(255,255,255,.30), transparent 58%),
         linear-gradient(180deg, color-mix(in srgb, var(--surface) 86%, transparent), color-mix(in srgb, var(--surface) 70%, transparent));
     box-shadow: 0 24px 72px rgba(0,0,0,.28), 0 0 0 1px rgba(255,255,255,.08) inset, inset 0 1px 0 rgba(255,255,255,.18);
     backdrop-filter: blur(30px) saturate(1.75);
     -webkit-backdrop-filter: blur(30px) saturate(1.75);
+    overflow: visible;
     opacity: 0;
     pointer-events: none;
     filter: blur(14px) saturate(.9);
@@ -1013,6 +1015,7 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     opacity: 1;
     pointer-events: auto;
     filter: blur(0) saturate(1);
+    overflow: visible;
 }
 .terminal-smartbar.closing .smartbar-panel {
     pointer-events: none;
@@ -1033,6 +1036,8 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     transition-delay: .10s;
 }
 .smartbar-dock {
+    position: relative;
+    z-index: 2; /* 图标层在 ::before 栏体材质之上 */
     display: flex;
     align-items: flex-end;
     justify-content: center;
@@ -1040,10 +1045,14 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     min-width: 0;
     max-width: 100%;
     min-height: 108px;
+    /* 横向滚动需要 overflow-x≠visible，规范会把 overflow-y:visible 算成 auto 并裁切。
+       用「内部顶 padding 给放大留绘制区 + 负 margin 抵消」：栏体外观高度不拉长，
+       放大上浮画在栏体上方图层，不被裁。 */
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
-    padding: 18px 20px 8px;
+    padding: 54px 20px 8px; /* 18 + 36 lift room */
+    margin-top: -36px; /* 抵消额外顶 padding，不拉长 dock 栏 */
     perspective: 900px;
     overscroll-behavior-x: contain;
     -webkit-overflow-scrolling: touch;
@@ -1059,6 +1068,7 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     --dock-lift: 0px;
     --dock-rotate: 0deg;
     position: relative;
+    z-index: 3; /* 放大后叠在 dock 栏材质之上 */
     display: inline-flex;
     align-items: center;
     justify-content: flex-start;
@@ -1109,15 +1119,25 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     height: 62px;
     border: 1px solid rgba(139,148,158,.24);
     border-radius: 18px;
+    /* 与 + 号同不透明度：surface 实底，不再用更透的 soft 底 */
     background:
         radial-gradient(circle at 30% 18%, rgba(255,255,255,.24), transparent 36%),
-        linear-gradient(145deg, color-mix(in srgb, var(--surface) 90%, transparent), color-mix(in srgb, var(--bg) 82%, transparent));
+        linear-gradient(145deg, color-mix(in srgb, var(--surface) 96%, transparent), color-mix(in srgb, var(--surface) 90%, var(--bg)));
     box-shadow: 0 10px 24px rgba(0,0,0,.22);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
     transition: border-color .28s ease, box-shadow .42s ease, transform .68s cubic-bezier(.16,1,.3,1), border-radius .42s ease;
+}
+/* active 只加描边/光环，背景体不透明度仍对齐 + 号 */
+.smartbar-session.active .smartbar-session-icon {
+    border-color: var(--accent);
+    background:
+        radial-gradient(circle at 30% 18%, rgba(255,255,255,.24), transparent 36%),
+        linear-gradient(145deg, color-mix(in srgb, var(--surface) 96%, transparent), color-mix(in srgb, var(--surface) 90%, var(--bg)));
+    box-shadow: 0 10px 24px rgba(0,0,0,.22), 0 0 0 3px rgba(10,132,255,.14);
+    animation: none;
 }
 .terminal-smartbar.open .smartbar-session,
 .terminal-smartbar.open .smartbar-add {
@@ -1138,7 +1158,7 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     border-radius: 21px;
     box-shadow: 0 22px 48px rgba(0,0,0,.30), 0 0 0 5px rgba(10,132,255,.09);
 }
-.smartbar-session.active .smartbar-session-icon { border-color: var(--accent); box-shadow: 0 16px 38px rgba(10,132,255,.22), 0 0 0 3px rgba(10,132,255,.14); animation: dockActivePulse 2.2s ease-in-out infinite; }
+/* active 图标背景在上方块已与 + 对齐；这里只保留底部 active 点 */
 .smartbar-session.active::after { content: ''; position: absolute; left: 50%; bottom: 0; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-hover); transform: translateX(-50%); box-shadow: 0 0 12px rgba(10,132,255,.72); }
 .smartbar-session.minimized { opacity: .74; }
 @keyframes dockItemBloom { 0% { opacity: 0; transform: translate3d(0, 18px, 0) scale(.78) rotateX(8deg); filter: blur(8px); } 64% { opacity: 1; transform: translate3d(0, -3px, 0) scale(1.025) rotateX(0); filter: blur(0); } 86% { transform: translate3d(0, 1px, 0) scale(.995); } 100% { opacity: 1; transform: translate3d(var(--dock-shift, 0px), var(--dock-lift), 0) scale(var(--dock-scale)) rotateZ(var(--dock-rotate)); filter: blur(0); } }
@@ -3172,16 +3192,20 @@ body.app-body > .toast.show { opacity: 1; transform: translate3d(0,0,0) scale(1)
         max-width: min(100vw - 28px, 720px);
         padding: 10px 12px 12px;
         border-radius: 28px;
+        overflow: visible;
     }
     .terminal-smartbar.open .smartbar-panel {
         clip-path: none;
+        overflow: visible;
     }
     .smartbar-dock {
         justify-content: flex-start;
         min-height: 92px;
         overflow-x: auto;
         overflow-y: hidden;
-        padding: 12px 14px 4px;
+        /* 移动端 lift 约 26：内顶 padding 留绘制区，负 margin 不拉长栏 */
+        padding: 38px 14px 4px;
+        margin-top: -26px;
         gap: 8px;
         scroll-padding-inline: 14px;
     }
@@ -11184,8 +11208,22 @@ select optgroup {
 .smartbar-trash-target {
     box-shadow: var(--shadow-soft) !important;
 }
-.smartbar-add:hover .smartbar-add-icon,
-.smartbar-session.active .smartbar-session-icon,
+.smartbar-add:hover .smartbar-add-icon {
+    border-color: var(--accent-soft-border) !important;
+    /* hover + 仍用与默认同不透明度的 surface 底，不换成半透明 soft-bg */
+    background:
+        radial-gradient(circle at 30% 18%, rgba(255,255,255,.24), transparent 36%),
+        linear-gradient(145deg, color-mix(in srgb, var(--surface) 96%, transparent), color-mix(in srgb, var(--surface) 90%, var(--bg))) !important;
+    box-shadow: 0 10px 24px rgba(0,0,0,.22), 0 0 0 3px rgba(10,132,255,.10) !important;
+}
+/* 会话 active 与 + 同不透明度；禁止 accent-soft-bg 洗成半透明 */
+.smartbar-session.active .smartbar-session-icon {
+    border-color: var(--accent) !important;
+    background:
+        radial-gradient(circle at 30% 18%, rgba(255,255,255,.24), transparent 36%),
+        linear-gradient(145deg, color-mix(in srgb, var(--surface) 96%, transparent), color-mix(in srgb, var(--surface) 90%, var(--bg))) !important;
+    box-shadow: 0 10px 24px rgba(0,0,0,.22), 0 0 0 3px rgba(10,132,255,.14) !important;
+}
 .terminal-window.active,
 .terminal-window.dock-drop-target,
 .server-check:has(input:checked),

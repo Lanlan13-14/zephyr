@@ -57,3 +57,24 @@ test('pointermove path warms motion engine before first dock hover', () => {
     assert.match(appJs, /sshKeyMotion\._ensure\(\)/);
     assert.match(appHtml, /app\.js\?v=\d{8}-[a-z0-9-]+/);
 });
+
+test('session icon body opacity matches plus icon surface fill', () => {
+    // 禁止 active 会话用 accent-soft-bg 洗成半透明；与 + 同 surface 实底。
+    assert.match(styleCss, /\.smartbar-session-icon,\s*\n\.smartbar-add-icon\s*\{[\s\S]*?var\(--surface\) 96%/);
+    assert.match(styleCss, /\.smartbar-session\.active \.smartbar-session-icon\s*\{[\s\S]*?var\(--surface\) 96%/);
+    assert.doesNotMatch(styleCss, /\.smartbar-session\.active \.smartbar-session-icon[^{]*\{[^}]*accent-soft-bg/);
+});
+
+test('dock icons layer above bar chrome without lengthening the bar', () => {
+    // 栏体材质恢复为 panel 本体（与原先同一套 surface 渐变 + backdrop）；不拆 ::before。
+    // 图标靠 overflow:visible + 负 margin 顶 padding 露头，不拉长栏。
+    assert.doesNotMatch(styleCss, /\.smartbar-panel::before\s*\{/);
+    assert.match(styleCss, /\.smartbar-panel\s*\{[\s\S]*?backdrop-filter:\s*blur\(30px\) saturate\(1\.75\)/);
+    assert.match(styleCss, /\.smartbar-panel\s*\{[\s\S]*?color-mix\(in srgb, var\(--surface\) 86%, transparent\)/);
+    assert.match(styleCss, /\.smartbar-panel\s*\{[\s\S]*?overflow:\s*visible/);
+    assert.match(styleCss, /\.smartbar-dock\s*\{[\s\S]*?z-index:\s*2/);
+    assert.match(styleCss, /\.smartbar-dock\s*\{[\s\S]*?margin-top:\s*-36px/);
+    assert.match(styleCss, /\.smartbar-dock\s*\{[\s\S]*?min-height:\s*108px/);
+    assert.match(styleCss, /\.smartbar-session,\s*\n\.smartbar-add\s*\{[\s\S]*?z-index:\s*3/);
+    assert.doesNotMatch(styleCss, /\.smartbar-dock\s*\{[\s\S]{0,180}?min-height:\s*136px/);
+});
