@@ -8,6 +8,7 @@ const app = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const vnc = fs.readFileSync(path.join(root, 'public/novnc.js'), 'utf8');
 const rdp = fs.readFileSync(path.join(root, 'public/rdp-wasm-client.js'), 'utf8');
 const service = fs.readFileSync(path.join(root, 'ai-agent-service.js'), 'utf8');
+const remoteDesktopTools = fs.readFileSync(path.join(root, 'ai-remote-desktop-tools.js'), 'utf8');
 const defaults = fs.readFileSync(path.join(root, 'ai-defaults.js'), 'utf8');
 const runtimeBridge = fs.readFileSync(path.join(root, 'ai-runtime-bridge.js'), 'utf8');
 const zh = JSON.parse(fs.readFileSync(path.join(root, 'public/i18n/locales/zh-CN.json'), 'utf8'));
@@ -24,7 +25,7 @@ const required = [
   '远程桌面动作闭环已验证',
   '发现 {count} 个可操作元素（DOM v{revision}）：{elements}',
   'AI 正在页面代操作：{target}',
-  'VNC 画面已变化，请重新截图后再操作',
+  '远程桌面截图令牌已过期、已使用或不是当前 Run 最新截图，请重新截图后再操作',
   'RDP Worker 尚未就绪',
   'RDP 截图像素无效',
   '未知 RDP 快捷键：{sequence}',
@@ -46,7 +47,8 @@ test('new AI UI paths call t() instead of hardcoding Chinese', () => {
   assert.match(app, /t\('远程桌面操作失败：\{error\}'/);
   assert.match(app, /t\('发现 \{count\} 个可操作元素（DOM v\{revision\}）：\{elements\}'/);
   assert.match(app, /localizedAiConfirmationSummary/);
-  assert.match(vnc, /t\('VNC 画面已变化，请重新截图后再操作'\)/);
+  assert.match(vnc, /captureId was already validated by the Node run ledger/);
+  assert.match(remoteDesktopTools, /远程桌面截图令牌已过期、已使用或不是当前 Run 最新截图/);
   assert.match(rdp, /t\('RDP Worker 尚未就绪'\)/);
   assert.match(rdp, /t\('未知 RDP AI 动作：\{control\}'/);
   assert.match(service, /summaryKey: '确认执行工具：\{tool\}'/);

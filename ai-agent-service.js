@@ -533,16 +533,31 @@ function providerHeaders(provider = {}, contentType = 'application/json', model 
     }
     return headers;
 }
+function isOfficialAnthropicBase(baseUrl = '') {
+    const raw = String(baseUrl || '').trim();
+    if (!raw) return true;
+    try {
+        const host = new URL(raw).hostname.toLowerCase();
+        return host === 'api.anthropic.com';
+    } catch (_) {
+        return false;
+    }
+}
 async function listProviderModels(provider = {}) {
     const type = providerType(provider);
     if (type === 'anthropic') {
-        if (!provider.baseUrl && provider.apiKey) {
+        const official = isOfficialAnthropicBase(provider.baseUrl);
+        if (official && provider.apiKey) {
             try {
                 const data = await fetchJson('https://api.anthropic.com/v1/models', { method: 'GET', headers: providerHeaders(provider), timeoutMs: 30000, label: `${provider.name || provider.type || 'Anthropic'}/models` });
                 return (data.data || []).map((m) => ({ id: m.id, name: m.display_name || m.id })).filter((m) => m.id);
             } catch (_) {}
         }
-        return ['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5'].map((id) => ({ id }));
+        // Match OpenMinis: a custom Anthropic-compatible endpoint owns its
+        // model catalog. Never inject official Claude names into a third-party
+        // provider when discovery is unavailable.
+        if (!official) return [];
+        return ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-5-20250929', 'claude-opus-4-5-20251101'].map((id) => ({ id }));
     }
     if (type === 'gemini') {
         const base = (provider.baseUrl || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
@@ -2675,7 +2690,8 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 const candidates = (tabId ? raw.filter((r) => String(r.tabId || '') === tabId) : raw)
                     .filter((r) => ['RDP', 'VNC'].includes(String(r.protocol || '').toUpperCase()) && (r.connected || r.hasScreenshot || r.dataUrl || r.error));
                 const targets = candidates.slice(0, 3).map((r) => ({ tabId: r.tabId || '', protocol: r.protocol || '', title: r.title || r.name || '', host: r.host || '', port: r.port || '', status: r.status || '', connected: !!r.connected, width: r.width || 0, height: r.height || 0, originalWidth: r.originalWidth || 0, originalHeight: r.originalHeight || 0, frameAt: r.frameAt || r.at || 0, captureId: remoteDesktopTools.captureIdFor(r) }));
-                const capture = candidates.filter((r) => r.dataUrl).slice(0, 1).map((r) => remoteDesktopTools.publicCapture({ ...r, hasScreenshot: true }))[0] || null;
+                const remembered = tabId ? remoteDesktopTools.getRememberedCapture({ userId: ctx.user?.userId, runId: ctx.runId, tabId }) : null;
+                const capture = remembered || candidates.filter((r) => r.dataUrl).slice(0, 1).map((r) => remoteDesktopTools.publicCapture({ ...r, hasScreenshot: true }))[0] || null;
                 const stale = capture && args.afterCaptureId && capture.captureId === String(args.afterCaptureId);
                 if (capture && !args.requireFresh && !stale) return { screenshots: [capture], capture, targets, clientCaptureRequired: false, tabId: capture.tabId || tabId, maxWidth, message: '已读取绑定 captureId 的远程桌面画面' };
                 if (!targets.length) return { screenshots: [], capture: null, clientCaptureRequired: false, message: '当前没有可读取的 RDP/VNC 远程桌面画面；请先打开连接。' };
@@ -2683,10 +2699,32 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             });
         case 'remote_desktop_action_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
-                const raw = Array.isArray(ctx.context?.remoteDesktopSnapshots) ? ctx.context.remoteDesktopSnapshots : [];
-                const snapshot = raw.find((item) => String(item.tabId || '') === String(args.tabId || ''));
-                const capture = remoteDesktopTools.validateActionAgainstCapture(args, snapshot || {});
-                const clientAction = remoteDesktopTools.clientAction({ ...args, screenshotWidth: capture.width, screenshotHeight: capture.height, originalWidth: capture.originalWidth, originalHeight: capture.originalHeight });
+                const staleScope = { userId: ctx.user?.userId, runId: ctx.runId, tabId: args.tabId, args };
+                const remembered = remoteDesktopTools.getRememberedCapture(staleScope);
+                if (!remembered) {
+                    const retryCount = remoteDesktopTools.noteStaleAction(staleScope);
+                    const exhausted = retryCount > 1;
+                    const error = new Error(exhausted ? '同一远程桌面动作在重新截图后仍然失效，已停止重试以避免循环' : '当前 Run 没有可用于操作的远程桌面截图，请先调用 remote_desktop_capture_v1');
+                    error.code = exhausted ? 'stale_capture_retry_exhausted' : 'stale_capture';
+                    error.retryable = !exhausted;
+                    throw error;
+                }
+                let capture;
+                try {
+                    capture = remoteDesktopTools.validateActionAgainstCapture(args, remembered);
+                    remoteDesktopTools.consumeRememberedCapture({ ...staleScope, captureId: args.captureId });
+                    remoteDesktopTools.clearStaleAction(staleScope);
+                } catch (error) {
+                    if (error?.code !== 'stale_capture') throw error;
+                    const retryCount = remoteDesktopTools.noteStaleAction(staleScope);
+                    if (retryCount > 1) {
+                        error.code = 'stale_capture_retry_exhausted';
+                        error.retryable = false;
+                        error.message = '同一远程桌面动作在重新截图后仍然失效，已停止重试以避免循环';
+                    }
+                    throw error;
+                }
+                const clientAction = remoteDesktopTools.clientAction({ ...args, frameAt: capture.frameAt, screenshotWidth: capture.width, screenshotHeight: capture.height, originalWidth: capture.originalWidth, originalHeight: capture.originalHeight });
                 return {
                     clientActionRequired: true,
                     clientAction,
@@ -3298,7 +3336,7 @@ function registerAiRoutes(app, deps) {
             }
 
             const models = await listProviderModels(provider);
-            res.json({ ok: true, models: models.slice(0, 300) });
+            res.json({ ok: true, models: models.slice(0, 300), preserveExisting: models.length === 0 });
         } catch (err) { res.status(err?.status || (isTransientAiFetchError(err) ? 502 : 400)).json({ error: publicError(err), code: err?.code || '', transient: isTransientAiFetchError(err) }); }
     });
 
@@ -3747,6 +3785,8 @@ module.exports = {
     mergeZephyrDefaultSkills,
     normalizeAiSettingsInput,
     safeAiSettings,
+    listProviderModels,
+    isOfficialAnthropicBase,
     executeAiToolForHost,
     listToolCatalog,
     toolDefinitions,

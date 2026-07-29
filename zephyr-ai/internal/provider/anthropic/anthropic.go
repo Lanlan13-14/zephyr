@@ -220,8 +220,10 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 				Input json.RawMessage `json:"input"`
 			} `json:"content"`
 			Usage *struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal(b, &data); err != nil {
@@ -250,8 +252,14 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		}
 		if data.Usage != nil {
 			out <- provider.Chunk{Type: "usage", Usage: &provider.Usage{
-				InputTokens: data.Usage.InputTokens, OutputTokens: data.Usage.OutputTokens,
-				TotalTokens: data.Usage.InputTokens + data.Usage.OutputTokens,
+				InputTokens:         data.Usage.InputTokens,
+				OutputTokens:        data.Usage.OutputTokens,
+				TotalTokens:         data.Usage.InputTokens + data.Usage.OutputTokens,
+				CacheCreationTokens: data.Usage.CacheCreationInputTokens,
+				CacheReadTokens:     data.Usage.CacheReadInputTokens,
+				// Match OpenMinis: Anthropic input_tokens already represents the
+				// current context window for the call.
+				LatestContextTokens: data.Usage.InputTokens,
 			}}
 		}
 		out <- provider.Chunk{Type: "done"}

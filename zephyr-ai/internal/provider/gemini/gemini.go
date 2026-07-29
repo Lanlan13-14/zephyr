@@ -263,9 +263,10 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		}
 		if data.UsageMetadata != nil {
 			out <- provider.Chunk{Type: "usage", Usage: &provider.Usage{
-				InputTokens:  data.UsageMetadata.PromptTokenCount,
-				OutputTokens: data.UsageMetadata.CandidatesTokenCount,
-				TotalTokens:  data.UsageMetadata.TotalTokenCount,
+				InputTokens:         data.UsageMetadata.PromptTokenCount,
+				OutputTokens:        data.UsageMetadata.CandidatesTokenCount,
+				TotalTokens:         data.UsageMetadata.TotalTokenCount,
+				LatestContextTokens: data.UsageMetadata.PromptTokenCount,
 			}}
 		}
 		out <- provider.Chunk{Type: "done"}

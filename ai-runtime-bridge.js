@@ -70,6 +70,10 @@ class AiRuntimeBridge {
         return this._fetch(`/admin/sessions/${encodeURIComponent(sessionId)}/messages?userId=${encodeURIComponent(user.userId)}`);
     }
 
+    async getSessionUsage(user, sessionId) {
+        return this._fetch(`/admin/sessions/${encodeURIComponent(sessionId)}/usage?userId=${encodeURIComponent(user.userId)}`);
+    }
+
     /**
      * Start a streaming run. Returns { runId, ticket, ssePath }.
      * systemCompose MUST preserve full skill/memory/env assembly.

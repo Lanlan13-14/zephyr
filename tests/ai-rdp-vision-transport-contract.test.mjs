@@ -11,6 +11,10 @@ test('client keeps rendering local and uploads only captured image bytes',()=>{
  assert.match(app,/capture-image\?callId=/);
  assert.match(app,/delete safeShot\.dataUrl/);
  assert.match(app,/captureAssetId: uploaded\.captureAssetId/);
+ assert.match(server,/captureAssetId: req\.body\?\.captureAssetId/);
+ assert.match(server,/rememberCapture/);
+ assert.match(app,/activeTabIsRemoteDesktop/);
+ assert.match(app,/item\.dataUrl \|\| item\.error \|\| item\.connected \|\| item\.pending/);
  assert.doesNotMatch(app,/JSON\.stringify\(\{ callId[^\n]*dataUrl/);
  assert.match(app,/vision_upload_failed|视觉帧上传失败/);
 });

@@ -23,9 +23,22 @@ test('remote desktop action validates capture and screenshot coordinates', () =>
   assert.throws(() => remoteTools.validateActionAgainstCapture({ action: 'mouse', captureId, x: 900, y: 1 }, snapshot), (error) => error.code === 'invalid_remote_coordinates');
 });
 
+test('runtime-scoped capture ledger supersedes frozen request context', () => {
+  const stored = remoteTools.rememberCapture({ userId: 'u1', runId: 'run-1', snapshot });
+  assert.equal(stored.captureId, 'rdp-1:12345:640:360');
+  assert.equal(stored.dataUrl, undefined);
+  assert.equal(stored.hasScreenshot, true);
+  assert.equal(remoteTools.getRememberedCapture({ userId: 'u1', runId: 'run-1', tabId: 'rdp-1' }).captureId, stored.captureId);
+  assert.equal(remoteTools.getRememberedCapture({ userId: 'u2', runId: 'run-1', tabId: 'rdp-1' }), null);
+  assert.equal(remoteTools.consumeRememberedCapture({ userId: 'u1', runId: 'run-1', tabId: 'rdp-1', captureId: stored.captureId }).captureId, stored.captureId);
+  assert.equal(remoteTools.getRememberedCapture({ userId: 'u1', runId: 'run-1', tabId: 'rdp-1' }), null);
+  assert.throws(() => remoteTools.consumeRememberedCapture({ userId: 'u1', runId: 'run-1', tabId: 'rdp-1', captureId: stored.captureId }), (error) => error.code === 'stale_capture');
+});
+
 test('remote desktop client action preserves capture binding', () => {
-  const action = remoteTools.clientAction({ tabId: 'rdp-1', action: 'send_text', captureId: 'cap-1', text: 'https://example.com', paste: true });
+  const action = remoteTools.clientAction({ tabId: 'rdp-1', action: 'send_text', captureId: 'cap-1', frameAt: 12345, text: 'https://example.com', paste: true });
   assert.equal(action.action, 'remote_desktop_send_text');
   assert.equal(action.captureId, 'cap-1');
+  assert.equal(action.frameAt, 12345);
   assert.equal(action.coordinateSpace, 'screenshot');
 });

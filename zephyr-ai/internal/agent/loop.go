@@ -108,18 +108,34 @@ type Config struct {
 }
 
 type Metrics struct {
-	ProviderCalls int   `json:"providerCalls"`
-	ProviderMs    int64 `json:"providerMs"`
-	ToolMs        int64 `json:"toolMs"`
-	ToolResults   int   `json:"toolResults"`
-	Steps         int   `json:"steps"`
-	InputTokens   int   `json:"inputTokens,omitempty"`
-	OutputTokens  int   `json:"outputTokens,omitempty"`
+	ProviderCalls       int   `json:"providerCalls"`
+	ProviderMs          int64 `json:"providerMs"`
+	ToolMs              int64 `json:"toolMs"`
+	ToolResults         int   `json:"toolResults"`
+	Steps               int   `json:"steps"`
+	InputTokens         int   `json:"inputTokens,omitempty"`
+	OutputTokens        int   `json:"outputTokens,omitempty"`
+	CacheCreationTokens int   `json:"cacheCreationTokens,omitempty"`
+	CacheReadTokens     int   `json:"cacheReadTokens,omitempty"`
+	LatestContextTokens int   `json:"latestContextTokens,omitempty"`
 }
 
-// Runner executes agent loops.
+func mergeUsageSnapshot(dst *provider.Usage, src *provider.Usage) {
+	if dst == nil || src == nil {
+		return
+	}
+	if src.InputTokens > 0 { dst.InputTokens = src.InputTokens }
+	if src.OutputTokens > 0 { dst.OutputTokens = src.OutputTokens }
+	if src.TotalTokens > 0 { dst.TotalTokens = src.TotalTokens }
+	if src.CacheCreationTokens > 0 { dst.CacheCreationTokens = src.CacheCreationTokens }
+	if src.CacheReadTokens > 0 { dst.CacheReadTokens = src.CacheReadTokens }
+	if src.LatestContextTokens > 0 { dst.LatestContextTokens = src.LatestContextTokens }
+}
+
+// Runner executes agent loops. Event sequence counters are scoped per run;
+// concurrent users/runs must never reset or advance each other's SSE sequence.
 type Runner struct {
-	seq atomic.Int64
+	seqByRun sync.Map // map[string]*atomic.Int64
 }
 
 type callWork struct {
@@ -136,10 +152,23 @@ type callWork struct {
 
 func NewRunner() *Runner { return &Runner{} }
 
-func (r *Runner) nextSeq() int64 { return r.seq.Add(1) }
+func (r *Runner) counter(runID string) *atomic.Int64 {
+	key := strings.TrimSpace(runID)
+	if key == "" {
+		key = "_anonymous"
+	}
+	if value, ok := r.seqByRun.Load(key); ok {
+		return value.(*atomic.Int64)
+	}
+	counter := &atomic.Int64{}
+	actual, _ := r.seqByRun.LoadOrStore(key, counter)
+	return actual.(*atomic.Int64)
+}
+
+func (r *Runner) nextSeq(runID string) int64 { return r.counter(runID).Add(1) }
 
 func (r *Runner) emit(cfg Config, t event.Type, data any) error {
-	ev := event.New(cfg.RunID, r.nextSeq(), t, data)
+	ev := event.New(cfg.RunID, r.nextSeq(cfg.RunID), t, data)
 	if cfg.Store != nil {
 		_ = cfg.Store.AppendEvent(cfg.RunID, ev.Seq, string(t), ev)
 	}
@@ -151,7 +180,17 @@ func (r *Runner) emit(cfg Config, t event.Type, data any) error {
 
 // Run executes until completion, pause, abort, or error.
 func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
-	r.seq.Store(0)
+	counter := r.counter(cfg.RunID)
+	if cfg.Resume == nil {
+		counter.Store(0)
+	} else if cfg.Store != nil {
+		// A capture/permission resume is the same run. Continue after the last
+		// persisted event; resetting to zero violates UNIQUE(run_id, seq), loses
+		// replay events and makes SSE ordering ambiguous.
+		if events, err := cfg.Store.ListEvents(cfg.RunID, 0); err == nil && len(events) > 0 {
+			counter.Store(events[len(events)-1].Seq)
+		}
+	}
 	metrics := Metrics{}
 	if cfg.Resume != nil {
 		metrics = cfg.Resume.Metrics
@@ -336,7 +375,9 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 			}
 			return metrics, err
 		}
-		// Append tool messages for this batch
+		// Append the complete tool-result batch first. OpenAI requires every
+		// assistant tool_call to have a matching role=tool message before any
+		// ordinary user/vision message appears.
 		for _, w := range works {
 			tm := toolResultMessage(w)
 			messages = append(messages, tm)
@@ -345,6 +386,8 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 					return metrics, err
 				}
 			}
+		}
+		for _, w := range works {
 			if w.observation != nil {
 				messages = withoutVisualParts(messages)
 				messages = append(messages, *w.observation)
@@ -415,6 +458,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 			text      strings.Builder
 			toolCalls []provider.ToolCall
 			respID    string
+			callUsage provider.Usage
 		)
 		for chunk := range ch {
 			if chunk.Err != nil || chunk.ErrorMsg != "" {
@@ -444,8 +488,11 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 				toolCalls = append(toolCalls, chunk.ToolCalls...)
 			case "usage":
 				if chunk.Usage != nil {
-					metrics.InputTokens += chunk.Usage.InputTokens
-					metrics.OutputTokens += chunk.Usage.OutputTokens
+					// Usage events are provider-specific snapshots. Gemini may send
+					// repeated cumulative snapshots; Anthropic may split input and
+					// output across events. Keep the latest non-zero value per field
+					// and add it to the run exactly once after this call finishes.
+					mergeUsageSnapshot(&callUsage, chunk.Usage)
 				}
 			}
 			if chunk.ResponseID != "" {
@@ -454,6 +501,15 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 		}
 		metrics.ProviderMs += time.Since(started).Milliseconds()
 		metrics.ProviderCalls++
+		metrics.InputTokens += callUsage.InputTokens
+		metrics.OutputTokens += callUsage.OutputTokens
+		metrics.CacheCreationTokens += callUsage.CacheCreationTokens
+		metrics.CacheReadTokens += callUsage.CacheReadTokens
+		if callUsage.LatestContextTokens > 0 {
+			metrics.LatestContextTokens = callUsage.LatestContextTokens
+		} else if callUsage.InputTokens > 0 {
+			metrics.LatestContextTokens = callUsage.InputTokens + callUsage.CacheCreationTokens + callUsage.CacheReadTokens
+		}
 
 		assistant := provider.Message{
 			Role:       provider.RoleAssistant,
@@ -561,6 +617,8 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 					return metrics, err
 				}
 			}
+		}
+		for _, w := range works {
 			if w.observation != nil {
 				messages = withoutVisualParts(messages)
 				messages = append(messages, *w.observation)
@@ -1009,7 +1067,47 @@ func limitVisualPins(messages []provider.Message, keep int) []provider.Message {
 // buildModelMessages keeps vision pins in relative order through compact.
 // Algorithm: replace pin messages with short placeholders → compact text →
 // rehydrate full pin messages (including image Parts) at placeholder sites.
+// repairToolCallSequence drops historical assistant tool calls that were
+// persisted before a client-side capture/permission flow failed and therefore
+// never received their complete contiguous role=tool output batch. Sending
+// such history makes OpenAI reject every later turn with "No tool output
+// found for function call ...". Complete batches are preserved byte-for-byte.
+func repairToolCallSequence(messages []provider.Message) []provider.Message {
+	out := make([]provider.Message, 0, len(messages))
+	for i := 0; i < len(messages); i++ {
+		msg := messages[i]
+		if msg.Role != provider.RoleAssistant || len(msg.ToolCalls) == 0 {
+			out = append(out, msg)
+			continue
+		}
+		expected := make(map[string]bool, len(msg.ToolCalls))
+		for _, call := range msg.ToolCalls {
+			if id := strings.TrimSpace(call.ID); id != "" {
+				expected[id] = true
+			}
+		}
+		seen := make(map[string]bool, len(expected))
+		j := i + 1
+		for ; j < len(messages) && messages[j].Role == provider.RoleTool; j++ {
+			if expected[messages[j].ToolCallID] {
+				seen[messages[j].ToolCallID] = true
+			}
+		}
+		if len(expected) == 0 || len(seen) != len(expected) {
+			// Drop the orphan assistant call and any partial tool outputs bound to
+			// it; keep the following user turn so the session can recover in place.
+			i = j - 1
+			continue
+		}
+		out = append(out, msg)
+		out = append(out, messages[i+1:j]...)
+		i = j - 1
+	}
+	return out
+}
+
 func buildModelMessages(messages []provider.Message, compCfg compact.Config, skipCompact bool, meta **compact.Result) []provider.Message {
+	messages = repairToolCallSequence(messages)
 	messages = limitVisualPins(messages, maxPinnedVisualFrames)
 	type item struct {
 		msg provider.Message
@@ -1066,13 +1164,17 @@ func stripCaptureImageData(value any) any {
 	case map[string]any:
 		out := make(map[string]any, len(item))
 		for key, child := range item {
-			if key == "dataUrl" || key == "imageData" || key == "base64" { continue }
+			if key == "dataUrl" || key == "imageData" || key == "base64" {
+				continue
+			}
 			out[key] = stripCaptureImageData(child)
 		}
 		return out
 	case []any:
 		out := make([]any, len(item))
-		for i, child := range item { out[i] = stripCaptureImageData(child) }
+		for i, child := range item {
+			out[i] = stripCaptureImageData(child)
+		}
 		return out
 	default:
 		return value
@@ -1082,9 +1184,27 @@ func stripCaptureImageData(value any) any {
 func remoteDesktopObservationText(call provider.ToolCall, raw json.RawMessage) string {
 	var meta map[string]any
 	_ = json.Unmarshal(raw, &meta)
-	captureID, _ := meta["captureId"].(string)
-	tabID, _ := meta["tabId"].(string)
-	protocol, _ := meta["protocol"].(string)
+	lookup := func(key string) string {
+		if value, ok := meta[key].(string); ok && value != "" {
+			return value
+		}
+		if capture, ok := meta["capture"].(map[string]any); ok {
+			if value, ok := capture[key].(string); ok && value != "" {
+				return value
+			}
+		}
+		if shots, ok := meta["screenshots"].([]any); ok && len(shots) > 0 {
+			if shot, ok := shots[0].(map[string]any); ok {
+				if value, ok := shot[key].(string); ok {
+					return value
+				}
+			}
+		}
+		return ""
+	}
+	captureID := lookup("captureId")
+	tabID := lookup("tabId")
+	protocol := lookup("protocol")
 	return fmt.Sprintf("客户端渲染的 %s 远程桌面视觉观察。toolCallId=%s tabId=%s captureId=%s。请直接观察随附图片；不要调用 browser_* 代替远程桌面。", strings.ToUpper(protocol), call.ID, tabID, captureID)
 }
 

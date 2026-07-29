@@ -116,7 +116,13 @@ type chatTool struct {
 func toChatMessages(msgs []provider.Message) []chatMessage {
 	out := make([]chatMessage, 0, len(msgs))
 	for _, m := range msgs {
-		cm := chatMessage{Role: string(m.Role), Name: m.Name, ToolCallID: m.ToolCallID}
+		cm := chatMessage{Role: string(m.Role), ToolCallID: m.ToolCallID}
+		// OpenAI message.name is restricted to [A-Za-z0-9_-]+. Internal
+		// markers such as zephyr.visual_observation deliberately contain dots;
+		// keep them runtime-only instead of sending an invalid provider field.
+		if m.Name != "" && !strings.ContainsAny(m.Name, ". ") {
+			cm.Name = m.Name
+		}
 		if len(m.Parts) > 0 {
 			parts := make([]map[string]any, 0, len(m.Parts))
 			for _, p := range m.Parts {
@@ -302,9 +308,14 @@ func (c *Client) readChatJSON(r io.Reader, out chan<- provider.Chunk) {
 			} `json:"message"`
 		} `json:"choices"`
 		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
+			PromptTokens        int `json:"prompt_tokens"`
+			CompletionTokens    int `json:"completion_tokens"`
+			TotalTokens         int `json:"total_tokens"`
+			PromptTokensDetails *struct {
+				CachedTokens    int `json:"cached_tokens"`
+				CacheHitTokens  int `json:"cache_hit_tokens"`
+				CacheMissTokens int `json:"cache_miss_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(r).Decode(&data); err != nil {
@@ -331,10 +342,23 @@ func (c *Client) readChatJSON(r io.Reader, out chan<- provider.Chunk) {
 		out <- provider.Chunk{Type: "tool_calls", ToolCalls: calls, ResponseID: data.ID}
 	}
 	if data.Usage != nil {
+		cached := 0
+		if data.Usage.PromptTokensDetails != nil {
+			cached = data.Usage.PromptTokensDetails.CachedTokens
+			if data.Usage.PromptTokensDetails.CacheHitTokens > cached {
+				cached = data.Usage.PromptTokensDetails.CacheHitTokens
+			}
+		}
+		fresh := data.Usage.PromptTokens
+		if cached > 0 && cached <= fresh {
+			fresh -= cached
+		}
 		out <- provider.Chunk{Type: "usage", Usage: &provider.Usage{
-			InputTokens:  data.Usage.PromptTokens,
-			OutputTokens: data.Usage.CompletionTokens,
-			TotalTokens:  data.Usage.TotalTokens,
+			InputTokens:         fresh,
+			OutputTokens:        data.Usage.CompletionTokens,
+			TotalTokens:         data.Usage.TotalTokens,
+			CacheReadTokens:     cached,
+			LatestContextTokens: data.Usage.PromptTokens,
 		}}
 	}
 	out <- provider.Chunk{Type: "done", ResponseID: data.ID}
@@ -418,9 +442,14 @@ func (c *Client) readChatSSE(r io.Reader, out chan<- provider.Chunk) {
 				} `json:"delta"`
 			} `json:"choices"`
 			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-				TotalTokens      int `json:"total_tokens"`
+				PromptTokens        int `json:"prompt_tokens"`
+				CompletionTokens    int `json:"completion_tokens"`
+				TotalTokens         int `json:"total_tokens"`
+				PromptTokensDetails *struct {
+					CachedTokens    int `json:"cached_tokens"`
+					CacheHitTokens  int `json:"cache_hit_tokens"`
+					CacheMissTokens int `json:"cache_miss_tokens"`
+				} `json:"prompt_tokens_details"`
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal([]byte(payload), &data); err != nil {
@@ -430,10 +459,23 @@ func (c *Client) readChatSSE(r io.Reader, out chan<- provider.Chunk) {
 			respID = data.ID
 		}
 		if data.Usage != nil {
+			cached := 0
+			if data.Usage.PromptTokensDetails != nil {
+				cached = data.Usage.PromptTokensDetails.CachedTokens
+				if data.Usage.PromptTokensDetails.CacheHitTokens > cached {
+					cached = data.Usage.PromptTokensDetails.CacheHitTokens
+				}
+			}
+			fresh := data.Usage.PromptTokens
+			if cached > 0 && cached <= fresh {
+				fresh -= cached
+			}
 			usage = &provider.Usage{
-				InputTokens:  data.Usage.PromptTokens,
-				OutputTokens: data.Usage.CompletionTokens,
-				TotalTokens:  data.Usage.TotalTokens,
+				InputTokens:         fresh,
+				OutputTokens:        data.Usage.CompletionTokens,
+				TotalTokens:         data.Usage.TotalTokens,
+				CacheReadTokens:     cached,
+				LatestContextTokens: data.Usage.PromptTokens,
 			}
 		}
 		if len(data.Choices) == 0 {
@@ -603,9 +645,12 @@ func (c *Client) streamResponses(ctx context.Context, req provider.Request) (<-c
 			} `json:"output"`
 			OutputText string `json:"output_text"`
 			Usage      *struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
-				TotalTokens  int `json:"total_tokens"`
+				InputTokens        int `json:"input_tokens"`
+				OutputTokens       int `json:"output_tokens"`
+				TotalTokens        int `json:"total_tokens"`
+				InputTokensDetails *struct {
+					CachedTokens int `json:"cached_tokens"`
+				} `json:"input_tokens_details"`
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal(b, &data); err != nil {
@@ -649,10 +694,20 @@ func (c *Client) streamResponses(ctx context.Context, req provider.Request) (<-c
 			out <- provider.Chunk{Type: "tool_calls", ToolCalls: calls, ResponseID: data.ID}
 		}
 		if data.Usage != nil {
+			cached := 0
+			if data.Usage.InputTokensDetails != nil {
+				cached = data.Usage.InputTokensDetails.CachedTokens
+			}
+			fresh := data.Usage.InputTokens
+			if cached > 0 && cached <= fresh {
+				fresh -= cached
+			}
 			out <- provider.Chunk{Type: "usage", Usage: &provider.Usage{
-				InputTokens:  data.Usage.InputTokens,
-				OutputTokens: data.Usage.OutputTokens,
-				TotalTokens:  data.Usage.TotalTokens,
+				InputTokens:         fresh,
+				OutputTokens:        data.Usage.OutputTokens,
+				TotalTokens:         data.Usage.TotalTokens,
+				CacheReadTokens:     cached,
+				LatestContextTokens: data.Usage.InputTokens,
 			}}
 		}
 		out <- provider.Chunk{Type: "done", ResponseID: data.ID}

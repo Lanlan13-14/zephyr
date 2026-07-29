@@ -55,6 +55,8 @@ let reconnecting = false;
 let mobileComposing = false;
 let lastRemoteClipboard = '';
 let vncLastFrameAt = 0;
+let vncFrameClockCanvas = null;
+let vncFrameClockContext = null;
 let panelLayoutMenu = null;
 let panelLayoutButton = null;
 let suppressNextLayoutClick = false;
@@ -222,10 +224,28 @@ function captureCanvasSnapshotForAi(source, options = {}) {
         return { error: err.message || String(err) };
     }
 }
+function installVncFrameClock(source) {
+    if (!source) return;
+    const ctx = source.getContext?.('2d');
+    if (!ctx || (source === vncFrameClockCanvas && ctx === vncFrameClockContext)) return;
+    vncFrameClockCanvas = source;
+    vncFrameClockContext = ctx;
+    vncLastFrameAt = Date.now();
+    const mark = () => { vncLastFrameAt = Date.now(); };
+    for (const name of ['putImageData', 'drawImage', 'fillRect', 'clearRect']) {
+        const original = ctx?.[name];
+        if (typeof original !== 'function') continue;
+        ctx[name] = function (...args) {
+            const result = original.apply(this, args);
+            mark();
+            return result;
+        };
+    }
+}
 function getRemoteDesktopSnapshotForAi(options = {}) {
     const source = screen?.querySelector?.('canvas');
-    const frameAt = source ? Date.now() : 0;
-    if (source) vncLastFrameAt = frameAt;
+    installVncFrameClock(source);
+    const frameAt = source ? (vncLastFrameAt || Date.now()) : 0;
     const shot = captureCanvasSnapshotForAi(source, options);
     const captureId = [params?.tabId || tabId || 'vnc', frameAt, shot.width || 0, shot.height || 0].map((part) => String(part || 0).replace(/[^A-Za-z0-9_.-]/g, '_')).join(':');
     return {
@@ -817,10 +837,8 @@ async function clickRemotePoint(x, y, button = 1) {
 async function performAiRemoteDesktopAction(data = {}) {
     const control = String(data.control || '').toLowerCase().replace(/-/g, '_');
     const text = String(data.text || '');
-    if (data.captureId) {
-        const current = getRemoteDesktopSnapshotForAi({ maxWidth: Number(data.screenshotWidth) || 960, quality: 0.42 });
-        if (String(data.captureId) !== String(current.captureId || '')) throw Object.assign(new Error(t('VNC 画面已变化，请重新截图后再操作')), { code: 'stale_capture' });
-    }
+    // captureId was already validated by the Node run ledger. A fresh canvas
+    // read here would differ on any animated desktop and create a retry loop.
     if (control === 'quality') { cycleQuality(data.qualityMode || ''); return { ok: true, control, qualityMode }; }
     if (control === 'fit') { cycleFit(data.fitMode || ''); return { ok: true, control, fitMode }; }
     if (control === 'joystick' || control === 'drag') { togglePanel(joystickPanel, true, dragBtn); return { ok: true, control, panel: 'joystick' }; }

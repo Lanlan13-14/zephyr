@@ -99,7 +99,7 @@ const PLAYBOOKS = Object.freeze([
         prompt: `# RDP/VNC captureId 闭环操作 Playbook
 
 - 每次观察先 remote_desktop_capture_v1；客户端渲染器会上传最新 RDP/VNC 帧，Runtime 会把它作为真正图片输入交给视觉模型。不得对 RDP/VNC 使用终端文本 Tool。
-- 模型必须先观察图片，再用 remote_desktop_action_v1；必须绑定同一 tabId 的最新 captureId，鼠标坐标基于该截图像素。stale_capture 时重新截图。
+- 模型必须先观察图片，再用 remote_desktop_action_v1；必须绑定同一 tabId 的最新 captureId，鼠标坐标基于该截图像素。stale_capture 时只允许重新截图并重试同一动作一次；第二次仍 stale_capture 必须停止并报告，禁止继续循环。
 - 动作后重新调用 remote_desktop_capture_v1 取得新视觉帧，再用 actionId、beforeCaptureId、afterCaptureId 调用 remote_desktop_verify_v1；只有 verified=true 才能继续判断业务目标。
 - captureId 变化只能证明画面更新，不自动证明业务目标成功；必须观察新图中的成功/错误状态。
 - 目标是 RDP/VNC 时禁止调用 browser_*；远程桌面里的浏览器仍属于远程桌面表面。禁止盲点坐标、复用旧图或把操作请求当作完成。任何 clientError、截图不可用或 verify=false 都必须如实报告。`,

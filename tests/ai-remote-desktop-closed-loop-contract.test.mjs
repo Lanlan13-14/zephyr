@@ -29,7 +29,9 @@ test('frontend binds actions and results to capture ids', () => {
   assert.match(app, /beforeCaptureId/);
   assert.match(app, /afterCaptureId/);
   assert.match(app, /captureChanged/);
-  assert.match(vnc, /stale_capture/);
+  assert.match(app, /runtimeLastEventId/);
+  assert.match(vnc, /vncLastFrameAt \|\| Date\.now\(\)/);
+  assert.match(vnc, /captureId was already validated by the Node run ledger/);
   assert.match(vnc, /captureId/);
   assert.match(rdp, /__zephyrGetRemoteDesktopSnapshot/);
   assert.match(rdp, /performAiRemoteDesktopAction/);
@@ -51,6 +53,8 @@ test('remote desktop capability and playbook require verification', () => {
   const playbook = PLAYBOOKS.find((item) => item.id === 'remote-desktop-closed-loop-v1');
   assert.ok(playbook);
   assert.match(playbook.prompt, /stale_capture/);
+  assert.match(playbook.prompt, /只允许重新截图并重试同一动作一次/);
+  assert.match(playbook.prompt, /禁止继续循环/);
   assert.match(playbook.prompt, /remote_desktop_verify_v1/);
   assert.match(playbook.prompt, /只有 verified=true/);
 });

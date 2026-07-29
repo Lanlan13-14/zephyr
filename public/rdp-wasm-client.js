@@ -427,7 +427,7 @@ function cleanupAudio() {
 async function getRemoteDesktopSnapshotForAi(options = {}) {
     if (!rdpWorkerBridge) return { protocol: 'RDP', tabId: params?.tabId || tabId, connected, error: t('RDP Worker 尚未就绪'), at: Date.now(), frameAt: 0 };
     try {
-        const frame = await rdpWorkerBridge.request('rdpCaptureFrame', []);
+        const frame = await rdpWorkerBridge.call('rdpCaptureFrame', []);
         const sourceWidth = Number(frame?.width || 0);
         const sourceHeight = Number(frame?.height || 0);
         const pixels = frame?.pixels instanceof Uint8Array ? frame.pixels : new Uint8Array(frame?.pixels || []);
@@ -1607,10 +1607,10 @@ function sendKeySequence(seq) {
 }
 
 async function performAiRemoteDesktopAction(data = {}) {
-    if (data.captureId) {
-        const current = await getRemoteDesktopSnapshotForAi({ maxWidth: Number(data.screenshotWidth) || 960, quality: 0.42 });
-        if (String(data.captureId) !== String(current.captureId || '')) throw Object.assign(new Error(t('RDP 画面已变化，请重新截图后再操作')), { code: 'stale_capture' });
-    }
+    // The Node tool host already validates captureId against the latest
+    // user+run+tab capture ledger before dispatch. Do not compare it with a
+    // newly rendered frame here: clocks, cursor blink and animations advance
+    // frameAt continuously and would reject every legitimate action.
     const control = String(data.control || '').toLowerCase().replace(/-/g, '_');
     if (control === 'quality') { $('#qualityBtn')?.click?.(); return { ok: true, control, qualityMode }; }
     if (control === 'fit') { $('#fitBtn')?.click?.(); return { ok: true, control, fitMode: fitModes[fitModeIdx] }; }

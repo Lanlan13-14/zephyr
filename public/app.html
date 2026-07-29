@@ -6,7 +6,7 @@
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1">
-    <link rel="modulepreload" href="app.js?v=20260728-ai-handle-only-drag1">
+    <link rel="modulepreload" href="app.js?v=20260729-ai-usage-model1">
     <link rel="modulepreload" href="theme-runtime.js?v=20260728-ai-handle-only-drag1">
     <link rel="modulepreload" href="i18n/runtime.js?v=20260728-ai-handle-only-drag1">
     <link rel="stylesheet" href="style.css?v=20260728-ai-handle-only-drag1">
@@ -751,7 +751,7 @@
                     <!-- AI 模型二级页：某供应商的模型列表（截图 1000067615） -->
                     <div class="settings-subpage" id="settingsAiModelsPage" aria-hidden="true">
                         <header class="settings-subpage-head ai-models-page-head">
-                            <button type="button" class="settings-subpage-back" id="aiModelsPageBackBtn" aria-label="返回">‹</button>
+                            <button type="button" class="settings-subpage-back" id="aiModelsPageBackBtn" aria-label="返回" data-i18n-aria-label="返回">‹</button>
                             <div class="settings-subpage-titles">
                                 <h2 id="aiModelsPageTitle" data-i18n="模型">模型</h2>
                                 <p class="muted" id="aiModelsPageSubtitle"></p>
@@ -1169,7 +1169,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-    <script src="app.js?v=20260728-ai-handle-only-drag1" type="module"></script>
+    <script src="app.js?v=20260729-ai-usage-model1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

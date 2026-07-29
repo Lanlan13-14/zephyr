@@ -116,9 +116,12 @@ type Chunk struct {
 }
 
 type Usage struct {
-	InputTokens  int `json:"inputTokens,omitempty"`
-	OutputTokens int `json:"outputTokens,omitempty"`
-	TotalTokens  int `json:"totalTokens,omitempty"`
+	InputTokens         int `json:"inputTokens,omitempty"`
+	OutputTokens        int `json:"outputTokens,omitempty"`
+	TotalTokens         int `json:"totalTokens,omitempty"`
+	CacheCreationTokens int `json:"cacheCreationTokens,omitempty"`
+	CacheReadTokens     int `json:"cacheReadTokens,omitempty"`
+	LatestContextTokens int `json:"latestContextTokens,omitempty"`
 }
 
 // Provider streams or completes chat.

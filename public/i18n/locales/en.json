@@ -2113,5 +2113,19 @@
   "搜索模型 ID 或显示名称": "Search model ID or display name",
   "搜索模型": "Search models",
   "模型（{shown}/{total}）": "Models ({shown}/{total})",
-  "没有匹配「{query}」的模型": "No models match \"{query}\""
+  "没有匹配「{query}」的模型": "No models match \"{query}\"",
+  "本轮真实用量": "Actual usage for this run",
+  "输入": "Input",
+  "缓存写入": "Cache write",
+  "缓存读取": "Cache read",
+  "当前会话": "Current session",
+  "总计": "Total",
+  "运行次数": "Runs",
+  "思考级别": "Thinking level",
+  "自定义端点未返回模型列表，已保留现有模型配置": "The custom endpoint returned no model catalog; existing models were preserved",
+  "PDF": "PDF",
+  "模型列表页未加载，请硬刷新后重试": "The model list page failed to load. Hard refresh and try again.",
+  "请先填写 API Key": "Enter an API key first",
+  "返回": "Back",
+  "远程桌面截图令牌已过期、已使用或不是当前 Run 最新截图，请重新截图后再操作": "The remote desktop capture token expired, was already used, or is no longer the latest capture for this run. Capture the screen again before acting."
 }

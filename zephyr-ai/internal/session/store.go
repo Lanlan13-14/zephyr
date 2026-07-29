@@ -39,30 +39,42 @@ type Session struct {
 }
 
 type Message struct {
-	ID         int64             `json:"id"`
-	SessionID  string            `json:"sessionId"`
-	Role       string            `json:"role"`
-	Content    string            `json:"content,omitempty"`
-	PartsJSON  json.RawMessage   `json:"parts,omitempty"`
-	ToolCalls  json.RawMessage   `json:"toolCalls,omitempty"`
-	ToolCallID string            `json:"toolCallId,omitempty"`
-	Name       string            `json:"name,omitempty"`
-	ResponseID string            `json:"responseId,omitempty"`
-	RunID      string            `json:"runId,omitempty"`
-	CreatedAt  int64             `json:"createdAt"`
+	ID         int64           `json:"id"`
+	SessionID  string          `json:"sessionId"`
+	Role       string          `json:"role"`
+	Content    string          `json:"content,omitempty"`
+	PartsJSON  json.RawMessage `json:"parts,omitempty"`
+	ToolCalls  json.RawMessage `json:"toolCalls,omitempty"`
+	ToolCallID string          `json:"toolCallId,omitempty"`
+	Name       string          `json:"name,omitempty"`
+	ResponseID string          `json:"responseId,omitempty"`
+	RunID      string          `json:"runId,omitempty"`
+	CreatedAt  int64           `json:"createdAt"`
 }
 
 type Run struct {
-	ID        string `json:"id"`
-	SessionID string `json:"sessionId"`
-	UserID    string `json:"userId"`
-	Status    string `json:"status"` // queued|running|waiting_permission|waiting_capture|completed|failed|aborted
-	Provider  string `json:"provider,omitempty"`
-	Model     string `json:"model,omitempty"`
-	Error     string `json:"error,omitempty"`
+	ID        string          `json:"id"`
+	SessionID string          `json:"sessionId"`
+	UserID    string          `json:"userId"`
+	Status    string          `json:"status"` // queued|running|waiting_permission|waiting_capture|completed|failed|aborted
+	Provider  string          `json:"provider,omitempty"`
+	Model     string          `json:"model,omitempty"`
+	Error     string          `json:"error,omitempty"`
 	Metrics   json.RawMessage `json:"metrics,omitempty"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
+	CreatedAt int64           `json:"createdAt"`
+	UpdatedAt int64           `json:"updatedAt"`
+}
+
+type SessionUsage struct {
+	SessionID           string `json:"sessionId"`
+	RunCount            int    `json:"runCount"`
+	ProviderCalls       int    `json:"providerCalls"`
+	InputTokens         int    `json:"inputTokens"`
+	OutputTokens        int    `json:"outputTokens"`
+	CacheCreationTokens int    `json:"cacheCreationTokens,omitempty"`
+	CacheReadTokens     int    `json:"cacheReadTokens,omitempty"`
+	LatestContextTokens int    `json:"latestContextTokens,omitempty"`
+	LastRun             *Run   `json:"lastRun,omitempty"`
 }
 
 func Open(path string) (*Store, error) {
@@ -407,6 +419,60 @@ func (s *Store) GetRun(runID string) (*Run, error) {
 		r.Metrics = json.RawMessage(mj)
 	}
 	return &r, nil
+}
+
+func metricInt(raw json.RawMessage, key string) int {
+	var data map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &data) != nil {
+		return 0
+	}
+	value, ok := data[key].(float64)
+	if !ok {
+		return 0
+	}
+	return int(value)
+}
+
+func (s *Store) SessionUsage(userID, sessionID string) (SessionUsage, error) {
+	if err := s.ValidateUserSession(userID, sessionID); err != nil {
+		return SessionUsage{}, err
+	}
+	rows, err := s.db.Query(`SELECT run_id,session_id,user_id,status,provider,model,error,metrics_json,created_at,updated_at FROM ai_runs WHERE session_id=? AND user_id=? ORDER BY created_at ASC, rowid ASC`, sessionID, userID)
+	if err != nil {
+		return SessionUsage{}, err
+	}
+	defer rows.Close()
+	usage := SessionUsage{SessionID: sessionID}
+	for rows.Next() {
+		var run Run
+		var metrics string
+		if err := rows.Scan(&run.ID, &run.SessionID, &run.UserID, &run.Status, &run.Provider, &run.Model, &run.Error, &metrics, &run.CreatedAt, &run.UpdatedAt); err != nil {
+			return SessionUsage{}, err
+		}
+		run.Metrics = json.RawMessage(metrics)
+		usage.RunCount++
+		usage.ProviderCalls += metricInt(run.Metrics, "providerCalls")
+		usage.InputTokens += metricInt(run.Metrics, "inputTokens")
+		usage.OutputTokens += metricInt(run.Metrics, "outputTokens")
+		usage.CacheCreationTokens += metricInt(run.Metrics, "cacheCreationTokens")
+		usage.CacheReadTokens += metricInt(run.Metrics, "cacheReadTokens")
+		if latest := metricInt(run.Metrics, "latestContextTokens"); latest > 0 {
+			usage.LatestContextTokens = latest
+		} else if input := metricInt(run.Metrics, "inputTokens"); input > 0 {
+			usage.LatestContextTokens = input
+		}
+		runCopy := run
+		var lastMetrics map[string]any
+		if json.Unmarshal(run.Metrics, &lastMetrics) == nil {
+			encoded, _ := json.Marshal(lastMetrics)
+			runCopy.Metrics = encoded
+		}
+		usage.LastRun = &runCopy
+	}
+	if err := rows.Err(); err != nil {
+		return SessionUsage{}, err
+	}
+	return usage, nil
 }
 
 func (s *Store) AppendEvent(runID string, seq int64, typ string, payload any) error {

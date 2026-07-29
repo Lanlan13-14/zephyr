@@ -4890,15 +4890,17 @@ function normalizeAiModelEntries(models, opts = {}) {
     }
     return [...byId.values()];
 }
-function mergeAiModelEntries(existing, nextIds, opts = {}) {
+function mergeAiModelEntries(existing, nextModels, opts = {}) {
     const current = normalizeAiModelEntries(existing, opts);
     const byId = new Map(current.map((m) => [m.id, m]));
-    const ids = normalizeAiModelEntries(nextIds, opts).map((m) => m.id);
+    const next = normalizeAiModelEntries(nextModels, opts);
     const out = [];
     const seen = new Set();
-    for (const id of ids) {
+    for (const remote of next) {
+        const id = remote.id;
         if (seen.has(id)) continue;
-        out.push(byId.get(id) || normalizeAiModelEntry(id, opts));
+        const existingEntry = byId.get(id);
+        out.push(existingEntry ? { ...remote, ...existingEntry, label: existingEntry.label || remote.label || id } : remote);
         seen.add(id);
     }
     return out;
@@ -5374,14 +5376,18 @@ function normalizeAiSettings(ai = {}) {
         plans: Array.isArray(ai.plans) ? ai.plans : [],
     };
 }
-function aiModelNames(provider = {}, { includeHidden = false } = {}) {
-    const entries = normalizeAiModelEntries(provider.models, {
+function aiModelEntries(provider = {}, { includeHidden = false } = {}) {
+    return normalizeAiModelEntries(provider.models, {
         providerVisionDefault: provider?.options?.vision !== false,
-    });
-    return entries
-        .filter((m) => includeHidden || !m.hidden)
-        .map((m) => m.id)
-        .filter(Boolean);
+    }).filter((m) => includeHidden || !m.hidden);
+}
+function aiModelNames(provider = {}, opts = {}) {
+    return aiModelEntries(provider, opts).map((m) => m.id).filter(Boolean);
+}
+function aiModelDisplayName(provider = {}, modelId = '') {
+    const id = String(modelId || '').trim();
+    const entry = aiModelEntries(provider, { includeHidden: true }).find((m) => m.id === id);
+    return String(entry?.label || entry?.id || id).trim();
 }
 function aiModelCapabilityIcons(entry = {}) {
     const icons = [];
@@ -5463,7 +5469,7 @@ function renderAiHeaderSelectors() {
     const chosen = ((p?.id === ai.defaultProviderId ? ai.defaultModel : '') || p?.defaultModel || models[0] || ai.defaultModel || '').trim();
     modelSelect.value = chosen;
     $('#aiProviderPickerBtn') && ($('#aiProviderPickerBtn').textContent = p ? (p.name || p.type || t('供应商')) : t('未配置模型'));
-    $('#aiModelPickerBtn') && ($('#aiModelPickerBtn').textContent = chosen || t('自动选择模型'));
+    $('#aiModelPickerBtn') && ($('#aiModelPickerBtn').textContent = aiModelDisplayName(p, chosen) || t('自动选择模型'));
     renderAiThinkingSelector(p, modelSelect.value || chosen);
     renderAiCapabilityStrip();
 }
@@ -5481,7 +5487,11 @@ function aiHeaderChoices(kind = '') {
     const providers = (ai.providers || []).filter((p) => p.enabled !== false);
     const provider = providers.find((p) => p.id === $('#aiProviderSelect')?.value) || providers[0] || {};
     if (kind === 'provider') return providers.map((p) => ({ value: p.id, label: p.name || p.type || t('供应商') }));
-    if (kind === 'model') return (aiModelNames(provider).length ? aiModelNames(provider) : [$('#aiModelSelect')?.value || provider.defaultModel || ai.defaultModel || '']).filter(Boolean).map((m) => ({ value: m, label: m }));
+    if (kind === 'model') {
+        const entries = aiModelEntries(provider);
+        if (entries.length) return entries.map((m) => ({ value: m.id, label: m.label || m.id }));
+        return [$('#aiModelSelect')?.value || provider.defaultModel || ai.defaultModel || ''].filter(Boolean).map((m) => ({ value: m, label: m }));
+    }
     if (kind === 'thinking') return aiThinkingOptionsForProvider(provider, $('#aiModelSelect')?.value || provider.defaultModel || '').map(([value, label]) => ({ value, label }));
     return [];
 }
@@ -5641,7 +5651,7 @@ function openAiPicker(kind = '', anchor = null) {
 }
 function applyAiPickerChoice(kind = '', value = '') {
     if (kind === 'provider') { $('#aiProviderSelect').value = value; renderAiHeaderSelectors(); }
-    if (kind === 'model') { $('#aiModelSelect').value = value; const ai = normalizeAiSettings(settings.ai || aiSettingsState || {}); const p = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {}; $('#aiModelPickerBtn').textContent = value || t('自动选择模型'); renderAiThinkingSelector(p, value); }
+    if (kind === 'model') { $('#aiModelSelect').value = value; const ai = normalizeAiSettings(settings.ai || aiSettingsState || {}); const p = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {}; $('#aiModelPickerBtn').textContent = aiModelDisplayName(p, value) || t('自动选择模型'); renderAiThinkingSelector(p, value); }
     if (kind === 'thinking') { $('#aiThinkIntensity').value = value; const ai = normalizeAiSettings(settings.ai || aiSettingsState || {}); const p = (ai.providers || []).find((x) => x.id === $('#aiProviderSelect')?.value) || {}; renderAiThinkingSelector(p, $('#aiModelSelect')?.value || ''); }
     closeAiPickerPopover();
 }
@@ -5653,37 +5663,48 @@ function formatTokenValue(n) {
 }
 async function openAiUsageSheet(messageMetrics = null, anchor = null) {
     document.querySelector('.ai-usage-popover')?.remove();
-    let metrics = {};
-    try { metrics = (await api('/api/ai/metrics')).metrics || {}; } catch (_) {}
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
     const provider = (ai.providers || []).find((p) => p.id === $('#aiProviderSelect')?.value) || {};
-    const model = $('#aiModelSelect')?.value || provider.defaultModel || '';
+    const modelId = $('#aiModelSelect')?.value || provider.defaultModel || '';
+    const modelEntry = aiModelEntries(provider, { includeHidden: true }).find((m) => m.id === modelId) || {};
     const context = ai.context || {};
     const opts = provider.options || {};
     const thinking = $('#aiThinkIntensity')?.value || '';
-    const samples = metrics.samples || [];
+    const currentSession = aiChatSessions.find((s) => s.id === aiCurrentSessionId);
+    let usage = {};
+    if (currentSession?.runtimeSessionId) {
+        try { usage = (await api(`/api/ai/runtime/sessions/${encodeURIComponent(currentSession.runtimeSessionId)}/usage`)).usage || {}; } catch (_) {}
+    }
     const msg = messageMetrics && typeof messageMetrics === 'object' ? messageMetrics : {};
-    const totals = samples.reduce((acc, s) => { acc.inputChars += Number(s.inputCharsBeforeCompact || 0); acc.rounds += Number(s.providerCalls || 0); return acc; }, { inputChars: 0, rounds: 0 });
+    const lastMetrics = usage.lastRun?.metrics && typeof usage.lastRun.metrics === 'object' ? usage.lastRun.metrics : {};
+    const metric = (key, fallback = 0) => Number(msg[key] ?? lastMetrics[key] ?? fallback ?? 0) || 0;
+    const contextWindow = Number(modelEntry.contextWindowTokens || opts.context?.windowTokens || context.windowTokens || 0);
+    const maxOutput = Number(modelEntry.maxOutputTokens || opts.max_output_tokens || opts.max_tokens || 0);
     const pop = document.createElement('div');
     pop.className = 'ai-usage-popover';
     pop.innerHTML = `<div class="ai-usage-head"><h2>${t('会话 Token 用量')}</h2><button class="ai-usage-close" type="button" aria-label="${t('关闭')}">×</button></div>
         <div class="ai-usage-body">
-            <div class="ai-usage-section">${t('上下文')}</div>
-            <div class="ai-usage-row"><span>${t('已用上下文')}</span><b>${formatTokenValue(Math.round((samples[0]?.inputCharsBeforeCompact || totals.inputChars || 0) / 2.4))}</b></div>
-            <div class="ai-usage-row"><span>${t('上下文窗口')}</span><b>${formatTokenValue(opts.context?.windowTokens || context.windowTokens || 0)}</b></div>
-            <div class="ai-usage-row"><span>${t('最大输出')}</span><b>${formatTokenValue(opts.max_output_tokens || opts.max_tokens || 0)}</b></div>
+            <div class="ai-usage-section">${t('本轮真实用量')}</div>
+            <div class="ai-usage-row"><span>${t('输入')}</span><b>${formatTokenValue(metric('inputTokens'))}</b></div>
+            <div class="ai-usage-row"><span>${t('输出')}</span><b>${formatTokenValue(metric('outputTokens'))}</b></div>
+            <div class="ai-usage-row"><span>${t('缓存写入')}</span><b>${formatTokenValue(metric('cacheCreationTokens', msg.cacheWriteTokens))}</b></div>
+            <div class="ai-usage-row"><span>${t('缓存读取')}</span><b>${formatTokenValue(metric('cacheReadTokens'))}</b></div>
             <div class="ai-usage-row"><span>${t('本轮耗时')}</span><b>${msg.durationMs ? (Number(msg.durationMs) / 1000).toFixed(1) + 's' : '—'}</b></div>
-            <div class="ai-usage-section">${t('思考')}</div>
-            <div class="ai-usage-row"><span>${t('思考')}</span><b>${thinking ? t('开') : t('默认')}</b></div>
-            <div class="ai-usage-row"><span>${t('级别')}</span><b>${escapeHtml(thinking || t('默认'))}</b></div>
-            <div class="ai-usage-row"><span>${t('已支持')}</span><b>${escapeHtml(aiProviderKind(provider) === 'openai' ? t('视模型而定') : t('是'))}</b></div>
-            <div class="ai-usage-section">TOKEN（${t('近期总计')}）</div>
-            <div class="ai-usage-row"><span>${t('输入（估算）')}</span><b>${formatTokenValue(Math.round(totals.inputChars / 2.4))}</b></div>
-            <div class="ai-usage-row"><span>${t('输出')}</span><b>—</b></div>
+            <div class="ai-usage-section">${t('当前会话')}</div>
+            <div class="ai-usage-row"><span>${t('输入')}</span><b>${formatTokenValue(usage.inputTokens || 0)}</b></div>
+            <div class="ai-usage-row"><span>${t('输出')}</span><b>${formatTokenValue(usage.outputTokens || 0)}</b></div>
+            <div class="ai-usage-row"><span>${t('总计')}</span><b>${formatTokenValue(Number(usage.inputTokens || 0) + Number(usage.outputTokens || 0))}</b></div>
+            <div class="ai-usage-row"><span>${t('缓存写入')}</span><b>${formatTokenValue(usage.cacheCreationTokens || 0)}</b></div>
+            <div class="ai-usage-row"><span>${t('缓存读取')}</span><b>${formatTokenValue(usage.cacheReadTokens || 0)}</b></div>
+            <div class="ai-usage-section">${t('上下文')}</div>
+            <div class="ai-usage-row"><span>${t('已用上下文')}</span><b>${formatTokenValue(usage.latestContextTokens || metric('latestContextTokens'))}</b></div>
+            <div class="ai-usage-row"><span>${t('上下文窗口')}</span><b>${formatTokenValue(contextWindow)}</b></div>
+            <div class="ai-usage-row"><span>${t('最大输出')}</span><b>${formatTokenValue(maxOutput)}</b></div>
             <div class="ai-usage-section">AGENT ${t('循环')}</div>
-            <div class="ai-usage-row"><span>${t('本轮循环次数')}</span><b>${formatTokenValue(msg.providerCalls || 0)}</b></div>
-            <div class="ai-usage-row"><span>${t('总循环次数')}</span><b>${formatTokenValue(totals.rounds)}</b></div>
-            <div class="ai-usage-row"><span>${t('近期请求数')}</span><b>${formatTokenValue(metrics.count || samples.length || 0)}</b></div>
+            <div class="ai-usage-row"><span>${t('本轮循环次数')}</span><b>${formatTokenValue(metric('providerCalls'))}</b></div>
+            <div class="ai-usage-row"><span>${t('总循环次数')}</span><b>${formatTokenValue(usage.providerCalls || 0)}</b></div>
+            <div class="ai-usage-row"><span>${t('运行次数')}</span><b>${formatTokenValue(usage.runCount || 0)}</b></div>
+            <div class="ai-usage-row"><span>${t('思考级别')}</span><b>${escapeHtml(thinking || t('默认'))}</b></div>
         </div>`;
     document.body.appendChild(pop);
     const rect = anchor?.getBoundingClientRect?.() || document.querySelector('#aiUsageBtn')?.getBoundingClientRect?.() || null;
@@ -6309,13 +6330,17 @@ async function fetchAiModelsForProvider(id = '') {
     if (btn) btn.disabled = true;
     try {
         const data = await api('/api/ai/models', { method: 'POST', body: JSON.stringify(body) });
-        const names = (data.models || []).map((m) => m.id || m.name).filter(Boolean);
-        const uniqueNames = Array.from(new Set(names));
+        const remoteEntries = (data.models || []).map((model) => ({
+            id: model.id || model.name,
+            label: model.name || model.display_name || model.id || '',
+        })).filter((model) => model.id);
+        const uniqueNames = Array.from(new Set(remoteEntries.map((model) => model.id)));
+        if (!uniqueNames.length && data.preserveExisting) return toast(t('自定义端点未返回模型列表，已保留现有模型配置'));
         if (!uniqueNames.length) return toast(t('没有获取到模型'));
 
         if (fromList) {
             if (saved.owned === false) return toast(t('已获取 {count} 个模型（共享 Provider 不能修改）', { count: uniqueNames.length }));
-            const merged = mergeAiModelEntries(saved.models, uniqueNames, {
+            const merged = mergeAiModelEntries(saved.models, remoteEntries, {
                 providerVisionDefault: saved?.options?.vision !== false,
             });
             await api(`/api/ai/providers/${encodeURIComponent(id)}`, {
@@ -6331,7 +6356,7 @@ async function fetchAiModelsForProvider(id = '') {
             if (aiModelsPageProviderId === id) renderAiModelsListPage();
         } else {
             // Modal: write into form only — user still clicks 保存供应商 to persist.
-            aiProviderModelEntriesDraft = mergeAiModelEntries(aiProviderModelEntriesDraft, uniqueNames, {
+            aiProviderModelEntriesDraft = mergeAiModelEntries(aiProviderModelEntriesDraft, remoteEntries, {
                 providerVisionDefault: !!$('#aiProviderVision')?.checked,
             });
             if ($('#aiProviderModels')) {
@@ -7008,9 +7033,18 @@ function collectAiContext(options = {}) {
     const terminalOutputs = collectAiTerminalOutputs();
     const remoteDesktopSnapshots = collectAiRemoteDesktopSnapshots({ includeImage: !!options.includeRemoteDesktopImages });
     const activeTerminal = terminalOutputs.find((item) => item.tabId === activeTerminalTab) || terminalOutputs[0] || null;
+    const activeTabProtocol = String(active?.protocol || '').toUpperCase();
+    const activeTabIsRemoteDesktop = ['RDP', 'VNC'].includes(activeTabProtocol);
     const activeRemoteDesktop = remoteDesktopSnapshots.find((item) => item.tabId === activeTerminalTab)
         || remoteDesktopSnapshots.find((item) => ['RDP', 'VNC'].includes(String(item.protocol || '').toUpperCase()))
-        || null;
+        || (activeTabIsRemoteDesktop ? {
+            tabId: active?.id || activeTerminalTab || '',
+            protocol: activeTabProtocol,
+            connectionId: active?.connectionId || '',
+            status: active?.status || '',
+            connected: active?.status === 'connected',
+            pending: true,
+        } : null);
     const activeSurface = activeRemoteDesktop
         ? { kind: 'remote-desktop', protocol: activeRemoteDesktop.protocol || active?.protocol || '', tabId: activeRemoteDesktop.tabId || activeTerminalTab || '', connectionId: activeRemoteDesktop.connectionId || active?.connectionId || '' }
         : activeTerminal
@@ -7175,7 +7209,19 @@ function readRemoteDesktopSnapshotForAi(tabId = '', maxWidth = 960) {
     let shot = null;
     try {
         shot = frame?.contentWindow?.__zephyrGetRemoteDesktopSnapshot?.({ maxWidth });
-        if (shot && typeof shot.then === 'function') return { pending: true, promise: shot, tabId: id, protocol, connectionId: tab?.connectionId || conn?.id || '' };
+        if (shot && typeof shot.then === 'function') return {
+            pending: true,
+            promise: shot,
+            tabId: id,
+            name: tab?.name || conn?.name || '',
+            protocol,
+            connectionId: tab?.connectionId || conn?.id || '',
+            host: conn?.host || '',
+            port: conn?.port || '',
+            status: tab?.status || '',
+            connected: tab?.status === 'connected',
+            error: '',
+        };
     } catch (err) { shot = { error: err.message || String(err) }; }
     if (shot?.dataUrl && shot.dataUrl.length > 6000000 && Number(maxWidth) > 520) {
         try {
@@ -7210,7 +7256,7 @@ function readRemoteDesktopSnapshotForAi(tabId = '', maxWidth = 960) {
 function collectAiRemoteDesktopSnapshots({ includeImage = false } = {}) {
     const ids = uniq([activeTerminalTab, ...visualLayout, ...terminalTabs.filter((t) => !t.minimized).map((t) => t.id), ...terminalTabs.map((t) => t.id)]).slice(0, includeImage ? 3 : 5);
     const list = ids.map((id, index) => includeImage ? readRemoteDesktopSnapshotForAi(id, index === 0 ? 960 : 720) : readRemoteDesktopSnapshotForAi(id, 360))
-        .filter((item) => item && ['RDP', 'VNC'].includes(item.protocol) && (item.dataUrl || item.error || item.connected))
+        .filter((item) => item && ['RDP', 'VNC'].includes(item.protocol) && (item.dataUrl || item.error || item.connected || item.pending))
         .slice(0, includeImage ? 1 : 2);
     if (includeImage) return list;
     return list.map(({ dataUrl, ...item }) => ({ ...item, hasScreenshot: !!dataUrl, dataUrlLength: dataUrl ? dataUrl.length : 0 }));
@@ -7229,6 +7275,7 @@ function publicAiRemoteDesktopAction(action = {}) {
         type: 'ai-remote-desktop-action',
         actionId: action.actionId || '',
         captureId: action.captureId || '',
+        frameAt: Number(action.frameAt || 0),
         control: action.desktopControl || action.control || '',
         qualityMode: action.qualityMode || '',
         fitMode: action.fitMode || '',
@@ -7244,6 +7291,8 @@ function publicAiRemoteDesktopAction(action = {}) {
         screenshotY: action.screenshotY,
         screenshotWidth: action.screenshotWidth,
         screenshotHeight: action.screenshotHeight,
+        originalWidth: action.originalWidth,
+        originalHeight: action.originalHeight,
     };
 }
 function normalizeAiRemoteDesktopMouseAction(action = {}, tabId = '') {
@@ -7251,12 +7300,13 @@ function normalizeAiRemoteDesktopMouseAction(action = {}, tabId = '') {
     const x = Number(action.x);
     const y = Number(action.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return action;
-    const shot = readRemoteDesktopSnapshotForAi(tabId, action.maxWidth || 960);
-    if (!shot?.pending && action.captureId && String(action.captureId) !== String(shot?.captureId || '')) throw new Error(t('远程桌面画面已变化，请重新截图后再点击'));
-    const screenshotWidth = Number(action.screenshotWidth || shot?.width || 0);
-    const screenshotHeight = Number(action.screenshotHeight || shot?.height || 0);
-    const remoteWidth = Number(action.originalWidth || shot?.originalWidth || screenshotWidth || 0);
-    const remoteHeight = Number(action.originalHeight || shot?.originalHeight || screenshotHeight || 0);
+    // The server already attached the dimensions of the validated capture.
+    // Do not take a new live snapshot just to scale coordinates: animated
+    // desktops advance frameAt continuously and this used to create stale loops.
+    const screenshotWidth = Number(action.screenshotWidth || 0);
+    const screenshotHeight = Number(action.screenshotHeight || 0);
+    const remoteWidth = Number(action.originalWidth || screenshotWidth || 0);
+    const remoteHeight = Number(action.originalHeight || screenshotHeight || 0);
     const coordinateSpace = String(action.coordinateSpace || action.coords || 'screenshot').toLowerCase();
     const shouldScale = coordinateSpace !== 'remote'
         && screenshotWidth > 0 && screenshotHeight > 0 && remoteWidth > 0 && remoteHeight > 0
@@ -7284,7 +7334,7 @@ async function waitForFreshRemoteDesktopSnapshot(tabId = '', { maxWidth = 640, a
             const raw = await shot.promise.catch((err) => ({ error: err.message || String(err) }));
             const frameAtValue = Number(raw?.frameAt || raw?.at || Date.now());
             const captureIdValue = raw?.captureId || [shot.tabId || 'remote', frameAtValue, raw?.width || 0, raw?.height || 0].map((part) => String(part || 0).replace(/[^A-Za-z0-9_.-]/g, '_')).join(':');
-            shot = { ...raw, tabId: raw?.tabId || shot.tabId || '', protocol: raw?.protocol || '', connectionId: raw?.connectionId || shot.connectionId || '', frameAt: frameAtValue, captureId: captureIdValue };
+            shot = { ...raw, tabId: raw?.tabId || shot.tabId || '', protocol: raw?.protocol || shot.protocol || '', connectionId: raw?.connectionId || shot.connectionId || '', frameAt: frameAtValue, captureId: captureIdValue };
         }
         const frameAt = Number(shot?.frameAt || shot?.at || 0);
         if (shot?.dataUrl && (!afterFrameAt || frameAt > afterFrameAt)) return shot;
@@ -7389,14 +7439,13 @@ async function performAiUiAction(action = {}) {
             actionId,
             desktopControl: actionForMessage.desktopControl || actionForMessage.control || (a === 'remote_desktop_send_text' ? 'text' : a === 'remote_desktop_mouse' ? 'mouse_click' : ''),
         });
-        const beforeShot = readRemoteDesktopSnapshotForAi(id, action.maxWidth || 640);
-        const beforeFrameAt = Number(beforeShot?.frameAt || beforeShot?.at || 0);
+        const beforeFrameAt = Number(action.frameAt || 0);
         const ackPromise = waitForAiRemoteDesktopActionAck(actionId, action.ackTimeoutMs || 5200);
         frame.contentWindow.postMessage(msg, '*');
         const ack = await ackPromise;
         await delayMs(action.waitMs ?? 2000);
         const remoteDesktopScreenshot = await waitForFreshRemoteDesktopSnapshot(id, { maxWidth: action.maxWidth || 640, afterFrameAt: beforeFrameAt, timeoutMs: action.freshTimeoutMs || 2600 });
-        const result = { remoteDesktopAction: ack || { ok: false, timeout: true }, remoteDesktopScreenshot, actionId, beforeCaptureId: action.captureId || beforeShot?.captureId || '', afterCaptureId: remoteDesktopScreenshot?.captureId || '' };
+        const result = { remoteDesktopAction: ack || { ok: false, timeout: true }, remoteDesktopScreenshot, actionId, beforeCaptureId: action.captureId || '', afterCaptureId: remoteDesktopScreenshot?.captureId || '' };
         result.captureChanged = !!result.beforeCaptureId && !!result.afterCaptureId && result.beforeCaptureId !== result.afterCaptureId;
         if (ack && ack.ok === false) result.clientError = ack.error || t('AI 远程桌面操作失败');
         return result;
@@ -7634,11 +7683,13 @@ async function aiRuntimeIsEnabled() {
 }
 
 /** Consume SSE from Node proxy. Supports fetch streaming (cookie auth). */
-async function consumeAiRuntimeSse(path, { signal, onEvent } = {}) {
+async function consumeAiRuntimeSse(path, { signal, onEvent, lastEventId = 0, onLastEventId } = {}) {
+    const headers = { Accept: 'text/event-stream' };
+    if (Number(lastEventId) > 0) headers['Last-Event-ID'] = String(Math.floor(Number(lastEventId)));
     const res = await fetch(path, {
         method: 'GET',
         credentials: 'same-origin',
-        headers: { Accept: 'text/event-stream' },
+        headers,
         signal,
     });
     if (!res.ok) {
@@ -7650,6 +7701,7 @@ async function consumeAiRuntimeSse(path, { signal, onEvent } = {}) {
     const dec = new TextDecoder();
     let buf = '';
     let eventName = 'message';
+    let eventId = '';
     let dataLines = [];
     const flush = () => {
         if (!dataLines.length) return;
@@ -7658,8 +7710,11 @@ async function consumeAiRuntimeSse(path, { signal, onEvent } = {}) {
         let payload = raw;
         try { payload = JSON.parse(raw); } catch {}
         const type = payload?.type || eventName;
-        onEvent?.({ type, data: payload, raw });
+        const parsedId = Number(eventId || payload?.seq || 0);
+        if (Number.isFinite(parsedId) && parsedId > 0) onLastEventId?.(parsedId);
+        onEvent?.({ type, data: payload, raw, eventId: parsedId || 0 });
         eventName = 'message';
+        eventId = '';
     };
     for (;;) {
         const { done, value } = await reader.read();
@@ -7673,6 +7728,7 @@ async function consumeAiRuntimeSse(path, { signal, onEvent } = {}) {
             if (line === '') { flush(); continue; }
             if (line.startsWith(':')) continue;
             if (line.startsWith('event:')) { eventName = line.slice(6).trim(); continue; }
+            if (line.startsWith('id:')) { eventId = line.slice(3).trim(); continue; }
             if (line.startsWith('data:')) { dataLines.push(line.slice(5).trimStart()); continue; }
         }
     }
@@ -7742,6 +7798,7 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
     });
     session.runtimeRunId = start.runId;
     session.runtimeTicket = start.ticket || session.runtimeTicket || '';
+    session.runtimeLastEventId = 0;
     saveAiChats();
 
     let assistantText = '';
@@ -7787,6 +7844,8 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
     const ssePath = start.sseProxyPath || start.ssePath || `/api/ai/runtime/runs/${encodeURIComponent(start.runId)}/events?ticket=${encodeURIComponent(start.ticket || '')}`;
     await consumeAiRuntimeSse(ssePath, {
         signal: abortController.signal,
+        lastEventId: session.runtimeLastEventId || 0,
+        onLastEventId: (id) => { session.runtimeLastEventId = Math.max(Number(session.runtimeLastEventId) || 0, Number(id) || 0); },
         onEvent: async ({ type, data }) => {
             const evType = data?.type || type;
             const payload = data?.data != null && typeof data.data === 'object' && !Array.isArray(data.data)
@@ -8189,6 +8248,10 @@ async function resolveAiConfirmation(id, approve) {
                     if (ticket) {
                         await consumeAiRuntimeSse(ssePath, {
                             signal: contController.signal,
+                            lastEventId: session?.runtimeLastEventId || 0,
+                            onLastEventId: (eventId) => {
+                                if (session) session.runtimeLastEventId = Math.max(Number(session.runtimeLastEventId) || 0, Number(eventId) || 0);
+                            },
                             onEvent: ({ type, data }) => {
                                 const evType = data?.type || type;
                                 if (evType === 'text.delta') {

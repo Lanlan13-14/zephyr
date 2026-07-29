@@ -91,7 +91,9 @@ func New(cfg config.Config, store *session.Store, log *slog.Logger) *Server {
 }
 
 func (s *Server) Close() {
-	if s.captures != nil { s.captures.Clear() }
+	if s.captures != nil {
+		s.captures.Clear()
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -100,6 +102,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/sessions", s.admin(s.handleCreateSession))
 	mux.HandleFunc("GET /admin/sessions", s.admin(s.handleListSessions))
 	mux.HandleFunc("GET /admin/sessions/{id}", s.admin(s.handleGetSession))
+	mux.HandleFunc("GET /admin/sessions/{id}/usage", s.admin(s.handleSessionUsage))
 	mux.HandleFunc("GET /admin/sessions/{id}/messages", s.admin(s.handleListMessages))
 	mux.HandleFunc("POST /admin/sessions/{id}/archive", s.admin(s.handleArchiveSession))
 	mux.HandleFunc("POST /admin/runs", s.admin(s.handleStartRun))
@@ -179,6 +182,20 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "session": sess})
+}
+
+func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	if userID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "user_id_required"})
+		return
+	}
+	usage, err := s.store.SessionUsage(userID, r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "not_found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "usage": usage})
 }
 
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
@@ -815,8 +832,14 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	// Replay persisted events first
-	if evs, err := s.store.ListEvents(runID, 0); err == nil {
+	// Replay only events the client has not acknowledged. Replaying the whole
+	// run after a capture/permission pause duplicates old tool calls and capture
+	// requests in the browser.
+	afterSeq := int64(0)
+	if raw := strings.TrimSpace(r.Header.Get("Last-Event-ID")); raw != "" {
+		_, _ = fmt.Sscanf(raw, "%d", &afterSeq)
+	}
+	if evs, err := s.store.ListEvents(runID, afterSeq); err == nil {
 		for _, e := range evs {
 			fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.Seq, e.Type, string(e.Payload))
 		}

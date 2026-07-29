@@ -3692,6 +3692,13 @@ app.get('/api/ai/runtime/sessions/:id/messages', requireUser, async (req, res) =
     } catch (err) { handleAiRuntimeError(res, err); }
 });
 
+app.get('/api/ai/runtime/sessions/:id/usage', requireUser, async (req, res) => {
+    try {
+        const data = await aiRuntimeBridge.getSessionUsage(req.user, req.params.id);
+        res.json(data);
+    } catch (err) { handleAiRuntimeError(res, err); }
+});
+
 app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
     try {
         if (!aiRuntimeBridge.enabled) throw Object.assign(new Error('Go AI 运行时未启用'), { status: 503, code: 'ai_runtime_unavailable' });
@@ -3958,6 +3965,7 @@ app.post('/api/ai/runtime/runs/:id/capture-image', requireUser, express.raw({ ty
 
 app.post('/api/ai/runtime/runs/:id/capture', requireUser, async (req, res) => {
     try {
+        const captureResult = req.body?.result ?? req.body?.capture ?? {};
         let providerPayload;
         if (aiProviderService && req.body?.providerId) {
             try {
@@ -3978,9 +3986,20 @@ app.post('/api/ai/runtime/runs/:id/capture', requireUser, async (req, res) => {
         const data = await aiRuntimeBridge.submitCapture(req.params.id, {
             userId: req.user.userId,
             callId: req.body?.callId || '',
-            result: req.body?.result ?? req.body?.capture ?? {},
+            captureAssetId: req.body?.captureAssetId || '',
+            result: captureResult,
             provider: providerPayload,
         });
+        try {
+            const remoteDesktopTools = require('./ai-remote-desktop-tools');
+            const snapshots = Array.isArray(captureResult?.screenshots) ? captureResult.screenshots : [];
+            const snapshot = captureResult?.capture || snapshots[0] || captureResult;
+            remoteDesktopTools.rememberCapture({
+                userId: req.user.userId,
+                runId: req.params.id,
+                snapshot: { ...snapshot, captureId: captureResult?.captureId || snapshot?.captureId || '' },
+            });
+        } catch (_) { /* capture resume already succeeded; ledger is advisory */ }
         res.json(data);
     } catch (err) { handleAiRuntimeError(res, err); }
 });
@@ -3992,7 +4011,9 @@ app.get('/api/ai/runtime/runs/:id/events', requireUser, async (req, res) => {
     const ticket = String(req.query.ticket || '');
     const url = `${process.env.ZEPHYR_AI_URL}/v1/runs/${encodeURIComponent(runId)}/events?ticket=${encodeURIComponent(ticket)}`;
     try {
-        const upstream = await fetch(url, { headers: { accept: 'text/event-stream' } });
+        const upstreamHeaders = { accept: 'text/event-stream' };
+        if (req.headers['last-event-id']) upstreamHeaders['last-event-id'] = String(req.headers['last-event-id']);
+        const upstream = await fetch(url, { headers: upstreamHeaders });
         if (!upstream.ok) {
             const text = await upstream.text().catch(() => '');
             return res.status(upstream.status).json({ error: text || upstream.statusText });
