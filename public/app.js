@@ -7232,6 +7232,10 @@ function readRemoteDesktopSnapshotForAi(tabId = '', maxWidth = 960) {
     }
     const frameAt = Number(shot?.frameAt || shot?.at || Date.now());
     const captureId = shot?.captureId || [id || 'remote', frameAt, shot?.width || 0, shot?.height || 0].map((part) => String(part || 0).replace(/[^A-Za-z0-9_.-]/g, '_')).join(':');
+    let certDialog = shot?.certDialog || null;
+    if (!certDialog) {
+        try { certDialog = frame?.contentWindow?.__zephyrGetRemoteDesktopCertState?.() || null; } catch (_) { certDialog = null; }
+    }
     return {
         tabId: id,
         name: tab?.name || conn?.name || '',
@@ -7242,6 +7246,9 @@ function readRemoteDesktopSnapshotForAi(tabId = '', maxWidth = 960) {
         status: shot?.status || tab?.status || '',
         title: shot?.title || tab?.name || conn?.name || '',
         connected: !!shot?.connected,
+        connectionPhase: shot?.connectionPhase || certDialog?.connectionPhase || (shot?.connected ? 'connected' : ''),
+        certPhase: shot?.certPhase || certDialog?.certPhase || 'none',
+        certDialog,
         dataUrl: shot?.dataUrl || '',
         width: shot?.width || 0,
         height: shot?.height || 0,
@@ -7450,15 +7457,104 @@ async function performAiUiAction(action = {}) {
         if (ack && ack.ok === false) result.clientError = ack.error || t('AI 远程桌面操作失败');
         return result;
     }
+    if (a === 'remote_desktop_cert_status') {
+        switchView('terminal');
+        const id = currentOrRequestedRemoteDesktopTab(action.tabId);
+        if (!id) throw new Error(t('暂无 RDP/VNC 远程桌面会话'));
+        const frame = await waitForTerminalFrameReady(terminalFrameByIdForAi(id));
+        if (!frame?.contentWindow) throw new Error(t('当前远程桌面页面还没准备好'));
+        const actionId = `rdp-cert-${Date.now().toString(36)}-${++aiRemoteDesktopActionSeq}`;
+        const ackPromise = waitForAiRemoteDesktopActionAck(actionId, action.ackTimeoutMs || 3200);
+        frame.contentWindow.postMessage({
+            source: 'zephyr-app',
+            type: 'ai-remote-desktop-cert-status',
+            actionId,
+            tabId: id,
+            connectionId: action.connectionId || '',
+        }, '*');
+        const ack = await ackPromise;
+        let cert = ack?.cert || ack?.result?.cert || null;
+        if (!cert) {
+            try { cert = frame.contentWindow.__zephyrGetRemoteDesktopCertState?.() || null; } catch (_) {}
+        }
+        if (!cert) {
+            const shot = readRemoteDesktopSnapshotForAi(id, 360);
+            cert = shot?.certDialog || null;
+        }
+        const result = { cert, remoteDesktopAction: ack || { ok: false, timeout: true }, actionId, clientCaptured: true, vision: false };
+        if (ack && ack.ok === false) result.clientError = ack.error || t('读取 RDP 证书状态失败');
+        return result;
+    }
+    if (a === 'remote_desktop_cert_decide') {
+        switchView('terminal');
+        const id = currentOrRequestedRemoteDesktopTab(action.tabId);
+        if (!id) throw new Error(t('暂无 RDP/VNC 远程桌面会话'));
+        const frame = await waitForTerminalFrameReady(terminalFrameByIdForAi(id));
+        if (!frame?.contentWindow) throw new Error(t('当前远程桌面页面还没准备好'));
+        const actionId = `rdp-cert-${Date.now().toString(36)}-${++aiRemoteDesktopActionSeq}`;
+        const decision = String(action.decision || '') === 'reject' ? 'reject' : 'accept';
+        const ackPromise = waitForAiRemoteDesktopActionAck(actionId, action.ackTimeoutMs || 5200);
+        frame.contentWindow.postMessage({
+            source: 'zephyr-app',
+            type: 'ai-remote-desktop-cert-decide',
+            actionId,
+            tabId: id,
+            decision,
+            remember: action.remember === true,
+            connectionId: action.connectionId || '',
+            expectedFingerprint: action.expectedFingerprint || '',
+        }, '*');
+        const ack = await ackPromise;
+        if (decision === 'accept') await delayMs(action.waitMs ?? 1200);
+        let cert = ack?.cert || ack?.result?.cert || null;
+        if (!cert) {
+            try { cert = frame.contentWindow.__zephyrGetRemoteDesktopCertState?.() || null; } catch (_) {}
+        }
+        const shot = readRemoteDesktopSnapshotForAi(id, 360);
+        const result = {
+            decided: !(ack && ack.ok === false),
+            decision,
+            remember: action.remember === true,
+            cert: cert || shot?.certDialog || null,
+            remoteDesktopAction: ack || { ok: false, timeout: true },
+            remoteDesktopScreenshot: shot,
+            actionId,
+            clientCaptured: true,
+            vision: false,
+        };
+        if (ack && ack.ok === false) result.clientError = ack.error || t('AI 证书决策失败');
+        return result;
+    }
     if (a === 'toast') { toast(action.text || t('AI 已执行操作')); return; }
     throw new Error(t('未知 UI 动作：{action}', { action: a }));
 }
 async function handleAiClientCapture(data = {}, { providerId = '', model = '', options = {}, signal = null, original = '', depth = 0, sessionId = '' } = {}) {
     // Legacy Chat must never embed data:image into message content. Remote-desktop
-    // vision is Runtime-only (capture-image → Go Parts). Fail closed instead of
-    // poisoning the model with base64 text.
+    // vision is Runtime-only (capture-image → Go Parts). Certificate dialog tools are
+    // HTML-layer and return structured cert state without framebuffer images.
     const targetSessionId = sessionId || aiCurrentSessionId;
     if (!data?.clientCaptureRequired || !data.clientCapture) return false;
+    const capture = data.clientCapture || {};
+    const captureType = String(capture.type || data.tool || '');
+    if (captureType.includes('remote_desktop_cert_') || capture.vision === false || String(capture.action?.action || '').startsWith('remote_desktop_cert_')) {
+        const action = capture.action || {
+            action: captureType.includes('cert_decide') ? 'remote_desktop_cert_decide' : 'remote_desktop_cert_status',
+            tabId: capture.tabId || '',
+            decision: capture.decision || 'accept',
+            remember: capture.remember === true,
+            connectionId: capture.connectionId || '',
+            expectedFingerprint: capture.expectedFingerprint || '',
+        };
+        const actionResult = await performAiUiAction(action);
+        const toolResults = [{
+            tool: captureType || 'remote_desktop_cert_status_v1',
+            args: capture,
+            result: { ok: true, data: { ...(actionResult || {}), clientCaptured: true, vision: false } },
+        }];
+        await syncAiToolSideEffects(toolResults, { sessionId: targetSessionId });
+        appendAiMessage(toolResults.map(formatAiToolResult).join(''), 'trace', { rawHtml: true, sessionId: targetSessionId });
+        return true;
+    }
     const context = collectAiContext({ includeRemoteDesktopImages: false, sessionId: targetSessionId });
     if (context?.activeSurface?.kind === 'remote-desktop') {
         appendAiMessage(t('RDP/VNC AI 视觉操作需要 Go Runtime'), 'system', { sessionId: targetSessionId });
@@ -7600,6 +7696,17 @@ function summarizeAiToolResult(tool, result = {}) {
     }
     if (tool === 'remote_desktop_action_v1') return data.clientError ? t('远程桌面操作失败：{error}', { error: data.clientError }) : (data.captureChanged ? t('远程桌面操作已返回新画面') : t('远程桌面操作等待闭环验证'));
     if (tool === 'remote_desktop_verify_v1') return data.verified ? t('远程桌面动作闭环已验证') : t('远程桌面画面未变化，不能确认操作成功');
+    if (tool === 'remote_desktop_cert_status_v1') {
+        const cert = data.cert || {};
+        if (data.clientError) return t('读取证书状态失败：{error}', { error: data.clientError });
+        if (cert.pending) return t('RDP 证书待确认：{host} fingerprint={fingerprint}', { host: cert.host || '', fingerprint: cert.fingerprint || '' });
+        return data.message || t('RDP 证书阶段：{phase}', { phase: cert.certPhase || cert.connectionPhase || '' });
+    }
+    if (tool === 'remote_desktop_cert_decide_v1') {
+        if (data.clientError) return t('证书决策失败：{error}', { error: data.clientError });
+        const rejected = String(data.decision || '') === 'reject' || data.cert?.certPhase === 'rejected';
+        return rejected ? t('RDP 证书已拒绝') : t('RDP 证书已接受');
+    }
     if (tool === 'ui_action' && result.clientError) return t('操作失败：{error}', { error: result.clientError });
     if (tool === 'ui_action' && result.remoteDesktopScreenshot) return t('远程桌面操作完成：{protocol} {status}', { protocol: result.remoteDesktopScreenshot.protocol || '', status: result.remoteDesktopScreenshot.status || '' });
     if (tool === 'ui_action' && result.terminalOutput) return result.terminalOutput.truncated ? t('终端输出 {count} 行（已截断）', { count: result.terminalOutput.lineCount || 0 }) : t('终端输出 {count} 行', { count: result.terminalOutput.lineCount || 0 });
@@ -7612,7 +7719,7 @@ function formatAiToolResult(r = {}) {
     const detail = JSON.stringify(maskAiSensitive({ args: r.args || {}, result }, r.tool), null, 2);
     const shot = browserShotFromResult(result);
     const titleMap = {
-        list_connections: t('列出连接'), connection_list_v1: t('列出连接'), connection_get_v1: t('读取连接'), connection_rename_v1: t('重命名连接'), connection_create_v1: t('新增连接'), connection_update_v1: t('修改连接'), connection_delete_v1: t('删除连接'), connection_test_v1: t('测试连接'), connection_open_v1: t('打开连接'), proxy_list_v1: t('列出代理'), proxy_get_v1: t('读取代理'), proxy_create_v1: t('新增代理'), proxy_update_v1: t('修改代理'), proxy_delete_v1: t('删除代理'), ssh_key_list_v1: t('列出 SSH 密钥'), ssh_key_get_v1: t('读取 SSH 密钥'), ssh_key_validate_v1: t('校验 SSH 密钥'), ssh_key_rename_v1: t('重命名 SSH 密钥'), ssh_key_update_metadata_v1: t('修改 SSH 密钥备注'), ssh_key_delete_v1: t('删除 SSH 密钥'), web_search: t('网页搜索'), fetch_url: t('网页读取'), browser_navigate: t('浏览器打开'), browser_inspect_v1: t('检查页面元素'), browser_screenshot: t('浏览器截图'), browser_click_v1: t('浏览器点击'), browser_type_v1: t('浏览器输入'), browser_scroll: t('浏览器滚动'), browser_text: t('读取浏览器文本'), browser_key: t('浏览器按键'), browser_wait: t('等待页面'), open_connection: t('打开连接'), terminal_read_output: t('读取终端输出'), remote_desktop_capture_v1: t('读取远程桌面画面'), remote_desktop_action_v1: t('操作远程桌面'), remote_desktop_verify_v1: t('验证远程桌面操作'), ui_action: t('页面/终端代操作'), memory_search: t('搜索 Memory'), memory_save: t('保存 Memory'), plan_task: t('创建计划'), plan_update: t('更新计划'), plan_delete: t('删除计划'), remote_execute: t('远程执行'), remote_read_file: t('读取远程文件'), remote_write_file: t('写入远程文件'), confirmed: t('敏感操作结果')
+        list_connections: t('列出连接'), connection_list_v1: t('列出连接'), connection_get_v1: t('读取连接'), connection_rename_v1: t('重命名连接'), connection_create_v1: t('新增连接'), connection_update_v1: t('修改连接'), connection_delete_v1: t('删除连接'), connection_test_v1: t('测试连接'), connection_open_v1: t('打开连接'), proxy_list_v1: t('列出代理'), proxy_get_v1: t('读取代理'), proxy_create_v1: t('新增代理'), proxy_update_v1: t('修改代理'), proxy_delete_v1: t('删除代理'), ssh_key_list_v1: t('列出 SSH 密钥'), ssh_key_get_v1: t('读取 SSH 密钥'), ssh_key_validate_v1: t('校验 SSH 密钥'), ssh_key_rename_v1: t('重命名 SSH 密钥'), ssh_key_update_metadata_v1: t('修改 SSH 密钥备注'), ssh_key_delete_v1: t('删除 SSH 密钥'), web_search: t('网页搜索'), fetch_url: t('网页读取'), browser_navigate: t('浏览器打开'), browser_inspect_v1: t('检查页面元素'), browser_screenshot: t('浏览器截图'), browser_click_v1: t('浏览器点击'), browser_type_v1: t('浏览器输入'), browser_scroll: t('浏览器滚动'), browser_text: t('读取浏览器文本'), browser_key: t('浏览器按键'), browser_wait: t('等待页面'), open_connection: t('打开连接'), terminal_read_output: t('读取终端输出'), remote_desktop_capture_v1: t('读取远程桌面画面'), remote_desktop_action_v1: t('操作远程桌面'), remote_desktop_verify_v1: t('验证远程桌面操作'), remote_desktop_cert_status_v1: t('读取 RDP 证书状态'), remote_desktop_cert_decide_v1: t('决策 RDP 证书'), sftp_list_v1: t('SFTP 列目录'), sftp_stat_v1: t('SFTP 元数据'), sftp_mkdir_v1: t('SFTP 创建目录'), sftp_rename_v1: t('SFTP 重命名'), sftp_delete_v1: t('SFTP 删除'), sftp_chmod_v1: t('SFTP 改权限'), docker_status_v1: t('Docker 状态'), docker_ps_v1: t('Docker 容器'), docker_images_v1: t('Docker 镜像'), docker_container_action_v1: t('Docker 容器操作'), docker_logs_v1: t('Docker 日志'), docker_pull_v1: t('Docker 拉取'), docker_mirrors_get_v1: t('Docker 镜像源'), docker_mirrors_set_v1: t('设置 Docker 镜像源'), agent_file_write_text_v1: t('写入 Agent 文件'), resource_share_list_v1: t('列出资源共享'), resource_share_put_v1: t('更新资源共享'), resource_share_delete_v1: t('删除资源共享'), resource_shared_with_me_v1: t('共享给我的资源'), note_groups_v1: t('笔记分组'), note_group_rename_v1: t('重命名笔记分组'), note_group_delete_v1: t('删除笔记分组'), note_restore_v1: t('恢复笔记'), note_purge_v1: t('彻底删除笔记'), note_bulk_v1: t('批量笔记操作'), env_set_v1: t('设置环境变量'), env_delete_v1: t('删除环境变量'), ui_action: t('页面/终端代操作'), memory_search: t('搜索 Memory'), memory_save: t('保存 Memory'), plan_task: t('创建计划'), plan_update: t('更新计划'), plan_delete: t('删除计划'), remote_execute: t('远程执行'), remote_read_file: t('读取远程文件'), remote_write_file: t('写入远程文件'), confirmed: t('敏感操作结果')
     };
     const title = titleMap[r.tool] || t('工具 {name}', { name: r.tool || 'unknown' });
     const duration = Number.isFinite(Number(r.durationMs)) ? `${(Number(r.durationMs) / 1000).toFixed(1)}s` : '';
@@ -7909,6 +8016,47 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                     const captureArgs = body?.args && typeof body.args === 'object' ? body.args : body;
                     const targetTabId = String(captureArgs?.tabId || body?.tabId || '').trim();
                     const maxWidth = Number(captureArgs?.maxWidth || body?.maxWidth || 640) || 640;
+                    const callId = body?.callId || captureArgs?.toolCallId || '';
+                    const captureType = String(captureArgs?.type || body?.name || '');
+                    const isCertCapture = captureType.includes('remote_desktop_cert_') || captureArgs?.vision === false
+                        || (captureArgs?.action && String(captureArgs.action.action || '').startsWith('remote_desktop_cert_'));
+                    if (isCertCapture) {
+                        let actionResult = null;
+                        if (captureType === 'remote_desktop_cert_decide_v1' || captureArgs?.action?.action === 'remote_desktop_cert_decide') {
+                            actionResult = await performAiUiAction(captureArgs.action || {
+                                action: 'remote_desktop_cert_decide',
+                                tabId: targetTabId,
+                                decision: captureArgs.decision || captureArgs.action?.decision || 'accept',
+                                remember: captureArgs.remember === true || captureArgs.action?.remember === true,
+                                connectionId: captureArgs.connectionId || captureArgs.action?.connectionId || '',
+                                expectedFingerprint: captureArgs.expectedFingerprint || captureArgs.action?.expectedFingerprint || '',
+                                waitMs: captureArgs.waitMs || captureArgs.action?.waitMs,
+                            });
+                        } else {
+                            actionResult = await performAiUiAction(captureArgs.action || {
+                                action: 'remote_desktop_cert_status',
+                                tabId: targetTabId,
+                                connectionId: captureArgs.connectionId || '',
+                            });
+                        }
+                        const cert = actionResult?.cert || null;
+                        const captureResult = {
+                            ...(actionResult || {}),
+                            cert,
+                            clientCaptured: true,
+                            vision: false,
+                            capturedAt: Date.now(),
+                            message: cert?.pending
+                                ? t('RDP 证书对话框待决策')
+                                : t('已读取 RDP 证书/连接阶段'),
+                        };
+                        await api(`/api/ai/runtime/runs/${encodeURIComponent(start.runId)}/capture`, {
+                            method: 'POST',
+                            signal: abortController.signal,
+                            body: JSON.stringify({ callId, result: captureResult, providerId, model }),
+                        });
+                        break;
+                    }
                     let actionResult = null;
                     let shot = null;
                     if (captureArgs?.type === 'remote_desktop_action_v1' && captureArgs?.action) {
@@ -7916,7 +8064,6 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                         shot = actionResult?.remoteDesktopScreenshot || null;
                     }
                     if (!shot) shot = await waitForFreshRemoteDesktopSnapshot(targetTabId, { maxWidth, timeoutMs: 3200, afterFrameAt: Number(captureArgs?.afterFrameAt || 0) });
-                    const callId = body?.callId || captureArgs?.toolCallId || '';
                     if (!shot?.dataUrl) throw new Error(shot?.error || t('实时截图不可用'));
                     const imageBlob = aiCaptureDataUrlToBlob(shot.dataUrl);
                     if (!imageBlob) throw new Error(t('截图格式无效，无法上传视觉帧'));

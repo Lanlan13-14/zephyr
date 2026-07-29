@@ -335,7 +335,10 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (Metrics, error) {
 			works[wi].result = data
 			works[wi].skip = true
 			works[wi].err = nil
-			if strings.HasPrefix(works[wi].call.Name, "remote_desktop_") && cfg.Decision.CaptureAssetID == "" {
+			// Certificate dialog tools are HTML-layer client actions without framebuffer vision.
+			// Only visual remote_desktop_* tools require a capture asset image.
+			needsVisionAsset := strings.HasPrefix(works[wi].call.Name, "remote_desktop_") && !strings.Contains(works[wi].call.Name, "_cert_")
+			if needsVisionAsset && cfg.Decision.CaptureAssetID == "" {
 				return metrics, fmt.Errorf("vision capture asset required")
 			}
 			if cfg.Decision.CaptureAssetID != "" {

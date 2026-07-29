@@ -46,3 +46,20 @@ test('agent text read is bounded and always closes handle', async () => {
   assert.equal(result.truncated, false);
   assert.deepEqual(h.calls.map((call) => call.method), ['stat', 'open', 'close']);
 });
+
+test('agent writeText uses v2 open/writeBinary/close and rejects readonly', async () => {
+  const h = managerHarness({ readOnly: false });
+  const v2 = [];
+  h.manager.callAgentV2 = (_id, method, params) => {
+    v2.push({ method, params });
+    if (method === 'open') return { promise: Promise.resolve({ handle: 'hw' }) };
+    if (method === 'writeBinary') return { promise: Promise.resolve({ bytesWritten: (params.data || []).length }) };
+    if (method === 'close') return { promise: Promise.resolve({}) };
+    return { promise: Promise.resolve({}) };
+  };
+  const result = await agentTools.writeText(h.manager, { userId: 'u1', username: 'alice' }, { agentId: 'a1', path: '/out.txt', content: 'abc' });
+  assert.equal(result.bytes, 3);
+  assert.deepEqual(v2.map((item) => item.method), ['open', 'writeBinary', 'close']);
+  h.info.readOnly = true;
+  await assert.rejects(() => agentTools.writeText(h.manager, { userId: 'u1', username: 'alice' }, { agentId: 'a1', path: '/out.txt', content: 'x' }), (error) => error.code === 'agent_read_only');
+});

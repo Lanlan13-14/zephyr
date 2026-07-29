@@ -13,7 +13,13 @@ const rdp = fs.readFileSync(path.join(root, 'public/rdp-wasm-client.js'), 'utf8'
 const worker = fs.readFileSync(path.join(root, 'public/rdp-worker.js'), 'utf8');
 const loop = fs.readFileSync(path.join(root, 'zephyr-ai/internal/agent/loop.go'), 'utf8');
 
-const names = ['remote_desktop_capture_v1', 'remote_desktop_action_v1', 'remote_desktop_verify_v1'];
+const names = [
+  'remote_desktop_capture_v1',
+  'remote_desktop_action_v1',
+  'remote_desktop_verify_v1',
+  'remote_desktop_cert_status_v1',
+  'remote_desktop_cert_decide_v1',
+];
 
 test('remote desktop canonical catalog exposes capture action verify chain', () => {
   const catalog = aiAgent.listToolCatalog({});
@@ -21,6 +27,8 @@ test('remote desktop canonical catalog exposes capture action verify chain', () 
   assert.equal(catalog.find((item) => item.name === 'remote_desktop_capture_v1').risk, 'R0');
   assert.equal(catalog.find((item) => item.name === 'remote_desktop_action_v1').risk, 'R2');
   assert.equal(catalog.find((item) => item.name === 'remote_desktop_verify_v1').risk, 'R0');
+  assert.equal(catalog.find((item) => item.name === 'remote_desktop_cert_status_v1').risk, 'R0');
+  assert.equal(catalog.find((item) => item.name === 'remote_desktop_cert_decide_v1').risk, 'R2');
   assert.equal(catalog.some((item) => item.name === 'remote_desktop_screenshot'), false);
 });
 
@@ -47,7 +55,7 @@ test('Go runtime detects wrapped canonical client captures', () => {
 });
 
 test('remote desktop capability and playbook require verification', () => {
-  for (const id of ['remotedesktop.capture', 'remotedesktop.action', 'remotedesktop.verify']) {
+  for (const id of ['remotedesktop.capture', 'remotedesktop.action', 'remotedesktop.verify', 'remotedesktop.cert_status', 'remotedesktop.cert_decide']) {
     assert.ok(capabilities.CAPABILITIES.some((item) => item.id === id && item.state === 'implemented'));
   }
   const playbook = PLAYBOOKS.find((item) => item.id === 'remote-desktop-closed-loop-v1');
@@ -57,4 +65,5 @@ test('remote desktop capability and playbook require verification', () => {
   assert.match(playbook.prompt, /禁止继续循环/);
   assert.match(playbook.prompt, /remote_desktop_verify_v1/);
   assert.match(playbook.prompt, /只有 verified=true/);
+  assert.match(playbook.prompt, /remote_desktop_cert_status_v1/);
 });

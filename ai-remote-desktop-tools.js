@@ -127,6 +127,33 @@ const REMOTE_DESKTOP_VERIFY_SCHEMA = Object.freeze({
     additionalProperties: false,
 });
 
+const REMOTE_DESKTOP_CERT_STATUS_SCHEMA = Object.freeze({
+    type: 'object',
+    properties: {
+        tabId: { type: 'string', maxLength: 160 },
+        connectionId: { type: 'string', maxLength: 160 },
+        requireLive: { type: 'boolean' },
+    },
+    additionalProperties: false,
+});
+
+const REMOTE_DESKTOP_CERT_DECIDE_SCHEMA = Object.freeze({
+    type: 'object',
+    properties: {
+        tabId: { type: 'string', minLength: 1, maxLength: 160 },
+        decision: { type: 'string', enum: ['accept', 'reject'] },
+        remember: { type: 'boolean' },
+        connectionId: { type: 'string', maxLength: 160 },
+        expectedFingerprint: { type: 'string', maxLength: 256 },
+        waitMs: { type: 'number', minimum: 0, maximum: 15000 },
+    },
+    required: ['tabId', 'decision'],
+    additionalProperties: false,
+});
+
+const CERT_PHASES = Object.freeze(['none', 'probing', 'pending', 'accepted', 'rejected', 'trusted', 'error']);
+const CONNECTION_PHASES = Object.freeze(['idle', 'probing_cert', 'cert_pending', 'connecting', 'connected', 'disconnected', 'error']);
+
 function captureIdFor(snapshot = {}) {
     return String(snapshot.captureId || [snapshot.tabId || 'remote', snapshot.frameAt || snapshot.at || 0, snapshot.width || 0, snapshot.height || 0]
         .map((part) => String(part || 0).replace(/[^A-Za-z0-9_.-]/g, '_')).join(':'));
@@ -139,6 +166,56 @@ function publicCapture(snapshot = {}) {
         captureId,
         frameAt: Number(snapshot.frameAt || snapshot.at || 0),
         hasScreenshot: !!snapshot.dataUrl,
+    };
+}
+
+function publicCertInfo(certInfo = {}) {
+    const reasons = Array.isArray(certInfo.reasons)
+        ? certInfo.reasons.map((item) => String(item || '').slice(0, 240)).filter(Boolean).slice(0, 12)
+        : [];
+    return {
+        host: String(certInfo.host || '').slice(0, 253),
+        port: Number(certInfo.port || 0) || 0,
+        subject: String(certInfo.subject || '').slice(0, 240),
+        issuer: String(certInfo.issuer || '').slice(0, 240),
+        fingerprint: String(certInfo.fingerprint || '').slice(0, 256),
+        validFrom: String(certInfo.validFrom || '').slice(0, 80),
+        validTo: String(certInfo.validTo || '').slice(0, 80),
+        authorized: certInfo.authorized === true,
+        hasCert: certInfo.hasCert !== false,
+        reasons,
+    };
+}
+
+function publicCertState(snapshot = {}) {
+    const cert = snapshot.certDialog && typeof snapshot.certDialog === 'object'
+        ? snapshot.certDialog
+        : (snapshot.cert && typeof snapshot.cert === 'object' ? snapshot.cert : {});
+    const rawPhase = cert.phase || cert.certPhase || snapshot.certPhase || (snapshot.connected ? 'none' : 'none');
+    const phase = CERT_PHASES.includes(String(rawPhase)) ? String(rawPhase) : 'none';
+    const info = publicCertInfo(cert.certInfo || cert.info || cert);
+    return {
+        tabId: String(snapshot.tabId || cert.tabId || ''),
+        connectionId: String(snapshot.connectionId || cert.connectionId || ''),
+        protocol: String(snapshot.protocol || 'RDP').toUpperCase(),
+        connectionPhase: CONNECTION_PHASES.includes(String(snapshot.connectionPhase || cert.connectionPhase || ''))
+            ? String(snapshot.connectionPhase || cert.connectionPhase)
+            : (snapshot.connected ? 'connected' : (phase === 'pending' ? 'cert_pending' : (snapshot.status ? 'connecting' : 'idle'))),
+        certPhase: phase,
+        pending: phase === 'pending',
+        trusted: phase === 'trusted' || phase === 'accepted',
+        connected: !!snapshot.connected,
+        status: String(snapshot.status || cert.status || ''),
+        host: info.host || String(snapshot.host || ''),
+        port: info.port || Number(snapshot.port || 0) || 0,
+        subject: info.subject,
+        issuer: info.issuer,
+        fingerprint: info.fingerprint,
+        validFrom: info.validFrom,
+        validTo: info.validTo,
+        authorized: info.authorized,
+        reasons: info.reasons,
+        at: Number(cert.at || snapshot.at || Date.now()),
     };
 }
 
@@ -192,10 +269,33 @@ function clientAction(args = {}) {
     };
 }
 
+function clientCertDecideAction(args = {}) {
+    return {
+        action: 'remote_desktop_cert_decide',
+        tabId: String(args.tabId || ''),
+        decision: String(args.decision || '') === 'reject' ? 'reject' : 'accept',
+        remember: args.remember === true,
+        connectionId: String(args.connectionId || ''),
+        expectedFingerprint: String(args.expectedFingerprint || ''),
+        waitMs: Number(args.waitMs) || 1200,
+    };
+}
+
+function requiresVisionCapture(toolName = '') {
+    const name = String(toolName || '');
+    if (!name.startsWith('remote_desktop_')) return false;
+    if (name.includes('_cert_')) return false;
+    return true;
+}
+
 module.exports = {
     REMOTE_DESKTOP_CAPTURE_SCHEMA,
     REMOTE_DESKTOP_ACTION_SCHEMA,
     REMOTE_DESKTOP_VERIFY_SCHEMA,
+    REMOTE_DESKTOP_CERT_STATUS_SCHEMA,
+    REMOTE_DESKTOP_CERT_DECIDE_SCHEMA,
+    CERT_PHASES,
+    CONNECTION_PHASES,
     captureIdFor,
     publicCapture,
     rememberCapture,
@@ -203,6 +303,10 @@ module.exports = {
     consumeRememberedCapture,
     noteStaleAction,
     clearStaleAction,
+    publicCertInfo,
+    publicCertState,
     validateActionAgainstCapture,
     clientAction,
+    clientCertDecideAction,
+    requiresVisionCapture,
 };

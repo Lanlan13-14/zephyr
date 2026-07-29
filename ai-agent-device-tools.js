@@ -11,6 +11,18 @@ const AGENT_FILE_READ_TEXT_SCHEMA = Object.freeze({ type: 'object', properties: 
 const AGENT_FILE_MKDIR_SCHEMA = Object.freeze({ type: 'object', properties: { agentId: { type: 'string', minLength: 1, maxLength: 160 }, path: { type: 'string', minLength: 1, maxLength: 2000 } }, required: ['agentId', 'path'], additionalProperties: false });
 const AGENT_FILE_RENAME_SCHEMA = Object.freeze({ type: 'object', properties: { agentId: { type: 'string', minLength: 1, maxLength: 160 }, oldPath: { type: 'string', minLength: 1, maxLength: 2000 }, newPath: { type: 'string', minLength: 1, maxLength: 2000 } }, required: ['agentId', 'oldPath', 'newPath'], additionalProperties: false });
 const AGENT_FILE_DELETE_SCHEMA = Object.freeze({ type: 'object', properties: { agentId: { type: 'string', minLength: 1, maxLength: 160 }, path: { type: 'string', minLength: 1, maxLength: 2000 }, recursive: { type: 'boolean' } }, required: ['agentId', 'path'], additionalProperties: false });
+const AGENT_FILE_WRITE_TEXT_SCHEMA = Object.freeze({
+    type: 'object',
+    properties: {
+        agentId: { type: 'string', minLength: 1, maxLength: 160 },
+        path: { type: 'string', minLength: 1, maxLength: 2000 },
+        content: { type: 'string', maxLength: 262144 },
+        encoding: { type: 'string', enum: ['utf8', 'utf-8'] },
+        append: { type: 'boolean' },
+    },
+    required: ['agentId', 'path', 'content'],
+    additionalProperties: false,
+});
 
 function normalizeAgentPath(value = '/', { allowRoot = true } = {}) {
     const raw = String(value || '/').replace(/\\/g, '/').trim();
@@ -79,6 +91,73 @@ async function readText(manager, user, args) {
     }
 }
 
+async function callAgentV2(manager, agentId, method, params = {}) {
+    if (typeof manager.callAgentV2 !== 'function') {
+        throw new HttpError(501, 'agent_v2_required', '当前 Agent 管理器不支持 writeBinary');
+    }
+    const inv = manager.callAgentV2(agentId, method, params);
+    return inv?.promise ? inv.promise : inv;
+}
+
+async function writeText(manager, user, args) {
+    const info = requireOwnedAgent(manager, user, args.agentId);
+    const readOnly = info.readOnly === true || info?.share?.readOnly === true;
+    if (readOnly) throw new HttpError(403, 'agent_read_only', 'Agent 共享目录只读，不能写入');
+    const filePath = normalizeAgentPath(args.path, { allowRoot: false });
+    const content = String(args.content || '');
+    const maxBytes = 262144;
+    const buffer = Buffer.from(content, 'utf8');
+    if (buffer.length > maxBytes) throw new HttpError(400, 'agent_write_too_large', `写入内容超过 ${maxBytes} bytes`);
+    let offset = 0;
+    let mode = 'writeTruncate';
+    if (args.append === true) {
+        try {
+            const stat = await manager.callAgent(args.agentId, 'stat', { path: filePath });
+            if (stat?.isDir) throw new HttpError(400, 'agent_path_is_directory', 'Agent 路径是目录，不能写入文本');
+            offset = Math.max(0, Number(stat?.size || 0));
+            mode = 'write';
+        } catch (err) {
+            if (err?.status === 400) throw err;
+            mode = 'writeTruncate';
+            offset = 0;
+        }
+    }
+    let handle = '';
+    try {
+        const opened = await callAgentV2(manager, args.agentId, 'open', { path: filePath, mode });
+        handle = String(opened?.handle || opened?.result?.handle || '');
+        if (!handle) {
+            // fallback to legacy open RPC if v2 open shape differs
+            const legacy = await manager.callAgent(args.agentId, 'open', { path: filePath, mode });
+            handle = String(legacy?.handle || '');
+        }
+        if (!handle) throw new HttpError(502, 'agent_open_failed', 'Agent 未返回可写句柄', true);
+        const chunkSize = Math.max(16 * 1024, Math.min(256 * 1024, Number(info.maxChunkSize || 256 * 1024) || 256 * 1024));
+        let written = 0;
+        while (written < buffer.length) {
+            const slice = buffer.subarray(written, Math.min(buffer.length, written + chunkSize));
+            await callAgentV2(manager, args.agentId, 'writeBinary', {
+                handle,
+                offset: offset + written,
+                data: slice,
+            });
+            written += slice.length;
+        }
+        return {
+            agent: publicAgent(info),
+            path: filePath,
+            bytes: buffer.length,
+            append: args.append === true,
+            mode,
+        };
+    } finally {
+        if (handle) {
+            try { await callAgentV2(manager, args.agentId, 'close', { handle }); }
+            catch { await manager.callAgent(args.agentId, 'close', { handle }).catch(() => {}); }
+        }
+    }
+}
+
 module.exports = {
     AGENT_LIST_SCHEMA,
     AGENT_GET_SCHEMA,
@@ -88,8 +167,11 @@ module.exports = {
     AGENT_FILE_MKDIR_SCHEMA,
     AGENT_FILE_RENAME_SCHEMA,
     AGENT_FILE_DELETE_SCHEMA,
+    AGENT_FILE_WRITE_TEXT_SCHEMA,
     normalizeAgentPath,
     publicAgent,
     requireOwnedAgent,
     readText,
+    writeText,
 };
+

@@ -42,3 +42,18 @@ test('remote desktop client action preserves capture binding', () => {
   assert.equal(action.frameAt, 12345);
   assert.equal(action.coordinateSpace, 'screenshot');
 });
+
+test('remote desktop cert state and decide action are structured', () => {
+  const cert = remoteTools.publicCertState({
+    tabId: 'rdp-1',
+    protocol: 'RDP',
+    certPhase: 'pending',
+    connectionPhase: 'cert_pending',
+    certDialog: { host: '1.2.3.4', port: 3389, fingerprint: 'FF:EE', reasons: ['self signed'] },
+  });
+  assert.equal(cert.pending, true);
+  assert.equal(cert.fingerprint, 'FF:EE');
+  const decide = remoteTools.clientCertDecideAction({ tabId: 'rdp-1', decision: 'reject', remember: false });
+  assert.equal(decide.action, 'remote_desktop_cert_decide');
+  assert.equal(decide.decision, 'reject');
+});

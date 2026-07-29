@@ -14,6 +14,8 @@ const jumpHostTools = require('./ai-jump-host-tools');
 const snippetTools = require('./ai-snippet-tools');
 const remoteDesktopTools = require('./ai-remote-desktop-tools');
 const agentDeviceTools = require('./ai-agent-device-tools');
+const sftpTools = require('./ai-sftp-tools');
+const dockerTools = require('./ai-docker-tools');
 const secretRefs = require('./ai-secret-refs');
 const contextBudget = require('./ai-context-budget');
 const { policyForExtendedTool, EXTENDED_CAPABILITIES } = require('./ai-extended-capabilities');
@@ -74,6 +76,8 @@ const CANONICAL_TOOL_SCHEMAS = Object.freeze({
     remote_desktop_capture_v1: remoteDesktopTools.REMOTE_DESKTOP_CAPTURE_SCHEMA,
     remote_desktop_action_v1: remoteDesktopTools.REMOTE_DESKTOP_ACTION_SCHEMA,
     remote_desktop_verify_v1: remoteDesktopTools.REMOTE_DESKTOP_VERIFY_SCHEMA,
+    remote_desktop_cert_status_v1: remoteDesktopTools.REMOTE_DESKTOP_CERT_STATUS_SCHEMA,
+    remote_desktop_cert_decide_v1: remoteDesktopTools.REMOTE_DESKTOP_CERT_DECIDE_SCHEMA,
     agent_list_v1: agentDeviceTools.AGENT_LIST_SCHEMA,
     agent_get_v1: agentDeviceTools.AGENT_GET_SCHEMA,
     agent_file_list_v1: agentDeviceTools.AGENT_FILE_LIST_SCHEMA,
@@ -82,6 +86,33 @@ const CANONICAL_TOOL_SCHEMAS = Object.freeze({
     agent_file_mkdir_v1: agentDeviceTools.AGENT_FILE_MKDIR_SCHEMA,
     agent_file_rename_v1: agentDeviceTools.AGENT_FILE_RENAME_SCHEMA,
     agent_file_delete_v1: agentDeviceTools.AGENT_FILE_DELETE_SCHEMA,
+    agent_file_write_text_v1: agentDeviceTools.AGENT_FILE_WRITE_TEXT_SCHEMA,
+    sftp_list_v1: sftpTools.SFTP_LIST_SCHEMA,
+    sftp_stat_v1: sftpTools.SFTP_STAT_SCHEMA,
+    sftp_mkdir_v1: sftpTools.SFTP_MKDIR_SCHEMA,
+    sftp_rename_v1: sftpTools.SFTP_RENAME_SCHEMA,
+    sftp_delete_v1: sftpTools.SFTP_DELETE_SCHEMA,
+    sftp_chmod_v1: sftpTools.SFTP_CHMOD_SCHEMA,
+    docker_status_v1: dockerTools.DOCKER_STATUS_SCHEMA,
+    docker_ps_v1: dockerTools.DOCKER_PS_SCHEMA,
+    docker_images_v1: dockerTools.DOCKER_IMAGES_SCHEMA,
+    docker_container_action_v1: dockerTools.DOCKER_CONTAINER_ACTION_SCHEMA,
+    docker_logs_v1: dockerTools.DOCKER_LOGS_SCHEMA,
+    docker_pull_v1: dockerTools.DOCKER_PULL_SCHEMA,
+    docker_mirrors_get_v1: dockerTools.DOCKER_MIRRORS_GET_SCHEMA,
+    docker_mirrors_set_v1: dockerTools.DOCKER_MIRRORS_SET_SCHEMA,
+    resource_share_list_v1: Object.freeze({ type: 'object', properties: { resourceType: { type: 'string', enum: ['connection', 'proxy', 'sshKey', 'jumpHost', 'note'] }, resourceId: { type: 'string', minLength: 1, maxLength: 160 } }, required: ['resourceType', 'resourceId'], additionalProperties: false }),
+    resource_share_put_v1: Object.freeze({ type: 'object', properties: { resourceType: { type: 'string', enum: ['connection', 'proxy', 'sshKey', 'jumpHost', 'note'] }, resourceId: { type: 'string', minLength: 1, maxLength: 160 }, shares: { type: 'array', items: { type: 'object', properties: { subjectId: { type: 'string' }, tier: { type: 'string' }, capabilities: { type: 'array', items: { type: 'string' } }, expiresAt: { type: 'number' } }, required: ['subjectId'], additionalProperties: false }, maxItems: 200 } }, required: ['resourceType', 'resourceId', 'shares'], additionalProperties: false }),
+    resource_share_delete_v1: Object.freeze({ type: 'object', properties: { resourceType: { type: 'string', enum: ['connection', 'proxy', 'sshKey', 'jumpHost', 'note'] }, resourceId: { type: 'string', minLength: 1, maxLength: 160 }, subjectId: { type: 'string', minLength: 1, maxLength: 160 } }, required: ['resourceType', 'resourceId', 'subjectId'], additionalProperties: false }),
+    resource_shared_with_me_v1: Object.freeze({ type: 'object', properties: { resourceType: { type: 'string', enum: ['connection', 'proxy', 'sshKey', 'jumpHost', 'note'] } }, additionalProperties: false }),
+    note_groups_v1: Object.freeze({ type: 'object', properties: {}, additionalProperties: false }),
+    note_group_rename_v1: Object.freeze({ type: 'object', properties: { oldPath: { type: 'string', minLength: 1, maxLength: 200 }, newPath: { type: 'string', maxLength: 200 } }, required: ['oldPath', 'newPath'], additionalProperties: false }),
+    note_group_delete_v1: Object.freeze({ type: 'object', properties: { groupPath: { type: 'string', minLength: 1, maxLength: 200 } }, required: ['groupPath'], additionalProperties: false }),
+    note_restore_v1: Object.freeze({ type: 'object', properties: { noteId: { type: 'string', minLength: 1, maxLength: 160 } }, required: ['noteId'], additionalProperties: false }),
+    note_purge_v1: Object.freeze({ type: 'object', properties: { noteId: { type: 'string', minLength: 1, maxLength: 160 } }, required: ['noteId'], additionalProperties: false }),
+    note_bulk_v1: Object.freeze({ type: 'object', properties: { noteIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 200 }, action: { type: 'string', enum: ['trash', 'restore', 'purge'] } }, required: ['noteIds', 'action'], additionalProperties: false }),
+    env_set_v1: Object.freeze({ type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 80 }, value: { type: 'string', maxLength: 20000 }, description: { type: 'string', maxLength: 500 }, visibleToAi: { type: 'boolean' }, valueVisibleToAi: { type: 'boolean' }, enabled: { type: 'boolean' } }, required: ['name'], additionalProperties: false }),
+    env_delete_v1: Object.freeze({ type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 80 } }, required: ['name'], additionalProperties: false }),
     secret_ref_list_v1: secretRefs.SECRET_REF_LIST_SCHEMA,
 });
 
@@ -704,6 +735,7 @@ function toolDefinitions(ai = {}) {
     tools.push({ type: 'function', function: { name: 'agent_file_mkdir_v1', description: '在非只读 Agent 共享目录创建文件夹；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_mkdir_v1 } });
     tools.push({ type: 'function', function: { name: 'agent_file_rename_v1', description: '在非只读 Agent 共享目录重命名或移动路径；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_rename_v1 } });
     tools.push({ type: 'function', function: { name: 'agent_file_delete_v1', description: '删除 Agent 共享目录中的路径；递归删除风险更高，需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_delete_v1 } });
+    tools.push({ type: 'function', function: { name: 'agent_file_write_text_v1', description: '向非只读 Agent 共享写入 UTF-8 文本（≤256KiB）；append 可选；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.agent_file_write_text_v1 } });
     tools.push({ type: 'function', function: { name: 'secret_ref_list_v1', description: '为当前用户可使用且已保存秘密的 SSH 密钥或代理签发短期不透明 secretRef。只返回引用和元数据，绝不返回秘密值。', parameters: CANONICAL_TOOL_SCHEMAS.secret_ref_list_v1 } });
     // Legacy aggregate/list aliases are not exposed to the model. Use the
     // canonical resource-specific list/get v1 tools above.
@@ -722,11 +754,19 @@ function toolDefinitions(ai = {}) {
         tools.push({ type: 'function', function: { name: 'note_create', description: '为当前用户创建一条新笔记。标题、正文、标签、分组均可选；可关联连接 ID。写操作需要确认。', parameters: { type: 'object', properties: { title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } } }, required: ['title'] } } });
         tools.push({ type: 'function', function: { name: 'note_update', description: '修改当前用户拥有的笔记。需要 noteId 和 expectedRevision；未传字段保持不变。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' }, title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } }, expectedRevision: { type: 'number' } }, required: ['noteId'] } } });
         tools.push({ type: 'function', function: { name: 'note_delete', description: '删除当前用户拥有的笔记（软删除，移入回收站）。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
+        tools.push({ type: 'function', function: { name: 'note_groups_v1', description: '列出笔记分组及数量。', parameters: CANONICAL_TOOL_SCHEMAS.note_groups_v1 } });
+        tools.push({ type: 'function', function: { name: 'note_group_rename_v1', description: '重命名笔记分组路径；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.note_group_rename_v1 } });
+        tools.push({ type: 'function', function: { name: 'note_group_delete_v1', description: '删除分组并把笔记移到未分组；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.note_group_delete_v1 } });
+        tools.push({ type: 'function', function: { name: 'note_restore_v1', description: '从回收站恢复笔记；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.note_restore_v1 } });
+        tools.push({ type: 'function', function: { name: 'note_purge_v1', description: '彻底删除回收站中的笔记；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.note_purge_v1 } });
+        tools.push({ type: 'function', function: { name: 'note_bulk_v1', description: '批量 trash/restore/purge 笔记；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.note_bulk_v1 } });
     }
     // terminal_read_output was replaced by authoritative terminal_read_v1.
     tools.push({ type: 'function', function: { name: 'remote_desktop_capture_v1', description: '获取 RDP/VNC 最新画面并签发 captureId。后续鼠标/键盘/文本操作必须绑定该 captureId；需要前端实时采集时会暂停并恢复同一运行。', parameters: CANONICAL_TOOL_SCHEMAS.remote_desktop_capture_v1 } });
     tools.push({ type: 'function', function: { name: 'remote_desktop_action_v1', description: '基于 captureId 对 RDP/VNC 执行工具栏、文本、快捷键或鼠标操作。操作后前端必须返回新的截图和 actionId；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.remote_desktop_action_v1 } });
     tools.push({ type: 'function', function: { name: 'remote_desktop_verify_v1', description: '验证远程桌面操作前后的 captureId 不同且与 actionId 对应，形成闭环证据。', parameters: CANONICAL_TOOL_SCHEMAS.remote_desktop_verify_v1 } });
+    tools.push({ type: 'function', function: { name: 'remote_desktop_cert_status_v1', description: '读取 RDP 客户端证书对话框与连接阶段（connectionPhase/certPhase）。证书框是 Zephyr HTML 层，不在远程桌面画面上；卡在“未验证证书”时必须先调用本工具，禁止 remote_desktop_mouse 盲点「连接」。', parameters: CANONICAL_TOOL_SCHEMAS.remote_desktop_cert_status_v1 } });
+    tools.push({ type: 'function', function: { name: 'remote_desktop_cert_decide_v1', description: '对当前 RDP 证书对话框执行 accept 或 reject。可 remember=true 写入本浏览器信任列表。必须先 remote_desktop_cert_status_v1 确认 certPhase=pending，并在确认摘要中展示 fingerprint/subject；需要用户确认。', parameters: CANONICAL_TOOL_SCHEMAS.remote_desktop_cert_decide_v1 } });
     tools.push({ type: 'function', function: { name: 'ui_action', description: '在用户当前 Zephyr 页面执行可见 UI 代操作：切换视图、打开新增/编辑连接弹窗、打开/全屏/排列终端、点击 SSH 终端工具栏、以及点击/调整 RDP/VNC 远程桌面工具栏（画质、视图/适应、缩放、剪贴板、键盘、快捷键、视区/拖拽、Ctrl+Alt+Del、重连、断开、发送快捷键/文本）。RDP/VNC 动作执行后通常会返回 remoteDesktopScreenshot，可直接依据该截图继续，不要重复截图。打开远程网页优先 shortcut:win 或 ctrl-l + remote_desktop_send_text 粘贴 URL。terminal_send_input 且 run=true 会像用户按发送一样执行命令，需要确认；run=false 只填入输入框。不要用于安全/数据管理设置页。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['switch_view', 'open_add_connection', 'open_edit_connection', 'terminal_fullscreen', 'terminal_exit_fullscreen', 'terminal_window_action', 'terminal_toolbar', 'terminal_send_input', 'remote_desktop_toolbar', 'remote_desktop_send_text', 'remote_desktop_mouse', 'toast'] }, view: { type: 'string', enum: ['dashboard', 'terminal', 'remote', 'settings'] }, settingsSection: { type: 'string', enum: ['ai', 'appearance', 'terminal', 'network', 'profile', 'snippets'] }, connectionId: { type: 'string' }, tabId: { type: 'string' }, windowAction: { type: 'string', enum: ['fullscreen', 'exit-fullscreen', 'left-half', 'right-half', 'right-top', 'right-bottom', 'left-two-thirds', 'right-two-thirds', 'minimize', 'close', 'reconnect-mobile'] }, control: { type: 'string', enum: ['file', 'info', 'docker', 'snippet', 'shortcut', 'copy', 'paste', 'theme', 'wterm-theme', 'reconnect', 'disconnect', 'quality', 'fit', 'zoom', 'clipboard', 'keyboard', 'shortcuts', 'joystick', 'drag', 'ctrl_alt_del', 'clipboard_send', 'clipboard_read_local', 'clipboard_copy_remote'] }, desktopControl: { type: 'string', enum: ['quality', 'fit', 'zoom', 'clipboard', 'keyboard', 'shortcuts', 'joystick', 'drag', 'ctrl_alt_del', 'reconnect', 'disconnect', 'clipboard_send', 'clipboard_read_local', 'clipboard_copy_remote', 'shortcut', 'text', 'mouse_click'] }, text: { type: 'string' }, run: { type: 'boolean' }, maxChars: { type: 'number' }, maxWidth: { type: 'number' }, qualityMode: { type: 'string', enum: ['balanced', 'performance', 'quality'] }, fitMode: { type: 'string', enum: ['fit', '1:1', '16:9', '4:3', 'original', 'drag'] }, zoomPercent: { type: 'number' }, sequence: { type: 'string' }, paste: { type: 'boolean' }, x: { type: 'number' }, y: { type: 'number' }, button: { type: 'number' }, coordinateSpace: { type: 'string', enum: ['remote', 'screenshot'] } }, required: ['action'] } } });
     if (p.webSearch !== false) tools.push({ type: 'function', function: { name: 'web_search', description: '在网页上搜索实时信息，返回标题、链接和摘要。', parameters: { type: 'object', properties: { query: { type: 'string' }, maxResults: { type: 'number' } }, required: ['query'] } } });
     if (p.webFetch !== false) tools.push({ type: 'function', function: { name: 'fetch_url', description: '读取一个网页 URL 的正文文本。', parameters: { type: 'object', properties: { url: { type: 'string' }, maxChars: { type: 'number' } }, required: ['url'] } } });
@@ -749,6 +789,8 @@ function toolDefinitions(ai = {}) {
     if (p.env !== false) {
         tools.push({ type: 'function', function: { name: 'list_env_vars', description: '列出 AI 专用环境变量名称和说明，不返回值。', parameters: { type: 'object', properties: {} } } });
         tools.push({ type: 'function', function: { name: 'get_env_var', description: '读取 AI 专用环境变量的值。敏感操作，需要用户确认。', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } });
+        tools.push({ type: 'function', function: { name: 'env_set_v1', description: '创建或更新 AI 环境变量元数据与值；需要确认。默认 visibleToAi=true。', parameters: CANONICAL_TOOL_SCHEMAS.env_set_v1 } });
+        tools.push({ type: 'function', function: { name: 'env_delete_v1', description: '删除 AI 环境变量；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.env_delete_v1 } });
     }
     // open_connection was replaced by connection_open_v1.
     tools.push({ type: 'function', function: { name: 'plan_task', description: '创建执行计划，返回 planId；后续用 plan_update 更新步骤状态。', parameters: { type: 'object', properties: { title: { type: 'string' }, steps: { type: 'array', items: { type: 'string' } }, risk: { type: 'string' } }, required: ['title', 'steps'] } } });
@@ -760,6 +802,25 @@ function toolDefinitions(ai = {}) {
         tools.push({ type: 'function', function: { name: 'remote_write_file', description: '写入或追加远程 SSH 主机文件。写入前自动快照原文（若可读），返回 snapshotId 可用 remote_file_rollback 回滚。敏感操作需要用户确认。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, path: { type: 'string' }, content: { type: 'string' }, encoding: { type: 'string', enum: ['utf8', 'base64'] }, append: { type: 'boolean' } }, required: ['connectionId', 'path', 'content'] } } });
         tools.push({ type: 'function', function: { name: 'remote_file_rollback', description: '用 remote_write_file 返回的 snapshotId 回滚远程文件到写入前内容；若原路径不存在则删除新文件。敏感操作需要确认。', parameters: { type: 'object', properties: { snapshotId: { type: 'string' } }, required: ['snapshotId'] } } });
         tools.push({ type: 'function', function: { name: 'remote_file_snapshot_list', description: '列出当前用户最近的远程文件写前快照（不含全文）。', parameters: { type: 'object', properties: { connectionId: { type: 'string' }, path: { type: 'string' }, limit: { type: 'number' } } } } });
+    tools.push({ type: 'function', function: { name: 'sftp_list_v1', description: '列出 SSH 连接上的 SFTP 目录条目（名称/类型/大小/权限）。需要 fileRead 权限。', parameters: CANONICAL_TOOL_SCHEMAS.sftp_list_v1 } });
+    tools.push({ type: 'function', function: { name: 'sftp_stat_v1', description: '读取 SSH 连接上路径的 SFTP 元数据。', parameters: CANONICAL_TOOL_SCHEMAS.sftp_stat_v1 } });
+    tools.push({ type: 'function', function: { name: 'sftp_mkdir_v1', description: '在 SSH 连接上创建目录；recursive 可选；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.sftp_mkdir_v1 } });
+    tools.push({ type: 'function', function: { name: 'sftp_rename_v1', description: '重命名或移动 SSH 上的路径；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.sftp_rename_v1 } });
+    tools.push({ type: 'function', function: { name: 'sftp_delete_v1', description: '删除 SSH 上的文件或目录；recursive 删除目录需确认。', parameters: CANONICAL_TOOL_SCHEMAS.sftp_delete_v1 } });
+    tools.push({ type: 'function', function: { name: 'sftp_chmod_v1', description: '修改 SSH 上路径权限（八进制 mode）；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.sftp_chmod_v1 } });
+    tools.push({ type: 'function', function: { name: 'docker_status_v1', description: '检查 SSH 主机是否安装 Docker 及 socket 可用性。', parameters: CANONICAL_TOOL_SCHEMAS.docker_status_v1 } });
+    tools.push({ type: 'function', function: { name: 'docker_ps_v1', description: '列出 SSH 主机 Docker 容器。', parameters: CANONICAL_TOOL_SCHEMAS.docker_ps_v1 } });
+    tools.push({ type: 'function', function: { name: 'docker_images_v1', description: '列出 SSH 主机 Docker 镜像。', parameters: CANONICAL_TOOL_SCHEMAS.docker_images_v1 } });
+    tools.push({ type: 'function', function: { name: 'docker_container_action_v1', description: '对容器执行 start/stop/restart/remove/pause/unpause；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.docker_container_action_v1 } });
+    tools.push({ type: 'function', function: { name: 'docker_logs_v1', description: '读取容器最近日志（非 follow）。', parameters: CANONICAL_TOOL_SCHEMAS.docker_logs_v1 } });
+    tools.push({ type: 'function', function: { name: 'docker_pull_v1', description: '拉取 Docker 镜像；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.docker_pull_v1 } });
+    tools.push({ type: 'function', function: { name: 'docker_mirrors_get_v1', description: '读取 /etc/docker/daemon.json 中的 registry-mirrors。', parameters: CANONICAL_TOOL_SCHEMAS.docker_mirrors_get_v1 } });
+    tools.push({ type: 'function', function: { name: 'docker_mirrors_set_v1', description: '设置 Docker registry-mirrors；可能需 sudo；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.docker_mirrors_set_v1 } });
+    tools.push({ type: 'function', function: { name: 'resource_share_list_v1', description: '列出某资源的共享 ACL（需 share 能力）。', parameters: CANONICAL_TOOL_SCHEMAS.resource_share_list_v1 } });
+    tools.push({ type: 'function', function: { name: 'resource_share_put_v1', description: '替换某资源的共享列表；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.resource_share_put_v1 } });
+    tools.push({ type: 'function', function: { name: 'resource_share_delete_v1', description: '删除某资源对指定用户的共享；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.resource_share_delete_v1 } });
+    tools.push({ type: 'function', function: { name: 'resource_shared_with_me_v1', description: '列出共享给我的资源。', parameters: CANONICAL_TOOL_SCHEMAS.resource_shared_with_me_v1 } });
+
     }
     // S3: session workspace L1 (local to Zephyr server, not remote SSH).
     tools.push({ type: 'function', function: { name: 'workspace_list_v1', description: '列出当前 AI 会话工作区目录（uploads/workspace/outputs）。无远端连接时用于加工用户附件与草稿。', parameters: { type: 'object', properties: { sessionId: { type: 'string' }, dir: { type: 'string', description: '相对路径，如 uploads 或 workspace/notes' } }, additionalProperties: false } } });
@@ -1362,7 +1423,7 @@ function formatAiContextForPrompt(context = {}) {
     if (c.connections.length) lines.push(`当前连接上下文：${c.connections.slice(0, 12).map((x) => `${x.protocol || 'SSH'}:${x.name || x.id}(${x.username || '-'}@${x.host || '-'})${Array.isArray(x.tags) && x.tags.length ? `[${x.tags.join(',')}]` : ''}`).join('; ')}`);
     const activeSurface = c.activeSurface && typeof c.activeSurface === 'object' ? c.activeSurface : null;
     if (activeSurface?.kind === 'remote-desktop') {
-        lines.push(`当前操作表面：${String(activeSurface.protocol || 'RDP/VNC').toUpperCase()} 远程桌面，tabId=${activeSurface.tabId || '[缺失]'}。本轮在该远程桌面内进行的网页、点击、输入或桌面任务必须使用 remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1；禁止调用 browser_*，因为内置浏览器不是远端桌面。`);
+        lines.push(`当前操作表面：${String(activeSurface.protocol || 'RDP/VNC').toUpperCase()} 远程桌面，tabId=${activeSurface.tabId || '[缺失]'}。若卡在证书对话框先 remote_desktop_cert_status_v1 / remote_desktop_cert_decide_v1；已连接后用 remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1。禁止调用 browser_*，证书框不在远程画面上。`);
     }
     const terminalOutputs = Array.isArray(c.terminalOutputs) ? c.terminalOutputs : [];
     const activeTerminalSessionId = String(c.activeTerminalSessionId || terminalOutputs[0]?.sessionId || terminalOutputs[0]?.tabId || '').trim();
@@ -1383,10 +1444,12 @@ function formatAiContextForPrompt(context = {}) {
     const rdps = remoteDesktopSnapshots.filter((r) => ['RDP', 'VNC'].includes(String(r.protocol || '').toUpperCase()));
     if (rdps.length) {
         const summary = rdps.slice(0, 3).map((r) => {
-            const label = (r.name || r.tabId || '远程桌面') + ' ' + (r.protocol || '') + ' ' + (r.host || '') + (r.port ? ':' + r.port : '') + ' ' + (r.connected ? '已连接' : (r.error || r.status || '未连接')) + ' ' + (r.originalWidth || r.width || 0) + 'x' + (r.originalHeight || r.height || 0);
+            const cert = remoteDesktopTools.publicCertState(r);
+            const phase = cert.pending ? '证书待确认' : (r.connected ? '已连接' : (r.error || r.status || cert.connectionPhase || '未连接'));
+            const label = (r.name || r.tabId || '远程桌面') + ' ' + (r.protocol || '') + ' ' + (r.host || '') + (r.port ? ':' + r.port : '') + ' ' + phase + (cert.fingerprint ? ` fp=${cert.fingerprint}` : '') + ' ' + (r.originalWidth || r.width || 0) + 'x' + (r.originalHeight || r.height || 0);
             return label.trim();
         }).join('; ');
-        lines.push('当前 RDP/VNC 远程桌面画面可用（无文本输出，需调用 remote_desktop_screenshot 查看画面快照）：' + summary);
+        lines.push('当前 RDP/VNC 远程桌面会话（证书待确认时用 remote_desktop_cert_*；已连接画面用 remote_desktop_capture_v1）：' + summary);
     }
     if (!lines.length) return '';
     return `\n当前 Zephyr 上下文（用于选择连接、项目和 Memory）：\n${lines.map((x) => `- ${x}`).join('\n')}`;
@@ -1695,9 +1758,32 @@ function confirmationSummary(toolName, args, deps) {
     if (toolName === 'snippet_delete_v1') return `删除代码片段：${args.snippetId || ''}`;
     if (toolName === 'terminal_send_v1') return `向终端会话 ${args.sessionId || ''} 发送：${String(args.text || '').slice(0, 160)}`;
     if (toolName === 'remote_desktop_action_v1') return `操作远程桌面 ${args.tabId || ''}：${args.action || ''}/${args.control || ''}`;
+    if (toolName === 'remote_desktop_cert_decide_v1') {
+        const decision = String(args.decision || '') === 'reject' ? '拒绝' : '接受';
+        const remember = args.remember === true ? '并记住' : '';
+        const fp = String(args.expectedFingerprint || '').slice(0, 96);
+        return `${decision}${remember} RDP 证书 tab=${args.tabId || ''}${fp ? ` fingerprint=${fp}` : ''}`;
+    }
     if (toolName === 'agent_file_mkdir_v1') return `在 Agent ${args.agentId || ''} 创建目录：${args.path || ''}`;
     if (toolName === 'agent_file_rename_v1') return `在 Agent ${args.agentId || ''} 重命名：${args.oldPath || ''} → ${args.newPath || ''}`;
     if (toolName === 'agent_file_delete_v1') return `从 Agent ${args.agentId || ''} 删除：${args.path || ''}`;
+    if (toolName === 'agent_file_write_text_v1') return `写入 Agent 文件 ${args.agentId || ''}:${args.path || ''}`;
+    if (toolName === 'sftp_mkdir_v1') return `SFTP 创建目录 ${args.connectionId || ''}:${args.path || ''}`;
+    if (toolName === 'sftp_rename_v1') return `SFTP 重命名 ${args.oldPath || ''} → ${args.newPath || ''}`;
+    if (toolName === 'sftp_delete_v1') return `SFTP 删除 ${args.connectionId || ''}:${args.path || ''}`;
+    if (toolName === 'sftp_chmod_v1') return `SFTP chmod ${args.path || ''} ${args.mode || ''}`;
+    if (toolName === 'docker_container_action_v1') return `Docker ${args.action || ''} ${args.container || ''}`;
+    if (toolName === 'docker_pull_v1') return `Docker pull ${args.image || ''}`;
+    if (toolName === 'docker_mirrors_set_v1') return `设置 Docker mirrors (${(args.mirrors || []).length})`;
+    if (toolName === 'resource_share_put_v1') return `更新共享 ${args.resourceType || ''}/${args.resourceId || ''}`;
+    if (toolName === 'resource_share_delete_v1') return `删除共享 ${args.resourceType || ''}/${args.resourceId || ''} → ${args.subjectId || ''}`;
+    if (toolName === 'note_group_rename_v1') return `重命名笔记分组 ${args.oldPath || ''} → ${args.newPath || ''}`;
+    if (toolName === 'note_group_delete_v1') return `删除笔记分组 ${args.groupPath || ''}`;
+    if (toolName === 'note_restore_v1') return `恢复笔记 ${args.noteId || ''}`;
+    if (toolName === 'note_purge_v1') return `彻底删除笔记 ${args.noteId || ''}`;
+    if (toolName === 'note_bulk_v1') return `批量笔记 ${args.action || ''} x${(args.noteIds || []).length}`;
+    if (toolName === 'env_set_v1') return `设置 AI 环境变量 ${args.name || ''}`;
+    if (toolName === 'env_delete_v1') return `删除 AI 环境变量 ${args.name || ''}`;
     if (toolName === 'connection_delete') return `删除连接：${args.connectionId || ''}`;
     if (toolName === 'proxy_save') return `${args.proxyId ? '修改' : '新增'}代理：${args.name || args.host || ''}`;
     if (toolName === 'proxy_delete') return `删除代理：${args.proxyId || ''}`;
@@ -1826,7 +1912,7 @@ function executeCanonicalAiTool(toolName, args, ctx, deps, execute) {
 
 async function executeAiTool(toolName, args = {}, ctx, deps) {
     if (ctx?.context?.activeSurface?.kind === 'remote-desktop' && String(toolName || '').startsWith('browser_')) {
-        const err = new Error('当前目标是 RDP/VNC 远程桌面；请使用 remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1');
+        const err = new Error('当前目标是 RDP/VNC 远程桌面；请使用 remote_desktop_cert_status_v1 / remote_desktop_cert_decide_v1 / remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1');
         err.code = 'wrong_surface';
         err.status = 409;
         throw err;
@@ -2180,6 +2266,13 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 await deps.fileAgentManager.callAgent(args.agentId, 'delete', { path: agentPath, recursive: !!args.recursive });
                 return { agent: agentDeviceTools.publicAgent(agent), path: agentPath, recursive: !!args.recursive, deleted: true };
             });
+        case 'agent_file_write_text_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.fileAgentManager || !ctx.user) throw new Error('Agent 管理服务不可用');
+                const result = await agentDeviceTools.writeText(deps.fileAgentManager, ctx.user, args);
+                deps.addActivity?.(`AI 写入 Agent 文件：${result.path}`, ctx.user?.userId);
+                return result;
+            });
         case 'secret_ref_list_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 if (!ctx.resourceService || !ctx.user) throw new Error('统一资源授权服务不可用');
@@ -2467,6 +2560,52 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 deps.addActivity?.(`AI 删除笔记：${args.noteId}`, ctx.user?.userId);
                 return { deleted: true, noteId: args.noteId };
             }, deps);
+        case 'note_groups_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.notesRead === false) throw new Error('笔记工具未开启');
+                if (!deps.notesService) throw new Error('笔记服务未配置');
+                return { groups: deps.notesService.groups(ctx.user) };
+            });
+        case 'note_group_rename_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.notesWrite === false) throw new Error('笔记工具未开启');
+                if (!deps.notesService) throw new Error('笔记服务未配置');
+                const result = deps.notesService.renameGroup(ctx.user, args.oldPath, args.newPath);
+                deps.addActivity?.(`AI 重命名笔记分组：${args.oldPath} → ${args.newPath}`, ctx.user?.userId);
+                return result;
+            });
+        case 'note_group_delete_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.notesWrite === false) throw new Error('笔记工具未开启');
+                if (!deps.notesService) throw new Error('笔记服务未配置');
+                const result = deps.notesService.deleteGroup(ctx.user, args.groupPath);
+                deps.addActivity?.(`AI 删除笔记分组：${args.groupPath}`, ctx.user?.userId);
+                return result;
+            });
+        case 'note_restore_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.notesWrite === false) throw new Error('笔记工具未开启');
+                if (!deps.notesService) throw new Error('笔记服务未配置');
+                const note = deps.notesService.restore(ctx.user, String(args.noteId || ''));
+                deps.addActivity?.(`AI 恢复笔记：${note.noteId}`, ctx.user?.userId);
+                return { note: { noteId: note.noteId, title: note.title, revision: note.revision } };
+            });
+        case 'note_purge_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.notesWrite === false) throw new Error('笔记工具未开启');
+                if (!deps.notesService) throw new Error('笔记服务未配置');
+                deps.notesService.purge(ctx.user, String(args.noteId || ''));
+                deps.addActivity?.(`AI 彻底删除笔记：${args.noteId}`, ctx.user?.userId);
+                return { purged: true, noteId: args.noteId };
+            });
+        case 'note_bulk_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.notesWrite === false) throw new Error('笔记工具未开启');
+                if (!deps.notesService) throw new Error('笔记服务未配置');
+                const result = deps.notesService.bulk(ctx.user, { noteIds: args.noteIds || [], action: args.action || 'trash' });
+                deps.addActivity?.(`AI 批量笔记 ${args.action}: ${(args.noteIds || []).length}`, ctx.user?.userId);
+                return result;
+            });
         case 'memory_save': {
             if (p.memory === false || ai.memory?.enabled === false) throw new Error('长期 Memory 权限未开启');
             const memories = Array.isArray(ai.memories) ? ai.memories.slice(0, 1000) : [];
@@ -2504,6 +2643,40 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 if (!item) throw new Error('环境变量不存在或未启用');
                 return { name: item.name, value: item.value || '', description: item.description || '' };
             }, deps);
+        case 'env_set_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.env === false) throw new Error('AI 环境变量权限未开启');
+                const name = String(args.name || '').trim().replace(/[^A-Za-z0-9_]/g, '_').slice(0, 80);
+                if (!name) throw new Error('环境变量名无效');
+                const current = Array.isArray(ai.envVars) ? ai.envVars.slice(0, 200) : [];
+                const idx = current.findIndex((item) => item.name === name);
+                const prev = idx >= 0 ? current[idx] : {};
+                const nextItem = {
+                    id: String(prev.id || crypto.randomUUID()).slice(0, 120),
+                    name,
+                    description: args.description !== undefined ? String(args.description || '').slice(0, 500) : String(prev.description || ''),
+                    value: args.value !== undefined ? String(args.value || '') : String(prev.value || ''),
+                    visibleToAi: args.visibleToAi !== undefined ? args.visibleToAi === true : (prev.visibleToAi !== false),
+                    valueVisibleToAi: args.valueVisibleToAi === true || prev.valueVisibleToAi === true,
+                    enabled: args.enabled === undefined ? (prev.enabled !== false) : args.enabled !== false,
+                    updatedAt: Date.now(),
+                };
+                if (idx >= 0) current[idx] = nextItem; else current.unshift(nextItem);
+                deps.storage.updateSettings({ ai: { envVars: current.slice(0, 200) } });
+                deps.addActivity?.(`AI 设置环境变量：${name}`, ctx.user?.userId);
+                return { envVar: publicEnvVar(nextItem) };
+            });
+        case 'env_delete_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.env === false) throw new Error('AI 环境变量权限未开启');
+                const name = String(args.name || '').trim();
+                const current = Array.isArray(ai.envVars) ? ai.envVars.slice(0, 200) : [];
+                const next = current.filter((item) => item.name !== name);
+                if (next.length === current.length) throw new Error('环境变量不存在');
+                deps.storage.updateSettings({ ai: { envVars: next } });
+                deps.addActivity?.(`AI 删除环境变量：${name}`, ctx.user?.userId);
+                return { deleted: true, name };
+            });
         case 'plan_task': {
             const steps = Array.isArray(args.steps) ? args.steps.map((s) => String(s).slice(0, 500)).filter(Boolean) : [];
             if (!steps.length) throw new Error('计划至少需要一个步骤');
@@ -2682,6 +2855,257 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                     limit: clampNumber(args.limit, 1, 50, 20),
                 }),
             };
+        case 'sftp_list_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.fileRead === false) throw new Error('远程文件读取权限未开启');
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('SFTP 仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'fileRead', 'connection', conn.id, conn, { resourceExists: true });
+                const targetPath = sftpTools.normalizeRemotePath(args.path || '/');
+                const limit = clampNumber(args.limit, 1, 1000, 500);
+                return withRemoteSftp(deps, conn, async (sftp) => {
+                    const list = await sftpTools.sftpReaddir(sftp, targetPath);
+                    const entries = list
+                        .filter((item) => item.filename !== '.' && item.filename !== '..')
+                        .slice(0, limit)
+                        .map((item) => sftpTools.publicSftpEntry(item, targetPath));
+                    return { connectionId: conn.id, path: targetPath, entries, truncated: list.length > limit };
+                });
+            });
+        case 'sftp_stat_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.fileRead === false) throw new Error('远程文件读取权限未开启');
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('SFTP 仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'fileRead', 'connection', conn.id, conn, { resourceExists: true });
+                const targetPath = sftpTools.normalizeRemotePath(args.path, { allowRoot: false });
+                return withRemoteSftp(deps, conn, async (sftp) => {
+                    const st = await sftpStat(sftp, targetPath);
+                    return { connectionId: conn.id, ...sftpTools.publicSftpStat(targetPath, st) };
+                });
+            });
+        case 'sftp_mkdir_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.fileWrite === false) throw new Error('远程文件写入权限未开启');
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('SFTP 仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'fileWrite', 'connection', conn.id, conn, { resourceExists: true });
+                const targetPath = sftpTools.normalizeRemotePath(args.path, { allowRoot: false });
+                return withRemoteSftp(deps, conn, async (sftp) => {
+                    if (args.recursive) await sftpTools.sftpMkdirRecursive(sftp, targetPath);
+                    else await sftpTools.sftpMkdir(sftp, targetPath);
+                    deps.addActivity?.(`AI SFTP mkdir：${targetPath}`, ctx.user?.userId);
+                    return { connectionId: conn.id, path: targetPath, created: true, recursive: !!args.recursive };
+                });
+            });
+        case 'sftp_rename_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.fileWrite === false) throw new Error('远程文件写入权限未开启');
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('SFTP 仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'fileWrite', 'connection', conn.id, conn, { resourceExists: true });
+                const oldPath = sftpTools.normalizeRemotePath(args.oldPath, { allowRoot: false });
+                const newPath = sftpTools.normalizeRemotePath(args.newPath, { allowRoot: false });
+                return withRemoteSftp(deps, conn, async (sftp) => {
+                    await sftpTools.sftpRename(sftp, oldPath, newPath);
+                    deps.addActivity?.(`AI SFTP rename：${oldPath} → ${newPath}`, ctx.user?.userId);
+                    return { connectionId: conn.id, oldPath, newPath, renamed: true };
+                });
+            });
+        case 'sftp_delete_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.fileWrite === false) throw new Error('远程文件写入权限未开启');
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('SFTP 仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'fileWrite', 'connection', conn.id, conn, { resourceExists: true });
+                const targetPath = sftpTools.normalizeRemotePath(args.path, { allowRoot: false });
+                return withRemoteSftp(deps, conn, async (sftp) => {
+                    if (args.recursive) {
+                        const result = await sftpTools.sftpDeleteRecursive(sftp, targetPath);
+                        deps.addActivity?.(`AI SFTP rmdir recursive：${targetPath}`, ctx.user?.userId);
+                        return { connectionId: conn.id, ...result, deleted: true, recursive: true };
+                    }
+                    try {
+                        await sftpTools.sftpUnlink(sftp, targetPath);
+                    } catch (err) {
+                        // maybe directory
+                        await sftpTools.sftpRmdir(sftp, targetPath);
+                    }
+                    deps.addActivity?.(`AI SFTP delete：${targetPath}`, ctx.user?.userId);
+                    return { connectionId: conn.id, path: targetPath, deleted: true, recursive: false };
+                });
+            });
+        case 'sftp_chmod_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (p.fileWrite === false) throw new Error('远程文件写入权限未开启');
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('SFTP 仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'fileWrite', 'connection', conn.id, conn, { resourceExists: true });
+                const targetPath = sftpTools.normalizeRemotePath(args.path, { allowRoot: false });
+                const mode = sftpTools.modeFromString(args.mode);
+                return withRemoteSftp(deps, conn, async (sftp) => {
+                    await sftpTools.sftpChmod(sftp, targetPath, mode);
+                    deps.addActivity?.(`AI SFTP chmod：${targetPath} ${args.mode}`, ctx.user?.userId);
+                    return { connectionId: conn.id, path: targetPath, mode: String(args.mode), changed: true };
+                });
+            });
+        case 'docker_status_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('Docker 工具仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'execute', 'connection', conn.id, conn, { resourceExists: true });
+                const command = "if command -v docker >/dev/null 2>&1; then echo __DOCKER_INSTALLED__=1; docker --version 2>/dev/null || true; if [ -S /var/run/docker.sock ]; then echo __DOCKER_SOCKET__=1; else echo __DOCKER_SOCKET__=0; fi; else echo __DOCKER_INSTALLED__=0; echo __DOCKER_SOCKET__=0; fi";
+                const result = await deps.runRemoteCommand(conn, command, 20, { signal: ctx.signal });
+                const raw = String(result?.stdout || result?.output || result?.results?.[0]?.stdout || '');
+                return {
+                    connectionId: conn.id,
+                    installed: /__DOCKER_INSTALLED__=1/.test(raw),
+                    socket: /__DOCKER_SOCKET__=1/.test(raw),
+                    version: (raw.split('\n').find((line) => line.toLowerCase().includes('docker version')) || '').trim(),
+                    raw: raw.slice(0, 4000),
+                    exitCode: result?.exitCode ?? result?.code,
+                };
+            });
+        case 'docker_ps_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('Docker 工具仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'execute', 'connection', conn.id, conn, { resourceExists: true });
+                const all = args.all !== false;
+                const command = `docker ps ${all ? '-a ' : ''}--no-trunc --format '{{json .}}'`;
+                const result = await deps.runRemoteCommand(conn, command, 30, { signal: ctx.signal });
+                const raw = String(result?.stdout || result?.output || '');
+                const limit = clampNumber(args.limit, 1, 500, 200);
+                const containers = dockerTools.parseJsonLines(raw).map(dockerTools.publicContainer).slice(0, limit);
+                return { connectionId: conn.id, containers, exitCode: result?.exitCode ?? result?.code };
+            });
+        case 'docker_images_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('Docker 工具仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'execute', 'connection', conn.id, conn, { resourceExists: true });
+                const command = "docker image ls --no-trunc --format '{{json .}}'";
+                const result = await deps.runRemoteCommand(conn, command, 30, { signal: ctx.signal });
+                const raw = String(result?.stdout || result?.output || '');
+                const limit = clampNumber(args.limit, 1, 500, 200);
+                const images = dockerTools.parseJsonLines(raw).map(dockerTools.publicImage).slice(0, limit);
+                return { connectionId: conn.id, images, exitCode: result?.exitCode ?? result?.code };
+            });
+        case 'docker_container_action_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('Docker 工具仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'execute', 'connection', conn.id, conn, { resourceExists: true });
+                const command = dockerTools.containerActionCommand(args.action, args.container, { force: !!args.force });
+                const result = await deps.runRemoteCommand(conn, command, 60, { signal: ctx.signal });
+                deps.addActivity?.(`AI docker ${args.action} ${args.container}`, ctx.user?.userId);
+                return {
+                    connectionId: conn.id,
+                    action: args.action,
+                    container: args.container,
+                    stdout: String(result?.stdout || result?.output || '').slice(0, 8000),
+                    stderr: String(result?.stderr || '').slice(0, 4000),
+                    exitCode: result?.exitCode ?? result?.code,
+                    ok: (result?.exitCode ?? result?.code ?? 0) === 0,
+                };
+            });
+        case 'docker_logs_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('Docker 工具仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'execute', 'connection', conn.id, conn, { resourceExists: true });
+                const tail = clampNumber(args.tail, 1, 2000, 200);
+                const ts = args.timestamps === false ? '' : '--timestamps ';
+                const command = `docker logs --tail ${tail} ${ts}${dockerTools.shellQuote(args.container)}`;
+                const result = await deps.runRemoteCommand(conn, command, 45, { signal: ctx.signal });
+                return {
+                    connectionId: conn.id,
+                    container: args.container,
+                    logs: String(result?.stdout || result?.output || '').slice(0, 60000),
+                    stderr: String(result?.stderr || '').slice(0, 8000),
+                    exitCode: result?.exitCode ?? result?.code,
+                };
+            });
+        case 'docker_pull_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('Docker 工具仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'execute', 'connection', conn.id, conn, { resourceExists: true });
+                const timeout = clampNumber(args.timeoutSeconds, 10, 600, 180);
+                const command = `docker pull ${dockerTools.shellQuote(args.image)}`;
+                const result = await deps.runRemoteCommand(conn, command, timeout, { signal: ctx.signal });
+                deps.addActivity?.(`AI docker pull ${args.image}`, ctx.user?.userId);
+                return {
+                    connectionId: conn.id,
+                    image: args.image,
+                    stdout: String(result?.stdout || result?.output || '').slice(0, 20000),
+                    stderr: String(result?.stderr || '').slice(0, 8000),
+                    exitCode: result?.exitCode ?? result?.code,
+                    ok: (result?.exitCode ?? result?.code ?? 0) === 0,
+                };
+            });
+        case 'docker_mirrors_get_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('Docker 工具仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'execute', 'connection', conn.id, conn, { resourceExists: true });
+                const command = "if [ -f /etc/docker/daemon.json ]; then cat /etc/docker/daemon.json; else printf '{}'; fi";
+                const result = await deps.runRemoteCommand(conn, command, 20, { signal: ctx.signal });
+                const raw = String(result?.stdout || result?.output || '{}');
+                let mirrors = [];
+                try {
+                    const data = JSON.parse(raw);
+                    mirrors = dockerTools.normalizeMirrors(data['registry-mirrors'] || data.registryMirrors || []);
+                } catch {}
+                return { connectionId: conn.id, mirrors, raw: raw.slice(0, 8000) };
+            });
+        case 'docker_mirrors_set_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const conn = findConnection(deps, args.connectionId, ctx);
+                if (String(conn.protocol || '').toUpperCase() !== 'SSH') throw new Error('Docker 工具仅支持 SSH 连接');
+                if (ctx.authz && ctx.user) ctx.authz.assertCan(ctx.user, 'execute', 'connection', conn.id, conn, { resourceExists: true });
+                const mirrors = dockerTools.normalizeMirrors(args.mirrors || []);
+                const script = dockerTools.mirrorsSetScript(mirrors);
+                const result = await deps.runRemoteCommand(conn, script, 45, { signal: ctx.signal });
+                let restart = null;
+                if (args.restart === true) {
+                    restart = await deps.runRemoteCommand(conn, 'if command -v systemctl >/dev/null 2>&1; then (systemctl restart docker || sudo -n systemctl restart docker); elif command -v service >/dev/null 2>&1; then (service docker restart || sudo -n service docker restart); else echo no_restart_helper; fi', 60, { signal: ctx.signal });
+                }
+                deps.addActivity?.(`AI 设置 docker mirrors (${mirrors.length})`, ctx.user?.userId);
+                return {
+                    connectionId: conn.id,
+                    mirrors,
+                    stdout: String(result?.stdout || result?.output || '').slice(0, 8000),
+                    stderr: String(result?.stderr || '').slice(0, 4000),
+                    exitCode: result?.exitCode ?? result?.code,
+                    restarted: args.restart === true,
+                    restartExitCode: restart ? (restart.exitCode ?? restart.code) : null,
+                };
+            });
+        case 'resource_share_list_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.sharingService || !ctx.user) throw new Error('共享服务不可用');
+                return { shares: deps.sharingService.listShares(ctx.user, args.resourceType, args.resourceId) };
+            });
+        case 'resource_share_put_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.sharingService || !ctx.user) throw new Error('共享服务不可用');
+                const results = deps.sharingService.putShares(ctx.user, args.resourceType, args.resourceId, args.shares || []);
+                deps.addActivity?.(`AI 更新资源共享：${args.resourceType}/${args.resourceId}`, ctx.user?.userId);
+                return { results };
+            });
+        case 'resource_share_delete_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.sharingService || !ctx.user) throw new Error('共享服务不可用');
+                deps.sharingService.deleteShare(ctx.user, args.resourceType, args.resourceId, args.subjectId);
+                deps.addActivity?.(`AI 删除资源共享：${args.resourceType}/${args.resourceId} → ${args.subjectId}`, ctx.user?.userId);
+                return { deleted: true, subjectId: args.subjectId };
+            });
+        case 'resource_shared_with_me_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                if (!deps.sharingService || !ctx.user) throw new Error('共享服务不可用');
+                return { shares: deps.sharingService.listSharedWithMe(ctx.user, { resourceType: args.resourceType || null }) };
+            });
         case 'remote_desktop_capture_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 const raw = Array.isArray(ctx.context?.remoteDesktopSnapshots) ? ctx.context.remoteDesktopSnapshots : [];
@@ -2739,6 +3163,98 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 const changed = String(args.beforeCaptureId) !== String(args.afterCaptureId);
                 return { verified: changed, changed, tabId: String(args.tabId), actionId: String(args.actionId || ''), beforeCaptureId: String(args.beforeCaptureId), afterCaptureId: String(args.afterCaptureId), evidence: changed ? 'capture_id_changed_after_action' : 'capture_id_unchanged' };
+            });
+        case 'remote_desktop_cert_status_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const raw = Array.isArray(ctx.context?.remoteDesktopSnapshots) ? ctx.context.remoteDesktopSnapshots : [];
+                const tabId = String(args.tabId || '').trim();
+                const connectionId = String(args.connectionId || '').trim();
+                const candidates = raw
+                    .filter((r) => ['RDP', 'VNC'].includes(String(r.protocol || '').toUpperCase()))
+                    .filter((r) => !tabId || String(r.tabId || '') === tabId)
+                    .filter((r) => !connectionId || String(r.connectionId || '') === connectionId);
+                const snapshot = candidates[0] || null;
+                const cert = snapshot ? remoteDesktopTools.publicCertState(snapshot) : null;
+                const pending = !!(cert && cert.pending);
+                if (cert && !args.requireLive) {
+                    return {
+                        cert,
+                        targets: candidates.slice(0, 5).map((item) => remoteDesktopTools.publicCertState(item)),
+                        clientActionRequired: false,
+                        clientCaptureRequired: false,
+                        tabId: cert.tabId || tabId,
+                        message: pending
+                            ? 'RDP 证书对话框待决策；请用 remote_desktop_cert_decide_v1 接受或拒绝，不要对远程画面点击。'
+                            : `远程桌面证书阶段：${cert.certPhase || 'none'}，连接阶段：${cert.connectionPhase || 'idle'}`,
+                    };
+                }
+                if (!tabId && !snapshot) {
+                    return {
+                        cert: null,
+                        targets: [],
+                        clientActionRequired: false,
+                        clientCaptureRequired: false,
+                        message: '当前没有可查询的 RDP/VNC 会话；请先 connection_open_v1 打开连接。',
+                    };
+                }
+                const targetTabId = tabId || String(snapshot?.tabId || '');
+                return {
+                    cert,
+                    targets: candidates.slice(0, 5).map((item) => remoteDesktopTools.publicCertState(item)),
+                    clientActionRequired: true,
+                    clientAction: { action: 'remote_desktop_cert_status', tabId: targetTabId, connectionId },
+                    clientCaptureRequired: true,
+                    clientCapture: {
+                        type: 'remote_desktop_cert_status_v1',
+                        tabId: targetTabId,
+                        connectionId,
+                        requireLive: true,
+                        vision: false,
+                    },
+                    tabId: targetTabId,
+                    message: '需要前端实时读取 RDP 证书对话框与连接阶段',
+                };
+            });
+        case 'remote_desktop_cert_decide_v1':
+            return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
+                const raw = Array.isArray(ctx.context?.remoteDesktopSnapshots) ? ctx.context.remoteDesktopSnapshots : [];
+                const tabId = String(args.tabId || '').trim();
+                const snapshot = raw.find((item) => String(item.tabId || '') === tabId) || null;
+                const before = snapshot ? remoteDesktopTools.publicCertState(snapshot) : null;
+                if (before && !before.pending && String(args.decision || '') === 'accept') {
+                    return {
+                        ok: false,
+                        decided: false,
+                        before,
+                        clientActionRequired: false,
+                        clientCaptureRequired: false,
+                        message: `当前 certPhase=${before.certPhase || 'none'}，没有待接受的证书对话框`,
+                    };
+                }
+                if (args.expectedFingerprint && before?.fingerprint && String(before.fingerprint) !== String(args.expectedFingerprint)) {
+                    const error = new Error('证书 fingerprint 与 expectedFingerprint 不一致，请重新 remote_desktop_cert_status_v1');
+                    error.code = 'cert_fingerprint_mismatch';
+                    error.retryable = true;
+                    throw error;
+                }
+                const clientAction = remoteDesktopTools.clientCertDecideAction(args);
+                return {
+                    before,
+                    clientActionRequired: true,
+                    clientAction,
+                    clientCaptureRequired: true,
+                    clientCapture: {
+                        type: 'remote_desktop_cert_decide_v1',
+                        tabId,
+                        action: clientAction,
+                        decision: clientAction.decision,
+                        remember: clientAction.remember === true,
+                        expectedFingerprint: clientAction.expectedFingerprint || '',
+                        vision: false,
+                    },
+                    tabId,
+                    message: '需要前端执行证书对话框决策并返回最新 certPhase',
+                };
             });
         case 'workspace_list_v1': {
             if (!deps.sessionFs) throw new Error('会话工作区服务不可用');
@@ -3713,7 +4229,7 @@ async function executeAiToolForHost(toolName, args = {}, hostCtx = {}) {
     const deps = hostCtx.deps;
     if (!deps) throw new Error('executeAiToolForHost: deps required');
     if (hostCtx?.context?.activeSurface?.kind === 'remote-desktop' && String(toolName || '').startsWith('browser_')) {
-        const err = new Error('当前目标是 RDP/VNC 远程桌面；请使用 remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1');
+        const err = new Error('当前目标是 RDP/VNC 远程桌面；请使用 remote_desktop_cert_status_v1 / remote_desktop_cert_decide_v1 / remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1');
         err.code = 'wrong_surface';
         err.status = 409;
         throw err;
@@ -3768,7 +4284,7 @@ function listToolCatalog(ai = {}) {
 function isReadOnlyToolName(name) {
     const n = String(name || '');
     if (!n) return false;
-    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|memory_search|web_search|fetch_url|secret_ref_list_v1|agent_list_v1|agent_get_v1|agent_file_list_v1|agent_file_stat_v1|agent_file_read_text_v1|terminal_read_v1|terminal_wait_v1|terminal_read|remote_desktop_capture_v1|remote_desktop_verify_v1|remote_read|browser_inspect_v1|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
+    if (/^(capability_search|list_|connection_list_v1|connection_get_v1|connection_test_v1|proxy_list_v1|proxy_get_v1|ssh_key_list_v1|ssh_key_get_v1|ssh_key_validate_v1|jump_host_list_v1|jump_host_get_v1|snippet_list_v1|snippet_get_v1|note_list|note_search|note_get|note_groups_v1|memory_search|web_search|fetch_url|secret_ref_list_v1|agent_list_v1|agent_get_v1|agent_file_list_v1|agent_file_stat_v1|agent_file_read_text_v1|terminal_read_v1|terminal_wait_v1|terminal_read|remote_desktop_capture_v1|remote_desktop_verify_v1|remote_desktop_cert_status_v1|sftp_list_v1|sftp_stat_v1|docker_status_v1|docker_ps_v1|docker_images_v1|docker_logs_v1|docker_mirrors_get_v1|resource_share_list_v1|resource_shared_with_me_v1|remote_read|browser_inspect_v1|browser_screenshot|browser_text|browser_wait|connection_test|plan_task|get_env)/.test(n)) return true;
     if (n.endsWith('_list') || n.endsWith('_search') || n.endsWith('_get') || n.endsWith('_status')) return true;
     return false;
 }

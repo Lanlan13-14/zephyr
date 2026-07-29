@@ -94,10 +94,18 @@ const PLAYBOOKS = Object.freeze([
     Object.freeze({
         id: 'remote-desktop-closed-loop-v1',
         title: 'RDP/VNC captureId 闭环操作',
-        capabilityIds: Object.freeze(['remotedesktop.capture', 'remotedesktop.action', 'remotedesktop.verify']),
-        triggers: Object.freeze(['RDP', 'VNC', '远程桌面', '截图', '点击桌面', 'captureId']),
+        capabilityIds: Object.freeze([
+            'remotedesktop.capture',
+            'remotedesktop.action',
+            'remotedesktop.verify',
+            'remotedesktop.cert_status',
+            'remotedesktop.cert_decide',
+        ]),
+        triggers: Object.freeze(['RDP', 'VNC', '远程桌面', '截图', '点击桌面', 'captureId', '证书', '未验证证书']),
         prompt: `# RDP/VNC captureId 闭环操作 Playbook
 
+- 打开 RDP 后若连接停在证书对话框，先 remote_desktop_cert_status_v1。证书框是 Zephyr HTML 层，不在远程桌面 framebuffer 上；禁止用 remote_desktop_mouse 点「连接」。
+- certPhase=pending 时：向用户复述 host/subject/fingerprint/reasons，再 remote_desktop_cert_decide_v1({ decision:'accept'|'reject', remember? })。接受未受信证书属于安全决策，必须等确认。accept 后等待 connectionPhase=connected 再 capture。
 - 每次观察先 remote_desktop_capture_v1；客户端渲染器会上传最新 RDP/VNC 帧，Runtime 会把它作为真正图片输入交给视觉模型。不得对 RDP/VNC 使用终端文本 Tool。
 - 模型必须先观察图片，再用 remote_desktop_action_v1；必须绑定同一 tabId 的最新 captureId，鼠标坐标基于该截图像素。stale_capture 时只允许重新截图并重试同一动作一次；第二次仍 stale_capture 必须停止并报告，禁止继续循环。
 - 动作后重新调用 remote_desktop_capture_v1 取得新视觉帧，再用 actionId、beforeCaptureId、afterCaptureId 调用 remote_desktop_verify_v1；只有 verified=true 才能继续判断业务目标。

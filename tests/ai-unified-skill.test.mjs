@@ -88,5 +88,5 @@ test('settings persist only user Skills and UI renders built-in Skill read-only'
 });
 
 test('guidance version advances for existing installations', () => {
-    assert.equal(defaults.DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, 16);
+    assert.equal(defaults.DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, 18);
 });

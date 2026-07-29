@@ -24,7 +24,7 @@ test('guidance v16 removes legacy built-ins and preserves user Skills', () => {
       ],
     } });
     const migrated = storage.ensureAiGuidanceDefaults();
-    assert.equal(migrated.guidanceVersion, 16);
+    assert.equal(migrated.guidanceVersion, 18);
     assert.deepEqual(migrated.skills.map((item) => item.id), ['custom-user-skill']);
   } finally {
     storage.close();

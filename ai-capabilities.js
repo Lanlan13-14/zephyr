@@ -225,8 +225,44 @@ const CAPABILITIES = defineCapabilities([
         toolIds: ['agent_file_list_v1', 'agent_file_stat_v1', 'agent_file_read_text_v1'], keywords: ['Agent', '文件', '目录', '读取', '手机'], playbookId: 'agent-device-files-v1',
     },
     {
-        id: 'agent.files_write', title: 'Create rename or delete paths on a writable Agent share', mode: 'ai', state: 'implemented', risk: 'R3', confirmation: 'always',
-        toolIds: ['agent_file_mkdir_v1', 'agent_file_rename_v1', 'agent_file_delete_v1'], keywords: ['Agent', '文件', '创建目录', '重命名', '删除'], playbookId: 'agent-device-files-v1',
+        id: 'agent.files_write', title: 'Create rename delete or write text on a writable Agent share', mode: 'ai', state: 'implemented', risk: 'R3', confirmation: 'always',
+        toolIds: ['agent_file_mkdir_v1', 'agent_file_rename_v1', 'agent_file_delete_v1', 'agent_file_write_text_v1'], keywords: ['Agent', '文件', '创建目录', '重命名', '删除', '写入'], playbookId: 'agent-device-files-v1',
+    },
+    {
+        id: 'sftp.list', title: 'List SFTP directory entries on SSH hosts', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['sftp_list_v1', 'sftp_stat_v1'], keywords: ['SFTP', '目录', '文件列表', 'stat', 'ls'], playbookId: 'ssh-file-operations-v1',
+    },
+    {
+        id: 'sftp.write', title: 'Create rename delete or chmod SFTP paths', mode: 'ai', state: 'implemented', risk: 'R3', confirmation: 'always',
+        toolIds: ['sftp_mkdir_v1', 'sftp_rename_v1', 'sftp_delete_v1', 'sftp_chmod_v1'], keywords: ['SFTP', 'mkdir', 'rename', 'chmod', '删除文件'], playbookId: 'ssh-file-operations-v1',
+    },
+    {
+        id: 'docker.inspect', title: 'Inspect Docker status containers images and logs', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['docker_status_v1', 'docker_ps_v1', 'docker_images_v1', 'docker_logs_v1', 'docker_mirrors_get_v1'], keywords: ['Docker', '容器', '镜像', '日志', 'mirrors'], playbookId: 'docker-operations-v1',
+    },
+    {
+        id: 'docker.mutate', title: 'Start stop restart pull or configure Docker', mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['docker_container_action_v1', 'docker_pull_v1', 'docker_mirrors_set_v1'], keywords: ['Docker', '启动', '停止', 'pull', '镜像源'], playbookId: 'docker-operations-v1',
+    },
+    {
+        id: 'resource.share_read', title: 'List resource ACL shares', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['resource_share_list_v1', 'resource_shared_with_me_v1'], keywords: ['共享', 'ACL', '权限', 'share', '列表'], playbookId: 'resource-share-v1',
+    },
+    {
+        id: 'resource.share', title: 'Update or delete resource ACL shares', mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['resource_share_put_v1', 'resource_share_delete_v1'], keywords: ['共享', 'ACL', '授权', '撤销共享'], playbookId: 'resource-share-v1',
+    },
+    {
+        id: 'notes.groups_read', title: 'List note groups', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['note_groups_v1'], keywords: ['笔记分组', 'groups'], playbookId: 'notes-management-v1',
+    },
+    {
+        id: 'notes.groups', title: 'Manage note groups and trash lifecycle', mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['note_group_rename_v1', 'note_group_delete_v1', 'note_restore_v1', 'note_purge_v1', 'note_bulk_v1'], keywords: ['笔记分组', '回收站', '恢复', '彻底删除'], playbookId: 'notes-management-v1',
+    },
+    {
+        id: 'env.write', title: 'Create update or delete AI environment variables', mode: 'ai', state: 'implemented', risk: 'R3', confirmation: 'always',
+        toolIds: ['env_set_v1', 'env_delete_v1'], keywords: ['环境变量', 'env set', '删除环境变量'], playbookId: 'environment-variables-v1',
     },
     {
         id: 'remotedesktop.capture', title: 'Capture RDP or VNC frame with a stable capture id', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
@@ -239,6 +275,14 @@ const CAPABILITIES = defineCapabilities([
     {
         id: 'remotedesktop.verify', title: 'Verify RDP or VNC action with before and after captures', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
         toolIds: ['remote_desktop_verify_v1'], keywords: ['RDP', 'VNC', '验证', '闭环', 'captureId'], playbookId: 'remote-desktop-closed-loop-v1',
+    },
+    {
+        id: 'remotedesktop.cert_status', title: 'Inspect RDP certificate dialog and connection phase', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',
+        toolIds: ['remote_desktop_cert_status_v1'], keywords: ['RDP', '证书', 'certificate', '未验证', '信任', 'cert pending', 'fingerprint'], playbookId: 'remote-desktop-closed-loop-v1',
+    },
+    {
+        id: 'remotedesktop.cert_decide', title: 'Accept or reject RDP untrusted certificate dialog', mode: 'ai', state: 'implemented', risk: 'R2', confirmation: 'always',
+        toolIds: ['remote_desktop_cert_decide_v1'], keywords: ['RDP', '证书', '接受证书', '忽略提示', '信任证书', 'certificate accept'], playbookId: 'remote-desktop-closed-loop-v1',
     },
     {
         id: 'browser.inspect', title: 'Inspect page elements and issue versioned element references', mode: 'ai', state: 'implemented', risk: 'R0', confirmation: 'never',

@@ -717,7 +717,20 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]any{"ok": false, "error": "capture_mismatch"})
 		return
 	}
-	if body.CaptureAssetID == "" || !s.captures.Owns(body.CaptureAssetID, userID, runID, body.CallID) {
+	toolName := ""
+	if st.Capture != nil {
+		toolName = st.Capture.Name
+	}
+	if toolName == "" && st.WaitingIndex >= 0 && st.WaitingIndex < len(st.PendingCalls) {
+		toolName = st.PendingCalls[st.WaitingIndex].Name
+	}
+	needsVisionAsset := strings.HasPrefix(toolName, "remote_desktop_") && !strings.Contains(toolName, "_cert_")
+	if needsVisionAsset {
+		if body.CaptureAssetID == "" || !s.captures.Owns(body.CaptureAssetID, userID, runID, body.CallID) {
+			writeJSON(w, 409, map[string]any{"ok": false, "error": "capture_asset_mismatch"})
+			return
+		}
+	} else if body.CaptureAssetID != "" && !s.captures.Owns(body.CaptureAssetID, userID, runID, body.CallID) {
 		writeJSON(w, 409, map[string]any{"ok": false, "error": "capture_asset_mismatch"})
 		return
 	}

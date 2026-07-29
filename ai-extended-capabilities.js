@@ -20,6 +20,7 @@ const EXTENDED_CAPABILITIES = Object.freeze([
     cap('memory.write', 'Save scoped AI memory', 'R2', 'always', ['memory_save'], 'memory-management-v1'),
     cap('env.list', 'List AI environment variable metadata', 'R0', 'never', ['list_env_vars'], 'environment-variables-v1'),
     cap('env.get', 'Read one enabled AI environment variable', 'R4', 'always', ['get_env_var'], 'environment-variables-v1'),
+    cap('env.write', 'Create update or delete AI environment variables', 'R3', 'always', ['env_set_v1', 'env_delete_v1'], 'environment-variables-v1'),
     cap('plan.create', 'Create an AI execution plan', 'R0', 'never', ['plan_task'], 'plan-management-v1'),
     cap('plan.update', 'Update AI plan state', 'R1', 'always', ['plan_update'], 'plan-management-v1'),
     cap('plan.delete', 'Delete an AI plan', 'R3', 'always', ['plan_delete'], 'plan-management-v1'),

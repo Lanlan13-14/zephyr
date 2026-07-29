@@ -11,7 +11,7 @@
  */
 
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
-import { t, initI18n } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
+import { t, initI18n } from './i18n/runtime.js?v=20260729-ai-rdp-cert1';
 import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260720-zft2';
 import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260720-zft2';
 import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260720-zft2';
@@ -67,6 +67,12 @@ let rdpManualDisconnect = false;
 let rdpReconnectTimer = null;
 let rdpReconnectAttempts = 0;
 let rdpReconnecting = false;
+/** AI-visible RDP shell phase (HTML cert dialog is not remote framebuffer). */
+let rdpConnectionPhase = 'idle';
+let rdpCertPhase = 'none';
+let rdpCertDialogInfo = null;
+let rdpCertDialogResolver = null;
+let rdpCertDialogConnectionId = '';
 let lastRemoteClipboard = '';
 let lastSyncedLocalClipboardText = '';
 let clipboardSyncTimer = null;
@@ -161,6 +167,8 @@ window.rdpOnReady = function () {
     connectionFailureReported = false;
     setStatus('connected', t('RDP 已连接'));
     connected = true;
+    rdpConnectionPhase = 'connected';
+    if (rdpCertPhase === 'probing' || rdpCertPhase === 'pending') rdpCertPhase = 'none';
     rdpHaptic('connect');
     rdpReconnectAttempts = 0;
     rdpReconnecting = false;
@@ -232,6 +240,7 @@ window.rdpOnError = function (msg) {
     clearConnectWatchdog();
     stopAgentDriveBridge();
     connected = false;
+    rdpConnectionPhase = 'error';
     if (wasConnected) {
         // Keep the concrete error visible briefly, then fall into the same
         // auto-reconnect path as an unexpected close. Manual disconnect still
@@ -255,6 +264,7 @@ window.rdpOnClose = function () {
     stopAgentDriveBridge();
     const wasConnected = connected;
     connected = false;
+    if (rdpConnectionPhase !== 'error' && rdpCertPhase !== 'rejected') rdpConnectionPhase = 'disconnected';
     if (connectionFailureReported) {
         // rdpOnError already scheduled reconnect if appropriate.
         cleanupAudio();
@@ -449,12 +459,44 @@ async function getRemoteDesktopSnapshotForAi(options = {}) {
         ctx.drawImage(source, 0, 0, width, height);
         const frameAt = Number(frame?.frameAt || Date.now());
         const captureId = [params?.tabId || tabId || 'rdp', frameAt, width, height].map((part) => String(part || 0).replace(/[^A-Za-z0-9_.-]/g, '_')).join(':');
-        return { protocol: 'RDP', tabId: params?.tabId || tabId, connectionId: activeConnectionId || params?.connectionId || '', host: params?.host || '', port: params?.port || 3389, status: statusText?.textContent || '', title: connInfo?.textContent || '', connected, dataUrl: out.toDataURL('image/jpeg', Math.max(0.28, Math.min(0.86, Number(options.quality) || 0.55))), width, height, originalWidth: sourceWidth, originalHeight: sourceHeight, frameAt, captureId, at: Date.now() };
+        return {
+            protocol: 'RDP',
+            tabId: params?.tabId || tabId,
+            connectionId: activeConnectionId || params?.connectionId || '',
+            host: params?.host || '',
+            port: params?.port || 3389,
+            status: statusText?.textContent || '',
+            title: connInfo?.textContent || '',
+            connected,
+            connectionPhase: rdpConnectionPhase || (connected ? 'connected' : 'idle'),
+            certPhase: rdpCertPhase || 'none',
+            certDialog: getRdpCertDialogStateForAi(),
+            dataUrl: out.toDataURL('image/jpeg', Math.max(0.28, Math.min(0.86, Number(options.quality) || 0.55))),
+            width,
+            height,
+            originalWidth: sourceWidth,
+            originalHeight: sourceHeight,
+            frameAt,
+            captureId,
+            at: Date.now(),
+        };
     } catch (err) {
-        return { protocol: 'RDP', tabId: params?.tabId || tabId, connectionId: activeConnectionId || params?.connectionId || '', connected, error: err.message || String(err), at: Date.now(), frameAt: 0 };
+        return {
+            protocol: 'RDP',
+            tabId: params?.tabId || tabId,
+            connectionId: activeConnectionId || params?.connectionId || '',
+            connected,
+            connectionPhase: rdpConnectionPhase || (connected ? 'connected' : 'error'),
+            certPhase: rdpCertPhase || 'none',
+            certDialog: getRdpCertDialogStateForAi(),
+            error: err.message || String(err),
+            at: Date.now(),
+            frameAt: 0,
+        };
     }
 }
 window.__zephyrGetRemoteDesktopSnapshot = getRemoteDesktopSnapshotForAi;
+window.__zephyrGetRemoteDesktopCertState = getRdpCertDialogStateForAi;
 
 /* ═══════════════════════════════════════════════════════════════════════
  * MICROPHONE INPUT (AUDIN) — browser getUserMedia → Go WASM → RDP server
@@ -773,46 +815,129 @@ function trustCert(connectionId) {
     } catch {}
 }
 
+function getRdpCertDialogStateForAi() {
+    const info = rdpCertDialogInfo || {};
+    return {
+        protocol: 'RDP',
+        tabId: params?.tabId || tabId || '',
+        connectionId: rdpCertDialogConnectionId || activeConnectionId || params?.connectionId || '',
+        connectionPhase: rdpConnectionPhase || (connected ? 'connected' : 'idle'),
+        certPhase: rdpCertPhase || 'none',
+        pending: rdpCertPhase === 'pending',
+        trusted: rdpCertPhase === 'trusted' || rdpCertPhase === 'accepted' || (!!rdpCertDialogConnectionId && isCertTrusted(rdpCertDialogConnectionId)),
+        connected: !!connected,
+        status: statusText?.textContent || '',
+        host: info.host || params?.host || '',
+        port: Number(info.port || params?.port || 3389) || 3389,
+        subject: info.subject || '',
+        issuer: info.issuer || '',
+        fingerprint: info.fingerprint || '',
+        validFrom: info.validFrom || '',
+        validTo: info.validTo || '',
+        authorized: info.authorized === true,
+        reasons: Array.isArray(info.reasons) ? info.reasons.slice(0, 12) : [],
+        at: Date.now(),
+    };
+}
+
+function settleCertDialog(accepted, { remember = false, source = 'ui' } = {}) {
+    const dialog = document.getElementById('rdpCertDialog');
+    const rememberEl = document.getElementById('certRemember');
+    if (rememberEl && source === 'ai' && remember) rememberEl.checked = true;
+    if (accepted && (remember || rememberEl?.checked) && rdpCertDialogConnectionId) {
+        trustCert(rdpCertDialogConnectionId);
+        rdpCertPhase = 'trusted';
+    } else if (accepted) {
+        rdpCertPhase = 'accepted';
+    } else {
+        rdpCertPhase = 'rejected';
+    }
+    rdpConnectionPhase = accepted ? 'connecting' : 'disconnected';
+    dialog?.classList.remove('visible');
+    const resolver = rdpCertDialogResolver;
+    rdpCertDialogResolver = null;
+    if (typeof resolver === 'function') resolver(!!accepted);
+    return getRdpCertDialogStateForAi();
+}
+
+function decideCertDialogFromAi(args = {}) {
+    if (rdpCertPhase !== 'pending' || typeof rdpCertDialogResolver !== 'function') {
+        const error = new Error(t('当前没有待决策的 RDP 证书对话框'));
+        error.code = 'cert_dialog_not_pending';
+        throw error;
+    }
+    const expected = String(args.expectedFingerprint || '').trim();
+    if (expected && rdpCertDialogInfo?.fingerprint && expected !== String(rdpCertDialogInfo.fingerprint)) {
+        const error = new Error(t('证书 fingerprint 与 expectedFingerprint 不一致'));
+        error.code = 'cert_fingerprint_mismatch';
+        throw error;
+    }
+    const decision = String(args.decision || '') === 'reject' ? 'reject' : 'accept';
+    return settleCertDialog(decision === 'accept', { remember: args.remember === true, source: 'ai' });
+}
+
 function showCertDialog(certInfo, connectionId) {
     return new Promise((resolve) => {
         const dialog = document.getElementById('rdpCertDialog');
-        if (!dialog) { resolve(true); return; }
+        if (!dialog) {
+            rdpCertPhase = 'none';
+            rdpConnectionPhase = 'connecting';
+            resolve(true);
+            return;
+        }
 
-        /* Populate content */
+        rdpCertDialogInfo = {
+            host: certInfo.host || params?.host || '',
+            port: certInfo.port || params?.port || 3389,
+            subject: certInfo.subject || certInfo.host || '',
+            issuer: certInfo.issuer || '',
+            fingerprint: certInfo.fingerprint || '',
+            validFrom: certInfo.validFrom || '',
+            validTo: certInfo.validTo || '',
+            authorized: certInfo.authorized === true,
+            hasCert: certInfo.hasCert !== false,
+            reasons: Array.isArray(certInfo.reasons) && certInfo.reasons.length
+                ? certInfo.reasons
+                : [t('不是来自受信任的认证机构')],
+        };
+        rdpCertDialogConnectionId = String(connectionId || params?.connectionId || '');
+        rdpCertPhase = 'pending';
+        rdpConnectionPhase = 'cert_pending';
+        rdpCertDialogResolver = resolve;
+
         const hostEl = document.getElementById('certHost');
         const subjectEl = document.getElementById('certSubject');
         const reasonsEl = document.getElementById('certReasons');
         const rememberEl = document.getElementById('certRemember');
 
-        if (hostEl) hostEl.textContent = (certInfo.host || '') + ':' + (certInfo.port || 3389);
-        if (subjectEl) subjectEl.textContent = certInfo.subject || certInfo.host || t('(未知)');
+        if (hostEl) hostEl.textContent = (rdpCertDialogInfo.host || '') + ':' + (rdpCertDialogInfo.port || 3389);
+        if (subjectEl) subjectEl.textContent = rdpCertDialogInfo.subject || rdpCertDialogInfo.host || t('(未知)');
         if (reasonsEl) {
-            const reasons = (certInfo.reasons && certInfo.reasons.length) ? certInfo.reasons : [t('不是来自受信任的认证机构')];
-            reasonsEl.innerHTML = reasons.map((r) => '<li>' + escapeHtml(r) + '</li>').join('');
+            reasonsEl.innerHTML = rdpCertDialogInfo.reasons.map((r) => '<li>' + escapeHtml(r) + '</li>').join('');
         }
         if (rememberEl) rememberEl.checked = false;
 
-        /* Show dialog */
         dialog.classList.add('visible');
 
-        /* Create fresh buttons to guarantee no stale listeners */
         const actionsDiv = dialog.querySelector('.rdp-cert-actions');
-        if (!actionsDiv) { resolve(true); return; }
+        if (!actionsDiv) {
+            rdpCertPhase = 'none';
+            rdpConnectionPhase = 'connecting';
+            rdpCertDialogResolver = null;
+            resolve(true);
+            return;
+        }
         actionsDiv.innerHTML = `<button class="rdp-cert-btn rdp-cert-btn-cancel" id="certCancelBtn">${t('取消')}</button><button class="rdp-cert-btn rdp-cert-btn-connect" id="certConnectBtn">${t('连接')}</button>`;
         const cancelBtn = document.getElementById('certCancelBtn');
         const connectBtn = document.getElementById('certConnectBtn');
 
-        let settled = false;
         cancelBtn.onclick = () => {
-            if (settled) return; settled = true;
-            dialog.classList.remove('visible');
-            resolve(false);
+            if (rdpCertPhase !== 'pending') return;
+            settleCertDialog(false, { source: 'ui' });
         };
         connectBtn.onclick = () => {
-            if (settled) return; settled = true;
-            if (rememberEl?.checked) trustCert(connectionId);
-            dialog.classList.remove('visible');
-            resolve(true);
+            if (rdpCertPhase !== 'pending') return;
+            settleCertDialog(true, { remember: !!rememberEl?.checked, source: 'ui' });
         };
     });
 }
@@ -1016,7 +1141,13 @@ async function connect() {
     rdpAgentStorageEnabled = !!storageEnabled;
 
     /* ── Certificate verification dialog ── */
+    if (connectionId && isCertTrusted(connectionId)) {
+        rdpCertPhase = 'trusted';
+        rdpCertDialogConnectionId = connectionId;
+    }
     if (connectionId && !isCertTrusted(connectionId)) {
+        rdpConnectionPhase = 'probing_cert';
+        rdpCertPhase = 'probing';
         setStatus('connecting', t('正在验证远程证书...'));
         try {
             const certResp = await fetch('/api/rdp/probe-cert', {
@@ -1028,14 +1159,19 @@ async function connect() {
             if (certInfo.hasCert && !certInfo.authorized) {
                 const accepted = await showCertDialog(certInfo, connectionId);
                 if (!accepted) {
+                    rdpConnectionPhase = 'disconnected';
+                    rdpCertPhase = 'rejected';
                     setStatus('disconnected', t('已取消连接'));
                     stopAgentDriveBridge();
                     cleanupAudio();
-                                    notifyParentCloseRequest('cert-rejected');
+                    notifyParentCloseRequest('cert-rejected');
                     return;
                 }
+            } else {
+                rdpCertPhase = certInfo.authorized ? 'none' : rdpCertPhase;
             }
         } catch (err) {
+            rdpCertPhase = 'error';
             console.warn('[rdp-wasm] cert probe failed, continuing anyway:', err.message);
         }
     }
@@ -1044,6 +1180,7 @@ async function connect() {
     reportRdpEvent('connect-start', { host, port });
     lastConnectError = '';
     connectionFailureReported = false;
+    rdpConnectionPhase = 'connecting';
     setStatus('connecting', t('正在连接 RDP...'));
 
     /* rdpConnect is exposed by Go WASM.
@@ -1068,6 +1205,7 @@ function disconnect() {
     rdpReconnecting = false;
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     connected = false;
+    rdpConnectionPhase = 'disconnected';
     try { rdpDisconnect(); } catch {}
     stopAgentDriveBridge();
     cleanupAudio();
@@ -2456,6 +2594,32 @@ function initFilePanel() {
 window.addEventListener('message', (e) => {
     if (!e.data || e.data.source !== 'zephyr-app') return;
     const msg = e.data;
+    if (msg.type === 'ai-remote-desktop-cert-status') {
+        const actionId = String(msg.actionId || '');
+        try {
+            const cert = getRdpCertDialogStateForAi();
+            notifyParentAiActionResult(actionId, { ok: true, control: 'cert_status', result: { cert }, cert });
+        } catch (err) {
+            notifyParentAiActionResult(actionId, { ok: false, control: 'cert_status', error: err.message || String(err), code: err.code || '' });
+        }
+        return;
+    }
+    if (msg.type === 'ai-remote-desktop-cert-decide') {
+        const actionId = String(msg.actionId || '');
+        try {
+            const cert = decideCertDialogFromAi(msg);
+            notifyParentAiActionResult(actionId, {
+                ok: true,
+                control: 'cert_decide',
+                result: { cert, decision: String(msg.decision || '') === 'reject' ? 'reject' : 'accept', remember: msg.remember === true },
+                cert,
+            });
+        } catch (err) {
+            console.warn('[rdp-client]', 'AI cert decide failed', { error: err.message });
+            notifyParentAiActionResult(actionId, { ok: false, control: 'cert_decide', error: err.message || t('AI 证书决策失败'), code: err.code || '' });
+        }
+        return;
+    }
     if (msg.type === 'ai-remote-desktop-action') {
         const actionId = String(msg.actionId || '');
         performAiRemoteDesktopAction(msg).then((result = {}) => {
