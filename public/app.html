@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-<link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260729-ai-notes-switches1">
-    <link rel="modulepreload" href="app.js?v=20260729-ai-notes-switches1">
-    <link rel="modulepreload" href="theme-runtime.js?v=20260729-ai-notes-switches1">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260729-ai-notes-switches1">
-    <link rel="stylesheet" href="style.css?v=20260729-ai-notes-switches1">
+<link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260729-terminal-dock-motion1">
+    <link rel="modulepreload" href="app.js?v=20260729-terminal-dock-motion1">
+    <link rel="modulepreload" href="theme-runtime.js?v=20260729-terminal-dock-motion1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260729-terminal-dock-motion1">
+    <link rel="stylesheet" href="style.css?v=20260729-terminal-dock-motion1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -879,8 +879,6 @@
         </main>
     </div>
 
-    <div id="connectionTransitionLayer" class="connection-transition-layer" aria-hidden="true"></div>
-
     <div class="ai-agent-panel file-manager" id="aiAgentPanel" style="display:none;" aria-hidden="true">
         <div class="panel-drag-handle" data-ai-agent-drag title="拖动移动窗口" data-i18n-title="拖动移动窗口">
             <button class="panel-traffic-btn" data-ai-agent-layout title="窗口布局" data-i18n-title="窗口布局"><span></span></button>
@@ -1002,8 +1000,11 @@
 
 
 
+    <div id="connectionModalScrim" aria-hidden="true"></div>
+    <div id="connectionMotionSurface" aria-hidden="true"></div>
     <div class="modal-backdrop" id="connectionModal" aria-hidden="true">
         <form class="connection-modal" id="connectionForm" data-mode="create">
+            <div id="connectionModalInner" class="connection-modal-inner">
             <div class="modal-head"><h2 id="modalTitle" data-i18n="添加服务器">添加服务器</h2><button type="button" class="icon-btn" id="closeModalBtn">✕</button></div>
             <div class="form-group connection-share-group connection-ephemeral-group force-hidden" id="connectionEphemeralGroup">
                 <label data-i18n="连接选项">连接选项</label>
@@ -1098,6 +1099,7 @@
                 <button class="btn btn-primary connection-action-normal" type="submit" id="saveConnectionBtn" data-i18n="保存">保存</button>
                 <button type="button" class="btn btn-primary connection-action-transient force-hidden" id="connectTransientBtn" data-i18n="连接">连接</button>
             </div>
+            </div>
         </form>
     </div>
 
@@ -1169,7 +1171,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-<script src="app.js?v=20260729-ai-notes-switches1" type="module"></script>
+<script src="app.js?v=20260729-terminal-dock-motion1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

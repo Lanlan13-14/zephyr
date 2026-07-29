@@ -140,7 +140,9 @@ test('production UI wires approved signature APIs without demo-only recipes', ()
   assert.match(appJs, /Motion\.press\s*\(/);
   assert.doesNotMatch(appJs, /Motion\.islandExpand\s*\(/);
   assert.doesNotMatch(appJs, /Motion\.playStagger\s*\(/);
-  assert.doesNotMatch(appJs, /Motion\.dockMagnify/);
+  // 终端会话 Dock 已接演示页 §9：dockMagnifyPointer / dockMagnifyReset
+  assert.match(appJs, /Motion\.dockMagnifyPointer/);
+  assert.match(appJs, /Motion\.dockMagnifyReset/);
   assert.doesNotMatch(appJs, /Motion\.clipInset/);
   // CSS fallbacks and non-migrated surfaces remain available.
   assert.match(styleCss, /@keyframes\s+floatingPanelOpenFromButton/);

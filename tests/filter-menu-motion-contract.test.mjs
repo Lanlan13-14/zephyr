@@ -36,13 +36,16 @@ test('motion opt-in set covers dashboard filters + settings/appearance/terminal 
         'colorSchemeSelect', 'themeModeSelect', 'terminalBgSource', 'terminalBgFit',
         'terminalMaxWindows', 'terminalSmartbarOrder', 'terminalShortcutPlatform',
         'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
-        // 设置 → 语言 与 代理弹窗 → 类型（2026-07-26 起与首页筛选同一套动画）
+        // 连接编辑器与图五首页筛选使用同一套菜单动画
+        'connProtocol', 'connSshKey', 'connEncoding', 'connRoute',
+        'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
+        // 设置 → 语言 与 代理弹窗 → 类型
         'languageSelect', 'proxyType',
     ];
     assert.deepEqual(ids.sort(), expected.sort());
-    // Connection modal selects must NOT opt in.
-    assert.ok(!ids.includes('connProtocol'));
-    assert.ok(!ids.includes('connSshKey'));
+    for (const id of ['connProtocol', 'connSshKey', 'connEncoding', 'connRoute']) {
+        assert.ok(ids.includes(id), `connection select ${id} must use dashboard filter motion`);
+    }
 });
 
 test('open uses Motion.morph with mac preset from trigger rect (demo §3 parity)', () => {

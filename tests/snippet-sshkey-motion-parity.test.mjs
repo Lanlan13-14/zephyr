@@ -83,7 +83,7 @@ test('CSS is motion-only for three modals — no scale/fade fallback', () => {
     assert.doesNotMatch(styleCss, /#proxyModal:not\(\.proxy1\)/);
     assert.doesNotMatch(styleCss, /#sshKeyModal \.connection-modal \{ transform: scale/);
     // generic fade must exclude the three motion cards
-    assert.match(styleCss, /\.connection-modal:not\(\.ssh-key-modal\):not\(\.snippet-modal\):not\(\.proxy-modal\)/);
+    assert.match(styleCss, /\.connection-modal:not\(#connectionForm\):not\(\.ssh-key-modal\):not\(\.snippet-modal\):not\(\.proxy-modal\)/);
 });
 
 test('JS open/close never uses connection-home-blur for three modals', () => {

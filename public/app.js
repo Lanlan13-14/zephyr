@@ -59,7 +59,8 @@ let connectionModalSource = 'dashboard';
 let transientToken = '';
 let transientHasCredential = false;
 let connectionModalTrigger = null;
-let connectionModalOriginRect = null;
+let connectionModalCycle = 0;
+const connectionModalMotion = { phase: 'closed', originRect: null, targetRect: null, trigger: null };
 let proxyModalTrigger = null;
 let proxyModalCycle = 0;
 let sshKeyModalTrigger = null;
@@ -1233,7 +1234,7 @@ const TOGGLE_SELECT_IDS = [
     // Proxy modal
     'proxyType',
     // Connection modal / RDP (when opened)
-    'connProtocol', 'connSshKey', 'connRoute',
+    'connProtocol', 'connSshKey', 'connEncoding', 'connRoute',
     'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
 ];
 let _toggleSelectDocBound = false;
@@ -1251,6 +1252,9 @@ const MOTION_FILTER_SELECT_IDS = [
     'colorSchemeSelect', 'themeModeSelect', 'terminalBgSource', 'terminalBgFit',
     // 设置 → 终端工作台
     'terminalMaxWindows', 'terminalSmartbarOrder', 'terminalShortcutPlatform',
+    // 连接弹窗：协议 / SSH 密钥 / Telnet 编码 / 代理选择与首页筛选同款菜单动画
+    'connProtocol', 'connSshKey', 'connEncoding', 'connRoute',
+    'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
     // AI 助理 / 供应商弹窗（与 CAPTCHA 完全同一套 open/close 动画）
     'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
     // 设置 → 语言 与 代理弹窗 → 类型（与首页筛选同一套 FLIP 展开/收起）
@@ -1747,184 +1751,6 @@ function setConnectionTestLatency(text = '', state = '') {
     el.textContent = text;
     el.dataset.state = state;
 }
-function viewportMetrics() {
-    const vv = window.visualViewport;
-    return {
-        width: Math.round(vv?.width || window.innerWidth || document.documentElement.clientWidth || 1),
-        height: Math.round(vv?.height || window.innerHeight || document.documentElement.clientHeight || 1),
-        left: Math.round(vv?.offsetLeft || 0),
-        top: Math.round(vv?.offsetTop || 0)
-    };
-}
-function connectionTransitionTargetRect(trigger = connectionModalTrigger) {
-    const source = trigger?.isConnected ? trigger : $('#addConnectionBtn');
-    const rect = source?.getBoundingClientRect?.();
-    if (rect?.width && rect?.height) return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, source };
-    const viewport = viewportMetrics();
-    return { left: viewport.width - 86, top: 82, width: 74, height: 74, source: null };
-}
-function nextAnimationFrame(fn) {
-    requestAnimationFrame(() => requestAnimationFrame(fn));
-}
-function getConnectionTransitionShadowLayer() {
-    let shadow = $('#connectionTransitionShadow');
-    if (!shadow) {
-        shadow = document.createElement('div');
-        shadow.id = 'connectionTransitionShadow';
-        shadow.className = 'connection-transition-shadow';
-        shadow.style.position = 'fixed';
-        shadow.style.inset = 'auto';
-        shadow.style.background = 'transparent';
-        shadow.style.border = '0';
-        shadow.style.boxSizing = 'border-box';
-        shadow.style.pointerEvents = 'none';
-        shadow.style.contain = 'layout paint style';
-        shadow.style.willChange = 'left, top, width, height, border-radius, box-shadow, opacity';
-        document.body.appendChild(shadow);
-    }
-    return shadow;
-}
-function resetConnectionTransitionShadow(shadow = $('#connectionTransitionShadow')) {
-    if (!shadow) return;
-    shadow.style.visibility = 'hidden';
-    shadow.style.transition = 'none';
-    shadow.style.opacity = '0';
-    shadow.style.left = '';
-    shadow.style.top = '';
-    shadow.style.width = '';
-    shadow.style.height = '';
-    shadow.style.borderRadius = '';
-    shadow.style.transform = '';
-}
-function setConnectionLayerRect(layer, rect) {
-    layer.style.left = `${rect.left}px`;
-    layer.style.top = `${rect.top}px`;
-    layer.style.width = `${rect.width}px`;
-    layer.style.height = `${rect.height}px`;
-}
-function syncConnectionLayerVisual(layer, source) {
-    if (!layer || !source?.isConnected) {
-        layer.innerHTML = '';
-        layer.removeAttribute('data-has-source-visual');
-        return;
-    }
-    const style = getComputedStyle(source);
-    const shellBackground = `
-        radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 30%),
-        radial-gradient(circle at 82% 8%, color-mix(in srgb, var(--success) 6%, transparent), transparent 28%),
-        var(--surface)
-    `;
-    layer.innerHTML = `<span class="connection-transition-source-visual">${source.innerHTML}</span>`;
-    layer.dataset.hasSourceVisual = 'true';
-    layer.style.background = shellBackground;
-    layer.style.border = '1px solid color-mix(in srgb, var(--border) 50%, transparent)';
-    layer.style.color = style.color;
-    layer.style.font = style.font;
-    layer.style.letterSpacing = style.letterSpacing;
-    layer.style.textAlign = style.textAlign;
-    layer.style.padding = '0';
-    layer.style.display = 'inline-flex';
-    layer.style.alignItems = 'center';
-    layer.style.justifyContent = 'center';
-    layer.style.gap = style.gap;
-    layer.style.whiteSpace = 'nowrap';
-
-    const visual = layer.querySelector('.connection-transition-source-visual');
-    if (visual) {
-        visual.style.background = style.background;
-        visual.style.border = style.border;
-        visual.style.borderRadius = style.borderRadius;
-        visual.style.color = style.color;
-        visual.style.font = style.font;
-        visual.style.letterSpacing = style.letterSpacing;
-        visual.style.padding = style.padding;
-        visual.style.gap = style.gap;
-    }
-    console.debug('[connection-transition]', 'source visual synced', {
-        sourceRole: source.id === 'addConnectionBtn' ? 'add' : source.matches('[data-edit]') ? 'edit' : 'other',
-        sourceBackground: style.background,
-        shellBackground: 'neutral-surface'
-    });
-}
-function applyConnectionLayerSourceChrome(layer, source, { revealVisual = false } = {}) {
-    if (!layer || !source?.isConnected) return;
-
-    const style = getComputedStyle(source);
-    const background = style.background && style.background !== 'none'
-        ? style.background
-        : style.backgroundColor;
-
-    layer.style.background = background || style.backgroundColor || 'var(--surface)';
-    layer.style.border = style.border || '1px solid color-mix(in srgb, var(--border) 50%, transparent)';
-    layer.style.color = style.color;
-    layer.style.font = style.font;
-    layer.style.letterSpacing = style.letterSpacing;
-    layer.style.textAlign = style.textAlign;
-    layer.style.padding = '0';
-    layer.style.display = 'inline-flex';
-    layer.style.alignItems = 'center';
-    layer.style.justifyContent = 'center';
-    layer.style.gap = style.gap;
-    layer.style.whiteSpace = 'nowrap';
-
-    const visual = layer.querySelector('.connection-transition-source-visual');
-    if (visual) {
-        visual.style.background = style.background;
-        visual.style.border = style.border;
-        visual.style.borderRadius = style.borderRadius;
-        visual.style.color = style.color;
-        visual.style.font = style.font;
-        visual.style.letterSpacing = style.letterSpacing;
-        visual.style.padding = style.padding;
-        visual.style.gap = style.gap;
-        visual.style.width = '100%';
-        visual.style.height = '100%';
-        visual.style.maxWidth = '100%';
-        visual.style.boxSizing = 'border-box';
-        visual.style.display = style.display === 'inline-flex' || style.display === 'flex' ? 'inline-flex' : 'flex';
-        visual.style.alignItems = style.alignItems || 'center';
-        visual.style.justifyContent = style.justifyContent || 'center';
-        visual.style.whiteSpace = 'nowrap';
-        visual.style.opacity = revealVisual ? '1' : '';
-        visual.style.transform = revealVisual ? 'scale(1)' : '';
-        visual.style.transition = revealVisual ? 'opacity 0.12s ease 0.06s, transform 0.18s cubic-bezier(.16,1,.3,1) 0.04s' : '';
-    }
-
-    console.debug('[connection-transition]', 'source chrome applied', {
-        sourceRole: source.id === 'addConnectionBtn' ? 'add' : source.matches('[data-edit]') ? 'edit' : 'other',
-        background,
-        revealVisual
-    });
-}
-function resetConnectionTransitionLayer(layer) {
-    if (!layer) return;
-    layer.style.visibility = 'hidden';
-    layer.style.pointerEvents = 'none';
-    layer.style.transition = 'none';
-    layer.style.transform = '';
-    layer.style.opacity = '';
-    layer.style.borderRadius = '';
-    layer.style.boxShadow = '';
-    layer.style.width = '';
-    layer.style.height = '';
-    layer.style.left = '';
-    layer.style.top = '';
-    layer.style.background = '';
-    layer.style.border = '';
-    layer.style.color = '';
-    layer.style.font = '';
-    layer.style.letterSpacing = '';
-    layer.style.textAlign = '';
-    layer.style.padding = '';
-    layer.style.display = '';
-    layer.style.alignItems = '';
-    layer.style.justifyContent = '';
-    layer.style.gap = '';
-    layer.style.whiteSpace = '';
-    layer.innerHTML = '';
-    layer.removeAttribute('data-has-source-visual');
-    layer.classList.remove('source-visual-hidden', 'expanded-material');
-}
 function isTransientConnectionMode(mode = connectionModalMode) {
     return mode === 'transient' || mode === 'ephemeral';
 }
@@ -2050,102 +1876,166 @@ function prepareConnectionModalForm(conn = null, options = {}) {
     updateProtocolFields({ preservePort: !!conn });
     // Connection/RDP selects: toggle-select so re-tap closes the menu.
     enhanceAllToggleSelects();
-    ['connProtocol', 'connSshKey', 'connRoute', 'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode'].forEach((id) => {
+    ['connProtocol', 'connSshKey', 'connEncoding', 'connRoute', 'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode'].forEach((id) => {
         const el = document.getElementById(id);
         if (el) syncToggleSelectFace(el);
     });
 }
+function connectionScrimSet(open) {
+    motionScrimSet('connectionModalScrim', 'connection1-blurring', open);
+}
+function stableConnectionSourceRect(trigger) {
+    if (!trigger?.isConnected) return null;
+    trigger.classList.remove('connection-pressing');
+    const oldTransition = trigger.style.getPropertyValue('transition');
+    const oldPriority = trigger.style.getPropertyPriority('transition');
+    trigger.style.setProperty('transition', 'none', 'important');
+    void trigger.offsetWidth;
+    const r = trigger.getBoundingClientRect();
+    if (oldTransition) trigger.style.setProperty('transition', oldTransition, oldPriority);
+    else trigger.style.removeProperty('transition');
+    return r.width > 2 && r.height > 2
+        ? { left: r.left, top: r.top, width: r.width, height: r.height }
+        : null;
+}
+function placeConnectionMotionSurface(surface, rect) {
+    if (!surface || !rect) return;
+    surface.style.left = `${rect.left}px`;
+    surface.style.top = `${rect.top}px`;
+    surface.style.width = `${rect.width}px`;
+    surface.style.height = `${rect.height}px`;
+}
+function resetConnectionMotionProxy(Motion, modal, card, surface, trigger) {
+    if (Motion) {
+        try {
+            if (trigger) Motion.restoreSource(trigger);
+            Motion.restoreSources(surface);
+            surface.querySelector?.(':scope > [data-motion-source-visual]')?.remove();
+            Motion.release(surface);
+            Motion.release(card);
+        } catch {}
+    } else if (trigger?.style) {
+        trigger.style.opacity = '';
+        trigger.style.pointerEvents = '';
+        delete trigger.dataset.motionHidden;
+    }
+    surface.style.visibility = 'hidden';
+    surface.style.pointerEvents = 'none';
+    surface.style.transform = '';
+    surface.style.opacity = '';
+    surface.style.borderRadius = '';
+    surface.style.left = '';
+    surface.style.top = '';
+    surface.style.width = '';
+    surface.style.height = '';
+    card.style.visibility = '';
+    card.style.opacity = '';
+    card.style.pointerEvents = '';
+    card.style.position = '';
+    card.style.zIndex = '';
+    card.style.overflow = '';
+    card.style.maxHeight = '';
+    card.style.height = '';
+    modal.classList.remove('show', 'closing', 'opening', 'app-visible', 'connection1');
+    connectionModalMotion.phase = 'closed';
+    connectionModalMotion.originRect = null;
+    connectionModalMotion.targetRect = null;
+    connectionModalMotion.trigger = null;
+}
 function openModal(conn = null, trigger = null, options = {}) {
     const modal = $('#connectionModal');
-    const layer = $('#connectionTransitionLayer');
-    if (!modal || !layer || modal.classList.contains('show')) return;
+    const card = $('#connectionForm');
+    const surface = $('#connectionMotionSurface');
+    if (!modal || !card || !surface || connectionModalMotion.phase === 'open' || connectionModalMotion.phase === 'opening') return;
+    const cycle = ++connectionModalCycle;
+    const source = trigger || $('#addConnectionBtn');
     prepareConnectionModalForm(conn, options);
-    connectionModalTrigger = trigger || connectionTransitionTargetRect().source;
-    window.clearTimeout(openModal._finishTimer);
-    window.clearTimeout(closeModal._timer);
-    window.clearTimeout(closeModal._restoreIconTimer);
-    window.clearTimeout(closeModal._shadowTimer);
-    resetConnectionTransitionShadow();
-    resetConnectionTransitionLayer(layer);
-    modal.classList.remove('closing', 'app-visible');
-    modal.classList.add('show');
-    document.body.classList.add('disable-interaction', 'connection-transition-opening');
+    connectionModalTrigger = source;
+    connectionModalMotion.trigger = source;
+    connectionModalMotion.originRect = stableConnectionSourceRect(source);
+    connectionModalMotion.phase = 'opening';
 
-    const viewport = viewportMetrics();
-    const sourceRect = connectionTransitionTargetRect(connectionModalTrigger);
-    connectionModalOriginRect = { left: sourceRect.left, top: sourceRect.top, width: sourceRect.width, height: sourceRect.height };
-    syncConnectionLayerVisual(layer, sourceRect.source);
-    setConnectionLayerRect(layer, connectionModalOriginRect);
-    layer.style.transition = 'none';
-    layer.style.borderRadius = getComputedStyle(sourceRect.source || connectionModalTrigger || layer).borderRadius || '18px';
-    layer.style.boxShadow = 'none';
-    layer.style.visibility = 'visible';
-    layer.style.pointerEvents = 'auto';
-    connectionModalTrigger?.style?.setProperty('opacity', '0');
+    modal.classList.remove('closing');
+    modal.classList.add('show', 'opening', 'connection1', 'app-visible');
+    modal.setAttribute('aria-hidden', 'false');
+    card.style.visibility = 'hidden';
+    card.style.opacity = '0';
+    card.style.pointerEvents = 'none';
+    void card.offsetWidth;
+    const target = card.getBoundingClientRect();
+    connectionModalMotion.targetRect = { left: target.left, top: target.top, width: target.width, height: target.height };
+    placeConnectionMotionSurface(surface, connectionModalMotion.targetRect);
+    connectionScrimSet(true);
 
-    void layer.offsetHeight;
-
-    console.debug('[connection-transition]', 'open:init', { mode: editingId ? 'edit' : 'create', connectionId: editingId || '', sourceRect, originRect: connectionModalOriginRect, viewport });
-
-    requestAnimationFrame(() => {
-        document.body.classList.add('connection-home-blur');
-        modal.classList.add('app-visible');
-        layer.classList.add('source-visual-hidden', 'expanded-material');
-        layer.style.transition = `
-            top var(--connection-app-duration) var(--connection-ios-spring),
-            left var(--connection-app-duration) var(--connection-ios-spring),
-            width var(--connection-app-duration) var(--connection-ios-spring),
-            height var(--connection-app-duration) var(--connection-ios-spring),
-            border-radius var(--connection-app-duration) var(--connection-ios-spring)
-        `;
-        layer.style.left = `${viewport.left}px`;
-        layer.style.top = `${viewport.top}px`;
-        layer.style.width = `${viewport.width}px`;
-        layer.style.height = `${viewport.height}px`;
-        layer.style.borderRadius = '0px';
-        layer.style.boxShadow = 'none';
-        console.debug('[connection-transition]', 'open:morph-start', { durationMs: 500 });
+    sshKeyMotion._ensure().then((Motion) => {
+        if (cycle !== connectionModalCycle || connectionModalMotion.phase !== 'opening') return;
+        const origin = connectionModalMotion.originRect;
+        if (!Motion || !origin) {
+            card.style.visibility = 'visible';
+            card.style.opacity = '1';
+            card.style.pointerEvents = 'auto';
+            surface.style.visibility = 'hidden';
+            modal.classList.remove('opening');
+            connectionModalMotion.phase = 'open';
+            return;
+        }
+        try {
+            Motion.stop(surface); Motion.release(surface);
+            Motion.stop(card); Motion.release(card);
+            surface.querySelector?.(':scope > [data-motion-source-visual]')?.remove();
+        } catch {}
+        surface.style.visibility = 'hidden';
+        surface.style.pointerEvents = 'none';
+        card.style.visibility = 'visible';
+        // 内容只做独立 opacity 合成；尽早开放关闭按钮，使 opening 可被 close 反向打断。
+        card.style.pointerEvents = 'auto';
+        Motion.iosAppOpen(surface, source, {
+            contentEl: card,
+            scrim: null,
+            home: null,
+            cloneSource: true,
+            hideSource: true,
+            radiusFrom: sshKeyBtnRadius(source, origin),
+            radiusTo: 22,
+            contentDelay: 0.16,
+            faceDelay: 0.05,
+            faceInDelay: 0.04,
+            shapePreset: 'shape',
+            contentPreset: 'content',
+        }).then((won) => {
+            if (!won || cycle !== connectionModalCycle || connectionModalMotion.phase !== 'opening') return;
+            modal.classList.remove('opening');
+            // 与新建代理完全同源：卡片完整外展，唯一滚动面交给 backdrop。
+            card.style.overflow = 'visible';
+            card.style.maxHeight = 'none';
+            card.style.height = 'auto';
+            card.style.pointerEvents = 'auto';
+            connectionModalMotion.phase = 'open';
+            $('#connName')?.focus({ preventScroll: true });
+        }).catch((err) => console.warn('[connection-motion-proxy] open failed', err));
     });
-
-    openModal._finishTimer = window.setTimeout(() => {
-        document.body.classList.remove('disable-interaction', 'connection-transition-opening');
-        modal.classList.add('app-visible');
-        console.debug('[connection-transition]', 'open:complete', { durationMs: 500 });
-    }, 520);
 }
 function closeModal() {
     const modal = $('#connectionModal');
-    const layer = $('#connectionTransitionLayer');
-    if (!modal?.classList.contains('show') || modal.classList.contains('closing')) return;
-
-    const viewport = viewportMetrics();
-    const currentRect = connectionTransitionTargetRect(connectionModalTrigger);
-    const sourceRect = connectionModalOriginRect || {
-        left: currentRect.left,
-        top: currentRect.top,
-        width: currentRect.width,
-        height: currentRect.height
-    };
-
-    window.clearTimeout(openModal._finishTimer);
-    window.clearTimeout(closeModal._restoreIconTimer);
-    window.clearTimeout(closeModal._timer);
-    window.clearTimeout(closeModal._shadowTimer);
-
+    const card = $('#connectionForm');
+    const surface = $('#connectionMotionSurface');
+    if (!modal?.classList.contains('show') || connectionModalMotion.phase === 'closed' || connectionModalMotion.phase === 'closing') return;
+    const trigger = connectionModalMotion.trigger || connectionModalTrigger;
+    const origin = connectionModalMotion.originRect;
+    const cycle = ++connectionModalCycle;
+    connectionModalMotion.phase = 'closing';
+    modal.classList.remove('opening', 'app-visible');
     modal.classList.add('closing');
-    modal.classList.remove('app-visible');
+    modal.setAttribute('aria-hidden', 'true');
+    card.style.pointerEvents = 'none';
 
-    // Wipe transient credential handles on close (FREEZE plan §5.3.5).
     transientToken = '';
     transientHasCredential = false;
     connectionModalMode = 'create';
     $('#transientToken') && ($('#transientToken').value = '');
-    $('#connectionForm')?.classList.remove('transient-mode');
-    $('#connectionForm')?.setAttribute('data-mode', 'create');
-    if ($('#connEphemeral')) {
-        $('#connEphemeral').checked = false;
-        $('#connEphemeral').disabled = false;
-    }
+    card.classList.remove('transient-mode');
+    card.setAttribute('data-mode', 'create');
+    if ($('#connEphemeral')) { $('#connEphemeral').checked = false; $('#connEphemeral').disabled = false; }
     if ($('#connName')) $('#connName').required = true;
     $('#connectionEphemeralGroup')?.classList.add('force-hidden');
     document.querySelector('#connectionForm .connection-share-group:not(.connection-ephemeral-group)')?.classList.remove('force-hidden');
@@ -2155,132 +2045,44 @@ function closeModal() {
         banner.classList.add('force-hidden');
         banner.innerHTML = `<strong>${t('临时连接')}</strong><span>· ${t('本次参数不会保存到主机库')}</span>`;
     }
-
     setConnectionTestLatency();
+    closeAllToggleSelects();
+    connectionScrimSet(false);
 
-    document.body.classList.add('disable-interaction', 'connection-transition-closing');
-    document.body.classList.remove('connection-transition-opening', 'connection-home-blur');
-    layer.classList.remove('expanded-material');
-
-    const sourceEl = currentRect.source || connectionModalTrigger;
-    const sourceStyle = sourceEl?.isConnected ? getComputedStyle(sourceEl) : null;
-    const sourceBorderRadius = sourceStyle?.borderRadius || getComputedStyle(connectionModalTrigger || layer).borderRadius || '18px';
-    const shadowLayer = getConnectionTransitionShadowLayer();
-
-    applyConnectionLayerSourceChrome(layer, sourceEl, { revealVisual: true });
-
-    layer.style.visibility = 'visible';
-    layer.style.pointerEvents = 'auto';
-    layer.style.transition = 'none';
-    layer.style.left = `${viewport.left}px`;
-    layer.style.top = `${viewport.top}px`;
-    layer.style.width = `${viewport.width}px`;
-    layer.style.height = `${viewport.height}px`;
-    layer.style.borderRadius = '0px';
-    layer.style.boxShadow = 'none';
-    layer.classList.remove('source-visual-hidden');
-
-    shadowLayer.style.visibility = 'visible';
-    shadowLayer.style.pointerEvents = 'none';
-    shadowLayer.style.transition = 'none';
-    shadowLayer.style.left = `${viewport.left}px`;
-    shadowLayer.style.top = `${viewport.top}px`;
-    shadowLayer.style.width = `${viewport.width}px`;
-    shadowLayer.style.height = `${viewport.height}px`;
-    shadowLayer.style.borderRadius = '0px';
-    shadowLayer.style.boxShadow = 'var(--connection-shadow-active)';
-    shadowLayer.style.opacity = '1';
-    shadowLayer.style.zIndex = '99';
-
-    void layer.offsetHeight;
-    void shadowLayer.offsetHeight;
-
-    console.debug('[connection-transition]', 'close:init', {
-        connectionId: editingId || '',
-        viewport,
-        sourceRect,
-        currentRect
-    });
-
-    requestAnimationFrame(() => {
-        layer.style.transition = `
-            top var(--connection-app-duration) var(--connection-ios-spring),
-            left var(--connection-app-duration) var(--connection-ios-spring),
-            width var(--connection-app-duration) var(--connection-ios-spring),
-            height var(--connection-app-duration) var(--connection-ios-spring),
-            border-radius var(--connection-app-duration) var(--connection-ios-spring)
-        `;
-
-        setConnectionLayerRect(layer, sourceRect);
-        layer.style.borderRadius = sourceBorderRadius;
-
-        shadowLayer.style.transition = `
-            left var(--connection-app-duration) var(--connection-ios-spring),
-            top var(--connection-app-duration) var(--connection-ios-spring),
-            width var(--connection-app-duration) var(--connection-ios-spring),
-            height var(--connection-app-duration) var(--connection-ios-spring),
-            border-radius var(--connection-app-duration) var(--connection-ios-spring),
-            opacity 0.72s cubic-bezier(.16, 1, .3, 1),
-            box-shadow 0.72s cubic-bezier(.16, 1, .3, 1)
-        `;
-        setConnectionLayerRect(shadowLayer, sourceRect);
-        shadowLayer.style.borderRadius = sourceBorderRadius;
-        shadowLayer.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)';
-        shadowLayer.style.opacity = '0';
-
-        console.debug('[connection-transition]', 'close:morph-start', { durationMs: 500 });
-    });
-
-    let done = false;
-
-    const restoreTriggerWithoutTransition = () => {
-        const trigger = connectionModalTrigger;
-        if (!trigger?.style) return;
-
-        const oldTransition = trigger.style.transition;
-        trigger.style.transition = 'none';
-        trigger.style.removeProperty('opacity');
-
-        void trigger.offsetHeight;
-
-        requestAnimationFrame(() => {
-            if (oldTransition) {
-                trigger.style.transition = oldTransition;
-            } else {
-                trigger.style.removeProperty('transition');
-            }
-        });
-    };
-
+    const Motion = sshKeyMotion.engine;
     const finish = () => {
-        if (done) return;
-        done = true;
-
-        layer.removeEventListener('transitionend', onEnd);
-        modal.classList.remove('show', 'closing', 'app-visible');
-        resetConnectionTransitionLayer(layer);
-
-        restoreTriggerWithoutTransition();
-        closeModal._shadowTimer = window.setTimeout(() => resetConnectionTransitionShadow(shadowLayer), 180);
-
-        window.setTimeout(() => {
-            document.body.classList.remove(
-                'disable-interaction',
-                'connection-transition-closing',
-                'connection-home-blur'
-            );
-        }, 80);
-        connectionModalOriginRect = null;
-
-        console.debug('[connection-transition]', 'close:complete', { durationMs: 500 });
+        if (cycle !== connectionModalCycle) return;
+        if (Motion) {
+            try { if (trigger) Motion.restoreSource(trigger); Motion.restoreSources(surface); } catch {}
+        }
+        void trigger?.offsetHeight;
+        resetConnectionMotionProxy(Motion, modal, card, surface, trigger);
+        connectionModalTrigger = null;
+        requestAnimationFrame(() => trigger?.focus?.({ preventScroll: true }));
     };
-
-    const onEnd = (ev) => {
-        if (ev.propertyName === 'top') finish();
-    };
-
-    layer.addEventListener('transitionend', onEnd);
-    closeModal._timer = window.setTimeout(finish, 560);
+    if (!Motion || !origin) { finish(); return; }
+    const closed = Motion.iosAppClose(surface, origin, {
+        contentEl: card,
+        scrim: null,
+        home: null,
+        cloneSource: true,
+        hideSource: false,
+        restoreSource: false,
+        hideSurface: false,
+        clearSourceVisual: false,
+        radiusTo: sshKeyBtnRadius(trigger, origin),
+        faceInDelay: 0.04,
+        shapePreset: 'shapeClose',
+        contentPreset: 'contentClose',
+    });
+    const cap = new Promise((resolve) => window.setTimeout(resolve, 900));
+    Promise.race([closed, cap]).then((won) => {
+        if (won === false || cycle !== connectionModalCycle) return;
+        requestAnimationFrame(finish);
+    }).catch((err) => {
+        console.warn('[connection-motion-proxy] close failed', err);
+        finish();
+    });
 }
 function updateRdpTouchSettingsUi() {
     const mode = $('#rdpTouchMode')?.value === 'relative' ? 'relative' : 'direct';
@@ -4384,8 +4186,22 @@ function reorderTerminalOrder(dragId, targetId) {
     stack.splice(to, 0, id);
     openOrderStack = order === 'new-first' ? stack.reverse() : stack;
 }
+const DOCK_MAGNIFY_SELECTOR = '.smartbar-session, .smartbar-add';
+function isVerticalSmartbarDock() {
+    return isCompactTerminalWorkspace() && document.body.classList.contains('terminal-custom-fullscreen-open');
+}
 function resetDockMagnification(dock = document.querySelector('.smartbar-dock')) {
-    dock?.querySelectorAll('.smartbar-session, .smartbar-add').forEach((item) => {
+    if (!dock) return;
+    // 演示页 §9 同源：Motion.dockMagnifyReset 用 spring 收回，不是瞬间清 CSS 变量。
+    const Motion = sshKeyMotion.engine;
+    if (Motion?.dockMagnifyReset) {
+        Motion.dockMagnifyReset(dock, {
+            itemSelector: DOCK_MAGNIFY_SELECTOR,
+            preset: 'snappy',
+        });
+        return;
+    }
+    dock.querySelectorAll(DOCK_MAGNIFY_SELECTOR).forEach((item) => {
         item.style.removeProperty('--dock-scale');
         item.style.removeProperty('--dock-lift');
         item.style.removeProperty('--dock-shift');
@@ -4395,10 +4211,27 @@ function resetDockMagnification(dock = document.querySelector('.smartbar-dock'))
 }
 function updateDockMagnification(clientX, dock = document.querySelector('.smartbar-dock'), clientY = null) {
     if (!dock) return;
-    const verticalDock = isCompactTerminalWorkspace() && document.body.classList.contains('terminal-custom-fullscreen-open');
+    const verticalDock = isVerticalSmartbarDock();
+    const Motion = sshKeyMotion.engine;
+    // 演示页 Motion.dockMagnifyPointer：五通道弹簧 --dock-scale/lift/shift/rotate/blur
+    if (Motion?.dockMagnifyPointer) {
+        Motion.dockMagnifyPointer(dock, clientX, clientY ?? smartbarDragState?.currentY ?? 0, {
+            itemSelector: DOCK_MAGNIFY_SELECTOR,
+            vertical: verticalDock,
+            influence: verticalDock ? 118 : 142,
+            maxScale: 1.26,
+            maxLift: verticalDock ? 6 : 15,
+            maxShift: verticalDock ? 9 : 8,
+            maxRotate: verticalDock ? 1.1 : 0.7,
+            maxBlur: 0.14,
+            preset: 'dock',
+        });
+        return;
+    }
+    // 引擎未就绪时瞬时回退（与旧生产一致）；空闲预热后走上面弹簧路径。
     const influence = verticalDock ? 118 : 142;
     const pointerCoord = verticalDock ? (clientY ?? smartbarDragState?.currentY ?? 0) : clientX;
-    dock.querySelectorAll('.smartbar-session, .smartbar-add').forEach((item) => {
+    dock.querySelectorAll(DOCK_MAGNIFY_SELECTOR).forEach((item) => {
         const rect = item.getBoundingClientRect();
         const center = verticalDock ? rect.top + rect.height / 2 : rect.left + rect.width / 2;
         const d = Math.abs(pointerCoord - center);
@@ -10185,7 +10018,7 @@ function armMotionModalOpen(Motion, modal, card, inner, trigger, motionClass) {
         inner.style.position = '';
         inner.style.zIndex = '';
     }
-    modal.classList.remove('closing', 'app-visible', 'sshkey1', 'snippet1', 'proxy1', 'aiprovider1');
+    modal.classList.remove('closing', 'app-visible', 'connection1', 'sshkey1', 'snippet1', 'proxy1', 'aiprovider1');
     modal.classList.add('show', motionClass);
     modal.setAttribute('aria-hidden', 'false');
     modal.classList.add('app-visible');
@@ -10623,12 +10456,15 @@ function bindEvents() {
         const dock = e.target.closest?.('.smartbar-dock');
         if (dock) {
             if (e.target.closest?.('[data-smartbar-tab]')) e.preventDefault?.();
+            // 懒加载引擎：首次 hover 前确保 ready，后续 pointermove 全走 dock 弹簧。
+            if (!sshKeyMotion.engine && !sshKeyMotion.failed) sshKeyMotion._ensure().catch(() => {});
             updateDockMagnification(e.clientX, dock, e.clientY);
         }
     }, { passive: false });
     $('#sessionTabs').addEventListener('pointerleave', (e) => {
         resetDockMagnification(e.currentTarget.querySelector('.smartbar-dock'));
     });
+    // dock 指针离开整个 sessionTabs 容器时复位；离开单个 item 不复位（跨 item 连续放大）。
     document.addEventListener('pointerdown', (e) => {
         if (!terminalSmartbarOpen) return;
         if (e.target.closest?.('[data-smartbar-toggle], .mobile-fullscreen-dock-toggle')) return;
@@ -10863,6 +10699,16 @@ function bindEvents() {
         }
         enforceTerminalWorkspaceLimit(activeTerminalTab);
         renderTerminalTabs();
+    });
+    // 连接窗与新建代理同源：点 backdrop / scrim 空白立即反向打断 opening。
+    $('#connectionModal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'connectionModal' && $('#connectionModal')?.classList.contains('show')) closeModal();
+    });
+    $('#connectionModalScrim')?.addEventListener('click', () => {
+        if ($('#connectionModal')?.classList.contains('show')) closeModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && $('#connectionModal')?.classList.contains('show')) closeModal();
     });
     $('#remoteExecForm').addEventListener('submit', remoteExecute); $('#beianForm').addEventListener('submit', saveBeian); $('#proxyForm').addEventListener('submit', saveProxy); $('#addProxyBtn')?.addEventListener('click', (e) => openProxyModal(null, e.currentTarget)); $('#proxyCloseBtn')?.addEventListener('click', closeProxyModal); $('#proxyCancelBtn')?.addEventListener('click', closeProxyModal); $('#proxyModal')?.addEventListener('click', (e) => { if (e.target.id === 'proxyModal') closeProxyModal(); }); $('#proxyModalScrim')?.addEventListener('click', () => { if ($('#proxyModal')?.classList.contains('show')) closeProxyModal(); }); document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#proxyModal')?.classList.contains('show')) closeProxyModal(); }); $('#sshKeyForm').addEventListener('submit', saveSshKey); $('#addSshKeyBtn')?.addEventListener('click', (e) => openSshKeyModal(null, e.currentTarget)); $('#sshKeyCloseBtn')?.addEventListener('click', closeSshKeyModal); $('#sshKeyCancelBtn')?.addEventListener('click', closeSshKeyModal); // 点模糊遮罩关闭（仅 target 为 backdrop 本身，点表单不关）。可打断飞行中动画。
 $('#sshKeyModal')?.addEventListener('click', (e) => { if (e.target.id === 'sshKeyModal') closeSshKeyModal(); });
