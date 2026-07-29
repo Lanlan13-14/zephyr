@@ -26,12 +26,13 @@ class NotesService {
         this.authz = authz;
         this.now = now;
         this.stmtInsert = db.prepare(`INSERT INTO notes
-            (note_id, owner_user_id, title, content, group_path, tags_json, linked_connection_ids_json, sort_order, revision, created_at, updated_at, deleted_at, visibility, share_with_users, share_with_admins)
-            VALUES (@noteId, @ownerUserId, @title, @content, @groupPath, @tagsJson, @linkedJson, @sortOrder, 1, @createdAt, @updatedAt, NULL, @visibility, @shareWithUsers, @shareWithAdmins)`);
+            (note_id, owner_user_id, title, content, group_path, tags_json, linked_connection_ids_json, sort_order, revision, created_at, updated_at, deleted_at, visibility, share_with_users, share_with_admins, allow_ai, allow_ai_read, allow_ai_write)
+            VALUES (@noteId, @ownerUserId, @title, @content, @groupPath, @tagsJson, @linkedJson, @sortOrder, 1, @createdAt, @updatedAt, NULL, @visibility, @shareWithUsers, @shareWithAdmins, @allowAi, @allowAiRead, @allowAiWrite)`);
         this.stmtGet = db.prepare('SELECT * FROM notes WHERE note_id = ?');
         this.stmtUpdate = db.prepare(`UPDATE notes SET title=@title, content=@content, group_path=@groupPath, tags_json=@tagsJson,
             linked_connection_ids_json=@linkedJson, sort_order=@sortOrder, revision=@revision, updated_at=@updatedAt,
-            visibility=@visibility, share_with_users=@shareWithUsers, share_with_admins=@shareWithAdmins
+            visibility=@visibility, share_with_users=@shareWithUsers, share_with_admins=@shareWithAdmins,
+            allow_ai=@allowAi, allow_ai_read=@allowAiRead, allow_ai_write=@allowAiWrite
             WHERE note_id=@noteId AND revision=@expectedRevision AND deleted_at IS NULL`);
         this.stmtSoftDelete = db.prepare('UPDATE notes SET deleted_at = ?, updated_at = ? WHERE note_id = ? AND deleted_at IS NULL');
         this.stmtRestore = db.prepare('UPDATE notes SET deleted_at = NULL, updated_at = ?, revision = revision + 1 WHERE note_id = ? AND deleted_at IS NOT NULL');
@@ -60,6 +61,10 @@ class NotesService {
             deletedAt: row.deleted_at ? Number(row.deleted_at) : null,
             shareWithUsers: !!row.share_with_users,
             shareWithAdmins: !!row.share_with_admins,
+            allowAiRead: !!(row.allow_ai_read || row.allow_ai),
+            allowAiWrite: !!row.allow_ai_write,
+            // Legacy combined flag: true if either read or write is allowed.
+            allowAi: !!(row.allow_ai_read || row.allow_ai_write || row.allow_ai),
             visibility: row.visibility || 'private',
         };
         if (includeContent) out.content = row.content || '';
@@ -90,7 +95,39 @@ class NotesService {
         return this.authz.can(user, CAP.EDIT, 'note', row.note_id, { ownerUserId: row.owner_user_id });
     }
 
-    create(user, { title, content = '', groupPath = '', tags = [], linkedConnectionIds = [], shareWithUsers = false, shareWithAdmins = false } = {}) {
+    _aiFlags(row = {}) {
+        const read = !!(row.allow_ai_read || row.allow_ai);
+        const write = !!(row.allow_ai_write || 0);
+        return { read, write };
+    }
+
+    /** AI may only touch notes the owner explicitly allowed (read and/or write). */
+    assertAiAccess(user, noteId, { write = false } = {}) {
+        const row = this.stmtGet.get(String(noteId || ''));
+        if (!row || row.deleted_at) throw new HttpError(404, 'resource_not_found_or_inaccessible', '笔记不存在或无权访问');
+        if (write && !this._canWrite(user, row)) throw new HttpError(403, 'forbidden_resource_edit', '当前账号没有编辑此笔记的权限');
+        if (!write && !this._canRead(user, row)) throw new HttpError(404, 'resource_not_found_or_inaccessible', '笔记不存在或无权访问');
+        const flags = this._aiFlags(row);
+        if (write && !flags.write) {
+            throw new HttpError(403, 'note_ai_write_disabled', '该笔记未允许 AI 编辑；请在笔记共享设置中开启「允许 AI 编辑」');
+        }
+        if (!write && !flags.read) {
+            throw new HttpError(403, 'note_ai_read_disabled', '该笔记未允许 AI 读取；请在笔记共享设置中开启「允许 AI 读取」');
+        }
+        return this._row(row, { includeContent: true });
+    }
+
+    listForAi(user, options = {}) {
+        const result = this.list(user, options);
+        const notes = (result.notes || []).filter((note) => note.allowAiRead === true);
+        return { ...result, notes, total: notes.length };
+    }
+
+    create(user, {
+        title, content = '', groupPath = '', tags = [], linkedConnectionIds = [],
+        shareWithUsers = false, shareWithAdmins = false,
+        allowAi, allowAiRead, allowAiWrite,
+    } = {}) {
         title = String(title || '').trim() || '未命名笔记';
         content = String(content || '');
         groupPath = String(groupPath || '').replace(/\.\./g, '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
@@ -101,6 +138,15 @@ class NotesService {
         const noteId = crypto.randomUUID();
         const shareWithUsersVal = shareWithUsers ? 1 : 0;
         const shareWithAdminsVal = shareWithAdmins ? 1 : 0;
+        // allowAi is a legacy alias that sets both when specific flags are omitted.
+        let allowAiReadVal = allowAiRead !== undefined ? (allowAiRead ? 1 : 0)
+            : (allowAi !== undefined ? (allowAi ? 1 : 0) : 0);
+        let allowAiWriteVal = allowAiWrite !== undefined ? (allowAiWrite ? 1 : 0)
+            : (allowAi !== undefined ? (allowAi ? 1 : 0) : 0);
+        // Write implies read so AI can verify after edit; no-read forces no-write.
+        if (allowAiWriteVal) allowAiReadVal = 1;
+        if (!allowAiReadVal) allowAiWriteVal = 0;
+        const allowAiVal = (allowAiReadVal || allowAiWriteVal) ? 1 : 0;
         this.stmtInsert.run({
             noteId,
             ownerUserId: user.userId,
@@ -115,8 +161,14 @@ class NotesService {
             visibility: shareWithUsersVal ? 'shared' : shareWithAdminsVal ? 'admin' : 'private',
             shareWithUsers: shareWithUsersVal,
             shareWithAdmins: shareWithAdminsVal,
+            allowAi: allowAiVal,
+            allowAiRead: allowAiReadVal,
+            allowAiWrite: allowAiWriteVal,
         });
-        this.authz.audit({ actorUserId: user.userId, resourceType: 'note', resourceId: noteId, action: 'note.create', outcome: 'success', metadata: { title } });
+        this.authz.audit({
+            actorUserId: user.userId, resourceType: 'note', resourceId: noteId, action: 'note.create', outcome: 'success',
+            metadata: { title, allowAiRead: !!allowAiReadVal, allowAiWrite: !!allowAiWriteVal },
+        });
         return this.get(user, noteId);
     }
 
@@ -136,6 +188,15 @@ class NotesService {
         if (!Number.isInteger(expectedRevision)) throw new HttpError(400, 'revision_required', '更新必须携带 expectedRevision');
         const shareWithUsers = patch.shareWithUsers !== undefined ? (patch.shareWithUsers ? 1 : 0) : (row.share_with_users || 0);
         const shareWithAdmins = patch.shareWithAdmins !== undefined ? (patch.shareWithAdmins ? 1 : 0) : (row.share_with_admins || 0);
+        const prevFlags = this._aiFlags(row);
+        let allowAiRead = patch.allowAiRead !== undefined ? (patch.allowAiRead ? 1 : 0)
+            : (patch.allowAi !== undefined ? (patch.allowAi ? 1 : 0) : (prevFlags.read ? 1 : 0));
+        let allowAiWrite = patch.allowAiWrite !== undefined ? (patch.allowAiWrite ? 1 : 0)
+            : (patch.allowAi !== undefined ? (patch.allowAi ? 1 : 0) : (prevFlags.write ? 1 : 0));
+        // Write implies read; turning off read also turns off write.
+        if (allowAiWrite && !allowAiRead) allowAiRead = 1;
+        if (!allowAiRead) allowAiWrite = 0;
+        const allowAi = (allowAiRead || allowAiWrite) ? 1 : 0;
         const next = {
             noteId: row.note_id,
             title: patch.title !== undefined ? String(patch.title).trim() || '未命名笔记' : row.title,
@@ -152,6 +213,9 @@ class NotesService {
             visibility: shareWithUsers ? 'shared' : shareWithAdmins ? 'admin' : 'private',
             shareWithUsers,
             shareWithAdmins,
+            allowAi,
+            allowAiRead,
+            allowAiWrite,
         };
         this._assertSize(next);
         const result = this.stmtUpdate.run({

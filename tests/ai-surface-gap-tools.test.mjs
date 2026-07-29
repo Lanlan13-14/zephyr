@@ -63,8 +63,8 @@ test('intent routing hits sftp and docker structured tools', () => {
   assert.ok(docker.some((item) => item.name === 'docker_ps_v1'));
 });
 
-test('guidance version is 18 for full surface gap release', () => {
-  assert.equal(defaults.DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, 18);
+test('guidance version is 19 for full surface gap release', () => {
+  assert.equal(defaults.DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, 19);
   assert.ok(capabilities.CAPABILITIES.some((item) => item.id === 'sftp.list'));
   assert.ok(capabilities.CAPABILITIES.some((item) => item.id === 'docker.mutate'));
   assert.ok(capabilities.CAPABILITIES.some((item) => item.id === 'resource.share_read'));

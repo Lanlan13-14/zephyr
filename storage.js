@@ -475,6 +475,15 @@ function init({ hashPassword }) {
     addColumnIfMissing('notes', 'visibility', "TEXT NOT NULL DEFAULT 'private'");
     addColumnIfMissing('notes', 'share_with_users', 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing('notes', 'share_with_admins', 'INTEGER NOT NULL DEFAULT 0');
+    // Per-note AI access (opt-in). Split read/write; legacy allow_ai is migrated once.
+    addColumnIfMissing('notes', 'allow_ai', 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing('notes', 'allow_ai_read', 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing('notes', 'allow_ai_write', 'INTEGER NOT NULL DEFAULT 0');
+    try {
+        // One-time copy from legacy allow_ai → read/write when new cols are still zeroed.
+        db.prepare(`UPDATE notes SET allow_ai_read = 1, allow_ai_write = 1
+            WHERE allow_ai = 1 AND (allow_ai_read = 0 AND allow_ai_write = 0)`).run();
+    } catch (_) {}
     addColumnIfMissing('connections', 'jumpHostIds', "TEXT DEFAULT '[]'");
     addColumnIfMissing('connections', 'sshKeyId', 'TEXT');
     addColumnIfMissing('connections', 'rdpSoundMode', "TEXT DEFAULT 'local'");

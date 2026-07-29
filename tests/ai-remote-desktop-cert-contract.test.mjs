@@ -169,5 +169,5 @@ test('frontend and runtime support non-vision cert client capture', () => {
   const playbook = PLAYBOOKS.find((item) => item.id === 'remote-desktop-closed-loop-v1');
   assert.match(playbook.prompt, /remote_desktop_cert_status_v1/);
   assert.match(playbook.prompt, /remote_desktop_cert_decide_v1/);
-  assert.equal(defaults.DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, 18);
+  assert.equal(defaults.DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, 19);
 });

@@ -227,6 +227,14 @@ function registerAiHostRoutes(app, deps) {
                 ? { userId: full.userId || full.id, role: full.role || (full.isSuperAdmin ? 'admin' : 'user'), ...full }
                 : user;
 
+            if (String(toolName || '').startsWith('note_') && deps.userSettingsService) {
+                try {
+                    const effective = deps.userSettingsService.effective(actor);
+                    if (!effective?.notes?.enabled) {
+                        return res.status(403).json({ ok: false, error: '当前用户未启用笔记功能', code: 'notes_disabled' });
+                    }
+                } catch (_) {}
+            }
             const result = await executePlatformTool(toolName, args || {}, {
                 user: actor,
                 context: context || {},
@@ -251,11 +259,22 @@ function listPlatformToolCatalog(deps, context = {}) {
     // Lazy require to avoid circular init
     const agent = require('./ai-agent-service');
     // Prefer exported catalog if present; else static minimal set
-    const tools = typeof agent.listToolCatalog === 'function'
+    let tools = typeof agent.listToolCatalog === 'function'
         ? agent.listToolCatalog(deps.storage?.getSettings?.().ai || {})
         : STATIC_PLATFORM_CATALOG;
     if (context?.activeSurface?.kind === 'remote-desktop') {
-        return tools.filter((tool) => !String(tool?.name || '').startsWith('browser_'));
+        tools = tools.filter((tool) => !String(tool?.name || '').startsWith('browser_'));
+    }
+    // Runtime catalog must honor per-user notes.enabled, same as Legacy Chat.
+    const userId = String(context?.userId || context?.actorUserId || '').trim();
+    if (userId && deps.userSettingsService && typeof deps.userSettingsService.effective === 'function') {
+        try {
+            const user = deps.storage?.getUserById?.(userId) || { userId };
+            const effective = deps.userSettingsService.effective(user);
+            if (!effective?.notes?.enabled) {
+                tools = tools.filter((tool) => !String(tool?.name || '').startsWith('note_'));
+            }
+        } catch (_) {}
     }
     return tools;
 }

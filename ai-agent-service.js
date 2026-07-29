@@ -746,13 +746,13 @@ function toolDefinitions(ai = {}) {
     // Note tools (FREEZE plan §6.5 / §10): AI searches first, reads on demand,
     // never auto-injects all note content into context.
     if (p.notesRead !== false) {
-        tools.push({ type: 'function', function: { name: 'note_list', description: '列出当前用户可读的笔记。返回标题、分组、标签、更新时间和摘要（前 200 字），不返回全文。先搜索再按需 note_get 读取正文。', parameters: { type: 'object', properties: { group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' }, offset: { type: 'number' }, trash: { type: 'boolean' } } } } });
-        tools.push({ type: 'function', function: { name: 'note_search', description: '按关键词搜索当前用户可读的笔记标题、正文和标签。返回匹配笔记的摘要，不返回全文。', parameters: { type: 'object', properties: { query: { type: 'string' }, group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] } } });
-        tools.push({ type: 'function', function: { name: 'note_get', description: '读取一条有权限笔记的完整内容（标题、正文、标签、分组、关联连接）。需要 noteId；用 note_list 或 note_search 找到 ID。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
+        tools.push({ type: 'function', function: { name: 'note_list', description: '列出当前用户允许 AI 读取（allowAiRead=true）的笔记。返回标题、分组、标签、更新时间和摘要（前 200 字），不返回全文。先搜索再按需 note_get 读取正文。', parameters: { type: 'object', properties: { group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' }, offset: { type: 'number' }, trash: { type: 'boolean' } } } } });
+        tools.push({ type: 'function', function: { name: 'note_search', description: '按关键词搜索当前用户允许 AI 读取（allowAiRead=true）的笔记标题、正文和标签。返回匹配笔记的摘要，不返回全文。', parameters: { type: 'object', properties: { query: { type: 'string' }, group: { type: 'string' }, tag: { type: 'string' }, connectionId: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] } } });
+        tools.push({ type: 'function', function: { name: 'note_get', description: '读取一条 allowAiRead=true 且有权限的笔记全文。需要 noteId；用 note_list 或 note_search 找到 ID。未开启 AI 读取的笔记会拒绝。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
     }
     if (p.notesWrite !== false) {
-        tools.push({ type: 'function', function: { name: 'note_create', description: '为当前用户创建一条新笔记。标题、正文、标签、分组均可选；可关联连接 ID。写操作需要确认。', parameters: { type: 'object', properties: { title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } } }, required: ['title'] } } });
-        tools.push({ type: 'function', function: { name: 'note_update', description: '修改当前用户拥有的笔记。需要 noteId 和 expectedRevision；未传字段保持不变。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' }, title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } }, expectedRevision: { type: 'number' } }, required: ['noteId'] } } });
+        tools.push({ type: 'function', function: { name: 'note_create', description: '为当前用户创建一条新笔记。默认 allowAiRead/allowAiWrite=true 以便 AI 可继续读写；隐私笔记可关掉。标题、正文、标签、分组均可选。写操作需要确认。', parameters: { type: 'object', properties: { title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } }, allowAiRead: { type: 'boolean' }, allowAiWrite: { type: 'boolean' }, allowAi: { type: 'boolean', description: '兼容字段：同时设置读取与编辑' } }, required: ['title'] } } });
+        tools.push({ type: 'function', function: { name: 'note_update', description: '修改当前用户拥有且 allowAiWrite=true 的笔记。需要 noteId 和 expectedRevision；可改 allowAiRead/allowAiWrite。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' }, title: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, group: { type: 'string' }, connectionIds: { type: 'array', items: { type: 'string' } }, allowAiRead: { type: 'boolean' }, allowAiWrite: { type: 'boolean' }, allowAi: { type: 'boolean' }, expectedRevision: { type: 'number' } }, required: ['noteId'] } } });
         tools.push({ type: 'function', function: { name: 'note_delete', description: '删除当前用户拥有的笔记（软删除，移入回收站）。写操作需要确认。', parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] } } });
         tools.push({ type: 'function', function: { name: 'note_groups_v1', description: '列出笔记分组及数量。', parameters: CANONICAL_TOOL_SCHEMAS.note_groups_v1 } });
         tools.push({ type: 'function', function: { name: 'note_group_rename_v1', description: '重命名笔记分组路径；需要确认。', parameters: CANONICAL_TOOL_SCHEMAS.note_group_rename_v1 } });
@@ -2494,33 +2494,36 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
         case 'note_list': {
             if (p.notesRead === false) throw new Error('笔记工具未开启');
             if (!deps.notesService) throw new Error('笔记服务未配置');
-            const result = deps.notesService.list(ctx.user, {
+            const result = deps.notesService.listForAi(ctx.user, {
                 group: args.group, tag: args.tag, connectionId: args.connectionId,
                 limit: args.limit, offset: args.offset, trash: !!args.trash,
             });
             return { notes: (result.notes || []).map((n) => ({
                 noteId: n.noteId, title: n.title, groupPath: n.groupPath,
                 tags: n.tags || [], linkedConnectionIds: n.linkedConnectionIds || [],
-                updatedAt: n.updatedAt, summary: String(n.content || '').slice(0, 200),
+                allowAiRead: true, allowAiWrite: !!n.allowAiWrite, allowAi: true,
+                updatedAt: n.updatedAt,
+                summary: String(n.content || n.preview || '').slice(0, 200),
             })) };
         }
         case 'note_search': {
             if (p.notesRead === false) throw new Error('笔记工具未开启');
             if (!deps.notesService) throw new Error('笔记服务未配置');
-            const result = deps.notesService.list(ctx.user, {
+            const result = deps.notesService.listForAi(ctx.user, {
                 q: String(args.query || ''), group: args.group, tag: args.tag,
                 connectionId: args.connectionId, limit: args.limit || 20,
             });
             return { notes: (result.notes || []).map((n) => ({
                 noteId: n.noteId, title: n.title, groupPath: n.groupPath,
-                tags: n.tags || [], updatedAt: n.updatedAt,
-                summary: String(n.content || '').slice(0, 200),
+                tags: n.tags || [], allowAiRead: true, allowAiWrite: !!n.allowAiWrite, allowAi: true,
+                updatedAt: n.updatedAt,
+                summary: String(n.content || n.preview || '').slice(0, 200),
             })) };
         }
         case 'note_get': {
             if (p.notesRead === false) throw new Error('笔记工具未开启');
             if (!deps.notesService) throw new Error('笔记服务未配置');
-            const note = deps.notesService.get(ctx.user, String(args.noteId || ''));
+            const note = deps.notesService.assertAiAccess(ctx.user, String(args.noteId || ''), { write: false });
             return { note };
         }
         case 'note_create':
@@ -2533,29 +2536,36 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                     tags: Array.isArray(args.tags) ? args.tags.map(String).filter(Boolean) : [],
                     groupPath: String(args.group || ''),
                     linkedConnectionIds: Array.isArray(args.connectionIds) ? args.connectionIds.map(String).filter(Boolean) : [],
+                    // AI-created notes default to read+write so the model can continue the task.
+                    allowAiRead: args.allowAiRead !== undefined ? args.allowAiRead !== false : (args.allowAi !== false),
+                    allowAiWrite: args.allowAiWrite !== undefined ? args.allowAiWrite !== false : (args.allowAi !== false),
                 });
                 deps.addActivity?.(`AI 创建笔记：${note.title}`, ctx.user?.userId);
-                return { note: { noteId: note.noteId, title: note.title, revision: note.revision } };
+                return { note: { noteId: note.noteId, title: note.title, revision: note.revision, allowAiRead: !!note.allowAiRead, allowAiWrite: !!note.allowAiWrite, allowAi: !!note.allowAi } };
             }, deps);
         case 'note_update':
             if (p.notesWrite === false) throw new Error('笔记工具未开启');
             if (!deps.notesService) throw new Error('笔记服务未配置');
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
+                deps.notesService.assertAiAccess(ctx.user, String(args.noteId || ''), { write: true });
                 const note = deps.notesService.update(ctx.user, String(args.noteId || ''), {
                     title: args.title !== undefined ? String(args.title).slice(0, 200) : undefined,
                     content: args.content !== undefined ? String(args.content).slice(0, 100000) : undefined,
                     tags: Array.isArray(args.tags) ? args.tags.map(String).filter(Boolean) : undefined,
                     groupPath: args.group !== undefined ? String(args.group) : undefined,
                     linkedConnectionIds: Array.isArray(args.connectionIds) ? args.connectionIds.map(String).filter(Boolean) : undefined,
+                    allowAiRead: args.allowAiRead !== undefined ? args.allowAiRead === true : (args.allowAi !== undefined ? args.allowAi === true : undefined),
+                    allowAiWrite: args.allowAiWrite !== undefined ? args.allowAiWrite === true : (args.allowAi !== undefined ? args.allowAi === true : undefined),
                     expectedRevision: args.expectedRevision,
                 });
                 deps.addActivity?.(`AI 修改笔记：${note.title}`, ctx.user?.userId);
-                return { note: { noteId: note.noteId, title: note.title, revision: note.revision } };
+                return { note: { noteId: note.noteId, title: note.title, revision: note.revision, allowAiRead: !!note.allowAiRead, allowAiWrite: !!note.allowAiWrite, allowAi: !!note.allowAi } };
             }, deps);
         case 'note_delete':
             if (p.notesWrite === false) throw new Error('笔记工具未开启');
             if (!deps.notesService) throw new Error('笔记服务未配置');
             return maybeRequireConfirmation(toolName, args, ctx, async () => {
+                deps.notesService.assertAiAccess(ctx.user, String(args.noteId || ''), { write: true });
                 deps.notesService.delete(ctx.user, String(args.noteId || ''));
                 deps.addActivity?.(`AI 删除笔记：${args.noteId}`, ctx.user?.userId);
                 return { deleted: true, noteId: args.noteId };
@@ -2586,14 +2596,21 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 if (p.notesWrite === false) throw new Error('笔记工具未开启');
                 if (!deps.notesService) throw new Error('笔记服务未配置');
+                // restore itself is owner-scoped; require allowAi on the trash note first.
+                const row = deps.notesService.stmtGet.get(String(args.noteId || ''));
+                if (!row || row.owner_user_id !== ctx.user.userId) throw new Error('笔记不存在或无权访问');
+                if (!(row.allow_ai_write || row.allow_ai)) throw Object.assign(new Error('该笔记未允许 AI 编辑'), { code: 'note_ai_write_disabled', status: 403 });
                 const note = deps.notesService.restore(ctx.user, String(args.noteId || ''));
                 deps.addActivity?.(`AI 恢复笔记：${note.noteId}`, ctx.user?.userId);
-                return { note: { noteId: note.noteId, title: note.title, revision: note.revision } };
+                return { note: { noteId: note.noteId, title: note.title, revision: note.revision, allowAiRead: !!note.allowAiRead, allowAiWrite: !!note.allowAiWrite, allowAi: !!note.allowAi } };
             });
         case 'note_purge_v1':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 if (p.notesWrite === false) throw new Error('笔记工具未开启');
                 if (!deps.notesService) throw new Error('笔记服务未配置');
+                const row = deps.notesService.stmtGet.get(String(args.noteId || ''));
+                if (!row || row.owner_user_id !== ctx.user.userId) throw new Error('笔记不存在或无权访问');
+                if (!(row.allow_ai_write || row.allow_ai)) throw Object.assign(new Error('该笔记未允许 AI 编辑'), { code: 'note_ai_write_disabled', status: 403 });
                 deps.notesService.purge(ctx.user, String(args.noteId || ''));
                 deps.addActivity?.(`AI 彻底删除笔记：${args.noteId}`, ctx.user?.userId);
                 return { purged: true, noteId: args.noteId };

@@ -1,6 +1,6 @@
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
-import { createNotesController } from './notes.js?v=20260720-notes-select1';
+import { createNotesController } from './notes.js?v=20260729-ai-notes-switches1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
 import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
 import { localizeActivityMessage } from './activity-i18n.js?v=20260728-ai-handle-only-drag1';

@@ -502,6 +502,9 @@ export function createNotesController({
             const shared = n.shareWithUsers || n.shareWithAdmins || n.visibility === 'shared'
                 ? `<span class="notes-chip">${t('共享')}</span>`
                 : '';
+            const aiChip = (n.allowAiWrite || n.allowAiRead || n.allowAi)
+                ? `<span class="notes-chip notes-chip-accent" title="${n.allowAiWrite ? t('允许 AI 读取与编辑') : t('允许 AI 读取')}">AI${n.allowAiWrite ? '' : t('读')}</span>`
+                : '';
             const delay = prefersReducedMotion() ? 0 : Math.min(i, 12) * 18;
             const checked = state.selectedIds.has(n.noteId);
             const active = n.noteId === state.selectedId && !state.selectMode;
@@ -516,7 +519,7 @@ export function createNotesController({
                     </div>
                     <div class="notes-list-meta">
                         <time datetime="${escapeHtml(String(n.updatedAt || ''))}" title="${escapeHtml(formatAbsoluteTime(n.updatedAt))}">${escapeHtml(formatRelativeTime(n.updatedAt))}</time>
-                        <div class="notes-list-chips">${tags}${connChip}${shared}${dirtyBadge}</div>
+                        <div class="notes-list-chips">${tags}${connChip}${shared}${aiChip}${dirtyBadge}</div>
                     </div>
                 </button>
             </div>`;
@@ -730,6 +733,9 @@ export function createNotesController({
                     revision: data.note.revision,
                     shareWithUsers: data.note.shareWithUsers,
                     shareWithAdmins: data.note.shareWithAdmins,
+                    allowAi: data.note.allowAi,
+                    allowAiRead: data.note.allowAiRead,
+                    allowAiWrite: data.note.allowAiWrite,
                     visibility: data.note.visibility,
                 };
                 renderList();
@@ -1052,6 +1058,10 @@ export function createNotesController({
             return;
         }
         let modal = document.getElementById('notesShareModal');
+        if (modal && !modal.querySelector('#notesAllowAiRead')) {
+            modal.remove();
+            modal = null;
+        }
         if (!modal) {
             modal = document.createElement('div');
             modal.id = 'notesShareModal';
@@ -1062,10 +1072,24 @@ export function createNotesController({
                         <h2 class="notes-dialog-title">${t('共享设置')}</h2>
                         <button type="button" class="notes-icon-btn" id="notesShareModalClose" aria-label="${t('关闭')}">${icon('close')}</button>
                     </div>
-                    <p class="notes-dialog-message">${t('共享后其他用户可读此笔记，不可编辑。默认私有。')}</p>
-                    <div class="notes-share-options">
-                        <label class="notes-check"><input type="checkbox" id="notesShareUsers"><span>${t('共享给所有用户')}</span></label>
-                        <label class="notes-check"><input type="checkbox" id="notesShareAdmins"><span>${t('共享给管理员')}</span></label>
+                    <p class="notes-dialog-message">${t('共享后其他用户可读此笔记，不可编辑。默认私有。AI 读取与编辑需单独开启。')}</p>
+                    <div class="notes-share-switch-list" role="group" aria-label="${t('共享设置')}">
+                        <label class="notes-share-switch-row" for="notesShareUsers">
+                            <span class="notes-share-switch-label">${t('共享给所有用户')}</span>
+                            <span class="connection-share-switch"><input type="checkbox" id="notesShareUsers"><span aria-hidden="true"></span></span>
+                        </label>
+                        <label class="notes-share-switch-row" for="notesShareAdmins">
+                            <span class="notes-share-switch-label">${t('共享给管理员')}</span>
+                            <span class="connection-share-switch"><input type="checkbox" id="notesShareAdmins"><span aria-hidden="true"></span></span>
+                        </label>
+                        <label class="notes-share-switch-row" for="notesAllowAiRead">
+                            <span class="notes-share-switch-label">${t('允许 AI 读取')}</span>
+                            <span class="connection-share-switch"><input type="checkbox" id="notesAllowAiRead"><span aria-hidden="true"></span></span>
+                        </label>
+                        <label class="notes-share-switch-row" for="notesAllowAiWrite">
+                            <span class="notes-share-switch-label">${t('允许 AI 编辑')}</span>
+                            <span class="connection-share-switch"><input type="checkbox" id="notesAllowAiWrite"><span aria-hidden="true"></span></span>
+                        </label>
                     </div>
                     <div class="notes-dialog-actions">
                         <button class="btn" type="button" id="notesShareCancel">${t('取消')}</button>
@@ -1074,8 +1098,22 @@ export function createNotesController({
                 </div>`;
             document.body.appendChild(modal);
         }
-        modal.querySelector('#notesShareUsers').checked = !!state.current.shareWithUsers;
-        modal.querySelector('#notesShareAdmins').checked = !!state.current.shareWithAdmins;
+        const usersEl = modal.querySelector('#notesShareUsers');
+        const adminsEl = modal.querySelector('#notesShareAdmins');
+        const aiReadEl = modal.querySelector('#notesAllowAiRead');
+        const aiWriteEl = modal.querySelector('#notesAllowAiWrite');
+        if (usersEl) usersEl.checked = !!state.current.shareWithUsers;
+        if (adminsEl) adminsEl.checked = !!state.current.shareWithAdmins;
+        if (aiReadEl) aiReadEl.checked = !!(state.current.allowAiRead || state.current.allowAi);
+        if (aiWriteEl) aiWriteEl.checked = !!state.current.allowAiWrite;
+        // Write implies read in the UI: turning write on auto-enables read; turning read off disables write.
+        const syncAiSwitches = (source) => {
+            if (!aiReadEl || !aiWriteEl) return;
+            if (source === 'write' && aiWriteEl.checked) aiReadEl.checked = true;
+            if (source === 'read' && !aiReadEl.checked) aiWriteEl.checked = false;
+        };
+        aiReadEl?.addEventListener('change', () => syncAiSwitches('read'));
+        aiWriteEl?.addEventListener('change', () => syncAiSwitches('write'));
         modal.classList.add('show');
         const close = () => {
             modal.classList.remove('show');
@@ -1084,14 +1122,20 @@ export function createNotesController({
         modal.querySelector('#notesShareCancel').onclick = close;
         modal.onclick = (e) => { if (e.target === modal) close(); };
         modal.querySelector('#notesShareSave').onclick = async () => {
-            const shareWithUsers = modal.querySelector('#notesShareUsers').checked;
-            const shareWithAdmins = modal.querySelector('#notesShareAdmins').checked;
+            const shareWithUsers = !!usersEl?.checked;
+            const shareWithAdmins = !!adminsEl?.checked;
+            let allowAiRead = !!aiReadEl?.checked;
+            let allowAiWrite = !!aiWriteEl?.checked;
+            if (allowAiWrite) allowAiRead = true;
+            if (!allowAiRead) allowAiWrite = false;
             try {
                 const updated = await api(`/api/notes/${encodeURIComponent(state.current.noteId)}`, {
                     method: 'PUT',
                     body: JSON.stringify({
                         shareWithUsers,
                         shareWithAdmins,
+                        allowAiRead,
+                        allowAiWrite,
                         expectedRevision: state.current.revision,
                     }),
                 });
@@ -1099,7 +1143,14 @@ export function createNotesController({
                 state.dirty = false;
                 fillEditor(updated.note);
                 close();
-                toast?.(shareWithUsers ? t('已共享给所有用户') : shareWithAdmins ? t('已共享给管理员') : t('已设为私有'));
+                const bits = [];
+                if (shareWithUsers) bits.push(t('已共享给所有用户'));
+                else if (shareWithAdmins) bits.push(t('已共享给管理员'));
+                else bits.push(t('已设为私有'));
+                if (allowAiWrite) bits.push(t('AI 可读可编'));
+                else if (allowAiRead) bits.push(t('AI 只读'));
+                else bits.push(t('AI 不可访问'));
+                toast?.(bits.join(' · '));
                 await loadList();
             } catch (err) {
                 toast?.(err.message || t('保存失败'));

@@ -47,6 +47,8 @@ test('note_create via tools/run creates a note owned by the calling user', async
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.ok(res.body.result?.data?.note?.noteId, 'must return noteId');
     aNoteId = res.body.result.data.note.noteId;
+    assert.equal(res.body.result.data.note.allowAiRead, true, 'AI-created notes default allowAiRead=true');
+    assert.equal(res.body.result.data.note.allowAiWrite, true, 'AI-created notes default allowAiWrite=true');
 });
 
 test('note_search finds notes by keyword; returns summary not full content', async () => {
@@ -112,8 +114,82 @@ test('notesRead and notesWrite are enforced independently', async () => {
 });
 
 test('per-user notes toggle disables AI note tools', async () => {
+    await server.api(adminCookie, 'PUT', '/api/settings', {
+        ai: { enabled: true, providers: [], permissions: { notesRead: true, notesWrite: true, remoteExecute: true } },
+    });
     await server.api(aCookie, 'PUT', '/api/me/settings', { 'notes.enabled': false });
     const denied = await server.api(aCookie, 'POST', '/api/ai/tools/run', { tool: 'note_create', args: { title: 'disabled' } });
     assert.ok(denied.status >= 400);
     assert.match(String(denied.body.error || ''), /未启用笔记/);
+    await server.api(aCookie, 'PUT', '/api/me/settings', { 'notes.enabled': true });
+});
+
+test('notes without allowAiRead are invisible to AI list/get; write needs allowAiWrite', async () => {
+    await server.api(adminCookie, 'PUT', '/api/settings', {
+        ai: { enabled: true, providers: [], permissions: { notesRead: true, notesWrite: true, remoteExecute: true } },
+    });
+    // Human creates a private note via REST without AI flags.
+    const created = await server.api(aCookie, 'POST', '/api/notes', {
+        title: 'Human private',
+        content: 'secret body',
+    });
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const privateId = created.body.note.noteId;
+    assert.equal(created.body.note.allowAiRead, false);
+    assert.equal(created.body.note.allowAiWrite, false);
+
+    const listed = await server.api(aCookie, 'POST', '/api/ai/tools/run', {
+        tool: 'note_list',
+        args: {},
+        context: {},
+    });
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    const notes = listed.body.result?.data?.notes || [];
+    assert.equal(notes.some((n) => n.noteId === privateId), false, 'private note must not appear in AI list');
+
+    const got = await server.api(aCookie, 'POST', '/api/ai/tools/run', {
+        tool: 'note_get',
+        args: { noteId: privateId },
+        context: {},
+    });
+    assert.ok(got.status >= 400, 'AI get must fail for allowAiRead=false');
+    assert.match(String(got.body.error || got.body.result?.error || ''), /未允许 AI|note_ai_read_disabled|AI/);
+
+    // Enable read only → AI can get but not update.
+    const readOnly = await server.api(aCookie, 'PUT', `/api/notes/${privateId}`, {
+        allowAiRead: true,
+        allowAiWrite: false,
+        expectedRevision: created.body.note.revision,
+    });
+    assert.equal(readOnly.status, 200, JSON.stringify(readOnly.body));
+    assert.equal(readOnly.body.note.allowAiRead, true);
+    assert.equal(readOnly.body.note.allowAiWrite, false);
+    const gotOk = await server.api(aCookie, 'POST', '/api/ai/tools/run', {
+        tool: 'note_get',
+        args: { noteId: privateId },
+        context: {},
+    });
+    assert.equal(gotOk.status, 200, JSON.stringify(gotOk.body));
+    assert.equal(gotOk.body.result.data.note.content, 'secret body');
+
+    const writeDenied = await runTool(aCookie, 'note_update', {
+        noteId: privateId,
+        title: 'hack',
+        expectedRevision: readOnly.body.note.revision,
+    });
+    assert.ok(writeDenied.status >= 400, 'AI update must fail without allowAiWrite');
+
+    const writable = await server.api(aCookie, 'PUT', `/api/notes/${privateId}`, {
+        allowAiWrite: true,
+        expectedRevision: readOnly.body.note.revision,
+    });
+    assert.equal(writable.status, 200, JSON.stringify(writable.body));
+    assert.equal(writable.body.note.allowAiWrite, true);
+    const writeOk = await runTool(aCookie, 'note_update', {
+        noteId: privateId,
+        title: 'AI edited',
+        expectedRevision: writable.body.note.revision,
+    });
+    assert.equal(writeOk.status, 200, JSON.stringify(writeOk.body));
+    assert.equal(writeOk.body.result?.data?.note?.title || writeOk.body.result?.note?.title, 'AI edited');
 });

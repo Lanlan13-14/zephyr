@@ -15,6 +15,7 @@ const OPERATIONS_PLAYBOOKS = freeze([
 - 先 note_search/list/get 定位目标；写入 note_create/update；删除 note_delete（进回收站）。
 - 分组：note_groups_v1 / note_group_rename_v1 / note_group_delete_v1。
 - 回收站：note_restore_v1、note_purge_v1、note_bulk_v1(trash|restore|purge)。
+- 只有 allowAiRead 的笔记可被 list/search/get；update/delete/restore/purge 需要 allowAiWrite。用户在共享设置用开关控制。
 - 笔记功能未启用时停止，不绕过个人设置；写/删/恢复/purge 需确认。`),
     pb('memory-management-v1', 'AI Memory 操作', ['memory.read', 'memory.write'], ['Memory', '记住', '历史约定'], `# AI Memory 操作 Playbook
 - 搜索时同时提供项目、连接、标签范围，避免只按关键词误命中。

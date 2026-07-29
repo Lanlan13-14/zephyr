@@ -13621,6 +13621,44 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     border-color: transparent !important;
     color: #fff !important;
 }
+.notes-share-switch-list {
+    display: flex;
+    flex-direction: column;
+    margin: 4px 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface, var(--bg));
+    overflow: hidden;
+}
+.notes-share-switch-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+    min-height: 52px;
+    padding: 12px 16px;
+    margin: 0;
+    cursor: pointer;
+    user-select: none;
+    background: transparent;
+    transition: background-color 140ms ease;
+}
+.notes-share-switch-row + .notes-share-switch-row {
+    border-top: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+}
+.notes-share-switch-row:hover {
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.notes-share-switch-row:active {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.notes-share-switch-label {
+    min-width: 0;
+    color: var(--text);
+    font-size: 16px;
+    line-height: 1.35;
+    font-weight: 400;
+}
 .notes-share-options {
     display: flex;
     flex-direction: column;
