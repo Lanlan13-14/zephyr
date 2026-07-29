@@ -52,3 +52,21 @@ func TestRepairToolCallSequenceDropsPartialBatch(t *testing.T) {
 		t.Fatalf("partial batch not removed: %#v", out)
 	}
 }
+
+func TestRepairToolCallSequenceDropsOrphanToolOutput(t *testing.T) {
+	// Compact can fold the assistant tool_calls message into a summary while
+	// leaving a recent tool result behind. Responses rejects that as
+	// "No tool call found for function call output".
+	in := []provider.Message{
+		{Role: provider.RoleUser, Content: "摘要后的历史"},
+		{Role: provider.RoleTool, ToolCallID: "call_orphan_output", Name: "remote_desktop_action_v1", Content: `{"ok":false}`},
+		{Role: provider.RoleUser, Content: "继续操作"},
+	}
+	out := repairToolCallSequence(in)
+	if len(out) != 2 || out[0].Role != provider.RoleUser || out[1].Role != provider.RoleUser {
+		t.Fatalf("orphan tool output not removed: %#v", out)
+	}
+	if out[0].Content != "摘要后的历史" || out[1].Content != "继续操作" {
+		t.Fatalf("unexpected repaired history: %#v", out)
+	}
+}

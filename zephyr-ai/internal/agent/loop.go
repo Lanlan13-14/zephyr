@@ -1070,15 +1070,23 @@ func limitVisualPins(messages []provider.Message, keep int) []provider.Message {
 // buildModelMessages keeps vision pins in relative order through compact.
 // Algorithm: replace pin messages with short placeholders → compact text →
 // rehydrate full pin messages (including image Parts) at placeholder sites.
-// repairToolCallSequence drops historical assistant tool calls that were
-// persisted before a client-side capture/permission flow failed and therefore
-// never received their complete contiguous role=tool output batch. Sending
-// such history makes OpenAI reject every later turn with "No tool output
-// found for function call ...". Complete batches are preserved byte-for-byte.
+// repairToolCallSequence keeps only complete assistant/tool batches.
+// Incomplete assistant tool_calls, partial tool batches, and orphan role=tool
+// messages are dropped. OpenAI Chat rejects missing tool outputs; Responses
+// rejects function_call_output without a matching function_call. Compact can
+// also fold assistant tool_calls into a summary while leaving tool messages in
+// the recent tail, so this must run again after compact rehydration.
 func repairToolCallSequence(messages []provider.Message) []provider.Message {
+	keptCallIDs := make(map[string]bool)
 	out := make([]provider.Message, 0, len(messages))
 	for i := 0; i < len(messages); i++ {
 		msg := messages[i]
+		if msg.Role == provider.RoleTool {
+			// Orphan tool outputs are handled in a second pass once we know which
+			// call IDs still have their assistant tool_calls in the history.
+			out = append(out, msg)
+			continue
+		}
 		if msg.Role != provider.RoleAssistant || len(msg.ToolCalls) == 0 {
 			out = append(out, msg)
 			continue
@@ -1092,8 +1100,9 @@ func repairToolCallSequence(messages []provider.Message) []provider.Message {
 		seen := make(map[string]bool, len(expected))
 		j := i + 1
 		for ; j < len(messages) && messages[j].Role == provider.RoleTool; j++ {
-			if expected[messages[j].ToolCallID] {
-				seen[messages[j].ToolCallID] = true
+			id := strings.TrimSpace(messages[j].ToolCallID)
+			if expected[id] {
+				seen[id] = true
 			}
 		}
 		if len(expected) == 0 || len(seen) != len(expected) {
@@ -1103,10 +1112,35 @@ func repairToolCallSequence(messages []provider.Message) []provider.Message {
 			continue
 		}
 		out = append(out, msg)
+		for _, call := range msg.ToolCalls {
+			if id := strings.TrimSpace(call.ID); id != "" {
+				keptCallIDs[id] = true
+			}
+		}
 		out = append(out, messages[i+1:j]...)
 		i = j - 1
 	}
-	return out
+	if len(keptCallIDs) == 0 {
+		filtered := out[:0]
+		for _, msg := range out {
+			if msg.Role == provider.RoleTool {
+				continue
+			}
+			filtered = append(filtered, msg)
+		}
+		return filtered
+	}
+	filtered := make([]provider.Message, 0, len(out))
+	for _, msg := range out {
+		if msg.Role == provider.RoleTool {
+			id := strings.TrimSpace(msg.ToolCallID)
+			if id == "" || !keptCallIDs[id] {
+				continue
+			}
+		}
+		filtered = append(filtered, msg)
+	}
+	return filtered
 }
 
 func buildModelMessages(messages []provider.Message, compCfg compact.Config, skipCompact bool, meta **compact.Result) []provider.Message {
@@ -1159,7 +1193,10 @@ func buildModelMessages(messages []provider.Message, compCfg compact.Config, ski
 			rehydrated = append(rehydrated, it.msg)
 		}
 	}
-	return rehydrated
+	// Compact may summarize old assistant tool_calls while leaving tool results
+	// in the recent tail. Repair again so Responses never sees an orphan
+	// function_call_output.
+	return repairToolCallSequence(rehydrated)
 }
 
 func stripCaptureImageData(value any) any {
