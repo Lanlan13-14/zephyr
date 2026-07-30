@@ -32,9 +32,21 @@ test('terminal smartbar dock uses Motion.dockMagnifyPointer from motion-feel §9
     assert.match(updateFn, /itemSelector:\s*DOCK_MAGNIFY_SELECTOR|itemSelector:\s*['"]\.smartbar-session, \.smartbar-add['"]/);
     assert.match(updateFn, /maxScale:\s*1\.26/);
     assert.match(updateFn, /preset:\s*'dock'/);
-    assert.match(updateFn, /vertical:\s*verticalDock/);
-    // influence parity with previous production + engine defaults
-    assert.match(updateFn, /influence:\s*verticalDock \? 118 : 142/);
+    // 横栏 influence / maxLift
+    assert.match(updateFn, /influence:\s*142/);
+    assert.match(updateFn, /maxLift:\s*15/);
+});
+
+test('fullscreen vertical dock uses dedicated dockMagnifyVerticalPointer', () => {
+    const updateFn = extractFn(appJs, 'updateDockMagnification');
+    assert.match(updateFn, /Motion\.dockMagnifyVerticalPointer/);
+    assert.match(updateFn, /maxScale:\s*1\.22/);
+    assert.match(updateFn, /maxLift:\s*12/);
+    assert.match(updateFn, /maxSpread:\s*8/);
+    // 上浮不侧弹
+    assert.doesNotMatch(updateFn, /outward:\s*'left'/);
+    assert.doesNotMatch(updateFn, /maxPop:/);
+    assert.doesNotMatch(updateFn, /vertical:\s*verticalDock/);
 });
 
 test('dock leave/reset uses Motion.dockMagnifyReset spring return', () => {
@@ -58,6 +70,20 @@ test('pointermove path warms motion engine before first dock hover', () => {
     assert.match(appHtml, /app\.js\?v=\d{8}-[a-z0-9-]+/);
 });
 
+test('fullscreen compact dock centers icons and keeps them above bar chrome', () => {
+    // 竖栏：栏体材质在 ::before(z0)；dock/图标更高；紧凑 padding
+    assert.match(styleCss, /body\.terminal-custom-fullscreen-open[\s\S]*?\.smartbar-panel::before/);
+    assert.match(styleCss, /body\.terminal-custom-fullscreen-open[\s\S]*?\.smartbar-panel[\s\S]*?overflow:\s*visible/);
+    assert.match(styleCss, /body\.terminal-custom-fullscreen-open[\s\S]*?\.smartbar-dock[\s\S]*?z-index:\s*2/);
+    assert.match(styleCss, /body\.terminal-custom-fullscreen-open[\s\S]*?\.smartbar-dock[\s\S]*?overflow:\s*visible/);
+    assert.match(styleCss, /body\.terminal-custom-fullscreen-open[\s\S]*?\.smartbar-dock[\s\S]*?padding:\s*4px 0 6px/);
+    assert.match(styleCss, /body\.terminal-custom-fullscreen-open[\s\S]*?\.smartbar-session[\s\S]*?transform-origin:\s*50% 100%/);
+    assert.match(styleCss, /body\.terminal-custom-fullscreen-open[\s\S]*?\.smartbar-session[\s\S]*?z-index:\s*3/);
+    // 整栏下移，给上浮留顶部安全区
+    assert.match(styleCss, /top:\s*calc\(env\(safe-area-inset-top\) \+ 56px\)/);
+    assert.doesNotMatch(styleCss, /body\.terminal-custom-fullscreen-open[\s\S]*?\.smartbar-dock[\s\S]{0,120}?padding:\s*48px 0 12px/);
+});
+
 test('session icon body opacity matches plus icon surface fill', () => {
     // 禁止 active 会话用 accent-soft-bg 洗成半透明；与 + 同 surface 实底。
     assert.match(styleCss, /\.smartbar-session-icon,\s*\n\.smartbar-add-icon\s*\{[\s\S]*?var\(--surface\) 96%/);
@@ -68,7 +94,7 @@ test('session icon body opacity matches plus icon surface fill', () => {
 test('dock icons layer above bar chrome without lengthening the bar', () => {
     // 栏体材质恢复为 panel 本体（与原先同一套 surface 渐变 + backdrop）；不拆 ::before。
     // 图标靠 overflow:visible + 负 margin 顶 padding 露头，不拉长栏。
-    assert.doesNotMatch(styleCss, /\.smartbar-panel::before\s*\{/);
+    // fullscreen vertical dock may use scoped panel::before for chrome under icons
     assert.match(styleCss, /\.smartbar-panel\s*\{[\s\S]*?backdrop-filter:\s*blur\(30px\) saturate\(1\.75\)/);
     assert.match(styleCss, /\.smartbar-panel\s*\{[\s\S]*?color-mix\(in srgb, var\(--surface\) 86%, transparent\)/);
     assert.match(styleCss, /\.smartbar-panel\s*\{[\s\S]*?overflow:\s*visible/);

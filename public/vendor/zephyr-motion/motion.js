@@ -2444,7 +2444,7 @@ export const Motion = {
         'islandExpand', 'islandCollapse', 'islandDots', 'islandSquish', 'islandSize',
         'macPanel', 'macPanelOpen', 'macPanelClose',
         'shelf', 'toastPush', 'toastDismiss',
-        'dockMagnify', 'dockMagnifyPointer', 'dockMagnifyReset',
+        'dockMagnify', 'dockMagnifyPointer', 'dockMagnifyVerticalPointer', 'dockMagnifyReset',
         'aiPanelOpen', 'aiPanelClose', 'clipInset',
       ],
     };
@@ -2548,46 +2548,105 @@ export const Motion = {
   },
 
   /**
-   * Pointer-driven dock magnification across all items (macOS Dock feel).
-   * Replaces production updateDockMagnification + zephyr-anim scale-only patch.
+   * Pointer-driven HORIZONTAL dock magnification (macOS bottom dock).
+   * CSS: transform: translate3d(shift, lift, 0) scale()  with origin 50% 100%.
+   *   lift = up (negative Y), shift = neighbor push along X.
    *
-   *   dockEl.querySelectorAll('.smartbar-session').forEach...
-   *   Motion.dockMagnifyPointer(dockEl, clientX, clientY, {
-   *     itemSelector: '.smartbar-session, .smartbar-add',
-   *     vertical: false,
-   *     influence: 140,
-   *     maxScale: 1.26,
-   *     maxLift: 15,
-   *   })
+   * Vertical rails MUST use dockMagnifyVerticalPointer — different axis mapping
+   * and transform-origin (center). Do not pass vertical:true here for production.
    */
   dockMagnifyPointer(dockEl, clientX, clientY, opts = {}) {
     if (!dockEl) return;
+    // Explicit vertical route — keep one entry point for demos that pass vertical:true
+    if (opts.vertical) {
+      return this.dockMagnifyVerticalPointer(dockEl, clientX, clientY, opts);
+    }
     const sel = opts.itemSelector || '.smartbar-session, .smartbar-add, [data-dock-item]';
     const items = [...dockEl.querySelectorAll(sel)];
     if (!items.length) return;
-    const vertical = !!opts.vertical;
-    const influence = Number(opts.influence) || (vertical ? 118 : 142);
+    const influence = Number(opts.influence) || 142;
     const maxScale = Number(opts.maxScale) || 1.26;
-    const maxLift = Number(opts.maxLift) || (vertical ? 6 : 15);
-    const maxShift = Number(opts.maxShift) || (vertical ? 9 : 8);
-    const maxRotate = Number(opts.maxRotate) || (vertical ? 1.1 : 0.7);
+    const maxLift = Number(opts.maxLift) || 15;
+    const maxShift = Number(opts.maxShift) || 8;
+    const maxRotate = Number(opts.maxRotate) || 0.7;
     const maxBlur = Number(opts.maxBlur) || 0.14;
-    const pointer = vertical ? (clientY ?? 0) : (clientX ?? 0);
+    const pointer = clientX ?? 0;
 
     items.forEach((item) => {
       const rect = item.getBoundingClientRect();
-      const center = vertical
-        ? rect.top + rect.height / 2
-        : rect.left + rect.width / 2;
+      const center = rect.left + rect.width / 2;
       const d = Math.abs(pointer - center);
       const t = Math.max(0, 1 - d / influence);
-      // smoothstep-ish ease (production uses cubic ease-out of t)
       const eased = 1 - Math.pow(1 - t, 3);
       const dir = Math.sign(center - pointer) || 0;
       this.dockMagnify(item, {
         scale: 1 + eased * (maxScale - 1),
         lift: -eased * maxLift,
         shift: dir * eased * maxShift,
+        rotate: dir * eased * -maxRotate,
+        blur: (1 - eased) * maxBlur,
+        preset: opts.preset ?? 'dock',
+      });
+    });
+  },
+
+  /**
+   * Pointer-driven VERTICAL dock magnification (edge rail column).
+   * Same spring feel as horizontal, axes remapped for a column:
+   *
+   *   Horizontal: lift = float UP (−Y);  shift = neighbor push LEFT/RIGHT (X)
+   *   Vertical:   lift = float UP (−Y) + neighbor push UP/DOWN (Y);
+   *               shift = 0  (no side pop — user wants 上浮, not 侧向弹出)
+   *
+   * Horizontal "left/right neighbor" becomes vertical "up/down neighbor" on Y.
+   * The shared "float up" stays −Y (same as bottom dock).
+   *
+   *   Motion.dockMagnifyVerticalPointer(dock, x, y, {
+   *     maxScale: 1.22, maxLift: 12, maxSpread: 8
+   *   })
+   */
+  dockMagnifyVerticalPointer(dockEl, clientX, clientY, opts = {}) {
+    if (!dockEl) return;
+    const sel = opts.itemSelector || '.smartbar-session, .smartbar-add, [data-dock-item]';
+    const items = [...dockEl.querySelectorAll(sel)];
+    if (!items.length) return;
+    const influence = Number(opts.influence) || 110;
+    const maxScale = Number(opts.maxScale) || 1.22;
+    // 上浮：与横栏同向（负 Y）
+    const maxLift = Number.isFinite(Number(opts.maxLift)) ? Number(opts.maxLift) : 12;
+    // 上下推邻：对应横栏左右 shift
+    const maxSpread = Number.isFinite(Number(opts.maxSpread))
+      ? Number(opts.maxSpread)
+      : (Number.isFinite(Number(opts.maxShift)) ? Number(opts.maxShift) : 8);
+    const maxRotate = Number(opts.maxRotate) || 0.7;
+    const maxBlur = Number(opts.maxBlur) || 0.12;
+    const pointer = clientY ?? 0;
+    const dockRect = dockEl.getBoundingClientRect();
+    const scrollTop = dockEl.scrollTop || 0;
+
+    items.forEach((item) => {
+      // Layout-stable Y center via offsetTop relative to dock content
+      // (avoids getBoundingClientRect chasing live spring transforms).
+      let topInDock = 0;
+      let n = item;
+      while (n && n !== dockEl) {
+        topInDock += n.offsetTop || 0;
+        n = n.parentElement;
+        if (!n || !dockEl.contains(n)) break;
+      }
+      const center = (n === dockEl || item.parentElement === dockEl)
+        ? dockRect.top + (item.parentElement === dockEl ? item.offsetTop : topInDock)
+          + (item.offsetHeight || 0) / 2 - scrollTop
+        : (() => { const r = item.getBoundingClientRect(); return r.top + r.height / 2; })();
+      const d = Math.abs(pointer - center);
+      const t = Math.max(0, 1 - d / influence);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const dir = Math.sign(center - pointer) || 0;
+      this.dockMagnify(item, {
+        scale: 1 + eased * (maxScale - 1),
+        // 上浮（−Y）+ 上下推邻（dir·Y）——横栏 lift/shift 的纵向对应
+        lift: -eased * maxLift + dir * eased * maxSpread,
+        shift: 0,
         rotate: dir * eased * -maxRotate,
         blur: (1 - eased) * maxBlur,
         preset: opts.preset ?? 'dock',

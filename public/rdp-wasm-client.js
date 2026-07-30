@@ -1797,6 +1797,27 @@ async function performAiRemoteDesktopAction(data = {}) {
 /* ═══════════════════════════════════════════════════════════════════════
  * TOOLBAR BUTTONS
  * ═══════════════════════════════════════════════════════════════════════ */
+/** SSH/Telnet topbar-actions 同源：横向滑动时短暂显示滚动条。 */
+function setupHorizontalScrollbarVisibility(...elements) {
+    elements.filter(Boolean).forEach((el) => {
+        let timer = 0;
+        const show = () => {
+            el.classList.add('scroll-active');
+            window.clearTimeout(timer);
+            timer = window.setTimeout(() => el.classList.remove('scroll-active'), 1100);
+        };
+        el.addEventListener('pointerdown', show, { passive: true });
+        el.addEventListener('touchstart', show, { passive: true });
+        el.addEventListener('wheel', show, { passive: true });
+        el.addEventListener('scroll', show, { passive: true });
+        el.addEventListener('mouseenter', show, { passive: true });
+        el.addEventListener('mouseleave', () => {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(() => el.classList.remove('scroll-active'), 260);
+        }, { passive: true });
+    });
+}
+
 function initToolbar() {
     const qualityBtn = $('#qualityBtn');
     const resolutionBtn = $('#resolutionBtn');
@@ -1814,6 +1835,9 @@ function initToolbar() {
     const disconnectBtn = $('#disconnectBtn');
     const shortcutsPanel = $('#shortcutsPanel');
     const joystickPanel = $('#joystickPanel');
+    // 与 SSH/Telnet 相同：横向溢出时 hover/滑动显示细滚动条
+    const topbarActions = document.getElementById('topbarActions');
+    setupHorizontalScrollbarVisibility(topbarActions);
 
     if (qualityBtn) {
         qualityBtn.textContent = qualityMode === 'performance' ? t('性能') : qualityMode === 'quality' ? t('画质') : t('平衡');

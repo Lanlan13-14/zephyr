@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title data-i18n="Zephyr - VNC 远程桌面">Zephyr - VNC 远程桌面</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260621-rdp-joystick-corners">
+    <link rel="stylesheet" href="style.css?v=20260730-rdp-topbar-ssh-scroll1">
 </head>
 <body>
     <div class="novnc-page rdp-page">
@@ -15,7 +15,7 @@
                 <span id="statusText" data-i18n="连接中...">连接中...</span>
             </div>
             <span class="info" id="connInfo"><strong id="connTitle" data-i18n="VNC 远程桌面">VNC 远程桌面</strong></span>
-            <div class="topbar-actions novnc-toolbar" role="toolbar" aria-label="VNC 控制栏" data-i18n-aria-label="VNC 控制栏">
+            <div class="topbar-actions novnc-toolbar" id="topbarActions" role="toolbar" aria-label="VNC 控制栏" data-i18n-aria-label="VNC 控制栏">
                 <button class="btn-sm" id="qualityBtn" data-vnc-icon="quality" type="button" title="切换性能/画质模式" data-i18n-title="切换性能/画质模式"><span id="qualityLabel" data-i18n="平衡">平衡</span></button>
                 <button class="btn-sm" id="fitBtn" data-vnc-icon="fit" type="button" title="切换适应/原始/拖拽视区" data-i18n-title="切换适应/原始/拖拽视区"><span id="fitLabel" data-i18n="适应">适应</span></button>
                 <button class="btn-sm" id="dragBtn" data-vnc-icon="joystick" type="button" title="打开视区摇杆" data-i18n-title="打开视区摇杆" data-i18n="视区">视区</button>
@@ -117,6 +117,6 @@
             </div>
         </main>
     </div>
-    <script src="novnc.js?v=20260729-ai-action-loop1" type="module"></script>
+    <script src="novnc.js?v=20260730-vnc-topbar-ssh-scroll2" type="module"></script>
 </body>
 </html>

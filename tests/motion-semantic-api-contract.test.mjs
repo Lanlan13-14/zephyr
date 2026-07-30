@@ -120,8 +120,13 @@ test('macPanel / connectionOpen / shelf standard APIs', () => {
 test('dock / AI / clip / islandSize APIs complete', () => {
   assert.match(motionJs, /dockMagnify\s*\(/);
   assert.match(motionJs, /dockMagnifyPointer\s*\(/);
+  assert.match(motionJs, /dockMagnifyVerticalPointer\s*\(/);
   assert.match(motionJs, /dockMagnifyReset\s*\(/);
   assert.match(motionJs, /--dock-scale/);
+  // 纵向：上浮（−Y）+ 上下推邻；无侧向弹出
+  assert.match(motionJs, /maxSpread/);
+  assert.match(motionJs, /-eased \* maxLift \+ dir \* eased \* maxSpread/);
+  assert.match(motionJs, /shift:\s*0/);
   assert.match(motionJs, /aiPanelOpen\s*\(/);
   assert.match(motionJs, /aiPanelClose\s*\(/);
   assert.match(motionJs, /clipInset\s*\(/);
@@ -140,8 +145,9 @@ test('production UI wires approved signature APIs without demo-only recipes', ()
   assert.match(appJs, /Motion\.press\s*\(/);
   assert.doesNotMatch(appJs, /Motion\.islandExpand\s*\(/);
   assert.doesNotMatch(appJs, /Motion\.playStagger\s*\(/);
-  // 终端会话 Dock 已接演示页 §9：dockMagnifyPointer / dockMagnifyReset
+  // 终端会话 Dock：横栏 dockMagnifyPointer；全屏竖栏 dockMagnifyVerticalPointer
   assert.match(appJs, /Motion\.dockMagnifyPointer/);
+  assert.match(appJs, /Motion\.dockMagnifyVerticalPointer/);
   assert.match(appJs, /Motion\.dockMagnifyReset/);
   assert.doesNotMatch(appJs, /Motion\.clipInset/);
   // CSS fallbacks and non-migrated surfaces remain available.

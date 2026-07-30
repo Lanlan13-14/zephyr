@@ -78,6 +78,18 @@ test('ai provider open/close use iosApp* identical to SSH key', () => {
     assert.equal(b.close, a.close, `close opts differ\nSSH:\n${a.close}\nAI:\n${b.close}`);
 });
 
+test('ai provider expands fully and backdrop owns scroll on desktop too', () => {
+    // 与编辑 RDP/新建代理一致：表单不锁 88vh，backdrop 可下滑
+    assert.match(styleCss, /#aiProviderModal \.ai-provider-modal[\s\S]*?max-height:\s*none\s*!important/);
+    assert.match(styleCss, /#aiProviderModal \.ai-provider-modal[\s\S]*?overflow:\s*visible\s*!important/);
+    assert.match(styleCss, /#aiProviderModal\.aiprovider1[\s\S]*?overflow-y:\s*auto/);
+    assert.match(styleCss, /#aiProviderModal\.aiprovider1 \.ai-provider-modal-inner[\s\S]*?max-height:\s*none\s*!important/);
+    // open 落地后清 overflow/maxHeight（JS 已有；桌面 CSS 也必须不锁）
+    const openFn = extractFn(appJs, 'openAiProviderModal');
+    assert.match(openFn, /card\.style\.overflow = 'visible'/);
+    assert.match(openFn, /card\.style\.maxHeight = 'none'/);
+});
+
 test('ai provider CSS is motion-only — old slide/fade removed', () => {
     assert.match(styleCss, /#aiProviderModalScrim/);
     assert.match(styleCss, /#aiProviderModalScrim/);
@@ -96,7 +108,7 @@ test('ai provider CSS is motion-only — old slide/fade removed', () => {
     assert.doesNotMatch(styleCss, /\.ai-provider-modal \.form-row\s*,[\s\S]{0,200}?legacyAiFadeLift/);
     assert.doesNotMatch(styleCss, /#aiAddProviderBtn\.connection-pressing/);
     // generic fade excludes ai-provider-modal
-    assert.match(styleCss, /\.connection-modal:not\(\.ssh-key-modal\):not\(\.snippet-modal\):not\(\.proxy-modal\):not\(\.ai-provider-modal\)/);
+    assert.match(styleCss, /\.connection-modal:not\(#connectionForm\):not\(\.ssh-key-modal\):not\(\.snippet-modal\):not\(\.proxy-modal\):not\(\.ai-provider-modal\)/);
 });
 
 test('ai provider finish path keeps atomic twin handoff', () => {

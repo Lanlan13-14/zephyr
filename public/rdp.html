@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
     <title data-i18n="Zephyr - 远程桌面">Zephyr - 远程桌面</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-    <link rel="stylesheet" href="style.css?v=20260729-ai-rdp-cert1">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260729-ai-rdp-cert1">
+    <link rel="stylesheet" href="style.css?v=20260730-rdp-topbar-ssh-scroll2">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260730-rdp-topbar-ssh-scroll2">
 </head>
 <body>
     <div class="novnc-page rdp-page">
@@ -16,7 +16,7 @@
                 <span id="statusText" data-i18n="连接中...">连接中...</span>
             </div>
             <span class="info" id="connInfo"></span>
-            <div class="topbar-actions novnc-toolbar">
+            <div class="topbar-actions novnc-toolbar" id="topbarActions">
                 <button class="btn-sm" id="qualityBtn" data-rdp-icon="quality" title="切换性能/画质模式" data-i18n-title="切换性能/画质模式" data-i18n="平衡">平衡</button>
                 <button class="btn-sm" id="resolutionBtn" data-rdp-icon="quality" title="切换远程桌面分辨率：自动 / 1080p / 2K / 4K" data-i18n-title="切换远程桌面分辨率：自动 / 1080p / 2K / 4K" data-i18n="自动">自动</button>
                 <button class="btn-sm" id="fpsBtn" data-rdp-icon="quality" title="切换远程桌面帧率：30 / 45 / 60 / 120 / 144 FPS" data-i18n-title="切换远程桌面帧率：30 / 45 / 60 / 120 / 144 FPS">30FPS</button>
@@ -216,7 +216,7 @@
             </div>
         </div>
     </div>
-<script src="rdp-wasm-client.js?v=20260729-ai-notes-switches1" type="module"></script>
+<script src="rdp-wasm-client.js?v=20260730-rdp-topbar-ssh-scroll2" type="module"></script>
     <script>
     /* Auto-report H264 debug logs to server after 8 seconds */
     setTimeout(async () => {

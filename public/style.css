@@ -6222,6 +6222,9 @@ body.smartbar-trash-hover .smartbar-trash-target {
         height: auto;
         z-index: 94;
     }
+    body.terminal-custom-fullscreen-open .terminal-smartbar {
+        overflow: visible !important;
+    }
     body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-panel {
         top: 0;
         right: 0;
@@ -6229,26 +6232,54 @@ body.smartbar-trash-hover .smartbar-trash-target {
         width: 84px;
         max-width: 84px;
         max-height: calc(100dvh - 120px);
-        padding: 10px 8px;
+        /* 紧凑留白；材质放 ::before 底层，图标可浮出栏外且在上层 */
+        padding: 10px 8px 10px;
         border-radius: 28px;
         transform-origin: top right;
         transform: translate3d(18px, -12px, 0) scale3d(.34, .18, 1);
+        overflow: visible !important;
+        background: transparent;
+        box-shadow: none;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        isolation: isolate;
+    }
+    body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-panel::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        border-radius: inherit;
+        border: 1px solid rgba(139,148,158,.24);
+        background:
+            radial-gradient(ellipse 70% 45% at 50% 0%, rgba(255,255,255,.30), transparent 58%),
+            linear-gradient(180deg, color-mix(in srgb, var(--surface) 86%, transparent), color-mix(in srgb, var(--surface) 70%, transparent));
+        box-shadow: 0 24px 72px rgba(0,0,0,.28), 0 0 0 1px rgba(255,255,255,.08) inset, inset 0 1px 0 rgba(255,255,255,.18);
+        backdrop-filter: blur(30px) saturate(1.75);
+        -webkit-backdrop-filter: blur(30px) saturate(1.75);
+        pointer-events: none;
     }
     body.terminal-custom-fullscreen-open .terminal-smartbar.open .smartbar-panel {
         transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+        overflow: visible !important;
     }
     body.terminal-custom-fullscreen-open .smartbar-panel .smartbar-dock,
     body.terminal-custom-fullscreen-open .smartbar-dock {
+        position: relative;
+        z-index: 2;
         flex-direction: column;
         align-items: center;
         justify-content: flex-start;
         min-height: 0;
+        width: 100%;
         max-height: calc(100dvh - 142px);
-        overflow-y: auto;
-        overflow-x: hidden;
-        padding: 6px 4px;
+        /* 不裁剪：上浮可画出栏外；图标层在 ::before 栏体之上 */
+        overflow: visible;
+        padding: 4px 0 6px;
+        margin: 0;
         gap: 10px;
-        scroll-padding-block: 18px;
+        scroll-padding-block: 12px;
+        box-sizing: border-box;
     }
     body.terminal-custom-fullscreen-open .smartbar-session,
     body.terminal-custom-fullscreen-open .smartbar-add,
@@ -6257,6 +6288,10 @@ body.smartbar-trash-hover .smartbar-trash-target {
         min-width: 60px;
         min-height: 64px;
         padding: 0;
+        margin: 0 auto;
+        z-index: 3;
+        /* 与横栏同源：底部原点放大 + 上浮（−Y） */
+        transform-origin: 50% 100%;
     }
     body.terminal-custom-fullscreen-open .smartbar-session-icon,
     body.terminal-custom-fullscreen-open .smartbar-add-icon,
@@ -6755,38 +6790,64 @@ body.smartbar-trash-hover .smartbar-trash-target {
         pointer-events: none;
     }
     body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-panel {
-        position: static;
+        position: relative;
         width: 86px;
         max-width: 86px;
         min-height: 0;
         max-height: calc(100dvh - 76px - env(safe-area-inset-bottom));
-        padding: 9px 7px;
+        padding: 10px 8px 10px;
         border-radius: 28px;
         transform-origin: 50% -22px;
         transform: translate3d(0, -16px, 0) scale3d(.22, .08, 1);
         opacity: 0;
         pointer-events: none;
+        overflow: visible !important;
+        background: transparent;
+        box-shadow: none;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        isolation: isolate;
         transition:
             transform .46s cubic-bezier(.16, 1, .3, 1),
             opacity .24s ease,
             filter .38s ease;
     }
+    body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-panel::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        border-radius: inherit;
+        border: 1px solid rgba(139,148,158,.24);
+        background:
+            radial-gradient(ellipse 70% 45% at 50% 0%, rgba(255,255,255,.30), transparent 58%),
+            linear-gradient(180deg, color-mix(in srgb, var(--surface) 86%, transparent), color-mix(in srgb, var(--surface) 70%, transparent));
+        box-shadow: 0 24px 72px rgba(0,0,0,.28), 0 0 0 1px rgba(255,255,255,.08) inset, inset 0 1px 0 rgba(255,255,255,.18);
+        backdrop-filter: blur(30px) saturate(1.75);
+        -webkit-backdrop-filter: blur(30px) saturate(1.75);
+        pointer-events: none;
+    }
     body.terminal-custom-fullscreen-open .terminal-smartbar.open .smartbar-panel {
         transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
         opacity: 1;
         pointer-events: auto;
+        overflow: visible !important;
     }
     body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-dock {
+        position: relative;
+        z-index: 2;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: flex-start;
         width: 100%;
         max-height: calc(100dvh - 98px - env(safe-area-inset-bottom));
-        overflow-y: auto;
-        overflow-x: hidden;
+        overflow: visible;
         gap: 10px;
-        padding: 6px 2px;
+        padding: 4px 0 6px;
+        margin: 0;
+        scroll-padding-block: 12px;
+        box-sizing: border-box;
     }
     body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-session,
     body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-add {
@@ -6796,8 +6857,11 @@ body.smartbar-trash-hover .smartbar-trash-target {
         min-height: 66px;
         flex: 0 0 auto;
         padding: 0;
+        margin: 0 auto;
         flex-direction: column;
         gap: 5px;
+        z-index: 3;
+        transform-origin: 50% 100%;
         transform: translate3d(var(--dock-shift, 0px), var(--dock-lift, 0px), 0) scale(var(--dock-scale, 1)) rotateZ(var(--dock-rotate, 0deg));
         transition: transform .28s cubic-bezier(.2,.8,.2,1), filter .22s ease, opacity .18s ease;
     }
@@ -8825,6 +8889,27 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
 .ai-input-box:focus { border-color: var(--accent); }
 #aiProviderModal,
 .modal-backdrop:has(.ai-provider-modal) { z-index: 10090; }
+/* 与编辑连接/新建代理同源：桌面也完整展开，唯一滚动面是 backdrop，表单内不锁 max-height */
+#aiProviderModal.ai-provider-modal,
+#aiProviderModal .ai-provider-modal,
+#aiProviderModal #aiProviderForm {
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+}
+#aiProviderModal.aiprovider1,
+#aiProviderModal.aiprovider1.closing {
+    overflow-y: auto;
+    overflow-x: hidden;
+    align-items: start;
+    place-items: start center;
+    -webkit-overflow-scrolling: touch;
+}
+#aiProviderModal.aiprovider1 .ai-provider-modal-inner,
+#aiProviderModal.aiprovider1.closing .ai-provider-modal-inner {
+    overflow: visible !important;
+    max-height: none !important;
+}
 .ai-provider-modal { max-width: 860px; display: grid; gap: 10px; }
 .ai-provider-modal h3 { margin: 4px 0 0; }
 .ai-provider-modal > label:not(.check-line) { display: none; }
@@ -10056,7 +10141,17 @@ body.app-body:not(.terminal-mode) .app-main {
     scrollbar-width: none;
 }
 .novnc-page .novnc-toolbar.topbar-actions::-webkit-scrollbar { height: 0; }
-.novnc-page .novnc-toolbar.topbar-actions:hover { scrollbar-width: thin; }
+/* 这条选择器比全局 .topbar-actions 更具体且更晚，必须在这里完整恢复 SSH 同款逻辑 */
+.novnc-page .novnc-toolbar.topbar-actions.scroll-active,
+.novnc-page .novnc-toolbar.topbar-actions:hover,
+.novnc-page .novnc-toolbar.topbar-actions:focus-within { scrollbar-width: thin; }
+.novnc-page .novnc-toolbar.topbar-actions.scroll-active::-webkit-scrollbar,
+.novnc-page .novnc-toolbar.topbar-actions:hover::-webkit-scrollbar,
+.novnc-page .novnc-toolbar.topbar-actions:focus-within::-webkit-scrollbar { height: 4px; }
+.novnc-page .novnc-toolbar.topbar-actions::-webkit-scrollbar-thumb {
+    background: rgba(139,148,158,0.45);
+    border-radius: 999px;
+}
 .novnc-page .novnc-toolbar .btn-sm[data-vnc-icon] {
     display: inline-flex;
     align-items: center;
@@ -11508,7 +11603,7 @@ select optgroup {
 
     body.terminal-custom-fullscreen-open .terminal-smartbar {
         position: fixed !important;
-        top: calc(env(safe-area-inset-top) + 40px) !important;
+        top: calc(env(safe-area-inset-top) + 56px) !important;
         right: max(8px, env(safe-area-inset-right)) !important;
         left: auto !important;
         bottom: auto !important;
@@ -11517,6 +11612,7 @@ select optgroup {
         transform: none !important;
         z-index: 1008 !important;
         pointer-events: none !important;
+        overflow: visible !important;
     }
     body.terminal-custom-fullscreen-open .terminal-smartbar.open .smartbar-panel {
         pointer-events: auto !important;
@@ -11528,7 +11624,7 @@ select optgroup {
         width: 92px !important;
         max-width: 92px !important;
         max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 52px) !important;
-        overflow: hidden !important;
+        overflow: visible !important;
         transform-origin: calc(100% - 25px) -18px !important;
         transform: translate3d(18px, -18px, 0) scale3d(.22, .10, 1) !important;
     }
@@ -11787,7 +11883,8 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
     body.terminal-custom-fullscreen-open .terminal-smartbar.open,
     body.terminal-custom-fullscreen-open .terminal-smartbar.closing {
         position: fixed !important;
-        top: calc(env(safe-area-inset-top) + 40px) !important;
+        /* 下移给上浮图标留出顶部安全区，避免撞 body overflow:hidden */
+        top: calc(env(safe-area-inset-top) + 56px) !important;
         right: max(8px, env(safe-area-inset-right)) !important;
         left: auto !important;
         bottom: auto !important;
@@ -11810,7 +11907,7 @@ body.terminal-mode .main-nav:not(.terminal-shelf-settled) ~ .app-main .terminal-
         width: 92px !important;
         max-width: 92px !important;
         max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 52px) !important;
-        overflow: hidden !important;
+        overflow: visible !important;
         transform-origin: calc(100% - 25px) -18px !important;
     }
     body.terminal-custom-fullscreen-open .terminal-smartbar.open .smartbar-panel {
@@ -15163,3 +15260,28 @@ body.settings-subpage-open {
 #connectionModal.opening #connectionForm,
 #connectionModal.closing #connectionForm { pointer-events: none; }
 body.connection1-blurring #connectionModalScrim { pointer-events: auto; }
+
+
+/* ===== Fullscreen vertical dock: room above for lift + icons over chrome ===== */
+@media (max-width: 700px) and (hover: none) and (pointer: coarse) {
+    body.terminal-custom-fullscreen-open .terminal-smartbar,
+    body.terminal-custom-fullscreen-open .terminal-smartbar.open,
+    body.terminal-custom-fullscreen-open .terminal-smartbar.closing {
+        top: calc(env(safe-area-inset-top) + 56px) !important;
+        overflow: visible !important;
+    }
+    body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-panel,
+    body.terminal-custom-fullscreen-open .terminal-smartbar.open .smartbar-panel,
+    body.terminal-custom-fullscreen-open .terminal-smartbar.closing .smartbar-panel {
+        overflow: visible !important;
+    }
+    body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-dock {
+        overflow: visible !important;
+        z-index: 2 !important;
+    }
+    body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-session,
+    body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-add {
+        z-index: 3 !important;
+        transform-origin: 50% 100% !important;
+    }
+}

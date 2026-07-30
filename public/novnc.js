@@ -895,7 +895,30 @@ async function performAiRemoteDesktopAction(data = {}) {
     throw new Error(t('未知远程桌面 UI 动作：{action}', { action: control }));
 }
 
+/** SSH/Telnet topbar-actions 同源：横向滑动时短暂显示滚动条。 */
+function setupHorizontalScrollbarVisibility(...elements) {
+    elements.filter(Boolean).forEach((el) => {
+        let timer = 0;
+        const show = () => {
+            el.classList.add('scroll-active');
+            window.clearTimeout(timer);
+            timer = window.setTimeout(() => el.classList.remove('scroll-active'), 1100);
+        };
+        el.addEventListener('pointerdown', show, { passive: true });
+        el.addEventListener('touchstart', show, { passive: true });
+        el.addEventListener('wheel', show, { passive: true });
+        el.addEventListener('scroll', show, { passive: true });
+        el.addEventListener('mouseenter', show, { passive: true });
+        el.addEventListener('mouseleave', () => {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(() => el.classList.remove('scroll-active'), 260);
+        }, { passive: true });
+    });
+}
+
 function bindEvents() {
+    const topbarActions = document.getElementById('topbarActions');
+    setupHorizontalScrollbarVisibility(topbarActions);
     qualityBtn.addEventListener('click', () => cycleQuality());
     fitBtn.addEventListener('click', () => cycleFit());
     dragBtn.addEventListener('click', () => togglePanel(joystickPanel, undefined, dragBtn));

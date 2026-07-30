@@ -84,6 +84,8 @@ let terminalSmartbarPickerOpen = false;
 let terminalSmartbarTimer = 0;
 let terminalSmartbarClosing = false;
 let terminalSmartbarLastInnerPointerAt = 0;
+let terminalSmartbarPointerInside = false;
+const TERMINAL_SMARTBAR_AUTO_CLOSE_MS = 10000;
 let smartbarDragState = null;
 let smartbarPressState = null;
 let suppressSmartbarClick = false;
@@ -4109,16 +4111,35 @@ async function fullscreenTerminalTab(tabId) {
     }
 }
 
-function scheduleTerminalSmartbarAutoClose(delay = 5000) {
+function isTerminalSmartbarInteractionTarget(target) {
+    return !!target?.closest?.(
+        '.terminal-smartbar, .smartbar-panel, .smartbar-dock, .smartbar-session, .smartbar-add, .smartbar-handle, .smartbar-picker, .mobile-fullscreen-dock-toggle, [data-smartbar-toggle], [data-smartbar-tab], [data-smartbar-add], [data-smartbar-connect], [data-smartbar-picker-close]'
+    );
+}
+
+function noteTerminalSmartbarPointerInside(inside = true) {
+    terminalSmartbarPointerInside = !!inside;
+    if (inside) terminalSmartbarLastInnerPointerAt = Date.now();
+}
+
+/** 指针在 dock 区域：不计时；离开后 10s 无交互再关。 */
+function scheduleTerminalSmartbarAutoClose(delay = TERMINAL_SMARTBAR_AUTO_CLOSE_MS) {
     window.clearTimeout(terminalSmartbarTimer);
+    if (!terminalSmartbarOpen) return;
+    // 鼠标/手指仍在 dock 上时：暂停自动关闭
+    if (terminalSmartbarPointerInside) return;
+    const wait = Math.max(0, Number(delay) || TERMINAL_SMARTBAR_AUTO_CLOSE_MS);
     terminalSmartbarTimer = window.setTimeout(() => {
         if (!terminalSmartbarOpen) return;
-        if (Date.now() - terminalSmartbarLastInnerPointerAt < delay) {
-            scheduleTerminalSmartbarAutoClose(delay);
+        if (terminalSmartbarPointerInside) return;
+        // 离开后若又点过 dock 内，从最后一次内交互重新计 10s
+        const idle = Date.now() - terminalSmartbarLastInnerPointerAt;
+        if (idle < wait) {
+            scheduleTerminalSmartbarAutoClose(wait - idle);
             return;
         }
         setTerminalSmartbarOpen(false);
-    }, delay);
+    }, wait);
 }
 
 function setTerminalSmartbarOpen(open) {
@@ -4126,6 +4147,7 @@ function setTerminalSmartbarOpen(open) {
     window.clearTimeout(setTerminalSmartbarOpen._closeTimer);
     if (!open) {
         document.querySelectorAll('#terminalWorkspace .terminal-frame').forEach((frame) => frame.style.pointerEvents = '');
+        terminalSmartbarPointerInside = false;
         if (!terminalSmartbarOpen) return;
         terminalSmartbarOpen = false;
         terminalSmartbarPickerOpen = false;
@@ -4142,13 +4164,14 @@ function setTerminalSmartbarOpen(open) {
         return;
     }
     terminalSmartbarLastInnerPointerAt = Date.now();
+    // 不强制 inside：只有真实 pointer 在 dock 上才暂停；否则从打开起 10s 无交互关闭
     $('.main-nav')?.classList.remove('terminal-shelf-settled', 'terminal-shelf-dock-open');
     terminalSmartbarClosing = false;
     terminalSmartbarOpen = true;
     renderTerminalSmartbar();
     syncTerminalShelfLineState();
     scheduleTerminalKeyboardReflow('smartbar-open');
-    scheduleTerminalSmartbarAutoClose();
+    scheduleTerminalSmartbarAutoClose(TERMINAL_SMARTBAR_AUTO_CLOSE_MS);
 }
 function noteTerminalWorkspaceActivity() {}
 function swapTerminalWindows(a, b) {
@@ -4213,36 +4236,70 @@ function updateDockMagnification(clientX, dock = document.querySelector('.smartb
     if (!dock) return;
     const verticalDock = isVerticalSmartbarDock();
     const Motion = sshKeyMotion.engine;
-    // 演示页 Motion.dockMagnifyPointer：五通道弹簧 --dock-scale/lift/shift/rotate/blur
-    if (Motion?.dockMagnifyPointer) {
-        Motion.dockMagnifyPointer(dock, clientX, clientY ?? smartbarDragState?.currentY ?? 0, {
+    const y = clientY ?? smartbarDragState?.currentY ?? 0;
+    if (verticalDock) {
+        // 全屏竖栏：横栏「左右推邻」→ 上下推邻；「上浮」仍为 −Y；无侧向弹出
+        if (Motion?.dockMagnifyVerticalPointer) {
+            Motion.dockMagnifyVerticalPointer(dock, clientX, y, {
+                itemSelector: DOCK_MAGNIFY_SELECTOR,
+                influence: 110,
+                maxScale: 1.22,
+                maxLift: 12,
+                maxSpread: 8,
+                maxRotate: 0.7,
+                maxBlur: 0.12,
+                preset: 'dock',
+            });
+            return;
+        }
+    } else if (Motion?.dockMagnifyPointer) {
+        // 横栏：演示页 §9 同源
+        Motion.dockMagnifyPointer(dock, clientX, y, {
             itemSelector: DOCK_MAGNIFY_SELECTOR,
-            vertical: verticalDock,
-            influence: verticalDock ? 118 : 142,
+            influence: 142,
             maxScale: 1.26,
-            maxLift: verticalDock ? 6 : 15,
-            maxShift: verticalDock ? 9 : 8,
-            maxRotate: verticalDock ? 1.1 : 0.7,
+            maxLift: 15,
+            maxShift: 8,
+            maxRotate: 0.7,
             maxBlur: 0.14,
             preset: 'dock',
         });
         return;
     }
-    // 引擎未就绪时瞬时回退（与旧生产一致）；空闲预热后走上面弹簧路径。
-    const influence = verticalDock ? 118 : 142;
-    const pointerCoord = verticalDock ? (clientY ?? smartbarDragState?.currentY ?? 0) : clientX;
+    // 引擎未就绪瞬时回退
+    if (verticalDock) {
+        const influence = 110;
+        const pointerCoord = y;
+        dock.querySelectorAll(DOCK_MAGNIFY_SELECTOR).forEach((item) => {
+            const rect = item.getBoundingClientRect();
+            const center = rect.top + rect.height / 2;
+            const d = Math.abs(pointerCoord - center);
+            const t = Math.max(0, 1 - d / influence);
+            const eased = 1 - Math.pow(1 - t, 3);
+            const direction = Math.sign(center - pointerCoord);
+            item.style.setProperty('--dock-scale', (1 + eased * 0.22).toFixed(3));
+            // 上浮 + 上下推邻；shift 恒 0
+            item.style.setProperty('--dock-lift', `${(-eased * 12 + direction * eased * 8).toFixed(2)}px`);
+            item.style.setProperty('--dock-shift', '0px');
+            item.style.setProperty('--dock-blur', `${((1 - eased) * 0.12).toFixed(2)}px`);
+            item.style.setProperty('--dock-rotate', `${(direction * eased * -0.7).toFixed(2)}deg`);
+        });
+        return;
+    }
+    const influence = 142;
+    const pointerCoord = clientX;
     dock.querySelectorAll(DOCK_MAGNIFY_SELECTOR).forEach((item) => {
         const rect = item.getBoundingClientRect();
-        const center = verticalDock ? rect.top + rect.height / 2 : rect.left + rect.width / 2;
+        const center = rect.left + rect.width / 2;
         const d = Math.abs(pointerCoord - center);
         const t = Math.max(0, 1 - d / influence);
         const eased = 1 - Math.pow(1 - t, 3);
         const direction = Math.sign(center - pointerCoord);
         item.style.setProperty('--dock-scale', (1 + eased * 0.26).toFixed(3));
-        item.style.setProperty('--dock-lift', `${(-eased * (verticalDock ? 6 : 15)).toFixed(2)}px`);
-        item.style.setProperty('--dock-shift', `${(direction * eased * (verticalDock ? 9 : 8)).toFixed(2)}px`);
+        item.style.setProperty('--dock-lift', `${(-eased * 15).toFixed(2)}px`);
+        item.style.setProperty('--dock-shift', `${(direction * eased * 8).toFixed(2)}px`);
         item.style.setProperty('--dock-blur', `${((1 - eased) * 0.14).toFixed(2)}px`);
-        item.style.setProperty('--dock-rotate', `${(direction * eased * (verticalDock ? -1.1 : -0.7)).toFixed(2)}deg`);
+        item.style.setProperty('--dock-rotate', `${(direction * eased * -0.7).toFixed(2)}deg`);
     });
 }
 function animateWindowFromDock(tabId, sourceRect, { swap = false } = {}) {
@@ -10449,11 +10506,19 @@ function bindEvents() {
         if (connect) { terminalSmartbarPickerOpen = false; setTerminalSmartbarOpen(false); openConnection(connect).catch((err) => toast(err.message)); }
     }, true);
     $('#sessionTabs').addEventListener('pointerdown', (e) => {
+        if (isTerminalSmartbarInteractionTarget(e.target)) {
+            noteTerminalSmartbarPointerInside(true);
+            window.clearTimeout(terminalSmartbarTimer); // 在区域内：暂停自动关闭
+        }
         const tabBtn = e.target.closest?.('[data-smartbar-tab]');
         if (!tabBtn) return;
         startSmartbarPress(e, tabBtn);
     });
     $('#sessionTabs').addEventListener('pointermove', (e) => {
+        if (terminalSmartbarOpen && isTerminalSmartbarInteractionTarget(e.target)) {
+            noteTerminalSmartbarPointerInside(true);
+            window.clearTimeout(terminalSmartbarTimer);
+        }
         const dock = e.target.closest?.('.smartbar-dock');
         if (dock) {
             if (e.target.closest?.('[data-smartbar-tab]')) e.preventDefault?.();
@@ -10464,17 +10529,33 @@ function bindEvents() {
     }, { passive: false });
     $('#sessionTabs').addEventListener('pointerleave', (e) => {
         resetDockMagnification(e.currentTarget.querySelector('.smartbar-dock'));
+        // 指针离开整个 sessionTabs：开始 10s 自动关闭
+        if (terminalSmartbarOpen) {
+            noteTerminalSmartbarPointerInside(false);
+            scheduleTerminalSmartbarAutoClose(TERMINAL_SMARTBAR_AUTO_CLOSE_MS);
+        }
+    });
+    // picker 层不在 #sessionTabs 内，单独续命
+    document.getElementById('smartbarPickerLayer')?.addEventListener('pointerenter', () => {
+        if (!terminalSmartbarOpen) return;
+        noteTerminalSmartbarPointerInside(true);
+        window.clearTimeout(terminalSmartbarTimer);
+    });
+    document.getElementById('smartbarPickerLayer')?.addEventListener('pointerleave', () => {
+        if (!terminalSmartbarOpen) return;
+        noteTerminalSmartbarPointerInside(false);
+        scheduleTerminalSmartbarAutoClose(TERMINAL_SMARTBAR_AUTO_CLOSE_MS);
     });
     // dock 指针离开整个 sessionTabs 容器时复位；离开单个 item 不复位（跨 item 连续放大）。
     document.addEventListener('pointerdown', (e) => {
         if (!terminalSmartbarOpen) return;
         if (e.target.closest?.('[data-smartbar-toggle], .mobile-fullscreen-dock-toggle')) return;
-        if (e.target.closest?.('.smartbar-picker')) { terminalSmartbarLastInnerPointerAt = Date.now(); scheduleTerminalSmartbarAutoClose(); return; }
-        if (e.target.closest?.('.terminal-smartbar .smartbar-panel, .terminal-smartbar .smartbar-dock, .terminal-smartbar .smartbar-session, .terminal-smartbar .smartbar-add')) {
-            terminalSmartbarLastInnerPointerAt = Date.now();
-            scheduleTerminalSmartbarAutoClose();
+        if (isTerminalSmartbarInteractionTarget(e.target)) {
+            noteTerminalSmartbarPointerInside(true);
+            window.clearTimeout(terminalSmartbarTimer);
             return;
         }
+        // 点 dock 外：立即收起（保持原行为）
         setTerminalSmartbarOpen(false);
         document.querySelectorAll('#terminalWorkspace .terminal-frame').forEach((frame) => frame.style.pointerEvents = '');
     }, true);
