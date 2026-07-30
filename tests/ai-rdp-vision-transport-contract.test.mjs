@@ -50,6 +50,14 @@ test('remote desktop runs fail closed when model/provider vision is disabled',()
 test('legacy paths never embed remote desktop dataUrl into chat content',()=>{
  assert.doesNotMatch(app,/最新远程桌面截图（实时截取）：\\n\$\{shot\?\.dataUrl\}/);
  assert.doesNotMatch(app,/最新远程桌面截图[^\n]{0,40}\$\{shot\?\.dataUrl\}/);
- assert.match(app,/handleAiClientCapture[\s\S]{0,800}RDP\/VNC AI 视觉操作需要 Go Runtime/);
- assert.match(app,/continueAiAfterRemoteDesktopClientActions[\s\S]{0,500}remote-desktop[\s\S]{0,300}Go Runtime/);
+ const captureStart=app.indexOf('async function handleAiClientCapture');
+ const captureEnd=app.indexOf('async function syncAiToolSideEffects',captureStart);
+ const captureBody=app.slice(captureStart,captureEnd);
+ assert.match(captureBody,/RDP\/VNC AI 视觉操作需要 Go Runtime/);
+ assert.doesNotMatch(captureBody,/shot\?\.dataUrl|appendAiMessage\([^\n]*dataUrl/);
+ const followStart=app.indexOf('async function continueAiAfterRemoteDesktopClientActions');
+ const followEnd=app.indexOf('function maskAiSensitive',followStart);
+ const followBody=app.slice(followStart,followEnd);
+ assert.match(followBody,/remote-desktop[\s\S]*Go Runtime/);
+ assert.doesNotMatch(followBody,/shot\?\.dataUrl|appendAiMessage\([^\n]*dataUrl/);
 });

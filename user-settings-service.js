@@ -32,6 +32,7 @@ const USER_ALLOWED_KEYS = new Set([
     'notes.editorMode',
     'notes.fontSize',
     'workspace.defaultView',
+    'workspace.sessionPersistence',
     'ai.panelLayout',
     'ai.assistantName',
     'mail.notifyLogin',

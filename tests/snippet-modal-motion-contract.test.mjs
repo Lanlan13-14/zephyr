@@ -44,7 +44,7 @@ test('snippet open/close use iosApp* only — no home-blur fallback', () => {
     assert.match(appJs, /function snippetBtnRadius/);
     assert.match(appJs, /Motion\.iosAppOpen\(card, snippetModalTrigger/);
     assert.match(appJs, /armMotionModalOpen\(Motion, modal, card, inner, snippetModalTrigger, 'snippet1'\)/);
-    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn', 'aiAddProviderBtn'\]\)/);
+    assert.match(appJs, /for \(const id of \['addSshKeyBtn', 'addSnippetBtn'\]\)/);
     const openFn = extractFn(appJs, 'openSnippetModal');
     const closeFn = extractFn(appJs, 'closeSnippetModal');
     assert.doesNotMatch(openFn, /connection-home-blur/);

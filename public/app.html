@@ -6,10 +6,10 @@
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
 <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260730-admin-user-modal1">
-    <link rel="modulepreload" href="app.js?v=20260730-admin-user-modal1">
+    <link rel="modulepreload" href="app.js?v=20260730-toast-motion4">
     <link rel="modulepreload" href="theme-runtime.js?v=20260730-admin-user-modal1">
     <link rel="modulepreload" href="i18n/runtime.js?v=20260730-admin-user-modal1">
-    <link rel="stylesheet" href="style.css?v=20260730-admin-user-modal1">
+    <link rel="stylesheet" href="style.css?v=20260730-toast-motion4">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -407,6 +407,10 @@
                         <div class="settings-panel" id="settings-appearance">
                             <h2 data-i18n="个性化设置">个性化设置</h2>
                             <form id="appearanceForm" class="settings-form">
+                                <label class="settings-switch-option" for="sessionPersistenceEnabled">
+                                    <span class="settings-switch-copy"><strong data-i18n="会话持久化">会话持久化</strong><small data-i18n="关闭页面后再次打开时，恢复之前的页面和会话。">关闭页面后再次打开时，恢复之前的页面和会话。</small></span>
+                                    <span class="connection-share-switch"><input type="checkbox" id="sessionPersistenceEnabled" checked><span aria-hidden="true"></span></span>
+                                </label>
                                 <label data-i18n="左上角标题">左上角标题</label>
                                 <input id="brandNameInput" maxlength="40" placeholder="Zephyr">
                                 <label data-i18n="左上角图标">左上角图标</label>
@@ -1189,14 +1193,15 @@
         </div>
     </div>
 
-    <div class="toast" id="toast"></div>
+    <div class="toast-container" id="toastHost" aria-live="polite"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20260730-ai-thinking-runtime1" type="module"></script>
+<script src="app.js?v=20260730-toast-motion4" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {
-            var lastView = localStorage.getItem('zephyr.lastView') || '';
+            var sessionPersistenceDisabled = localStorage.getItem('zephyr.sessionPersistence.disabled') === '1';
+            var lastView = sessionPersistenceDisabled ? '' : (localStorage.getItem('zephyr.lastView') || '');
             if (['activity','terminal','remote','notes','settings'].indexOf(lastView) >= 0) {
                 document.documentElement.dataset.earlyView = lastView;
                 document.addEventListener('DOMContentLoaded', function () {

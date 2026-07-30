@@ -1,9 +1,9 @@
-const CACHE_NAME = 'zephyr-static-20260728-ai-handle-only-drag1';
+const CACHE_NAME = 'zephyr-static-20260730-toast-motion4';
 const PRECACHE = [
-    '/app.js?v=20260728-ai-handle-only-drag1',
-    '/style.css?v=20260728-ai-handle-only-drag1',
+    '/app.js?v=20260730-toast-motion4',
+    '/style.css?v=20260730-toast-motion4',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260728-ai-handle-only-drag1',
+    '/terminal.js?v=20260730-toast-motion4',
     '/notes.js',
     '/markdown.js',
 ];

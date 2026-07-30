@@ -96,6 +96,15 @@ RUN apk add --no-cache \
         font-noto-emoji \
         openssl \
         curl \
+        bubblewrap \
+        jq \
+        file \
+        python3 \
+        py3-pip \
+        go \
+        rust \
+        cargo \
+        ffmpeg \
     && echo "=== runtime deps installed ==="
 
 COPY --from=app-build /app /app

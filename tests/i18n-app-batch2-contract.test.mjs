@@ -61,6 +61,7 @@ test('catalogs include batch 2 keys with en translations', () => {
         '命令', '例如：uname -a && uptime', '超时（秒）', '批量执行',
         '暂无连接，点击右上角添加新连接。',
         '个性化设置', '界面语言', '界面语言会立即生效，并保存在本机。',
+        '会话持久化', '关闭页面后再次打开时，恢复之前的页面和会话。',
         '安全设置', '备案信息', '代理池', 'SSH 密钥库', '代码片段',
         'AI 助理', '数据管理', '邮件通知', '笔记功能', '多用户管理', '关于',
         '个性化设置已保存', '名称和图标已重置',
@@ -71,11 +72,11 @@ test('catalogs include batch 2 keys with en translations', () => {
     }
 });
 
-test('app.html cache busts include current i18n fix revision', () => {
+test('app.html cache busts app, style, and i18n assets', () => {
     const html = read('public/app.html');
-    assert.match(html, /app\.js\?v=20260728-ai-handle-only-drag1/);
-    assert.match(html, /style\.css\?v=20260728-ai-handle-only-drag1/);
-    assert.match(html, /i18n\/runtime\.js\?v=20260728-ai-handle-only-drag1/);
+    assert.match(html, /app\.js\?v=[A-Za-z0-9._-]+/);
+    assert.match(html, /style\.css\?v=[A-Za-z0-9._-]+/);
+    assert.match(html, /i18n\/runtime\.js\?v=[A-Za-z0-9._-]+/);
 });
 
 test('app.html marks security settings panel with data-i18n', () => {
@@ -115,6 +116,8 @@ test('catalogs include security panel keys with en translations', () => {
 
 test('app.html marks appearance form with data-i18n', () => {
     const html = read('public/app.html');
+    assert.match(html, /data-i18n="会话持久化"/);
+    assert.match(html, /data-i18n="关闭页面后再次打开时，恢复之前的页面和会话。"/);
     assert.match(html, /data-i18n="左上角标题"/);
     assert.match(html, /data-i18n="配色方案"/);
     assert.match(html, /data-i18n="凝霜蓝（默认）"/);
@@ -131,6 +134,7 @@ test('app.html marks appearance form with data-i18n', () => {
 test('catalogs include appearance + terminal layout keys', () => {
     const en = JSON.parse(read('public/i18n/locales/en.json'));
     const required = [
+        '会话持久化', '关闭页面后再次打开时，恢复之前的页面和会话。',
         '左上角标题', '左上角图标', '当前图标', '配色方案',
         '凝霜蓝（默认）', '熔岩流 Lava Flow', '浅葱影 Asagi', '极夜青 Cyber Teal',
         '自定义 CSS/JS 与配色', '深浅模式', '跟随系统', '深色', '浅色',

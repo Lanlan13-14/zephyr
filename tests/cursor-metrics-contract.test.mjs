@@ -82,7 +82,7 @@ test('terminal.html loads fork terminal.css (not stock @wterm/dom)', () => {
         'must load fork terminal.css');
     assert.ok(!/\/vendor\/@wterm\/dom\/terminal\.css/.test(terminalHtml),
         'must not load stock terminal.css as primary');
-    assert.ok(/20260728-ai-handle-only-drag1/.test(terminalHtml), 'current cache-bust present');
+    assert.ok(/terminal\.js\?v=20260730-toast-motion4/.test(terminalHtml), 'current terminal cache-bust present');
 });
 
 test('getTerminalCharMetrics prefers term.getCellMetrics (no Math.max multi-source)', () => {

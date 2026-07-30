@@ -4,8 +4,10 @@ import fs from 'node:fs';
 
 const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 
-test('app automatically restores workspace after connections load', () => {
+test('app automatically restores workspace after connections load when persistence is enabled', () => {
   assert.match(js, /await loadConnections\(\);[\s\S]*await restoreLastWorkspace\(\);/);
+  assert.match(js, /function isSessionPersistenceEnabled\(\)/);
+  assert.match(js, /async function restoreLastWorkspace\(\)[\s\S]*?!isSessionPersistenceEnabled\(\)/);
   assert.match(js, /\/api\/me\/workspaces\/\$\{encodeURIComponent\(automaticWorkspaceId\(\)\)\}\/restore/);
   // Must be POST — default GET hits Express 404 and was swallowed as "no workspace".
   assert.match(js, /\/restore`[\s\S]{0,80}method:\s*'POST'/);
@@ -19,8 +21,10 @@ test('workspace state contains tabs, order, minimized and active view', () => {
   assert.match(js, /activeView:\s*currentAppView/);
 });
 
-test('workspace autosaves and excludes transient tabs', () => {
+test('workspace autosaves only when persistence is enabled and excludes transient tabs', () => {
   assert.match(js, /filter\(\(t\) => t\.connectionId && !t\.transient\)/);
+  assert.match(js, /function scheduleWorkspaceSave[\s\S]*?!isSessionPersistenceEnabled\(\)/);
+  assert.match(js, /async function saveWorkspaceNow[\s\S]*?!isSessionPersistenceEnabled\(\)/);
   assert.match(js, /scheduleWorkspaceSave\('terminal-tabs'\)/);
   assert.match(js, /addEventListener\('pagehide'/);
   assert.doesNotMatch(js, /addEventListener\('beforeunload'/);

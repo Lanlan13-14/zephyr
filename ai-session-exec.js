@@ -39,7 +39,8 @@ const MAX_ARG_LEN = 8192;
 const MAX_CONCURRENT_GLOBAL = 4;
 const MAX_CONCURRENT_USER = 2;
 const MAX_SESSION_EXECS_PER_HOUR = 60;
-const MEM_LIMIT_BYTES = 512 * 1024 * 1024; // 512MB for compile/ffmpeg
+const MEM_LIMIT_BYTES = 512 * 1024 * 1024; // default for compile/ffmpeg
+const NODE_MEM_LIMIT_BYTES = 1536 * 1024 * 1024; // V8 reserves a large virtual CodeRange before running scripts
 const CPU_CPU_SECONDS = 120;
 
 /** @type {ReadonlyArray<{name:string, candidates:string[], tier?:string}>} */
@@ -625,6 +626,9 @@ function buildBwrapArgs({ sessionRoot, cwdAbs, network, argv }) {
     ];
     if (fs.existsSync('/lib')) args.push('--ro-bind', '/lib', '/lib');
     if (fs.existsSync('/lib64')) args.push('--ro-bind', '/lib64', '/lib64');
+    // Debian's BLAS/LAPACK and similar loader links resolve through
+    // /etc/alternatives; without this read-only bind ffmpeg starts with 127.
+    if (fs.existsSync('/etc/alternatives')) args.push('--ro-bind', '/etc/alternatives', '/etc/alternatives');
     if (fs.existsSync('/lib/aarch64-linux-gnu')) {
         // already under /lib
     }
@@ -643,15 +647,16 @@ function buildBwrapArgs({ sessionRoot, cwdAbs, network, argv }) {
     return args;
 }
 
-function wrapWithLimits(argv, timeoutMs) {
+function wrapWithLimits(argv, timeoutMs, memLimitBytes = MEM_LIMIT_BYTES) {
     const caps = probeCapabilities();
     let finalArgv = argv.slice();
-    // prlimit: cpu time + address space
+    // prlimit: cpu time + address space. Node/V8 needs a larger virtual address
+    // reservation for its CodeRange even when actual RSS stays well below 512MB.
     if (caps.prlimitPath) {
         finalArgv = [
             caps.prlimitPath,
             `--cpu=${CPU_CPU_SECONDS}`,
-            `--as=${MEM_LIMIT_BYTES}`,
+            `--as=${memLimitBytes}`,
             '--',
             ...finalArgv,
         ];
@@ -673,6 +678,7 @@ function planExecution({ command, args, sessionRoot, cwdAbs, network, timeoutMs 
     const caps = probeCapabilities();
     const cmd = resolveCommand(command);
     const confinedArgs = validateArgs(cmd.name, args, cwdAbs, sessionRoot);
+    const memLimitBytes = (cmd.name === 'node' || cmd.name === 'npm') ? NODE_MEM_LIMIT_BYTES : MEM_LIMIT_BYTES;
     // busybox multi-call must invoke as: busybox <applet> args...
     const inner = cmd.applet
         ? [cmd.absolute, cmd.applet, ...confinedArgs]
@@ -681,7 +687,7 @@ function planExecution({ command, args, sessionRoot, cwdAbs, network, timeoutMs 
     if (caps.bwrapOk && caps.bwrapPath) {
         const bwrapArgs = buildBwrapArgs({ sessionRoot, cwdAbs, network: !!network, argv: inner });
         const full = [caps.bwrapPath, ...bwrapArgs];
-        const capped = wrapWithLimits(full, timeoutMs);
+        const capped = wrapWithLimits(full, timeoutMs, memLimitBytes);
         return {
             file: capped[0],
             argv: capped,
@@ -695,7 +701,7 @@ function planExecution({ command, args, sessionRoot, cwdAbs, network, timeoutMs 
 
     if (!network && caps.unshareNet && caps.unsharePath) {
         const full = [caps.unsharePath, '-n', '--', ...inner];
-        const capped = wrapWithLimits(full, timeoutMs);
+        const capped = wrapWithLimits(full, timeoutMs, memLimitBytes);
         return {
             file: capped[0],
             argv: capped,
@@ -712,7 +718,7 @@ function planExecution({ command, args, sessionRoot, cwdAbs, network, timeoutMs 
         // Document mode for operators.
     }
 
-    const capped = wrapWithLimits(inner, timeoutMs);
+    const capped = wrapWithLimits(inner, timeoutMs, memLimitBytes);
     return {
         file: capped[0],
         argv: capped,

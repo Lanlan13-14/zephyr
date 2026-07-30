@@ -84,9 +84,9 @@ test('notes CSS covers glass chrome, mode thumb, dialogs, mobile master-detail',
 });
 
 test('app wires craft notes module and current app cache-bust', () => {
-  assert.match(appJs, /notes\.js\?v=20260720-notes-select1/);
-  assert.match(appHtml, /style\.css\?v=20260728-ai-handle-only-drag1/);
-  assert.match(appHtml, /app\.js\?v=20260728-ai-handle-only-drag1/);
+  assert.match(appJs, /notes\.js\?v=20260729-ai-notes-switches1/);
+  assert.match(appHtml, /style\.css\?v=20260730-toast-motion4/);
+  assert.match(appHtml, /app\.js\?v=20260730-toast-motion4/);
 });
 
 test('keyboard shortcuts exist for high-frequency notes actions', () => {

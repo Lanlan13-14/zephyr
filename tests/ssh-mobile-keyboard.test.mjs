@@ -298,7 +298,7 @@ test('wiring contract: terminal imports controller + facade; button removed', ()
     assert.match(terminalJs, /assertKeyboardLayoutSettled/);
     assert.match(terminalJs, /openCmd\(|LiftMode\.NONE|liftMode/);
     assert.doesNotMatch(terminalHtml, /id="cmdKeyboardBtn"/);
-    assert.match(terminalHtml, /20260728-ai-handle-only-drag1/);
+    assert.match(terminalHtml, /terminal\.js\?v=20260730-toast-motion4/);
     assert.match(styleCss, /\.cmd-keyboard-btn \{ display: none !important/);
 });
 

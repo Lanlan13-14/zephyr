@@ -84,10 +84,13 @@ test('platform settings and destructive APIs require the super admin', async () 
 test('personal settings stay isolated and allow login notification preference', async () => {
     const update = await server.api(userCookie, 'PUT', '/api/me/settings', {
         appearance: { theme: 'light' },
+        workspace: { sessionPersistence: false },
         mail: { notifyLogin: false },
     });
     assert.equal(update.status, 200, JSON.stringify(update.body));
     assert.equal(update.body.overrides.appearance.theme, 'light');
+    assert.equal(update.body.overrides.workspace.sessionPersistence, false);
+    assert.equal(update.body.settings.workspace.sessionPersistence, false);
     assert.equal(update.body.overrides.mail.notifyLogin, false);
     assert.equal(update.body.settings.mail.notifyLogin, false);
     assert.equal(Object.hasOwn(update.body.settings.mail, 'host'), false);

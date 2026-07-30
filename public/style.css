@@ -3070,8 +3070,12 @@ body.adminuser1-blurring #adminUserModalScrim { pointer-events: auto; }
 .connection-test-latency[data-state="pending"] { color: var(--accent-hover); }
 .connection-test-latency[data-state="success"] { color: var(--success); }
 .connection-test-latency[data-state="error"] { color: var(--danger); }
-body.app-body > .toast { position: fixed; top: 72px; right: 18px; z-index: 120; pointer-events: none; }
-body.app-body > .toast.show { opacity: 1; transform: translate3d(0,0,0) scale(1); }
+/* 主界面 toast 宿主：右上锚点，避让顶栏 */
+body.app-body > .toast-container {
+    top: 72px;
+    right: 18px;
+    z-index: 120;
+}
 
 @media (max-width: 760px) and (hover: none) and (pointer: coarse) {
     .main-nav { align-items: flex-start; flex-wrap: wrap; padding: 10px; }
@@ -5020,20 +5024,22 @@ html.ssh-kb-open .terminal-page {
 }
 .btn-secondary:hover { border-color: var(--text-secondary); background: var(--surface); }
 
-/* 通用 Toast */
+/* 通用 Toast —— 纯中性视觉；进出/堆叠仅 Motion y，禁止 CSS transition/变色 */
 .toast-container {
     position: fixed;
     top: calc(16px + env(safe-area-inset-top));
     right: calc(16px + env(safe-area-inset-right));
     z-index: 999;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    /* 子项 absolute 叠原点；容器只提供锚点，不参与纵向排布 */
+    width: 0;
+    height: 0;
+    overflow: visible;
     pointer-events: none;
 }
 .toast {
     min-width: 180px;
     max-width: min(360px, calc(100vw - 32px));
+    width: max-content;
     padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -5044,13 +5050,16 @@ html.ssh-kb-open .terminal-page {
     -webkit-backdrop-filter: blur(18px) saturate(1.4);
     font-size: 13px;
     opacity: 0;
-    transform: translate3d(14px, -6px, 0) scale(0.98);
-    transition: opacity 0.22s ease, transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.24s ease;
+    transition: none !important;
+    /* 不按 kind 变色；success/error/info 类名即使存在也保持中性 */
 }
-.toast.show { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
-.toast.success { border-color: rgba(63,185,80,0.45); box-shadow: 0 14px 40px rgba(63,185,80,0.12), 0 14px 40px rgba(0,0,0,0.26); }
-.toast.error { border-color: rgba(248,81,73,0.5); color: var(--danger); }
-.toast.info { border-color: rgba(10,132,255,0.45); }
+.toast.success,
+.toast.error,
+.toast.info {
+    border-color: var(--border);
+    color: var(--text);
+    box-shadow: 0 14px 40px rgba(0,0,0,0.3);
+}
 
 /* ===== Docker 管理面板 ===== */
 .docker-header {
@@ -5435,8 +5444,13 @@ html.ssh-kb-open .terminal-page {
     .fm-header.panel-titlebar .fm-path-input { font-size: 12px; padding-inline: 7px; }
     .fm-header.panel-titlebar .fm-refresh-btn { margin-left: 0; }
     .fm-toolbar { padding-inline: 8px; overflow-x: auto; gap: 4px; }
-    .toast-container { left: 12px; right: 12px; top: auto; bottom: calc(12px + env(safe-area-inset-bottom) + var(--keyboard-inset, 0px)); }
-    .toast { width: 100%; max-width: none; }
+    .toast-container {
+        left: auto;
+        right: 12px;
+        top: auto;
+        bottom: calc(12px + env(safe-area-inset-bottom) + var(--keyboard-inset, 0px));
+    }
+    .toast { max-width: min(360px, calc(100vw - 24px)); }
     .panel-resize-handle { width: 38px; height: 38px; }
     .fm-editor-minimap { width: 112px; flex-basis: 112px; }
     .fm-editor-actions { flex-wrap: wrap; }
@@ -11384,9 +11398,7 @@ select optgroup {
 .panel-layout-icon.right::after,
 .panel-layout-icon.top::after,
 .panel-layout-icon.bottom::after { background: var(--accent-soft-bg) !important; }
-.toast.info,
-.toast.success,
-.toast.error { box-shadow: var(--shadow-lift) !important; }
+.toast { box-shadow: var(--shadow-lift) !important; }
 
 .novnc-page {
     background: var(--bg);

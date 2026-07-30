@@ -99,6 +99,7 @@ let previewSettings = {
         shortcutPlatform: 'auto',
         allowLigatures: false,
     },
+    workspace: { sessionPersistence: true },
     notes: { enabled: false },
     ai: { enabled: false, providers: [] },
     security: {},
@@ -167,7 +168,13 @@ if (previewEnabled && !globalThis.__zephyrPreviewMockInstalled) {
         if (path === '/api/activities' && method === 'DELETE') return jsonResponse({ ok: true });
         if (path === '/api/me/settings' && method === 'GET') return jsonResponse({ settings: previewSettings, overrides: { mail: { notifyLogin: true } } });
         if (path === '/api/me/settings' && method === 'PUT') {
-            previewSettings = { ...previewSettings, ...body };
+            previewSettings = {
+                ...previewSettings,
+                ...body,
+                appearance: { ...(previewSettings.appearance || {}), ...(body.appearance || {}) },
+                terminal: { ...(previewSettings.terminal || {}), ...(body.terminal || {}) },
+                workspace: { ...(previewSettings.workspace || {}), ...(body.workspace || {}) },
+            };
             return jsonResponse({ ok: true, settings: previewSettings, overrides: body });
         }
         if (path === '/api/ai/providers') return jsonResponse({ providers: [] });
@@ -220,6 +227,7 @@ if (previewEnabled && !globalThis.__zephyrPreviewMockInstalled) {
             return sshKey ? jsonResponse({ sshKey: { ...sshKey, hasPrivateKey: !!sshKey.privateKey, hasPassphrase: !!sshKey.passphrase } }) : jsonResponse({ error: t('SSH 密钥不存在') }, 404);
         }
         if (/^\/api\/me\/workspaces\/[^/]+\/restore$/.test(path) && method === 'POST') return jsonResponse({ workspace: null, inaccessible: 0, autoReplay: false });
+        if (/^\/api\/me\/workspaces\/[^/]+$/.test(path) && method === 'DELETE') return jsonResponse({ ok: true });
         if (/^\/api\/me\/workspaces\/[^/]+$/.test(path) && method === 'PUT') return jsonResponse({
             workspace: { workspaceId: path.split('/').pop(), revision: Number(body.revision || 0) + 1, state: body.state || {} },
         });

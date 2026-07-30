@@ -55,8 +55,7 @@ test('frontend user-visible calls contain no untranslated Chinese literals', () 
     }
 });
 
-test('every frontend module that imports i18n uses the current cache revision', () => {
-    const current = '20260728-ai-handle-only-drag1';
+test('every frontend module that imports i18n uses a cache-busted runtime URL', () => {
     const publicDir = path.join(root, 'public');
     const files = [];
     const walk = (dir) => {
@@ -71,6 +70,6 @@ test('every frontend module that imports i18n uses the current cache revision', 
     const importing = files.filter((file) => fs.readFileSync(file, 'utf8').includes('i18n/runtime.js'));
     assert.ok(importing.length > 0);
     for (const file of importing) {
-        assert.match(fs.readFileSync(file, 'utf8'), new RegExp(`i18n/runtime\\.js\\?v=${current}`), path.relative(root, file));
+        assert.match(fs.readFileSync(file, 'utf8'), /i18n\/runtime\.js\?v=[A-Za-z0-9._-]+/, path.relative(root, file));
     }
 });

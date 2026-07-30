@@ -640,6 +640,7 @@ function getParams() {
 }
 
 const params = getParams();
+let sessionPersistenceEnabled = localStorage.getItem('zephyr.sessionPersistence.disabled') !== '1';
 let terminalHistorySessionId = String(params?.tabId || params?.sessionId || params?.connectionId || '');
 let terminalRemoteHistory = null;
 let pendingWorkspaceRestoreState = null;
@@ -2063,6 +2064,9 @@ window.addEventListener('message', (e) => {
         applyWtermTheme(getPreferredWtermTheme());
         if (!hasTerminalThemeOverride()) applyTheme(e.data.theme);
         requestStableTerminalLayout('parent-theme-change', { includeResize: false });
+    }
+    if ((e.data.type === 'terminal-settings' || e.data.workspace) && e.data.workspace && Object.prototype.hasOwnProperty.call(e.data.workspace, 'sessionPersistence')) {
+        sessionPersistenceEnabled = e.data.workspace.sessionPersistence !== false;
     }
     if ((e.data.type === 'terminal-settings' || e.data.terminal) && e.data.terminal && Object.prototype.hasOwnProperty.call(e.data.terminal, 'allowLigatures')) {
         applyTerminalLigatures(!!e.data.terminal.allowLigatures);
@@ -4337,23 +4341,104 @@ function handleTransferActionClick(e) {
     }
 }
 
-// ---------- 通用提示 ----------
-function showToast(message, type = 'info', timeout = 2800) {
+// ---------- 通用提示：仅 zephyr-motion toastPush，无 CSS 进出场 fallback ----------
+const terminalToastMotion = {
+    engine: null,
+    _p: null,
+    _ensure() {
+        if (this.engine) return Promise.resolve(this.engine);
+        if (this._p) return this._p;
+        this._p = import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1')
+            .then(async (mod) => {
+                const Motion = mod?.Motion || window.Motion;
+                if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
+                try { await Motion.init({ capacity: 128 }); } catch {}
+                this.engine = Motion;
+                return Motion;
+            })
+            .catch((err) => {
+                this._p = null;
+                throw err;
+            });
+        return this._p;
+    },
+};
+
+function ensureTerminalToastHost() {
     let container = document.querySelector('.toast-container');
     if (!container) {
         container = document.createElement('div');
         container.className = 'toast-container';
         document.body.appendChild(container);
     }
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    container.appendChild(toast);
-    requestAnimationFrame(() => toast.classList.add('show'));
-    window.setTimeout(() => {
-        toast.classList.remove('show');
-        window.setTimeout(() => toast.remove(), 220);
-    }, timeout);
+    return container;
+}
+
+function styleTerminalToastNode(el) {
+    if (!el) return;
+    el.className = 'toast';
+    el.style.background = '';
+    el.style.border = '';
+    el.style.borderColor = '';
+    el.style.borderRadius = '';
+    el.style.boxShadow = '';
+    el.style.color = '';
+    el.style.font = '';
+    el.style.padding = '';
+    el.style.minWidth = '';
+    el.style.maxWidth = '';
+    el.style.backdropFilter = '';
+    el.style.webkitBackdropFilter = '';
+    el.style.pointerEvents = 'none';
+    el.style.position = 'absolute';
+    el.style.top = '0';
+    el.style.right = '0';
+    el.style.left = 'auto';
+    el.style.bottom = 'auto';
+    el.style.willChange = 'transform, opacity';
+}
+
+function reflowTerminalToastStack(Motion, host, edge) {
+    try {
+        const stack = Motion._toastStacks?.get?.(host);
+        if (!stack?.items?.length) return;
+        let offset = 0;
+        const gap = stack.gap || 8;
+        stack.items.forEach((it) => {
+            const h = it.el?.offsetHeight || 44;
+            const y = edge === 'bottom' ? -offset : offset;
+            it.y = y;
+            Motion.to(it.el, { y }, { preset: 'snappy' });
+            offset += h + gap;
+        });
+    } catch { /* ignore */ }
+}
+
+function showToast(message, type = 'info', timeout = 2800) {
+    const text = String(message ?? '');
+    const durationSec = Math.max(0.8, (Number(timeout) || 2800) / 1000);
+    const host = ensureTerminalToastHost();
+    const edge = window.matchMedia?.('(max-width: 760px) and (hover: none) and (pointer: coarse)')?.matches
+        ? 'bottom'
+        : 'top';
+    terminalToastMotion._ensure().then((Motion) => {
+        const pushed = Motion.toastPush(host, {
+            text,
+            kind: 'info',
+            duration: durationSec,
+            edge,
+            gap: 8,
+        });
+        styleTerminalToastNode(pushed?.el);
+        requestAnimationFrame(() => reflowTerminalToastStack(Motion, host, edge));
+        return Promise.resolve(pushed).then((handle) => {
+            styleTerminalToastNode(handle?.el);
+            reflowTerminalToastStack(Motion, host, edge);
+            return handle;
+        });
+    }).catch((err) => {
+        console.warn('[terminal-toast] motion required, toast skipped:', err?.message || err);
+    });
 }
 
 function sendJsonMessage(payload) {
@@ -12826,9 +12911,10 @@ disconnectBtn.addEventListener('click', () => {
     }
 });
 window.addEventListener('beforeunload', () => {
-    userClosedConnection = true;
+    const shouldDetach = sessionPersistenceEnabled;
+    userClosedConnection = !shouldDetach;
     clearReconnectTimer();
-    closeWebSocketOnly(t('页面卸载'), { sendDisconnect: false });
+    closeWebSocketOnly(t('页面卸载'), { sendDisconnect: !shouldDetach });
 });
 
 main();

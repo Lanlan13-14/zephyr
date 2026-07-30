@@ -177,7 +177,115 @@ function apiMaybeForm(path, options = {}) {
     return fetch(path, { credentials: 'same-origin', headers, ...options })
         .then(async (res) => { const data = await res.json().catch(() => ({})); if (!res.ok) throw apiErrorFromResponse(res, data); return data; });
 }
-function toast(message) { const el = $('#toast'); if (!el) { console.warn('[toast]', message); return; } el.textContent = message; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2600); }
+/* Toast → 仅 zephyr-motion toastPush 堆叠（API.md §5.4）。
+ * 多条消息各自入场/退场，新消息把旧消息顶开；无 CSS 进出场 fallback。 */
+let toastMotionEngine = null;
+let toastMotionPromise = null;
+function ensureToastMotion() {
+    if (toastMotionEngine) return Promise.resolve(toastMotionEngine);
+    if (toastMotionPromise) return toastMotionPromise;
+    toastMotionPromise = (async () => {
+        try {
+            if (sshKeyMotion && typeof sshKeyMotion._ensure === 'function') {
+                const viaShared = await sshKeyMotion._ensure();
+                if (viaShared?.toastPush) {
+                    toastMotionEngine = viaShared;
+                    return viaShared;
+                }
+            }
+        } catch { /* TDZ */ }
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1');
+        const Motion = mod?.Motion || window.Motion;
+        if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
+        try { await Motion.init({ capacity: 256 }); } catch {}
+        toastMotionEngine = Motion;
+        return Motion;
+    })().catch((err) => {
+        toastMotionPromise = null;
+        throw err;
+    });
+    return toastMotionPromise;
+}
+function ensureAppToastHost() {
+    let host = document.getElementById('toastHost') || document.querySelector('.toast-container');
+    if (!host) {
+        host = document.createElement('div');
+        host.id = 'toastHost';
+        host.className = 'toast-container';
+        host.setAttribute('aria-live', 'polite');
+        document.body.appendChild(host);
+    }
+    return host;
+}
+function styleAppToastNode(el) {
+    if (!el) return;
+    // 统一中性样式（与原单例 toast 一致，不做 success/error 变色）
+    el.className = 'toast';
+    // 清掉 toastPush demo 内联 chrome；保留引擎 transform/opacity
+    el.style.background = '';
+    el.style.border = '';
+    el.style.borderColor = '';
+    el.style.borderRadius = '';
+    el.style.boxShadow = '';
+    el.style.color = '';
+    el.style.font = '';
+    el.style.padding = '';
+    el.style.minWidth = '';
+    el.style.maxWidth = '';
+    el.style.backdropFilter = '';
+    el.style.webkitBackdropFilter = '';
+    el.style.pointerEvents = 'none';
+    // 绝对定位叠在宿主原点：堆叠间距只由 Motion y 负责，避免 flex 流 + transform 双倍间距
+    el.style.position = 'absolute';
+    el.style.top = '0';
+    el.style.right = '0';
+    el.style.left = 'auto';
+    el.style.bottom = 'auto';
+    el.style.willChange = 'transform, opacity';
+}
+function toast(message, opts = {}) {
+    const text = String(message ?? '');
+    if (!text) return;
+    const durationMs = Math.max(800, Number(opts.duration ?? opts.timeout ?? 2600) || 2600);
+    const host = ensureAppToastHost();
+    const edge = window.matchMedia?.('(max-width: 760px) and (hover: none) and (pointer: coarse)')?.matches
+        ? 'bottom'
+        : 'top';
+    ensureToastMotion().then((Motion) => {
+        // gap=8 与演示页一致；创建后立刻绝对定位 + 中性样式，避免 flex 双倍间距与 kind 变色闪烁
+        const pushed = Motion.toastPush(host, {
+            text,
+            kind: 'info',
+            duration: durationMs / 1000,
+            edge,
+            gap: 8,
+        });
+        styleAppToastNode(pushed?.el);
+        const reflow = () => {
+            try {
+                const stack = Motion._toastStacks?.get?.(host);
+                if (!stack?.items?.length) return;
+                let offset = 0;
+                const gap = stack.gap || 8;
+                stack.items.forEach((it) => {
+                    const h = it.el?.offsetHeight || 44;
+                    const y = edge === 'bottom' ? -offset : offset;
+                    it.y = y;
+                    Motion.to(it.el, { y }, { preset: 'snappy' });
+                    offset += h + gap;
+                });
+            } catch { /* ignore */ }
+        };
+        requestAnimationFrame(reflow);
+        return Promise.resolve(pushed).then((handle) => {
+            styleAppToastNode(handle?.el);
+            reflow();
+            return handle;
+        });
+    }).catch((err) => {
+        console.warn('[toast] motion required, toast skipped:', err?.message || err);
+    });
+}
 window.addEventListener('error', (event) => {
     console.error('[app-runtime]', event.error || event.message);
     if (document.readyState === 'complete') toast(t('前端错误：{error}', { error: event.message || t('未知错误') }));
@@ -360,6 +468,7 @@ function handleSharedClipboardMessage(data = {}) {
 const systemThemeQuery = matchMedia('(prefers-color-scheme: dark)');
 function getSystemTheme() { return systemThemeQuery.matches ? 'dark' : 'light'; }
 function getAppearance() { return settings?.appearance || {}; }
+function isSessionPersistenceEnabled() { return settings?.workspace?.sessionPersistence !== false; }
 function isAutoThemeEnabled() { return getAppearance().autoThemeEnabled !== false; }
 function getPreferredTheme() {
     const appearance = getAppearance();
@@ -517,9 +626,9 @@ function scheduleTerminalLayoutStabilize(reason = 'layout-stabilize', options = 
         });
     }, 24);
 }
-function broadcastTerminalSettings(terminal = {}) {
+function broadcastTerminalSettings(terminal = {}, workspace = settings?.workspace || {}) {
     $$('#terminalWorkspace iframe.terminal-frame').forEach((frame) => {
-        try { frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'terminal-settings', terminal }, '*'); } catch (_) {}
+        try { frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'terminal-settings', terminal, workspace }, '*'); } catch (_) {}
     });
 }
 function broadcastThemeToTerminals(theme) {
@@ -2428,6 +2537,7 @@ function stableTerminalSessionId(connectionId, protocol = 'SSH') {
 }
 
 function rememberLastAppView(view = currentAppView) {
+    if (!isSessionPersistenceEnabled()) return;
     try { localStorage.setItem('zephyr.lastView', String(view || 'dashboard')); } catch {}
 }
 
@@ -3021,6 +3131,12 @@ function createTerminalWindowElement(session) {
                     type: 'notes-enabled',
                     enabled: isNotesEnabled(),
                 }, '*');
+                frame.contentWindow?.postMessage({
+                    source: 'zephyr-app',
+                    type: 'terminal-settings',
+                    terminal: settings.terminal || {},
+                    workspace: settings.workspace || { sessionPersistence: true },
+                }, '*');
                 if (session.workspaceState) {
                     frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'restore-workspace-state', state: session.workspaceState }, '*');
                 }
@@ -3161,7 +3277,10 @@ function renderTerminalTabs({ rebuildWorkspace = true } = {}) {
         });
         terminalTabs.forEach((t) => { $$(`[data-window-status="${t.id}"]`).forEach((el) => { el.textContent = t.status || ''; }); });
     }
-    requestAnimationFrame(() => broadcastThemeToTerminals(document.documentElement.getAttribute('data-theme') || getPreferredTheme()));
+    requestAnimationFrame(() => {
+        broadcastThemeToTerminals(document.documentElement.getAttribute('data-theme') || getPreferredTheme());
+        broadcastTerminalSettings(settings.terminal || {}, settings.workspace || { sessionPersistence: true });
+    });
     scheduleWorkspaceSave('terminal-tabs');
 }
 
@@ -9297,6 +9416,7 @@ async function loadSettings() {
             ...settings,
             appearance: { ...(admin.appearance || {}), ...(settings.appearance || {}) },
             terminal: { ...(admin.terminal || {}), ...(settings.terminal || {}) },
+            workspace: { ...(admin.workspace || {}), ...(settings.workspace || {}) },
             ai: { ...(admin.ai || {}), ...(settings.ai || {}) },
             mail: { ...(admin.mail || {}), ...(settings.mail || {}) },
             _admin: admin,
@@ -9314,6 +9434,12 @@ async function loadSettings() {
     $('#captchaEnabled').checked = !!cap.enabled; $('#captchaProvider').value = cap.provider || 'turnstile'; $('#captchaSiteKey').value = cap.siteKey || cap.tencentCaptchaAppId || cap.aliyunCaptchaId || cap.aliyunSceneId || ''; $('#captchaSecretKey').value = cap.secretKey || cap.tencentAppSecretKey || cap.aliyunAccessKeySecret || '';
     $('#mailEnabled').checked = !!mail.enabled; $('#mailHost').value = mail.host || ''; $('#mailPort').value = mail.port || 465; $('#mailSecure').checked = mail.secure !== false; $('#mailUser').value = mail.user || ''; $('#mailPass').value = mail.pass || ''; $('#mailFrom').value = mail.from || ''; $('#mailAdminEmail').value = mail.adminEmail || ''; $('#notifyLoginSuccess').checked = mail.notifyLoginSuccess !== false; $('#notifyLoginFailure').checked = mail.notifyLoginFailure !== false; $('#notifyLoginToUser').checked = mail.notifyLoginToUser !== false; $('#geoLookupEnabled').checked = mail.geoLookupEnabled !== false;
     $('#notifyLoginPersonal').checked = personalSettingsOverrides?.mail?.notifyLogin !== false;
+    settings.workspace = { sessionPersistence: true, ...(settings.workspace || {}) };
+    try {
+        if (isSessionPersistenceEnabled()) localStorage.removeItem('zephyr.sessionPersistence.disabled');
+        else localStorage.setItem('zephyr.sessionPersistence.disabled', '1');
+    } catch {}
+    if ($('#sessionPersistenceEnabled')) $('#sessionPersistenceEnabled').checked = isSessionPersistenceEnabled();
     $('#terminalMaxWindows').value = String(getConfiguredTerminalMaxWindows());
     if ($('#terminalAllowLigatures')) $('#terminalAllowLigatures').checked = !!(settings?.terminal?.allowLigatures);
     $('#terminalMinimizedKeepAlive').value = String(getConfiguredMinimizedKeepAlive());
@@ -9385,6 +9511,34 @@ async function savePersonalLoginNotification() {
     const enabled = !!$('#notifyLoginPersonal')?.checked;
     settings = await savePersonalSettings({ mail: { notifyLogin: enabled } });
     toast(enabled ? '已开启个人登录邮件通知' : '已关闭个人登录邮件通知');
+}
+async function setSessionPersistenceEnabled(enabled) {
+    settings = await savePersonalSettings({ workspace: { sessionPersistence: !!enabled } });
+    settings.workspace = { ...(settings.workspace || {}), sessionPersistence: !!enabled };
+    try {
+        if (enabled) localStorage.removeItem('zephyr.sessionPersistence.disabled');
+        else localStorage.setItem('zephyr.sessionPersistence.disabled', '1');
+    } catch {}
+    if ($('#sessionPersistenceEnabled')) $('#sessionPersistenceEnabled').checked = isSessionPersistenceEnabled();
+    broadcastTerminalSettings(settings.terminal || {}, settings.workspace || {});
+    if (enabled) {
+        workspaceReady = true;
+        rememberLastAppView(currentAppView);
+        await saveWorkspaceNow({ reason: 'session-persistence-enabled' });
+        toast(t('会话持久化已开启'));
+        return;
+    }
+    clearTimeout(workspaceSaveTimer);
+    workspaceSaveTimer = null;
+    workspaceRevision = null;
+    try { sessionStorage.removeItem(TERMINAL_SNAPSHOT_STORAGE_KEY); } catch {}
+    try { localStorage.removeItem('zephyr.lastView'); } catch {}
+    try {
+        await api(`/api/me/workspaces/${encodeURIComponent(automaticWorkspaceId())}`, { method: 'DELETE' });
+    } catch (err) {
+        if (err.status !== 404) console.warn('[workspace-persistence]', 'failed to delete saved automatic workspace', err);
+    }
+    toast(t('会话持久化已关闭'));
 }
 async function saveBeian(e) { e.preventDefault(); settings = await savePlatformSettings('beian', { beian: { icp: $('#icpInput').value, icpUrl: $('#icpUrlInput').value, policeBeian: $('#policeInput').value, policeBeianUrl: $('#policeUrlInput').value, show: $('#showBeianInput').checked } }); toast(t('备案信息已保存')); }
 async function loadSecurityStatus() { securityStatus = await api('/api/security/status').catch(() => ({ user: {}, passkeys: [] })); $('#profileUsername').value = securityStatus.user.username || ''; $('#profileEmail').value = securityStatus.user.email || ''; renderTotp(); renderPasskeys(); }
@@ -10868,6 +11022,18 @@ $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?
     });
     $('#profileForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/profile', { method: 'PUT', body: JSON.stringify({ username: $('#profileUsername').value.trim(), email: $('#profileEmail').value }) }); toast(t('资料已保存')); await loadSecurityStatus(); });
     $('#securityPolicyForm').addEventListener('submit', saveSecurityPolicy); $('#captchaForm').addEventListener('submit', saveCaptcha); $('#mailForm').addEventListener('submit', saveMail); $('#appearanceForm').addEventListener('submit', saveAppearance); $('#terminalLayoutForm').addEventListener('submit', saveTerminalLayout); setupSnippetSettings(); setupAgentTokenSettings();
+    $('#sessionPersistenceEnabled')?.addEventListener('change', async (e) => {
+        const input = e.currentTarget;
+        input.disabled = true;
+        try {
+            await setSessionPersistenceEnabled(input.checked);
+        } catch (err) {
+            input.checked = isSessionPersistenceEnabled();
+            toast(err.message || t('保存会话持久化设置失败'));
+        } finally {
+            input.disabled = false;
+        }
+    });
     $('#totpAction').addEventListener('click', (e) => { if (e.target.id === 'setupTotpBtn') setupTotp().catch((err) => toast(err.message)); });
     $('#totpEnableForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/totp/enable', { method: 'POST', body: JSON.stringify({ code: $('#totpEnableCode').value }) }); toast(t('TOTP 已开启')); $('#totpEnableForm').classList.add('force-hidden'); await loadSecurityStatus(); });
     $('#totpDisableForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm(t('确定关闭 TOTP？'))) return; await api('/api/security/totp/disable', { method: 'POST', body: JSON.stringify({ currentPassword: $('#totpDisablePassword').value, code: $('#totpDisableCode').value }) }); e.target.reset(); toast(t('TOTP 已关闭')); await loadSecurityStatus(); });
@@ -10991,7 +11157,7 @@ function collectWorkspaceState() {
 }
 
 function scheduleWorkspaceSave(reason = '', { immediate = false } = {}) {
-    if (!workspaceReady || workspaceRestoring || !workspaceClientId) return;
+    if (!isSessionPersistenceEnabled() || !workspaceReady || workspaceRestoring || !workspaceClientId) return;
     clearTimeout(workspaceSaveTimer);
     if (immediate) {
         workspaceSaveTimer = null;
@@ -11002,7 +11168,7 @@ function scheduleWorkspaceSave(reason = '', { immediate = false } = {}) {
 }
 
 async function saveWorkspaceNow({ keepalive = false, reason = '' } = {}) {
-    if (!workspaceReady || workspaceRestoring || !workspaceClientId) return;
+    if (!isSessionPersistenceEnabled() || !workspaceReady || workspaceRestoring || !workspaceClientId) return;
     clearTimeout(workspaceSaveTimer);
     workspaceSaveTimer = null;
     const body = {
@@ -11037,7 +11203,12 @@ async function saveWorkspaceNow({ keepalive = false, reason = '' } = {}) {
 }
 
 async function restoreLastWorkspace() {
-    if (!workspaceClientId) return;
+    if (!workspaceClientId || !isSessionPersistenceEnabled()) {
+        workspaceRevision = null;
+        workspaceRestoring = false;
+        workspaceReady = true;
+        return;
+    }
     workspaceRestoring = true;
     try {
         // Backend only exposes POST /restore (GET falls through to Express 404 and was
@@ -11670,7 +11841,7 @@ async function init() {
         // Early shell switch: if last view was terminal, paint that shell before
         // network restore so refresh does not flash the dashboard first.
         try {
-            const lastView = localStorage.getItem('zephyr.lastView') || '';
+            const lastView = isSessionPersistenceEnabled() ? (localStorage.getItem('zephyr.lastView') || '') : '';
             if (['activity', 'terminal', 'remote', 'notes', 'settings', 'dashboard'].includes(lastView) && lastView !== 'dashboard') {
                 currentAppView = lastView;
                 $$('.nav-tab').forEach((b) => b.classList.toggle('active', b.dataset.view === lastView));
@@ -11710,8 +11881,12 @@ async function init() {
         window.openTransientFromUri = openTransientFromUri;
         registerStaticAssetWorker();
         const flushWorkspace = () => {
-            captureTerminalSnapshots();
-            saveWorkspaceNow({ keepalive: true, reason: 'page-exit' }).catch(() => {});
+            if (isSessionPersistenceEnabled()) {
+                captureTerminalSnapshots();
+                saveWorkspaceNow({ keepalive: true, reason: 'page-exit' }).catch(() => {});
+            } else {
+                try { sessionStorage.removeItem(TERMINAL_SNAPSHOT_STORAGE_KEY); } catch {}
+            }
             // Best-effort: drop any open one-shot rows so a hard refresh does not
             // leave orphan ephemeral hosts until the 6h GC runs.
             terminalTabs.forEach((t) => {

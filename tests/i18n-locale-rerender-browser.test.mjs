@@ -15,15 +15,15 @@ after(async () => {
     await server?.cleanup();
 });
 
-test('app HTML ships the current i18n cache-busting revision', async () => {
+test('app HTML ships the current app and i18n cache-busting revisions', async () => {
     const response = await fetch(server.url('/app.html'), { headers: { cookie } });
     const html = await response.text();
-    assert.match(html, /app\.js\?v=20260728-ai-handle-only-drag1/);
-    assert.match(html, /i18n\/runtime\.js\?v=20260728-ai-handle-only-drag1/);
+    assert.match(html, /app\.js\?v=20260730-toast-motion4/);
+    assert.match(html, /i18n\/runtime\.js\?v=20260730-admin-user-modal1/);
 });
 
 test('locale switch hook repaints state-derived security fragments', async () => {
-    const source = await (await fetch(server.url('/app.js?v=20260728-ai-handle-only-drag1'))).text();
+    const source = await (await fetch(server.url('/app.js?v=20260730-toast-motion4'))).text();
     for (const renderer of ['renderTotp', 'renderPasskeys', 'renderSecurityLists', 'renderAiProviderList']) {
         assert.match(source, new RegExp(`rerenderLocaleSensitiveContent[\\s\\S]{0,1800}${renderer}`));
     }
