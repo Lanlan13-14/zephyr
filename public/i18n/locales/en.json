@@ -554,7 +554,7 @@
   "停止": "Stop",
   "保存 Token 失败": "Failed to save token",
   "全部 Token 已重置，新 Token 已显示": "All tokens have been reset; new tokens are shown",
-  "创建失败": "Creation failed",
+  "创建失败": "Create failed",
   "重置失败": "Reset failed",
   "查看失败": "View failed",
   "重命名失败": "Rename failed",
@@ -2127,5 +2127,18 @@
   "模型列表页未加载，请硬刷新后重试": "The model list page failed to load. Hard refresh and try again.",
   "请先填写 API Key": "Enter an API key first",
   "返回": "Back",
-  "远程桌面截图令牌已过期、已使用或不是当前 Run 最新截图，请重新截图后再操作": "The remote desktop capture token expired, was already used, or is no longer the latest capture for this run. Capture the screen again before acting."
+  "远程桌面截图令牌已过期、已使用或不是当前 Run 最新截图，请重新截图后再操作": "The remote desktop capture token expired, was already used, or is no longer the latest capture for this run. Capture the screen again before acting.",
+  "初始密码": "Initial password",
+  "邮箱": "Email",
+  "角色": "Role",
+  "创建用户": "Create user",
+  "密码至少 4 位": "Password must be at least 4 characters",
+  "首次登录必须修改密码": "Require password change on first sign-in",
+  "开启后用户首次登录会被要求修改密码": "When enabled, the user must change their password on first sign-in",
+  "关闭添加用户弹窗": "Close add-user dialog",
+  "用户名需为 2-32 位字母、数字或 ._@-。只有超级管理员可以创建管理员账号。": "Username must be 2–32 characters: letters, digits, or ._@-. Only the super administrator can create admin accounts.",
+  "例如：alice": "For example: alice",
+  "可选邮箱": "Optional email",
+  "至少 4 位": "At least 4 characters",
+  "保存用户": "Save user"
 }

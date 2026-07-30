@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
-<link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260730-ai-provider-scroll1">
-    <link rel="modulepreload" href="app.js?v=20260730-ai-provider-scroll1">
-    <link rel="modulepreload" href="theme-runtime.js?v=20260730-ai-provider-scroll1">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20260730-ai-provider-scroll1">
-    <link rel="stylesheet" href="style.css?v=20260730-ai-provider-scroll1">
+<link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260730-admin-user-modal1">
+    <link rel="modulepreload" href="app.js?v=20260730-admin-user-modal1">
+    <link rel="modulepreload" href="theme-runtime.js?v=20260730-admin-user-modal1">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20260730-admin-user-modal1">
+    <link rel="stylesheet" href="style.css?v=20260730-admin-user-modal1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -1137,6 +1137,26 @@
         </form>
     </div>
 
+    <!-- 添加用户弹窗专用遮罩：与 SSH 密钥同源（zephyr-motion 驱动虚化） -->
+    <div id="adminUserModalScrim" aria-hidden="true"></div>
+    <div class="modal-backdrop" id="adminUserModal" aria-hidden="true">
+        <form class="connection-modal admin-user-modal" id="adminUserForm">
+            <div id="adminUserModalInner" class="admin-user-modal-inner">
+            <div class="modal-head"><h2 id="adminUserModalTitle" data-i18n="添加用户">添加用户</h2><button type="button" class="icon-btn" id="adminUserCloseBtn" aria-label="关闭添加用户弹窗" data-i18n-aria-label="关闭添加用户弹窗">✕</button></div>
+            <div class="form-group"><label for="adminUserName" data-i18n="用户名">用户名</label><input id="adminUserName" required autocomplete="off" spellcheck="false" placeholder="例如：alice" data-i18n-placeholder="例如：alice"></div>
+            <div class="form-group"><label for="adminUserPassword" data-i18n="初始密码">初始密码</label><input id="adminUserPassword" type="password" required autocomplete="new-password" placeholder="至少 4 位" data-i18n-placeholder="至少 4 位"></div>
+            <div class="form-group"><label for="adminUserEmail" data-i18n="邮箱">邮箱</label><input id="adminUserEmail" type="email" autocomplete="off" placeholder="可选邮箱" data-i18n-placeholder="可选邮箱"></div>
+            <div class="form-group" id="adminUserRoleGroup"><label for="adminUserRole" data-i18n="角色">角色</label><select id="adminUserRole"><option value="user" data-i18n="普通用户">普通用户</option><option value="admin" data-i18n="管理员">管理员</option></select></div>
+            <label class="settings-switch-option admin-user-must-change" for="adminUserMustChangePassword">
+                <span class="settings-switch-copy"><strong data-i18n="首次登录必须修改密码">首次登录必须修改密码</strong><small data-i18n="开启后用户首次登录会被要求修改密码">开启后用户首次登录会被要求修改密码</small></span>
+                <span class="connection-share-switch"><input type="checkbox" id="adminUserMustChangePassword" checked><span aria-hidden="true"></span></span>
+            </label>
+            <p class="field-hint" data-i18n="用户名需为 2-32 位字母、数字或 ._@-。只有超级管理员可以创建管理员账号。">用户名需为 2-32 位字母、数字或 ._@-。只有超级管理员可以创建管理员账号。</p>
+            <div class="modal-actions"><button class="btn" type="button" id="adminUserCancelBtn" data-i18n="取消">取消</button><button class="btn btn-primary" type="submit" id="saveAdminUserBtn" data-i18n="创建用户">创建用户</button></div>
+            </div>
+        </form>
+    </div>
+
     <!-- 代码片段弹窗专用遮罩：与 SSH 密钥同源（zephyr-motion 驱动虚化） -->
     <div id="snippetModalScrim" aria-hidden="true"></div>
     <div class="modal-backdrop" id="snippetModal" aria-hidden="true">
@@ -1171,7 +1191,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
-<script src="app.js?v=20260730-ai-provider-scroll1" type="module"></script>
+<script src="app.js?v=20260730-admin-user-modal1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

@@ -303,13 +303,19 @@ body.app-body.theme-ripple-active::before {
         opacity 180ms ease,
         filter 180ms ease;
 }
-/* 代理新建按钮：清掉 CSS press/hover/active transform，只让 zephyr-motion 接管 */
+/* 代理新建 / 添加用户按钮：清掉 CSS press/hover/active transform，只让 zephyr-motion 接管 */
 #addProxyBtn,
 #addProxyBtn:hover,
 #addProxyBtn:active,
 #addProxyBtn.connection-pressing,
 #addProxyBtn.btn-primary:hover,
-#addProxyBtn.btn-primary:active {
+#addProxyBtn.btn-primary:active,
+#adminAddUserBtn,
+#adminAddUserBtn:hover,
+#adminAddUserBtn:active,
+#adminAddUserBtn.connection-pressing,
+#adminAddUserBtn.btn-primary:hover,
+#adminAddUserBtn.btn-primary:active {
     transform: none !important;
     transition: none !important;
     animation: none !important;
@@ -2516,7 +2522,8 @@ body.app-body::after {
 #sshKeyModalScrim,
 #snippetModalScrim,
 #proxyModalScrim,
-#aiProviderModalScrim {
+#aiProviderModalScrim,
+#adminUserModalScrim {
     position: fixed;
     inset: 0;
     z-index: 100;
@@ -2535,7 +2542,8 @@ body.app-body::after {
 #sshKeyModal .ssh-key-modal,
 #snippetModal .snippet-modal,
 #proxyModal .proxy-modal,
-#aiProviderModal .ai-provider-modal {
+#aiProviderModal .ai-provider-modal,
+#adminUserModal .admin-user-modal {
     position: relative;
     /* 覆盖 .connection-modal 默认 opacity:0，避免 display:grid 后 CSS 再 fade */
     opacity: 1;
@@ -2557,7 +2565,9 @@ body.app-body::after {
 #proxyModal.proxy1 .proxy-modal *,
 #proxyModal.proxy1.closing .proxy-modal *,
 #aiProviderModal.aiprovider1 .ai-provider-modal *,
-#aiProviderModal.aiprovider1.closing .ai-provider-modal * {
+#aiProviderModal.aiprovider1.closing .ai-provider-modal *,
+#adminUserModal.adminuser1 .admin-user-modal *,
+#adminUserModal.adminuser1.closing .admin-user-modal * {
     transition: none !important;
     animation: none !important;
 }
@@ -2577,7 +2587,8 @@ body.app-body::after {
 .ssh-key-modal-inner,
 .snippet-modal-inner,
 .proxy-modal-inner,
-.ai-provider-modal-inner {
+.ai-provider-modal-inner,
+.admin-user-modal-inner {
     display: block;
     will-change: opacity;
     transform: translateZ(0);
@@ -2586,14 +2597,16 @@ body.connection1-blurring #connectionModalScrim,
 body.sshkey1-blurring #sshKeyModalScrim,
 body.snippet1-blurring #snippetModalScrim,
 body.proxy1-blurring #proxyModalScrim,
-body.aiprovider1-blurring #aiProviderModalScrim { pointer-events: auto; }
+body.aiprovider1-blurring #aiProviderModalScrim,
+body.adminuser1-blurring #adminUserModalScrim { pointer-events: auto; }
 
 @media (prefers-reduced-motion: reduce) {
     #connectionModalScrim,
     #sshKeyModalScrim,
     #snippetModalScrim,
     #proxyModalScrim,
-    #aiProviderModalScrim { transition-duration: 0.01s; }
+    #aiProviderModalScrim,
+    #adminUserModalScrim { transition-duration: 0.01s; }
 }
 /* ── /sshkey / snippet / proxy / aiprovider motion-only ──────────────── */
 
@@ -2659,21 +2672,26 @@ body.aiprovider1-blurring #aiProviderModalScrim { pointer-events: auto; }
 .ssh-key-modal .field-hint { margin: 2px 0 14px; }
 .ssh-key-modal .modal-actions { margin-top: 4px; }
 /* 仅连接弹窗等非 motion 窗走 CSS fade；密钥/片段/代理/AI供应商永远 transition:none。 */
-.modal-backdrop.show.app-visible .connection-modal:not(#connectionForm):not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal) {
+.modal-backdrop.show.app-visible .connection-modal:not(#connectionForm):not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal):not(.admin-user-modal) {
     opacity: 1;
     transition: opacity 0.3s ease-out 0.1s;
 }
-.modal-backdrop.closing .connection-modal:not(#connectionForm):not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal) {
+.modal-backdrop.closing .connection-modal:not(#connectionForm):not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal):not(.admin-user-modal) {
     opacity: 0;
     transition: opacity 0.15s cubic-bezier(0.4, 0, 1, 1);
 }
 @media (prefers-reduced-motion: reduce) {
-    .modal-backdrop .connection-modal:not(#connectionForm):not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal),
-    .modal-backdrop.show.app-visible .connection-modal:not(#connectionForm):not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal),
-    .modal-backdrop.closing .connection-modal:not(#connectionForm):not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal) {
+    .modal-backdrop .connection-modal:not(#connectionForm):not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal):not(.admin-user-modal),
+    .modal-backdrop.show.app-visible .connection-modal:not(#connectionForm):not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal):not(.admin-user-modal),
+    .modal-backdrop.closing .connection-modal:not(#connectionForm):not(.ssh-key-modal):not(.snippet-modal):not(.proxy-modal):not(.ai-provider-modal):not(.admin-user-modal) {
         transition: opacity .01ms linear;
     }
 }
+.admin-user-modal { width: min(520px, 100%); }
+.admin-user-modal .form-group { margin-bottom: 12px; }
+.admin-user-modal .field-hint { margin: 2px 0 14px; }
+.admin-user-modal .modal-actions { margin-top: 4px; }
+.admin-user-modal .admin-user-must-change { margin: 4px 0 10px; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .icon-btn { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; }
 .password-field { position: relative; }
@@ -3145,7 +3163,8 @@ body.app-body > .toast.show { opacity: 1; transform: translate3d(0,0,0) scale(1)
         -webkit-overflow-scrolling: touch;
     }
     #proxyModal .proxy-modal,
-    #aiProviderModal .ai-provider-modal {
+    #aiProviderModal .ai-provider-modal,
+    #adminUserModal .admin-user-modal {
         max-height: none !important;
         height: auto !important;
         overflow: visible !important;
@@ -3155,7 +3174,9 @@ body.app-body > .toast.show { opacity: 1; transform: translate3d(0,0,0) scale(1)
     #proxyModal.proxy1,
     #proxyModal.proxy1.closing,
     #aiProviderModal.aiprovider1,
-    #aiProviderModal.aiprovider1.closing {
+    #aiProviderModal.aiprovider1.closing,
+    #adminUserModal.adminuser1,
+    #adminUserModal.adminuser1.closing {
         overflow-y: auto;
         overflow-x: hidden;
         align-items: start;
@@ -3165,7 +3186,9 @@ body.app-body > .toast.show { opacity: 1; transform: translate3d(0,0,0) scale(1)
     #proxyModal.proxy1 .proxy-modal-inner,
     #proxyModal.proxy1.closing .proxy-modal-inner,
     #aiProviderModal.aiprovider1 .ai-provider-modal-inner,
-    #aiProviderModal.aiprovider1.closing .ai-provider-modal-inner {
+    #aiProviderModal.aiprovider1.closing .ai-provider-modal-inner,
+    #adminUserModal.adminuser1 .admin-user-modal-inner,
+    #adminUserModal.adminuser1.closing .admin-user-modal-inner {
         overflow: visible !important;
         max-height: none !important;
     }

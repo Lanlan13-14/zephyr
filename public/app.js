@@ -65,6 +65,8 @@ let proxyModalTrigger = null;
 let proxyModalCycle = 0;
 let sshKeyModalTrigger = null;
 let sshKeyModalCycle = 0;
+let adminUserModalTrigger = null;
+let adminUserModalCycle = 0;
 let snippetModalTrigger = null;
 let snippetModalCycle = 0;
 let aiProviderModalTrigger = null;
@@ -10076,7 +10078,7 @@ function armMotionModalOpen(Motion, modal, card, inner, trigger, motionClass) {
         inner.style.position = '';
         inner.style.zIndex = '';
     }
-    modal.classList.remove('closing', 'app-visible', 'connection1', 'sshkey1', 'snippet1', 'proxy1', 'aiprovider1');
+    modal.classList.remove('closing', 'app-visible', 'connection1', 'sshkey1', 'snippet1', 'proxy1', 'aiprovider1', 'adminuser1');
     modal.classList.add('show', motionClass);
     modal.setAttribute('aria-hidden', 'false');
     modal.classList.add('app-visible');
@@ -10362,7 +10364,13 @@ function bindEvents() {
     bindLocaleSelects();
     $('#notesSettingsForm')?.addEventListener('submit', saveNotesSettings);
     $('#notifyLoginPersonal')?.addEventListener('change', () => savePersonalLoginNotification().catch((err) => toast(err.message || '保存通知设置失败')));
-    $('#adminAddUserBtn')?.addEventListener('click', openAdminAddUserDialog);
+    $('#adminAddUserBtn')?.addEventListener('click', (e) => openAdminAddUserDialog(e.currentTarget));
+    $('#adminUserForm')?.addEventListener('submit', (e) => { saveAdminUser(e).catch((err) => toast(err.message || t('创建失败'))); });
+    $('#adminUserCloseBtn')?.addEventListener('click', closeAdminUserModal);
+    $('#adminUserCancelBtn')?.addEventListener('click', closeAdminUserModal);
+    $('#adminUserModal')?.addEventListener('click', (e) => { if (e.target.id === 'adminUserModal') closeAdminUserModal(); });
+    $('#adminUserModalScrim')?.addEventListener('click', () => { if ($('#adminUserModal')?.classList.contains('show')) closeAdminUserModal(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#adminUserModal')?.classList.contains('show')) closeAdminUserModal(); });
     document.getElementById('adminUserList')?.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-admin-action]');
         if (!btn) return;
@@ -11329,18 +11337,205 @@ function renderAdminUsers(users) {
     }).join('');
 }
 
-function openAdminAddUserDialog() {
-    const name = prompt(t('新用户用户名：'));
-    if (!name) return;
-    const password = prompt(t('为 {name} 设置初始密码：', { name }));
-    if (!password) return;
-    let role = 'user';
-    if (myIdentity.isSuperAdmin) {
-        role = confirm(t('{name} 设为管理员吗？\n确定 = 管理员，取消 = 普通用户', { name })) ? 'admin' : 'user';
+function adminUserScrimSet(open, _Motion) {
+    motionScrimSet('adminUserModalScrim', 'adminuser1-blurring', open);
+}
+
+function adminUserBtnRadius(el, rect) {
+    const r = parseFloat(getComputedStyle(el)?.borderRadius);
+    if (Number.isFinite(r) && r > 0) return r;
+    return Math.min(rect.width, rect.height) / 2;
+}
+
+function openAdminAddUserDialog(trigger = null) {
+    window.clearTimeout(closeAdminUserModal._timer);
+    const cycle = ++adminUserModalCycle;
+    const modal = $('#adminUserModal');
+    if (!modal || (modal.classList.contains('show') && !modal.classList.contains('closing'))) return;
+    const card = $('#adminUserForm');
+    const inner = $('#adminUserModalInner');
+    // 字段手写赋值，避免原生 reset 触发布局闪
+    $('#adminUserModalTitle').textContent = t('添加用户');
+    $('#saveAdminUserBtn').textContent = t('创建用户');
+    $('#adminUserName').value = '';
+    $('#adminUserPassword').value = '';
+    $('#adminUserEmail').value = '';
+    $('#adminUserRole').value = 'user';
+    $('#adminUserMustChangePassword').checked = true;
+    const roleGroup = $('#adminUserRoleGroup');
+    if (roleGroup) roleGroup.classList.toggle('force-hidden', !myIdentity.isSuperAdmin);
+    adminUserModalTrigger = trigger || $('#adminAddUserBtn');
+
+    sshKeyMotion._ensure().then((Motion) => {
+        if (cycle !== adminUserModalCycle) return;
+        armMotionModalOpen(Motion, modal, card, inner, adminUserModalTrigger, 'adminuser1');
+        try { closeAllToggleSelects(); } catch {}
+        const btnRect = adminUserModalTrigger?.getBoundingClientRect?.() || null;
+        adminUserScrimSet(true, Motion || null);
+        const useMotion = !!Motion && !!btnRect && btnRect.width > 2 && btnRect.height > 2;
+        if (!useMotion) {
+            if (card?.style) {
+                card.style.visibility = '';
+                card.style.opacity = '';
+                card.style.pointerEvents = '';
+            }
+            if (inner?.style) inner.style.opacity = '';
+            if (adminUserModalTrigger?.style) {
+                adminUserModalTrigger.style.opacity = '';
+                adminUserModalTrigger.style.pointerEvents = '';
+                delete adminUserModalTrigger.dataset.motionHidden;
+            }
+            try {
+                enhanceToggleSelect($('#adminUserRole'));
+                syncToggleSelectFace($('#adminUserRole'));
+            } catch {}
+            $('#adminUserName')?.focus({ preventScroll: true });
+            return;
+        }
+        Motion.iosAppOpen(card, adminUserModalTrigger, {
+            contentEl: inner,
+            scrim: null,
+            home: null,
+            cloneSource: true,
+            hideSource: true,
+            radiusFrom: adminUserBtnRadius(adminUserModalTrigger, btnRect),
+            radiusTo: 22,
+            contentDelay: 0.16,
+            faceDelay: 0.05,
+            faceInDelay: 0.04,
+            shapePreset: 'shape',
+            contentPreset: 'content',
+        }).then(() => {
+            if (cycle !== adminUserModalCycle) return;
+            card.style.overflow = 'visible';
+            card.style.maxHeight = 'none';
+            card.style.height = 'auto';
+            if (inner?.style) {
+                inner.style.overflow = 'visible';
+                inner.style.maxHeight = 'none';
+            }
+            try {
+                enhanceToggleSelect($('#adminUserRole'));
+                syncToggleSelectFace($('#adminUserRole'));
+            } catch {}
+        }).catch((err) => console.warn('[adminuser1] iosAppOpen failed', err));
+        window.setTimeout(() => {
+            if (cycle === adminUserModalCycle && modal.classList.contains('show')) {
+                $('#adminUserName')?.focus({ preventScroll: true });
+            }
+        }, 220);
+    });
+}
+
+function closeAdminUserModal() {
+    const modal = $('#adminUserModal');
+    if (!modal?.classList.contains('show') || modal.classList.contains('closing')) return;
+    const card = $('#adminUserForm');
+    const inner = $('#adminUserModalInner');
+    const cycle = ++adminUserModalCycle;
+    window.clearTimeout(closeAdminUserModal._timer);
+
+    modal.classList.add('closing');
+    modal.classList.remove('app-visible');
+    modal.setAttribute('aria-hidden', 'true');
+
+    const Motion = sshKeyMotion.engine;
+    const trigger = adminUserModalTrigger;
+    const btnRect = trigger?.getBoundingClientRect?.() || null;
+    const useMotion = !!Motion && !sshKeyMotion.failed
+        && modal.classList.contains('adminuser1')
+        && !!btnRect && btnRect.width > 2 && btnRect.height > 2;
+
+    const finish = () => {
+        if (cycle !== adminUserModalCycle) return;
+        if (Motion) {
+            try {
+                if (trigger) Motion.restoreSource(trigger);
+                Motion.restoreSources(card);
+            } catch {}
+        } else if (trigger?.style) {
+            trigger.style.opacity = '';
+            trigger.style.pointerEvents = '';
+            delete trigger.dataset.motionHidden;
+        }
+        void (trigger?.offsetHeight);
+        void card.offsetHeight;
+
+        modal.classList.remove('show', 'closing', 'adminuser1');
+
+        if (Motion) {
+            try {
+                card.querySelector?.(':scope > [data-motion-source-visual]')?.remove();
+                Motion.release(card);
+                if (inner) Motion.release(inner);
+            } catch {}
+        }
+        card.style.overflow = '';
+        card.style.visibility = '';
+        card.style.opacity = '';
+        card.style.filter = '';
+        card.style.transform = '';
+        card.style.borderRadius = '';
+        const focusEl = trigger;
+        adminUserModalTrigger = null;
+        if (focusEl) {
+            requestAnimationFrame(() => {
+                try { focusEl.focus?.({ preventScroll: true }); } catch {}
+            });
+        }
+    };
+
+    adminUserScrimSet(false, Motion || null);
+    if (!useMotion) {
+        closeAdminUserModal._timer = window.setTimeout(finish, 0);
+        return;
     }
-    api('/api/admin/users', { method: 'POST', body: JSON.stringify({ username: name, password, role }) })
-        .then(() => { toast(t('用户已创建')); loadAdminUsers(); })
-        .catch((err) => toast(err.message || t('创建失败')));
+    try {
+        const twinLayer = card.querySelector(':scope > [data-motion-source-visual]');
+        if (twinLayer) Motion.set(twinLayer, { opacity: Number(twinLayer.style.opacity) || 0 });
+    } catch {}
+    const closed = Motion.iosAppClose(card, trigger, {
+        contentEl: inner,
+        scrim: null,
+        home: null,
+        restoreSource: false,
+        hideSurface: false,
+        clearSourceVisual: false,
+        release: false,
+        radiusTo: adminUserBtnRadius(trigger, btnRect),
+        shapePreset: 'shapeClose',
+        contentPreset: 'contentClose',
+        faceInDelay: 0.04,
+    });
+    const cap = new Promise(r => window.setTimeout(r, 900));
+    Promise.race([closed, cap]).then(() => {
+        requestAnimationFrame(() => finish());
+    }).catch((err) => {
+        console.warn('[adminuser1] iosAppClose failed', err);
+        finish();
+    });
+}
+
+async function saveAdminUser(e) {
+    e.preventDefault();
+    const username = ($('#adminUserName')?.value || '').trim();
+    const password = $('#adminUserPassword')?.value || '';
+    const email = ($('#adminUserEmail')?.value || '').trim();
+    const role = myIdentity.isSuperAdmin ? (($('#adminUserRole')?.value || 'user') === 'admin' ? 'admin' : 'user') : 'user';
+    const mustChangePassword = !!$('#adminUserMustChangePassword')?.checked;
+    if (!username) return toast(t('请输入新用户名'));
+    if (!password || password.length < 4) return toast(t('密码至少 4 位'));
+    try {
+        await api('/api/admin/users', {
+            method: 'POST',
+            body: JSON.stringify({ username, password, email, role, mustChangePassword }),
+        });
+        closeAdminUserModal();
+        await loadAdminUsers();
+        toast(t('用户已创建'));
+    } catch (err) {
+        toast(err.message || t('创建失败'));
+    }
 }
 
 async function handleAdminAction(action, userId) {
