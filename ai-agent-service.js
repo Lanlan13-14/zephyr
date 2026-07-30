@@ -497,6 +497,17 @@ function normalizeOptions(provider = {}, requestOptions = {}, mode = 'chat') {
         const rf = parseExtraObject(raw.response_format);
         out.response_format = Object.keys(rf).length ? rf : { type: String(raw.response_format) };
     }
+    // seed / stop / n are valid sampling params; pass through when present and
+    // non-empty. They are scoped per-mode below (stop/n are chat-only).
+    if (raw.seed !== '' && raw.seed !== undefined && raw.seed !== null) {
+        const seed = Number(raw.seed);
+        if (Number.isFinite(seed)) out.seed = seed;
+    }
+    if (raw.stop !== '' && raw.stop !== undefined && raw.stop !== null) out.stop = raw.stop;
+    if (raw.n !== '' && raw.n !== undefined && raw.n !== null) {
+        const n = Number(raw.n);
+        if (Number.isFinite(n) && n >= 1) out.n = n;
+    }
     const selectedModel = String(provider?._selectedModel || requestOptions?.model || '').trim();
     const merged = sanitizeThinkingOptions(provider, selectedModel, { ...out, ...extra });
     const apiMode = String(mode || 'chat').toLowerCase();
@@ -507,6 +518,14 @@ function normalizeOptions(provider = {}, requestOptions = {}, mode = 'chat') {
         if (merged.reasoning_effort && !merged.reasoning) merged.reasoning = { effort: merged.reasoning_effort };
         delete merged.reasoning_effort;
         delete merged.response_format;
+        // stop / n are Chat Completions-only and rejected by /v1/responses.
+        delete merged.stop;
+        delete merged.n;
+        // presence_penalty / frequency_penalty / max_completion_tokens are
+        // Chat Completions-only and rejected by /v1/responses (InvalidParameter).
+        delete merged.presence_penalty;
+        delete merged.frequency_penalty;
+        delete merged.max_completion_tokens;
     } else if (apiMode === 'anthropic' || apiMode === 'gemini') {
         if (merged.max_output_tokens && !merged.max_tokens) merged.max_tokens = merged.max_output_tokens;
         delete merged.max_output_tokens;
@@ -4367,4 +4386,6 @@ module.exports = {
     selectPromptMemories,
     rankMemories,
     compactConversationHistory,
+    normalizeOptions,
+    openAiApiMode,
 };

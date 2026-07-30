@@ -172,29 +172,82 @@ func toChatTools(tools []provider.ToolSchema) []chatTool {
 	return out
 }
 
-func applyOptions(payload map[string]any, opts map[string]any) {
+func applyOptions(payload map[string]any, opts map[string]any, mode string) {
 	if opts == nil {
 		return
 	}
-	// Pass through known sampling keys; ignore unknowns silently for compat.
-	for _, k := range []string{
-		"temperature", "top_p", "max_tokens", "max_completion_tokens",
-		"presence_penalty", "frequency_penalty", "reasoning_effort",
-		"response_format", "seed", "stop", "n",
-	} {
-		if v, ok := opts[k]; ok && v != nil {
+	responses := mode == "responses"
+
+	// Number-valued sampling keys shared by both modes. temperature/top_p
+	// are accepted by both, but OpenAI rejects them for reasoning models;
+	// callers already omit via sanitizeThinkingOptions, and -1/empty is
+	// dropped here as well.
+	for _, k := range []string{"temperature", "top_p"} {
+		if v, ok := opts[k]; ok && !isEmptyOption(v) {
 			payload[k] = v
 		}
 	}
-	if v, ok := opts["reasoning"]; ok && v != nil {
+	if responses {
+		// Responses API uses max_output_tokens (not max_tokens /
+		// max_completion_tokens).
+		if v, ok := opts["max_output_tokens"]; ok && !isEmptyOption(v) {
+			payload["max_output_tokens"] = v
+		} else if v, ok := opts["max_tokens"]; ok && !isEmptyOption(v) {
+			payload["max_output_tokens"] = v
+		}
+		// reasoning is an object {effort} on Responses; never a top-level
+		// string.
+		if v, ok := opts["reasoning"]; ok && !isEmptyOption(v) {
+			if r, ok := v.(map[string]any); ok {
+				payload["reasoning"] = r
+			}
+		}
+		// seed is accepted by Responses; response_format, stop, n,
+		// presence/frequency penalty, and max_completion_tokens are NOT.
+		if v, ok := opts["seed"]; ok && !isEmptyOption(v) {
+			payload["seed"] = v
+		}
+		return
+	}
+
+	// Chat Completions mode.
+	for _, k := range []string{
+		"max_tokens", "max_completion_tokens",
+		"presence_penalty", "frequency_penalty",
+		"reasoning_effort", "response_format", "seed", "stop", "n",
+	} {
+		if v, ok := opts[k]; ok && !isEmptyOption(v) {
+			payload[k] = v
+		}
+	}
+	if v, ok := opts["reasoning"]; ok && !isEmptyOption(v) {
 		payload["reasoning"] = v
 	}
-	// max_output_tokens → max_tokens alias
+	// max_output_tokens -> max_tokens alias
 	if _, ok := payload["max_tokens"]; !ok {
-		if v, ok := opts["max_output_tokens"]; ok {
+		if v, ok := opts["max_output_tokens"]; ok && !isEmptyOption(v) {
 			payload["max_tokens"] = v
 		}
 	}
+}
+
+// isEmptyOption reports whether an option value should be omitted from the
+// wire payload: nil, empty string, or JSON null. Numeric -1 is a Zephyr
+// convention meaning "do not send" for temperature/top_p and is also dropped.
+func isEmptyOption(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return x == ""
+	case float64:
+		return x == -1
+	case int:
+		return x == -1
+	case int64:
+		return x == -1
+	}
+	return false
 }
 
 func normalizeEffort(value any) string {
@@ -351,7 +404,7 @@ func (c *Client) streamChat(ctx context.Context, req provider.Request) (<-chan p
 		"messages": toChatMessages(req.Messages),
 		"stream":   req.Stream,
 	}
-	applyOptions(payload, req.Options)
+	applyOptions(payload, req.Options, "chat")
 	if len(req.Tools) > 0 {
 		payload["tools"] = toChatTools(req.Tools)
 		payload["tool_choice"] = "auto"
@@ -664,11 +717,28 @@ func (c *Client) streamResponses(ctx context.Context, req provider.Request) (<-c
 	if instructions != "" {
 		payload["instructions"] = instructions
 	}
-	applyOptions(payload, req.Options)
-	// responses uses max_output_tokens
-	if v, ok := payload["max_tokens"]; ok {
-		payload["max_output_tokens"] = v
-		delete(payload, "max_tokens")
+	applyOptions(payload, req.Options, "responses")
+	// max_tokens is not valid on Responses (applyOptions already mapped it to
+	// max_output_tokens); drop any stray alias that slipped through.
+	delete(payload, "max_tokens")
+	delete(payload, "max_completion_tokens")
+	delete(payload, "presence_penalty")
+	delete(payload, "frequency_penalty")
+	delete(payload, "response_format")
+	delete(payload, "stop")
+	delete(payload, "n")
+	if r, ok := payload["reasoning_effort"]; ok {
+		delete(payload, "reasoning_effort")
+		if effort, ok := r.(string); ok && effort != "" {
+			existing, _ := payload["reasoning"].(map[string]any)
+			if existing == nil {
+				existing = map[string]any{}
+			}
+			if _, set := existing["effort"]; !set {
+				existing["effort"] = effort
+			}
+			payload["reasoning"] = existing
+		}
 	}
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(req.Tools))

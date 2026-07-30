@@ -77,13 +77,40 @@ const {
     safeAiSettings,
     formatAiContextForPrompt,
     selectPromptMemories,
+    normalizeOptions,
+    openAiApiMode,
 } = require('./ai-agent-service');
 const {
     AiRuntimeBridge,
     registerAiHostRoutes,
 } = require('./ai-runtime-bridge');
 const { buildIntentRoutingHint } = require('./ai-intent-routing');
-const { sanitizeThinkingOptions } = require('./public/ai-thinking-policy');
+
+// normalizeOptionsForRuntime scopes provider/request options to the wire API
+// mode so Chat-Completions-only fields (presence_penalty, frequency_penalty,
+// max_completion_tokens, top-level reasoning_effort, response_format, stop, n)
+// never reach the Responses API (which rejects them with 400 InvalidParameter),
+// and vice-versa. Mirrors the Legacy /api/ai/chat path's normalizeOptions.
+function normalizeOptionsForRuntime(provider = {}, model = '', merged = {}) {
+    const type = String(provider.type || provider.kind || '').toLowerCase();
+    const base = String(provider.baseUrl || '').toLowerCase();
+    let mode = 'chat';
+    if (type === 'anthropic' || base.includes('anthropic.com')) {
+        mode = 'anthropic';
+    } else if (type === 'gemini' || type === 'google' || type === 'google-gemini' || base.includes('generativelanguage.googleapis.com')) {
+        mode = 'gemini';
+    } else if (type === 'ollama') {
+        mode = 'chat';
+    } else {
+        // openai / openai-compatible
+        mode = openAiApiMode({
+            apiMode: provider.config?.apiMode || provider.apiMode,
+            baseUrl: provider.baseUrl,
+        });
+    }
+    const providerForNormalize = { ...provider, _selectedModel: model };
+    return normalizeOptions(providerForNormalize, merged, mode);
+}
 const { parseLoopbackListen } = require('./ai-host-listener');
 const {
     getImageExt,
@@ -3875,7 +3902,7 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
             model,
             message: attachmentIds.length ? '' : (req.body?.message || ''),
             messages: runMessages,
-            options: sanitizeThinkingOptions(provider, model, {
+            options: normalizeOptionsForRuntime(provider, model, {
                 ...(provider.config?.options || provider.options || {}),
                 ...(req.body?.options || {}),
             }),

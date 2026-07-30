@@ -13,7 +13,7 @@ import (
 
 func TestApplyOptionsCarriesResponsesReasoning(t *testing.T) {
 	payload := map[string]any{}
-	applyOptions(payload, map[string]any{"reasoning": map[string]any{"effort": "max"}})
+	applyOptions(payload, map[string]any{"reasoning": map[string]any{"effort": "max"}}, "responses")
 	reasoning, ok := payload["reasoning"].(map[string]any)
 	if !ok || reasoning["effort"] != "max" {
 		t.Fatalf("reasoning object missing: %#v", payload)
