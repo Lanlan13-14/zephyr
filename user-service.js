@@ -42,7 +42,11 @@ class UserService {
     }
 
     listUsers() {
-        return this.storage.listUsers().map((u) => this._publicUser(u));
+        // Soft-delete keeps the row for audit/resource history, but admin UI
+        // must not keep showing deleted cards after DELETE succeeds.
+        return this.storage.listUsers()
+            .filter((u) => u && u.status !== 'deleted')
+            .map((u) => this._publicUser(u));
     }
 
     getUser(userId) {
@@ -54,11 +58,39 @@ class UserService {
     createUser(actor, { username, password, email = '', role = 'user', mustChangePassword = true }) {
         username = String(username || '').trim();
         if (!USERNAME_RE.test(username)) throw new HttpError(400, 'invalid_username', '用户名需为 2-32 位字母、数字或 ._@-' );
-        if (this.storage.getUser(username)) throw new HttpError(409, 'username_taken', '用户名已存在');
+        const existing = this.storage.getUser(username);
+        if (existing && existing.status !== 'deleted') throw new HttpError(409, 'username_taken', '用户名已存在');
         if (!password || String(password).length < 4) throw new HttpError(400, 'weak_password', '密码至少 4 位');
         if (!ROLES.has(role)) throw new HttpError(400, 'invalid_role', '角色不合法');
         // Only super admin can create new admins (§19.3)
         if (role === 'admin' && !actor.isSuperAdmin) throw new HttpError(403, 'super_admin_required', '只有超级管理员可以创建管理员账号');
+        // Soft-deleted row still occupies the unique username — recycle it
+        // instead of failing create after a successful admin delete.
+        if (existing && existing.status === 'deleted') {
+            if (existing.isSuperAdmin) throw new HttpError(403, 'cannot_recreate_super_admin', '不能复用超级管理员用户名');
+            const recycled = this.storage.updateUserById(existing.userId, {
+                passwordHash: this.hashPassword(String(password)),
+                email: String(email || ''),
+                role,
+                status: 'active',
+                defaultPassword: !!mustChangePassword,
+                isSuperAdmin: false,
+                failedLoginCount: 0,
+                lockedUntil: null,
+                totpEnabled: false,
+                totpSecret: null,
+            });
+            this.getSessionStore().revokeAllForUser(existing.userId, 'user-recreated');
+            this.getSessionStore().setMustChangePassword?.(existing.userId, !!mustChangePassword);
+            this.authz.audit({
+                actorUserId: actor.userId,
+                targetUserId: existing.userId,
+                action: 'user.create',
+                outcome: 'success',
+                metadata: { username, role, recycled: true },
+            });
+            return this._publicUser(recycled);
+        }
         const user = this.storage.createUser({
             username,
             passwordHash: this.hashPassword(String(password)),

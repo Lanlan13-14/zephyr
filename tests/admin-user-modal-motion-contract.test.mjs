@@ -131,3 +131,23 @@ test('admin user modal binds scrim / backdrop / Escape close and form submit', (
     assert.match(appJs, /closeAdminUserModal\(\)/);
     assert.match(appJs, /\/api\/admin\/users[\s\S]*?mustChangePassword/);
 });
+
+test('admin user role select joins protocolFilter motion morph menu path', () => {
+    // Same toggle-select shell as dashboard filters + Motion.morph(mac)/macClose.
+    assert.match(appJs, /const TOGGLE_SELECT_IDS = \[[\s\S]*?'adminUserRole'/);
+    assert.match(appJs, /const MOTION_FILTER_SELECT_IDS = \[[\s\S]*?'adminUserRole'/);
+    assert.match(appJs, /enhanceToggleSelect\(\$\('#adminUserRole'\)\)/);
+    assert.match(appJs, /syncToggleSelectFace\(\$\('#adminUserRole'\)\)/);
+    assert.match(appJs, /Motion\.morph\(menu, from, \{[\s\S]*?preset:\s*'mac'/);
+    assert.match(appJs, /Motion\.to\(menu, \{ opacity: 0, scale: 0\.94, y: -8, x: 0, blur: 0 \}, \{ preset: 'macClose' \}\)/);
+});
+
+test('admin user list hides soft-deleted cards after delete', () => {
+    const renderFn = extractFn(appJs, 'renderAdminUsers');
+    assert.match(renderFn, /status !== 'deleted'/);
+    assert.match(renderFn, /const visible = \(Array\.isArray\(users\) \? users : \[\]\)\.filter/);
+    assert.match(renderFn, /visible\.map\(/);
+    assert.match(appJs, /data-admin-action="delete"/);
+    assert.match(appJs, /method:\s*'DELETE'[\s\S]*?resourcePolicy:\s*'transfer-to-admin'/);
+    assert.match(appJs, /await loadAdminUsers\(\)/);
+});

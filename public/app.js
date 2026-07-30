@@ -1349,6 +1349,8 @@ const TOGGLE_SELECT_IDS = [
     // Connection modal / RDP (when opened)
     'connProtocol', 'connSshKey', 'connEncoding', 'connRoute',
     'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
+    // 多用户 → 添加用户 → 角色（与首页「全部协议」同源 toggle-select）
+    'adminUserRole',
 ];
 let _toggleSelectDocBound = false;
 
@@ -1372,6 +1374,8 @@ const MOTION_FILTER_SELECT_IDS = [
     'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
     // 设置 → 语言 与 代理弹窗 → 类型（与首页筛选同一套 FLIP 展开/收起）
     'languageSelect', 'proxyType',
+    // 多用户 → 添加用户 → 角色：与「全部协议」同一套 Motion.morph(mac) / macClose
+    'adminUserRole',
 ];
 function isMotionFilterShell(shell) {
     return !!shell && MOTION_FILTER_SELECT_IDS.includes(shell.dataset?.selectId || '');
@@ -11453,12 +11457,14 @@ async function loadAdminUsers() {
 function renderAdminUsers(users) {
     const list = document.getElementById('adminUserList');
     if (!list) return;
-    if (!users.length) {
+    // Soft-deleted users must never remain visible after delete (status=deleted).
+    const visible = (Array.isArray(users) ? users : []).filter((u) => u && u.status !== 'deleted');
+    if (!visible.length) {
         list.innerHTML = `<p class="muted">${t('暂无用户')}</p>`;
         return;
     }
-    const activeAdmins = users.filter((u) => u.role === 'admin' && u.status === 'active');
-    list.innerHTML = users.map((u) => {
+    const activeAdmins = visible.filter((u) => u.role === 'admin' && u.status === 'active');
+    list.innerHTML = visible.map((u) => {
         const isSelf = u.userId === myIdentity.userId;
         const isLastActiveAdmin = u.role === 'admin' && u.status === 'active' && activeAdmins.length <= 1;
         const roleBadge = u.isSuperAdmin
