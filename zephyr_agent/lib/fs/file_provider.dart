@@ -202,49 +202,42 @@ class DesktopFileProvider extends ZephyrFileProvider {
     final file = io.File(resolved);
 
     final wantsWrite = mode == 'write' || mode == 'writeTruncate';
-    // Dart FileMode.write always truncates. For mode=write (in-place) we must
-    // preserve existing bytes. Use the known-good preserve-copy path — do NOT
-    // use FileMode.append: on Windows FILE_APPEND_DATA ignores seek offsets and
-    // setPosition can fail, which made Explorer copies of even tiny files drop
-    // the RDP drive with 0x8007048F. Multi-GB pure reads should open as mode
-    // "read" from rdpefs (FILE_OPEN/FILE_OPEN_IF) so this path is avoided.
-    io.File? preservedCopy;
     if (wantsWrite) {
+      // Ensure parent directory and file exist before opening.
+      // Do NOT copy-then-rewrite existing content: the old "preserve-copy"
+      // approach read the entire file back before returning the handle, which
+      // blocked even tiny Explorer copies long enough to cause timeout /
+      // 0x8007048F on every platform.  Windows Explorer always does a full
+      // overwrite anyway (FILE_OVERWRITE_IF + sequential WRITEs from offset 0),
+      // so preserving existing bytes served no purpose.
       await file.parent.create(recursive: true);
-      if (await file.exists()) {
-        if (mode == 'write') {
-          preservedCopy =
-              await file.copy('$resolved.zephyr-agent-preserve-${_uuid.v4()}');
-        }
-      } else {
-        await file.create();
+      if (!await file.exists()) await file.create();
+    } else {
+      if (!await file.exists()) {
+        throw FileProviderException('not_found', 'File not found: $path');
       }
     }
 
-    if (!await file.exists()) {
-      throw FileProviderException('not_found', 'File not found: $path');
+    // mode=writeTruncate  → FileMode.write   (O_WRONLY|O_CREAT|O_TRUNC)
+    // mode=write          → FileMode.writeOnly (O_WRONLY|O_CREAT, no truncate)
+    //   Each WRITE IRP supplies an explicit byte offset and calls setPosition()
+    //   before writeFrom(), so random-access in-place updates work correctly
+    //   without truncating the file at open time.
+    // mode=read           → FileMode.read    (O_RDONLY)
+    //
+    // FileMode.append is intentionally avoided: on Windows it ignores seek
+    // offsets (FILE_APPEND_DATA), causing setPosition() to have no effect and
+    // producing corrupt output on the Agent side.
+    final io.FileMode fileMode;
+    if (mode == 'writeTruncate') {
+      fileMode = io.FileMode.write;       // truncates on open
+    } else if (mode == 'write') {
+      fileMode = io.FileMode.writeOnly;   // no truncate; IRP offsets drive seeks
+    } else {
+      fileMode = io.FileMode.read;
     }
 
-    final fileMode = wantsWrite ? io.FileMode.write : io.FileMode.read;
     final raf = await file.open(mode: fileMode);
-    if (preservedCopy != null) {
-      io.RandomAccessFile? src;
-      try {
-        src = await preservedCopy.open(mode: io.FileMode.read);
-        while (true) {
-          final chunk = await src.read(1024 * 1024);
-          if (chunk.isEmpty) break;
-          await raf.writeFrom(chunk);
-        }
-        await raf.setPosition(0);
-      } finally {
-        await src?.close();
-        try {
-          await preservedCopy.delete();
-        } catch (_) {}
-      }
-    }
-
     final handle = 'h_${_uuid.v4().substring(0, 8)}';
     _openFiles[handle] = _DesktopOpenFile(resolved, raf, wantsWrite);
     return handle;

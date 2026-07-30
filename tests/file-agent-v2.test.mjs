@@ -48,13 +48,34 @@ test('Agent v2 cancellation rejects immediately and emits CANCEL', async () => {
   assert.equal(conn.ws.sent.length, 2);
 });
 
-test('Agent v2 enforces negotiated in-flight limit', async () => {
+test('Agent v2 queues requests beyond in-flight limit and unblocks when slot frees', async () => {
   const conn = connection();
+  // Fill both slots (maxInflight=2 in the mock connection).
   const one = conn.callBinaryV2(OP.READ, { handle: 'h1', length: 1 }, null, 1000);
   const two = conn.callBinaryV2(OP.READ, { handle: 'h2', length: 1 }, null, 1000);
+  // Third request arrives while the window is full — must NOT reject immediately
+  // with "busy"; it should queue and wait for a slot to free up.
   const three = conn.callBinaryV2(OP.READ, { handle: 'h3', length: 1 }, null, 1000);
-  await assert.rejects(three.promise, (error) => error.code === 'busy');
+
+  // Give the event loop several poll intervals so any instant-reject would fire.
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(conn.ws.sent.length, 2, 'third request should be queued, not sent yet');
+  // Confirm three is not yet in the pending map (still waiting for a slot).
+  assert.equal(conn.pendingRequests.size, 2, 'only two requests should hold a slot');
+
+  // Free one slot — one.cancel() also sends a CANCEL frame.
   one.cancel();
+  await assert.rejects(one.promise, (e) => e.code === 'cancelled');
+
+  // After the slot frees the third request should acquire it and send its
+  // frame within a few poll intervals (≤ 30 ms).
+  await new Promise((r) => setTimeout(r, 30));
+  // Sent count: 2 (initial) + 1 (cancel for one) + 1 (three's frame) = 4.
+  assert.equal(conn.ws.sent.length, 4, 'third request should have sent after slot freed');
+  assert.equal(conn.pendingRequests.size, 2, 'two and three should now hold slots');
+
+  // Clean up — cancel remaining to avoid dangling timers.
   two.cancel();
-  await Promise.allSettled([one.promise, two.promise]);
+  three.cancel();
+  await Promise.allSettled([two.promise, three.promise]);
 });

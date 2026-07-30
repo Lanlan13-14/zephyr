@@ -210,10 +210,16 @@ class AgentController extends ChangeNotifier {
         'binaryWrite': true,
         'cancel': true,
         'creditFlow': true,
-        // Android MethodChannel / Binder soft-caps ~1 MiB per transaction
-        // including frame overhead. Stay at 256 KiB on Android so large-file
-        // readahead (4×chunk) and writes do not TransactionTooLarge.
-        'maxInflight': Platform.isAndroid ? 4 : 8,
+        // ZFT2 travels over a plain WebSocket — not through Android's
+        // MethodChannel/Binder.  The old Android=4 cap was protecting against
+        // Binder TransactionTooLargeException, but that path is never taken
+        // for ZFT2 traffic.  Raising to 8 matches desktop Agents and lets the
+        // Go WASM write pipeline fill its agentWriteParallel=4 slots without
+        // hitting busy-reject on the Node side.
+        // maxChunkSize stays at 256 KiB on Android: SAF MethodChannel calls
+        // (AndroidSafFileProvider) still cross Binder, so per-read/write
+        // payloads must stay under the ~1 MiB Binder limit.
+        'maxInflight': 8,
         'maxChunkSize': Platform.isAndroid ? 256 * 1024 : 1 * 1024 * 1024,
       },
       'share': {

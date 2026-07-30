@@ -269,15 +269,43 @@ const (
 	agentReadAheadParallel   = 4
 	agentReadAheadWindow     = agentReadAheadChunkBytes * agentReadAheadParallel
 	agentReadAheadMaxBytes   = 16 * 1024 * 1024
+
+	// Pipelined write: split large WRITE IRPs into 256 KiB chunks and issue
+	// up to agentWriteParallel of them concurrently.  The old stop-and-wait
+	// loop capped throughput at chunk_size/RTT (≈2–3 MB/s on a LAN hop);
+	// parallel chunks hide RTT latency and push throughput closer to link
+	// capacity.  Value is capped well below maxInflight (8) so reads and
+	// control RPCs always have slots available.
+	agentWriteParallel = 4
 )
 
+// agentReadCacheMaxSlots is the number of independent read-window slots kept
+// per open file handle.  Each slot is loaded and used concurrently, so
+// multiple IRP_MJ_READ goroutines with different offsets never block each
+// other.  Setting this above the in-flight window (maxInflight = 8) wastes
+// memory without any benefit.
+const agentReadCacheMaxSlots = 8
+
+// cacheSlot holds one fetched readahead window.
+type cacheSlot struct {
+	fetchStart uint64
+	fetchLen   uint32
+	data       []byte
+	loading    bool
+	failed     bool
+	ready      chan struct{} // closed when loading transitions to false
+}
+
+// agentReadCache holds a set of concurrently-loadable read-window slots.
+// The old single-slot design serialised all IRP goroutines: a goroutine
+// waiting on slot A's ready channel would be woken only after A's fetch
+// finished, even if another goroutine had already evicted A's slot to start
+// fetching a different range.  With multiple independent slots, each IRP
+// goroutine finds or creates its own slot and never evicts an in-progress
+// neighbour's data.
 type agentReadCache struct {
-	mu       sync.Mutex
-	start    uint64
-	data     []byte
-	loading  bool
-	loadFrom uint64
-	ready    chan struct{}
+	mu    sync.Mutex
+	slots []*cacheSlot
 }
 
 // openHandle tracks an open file/directory for IRP processing
@@ -1219,81 +1247,125 @@ func (h *RdpefsHandler) readAgentCached(handle *openHandle, offset uint64, lengt
 	if length == 0 {
 		return []byte{}
 	}
-	cache := handle.ReadCache
-	if cache == nil {
+	// Lazy-init the cache.
+	if handle.ReadCache == nil {
 		h.mu.Lock()
 		if handle.ReadCache == nil {
 			handle.ReadCache = &agentReadCache{}
 		}
-		cache = handle.ReadCache
 		h.mu.Unlock()
 	}
+	cache := handle.ReadCache
+
+	// Compute the fetch window size for a miss (same rounding as before).
+	fetchLen := func() uint32 {
+		fl := length
+		if fl < agentReadAheadChunkBytes {
+			fl = agentReadAheadChunkBytes
+		} else if fl < agentReadAheadWindow {
+			c := (fl + agentReadAheadChunkBytes - 1) / agentReadAheadChunkBytes
+			fl = c * agentReadAheadChunkBytes
+			if fl > agentReadAheadWindow {
+				fl = agentReadAheadWindow
+			}
+		}
+		if fl > agentReadAheadMaxBytes {
+			fl = agentReadAheadMaxBytes
+		}
+		return fl
+	}()
+
 	for {
 		cache.mu.Lock()
-		if offset >= cache.start && offset+uint64(length) <= cache.start+uint64(len(cache.data)) {
-			start := int(offset - cache.start)
-			chunk := append([]byte(nil), cache.data[start:start+int(length)]...)
-			cache.mu.Unlock()
-			addProtocolCounter("file.cache.hit", 1)
-			addProtocolCounter("file.bytes.cache", uint64(len(chunk)))
-			return chunk
-		}
-		if cache.loading && offset >= cache.loadFrom && offset < cache.loadFrom+agentReadAheadWindow {
-			ready := cache.ready
-			cache.mu.Unlock()
-			<-ready
-			continue
-		}
-		cache.loading = true
-		cache.loadFrom = offset
-		cache.ready = make(chan struct{})
-		ready := cache.ready
-		cache.mu.Unlock()
 
-		// Readahead at most one extra window beyond the IRP, but never force a
-		// multi-MiB fetch for a small request — that was burning inflight slots
-		// and turning tiny Explorer copies into 0x8007048F.
-		fetchLength := length
-		if fetchLength < agentReadAheadChunkBytes {
-			fetchLength = agentReadAheadChunkBytes
-		} else if fetchLength < agentReadAheadWindow {
-			// round up to next chunk boundary, cap at one readahead window
-			chunks := (fetchLength + agentReadAheadChunkBytes - 1) / agentReadAheadChunkBytes
-			fetchLength = chunks * agentReadAheadChunkBytes
-			if fetchLength > agentReadAheadWindow {
-				fetchLength = agentReadAheadWindow
+		// ── 1. Check all existing slots for a hit ────────────────────────
+		for _, s := range cache.slots {
+			if s.loading || s.failed || s.data == nil {
+				continue
+			}
+			if offset >= s.fetchStart && offset+uint64(length) <= s.fetchStart+uint64(len(s.data)) {
+				start := int(offset - s.fetchStart)
+				chunk := append([]byte(nil), s.data[start:start+int(length)]...)
+				cache.mu.Unlock()
+				addProtocolCounter("file.cache.hit", 1)
+				addProtocolCounter("file.bytes.cache", uint64(len(chunk)))
+				return chunk
 			}
 		}
-		if fetchLength > agentReadAheadMaxBytes {
-			fetchLength = agentReadAheadMaxBytes
-		}
-		started := time.Now()
-		data := h.callAgentReadWindow(handle.AgentID, handle.RemoteHandle, offset, fetchLength)
-		elapsed := time.Since(started)
 
-		cache.mu.Lock()
-		if data != nil {
-			cache.start = offset
-			cache.data = data
-			if len(cache.data) > agentReadAheadMaxBytes {
-				cache.data = cache.data[:agentReadAheadMaxBytes]
+		// ── 2. Check if an in-flight slot already covers this range ──────
+		for _, s := range cache.slots {
+			if !s.loading {
+				continue
 			}
-		} else {
-			cache.data = nil
+			if offset >= s.fetchStart && offset < s.fetchStart+uint64(s.fetchLen) {
+				ready := s.ready
+				cache.mu.Unlock()
+				<-ready
+				// Re-enter the loop: the slot may now have data or may have
+				// failed — either way, re-evaluate from the top.
+				goto retry
+			}
 		}
-		cache.loading = false
-		close(ready)
-		cache.mu.Unlock()
-		addProtocolCounter("file.cache.miss", 1)
-		addProtocolCounter("file.bytes.network", uint64(len(data)))
-		addProtocolCounter("file.read.latency_ms", uint64(elapsed.Milliseconds()))
-		if data == nil {
-			return nil
+
+		// ── 3. No hit and no in-flight match — allocate / reuse a slot ───
+		{
+			var slot *cacheSlot
+			if len(cache.slots) < agentReadCacheMaxSlots {
+				// Grow the slot table.
+				slot = &cacheSlot{}
+				cache.slots = append(cache.slots, slot)
+			} else {
+				// Evict the oldest idle slot (first non-loading, non-nil data slot;
+				// fall back to any non-loading slot if all are loading).
+				for _, s := range cache.slots {
+					if !s.loading {
+						slot = s
+						break
+					}
+				}
+				if slot == nil {
+					// All slots busy — wait on any one of them to free up.
+					ready := cache.slots[0].ready
+					cache.mu.Unlock()
+					<-ready
+					goto retry
+				}
+			}
+			slot.fetchStart = offset
+			slot.fetchLen = fetchLen
+			slot.data = nil
+			slot.loading = true
+			slot.failed = false
+			slot.ready = make(chan struct{})
+			ready := slot.ready
+			cache.mu.Unlock()
+
+			started := time.Now()
+			data := h.callAgentReadWindow(handle.AgentID, handle.RemoteHandle, offset, fetchLen)
+			elapsed := time.Since(started)
+
+			cache.mu.Lock()
+			slot.data = data
+			slot.loading = false
+			slot.failed = data == nil
+			close(ready)
+			cache.mu.Unlock()
+
+			addProtocolCounter("file.cache.miss", 1)
+			addProtocolCounter("file.bytes.network", uint64(len(data)))
+			addProtocolCounter("file.read.latency_ms", uint64(elapsed.Milliseconds()))
+
+			if data == nil {
+				return nil
+			}
+			if uint32(len(data)) < length {
+				return append([]byte(nil), data...)
+			}
+			return append([]byte(nil), data[:length]...)
 		}
-		if uint32(len(data)) < length {
-			return append([]byte(nil), data...)
-		}
-		return append([]byte(nil), data[:length]...)
+
+	retry:
 	}
 }
 
@@ -1303,8 +1375,16 @@ func invalidateAgentReadCache(handle *openHandle) {
 	}
 	cache := handle.ReadCache
 	cache.mu.Lock()
-	cache.data = nil
-	cache.start = 0
+	// Clear all slots.  In-flight slots are left with their goroutine still
+	// running; when it finishes it will write into the slot and close ready,
+	// but the next readAgentCached call will see failed/stale data and issue
+	// a fresh fetch from the correct offset.
+	for _, s := range cache.slots {
+		if !s.loading {
+			s.data = nil
+			s.failed = true
+		}
+	}
 	cache.mu.Unlock()
 }
 
@@ -2138,12 +2218,21 @@ func minU32(a, b uint32) uint32 {
 }
 
 func (h *RdpefsHandler) callAgentWrite(agentID, handle string, offset uint64, data []byte) int {
-	// Split oversized writes so Android Agents advertising 256 KiB chunks
-	// (Binder/MethodChannel) can accept Explorer multi-MB IRPs.
+	// Split the IRP into 256 KiB chunks and issue up to agentWriteParallel of
+	// them concurrently.  The old stop-and-wait loop limited throughput to
+	// ~chunk_size/RTT (≈2–3 MB/s on a typical hop); pipelining hides RTT
+	// latency and allows the link to be saturated.
+	//
+	// Ordering guarantee: RDPDR IRP_MJ_WRITE carries an explicit byte offset,
+	// so each chunk can land independently — the Agent side calls setPosition()
+	// before writeFrom().  The Dart path-queue serialises concurrent WRITEs on
+	// the same handle, so in-order delivery within a single IRP is preserved
+	// without extra coordination here.
 	const maxWriteChunk = 256 * 1024
 	if len(data) == 0 {
 		return 0
 	}
+	// Single chunk — fast path, no goroutine overhead.
 	if len(data) <= maxWriteChunk {
 		response, err := h.requestAgent(agentID, zft2Write, map[string]any{"handle": handle, "offset": offset}, data)
 		if err != nil {
@@ -2152,28 +2241,79 @@ func (h *RdpefsHandler) callAgentWrite(agentID, handle string, offset uint64, da
 		}
 		return int(int64Meta(response.Meta, "bytesWritten"))
 	}
-	written := 0
-	for written < len(data) {
-		end := written + maxWriteChunk
+
+	// Build chunk list.
+	type writeChunk struct {
+		index  int
+		off    uint64
+		data   []byte
+	}
+	type writeResult struct {
+		index   int
+		written int
+		err     error
+	}
+
+	totalChunks := (len(data) + maxWriteChunk - 1) / maxWriteChunk
+	chunks := make([]writeChunk, totalChunks)
+	for i := 0; i < totalChunks; i++ {
+		start := i * maxWriteChunk
+		end := start + maxWriteChunk
 		if end > len(data) {
 			end = len(data)
 		}
-		chunk := data[written:end]
-		response, err := h.requestAgent(agentID, zft2Write, map[string]any{"handle": handle, "offset": offset + uint64(written)}, chunk)
-		if err != nil {
-			slog.Warn("rdpefs: agent write failed", "handle", handle, "offset", offset+uint64(written), "err", err)
-			return written
+		chunks[i] = writeChunk{index: i, off: offset + uint64(start), data: data[start:end]}
+	}
+
+	results := make(chan writeResult, totalChunks)
+	// Semaphore to cap concurrency at agentWriteParallel without launching all
+	// goroutines at once on very large IRPs.
+	sem := make(chan struct{}, agentWriteParallel)
+
+	for _, c := range chunks {
+		c := c
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem }()
+			resp, err := h.requestAgent(agentID, zft2Write,
+				map[string]any{"handle": handle, "offset": c.off}, c.data)
+			if err != nil {
+				slog.Warn("rdpefs: agent write failed", "handle", handle, "offset", c.off, "err", err)
+				results <- writeResult{index: c.index, written: 0, err: err}
+				return
+			}
+			results <- writeResult{index: c.index, written: int(int64Meta(resp.Meta, "bytesWritten"))}
+		}()
+	}
+
+	// Collect results.  We want total bytes written up to the first failure
+	// (by chunk index order) so partial progress is reported accurately.
+	type indexed struct {
+		written int
+		err     error
+	}
+	ordered := make([]indexed, totalChunks)
+	for range totalChunks {
+		r := <-results
+		ordered[r.index] = indexed{written: r.written, err: r.err}
+	}
+
+	total := 0
+	for i, r := range ordered {
+		if r.err != nil {
+			slog.Warn("rdpefs: agent write chunk failed", "handle", handle, "chunk", i, "err", r.err)
+			return total
 		}
-		n := int(int64Meta(response.Meta, "bytesWritten"))
-		if n <= 0 {
-			return written
+		if r.written <= 0 {
+			return total
 		}
-		written += n
-		if n < len(chunk) {
-			return written
+		total += r.written
+		if r.written < len(chunks[i].data) {
+			// Short write — stop here; caller will retry from the new offset.
+			return total
 		}
 	}
-	return written
+	return total
 }
 
 func (h *RdpefsHandler) callAgentClose(agentID, handle string) {

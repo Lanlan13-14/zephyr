@@ -140,61 +140,82 @@ class FileAgentConnection {
 
     /** Send a protocol-v2 binary request to the Agent. */
     callBinaryV2(type, meta, payload, timeoutMs) {
+        // Wait for a free in-flight slot instead of immediately rejecting with
+        // "busy".  The old instant-reject caused the Go WASM retry loop to spin
+        // at 25/50/100 ms intervals, burning all retry attempts and eventually
+        // failing large-file copies with STATUS_UNSUCCESSFUL / 0x8007048F.
+        // Polling at 4 ms matches the Go WASM fileTransferSlotPoll constant so
+        // both sides drain at the same cadence.
+        const SLOT_POLL_MS = 4;
         let settled = false;
+        let cancelled = false;
         let cancel = () => {};
+
         const promise = new Promise((resolve, reject) => {
-            if (!this.online) {
-                reject(new AgentError('agent_offline', 'Agent is offline'));
-                return;
-            }
-            if (this.protocolVersion < 2) {
-                reject(new AgentError('unsupported', 'Agent does not support ZFT2'));
-                return;
-            }
-            if (this.pendingRequests.size >= this.maxInflight) {
-                reject(new AgentError('busy', 'Agent request window is full'));
-                return;
-            }
-            const id = this.nextRequestId++ >>> 0;
-            const frame = encodeZft2Frame({ type, requestId: id, meta: meta || {}, payload });
-            const timer = setTimeout(() => {
-                this.pendingRequests.delete(id);
-                if (!settled) {
-                    finishReject(new AgentError('timeout', `ZFT2 request timed out after ${timeoutMs}ms`));
+            if (!this.online) { reject(new AgentError('agent_offline', 'Agent is offline')); return; }
+            if (this.protocolVersion < 2) { reject(new AgentError('unsupported', 'Agent does not support ZFT2')); return; }
+
+            const effectiveTimeout = timeoutMs || RPC_DEFAULT_TIMEOUT_MS;
+            const deadline = Date.now() + effectiveTimeout;
+
+            const finishResolve = (value) => { if (settled) return; settled = true; resolve(value); };
+            const finishReject  = (error)  => { if (settled) return; settled = true; reject(error); };
+
+            const tryAcquire = () => {
+                if (cancelled || settled) return;
+                if (!this.online) { finishReject(new AgentError('agent_offline', 'Agent went offline')); return; }
+                if (Date.now() >= deadline) { finishReject(new AgentError('timeout', `ZFT2 request timed out after ${effectiveTimeout}ms`)); return; }
+
+                // Slot available — claim it and send.
+                if (this.pendingRequests.size < this.maxInflight) {
+                    const id = this.nextRequestId++ >>> 0;
+                    const frame = encodeZft2Frame({ type, requestId: id, meta: meta || {}, payload });
+                    const timer = setTimeout(() => {
+                        this.pendingRequests.delete(id);
+                        finishReject(new AgentError('timeout', `ZFT2 request timed out after ${effectiveTimeout}ms`));
+                    }, Math.max(1, deadline - Date.now()));
+
+                    this.pendingRequests.set(id, { resolve: finishResolve, reject: finishReject, timer, binaryV2: true, method: type });
+
+                    cancel = () => {
+                        if (settled) return;
+                        clearTimeout(timer);
+                        this.pendingRequests.delete(id);
+                        try { this.ws.send(encodeZft2Frame({ type: ZFT2_OP.CANCEL, requestId: this.nextRequestId++ >>> 0, meta: { targetRequestId: id } })); } catch {}
+                        finishReject(new AgentError('cancelled', 'File request cancelled'));
+                    };
+
+                    try {
+                        this.ws.send(frame, { binary: true }, (err) => {
+                            if (!err || settled) return;
+                            clearTimeout(timer);
+                            this.pendingRequests.delete(id);
+                            finishReject(new AgentError('io_error', err.message));
+                        });
+                    } catch (err) {
+                        clearTimeout(timer);
+                        this.pendingRequests.delete(id);
+                        finishReject(new AgentError('io_error', err.message));
+                    }
+                    return;
                 }
-            }, timeoutMs || RPC_DEFAULT_TIMEOUT_MS);
-            const finishResolve = (value) => {
-                if (settled) return;
-                settled = true;
-                resolve(value);
+
+                // Window full — back off and retry.
+                setTimeout(tryAcquire, SLOT_POLL_MS);
             };
-            const finishReject = (error) => {
-                if (settled) return;
-                settled = true;
-                reject(error);
-            };
-            this.pendingRequests.set(id, { resolve: finishResolve, reject: finishReject, timer, binaryV2: true, method: type });
-            cancel = () => {
-                if (settled) return;
-                clearTimeout(timer);
-                this.pendingRequests.delete(id);
-                try { this.ws.send(encodeZft2Frame({ type: ZFT2_OP.CANCEL, requestId: this.nextRequestId++ >>> 0, meta: { targetRequestId: id } })); } catch {}
-                finishReject(new AgentError('cancelled', 'File request cancelled'));
-            };
-            try {
-                this.ws.send(frame, { binary: true }, (err) => {
-                    if (!err || settled) return;
-                    clearTimeout(timer);
-                    this.pendingRequests.delete(id);
-                    finishReject(new AgentError('io_error', err.message));
-                });
-            } catch (err) {
-                clearTimeout(timer);
-                this.pendingRequests.delete(id);
-                finishReject(new AgentError('io_error', err.message));
-            }
+
+            tryAcquire();
         });
-        return { promise, cancel };
+
+        // Return the outer cancel that sets cancelled=true and delegates to
+        // whichever inner cancel was bound when a slot was acquired.
+        return {
+            promise,
+            cancel: () => {
+                cancelled = true;
+                cancel();
+            },
+        };
     }
 
     /** Handle an incoming ZFT2 response from the Agent. */
