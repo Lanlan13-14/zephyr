@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-ai/internal/tool"
 )
 
 func TestListTools(t *testing.T) {
@@ -101,5 +103,49 @@ func TestCallSendsConfirmedOnlyForMatchingApprovedTool(t *testing.T) {
 	}
 	if confirmedCallFromContext(ctx, "connection_delete_v1") {
 		t.Fatal("approval must not transfer to a different tool")
+	}
+}
+
+func TestInjectCatalogIdentity(t *testing.T) {
+	original := json.RawMessage(`{"aiChatSessionId":"chat-1","activeSurface":{"kind":"terminal"}}`)
+	merged := injectCatalogIdentity(original, "user-1", "runtime-1")
+	var got map[string]any
+	if err := json.Unmarshal(merged, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["userId"] != "user-1" || got["actorUserId"] != "user-1" {
+		t.Fatalf("user identity missing: %#v", got)
+	}
+	if got["runtimeSessionId"] != "runtime-1" {
+		t.Fatalf("runtime session missing: %#v", got)
+	}
+	if got["aiChatSessionId"] != "chat-1" {
+		t.Fatalf("browser context was not preserved: %#v", got)
+	}
+}
+
+func TestRegisterFromHostInjectsIdentityForToolDiscovery(t *testing.T) {
+	var discoveredContext string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		discoveredContext = r.URL.Query().Get("context")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "tools": []map[string]any{}})
+	}))
+	defer srv.Close()
+
+	h := NewHost(srv.URL, "")
+	reg := tool.NewRegistry()
+	browserContext := json.RawMessage(`{"aiChatSessionId":"chat-1"}`)
+	if err := RegisterFromHost(context.Background(), reg, h, "user-1", "runtime-1", "run-1", browserContext); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(discoveredContext), &got); err != nil {
+		t.Fatalf("invalid discovery context %q: %v", discoveredContext, err)
+	}
+	if got["userId"] != "user-1" || got["runtimeSessionId"] != "runtime-1" {
+		t.Fatalf("identity was not injected into discovery context: %#v", got)
+	}
+	if got["aiChatSessionId"] != "chat-1" {
+		t.Fatalf("original browser context was lost: %#v", got)
 	}
 }

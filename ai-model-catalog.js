@@ -1,5 +1,7 @@
 'use strict';
 
+const { inferredReasoningModel } = require('./public/ai-thinking-policy');
+
 /**
  * Per-model capability catalog (S0).
  * models_json accepts legacy string[] or ModelEntry[]; reads always normalize to ModelEntry[].
@@ -55,7 +57,8 @@ function normalizeModelEntry(raw, opts = {}) {
             maxOutputTokens: null,
             temperature: null,
             topP: null,
-            reasoning: false,
+            reasoning: inferredReasoningModel(id),
+            reasoningConfigured: false,
             reasoningEffort: null,
             input: mods.input,
             output: mods.output,
@@ -78,7 +81,9 @@ function normalizeModelEntry(raw, opts = {}) {
     const effort = raw.reasoningEffort == null || raw.reasoningEffort === ''
         ? null
         : String(raw.reasoningEffort);
-    const allowedEffort = new Set(['none', 'low', 'medium', 'high', 'max']);
+    const allowedEffort = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+    const reasoningConfigured = bool(raw.reasoningConfigured, Object.prototype.hasOwnProperty.call(raw, 'reasoningConfigured'));
+    const reasoning = reasoningConfigured ? bool(raw.reasoning, false) : (bool(raw.reasoning, false) || inferredReasoningModel(id));
     return {
         id,
         label: cleanId(raw.label || raw.displayName || id) || id,
@@ -87,7 +92,8 @@ function normalizeModelEntry(raw, opts = {}) {
         maxOutputTokens: numOrNull(raw.maxOutputTokens ?? raw.max_output_tokens),
         temperature: raw.temperature == null || raw.temperature === '' ? null : Number(raw.temperature),
         topP: raw.topP == null && raw.top_p == null ? null : Number(raw.topP ?? raw.top_p),
-        reasoning: bool(raw.reasoning, false),
+        reasoning,
+        reasoningConfigured,
         reasoningEffort: effort && allowedEffort.has(effort) ? effort : null,
         input: {
             image: bool(input.image, mods.input.image),

@@ -218,7 +218,11 @@ func (h *Host) ListTools(ctx context.Context, contextJSON json.RawMessage) ([]To
 
 // RegisterFromHost pulls catalog and registers proxy tools.
 func RegisterFromHost(ctx context.Context, reg *tool.Registry, h *Host, userID, sessionID, runID string, contextJSON json.RawMessage) error {
-	defs, err := h.ListTools(ctx, contextJSON)
+	// The browser context does not carry an authoritative user id. Inject the
+	// control-plane identity before discovery so Node can apply per-user gates
+	// (notably notes.enabled) consistently with the later tool-call path.
+	catalogContext := injectCatalogIdentity(contextJSON, userID, sessionID)
+	defs, err := h.ListTools(ctx, catalogContext)
 	if err != nil {
 		return err
 	}
@@ -260,4 +264,25 @@ func RegisterFromHost(ctx context.Context, reg *tool.Registry, h *Host, userID, 
 		}
 	}
 	return nil
+}
+
+// injectCatalogIdentity preserves browser-supplied context while adding the
+// authenticated runtime identity used only for tool discovery.
+func injectCatalogIdentity(contextJSON json.RawMessage, userID, sessionID string) json.RawMessage {
+	contextMap := map[string]any{}
+	if len(contextJSON) > 0 && string(contextJSON) != "null" {
+		_ = json.Unmarshal(contextJSON, &contextMap)
+	}
+	if userID != "" {
+		contextMap["userId"] = userID
+		contextMap["actorUserId"] = userID
+	}
+	if sessionID != "" {
+		contextMap["runtimeSessionId"] = sessionID
+	}
+	merged, err := json.Marshal(contextMap)
+	if err != nil {
+		return contextJSON
+	}
+	return merged
 }

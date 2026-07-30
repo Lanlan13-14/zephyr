@@ -61,6 +61,23 @@ test('listPlatformToolCatalog prefers dynamic catalog', () => {
     assert.ok(tools.length >= 10);
 });
 
+test('runtime catalog applies per-user notes.enabled when identity is present', () => {
+    const deps = {
+        storage: {
+            getSettings: () => ({ ai: { permissions: { notesRead: true, notesWrite: true } } }),
+            getUserById: (userId) => ({ userId, role: 'user' }),
+        },
+        userSettingsService: {
+            effective: (user) => ({ notes: { enabled: user.userId === 'enabled-user' } }),
+        },
+    };
+    const disabled = listPlatformToolCatalog(deps, { userId: 'disabled-user' });
+    assert.ok(disabled.length > 0);
+    assert.equal(disabled.some((tool) => tool.name.startsWith('note_')), false);
+    const enabled = listPlatformToolCatalog(deps, { userId: 'enabled-user' });
+    assert.equal(enabled.some((tool) => tool.name === 'note_get'), true);
+});
+
 test('executeAiToolForHost requires deps', async () => {
     await assert.rejects(() => executeAiToolForHost('connection_list_v1', {}, {}), /deps required/);
 });

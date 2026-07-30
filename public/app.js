@@ -4736,7 +4736,9 @@ function normalizeAiModelEntry(raw, { providerVisionDefault = true } = {}) {
         return {
             id, label: id, hidden: false,
             contextWindowTokens: null, maxOutputTokens: null,
-            temperature: null, topP: null, reasoning: false, reasoningEffort: null,
+            temperature: null, topP: null,
+            reasoning: !!globalThis.ZephyrThinkingPolicy?.inferredReasoningModel?.(id),
+            reasoningConfigured: false, reasoningEffort: null,
             input: mods.input, output: mods.output,
             tools: true, parallelToolCalls: true, promptCache: 'auto',
             maxImagesPerRequest: null, maxImageBytes: null, apiMode: null, userAgent: null, extra: {},
@@ -4756,7 +4758,10 @@ function normalizeAiModelEntry(raw, { providerVisionDefault = true } = {}) {
         maxOutputTokens: raw.maxOutputTokens == null || raw.maxOutputTokens === '' ? null : Number(raw.maxOutputTokens) || null,
         temperature: raw.temperature == null || raw.temperature === '' ? null : Number(raw.temperature),
         topP: raw.topP == null && raw.top_p == null ? null : Number(raw.topP ?? raw.top_p),
-        reasoning: !!raw.reasoning,
+        reasoning: raw.reasoningConfigured
+            ? !!raw.reasoning
+            : (!!raw.reasoning || !!globalThis.ZephyrThinkingPolicy?.inferredReasoningModel?.(id)),
+        reasoningConfigured: !!raw.reasoningConfigured,
         reasoningEffort: raw.reasoningEffort || null,
         input: {
             image: input.image === undefined ? mods.input.image : !!input.image,
@@ -5109,6 +5114,7 @@ async function saveAiModelDetail(e) {
         contextWindowTokens: Number($('#aiModelDetailContextWindow')?.value) || null,
         maxOutputTokens: Number($('#aiModelDetailMaxOutput')?.value) || null,
         reasoning: !!$('#aiModelDetailReasoning')?.checked,
+        reasoningConfigured: true,
         hidden: !!$('#aiModelDetailHidden')?.checked,
         input: {
             image: !!$('#aiModelDetailInputImage')?.checked,
@@ -5299,16 +5305,11 @@ function aiProviderKind(provider = {}) {
     return 'openai';
 }
 function aiThinkingOptionsForProvider(provider = {}, model = '') {
-    const kind = aiProviderKind(provider);
-    const m = String(model || provider.defaultModel || '').toLowerCase();
-    if (kind === 'gemini') {
-        if (/gemini-2\.5/i.test(m)) return [
-            ['', t('默认')], ['0', '关闭思考'], ['-1', '动态思考'], ['1024', '浅度思考'], ['8192', '深度思考'],
-        ];
-        return [['', t('默认')], ['minimal', 'minimal'], ['low', 'low'], ['medium', 'medium'], ['high', 'high']];
+    const policy = globalThis.ZephyrThinkingPolicy;
+    if (policy?.optionsForProvider) {
+        return policy.optionsForProvider(provider, model).map(([value, label]) => [value, label === '默认' ? t('默认') : label]);
     }
-    if (kind === 'anthropic') return [['', t('默认')], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']];
-    return [['', t('默认')], ['none', 'none'], ['minimal', 'minimal'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']];
+    return [['', t('默认')]];
 }
 function aiCurrentSession() {
     if (!aiChatSessions.length) createAiChat({ silent: true });
@@ -5371,8 +5372,14 @@ function renderAiThinkingSelector(provider = null, model = '') {
     const previous = select.value;
     const options = aiThinkingOptionsForProvider(provider || {}, model);
     select.value = options.some(([value]) => value === previous) ? previous : '';
-    const label = options.find(([value]) => value === select.value)?.[1] || t('默认');
-    $('#aiThinkPickerBtn') && ($('#aiThinkPickerBtn').textContent = t('推理：{label}', { label }));
+    const supported = options.some(([value]) => value !== '');
+    const label = supported ? (options.find(([value]) => value === select.value)?.[1] || t('默认')) : t('不支持');
+    const button = $('#aiThinkPickerBtn');
+    if (button) {
+        button.textContent = t('推理：{label}', { label });
+        button.disabled = !supported;
+        button.title = supported ? '' : t('当前模型未启用思考能力');
+    }
 }
 function aiHeaderChoices(kind = '') {
     const ai = normalizeAiSettings(settings.ai || aiSettingsState || {});
@@ -6910,8 +6917,8 @@ function aiIntensityOptions() {
         if (/^-?\d+$/.test(value)) return { thinkingConfig: { thinkingBudget: Number(value) } };
         return { thinkingConfig: { thinkingLevel: value } };
     }
-    if (kind === 'anthropic') return { effort: value };
-    return { reasoning_effort: value };
+    const raw = kind === 'anthropic' ? { effort: value } : { reasoning_effort: value };
+    return globalThis.ZephyrThinkingPolicy?.sanitizeThinkingOptions?.(provider, model, raw) || raw;
 }
 function uniq(list = []) { return Array.from(new Set(list.map((x) => String(x || '').trim()).filter(Boolean))); }
 function collectAiContext(options = {}) {

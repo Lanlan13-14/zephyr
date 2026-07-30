@@ -186,12 +186,115 @@ func applyOptions(payload map[string]any, opts map[string]any) {
 			payload[k] = v
 		}
 	}
+	if v, ok := opts["reasoning"]; ok && v != nil {
+		payload["reasoning"] = v
+	}
 	// max_output_tokens → max_tokens alias
 	if _, ok := payload["max_tokens"]; !ok {
 		if v, ok := opts["max_output_tokens"]; ok {
 			payload["max_tokens"] = v
 		}
 	}
+}
+
+func normalizeEffort(value any) string {
+	v := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+	switch v {
+	case "ultra":
+		return "max"
+	case "max", "xhigh", "high", "medium", "low", "minimal", "none":
+		return v
+	default:
+		return ""
+	}
+}
+
+func nextEffortFallback(level string) string {
+	switch normalizeEffort(level) {
+	case "max":
+		return "xhigh"
+	case "xhigh":
+		return "high"
+	case "high":
+		return "medium"
+	case "medium":
+		return "low"
+	case "low":
+		return "minimal"
+	default:
+		return ""
+	}
+}
+
+func rejectedEffort(message string) string {
+	text := strings.ToLower(message)
+	if !strings.Contains(text, "reason") && !strings.Contains(text, "thinking") && !strings.Contains(text, "effort") {
+		return ""
+	}
+	for _, level := range []string{"minimal", "medium", "xhigh", "none", "high", "low", "max"} {
+		if strings.Contains(text, level) && (strings.Contains(text, "invalid") || strings.Contains(text, "unsupported") || strings.Contains(text, "not supported") || strings.Contains(text, "unknown")) {
+			return level
+		}
+	}
+	return ""
+}
+
+func downgradeReasoningPayload(payload map[string]any, rejected string) bool {
+	rejected = normalizeEffort(rejected)
+	if rejected == "" {
+		return false
+	}
+	next := nextEffortFallback(rejected)
+	changed := false
+	if current := normalizeEffort(payload["reasoning_effort"]); current == rejected {
+		if next == "" {
+			delete(payload, "reasoning_effort")
+		} else {
+			payload["reasoning_effort"] = next
+		}
+		changed = true
+	}
+	if reasoning, ok := payload["reasoning"].(map[string]any); ok {
+		if current := normalizeEffort(reasoning["effort"]); current == rejected {
+			if next == "" {
+				delete(payload, "reasoning")
+			} else {
+				reasoning["effort"] = next
+				payload["reasoning"] = reasoning
+			}
+			changed = true
+		}
+	}
+	return changed
+}
+
+func (c *Client) postWithReasoningFallback(ctx context.Context, url, label string, payload map[string]any) (*http.Response, error) {
+	for attempt := 0; attempt < 7; attempt++ {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header = c.headers()
+		res, err := c.client.Do(httpReq)
+		if err != nil {
+			return nil, err
+		}
+		if res.StatusCode < 300 {
+			return res, nil
+		}
+		b, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+		res.Body.Close()
+		message := fmt.Sprintf("%s %s: %s", label, res.Status, strings.TrimSpace(string(b)))
+		if rejected := rejectedEffort(message); rejected != "" && downgradeReasoningPayload(payload, rejected) {
+			continue
+		}
+		return nil, fmt.Errorf("%s", message)
+	}
+	return nil, fmt.Errorf("%s reasoning fallback exhausted", label)
 }
 
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Message, provider.Usage, error) {
@@ -257,32 +360,17 @@ func (c *Client) streamChat(ctx context.Context, req provider.Request) (<-chan p
 		payload["stream_options"] = map[string]any{"include_usage": true}
 	}
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
 	url := joinURL(c.cfg.BaseURL, "/chat/completions")
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header = c.headers()
 
 	out := make(chan provider.Chunk, 16)
 	go func() {
 		defer close(out)
-		res, err := c.client.Do(httpReq)
+		res, err := c.postWithReasoningFallback(ctx, url, "openai chat", payload)
 		if err != nil {
 			out <- provider.Chunk{Type: "error", Err: err, ErrorMsg: err.Error()}
 			return
 		}
 		defer res.Body.Close()
-		if res.StatusCode >= 300 {
-			b, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
-			msg := fmt.Sprintf("openai chat %s: %s", res.Status, strings.TrimSpace(string(b)))
-			out <- provider.Chunk{Type: "error", ErrorMsg: msg, Err: fmt.Errorf("%s", msg)}
-			return
-		}
 		if req.Stream {
 			c.readChatSSE(res.Body, out)
 			return
@@ -600,21 +688,12 @@ func (c *Client) streamResponses(ctx context.Context, req provider.Request) (<-c
 		payload["tool_choice"] = "auto"
 	}
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
 	url := joinURL(c.cfg.BaseURL, "/responses")
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header = c.headers()
 
 	out := make(chan provider.Chunk, 16)
 	go func() {
 		defer close(out)
-		res, err := c.client.Do(httpReq)
+		res, err := c.postWithReasoningFallback(ctx, url, "openai responses", payload)
 		if err != nil {
 			out <- provider.Chunk{Type: "error", Err: err, ErrorMsg: err.Error()}
 			return
@@ -623,11 +702,6 @@ func (c *Client) streamResponses(ctx context.Context, req provider.Request) (<-c
 		b, err := io.ReadAll(io.LimitReader(res.Body, 8<<20))
 		if err != nil {
 			out <- provider.Chunk{Type: "error", Err: err, ErrorMsg: err.Error()}
-			return
-		}
-		if res.StatusCode >= 300 {
-			msg := fmt.Sprintf("openai responses %s: %s", res.Status, strings.TrimSpace(string(b)))
-			out <- provider.Chunk{Type: "error", ErrorMsg: msg, Err: fmt.Errorf("%s", msg)}
 			return
 		}
 		var data struct {

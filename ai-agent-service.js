@@ -21,6 +21,7 @@ const contextBudget = require('./ai-context-budget');
 const { policyForExtendedTool, EXTENDED_CAPABILITIES } = require('./ai-extended-capabilities');
 const { PLAYBOOKS } = require('./ai-playbooks');
 const { buildIntentRoutingHint } = require('./ai-intent-routing');
+const { sanitizeThinkingOptions, rejectedThinkingLevel, nextFallbackLevel } = require('./public/ai-thinking-policy');
 
 const DEFAULT_TOOL_CALL_LIMIT = 0;
 const DEFAULT_AI_CONTEXT = { windowTokens: 64000, maxInputChars: 90000, toolResultChars: 30000, memoryItems: 16, maxToolRounds: 0, summaryChars: 18000, recentChars: 42000 };
@@ -194,6 +195,19 @@ function aiBrowserSession(args = {}, ctx = {}) {
     if (explicit.startsWith(`${base}-`)) return explicit;
     return `${base}-${explicit}`;
 }
+
+// Session-scoped attachments/workspaces live under the Go runtime session id,
+// not the browser-local aiChatSessionId. Runtime context is authoritative so a
+// model-supplied stale/local sessionId cannot shadow the active run's storage.
+function resolveAiSessionId(args = {}, ctx = {}) {
+    return String(
+        ctx?.sessionId
+        || ctx?.context?.runtimeSessionId
+        || args?.sessionId
+        || ctx?.context?.aiChatSessionId
+        || ''
+    ).trim();
+}
 function unsupportedParameterName(err) {
     const text = String(err?.message || err || '');
     const match = text.match(/Unsupported parameter:\s*['"]?([A-Za-z0-9_.-]+)['"]?/i)
@@ -241,6 +255,25 @@ async function fetchJsonWithUnsupportedParamRetry(url, requestOptions = {}, payl
             return await fetchJson(url, { ...requestOptions, label, body: JSON.stringify(body) });
         } catch (err) {
             if (err?.name === 'AbortError') throw err;
+            const rejectedLevel = rejectedThinkingLevel(err);
+            if (rejectedLevel) {
+                const nextLevel = nextFallbackLevel(rejectedLevel);
+                let changed = false;
+                if (body.reasoning && typeof body.reasoning === 'object' && String(body.reasoning.effort || '').toLowerCase() === rejectedLevel) {
+                    if (nextLevel) body.reasoning.effort = nextLevel;
+                    else delete body.reasoning;
+                    changed = true;
+                }
+                if (String(body.reasoning_effort || '').toLowerCase() === rejectedLevel) {
+                    if (nextLevel) body.reasoning_effort = nextLevel;
+                    else delete body.reasoning_effort;
+                    changed = true;
+                }
+                if (changed) {
+                    console.warn(`[ai-agent] ${label} rejected reasoning level '${rejectedLevel}', retrying with '${nextLevel || 'default'}'`);
+                    continue;
+                }
+            }
             const param = unsupportedParameterName(err);
             if (param && !removed.includes(param) && removePayloadParameter(body, param)) {
                 removed.push(param);
@@ -464,7 +497,8 @@ function normalizeOptions(provider = {}, requestOptions = {}, mode = 'chat') {
         const rf = parseExtraObject(raw.response_format);
         out.response_format = Object.keys(rf).length ? rf : { type: String(raw.response_format) };
     }
-    const merged = { ...out, ...extra };
+    const selectedModel = String(provider?._selectedModel || requestOptions?.model || '').trim();
+    const merged = sanitizeThinkingOptions(provider, selectedModel, { ...out, ...extra });
     const apiMode = String(mode || 'chat').toLowerCase();
     ['context', 'windowTokens', 'maxInputChars', 'toolResultChars', 'memoryItems', 'timeoutMs', 'timeout_ms', 'retries', 'retryCount'].forEach((key) => delete merged[key]);
     if (apiMode === 'responses') {
@@ -479,6 +513,10 @@ function normalizeOptions(provider = {}, requestOptions = {}, mode = 'chat') {
         delete merged.text;
         delete merged.response_format;
         delete merged.use_previous_response_id;
+        if (apiMode === 'gemini') {
+            delete merged.reasoning;
+            delete merged.output_config;
+        }
     } else {
         if (merged.max_output_tokens && !merged.max_tokens) merged.max_tokens = merged.max_output_tokens;
         delete merged.max_output_tokens;
@@ -933,8 +971,8 @@ function toAnthropicTools(tools = []) {
 }
 function anthropicEffort(value = '') {
     const v = String(value || '').toLowerCase();
-    if (['low', 'medium', 'high', 'xhigh'].includes(v)) return v;
-    if (v === 'max') return 'xhigh';
+    if (['low', 'medium', 'high', 'max'].includes(v)) return v;
+    if (v === 'xhigh' || v === 'ultra') return 'max';
     if (v === 'minimal') return 'low';
     return '';
 }
@@ -1213,6 +1251,7 @@ async function callGemini(provider, model, messages, options = {}, tools = [], s
 }
 async function callProvider(provider, model, messages, options = {}, tools = [], signal = null) {
     throwIfAborted(signal);
+    provider._selectedModel = model;
     const type = providerType(provider);
     if (type === 'anthropic') return callAnthropic(provider, model, messages, options, tools, signal);
     if (type === 'gemini') return callGemini(provider, model, messages, options, tools, signal);
@@ -3275,13 +3314,13 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             });
         case 'workspace_list_v1': {
             if (!deps.sessionFs) throw new Error('会话工作区服务不可用');
-            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || '').trim();
+            const sessionId = resolveAiSessionId(args, ctx);
             if (!sessionId) throw new Error('sessionId required');
             return deps.sessionFs.listWorkspace(ctx.user.userId, sessionId, { dir: args.dir || '' });
         }
         case 'workspace_read_v1': {
             if (!deps.sessionFs) throw new Error('会话工作区服务不可用');
-            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || '').trim();
+            const sessionId = resolveAiSessionId(args, ctx);
             if (!sessionId) throw new Error('sessionId required');
             return deps.sessionFs.readWorkspaceFile(ctx.user.userId, sessionId, args.path, {
                 offset: args.offset,
@@ -3290,13 +3329,13 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
         }
         case 'workspace_write_v1': {
             if (!deps.sessionFs) throw new Error('会话工作区服务不可用');
-            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || '').trim();
+            const sessionId = resolveAiSessionId(args, ctx);
             if (!sessionId) throw new Error('sessionId required');
             return deps.sessionFs.writeWorkspaceFile(ctx.user.userId, sessionId, args.path, args.content);
         }
         case 'user_attachment_read_v1': {
             if (!deps.sessionFs) throw new Error('会话工作区服务不可用');
-            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || '').trim();
+            const sessionId = resolveAiSessionId(args, ctx);
             if (!sessionId) throw new Error('sessionId required');
             const attachmentId = String(args.attachmentId || '').trim();
             const { item, data } = await deps.sessionFs.readAttachmentBytes(ctx.user.userId, sessionId, attachmentId);
@@ -3316,7 +3355,7 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
         }
         case 'user_attachment_view_v1': {
             if (!deps.sessionFs) throw new Error('会话工作区服务不可用');
-            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || '').trim();
+            const sessionId = resolveAiSessionId(args, ctx);
             if (!sessionId) throw new Error('sessionId required');
             const item = await deps.sessionFs.getAttachment(ctx.user.userId, sessionId, String(args.attachmentId || ''));
             // S4: if model cannot take images and OCR is configured, attempt OCR text.
@@ -3407,7 +3446,7 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
                 });
             }
             if (!deps.sessionFs && !deps.DATA_DIR) throw new Error('会话沙箱服务不可用');
-            const sessionId = String(args.sessionId || ctx?.context?.aiChatSessionId || ctx?.sessionId || ctx?.context?.runtimeSessionId || '').trim();
+            const sessionId = resolveAiSessionId(args, ctx);
             if (!sessionId) throw new Error('sessionId required');
             const network = !!args.network;
             const ai = deps.storage?.getSettings?.().ai || {};

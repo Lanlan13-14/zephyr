@@ -83,6 +83,7 @@ const {
     registerAiHostRoutes,
 } = require('./ai-runtime-bridge');
 const { buildIntentRoutingHint } = require('./ai-intent-routing');
+const { sanitizeThinkingOptions } = require('./public/ai-thinking-policy');
 const { parseLoopbackListen } = require('./ai-host-listener');
 const {
     getImageExt,
@@ -3861,7 +3862,10 @@ app.post('/api/ai/runtime/runs', requireUser, async (req, res) => {
             model,
             message: attachmentIds.length ? '' : (req.body?.message || ''),
             messages: runMessages,
-            options: req.body?.options || {},
+            options: sanitizeThinkingOptions(provider, model, {
+                ...(provider.config?.options || provider.options || {}),
+                ...(req.body?.options || {}),
+            }),
             maxSteps: req.body?.maxSteps || ai.context?.maxToolRounds || 0,
             permission: perm,
             autoConfirm: !!ai.sensitive?.autoConfirm && req.body?.autoConfirm !== false,

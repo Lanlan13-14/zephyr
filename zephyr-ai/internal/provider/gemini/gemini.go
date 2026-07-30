@@ -157,6 +157,11 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		} else if v, ok := req.Options["max_output_tokens"]; ok {
 			gen["maxOutputTokens"] = v
 		}
+		if v, ok := req.Options["thinkingConfig"]; ok && v != nil {
+			gen["thinkingConfig"] = v
+		} else if v, ok := req.Options["thinking_config"]; ok && v != nil {
+			gen["thinkingConfig"] = v
+		}
 	}
 	if len(gen) > 0 {
 		body["generationConfig"] = gen

@@ -11,6 +11,7 @@ const style = read('public/style.css');
 const catalog = read('ai-model-catalog.js');
 const providerSvc = read('ai-provider-service.js');
 const server = read('server.js');
+const agent = read('ai-agent-service.js');
 
 test('model catalog module normalizes string and object entries', () => {
   assert.match(catalog, /function normalizeModels/);
@@ -24,6 +25,11 @@ test('provider service persists ModelEntry arrays and filters hidden models', ()
   assert.match(providerSvc, /selectableModelIds/);
   assert.match(providerSvc, /model_hidden/);
   assert.match(providerSvc, /mergeFetchedModels|mergeModelList/);
+});
+
+test('Node Anthropic effort maps xhigh/ultra to max like OpenMinis', () => {
+  assert.match(agent, /if \(v === 'xhigh' \|\| v === 'ultra'\) return 'max'/);
+  assert.doesNotMatch(agent, /if \(v === 'max'\) return 'xhigh'/);
 });
 
 test('runtime vision gate uses per-model input.image', () => {

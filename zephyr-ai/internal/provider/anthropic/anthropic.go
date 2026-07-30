@@ -24,6 +24,54 @@ type Client struct {
 	client *http.Client
 }
 
+func normalizeThinkingEffort(value any) string {
+	v := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+	switch v {
+	case "ultra", "xhigh":
+		return "max"
+	case "max", "high", "medium", "low":
+		return v
+	case "minimal":
+		return "low"
+	default:
+		return ""
+	}
+}
+
+func adaptiveThinkingModel(model string) bool {
+	id := strings.ToLower(model)
+	return strings.Contains(id, "opus-4-6") || strings.Contains(id, "opus-4.6") ||
+		strings.Contains(id, "opus-4-7") || strings.Contains(id, "opus-4.7") ||
+		strings.Contains(id, "opus-4-8") || strings.Contains(id, "opus-4.8") ||
+		strings.Contains(id, "claude-5") || strings.Contains(id, "sonnet-5")
+}
+
+func thinkingBudget(maxTokens int, effort string) int {
+	var target int
+	switch normalizeThinkingEffort(effort) {
+	case "low":
+		target = 8192
+	case "medium":
+		target = 32768
+	case "high":
+		target = 65536
+	case "max":
+		target = maxTokens - 1
+	default:
+		return 0
+	}
+	if maxTokens <= 1024 {
+		return 0
+	}
+	if target >= maxTokens {
+		target = maxTokens - 1
+	}
+	if target < 1024 {
+		return 0
+	}
+	return target
+}
+
 func New(cfg provider.Config) *Client {
 	to := time.Duration(cfg.TimeoutMs) * time.Millisecond
 	if to <= 0 {
@@ -164,6 +212,22 @@ func (c *Client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		}
 		if v, ok := req.Options["top_p"]; ok {
 			payload["top_p"] = v
+		}
+		effort := normalizeThinkingEffort(req.Options["effort"])
+		if effort == "" {
+			if output, ok := req.Options["output_config"].(map[string]any); ok {
+				effort = normalizeThinkingEffort(output["effort"])
+			}
+		}
+		if effort != "" {
+			if adaptiveThinkingModel(req.Model) {
+				payload["thinking"] = map[string]any{"type": "adaptive", "display": "summarized"}
+				payload["output_config"] = map[string]any{"effort": effort}
+				delete(payload, "temperature")
+			} else if budget := thinkingBudget(maxTokens, effort); budget > 0 {
+				payload["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
+				payload["temperature"] = 1
+			}
 		}
 	}
 	if len(req.Tools) > 0 {
