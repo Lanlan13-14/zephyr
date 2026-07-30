@@ -13,8 +13,9 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
 import { t, initI18n } from './i18n/runtime.js?v=20260729-ai-rdp-cert1';
 import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260720-zft2';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260720-zft2';
-import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260720-zft2';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260730-rdp-ordered-surface4';
+import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260730-rdp-ordered-surface4';
+import { RdpAudioScheduler } from './rdp-audio-scheduler.js?v=20260730-rdp-ordered-surface4';
 import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260720-zft2';
 import {
     setupPanelInteractions,
@@ -122,14 +123,16 @@ if (params.rdpFps && fpsModes.includes(Number(params.rdpFps))) fpsValue = Number
 
 /* Audio */
 let audioCtx = null;
-let audioNextAt = 0;
-/* Live-stream audio scheduling. Video is drawn immediately on H.264 decode
- * (zero buffer), so audio latency directly determines lip-sync offset.
- * Strategy: each chunk is scheduled just ahead of the playhead. If multiple
- * chunks arrive in a burst they queue back-to-back, but we hard-cap total
- * queue depth so audio never drifts more than ~150ms behind the picture. */
-const AUDIO_MIN_LATENCY = 0.04; /* 40ms — minimum buffer to avoid underruns */
-const AUDIO_MAX_QUEUE = 0.15;   /* 150ms — hard resync ceiling */
+const audioScheduler = new RdpAudioScheduler();
+/* Live-stream audio scheduling. Video is decoded and presented with no fixed
+ * playout buffer, so the scheduler keeps a small cushion and actively drops
+ * queued WebAudio nodes after a burst or media seek instead of letting stale
+ * sources continue in parallel. */
+
+function resetAudioSchedule(options = {}) {
+    if (audioScheduler.context !== audioCtx) audioScheduler.setContext(audioCtx);
+    else audioScheduler.reset(options);
+}
 
 /* Pointer cache */
 const pointerCache = new Map();
@@ -175,7 +178,7 @@ window.rdpOnReady = function () {
     notifyParentStatus('connected');
     if (rdpCanvas) rdpCanvas.focus();
     if (rdpAgentStorageEnabled) syncAgentDrives({ enabled: true });
-    for (const elapsedMs of [1000, 3000, 8000, 15000]) {
+    for (const elapsedMs of [1000, 3000, 8000, 15000, 30000, 60000]) {
         setTimeout(() => reportWorkerTelemetry(elapsedMs).catch(() => {}), elapsedMs);
     }
 
@@ -298,6 +301,10 @@ window.rdpOnClipboard = function (text) {
 };
 
 /* Called by Go with raw PCM audio data */
+window.rdpAudioReset = function () {
+    resetAudioSchedule();
+};
+
 window.rdpAudioPlay = function (sampleRate, channels, bitsPerSample, uint8Data) {
     if (!audioCtx || audioCtx.state === 'closed') return;
     const bytesPerSample = bitsPerSample >> 3;
@@ -320,21 +327,8 @@ window.rdpAudioPlay = function (sampleRate, channels, bitsPerSample, uint8Data) 
             }
         }
     }
-    const src = audioCtx.createBufferSource();
-    src.buffer = audioBuf;
-    src.connect(audioCtx.destination);
-    const now = audioCtx.currentTime;
-    /* Resync aggressively: if the scheduled playback point has fallen behind
-     * the playhead (underrun) or drifted too far ahead (burst accumulation),
-     * snap back to just-ahead-of-now. This keeps lip-sync bounded to at most
-     * AUDIO_MAX_QUEUE regardless of network jitter or burst patterns.
-     * For smooth playback we let consecutive chunks chain back-to-back
-     * (audioNextAt += duration) but only within the tight window. */
-    if (audioNextAt < now || audioNextAt > now + AUDIO_MAX_QUEUE) {
-        audioNextAt = now + AUDIO_MIN_LATENCY;
-    }
-    src.start(audioNextAt);
-    audioNextAt += audioBuf.duration;
+    audioScheduler.setContext(audioCtx);
+    audioScheduler.schedule(audioBuf);
 };
 
 /* Called by Go with raw H.264 NAL data — each call may be a different tile */
@@ -431,7 +425,8 @@ function buildCursorCss(xorBpp, hotX, hotY, w, h, andMask, xorData) {
 }
 
 function cleanupAudio() {
-    if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; audioNextAt = 0; }
+    audioScheduler.close();
+    if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; }
 }
 
 async function getRemoteDesktopSnapshotForAi(options = {}) {
@@ -1064,7 +1059,7 @@ async function connect() {
     } else if (audioCtx.state === 'suspended') {
         audioCtx.resume().catch(() => {});
     }
-    audioNextAt = 0;
+    resetAudioSchedule();
 
     rdpDiag.codec = 'semantic-webcodecs';
 
@@ -2695,13 +2690,13 @@ window.addEventListener('message', (e) => {
         if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
         if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
 
-        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260720-zft2' });
+        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260730-rdp-ordered-surface4' });
         rdpDiag.workerProbe = probe;
         if (!probe.supported) {
             throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
         }
 
-        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260720-zft2', { type: 'module' }));
+        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260730-rdp-ordered-surface4', { type: 'module' }));
         rdpWorkerBridge.installGlobals(window);
         await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: false });
         const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });

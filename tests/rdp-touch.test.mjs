@@ -83,6 +83,7 @@ test('double tap pairs by screen distance under remote-coordinate scaling', () =
     canvas.fire('touchstart', touchEvent([point(120, 135)]));
     canvas.fire('touchend', touchEvent([], [point(120, 135)]));
     assert.equal(events.down.length, 2, 'screen-space double tap must still pair');
+    assert.deepEqual(events.down[1], [0, 400, 480], 'second click must reuse the first remote target');
     controller.destroy();
 });
 
@@ -110,7 +111,7 @@ test('distance-only two-finger pinch cannot zoom or scroll', () => {
     controller.destroy();
 });
 
-test('two-finger centroid motion sends both wheel axes and starts fling', () => {
+test('two-finger centroid motion sends proportional wheel axes and starts fling', () => {
     const { canvas, events, controller } = fixture();
     canvas.fire('touchstart', touchEvent([point(100, 100)]));
     canvas.fire('touchstart', touchEvent([point(100, 100), point(200, 100)]));
@@ -118,6 +119,8 @@ test('two-finger centroid motion sends both wheel axes and starts fling', () => 
     canvas.fire('touchmove', touchEvent([point(120, 130), point(220, 130)]));
     assert.equal(events.wheel.length, 1);
     assert.equal(events.hwheel.length, 1);
+    assert.ok(Math.abs(events.wheel[0]) < 1, 'one short finger move must not become multiple wheel notches');
+    assert.ok(Math.abs(events.hwheel[0]) < 1, 'horizontal motion must stay proportional');
     canvas.fire('touchend', touchEvent([]));
     assert.notEqual(controller._flingRAF, null);
     controller.destroy();

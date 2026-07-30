@@ -23,6 +23,23 @@ void main() {
       }
     });
 
+    test('write mode can extend without copying or truncating', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'zephyr_agent_provider_',
+      );
+      try {
+        final file = File('${dir.path}/hello.bin');
+        await file.writeAsBytes([1, 2, 3, 4]);
+        final provider = DesktopFileProvider(dir.path);
+        final handle = await provider.open('/hello.bin', 'write');
+        await provider.write(handle, 6, Uint8List.fromList([9, 10]));
+        await provider.close(handle);
+        expect(await file.readAsBytes(), [1, 2, 3, 4, 0, 0, 9, 10]);
+      } finally {
+        await dir.delete(recursive: true);
+      }
+    });
+
     test('writeTruncate replaces file contents', () async {
       final dir = await Directory.systemTemp.createTemp(
         'zephyr_agent_provider_',

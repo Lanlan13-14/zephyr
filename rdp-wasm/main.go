@@ -301,6 +301,11 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 		copy(cp, data)
 		playAudio(int(af.SamplesPerSec), int(af.Channels), int(af.BitsPerSample), cp)
 	})
+	g.OnAudioReset(func() {
+		if isCurrentClient(myGen, g) {
+			js.Global().Call("rdpAudioReset")
+		}
+	})
 
 	renderCallback, _, videoDecode, rendererConfigured := configuredRenderer()
 	if !rendererConfigured || renderCallback.Type() != js.TypeFunction {

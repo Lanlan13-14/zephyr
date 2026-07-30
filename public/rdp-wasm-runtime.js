@@ -1,4 +1,4 @@
-const DEFAULT_RUNTIME_URL = './vendor/rdp-wasm/wasm_exec.mjs?v=20260720-zft2';
+const DEFAULT_RUNTIME_URL = './vendor/rdp-wasm/wasm_exec.mjs?v=20260730-rdp-ordered-surface4';
 
 export async function loadGoRuntime({ runtimeUrl = DEFAULT_RUNTIME_URL, importer = (url) => import(url), pipeline = 'unknown' } = {}) {
     let runtime;
@@ -15,7 +15,7 @@ export async function loadGoRuntime({ runtimeUrl = DEFAULT_RUNTIME_URL, importer
 }
 
 export async function instantiateGoWasm(GoRuntime, {
-    wasmUrl = './vendor/rdp-wasm/main.wasm?v=20260720-zft2',
+    wasmUrl = './vendor/rdp-wasm/main.wasm?v=20260730-rdp-ordered-surface4',
     fetchImpl = globalThis.fetch,
     pipeline = 'unknown',
 } = {}) {

@@ -5,14 +5,38 @@ import fs from 'node:fs/promises';
 const source = await fs.readFile(new URL('../public/rdp-input-channel.js', import.meta.url), 'utf8');
 const { OrderedRdpInputChannel } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
+function frameFixture() {
+    let nextId = 0;
+    const callbacks = new Map();
+    return {
+        requestFrame(callback) { const id = ++nextId; callbacks.set(id, callback); return id; },
+        cancelFrame(id) { callbacks.delete(id); },
+        fire() { const pending = [...callbacks.values()]; callbacks.clear(); for (const callback of pending) callback(16); },
+        size() { return callbacks.size; },
+    };
+}
+
 test('only consecutive mouse moves are coalesced', () => {
     const sent = [];
-    const channel = new OrderedRdpInputChannel((event) => sent.push(event), { now: () => 1 });
+    const frame = frameFixture();
+    const channel = new OrderedRdpInputChannel((event) => sent.push(event), { now: () => 1, requestFrame: frame.requestFrame, cancelFrame: frame.cancelFrame });
     channel.push('mouse-move', { x: 1 });
     channel.push('mouse-move', { x: 2 });
     assert.equal(sent.length, 0);
+    assert.equal(frame.size(), 1);
     channel.push('mouse-down', { button: 0 });
     assert.deepEqual(sent.map((event) => [event.type, event.payload.x ?? event.payload.button]), [['mouse-move', 2], ['mouse-down', 0]]);
+    assert.equal(frame.size(), 0);
+});
+
+test('pending mouse move is delivered on the next frame without a barrier', () => {
+    const sent = [];
+    const frame = frameFixture();
+    const channel = new OrderedRdpInputChannel((event) => sent.push(event), { requestFrame: frame.requestFrame, cancelFrame: frame.cancelFrame });
+    channel.push('mouse-move', { x: 10, y: 20 });
+    channel.push('mouse-move', { x: 11, y: 21 });
+    frame.fire();
+    assert.deepEqual(sent.map((event) => [event.type, event.payload.x, event.payload.y]), [['mouse-move', 11, 21]]);
 });
 
 test('wheel axes and key/button barriers preserve sequence', () => {

@@ -274,19 +274,73 @@ export class RdpGpuSurfaceCompositor {
         this.dirty = true;
     }
 
-    uploadVideoFrame(id, rect, frame) {
+    uploadBitmapRegions(id, rect, bytes, stride, regions, bgra = true) {
+        const base = clampRect(rect, this._requireSurface(id).width, this._requireSurface(id).height);
+        const sourceStride = Number(stride) || base.width * 4;
+        let uploaded = 0;
+        for (const region of regions || []) {
+            const left = Math.max(0, Math.min(base.width, Math.floor(Number(region?.left) || 0)));
+            const top = Math.max(0, Math.min(base.height, Math.floor(Number(region?.top) || 0)));
+            const right = Math.max(left, Math.min(base.width, Math.ceil(Number(region?.right) || 0)));
+            const bottom = Math.max(top, Math.min(base.height, Math.ceil(Number(region?.bottom) || 0)));
+            const width = right - left, height = bottom - top;
+            if (!width || !height) continue;
+            const regionStride = width * 4;
+            const pixels = new Uint8Array(regionStride * height);
+            for (let row = 0; row < height; row++) {
+                const sourceOffset = (top + row) * sourceStride + left * 4;
+                pixels.set(bytes.subarray(sourceOffset, sourceOffset + regionStride), row * regionStride);
+            }
+            this.uploadBitmap(id, {
+                left: base.left + left,
+                top: base.top + top,
+                right: base.left + right,
+                bottom: base.top + bottom,
+            }, pixels, regionStride, bgra);
+            uploaded++;
+        }
+        return uploaded;
+    }
+
+    uploadVideoFrame(id, rect, frame, regions = null) {
         const surface = this._requireSurface(id);
         const clipped = clampRect(rect, surface.width, surface.height);
-        if (!clipped.width || !clipped.height) return;
+        if (!clipped.width || !clipped.height) return 0;
         const sourceWidth = Number(frame.displayWidth || frame.codedWidth || clipped.width);
         const sourceHeight = Number(frame.displayHeight || frame.codedHeight || clipped.height);
         this._ensureStaging(sourceWidth, sourceHeight);
         const gl = this.gl;
         gl.bindTexture(gl.TEXTURE_2D, this.stagingTexture);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, frame);
-        // VideoFrame is top-down, same contract as uploadBitmap.
-        this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, clipped, this.rgbaProgram, { u0: 0, v0: sourceHeight / this.stagingHeight, u1: sourceWidth / this.stagingWidth, v1: 0 });
-        this.dirty = true;
+        const requested = regions?.length ? regions : [{ left: 0, top: 0, right: clipped.width, bottom: clipped.height }];
+        let uploaded = 0;
+        for (const region of requested) {
+            const left = Math.max(0, Math.min(clipped.width, Math.floor(Number(region?.left) || 0)));
+            const top = Math.max(0, Math.min(clipped.height, Math.floor(Number(region?.top) || 0)));
+            const right = Math.max(left, Math.min(clipped.width, Math.ceil(Number(region?.right) || 0)));
+            const bottom = Math.max(top, Math.min(clipped.height, Math.ceil(Number(region?.bottom) || 0)));
+            if (right <= left || bottom <= top) continue;
+            const target = {
+                left: clipped.left + left,
+                top: clipped.top + top,
+                right: clipped.left + right,
+                bottom: clipped.top + bottom,
+                width: right - left,
+                height: bottom - top,
+            };
+            // VideoFrame is top-down. Map only the protocol's valid dirty
+            // window into the target surface; pixels outside this window are
+            // decoder padding/undefined and must retain their previous value.
+            this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, target, this.rgbaProgram, {
+                u0: left / this.stagingWidth,
+                v0: (sourceHeight - bottom) / this.stagingHeight,
+                u1: right / this.stagingWidth,
+                v1: (sourceHeight - top) / this.stagingHeight,
+            });
+            uploaded++;
+        }
+        if (uploaded) this.dirty = true;
+        return uploaded;
     }
 
     solidFill(id, rect, colorBGRA) {
@@ -359,7 +413,13 @@ export class RdpGpuSurfaceCompositor {
 
     beginFrame(frameId) { this.activeFrame = Number(frameId); }
     addFramePending(frameId) { const id = Number(frameId); this.framePending.set(id, (this.framePending.get(id) || 0) + 1); }
-    completeFramePending(frameId) { const id = Number(frameId); const left = Math.max(0, (this.framePending.get(id) || 0) - 1); if (left) this.framePending.set(id, left); else this.framePending.delete(id); this.schedulePresent(); }
+    completeFramePending(frameId, { dirty = true } = {}) {
+        const id = Number(frameId);
+        const left = Math.max(0, (this.framePending.get(id) || 0) - 1);
+        if (left) this.framePending.set(id, left); else this.framePending.delete(id);
+        if (dirty) this.dirty = true;
+        this.schedulePresent();
+    }
     endFrame(frameId) { this.sealedFrames.add(Number(frameId)); this.activeFrame = null; this.schedulePresent(); }
 
     schedulePresent() {

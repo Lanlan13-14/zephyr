@@ -218,21 +218,20 @@ class DesktopFileProvider extends ZephyrFileProvider {
       }
     }
 
-    // mode=writeTruncate  → FileMode.write   (O_WRONLY|O_CREAT|O_TRUNC)
-    // mode=write          → FileMode.writeOnly (O_WRONLY|O_CREAT, no truncate)
-    //   Each WRITE IRP supplies an explicit byte offset and calls setPosition()
-    //   before writeFrom(), so random-access in-place updates work correctly
-    //   without truncating the file at open time.
-    // mode=read           → FileMode.read    (O_RDONLY)
-    //
-    // FileMode.append is intentionally avoided: on Windows it ignores seek
-    // offsets (FILE_APPEND_DATA), causing setPosition() to have no effect and
-    // producing corrupt output on the Agent side.
+    // Dart's names are misleading here:
+    //   write / writeOnly             → truncate existing files
+    //   append / writeOnlyAppend      → preserve existing files
+    // The SDK does not set O_APPEND/FILE_APPEND_DATA for the latter modes. It
+    // opens without truncation and merely positions the handle at EOF once;
+    // setPosition() remains authoritative on Linux, macOS and Windows. Every
+    // WRITE IRP below sets its explicit byte offset before writeFrom(), so
+    // writeOnlyAppend gives us the required non-truncating random-access FD
+    // without the old O(file-size) preserve-copy path.
     final io.FileMode fileMode;
     if (mode == 'writeTruncate') {
-      fileMode = io.FileMode.write;       // truncates on open
+      fileMode = io.FileMode.writeOnly;
     } else if (mode == 'write') {
-      fileMode = io.FileMode.writeOnly;   // no truncate; IRP offsets drive seeks
+      fileMode = io.FileMode.writeOnlyAppend;
     } else {
       fileMode = io.FileMode.read;
     }

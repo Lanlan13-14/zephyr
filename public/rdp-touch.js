@@ -20,20 +20,22 @@
  *   Relative touchpad mode      — touch delta moves the remote Windows pointer
  */
 
-const LONG_PRESS_MS = 450;
+const LONG_PRESS_MS = 500;
 // Double-tap and drag thresholds are measured in CSS/screen pixels, not
-// remote desktop pixels. On a phone the remote surface is often scaled to
-// ~1/3–1/5, so a 6–20 remote-pixel threshold collapses to 1–5 CSS pixels
-// and almost every real finger tap becomes a drag or fails to pair.
-const DOUBLE_TAP_MS = 450;
-const DOUBLE_TAP_SCREEN_DIST = 48;
-const DRAG_THRESHOLD_SCREEN = 12;
-const SCROLL_THRESHOLD = 4;
+// remote desktop pixels. Keep the double-tap window close to Windows' native
+// touch timing while allowing ordinary finger drift on a phone-sized canvas.
+const DOUBLE_TAP_MS = 360;
+const DOUBLE_TAP_SCREEN_DIST = 36;
+const DRAG_THRESHOLD_SCREEN = 10;
+const SCROLL_THRESHOLD = 5;
 const THREE_FINGER_SWIPE_THRESHOLD = 40;
 const MOVE_THROTTLE_MS = 4;
-const FLING_MIN_VELOCITY = 0.05;
-const FLING_START_VELOCITY = 0.3;
-const FLING_FRICTION = 0.92;
+const CLICK_HOLD_MS = 32;
+const FLING_MIN_VELOCITY = 0.02;
+const FLING_START_VELOCITY = 0.12;
+const FLING_DECELERATION_RATE = 0.992;
+const SCROLL_WHEEL_CSS_PX = 42;
+const FLING_MAX_MS = 900;
 
 export function applyPointerAcceleration(rawDelta, deltaTimeMs = 16, sensitivity = 1.5) {
     const delta = Number(rawDelta) || 0;
@@ -186,6 +188,11 @@ export class RdpTouchController {
         }
     }
 
+    _sendScrollDelta(dx, dy) {
+        if (Math.abs(dy) > 0.01) this.sendMouseWheel(-dy / SCROLL_WHEEL_CSS_PX);
+        if (Math.abs(dx) > 0.01 && this.sendMouseHWheel) this.sendMouseHWheel(dx / SCROLL_WHEEL_CSS_PX);
+    }
+
     _startFling(velX, velY) {
         this._cancelFling();
         let vx = Number(velX) || 0;
@@ -193,18 +200,18 @@ export class RdpTouchController {
         if (Math.abs(vx) < FLING_START_VELOCITY) vx = 0;
         if (Math.abs(vy) < FLING_START_VELOCITY) vy = 0;
         if (!vx && !vy) return;
-        let lastTime = performance.now();
+        const startedAt = performance.now();
+        let lastTime = startedAt;
         const tick = () => {
             if (this._destroyed || !this.getConnected()) { this._flingRAF = null; return; }
             const now = performance.now();
             const dt = Math.min(32, Math.max(1, now - lastTime));
             lastTime = now;
-            const decay = Math.pow(FLING_FRICTION, dt / 16);
+            const decay = Math.pow(FLING_DECELERATION_RATE, dt);
             vx *= decay;
             vy *= decay;
-            if (Math.abs(vy) >= FLING_MIN_VELOCITY) this.sendMouseWheel(-(vy * dt) / 30);
-            if (Math.abs(vx) >= FLING_MIN_VELOCITY && this.sendMouseHWheel) this.sendMouseHWheel((vx * dt) / 30);
-            if (Math.abs(vx) < FLING_MIN_VELOCITY && Math.abs(vy) < FLING_MIN_VELOCITY) {
+            this._sendScrollDelta(vx * dt, vy * dt);
+            if ((Math.abs(vx) < FLING_MIN_VELOCITY && Math.abs(vy) < FLING_MIN_VELOCITY) || now - startedAt >= FLING_MAX_MS) {
                 this._flingRAF = null;
                 return;
             }
@@ -374,11 +381,10 @@ export class RdpTouchController {
                 const dt = Math.max(1, now - (this._state.lastMoveTime || now));
                 const instantX = screenDx / dt;
                 const instantY = screenDy / dt;
-                this._state.velX = this._state.velX ? this._state.velX * 0.7 + instantX * 0.3 : instantX;
-                this._state.velY = this._state.velY ? this._state.velY * 0.7 + instantY * 0.3 : instantY;
+                this._state.velX = this._state.velX ? this._state.velX * 0.55 + instantX * 0.45 : instantX;
+                this._state.velY = this._state.velY ? this._state.velY * 0.55 + instantY * 0.45 : instantY;
                 this._state.lastMoveTime = now;
-                if (Math.abs(screenDy) > 1) this.sendMouseWheel(-screenDy / 30);
-                if (Math.abs(screenDx) > 1 && this.sendMouseHWheel) this.sendMouseHWheel(screenDx / 30);
+                this._sendScrollDelta(screenDx, screenDy);
                 this._state.lastScreenCX = cx;
                 this._state.lastScreenCY = cy;
                 this._state.moved = true;
@@ -439,10 +445,15 @@ export class RdpTouchController {
                 const tapDist = Math.hypot(clientX - this._lastTapClientX, clientY - this._lastTapClientY);
 
                 if (tapDt < DOUBLE_TAP_MS && tapDist <= DOUBLE_TAP_SCREEN_DIST) {
-                    // The first tap was already sent immediately. Send exactly
-                    // one more click so the pair is a double-click, not a triple.
-                    this.sendMouseDown(0, x, y);
-                    setTimeout(() => this.sendMouseUp(0, x, y), 40);
+                    // Keep both clicks on the first tap's remote target. Windows
+                    // applies its own pixel-distance test; finger drift that is
+                    // acceptable in CSS pixels can otherwise become a different
+                    // remote icon under a scaled desktop.
+                    const clickX = this.relativeMode ? x : this._lastTapX;
+                    const clickY = this.relativeMode ? y : this._lastTapY;
+                    this.sendMouseMove(clickX, clickY);
+                    this.sendMouseDown(0, clickX, clickY);
+                    setTimeout(() => this.sendMouseUp(0, clickX, clickY), CLICK_HOLD_MS);
                     this._lastTapTime = 0;
                     this._lastTapClientX = 0;
                     this._lastTapClientY = 0;
@@ -450,7 +461,7 @@ export class RdpTouchController {
                 } else {
                     // Immediate single click; never wait for the double-tap window.
                     this.sendMouseDown(0, x, y);
-                    setTimeout(() => this.sendMouseUp(0, x, y), 40);
+                    setTimeout(() => this.sendMouseUp(0, x, y), CLICK_HOLD_MS);
                     this._lastTapTime = now;
                     this._lastTapX = x;
                     this._lastTapY = y;

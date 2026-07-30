@@ -1,11 +1,22 @@
 export const INPUT_BARRIERS = new Set(['mouse-down', 'mouse-up', 'wheel', 'hwheel', 'key-down', 'key-up', 'control']);
 
 export class OrderedRdpInputChannel {
-    constructor(send, { now = () => performance.now() } = {}) {
+    constructor(send, {
+        now = () => performance.now(),
+        requestFrame = (callback) => typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame(callback)
+            : setTimeout(() => callback(now()), 16),
+        cancelFrame = (id) => typeof cancelAnimationFrame === 'function'
+            ? cancelAnimationFrame(id)
+            : clearTimeout(id),
+    } = {}) {
         this.send = send;
         this.now = now;
+        this.requestFrame = requestFrame;
+        this.cancelFrame = cancelFrame;
         this.sequence = 0;
         this.pendingMove = null;
+        this.moveFrame = null;
         this.keysDown = new Set();
         this.buttonsDown = new Set();
         this.layoutVersion = 0;
@@ -16,6 +27,7 @@ export class OrderedRdpInputChannel {
     push(type, payload = {}) {
         if (type === 'mouse-move') {
             this.pendingMove = this._envelope(type, payload);
+            this._scheduleMove();
             return this.pendingMove.sequence;
         }
         this.flushMove();
@@ -25,7 +37,19 @@ export class OrderedRdpInputChannel {
         return envelope.sequence;
     }
 
+    _scheduleMove() {
+        if (this.moveFrame !== null) return;
+        this.moveFrame = this.requestFrame(() => {
+            this.moveFrame = null;
+            this.flushMove();
+        });
+    }
+
     flushMove() {
+        if (this.moveFrame !== null) {
+            this.cancelFrame(this.moveFrame);
+            this.moveFrame = null;
+        }
         if (!this.pendingMove) return;
         const envelope = this.pendingMove;
         this.pendingMove = null;
@@ -33,6 +57,10 @@ export class OrderedRdpInputChannel {
     }
 
     releaseAll() {
+        if (this.moveFrame !== null) {
+            this.cancelFrame(this.moveFrame);
+            this.moveFrame = null;
+        }
         this.pendingMove = null;
         for (const code of [...this.keysDown].reverse()) this.send(this._envelope('key-up', { code, synthetic: true }));
         for (const button of [...this.buttonsDown].reverse()) this.send(this._envelope('mouse-up', { button, synthetic: true }));
