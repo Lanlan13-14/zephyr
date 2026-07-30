@@ -29,6 +29,27 @@ test('export surface is complete', t => {
   }
 });
 
+test('Go-owned iOS card standards configure canonical springs', t => {
+  if (needWasm(t)) return;
+  const ex = wasm.exports;
+  ex.engine_init(2);
+  assert.equal(ex.engine_configure_standard(0, 3), 1, 'iOS card flip-open standard');
+  assert.equal(ex.engine_configure_standard(1, 1), 1, 'iOS card geometry-open standard');
+  assert.equal(ex.engine_configure_standard(0, 9999), 0, 'unknown standards rejected');
+  ex.engine_animate_to(0, -180);
+  ex.engine_animate_to(1, 1);
+  let minRotation = 0;
+  let maxGeometry = 0;
+  for (let i = 0; i < 600; i++) {
+    ex.engine_tick(1 / 240);
+    minRotation = Math.min(minRotation, ex.engine_get_value(0));
+    maxGeometry = Math.max(maxGeometry, ex.engine_get_value(1));
+  }
+  const overshoot = Math.abs(minRotation) - 180;
+  assert.ok(overshoot > 0 && overshoot < 1, `sub-degree flip settle, got ${overshoot}`);
+  assert.ok(maxGeometry <= 1.000001, `geometry must not overshoot, got ${maxGeometry}`);
+});
+
 test('engine init/capacity/buffer contract', t => {
   if (needWasm(t)) return;
   const ex = wasm.exports;

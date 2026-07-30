@@ -10,6 +10,18 @@ const feel = readFileSync(path.join(root, 'tests/motion-feel.html'), 'utf8');
 const appJs = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 
+test('Go-owned iOS card standard API is public and documented in source', () => {
+  for (const name of ['iosCardTransition', 'iosCardOpen', 'iosCardClose']) {
+    assert.match(motionJs, new RegExp(`${name}\\s*\\(`), `missing ${name}`);
+  }
+  assert.match(motionJs, /MOTION_STANDARDS\.iosCardFlipOpen/);
+  assert.match(motionJs, /MOTION_STANDARDS\.iosCardGeometryOpen/);
+  assert.match(motionJs, /standard:\s*geometryStandard/);
+  assert.match(motionJs, /standard:\s*flipStandard/);
+  assert.match(motionJs, /rotateY:\s*-180/);
+  assert.match(motionJs, /transformStyle\s*=\s*'preserve-3d'/);
+});
+
 test('signature APIs: island expand/collapse + iOS app open/close', () => {
   for (const name of [
     'islandDots', 'islandExpand', 'islandCollapse', 'islandSquish',

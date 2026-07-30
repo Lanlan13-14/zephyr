@@ -1,8 +1,8 @@
-# zephyr-motion — 标准接口文档（接线前）
+# zephyr-motion — 标准接口文档
 
-**状态：接口层已齐 · 生产未接线**  
-**日期：2026-07-24**  
-**约束：生产 `app.js` / `floating-panel.js` / `terminal.js` 不得 `Motion.*`，直至明确开启接线阶段。**
+**状态：Go/WASM 标准接口 + 生产接线并行维护**
+**日期：2026-07-30**
+**原则：稳定交互使用 `standard` / 产品签名 API；调用方不复制底层 response/damping。**
 
 入口：
 
@@ -60,7 +60,60 @@ resolvePreset({ response: 0.3, damping: 1 })
 
 ---
 
-## 3. 原子 API
+## 3. Go/WASM 标准动作接口
+
+标准动作不是 JS 侧 preset 的别名。标准编号由 Go `motion.Standard` 定义，
+通过 WASM ABI `engine_configure_standard(id, standard) -> 1|0` 配置槽位；
+重新配置会保留当前呈现值与速度，因此可在飞行中反向或换目标。
+
+```js
+import { Motion, MOTION_STANDARDS } from './vendor/zephyr-motion/index.js';
+
+await Motion.to(card, { rotateY: -180 }, {
+  standard: MOTION_STANDARDS.iosCardFlipOpen,
+});
+```
+
+| JS 标准名 | ABI 编号 | Go 参数 | 用途 |
+|---|---:|---|---|
+| `iosCardGeometryOpen` | 1 | response `0.44`, damping `1.00` | 小卡片到详情卡的 FLIP 几何；临界阻尼、无边缘抖动 |
+| `iosCardGeometryClose` | 2 | `0.34`, `1.00` | 对称收回；关闭快于打开 |
+| `iosCardFlipOpen` | 3 | `0.50`, `0.90` | `rotateY(0→-180)`；仅亚 1° soft settle |
+| `iosCardFlipClose` | 4 | `0.38`, `0.96` | `rotateY(-180→0)`；近临界、快速回收 |
+| `iosCardContent` | 5 | `0.32`, `1.00` | 正反面/详情内容淡入淡出 |
+| `iosCardScrim` | 6 | `0.42`, `1.00` | 纯 dim 遮罩；不使用 backdrop blur |
+
+### 3.1 iOS 双面卡片标准签名
+
+```js
+await Motion.iosCardOpen(cardSurface, sourceCard, {
+  frontEl: cardSurface.querySelector('.face.front'),
+  backEl: cardSurface.querySelector('.face.back'),
+  scrim,
+  radiusFrom: 28,
+  radiusTo: 36,
+});
+
+await Motion.iosCardClose(cardSurface, sourceCard, {
+  frontEl,
+  backEl,
+  scrim,
+});
+```
+
+`iosCardTransition(surface, source, { open })` 是统一底层签名，open/close 是
+可读别名。实现约束：
+
+- 几何和 Y 轴旋转使用独立 Go 标准槽位；不可把两者压成同一曲线。
+- 只动画 `transform` / `opacity` / 补偿圆角；不 tween `width/height`。
+- 打开与关闭沿同一锚点路径，关闭更快；支持中途反向，不设 busy lock。
+- 正反面需要 `backface-visibility: hidden`；容器需要 `perspective`，surface
+  会自动设置 `transform-style: preserve-3d`。
+- reduced-motion 由 runtime 直接跳终态；WASM 不可用时 JS 使用同参数 fallback。
+
+---
+
+## 4. 原子 API
 
 | API | 说明 |
 |-----|------|
@@ -91,9 +144,9 @@ resolvePreset({ response: 0.3, damping: 1 })
 
 ---
 
-## 4. 产品级签名 API（接线对照表）
+## 5. 产品级签名 API（接线对照表）
 
-### 4.1 新建/编辑连接（iOS 主屏）
+### 5.1 新建/编辑连接（iOS 主屏）
 
 ```js
 // 现状：openModal / closeModal 用 top/left/width/height CSS transition
@@ -112,7 +165,7 @@ await Motion.connectionClose(transitionLayer, sourceCardEl, { ... });
 
 默认：`scrimOpacity: 0.24`，`homeScale: 0.92`，`homeBlur: 0`。
 
-### 4.2 终端底栏浮窗（macOS 面板）
+### 5.2 终端底栏浮窗（macOS 面板）
 
 ```js
 // 现状：floating-panel.js animatePanelFromButton + CSS keyframes
@@ -130,7 +183,7 @@ await Motion.macPanel(panelEl, toolbarBtn, { open: false, mode: 'flip', hideSour
 // setOriginFromAnchor(panel, button) 可单独用
 ```
 
-### 4.3 灵动岛窗口菜单
+### 5.3 灵动岛窗口菜单
 
 ```js
 await Motion.islandExpand({ grip, panel, opts: { radiusFrom: 11, radiusTo: 22, hideGrip: true } });
@@ -141,7 +194,7 @@ Motion.islandSize(grip, { w: 214, h: 34 });
 Motion.clipInset(el, { top:0, right:44, bottom:86, left:44, round:999 }); // 液体遮罩
 ```
 
-### 4.4 Toast
+### 5.4 Toast
 
 ```js
 // 现状：classList + CSS transition
@@ -152,7 +205,7 @@ Motion.toast(el, { edge: 'top', distance: 28 });
 Motion.toastDismiss(el, { edge: 'top', thenRemove: true });
 ```
 
-### 4.5 Dock 放大
+### 5.5 Dock 放大
 
 ```js
 // 现状：updateDockMagnification 硬写 CSS 变量 + zephyr-anim 半套
@@ -177,7 +230,7 @@ transform: translate3d(var(--dock-shift), var(--dock-lift), 0)
 filter: blur(var(--dock-blur));
 ```
 
-### 4.6 AI 面板 / Smartbar shelf
+### 5.6 AI 面板 / Smartbar shelf
 
 ```js
 Motion.aiPanelOpen(panel, triggerBtn, { contentEl, hideSource: false });
@@ -185,7 +238,7 @@ Motion.aiPanelClose(panel, triggerBtn, { contentEl });
 Motion.shelf(panel, { open: true, edge: 'bottom', travel: 20 });
 ```
 
-### 4.7 列表 / 配方
+### 5.7 列表 / 配方
 
 ```js
 Motion.play(el, 'connectionCardIn');
@@ -195,7 +248,7 @@ Motion.floatPanelOpen(el); // recipe alias
 // listRecipes() → { spring, cssOnly, signature }
 ```
 
-### 4.8 反馈
+### 5.8 反馈
 
 ```js
 Motion.press(document.querySelectorAll('.btn'));
@@ -205,7 +258,7 @@ Motion.shake(el); Motion.attention(el);
 
 ---
 
-## 5. hideSource 安全规则（接线必读）
+## 6. hideSource 安全规则（接线必读）
 
 | 场景 | hideSource |
 |------|------------|
@@ -222,7 +275,7 @@ Motion.restoreSources(surface); // finally 里永远调用
 
 ---
 
-## 6. 推荐接线顺序（下次）
+## 7. 推荐接线顺序（下次）
 
 1. **统一 runtime**：`app.html` 只加载 `zephyr-motion`，移除 `zephyr-anim-init`（见 `plans/001-unify-motion-runtime.md`）。
 2. **`openModal` / `closeModal` → `connectionOpen` / `connectionClose`**。
@@ -236,7 +289,7 @@ Motion.restoreSources(surface); // finally 里永远调用
 
 ---
 
-## 7. 文件地图
+## 8. 文件地图
 
 ```
 public/vendor/zephyr-motion/
@@ -260,7 +313,7 @@ motion-wasm/README.md               物理与 ABI
 
 ---
 
-## 8. 演示节索引（`motion-feel.html`）
+## 9. 演示节索引（`motion-feel.html`）
 
 | 节 | 内容 |
 |----|------|
@@ -280,7 +333,7 @@ motion-wasm/README.md               物理与 ABI
 
 ---
 
-## 9. 明确不做 / 勿接线错误用法
+## 10. 明确不做 / 勿接线错误用法
 
 - 不要把 `spin` / `pulse` / loader 改成 spring。  
 - 不要对工具栏按钮默认 `hideSource: true`。  

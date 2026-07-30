@@ -6,9 +6,9 @@
  */
 import { engine, Engine } from './runtime.js';
 import { Motion } from './motion.js';
-import { PRESETS, resolvePreset } from './presets.js';
+import { PRESETS, MOTION_STANDARDS, STANDARD_FALLBACKS, resolvePreset } from './presets.js';
 
-export { engine, Engine, Motion, PRESETS, resolvePreset };
+export { engine, Engine, Motion, PRESETS, MOTION_STANDARDS, STANDARD_FALLBACKS, resolvePreset };
 
 if (typeof window !== 'undefined') {
   window.Motion = Motion;

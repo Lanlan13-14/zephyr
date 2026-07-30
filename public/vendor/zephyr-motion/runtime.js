@@ -3,7 +3,8 @@
  * slot bindings, the single rAF loop, settle callbacks, reduced motion.
  *
  * Backend contract (both backends implement it):
- *   configure(id, response, damping) / animateTo(id, target)
+ *   configure(id, response, damping) / configureStandard(id, standard, fallback)
+ *   animateTo(id, target)
  *   animateToDelayed(id, target, delay) / flickTo(id, target, velocity)
  *   setValue / getValue / getVelocity / isActive / stop / setEpsilon
  *   tick(dtSeconds) → activeCount
@@ -43,6 +44,9 @@ class WasmBackend {
     return this._buf;
   }
   configure(id, r, d) { this.ex.engine_configure(id, r, d); }
+  configureStandard(id, standard) {
+    return this.ex.engine_configure_standard?.(id, standard) === 1;
+  }
   setEpsilon(p, v) { this.ex.engine_set_epsilon(p, v); }
   animateTo(id, t) { this.ex.engine_animate_to(id, t); }
   animateToDelayed(id, t, d) { this.ex.engine_animate_to_delayed(id, t, d); }
@@ -124,6 +128,11 @@ class JsBackend {
   }
   frameBuffer() { return this.engine.buffer; }
   configure(id, r, d) { this.engine.configure(id, r, d); }
+  configureStandard(id, _standard, fallback) {
+    if (!fallback) return false;
+    this.engine.configure(id, fallback.response, fallback.damping);
+    return true;
+  }
   setEpsilon(p, v) { this.engine.setEpsilon(p, v); }
   animateTo(id, t) { this.engine.animateTo(id, t); }
   animateToDelayed(id, t, d) { this.engine.animateToDelayed(id, t, d); }
@@ -213,6 +222,14 @@ export class Engine {
 
   configure(id, response, damping) {
     this._whenReady(() => this._b.configure(id, response, damping));
+  }
+
+  /** Configure by stable Go-owned motion standard; preserves live state. */
+  configureStandard(id, standard, fallback) {
+    this._whenReady(() => {
+      const ok = this._b.configureStandard?.(id, standard, fallback);
+      if (!ok && fallback) this._b.configure(id, fallback.response, fallback.damping);
+    });
   }
 
   setEpsilon(posEps, velEps) {

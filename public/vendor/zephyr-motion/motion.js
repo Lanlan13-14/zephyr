@@ -13,16 +13,16 @@
  */
 
 import { engine } from './runtime.js';
-import { PRESETS, resolvePreset } from './presets.js';
+import { PRESETS, MOTION_STANDARDS, STANDARD_FALLBACKS, resolvePreset } from './presets.js';
 
 // ── channel model ────────────────────────────────────────────────────────
 
-const TRANSFORM_CH = new Set(['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotate']);
+const TRANSFORM_CH = new Set(['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotate', 'rotateY']);
 const FILTER_CH = new Set(['blur', 'saturate']);
 /** clip inset channels → clip-path: inset(top% right% bottom% left% round Rpx) */
 const CLIP_CH = new Set(['clipTop', 'clipRight', 'clipBottom', 'clipLeft', 'clipRound']);
 const CHANNEL_DEFAULTS = {
-  x: 0, y: 0, scale: 1, scaleX: 1, scaleY: 1, rotate: 0,
+  x: 0, y: 0, scale: 1, scaleX: 1, scaleY: 1, rotate: 0, rotateY: 0,
   opacity: 1, radius: 0, blur: 0, saturate: 1, w: 0, h: 0,
   clipTop: 0, clipRight: 0, clipBottom: 0, clipLeft: 0, clipRound: 0,
 };
@@ -30,7 +30,7 @@ const CHANNEL_DEFAULTS = {
 function channelUnit(ch) {
   switch (ch) {
     case 'x': case 'y': case 'w': case 'h': case 'radius': case 'blur': return 'px';
-    case 'rotate': return 'deg';
+    case 'rotate': case 'rotateY': return 'deg';
     case 'clipTop': case 'clipRight': case 'clipBottom': case 'clipLeft': return ''; // %
     case 'clipRound': return 'px';
     default: return '';
@@ -54,8 +54,10 @@ function composeTransform(tv) {
   const sx = tv.scaleX ?? tv.scale ?? 1;
   const sy = tv.scaleY ?? tv.scale ?? 1;
   const rot = tv.rotate ?? 0;
+  const rotY = tv.rotateY ?? 0;
   let out = `translate3d(${x}px, ${y}px, 0) scale(${sx}, ${sy})`;
   if (rot) out += ` rotate(${rot}deg)`;
+  if (rotY) out += ` rotateY(${rotY}deg)`;
   return out;
 }
 
@@ -202,6 +204,7 @@ function channelsOf(el) {
 export const Motion = {
   engine,
   PRESETS,
+  STANDARDS: MOTION_STANDARDS,
 
   /** Boot the engine (idempotent). Await before first frame-critical use. */
   init({ capacity = 256 } = {}) {
@@ -236,7 +239,10 @@ export const Motion = {
    * Returns a Promise resolving when all channels settle.
    */
   to(el, props, opts = {}) {
-    const p = resolvePreset(opts.preset ?? opts);
+    const standard = opts.standard;
+    const p = standard != null
+      ? (STANDARD_FALLBACKS[standard] || resolvePreset(opts.preset ?? opts))
+      : resolvePreset(opts.preset ?? opts);
     const channels = Object.keys(props);
     if (!channels.length) return Promise.resolve();
     let pending = channels.length;
@@ -245,7 +251,8 @@ export const Motion = {
       for (const ch of channels) {
         const rec = slotFor(el, ch, opts.units?.[ch]);
         if (!rec) { settle(); continue; }
-        engine.configure(rec.id, p.response, p.damping);
+        if (standard != null) engine.configureStandard(rec.id, standard, p);
+        else engine.configure(rec.id, p.response, p.damping);
         const target = Number(props[ch]);
         const vel = typeof opts.velocity === 'number' ? opts.velocity : opts.velocity?.[ch];
         const rest = () => { engine.offRest(rec.id, rest); settle(); };
@@ -2156,6 +2163,135 @@ export const Motion = {
   },
 
   /**
+   * Standard iOS card flip + matched-geometry transition.
+   *
+   * Go owns all spring profiles through engine_configure_standard. Geometry
+   * and rotation use independent standards so the card can land cleanly while
+   * the half-turn carries a restrained, sub-degree soft settle.
+   *
+   * Required DOM: surface contains front/back faces with backface-visibility
+   * hidden; pass them as opts.frontEl / opts.backEl to crossfade content.
+   */
+  async iosCardTransition(surfaceEl, sourceElOrRect, opts = {}) {
+    if (!surfaceEl) return false;
+    const open = opts.open !== false;
+    const token = this._bump(surfaceEl);
+    const source = sourceElOrRect && typeof sourceElOrRect.getBoundingClientRect === 'function'
+      ? sourceElOrRect : null;
+    const anchorRect = source ? source.getBoundingClientRect() : sourceElOrRect;
+    const scrim = opts.scrim || null;
+    const frontEl = opts.frontEl || null;
+    const backEl = opts.backEl || null;
+    const hideSource = opts.hideSource !== false;
+    const geometryStandard = open
+      ? MOTION_STANDARDS.iosCardGeometryOpen
+      : MOTION_STANDARDS.iosCardGeometryClose;
+    const flipStandard = open
+      ? MOTION_STANDARDS.iosCardFlipOpen
+      : MOTION_STANDARDS.iosCardFlipClose;
+    const scrimOpacity = Number.isFinite(Number(opts.scrimOpacity)) ? Number(opts.scrimOpacity) : 0.42;
+    const radiusFrom = Number(opts.radiusFrom) || (
+      anchorRect ? Math.min(anchorRect.width, anchorRect.height) * 0.233 : 28
+    );
+    const radiusTo = Number.isFinite(Number(opts.radiusTo)) ? Number(opts.radiusTo) : 36;
+
+    surfaceEl.hidden = false;
+    if (!surfaceEl.style.display || surfaceEl.style.display === 'none') surfaceEl.style.display = 'block';
+    surfaceEl.style.transformStyle = 'preserve-3d';
+    surfaceEl.style.transformOrigin = '0 0';
+    surfaceEl.style.willChange = 'transform, opacity';
+    surfaceEl.style.pointerEvents = open ? 'auto' : surfaceEl.style.pointerEvents;
+
+    if (open) {
+      surfaceEl.style.visibility = 'hidden';
+      this.stop(surfaceEl);
+      surfaceEl.style.transform = 'none';
+      void surfaceEl.offsetWidth;
+      const layoutBox = surfaceEl.getBoundingClientRect();
+      const st = stateFor(surfaceEl);
+      st.layoutW = layoutBox.width;
+      st.layoutH = layoutBox.height;
+      st.radiusCompensate = true;
+      st.visualRadius = radiusFrom;
+      if (anchorRect && layoutBox.width > 1 && layoutBox.height > 1) {
+        this.set(surfaceEl, {
+          x: anchorRect.left - layoutBox.left,
+          y: anchorRect.top - layoutBox.top,
+          scaleX: Math.max(0.001, anchorRect.width / layoutBox.width),
+          scaleY: Math.max(0.001, anchorRect.height / layoutBox.height),
+          rotateY: 0,
+          radius: radiusFrom,
+          opacity: 1,
+        });
+      }
+      if (frontEl) this.set(frontEl, { opacity: 1 });
+      if (backEl) this.set(backEl, { opacity: 0 });
+      if (scrim) {
+        scrim.style.backdropFilter = 'none';
+        scrim.style.webkitBackdropFilter = 'none';
+        if (!this.isAnimating(scrim)) this.set(scrim, { opacity: 0 });
+      }
+      if (source && hideSource) this.hideSource(surfaceEl, source);
+      surfaceEl.style.visibility = 'visible';
+
+      const jobs = [
+        this.to(surfaceEl, { x: 0, y: 0, scaleX: 1, scaleY: 1, radius: radiusTo, opacity: 1 }, { standard: geometryStandard }),
+        this.to(surfaceEl, { rotateY: -180 }, { standard: flipStandard }),
+      ];
+      if (frontEl) jobs.push(this.to(frontEl, { opacity: 0 }, { standard: MOTION_STANDARDS.iosCardContent, delay: 0.06 }));
+      if (backEl) jobs.push(this.to(backEl, { opacity: 1 }, { standard: MOTION_STANDARDS.iosCardContent, delay: 0.10 }));
+      if (scrim) jobs.push(this.to(scrim, { opacity: scrimOpacity }, { standard: MOTION_STANDARDS.iosCardScrim }));
+      await Promise.all(jobs);
+      return this._genOf(surfaceEl) === token;
+    }
+
+    const toRect = source ? source.getBoundingClientRect() : anchorRect;
+    if (source && hideSource) this.hideSource(surfaceEl, source);
+    const jobs = [];
+    if (toRect) {
+      const cur = surfaceEl.getBoundingClientRect();
+      const st = stateFor(surfaceEl);
+      const layoutW = st.layoutW || Math.max(1, cur.width / Math.max(0.001, this.value(surfaceEl, 'scaleX') || 1));
+      const layoutH = st.layoutH || Math.max(1, cur.height / Math.max(0.001, this.value(surfaceEl, 'scaleY') || 1));
+      jobs.push(this.to(surfaceEl, {
+        x: this.value(surfaceEl, 'x') + toRect.left - cur.left,
+        y: this.value(surfaceEl, 'y') + toRect.top - cur.top,
+        scaleX: toRect.width / layoutW,
+        scaleY: toRect.height / layoutH,
+        radius: radiusFrom,
+        opacity: 1,
+      }, { standard: geometryStandard }));
+    }
+    jobs.push(this.to(surfaceEl, { rotateY: 0 }, { standard: flipStandard }));
+    if (frontEl) jobs.push(this.to(frontEl, { opacity: 1 }, { standard: MOTION_STANDARDS.iosCardContent, delay: 0.035 }));
+    if (backEl) jobs.push(this.to(backEl, { opacity: 0 }, { standard: MOTION_STANDARDS.iosCardContent }));
+    if (scrim) jobs.push(this.to(scrim, { opacity: 0 }, { standard: MOTION_STANDARDS.iosCardScrim }));
+    try {
+      await Promise.all(jobs);
+    } finally {
+      if (opts.restoreSource !== false) {
+        this.restoreSources(surfaceEl);
+        if (source) this.restoreSource(source);
+      }
+    }
+    if (this._genOf(surfaceEl) !== token) return false;
+    if (opts.thenHide !== false) {
+      surfaceEl.style.visibility = 'hidden';
+      surfaceEl.style.pointerEvents = 'none';
+      this.set(surfaceEl, { x: 0, y: 0, scaleX: 1, scaleY: 1, rotateY: 0, radius: 0, opacity: 1 });
+    }
+    return true;
+  },
+
+  iosCardOpen(surfaceEl, sourceElOrRect, opts = {}) {
+    return this.iosCardTransition(surfaceEl, sourceElOrRect, { ...opts, open: true });
+  },
+
+  iosCardClose(surfaceEl, sourceElOrRect, opts = {}) {
+    return this.iosCardTransition(surfaceEl, sourceElOrRect, { ...opts, open: false });
+  },
+
+  /**
    * iOS SpringBoard OPEN — one continuous critically-damped spring.
    * No multi-phase handoffs. Surface is seeded as the icon (clone + FLIP),
    * real icon hidden underneath, home recedes, chrome fades late.
@@ -2439,6 +2575,7 @@ export const Motion = {
       spring: Object.keys(this.recipes),
       cssOnly: [...this.CSS_ONLY_RECIPES],
       signature: [
+        'iosCardTransition', 'iosCardOpen', 'iosCardClose',
         'iosAppOpen', 'iosAppClose', 'appIconTransition',
         'connectionOpen', 'connectionClose',
         'islandExpand', 'islandCollapse', 'islandDots', 'islandSquish', 'islandSize',

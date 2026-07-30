@@ -20,6 +20,11 @@ func engineConfigure(id int32, response, damping float64) {
 	abiEngineConfigure(id, response, damping)
 }
 
+//go:wasmexport engine_configure_standard
+func engineConfigureStandard(id, standard int32) int32 {
+	return abiEngineConfigureStandard(id, standard)
+}
+
 //go:wasmexport engine_set_epsilon
 func engineSetEpsilon(posEps, velEps float64) { abiEngineSetEpsilon(posEps, velEps) }
 

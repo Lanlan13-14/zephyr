@@ -39,6 +39,13 @@ func abiEngineConfigure(id int32, response, damping float64) {
 	engine.Configure(int(id), response, damping)
 }
 
+func abiEngineConfigureStandard(id, standard int32) int32 {
+	if engine.ConfigureStandard(int(id), motion.Standard(standard)) {
+		return 1
+	}
+	return 0
+}
+
 func abiEngineSetEpsilon(posEps, velEps float64) {
 	if posEps > 0 {
 		engine.PosEps = posEps

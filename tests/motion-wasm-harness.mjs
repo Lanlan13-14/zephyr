@@ -98,7 +98,7 @@ export async function loadMotionWasm() {
 }
 
 export const EXPECTED_EXPORTS = [
-  'engine_init', 'engine_capacity', 'engine_configure', 'engine_set_epsilon',
+  'engine_init', 'engine_capacity', 'engine_configure', 'engine_configure_standard', 'engine_set_epsilon',
   'engine_animate_to', 'engine_animate_to_delayed', 'engine_flick_to',
   'engine_set_value', 'engine_get_value', 'engine_get_velocity',
   'engine_is_active', 'engine_stop', 'engine_tick',

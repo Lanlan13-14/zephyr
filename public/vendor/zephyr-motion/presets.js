@@ -10,6 +10,24 @@
  *   rotation                damping 0.8  response 0.4
  *   drawer / sheet          damping 0.8  response 0.3
  */
+export const MOTION_STANDARDS = Object.freeze({
+  iosCardGeometryOpen: 1,
+  iosCardGeometryClose: 2,
+  iosCardFlipOpen: 3,
+  iosCardFlipClose: 4,
+  iosCardContent: 5,
+  iosCardScrim: 6,
+});
+
+export const STANDARD_FALLBACKS = Object.freeze({
+  [MOTION_STANDARDS.iosCardGeometryOpen]: { response: 0.44, damping: 1.00 },
+  [MOTION_STANDARDS.iosCardGeometryClose]: { response: 0.34, damping: 1.00 },
+  [MOTION_STANDARDS.iosCardFlipOpen]: { response: 0.50, damping: 0.90 },
+  [MOTION_STANDARDS.iosCardFlipClose]: { response: 0.38, damping: 0.96 },
+  [MOTION_STANDARDS.iosCardContent]: { response: 0.32, damping: 1.00 },
+  [MOTION_STANDARDS.iosCardScrim]: { response: 0.42, damping: 1.00 },
+});
+
 export const PRESETS = {
   snappy:  { response: 0.28, damping: 1.0 },  // buttons, small popovers, press feedback
   ui:      { response: 0.40, damping: 1.0 },  // default repositioning (Apple PiP move)

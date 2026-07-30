@@ -7,7 +7,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { Engine } from '../public/vendor/zephyr-motion/runtime.js';
 import { Motion } from '../public/vendor/zephyr-motion/motion.js';
-import { PRESETS, resolvePreset } from '../public/vendor/zephyr-motion/presets.js';
+import { PRESETS, MOTION_STANDARDS, STANDARD_FALLBACKS, resolvePreset } from '../public/vendor/zephyr-motion/presets.js';
 
 // The Motion facade uses a module-global engine; boot it once (JS fallback
 // in Node — no fetchable wasm URL).
@@ -97,6 +97,68 @@ test('retarget keeps velocity through facade', async () => {
   const v = e.getVelocity(0);
   e.animateTo(0, 500);
   assert.equal(e.getVelocity(0), v);
+});
+
+test('iosCardOpen/Close follows one reversible anchored path', async () => {
+  const makeStyle = () => {
+    const props = {};
+    return {
+      setProperty: (k, v) => { props[k] = v; },
+      removeProperty: k => { delete props[k]; },
+      getPropertyValue: k => props[k] || '',
+      getPropertyPriority: () => '',
+      _props: props,
+      set transform(v) { props.transform = v; }, get transform() { return props.transform || ''; },
+      set opacity(v) { props.opacity = String(v); }, get opacity() { return props.opacity || ''; },
+      set filter(v) { props.filter = v; }, get filter() { return props.filter || ''; },
+      set borderRadius(v) { props.borderRadius = v; }, get borderRadius() { return props.borderRadius || ''; },
+    };
+  };
+  const source = {
+    style: makeStyle(), dataset: {}, offsetWidth: 120,
+    getBoundingClientRect: () => ({ left: 40, top: 70, width: 120, height: 120 }),
+  };
+  const surface = {
+    style: makeStyle(), hidden: true, dataset: {}, offsetWidth: 340,
+    getBoundingClientRect() {
+      return { left: 210, top: 100, width: 340, height: 480 };
+    },
+  };
+  const front = { style: makeStyle() };
+  const back = { style: makeStyle() };
+  const scrim = { style: makeStyle() };
+
+  const openP = Motion.iosCardOpen(surface, source, { frontEl: front, backEl: back, scrim });
+  for (let i = 0; i < 600; i++) Motion.engine.tick(1 / 120);
+  assert.equal(await openP, true);
+  assert.equal(Motion.value(surface, 'rotateY'), -180);
+  assert.equal(Motion.value(surface, 'scaleX'), 1);
+  assert.equal(front.style.opacity, '0');
+  assert.equal(back.style.opacity, '1');
+  assert.equal(source.dataset.motionHidden, '1');
+
+  const originalRAF = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = cb => { queueMicrotask(cb); return 1; };
+  try {
+    const closeP = Motion.iosCardClose(surface, source, { frontEl: front, backEl: back, scrim });
+    for (let i = 0; i < 600; i++) Motion.engine.tick(1 / 120);
+    assert.equal(await closeP, true);
+  } finally {
+    globalThis.requestAnimationFrame = originalRAF;
+  }
+  assert.equal(Motion.value(surface, 'rotateY'), 0);
+  assert.equal(surface.style.visibility, 'hidden');
+  assert.equal(source.dataset.motionHidden, undefined);
+  assert.equal(scrim.style.opacity, '0');
+});
+
+test('Motion.to accepts stable standard and composes rotateY', async () => {
+  const el = fakeEl();
+  const p = Motion.to(el, { rotateY: -180 }, { standard: MOTION_STANDARDS.iosCardFlipOpen });
+  for (let i = 0; i < 500; i++) Motion.engine.tick(1 / 60);
+  await p;
+  assert.match(el.style.transform, /rotateY\(-180deg\)/);
+  assert.deepEqual(STANDARD_FALLBACKS[MOTION_STANDARDS.iosCardFlipOpen], { response: 0.50, damping: 0.90 });
 });
 
 test('Motion.to composes transform and resolves on settle', async () => {

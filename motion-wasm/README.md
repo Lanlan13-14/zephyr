@@ -43,6 +43,13 @@ Springs take **response** (seconds to approach target) and **damping**
 (ratio; 1.0 = critically damped). They have no fixed duration — settle time
 emerges, which is exactly why retargeting mid-flight stays smooth.
 
+### Stable standards (Go-owned ABI)
+
+`engine_configure_standard(id, standard)` selects a versioned interaction profile
+inside Go. Current standards: iOS card geometry open/close, Y-flip open/close,
+content, and scrim. JS exports matching `MOTION_STANDARDS` constants and passes a
+same-value fallback only when WASM is unavailable. See `API.md` §3.
+
 | preset  | response | damping | use |
 |---------|----------|---------|-----|
 | snappy  | 0.28 | 1.00 | buttons, small popovers |
