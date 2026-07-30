@@ -896,13 +896,13 @@ body.terminal-mode .app-shell {
 .terminal-view.active {
     display: flex;
     flex-direction: column;
-    height: calc(100dvh - var(--smartbar-top, 61px) - 4px);
+    height: 100%;
     min-height: 0;
     overflow: hidden;
 }
 .app-main:has(#view-terminal.active) {
     width: calc(100% - 4px);
-    height: calc(100dvh - var(--smartbar-top, 61px));
+    height: 100%;
     min-height: 0;
     padding: 2px 0 0;
     overflow: hidden;
@@ -8449,8 +8449,8 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
    bottom toolbars stay visible instead of being clipped off-screen. */
 @media (max-width: 760px) and (hover: none) and (pointer: coarse) {
     body.app-body.terminal-mode:not(.terminal-custom-fullscreen-open) .terminal-view.active {
-        height: calc(100dvh - var(--smartbar-top, 61px) - 4px) !important;
-        max-height: calc(100dvh - var(--smartbar-top, 61px) - 4px) !important;
+        height: 100% !important;
+        max-height: none !important;
         min-height: 0 !important;
     }
 
@@ -15318,5 +15318,435 @@ body.connection1-blurring #connectionModalScrim { pointer-events: auto; }
     body.terminal-custom-fullscreen-open .terminal-smartbar .smartbar-add {
         z-index: 3 !important;
         transform-origin: 50% 100% !important;
+    }
+}
+
+/* ===== Terminal card flip: stage + rotor dual-face (engine Motion only) ===== */
+.terminal-card-flip-stage {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: 0;
+    z-index: 45;
+    pointer-events: none;
+    visibility: hidden;
+    perspective: 1400px;
+    -webkit-perspective: 1400px;
+    perspective-origin: 50% 40%;
+    overflow: visible;
+}
+.terminal-card-flip-stage.is-active {
+    visibility: visible;
+}
+.terminal-card-flip-stage:not(.is-active) {
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+#terminalCardFlipScrim.terminal-card-flip-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    visibility: hidden;
+    pointer-events: none;
+    opacity: 0;
+    background: color-mix(in srgb, var(--text, #000) 14%, transparent);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    will-change: opacity;
+}
+#terminalCardFlipScrim.terminal-card-flip-scrim.is-open {
+    visibility: visible;
+}
+#terminalCardFlipSurface.terminal-card-flip-surface {
+    position: absolute;
+    z-index: 2;
+    visibility: hidden;
+    pointer-events: none;
+    overflow: visible !important;
+    isolation: auto !important;
+    box-sizing: border-box;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    transform-origin: 0 0;
+    will-change: transform, opacity;
+}
+#terminalCardFlipSurface.terminal-card-flip-surface.is-live {
+    visibility: visible;
+    pointer-events: auto;
+}
+#terminalCardFlipSurface.terminal-card-flip-surface.is-live.flip-fill-stage {
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    top: 0 !important;
+    width: auto !important;
+    height: auto !important;
+}
+#terminalCardFlipSurface .terminal-card-flip-rotor {
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d !important;
+    -webkit-transform-style: preserve-3d !important;
+    transform-origin: 50% 50%;
+    overflow: visible !important;
+    will-change: transform;
+    border-radius: inherit;
+}
+#terminalCardFlipSurface .terminal-card-flip-face {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    overflow: hidden;
+    backface-visibility: hidden !important;
+    -webkit-backface-visibility: hidden !important;
+    pointer-events: none;
+    background: var(--surface);
+}
+#terminalCardFlipSurface .terminal-card-flip-front {
+    transform: rotateY(0deg);
+    opacity: 1 !important;
+}
+#terminalCardFlipSurface .terminal-card-flip-back {
+    transform: rotateY(180deg) !important;
+    opacity: 1 !important;
+    background: transparent;
+}
+#terminalCardFlipSurface .terminal-card-flip-card-clone.connection-card {
+    border: none !important;
+    box-shadow: none !important;
+    height: 100% !important;
+    display: flex;
+    flex-direction: column;
+}
+#terminalCardFlipSurface .terminal-card-flip-front-fallback {
+    width: 100%;
+    height: 100%;
+    padding: 16px;
+    box-sizing: border-box;
+    background: var(--surface);
+    color: var(--text);
+}
+#terminalCardFlipSurface .terminal-card-flip-window-clone,
+#terminalCardFlipSurface .terminal-card-flip-window-fallback {
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    visibility: visible !important;
+    background: var(--surface) !important;
+    border-radius: inherit !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+}
+#terminalCardFlipSurface .terminal-card-flip-window-clone .terminal-window-titlebar,
+#terminalCardFlipSurface .terminal-card-flip-window-fallback .terminal-window-titlebar {
+    background: color-mix(in srgb, var(--surface) 80%, transparent);
+    backdrop-filter: blur(14px) saturate(1.25);
+    -webkit-backdrop-filter: blur(14px) saturate(1.25);
+    border-bottom: 1px solid rgba(139,148,158,.18);
+}
+#terminalCardFlipSurface .terminal-card-flip-frame-placeholder {
+    width: 100%;
+    height: 100%;
+    min-height: 140px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: color-mix(in srgb, var(--surface) 90%, var(--text) 5%);
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+#terminalCardFlipSurface .terminal-card-flip-spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2.5px solid color-mix(in srgb, var(--text-secondary) 25%, transparent);
+    border-top-color: var(--accent, #0a84ff);
+    animation: terminalCardFlipSpin .7s linear infinite;
+}
+@keyframes terminalCardFlipSpin {
+    to { transform: rotate(360deg); }
+}
+#terminalCardFlipSurface .terminal-card-flip-status-line {
+    padding: 8px 12px 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+body.terminal-card-flip-animating #view-terminal.terminal-view,
+body.terminal-card-flip-animating .view.active {
+    animation: none !important;
+}
+body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window {
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+body.terminal-card-flip-open:not(.terminal-card-flip-animating) #terminalWorkspace > .terminal-window,
+body:not(.terminal-card-flip-open) #terminalWorkspace > .terminal-window {
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+}
+#terminalCardFlipSurface .terminal-card-flip-face,
+#terminalCardFlipSurface .terminal-card-flip-rotor,
+#terminalCardFlipSurface.terminal-card-flip-surface {
+    transition: none !important;
+}
+
+
+/* ===== Shell scroll lock: nav fixed, only content below scrolls ===== */
+html:has(body.app-body:not(.terminal-mode)),
+html:has(body.app-body:not(.terminal-mode)) body,
+body.app-body:not(.terminal-mode) {
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 100% !important;
+    overflow: hidden !important;
+    overscroll-behavior: none !important;
+    touch-action: manipulation !important;
+    -webkit-overflow-scrolling: auto !important;
+}
+body.app-body:not(.terminal-mode) .app-shell {
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+}
+body.app-body:not(.terminal-mode) .main-nav {
+    position: relative !important;
+    top: auto !important;
+    flex: 0 0 auto !important;
+    z-index: 50;
+}
+body.app-body:not(.terminal-mode) .app-main {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    width: min(1180px, calc(100% - 28px));
+    margin: 0 auto !important;
+    padding: 26px 0 48px !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior-y: contain !important;
+    -webkit-overflow-scrolling: touch !important;
+    touch-action: pan-y !important;
+}
+body.app-body:not(.terminal-mode) .app-main > .view {
+    min-height: min-content;
+}
+@media (max-width: 760px) {
+    html:has(body.app-body:not(.terminal-mode)),
+    html:has(body.app-body:not(.terminal-mode)) body,
+    body.app-body:not(.terminal-mode) {
+        height: 100% !important;
+        min-height: 100% !important;
+        overflow: hidden !important;
+        touch-action: manipulation !important;
+    }
+    body.app-body:not(.terminal-mode) .app-shell,
+    body.app-body:not(.terminal-mode) .app-main {
+        min-height: 0 !important;
+    }
+    body.app-body:not(.terminal-mode) .app-shell {
+        overflow: hidden !important;
+    }
+    body.app-body:not(.terminal-mode) .app-main {
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        touch-action: pan-y !important;
+    }
+}
+
+/* ===== Terminal height layout only (no color/chrome overrides) ===== */
+body.app-body.terminal-mode .app-shell {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+body.app-body.terminal-mode .main-nav {
+    position: relative !important;
+    top: auto !important;
+    flex: 0 0 auto !important;
+}
+body.app-body.terminal-mode .app-main,
+body.app-body.terminal-mode .app-main:has(#view-terminal.active) {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}
+body.app-body.terminal-mode .terminal-view.active,
+body.app-body.terminal-mode #view-terminal.terminal-view.active {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}
+body.app-body.terminal-mode .terminal-workspace,
+body.app-body.terminal-mode .terminal-workspace.compact,
+body.app-body.terminal-mode #terminalWorkspace {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    margin: 0 !important;
+}
+body.app-body.terminal-mode .terminal-smartbar {
+    z-index: 80 !important;
+}
+body.app-body.terminal-mode .terminal-smartbar .smartbar-handle {
+    pointer-events: auto !important;
+}
+@media (max-width: 760px) and (hover: none) and (pointer: coarse) {
+    body.app-body.terminal-mode .app-main:has(#view-terminal.active),
+    body.app-body.terminal-mode .terminal-view.active {
+        height: 100% !important;
+        max-height: 100% !important;
+        width: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+}
+
+
+/* ===== Shelf / titlebar gap fix (layout + backdrop only) ===== */
+/* 1) Shell: nav row + content row. Content never draws under nav/shelf band. */
+body.app-body.terminal-mode .app-shell {
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+body.app-body.terminal-mode .main-nav {
+    /* stay in first grid row; never sticky-overlay content */
+    position: relative !important;
+    top: auto !important;
+    grid-row: 1 !important;
+    /* DO NOT change background / blur / z-index (smartbar clicks + colors) */
+}
+body.app-body.terminal-mode .app-main,
+body.app-body.terminal-mode .app-main:has(#view-terminal.active) {
+    grid-row: 2 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    /* no negative margin that could pull under nav */
+    transform: none !important;
+}
+body.app-body.terminal-mode .terminal-view.active,
+body.app-body.terminal-mode #view-terminal.terminal-view.active {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}
+body.app-body.terminal-mode #terminalWorkspace,
+body.app-body.terminal-mode .terminal-workspace,
+body.app-body.terminal-mode .terminal-workspace.compact {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    /* Color match: titlebar is translucent; gray #d1d5db behind it looks wrong.
+       Final RDP chrome sits on surface-like light — use surface as workspace bg. */
+    background: var(--surface) !important;
+    border-radius: 0 !important;
+}
+body.app-body.terminal-mode .terminal-workspace-grid {
+    background: var(--surface) !important;
+    gap: 0 !important;
+    padding: 0 !important;
+}
+body.app-body.terminal-mode .terminal-window:not(.minimized-keepalive) {
+    min-height: 0 !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    margin: 0 !important;
+    /* keep original border/shadow language but no layout gutter */
+    border-radius: 0 !important;
+}
+/* Titlebar: keep ORIGINAL rule (color-mix + blur). Only ensure body behind is surface
+   so computed look matches final. No background !important on titlebar. */
+body.app-body.terminal-mode .terminal-window-body {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    background: var(--surface);
+}
+/* Flip clone: don't invent a different titlebar color — inherit production classes */
+#terminalCardFlipSurface .terminal-card-flip-window-clone .terminal-window-titlebar,
+#terminalCardFlipSurface .terminal-card-flip-window-fallback .terminal-window-titlebar {
+    /* clear any previous forced solid overrides if still present */
+    background: color-mix(in srgb, var(--surface) 80%, transparent);
+    backdrop-filter: blur(14px) saturate(1.25);
+    -webkit-backdrop-filter: blur(14px) saturate(1.25);
+    border-bottom: 1px solid rgba(139,148,158,.18);
+}
+/* Smartbar handle stays clickable above content */
+body.app-body.terminal-mode .terminal-smartbar {
+    z-index: 80 !important;
+}
+body.app-body.terminal-mode .terminal-smartbar .smartbar-handle {
+    pointer-events: auto !important;
+}
+.terminal-card-flip-stage {
+    z-index: 45 !important; /* below smartbar 80, do not cover shelf handle */
+}
+.terminal-card-flip-stage:not(.is-active) {
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+/* Flip stage under shelf only; card fills workspace */
+body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    visibility: visible !important;
+}
+body.terminal-card-flip-open:not(.terminal-card-flip-animating) #terminalWorkspace > .terminal-window,
+body:not(.terminal-card-flip-open) #terminalWorkspace > .terminal-window {
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+}
+@media (max-width: 760px) and (hover: none) and (pointer: coarse) {
+    body.app-body.terminal-mode .app-main:has(#view-terminal.active),
+    body.app-body.terminal-mode .terminal-view.active {
+        height: 100% !important;
+        max-height: 100% !important;
+        width: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
     }
 }

@@ -61,6 +61,7 @@ let transientHasCredential = false;
 let connectionModalTrigger = null;
 let connectionModalCycle = 0;
 const connectionModalMotion = { phase: 'closed', originRect: null, targetRect: null, trigger: null };
+const terminalCardFlipMotion = { phase: 'closed', cycle: 0, originRect: null, sourceEl: null, connectionId: null, fromView: 'dashboard' };
 let proxyModalTrigger = null;
 let proxyModalCycle = 0;
 let sshKeyModalTrigger = null;
@@ -1284,7 +1285,7 @@ function closeTerminalSmartbarForViewLeave() {
     root?.classList.remove('open', 'closing', 'shelf-line-active', 'dock-open');
     $('.main-nav')?.classList.remove('terminal-shelf-settled', 'terminal-shelf-dock-open');
 }
-function switchView(name) {
+function applySwitchViewCore(name, { enteringAnimated = false } = {}) {
     const target = name === 'ai' ? 'dashboard' : name;
     currentAppView = target;
     rememberLastAppView(target);
@@ -1298,16 +1299,31 @@ function switchView(name) {
     const leavingTerminal = target !== 'terminal' && wasTerminal;
     if (leavingTerminal) closeTerminalSmartbarForViewLeave();
     document.body.classList.toggle('terminal-mode', target === 'terminal');
-    document.body.classList.toggle('terminal-mode-entering', enteringTerminal);
+    document.body.classList.toggle('terminal-mode-entering', enteringTerminal && !enteringAnimated);
     window.clearTimeout(switchView._navTimer);
     if (target === 'terminal') {
         renderTerminalSmartbar();
+        // Immediate measure so content row sits under nav+shelf (no underlap).
+        try {
+            syncTerminalSmartbarTop();
+            syncTerminalShelfLineState();
+            const nav = document.querySelector('.main-nav');
+            if (nav) {
+                document.documentElement.style.setProperty('--terminal-nav-height', `${Math.round(nav.getBoundingClientRect().height)}px`);
+            }
+        } catch {}
         scheduleTerminalSmartbarTopSync(enteringTerminal ? 'switch-enter-terminal' : 'switch-terminal');
         switchView._navTimer = window.setTimeout(() => {
             document.body.classList.remove('terminal-mode-entering');
             syncTerminalSmartbarTop();
             syncTerminalShelfLineState();
-        }, 680);
+            try {
+                const nav = document.querySelector('.main-nav');
+                if (nav) {
+                    document.documentElement.style.setProperty('--terminal-nav-height', `${Math.round(nav.getBoundingClientRect().height)}px`);
+                }
+            } catch {}
+        }, enteringAnimated ? 40 : 680);
         rememberCompactTerminalKeyboardBaseline('switch-view-terminal');
         scheduleTerminalLayoutStabilize('switch-view-terminal', { focus: true });
     } else {
@@ -1318,6 +1334,788 @@ function switchView(name) {
         notesController?.activate?.().catch((err) => toast(err.message || t('加载笔记失败')));
     }
     scheduleWorkspaceSave('view-change');
+    return { target, wasTerminal, enteringTerminal, leavingTerminal };
+}
+function stableTerminalCardSourceRect(el) {
+    if (!el?.isConnected) return null;
+    const oldTransition = el.style.getPropertyValue('transition');
+    const oldPriority = el.style.getPropertyPriority('transition');
+    el.style.setProperty('transition', 'none', 'important');
+    void el.offsetWidth;
+    const r = el.getBoundingClientRect();
+    if (oldTransition) el.style.setProperty('transition', oldTransition, oldPriority);
+    else el.style.removeProperty('transition');
+    return r.width > 2 && r.height > 2
+        ? { left: r.left, top: r.top, width: r.width, height: r.height, right: r.right, bottom: r.bottom }
+        : null;
+}
+function terminalCardFlipNavBottom() {
+    const nav = document.querySelector('.main-nav');
+    if (!nav) return 0;
+    const r = nav.getBoundingClientRect();
+    return Math.max(0, Math.round(r.bottom));
+}
+function terminalCardSourceRadius(sourceEl) {
+    const card = sourceEl?.classList?.contains?.('connection-card')
+        ? sourceEl
+        : (sourceEl?.closest?.('.connection-card') || sourceEl);
+    if (!card?.isConnected) {
+        const lg = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--radius-lg'));
+        return Number.isFinite(lg) && lg > 0 ? lg : 16;
+    }
+    const raw = getComputedStyle(card).borderRadius || '';
+    const m = String(raw).match(/([\d.]+)px/);
+    if (m) return Math.max(4, parseFloat(m[1]));
+    const lg = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--radius-lg'));
+    return Number.isFinite(lg) && lg > 0 ? lg : 16;
+}
+function terminalCardFlipTargetRect(_origin) {
+    const vw = window.innerWidth || document.documentElement.clientWidth || 360;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 640;
+    // In terminal-mode, nav.getBoundingClientRect().bottom already includes shelf padding-bottom.
+    // Stage + card fill exactly that content region — never underlap the shelf band.
+    const navBottom = terminalCardFlipNavBottom();
+    return {
+        left: 0,
+        top: navBottom,
+        width: Math.max(200, vw),
+        height: Math.max(200, vh - navBottom),
+        topBound: navBottom,
+        fillStage: true,
+    };
+}
+function placeTerminalCardFlipSurface(surface, rect) {
+    if (!surface || !rect) return;
+    surface.style.left = `${rect.left}px`;
+    surface.style.top = `${rect.top}px`;
+    surface.style.width = `${rect.width}px`;
+    surface.style.height = `${rect.height}px`;
+    surface.style.right = 'auto';
+    surface.style.bottom = 'auto';
+    surface.style.inset = 'auto';
+}
+function placeTerminalCardFlipStage(stage, topBound) {
+    if (!stage) return;
+    // Stage starts at nav bottom: shelf line is drawn in nav::after above this.
+    stage.style.top = `${Math.max(0, topBound)}px`;
+    stage.style.left = '0';
+    stage.style.right = '0';
+    stage.style.bottom = '0';
+    stage.style.width = 'auto';
+    stage.style.height = 'auto';
+}
+function setCompensatedRadius(el, visualPx, sx, sy) {
+    if (!el) return;
+    const v = Math.max(0, Number(visualPx) || 0);
+    const sxn = Math.max(0.001, Math.abs(sx || 1));
+    const syn = Math.max(0.001, Math.abs(sy || 1));
+    el.style.borderRadius = `${v / sxn}px / ${v / syn}px`;
+}
+function paintTerminalCardFlipFront(sourceEl) {
+    const front = document.querySelector('[data-terminal-card-front]');
+    if (!front) return;
+    front.innerHTML = '';
+    front.style.cssText = [
+        'position:absolute',
+        'inset:0',
+        'border-radius:inherit',
+        'overflow:hidden',
+        'opacity:1',
+        'backface-visibility:hidden',
+        '-webkit-backface-visibility:hidden',
+        'transform:rotateY(0deg)',
+        'background:var(--surface)',
+        'pointer-events:none',
+    ].join(';');
+    if (!sourceEl?.isConnected) {
+        front.innerHTML = `<div class="terminal-card-flip-front-fallback connection-card"><h2>${t('连接')}</h2></div>`;
+        return;
+    }
+    try {
+        const card = sourceEl.classList?.contains('connection-card')
+            ? sourceEl
+            : (sourceEl.closest?.('.connection-card') || sourceEl);
+        const clone = card.cloneNode(true);
+        clone.removeAttribute('id');
+        clone.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+        clone.classList.add('terminal-card-flip-card-clone');
+        clone.style.cssText = [
+            'margin:0',
+            'width:100%',
+            'height:100%',
+            'max-width:none',
+            'box-sizing:border-box',
+            'pointer-events:none',
+            'transform:none',
+            'animation:none',
+            'transition:none',
+            'box-shadow:none',
+        ].join(';');
+        clone.querySelectorAll('button').forEach((btn) => {
+            btn.disabled = true;
+            btn.tabIndex = -1;
+        });
+        front.appendChild(clone);
+    } catch {
+        front.innerHTML = `<div class="terminal-card-flip-front-fallback connection-card"><h2>${t('连接')}</h2></div>`;
+    }
+}
+function paintTerminalCardFlipBack(options = {}) {
+    const back = document.querySelector('[data-terminal-card-back]');
+    if (!back) return;
+    back.innerHTML = '';
+    // Transparent face shell — real terminal-window styles paint the chrome (titlebar color matches 图二).
+    back.style.position = 'absolute';
+    back.style.inset = '0';
+    back.style.borderRadius = 'inherit';
+    back.style.overflow = 'hidden';
+    back.style.opacity = '1';
+    back.style.backfaceVisibility = 'hidden';
+    back.style.webkitBackfaceVisibility = 'hidden';
+    back.style.transform = 'rotateY(180deg)';
+    back.style.background = 'transparent';
+    back.style.pointerEvents = 'none';
+    back.style.transition = 'none';
+
+    const name = options.name || t('终端');
+    const host = options.host || '';
+    const protocol = String(options.protocol || 'SSH').toUpperCase();
+    const tabId = options.tabId || activeTerminalTab || '';
+
+    const liveWin = options.liveWindow
+        || (tabId ? document.querySelector(`#terminalWorkspace .terminal-window[data-window="${CSS.escape(String(tabId))}"]`) : null)
+        || document.querySelector('#terminalWorkspace .terminal-window:not(.minimized-keepalive)');
+
+    if (liveWin) {
+        try {
+            const clone = liveWin.cloneNode(true);
+            clone.removeAttribute('id');
+            clone.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+            clone.classList.add('terminal-card-flip-window-clone');
+            clone.querySelectorAll('iframe').forEach((frame) => {
+                const ph = document.createElement('div');
+                ph.className = 'terminal-card-flip-frame-placeholder';
+                const label = protocol === 'RDP'
+                    ? t('正在建立 RDP 连接…')
+                    : protocol === 'VNC'
+                        ? t('正在建立 VNC 连接…')
+                        : t('正在建立连接…');
+                ph.innerHTML = `<div class="terminal-card-flip-spinner" aria-hidden="true"></div><span>${label}</span>`;
+                frame.replaceWith(ph);
+            });
+            clone.querySelectorAll('button, a, input, select, textarea').forEach((el) => {
+                el.disabled = true;
+                el.tabIndex = -1;
+                el.style.pointerEvents = 'none';
+            });
+            // Let production .terminal-window / .terminal-window-titlebar CSS own colors.
+            clone.style.cssText = 'margin:0;width:100%;height:100%;max-width:none;box-sizing:border-box;pointer-events:none;transform:none !important;animation:none !important;visibility:visible !important;opacity:1 !important;';
+            back.appendChild(clone);
+            return;
+        } catch (err) {
+            console.warn('[terminal-card-flip] live window clone failed', err);
+        }
+    }
+
+    const shell = document.createElement('article');
+    shell.className = 'terminal-window terminal-card-flip-window-fallback';
+    shell.innerHTML = `
+        <div class="terminal-window-titlebar">
+            <button class="terminal-grip terminal-window-center-dots" type="button" tabindex="-1" aria-hidden="true"><span></span></button>
+            <span class="proto-dot ${terminalProtocolClass(protocol)}"></span>
+            <strong></strong>
+        </div>
+        <div class="terminal-window-body">
+            <div class="terminal-card-flip-frame-placeholder">
+                <div class="terminal-card-flip-spinner" aria-hidden="true"></div>
+                <span></span>
+            </div>
+        </div>
+    `;
+    shell.querySelector('strong').textContent = terminalShortName(name);
+    const status = shell.querySelector('.terminal-card-flip-frame-placeholder span');
+    if (protocol === 'RDP') status.textContent = t('正在建立 RDP 连接…');
+    else if (protocol === 'VNC') status.textContent = t('正在建立 VNC 连接…');
+    else status.textContent = host || t('正在建立连接…');
+    shell.style.cssText = 'margin:0;width:100%;height:100%;animation:none !important;';
+    back.appendChild(shell);
+}
+function resetTerminalCardFlipSurface(Motion) {
+    const stage = $('#terminalCardFlipStage');
+    const surface = $('#terminalCardFlipSurface');
+    const rotor = document.querySelector('[data-terminal-card-rotor]');
+    const scrim = $('#terminalCardFlipScrim');
+    const front = document.querySelector('[data-terminal-card-front]');
+    const back = document.querySelector('[data-terminal-card-back]');
+    if (Motion) {
+        try {
+            if (surface) Motion.release(surface);
+            if (rotor) Motion.release(rotor);
+            if (scrim) Motion.release(scrim);
+        } catch {}
+    }
+    if (terminalCardFlipMotion.sourceEl?.style) {
+        const src = terminalCardFlipMotion.sourceEl;
+        src.style.opacity = '';
+        src.style.pointerEvents = '';
+        src.style.visibility = '';
+        delete src.dataset.motionHidden;
+    }
+    if (front) front.innerHTML = '';
+    if (back) back.innerHTML = '';
+    if (surface) {
+        surface.classList.remove('is-live', 'flip-fill-stage');
+        surface.style.visibility = 'hidden';
+        surface.style.pointerEvents = 'none';
+        surface.style.transform = '';
+        surface.style.opacity = '';
+        surface.style.borderRadius = '';
+        surface.style.transition = '';
+        surface.style.left = '';
+        surface.style.top = '';
+        surface.style.width = '';
+        surface.style.height = '';
+        surface.setAttribute('aria-hidden', 'true');
+    }
+    if (rotor) {
+        rotor.style.transform = '';
+        rotor.style.transition = '';
+    }
+    if (scrim) {
+        scrim.style.visibility = 'hidden';
+        scrim.style.opacity = '0';
+        scrim.style.transition = '';
+        scrim.classList.remove('is-open');
+        scrim.setAttribute('aria-hidden', 'true');
+    }
+    if (stage) {
+        stage.classList.remove('is-active');
+        stage.setAttribute('aria-hidden', 'true');
+    }
+    document.body.classList.remove('terminal-card-flip-animating', 'terminal-card-flip-open');
+    document.documentElement.classList.remove('terminal-card-flip-3d');
+}
+function cardFlipStandards(Motion) {
+    return Motion.STANDARDS || Motion.MOTION_STANDARDS || {
+        iosCardGeometryOpen: 1,
+        iosCardGeometryClose: 2,
+        iosCardFlipOpen: 3,
+        iosCardFlipClose: 4,
+        iosCardContent: 5,
+        iosCardScrim: 6,
+    };
+}
+async function playTerminalCardFlipOpen(sourceEl, options = {}) {
+    const stage = $('#terminalCardFlipStage');
+    const surface = $('#terminalCardFlipSurface');
+    const rotor = document.querySelector('[data-terminal-card-rotor]');
+    const scrim = $('#terminalCardFlipScrim');
+    const front = document.querySelector('[data-terminal-card-front]');
+    const back = document.querySelector('[data-terminal-card-back]');
+    if (!stage || !surface || !rotor || !front || !back) {
+        console.warn('[terminal-card-flip] missing DOM');
+        return false;
+    }
+    const origin = options.originRect || stableTerminalCardSourceRect(sourceEl);
+    if (!origin) {
+        console.warn('[terminal-card-flip] no origin rect');
+        return false;
+    }
+
+    const cycle = ++terminalCardFlipMotion.cycle;
+    terminalCardFlipMotion.phase = 'opening';
+    terminalCardFlipMotion.originRect = origin;
+    terminalCardFlipMotion.sourceEl = sourceEl || null;
+    terminalCardFlipMotion.connectionId = options.connectionId || terminalCardFlipMotion.connectionId || null;
+    terminalCardFlipMotion.fromView = options.fromView || currentAppView || 'dashboard';
+
+    document.body.classList.add('terminal-card-flip-animating', 'terminal-card-flip-open');
+    paintTerminalCardFlipFront(sourceEl);
+    paintTerminalCardFlipBack({
+        name: options.name || sourceEl?.querySelector?.('h2')?.textContent || t('终端'),
+        host: options.host || sourceEl?.querySelector?.('.host-line')?.textContent || '',
+        protocol: options.protocol || 'SSH',
+        tabId: options.tabId,
+        liveWindow: options.liveWindow || null,
+    });
+
+    // Engine first — never animate with CSS transitions.
+    const Motion = await sshKeyMotion._ensure();
+    if (cycle !== terminalCardFlipMotion.cycle || terminalCardFlipMotion.phase !== 'opening') return false;
+
+    const target = terminalCardFlipTargetRect(origin);
+    const topBound = target.topBound != null ? target.topBound : terminalCardFlipNavBottom();
+    placeTerminalCardFlipStage(stage, topBound);
+    const localTarget = target.fillStage
+        ? { left: 0, top: 0, width: target.width, height: target.height }
+        : {
+            left: Math.max(0, target.left),
+            top: Math.max(0, target.top - topBound),
+            width: target.width,
+            height: target.height,
+        };
+    placeTerminalCardFlipSurface(surface, localTarget);
+    surface.classList.toggle('flip-fill-stage', !!target.fillStage);
+
+    const originLocal = {
+        left: origin.left,
+        top: origin.top - topBound,
+        width: origin.width,
+        height: origin.height,
+    };
+    const sx0 = Math.max(0.001, originLocal.width / Math.max(1, localTarget.width));
+    const sy0 = Math.max(0.001, originLocal.height / Math.max(1, localTarget.height));
+    const x0 = originLocal.left - localTarget.left;
+    const y0 = originLocal.top - localTarget.top;
+    const radiusFrom = terminalCardSourceRadius(sourceEl);
+    const radiusTo = radiusFrom;
+
+    stage.classList.add('is-active');
+    stage.setAttribute('aria-hidden', 'false');
+    surface.classList.add('is-live');
+    surface.style.visibility = 'visible';
+    surface.style.pointerEvents = 'auto';
+    surface.style.transformOrigin = '0 0';
+    surface.style.overflow = 'visible';
+    surface.style.isolation = 'auto';
+    surface.style.background = 'transparent';
+    surface.style.border = 'none';
+    surface.style.boxShadow = 'none';
+    surface.style.transition = 'none';
+    surface.setAttribute('aria-hidden', 'false');
+
+    rotor.style.position = 'absolute';
+    rotor.style.inset = '0';
+    rotor.style.transformOrigin = '50% 50%';
+    rotor.style.transformStyle = 'preserve-3d';
+    rotor.style.webkitTransformStyle = 'preserve-3d';
+    rotor.style.overflow = 'visible';
+    rotor.style.transition = 'none';
+    rotor.style.borderRadius = 'inherit';
+
+    // Dual-face: faces own chrome; no engine opacity crossfade between faces.
+    front.style.cssText = [
+        'position:absolute', 'inset:0', 'border-radius:inherit', 'overflow:hidden',
+        'opacity:1', 'backface-visibility:hidden', '-webkit-backface-visibility:hidden',
+        'transform:rotateY(0deg)', 'background:var(--surface)', 'pointer-events:none',
+        'border:1px solid var(--border)', 'box-shadow:var(--shadow-lift, 0 18px 50px rgba(0,0,0,.16))',
+        'transition:none',
+    ].join(';');
+    back.style.cssText = [
+        'position:absolute', 'inset:0', 'border-radius:inherit', 'overflow:hidden',
+        'opacity:1', 'backface-visibility:hidden', '-webkit-backface-visibility:hidden',
+        'transform:rotateY(180deg)', 'background:transparent', 'pointer-events:none',
+        'border:1px solid var(--border)', 'box-shadow:var(--shadow-lift, 0 18px 50px rgba(0,0,0,.16))',
+        'transition:none',
+    ].join(';');
+    if (scrim) {
+        scrim.style.visibility = 'visible';
+        scrim.style.transition = 'none';
+        scrim.classList.add('is-open');
+        scrim.setAttribute('aria-hidden', 'false');
+    }
+
+    // Seed with engine (not CSS transition). One frame paint, then hide source.
+    if (Motion) {
+        try {
+            Motion.stop(surface); Motion.release(surface);
+            Motion.stop(rotor); Motion.release(rotor);
+            if (scrim) { Motion.stop(scrim); Motion.release(scrim); }
+        } catch {}
+        Motion.set(surface, {
+            x: x0, y: y0, scaleX: sx0, scaleY: sy0, radius: radiusFrom, opacity: 1,
+        });
+        // Enable radius compensate under non-uniform scale (engine-owned).
+        try {
+            const st = Motion._state?.(surface) || null;
+            // morph will set compensate; for to() path set visual radius via set already
+        } catch {}
+        Motion.set(rotor, { rotateY: 0 });
+        if (scrim) Motion.set(scrim, { opacity: 0 });
+    } else {
+        // Engine unavailable: hard end-state only (no CSS animation).
+        surface.style.transform = 'translate3d(0,0,0) scale(1,1)';
+        setCompensatedRadius(surface, radiusTo, 1, 1);
+        rotor.style.transform = 'rotateY(-180deg)';
+        if (scrim) scrim.style.opacity = '0.42';
+        if (sourceEl?.style) {
+            sourceEl.style.opacity = '0';
+            sourceEl.style.pointerEvents = 'none';
+            sourceEl.dataset.motionHidden = '1';
+        }
+        terminalCardFlipMotion.phase = 'open';
+        return false;
+    }
+
+    await new Promise((r) => requestAnimationFrame(r));
+    if (cycle !== terminalCardFlipMotion.cycle) return false;
+    if (sourceEl?.style) {
+        sourceEl.style.opacity = '0';
+        sourceEl.style.pointerEvents = 'none';
+        sourceEl.dataset.motionHidden = '1';
+    }
+
+    const S = cardFlipStandards(Motion);
+    const fromRect = {
+        left: origin.left,
+        top: origin.top,
+        width: origin.width,
+        height: origin.height,
+    };
+    try {
+        // Geometry + flip + scrim: all Go standards / engine springs. No CSS.
+        await Promise.all([
+            Motion.morph(surface, fromRect, {
+                radiusFrom,
+                radiusTo,
+                radiusCompensate: true,
+                forceFrom: true,
+                // morph is engine-owned; use snappy shape preset (critically damped)
+                preset: 'shape',
+            }),
+            Motion.to(rotor, { rotateY: -180 }, { standard: S.iosCardFlipOpen }),
+            scrim ? Motion.to(scrim, { opacity: 0.42 }, { standard: S.iosCardScrim }) : Promise.resolve(),
+        ]);
+    } catch (err) {
+        console.warn('[terminal-card-flip] engine open failed', err);
+        // Instant settle via engine set — still no CSS transition.
+        try {
+            Motion.set(surface, { x: 0, y: 0, scaleX: 1, scaleY: 1, radius: radiusTo, opacity: 1 });
+            Motion.set(rotor, { rotateY: -180 });
+            if (scrim) Motion.set(scrim, { opacity: 0.42 });
+        } catch {}
+        terminalCardFlipMotion.phase = 'open';
+        return false;
+    }
+    if (cycle !== terminalCardFlipMotion.cycle) return false;
+    terminalCardFlipMotion.phase = 'open';
+    return true;
+}
+async function finishTerminalCardFlipOpenHandoff() {
+    const surface = $('#terminalCardFlipSurface');
+    const scrim = $('#terminalCardFlipScrim');
+    const stage = $('#terminalCardFlipStage');
+    const Motion = sshKeyMotion.engine;
+
+    // 1) Live terminal fully visible under the card (same box) before surface leaves.
+    document.querySelectorAll('#terminalWorkspace .terminal-window').forEach((w) => {
+        w.style.visibility = 'visible';
+        w.style.opacity = '1';
+        w.style.pointerEvents = '';
+    });
+    // Stop hiding live windows via body class BEFORE surface fades — prevents double-stack tint.
+    document.body.classList.remove('terminal-card-flip-animating');
+
+    // 2) Engine opacity out only — no CSS. Terminal already painted.
+    if (Motion && surface) {
+        try {
+            const S = cardFlipStandards(Motion);
+            await Promise.all([
+                Motion.to(surface, { opacity: 0 }, { standard: S.iosCardContent, preset: 'contentClose' }),
+                scrim ? Motion.to(scrim, { opacity: 0 }, { standard: S.iosCardScrim }) : Promise.resolve(),
+            ]);
+        } catch {
+            try {
+                Motion.set(surface, { opacity: 0 });
+                if (scrim) Motion.set(scrim, { opacity: 0 });
+            } catch {}
+        }
+    }
+
+    // 3) Hard teardown stage so no residual layer sits under the shelf line.
+    resetTerminalCardFlipSurface(Motion);
+    // Keep phase open so leaving terminal can still reverse-close if desired.
+    terminalCardFlipMotion.phase = 'open';
+    document.body.classList.remove('terminal-card-flip-open');
+    // Shelf/nav metrics after layout settle.
+    try {
+        syncTerminalSmartbarTop();
+        syncTerminalShelfLineState();
+        scheduleTerminalSmartbarTopSync('card-flip-handoff');
+    } catch {}
+}
+async function playTerminalCardFlipClose(options = {}) {
+    const stage = $('#terminalCardFlipStage');
+    const surface = $('#terminalCardFlipSurface');
+    const rotor = document.querySelector('[data-terminal-card-rotor]');
+    const scrim = $('#terminalCardFlipScrim');
+    const front = document.querySelector('[data-terminal-card-front]');
+    const back = document.querySelector('[data-terminal-card-back]');
+    if (!surface || !rotor) return false;
+    if (terminalCardFlipMotion.phase === 'closed' || terminalCardFlipMotion.phase === 'closing') return false;
+
+    let sourceEl = options.sourceEl || terminalCardFlipMotion.sourceEl;
+    if (sourceEl && !sourceEl.isConnected && terminalCardFlipMotion.connectionId) {
+        const id = String(terminalCardFlipMotion.connectionId);
+        sourceEl = document.querySelector(`.connection-card [data-connect="${CSS.escape(id)}"]`)?.closest?.('.connection-card')
+            || document.querySelector(`[data-connect="${CSS.escape(id)}"]`)?.closest?.('.connection-card')
+            || null;
+    }
+    const origin = options.originRect || terminalCardFlipMotion.originRect || stableTerminalCardSourceRect(sourceEl);
+
+    const cycle = ++terminalCardFlipMotion.cycle;
+    terminalCardFlipMotion.phase = 'closing';
+    document.body.classList.add('terminal-card-flip-animating', 'terminal-card-flip-open');
+    paintTerminalCardFlipFront(sourceEl);
+    paintTerminalCardFlipBack({
+        name: options.name || sourceEl?.querySelector?.('h2')?.textContent || t('终端'),
+        host: options.host || sourceEl?.querySelector?.('.host-line')?.textContent || '',
+        protocol: options.protocol,
+        tabId: options.tabId,
+    });
+
+    const Motion = await sshKeyMotion._ensure();
+    if (cycle !== terminalCardFlipMotion.cycle || terminalCardFlipMotion.phase !== 'closing') return false;
+
+    const target = terminalCardFlipTargetRect(origin);
+    const topBound = target.topBound != null ? target.topBound : terminalCardFlipNavBottom();
+    placeTerminalCardFlipStage(stage, topBound);
+    const localTarget = target.fillStage
+        ? { left: 0, top: 0, width: target.width, height: target.height }
+        : {
+            left: Math.max(0, target.left),
+            top: Math.max(0, target.top - topBound),
+            width: target.width,
+            height: target.height,
+        };
+    placeTerminalCardFlipSurface(surface, localTarget);
+    if (stage) {
+        stage.classList.add('is-active');
+        stage.setAttribute('aria-hidden', 'false');
+    }
+    surface.classList.add('is-live');
+    surface.classList.toggle('flip-fill-stage', !!target.fillStage);
+    surface.style.visibility = 'visible';
+    surface.style.pointerEvents = 'none';
+    surface.style.transformOrigin = '0 0';
+    surface.style.overflow = 'visible';
+    surface.style.transition = 'none';
+    surface.style.background = 'transparent';
+    surface.style.border = 'none';
+    surface.style.boxShadow = 'none';
+    rotor.style.transformOrigin = '50% 50%';
+    rotor.style.transformStyle = 'preserve-3d';
+    rotor.style.transition = 'none';
+    if (scrim) {
+        scrim.style.visibility = 'visible';
+        scrim.style.transition = 'none';
+        scrim.classList.add('is-open');
+    }
+    // Hide live windows while reverse-close plays.
+    document.querySelectorAll('#terminalWorkspace .terminal-window').forEach((w) => {
+        w.style.opacity = '0';
+        w.style.pointerEvents = 'none';
+    });
+
+    const radiusClose = terminalCardSourceRadius(sourceEl || terminalCardFlipMotion.sourceEl);
+    const sEnd = 0.01;
+    const closeLayoutW = localTarget.width;
+    const closeLayoutH = localTarget.height;
+
+    if (!Motion) {
+        resetTerminalCardFlipSurface(null);
+        terminalCardFlipMotion.phase = 'closed';
+        terminalCardFlipMotion.originRect = null;
+        terminalCardFlipMotion.sourceEl = null;
+        return false;
+    }
+    try {
+        Motion.stop(surface); Motion.release(surface);
+        Motion.stop(rotor); Motion.release(rotor);
+        if (scrim) { Motion.stop(scrim); Motion.release(scrim); }
+    } catch {}
+
+    Motion.set(surface, { x: 0, y: 0, scaleX: 1, scaleY: 1, radius: radiusClose, opacity: 1 });
+    Motion.set(rotor, { rotateY: -180 });
+    if (front) front.style.opacity = '1';
+    if (back) back.style.opacity = '1';
+    if (scrim) Motion.set(scrim, { opacity: 0.42 });
+
+    const S = cardFlipStandards(Motion);
+    try {
+        await Promise.all([
+            Motion.to(surface, {
+                x: closeLayoutW / 2 * (1 - sEnd),
+                y: closeLayoutH / 2 * (1 - sEnd),
+                scaleX: sEnd,
+                scaleY: sEnd,
+                radius: radiusClose,
+                opacity: 0,
+            }, { standard: S.iosCardGeometryClose }),
+            Motion.to(rotor, { rotateY: -180 }, { standard: S.iosCardFlipClose }),
+            scrim ? Motion.to(scrim, { opacity: 0 }, { standard: S.iosCardScrim }) : Promise.resolve(),
+        ]);
+    } catch (err) {
+        console.warn('[terminal-card-flip] engine close failed', err);
+    }
+    if (cycle !== terminalCardFlipMotion.cycle) return false;
+
+    if (sourceEl?.style) {
+        sourceEl.style.opacity = '';
+        sourceEl.style.pointerEvents = '';
+        sourceEl.style.visibility = '';
+        delete sourceEl.dataset.motionHidden;
+    }
+    document.querySelectorAll('#terminalWorkspace .terminal-window').forEach((w) => {
+        w.style.opacity = '';
+        w.style.pointerEvents = '';
+    });
+    resetTerminalCardFlipSurface(Motion);
+    terminalCardFlipMotion.phase = 'closed';
+    terminalCardFlipMotion.originRect = null;
+    terminalCardFlipMotion.sourceEl = null;
+    return true;
+}
+async function openConnectionWithCardFlip(id, sourceEl, extra = {}) {
+    const cardEl = sourceEl?.classList?.contains?.('connection-card')
+        ? sourceEl
+        : (sourceEl?.closest?.('.connection-card') || sourceEl);
+    const originRect = stableTerminalCardSourceRect(cardEl);
+    if (!originRect) {
+        return openConnection(id, { ...extra, skipCardFlip: true });
+    }
+
+    const name = cardEl?.querySelector?.('h2')?.textContent || extra.name || '';
+    const host = cardEl?.querySelector?.('.host-line')?.textContent || extra.host || '';
+    const protocolGuess = (cardEl?.querySelector?.('.protocol-badge')?.textContent || extra.protocol || 'SSH').trim().toUpperCase();
+
+    // Warm engine ASAP, then start flip and network in parallel.
+    const Motion = await sshKeyMotion._ensure();
+    if (!Motion) {
+        // No engine → plain open, no fake CSS animation.
+        return openConnection(id, { ...extra, skipCardFlip: true });
+    }
+
+    // Switch terminal immediately so shelf is part of nav height (flex), not overlaid.
+    applySwitchViewCore('terminal', { enteringAnimated: false });
+    try {
+        syncTerminalSmartbarTop();
+        syncTerminalShelfLineState();
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        syncTerminalSmartbarTop();
+    } catch {}
+
+    // Start flip immediately with provisional back chrome; upgrade when window mounts.
+    const flipP = playTerminalCardFlipOpen(cardEl, {
+        originRect,
+        connectionId: id,
+        name,
+        host,
+        protocol: protocolGuess,
+        fromView: 'dashboard',
+    });
+
+    let tabId = null;
+    let openErr = null;
+    try {
+        tabId = await openConnection(id, {
+            ...extra,
+            skipViewSwitch: true,
+            skipCardFlip: true,
+            cardFlipSource: cardEl,
+        });
+        renderTerminalTabs({ rebuildWorkspace: true });
+        await new Promise((r) => requestAnimationFrame(r));
+        const session = getTerminalSession(tabId);
+        const liveWin = document.querySelector(`#terminalWorkspace .terminal-window[data-window="${CSS.escape(String(tabId))}"]`);
+        // Upgrade back face mid-flight / before settle — still dual-face, engine continues.
+        paintTerminalCardFlipBack({
+            tabId,
+            name: session?.name || name,
+            host,
+            protocol: session?.protocol || protocolGuess,
+            liveWindow: liveWin,
+        });
+        // Re-assert dual-face CSS after paint (clone must not break backface).
+        const back = document.querySelector('[data-terminal-card-back]');
+        if (back) {
+            back.style.backfaceVisibility = 'hidden';
+            back.style.webkitBackfaceVisibility = 'hidden';
+            back.style.transform = 'rotateY(180deg)';
+            back.style.opacity = '1';
+            back.style.background = 'transparent';
+        }
+    } catch (err) {
+        openErr = err;
+    }
+
+    const flipped = await flipP.catch(() => false);
+    if (openErr) {
+        await playTerminalCardFlipClose({ sourceEl: cardEl, originRect }).catch(() => {});
+        throw openErr;
+    }
+    if (flipped) {
+        await finishTerminalCardFlipOpenHandoff();
+    } else {
+        resetTerminalCardFlipSurface(sshKeyMotion.engine);
+        terminalCardFlipMotion.phase = 'open';
+        terminalCardFlipMotion.originRect = originRect;
+        terminalCardFlipMotion.sourceEl = cardEl;
+        terminalCardFlipMotion.connectionId = id;
+        document.querySelectorAll('#terminalWorkspace .terminal-window').forEach((w) => {
+            w.style.opacity = '';
+            w.style.visibility = '';
+            w.style.pointerEvents = '';
+        });
+    }
+    scheduleTerminalLayoutStabilize?.('card-flip-handoff', { focus: true });
+    return tabId;
+}
+
+function switchView(name, options = {}) {
+    const target = name === 'ai' ? 'dashboard' : name;
+    const wasTerminal = document.body.classList.contains('terminal-mode');
+    const enteringTerminal = target === 'terminal' && !wasTerminal;
+    const leavingTerminal = target !== 'terminal' && wasTerminal;
+    const sourceEl = options.cardFlipSource
+        || (options.cardFlipSourceSelector ? document.querySelector(options.cardFlipSourceSelector) : null);
+    // Open flip is owned by openConnectionWithCardFlip (starts before API).
+    // switchView only plays open flip when explicitly forced (forceCardFlipOpen).
+    const wantsOpenFlip = enteringTerminal && !options.skipCardFlip && !!options.forceCardFlipOpen && !!sourceEl;
+    const wantsCloseFlip = leavingTerminal && !options.skipCardFlip && (
+        terminalCardFlipMotion.phase === 'open'
+        || terminalCardFlipMotion.phase === 'opening'
+        || !!terminalCardFlipMotion.originRect
+    );
+
+    if (wantsOpenFlip) {
+        playTerminalCardFlipOpen(sourceEl, {
+            connectionId: options.connectionId || null,
+            originRect: options.originRect || null,
+            fromView: options.fromView || 'dashboard',
+        }).then(async (ok) => {
+            applySwitchViewCore(target, { enteringAnimated: true });
+            if (ok) await finishTerminalCardFlipOpenHandoff();
+            else {
+                resetTerminalCardFlipSurface(sshKeyMotion.engine);
+                terminalCardFlipMotion.phase = 'open';
+            }
+        }).catch((err) => {
+            console.warn('[terminal-card-flip] open path', err);
+            applySwitchViewCore(target, { enteringAnimated: true });
+        });
+        return;
+    }
+    if (wantsCloseFlip) {
+        // Keep terminal painted until shrink finishes, then land on destination.
+        playTerminalCardFlipClose({
+            sourceEl,
+            originRect: options.originRect || terminalCardFlipMotion.originRect || null,
+        }).then(() => {
+            applySwitchViewCore(target, { enteringAnimated: false });
+        }).catch((err) => {
+            console.warn('[terminal-card-flip] close path', err);
+            applySwitchViewCore(target, { enteringAnimated: false });
+        });
+        return;
+    }
+    if (leavingTerminal) {
+        resetTerminalCardFlipSurface(sshKeyMotion.engine);
+        terminalCardFlipMotion.phase = 'closed';
+        terminalCardFlipMotion.originRect = null;
+        terminalCardFlipMotion.sourceEl = null;
+    }
+    applySwitchViewCore(target, { enteringAnimated: false });
 }
 function parseTags(v) { return String(v || '').split(',').map((x) => x.trim()).filter(Boolean); }
 function base64urlToBuffer(value) { const s = String(value).replace(/-/g, '+').replace(/_/g, '/'); return Uint8Array.from(atob(s + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0)); }
@@ -10511,7 +11309,7 @@ function bindConnectionPressFeedback(root = document) {
 function bindEvents() {
     document.documentElement.dataset.appBindEvents = 'start';
     bindConnectionPressFeedback();
-    $$('.nav-tab').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view)));
+    $$('.nav-tab').forEach((btn) => btn.addEventListener('click', () => switchView(btn.dataset.view, { cardFlipSource: btn })));
     $$('.settings-tab').forEach((btn) => btn.addEventListener('click', () => {
         $$('.settings-tab').forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
@@ -10593,7 +11391,10 @@ function bindEvents() {
                 toast(err.message);
             }
         }
-        if (connect) openConnection(connect).catch((err) => toast(err.message));
+        if (connect) {
+            const sourceCard = e.target.closest?.('.connection-card') || e.target.closest?.('[data-connect]')?.closest?.('.connection-card') || e.target.closest?.('[data-connect]');
+            openConnectionWithCardFlip(connect, sourceCard).catch((err) => toast(err.message));
+        }
     });
     $('#sessionTabs').addEventListener('click', (e) => {
         if (suppressSmartbarClick) { suppressSmartbarClick = false; return; }
@@ -10676,7 +11477,12 @@ function bindEvents() {
         }
         if (e.target.closest?.('[data-smartbar-picker-close]')) { terminalSmartbarPickerOpen = false; renderTerminalSmartbar(); return; }
         const connect = e.target.closest?.('[data-smartbar-connect]')?.dataset.smartbarConnect;
-        if (connect) { terminalSmartbarPickerOpen = false; setTerminalSmartbarOpen(false); openConnection(connect).catch((err) => toast(err.message)); }
+        if (connect) {
+            terminalSmartbarPickerOpen = false;
+            setTerminalSmartbarOpen(false);
+            const sourceBtn = e.target.closest?.('[data-smartbar-connect]') || document.querySelector(`[data-smartbar-connect="${CSS.escape(String(connect))}"]`);
+            openConnectionWithCardFlip(connect, sourceBtn).catch((err) => toast(err.message));
+        }
     }, true);
     $('#sessionTabs').addEventListener('pointerdown', (e) => {
         if (isTerminalSmartbarInteractionTarget(e.target)) {

@@ -1,9 +1,9 @@
-const CACHE_NAME = 'zephyr-static-20260730-admin-role-delete1';
+const CACHE_NAME = 'zephyr-static-20260730-terminal-card-flip1';
 const PRECACHE = [
-    '/app.js?v=20260730-admin-role-delete1',
-    '/style.css?v=20260730-admin-role-delete1',
+    '/app.js?v=20260730-terminal-card-flip1',
+    '/style.css?v=20260730-terminal-card-flip1',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260730-admin-role-delete1',
+    '/terminal.js?v=20260730-terminal-card-flip1',
     '/notes.js',
     '/markdown.js',
 ];

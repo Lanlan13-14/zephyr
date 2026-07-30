@@ -6,10 +6,10 @@
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
 <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260730-admin-user-modal1">
-    <link rel="modulepreload" href="app.js?v=20260730-admin-role-delete1">
+    <link rel="modulepreload" href="app.js?v=20260730-terminal-card-flip1">
     <link rel="modulepreload" href="theme-runtime.js?v=20260730-admin-user-modal1">
     <link rel="modulepreload" href="i18n/runtime.js?v=20260730-admin-user-modal1">
-    <link rel="stylesheet" href="style.css?v=20260730-admin-role-delete1">
+    <link rel="stylesheet" href="style.css?v=20260730-terminal-card-flip1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -1006,6 +1006,15 @@
 
     <div id="connectionModalScrim" aria-hidden="true"></div>
     <div id="connectionMotionSurface" aria-hidden="true"></div>
+    <div id="terminalCardFlipStage" class="terminal-card-flip-stage" aria-hidden="true">
+        <div id="terminalCardFlipScrim" class="terminal-card-flip-scrim" aria-hidden="true"></div>
+        <div id="terminalCardFlipSurface" class="terminal-card-flip-surface" aria-hidden="true">
+            <div class="terminal-card-flip-rotor" data-terminal-card-rotor>
+                <div class="terminal-card-flip-face terminal-card-flip-front" data-terminal-card-front></div>
+                <div class="terminal-card-flip-face terminal-card-flip-back" data-terminal-card-back></div>
+            </div>
+        </div>
+    </div>
     <div class="modal-backdrop" id="connectionModal" aria-hidden="true">
         <form class="connection-modal" id="connectionForm" data-mode="create">
             <div id="connectionModalInner" class="connection-modal-inner">
@@ -1196,7 +1205,7 @@
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20260730-admin-role-delete1" type="module"></script>
+<script src="app.js?v=20260730-terminal-card-flip1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {
