@@ -2,6 +2,11 @@ import RFB from '/vendor/novnc/core/rfb.js';
 import { t, initI18n } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
 import KeyTable from '/vendor/novnc/core/input/keysym.js';
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
+import {
+    ensureFloatingPanelPhysicsDrag,
+    consumeLayoutClickSuppression,
+    markLayoutClickSuppressed,
+} from './floating-panel.js?v=20260731-panel-drag-physics1';
 
 const $ = (sel) => document.querySelector(sel);
 const NOVNC_CLIENT_VERSION = '2026-06-14-theme-palettes';
@@ -563,28 +568,14 @@ function openPanelLayoutMenu(button, panel) {
     });
 }
 function setupPanelLayoutMenu() {
+    // ⋯ click opens island menu. Hard drag bound by ensureFloatingPanelPhysicsDrag.
     document.querySelectorAll('[data-layout-panel]').forEach((button) => {
         const panel = document.getElementById(button.dataset.layoutPanel);
-        if (!panel || button.dataset.novncLayoutReady === '1') return;
-        button.dataset.novncLayoutReady = '1';
-        button.addEventListener('pointerdown', (event) => {
-            event.preventDefault(); event.stopPropagation(); bringPanelToFront(panel); button.classList.add('pressing'); button.setPointerCapture?.(event.pointerId);
-            const start = { x: event.clientX, y: event.clientY, left: panel.offsetLeft, top: panel.offsetTop };
-            let moved = false;
-            const move = (ev) => {
-                ev.preventDefault();
-                const dx = ev.clientX - start.x, dy = ev.clientY - start.y;
-                if (!moved && Math.hypot(dx, dy) > 7) { moved = true; closePanelLayoutMenu({ instant: true }); panel.classList.add('dragging'); }
-                if (!moved) return;
-                panel.style.left = `${start.left + dx}px`; panel.style.top = `${start.top + dy}px`; panel.style.right = 'auto'; panel.style.bottom = 'auto'; clampPanel(panel);
-            };
-            const up = () => { panel.classList.remove('dragging'); button.classList.remove('pressing'); suppressNextLayoutClick = moved; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
-            window.addEventListener('pointermove', move, { passive: false });
-            window.addEventListener('pointerup', up, { once: true });
-            window.addEventListener('pointercancel', up, { once: true });
-        });
+        if (!panel || button.dataset.panelLayoutClickBound === '1') return;
+        button.dataset.panelLayoutClickBound = '1';
         button.addEventListener('click', (event) => {
             event.preventDefault(); event.stopPropagation();
+            if (consumeLayoutClickSuppression()) return;
             if (suppressNextLayoutClick) { suppressNextLayoutClick = false; return; }
             bringPanelToFront(panel);
             if (navigator.vibrate) navigator.vibrate(8);
@@ -596,19 +587,16 @@ function setupPanelLayoutMenu() {
     });
 }
 function setupPanelDrag() {
-    const handles = [...document.querySelectorAll('[data-drag-panel]'), ...document.querySelectorAll('.novnc-panel .panel-titlebar')];
-    handles.forEach((handle) => {
-        const panel = handle.dataset.dragPanel ? document.getElementById(handle.dataset.dragPanel) : handle.closest('.novnc-panel');
-        if (!panel || handle.dataset.novncDragReady === '1') return;
-        handle.dataset.novncDragReady = '1';
-        handle.addEventListener('pointerdown', (event) => {
-            if (event.target.closest('button,input,select,textarea,label')) return;
-            event.preventDefault(); bringPanelToFront(panel); panel.classList.add('dragging'); handle.setPointerCapture?.(event.pointerId);
-            const start = { x: event.clientX, y: event.clientY, left: panel.offsetLeft, top: panel.offsetTop };
-            const move = (ev) => { ev.preventDefault(); panel.style.left = `${start.left + ev.clientX - start.x}px`; panel.style.top = `${start.top + ev.clientY - start.y}px`; panel.style.right = 'auto'; panel.style.bottom = 'auto'; clampPanel(panel); };
-            const up = () => { panel.classList.remove('dragging'); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-            window.addEventListener('pointermove', move, { passive: false });
-            window.addEventListener('pointerup', up, { once: true });
+    // AI panel parity: gray strip = Motion.drag physics; ⋯ = hard drag.
+    // Titlebar/content are NOT drag surfaces.
+    document.querySelectorAll('.rdp-floating-panel.novnc-panel, .novnc-panel').forEach((panel) => {
+        if (panel.dataset.panelPhysicsWired === '1') return;
+        panel.dataset.panelPhysicsWired = '1';
+        void ensureFloatingPanelPhysicsDrag(panel, {
+            handle: panel.querySelector('.panel-drag-handle'),
+            layoutButton: panel.querySelector('[data-layout-panel], .panel-traffic-btn'),
+            bringToFront: bringPanelToFront,
+            onActivate: () => markLayoutClickSuppressed(true),
         });
     });
 }

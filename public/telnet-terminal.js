@@ -27,6 +27,11 @@ import {
     shouldScrollOnTerminalOutput,
 } from './terminal-scroll-policy.js?v=20260721-kb-reopen1';
 import { createTerminalSurfaceController } from './terminal-surface-controller.js?v=20260721-kb-reopen1';
+import {
+    ensureFloatingPanelPhysicsDrag,
+    consumeLayoutClickSuppression,
+    markLayoutClickSuppressed,
+} from './floating-panel.js?v=20260731-panel-drag-physics1';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -4494,6 +4499,13 @@ function createFileManagerWindow({ path = currentPath } = {}) {
     panel.querySelector('.fm-editor-modal')?.remove();
     panel.querySelectorAll('[data-drag-panel]').forEach((el) => el.removeAttribute('data-drag-panel'));
     panel.querySelectorAll('[data-resize-panel]').forEach((el) => el.removeAttribute('data-resize-panel'));
+    // cloneNode copies dataset bind flags but not listeners — force rebind.
+    delete panel.dataset.panelPhysicsWired;
+    delete panel.dataset.panelPhysicsPointerBound;
+    panel.querySelectorAll('[data-panel-layout-click-bound], [data-layout-panel]').forEach((el) => {
+        delete el.dataset.panelLayoutClickBound;
+        delete el.dataset.panelBound;
+    });
     panel.classList.remove('open', 'front', 'front-switching', 'panel-opening', 'panel-closing', 'dragging', 'resizing', 'drag-over');
     panel.style.display = 'flex';
     const mount = fileManager.parentElement || terminalContainer.parentElement || document.querySelector('.terminal-page') || document.body;
@@ -4638,15 +4650,24 @@ function createFileManagerWindow({ path = currentPath } = {}) {
         target.addEventListener('dragleave', () => panel.classList.remove('drag-over'), { passive: true });
         target.addEventListener('drop', (e) => { if (!hasDraggedFiles(e)) return; e.preventDefault(); panel.classList.remove('drag-over'); uploadLocalFiles(e.dataTransfer?.files); }, { passive: false });
     });
-    layoutBtn?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); bringPanelToFront(panel); if (navigator.vibrate) navigator.vibrate(8); if (panelLayoutMenu && panelLayoutButton === layoutBtn) closePanelLayoutMenu(); else openPanelLayoutMenu(layoutBtn, panel); });
-    dragHandles.forEach((handle) => handle.addEventListener('pointerdown', (e) => {
-        if (e.target.closest('button,input,select,textarea,label')) return;
-        e.preventDefault(); bringPanelToFront(panel); panel.classList.add('dragging'); handle.setPointerCapture?.(e.pointerId);
-        const startX = e.clientX, startY = e.clientY, startLeft = panel.offsetLeft, startTop = panel.offsetTop;
-        const onMove = (ev) => { ev.preventDefault(); panel.style.left = `${startLeft + ev.clientX - startX}px`; panel.style.top = `${startTop + ev.clientY - startY}px`; panel.style.right = 'auto'; panel.style.bottom = 'auto'; clampPanel(panel); };
-        const onUp = () => { panel.classList.remove('dragging'); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
-        window.addEventListener('pointermove', onMove, { passive: false }); window.addEventListener('pointerup', onUp, { once: true });
-    }));
+    layoutBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (consumeLayoutClickSuppression()) return;
+        bringPanelToFront(panel);
+        if (navigator.vibrate) navigator.vibrate(8);
+        if (panelLayoutMenu && panelLayoutButton === layoutBtn) closePanelLayoutMenu();
+        else openPanelLayoutMenu(layoutBtn, panel);
+    });
+    // Extra FM windows: gray strip = physics, ⋯ = hard drag (AI parity).
+    // Titlebar is intentionally NOT a drag surface.
+    void ensureFloatingPanelPhysicsDrag(panel, {
+        handle: panel.querySelector('.panel-drag-handle'),
+        layoutButton: layoutBtn,
+        bringToFront: bringPanelToFront,
+        onActivate: () => markLayoutClickSuppressed(true),
+    });
+    void dragHandles;
     resizeHandles.forEach((handle) => handle.addEventListener('pointerdown', (e) => {
         e.preventDefault(); bringPanelToFront(panel); panel.classList.add('resizing'); handle.setPointerCapture?.(e.pointerId);
         const startX = e.clientX, startY = e.clientY, startWidth = panel.offsetWidth, startHeight = panel.offsetHeight, startLeft = panel.offsetLeft;
@@ -6744,80 +6765,15 @@ function setupEditorPanel(panel) {
         updateEditorZIndex(panel);
         bringPanelToFront(panel);
     }, { capture: true });
-    panel.querySelector('.fm-editor-header')?.addEventListener('pointerdown', (e) => {
-        // Buttons + the horizontally-scrollable actions strip must not start window drag.
-        if (e.target.closest('button,input,select,textarea,label,.fm-editor-header-actions')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        updateActiveEditorRefs(panel);
-        updateEditorZIndex(panel);
-        bringPanelToFront(panel);
-        panel.classList.add('dragging');
-        panel.setPointerCapture?.(e.pointerId);
-        const startX = e.clientX;
-        const startY = e.clientY;
-        const startLeft = panel.offsetLeft;
-        const startTop = panel.offsetTop;
-        const onMove = (ev) => {
-            ev.preventDefault();
-            panel.style.left = `${startLeft + ev.clientX - startX}px`;
-            panel.style.top = `${startTop + ev.clientY - startY}px`;
-            panel.dataset.editorMoved = '1';
-            panel.style.right = 'auto';
-            panel.style.bottom = 'auto';
-            clampPanel(panel);
-        };
-        const onUp = () => {
-            panel.classList.remove('dragging');
-            window.removeEventListener('pointermove', onMove);
-            window.removeEventListener('pointerup', onUp);
-        };
-        window.addEventListener('pointermove', onMove, { passive: false });
-        window.addEventListener('pointerup', onUp, { once: true });
-    });
+    // Editor chrome: gray strip (if present) = physics; ⋯ = hard drag.
+    // Header / titlebar body intentionally do NOT drag (AI panel parity).
     const editorLayoutButton = panel.querySelector('[data-layout-panel="editor"]');
     if (editorLayoutButton && !editorLayoutButton._editorLayoutReady) {
         editorLayoutButton._editorLayoutReady = true;
-        editorLayoutButton.addEventListener('pointerdown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            updateActiveEditorRefs(panel);
-            bringPanelToFront(panel);
-            editorLayoutButton.classList.add('pressing');
-            editorLayoutButton.setPointerCapture?.(e.pointerId);
-            const startX = e.clientX;
-            const startY = e.clientY;
-            const startLeft = panel.offsetLeft;
-            const startTop = panel.offsetTop;
-            let moved = false;
-            const onMove = (ev) => {
-                ev.preventDefault();
-                const dx = ev.clientX - startX;
-                const dy = ev.clientY - startY;
-                if (!moved && Math.hypot(dx, dy) > 7) { moved = true; closePanelLayoutMenu({ instant: true }); panel.classList.add('dragging'); }
-                if (!moved) return;
-                panel.style.left = `${startLeft + dx}px`;
-                panel.style.top = `${startTop + dy}px`;
-                panel.style.right = 'auto';
-                panel.style.bottom = 'auto';
-                panel.dataset.editorMoved = '1';
-                clampPanel(panel);
-            };
-            const onUp = () => {
-                panel.classList.remove('dragging');
-                editorLayoutButton.classList.remove('pressing');
-                suppressNextLayoutClick = moved;
-                window.removeEventListener('pointermove', onMove);
-                window.removeEventListener('pointerup', onUp);
-                window.removeEventListener('pointercancel', onUp);
-            };
-            window.addEventListener('pointermove', onMove, { passive: false });
-            window.addEventListener('pointerup', onUp, { once: true });
-            window.addEventListener('pointercancel', onUp, { once: true });
-        });
         editorLayoutButton.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (consumeLayoutClickSuppression()) return;
             if (suppressNextLayoutClick) { suppressNextLayoutClick = false; return; }
             updateActiveEditorRefs(panel);
             bringPanelToFront(panel);
@@ -6826,40 +6782,20 @@ function setupEditorPanel(panel) {
             else openPanelLayoutMenu(editorLayoutButton, panel);
         });
     }
-
-    const titlebar = panel.querySelector('.fm-editor-window-titlebar');
-    if (titlebar && !titlebar._editorTitlebarDragReady) {
-        titlebar._editorTitlebarDragReady = true;
-        titlebar.addEventListener('pointerdown', (e) => {
-            if (e.target.closest('button,input,select,textarea,label')) return;
-            e.preventDefault();
-            e.stopPropagation();
-            updateActiveEditorRefs(panel);
-            bringPanelToFront(panel);
-            panel.classList.add('dragging');
-            titlebar.setPointerCapture?.(e.pointerId);
-            const startX = e.clientX;
-            const startY = e.clientY;
-            const startLeft = panel.offsetLeft;
-            const startTop = panel.offsetTop;
-            const onMove = (ev) => {
-                ev.preventDefault();
-                panel.style.left = `${startLeft + ev.clientX - startX}px`;
-                panel.style.top = `${startTop + ev.clientY - startY}px`;
+    if (!panel.dataset.panelPhysicsWired) {
+        panel.dataset.panelPhysicsWired = '1';
+        void ensureFloatingPanelPhysicsDrag(panel, {
+            handle: panel.querySelector('.panel-drag-handle'),
+            layoutButton: editorLayoutButton || panel.querySelector('.panel-traffic-btn'),
+            bringToFront: (p) => {
+                updateActiveEditorRefs(p);
+                updateEditorZIndex(p);
+                bringPanelToFront(p);
+            },
+            onActivate: () => {
                 panel.dataset.editorMoved = '1';
-                panel.style.right = 'auto';
-                panel.style.bottom = 'auto';
-                clampPanel(panel);
-            };
-            const onUp = () => {
-                panel.classList.remove('dragging');
-                window.removeEventListener('pointermove', onMove);
-                window.removeEventListener('pointerup', onUp);
-                window.removeEventListener('pointercancel', onUp);
-            };
-            window.addEventListener('pointermove', onMove, { passive: false });
-            window.addEventListener('pointerup', onUp, { once: true });
-            window.addEventListener('pointercancel', onUp, { once: true });
+                markLayoutClickSuppressed(true);
+            },
         });
     }
 
@@ -6925,6 +6861,13 @@ function createEditorPanel(filePath) {
     const panel = template.cloneNode(true);
     panel.removeAttribute('id');
     panel.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+    // cloneNode copies dataset bind flags but not listeners — force rebind.
+    delete panel.dataset.panelPhysicsWired;
+    delete panel.dataset.panelPhysicsPointerBound;
+    panel.querySelectorAll('[data-layout-panel], .panel-traffic-btn').forEach((el) => {
+        delete el.dataset.panelLayoutClickBound;
+        delete el._editorLayoutReady;
+    });
     dockEditorPanel(panel);
     panel.dataset.editorPath = filePath;
     panel.style.display = 'flex';
@@ -11428,60 +11371,23 @@ function openPanelLayoutMenu(button, panel) {
 }
 
 function setupPanelLayoutMenu() {
+    // ⋯ click opens island menu. Hard drag is bound by ensureFloatingPanelPhysicsDrag.
     document.querySelectorAll('[data-layout-panel]').forEach((button) => {
-        const getPanel = () => button.dataset.layoutPanel === 'editor' ? button.closest('.fm-editor-modal') : document.getElementById(button.dataset.layoutPanel);
-        const panel = getPanel();
-        if (!panel) return;
-        button.addEventListener('pointerdown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            bringPanelToFront(panel);
-            button.classList.add('pressing');
-            button.setPointerCapture?.(e.pointerId);
-
-            const startX = e.clientX;
-            const startY = e.clientY;
-            const startLeft = panel.offsetLeft;
-            const startTop = panel.offsetTop;
-            let moved = false;
-
-            const onMove = (ev) => {
-                ev.preventDefault();
-                const dx = ev.clientX - startX;
-                const dy = ev.clientY - startY;
-                if (!moved && Math.hypot(dx, dy) > 7) {
-                    moved = true;
-                    closePanelLayoutMenu({ instant: true });
-                    panel.classList.add('dragging');
-                }
-                if (!moved) return;
-                panel.style.left = `${startLeft + dx}px`;
-                panel.style.top = `${startTop + dy}px`;
-                panel.style.right = 'auto';
-                panel.style.bottom = 'auto';
-                clampPanel(panel);
-            };
-
-            const onUp = () => {
-                panel.classList.remove('dragging');
-                button.classList.remove('pressing');
-                suppressNextLayoutClick = moved;
-                window.removeEventListener('pointermove', onMove);
-                window.removeEventListener('pointerup', onUp);
-                window.removeEventListener('pointercancel', onUp);
-            };
-
-            window.addEventListener('pointermove', onMove, { passive: false });
-            window.addEventListener('pointerup', onUp, { once: true });
-            window.addEventListener('pointercancel', onUp, { once: true });
-        });
+        if (button.dataset.panelLayoutClickBound === '1') return;
+        button.dataset.panelLayoutClickBound = '1';
         button.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (consumeLayoutClickSuppression()) return;
             if (suppressNextLayoutClick) {
                 suppressNextLayoutClick = false;
                 return;
             }
+            const getPanel = () => button.dataset.layoutPanel === 'editor'
+                ? button.closest('.fm-editor-modal')
+                : document.getElementById(button.dataset.layoutPanel);
+            const panel = getPanel();
+            if (!panel) return;
             bringPanelToFront(panel);
             console.info('[DynamicIslandDiagnostics]', {
                 event: 'layout-menu-toggle',
@@ -11545,41 +11451,25 @@ function setupFloatingPanel(panel, options) {
 }
 
 function setupPanelDrag() {
-    const handles = [
-        ...document.querySelectorAll('[data-drag-panel]'),
-        ...document.querySelectorAll('.panel-titlebar'),
-    ];
-    handles.forEach((handle) => {
-        const panel = handle.dataset.dragPanel
-            ? document.getElementById(handle.dataset.dragPanel)
-            : handle.closest('.file-manager, .info-modal, .docker-panel');
-        if (!panel) return;
-        handle.addEventListener('pointerdown', (e) => {
-            if (e.target.closest('button,input,select,textarea,label')) return;
-            e.preventDefault();
-            bringPanelToFront(panel);
-            panel.classList.add('dragging');
-            handle.setPointerCapture?.(e.pointerId);
-            const startX = e.clientX;
-            const startY = e.clientY;
-            const startLeft = panel.offsetLeft;
-            const startTop = panel.offsetTop;
-
-            const onMove = (ev) => {
-                ev.preventDefault();
-                panel.style.left = `${startLeft + ev.clientX - startX}px`;
-                panel.style.top = `${startTop + ev.clientY - startY}px`;
-                panel.style.right = 'auto';
-                panel.style.bottom = 'auto';
-                clampPanel(panel);
-            };
-            const onUp = () => {
-                panel.classList.remove('dragging');
-                window.removeEventListener('pointermove', onMove);
-                window.removeEventListener('pointerup', onUp);
-            };
-            window.addEventListener('pointermove', onMove);
-            window.addEventListener('pointerup', onUp, { once: true });
+    // AI panel parity: gray .panel-drag-handle → Motion.drag physics;
+    // ⋯ traffic light → precise hard drag. Title/content are NOT drag surfaces.
+    const panels = new Set();
+    document.querySelectorAll('[data-drag-panel]').forEach((handle) => {
+        const panel = document.getElementById(handle.dataset.dragPanel)
+            || handle.closest('.file-manager, .info-modal, .docker-panel, .snippet-panel, .shortcut-panel, .fm-editor-modal');
+        if (panel) panels.add(panel);
+    });
+    document.querySelectorAll('.file-manager, .info-modal, .docker-panel, .snippet-panel, .shortcut-panel').forEach((panel) => {
+        panels.add(panel);
+    });
+    panels.forEach((panel) => {
+        if (panel.dataset.panelPhysicsWired === '1') return;
+        panel.dataset.panelPhysicsWired = '1';
+        void ensureFloatingPanelPhysicsDrag(panel, {
+            handle: panel.querySelector('.panel-drag-handle'),
+            layoutButton: panel.querySelector('[data-layout-panel], .panel-traffic-btn'),
+            bringToFront: bringPanelToFront,
+            onActivate: () => markLayoutClickSuppressed(true),
         });
     });
 }

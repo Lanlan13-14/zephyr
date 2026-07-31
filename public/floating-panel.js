@@ -9,6 +9,19 @@ let panelLayoutMenu = null;
 let panelLayoutButton = null;
 let suppressNextLayoutClick = false;
 
+/** Shared ⋯ drag→click suppression (AI panel parity). */
+export function markLayoutClickSuppressed(value = true) {
+    suppressNextLayoutClick = !!value;
+}
+export function consumeLayoutClickSuppression() {
+    if (!suppressNextLayoutClick) return false;
+    suppressNextLayoutClick = false;
+    return true;
+}
+export function isLayoutClickSuppressed() {
+    return suppressNextLayoutClick;
+}
+
 import { t } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
 
 export function detectInteractionEnvironment() {
@@ -311,89 +324,374 @@ export function openPanelLayoutMenu(button, panel, { onClosePanel } = {}) {
     });
 }
 
+/** Motion loader — same module path/revision as AI panel / terminal toast. */
+const floatingPanelMotion = {
+    engine: null,
+    failed: false,
+    _p: null,
+    _ensure() {
+        if (this.engine) return Promise.resolve(this.engine);
+        if (this.failed && !this._p) return Promise.resolve(null);
+        if (this._p) return this._p;
+        this._p = import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1')
+            .then(async (mod) => {
+                const Motion = mod?.Motion || (typeof window !== 'undefined' ? window.Motion : null);
+                if (!Motion || typeof Motion.drag !== 'function') throw new Error('Motion.drag unavailable');
+                try { await Motion.init({ capacity: 256 }); } catch { /* ignore */ }
+                this.engine = Motion;
+                this.failed = false;
+                return Motion;
+            })
+            .catch(() => {
+                this.failed = true;
+                this._p = null;
+                return null;
+            });
+        return this._p;
+    },
+};
+
+const panelPhysicsState = new WeakMap();
+
+export function panelParentRect(panel) {
+    return panel?.parentElement?.getBoundingClientRect?.() || {
+        left: 0,
+        top: 0,
+        width: window.innerWidth || document.documentElement.clientWidth || 0,
+        height: window.innerHeight || document.documentElement.clientHeight || 0,
+    };
+}
+
+/** Keep only enough chrome on-screen to grab again (traffic light / title). */
+export function panelMinVisiblePx(panel) {
+    const width = panel?.offsetWidth || panel?.getBoundingClientRect?.().width || 320;
+    return Math.min(56, Math.max(44, Math.round(width * 0.12)));
+}
+
+export function bakePanelTransform(panel) {
+    if (!panel) return;
+    const parent = panelParentRect(panel);
+    const rect = panel.getBoundingClientRect();
+    Object.assign(panel.style, {
+        left: `${rect.left - parent.left}px`,
+        top: `${rect.top - parent.top}px`,
+        right: 'auto',
+        bottom: 'auto',
+        transform: '',
+    });
+}
+
+export function floatingPanelDragBounds(panel) {
+    const parent = panelParentRect(panel);
+    const width = panel.offsetWidth || panel.getBoundingClientRect().width;
+    const height = panel.offsetHeight || panel.getBoundingClientRect().height;
+    const left = parseFloat(panel.style.left) || 0;
+    const top = parseFloat(panel.style.top) || 0;
+    const minVisible = panelMinVisiblePx(panel);
+    return {
+        minX: (minVisible - width) - left,
+        maxX: (parent.width - minVisible) - left,
+        minY: (0) - top,
+        maxY: (Math.max(0, parent.height - Math.min(56, height * 0.25))) - top,
+    };
+}
+
+function hardClampDragDelta(panel, x, y) {
+    const b = floatingPanelDragBounds(panel);
+    return {
+        x: Math.min(b.maxX ?? Infinity, Math.max(b.minX ?? -Infinity, x)),
+        y: Math.min(b.maxY ?? Infinity, Math.max(b.minY ?? -Infinity, y)),
+    };
+}
+
+function softClampPanelEdge(panel) {
+    if (!panel?.parentElement) return;
+    const rect = panel.getBoundingClientRect();
+    const parentRect = panelParentRect(panel);
+    const minVisible = panelMinVisiblePx(panel);
+    const left = Math.min(Math.max(rect.left - parentRect.left, -rect.width + minVisible), parentRect.width - minVisible);
+    // Match AI panel: keep a thin top edge so the gray strip stays grabbable.
+    const top = Math.min(Math.max(rect.top - parentRect.top, 8), parentRect.height - minVisible);
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+}
+
+function finishFloatingPanelPhysicsDrag(panel, Motion, { onFinish } = {}) {
+    bakePanelTransform(panel);
+    try { Motion?.stop?.(panel, ['x', 'y']); Motion?.set?.(panel, { x: 0, y: 0 }); Motion?.release?.(panel); } catch { /* ignore */ }
+    panel.classList.remove('dragging');
+    panel.style.willChange = '';
+    panel.style.transform = '';
+    softClampPanelEdge(panel);
+    if (typeof onFinish === 'function') {
+        try { onFinish(panel); } catch { /* ignore */ }
+    }
+    window.setTimeout(() => {
+        suppressNextLayoutClick = false;
+        panel._suppressHeaderClick = false;
+    }, 320);
+}
+
+/**
+ * Precise 1:1 hard drag (no rubberband/inertia) — used by the ⋯ traffic light.
+ * Gray strip uses Motion.drag physics instead.
+ */
+export function startFloatingPanelHardDrag(panel, e, {
+    threshold = 4,
+    suppressLayoutClick = false,
+    onActivate,
+    onFinish,
+    bringToFront = bringPanelToFront,
+} = {}) {
+    if (!panel || !e) return;
+    if (e.button !== undefined && e.button !== 0) return;
+    try { bringToFront?.(panel); } catch { /* ignore */ }
+    void floatingPanelMotion._ensure().then((Motion) => {
+        try { Motion?.stop?.(panel); Motion?.set?.(panel, { x: 0, y: 0 }); } catch { /* ignore */ }
+    }).catch(() => {});
+    bakePanelTransform(panel);
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const sl = panel.offsetLeft;
+    const st = panel.offsetTop;
+    let dragging = false;
+    let raf = 0;
+    let lastX = sx;
+    let lastY = sy;
+    const commit = () => {
+        raf = 0;
+        panel.style.left = `${sl + lastX - sx}px`;
+        panel.style.top = `${st + lastY - sy}px`;
+        panel.style.right = 'auto';
+        panel.style.bottom = 'auto';
+        panel.style.transform = '';
+        softClampPanelEdge(panel);
+    };
+    const move = (ev) => {
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+        const dist = Math.hypot(lastX - sx, lastY - sy);
+        if (!dragging && dist > threshold) {
+            dragging = true;
+            panel.classList.add('dragging');
+            panel._suppressHeaderClick = true;
+            if (suppressLayoutClick) {
+                suppressNextLayoutClick = true;
+                closePanelLayoutMenu({ instant: true });
+            }
+            if (typeof onActivate === 'function') {
+                try { onActivate(panel); } catch { /* ignore */ }
+            }
+        }
+        if (!dragging) return;
+        ev.preventDefault();
+        if (!raf) raf = requestAnimationFrame(commit);
+    };
+    const up = () => {
+        if (raf) cancelAnimationFrame(raf);
+        if (dragging) commit();
+        panel.classList.remove('dragging');
+        if (typeof onFinish === 'function') {
+            try { onFinish(panel, { dragged: dragging }); } catch { /* ignore */ }
+        }
+        if (suppressLayoutClick && dragging) {
+            window.setTimeout(() => { suppressNextLayoutClick = false; }, 700);
+        }
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+    };
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', up, { once: true });
+    window.addEventListener('pointercancel', up, { once: true });
+}
+
+/**
+ * Bind AI-identical physics drag on the gray strip + hard drag on ⋯.
+ * Title/content never receive drag listeners.
+ */
+export async function ensureFloatingPanelPhysicsDrag(panel, {
+    handle,
+    layoutButton,
+    layoutSelector = '[data-layout-panel], [data-action="layout"], [data-ai-agent-layout]',
+    onActivate,
+    onFinish,
+    bringToFront = bringPanelToFront,
+    force = false,
+} = {}) {
+    if (!panel) return false;
+    // Prefer explicit gray strip; fall back to window titlebar chrome when a
+    // panel only has traffic-light titlebar (editor / image / media preview).
+    const dragHandle = handle
+        || panel.querySelector('.panel-drag-handle')
+        || panel.querySelector('.fm-editor-window-titlebar, .image-preview-titlebar, .media-preview-titlebar');
+    let state = panelPhysicsState.get(panel);
+    if (!state) {
+        state = { physicsReady: false, controller: null, hardBound: false, fallbackBound: false };
+        panelPhysicsState.set(panel, state);
+    }
+
+    // Precise hard drag on ⋯ only.
+    const traffic = layoutButton
+        || panel.querySelector(layoutSelector)
+        || panel.querySelector('.panel-traffic-btn');
+    if (traffic && !state.hardBound) {
+        state.hardBound = true;
+        traffic.addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            traffic.classList.add('pressing');
+            // Hold-and-drag on ⋯ = precise hard drag; short click still opens layout menu.
+            startFloatingPanelHardDrag(panel, e, {
+                suppressLayoutClick: true,
+                threshold: 4,
+                onActivate,
+                onFinish,
+                bringToFront,
+            });
+            const up = () => {
+                traffic.classList.remove('pressing');
+                window.removeEventListener('pointerup', up);
+                window.removeEventListener('pointercancel', up);
+            };
+            window.addEventListener('pointerup', up, { once: true });
+            window.addEventListener('pointercancel', up, { once: true });
+        });
+    }
+
+    if (state.physicsReady && !force) return true;
+    const Motion = await floatingPanelMotion._ensure();
+    if (!Motion || floatingPanelMotion.failed || typeof Motion.drag !== 'function') {
+        // Engine unavailable: hard-drag fallback still limited to gray strip.
+        if (dragHandle && !state.fallbackBound) {
+            state.fallbackBound = true;
+            dragHandle.addEventListener('pointerdown', (e) => {
+                if (e.target.closest?.(layoutSelector + ', button, a, input, textarea, select, [role="button"], label')) return;
+                startFloatingPanelHardDrag(panel, e, {
+                    suppressLayoutClick: false,
+                    threshold: 4,
+                    onActivate,
+                    onFinish,
+                    bringToFront,
+                });
+            });
+        }
+        return false;
+    }
+
+    if (state.controller?.destroy) {
+        try { state.controller.destroy(); } catch { /* ignore */ }
+    }
+
+    // Only the top gray .panel-drag-handle owns physical dragging.
+    // Three-dot traffic light is separately wired to precise hard drag.
+    state.controller = Motion.drag(panel, {
+        handle: dragHandle,
+        activationThreshold: 4,
+        rubberband: true,
+        decelRate: 0.997,
+        preset: 'ui',
+        bounds: () => floatingPanelDragBounds(panel),
+        snap: (tx, ty, ctx) => {
+            const b = floatingPanelDragBounds(panel);
+            const cx = Number(ctx?.x);
+            const cy = Number(ctx?.y);
+            const pastEdge = Number.isFinite(cx) && (
+                cx < (b.minX ?? -Infinity) - 0.5
+                || cx > (b.maxX ?? Infinity) + 0.5
+                || (Number.isFinite(cy) && (cy < (b.minY ?? -Infinity) - 0.5 || cy > (b.maxY ?? Infinity) + 0.5))
+            );
+            if (pastEdge) return hardClampDragDelta(panel, cx, cy);
+            return hardClampDragDelta(panel, tx, ty);
+        },
+        filter: (e) => {
+            if (!e || !dragHandle) return false;
+            if (e.button != null && e.button !== 0) return false;
+            if (e.target?.closest?.(layoutSelector)) return false;
+            const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+            const fromHandle = path.includes?.(dragHandle)
+                || dragHandle === e.target
+                || dragHandle.contains?.(e.target);
+            if (!fromHandle) return false;
+            if (e.target?.closest?.('button, a, input, textarea, select, [role="button"], label')) return false;
+            return true;
+        },
+        onActivate: () => {
+            try { bringToFront?.(panel); } catch { /* ignore */ }
+            closePanelLayoutMenu({ instant: true });
+            suppressNextLayoutClick = true;
+            panel._suppressHeaderClick = true;
+            try { Motion.stop(panel); } catch { /* ignore */ }
+            bakePanelTransform(panel);
+            try { Motion.set(panel, { x: 0, y: 0 }); } catch { /* ignore */ }
+            panel.classList.add('dragging');
+            panel.style.willChange = 'transform';
+            if (typeof onActivate === 'function') {
+                try { onActivate(panel); } catch { /* ignore */ }
+            }
+        },
+        onMove: () => {},
+        onEnd: ({ settled }) => {
+            if (settled && typeof settled.then === 'function') {
+                settled.then(() => finishFloatingPanelPhysicsDrag(panel, Motion, { onFinish }))
+                    .catch(() => finishFloatingPanelPhysicsDrag(panel, Motion, { onFinish }));
+            } else {
+                finishFloatingPanelPhysicsDrag(panel, Motion, { onFinish });
+            }
+        },
+        onCancel: () => {
+            panel.classList.remove('dragging');
+        },
+    });
+    state.physicsReady = true;
+
+    // Lazy rebind if first interaction happened before engine boot.
+    if (!panel.dataset.panelPhysicsPointerBound) {
+        panel.dataset.panelPhysicsPointerBound = '1';
+        panel.addEventListener('pointerdown', () => {
+            void ensureFloatingPanelPhysicsDrag(panel, {
+                handle: dragHandle,
+                layoutButton: traffic,
+                layoutSelector,
+                onActivate,
+                onFinish,
+                bringToFront,
+            });
+        });
+    }
+    return true;
+}
+
 export function setupPanelInteractions(root = document, {
     panelSelector = '.rdp-floating-panel',
     onClosePanel,
+    bringToFront = bringPanelToFront,
 } = {}) {
-    // Titlebar drag (parent-relative coordinates, same as SSH).
+    // Physics on gray strip + hard drag on ⋯ (AI panel parity).
+    // Title/content are NOT drag surfaces.
+    const panels = new Set();
+    root.querySelectorAll(panelSelector).forEach((panel) => panels.add(panel));
     root.querySelectorAll('[data-drag-panel]').forEach((handle) => {
-        if (handle.dataset.panelBound === '1') return;
-        handle.dataset.panelBound = '1';
-        handle.addEventListener('pointerdown', (e) => {
-            if (e.target.closest('[data-layout-panel], button, input, select, textarea, label')) return;
-            const panel = document.getElementById(handle.dataset.dragPanel) || handle.closest(panelSelector);
-            if (!panel?.parentElement) return;
-            e.preventDefault();
-            bringPanelToFront(panel);
-            panel.classList.add('dragging');
-            handle.setPointerCapture?.(e.pointerId);
-            const startX = e.clientX;
-            const startY = e.clientY;
-            const startLeft = panel.offsetLeft;
-            const startTop = panel.offsetTop;
-            const onMove = (ev) => {
-                ev.preventDefault();
-                panel.style.left = `${startLeft + ev.clientX - startX}px`;
-                panel.style.top = `${startTop + ev.clientY - startY}px`;
-                panel.style.right = 'auto';
-                panel.style.bottom = 'auto';
-                clampPanel(panel);
-            };
-            const onUp = () => {
-                panel.classList.remove('dragging');
-                window.removeEventListener('pointermove', onMove);
-                window.removeEventListener('pointerup', onUp);
-            };
-            window.addEventListener('pointermove', onMove, { passive: false });
-            window.addEventListener('pointerup', onUp, { once: true });
+        const panel = document.getElementById(handle.dataset.dragPanel) || handle.closest(panelSelector);
+        if (panel) panels.add(panel);
+    });
+    panels.forEach((panel) => {
+        if (panel.dataset.panelPhysicsWired === '1') return;
+        panel.dataset.panelPhysicsWired = '1';
+        const dragHandle = panel.querySelector('.panel-drag-handle');
+        const layoutButton = panel.querySelector('[data-layout-panel], .panel-traffic-btn');
+        void ensureFloatingPanelPhysicsDrag(panel, {
+            handle: dragHandle,
+            layoutButton,
+            bringToFront,
         });
     });
 
-    // Traffic-light button: press-and-drag moves panel; click opens island menu.
+    // Traffic-light click opens island menu (drag is handled by hard-drag binder).
     root.querySelectorAll('[data-layout-panel]').forEach((button) => {
-        if (button.dataset.panelBound === '1') return;
-        button.dataset.panelBound = '1';
-        button.addEventListener('pointerdown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const panel = document.getElementById(button.dataset.layoutPanel) || button.closest(panelSelector);
-            if (!panel) return;
-            bringPanelToFront(panel);
-            button.classList.add('pressing');
-            button.setPointerCapture?.(e.pointerId);
-            const startX = e.clientX;
-            const startY = e.clientY;
-            const startLeft = panel.offsetLeft;
-            const startTop = panel.offsetTop;
-            let moved = false;
-            const onMove = (ev) => {
-                ev.preventDefault();
-                const dx = ev.clientX - startX;
-                const dy = ev.clientY - startY;
-                if (!moved && Math.hypot(dx, dy) > 7) {
-                    moved = true;
-                    closePanelLayoutMenu({ instant: true });
-                    panel.classList.add('dragging');
-                }
-                if (!moved) return;
-                panel.style.left = `${startLeft + dx}px`;
-                panel.style.top = `${startTop + dy}px`;
-                panel.style.right = 'auto';
-                panel.style.bottom = 'auto';
-                clampPanel(panel);
-            };
-            const onUp = () => {
-                panel.classList.remove('dragging');
-                button.classList.remove('pressing');
-                suppressNextLayoutClick = moved;
-                window.removeEventListener('pointermove', onMove);
-                window.removeEventListener('pointerup', onUp);
-                window.removeEventListener('pointercancel', onUp);
-            };
-            window.addEventListener('pointermove', onMove, { passive: false });
-            window.addEventListener('pointerup', onUp, { once: true });
-            window.addEventListener('pointercancel', onUp, { once: true });
-        });
+        if (button.dataset.panelLayoutClickBound === '1') return;
+        button.dataset.panelLayoutClickBound = '1';
         button.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -403,7 +701,7 @@ export function setupPanelInteractions(root = document, {
             }
             const panel = document.getElementById(button.dataset.layoutPanel) || button.closest(panelSelector);
             if (!panel) return;
-            bringPanelToFront(panel);
+            try { bringToFront?.(panel); } catch { /* ignore */ }
             if (navigator.vibrate) navigator.vibrate(8);
             if (panelLayoutMenu && panelLayoutButton === button) closePanelLayoutMenu();
             else openPanelLayoutMenu(button, panel, { onClosePanel });
@@ -527,4 +825,16 @@ export function toggleFloatingPanel(panel, button, options = {}) {
     if (willOpen) openFloatingPanel(panel, button, options);
     else closeFloatingPanel(panel, button);
     return willOpen;
+}
+
+// Preview IIFE modules (image/media) share the same drag policy via window.
+if (typeof window !== 'undefined') {
+    window.ZephyrFloatingPanelPhysics = {
+        ensure: ensureFloatingPanelPhysicsDrag,
+        hardDrag: startFloatingPanelHardDrag,
+        markLayoutClickSuppressed,
+        consumeLayoutClickSuppression,
+        bake: bakePanelTransform,
+        bounds: floatingPanelDragBounds,
+    };
 }

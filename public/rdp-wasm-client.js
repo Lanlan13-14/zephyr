@@ -25,7 +25,7 @@ import {
     bringPanelToFront,
     applyPanelLayout,
     closePanelLayoutMenu,
-} from './floating-panel.js?v=20260720-zft2';
+} from './floating-panel.js?v=20260731-panel-drag-physics1';
 import {
     subscribeAgentEvents,
     unsubscribeAgentEvents,
