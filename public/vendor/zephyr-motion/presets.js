@@ -17,6 +17,8 @@ export const MOTION_STANDARDS = Object.freeze({
   iosCardFlipClose: 4,
   iosCardContent: 5,
   iosCardScrim: 6,
+  stretchExpandOpen: 7,
+  stretchExpandClose: 8,
 });
 
 export const STANDARD_FALLBACKS = Object.freeze({
@@ -26,6 +28,9 @@ export const STANDARD_FALLBACKS = Object.freeze({
   [MOTION_STANDARDS.iosCardFlipClose]: { response: 0.38, damping: 0.96 },
   [MOTION_STANDARDS.iosCardContent]: { response: 0.32, damping: 1.00 },
   [MOTION_STANDARDS.iosCardScrim]: { response: 0.42, damping: 1.00 },
+  // Keep in lockstep with motion-wasm/motion/standards.go
+  [MOTION_STANDARDS.stretchExpandOpen]: { response: 0.48, damping: 1.00 },
+  [MOTION_STANDARDS.stretchExpandClose]: { response: 0.48, damping: 1.00 },
 });
 
 export const PRESETS = {
@@ -57,6 +62,9 @@ export const PRESETS = {
   island:  { response: 0.42, damping: 0.92 },
   islandPress: { response: 0.22, damping: 0.95 },
   bouncy:  { response: 0.40, damping: 0.72 },
+  // Bottom-anchored fill (mobile terminal fullscreen). Same curve both ways —
+  // reference HTML cubic-bezier(0.65,0,0.35,1) @ 0.6s → critically-damped ~0.48s.
+  stretch: { response: 0.48, damping: 1.0 },
 };
 
 /** Resolve a preset name or {response, damping} object to numbers. */

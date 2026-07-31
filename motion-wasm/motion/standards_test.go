@@ -17,6 +17,8 @@ func TestIOSCardStandardProfiles(t *testing.T) {
 		{StandardIOSCardFlipClose, 0.38, 0.96},
 		{StandardIOSCardContent, 0.32, 1.00},
 		{StandardIOSCardScrim, 0.42, 1.00},
+		{StandardStretchExpandOpen, 0.48, 1.00},
+		{StandardStretchExpandClose, 0.48, 1.00},
 	}
 	for _, tt := range tests {
 		profile, ok := ProfileForStandard(tt.standard)

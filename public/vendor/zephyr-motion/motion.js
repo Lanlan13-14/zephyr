@@ -2583,8 +2583,113 @@ export const Motion = {
         'shelf', 'toastPush', 'toastDismiss',
         'dockMagnify', 'dockMagnifyPointer', 'dockMagnifyVerticalPointer', 'dockMagnifyReset',
         'aiPanelOpen', 'aiPanelClose', 'clipInset',
+        'stretchExpand',
       ],
     };
+  },
+
+  /**
+   * Bottom-anchored vertical fill driven by the Go spring engine
+   * (StandardStretchExpandOpen/Close). Open and close share the same critical
+   * spring so mid-flight reverse is continuous — no CSS transition.
+   *
+   *   Motion.stretchExpand(el, { open: true, fromRect, toHeight, radiusFrom, radiusTo })
+   *   Motion.stretchExpand(el, { open: false, fromRect, toHeight, radiusFrom, radiusTo })
+   *
+   * Geometry: bottom edge fixed, only height + radius spring. Interruptible:
+   * a second call retargets from the live presentation height/radius.
+   */
+  async stretchExpand(el, opts = {}) {
+    if (!el) return false;
+    // Ensure engine (wasm preferred) is ready before allocating slots.
+    try { await this.init({ capacity: 256 }); } catch { /* use whatever is live */ }
+
+    const token = this._bump(el);
+    const open = opts.open !== false;
+    const standard = open
+      ? (MOTION_STANDARDS.stretchExpandOpen ?? 7)
+      : (MOTION_STANDARDS.stretchExpandClose ?? 8);
+    const vh = Number(opts.viewportHeight)
+      || Math.max(
+        (typeof window !== 'undefined' ? window.innerHeight : 0) || 0,
+        (typeof document !== 'undefined' ? document.documentElement?.clientHeight : 0) || 0,
+        1,
+      );
+    const live = el.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0, bottom: 0, right: 0 };
+    const fromRect = opts.fromRect || live;
+    // Vertical-only fill (reference HTML): always full viewport width.
+    // NEVER animate left/width — that caused a one-frame horizontal flash when
+    // settling into custom-fullscreen (inset:0 / 100vw).
+    const fullBleedX = opts.fullBleedX !== false;
+    const pinBottom = Number.isFinite(Number(opts.pinBottom))
+      ? Math.max(0, Number(opts.pinBottom))
+      : 0; // bottom edge glued to viewport bottom; only the top edge moves
+    // Explicit from→to heights. Open: collapsed→viewport. Close: full→collapsed.
+    const measuredH = Math.max(1, Number(fromRect.height) || live.height || el.offsetHeight || 1);
+    const startH = Math.max(1, Number(opts.fromHeight) || measuredH);
+    const endH = Math.max(1, Number(opts.toHeight) || (open ? Math.max(startH, vh - pinBottom) : startH));
+    const radiusFrom = Number.isFinite(Number(opts.radiusFrom))
+      ? Number(opts.radiusFrom)
+      : (open ? 18 : 0);
+    const radiusTo = Number.isFinite(Number(opts.radiusTo))
+      ? Number(opts.radiusTo)
+      : (open ? 0 : 18);
+
+    // Pin bottom edge; only height + radius spring. No horizontal motion.
+    el.style.position = 'fixed';
+    if (fullBleedX) {
+      el.style.left = '0';
+      el.style.right = '0';
+      el.style.width = '100vw';
+    } else {
+      const left = Number.isFinite(Number(opts.left)) ? Number(opts.left) : (Number(fromRect.left) || live.left || 0);
+      const width = Number.isFinite(Number(opts.width))
+        ? Number(opts.width)
+        : Math.max(1, Number(fromRect.width) || live.width || el.offsetWidth || 1);
+      el.style.left = `${left}px`;
+      el.style.width = `${width}px`;
+      el.style.right = 'auto';
+    }
+    el.style.top = 'auto';
+    el.style.bottom = `${pinBottom}px`;
+    el.style.maxHeight = 'none';
+    el.style.minHeight = '0';
+    el.style.zIndex = String(opts.zIndex || 1000);
+    el.style.willChange = 'height, border-radius';
+    el.style.overflow = el.style.overflow || 'hidden';
+    el.style.boxSizing = 'border-box';
+    // Kill host CSS transitions so radius/height aren't double-driven.
+    el.style.transition = 'none';
+
+    const animating = this.isAnimating(el);
+    const liveH = animating && Number.isFinite(this.value(el, 'h'))
+      ? Math.max(1, this.value(el, 'h'))
+      : startH;
+    const liveR = animating && Number.isFinite(this.value(el, 'radius'))
+      ? this.value(el, 'radius')
+      : radiusFrom;
+
+    // Seed only when idle so interrupt keeps live velocity.
+    if (!animating) {
+      this.set(el, { h: liveH, radius: liveR });
+    }
+
+    // Go-owned standard (wasm configureStandard); JS fallback uses STANDARD_FALLBACKS.
+    await this.to(el, { h: endH, radius: radiusTo }, {
+      standard,
+      delay: opts.delay ?? 0,
+    });
+
+    if (this._genOf(el) !== token) return false;
+    if (opts.release !== false) {
+      this.release(el);
+      if (opts.clearInline !== false) {
+        for (const prop of ['position', 'left', 'width', 'right', 'top', 'bottom', 'zIndex', 'willChange', 'maxHeight', 'minHeight', 'overflow', 'boxSizing', 'height', 'borderRadius', 'transition']) {
+          el.style[prop] = '';
+        }
+      }
+    }
+    return this._genOf(el) === token;
   },
 
   // ── clip-path inset (liquid island / progressive reveal) ───────────────

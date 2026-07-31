@@ -1,9 +1,9 @@
-const CACHE_NAME = 'zephyr-static-20260731-activity-meta1';
+const CACHE_NAME = 'zephyr-static-20260731-fullscreen-stretch1';
 const PRECACHE = [
-    '/app.js?v=20260731-activity-meta1',
-    '/style.css?v=20260731-activity-meta1',
+    '/app.js?v=20260731-fullscreen-stretch1',
+    '/style.css?v=20260731-fullscreen-stretch1',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260731-activity-meta1',
+    '/terminal.js?v=20260731-fullscreen-stretch1',
     '/notes.js',
     '/markdown.js',
 ];

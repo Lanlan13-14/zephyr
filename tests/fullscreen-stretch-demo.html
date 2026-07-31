@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Motion.stretchExpand 演示</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "PingFang SC", "SF Pro Text", system-ui, sans-serif;
+    background: linear-gradient(160deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #f4f4f6;
+    overflow: hidden;
+  }
+  .chrome {
+    height: 40vh;
+    display: grid;
+    place-content: center;
+    gap: 8px;
+    text-align: center;
+    color: rgba(255,255,255,.88);
+    padding: 24px;
+  }
+  .chrome h1 { font-size: 22px; font-weight: 700; letter-spacing: .04em; }
+  .chrome p { font-size: 13px; opacity: .7; line-height: 1.6; }
+  #workspace {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    height: 58vh;
+    border-radius: 18px;
+    background: linear-gradient(170deg, #667eea 0%, #764ba2 100%);
+    border: 0;
+    box-shadow: 0 -12px 40px rgba(0,0,0,.35);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  #workspace.custom-fullscreen {
+    left: 0; right: 0; bottom: 0;
+    width: 100vw !important;
+    height: 100dvh !important;
+    border-radius: 0;
+    border: 0;
+  }
+  .titlebar {
+    flex: 0 0 auto;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 14px;
+    background: rgba(255,255,255,.12);
+    border-bottom: 1px solid rgba(255,255,255,.12);
+  }
+  .titlebar strong { font-size: 14px; color: #fff; }
+  .titlebar button {
+    border: 0;
+    border-radius: 999px;
+    padding: 8px 14px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    background: rgba(255,255,255,.92);
+    color: #4c1d95;
+  }
+  .body {
+    flex: 1;
+    min-height: 0;
+    padding: 16px 18px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    color: rgba(255,255,255,.92);
+    overflow: auto;
+    white-space: pre-wrap;
+  }
+  #log {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    z-index: 20;
+    pointer-events: none;
+    font: 11px/1.45 ui-monospace, monospace;
+    color: rgba(255,255,255,.55);
+    text-shadow: 0 1px 2px rgba(0,0,0,.5);
+  }
+  .hint {
+    margin-top: 8px;
+    opacity: .75;
+  }
+</style>
+</head>
+<body>
+  <div id="log">loading Motion…</div>
+  <div class="chrome">
+    <h1>顶部区域（模拟导航）</h1>
+    <p>点击终端把手「全屏 / 退出全屏」<br>底边固定 · 顶部向上拉伸 · 同一弹簧双向可打断</p>
+  </div>
+
+  <div id="workspace">
+    <div class="titlebar">
+      <strong>● Xnnet</strong>
+      <button type="button" id="toggle">全屏</button>
+    </div>
+    <div class="body" id="term">Last login: Fri Jul 31 03:12:38 2026 from 172.17.0.2
+root@zephyr-ssh:~# ls
+app  data  public  server.js
+root@zephyr-ssh:~# █
+
+<span class="hint">参考：shared-c5377866.html
+引擎：Motion.stretchExpand · preset stretch</span></div>
+  </div>
+
+<script type="module">
+import { Motion } from '../public/vendor/zephyr-motion/index.js?v=20260731-fullscreen-stretch1';
+
+const workspace = document.getElementById('workspace');
+const toggle = document.getElementById('toggle');
+const logEl = document.getElementById('log');
+let open = false;
+let gen = 0;
+let origin = null;
+
+function log(msg) {
+  logEl.textContent = msg;
+  console.log('[demo]', msg);
+}
+
+function clearInline() {
+  for (const prop of ['position','left','width','right','top','bottom','zIndex','willChange','maxHeight','minHeight','overflow','boxSizing','height','borderRadius','transform','opacity','filter']) {
+    workspace.style[prop] = '';
+  }
+}
+
+async function boot() {
+  try {
+    await Motion.init({ capacity: 64 });
+    log(`Motion ready · wasm=${!!Motion.usingWasm} · stretchExpand=${typeof Motion.stretchExpand}`);
+  } catch (err) {
+    log(`Motion init warn: ${err?.message || err}`);
+  }
+  if (typeof Motion.stretchExpand !== 'function') {
+    log('ERROR: Motion.stretchExpand missing');
+    return;
+  }
+
+  toggle.addEventListener('click', async () => {
+    const my = ++gen;
+    const entering = !open;
+    const t0 = performance.now();
+    log(`${entering ? 'ENTER' : 'EXIT'} start · gen=${my}`);
+    try {
+      if (entering) {
+        const fromRect = workspace.getBoundingClientRect();
+        origin = {
+          left: fromRect.left, top: fromRect.top,
+          width: fromRect.width, height: fromRect.height,
+          bottom: fromRect.bottom, right: fromRect.right,
+        };
+        const radiusFrom = parseFloat(getComputedStyle(workspace).borderRadius) || 18;
+        const vh = Math.max(window.innerHeight, document.documentElement.clientHeight);
+        await Motion.stretchExpand(workspace, {
+          open: true,
+          fromRect,
+          fromHeight: fromRect.height,
+          toHeight: vh,
+          radiusFrom,
+          radiusTo: 0,
+          release: false,
+          clearInline: false,
+        });
+        if (my !== gen) return;
+        workspace.classList.add('custom-fullscreen');
+        try { Motion.release(workspace); } catch {}
+        clearInline();
+        open = true;
+        toggle.textContent = '退出全屏';
+      } else {
+        const fullRect = workspace.getBoundingClientRect();
+        const vh = Math.max(window.innerHeight, document.documentElement.clientHeight);
+        const collapsedH = Math.max(1, origin?.height || Math.round(vh * 0.58));
+        workspace.style.position = 'fixed';
+        workspace.style.left = `${fullRect.left}px`;
+        workspace.style.width = `${fullRect.width}px`;
+        workspace.style.top = 'auto';
+        workspace.style.bottom = `${Math.max(0, vh - fullRect.bottom)}px`;
+        workspace.style.height = `${fullRect.height}px`;
+        workspace.style.borderRadius = '0px';
+        workspace.style.zIndex = '1000';
+        workspace.classList.remove('custom-fullscreen');
+        void workspace.offsetHeight;
+        await Motion.stretchExpand(workspace, {
+          open: false,
+          fromRect: fullRect,
+          fromHeight: fullRect.height,
+          toHeight: collapsedH,
+          radiusFrom: 0,
+          radiusTo: 18,
+          left: origin?.left ?? fullRect.left,
+          width: origin?.width ?? fullRect.width,
+          release: false,
+          clearInline: false,
+          
+        });
+        if (my !== gen) return;
+        try { Motion.release(workspace); } catch {}
+        clearInline();
+        origin = null;
+        open = false;
+        toggle.textContent = '全屏';
+      }
+      log(`${entering ? 'ENTER' : 'EXIT'} done · ${(performance.now()-t0).toFixed(0)}ms · gen=${my}`);
+    } catch (err) {
+      log(`FAIL: ${err?.message || err}`);
+      clearInline();
+    }
+  });
+}
+boot();
+</script>
+</body>
+</html>

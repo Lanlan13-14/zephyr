@@ -12,6 +12,10 @@ const (
 	StandardIOSCardFlipClose
 	StandardIOSCardContent
 	StandardIOSCardScrim
+	// Bottom-anchored vertical fill (mobile terminal fullscreen).
+	// Open/close share identical critical damping so reverse is symmetric.
+	StandardStretchExpandOpen
+	StandardStretchExpandClose
 )
 
 // StandardProfile is the Apple-style spring parameter pair used by a
@@ -39,6 +43,12 @@ func ProfileForStandard(standard Standard) (StandardProfile, bool) {
 		return StandardProfile{Response: 0.32, Damping: 1.00}, true
 	case StandardIOSCardScrim:
 		return StandardProfile{Response: 0.42, Damping: 1.00}, true
+	case StandardStretchExpandOpen:
+		// ~0.6s visual fill, critically damped — matches ref easeInOutQuart cadence
+		// without CSS. Same profile on close for interruptible reverse symmetry.
+		return StandardProfile{Response: 0.48, Damping: 1.00}, true
+	case StandardStretchExpandClose:
+		return StandardProfile{Response: 0.48, Damping: 1.00}, true
 	default:
 		return StandardProfile{}, false
 	}

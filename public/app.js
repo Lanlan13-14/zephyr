@@ -101,7 +101,10 @@ let terminalControlLongPress = false;
 let mobileDockTogglePressState = null;
 let mobileDockToggleLastToggleAt = 0;
 const terminalReconnectFallbackTimers = new Map();
-let fullscreenLoadingTimer = 0;
+/** Mid-flight interrupt token for mobile stretchExpand fullscreen. */
+let terminalFullscreenMotionGen = 0;
+/** Collapsed workspace rect captured just before mobile fullscreen expand. */
+let terminalFullscreenOriginRect = null;
 let sshKbParentBaseline = 0;
 let sshKbParentOpen = false;
 // True only after parent visualViewport itself observed a real IME inset.
@@ -195,7 +198,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20260731-fullscreen-stretch1');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -4018,7 +4021,7 @@ function renderTerminalWorkspace() {
     const keepAliveMinimized = getMinimizedKeepAliveSessions();
     const count = visible.length;
     const workspace = $('#terminalWorkspace');
-    const preservedWorkspaceClasses = ['custom-fullscreen', 'ssh-kb-open', 'fullscreen-transitioning', 'fullscreen-loading']
+    const preservedWorkspaceClasses = ['custom-fullscreen', 'ssh-kb-open']
         .filter((className) => workspace.classList.contains(className));
     workspace.className = `terminal-workspace terminal-workspace-grid layout-${Math.min(count, 3)} ${isCompactTerminalWorkspace() ? 'compact' : ''} ${preservedWorkspaceClasses.join(' ')}`;
     const visibleIds = new Set(visible.map((t) => t.id));
@@ -4132,9 +4135,18 @@ function exitTerminalFullscreen() {
     const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
     if (workspace?.classList.contains('custom-fullscreen')) {
         resetTerminalWorkspaceKeyboard({ force: true });
-        workspace.classList.remove('custom-fullscreen');
-        document.body.classList.remove('terminal-custom-fullscreen-open');
-        renderTerminalTabs();
+        // Fire-and-forget stretch collapse; re-render after settle.
+        animateMobileTerminalFullscreen(workspace, { open: false })
+            .catch(() => {
+                workspace.classList.remove('custom-fullscreen');
+                document.body.classList.remove('terminal-custom-fullscreen-open');
+                clearTerminalFullscreenInline(workspace);
+            })
+            .finally(() => {
+                renderTerminalTabs();
+                scheduleTerminalKeyboardReflow('mobile-fullscreen-exit');
+            });
+        return;
     }
     if (fullscreenElement) {
         if (document.exitFullscreen) document.exitFullscreen().catch?.(() => {});
@@ -4984,38 +4996,110 @@ function scheduleTerminalKeyboardReflow(reason = 'terminal-keyboard-reflow') {
     });
 }
 
-function ensureFullscreenLoader() {
-    const workspace = $('#terminalWorkspace');
-    if (!workspace) return null;
-    let loader = workspace.querySelector('.terminal-fullscreen-loader');
-    if (!loader) {
-        loader = document.createElement('div');
-        loader.className = 'terminal-fullscreen-loader';
-        loader.setAttribute('aria-live', 'polite');
-        loader.innerHTML = `<div class="terminal-fullscreen-spinner"></div><span>${t('正在切换全屏...')}</span>`;
-        workspace.appendChild(loader);
+function clearTerminalFullscreenInline(workspace) {
+    if (!workspace) return;
+    for (const prop of ['position', 'left', 'width', 'right', 'top', 'bottom', 'zIndex', 'willChange', 'maxHeight', 'minHeight', 'overflow', 'boxSizing', 'height', 'borderRadius', 'transform', 'opacity', 'filter', 'transition']) {
+        workspace.style[prop] = '';
     }
-    return loader;
 }
 
-function showFullscreenLoading(text = t('正在切换全屏...')) {
-    const workspace = $('#terminalWorkspace');
-    const loader = ensureFullscreenLoader();
-    if (!workspace || !loader) return;
-    loader.querySelector('span').textContent = text;
-    workspace.classList.add('fullscreen-transitioning');
-    workspace.classList.add('fullscreen-loading');
-    window.clearTimeout(fullscreenLoadingTimer);
-    fullscreenLoadingTimer = window.setTimeout(() => hideFullscreenLoading(), 2400);
+function terminalWorkspaceRadiusPx(el) {
+    const r = parseFloat(getComputedStyle(el)?.borderRadius);
+    return Number.isFinite(r) && r > 0 ? r : 12;
 }
 
-function hideFullscreenLoading({ delay = 520 } = {}) {
-    window.clearTimeout(fullscreenLoadingTimer);
-    fullscreenLoadingTimer = window.setTimeout(() => {
-        const workspace = $('#terminalWorkspace');
-        workspace?.classList.remove('fullscreen-loading');
-        window.setTimeout(() => workspace?.classList.remove('fullscreen-transitioning'), 520);
-    }, delay);
+/**
+ * Mobile terminal fullscreen: bottom-anchored height stretch via Motion.stretchExpand.
+ * Open and close share the same spring so mid-flight reverse is continuous.
+ * No spinner / loading overlay.
+ */
+async function animateMobileTerminalFullscreen(workspace, { open }) {
+    if (!workspace) return false;
+    const gen = ++terminalFullscreenMotionGen;
+    const Motion = await sshKeyMotion._ensure();
+    const vh = Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0, 1);
+    if (!Motion?.stretchExpand || sshKeyMotion.failed) {
+        // Instant fallback — still no spinner.
+        if (open) {
+            terminalFullscreenOriginRect = workspace.getBoundingClientRect();
+            workspace.classList.add('custom-fullscreen');
+            document.body.classList.add('terminal-custom-fullscreen-open');
+        } else {
+            workspace.classList.remove('custom-fullscreen');
+            document.body.classList.remove('terminal-custom-fullscreen-open');
+            terminalFullscreenOriginRect = null;
+        }
+        clearTerminalFullscreenInline(workspace);
+        return gen === terminalFullscreenMotionGen;
+    }
+
+    if (open) {
+        const fromRect = workspace.getBoundingClientRect();
+        terminalFullscreenOriginRect = {
+            left: fromRect.left,
+            top: fromRect.top,
+            width: fromRect.width,
+            height: fromRect.height,
+            bottom: fromRect.bottom,
+            right: fromRect.right,
+        };
+        const radiusFrom = terminalWorkspaceRadiusPx(workspace);
+        // Full-bleed X from frame 0; only height/radius spring (no horizontal flash).
+        const ok = await Motion.stretchExpand(workspace, {
+            open: true,
+            fromRect,
+            fromHeight: fromRect.height,
+            toHeight: vh,
+            pinBottom: 0,
+            fullBleedX: true,
+            radiusFrom,
+            radiusTo: 0,
+            release: false,
+            clearInline: false,
+        });
+        if (gen !== terminalFullscreenMotionGen) return false;
+        workspace.classList.add('custom-fullscreen');
+        document.body.classList.add('terminal-custom-fullscreen-open');
+        try { Motion.release(workspace); } catch {}
+        clearTerminalFullscreenInline(workspace);
+        return ok && gen === terminalFullscreenMotionGen;
+    }
+
+    // Close: keep full-bleed paint, drop class, then shrink height only.
+    const fullRect = workspace.getBoundingClientRect();
+    const origin = terminalFullscreenOriginRect;
+    const collapsedH = Math.max(1, origin?.height || Math.round(vh * 0.6));
+    const radiusTo = origin ? terminalWorkspaceRadiusPx(workspace) || 12 : 12;
+    workspace.style.position = 'fixed';
+    workspace.style.left = '0';
+    workspace.style.right = '0';
+    workspace.style.width = '100vw';
+    workspace.style.top = 'auto';
+    workspace.style.bottom = '0';
+    workspace.style.height = `${fullRect.height}px`;
+    workspace.style.borderRadius = '0px';
+    workspace.style.zIndex = '1000';
+    workspace.style.transition = 'none';
+    workspace.classList.remove('custom-fullscreen');
+    document.body.classList.remove('terminal-custom-fullscreen-open');
+    void workspace.offsetHeight;
+    const ok = await Motion.stretchExpand(workspace, {
+        open: false,
+        fromRect: fullRect,
+        fromHeight: fullRect.height,
+        toHeight: collapsedH,
+        pinBottom: 0,
+        fullBleedX: true,
+        radiusFrom: 0,
+        radiusTo,
+        release: false,
+        clearInline: false,
+    });
+    if (gen !== terminalFullscreenMotionGen) return false;
+    try { Motion.release(workspace); } catch {}
+    clearTerminalFullscreenInline(workspace);
+    terminalFullscreenOriginRect = null;
+    return ok && gen === terminalFullscreenMotionGen;
 }
 
 async function fullscreenTerminalTab(tabId) {
@@ -5035,16 +5119,14 @@ async function fullscreenTerminalTab(tabId) {
     const workspace = $('#terminalWorkspace');
     const win = workspace?.querySelector(`.terminal-window[data-window="${CSS.escape(tabId)}"]`);
     if (!workspace || !win) return;
-    showFullscreenLoading(compact ? t('正在进入移动端全屏...') : t('正在切换为单窗口...'));
     try {
         if (compact) {
+            const entering = !workspace.classList.contains('custom-fullscreen');
             resetTerminalWorkspaceKeyboard({ force: true });
-            workspace.classList.toggle('custom-fullscreen');
-            document.body.classList.toggle('terminal-custom-fullscreen-open', workspace.classList.contains('custom-fullscreen'));
+            await animateMobileTerminalFullscreen(workspace, { open: entering });
             sshKbParentLastSignature = '';
-            scheduleTerminalKeyboardReflow(workspace.classList.contains('custom-fullscreen') ? 'mobile-fullscreen-enter' : 'mobile-fullscreen-exit');
+            scheduleTerminalKeyboardReflow(entering ? 'mobile-fullscreen-enter' : 'mobile-fullscreen-exit');
             renderTerminalTabs();
-            hideFullscreenLoading({ delay: 360 });
             window.setTimeout(() => {
                 scheduleTerminalKeyboardReflow('mobile-fullscreen-after-focus');
                 win.querySelector('.terminal-frame')?.contentWindow?.postMessage({ source: 'zephyr-app', type: 'focus-terminal' }, '*');
@@ -5064,13 +5146,12 @@ async function fullscreenTerminalTab(tabId) {
                 visualLayout: [...visualLayout]
             });
             renderTerminalTabs();
-            hideFullscreenLoading({ delay: 220 });
             window.setTimeout(() => {
                 workspace.querySelector(`.terminal-frame[data-frame="${CSS.escape(tabId)}"]`)?.contentWindow?.postMessage({ source: 'zephyr-app', type: 'focus-terminal' }, '*');
             }, 120);
         }
     } catch (err) {
-        hideFullscreenLoading({ delay: 0 });
+        clearTerminalFullscreenInline(workspace);
         throw err;
     }
 }
@@ -11099,7 +11180,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1')
+        return import('./vendor/zephyr-motion/index.js?v=20260731-fullscreen-stretch1')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -11677,12 +11758,12 @@ function bindEvents() {
         if (isTerminalFullscreen) {
             sshKbParentBaseline = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, window.visualViewport?.height || 0);
             scheduleTerminalKeyboardReflow('native-fullscreen-change');
-            hideFullscreenLoading({ delay: 620 });
         } else {
             resetTerminalWorkspaceKeyboard();
-            workspace?.classList.remove('custom-fullscreen');
-            document.body.classList.remove('terminal-custom-fullscreen-open');
-            showFullscreenLoading('正在退出全屏...'), hideFullscreenLoading({ delay: 680 });
+            // Native browser fullscreen only — custom mobile stretch path owns its class.
+            if (!workspace?.classList.contains('custom-fullscreen')) {
+                document.body.classList.remove('terminal-custom-fullscreen-open');
+            }
         }
     }));
     systemThemeQuery.addEventListener('change', () => {

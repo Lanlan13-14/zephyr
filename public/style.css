@@ -2245,6 +2245,8 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     border: 0;
     border-radius: 0;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    /* Height/radius owned by Motion.stretchExpand (Go spring) — no CSS fight. */
+    transition: none !important;
 }
 .terminal-workspace.compact {
     min-height: calc(100dvh - 12px);
@@ -2302,7 +2304,6 @@ body.terminal-custom-fullscreen-open .main-nav {
     display: none !important;
 }
 .terminal-workspace-grid.compact .workspace-splitter { display: none; }
-.terminal-workspace.fullscreen-transitioning { transform: scale(.992); box-shadow: 0 28px 88px rgba(0,0,0,.36); }
 .terminal-frame { display: none; width: 100%; height: 720px; border: 0; background: var(--bg); }
 .terminal-frame.active { display: block; }
 .terminal-workspace .terminal-placeholder { min-height: 720px; display: none; place-items: center; }
@@ -2343,49 +2344,6 @@ body.terminal-custom-fullscreen-open .main-nav {
 .terminal-workspace:fullscreen.ssh-kb-open .terminal-frame.active {
     height: 100% !important;
     max-height: 100% !important;
-}
-.terminal-fullscreen-loader {
-    position: absolute;
-    inset: 0;
-    z-index: 30;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 14px;
-    background:
-        radial-gradient(circle at 50% 42%, rgba(10,132,255,.18), transparent 34%),
-        color-mix(in srgb, #05070a 82%, transparent);
-    color: #f4f4f6;
-    font-weight: 700;
-    letter-spacing: .04em;
-    opacity: 0;
-    pointer-events: none;
-    transform: scale(1.015);
-    backdrop-filter: blur(14px) saturate(1.25);
-    -webkit-backdrop-filter: blur(14px) saturate(1.25);
-    transition: opacity .44s ease, transform .64s cubic-bezier(.16,1,.3,1);
-}
-.terminal-workspace.fullscreen-loading .terminal-fullscreen-loader {
-    opacity: 1;
-    transform: scale(1);
-    pointer-events: auto;
-}
-.terminal-fullscreen-spinner {
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    border: 3px solid rgba(139,148,158,.32);
-    border-top-color: var(--accent-hover);
-    box-shadow: 0 0 28px rgba(10,132,255,.32);
-    animation: spin .82s linear infinite;
-}
-.terminal-fullscreen-loader span {
-    padding: 7px 12px;
-    border-radius: 999px;
-    background: rgba(13,17,23,.58);
-    border: 1px solid rgba(139,148,158,.24);
-    font-size: 13px;
 }
 .panel-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .panel-title-row h2 { margin: 0; }
