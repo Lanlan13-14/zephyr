@@ -2474,15 +2474,46 @@ function activityDetails(activity) {
     const connection = connections.find((item) => message.includes(item.name) || activity.connectionId === item.id);
     const category = activity.category || (/登录|密码|TOTP|Passkey|用户/.test(message) ? t('账户') : (/连接|服务器|跳板机|代理|SSH 密钥/.test(message) ? t('连接') : (/设置|邮件|导入|日志/.test(message) ? t('系统') : t('操作'))));
     const outcome = activity.outcome || (/失败|拒绝|错误|超时/.test(message) ? t('失败') : t('成功'));
+    const durationMs = Number(activity.durationMs);
+    const sourceIp = String(activity.sourceIp || '').trim();
+    const protocol = activity.protocol || connection?.protocol || '';
+    const target = activity.target || (connection ? `${connection.host}:${connection.port}` : '');
     return {
         category,
         outcome,
         actor: activity.actor || (activity.userId === myIdentity.userId ? t('当前用户') : (activity.userId || t('系统'))),
-        protocol: activity.protocol || connection?.protocol || '—',
-        target: activity.target || (connection ? `${connection.host}:${connection.port}` : '—'),
-        sourceIp: activity.sourceIp || '—',
-        duration: Number.isFinite(Number(activity.durationMs)) ? `${Number(activity.durationMs)} ms` : '—',
+        protocol,
+        target,
+        sourceIp,
+        durationMs: Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : null,
+        duration: Number.isFinite(durationMs) ? `${Math.max(0, Math.round(durationMs))} ms` : '',
     };
+}
+function syncActivityRangeThumb({ instant = false } = {}) {
+    const tabs = document.querySelector('.activity-range-tabs');
+    if (!tabs) return;
+    const thumb = tabs.querySelector('.activity-range-thumb');
+    const active = tabs.querySelector('.activity-range-btn.active')
+        || tabs.querySelector(`[data-activity-range="${activityRange}"]`)
+        || tabs.querySelector('[data-activity-range]');
+    if (!thumb || !active) return;
+    if (instant) tabs.classList.add('no-thumb-transition');
+    const x = active.offsetLeft;
+    const w = active.offsetWidth;
+    tabs.style.setProperty('--activity-thumb-x', `${Math.max(0, x)}px`);
+    tabs.style.setProperty('--activity-thumb-w', `${Math.max(0, w)}px`);
+    if (instant) {
+        void thumb.offsetWidth;
+        tabs.classList.remove('no-thumb-transition');
+    }
+}
+function setActivityRangeSelection(range, { animate = true } = {}) {
+    activityRange = range || '7d';
+    $$('[data-activity-range]').forEach((item) => {
+        item.classList.toggle('active', item.dataset.activityRange === activityRange);
+    });
+    $('#activityCustomRange')?.classList.toggle('force-hidden', activityRange !== 'custom');
+    syncActivityRangeThumb({ instant: !animate });
 }
 function renderActivities() {
     const list = $('#activityList');
@@ -2490,10 +2521,17 @@ function renderActivities() {
     const bounds = activityRangeBounds();
     $('#activityResultCount').textContent = t('{count} 条记录', { count: activities.length });
     $('#activityRangeLabel').textContent = bounds.label;
-    list.innerHTML = activities.length ? activities.map((activity) => {
+    const empty = `<div class="activity-empty"><strong>${t('此时间范围内没有活动')}</strong><span>${t('尝试扩大时间范围查看更早的记录。')}</span></div>`;
+    if (!activities.length) {
+        list.innerHTML = empty;
+        requestAnimationFrame(() => syncActivityRangeThumb({ instant: true }));
+        return;
+    }
+    const html = activities.map((activity, index) => {
         const detail = activityDetails(activity);
         const outcomeClass = detail.outcome === t('失败') ? 'failed' : 'success';
-        return `<article class="activity-detail-item">
+        const stagger = Math.min(index, 12) * 28;
+        return `<article class="activity-detail-item" style="--activity-stagger:${stagger}ms">
             <div class="activity-detail-head">
                 <div class="activity-event-mark" data-category="${escapeHtml(detail.category)}" aria-hidden="true"></div>
                 <div class="activity-event-title"><h2>${escapeHtml(localizeActivityMessage(activity.message || t('未知活动')))}</h2><span class="activity-status ${outcomeClass}">${escapeHtml(detail.outcome)}</span></div>
@@ -2502,14 +2540,17 @@ function renderActivities() {
             <dl class="activity-meta-grid">
                 <div><dt>${t('事件类型')}</dt><dd>${escapeHtml(detail.category)}</dd></div>
                 <div><dt>${t('操作者')}</dt><dd>${escapeHtml(detail.actor)}</dd></div>
-                ${detail.protocol !== '-' ? `<div><dt>${t('协议')}</dt><dd>${escapeHtml(detail.protocol)}</dd></div>` : ''}
-                ${detail.target !== '-' ? `<div><dt>${t('目标地址')}</dt><dd>${escapeHtml(detail.target)}</dd></div>` : ''}
-                ${detail.sourceIp !== '-' ? `<div><dt>${t('来源 IP')}</dt><dd>${escapeHtml(detail.sourceIp)}</dd></div>` : ''}
-                ${detail.duration !== '-' ? `<div><dt>${t('耗时')}</dt><dd>${escapeHtml(detail.duration)}</dd></div>` : ''}
+                ${detail.protocol ? `<div><dt>${t('协议')}</dt><dd>${escapeHtml(detail.protocol)}</dd></div>` : ''}
+                ${detail.target ? `<div><dt>${t('目标地址')}</dt><dd>${escapeHtml(detail.target)}</dd></div>` : ''}
+                ${detail.sourceIp ? `<div><dt>${t('来源 IP')}</dt><dd>${escapeHtml(detail.sourceIp)}</dd></div>` : ''}
+                ${detail.duration ? `<div><dt>${t('耗时')}</dt><dd>${escapeHtml(detail.duration)}</dd></div>` : ''}
             </dl>
             <div class="activity-event-id"><span>${t('事件 ID')}</span><code>${escapeHtml(activity.id || '—')}</code></div>
         </article>`;
-    }).join('') : `<div class="activity-empty"><strong>${t('此时间范围内没有活动')}</strong><span>${t('尝试扩大时间范围查看更早的记录。')}</span></div>`;
+    }).join('');
+    list.innerHTML = html;
+    /* i18n / font load can change label widths — keep thumb under active chip. */
+    requestAnimationFrame(() => syncActivityRangeThumb({ instant: true }));
 }
 async function loadActivities() {
     const { from, to } = activityRangeBounds();
@@ -11358,11 +11399,24 @@ function bindEvents() {
     // Settings/appearance selects may mount later with settings HTML — re-enhance after loadSettings.
     window.__zephyrEnhanceToggleSelects = enhanceAllToggleSelects;
     $$('[data-activity-range]').forEach((button) => button.addEventListener('click', async () => {
-        activityRange = button.dataset.activityRange || '7d';
-        $$('[data-activity-range]').forEach((item) => item.classList.toggle('active', item === button));
-        $('#activityCustomRange').classList.toggle('force-hidden', activityRange !== 'custom');
+        const next = button.dataset.activityRange || '7d';
+        if (next === activityRange && button.classList.contains('active')) {
+            if (next !== 'custom') return;
+        }
+        setActivityRangeSelection(next, { animate: true });
         if (activityRange !== 'custom') await loadActivities();
     }));
+    const activityRangeTabs = document.querySelector('.activity-range-tabs');
+    if (activityRangeTabs) {
+        setActivityRangeSelection(activityRange, { animate: false });
+        requestAnimationFrame(() => syncActivityRangeThumb({ instant: true }));
+        if (typeof ResizeObserver !== 'undefined') {
+            const ro = new ResizeObserver(() => syncActivityRangeThumb({ instant: true }));
+            ro.observe(activityRangeTabs);
+            activityRangeTabs.querySelectorAll('.activity-range-btn').forEach((btn) => ro.observe(btn));
+        }
+        window.addEventListener('resize', () => syncActivityRangeThumb({ instant: true }), { passive: true });
+    }
     $('#applyActivityRange')?.addEventListener('click', async () => {
         const bounds = activityRangeBounds('custom');
         if (bounds.from && bounds.to && bounds.from > bounds.to) return toast(t('开始日期不能晚于结束日期'));

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>activity range thumb harness</title>
+<style>
+:root {
+  --text: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --accent: #0a84ff;
+  --accent-hover: #0071e3;
+  --accent-soft-bg: color-mix(in srgb, #0a84ff 14%, #fff);
+  --surface: #fff;
+  --bg: #f5f5f7;
+  --border: rgba(0,0,0,.08);
+  --radius-lg: 18px;
+  --shadow-soft: 0 8px 24px rgba(0,0,0,.06);
+  --ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+body { margin: 24px; background: var(--bg); color: var(--text); }
+.activity-filter-bar {
+  display: grid; gap: 12px; margin-bottom: 18px; padding: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--surface); box-shadow: var(--shadow-soft); max-width: 560px;
+}
+.activity-range-tabs {
+  --activity-thumb-x: 0px; --activity-thumb-w: 0px;
+  --activity-range-ease: var(--ease-smooth);
+  position: relative; display: flex; align-items: center; gap: 4px;
+  overflow-x: auto; isolation: isolate; -webkit-overflow-scrolling: touch;
+}
+.activity-range-thumb {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: var(--activity-thumb-w); border-radius: 10px;
+  background: var(--accent-soft-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+  transform: translate3d(var(--activity-thumb-x), 0, 0);
+  transition: transform 240ms var(--activity-range-ease), width 240ms var(--activity-range-ease);
+  pointer-events: none; z-index: 0; will-change: transform, width;
+}
+.activity-range-tabs.no-thumb-transition .activity-range-thumb { transition: none; }
+.activity-range-btn {
+  position: relative; z-index: 1; min-height: 36px; padding: 7px 13px; border: 0;
+  border-radius: 10px; background: transparent; color: var(--text-secondary);
+  font: inherit; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer;
+  transition: color 160ms var(--ease-smooth);
+}
+.activity-range-btn.active { color: var(--accent-hover); background: transparent; }
+#log { margin-top: 16px; font: 12px/1.5 ui-monospace, monospace; color: var(--text-secondary); white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div class="activity-filter-bar">
+  <div class="activity-range-tabs" role="group">
+    <span class="activity-range-thumb" aria-hidden="true"></span>
+    <button class="activity-range-btn" type="button" data-activity-range="today">今天</button>
+    <button class="activity-range-btn active" type="button" data-activity-range="7d">近 7 天</button>
+    <button class="activity-range-btn" type="button" data-activity-range="30d">近 30 天</button>
+    <button class="activity-range-btn" type="button" data-activity-range="all">全部</button>
+    <button class="activity-range-btn" type="button" data-activity-range="custom">自定义</button>
+  </div>
+</div>
+<div id="log"></div>
+<script>
+let activityRange = '7d';
+const logEl = document.getElementById('log');
+function log(msg) { logEl.textContent += msg + '\n'; }
+function syncActivityRangeThumb({ instant = false } = {}) {
+  const tabs = document.querySelector('.activity-range-tabs');
+  const thumb = tabs.querySelector('.activity-range-thumb');
+  const active = tabs.querySelector('.activity-range-btn.active');
+  if (instant) tabs.classList.add('no-thumb-transition');
+  tabs.style.setProperty('--activity-thumb-x', `${Math.max(0, active.offsetLeft)}px`);
+  tabs.style.setProperty('--activity-thumb-w', `${Math.max(0, active.offsetWidth)}px`);
+  if (instant) { void thumb.offsetWidth; tabs.classList.remove('no-thumb-transition'); }
+}
+function setActivityRangeSelection(range, { animate = true } = {}) {
+  activityRange = range || '7d';
+  document.querySelectorAll('[data-activity-range]').forEach((item) => {
+    item.classList.toggle('active', item.dataset.activityRange === activityRange);
+  });
+  syncActivityRangeThumb({ instant: !animate });
+}
+document.querySelectorAll('[data-activity-range]').forEach((button) => {
+  button.addEventListener('click', () => {
+    const next = button.dataset.activityRange;
+    if (next === activityRange) return;
+    setActivityRangeSelection(next, { animate: true });
+    const tabs = document.querySelector('.activity-range-tabs');
+    log(`select=${next} x=${tabs.style.getPropertyValue('--activity-thumb-x')} w=${tabs.style.getPropertyValue('--activity-thumb-w')}`);
+  });
+});
+setActivityRangeSelection(activityRange, { animate: false });
+requestAnimationFrame(() => {
+  syncActivityRangeThumb({ instant: true });
+  const tabs = document.querySelector('.activity-range-tabs');
+  log(`init x=${tabs.style.getPropertyValue('--activity-thumb-x')} w=${tabs.style.getPropertyValue('--activity-thumb-w')}`);
+  // Auto-cycle for visual sampling
+  const order = ['today', '7d', '30d', 'all', 'custom', 'today'];
+  let i = 0;
+  const timer = setInterval(() => {
+    i++;
+    if (i >= order.length) { clearInterval(timer); log('auto-cycle done'); return; }
+    setActivityRangeSelection(order[i], { animate: true });
+    const tabs = document.querySelector('.activity-range-tabs');
+    log(`auto=${order[i]} x=${tabs.style.getPropertyValue('--activity-thumb-x')} w=${tabs.style.getPropertyValue('--activity-thumb-w')}`);
+  }, 500);
+});
+</script>
+</body>
+</html>

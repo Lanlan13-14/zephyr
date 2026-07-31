@@ -471,6 +471,14 @@ function init({ hashPassword }) {
     addColumnIfMissing('jump_hosts', 'createdByUserId', 'TEXT');
     addColumnIfMissing('users', 'lastLoginAt', 'INTEGER');
     addColumnIfMissing('activities', 'userId', 'TEXT');
+    addColumnIfMissing('activities', 'sourceIp', 'TEXT');
+    addColumnIfMissing('activities', 'durationMs', 'INTEGER');
+    addColumnIfMissing('activities', 'category', 'TEXT');
+    addColumnIfMissing('activities', 'outcome', 'TEXT');
+    addColumnIfMissing('activities', 'actor', 'TEXT');
+    addColumnIfMissing('activities', 'protocol', 'TEXT');
+    addColumnIfMissing('activities', 'target', 'TEXT');
+    addColumnIfMissing('activities', 'connectionId', 'TEXT');
     addColumnIfMissing('users', 'isSuperAdmin', 'INTEGER DEFAULT 0');
     addColumnIfMissing('notes', 'visibility', "TEXT NOT NULL DEFAULT 'private'");
     addColumnIfMissing('notes', 'share_with_users', 'INTEGER NOT NULL DEFAULT 0');
@@ -830,7 +838,27 @@ function queryActivities({ userId = '', from = 0, to = 0, limit = 500 } = {}) {
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     return db.prepare(`SELECT * FROM activities ${where} ORDER BY time DESC LIMIT @limit`).all(params);
 }
-function addActivity(activity) { db.prepare('INSERT INTO activities (id,time,message,type,userId) VALUES (@id,@time,@message,@type,@userId)').run({ ...activity, userId: activity.userId || null }); }
+function addActivity(activity) {
+    const row = {
+        id: activity.id,
+        time: Number(activity.time) || Date.now(),
+        message: String(activity.message || ''),
+        type: activity.type || 'info',
+        userId: activity.userId || null,
+        sourceIp: activity.sourceIp || null,
+        durationMs: Number.isFinite(Number(activity.durationMs)) ? Math.max(0, Math.round(Number(activity.durationMs))) : null,
+        category: activity.category || null,
+        outcome: activity.outcome || null,
+        actor: activity.actor || null,
+        protocol: activity.protocol || null,
+        target: activity.target || null,
+        connectionId: activity.connectionId || null,
+    };
+    db.prepare(`INSERT INTO activities
+        (id,time,message,type,userId,sourceIp,durationMs,category,outcome,actor,protocol,target,connectionId)
+        VALUES
+        (@id,@time,@message,@type,@userId,@sourceIp,@durationMs,@category,@outcome,@actor,@protocol,@target,@connectionId)`).run(row);
+}
 function clearActivities() { db.prepare('DELETE FROM activities').run(); }
 
 function listProxies() { return db.prepare('SELECT * FROM proxies ORDER BY createdAt DESC').all().map(rowToProxy); }

@@ -1573,8 +1573,39 @@ function runRemoteCommand(conn, command, timeoutSeconds = 30, options = {}) {
     });
 }
 
-function addActivity(message, userId = null) {
-    storage.addActivity({ id: crypto.randomUUID(), time: Date.now(), message, type: 'info', userId });
+function addActivity(message, userId = null, meta = {}) {
+    const durationRaw = meta?.durationMs;
+    const durationMs = Number.isFinite(Number(durationRaw)) ? Math.max(0, Math.round(Number(durationRaw))) : null;
+    storage.addActivity({
+        id: crypto.randomUUID(),
+        time: Date.now(),
+        message: String(message || ''),
+        type: meta?.type || 'info',
+        userId: userId || null,
+        sourceIp: meta?.sourceIp || null,
+        durationMs,
+        category: meta?.category || null,
+        outcome: meta?.outcome || null,
+        actor: meta?.actor || null,
+        protocol: meta?.protocol || null,
+        target: meta?.target || null,
+        connectionId: meta?.connectionId || null,
+    });
+}
+
+/** Attach request-derived fields (client IP + actor) for activity rows. */
+function activityFromReq(req, extra = {}) {
+    return {
+        sourceIp: extra.sourceIp || (req ? clientIp(req) : null),
+        actor: extra.actor || req?.user?.username || req?.session?.username || null,
+        category: extra.category || null,
+        outcome: extra.outcome || null,
+        protocol: extra.protocol || null,
+        target: extra.target || null,
+        connectionId: extra.connectionId || null,
+        durationMs: Number.isFinite(Number(extra.durationMs)) ? Math.max(0, Math.round(Number(extra.durationMs))) : null,
+        type: extra.type || 'info',
+    };
 }
 
 function trustProxyEnabled() {
@@ -1777,7 +1808,7 @@ function updateSettingsSection(req, res, section) {
         patch.showBeian = normalized.showBeian;
     }
     const settings = storage.updateSettings(patch);
-    addActivity(`更新系统设置：${section}`, req.user.userId);
+    addActivity(`更新系统设置：${section}`, req.user.userId, activityFromReq(req, { category: '系统', outcome: '成功' }));
     if (req.user.isSuperAdmin) return res.json(safeSettings(settings));
     if (section === 'appearance') return res.json({ appearance: settings.appearance || {} });
     if (section === 'notes') return res.json({ notes: settings.notes || {} });
@@ -2280,7 +2311,7 @@ app.post('/api/auth/login', async (req, res) => {
     recordLoginSuccess(guard.ip);
     createSession(req, res, user, { remember: !!remember });
     try { storage.rawDb().prepare('UPDATE users SET lastLoginAt = ? WHERE userId = ?').run(Date.now(), user.userId); } catch {}
-    addActivity(`用户登录：${user.username}`, user.userId);
+    addActivity(`用户登录：${user.username}`, user.userId, activityFromReq(req, { category: '账户', outcome: '成功', sourceIp: guard.ip, actor: user.username }));
     await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: true, reason: '' });
     res.json({ ok: true, user: { username: user.username }, mustChangePassword: !!user.defaultPassword });
 });
@@ -2327,7 +2358,7 @@ app.post('/api/auth/totp/verify', async (req, res) => {
     recordLoginSuccess(guard.ip);
     createSession(req, res, user, { remember: !!tmp.remember });
     try { storage.rawDb().prepare('UPDATE users SET lastLoginAt = ? WHERE userId = ?').run(Date.now(), user.userId); } catch {}
-    addActivity(`用户登录：${user.username}`, user.userId);
+    addActivity(`用户登录：${user.username}`, user.userId, activityFromReq(req, { category: '账户', outcome: '成功', sourceIp: guard.ip, actor: user.username }));
     await notifyLogin({ username: user.username, ip: guard.ip, userAgent: tmp.userAgent, success: true, reason: '' });
     res.json({ ok: true, user: { username: user.username }, mustChangePassword: !!user.defaultPassword });
 });
@@ -2402,7 +2433,7 @@ app.post('/api/auth/forgot-password/reset', (req, res) => {
     sessionStore.revokeAllForUser(user.userId, 'password-reset');
     sessionStore.setMustChangePassword(user.userId, false);
     recordLoginSuccess(ip);
-    addActivity('通过邮箱重置令牌重置密码', user.userId);
+    addActivity('通过邮箱重置令牌重置密码', user.userId, activityFromReq(req, { category: '账户', outcome: '成功', actor: user.username }));
     res.json({ ok: true });
 });
 
@@ -2526,7 +2557,7 @@ app.post('/api/auth/change-password', requireUser, async (req, res) => {
     sessionStore.revokeAllForUser(user.userId, 'password-changed', { exceptSid: sid || '' });
     sessionStore.setMustChangePassword(user.userId, false);
     req.session.mustChangePassword = false;
-    addActivity('修改登录密码');
+    addActivity('修改登录密码', req.user?.userId || null, activityFromReq(req, { category: '账户', outcome: '成功' }));
 
     /* Success notification. With a bound mailbox the rollback link travels by
      * email only; without one the response carries it so the UI can show it
@@ -2601,7 +2632,7 @@ app.post('/api/auth/password-rollback', async (req, res) => {
      * the attacker's, and clear any forced must-change flag. */
     sessionStore.revokeAllForUser(user.userId, 'password-rollback');
     sessionStore.setMustChangePassword(user.userId, false);
-    addActivity('通过恢复链接回滚密码', user.userId);
+    addActivity('通过恢复链接回滚密码', user.userId, activityFromReq(req, { category: '账户', outcome: '成功', actor: user.username }));
     console.warn('[security] password rolled back via notification link', { username: user.username, ip });
 
     const s = storage.getSettings();
@@ -3233,12 +3264,12 @@ app.post('/api/security/totp/setup', requireUser, async (req, res) => {
 });
 app.post('/api/security/totp/enable', requireUser, (req, res) => {
     const secret = req.session.pendingTotpSecret; if (!secret || !verifySync({ secret, token: String(req.body?.code || '') }).valid) return res.status(400).json({ error: '动态验证码错误' });
-    storage.updateUser(req.session.username, { totpEnabled: true, totpSecret: secret }); delete req.session.pendingTotpSecret; addActivity('开启 TOTP 两步验证'); res.json({ ok: true });
+    storage.updateUser(req.session.username, { totpEnabled: true, totpSecret: secret }); delete req.session.pendingTotpSecret; addActivity('开启 TOTP 两步验证', req.user?.userId || null, activityFromReq(req, { category: '账户', outcome: '成功' })); res.json({ ok: true });
 });
 app.post('/api/security/totp/disable', requireUser, (req, res) => {
     const user = storage.getUser(req.session.username); const { currentPassword, code } = req.body || {};
     if (!verifyPassword(currentPassword, user.passwordHash) || !verifySync({ secret: user.totpSecret || '', token: String(code || '') }).valid) return res.status(400).json({ error: '密码或动态验证码错误' });
-    storage.updateUser(user.username, { totpEnabled: false, totpSecret: null }); addActivity('关闭 TOTP 两步验证'); res.json({ ok: true });
+    storage.updateUser(user.username, { totpEnabled: false, totpSecret: null }); addActivity('关闭 TOTP 两步验证', req.user?.userId || user.userId || null, activityFromReq(req, { category: '账户', outcome: '成功' })); res.json({ ok: true });
 });
 app.get('/api/security/status', requireUser, (req, res) => { const u = storage.getUser(req.user.username); res.json({ user: { username: u.username, email: u.email || '', totpEnabled: !!u.totpEnabled }, passkeys: storage.listPasskeys(u.username).map((p) => ({ id: p.id, createdAt: p.createdAt, lastUsedAt: p.lastUsedAt })) }); });
 app.put('/api/security/profile', requireUser, (req, res) => {
@@ -3253,7 +3284,7 @@ app.put('/api/security/profile', requireUser, (req, res) => {
              * their display username refreshed (FREEZE plan §18.1). */
             sessionStore.renameUser(u.userId, u.username);
             req.session.username = nextUsername;
-            addActivity(`修改登录用户名：${nextUsername}`);
+            addActivity(`修改登录用户名：${nextUsername}`, req.user?.userId || null, activityFromReq(req, { category: '账户', outcome: '成功' }));
         }
         res.json({ user: { username: u.username, email: u.email || '', totpEnabled: !!u.totpEnabled } });
     } catch (err) {
@@ -3340,7 +3371,7 @@ app.post('/api/connections', requireUser, (req, res) => {
     else if (protocol === 'TELNET' && !conn.encoding) conn.encoding = 'utf-8';
     try {
         const saved = resourceService.createConnection(req.user, conn);
-        addActivity(`新增连接：${conn.name}`, req.user.userId);
+        addActivity(`新增连接：${conn.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: conn.protocol, target: `${conn.host}:${conn.port}`, connectionId: conn.id }));
         res.json({ connection: saved });
     } catch (err) {
         handleServiceError(res, err, 400);
@@ -3386,7 +3417,7 @@ app.put('/api/connections/:id', requireUser, (req, res) => {
             }
             return conn;
         });
-        addActivity(`编辑连接：${saved.name}`, req.user.userId);
+        addActivity(`编辑连接：${saved.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: saved.protocol, target: `${saved.host}:${saved.port}`, connectionId: saved.id }));
         res.json({ connection: saved });
     } catch (err) {
         handleServiceError(res, err, 400);
@@ -3396,7 +3427,7 @@ app.put('/api/connections/:id', requireUser, (req, res) => {
 app.delete('/api/connections/:id', requireUser, (req, res) => {
     try {
         resourceService.deleteConnection(req.user, req.params.id);
-        addActivity(`删除连接：${req.params.id}`, req.user.userId);
+        addActivity(`删除连接：${req.params.id}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', connectionId: req.params.id }));
         res.json({ ok: true });
     } catch (err) {
         handleServiceError(res, err, 400);
@@ -3417,7 +3448,7 @@ app.post('/api/connections/:id/open', requireUser, (req, res) => {
         const raw = storage.getConnectionById(req.params.id);
         authz.assertCan(req.user, CAP.USE, 'connection', req.params.id, raw || { ownerUserId: '' }, { resourceExists: !!raw });
         resourceService.markConnected(req.user, req.params.id);
-        addActivity(`打开连接：${raw.name}`, req.user.userId);
+        addActivity(`打开连接：${raw.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: raw.protocol, target: `${raw.host}:${raw.port}`, connectionId: raw.id }));
         res.json({ connection: resourceService.getConnection(req.user, req.params.id) });
     } catch (err) {
         handleServiceError(res, err, 403);
@@ -3439,7 +3470,7 @@ app.post('/api/rdp/ephemeral-grant', requireUser, (req, res) => {
             outcome: 'success',
             metadata: { host: grant.host, port: grant.port },
         });
-        addActivity(`临时 RDP 连接授权：${grant.host}:${grant.port}`, req.user.userId);
+        addActivity(`临时 RDP 连接授权：${grant.host}:${grant.port}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: 'RDP', target: `${grant.host}:${grant.port}` }));
         res.json({ ok: true, ...grant });
     } catch (err) {
         res.status(400).json({ error: err.message || '无法授权临时 RDP 目标' });
@@ -3590,7 +3621,7 @@ app.put('/api/settings', requireSuperAdmin, (req, res) => {
     const body = normalizeSettingsInput(req.body || {});
     if (body.security?.ipWhitelistEnabled && !ipAllowed(clientIp(req), body.security.ipWhitelist)) return res.status(400).json({ error: '当前 IP 不在白名单内，已阻止启用以避免误锁' });
     const settings = storage.updateSettings(body);
-    addActivity('更新系统设置', req.user.userId);
+    addActivity('更新系统设置', req.user.userId, activityFromReq(req, { category: '系统', outcome: '成功' }));
     res.json(safeSettings(settings));
 });
 
@@ -3608,7 +3639,7 @@ app.post('/api/settings/test-mail', requireSuperAdmin, async (req, res) => {
     console.info('[MAIL] 开始发送测试邮件:', publicMailDebug(mail, to));
     try {
         const result = await sendMail('Zephyr 测试邮件', `这是一封 Zephyr 测试邮件。\n时间：${new Date().toLocaleString()}`, to);
-        addActivity(`发送测试邮件：${to || mail.adminEmail}`);
+        addActivity(`发送测试邮件：${to || mail.adminEmail}`, req.user?.userId || null, activityFromReq(req, { category: '系统', outcome: '成功' }));
         res.json({ ok: true, message: '测试邮件已发送', messageId: result.messageId || '' });
     } catch (err) {
         console.error('[MAIL] 测试邮件发送失败:', { ...publicMailDebug(mail, to), error: err.message });
@@ -3651,7 +3682,7 @@ app.get('/api/security/ip-bans', requireSuperAdmin, (req, res) => res.json({ ban
 app.delete('/api/security/ip-bans/:ip', requireSuperAdmin, (req, res) => { storage.clearIpBan(req.params.ip); res.json({ ok: true }); });
 app.get('/api/security/login-events', requireSuperAdmin, (req, res) => res.json({ events: storage.listLoginEvents(100) }));
 app.get('/api/security/login-events/mine', requireUser, (req, res) => res.json({ events: storage.listLoginEvents(100, req.user.username) }));
-app.delete('/api/security/login-events', requireSuperAdmin, (req, res) => { storage.clearLoginEvents(); addActivity('清理登录事件日志', req.user.userId); res.json({ ok: true }); });
+app.delete('/api/security/login-events', requireSuperAdmin, (req, res) => { storage.clearLoginEvents(); addActivity('清理登录事件日志', req.user.userId, activityFromReq(req, { category: '系统', outcome: '成功' })); res.json({ ok: true }); });
 app.delete('/api/activities', requireSuperAdmin, (req, res) => { storage.clearActivities(); res.json({ ok: true }); });
 
 /* Platform tool host for zephyr-ai (Go). Must stay on control plane.
@@ -4175,10 +4206,10 @@ app.post('/api/passkeys/register/verify', requireUser, async (req, res) => {
         if (!result.verified) return res.status(400).json({ error: 'Passkey 验证失败' });
         const info = result.registrationInfo;
         storage.savePasskey({ id: crypto.randomUUID(), username: req.session.username, credentialId: info.credential.id, publicKey: Buffer.from(info.credential.publicKey).toString('base64'), counter: info.credential.counter || 0, transports: req.body?.response?.transports || [], createdAt: Date.now(), lastUsedAt: null });
-        webauthnChallenges.delete(`reg:${req.session.username}`); addActivity('绑定 Passkey'); res.json({ ok: true });
+        webauthnChallenges.delete(`reg:${req.session.username}`); addActivity('绑定 Passkey', req.user?.userId || null, activityFromReq(req, { category: '账户', outcome: '成功' })); res.json({ ok: true });
     } catch (err) { res.status(400).json({ error: err.message || 'Passkey 注册失败' }); }
 });
-app.delete('/api/passkeys/:id', requireUser, (req, res) => { storage.deletePasskey(req.user.username, req.params.id); addActivity('删除 Passkey', req.user.userId); res.json({ ok: true }); });
+app.delete('/api/passkeys/:id', requireUser, (req, res) => { storage.deletePasskey(req.user.username, req.params.id); addActivity('删除 Passkey', req.user.userId, activityFromReq(req, { category: '账户', outcome: '成功' })); res.json({ ok: true }); });
 app.post('/api/passkeys/login/options', async (req, res) => {
     const guard = checkLoginGuards(req);
     if (!guard.ok) return res.status(403).json({ error: guard.reason });
@@ -4285,7 +4316,7 @@ app.post('/api/passkeys/login/verify', async (req, res) => {
         recordLoginSuccess(guard.ip);
         createSession(req, res, user);
         try { storage.rawDb().prepare('UPDATE users SET lastLoginAt = ? WHERE userId = ?').run(Date.now(), user.userId); } catch {}
-        addActivity(`Passkey 登录：${user.username}`, user.userId);
+        addActivity(`Passkey 登录：${user.username}`, user.userId, activityFromReq(req, { category: '账户', outcome: '成功', actor: user.username }));
         await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: true, reason: 'passkey' });
         res.json({ ok: true, mustChangePassword: !!user.defaultPassword });
     } catch (err) {
@@ -4328,7 +4359,7 @@ app.post('/api/data/import', requireSuperAdmin, upload.single('backup'), async (
             reopenStorage();
             throw err;
         }
-        addActivity('导入数据备份');
+        addActivity('导入数据备份', req.user?.userId || null, activityFromReq(req, { category: '系统', outcome: '成功' }));
         res.json({ ok: true, message: '导入完成，数据已重新加载' });
     } catch (err) { res.status(400).json({ error: err.message || '导入失败' }); }
 });
@@ -4367,7 +4398,7 @@ app.post('/api/connections/test', requireUser, async (req, res) => {
                 : protocol === 'TELNET'
                     ? await testTelnetConnection(conn, timeoutMs)
                     : { ok: false, code: 'unsupported_protocol', message: `不支持的协议：${protocol}`, durationMs: 0 };
-    addActivity(`测试连接：${conn.name || conn.host} - ${result.message}`, req.user.userId);
+    addActivity(`测试连接：${conn.name || conn.host} - ${result.message}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: result.ok ? '成功' : '失败', protocol, target: `${conn.host}:${conn.port}`, connectionId: conn.id || null, durationMs: result.durationMs }));
     res.status(result.ok ? 200 : 400).json(result);
 });
 
@@ -4394,7 +4425,7 @@ app.post('/api/remote-execute', requireUser, async (req, res) => {
         return runRemoteCommand(conn, String(command), timeoutSeconds);
     }));
     authz.audit({ actorUserId: req.user.userId, action: 'resource.remote_execute', outcome: 'success', metadata: { targets: targets.length, command: String(command).slice(0, 120) } });
-    addActivity(`远程执行：${targets.length} 台服务器，命令 ${String(command).slice(0, 40)}`, req.user.userId);
+    addActivity(`远程执行：${targets.length} 台服务器，命令 ${String(command).slice(0, 40)}`, req.user.userId, activityFromReq(req, { category: '操作', outcome: results.some((r) => r.success === false || r.denied) ? '失败' : '成功', durationMs: Date.now() - started }));
     res.json({ startedAt: started, durationMs: Date.now() - started, results });
 });
 
@@ -4403,7 +4434,7 @@ app.post('/api/proxies', requireUser, (req, res) => {
     const b = req.body || {};
     if (!b.name || !b.host || !b.port) return res.status(400).json({ error: '名称、IP、端口不能为空' });
     const proxy = resourceService.createOwned(req.user, 'proxy', { id: crypto.randomUUID(), name: String(b.name), host: String(b.host), port: Number(b.port) || 1080, type: normalizeProxyType(b.type), username: String(b.username || ''), password: String(b.password || ''), createdAt: Date.now(), updatedAt: Date.now() });
-    addActivity(`新增代理：${proxy.name}`, req.user.userId);
+    addActivity(`新增代理：${proxy.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: proxy.type, target: `${proxy.host}:${proxy.port}` }));
     res.json({ proxy });
 });
 app.put('/api/proxies/:id', requireUser, (req, res) => {
@@ -4411,7 +4442,7 @@ app.put('/api/proxies/:id', requireUser, (req, res) => {
         const old = resourceService.getRawAuthorized(req.user, 'proxy', req.params.id, CAP.EDIT);
         const b = req.body || {};
         const proxy = resourceService.updateOwned(req.user, 'proxy', req.params.id, { name: String(b.name ?? old.name), host: String(b.host ?? old.host), port: Number(b.port ?? old.port) || 1080, type: normalizeProxyType(b.type ?? old.type), username: String(b.username ?? old.username ?? ''), password: b.password === '******' ? old.password : String(b.password ?? old.password ?? ''), updatedAt: Date.now() });
-        addActivity(`编辑代理：${proxy.name}`, req.user.userId);
+        addActivity(`编辑代理：${proxy.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', protocol: proxy.type, target: `${proxy.host}:${proxy.port}` }));
         res.json({ proxy });
     } catch (err) {
         handleServiceError(res, err, 400);
@@ -4431,7 +4462,7 @@ app.post('/api/proxies/:id/open', requireUser, (req, res) => {
 app.delete('/api/proxies/:id', requireUser, (req, res) => {
     try {
         resourceService.deleteOwned(req.user, 'proxy', req.params.id);
-        addActivity('删除代理', req.user.userId);
+        addActivity('删除代理', req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功' }));
         res.json({ ok: true });
     } catch (err) {
         handleServiceError(res, err, 400);
@@ -4444,7 +4475,7 @@ app.post('/api/ssh-keys', requireUser, (req, res) => {
     if (!String(b.name || '').trim()) return res.status(400).json({ error: '密钥名称不能为空' });
     if (!String(b.privateKey || '').includes('-----BEGIN')) return res.status(400).json({ error: '请填写有效的 SSH 私钥' });
     const sshKey = resourceService.createOwned(req.user, 'sshKey', { id: crypto.randomUUID(), name: String(b.name).trim(), privateKey: String(b.privateKey), passphrase: String(b.passphrase || ''), remark: String(b.remark || ''), createdAt: Date.now(), updatedAt: Date.now() });
-    addActivity(`新增 SSH 密钥：${sshKey.name}`, req.user.userId);
+    addActivity(`新增 SSH 密钥：${sshKey.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功' }));
     res.json({ sshKey });
 });
 app.put('/api/ssh-keys/:id', requireUser, (req, res) => {
@@ -4456,7 +4487,7 @@ app.put('/api/ssh-keys/:id', requireUser, (req, res) => {
         if (!String((b.name ?? old.name) || '').trim()) return res.status(400).json({ error: '密钥名称不能为空' });
         if (!privateKey.includes('-----BEGIN')) return res.status(400).json({ error: '请填写有效的 SSH 私钥' });
         const sshKey = resourceService.updateOwned(req.user, 'sshKey', req.params.id, { name: String(b.name ?? old.name).trim(), privateKey, passphrase, remark: String(b.remark ?? old.remark ?? ''), updatedAt: Date.now() });
-        addActivity(`编辑 SSH 密钥：${sshKey.name}`, req.user.userId);
+        addActivity(`编辑 SSH 密钥：${sshKey.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功' }));
         res.json({ sshKey });
     } catch (err) {
         handleServiceError(res, err, 400);
@@ -4476,7 +4507,7 @@ app.post('/api/ssh-keys/:id/open', requireUser, (req, res) => {
 app.delete('/api/ssh-keys/:id', requireUser, (req, res) => {
     try {
         resourceService.deleteOwned(req.user, 'sshKey', req.params.id);
-        addActivity('删除 SSH 密钥', req.user.userId);
+        addActivity('删除 SSH 密钥', req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功' }));
         res.json({ ok: true });
     } catch (err) {
         handleServiceError(res, err, 400);
@@ -4498,7 +4529,7 @@ app.post('/api/jump-hosts', requireUser, (req, res) => {
     try {
         ensureSshJumpConnection(b.connectionId, req.user);
         const jumpHost = resourceService.createOwned(req.user, 'jumpHost', { id: crypto.randomUUID(), name: String(b.name), connectionId: String(b.connectionId), createdAt: Date.now(), updatedAt: Date.now() });
-        addActivity(`新增跳板机：${jumpHost.name}`, req.user.userId);
+        addActivity(`新增跳板机：${jumpHost.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', target: `${jumpHost.host}:${jumpHost.port}` }));
         res.json({ jumpHost });
     } catch (err) {
         handleServiceError(res, err, 400);
@@ -4511,7 +4542,7 @@ app.put('/api/jump-hosts/:id', requireUser, (req, res) => {
         const nextConnectionId = String(b.connectionId ?? old.connectionId);
         ensureSshJumpConnection(nextConnectionId, req.user);
         const jumpHost = resourceService.updateOwned(req.user, 'jumpHost', req.params.id, { name: String(b.name ?? old.name), connectionId: nextConnectionId, updatedAt: Date.now() });
-        addActivity(`编辑跳板机：${jumpHost.name}`, req.user.userId);
+        addActivity(`编辑跳板机：${jumpHost.name}`, req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功', target: `${jumpHost.host}:${jumpHost.port}` }));
         res.json({ jumpHost });
     } catch (err) {
         handleServiceError(res, err, 400);
@@ -4520,7 +4551,7 @@ app.put('/api/jump-hosts/:id', requireUser, (req, res) => {
 app.delete('/api/jump-hosts/:id', requireUser, (req, res) => {
     try {
         resourceService.deleteOwned(req.user, 'jumpHost', req.params.id);
-        addActivity('删除跳板机', req.user.userId);
+        addActivity('删除跳板机', req.user.userId, activityFromReq(req, { category: '连接', outcome: '成功' }));
         res.json({ ok: true });
     } catch (err) {
         handleServiceError(res, err, 400);

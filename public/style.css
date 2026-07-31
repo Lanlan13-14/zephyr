@@ -744,12 +744,45 @@ body.terminal-mode .terminal-view.active { animation: none; }
     background: var(--surface);
     box-shadow: var(--shadow-soft);
 }
-.activity-range-tabs { display: flex; align-items: center; gap: 4px; overflow-x: auto; }
+.activity-range-tabs {
+    --activity-thumb-x: 0px;
+    --activity-thumb-w: 0px;
+    --activity-range-ease: var(--ease-smooth, cubic-bezier(0.16, 1, 0.3, 1));
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow-x: auto;
+    isolation: isolate;
+    -webkit-overflow-scrolling: touch;
+}
+.activity-range-thumb {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: var(--activity-thumb-w);
+    border-radius: 10px;
+    background: var(--accent-soft-bg);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+    transform: translate3d(var(--activity-thumb-x), 0, 0);
+    transition:
+        transform 240ms var(--activity-range-ease),
+        width 240ms var(--activity-range-ease);
+    pointer-events: none;
+    z-index: 0;
+    will-change: transform, width;
+}
+.activity-range-tabs.no-thumb-transition .activity-range-thumb {
+    transition: none;
+}
 .activity-range-btn {
+    position: relative;
+    z-index: 1;
     min-height: 36px;
     padding: 7px 13px;
     border: 0;
-    border-radius: 7px;
+    border-radius: 10px;
     background: transparent;
     color: var(--text-secondary);
     font: inherit;
@@ -757,9 +790,27 @@ body.terminal-mode .terminal-view.active { animation: none; }
     font-weight: 700;
     white-space: nowrap;
     cursor: pointer;
+    transition: color 160ms var(--ease-smooth, ease);
+    -webkit-tap-highlight-color: transparent;
 }
-.activity-range-btn:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
-.activity-range-btn.active { color: var(--accent-hover); background: var(--accent-soft-bg); }
+.activity-range-btn:hover { color: var(--text); background: transparent; }
+.activity-range-btn:active { transform: scale(0.98); }
+.activity-range-btn.active {
+    color: var(--accent-hover);
+    background: transparent;
+}
+.activity-range-btn:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+    outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+    .activity-range-thumb {
+        transition: none;
+    }
+    .activity-range-btn:active {
+        transform: none;
+    }
+}
 .activity-custom-range { display: flex; align-items: flex-end; gap: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
 .activity-custom-range label { display: grid; flex: 1; gap: 6px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
 .activity-custom-range input {
@@ -778,12 +829,46 @@ body.terminal-mode .terminal-view.active { animation: none; }
 .activity-summary strong { color: var(--text); }
 .activity-list { display: grid; gap: 8px; }
 .activity-detail-item {
+    --activity-stagger: 0ms;
     padding: 16px 18px;
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--surface);
     box-shadow: 0 5px 18px -16px rgba(0,0,0,.35);
-    animation: fadeIn .28s ease-out both;
+    transform-origin: center top;
+    animation: activityCardIn .34s cubic-bezier(.16,1,.3,1) both;
+    animation-delay: var(--activity-stagger);
+    transition:
+        transform .52s var(--ease-micro),
+        opacity .24s ease,
+        filter .28s ease,
+        border-color .32s var(--ease-smooth),
+        box-shadow .52s var(--ease-micro);
+    will-change: transform, opacity, filter;
+}
+.activity-detail-item:hover {
+    transform: translate3d(0, -2px, 0) scale(1.004);
+    border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+    box-shadow: var(--shadow-lift, 0 12px 28px -18px rgba(0,0,0,.28));
+}
+.activity-list.activity-list-switching .activity-detail-item {
+    animation: none;
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(.985);
+    filter: blur(6px);
+}
+@keyframes activityCardIn {
+    from { opacity: 0; transform: translate3d(0, 14px, 0) scale(.975); filter: blur(8px); }
+    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .activity-detail-item {
+        animation: none;
+        transition: none;
+    }
+    .activity-detail-item:hover {
+        transform: none;
+    }
 }
 .activity-detail-head { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .activity-event-mark { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft-bg); }
