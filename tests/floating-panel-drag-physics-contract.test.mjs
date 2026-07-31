@@ -12,7 +12,7 @@ const media = readFileSync(new URL('../public/preview/media/media-preview.js', i
 const style = readFileSync(new URL('../public/style.css', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const sw = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
-const CACHE = '20260731-panel-drag-physics2';
+const CACHE = '20260731-panel-drag-physics3';
 const APP_CACHE = '20260731-activity-ux1';
 
 test('shared floating-panel exposes AI-parity physics + hard drag', () => {
@@ -33,6 +33,19 @@ test('shared floating-panel exposes AI-parity physics + hard drag', () => {
   assert.match(floating, /_panelMotionClearTimer/);
   assert.match(floating, /classList\.remove\('panel-opening'/);
   assert.match(floating, /Drop any CSS transform owner before Motion writes/);
+  // Post-release jump fix: bake in offset space, clamp limits == drag bounds.
+  assert.match(floating, /export function floatingPanelVisualLimits/);
+  assert.match(floating, /panel\.offsetLeft \+ x/);
+  assert.match(floating, /panel\.offsetTop \+ y/);
+  assert.match(floating, /parent\.clientWidth/);
+  assert.match(floating, /minTop:\s*0/);
+  assert.match(floating, /same visual limits as drag bounds/);
+  assert.match(floating, /bakePanelTransform\(panel, Motion\)/);
+  // Must NOT bake via getBoundingClientRect - parent.left (border-box jump).
+  assert.doesNotMatch(
+    floating,
+    /bakePanelTransform[\s\S]{0,400}?rect\.left - parent\.left/,
+  );
 });
 
 test('bring-to-front never runs CSS transform animation (AI parity)', () => {
@@ -120,8 +133,8 @@ test('image/media preview use shared physics, not header hard drag', () => {
   assert.doesNotMatch(media, /startPanelDrag/);
 });
 
-test('cache revision pins style + terminal + floating-panel physics2', () => {
-  assert.match(sw, new RegExp(`CACHE_NAME = 'zephyr-static-${APP_CACHE}'`));
+test('cache revision pins style + terminal + floating-panel physics3', () => {
+  assert.match(sw, new RegExp(`CACHE_NAME = 'zephyr-static-${CACHE}'`));
   assert.match(sw, new RegExp(`/style\\.css\\?v=${APP_CACHE}`));
   assert.match(sw, new RegExp(`/terminal\\.js\\?v=${CACHE}`));
   assert.match(sw, new RegExp(`/floating-panel\\.js\\?v=${CACHE}`));

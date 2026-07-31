@@ -1,0 +1,156 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="/public/style.css?v=harness" />
+  <style>
+    html, body { margin: 0; height: 100%; background: #111; }
+    /* Mimic terminal-page: fixed + 1px border + padding (the jump source). */
+    #stage {
+      position: fixed;
+      inset: 0;
+      border: 1px solid #333;
+      padding: 8px 12px;
+      box-sizing: border-box;
+      overflow: hidden;
+      background: #151515;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div class="file-manager open" id="panel"
+         style="left:40px;top:40px;width:320px;height:240px;visibility:visible;opacity:1;position:absolute;">
+      <div class="panel-drag-handle" id="handle" data-drag-panel="panel">
+        <button class="panel-traffic-btn" data-layout-panel="panel" type="button"><span></span></button>
+      </div>
+      <div class="panel-titlebar">title</div>
+      <div style="flex:1;padding:12px">body</div>
+    </div>
+  </div>
+  <script type="module">
+    import {
+      ensureFloatingPanelPhysicsDrag,
+      bakePanelTransform,
+      floatingPanelVisualLimits,
+    } from '/public/floating-panel.js?v=harness';
+    import { Motion } from '/public/vendor/zephyr-motion/index.js?v=harness';
+
+    const panel = document.getElementById('panel');
+    const handle = document.getElementById('handle');
+    const out = (window.__HARNESS = { ready: false, error: null, steps: {} });
+
+    function layout() {
+      return {
+        left: panel.offsetLeft,
+        top: panel.offsetTop,
+        styleLeft: panel.style.left,
+        styleTop: panel.style.top,
+        transform: getComputedStyle(panel).transform,
+        rect: (() => {
+          const r = panel.getBoundingClientRect();
+          return { left: r.left, top: r.top, width: r.width, height: r.height };
+        })(),
+      };
+    }
+
+    function fire(type, target, x, y) {
+      target.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        pointerId: 1, pointerType: 'mouse', isPrimary: true,
+        clientX: x, clientY: y,
+        button: 0,
+        buttons: type === 'pointerup' || type === 'pointercancel' ? 0 : 1,
+      }));
+    }
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    try {
+      await Motion.init({ capacity: 64 });
+      panel.classList.remove('panel-opening', 'panel-closing');
+      const ok = await ensureFloatingPanelPhysicsDrag(panel, {
+        handle,
+        bringToFront: () => panel.classList.add('front'),
+      });
+      out.steps.physicsReady = ok === true;
+
+      // Unit-ish: bake with Motion x/y must use offset + motion, not border-box.
+      Motion.set(panel, { x: 30, y: 20 });
+      const beforeBake = layout();
+      bakePanelTransform(panel, Motion);
+      Motion.set(panel, { x: 0, y: 0 });
+      panel.style.transform = '';
+      const afterBake = layout();
+      out.steps.bakeDx = afterBake.left - (beforeBake.left);
+      // beforeBake.left is layout without transform; after should be +30
+      // (Motion x folded). If old rect-parent bake: would be +30 ± border/padding.
+      out.steps.bakeExact = Math.abs(afterBake.left - (beforeBake.left + 30)) < 0.75
+        && Math.abs(afterBake.top - (beforeBake.top + 20)) < 0.75;
+
+      // Full gesture: drag, release, wait settle, assert no post-settle jump.
+      const hx = handle.getBoundingClientRect();
+      const sx = hx.left + hx.width / 2;
+      const sy = hx.top + hx.height / 2;
+      // Slow moves → near-zero release velocity → short settle, clean bake.
+      fire('pointerdown', handle, sx, sy);
+      await sleep(20);
+      fire('pointermove', handle, sx + 40, sy + 30);
+      await sleep(40);
+      fire('pointermove', handle, sx + 80, sy + 50);
+      await sleep(40);
+      fire('pointermove', handle, sx + 100, sy + 60);
+      await sleep(40);
+      fire('pointerup', handle, sx + 100, sy + 60);
+
+      // Poll until finish bake clears transform (or timeout).
+      let last = layout();
+      let baked = null;
+      let prevVisual = last.rect;
+      let maxFrameJump = 0;
+      for (let i = 0; i < 80; i++) {
+        await sleep(25);
+        const cur = layout();
+        const jump = Math.hypot(cur.rect.left - prevVisual.left, cur.rect.top - prevVisual.top);
+        // Ignore large continuous spring steps; flag only single-frame snaps after
+        // transform is already none (post-bake softClamp jump).
+        if (cur.transform === 'none' && prevVisual && last.transform === 'none') {
+          maxFrameJump = Math.max(maxFrameJump, jump);
+        }
+        prevVisual = cur.rect;
+        last = cur;
+        if (cur.transform === 'none' && !panel.classList.contains('dragging')) {
+          baked = cur;
+          // sample one more frame for softClamp after-finish jump
+          await sleep(32);
+          const after = layout();
+          maxFrameJump = Math.max(
+            maxFrameJump,
+            Math.hypot(after.rect.left - cur.rect.left, after.rect.top - cur.rect.top),
+          );
+          last = after;
+          break;
+        }
+      }
+
+      out.steps.final = last;
+      out.steps.baked = baked;
+      out.steps.maxPostBakeJump = maxFrameJump;
+      out.steps.transformCleared = last.transform === 'none';
+      const lim = floatingPanelVisualLimits(panel);
+      out.steps.limits = lim;
+      out.steps.finalInside = last.left >= lim.minLeft - 0.5
+        && last.left <= lim.maxLeft + 0.5
+        && last.top >= lim.minTop - 0.5
+        && last.top <= lim.maxTop + 0.5;
+      out.steps.minTopIsZero = lim.minTop === 0;
+      out.steps.noPostJump = maxFrameJump < 1.5;
+      out.steps.moved = Math.hypot(last.left - 40, last.top - 40) > 30
+        || Math.hypot(last.rect.left - (12 + 40), last.rect.top - (8 + 40)) > 30;
+      out.ready = true;
+    } catch (err) {
+      out.error = String(err && err.stack || err);
+      out.ready = true;
+    }
+  </script>
+</body>
+</html>

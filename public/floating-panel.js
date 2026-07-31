@@ -357,12 +357,30 @@ const floatingPanelMotion = {
 
 const panelPhysicsState = new WeakMap();
 
+/**
+ * Layout metrics for an absolute panel's containing block.
+ * Prefer clientWidth/Height (padding box) over getBoundingClientRect border-box —
+ * CSS left/top for position:absolute are relative to the padding edge, and
+ * terminal-page has 1px border + safe-area padding. Using border-box made every
+ * bake shift left/top by border/padding, which softClamp then "corrected" as a
+ * visible jump after release (AI panel is position:fixed so it never hit this).
+ */
 export function panelParentRect(panel) {
-    return panel?.parentElement?.getBoundingClientRect?.() || {
-        left: 0,
-        top: 0,
-        width: window.innerWidth || document.documentElement.clientWidth || 0,
-        height: window.innerHeight || document.documentElement.clientHeight || 0,
+    const parent = panel?.parentElement;
+    if (!parent) {
+        return {
+            left: 0,
+            top: 0,
+            width: window.innerWidth || document.documentElement.clientWidth || 0,
+            height: window.innerHeight || document.documentElement.clientHeight || 0,
+        };
+    }
+    const rect = parent.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
+    return {
+        left: rect.left,
+        top: rect.top,
+        width: parent.clientWidth || rect.width || 0,
+        height: parent.clientHeight || rect.height || 0,
     };
 }
 
@@ -372,31 +390,87 @@ export function panelMinVisiblePx(panel) {
     return Math.min(56, Math.max(44, Math.round(width * 0.12)));
 }
 
-export function bakePanelTransform(panel) {
+function readMotionXY(panel, Motion) {
+    let x = 0;
+    let y = 0;
+    if (Motion && typeof Motion.value === 'function') {
+        const mx = Number(Motion.value(panel, 'x'));
+        const my = Number(Motion.value(panel, 'y'));
+        if (Number.isFinite(mx)) x = mx;
+        if (Number.isFinite(my)) y = my;
+        return { x, y };
+    }
+    // Fallback: parse the painted transform matrix (no Motion reference).
+    try {
+        const t = getComputedStyle(panel).transform;
+        if (t && t !== 'none') {
+            const m = new DOMMatrixReadOnly(t);
+            x = Number(m.m41) || 0;
+            y = Number(m.m42) || 0;
+        }
+    } catch { /* ignore */ }
+    return { x, y };
+}
+
+/**
+ * Fold Motion x/y into CSS left/top using layout offsets (not border-box rects).
+ * offsetLeft/Top are the absolute containing-block coordinates and ignore the
+ * live transform — so left' = offsetLeft + motionX is exact.
+ */
+export function bakePanelTransform(panel, Motion = null) {
     if (!panel) return;
-    const parent = panelParentRect(panel);
-    const rect = panel.getBoundingClientRect();
+    const { x, y } = readMotionXY(panel, Motion);
+    const left = panel.offsetLeft + x;
+    const top = panel.offsetTop + y;
     Object.assign(panel.style, {
-        left: `${rect.left - parent.left}px`,
-        top: `${rect.top - parent.top}px`,
+        left: `${left}px`,
+        top: `${top}px`,
         right: 'auto',
         bottom: 'auto',
         transform: '',
     });
 }
 
-export function floatingPanelDragBounds(panel) {
-    const parent = panelParentRect(panel);
-    const width = panel.offsetWidth || panel.getBoundingClientRect().width;
-    const height = panel.offsetHeight || panel.getBoundingClientRect().height;
-    const left = parseFloat(panel.style.left) || 0;
-    const top = parseFloat(panel.style.top) || 0;
+/** Visual left/top limits in containing-block coordinates (same for drag + finish). */
+export function floatingPanelVisualLimits(panel) {
+    const parent = panel?.parentElement;
+    const width = panel?.offsetWidth || panel?.getBoundingClientRect?.().width || 0;
+    const height = panel?.offsetHeight || panel?.getBoundingClientRect?.().height || 0;
+    const parentW = parent?.clientWidth
+        || panelParentRect(panel).width
+        || (window.innerWidth || 0);
+    const parentH = parent?.clientHeight
+        || panelParentRect(panel).height
+        || (window.innerHeight || 0);
     const minVisible = panelMinVisiblePx(panel);
+    // Keep gray strip grabbable at top; match drag minY visual = 0 (AI drag bounds).
+    // Bottom limit matches drag maxY visual — NOT minVisible-from-width (that was
+    // a post-release pull-in jump for short panels).
     return {
-        minX: (minVisible - width) - left,
-        maxX: (parent.width - minVisible) - left,
-        minY: (0) - top,
-        maxY: (Math.max(0, parent.height - Math.min(56, height * 0.25))) - top,
+        minLeft: minVisible - width,
+        maxLeft: parentW - minVisible,
+        minTop: 0,
+        maxTop: Math.max(0, parentH - Math.min(56, height * 0.25)),
+        width,
+        height,
+        parentW,
+        parentH,
+        minVisible,
+    };
+}
+
+export function floatingPanelDragBounds(panel) {
+    // Bounds are Motion x/y deltas relative to the current baked left/top.
+    // Prefer offsetLeft/Top (layout) over parseFloat(style) so we stay in sync
+    // with bakePanelTransform even if style was set without 'px' quirks.
+    const left = Number.isFinite(panel?.offsetLeft) ? panel.offsetLeft : (parseFloat(panel?.style?.left) || 0);
+    const top = Number.isFinite(panel?.offsetTop) ? panel.offsetTop : (parseFloat(panel?.style?.top) || 0);
+    const lim = floatingPanelVisualLimits(panel);
+    return {
+        minX: lim.minLeft - left,
+        maxX: lim.maxLeft - left,
+        minY: lim.minTop - top,
+        maxY: lim.maxTop - top,
     };
 }
 
@@ -408,22 +482,32 @@ function hardClampDragDelta(panel, x, y) {
     };
 }
 
+/**
+ * Soft safety after bake. MUST use the same visual limits as drag bounds —
+ * any tighter clamp produces the post-release "jump then stop" the AI panel
+ * never shows (AI comment: never re-clamp to a larger minVisible afterward).
+ * No-op when already inside limits so we never rewrite left/top for free.
+ */
 function softClampPanelEdge(panel) {
-    if (!panel?.parentElement) return;
-    const rect = panel.getBoundingClientRect();
-    const parentRect = panelParentRect(panel);
-    const minVisible = panelMinVisiblePx(panel);
-    const left = Math.min(Math.max(rect.left - parentRect.left, -rect.width + minVisible), parentRect.width - minVisible);
-    // Match AI panel: keep a thin top edge so the gray strip stays grabbable.
-    const top = Math.min(Math.max(rect.top - parentRect.top, 8), parentRect.height - minVisible);
-    panel.style.left = `${left}px`;
-    panel.style.top = `${top}px`;
+    if (!panel?.parentElement) return false;
+    const lim = floatingPanelVisualLimits(panel);
+    const left = panel.offsetLeft;
+    const top = panel.offsetTop;
+    const nextLeft = Math.min(Math.max(left, lim.minLeft), lim.maxLeft);
+    const nextTop = Math.min(Math.max(top, lim.minTop), lim.maxTop);
+    // Ignore sub-pixel noise from fractional Motion values.
+    if (Math.abs(nextLeft - left) < 0.5 && Math.abs(nextTop - top) < 0.5) return false;
+    panel.style.left = `${nextLeft}px`;
+    panel.style.top = `${nextTop}px`;
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
+    return true;
 }
 
 function finishFloatingPanelPhysicsDrag(panel, Motion, { onFinish } = {}) {
-    bakePanelTransform(panel);
+    // Bake painted Motion x/y into left/top FIRST (offset-space), then clear
+    // engine channels. Never getBoundingClientRect-bake against a bordered parent.
+    bakePanelTransform(panel, Motion);
     try { Motion?.stop?.(panel, ['x', 'y']); Motion?.set?.(panel, { x: 0, y: 0 }); Motion?.release?.(panel); } catch { /* ignore */ }
     panel.classList.remove('dragging');
     panel.style.willChange = '';
@@ -454,10 +538,15 @@ export function startFloatingPanelHardDrag(panel, e, {
     try { bringToFront?.(panel); } catch { /* ignore */ }
     window.clearTimeout(panel._panelMotionClearTimer);
     panel.classList.remove('panel-opening', 'panel-closing', 'front-switching');
+    // Fold any residual Motion x/y into left/top before hard-drag owns layout.
     void floatingPanelMotion._ensure().then((Motion) => {
-        try { Motion?.stop?.(panel); Motion?.set?.(panel, { x: 0, y: 0 }); } catch { /* ignore */ }
+        try {
+            bakePanelTransform(panel, Motion);
+            Motion?.stop?.(panel, ['x', 'y']);
+            Motion?.set?.(panel, { x: 0, y: 0 });
+        } catch { /* ignore */ }
     }).catch(() => {});
-    bakePanelTransform(panel);
+    bakePanelTransform(panel, floatingPanelMotion.engine);
     const sx = e.clientX;
     const sy = e.clientY;
     const sl = panel.offsetLeft;
@@ -632,7 +721,8 @@ export async function ensureFloatingPanelPhysicsDrag(panel, {
             window.clearTimeout(panel._panelMotionClearTimer);
             panel.classList.remove('panel-opening', 'panel-closing', 'front-switching');
             try { Motion.stop(panel); } catch { /* ignore */ }
-            bakePanelTransform(panel);
+            // offsetLeft + Motion x/y — never border-box rect bake (parent border jump).
+            bakePanelTransform(panel, Motion);
             try { Motion.set(panel, { x: 0, y: 0 }); } catch { /* ignore */ }
             panel.classList.add('dragging');
             panel.style.willChange = 'transform';
