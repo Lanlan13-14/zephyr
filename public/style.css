@@ -736,7 +736,7 @@ body.terminal-mode .terminal-view.active { animation: none; }
 .activity-intro { margin-top: 7px; color: var(--text-secondary); font-size: 14px; }
 .activity-filter-bar {
     display: grid;
-    gap: 12px;
+    gap: 0;
     margin-bottom: 18px;
     padding: 12px;
     border: 1px solid var(--border);
@@ -808,7 +808,7 @@ body.terminal-mode .terminal-view.active { animation: none; }
         transition: none;
     }
 }
-.activity-custom-range { display: flex; align-items: flex-end; gap: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
+.activity-custom-range { display: flex; align-items: flex-end; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .activity-custom-range label { display: grid; flex: 1; gap: 6px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
 .activity-custom-range input {
     width: 100%;
@@ -2286,8 +2286,12 @@ body.terminal-custom-fullscreen-open {
     height: 100dvh;
     overflow: hidden;
 }
-body.terminal-custom-fullscreen-open .main-nav {
+body.terminal-custom-fullscreen-open:not(.terminal-fullscreen-exiting) .main-nav {
     display: none !important;
+}
+body.terminal-custom-fullscreen-open.terminal-fullscreen-exiting .main-nav {
+    display: flex !important;
+    pointer-events: none !important;
 }
 .terminal-workspace-grid.compact .workspace-splitter { display: none; }
 .terminal-frame { display: none; width: 100%; height: 720px; border: 0; background: var(--bg); }

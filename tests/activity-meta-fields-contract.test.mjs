@@ -11,7 +11,7 @@ const appJs = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const CACHE = '20260731-activity-ux1';
+const CACHE = '20260731-mobile-motion-fix2';
 
 test('activities table persists sourceIp and durationMs (plus detail columns)', () => {
     assert.match(storageJs, /addColumnIfMissing\('activities', 'sourceIp'/);

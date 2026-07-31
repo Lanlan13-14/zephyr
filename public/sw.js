@@ -1,7 +1,7 @@
-const CACHE_NAME = 'zephyr-static-20260731-panel-drag-physics4';
+const CACHE_NAME = 'zephyr-static-20260731-mobile-motion-fix2';
 const PRECACHE = [
-    '/app.js?v=20260731-activity-ux1',
-    '/style.css?v=20260731-panel-drag-physics4',
+    '/app.js?v=20260731-mobile-motion-fix2',
+    '/style.css?v=20260731-mobile-motion-fix2',
     '/theme-runtime.js?v=20260615-visual-color-picker',
     '/terminal.js?v=20260731-panel-drag-physics4',
     '/floating-panel.js?v=20260731-panel-drag-physics4',

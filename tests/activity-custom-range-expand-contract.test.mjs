@@ -10,14 +10,18 @@ const appJs = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const CACHE = '20260731-activity-ux1';
+const CACHE = '20260731-mobile-motion-fix2';
 
 test('Motion.expand provides Apple-style height+opacity expand/collapse', () => {
   assert.match(motionJs, /async expand\(el, opts = \{\}\)/);
   assert.match(motionJs, /hiddenClass/);
   assert.match(motionJs, /tween\(el, \{ h: targetH, opacity: 1 \}/);
-  assert.match(motionJs, /tween\(el, \{ h: 0, opacity: 0 \}/);
+  assert.match(motionJs, /const hSlot = slotFor\(el, 'h'\)/);
+  assert.match(motionJs, /const opacitySlot = slotFor\(el, 'opacity'\)/);
+  assert.match(motionJs, /engine\.setValue\(hSlot\.id, startH \* \(1 - q\)\)/);
+  assert.match(motionJs, /engine\.setValue\(opacitySlot\.id, startO \* \(1 - q\)\)/);
   assert.match(motionJs, /el\.style\.overflow = 'hidden';/);
+  assert.match(motionJs, /marginTop/);
   assert.match(motionJs, /paddingTop/);
   assert.match(motionJs, /borderTopWidth/);
   assert.ok(motionJs.indexOf('paddingTop') < motionJs.lastIndexOf("el.style.height = '';"));
@@ -30,7 +34,11 @@ test('activity custom range uses Motion.expand instead of instant force-hidden t
   assert.match(appJs, /function setActivityCustomRangeVisible/);
   assert.match(appJs, /Motion\.expand\(el,/);
   assert.match(appJs, /setActivityCustomRangeVisible\(activityRange === 'custom'/);
+  assert.match(appJs, /return customRangeMotion;/);
+  assert.match(appJs, /await customRangeMotion;[\s\S]*await loadActivities\(\);/);
   assert.doesNotMatch(appJs, /#activityCustomRange'\)\?\.classList\.toggle\('force-hidden', activityRange !== 'custom'\)/);
+  assert.match(styleCss, /\.activity-filter-bar\s*\{[\s\S]*?gap:\s*0;/);
+  assert.match(styleCss, /\.activity-custom-range\s*\{[^}]*margin-top:\s*12px;/);
   assert.match(styleCss, /#activityCustomRange\.activity-custom-range/);
 });
 
@@ -38,5 +46,5 @@ test('cache revision covers activity custom expand', () => {
   assert.match(appHtml, new RegExp(`app\\.js\\?v=${CACHE}`));
   assert.match(appHtml, new RegExp(`style\\.css\\?v=${CACHE}`));
   assert.match(swJs, new RegExp(`app\\.js\\?v=${CACHE}`));
-  assert.match(appHtml, /zephyr-motion\/index\.js\?v=20260731-motion-expand1/);
+  assert.match(appHtml, /zephyr-motion\/index\.js\?v=20260731-motion-mobile-fix2/);
 });

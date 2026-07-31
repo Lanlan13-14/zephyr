@@ -105,6 +105,8 @@ const terminalReconnectFallbackTimers = new Map();
 let terminalFullscreenMotionGen = 0;
 /** Collapsed workspace rect captured just before mobile fullscreen expand. */
 let terminalFullscreenOriginRect = null;
+/** One shared exit promise prevents close/minimize from racing the collapse. */
+let terminalFullscreenExitPromise = null;
 let sshKbParentBaseline = 0;
 let sshKbParentOpen = false;
 // True only after parent visualViewport itself observed a real IME inset.
@@ -198,7 +200,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20260731-motion-tween3');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -2563,9 +2565,10 @@ function setActivityRangeSelection(range, { animate = true } = {}) {
     $$('[data-activity-range]').forEach((item) => {
         item.classList.toggle('active', item.dataset.activityRange === activityRange);
     });
-    void setActivityCustomRangeVisible(activityRange === 'custom', { animate });
+    const customRangeMotion = setActivityCustomRangeVisible(activityRange === 'custom', { animate });
     syncActivityRangeThumb({ instant: !animate });
     bindActivityRangeMotion();
+    return customRangeMotion;
 }
 function renderActivities() {
     const list = $('#activityList');
@@ -4227,28 +4230,43 @@ function renderTerminalTabs({ rebuildWorkspace = true } = {}) {
     scheduleWorkspaceSave('terminal-tabs');
 }
 
-function exitTerminalFullscreen() {
+function exitTerminalFullscreen({ renderAfter = true } = {}) {
     const workspace = $('#terminalWorkspace');
     const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
     if (workspace?.classList.contains('custom-fullscreen')) {
+        if (terminalFullscreenExitPromise) return terminalFullscreenExitPromise;
         resetTerminalWorkspaceKeyboard({ force: true });
-        // Fire-and-forget stretch collapse; re-render after settle.
-        animateMobileTerminalFullscreen(workspace, { open: false })
+        terminalFullscreenExitPromise = animateMobileTerminalFullscreen(workspace, { open: false })
             .catch(() => {
                 workspace.classList.remove('custom-fullscreen');
-                document.body.classList.remove('terminal-custom-fullscreen-open');
+                document.body.classList.remove('terminal-custom-fullscreen-open', 'terminal-fullscreen-exiting');
+                const nav = document.querySelector('.main-nav');
+                if (nav) {
+                    try { sshKeyMotion.engine?.release?.(nav); } catch {}
+                    nav.style.display = '';
+                    nav.style.visibility = '';
+                    nav.style.pointerEvents = '';
+                    nav.style.willChange = '';
+                }
+                try { sshKeyMotion.engine?.release?.(workspace); } catch {}
                 clearTerminalFullscreenInline(workspace);
+                return false;
             })
             .finally(() => {
-                renderTerminalTabs();
+                terminalFullscreenExitPromise = null;
+                if (renderAfter) renderTerminalTabs();
                 scheduleTerminalKeyboardReflow('mobile-fullscreen-exit');
             });
-        return;
+        return terminalFullscreenExitPromise;
     }
     if (fullscreenElement) {
-        if (document.exitFullscreen) document.exitFullscreen().catch?.(() => {});
-        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        if (document.exitFullscreen) return document.exitFullscreen().catch?.(() => false) || Promise.resolve(true);
+        if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+            return Promise.resolve(true);
+        }
     }
+    return Promise.resolve(false);
 }
 
 async function playTerminalWindowCloseMotion(win) {
@@ -4282,10 +4300,21 @@ async function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
         ephemeralConnectionId: ephemeralConnectionId || '',
         customFullscreen: $('#terminalWorkspace')?.classList.contains('custom-fullscreen'),
     });
-    if (activeTerminalTab === tabId || willBeLastTab) exitTerminalFullscreen();
+    const customFullscreen = !!$('#terminalWorkspace')?.classList.contains('custom-fullscreen');
+    const shouldExitFullscreen = activeTerminalTab === tabId || willBeLastTab;
     closingTerminalTabs.add(tabId);
     const win = terminalWorkspace?.querySelector(`.terminal-window[data-window="${CSS.escape(String(tabId))}"]`);
-    await playTerminalWindowCloseMotion(win);
+    const closeMotion = playTerminalWindowCloseMotion(win);
+    if (shouldExitFullscreen && customFullscreen) {
+        // Window shrink and nav/workspace return are one coordinated gesture.
+        await Promise.all([
+            exitTerminalFullscreen({ renderAfter: false }),
+            closeMotion,
+        ]);
+    } else {
+        if (shouldExitFullscreen) await exitTerminalFullscreen({ renderAfter: false });
+        await closeMotion;
+    }
     // Fire-and-forget: delete the one-shot host row so it never lingers in the library.
     if (ephemeralConnectionId) {
         disposeEphemeralConnection(ephemeralConnectionId, { reason: `tab-close:${reason}` });
@@ -4329,9 +4358,17 @@ function applyTerminalWindowPreset(tabId, action) {
         maxWindows: getEffectiveTerminalMaxWindows()
     });
     if (action === 'minimize') {
-        exitTerminalFullscreen();
-        minimizeTerminalSession(tabId);
-        renderTerminalTabs();
+        const workspace = $('#terminalWorkspace');
+        const customFullscreen = !!workspace?.classList.contains('custom-fullscreen');
+        if (customFullscreen) {
+            // Nav/workspace collapse and window minimize begin on the same frame.
+            const exitJob = exitTerminalFullscreen({ renderAfter: false });
+            minimizeTerminalSession(tabId);
+            exitJob.finally(() => renderTerminalTabs());
+        } else {
+            minimizeTerminalSession(tabId);
+            renderTerminalTabs();
+        }
         return;
     }
     if (action === 'close') { closeTerminalTab(tabId); return; }
@@ -5110,9 +5147,10 @@ function scheduleTerminalKeyboardReflow(reason = 'terminal-keyboard-reflow') {
 
 function clearTerminalFullscreenInline(workspace) {
     if (!workspace) return;
-    for (const prop of ['position', 'left', 'width', 'right', 'top', 'bottom', 'zIndex', 'willChange', 'maxHeight', 'minHeight', 'overflow', 'boxSizing', 'height', 'borderRadius', 'transform', 'opacity', 'filter', 'transition']) {
+    for (const prop of ['position', 'left', 'width', 'right', 'top', 'bottom', 'zIndex', 'willChange', 'maxHeight', 'minHeight', 'overflow', 'boxSizing', 'borderRadius', 'transform', 'opacity', 'filter', 'transition']) {
         workspace.style[prop] = '';
     }
+    workspace.style.removeProperty('height');
 }
 
 function terminalWorkspaceRadiusPx(el) {
@@ -5156,6 +5194,9 @@ async function animateMobileTerminalFullscreen(workspace, { open }) {
             right: fromRect.right,
         };
         const radiusFrom = terminalWorkspaceRadiusPx(workspace);
+        // Freeze the measured collapsed presentation before fixed positioning.
+        // Late `height:100%!important` shell rules otherwise win the first paint.
+        workspace.style.setProperty('height', `${fromRect.height}px`, 'important');
         // Full-bleed X from frame 0; only height/radius spring (no horizontal flash).
         const ok = await Motion.stretchExpand(workspace, {
             open: true,
@@ -5177,38 +5218,64 @@ async function animateMobileTerminalFullscreen(workspace, { open }) {
         return ok && gen === terminalFullscreenMotionGen;
     }
 
-    // Close: keep full-bleed paint, drop class, then shrink height only.
+    // Close: keep the body in fullscreen state while the workspace shrinks.
+    // Removing that class first made the entire mobile nav appear in one paint.
     const fullRect = workspace.getBoundingClientRect();
     const origin = terminalFullscreenOriginRect;
-    const collapsedH = Math.max(1, origin?.height || Math.round(vh * 0.6));
-    const radiusTo = origin ? terminalWorkspaceRadiusPx(workspace) || 12 : 12;
+    const targetTop = Math.max(0, Number(origin?.top) || 0);
+    const collapsedH = Math.max(1, Number(origin?.height) || Math.round(vh * 0.6));
+    const targetBottom = Math.max(0, vh - targetTop - collapsedH);
+    const radiusTo = (() => {
+        const raw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--terminal-card-radius'));
+        return Number.isFinite(raw) && raw > 0 ? raw : 12;
+    })();
     workspace.style.position = 'fixed';
     workspace.style.left = '0';
     workspace.style.right = '0';
     workspace.style.width = '100vw';
     workspace.style.top = 'auto';
     workspace.style.bottom = '0';
-    workspace.style.height = `${fullRect.height}px`;
+    workspace.style.setProperty('height', `${fullRect.height}px`, 'important');
     workspace.style.borderRadius = '0px';
     workspace.style.zIndex = '1000';
     workspace.style.transition = 'none';
-    workspace.classList.remove('custom-fullscreen');
-    document.body.classList.remove('terminal-custom-fullscreen-open');
-    void workspace.offsetHeight;
-    const ok = await Motion.stretchExpand(workspace, {
+    document.body.classList.add('terminal-fullscreen-exiting');
+    const nav = document.querySelector('.main-nav');
+    if (nav) {
+        nav.style.display = 'flex';
+        nav.style.visibility = 'visible';
+        nav.style.pointerEvents = 'none';
+        nav.style.willChange = 'transform, opacity';
+    }
+    let navMotion = Promise.resolve();
+    if (nav) {
+        Motion.set(nav, { y: -Math.max(1, nav.getBoundingClientRect().height), opacity: 0 });
+        navMotion = Motion.to(nav, { y: 0, opacity: 1 }, { preset: { response: 0.30, damping: 1 } });
+    }
+    const workspaceMotion = Motion.stretchExpand(workspace, {
         open: false,
         fromRect: fullRect,
         fromHeight: fullRect.height,
         toHeight: collapsedH,
-        pinBottom: 0,
+        pinBottom: targetBottom,
         fullBleedX: true,
         radiusFrom: 0,
         radiusTo,
         release: false,
         clearInline: false,
     });
+    const [ok] = await Promise.all([workspaceMotion, navMotion]);
     if (gen !== terminalFullscreenMotionGen) return false;
+    workspace.classList.remove('custom-fullscreen');
+    document.body.classList.remove('terminal-custom-fullscreen-open', 'terminal-fullscreen-exiting');
     try { Motion.release(workspace); } catch {}
+    if (nav) {
+        try { Motion.release(nav); } catch {}
+        nav.style.display = '';
+        nav.style.visibility = '';
+        nav.style.pointerEvents = '';
+        nav.style.willChange = '';
+    }
     clearTerminalFullscreenInline(workspace);
     terminalFullscreenOriginRect = null;
     return ok && gen === terminalFullscreenMotionGen;
@@ -5264,6 +5331,14 @@ async function fullscreenTerminalTab(tabId) {
         }
     } catch (err) {
         clearTerminalFullscreenInline(workspace);
+        document.body.classList.remove('terminal-fullscreen-exiting');
+        const nav = document.querySelector('.main-nav');
+        if (nav) {
+            nav.style.display = '';
+            nav.style.visibility = '';
+            nav.style.pointerEvents = '';
+            nav.style.willChange = '';
+        }
         throw err;
     }
 }
@@ -11292,7 +11367,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260731-motion-tween3')
+        return import('./vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -11599,8 +11674,13 @@ function bindEvents() {
             if (next === activityRange && button.classList.contains('active')) {
                 if (next !== 'custom') return;
             }
-            setActivityRangeSelection(next, { animate: true });
-            if (activityRange !== 'custom') await loadActivities();
+            const customRangeMotion = setActivityRangeSelection(next, { animate: true });
+            // Closing the date controls animates layout. Do not simultaneously
+            // replace a potentially long activity list on the main thread.
+            if (next !== 'custom') {
+                await customRangeMotion;
+                await loadActivities();
+            }
         });
     });
     const activityRangeTabs = document.querySelector('.activity-range-tabs');

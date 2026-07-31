@@ -86,8 +86,10 @@ test('dual-face DOM and no CSS transition owner', () => {
 test('terminal close uses one Motion path before removal', () => {
   const close = fn('closeTerminalTab'); const motion = fn('playTerminalWindowCloseMotion');
   assert.match(close, /terminal-window\[data-window=/);
-  assert.match(close, /await playTerminalWindowCloseMotion\(win\)/);
-  assert.ok(close.indexOf('await playTerminalWindowCloseMotion(win)') < close.indexOf('terminalTabs = terminalTabs.filter'));
+  assert.match(close, /const closeMotion = playTerminalWindowCloseMotion\(win\)/);
+  assert.match(close, /await Promise\.all\(\[[\s\S]*closeMotion/);
+  assert.match(close, /await closeMotion/);
+  assert.ok(close.indexOf('const closeMotion = playTerminalWindowCloseMotion(win)') < close.indexOf('terminalTabs = terminalTabs.filter'));
   assert.match(motion, /Motion\.tween\(win,[\s\S]*scaleX: 0\.01,[\s\S]*scaleY: 0\.01,[\s\S]*opacity: 0/);
   assert.match(motion, /duration: 360/); assert.match(motion, /bezier: \[0\.32, 0\.72, 0, 1\]/);
   assert.match(css, /terminal-window\.motion-closing/);

@@ -318,7 +318,7 @@ export const Motion = {
 
     el.style.overflow = 'hidden';
     el.style.boxSizing = 'border-box';
-    el.style.willChange = 'height, opacity';
+    el.style.willChange = 'height, opacity, margin';
 
     const liveH = () => {
       if (this.isAnimating(el) && Number.isFinite(this.value(el, 'h'))) {
@@ -336,7 +336,7 @@ export const Motion = {
     };
 
     if (open) {
-      this._edgeStop?.();
+      el.style.marginTop = '';
       el.style.paddingTop = '';
       el.style.borderTopWidth = '';
       el.classList.remove(hiddenClass);
@@ -377,43 +377,49 @@ export const Motion = {
     }
     // Clamp overflow while the box shrinks so inner inputs never jut out.
     el.style.overflow = 'hidden';
-    el.style.willChange = 'height, opacity';
-    this.set(el, { h: startH, opacity: startO });
+    el.style.willChange = 'height, opacity, margin';
+    this.stop(el);
+    const token = this._bump(el);
+    const hSlot = slotFor(el, 'h');
+    const opacitySlot = slotFor(el, 'opacity');
+    if (!hSlot || !opacitySlot) return false;
+    engine.setValue(hSlot.id, startH);
+    engine.setValue(opacitySlot.id, startO);
+    engine.tick(0);
 
-    // Collapse padding-top + border-top-width on the same bezier so the box really
-    // reaches 0 (border-box otherwise keeps a forced padding/border strip, which reads
-    // as a two-step collapse: content stops, strip lingers, then display:none snaps).
+    // Height, opacity and edge chrome use ONE display-synced clock. The old
+    // parallel tween + edge rAF loops could land on alternating frames under
+    // mobile load, which read as a hitch halfway through the collapse.
     const cs = getComputedStyle(el);
+    const margin0 = Math.max(0, parseFloat(cs.marginTop) || 0);
     const pad0 = Math.max(0, parseFloat(cs.paddingTop) || 0);
     const bw0 = Math.max(0, parseFloat(cs.borderTopWidth) || 0);
-    let edgeStopped = false;
-    const stopEdge = () => { edgeStopped = true; };
-    this._edgeStop = stopEdge;
-    const easeEdge = engine.bezier(bezier[0], bezier[1], bezier[2], bezier[3]);
-    const edgeStart = performance.now();
-    const edgeDone = new Promise(resolve => {
+    const ease = engine.bezier(bezier[0], bezier[1], bezier[2], bezier[3]);
+    const ok = await new Promise(resolve => {
+      const start = performance.now();
       const step = now => {
-        if (edgeStopped) return resolve();
-        const raw = Math.min(1, Math.max(0, (now - edgeStart) / duration));
-        const q = easeEdge(raw);
+        if (this._genOf(el) !== token) return resolve(false);
+        const raw = Math.min(1, Math.max(0, (now - start) / duration));
+        const q = ease(raw);
+        engine.setValue(hSlot.id, startH * (1 - q));
+        engine.setValue(opacitySlot.id, startO * (1 - q));
+        engine.tick(0);
+        if (margin0 > 0) el.style.marginTop = `${(margin0 * (1 - q)).toFixed(2)}px`;
         if (pad0 > 0) el.style.paddingTop = `${(pad0 * (1 - q)).toFixed(2)}px`;
         if (bw0 > 0) el.style.borderTopWidth = `${(bw0 * (1 - q)).toFixed(2)}px`;
-        if (raw < 1) requestAnimationFrame(step); else resolve();
+        if (raw < 1) requestAnimationFrame(step); else resolve(true);
       };
       requestAnimationFrame(step);
     });
-
-    const ok = await this.tween(el, { h: 0, opacity: 0 }, { duration, bezier });
-    if (!ok) { stopEdge(); this._edgeStop = null; return false; }
-    await edgeDone;
+    if (!ok) return false;
     this.release(el);
-    this._edgeStop = null;
     // Hide first, then clear inline styles — one task, no flash of natural height.
     el.classList.add(hiddenClass);
     el.style.height = '';
     el.style.opacity = '';
     el.style.overflow = '';
     el.style.willChange = '';
+    el.style.marginTop = '';
     el.style.paddingTop = '';
     el.style.borderTopWidth = '';
     return true;
@@ -2812,6 +2818,20 @@ export const Motion = {
     el.style.willChange = 'height, border-radius';
     el.style.overflow = el.style.overflow || 'hidden';
     el.style.boxSizing = 'border-box';
+    // App shell has late `height: 100% !important` guards. Give the animation
+    // channel an explicit owner so every spring frame is actually painted.
+    // Motion.release removes the property at handoff.
+    el.style.setProperty('height', `${startH}px`, 'important');
+    const state = stateFor(el);
+    state.managed.add('height');
+    const heightSlot = slotFor(el, 'h');
+    if (heightSlot) {
+      engine.unbind(heightSlot.id);
+      engine.bind(heightSlot.id, v => {
+        el.style.setProperty('height', `${v}px`, 'important');
+        state.managed.add('height');
+      });
+    }
     // Kill host CSS transitions so radius/height aren't double-driven.
     el.style.transition = 'none';
 

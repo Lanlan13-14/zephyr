@@ -10,7 +10,7 @@ const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
 
-const CACHE = '20260731-activity-ux1';
+const CACHE = '20260731-mobile-motion-fix2';
 
 function extractFn(src, name) {
     const re = new RegExp(`function ${name}\\s*\\(`);
