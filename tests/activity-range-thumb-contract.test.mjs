@@ -10,7 +10,7 @@ const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
 
-const CACHE = '20260731-main-animation-sync1';
+const CACHE = '20260731-activity-ux1';
 
 function extractFn(src, name) {
     const re = new RegExp(`function ${name}\\s*\\(`);
@@ -53,7 +53,7 @@ test('activity range tabs ship a sliding thumb element', () => {
 test('CSS drives thumb geometry with width/transform transitions', () => {
     assert.match(styleCss, /\.activity-range-thumb\s*\{[\s\S]*?width:\s*var\(--activity-thumb-w\)/);
     assert.match(styleCss, /\.activity-range-thumb\s*\{[\s\S]*?transform:\s*translate3d\(var\(--activity-thumb-x\), 0, 0\)/);
-    assert.match(styleCss, /\.activity-range-thumb\s*\{[\s\S]*?transition:[\s\S]*?transform 240ms[\s\S]*?width 240ms/);
+    assert.match(styleCss, /\.activity-range-thumb\s*\{[\s\S]*?transition:[\s\S]*?transform 210ms[\s\S]*?width 210ms/);
     assert.match(styleCss, /\.activity-range-tabs\.no-thumb-transition \.activity-range-thumb\s*\{[\s\S]*?transition:\s*none/);
     assert.match(styleCss, /prefers-reduced-motion:\s*reduce[\s\S]*?\.activity-range-thumb[\s\S]*?transition:\s*none/);
     // Active chip no longer paints its own solid background — thumb owns the fill.
@@ -72,9 +72,15 @@ test('JS measures active chip and animates selection changes', () => {
     const setFn = extractFn(appJs, 'setActivityRangeSelection');
     assert.match(setFn, /classList\.toggle\('active'/);
     assert.match(setFn, /syncActivityRangeThumb\(\{\s*instant:\s*!animate\s*\}\)/);
-    assert.match(setFn, /activityCustomRange/);
+    assert.match(setFn, /setActivityCustomRangeVisible\(activityRange === .custom./);
 
     assert.match(appJs, /setActivityRangeSelection\(next,\s*\{\s*animate:\s*true\s*\}\)/);
+    assert.match(appJs, /sshKeyMotion\._ensure\(\)\.then/);
+    assert.match(appJs, /Motion\.press\(btn, \{ scale: 0\.965/);
+    assert.match(appJs, /\.activity-range-tabs \.activity-range-btn/);
+    assert.match(appJs, /pointerdown[^\n]*previewActivityRangeSelection\(button\)/);
+    assert.match(appJs, /pointercancel[^\n]*syncActivityRangeThumb\(\)/);
+    assert.doesNotMatch(styleCss, /\.activity-range-btn:active\s*\{[^}]*transform/);
     assert.match(appJs, /setActivityRangeSelection\(activityRange,\s*\{\s*animate:\s*false\s*\}\)/);
     assert.match(appJs, /ResizeObserver/);
     // Locale re-render path must re-measure after label text changes.

@@ -11,7 +11,7 @@ const appJs = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const CACHE = '20260731-main-animation-sync1';
+const CACHE = '20260731-activity-ux1';
 
 test('activities table persists sourceIp and durationMs (plus detail columns)', () => {
     assert.match(storageJs, /addColumnIfMissing\('activities', 'sourceIp'/);
@@ -42,13 +42,14 @@ test('server addActivity accepts meta and stamps request IP', () => {
     }
 });
 
-test('frontend renders real sourceIp/duration and hides empty cells', () => {
+test('frontend renders real sourceIp and hides empty cells without duration UI', () => {
     assert.match(appJs, /const sourceIp = String\(activity\.sourceIp \|\| ''\)\.trim\(\);/);
-    assert.match(appJs, /durationMs:\s*Number\.isFinite\(durationMs\) \? Math\.max\(0, Math\.round\(durationMs\)\) : null/);
     assert.match(appJs, /detail\.sourceIp \? `/);
-    assert.match(appJs, /detail\.duration \? `/);
     assert.match(appJs, /t\('来源 IP'\)/);
-    assert.match(appJs, /t\('耗时'\)/);
+    // Activity cards no longer surface duration; storage/server still keep durationMs.
+    assert.doesNotMatch(appJs, /detail\.duration \? `/);
+    assert.doesNotMatch(appJs, /t\('耗时'\)/);
+    assert.doesNotMatch(appJs, /durationMs:\s*Number\.isFinite\(durationMs\) \? Math\.max\(0, Math\.round\(durationMs\)\) : null/);
     // Old bug: compared em-dash field against ASCII hyphen, so empty always rendered.
     assert.doesNotMatch(appJs, /detail\.sourceIp !== '-'/);
     assert.doesNotMatch(appJs, /detail\.duration !== '-'/);

@@ -2466,7 +2466,6 @@ function activityDetails(activity) {
     const connection = connections.find((item) => message.includes(item.name) || activity.connectionId === item.id);
     const category = activity.category || (/登录|密码|TOTP|Passkey|用户/.test(message) ? t('账户') : (/连接|服务器|跳板机|代理|SSH 密钥/.test(message) ? t('连接') : (/设置|邮件|导入|日志/.test(message) ? t('系统') : t('操作'))));
     const outcome = activity.outcome || (/失败|拒绝|错误|超时/.test(message) ? t('失败') : t('成功'));
-    const durationMs = Number(activity.durationMs);
     const sourceIp = String(activity.sourceIp || '').trim();
     const protocol = activity.protocol || connection?.protocol || '';
     const target = activity.target || (connection ? `${connection.host}:${connection.port}` : '');
@@ -2477,8 +2476,6 @@ function activityDetails(activity) {
         protocol,
         target,
         sourceIp,
-        durationMs: Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : null,
-        duration: Number.isFinite(durationMs) ? `${Math.max(0, Math.round(durationMs))} ms` : '',
     };
 }
 function syncActivityRangeThumb({ instant = false } = {}) {
@@ -2499,13 +2496,76 @@ function syncActivityRangeThumb({ instant = false } = {}) {
         tabs.classList.remove('no-thumb-transition');
     }
 }
+function bindActivityRangeMotion() {
+    if (!sshKeyMotion?._ensure) return;
+    sshKeyMotion._ensure().then((Motion) => {
+        if (!Motion?.press) return;
+        document.querySelectorAll('.activity-range-tabs .activity-range-btn').forEach((btn) => {
+            if (btn.dataset.motionPressBound === '1') return;
+            Motion.press(btn, { scale: 0.965, preset: { response: 0.18, damping: 0.86 } });
+            btn.dataset.motionPressBound = '1';
+            btn.classList.add('motion-press-bound');
+        });
+    }).catch(() => {});
+}
+
+function previewActivityRangeSelection(btn) {
+    if (!btn || btn.classList.contains('active')) return;
+    const tabs = document.querySelector('.activity-range-tabs');
+    if (!tabs || tabs.classList.contains('no-transition') || tabs.classList.contains('no-thumb-transition')) return;
+    tabs.style.setProperty('--activity-thumb-x', `${Math.max(0, btn.offsetLeft)}px`);
+    tabs.style.setProperty('--activity-thumb-w', `${Math.max(0, btn.offsetWidth)}px`);
+}
+
+
+let activityCustomRangeAnimGen = 0;
+async function setActivityCustomRangeVisible(show, { animate = true } = {}) {
+    const el = $('#activityCustomRange');
+    if (!el) return;
+    const wantOpen = !!show;
+    const isHidden = el.classList.contains('force-hidden');
+    if (wantOpen === !isHidden && !el.style.height) return;
+    if (!animate || !sshKeyMotion?._ensure) {
+        el.classList.toggle('force-hidden', !wantOpen);
+        el.style.height = '';
+        el.style.opacity = '';
+        el.style.overflow = '';
+        el.style.willChange = '';
+        return;
+    }
+    const gen = ++activityCustomRangeAnimGen;
+    try {
+        const Motion = await sshKeyMotion._ensure();
+        if (gen !== activityCustomRangeAnimGen) return;
+        if (!Motion?.expand) {
+            el.classList.toggle('force-hidden', !wantOpen);
+            return;
+        }
+        await Motion.expand(el, {
+            open: wantOpen,
+            hiddenClass: 'force-hidden',
+            duration: wantOpen ? 340 : 280,
+            bezier: [0.32, 0.72, 0, 1],
+        });
+    } catch (err) {
+        if (gen !== activityCustomRangeAnimGen) return;
+        console.warn('[activity-custom-range] expand failed', err);
+        el.classList.toggle('force-hidden', !wantOpen);
+        el.style.height = '';
+        el.style.opacity = '';
+        el.style.overflow = '';
+        el.style.willChange = '';
+    }
+}
+
 function setActivityRangeSelection(range, { animate = true } = {}) {
     activityRange = range || '7d';
     $$('[data-activity-range]').forEach((item) => {
         item.classList.toggle('active', item.dataset.activityRange === activityRange);
     });
-    $('#activityCustomRange')?.classList.toggle('force-hidden', activityRange !== 'custom');
+    void setActivityCustomRangeVisible(activityRange === 'custom', { animate });
     syncActivityRangeThumb({ instant: !animate });
+    bindActivityRangeMotion();
 }
 function renderActivities() {
     const list = $('#activityList');
@@ -2535,7 +2595,6 @@ function renderActivities() {
                 ${detail.protocol ? `<div><dt>${t('协议')}</dt><dd>${escapeHtml(detail.protocol)}</dd></div>` : ''}
                 ${detail.target ? `<div><dt>${t('目标地址')}</dt><dd>${escapeHtml(detail.target)}</dd></div>` : ''}
                 ${detail.sourceIp ? `<div><dt>${t('来源 IP')}</dt><dd>${escapeHtml(detail.sourceIp)}</dd></div>` : ''}
-                ${detail.duration ? `<div><dt>${t('耗时')}</dt><dd>${escapeHtml(detail.duration)}</dd></div>` : ''}
             </dl>
             <div class="activity-event-id"><span>${t('事件 ID')}</span><code>${escapeHtml(activity.id || '—')}</code></div>
         </article>`;
@@ -11532,14 +11591,18 @@ function bindEvents() {
     });
     // Settings/appearance selects may mount later with settings HTML — re-enhance after loadSettings.
     window.__zephyrEnhanceToggleSelects = enhanceAllToggleSelects;
-    $$('[data-activity-range]').forEach((button) => button.addEventListener('click', async () => {
-        const next = button.dataset.activityRange || '7d';
-        if (next === activityRange && button.classList.contains('active')) {
-            if (next !== 'custom') return;
-        }
-        setActivityRangeSelection(next, { animate: true });
-        if (activityRange !== 'custom') await loadActivities();
-    }));
+    $$('[data-activity-range]').forEach((button) => {
+        button.addEventListener('pointerdown', () => previewActivityRangeSelection(button), { passive: true });
+        button.addEventListener('pointercancel', () => syncActivityRangeThumb());
+        button.addEventListener('click', async () => {
+            const next = button.dataset.activityRange || '7d';
+            if (next === activityRange && button.classList.contains('active')) {
+                if (next !== 'custom') return;
+            }
+            setActivityRangeSelection(next, { animate: true });
+            if (activityRange !== 'custom') await loadActivities();
+        });
+    });
     const activityRangeTabs = document.querySelector('.activity-range-tabs');
     if (activityRangeTabs) {
         setActivityRangeSelection(activityRange, { animate: false });

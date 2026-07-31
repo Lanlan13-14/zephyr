@@ -298,6 +298,127 @@ export const Motion = {
     });
   },
 
+
+  /**
+   * Apple-style inline expand / collapse.
+   * Uses height + opacity with interruptible cubic-bezier (same family as iOS sheet).
+   *
+   *   Motion.expand(el, { open: true })
+   *   Motion.expand(el, { open: false, duration: 280, bezier: [0.32, 0.72, 0, 1] })
+   *
+   * Hidden state uses opts.hiddenClass (default: force-hidden → display:none).
+   * Mid-flight reverse keeps the live height/opacity so open↔close feels continuous.
+   */
+  async expand(el, opts = {}) {
+    if (!el) return false;
+    const open = opts.open !== false;
+    const duration = Math.max(0, Number(opts.duration ?? (open ? 340 : 280)));
+    const bezier = Array.isArray(opts.bezier) ? opts.bezier : [0.32, 0.72, 0, 1];
+    const hiddenClass = opts.hiddenClass || 'force-hidden';
+
+    el.style.overflow = 'hidden';
+    el.style.boxSizing = 'border-box';
+    el.style.willChange = 'height, opacity';
+
+    const liveH = () => {
+      if (this.isAnimating(el) && Number.isFinite(this.value(el, 'h'))) {
+        return Math.max(0, Number(this.value(el, 'h')) || 0);
+      }
+      const r = el.getBoundingClientRect?.();
+      return Math.max(0, r?.height || el.scrollHeight || el.offsetHeight || 0);
+    };
+    const liveO = () => {
+      if (this.isAnimating(el) && Number.isFinite(this.value(el, 'opacity'))) {
+        return Math.max(0, Math.min(1, Number(this.value(el, 'opacity')) || 0));
+      }
+      const o = Number.parseFloat(getComputedStyle(el).opacity);
+      return Number.isFinite(o) ? o : (open ? 0 : 1);
+    };
+
+    if (open) {
+      this._edgeStop?.();
+      el.style.paddingTop = '';
+      el.style.borderTopWidth = '';
+      el.classList.remove(hiddenClass);
+      // Measure natural content height without flashing full opacity.
+      const prevVisibility = el.style.visibility;
+      el.style.visibility = 'hidden';
+      el.style.height = 'auto';
+      el.style.opacity = '0';
+      const targetH = Math.max(0, el.scrollHeight || el.offsetHeight || 0);
+      el.style.visibility = prevVisibility || '';
+      const fromH = liveH();
+      const fromO = liveO();
+      this.set(el, { h: fromH > 0 && fromH < targetH ? fromH : 0, opacity: fromO < 1 ? fromO : 0 });
+      // Force a layout seed so the first tween frame starts from 0/near-0.
+      if (!(fromH > 0 && fromH < targetH)) this.set(el, { h: 0, opacity: 0 });
+      const ok = await this.tween(el, { h: targetH, opacity: 1 }, { duration, bezier });
+      if (!ok) return false;
+      this.release(el);
+      el.style.height = 'auto';
+      el.style.opacity = '';
+      el.style.overflow = '';
+      el.style.willChange = '';
+      return true;
+    }
+
+    // close
+    if (el.classList.contains(hiddenClass)) return true;
+    const startH = liveH();
+    const startO = liveO();
+    if (startH < 0.5) {
+      this.release(el);
+      el.style.height = '';
+      el.style.opacity = '';
+      el.style.overflow = '';
+      el.style.willChange = '';
+      el.classList.add(hiddenClass);
+      return true;
+    }
+    // Clamp overflow while the box shrinks so inner inputs never jut out.
+    el.style.overflow = 'hidden';
+    el.style.willChange = 'height, opacity';
+    this.set(el, { h: startH, opacity: startO });
+
+    // Collapse padding-top + border-top-width on the same bezier so the box really
+    // reaches 0 (border-box otherwise keeps a forced padding/border strip, which reads
+    // as a two-step collapse: content stops, strip lingers, then display:none snaps).
+    const cs = getComputedStyle(el);
+    const pad0 = Math.max(0, parseFloat(cs.paddingTop) || 0);
+    const bw0 = Math.max(0, parseFloat(cs.borderTopWidth) || 0);
+    let edgeStopped = false;
+    const stopEdge = () => { edgeStopped = true; };
+    this._edgeStop = stopEdge;
+    const easeEdge = engine.bezier(bezier[0], bezier[1], bezier[2], bezier[3]);
+    const edgeStart = performance.now();
+    const edgeDone = new Promise(resolve => {
+      const step = now => {
+        if (edgeStopped) return resolve();
+        const raw = Math.min(1, Math.max(0, (now - edgeStart) / duration));
+        const q = easeEdge(raw);
+        if (pad0 > 0) el.style.paddingTop = `${(pad0 * (1 - q)).toFixed(2)}px`;
+        if (bw0 > 0) el.style.borderTopWidth = `${(bw0 * (1 - q)).toFixed(2)}px`;
+        if (raw < 1) requestAnimationFrame(step); else resolve();
+      };
+      requestAnimationFrame(step);
+    });
+
+    const ok = await this.tween(el, { h: 0, opacity: 0 }, { duration, bezier });
+    if (!ok) { stopEdge(); this._edgeStop = null; return false; }
+    await edgeDone;
+    this.release(el);
+    this._edgeStop = null;
+    // Hide first, then clear inline styles — one task, no flash of natural height.
+    el.classList.add(hiddenClass);
+    el.style.height = '';
+    el.style.opacity = '';
+    el.style.overflow = '';
+    el.style.willChange = '';
+    el.style.paddingTop = '';
+    el.style.borderTopWidth = '';
+    return true;
+  },
+
   set(el, props) {
     for (const ch of Object.keys(props)) {
       const rec = slotFor(el, ch);
