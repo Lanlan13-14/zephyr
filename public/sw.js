@@ -1,9 +1,9 @@
-const CACHE_NAME = 'zephyr-static-20260731-mobile-motion-fix2';
+const CACHE_NAME = 'zephyr-static-20260731-sftp-multi-close1';
 const PRECACHE = [
-    '/app.js?v=20260731-mobile-motion-fix2',
-    '/style.css?v=20260731-mobile-motion-fix2',
+    '/app.js?v=20260731-sftp-multi-close1',
+    '/style.css?v=20260731-sftp-multi-close1',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260731-panel-drag-physics4',
+    '/terminal.js?v=20260731-sftp-multi-close1',
     '/floating-panel.js?v=20260731-panel-drag-physics4',
     '/notes.js',
     '/markdown.js',

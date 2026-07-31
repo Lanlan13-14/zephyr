@@ -4067,8 +4067,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260731-sftp-multi-close1`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260731-sftp-multi-close1`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {

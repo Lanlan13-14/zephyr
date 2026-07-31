@@ -4733,6 +4733,7 @@ html.ssh-kb-open .terminal-page {
     pointer-events: auto;
 }
 #fmCloseBtn,
+.fm-close-btn,
 #infoCloseBtn,
 #dockerCloseBtn {
     display: none !important;

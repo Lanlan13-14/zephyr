@@ -56,8 +56,8 @@ test('terminal unload policy follows the setting so detached SSH sessions do not
 });
 
 test('updated app and terminal assets use the current cache revision', () => {
-    assert.match(appHtml, /app\.js\?v=20260730-admin-role-delete1/);
-    assert.match(terminalHtml, /terminal\.js\?v=20260730-admin-role-delete1/);
-    assert.match(telnetHtml, /telnet-terminal\.js\?v=20260730-admin-role-delete1/);
-    assert.match(sw, /zephyr-static-20260730-admin-role-delete1/);
+    assert.match(appHtml, /app\.js\?v=20260731-sftp-multi-close1/);
+    assert.match(terminalHtml, /terminal\.js\?v=20260731-sftp-multi-close1/);
+    assert.match(telnetHtml, /telnet-terminal\.js\?v=20260731-sftp-multi-close1/);
+    assert.match(sw, /zephyr-static-20260731-sftp-multi-close1/);
 });

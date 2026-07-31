@@ -4525,7 +4525,9 @@ function createFileManagerWindow({ path = currentPath } = {}) {
     const pathInput = panel.querySelector('.fm-path-input');
     const goBtn = panel.querySelector('.fm-path-box .tool-btn');
     const refreshBtn = panel.querySelector('.fm-refresh-btn');
-    const closeBtn = panel.querySelector('.fm-close-btn');
+    // Legacy toolbar X is hidden on the primary panel by #fmCloseBtn. Clones lose
+    // that id, so remove the duplicate control; all windows close from the ⋯ menu.
+    panel.querySelector('.fm-close-btn')?.remove();
     const searchInput = panel.querySelector('.fm-search-input');
     const newFolderBtn = Array.from(panel.querySelectorAll('.fm-toolbar .tool-btn')).find((btn) => btn.textContent.includes(t('新建文件夹')));
     const newFileBtn = Array.from(panel.querySelectorAll('.fm-toolbar .tool-btn')).find((btn) => btn.textContent.includes(t('新建文件')));
@@ -4639,7 +4641,6 @@ function createFileManagerWindow({ path = currentPath } = {}) {
     state.close = close;
 
     refreshBtn?.addEventListener('click', refresh);
-    closeBtn?.addEventListener('click', close);
     goBtn?.addEventListener('click', () => { const p = pathInput?.value.trim(); if (p) navigate(p); });
     pathInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const p = pathInput.value.trim(); if (p) navigate(p); } });
     backBtn?.addEventListener('click', () => { const parts = state.currentPath.replace(/\/+$/, '').split('/'); parts.pop(); navigate(parts.join('/') || '/'); });

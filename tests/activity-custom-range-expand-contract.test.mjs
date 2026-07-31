@@ -10,7 +10,7 @@ const appJs = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const CACHE = '20260731-mobile-motion-fix2';
+const CACHE = '20260731-sftp-multi-close1';
 
 test('Motion.expand provides Apple-style height+opacity expand/collapse', () => {
   assert.match(motionJs, /async expand\(el, opts = \{\}\)/);

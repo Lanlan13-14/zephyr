@@ -31,11 +31,12 @@ test('mobile editor css reinforces horizontal scroll on actions and toolbar', ()
     assert.match(editorCss, /\.fm-editor-toolbar\s*\{[^}]*flex-wrap:\s*nowrap/s);
 });
 
-test('editor header drag ignores actions strip', () => {
-    assert.match(
-        terminalJs,
-        /closest\('button,input,select,textarea,label,\.fm-editor-header-actions'\)/,
-    );
+test('editor header/actions are not drag surfaces', () => {
+    const setupStart = terminalJs.indexOf('function setupEditorPanel');
+    const setupEnd = terminalJs.indexOf('function createEditorPanel', setupStart);
+    const setup = terminalJs.slice(setupStart, setupEnd);
+    assert.match(setup, /handle:\s*panel\.querySelector\('\.panel-drag-handle'\)/);
+    assert.doesNotMatch(setup, /querySelector\('\.fm-editor-header'\).*addEventListener\('pointerdown'/s);
 });
 
 test('editor header markup still hosts the action buttons', () => {

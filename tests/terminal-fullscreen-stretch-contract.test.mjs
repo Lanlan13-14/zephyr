@@ -11,7 +11,7 @@ const motionJs = readFileSync(path.join(root, 'public/vendor/zephyr-motion/motio
 const presetsJs = readFileSync(path.join(root, 'public/vendor/zephyr-motion/presets.js'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const APP_CACHE = '20260731-mobile-motion-fix2';
+const APP_CACHE = '20260731-sftp-multi-close1';
 const MOTION_CACHE = '20260731-motion-mobile-fix2';
 
 test('Motion.stretchExpand is Go-standard driven (no CSS transition)', () => {
