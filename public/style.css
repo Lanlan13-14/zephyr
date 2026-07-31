@@ -4063,11 +4063,24 @@ html.ssh-kb-open .terminal-page {
 .file-manager.open:not(.panel-opening):not(.panel-closing):not(.layout-animating),
 .docker-panel.open:not(.panel-opening):not(.panel-closing):not(.layout-animating) {
     transform: none;
-    /* Do not CSS-transition transform after open — Motion owns the channel. */
-    transition:
-        opacity 0.28s ease,
-        filter 0.32s ease,
-        visibility 0.36s;
+    /* AI panel parity: geometry is NOT CSS-transitioned. left/top/transform
+       changes from Motion.drag bake must apply in one paint — any CSS
+       transition here becomes a visible "super jump" on release. */
+    transition: none !important;
+    animation: none !important;
+}
+/* While baking Motion x/y into left/top, never let CSS interpolate geometry. */
+.file-manager.panel-physics-baking,
+.docker-panel.panel-physics-baking,
+.info-modal.panel-physics-baking,
+.snippet-panel.panel-physics-baking,
+.shortcut-panel.panel-physics-baking,
+.rdp-floating-panel.panel-physics-baking,
+.fm-editor-modal.panel-physics-baking,
+.image-preview-modal.panel-physics-baking,
+.media-preview-modal.panel-physics-baking {
+    transition: none !important;
+    animation: none !important;
 }
 
 @keyframes panelFrontSwitch {
@@ -4666,7 +4679,8 @@ html.ssh-kb-open .terminal-page {
 }
 .fm-editor-modal.open:not(.panel-opening):not(.panel-closing):not(.layout-animating):not(.closing) {
     transform: none;
-    transition: opacity 0.24s ease, filter 0.26s ease;
+    transition: none !important;
+    animation: none !important;
 }
 .fm-editor-modal.closing {
     opacity: 0;
@@ -5345,10 +5359,8 @@ html.ssh-kb-open .terminal-page {
 }
 .info-modal.open:not(.panel-opening):not(.panel-closing):not(.layout-animating) {
     transform: none;
-    transition:
-        opacity 0.28s ease,
-        filter 0.32s ease,
-        visibility 0.36s;
+    transition: none !important;
+    animation: none !important;
 }
 .info-modal-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -5825,10 +5837,9 @@ html.ssh-kb-open .terminal-page {
 }
 .rdp-floating-panel.open:not(.panel-opening):not(.panel-closing):not(.layout-animating) {
     transform: none;
-    transition:
-        opacity .24s ease,
-        visibility .24s ease,
-        box-shadow .24s ease;
+    /* Geometry owned by Motion.drag — no CSS left/top/transform transition. */
+    transition: none !important;
+    animation: none !important;
 }
 
 .rdp-floating-panel.front {
@@ -6252,7 +6263,8 @@ body.smartbar-trash-hover .smartbar-trash-target {
 .snippet-panel.open:not(.panel-opening):not(.panel-closing):not(.layout-animating),
 .shortcut-panel.open:not(.panel-opening):not(.panel-closing):not(.layout-animating) {
     transform: none;
-    transition: opacity .28s ease, filter .32s ease;
+    transition: none !important;
+    animation: none !important;
 }
 .snippet-panel.front,
 .shortcut-panel.front { z-index: 47; }

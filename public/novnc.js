@@ -6,7 +6,7 @@ import {
     ensureFloatingPanelPhysicsDrag,
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
-} from './floating-panel.js?v=20260731-panel-drag-physics3';
+} from './floating-panel.js?v=20260731-panel-drag-physics4';
 
 const $ = (sel) => document.querySelector(sel);
 const NOVNC_CLIENT_VERSION = '2026-06-14-theme-palettes';

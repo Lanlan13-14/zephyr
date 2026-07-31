@@ -74,18 +74,18 @@
       });
       out.steps.physicsReady = ok === true;
 
-      // Unit-ish: bake with Motion x/y must use offset + motion, not border-box.
+      // Unit-ish: bake must keep the PAINTED rect continuous (no double-offset).
       Motion.set(panel, { x: 30, y: 20 });
       const beforeBake = layout();
       bakePanelTransform(panel, Motion);
-      Motion.set(panel, { x: 0, y: 0 });
-      panel.style.transform = '';
       const afterBake = layout();
-      out.steps.bakeDx = afterBake.left - (beforeBake.left);
-      // beforeBake.left is layout without transform; after should be +30
-      // (Motion x folded). If old rect-parent bake: would be +30 ± border/padding.
-      out.steps.bakeExact = Math.abs(afterBake.left - (beforeBake.left + 30)) < 0.75
-        && Math.abs(afterBake.top - (beforeBake.top + 20)) < 0.75;
+      out.steps.bakeDx = afterBake.left - beforeBake.left;
+      // Visual rect must not jump when transform is folded into left/top.
+      out.steps.bakeVisualDx = afterBake.rect.left - beforeBake.rect.left;
+      out.steps.bakeVisualDy = afterBake.rect.top - beforeBake.rect.top;
+      out.steps.bakeExact = Math.abs(out.steps.bakeVisualDx) < 1.0
+        && Math.abs(out.steps.bakeVisualDy) < 1.0
+        && afterBake.transform === 'none';
 
       // Full gesture: drag, release, wait settle, assert no post-settle jump.
       const hx = handle.getBoundingClientRect();

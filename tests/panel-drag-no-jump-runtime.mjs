@@ -95,11 +95,15 @@ try {
     && s.minTopIsZero
     && s.finalInside
     && s.transformCleared
-    && s.moved;
+    && s.moved
+    && Math.abs(s.bakeVisualDx || 0) < 1.0
+    && Math.abs(s.bakeVisualDy || 0) < 1.0;
   if (!ok) {
     console.error('ASSERT_FAIL', {
       physicsReady: s.physicsReady,
       bakeExact: s.bakeExact,
+      bakeVisualDx: s.bakeVisualDx,
+      bakeVisualDy: s.bakeVisualDy,
       noPostJump: s.noPostJump,
       maxPostBakeJump: s.maxPostBakeJump,
       minTopIsZero: s.minTopIsZero,

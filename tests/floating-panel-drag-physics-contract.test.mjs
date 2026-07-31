@@ -12,8 +12,8 @@ const media = readFileSync(new URL('../public/preview/media/media-preview.js', i
 const style = readFileSync(new URL('../public/style.css', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const sw = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
-const CACHE = '20260731-panel-drag-physics3';
-const APP_CACHE = '20260731-activity-ux1';
+const CACHE = '20260731-panel-drag-physics4';
+const APP_CACHE = '20260731-panel-drag-physics4';
 
 test('shared floating-panel exposes AI-parity physics + hard drag', () => {
   assert.match(floating, /export async function ensureFloatingPanelPhysicsDrag/);
@@ -33,19 +33,28 @@ test('shared floating-panel exposes AI-parity physics + hard drag', () => {
   assert.match(floating, /_panelMotionClearTimer/);
   assert.match(floating, /classList\.remove\('panel-opening'/);
   assert.match(floating, /Drop any CSS transform owner before Motion writes/);
-  // Post-release jump fix: bake in offset space, clamp limits == drag bounds.
+  // Post-release jump fix: visual bake after detaching Motion writers.
   assert.match(floating, /export function floatingPanelVisualLimits/);
-  assert.match(floating, /panel\.offsetLeft \+ x/);
-  assert.match(floating, /panel\.offsetTop \+ y/);
-  assert.match(floating, /parent\.clientWidth/);
+  assert.match(floating, /export function visualPanelLayoutPosition/);
+  assert.match(floating, /borderLeft/);
   assert.match(floating, /minTop:\s*0/);
-  assert.match(floating, /same visual limits as drag bounds/);
-  assert.match(floating, /bakePanelTransform\(panel, Motion\)/);
-  // Must NOT bake via getBoundingClientRect - parent.left (border-box jump).
-  assert.doesNotMatch(
-    floating,
-    /bakePanelTransform[\s\S]{0,400}?rect\.left - parent\.left/,
-  );
+  assert.match(floating, /CRITICAL ORDER/);
+  assert.match(floating, /Motion\?\.release\?\.\(panel\)/);
+  assert.match(floating, /panel-physics-baking/);
+  assert.match(floating, /double-offset|double-paints|super jump/);
+  // finish must detach writers BEFORE clearing transform / writing left.
+  const finishIdx = floating.indexOf('function finishFloatingPanelPhysicsDrag');
+  assert.ok(finishIdx >= 0);
+  const finishBody = floating.slice(finishIdx, finishIdx + 1600);
+  assert.match(finishBody, /visualPanelLayoutPosition\(panel\)/);
+  assert.match(finishBody, /release\?\.\(panel\)/);
+  assert.match(finishBody, /transform:\s*['"]none['"]/);
+  const visAt = finishBody.indexOf('visualPanelLayoutPosition(panel)');
+  const relAt = finishBody.indexOf('Motion?.release?.(panel)');
+  const trnAt = finishBody.search(/transform:\s*['"]none['"]/);
+  assert.ok(visAt >= 0 && relAt >= 0 && trnAt >= 0, 'finish has capture/release/transform');
+  assert.ok(visAt < trnAt, 'capture painted rect before clearing transform');
+  assert.ok(relAt < trnAt, 'release writers before clearing transform');
 });
 
 test('bring-to-front never runs CSS transform animation (AI parity)', () => {
@@ -84,15 +93,20 @@ test('CSS frees transform for Motion.drag while open/dragging', () => {
     assert.match(block, /animation:\s*none\s*!important/, `${name} animation none`);
     assert.match(block, /transition:\s*none\s*!important/, `${name} transition none`);
   }
-  // Resting open frees transform channel.
+  // Resting open frees transform channel and kills ALL geometry transitions.
   assert.ok(style.includes('.file-manager.open:not(.panel-opening):not(.panel-closing):not(.layout-animating)'));
   assert.ok(style.includes('.rdp-floating-panel.open:not(.panel-opening):not(.panel-closing):not(.layout-animating)'));
   const freeIdx = style.indexOf('.file-manager.open:not(.panel-opening):not(.panel-closing):not(.layout-animating)');
   assert.ok(freeIdx >= 0);
-  assert.match(style.slice(freeIdx, freeIdx + 320), /transform:\s*none;/);
+  const freeBlock = style.slice(freeIdx, freeIdx + 700);
+  assert.match(freeBlock, /transform:\s*none;/);
+  assert.match(freeBlock, /transition:\s*none\s*!important/);
   const rdpFreeIdx = style.indexOf('.rdp-floating-panel.open:not(.panel-opening):not(.panel-closing):not(.layout-animating)');
   assert.ok(rdpFreeIdx >= 0);
-  assert.match(style.slice(rdpFreeIdx, rdpFreeIdx + 280), /transform:\s*none;/);
+  const rdpFree = style.slice(rdpFreeIdx, rdpFreeIdx + 400);
+  assert.match(rdpFree, /transform:\s*none;/);
+  assert.match(rdpFree, /transition:\s*none\s*!important/);
+  assert.match(style, /\.panel-physics-baking/);
 });
 
 test('SSH terminal wires physics drag, not titlebar hard drag', () => {
@@ -133,7 +147,7 @@ test('image/media preview use shared physics, not header hard drag', () => {
   assert.doesNotMatch(media, /startPanelDrag/);
 });
 
-test('cache revision pins style + terminal + floating-panel physics3', () => {
+test('cache revision pins style + terminal + floating-panel physics4', () => {
   assert.match(sw, new RegExp(`CACHE_NAME = 'zephyr-static-${CACHE}'`));
   assert.match(sw, new RegExp(`/style\\.css\\?v=${APP_CACHE}`));
   assert.match(sw, new RegExp(`/terminal\\.js\\?v=${CACHE}`));

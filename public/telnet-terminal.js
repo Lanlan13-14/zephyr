@@ -31,7 +31,7 @@ import {
     ensureFloatingPanelPhysicsDrag,
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
-} from './floating-panel.js?v=20260731-panel-drag-physics3';
+} from './floating-panel.js?v=20260731-panel-drag-physics4';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
