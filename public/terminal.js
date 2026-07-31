@@ -30,7 +30,7 @@ import {
     ensureFloatingPanelPhysicsDrag,
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
-} from './floating-panel.js?v=20260731-panel-drag-physics1';
+} from './floating-panel.js?v=20260731-panel-drag-physics2';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
 let terminalSurface = null;
@@ -4467,9 +4467,18 @@ function animatePanelFromButton(panel, button, opening = true) {
     panel.classList.remove('panel-opening', 'panel-closing');
     void panel.offsetWidth;
     panel.classList.add(opening ? 'panel-opening' : 'panel-closing');
+    // animation-fill:both on .panel-opening must not stick — it overrides
+    // Motion.drag inline transform and makes panels undraggable.
+    window.clearTimeout(panel._panelMotionClearTimer);
+    const ms = opening ? 400 : 320;
+    panel._panelMotionClearTimer = window.setTimeout(() => {
+        if (opening) panel.classList.remove('panel-opening');
+        else if (!panel.classList.contains('open')) panel.classList.remove('panel-closing');
+    }, ms);
 }
 function clearPanelMotion(panel) {
     if (!panel) return;
+    window.clearTimeout(panel._panelMotionClearTimer);
     panel.classList.remove('panel-opening', 'panel-closing');
 }
 
@@ -11409,35 +11418,35 @@ function setupPanelLayoutMenu() {
 
 function bringPanelToFront(panel) {
     if (!panel) return;
+    // AI panel parity: raise z-index only. CSS front-switching rewrite of
+    // transform would clobber Motion.drag mid-gesture (drag feels dead).
     if (panel.classList?.contains('editor-window') || panel.classList?.contains('image-preview-modal') || panel.classList?.contains('media-preview-modal')) {
         document.querySelectorAll('.fm-editor-modal.editor-window, .image-preview-modal, .media-preview-modal').forEach((p) => {
-            if (p !== panel) p.classList.remove('front-switching');
+            if (p !== panel) {
+                p.classList.remove('front');
+                p.classList.remove('front-switching');
+            }
         });
         const nextZ = allocateFloatingPanelZIndex(panel);
         panel.style.zIndex = String(nextZ);
         panel.style.setProperty('--panel-z', String(nextZ));
         panel.classList.add('front');
+        panel.classList.remove('front-switching');
+        window.clearTimeout(panel._frontSwitchTimer);
         return;
     }
-    const wasFront = panel.classList.contains('front');
     document.querySelectorAll('.file-manager, .info-modal, .docker-panel, .snippet-panel, .shortcut-panel').forEach((p) => {
-        if (p !== panel) p.classList.remove('front');
-        if (p !== panel) p.classList.remove('front-switching');
+        if (p !== panel) {
+            p.classList.remove('front');
+            p.classList.remove('front-switching');
+        }
     });
     const nextZ = allocateFloatingPanelZIndex(panel);
     panel.style.zIndex = String(nextZ);
     panel.style.setProperty('--panel-z', String(nextZ));
     panel.classList.add('front');
-    if (!wasFront) {
-        panel.classList.remove('front-switching');
-        // 重新触发布局动画：模拟 iPadOS 窗口切到前台时的轻微弹性抬起感。
-        void panel.offsetWidth;
-        panel.classList.add('front-switching');
-        window.clearTimeout(panel._frontSwitchTimer);
-        panel._frontSwitchTimer = window.setTimeout(() => {
-            panel.classList.remove('front-switching');
-        }, 360);
-    }
+    panel.classList.remove('front-switching');
+    window.clearTimeout(panel._frontSwitchTimer);
 }
 
 function setupFloatingPanel(panel, options) {

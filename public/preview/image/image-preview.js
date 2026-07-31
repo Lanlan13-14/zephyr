@@ -177,7 +177,14 @@
             }
             this.focus();
             requestAnimationFrame(() => {
-                if (!this.closed && this.modal.isConnected) this.modal.classList.add('panel-opening');
+                if (!this.closed && this.modal.isConnected) {
+                    this.modal.classList.add('panel-opening');
+                    // animation-fill:both must not stick or Motion.drag loses transform.
+                    window.clearTimeout(this.modal._panelMotionClearTimer);
+                    this.modal._panelMotionClearTimer = window.setTimeout(() => {
+                        this.modal?.classList?.remove('panel-opening');
+                    }, 400);
+                }
             });
             this.setLoading(filePath);
             this.send({ type: 'sftp-preview', path: filePath, force: !!options.force });

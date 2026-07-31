@@ -180,7 +180,14 @@
             this.modal.style.display = 'flex';
             this.modal.classList.remove('open', 'closing', 'panel-opening', 'panel-closing');
             requestAnimationFrame(() => {
-                if (!this.closed && this.modal.isConnected) this.modal.classList.add('panel-opening');
+                if (!this.closed && this.modal.isConnected) {
+                    this.modal.classList.add('panel-opening');
+                    // animation-fill:both must not stick or Motion.drag loses transform.
+                    window.clearTimeout(this.modal._panelMotionClearTimer);
+                    this.modal._panelMotionClearTimer = window.setTimeout(() => {
+                        this.modal?.classList?.remove('panel-opening');
+                    }, 400);
+                }
             });
             this.focus();
             this.send({ type: 'sftp-media-preview', path: filePath, force: !!options.force, capabilities: this.getCapabilities(filePath) });

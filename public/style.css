@@ -4017,7 +4017,17 @@ html.ssh-kb-open .terminal-page {
 .shortcut-panel.dragging,
 .shortcut-panel.resizing,
 .fm-editor-modal.editor-window.dragging,
-.fm-editor-modal.editor-window.resizing { transition: none; user-select: none; touch-action: none; }
+.fm-editor-modal.editor-window.resizing,
+.image-preview-modal.dragging,
+.image-preview-modal.resizing,
+.media-preview-modal.dragging,
+.media-preview-modal.resizing {
+    /* Motion.drag owns transform; CSS animation/transition must not rewrite it. */
+    transition: none !important;
+    animation: none !important;
+    user-select: none;
+    touch-action: none;
+}
 .file-manager.layout-animating,
 .info-modal.layout-animating,
 .docker-panel.layout-animating,
@@ -4040,8 +4050,19 @@ html.ssh-kb-open .terminal-page {
 .docker-panel.open {
     visibility: visible;
     opacity: 1;
+    /* Identity only while open/close keyframes run; resting open frees
+       transform for Motion.drag (AI panel parity). */
     transform: scale(1) translateY(0);
     filter: blur(0);
+}
+.file-manager.open:not(.panel-opening):not(.panel-closing):not(.layout-animating),
+.docker-panel.open:not(.panel-opening):not(.panel-closing):not(.layout-animating) {
+    transform: none;
+    /* Do not CSS-transition transform after open — Motion owns the channel. */
+    transition:
+        opacity 0.28s ease,
+        filter 0.32s ease,
+        visibility 0.36s;
 }
 
 @keyframes panelFrontSwitch {
@@ -4637,6 +4658,10 @@ html.ssh-kb-open .terminal-page {
     transform: translate3d(0, 0, 0) scale(1);
     filter: blur(0);
     pointer-events: auto;
+}
+.fm-editor-modal.open:not(.panel-opening):not(.panel-closing):not(.layout-animating):not(.closing) {
+    transform: none;
+    transition: opacity 0.24s ease, filter 0.26s ease;
 }
 .fm-editor-modal.closing {
     opacity: 0;
@@ -5313,6 +5338,13 @@ html.ssh-kb-open .terminal-page {
     transform: scale(1) translateY(0);
     filter: blur(0);
 }
+.info-modal.open:not(.panel-opening):not(.panel-closing):not(.layout-animating) {
+    transform: none;
+    transition:
+        opacity 0.28s ease,
+        filter 0.32s ease,
+        visibility 0.36s;
+}
 .info-modal-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 14px; background: var(--bg); border-bottom: 1px solid var(--border); font-weight: 600;
@@ -5786,6 +5818,13 @@ html.ssh-kb-open .terminal-page {
     pointer-events: auto;
     transform: translate3d(0, 0, 0) scale(1);
 }
+.rdp-floating-panel.open:not(.panel-opening):not(.panel-closing):not(.layout-animating) {
+    transform: none;
+    transition:
+        opacity .24s ease,
+        visibility .24s ease,
+        box-shadow .24s ease;
+}
 
 .rdp-floating-panel.front {
     z-index: 42;
@@ -5798,7 +5837,9 @@ html.ssh-kb-open .terminal-page {
 
 .rdp-floating-panel.dragging,
 .rdp-floating-panel.resizing {
-    transition: none;
+    /* Motion.drag owns transform; CSS must not rewrite mid-gesture. */
+    transition: none !important;
+    animation: none !important;
     user-select: none;
     touch-action: none;
 }
@@ -6203,12 +6244,22 @@ body.smartbar-trash-hover .smartbar-trash-target {
     transform: scale(1) translateY(0);
     filter: blur(0);
 }
+.snippet-panel.open:not(.panel-opening):not(.panel-closing):not(.layout-animating),
+.shortcut-panel.open:not(.panel-opening):not(.panel-closing):not(.layout-animating) {
+    transform: none;
+    transition: opacity .28s ease, filter .32s ease;
+}
 .snippet-panel.front,
 .shortcut-panel.front { z-index: 47; }
 .snippet-panel.dragging,
 .snippet-panel.resizing,
 .shortcut-panel.dragging,
-.shortcut-panel.resizing { transition: none; user-select: none; touch-action: none; }
+.shortcut-panel.resizing {
+    transition: none !important;
+    animation: none !important;
+    user-select: none;
+    touch-action: none;
+}
 .snippet-panel.layout-animating,
 .shortcut-panel.layout-animating {
     transition: left .62s var(--ios-open), top .62s var(--ios-open), width .62s var(--ios-open), height .62s var(--ios-open), transform .72s var(--ios-bounce), opacity .28s ease, filter .32s ease;
@@ -8632,7 +8683,12 @@ html[data-theme="dark"] .rdp-joystick-icon.active { fill: #ffb14f; filter: brigh
     pointer-events: none !important;
 }
 .ai-agent-panel.file-manager.dragging,
-.ai-agent-panel.file-manager.resizing { transition: none; user-select: none; touch-action: none; }
+.ai-agent-panel.file-manager.resizing {
+    transition: none !important;
+    animation: none !important;
+    user-select: none;
+    touch-action: none;
+}
 /* AI layout rectangles are animated exclusively by Motion.morph (FLIP).
    CSS left/width transitions would double-interpolate against the engine. */
 .ai-agent-panel.file-manager.layout-animating {

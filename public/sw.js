@@ -1,9 +1,10 @@
-const CACHE_NAME = 'zephyr-static-20260731-main-animation-sync1';
+const CACHE_NAME = 'zephyr-static-20260731-panel-drag-physics2';
 const PRECACHE = [
     '/app.js?v=20260731-main-animation-sync1',
-    '/style.css?v=20260731-main-animation-sync1',
+    '/style.css?v=20260731-panel-drag-physics2',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260731-main-animation-sync1',
+    '/terminal.js?v=20260731-panel-drag-physics2',
+    '/floating-panel.js?v=20260731-panel-drag-physics2',
     '/notes.js',
     '/markdown.js',
 ];

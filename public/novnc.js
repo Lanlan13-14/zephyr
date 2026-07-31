@@ -6,7 +6,7 @@ import {
     ensureFloatingPanelPhysicsDrag,
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
-} from './floating-panel.js?v=20260731-panel-drag-physics1';
+} from './floating-panel.js?v=20260731-panel-drag-physics2';
 
 const $ = (sel) => document.querySelector(sel);
 const NOVNC_CLIENT_VERSION = '2026-06-14-theme-palettes';
@@ -412,19 +412,17 @@ function clampPanel(panel) {
 }
 function bringPanelToFront(panel) {
     if (!panel) return;
-    const wasFront = panel.classList.contains('front');
+    // AI panel parity: raise z-index only. Never run CSS transform animations
+    // that clobber Motion.drag mid-gesture.
     floatingPanels().forEach((item) => {
-        item.classList.remove('front');
-        if (item !== panel) item.classList.remove('front-switching');
+        if (item !== panel) {
+            item.classList.remove('front');
+            item.classList.remove('front-switching');
+        }
     });
     panel.classList.add('front');
-    if (!wasFront) {
-        panel.classList.remove('front-switching');
-        void panel.offsetWidth;
-        panel.classList.add('front-switching');
-        window.clearTimeout(panel._frontSwitchTimer);
-        panel._frontSwitchTimer = window.setTimeout(() => panel.classList.remove('front-switching'), 360);
-    }
+    panel.classList.remove('front-switching');
+    window.clearTimeout(panel._frontSwitchTimer);
 }
 function animatePanelFromButton(panel, button, opening = true) {
     if (!panel || !button) return;
@@ -438,8 +436,19 @@ function animatePanelFromButton(panel, button, opening = true) {
     panel.classList.remove('panel-opening', 'panel-closing');
     void panel.offsetWidth;
     panel.classList.add(opening ? 'panel-opening' : 'panel-closing');
+    // animation-fill:both must not stick or Motion.drag cannot move the panel.
+    window.clearTimeout(panel._panelMotionClearTimer);
+    const ms = opening ? 400 : 320;
+    panel._panelMotionClearTimer = window.setTimeout(() => {
+        if (opening) panel.classList.remove('panel-opening');
+        else if (!panel.classList.contains('open')) panel.classList.remove('panel-closing');
+    }, ms);
 }
-function clearPanelMotion(panel) { panel?.classList.remove('panel-opening', 'panel-closing'); }
+function clearPanelMotion(panel) {
+    if (!panel) return;
+    window.clearTimeout(panel._panelMotionClearTimer);
+    panel.classList.remove('panel-opening', 'panel-closing');
+}
 function panelButton(panel) {
     if (panel === clipboardPanel) return clipboardBtn;
     if (panel === shortcutsPanel) return shortcutsBtn;

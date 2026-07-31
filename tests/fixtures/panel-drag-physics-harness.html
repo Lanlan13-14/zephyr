@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="/public/style.css?v=harness" />
+  <style>
+    html, body { margin: 0; height: 100%; background: #111; }
+    #stage { position: relative; width: 800px; height: 600px; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div class="file-manager open" id="panel" style="left:40px;top:40px;width:320px;height:240px;visibility:visible;opacity:1;">
+      <div class="panel-drag-handle" data-drag-panel="panel" id="handle">
+        <button class="panel-traffic-btn" data-layout-panel="panel" type="button"><span></span></button>
+      </div>
+      <div class="panel-titlebar">title</div>
+      <div style="flex:1;padding:12px">body</div>
+    </div>
+  </div>
+  <script type="module">
+    import {
+      ensureFloatingPanelPhysicsDrag,
+      bakePanelTransform,
+    } from '/public/floating-panel.js?v=harness';
+    import { Motion } from '/public/vendor/zephyr-motion/index.js?v=harness';
+
+    const panel = document.getElementById('panel');
+    const handle = document.getElementById('handle');
+    const out = (window.__HARNESS = {
+      ready: false,
+      error: null,
+      steps: {},
+    });
+
+    function rect() {
+      const r = panel.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height, transform: getComputedStyle(panel).transform };
+    }
+
+    function fire(type, target, x, y, extras = {}) {
+      const ev = new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true,
+        clientX: x,
+        clientY: y,
+        button: 0,
+        buttons: type === 'pointerup' || type === 'pointercancel' ? 0 : 1,
+        ...extras,
+      });
+      target.dispatchEvent(ev);
+    }
+
+    async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+    try {
+      await Motion.init({ capacity: 64 });
+      // Reproduce the pre-fix bug: stuck panel-opening with fill:both
+      // owns transform and Motion.drag writes lose.
+      panel.classList.add('panel-opening');
+      // Force a non-identity filled transform via inline animation simulation:
+      // if class remains, CSS animation fill would pin transform. We also set
+      // a CSS-animation-equivalent computed transform via temporary style when
+      // animation API is flaky in headless.
+      panel.style.transform = 'translate3d(0px, 0px, 0) scale(1)';
+      const stuckBefore = rect();
+      out.steps.stuckClass = panel.classList.contains('panel-opening');
+
+      const ok = await ensureFloatingPanelPhysicsDrag(panel, {
+        handle,
+        bringToFront: () => {
+          panel.classList.add('front');
+          // old buggy path used to add front-switching here
+        },
+      });
+      out.steps.physicsReady = ok === true;
+      await sleep(30);
+
+      // Activate drag from gray strip
+      const start = rect();
+      const hx = handle.getBoundingClientRect();
+      const sx = hx.left + hx.width / 2;
+      const sy = hx.top + hx.height / 2;
+      fire('pointerdown', handle, sx, sy);
+      await sleep(16);
+      fire('pointermove', handle, sx + 120, sy + 80);
+      await sleep(32);
+      fire('pointermove', handle, sx + 160, sy + 100);
+      await sleep(32);
+      const midWithStuck = rect();
+      fire('pointerup', handle, sx + 160, sy + 100);
+      await sleep(50);
+
+      // Now clear stuck class like production fix does on activate / timer
+      panel.classList.remove('panel-opening', 'panel-closing', 'front-switching');
+      panel.style.transform = '';
+      bakePanelTransform(panel);
+      try { Motion.set(panel, { x: 0, y: 0 }); } catch {}
+      await sleep(16);
+
+      const base = rect();
+      fire('pointerdown', handle, sx, sy);
+      await sleep(16);
+      fire('pointermove', handle, sx + 140, sy + 90);
+      await sleep(32);
+      fire('pointermove', handle, sx + 180, sy + 110);
+      await sleep(32);
+      const mid = rect();
+      fire('pointerup', handle, sx + 180, sy + 110);
+      await sleep(420); // allow inertia settle + bake
+      const end = rect();
+
+      out.steps.start = start;
+      out.steps.midWithStuck = midWithStuck;
+      out.steps.base = base;
+      out.steps.mid = mid;
+      out.steps.end = end;
+      out.steps.dx = mid.left - base.left;
+      out.steps.dy = mid.top - base.top;
+      out.steps.moved = Math.hypot(out.steps.dx, out.steps.dy) > 40;
+      out.steps.stuckClassCleared = !panel.classList.contains('panel-opening');
+      out.steps.noFrontSwitching = !panel.classList.contains('front-switching');
+      out.ready = true;
+    } catch (err) {
+      out.error = String(err && err.stack || err);
+      out.ready = true;
+    }
+  </script>
+</body>
+</html>

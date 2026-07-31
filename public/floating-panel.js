@@ -134,7 +134,8 @@ export function clampPanel(panel) {
 
 export function bringPanelToFront(panel, selector = '.rdp-floating-panel, .file-manager, .info-modal, .docker-panel, .snippet-panel, .shortcut-panel') {
     if (!panel) return;
-    const wasFront = panel.classList.contains('front');
+    // AI panel parity: fronting only raises z-index. Never run CSS transform
+    // animations here — they clobber Motion.drag's transform channel mid-gesture.
     document.querySelectorAll(selector).forEach((p) => {
         if (p !== panel) {
             p.classList.remove('front');
@@ -145,15 +146,8 @@ export function bringPanelToFront(panel, selector = '.rdp-floating-panel, .file-
     panel.style.zIndex = String(nextZ);
     panel.style.setProperty('--panel-z', String(nextZ));
     panel.classList.add('front');
-    if (!wasFront) {
-        panel.classList.remove('front-switching');
-        void panel.offsetWidth;
-        panel.classList.add('front-switching');
-        window.clearTimeout(panel._frontSwitchTimer);
-        panel._frontSwitchTimer = window.setTimeout(() => {
-            panel.classList.remove('front-switching');
-        }, 360);
-    }
+    panel.classList.remove('front-switching');
+    window.clearTimeout(panel._frontSwitchTimer);
 }
 
 export function animatePanelFromButton(panel, button, opening = true) {
@@ -168,10 +162,20 @@ export function animatePanelFromButton(panel, button, opening = true) {
     panel.classList.remove('panel-opening', 'panel-closing');
     void panel.offsetWidth;
     panel.classList.add(opening ? 'panel-opening' : 'panel-closing');
+    // Critical: floatingPanelOpenFromButton uses animation-fill:both. If
+    // .panel-opening sticks after the keyframe ends, the filled transform
+    // permanently overrides Motion.drag's inline style → "can't drag".
+    window.clearTimeout(panel._panelMotionClearTimer);
+    const ms = opening ? 400 : 320;
+    panel._panelMotionClearTimer = window.setTimeout(() => {
+        if (opening) panel.classList.remove('panel-opening');
+        else if (!panel.classList.contains('open')) panel.classList.remove('panel-closing');
+    }, ms);
 }
 
 export function clearPanelMotion(panel) {
     if (!panel) return;
+    window.clearTimeout(panel._panelMotionClearTimer);
     panel.classList.remove('panel-opening', 'panel-closing');
 }
 
@@ -333,7 +337,7 @@ const floatingPanelMotion = {
         if (this.engine) return Promise.resolve(this.engine);
         if (this.failed && !this._p) return Promise.resolve(null);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20260728-ai-handle-only-drag1')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20260731-motion-tween3')
             .then(async (mod) => {
                 const Motion = mod?.Motion || (typeof window !== 'undefined' ? window.Motion : null);
                 if (!Motion || typeof Motion.drag !== 'function') throw new Error('Motion.drag unavailable');
@@ -448,6 +452,8 @@ export function startFloatingPanelHardDrag(panel, e, {
     if (!panel || !e) return;
     if (e.button !== undefined && e.button !== 0) return;
     try { bringToFront?.(panel); } catch { /* ignore */ }
+    window.clearTimeout(panel._panelMotionClearTimer);
+    panel.classList.remove('panel-opening', 'panel-closing', 'front-switching');
     void floatingPanelMotion._ensure().then((Motion) => {
         try { Motion?.stop?.(panel); Motion?.set?.(panel, { x: 0, y: 0 }); } catch { /* ignore */ }
     }).catch(() => {});
@@ -622,6 +628,9 @@ export async function ensureFloatingPanelPhysicsDrag(panel, {
             closePanelLayoutMenu({ instant: true });
             suppressNextLayoutClick = true;
             panel._suppressHeaderClick = true;
+            // Drop any CSS transform owner before Motion writes x/y.
+            window.clearTimeout(panel._panelMotionClearTimer);
+            panel.classList.remove('panel-opening', 'panel-closing', 'front-switching');
             try { Motion.stop(panel); } catch { /* ignore */ }
             bakePanelTransform(panel);
             try { Motion.set(panel, { x: 0, y: 0 }); } catch { /* ignore */ }
