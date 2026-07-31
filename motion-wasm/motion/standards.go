@@ -36,7 +36,7 @@ func ProfileForStandard(standard Standard) (StandardProfile, bool) {
 	case StandardIOSCardGeometryClose:
 		return StandardProfile{Response: 0.34, Damping: 1.00}, true
 	case StandardIOSCardFlipOpen:
-		return StandardProfile{Response: 0.50, Damping: 0.90}, true
+		return StandardProfile{Response: 0.40, Damping: 0.96}, true
 	case StandardIOSCardFlipClose:
 		return StandardProfile{Response: 0.38, Damping: 0.96}, true
 	case StandardIOSCardContent:

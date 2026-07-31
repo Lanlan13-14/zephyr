@@ -24,7 +24,7 @@ export const MOTION_STANDARDS = Object.freeze({
 export const STANDARD_FALLBACKS = Object.freeze({
   [MOTION_STANDARDS.iosCardGeometryOpen]: { response: 0.44, damping: 1.00 },
   [MOTION_STANDARDS.iosCardGeometryClose]: { response: 0.34, damping: 1.00 },
-  [MOTION_STANDARDS.iosCardFlipOpen]: { response: 0.50, damping: 0.90 },
+  [MOTION_STANDARDS.iosCardFlipOpen]: { response: 0.40, damping: 0.96 },
   [MOTION_STANDARDS.iosCardFlipClose]: { response: 0.38, damping: 0.96 },
   [MOTION_STANDARDS.iosCardContent]: { response: 0.32, damping: 1.00 },
   [MOTION_STANDARDS.iosCardScrim]: { response: 0.42, damping: 1.00 },

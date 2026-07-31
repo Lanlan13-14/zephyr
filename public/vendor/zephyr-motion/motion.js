@@ -246,10 +246,10 @@ export const Motion = {
     const channels = Object.keys(props);
     if (!channels.length) return Promise.resolve();
     let pending = channels.length;
+    const records = channels.map(ch => ({ ch, rec: slotFor(el, ch, opts.units?.[ch]) }));
     const done = new Promise(res => {
       const settle = () => { if (--pending === 0) res(); };
-      for (const ch of channels) {
-        const rec = slotFor(el, ch, opts.units?.[ch]);
+      for (const { ch, rec } of records) {
         if (!rec) { settle(); continue; }
         if (standard != null) engine.configureStandard(rec.id, standard, p);
         else engine.configure(rec.id, p.response, p.damping);
@@ -264,7 +264,40 @@ export const Motion = {
     return done;
   },
 
-  /** Instant set (no spring). Also the gesture 1:1-follow path. */
+  tween(el, props, opts = {}) {
+    if (!el || !props || typeof props !== 'object') return Promise.resolve(false);
+    const duration = Math.max(0, Number(opts.duration ?? 500));
+    const curve = Array.isArray(opts.bezier) ? opts.bezier : [0.32, 0.72, 0, 1];
+    const ease = engine.bezier(...curve.map(Number));
+    this.stop(el);
+    const token = this._bump(el);
+    const channels = [];
+    for (const [prop, target] of Object.entries(props)) {
+      if (!(prop in CHANNEL_DEFAULTS)) continue;
+      const slot = slotFor(el, prop);
+      channels.push({ slot, from: Number(engine.getValue(slot.id)), to: Number(target) });
+    }
+    if (!channels.length) return Promise.resolve(false);
+    if (engine.reducedMotion || duration === 0) {
+      channels.forEach(({ slot, to }) => engine.setValue(slot.id, to));
+      engine.tick(0);
+      return Promise.resolve(true);
+    }
+    return new Promise(resolve => {
+      const start = performance.now();
+      const step = now => {
+        if (this._genOf(el) !== token) return resolve(false);
+        const raw = Math.min(1, Math.max(0, (now - start) / duration));
+        const p = ease(raw);
+        channels.forEach(({ slot, from, to }) => engine.setValue(slot.id, from + (to - from) * p));
+        engine.tick(0);
+        if (raw < 1) requestAnimationFrame(step);
+        else resolve(true);
+      };
+      requestAnimationFrame(step);
+    });
+  },
+
   set(el, props) {
     for (const ch of Object.keys(props)) {
       const rec = slotFor(el, ch);

@@ -78,7 +78,7 @@ await Motion.to(card, { rotateY: -180 }, {
 |---|---:|---|---|
 | `iosCardGeometryOpen` | 1 | response `0.44`, damping `1.00` | 小卡片到详情卡的 FLIP 几何；临界阻尼、无边缘抖动 |
 | `iosCardGeometryClose` | 2 | `0.34`, `1.00` | 对称收回；关闭快于打开 |
-| `iosCardFlipOpen` | 3 | `0.50`, `0.90` | `rotateY(0→-180)`；仅亚 1° soft settle |
+| `iosCardFlipOpen` | 3 | `0.40`, `0.96` | `rotateY(0→-180)`；仅亚 1° soft settle |
 | `iosCardFlipClose` | 4 | `0.38`, `0.96` | `rotateY(-180→0)`；近临界、快速回收 |
 | `iosCardContent` | 5 | `0.32`, `1.00` | 正反面/详情内容淡入淡出 |
 | `iosCardScrim` | 6 | `0.42`, `1.00` | 纯 dim 遮罩；不使用 backdrop blur |

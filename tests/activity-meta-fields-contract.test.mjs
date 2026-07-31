@@ -11,7 +11,7 @@ const appJs = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const CACHE = '20260731-fullscreen-stretch1';
+const CACHE = '20260731-main-animation-sync1';
 
 test('activities table persists sourceIp and durationMs (plus detail columns)', () => {
     assert.match(storageJs, /addColumnIfMissing\('activities', 'sourceIp'/);
@@ -54,12 +54,12 @@ test('frontend renders real sourceIp/duration and hides empty cells', () => {
     assert.doesNotMatch(appJs, /detail\.duration !== '-'/);
 });
 
-test('activity cards use connection-card style float-in motion', () => {
-    assert.match(styleCss, /@keyframes activityCardIn/);
-    assert.match(styleCss, /\.activity-detail-item\s*\{[\s\S]*animation:\s*activityCardIn/);
-    assert.match(styleCss, /--activity-stagger/);
-    assert.match(appJs, /--activity-stagger:\$\{stagger\}ms/);
+test('activity cards keep hover affordance without per-card entrance storms', () => {
+    assert.match(styleCss, /\.activity-detail-item\s*\{[\s\S]*content-visibility:\s*auto/);
+    assert.match(styleCss, /\.activity-detail-item\s*\{[\s\S]*contain-intrinsic-size:\s*auto 180px/);
+    assert.match(styleCss, /\.activity-detail-item\s*\{[\s\S]*animation:\s*none/);
     assert.match(styleCss, /\.activity-detail-item:hover/);
+    assert.doesNotMatch(styleCss, /\.activity-detail-item\s*\{[\s\S]*animation:\s*activityCardIn/);
 });
 
 test('cache revision bumped for activity meta fix', () => {

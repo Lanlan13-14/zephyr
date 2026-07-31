@@ -61,7 +61,7 @@ let transientHasCredential = false;
 let connectionModalTrigger = null;
 let connectionModalCycle = 0;
 const connectionModalMotion = { phase: 'closed', originRect: null, targetRect: null, trigger: null };
-const terminalCardFlipMotion = { phase: 'closed', cycle: 0, originRect: null, sourceEl: null, connectionId: null, fromView: 'dashboard' };
+const terminalCardFlipMotion = { phase: 'closed', cycle: 0, originRect: null, sourceEl: null, connectionId: null, fromView: 'dashboard', layoutW: 0, layoutH: 0, hostedWindow: null, hostedParent: null, hostedNext: null };
 let proxyModalTrigger = null;
 let proxyModalCycle = 0;
 let sshKeyModalTrigger = null;
@@ -198,7 +198,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20260731-fullscreen-stretch1');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20260731-motion-tween3');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -1358,6 +1358,28 @@ function terminalCardFlipNavBottom() {
     const r = nav.getBoundingClientRect();
     return Math.max(0, Math.round(r.bottom));
 }
+function settleTerminalShelfForCardFlip() {
+    const nav = document.querySelector('.main-nav');
+    if (!nav) return 0;
+    const oldTransition = nav.style.getPropertyValue('transition');
+    const oldTransitionPriority = nav.style.getPropertyPriority('transition');
+    const oldPaddingBottom = nav.style.getPropertyValue('padding-bottom');
+    const oldPaddingPriority = nav.style.getPropertyPriority('padding-bottom');
+    const rootStyle = getComputedStyle(document.documentElement);
+    const openPadding = rootStyle.getPropertyValue('--terminal-shelf-open-padding').trim() || '27px';
+    // The card owns the visible transition. Snap the shelf to its terminal
+    // layout in the same task so the flip stage and live terminal share one box.
+    nav.style.setProperty('transition', 'none', 'important');
+    nav.style.setProperty('padding-bottom', openPadding, 'important');
+    void nav.offsetWidth;
+    const bottom = Math.max(0, Math.round(nav.getBoundingClientRect().bottom));
+    document.documentElement.style.setProperty('--terminal-nav-height', `${Math.round(nav.getBoundingClientRect().height)}px`);
+    if (oldPaddingBottom) nav.style.setProperty('padding-bottom', oldPaddingBottom, oldPaddingPriority);
+    else nav.style.removeProperty('padding-bottom');
+    if (oldTransition) nav.style.setProperty('transition', oldTransition, oldTransitionPriority);
+    else nav.style.removeProperty('transition');
+    return bottom;
+}
 function terminalCardSourceRadius(sourceEl) {
     const card = sourceEl?.classList?.contains?.('connection-card')
         ? sourceEl
@@ -1375,9 +1397,17 @@ function terminalCardSourceRadius(sourceEl) {
 function terminalCardFlipTargetRect(_origin) {
     const vw = window.innerWidth || document.documentElement.clientWidth || 360;
     const vh = window.innerHeight || document.documentElement.clientHeight || 640;
-    // In terminal-mode, nav.getBoundingClientRect().bottom already includes shelf padding-bottom.
-    // Stage + card fill exactly that content region — never underlap the shelf band.
-    const navBottom = terminalCardFlipNavBottom();
+    // Measure the terminal shelf's final bottom while the dashboard is still
+    // the visible view. This lets preparation happen without selecting an
+    // empty terminal page before the actual card starts moving.
+    const nav = document.querySelector('.main-nav');
+    let navBottom = terminalCardFlipNavBottom();
+    if (nav && !document.body.classList.contains('terminal-mode')) {
+        const currentPadding = parseFloat(getComputedStyle(nav).paddingBottom) || 0;
+        const openPadding = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--terminal-shelf-open-padding')) || 27;
+        navBottom += Math.max(0, openPadding - currentPadding);
+    }
+    navBottom = Math.max(0, Math.round(navBottom));
     return {
         left: 0,
         top: navBottom,
@@ -1465,85 +1495,66 @@ function paintTerminalCardFlipFront(sourceEl) {
 }
 function paintTerminalCardFlipBack(options = {}) {
     const back = document.querySelector('[data-terminal-card-back]');
-    if (!back) return;
+    const liveWin = options.liveWindow || null;
+    if (!back || !liveWin?.isConnected) return false;
+    restoreCardFlipHostedWindow();
     back.innerHTML = '';
-    // Transparent face shell — real terminal-window styles paint the chrome (titlebar color matches 图二).
-    back.style.position = 'absolute';
-    back.style.inset = '0';
-    back.style.borderRadius = 'inherit';
-    back.style.overflow = 'hidden';
-    back.style.opacity = '1';
-    back.style.backfaceVisibility = 'hidden';
-    back.style.webkitBackfaceVisibility = 'hidden';
-    back.style.transform = 'rotateY(180deg)';
-    back.style.background = 'transparent';
-    back.style.pointerEvents = 'none';
-    back.style.transition = 'none';
-
-    const name = options.name || t('终端');
-    const host = options.host || '';
-    const protocol = String(options.protocol || 'SSH').toUpperCase();
-    const tabId = options.tabId || activeTerminalTab || '';
-
-    const liveWin = options.liveWindow
-        || (tabId ? document.querySelector(`#terminalWorkspace .terminal-window[data-window="${CSS.escape(String(tabId))}"]`) : null)
-        || document.querySelector('#terminalWorkspace .terminal-window:not(.minimized-keepalive)');
-
-    if (liveWin) {
-        try {
-            const clone = liveWin.cloneNode(true);
-            clone.removeAttribute('id');
-            clone.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
-            clone.classList.add('terminal-card-flip-window-clone');
-            clone.querySelectorAll('iframe').forEach((frame) => {
-                const ph = document.createElement('div');
-                ph.className = 'terminal-card-flip-frame-placeholder';
-                const label = protocol === 'RDP'
-                    ? t('正在建立 RDP 连接…')
-                    : protocol === 'VNC'
-                        ? t('正在建立 VNC 连接…')
-                        : t('正在建立连接…');
-                ph.innerHTML = `<div class="terminal-card-flip-spinner" aria-hidden="true"></div><span>${label}</span>`;
-                frame.replaceWith(ph);
-            });
-            clone.querySelectorAll('button, a, input, select, textarea').forEach((el) => {
-                el.disabled = true;
-                el.tabIndex = -1;
-                el.style.pointerEvents = 'none';
-            });
-            // Let production .terminal-window / .terminal-window-titlebar CSS own colors.
-            clone.style.cssText = 'margin:0;width:100%;height:100%;max-width:none;box-sizing:border-box;pointer-events:none;transform:none !important;animation:none !important;visibility:visible !important;opacity:1 !important;';
-            back.appendChild(clone);
-            return;
-        } catch (err) {
-            console.warn('[terminal-card-flip] live window clone failed', err);
-        }
-    }
-
-    const shell = document.createElement('article');
-    shell.className = 'terminal-window terminal-card-flip-window-fallback';
-    shell.innerHTML = `
-        <div class="terminal-window-titlebar">
-            <button class="terminal-grip terminal-window-center-dots" type="button" tabindex="-1" aria-hidden="true"><span></span></button>
-            <span class="proto-dot ${terminalProtocolClass(protocol)}"></span>
-            <strong></strong>
-        </div>
-        <div class="terminal-window-body">
-            <div class="terminal-card-flip-frame-placeholder">
-                <div class="terminal-card-flip-spinner" aria-hidden="true"></div>
-                <span></span>
-            </div>
-        </div>
-    `;
-    shell.querySelector('strong').textContent = terminalShortName(name);
-    const status = shell.querySelector('.terminal-card-flip-frame-placeholder span');
-    if (protocol === 'RDP') status.textContent = t('正在建立 RDP 连接…');
-    else if (protocol === 'VNC') status.textContent = t('正在建立 VNC 连接…');
-    else status.textContent = host || t('正在建立连接…');
-    shell.style.cssText = 'margin:0;width:100%;height:100%;animation:none !important;';
-    back.appendChild(shell);
+    terminalCardFlipMotion.hostedWindow = liveWin;
+    terminalCardFlipMotion.hostedParent = liveWin.parentElement;
+    terminalCardFlipMotion.hostedNext = liveWin.nextSibling;
+    liveWin.dataset.cardFlipHosted = '1';
+    Object.assign(liveWin.style, {
+        width:'100%', height:'100%', margin:'0', maxWidth:'none', borderRadius:'inherit',
+        overflow:'hidden', boxShadow:'none', opacity:'1', visibility:'visible', pointerEvents:'none',
+        animation:'none', transition:'none', transform:'none', filter:'none',
+    });
+    back.appendChild(liveWin);
+    return true;
 }
+function restoreCardFlipHostedWindow() {
+    const win = terminalCardFlipMotion.hostedWindow;
+    if (!win) return;
+    const parent = terminalCardFlipMotion.hostedParent;
+    const next = terminalCardFlipMotion.hostedNext;
+    try {
+        // Clear flip-only inline layout so workspace CSS takes over.
+        ['width', 'height', 'margin', 'maxWidth', 'boxShadow', 'opacity', 'visibility',
+            'pointerEvents', 'animation', 'transform', 'filter'].forEach((k) => {
+            try { win.style[k] = ''; } catch {}
+        });
+        // Keep matched radius if set.
+        if (win.dataset.cardFlipRadius) {
+            win.style.borderRadius = `${win.dataset.cardFlipRadius}px`;
+            win.style.overflow = 'hidden';
+            win.style.animation = 'none';
+            win.style.transition = 'none';
+            win.style.transform = 'none';
+            win.style.filter = 'none';
+        } else {
+            win.style.borderRadius = '';
+            win.style.overflow = '';
+        }
+        delete win.dataset.cardFlipHosted;
+        const targetParent = parent && parent.isConnected ? parent : $('#terminalWorkspace');
+        const targetNext = targetParent === parent && next?.parentElement === parent ? next : null;
+        if (targetParent) {
+            // State-preserving DOM move keeps the live iframe browsing/rendering
+            // context attached, avoiding a white compositor frame at handoff.
+            if (typeof targetParent.moveBefore === 'function') targetParent.moveBefore(win, targetNext);
+            else if (targetNext) targetParent.insertBefore(win, targetNext);
+            else targetParent.appendChild(win);
+        }
+    } catch (err) {
+        console.warn('[terminal-card-flip] restore hosted window failed', err);
+    }
+    terminalCardFlipMotion.hostedWindow = null;
+    terminalCardFlipMotion.hostedParent = null;
+    terminalCardFlipMotion.hostedNext = null;
+}
+
 function resetTerminalCardFlipSurface(Motion) {
+    restoreCardFlipHostedWindow();
+
     const stage = $('#terminalCardFlipStage');
     const surface = $('#terminalCardFlipSurface');
     const rotor = document.querySelector('[data-terminal-card-rotor]');
@@ -1608,6 +1619,14 @@ function cardFlipStandards(Motion) {
         iosCardScrim: 6,
     };
 }
+/**
+ * Reference-grade OPEN — one Go spring for geometry + rotateY (same standard).
+ * Center origin. Interruptible via terminalCardFlipMotion.cycle.
+ */
+/**
+ * Reference-grade OPEN — one Go spring for geometry + rotateY (same standard).
+ * Center origin. Interruptible via terminalCardFlipMotion.cycle.
+ */
 async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     const stage = $('#terminalCardFlipStage');
     const surface = $('#terminalCardFlipSurface');
@@ -1615,102 +1634,49 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     const scrim = $('#terminalCardFlipScrim');
     const front = document.querySelector('[data-terminal-card-front]');
     const back = document.querySelector('[data-terminal-card-back]');
-    if (!stage || !surface || !rotor || !front || !back) {
-        console.warn('[terminal-card-flip] missing DOM');
-        return false;
-    }
+    const liveWindow = options.liveWindow || null;
     const origin = options.originRect || stableTerminalCardSourceRect(sourceEl);
-    if (!origin) {
-        console.warn('[terminal-card-flip] no origin rect');
-        return false;
-    }
+    if (!stage || !surface || !rotor || !front || !back || !liveWindow || !origin) return false;
 
     const cycle = ++terminalCardFlipMotion.cycle;
     terminalCardFlipMotion.phase = 'opening';
     terminalCardFlipMotion.originRect = origin;
     terminalCardFlipMotion.sourceEl = sourceEl || null;
-    terminalCardFlipMotion.connectionId = options.connectionId || terminalCardFlipMotion.connectionId || null;
-    terminalCardFlipMotion.fromView = options.fromView || currentAppView || 'dashboard';
-
+    terminalCardFlipMotion.connectionId = options.connectionId || null;
     document.body.classList.add('terminal-card-flip-animating', 'terminal-card-flip-open');
     paintTerminalCardFlipFront(sourceEl);
-    paintTerminalCardFlipBack({
-        name: options.name || sourceEl?.querySelector?.('h2')?.textContent || t('终端'),
-        host: options.host || sourceEl?.querySelector?.('.host-line')?.textContent || '',
-        protocol: options.protocol || 'SSH',
-        tabId: options.tabId,
-        liveWindow: options.liveWindow || null,
-    });
-
-    // Engine first — never animate with CSS transitions.
-    const Motion = await sshKeyMotion._ensure();
-    if (cycle !== terminalCardFlipMotion.cycle || terminalCardFlipMotion.phase !== 'opening') return false;
+    if (!paintTerminalCardFlipBack({ liveWindow })) return false;
 
     const target = terminalCardFlipTargetRect(origin);
     const topBound = target.topBound != null ? target.topBound : terminalCardFlipNavBottom();
     placeTerminalCardFlipStage(stage, topBound);
     const localTarget = target.fillStage
         ? { left: 0, top: 0, width: target.width, height: target.height }
-        : {
-            left: Math.max(0, target.left),
-            top: Math.max(0, target.top - topBound),
-            width: target.width,
-            height: target.height,
-        };
+        : { left: Math.max(0, target.left), top: Math.max(0, target.top - topBound), width: target.width, height: target.height };
     placeTerminalCardFlipSurface(surface, localTarget);
     surface.classList.toggle('flip-fill-stage', !!target.fillStage);
 
-    const originLocal = {
-        left: origin.left,
-        top: origin.top - topBound,
-        width: origin.width,
-        height: origin.height,
-    };
-    const sx0 = Math.max(0.001, originLocal.width / Math.max(1, localTarget.width));
-    const sy0 = Math.max(0.001, originLocal.height / Math.max(1, localTarget.height));
-    const x0 = originLocal.left - localTarget.left;
-    const y0 = originLocal.top - localTarget.top;
-    const radiusFrom = terminalCardSourceRadius(sourceEl);
-    const radiusTo = radiusFrom;
+    const targetWidth = Math.max(1, localTarget.width);
+    const targetHeight = Math.max(1, localTarget.height);
+    const sx0 = Math.max(0.001, origin.width / targetWidth);
+    const sy0 = Math.max(0.001, origin.height / targetHeight);
+    const x0 = (origin.left + origin.width / 2) - (localTarget.left + targetWidth / 2);
+    const y0 = (origin.top - topBound + origin.height / 2) - (localTarget.top + targetHeight / 2);
+    const radius = Number.isFinite(Number(options.radiusFrom)) ? Number(options.radiusFrom) : terminalCardSourceRadius(sourceEl);
+    const radiusCss = `${radius}px`;
 
     stage.classList.add('is-active');
     stage.setAttribute('aria-hidden', 'false');
     surface.classList.add('is-live');
-    surface.style.visibility = 'visible';
-    surface.style.pointerEvents = 'auto';
-    surface.style.transformOrigin = '0 0';
-    surface.style.overflow = 'visible';
-    surface.style.isolation = 'auto';
-    surface.style.background = 'transparent';
-    surface.style.border = 'none';
-    surface.style.boxShadow = 'none';
-    surface.style.transition = 'none';
+    Object.assign(surface.style, {
+        visibility: 'visible', pointerEvents: 'none', transformOrigin: '50% 50%', overflow: 'visible',
+        isolation: 'auto', background: 'transparent', border: 'none', boxShadow: 'none',
+        transition: 'none', borderRadius: radiusCss,
+    });
     surface.setAttribute('aria-hidden', 'false');
-
-    rotor.style.position = 'absolute';
-    rotor.style.inset = '0';
-    rotor.style.transformOrigin = '50% 50%';
-    rotor.style.transformStyle = 'preserve-3d';
-    rotor.style.webkitTransformStyle = 'preserve-3d';
-    rotor.style.overflow = 'visible';
-    rotor.style.transition = 'none';
-    rotor.style.borderRadius = 'inherit';
-
-    // Dual-face: faces own chrome; no engine opacity crossfade between faces.
-    front.style.cssText = [
-        'position:absolute', 'inset:0', 'border-radius:inherit', 'overflow:hidden',
-        'opacity:1', 'backface-visibility:hidden', '-webkit-backface-visibility:hidden',
-        'transform:rotateY(0deg)', 'background:var(--surface)', 'pointer-events:none',
-        'border:1px solid var(--border)', 'box-shadow:var(--shadow-lift, 0 18px 50px rgba(0,0,0,.16))',
-        'transition:none',
-    ].join(';');
-    back.style.cssText = [
-        'position:absolute', 'inset:0', 'border-radius:inherit', 'overflow:hidden',
-        'opacity:1', 'backface-visibility:hidden', '-webkit-backface-visibility:hidden',
-        'transform:rotateY(180deg)', 'background:transparent', 'pointer-events:none',
-        'border:1px solid var(--border)', 'box-shadow:var(--shadow-lift, 0 18px 50px rgba(0,0,0,.16))',
-        'transition:none',
-    ].join(';');
+    rotor.style.cssText = 'position:absolute;inset:0;border-radius:inherit;transform-style:preserve-3d;-webkit-transform-style:preserve-3d;transform-origin:50% 50%;overflow:visible;transition:none;pointer-events:none';
+    front.style.cssText = `position:absolute;inset:0;border-radius:${radiusCss};overflow:hidden;opacity:1;backface-visibility:hidden;-webkit-backface-visibility:hidden;transform:rotateY(0deg);background:var(--surface);pointer-events:none;border:1px solid var(--border);box-shadow:var(--shadow-lift,0 18px 50px rgba(0,0,0,.16));transition:none`;
+    back.style.cssText = `position:absolute;inset:0;border-radius:${radiusCss};overflow:hidden;opacity:1;backface-visibility:hidden;-webkit-backface-visibility:hidden;transform:rotateY(180deg);background:var(--surface);pointer-events:none;border:1px solid var(--border);box-shadow:var(--shadow-lift,0 18px 50px rgba(0,0,0,.16));transition:none`;
     if (scrim) {
         scrim.style.visibility = 'visible';
         scrim.style.transition = 'none';
@@ -1718,39 +1684,18 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
         scrim.setAttribute('aria-hidden', 'false');
     }
 
-    // Seed with engine (not CSS transition). One frame paint, then hide source.
-    if (Motion) {
-        try {
-            Motion.stop(surface); Motion.release(surface);
-            Motion.stop(rotor); Motion.release(rotor);
-            if (scrim) { Motion.stop(scrim); Motion.release(scrim); }
-        } catch {}
-        Motion.set(surface, {
-            x: x0, y: y0, scaleX: sx0, scaleY: sy0, radius: radiusFrom, opacity: 1,
-        });
-        // Enable radius compensate under non-uniform scale (engine-owned).
-        try {
-            const st = Motion._state?.(surface) || null;
-            // morph will set compensate; for to() path set visual radius via set already
-        } catch {}
-        Motion.set(rotor, { rotateY: 0 });
-        if (scrim) Motion.set(scrim, { opacity: 0 });
-    } else {
-        // Engine unavailable: hard end-state only (no CSS animation).
-        surface.style.transform = 'translate3d(0,0,0) scale(1,1)';
-        setCompensatedRadius(surface, radiusTo, 1, 1);
-        rotor.style.transform = 'rotateY(-180deg)';
-        if (scrim) scrim.style.opacity = '0.42';
-        if (sourceEl?.style) {
-            sourceEl.style.opacity = '0';
-            sourceEl.style.pointerEvents = 'none';
-            sourceEl.dataset.motionHidden = '1';
-        }
-        terminalCardFlipMotion.phase = 'open';
-        return false;
-    }
+    const Motion = await sshKeyMotion._ensure();
+    if (cycle !== terminalCardFlipMotion.cycle || !Motion) return false;
+    Motion.stop(surface);
+    Motion.stop(rotor);
+    if (scrim) Motion.stop(scrim);
+    Motion.set(surface, { x: x0, y: y0, scaleX: sx0, scaleY: sy0, opacity: 1, radius });
+    Motion.set(rotor, { rotateY: 0 });
+    if (scrim) Motion.set(scrim, { opacity: 0 });
 
-    await new Promise((r) => requestAnimationFrame(r));
+    // The seeded layer now exactly replaces the source card. Hide the source
+    // atomically; the dashboard remains behind the single flipping card.
+    await new Promise(requestAnimationFrame);
     if (cycle !== terminalCardFlipMotion.cycle) return false;
     if (sourceEl?.style) {
         sourceEl.style.opacity = '0';
@@ -1758,85 +1703,112 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
         sourceEl.dataset.motionHidden = '1';
     }
 
-    const S = cardFlipStandards(Motion);
-    const fromRect = {
-        left: origin.left,
-        top: origin.top,
-        width: origin.width,
-        height: origin.height,
-    };
-    try {
-        // Geometry + flip + scrim: all Go standards / engine springs. No CSS.
-        await Promise.all([
-            Motion.morph(surface, fromRect, {
-                radiusFrom,
-                radiusTo,
-                radiusCompensate: true,
-                forceFrom: true,
-                // morph is engine-owned; use snappy shape preset (critically damped)
-                preset: 'shape',
-            }),
-            Motion.to(rotor, { rotateY: -180 }, { standard: S.iosCardFlipOpen }),
-            scrim ? Motion.to(scrim, { opacity: 0.42 }, { standard: S.iosCardScrim }) : Promise.resolve(),
-        ]);
-    } catch (err) {
-        console.warn('[terminal-card-flip] engine open failed', err);
-        // Instant settle via engine set — still no CSS transition.
-        try {
-            Motion.set(surface, { x: 0, y: 0, scaleX: 1, scaleY: 1, radius: radiusTo, opacity: 1 });
-            Motion.set(rotor, { rotateY: -180 });
-            if (scrim) Motion.set(scrim, { opacity: 0.42 });
-        } catch {}
-        terminalCardFlipMotion.phase = 'open';
-        return false;
+    // Lay out the terminal shelf before the back face becomes readable. The
+    // full card remains above it; the nav padding is snapped to final geometry
+    // so there can be no post-handoff downward frame.
+    document.body.classList.add('terminal-card-flip-handoff');
+    const nav = document.querySelector('.main-nav');
+    const navStyle = nav ? getComputedStyle(nav) : null;
+    const shelfFrom = navStyle ? (parseFloat(navStyle.paddingBottom) || 10) : 10;
+    const shelfTo = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--terminal-shelf-open-padding')) || 27;
+    applySwitchViewCore('terminal', { enteringAnimated: true });
+    if (nav) {
+        Motion.cssVars(nav, { '--terminal-card-shelf-line-opacity': 0 }, { immediate: true });
+        Motion.set(nav, { y: shelfFrom - shelfTo });
+        void nav.offsetHeight;
     }
+    syncTerminalSmartbarTop();
+    syncTerminalShelfLineState();
+
+    // Top shelf catches up first; the card keeps the slower reference cadence.
+    const shelfJobs = nav ? [
+        Motion.to(nav, { y: 0 }, { preset: { response: 0.22, damping: 1 } }),
+        Motion.cssVars(nav, { '--terminal-card-shelf-line-opacity': 1 }, { preset: { response: 0.40, damping: 0.96 }, delay: 0.10 }),
+    ] : [];
+
+    // One cadence for the whole gesture. Geometry and rotation are separate
+    // DOM responsibilities but use the same Go flip standard and start frame.
+    const S = cardFlipStandards(Motion);
+    const jobs = [
+        Motion.to(surface, { x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1, radius }, { standard: S.iosCardFlipOpen }),
+        Motion.to(rotor, { rotateY: -180 }, { standard: S.iosCardFlipOpen }),
+        scrim ? Motion.to(scrim, { opacity: 0.55 }, { standard: S.iosCardFlipOpen }) : Promise.resolve(),
+    ];
+    // Reference motion visually finishes around 0.7s. Do not keep the flip
+    // layer alive for the spring's sub-pixel/sub-degree numerical tail; that
+    // makes the real page feel faster than the animation. At the visual end,
+    // snap the same Go channels to their exact target and hand off this node.
+    await new Promise((resolve) => window.setTimeout(resolve, 700));
     if (cycle !== terminalCardFlipMotion.cycle) return false;
+    Motion.stop(surface);
+    Motion.stop(rotor);
+    if (scrim) Motion.stop(scrim);
+    Motion.set(surface, { x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1, radius });
+    Motion.set(rotor, { rotateY: -180 });
+    if (scrim) Motion.set(scrim, { opacity: 0.55 });
+    Promise.allSettled([...jobs, ...shelfJobs]).catch(() => {});
+    if (nav) {
+        Motion.stop(nav, ['y', '--terminal-card-shelf-line-opacity']);
+        Motion.set(nav, { y: 0, '--terminal-card-shelf-line-opacity': 1 });
+    }
     terminalCardFlipMotion.phase = 'open';
     return true;
 }
+/** Instant handoff — no fade. Real terminal is already under the card. */
+/** Instant handoff — no fade. Real terminal is already under the card. */
+/** Instant handoff — no fade, no leave-fly residue. */
+/** Instant handoff onto the real page — restore reparented window, no fade flash. */
 async function finishTerminalCardFlipOpenHandoff() {
     const surface = $('#terminalCardFlipSurface');
     const scrim = $('#terminalCardFlipScrim');
-    const stage = $('#terminalCardFlipStage');
     const Motion = sshKeyMotion.engine;
-
-    // 1) Live terminal fully visible under the card (same box) before surface leaves.
-    document.querySelectorAll('#terminalWorkspace .terminal-window').forEach((w) => {
-        w.style.visibility = 'visible';
-        w.style.opacity = '1';
-        w.style.pointerEvents = '';
+    const win = terminalCardFlipMotion.hostedWindow;
+    if (!win) return false;
+    // The final back face still covers the whole target while terminal mode is
+    // laid out underneath. All operations remain in this one JS task, so the
+    // browser never paints an empty intermediate page.
+    settleTerminalShelfForCardFlip();
+    syncTerminalSmartbarTop();
+    syncTerminalShelfLineState();
+    // The live window is still hosted by the full-screen back face, so the
+    // workspace can be assigned its final layout without painting a duplicate.
+    const workspace = $('#terminalWorkspace');
+    if (workspace) workspace.className = `terminal-workspace terminal-workspace-grid layout-1 ${isCompactTerminalWorkspace() ? 'compact' : ''}`;
+    visualLayout = [win.dataset.window];
+    // Keep the final back face visually intact until the live node is already
+    // in its final workspace box. The back surface is cleared only afterwards.
+    restoreCardFlipHostedWindow();
+    Object.assign(win.style, {
+        visibility: 'visible', opacity: '1', pointerEvents: '', animation: 'none',
+        transition: 'none', transform: 'none', filter: 'none',
     });
-    // Stop hiding live windows via body class BEFORE surface fades — prevents double-stack tint.
-    document.body.classList.remove('terminal-card-flip-animating');
-
-    // 2) Engine opacity out only — no CSS. Terminal already painted.
+    // Same-frame handoff: the exact back-face node is now in the exact final
+    // box; only then remove the flip surface and reveal the terminal view.
+    document.body.classList.remove('terminal-card-flip-preparing', 'terminal-card-flip-animating', 'terminal-card-flip-handoff');
     if (Motion && surface) {
-        try {
-            const S = cardFlipStandards(Motion);
-            await Promise.all([
-                Motion.to(surface, { opacity: 0 }, { standard: S.iosCardContent, preset: 'contentClose' }),
-                scrim ? Motion.to(scrim, { opacity: 0 }, { standard: S.iosCardScrim }) : Promise.resolve(),
-            ]);
-        } catch {
-            try {
-                Motion.set(surface, { opacity: 0 });
-                if (scrim) Motion.set(scrim, { opacity: 0 });
-            } catch {}
-        }
+        Motion.stop(surface);
+        if (scrim) Motion.stop(scrim);
+        Motion.set(surface, { opacity: 0 });
+        if (scrim) Motion.set(scrim, { opacity: 0 });
     }
-
-    // 3) Hard teardown stage so no residual layer sits under the shelf line.
+    if (Motion) {
+        const nav = document.querySelector('.main-nav');
+        if (nav) Motion.release(nav);
+    }
     resetTerminalCardFlipSurface(Motion);
-    // Keep phase open so leaving terminal can still reverse-close if desired.
-    terminalCardFlipMotion.phase = 'open';
-    document.body.classList.remove('terminal-card-flip-open');
-    // Shelf/nav metrics after layout settle.
-    try {
-        syncTerminalSmartbarTop();
-        syncTerminalShelfLineState();
-        scheduleTerminalSmartbarTopSync('card-flip-handoff');
-    } catch {}
+    terminalCardFlipMotion.phase = 'settled';
+    terminalCardFlipMotion.originRect = null;
+    terminalCardFlipMotion.sourceEl = null;
+    return true;
 }
+/**
+ * Reference-grade CLOSE — hold rotateY(-180), centre scale→0.01 + opacity 0.
+ * Can interrupt an in-flight OPEN (no busy lock).
+ */
+/**
+ * Reference-grade CLOSE — hold rotateY(-180), centre scale→0.01 + opacity 0.
+ * Can interrupt an in-flight OPEN (no busy lock).
+ */
 async function playTerminalCardFlipClose(options = {}) {
     const stage = $('#terminalCardFlipStage');
     const surface = $('#terminalCardFlipSurface');
@@ -1845,7 +1817,8 @@ async function playTerminalCardFlipClose(options = {}) {
     const front = document.querySelector('[data-terminal-card-front]');
     const back = document.querySelector('[data-terminal-card-back]');
     if (!surface || !rotor) return false;
-    if (terminalCardFlipMotion.phase === 'closed' || terminalCardFlipMotion.phase === 'closing') return false;
+    // Allow interrupting opening. Only reject if already closed or already closing this cycle path.
+    if (terminalCardFlipMotion.phase === 'closed') return false;
 
     let sourceEl = options.sourceEl || terminalCardFlipMotion.sourceEl;
     if (sourceEl && !sourceEl.isConnected && terminalCardFlipMotion.connectionId) {
@@ -1857,18 +1830,22 @@ async function playTerminalCardFlipClose(options = {}) {
     const origin = options.originRect || terminalCardFlipMotion.originRect || stableTerminalCardSourceRect(sourceEl);
 
     const cycle = ++terminalCardFlipMotion.cycle;
+    const wasOpening = terminalCardFlipMotion.phase === 'opening';
     terminalCardFlipMotion.phase = 'closing';
     document.body.classList.add('terminal-card-flip-animating', 'terminal-card-flip-open');
-    paintTerminalCardFlipFront(sourceEl);
-    paintTerminalCardFlipBack({
-        name: options.name || sourceEl?.querySelector?.('h2')?.textContent || t('终端'),
-        host: options.host || sourceEl?.querySelector?.('.host-line')?.textContent || '',
-        protocol: options.protocol,
-        tabId: options.tabId,
-    });
+
+    if (!front.childNodes.length) paintTerminalCardFlipFront(sourceEl);
+    if (!back.childNodes.length) {
+        paintTerminalCardFlipBack({
+            name: options.name || sourceEl?.querySelector?.('h2')?.textContent || t('终端'),
+            host: options.host || sourceEl?.querySelector?.('.host-line')?.textContent || '',
+            protocol: options.protocol,
+            tabId: options.tabId,
+        });
+    }
 
     const Motion = await sshKeyMotion._ensure();
-    if (cycle !== terminalCardFlipMotion.cycle || terminalCardFlipMotion.phase !== 'closing') return false;
+    if (cycle !== terminalCardFlipMotion.cycle) return false;
 
     const target = terminalCardFlipTargetRect(origin);
     const topBound = target.topBound != null ? target.topBound : terminalCardFlipNavBottom();
@@ -1881,7 +1858,10 @@ async function playTerminalCardFlipClose(options = {}) {
             width: target.width,
             height: target.height,
         };
-    placeTerminalCardFlipSurface(surface, localTarget);
+    // If already live at final box, keep placement; else place.
+    if (!surface.classList.contains('is-live') || !surface.style.width) {
+        placeTerminalCardFlipSurface(surface, localTarget);
+    }
     if (stage) {
         stage.classList.add('is-active');
         stage.setAttribute('aria-hidden', 'false');
@@ -1890,30 +1870,39 @@ async function playTerminalCardFlipClose(options = {}) {
     surface.classList.toggle('flip-fill-stage', !!target.fillStage);
     surface.style.visibility = 'visible';
     surface.style.pointerEvents = 'none';
-    surface.style.transformOrigin = '0 0';
+    surface.style.transformOrigin = '50% 50%';
+    surface.style.transformStyle = 'preserve-3d';
     surface.style.overflow = 'visible';
     surface.style.transition = 'none';
     surface.style.background = 'transparent';
     surface.style.border = 'none';
     surface.style.boxShadow = 'none';
-    rotor.style.transformOrigin = '50% 50%';
-    rotor.style.transformStyle = 'preserve-3d';
-    rotor.style.transition = 'none';
+    rotor.style.cssText = [
+        'position:absolute', 'inset:0', 'border-radius:inherit',
+        'transform-style:preserve-3d', '-webkit-transform-style:preserve-3d',
+        'transform:none', 'overflow:visible', 'transition:none',
+    ].join(';');
+    if (front) {
+        front.style.backfaceVisibility = 'hidden';
+        front.style.webkitBackfaceVisibility = 'hidden';
+        front.style.transform = 'rotateY(0deg)';
+        front.style.opacity = '1';
+    }
+    if (back) {
+        back.style.backfaceVisibility = 'hidden';
+        back.style.webkitBackfaceVisibility = 'hidden';
+        back.style.transform = 'rotateY(180deg)';
+        back.style.opacity = '1';
+    }
     if (scrim) {
         scrim.style.visibility = 'visible';
         scrim.style.transition = 'none';
         scrim.classList.add('is-open');
     }
-    // Hide live windows while reverse-close plays.
     document.querySelectorAll('#terminalWorkspace .terminal-window').forEach((w) => {
         w.style.opacity = '0';
         w.style.pointerEvents = 'none';
     });
-
-    const radiusClose = terminalCardSourceRadius(sourceEl || terminalCardFlipMotion.sourceEl);
-    const sEnd = 0.01;
-    const closeLayoutW = localTarget.width;
-    const closeLayoutH = localTarget.height;
 
     if (!Motion) {
         resetTerminalCardFlipSurface(null);
@@ -1922,31 +1911,49 @@ async function playTerminalCardFlipClose(options = {}) {
         terminalCardFlipMotion.sourceEl = null;
         return false;
     }
-    try {
-        Motion.stop(surface); Motion.release(surface);
-        Motion.stop(rotor); Motion.release(rotor);
-        if (scrim) { Motion.stop(scrim); Motion.release(scrim); }
-    } catch {}
 
-    Motion.set(surface, { x: 0, y: 0, scaleX: 1, scaleY: 1, radius: radiusClose, opacity: 1 });
-    Motion.set(rotor, { rotateY: -180 });
-    if (front) front.style.opacity = '1';
-    if (back) back.style.opacity = '1';
-    if (scrim) Motion.set(scrim, { opacity: 0.42 });
+    // Interrupt-safe: stop at live pose, then spring to shrink-out.
+    try { Motion.stop(surface); if (scrim) Motion.stop(scrim); } catch {}
+
+    const liveX = Motion.value?.(surface, 'x');
+    const liveY = Motion.value?.(surface, 'y');
+    const liveSX = Motion.value?.(surface, 'scaleX');
+    const liveSY = Motion.value?.(surface, 'scaleY');
+    const liveRot = Motion.value?.(rotor, 'rotateY');
+    const liveOp = Motion.value?.(surface, 'opacity');
+    const hasLive = wasOpening && Number.isFinite(liveSX);
+
+    // Centre-origin shrink: stay at x=0,y=0 (or current centre), scale→0.01, hold -180.
+    Motion.set(surface, {
+        x: hasLive && Number.isFinite(liveX) ? liveX : 0,
+        y: hasLive && Number.isFinite(liveY) ? liveY : 0,
+        scaleX: hasLive ? liveSX : 1,
+        scaleY: hasLive && Number.isFinite(liveSY) ? liveSY : (hasLive ? liveSX : 1),
+        opacity: Number.isFinite(liveOp) ? liveOp : 1,
+    });
+    Motion.set(rotor, { rotateY: Number.isFinite(liveRot) ? liveRot : -180 });
+    if (scrim) {
+        const so = Motion.value?.(scrim, 'opacity');
+        Motion.set(scrim, { opacity: Number.isFinite(so) ? so : 0.55 });
+    }
 
     const S = cardFlipStandards(Motion);
+    const sEnd = 0.01;
     try {
+        // Close is faster than open (reference 0.5s vs 0.7s) — geometryClose 0.34/1.0.
+        // Hold rotateY at -180 (no reverse flip). Centre origin → x/y → 0 while scaling down.
         await Promise.all([
             Motion.to(surface, {
-                x: closeLayoutW / 2 * (1 - sEnd),
-                y: closeLayoutH / 2 * (1 - sEnd),
+                x: 0,
+                y: 0,
                 scaleX: sEnd,
                 scaleY: sEnd,
-                radius: radiusClose,
                 opacity: 0,
             }, { standard: S.iosCardGeometryClose }),
             Motion.to(rotor, { rotateY: -180 }, { standard: S.iosCardFlipClose }),
-            scrim ? Motion.to(scrim, { opacity: 0 }, { standard: S.iosCardScrim }) : Promise.resolve(),
+            scrim
+                ? Motion.to(scrim, { opacity: 0 }, { standard: S.iosCardScrim })
+                : Promise.resolve(),
         ]);
     } catch (err) {
         console.warn('[terminal-card-flip] engine close failed', err);
@@ -1969,100 +1976,76 @@ async function playTerminalCardFlipClose(options = {}) {
     terminalCardFlipMotion.sourceEl = null;
     return true;
 }
+
+
+/**
+ * Connect + flip: engine-owned, interruptible, parallel network.
+ * Flip starts as soon as engine is ready; no busy lock.
+ */
+/**
+ * Connect + flip: engine-owned, interruptible, parallel network.
+ * Flip starts as soon as engine is ready; no busy lock.
+ */
+/**
+ * Connect with card flip — REAL page on the back face.
+ * Order:
+ *  1) Measure source card + radius
+ *  2) Switch terminal + open session + mount real window (hidden under stage)
+ *  3) Paint back = live terminal chrome (图二), front = connection card
+ *  4) Go spring: scale + rotateY on one surface (same radius end-to-end)
+ *  5) Instant handoff onto the real window (same box/radius) — no flash
+ */
+/**
+ * Connect + flip: animation FIRST (same as demo), real page on the back.
+ * Never wait for API before the first flip frame.
+ */
 async function openConnectionWithCardFlip(id, sourceEl, extra = {}) {
     const cardEl = sourceEl?.classList?.contains?.('connection-card')
-        ? sourceEl
-        : (sourceEl?.closest?.('.connection-card') || sourceEl);
+        ? sourceEl : (sourceEl?.closest?.('.connection-card') || sourceEl);
     const originRect = stableTerminalCardSourceRect(cardEl);
-    if (!originRect) {
+    const connection = connections.find((item) => String(item.id) === String(id));
+    if (!originRect || !connection) return openConnection(id, { ...extra, skipCardFlip: true });
+    const cardRadius = terminalCardSourceRadius(cardEl);
+    document.documentElement.style.setProperty('--terminal-card-radius', `${cardRadius}px`);
+    document.body.classList.add('terminal-card-flip-preparing');
+
+    // Mount the actual terminal immediately from the already-authorized public
+    // connection metadata. Server-side USE authorization/markConnected runs in
+    // parallel, so network latency cannot delay the card's first frame.
+    const tabId = `tab_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const mountedId = mountConnectionLocallyForCardFlip(connection, { tabId });
+    const liveWin = mountedId
+        ? document.querySelector(`#terminalWorkspace .terminal-window[data-window="${CSS.escape(String(mountedId))}"]`)
+        : null;
+    if (!liveWin) {
+        document.body.classList.remove('terminal-card-flip-preparing');
         return openConnection(id, { ...extra, skipCardFlip: true });
     }
+    liveWin.dataset.cardFlipRadius = String(cardRadius);
+    Object.assign(liveWin.style, {borderRadius:`${cardRadius}px`,overflow:'hidden',animation:'none',transition:'none',transform:'none',filter:'none'});
 
-    const name = cardEl?.querySelector?.('h2')?.textContent || extra.name || '';
-    const host = cardEl?.querySelector?.('.host-line')?.textContent || extra.host || '';
-    const protocolGuess = (cardEl?.querySelector?.('.protocol-badge')?.textContent || extra.protocol || 'SSH').trim().toUpperCase();
-
-    // Warm engine ASAP, then start flip and network in parallel.
-    const Motion = await sshKeyMotion._ensure();
-    if (!Motion) {
-        // No engine → plain open, no fake CSS animation.
-        return openConnection(id, { ...extra, skipCardFlip: true });
-    }
-
-    // Switch terminal immediately so shelf is part of nav height (flex), not overlaid.
-    applySwitchViewCore('terminal', { enteringAnimated: false });
-    try {
-        syncTerminalSmartbarTop();
-        syncTerminalShelfLineState();
-        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-        syncTerminalSmartbarTop();
-    } catch {}
-
-    // Start flip immediately with provisional back chrome; upgrade when window mounts.
-    const flipP = playTerminalCardFlipOpen(cardEl, {
-        originRect,
-        connectionId: id,
-        name,
-        host,
-        protocol: protocolGuess,
-        fromView: 'dashboard',
+    const authorize = api(`/api/connections/${id}/open`, { method: 'POST' });
+    const flight = playTerminalCardFlipOpen(cardEl, {
+        originRect, connectionId:id, tabId:mountedId, liveWindow:liveWin,
+        radiusFrom:cardRadius, radiusTo:cardRadius, fromView:'dashboard',
     });
-
-    let tabId = null;
-    let openErr = null;
-    try {
-        tabId = await openConnection(id, {
-            ...extra,
-            skipViewSwitch: true,
-            skipCardFlip: true,
-            cardFlipSource: cardEl,
-        });
-        renderTerminalTabs({ rebuildWorkspace: true });
-        await new Promise((r) => requestAnimationFrame(r));
-        const session = getTerminalSession(tabId);
-        const liveWin = document.querySelector(`#terminalWorkspace .terminal-window[data-window="${CSS.escape(String(tabId))}"]`);
-        // Upgrade back face mid-flight / before settle — still dual-face, engine continues.
-        paintTerminalCardFlipBack({
-            tabId,
-            name: session?.name || name,
-            host,
-            protocol: session?.protocol || protocolGuess,
-            liveWindow: liveWin,
-        });
-        // Re-assert dual-face CSS after paint (clone must not break backface).
-        const back = document.querySelector('[data-terminal-card-back]');
-        if (back) {
-            back.style.backfaceVisibility = 'hidden';
-            back.style.webkitBackfaceVisibility = 'hidden';
-            back.style.transform = 'rotateY(180deg)';
-            back.style.opacity = '1';
-            back.style.background = 'transparent';
-        }
-    } catch (err) {
-        openErr = err;
-    }
-
-    const flipped = await flipP.catch(() => false);
-    if (openErr) {
-        await playTerminalCardFlipClose({ sourceEl: cardEl, originRect }).catch(() => {});
-        throw openErr;
-    }
-    if (flipped) {
-        await finishTerminalCardFlipOpenHandoff();
-    } else {
+    let authorized = true;
+    authorize.catch((err) => { authorized = false; console.warn('[terminal-card-flip] connect authorization failed', err); });
+    const flipped = await flight.catch(() => false);
+    if (!authorized) {
         resetTerminalCardFlipSurface(sshKeyMotion.engine);
-        terminalCardFlipMotion.phase = 'open';
-        terminalCardFlipMotion.originRect = originRect;
-        terminalCardFlipMotion.sourceEl = cardEl;
-        terminalCardFlipMotion.connectionId = id;
-        document.querySelectorAll('#terminalWorkspace .terminal-window').forEach((w) => {
-            w.style.opacity = '';
-            w.style.visibility = '';
-            w.style.pointerEvents = '';
-        });
+        document.body.classList.remove('terminal-card-flip-preparing');
+        rollbackLocallyMountedCardFlipTab(mountedId);
+        throw new Error(t('连接授权失败'));
     }
-    scheduleTerminalLayoutStabilize?.('card-flip-handoff', { focus: true });
-    return tabId;
+    if (flipped || terminalCardFlipMotion.hostedWindow) await finishTerminalCardFlipOpenHandoff();
+    else {
+        resetTerminalCardFlipSurface(sshKeyMotion.engine);
+        document.body.classList.remove('terminal-card-flip-preparing');
+    }
+    scheduleTerminalLayoutStabilize?.('card-flip-handoff', {focus:true});
+    authorize.then(() => { loadConnections().catch(() => {}); }).catch(() => {});
+    return mountedId;
 }
 
 function switchView(name, options = {}) {
@@ -2072,14 +2055,12 @@ function switchView(name, options = {}) {
     const leavingTerminal = target !== 'terminal' && wasTerminal;
     const sourceEl = options.cardFlipSource
         || (options.cardFlipSourceSelector ? document.querySelector(options.cardFlipSourceSelector) : null);
-    // Open flip is owned by openConnectionWithCardFlip (starts before API).
-    // switchView only plays open flip when explicitly forced (forceCardFlipOpen).
     const wantsOpenFlip = enteringTerminal && !options.skipCardFlip && !!options.forceCardFlipOpen && !!sourceEl;
-    const wantsCloseFlip = leavingTerminal && !options.skipCardFlip && (
-        terminalCardFlipMotion.phase === 'open'
-        || terminalCardFlipMotion.phase === 'opening'
-        || !!terminalCardFlipMotion.originRect
-    );
+    // ONLY interrupt an in-flight open with reverse shrink. After handoff
+    // (phase settled/closed) just clean up — no ghost card flying home.
+    const wantsCloseFlip = leavingTerminal
+        && !options.skipCardFlip
+        && terminalCardFlipMotion.phase === 'opening';
 
     if (wantsOpenFlip) {
         playTerminalCardFlipOpen(sourceEl, {
@@ -2088,10 +2069,10 @@ function switchView(name, options = {}) {
             fromView: options.fromView || 'dashboard',
         }).then(async (ok) => {
             applySwitchViewCore(target, { enteringAnimated: true });
-            if (ok) await finishTerminalCardFlipOpenHandoff();
-            else {
+            if (ok || terminalCardFlipMotion.phase === 'open') await finishTerminalCardFlipOpenHandoff();
+            else if (terminalCardFlipMotion.phase !== 'closing') {
                 resetTerminalCardFlipSurface(sshKeyMotion.engine);
-                terminalCardFlipMotion.phase = 'open';
+                terminalCardFlipMotion.phase = 'settled';
             }
         }).catch((err) => {
             console.warn('[terminal-card-flip] open path', err);
@@ -2100,9 +2081,8 @@ function switchView(name, options = {}) {
         return;
     }
     if (wantsCloseFlip) {
-        // Keep terminal painted until shrink finishes, then land on destination.
         playTerminalCardFlipClose({
-            sourceEl,
+            sourceEl: terminalCardFlipMotion.sourceEl || sourceEl,
             originRect: options.originRect || terminalCardFlipMotion.originRect || null,
         }).then(() => {
             applySwitchViewCore(target, { enteringAnimated: false });
@@ -2113,13 +2093,22 @@ function switchView(name, options = {}) {
         return;
     }
     if (leavingTerminal) {
+        try {
+            const surface = $('#terminalCardFlipSurface');
+            if (surface && sshKeyMotion.engine) sshKeyMotion.engine.stop(surface);
+        } catch {}
         resetTerminalCardFlipSurface(sshKeyMotion.engine);
         terminalCardFlipMotion.phase = 'closed';
         terminalCardFlipMotion.originRect = null;
         terminalCardFlipMotion.sourceEl = null;
+        applySwitchViewCore(target, { enteringAnimated: false });
+        return;
     }
     applySwitchViewCore(target, { enteringAnimated: false });
 }
+
+
+
 function parseTags(v) { return String(v || '').split(',').map((x) => x.trim()).filter(Boolean); }
 function base64urlToBuffer(value) { const s = String(value).replace(/-/g, '+').replace(/_/g, '/'); return Uint8Array.from(atob(s + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0)); }
 function bufferToBase64url(buffer) { return btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
@@ -3387,6 +3376,54 @@ function rememberLastAppView(view = currentAppView) {
     try { localStorage.setItem('zephyr.lastView', String(view || 'dashboard')); } catch {}
 }
 
+function mountConnectionLocallyForCardFlip(connection, options = {}) {
+    const c = connection;
+    if (!c?.id) return null;
+    const protocol = String(c.protocol || 'SSH').toUpperCase();
+    const tabId = String(options.tabId || `tab_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+    if (terminalTabs.some((item) => item.id === tabId)) return tabId;
+    if (protocol === 'RDP' || protocol === 'VNC') {
+        sessionStorage.setItem(`zephyr_remote_desktop_params_${tabId}`, JSON.stringify({
+            connectionId:c.id,name:c.name,host:c.host,port:c.port,username:c.username,protocol,tabId,sessionId:tabId,
+            embedded:true,timestamp:Date.now(),rdpResolution:c.rdpResolution||'1080p',quality:c.rdpQuality||'balanced',
+            rdpFps:Number(c.rdpFps||30),rdpPipeline:'worker-gpu-v2',rdpTouchMode:c.rdpTouchMode==='relative'?'relative':'direct',
+            rdpTouchSensitivity:Math.max(.5,Math.min(3,Number(c.rdpTouchSensitivity)||1.5)),rdpSoundMode:c.rdpSoundMode||'local',
+            rdpClipboard:c.rdpClipboard!==false,rdpDomain:c.rdpDomain||'',rdpMicrophone:!!c.rdpMicrophone,
+            rdpLocation:!!c.rdpLocation,rdpStorage:!!c.rdpStorage,rdpCamera:!!c.rdpCamera,
+        }));
+        terminalTabs.push({id:tabId,name:c.name,protocol,status:'connecting',iframe:true,page:protocol==='VNC'?'novnc':'rdp',connectionId:c.id,sessionId:tabId,createdAt:Date.now(),lastUsedAt:Date.now(),minimized:false});
+    } else {
+        const page = protocol === 'TELNET' ? 'telnet-terminal' : 'terminal';
+        sessionStorage.setItem(`zephyr_ssh_params_${tabId}`, JSON.stringify({connectionId:c.id,host:c.host,port:c.port,username:c.username,protocol,encoding:c.encoding||'utf-8',init:'',tabId,sessionId:tabId,embedded:!isCompactTerminalWorkspace(),timestamp:Date.now(),snippets:settings?.snippets||[]}));
+        terminalTabs.push({id:tabId,name:c.name,protocol,status:'connecting',iframe:true,page,connectionId:c.id,sessionId:tabId,createdAt:Date.now(),lastUsedAt:Date.now(),minimized:false});
+    }
+    if (!openOrderStack.includes(tabId)) openOrderStack.push(tabId);
+    activeTerminalTab = tabId;
+    touchTerminalSession(tabId);
+    enforceTerminalWorkspaceLimit(tabId);
+    const workspace = $('#terminalWorkspace');
+    if (workspace) {
+        workspace.querySelectorAll(':scope > .terminal-placeholder').forEach((el) => el.remove());
+        workspace.className = `terminal-workspace terminal-workspace-grid layout-1 ${isCompactTerminalWorkspace() ? 'compact' : ''}`;
+        visualLayout = [tabId];
+        const session = getTerminalSession(tabId);
+        const win = createTerminalWindowElement(session);
+        win.className = 'terminal-window active slot-1';
+        workspace.appendChild(win);
+    }
+    return tabId;
+}
+
+function rollbackLocallyMountedCardFlipTab(tabId) {
+    terminalTabs = terminalTabs.filter((item) => item.id !== tabId);
+    openOrderStack = openOrderStack.filter((item) => item !== tabId);
+    visualLayout = visualLayout.filter((item) => item !== tabId);
+    if (activeTerminalTab === tabId) activeTerminalTab = terminalTabs.at(-1)?.id || null;
+    sessionStorage.removeItem(`zephyr_remote_desktop_params_${tabId}`);
+    sessionStorage.removeItem(`zephyr_ssh_params_${tabId}`);
+    renderTerminalTabs({rebuildWorkspace:true});
+}
+
 async function openConnection(id, options = {}) {
     const data = await api(`/api/connections/${id}/open`, { method: 'POST' }); const c = data.connection;
     const protocol = String(c.protocol || 'SSH').toUpperCase();
@@ -3962,8 +3999,9 @@ function createTerminalWindowElement(session) {
         const frame = document.createElement('iframe');
         frame.className = 'terminal-frame';
         frame.dataset.frame = session.id;
+        const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            ? `/rdp.html?embed=1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
@@ -4154,7 +4192,23 @@ function exitTerminalFullscreen() {
     }
 }
 
-function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
+async function playTerminalWindowCloseMotion(win) {
+    if (!win) return false;
+    win.classList.add('motion-closing');
+    win.style.transformOrigin = '50% 50%';
+    try {
+        await Motion.tween(win, { scaleX: 0.01, scaleY: 0.01, opacity: 0 }, {
+            duration: 360,
+            bezier: [0.32, 0.72, 0, 1]
+        });
+        return true;
+    } catch (e) {
+        console.warn('[terminal] close motion failed', e);
+        return false;
+    }
+}
+
+async function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
     if (!terminalTabs.some((t) => t.id === tabId) || closingTerminalTabs.has(tabId)) return;
     const willBeLastTab = terminalTabs.length <= 1;
     const closingTab = terminalTabs.find((t) => t.id === tabId);
@@ -4171,40 +4225,39 @@ function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
     });
     if (activeTerminalTab === tabId || willBeLastTab) exitTerminalFullscreen();
     closingTerminalTabs.add(tabId);
-    renderTerminalTabs({ rebuildWorkspace: false });
+    const win = terminalWorkspace?.querySelector(`.terminal-window[data-window="${CSS.escape(String(tabId))}"]`);
+    await playTerminalWindowCloseMotion(win);
     // Fire-and-forget: delete the one-shot host row so it never lingers in the library.
     if (ephemeralConnectionId) {
         disposeEphemeralConnection(ephemeralConnectionId, { reason: `tab-close:${reason}` });
     }
-    window.setTimeout(() => {
-        terminalTabs = terminalTabs.filter((t) => t.id !== tabId);
-        openOrderStack = openOrderStack.filter((id) => id !== tabId);
-        visualLayout = visualLayout.filter((id) => id !== tabId);
-        recentUseStack = recentUseStack.filter((id) => id !== tabId);
-        closingTerminalTabs.delete(tabId);
-        const reconnectTimer = terminalReconnectFallbackTimers.get(tabId);
-        if (reconnectTimer) {
-            window.clearTimeout(reconnectTimer);
-            terminalReconnectFallbackTimers.delete(tabId);
-        }
-        sessionStorage.removeItem(`zephyr_ssh_params_${tabId}`);
-        sessionStorage.removeItem(`zephyr_remote_desktop_params_${tabId}`);
-        removeTerminalSnapshot(tabId);
-        if (activeTerminalTab === tabId) activeTerminalTab = visualLayout[0] || terminalTabs.find((t) => !t.minimized)?.id || terminalTabs[0]?.id || null;
-        if (!terminalTabs.length) {
-            activeTerminalTab = null;
-            visualLayout = [];
-            openOrderStack = [];
-            recentUseStack = [];
-            setTerminalSmartbarOpen(false);
-            exitTerminalFullscreen();
-            resetTerminalWorkspaceKeyboard();
-            // 最后一个终端关闭后保留在终端页，显示空会话占位，不再自动回到首页。
-            switchView('terminal');
-        }
-        renderTerminalTabs();
-        scheduleWorkspaceSave('close-terminal-tab', { immediate: true });
-    }, 260);
+    terminalTabs = terminalTabs.filter((t) => t.id !== tabId);
+    openOrderStack = openOrderStack.filter((id) => id !== tabId);
+    visualLayout = visualLayout.filter((id) => id !== tabId);
+    recentUseStack = recentUseStack.filter((id) => id !== tabId);
+    closingTerminalTabs.delete(tabId);
+    const reconnectTimer = terminalReconnectFallbackTimers.get(tabId);
+    if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+        terminalReconnectFallbackTimers.delete(tabId);
+    }
+    sessionStorage.removeItem(`zephyr_ssh_params_${tabId}`);
+    sessionStorage.removeItem(`zephyr_remote_desktop_params_${tabId}`);
+    removeTerminalSnapshot(tabId);
+    if (activeTerminalTab === tabId) activeTerminalTab = visualLayout[0] || terminalTabs.find((t) => !t.minimized)?.id || terminalTabs[0]?.id || null;
+    if (!terminalTabs.length) {
+        activeTerminalTab = null;
+        visualLayout = [];
+        openOrderStack = [];
+        recentUseStack = [];
+        setTerminalSmartbarOpen(false);
+        exitTerminalFullscreen();
+        resetTerminalWorkspaceKeyboard();
+        // 最后一个终端关闭后保留在终端页，显示空会话占位，不再自动回到首页。
+        switchView('terminal');
+    }
+    renderTerminalTabs();
+    scheduleWorkspaceSave('close-terminal-tab', { immediate: true });
 }
 
 function applyTerminalWindowPreset(tabId, action) {
@@ -11180,7 +11233,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260731-fullscreen-stretch1')
+        return import('./vendor/zephyr-motion/index.js?v=20260731-motion-tween3')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');

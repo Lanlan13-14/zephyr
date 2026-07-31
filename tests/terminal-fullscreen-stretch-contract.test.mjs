@@ -11,7 +11,8 @@ const motionJs = readFileSync(path.join(root, 'public/vendor/zephyr-motion/motio
 const presetsJs = readFileSync(path.join(root, 'public/vendor/zephyr-motion/presets.js'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const CACHE = '20260731-fullscreen-stretch1';
+const APP_CACHE = '20260731-main-animation-sync1';
+const MOTION_CACHE = '20260731-motion-tween3';
 
 test('Motion.stretchExpand is Go-standard driven (no CSS transition)', () => {
     assert.match(motionJs, /async stretchExpand\(el, opts = \{\}\)/);
@@ -54,9 +55,9 @@ test('mobile fullscreen uses stretchExpand and deletes spinner loader path', () 
 });
 
 test('cache revision covers app + motion module', () => {
-    assert.match(appHtml, new RegExp(`app\\.js\\?v=${CACHE}`));
-    assert.match(appHtml, new RegExp(`style\\.css\\?v=${CACHE}`));
-    assert.match(appHtml, new RegExp(`zephyr-motion/index\\.js\\?v=${CACHE}`));
-    assert.match(swJs, new RegExp(`app\\.js\\?v=${CACHE}`));
-    assert.match(appJs, new RegExp(`zephyr-motion/index\\.js\\?v=${CACHE}`));
+    assert.match(appHtml, new RegExp(`app\\.js\\?v=${APP_CACHE}`));
+    assert.match(appHtml, new RegExp(`style\\.css\\?v=${APP_CACHE}`));
+    assert.match(appHtml, new RegExp(`zephyr-motion/index\\.js\\?v=${MOTION_CACHE}`));
+    assert.match(swJs, new RegExp(`app\\.js\\?v=${APP_CACHE}`));
+    assert.match(appJs, new RegExp(`zephyr-motion/index\\.js\\?v=${MOTION_CACHE}`));
 });

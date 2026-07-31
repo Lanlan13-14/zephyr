@@ -835,40 +835,15 @@ body.terminal-mode .terminal-view.active { animation: none; }
     border-radius: var(--radius-lg);
     background: var(--surface);
     box-shadow: 0 5px 18px -16px rgba(0,0,0,.35);
-    transform-origin: center top;
-    animation: activityCardIn .34s cubic-bezier(.16,1,.3,1) both;
-    animation-delay: var(--activity-stagger);
-    transition:
-        transform .52s var(--ease-micro),
-        opacity .24s ease,
-        filter .28s ease,
-        border-color .32s var(--ease-smooth),
-        box-shadow .52s var(--ease-micro);
-    will-change: transform, opacity, filter;
+    transition: box-shadow .2s ease, transform .2s ease, border-color .2s ease;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 180px;
+    animation: none;
 }
 .activity-detail-item:hover {
-    transform: translate3d(0, -2px, 0) scale(1.004);
-    border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
-    box-shadow: var(--shadow-lift, 0 12px 28px -18px rgba(0,0,0,.28));
-}
-.activity-list.activity-list-switching .activity-detail-item {
-    animation: none;
-    opacity: 0;
-    transform: translate3d(0, 10px, 0) scale(.985);
-    filter: blur(6px);
-}
-@keyframes activityCardIn {
-    from { opacity: 0; transform: translate3d(0, 14px, 0) scale(.975); filter: blur(8px); }
-    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
-}
-@media (prefers-reduced-motion: reduce) {
-    .activity-detail-item {
-        animation: none;
-        transition: none;
-    }
-    .activity-detail-item:hover {
-        transform: none;
-    }
+    border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
 }
 .activity-detail-head { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .activity-event-mark { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft-bg); }
@@ -1408,7 +1383,13 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
 .terminal-window.active { border-color: rgba(10,132,255,.58); box-shadow: 0 24px 70px rgba(0,0,0,.38), 0 0 0 3px rgba(10,132,255,.08); z-index: 2; }
 .terminal-window.background { opacity: 1; filter: none; }
 .terminal-window.background:hover { opacity: 1; filter: none; }
-.terminal-window.closing { opacity: 0; transform: scale(.82) translateY(-12px); filter: blur(12px); pointer-events: none; }
+.terminal-window.motion-closing {
+    pointer-events: none;
+    transform-origin: 50% 50% !important;
+    transition: none !important;
+    animation: none !important;
+    will-change: transform, opacity;
+}
 .terminal-window.minimizing { opacity: 0; transform: scale(.72) translateY(-34px); filter: blur(14px) saturate(.72); pointer-events: none; }
 .terminal-window.dock-drop-target {
     border-color: rgba(10,132,255,.86);
@@ -11827,6 +11808,10 @@ body.terminal-mode .main-nav {
         box-shadow .42s ease,
         border-radius .42s ease !important;
 }
+body.terminal-card-flip-animating.terminal-mode .main-nav,
+body.terminal-card-flip-handoff.terminal-mode .main-nav {
+    transition: none !important;
+}
 body.terminal-mode .main-nav::after {
     content: '';
     position: absolute;
@@ -15520,16 +15505,20 @@ body.connection1-blurring #connectionModalScrim { pointer-events: auto; }
     font-size: 12px;
     color: var(--text-secondary);
 }
+body.terminal-card-flip-open #view-terminal.terminal-view,
 body.terminal-card-flip-animating #view-terminal.terminal-view,
-body.terminal-card-flip-animating .view.active {
+body.terminal-card-flip-handoff #view-terminal.terminal-view,
+body.terminal-card-flip-animating .view.active,
+body.terminal-card-flip-handoff .view.active {
     animation: none !important;
+    transform: none !important;
 }
 body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window {
     opacity: 0 !important;
     pointer-events: none !important;
 }
-body.terminal-card-flip-open:not(.terminal-card-flip-animating) #terminalWorkspace > .terminal-window,
-body:not(.terminal-card-flip-open) #terminalWorkspace > .terminal-window {
+body.terminal-card-flip-open:not(.terminal-card-flip-animating) #terminalWorkspace > .terminal-window:not(.motion-closing),
+body:not(.terminal-card-flip-open) #terminalWorkspace > .terminal-window:not(.motion-closing) {
     opacity: 1 !important;
     visibility: visible !important;
     pointer-events: auto !important;
@@ -15777,8 +15766,8 @@ body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .
     pointer-events: none !important;
     visibility: visible !important;
 }
-body.terminal-card-flip-open:not(.terminal-card-flip-animating) #terminalWorkspace > .terminal-window,
-body:not(.terminal-card-flip-open) #terminalWorkspace > .terminal-window {
+body.terminal-card-flip-open:not(.terminal-card-flip-animating) #terminalWorkspace > .terminal-window:not(.motion-closing),
+body:not(.terminal-card-flip-open) #terminalWorkspace > .terminal-window:not(.motion-closing) {
     opacity: 1 !important;
     visibility: visible !important;
     pointer-events: auto !important;
@@ -15792,4 +15781,92 @@ body:not(.terminal-card-flip-open) #terminalWorkspace > .terminal-window {
         padding: 0 !important;
         margin: 0 !important;
     }
+}
+
+/* ===== Terminal card flip: one Go-owned surface, real page as back face ===== */
+#terminalCardFlipSurface.terminal-card-flip-surface {
+    transform-style: preserve-3d !important;
+    -webkit-transform-style: preserve-3d !important;
+    transform-origin: 50% 50% !important;
+    overflow: visible !important;
+    isolation: auto !important;
+    background: transparent !important;
+    transition: none !important;
+}
+#terminalCardFlipSurface .terminal-card-flip-rotor {
+    transform-style: preserve-3d !important;
+    -webkit-transform-style: preserve-3d !important;
+    overflow: visible !important;
+    transition: none !important;
+}
+#terminalCardFlipSurface .terminal-card-flip-front,
+#terminalCardFlipSurface .terminal-card-flip-back {
+    border-radius: inherit !important;
+    overflow: hidden !important;
+    backface-visibility: hidden !important;
+    -webkit-backface-visibility: hidden !important;
+    background: var(--surface) !important;
+    transition: none !important;
+}
+#terminalCardFlipSurface .terminal-card-flip-front { transform: rotateY(0deg) !important; }
+#terminalCardFlipSurface .terminal-card-flip-back { transform: rotateY(180deg) !important; }
+#terminalCardFlipSurface .terminal-card-flip-back > .terminal-window[data-card-flip-hosted="1"] {
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    border-radius: inherit !important;
+    overflow: hidden !important;
+    box-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+    filter: none !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+/* The terminal page keeps the exact card curvature after handoff. */
+body.app-body.terminal-mode #terminalWorkspace,
+body.app-body.terminal-mode .terminal-workspace,
+body.app-body.terminal-mode .terminal-workspace.compact,
+body.app-body.terminal-mode .terminal-workspace-grid,
+body.app-body.terminal-mode .terminal-window[data-card-flip-radius] {
+    border-radius: var(--terminal-card-radius, 18px) !important;
+    overflow: hidden !important;
+}
+body.app-body.terminal-mode .terminal-window[data-card-flip-radius]:not(.motion-closing) {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+    filter: none !important;
+}
+
+/* Prepare terminal layout/session without exposing it before the seeded flip. */
+body.terminal-card-flip-preparing #view-terminal,
+body.terminal-card-flip-preparing #terminalWorkspace,
+body.terminal-card-flip-preparing .terminal-smartbar,
+body.terminal-card-flip-preparing .main-nav::after {
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+/* Rotation belongs only to the rotor; surface owns matched geometry. */
+#terminalCardFlipSurface .terminal-card-flip-rotor {
+    transform-style: preserve-3d !important;
+    -webkit-transform-style: preserve-3d !important;
+}
+
+/* During card flight, shelf geometry and line are already at their final pose.
+   The card remains the only moving surface; no late CSS line drop after handoff. */
+body.terminal-card-flip-handoff.terminal-mode .main-nav::after {
+    opacity: var(--terminal-card-shelf-line-opacity, 0) !important;
+    clip-path: inset(0 0 calc((1 - var(--terminal-card-shelf-line-opacity, 0)) * 100%) 0 round 999px) !important;
+    transform: translate3d(-50%, calc((1 - var(--terminal-card-shelf-line-opacity, 0)) * -1 * var(--terminal-shelf-line-travel)), 0) !important;
+    transition: none !important;
+}
+body.terminal-card-flip-handoff.terminal-mode .terminal-smartbar {
+    transition: none !important;
+}
+
+#terminalCardFlipSurface .terminal-card-flip-back:not(:has(> .terminal-window[data-card-flip-hosted="1"])) {
+    background: transparent !important;
 }

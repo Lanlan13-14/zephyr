@@ -13,7 +13,7 @@ func TestIOSCardStandardProfiles(t *testing.T) {
 	}{
 		{StandardIOSCardGeometryOpen, 0.44, 1.00},
 		{StandardIOSCardGeometryClose, 0.34, 1.00},
-		{StandardIOSCardFlipOpen, 0.50, 0.90},
+		{StandardIOSCardFlipOpen, 0.40, 0.96},
 		{StandardIOSCardFlipClose, 0.38, 0.96},
 		{StandardIOSCardContent, 0.32, 1.00},
 		{StandardIOSCardScrim, 0.42, 1.00},

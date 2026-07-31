@@ -158,7 +158,7 @@ test('Motion.to accepts stable standard and composes rotateY', async () => {
   for (let i = 0; i < 500; i++) Motion.engine.tick(1 / 60);
   await p;
   assert.match(el.style.transform, /rotateY\(-180deg\)/);
-  assert.deepEqual(STANDARD_FALLBACKS[MOTION_STANDARDS.iosCardFlipOpen], { response: 0.50, damping: 0.90 });
+  assert.deepEqual(STANDARD_FALLBACKS[MOTION_STANDARDS.iosCardFlipOpen], { response: 0.40, damping: 0.96 });
 });
 
 test('Motion.to composes transform and resolves on settle', async () => {
@@ -209,4 +209,17 @@ test('Motion stagger assigns increasing delays without hanging', async () => {
   for (let i = 0; i < 400; i++) Motion.engine.tick(1 / 60);
   await p;
   for (const el of els) assert.match(el.style.transform, /translate3d\(50px/);
+});
+
+test('Motion.to seeds all transform channels before retargeting any channel', async () => {
+  const el = fakeEl();
+  Motion.set(el, { x: 120, y: 300, scaleX: 0.4, scaleY: 0.3, rotateY: 0 });
+  const seeded = el.style.transform;
+  const promise = Motion.to(el, {
+    x: 0, y: 0, scaleX: 1, scaleY: 1, rotateY: -180,
+  }, { standard: MOTION_STANDARDS.iosCardFlipOpen });
+  assert.equal(el.style.transform, seeded, 'starting one channel must not repaint later channels to defaults');
+  for (let i = 0; i < 180 && Motion.isAnimating(el); i++) Motion.engine.tick(1 / 60);
+  await promise;
+  assert.match(el.style.transform, /translate3d\(0px, 0px, 0\) scale\(1, 1\) rotateY\(-180deg\)/);
 });
