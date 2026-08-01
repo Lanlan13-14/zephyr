@@ -4,6 +4,9 @@ import fs from 'node:fs';
 
 const appJs = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const terminalJs = fs.readFileSync(new URL('../public/terminal.js', import.meta.url), 'utf8');
+const telnetJs = fs.readFileSync(new URL('../public/telnet-terminal.js', import.meta.url), 'utf8');
+const rdpJs = fs.readFileSync(new URL('../public/rdp-wasm-client.js', import.meta.url), 'utf8');
+const novncJs = fs.readFileSync(new URL('../public/novnc.js', import.meta.url), 'utf8');
 const styleCss = fs.readFileSync(new URL('../public/style.css', import.meta.url), 'utf8');
 const terminalHtml = fs.readFileSync(new URL('../public/terminal.html', import.meta.url), 'utf8');
 const telnetHtml = fs.readFileSync(new URL('../public/telnet-terminal.html', import.meta.url), 'utf8');
@@ -46,10 +49,26 @@ test('notes button is gated by notes.enabled and hidden when off', () => {
   assert.match(appJs, /function isNotesEnabled\(\)/);
   assert.match(appJs, /type:\s*'notes-enabled'/);
   assert.match(appJs, /broadcastNotesEnabled/);
-  assert.match(terminalJs, /function applyNotesFeatureEnabled/);
-  assert.match(terminalJs, /classList\.toggle\('force-hidden',\s*!notesFeatureEnabled\)/);
-  assert.match(terminalJs, /type === 'notes-enabled'/);
-  assert.match(terminalJs, /\/api\/me\/settings/);
+  for (const [name, src] of [
+    ['ssh', terminalJs],
+    ['telnet', telnetJs],
+    ['rdp', rdpJs],
+    ['vnc', novncJs],
+  ]) {
+    assert.match(src, /function applyNotesFeatureEnabled/, `${name} applyNotesFeatureEnabled`);
+    assert.match(src, /classList\.toggle\('force-hidden',\s*!notesFeatureEnabled\)/, `${name} force-hidden gate`);
+    assert.match(src, /type === 'notes-enabled'|type === "notes-enabled"|msg\.type === 'notes-enabled'|event\.data\.type === 'notes-enabled'/, `${name} notes-enabled handler`);
+    assert.match(src, /\/api\/me\/settings/, `${name} settings fetch`);
+    assert.match(src, /if \(!notesFeatureEnabled\)/, `${name} click gate`);
+    assert.match(src, /type:\s*'open-notes-for-connection'/, `${name} open notes message`);
+    assert.match(src, /source:\s*'zephyr-terminal'/, `${name} message source`);
+    assert.match(src, /笔记面板需要在应用主界面打开/, `${name} non-embed feedback`);
+  }
+});
+
+test('RDP and VNC script cache includes notes-align revision', () => {
+  assert.match(rdpHtml, /rdp-wasm-client\.js\?v=20260801-rdp-vnc-notes-align1/);
+  assert.match(novncHtml, /novnc\.js\?v=20260801-rdp-vnc-notes-align1/);
 });
 
 test('stable mobile keyboard uses parent overlay without workspace clip', () => {

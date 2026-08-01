@@ -41,4 +41,20 @@ test('terminal notes request uses fullscreen-exit-before-notes flow', () => {
     assert.match(listener, /Promise\.resolve\(switchView\('notes', \{ source: 'terminal-notes-button' \}\)\)/);
     assert.match(listener, /\.then\(\(\) => \{[\s\S]*?filterByConnection/);
     assert.doesNotMatch(listener, /\nswitchView\('notes'\);/);
+    // switchView itself routes through exitTerminalFullscreenThenSwitchView for
+    // any non-terminal destination while mobile custom fullscreen is open —
+    // SSH / Telnet / RDP / VNC all post the same open-notes-for-connection message.
+    assert.match(appJs, /function shouldExitTerminalFullscreenBeforeView/);
+    assert.match(appJs, /return exitTerminalFullscreenThenSwitchView\(target, options\)/);
+    assert.match(appJs, /source: 'terminal-notes-button'/);
+});
+
+test('parent notes message accepts all protocol iframes via zephyr-terminal source', () => {
+    const start = appJs.indexOf('// Terminal -> app: open notes filtered by current connection');
+    assert.ok(start >= 0, 'notes message listener marker missing');
+    const listener = appJs.slice(start, appJs.indexOf('// ─── Multi-user management UI', start));
+    assert.match(listener, /data\.source !== 'zephyr-terminal'/);
+    assert.match(listener, /data\.type !== 'open-notes-for-connection'/);
+    assert.match(listener, /isNotesEnabled\(\)/);
+    assert.match(listener, /filterByConnection\?\.\(data\.connectionId\)/);
 });

@@ -52,6 +52,47 @@ const urlParams = new URLSearchParams(location.search);
 const tabId = urlParams.get('tabId') || '';
 const embeddedMode = urlParams.get('embed') === '1';
 
+/* Notes side panel: same gating/postMessage contract as SSH/Telnet terminal.
+ * Parent app.js owns notesController + mobile fullscreen exit animation. */
+let notesFeatureEnabled = false;
+function showNotesToast(message, type = 'info') {
+    const text = String(message ?? '');
+    if (!text) return;
+    let host = document.getElementById('remoteNotesToastHost');
+    if (!host) {
+        host = document.createElement('div');
+        host.id = 'remoteNotesToastHost';
+        host.className = 'toast-container';
+        host.setAttribute('aria-live', 'polite');
+        host.style.cssText = 'position:fixed;left:50%;bottom:max(16px,env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:12000;display:flex;flex-direction:column;gap:8px;pointer-events:none;';
+        document.body.appendChild(host);
+    }
+    const node = document.createElement('div');
+    node.className = `toast ${type === 'error' ? 'error' : type === 'success' ? 'success' : 'info'}`;
+    node.textContent = text;
+    host.appendChild(node);
+    window.setTimeout(() => {
+        try { node.remove(); } catch {}
+    }, 2800);
+}
+function applyNotesFeatureEnabled(enabled) {
+    notesFeatureEnabled = !!enabled;
+    const notesBtn = document.getElementById('notesBtn');
+    notesBtn?.classList.toggle('force-hidden', !notesFeatureEnabled);
+    if (notesBtn) notesBtn.hidden = !notesFeatureEnabled;
+}
+async function loadRemoteNotesSettings() {
+    try {
+        const res = await fetch('/api/me/settings', { credentials: 'same-origin', cache: 'no-store' });
+        if (!res.ok) return;
+        const payload = await res.json();
+        applyNotesFeatureEnabled(!!payload?.settings?.notes?.enabled);
+    } catch (_) {
+        applyNotesFeatureEnabled(false);
+    }
+}
+applyNotesFeatureEnabled(false);
+
 let params = loadParams();
 let rfb = null;
 let connected = false;
@@ -925,10 +966,14 @@ function bindEvents() {
     cadBtn.addEventListener('click', () => rfb?.sendCtrlAltDel?.());
     reconnectBtn.addEventListener('click', reconnect);
     disconnectBtn.addEventListener('click', () => disconnect({ closeTab: true }));
-    /* Notes button: postMessage to parent (app.js) to open notes filtered
-     * by the current connection, same as SSH terminal. */
-    const notesBtn = $('#notesBtn');
+    /* Notes button: same contract as SSH/Telnet — parent runs
+     * exitTerminalFullscreenThenSwitchView before notes when fullscreen. */
+    const notesBtn = document.getElementById('notesBtn');
     notesBtn?.addEventListener('click', () => {
+        if (!notesFeatureEnabled) {
+            showNotesToast('笔记功能未开启，请在设置中启用', 'error');
+            return;
+        }
         if (embeddedMode && window.parent && window.parent !== window) {
             window.parent.postMessage({
                 source: 'zephyr-terminal',
@@ -936,6 +981,8 @@ function bindEvents() {
                 tabId: params?.tabId || tabId,
                 connectionId: params?.connectionId || urlParams.get('connectionId') || '',
             }, '*');
+        } else {
+            showNotesToast('笔记面板需要在应用主界面打开');
         }
     });
     shortcutGrid.addEventListener('click', (event) => {
@@ -960,11 +1007,7 @@ function bindEvents() {
         if (event.data.type === 'reconnect-terminal') reconnect();
         if (event.data.type === 'focus-terminal') rfb?.focus?.();
         if (event.data.type === 'notes-enabled') {
-            const notesBtn = $('#notesBtn');
-            if (notesBtn) {
-                notesBtn.classList.toggle('force-hidden', !event.data.enabled);
-                notesBtn.hidden = !event.data.enabled;
-            }
+            applyNotesFeatureEnabled(!!event.data.enabled);
         }
         if (event.data.type === 'ai-remote-desktop-action') {
             const actionId = String(event.data.actionId || '');
@@ -985,4 +1028,5 @@ function bindEvents() {
 
 applyDisplayOptions();
 bindEvents();
+loadRemoteNotesSettings();
 connect();

@@ -13,8 +13,8 @@ const style = readFileSync(new URL('../public/style.css', import.meta.url), 'utf
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const sw = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
 const CACHE = '20260731-panel-drag-physics4';
-const TERMINAL_CACHE = '20260731-sftp-multi-close1';
-const APP_CACHE = '20260731-sftp-multi-close1';
+const TERMINAL_CACHE = '20260801-terminal-grid-converge1';
+const APP_CACHE = '20260801-dock-notes-fullscreen1';
 
 test('shared floating-panel exposes AI-parity physics + hard drag', () => {
   assert.match(floating, /export async function ensureFloatingPanelPhysicsDrag/);
