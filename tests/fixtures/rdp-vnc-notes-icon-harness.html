@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RDP/VNC notes icon harness</title>
+  <link rel="stylesheet" href="/public/style.css?v=harness" />
+  <style>
+    body { margin: 24px; font: 14px/1.4 system-ui, sans-serif; background: #0d1117; color: #e6edf3; }
+    h1 { font-size: 16px; margin: 0 0 16px; }
+    .row { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 24px; }
+    .card { border: 1px solid #30363d; border-radius: 12px; padding: 16px; background: #161b22; min-width: 280px; }
+    .card h2 { font-size: 13px; margin: 0 0 12px; color: #8b949e; }
+    .topbar-actions { display: flex; gap: 8px; align-items: center; }
+    .btn-sm { border: 1px solid #30363d; background: #21262d; color: #e6edf3; border-radius: 8px; padding: 6px 10px; }
+    #out { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; color: #7ee787; }
+  </style>
+</head>
+<body>
+  <h1>RDP / VNC notes icon parity harness</h1>
+  <div class="row">
+    <div class="card terminal-page">
+      <h2>SSH / terminal (data-mobile-icon)</h2>
+      <div class="topbar-actions">
+        <button class="btn-sm" id="sshNotes" data-mobile-icon="notes">笔记</button>
+      </div>
+    </div>
+    <div class="card rdp-page">
+      <h2>RDP (data-rdp-icon)</h2>
+      <div class="topbar-actions">
+        <button class="btn-sm" id="rdpNotes" data-rdp-icon="notes">笔记</button>
+      </div>
+    </div>
+    <div class="card novnc-page">
+      <h2>VNC (data-vnc-icon)</h2>
+      <div class="novnc-toolbar topbar-actions">
+        <button class="btn-sm" id="vncNotes" data-vnc-icon="notes">笔记</button>
+      </div>
+    </div>
+  </div>
+  <pre id="out">measuring…</pre>
+  <script>
+    function iconOf(sel) {
+      const el = document.querySelector(sel);
+      const cs = getComputedStyle(el, '::before');
+      return {
+        content: cs.content,
+        width: cs.width,
+        height: cs.height,
+        mask: cs.webkitMaskImage || cs.maskImage || '',
+        bg: cs.backgroundColor || cs.backgroundImage || '',
+        display: cs.display,
+      };
+    }
+    const ssh = iconOf('#sshNotes');
+    const rdp = iconOf('#rdpNotes');
+    const vnc = iconOf('#vncNotes');
+    const okMask = ssh.mask && rdp.mask === ssh.mask && vnc.mask === ssh.mask;
+    const okPseudo = [ssh, rdp, vnc].every((x) => x.content === '""' || x.content === "''" || x.display !== 'none');
+    const hasMaskUrl = [ssh, rdp, vnc].every((x) => /svg\+xml|url\(/.test(x.mask));
+    const result = {
+      ok: okMask && hasMaskUrl,
+      okMask,
+      hasMaskUrl,
+      okPseudo,
+      ssh, rdp, vnc,
+    };
+    document.getElementById('out').textContent = JSON.stringify(result, null, 2);
+    document.title = result.ok ? 'NOTES_ICON_PASS' : 'NOTES_ICON_FAIL';
+  </script>
+</body>
+</html>
