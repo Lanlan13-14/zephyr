@@ -68,7 +68,7 @@ export function createTerminalHistoryGesture({
                 return;
             }
             const changed = consumePixels(
-                velocity * dt * cfg.dragGain,
+                -velocity * dt * cfg.dragGain,
                 'touch-fling',
                 cfg.maxFlingLinesPerFrame,
             );
@@ -108,9 +108,10 @@ export function createTerminalHistoryGesture({
             const instantVelocity = dy / dt;
             velocityPxPerMs = velocityPxPerMs * cfg.velocitySmoothing
                 + instantVelocity * (1 - cfg.velocitySmoothing);
-            // Finger up (negative dy) moves the viewport into older history
-            // (negative xterm scrollLines); content tracks the finger 1:1.
-            const lines = consumePixels(dy * cfg.dragGain, 'touch-pan', cfg.maxLinesPerMove);
+            // Native touch physics: viewport movement is opposite finger movement.
+            // Finger up (negative dy) advances toward newer lines (positive
+            // xterm scrollLines), so the content itself follows the finger up.
+            const lines = consumePixels(-dy * cfg.dragGain, 'touch-pan', cfg.maxLinesPerMove);
             return { moved: true, lines };
         },
         end({ cancel = false } = {}) {

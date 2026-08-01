@@ -39,7 +39,7 @@ test('parent handles ssh-kb via reduceParentKeyboardMessage', () => {
     assert.match(appJs, /type === 'ssh-kb'/);
 });
 
-test('cache bust kb-xterm-fit2 on terminal entry', () => {
-    assert.match(terminalHtml, /kb-xterm-fit2/);
-    assert.match(terminalJs, /kb-xterm-fit2/);
+test('cache bust terminal-grid-converge1 on terminal entry', () => {
+    assert.match(terminalHtml, /terminal-grid-converge1/);
+    assert.match(terminalJs, /terminal-grid-converge1/);
 });

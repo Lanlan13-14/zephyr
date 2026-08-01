@@ -1,3 +1,4 @@
+// terminal-grid-converge1 supersedes terminal-stability1 / kb-xterm-fit2 / aux-bar-fly1.
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
 import {
     fitWTerm as xtermFitWTerm,
@@ -12,7 +13,8 @@ import {
     LiftMode as SoftKeyboardLiftMode,
 } from './ssh-keyboard/index.js?v=20260723-sync2';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
-import { createTerminalHistoryGesture } from './terminal-history-gesture.js?v=20260728-ai-handle-only-drag1';
+import { createTerminalHistoryGesture } from './terminal-history-gesture.js?v=20260801-terminal-stability1';
+import { decideTerminalGridGrowth } from './terminal-grid-convergence.js?v=20260801-terminal-grid-converge1';
 import {
     DEFAULT_TERMINAL_SCROLL_SETTINGS,
     allowScrollDuringTyping,
@@ -90,10 +92,16 @@ function getWTermScrollTarget() {
 function setWTermImeActive(active, reason = 'ime') {
     const el = term?.element || wtermWrapper?.querySelector?.('.wterm') || wtermWrapper;
     if (!el?.classList) return;
-    el.classList.toggle('ime-active', !!active);
-    // Keep a solid cursor even if WTerm's hidden textarea is not focused.
-    if (active) el.classList.add('cursor-blink');
-    logTerminalLayoutDiagnostics?.('wterm-ime-active', { active: !!active, reason });
+    const cursorMayShow = !!active && !isTerminalUserReadingHistory?.();
+    el.classList.toggle('ime-active', cursorMayShow);
+    // Keep a solid cursor only at the live viewport. While ydisp < ybase the
+    // PTY cursor is off-screen and painting it over history is simply wrong.
+    if (cursorMayShow) el.classList.add('cursor-blink');
+    logTerminalLayoutDiagnostics?.('wterm-ime-active', {
+        active: !!active,
+        cursorMayShow,
+        reason,
+    });
 }
 
 /**
@@ -1148,6 +1156,44 @@ function enterMobileTerminalSelectionMode(reason = 'selection') {
     logTerminalCopyDiagnostics(wasActive ? 'selection-mode-keep' : 'selection-mode-enter', { reason });
 }
 
+function clearTerminalDomSelection(reason = 'selection-clear') {
+    try {
+        const selection = window.getSelection?.();
+        if (selection && !selection.isCollapsed) selection.removeAllRanges();
+    } catch (_) {}
+    cachedSelectionText = '';
+    logTerminalCopyDiagnostics('selection-dom-clear', { reason });
+}
+
+function exitMobileTerminalSelectionMode(reason = 'selection-exit', {
+    clearSelection = false,
+    refocus = false,
+} = {}) {
+    window.clearTimeout(mobileTerminalSelectionRestoreTimer);
+    window.clearTimeout(mobileTerminalSelectionTimer);
+    window.clearTimeout(terminalTouchFocusTimer);
+    if (clearSelection) clearTerminalDomSelection(reason);
+    mobileTerminalSelectionMode = false;
+    document.documentElement.classList.remove('terminal-selection-mode');
+    logTerminalCopyDiagnostics('selection-mode-exit', { reason, clearSelection, refocus });
+    if (refocus && isTouchKeyboardDevice()) {
+        const run = () => {
+            if (hasLiveTerminalSelection?.()) return;
+            const kb = ensureSshKeyboard?.();
+            kb?._gesture?.forceIdle?.();
+            const opened = kb?.openTerminal?.(`${reason}:resume-input`);
+            if (opened !== false) {
+                try { mobileImeProxy?.focus?.({ preventScroll: true }); }
+                catch (_) { try { mobileImeProxy?.focus?.(); } catch (__) {} }
+                setWTermImeActive(true, `${reason}:resume-input`);
+                scheduleImeProxyCursorAnchor?.(`${reason}:resume-input`);
+            }
+        };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+        else run();
+    }
+}
+
 function scheduleExitMobileTerminalSelectionMode(delay = 900) {
     window.clearTimeout(mobileTerminalSelectionRestoreTimer);
     mobileTerminalSelectionRestoreTimer = window.setTimeout(() => {
@@ -1155,9 +1201,7 @@ function scheduleExitMobileTerminalSelectionMode(delay = 900) {
             scheduleExitMobileTerminalSelectionMode(900);
             return;
         }
-        mobileTerminalSelectionMode = false;
-        document.documentElement.classList.remove('terminal-selection-mode');
-        logTerminalCopyDiagnostics('selection-mode-exit');
+        exitMobileTerminalSelectionMode('selection-collapsed');
     }, delay);
 }
 
@@ -1515,7 +1559,7 @@ function getEstimatedKeyboardInset() {
     // tools fly to a wrong edge then correct ~1s later when live vv arrived.
     try {
         const m = getViewportKeyboardMetrics();
-        if (m.keyboardOpen && m.keyboardInset >= 80) return m.keyboardInset;
+        if (m.keyboardOpen && m.keyboardInset > 0) return m.keyboardInset;
     } catch (_) {}
     return 0;
 }
@@ -2332,6 +2376,13 @@ window.addEventListener('message', (e) => {
             }
         }
  
+        const parentWorkspaceHeight = Math.max(0, Math.round(Number(e.data.workspaceHeight) || 0));
+        if (parentWorkspaceHeight > 0) {
+            document.documentElement.style.setProperty('--parent-terminal-workspace-height', `${parentWorkspaceHeight}px`);
+        }
+        if (isTouchKeyboardDevice() && (e.data.fullscreen || e.data.customFullscreen) && !e.data.keyboardOpen) {
+            setStableViewportHeight({ force: true });
+        }
         const keyboardRelated = isTouchKeyboardDevice() && (
             String(reason).includes('keyboard')
             || String(reason).includes('viewport')
@@ -2357,6 +2408,13 @@ window.addEventListener('message', (e) => {
             return;
         }
         requestStableTerminalLayout(reason, { includeResize: true, focus: !!e.data.focus });
+        if (isTouchKeyboardDevice() && (
+            e.data.fullscreen
+            || e.data.customFullscreen
+            || /fullscreen|window-morph|terminal-fullscreen|custom-fullscreen/.test(String(reason))
+        )) {
+            scheduleMobileTerminalGridConvergence(`parent-layout:${reason}`);
+        }
     }
 });
 
@@ -2825,8 +2883,14 @@ function sendTerminalResize(cols, rows, { reason = 'direct', force = false } = {
         return;
     }
 
-    const nextCols = measured.cols;
-    const nextRows = measured.rows;
+    const useExplicitForceSize = force
+        && Number.isFinite(explicitCols)
+        && Number.isFinite(explicitRows)
+        && explicitCols >= 20
+        && explicitRows >= 2;
+    const nextCols = useExplicitForceSize ? explicitCols : measured.cols;
+    const nextRows = useExplicitForceSize ? explicitRows : measured.rows;
+    if (useExplicitForceSize) lastSentTerminalSize = { cols: nextCols, rows: nextRows };
 
     wsConnection.send(JSON.stringify({ type: 'resize', rows: nextRows, cols: nextCols }));
     logTerminalLayoutDiagnostics('resize:sent', {
@@ -3193,6 +3257,114 @@ function syncWTermGridToLastPty(reason = 'sync-grid-to-pty') {
     return updateWTermLocalGridSize(lastSentTerminalSize.cols, lastSentTerminalSize.rows, reason);
 }
 
+let terminalGridGrowthTimer = 0;
+let terminalGridGrowthGeneration = 0;
+let terminalGridGrowthScheduleGeneration = 0;
+
+function convergeMobileTerminalGridGrowth(reason = 'mobile-grid-growth', { delay = 0 } = {}) {
+    if (!isTouchKeyboardDevice()) return false;
+    const generation = ++terminalGridGrowthGeneration;
+    window.clearTimeout(terminalGridGrowthTimer);
+    terminalGridGrowthTimer = window.setTimeout(() => {
+        if (generation !== terminalGridGrowthGeneration || !term || !wtermWrapper) return;
+        if (document.visibilityState !== 'visible' || !isEmbeddedTerminalFrameVisible()) return;
+        normalizeWTermContainerLayout(`${reason}:normalize`);
+        try { void wtermWrapper.offsetHeight; } catch (_) {}
+        const rect = wtermWrapper.getBoundingClientRect();
+        const parentWorkspaceHeight = Math.max(
+            0,
+            parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--parent-terminal-workspace-height')) || 0,
+        );
+        // During fullscreen/IME-close transitions the iframe can report its new
+        // outer height one frame before the child flex layout catches up. Retry
+        // instead of fitting against that stale inner rectangle.
+        if (parentWorkspaceHeight > 0 && rect.height + 24 < parentWorkspaceHeight) {
+            logTerminalLayoutDiagnostics('mobile-grid-growth:child-layout-lag', {
+                reason,
+                parentWorkspaceHeight,
+                height: Math.round(rect.height || 0),
+            });
+            requestInitialMobileRenderFlush(`${reason}:child-layout-lag`);
+            return;
+        }
+        const measured = getMeasuredTerminalSize();
+        const currentCols = Number(term.cols ?? term.bridge?.getCols?.() ?? lastSentTerminalSize.cols ?? 0);
+        const currentRows = Number(term.rows ?? term.bridge?.getRows?.() ?? lastSentTerminalSize.rows ?? 0);
+        const viewportMetrics = getViewportKeyboardMetrics();
+        const physicalKeyboardOpen = Boolean(
+            isSshKbLayoutOpen()
+            || document.documentElement.classList.contains('ssh-kb-open')
+            || viewportMetrics.keyboardInset > 8
+        );
+        const decision = decideTerminalGridGrowth({
+            currentCols,
+            currentRows,
+            measuredCols: measured.cols,
+            measuredRows: measured.rows,
+            width: rect.width,
+            height: rect.height,
+            // Stale desired/focus state can outlive the actual keyboard and was
+            // the reason growth stayed blocked after IME close. Only physical
+            // layout/inset state may veto this grow-only recovery path.
+            keyboardOpen: physicalKeyboardOpen,
+            visible: wtermWrapper.offsetParent !== null,
+        });
+        logTerminalLayoutDiagnostics('mobile-grid-growth:decision', {
+            reason,
+            decision,
+            currentCols,
+            currentRows,
+            measuredCols: measured.cols,
+            measuredRows: measured.rows,
+            width: Math.round(rect.width || 0),
+            height: Math.round(rect.height || 0),
+        });
+        if (!decision.apply) {
+            requestInitialMobileRenderFlush(`${reason}:${decision.reason}`);
+            scheduleTerminalScrollbarUpdate();
+            return;
+        }
+        const wasFollowing = terminalAutoFollowEnabled
+            || mobileStableLastBottomIntent
+            || isTerminalAtBottom(undefined, TERMINAL_XTERM_SCROLL_LOCK_THRESHOLD);
+        runWithMobileStableResizeBypass(() => {
+            updateWTermLocalGridSize(decision.cols, decision.rows, `${reason}:grow-local`);
+            sendTerminalResize(decision.cols, decision.rows, {
+                reason: `force-mobile-grow:${reason}`,
+                force: true,
+            });
+        });
+        terminalFitSnapshot = {
+            cols: decision.cols,
+            rows: decision.rows,
+            width: measured.width,
+            height: measured.height,
+            reason: `${reason}:grow-remember`,
+            at: Date.now(),
+        };
+        if (wasFollowing) {
+            setTerminalAutoFollow(true, `${reason}:grow-follow`);
+            requestAnimationFrame(() => requestTerminalAutoFollow(`${reason}:grow-follow`));
+        } else {
+            scheduleTerminalScrollbarUpdate();
+        }
+    }, Math.max(0, Number(delay) || 0));
+    return true;
+}
+
+function scheduleMobileTerminalGridConvergence(reason = 'mobile-grid-converge') {
+    if (!isTouchKeyboardDevice()) return false;
+    const scheduleGeneration = ++terminalGridGrowthScheduleGeneration;
+    [0, 80, 220, 520, 900].forEach((delay, index) => {
+        window.setTimeout(() => {
+            if (scheduleGeneration !== terminalGridGrowthScheduleGeneration) return;
+            convergeMobileTerminalGridGrowth(`${reason}:phase-${index}`, { delay: 0 });
+        }, delay);
+    });
+    return true;
+}
+/* terminal grid convergence remains internal; browser debug hooks are not exported. */
+
 function runWithMobileStableResizeBypass(callback) {
     const previous = runWithMobileStableResizeBypass.active;
     runWithMobileStableResizeBypass.active = true;
@@ -3229,6 +3401,7 @@ function scheduleKeyboardCloseFit(reason = 'keyboard-close-fit', delay = TERMINA
         scheduleKeyboardCloseFit._mobileTimer = window.setTimeout(() => {
             normalizeWTermContainerLayout(`${reason}:settled`);
             requestInitialMobileRenderFlush(`${reason}:settled`);
+            scheduleMobileTerminalGridConvergence(`${reason}:settled-growth`);
             if (isMobileTerminalAutoFollowLocked() || isTerminalUserReadingHistory()) {
                 lockMobileTerminalAutoFollow(`${reason}:history-preserved`, 1600);
                 scheduleTerminalScrollbarUpdate();
@@ -3391,9 +3564,22 @@ copyBtn.addEventListener('click', async () => {
         document.body.removeChild(ta);
         try { active?.focus?.({ preventScroll: true }); } catch (_) {}
     } finally {
-        window.setTimeout(() => { mobileClipboardActionInProgress = false; }, 220);
+        // Native Android selection handles keep a live Range after copy. If it
+        // remains, every later terminal tap is classified as "selection" and
+        // the external IME proxy never receives focus again. Copy is complete,
+        // so collapse the Range and explicitly hand focus back to terminal IME.
+        window.setTimeout(() => {
+            mobileClipboardActionInProgress = false;
+            if (isTouchKeyboardDevice()) {
+                exitMobileTerminalSelectionMode('copy-complete', {
+                    clearSelection: true,
+                    refocus: true,
+                });
+            } else {
+                scheduleExitMobileTerminalSelectionMode(1200);
+            }
+        }, 80);
     }
-    scheduleExitMobileTerminalSelectionMode(1200);
     setTimeout(() => { copyBtn.textContent = originalText; }, 1500);
 });
 
@@ -8147,6 +8333,7 @@ function _flushHistoryScrollUi() {
     if (atBottom) {
         clearMobileTerminalHistoryLock?.(`${reason}:at-bottom`);
         setTerminalAutoFollow?.(true, `${reason}:at-bottom`);
+        setWTermImeActive?.(isSshKbFocusLikely?.(), `${reason}:at-bottom`);
         scheduleEnsureActiveLineAboveChrome?.(`${reason}:follow`);
     } else {
         try {
@@ -8155,6 +8342,7 @@ function _flushHistoryScrollUi() {
         } catch (_) {}
         lockMobileTerminalAutoFollow?.(`${reason}:history`, 2400);
         setTerminalAutoFollow?.(false, `${reason}:history`);
+        setWTermImeActive?.(false, `${reason}:history`);
         terminalUserScrolledAway = true;
         if (isMobileStableInputMode()) terminalUserScrollGestureUntil = Date.now() + 1400;
     }
@@ -8862,6 +9050,10 @@ function forceClearSshKbShell(reason = 'force-clear') {
     const wasOpen = !!_sshKbLayoutOpenCache || (_sshKbInsetCache || 0) > 0
         || document.documentElement.classList.contains('ssh-kb-open');
     writeSshKbPageGeometry(0, false, { fromParent: true });
+    // The IME/fullscreen transition may have left --stable-vh at the cropped
+    // height. Refresh it immediately so .terminal-page can actually expand
+    // before grow-only PTY convergence measures rows.
+    setStableViewportHeight({ force: true });
     try { updateTerminalInputPanelMetrics(); } catch (_) {}
     try { assertKeyboardLayoutSettled?.(reason); } catch (_) {}
     if (wasOpen) {
@@ -9942,7 +10134,7 @@ function applyKeyboardFallbackAvoidance() {
     let live = 0;
     try {
         const m = getViewportKeyboardMetrics();
-        if (m.keyboardOpen && m.keyboardInset >= 80) live = m.keyboardInset;
+        if (m.keyboardOpen && m.keyboardInset > 0) live = m.keyboardInset;
     } catch (_) {}
     if (live < 80) return false;
     kb._intent?.syncViewport?.({
@@ -12362,7 +12554,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     // Register the Terminal ctor before WTerm.init so XtermBridge.load works
     // without a bare npm resolver in the browser.
     try {
-        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260723-sync2');
+        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260801-terminal-stability1');
     } catch (err) {
         console.error('[terminal] xterm-headless register failed', err);
         throw err;
@@ -12370,7 +12562,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API. DOM/input/viewport
         // stay wterm; core is XtermBridge over vendored xterm (see /xterm).
-        const module = await import('/vendor/wterm-fork/index.js?v=20260726-url-wrap1');
+        const module = await import('/vendor/wterm-fork/index.js?v=20260801-terminal-stability1');
         WTermClass = module.WTerm;
     } catch {
         try {
@@ -12681,10 +12873,23 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                         resolve(ws);
                         break;
                     case 'data':
-                        writeTerminalData(msg.data);
+                        if ((msg.replayKind || msg.extra?.replayKind) === 'snapshot') {
+                            // Snapshot describes a complete canonical framebuffer, not
+                            // append-only output. Reset normal + alternate buffers first
+                            // so reconnect cannot stack the restored screen on stale DOM.
+                            writeTerminalData(`\x1bc${msg.data || ''}`);
+                        } else {
+                            writeTerminalData(msg.data);
+                        }
                         if (msg.replay || msg.extra?.replay) {
-                            // Keep the viewport on the live end while history is replaying.
-                            try { term?.scrollToBottom?.(); } catch (_) {}
+                            // Replay is one canonical framebuffer. Do not invoke public
+                            // scrollToBottom here: on mobile that enters the chrome-pin
+                            // path before the replay render has committed and causes a
+                            // transient cursor jump/flash. Xterm write already leaves
+                            // ydisp at ybase; ready performs the final UI settle.
+                            mobileStableLastBottomIntent = true;
+                            setTerminalAutoFollow(true, `replay:${msg.replayKind || 'raw'}`);
+                            scheduleTerminalScrollbarUpdate();
                         }
                         if (isTouchKeyboardDevice() && !writeTerminalData._mobileFirstDataFlushed) {
                             writeTerminalData._mobileFirstDataFlushed = true;

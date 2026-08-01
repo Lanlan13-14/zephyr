@@ -18,8 +18,11 @@ test('Node output is batched and ordered with resize close',()=>{
  assert.match(server,/terminalHistory\.appendResize/);
  assert.match(server,/flushSshSessionHistory\(session\);\n\s*try \{ terminalHistory\.close/);
 });
-test('attach replay prefers persisted journal',()=>{
- assert.match(server,/terminalHistory\.replayTail\(session\.userId, session\.id\)\.data/);
+test('attach replay prefers canonical framebuffer with journal fallback',()=>{
+ const attach = server.slice(server.indexOf('async function attachSshSession'), server.indexOf('function execDockerStream'));
+ const snapshot = attach.indexOf('terminalSnapshot?.serialize');
+ const journal = attach.indexOf('terminalHistory.replayTail(session.userId, session.id).data');
+ assert.ok(snapshot > 0 && journal > snapshot, 'snapshot must precede raw journal fallback');
 });
 test('history routes are authenticated and scoped',()=>{
  assert.match(server,/terminal-history\/:sessionId\/lines', requireUser/);

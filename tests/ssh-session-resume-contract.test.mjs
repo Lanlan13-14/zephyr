@@ -13,13 +13,16 @@ test('websocket close detaches SSH instead of destroying the PTY', () => {
   assert.match(server, /detached-ttl/);
 });
 
-test('attach replays output buffer before ready', () => {
-  const start = server.indexOf('function attachSshSession');
+test('attach replays canonical framebuffer before ready', () => {
+  const start = server.indexOf('async function attachSshSession');
   assert.ok(start > 0);
-  const body = server.slice(start, start + 3200);
+  const end = server.indexOf('function execDockerStream', start);
+  const body = server.slice(start, end);
   const replayIdx = body.indexOf("type: 'data'");
   const readyIdx = body.indexOf("type: 'ready'");
   assert.ok(replayIdx > 0 && readyIdx > replayIdx, 'replay data must be sent before ready');
+  assert.match(body, /terminalSnapshot\?\.serialize/);
+  assert.match(body, /replayKind\s*=\s*'snapshot'/);
   assert.match(body, /replay:\s*true/);
   assert.match(body, /attached:\s*true/);
 });

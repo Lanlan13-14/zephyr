@@ -852,6 +852,51 @@ export class Renderer {
     this._graphicsIds = seen;
   }
 
+  /**
+   * Recycle viewport row DOM when ydisp shifts by a small delta.
+   * delta>0: scrolled toward bottom (newer) → drop top rows, append at bottom.
+   * delta<0: scrolled into history → drop bottom rows, prepend at top.
+   * Only the incoming edge must be rebuilt; shared rows keep their HTML.
+   */
+  private _recycleRowsForScroll(delta: number): boolean {
+    const d = Math.trunc(Number(delta) || 0);
+    if (!d || !this.rows || Math.abs(d) >= this.rows) {
+      this.rowSignatures = this.rowSignatures.map(() => null);
+      return Math.abs(d) >= this.rows;
+    }
+    const cursorEl = this.cursorEl;
+    if (d > 0) {
+      const movedEls = this.rowEls.splice(0, d);
+      this.rowSignatures.splice(0, d);
+      for (let i = 0; i < d; i++) this.rowSignatures.push(null);
+      this.rowEls.push(...movedEls);
+      for (const el of movedEls) {
+        if (cursorEl && cursorEl.parentNode === this.container) {
+          this.container.insertBefore(el, cursorEl);
+        } else {
+          this.container.appendChild(el);
+        }
+      }
+      if (this.prevRowBg.length === this.rows) {
+        const movedBg = this.prevRowBg.splice(0, d);
+        this.prevRowBg.push(...movedBg.map(() => ""));
+      }
+    } else {
+      const n = -d;
+      const movedEls = this.rowEls.splice(this.rows - n, n);
+      this.rowSignatures.splice(this.rows - n, n);
+      for (let i = 0; i < n; i++) this.rowSignatures.unshift(null);
+      this.rowEls.unshift(...movedEls);
+      const ref = this.rowEls[n] || cursorEl || this.container.firstChild;
+      for (let i = 0; i < n; i++) this.container.insertBefore(this.rowEls[i], ref);
+      if (this.prevRowBg.length === this.rows) {
+        const movedBg = this.prevRowBg.splice(this.rows - n, n);
+        this.prevRowBg.unshift(...movedBg.map(() => ""));
+      }
+    }
+    return false;
+  }
+
   render(core: TerminalCore): void {
     const rows = core.getRows();
     const cols = core.getCols();
@@ -886,21 +931,45 @@ export class Renderer {
       this._renderedScrollbackCount = 0;
     }
 
+    // History scroll: recycle shared rows before dirty paint (only edge rebuilds).
+    if (
+      !resized &&
+      !screenReverseChanged &&
+      xtermViewport &&
+      typeof (core as { consumeViewportScrollDelta?: () => number }).consumeViewportScrollDelta === "function"
+    ) {
+      const scrollDelta = (core as { consumeViewportScrollDelta: () => number }).consumeViewportScrollDelta() | 0;
+      if (scrollDelta) {
+        const full = this._recycleRowsForScroll(scrollDelta);
+        if (full) this.rowSignatures = this.rowSignatures.map(() => null);
+      }
+    } else if (typeof (core as { consumeViewportScrollDelta?: () => number }).consumeViewportScrollDelta === "function") {
+      (core as { consumeViewportScrollDelta: () => number }).consumeViewportScrollDelta();
+    }
+
     const cursor = core.getCursor();
     const paintCursor = cursor;
 
     const cursorMoved =
       paintCursor.row !== this.prevCursorRow ||
       paintCursor.col !== this.prevCursorCol;
+    const cursorNeedsPaint =
+      cursorMoved ||
+      resized ||
+      paintCursor.visible !== this.cursorVisible ||
+      (core as { kind?: string }).kind === "xterm";
 
     const cellAt = (r: number, col: number) => core.getCell(r, col);
 
     // P1-2: cell-level diff. For each dirty row, compare cell signatures
     // against the cached version. If all cells match, skip the rebuild.
     for (let r = 0; r < this.rows; r++) {
+      // Recycled incoming edge has a null signature and must be rebuilt even
+      // when the core's dirty bitmap was already consumed/coalesced.
       const isDirty =
         resized ||
         screenReverseChanged ||
+        this.rowSignatures[r] === null ||
         core.isDirtyRow(r);
 
       if (!isDirty) continue;
@@ -962,13 +1031,18 @@ export class Renderer {
       this.rowSignatures[r] = newSigs;
     }
 
-    // P1-2: update cursor overlay independently.
-    if (cursorMoved || resized || paintCursor.visible !== this.cursorVisible) {
+    // P1-2: update cursor overlay independently. Xterm history changes ydisp
+    // without moving cursorX/cursorY, so visibility/viewport row must be
+    // re-evaluated on every xterm paint (otherwise the cursor sticks to an old row).
+    if (cursorNeedsPaint) {
       this._updateCursorOverlay(core, paintCursor);
     }
 
     this.prevCursorRow = paintCursor.row;
     this.prevCursorCol = paintCursor.col;
+    // _updateCursorOverlay owns the current visibility; never let a stale
+    // hidden cursor cache survive a later scroll back into the live viewport.
+    this.cursorVisible = !!paintCursor.visible;
  
     const lastRowDirty = resized || core.isDirtyRow(this.rows - 1);
     if (lastRowDirty) {

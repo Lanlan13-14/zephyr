@@ -1,9 +1,14 @@
-const CACHE_NAME = 'zephyr-static-20260731-sftp-multi-close1';
+const CACHE_NAME = 'zephyr-static-20260801-dock-notes-fullscreen1';
 const PRECACHE = [
-    '/app.js?v=20260731-sftp-multi-close1',
-    '/style.css?v=20260731-sftp-multi-close1',
+    '/app.js?v=20260801-dock-notes-fullscreen1',
+    '/style.css?v=20260801-dock-notes-fullscreen1',
     '/theme-runtime.js?v=20260615-visual-color-picker',
-    '/terminal.js?v=20260731-sftp-multi-close1',
+    '/terminal.js?v=20260801-terminal-grid-converge1',
+    '/telnet-terminal.js?v=20260801-terminal-grid-converge1',
+    '/terminal-history-gesture.js?v=20260801-terminal-stability1',
+    '/terminal-grid-convergence.js?v=20260801-terminal-grid-converge1',
+    '/vendor/wterm-fork/index.js?v=20260801-terminal-stability1',
+    '/vendor/wterm-fork/core/xterm-headless-register.js?v=20260801-terminal-stability1',
     '/floating-panel.js?v=20260731-panel-drag-physics4',
     '/notes.js',
     '/markdown.js',

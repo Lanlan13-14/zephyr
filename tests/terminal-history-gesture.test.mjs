@@ -34,20 +34,20 @@ function harness({ min = -500, max = 0, start = 0 } = {}) {
 }
 
 test('sub-row drag accumulates instead of feeling stuck', () => {
-    const h = harness();
+    const h = harness({ min: -500, max: 500 });
     h.gesture.start(200, 0);
     assert.equal(h.gesture.move(193, 16).lines, 0);
     assert.equal(h.gesture.move(186, 32).lines, 0);
-    assert.equal(h.gesture.move(179, 48).lines, -1);
-    assert.equal(h.position, -1, 'upward finger moves into older negative rows');
+    assert.equal(h.gesture.move(179, 48).lines, 1);
+    assert.equal(h.position, 1, 'upward finger advances viewport toward newer positive rows');
     const moved = h.calls.reduce((sum, x) => sum + Math.abs(x.moved), 0);
     assert.equal(moved, 1);
 });
 
-test('upward drag scrolls deep into older history with 1:1 gain', () => {
-    const h = harness({ start: 0 });
-    h.gesture.start(300, 0);
-    const result = h.gesture.move(180, 40);
+test('downward drag scrolls deep into older history with native touch direction', () => {
+    const h = harness({ min: -500, max: 500, start: 0 });
+    h.gesture.start(180, 0);
+    const result = h.gesture.move(300, 40);
     assert.equal(result.moved, true);
     assert.ok(result.lines <= -6, `expected at least 6 older rows, got ${result.lines}`);
     assert.ok(h.position <= -6);

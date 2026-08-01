@@ -25,7 +25,7 @@ test('telnet connect builds a session object into sshTerminalSessions', () => {
     assert.match(body, /sshTerminalSessions\.set\(session\.id,\s*session\)/);
     assert.match(body, /terminalHistory\.open\(/);
     assert.match(body, /appendSshSessionBuffer\(session,/);
-    assert.match(body, /broadcastSshSession\(session,\s*\{\s*type:\s*'data'/);
+    assert.match(body, /queueSshSessionBroadcast\(session,\s*text,\s*sequence\)/);
     assert.match(body, /destroySshTerminalSession\(session,\s*'telnet-error'\)/);
     assert.match(body, /destroySshTerminalSession\(session,\s*'telnet-close'\)/);
     assert.match(body, /attachIacEngine|telnetIac/);
@@ -55,9 +55,9 @@ test('ws-close detaches without destroying telnet TCP', () => {
 });
 
 test('attach restores telnetSocket and includes protocol on ready', () => {
-    const start = serverSrc.indexOf('function attachSshSession');
+    const start = serverSrc.indexOf('async function attachSshSession');
     assert.ok(start > 0);
-    const body = serverSrc.slice(start, start + 3500);
+    const body = serverSrc.slice(start, serverSrc.indexOf('function execDockerStream', start));
     assert.match(body, /telnetSocket\s*=\s*session\.telnetSocket/);
     assert.match(body, /protocol/);
     assert.match(body, /Telnet 未加密/);

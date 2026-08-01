@@ -101,17 +101,9 @@ function safeHyperlink(uri) {
     return null;
   }
 }
-/**
- * Soft-wrap continuation of a URL path/query (no scheme on later rows).
- * Intentionally stricter than "non-space": shell prompts like
- * `root@zephyr-ssh:~#` must NOT be glued onto the previous URL.
- */
 const URL_CONT_RE = /^[A-Za-z0-9/._~%&=+\-?#]+/;
-/** Start of a URL on a row (scheme required). */
 const URL_START_RE = /https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)}\]]?/g;
-/** URL that already ends like a finished resource (file/query/hash). */
 const URL_LOOKS_COMPLETE_RE = /(?:\/|[.](?:html?|php|aspx?|jsp|json|xml|pdf|png|jpe?g|gif|webp|svg|css|js|mjs|ts|md|txt|zip|tar|gz|tgz|bz2|xz|7z|rar|mp[34]|wav|avi|mov|webm|ico|woff2?|ttf|eot|csv|tsv|yaml|yml|toml|ini|cfg|log|sh|py|go|rs|java|c|cpp|h|rb|pl|lua))(?:[?#][^\s]*)?$/i;
-
 function unwrapAutoLinks(row) {
   if (!row) return;
   row.querySelectorAll("a.term-auto-link").forEach((a) => {
@@ -122,17 +114,11 @@ function unwrapAutoLinks(row) {
     parent.normalize?.();
   });
 }
-
-/**
- * Map a [start, end) char range in row.textContent onto text nodes and wrap
- * with <a class="term-hyperlink term-auto-link" href=...>.
- */
 function wrapTextRangeInRow(row, start, end, href) {
   if (!row || end <= start || !href) return false;
-  // Skip if any part of the range is already inside a hyperlink (OSC8 / prior).
   const walker0 = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
   let node0, off0 = 0;
-  while ((node0 = walker0.nextNode())) {
+  while (node0 = walker0.nextNode()) {
     const len = node0.textContent?.length || 0;
     const nStart = off0;
     const nEnd = off0 + len;
@@ -143,7 +129,7 @@ function wrapTextRangeInRow(row, start, end, href) {
   }
   const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
   let node, offset = 0, startNode = null, endNode = null, startOffset = 0, endOffset = 0;
-  while ((node = walker.nextNode())) {
+  while (node = walker.nextNode()) {
     const len = node.textContent?.length || 0;
     if (!startNode && start >= offset && start <= offset + len) {
       startNode = node;
@@ -173,58 +159,30 @@ function wrapTextRangeInRow(row, start, end, href) {
     return false;
   }
 }
-
-/**
- * Strip trailing URL punctuation that is usually not part of the link.
- */
 function trimUrlTrailingPunct(url) {
   return String(url || "").replace(/[.,;:!?)}\]]+$/g, "");
 }
-
-/**
- * Next terminal line is a shell prompt / new command, not a soft-wrapped URL tail.
- * Examples: `root@zephyr-ssh:~#`, `user@host:~$`, `$ `, `# `, `❯ `
- */
 function isShellPromptLine(text = "") {
   const s = String(text || "").trimStart();
   if (!s) return false;
-  // user@host:…# / user@host:…$  (common bash/zsh PS1)
   if (/^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:/.test(s)) return true;
-  // bare prompt markers
   if (/^[#$%❯➜]\s?/.test(s)) return true;
-  // zsh/fish-ish: path followed by %#
   if (/^~?[\/\w.-]*[%#]\s*$/.test(s)) return true;
   return false;
 }
-
-/**
- * Soft-wrap path continuation only (not a new shell line).
- * Real wrap: mid-path `…/wterm-fo` + `rk/renderer.js`
- * Not wrap:  `….html` + `root@host:~#`
- */
 function isUrlSoftWrapContinuation(urlSoFar, nextLine) {
   const next = String(nextLine || "");
   if (!next) return false;
   if (/^https?:\/\//i.test(next.trimStart())) return false;
   if (isShellPromptLine(next)) return false;
-  // Leading whitespace ⇒ new visual line / indent, not soft wrap of URL.
   if (/^\s/.test(next)) return false;
-  // Must start with path/query-ish characters.
   if (!URL_CONT_RE.test(next)) return false;
-  // Finished resource (.html, .json, /…) — only continue for query/hash/path slash.
   if (URL_LOOKS_COMPLETE_RE.test(urlSoFar)) {
     return /^[/?#&]/.test(next);
   }
-  // Mid-token wrap: next should look like path continuation, not user@host.
   if (/^[A-Za-z0-9_.-]+@/.test(next)) return false;
   return true;
 }
-
-/**
- * Given texts[startRow] has a URL match at startIdx of length matchLen,
- * extend across soft-wrapped following rows until whitespace.
- * Returns { href, segments: [{row, start, end}, ...] }.
- */
 function resolveWrappedUrl(texts, startRow, startIdx, matchLen) {
   const n = texts.length;
   let url = String(texts[startRow] || "").slice(startIdx, startIdx + matchLen);
@@ -232,11 +190,9 @@ function resolveWrappedUrl(texts, startRow, startIdx, matchLen) {
   let r = startRow;
   let end = startIdx + matchLen;
   const line = () => String(texts[r] || "");
-  // Extend only when this row ends mid-URL (soft wrap) AND next row is path tail.
   while (r < n) {
     const t = line();
     const trailing = t.slice(end);
-    // Non-empty non-space after match on this row → URL finished mid-line.
     if (trailing && /\S/.test(trailing)) break;
     if (r + 1 >= n) break;
     const next = String(texts[r + 1] || "");
@@ -256,28 +212,17 @@ function resolveWrappedUrl(texts, startRow, startIdx, matchLen) {
   url = trimUrlTrailingPunct(url);
   return { url, segments };
 }
-
-/**
- * Auto-link plain URLs across soft-wrapped terminal rows.
- * Single-row linkify misses "https://…/long" when the path continues on the next row.
- */
 function linkifyViewport(rowEls) {
   if (!rowEls?.length) return;
   const texts = rowEls.map((el) => el?.textContent || "");
-  // Drop previous auto-links so scroll/recycle can re-bind full hrefs.
   for (const el of rowEls) unwrapAutoLinks(el);
-
-  // Collect jobs first (wrap mutates DOM / textContent). Process bottom-up per row.
-  /** @type {{ row: number, start: number, end: number, href: string }[]} */
   const jobs = [];
   for (let r = 0; r < texts.length; r++) {
     const text = texts[r];
     if (!text) continue;
     URL_START_RE.lastIndex = 0;
     let m;
-    while ((m = URL_START_RE.exec(text))) {
-      // Skip if this start sits inside a row that already has OSC8 covering it —
-      // resolveWrappedUrl + wrapTextRangeInRow will no-op on OSC8 parents.
+    while (m = URL_START_RE.exec(text)) {
       const matchLen = m[0].length;
       if (!matchLen) {
         URL_START_RE.lastIndex = m.index + 1;
@@ -289,20 +234,16 @@ function linkifyViewport(rowEls) {
       for (const seg of resolved.segments) {
         jobs.push({ row: seg.row, start: seg.start, end: seg.end, href });
       }
-      // Advance past this match on the start row only; continuations have no scheme.
       URL_START_RE.lastIndex = m.index + matchLen;
     }
   }
-  // Apply from bottom rows / right ranges so offsets stay stable within a row.
-  jobs.sort((a, b) => (b.row - a.row) || (b.start - a.start));
+  jobs.sort((a, b) => b.row - a.row || b.start - a.start);
   for (const job of jobs) {
     const el = rowEls[job.row];
     if (!el) continue;
     wrapTextRangeInRow(el, job.start, job.end, job.href);
   }
 }
-
-/** @deprecated single-row; use linkifyViewport after paint */
 function linkifyRow(row) {
   if (!row) return;
   linkifyViewport([row]);
@@ -550,7 +491,6 @@ class Renderer {
     }
     flushRun(this.cols);
     rowEl.innerHTML = html;
-    // Auto-links applied once per frame in render() via linkifyViewport (cross-row).
     let bgCss = "";
     if (lineLen >= this.cols && this.cols > 0) {
       const lastCell = getCell(this.cols - 1);
@@ -729,7 +669,6 @@ class Renderer {
       this.rowSignatures = this.rowSignatures.map(() => null);
       return Math.abs(d) >= this.rows;
     }
-    // Keep cursor overlay / graphics layer as last siblings.
     const cursorEl = this.cursorEl;
     if (d > 0) {
       const movedEls = this.rowEls.splice(0, d);
@@ -754,9 +693,7 @@ class Renderer {
       for (let i = 0; i < n; i++) this.rowSignatures.unshift(null);
       this.rowEls.unshift(...movedEls);
       const ref = this.rowEls[n] || cursorEl || this.container.firstChild;
-      for (let i = 0; i < n; i++) {
-        this.container.insertBefore(this.rowEls[i], ref);
-      }
+      for (let i = 0; i < n; i++) this.container.insertBefore(this.rowEls[i], ref);
       if (this.prevRowBg.length === this.rows) {
         const movedBg = this.prevRowBg.splice(this.rows - n, n);
         this.prevRowBg.unshift(...movedBg.map(() => ""));
@@ -790,31 +727,22 @@ class Renderer {
       this._scrollbackRowEls = [];
       this._renderedScrollbackCount = 0;
     }
-    // History scroll: recycle shared rows before dirty paint (only edge rebuilds).
-    let scrollRecycled = false;
-    if (!resized && !screenReverseChanged && xtermViewport
-      && typeof core.consumeViewportScrollDelta === "function") {
+    if (!resized && !screenReverseChanged && xtermViewport && typeof core.consumeViewportScrollDelta === "function") {
       const scrollDelta = core.consumeViewportScrollDelta() | 0;
       if (scrollDelta) {
         const full = this._recycleRowsForScroll(scrollDelta);
-        scrollRecycled = !full;
-        if (full) {
-          this.rowSignatures = this.rowSignatures.map(() => null);
-        }
+        if (full) this.rowSignatures = this.rowSignatures.map(() => null);
       }
     } else if (typeof core.consumeViewportScrollDelta === "function") {
-      // Drop stale delta when we cannot recycle (resize / reverse).
       core.consumeViewportScrollDelta();
     }
     const cursor = core.getCursor();
     const paintCursor = cursor;
     const cursorMoved = paintCursor.row !== this.prevCursorRow || paintCursor.col !== this.prevCursorCol;
+    const cursorNeedsPaint = cursorMoved || resized || paintCursor.visible !== this.cursorVisible || core.kind === "xterm";
     const cellAt = (r, col) => core.getCell(r, col);
     for (let r = 0; r < this.rows; r++) {
-      // After recycle, null signature = incoming edge → must rebuild.
-      // Shared rows keep signatures + DOM; skip unless buffer marked dirty.
-      const sigMissing = this.rowSignatures[r] == null;
-      const isDirty = resized || screenReverseChanged || sigMissing || core.isDirtyRow(r);
+      const isDirty = resized || screenReverseChanged || this.rowSignatures[r] === null || core.isDirtyRow(r);
       if (!isDirty) continue;
       const oldSigs = this.rowSignatures[r];
       let allMatch = oldSigs !== null && oldSigs.length === this.cols;
@@ -849,8 +777,6 @@ class Renderer {
         (char) => core.getGrapheme(char),
         this.screenReverse
       );
-      // Build signatures from the same paint path without a second full getCell pass:
-      // re-read once into newSigs (still needed for next-frame diff).
       const newSigs = [];
       for (let col = 0; col < this.cols; col++) {
         const cell = cellAt(r, col);
@@ -869,11 +795,12 @@ class Renderer {
       }
       this.rowSignatures[r] = newSigs;
     }
-    if (cursorMoved || resized || paintCursor.visible !== this.cursorVisible) {
+    if (cursorNeedsPaint) {
       this._updateCursorOverlay(core, paintCursor);
     }
     this.prevCursorRow = paintCursor.row;
     this.prevCursorCol = paintCursor.col;
+    this.cursorVisible = !!paintCursor.visible;
     const lastRowDirty = resized || core.isDirtyRow(this.rows - 1);
     if (lastRowDirty) {
       const bottomRight = core.getCell(this.rows - 1, this.cols - 1);
@@ -892,10 +819,10 @@ class Renderer {
       }
     }
     this._syncGraphics(core);
-    // Soft-wrapped URLs: one href across multiple .term-row elements.
     try {
       linkifyViewport(this.rowEls);
-    } catch (_) {}
+    } catch {
+    }
     core.clearDirty();
   }
 }
@@ -904,6 +831,6 @@ export {
   buildCellStyle,
   linkifyRow,
   linkifyViewport,
-  resolveWrappedUrl,
-  resolveQueryColor
+  resolveQueryColor,
+  resolveWrappedUrl
 };

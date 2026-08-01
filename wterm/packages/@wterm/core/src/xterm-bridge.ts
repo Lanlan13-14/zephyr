@@ -313,6 +313,10 @@ export class XtermBridge implements TerminalCore {
   private _rows = 24;
   private _dirty: Uint8Array = new Uint8Array(256);
   private _allDirty = true;
+  /** Net ydisp delta since last paint; renderer recycles only incoming rows. */
+  private _pendingScrollDelta = 0;
+  /** Suppress generic onScroll dirtying for bridge-owned scroll methods. */
+  private _scrollSuppressDirty = false;
   private _bellPending = false;
   private _title: string | null = null;
   private _titleChanged = false;
@@ -378,10 +382,12 @@ export class XtermBridge implements TerminalCore {
         this.markAllDirty();
       }),
     );
-    // ydisp changes (user scroll or stick-bottom on write) → full viewport repaint.
     if (typeof this._term.onScroll === "function") {
       this._disposables.push(
         this._term.onScroll(() => {
+          // scrollLines/scrollTo* record a recycle delta themselves. Unknown
+          // external scroll sources still fall back to a full dirty viewport.
+          if (this._scrollSuppressDirty) return;
           this.markAllDirty();
         }),
       );
@@ -512,53 +518,134 @@ export class XtermBridge implements TerminalCore {
     return this._active().baseY | 0;
   }
 
+  /** Record ydisp movement for row-recycle paint. */
+  private _noteViewportScroll(delta: number): void {
+    const d = Math.trunc(Number(delta) || 0);
+    if (!d) return;
+    // onScroll/onRender can synchronously mark the viewport dirty before a
+    // bridge-owned scroll method regains control. This method is the final
+    // authority: clear that stale full-dirty state and mark only incoming rows.
+    this._dirty.fill(0);
+    this._allDirty = false;
+    const rows = this._rows | 0;
+    this._pendingScrollDelta = (this._pendingScrollDelta | 0) + d;
+    if (Math.abs(this._pendingScrollDelta) >= Math.max(1, rows)) {
+      this.markAllDirty();
+      return;
+    }
+    this._allDirty = false;
+    if (d > 0) {
+      const start = Math.max(0, rows - Math.abs(this._pendingScrollDelta));
+      for (let r = start; r < rows; r++) this._dirty[r] = 1;
+    } else {
+      const end = Math.min(rows, Math.abs(this._pendingScrollDelta));
+      for (let r = 0; r < end; r++) this._dirty[r] = 1;
+    }
+  }
+
+  consumeViewportScrollDelta(): number {
+    const d = this._pendingScrollDelta | 0;
+    this._pendingScrollDelta = 0;
+    return d;
+  }
+
   /** Drive xterm buffer scroll. amount is in rows (negative = up into history). */
   scrollLines(amount: number): void {
     const n = Math.trunc(Number(amount) || 0);
     if (!n) return;
     const before = this.getViewportY();
-    if (typeof this._term.scrollLines === "function") {
-      this._term.scrollLines(n);
+    this._scrollSuppressDirty = true;
+    try {
+      if (typeof this._term.scrollLines === "function") this._term.scrollLines(n);
+    } finally {
+      this._scrollSuppressDirty = false;
     }
-    // onScroll listener marks dirty; if ydisp did not move (edge), skip paint thrash.
-    if (this.getViewportY() !== before) this.markAllDirty();
+    const after = this.getViewportY();
+    if (after !== before) {
+      // Drop stale write dirty flags before declaring only the recycled edge.
+      // Otherwise one old full-dirty frame rebuilds rows after DOM recycle and
+      // can make scrollToBottom appear not to restore the live viewport.
+      this._dirty.fill(0);
+      this._allDirty = false;
+      this._noteViewportScroll(after - before);
+    }
   }
 
   scrollToBottom(): void {
     if (this.isAtBottom()) return;
-    if (typeof this._term.scrollToBottom === "function") {
-      this._term.scrollToBottom();
-    } else {
-      const buf = this._active();
-      const delta = (buf.baseY | 0) - (buf.viewportY | 0);
-      if (delta && typeof this._term.scrollLines === "function") {
-        this._term.scrollLines(delta);
+    const before = this.getViewportY();
+    this._scrollSuppressDirty = true;
+    try {
+      if (typeof this._term.scrollToBottom === "function") {
+        this._term.scrollToBottom();
+      } else {
+        const buf = this._active();
+        const delta = (buf.baseY | 0) - (buf.viewportY | 0);
+        if (delta && typeof this._term.scrollLines === "function") this._term.scrollLines(delta);
+      }
+    } finally {
+      this._scrollSuppressDirty = false;
+    }
+    const after = this.getViewportY();
+    if (after !== before) {
+      if (Math.abs(after - before) >= (this._rows | 0)) this.markAllDirty();
+      else {
+        this._dirty.fill(0);
+        this._allDirty = false;
+        this._noteViewportScroll(after - before);
       }
     }
-    this.markAllDirty();
   }
 
   scrollToTop(): void {
     if (this.getViewportY() === 0) return;
-    if (typeof this._term.scrollToTop === "function") {
-      this._term.scrollToTop();
-    } else if (typeof this._term.scrollLines === "function") {
-      this._term.scrollLines(-(this._active().viewportY | 0));
+    const before = this.getViewportY();
+    this._scrollSuppressDirty = true;
+    try {
+      if (typeof this._term.scrollToTop === "function") {
+        this._term.scrollToTop();
+      } else if (typeof this._term.scrollLines === "function") {
+        this._term.scrollLines(-(this._active().viewportY | 0));
+      }
+    } finally {
+      this._scrollSuppressDirty = false;
     }
-    this.markAllDirty();
+    const after = this.getViewportY();
+    if (after !== before) {
+      if (Math.abs(after - before) >= (this._rows | 0)) this.markAllDirty();
+      else {
+        this._dirty.fill(0);
+        this._allDirty = false;
+        this._noteViewportScroll(after - before);
+      }
+    }
   }
 
   /** Absolute buffer line index → ydisp. */
   scrollToLine(line: number): void {
     const target = Math.max(0, Math.floor(Number(line) || 0));
     if (target === this.getViewportY()) return;
-    if (typeof this._term.scrollToLine === "function") {
-      this._term.scrollToLine(target);
-    } else if (typeof this._term.scrollLines === "function") {
-      const delta = target - (this._active().viewportY | 0);
-      if (delta) this._term.scrollLines(delta);
+    const before = this.getViewportY();
+    this._scrollSuppressDirty = true;
+    try {
+      if (typeof this._term.scrollToLine === "function") {
+        this._term.scrollToLine(target);
+      } else if (typeof this._term.scrollLines === "function") {
+        const delta = target - (this._active().viewportY | 0);
+        if (delta) this._term.scrollLines(delta);
+      }
+    } finally {
+      this._scrollSuppressDirty = false;
     }
-    this.markAllDirty();
+    const after = this.getViewportY();
+    if (after !== before) {
+      if (Math.abs(after - before) >= (this._rows | 0)) this.markAllDirty();
+      else {
+        this._dirty.fill(0);
+        this._allDirty = false;
+        this._noteViewportScroll(after - before);
+      }
+    }
   }
  
   getCell(row: number, col: number): CellData {
@@ -627,11 +714,13 @@ export class XtermBridge implements TerminalCore {
   clearDirty(): void {
     this._dirty.fill(0);
     this._allDirty = false;
+    this._pendingScrollDelta = 0;
   }
 
   markAllDirty(): void {
     this._allDirty = true;
     this._dirty.fill(1);
+    this._pendingScrollDelta = 0;
   }
 
   getCols(): number {
@@ -648,10 +737,14 @@ export class XtermBridge implements TerminalCore {
     const buf = this._active();
     const hidden = !!this._term._core?.coreService?.isCursorHidden;
     const show = this._term.modes?.showCursor !== false;
+    // buffer.cursorY is relative to the live base (ybase), not the currently
+    // viewed history window (ydisp). When ydisp < ybase the real cursor is
+    // below the viewport and must not be painted over an unrelated old row.
+    const viewportRow = (buf.baseY | 0) + (buf.cursorY | 0) - (buf.viewportY | 0);
     return {
-      row: buf.cursorY,
+      row: viewportRow,
       col: buf.cursorX,
-      visible: show && !hidden,
+      visible: show && !hidden && viewportRow >= 0 && viewportRow < this._rows,
       style: this._cursorStyle,
     };
   }

@@ -87,8 +87,8 @@ test('finalizeKeyboardClose delegates to facade close', () => {
     assert.match(body, /kb\.close|ensureSshKeyboard/);
 });
 
-test('cache bust kb-xterm-fit2', () => {
-    assert.match(terminalHtml, /kb-xterm-fit2/);
+test('cache bust terminal-grid-converge1', () => {
+    assert.match(terminalHtml, /terminal-grid-converge1/);
 });
 
 test('no bare inset open thresholds in terminal.js', () => {

@@ -686,16 +686,19 @@ export class WTerm {
   }
 
   private _scheduleRender(): void {
-    if (this._renderTimer != null) return;
-    this._renderTimer = setTimeout(() => {
+    // One visual publication per animation frame. The old setTimeout(0) → rAF
+    // two-stage scheduler let bursts straddle frame boundaries and exposed
+    // intermediate clear/redraw states as a flash. Parsing remains immediate;
+    // only DOM/canvas publication is coalesced.
+    if (this.rafId != null) return;
+    if (this._renderTimer != null) {
+      clearTimeout(this._renderTimer);
       this._renderTimer = null;
-      if (this.rafId == null) {
-        this.rafId = requestAnimationFrame(() => {
-          this.rafId = null;
-          this._doRender();
-        });
-      }
-    }, 0);
+    }
+    this.rafId = requestAnimationFrame(() => {
+      this.rafId = null;
+      this._doRender();
+    });
   }
 
   private _initialRender(): void {

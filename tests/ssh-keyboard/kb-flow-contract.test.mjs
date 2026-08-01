@@ -113,9 +113,9 @@ test('pin path stick-bottom when chromeHeight is 0', () => {
     assert.equal(mid.changed, false);
 });
 
-test('terminal entry cache-bust aux-bar-fly1', () => {
-    assert.match(terminalHtml, /aux-bar-fly1/);
-    assert.match(terminalHtml, /terminal\.js\?v=20260722-aux-bar-fly1/);
+test('terminal entry cache-bust terminal-grid-converge1', () => {
+    assert.match(terminalHtml, /terminal-grid-converge1/);
+    assert.match(terminalHtml, /terminal\.js\?v=20260801-terminal-grid-converge1/);
 });
 
 test('allowScrollDuringTyping still rejects non-unclip', () => {

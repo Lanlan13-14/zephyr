@@ -21,12 +21,21 @@ test('SSH and Telnet share the inertial history gesture controller', () => {
     }
 });
 
-test('history gesture has 1:1 drag, velocity smoothing and decaying fling', () => {
+test('history gesture has native touch direction, velocity smoothing and decaying fling', () => {
     assert.match(gesture, /dragGain:\s*1/);
+    assert.match(gesture, /consumePixels\(-dy \* cfg\.dragGain/);
+    assert.match(gesture, /-velocity \* dt \* cfg\.dragGain/);
     assert.match(gesture, /velocitySmoothing:\s*0\.72/);
     assert.match(gesture, /flingFrictionPer16Ms:\s*0\.94/);
     assert.match(gesture, /boundary/);
     assert.match(gesture, /requestFrame\(tick\)/);
+});
+
+test('desktop wheel direction stays native xterm direction', () => {
+    for (const source of [terminal, telnet, wtermSrc, wtermBuilt]) {
+        assert.match(source, /deltaY/);
+        assert.doesNotMatch(source, /scrollLines\?\.\(-deltaLines\)/);
+    }
 });
 
 test('history scroll reports actual movement so fling stops at boundaries', () => {

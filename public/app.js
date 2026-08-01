@@ -534,6 +534,10 @@ function postTerminalLayoutStabilize(reason = 'layout-stabilize', { focus = fals
         focus,
         keyboardOpen: !!workspace?.classList.contains('ssh-kb-open') || sshKbParentOpen,
         keyboardInset: Math.round(keyboardInset || 0),
+        fullscreen: !!fullscreenElement,
+        customFullscreen: !!workspace?.classList.contains('custom-fullscreen'),
+        workspaceWidth: Math.round(workspaceRect?.width || 0),
+        workspaceHeight: Math.round(workspaceRect?.height || 0),
     }, '*'));
 }
 function maybeApplyCompactKeyboardFromViewport(reason = 'compact-keyboard-viewport') {
@@ -2050,8 +2054,33 @@ async function openConnectionWithCardFlip(id, sourceEl, extra = {}) {
     return mountedId;
 }
 
+function shouldExitTerminalFullscreenBeforeView(target) {
+    if (target === 'terminal') return false;
+    const workspace = $('#terminalWorkspace');
+    const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
+    return !!workspace?.classList.contains('custom-fullscreen')
+        || fullscreenElement === workspace
+        || !!fullscreenElement?.classList?.contains?.('terminal-window');
+}
+
+async function exitTerminalFullscreenThenSwitchView(name, options = {}) {
+    const target = name === 'ai' ? 'dashboard' : name;
+    if (document.body.classList.contains('terminal-mode') && shouldExitTerminalFullscreenBeforeView(target)) {
+        // Keep terminal-mode and fullscreen classes alive until the Go spring
+        // finishes. This preserves the existing workspace shrink + nav return
+        // animation instead of snapping directly to the destination view.
+        await exitTerminalFullscreen({ renderAfter: false });
+    }
+    switchView(target, { ...options, fullscreenExitHandled: true });
+}
+
 function switchView(name, options = {}) {
     const target = name === 'ai' ? 'dashboard' : name;
+    if (!options.fullscreenExitHandled
+        && document.body.classList.contains('terminal-mode')
+        && shouldExitTerminalFullscreenBeforeView(target)) {
+        return exitTerminalFullscreenThenSwitchView(target, options);
+    }
     const wasTerminal = document.body.classList.contains('terminal-mode');
     const enteringTerminal = target === 'terminal' && !wasTerminal;
     const leavingTerminal = target !== 'terminal' && wasTerminal;
@@ -4067,8 +4096,8 @@ function createTerminalWindowElement(session) {
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260731-sftp-multi-close1`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260731-sftp-multi-close1`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260801-terminal-grid-converge1`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260801-terminal-grid-converge1`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -12524,9 +12553,15 @@ function bindDeepLinkChannel() {
             toast(t('笔记功能未开启，请在设置中启用'));
             return;
         }
-        switchView('notes');
-        notesController?.filterByConnection?.(data.connectionId);
-        toast(data.connectionId ? '已按当前连接过滤笔记' : '已打开笔记');
+        Promise.resolve(switchView('notes', { source: 'terminal-notes-button' }))
+            .then(() => {
+                notesController?.filterByConnection?.(data.connectionId);
+                toast(data.connectionId ? '已按当前连接过滤笔记' : '已打开笔记');
+            })
+            .catch((err) => {
+                console.warn('[terminal-notes]', 'fullscreen exit before notes failed', err);
+                toast(t('无法打开笔记，请重试'));
+            });
     });
 }
 

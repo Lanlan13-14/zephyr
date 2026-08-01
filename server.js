@@ -55,6 +55,7 @@ const { NotesService } = require('./notes-service');
 const { DeepLinkService } = require('./deeplink-service');
 const { WorkerBridge } = require('./worker-bridge');
 const { TerminalHistoryService } = require('./terminal-history-service');
+const { createTerminalSnapshot } = require('./terminal-snapshot');
 const { AiPolicyService } = require('./ai-policy');
 const { AiProviderService } = require('./ai-provider-service');
 const secretCrypto = require('./secret-crypto');
@@ -344,8 +345,18 @@ function appendSshSessionBuffer(session, data) {
     while (total > 64 * 1024 && session.outputBuffer.length > 1) {
         total -= Buffer.byteLength(session.outputBuffer.shift(), 'utf8');
     }
+    // Raw byte tails cannot reconstruct carriage-return progress bars, cursor
+    // rewrites, or alternate-screen TUIs after reconnect. Feed the same bytes
+    // into a headless xterm and replay its serialized framebuffer instead.
+    session.outputSequence = Math.max(0, Number(session.outputSequence) || 0) + 1;
+    const outputSequence = session.outputSequence;
+    try { session.terminalSnapshot?.write?.(bytes, outputSequence); }
+    catch (err) {
+        console.warn('[SSH-SESSION]', 'snapshot write failed', { sessionId: session.id, error: err.message });
+    }
     queueSshSessionHistory(session, bytes);
     session.lastActive = Date.now();
+    return outputSequence;
 }
 
 function broadcastSshSession(session, obj) {
@@ -353,6 +364,57 @@ function broadcastSshSession(session, obj) {
     for (const targetWs of [...session.attachedWs]) {
         wsSendJSON(targetWs, obj);
     }
+}
+
+const SSH_OUTPUT_FRAME_MS = Math.max(4, Math.min(32, Number(process.env.SSH_OUTPUT_FRAME_MS) || 12));
+
+/**
+ * Coalesce adjacent PTY chunks into one browser write per visual frame.
+ * This keeps clear/home/redraw bursts atomic for top/htop/progress UIs instead
+ * of exposing the transient cleared frame as a visible flash.
+ */
+function broadcastSshOutputItems(session, pending = []) {
+    if (!session?.attachedWs || !pending.length) return;
+    for (const targetWs of [...session.attachedWs]) {
+        const delivered = Math.max(0, Number(targetWs._sshOutputSequence) || 0);
+        const relevant = pending.filter((item) => !item.sequence || item.sequence > delivered);
+        if (!relevant.length) continue;
+        const text = relevant.map((item) => item.data).join('');
+        const sequence = relevant.reduce((max, item) => Math.max(max, item.sequence || 0), delivered);
+        if (text) wsSendJSON(targetWs, { type: 'data', data: text, sequence });
+        targetWs._sshOutputSequence = sequence;
+    }
+}
+
+function queueSshSessionBroadcast(session, data, sequence = session?.outputSequence) {
+    if (!session || session.closed || data == null || data === '') return;
+    if (!Array.isArray(session.outputBroadcastPending)) session.outputBroadcastPending = [];
+    session.outputBroadcastPending.push({
+        data: String(data),
+        sequence: Math.max(0, Number(sequence) || 0),
+    });
+    if (session.outputBroadcastTimer) return;
+    session.outputBroadcastTimer = setTimeout(() => {
+        session.outputBroadcastTimer = null;
+        if (session.closed || !session.outputBroadcastPending?.length) return;
+        const pending = session.outputBroadcastPending;
+        session.outputBroadcastPending = [];
+        broadcastSshOutputItems(session, pending);
+    }, SSH_OUTPUT_FRAME_MS);
+    session.outputBroadcastTimer.unref?.();
+}
+
+function flushSshSessionBroadcast(session) {
+    if (!session) return;
+    if (session.outputBroadcastTimer) clearTimeout(session.outputBroadcastTimer);
+    session.outputBroadcastTimer = null;
+    if (!session.outputBroadcastPending?.length || session.closed) {
+        session.outputBroadcastPending = [];
+        return;
+    }
+    const pending = session.outputBroadcastPending;
+    session.outputBroadcastPending = [];
+    broadcastSshOutputItems(session, pending);
 }
 
 function sendTransferEvent(username, payload) {
@@ -370,6 +432,8 @@ const SSH_DETACHED_SESSION_TTL_MS = Math.max(
 function destroySshTerminalSession(sessionOrId, reason = 'session-destroy') {
     const session = typeof sessionOrId === 'string' ? sshTerminalSessions.get(sessionOrId) : sessionOrId;
     if (!session || session.closed) return;
+    // Publish any final complete burst before marking closed, then cancel timer.
+    flushSshSessionBroadcast(session);
     session.closed = true;
     sshTerminalSessions.delete(session.id);
     for (const entry of session.dockerLogStreams?.values?.() || []) {
@@ -407,6 +471,8 @@ function destroySshTerminalSession(sessionOrId, reason = 'session-destroy') {
     });
     flushSshSessionHistory(session);
     try { terminalHistory.close(session.userId, session.id, reason); } catch {}
+    try { session.terminalSnapshot?.dispose?.(); } catch {}
+    session.terminalSnapshot = null;
     const protocol = String(session.protocol || 'SSH').toUpperCase();
     const classified = classifyTerminalClose(reason, protocol);
     broadcastSshSession(session, {
@@ -7063,7 +7129,7 @@ wss.on('connection', (ws, req) => {
         }
     };
 
-    function attachSshSession(session, { replay = true } = {}) {
+    async function attachSshSession(session, { replay = true } = {}) {
         if (!session || session.closed) return false;
         cleanup({ destroySsh: false, reason: 'attach-existing-session' });
         attachedSshSession = session;
@@ -7075,7 +7141,9 @@ wss.on('connection', (ws, req) => {
         sftpStream = session.sftpStream || null;
         dockerLogStreams = session.dockerLogStreams || (session.dockerLogStreams = new Map());
         sftpUploadStreams = session.sftpUploadStreams || (session.sftpUploadStreams = new Map());
-        session.attachedWs.add(ws);
+        // Do not subscribe this websocket to live broadcasts until the snapshot
+        // has been sent; otherwise output arriving during serialization can be
+        // delivered before the older framebuffer and then overwritten by it.
         session.lastActive = Date.now();
         session.lastDetachedAt = 0;
         ws._sshTerminalSession = session;
@@ -7088,14 +7156,41 @@ wss.on('connection', (ws, req) => {
             bufferChunks: session.outputBuffer?.length || 0,
         });
         const pty = session.pty || { cols: 80, rows: 24 };
-        // Replay first so the terminal paints previous content as soon as it is ready,
-        // then emit ready so the client can treat the surface as fully attached.
+        // Replay a canonical framebuffer first, then emit ready. A raw journal
+        // tail is not a terminal state: it may begin after the clear/home/alt-
+        // screen sequences and turns progress/TUI redraws into a duplicated pile.
         let replayData = '';
+        let replayKind = '';
+        let replayTruncated = false;
+        let replaySequence = 0;
         if (replay) {
-            try { replayData = terminalHistory.replayTail(session.userId, session.id).data; } catch {}
-            if (!replayData && session.outputBuffer.length) replayData = session.outputBuffer.join('');
-            if (replayData) sendJSON({ type: 'data', data: replayData, replay: true });
+            try {
+                const snapshot = await session.terminalSnapshot?.serialize?.({ scrollback: 2000 });
+                replayData = String(snapshot?.data || '');
+                replayTruncated = !!snapshot?.truncated;
+                replaySequence = Math.max(0, Number(snapshot?.outputSequence) || 0);
+                if (replayData) replayKind = 'snapshot';
+            } catch (err) {
+                console.warn('[SSH-SESSION]', 'snapshot serialize failed', { sessionId: session.id, error: err.message });
+            }
+            if (!replayData) {
+                try { replayData = terminalHistory.replayTail(session.userId, session.id).data; } catch {}
+                if (!replayData && session.outputBuffer.length) replayData = session.outputBuffer.join('');
+                if (replayData) replayKind = 'raw-fallback';
+            }
+            if (replayData) sendJSON({
+                type: 'data',
+                data: replayData,
+                replay: true,
+                replayKind,
+                replayTruncated,
+                sequence: replaySequence,
+            });
+            ws._sshOutputSequence = replaySequence;
         }
+        // Snapshot queue is now drained. Subscribe before ready; future output
+        // is strictly newer than the serialized framebuffer.
+        session.attachedWs.add(ws);
         const protocol = String(session.protocol || 'SSH').toUpperCase();
         sendJSON({
             type: 'ready',
@@ -7104,6 +7199,8 @@ wss.on('connection', (ws, req) => {
             cols: pty.cols,
             rows: pty.rows,
             replayed: !!replayData,
+            replayKind,
+            replayTruncated,
             protocol,
             ...(protocol === 'TELNET' ? { warning: 'Telnet 未加密；凭据以明文传输' } : {}),
         });
@@ -7368,7 +7465,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     try { ws.close(1008, 'session-owner-mismatch'); } catch {}
                     return;
                 }
-                attachSshSession(existingSession, { replay: true });
+                await attachSshSession(existingSession, { replay: true });
                 return;
             }
             cleanup({ destroySsh: false, reason: 'connect-new-session' });
@@ -7547,6 +7644,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         attachedWs: new Set([ws]),
                         pty: { rows: initialRows, cols: initialCols },
                         outputBuffer: [],
+                        terminalSnapshot: createTerminalSnapshot({ cols: initialCols, rows: initialRows }),
                         createdAt: Date.now(),
                         lastActive: Date.now(),
                         lastDetachedAt: 0,
@@ -7559,6 +7657,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     };
                     attachedSshSession = session;
                     ws._sshTerminalSession = session;
+                    ws._sshOutputSequence = 0;
                     sshTerminalSessions.set(session.id, session);
                     try {
                         terminalHistory.open({
@@ -7584,8 +7683,8 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         if (!text) return;
                         try { session.telnetAutoLogin?.feed?.(text); } catch {}
                         // History journal stores utf-8 text bytes for search/replay.
-                        appendSshSessionBuffer(session, Buffer.from(text, 'utf8'));
-                        broadcastSshSession(session, { type: 'data', data: text });
+                        const sequence = appendSshSessionBuffer(session, Buffer.from(text, 'utf8'));
+                        queueSshSessionBroadcast(session, text, sequence);
                     });
                     socket.on('error', (err) => {
                         console.error(`[TELNET] 错误: ${err.message}`);
@@ -7615,6 +7714,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                             telnetProtocol = false;
                         }
                     });
+                    flushSshSessionBroadcast(session);
                     sendJSON({
                         type: 'ready',
                         sessionId: session.id,
@@ -7697,6 +7797,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         attachedWs: new Set([ws]),
                         pty: { rows: initialRows, cols: initialCols },
                         outputBuffer: [],
+                        terminalSnapshot: createTerminalSnapshot({ cols: initialCols, rows: initialRows }),
                         createdAt: Date.now(),
                         lastActive: Date.now(),
                         lastDetachedAt: 0,
@@ -7709,11 +7810,13 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     };
                     attachedSshSession = session;
                     ws._sshTerminalSession = session;
+                    ws._sshOutputSequence = 0;
                     sshTerminalSessions.set(session.id, session);
                     try { terminalHistory.open({ userId: session.userId, sessionId: session.id, connectionId: session.connectionId, cols: initialCols, rows: initialRows }); } catch (err) {
                         console.warn('[TERMINAL-HISTORY] open failed', { sessionId: session.id, error: err.message });
                     }
                     const pty = session.pty || { rows: initialRows, cols: initialCols };
+                    flushSshSessionBroadcast(session);
                     sendJSON({ type: 'ready', sessionId: session.id, cols: pty.cols, rows: pty.rows });
 
                     // SSH 连接就绪后，启动实时监控推送
@@ -7721,8 +7824,8 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
                     stream.on('data', (data) => {
                         const text = data.toString('utf-8');
-                        appendSshSessionBuffer(session, data);
-                        broadcastSshSession(session, { type: 'data', data: text });
+                        const sequence = appendSshSessionBuffer(session, data);
+                        queueSshSessionBroadcast(session, text, sequence);
                     });
                     stream.on('close', (code, signal) => {
                         console.log(`[SSH] Shell 关闭 code=${code} signal=${signal}`);
@@ -7731,8 +7834,8 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     });
                     stream.stderr.on('data', (data) => {
                         const text = data.toString('utf-8');
-                        appendSshSessionBuffer(session, data);
-                        broadcastSshSession(session, { type: 'data', data: text });
+                        const sequence = appendSshSessionBuffer(session, data);
+                        queueSshSessionBroadcast(session, text, sequence);
                     });
 
                     if (init && typeof init === 'string' && init.trim().length > 0) {
@@ -7790,6 +7893,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 if (attachedSshSession) {
                     attachedSshSession.pty = { rows, cols };
                     attachedSshSession.lastActive = Date.now();
+                    try { attachedSshSession.terminalSnapshot?.resize?.(cols, rows); } catch {}
                     flushSshSessionHistory(attachedSshSession);
                     try { terminalHistory.appendResize(attachedSshSession.userId, attachedSshSession.id, cols, rows); } catch {}
                 }
@@ -7800,6 +7904,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 if (attachedSshSession) {
                     attachedSshSession.pty = { rows, cols };
                     attachedSshSession.lastActive = Date.now();
+                    try { attachedSshSession.terminalSnapshot?.resize?.(cols, rows); } catch {}
                     flushSshSessionHistory(attachedSshSession);
                     try { terminalHistory.appendResize(attachedSshSession.userId, attachedSshSession.id, cols, rows); } catch {}
                 }

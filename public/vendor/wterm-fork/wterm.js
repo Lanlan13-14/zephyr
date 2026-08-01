@@ -507,16 +507,15 @@ class WTerm {
     }
   }
   _scheduleRender() {
-    if (this._renderTimer != null) return;
-    this._renderTimer = setTimeout(() => {
+    if (this.rafId != null) return;
+    if (this._renderTimer != null) {
+      clearTimeout(this._renderTimer);
       this._renderTimer = null;
-      if (this.rafId == null) {
-        this.rafId = requestAnimationFrame(() => {
-          this.rafId = null;
-          this._doRender();
-        });
-      }
-    }, 0);
+    }
+    this.rafId = requestAnimationFrame(() => {
+      this.rafId = null;
+      this._doRender();
+    });
   }
   _initialRender() {
     this._doRender();

@@ -11,7 +11,8 @@ const motionJs = readFileSync(path.join(root, 'public/vendor/zephyr-motion/motio
 const presetsJs = readFileSync(path.join(root, 'public/vendor/zephyr-motion/presets.js'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const APP_CACHE = '20260731-sftp-multi-close1';
+const APP_CACHE = '20260801-dock-notes-fullscreen1';
+const STYLE_CACHE = '20260801-dock-notes-fullscreen1';
 const MOTION_CACHE = '20260731-motion-mobile-fix2';
 
 test('Motion.stretchExpand is Go-standard driven (no CSS transition)', () => {
@@ -70,7 +71,7 @@ test('mobile fullscreen exit reveals nav through Motion and serializes close/min
 
 test('cache revision covers app + motion module', () => {
     assert.match(appHtml, new RegExp(`app\\.js\\?v=${APP_CACHE}`));
-    assert.match(appHtml, new RegExp(`style\\.css\\?v=${APP_CACHE}`));
+    assert.match(appHtml, new RegExp(`style\\.css\\?v=${STYLE_CACHE}`));
     assert.match(appHtml, new RegExp(`zephyr-motion/index\\.js\\?v=${MOTION_CACHE}`));
     assert.match(swJs, new RegExp(`app\\.js\\?v=${APP_CACHE}`));
     assert.match(appJs, new RegExp(`zephyr-motion/index\\.js\\?v=${MOTION_CACHE}`));

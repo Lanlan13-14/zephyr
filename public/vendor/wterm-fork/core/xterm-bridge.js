@@ -126,12 +126,9 @@ class XtermBridge {
     __publicField(this, "_rows", 24);
     __publicField(this, "_dirty", new Uint8Array(256));
     __publicField(this, "_allDirty", true);
-    /**
-     * Net ydisp delta since last paint (positive = toward bottom / newer).
-     * Renderer recycles row DOM by this and only rebuilds the incoming edge.
-     * Avoids full-viewport markAllDirty on every history scroll line (mobile jank).
-     */
+    /** Net ydisp delta since last paint; renderer recycles only incoming rows. */
     __publicField(this, "_pendingScrollDelta", 0);
+    /** Suppress generic onScroll dirtying for bridge-owned scroll methods. */
     __publicField(this, "_scrollSuppressDirty", false);
     __publicField(this, "_bellPending", false);
     __publicField(this, "_title", null);
@@ -186,17 +183,13 @@ class XtermBridge {
     );
     this._disposables.push(
       this._term.onWriteParsed(() => {
-        // Write may change any cell; full rebuild. Scroll alone must NOT go through here.
         this.markAllDirty();
       })
     );
     if (typeof this._term.onScroll === "function") {
       this._disposables.push(
         this._term.onScroll(() => {
-          // scrollLines / scrollTo* already track _pendingScrollDelta.
-          // A full markAllDirty here forced 40-row DOM rebuild every finger move.
           if (this._scrollSuppressDirty) return;
-          // External/unknown scroll source: fall back to full dirty.
           this.markAllDirty();
         })
       );
@@ -300,20 +293,18 @@ class XtermBridge {
   getBaseY() {
     return this._active().baseY | 0;
   }
-  /**
-   * Record ydisp movement for row-recycle paint. Large jumps → full dirty.
-   * amount = after - before (positive toward bottom).
-   */
+  /** Record ydisp movement for row-recycle paint. */
   _noteViewportScroll(delta) {
     const d = Math.trunc(Number(delta) || 0);
     if (!d) return;
+    this._dirty.fill(0);
+    this._allDirty = false;
     const rows = this._rows | 0;
     this._pendingScrollDelta = (this._pendingScrollDelta | 0) + d;
     if (Math.abs(this._pendingScrollDelta) >= Math.max(1, rows)) {
       this.markAllDirty();
       return;
     }
-    // Edge rows that will enter the viewport after recycle.
     this._allDirty = false;
     if (d > 0) {
       const start = Math.max(0, rows - Math.abs(this._pendingScrollDelta));
@@ -323,7 +314,6 @@ class XtermBridge {
       for (let r = 0; r < end; r++) this._dirty[r] = 1;
     }
   }
-  /** Renderer consumes net scroll since last paint (then recycles DOM rows). */
   consumeViewportScrollDelta() {
     const d = this._pendingScrollDelta | 0;
     this._pendingScrollDelta = 0;
@@ -336,14 +326,16 @@ class XtermBridge {
     const before = this.getViewportY();
     this._scrollSuppressDirty = true;
     try {
-      if (typeof this._term.scrollLines === "function") {
-        this._term.scrollLines(n);
-      }
+      if (typeof this._term.scrollLines === "function") this._term.scrollLines(n);
     } finally {
       this._scrollSuppressDirty = false;
     }
     const after = this.getViewportY();
-    if (after !== before) this._noteViewportScroll(after - before);
+    if (after !== before) {
+      this._dirty.fill(0);
+      this._allDirty = false;
+      this._noteViewportScroll(after - before);
+    }
   }
   scrollToBottom() {
     if (this.isAtBottom()) return;
@@ -355,9 +347,7 @@ class XtermBridge {
       } else {
         const buf = this._active();
         const delta = (buf.baseY | 0) - (buf.viewportY | 0);
-        if (delta && typeof this._term.scrollLines === "function") {
-          this._term.scrollLines(delta);
-        }
+        if (delta && typeof this._term.scrollLines === "function") this._term.scrollLines(delta);
       }
     } finally {
       this._scrollSuppressDirty = false;
@@ -365,7 +355,11 @@ class XtermBridge {
     const after = this.getViewportY();
     if (after !== before) {
       if (Math.abs(after - before) >= (this._rows | 0)) this.markAllDirty();
-      else this._noteViewportScroll(after - before);
+      else {
+        this._dirty.fill(0);
+        this._allDirty = false;
+        this._noteViewportScroll(after - before);
+      }
     }
   }
   scrollToTop() {
@@ -384,7 +378,11 @@ class XtermBridge {
     const after = this.getViewportY();
     if (after !== before) {
       if (Math.abs(after - before) >= (this._rows | 0)) this.markAllDirty();
-      else this._noteViewportScroll(after - before);
+      else {
+        this._dirty.fill(0);
+        this._allDirty = false;
+        this._noteViewportScroll(after - before);
+      }
     }
   }
   /** Absolute buffer line index → ydisp. */
@@ -406,7 +404,11 @@ class XtermBridge {
     const after = this.getViewportY();
     if (after !== before) {
       if (Math.abs(after - before) >= (this._rows | 0)) this.markAllDirty();
-      else this._noteViewportScroll(after - before);
+      else {
+        this._dirty.fill(0);
+        this._allDirty = false;
+        this._noteViewportScroll(after - before);
+      }
     }
   }
   getCell(row, col) {
@@ -421,9 +423,15 @@ class XtermBridge {
       out.char = this._registerGrapheme(g);
       delete out._grapheme;
     }
-    // Zero-copy: single-threaded paint reads fields immediately. Cloning every
-    // cell (cols×rows×dirty) was a major GC cost during history scroll.
-    return out;
+    if (line) {
+      try {
+        const raw = line.getCell(col);
+        const urlId = raw?.extended?.urlId | 0;
+        if (urlId) out.linkId = urlId;
+      } catch {
+      }
+    }
+    return { ...out };
   }
   getHyperlink(id) {
     if (!id) return null;
@@ -464,7 +472,6 @@ class XtermBridge {
   markAllDirty() {
     this._allDirty = true;
     this._dirty.fill(1);
-    // Full rebuild supersedes row-recycle scroll delta.
     this._pendingScrollDelta = 0;
   }
   getCols() {
@@ -478,10 +485,11 @@ class XtermBridge {
     const buf = this._active();
     const hidden = !!this._term._core?.coreService?.isCursorHidden;
     const show = this._term.modes?.showCursor !== false;
+    const viewportRow = (buf.baseY | 0) + (buf.cursorY | 0) - (buf.viewportY | 0);
     return {
-      row: buf.cursorY,
+      row: viewportRow,
       col: buf.cursorX,
-      visible: show && !hidden,
+      visible: show && !hidden && viewportRow >= 0 && viewportRow < this._rows,
       style: this._cursorStyle
     };
   }
