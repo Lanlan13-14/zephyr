@@ -10590,6 +10590,8 @@ async function loadSettings() {
             workspace: { ...(admin.workspace || {}), ...(settings.workspace || {}) },
             ai: { ...(admin.ai || {}), ...(settings.ai || {}) },
             mail: { ...(admin.mail || {}), ...(settings.mail || {}) },
+            // Personal notes.enabled must win over platform default (same as /api/me/settings).
+            notes: { ...(admin.notes || {}), ...(settings.notes || {}) },
             _admin: admin,
         };
     }
@@ -10668,15 +10670,28 @@ function renderNotesToggle() {
 
 async function saveNotesSettings(e) {
     e.preventDefault();
-    const enabled = document.getElementById('notesEnabledInput')?.checked || false;
-    if (myIdentity.role === 'admin') {
-        settings = await savePlatformSettings('notes', { notes: { enabled } });
-    } else {
-        const result = await api('/api/me/settings', { method: 'PUT', body: JSON.stringify({ 'notes.enabled': enabled }) });
-        settings.notes = { ...(settings.notes || {}), enabled: !!result?.settings?.notes?.enabled };
+    const enabled = !!document.getElementById('notesEnabledInput')?.checked;
+    try {
+        // Always persist the personal opt-in (toast says "当前用户"; USER_ALLOWED_KEYS has notes.enabled).
+        // Admin-only platform write was wrong: it never wrote user_settings, and superadmin
+        // loadSettings used to drop personal notes when re-merging /api/settings/admin.
+        if (myIdentity.role === 'admin') {
+            // Platform default so new accounts inherit the policy; failures must not
+            // block the personal override that actually controls this session.
+            await api('/api/settings/notes', {
+                method: 'PUT',
+                body: JSON.stringify({ notes: { enabled } }),
+            }).catch((err) => {
+                console.warn('[notes-settings] platform default save failed', err);
+            });
+        }
+        settings = await savePersonalSettings({ notes: { enabled } });
+        settings.notes = { ...(settings.notes || {}), enabled: !!(settings.notes && settings.notes.enabled) };
+        renderNotesToggle();
+        toast(enabled ? '已为当前用户开启笔记功能' : '已为当前用户关闭笔记功能');
+    } catch (err) {
+        toast(err?.message || t('保存失败'));
     }
-    renderNotesToggle();
-    toast(enabled ? '已为当前用户开启笔记功能' : '已为当前用户关闭笔记功能');
 }
 async function savePersonalLoginNotification() {
     const enabled = !!$('#notifyLoginPersonal')?.checked;

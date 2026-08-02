@@ -1,6 +1,6 @@
-const CACHE_NAME = 'zephyr-static-20260801-dock-notes-fullscreen1';
+const CACHE_NAME = 'zephyr-static-20260802-notes-enabled-persist1';
 const PRECACHE = [
-    '/app.js?v=20260801-dock-notes-fullscreen1',
+    '/app.js?v=20260802-notes-enabled-persist1',
     '/style.css?v=20260801-dock-notes-fullscreen1',
     '/theme-runtime.js?v=20260615-visual-color-picker',
     '/terminal.js?v=20260801-terminal-grid-converge1',

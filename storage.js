@@ -199,6 +199,10 @@ function defaultSettings(legacySettings = {}) {
             shortcutPlatform: 'auto',
             allowLigatures: false,
         },
+        // Notes is opt-in (FREEZE §6.1). Platform default off; users override via user_settings notes.enabled.
+        notes: {
+            enabled: false,
+        },
         ai: {
             enabled: false,
             assistantName: 'Zephyr AI',
