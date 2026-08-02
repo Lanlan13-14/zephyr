@@ -7776,6 +7776,7 @@ function createAiChat({ silent = false } = {}) {
     aiCurrentSessionId = id;
     aiEditingMessageIndex = -1;
     aiEditingSessionId = '';
+    syncAiEditingState();
     saveAiChats();
     if (!silent) renderAiChat();
 }
@@ -7811,6 +7812,7 @@ function renderAiChat() {
     area.appendChild(typing);
     updateAiRunUiForCurrentSession();
     renderAiChatList();
+    syncAiEditingState();
     scrollAiChat();
 }
 function summarizeAiUserMessageForDisplay(text = '') {
@@ -8007,6 +8009,30 @@ function selectAiMessageText(el) {
     sel.removeAllRanges();
     sel.addRange(range);
 }
+function syncAiEditingState() {
+    const editing = aiEditingMessageIndex >= 0 && (!aiEditingSessionId || aiEditingSessionId === aiCurrentSessionId);
+    const button = $('#aiCancelEditBtn');
+    const area = button?.closest?.('.ai-input-area') || $('.ai-input-area');
+    const input = $('#aiUserInput');
+    if (button) button.hidden = !editing;
+    area?.classList.toggle('is-editing', editing);
+    if (input) {
+        if (editing) input.setAttribute('aria-label', t('正在编辑已发送消息'));
+        else input.removeAttribute('aria-label');
+    }
+}
+function cancelAiMessageEdit({ focus = true } = {}) {
+    aiEditingMessageIndex = -1;
+    aiEditingSessionId = '';
+    const input = $('#aiUserInput');
+    if (input) {
+        input.value = '';
+        autoResizeAiInput(input);
+    }
+    updateAiInputPreview();
+    syncAiEditingState();
+    if (focus) input?.focus?.();
+}
 function editAiMessageFromMenu() {
     const input = $('#aiUserInput');
     if (!input) return;
@@ -8015,6 +8041,7 @@ function editAiMessageFromMenu() {
     input.value = aiMessageMenuState.text || '';
     autoResizeAiInput(input);
     updateAiInputPreview();
+    syncAiEditingState();
     input.focus?.();
     toast(t('已载入原消息，修改后发送会从此处重新回答'));
 }
@@ -8026,6 +8053,7 @@ function regenerateAiMessageFromMenu() {
     aiEditingSessionId = aiMessageMenuState.sessionId || aiCurrentSessionId;
     input.value = aiMessageMenuState.text || '';
     autoResizeAiInput(input);
+    syncAiEditingState();
     sendAiMessage();
 }
 function handleAiMessageMenuAction(action = '') {
@@ -8109,6 +8137,7 @@ function deleteAiChat(id) {
     });
 }
 function deleteAiChatConfirmed(id) {
+    if (aiEditingSessionId === id) cancelAiMessageEdit({ focus: false });
     const controller = aiRunForSession(id);
     if (controller) {
         aiStoppedControllers.add(controller);
@@ -9308,6 +9337,7 @@ async function sendAiMessage() {
     const editingIndex = aiEditingSessionId && aiEditingSessionId !== sessionId ? -1 : aiEditingMessageIndex;
     aiEditingMessageIndex = -1;
     aiEditingSessionId = '';
+    syncAiEditingState();
     if (editingIndex >= 0) {
         session.messages = session.messages.slice(0, Math.max(0, editingIndex));
         renderAiChat();
@@ -10446,12 +10476,13 @@ function setupAiAssistant() {
     $('#aiFloatingBtn')?.addEventListener('click', (e) => toggleAiAssistantPanel(e.currentTarget));
     $('#aiJumpSettingsBtn')?.addEventListener('click', () => { switchView('settings'); document.querySelector('.settings-tab[data-settings="ai"]')?.click(); });
     $('#aiClosePanelBtn')?.addEventListener('click', closeAiAssistantPanel); $('#aiNewChatBtn')?.addEventListener('click', () => createAiChat());
-    $('#aiChatList')?.addEventListener('click', (e) => { const del = e.target.closest?.('[data-ai-delete-chat]')?.dataset.aiDeleteChat; if (del) { e.preventDefault(); e.stopPropagation(); deleteAiChat(del); return; } const id = e.target.closest?.('[data-ai-chat]')?.dataset.aiChat || e.target.closest?.('[data-ai-chat-row]')?.dataset.aiChatRow; if (id) { aiCurrentSessionId = id; aiEditingMessageIndex = -1; aiEditingSessionId = ''; saveAiChats(); renderAiChat(); } });
+    $('#aiChatList')?.addEventListener('click', (e) => { const del = e.target.closest?.('[data-ai-delete-chat]')?.dataset.aiDeleteChat; if (del) { e.preventDefault(); e.stopPropagation(); deleteAiChat(del); return; } const id = e.target.closest?.('[data-ai-chat]')?.dataset.aiChat || e.target.closest?.('[data-ai-chat-row]')?.dataset.aiChatRow; if (id) { cancelAiMessageEdit({ focus: false }); aiCurrentSessionId = id; saveAiChats(); renderAiChat(); } });
     $('#aiSendBtn')?.addEventListener('click', () => { if (aiIsSessionRunning(aiCurrentSessionId)) stopAiResponse(aiCurrentSessionId); else sendAiMessage(); });
+    $('#aiCancelEditBtn')?.addEventListener('click', () => cancelAiMessageEdit());
     $('#aiUserInput')?.addEventListener('input', (e) => { autoResizeAiInput(e.target); updateAiInputPreview(); });
-    $('#aiUserInput')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendAiMessage(); } });
+    $('#aiUserInput')?.addEventListener('keydown', (e) => { if (e.key === 'Escape' && aiEditingMessageIndex >= 0) { e.preventDefault(); cancelAiMessageEdit(); return; } if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendAiMessage(); } });
     // Markdown preview toggle removed; messages are rendered as Markdown directly.
-    $('#aiClearChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast(t('请先停止当前对话的 AI 回复')); s.messages = []; renderAiChat(); });
+    $('#aiClearChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast(t('请先停止当前对话的 AI 回复')); cancelAiMessageEdit({ focus: false }); s.messages = []; renderAiChat(); });
     $('#aiCompressChatBtn')?.addEventListener('click', () => { const s = aiCurrentSession(); if (aiIsSessionRunning(s?.id)) return toast(t('请先停止当前对话的 AI 回复')); if (s.messages.length > 2) s.messages = [{ role: 'system', content: `历史已压缩：此前共有 ${s.messages.length} 条消息。` }, s.messages[s.messages.length - 1]]; renderAiChat(); });
     $('#aiProviderPickerBtn')?.addEventListener('click', (e) => openAiPicker('provider', e.currentTarget));
     $('#aiModelPickerBtn')?.addEventListener('click', (e) => openAiPicker('model', e.currentTarget));

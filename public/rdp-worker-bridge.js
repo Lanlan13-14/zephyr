@@ -1,11 +1,11 @@
-import { OrderedRdpInputChannel } from './rdp-input-channel.js';
+import { OrderedRdpInputChannel } from './rdp-input-channel.js?v=20260802-rdp-input-render16';
 
 const WORKER_EXPORTS = [
     'rdpConnect', 'rdpDisconnect', 'rdpMouseMove', 'rdpMouseDown', 'rdpMouseUp',
-    'rdpMouseWheel', 'rdpMouseHScroll', 'rdpKeyDown', 'rdpKeyUp',
+    'rdpMouseWheel', 'rdpMouseHScroll', 'rdpKeyDown', 'rdpKeyUp', 'rdpUnicodeText',
     'rdpClipboardChanged', 'rdpNotifyFilesChanged', 'rdpAudinData',
     'rdpLocationData', 'rdpCameraFrame', 'rdpFsAttachDrive', 'rdpFsDetachDrive',
-    'rdpRequestFullRefresh',
+    'rdpRequestFullRefresh', 'rdpSetResolution', 'rdpSetRenderPreferences',
 ];
 
 export class RdpWorkerBridge {
@@ -30,7 +30,7 @@ export class RdpWorkerBridge {
         this.input = new OrderedRdpInputChannel((envelope) => worker.postMessage({ type: 'input', envelope }));
     }
 
-    static probe({ url = './rdp-worker-probe.js', timeoutMs = 3000 } = {}) {
+    static probe({ url = './rdp-worker-probe.js', timeoutMs = 10000 } = {}) {
         return new Promise((resolve) => {
             if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined') {
                 resolve({ supported: false, reason: 'WORKER_OFFSCREEN_UNAVAILABLE' });
@@ -73,6 +73,8 @@ export class RdpWorkerBridge {
         // Await a Worker response so missing Go exports and dispatch failures are
         // visible to the page instead of degrading into a watchdog reconnect.
         target.rdpConnect = (...args) => this.call('rdpConnect', args);
+        target.rdpSetResolution = (...args) => this.call('rdpSetResolution', args);
+		target.rdpSetRenderPreferences = (...args) => this.call('rdpSetRenderPreferences', args);
         target.rdpMouseMove = (x, y) => this.input.push('mouse-move', { x, y });
         target.rdpMouseDown = (button, x, y) => this.input.push('mouse-down', { button, x, y });
         target.rdpMouseUp = (button, x, y) => this.input.push('mouse-up', { button, x, y });
@@ -80,6 +82,7 @@ export class RdpWorkerBridge {
         target.rdpMouseHScroll = (delta) => this.input.push('hwheel', { delta });
         target.rdpKeyDown = (code) => this.input.push('key-down', { code });
         target.rdpKeyUp = (code) => this.input.push('key-up', { code });
+        target.rdpUnicodeText = (text) => this.input.push('unicode-text', { text: String(text ?? '') });
         target.rdpFsAttachDrive = (...args) => { this.notify('rdpFsAttachDrive', args); return `worker:${args[0]}`; };
         target.rdpFsDetachDrive = (...args) => { this.notify('rdpFsDetachDrive', args); return true; };
         target.rdpClipboardChangedSync = (...args) => this.call('rdpClipboardChangedSync', args);
@@ -87,6 +90,7 @@ export class RdpWorkerBridge {
         target.rdpGetServerFiles = () => { throw new Error('rdpGetServerFiles is asynchronous in Worker mode'); };
         target.rdpGetServerFilesAsync = () => this.call('rdpGetServerFiles', []);
         target.rdpGetWorkerDiagnostics = () => this.call('rdpGetWorkerDiagnostics', []);
+		target.rdpGetClearCapture = () => this.call('rdpGetClearCapture', []);
         target.rdpFsListDrives = () => { throw new Error('rdpFsListDrives is asynchronous in Worker mode'); };
         target.rdpFsListDrivesAsync = () => this.call('rdpFsListDrives', []);
         return this;

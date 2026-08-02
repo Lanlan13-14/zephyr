@@ -1,4 +1,4 @@
-export const INPUT_BARRIERS = new Set(['mouse-down', 'mouse-up', 'wheel', 'hwheel', 'key-down', 'key-up', 'control']);
+export const INPUT_BARRIERS = new Set(['mouse-down', 'mouse-up', 'wheel', 'hwheel', 'key-down', 'key-up', 'unicode-text', 'control']);
 
 export class OrderedRdpInputChannel {
     constructor(send, {

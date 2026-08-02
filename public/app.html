@@ -6,9 +6,9 @@
     <title>Zephyr</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌬️</text></svg>">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
-    <link rel="modulepreload" href="app.js?v=20260801-dock-notes-fullscreen1">
+    <link rel="modulepreload" href="app.js?v=20260801-ai-edit-cancel1">
     <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
-    <link rel="stylesheet" href="style.css?v=20260801-dock-notes-fullscreen1">
+    <link rel="stylesheet" href="style.css?v=20260801-ai-edit-cancel1">
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -943,6 +943,7 @@
                     <!-- 语音输入已移除：保留附件上传与文本输入 -->
                     <span class="ai-md-toggle-removed" hidden></span>
                     <textarea class="ai-input-box" id="aiUserInput" rows="1" placeholder="输入指令，可让 AI 搜索网页、分析连接、执行远程命令..." data-i18n-placeholder="输入指令，可让 AI 搜索网页、分析连接、执行远程命令..."></textarea>
+                    <button class="ai-cancel-edit-btn" type="button" id="aiCancelEditBtn" hidden data-i18n="退出编辑" aria-label="退出编辑" data-i18n-aria-label="退出编辑">退出编辑</button>
                     <button class="ai-send-btn" type="button" id="aiSendBtn" title="发送" data-i18n-title="发送" aria-label="发送" data-i18n-aria-label="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg></button>
                     <div class="ai-input-preview" id="aiInputPreview" hidden></div>
                 </div>
@@ -1205,7 +1206,7 @@
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
     <script src="preview-mock.js?v=20260723-sync2" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20260801-dock-notes-fullscreen1" type="module"></script>
+<script src="app.js?v=20260801-ai-edit-cancel1" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

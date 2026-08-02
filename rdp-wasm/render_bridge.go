@@ -65,7 +65,6 @@ func forwardRenderEvent(event rdpgfx.RenderEvent) {
 		slog.Warn("forwardRenderEvent: renderer not configured", "kind", event.Kind)
 		return
 	}
-	slog.Info("forwardRenderEvent", "kind", event.Kind, "frameId", event.FrameID, "surfaceId", event.SurfaceID, "dataLen", len(event.Data))
 	if (event.Kind == rdpgfx.RenderBitmap || event.Kind == rdpgfx.RenderClassicBitmap) && len(event.Data) > 0 && bitmapCallback.Type() == js.TypeFunction {
 		// Pass the linear-memory offset as float64, NOT int. On go/wasm,
 		// int is 32-bit; casting a uintptr ≥ 2^31 yields a negative int,

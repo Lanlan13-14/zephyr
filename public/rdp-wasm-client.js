@@ -13,10 +13,11 @@
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260630-rdp-engine';
 import { t, initI18n } from './i18n/runtime.js?v=20260729-ai-rdp-cert1';
 import { createRdpDiagnostics } from './rdp-diagnostics.js?v=20260720-zft2';
-import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260730-rdp-ordered-surface4';
+import { computeSafeRdpSize } from './rdp-resolution-policy.js?v=20260801-rdp-motion9';
+import { RdpWorkerBridge } from './rdp-worker-bridge.js?v=20260802-rdp-input-render20';
 import { RdpTouchController, rdpHaptic } from './rdp-touch.js?v=20260730-rdp-ordered-surface4';
 import { RdpAudioScheduler } from './rdp-audio-scheduler.js?v=20260730-rdp-ordered-surface4';
-import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260720-zft2';
+import { RdpMobileKeyboard } from './rdp-mobile-keyboard.js?v=20260802-rdp-input-render16';
 import {
     setupPanelInteractions,
     toggleFloatingPanel,
@@ -134,6 +135,35 @@ let rdpCanvas = null;
 let rdpWorkerBridge = null;
 let rdpWidth = 0;
 let rdpHeight = 0;
+let rdpStageResizeObserver = null;
+let rdpResizeTimer = 0;
+let rdpResizeInFlight = false;
+let rdpResizeQueued = false;
+let rdpResizeRetryCount = 0;
+let rdpResizeAwaitingReset = false;
+let rdpResizeRequestedSize = null;
+let rdpResizeAckTimer = 0;
+let rdpResizeResetTimeouts = 0;
+let rdpLastResizeRequestAt = 0;
+let rdpResizeCleanReconnectTimer = 0;
+let rdpResizeCleanReconnectGeneration = 0;
+let rdpResizeCleanReconnectPending = false;
+let rdpTransitionFrame = null;
+let rdpTransitionPollTimer = 0;
+let rdpTransitionExpiryTimer = 0;
+let rdpTransitionReadyForResize = false;
+let rdpInternalRestarting = false;
+let rdpInternalRestartReady = null;
+let rdpInternalRestartFailure = null;
+let rdpWorkerRestartPromise = null;
+let rdpWorkerProbeCapabilities = null;
+let rdpInputAbortController = null;
+const RDP_MIN_RESIZE_INTERVAL_MS = 600;
+const RDP_RESIZE_RECONNECT_SETTLE_MS = 650;
+const RDP_TRANSITION_FRAME_MAX_AGE_MS = 60000;
+const RDP_TRANSITION_FRAME_KEY = `zephyr_rdp_resize_transition_${tabId || 'default'}`;
+const RDP_WORKER_URL = './rdp-worker.js?v=20260802-rdp-input-render20';
+const RDP_WORKER_PROBE_URL = './rdp-worker-probe.js?v=20260802-rdp-input-render20';
 
 /* fit/zoom */
 const fitModes = ['adapt', 'original', 'fill'];
@@ -186,6 +216,7 @@ const { state: rdpDiag, snapshot: snapshotRdpDiagnostics } = createRdpDiagnostic
     renderer: 'worker-gpu-v2-pending',
 });
 window._rdpRenderDiag = () => JSON.stringify(snapshotRdpDiagnostics());
+let lastWorkerTelemetrySample = null;
 
 /* Go WASM is instantiated only inside rdp-worker.js. */
 
@@ -193,26 +224,89 @@ window._rdpRenderDiag = () => JSON.stringify(snapshotRdpDiagnostics());
  * WASM → JS CALLBACKS (called by Go code)
  * ═══════════════════════════════════════════════════════════════════════ */
 
-async function reportWorkerTelemetry(elapsedMs) {
+async function reportWorkerTelemetry(elapsedMs, { reason = 'scheduled' } = {}) {
     if (!rdpWorkerBridge) return null;
     const diag = await rdpWorkerBridge.call('rdpGetWorkerDiagnostics', []);
+    const sampledAt = performance.now();
+    const schedulerCallbacks = Number(diag.frameScheduler?.rafCallbacks || 0)
+        + Number(diag.frameScheduler?.timerCallbacks || 0);
+    const decodedOutputs = Number(diag.avc420Events || 0) + Number(diag.avc444Events || 0);
+    const previous = lastWorkerTelemetrySample;
+    const seconds = previous ? Math.max(0.001, (sampledAt - previous.sampledAt) / 1000) : 0;
+    const rate = (current, prior) => seconds ? Math.max(0, (Number(current) - Number(prior || 0)) / seconds) : 0;
+    const enriched = {
+        ...diag,
+        telemetryReason: reason,
+        resolutionMode: String(params.rdpResolution || '1080p'),
+        qualityMode,
+        fpsValue,
+        desktopWidth: rdpWidth,
+        desktopHeight: rdpHeight,
+        requestedWidth: rdpResizeRequestedSize?.width || 0,
+        requestedHeight: rdpResizeRequestedSize?.height || 0,
+        resizeAwaitingReset: rdpResizeAwaitingReset,
+        schedulerTargetFps: Number(diag.frameScheduler?.targetFps || 0),
+        schedulerMode: String(diag.frameScheduler?.mode || ''),
+        schedulerEffectiveFps: Number(diag.frameScheduler?.effectiveFps || 0),
+        schedulerIntervalMs: Number(diag.frameScheduler?.intervalMs || 0),
+        schedulerCallbacks,
+        schedulerCallbacksPerSecond: previous ? rate(schedulerCallbacks, previous.schedulerCallbacks) : 0,
+        presentsPerSecond: previous ? rate(diag.presents, previous.presents) : 0,
+        presentedFramesPerSecond: previous ? rate(diag.presentedFrames, previous.presentedFrames) : 0,
+        decodedOutputsPerSecond: previous ? rate(decodedOutputs, previous.decodedOutputs) : 0,
+    };
+    lastWorkerTelemetrySample = {
+        sampledAt,
+        schedulerCallbacks,
+        presents: Number(diag.presents || 0),
+        presentedFrames: Number(diag.presentedFrames || 0),
+        decodedOutputs,
+    };
+    console.info('[rdp-render-telemetry]', JSON.stringify(enriched));
     fetch('/api/rdp/telemetry', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectionId: activeConnectionId, elapsedMs, ...diag }),
+        body: JSON.stringify({ connectionId: activeConnectionId, elapsedMs, ...enriched }),
         keepalive: true,
     }).catch(() => {});
-    return diag;
+    return enriched;
 }
 
 /* Called by Go when RDP session is ready */
 window.rdpOnReady = function () {
+    /* A live RDPEDISP resize can make the server send DeactivateAll and run
+     * the normal activation sequence again. Go consequently emits OnReady a
+     * second time for the same transport. That is a protocol reactivation,
+     * not a new login: clearing the resize state here would drop the ordered
+     * ResetGraphics barrier and allow another MonitorLayout request while the
+     * server is still rebuilding its desktop. */
+    const isReactivation = connected;
     clearConnectWatchdog();
     connectionFailureReported = false;
     setStatus('connected', t('RDP 已连接'));
     connected = true;
     rdpConnectionPhase = 'connected';
+    waitForFreshRdpFrameAfterReconnect();
+    if (rdpInternalRestarting && rdpInternalRestartReady) {
+        const resolveRestart = rdpInternalRestartReady;
+        rdpInternalRestartReady = null;
+        rdpInternalRestartFailure = null;
+        resolveRestart();
+    }
+
+    if (isReactivation) {
+        reportRdpEvent('reactivation-ready', {
+            value: 'preserved-resize-barrier',
+            resizeInFlight: rdpResizeInFlight,
+            resizeQueued: rdpResizeQueued,
+        });
+        reportWorkerTelemetry(0, { reason: 'reactivation-ready' }).catch(() => {});
+        return;
+    }
+
+    resetLiveRdpResizeState();
+    scheduleLiveRdpResize({ delay: 80, resetRetry: true });
     if (rdpCertPhase === 'probing' || rdpCertPhase === 'pending') rdpCertPhase = 'none';
     rdpHaptic('connect');
     rdpReconnectAttempts = 0;
@@ -247,18 +341,83 @@ window.rdpOnReady = function () {
             } else if (Number(diag.presents || 0) === 0) {
                 setStatus('connected', `RDP 已收到 ${events} 个图形命令但 GPU 未呈现 · lastKind=${diag.lastKind} AVC=${diag.avc420Events}/${diag.avc444Events} fail=${diag.drawFails} ${diag.lastError || ''}`, { holdOverlayMs: 4500 });
             }
-            console.info('[rdp-render] Worker GPU diagnostics', diag);
+            console.info('[rdp-render] Worker GPU diagnostics', JSON.stringify(diag));
         } catch (error) {
             console.warn('[rdp-render] Worker diagnostics unavailable', error);
         }
     }, 3000);
 };
 
+/* The display update request is complete only when the server answers with
+ * RDPGFX ResetGraphics. Keeping this acknowledgement on the semantic render
+ * queue also guarantees that old-size video commands have been retired first. */
+window.rdpOnGraphicsReset = function (width, height) {
+    const actualWidth = Math.max(0, Math.trunc(Number(width) || 0));
+    const actualHeight = Math.max(0, Math.trunc(Number(height) || 0));
+    if (!actualWidth || !actualHeight) return;
+
+    const requested = rdpResizeRequestedSize;
+    window.clearTimeout(rdpResizeAckTimer);
+    rdpResizeAckTimer = 0;
+    rdpResizeAwaitingReset = false;
+    rdpResizeRequestedSize = null;
+    rdpResizeResetTimeouts = 0;
+    rdpResizeRetryCount = 0;
+    rdpWidth = actualWidth;
+    rdpHeight = actualHeight;
+    applyFitMode();
+    reportRdpEvent('graphics-reset', {
+        width: actualWidth,
+        height: actualHeight,
+        previousWidth: requested?.width || 0,
+        previousHeight: requested?.height || 0,
+    });
+    reportWorkerTelemetry(0, { reason: 'graphics-reset' }).catch(() => {});
+
+    const desired = computeRdpSize();
+    const latestChanged = desired.width !== actualWidth || desired.height !== actualHeight;
+    const serverClampedRequest = requested
+        && requested.width === desired.width && requested.height === desired.height
+        && (requested.width !== actualWidth || requested.height !== actualHeight);
+    const shouldSendLatest = rdpResizeQueued && latestChanged && !serverClampedRequest;
+    rdpResizeQueued = false;
+    if (shouldSendLatest) {
+        scheduleLiveRdpResize({ delay: 350 });
+    } else if (requested) {
+        // Windows deletes the old RDPGFX surface before ResetGraphics and, on
+        // ClearCodec sessions, can resume with only sparse dirty regions even
+        // after a standards-compliant SuppressOutput/RefreshRect cycle. A
+        // short clean reconnect at the already-acknowledged size is the only
+        // deterministic way to eliminate permanent old-layout residue. The
+        // parent terminal workspace and sibling SSH sessions stay alive; only
+        // this embedded RDP transport is recreated.
+        reportRdpEvent('resize-clean-reconnect', { width: actualWidth, height: actualHeight });
+        setStatus('connecting', t('正在应用新的远程桌面尺寸...'));
+        scheduleResizeCleanReconnect(actualWidth, actualHeight);
+    }
+};
+
 function reportRdpEvent(kind, detail = {}) {
+    const desired = computeRdpSize();
     fetch('/api/rdp/telemetry', {
         method: 'POST', credentials: 'same-origin', keepalive: true,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectionId: activeConnectionId, kind, stage: lastConnectStage, ...detail }),
+        body: JSON.stringify({
+            connectionId: activeConnectionId,
+            kind,
+            stage: lastConnectStage,
+            resolutionMode: String(params.rdpResolution || '1080p'),
+            qualityMode,
+            fpsValue,
+            desktopWidth: rdpWidth,
+            desktopHeight: rdpHeight,
+            desiredWidth: desired.width,
+            desiredHeight: desired.height,
+            requestedWidth: rdpResizeRequestedSize?.width || 0,
+            requestedHeight: rdpResizeRequestedSize?.height || 0,
+            resizeAwaitingReset: rdpResizeAwaitingReset,
+            ...detail,
+        }),
     }).catch(() => {});
 }
 
@@ -278,14 +437,25 @@ window.rdpOnProtocolMilestone = function (event) {
 window.rdpOnError = function (msg) {
     const wasConnected = connected;
     connectionFailureReported = true;
+    const internalRestart = rdpInternalRestarting;
     lastConnectError = String(msg || 'unknown error');
     console.warn('[rdp-wasm] error:', lastConnectError);
     reportRdpEvent('error', { value: lastConnectError });
+    reportWorkerTelemetry(0, { reason: 'transport-error' }).catch(() => {});
     rdpHaptic('error');
     clearConnectWatchdog();
+    resetLiveRdpResizeState();
     stopAgentDriveBridge();
     connected = false;
     rdpConnectionPhase = 'error';
+    if (internalRestart) {
+        const rejectRestart = rdpInternalRestartFailure;
+        rdpInternalRestartReady = null;
+        rdpInternalRestartFailure = null;
+        cleanupAudio();
+        rejectRestart?.(new Error(lastConnectError));
+        return;
+    }
     if (wasConnected) {
         // Keep the concrete error visible briefly, then fall into the same
         // auto-reconnect path as an unexpected close. Manual disconnect still
@@ -303,13 +473,20 @@ window.rdpOnError = function (msg) {
 
 /* Called by Go on connection close */
 window.rdpOnClose = function () {
+    const internalRestart = rdpInternalRestarting;
     console.info('[rdp-wasm] connection closed', { stage: lastConnectStage, failureReported: connectionFailureReported });
     reportRdpEvent('close', { failureReported: connectionFailureReported });
+    reportWorkerTelemetry(0, { reason: 'transport-close' }).catch(() => {});
     clearConnectWatchdog();
+    resetLiveRdpResizeState();
     stopAgentDriveBridge();
     const wasConnected = connected;
     connected = false;
     if (rdpConnectionPhase !== 'error' && rdpCertPhase !== 'rejected') rdpConnectionPhase = 'disconnected';
+    if (internalRestart) {
+        cleanupAudio();
+        return;
+    }
     if (connectionFailureReported) {
         // rdpOnError already scheduled reconnect if appropriate.
         cleanupAudio();
@@ -1051,34 +1228,281 @@ function persistSessionParams(patch = {}) {
     }).catch((err) => console.warn('[rdp] persist settings failed', err));
 }
 
-function reconnectWithSettings() {
+function dismissRdpTransitionFrame({ immediate = false, keepStored = false } = {}) {
+    window.clearTimeout(rdpTransitionPollTimer);
+    window.clearTimeout(rdpTransitionExpiryTimer);
+    rdpTransitionPollTimer = 0;
+    rdpTransitionExpiryTimer = 0;
+    const frame = rdpTransitionFrame;
+    if (!frame) return;
+    rdpTransitionFrame = null;
+    rdpTransitionReadyForResize = false;
+    if (!keepStored) {
+        try { sessionStorage.removeItem(RDP_TRANSITION_FRAME_KEY); } catch {}
+    }
+    if (immediate) {
+        frame.remove();
+        return;
+    }
+    frame.classList.add('is-dismissing');
+    window.setTimeout(() => frame.remove(), 180);
+}
+
+function restoreRdpResizeTransitionFrame() {
+    let saved = null;
+    try {
+        saved = JSON.parse(sessionStorage.getItem(RDP_TRANSITION_FRAME_KEY) || 'null');
+    } catch {
+        try { sessionStorage.removeItem(RDP_TRANSITION_FRAME_KEY); } catch {}
+    }
+    const age = Date.now() - Number(saved?.createdAt || 0);
+    const dataUrl = String(saved?.dataUrl || '');
+    if (!displayShell || age < 0 || age > RDP_TRANSITION_FRAME_MAX_AGE_MS || !dataUrl.startsWith('data:image/')) return;
+    const frame = document.createElement('img');
+    frame.className = 'rdp-resize-transition-frame';
+    frame.alt = '';
+    frame.setAttribute('aria-hidden', 'true');
+    frame.decoding = 'async';
+    frame.src = dataUrl;
+    frame.addEventListener('error', () => dismissRdpTransitionFrame({ immediate: true }), { once: true });
+    displayShell.appendChild(frame);
+    rdpTransitionFrame = frame;
+    rdpTransitionReadyForResize = false;
+    rdpTransitionExpiryTimer = window.setTimeout(
+        () => dismissRdpTransitionFrame(),
+        Math.max(1000, RDP_TRANSITION_FRAME_MAX_AGE_MS - age),
+    );
+}
+
+async function showRdpResizeTransitionFrame() {
+    if (rdpTransitionFrame) return true;
+    if (!rdpWorkerBridge || !connected) return false;
+    try {
+        // Capture before MonitorLayout mutates the remote surface. Capturing
+        // after ResetGraphics can already contain ClearCodec's sparse/old-size
+        // residue, which is exactly the broken frame this overlay must hide.
+        const snapshot = await getRemoteDesktopSnapshotForAi({ maxWidth: 1280, quality: 0.76 });
+        const dataUrl = String(snapshot?.dataUrl || '');
+        if (!dataUrl.startsWith('data:image/')) return false;
+
+        const frame = document.createElement('img');
+        frame.className = 'rdp-resize-transition-frame';
+        frame.alt = '';
+        frame.setAttribute('aria-hidden', 'true');
+        frame.decoding = 'async';
+        frame.src = dataUrl;
+        try { await frame.decode(); } catch {
+            if (!frame.complete || !frame.naturalWidth) return false;
+        }
+        if (rdpTransitionFrame) return true;
+        displayShell?.appendChild(frame);
+        rdpTransitionFrame = frame;
+        rdpTransitionReadyForResize = true;
+        window.clearTimeout(rdpTransitionExpiryTimer);
+        rdpTransitionExpiryTimer = window.setTimeout(
+            () => dismissRdpTransitionFrame(),
+            RDP_TRANSITION_FRAME_MAX_AGE_MS,
+        );
+        try { sessionStorage.removeItem(RDP_TRANSITION_FRAME_KEY); } catch {}
+        // Ensure the complete old frame is composited before the server is
+        // allowed to begin deleting/replacing its old-size graphics surface.
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+        return true;
+    } catch (error) {
+        console.warn('[rdp-resize] could not preserve transition frame', error?.message || error);
+        return false;
+    }
+}
+
+function waitForFreshRdpFrameAfterReconnect() {
+    if (!rdpTransitionFrame) return;
+    window.clearTimeout(rdpTransitionPollTimer);
+    const poll = async () => {
+        if (!rdpTransitionFrame) return;
+        if (!connected || !rdpWorkerBridge) {
+            rdpTransitionPollTimer = window.setTimeout(poll, 180);
+            return;
+        }
+        try {
+            const diag = await rdpWorkerBridge.call('rdpGetWorkerDiagnostics', []);
+            const meaningfulUpdates = Number(diag.classicBitmaps || 0)
+                + Number(diag.bitmapEvents || 0)
+                + Number(diag.avc420Events || 0)
+                + Number(diag.avc444Events || 0);
+            if (Number(diag.presents || 0) >= 6 && meaningfulUpdates >= 100) {
+                rdpTransitionReadyForResize = true;
+                const desired = computeRdpSize();
+                const geometryChanged = desired.width !== rdpWidth || desired.height !== rdpHeight;
+                if (geometryChanged && !rdpResizeAwaitingReset && !rdpResizeCleanReconnectPending) {
+                    rdpResizeQueued = false;
+                    scheduleLiveRdpResize({ delay: 0 });
+                    rdpTransitionPollTimer = window.setTimeout(poll, 180);
+                    return;
+                }
+                if (!geometryChanged && !rdpResizeAwaitingReset && !rdpResizeCleanReconnectPending) {
+                    dismissRdpTransitionFrame();
+                    return;
+                }
+            }
+            if (rdpTransitionReadyForResize && rdpResizeCleanReconnectPending) {
+                // Keep the original good frame visible through the entire
+                // chained resize/reload sequence. It must not be replaced by
+                // a sparse or black ResetGraphics transition surface.
+                rdpTransitionPollTimer = window.setTimeout(poll, 180);
+                return;
+            }
+        } catch {}
+        rdpTransitionPollTimer = window.setTimeout(poll, 180);
+    };
+    poll();
+}
+
+function assertWorkerGpuAvailable() {
+    const missing = [];
+    if (!globalThis.isSecureContext) missing.push('INSECURE_CONTEXT');
+    if (typeof Worker === 'undefined') missing.push('MODULE_WORKER_UNAVAILABLE');
+    if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
+    if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
+}
+
+async function ensureRdpWorkerProbe() {
+    if (!rdpWorkerProbeCapabilities) {
+        rdpWorkerProbeCapabilities = await RdpWorkerBridge.probe({ url: RDP_WORKER_PROBE_URL });
+    }
+    rdpDiag.workerProbe = rdpWorkerProbeCapabilities;
+    if (!rdpWorkerProbeCapabilities.supported) {
+        throw new Error(`WORKER_GPU_PROBE_FAILED:${rdpWorkerProbeCapabilities.reason || 'unknown'}:${rdpWorkerProbeCapabilities.stage || 'unknown'}:${rdpWorkerProbeCapabilities.error || ''}`);
+    }
+    return rdpWorkerProbeCapabilities;
+}
+
+async function initializeRdpWorker() {
+    assertWorkerGpuAvailable();
+    await ensureRdpWorkerProbe();
+    const bridge = new RdpWorkerBridge(new Worker(RDP_WORKER_URL, { type: 'module' }));
+    rdpWorkerBridge = bridge;
+    bridge.installGlobals(window);
+    try {
+        await bridge.setLocalFiles(rdpStorageFiles, { notify: false });
+        const capabilities = await bridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
+        wasmReady = true;
+        rdpDiag.renderer = 'worker-gpu-v2';
+        rdpDiag.worker = capabilities;
+        return capabilities;
+    } catch (error) {
+        const failedStage = bridge.bootStage || 'pre-worker';
+        try { bridge.close(); } catch {}
+        if (rdpWorkerBridge === bridge) rdpWorkerBridge = null;
+        wasmReady = false;
+        error.rdpBootStage = failedStage;
+        throw error;
+    }
+}
+
+async function restartRdpWorkerInPlace(width, height, { reason = 'reconnect' } = {}) {
+    if (rdpWorkerRestartPromise) return rdpWorkerRestartPromise;
+    const targetWidth = Math.max(64, Math.trunc(Number(width) || rdpWidth || 1920));
+    const targetHeight = Math.max(64, Math.trunc(Number(height) || rdpHeight || 1080));
+    rdpWorkerRestartPromise = (async () => {
+        const oldBridge = rdpWorkerBridge;
+        rdpInternalRestarting = true;
+        rdpTransitionReadyForResize = false;
+        clearConnectWatchdog();
+        if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
+        rdpReconnecting = false;
+        rdpManualDisconnect = false;
+        oldBridge?.input?.releaseAll();
+        try { oldBridge?.notify('rdpDisconnect', []); } catch {}
+        stopAgentDriveBridge();
+        connected = false;
+        rdpConnectionPhase = 'connecting';
+        setStatus('connecting', t('正在应用新的远程桌面尺寸...'));
+
+        // Let the old Go/WebSocket loop observe disconnect before terminating
+        // it. This prevents the replacement transport racing a still-open proxy
+        // session, while the retained frame stays visible in this same document.
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
+        try { oldBridge?.close(); } catch {}
+        if (rdpWorkerBridge === oldBridge) rdpWorkerBridge = null;
+        wasmReady = false;
+
+        destroyRdpCanvas();
+        ensureCanvas(targetWidth, targetHeight);
+        await initializeRdpWorker();
+
+        let readyTimer = 0;
+        const ready = new Promise((resolve, reject) => {
+            rdpInternalRestartReady = resolve;
+            rdpInternalRestartFailure = reject;
+            readyTimer = window.setTimeout(() => reject(new Error('RDP replacement transport timed out')), CONNECT_TIMEOUT_MS + 1500);
+        });
+        try {
+            reportRdpEvent('worker-restart', { value: reason, width: targetWidth, height: targetHeight });
+            await connect();
+            await ready;
+        } finally {
+            window.clearTimeout(readyTimer);
+            rdpInternalRestartReady = null;
+            rdpInternalRestartFailure = null;
+        }
+    })().catch((error) => {
+        const failedStage = error?.rdpBootStage || rdpWorkerBridge?.bootStage || 'worker-restart';
+        rdpDiag.worker = { error: error?.message || String(error), bootStage: failedStage };
+        console.error('[rdp-worker] in-place restart failed:', error);
+        setStatus('error', `RDP Worker GPU 重建失败 [${failedStage}]: ${error.message || error}`);
+        throw error;
+    }).finally(() => {
+        rdpInternalRestarting = false;
+        rdpWorkerRestartPromise = null;
+        const desired = computeRdpSize();
+        if (connected && (desired.width !== rdpWidth || desired.height !== rdpHeight)) {
+            scheduleLiveRdpResize({ delay: 120, resetRetry: true });
+        }
+    });
+    return rdpWorkerRestartPromise;
+}
+
+async function reconnectWithSettings({ reason = 'settings', preserveFrame = true, targetSize = null } = {}) {
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     clearConnectWatchdog();
     rdpManualDisconnect = false;
     rdpReconnecting = false;
     rdpReconnectAttempts = 0;
-    connected = false;
-    // Persist before reload so the new session actually applies the clicked
-    // resolution / quality / fps instead of re-reading the old params.
+    // Persist before rebuilding so the replacement transport applies the
+    // clicked resolution / quality / fps instead of re-reading old params.
     persistSessionParams({
         rdpResolution: params.rdpResolution || '1080p',
         quality: qualityMode,
         rdpFps: fpsValue,
     });
-    /* Disconnect the old session and give Go WASM + WebSocket a moment to
-     * tear down before starting a fresh connection. Without this gap the new
-     * connect races the old close and the proxy/WASM state machine jams. */
-    try { rdpDisconnect(); } catch {}
-    stopAgentDriveBridge();
-    try { rdpWorkerBridge?.close(); } catch {}
-    rdpWorkerBridge = null;
-    location.reload();
+    if (preserveFrame && connected) await showRdpResizeTransitionFrame();
+    const size = targetSize || computeRdpSize();
+    return restartRdpWorkerInPlace(size.width, size.height, { reason });
+}
+
+async function applyLiveRenderPreferences(reason = 'preferences') {
+	if (!connected || !rdpWorkerBridge || typeof window.rdpSetRenderPreferences !== 'function') return false;
+	reportRdpEvent('preferences-request', { value: reason });
+	reportWorkerTelemetry(0, { reason: `${reason}-before` }).catch(() => {});
+	const accepted = await Promise.resolve(window.rdpSetRenderPreferences(qualityMode, fpsValue));
+	if (!accepted) throw new Error('RDP renderer is not ready for live preferences');
+	if (reason === 'quality') {
+		// The login-time ClientInfo flags cannot change in place. Ask for a fresh
+		// RDPGFX update after changing Frame Acknowledge feedback so the encoder
+		// can converge on the new live quality policy promptly.
+		window.setTimeout(() => window.rdpRequestFullRefresh?.(), 80);
+	}
+	reportRdpEvent('preferences-applied', { value: reason });
+	window.setTimeout(() => reportWorkerTelemetry(0, { reason: `${reason}-after` }).catch(() => {}), 1000);
+	setStatus('connected', `${qualityMode === 'performance' ? t('性能') : qualityMode === 'quality' ? t('画质') : t('平衡')} · ${fpsValue}FPS`);
+	return true;
 }
 
 async function connect() {
     if (!wasmReady || !rdpWorkerBridge) throw new Error('Worker GPU WASM engine is not ready');
 
     /* Clean up any lingering state (safe to call even if already clean). */
+    lastWorkerTelemetrySample = null;
     try { rdpDisconnect(); } catch {}
     stopAgentDriveBridge();
     rdpManualDisconnect = false;
@@ -1239,6 +1663,7 @@ function disconnect() {
     rdpManualDisconnect = true;
     rdpWorkerBridge?.input?.releaseAll();
     clearConnectWatchdog();
+    resetLiveRdpResizeState();
     rdpReconnecting = false;
     if (rdpReconnectTimer) { clearTimeout(rdpReconnectTimer); rdpReconnectTimer = null; }
     connected = false;
@@ -1276,7 +1701,10 @@ function maybeAutoReconnect({ reason = t('连接已断开') } = {}) {
         rdpReconnecting = false;
         if (rdpManualDisconnect || connected) return;
         if (!rdpWorkerBridge) {
-            location.reload();
+            reconnectWithSettings({ reason: 'auto-reconnect', preserveFrame: false }).catch((e) => {
+                console.warn('[rdp-wasm] Worker rebuild reconnect failed:', e);
+                if (!rdpManualDisconnect && !connected) maybeAutoReconnect({ reason: e?.message || t('重连失败') });
+            });
             return;
         }
         connect().catch((e) => {
@@ -1290,6 +1718,17 @@ function maybeAutoReconnect({ reason = t('连接已断开') } = {}) {
 /* ═══════════════════════════════════════════════════════════════════════
  * CANVAS MANAGEMENT
  * ═══════════════════════════════════════════════════════════════════════ */
+function destroyRdpCanvas() {
+    try { rdpTouchController?.destroy?.(); } catch {}
+    rdpTouchController = null;
+    try { rdpInputAbortController?.abort?.(); } catch {}
+    rdpInputAbortController = null;
+    inputAttached = false;
+    try { rdpCanvas?.remove(); } catch {}
+    rdpCanvas = null;
+    if (displayRoot) displayRoot.innerHTML = '';
+}
+
 function ensureCanvas(w, h) {
     rdpWidth = w;
     rdpHeight = h;
@@ -1450,13 +1889,15 @@ function canvasCoords(e) {
 function attachInputEvents() {
     if (inputAttached || !rdpCanvas) return;
     inputAttached = true;
+    rdpInputAbortController = new AbortController();
+    const signal = rdpInputAbortController.signal;
 
     rdpCanvas.addEventListener('mousemove', (e) => {
         if (!connected) return;
         const { x, y } = canvasCoords(e);
         if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('mouse-move', { x, y });
         else rdpMouseMove(x, y);
-    });
+    }, { signal });
 
     rdpCanvas.addEventListener('mousedown', (e) => {
         if (!connected) return;
@@ -1465,7 +1906,7 @@ function attachInputEvents() {
         const { x, y } = canvasCoords(e);
         if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('mouse-down', { button: e.button, x, y });
         else rdpMouseDown(e.button, x, y);
-    });
+    }, { signal });
 
     rdpCanvas.addEventListener('mouseup', (e) => {
         if (!connected) return;
@@ -1473,7 +1914,7 @@ function attachInputEvents() {
         const { x, y } = canvasCoords(e);
         if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('mouse-up', { button: e.button, x, y });
         else rdpMouseUp(e.button, x, y);
-    });
+    }, { signal });
 
     rdpCanvas.addEventListener('wheel', (e) => {
         if (!connected) return;
@@ -1484,9 +1925,9 @@ function attachInputEvents() {
         else delta = -e.deltaY / 100;
         if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('wheel', { delta });
         else rdpMouseWheel(delta);
-    }, { passive: false });
+    }, { passive: false, signal });
 
-    rdpCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    rdpCanvas.addEventListener('contextmenu', (e) => e.preventDefault(), { signal });
 
     /* Clipboard sync on pointer down */
     function syncClipboard() {
@@ -1500,20 +1941,20 @@ function attachInputEvents() {
             })
             .catch(() => {});
     }
-    rdpCanvas.addEventListener('pointerdown', syncClipboard);
+    rdpCanvas.addEventListener('pointerdown', syncClipboard, { signal });
 
     /* Proactive clipboard sync: also sync when the window regains focus or
      * becomes visible, so Ctrl+V doesn't paste stale content. */
-    window.addEventListener('focus', syncClipboard);
+    window.addEventListener('focus', syncClipboard, { signal });
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') syncClipboard();
-    });
+    }, { signal });
 
     document.addEventListener('paste', (e) => {
         if (!connected) return;
         const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
         if (text) rdpClipboardChanged(text);
-    });
+    }, { signal });
 
     rdpCanvas.addEventListener('keydown', async (e) => {
         if (!connected) return;
@@ -1527,14 +1968,14 @@ function attachInputEvents() {
         await clipboardSyncPromise;
         if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('key-down', { code: e.code });
         else rdpKeyDown(e.code);
-    });
+    }, { signal });
 
     rdpCanvas.addEventListener('keyup', (e) => {
         if (!connected) return;
         e.preventDefault();
         if (selectedPipeline === 'worker-gpu-v2') rdpWorkerBridge.input.push('key-up', { code: e.code });
         else rdpKeyUp(e.code);
-    });
+    }, { signal });
 
     /* ─── Touch input — uses RdpTouchController module ──── */
     if (!rdpTouchController) {
@@ -1626,7 +2067,10 @@ function setStatus(state, text, options = {}) {
     if (overlayMsg) overlayMsg.textContent = text || '';
     const holdMs = Number(options.holdOverlayMs) || 0;
     if (overlay) {
-        if (state === 'connected' && holdMs > 0) {
+        const keepTransitionVisible = !!rdpTransitionFrame && state !== 'error';
+        if (keepTransitionVisible) {
+            overlay.classList.add('hidden');
+        } else if (state === 'connected' && holdMs > 0) {
             overlay.classList.remove('hidden');
             setTimeout(() => { if (statusSequence === seq) overlay.classList.add('hidden'); }, holdMs);
         } else {
@@ -1692,19 +2136,9 @@ function isPortraitTouch() {
     return !!coarse && (window.innerHeight || 0) >= (window.innerWidth || 0);
 }
 function computeRdpSize() {
-    /* Resolution model: the remote desktop ALWAYS matches the display
-     * container's real aspect ratio (so object-fit:contain leaves NO black
-     * bars). The "resolution" setting is a *pixel-density tier* that only
-     * controls sharpness/bandwidth — NOT the shape:
-     *   auto  → device physical pixels (container CSS size × dpr)
-     *   1080p → short edge = 1080, long edge scaled to container aspect
-     *   2K    → short edge = 1440
-     *   4K    → short edge = 2160
-     * The tier fills the SAME region at the SAME PPI on every edge. */
-    const res = params.rdpResolution || '1080p';
-    const wxhMatch = res.match(/^(\d+)x(\d+)$/);
-
-    /* Measure the display container's real aspect ratio. */
+    /* Match the display region's aspect, but keep every named density tier
+     * inside its conventional pixel envelope. In particular, a shallow stage
+     * must not turn "2K" into a 6176x1440 monitor-layout request. */
     const stage = document.getElementById('rdpStage');
     let cw = 0, ch = 0;
     if (stage) {
@@ -1712,48 +2146,194 @@ function computeRdpSize() {
         cw = r.width; ch = r.height;
     }
     if (!cw || !ch) { cw = window.innerWidth; ch = window.innerHeight || 1; }
-    const aspect = cw / ch; /* width / height of the region we must fill */
+    return computeSafeRdpSize({
+        resolution: params.rdpResolution || '1080p',
+        viewportWidth: cw,
+        viewportHeight: ch,
+        devicePixelRatio: window.devicePixelRatio || 1,
+    });
+}
 
-    let w, h;
-    if (wxhMatch) {
-        /* Legacy WxH format (e.g. '1920x1080' from old saved connections):
-         * honour the short edge as a PPI tier, keep container aspect. */
-        const shortPx = Math.min(Number(wxhMatch[1]), Number(wxhMatch[2]));
-        if (aspect >= 1) { h = shortPx; w = Math.round(h * aspect); }
-        else { w = shortPx; h = Math.round(w / aspect); }
-    } else if (res === 'auto' || !/^\d+p?$|^[0-9]+K$/i.test(res)) {
-        /* Auto: device physical pixels, capped so the long edge ≤ 4K. */
-        const dpr = window.devicePixelRatio || 1;
-        w = Math.round(cw * dpr);
-        h = Math.round(ch * dpr);
-    } else {
-        /* Density tier: short edge = tier pixels, long edge = short / minRatio
-         * so the SHORT dimension carries the tier's PPI and the region keeps
-         * the container's exact shape. */
-        const tierShort = { '1080p': 1080, '2K': 1440, '4K': 2160, '8K': 4320 }[res] || 1080;
-        if (aspect >= 1) {
-            /* landscape container: height is the short edge */
-            h = tierShort;
-            w = Math.round(h * aspect);
-        } else {
-            /* portrait container (phone): width is the short edge */
-            w = tierShort;
-            h = Math.round(w / aspect);
+async function applyLiveRdpResize() {
+    rdpResizeTimer = 0;
+    if (!connected || !wasmReady || !rdpWorkerBridge || typeof window.rdpSetResolution !== 'function') return false;
+    let size = computeRdpSize();
+    if (rdpTransitionFrame && !rdpTransitionReadyForResize) {
+        if (size.width !== rdpWidth || size.height !== rdpHeight) rdpResizeQueued = true;
+        return false;
+    }
+    if (rdpResizeAwaitingReset) {
+        if (!rdpResizeRequestedSize
+            || size.width !== rdpResizeRequestedSize.width
+            || size.height !== rdpResizeRequestedSize.height) rdpResizeQueued = true;
+        return false;
+    }
+    if (size.width === rdpWidth && size.height === rdpHeight) {
+        rdpResizeRetryCount = 0;
+        return true;
+    }
+    if (rdpResizeInFlight) {
+        rdpResizeQueued = true;
+        return false;
+    }
+    const sinceLastRequest = performance.now() - rdpLastResizeRequestAt;
+    if (rdpLastResizeRequestAt > 0 && sinceLastRequest < RDP_MIN_RESIZE_INTERVAL_MS) {
+        rdpResizeQueued = true;
+        scheduleLiveRdpResize({ delay: RDP_MIN_RESIZE_INTERVAL_MS - sinceLastRequest });
+        return false;
+    }
+    rdpResizeInFlight = true;
+    try {
+        const transitionReady = await showRdpResizeTransitionFrame();
+        if (!transitionReady) {
+            rdpResizeRetryCount++;
+            if (rdpResizeRetryCount <= 6) scheduleLiveRdpResize({ delay: 350 });
+            return false;
+        }
+        size = computeRdpSize();
+        if (size.width === rdpWidth && size.height === rdpHeight) {
+            dismissRdpTransitionFrame();
+            return true;
+        }
+        reportRdpEvent('resize-request', {
+            width: size.width,
+            height: size.height,
+            previousWidth: rdpWidth,
+            previousHeight: rdpHeight,
+        });
+        reportWorkerTelemetry(0, { reason: 'resize-request' }).catch(() => {});
+        const accepted = await Promise.resolve(window.rdpSetResolution(size.width, size.height));
+        if (!accepted) {
+            // rdpOnReady can precede the dynamic display channel by a short
+            // interval. Retry a bounded number of times; unsupported servers
+            // must not create an endless resize loop.
+            rdpResizeRetryCount++;
+            if (rdpResizeRetryCount <= 12) scheduleLiveRdpResize({ delay: 400 });
+            return false;
+        }
+        rdpResizeRetryCount = 0;
+        rdpLastResizeRequestAt = performance.now();
+        rdpResizeAwaitingReset = true;
+        rdpResizeRequestedSize = { ...size };
+        reportRdpEvent('resize-accepted', { width: size.width, height: size.height });
+        window.clearTimeout(rdpResizeAckTimer);
+        rdpResizeAckTimer = window.setTimeout(() => {
+            if (!rdpResizeAwaitingReset) return;
+            const timedOut = rdpResizeRequestedSize;
+            rdpResizeAwaitingReset = false;
+            rdpResizeRequestedSize = null;
+            rdpResizeResetTimeouts++;
+            reportRdpEvent('resize-reset-timeout', {
+                width: timedOut?.width || 0,
+                height: timedOut?.height || 0,
+                value: `timeout-${rdpResizeResetTimeouts}`,
+            });
+            reportWorkerTelemetry(0, { reason: 'resize-reset-timeout' }).catch(() => {});
+            // A lost ResetGraphics must not create an unbounded MonitorLayout
+            // storm. Retry at most twice, retaining only the latest geometry.
+            if (connected && rdpResizeResetTimeouts <= 2) scheduleLiveRdpResize({ delay: 250 });
+        }, 12000);
+        return true;
+    } catch (error) {
+        console.warn('[rdp-resize] live resolution request failed:', error?.message || error);
+        return false;
+    } finally {
+        rdpResizeInFlight = false;
+        if (rdpResizeQueued && !rdpResizeAwaitingReset) {
+            rdpResizeQueued = false;
+            scheduleLiveRdpResize({ delay: 0 });
         }
     }
+}
 
-    /* Preserve aspect while respecting RDP/browser/server bounds. */
-    const maxW = 7680, maxH = 4320;
-    const capScale = Math.min(1, maxW / w, maxH / h);
-    if (capScale < 1) {
-        w = Math.round(w * capScale);
-        h = Math.round(h * capScale);
+function scheduleLiveRdpResize({ delay = 180, resetRetry = false } = {}) {
+    if (rdpResizeCleanReconnectTimer) {
+        const desired = computeRdpSize();
+        if (desired.width !== rdpWidth || desired.height !== rdpHeight) {
+            window.clearTimeout(rdpResizeCleanReconnectTimer);
+            rdpResizeCleanReconnectTimer = 0;
+            rdpResizeCleanReconnectGeneration++;
+            rdpResizeCleanReconnectPending = false;
+        }
     }
+    if (resetRetry) {
+        rdpResizeRetryCount = 0;
+        rdpResizeResetTimeouts = 0;
+    }
+    window.clearTimeout(rdpResizeTimer);
+    rdpResizeTimer = window.setTimeout(() => { applyLiveRdpResize().catch(() => {}); }, Math.max(0, Number(delay) || 0));
+}
 
-    /* RDP requires even dimensions and sane minimums. */
-    w = Math.max(640, Math.floor(w / 2) * 2);
-    h = Math.max(480, Math.floor(h / 2) * 2);
-    return { width: w, height: h };
+function resetLiveRdpResizeState() {
+    window.clearTimeout(rdpResizeTimer);
+    window.clearTimeout(rdpResizeAckTimer);
+    rdpResizeTimer = 0;
+    rdpResizeAckTimer = 0;
+    rdpResizeInFlight = false;
+    rdpResizeQueued = false;
+    rdpResizeAwaitingReset = false;
+    rdpResizeRequestedSize = null;
+    rdpResizeRetryCount = 0;
+    rdpResizeResetTimeouts = 0;
+    rdpLastResizeRequestAt = 0;
+    window.clearTimeout(rdpResizeCleanReconnectTimer);
+    rdpResizeCleanReconnectTimer = 0;
+    rdpResizeCleanReconnectGeneration++;
+    rdpResizeCleanReconnectPending = false;
+}
+
+function scheduleResizeCleanReconnect(width, height) {
+    window.clearTimeout(rdpResizeCleanReconnectTimer);
+    const generation = ++rdpResizeCleanReconnectGeneration;
+    rdpResizeCleanReconnectPending = true;
+    rdpResizeCleanReconnectTimer = window.setTimeout(async () => {
+        rdpResizeCleanReconnectTimer = 0;
+        if (generation !== rdpResizeCleanReconnectGeneration || !connected || rdpResizeAwaitingReset || rdpResizeQueued) {
+            rdpResizeCleanReconnectPending = false;
+            return;
+        }
+        const desired = computeRdpSize();
+        if (desired.width !== width || desired.height !== height) {
+            rdpResizeCleanReconnectPending = false;
+            scheduleLiveRdpResize({ delay: 0 });
+            return;
+        }
+        if (!rdpTransitionFrame) await showRdpResizeTransitionFrame();
+        if (generation !== rdpResizeCleanReconnectGeneration || !connected || rdpResizeAwaitingReset || rdpResizeQueued) {
+            rdpResizeCleanReconnectPending = false;
+            return;
+        }
+        const latest = computeRdpSize();
+        if (latest.width !== width || latest.height !== height) {
+            rdpResizeCleanReconnectPending = false;
+            scheduleLiveRdpResize({ delay: 0 });
+            return;
+        }
+        rdpTransitionReadyForResize = false;
+        try {
+            await reconnectWithSettings({
+                reason: 'resize-clean-reconnect',
+                preserveFrame: false,
+                targetSize: { width, height },
+            });
+        } catch (error) {
+            console.warn('[rdp-resize] clean Worker restart failed:', error?.message || error);
+        }
+    }, RDP_RESIZE_RECONNECT_SETTLE_MS);
+}
+
+function initLiveRdpResize() {
+    const stage = document.getElementById('rdpStage');
+    if (stage && typeof ResizeObserver === 'function') {
+        rdpStageResizeObserver = new ResizeObserver(() => scheduleLiveRdpResize());
+        rdpStageResizeObserver.observe(stage);
+    }
+    const scheduleSettledResize = () => scheduleLiveRdpResize({ delay: 220, resetRetry: true });
+    window.addEventListener('resize', scheduleSettledResize, { passive: true });
+    window.addEventListener('orientationchange', scheduleSettledResize, { passive: true });
+    document.addEventListener('fullscreenchange', scheduleSettledResize);
+    window.visualViewport?.addEventListener?.('resize', scheduleSettledResize, { passive: true });
+    screen.orientation?.addEventListener?.('change', scheduleSettledResize);
 }
 
 /* ─── Shortcut key handler ────────────────────────────────────────── */
@@ -1884,8 +2464,10 @@ function initToolbar() {
             qualityBtn.textContent = qualityMode === 'performance' ? t('性能') : qualityMode === 'quality' ? t('画质') : t('平衡');
             persistSessionParams({ quality: qualityMode });
             if (connected) {
-                setStatus('connecting', t('正在应用画质设置...'));
-                reconnectWithSettings();
+				applyLiveRenderPreferences('quality').catch((error) => {
+					console.warn('[rdp] live quality preference failed', error);
+					setStatus('connected', t('画质设置已保存'));
+				});
             }
         });
     }
@@ -1898,8 +2480,10 @@ function initToolbar() {
             fpsBtn.textContent = fpsValue + 'FPS';
             persistSessionParams({ rdpFps: fpsValue });
             if (connected) {
-                setStatus('connecting', t('正在应用帧率设置...'));
-                reconnectWithSettings();
+				applyLiveRenderPreferences('fps').catch((error) => {
+					console.warn('[rdp] live FPS preference failed', error);
+					setStatus('connected', t('帧率设置已保存'));
+				});
             }
         });
     }
@@ -1958,6 +2542,7 @@ function initToolbar() {
             isConnected: () => connected,
             sendKeyDown: (code) => rdpKeyDown(code),
             sendKeyUp: (code) => rdpKeyUp(code),
+            sendUnicodeText: (text) => rdpUnicodeText(text),
             sendClipboardText: (text) => sendTextViaClipboard(text),
         });
     }
@@ -2130,7 +2715,9 @@ function initToolbar() {
     if (reconnectBtn) {
         reconnectBtn.addEventListener('click', () => {
             rdpReconnectAttempts = 0;
-            reconnectWithSettings();
+            reconnectWithSettings({ reason: 'manual-reconnect' }).catch((error) => {
+                console.warn('[rdp-wasm] manual reconnect failed:', error);
+            });
         });
     }
 
@@ -2206,11 +2793,13 @@ function initToolbar() {
     }
 
     /* Resolution button — density tiers (aspect always follows the screen). */
-    const resolutions = ['auto', '1080p', '2K', '4K', '8K'];
-    const resLabels = { 'auto': t('自动'), '1080p': '1080p', '2K': '2K', '4K': '4K', '8K': '8K' };
+    const resolutions = ['auto', '1080p', '2K', '4K'];
+    const resLabels = { 'auto': t('自动'), '1080p': '1080p', '2K': '2K', '4K': '4K' };
     /* Map legacy WxH values from old saved sessions to new tier names. */
     const legacyMap = { '1920x1080': '1080p', '2560x1440': '2K', '3840x2160': '4K', '7680x4320': '8K' };
-    const currentRes = legacyMap[params.rdpResolution] || params.rdpResolution || '1080p';
+    const currentRes = params.rdpResolution === '8K'
+        ? '4K'
+        : legacyMap[params.rdpResolution] || params.rdpResolution || '1080p';
     let resIdx = resolutions.indexOf(currentRes);
     if (resIdx < 0) resIdx = 1; /* default 1080p */
     if (resolutionBtn) {
@@ -2220,13 +2809,11 @@ function initToolbar() {
             resolutionBtn.textContent = resLabels[resolutions[resIdx]] || resolutions[resIdx];
             params.rdpResolution = resolutions[resIdx];
             persistSessionParams({ rdpResolution: params.rdpResolution });
-            /* Reconnect with new density tier. */
+            /* Apply the new density tier through MS-RDPEDISP without dropping
+             * the active session. The same coordinator also handles fullscreen
+             * and orientation/container changes. */
             if (connected) {
-                const size = computeRdpSize();
-                rdpWidth = size.width;
-                rdpHeight = size.height;
-                setStatus('connecting', t('正在应用分辨率设置...'));
-                reconnectWithSettings();
+                scheduleLiveRdpResize({ delay: 0, resetRetry: true });
             }
         });
     }
@@ -2723,38 +3310,23 @@ window.addEventListener('message', (e) => {
     initToolbar();
     initFilePanel();
     loadRemoteNotesSettings();
-
+    // render20 no longer navigates the iframe for resize reconnects. Discard
+    // any transition snapshot left by the legacy reload path.
+    try { sessionStorage.removeItem(RDP_TRANSITION_FRAME_KEY); } catch {}
 
     /* Compute initial resolution */
     const size = computeRdpSize();
     rdpWidth = size.width;
     rdpHeight = size.height;
     ensureCanvas(rdpWidth, rdpHeight);
+    initLiveRdpResize();
 
     /* Worker GPU is mandatory: no page-thread WASM, Canvas2D, or page GPU fallback. */
     try {
-        const missing = [];
-        if (!globalThis.isSecureContext) missing.push('INSECURE_CONTEXT');
-        if (typeof Worker === 'undefined') missing.push('MODULE_WORKER_UNAVAILABLE');
-        if (typeof rdpCanvas?.transferControlToOffscreen !== 'function') missing.push('OFFSCREEN_CANVAS_TRANSFER_UNAVAILABLE');
-        if (missing.length) throw new Error(`WORKER_GPU_REQUIRED:${missing.join('+')}`);
-
-        const probe = await RdpWorkerBridge.probe({ url: './rdp-worker-probe.js?v=20260730-rdp-ordered-surface4' });
-        rdpDiag.workerProbe = probe;
-        if (!probe.supported) {
-            throw new Error(`WORKER_GPU_PROBE_FAILED:${probe.reason || 'unknown'}:${probe.stage || 'unknown'}:${probe.error || ''}`);
-        }
-
-        rdpWorkerBridge = new RdpWorkerBridge(new Worker('./rdp-worker.js?v=20260730-rdp-ordered-surface4', { type: 'module' }));
-        rdpWorkerBridge.installGlobals(window);
-        await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: false });
-        const capabilities = await rdpWorkerBridge.init(rdpCanvas, { width: rdpWidth, height: rdpHeight });
-        wasmReady = true;
-        rdpDiag.renderer = 'worker-gpu-v2';
-        rdpDiag.worker = capabilities;
+        await initializeRdpWorker();
         await connect();
     } catch (err) {
-        const failedStage = rdpWorkerBridge?.bootStage || 'pre-worker';
+        const failedStage = err?.rdpBootStage || rdpWorkerBridge?.bootStage || 'pre-worker';
         try { rdpWorkerBridge?.close(); } catch {}
         rdpWorkerBridge = null;
         wasmReady = false;

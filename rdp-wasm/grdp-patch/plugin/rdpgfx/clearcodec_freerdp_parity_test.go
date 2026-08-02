@@ -224,6 +224,7 @@ func buildNSCodecRaw2x2() []byte {
 	binary.LittleEndian.PutUint32(msg[4:], 4)
 	binary.LittleEndian.PutUint32(msg[8:], 4)
 	binary.LittleEndian.PutUint32(msg[12:], 0)
+	msg[16] = 1                   // ColorLossLevel must be in FreeRDP's accepted [1,7] range.
 	msg = append(msg, 0, 1, 2, 3) // Y
 	msg = append(msg, 0, 0, 0, 0) // Co
 	msg = append(msg, 0, 0, 0, 0) // Cg
@@ -253,21 +254,12 @@ func TestClearNSCodecSubcodecDecodedTopDown(t *testing.T) {
 	}
 }
 
-func TestClearNSCodecMalformedPayloadWarns(t *testing.T) {
+func TestClearNSCodecMalformedPayloadDropsWholeTile(t *testing.T) {
 	d := newClearDecoder()
 	sub := []byte{0, 0, 0, 0, 2, 0, 2, 0, 6, 0, 0, 0, 1, 1, 2, 3, 4, 5, 6}
 	stream := buildClearStream(0, 1, nil, residualSolid(11, 22, 33, 4*4), nil, sub)
-	if _, err := d.decode(stream, 4, 4); err != nil {
-		t.Fatalf("malformed optional subcodec must not drop the tile: %v", err)
-	}
-	found := false
-	for _, w := range d.takeWarns() {
-		if strings.Contains(w, "nscodec") && strings.Contains(w, "decode failed") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("missing malformed nscodec warning")
+	if _, err := d.decode(stream, 4, 4); err == nil || !strings.Contains(strings.ToLower(err.Error()), "nscodec") {
+		t.Fatalf("malformed NSCodec must reject the complete ClearCodec tile, got %v", err)
 	}
 }
 
@@ -305,6 +297,30 @@ func TestClearSeqAdoptsFirstNonZero(t *testing.T) {
 	}
 	if d.seqMismatch != 0 {
 		t.Fatalf("unexpected mismatch count %d", d.seqMismatch)
+	}
+}
+
+func TestResetGraphicsPreservesClearCodecCaches(t *testing.T) {
+	g := NewGfxHandler(nil)
+	defer g.Close()
+
+	store := buildClearStream(clearFlagGlyphIndex, 1, glyphIndexPtr(17), residualSolid(7, 8, 9, 4), nil, nil)
+	if _, err := g.clearDecoder.decode(store, 2, 2); err != nil {
+		t.Fatalf("store before reset: %v", err)
+	}
+
+	reset := make([]byte, 12)
+	binary.LittleEndian.PutUint32(reset[0:4], 1920)
+	binary.LittleEndian.PutUint32(reset[4:8], 1080)
+	g.onResetGraphics(reset)
+
+	hit := buildClearStream(clearFlagGlyphIndex|clearFlagGlyphHit, 42, glyphIndexPtr(17), nil, nil, nil)
+	out, err := g.clearDecoder.decode(hit, 2, 2)
+	if err != nil {
+		t.Fatalf("cache hit after ResetGraphics: %v", err)
+	}
+	if len(out) != 2*2*4 || out[0] != 7 || out[1] != 8 || out[2] != 9 {
+		t.Fatalf("cached pixels were not preserved: %v", out)
 	}
 }
 

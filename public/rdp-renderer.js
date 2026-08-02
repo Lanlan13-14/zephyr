@@ -91,9 +91,10 @@ export class RdpGpuSurfaceCompositor {
             depth: false,
             stencil: false,
             desynchronized: true,
-            // AI captureId closed-loop needs a readable, exact last-presented
-            // frame. This changes memory behavior, not rendering semantics.
-            preserveDrawingBuffer: true,
+            // Keeping the default framebuffer after every present forces a
+            // costly compositor copy on mobile GPUs. AI screenshots use a
+            // dedicated on-demand readback framebuffer instead.
+            preserveDrawingBuffer: false,
         });
         if (!this.gl) throw new Error('WebGL2 is unavailable');
         this._initGl();
@@ -104,7 +105,7 @@ export class RdpGpuSurfaceCompositor {
             // full server refresh/reset before presenting again.
             this.contextLost = false;
             this._initGl();
-            for (const id of [...this.surfaces.keys()]) this.deleteSurface(id);
+            for (const id of [...this.surfaces.keys()]) this.deleteSurface(id, { preserveMappedDesktop: false });
             // All resources from the lost context are invalid, including cache
             // textures/FBOs. Drop frame bookkeeping that can no longer finish.
             this.cacheEntries.clear();
@@ -125,9 +126,12 @@ export class RdpGpuSurfaceCompositor {
         this.bgraProgram = compileProgram(gl, FRAGMENT_BGRA);
         this.vertexBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-            -1, -1, 0, 1, 1, -1, 1, 1, -1, 1, 0, 0, 1, 1, 1, 0,
-        ]), gl.STATIC_DRAW);
+        this.vertexData = new Float32Array(16);
+        gl.bufferData(gl.ARRAY_BUFFER, this.vertexData.byteLength, gl.DYNAMIC_DRAW);
+        this.programStates = new Map([
+            [this.rgbaProgram, this._createProgramState(this.rgbaProgram)],
+            [this.bgraProgram, this._createProgramState(this.bgraProgram)],
+        ]);
         this.stagingTexture = this._newTexture(1, 1);
         this.stagingWidth = 1;
         this.stagingHeight = 1;
@@ -137,9 +141,42 @@ export class RdpGpuSurfaceCompositor {
         this.scratchFramebuffer = null;
         this.scratchWidth = 0;
         this.scratchHeight = 0;
+        this.captureTexture = null;
+        this.captureFramebuffer = null;
+        this.captureWidth = 0;
+        this.captureHeight = 0;
+        // RESET_GRAPHICS destroys every protocol surface before the resized
+        // desktop has been repainted. Windows can immediately resume VOR
+        // chroma-key fills plus sparse AVC regions; suppressing those keys on
+        // an empty texture otherwise exposes permanent black holes. Keep one
+        // GPU-only copy of the last complete desktop and seed the first
+        // matching post-reset surface from it. New protocol pixels still win
+        // immediately, so this is a transition base rather than a frame cache.
+        this.resetCarryTexture = null;
+        this.resetCarryFramebuffer = null;
+        this.resetCarryWidth = 0;
+        this.resetCarryHeight = 0;
         gl.disable(gl.BLEND);
         gl.disable(gl.DEPTH_TEST);
         gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    }
+
+    _createProgramState(program) {
+        const gl = this.gl;
+        const vao = gl.createVertexArray();
+        gl.bindVertexArray(vao);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+        const position = gl.getAttribLocation(program, 'a_position');
+        const texCoord = gl.getAttribLocation(program, 'a_texCoord');
+        gl.enableVertexAttribArray(position);
+        gl.enableVertexAttribArray(texCoord);
+        gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 16, 0);
+        gl.vertexAttribPointer(texCoord, 2, gl.FLOAT, false, 16, 8);
+        const sampler = gl.getUniformLocation(program, 'u_texture');
+        gl.useProgram(program);
+        gl.uniform1i(sampler, 0);
+        gl.bindVertexArray(null);
+        return { vao };
     }
 
     _newTexture(width, height) {
@@ -188,9 +225,13 @@ export class RdpGpuSurfaceCompositor {
         return this._newSurface(Number(id), Number(width), Number(height), pixelFormat);
     }
 
-    deleteSurface(id) {
+    deleteSurface(id, { preserveMappedDesktop = true } = {}) {
         const surface = this.surfaces.get(Number(id));
         if (!surface) return;
+        // Windows sends DELETE_SURFACE before RESET_GRAPHICS during a live
+        // RDPEDISP resize. Capture while the mapped desktop texture still
+        // exists; waiting for RESET_GRAPHICS is already one command too late.
+        if (preserveMappedDesktop && surface.mapped) this._captureResetCarry();
         this.gl.deleteFramebuffer(surface.framebuffer);
         this.gl.deleteTexture(surface.texture);
         this.surfaces.delete(Number(id));
@@ -246,6 +287,12 @@ export class RdpGpuSurfaceCompositor {
         surface.outputY = Number(outputY) || 0;
         surface.outputWidth = Number(outputWidth) || surface.width;
         surface.outputHeight = Number(outputHeight) || surface.height;
+        // CREATE_SURFACE does not identify which protocol surface is the
+        // desktop. Wait for MAP_SURFACE(_SCALED), then seed only a surface
+        // whose output covers the complete resized desktop. This also handles
+        // the common case where the raw surface size differs from the mapped
+        // output size during a live RDPEDISP transition.
+        this._seedSurfaceFromResetCarry(surface);
         this.dirty = true;
     }
 
@@ -302,41 +349,91 @@ export class RdpGpuSurfaceCompositor {
         return uploaded;
     }
 
-    uploadVideoFrame(id, rect, frame, regions = null) {
+    uploadVideoFrame(id, wireRect, frame, regions = null, { trustRegions = false } = {}) {
         const surface = this._requireSurface(id);
-        const clipped = clampRect(rect, surface.width, surface.height);
-        if (!clipped.width || !clipped.height) return 0;
-        const sourceWidth = Number(frame.displayWidth || frame.codedWidth || clipped.width);
-        const sourceHeight = Number(frame.displayHeight || frame.codedHeight || clipped.height);
+        if (!surface.width || !surface.height) return 0;
+        const sourceWidth = Math.max(1, Math.trunc(Number(frame.displayWidth || frame.codedWidth || surface.width)));
+        const sourceHeight = Math.max(1, Math.trunc(Number(frame.displayHeight || frame.codedHeight || surface.height)));
         this._ensureStaging(sourceWidth, sourceHeight);
         const gl = this.gl;
         gl.bindTexture(gl.TEXTURE_2D, this.stagingTexture);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, frame);
-        const requested = regions?.length ? regions : [{ left: 0, top: 0, right: clipped.width, bottom: clipped.height }];
+        if (this.diagnostics) {
+            this.diagnostics.videoDisplayWidth = sourceWidth;
+            this.diagnostics.videoDisplayHeight = sourceHeight;
+            this.diagnostics.videoCodedWidth = Math.max(0, Math.trunc(Number(frame.codedWidth) || 0));
+            this.diagnostics.videoCodedHeight = Math.max(0, Math.trunc(Number(frame.codedHeight) || 0));
+            this.diagnostics.videoSurfaceWidth = surface.width;
+            this.diagnostics.videoSurfaceHeight = surface.height;
+            this.diagnostics.videoWireLeft = Math.trunc(Number(wireRect?.left) || 0);
+            this.diagnostics.videoWireTop = Math.trunc(Number(wireRect?.top) || 0);
+            this.diagnostics.videoWireRight = Math.trunc(Number(wireRect?.right) || 0);
+            this.diagnostics.videoWireBottom = Math.trunc(Number(wireRect?.bottom) || 0);
+        }
+        const fullFrame = { left: 0, top: 0, right: surface.width, bottom: surface.height };
+        let requested = [fullFrame];
+        // AVC420/AVC444 decode against the complete RDPGFX surface. FreeRDP
+        // resets its H.264 context to surface.width/surface.height and uses the
+        // AVC metadata regionRects (also surface-relative) for dirty updates.
+        // WIRE_TO_SURFACE_1.destRect is only validated by FreeRDP; treating it
+        // as the decoded-frame target scales a full desktop frame into an
+        // unrelated dirty rectangle and produces green/mirrored mosaics.
+        // H.264 coded dimensions may be macroblock padded, so crop the right
+        // and bottom padding when the decoded frame covers the surface.
+        const sourceCoversTarget = sourceWidth >= surface.width && sourceHeight >= surface.height;
+        const scaleFullSource = !sourceCoversTarget;
+        // WebCodecs returns a complete decoder reference frame. Pixels outside
+        // the current RDPGFX dirty metadata are not necessarily desktop pixels:
+        // Windows may leave the VOR chroma key there. Callers opt into strict
+        // region drawing after validating that metadata for AVC420/AVC444.
+        if (trustRegions && Array.isArray(regions) && regions.length && sourceCoversTarget) {
+            const normalized = [];
+            let invalid = false;
+            for (const region of regions) {
+                const raw = [region?.left, region?.top, region?.right, region?.bottom].map(Number);
+                if (!raw.every(Number.isFinite) || raw[0] < 0 || raw[1] < 0 || raw[2] > surface.width || raw[3] > surface.height) {
+                    invalid = true;
+                    break;
+                }
+                const left = Math.max(0, Math.min(surface.width, Math.floor(raw[0])));
+                const top = Math.max(0, Math.min(surface.height, Math.floor(raw[1])));
+                const right = Math.max(left, Math.min(surface.width, Math.ceil(raw[2])));
+                const bottom = Math.max(top, Math.min(surface.height, Math.ceil(raw[3])));
+                if (right <= left || bottom <= top) {
+                    invalid = true;
+                    break;
+                }
+                normalized.push({ left, top, right, bottom });
+            }
+            if (!invalid && normalized.length === regions.length) requested = normalized;
+        }
         let uploaded = 0;
         for (const region of requested) {
-            const left = Math.max(0, Math.min(clipped.width, Math.floor(Number(region?.left) || 0)));
-            const top = Math.max(0, Math.min(clipped.height, Math.floor(Number(region?.top) || 0)));
-            const right = Math.max(left, Math.min(clipped.width, Math.ceil(Number(region?.right) || 0)));
-            const bottom = Math.max(top, Math.min(clipped.height, Math.ceil(Number(region?.bottom) || 0)));
+            const left = Math.max(0, Math.min(surface.width, Math.floor(Number(region?.left) || 0)));
+            const top = Math.max(0, Math.min(surface.height, Math.floor(Number(region?.top) || 0)));
+            const right = Math.max(left, Math.min(surface.width, Math.ceil(Number(region?.right) || 0)));
+            const bottom = Math.max(top, Math.min(surface.height, Math.ceil(Number(region?.bottom) || 0)));
             if (right <= left || bottom <= top) continue;
             const target = {
-                left: clipped.left + left,
-                top: clipped.top + top,
-                right: clipped.left + right,
-                bottom: clipped.top + bottom,
+                left,
+                top,
+                right,
+                bottom,
                 width: right - left,
                 height: bottom - top,
             };
-            // VideoFrame is top-down. Map only the protocol's valid dirty
-            // window into the target surface; pixels outside this window are
-            // decoder padding/undefined and must retain their previous value.
-            this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, target, this.rgbaProgram, {
-                u0: left / this.stagingWidth,
-                v0: (sourceHeight - bottom) / this.stagingHeight,
-                u1: right / this.stagingWidth,
-                v1: (sourceHeight - top) / this.stagingHeight,
-            });
+            // WebGL uploads VideoFrame row 0 at texture row 0. _drawTexture's
+            // v0 is attached to the target bottom and v1 to its top, so the
+            // top-down source window uses bottom/stagingHeight -> top/stagingHeight.
+            const sourceUv = scaleFullSource
+                ? { u0: 0, v0: sourceHeight / this.stagingHeight, u1: sourceWidth / this.stagingWidth, v1: 0 }
+                : {
+                    u0: left / this.stagingWidth,
+                    v0: bottom / this.stagingHeight,
+                    u1: right / this.stagingWidth,
+                    v1: top / this.stagingHeight,
+                };
+            this._drawTexture(this.stagingTexture, surface.framebuffer, surface.width, surface.height, target, this.rgbaProgram, sourceUv);
             uploaded++;
         }
         if (uploaded) this.dirty = true;
@@ -347,8 +444,21 @@ export class RdpGpuSurfaceCompositor {
         const surface = this._requireSurface(id);
         const clipped = clampRect(rect, surface.width, surface.height);
         if (!clipped.width || !clipped.height) return;
-        const gl = this.gl;
         const b = colorBGRA & 255, g = (colorBGRA >>> 8) & 255, r = (colorBGRA >>> 16) & 255, a = (colorBGRA >>> 24) & 255;
+        // Windows video optimization paints a large, nearly pure green key
+        // before sparse RDPGFX AVC regions. There is no companion RDPEVOR
+        // stream on affected hosts, so displaying that key destroys the base
+        // desktop and turns later dirty updates into visible mosaics. Treat
+        // only a large dominant-green fill as an overlay key; ordinary green
+        // UI rectangles remain protocol-visible.
+        const exactKeyGreen = g >= 240 && b <= 16 && r <= 16;
+        const chromaGreen = g >= 192 && g > b * 2 && g > r * 2;
+        const large = clipped.width * clipped.height * 4 >= surface.width * surface.height;
+        if (exactKeyGreen || (chromaGreen && large)) {
+            if (this.diagnostics) this.diagnostics.vorKeyFillsSuppressed = (this.diagnostics.vorKeyFillsSuppressed || 0) + 1;
+            return;
+        }
+        const gl = this.gl;
         gl.bindFramebuffer(gl.FRAMEBUFFER, surface.framebuffer);
         gl.viewport(0, 0, surface.width, surface.height);
         gl.enable(gl.SCISSOR_TEST);
@@ -397,8 +507,82 @@ export class RdpGpuSurfaceCompositor {
         this.dirty = true;
     }
 
+    _discardResetCarry() {
+        const gl = this.gl;
+        if (this.resetCarryFramebuffer) gl.deleteFramebuffer(this.resetCarryFramebuffer);
+        if (this.resetCarryTexture) gl.deleteTexture(this.resetCarryTexture);
+        this.resetCarryTexture = null;
+        this.resetCarryFramebuffer = null;
+        this.resetCarryWidth = 0;
+        this.resetCarryHeight = 0;
+    }
+
+    _captureResetCarry() {
+        if (this.contextLost || !this.width || !this.height) return false;
+        // A resize can produce more than one RESET_GRAPHICS while the first
+        // reset has already deleted every mapped surface. Preserve the last
+        // valid carry in that case instead of replacing it with nothing.
+        if (![...this.surfaces.values()].some((surface) => surface.mapped)) return false;
+        const gl = this.gl;
+        const texture = this._newTexture(this.width, this.height);
+        const framebuffer = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+            gl.deleteFramebuffer(framebuffer);
+            gl.deleteTexture(texture);
+            return false;
+        }
+        this._renderMappedSurfaces(framebuffer, this.width, this.height);
+        this._discardResetCarry();
+        this.resetCarryTexture = texture;
+        this.resetCarryFramebuffer = framebuffer;
+        this.resetCarryWidth = this.width;
+        this.resetCarryHeight = this.height;
+        if (this.diagnostics) this.diagnostics.resetCarryCaptured = (this.diagnostics.resetCarryCaptured || 0) + 1;
+        return true;
+    }
+
+    _seedSurfaceFromResetCarry(surface) {
+        if (!this.resetCarryTexture || !surface) return false;
+        // Surface dimensions alone do not identify the desktop: Windows may
+        // create an old-sized surface and MAP_SURFACE_SCALED it to the new
+        // output. Seed only after the mapping proves this one surface covers
+        // the complete desktop, so cache/overlay surfaces cannot consume the
+        // transition carry first.
+        const coversDesktop = surface.mapped
+            && surface.outputX <= 0
+            && surface.outputY <= 0
+            && surface.outputX + surface.outputWidth >= this.width
+            && surface.outputY + surface.outputHeight >= this.height;
+        if (!coversDesktop) return false;
+        const target = {
+            left: 0,
+            top: 0,
+            right: surface.width,
+            bottom: surface.height,
+            width: surface.width,
+            height: surface.height,
+        };
+        if (!target.width || !target.height) return false;
+        this._drawTexture(
+            this.resetCarryTexture,
+            surface.framebuffer,
+            surface.width,
+            surface.height,
+            target,
+            this.rgbaProgram,
+            { u0: 0, v0: 0, u1: 1, v1: 1 },
+        );
+        this._discardResetCarry();
+        this.dirty = true;
+        if (this.diagnostics) this.diagnostics.resetCarrySeeded = (this.diagnostics.resetCarrySeeded || 0) + 1;
+        return true;
+    }
+
     reset(width, height) {
-        for (const id of [...this.surfaces.keys()]) this.deleteSurface(id);
+        this._captureResetCarry();
+        for (const id of [...this.surfaces.keys()]) this.deleteSurface(id, { preserveMappedDesktop: false });
         for (const slot of [...this.cacheEntries.keys()]) this.evictCache(slot);
         this.width = Number(width) || 1;
         this.height = Number(height) || 1;
@@ -435,16 +619,7 @@ export class RdpGpuSurfaceCompositor {
         // While a FrameMarker is open, hold the display until EndFrame seals it.
         // Presenting mid-frame is what produces torn rectangles on mobile GPUs.
         if (!orderedSealed.length && this.activeFrame !== null) return false;
-        const gl = this.gl;
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.viewport(0, 0, this.width, this.height);
-        gl.clearColor(0, 0, 0, 1);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-        for (const surface of this.surfaces.values()) {
-            if (!surface.mapped) continue;
-            const rect = { left: surface.outputX, top: surface.outputY, right: surface.outputX + surface.outputWidth, bottom: surface.outputY + surface.outputHeight, width: surface.outputWidth, height: surface.outputHeight };
-            this._drawTexture(surface.texture, null, this.width, this.height, rect, this.rgbaProgram);
-        }
+        this._renderMappedSurfaces(null, this.width, this.height);
         const frames = [];
         for (const id of orderedSealed) {
             if (this.framePending.has(id)) break;
@@ -456,6 +631,46 @@ export class RdpGpuSurfaceCompositor {
         if (frames.length && this.onFramesPresented) this.onFramesPresented(frames);
         if (this.diagnostics) this.diagnostics.presents = (this.diagnostics.presents || 0) + 1;
         return true;
+    }
+
+    _renderMappedSurfaces(framebuffer, width, height) {
+        const gl = this.gl;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.viewport(0, 0, width, height);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        for (const surface of this.surfaces.values()) {
+            if (!surface.mapped) continue;
+            const rect = { left: surface.outputX, top: surface.outputY, right: surface.outputX + surface.outputWidth, bottom: surface.outputY + surface.outputHeight, width: surface.outputWidth, height: surface.outputHeight };
+            this._drawTexture(surface.texture, framebuffer, width, height, rect, this.rgbaProgram);
+        }
+    }
+
+    _ensureCaptureFramebuffer(width, height) {
+        if (this.captureFramebuffer && this.captureWidth === width && this.captureHeight === height) return;
+        const gl = this.gl;
+        if (this.captureFramebuffer) gl.deleteFramebuffer(this.captureFramebuffer);
+        if (this.captureTexture) gl.deleteTexture(this.captureTexture);
+        this.captureTexture = this._newTexture(width, height);
+        this.captureFramebuffer = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.captureFramebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.captureTexture, 0);
+        if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('capture framebuffer incomplete');
+        this.captureWidth = width;
+        this.captureHeight = height;
+    }
+
+    capturePixels() {
+        if (this.contextLost) throw new Error('RDP WebGL context is lost');
+        const width = this.width;
+        const height = this.height;
+        this._ensureCaptureFramebuffer(width, height);
+        this._renderMappedSurfaces(this.captureFramebuffer, width, height);
+        const gl = this.gl;
+        const pixels = new Uint8Array(width * height * 4);
+        gl.finish();
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return { width, height, pixels };
     }
 
     handleEvent(event) {
@@ -476,6 +691,7 @@ export class RdpGpuSurfaceCompositor {
             colorBGRA: event.colorBGRA ?? event.ColorBGRA,
         };
         event = normalized;
+        this._traceResetTransition('before', event);
         switch (Number(event.kind)) {
         case RDP_RENDER_EVENT.RESET_GRAPHICS: this.reset(event.width, event.height); break;
         case RDP_RENDER_EVENT.BEGIN_FRAME: this.beginFrame(event.frameId); break;
@@ -492,6 +708,7 @@ export class RdpGpuSurfaceCompositor {
         case RDP_RENDER_EVENT.SOLID_FILL: this.solidFill(event.surfaceId, event.rect, event.colorBGRA); break;
         case RDP_RENDER_EVENT.SURFACE_COPY: this.copySurface(event.surfaceId2, event.surfaceId, event.rect, event.outputX, event.outputY); break;
         }
+        this._traceResetTransition('after', event);
         // Drawing ops only schedule a present when we are outside a FrameMarker
         // or the event itself carries no frame id. Framed updates present once
         // on EndFrame / async completion, which keeps the on-screen image whole.
@@ -499,6 +716,29 @@ export class RdpGpuSurfaceCompositor {
         if ([RDP_RENDER_EVENT.BEGIN_FRAME, RDP_RENDER_EVENT.END_FRAME].includes(kind)) return;
         if (this.activeFrame !== null || Number(event.frameId)) return;
         this.schedulePresent();
+    }
+
+    _traceResetTransition(stage, event) {
+        if (!this.diagnostics) return;
+        const kind = Number(event?.kind) || 0;
+        if (![RDP_RENDER_EVENT.RESET_GRAPHICS, RDP_RENDER_EVENT.CREATE_SURFACE, RDP_RENDER_EVENT.DELETE_SURFACE, RDP_RENDER_EVENT.MAP_SURFACE, RDP_RENDER_EVENT.MAP_SURFACE_SCALED, RDP_RENDER_EVENT.SOLID_FILL].includes(kind)) return;
+        const trace = this.diagnostics.resetTransitionTrace || (this.diagnostics.resetTransitionTrace = []);
+        trace.push({
+            n: (this.diagnostics.resetTransitionSequence = (this.diagnostics.resetTransitionSequence || 0) + 1),
+            stage,
+            kind,
+            id: Number(event?.surfaceId) || 0,
+            width: Number(event?.width) || 0,
+            height: Number(event?.height) || 0,
+            outputX: Number(event?.outputX) || 0,
+            outputY: Number(event?.outputY) || 0,
+            color: Number(event?.colorBGRA) >>> 0,
+            rect: event?.rect ? [Number(event.rect.left) || 0, Number(event.rect.top) || 0, Number(event.rect.right) || 0, Number(event.rect.bottom) || 0] : null,
+            carry: Boolean(this.resetCarryTexture),
+            desktop: [this.width, this.height],
+            surfaces: [...this.surfaces.values()].map((surface) => [surface.id, surface.width, surface.height, surface.mapped ? 1 : 0, surface.outputX, surface.outputY, surface.outputWidth, surface.outputHeight]),
+        });
+        if (trace.length > 80) trace.splice(0, trace.length - 80);
     }
 
     _ensureStaging(width, height) {
@@ -553,27 +793,23 @@ export class RdpGpuSurfaceCompositor {
         const right = -1 + (2 * rect.right) / targetWidth;
         const top = 1 - (2 * rect.top) / targetHeight;
         const bottom = 1 - (2 * rect.bottom) / targetHeight;
+        const vertices = this.vertexData;
+        vertices[0] = left; vertices[1] = bottom; vertices[2] = u0; vertices[3] = v0;
+        vertices[4] = right; vertices[5] = bottom; vertices[6] = u1; vertices[7] = v0;
+        vertices[8] = left; vertices[9] = top; vertices[10] = u0; vertices[11] = v1;
+        vertices[12] = right; vertices[13] = top; vertices[14] = u1; vertices[15] = v1;
+        const state = this.programStates.get(program);
+        if (!state) throw new Error('unknown RDP shader program');
+        gl.bindVertexArray(state.vao);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-            left, bottom, u0, v0,
-            right, bottom, u1, v0,
-            left, top, u0, v1,
-            right, top, u1, v1,
-        ]), gl.DYNAMIC_DRAW);
-        const position = gl.getAttribLocation(program, 'a_position');
-        const texCoord = gl.getAttribLocation(program, 'a_texCoord');
-        gl.enableVertexAttribArray(position);
-        gl.enableVertexAttribArray(texCoord);
-        gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 16, 0);
-        gl.vertexAttribPointer(texCoord, 2, gl.FLOAT, false, 16, 8);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, vertices);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, texture);
-        const sampler = gl.getUniformLocation(program, 'u_texture');
-        gl.uniform1i(sampler, 0);
         gl.enable(gl.SCISSOR_TEST);
         gl.scissor(rect.left, targetHeight - rect.bottom, rect.width, rect.height);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         gl.disable(gl.SCISSOR_TEST);
+        gl.bindVertexArray(null);
     }
 
     _requireSurface(id) {
@@ -587,7 +823,8 @@ export class RdpGpuSurfaceCompositor {
 
     destroy() {
         this._cancelPresent();
-        for (const id of [...this.surfaces.keys()]) this.deleteSurface(id);
+        this._discardResetCarry();
+        for (const id of [...this.surfaces.keys()]) this.deleteSurface(id, { preserveMappedDesktop: false });
         for (const slot of [...this.cacheEntries.keys()]) this.evictCache(slot);
         this.sealedFrames.clear();
         this.framePending.clear();
@@ -598,13 +835,19 @@ export class RdpGpuSurfaceCompositor {
             if (this.rgbaProgram) gl.deleteProgram(this.rgbaProgram);
             if (this.bgraProgram) gl.deleteProgram(this.bgraProgram);
             if (this.vertexBuffer) gl.deleteBuffer(this.vertexBuffer);
+            for (const state of this.programStates?.values?.() || []) if (state.vao) gl.deleteVertexArray(state.vao);
             if (this.stagingTexture) gl.deleteTexture(this.stagingTexture);
             if (this.scratchTexture) gl.deleteTexture(this.scratchTexture);
             if (this.scratchFramebuffer) gl.deleteFramebuffer(this.scratchFramebuffer);
+            if (this.captureTexture) gl.deleteTexture(this.captureTexture);
+            if (this.captureFramebuffer) gl.deleteFramebuffer(this.captureFramebuffer);
         }
-        this.rgbaProgram = this.bgraProgram = this.vertexBuffer = this.stagingTexture = null;
+        this.rgbaProgram = this.bgraProgram = this.vertexBuffer = this.vertexData = this.stagingTexture = null;
+        this.programStates = null;
         this.scratchTexture = this.scratchFramebuffer = null;
         this.scratchWidth = this.scratchHeight = 0;
+        this.captureTexture = this.captureFramebuffer = null;
+        this.captureWidth = this.captureHeight = 0;
         this.canvas.removeEventListener?.('webglcontextlost', this._onContextLost);
         this.canvas.removeEventListener?.('webglcontextrestored', this._onContextRestored);
     }

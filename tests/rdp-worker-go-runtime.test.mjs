@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadGoRuntime, instantiateGoWasm } from '../public/rdp-wasm-runtime.js';
 
 const worker = await fs.readFile(new URL('../public/rdp-worker.js', import.meta.url), 'utf8');
@@ -34,7 +35,9 @@ test('Worker waits for Go to register callable exports', async () => {
     assert.match(goMain, /ready\.Invoke\(\)/);
     assert.match(worker, /Go WASM exports registration timed out/);
     assert.match(worker, /await exportsReady/);
-    assert.match(worker, /requiredExports = \['rdpConnect', 'rdpDisconnect', 'rdpConfigureRenderer', 'rdpGetProtocolDiagnostics', 'rdpGfxCompleteFrame', 'rdpRequestFullRefresh'\]/);
+    for (const name of ['rdpConnect', 'rdpDisconnect', 'rdpConfigureRenderer', 'rdpGetProtocolDiagnostics', 'rdpGetClearCapture', 'rdpGfxCompleteFrame', 'rdpRequestFullRefresh', 'rdpSetResolution', 'rdpSetRenderPreferences']) {
+        assert.match(worker, new RegExp(`requiredExports[^\\n]+['"]${name}['"]`));
+    }
     assert.doesNotMatch(worker, /go\.run\(result\.instance\);\s*(?:runPromise\?\.catch[\s\S]*?}\);\s*)?wasmReady = true/);
 });
 
@@ -84,7 +87,7 @@ test('Go runtime converter emits an importable ESM class', async () => {
         const input = join(dir, 'wasm_exec.js');
         const output = join(dir, 'wasm_exec.mjs');
         await fs.writeFile(input, '"use strict";\n(() => {\n globalThis.Go = class { constructor(){ this.importObject = {}; } };\n})();\n');
-        const result = spawnSync(process.execPath, ['scripts/build-go-wasm-esm.mjs', input, output], { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8' });
+        const result = spawnSync(process.execPath, ['scripts/build-go-wasm-esm.mjs', input, output], { cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8' });
         assert.equal(result.status, 0, result.stderr);
         const module = await import(`file://${output}?v=${Date.now()}`);
         assert.equal(typeof module.Go, 'function');

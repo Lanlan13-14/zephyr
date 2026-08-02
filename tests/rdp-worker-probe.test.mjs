@@ -35,6 +35,12 @@ function installProbe({ pixel = [255, 0, 0, 255] } = {}) {
         reset(width, height) { calls.push(['reset', width, height]); }
         ensureDesktopSurface(width, height) { calls.push(['surface', width, height]); }
         uploadClassicBitmap(rect, bytes, stride) { calls.push(['upload', rect, bytes.byteLength, stride]); this.dirty = true; this.options.requestFrame(() => { this.dirty = false; }); }
+        capturePixels() {
+            calls.push(['capture']);
+            const pixels = new Uint8Array(4 * 4 * 4);
+            for (let i = 0; i < pixels.length; i += 4) pixels.set(pixel, i);
+            return { width: 4, height: 4, pixels };
+        }
         destroy() { calls.push(['destroy']); }
     };
     return {
@@ -91,6 +97,6 @@ test('Worker probe fails closed on incorrect GPU pixel', async () => {
 
 test('Worker probe source never stubs frame scheduling', () => {
     assert.doesNotMatch(source, /requestFrame:\s*\(\)\s*=>\s*1/);
-    assert.match(source, /gl\.readPixels/);
+    assert.match(source, /compositor\.capturePixels\(\)/);
     assert.match(source, /WebGL2 present callback timed out/);
 });

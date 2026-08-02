@@ -53,7 +53,7 @@ func FilterToolsForMode(src *tool.Registry, mode string) *tool.Registry {
 
 func filterEconomy(src *tool.Registry) *tool.Registry {
 	allow := map[string]bool{
-		"capability_search": true,
+		"capability_search":  true,
 		"connection_list_v1": true, "connection_get_v1": true, "connection_open_v1": true, "connection_test_v1": true,
 		"terminal_read_v1": true, "terminal_send_v1": true, "terminal_wait_v1": true,
 		"remote_execute": true, "remote_read_file": true,
@@ -61,6 +61,7 @@ func filterEconomy(src *tool.Registry) *tool.Registry {
 		"user_attachment_read_v1": true, "user_attachment_view_v1": true,
 		"session_exec_v1": true, "session_sandbox_status_v1": true,
 		"memory_search": true, "list_env_vars": true,
+		"note_list": true, "note_search": true, "note_get": true,
 		"subagent_list_profiles_v1": true, "subagent_task_v1": true, "subagent_parallel_v1": true,
 		"remote_desktop_capture_v1": true, "remote_desktop_action_v1": true, "remote_desktop_verify_v1": true,
 		"plan_task": true, "plan_update": true,

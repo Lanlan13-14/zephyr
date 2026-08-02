@@ -122,10 +122,10 @@ func (h *Handler) Process(data []byte) {
 //
 // The server will apply the new layout and—if using the RDPGFX pipeline—send
 // a ResetGraphics command that resets surface dimensions to match.
-func (h *Handler) SendMonitorLayout(monitors []Monitor) {
+func (h *Handler) SendMonitorLayout(monitors []Monitor) bool {
 	if h.send == nil {
 		slog.Warn("rdpedisp: SendMonitorLayout: channel not open")
-		return
+		return false
 	}
 
 	numMonitors := uint32(len(monitors))
@@ -158,4 +158,5 @@ func (h *Handler) SendMonitorLayout(monitors []Monitor) {
 
 	slog.Debug("rdpedisp: sending MonitorLayout", "numMonitors", numMonitors)
 	h.send(pdu)
+	return true
 }

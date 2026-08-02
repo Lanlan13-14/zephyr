@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/nakagami/grdp/plugin"
@@ -134,7 +135,15 @@ type RdpClient struct {
 	// gfxHandler is the active RDPGFX handler; nil when not connected.
 	// Stored here so closeTransport() can stop its goroutines.
 	gfxHandler *rdpgfx.GfxHandler
-	dvcClient  *drdynvc.DvcClient
+	// queueDepthHint is retained before Login because the RDPGFX handler is
+	// created only while dynamic channels are registered. Keeping the value on
+	// the client also makes live FPS preference updates survive reactivation.
+	queueDepthHint atomic.Uint32
+	dvcClient      *drdynvc.DvcClient
+	// Successfully rejected MS-RDPEVOR channels bump this generation. The
+	// last rejection schedules one repaint after Windows completes fallback,
+	// clearing chroma-key rectangles it may have painted optimistically.
+	vorFallbackGeneration atomic.Uint64
 
 	// avc444Disabled, when true, limits CAPS_ADVERTISE to v8.1 so the server
 	// uses AVC420 only.  Set via DisableAVC444() before Connect(); preserved
@@ -575,7 +584,7 @@ func (g *RdpClient) doLogin(routingToken []byte) error {
 
 	// drdynvc (Dynamic Virtual Channels)
 	dvcClient := drdynvc.NewDvcClient()
-	dvcClient.SetProtocolObserver(g.protocolObserver)
+	dvcClient.SetProtocolObserver(g.observeDvcProtocol)
 	g.dvcClient = dvcClient
 	g.mcs.SetProtocolObserver(g.protocolObserver)
 	g.channels.Register(dvcClient)
@@ -631,6 +640,7 @@ func (g *RdpClient) doLogin(routingToken []byte) error {
 	}
 	gfxHandler.SetExternalVideoDecode(g.externalVideoDecode)
 	gfxHandler.SetExternalFrameCompletion(g.externalFrameCompletion)
+	gfxHandler.SetQueueDepthHint(g.queueDepthHint.Load())
 	if g.avc444Disabled {
 		gfxHandler.SetAVC444Disabled(true)
 	}
@@ -646,14 +656,16 @@ func (g *RdpClient) doLogin(routingToken []byte) error {
 	g.dispHandler = dispHandler
 	dvcClient.RegisterHandler(rdpedisp.ChannelName, dispHandler)
 
-	// Reject Video Optimized Remoting (VOR) channels so the server keeps
-	// sending video through the RDPGFX pipeline which we do handle.
-	// Without this, the server detects video playback (e.g. YouTube) and
-	// switches to VOR channels that we don't implement, causing the video
-	// to freeze while audio continues.
-	dvcClient.RegisterRejectedChannel("Microsoft::Windows::RDS::Video::Control::v08.01")
-	dvcClient.RegisterRejectedChannel("Microsoft::Windows::RDS::Video::Data::v08.01")
-	dvcClient.RegisterRejectedChannel("Microsoft::Windows::RDS::Geometry::v08.01")
+	// This client composites redirected video through RDPGFX/WebCodecs and does
+	// not implement the separate RDPEVOR Geometry/Control/Data compositor. Keep
+	// those DVCs unavailable instead of accepting streams with no consumer.
+	for _, channelName := range []string{
+		"Microsoft::Windows::RDS::Geometry::v08.01",
+		"Microsoft::Windows::RDS::Video::Control::v08.01",
+		"Microsoft::Windows::RDS::Video::Data::v08.01",
+	} {
+		dvcClient.RegisterRejectedChannel(channelName)
+	}
 
 	// Register DVC audio handlers for both the lossless and lossy variants.
 	// gnome-remote-desktop requests AUDIO_PLAYBACK_LOSSY_DVC first; if it is
@@ -1083,6 +1095,33 @@ func (g *RdpClient) RequestFullRefresh() {
 	}
 }
 
+func (g *RdpClient) observeDvcProtocol(event string) {
+	if g.protocolObserver != nil {
+		g.protocolObserver(event)
+	}
+	// Control/Data are created at most once per presentation negotiation. A
+	// delayed full refresh clears any chroma-key fill already queued before the
+	// server observed the standards-compliant CREATE rejection. Geometry can be
+	// retried repeatedly, so it deliberately does not trigger refresh storms.
+	if strings.HasPrefix(event, "drdynvc.reject:Microsoft::Windows::RDS::Video::Control::") ||
+		strings.HasPrefix(event, "drdynvc.reject:Microsoft::Windows::RDS::Video::Data::") {
+		g.scheduleVORFallbackRefresh()
+	}
+}
+
+func (g *RdpClient) scheduleVORFallbackRefresh() {
+	generation := g.vorFallbackGeneration.Add(1)
+	time.AfterFunc(500*time.Millisecond, func() {
+		if g.closed.Load() || generation != g.vorFallbackGeneration.Load() {
+			return
+		}
+		g.RequestFullRefresh()
+		if g.protocolObserver != nil {
+			g.protocolObserver("rdpgfx.vor-fallback.refresh")
+		}
+	})
+}
+
 // OnDecoderBroken registers a callback that is invoked when the H.264 decoder
 // enters an unrecoverable state (all hard-reset attempts exhausted).  When
 // this callback is set, grdp does NOT automatically call Reconnect; the
@@ -1118,7 +1157,7 @@ func (g *RdpClient) SetProtocolObserver(observer func(string)) *RdpClient {
 		g.mcs.SetProtocolObserver(observer)
 	}
 	if g.dvcClient != nil {
-		g.dvcClient.SetProtocolObserver(observer)
+		g.dvcClient.SetProtocolObserver(g.observeDvcProtocol)
 	}
 	if g.gfxHandler != nil {
 		g.gfxHandler.SetProtocolObserver(observer)
@@ -1211,6 +1250,41 @@ func (g *RdpClient) KeyDown(sc int) {
 	p := &pdu.ScancodeKeyEvent{}
 	p.KeyCode = uint16(sc)
 	g.pdu.SendInputEvents(pdu.INPUT_EVENT_SCANCODE, []pdu.InputEventsInterface{p})
+	g.notifyGfxLocalInput()
+}
+
+const maxUnicodeCodeUnitsPerBatch = 7
+
+func unicodeInputEvents(units []uint16) []pdu.InputEventsInterface {
+	events := make([]pdu.InputEventsInterface, 0, len(units)*2)
+	for _, unit := range units {
+		events = append(events,
+			&pdu.UnicodeKeyEvent{Unicode: unit},
+			&pdu.UnicodeKeyEvent{KeyboardFlags: pdu.KBDFLAGS_RELEASE, Unicode: unit},
+		)
+	}
+	return events
+}
+
+// SendUnicodeText sends committed text as native RDP Unicode keyboard input.
+// The protocol carries UTF-16 code units, so supplementary characters are
+// emitted as surrogate pairs. Batches contain at most 14 events (seven
+// key-down/key-up pairs) and therefore stay on the Fast-Path input transport.
+func (g *RdpClient) SendUnicodeText(text string) {
+	if !g.eventReady.Load() || text == "" {
+		return
+	}
+	g.flushMouseMove()
+	g.flushWheels()
+
+	units := utf16.Encode([]rune(text))
+	for start := 0; start < len(units); start += maxUnicodeCodeUnitsPerBatch {
+		end := start + maxUnicodeCodeUnitsPerBatch
+		if end > len(units) {
+			end = len(units)
+		}
+		g.pdu.SendInputEvents(pdu.INPUT_EVENT_UNICODE, unicodeInputEvents(units[start:end]))
+	}
 	g.notifyGfxLocalInput()
 }
 
@@ -1441,12 +1515,20 @@ func (g *RdpClient) MouseDown(button int, x, y int) {
 // given dimensions and send a fresh RDPGFX ResetGraphics command.
 //
 // width must be even and both width and height must be >= 200.
-// This method is a no-op when the RDPEDISP channel has not been established
-// (e.g. when the server does not support it).
-func (g *RdpClient) SetResolution(width, height int) {
+// It returns false when the RDPEDISP channel has not been established (for
+// example, while the channel is still opening or the server does not support
+// dynamic display updates). Callers may retry after the session is ready.
+func (g *RdpClient) SetResolution(width, height int) bool {
 	if g.dispHandler == nil {
 		slog.Warn("SetResolution: RDPEDISP channel not available")
-		return
+		return false
+	}
+	// Reject invalid values before converting to uint32. Without this guard a
+	// negative JavaScript value would wrap into a multi-billion-pixel monitor
+	// layout instead of being treated as an invalid resize request.
+	if width <= 0 || height <= 0 {
+		slog.Warn("SetResolution: invalid dimensions", "width", width, "height", height)
+		return false
 	}
 	w := uint32(width)
 	if w%2 != 0 {
@@ -1455,7 +1537,7 @@ func (g *RdpClient) SetResolution(width, height int) {
 	w = max(w, 200)
 	h := uint32(height)
 	h = max(h, 200)
-	g.dispHandler.SendMonitorLayout([]rdpedisp.Monitor{
+	if !g.dispHandler.SendMonitorLayout([]rdpedisp.Monitor{
 		{
 			Flags:              rdpedisp.MonitorFlagPrimary,
 			Left:               0,
@@ -1468,8 +1550,13 @@ func (g *RdpClient) SetResolution(width, height int) {
 			DesktopScaleFactor: 100,
 			DeviceScaleFactor:  100,
 		},
-	})
+	}) {
+		return false
+	}
+	g.width = int(w)
+	g.height = int(h)
 	slog.Debug("SetResolution", "width", w, "height", h)
+	return true
 }
 
 // SetQueueDepthHint controls the frame-rate and encoding quality reported to
@@ -1484,6 +1571,7 @@ func (g *RdpClient) SetResolution(width, height int) {
 // Use 0xFFFFFFFF to pause new frames entirely (the stream resumes when hint is
 // reduced or cleared).
 func (g *RdpClient) SetQueueDepthHint(depth uint32) {
+	g.queueDepthHint.Store(depth)
 	if g.gfxHandler != nil {
 		g.gfxHandler.SetQueueDepthHint(depth)
 	}
@@ -1594,6 +1682,7 @@ func (g *RdpClient) cancelInputCoalescers() {
 
 // closeTransport closes the underlying transport and stops active handlers.
 func (g *RdpClient) closeTransport() {
+	g.vorFallbackGeneration.Add(1)
 	g.cancelInputCoalescers()
 	if g.gfxHandler != nil {
 		g.gfxHandler.Close()

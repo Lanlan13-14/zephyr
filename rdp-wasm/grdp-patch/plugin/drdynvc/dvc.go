@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 
 	"github.com/nakagami/grdp/core"
 	"github.com/nakagami/grdp/plugin"
@@ -19,7 +20,8 @@ const (
 )
 
 const (
-	MAX_DVC_CHANNELS = 20
+	MAX_DVC_CHANNELS           = 20
+	maxUnknownDataObservations = 8
 )
 
 const (
@@ -59,24 +61,28 @@ type dvcReassembly struct {
 }
 
 type DvcClient struct {
-	w                 core.ChannelSender
-	channels          map[string]ChannelClient
-	handlers          map[string]DvcChannelHandler // channelName → handler
-	rejectedChannels  map[string]bool              // channelName → explicitly rejected
-	channelById       map[uint32]*dvcChannelInfo   // channelId → info
-	reassembly        map[uint32]*dvcReassembly    // channelId → reassembly state
-	negotiatedVersion uint16
-	capsReady         bool
-	protocolObserver  func(string)
+	w                   core.ChannelSender
+	channels            map[string]ChannelClient
+	handlers            map[string]DvcChannelHandler // channelName → handler
+	rejectedChannels    map[string]bool              // channelName → explicitly rejected
+	channelById         map[uint32]*dvcChannelInfo   // channelId → info
+	reassembly          map[uint32]*dvcReassembly    // channelId → reassembly state
+	firstDataObserved   map[uint32]bool              // channelId → bounded first-fragment diagnostic emitted
+	unknownDataObserved map[uint32]bool
+	negotiatedVersion   uint16
+	capsReady           bool
+	protocolObserver    func(string)
 }
 
 func NewDvcClient() *DvcClient {
 	return &DvcClient{
-		channels:         make(map[string]ChannelClient, 100),
-		handlers:         make(map[string]DvcChannelHandler),
-		rejectedChannels: make(map[string]bool),
-		channelById:      make(map[uint32]*dvcChannelInfo),
-		reassembly:       make(map[uint32]*dvcReassembly),
+		channels:            make(map[string]ChannelClient, 100),
+		handlers:            make(map[string]DvcChannelHandler),
+		rejectedChannels:    make(map[string]bool),
+		channelById:         make(map[uint32]*dvcChannelInfo),
+		reassembly:          make(map[uint32]*dvcReassembly),
+		firstDataObserved:   make(map[uint32]bool),
+		unknownDataObserved: make(map[uint32]bool),
 	}
 }
 
@@ -229,7 +235,9 @@ func (c *DvcClient) processClose(hdr *DvcHeader, s []byte) {
 		name = ch.name
 		delete(c.channelById, channelId)
 		delete(c.reassembly, channelId)
+		delete(c.firstDataObserved, channelId)
 	}
+	delete(c.unknownDataObserved, channelId)
 	slog.Debug("dvc: CLOSE", "channelId", channelId, "name", name)
 }
 
@@ -261,6 +269,8 @@ func (c *DvcClient) processCreateReq(hdr *DvcHeader, s []byte) {
 			zgfx:    rdpgfx.NewZGFXDecoder(),
 		}
 		c.channelById[channelId] = info
+		delete(c.firstDataObserved, channelId)
+		delete(c.unknownDataObserved, channelId)
 
 		// Provide send callback if handler supports it
 		if setter, ok := handler.(interface{ SetSendFunc(func([]byte)) }); ok {
@@ -272,20 +282,28 @@ func (c *DvcClient) processCreateReq(hdr *DvcHeader, s []byte) {
 		slog.Debug("dvc: handler registered", "channel", channelName, "id", channelId)
 	}
 
-	// Match FreeRDP/mstsc: unknown channels are rejected with STATUS_NOT_FOUND.
+	// Match FreeRDP/mstsc: unavailable channels are rejected with
+	// STATUS_NOT_FOUND. In particular, Video Optimized Remoting treats the
+	// CreationStatus as an NTSTATUS. Returning the HRESULT E_FAIL here leaves
+	// some Windows senders in a half-enabled state: RDPGFX still contains the
+	// green chroma-key rectangles, but the client never receives the matching
+	// video/geometry stream.
+	//
 	// Accepting an unknown channel tells the server to stream data into a
 	// channel with no consumer and can interfere with unrelated DVC fallback.
 	if handler == nil || c.rejectedChannels[channelName] {
 		status := uint32(0xC0000225) // STATUS_NOT_FOUND
-		if c.rejectedChannels[channelName] {
-			status = 0x80004005 // E_FAIL for an explicitly rejected feature
-		}
 		slog.Debug("dvc: rejecting channel", "channel", channelName, "id", channelId, "status", status)
 		rspHdr := &DvcHeader{cmd: DYNVC_CREATE_REQ, sp: 0, cbChId: hdr.cbChId}
 		b := &bytes.Buffer{}
 		b.Write(rspHdr.serialize(channelId))
 		core.WriteUInt32LE(status, b)
-		c.Send(b.Bytes())
+		if _, err := c.Send(b.Bytes()); err != nil {
+			slog.Warn("dvc: reject response failed", "channel", channelName, "id", channelId, "err", err)
+			c.observe("drdynvc.reject-send-error:" + channelName)
+		} else {
+			c.observe(fmt.Sprintf("drdynvc.reject:%s:status0x%08x", channelName, status))
+		}
 		return
 	}
 
@@ -294,7 +312,12 @@ func (c *DvcClient) processCreateReq(hdr *DvcHeader, s []byte) {
 	b := &bytes.Buffer{}
 	b.Write(rspHdr.serialize(channelId))
 	core.WriteUInt32LE(0, b)
-	c.Send(b.Bytes())
+	if _, err := c.Send(b.Bytes()); err != nil {
+		slog.Warn("dvc: create response failed", "channel", channelName, "id", channelId, "err", err)
+		c.observe("drdynvc.accept-send-error:" + channelName)
+		return
+	}
+	c.observe("drdynvc.accept:" + channelName)
 
 	// Notify handler that channel is ready (CREATE_RSP has been sent)
 	if handler != nil {
@@ -317,13 +340,50 @@ func readDvcId(r io.Reader, cbLen uint8) (id uint32) {
 	}
 	return
 }
+
+// observeFirstDataFragment emits exactly one small diagnostic per accepted
+// dynamic channel. It is intentionally recorded before message reassembly so
+// field telemetry can distinguish "the server sent nothing" from an RDPEVOR
+// PDU that our higher-level parser rejected. Only the first 16 payload bytes
+// are included, keeping both cardinality and log volume bounded.
+func (c *DvcClient) observeFirstDataFragment(channelID uint32, ch *dvcChannelInfo, kind string, data []byte) {
+	headLimit := 16
+	if ch != nil && (strings.HasPrefix(ch.name, "Microsoft::Windows::RDS::Geometry::") ||
+		strings.HasPrefix(ch.name, "Microsoft::Windows::RDS::Video::")) {
+		headLimit = 96
+	}
+	head := data
+	if len(head) > headLimit {
+		head = head[:headLimit]
+	}
+	if ch == nil {
+		if c.unknownDataObserved[channelID] || len(c.unknownDataObserved) >= maxUnknownDataObservations {
+			return
+		}
+		c.unknownDataObserved[channelID] = true
+		c.observe(fmt.Sprintf("drdynvc.data-unknown:id%d:%s:len%d:head%s", channelID, kind, len(data), hex.EncodeToString(head)))
+		return
+	}
+	if c.firstDataObserved[channelID] {
+		return
+	}
+	c.firstDataObserved[channelID] = true
+	c.observe(fmt.Sprintf("drdynvc.data-first:id%d:%s:%s:len%d:head%s", channelID, ch.name, kind, len(data), hex.EncodeToString(head)))
+}
+
 func (c *DvcClient) processCompressedDataFirst(hdr *DvcHeader, s []byte) {
 	r := bytes.NewReader(s)
 	channelId := readDvcId(r, hdr.cbChId)
 	totalLen := readDvcId(r, hdr.sp)
 	ch, ok := c.channelById[channelId]
-	if !ok || ch.zgfx == nil {
+	if !ok {
+		compressed, _ := core.ReadBytes(r.Len(), r)
+		c.observeFirstDataFragment(channelId, nil, "compressed-first", compressed)
 		slog.Warn("dvc: compressed DATA_FIRST for unknown channel", "channelId", channelId)
+		return
+	}
+	if ch.zgfx == nil {
+		slog.Warn("dvc: compressed DATA_FIRST without decoder", "channelId", channelId)
 		return
 	}
 	compressed, _ := core.ReadBytes(r.Len(), r)
@@ -350,8 +410,14 @@ func (c *DvcClient) processCompressedData(hdr *DvcHeader, s []byte) {
 	r := bytes.NewReader(s)
 	channelId := readDvcId(r, hdr.cbChId)
 	ch, ok := c.channelById[channelId]
-	if !ok || ch.zgfx == nil {
+	if !ok {
+		compressed, _ := core.ReadBytes(r.Len(), r)
+		c.observeFirstDataFragment(channelId, nil, "compressed", compressed)
 		slog.Warn("dvc: compressed DATA for unknown channel", "channelId", channelId)
+		return
+	}
+	if ch.zgfx == nil {
+		slog.Warn("dvc: compressed DATA without decoder", "channelId", channelId)
 		return
 	}
 	compressed, _ := core.ReadBytes(r.Len(), r)
@@ -388,6 +454,7 @@ func (c *DvcClient) processDataFirst(hdr *DvcHeader, s []byte) {
 
 	data, _ := core.ReadBytes(r.Len(), r)
 	ch, ok := c.channelById[channelId]
+	c.observeFirstDataFragment(channelId, ch, "first", data)
 	if !ok || ch.handler == nil {
 		return
 	}
@@ -417,6 +484,7 @@ func (c *DvcClient) processData(hdr *DvcHeader, s []byte) {
 	data, _ := core.ReadBytes(r.Len(), r)
 
 	ch, ok := c.channelById[channelId]
+	c.observeFirstDataFragment(channelId, ch, "data", data)
 	if !ok || ch.handler == nil {
 		return
 	}

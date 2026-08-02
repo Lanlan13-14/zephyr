@@ -47,6 +47,16 @@ test('wheel axes and key/button barriers preserve sequence', () => {
     assert.deepEqual(sent.map((event) => event.sequence), [1, 2, 3, 4]);
 });
 
+test('native Unicode text is an ordering barrier', () => {
+    const sent = [];
+    const frame = frameFixture();
+    const channel = new OrderedRdpInputChannel((event) => sent.push(event), { requestFrame: frame.requestFrame, cancelFrame: frame.cancelFrame });
+    channel.push('mouse-move', { x: 20, y: 30 });
+    channel.push('unicode-text', { text: '中文😀' });
+    assert.deepEqual(sent.map((event) => event.type), ['mouse-move', 'unicode-text']);
+    assert.equal(sent[1].payload.text, '中文😀');
+});
+
 test('releaseAll cancels pending move and releases held states', () => {
     const sent = [];
     const channel = new OrderedRdpInputChannel((event) => sent.push(event));

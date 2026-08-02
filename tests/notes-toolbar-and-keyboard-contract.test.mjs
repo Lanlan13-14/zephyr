@@ -66,8 +66,8 @@ test('notes button is gated by notes.enabled and hidden when off', () => {
   }
 });
 
-test('RDP and VNC script cache includes notes-align revision', () => {
-  assert.match(rdpHtml, /rdp-wasm-client\.js\?v=20260801-rdp-vnc-notes-align1/);
+test('RDP and VNC script cache includes their latest notes-compatible revision', () => {
+  assert.match(rdpHtml, /rdp-wasm-client\.js\?v=20260802-rdp-input-render20/);
   assert.match(novncHtml, /novnc\.js\?v=20260801-rdp-vnc-notes-align1/);
 });
 

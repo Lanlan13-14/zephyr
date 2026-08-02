@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"syscall/js"
 	"time"
@@ -38,10 +39,50 @@ var (
 )
 
 func noteProtocol(event string) {
-	addProtocolCounter(event, 1)
+	addProtocolCounter(protocolCounterKey(event), 1)
+	// Keep high-frequency PDU/WTS1 events in aggregated counters. Forwarding
+	// every event across the Worker boundary used to trigger a postMessage and
+	// an HTTP telemetry request for every graphics PDU during video playback.
+	if !isProtocolMilestone(event) {
+		return
+	}
 	if callback := js.Global().Get("rdpOnProtocolMilestone"); callback.Type() == js.TypeFunction {
 		callback.Invoke(event)
 	}
+}
+
+func protocolCounterKey(event string) string {
+	// Payload byte lengths, dimensions and order counts vary per PDU. Keeping
+	// those values in the map key made the supposedly aggregated diagnostics
+	// map grow almost once per video tile. Collapse them to bounded families.
+	for _, prefix := range []string{
+		"rdpgfx.wts1:codec",
+		"rdpgfx.cavideo.rects:",
+		"rdpgfx.progressive.rects:",
+		"pdu.orders:",
+	} {
+		if !strings.HasPrefix(event, prefix) {
+			continue
+		}
+		if prefix == "rdpgfx.wts1:codec" {
+			rest := strings.TrimPrefix(event, "rdpgfx.wts1:")
+			if end := strings.IndexByte(rest, ':'); end >= 0 {
+				return "rdpgfx.wts1:" + rest[:end]
+			}
+		}
+		return strings.TrimSuffix(prefix, ":")
+	}
+	return event
+}
+
+func isProtocolMilestone(event string) bool {
+	return event == "pdu.ready" ||
+		strings.HasPrefix(event, "drdynvc.") ||
+		strings.HasPrefix(event, "rdpevor.") ||
+		strings.HasPrefix(event, "rdpgfx.channel.") ||
+		strings.HasPrefix(event, "rdpgfx.caps.") ||
+		strings.HasPrefix(event, "rdpgfx.clearcodec.warn:") ||
+		strings.HasPrefix(event, "rdpgfx.clearcodec.drop:")
 }
 
 func addProtocolCounter(event string, value uint64) {
@@ -131,6 +172,7 @@ func main() {
 	js.Global().Set("rdpMouseHScroll", js.FuncOf(jsMouseHScroll))
 	js.Global().Set("rdpKeyDown", js.FuncOf(jsKeyDown))
 	js.Global().Set("rdpKeyUp", js.FuncOf(jsKeyUp))
+	js.Global().Set("rdpUnicodeText", js.FuncOf(jsUnicodeText))
 	js.Global().Set("rdpClipboardChanged", js.FuncOf(jsClipboardChanged))
 	js.Global().Set("rdpClipboardChangedSync", js.FuncOf(jsClipboardChangedSync))
 	js.Global().Set("rdpNotifyFilesChanged", js.FuncOf(jsNotifyFilesChanged))
@@ -141,6 +183,8 @@ func main() {
 	js.Global().Set("rdpCameraFrame", js.FuncOf(jsCameraFrame))
 	js.Global().Set("rdpGfxCompleteFrame", js.FuncOf(jsGfxCompleteFrame))
 	js.Global().Set("rdpRequestFullRefresh", js.FuncOf(jsRequestFullRefresh))
+	js.Global().Set("rdpSetResolution", js.FuncOf(jsSetResolution))
+	js.Global().Set("rdpSetRenderPreferences", js.FuncOf(jsSetRenderPreferences))
 	js.Global().Set("rdpGetProtocolDiagnostics", js.FuncOf(jsGetProtocolDiagnostics))
 	js.Global().Set("rdpGetClearCapture", js.FuncOf(jsGetClearCapture))
 	js.Global().Set("rdpGetProgressiveCapture", js.FuncOf(jsGetProgressiveCapture))
@@ -165,6 +209,74 @@ func main() {
 func reportStage(stage string) {
 	if callback := js.Global().Get("rdpOnStage"); callback.Type() == js.TypeFunction {
 		callback.Invoke(stage)
+	}
+}
+
+// jsSetResolution requests a live desktop resize over MS-RDPEDISP. A false
+// result means the display-control channel is not open yet (or unsupported),
+// so the page can retry without assuming that the remote desktop changed.
+func jsSetResolution(_ js.Value, args []js.Value) any {
+	if len(args) < 2 {
+		return false
+	}
+	c := currentClient()
+	if c == nil {
+		return false
+	}
+	return c.SetResolution(args[0].Int(), args[1].Int())
+}
+
+// jsSetRenderPreferences applies the parts of the rendering profile that are
+// safe to change without replacing the transport. ClientInfo performance
+// flags are login-time state, while RDPGFX queue depth and the Worker frame
+// scheduler can be updated during an active session.
+func jsSetRenderPreferences(_ js.Value, args []js.Value) any {
+	if len(args) < 2 {
+		return false
+	}
+	c := currentClient()
+	if c == nil {
+		return false
+	}
+	qualityMode := args[0].String()
+	fps := args[1].Int()
+	// ClientInfo PERF flags are login-time only. During a live session the
+	// standards-compliant control surface is RDPGFX FRAME_ACKNOWLEDGE feedback,
+	// so combine the selected quality and FPS into one adaptive queue-depth hint.
+	c.SetQualityMode(qualityMode)
+	c.SetQueueDepthHint(queueDepthForPreferences(qualityMode, fps))
+	return true
+}
+
+func queueDepthForPreferences(qualityMode string, fps int) uint32 {
+	var fpsHint uint32
+	switch {
+	case fps > 0 && fps <= 30:
+		fpsHint = 16
+	case fps > 0 && fps <= 45:
+		fpsHint = 8
+	case fps > 0 && fps <= 60:
+		fpsHint = 4
+	default:
+		fpsHint = 0
+	}
+
+	switch qualityMode {
+	case "performance":
+		// Prefer a lower bitrate/encode cost at every FPS tier while leaving
+		// 120/144 FPS available to the Worker scheduler.
+		if fpsHint < 10 {
+			if fps >= 120 {
+				return 2
+			}
+			return 10
+		}
+		return fpsHint + 8
+	case "quality":
+		// Preserve only the backpressure needed for the explicit low-FPS tiers.
+		return fpsHint / 2
+	default:
+		return fpsHint
 	}
 }
 
@@ -254,19 +366,9 @@ func connect(proxyWsURL, host, port, domain, user, password string, width, heigh
 	})
 	// Apply quality tier before Login so ClientInfo performance flags match UI.
 	g.SetQualityMode(qualityMode)
-	// Frame-rate hint via RDPGFX queueDepth: higher depth → server slows encode.
-	// 0 keeps real queue depth (no artificial throttle). Map target FPS to a
-	// mild backlog for lower rates so the server is free to drop quality.
-	if fps > 0 && fps < 60 {
-		// Rough throttle: 30fps → depth 20, 45fps → depth 8, else 0.
-		depth := uint32(0)
-		if fps <= 30 {
-			depth = 20
-		} else if fps <= 45 {
-			depth = 8
-		}
-		g.SetQueueDepthHint(depth)
-	}
+	// RdpClient retains this value and applies it when the dynamic graphics
+	// channel is created later during Login.
+	g.SetQueueDepthHint(queueDepthForPreferences(qualityMode, fps))
 	resetProtocolDiagnostics()
 	g.SetProtocolObserver(noteProtocol)
 	g.OnOrders(func(count int) { noteProtocol(fmt.Sprintf("pdu.orders:%d", count)) })
@@ -512,8 +614,6 @@ func forwardClassicBitmaps(bs []grdp.Bitmap) {
 			slog.Error("forwardClassicBitmaps panic", "err", r, "count", len(bs))
 		}
 	}()
-	slog.Info("forwardClassicBitmaps", "count", len(bs))
-
 	for _, bm := range bs {
 		w := bm.DestRight - bm.DestLeft + 1
 		if w > bm.Width {
@@ -685,6 +785,24 @@ func jsKeyUp(_ js.Value, args []js.Value) any {
 		}
 	}
 	return nil
+}
+
+func jsUnicodeText(_ js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return false
+	}
+	clientMu.Lock()
+	c := rdpClient
+	clientMu.Unlock()
+	if c == nil {
+		return false
+	}
+	text := args[0].String()
+	if text == "" {
+		return true
+	}
+	c.SendUnicodeText(text)
+	return true
 }
 
 // jsClipboardChanged is called from JS when the local clipboard text changes.

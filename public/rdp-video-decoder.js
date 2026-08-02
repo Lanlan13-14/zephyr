@@ -1,5 +1,60 @@
 function hexByte(value) { return Number(value).toString(16).padStart(2, '0').toUpperCase(); }
 
+function recoverableVideoError(code, detail = '') {
+    const error = new Error(detail ? `${code}: ${detail}` : code);
+    error.code = code;
+    error.recoverable = true;
+    return error;
+}
+
+// Sparse RGBA inspection for field diagnostics. This deliberately samples a
+// clone of an occasional decoded frame; the hot WebGL VideoFrame upload path
+// remains zero-copy. A large number of near-solid green rows is the signature
+// of an orphaned MS-RDPEVOR chroma-key surface, while a clean copyTo result
+// paired with a green canvas points at the GPU import/compositor instead.
+export async function inspectVideoFrameGreen(frame, { sampleStep = 4 } = {}) {
+    if (!frame || typeof frame.copyTo !== 'function') throw new Error('VideoFrame.copyTo is unavailable');
+    const width = Math.max(1, Math.trunc(Number(frame.displayWidth || frame.codedWidth || 0)));
+    const height = Math.max(1, Math.trunc(Number(frame.displayHeight || frame.codedHeight || 0)));
+    const options = { format: 'RGBA' };
+    const size = typeof frame.allocationSize === 'function'
+        ? Number(frame.allocationSize(options))
+        : width * height * 4;
+    if (!Number.isFinite(size) || size < width * height * 4) throw new Error(`invalid RGBA allocation size ${size}`);
+    const pixels = new Uint8Array(size);
+    const layouts = await frame.copyTo(pixels, options);
+    const layout = layouts?.[0] || {};
+    const offset = Math.max(0, Math.trunc(Number(layout.offset) || 0));
+    const stride = Math.max(width * 4, Math.trunc(Number(layout.stride) || width * 4));
+    const step = Math.max(1, Math.trunc(Number(sampleStep) || 1));
+    let samples = 0;
+    let keyGreen = 0;
+    let solidGreenRows = 0;
+    let maxGreenPermille = 0;
+    for (let y = 0; y < height; y += step) {
+        let rowSamples = 0;
+        let rowGreen = 0;
+        for (let x = 0; x < width; x += step) {
+            const i = offset + y * stride + x * 4;
+            const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+            if (![r, g, b].every(Number.isFinite)) continue;
+            rowSamples++;
+            samples++;
+            // Windows VOR uses a dark, nearly pure green key. Keep this much
+            // stricter than ordinary "green dominant" content so forests and
+            // UI accents do not look like protocol failures.
+            if (r <= 48 && b <= 48 && g >= 64 && g >= r + 32 && g >= b + 32) {
+                rowGreen++;
+                keyGreen++;
+            }
+        }
+        const permille = rowSamples ? Math.round((rowGreen * 1000) / rowSamples) : 0;
+        maxGreenPermille = Math.max(maxGreenPermille, permille);
+        if (rowSamples >= 8 && permille >= 750) solidGreenRows++;
+    }
+    return { width, height, samples, keyGreen, solidGreenRows, maxGreenPermille };
+}
+
 export function h264CodecFromAnnexB(data, fallback = 'avc1.640033') {
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data || 0);
     for (let i = 0; i + 4 < bytes.length; i++) {
@@ -13,14 +68,16 @@ export function h264CodecFromAnnexB(data, fallback = 'avc1.640033') {
 }
 
 export class RdpAvc420Decoder {
-    constructor({ Decoder = globalThis.VideoDecoder, Chunk = globalThis.EncodedVideoChunk, onFrame, onError = () => {}, maxQueue = 64 } = {}) {
+    constructor({ Decoder = globalThis.VideoDecoder, Chunk = globalThis.EncodedVideoChunk, onFrame, onError = () => {}, maxQueue = 64, outputTimeoutMs = 750 } = {}) {
         if (!Decoder || !Chunk) throw new Error('WebCodecs VideoDecoder is unavailable');
         this.Decoder = Decoder;
         this.Chunk = Chunk;
         this.onFrame = onFrame;
         this.onError = onError;
         this.maxQueue = maxQueue;
+        this.outputTimeoutMs = Math.max(0, Number(outputTimeoutMs) || 0);
         this.decoders = new Map();
+        this.waitingForKey = new Set();
         this.nextToken = 0;
     }
 
@@ -37,15 +94,28 @@ export class RdpAvc420Decoder {
     decode(event) {
         const stream = event.stream1;
         if (!stream?.data?.byteLength) throw new Error('AVC420 event has no stream1 data');
-        const key = `${Number(event.surfaceId)}:1`;
-        const state = this._state(key);
+        const surfaceId = Number(event.surfaceId);
+        if (this.waitingForKey.has(surfaceId)) {
+            if (!stream.key) throw recoverableVideoError('AVC420_WAITING_FOR_KEYFRAME');
+            this.waitingForKey.delete(surfaceId);
+        }
+        const key = `${surfaceId}:1`;
+        const state = this._state(key, surfaceId);
         if (state.decoder.decodeQueueSize >= this.maxQueue) {
             // Never drop a reference-bearing chunk. Fail explicitly so the
             // caller can apply RDPGFX backpressure/recovery.
-            throw new Error(`AVC420 decode queue exceeded ${this.maxQueue}`);
+            throw recoverableVideoError('AVC420_QUEUE_SATURATED', `decode queue exceeded ${this.maxQueue}`);
         }
         const token = ++this.nextToken;
-        state.metadata.set(token, { event, token });
+        const item = { event, token, timer: null };
+        state.metadata.set(token, item);
+        if (this.outputTimeoutMs > 0) {
+            item.timer = setTimeout(() => {
+                if (!state.metadata.delete(token)) return;
+                this.onError(recoverableVideoError('AVC420_OUTPUT_TIMEOUT', `decoder produced no frame for ${this.outputTimeoutMs}ms`), event, token);
+            }, this.outputTimeoutMs);
+            item.timer?.unref?.();
+        }
         try {
             const codec = h264CodecFromAnnexB(stream.data, state.codec);
             if (codec !== state.codec) {
@@ -56,25 +126,45 @@ export class RdpAvc420Decoder {
             state.decoder.decode(new this.Chunk({ type: stream.key ? 'key' : 'delta', timestamp: token, data: stream.data }));
         } catch (error) {
             state.metadata.delete(token);
+            if (item.timer != null) clearTimeout(item.timer);
             throw error;
         }
         return token;
     }
 
-    _state(key) {
+    _state(key, surfaceId) {
         let state = this.decoders.get(key);
         if (state) return state;
         const metadata = new Map();
         const decoder = new this.Decoder({
             output: (frame) => {
-                const item = metadata.get(Number(frame.timestamp));
-                metadata.delete(Number(frame.timestamp));
+                const outputToken = Number(frame.timestamp);
+                // WebCodecs may consume an EncodedVideoChunk without emitting
+                // a VideoFrame. Retire older unresolved inputs as soon as a
+                // later timestamp appears; otherwise one missing output blocks
+                // the ordered compositor queue forever.
+                for (const [token, pending] of metadata) {
+                    if (token >= outputToken) break;
+                    metadata.delete(token);
+                    if (pending.timer != null) clearTimeout(pending.timer);
+                    this.onError(recoverableVideoError('AVC420_OUTPUT_DROPPED', `decoder advanced from ${token} to ${outputToken}`), pending.event, pending.token);
+                }
+                const item = metadata.get(outputToken);
+                metadata.delete(outputToken);
                 if (!item) { frame.close?.(); return; }
+                if (item.timer != null) clearTimeout(item.timer);
                 this.onFrame?.(frame, item.event, item.token);
             },
             error: (error) => {
-                for (const item of metadata.values()) this.onError(error, item.event, item.token);
+                const items = [...metadata.values()];
                 metadata.clear();
+                this.decoders.delete(key);
+                this.waitingForKey.add(surfaceId);
+                const recoverable = recoverableVideoError('AVC420_DECODER_ERROR', error?.message || String(error));
+                for (const item of items) {
+                    if (item.timer != null) clearTimeout(item.timer);
+                    this.onError(recoverable, item.event, item.token);
+                }
             },
         });
         const codec = 'avc1.640033';
@@ -85,25 +175,40 @@ export class RdpAvc420Decoder {
     }
 
     resetSurface(surfaceId) {
-        const prefix = `${Number(surfaceId)}:`;
+        const id = Number(surfaceId);
+        this.waitingForKey.delete(id);
+        const prefix = `${id}:`;
         for (const [key, state] of this.decoders) {
             if (!key.startsWith(prefix)) continue;
             try { state.decoder.close(); } catch {}
             const error = new Error('decoder reset');
-            for (const item of state.metadata.values()) this.onError(error, item.event, item.token);
+            for (const item of state.metadata.values()) {
+                if (item.timer != null) clearTimeout(item.timer);
+                this.onError(error, item.event, item.token);
+            }
             state.metadata.clear();
             this.decoders.delete(key);
         }
+    }
+
+    recoverSurface(surfaceId) {
+        const id = Number(surfaceId);
+        this.resetSurface(id);
+        this.waitingForKey.add(id);
     }
 
     close() {
         const error = new Error('decoder closed');
         for (const state of this.decoders.values()) {
             try { state.decoder.close(); } catch {}
-            for (const item of state.metadata.values()) this.onError(error, item.event, item.token);
+            for (const item of state.metadata.values()) {
+                if (item.timer != null) clearTimeout(item.timer);
+                this.onError(error, item.event, item.token);
+            }
             state.metadata.clear();
         }
         this.decoders.clear();
+        this.waitingForKey.clear();
     }
 }
 
@@ -324,33 +429,69 @@ async function copyFrameI420(frame) {
     };
 }
 
+function cloneI420Planes(planes) {
+    if (!planes) return null;
+    return {
+        ...planes,
+        Y: planes.Y?.slice?.() || planes.Y,
+        U: planes.U?.slice?.() || planes.U,
+        V: planes.V?.slice?.() || planes.V,
+    };
+}
+
 export class RdpAvc444Decoder {
-    constructor({ Decoder = globalThis.VideoDecoder, Chunk = globalThis.EncodedVideoChunk, onMainFrame, onCombinedBitmap } = {}) {
+    constructor({ Decoder = globalThis.VideoDecoder, Chunk = globalThis.EncodedVideoChunk, onMainFrame, onCombinedBitmap, maxQueue = 64 } = {}) {
         if (!Decoder || !Chunk) throw new Error('WebCodecs VideoDecoder is unavailable');
         this.Decoder = Decoder;
         this.Chunk = Chunk;
         this.onMainFrame = onMainFrame;
         this.onCombinedBitmap = onCombinedBitmap;
+        this.maxQueue = maxQueue;
         this.states = new Map();
+        this.waitingForKey = new Set();
         this.mainPlanes = new Map();
+        // A stream2 IDR belongs with the main-stream IDR, not with a newer
+        // stream1 delta that may have arrived while the auxiliary decoder was
+        // producing output. Keep an immutable IDR snapshot per surface.
+        this.idrMainPlanes = new Map();
         this.surfaceChains = new Map();
+        this.surfaceGenerations = new Map();
         this.nextToken = 0;
         this.maxMainAgeMs = 500;
+        this.closed = false;
     }
 
     decode(event) {
+        if (this.closed) throw new Error('AVC444 decoder is closed');
         const surfaceId = Number(event.surfaceId);
+        const generation = this.surfaceGenerations.get(surfaceId) || 0;
         // Submit compressed chunks immediately. Serialising decode() calls can
         // deadlock codecs that need a later chunk before emitting the current
         // frame. Only the cache/combine stage is ordered per surface.
         const prepared = this._prepare(event);
         const previous = this.surfaceChains.get(surfaceId) || Promise.resolve();
-        const current = previous.catch(() => {}).then(async () => this._applyPrepared(await prepared, event));
+        const current = previous.catch(() => {}).then(async () => {
+            const value = await prepared;
+            // ResetGraphics and DELETE_SURFACE invalidate every in-flight decode
+            // for that surface. Closing VideoDecoder rejects chunks that have not
+            // produced output yet, but a frame may already be inside copyTo() or
+            // waiting behind the ordered surface chain. Never let such a frame
+            // repopulate mainPlanes for a newly-created surface with the same id.
+            if (this.closed || generation !== (this.surfaceGenerations.get(surfaceId) || 0)) {
+                this._disposePrepared(value);
+                return false;
+            }
+            return this._applyPrepared(value, event);
+        });
         this.surfaceChains.set(surfaceId, current);
         current.finally(() => {
             if (this.surfaceChains.get(surfaceId) === current) this.surfaceChains.delete(surfaceId);
         }).catch(() => {});
         return current;
+    }
+
+    _disposePrepared(prepared) {
+        try { prepared?.mainFrame?.close?.(); } catch {}
     }
 
     async _prepare(event) {
@@ -399,6 +540,7 @@ export class RdpAvc444Decoder {
             prepared.main.updatedAt = performance.now();
             prepared.main.key = !!event.stream1?.key;
             this.mainPlanes.set(surfaceId, prepared.main);
+            if (prepared.main.key) this.idrMainPlanes.set(surfaceId, cloneI420Planes(prepared.main));
             this.onMainFrame?.(prepared.mainFrame, event);
             return true;
         }
@@ -407,15 +549,25 @@ export class RdpAvc444Decoder {
             prepared.main.updatedAt = performance.now();
             prepared.main.key = !!event.stream1?.key;
             this.mainPlanes.set(surfaceId, prepared.main);
+            if (prepared.main.key) this.idrMainPlanes.set(surfaceId, cloneI420Planes(prepared.main));
             this.onMainFrame?.(prepared.mainFrame, event);
             return true;
         }
-        const main = this.mainPlanes.get(surfaceId);
-        if (!main || !Number.isFinite(main.updatedAt) || performance.now() - main.updatedAt > this.maxMainAgeMs) return false;
+        const auxiliaryIsIdr = !!event.stream2?.key;
+        const main = auxiliaryIsIdr ? this.idrMainPlanes.get(surfaceId) : this.mainPlanes.get(surfaceId);
+        if (!main || !Number.isFinite(main.updatedAt)) return false;
+        if (!auxiliaryIsIdr && performance.now() - main.updatedAt > this.maxMainAgeMs) return false;
         if (avc444MainLooksCorrupt(main)) return false;
         const width = Number(event.rect?.right) - Number(event.rect?.left) || main.width;
         const height = Number(event.rect?.bottom) - Number(event.rect?.top) || main.height;
         const filtered = filterAvc444Regions(prepared.aux, event.stream2?.regions, width, height);
+        // Never apply only the accepted subset of an AVC444 update. That
+        // produces a visible quilt of fresh and stale chroma. Preserve the
+        // previous complete surface and request a fresh reference frame.
+        if (filtered.rejected > 0) {
+            event.__avc444RejectedRegions = filtered.rejected;
+            return false;
+        }
         if (filtered.regions && !filtered.regions.length) return false;
         if (!filtered.regions && avc444AuxLooksCorrupt(prepared.aux)) return false;
         this.onCombinedBitmap?.(combineAvc444Planes(main, prepared.aux, width, height), event, filtered.regions, filtered.rejected);
@@ -423,7 +575,17 @@ export class RdpAvc444Decoder {
     }
 
     _submit(surfaceId, role, stream) {
+        const key = `${surfaceId}:${role}`;
+        if (this.waitingForKey.has(key)) {
+            if (!stream.key) return Promise.reject(recoverableVideoError('AVC444_WAITING_FOR_KEYFRAME', `surface ${surfaceId} stream ${role}`));
+            this.waitingForKey.delete(key);
+        }
         const state = this._state(surfaceId, role);
+        if (state.decoder.decodeQueueSize >= this.maxQueue) {
+            const error = recoverableVideoError('AVC444_QUEUE_SATURATED', `surface ${surfaceId} stream ${role} exceeded ${this.maxQueue}`);
+            this._recoverState(surfaceId, role, error);
+            return Promise.reject(error);
+        }
         const token = ++this.nextToken;
         return new Promise((resolve, reject) => {
             state.pending.set(token, { resolve, reject });
@@ -453,9 +615,13 @@ export class RdpAvc444Decoder {
                 pending.delete(Number(frame.timestamp));
                 if (item) item.resolve(frame); else frame.close?.();
             },
-            error(error) {
-                for (const item of pending.values()) item.reject(error);
+            error: (error) => {
+                const items = [...pending.values()];
                 pending.clear();
+                this.states.delete(key);
+                this.waitingForKey.add(key);
+                const recoverable = recoverableVideoError('AVC444_DECODER_ERROR', error?.message || String(error));
+                for (const item of items) item.reject(recoverable);
             },
         });
         const codec = 'avc1.640033';
@@ -465,19 +631,40 @@ export class RdpAvc444Decoder {
         return state;
     }
 
+    _recoverState(surfaceId, role, error) {
+        const key = `${surfaceId}:${role}`;
+        const state = this.states.get(key);
+        if (state) {
+            try { state.decoder.close(); } catch {}
+            const items = [...state.pending.values()];
+            state.pending.clear();
+            this.states.delete(key);
+            for (const item of items) item.reject(error);
+        }
+        this.waitingForKey.add(key);
+    }
+
     resetSurface(surfaceId) {
-        const prefix = `${Number(surfaceId)}:`;
+        const id = Number(surfaceId);
+        this.surfaceGenerations.set(id, (this.surfaceGenerations.get(id) || 0) + 1);
+        const prefix = `${id}:`;
+        for (const key of this.waitingForKey) {
+            if (key.startsWith(prefix)) this.waitingForKey.delete(key);
+        }
         for (const [key, state] of this.states) {
             if (!key.startsWith(prefix)) continue;
             try { state.decoder.close(); } catch {}
             for (const item of state.pending.values()) item.reject(new Error('decoder reset'));
+            state.pending.clear();
             this.states.delete(key);
         }
-        this.mainPlanes.delete(Number(surfaceId));
-        this.surfaceChains.delete(Number(surfaceId));
+        this.mainPlanes.delete(id);
+        this.idrMainPlanes.delete(id);
+        this.surfaceChains.delete(id);
     }
 
     close() {
+        this.closed = true;
         const error = new Error('decoder closed');
         for (const state of this.states.values()) {
             try { state.decoder.close(); } catch {}
@@ -485,7 +672,10 @@ export class RdpAvc444Decoder {
             state.pending.clear();
         }
         this.states.clear();
+        this.waitingForKey.clear();
         this.mainPlanes.clear();
+        this.idrMainPlanes.clear();
         this.surfaceChains.clear();
+        this.surfaceGenerations.clear();
     }
 }

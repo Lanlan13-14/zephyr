@@ -1,7 +1,7 @@
-import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260730-rdp-ordered-surface4';
-import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260730-rdp-ordered-surface4';
+import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260802-rdp-input-render16';
+import { RdpAvc420Decoder, RdpAvc444Decoder } from './rdp-video-decoder.js?v=20260802-rdp-input-render16';
 import { createSynchronousBitmapUploader } from './rdp-wasm-memory.js?v=20260730-rdp-ordered-surface4';
-import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260730-rdp-ordered-surface4';
+import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260801-rdp-motion9';
 import { OrderedRenderCommandQueue } from './rdp-render-command-queue.js?v=20260730-rdp-ordered-surface4';
 import { loadGoRuntime, instantiateGoWasm } from './rdp-wasm-runtime.js?v=20260730-rdp-ordered-surface4';
 
@@ -11,8 +11,9 @@ let avc444 = null;
 let initialized = false;
 let wasmReady = false;
 let localFiles = [];
-const frameScheduler = createWorkerFrameScheduler(globalThis, { fallbackMs: 34 });
+const frameScheduler = createWorkerFrameScheduler(globalThis, { targetFps: 60 });
 let lastPresentedAt = 0;
+let lastVideoRefreshAt = Number.NEGATIVE_INFINITY;
 const renderQueue = new OrderedRenderCommandQueue({
     onError(error, entry) { failClosed(`RENDER_COMMAND_FAILED:${entry?.label || entry?.sequence || ''}`, error); },
 });
@@ -29,6 +30,8 @@ const workerDiag = {
     avc420LastRegionPixels: 0,
     avc420LastFramePixels: 0,
     avc420FullUploads: 0,
+    avc420DroppedOutputs: 0,
+    avc420OutputTimeouts: 0,
     avc444Events: 0,
     avc444RejectedRegions: 0,
     presents: 0,
@@ -49,7 +52,7 @@ function bootStage(stage, detail = '') {
     postMessage({ type: 'boot-stage', stage: currentBootStage, detail });
 }
 const callbacksToPage = new Set([
-    'rdpOnReady', 'rdpOnError', 'rdpOnClose', 'rdpOnStage', 'rdpOnProtocolMilestone', 'rdpOnClipboard', 'rdpOnRemoteFiles',
+    'rdpOnReady', 'rdpOnError', 'rdpOnClose', 'rdpOnStage', 'rdpOnProtocolMilestone', 'rdpOnGraphicsReset', 'rdpOnClipboard', 'rdpOnRemoteFiles',
     'rdpOnPointerHide', 'rdpOnPointerCached', 'rdpOnPointerUpdate',
     'rdpAudioPlay', 'rdpAudioReset', 'rdpAudinStart', 'rdpAudinStop', 'rdpCameraStart',
     'rdpCameraStop', 'rdpLocationStart', 'rdpLocationStop',
@@ -74,7 +77,7 @@ async function loadGoWasm() {
     bootStage('wasm-fetching');
     bootStage('wasm-instantiating');
     const { go, result } = await instantiateGoWasm(GoRuntime, {
-        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20260730-rdp-ordered-surface4',
+        wasmUrl: './vendor/rdp-wasm/main.wasm?v=20260802-rdp-input-render16',
         pipeline: 'worker-gpu-v2',
     });
     if (result.instance.exports.mem) {
@@ -133,7 +136,7 @@ async function loadGoWasm() {
     } finally {
         delete globalThis.zephyrRdpWasmReady;
     }
-    const requiredExports = ['rdpConnect', 'rdpDisconnect', 'rdpConfigureRenderer', 'rdpGetProtocolDiagnostics', 'rdpGfxCompleteFrame', 'rdpRequestFullRefresh'];
+    const requiredExports = ['rdpConnect', 'rdpDisconnect', 'rdpConfigureRenderer', 'rdpGetProtocolDiagnostics', 'rdpGetClearCapture', 'rdpGfxCompleteFrame', 'rdpRequestFullRefresh', 'rdpSetResolution', 'rdpSetRenderPreferences'];
     const missingExports = requiredExports.filter((name) => typeof globalThis[name] !== 'function');
     if (missingExports.length) throw new Error(`Go WASM exports unavailable: ${missingExports.join(', ')}`);
     if (typeof globalThis.rdpOnWasmBitmap !== 'function') throw new Error('Worker WASM bitmap callback is unavailable');
@@ -149,20 +152,28 @@ function createAvc420Decoder() {
             const ticket = event.__renderTicket;
             if (!ticket) { frame.close?.(); failClosed('AVC420_RENDER_TICKET_MISSING', new Error('missing render ticket')); return; }
             ticket.resolve(() => {
-                compositor.uploadVideoFrame(event.surfaceId, event.rect, frame, event.stream1?.regions);
+                // AVC420 output is a full decoder reference surface, but
+                // pixels outside the RDPGFX dirty regions can contain the VOR
+                // green key. Commit only the protocol-declared regions so a
+                // sparse moving frame cannot erase the existing desktop.
+                compositor.uploadVideoFrame(event.surfaceId, event.rect, frame, event.stream1?.regions, { trustRegions: true });
                 compositor.completeFramePending(event.frameId);
             }, () => frame.close?.());
         },
         onError(error, event) {
             event?.__renderTicket?.skip();
             const message = String(error?.message || error || '');
+            if (error?.code === 'AVC420_OUTPUT_DROPPED' || error?.code === 'AVC420_OUTPUT_TIMEOUT') {
+                workerDiag.avc420DroppedOutputs++;
+                if (error.code === 'AVC420_OUTPUT_TIMEOUT') workerDiag.avc420OutputTimeouts++;
+                compositor.completeFramePending(event?.frameId, { dirty: false });
+                return;
+            }
             if (message === 'decoder reset' || message === 'decoder closed') {
                 compositor.completeFramePending(event?.frameId, { dirty: false });
                 return;
             }
-            // Keep the frame pending; failClosed destroys the protocol session
-            // so an undecoded frame cannot be acknowledged.
-            failClosed('AVC420_WORKER_FAILED', error);
+            recoverAvc420Frame(error, event);
         },
     });
 }
@@ -171,7 +182,7 @@ function createAvc444Decoder() {
     return new RdpAvc444Decoder({
         onMainFrame(frame, event) {
             event.__preparedRender = {
-                apply() { compositor.uploadVideoFrame(event.surfaceId, event.rect, frame, event.stream1?.regions); },
+                apply() { compositor.uploadVideoFrame(event.surfaceId, event.rect, frame, event.stream1?.regions, { trustRegions: true }); },
                 dispose() { frame.close?.(); },
             };
         },
@@ -191,6 +202,22 @@ function createAvc444Decoder() {
     });
 }
 
+function requestVideoRefresh() {
+    const now = globalThis.performance?.now?.() ?? Date.now();
+    if (now - lastVideoRefreshAt < 250) return false;
+    lastVideoRefreshAt = now;
+    try { globalThis.rdpRequestFullRefresh?.(); return true; } catch { return false; }
+}
+
+function recoverAvc420Frame(error, event, { resetDecoder = false } = {}) {
+    workerDiag.drawFails++;
+    workerDiag.lastError = `AVC420_FRAME_RECOVERY: ${error?.message || error}`;
+    if (resetDecoder) avc420?.recoverSurface?.(event?.surfaceId);
+    event?.__renderTicket?.skip();
+    compositor.completeFramePending(event?.frameId, { dirty: false });
+    requestVideoRefresh();
+}
+
 function recoverAvc444Frame(error, event) {
     workerDiag.drawFails++;
     workerDiag.lastError = `AVC444_FRAME_SKIPPED: ${error?.message || error}`;
@@ -199,7 +226,7 @@ function recoverAvc444Frame(error, event) {
     // server for a fresh reference frame. The frame ACK carries backlog so the
     // server can reduce pressure while WebCodecs catches up.
     compositor.completeFramePending(event.frameId, { dirty: false });
-    try { globalThis.rdpRequestFullRefresh?.(); } catch {}
+    requestVideoRefresh();
 }
 
 function setupRenderer(canvas) {
@@ -256,7 +283,14 @@ function handleRenderEvent(event) {
         avc444?.close();
         avc420 = createAvc420Decoder();
         avc444 = createAvc444Decoder();
-        renderQueue.enqueue(() => compositor.handleEvent(event), 'reset-graphics');
+        renderQueue.enqueue(() => {
+            compositor.handleEvent(event);
+            globalThis.rdpOnGraphicsReset?.(Number(event.width) || 0, Number(event.height) || 0);
+            // The resized surface starts from the compositor's transition
+            // base; ask the server for fresh desktop pixels so the carry is
+            // retired by current-size updates as quickly as possible.
+            globalThis.setTimeout?.(() => requestVideoRefresh(), 120);
+        }, 'reset-graphics');
         return;
     }
     if (kind === 9) {
@@ -270,6 +304,15 @@ function handleRenderEvent(event) {
         workerDiag.avc420LastFramePixels = framePixels;
         workerDiag.avc420LastRegionPixels = regionPixels;
         workerDiag.avc420FramePixels += framePixels;
+        workerDiag.avc420WireLeft = Math.trunc(Number(event.rect?.left) || 0);
+        workerDiag.avc420WireTop = Math.trunc(Number(event.rect?.top) || 0);
+        workerDiag.avc420WireRight = Math.trunc(Number(event.rect?.right) || 0);
+        workerDiag.avc420WireBottom = Math.trunc(Number(event.rect?.bottom) || 0);
+        const firstRegion = regions[0];
+        workerDiag.avc420RegionLeft = Math.trunc(Number(firstRegion?.left) || 0);
+        workerDiag.avc420RegionTop = Math.trunc(Number(firstRegion?.top) || 0);
+        workerDiag.avc420RegionRight = Math.trunc(Number(firstRegion?.right) || 0);
+        workerDiag.avc420RegionBottom = Math.trunc(Number(firstRegion?.bottom) || 0);
         if (regions.length) {
             workerDiag.avc420RegionEvents++;
             workerDiag.avc420RegionRects += regions.length;
@@ -282,8 +325,7 @@ function handleRenderEvent(event) {
             event.__renderTicket = renderQueue.reserve(`avc420:${event.surfaceId}:${event.frameId}`);
             avc420.decode(event);
         } catch (error) {
-            event.__renderTicket?.skip();
-            failClosed('AVC420_QUEUE_FAILED', error);
+            recoverAvc420Frame(error, event, { resetDecoder: true });
         }
         return;
     }
@@ -298,8 +340,14 @@ function handleRenderEvent(event) {
                     event.__renderTicket.skip(prepared?.dispose);
                     compositor.completeFramePending(event.frameId, { dirty: false });
                     workerDiag.drawFails++;
-                    workerDiag.lastError = 'AVC444_FRAME_SKIPPED: stale or corrupt chroma';
-                    try { globalThis.rdpRequestFullRefresh?.(); } catch {}
+                    const rejected = Number(event.__avc444RejectedRegions) || 0;
+                    if (rejected > 0) {
+                        workerDiag.avc444RejectedRegions = (workerDiag.avc444RejectedRegions || 0) + rejected;
+                        workerDiag.lastError = `AVC444_FRAME_SKIPPED: rejected ${rejected} corrupt region tiles`;
+                    } else {
+                        workerDiag.lastError = 'AVC444_FRAME_SKIPPED: stale or corrupt chroma';
+                    }
+                    requestVideoRefresh();
                     return;
                 }
                 event.__renderTicket.resolve(() => {
@@ -333,20 +381,17 @@ function dispatchInput(envelope) {
     case 'hwheel': return globalThis.rdpMouseHScroll(p.delta);
     case 'key-down': return globalThis.rdpKeyDown(p.code);
     case 'key-up': return globalThis.rdpKeyUp(p.code);
+    case 'unicode-text': return globalThis.rdpUnicodeText(p.text);
     default: throw new Error(`unknown input type ${envelope.type}`);
     }
 }
 
 async function invokeMethod(method, args) {
+	if (method === 'rdpConnect') frameScheduler.setTargetFps(args?.[14]);
+	if (method === 'rdpSetRenderPreferences') frameScheduler.setTargetFps(args?.[1]);
     if (method === 'rdpCaptureFrame') {
         if (!compositor?.gl || !compositor.width || !compositor.height) throw new Error('RDP renderer is not ready');
-        const gl = compositor.gl;
-        const width = compositor.width;
-        const height = compositor.height;
-        const pixels = new Uint8Array(width * height * 4);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.finish();
-        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        const { width, height, pixels } = compositor.capturePixels();
         const flipped = new Uint8Array(pixels.length);
         const row = width * 4;
         for (let y = 0; y < height; y++) flipped.set(pixels.subarray((height - 1 - y) * row, (height - y) * row), y * row);
@@ -369,6 +414,8 @@ async function invokeMethod(method, args) {
             protocol[`dbg.bm${i}.rb`] = s.rb;
             protocol[`dbg.bm${i}.b`] = s.b[0] * 16777216 + s.b[1] * 65536 + s.b[2] * 256 + s.b[3];
         });
+        protocol['dbg.avc420.outputDropped'] = workerDiag.avc420DroppedOutputs;
+        protocol['dbg.avc420.outputTimeouts'] = workerDiag.avc420OutputTimeouts;
         return {
             ...workerDiag,
             bitmapSamples: undefined,

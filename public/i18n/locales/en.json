@@ -1420,6 +1420,8 @@
   "值可见": "Value visible",
   "复制文本": "Copy text",
   "编辑消息": "Edit message",
+  "退出编辑": "Cancel edit",
+  "正在编辑已发送消息": "Editing a sent message",
   "重新回答": "Re-answer",
   "选择文本": "Select text",
   "查看用量": "View usage",

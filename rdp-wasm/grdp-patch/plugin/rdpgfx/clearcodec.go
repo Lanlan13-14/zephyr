@@ -48,6 +48,13 @@ func newClearDecoder() *clearDecoder {
 	}
 }
 
+// resetSequence implements FreeRDP clear_context_reset semantics. ClearCodec
+// caches belong to the graphics channel, not to an individual surface, so a
+// RESET_GRAPHICS PDU must not discard glyph or VBar entries.
+func (d *clearDecoder) resetSequence() {
+	d.seq = 0
+}
+
 // takeWarns returns and clears the decode warnings accumulated since the last
 // call. The WTS1 handler forwards them to the protocol observer so dropped or
 // degraded tiles are visible in telemetry instead of silent.
@@ -223,7 +230,9 @@ func (d *clearDecoder) decodeComposite(c *clearCursor, out []byte, width int) er
 	if err := d.decodeClearBands(bands, out, width); err != nil {
 		return err
 	}
-	d.decodeClearSubcodecs(sub, out, width)
+	if err := d.decodeClearSubcodecs(sub, out, width); err != nil {
+		return err
+	}
 	if c.remaining() != 0 {
 		return fmt.Errorf("ClearCodec trailing bytes %d", c.remaining())
 	}
@@ -258,40 +267,35 @@ func decodeClearResidual(data, out []byte) error {
 	return nil
 }
 
-func (d *clearDecoder) decodeClearSubcodecs(data, out []byte, surfW int) {
+func (d *clearDecoder) decodeClearSubcodecs(data, out []byte, surfW int) error {
 	c := &clearCursor{data: data}
 	surfH := len(out) / (surfW * 4)
 	for c.remaining() > 0 {
 		if c.remaining() < 13 {
-			d.warnf("subcodec header truncated: %d bytes", c.remaining())
-			return
+			return fmt.Errorf("ClearCodec subcodec header truncated: %d bytes", c.remaining())
 		}
 		x, y, w, h := int(c.u16()), int(c.u16()), int(c.u16()), int(c.u16())
 		n := int(c.u32())
 		id := c.u8()
 		if c.remaining() < n {
-			d.warnf("subcodec %d payload truncated: need %d have %d", id, n, c.remaining())
-			return
+			return fmt.Errorf("ClearCodec subcodec %d payload truncated: need %d have %d", id, n, c.remaining())
 		}
 		payload := c.take(n)
 		if w <= 0 || h <= 0 || x+w > surfW || y+h > surfH {
-			d.warnf("subcodec %d bounds (%d,%d %dx%d)", id, x, y, w, h)
-			continue
+			return fmt.Errorf("ClearCodec subcodec %d bounds (%d,%d %dx%d)", id, x, y, w, h)
 		}
 		switch id {
 		case 0:
 			if len(payload) != w*h*3 {
-				d.warnf("raw subcodec size %d != %d", len(payload), w*h*3)
-				continue
+				return fmt.Errorf("ClearCodec raw subcodec size %d != %d", len(payload), w*h*3)
 			}
 			decodeClearRaw(payload, out, x, y, w, h, surfW)
 		case 1:
 			// FreeRDP routes NSCodec through nsc_process_message with
 			// FLIP_NONE. DecodeNSCodec returns top-down BGRA rows.
-			decoded := pdu.DecodeNSCodec(payload, w, h)
-			if len(decoded) != w*h*4 {
-				d.warnf("nscodec subcodec %dx%d decode failed", w, h)
-				continue
+			decoded, err := pdu.DecodeNSCodec(payload, w, h)
+			if err != nil {
+				return fmt.Errorf("ClearCodec NSCodec subcodec %dx%d: %w", w, h, err)
 			}
 			for row := 0; row < h; row++ {
 				srcOff := row * w * 4
@@ -300,12 +304,13 @@ func (d *clearDecoder) decodeClearSubcodecs(data, out []byte, surfW int) {
 			}
 		case 2:
 			if err := decodeClearRlexRegion(payload, out, x, y, w, h, surfW); err != nil {
-				d.warnf("rlex: %v", err)
+				return fmt.Errorf("ClearCodec RLEX subcodec: %w", err)
 			}
 		default:
 			d.warnf("unsupported subcodec %d", id)
 		}
 	}
+	return nil
 }
 
 func decodeClearRaw(data, out []byte, x0, y0, w, h, surfW int) {

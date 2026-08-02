@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 
 const inputSource = await fs.readFile(new URL('../public/rdp-input-channel.js', import.meta.url), 'utf8');
 const bridgeSource = (await fs.readFile(new URL('../public/rdp-worker-bridge.js', import.meta.url), 'utf8'))
-    .replace("import { OrderedRdpInputChannel } from './rdp-input-channel.js';", `const { OrderedRdpInputChannel } = await import('data:text/javascript;base64,${Buffer.from(inputSource).toString('base64')}');`);
+    .replace(/import \{ OrderedRdpInputChannel \} from '\.\/rdp-input-channel\.js[^']*';/, `const { OrderedRdpInputChannel } = await import('data:text/javascript;base64,${Buffer.from(inputSource).toString('base64')}');`);
 const { RdpWorkerBridge } = await import(`data:text/javascript;base64,${Buffer.from(bridgeSource).toString('base64')}`);
 
 class MockWorker extends EventEmitter {
@@ -70,6 +70,17 @@ test('Worker input uses ordered envelopes', () => {
     const inputs = worker.sent.filter(({ message }) => message.type === 'input').map(({ message }) => message.envelope);
     assert.deepEqual(inputs.map((event) => event.type), ['mouse-move', 'mouse-down']);
     assert.equal(inputs[0].payload.x, 2);
+});
+
+test('Worker bridge sends Unicode text through the ordered input channel', () => {
+    const worker = new MockWorker();
+    const bridge = new RdpWorkerBridge(worker, { syncBytes: 1024 });
+    const target = {};
+    bridge.installGlobals(target);
+    target.rdpUnicodeText('中文😀');
+    const envelope = worker.sent.at(-1).message.envelope;
+    assert.equal(envelope.type, 'unicode-text');
+    assert.equal(envelope.payload.text, '中文😀');
 });
 
 

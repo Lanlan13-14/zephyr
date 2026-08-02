@@ -386,7 +386,7 @@ func (c *Client) recvServerFontMapPDU(s []byte) {
 
 	// Tell the server we're ready to receive display updates (MS-RDPBCGR 2.2.11.3.1)
 	slog.Debug("Sending SuppressOutput (ALLOW_DISPLAY_UPDATES)")
-	c.sendDataPDU(&SuppressOutputPDU{
+	c.sendDataPDU(&AllowOutputPDU{
 		AllowDisplayUpdates: 1,
 		Right:               c.clientCoreData.DesktopWidth - 1,
 		Bottom:              c.clientCoreData.DesktopHeight - 1,
@@ -427,7 +427,6 @@ func (c *Client) recvPDU(s []byte) {
 				p := up.Udata
 				if up.UpdateType == FASTPATH_UPDATETYPE_BITMAP {
 					rects := p.(*BitmapUpdateDataPDU).Rectangles
-					slog.Info("recvPDU slow-path BITMAP", "rects", len(rects))
 					c.Emit("bitmap", rects)
 				} else if up.UpdateType == FASTPATH_UPDATETYPE_ORDERS {
 					c.Emit("orders", p.(*FastPathOrdersPDU).OrderPdus)
@@ -496,13 +495,6 @@ func (c *Client) RecvFastPath(secFlag byte, s []byte) {
 			"compressionFlags", compressionFlags,
 			"fragmentation", fragmentation,
 			"size", size)
-
-		if updateCode == FASTPATH_UPDATETYPE_BITMAP {
-			slog.Info("RecvFastPath BITMAP", "rects", "pending", "size", size)
-		}
-		if updateCode == FASTPATH_UPDATETYPE_SURFCMDS {
-			slog.Info("RecvFastPath SURFCMDS", "size", size)
-		}
 
 		// Handle fragmentation: reassemble fragments first, then decompress.
 		if fragmentation != FASTPATH_FRAGMENT_SINGLE {
@@ -652,9 +644,13 @@ func (c *Client) SendForceRefresh(width, height uint16) {
 	c.sendDataPDU(&SuppressOutputPDU{
 		AllowDisplayUpdates: 0x00, // SUPPRESS_DISPLAY_UPDATES
 	})
-	c.sendDataPDU(&SuppressOutputPDU{
+	c.sendDataPDU(&AllowOutputPDU{
 		AllowDisplayUpdates: 0x01, // ALLOW_DISPLAY_UPDATES
 		Right:               width - 1,
 		Bottom:              height - 1,
 	})
+	// RefreshRect is redundant on conforming servers after ALLOW, but it makes
+	// the intended full GFX surface invalidation explicit and repairs Windows
+	// hosts that otherwise resume with only sparse ClearCodec dirty regions.
+	c.SendRefreshRect(width, height)
 }

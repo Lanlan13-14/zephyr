@@ -1279,6 +1279,10 @@ func (g *GfxHandler) onCapsConfirm(data []byte) {
 	if dataLen >= 4 {
 		flags = binary.LittleEndian.Uint32(data[8:])
 	}
+	// totalFramesDecoded belongs to the negotiated RDPGFX channel lifetime.
+	// FreeRDP resets it when CAPS_CONFIRM establishes that lifetime, not when
+	// the server later changes the desktop with RESET_GRAPHICS.
+	g.framesDecoded.Store(0)
 	slog.Debug("RDPGFX: CAPS_CONFIRM", "version", version, "flags", flags)
 	g.observe(fmt.Sprintf("rdpgfx.caps.confirm:v0x%08x:flags0x%08x", version, flags))
 }
@@ -1292,9 +1296,11 @@ func (g *GfxHandler) onResetGraphics(data []byte) {
 	slog.Debug("RDPGFX: RESET_GRAPHICS", "w", w, "h", h)
 	g.surfaces = make(map[uint16]*surface)
 	g.cacheEntries = make(map[uint16]cacheEntry)
-	g.clearCtx = newClearCodecCtx()
-	g.clearDecoder = newClearDecoder()
-	g.framesDecoded.Store(0)
+	// FreeRDP clear_context_reset only resets the sequence number. ClearCodec
+	// caches are channel-wide and remain valid across RESET_GRAPHICS.
+	if g.clearDecoder != nil {
+		g.clearDecoder.resetSequence()
+	}
 	g.softResetCount = 0
 	g.noIDRSoftResetCount = 0
 	g.decoderBrokenNotified = false
@@ -1369,7 +1375,7 @@ func (g *GfxHandler) onMapSurfaceToOutput(data []byte) {
 		s.outputY = oy
 		s.mapped = true
 		g.emitRenderEvent(RenderEvent{Kind: RenderMapSurface, FrameID: g.currentFrameID, SurfaceID: id, OutputX: ox, OutputY: oy, Width: uint32(s.width), Height: uint32(s.height)})
-		g.emitBitmap(s, 0, 0, int(s.width), int(s.height), s.data)
+		g.emitFreshLegacyMappedShadow(s)
 	}
 }
 
@@ -1389,8 +1395,21 @@ func (g *GfxHandler) onMapSurfaceToScaledOutput(data []byte) {
 		s.outputY = oy
 		s.mapped = true
 		g.emitRenderEvent(RenderEvent{Kind: RenderMapSurfaceScaled, FrameID: g.currentFrameID, SurfaceID: id, OutputX: ox, OutputY: oy, Width: targetW, Height: targetH})
-		g.emitBitmap(s, 0, 0, int(s.width), int(s.height), s.data)
+		g.emitFreshLegacyMappedShadow(s)
 	}
+}
+
+// emitFreshLegacyMappedShadow preserves the historical onBitmap behaviour for
+// CPU-only consumers without replaying it into the semantic render pipeline.
+// A map command changes only the surface-to-output relationship; the renderer
+// already owns the current GPU surface contents. Re-emitting the CPU shadow as
+// RenderBitmap would overwrite that content, and is especially harmful after
+// GPU-only AVC updates have marked the shadow stale.
+func (g *GfxHandler) emitFreshLegacyMappedShadow(s *surface) {
+	if g.onRenderEvent != nil || g.onBitmap == nil || s == nil || s.shadowStale {
+		return
+	}
+	g.emitBitmap(s, 0, 0, int(s.width), int(s.height), s.data)
 }
 
 // sendFrameAck builds and queues a FRAME_ACKNOWLEDGE PDU.
@@ -1448,10 +1467,7 @@ func (g *GfxHandler) onEndFrame(data []byte) {
 	if g.externalFrameCompletion {
 		return
 	}
-	realDepth := uint32(len(g.decodeCh))
-	if hint := g.queueDepthHint.Load(); hint > realDepth {
-		realDepth = hint
-	}
+	realDepth := g.effectiveQueueDepth(uint32(len(g.decodeCh)))
 	if err := g.frameTracker.Complete(frameID, realDepth); err != nil {
 		slog.Warn("RDPGFX: frame completion failed", "frameId", frameID, "err", err)
 		return
@@ -1474,11 +1490,21 @@ func (g *GfxHandler) SetExternalFrameCompletion(enabled bool) { g.externalFrameC
 // CompleteFrame marks a sealed frame complete and emits all consecutively
 // ready ACKs in protocol order.
 func (g *GfxHandler) CompleteFrame(frameID, queueDepth uint32) error {
-	if err := g.frameTracker.Complete(frameID, queueDepth); err != nil {
+	if err := g.frameTracker.Complete(frameID, g.effectiveQueueDepth(queueDepth)); err != nil {
 		return err
 	}
 	g.sendReadyFrameAcks()
 	return nil
+}
+
+// effectiveQueueDepth applies the configured pacing hint to both completion
+// paths. WASM uses external compositor completion, so applying the hint only
+// from onEndFrame silently made live 30/45 FPS changes no-ops for the server.
+func (g *GfxHandler) effectiveQueueDepth(realDepth uint32) uint32 {
+	if hint := g.queueDepthHint.Load(); hint > realDepth {
+		return hint
+	}
+	return realDepth
 }
 
 // SetQueueDepthHint sets a minimum queueDepth to report in FRAME_ACKNOWLEDGE
@@ -1996,16 +2022,35 @@ func (g *GfxHandler) onSolidFill(data []byte) {
 		right := binary.LittleEndian.Uint16(data[offset+4:])
 		bottom := binary.LittleEndian.Uint16(data[offset+6:])
 		offset += 8
-		w := int(right - left)
-		h := int(bottom - top)
+		if left >= right || top >= bottom || left >= s.width || top >= s.height {
+			continue
+		}
+		right = min(right, s.width)
+		bottom = min(bottom, s.height)
+		w := int(right) - int(left)
+		h := int(bottom) - int(top)
 		if w <= 0 || h <= 0 {
 			continue
 		}
+		// Video Optimized Remoting uses a chroma-key rectangle while the
+		// redirected video arrives over separate Video/Geometry DVCs. Keep a
+		// bounded diagnostic for this distinctive symptom: if those channels
+		// are rejected but the server still paints the key, the renderer is not
+		// the source of the large green rectangle.
+		large := uint64(w)*uint64(h)*4 >= uint64(s.width)*uint64(s.height)
+		chromaGreen := cg >= 192 && uint16(cg) > uint16(cb)*2 && uint16(cg) > uint16(cr)*2
+		switch {
+		case chromaGreen && large:
+			g.observe("rdpgfx.solidfill.chroma-green.large")
+		case chromaGreen:
+			g.observe("rdpgfx.solidfill.chroma-green")
+		case large:
+			g.observe("rdpgfx.solidfill.other.large")
+		}
 		g.emitRenderEvent(RenderEvent{Kind: RenderSolidFill, FrameID: g.currentFrameID, SurfaceID: surfId, Rect: RenderRect{Left: left, Top: top, Right: right, Bottom: bottom}, ColorBGRA: pixelU32})
 
-		// Clamp to surface bounds
-		yEnd := min(int(bottom), int(s.height))
-		xEnd := min(int(right), int(s.width))
+		yEnd := int(bottom)
+		xEnd := int(right)
 
 		// Fill the first row with PutUint32 (single 32-bit store per pixel),
 		// then replicate it to subsequent rows with copy().

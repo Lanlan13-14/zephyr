@@ -2,6 +2,7 @@ package pdu
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -861,9 +862,18 @@ func (d *SetKeyboardIndicatorsDataPDU) Unpack(r io.Reader) error {
 	return struc.Unpack(r, d)
 }
 
-// SuppressOutputPDU tells the server to start/stop sending display updates.
-// MS-RDPBCGR 2.2.11.3.1
+// SuppressOutputPDU is the four-byte SUPPRESS_DISPLAY_UPDATES form from
+// MS-RDPBCGR 2.2.11.3.1. The desktopRectangle field is absent when
+// AllowDisplayUpdates is FALSE; sending the twelve-byte allow form with zero
+// rectangle bytes makes Windows ignore the transition on some hosts.
 type SuppressOutputPDU struct {
+	AllowDisplayUpdates uint8   `struc:"little"`
+	Pad3Octets          [3]byte `struc:"little"`
+}
+
+// AllowOutputPDU is the twelve-byte ALLOW_DISPLAY_UPDATES form. The desktop
+// rectangle is mandatory only for this form.
+type AllowOutputPDU struct {
 	AllowDisplayUpdates uint8   `struc:"little"`
 	Pad3Octets          [3]byte `struc:"little"`
 	Left                uint16  `struc:"little"`
@@ -876,6 +886,13 @@ func (*SuppressOutputPDU) Type2() uint8 {
 	return PDUTYPE2_SUPPRESS_OUTPUT
 }
 func (d *SuppressOutputPDU) Unpack(r io.Reader) error {
+	return struc.Unpack(r, d)
+}
+
+func (*AllowOutputPDU) Type2() uint8 {
+	return PDUTYPE2_SUPPRESS_OUTPUT
+}
+func (d *AllowOutputPDU) Unpack(r io.Reader) error {
 	return struc.Unpack(r, d)
 }
 
@@ -1226,10 +1243,9 @@ func decodeSurfaceBitsCmd(r io.Reader) (*BitmapData, error) {
 	case 0: // Uncompressed
 		pixels = bitmapData
 	case 1: // NSCodec
-		pixels = DecodeNSCodec(bitmapData, int(width), int(height))
-		if pixels == nil {
-			slog.Warn("NSCodec surface decode failed")
-			return nil, nil
+		pixels, err = DecodeNSCodec(bitmapData, int(width), int(height))
+		if err != nil {
+			return nil, fmt.Errorf("NSCodec surface decode failed: %w", err)
 		}
 		outBpp = 32 // NSCodec always decodes to BGRA (4 bytes/pixel)
 	case 3: // RemoteFX (MS-RDPRFX)
@@ -1279,11 +1295,15 @@ func decodeSurfaceBitsCmd(r io.Reader) (*BitmapData, error) {
 }
 
 // DecodeNSCodec decodes NSCodec (MS-RDPNSC) encoded bitmap data into top-down
-// BGRA pixels. It is shared by Classic SurfaceBits and ClearCodec subcodec tiles.
-func DecodeNSCodec(data []byte, width, height int) []byte {
+// BGRA pixels. Malformed RLE is rejected atomically so pooled plane bytes from
+// an earlier frame can never be rendered as part of the current frame.
+func DecodeNSCodec(data []byte, width, height int) ([]byte, error) {
 	if len(data) < 20 {
-		slog.Warn("NSCodec data too short", "len", len(data))
-		return nil
+		return nil, fmt.Errorf("NSCodec header truncated: have %d want 20", len(data))
+	}
+	maxInt := int(^uint(0) >> 1)
+	if width <= 0 || height <= 0 || width > maxInt-7 || width > maxInt/height || width*height > maxInt/4 {
+		return nil, fmt.Errorf("NSCodec invalid dimensions %dx%d", width, height)
 	}
 
 	r := bytes.NewReader(data)
@@ -1295,8 +1315,8 @@ func DecodeNSCodec(data []byte, width, height int) []byte {
 	chromaSubsamplingLevel, _ := core.ReadUInt8(r)
 	_, _ = core.ReadUint16LE(r) // reserved
 
-	if colorLossLevel < 1 {
-		colorLossLevel = 1
+	if colorLossLevel < 1 || colorLossLevel > 7 {
+		return nil, fmt.Errorf("NSCodec color loss level %d outside [1,7]", colorLossLevel)
 	}
 	shift := colorLossLevel - 1
 
@@ -1309,11 +1329,9 @@ func DecodeNSCodec(data []byte, width, height int) []byte {
 	remaining := data[20:]
 
 	// Bounds check
-	totalPlaneLen := int(lumaLen + orangeLen + greenLen + alphaLen)
-	if totalPlaneLen > len(remaining) {
-		slog.Warn("NSCodec plane lengths exceed data",
-			"planeLens", totalPlaneLen, "available", len(remaining))
-		return nil
+	totalPlaneLen := uint64(lumaLen) + uint64(orangeLen) + uint64(greenLen) + uint64(alphaLen)
+	if totalPlaneLen > uint64(len(remaining)) {
+		return nil, fmt.Errorf("NSCodec plane lengths %d exceed available data %d", totalPlaneLen, len(remaining))
 	}
 
 	// Compute plane original (decompressed) sizes, matching FreeRDP:
@@ -1321,6 +1339,9 @@ func DecodeNSCodec(data []byte, width, height int) []byte {
 	// Co and Cg: (tempWidth>>1) * (tempHeight>>1) when chroma subsampled
 	tempWidth := (width + 7) &^ 7   // ROUND_UP_TO(width, 8)
 	tempHeight := (height + 1) &^ 1 // ROUND_UP_TO(height, 2)
+	if tempWidth > maxInt/height || (tempWidth>>1) > maxInt/(tempHeight>>1) {
+		return nil, fmt.Errorf("NSCodec plane dimensions overflow for %dx%d", width, height)
+	}
 
 	var yOrigSize, coOrigSize, cgOrigSize, aOrigSize int
 	if chromaSubsamplingLevel > 0 {
@@ -1345,18 +1366,26 @@ func DecodeNSCodec(data []byte, width, height int) []byte {
 
 	// Decompress each plane: if planeSize < originalSize → NRLE decode,
 	// if planeSize == 0 → fill with 0xFF, otherwise raw copy.
-	nscDecompressPlaneInto(remaining[:lumaLen], int(lumaLen), yPlane)
+	if err := nscDecompressPlaneInto(remaining[:lumaLen], int(lumaLen), yPlane); err != nil {
+		return nil, fmt.Errorf("NSCodec luma plane: %w", err)
+	}
 	remaining = remaining[lumaLen:]
-	nscDecompressPlaneInto(remaining[:orangeLen], int(orangeLen), coPlane)
+	if err := nscDecompressPlaneInto(remaining[:orangeLen], int(orangeLen), coPlane); err != nil {
+		return nil, fmt.Errorf("NSCodec orange chroma plane: %w", err)
+	}
 	remaining = remaining[orangeLen:]
-	nscDecompressPlaneInto(remaining[:greenLen], int(greenLen), cgPlane)
+	if err := nscDecompressPlaneInto(remaining[:greenLen], int(greenLen), cgPlane); err != nil {
+		return nil, fmt.Errorf("NSCodec green chroma plane: %w", err)
+	}
 	remaining = remaining[greenLen:]
 
 	var aPlane []byte
 	if alphaLen > 0 {
 		aPlane = acquireNSCPlaneBuf(aOrigSize)
 		defer releaseNSCPlaneBuf(aPlane)
-		nscDecompressPlaneInto(remaining[:alphaLen], int(alphaLen), aPlane)
+		if err := nscDecompressPlaneInto(remaining[:alphaLen], int(alphaLen), aPlane); err != nil {
+			return nil, fmt.Errorf("NSCodec alpha plane: %w", err)
+		}
 	}
 
 	// YCoCg to BGRA conversion (matches FreeRDP nsc_decode exactly).
@@ -1381,7 +1410,7 @@ func DecodeNSCodec(data []byte, width, height int) []byte {
 		// Fast path: no chroma subsampling, no alpha override.
 		// ycoCgToBGRANoSub has SIMD implementations on amd64/arm64.
 		ycoCgToBGRANoSub(pixels, yPlane, coPlane, cgPlane, width*height, shift)
-		return pixels
+		return pixels, nil
 	}
 
 	if chromaSubsamplingLevel > 0 {
@@ -1494,7 +1523,7 @@ func DecodeNSCodec(data []byte, width, height int) []byte {
 		}
 	}
 
-	return pixels
+	return pixels, nil
 }
 
 func clampByte(v int16) uint8 {
@@ -1510,27 +1539,41 @@ func clampByte(v int16) uint8 {
 // nscDecompressPlane decompresses a single NSCodec plane.
 // If planeSize == 0, fills with 0xFF. If planeSize >= originalSize, raw copy.
 // Otherwise, uses the NRLE format (matching FreeRDP's nsc_rle_decode).
-func nscDecompressPlane(input []byte, planeSize, originalSize int) []byte {
+func nscDecompressPlane(input []byte, planeSize, originalSize int) ([]byte, error) {
 	out := make([]byte, originalSize)
-	nscDecompressPlaneInto(input, planeSize, out)
-	return out
+	if err := nscDecompressPlaneInto(input, planeSize, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // nscDecompressPlaneInto is the zero-allocation variant of nscDecompressPlane.
 // out must be pre-allocated to exactly originalSize bytes.
-func nscDecompressPlaneInto(input []byte, planeSize int, out []byte) {
+func nscDecompressPlaneInto(input []byte, planeSize int, out []byte) error {
 	originalSize := len(out)
+	if planeSize < 0 || planeSize > len(input) {
+		return fmt.Errorf("plane size %d exceeds input %d", planeSize, len(input))
+	}
 	if planeSize == 0 {
 		for i := range out {
 			out[i] = 0xFF
 		}
-		return
+		return nil
 	}
 	if planeSize >= originalSize {
+		if len(input) < originalSize {
+			return fmt.Errorf("raw plane truncated: have %d want %d", len(input), originalSize)
+		}
 		copy(out, input[:originalSize])
-		return
+		return nil
 	}
-	nrleDecodeInto(input[:planeSize], out)
+	if err := nrleDecodeInto(input[:planeSize], out); err != nil {
+		// Buffers come from a pool. Clear a rejected partial decode so even a
+		// future caller that mishandles the error cannot expose prior pixels.
+		clear(out)
+		return err
+	}
+	return nil
 }
 
 // nrleDecode decompresses NRLE (NSCodec Run-Length Encoding) data.
@@ -1539,21 +1582,29 @@ func nscDecompressPlaneInto(input []byte, planeSize int, out []byte) {
 //   - If 3rd byte < 0xFF: run length = byte + 2
 //   - If 3rd byte == 0xFF: run length = next 4 bytes as uint32 LE
 //   - Last 4 bytes of output are copied raw from input
-func nrleDecode(input []byte, originalSize int) []byte {
+func nrleDecode(input []byte, originalSize int) ([]byte, error) {
 	output := make([]byte, originalSize)
-	nrleDecodeInto(input, output)
-	return output
+	if err := nrleDecodeInto(input, output); err != nil {
+		return nil, err
+	}
+	return output, nil
 }
 
 // nrleDecodeInto is the zero-allocation variant of nrleDecode.
 // output must be pre-allocated to exactly originalSize bytes.
-func nrleDecodeInto(input []byte, output []byte) {
+func nrleDecodeInto(input []byte, output []byte) error {
 	originalSize := len(output)
+	if originalSize < 4 {
+		return fmt.Errorf("NRLE output too small: %d", originalSize)
+	}
 	left := originalSize
 	inPos := 0
 	outPos := 0
 
-	for left > 4 && inPos < len(input) {
+	for left > 4 {
+		if inPos >= len(input) {
+			return fmt.Errorf("NRLE input truncated with %d output bytes remaining", left)
+		}
 		value := input[inPos]
 		inPos++
 
@@ -1561,55 +1612,65 @@ func nrleDecodeInto(input []byte, output []byte) {
 			output[outPos] = value
 			outPos++
 			left--
-		} else if inPos < len(input) && value == input[inPos] {
+		} else {
+			if inPos >= len(input) {
+				return fmt.Errorf("NRLE lookahead truncated with %d output bytes remaining", left)
+			}
+			if value != input[inPos] {
+				output[outPos] = value
+				outPos++
+				left--
+				continue
+			}
 			// Run detected
 			inPos++ // skip the second occurrence
-			runLen := 0
-			if inPos < len(input) {
-				if input[inPos] < 0xFF {
-					runLen = int(input[inPos]) + 2
-					inPos++
-				} else {
-					// Long run: skip 0xFF marker, read uint32 LE
-					inPos++
-					if inPos+4 <= len(input) {
-						runLen = int(input[inPos]) |
-							int(input[inPos+1])<<8 |
-							int(input[inPos+2])<<16 |
-							int(input[inPos+3])<<24
-						inPos += 4
-					}
+			if inPos >= len(input) {
+				return fmt.Errorf("NRLE run length truncated")
+			}
+			var runLen uint32
+			if input[inPos] < 0xFF {
+				runLen = uint32(input[inPos]) + 2
+				inPos++
+			} else {
+				// Long run: skip 0xFF marker, then read uint32 LE.
+				if inPos+5 > len(input) {
+					return fmt.Errorf("NRLE long run length truncated")
 				}
+				inPos++
+				runLen = binary.LittleEndian.Uint32(input[inPos : inPos+4])
+				inPos += 4
 			}
-			if runLen > left {
-				runLen = left
+			if uint64(runLen) > uint64(left) || uint64(runLen) > uint64(len(output)-outPos) {
+				return fmt.Errorf("NRLE run length %d exceeds remaining output %d", runLen, left)
 			}
+			n := int(runLen)
 			// Exponential-doubling copy for large runs is O(log n) instead of O(n).
-			n := min(runLen, originalSize-outPos)
-			output[outPos] = value
-			wrote := 1
-			for wrote < n {
-				step := wrote
-				if wrote+step > n {
-					step = n - wrote
+			if n > 0 {
+				output[outPos] = value
+				wrote := 1
+				for wrote < n {
+					step := wrote
+					if wrote+step > n {
+						step = n - wrote
+					}
+					copy(output[outPos+wrote:outPos+wrote+step], output[outPos:outPos+wrote])
+					wrote += step
 				}
-				copy(output[outPos+wrote:outPos+wrote+step], output[outPos:outPos+wrote])
-				wrote += step
 			}
 			outPos += n
-			left -= runLen
-		} else {
-			// Single byte
-			output[outPos] = value
-			outPos++
-			left--
+			left -= n
 		}
 	}
 
 	// Copy last 4 bytes raw
-	if left >= 4 && inPos+4 <= len(input) {
-		copy(output[outPos:outPos+4], input[inPos:inPos+4])
+	if left != 4 || outPos+4 > len(output) {
+		return fmt.Errorf("NRLE invalid terminal state: left=%d out=%d", left, outPos)
 	}
+	if inPos+4 > len(input) {
+		return fmt.Errorf("NRLE raw tail truncated: have %d want 4", len(input)-inPos)
+	}
+	copy(output[outPos:outPos+4], input[inPos:inPos+4])
+	return nil
 }
 
 type FastPathUpdatePointerPDU struct {

@@ -5729,6 +5729,26 @@ html.ssh-kb-open .terminal-page {
     transform-origin: center center;
 }
 
+.rdp-resize-transition-frame {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    object-fit: contain;
+    background: #000;
+    pointer-events: none;
+    user-select: none;
+    opacity: 1;
+    transition: opacity 160ms ease;
+}
+
+.rdp-resize-transition-frame.is-dismissing {
+    opacity: 0;
+}
+
 .rdp-gfx-client-host {
     width: 100%;
     height: 100%;
@@ -10038,6 +10058,30 @@ body.app-body:not(.terminal-mode) .app-main {
     transform: none !important;
 }
 .ai-agent-panel .ai-input-box::placeholder { color: var(--ai-mac-placeholder); font-size: 14px; }
+.ai-agent-panel .ai-cancel-edit-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 32px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--ai-mac-icon-color);
+    font: inherit;
+    font-size: 13px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.ai-agent-panel .ai-cancel-edit-btn[hidden] { display: none !important; }
+.ai-agent-panel .ai-cancel-edit-btn:hover {
+    background: color-mix(in srgb, var(--ai-mac-text) 7%, transparent);
+    color: var(--ai-mac-text);
+}
+.ai-agent-panel .ai-input-area.is-editing {
+    border-color: color-mix(in srgb, var(--accent) 48%, var(--ai-mac-input-border)) !important;
+}
 .ai-agent-panel .ai-send-btn {
     flex: 0 0 auto !important;
     display: inline-flex !important;

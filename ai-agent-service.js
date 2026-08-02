@@ -1649,7 +1649,7 @@ function publicRemoteDesktopScreenshot(r = {}, maxWidth = 960) {
 }
 function cachedToolDefinitions(ai = {}) {
     const p = ai.permissions || {};
-    const key = JSON.stringify({ webSearch: p.webSearch !== false, webFetch: p.webFetch !== false, browser: p.browser !== false, memory: p.memory !== false, env: p.env !== false, remoteExecute: p.remoteExecute !== false, fileRead: p.fileRead !== false, fileWrite: p.fileWrite !== false });
+    const key = JSON.stringify({ webSearch: p.webSearch !== false, webFetch: p.webFetch !== false, browser: p.browser !== false, memory: p.memory !== false, env: p.env !== false, remoteExecute: p.remoteExecute !== false, fileRead: p.fileRead !== false, fileWrite: p.fileWrite !== false, notesRead: p.notesRead !== false, notesWrite: p.notesWrite !== false });
     if (!AI_TOOL_CACHE.has(key)) AI_TOOL_CACHE.set(key, toolDefinitions(ai));
     return AI_TOOL_CACHE.get(key);
 }
@@ -4381,6 +4381,7 @@ module.exports = {
     executeAiToolForHost,
     listToolCatalog,
     toolDefinitions,
+    cachedToolDefinitions,
     CANONICAL_TOOL_SCHEMAS,
     formatAiContextForPrompt,
     selectPromptMemories,

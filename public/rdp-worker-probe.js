@@ -1,6 +1,6 @@
-import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260719-xfile3';
+import { RdpGpuSurfaceCompositor } from './rdp-renderer.js?v=20260801-rdp-motion9';
 import { loadGoRuntime } from './rdp-wasm-runtime.js?v=20260719-xfile3';
-import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260719-xfile3';
+import { createWorkerFrameScheduler } from './rdp-worker-frame-scheduler.js?v=20260801-rdp-motion9';
 
 export async function runWorkerCapabilityProbe({ runtimeLoader = loadGoRuntime } = {}) {
     if (typeof OffscreenCanvas === 'undefined') return { ok: false, stage: 'offscreen-canvas', error: 'OffscreenCanvas is unavailable' };
@@ -8,7 +8,7 @@ export async function runWorkerCapabilityProbe({ runtimeLoader = loadGoRuntime }
     catch (error) { return { ok: false, stage: 'go-runtime-import', error: error?.message || String(error) }; }
 
     const canvas = new OffscreenCanvas(4, 4);
-    const scheduler = createWorkerFrameScheduler(globalThis, { fallbackMs: 34 });
+    const scheduler = createWorkerFrameScheduler(globalThis, { fallbackMs: 16 });
     let compositor;
     try {
         compositor = new RdpGpuSurfaceCompositor(canvas, { requestFrame: scheduler.request, cancelFrame: scheduler.cancel });
@@ -27,9 +27,9 @@ export async function runWorkerCapabilityProbe({ runtimeLoader = loadGoRuntime }
             poll();
         });
         const gl = compositor.gl;
-        const out = new Uint8Array(4);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.readPixels(2, 2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, out);
+        const capture = compositor.capturePixels();
+        const offset = (2 * capture.width + 2) * 4;
+        const out = capture.pixels.subarray(offset, offset + 4);
         if (out[0] < 200 || out[1] > 40 || out[2] > 40 || out[3] < 200) throw new Error(`GPU pixel mismatch: ${[...out].join(',')}`);
         const renderer = gl.getParameter(gl.RENDERER) || 'webgl2';
         compositor.destroy();

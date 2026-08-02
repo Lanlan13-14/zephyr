@@ -56,12 +56,18 @@ func TestFilterToolsForPlan(t *testing.T) {
 		ToolName: "connection_list_v1", ToolDescription: "c", ToolSchema: json.RawMessage(`{}`),
 		IsReadOnly: true, Fn: func(ctx context.Context, args json.RawMessage) (any, error) { return nil, nil },
 	})
+	for _, name := range []string{"note_list", "note_search", "note_get", "note_create"} {
+		_ = reg.Register(&tool.FuncTool{
+			ToolName: name, ToolDescription: "note", ToolSchema: json.RawMessage(`{}`),
+			IsReadOnly: name != "note_create", Fn: func(ctx context.Context, args json.RawMessage) (any, error) { return nil, nil },
+		})
+	}
 	eco := FilterToolsForMode(reg, "economy")
 	ecoNames := map[string]bool{}
 	for _, t := range eco.List() {
 		ecoNames[t.Name()] = true
 	}
-	if !ecoNames["connection_list_v1"] || ecoNames["browser_navigate"] {
+	if !ecoNames["connection_list_v1"] || !ecoNames["note_list"] || !ecoNames["note_search"] || !ecoNames["note_get"] || ecoNames["note_create"] || ecoNames["browser_navigate"] {
 		t.Fatalf("economy filter wrong: %v", ecoNames)
 	}
 	if ModeSystemSuffix("economy") == "" || ModeSystemSuffix("delivery") == "" {
