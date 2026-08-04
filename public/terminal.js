@@ -1062,6 +1062,9 @@ let mobileImeComposing = false;
 /** Last compositionupdate/start time — stuck IME compositions are force-cleared. */
 let mobileImeComposingAt = 0;
 let mobileImeComposeWatchdog = 0;
+let mobileImeBeforeInputFallbackTimer = 0;
+let mobileImeBeforeInputFallbackToken = 0;
+let mobileImeBeforeInputFallback = null;
 /** After compositionend, suppress duplicate beforeinput/input for the same text. */
 let mobileImeComposeSuppressUntil = 0;
 let mobileImeLastComposedText = '';
@@ -9409,6 +9412,61 @@ function sendMobileStableImeText(text = '', source = 'mobile-ime', { paste = fal
     }
     return true;
 }
+
+function cancelMobileImeBeforeInputFallback(reason = 'cancel') {
+    mobileImeBeforeInputFallbackToken += 1;
+    if (mobileImeBeforeInputFallbackTimer) {
+        window.clearTimeout(mobileImeBeforeInputFallbackTimer);
+        mobileImeBeforeInputFallbackTimer = 0;
+    }
+    mobileImeBeforeInputFallback = null;
+    logTerminalLayoutDiagnostics?.('ime-beforeinput-fallback-cancel', { reason });
+}
+
+function flushMobileImeBeforeInputFallback(reason = 'timer') {
+    const pending = mobileImeBeforeInputFallback;
+    if (!pending) return false;
+    mobileImeBeforeInputFallbackToken += 1;
+    if (mobileImeBeforeInputFallbackTimer) {
+        window.clearTimeout(mobileImeBeforeInputFallbackTimer);
+        mobileImeBeforeInputFallbackTimer = 0;
+    }
+    mobileImeBeforeInputFallback = null;
+
+    const payload = String(mobileImeProxy?.value || pending.text || '');
+    if (!payload) return false;
+    if (imeTextAlreadySent(payload, 900)) {
+        if (mobileImeProxy) mobileImeProxy.value = '';
+        return false;
+    }
+
+    const source = `mobile-ime-beforeinput-fallback:${pending.type}:${reason}`;
+    if (pending.compositionCommit) {
+        return commitComposedImeText(payload, source);
+    }
+    // Never flush progressive candidate text while a real composition is live.
+    if (mobileImeComposing) return false;
+    const sent = sendMobileStableImeText(payload, source);
+    if (sent && mobileImeProxy) mobileImeProxy.value = '';
+    return sent;
+}
+
+function scheduleMobileImeBeforeInputFallback(type = 'insertText', text = '', { compositionCommit = false } = {}) {
+    cancelMobileImeBeforeInputFallback('reschedule');
+    const token = mobileImeBeforeInputFallbackToken;
+    mobileImeBeforeInputFallback = {
+        type: String(type || 'insertText'),
+        text: String(text || ''),
+        compositionCommit: !!compositionCommit,
+    };
+    // Normal browsers emit input/compositionend synchronously after beforeinput.
+    // A short timer only wins on mobile IMEs that omit that final event entirely.
+    mobileImeBeforeInputFallbackTimer = window.setTimeout(() => {
+        if (token !== mobileImeBeforeInputFallbackToken) return;
+        mobileImeBeforeInputFallbackTimer = 0;
+        flushMobileImeBeforeInputFallback('timeout');
+    }, 32);
+}
  
 /**
  * Android IME frequently leaves isComposing/compositionstart stuck after
@@ -9458,6 +9516,9 @@ function clearStuckImeComposition(reason = 'compose-clear', { commit = false, qu
  * - Does not touch facade / aux / parent shell geometry.
  */
 function flushMobileImeEnter(source = 'mobile-ime-enter') {
+    // beforeinput-only keyboards may not have populated proxy.value or emitted
+    // input yet. Commit their pending text before sending CR so ordering stays.
+    flushMobileImeBeforeInputFallback(`${source}:pre-enter`);
     const leftover = String(mobileImeProxy?.value || '');
     const wasComposing = !!mobileImeComposing;
     // Quiet clear: no handleCompositionEnd → no applyFacadeChrome (bar fly).
@@ -9710,7 +9771,7 @@ function anchorImeProxyToCursor(reason = 'cursor-anchor') {
     s.maxHeight = `${h}px`;
     s.fontSize = '16px';
     s.lineHeight = `${h}px`;
-    s.opacity = '0';
+    s.opacity = '0.01';
     s.color = 'transparent';
     s.caretColor = 'transparent';
     s.background = 'transparent';
@@ -9776,6 +9837,7 @@ function setupMobileStableImeProxy() {
 
     // ---- System IME owns the whole composition (pinyin → candidates → 汉字) ----
     proxy.addEventListener('compositionstart', () => {
+        cancelMobileImeBeforeInputFallback('compositionstart');
         mobileImeComposing = true;
         mobileImeComposingAt = Date.now();
         ensureSshKeyboard()?.handleCompositionStart?.();
@@ -9793,6 +9855,7 @@ function setupMobileStableImeProxy() {
         // No value write, no re-anchor — browser + OS IME own the buffer/UI.
     });
     proxy.addEventListener('compositionend', (e) => {
+        cancelMobileImeBeforeInputFallback('compositionend');
         // Enter already unstuck + flushed Latin (kimi) — drop late end (kimikimi).
         // Real CJK 选词 always lands here first; Enter-after-选词 does not re-enter compose.
         if (performance.now() < mobileImeEnterSuppressCompositionEndUntil) {
@@ -9878,15 +9941,24 @@ function setupMobileStableImeProxy() {
         const liveCompose = !!(e && (e.isComposing || e.keyCode === 229 || /Composition/i.test(type)));
         // Stuck flag but event is plain typing → quiet unstick so input is not frozen.
         // keepValue: do not wipe proxy; following input/enter will flush leftover.
-        if (mobileImeComposing && !liveCompose && (type === 'insertText' || type === 'deleteContentBackward'
+        if (mobileImeComposing && !liveCompose && (type === 'insertText' || type === 'insertReplacementText' || type === 'deleteContentBackward'
             || type === 'insertLineBreak' || type === 'insertParagraph')) {
             clearStuckImeComposition('beforeinput:unstick', { commit: false, quiet: true, keepValue: true });
         }
+        if (type === 'insertFromComposition') {
+            scheduleMobileImeBeforeInputFallback(type, e.data || '', { compositionCommit: true });
+            armImeComposeWatchdog();
+            return;
+        }
+        if (type === 'insertText' || type === 'insertReplacementText') {
+            if (!isImeCompositionActive(e)) {
+                scheduleMobileImeBeforeInputFallback(type, e.data || '');
+            }
+            return;
+        }
         if (
-            type === 'insertText'
-            || type === 'insertCompositionText'
+            type === 'insertCompositionText'
             || type === 'deleteCompositionText'
-            || type === 'insertFromComposition'
             || type === 'deleteByComposition'
             || isImeCompositionActive(e)
         ) {
@@ -9917,6 +9989,7 @@ function setupMobileStableImeProxy() {
 
     // After OS finishes (or plain ASCII typing): push to PTY, terminal echo shows it.
     proxy.addEventListener('input', (e) => {
+        cancelMobileImeBeforeInputFallback('input');
         const liveCompose = !!(e && e.isComposing);
         if (mobileImeComposing && !liveCompose) {
             // Flag stuck after Latin without compositionend — quiet unstick, keep buffer.
@@ -9938,6 +10011,7 @@ function setupMobileStableImeProxy() {
     });
 
     proxy.addEventListener('paste', (e) => {
+        cancelMobileImeBeforeInputFallback('paste');
         const text = e.clipboardData?.getData?.('text/plain') || '';
         if (!text) return;
         e.preventDefault();
@@ -12240,8 +12314,26 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
  // - 支持 bracketed paste；
  // - 在 onData 前执行 WTerm 内置输入滚动；
  // - 避免外层捕获 paste 后强制滚到底。
+function retainMobileImeFocusAfterTerminalClick(e) {
+    if (!isMobileStableInputMode() || mobileTerminalSelectionMode || hasLiveTerminalSelection() || terminalTouchMoved) return false;
+    if (e?.target?.closest?.('a, button, input, textarea, select, [contenteditable="true"]')) return false;
+    if (performance.now() - mobileStableLastFocusGestureAt > 900) return false;
+    const kb = ensureSshKeyboard();
+    if (!kb || (!kb.desiredOpen?.() && !kb.physicalOpen?.())) return false;
+    e?.preventDefault?.();
+    kb.retainFocus('terminal-click-retain');
+    scheduleImeProxyCursorAnchor('terminal-click-retain');
+    return true;
+}
+
+// Use one primary touch event family. Registering pointer and touch handlers at
+// the same time restarted the gesture classifier and made focus device-dependent.
+const terminalPrimaryPointerEvents = window.PointerEvent
+    ? { down: 'pointerdown', move: 'pointermove', up: 'pointerup', cancel: 'pointercancel' }
+    : { down: 'touchstart', move: 'touchmove', up: 'touchend', cancel: 'touchcancel' };
+
 // Mobile keyboard gestures: single facade path (ssh-keyboard). No parallel open chains.
-['pointerdown', 'touchstart'].forEach((eventName) => {
+[terminalPrimaryPointerEvents.down].forEach((eventName) => {
     wtermWrapper.addEventListener(eventName, (e) => {
         terminalTouchMoved = false;
         terminalTouchStartX = e.clientX ?? e.touches?.[0]?.clientX ?? 0;
@@ -12271,10 +12363,10 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
         if (isMobileStableInputMode() && !mobileTerminalSelectionMode && !hasLiveTerminalSelection()) {
             ensureSshKeyboard()?.handlePointerDown?.(e);
         }
-    }, { passive: true });
+    }, { passive: false });
 });
 
-['pointermove', 'touchmove'].forEach((eventName) => {
+[terminalPrimaryPointerEvents.move].forEach((eventName) => {
     wtermWrapper.addEventListener(eventName, (e) => {
         const x = e.clientX ?? e.touches?.[0]?.clientX ?? terminalTouchStartX;
         const y = e.clientY ?? e.touches?.[0]?.clientY ?? terminalTouchStartY;
@@ -12291,7 +12383,7 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
     }, { passive: true });
 });
 
-['pointerup', 'touchend', 'touchcancel'].forEach((eventName) => {
+[terminalPrimaryPointerEvents.up, terminalPrimaryPointerEvents.cancel].forEach((eventName) => {
     wtermWrapper.addEventListener(eventName, (e) => {
         if (eventName === 'pointerup' && e.pointerType !== 'touch' && sendTerminalMouseEvent(e, 'release')) {
             e.preventDefault();
@@ -12320,8 +12412,13 @@ wtermWrapper.addEventListener('contextmenu', async (e) => {
             else if (mobileTerminalSelectionMode) scheduleExitMobileTerminalSelectionMode(900);
         }, 80);
         notifyParentActivity();
-    }, { passive: true });
+    }, { passive: false });
 });
+
+// A browser's synthesized click runs after pointerup and can move focus away
+// from the IME host. Cancel that default only for the clean terminal tap that
+// just opened/retained the keyboard, then synchronously reassert proxy focus.
+wtermWrapper.addEventListener('click', retainMobileImeFocusAfterTerminalClick, { passive: false });
 
 // ---------- 状态指示 ----------
 function setStatus(state, msg) {

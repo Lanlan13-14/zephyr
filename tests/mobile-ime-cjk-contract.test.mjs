@@ -29,9 +29,11 @@ test('beforeinput never steals insertText (拼音 stays in field)', () => {
   assert.match(terminalJs, /type === 'insertText'/);
 });
 
-test('compositionend is the only CJK commit path', () => {
+test('compositionend is authoritative and insertFromComposition has a delayed fallback', () => {
   assert.match(terminalJs, /commitComposedImeText\(text, 'mobile-ime-composition'\)/);
   assert.match(terminalJs, /\(e && e\.data != null\) \? String\(e\.data\) : ''/);
+  assert.match(terminalJs, /type === 'insertFromComposition'[\s\S]*compositionCommit: true/);
+  assert.match(terminalJs, /cancelMobileImeBeforeInputFallback\('compositionend'\)/);
 });
 
 test('composition commit sends before arming suppress (no self-drop)', () => {

@@ -47,3 +47,17 @@ test('late novnc selector restores WebKit height instead of overriding SSH to ze
     assert.match(styleCss, /\.novnc-page \.novnc-toolbar\.topbar-actions:hover::-webkit-scrollbar[\s\S]*?height:\s*4px/);
     assert.match(styleCss, /\.novnc-page \.novnc-toolbar\.topbar-actions:focus-within::-webkit-scrollbar[\s\S]*?height:\s*4px/);
 });
+
+test('desktop RDP toolbar wraps in a narrow floating window without changing mobile or VNC', () => {
+    assert.match(rdpHtml, /class="novnc-page rdp-page rdp-protocol-page"/);
+    assert.doesNotMatch(vncHtml, /rdp-protocol-page/);
+    const selectorStart = styleCss.indexOf('.novnc-page.rdp-page.rdp-protocol-page .novnc-toolbar.topbar-actions');
+    assert.ok(selectorStart >= 0, 'desktop RDP toolbar override missing');
+    const desktopStart = styleCss.lastIndexOf('@media (hover: hover) and (pointer: fine)', selectorStart);
+    const desktopEnd = styleCss.indexOf('.novnc-page .novnc-toolbar .btn-sm', selectorStart);
+    const block = styleCss.slice(desktopStart, desktopEnd);
+    assert.match(block, /\.novnc-page\.rdp-page\.rdp-protocol-page \.novnc-toolbar\.topbar-actions/);
+    assert.match(block, /flex-wrap:\s*wrap/);
+    assert.match(block, /overflow-x:\s*visible/);
+    assert.doesNotMatch(block, /\.novnc-page:not\(\.rdp-page\)|\.novnc-page \.novnc-toolbar/);
+});

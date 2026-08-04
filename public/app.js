@@ -4092,12 +4092,12 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            ? `/rdp.html?embed=1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}&v=20260804-terminal-shell3`
             : session.page === 'novnc'
-                ? `/novnc.html?embed=1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+                ? `/novnc.html?embed=1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}&v=20260804-terminal-shell3`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260801-terminal-grid-converge1`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260801-terminal-grid-converge1`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260801-terminal-grid-converge1-mobile-ime2`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20260801-terminal-grid-converge1-mobile-ime2`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -5574,10 +5574,11 @@ function animateWindowFromDock(tabId, sourceRect, { swap = false } = {}) {
         const sy = Math.max(0.06, sourceRect.height / rect.height);
         const dx = (sourceRect.left + sourceRect.width / 2) - (rect.left + rect.width / 2);
         const dy = (sourceRect.top + sourceRect.height / 2) - (rect.top + rect.height / 2);
+        const shellRadius = `${parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--radius-lg')) || 18}px`;
         win.animate([
             { transform: `translate3d(${dx}px, ${dy}px, 0) scale3d(${sx}, ${sy}, 1)`, opacity: 0.28, filter: 'blur(18px) saturate(.82)', borderRadius: '30px' },
-            { transform: `translate3d(${dx * 0.16}px, ${dy * 0.16 - 8}px, 0) scale3d(1.025, 1.018, 1)`, opacity: 1, filter: 'blur(0) saturate(1.08)', borderRadius: '12px', offset: 0.72 },
-            { transform: 'translate3d(0, 0, 0) scale3d(1, 1, 1)', opacity: 1, filter: 'blur(0) saturate(1)', borderRadius: '0px' }
+            { transform: `translate3d(${dx * 0.16}px, ${dy * 0.16 - 8}px, 0) scale3d(1.025, 1.018, 1)`, opacity: 1, filter: 'blur(0) saturate(1.08)', borderRadius: shellRadius, offset: 0.72 },
+            { transform: 'translate3d(0, 0, 0) scale3d(1, 1, 1)', opacity: 1, filter: 'blur(0) saturate(1)', borderRadius: shellRadius }
         ], { duration: swap ? 620 : 560, easing: 'cubic-bezier(.16,1,.3,1)' });
     });
 }
