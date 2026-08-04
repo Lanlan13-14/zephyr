@@ -10336,29 +10336,6 @@ body.app-body:not(.terminal-mode) .app-main {
     background: rgba(139,148,158,0.45);
     border-radius: 999px;
 }
-/* Desktop RDP windows can be resized far narrower than the app viewport.
-   Keep every action visible by wrapping inside the iframe instead of forcing
-   the SSH/VNC single-row scrollbar. Coarse-pointer/mobile behavior is kept. */
-@media (hover: hover) and (pointer: fine) {
-    .novnc-page.rdp-page.rdp-protocol-page .rdp-topbar {
-        align-items: flex-start;
-    }
-    .novnc-page.rdp-page.rdp-protocol-page .novnc-toolbar.topbar-actions {
-        padding-bottom: 0;
-        flex-wrap: wrap;
-        overflow-x: visible;
-        overflow-y: visible;
-        overscroll-behavior-x: auto;
-        scrollbar-width: none;
-    }
-    .novnc-page.rdp-page.rdp-protocol-page .novnc-toolbar.topbar-actions::-webkit-scrollbar,
-    .novnc-page.rdp-page.rdp-protocol-page .novnc-toolbar.topbar-actions.scroll-active::-webkit-scrollbar,
-    .novnc-page.rdp-page.rdp-protocol-page .novnc-toolbar.topbar-actions:hover::-webkit-scrollbar,
-    .novnc-page.rdp-page.rdp-protocol-page .novnc-toolbar.topbar-actions:focus-within::-webkit-scrollbar {
-        width: 0;
-        height: 0;
-    }
-}
 .novnc-page .novnc-toolbar .btn-sm[data-vnc-icon] {
     display: inline-flex;
     align-items: center;

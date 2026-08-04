@@ -4092,7 +4092,7 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}&v=20260804-terminal-shell3`
+            ? `/rdp.html?embed=1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}&v=20260804-rdp-ssh-scroll4`
             : session.page === 'novnc'
                 ? `/novnc.html?embed=1&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}&v=20260804-terminal-shell3`
                 : session.page === 'telnet-terminal'

@@ -57,13 +57,13 @@ test('SSH, Telnet, RDP and VNC load the same refreshed shell stylesheet', () => 
     assert.match(appHtml, /style\.css\?v=20260801-ai-edit-cancel1-terminal-shell3/);
     assert.match(terminalHtml, /style\.css\?v=20260731-sftp-multi-close1-mobile-ime2-shell3/);
     assert.match(telnetHtml, /style\.css\?v=20260731-sftp-multi-close1-mobile-ime2-shell3/);
-    assert.match(rdpHtml, /style\.css\?v=20260801-rdp-vnc-notes-icon1-desktop-wrap2-shell3/);
+    assert.match(rdpHtml, /style\.css\?v=20260804-rdp-ssh-scroll3-shell3/);
     assert.match(vncHtml, /style\.css\?v=20260801-rdp-vnc-notes-icon1-shell3/);
 });
 
 test('app cache-busts every protocol iframe after shell and input changes', () => {
-    assert.match(appHtml, /app\.js\?v=20260802-notes-enabled-persist1-mobile-ime2-shell4/);
-    assert.match(appJs, /rdp\.html\?embed=1[\s\S]*&v=20260804-terminal-shell3/);
+    assert.match(appHtml, /app\.js\?v=20260804-notes-enabled-persist1-mobile-ime2-shell5/);
+    assert.match(appJs, /rdp\.html\?embed=1[\s\S]*&v=20260804-rdp-ssh-scroll4/);
     assert.match(appJs, /novnc\.html\?embed=1[\s\S]*&v=20260804-terminal-shell3/);
     assert.match(appJs, /telnet-terminal\.html\?embed=1[\s\S]*terminal-grid-converge1-mobile-ime2/);
     assert.match(appJs, /terminal\.html\?embed=1[\s\S]*terminal-grid-converge1-mobile-ime2/);
