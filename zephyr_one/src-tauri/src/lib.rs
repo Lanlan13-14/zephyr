@@ -60,9 +60,11 @@ pub fn run() {
             commands::token_import_local,
         ])
         .setup(|app| {
-            if let Err(err) = runtime::ensure_started(app.handle()) {
-                eprintln!("[zephyr-one] local runtime not started yet: {err}");
-            }
+            // Do NOT call ensure_started here.
+            // Android first-launch extracts zephyr-core.tar.gz (tens of MB) and
+            // can take many seconds; doing it on the setup thread races the
+            // WebView and has historically contributed to hard launch crashes.
+            // Frontend invokes `runtime_start` after boot UI is visible.
             let _ = app.get_webview_window("main");
             Ok(())
         })

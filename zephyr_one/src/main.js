@@ -107,7 +107,10 @@ function openLocalZephyr(baseUrl) {
 async function startAndEnter() {
   only($('#bootGate'));
   const status = $('#bootStatus');
-  if (status) status.textContent = '正在启动本地 Zephyr 核心…';
+  if (status) {
+    status.textContent =
+      '正在启动本地 Zephyr 核心…（首次安装或版本更新会解压核心，可能需要数十秒）';
+  }
   try {
     const info = await safeInvoke('runtime_start');
     state.runtime = info;
@@ -117,7 +120,12 @@ async function startAndEnter() {
   } catch (e) {
     only($('#errorGate'));
     const err = $('#errorText');
-    if (err) err.textContent = e?.message || String(e);
+    const msg = e?.message || String(e);
+    if (err) {
+      err.textContent =
+        msg +
+        '\n\n若反复失败：清除应用数据后重试；Android 可查看 files/zephyr-node-stderr.log。';
+    }
   }
 }
 

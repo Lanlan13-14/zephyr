@@ -24,25 +24,56 @@ python3 "$ROOT/scripts/stamp-android-icons.py" "$ANDROID_ROOT"
 # Node jniLibs (open-box)
 sh "$ROOT/scripts/bundle-node-android.sh" "$ANDROID_ROOT"
 
-# 5) Copy zephyr-core to Android assets (individual files, no archive/compression)
-#    Runtime copies these to filesDir via NDK AssetManager on first launch.
+# 5) Pack zephyr-core as a single assets/zephyr-core.tar.gz
+#    Why not a directory of files?
+#    NDK AAssetDir_getNextFileName does NOT list subdirectories — nested trees
+#    (public/, node_modules/, …) would never be copied at runtime. One archive
+#    is opened via AAssetManager_open and extracted with flate2+tar in Rust.
 CORE_SRC="$ROOT/zephyr-core"
 ASSETS_DIR="$APP/src/main/assets"
-if [ -d "$CORE_SRC" ] && [ -f "$CORE_SRC/server.js" ]; then
+if [ -d "$CORE_SRC" ] && [ -f "$CORE_SRC/server.js" ] && [ -d "$CORE_SRC/public" ]; then
     mkdir -p "$ASSETS_DIR"
     rm -rf "$ASSETS_DIR/zephyr-core"
-    cp -a "$CORE_SRC" "$ASSETS_DIR/zephyr-core"
-    NFILES=$(find "$ASSETS_DIR/zephyr-core" -type f | wc -l)
-    echo "Copied zephyr-core to Android assets ($NFILES files)"
+    rm -f "$ASSETS_DIR/zephyr-core.tar.gz"
+    # Archive *contents* of zephyr-core/ at tarball root (server.js, public/, …)
+    # Use portable tar; prefer pigz if present for speed, else gzip.
+    (
+        cd "$CORE_SRC"
+        if command -v pigz >/dev/null 2>&1; then
+            tar -cf - . | pigz -1 >"$ASSETS_DIR/zephyr-core.tar.gz"
+        else
+            tar -czf "$ASSETS_DIR/zephyr-core.tar.gz" .
+        fi
+    )
+    # Sanity: archive non-empty and contains server.js
+    SZ=$(wc -c <"$ASSETS_DIR/zephyr-core.tar.gz" | tr -d ' ')
+    if [ "${SZ:-0}" -lt 1000 ]; then
+        echo "ERROR: zephyr-core.tar.gz too small ($SZ bytes)" >&2
+        exit 1
+    fi
+    if command -v tar >/dev/null 2>&1; then
+        tar -tzf "$ASSETS_DIR/zephyr-core.tar.gz" | grep -E '(^|/)server\.js$' >/dev/null \
+            || { echo "ERROR: tarball missing server.js" >&2; exit 1; }
+        tar -tzf "$ASSETS_DIR/zephyr-core.tar.gz" | grep -E '(^|/)public/' >/dev/null \
+            || { echo "ERROR: tarball missing public/" >&2; exit 1; }
+    fi
+    NFILES=$(find "$CORE_SRC" -type f | wc -l | tr -d ' ')
+    echo "Packed zephyr-core → assets/zephyr-core.tar.gz ($NFILES files, ${SZ} bytes)"
 else
     echo "ERROR: zephyr-core not found at $CORE_SRC - run: npm run stage:core" >&2
     exit 1
 fi
 
-python3 - "$GRADLE" "$MANIFEST" "$ANDROID_ROOT" <<'PY'
+# Optional: stamp versionName/versionCode from env (set by scripts/set-version.py / CI)
+VERSION_NAME="${ZEPHYR_ONE_VERSION_NAME:-}"
+VERSION_CODE="${ZEPHYR_ONE_VERSION_CODE:-}"
+
+python3 - "$GRADLE" "$MANIFEST" "$ANDROID_ROOT" "$VERSION_NAME" "$VERSION_CODE" <<'PY'
 import re, sys
 from pathlib import Path
 gradle, manifest, android_root = map(Path, sys.argv[1:4])
+version_name = (sys.argv[4] if len(sys.argv) > 4 else "").strip()
+version_code = (sys.argv[5] if len(sys.argv) > 5 else "").strip()
 s = gradle.read_text()
 if "zephyr-one-release.jks" not in s:
     s = s.replace(
@@ -84,6 +115,34 @@ if "jniLibs" not in s and "packaging" not in s:
 ''',
         1,
     )
+
+# Stamp versionName / versionCode so Settings → App info matches release tag
+# (one-v0.1.7 → versionName 0.1.7). Tauri also reads package version, but the
+# generated gradle defaults to 0.1.0 unless we rewrite it.
+if version_name:
+    if re.search(r'versionName\s*=', s):
+        s = re.sub(r'versionName\s*=\s*"[^"]*"', f'versionName = "{version_name}"', s, count=1)
+    elif re.search(r'versionName\s+"', s):
+        s = re.sub(r'versionName\s+"[^"]*"', f'versionName "{version_name}"', s, count=1)
+    else:
+        s = re.sub(
+            r'(defaultConfig\s*\{)',
+            rf'\1\n        versionName = "{version_name}"',
+            s,
+            count=1,
+        )
+if version_code and version_code.isdigit():
+    if re.search(r'versionCode\s*=', s):
+        s = re.sub(r'versionCode\s*=\s*\d+', f'versionCode = {version_code}', s, count=1)
+    elif re.search(r'versionCode\s+\d+', s):
+        s = re.sub(r'versionCode\s+\d+', f'versionCode {version_code}', s, count=1)
+    else:
+        s = re.sub(
+            r'(defaultConfig\s*\{)',
+            rf'\1\n        versionCode = {version_code}',
+            s,
+            count=1,
+        )
 gradle.write_text(s)
 
 props = android_root / "gradle.properties"

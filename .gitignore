@@ -53,3 +53,4 @@ xterm/out/
 xterm/lib/
 xterm/lib-headless/
 xterm/out-test/
+__pycache__/

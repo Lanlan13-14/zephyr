@@ -12,3 +12,4 @@ src-tauri/gen/
 .tauri/
 *.apk
 *.aab
+__pycache__/

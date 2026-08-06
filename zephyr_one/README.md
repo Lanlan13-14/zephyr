@@ -35,6 +35,23 @@ Tauri 原生客户端：**在本地运行完整 Zephyr 产品**（仪表盘 / SS
 
 系统安装 APK 时解压到 `nativeLibraryDir`，运行时直接 `exec`，**没有**应用内下载/解压 Node 步骤。
 
+## Android 核心资源
+
+- 构建期：`prepare-android.sh` 把 `zephyr-core/` 打成**单个** `assets/zephyr-core.tar.gz`
+- 运行时：NDK `AAssetManager_open` 读这一文件 → `flate2`+`tar` 解到 `filesDir/zephyr-core/`
+- **不要**再把 core 以目录树形式塞进 assets：`AAssetDir_getNextFileName` **不枚举子目录**，`public/` / `node_modules/` 会丢失
+- 版本变化（`CARGO_PKG_VERSION` / `.zephyr-one-app-version`）时重新解压
+
+## 版本号
+
+发布 tag `one-v0.1.7` 必须映射到应用版本 `0.1.7`（Settings → 应用信息 / `get_app_version`）：
+
+```bash
+python3 scripts/set-version.py one-v0.1.7
+# 写入 package.json / src-tauri/Cargo.toml / src-tauri/tauri.conf.json
+# CI 各平台 build job 在编译前自动执行；Android 同步写 versionName/versionCode
+```
+
 ## 开发
 
 ```bash
@@ -50,7 +67,7 @@ npm run tauri dev
 ```bash
 npm run stage:core
 npx tauri android init   # 首次
-npm run android:prepare  # 图标 + JKS 签名 + jniLibs Node
+npm run android:prepare  # 图标 + JKS 签名 + jniLibs Node + core tarball
 npx tauri android build --apk --target aarch64
 ```
 
@@ -65,6 +82,7 @@ zephyr_one/
   scripts/
     stage-zephyr-core.sh
     prepare-android.sh
+    set-version.py
     stamp-android-icons.py
     fetch-node-android.sh
 ```

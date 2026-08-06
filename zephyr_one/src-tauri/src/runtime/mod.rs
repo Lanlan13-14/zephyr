@@ -9,8 +9,14 @@
 //!
 //! **Android core embedding**: Tauri `resource_dir()` returns `"asset://localhost/"`
 //! (a virtual URI, not a filesystem path). APK assets are not accessible via
-//! `std::fs`. Instead, we embed `zephyr-core.tar.gz` in the `.so` via
-//! `include_bytes!()` and extract it to `app_data_dir/zephyr-core/` on first run.
+//! `std::fs`, and NDK `AAssetDir_getNextFileName` does **not** list subdirectories.
+//! Shipping thousands of individual asset files is therefore broken for nested
+//! trees (`public/`, `node_modules/`, …).
+//!
+//! Fix: package a single `assets/zephyr-core.tar.gz` at build time, open that
+//! one asset via NDK `AAssetManager_open`, stream it to a temp file, then
+//! `flate2`+`tar` extract into `app_data_dir/zephyr-core/`. Re-extract when the
+//! app version marker changes.
 
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
@@ -65,19 +71,17 @@ fn wait_http_ready(url: &str, timeout: Duration) -> bool {
     false
 }
 
-/// Copy bundled zephyr-core from APK assets to `dest/zephyr-core/` using the
-/// Android NDK AssetManager. No archive, no decompression — just file copies.
+/// Open a single APK asset by path and stream its bytes into `dest_file`.
 ///
-/// On Android, Tauri `resource_dir()` returns `"asset://localhost/"` (virtual URI);
-/// APK assets are not accessible via `std::fs`. We traverse the AssetManager tree
-/// and copy each file individually to the app's filesDir.
+/// Uses NDK AAssetManager via JNI. Only one asset is opened — no directory
+/// enumeration (which is broken for nested asset trees on Android).
 #[cfg(target_os = "android")]
-fn copy_assets_core(dest: &Path) -> Result<PathBuf, String> {
-    use std::ffi::{CStr, CString};
+fn copy_asset_file_to_path(asset_path: &str, dest_file: &Path) -> Result<(), String> {
+    use std::ffi::CString;
+    use std::io::Write;
     use std::os::raw::{c_char, c_int, c_void};
 
     type AAssetManager = c_void;
-    type AAssetDir = c_void;
     type AAsset = c_void;
     const AASSET_MODE_STREAMING: c_int = 2;
 
@@ -87,93 +91,31 @@ fn copy_assets_core(dest: &Path) -> Result<PathBuf, String> {
             env: *mut jni::sys::JNIEnv,
             assetManager: jni::sys::jobject,
         ) -> *mut AAssetManager;
-        fn AAssetManager_openDir(
-            mgr: *mut AAssetManager,
-            dirName: *const c_char,
-        ) -> *mut AAssetDir;
         fn AAssetManager_open(
             mgr: *mut AAssetManager,
             filename: *const c_char,
             mode: c_int,
         ) -> *mut AAsset;
-        fn AAssetDir_getNextFileName(dir: *mut AAssetDir) -> *const c_char;
-        fn AAssetDir_close(dir: *mut AAssetDir);
-        fn AAsset_getLength(asset: *mut AAsset) -> i64;
         fn AAsset_read(asset: *mut AAsset, buf: *mut c_void, count: usize) -> c_int;
         fn AAsset_close(asset: *mut AAsset);
     }
 
-    /// Recursively copy `asset_dir` (relative to APK assets root) to `fs_dir`.
-    fn copy_dir(
-        mgr: *mut AAssetManager,
-        asset_dir: &str,
-        fs_dir: &Path,
-    ) -> Result<(), String> {
-        let c_dir = CString::new(asset_dir).map_err(|e| e.to_string())?;
-        let dir = unsafe { AAssetManager_openDir(mgr, c_dir.as_ptr()) };
-        if dir.is_null() {
-            return Err(format!("AAssetManager_openDir failed: {asset_dir}"));
-        }
-        std::fs::create_dir_all(fs_dir).map_err(|e| e.to_string())?;
-
-        loop {
-            let name_ptr = unsafe { AAssetDir_getNextFileName(dir) };
-            if name_ptr.is_null() {
-                break;
-            }
-            let name =
-                unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy().into_owned();
-            let asset_path = if asset_dir.is_empty() {
-                name.clone()
-            } else {
-                format!("{asset_dir}/{name}")
-            };
-            let dest_file = fs_dir.join(&name);
-
-            // Try opening as a file first
-            let c_path = CString::new(asset_path.as_str()).map_err(|e| e.to_string())?;
-            let asset =
-                unsafe { AAssetManager_open(mgr, c_path.as_ptr(), AASSET_MODE_STREAMING) };
-
-            if !asset.is_null() {
-                // It's a file — copy bytes
-                if let Some(parent) = dest_file.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                }
-                use std::io::Write;
-                let mut file =
-                    std::fs::File::create(&dest_file).map_err(|e| e.to_string())?;
-                let mut buf = vec![0u8; 131072];
-                loop {
-                    let n = unsafe {
-                        AAsset_read(asset, buf.as_mut_ptr() as *mut c_void, buf.len())
-                    };
-                    if n <= 0 {
-                        break;
-                    }
-                    file.write_all(&buf[..n as usize])
-                        .map_err(|e| e.to_string())?;
-                }
-                unsafe { AAsset_close(asset) };
-            } else {
-                // Might be a subdirectory — recurse
-                copy_dir(mgr, &asset_path, &dest_file)?;
-            }
-        }
-        unsafe { AAssetDir_close(dir) };
-        Ok(())
+    let ctx = ndk_context::android_context();
+    let vm_ptr = ctx.vm();
+    let context_ptr = ctx.context();
+    if vm_ptr.is_null() || context_ptr.is_null() {
+        return Err("ndk-context 未初始化（vm/context 为 null）".into());
     }
 
-    // ── Get AAssetManager via JNI + ndk-context ──
-    let ctx = ndk_context::android_context();
-    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
+    let vm = unsafe { jni::JavaVM::from_raw(vm_ptr.cast()) }
         .map_err(|e| format!("JavaVM::from_raw: {e}"))?;
     let mut env = vm
         .attach_current_thread()
         .map_err(|e| format!("attach_current_thread: {e}"))?;
 
-    // Context.getAssets() -> AssetManager
-    let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
+    // Context.getAssets() -> AssetManager. context is a global ref owned by
+    // ndk-context; wrap without letting jni-rs DeleteLocalRef it.
+    let context = unsafe { jni::objects::JObject::from_raw(context_ptr.cast()) };
     let asset_manager = env
         .call_method(
             &context,
@@ -184,7 +126,6 @@ fn copy_assets_core(dest: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("getAssets(): {e}"))?
         .l()
         .map_err(|e| format!("getAssets() non-object: {e}"))?;
-    // Prevent DeleteLocalRef on the global ref
     std::mem::forget(context);
 
     let mgr = unsafe { AAssetManager_fromJava(env.get_raw(), asset_manager.as_raw()) };
@@ -192,15 +133,124 @@ fn copy_assets_core(dest: &Path) -> Result<PathBuf, String> {
         return Err("AAssetManager_fromJava returned null".into());
     }
 
-    // ── Copy assets/zephyr-core/ -> dest/zephyr-core/ ──
+    let c_path = CString::new(asset_path).map_err(|e| e.to_string())?;
+    let asset = unsafe { AAssetManager_open(mgr, c_path.as_ptr(), AASSET_MODE_STREAMING) };
+    if asset.is_null() {
+        return Err(format!(
+            "AAssetManager_open 失败: {asset_path}（APK 中可能缺少该 asset）"
+        ));
+    }
+
+    if let Some(parent) = dest_file.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut file = std::fs::File::create(dest_file).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; 256 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        let n = unsafe { AAsset_read(asset, buf.as_mut_ptr() as *mut c_void, buf.len()) };
+        if n < 0 {
+            unsafe { AAsset_close(asset) };
+            return Err(format!("AAsset_read 错误: {n}"));
+        }
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n as usize])
+            .map_err(|e| e.to_string())?;
+        total += n as u64;
+    }
+    unsafe { AAsset_close(asset) };
+    file.flush().map_err(|e| e.to_string())?;
+    if total == 0 {
+        return Err(format!("asset 为空: {asset_path}"));
+    }
+    Ok(())
+}
+
+/// Extract `assets/zephyr-core.tar.gz` into `dest/zephyr-core/`.
+///
+/// Build ships one archive because AAssetDir cannot recurse into subdirs.
+#[cfg(target_os = "android")]
+fn extract_assets_core_tarball(dest: &Path) -> Result<PathBuf, String> {
+    use flate2::read::GzDecoder;
+    use std::io::BufReader;
+    use tar::Archive;
+
     let core_dest = dest.join("zephyr-core");
-    let _ = std::fs::remove_dir_all(&core_dest);
+    let staging = dest.join("zephyr-core.extracting");
+    let tarball = dest.join("zephyr-core.tar.gz");
+
+    // Clean previous partial extract
+    let _ = std::fs::remove_dir_all(&staging);
+    let _ = std::fs::remove_file(&tarball);
     std::fs::create_dir_all(dest).map_err(|e| format!("创建目录失败: {e}"))?;
 
-    copy_dir(mgr, "zephyr-core", &core_dest)?;
+    copy_asset_file_to_path("zephyr-core.tar.gz", &tarball)?;
+
+    {
+        let file = std::fs::File::open(&tarball)
+            .map_err(|e| format!("打开 tarball 失败: {e}"))?;
+        let dec = GzDecoder::new(BufReader::new(file));
+        let mut archive = Archive::new(dec);
+        // Unpack into staging so a half-written tree is never used as core.
+        std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+        archive
+            .unpack(&staging)
+            .map_err(|e| format!("解压 zephyr-core.tar.gz 失败: {e}"))?;
+    }
+    let _ = std::fs::remove_file(&tarball);
+
+    // stage-zephyr-core packs the *contents* of zephyr-core/ at archive root
+    // (server.js, public/, …). Accept either layout.
+    let unpacked = if staging.join("server.js").is_file() {
+        staging.clone()
+    } else if staging.join("zephyr-core").join("server.js").is_file() {
+        staging.join("zephyr-core")
+    } else {
+        // single top-level dir?
+        let mut found = None;
+        if let Ok(rd) = std::fs::read_dir(&staging) {
+            for ent in rd.flatten() {
+                let p = ent.path();
+                if p.is_dir() && p.join("server.js").is_file() {
+                    found = Some(p);
+                    break;
+                }
+            }
+        }
+        found.ok_or_else(|| {
+            "解压后未找到 server.js（tarball 布局异常）".to_string()
+        })?
+    };
+
+    if !unpacked.join("public").is_dir() {
+        return Err("解压后未找到 public/ 目录".into());
+    }
+
+    // Atomic-ish replace: prefer rename, fall back to recursive copy
+    let _ = std::fs::remove_dir_all(&core_dest);
+    let move_or_copy = |from: &Path, to: &Path| -> Result<(), String> {
+        match std::fs::rename(from, to) {
+            Ok(()) => Ok(()),
+            Err(rename_err) => {
+                copy_dir_recursive(from, to).map_err(|e| {
+                    format!("rename({rename_err}) 且 copy 失败: {e}")
+                })?;
+                let _ = std::fs::remove_dir_all(from);
+                Ok(())
+            }
+        }
+    };
+    if unpacked == staging {
+        move_or_copy(&staging, &core_dest)?;
+    } else {
+        move_or_copy(&unpacked, &core_dest)?;
+        let _ = std::fs::remove_dir_all(&staging);
+    }
 
     if !core_dest.join("server.js").is_file() {
-        return Err("拷贝后未找到 server.js，assets 中可能缺少 zephyr-core".into());
+        return Err("最终 core 缺少 server.js".into());
     }
     Ok(core_dest)
 }
@@ -216,7 +266,7 @@ pub fn resolve_core_dir(app: &AppHandle) -> Result<PathBuf, String> {
         candidates.push(cwd.join("..").join("zephyr-core"));
         candidates.push(cwd.join("..")); // monorepo root with server.js
     }
-    // Android: filesDir / native adjacent staged core
+    // Android: filesDir staged core
     if let Ok(data) = app.path().app_data_dir() {
         candidates.push(data.join("zephyr-core"));
         candidates.push(data.join("..").join("zephyr-core"));
@@ -266,7 +316,6 @@ pub fn resolve_node_bin(app: &AppHandle) -> Result<PathBuf, String> {
                     candidates.push(app_root.join("lib").join(abi).join("libnode.so"));
                 }
             }
-            // walk up to find …/lib/*/libnode.so under /data/app
             candidates.push(data.join("libnode.so"));
         }
         if let Ok(res) = app.path().resource_dir() {
@@ -405,23 +454,30 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         }
     }
 
-    // Android: copy zephyr-core from APK assets to filesDir on first run.
-    // Tauri resource_dir() returns "asset://localhost/" (virtual URI) on Android;
-    // APK assets are not accessible via std::fs. We use the NDK AssetManager to
-    // copy individual files from assets/zephyr-core/ to app_data_dir/zephyr-core/.
+    // Android: extract zephyr-core.tar.gz from APK assets to filesDir on first
+    // run / version change. Single-file asset avoids AAssetDir not listing
+    // subdirectories (public/, node_modules/, … would otherwise be missing).
     #[cfg(target_os = "android")]
     {
         let data_dir_check = app.path().app_data_dir().map_err(|e| e.to_string())?;
         let core_dest = data_dir_check.join("zephyr-core");
-        let version_marker = core_dest.join(".zephyr-one-app-version");
+        let version_marker = data_dir_check.join(".zephyr-one-app-version");
         let current_version = env!("CARGO_PKG_VERSION");
         let needs_copy = match std::fs::read_to_string(&version_marker) {
-            Ok(v) => v.trim() != current_version || !core_dest.join("server.js").is_file(),
+            Ok(v) => {
+                v.trim() != current_version
+                    || !core_dest.join("server.js").is_file()
+                    || !core_dest.join("public").is_dir()
+            }
             Err(_) => true,
         };
         if needs_copy {
-            copy_assets_core(&data_dir_check)?;
+            eprintln!(
+                "[zephyr-one] extracting zephyr-core.tar.gz (version {current_version})…"
+            );
+            extract_assets_core_tarball(&data_dir_check)?;
             let _ = std::fs::write(&version_marker, current_version);
+            eprintln!("[zephyr-one] zephyr-core ready at {}", core_dest.display());
         }
     }
 
@@ -453,13 +509,32 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    // Android: give node a writable HOME/TMP (default HOME may be unset/inaccessible)
+    // Android: writable HOME/TMP + node stderr log (Stdio::null hides crash reasons)
     #[cfg(target_os = "android")]
     {
         if let Ok(data) = app.path().app_data_dir() {
             cmd.env("HOME", &data);
             cmd.env("TMPDIR", data.join("tmp"));
             let _ = std::fs::create_dir_all(data.join("tmp"));
+            // Help Node find itself / avoid dlopen issues when invoked as libnode.so
+            if let Some(dir) = node.parent() {
+                let prev = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+                let joined = if prev.is_empty() {
+                    dir.display().to_string()
+                } else {
+                    format!("{}:{}", dir.display(), prev)
+                };
+                cmd.env("LD_LIBRARY_PATH", joined);
+            }
+            let log_path = data.join("zephyr-node-stderr.log");
+            match std::fs::File::create(&log_path) {
+                Ok(f) => {
+                    cmd.stderr(Stdio::from(f));
+                }
+                Err(e) => {
+                    eprintln!("[zephyr-one] cannot open node stderr log: {e}");
+                }
+            }
         }
     }
 
@@ -473,6 +548,8 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
 
     let health = format!("{public_origin}/healthz");
     if !wait_http_ready(&health, Duration::from_secs(60)) {
+        // Keep child around so a subsequent runtime_start can inspect / retry
+        // against the same port if still alive; surface timeout to UI.
         st.child = Some(child);
         st.port = port;
         st.base_url = public_origin.clone();
