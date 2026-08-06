@@ -316,12 +316,13 @@ jobs:
             npx tauri ios init --ci
           fi
           ls -la src-tauri/gen/apple
-      - name: Build iOS (no codesign)
+      - name: Build iOS (unsigned; Tauri flag is --no-sign)
         run: |
           set -e
-          if ! npx tauri ios build --no-codesign --target aarch64; then
-            echo "device aarch64 failed; trying default --no-codesign"
-            npx tauri ios build --no-codesign
+          # Tauri 2 CLI: --no-sign (not --no-codesign)
+          if ! npx tauri ios build --no-sign --target aarch64 --ci; then
+            echo "device aarch64 failed; trying default --no-sign --ci"
+            npx tauri ios build --no-sign --ci
           fi
       - name: Collect iOS artifacts
         run: |
