@@ -24,6 +24,21 @@ python3 "$ROOT/scripts/stamp-android-icons.py" "$ANDROID_ROOT"
 # Node jniLibs (open-box)
 sh "$ROOT/scripts/bundle-node-android.sh" "$ANDROID_ROOT"
 
+# 5) Copy zephyr-core to Android assets (individual files, no archive/compression)
+#    Runtime copies these to filesDir via NDK AssetManager on first launch.
+CORE_SRC="$ROOT/zephyr-core"
+ASSETS_DIR="$APP/src/main/assets"
+if [ -d "$CORE_SRC" ] && [ -f "$CORE_SRC/server.js" ]; then
+    mkdir -p "$ASSETS_DIR"
+    rm -rf "$ASSETS_DIR/zephyr-core"
+    cp -a "$CORE_SRC" "$ASSETS_DIR/zephyr-core"
+    NFILES=$(find "$ASSETS_DIR/zephyr-core" -type f | wc -l)
+    echo "Copied zephyr-core to Android assets ($NFILES files)"
+else
+    echo "ERROR: zephyr-core not found at $CORE_SRC - run: npm run stage:core" >&2
+    exit 1
+fi
+
 python3 - "$GRADLE" "$MANIFEST" "$ANDROID_ROOT" <<'PY'
 import re, sys
 from pathlib import Path

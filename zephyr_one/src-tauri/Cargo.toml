@@ -35,6 +35,11 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-biometric = "2"
 
+# Android: NDK AssetManager access (copy bundled assets to filesystem, no archive/decompression)
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-context = "0.1"
+jni = "0.21"
+
 # macOS OS unlock
 [target.'cfg(target_os = "macos")'.dependencies]
 localauthentication-rs = "0.1"
