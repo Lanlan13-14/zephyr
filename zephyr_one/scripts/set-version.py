@@ -107,9 +107,10 @@ def main() -> None:
             f.write(f"ZEPHYR_ONE_VERSION_NAME={version}\n")
             f.write(f"ZEPHYR_ONE_VERSION_CODE={code}\n")
 
+    # ASCII only: Windows runners default to cp1252 and choke on arrows/CJK.
     print(f"ZEPHYR_ONE_VERSION_NAME={version}")
     print(f"ZEPHYR_ONE_VERSION_CODE={code}")
-    print(f"stamped package.json / Cargo.toml / tauri.conf.json → {version}")
+    print(f"stamped package.json / Cargo.toml / tauri.conf.json -> {version}")
 
 
 if __name__ == "__main__":
