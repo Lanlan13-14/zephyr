@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. one-v0.1.0)'
+        description: 'Release tag (e.g. one-v0.1.2)'
         required: false
         default: ''
 
@@ -45,11 +45,13 @@ jobs:
       - run: npm install
       - run: npm run test:ci
       - run: npm run build
-      - name: Stage Zephyr core (syntax check presence)
+      - name: Stage Zephyr core
         run: |
           sh scripts/stage-zephyr-core.sh
           test -f zephyr-core/server.js
           test -d zephyr-core/public
+
+  # ───────────── Release builds (workflow_dispatch + tag) ─────────────
 
   build-android:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
@@ -62,14 +64,14 @@ jobs:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-      - name: Install NDK
+      - name: Install NDK / platforms
         run: sdkmanager "ndk;27.2.12479018" "platforms;android-34" "build-tools;34.0.0"
         working-directory: .
       - run: npm install
@@ -80,9 +82,8 @@ jobs:
           if [ ! -d src-tauri/gen/android ]; then
             npx tauri android init --ci
           fi
-      - name: Prepare icons + release signing + jniLibs Node (open-box)
+      - name: Prepare icons + release signing + jniLibs Node
         run: |
-          # prepare-android downloads node-android-build into jniLibs as libnode.so
           sh scripts/prepare-android.sh src-tauri/gen/android
           test -f src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libnode.so
           ls -lh src-tauri/gen/android/app/src/main/jniLibs/*/* || true
@@ -102,10 +103,104 @@ jobs:
           APK=$(find src-tauri/gen/android -name '*release*.apk' | head -n 1)
           echo "path=$APK" >> "$GITHUB_OUTPUT"
           ls -lh "$APK"
+          mkdir -p dist-out
+          cp "$APK" "dist-out/zephyr-one-android-arm64-${{ github.event.inputs.tag }}.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: ${{ steps.apk.outputs.path }}
+          path: zephyr_one/dist-out/*.apk
+
+  build-windows:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    needs: test
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install WebView2 (usually preinstalled on windows-2022)
+        shell: pwsh
+        run: |
+          Write-Host "WebView2 / MSVC toolchain assumed available on runner"
+      - name: Install npm deps
+        shell: pwsh
+        run: npm install
+      - name: Stage Zephyr core
+        shell: bash
+        run: sh scripts/stage-zephyr-core.sh
+      - name: Build frontend
+        shell: pwsh
+        run: npm run build
+      - name: Tauri build Windows
+        shell: pwsh
+        run: npm run tauri build
+      - name: Collect Windows artifacts
+        shell: bash
+        run: |
+          mkdir -p dist-out
+          find src-tauri/target/release/bundle -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.zip' \) -print
+          # NSIS / MSI typical paths
+          cp -v src-tauri/target/release/bundle/msi/*.msi dist-out/ 2>/dev/null || true
+          cp -v src-tauri/target/release/bundle/nsis/*.exe dist-out/ 2>/dev/null || true
+          # portable: zip the main exe + deps if present
+          if [ -f src-tauri/target/release/zephyr-one.exe ]; then
+            (cd src-tauri/target/release && zip -r "$OLDPWD/dist-out/zephyr-one-windows-x64-${{ github.event.inputs.tag }}.zip" zephyr-one.exe *.dll resources 2>/dev/null) || \
+            (cd src-tauri/target/release && 7z a "$OLDPWD/dist-out/zephyr-one-windows-x64-${{ github.event.inputs.tag }}.zip" zephyr-one.exe) || true
+          fi
+          ls -la dist-out || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: zephyr_one/dist-out/**
+          if-no-files-found: warn
+
+  build-macos:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: npm install
+      - run: sh scripts/stage-zephyr-core.sh
+      - run: npm run build
+      - name: Tauri build macOS
+        run: npm run tauri build
+      - name: Collect macOS artifacts
+        run: |
+          mkdir -p dist-out
+          find src-tauri/target/release/bundle -type f \( -name '*.dmg' -o -name '*.app' \) 2>/dev/null | head -50 || true
+          find src-tauri/target -type d -name '*.app' 2>/dev/null | head -20 || true
+          # DMG
+          cp -v src-tauri/target/release/bundle/dmg/*.dmg dist-out/ 2>/dev/null || true
+          # App bundle zip
+          app_path=$(find src-tauri/target/release/bundle -maxdepth 3 -name '*.app' -type d | head -n 1 || true)
+          if [ -n "$app_path" ]; then
+            app_name=$(basename "$app_path")
+            (cd "$(dirname "$app_path")" && zip -r "$OLDPWD/dist-out/zephyr-one-macos-${{ github.event.inputs.tag }}.zip" "$app_name")
+          fi
+          # rename dmg if generic
+          for f in dist-out/*.dmg; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            case "$base" in
+              zephyr-one-*) ;;
+              *) mv "$f" "dist-out/zephyr-one-macos-${{ github.event.inputs.tag }}.dmg" 2>/dev/null || true ;;
+            esac
+          done
+          ls -la dist-out || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          path: zephyr_one/dist-out/**
+          if-no-files-found: warn
 
   build-linux:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
@@ -125,25 +220,75 @@ jobs:
       - run: npm install
       - run: npm run stage:core
       - run: npm run tauri build
+      - name: Collect Linux artifacts
+        run: |
+          mkdir -p dist-out
+          find src-tauri/target/release/bundle -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \) -exec cp -v {} dist-out/ \; || true
+          ls -la dist-out || true
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x64
-          path: zephyr_one/src-tauri/target/release/bundle/**
+          path: zephyr_one/dist-out/**
+          if-no-files-found: warn
+
+  # iOS: unsigned (needs Apple team for store signing)
+  build-ios:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+      - run: npm install
+      - run: sh scripts/stage-zephyr-core.sh
+      - run: npm run build
+      - name: Init iOS project
+        run: |
+          if [ ! -d src-tauri/gen/apple ]; then
+            npx tauri ios init --ci || true
+          fi
+      - name: Build iOS (no codesign)
+        run: |
+          npx tauri ios build --no-codesign || echo "iOS build may need further Xcode project setup"
+      - name: Collect iOS artifacts
+        run: |
+          mkdir -p dist-out
+          find src-tauri/gen/apple -type d -name '*.app' 2>/dev/null | head
+          app=$(find src-tauri -type d -name '*.app' 2>/dev/null | head -n 1 || true)
+          if [ -n "$app" ]; then
+            (cd "$(dirname "$app")" && zip -r "$OLDPWD/dist-out/zephyr-one-ios-${{ github.event.inputs.tag }}-unsigned.zip" "$(basename "$app")")
+          fi
+          ls -la dist-out || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned
+          path: zephyr_one/dist-out/**
+          if-no-files-found: warn
 
   release:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
-    needs: [build-android, build-linux]
+    needs: [build-android, build-windows, build-macos, build-linux, build-ios]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
           path: release-artifacts
-      - name: Pack
+      - name: Pack all platforms
         working-directory: .
         run: |
           mkdir -p dist-one
-          find release-artifacts -type f \( -name '*.apk' -o -name '*.aab' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \) -exec cp -v {} dist-one/ \; || true
+          find release-artifacts -type f \( \
+            -name '*.apk' -o -name '*.aab' -o \
+            -name '*.msi' -o -name '*.exe' -o -name '*.zip' -o \
+            -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' -o \
+            -name '*.ipa' \
+          \) -exec cp -v {} dist-one/ \; || true
           ls -la dist-one || true
       - uses: softprops/action-gh-release@v2
         with:
@@ -152,11 +297,21 @@ jobs:
           body: |
             ## Zephyr One ${{ github.event.inputs.tag }}
 
-            Full Zephyr product embedded in Tauri.
-            - Local core: complete UI + SSH/RDP/VNC/notes/AI
-            - Remote main: **data sync only**
-            - Android signing: same certificate practice as Zephyr Agent (`zephyr-one-release.jks` / Agent key material)
-            - Optional OS unlock setting (default off)
+            Full Zephyr product embedded in Tauri (local core). Remote main is **data sync only**.
+
+            ### Platforms (aligned with Zephyr Agent)
+            | Platform | Artifact |
+            |---|---|
+            | Android APK | `zephyr-one-android-arm64-*.apk` (Agent-style release JKS; package `com.zephyr.one`) |
+            | Windows | MSI / NSIS / portable zip |
+            | macOS | DMG / app zip |
+            | Linux | deb / AppImage |
+            | iOS | unsigned zip (needs Apple signing for device/store) |
+
+            ### Notes
+            - Android Node: open-box `jniLibs/*/libnode.so` (node-android-build)
+            - Optional OS unlock (default off): real Biometric / LA / Windows Hello
+            - Does **not** replace Zephyr Agent (`com.zephyr.agent`)
           files: dist-one/*
           draft: false
           prerelease: false
