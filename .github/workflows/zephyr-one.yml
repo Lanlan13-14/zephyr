@@ -72,7 +72,17 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
       - name: Install NDK / platforms
-        run: sdkmanager "ndk;27.2.12479018" "platforms;android-34" "build-tools;34.0.0"
+        run: |
+          sdkmanager "ndk;27.2.12479018" "platforms;android-34" "build-tools;34.0.0"
+          # Point NDK_HOME at the SDK-managed NDK (tauri rejects empty/invalid NDK_HOME)
+          NDK_PATH="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$NDK_PATH" ]; then
+            NDK_PATH="$(ls -d "$ANDROID_SDK_ROOT"/ndk/* 2>/dev/null | sort -V | tail -n 1)"
+          fi
+          echo "NDK_PATH=$NDK_PATH"
+          test -n "$NDK_PATH" && test -d "$NDK_PATH"
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
         working-directory: .
       - run: npm install
       - run: npm run stage:core
@@ -92,9 +102,17 @@ jobs:
       - name: Build signed release APK (aarch64)
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        run: npx tauri android build --apk --target aarch64
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          NDK_HOME: ${{ env.NDK_HOME }}
+        run: |
+          echo "NDK_HOME=$NDK_HOME"
+          test -d "$NDK_HOME"
+          npx tauri android build --apk --target aarch64
       - name: Re-apply jniLibs/signing and assemble release
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          NDK_HOME: ${{ env.NDK_HOME }}
         run: |
           sh scripts/prepare-android.sh src-tauri/gen/android
           cd src-tauri/gen/android
@@ -223,20 +241,29 @@ jobs:
       - run: npm install
       - run: npm run stage:core
       - run: npm run build
-      - name: Tauri build Linux
-        run: npx tauri build
+      - name: Tauri build Linux (deb+rpm; skip AppImage/linuxdeploy flakiness)
+        run: |
+          # Full compile always; AppImage's linuxdeploy often fails on GH runners.
+          npx tauri build --bundles deb,rpm
+          # Keep the raw binary as portable fallback
+          mkdir -p dist-out
+          if [ -f src-tauri/target/release/zephyr-one ]; then
+            cp -v src-tauri/target/release/zephyr-one "dist-out/zephyr-one-linux-x64-${{ github.event.inputs.tag }}"
+            chmod +x "dist-out/zephyr-one-linux-x64-${{ github.event.inputs.tag }}"
+          fi
       - name: Collect Linux artifacts
         run: |
           mkdir -p dist-out
           find src-tauri/target/release/bundle -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \) -exec cp -v {} dist-out/ \; || true
           ls -la dist-out || true
+          test "$(find dist-out -type f | wc -l)" -gt 0
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x64
           path: zephyr_one/dist-out/**
           if-no-files-found: warn
 
-  # iOS: unsigned (needs Apple team for store signing)
+  # iOS: unsigned (device/store install needs Apple team + codesign)
   build-ios:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
     needs: test
@@ -248,32 +275,51 @@ jobs:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
+          xcodebuild -version
       - run: npm install
       - run: sh scripts/stage-zephyr-core.sh
       - run: npm run build
       - name: Init iOS project
         run: |
           if [ ! -d src-tauri/gen/apple ]; then
-            npx tauri ios init --ci || true
+            npx tauri ios init --ci
           fi
+          ls -la src-tauri/gen/apple || true
       - name: Build iOS (no codesign)
         run: |
-          npx tauri ios build --no-codesign || echo "iOS build may need further Xcode project setup"
+          set -e
+          # Prefer device target; fall back to simulator if needed
+          if ! npx tauri ios build --no-codesign --target aarch64; then
+            echo "device target failed; trying default tauri ios build --no-codesign"
+            npx tauri ios build --no-codesign
+          fi
       - name: Collect iOS artifacts
         run: |
+          set -e
           mkdir -p dist-out
-          find src-tauri/gen/apple -type d -name '*.app' 2>/dev/null | head
+          echo "searching for .app bundles..."
+          find src-tauri -type d -name '*.app' 2>/dev/null | head -50 || true
           app=$(find src-tauri -type d -name '*.app' 2>/dev/null | head -n 1 || true)
-          if [ -n "$app" ]; then
-            (cd "$(dirname "$app")" && zip -r "$OLDPWD/dist-out/zephyr-one-ios-${{ github.event.inputs.tag }}-unsigned.zip" "$(basename "$app")")
+          if [ -z "$app" ]; then
+            echo "No .app produced" >&2
+            exit 1
           fi
-          ls -la dist-out || true
+          echo "found app: $app"
+          (cd "$(dirname "$app")" && zip -ry "$OLDPWD/dist-out/zephyr-one-ios-${{ github.event.inputs.tag }}-unsigned.zip" "$(basename "$app")")
+          # Optional IPA-like layout for sideload tooling
+          rm -rf Payload && mkdir Payload
+          cp -R "$app" Payload/
+          zip -ry "dist-out/zephyr-one-ios-${{ github.event.inputs.tag }}-unsigned.ipa" Payload
+          ls -lah dist-out
       - uses: actions/upload-artifact@v4
         with:
           name: ios-unsigned
           path: zephyr_one/dist-out/**
-          if-no-files-found: warn
+          if-no-files-found: error
 
   release:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
