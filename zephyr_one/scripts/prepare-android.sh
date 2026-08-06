@@ -6,7 +6,8 @@
 # 4) Manifest: INTERNET, biometric, cleartext, extractNativeLibs
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
-ANDROID_ROOT="${1:-$ROOT/src-tauri/gen/android}"
+# Always absolute — later we `cd` into zephyr-core for tar, so relative paths break.
+ANDROID_ROOT="$(CDPATH= cd -- "${1:-$ROOT/src-tauri/gen/android}" && pwd)"
 APP="$ANDROID_ROOT/app"
 GRADLE="$APP/build.gradle.kts"
 MANIFEST="$APP/src/main/AndroidManifest.xml"

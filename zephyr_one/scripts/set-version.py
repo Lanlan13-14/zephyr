@@ -45,16 +45,22 @@ def parse_version(raw: str | None) -> str:
 def version_code(version: str, fallback: str | None = None) -> str:
     """Android-style integer versionCode: major*10000 + minor*100 + patch.
 
-    Prefer explicit env / GITHUB_RUN_NUMBER when provided so rebuilds of the
-    same semver still produce a strictly increasing code.
+    Prefer the semver-derived code so one-v0.1.8 → 108 (not GITHUB_RUN_NUMBER,
+    which is unrelated to the product version). Explicit ZEPHYR_ONE_VERSION_CODE
+    still wins when set intentionally.
     """
-    if fallback and str(fallback).strip().isdigit():
-        return str(fallback).strip()
     nums = [int(x) for x in re.findall(r"\d+", version)[:3]]
     while len(nums) < 3:
         nums.append(0)
     major, minor, patch = nums[:3]
-    return str(major * 10000 + minor * 100 + patch)
+    derived = major * 10000 + minor * 100 + patch
+    if fallback and str(fallback).strip().isdigit():
+        # Only honor explicit override when it is not a bare CI run number that
+        # would shrink the code (e.g. run 27 < 108). Larger explicit values OK.
+        fb = int(str(fallback).strip())
+        if fb >= derived:
+            return str(fb)
+    return str(derived)
 
 
 def patch_package_json(version: str) -> None:
@@ -88,10 +94,9 @@ def patch_cargo_toml(version: str) -> None:
 def main() -> None:
     raw = sys.argv[1] if len(sys.argv) > 1 else None
     version = parse_version(raw)
-    code = version_code(
-        version,
-        os.environ.get("ZEPHYR_ONE_VERSION_CODE") or os.environ.get("GITHUB_RUN_NUMBER"),
-    )
+    # Prefer explicit ZEPHYR_ONE_VERSION_CODE only — never GITHUB_RUN_NUMBER
+    # (run id is not a product version; one-v0.1.8 must become 108, not 27).
+    code = version_code(version, os.environ.get("ZEPHYR_ONE_VERSION_CODE"))
     patch_package_json(version)
     patch_tauri_conf(version)
     patch_cargo_toml(version)
