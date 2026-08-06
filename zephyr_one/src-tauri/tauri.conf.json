@@ -53,9 +53,6 @@
         "depends": []
       }
     },
-    "iOS": {
-      "developmentTeam": ""
-    },
     "android": {
       "minSdkVersion": 24
     }

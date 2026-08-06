@@ -57,6 +57,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
     needs: test
     runs-on: ubuntu-latest
+    # Keep hard-fail for Android; NDK_HOME is set in Install NDK step.
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
@@ -263,11 +264,13 @@ jobs:
           path: zephyr_one/dist-out/**
           if-no-files-found: warn
 
-  # iOS: unsigned (device/store install needs Apple team + codesign)
+  # iOS: unsigned CI build (App Store / device install still needs real Apple team + certs)
   build-ios:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
     needs: test
     runs-on: macos-latest
+    # Do not sink the whole release if only iOS tooling is missing secrets.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
@@ -283,25 +286,47 @@ jobs:
       - run: npm install
       - run: sh scripts/stage-zephyr-core.sh
       - run: npm run build
+      - name: Inject Apple development team for project generation
+        env:
+          # Prefer repo secret when available; placeholder only for Xcode project init + --no-codesign.
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+        run: |
+          set -e
+          TEAM="${APPLE_DEVELOPMENT_TEAM:-}"
+          if [ -z "$TEAM" ]; then
+            # Tauri refuses empty team during `ios init`. Placeholder is enough for unsigned CI.
+            TEAM="0000000000"
+            echo "APPLE_DEVELOPMENT_TEAM secret not set; using unsigned CI placeholder $TEAM"
+          else
+            echo "Using APPLE_DEVELOPMENT_TEAM from secrets"
+          fi
+          python3 - <<PY
+          import json
+          from pathlib import Path
+          p = Path("src-tauri/tauri.conf.json")
+          conf = json.loads(p.read_text())
+          conf.setdefault("bundle", {}).setdefault("iOS", {})["developmentTeam"] = "${TEAM}"
+          p.write_text(json.dumps(conf, indent=2) + "\n")
+          print("wrote bundle.iOS.developmentTeam")
+          PY
       - name: Init iOS project
         run: |
+          set -e
           if [ ! -d src-tauri/gen/apple ]; then
             npx tauri ios init --ci
           fi
-          ls -la src-tauri/gen/apple || true
+          ls -la src-tauri/gen/apple
       - name: Build iOS (no codesign)
         run: |
           set -e
-          # Prefer device target; fall back to simulator if needed
           if ! npx tauri ios build --no-codesign --target aarch64; then
-            echo "device target failed; trying default tauri ios build --no-codesign"
+            echo "device aarch64 failed; trying default --no-codesign"
             npx tauri ios build --no-codesign
           fi
       - name: Collect iOS artifacts
         run: |
           set -e
           mkdir -p dist-out
-          echo "searching for .app bundles..."
           find src-tauri -type d -name '*.app' 2>/dev/null | head -50 || true
           app=$(find src-tauri -type d -name '*.app' 2>/dev/null | head -n 1 || true)
           if [ -z "$app" ]; then
@@ -310,7 +335,6 @@ jobs:
           fi
           echo "found app: $app"
           (cd "$(dirname "$app")" && zip -ry "$OLDPWD/dist-out/zephyr-one-ios-${{ github.event.inputs.tag }}-unsigned.zip" "$(basename "$app")")
-          # Optional IPA-like layout for sideload tooling
           rm -rf Payload && mkdir Payload
           cp -R "$app" Payload/
           zip -ry "dist-out/zephyr-one-ios-${{ github.event.inputs.tag }}-unsigned.ipa" Payload
@@ -319,11 +343,12 @@ jobs:
         with:
           name: ios-unsigned
           path: zephyr_one/dist-out/**
-          if-no-files-found: error
+          if-no-files-found: warn
 
   release:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
-    needs: [build-android, build-windows, build-macos, build-linux, build-ios]
+    # Publish whatever platforms succeeded; don't require all five green.
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && needs.test.result == 'success' }}
+    needs: [test, build-android, build-windows, build-macos, build-linux, build-ios]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
