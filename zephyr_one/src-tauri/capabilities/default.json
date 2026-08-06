@@ -24,9 +24,6 @@
     "os:default",
     "process:default",
     "shell:allow-open",
-    "store:default",
-    "biometric:default",
-    "biometric:allow-authenticate",
-    "biometric:allow-status"
+    "store:default"
   ]
 }

@@ -84,6 +84,8 @@ jobs:
           fi
       - name: Prepare icons + release signing + jniLibs Node
         run: |
+          # Optional PIL for crisp mipmaps; stamp script works without it.
+          python3 -m pip install --user pillow || true
           sh scripts/prepare-android.sh src-tauri/gen/android
           test -f src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libnode.so
           ls -lh src-tauri/gen/android/app/src/main/jniLibs/*/* || true
@@ -135,7 +137,8 @@ jobs:
         run: npm run build
       - name: Tauri build Windows
         shell: pwsh
-        run: npm run tauri build
+        # stage:core already done; avoid double npm install in pretauri
+        run: npx tauri build
       - name: Collect Windows artifacts
         shell: bash
         run: |
@@ -172,7 +175,7 @@ jobs:
       - run: sh scripts/stage-zephyr-core.sh
       - run: npm run build
       - name: Tauri build macOS
-        run: npm run tauri build
+        run: npx tauri build
       - name: Collect macOS artifacts
         run: |
           mkdir -p dist-out
@@ -219,7 +222,9 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
       - run: npm install
       - run: npm run stage:core
-      - run: npm run tauri build
+      - run: npm run build
+      - name: Tauri build Linux
+        run: npx tauri build
       - name: Collect Linux artifacts
         run: |
           mkdir -p dist-out

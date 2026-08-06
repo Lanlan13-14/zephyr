@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "mobile",
+  "description": "Mobile-only permissions (Android/iOS biometric). Desktop builds ignore unknown platforms.",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
+  "permissions": [
+    "biometric:default",
+    "biometric:allow-authenticate",
+    "biometric:allow-status"
+  ]
+}
