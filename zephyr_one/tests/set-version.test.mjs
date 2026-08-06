@@ -12,10 +12,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'set-version.py');
 
-function runSetVersion(tag) {
+function runSetVersion(tag, extraEnv = {}) {
+  // Isolate from CI: GITHUB_RUN_NUMBER would override computed versionCode.
+  const env = { ...process.env, ...extraEnv };
+  delete env.GITHUB_ENV;
+  delete env.GITHUB_RUN_NUMBER;
+  delete env.ZEPHYR_ONE_VERSION_CODE;
+  delete env.ZEPHYR_ONE_VERSION;
   return spawnSync('python3', [SCRIPT, tag], {
     cwd: ROOT,
-    env: { ...process.env, GITHUB_ENV: '' },
+    env,
     encoding: 'utf8',
   });
 }
