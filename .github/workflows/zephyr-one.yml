@@ -107,29 +107,25 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
           NDK_HOME: ${{ env.NDK_HOME }}
         run: |
+          set -e
           echo "NDK_HOME=$NDK_HOME"
           test -d "$NDK_HOME"
+          # Single shot: do NOT re-run gradle assemble afterward without tauri CLI
+          # (android-studio-script expects tauri's WS; Connection refused fails the job).
           npx tauri android build --apk --target aarch64
-      - name: Re-apply jniLibs/signing and assemble release
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-          NDK_HOME: ${{ env.NDK_HOME }}
-        run: |
-          sh scripts/prepare-android.sh src-tauri/gen/android
-          cd src-tauri/gen/android
-          ./gradlew :app:assembleUniversalRelease
-      - name: Locate APK
-        id: apk
-        run: |
-          APK=$(find src-tauri/gen/android -name '*release*.apk' | head -n 1)
-          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          APK=$(find src-tauri/gen/android -type f \( -name 'app-universal-release.apk' -o -name '*-release*.apk' \) | head -n 1)
+          echo "APK=$APK"
+          test -n "$APK" && test -f "$APK"
           ls -lh "$APK"
           mkdir -p dist-out
-          cp "$APK" "dist-out/zephyr-one-android-arm64-${{ github.event.inputs.tag }}.apk"
+          cp -v "$APK" "dist-out/zephyr-one-android-arm64-${{ github.event.inputs.tag }}.apk"
+          # Prefer release-signed APK from tauri; verify zip
+          file "dist-out/zephyr-one-android-arm64-${{ github.event.inputs.tag }}.apk" || true
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
           path: zephyr_one/dist-out/*.apk
+          if-no-files-found: error
 
   build-windows:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
