@@ -1,0 +1,159 @@
+name: Zephyr One
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'zephyr_one/**'
+      - 'public/**'
+      - 'server.js'
+      - 'one-client-manager.js'
+      - 'file-agent-manager.js'
+      - '.github/workflows/zephyr-one.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'zephyr_one/**'
+      - '.github/workflows/zephyr-one.yml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. one-v0.1.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+defaults:
+  run:
+    working-directory: zephyr_one
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: zephyr_one/package.json
+      - run: npm install
+      - run: npm run test:ci
+      - run: npm run build
+      - name: Stage Zephyr core (syntax check presence)
+        run: |
+          sh scripts/stage-zephyr-core.sh
+          test -f zephyr-core/server.js
+          test -d zephyr-core/public
+
+  build-android:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install NDK
+        run: sdkmanager "ndk;27.2.12479018" "platforms;android-34" "build-tools;34.0.0"
+        working-directory: .
+      - run: npm install
+      - run: npm run stage:core
+      - run: npm run build
+      - name: Init Android project
+        run: |
+          if [ ! -d src-tauri/gen/android ]; then
+            npx tauri android init --ci
+          fi
+      - name: Prepare icons + release signing (Agent-style JKS)
+        run: sh scripts/prepare-android.sh src-tauri/gen/android
+      - name: Build signed release APK (aarch64)
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        run: npx tauri android build --apk --target aarch64
+      - name: Re-stamp icons and assemble with release signing
+        run: |
+          sh scripts/prepare-android.sh src-tauri/gen/android
+          cd src-tauri/gen/android
+          ./gradlew :app:assembleUniversalRelease
+      - name: Locate APK
+        id: apk
+        run: |
+          APK=$(find src-tauri/gen/android -name '*release*.apk' | head -n 1)
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          ls -lh "$APK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: ${{ steps.apk.outputs.path }}
+
+  build-linux:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux deps
+        working-directory: .
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+      - run: npm install
+      - run: npm run stage:core
+      - run: npm run tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: zephyr_one/src-tauri/target/release/bundle/**
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    needs: [build-android, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+      - name: Pack
+        working-directory: .
+        run: |
+          mkdir -p dist-one
+          find release-artifacts -type f \( -name '*.apk' -o -name '*.aab' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \) -exec cp -v {} dist-one/ \; || true
+          ls -la dist-one || true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          name: "Zephyr One ${{ github.event.inputs.tag }}"
+          body: |
+            ## Zephyr One ${{ github.event.inputs.tag }}
+
+            Full Zephyr product embedded in Tauri.
+            - Local core: complete UI + SSH/RDP/VNC/notes/AI
+            - Remote main: **data sync only**
+            - Android signing: same certificate practice as Zephyr Agent (`zephyr-one-release.jks` / Agent key material)
+            - Optional OS unlock setting (default off)
+          files: dist-one/*
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false

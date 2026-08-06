@@ -136,6 +136,7 @@ const {
     cleanupMediaProbeCache,
 } = require('./preview/media/media-service');
 const { FileAgentManager } = require('./file-agent-manager');
+const { OneClientManager } = require('./one-client-manager');
 const terminalSessionTools = require('./ai-terminal-session-tools');
 const { FileTransferGateway } = require('./file-transfer-ws');
 const { attachRdpProxyBridge } = require('./server/rdp-proxy-bridge');
@@ -598,6 +599,15 @@ const userService = new UserService(storage, () => sessionStore, authz, hashPass
 const workspaceService = new WorkspaceService(storage.rawDb(), { resources: resourceService });
 const userSettingsService = new UserSettingsService(storage.rawDb(), storage);
 const notesService = new NotesService(storage.rawDb(), authz);
+const oneClientManager = new OneClientManager({
+    db: storage.rawDb(),
+    fileAgentManager,
+    resourceService,
+    notesService,
+    userSettingsService,
+    storage,
+    log: console.log,
+});
 const deepLinkService = new DeepLinkService(storage.rawDb());
 const workerBridge = new WorkerBridge({
     storage,
@@ -640,6 +650,15 @@ function rebuildAuthServices() {
     Object.assign(workspaceService, new WorkspaceService(storage.rawDb(), { resources: resourceService }));
     Object.assign(userSettingsService, new UserSettingsService(storage.rawDb(), storage));
     Object.assign(notesService, new NotesService(storage.rawDb(), authz));
+    Object.assign(oneClientManager, new OneClientManager({
+        db: storage.rawDb(),
+        fileAgentManager,
+        resourceService,
+        notesService,
+        userSettingsService,
+        storage,
+        log: console.log,
+    }));
     Object.assign(deepLinkService, new DeepLinkService(storage.rawDb()));
     Object.assign(workerBridge, new WorkerBridge({ storage, resources: resourceService, deepLink: deepLinkService, authz }));
     Object.assign(aiPolicyService, new AiPolicyService(storage.rawDb(), { storage, userSettings: userSettingsService }));
@@ -670,7 +689,11 @@ function parseCookies(req) {
  * SQLite is authoritative, so sessions survive process restarts; the in-memory
  * cache inside SessionStore is only a hot path. */
 function currentSession(req) {
-    const sid = parseCookies(req).zephyr_sid;
+    // Prefer cookie; Zephyr One native clients may also send X-Zephyr-Sid when
+    // HttpOnly cookies cannot be shared across origins.
+    const sid = parseCookies(req).zephyr_sid
+        || String(req.headers['x-zephyr-sid'] || '').trim()
+        || '';
     if (!sid) return null;
     return sessionStore.resolve(sid);
 }
@@ -2375,11 +2398,14 @@ app.post('/api/auth/login', async (req, res) => {
     }
     clearAccountLoginFailure(user);
     recordLoginSuccess(guard.ip);
-    createSession(req, res, user, { remember: !!remember });
+    const sid = createSession(req, res, user, { remember: !!remember });
     try { storage.rawDb().prepare('UPDATE users SET lastLoginAt = ? WHERE userId = ?').run(Date.now(), user.userId); } catch {}
     addActivity(`用户登录：${user.username}`, user.userId, activityFromReq(req, { category: '账户', outcome: '成功', sourceIp: guard.ip, actor: user.username }));
     await notifyLogin({ username: user.username, ip: guard.ip, userAgent: ua, success: true, reason: '' });
-    res.json({ ok: true, user: { username: user.username }, mustChangePassword: !!user.defaultPassword });
+    const payload = { ok: true, user: { username: user.username, userId: user.userId }, mustChangePassword: !!user.defaultPassword };
+    // Native Zephyr One cannot read HttpOnly Set-Cookie across origins; return sid when requested.
+    if (req.body?.returnSid || req.headers['x-zephyr-one-client'] === '1') payload.sid = sid;
+    res.json(payload);
 });
 
 app.post('/api/auth/totp/verify', async (req, res) => {
@@ -2422,11 +2448,13 @@ app.post('/api/auth/totp/verify', async (req, res) => {
     tempTotpTokens.delete(tempToken);
     clearAccountLoginFailure(user);
     recordLoginSuccess(guard.ip);
-    createSession(req, res, user, { remember: !!tmp.remember });
+    const sid = createSession(req, res, user, { remember: !!tmp.remember });
     try { storage.rawDb().prepare('UPDATE users SET lastLoginAt = ? WHERE userId = ?').run(Date.now(), user.userId); } catch {}
     addActivity(`用户登录：${user.username}`, user.userId, activityFromReq(req, { category: '账户', outcome: '成功', sourceIp: guard.ip, actor: user.username }));
     await notifyLogin({ username: user.username, ip: guard.ip, userAgent: tmp.userAgent, success: true, reason: '' });
-    res.json({ ok: true, user: { username: user.username }, mustChangePassword: !!user.defaultPassword });
+    const payload = { ok: true, user: { username: user.username, userId: user.userId }, mustChangePassword: !!user.defaultPassword };
+    if (req.body?.returnSid || req.headers['x-zephyr-one-client'] === '1') payload.sid = sid;
+    res.json(payload);
 });
 
 app.post('/api/auth/forgot-password/request', async (req, res) => {
@@ -6439,6 +6467,19 @@ app.get('/open.html', (req, res) => sendNoStorePage(res, 'open.html'));
  * query string is the only capability; the page itself just POSTs it. */
 app.get('/password-rollback', (req, res) => sendNoStorePage(res, 'password-rollback.html'));
 app.get('/password-rollback.html', (req, res) => sendNoStorePage(res, 'password-rollback.html'));
+/* Zephyr One embedded profile: hide multi-user / security / backup UI. */
+app.get(['/app.html', '/app'], (req, res, next) => {
+    if (process.env.ZEPHYR_ONE_EMBEDDED !== '1' && req.query.zephyrOne !== '1') return next();
+    const file = path.join(__dirname, 'public', 'app.html');
+    fs.readFile(file, 'utf8', (err, html) => {
+        if (err) return next();
+        if (html.includes('zephyr-one-embed.css')) return res.type('html').send(html);
+        const inject = '<link rel="stylesheet" href="/zephyr-one-embed.css">';
+        const out = html.includes('</head>') ? html.replace('</head>', `${inject}\n</head>`) : inject + html;
+        res.type('html').send(out);
+    });
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
     index: 'index.html',
     setHeaders: (res, filePath) => {
@@ -6524,6 +6565,13 @@ app.get('/api/rdp/h264-debug', requireAdmin, (req, res) => {
 /* Mount file-agent REST API routes before the SPA catch-all. GET routes like
  * /api/rdp/file-agent-tokens must not be swallowed by app.get('*'). */
 fileAgentManager.mountRoutes(app, requireUser, (req) => req.user, verifySensitiveAccess);
+oneClientManager.mountRoutes(app, {
+    requireUser,
+    getSessionUser: (req) => req.user,
+    verifySensitiveAccess,
+    resolveUserById: (id) => storage.getUserById(id),
+    resolveUserByUsername: (name) => storage.getUser(name),
+});
 
 app.get('/healthz', (req, res) => res.status(200).json({ ok: true, instanceId: INSTANCE_ID, version: APP_VERSION }));
 

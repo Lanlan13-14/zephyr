@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark" data-palette="frost">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#101114" />
+  <title>Zephyr One</title>
+  <link rel="icon" type="image/png" href="/src/assets/logo/zephyr-app-icon.png" />
+  <link rel="stylesheet" href="/src/styles/mirror-shell.css" />
+</head>
+<body class="shell-body">
+  <!-- Optional OS unlock (default OFF; toggle in 安全设置) -->
+  <div id="lockGate" class="gate force-hidden">
+    <div class="gate-card">
+      <img class="gate-logo" src="/src/assets/logo/zephyr-app-icon.png" width="72" height="72" alt="Zephyr" />
+      <h1>Zephyr One</h1>
+      <p class="gate-sub">需要系统解锁才能进入</p>
+      <p class="gate-hint">调用本机系统认证，不使用应用自建密码。</p>
+      <button type="button" class="z-btn z-btn-primary" id="unlockBtn">使用系统解锁</button>
+      <p class="gate-error" id="lockError" hidden></p>
+    </div>
+  </div>
+
+  <!-- Boot local full Zephyr core -->
+  <div id="bootGate" class="gate">
+    <div class="gate-card">
+      <img class="gate-logo" src="/src/assets/logo/zephyr-app-icon.png" width="72" height="72" alt="Zephyr" />
+      <h1>Zephyr One</h1>
+      <p class="gate-sub" id="bootStatus">正在准备完整 Zephyr…</p>
+      <p class="gate-hint">本地运行完整主端功能；与远程主端仅用于可选数据同步。</p>
+      <button type="button" class="z-btn" id="openSecurityFromBoot">安全设置</button>
+    </div>
+  </div>
+
+  <div id="errorGate" class="gate force-hidden">
+    <div class="gate-card gate-card-wide">
+      <img class="gate-logo" src="/src/assets/logo/zephyr-app-icon.png" width="56" height="56" alt="Zephyr" />
+      <h1>启动失败</h1>
+      <p class="gate-error" id="errorText" style="display:block"></p>
+      <div class="gate-actions">
+        <button type="button" class="z-btn z-btn-primary" id="retryBootBtn">重试</button>
+        <button type="button" class="z-btn" id="openSecurityFromError" style="margin-top:10px">安全设置</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Local app security + optional remote sync host (sync-only interconnect) -->
+  <div id="securityGate" class="gate force-hidden">
+    <div class="gate-card gate-card-wide">
+      <img class="gate-logo" src="/src/assets/logo/zephyr-app-icon.png" width="48" height="48" alt="Zephyr" />
+      <h1>安全设置</h1>
+      <p class="gate-sub">仅控制本机 Zephyr One。默认不锁屏。</p>
+
+      <label class="z-check">
+        <input type="checkbox" id="requireUnlockToggle" />
+        <span>启动时要求系统解锁</span>
+      </label>
+      <p class="gate-hint">开启后调用系统 Biometric / 面容 / 系统密码，不收集应用密码。</p>
+      <p class="gate-hint muted" id="unlockCapabilityDetail"></p>
+
+      <label class="z-label" for="syncServerUrl">远程主端（仅数据同步，可选）</label>
+      <input class="z-input" id="syncServerUrl" type="url" placeholder="https://ssh.example.com" />
+      <p class="gate-hint">与主端的互联仅用于账号数据同步，日常 SSH/RDP/VNC/AI 均走本地完整核心。</p>
+
+      <div class="gate-actions">
+        <button type="button" class="z-btn" id="testSystemUnlockBtn">测试系统解锁</button>
+        <button type="button" class="z-btn z-btn-primary" id="securityDoneBtn" style="margin-top:10px">完成</button>
+      </div>
+      <p class="gate-error" id="securityError" hidden></p>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

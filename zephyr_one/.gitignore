@@ -1,0 +1,13 @@
+node_modules/
+dist/
+dist-android/
+zephyr-core/
+src-tauri/target/
+src-tauri/gen/
+.DS_Store
+*.log
+.vscode/
+.idea/
+.tauri/
+*.apk
+*.aab

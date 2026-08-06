@@ -979,15 +979,18 @@ class FileAgentManager {
             }
         });
 
-        // POST /api/rdp/file-agent-tokens/:tokenId/regenerate — rotate one token
+        // POST /api/rdp/file-agent-tokens/:tokenId/regenerate — rotate one token (password/TOTP required)
         app.post('/api/rdp/file-agent-tokens/:tokenId/regenerate', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             try {
+                if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
+                verifySensitiveAccess(req, req.body?.secret);
                 const record = this.regenerateTokenRecord(user.username, req.params.tokenId, req.body?.length || 50);
                 res.json({ ok: true, token: this.publicTokenRecord(record, true) });
             } catch (err) {
-                res.status(err.code === 'not_found' ? 404 : 500).json({ ok: false, error: { code: err.code || 'internal_error', message: err.message } });
+                const status = err.code === 'not_found' ? 404 : 400;
+                res.status(status).json({ ok: false, error: { code: err.code || 'auth_failed', message: err.message } });
             }
         });
 
@@ -1025,15 +1028,34 @@ class FileAgentManager {
             }
         });
 
-        // DELETE /api/rdp/file-agent-tokens/:tokenId — delete one token
+        // DELETE /api/rdp/file-agent-tokens/:tokenId — delete one token (password/TOTP required)
         app.delete('/api/rdp/file-agent-tokens/:tokenId', requireUser, (req, res) => {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             try {
+                if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
+                // Express DELETE body may be empty; also accept query.secret for clients that cannot send body.
+                verifySensitiveAccess(req, req.body?.secret ?? req.query?.secret);
                 this.deleteToken(user.username, req.params.tokenId);
                 res.json({ ok: true });
             } catch (err) {
-                res.status(err.code === 'not_found' ? 404 : 500).json({ ok: false, error: { code: err.code || 'internal_error', message: err.message } });
+                const status = err.code === 'not_found' ? 404 : (err.code === 'unsupported' ? 500 : 400);
+                res.status(status).json({ ok: false, error: { code: err.code || 'auth_failed', message: err.message } });
+            }
+        });
+
+        // POST /api/rdp/file-agent-tokens/:tokenId/delete — JSON-body friendly delete with secret
+        app.post('/api/rdp/file-agent-tokens/:tokenId/delete', requireUser, (req, res) => {
+            const user = getSessionUser(req);
+            if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+            try {
+                if (!verifySensitiveAccess) throw new AgentError('unsupported', 'Sensitive verification unavailable');
+                verifySensitiveAccess(req, req.body?.secret);
+                this.deleteToken(user.username, req.params.tokenId);
+                res.json({ ok: true });
+            } catch (err) {
+                const status = err.code === 'not_found' ? 404 : 400;
+                res.status(status).json({ ok: false, error: { code: err.code || 'auth_failed', message: err.message } });
             }
         });
 
@@ -1042,7 +1064,7 @@ class FileAgentManager {
             const user = getSessionUser(req);
             if (!user) return res.status(401).json({ ok: false, error: 'Unauthorized' });
             this.getOrCreateToken(user.username);
-            res.json({ ok: true, token: null, deprecated: true, message: 'Use Settings → Zephyr Agent to reveal tokens after password/TOTP verification.' });
+            res.json({ ok: true, token: null, deprecated: true, message: 'Use Settings → Zephyr Client to reveal tokens after password/TOTP verification.' });
         });
 
         // POST /api/rdp/file-agent-token/regenerate — legacy reset endpoint, requires password/TOTP

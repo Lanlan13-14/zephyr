@@ -1,0 +1,64 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Zephyr One",
+  "version": "0.1.0",
+  "identifier": "com.zephyr.one",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "Zephyr One",
+        "width": 1100,
+        "height": 760,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http: https: ws: wss:; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-src http: https:; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "../zephyr-core"
+    ],
+    "category": "Utility",
+    "shortDescription": "Zephyr One — full Zephyr native client",
+    "longDescription": "Zephyr One embeds the full Zephyr product locally. Remote Zephyr main is used only for optional account data sync. Release signing follows Zephyr Agent certificate practice.",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "certificateThumbprint": null
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    },
+    "iOS": {
+      "developmentTeam": ""
+    },
+    "android": {
+      "minSdkVersion": 24
+    }
+  },
+  "plugins": {}
+}

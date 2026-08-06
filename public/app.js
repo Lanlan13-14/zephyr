@@ -13210,7 +13210,7 @@ async function refreshAgentTokensKeeping(tokenRecord) {
 }
 
 async function createAgentToken() {
-    const name = prompt(t('Token 名称，例如：我的手机 / 办公室 Windows / Pad'), 'Zephyr Agent Token');
+    const name = prompt(t('Token 名称，例如：我的手机 / 办公室 Windows / Pad'), 'Zephyr Client Token');
     if (name === null) return;
     const data = await api('/api/rdp/file-agent-tokens', { method: 'POST', body: JSON.stringify({ name, length: currentAgentTokenLength() }) });
     const tokenRecord = data.token;
@@ -13221,7 +13221,7 @@ async function createAgentToken() {
 
 async function renameAgentToken(id) {
     const item = document.querySelector(`[data-token-id="${CSS.escape(id)}"] .agent-token-title strong`);
-    const name = prompt(t('新的 Token 名称'), item?.textContent || 'Zephyr Agent Token');
+    const name = prompt(t('新的 Token 名称'), item?.textContent || 'Zephyr Client Token');
     if (name === null) return;
     await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
     await loadAgentTokens();
@@ -13229,8 +13229,13 @@ async function renameAgentToken(id) {
 }
 
 async function regenerateAgentToken(id) {
-    if (!confirm(t('重新生成后，使用旧 Token 的 Agent 会断开，需要在 Agent App 中填写新 Token。继续？'))) return;
-    const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/regenerate`, { method: 'POST', body: JSON.stringify({ length: currentAgentTokenLength() }) });
+    if (!confirm(t('重新生成后，使用旧 Token 的 Agent / One 会断开，需要重新填写新 Token。继续？'))) return;
+    const secret = requestSensitiveSecret(t('重新生成 Zephyr Client Token'));
+    if (secret == null || secret === '') throw new Error(t('已取消'));
+    const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/regenerate`, {
+        method: 'POST',
+        body: JSON.stringify({ length: currentAgentTokenLength(), secret }),
+    });
     const tokenRecord = data.token;
     if (!tokenRecord?.token) throw new Error(t('服务端未返回新 Token'));
     await refreshAgentTokensKeeping(tokenRecord);
@@ -13238,8 +13243,14 @@ async function regenerateAgentToken(id) {
 }
 
 async function deleteAgentToken(id) {
-    if (!confirm(t('删除后，使用此 Token 的 Agent 会断开。继续删除？'))) return;
-    await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!confirm(t('删除后，使用此 Token 的 Agent / One 会断开。删除需验证密码或两步验证码。继续？'))) return;
+    const secret = requestSensitiveSecret(t('删除 Zephyr Client Token'));
+    if (secret == null || secret === '') throw new Error(t('已取消'));
+    await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/delete`, {
+        method: 'POST',
+        body: JSON.stringify({ secret }),
+    });
+    agentRevealedTokens.delete(id);
     await loadAgentTokens();
     toast(t('Token 已删除'));
 }
@@ -13247,7 +13258,8 @@ async function deleteAgentToken(id) {
 async function revealAgentToken(id, { copy = false } = {}) {
     let token = agentRevealedTokens.get(id) || '';
     if (!token) {
-        const secret = requestSensitiveSecret(copy ? t('复制 Zephyr Agent Token') : t('查看 Zephyr Agent Token'));
+        const secret = requestSensitiveSecret(copy ? t('复制 Zephyr Client Token') : t('查看 Zephyr Client Token'));
+        if (secret == null || secret === '') throw new Error(t('已取消'));
         const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/open`, {
             method: 'POST',
             body: JSON.stringify({ secret }),
@@ -13270,8 +13282,9 @@ async function copyAgentToken(id) {
 }
 
 async function resetAllAgentTokens() {
-    if (!confirm(t('这会删除当前账号所有 Zephyr Agent Token，并断开所有已连接 Agent。继续？'))) return;
-    const secret = requestSensitiveSecret(t('重置全部 Zephyr Agent Token'));
+    if (!confirm(t('这会删除当前账号所有 Client Token，并断开所有已连接 Agent / One。继续？'))) return;
+    const secret = requestSensitiveSecret(t('重置全部 Zephyr Client Token'));
+    if (secret == null || secret === '') throw new Error(t('已取消'));
     const name = prompt(t('新 Token 名称'), t('默认 Token'));
     if (name === null) return;
     const data = await api('/api/rdp/file-agent-tokens/reset-all', {
@@ -13280,14 +13293,65 @@ async function resetAllAgentTokens() {
     });
     const tokenRecord = data.token;
     if (!tokenRecord?.token) throw new Error(t('服务端未返回新 Token'));
+    agentRevealedTokens.clear();
     await refreshAgentTokensKeeping(tokenRecord);
     toast(t('全部 Token 已重置，新 Token 已显示'));
+}
+
+function formatOneClientTime(ms) {
+    if (!ms) return t('从未');
+    try { return new Date(Number(ms)).toLocaleString(); } catch { return t('未知'); }
+}
+
+async function loadOneClients() {
+    const list = $('#oneClientList');
+    if (!list) return;
+    list.innerHTML = `<p class="empty-state">${t('正在加载...')}</p>`;
+    try {
+        const data = await api('/api/one/clients');
+        renderOneClients(data.clients || []);
+    } catch (err) {
+        list.innerHTML = `<p class="empty-state">${t('加载失败：')}${escapeHtml(err.message || 'unknown')}</p>`;
+    }
+}
+
+function renderOneClients(clients) {
+    const list = $('#oneClientList');
+    if (!list) return;
+    if (!clients.length) {
+        list.innerHTML = `<p class="empty-state">${t('尚无绑定的 Zephyr One 客户端')}</p>`;
+        return;
+    }
+    list.innerHTML = clients.map((c) => `
+        <div class="agent-token-item" data-one-client-id="${escapeHtml(c.clientId)}">
+            <div class="agent-token-main">
+                <div class="agent-token-title"><strong>${escapeHtml(c.deviceName || 'Zephyr One')}</strong><span>${escapeHtml(c.clientId || '')}</span></div>
+                <div class="agent-token-meta">${escapeHtml(c.platform || '—')} · ${c.enabled ? t('同步已启用') : t('已禁用')} · Token ${escapeHtml(c.tokenId || '—')}</div>
+                <div class="agent-token-meta">${t('最近同步：')}${escapeHtml(formatOneClientTime(c.lastSyncAt))} · ${t('间隔：')}${escapeHtml(String(c.syncIntervalSec || 300))}s · ${t('创建：')}${escapeHtml(formatOneClientTime(c.createdAt))}</div>
+            </div>
+            <div class="agent-token-buttons">
+                <button class="tool-btn danger" type="button" data-one-delete-client="${escapeHtml(c.clientId)}">${t('删除客户端')}</button>
+            </div>
+        </div>`).join('');
+}
+
+async function deleteOneClient(clientId) {
+    if (!confirm(t('删除后该 Zephyr One 将无法同步，需重新登录绑定。删除需密码或两步验证码。继续？'))) return;
+    const secret = requestSensitiveSecret(t('删除 Zephyr One 客户端'));
+    if (secret == null || secret === '') throw new Error(t('已取消'));
+    await api(`/api/one/clients/${encodeURIComponent(clientId)}/revoke`, {
+        method: 'POST',
+        body: JSON.stringify({ secret, reason: 'deleted_from_settings' }),
+    });
+    await loadOneClients();
+    toast(t('Zephyr One 客户端已删除'));
 }
 
 function setupAgentTokenSettings() {
     $('#agentCreateTokenBtn')?.addEventListener('click', () => createAgentToken().catch((err) => toast(err.message || t('创建失败'))));
     $('#agentRefreshTokenBtn')?.addEventListener('click', () => loadAgentTokens());
     $('#agentResetAllTokenBtn')?.addEventListener('click', () => resetAllAgentTokens().catch((err) => toast(err.message || t('重置失败'))));
+    $('#oneClientRefreshBtn')?.addEventListener('click', () => loadOneClients().catch(() => {}));
     $('#agentCopyServerUrlBtn')?.addEventListener('click', async () => {
         try {
             await copyTextToClipboard(currentAgentServerUrl(), t('主端地址已复制'));
@@ -13307,6 +13371,11 @@ function setupAgentTokenSettings() {
         if (regen) regenerateAgentToken(regen).catch((err) => toast(err.message || t('重新生成失败')));
         if (del) deleteAgentToken(del).catch((err) => toast(err.message || t('删除失败')));
     });
+    $('#oneClientList')?.addEventListener('click', (e) => {
+        const del = e.target.dataset.oneDeleteClient;
+        if (del) deleteOneClient(del).catch((err) => toast(err.message || t('删除失败')));
+    });
     updateAgentServerInfo();
     loadAgentTokens().catch(() => {});
+    loadOneClients().catch(() => {});
 }

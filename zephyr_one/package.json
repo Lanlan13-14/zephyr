@@ -1,0 +1,39 @@
+{
+  "name": "zephyr-one",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Zephyr One — full Zephyr product in Tauri; remote main is sync-only",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "stage:core": "sh scripts/stage-zephyr-core.sh",
+    "pretauri:dev": "npm run stage:core",
+    "pretauri:build": "npm run stage:core",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "android:prepare": "sh scripts/prepare-android.sh",
+    "test:unit": "node --test tests/*.test.mjs",
+    "test:protocol": "node --test tests/zft2-protocol.test.mjs",
+    "test:ci": "npm run test:unit && npm run test:protocol"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-fs": "^2.4.2",
+    "@tauri-apps/plugin-http": "^2.5.2",
+    "@tauri-apps/plugin-os": "^2.3.1",
+    "@tauri-apps/plugin-process": "^2.3.0",
+    "@tauri-apps/plugin-shell": "^2.3.1",
+    "@tauri-apps/plugin-store": "^2.4.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "vite": "^6.3.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
