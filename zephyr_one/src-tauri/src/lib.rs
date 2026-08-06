@@ -9,14 +9,21 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_store::Builder::default().build());
+
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        builder = builder.plugin(tauri_plugin_biometric::init());
+    }
+
+    builder
         .manage(fs::FsState::default())
         .manage(token::TokenState::default())
         .invoke_handler(tauri::generate_handler![
@@ -46,8 +53,6 @@ pub fn run() {
             commands::token_import_local,
         ])
         .setup(|app| {
-            // Start local Zephyr core ASAP so first paint can navigate.
-            // Failure is non-fatal at setup; UI can retry via runtime_start.
             if let Err(err) = runtime::ensure_started(app.handle()) {
                 eprintln!("[zephyr-one] local runtime not started yet: {err}");
             }

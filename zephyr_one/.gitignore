@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-android/
 zephyr-core/
+third_party/
 src-tauri/target/
 src-tauri/gen/
 .DS_Store

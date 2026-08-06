@@ -1,5 +1,9 @@
 #!/usr/bin/env sh
-# Stamp Zephyr icons + Agent-style release signing into Tauri Android project.
+# Full Android open-box prep:
+# 1) Zephyr icons
+# 2) Release signing (Agent-style JKS — package id stays com.zephyr.one)
+# 3) Bundle Node as jniLibs/*/libnode.so (install-time extract, no app unpack)
+# 4) Manifest: INTERNET, biometric, cleartext, extractNativeLibs
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 ANDROID_ROOT="${1:-$ROOT/src-tauri/gen/android}"
@@ -16,6 +20,9 @@ cp "$JKS_SRC" "$APP/zephyr-one-release.jks"
 mkdir -p "$APP/src/main/res/drawable-nodpi"
 cp "$ICON_SRC" "$APP/src/main/res/drawable-nodpi/zephyr_one_icon.png"
 python3 "$ROOT/scripts/stamp-android-icons.py" "$ANDROID_ROOT"
+
+# Node jniLibs (open-box)
+sh "$ROOT/scripts/bundle-node-android.sh" "$ANDROID_ROOT"
 
 python3 - "$GRADLE" "$MANIFEST" "$ANDROID_ROOT" <<'PY'
 import re, sys
@@ -38,7 +45,6 @@ if "zephyr-one-release.jks" not in s:
         1,
     )
 if 'signingConfig = signingConfigs.getByName("release")' not in s:
-    # common Tauri patterns
     s = s.replace(
         'signingConfig = signingConfigs.getByName("debug")',
         'signingConfig = signingConfigs.getByName("release")',
@@ -50,6 +56,19 @@ if 'signingConfig = signingConfigs.getByName("release")' not in s:
             s,
             count=1,
         )
+# packaging: keep jniLibs .so
+if "jniLibs" not in s and "packaging" not in s:
+    s = s.replace(
+        "android {",
+        '''android {
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+''',
+        1,
+    )
 gradle.write_text(s)
 
 props = android_root / "gradle.properties"
@@ -61,6 +80,8 @@ if manifest.exists():
     m = manifest.read_text()
     if "usesCleartextTraffic" not in m:
         m = re.sub(r"<application\b", '<application android:usesCleartextTraffic="true"', m, count=1)
+    if "extractNativeLibs" not in m:
+        m = re.sub(r"<application\b", '<application android:extractNativeLibs="true"', m, count=1)
     for perm in (
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
@@ -73,7 +94,7 @@ if manifest.exists():
     m = m.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@drawable/zephyr_one_icon"')
     m = m.replace('android:roundIcon="@mipmap/ic_launcher_round"', 'android:roundIcon="@drawable/zephyr_one_icon"')
     manifest.write_text(m)
-print("prepare-android: signing + icons + manifest OK")
+print("prepare-android: icons + signing + jniLibs node + manifest OK")
 PY
 
 echo "prepare-android done: $ANDROID_ROOT"

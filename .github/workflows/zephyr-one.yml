@@ -80,14 +80,18 @@ jobs:
           if [ ! -d src-tauri/gen/android ]; then
             npx tauri android init --ci
           fi
-      - name: Prepare icons + release signing (Agent-style JKS)
-        run: sh scripts/prepare-android.sh src-tauri/gen/android
+      - name: Prepare icons + release signing + jniLibs Node (open-box)
+        run: |
+          # prepare-android downloads node-android-build into jniLibs as libnode.so
+          sh scripts/prepare-android.sh src-tauri/gen/android
+          test -f src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libnode.so
+          ls -lh src-tauri/gen/android/app/src/main/jniLibs/*/* || true
       - name: Build signed release APK (aarch64)
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         run: npx tauri android build --apk --target aarch64
-      - name: Re-stamp icons and assemble with release signing
+      - name: Re-apply jniLibs/signing and assemble release
         run: |
           sh scripts/prepare-android.sh src-tauri/gen/android
           cd src-tauri/gen/android

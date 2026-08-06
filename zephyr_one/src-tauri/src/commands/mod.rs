@@ -29,13 +29,13 @@ pub fn get_app_version() -> String {
 }
 
 #[tauri::command]
-pub fn auth_capabilities() -> auth::AuthCapabilities {
-    auth::capabilities()
+pub fn auth_capabilities(app: AppHandle) -> auth::AuthCapabilities {
+    auth::capabilities(&app)
 }
 
 #[tauri::command]
-pub fn auth_unlock(reason: Option<String>) -> auth::UnlockResult {
-    auth::unlock(reason.as_deref().unwrap_or("Unlock Zephyr One"))
+pub fn auth_unlock(app: AppHandle, reason: Option<String>) -> auth::UnlockResult {
+    auth::unlock(&app, reason.as_deref().unwrap_or("Unlock Zephyr One"))
 }
 
 /// Start embedded Zephyr core (full product). Remote main is sync-only.

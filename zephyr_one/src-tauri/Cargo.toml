@@ -1,7 +1,7 @@
 [package]
 name = "zephyr-one"
 version = "0.1.0"
-description = "Zephyr One — native multi-platform client with integrated Agent"
+description = "Zephyr One — full Zephyr product in Tauri"
 authors = ["Zephyr"]
 edition = "2021"
 rust-version = "1.77"
@@ -31,17 +31,25 @@ base64 = "0.22"
 once_cell = "1"
 ureq = { version = "2", default-features = false, features = ["tls"] }
 
-# Optional biometric / device credential unlock (desktop + mobile where supported)
-# Android/iOS: uses platform authenticators; desktop may fall back to OS keychain prompt plugins.
-# We keep a thin abstraction in auth/mod.rs so missing plugin does not break builds.
-
+# Mobile OS unlock (Android BiometricPrompt / iOS LocalAuthentication)
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
-# Mobile targets use the same command surface; biometric via platform channel stubs.
+tauri-plugin-biometric = "2"
+
+# macOS OS unlock
+[target.'cfg(target_os = "macos")'.dependencies]
+localauthentication-rs = "0.1"
+
+# Windows Hello
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+  "Security_Credentials_UI",
+  "Foundation",
+] }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-# NEVER enable for store builds. Local debug only.
+# NEVER enable for store builds.
 dev-system-unlock-bypass = []
 
 [profile.release]

@@ -15,12 +15,14 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "android:prepare": "sh scripts/prepare-android.sh",
+    "android:bundle-node": "sh scripts/bundle-node-android.sh",
     "test:unit": "node --test tests/*.test.mjs",
     "test:protocol": "node --test tests/zft2-protocol.test.mjs",
     "test:ci": "npm run test:unit && npm run test:protocol"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-biometric": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.4.0",
     "@tauri-apps/plugin-fs": "^2.4.2",
     "@tauri-apps/plugin-http": "^2.5.2",
