@@ -42,6 +42,9 @@ print(sorted(names)[-1] if names else "")')
     echo "warn: node binary not found in $asset" >&2
     return 1
   fi
+  # Android core uses Node 24 node:sqlite instead of better-sqlite3. Verify
+  # the actual downloaded binary before it can enter the signed APK.
+  sh "$ROOT/scripts/verify-android-node-binary.sh" "$node_bin"
   out_dir="$ANDROID_ROOT/app/src/main/jniLibs/$abi"
   mkdir -p "$out_dir"
   # Android PackageManager only auto-extracts lib*.so from jniLibs.
@@ -51,11 +54,22 @@ print(sorted(names)[-1] if names else "")')
   echo "bundled $arch -> jniLibs/$abi/libnode.so"
 }
 
-# Primary phone ABI + common emulator
-bundle_one "arm64-v8a" "arm64" || true
-bundle_one "armeabi-v7a" "arm" || true
-# Optional desktop emulators (skip if missing)
-bundle_one "x86_64" "x64" || true
+# Release workflow builds `--target aarch64`, so arm64 is the fast default.
+# Other ABIs can be requested explicitly, e.g.
+# NODE_ANDROID_ABIS="arm64-v8a armeabi-v7a x86_64".
+NODE_ANDROID_ABIS="${NODE_ANDROID_ABIS:-arm64-v8a}"
+LIBS_ROOT="$ANDROID_ROOT/app/src/main/jniLibs"
+for abi in arm64-v8a armeabi-v7a x86_64; do
+  case " $NODE_ANDROID_ABIS " in *" $abi "*) ;; *) rm -rf "$LIBS_ROOT/$abi" ;; esac
+done
+for abi in $NODE_ANDROID_ABIS; do
+  case "$abi" in
+    arm64-v8a) bundle_one "$abi" "arm64" ;;
+    armeabi-v7a) bundle_one "$abi" "arm" ;;
+    x86_64) bundle_one "$abi" "x64" ;;
+    *) echo "ERROR: unsupported NODE_ANDROID_ABIS entry: $abi" >&2; exit 1 ;;
+  esac
+done
 
 # Ensure extractNativeLibs so libnode.so is on a real filesystem path we can exec
 MANIFEST="$ANDROID_ROOT/app/src/main/AndroidManifest.xml"

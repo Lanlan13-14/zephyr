@@ -13,9 +13,11 @@
 //! Shipping thousands of individual asset files is therefore broken for nested
 //! trees (`public/`, `node_modules/`, …).
 //!
-//! Fix: package a single `assets/zephyr-core.tar.gz` at build time, open that
-//! one asset via NDK `AAssetManager_open`, stream it to a temp file, then
-//! `flate2`+`tar` extract into `app_data_dir/zephyr-core/`. Re-extract when the
+//! Fix: package one plain `assets/zephyr-core.tar` and stream it from NDK
+//! `AAssetManager_open` directly into `tar`, extracting to
+//! `app_data_dir/zephyr-core/` without a temporary archive. The APK ZIP already
+//! provides compression; an inner `.tar.gz` is renamed by Android's asset
+//! packaging and cannot be addressed reliably at runtime. Re-extract when the
 //! app version marker changes.
 
 use once_cell::sync::OnceCell;
@@ -71,34 +73,76 @@ fn wait_http_ready(url: &str, timeout: Duration) -> bool {
     false
 }
 
-/// Open a single APK asset by path and stream its bytes into `dest_file`.
+/// A streaming reader over one APK asset. `Drop` closes the NDK handle.
 ///
-/// Uses NDK AAssetManager via JNI. Only one asset is opened — no directory
-/// enumeration (which is broken for nested asset trees on Android).
+/// This avoids first writing the whole 136 MB tar to filesDir, then reading it
+/// back for extraction. `tar::Archive` consumes this reader directly.
 #[cfg(target_os = "android")]
-fn copy_asset_file_to_path(asset_path: &str, dest_file: &Path) -> Result<(), String> {
-    use std::ffi::CString;
-    use std::io::Write;
-    use std::os::raw::{c_char, c_int, c_void};
+struct AndroidAssetReader {
+    asset: *mut std::ffi::c_void,
+}
 
-    type AAssetManager = c_void;
-    type AAsset = c_void;
-    const AASSET_MODE_STREAMING: c_int = 2;
-
-    #[link(name = "android")]
-    extern "C" {
-        fn AAssetManager_fromJava(
-            env: *mut jni::sys::JNIEnv,
-            assetManager: jni::sys::jobject,
-        ) -> *mut AAssetManager;
-        fn AAssetManager_open(
-            mgr: *mut AAssetManager,
-            filename: *const c_char,
-            mode: c_int,
-        ) -> *mut AAsset;
-        fn AAsset_read(asset: *mut AAsset, buf: *mut c_void, count: usize) -> c_int;
-        fn AAsset_close(asset: *mut AAsset);
+#[cfg(target_os = "android")]
+impl std::io::Read for AndroidAssetReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let read = unsafe {
+            AAsset_read(
+                self.asset,
+                buf.as_mut_ptr().cast::<std::ffi::c_void>(),
+                buf.len(),
+            )
+        };
+        if read < 0 {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("AAsset_read 错误: {read}"),
+            ))
+        } else {
+            Ok(read as usize)
+        }
     }
+}
+
+#[cfg(target_os = "android")]
+impl Drop for AndroidAssetReader {
+    fn drop(&mut self) {
+        if !self.asset.is_null() {
+            unsafe { AAsset_close(self.asset) };
+            self.asset = std::ptr::null_mut();
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[link(name = "android")]
+extern "C" {
+    fn AAssetManager_fromJava(
+        env: *mut jni::sys::JNIEnv,
+        asset_manager: jni::sys::jobject,
+    ) -> *mut std::ffi::c_void;
+    fn AAssetManager_open(
+        manager: *mut std::ffi::c_void,
+        filename: *const std::ffi::c_char,
+        mode: std::ffi::c_int,
+    ) -> *mut std::ffi::c_void;
+    fn AAsset_read(
+        asset: *mut std::ffi::c_void,
+        buffer: *mut std::ffi::c_void,
+        count: usize,
+    ) -> std::ffi::c_int;
+    fn AAsset_close(asset: *mut std::ffi::c_void);
+}
+
+/// Open exactly one APK asset as a `Read` stream via NDK AAssetManager.
+///
+/// Directory enumeration is intentionally never used: it cannot recursively
+/// enumerate public/ and node_modules/ in Android assets.
+#[cfg(target_os = "android")]
+fn open_asset_reader(asset_path: &str) -> Result<AndroidAssetReader, String> {
+    const AASSET_MODE_STREAMING: std::ffi::c_int = 2;
 
     let ctx = ndk_context::android_context();
     let vm_ptr = ctx.vm();
@@ -113,8 +157,7 @@ fn copy_asset_file_to_path(asset_path: &str, dest_file: &Path) -> Result<(), Str
         .attach_current_thread()
         .map_err(|e| format!("attach_current_thread: {e}"))?;
 
-    // Context.getAssets() -> AssetManager. context is a global ref owned by
-    // ndk-context; wrap without letting jni-rs DeleteLocalRef it.
+    // ndk-context owns this global Context ref. Do not let jni-rs delete it.
     let context = unsafe { jni::objects::JObject::from_raw(context_ptr.cast()) };
     let asset_manager = env
         .call_method(
@@ -128,78 +171,44 @@ fn copy_asset_file_to_path(asset_path: &str, dest_file: &Path) -> Result<(), Str
         .map_err(|e| format!("getAssets() non-object: {e}"))?;
     std::mem::forget(context);
 
-    let mgr = unsafe { AAssetManager_fromJava(env.get_raw(), asset_manager.as_raw()) };
-    if mgr.is_null() {
+    let manager = unsafe { AAssetManager_fromJava(env.get_raw(), asset_manager.as_raw()) };
+    if manager.is_null() {
         return Err("AAssetManager_fromJava returned null".into());
     }
-
-    let c_path = CString::new(asset_path).map_err(|e| e.to_string())?;
-    let asset = unsafe { AAssetManager_open(mgr, c_path.as_ptr(), AASSET_MODE_STREAMING) };
+    let path = std::ffi::CString::new(asset_path).map_err(|e| e.to_string())?;
+    let asset = unsafe { AAssetManager_open(manager, path.as_ptr(), AASSET_MODE_STREAMING) };
     if asset.is_null() {
         return Err(format!(
             "AAssetManager_open 失败: {asset_path}（APK 中可能缺少该 asset）"
         ));
     }
-
-    if let Some(parent) = dest_file.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut file = std::fs::File::create(dest_file).map_err(|e| e.to_string())?;
-    let mut buf = vec![0u8; 256 * 1024];
-    let mut total: u64 = 0;
-    loop {
-        let n = unsafe { AAsset_read(asset, buf.as_mut_ptr() as *mut c_void, buf.len()) };
-        if n < 0 {
-            unsafe { AAsset_close(asset) };
-            return Err(format!("AAsset_read 错误: {n}"));
-        }
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buf[..n as usize])
-            .map_err(|e| e.to_string())?;
-        total += n as u64;
-    }
-    unsafe { AAsset_close(asset) };
-    file.flush().map_err(|e| e.to_string())?;
-    if total == 0 {
-        return Err(format!("asset 为空: {asset_path}"));
-    }
-    Ok(())
+    Ok(AndroidAssetReader { asset })
 }
 
-/// Extract `assets/zephyr-core.tar.gz` into `dest/zephyr-core/`.
+/// Extract `assets/zephyr-core.tar` into `dest/zephyr-core/`.
 ///
-/// Build ships one archive because AAssetDir cannot recurse into subdirs.
+/// Build ships one archive because AAssetDir cannot recurse into subdirs. This
+/// is deliberately a plain tar: Android turns a `.tar.gz` asset into `.tar`,
+/// and the outer APK ZIP performs compression already.
 #[cfg(target_os = "android")]
 fn extract_assets_core_tarball(dest: &Path) -> Result<PathBuf, String> {
-    use flate2::read::GzDecoder;
-    use std::io::BufReader;
     use tar::Archive;
 
     let core_dest = dest.join("zephyr-core");
     let staging = dest.join("zephyr-core.extracting");
-    let tarball = dest.join("zephyr-core.tar.gz");
 
-    // Clean previous partial extract
+    // Clean a previous partial extract before opening the asset stream.
     let _ = std::fs::remove_dir_all(&staging);
-    let _ = std::fs::remove_file(&tarball);
     std::fs::create_dir_all(dest).map_err(|e| format!("创建目录失败: {e}"))?;
+    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
 
-    copy_asset_file_to_path("zephyr-core.tar.gz", &tarball)?;
-
-    {
-        let file = std::fs::File::open(&tarball)
-            .map_err(|e| format!("打开 tarball 失败: {e}"))?;
-        let dec = GzDecoder::new(BufReader::new(file));
-        let mut archive = Archive::new(dec);
-        // Unpack into staging so a half-written tree is never used as core.
-        std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
-        archive
-            .unpack(&staging)
-            .map_err(|e| format!("解压 zephyr-core.tar.gz 失败: {e}"))?;
-    }
-    let _ = std::fs::remove_file(&tarball);
+    // Stream directly from the APK to tar. No 136 MB temporary .tar is written
+    // into filesDir, so first launch has less I/O and lower free-space demand.
+    let reader = open_asset_reader("zephyr-core.tar")?;
+    let mut archive = Archive::new(reader);
+    archive
+        .unpack(&staging)
+        .map_err(|e| format!("解压 zephyr-core.tar 失败: {e}"))?;
 
     // stage-zephyr-core packs the *contents* of zephyr-core/ at archive root
     // (server.js, public/, …). Accept either layout.
@@ -219,9 +228,7 @@ fn extract_assets_core_tarball(dest: &Path) -> Result<PathBuf, String> {
                 }
             }
         }
-        found.ok_or_else(|| {
-            "解压后未找到 server.js（tarball 布局异常）".to_string()
-        })?
+        found.ok_or_else(|| "解压后未找到 server.js（tarball 布局异常）".to_string())?
     };
 
     if !unpacked.join("public").is_dir() {
@@ -234,9 +241,8 @@ fn extract_assets_core_tarball(dest: &Path) -> Result<PathBuf, String> {
         match std::fs::rename(from, to) {
             Ok(()) => Ok(()),
             Err(rename_err) => {
-                copy_dir_recursive(from, to).map_err(|e| {
-                    format!("rename({rename_err}) 且 copy 失败: {e}")
-                })?;
+                copy_dir_recursive(from, to)
+                    .map_err(|e| format!("rename({rename_err}) 且 copy 失败: {e}"))?;
                 let _ = std::fs::remove_dir_all(from);
                 Ok(())
             }
@@ -305,14 +311,7 @@ pub fn resolve_node_bin(app: &AppHandle) -> Result<PathBuf, String> {
             // dataDir ≈ /data/user/0/com.zephyr.one/files
             // native libs ≈ /data/app/~~…/com.zephyr.one-…/lib/<abi>/libnode.so
             if let Some(app_root) = data.parent() {
-                for abi in [
-                    "arm64",
-                    "arm64-v8a",
-                    "armeabi-v7a",
-                    "arm",
-                    "x86_64",
-                    "x86",
-                ] {
+                for abi in ["arm64", "arm64-v8a", "armeabi-v7a", "arm", "x86_64", "x86"] {
                     candidates.push(app_root.join("lib").join(abi).join("libnode.so"));
                 }
             }
@@ -454,9 +453,9 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         }
     }
 
-    // Android: extract zephyr-core.tar.gz from APK assets to filesDir on first
-    // run / version change. Single-file asset avoids AAssetDir not listing
-    // subdirectories (public/, node_modules/, … would otherwise be missing).
+    // Android: extract zephyr-core.tar from APK assets to filesDir on first
+    // run / version change. A single plain-tar asset avoids both AAssetDir
+    // nested-directory loss and Android's `.tar.gz` asset-name rewrite.
     #[cfg(target_os = "android")]
     {
         let data_dir_check = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -473,7 +472,7 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         };
         if needs_copy {
             eprintln!(
-                "[zephyr-one] extracting zephyr-core.tar.gz (version {current_version})…"
+                "[zephyr-one] extracting zephyr-core.tar (version {current_version})…"
             );
             extract_assets_core_tarball(&data_dir_check)?;
             let _ = std::fs::write(&version_marker, current_version);
@@ -505,6 +504,9 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         .env("ALLOW_DEFAULT_PASSWORD_REMOTE_LOGIN", "true")
         .env("TRUST_PROXY", "false")
         .env("ZEPHYR_ONE_EMBEDDED", "1")
+        // Be explicit instead of relying only on Node's Android platform label:
+        // this core must never attempt the desktop better-sqlite3 addon.
+        .env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

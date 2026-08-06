@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "Zephyr One — full Zephyr product in Tauri"
 authors = ["Zephyr"]
 edition = "2021"
-rust-version = "1.77"
+# Locked dependency graph requires Cargo 1.88 or newer.
+rust-version = "1.88"
 
 [lib]
 name = "zephyr_one_lib"
@@ -35,11 +36,12 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-biometric = "2"
 
-# Android: open single asset (zephyr-core.tar.gz) via NDK AAssetManager, then gunzip+tar
+# Android: stream one plain tar asset via NDK AAssetManager, then unpack it.
+# The APK ZIP already compresses the asset; an inner gzip layer is redundant and
+# Android rewrites .tar.gz asset names, so the runtime must use plain .tar.
 [target.'cfg(target_os = "android")'.dependencies]
 ndk-context = "0.1"
 jni = "0.21"
-flate2 = "1"
 tar = "0.4"
 
 # macOS OS unlock
@@ -61,7 +63,9 @@ dev-system-unlock-bypass = []
 
 [profile.release]
 panic = "abort"
-codegen-units = 1
-lto = true
+# Thin LTO preserves cross-crate optimization while avoiding full-LTO's long
+# single-threaded linker tail. Extra units make ARM64 CI builds use the runner.
+codegen-units = 8
+lto = "thin"
 opt-level = "s"
 strip = true

@@ -2,7 +2,18 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const sharp = require('sharp');
+
+// sharp ships Linux native addons and cannot be required by Android Node.
+// Delay resolution until an image conversion is actually requested so core
+// startup remains available; Android can fall back to ImageMagick if supplied.
+let sharpLoader;
+function loadSharp() {
+    if (process.platform === 'android') return null;
+    if (sharpLoader === undefined) {
+        try { sharpLoader = require('sharp'); } catch { sharpLoader = null; }
+    }
+    return sharpLoader;
+}
 
 function getImageExt(filePath = '') {
     const base = String(filePath || '').split(/[\\/]/).pop() || '';
@@ -60,17 +71,23 @@ function convertWithImageMagick(inputPath, outputPath, timeoutMs = 60000) {
 }
 
 async function convertImageToWebp(inputPath, outputPath) {
-    try {
-        await sharp(inputPath, { animated: false, pages: 1, limitInputPixels: false })
-            .rotate()
-            .webp({ quality: 82, effort: 4 })
-            .toFile(outputPath);
-        return { engine: 'sharp' };
-    } catch (sharpErr) {
-        if (!(await hasImageMagick())) throw sharpErr;
-        await convertWithImageMagick(inputPath, outputPath);
-        return { engine: 'imagemagick' };
+    const sharp = loadSharp();
+    if (sharp) {
+        try {
+            await sharp(inputPath, { animated: false, pages: 1, limitInputPixels: false })
+                .rotate()
+                .webp({ quality: 82, effort: 4 })
+                .toFile(outputPath);
+            return { engine: 'sharp' };
+        } catch (sharpErr) {
+            if (!(await hasImageMagick())) throw sharpErr;
+        }
     }
+    if (!(await hasImageMagick())) {
+        throw new Error('图片转码不可用：Android 不支持 sharp，且未找到 ImageMagick');
+    }
+    await convertWithImageMagick(inputPath, outputPath);
+    return { engine: 'imagemagick' };
 }
 
 async function ensurePreviewCacheFile({ cache, cacheMap, cacheDir, sourcePath, sourceSize, sourceMtime, ext, readSourceFile }) {

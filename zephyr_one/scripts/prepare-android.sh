@@ -25,41 +25,35 @@ python3 "$ROOT/scripts/stamp-android-icons.py" "$ANDROID_ROOT"
 # Node jniLibs (open-box)
 sh "$ROOT/scripts/bundle-node-android.sh" "$ANDROID_ROOT"
 
-# 5) Pack zephyr-core as a single assets/zephyr-core.tar.gz
-#    Why not a directory of files?
-#    NDK AAssetDir_getNextFileName does NOT list subdirectories — nested trees
-#    (public/, node_modules/, …) would never be copied at runtime. One archive
-#    is opened via AAssetManager_open and extracted with flate2+tar in Rust.
+# 5) Pack zephyr-core as one uncompressed tar asset.
+#    AAssetDir_getNextFileName does not enumerate nested directories, so a
+#    directory asset loses public/ and node_modules/. Do not add a gzip layer:
+#    Android's asset packager turns a .tar.gz input into assets/zephyr-core.tar.
+#    That made the former runtime ask for a nonexistent asset and then attempt
+#    to gunzip plain tar bytes. The APK ZIP already compresses this .tar entry.
 CORE_SRC="$ROOT/zephyr-core"
 ASSETS_DIR="$APP/src/main/assets"
+CORE_ASSET="$ASSETS_DIR/zephyr-core.tar"
 if [ -d "$CORE_SRC" ] && [ -f "$CORE_SRC/server.js" ] && [ -d "$CORE_SRC/public" ]; then
     mkdir -p "$ASSETS_DIR"
     rm -rf "$ASSETS_DIR/zephyr-core"
-    rm -f "$ASSETS_DIR/zephyr-core.tar.gz"
-    # Archive *contents* of zephyr-core/ at tarball root (server.js, public/, …)
-    # Use portable tar; prefer pigz if present for speed, else gzip.
-    (
-        cd "$CORE_SRC"
-        if command -v pigz >/dev/null 2>&1; then
-            tar -cf - . | pigz -1 >"$ASSETS_DIR/zephyr-core.tar.gz"
-        else
-            tar -czf "$ASSETS_DIR/zephyr-core.tar.gz" .
-        fi
-    )
-    # Sanity: archive non-empty and contains server.js
-    SZ=$(wc -c <"$ASSETS_DIR/zephyr-core.tar.gz" | tr -d ' ')
+    rm -f "$ASSETS_DIR/zephyr-core.tar.gz" "$CORE_ASSET"
+    # Archive contents at the root: server.js, public/, node_modules/, … .
+    # The APK ZIP provides compression, avoiding a redundant gzip pass here.
+    (cd "$CORE_SRC" && tar -cf "$CORE_ASSET" .)
+    SZ=$(wc -c <"$CORE_ASSET" | tr -d ' ')
     if [ "${SZ:-0}" -lt 1000 ]; then
-        echo "ERROR: zephyr-core.tar.gz too small ($SZ bytes)" >&2
+        echo "ERROR: zephyr-core.tar too small ($SZ bytes)" >&2
         exit 1
     fi
     if command -v tar >/dev/null 2>&1; then
-        tar -tzf "$ASSETS_DIR/zephyr-core.tar.gz" | grep -E '(^|/)server\.js$' >/dev/null \
+        tar -tf "$CORE_ASSET" | grep -E '(^|/)server\.js$' >/dev/null \
             || { echo "ERROR: tarball missing server.js" >&2; exit 1; }
-        tar -tzf "$ASSETS_DIR/zephyr-core.tar.gz" | grep -E '(^|/)public/' >/dev/null \
+        tar -tf "$CORE_ASSET" | grep -E '(^|/)public/' >/dev/null \
             || { echo "ERROR: tarball missing public/" >&2; exit 1; }
     fi
     NFILES=$(find "$CORE_SRC" -type f | wc -l | tr -d ' ')
-    echo "Packed zephyr-core → assets/zephyr-core.tar.gz ($NFILES files, ${SZ} bytes)"
+    echo "Packed zephyr-core -> assets/zephyr-core.tar ($NFILES files, ${SZ} bytes)"
 else
     echo "ERROR: zephyr-core not found at $CORE_SRC - run: npm run stage:core" >&2
     exit 1

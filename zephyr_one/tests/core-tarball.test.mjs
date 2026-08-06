@@ -1,10 +1,12 @@
 /**
  * Validates the Android packaging strategy:
- * pack zephyr-core/ contents into a single .tar.gz (as prepare-android.sh does),
- * then extract and confirm nested trees (public/, etc.) survive.
+ * pack zephyr-core/ contents into a single plain .tar (as prepare-android.sh
+ * does), then extract and confirm nested trees (public/, etc.) survive.
  *
- * This is the contract the Rust runtime depends on after AAssetDir was abandoned
- * (AAssetDir_getNextFileName does not list subdirectories).
+ * The APK ZIP compresses this asset. An inner .tar.gz is wrong: Android renames
+ * that asset to .tar in the installed APK, breaking both asset lookup and gzip
+ * decoding. This is the contract after AAssetDir was abandoned because it does
+ * not list nested directories.
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +28,7 @@ describe('zephyr-core tarball pack/extract contract', () => {
   before(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'zephyr-one-tarball-'));
     coreSrc = path.join(tmp, 'zephyr-core');
-    tarball = path.join(tmp, 'zephyr-core.tar.gz');
+    tarball = path.join(tmp, 'zephyr-core.tar');
     extractDir = path.join(tmp, 'out');
     fs.mkdirSync(path.join(coreSrc, 'public', 'nested'), { recursive: true });
     fs.mkdirSync(path.join(coreSrc, 'node_modules', 'foo'), { recursive: true });
@@ -45,10 +47,11 @@ describe('zephyr-core tarball pack/extract contract', () => {
   });
 
   it('packs contents at archive root and restores nested dirs', () => {
-    // Same layout as prepare-android.sh: (cd core && tar -czf dest .)
+    // Same layout as prepare-android.sh: (cd core && tar -cf dest .).
+    // The enclosing APK ZIP provides compression; this asset must stay .tar.
     const r = spawnSync(
       'tar',
-      ['-czf', tarball, '.'],
+      ['-cf', tarball, '.'],
       { cwd: coreSrc, encoding: 'utf8' },
     );
     assert.equal(r.status, 0, r.stderr || r.stdout);
@@ -56,14 +59,14 @@ describe('zephyr-core tarball pack/extract contract', () => {
     assert.ok(st.size > 100, `tarball too small: ${st.size}`);
 
     // list must include nested paths (proves we are not flat-file-only)
-    const list = spawnSync('tar', ['-tzf', tarball], { encoding: 'utf8' });
+    const list = spawnSync('tar', ['-tf', tarball], { encoding: 'utf8' });
     assert.equal(list.status, 0, list.stderr);
     assert.match(list.stdout, /server\.js/);
     assert.match(list.stdout, /public\/app\.html|public\/\.\/app\.html|\.\/public\/app\.html/);
     assert.match(list.stdout, /node_modules\/foo\/index\.js/);
 
     fs.mkdirSync(extractDir, { recursive: true });
-    const x = spawnSync('tar', ['-xzf', tarball, '-C', extractDir], { encoding: 'utf8' });
+    const x = spawnSync('tar', ['-xf', tarball, '-C', extractDir], { encoding: 'utf8' });
     assert.equal(x.status, 0, x.stderr);
 
     assert.ok(fs.existsSync(path.join(extractDir, 'server.js')));
@@ -76,7 +79,10 @@ describe('zephyr-core tarball pack/extract contract', () => {
   it('prepare-android.sh packing snippet produces a valid asset name', () => {
     // Smoke: script exists and documents tarball, not directory copy
     const sh = fs.readFileSync(path.join(ROOT, 'scripts', 'prepare-android.sh'), 'utf8');
-    assert.match(sh, /zephyr-core\.tar\.gz/);
+    assert.match(sh, /CORE_ASSET="\$ASSETS_DIR\/zephyr-core\.tar"/);
+    assert.match(sh, /tar -cf "\$CORE_ASSET" \./);
+    // A legacy .tar.gz cleanup is allowed; packing must never create one.
+    assert.doesNotMatch(sh, /tar -czf|pigz/);
     assert.match(sh, /AAssetDir/);
     assert.doesNotMatch(
       sh,

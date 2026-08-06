@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const Database = require('better-sqlite3');
+const { createDatabase } = require('./sqlite-driver');
 const { getAppVersion } = require('./version');
 const { DEFAULT_ZEPHYR_AI_GUIDANCE_VERSION, DEFAULT_ZEPHYR_SYSTEM_PROMPT, DEFAULT_ZEPHYR_SKILLS } = require('./ai-defaults');
 const secretCrypto = require('./secret-crypto');
@@ -230,7 +230,7 @@ function defaultSettings(legacySettings = {}) {
 
 function init({ hashPassword }) {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    db = new Database(DB_FILE);
+    db = createDatabase(DB_FILE);
     db.pragma('journal_mode = WAL');
     db.pragma('secure_delete = ON');
     db.exec(`

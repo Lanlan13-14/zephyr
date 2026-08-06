@@ -61,7 +61,7 @@ pub fn run() {
         ])
         .setup(|app| {
             // Do NOT call ensure_started here.
-            // Android first-launch extracts zephyr-core.tar.gz (tens of MB) and
+            // Android first-launch streams and extracts zephyr-core.tar (tens of MB) and
             // can take many seconds; doing it on the setup thread races the
             // WebView and has historically contributed to hard launch crashes.
             // Frontend invokes `runtime_start` after boot UI is visible.

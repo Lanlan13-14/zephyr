@@ -42,7 +42,7 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: zephyr_one/package.json
-      - run: npm install
+      - run: npm ci --ignore-scripts
       - run: npm run test:ci
       - run: npm run build
       - name: Stage Zephyr core
@@ -67,9 +67,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.88.0
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zephyr_one/src-tauri -> target
+          key: one-android-arm64
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -88,9 +92,16 @@ jobs:
           test -n "$NDK_PATH" && test -d "$NDK_PATH"
           echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
           echo "NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
+          LLVM_BIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "PATH=$LLVM_BIN:$PATH" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=$LLVM_BIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "CXX_aarch64_linux_android=$LLVM_BIN/aarch64-linux-android24-clang++" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$LLVM_BIN/llvm-ar" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$LLVM_BIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
         working-directory: .
-      - run: npm install
-      - run: npm run stage:core
+      - run: npm ci --ignore-scripts
+      - run: ZEPHYR_ONE_ANDROID=1 npm run stage:core
+      - run: node --test ../tests/android-core-startup-smoke.test.mjs
       - run: npm run build
       - name: Init Android project
         run: |
@@ -103,9 +114,15 @@ jobs:
           python3 -m pip install --user pillow || true
           sh scripts/prepare-android.sh src-tauri/gen/android
           test -f src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libnode.so
-          test -f src-tauri/gen/android/app/src/main/assets/zephyr-core.tar.gz
+          sh scripts/verify-android-node-binary.sh src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libnode.so
+          test -f src-tauri/gen/android/app/src/main/assets/zephyr-core.tar
+          test "$(find zephyr-core/node_modules -type f -name '*.node' | wc -l)" -eq 0
+          test ! -e zephyr-core/node_modules/better-sqlite3
+          test ! -e zephyr-core/node_modules/sharp
+          test ! -e zephyr-core/node_modules/@img
+          sh scripts/verify-android-core.sh zephyr-core
           ls -lh src-tauri/gen/android/app/src/main/jniLibs/*/* || true
-          ls -lh src-tauri/gen/android/app/src/main/assets/zephyr-core.tar.gz
+          ls -lh src-tauri/gen/android/app/src/main/assets/zephyr-core.tar
           # Confirm gradle carries stamped version
           grep -E 'versionName|versionCode' src-tauri/gen/android/app/build.gradle.kts || true
       - name: Build signed release APK (aarch64)
@@ -118,12 +135,16 @@ jobs:
           set -e
           echo "NDK_HOME=$NDK_HOME"
           test -d "$NDK_HOME"
-          # Single shot: do NOT re-run gradle assemble afterward without tauri CLI
-          # (android-studio-script expects tauri's WS; Connection refused fails the job).
+          # Keep Gradle below memory pressure while Rust/NDK tasks run. The build
+          # must stay under Tauri CLI because its plugin uses the CLI WebSocket.
+          GRADLE_PROPERTIES=src-tauri/gen/android/gradle.properties
+          sed -i 's/^org\.gradle\.jvmargs=.*/org.gradle.jvmargs=-Xmx1024m -Dfile.encoding=UTF-8/' "$GRADLE_PROPERTIES"
+          printf '\norg.gradle.workers.max=1\norg.gradle.daemon=false\n' >> "$GRADLE_PROPERTIES"
           npx tauri android build --apk --target aarch64
           APK=$(find src-tauri/gen/android -type f \( -name 'app-universal-release.apk' -o -name '*-release*.apk' \) | head -n 1)
           echo "APK=$APK"
           test -n "$APK" && test -f "$APK"
+          sh scripts/verify-android-apk.sh "$APK"
           ls -lh "$APK"
           mkdir -p dist-out
           cp -v "$APK" "dist-out/zephyr-one-android-arm64-${{ github.event.inputs.tag }}.apk"

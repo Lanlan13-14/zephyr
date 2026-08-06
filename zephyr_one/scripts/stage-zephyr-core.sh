@@ -39,11 +39,26 @@ for d in zephyr-worker rdp-wasm motion-wasm; do
   fi
 done
 
-# Production deps
+# Production dependencies follow the root lockfile. Desktop platforms retain
+# install scripts so their native addons match the target OS. Android never runs
+# those host-native scripts: it uses node:sqlite and ssh2's pure-JS fallback.
 if command -v npm >/dev/null 2>&1; then
-  (cd "$OUT" && npm install --omit=dev --no-audit --no-fund) || {
-    echo "warn: npm install failed in zephyr-core" >&2
-  }
+  if [ "${ZEPHYR_ONE_ANDROID:-0}" = "1" ]; then
+    (cd "$OUT" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund) || {
+      echo "ERROR: npm ci failed in Android zephyr-core" >&2
+      exit 1
+    }
+    # better-sqlite3 is replaced by node:sqlite and sharp is lazy/fallback-only
+    # on Android. Remove their host packages before packing to reduce APK size.
+    rm -rf "$OUT/node_modules/better-sqlite3" "$OUT/node_modules/sharp" "$OUT/node_modules/@img"
+    find "$OUT/node_modules" -type f -name '*.node' -delete
+    echo "Android core: removed unsupported native dependency packages and .node addons"
+  else
+    (cd "$OUT" && npm ci --omit=dev --no-audit --no-fund) || {
+      echo "ERROR: npm ci failed in desktop zephyr-core" >&2
+      exit 1
+    }
+  fi
 fi
 
 # Embed CSS for One product surface (hide multi-user / security / backup)
