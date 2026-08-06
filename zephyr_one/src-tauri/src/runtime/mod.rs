@@ -459,11 +459,14 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    // Android: give node a writable HOME/TMP
-    if let Ok(data) = app.path().app_data_dir() {
-        cmd.env("HOME", &data);
-        cmd.env("TMPDIR", data.join("tmp"));
-        let _ = std::fs::create_dir_all(data.join("tmp"));
+    // Android: give node a writable HOME/TMP (default HOME may be unset/inaccessible)
+    #[cfg(target_os = "android")]
+    {
+        if let Ok(data) = app.path().app_data_dir() {
+            cmd.env("HOME", &data);
+            cmd.env("TMPDIR", data.join("tmp"));
+            let _ = std::fs::create_dir_all(data.join("tmp"));
+        }
     }
 
     let child = cmd.spawn().map_err(|e| {
