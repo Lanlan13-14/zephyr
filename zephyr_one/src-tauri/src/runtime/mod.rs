@@ -221,6 +221,7 @@ fn ensure_core_on_device(app: &AppHandle, staged: &Path) -> Result<PathBuf, Stri
     }
 }
 
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {

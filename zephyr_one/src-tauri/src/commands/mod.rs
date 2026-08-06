@@ -4,6 +4,7 @@ use crate::runtime;
 use crate::token::{TokenRecord, TokenState};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_dialog::DialogExt;
 
 #[derive(Debug, Serialize)]

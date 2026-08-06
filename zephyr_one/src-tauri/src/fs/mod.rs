@@ -333,6 +333,7 @@ pub fn default_share_path() -> (String, String) {
             "Internal Storage".into(),
         );
     }
+
     #[cfg(target_os = "ios")]
     {
         if let Ok(home) = std::env::var("HOME") {
@@ -343,6 +344,7 @@ pub fn default_share_path() -> (String, String) {
         let tmp = std::env::temp_dir();
         return (tmp.to_string_lossy().to_string(), "Temp".into());
     }
+
     #[cfg(target_os = "windows")]
     {
         if let Ok(profile) = std::env::var("USERPROFILE") {
@@ -352,7 +354,10 @@ pub fn default_share_path() -> (String, String) {
                 .unwrap_or_else(|| "User".into());
             return (profile, name);
         }
+        let tmp = std::env::temp_dir();
+        return (tmp.to_string_lossy().to_string(), "Temp".into());
     }
+
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         if let Ok(home) = std::env::var("HOME") {
@@ -362,19 +367,23 @@ pub fn default_share_path() -> (String, String) {
                 .unwrap_or_else(|| "Home".into());
             return (home, name);
         }
+        let tmp = std::env::temp_dir();
+        return (tmp.to_string_lossy().to_string(), "Temp".into());
     }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+
+    // Other / unknown targets
+    #[cfg(not(any(
+        target_os = "android",
+        target_os = "ios",
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux"
+    )))]
     {
         let tmp = std::env::temp_dir();
-        return (
+        (
             tmp.to_string_lossy().to_string(),
             "Temp".into(),
-        );
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        // Fallback for incomplete ios HOME above; android returns early.
-        let tmp = std::env::temp_dir();
-        (tmp.to_string_lossy().to_string(), "Temp".into())
+        )
     }
 }
