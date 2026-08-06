@@ -166,20 +166,14 @@ fn copy_assets_core(dest: &Path) -> Result<PathBuf, String> {
 
     // ── Get AAssetManager via JNI + ndk-context ──
     let ctx = ndk_context::android_context();
-    let vm_raw = ctx.vm as *mut jni::sys::JavaVM;
-    let context_raw = ctx.context as jni::sys::jobject;
-    if vm_raw.is_null() || context_raw.is_null() {
-        return Err("ndk-context 未初始化（vm/context 为 null）".into());
-    }
-
-    let vm = unsafe { jni::JavaVM::from_raw(vm_raw) }
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
         .map_err(|e| format!("JavaVM::from_raw: {e}"))?;
     let mut env = vm
         .attach_current_thread()
         .map_err(|e| format!("attach_current_thread: {e}"))?;
 
     // Context.getAssets() -> AssetManager
-    let context = unsafe { jni::objects::JObject::from_raw(context_raw) };
+    let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
     let asset_manager = env
         .call_method(
             &context,
