@@ -26,6 +26,15 @@ on:
         type: boolean
         required: false
         default: false
+      validation_platform:
+        description: 'Platform subset for validation builds'
+        type: choice
+        required: false
+        default: both
+        options:
+          - both
+          - windows
+          - android
 
 permissions:
   contents: write
@@ -59,7 +68,7 @@ jobs:
   # ───────────── Release builds (workflow_dispatch + tag) ─────────────
 
   build-android:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_platform != 'windows'
     needs: test
     runs-on: ubuntu-latest
     # Keep hard-fail for Android; NDK_HOME is set in Install NDK step.
@@ -208,7 +217,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_platform != 'android'
     needs: test
     runs-on: windows-2022
     steps:
