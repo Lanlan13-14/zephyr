@@ -74,16 +74,23 @@ fi
 #
 # Hidden here, and why each is browser-only:
 #   admin  — multi-user management; One is a single local account
-#   data   — server-side backup/restore of a shared deployment
 #   mail   — SMTP for login/reset mail; One has no remote recipients
 #   beian  — ICP filing notice, a public-website obligation
+#
+# `data` (backup / restore) is deliberately NOT hidden. It acts on the local
+# core's own zephyr.db, so it is a first-class One capability, and the product
+# contract names it twice: once in the required mobile capability list and again
+# as "服务器设置和备份恢复保留；不能因为它们由主端执行就擅自从One移除".
+# Verified against a real embedded core: the adopted session is the first user,
+# whom storage.js promotes to super admin, so requireSuperAdmin passes; export
+# returns 200 with a zip.enc attachment, and import still demands the account
+# password (wrong password -> 403), which is what contract §8 requires of a
+# sensitive operation.
 cat > "$OUT/public/zephyr-one-embed.css" <<'CSS'
 /* Zephyr One local product surface */
 #adminSettingsTab,
 #settings-admin,
 .settings-tab[data-settings="admin"],
-.settings-tab[data-settings="data"],
-#settings-data,
 .settings-tab[data-settings="mail"],
 #settings-mail,
 .settings-tab[data-settings="beian"],

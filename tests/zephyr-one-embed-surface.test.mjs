@@ -174,10 +174,41 @@ test('embedded mode skips the login page entirely', () => {
 test('stage script still hides the web-only settings tabs it owns', () => {
     // The transform removes the security tab structurally; the stylesheet
     // covers the multi-user / deployment tabs that stay in the DOM.
-    for (const selector of ['admin', 'data', 'mail', 'beian']) {
+    for (const selector of ['admin', 'mail', 'beian']) {
         assert.ok(
             STAGE_SH.includes(`.settings-tab[data-settings="${selector}"]`),
             `embed CSS should hide the ${selector} settings tab`,
         );
     }
+});
+
+test('backup / restore stays reachable in One', () => {
+    /* PRODUCT_REQUIREMENTS.md names 备份恢复 twice: in the required mobile
+     * capability list, and again as "服务器设置和备份恢复保留；不能因为它们由
+     * 主端执行就擅自从One移除". The tab acts on the local core's own
+     * zephyr.db, so hiding it removed a contract capability. */
+    assert.ok(
+        !STAGE_SH.includes('.settings-tab[data-settings="data"]'),
+        'embed CSS must not hide the data (backup/restore) tab button',
+    );
+    assert.ok(
+        !STAGE_SH.includes('#settings-data'),
+        'embed CSS must not hide the data (backup/restore) panel',
+    );
+
+    // The transform must not remove it structurally either.
+    const removals = EDITS.filter((edit) => edit.to === '');
+    for (const edit of removals) {
+        assert.ok(
+            !edit.from.includes('data-settings="data"'),
+            `edit ${edit.name} must not delete the backup/restore tab`,
+        );
+    }
+
+    // And it must survive the real transform end to end.
+    const { html } = applyEmbeddedSurface(APP_HTML);
+    assert.match(html, /<button class="settings-tab" data-settings="data"/);
+    assert.match(html, /id="settings-data"/);
+    assert.match(html, /id="exportDataBtn"/);
+    assert.match(html, /id="importDataForm"/);
 });
