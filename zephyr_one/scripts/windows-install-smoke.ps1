@@ -192,18 +192,25 @@ while ((Get-Date) -lt $deadline) {
   # Fallback: if Node is listening on a high port, probe /healthz directly.
   if (-not $ready) {
     try {
-      $conns = Get-NetTCPConnection -State Listen -OwningProcess (Get-Process -Name node -ErrorAction SilentlyContinue).Id -ErrorAction SilentlyContinue |
-        Where-Object { $_.LocalAddress -in @('127.0.0.1','::1') -and $_.LocalPort -gt 1024 }
-      foreach ($c in $conns) {
-        try {
-          $h = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $c.LocalPort) -TimeoutSec 2
-          if ($h.StatusCode -ge 200 -and $h.StatusCode -lt 500) {
-            $port = [int]$c.LocalPort
-            $ready = $true
-            Write-Log ("healthz via netstat port {0}" -f $port)
-            break
-          }
-        } catch {}
+      $nodePids = @(Get-Process -Name node -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+      if ($nodePids.Count -gt 0) {
+        $conns = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+          Where-Object {
+            ($nodePids -contains $_.OwningProcess) -and
+            ($_.LocalAddress -in @('127.0.0.1', '::1', '0.0.0.0')) -and
+            ($_.LocalPort -gt 1024)
+          })
+        foreach ($c in $conns) {
+          try {
+            $probe = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $c.LocalPort) -TimeoutSec 2
+            if ($probe.StatusCode -ge 200 -and $probe.StatusCode -lt 500) {
+              $port = [int]$c.LocalPort
+              $ready = $true
+              Write-Log ("healthz via netstat port {0}" -f $port)
+              break
+            }
+          } catch {}
+        }
       }
     } catch {}
   }
@@ -216,15 +223,19 @@ if (-not $ready -or -not $port) {
 }
 
 Write-Log ("HTTP ready on port {0}" -f $port)
+# Do NOT use $home / $Host / $PID — automatic/read-only in PowerShell.
 try {
-  $health = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $port) -TimeoutSec 10
-  $health.Content | Set-Content -Encoding utf8 (Join-Path $OutDir "healthz.json")
-  if ($health.StatusCode -lt 200 -or $health.StatusCode -ge 500) {
-    Dump-Fail ("healthz status {0}" -f $health.StatusCode)
+  $healthResp = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $port) -TimeoutSec 10
+  $healthResp.Content | Set-Content -Encoding utf8 (Join-Path $OutDir "healthz.json")
+  if ($healthResp.StatusCode -lt 200 -or $healthResp.StatusCode -ge 500) {
+    Dump-Fail ("healthz status {0}" -f $healthResp.StatusCode)
   }
-  $home = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/" -f $port) -TimeoutSec 15
-  $home.Content.Substring(0, [Math]::Min(500, $home.Content.Length)) |
+  Write-Log ("healthz ok status={0} body={1}" -f $healthResp.StatusCode, $healthResp.Content)
+  $indexResp = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/" -f $port) -TimeoutSec 15
+  $snippetLen = [Math]::Min(500, $indexResp.Content.Length)
+  $indexResp.Content.Substring(0, $snippetLen) |
     Set-Content -Encoding utf8 (Join-Path $OutDir "index-head.txt")
+  Write-Log ("index ok status={0} bytes={1}" -f $indexResp.StatusCode, $indexResp.Content.Length)
 } catch {
   Dump-Fail ("HTTP probe failed: {0}" -f $_)
 }
@@ -236,7 +247,10 @@ while ((Get-Date) -lt $holdDeadline) {
     Dump-Fail ("app exited during hold window code={0}" -f $proc.ExitCode)
   }
   try {
-    $null = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $port) -TimeoutSec 5
+    $holdResp = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $port) -TimeoutSec 5
+    if ($holdResp.StatusCode -lt 200 -or $holdResp.StatusCode -ge 500) {
+      Dump-Fail ("healthz bad status during hold: {0}" -f $holdResp.StatusCode)
+    }
   } catch {
     Dump-Fail ("healthz failed during hold: {0}" -f $_)
   }
@@ -247,14 +261,14 @@ while ((Get-Date) -lt $holdDeadline) {
 @(
   "launchExe=$launchExe",
   "installDir=$installDir",
-  "dataDir=$script:DataDir",
-  "nodeLog=$script:NodeLog",
+  "dataDir=$($script:DataDir)",
+  "nodeLog=$($script:NodeLog)",
   "port=$port",
   "holdSec=$HoldSec"
 ) | Set-Content -Encoding utf8 (Join-Path $OutDir "summary.txt")
 
 Write-Log ("PASS: Windows smoke ok port={0} hold={1}s" -f $port, $HoldSec)
 
-# Clean stop so the runner can finish
-Get-Process -Name "zephyr-one" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# Clean stop so the runner can finish (app + embedded node child)
+Get-Process -Name "zephyr-one","node" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 exit 0
