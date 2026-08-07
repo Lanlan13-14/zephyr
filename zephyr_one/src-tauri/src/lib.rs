@@ -3,6 +3,7 @@ mod auth;
 mod commands;
 mod fs;
 mod icon;
+mod rdp_picker;
 mod runtime;
 mod token;
 

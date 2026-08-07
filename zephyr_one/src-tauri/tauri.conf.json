@@ -37,7 +37,8 @@
     ],
     "resources": [
       "../zephyr-core",
-      "../desktop-runtime"
+      "../desktop-runtime",
+      "../native-bin"
     ],
     "category": "Utility",
     "shortDescription": "Zephyr One — full Zephyr native client",

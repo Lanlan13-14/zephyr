@@ -1,0 +1,37 @@
+[package]
+name = "zephyr-one-rdp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+description = "Native FreeRDP session helper for Zephyr One"
+publish = false
+
+# Deliberately its own crate rather than a second [[bin]] in src-tauri:
+# src-tauri's build.rs would then run for this target too, and every desktop
+# build of the shell would gain a hard link-time dependency on libfreerdp even
+# though the shell itself never speaks RDP.
+[[bin]]
+name = "zephyr-one-rdp"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+cc = "1"
+pkg-config = "0.3"
+# Unconditional on purpose. build.rs decides which package manager to ask by
+# reading CARGO_CFG_TARGET_OS at run time, which is the only way to see the
+# *target*: a build script is itself compiled for the host, so gating this
+# dependency on `cfg(target_os = "windows")` would make it unavailable exactly
+# when cross-compiling Linux → Windows, and would fail to compile on a Linux
+# host even for a Linux target because build.rs names `vcpkg::` unconditionally.
+# The crate is small and pure Rust, so carrying it everywhere costs nothing.
+vcpkg = "0.2"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true
+panic = "abort"

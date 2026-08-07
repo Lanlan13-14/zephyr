@@ -163,6 +163,66 @@ pub fn resolve_node_bin(app: &AppHandle) -> Result<PathBuf, String> {
     Err("安装包缺少内置 Node 运行时，请重新安装 Zephyr One。".into())
 }
 
+/// Locate the native FreeRDP session helper (`zephyr-one-rdp[.exe]`).
+///
+/// Zephyr One's RDP tab is a native FreeRDP session, not the browser product's
+/// Go/WASM client. The Node core spawns this binary per session and speaks a
+/// length-prefixed protocol to it over stdio, so the core has to be told where
+/// it lives — it cannot rely on `PATH`, because the shipped binary sits inside
+/// the app bundle.
+///
+/// Returning `None` is not fatal here: the core starts anyway and the RDP tab
+/// reports a specific "component missing" error. Refusing to start the whole
+/// product because one protocol is unavailable would take SSH/SFTP/Docker down
+/// with it.
+pub fn resolve_rdp_helper_bin(app: &AppHandle) -> Option<PathBuf> {
+    let exe = if cfg!(target_os = "windows") {
+        "zephyr-one-rdp.exe"
+    } else {
+        "zephyr-one-rdp"
+    };
+
+    // Explicit override first, so a developer can point at a cargo build.
+    if let Ok(value) = std::env::var("ZEPHYR_ONE_RDP_HELPER") {
+        let candidate = PathBuf::from(value);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    if let Ok(res) = app.path().resource_dir() {
+        for root in resource_candidates(&res, "native-bin") {
+            let candidate = root.join(exe);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        let direct = res.join(exe);
+        if direct.is_file() {
+            return Some(direct);
+        }
+    }
+
+    // Development: the staged copy, then cargo's own output directory.
+    if let Ok(cwd) = std::env::current_dir() {
+        for rel in [
+            "native-bin",
+            "../native-bin",
+            "native/zephyr-one-rdp/target/release",
+            "../native/zephyr-one-rdp/target/release",
+            "native/zephyr-one-rdp/target/debug",
+            "../native/zephyr-one-rdp/target/debug",
+        ] {
+            let candidate = cwd.join(rel).join(exe);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
 fn which_node() -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
@@ -235,6 +295,23 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
          * arch and ABI of the runtime actually shipped. sqlite-driver.js aligns
          * its named-parameter semantics with better-sqlite3 in both directions. */
         .env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1");
+
+    /* Tell the core where the native FreeRDP helper is. Passed as an env var
+     * rather than discovered by the core itself: only the shell can resolve a
+     * Tauri resource path, and only the shell knows whether this is a packaged
+     * install or a cargo build. When it is absent the core still starts and the
+     * RDP tab reports a specific missing-component error. */
+    match resolve_rdp_helper_bin(app) {
+        Some(helper) => {
+            cmd.env("ZEPHYR_ONE_RDP_HELPER", &helper);
+        }
+        None => {
+            eprintln!(
+                "zephyr-one: native RDP helper not found; RDP tabs will report \
+                 a missing component (run scripts/stage-native-rdp-bin.sh)"
+            );
+        }
+    }
 
     cmd.stdin(Stdio::null());
 

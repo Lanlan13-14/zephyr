@@ -1,6 +1,7 @@
 use crate::auth;
 use crate::fs::{self, FileStat, FsState};
 use crate::icon;
+use crate::rdp_picker;
 use crate::runtime;
 use crate::token::{TokenRecord, TokenState};
 use serde::Serialize;
@@ -63,6 +64,14 @@ pub async fn runtime_start(app: AppHandle) -> Result<runtime::RuntimeInfo, Strin
      * the shell may retry runtime_start after a failure (the watcher itself is
      * idempotent, so a retry cannot stack threads). */
     icon::spawn_theme_watcher(&watcher_app);
+    /* RDP folder mapping needs a *native* directory dialog, and the WebView
+     * showing the product UI is on a remote origin (the loopback core), so it
+     * cannot invoke a Tauri command. The page therefore files a pick request
+     * with the core and this watcher — which runs in the shell, where the
+     * dialog is possible — claims it, opens the dialog, and posts the chosen
+     * path back. Same polling shape as the theme watcher above, and idempotent
+     * for the same reason. */
+    rdp_picker::spawn_picker_watcher(&watcher_app);
     Ok(info)
 }
 

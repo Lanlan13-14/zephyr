@@ -6772,6 +6772,75 @@ function handleHttpUpgrade(req, socket, head) {
 }
 server.on('upgrade', handleHttpUpgrade);
 if (httpsServer) httpsServer.on('upgrade', handleHttpUpgrade);
+
+/* ─── Zephyr One native RDP surface (FreeRDP) ─────────────────────────────
+ *
+ * Gated on ZEPHYR_ONE_EMBEDDED, and `require`d lazily inside the gate so the
+ * browser product never even loads the module: its behaviour is byte-identical
+ * with this block present.
+ *
+ * Why One gets a different RDP path at all: the browser has to run the protocol
+ * itself (Go→WASM), which forces the password out to the client and reimplements
+ * every codec. One is a desktop process, so it links FreeRDP — the reference
+ * implementation — and the credential never leaves the machine. That is also
+ * what makes folder mapping real: FreeRDP's own RDPDR drive addin exposes a
+ * mapped drive in the remote session, instead of the WASM path's file list.
+ *
+ * Mounted after the core's own upgrade handler so the bridge can wrap those
+ * listeners for one path rather than editing the core's path table.
+ */
+if (ZEPHYR_ONE_EMBEDDED) {
+    const zephyrOneRdpNative = require('./zephyr-one-rdp-native');
+
+    /* Authorisation for a native RDP session.
+     *
+     * CAP.USE, not CAP.REVEAL_SECRET. The browser endpoint
+     * (/api/rdp/credentials) needs REVEAL_SECRET because it hands the plaintext
+     * password to the page. Here the password goes from this process straight
+     * into the helper's stdin and is never serialised toward the client, so the
+     * capability that matches is the same one SSH uses for "the server connects
+     * on your behalf with the stored credential". Requiring REVEAL_SECRET would
+     * be stricter than SSH for a strictly less exposed operation.
+     */
+    const oneRdpFindConnection = (connectionId, session) => {
+        const raw = storage.getConnectionById(connectionId);
+        const brief = session?.userId ? storage.getUserBrief(session.userId) : null;
+        if (!brief || brief.status === 'deleted' || brief.status === 'suspended') {
+            throw Object.assign(new Error('未登录或会话已过期'), { statusCode: 401 });
+        }
+        const identity = {
+            userId: brief.userId,
+            username: brief.username,
+            role: brief.role,
+            status: brief.status,
+            email: brief.email || '',
+            isSuperAdmin: !!brief.isSuperAdmin,
+        };
+        // Throws a 403-shaped error when denied; resourceExists keeps a missing
+        // connection from being reported as a permission problem.
+        authz.assertCan(identity, CAP.USE, 'connection', connectionId,
+                        raw || { ownerUserId: '' }, { resourceExists: !!raw });
+        return raw || null;
+    };
+
+    zephyrOneRdpNative.attach({
+        app,
+        server,
+        httpsServer,
+        WebSocketServer,
+        dataDir: DATA_DIR,
+        currentSession,
+        requireUser,
+        rejectSocket,
+        findConnection: oneRdpFindConnection,
+        /* Same key/passphrase resolution the SSH and browser-RDP paths use, so a
+         * connection that stores its secret in an SSH key record works here too
+         * instead of silently connecting with an empty password. */
+        resolveCredentials: resolveSshKeyForConnection,
+        logger: console,
+    });
+    console.log('   Zephyr One: native FreeRDP surface mounted at /zephyr-one-rdp');
+}
 editorLspWss.on('connection', handleEditorLspConnection);
 
 /* ─── File Agent WebSocket ─── */
