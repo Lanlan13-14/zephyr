@@ -74,7 +74,7 @@ jobs:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@1.88.0
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: zephyr_one/src-tauri -> target
@@ -103,6 +103,10 @@ jobs:
           echo "CXX_aarch64_linux_android=$LLVM_BIN/aarch64-linux-android24-clang++" >> "$GITHUB_ENV"
           echo "AR_aarch64_linux_android=$LLVM_BIN/llvm-ar" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$LLVM_BIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "CC_x86_64_linux_android=$LLVM_BIN/x86_64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "CXX_x86_64_linux_android=$LLVM_BIN/x86_64-linux-android24-clang++" >> "$GITHUB_ENV"
+          echo "AR_x86_64_linux_android=$LLVM_BIN/llvm-ar" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$LLVM_BIN/x86_64-linux-android24-clang" >> "$GITHUB_ENV"
         working-directory: .
       - run: npm ci --ignore-scripts
       - run: ZEPHYR_ONE_ANDROID=1 npm run stage:core
@@ -157,6 +161,46 @@ jobs:
           cp -v "$APK" "dist-out/zephyr-one-android-arm64-${{ github.event.inputs.tag }}.apk"
           # Prefer release-signed APK from tauri; verify zip
           file "dist-out/zephyr-one-android-arm64-${{ github.event.inputs.tag }}.apk" || true
+      - name: Build x86_64 APK for real emulator startup smoke
+        env:
+          NODE_ANDROID_ABIS: x86_64
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          NDK_HOME: ${{ env.NDK_HOME }}
+        run: |
+          set -e
+          sh scripts/prepare-android.sh src-tauri/gen/android
+          sh scripts/verify-android-node-binary.sh src-tauri/gen/android/app/src/main/jniLibs/x86_64/libnode.so x64
+          npx tauri android build --apk --target x86_64
+          X86_APK=$(find src-tauri/gen/android -type f \( -path '*/x86_64/release/*.apk' -o -name '*x86_64*release*.apk' \) | head -n 1)
+          echo "X86_APK=$X86_APK"
+          test -n "$X86_APK" && test -f "$X86_APK"
+          sh scripts/verify-android-apk.sh "$X86_APK" x86_64
+          mkdir -p dist-emulator
+          cp -v "$X86_APK" dist-emulator/zephyr-one-android-x86_64.apk
+      - name: Enable Android emulator acceleration
+        working-directory: .
+        run: |
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+      - name: Install and run Zephyr One in Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: default
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: sh zephyr_one/scripts/android-emulator-smoke.sh zephyr_one/dist-emulator/zephyr-one-android-x86_64.apk com.zephyr.one zephyr_one/dist-emulator-smoke
+      - name: Upload Android emulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-smoke
+          path: zephyr_one/dist-emulator-smoke/**
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk

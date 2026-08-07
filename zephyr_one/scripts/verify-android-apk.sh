@@ -2,6 +2,7 @@
 # Validate the final APK, not merely the pre-AAPT assets directory.
 set -eu
 APK="${1:?usage: verify-android-apk.sh <apk>}"
+ABI="${2:-arm64-v8a}"
 [ -f "$APK" ] || { echo "APK not found: $APK" >&2; exit 1; }
 command -v unzip >/dev/null 2>&1 || { echo "unzip is required" >&2; exit 1; }
 
@@ -18,8 +19,8 @@ has_zip_entry 'assets/zephyr-public/index.html' || {
 has_zip_entry 'assets/zephyr-public/app.html' || {
   echo "APK lacks assets/zephyr-public/app.html" >&2; exit 1;
 }
-has_zip_entry 'lib/arm64-v8a/libnode.so' || {
-  echo "APK lacks lib/arm64-v8a/libnode.so" >&2; exit 1;
+has_zip_entry "lib/$ABI/libnode.so" || {
+  echo "APK lacks lib/$ABI/libnode.so" >&2; exit 1;
 }
 if has_zip_entry 'assets/zephyr-core.tar'; then
   echo "APK still contains the removed first-run extraction tar" >&2

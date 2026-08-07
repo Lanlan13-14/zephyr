@@ -44,7 +44,7 @@ print(sorted(names)[-1] if names else "")')
   fi
   # Android core uses Node 24 node:sqlite instead of better-sqlite3. Verify
   # the actual downloaded binary before it can enter the signed APK.
-  sh "$ROOT/scripts/verify-android-node-binary.sh" "$node_bin"
+  sh "$ROOT/scripts/verify-android-node-binary.sh" "$node_bin" "$arch"
   out_dir="$ANDROID_ROOT/app/src/main/jniLibs/$abi"
   mkdir -p "$out_dir"
   # Android PackageManager only auto-extracts lib*.so from jniLibs.
