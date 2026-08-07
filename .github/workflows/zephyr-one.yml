@@ -267,6 +267,25 @@ jobs:
             (cd src-tauri/target/release && 7z a "$OLDPWD/dist-out/zephyr-one-windows-x64-${{ github.event.inputs.tag }}.zip" zephyr-one.exe) || true
           fi
           ls -la dist-out || true
+      # Path/unit checks that only compile on Windows (verbatim \\?\ stripping).
+      - name: Cargo test Windows path helpers
+        shell: pwsh
+        working-directory: zephyr_one/src-tauri
+        run: cargo test --release --lib -- --nocapture
+      # Install (NSIS if present) + launch + healthz + 60s hold. Uploads diagnostics
+      # on failure so empty logs / EISDIR / missing resources are visible.
+      - name: Windows install and runtime smoke
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-windows-smoke | Out-Null
+          pwsh -File scripts/windows-install-smoke.ps1 -Root (Resolve-Path .) -OutDir (Resolve-Path dist-windows-smoke) -ReadyTimeoutSec 120 -HoldSec 60
+      - name: Upload Windows smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-install-smoke
+          path: zephyr_one/dist-windows-smoke/**
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
