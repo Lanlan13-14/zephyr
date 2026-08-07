@@ -4,7 +4,8 @@
 
 ## 内容
 
-- [`DEVELOPMENT.md`](DEVELOPMENT.md)：Kotlin + Jetpack Compose、Swift + SwiftUI 原生 App 完整开发文档。
+- [`PRODUCT_REQUIREMENTS.md`](PRODUCT_REQUIREMENTS.md)：用户确认的产品范围合同；规定功能、绑定、完整同步、Token互备、命名和发布阻断项。
+- [`DEVELOPMENT.md`](DEVELOPMENT.md)：Kotlin + Jetpack Compose、Swift + SwiftUI 原生 App 完整技术开发文档。
 - [`branding/manifest.json`](branding/manifest.json)：四色图标 palette、geometry、源文件 SHA-256 与生产规则。
 - [`branding/source/`](branding/source/)：用户提交的 Frost / Lava / Asagi / Cyber 四色 SVG 及预览 HTML 权威设计源。
 - [`references/bottom-floating-island.jpg`](references/bottom-floating-island.jpg)：普通页面四入口底部浮岛视觉参考。
@@ -15,10 +16,14 @@
 
 ## 已冻结的关键决策
 
+- [KNOWN] Android 使用 Kotlin + Jetpack Compose、iOS 使用 Swift + SwiftUI；旧 Tauri `zephyr_one/` 是迁移/兼容来源。
+- [KNOWN] 除多用户管理和独立 Zephyr Agent 页面外，Zephyr 的正式功能都必须在 Zephyr One 提供对应实现。
+- [KNOWN] One 内原 Zephyr Agent 设置改名“文件同步”；主端设置入口统一叫“Zephyr Client”并继续兼容旧 Agent。
+- [KNOWN] 文件同步像 iCloud 一样完整双向镜像绑定账号的持久数据、凭据、设置和 Client Token，不限于连接/笔记。
+- [KNOWN] 开启同步要求主端先创建 Token，然后在 One 输入 Zephyr 用户名、密码，并在启用 TOTP 时通过动态码后绑定设备。
+- [KNOWN] 文件同步同时提供用户自定义自动间隔和“立即同步”；删除 One 设备、查看/旋转/删除/重置 Token 必须走密码或 TOTP 敏感验证。
 - [INFERRED] 普通页面使用四入口底部浮岛；选中项展开为“图标 + 文字”胶囊，其他项只显示图标。
-- [INFERRED] 终端使用 `terminal viewport + 快捷键矩阵 + terminal context dock`。
-- [INFERRED] 系统键盘出现时隐藏根浮岛/context dock，快捷键矩阵紧贴 IME，终端 viewport 与 PTY rows/cols 同步 resize。
-- [INFERRED] Zephyr One 使用 Frost / Lava / Asagi / Cyber 四套应用图标，并按平台能力随主题切换。
-- [INFERRED] 正式 launcher asset 必须把 SVG 中的 “One” 系统字体文字转成固定 path 后再生成。
+- [INFERRED] 终端使用 `terminal viewport + 快捷键矩阵 + terminal context dock`；系统键盘出现时隐藏 dock，矩阵紧贴 IME，viewport 与 PTY rows/cols 同步 resize。
+- [INFERRED] Zephyr One 使用 Frost / Lava / Asagi / Cyber 四套应用图标，并按平台能力随主题切换；正式 launcher asset 先把 “One” 文字转成固定 path。
 
 [KNOWN] 设计参考和原始压缩包按收到的字节保存；校验值记录在 `DEVELOPMENT.md` 与 `branding/manifest.json`。
