@@ -37,12 +37,20 @@ function Dump-Fail([string]$reason) {
   } else {
     $lines.Add("(no install dir)") | Out-Null
   }
-  $lines.Add("---- app data scan under LOCALAPPDATA ----") | Out-Null
+  $lines.Add("---- app data scan under APPDATA+LOCALAPPDATA ----") | Out-Null
   try {
-    $hits = Get-ChildItem -Path $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue |
+    $hits = Get-ChildItem -Path $env:APPDATA,$env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue |
       Where-Object { $_.Name -match 'zephyr-node\.log|runtime-boot\.json|zephyr-data' } |
-      Select-Object -First 40 FullName,Length,LastWriteTime
+      Select-Object -First 60 FullName,Length,LastWriteTime
     $lines.Add(($hits | Format-Table -AutoSize | Out-String)) | Out-Null
+  } catch { $lines.Add("$_") | Out-Null }
+  $lines.Add("---- listening ports (node/zephyr-one) ----") | Out-Null
+  try {
+    $pids = @(Get-Process -Name "node","zephyr-one" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+    $lines.Add((Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+      Where-Object { $pids -contains $_.OwningProcess } |
+      Select-Object LocalAddress,LocalPort,OwningProcess |
+      Format-Table -AutoSize | Out-String)) | Out-Null
   } catch { $lines.Add("$_") | Out-Null }
   $lines.Add("---- node log ----") | Out-Null
   if ($script:NodeLog -and (Test-Path -LiteralPath $script:NodeLog)) {
@@ -110,19 +118,24 @@ if ($nsis) {
   Dump-Fail "No NSIS installer and no release zephyr-one.exe"
 }
 
-# App data / log paths used by runtime::ensure_started
-$script:DataDir = Join-Path $env:LOCALAPPDATA "com.zephyr.one\zephyr-data"
-if (-not (Test-Path $script:DataDir)) {
-  # Tauri may use product identifier path variants
-  $alt = Get-ChildItem -Path $env:LOCALAPPDATA -Directory -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match 'zephyr|com\.zephyr' }
-  foreach ($d in $alt) {
-    $cand = Join-Path $d.FullName "zephyr-data"
-    if (Test-Path $cand) { $script:DataDir = $cand; break }
-    $script:DataDir = $cand
+# Tauri app_data_dir on Windows is typically under Roaming AppData (APPDATA),
+# not LocalAppData. Search both, plus product-name folders.
+function Find-ZephyrData {
+  $roots = @($env:APPDATA, $env:LOCALAPPDATA) | Where-Object { $_ }
+  foreach ($root in $roots) {
+    foreach ($name in @("com.zephyr.one", "Zephyr One", "zephyr-one")) {
+      $cand = Join-Path (Join-Path $root $name) "zephyr-data"
+      if (Test-Path -LiteralPath $cand) { return $cand }
+    }
   }
+  $hit = Get-ChildItem -Path $env:APPDATA,$env:LOCALAPPDATA -Recurse -Directory -Filter "zephyr-data" -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+  if ($hit) { return $hit.FullName }
+  return (Join-Path (Join-Path $env:APPDATA "com.zephyr.one") "zephyr-data")
 }
+$script:DataDir = Find-ZephyrData
 $script:NodeLog = Join-Path $script:DataDir "zephyr-node.log"
+Write-Log ("initial dataDir guess: {0}" -f $script:DataDir)
 
 # Kill leftovers from previous runs
 Get-Process -Name "zephyr-one" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -148,9 +161,9 @@ while ((Get-Date) -lt $deadline) {
   if ($proc.HasExited) {
     Dump-Fail ("zephyr-one.exe exited early code={0}" -f $proc.ExitCode)
   }
-  # Refresh data dir if Tauri created it after start
-  if (-not (Test-Path $script:NodeLog)) {
-    $guess = Get-ChildItem -Path $env:LOCALAPPDATA -Recurse -Filter "zephyr-node.log" -ErrorAction SilentlyContinue |
+  # Refresh data dir: Tauri uses APPDATA (Roaming) more often than LocalAppData.
+  if (-not (Test-Path -LiteralPath $script:NodeLog)) {
+    $guess = Get-ChildItem -Path $env:APPDATA,$env:LOCALAPPDATA -Recurse -Filter "zephyr-node.log" -ErrorAction SilentlyContinue |
       Sort-Object LastWriteTime -Descending |
       Select-Object -First 1
     if ($guess) {
@@ -159,8 +172,8 @@ while ((Get-Date) -lt $deadline) {
       Write-Log ("found node log: {0}" -f $script:NodeLog)
     }
   }
-  if (Test-Path $script:NodeLog) {
-    $text = Get-Content -Raw $script:NodeLog -ErrorAction SilentlyContinue
+  if (Test-Path -LiteralPath $script:NodeLog) {
+    $text = Get-Content -LiteralPath $script:NodeLog -Raw -ErrorAction SilentlyContinue
     if ($text) {
       Set-Content -Encoding utf8 (Join-Path $OutDir "zephyr-node.log") $text
       if ($text -match 'Zephyr HTTP.*localhost:(\d+)') {
@@ -171,12 +184,30 @@ while ((Get-Date) -lt $deadline) {
       if ($text -match '\[startup\] Zephyr|EISDIR|ENOENT|未找到|失败') {
         Dump-Fail "Node log reports startup failure (see zephyr-node.log)"
       }
-      # Catch the historical verbatim-path bug explicitly
       if ($text -match '\\\\\?\\C:' -or $text -match 'EISDIR') {
         Dump-Fail "Node log suggests Windows verbatim path / EISDIR regression"
       }
     }
   }
+  # Fallback: if Node is listening on a high port, probe /healthz directly.
+  if (-not $ready) {
+    try {
+      $conns = Get-NetTCPConnection -State Listen -OwningProcess (Get-Process -Name node -ErrorAction SilentlyContinue).Id -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalAddress -in @('127.0.0.1','::1') -and $_.LocalPort -gt 1024 }
+      foreach ($c in $conns) {
+        try {
+          $h = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $c.LocalPort) -TimeoutSec 2
+          if ($h.StatusCode -ge 200 -and $h.StatusCode -lt 500) {
+            $port = [int]$c.LocalPort
+            $ready = $true
+            Write-Log ("healthz via netstat port {0}" -f $port)
+            break
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+  if ($ready) { break }
   Start-Sleep -Seconds 2
 }
 
