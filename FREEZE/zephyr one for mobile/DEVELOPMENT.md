@@ -1,12 +1,14 @@
 # Zephyr Android / iOS 原生 App 完整开发文档
 
-> 文档状态：产品约束修订版 v1.1（用户要求优先）
+> 文档状态：产品约束 + Zephyr 继承修订版 v1.2（用户要求优先）
 >
-> 审计基线：仓库 `Lanlan13-14/zephyr-ssh`，提交 `ae65756`（2026-08-07）
+> 审计基线：仓库 `Lanlan13-14/zephyr-ssh`，提交 `3a61d2f`（2026-08-08）
 >
 > 目标产品：以 Android Kotlin + Jetpack Compose、iOS Swift + SwiftUI 原生实现 Zephyr One 的移动操作能力；排除无移动用途的账号安全/服务器部署后台，并通过“文件同步”完成 One 有用途账号数据的完整双向同步
 >
-> 产品范围合同：[`PRODUCT_REQUIREMENTS.md`](PRODUCT_REQUIREMENTS.md)。该合同约束“必须做什么”，本文约束“怎样实现”；范围冲突时合同优先。
+> 产品范围合同：[`PRODUCT_REQUIREMENTS.md`](PRODUCT_REQUIREMENTS.md)。该合同约束“必须做什么”，本文约束总体“怎样实现”；范围冲突时合同优先。
+>
+> 细化规范：Zephyr 业务继承见 [`ZEPHYR_PARITY.md`](ZEPHYR_PARITY.md)，逐屏落点见 [`SCREEN_CATALOG.md`](SCREEN_CATALOG.md)，同步顺序见 [`SYNC_STATE_MACHINE.md`](SYNC_STATE_MACHINE.md)，DDL/Secret/迁移见 [`DATA_AND_MIGRATION.md`](DATA_AND_MIGRATION.md)，协议引擎见 [`NATIVE_ENGINE_DECISIONS.md`](NATIVE_ENGINE_DECISIONS.md)，机器合同见 [`contracts/`](contracts/)。这些细化文件在各自主题内覆盖本文早期概述。
 
 ## 0. 标记与置信度
 
@@ -247,7 +249,7 @@ server/
 1. [INFERRED] **首页**（dashboard）：连接卡片、搜索、协议/标签筛选、最近连接、活动摘要。
 2. [INFERRED] **会话**（document/session）：正在连接、已连接、断线、可恢复的 SSH/Telnet/RDP/VNC 会话。
 3. [INFERRED] **资料**（folder）：笔记、最近文件、代码片段；进入具体 SSH 会话后由终端上下文 dock 的“文件”入口接管 SFTP。
-4. [INFERRED] **工具**（crossed tools）：远程批量执行、AI、文件同步、代理、SSH Key、外观和 One 设置；不出现账号安全、服务器管理或独立 Zephyr Agent入口。
+4. [INFERRED] **工具**（crossed tools）：远程批量执行、AI、文件同步、代理、SSH Key、JumpHost、外观、One 设置，以及“服务器”二级分组中的服务器设置与备份恢复；不出现账号安全、Web部署管理、多用户管理或独立 Zephyr Agent入口。逐屏路径以 [`SCREEN_CATALOG.md`](SCREEN_CATALOG.md) 为准。
 
 [INFERRED] Web 顶栏里的 Activity 合并到首页二级页；AI 是工具入口和页面级 action，不单独挤占第五个导航槽。顶部仍保留原生标题与页面 action，例如搜索、添加、同步状态；浮岛只负责根目的地切换。
 
@@ -512,8 +514,9 @@ ClientTokenRecord
 
 FileSyncConfig
   serverProfileId, enabled, automaticEnabled, intervalSec,
-  lastAttemptAt, lastSuccessAt, lastCursor, lastError,
-  conflictCount, updatedAt
+  bindingState, registryHash, bootstrapId, bootstrapPageToken,
+  lastAttemptAt, lastSuccessAt, appliedCursor, acknowledgedCursor,
+  pendingCount, lastError, conflictCount, rerunRequested, updatedAt
 
 FileSyncShareProfile
   id, serverProfileId, displayName, localGrantRef,
@@ -834,19 +837,7 @@ CREATE TABLE mobile_applied_ops (
 
 ## 12. Secret 同步
 
-[INFERRED] TLS 是最低要求，但绑定后的 deviceToken 泄漏不应直接暴露所有连接密码。服务端向设备返回 secret 时，使用绑定公钥派生会话密钥并生成 AES-256-GCM envelope。
-
-```json
-{
-  "alg": "ECDH-P256-HKDF-SHA256+A256GCM",
-  "ephemeralPublicKey": { "kty": "EC", "crv": "P-256", "x": "...", "y": "..." },
-  "salt": "...",
-  "nonce": "...",
-  "ciphertext": "...",
-  "aad": "server/user/connection/id/password",
-  "keyVersion": 1
-}
-```
+[INFERRED] TLS 是最低要求，但绑定后的 access credential 泄漏不应直接暴露所有连接密码。为继承 Zephyr `secret-crypto.js` 已采用的 ML-KEM-768 方向，正式设备 envelope 使用 `ML-KEM-768+HKDF-SHA256+AES-256-GCM`；设备另持有 ES256 signing key 证明请求来源。JSON Schema、AAD 的 NUL 分隔字节、Base64、tag、keyVersion、entityRevision 与跨端测试向量以 [`DATA_AND_MIGRATION.md`](DATA_AND_MIGRATION.md) 和 [`contracts/schemas/secret-envelope.schema.json`](contracts/schemas/secret-envelope.schema.json) 为唯一细节真源，禁止 Android/iOS各自解释一版。
 
 - [INFERRED] 服务端生成 envelope 时可短暂接触明文，因为现有 Web 主端本来就需要解密凭据建立会话；明文不得进入 change log、日志或缓存。
 - [INFERRED] 设备私钥不可导出时优先不可导出；不支持硬件密钥的设备退化为 Keychain/Keystore 保护的软件密钥并在安全页明确显示。
@@ -1082,7 +1073,7 @@ Zephyr 主端                  https://...
 - [KNOWN] App 前台启动、绑定完成、用户点“立即同步”、自动间隔到期、网络恢复、本地写入 debounce、主端 wake event 时触发同步。
 - [INFERRED] 手动同步不受自动同步总开关影响：只要设备仍绑定，用户始终可点“立即同步”；完全解绑后才禁用。
 - [INFERRED] 同一账号同一时刻只运行一个 sync actor；新触发合并为 rerun flag，不并发修改 cursor。用户连续点击只产生一次当前任务 + 最多一次尾随任务。
-- [INFERRED] 每轮顺序固定为：验证绑定/registry → push 本地 pending ops → pull changes 到最新 → 处理 blob → ack cursor → 更新状态。首次绑定使用 bootstrap。
+- [INFERRED] 普通轮顺序固定为：验证绑定/registry → push 本地 pending ops → pull changes 到最新 → 处理 blob → ack cursor → 更新状态。首次绑定固定为 bootstrap → catch-up pull → push bootstrap期间 pending ops → pull → blob → ack；事务、崩溃恢复和 cursor 不变量以 [`SYNC_STATE_MACHINE.md`](SYNC_STATE_MACHINE.md) 为准。
 
 ### 17.3 平台后台行为
 
@@ -1293,6 +1284,13 @@ Zephyr 主端                  https://...
 ## 26. 当前仓库对应代码索引
 
 - [KNOWN] 用户确认的移动端产品范围合同：[`PRODUCT_REQUIREMENTS.md`](PRODUCT_REQUIREMENTS.md)
+- [KNOWN] Zephyr 业务继承规范：[`ZEPHYR_PARITY.md`](ZEPHYR_PARITY.md)
+- [KNOWN] 原生逐屏规格：[`SCREEN_CATALOG.md`](SCREEN_CATALOG.md)
+- [KNOWN] 同步状态机：[`SYNC_STATE_MACHINE.md`](SYNC_STATE_MACHINE.md)
+- [KNOWN] DDL、Secret 与迁移：[`DATA_AND_MIGRATION.md`](DATA_AND_MIGRATION.md)
+- [KNOWN] 原生协议引擎决策：[`NATIVE_ENGINE_DECISIONS.md`](NATIVE_ENGINE_DECISIONS.md)
+- [KNOWN] 需求追踪与实际状态：[`TRACEABILITY.md`](TRACEABILITY.md)、[`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)
+- [KNOWN] OpenAPI、entity/error registry、JSON Schema 与 vectors：[`contracts/`](contracts/)
 - [KNOWN] 主功能与协议说明：[`../../README.md`](../../README.md)
 - [KNOWN] 现有 One 设备绑定与 pull：[`../../one-client-manager.js`](../../one-client-manager.js)
 - [KNOWN] 现有 One pull-only engine：[`../../zephyr_one/src/js/sync/sync-engine.js`](../../zephyr_one/src/js/sync/sync-engine.js)

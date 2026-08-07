@@ -1,0 +1,93 @@
+# Zephyr One 原生实现状态
+
+> [KNOWN] 基线：`main@3a61d2f`，2026-08-08。
+>
+> [KNOWN] 本文件只报告仓库实际存在的代码与合同，不把设计文档当实现。
+
+## 状态枚举
+
+- `implemented-zephyr`：Zephyr Web/server 已有并有代码。
+- `legacy-one`：旧 Tauri One 已有，不能当 Kotlin/Swift 原生完成。
+- `specified`：本目录已写可执行合同，但生产代码未实现。
+- `partial`：有部分 server/legacy 实现，缺完整合同目标。
+- `blocked`：前置模型/依赖未冻结或现有实现必须迁移。
+- `missing`：没有实现也没有足够合同。
+
+## 总览
+
+| 层 | 状态 | 证据/缺口 |
+| --- | --- | --- |
+| 产品合同 | `specified` | [KNOWN] `PRODUCT_REQUIREMENTS.md` |
+| Zephyr 继承规则 | `specified` | [KNOWN] `ZEPHYR_PARITY.md` |
+| machine contracts | `specified` | [KNOWN] `contracts/openapi-mobile-v1.json`、schemas、registries、vectors |
+| Android Kotlin/Compose | `missing` | [KNOWN] 仓库没有 `mobile/android` 或 Kotlin 原生 App |
+| iOS Swift/SwiftUI | `missing` | [KNOWN] 仓库没有 `mobile/ios` 或 Swift 原生 App |
+| mobile v1 server API | `missing` | [KNOWN] 当前没有 `/api/mobile/v1/*` 路由 |
+| Tauri One | `legacy-one` | [KNOWN] `zephyr_one/` 存在，pull-only/localStorage/内嵌 core |
+| Zephyr business services | `implemented-zephyr` | [KNOWN] resource/notes/authz/settings/workspace/AI 等 service |
+| 完整双向同步 | `specified` | [KNOWN] 当前仅 `/api/one/sync/pull`；新状态机未实现 |
+| 原生协议 engines | `blocked` | [KNOWN] Kotlin/iOS SSH/RDP/VNC 依赖 ADR 未完成 |
+
+## 功能状态
+
+| ID | 功能 | Zephyr 现状 | 原生 One 现状 | 阻断 |
+| --- | --- | --- | --- | --- |
+| F-001 | 账号登录/TOTP | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生状态机未实现；现有 API 已支持返回 SID |
+| F-002 | Client Token 前置绑定 | `partial` | `legacy-one` | [KNOWN] 当前 OneClientManager 可绑定；缺 device keys/refresh/proof |
+| F-003 | Device registry | `partial` | `legacy-one` | [KNOWN] `one_clients` 表存在；缺 mobile v1 字段和 tombstone |
+| F-004 | 完整双向同步 | `missing` | `missing` | [KNOWN] 当前 pull-only |
+| F-005 | Secret envelope | `partial` | `missing` | [KNOWN] server at-rest ML-KEM 已有；device envelope 未实现 |
+| F-006 | Connection CRUD | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 UI/本地镜像未实现 |
+| F-007 | ACL/share | `implemented-zephyr` | `missing` | [KNOWN] 原生 capability UI 未实现 |
+| F-008 | SSH/SFTP | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 SSH engine 未定 |
+| F-009 | Telnet | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 parser/transport 未实现 |
+| F-010 | RDP | `implemented-zephyr` | `legacy-one` | [KNOWN] 当前 Web/WASM；原生 core 未进仓库 |
+| F-011 | VNC | `implemented-zephyr` | `legacy-one` | [KNOWN] 当前 noVNC；原生 RFB core 未定 |
+| F-012 | 终端 IME | `implemented-zephyr` | `specified` | [KNOWN] Web 行为合同已有；原生 SurfaceController 未实现 |
+| F-013 | 笔记 | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生列表/编辑/冲突未实现 |
+| F-014 | Snippet | `implemented-zephyr` | `legacy-one` | [KNOWN] 当前塞在 user_settings 数组，需实体正规化 |
+| F-015 | AI | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 AI UI 未实现；conversation schema 未冻结 |
+| F-016 | Docker/监控/日志 | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 remote panels 未实现 |
+| F-017 | 批量执行 | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生逐机结果 UI 未实现 |
+| F-018 | Proxy/SSH Key/JumpHost | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生管理页未实现 |
+| F-019 | 工作区恢复 | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生移动 state adapter 未实现 |
+| F-020 | Deep Link | `implemented-zephyr` | `legacy-one` | [KNOWN] App/Universal Link wiring 未实现 |
+| F-021 | 活动 | `implemented-zephyr` | `legacy-one` | [KNOWN] append-only change hook/原生页未实现 |
+| F-022 | 服务器设置 | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生有用途 section 未实现 |
+| F-023 | 备份恢复 | `implemented-zephyr` | `legacy-one` | [KNOWN] Web/旧 One E2E 已有；原生 document flow 未实现 |
+| F-024 | Client Token 完整互备 | `partial` | `missing` | [KNOWN] 当前 JSON 明文且 sync 只给 metadata |
+| F-025 | ZFT2 文件桥接 | `implemented-zephyr` | `legacy-one` | [KNOWN] JS/Dart 已有；Kotlin/Swift 未实现 |
+| F-026 | Android SAF foreground bridge | `missing` | `missing` | [KNOWN] 原生项目不存在 |
+| F-027 | iOS security-scoped bridge | `missing` | `missing` | [KNOWN] 原生项目不存在 |
+| F-028 | 系统 App Lock | `partial` | `legacy-one` | [KNOWN] Tauri hook 非正式 BiometricPrompt/LA 实现 |
+| F-029 | 四色原生图标 | `specified` | `partial` | [KNOWN] SVG/manifest 有；production path/adaptive/alternate assets 未生成 |
+| F-030 | Tauri → native migration | `specified` | `missing` | [KNOWN] migration artifact/exporter/importer 未实现 |
+
+## 当前可复用测试资产
+
+- [KNOWN] 241 个 Node `*.test.mjs` 文件覆盖 Zephyr 多个业务面。
+- [KNOWN] `authz.test.mjs`：owner/admin/ACL/expiry/revoke/防枚举。
+- [KNOWN] `auth-hardening.test.mjs`：锁定、reset token、TOTP exhaustion。
+- [KNOWN] `notes-deeplink.test.mjs`：Note revision/soft-delete、Deep Link、Workspace ACL。
+- [KNOWN] `one-client-manager.test.mjs`：Token 前置、撤销、interval clamp。
+- [KNOWN] `zephyr-one-backup-restore.test.mjs`：真实导出、错误密码、正确导入。
+- [KNOWN] `zephyr_one/tests/zft2-protocol.test.mjs`：ZFT2 round-trip/flags/bad magic/length mismatch。
+- [KNOWN] Telnet/SSH/RDP/mobile IME 有现成回归测试，可改造成跨端 fixture。
+
+## 开工顺序
+
+1. [INFERRED] 先实现 server `mobile_0001…0005` 与 machine contract validator。
+2. [INFERRED] 迁移 Client Token 明文 JSON，补全 change hooks/tombstones。
+3. [INFERRED] 建 Android/iOS 原生项目和共享 fixture runner。
+4. [INFERRED] M0 冻结 SSH/RDP/VNC/terminal engine ADR 并跑真机 spike。
+5. [INFERRED] 本地 DB/SecretStore/绑定/bootstrap。
+6. [INFERRED] Connection/Note/Settings/Token 首批完整 sync，再扩展 registry 每个实体。
+7. [INFERRED] 会话协议和文件桥接。
+8. [INFERRED] 其余页面、迁移、商店发布门。
+
+## 禁止状态漂移
+
+- [KNOWN] 新提交改变本表任一状态时，必须附代码路径和测试路径；不能只改为“完成”。
+- [KNOWN] `implemented-zephyr` 不等于 `implemented-one`。
+- [KNOWN] `specified` 不等于生产可用。
+- [KNOWN] 任一 `blocked/missing` 的产品必需功能存在时，不得发布“Zephyr One 完整实现”。

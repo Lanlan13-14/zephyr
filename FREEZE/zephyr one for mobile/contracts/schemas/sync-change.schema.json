@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/sync-change.schema.json",
+  "title": "SyncChange",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "changeSeq",
+    "entityType",
+    "entityId",
+    "action",
+    "revision",
+    "changedAt"
+  ],
+  "properties": {
+    "changeSeq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "entityType": {
+      "type": "string"
+    },
+    "entityId": {
+      "type": "string"
+    },
+    "action": {
+      "enum": [
+        "upsert",
+        "delete"
+      ]
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "actorDeviceId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "changedAt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fieldMask": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    },
+    "payload": {
+      "type": "object"
+    },
+    "secretEnvelopes": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "secret-envelope.schema.json"
+      }
+    },
+    "tombstone": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "upsert"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": true,
+          "fieldMask": true
+        },
+        "required": [
+          "payload",
+          "fieldMask"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "delete"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "tombstone": true
+        },
+        "required": [
+          "tombstone"
+        ]
+      }
+    }
+  ]
+}
