@@ -58,28 +58,33 @@ if ($nsis) {
   # NSIS silent; product name "Zephyr One"
   $p = Start-Process -FilePath $nsis.FullName -ArgumentList "/S" -Wait -PassThru
   if ($p.ExitCode -ne 0) { Dump-Fail ("NSIS installer exit {0}" -f $p.ExitCode) }
+  # Force array (@(...)): a single pipeline string would make $x[0] == 'C' (first char).
   $candidates = @(
-    (Join-Path $env:LOCALAPPDATA "Zephyr One\zephyr-one.exe"),
-    (Join-Path $env:ProgramFiles "Zephyr One\zephyr-one.exe"),
-    (Join-Path ${env:ProgramFiles(x86)} "Zephyr One\zephyr-one.exe")
-  ) | Where-Object { $_ -and (Test-Path $_) }
-  if (-not $candidates) {
-    # Fall back: search under LocalAppData for the exe
-    $found = Get-ChildItem -Path $env:LOCALAPPDATA -Recurse -Filter "zephyr-one.exe" -ErrorAction SilentlyContinue |
-      Select-Object -First 1
-    if ($found) { $candidates = @($found.FullName) }
+    @(
+      (Join-Path $env:LOCALAPPDATA "Zephyr One\zephyr-one.exe"),
+      (Join-Path $env:ProgramFiles "Zephyr One\zephyr-one.exe"),
+      (Join-Path ${env:ProgramFiles(x86)} "Zephyr One\zephyr-one.exe")
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+  )
+  if ($candidates.Count -eq 0) {
+    $found = @(Get-ChildItem -Path $env:LOCALAPPDATA,$env:ProgramFiles -Recurse -Filter "zephyr-one.exe" -ErrorAction SilentlyContinue |
+      Select-Object -First 5)
+    foreach ($f in $found) { $candidates += $f.FullName }
   }
-  if (-not $candidates) { Dump-Fail "NSIS finished but zephyr-one.exe not found under LocalAppData/Program Files" }
-  $launchExe = $candidates[0]
+  if ($candidates.Count -eq 0) { Dump-Fail "NSIS finished but zephyr-one.exe not found under LocalAppData/Program Files" }
+  $launchExe = [string]$candidates[0]
+  if ($launchExe.Length -lt 8 -or -not (Test-Path -LiteralPath $launchExe)) {
+    Dump-Fail ("Resolved launch path looks wrong: '{0}' (candidates={1})" -f $launchExe, ($candidates -join '|'))
+  }
   $installDir = Split-Path -Parent $launchExe
   Write-Log ("Installed app: {0}" -f $launchExe)
-} elseif (Test-Path $releaseExe) {
+  Write-Log ("Install dir: {0}" -f $installDir)
+} elseif (Test-Path -LiteralPath $releaseExe) {
   Write-Log ("No NSIS; using portable release exe: {0}" -f $releaseExe)
   $launchExe = $releaseExe
   $installDir = Split-Path -Parent $launchExe
-  # resources must sit next to exe for portable layout (Tauri copies under resources/)
   $res = Join-Path $installDir "resources"
-  if (-not (Test-Path $res)) {
+  if (-not (Test-Path -LiteralPath $res)) {
     Write-Log "WARN: portable layout missing resources/ next to exe — runtime may fail to find core"
   }
 } else {
@@ -105,8 +110,12 @@ Get-Process -Name "zephyr-one" -ErrorAction SilentlyContinue | Stop-Process -For
 Start-Sleep -Seconds 1
 if (Test-Path $script:NodeLog) { Remove-Item $script:NodeLog -Force -ErrorAction SilentlyContinue }
 
-Write-Log ("Launching {0}" -f $launchExe)
-$proc = Start-Process -FilePath $launchExe -PassThru -WorkingDirectory $installDir
+if (-not $installDir -or -not (Test-Path -LiteralPath $installDir)) {
+  Dump-Fail ("installDir invalid: '{0}'" -f $installDir)
+}
+Write-Log ("Launching '{0}' cwd='{1}'" -f $launchExe, $installDir)
+$proc = Start-Process -FilePath $launchExe -WorkingDirectory $installDir -PassThru
+if (-not $proc) { Dump-Fail "Start-Process returned null" }
 Write-Log ("pid={0}" -f $proc.Id)
 
 # Wait for log + Zephyr HTTP line (same contract as Android smoke)

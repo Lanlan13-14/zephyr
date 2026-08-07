@@ -7,9 +7,25 @@ set -eu
 APK="${1:?usage: android-emulator-smoke.sh <apk> [package] [output-dir]}"
 PACKAGE="${2:-com.zephyr.one}"
 OUT="${3:-dist-emulator-smoke}"
-DATA_DIR="/data/user/0/$PACKAGE/files"
+PKG_DATA="/data/user/0/$PACKAGE"
+DATA_DIR="$PKG_DATA/files"
+# Prefer the path Rust uses (app_data_dir/zephyr-data); fall back to a package-wide find.
 NODE_LOG="$DATA_DIR/zephyr-data/zephyr-node.log"
+BOOT_MARKER="$DATA_DIR/zephyr-data/runtime-boot.json"
 ACTIVITY="$PACKAGE/.MainActivity"
+
+resolve_logs() {
+  # Tauri app_data_dir is usually files/, but resolve by content if layout differs.
+  found="$(adb shell "find '$PKG_DATA' -name 'zephyr-node.log' 2>/dev/null" | tr -d '\r' | head -n 1 || true)"
+  if [ -n "$found" ]; then
+    NODE_LOG="$found"
+    DATA_DIR="$(dirname "$(dirname "$found")")"
+  fi
+  found_boot="$(adb shell "find '$PKG_DATA' -name 'runtime-boot.json' 2>/dev/null" | tr -d '\r' | head -n 1 || true)"
+  if [ -n "$found_boot" ]; then
+    BOOT_MARKER="$found_boot"
+  fi
+}
 
 [ -f "$APK" ] || { echo "APK not found: $APK" >&2; exit 1; }
 command -v adb >/dev/null 2>&1 || { echo "adb is required" >&2; exit 1; }
@@ -19,24 +35,28 @@ mkdir -p "$OUT"
 dump_fail() {
   reason="$1"
   echo "$reason" >&2
+  resolve_logs || true
   {
     echo "==== reason: $reason ===="
     echo "---- adb devices ----"
     adb devices -l || true
     echo "---- pidof / ps ----"
     adb shell "pidof $PACKAGE || true; ps -A | grep -E 'zephyr|libnode|one' || true" || true
+    echo "---- resolved NODE_LOG=$NODE_LOG ----"
+    echo "---- resolved BOOT_MARKER=$BOOT_MARKER ----"
+    echo "---- runtime-boot.json ----"
+    adb shell "cat '$BOOT_MARKER' 2>/dev/null || true" || true
     echo "---- zephyr-node.log ----"
     adb shell "cat '$NODE_LOG' 2>/dev/null || true" || true
-    echo "---- app files (maxdepth 4) ----"
-    adb shell "find '$DATA_DIR' -maxdepth 4 2>/dev/null | head -n 120" || true
+    echo "---- package data tree (maxdepth 5) ----"
+    adb shell "find '$PKG_DATA' -maxdepth 5 2>/dev/null | head -n 200" || true
     echo "---- dumpsys activity (package) ----"
     adb shell "dumpsys activity activities | grep -A3 -E '$PACKAGE|ACTIVITY' | head -n 80" || true
     echo "---- tombstones (names) ----"
     adb shell "ls -la /data/tombstones 2>/dev/null | head -n 20" || true
   } | tee "$OUT/diagnostics.txt" >&2
   adb logcat -d -v threadtime >"$OUT/logcat.txt" 2>/dev/null || true
-  # Keep filtered views for humans; full logcat stays in logcat.txt
-  grep -nE 'FATAL EXCEPTION|AndroidRuntime|RustPanic|DEBUG|libc|signal|tombstone|zephyr|libnode|MainActivity|Abort' \
+  grep -nE 'FATAL EXCEPTION|AndroidRuntime|RustPanic|DEBUG|libc|signal|tombstone|zephyr|libnode|MainActivity|Abort|RustStdout|runtime-boot|zephyr-one' \
     "$OUT/logcat.txt" >"$OUT/logcat-filtered.txt" 2>/dev/null || true
   exit 1
 }
@@ -80,6 +100,7 @@ while [ "$attempt" -lt 40 ]; do
   fi
   missed_pid=0
 
+  resolve_logs || true
   if adb shell test -s "$NODE_LOG" 2>/dev/null; then
     adb shell cat "$NODE_LOG" >"$OUT/zephyr-node.log" || true
     if grep -F 'Zephyr HTTP' "$OUT/zephyr-node.log" >/dev/null 2>&1; then
@@ -89,6 +110,10 @@ while [ "$attempt" -lt 40 ]; do
     if grep -E '\[startup\] Zephyr|uncaughtException|unhandledRejection' "$OUT/zephyr-node.log" >/dev/null 2>&1; then
       dump_fail "Embedded Zephyr core reported a startup error"
     fi
+  fi
+  # If boot marker exists but log never fills, still fail with that context at timeout.
+  if adb shell test -s "$BOOT_MARKER" 2>/dev/null; then
+    adb shell cat "$BOOT_MARKER" >"$OUT/runtime-boot.json" || true
   fi
   sleep 5
 done

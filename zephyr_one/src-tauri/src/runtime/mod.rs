@@ -559,20 +559,47 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
     cmd.stdin(Stdio::piped());
 
     let log_path = data_dir.join("zephyr-node.log");
-    // Append-friendly create: truncate once, then share FDs for stdout+stderr.
-    // Prefer write so Node can flush progress as it boots.
-    if let Ok(log) = std::fs::OpenOptions::new()
+    // Definitive breadcrumb for smoke tests: proves ensure_started chose this
+    // data_dir even when Node stdout never appears (fd redirect / hang).
+    {
+        let marker = data_dir.join("runtime-boot.json");
+        let body = format!(
+            "{{\"pid_parent\":{},\"node\":{},\"data_dir\":{},\"log\":{},\"ts_ms\":{}}}\n",
+            std::process::id(),
+            serde_json::to_string(&node.display().to_string()).unwrap_or_else(|_| "\"\"".into()),
+            serde_json::to_string(&data_dir.display().to_string()).unwrap_or_else(|_| "\"\"".into()),
+            serde_json::to_string(&log_path.display().to_string()).unwrap_or_else(|_| "\"\"".into()),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0),
+        );
+        let _ = std::fs::write(&marker, body);
+    }
+    // Truncate once, then share FDs for stdout+stderr. Prefer write so Node can
+    // flush progress as it boots. If open fails, fall back to null (marker still
+    // records the intended path).
+    match std::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(&log_path)
     {
-        if let Ok(stdout) = log.try_clone() {
-            cmd.stdout(Stdio::from(stdout));
+        Ok(log) => {
+            if let Ok(stdout) = log.try_clone() {
+                cmd.stdout(Stdio::from(stdout));
+            } else {
+                cmd.stdout(Stdio::null());
+            }
+            cmd.stderr(Stdio::from(log));
         }
-        cmd.stderr(Stdio::from(log));
-    } else {
-        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        Err(error) => {
+            let _ = std::fs::write(
+                data_dir.join("runtime-boot-log-open-error.txt"),
+                format!("open {log_path:?}: {error}\n"),
+            );
+            cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        }
     }
 
     // Android: writable HOME/TMP, APK asset path for public files, and a usable
