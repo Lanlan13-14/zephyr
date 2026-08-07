@@ -200,10 +200,12 @@ jobs:
         with:
           api-level: 34
           arch: x86_64
-          target: default
-          profile: pixel_6
+          target: google_apis
+          # No pixel_6 profile: skin overlay cmds spam "device not found" on
+          # every run and are unrelated to the app. generic AVD is enough.
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -accel on
           script: sh zephyr_one/scripts/android-emulator-smoke.sh zephyr_one/dist-emulator/zephyr-one-android-x86_64.apk com.zephyr.one zephyr_one/dist-emulator-smoke
       - name: Upload Android emulator diagnostics
         if: always()
