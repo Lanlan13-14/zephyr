@@ -60,10 +60,30 @@ pub fn run() {
             commands::token_import_local,
         ])
         .setup(|app| {
-            // Do NOT call ensure_started here.
-            // Frontend invokes the async `runtime_start` after the boot UI is visible.
-            // The Android core is streamed from the APK and never extracted.
+            // Default: frontend invokes async `runtime_start` after the boot UI
+            // is visible (Android streams the core from the APK, never extracts).
+            // CI/install smoke sets ZEPHYR_ONE_AUTOSTART_RUNTIME=1 so the embedded
+            // Node core comes up even if the WebView never finishes loading JS.
             let _ = app.get_webview_window("main");
+            let autostart = std::env::var("ZEPHYR_ONE_AUTOSTART_RUNTIME")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            if autostart {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    match runtime::ensure_started(&handle) {
+                        Ok(info) => {
+                            eprintln!(
+                                "zephyr-one: autostart ok base_url={} node={}",
+                                info.base_url, info.node_path
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("zephyr-one: autostart failed: {error}");
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .on_window_event(|_window, event| {

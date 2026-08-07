@@ -21,21 +21,40 @@ function Write-Log([string]$msg) {
 function Dump-Fail([string]$reason) {
   Write-Log "FAIL: $reason"
   $diag = Join-Path $OutDir "diagnostics.txt"
-  @(
-    "==== $reason ====",
-    "---- processes ----",
-    (Get-Process -Name "zephyr-one","node" -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String),
-    "---- app data ----",
-    (if (Test-Path $script:DataDir) { Get-ChildItem -Recurse -Force $script:DataDir -ErrorAction SilentlyContinue | Select-Object -First 80 FullName,Length | Format-Table -AutoSize | Out-String } else { "(no data dir)" }),
-    "---- node log ----",
-    (if (Test-Path $script:NodeLog) { Get-Content -Raw $script:NodeLog } else { "(missing $script:NodeLog)" }),
-    "---- env ----",
-    ("LOCALAPPDATA={0}" -f $env:LOCALAPPDATA),
-    ("PROGRAMFILES={0}" -f $env:ProgramFiles)
-  ) | Set-Content -Encoding utf8 $diag
-  if (Test-Path $script:NodeLog) {
-    Copy-Item $script:NodeLog (Join-Path $OutDir "zephyr-node.log") -Force
+  $lines = New-Object System.Collections.Generic.List[string]
+  $lines.Add("==== $reason ====") | Out-Null
+  $lines.Add("---- processes ----") | Out-Null
+  try {
+    $lines.Add((Get-Process -Name "zephyr-one","node" -ErrorAction SilentlyContinue | Format-List Id,ProcessName,Path,StartTime | Out-String)) | Out-Null
+  } catch { $lines.Add("$_") | Out-Null }
+  $lines.Add("---- install dir tree ----") | Out-Null
+  if ($script:InstallDir -and (Test-Path -LiteralPath $script:InstallDir)) {
+    try {
+      $lines.Add((Get-ChildItem -LiteralPath $script:InstallDir -Recurse -Force -ErrorAction SilentlyContinue |
+        Select-Object -First 120 FullName,Length |
+        Format-Table -AutoSize | Out-String)) | Out-Null
+    } catch { $lines.Add("$_") | Out-Null }
+  } else {
+    $lines.Add("(no install dir)") | Out-Null
   }
+  $lines.Add("---- app data scan under LOCALAPPDATA ----") | Out-Null
+  try {
+    $hits = Get-ChildItem -Path $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -match 'zephyr-node\.log|runtime-boot\.json|zephyr-data' } |
+      Select-Object -First 40 FullName,Length,LastWriteTime
+    $lines.Add(($hits | Format-Table -AutoSize | Out-String)) | Out-Null
+  } catch { $lines.Add("$_") | Out-Null }
+  $lines.Add("---- node log ----") | Out-Null
+  if ($script:NodeLog -and (Test-Path -LiteralPath $script:NodeLog)) {
+    $lines.Add((Get-Content -LiteralPath $script:NodeLog -Raw -ErrorAction SilentlyContinue)) | Out-Null
+    Copy-Item -LiteralPath $script:NodeLog -Destination (Join-Path $OutDir "zephyr-node.log") -Force
+  } else {
+    $lines.Add("(missing node log path=$($script:NodeLog))") | Out-Null
+  }
+  $lines.Add("---- env ----") | Out-Null
+  $lines.Add(("LOCALAPPDATA={0}" -f $env:LOCALAPPDATA)) | Out-Null
+  $lines.Add(("ZEPHYR_ONE_AUTOSTART_RUNTIME={0}" -f $env:ZEPHYR_ONE_AUTOSTART_RUNTIME)) | Out-Null
+  $lines | Set-Content -Encoding utf8 $diag
   throw $reason
 }
 
@@ -113,7 +132,10 @@ if (Test-Path $script:NodeLog) { Remove-Item $script:NodeLog -Force -ErrorAction
 if (-not $installDir -or -not (Test-Path -LiteralPath $installDir)) {
   Dump-Fail ("installDir invalid: '{0}'" -f $installDir)
 }
-Write-Log ("Launching '{0}' cwd='{1}'" -f $launchExe, $installDir)
+$script:InstallDir = $installDir
+# CI/headless: start embedded core from Rust setup without waiting on WebView JS.
+$env:ZEPHYR_ONE_AUTOSTART_RUNTIME = "1"
+Write-Log ("Launching '{0}' cwd='{1}' ZEPHYR_ONE_AUTOSTART_RUNTIME=1" -f $launchExe, $installDir)
 $proc = Start-Process -FilePath $launchExe -WorkingDirectory $installDir -PassThru
 if (-not $proc) { Dump-Fail "Start-Process returned null" }
 Write-Log ("pid={0}" -f $proc.Id)
