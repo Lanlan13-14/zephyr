@@ -1,6 +1,24 @@
 const DEFAULT_BRAND_ICON = '🌬️';
 const SCHEME_IDS = new Set(['frost', 'lava', 'asagi', 'cyber', 'custom']);
 
+/* ── Zephyr One mark geometry ───────────────────────────────────────────
+ * Single source of truth, shared by the inline mark and the favicon so the
+ * two cannot drift. Values are transcribed from the shipped One artwork in
+ * zephyr_one/platform_assets/icons/zephyr-one-*.svg.
+ *
+ * The One mark differs from the Zephyr mark in three ways:
+ *   1. The tail sweeps wider so it clears the wordmark.
+ *   2. The mid stroke is masked by an ellipse at (145,115); the wordmark's "O"
+ *      sits in that gap, so the stroke must not run through it.
+ *   3. There is no dot-a circle — the "O" occupies that position.
+ */
+const ONE_PATH_MAIN = 'M 45 65 C 85 45, 135 55, 160 80 C 130 80, 95 95, 75 125';
+const ONE_PATH_MID = 'M 50 75 C 90 75, 125 90, 145 115 C 115 135, 75 155, 40 135';
+const ONE_PATH_TAIL = 'M 78 88 C 108 106, 137 137, 170 128';
+const ONE_WORDMARK_FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+/** Ellipse punched out of the mid stroke to seat the wordmark's "O". */
+const ONE_CUT = { cx: 145, cy: 115, rx: 5, ry: 4.8 };
+
 export const DEFAULT_CUSTOM_THEME_COLORS = Object.freeze({
     bgMain: '#101114',
     bgCard: '#1b1c20',
@@ -178,12 +196,48 @@ function zephyrWindSvg({ gradientId = 'zephyr-brand-gradient', title = 'Zephyr' 
     return `<svg class="zephyr-brand-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false"><title>${escapeHtml(title)}</title><defs><linearGradient id="${gradientId}" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="var(--zephyr-icon-grad-start, #e0f2fe)"/><stop offset="var(--zephyr-icon-grad-mid-offset, 60%)" stop-color="var(--zephyr-icon-grad-mid, #93c5fd)"/><stop offset="100%" stop-color="var(--zephyr-icon-grad-end, #60a5fa)"/></linearGradient></defs><path class="wind-path-main" d="M 45 65 C 85 45, 135 55, 160 80 C 130 80, 95 95, 75 125" stroke="url(#${gradientId})"/><path class="wind-path-mid" d="M 50 75 C 90 75, 125 90, 145 115 C 115 135, 75 155, 40 135" stroke="url(#${gradientId})"/><path class="wind-path-tail" d="M 85 95 C 110 110, 135 135, 155 130" stroke="url(#${gradientId})"/><circle cx="145" cy="115" r="4.5" fill="var(--zephyr-icon-dot-a, #60a5fa)" opacity="0.9"/><circle cx="75" cy="125" r="3" fill="var(--zephyr-icon-dot-b, #93c5fd)" opacity="0.8"/></svg>`;
 }
 
+/* Zephyr One's mark: the same wind strokes carrying an "One" wordmark.
+ *
+ * Three deliberate differences from the Zephyr mark above, matching the
+ * shipped One artwork in zephyr_one/platform_assets/icons/:
+ *   1. The tail sweeps wider (`M 78 88 …`) so it clears the wordmark.
+ *   2. The mid stroke is masked by an ellipse at (145,115) — the wordmark's
+ *      "O" sits in that gap, so the stroke must not run through it.
+ *   3. There is no dot-a circle; the "O" occupies that position.
+ *
+ * The white rounded plate present in the app-icon SVGs is intentionally NOT
+ * emitted here: that plate exists so the light-gray strokes stay visible on a
+ * light OS taskbar, but inline it would punch a white square into a dark UI.
+ *
+ * Colours come from the same CSS custom properties as the Zephyr mark, so this
+ * follows the active colour scheme with no extra wiring.
+ */
+function oneCutMask(maskId) {
+    return `<mask id="${maskId}" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200"><rect width="200" height="200" fill="#ffffff"/><ellipse cx="${ONE_CUT.cx}" cy="${ONE_CUT.cy}" rx="${ONE_CUT.rx}" ry="${ONE_CUT.ry}" fill="#000000"/></mask>`;
+}
+
+function oneWordmark(fill) {
+    return `<g class="zephyr-one-wordmark" font-family="${ONE_WORDMARK_FONT}" font-size="15" font-weight="800" fill="${fill}" opacity="0.9"><text x="145" y="120.7" text-anchor="middle">O</text><text x="152.4" y="120.7">ne</text></g>`;
+}
+
+function zephyrOneWindSvg({ gradientId = 'zephyr-one-gradient', maskId = 'zephyr-one-cut', title = 'Zephyr One' } = {}) {
+    return `<svg class="zephyr-brand-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false"><title>${escapeHtml(title)}</title><defs><linearGradient id="${gradientId}" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="var(--zephyr-icon-grad-start, #eef2f7)"/><stop offset="var(--zephyr-icon-grad-mid-offset, 58%)" stop-color="var(--zephyr-icon-grad-mid, #a8b5c3)"/><stop offset="100%" stop-color="var(--zephyr-icon-grad-end, #6e7b88)"/></linearGradient>${oneCutMask(maskId)}</defs><path class="wind-path-main" d="${ONE_PATH_MAIN}" stroke="url(#${gradientId})"/><path class="wind-path-mid" d="${ONE_PATH_MID}" stroke="url(#${gradientId})" mask="url(#${maskId})"/><path class="wind-path-tail" d="${ONE_PATH_TAIL}" stroke="url(#${gradientId})"/>${oneWordmark('var(--zephyr-icon-title, #0a84ff)')}<circle cx="75" cy="125" r="3" fill="var(--zephyr-icon-dot-b, #8e99a6)" opacity="0.8"/></svg>`;
+}
+
+/** True when this document is the Zephyr One shell rather than Zephyr proper. */
+function isOneProduct() {
+    return document.documentElement?.dataset?.zephyrProduct === 'one';
+}
+
 export function zephyrBrandIconHtml(icon = DEFAULT_BRAND_ICON) {
     const value = String(icon || DEFAULT_BRAND_ICON).trim() || DEFAULT_BRAND_ICON;
     if (value.startsWith('data:image/')) return `<img src="${value}" alt="">`;
     if (value === DEFAULT_BRAND_ICON) {
-        const gradientId = `zephyr-brand-gradient-${++iconSeq}`;
-        return `<span class="zephyr-brand-mark" aria-hidden="true">${zephyrWindSvg({ gradientId })}</span>`;
+        const seq = ++iconSeq;
+        const svg = isOneProduct()
+            ? zephyrOneWindSvg({ gradientId: `zephyr-one-gradient-${seq}`, maskId: `zephyr-one-cut-${seq}` })
+            : zephyrWindSvg({ gradientId: `zephyr-brand-gradient-${seq}` });
+        return `<span class="zephyr-brand-mark" aria-hidden="true">${svg}</span>`;
     }
     return escapeHtml(value);
 }
@@ -196,10 +250,27 @@ function faviconSvgForPalette(palette) {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none"><defs><linearGradient id="g" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="${s0}"/><stop offset="${midOffset}" stop-color="${s1}"/><stop offset="100%" stop-color="${s2}"/></linearGradient></defs><path d="M 45 65 C 85 45, 135 55, 160 80 C 130 80, 95 95, 75 125" stroke="url(#g)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M 50 75 C 90 75, 125 90, 145 115 C 115 135, 75 155, 40 135" stroke="url(#g)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/><path d="M 85 95 C 110 110, 135 135, 155 130" stroke="url(#g)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/><circle cx="145" cy="115" r="4.5" fill="${palette.dotA || palette.dark}" opacity="0.9"/><circle cx="75" cy="125" r="3" fill="${palette.dotB || palette.mid}" opacity="0.8"/></svg>`;
 }
 
+/* Favicon variant of the One mark. Same reasoning as oneWindSvg(): a `data:`
+ * URL is rendered outside the document, so CSS custom properties resolve to
+ * nothing and every colour must be a literal. No white plate here — a favicon
+ * sits on the browser/webview chrome, not on an OS icon grid. */
+function oneFaviconSvgForPalette(palette) {
+    const midOffset = palette.midOffset || '60%';
+    const s0 = palette.polar ? palette.dark : palette.main;
+    const s1 = palette.mid;
+    const s2 = palette.polar ? palette.main : palette.dark;
+    const title = palette.title || palette.dark;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none"><defs><linearGradient id="g" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="${s0}"/><stop offset="${midOffset}" stop-color="${s1}"/><stop offset="100%" stop-color="${s2}"/></linearGradient>${oneCutMask('gcut')}</defs><path d="${ONE_PATH_MAIN}" stroke="url(#g)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/><path d="${ONE_PATH_MID}" stroke="url(#g)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" mask="url(#gcut)"/><path d="${ONE_PATH_TAIL}" stroke="url(#g)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>${oneWordmark(title)}<circle cx="75" cy="125" r="3" fill="${palette.dotB || palette.mid}" opacity="0.8"/></svg>`;
+}
+
 export function zephyrFaviconHref(icon = DEFAULT_BRAND_ICON) {
     const value = String(icon || DEFAULT_BRAND_ICON).trim() || DEFAULT_BRAND_ICON;
     if (value.startsWith('data:image/')) return value;
-    if (value === DEFAULT_BRAND_ICON) return `data:image/svg+xml,${encodeURIComponent(faviconSvgForPalette(paletteForScheme()))}`;
+    if (value === DEFAULT_BRAND_ICON) {
+        const palette = paletteForScheme();
+        const svg = isOneProduct() ? oneFaviconSvgForPalette(palette) : faviconSvgForPalette(palette);
+        return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    }
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">${escapeHtml(value)}</text></svg>`;
     return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }

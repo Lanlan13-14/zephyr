@@ -39,26 +39,16 @@ for d in zephyr-worker rdp-wasm motion-wasm; do
   fi
 done
 
-# Production dependencies follow the root lockfile. Desktop platforms retain
-# install scripts so their native addons match the target OS. Android never runs
-# those host-native scripts: it uses node:sqlite and ssh2's pure-JS fallback.
+# Production dependencies follow the root lockfile. Install scripts stay enabled
+# so any native addon is built for the host, but the runtime still selects
+# node:sqlite (ZEPHYR_ONE_USE_BUILTIN_SQLITE=1 in runtime/mod.rs) because the
+# bundled Node is the CI runner's own binary and the macOS bundle is universal
+# while npm can only build a single-arch addon.
 if command -v npm >/dev/null 2>&1; then
-  if [ "${ZEPHYR_ONE_ANDROID:-0}" = "1" ]; then
-    (cd "$OUT" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund) || {
-      echo "ERROR: npm ci failed in Android zephyr-core" >&2
-      exit 1
-    }
-    # better-sqlite3 is replaced by node:sqlite and sharp is lazy/fallback-only
-    # on Android. Remove their host packages before packing to reduce APK size.
-    rm -rf "$OUT/node_modules/better-sqlite3" "$OUT/node_modules/sharp" "$OUT/node_modules/@img"
-    find "$OUT/node_modules" -type f -name '*.node' -delete
-    echo "Android core: removed unsupported native dependency packages and .node addons"
-  else
-    (cd "$OUT" && npm ci --omit=dev --no-audit --no-fund) || {
-      echo "ERROR: npm ci failed in desktop zephyr-core" >&2
-      exit 1
-    }
-  fi
+  (cd "$OUT" && npm ci --omit=dev --no-audit --no-fund) || {
+    echo "ERROR: npm ci failed in desktop zephyr-core" >&2
+    exit 1
+  }
 fi
 
 # The Android runtime reads static files directly from the installed APK. Copy

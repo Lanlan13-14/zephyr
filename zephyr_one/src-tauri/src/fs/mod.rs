@@ -326,25 +326,6 @@ mod tests {
 }
 
 pub fn default_share_path() -> (String, String) {
-    #[cfg(target_os = "android")]
-    {
-        return (
-            "/storage/emulated/0".into(),
-            "Internal Storage".into(),
-        );
-    }
-
-    #[cfg(target_os = "ios")]
-    {
-        if let Ok(home) = std::env::var("HOME") {
-            let docs = format!("{home}/Documents");
-            let _ = fs::create_dir_all(&docs);
-            return (docs, "Documents".into());
-        }
-        let tmp = std::env::temp_dir();
-        return (tmp.to_string_lossy().to_string(), "Temp".into());
-    }
-
     #[cfg(target_os = "windows")]
     {
         if let Ok(profile) = std::env::var("USERPROFILE") {
@@ -373,8 +354,6 @@ pub fn default_share_path() -> (String, String) {
 
     // Other / unknown targets
     #[cfg(not(any(
-        target_os = "android",
-        target_os = "ios",
         target_os = "windows",
         target_os = "macos",
         target_os = "linux"

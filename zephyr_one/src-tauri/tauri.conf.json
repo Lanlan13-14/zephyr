@@ -53,9 +53,6 @@
       "deb": {
         "depends": []
       }
-    },
-    "android": {
-      "minSdkVersion": 24
     }
   },
   "plugins": {}

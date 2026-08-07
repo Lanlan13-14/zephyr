@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +22,29 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(path.join(root, rel), 'utf8');
+
+/**
+ * Remove comments so a residue scan matches code rather than prose.
+ *
+ * Deleting a platform means the remaining comments have to name what went away
+ * and why; without this, those explanations register as leftovers. Deliberately
+ * crude — it only has to be good enough for negative matching, and mangling a
+ * URL inside a stripped string cannot produce a false *pass*.
+ *
+ * @param {string} file path, used only to pick the comment syntax
+ * @param {string} text file contents
+ * @returns {string} contents with comments blanked out
+ */
+function stripComments(file, text) {
+    if (/\.(toml|sh|py)$/.test(file)) {
+        return text.replace(/^\s*#.*$/gm, '').replace(/\s+#.*$/gm, '');
+    }
+    return text
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '')
+        .replace(/^\s*\/\/\/.*$/gm, '')
+        .replace(/^\s*\/\/!.*$/gm, '');
+}
 
 const runtimeRs = read('zephyr_one/src-tauri/src/runtime/mod.rs');
 const serverJs = read('server.js');
@@ -86,82 +109,91 @@ test('adopted local session cannot be reached without the embedded flag', () => 
     assert.match(body, /storage\.getFirstUser\(\)/);
 });
 
-test('release builds skip Android and iOS unless explicitly requested', () => {
-    assert.match(workflow, /include_mobile:/);
-    assert.match(workflow, /description: 'Also build Android \+ iOS \(off by default; desktop-only release\)'/);
+test('the workflow builds only the three desktop platforms', () => {
+    /* Zephyr One is desktop-only. Android and iOS were not merely disabled —
+     * their jobs, scripts, configs and Rust branches were deleted, because iOS
+     * cannot spawn the Node core at all and Android's libnode.so + APK-asset
+     * pipeline is not worth carrying beside the desktop product. A leftover
+     * `needs:` entry pointing at a deleted job makes GitHub Actions reject the
+     * whole workflow, so this asserts the graph, not just the text. */
+    /* Scope to the jobs: block. A bare 2-space-indent match also picks up
+     * `push:` under `on:` and `run:` under `defaults:`. */
+    const jobsAt = workflow.indexOf('\njobs:');
+    assert.ok(jobsAt > 0, 'workflow must declare a jobs: block');
+    const jobsBlock = workflow.slice(jobsAt);
+    const jobNames = [...jobsBlock.matchAll(/^ {2}([a-z][a-z0-9-]*):$/gm)].map((m) => m[1]);
+    assert.deepEqual(
+        jobNames,
+        ['test', 'build-windows', 'build-macos', 'build-linux', 'release'],
+        'only desktop jobs may exist',
+    );
 
-    /* Default must be off, so a mobile break cannot stall a desktop publish.
-     * The block is delimited by the next top-level key rather than a byte
-     * offset — a fixed slice silently truncates when the comment above the
-     * input grows, which turns this assertion into a false failure. */
-    const inputAt = workflow.indexOf('include_mobile:');
-    const afterInput = workflow.slice(inputAt);
-    const blockEnd = afterInput.search(/\n[a-z]/);
-    const inputBlock = blockEnd === -1 ? afterInput : afterInput.slice(0, blockEnd);
-    assert.match(inputBlock, /type: boolean/);
-    assert.match(inputBlock, /default: false/);
-
-    // Both mobile jobs gated; all three desktop jobs untouched.
-    const jobCondition = (name) => {
-        const at = workflow.indexOf(`\n  ${name}:`);
-        assert.ok(at > 0, `job ${name} must exist`);
-        const block = workflow.slice(at, at + 700);
-        const line = block.split('\n').find((l) => l.trimStart().startsWith('if:'));
-        assert.ok(line, `job ${name} must have an if: condition`);
-        return line;
-    };
-
-    for (const mobile of ['build-android', 'build-ios']) {
-        assert.match(
-            jobCondition(mobile),
-            /inputs\.include_mobile == 'true'/,
-            `${mobile} must be gated behind include_mobile`,
-        );
+    for (const gone of ['build-android', 'build-ios', 'include_mobile', 'validation_platform']) {
+        assert.ok(!jobNames.includes(gone), `${gone} must not be a job`);
     }
-    for (const desktop of ['build-windows', 'build-macos', 'build-linux']) {
-        assert.doesNotMatch(
-            jobCondition(desktop),
-            /include_mobile/,
-            `${desktop} must not depend on the mobile gate`,
-        );
+
+    // Every `needs:` target must resolve to a real job.
+    for (const match of workflow.matchAll(/needs:\s*(\[[^\]]*\]|[a-z][a-z0-9-]*)/g)) {
+        const targets = match[1].startsWith('[')
+            ? match[1].slice(1, -1).split(',').map((s) => s.trim()).filter(Boolean)
+            : [match[1]];
+        for (const target of targets) {
+            assert.ok(jobNames.includes(target), `needs: ${target} references a missing job`);
+        }
     }
 });
 
-test('release job still publishes when the mobile jobs are skipped', () => {
+test('release depends on the desktop jobs and still tolerates one failing', () => {
     const at = workflow.indexOf('\n  release:');
     assert.ok(at > 0);
     const block = workflow.slice(at, at + 900);
-    // always() is what lets skipped needs through; without it a skipped
-    // build-android would block the whole release.
+    // always() lets a single failed desktop platform through so the other two
+    // still publish; needs.test.result gates on the suite actually passing.
     assert.match(block, /always\(\)/);
     assert.match(block, /needs\.test\.result == 'success'/);
-    assert.match(block, /needs: \[test, build-android, build-windows, build-macos, build-linux, build-ios\]/);
+    assert.match(block, /needs: \[test, build-windows, build-macos, build-linux\]/);
 });
 
-test('release notes do not advertise platforms the default build omits', () => {
-    const at = workflow.indexOf('## Zephyr One ${{ github.event.inputs.tag }}');
-    assert.ok(at > 0, 'release body must exist');
-    const body = workflow.slice(at, workflow.indexOf('files: dist-one/*'));
+test('release packaging and notes cover desktop artifacts only', () => {
+    const packAt = workflow.indexOf('Pack all platforms');
+    assert.ok(packAt > 0, 'the packaging step must exist');
+    const pack = workflow.slice(packAt, workflow.indexOf('- uses: softprops/action-gh-release', packAt));
+    for (const desktop of ['*.msi', '*.exe', '*.dmg', '*.deb', '*.rpm']) {
+        assert.ok(pack.includes(desktop), `${desktop} must still be collected`);
+    }
+    for (const mobile of ['*.apk', '*.aab', '*.ipa']) {
+        assert.ok(!pack.includes(mobile), `${mobile} must no longer be collected`);
+    }
 
-    // Desktop is what a default run produces.
+    const bodyAt = workflow.indexOf('## Zephyr One ${{ github.event.inputs.tag }}');
+    assert.ok(bodyAt > 0, 'release body must exist');
+    const body = workflow.slice(bodyAt, workflow.indexOf('files: dist-one/*'));
     for (const platform of ['Windows', 'macOS', 'Linux']) {
         assert.ok(body.includes(platform), `${platform} must be listed`);
     }
-    // Mobile must be marked opt-in rather than presented as shipped.
-    assert.match(body, /include_mobile/, 'mobile rows must reference the opt-in input');
+    // Mobile may only appear as an explicit removal note, never as an artifact row.
+    assert.doesNotMatch(body, /\|\s*(Android|iOS)\s*(APK)?\s*\|/, 'no mobile artifact row');
 });
 
-test('the built-in SQLite flag is set once, for every platform, not per-OS', () => {
-    // This flag is why desktop hit the node:sqlite binding divergence at all:
-    // it lives in the shared block, so Windows/macOS/Linux use the built-in
-    // driver too. Asserted so the parity tests are known to cover desktop.
-    const shared = runtimeRs.indexOf('.env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1")');
-    assert.ok(shared > 0, 'the shared env block must set the built-in SQLite flag');
+test('the built-in SQLite flag is set unconditionally for every desktop platform', () => {
+    /* This flag is why desktop hit the node:sqlite binding divergence at all.
+     * It has to stay unconditional: better-sqlite3's addon is compiled for the
+     * CI runner's ABI and architecture, which does not match the bundled Node
+     * on macOS universal builds. Guarding it per-OS would silently send one
+     * platform down the native path. */
+    const occurrences = runtimeRs.split('ZEPHYR_ONE_USE_BUILTIN_SQLITE').length - 1;
+    assert.equal(occurrences, 1, 'the flag must be set exactly once, not per-OS');
 
-    const androidBlockAt = runtimeRs.indexOf('cmd.env("ZEPHYR_ANDROID_APK_PATH"');
+    const flagAt = runtimeRs.indexOf('.env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1")');
+    assert.ok(flagAt > 0, 'the shared env block must set the built-in SQLite flag');
+
+    // It must not sit inside any cfg-gated block.
+    const before = runtimeRs.slice(0, flagAt);
+    const lastCfg = before.lastIndexOf('#[cfg(');
+    const lastEnvChainStart = before.lastIndexOf('cmd.env("ZEPHYR_DATA_DIR"');
     assert.ok(
-        shared < androidBlockAt,
-        'the flag must be set in the shared block, before the Android-only block',
+        lastEnvChainStart > lastCfg,
+        'the flag must be part of the unconditional env chain, not a cfg block',
     );
 
     assert.match(
@@ -169,4 +201,80 @@ test('the built-in SQLite flag is set once, for every platform, not per-OS', () 
         /ZEPHYR_ONE_USE_BUILTIN_SQLITE === '1'/,
         'the driver must honour the flag',
     );
+});
+
+test('no Android or iOS surface remains anywhere in the Zephyr One tree', () => {
+    /* A deletion this wide fails quietly: a leftover script, capability file or
+     * cfg branch keeps building until someone trips over it. Walk the tree. */
+    const oneRoot = path.join(root, 'zephyr_one');
+    const skip = new Set(['node_modules', 'dist', 'target', 'gen', '.git']);
+    const offenders = [];
+
+    const walk = (dir) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            if (skip.has(entry.name)) continue;
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) { walk(full); continue; }
+            if (!/\.(rs|toml|json|mjs|js|sh|py)$/.test(entry.name)) continue;
+            /* Comments are stripped first. Explaining *why* mobile was removed
+             * necessarily names the things that were removed, and a raw text
+             * match would flag that prose as residue — turning every honest
+             * comment into a test failure. Only code counts. */
+            const code = stripComments(full, readFileSync(full, 'utf8'));
+            // Identifiers that would actually still build or link something.
+            const hits = [
+                /target_os = "android"/,
+                /target_os = "ios"/,
+                /tauri_plugin_biometric/,
+                /libnode\.so/,
+                /jniLibs/,
+                /AAssetManager/,
+                /zephyr-core\.cjs/,
+            ].filter((re) => re.test(code));
+            if (hits.length) offenders.push(`${path.relative(root, full)} → ${hits.join(', ')}`);
+        }
+    };
+    walk(oneRoot);
+
+    assert.deepEqual(offenders, [], `mobile surface still present:\n${offenders.join('\n')}`);
+});
+
+test('mobile-only scripts, configs and assets are gone', () => {
+    const gone = [
+        'zephyr_one/scripts/prepare-android.sh',
+        'zephyr_one/scripts/build-android-embedded-core.mjs',
+        'zephyr_one/scripts/bundle-node-android.sh',
+        'zephyr_one/scripts/fetch-node-android.sh',
+        'zephyr_one/scripts/patch-android-manifest.sh',
+        'zephyr_one/scripts/stamp-android-icons.py',
+        'zephyr_one/scripts/verify-android-apk.sh',
+        'zephyr_one/scripts/verify-android-core.sh',
+        'zephyr_one/scripts/verify-android-node-binary.sh',
+        'zephyr_one/scripts/android-emulator-smoke.sh',
+        'zephyr_one/src-tauri/tauri.android.conf.json',
+        'zephyr_one/src-tauri/capabilities/mobile.json',
+        'zephyr_one/platform_assets/android',
+    ];
+    for (const rel of gone) {
+        assert.ok(!existsSync(path.join(root, rel)), `${rel} must be deleted`);
+    }
+
+    // package.json must not advertise android:* scripts any more.
+    const pkg = JSON.parse(read('zephyr_one/package.json'));
+    const mobileScripts = Object.keys(pkg.scripts || {}).filter((k) => /android|ios/i.test(k));
+    assert.deepEqual(mobileScripts, [], 'no mobile npm scripts may remain');
+
+    /* The crate is desktop-only, so assert the declared crate-type positively.
+     * A `doesNotMatch(/staticlib/)` would trip over the comment that records
+     * why those link kinds were dropped. */
+    const cargo = read('zephyr_one/src-tauri/Cargo.toml');
+    assert.match(
+        cargo,
+        /crate-type = \["rlib"\]/,
+        'main.rs links the lib normally; staticlib (iOS) and cdylib (Android JNI) cost link time for nothing',
+    );
+    const cargoCode = stripComments('Cargo.toml', cargo);
+    assert.doesNotMatch(cargoCode, /^jni\s*=/m, 'the jni dependency was Android-only');
+    assert.doesNotMatch(cargoCode, /tauri-plugin-biometric/, 'biometric plugin was mobile-only');
+    assert.doesNotMatch(cargoCode, /target_os = "(android|ios)"/, 'no mobile target blocks may remain');
 });

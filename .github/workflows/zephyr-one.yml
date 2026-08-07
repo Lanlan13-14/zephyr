@@ -22,27 +22,7 @@ on:
         required: false
         default: ''
       validation_only:
-        description: 'Build Windows + Android for validation without publishing a release'
-        type: boolean
-        required: false
-        default: false
-      validation_platform:
-        description: 'Platform subset for validation builds'
-        type: choice
-        required: false
-        default: both
-        options:
-          - both
-          - windows
-          - android
-      include_mobile:
-        # Desktop (Windows/macOS/Linux) is the supported surface today. Android
-        # still boots the core through the libnode.so + APK-asset path, and iOS
-        # has no working core path at all: runtime/mod.rs resolves Node through
-        # the desktop branch, which needs a spawnable node binary that iOS
-        # forbids. Keep both off the default release so a mobile failure cannot
-        # stall a desktop publish; flip this on deliberately when working on them.
-        description: 'Also build Android + iOS (off by default; desktop-only release)'
+        description: 'Build the desktop targets for validation without publishing a release'
         type: boolean
         required: false
         default: false
@@ -78,161 +58,8 @@ jobs:
 
   # ───────────── Release builds (workflow_dispatch + tag) ─────────────
 
-  build-android:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_platform != 'windows' && github.event.inputs.include_mobile == 'true'
-    needs: test
-    runs-on: ubuntu-latest
-    # Keep hard-fail for Android; NDK_HOME is set in Install NDK step.
-    steps:
-      - uses: actions/checkout@v5
-      - name: Stamp package version from release tag
-        # one-v0.1.7 → package.json / Cargo.toml / tauri.conf.json version 0.1.7
-        # + ZEPHYR_ONE_VERSION_NAME / ZEPHYR_ONE_VERSION_CODE for Android gradle
-        run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - uses: dtolnay/rust-toolchain@1.88.0
-        with:
-          targets: aarch64-linux-android,x86_64-linux-android
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: zephyr_one/src-tauri -> target
-          key: one-android-arm64
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install NDK / platforms
-        run: |
-          sdkmanager "ndk;27.2.12479018" "platforms;android-34" "build-tools;34.0.0"
-          # Point NDK_HOME at the SDK-managed NDK (tauri rejects empty/invalid NDK_HOME)
-          NDK_PATH="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -n 1)"
-          if [ -z "$NDK_PATH" ]; then
-            NDK_PATH="$(ls -d "$ANDROID_SDK_ROOT"/ndk/* 2>/dev/null | sort -V | tail -n 1)"
-          fi
-          echo "NDK_PATH=$NDK_PATH"
-          test -n "$NDK_PATH" && test -d "$NDK_PATH"
-          echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
-          echo "NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
-          LLVM_BIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          echo "PATH=$LLVM_BIN:$PATH" >> "$GITHUB_ENV"
-          echo "CC_aarch64_linux_android=$LLVM_BIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
-          echo "CXX_aarch64_linux_android=$LLVM_BIN/aarch64-linux-android24-clang++" >> "$GITHUB_ENV"
-          echo "AR_aarch64_linux_android=$LLVM_BIN/llvm-ar" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$LLVM_BIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
-          echo "CC_x86_64_linux_android=$LLVM_BIN/x86_64-linux-android24-clang" >> "$GITHUB_ENV"
-          echo "CXX_x86_64_linux_android=$LLVM_BIN/x86_64-linux-android24-clang++" >> "$GITHUB_ENV"
-          echo "AR_x86_64_linux_android=$LLVM_BIN/llvm-ar" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$LLVM_BIN/x86_64-linux-android24-clang" >> "$GITHUB_ENV"
-        working-directory: .
-      - run: npm ci --ignore-scripts
-      - run: ZEPHYR_ONE_ANDROID=1 npm run stage:core
-      - run: node --test ../tests/android-core-startup-smoke.test.mjs
-      - run: npm run build
-      - name: Init Android project
-        run: |
-          if [ ! -d src-tauri/gen/android ]; then
-            npx tauri android init --ci
-          fi
-      - name: Prepare icons + signing + Node + no-extract embedded core
-        run: |
-          # Optional PIL for crisp mipmaps; stamp script works without it.
-          python3 -m pip install --user pillow || true
-          sh scripts/prepare-android.sh src-tauri/gen/android
-          test -f src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libnode.so
-          sh scripts/verify-android-node-binary.sh src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libnode.so
-          test -s src-tauri/gen/android/app/src/main/assets/zephyr-core.cjs
-          test -f src-tauri/gen/android/app/src/main/assets/zephyr-public/app.html
-          test ! -e src-tauri/gen/android/app/src/main/assets/zephyr-core.tar
-          test "$(find zephyr-core/node_modules -type f -name '*.node' | wc -l)" -eq 0
-          test ! -e zephyr-core/node_modules/better-sqlite3
-          test ! -e zephyr-core/node_modules/sharp
-          test ! -e zephyr-core/node_modules/@img
-          sh scripts/verify-android-core.sh zephyr-core
-          ls -lh src-tauri/gen/android/app/src/main/jniLibs/*/* || true
-          ls -lh src-tauri/gen/android/app/src/main/assets/zephyr-core.cjs
-          # Confirm gradle carries stamped version
-          grep -E 'versionName|versionCode' src-tauri/gen/android/app/build.gradle.kts || true
-      - name: Build signed release APK (aarch64)
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-          NDK_HOME: ${{ env.NDK_HOME }}
-        run: |
-          set -e
-          echo "NDK_HOME=$NDK_HOME"
-          test -d "$NDK_HOME"
-          # Keep Gradle below memory pressure while Rust/NDK tasks run. The build
-          # must stay under Tauri CLI because its plugin uses the CLI WebSocket.
-          GRADLE_PROPERTIES=src-tauri/gen/android/gradle.properties
-          sed -i 's/^org\.gradle\.jvmargs=.*/org.gradle.jvmargs=-Xmx1024m -Dfile.encoding=UTF-8/' "$GRADLE_PROPERTIES"
-          printf '\norg.gradle.workers.max=1\norg.gradle.daemon=false\n' >> "$GRADLE_PROPERTIES"
-          npx tauri android build --apk --target aarch64
-          APK=$(find src-tauri/gen/android -type f \( -name 'app-universal-release.apk' -o -name '*-release*.apk' \) | head -n 1)
-          echo "APK=$APK"
-          test -n "$APK" && test -f "$APK"
-          sh scripts/verify-android-apk.sh "$APK"
-          ls -lh "$APK"
-          mkdir -p dist-out
-          cp -v "$APK" "dist-out/zephyr-one-android-arm64-${{ github.event.inputs.tag }}.apk"
-          # Prefer release-signed APK from tauri; verify zip
-          file "dist-out/zephyr-one-android-arm64-${{ github.event.inputs.tag }}.apk" || true
-      - name: Build x86_64 APK for real emulator startup smoke
-        env:
-          NODE_ANDROID_ABIS: x86_64
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-          NDK_HOME: ${{ env.NDK_HOME }}
-        run: |
-          set -e
-          sh scripts/prepare-android.sh src-tauri/gen/android
-          sh scripts/verify-android-node-binary.sh src-tauri/gen/android/app/src/main/jniLibs/x86_64/libnode.so x64
-          npx tauri android build --apk --target x86_64
-          # Tauri names a single-ABI release app-universal-release.apk too, so
-          # select the APK just written by this second build by modification time.
-          X86_APK=$(find src-tauri/gen/android -type f -name '*release*.apk' -printf '%T@ %p\n' | sort -nr | sed -n '1s/^[^ ]* //p')
-          echo "X86_APK=$X86_APK"
-          test -n "$X86_APK" && test -f "$X86_APK"
-          sh scripts/verify-android-apk.sh "$X86_APK" x86_64
-          mkdir -p dist-emulator
-          cp -v "$X86_APK" dist-emulator/zephyr-one-android-x86_64.apk
-      - name: Enable Android emulator acceleration
-        working-directory: .
-        run: |
-          test -e /dev/kvm
-          sudo chmod 666 /dev/kvm
-      - name: Install and run Zephyr One in Android emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 34
-          arch: x86_64
-          target: google_apis
-          # No pixel_6 profile: skin overlay cmds spam "device not found" on
-          # every run and are unrelated to the app. generic AVD is enough.
-          disable-animations: true
-          emulator-boot-timeout: 900
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -accel on
-          script: sh zephyr_one/scripts/android-emulator-smoke.sh zephyr_one/dist-emulator/zephyr-one-android-x86_64.apk com.zephyr.one zephyr_one/dist-emulator-smoke
-      - name: Upload Android emulator diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-emulator-smoke
-          path: zephyr_one/dist-emulator-smoke/**
-          if-no-files-found: warn
-      - uses: actions/upload-artifact@v4
-        with:
-          name: android-apk
-          path: zephyr_one/dist-out/*.apk
-          if-no-files-found: error
-
   build-windows:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_platform != 'android'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
     needs: test
     runs-on: windows-2022
     steps:
@@ -395,94 +222,11 @@ jobs:
           path: zephyr_one/dist-out/**
           if-no-files-found: warn
 
-  # iOS: unsigned CI build (App Store / device install still needs real Apple team + certs)
-  build-ios:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true' && github.event.inputs.include_mobile == 'true'
-    needs: test
-    runs-on: macos-latest
-    # Do not sink the whole release if only iOS tooling is missing secrets.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-      - name: Stamp package version from release tag
-        run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim
-      - name: Select Xcode
-        run: |
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
-          xcodebuild -version
-      - run: npm install
-      - run: sh scripts/stage-zephyr-core.sh
-      - run: npm run build
-      - name: Inject Apple development team for project generation
-        env:
-          # Prefer repo secret when available; placeholder only for Xcode project init + --no-codesign.
-          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
-        run: |
-          set -e
-          TEAM="${APPLE_DEVELOPMENT_TEAM:-}"
-          if [ -z "$TEAM" ]; then
-            # Tauri refuses empty team during `ios init`. Placeholder is enough for unsigned CI.
-            TEAM="0000000000"
-            echo "APPLE_DEVELOPMENT_TEAM secret not set; using unsigned CI placeholder $TEAM"
-          else
-            echo "Using APPLE_DEVELOPMENT_TEAM from secrets"
-          fi
-          python3 - <<PY
-          import json
-          from pathlib import Path
-          p = Path("src-tauri/tauri.conf.json")
-          conf = json.loads(p.read_text())
-          conf.setdefault("bundle", {}).setdefault("iOS", {})["developmentTeam"] = "${TEAM}"
-          p.write_text(json.dumps(conf, indent=2) + "\n")
-          print("wrote bundle.iOS.developmentTeam")
-          PY
-      - name: Init iOS project
-        run: |
-          set -e
-          if [ ! -d src-tauri/gen/apple ]; then
-            npx tauri ios init --ci
-          fi
-          ls -la src-tauri/gen/apple
-      - name: Build iOS (unsigned; Tauri flag is --no-sign)
-        run: |
-          set -e
-          # Tauri 2 CLI: --no-sign (not --no-codesign)
-          if ! npx tauri ios build --no-sign --target aarch64 --ci; then
-            echo "device aarch64 failed; trying default --no-sign --ci"
-            npx tauri ios build --no-sign --ci
-          fi
-      - name: Collect iOS artifacts
-        run: |
-          set -e
-          mkdir -p dist-out
-          find src-tauri -type d -name '*.app' 2>/dev/null | head -50 || true
-          app=$(find src-tauri -type d -name '*.app' 2>/dev/null | head -n 1 || true)
-          if [ -z "$app" ]; then
-            echo "No .app produced" >&2
-            exit 1
-          fi
-          echo "found app: $app"
-          (cd "$(dirname "$app")" && zip -ry "$OLDPWD/dist-out/zephyr-one-ios-${{ github.event.inputs.tag }}-unsigned.zip" "$(basename "$app")")
-          rm -rf Payload && mkdir Payload
-          cp -R "$app" Payload/
-          zip -ry "dist-out/zephyr-one-ios-${{ github.event.inputs.tag }}-unsigned.ipa" Payload
-          ls -lah dist-out
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ios-unsigned
-          path: zephyr_one/dist-out/**
-          if-no-files-found: warn
-
   release:
-    # Publish whatever platforms succeeded; don't require all five green.
+    # Publish whatever desktop platforms succeeded; one failing OS must not
+    # withhold the others. `test` is the only hard gate.
     if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true' && needs.test.result == 'success' }}
-    needs: [test, build-android, build-windows, build-macos, build-linux, build-ios]
+    needs: [test, build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -494,12 +238,14 @@ jobs:
         run: |
           mkdir -p dist-one
           find release-artifacts -type f \( \
-            -name '*.apk' -o -name '*.aab' -o \
             -name '*.msi' -o -name '*.exe' -o -name '*.zip' -o \
-            -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' -o \
-            -name '*.ipa' \
+            -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' \
           \) -exec cp -v {} dist-one/ \; || true
+          # Linux also ships a bare portable binary with no extension.
+          find release-artifacts -type f -name 'zephyr-one-linux-x64-*' \
+            -exec cp -v {} dist-one/ \; || true
           ls -la dist-one || true
+          test "$(find dist-one -type f | wc -l)" -gt 0
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag }}
@@ -516,9 +262,12 @@ jobs:
             | macOS | DMG / app zip |
             | Linux | deb / rpm / portable binary |
 
-            Android and iOS are **not** part of this release. Both are being
-            rebuilt as native clients; run the workflow with `include_mobile`
-            enabled to produce the legacy Tauri mobile artifacts.
+            Android and iOS are **not** part of Zephyr One. The Tauri mobile
+            path has been removed from this repository: iOS cannot spawn the
+            Node core at all, and Android needed a libnode.so + APK-asset
+            pipeline not worth maintaining. Both platforms are being rebuilt as
+            native clients (SwiftUI / Jetpack Compose) that sync with Zephyr
+            main instead of embedding the core.
 
             ### Notes
             - Desktop core runs in-process on loopback only; no LAN exposure

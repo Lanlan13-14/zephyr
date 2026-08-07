@@ -1,10 +1,10 @@
 use crate::auth;
 use crate::fs::{self, FileStat, FsState};
+use crate::icon;
 use crate::runtime;
 use crate::token::{TokenRecord, TokenState};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_dialog::DialogExt;
 
 #[derive(Debug, Serialize)]
@@ -39,12 +39,31 @@ pub fn auth_unlock(app: AppHandle, reason: Option<String>) -> auth::UnlockResult
     auth::unlock(&app, reason.as_deref().unwrap_or("Unlock Zephyr One"))
 }
 
+/// Swap the window icon to the palette the product UI is using.
+///
+/// Mirrors Zephyr Agent's theme-following icon. Windows and Linux apply it;
+/// macOS has no per-window icon and keeps the bundled frost artwork, which the
+/// returned `applied: false` + `reason` reports honestly instead of silently
+/// doing nothing.
+#[tauri::command]
+pub fn set_theme_icon(app: AppHandle, theme: Option<String>) -> icon::IconResult {
+    icon::set_theme_icon(&app, theme.as_deref().unwrap_or("frost"))
+}
+
 /// Start embedded Zephyr core (full product). Remote main is sync-only.
 #[tauri::command]
 pub async fn runtime_start(app: AppHandle) -> Result<runtime::RuntimeInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || runtime::ensure_started(&app))
+    // `app` is moved into the blocking closure; the watcher needs its own handle.
+    let watcher_app = app.clone();
+    let info = tauri::async_runtime::spawn_blocking(move || runtime::ensure_started(&app))
         .await
-        .map_err(|error| format!("本地运行时任务异常退出：{error}"))?
+        .map_err(|error| format!("本地运行时任务异常退出：{error}"))??;
+    /* The core is now serving, so its colour scheme is readable. Start the
+     * watcher only on success: before that there is no base_url to poll, and
+     * the shell may retry runtime_start after a failure (the watcher itself is
+     * idempotent, so a retry cannot stack threads). */
+    icon::spawn_theme_watcher(&watcher_app);
+    Ok(info)
 }
 
 #[tauri::command]
@@ -59,23 +78,11 @@ pub fn runtime_stop() {
 
 #[tauri::command]
 pub fn agent_pick_directory(app: AppHandle) -> Result<Option<String>, String> {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let _ = app;
-        let (path, _name) = fs::default_share_path();
-        if path.is_empty() {
-            return Ok(None);
-        }
-        return Ok(Some(path));
-    }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let folder = app.dialog().file().blocking_pick_folder();
-        Ok(folder.map(|p| match p.into_path() {
-            Ok(path) => path.to_string_lossy().into_owned(),
-            Err(fp) => fp.to_string(),
-        }))
-    }
+    let folder = app.dialog().file().blocking_pick_folder();
+    Ok(folder.map(|p| match p.into_path() {
+        Ok(path) => path.to_string_lossy().into_owned(),
+        Err(fp) => fp.to_string(),
+    }))
 }
 
 #[tauri::command]

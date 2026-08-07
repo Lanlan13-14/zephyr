@@ -39,6 +39,7 @@ const LOGOUT_BUTTON = '<button class="btn-sm danger" id="logoutBtn" data-i18n="�
 const SECURITY_PANEL_OPEN = 'class="settings-panel active" id="settings-security"';
 const LANGUAGE_TAB_BUTTON = '<button class="settings-tab" data-settings="language"';
 const LANGUAGE_PANEL_OPEN = 'class="settings-panel" id="settings-language"';
+const HTML_TAG = '<html lang="zh-CN" data-theme="dark">';
 
 /**
  * Structural edits, in order. Each entry is asserted to apply exactly once.
@@ -70,6 +71,21 @@ const EDITS = [
         name: 'promote-language-panel',
         from: LANGUAGE_PANEL_OPEN,
         to: 'class="settings-panel active" id="settings-language"',
+    },
+    /* Product marker. theme-runtime.js reads
+     * document.documentElement.dataset.zephyrProduct and draws the Zephyr One
+     * wind-mark — same strokes, plus the "One" wordmark — instead of the Zephyr
+     * mark, for both the header brand icon and the favicon. That is what makes
+     * the two products visually distinguishable at a glance.
+     *
+     * It has to be an attribute on <html> rather than a script: the brand icon
+     * is re-rendered by applyAppearance() on every locale/theme change, so any
+     * one-shot DOM patch would be overwritten on the next repaint. Reading a
+     * root attribute means every re-render picks the right shape. */
+    {
+        name: 'mark-one-product',
+        from: HTML_TAG,
+        to: '<html lang="zh-CN" data-theme="dark" data-zephyr-product="one">',
     },
 ];
 

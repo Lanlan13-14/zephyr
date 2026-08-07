@@ -9,13 +9,19 @@ rust-version = "1.88"
 
 [lib]
 name = "zephyr_one_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Desktop-only: main.rs links this as a normal Rust library. `staticlib` existed
+# for the iOS static link and `cdylib` for the Android JNI shared object; both
+# targets are gone, and building them cost link time on every desktop build.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `image-png` is required by tauri::image::Image::from_bytes, which the runtime
+# theme-icon switch uses. Without it that constructor is not compiled in and the
+# call fails to resolve.
+tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-http = "2"
@@ -30,15 +36,6 @@ uuid = { version = "1", features = ["v4", "serde"] }
 parking_lot = "0.12"
 once_cell = "1"
 ureq = { version = "2", default-features = false, features = ["tls"] }
-
-# Mobile OS unlock (Android BiometricPrompt / iOS LocalAuthentication)
-[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
-tauri-plugin-biometric = "2"
-
-# Android: stream the bundled CommonJS entry via NDK AAssetManager. Static UI
-# files stay as ordinary APK assets and are read from base.apk on demand.
-[target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
 
 # macOS OS unlock
 [target.'cfg(target_os = "macos")'.dependencies]

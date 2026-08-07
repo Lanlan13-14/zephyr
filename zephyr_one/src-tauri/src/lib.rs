@@ -2,25 +2,17 @@ mod agent;
 mod auth;
 mod commands;
 mod fs;
+mod icon;
 mod runtime;
 mod token;
 
 use tauri::Manager;
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Desktop-only entry point (Windows / macOS / Linux). Zephyr One no longer
+/// ships Android or iOS: the core is a spawned Node child process, which iOS
+/// forbids outright, and the Android path needed a libnode.so + APK-asset
+/// pipeline that is not worth maintaining alongside the desktop product.
 pub fn run() {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_store::Builder::default().build())
-        .plugin(tauri_plugin_biometric::init());
-
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -38,6 +30,7 @@ pub fn run() {
             commands::get_app_version,
             commands::auth_capabilities,
             commands::auth_unlock,
+            commands::set_theme_icon,
             commands::runtime_start,
             commands::runtime_info,
             commands::runtime_stop,
@@ -60,10 +53,11 @@ pub fn run() {
             commands::token_import_local,
         ])
         .setup(|app| {
-            // Default: frontend invokes async `runtime_start` after the boot UI
-            // is visible (Android streams the core from the APK, never extracts).
-            // CI/install smoke sets ZEPHYR_ONE_AUTOSTART_RUNTIME=1 so the embedded
-            // Node core comes up even if the WebView never finishes loading JS.
+            // Default: the frontend invokes async `runtime_start` once the boot
+            // UI is visible, so a slow core start never blocks first paint.
+            // CI/install smoke sets ZEPHYR_ONE_AUTOSTART_RUNTIME=1 so the
+            // embedded Node core comes up even if the WebView never finishes
+            // loading JS.
             let _ = app.get_webview_window("main");
             let autostart = std::env::var("ZEPHYR_ONE_AUTOSTART_RUNTIME")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))

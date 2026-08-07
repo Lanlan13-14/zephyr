@@ -2,7 +2,6 @@
 //!
 //! | Platform | Implementation |
 //! |----------|----------------|
-//! | Android / iOS | `tauri-plugin-biometric` (BiometricPrompt / LocalAuthentication) |
 //! | macOS | LocalAuthentication via `localauthentication-rs` |
 //! | Windows | UserConsentVerifier (Windows Hello / PIN) via `windows` crate |
 //! | Linux | no portable system unlock; reports unavailable |
@@ -31,37 +30,6 @@ pub struct UnlockResult {
 }
 
 pub fn capabilities<R: Runtime>(app: &AppHandle<R>) -> AuthCapabilities {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        use tauri_plugin_biometric::BiometricExt;
-        match app.biometric().status() {
-            Ok(status) => {
-                if status.is_available {
-                    return AuthCapabilities {
-                        available: true,
-                        biometry: true,
-                        reason: "系统生物识别 / 设备凭据可用".into(),
-                    };
-                }
-                // Device credential may still work when biometry not enrolled
-                return AuthCapabilities {
-                    available: true,
-                    biometry: false,
-                    reason: status
-                        .error
-                        .unwrap_or_else(|| "将回退到系统锁屏密码/图案".into()),
-                };
-            }
-            Err(err) => {
-                return AuthCapabilities {
-                    available: false,
-                    biometry: false,
-                    reason: format!("生物识别插件不可用: {err}"),
-                };
-            }
-        }
-    }
-
     #[cfg(target_os = "macos")]
     {
         let _ = app;
@@ -92,13 +60,7 @@ pub fn capabilities<R: Runtime>(app: &AppHandle<R>) -> AuthCapabilities {
         };
     }
 
-    #[cfg(not(any(
-        target_os = "android",
-        target_os = "ios",
-        target_os = "macos",
-        target_os = "windows",
-        target_os = "linux"
-    )))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = app;
         AuthCapabilities {
@@ -117,31 +79,6 @@ pub fn unlock<R: Runtime>(app: &AppHandle<R>, reason: &str) -> UnlockResult {
             ok: true,
             method: Some("dev-system-unlock-bypass".into()),
             error: None,
-        };
-    }
-
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        use tauri_plugin_biometric::{AuthOptions, BiometricExt};
-        let options = AuthOptions {
-            allow_device_credential: true,
-            cancel_title: Some("取消".into()),
-            fallback_title: Some("使用设备密码".into()),
-            title: Some("Zephyr One".into()),
-            subtitle: Some(reason.to_string()),
-            confirmation_required: Some(false),
-        };
-        return match app.biometric().authenticate(reason.to_string(), options) {
-            Ok(()) => UnlockResult {
-                ok: true,
-                method: Some("system_biometric_or_device_credential".into()),
-                error: None,
-            },
-            Err(err) => UnlockResult {
-                ok: false,
-                method: None,
-                error: Some(err.to_string()),
-            },
         };
     }
 
@@ -166,13 +103,7 @@ pub fn unlock<R: Runtime>(app: &AppHandle<R>, reason: &str) -> UnlockResult {
         };
     }
 
-    #[cfg(not(any(
-        target_os = "android",
-        target_os = "ios",
-        target_os = "macos",
-        target_os = "windows",
-        target_os = "linux"
-    )))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (app, reason);
         UnlockResult {
