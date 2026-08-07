@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "product": "Zephyr One",
+  "sourceArchive": {
+    "name": "zephyr-one-icons.zip",
+    "sha256": "f379493ee3cdb4060dc9d526990cc5c0769607674b7840e515f3c78c15ccf533"
+  },
+  "viewBox": "0 0 200 200",
+  "defaultTheme": "frost",
+  "fallbackTheme": "frost",
+  "themes": {
+    "frost": {
+      "source": "source/zephyr-one-frost.svg",
+      "sha256": "31c13deb66daa27d542e38cf7052c5cb6aff2beec1112abcec1b66516c46d5bb",
+      "main": "#eef2f7",
+      "mid": "#a8b5c3",
+      "dark": "#6e7b88",
+      "dotA": "#0a84ff",
+      "dotB": "#8e99a6",
+      "midOffset": "58%"
+    },
+    "lava": {
+      "source": "source/zephyr-one-lava.svg",
+      "sha256": "b65ff5ff92f00412e19cc660244fc112ae290042eceb62a2e225158bfcf870e7",
+      "main": "#f1e8df",
+      "mid": "#c79672",
+      "dark": "#8d5a3a",
+      "dotA": "#bf5a1f",
+      "dotB": "#a58a78",
+      "midOffset": "58%"
+    },
+    "asagi": {
+      "source": "source/zephyr-one-asagi.svg",
+      "sha256": "570635324018c7207822e85485d80f079b61d9f7dd66b1d086a53b150b35c596",
+      "main": "#edf4f2",
+      "mid": "#9bbdb5",
+      "dark": "#5e8f83",
+      "dotA": "#4d9c8a",
+      "dotB": "#829b96",
+      "midOffset": "58%"
+    },
+    "cyber": {
+      "source": "source/zephyr-one-cyber.svg",
+      "sha256": "cde0df1b57af7fbfc6571af1f484974fe2f143fbd562b90239a4aff32f8a7884",
+      "main": "#eef3f5",
+      "mid": "#9eb7bd",
+      "dark": "#5d858d",
+      "dotA": "#4f9da6",
+      "dotB": "#7f9298",
+      "midOffset": "58%"
+    }
+  },
+  "preview": {
+    "source": "source/zephyr-one-icon.html",
+    "sha256": "d2e40a9d3ce26db8b9e391ba5be3aa83f6cdce0171c83ee65620583c7ca47f7d"
+  },
+  "geometry": {
+    "oneAnchor": { "x": 145, "y": 115 },
+    "maskEllipse": { "rx": 5.0, "ry": 4.8 },
+    "thinCurve": "M 78 88 C 108 106, 137 137, 170 128"
+  },
+  "productionRule": "Convert the One text to fixed paths before generating Android or iOS release assets. Preserve the source files unchanged."
+}

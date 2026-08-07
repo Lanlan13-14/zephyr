@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "references": {
+    "bottomFloatingIsland": {
+      "file": "bottom-floating-island.jpg",
+      "sourceName": "1000069462.jpg",
+      "width": 1440,
+      "height": 323,
+      "sha256": "c3a458fcd0ab11a66c4efe4f680638c41c1a5d5b138bfe1012adeb3248b834b1",
+      "designRole": "Root navigation floating island: selected icon and label capsule; unselected icons only."
+    },
+    "terminalImeClosed": {
+      "file": "terminal-ime-closed.jpg",
+      "sourceName": "1000069466.jpg",
+      "width": 1440,
+      "height": 2828,
+      "sha256": "23cf2451d4670299caf8b087dd6c983ea75349bbf1fbd592496fe38d3d6879f2",
+      "designRole": "Terminal viewport, shortcut matrix and terminal context dock while the system IME is hidden."
+    },
+    "terminalImeOpen": {
+      "file": "terminal-ime-open.jpg",
+      "sourceName": "1000069465.jpg",
+      "width": 1440,
+      "height": 2849,
+      "sha256": "a4afcc889da6d344fccfb2e293075a90b506cc87bc7e55aa6f10aa1024bd014b",
+      "designRole": "Terminal viewport and shortcut matrix attached above the visible native system IME; terminal dock hidden."
+    }
+  }
+}

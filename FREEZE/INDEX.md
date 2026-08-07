@@ -44,11 +44,12 @@
 - **代码**：`ai-capability-registry.js`、`ai-capabilities.js`、`ai-tool-executor.js`、`ai-connection-tools.js`、`ai-proxy-tools.js`、`ai-ssh-key-tools.js`、`ai-playbooks.js`
 - **约束**：接口完整 + 接口标准 + AI 通过 Playbook + capability_search 真会用；批量小、每批独立验证
 
-### 3. Agent 内嵌 WebView + 本地设备管理（优先级：低）
-- **状态**：完整方案已写，未开始实施
-- **方案文档**：[AGENT_WEBAPP_PLAN.md](./AGENT_WEBAPP_PLAN.md)（1687 行）
-- **核心内容**：Flutter Agent 内嵌 WebView + JS Bridge + 本地设备管理
-- **恢复起点**：方案文档第二章"整体架构"
+### 3. Zephyr One Android / iOS 原生 App
+- **状态**：完整产品、架构、同步、Agent、浮岛导航、终端 IME 和四色图标规范已写，未开始实施
+- **资料目录**：[`zephyr one for mobile/`](./zephyr%20one%20for%20mobile/)
+- **方案文档**：[`DEVELOPMENT.md`](./zephyr%20one%20for%20mobile/DEVELOPMENT.md)
+- **核心内容**：Kotlin + Jetpack Compose、Swift + SwiftUI、local-first、`/api/mobile/v1` 双向增量同步、Agent 内嵌、四入口底部浮岛、终端快捷键矩阵与 IME 几何、四色应用图标
+- **设计附件**：用户提交的三张 UI 参考图、四套 SVG、预览 HTML 与原始 ZIP 均保存在该目录
 
 ---
 
