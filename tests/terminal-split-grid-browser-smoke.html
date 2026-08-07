@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>terminal split grid smoke</title>
+<!-- The REAL production stylesheet. This smoke exists to prove the shipped
+     grid/splitter geometry, so it must never use a trimmed copy. -->
+<link rel="stylesheet" href="/public/style.css">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body.app-body { display: flex; flex-direction: column; }
+  /* Stand in for #view-terminal's flex box in app.html. */
+  #stage { position: fixed; inset: 0; display: flex; }
+  #out { position: fixed; left: -99999px; top: -99999px; }
+</style>
+</head>
+<!-- terminal-mode is what forces gap:0 / padding:0 on the workspace, i.e. the
+     exact state in which the old absolutely-positioned splitter overlapped. -->
+<body class="app-body terminal-mode">
+<div id="stage">
+  <div class="terminal-view active" id="view-terminal" style="display:flex;flex-direction:column;width:100%;height:100%;">
+    <div class="terminal-workspace terminal-workspace-grid layout-0" id="terminalWorkspace"></div>
+  </div>
+</div>
+<pre id="out"></pre>
+<script>
+const ws = document.getElementById('terminalWorkspace');
+
+/**
+ * The shipped public/app.js, fetched SYNCHRONOUSLY and once.
+ *
+ * Synchronous on purpose: `--dump-dom` snapshots right after the load event, so
+ * an awaited fetch raced the snapshot and produced an empty result. Keeping the
+ * whole probe inside the load handler makes every run deterministic.
+ */
+let APP_SOURCE = null;
+function appSource() {
+  if (APP_SOURCE !== null) return APP_SOURCE;
+  const xhr = new XMLHttpRequest();
+  xhr.open('GET', '/public/app.js', false);
+  xhr.send(null);
+  if (xhr.status !== 200) throw new Error(`app.js fetch failed: ${xhr.status}`);
+  APP_SOURCE = xhr.responseText;
+  return APP_SOURCE;
+}
+/**
+ * Balanced-brace slice of top-level `function name(...) { ... }` declarations.
+ *
+ * app.js is a module with top-level side effects (bootstrap fetches, listeners)
+ * so it cannot be imported here. Slicing the exact function text means the logic
+ * under test is the shipped code byte for byte — a replica would only prove the
+ * replica.
+ */
+function shippedFns(names) {
+  const source = appSource();
+  return names.map((name) => {
+    const start = source.indexOf(`function ${name}(`);
+    if (start < 0) throw new Error(`function ${name} not found in app.js`);
+    const open = source.indexOf('{', source.indexOf(')', start));
+    let depth = 0;
+    for (let i = open; i < source.length; i++) {
+      if (source[i] === '{') depth++;
+      else if (source[i] === '}' && --depth === 0) return source.slice(start, i + 1);
+    }
+    throw new Error(`unterminated ${name}`);
+  }).join('\n');
+}
+/** Read a shipped top-level `const NAME = <literal>;` so the probe cannot drift. */
+function shippedConst(name) {
+  const m = new RegExp(`const ${name} = ([^;]+);`).exec(appSource());
+  if (!m) throw new Error(`const ${name} not found in app.js`);
+  // eslint-disable-next-line no-new-func
+  return new Function(`return (${m[1]});`)();
+}
+const TERMINAL_MORPH_DURATION_PROBE = shippedConst('TERMINAL_MORPH_DURATION');
+const TERMINAL_MORPH_EASING_PROBE = shippedConst('TERMINAL_MORPH_EASING');
+
+function makeWindow(id, slot, active) {
+  const a = document.createElement('article');
+  a.className = `terminal-window slot-${slot} ${active ? 'active' : 'background'}`;
+  a.dataset.window = id;
+  const tb = document.createElement('div');
+  tb.className = 'terminal-window-titlebar';
+  tb.innerHTML = `<span class="terminal-window-title">${id}</span>`;
+  const body = document.createElement('div');
+  body.className = 'terminal-window-body';
+  const frame = document.createElement('div');
+  frame.className = 'terminal-placeholder active';
+  frame.textContent = id;
+  body.appendChild(frame);
+  a.append(tb, body);
+  // Entrance keyframes animate transform/opacity; kill them so every rect we
+  // measure is the resting layout, not an animation frame.
+  a.style.animation = 'none';
+  return a;
+}
+function makeSplitter(kind) {
+  const d = document.createElement('div');
+  d.className = `workspace-splitter ${kind}`;
+  d.dataset.splitter = kind === 'vertical' ? 'x' : 'y';
+  return d;
+}
+/** Byte-for-byte what renderTerminalWorkspace() appends for a given count. */
+function build(count) {
+  ws.className = `terminal-workspace terminal-workspace-grid layout-${count}`;
+  ws.innerHTML = '';
+  for (let i = 1; i <= count; i++) ws.appendChild(makeWindow(`t${i}`, i, i === 1));
+  if (count === 2 || count === 3) ws.appendChild(makeSplitter('vertical'));
+  if (count === 3) ws.appendChild(makeSplitter('horizontal'));
+}
+
+const rect = (sel) => {
+  const el = ws.querySelector(sel);
+  if (!el) return null;
+  const b = el.getBoundingClientRect();
+  return { l: +b.left.toFixed(2), t: +b.top.toFixed(2), r: +b.right.toFixed(2), b: +b.bottom.toFixed(2), w: +b.width.toFixed(2), h: +b.height.toFixed(2) };
+};
+/** Intersection area in px^2. 0 means the two boxes are disjoint. */
+const overlapArea = (a, b) => {
+  if (!a || !b) return null;
+  const x = Math.min(a.r, b.r) - Math.max(a.l, b.l);
+  const y = Math.min(a.b, b.b) - Math.max(a.t, b.t);
+  return (x > 0 && y > 0) ? +(x * y).toFixed(2) : 0;
+};
+
+function measure(count) {
+  const cs = getComputedStyle(ws);
+  const wins = [rect('[data-window="t1"]'), rect('[data-window="t2"]'), rect('[data-window="t3"]')].slice(0, count);
+  const sx = rect('.workspace-splitter.vertical');
+  const sy = rect('.workspace-splitter.horizontal');
+  const gutter = parseFloat(cs.getPropertyValue('--workspace-gutter')) || 0;
+
+  // Every splitter box against every window box.
+  const splitterOverlaps = [];
+  [sx, sy].filter(Boolean).forEach((s, si) => wins.forEach((w, wi) => {
+    splitterOverlaps.push({ splitter: si === 0 ? 'x' : 'y', win: wi + 1, area: overlapArea(s, w) });
+  }));
+  // Every window box against every other window box.
+  const windowOverlaps = [];
+  for (let i = 0; i < wins.length; i++) {
+    for (let j = i + 1; j < wins.length; j++) {
+      windowOverlaps.push({ a: i + 1, b: j + 1, area: overlapArea(wins[i], wins[j]) });
+    }
+  }
+  const winEl = ws.querySelector('[data-window="t1"]');
+  return {
+    count,
+    cls: ws.className,
+    gap: cs.gap,
+    gutter,
+    cols: cs.gridTemplateColumns,
+    rows: cs.gridTemplateRows,
+    wins,
+    sx, sy,
+    splitterOverlaps,
+    windowOverlaps,
+    // The vertical bar must exactly fill the gap between the two columns.
+    sxFillsGutter: (sx && wins[1]) ? {
+      leftEdgeMatchesW1Right: +Math.abs(sx.l - wins[0].r).toFixed(2),
+      rightEdgeMatchesW2Left: +Math.abs(sx.r - wins[1].l).toFixed(2),
+      width: sx.w,
+    } : null,
+    syFillsGutter: (sy && wins[2]) ? {
+      topEdgeMatchesW2Bottom: +Math.abs(sy.t - wins[1].b).toFixed(2),
+      bottomEdgeMatchesW3Top: +Math.abs(sy.b - wins[2].t).toFixed(2),
+      // Old bug: horizontal bar started at split-x + 12px, i.e. inset from the
+      // right column's left edge, leaving a notch.
+      leftEdgeMatchesRightColumn: +Math.abs(sy.l - wins[1].l).toFixed(2),
+      height: sy.h,
+    } : null,
+    sideBySide: wins.length >= 2 ? (wins[1].l > wins[0].l + 1 && Math.abs(wins[1].t - wins[0].t) < 1) : null,
+    stackedVertically: wins.length >= 2 ? (Math.abs(wins[1].l - wins[0].l) < 1 && wins[1].t > wins[0].t + 1) : null,
+    radius: winEl ? getComputedStyle(winEl).borderTopLeftRadius : null,
+    splitterPosition: sx ? getComputedStyle(ws.querySelector('.workspace-splitter.vertical')).position : null,
+    splitterBackdrop: sx ? getComputedStyle(ws.querySelector('.workspace-splitter.vertical')).backdropFilter : null,
+    splitterZ: sx ? getComputedStyle(ws.querySelector('.workspace-splitter.vertical')).zIndex : null,
+  };
+}
+
+/**
+ * Replica of the shipped startWorkspaceSplitterDrag math. Proves the grab point
+ * lands on the bar centre, i.e. the bar tracks the pointer without drift.
+ */
+function dragProbe(clientX) {
+  const r = ws.getBoundingClientRect();
+  const cs = getComputedStyle(ws);
+  const num = (v, f = 0) => { const p = parseFloat(v); return Number.isFinite(p) ? p : f; };
+  const bl = num(cs.borderLeftWidth), brr = num(cs.borderRightWidth);
+  const pl = num(cs.paddingLeft), pr = num(cs.paddingRight);
+  const left = r.left + bl + pl;
+  const width = Math.max(1, r.width - bl - brr - pl - pr);
+  const gutter = num(cs.getPropertyValue('--workspace-gutter'), 12);
+  const px = (clientX - left) - gutter / 2;
+  const maxByTrailing = ((width - gutter - 88) / width) * 100;
+  const hi = Math.min(82, Number.isFinite(maxByTrailing) ? maxByTrailing : 82);
+  const lo = Math.min(24, hi);
+  const pct = Math.min(hi, Math.max(lo, (px / width) * 100));
+  ws.style.setProperty('--workspace-split-x', `${pct.toFixed(2)}%`);
+  const bar = ws.querySelector('.workspace-splitter.vertical')?.getBoundingClientRect();
+  const clamped = pct >= hi - 0.01 || pct <= lo + 0.01;
+  return {
+    requestedX: clientX,
+    pct: +pct.toFixed(2),
+    clamped,
+    drift: bar ? +((bar.left + bar.width / 2) - clientX).toFixed(2) : null,
+  };
+}
+
+/**
+ * The FLIP morph paints the corner through scale3d, so a plain radius is
+ * stretched. Prove the compensation keeps the PAINTED radius constant, and
+ * prove plain WAAPI on border-radius cannot (the shell invariant is !important).
+ */
+function radiusProbe() {
+  build(2);
+  const el = ws.querySelector('[data-window="t1"]');
+  const rest = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
+
+  // Control: plain WAAPI on the shorthand must be outranked by the !important
+  // shell invariant. This is the reason the compensation has to go through
+  // registered custom properties at all.
+  const plain = el.animate([{ borderRadius: '2px' }, { borderRadius: '2px' }], { duration: 100, fill: 'both' });
+  plain.pause(); plain.currentTime = 50;
+  const plainBlocked = getComputedStyle(el).borderTopLeftRadius;
+  plain.cancel();
+
+  // The SHIPPED frame builder, not a replica.
+  const shipped = shippedFns(['terminalMorphFrameCount', 'buildTerminalMorphFrames']);
+  const build2 = new Function(`${shipped}\nreturn buildTerminalMorphFrames(arguments[0]);`);
+  const countFn = new Function(`${shipped}\nreturn terminalMorphFrameCount(arguments[0], arguments[1]);`);
+
+  /** Worst |painted - rest| over the whole timeline for one scale pair. */
+  function sweep(sx, sy, compensate = true) {
+    const frames = build2({ dx: 240, dy: 120, sx, sy, radius: rest, compensate });
+    if (compensate) el.classList.add('layout-morphing', 'layout-morphing-radius');
+    else el.classList.add('layout-morphing');
+    const anim = el.animate(frames, {
+      duration: TERMINAL_MORPH_DURATION_PROBE,
+      easing: TERMINAL_MORPH_EASING_PROBE,
+      fill: 'both',
+    });
+    anim.pause();
+    let worst = 0, worstAt = null;
+    const samples = [];
+    for (let i = 0; i <= 40; i++) {
+      anim.currentTime = (i / 40) * TERMINAL_MORPH_DURATION_PROBE;
+      const cs = getComputedStyle(el);
+      const m = new DOMMatrixReadOnly(cs.transform);
+      // What the user actually sees: the authored radius scaled by the
+      // transform that is painting the box at this instant.
+      const rx = parseFloat(cs.borderTopLeftRadius.split(' ')[0]);
+      const ryRaw = cs.borderTopLeftRadius.split(' ')[1];
+      const ry = ryRaw === undefined ? rx : parseFloat(ryRaw);
+      const px = rx * m.a;
+      const py = ry * m.d;
+      const err = Math.max(Math.abs(px - rest), Math.abs(py - rest));
+      if (err > worst) { worst = err; worstAt = +(i / 40).toFixed(3); }
+      if (i % 10 === 0) samples.push({ t: +(i / 40).toFixed(2), px: +px.toFixed(3), py: +py.toFixed(3) });
+    }
+    anim.cancel();
+    el.classList.remove('layout-morphing', 'layout-morphing-radius');
+    return { sx, sy, frames: frames.length, worstPaintedErrorPx: +worst.toFixed(4), worstAt, samples };
+  }
+
+  // Endpoint readings, kept for the "is the custom property actually wired"
+  // assertions. Values are the shipped builder's, at offset 0 and 1.
+  const frames = build2({ dx: 0, dy: 0, sx: 2, sy: 0.5, radius: rest, compensate: true });
+  el.classList.add('layout-morphing', 'layout-morphing-radius');
+  const anim = el.animate(frames, { duration: 100, easing: 'linear', fill: 'both' });
+  anim.pause();
+  anim.currentTime = 0;
+  const startRadius = getComputedStyle(el).borderTopLeftRadius;
+  // Mid-timeline reading. With UNREGISTERED custom properties WAAPI falls back
+  // to discrete animation, which would hold the offset-0 value here — that is
+  // exactly the bug the endpoint-only version of this probe could not see.
+  anim.currentTime = 50;
+  const midRadius = getComputedStyle(el).borderTopLeftRadius;
+  anim.currentTime = 100;
+  const endRadius = getComputedStyle(el).borderTopLeftRadius;
+  anim.cancel();
+  el.classList.remove('layout-morphing', 'layout-morphing-radius');
+  const afterCleanup = getComputedStyle(el).borderTopLeftRadius;
+
+  // A MOVE-ONLY morph must not engage the compensation rule at all. If the rule
+  // were keyed on .layout-morphing it would resolve var(--morph-rx) with
+  // nothing driving it and square the corner for the whole morph.
+  el.classList.add('layout-morphing');
+  const moveOnlyRadius = getComputedStyle(el).borderTopLeftRadius;
+  el.classList.remove('layout-morphing');
+
+  // Scale matrix: widen/narrow ratio changes, plus the card-flip settle which
+  // shrinks a full-stage window into one slot.
+  const matrix = [
+    sweep(2, 1), sweep(0.5, 1), sweep(1, 2), sweep(1, 0.5),
+    sweep(2, 0.5), sweep(3.08, 1), sweep(0.33, 1),
+  ];
+  return {
+    rest,
+    plainBlocked,
+    startRadius,
+    midRadius,
+    endRadius,
+    afterCleanup,
+    moveOnlyRadius,
+    frameCountAt2: countFn(2, 1),
+    frameCountAt10: countFn(0.1, 1),
+    matrix,
+    worstPaintedErrorPx: +Math.max(...matrix.map((m) => m.worstPaintedErrorPx)).toFixed(4),
+  };
+}
+
+/**
+ * `fill: 'both'` keeps the end keyframe in the Animation origin forever, which
+ * outranks author-normal declarations. Prove that a leaked fill freezes
+ * .minimizing's transform and that cancel() releases it.
+ */
+function fillProbe() {
+  build(2);
+  const el = ws.querySelector('[data-window="t1"]');
+  el.style.animation = 'none';
+  const anim = el.animate([
+    { transform: 'translate3d(10px,0,0) scale3d(1.2,1,1)' },
+    { transform: 'translate3d(0,0,0) scale3d(1,1,1)' },
+  ], { duration: 100, fill: 'both' });
+  anim.pause();
+  anim.currentTime = 100;
+  el.classList.add('minimizing');
+  const whileFilling = getComputedStyle(el).transform;
+  anim.cancel();
+  const afterCancel = getComputedStyle(el).transform;
+  el.classList.remove('minimizing');
+  el.style.removeProperty('animation');
+  return { whileFilling, afterCancel };
+}
+
+/**
+ * The old card-flip DOM: layout-1 while a second window is still mounted. The
+ * defensive layout-1 rule must keep both in the single cell rather than letting
+ * the grid auto-place the second one into an implicit ROW (the reported
+ * "stacked instead of side-by-side" symptom).
+ */
+/**
+ * The card-flip always ends full-stage. Whether the handed-off window should
+ * then morph into its slot is decided by the SHIPPED
+ * shouldSettleCardFlipIntoSlot(). Two cases must be distinguished:
+ *
+ *  - one visible window: the final box IS the workspace, differing only by its
+ *    1px border. |dx|+|dy| = 2 already exceeds the morph's own 1px threshold, so
+ *    without this gate an invisible 560ms morph would run and
+ *    `.layout-morphing .terminal-frame { pointer-events: none }` would make the
+ *    freshly opened terminal ignore clicks and keys for that whole time.
+ *  - two visible windows: the final box is one slot, hundreds of px away, so the
+ *    morph must run.
+ */
+function settleGateProbe() {
+  const gateFn = new Function(
+    `${shippedFns(['shouldSettleCardFlipIntoSlot'])}\nreturn shouldSettleCardFlipIntoSlot(arguments[0], arguments[1]);`,
+  );
+
+  // Single window: stage box == workspace box (what the flip hands over).
+  build(1);
+  const stage = ws.getBoundingClientRect();
+  const only = ws.querySelector('[data-window="t1"]');
+  const onlyRect = only.getBoundingClientRect();
+  const single = {
+    dx: +(onlyRect.left - stage.left).toFixed(2),
+    dy: +(onlyRect.top - stage.top).toFixed(2),
+    dw: +(onlyRect.width - stage.width).toFixed(2),
+    dh: +(onlyRect.height - stage.height).toFixed(2),
+    // The naive threshold inside animateTerminalWindowLayoutFrom.
+    wouldMorphWithoutGate: Math.abs(onlyRect.left - stage.left) + Math.abs(onlyRect.top - stage.top) > 1,
+    gate: gateFn(only, stage),
+    gutterSeen: getComputedStyle(only).getPropertyValue('--workspace-gutter').trim(),
+  };
+
+  // Two windows: the new one lands in slot-2, far from the full-stage box.
+  build(2);
+  const stage2 = ws.getBoundingClientRect();
+  const second = ws.querySelector('[data-window="t2"]');
+  const secondRect = second.getBoundingClientRect();
+  const multi = {
+    dx: +(secondRect.left - stage2.left).toFixed(2),
+    dw: +(secondRect.width - stage2.width).toFixed(2),
+    gate: gateFn(second, stage2),
+  };
+
+  // Degenerate inputs must never schedule a morph.
+  const degenerate = {
+    nullWin: gateFn(null, stage2),
+    zeroStage: gateFn(second, { left: 0, top: 0, width: 0, height: 0 }),
+  };
+  return { single, multi, degenerate };
+}
+
+/**
+ * Drive the REAL reported repro through its REAL entry point.
+ *
+ * renderProbe() calls renderTerminalWorkspace() directly, but the bug was in
+ * mountConnectionLocallyForCardFlip() — the function the dashboard card taps
+ * into. It used to hardcode `layout-1`, append a second window itself, and
+ * leave the already-open window auto-placed into an implicit grid ROW.
+ *
+ * So: mount session 1 and render it (user opens a terminal), then call the
+ * shipped mount function for session 2 while window 1 is still in the DOM
+ * (user went back to the dashboard and tapped a second connection). The DOM
+ * state that produced the vertical stack is reproduced exactly.
+ */
+function mountProbe() {
+  const shipped = shippedFns([
+    'mountConnectionLocallyForCardFlip',
+    'enforceTerminalWorkspaceLimit',
+    'minimizeTerminalSession',
+    'touchTerminalSession',
+    'renderTerminalWorkspace',
+    'getMinimizedKeepAliveSessions',
+    'mountMobileDockToggle',
+    'orderedVisibleIds',
+    'computeDefaultVisualLayout',
+    'syncVisualLayout',
+    'visibleTerminalTabs',
+    'getTerminalSession',
+  ]);
+
+  const harness = `
+    let terminalTabs = [];
+    let visualLayout = [];
+    let activeTerminalTab = null;
+    let openOrderStack = [];
+    let recentUseStack = [];
+    const closingTerminalTabs = new Set();
+    const minimizingTerminalTabs = new Set();
+    const dockSwapAnimatingWindows = new Set();
+    const dockLaunchAnimatingWindows = new Set();
+    const settings = { snippets: [] };
+    const $ = (sel) => document.querySelector(sel);
+    const t = (s) => s;
+    const isCompactTerminalWorkspace = () => __state.compact === true;
+    const getConfiguredMinimizedKeepAlive = () => __state.keepAlive ?? 0;
+    const getConfiguredTerminalMaxWindows = () => __state.maxWindows ?? 3;
+    const getEffectiveTerminalMaxWindows = () =>
+      isCompactTerminalWorkspace() ? 1 : getConfiguredTerminalMaxWindows();
+    const terminalWindowTitlebarHtml = (s) =>
+      '<span class="terminal-window-title">' + s.id + '</span>';
+    const getPreferredTheme = () => 'light';
+    // Only the iframe is stubbed. Every layout decision below is shipped code.
+    const createTerminalWindowElement = (session) => {
+      __state.created.push(session.id);
+      const a = document.createElement('article');
+      a.className = 'terminal-window';
+      a.dataset.window = session.id;
+      const tb = document.createElement('div');
+      tb.className = 'terminal-window-titlebar';
+      const b = document.createElement('div');
+      b.className = 'terminal-window-body';
+      const ph = document.createElement('div');
+      ph.className = 'terminal-placeholder active';
+      b.appendChild(ph);
+      a.append(tb, b);
+      a.style.animation = 'none';
+      return a;
+    };
+    const rememberCompactTerminalKeyboardBaseline = () => {};
+    const scheduleTerminalLayoutStabilize = () => {};
+    const resetTerminalWorkspaceKeyboard = () => {};
+    const renderTerminalTabs = () => { renderTerminalWorkspace(); };
+    ${shipped}
+
+    const snapshot = (label) => {
+      const wsEl = document.querySelector('#terminalWorkspace');
+      const wins = Array.from(wsEl.querySelectorAll(':scope > .terminal-window'));
+      return {
+        label,
+        cls: wsEl.className.trim().replace(/\\s+/g, ' '),
+        visualLayout: [...visualLayout],
+        activeTerminalTab,
+        windows: wins.map((el) => {
+          const b = el.getBoundingClientRect();
+          return {
+            id: el.dataset.window,
+            cls: el.className.trim().replace(/\\s+/g, ' '),
+            l: +b.left.toFixed(2), t: +b.top.toFixed(2),
+            w: +b.width.toFixed(2), h: +b.height.toFixed(2),
+          };
+        }),
+        splitters: Array.from(wsEl.querySelectorAll(':scope > .workspace-splitter'))
+          .map((el) => el.className.trim()),
+        placeholders: wsEl.querySelectorAll(':scope > .terminal-placeholder').length,
+        cols: getComputedStyle(wsEl).gridTemplateColumns,
+        rows: getComputedStyle(wsEl).gridTemplateRows,
+      };
+    };
+
+    // --- step 1: user opens the first connection -------------------------
+    const id1 = mountConnectionLocallyForCardFlip(__state.c1, { tabId: 'tabA' });
+    const afterFirst = snapshot('after first connection');
+    __state.created = [];
+    const nodeBefore = document.querySelector('#terminalWorkspace .terminal-window[data-window="tabA"]');
+
+    // --- step 2: back to the dashboard, tap a SECOND connection ----------
+    // Window 1 is still mounted. This is the state that stacked vertically.
+    const id2 = mountConnectionLocallyForCardFlip(__state.c2, { tabId: 'tabB' });
+    const afterSecond = snapshot('after second connection');
+    const nodeAfter = document.querySelector('#terminalWorkspace .terminal-window[data-window="tabA"]');
+
+    return {
+      id1, id2,
+      afterFirst,
+      afterSecond,
+      // The caller does exactly this lookup right after the mount returns.
+      callerCanFindNewWindow: !!document.querySelector(
+        '#terminalWorkspace .terminal-window[data-window="' + id2 + '"]'),
+      // A rebuilt window 1 means its live SSH iframe was reloaded.
+      recreatedOnSecondMount: [...__state.created],
+      window1NodePreserved: nodeBefore === nodeAfter && !!nodeAfter,
+      sessionParamsWritten: [
+        !!sessionStorage.getItem('zephyr_ssh_params_tabA'),
+        !!sessionStorage.getItem('zephyr_ssh_params_tabB'),
+      ],
+    };
+  `;
+
+  const conn = (id, name) => ({
+    id, name, protocol: 'SSH', host: '10.0.0.1', port: 22, username: 'root',
+  });
+
+  function runMount(state) {
+    ws.className = 'terminal-workspace terminal-workspace-grid layout-0';
+    ws.innerHTML = '<div class="terminal-placeholder active">empty</div>';
+    sessionStorage.removeItem('zephyr_ssh_params_tabA');
+    sessionStorage.removeItem('zephyr_ssh_params_tabB');
+    state.created = [];
+    state.c1 = conn('c1', 'first');
+    state.c2 = conn('c2', 'second');
+    // eslint-disable-next-line no-new-func
+    return new Function('__state', harness)(state);
+  }
+
+  const desktop = runMount({ compact: false, maxWindows: 3, keepAlive: 0 });
+  // maxWindows = 1 must still end up single-cell: the setting is respected.
+  const capped = runMount({ compact: false, maxWindows: 1, keepAlive: 0 });
+  // Phone: effective max is forced to 1 regardless of the setting.
+  const compact = runMount({ compact: true, maxWindows: 3, keepAlive: 0 });
+  return { desktop, capped, compact };
+}
+
+function staleSlotProbe() {
+  ws.className = 'terminal-workspace terminal-workspace-grid layout-1';
+  ws.innerHTML = '';
+  ws.appendChild(makeWindow('t1', 1, false));
+  ws.appendChild(makeWindow('t2', 1, true));
+  const w1 = rect('[data-window="t1"]');
+  const w2 = rect('[data-window="t2"]');
+  return {
+    rows: getComputedStyle(ws).gridTemplateRows,
+    sameCell: !!(w1 && w2 && Math.abs(w1.t - w2.t) < 1 && Math.abs(w1.h - w2.h) < 1),
+    impliedRow: !!(w1 && w2 && w2.t > w1.t + 1),
+  };
+}
+
+/**
+ * Guard against a vacuous pass: if public/style.css did not load, every
+ * geometry number below would describe an unstyled div, not the shipped grid.
+ */
+function envProbe() {
+  build(2);
+  const winEl = ws.querySelector('[data-window="t1"]');
+  const cs = getComputedStyle(ws);
+  const sheetHrefs = Array.from(document.styleSheets).map((s) => s.href || 'inline');
+  let ruleCount = 0;
+  try {
+    ruleCount = Array.from(document.styleSheets)
+      .filter((s) => (s.href || '').includes('style.css'))
+      .reduce((n, s) => n + (s.cssRules ? s.cssRules.length : 0), 0);
+  } catch (err) { ruleCount = -1; }
+  return {
+    sheetHrefs,
+    productionRuleCount: ruleCount,
+    cssLoaded: ruleCount > 1000,
+    display: cs.display,
+    radius: winEl ? getComputedStyle(winEl).borderTopLeftRadius : null,
+    gutter: cs.getPropertyValue('--workspace-gutter').trim(),
+    // The gutter bar must be fully opaque; a translucent one samples the
+    // neighbouring window and smears its rounded corner into the gap.
+    splitterBg: getComputedStyle(ws.querySelector('.workspace-splitter.vertical')).backgroundColor,
+  };
+}
+
+/**
+ * Execute the REAL renderTerminalWorkspace() from the shipped public/app.js.
+ *
+ * A replica of the renderer would only prove the replica. app.js is a module
+ * with top-level side effects (bootstrap fetches, listeners), so it cannot be
+ * imported here; instead slice the exact function texts out of the shipped
+ * source and evaluate them against stubbed module-scope state. The layout
+ * decision under test — layout-N class, slot-N placement, splitter tracks,
+ * window reuse — is then the shipped code's, byte for byte.
+ */
+function renderProbe() {
+  const shipped = shippedFns([
+    'renderTerminalWorkspace',
+    'getMinimizedKeepAliveSessions',
+    'mountMobileDockToggle',
+    'orderedVisibleIds',
+    'computeDefaultVisualLayout',
+    'syncVisualLayout',
+    'visibleTerminalTabs',
+    'getTerminalSession',
+  ]);
+
+  // Everything the sliced functions read from module scope. Only iframe
+  // creation and cross-frame messaging are stubbed; layout logic is real.
+  const harness = `
+    let terminalTabs = __state.tabs;
+    let visualLayout = __state.visualLayout;
+    let activeTerminalTab = __state.active;
+    const closingTerminalTabs = new Set(__state.closing || []);
+    const minimizingTerminalTabs = new Set();
+    const dockSwapAnimatingWindows = new Set();
+    const dockLaunchAnimatingWindows = new Set();
+    let openOrderStack = __state.openOrder;
+    const $ = (sel) => document.querySelector(sel);
+    const t = (s) => s;
+    const isCompactTerminalWorkspace = () => __state.compact === true;
+    const getConfiguredMinimizedKeepAlive = () => __state.keepAlive ?? 0;
+    const getConfiguredTerminalMaxWindows = () => __state.maxWindows ?? 3;
+    const getEffectiveTerminalMaxWindows = () =>
+      isCompactTerminalWorkspace() ? 1 : getConfiguredTerminalMaxWindows();
+    const terminalWindowTitlebarHtml = (s) =>
+      '<span class="terminal-window-title">' + s.id + '</span>';
+    // Real DOM shape minus the iframe: no network, no cross-origin frames.
+    const createTerminalWindowElement = (session) => {
+      __state.created.push(session.id);
+      const a = document.createElement('article');
+      a.className = 'terminal-window';
+      a.dataset.window = session.id;
+      const tb = document.createElement('div');
+      tb.className = 'terminal-window-titlebar';
+      const b = document.createElement('div');
+      b.className = 'terminal-window-body';
+      const ph = document.createElement('div');
+      ph.className = 'terminal-placeholder active';
+      b.appendChild(ph);
+      a.append(tb, b);
+      a.style.animation = 'none';
+      return a;
+    };
+    const rememberCompactTerminalKeyboardBaseline = () => {};
+    const scheduleTerminalLayoutStabilize = () => {};
+    ${shipped}
+    // Real call order from the card-flip mount path: enforceTerminalWorkspaceLimit()
+    // ends in syncVisualLayout({preserve:false}), then the renderer runs. Driving
+    // both means slot order is the shipped computation, not a harness guess.
+    syncVisualLayout({ preserve: false });
+    renderTerminalWorkspace();
+    return {
+      cls: document.querySelector('#terminalWorkspace').className,
+      visualLayout: [...visualLayout],
+      activeTerminalTab,
+    };
+  `;
+
+  const tab = (id, extra = {}) => ({
+    id, name: id, protocol: 'SSH', iframe: true, page: 'terminal',
+    minimized: false, lastUsedAt: 1, createdAt: 1, ...extra,
+  });
+
+  function renderWith(state) {
+    ws.className = 'terminal-workspace terminal-workspace-grid layout-0';
+    ws.innerHTML = '';
+    state.created = [];
+    // eslint-disable-next-line no-new-func
+    const out = new Function('__state', harness)(state);
+    const windows = Array.from(ws.querySelectorAll(':scope > .terminal-window'));
+    return {
+      ...out,
+      created: state.created,
+      windows: windows.map((el) => ({ id: el.dataset.window, cls: el.className })),
+      splitters: Array.from(ws.querySelectorAll(':scope > .workspace-splitter')).map((el) => el.className),
+      cols: getComputedStyle(ws).gridTemplateColumns,
+      rows: getComputedStyle(ws).gridTemplateRows,
+      rects: windows.map((el) => {
+        const b = el.getBoundingClientRect();
+        return { id: el.dataset.window, l: +b.left.toFixed(2), t: +b.top.toFixed(2), w: +b.width.toFixed(2), h: +b.height.toFixed(2) };
+      }),
+    };
+  }
+
+  // The reported repro: one session already open, then a second is opened from
+  // the dashboard. This is exactly the state mountConnectionLocallyForCardFlip
+  // now hands to the renderer.
+  const two = renderWith({
+    tabs: [tab('t1'), tab('t2')], visualLayout: [], active: 't2',
+    openOrder: ['t1', 't2'], maxWindows: 3, compact: false, created: [],
+  });
+  const three = renderWith({
+    tabs: [tab('t1'), tab('t2'), tab('t3')], visualLayout: [], active: 't3',
+    openOrder: ['t1', 't2', 't3'], maxWindows: 3, compact: false, created: [],
+  });
+  // maxWindows = 1 must still collapse to a single cell (setting respected).
+  const single = renderWith({
+    tabs: [tab('t1'), tab('t2', { minimized: true })], visualLayout: [], active: 't1',
+    openOrder: ['t1', 't2'], maxWindows: 1, compact: false, created: [],
+  });
+
+  // Reuse: render twice with the same state; the second pass must not rebuild
+  // any window (a rebuilt window means a reloaded live SSH iframe).
+  const reuseState = {
+    tabs: [tab('t1'), tab('t2')], visualLayout: [], active: 't2',
+    openOrder: ['t1', 't2'], maxWindows: 3, compact: false, created: [],
+  };
+  renderWith(reuseState);
+  const firstNodes = Array.from(ws.querySelectorAll(':scope > .terminal-window'));
+  reuseState.created = [];
+  reuseState.visualLayout = [];
+  // eslint-disable-next-line no-new-func
+  new Function('__state', harness)(reuseState);
+  const secondNodes = Array.from(ws.querySelectorAll(':scope > .terminal-window'));
+  const reuse = {
+    createdOnSecondPass: reuseState.created,
+    sameNodes: firstNodes.length === secondNodes.length
+      && firstNodes.every((el, i) => el === secondNodes[i]),
+  };
+
+  return { two, three, single, reuse };
+}
+
+function run() {
+  const out = { ok: true, env: null, layouts: {}, drags: [], radius: null, fill: null, staleSlot: null, shippedRender: null };
+  out.env = envProbe();
+  [1, 2, 3].forEach((n) => { build(n); out.layouts[n] = measure(n); });
+
+  // Real drags disable the grid transition, so measure in that state.
+  build(3);
+  ws.classList.add('splitting');
+  [-500, 200, 400, 500, 700, 900, 5000].forEach((x) => {
+    const probe = dragProbe(x);
+    // The trailing window must never be squeezed away by the clamp.
+    probe.trailingWidth = rect('[data-window="t2"]')?.w ?? null;
+    out.drags.push(probe);
+  });
+  ws.classList.remove('splitting');
+  ws.style.removeProperty('--workspace-split-x');
+
+  out.radius = radiusProbe();
+  out.fill = fillProbe();
+  out.staleSlot = staleSlotProbe();
+  out.settleGate = settleGateProbe();
+  out.shippedRender = renderProbe();
+  out.shippedMount = mountProbe();
+  document.getElementById('out').textContent = JSON.stringify(out);
+}
+
+/**
+ * Never leave `#out` empty on a throw: an empty <pre> would make the runner
+ * report "result missing" instead of the real cause.
+ */
+function main() {
+  try {
+    run();
+  } catch (err) {
+    document.getElementById('out').textContent = JSON.stringify({
+      ok: false,
+      error: String(err && err.stack ? err.stack : err),
+    });
+  }
+}
+
+// Wait for the real stylesheet before measuring anything.
+if (document.readyState === 'complete') main();
+else window.addEventListener('load', main);
+</script>
+</body>
+</html>

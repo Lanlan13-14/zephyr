@@ -79,6 +79,24 @@
     initial-value: 50%;
 }
 
+/* FLIP layout morph paints the window through scale3d(sx, sy, 1), which scales
+   border-radius with it: an 18px corner becomes 36px x 9px mid-flight and reads
+   as "the rounded corner is gone". These two carry the inverse-compensated
+   radius so the PAINTED corner stays constant for the whole morph.
+   They must be registered, otherwise they are not interpolatable, and they must
+   be consumed by a rule that outranks the !important shell-radius invariant. */
+@property --morph-rx {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 18px;
+}
+
+@property --morph-ry {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 18px;
+}
+
 @property --island-fluid-scale-x {
     syntax: '<number>';
     inherits: true;
@@ -1334,8 +1352,13 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
 .terminal-workspace-grid {
     --workspace-split-x: 66.666%;
     --workspace-split-y: 50%;
+    /* The resize bar owns a real grid track. Windows and splitters therefore
+       occupy disjoint boxes: neither can ever paint over the other, and every
+       window keeps all four corners inside its own track. */
+    --workspace-gutter: 12px;
     display: grid;
-    gap: 12px;
+    /* gap must stay 0: the gutter above IS the spacing track. */
+    gap: 0;
     padding: 0;
     background:
         radial-gradient(circle at 20% 0%, rgba(10,132,255,.13), transparent 30%),
@@ -1352,14 +1375,28 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     transition: none;
 }
 .terminal-workspace-grid.layout-0 { display: grid; place-items: center; }
-.terminal-workspace-grid.layout-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-.terminal-workspace-grid.layout-2 { grid-template-columns: var(--workspace-split-x) minmax(0, 1fr); grid-template-rows: 1fr; }
+.terminal-workspace-grid.layout-1 { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+/* layout-1 has no splitter, so a single in-flow window must always take the
+   only cell even if a stale slot-N class survives a partial render. */
+.terminal-workspace-grid.layout-1 .terminal-window:not(.minimized-keepalive) { grid-column: 1; grid-row: 1; }
+/* Columns: [ left window | gutter | right window ] */
+.terminal-workspace-grid.layout-2 {
+    grid-template-columns: var(--workspace-split-x) var(--workspace-gutter) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+}
 .terminal-workspace-grid.layout-2 .slot-1 { grid-column: 1; grid-row: 1; }
-.terminal-workspace-grid.layout-2 .slot-2 { grid-column: 2; grid-row: 1; }
-.terminal-workspace-grid.layout-3 { grid-template-columns: var(--workspace-split-x) minmax(0, 1fr); grid-template-rows: var(--workspace-split-y) minmax(0, 1fr); }
-.terminal-workspace-grid.layout-3 .slot-1 { grid-row: 1 / 3; }
-.terminal-workspace-grid.layout-3 .slot-2 { grid-column: 2; grid-row: 1; }
-.terminal-workspace-grid.layout-3 .slot-3 { grid-column: 2; grid-row: 2; }
+.terminal-workspace-grid.layout-2 .slot-2 { grid-column: 3; grid-row: 1; }
+.terminal-workspace-grid.layout-2 > .workspace-splitter.vertical { grid-column: 2; grid-row: 1; }
+/* Rows: [ top window | gutter | bottom window ] in the right column only. */
+.terminal-workspace-grid.layout-3 {
+    grid-template-columns: var(--workspace-split-x) var(--workspace-gutter) minmax(0, 1fr);
+    grid-template-rows: var(--workspace-split-y) var(--workspace-gutter) minmax(0, 1fr);
+}
+.terminal-workspace-grid.layout-3 .slot-1 { grid-column: 1; grid-row: 1 / 4; }
+.terminal-workspace-grid.layout-3 .slot-2 { grid-column: 3; grid-row: 1; }
+.terminal-workspace-grid.layout-3 .slot-3 { grid-column: 3; grid-row: 3; }
+.terminal-workspace-grid.layout-3 > .workspace-splitter.vertical { grid-column: 2; grid-row: 1 / 4; }
+.terminal-workspace-grid.layout-3 > .workspace-splitter.horizontal { grid-column: 3; grid-row: 2; }
 .terminal-window {
     position: relative;
     min-width: 0;
@@ -1403,7 +1440,11 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     filter: saturate(1.08) brightness(1.03);
 }
 .terminal-window.dock-swapping {
-    animation: terminalDockSwapIn .54s cubic-bezier(.16,1,.3,1) both;
+    /* !important on purpose: a card-flip handoff leaves inline `animation:none`
+       on the handed-off window (so terminalWindowIn cannot replay on an
+       already-visible node). Inline outranks author-normal, which would have
+       silently swallowed this swap entrance for exactly that window. */
+    animation: terminalDockSwapIn .54s cubic-bezier(.16,1,.3,1) both !important;
 }
 @keyframes terminalDockSwapIn {
     0% { opacity: 0; transform: translate3d(0, 28px, 0) scale(.90); filter: blur(16px) saturate(.82); }
@@ -2137,12 +2178,21 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
 }
 .terminal-window-body .terminal-placeholder.active { display: grid; width: 100%; height: 100%; min-height: 0; border: 0; border-radius: 0; }
 .workspace-splitter {
-    --splitter-bar-bg: color-mix(in srgb, var(--surface) 88%, transparent);
+    /* Opaque on purpose. A translucent/backdrop-filtered bar samples the
+       neighbouring window pixels and smears their rounded corners into the
+       gutter, which reads as "the corner got covered / went missing". */
+    --splitter-bar-bg: var(--surface);
     --splitter-bar-border: rgba(139,148,158,.42);
     --splitter-handle: rgba(107,114,128,.88);
     --splitter-handle-active: rgba(75,85,99,.96);
-    position: absolute;
-    z-index: 9;
+    /* Grid item, NOT an overlay: it lives in its own gutter track, so it can
+       neither cover a window nor be covered by one. */
+    position: relative;
+    z-index: 3;
+    min-width: 0;
+    min-height: 0;
+    align-self: stretch;
+    justify-self: stretch;
     border-radius: 0;
     background: var(--splitter-bar-bg);
     opacity: 1;
@@ -2153,8 +2203,6 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     box-shadow:
         inset 0 1px 0 rgba(255,255,255,.20),
         inset 0 -1px 0 rgba(0,0,0,.08);
-    backdrop-filter: blur(20px) saturate(1.35);
-    -webkit-backdrop-filter: blur(20px) saturate(1.35);
 }
 .terminal-workspace.splitting .workspace-splitter,
 .workspace-splitter.dragging {
@@ -2185,14 +2233,13 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     box-shadow: inset 0 1px 0 rgba(255,255,255,.30);
     transition: background .20s ease;
 }
+/* Geometry comes from the gutter track alone — no left/top math, no
+   translate(-50%), so the bar can never bleed into a window column/row. */
 .workspace-splitter.vertical {
-    top: 0;
-    bottom: 0;
-    left: calc(var(--workspace-split-x) + 6px);
-    width: 12px;
+    width: 100%;
+    height: 100%;
     border-left: 1px solid var(--splitter-bar-border);
     border-right: 1px solid var(--splitter-bar-border);
-    transform: translateX(-50%);
     cursor: col-resize;
 }
 .workspace-splitter.vertical::before { width: 2px; height: 100%; }
@@ -2201,13 +2248,10 @@ body:not(.terminal-mode) .terminal-smartbar:not(.open):not(.closing) .smartbar-h
     height: min(74px, 24vh);
 }
 .workspace-splitter.horizontal {
-    left: calc(var(--workspace-split-x) + 12px);
-    right: 0;
-    top: calc(var(--workspace-split-y) + 6px);
-    height: 12px;
+    width: 100%;
+    height: 100%;
     border-top: 1px solid var(--splitter-bar-border);
     border-bottom: 1px solid var(--splitter-bar-border);
-    transform: translateY(-50%);
     cursor: row-resize;
 }
 .workspace-splitter.horizontal::before { width: 100%; height: 2px; }
@@ -11937,6 +11981,30 @@ select optgroup {
 .terminal-window:fullscreen,
 .terminal-workspace.custom-fullscreen .terminal-window {
     border-radius: 0 !important;
+}
+/* Radius compensation during a FLIP layout morph.
+ *
+ * The morph paints the window through scale3d(sx, sy, 1). A fixed 18px radius
+ * is scaled with it, so at sx=2 the corner reads as a 36x18 ellipse — that is
+ * the "corners look wrong / went missing" while the ratio changes.
+ *
+ * Pre-dividing the radius by the current scale keeps the PAINTED radius at
+ * exactly --radius-lg for every frame. It must be a registered custom property
+ * consumed by a higher-specificity !important rule, because the invariant above
+ * is author-important and therefore outranks element.animate() on border-radius.
+ * Specificity here is (0,6,0) vs the invariant's (0,5,0). */
+/* Keyed on .layout-morphing-radius, NOT .layout-morphing: the JS adds this
+   class only for the morphs where it actually animates --morph-rx/ry. Keying it
+   on .layout-morphing would apply the rule to move-only morphs too, where those
+   properties sit at their initial value, and any mismatch there would square
+   the corners for the whole morph — the exact defect this compensates for.
+   The var() fallbacks are a second belt: never resolve to 0. */
+.terminal-workspace:not(.custom-fullscreen) .terminal-window.layout-morphing-radius:not(:fullscreen):not(.minimized-keepalive) {
+    border-radius:
+        var(--morph-rx, var(--radius-lg)) var(--morph-rx, var(--radius-lg))
+        var(--morph-rx, var(--radius-lg)) var(--morph-rx, var(--radius-lg)) /
+        var(--morph-ry, var(--radius-lg)) var(--morph-ry, var(--radius-lg))
+        var(--morph-ry, var(--radius-lg)) var(--morph-ry, var(--radius-lg)) !important;
 }
 
 /* ===== Terminal shelf/smartbar final lock: the white line is carved into the nav extension ===== */

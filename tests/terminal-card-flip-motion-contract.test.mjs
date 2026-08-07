@@ -16,6 +16,16 @@ function fn(name) {
   }
   throw new Error(`unterminated ${name}`);
 }
+/**
+ * Function body with comments stripped. Negative assertions ("this function
+ * must not hardcode a layout class") have to look at code only — otherwise a
+ * comment explaining the bug is enough to fail the test.
+ */
+function code(name) {
+  return fn(name)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
 test('open splits matched geometry and dual-face rotation across Go springs', () => {
   const open = fn('playTerminalCardFlipOpen');
   assert.match(open, /Motion\.to\(surface,\s*\{[\s\S]*scaleX:\s*1[\s\S]*scaleY:\s*1[\s\S]*\},\s*\{\s*standard:\s*S\.iosCardFlipOpen\s*\}\)/);
@@ -42,21 +52,51 @@ test('real operation window mounts synchronously and authorization runs in paral
   assert.ok(connect.indexOf('const authorize = api') < connect.indexOf('await flight'));
   assert.doesNotMatch(connect, /tabId = await openConnection/);
   assert.doesNotMatch(connect, /await sshKeyMotion\._ensure/);
-  assert.match(fn('mountConnectionLocallyForCardFlip'), /createTerminalWindowElement\(session\)/);
-  assert.match(fn('mountConnectionLocallyForCardFlip'), /layout-1/);
+  // The mount must go through the single layout owner. Hardcoding a layout
+  // class here left an already-open window auto-placed into an implicit grid
+  // row, i.e. two terminals stacked vertically instead of side-by-side.
+  const mount = code('mountConnectionLocallyForCardFlip');
+  assert.match(mount, /renderTerminalWorkspace\(\)/);
+  assert.doesNotMatch(mount, /layout-\$\{|layout-1|layout-2|layout-3/);
+  assert.doesNotMatch(mount, /workspace\.className\s*=/);
+  assert.doesNotMatch(mount, /visualLayout\s*=\s*\[tabId\]/);
+  // …and the layout owner is still what builds the live window synchronously.
+  assert.match(fn('renderTerminalWorkspace'), /createTerminalWindowElement\(t\)/);
   const back = fn('paintTerminalCardFlipBack');
   assert.match(back, /back\.appendChild\(liveWin\)/);
   assert.doesNotMatch(back, /terminal-card-flip-window-fallback|cloneNode/);
 });
 test('handoff moves the same live node with no second entrance animation', () => {
-  const hand = fn('finishTerminalCardFlipOpenHandoff');
+  const hand = code('finishTerminalCardFlipOpenHandoff');
   assert.match(hand, /restoreCardFlipHostedWindow\(\)/);
   assert.match(hand, /animation:\s*'none'/);
   assert.match(hand, /transform:\s*'none'/);
   assert.doesNotMatch(hand, /iosCardContent|contentClose/);
   assert.match(hand, /classList\.remove\('terminal-card-flip-preparing', 'terminal-card-flip-animating', 'terminal-card-flip-handoff'\)/);
-  assert.match(hand, /visualLayout = \[win\.dataset\.window\]/);
-  assert.match(hand, /workspace\.className = `terminal-workspace terminal-workspace-grid layout-1/);
+  // The handoff must NOT pin the workspace to a single cell. With "multiple
+  // terminals per page" enabled and a session already open, the real layout is
+  // 2 or 3 tracks; forcing layout-1 auto-placed the windows into implicit rows
+  // (vertical stack instead of side-by-side).
+  assert.doesNotMatch(hand, /workspace\.className\s*=\s*`terminal-workspace terminal-workspace-grid layout-1/);
+  assert.doesNotMatch(hand, /visualLayout = \[win\.dataset\.window\]/);
+  // The renderer is the single source of truth for layout-N / slot-N / splitters.
+  assert.match(hand, /syncVisualLayout\(\{ preserve: true \}\)/);
+  assert.match(hand, /renderTerminalWorkspace\(\)/);
+  // Restore first, then render: the renderer only reuses a window it can find
+  // under #terminalWorkspace, otherwise it would build a second live iframe.
+  assert.ok(hand.indexOf('restoreCardFlipHostedWindow()') < hand.indexOf('renderTerminalWorkspace()'));
+  // Flip-only !important pins must be released, otherwise this window can never
+  // be moved by a later layout morph (author-important outranks WAAPI).
+  assert.match(hand, /releaseCardFlipWindowPins\(win\)/);
+  const release = fn('releaseCardFlipWindowPins');
+  assert.match(release, /delete win\.dataset\.cardFlipRadius/);
+  assert.match(release, /removeProperty\('transform'\)/);
+  assert.match(release, /removeProperty\('transition'\)/);
+  assert.match(release, /removeProperty\('filter'\)/);
+  // The flip always ends full-stage, so a multi-window layout must morph into
+  // its slot instead of snapping.
+  assert.match(hand, /const stageRect = win\.getBoundingClientRect\(\)/);
+  assert.match(hand, /animateTerminalWindowLayoutFrom\(new Map\(\[\[win\.dataset\.window, stageRect\]\]\)/);
 });
 test('one radius is shared by source, both faces, hosted page and final page', () => {
   const connect = fn('openConnectionWithCardFlip');

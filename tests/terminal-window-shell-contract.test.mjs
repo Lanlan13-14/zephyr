@@ -54,7 +54,7 @@ test('only fullscreen terminal shells are square', () => {
 });
 
 test('SSH, Telnet, RDP and VNC load the same refreshed shell stylesheet', () => {
-    assert.match(appHtml, /style\.css\?v=20260801-ai-edit-cancel1-terminal-shell3/);
+    assert.match(appHtml, /style\.css\?v=20260807-ai-edit-cancel1-terminal-shell3-splitgrid1/);
     assert.match(terminalHtml, /style\.css\?v=20260731-sftp-multi-close1-mobile-ime2-shell3/);
     assert.match(telnetHtml, /style\.css\?v=20260731-sftp-multi-close1-mobile-ime2-shell3/);
     assert.match(rdpHtml, /style\.css\?v=20260804-rdp-ssh-scroll3-shell3/);
@@ -62,7 +62,7 @@ test('SSH, Telnet, RDP and VNC load the same refreshed shell stylesheet', () => 
 });
 
 test('app cache-busts every protocol iframe after shell and input changes', () => {
-    assert.match(appHtml, /app\.js\?v=20260804-notes-enabled-persist1-mobile-ime2-shell5/);
+    assert.match(appHtml, /app\.js\?v=20260807-notes-enabled-persist1-mobile-ime2-shell5-splitgrid1/);
     assert.match(appJs, /rdp\.html\?embed=1[\s\S]*&v=20260804-rdp-ssh-scroll4/);
     assert.match(appJs, /novnc\.html\?embed=1[\s\S]*&v=20260804-terminal-shell3/);
     assert.match(appJs, /telnet-terminal\.html\?embed=1[\s\S]*terminal-grid-converge1-mobile-ime2/);

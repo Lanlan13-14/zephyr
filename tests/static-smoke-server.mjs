@@ -4,7 +4,14 @@ import path from 'node:path';
 
 const root = process.cwd();
 const port = Number(process.argv[2]) || 18765;
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm' };
+const types = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    // Chrome refuses a stylesheet served with a non-CSS MIME in standards mode,
+    // so layout smokes that load the real public/style.css need this entry.
+    '.css': 'text/css; charset=utf-8',
+    '.wasm': 'application/wasm',
+};
 http.createServer((req, res) => {
     const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
     const file = path.resolve(root, `.${pathname}`);

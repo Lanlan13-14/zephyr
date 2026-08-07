@@ -1776,11 +1776,15 @@ async function finishTerminalCardFlipOpenHandoff() {
     settleTerminalShelfForCardFlip();
     syncTerminalSmartbarTop();
     syncTerminalShelfLineState();
+    // The back face is still full-stage, so this is the flip's visual end box.
+    // It becomes the FLIP "before" rect for the settle morph below.
+    const stageRect = win.getBoundingClientRect();
     // The live window is still hosted by the full-screen back face, so the
     // workspace can be assigned its final layout without painting a duplicate.
-    const workspace = $('#terminalWorkspace');
-    if (workspace) workspace.className = `terminal-workspace terminal-workspace-grid layout-1 ${isCompactTerminalWorkspace() ? 'compact' : ''}`;
-    visualLayout = [win.dataset.window];
+    // NEVER hardcode layout-1 here: when "multiple terminals per page" is on
+    // and a session is already open, the real layout is 2 or 3 columns. Forcing
+    // layout-1 left every window auto-placed into implicit rows, which is what
+    // produced the vertical stack instead of a left/right split.
     // Keep the final back face visually intact until the live node is already
     // in its final workspace box. The back surface is cleared only afterwards.
     restoreCardFlipHostedWindow();
@@ -1788,9 +1792,21 @@ async function finishTerminalCardFlipOpenHandoff() {
         visibility: 'visible', opacity: '1', pointerEvents: '', animation: 'none',
         transition: 'none', transform: 'none', filter: 'none',
     });
+    // The restored node is back under #terminalWorkspace, so the normal
+    // renderer reuses this exact iframe and assigns the real layout class,
+    // slot-N placement and splitter tracks in the same JS task.
+    syncVisualLayout({ preserve: true });
+    renderTerminalWorkspace();
     // Same-frame handoff: the exact back-face node is now in the exact final
     // box; only then remove the flip surface and reveal the terminal view.
     document.body.classList.remove('terminal-card-flip-preparing', 'terminal-card-flip-animating', 'terminal-card-flip-handoff');
+    // Release the flip-only pins. `[data-card-flip-radius]` carries
+    // `transform/transition/filter/animation: none !important`, which outranks
+    // element.animate() in the cascade — leaving it on froze this window for
+    // every later layout morph while its siblings moved, so windows ended up
+    // overlapping and corners were covered. Keep only the inline
+    // `animation: none` so the entrance keyframes cannot replay.
+    releaseCardFlipWindowPins(win);
     if (Motion && surface) {
         Motion.stop(surface);
         if (scrim) Motion.stop(scrim);
@@ -1802,10 +1818,74 @@ async function finishTerminalCardFlipOpenHandoff() {
         if (nav) Motion.release(nav);
     }
     resetTerminalCardFlipSurface(Motion);
+    // The flip always ends full-stage. With a multi-window layout the final box
+    // is one slot, so morph from the flip's end box into that slot instead of
+    // snapping.
+    //
+    // This must be gated on a MATERIAL difference, not on the morph's own 1px
+    // threshold. In a single-window layout the window is inset by the
+    // workspace's 1px border, so |dx|+|dy| is 2 and the morph would fire for a
+    // 1px nudge — and `.layout-morphing .terminal-frame` is `pointer-events:
+    // none`, which would leave a freshly opened terminal dead to input for the
+    // whole 560ms. Compare against the settled box and only morph on a real
+    // slot change.
+    if (shouldSettleCardFlipIntoSlot(win, stageRect)) {
+        animateTerminalWindowLayoutFrom(new Map([[win.dataset.window, stageRect]]), { reason: 'card-flip-settle' });
+    }
     terminalCardFlipMotion.phase = 'settled';
     terminalCardFlipMotion.originRect = null;
     terminalCardFlipMotion.sourceEl = null;
     return true;
+}
+/**
+ * Should the handed-off window morph from the flip's full-stage box into its
+ * final slot, or is it already effectively there?
+ *
+ * The flip always ends full-stage. With one visible window the final box is the
+ * whole workspace, differing only by the workspace's 1px border — i.e. |dx|+|dy|
+ * = 2, which is already past animateTerminalWindowLayoutFrom's 1px threshold. A
+ * morph there would be invisible yet still add `.layout-morphing`, whose rule
+ * sets `pointer-events: none` on `.terminal-frame`: the terminal would ignore
+ * clicks and keys for the whole 560ms right after opening. Only morph when the
+ * slot is materially different, which is exactly the multi-window case.
+ *
+ * The threshold is read from --workspace-gutter so it cannot drift from the CSS:
+ * anything smaller than one gutter is not a slot change.
+ */
+function shouldSettleCardFlipIntoSlot(win, stageRect) {
+    if (!win?.isConnected || !stageRect || stageRect.width <= 1 || stageRect.height <= 1) return false;
+    const now = win.getBoundingClientRect();
+    if (now.width <= 1 || now.height <= 1) return false;
+    const gutter = (() => {
+        const raw = parseFloat(getComputedStyle(win).getPropertyValue('--workspace-gutter'));
+        return Number.isFinite(raw) && raw > 0 ? raw : 12;
+    })();
+    return Math.abs(now.left - stageRect.left) >= gutter
+        || Math.abs(now.top - stageRect.top) >= gutter
+        || Math.abs(now.width - stageRect.width) >= gutter
+        || Math.abs(now.height - stageRect.height) >= gutter;
+}
+/**
+ * Drop every flip-only pin from a handed-off window.
+ *
+ * `[data-card-flip-radius]` is matched by a rule carrying
+ * `transform/transition/filter/animation: none !important`. Author-important
+ * beats the Animation origin in the cascade, so while that attribute stays the
+ * window can never be moved by element.animate() nor by any class-driven
+ * transition. Removing it restores normal layout-morph behaviour.
+ *
+ * Inline `animation: 'none'` is deliberately kept: clearing it would restart
+ * `terminalWindowIn` on an already-visible window and flash it. Class-driven
+ * keyframes (`.motion-closing`, `.dock-swapping`) use !important so they still win.
+ */
+function releaseCardFlipWindowPins(win) {
+    if (!win) return;
+    delete win.dataset.cardFlipRadius;
+    win.style.removeProperty('border-radius');
+    win.style.removeProperty('overflow');
+    win.style.removeProperty('transform');
+    win.style.removeProperty('transition');
+    win.style.removeProperty('filter');
 }
 /**
  * Reference-grade CLOSE — hold rotateY(-180), centre scale→0.01 + opacity 0.
@@ -3494,13 +3574,14 @@ function mountConnectionLocallyForCardFlip(connection, options = {}) {
     enforceTerminalWorkspaceLimit(tabId);
     const workspace = $('#terminalWorkspace');
     if (workspace) {
-        workspace.querySelectorAll(':scope > .terminal-placeholder').forEach((el) => el.remove());
-        workspace.className = `terminal-workspace terminal-workspace-grid layout-1 ${isCompactTerminalWorkspace() ? 'compact' : ''}`;
-        visualLayout = [tabId];
-        const session = getTerminalSession(tabId);
-        const win = createTerminalWindowElement(session);
-        win.className = 'terminal-window active slot-1';
-        workspace.appendChild(win);
+        // Never hardcode a layout class here. Any already-visible window stays
+        // in the workspace, so a fixed single-cell template auto-placed the
+        // second window into an implicit ROW — that is the "stacked instead of
+        // side-by-side" bug. renderTerminalWorkspace() is the single source of
+        // truth for the layout-N class, slot-N placement and splitter tracks,
+        // and it reuses existing window elements (live iframes are not
+        // reloaded), so the already-open session keeps its PTY.
+        renderTerminalWorkspace();
     }
     return tabId;
 }
@@ -4431,12 +4512,74 @@ function captureTerminalWindowRects() {
     if (!workspace) return new Map();
     return new Map(Array.from(workspace.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)')).map((el) => [el.dataset.window, el.getBoundingClientRect()]));
 }
+/**
+ * The window's resting corner radius in px, read while no morph class is on.
+ * The shell invariant publishes it with !important, so the computed longhand is
+ * the single source of truth (never assume --radius-lg).
+ */
+function terminalWindowRestRadius(el) {
+    if (!el) return 0;
+    const raw = getComputedStyle(el).borderTopLeftRadius || '';
+    const px = parseFloat(String(raw).split(/[\s/]+/)[0]);
+    return Number.isFinite(px) && px > 0 ? px : 0;
+}
+const TERMINAL_MORPH_DURATION = 560;
+const TERMINAL_MORPH_EASING = 'cubic-bezier(.16, 1, .3, 1)';
+/**
+ * Keyframe count for the morph's geometry track.
+ *
+ * The radius compensation is R/scale — a hyperbola — while WAAPI interpolates
+ * between keyframes linearly. Two keyframes therefore overshoot the PAINTED
+ * corner (measured: 2.25px / 12.5% at sx=2). Densifying the track turns the
+ * chord error into a piecewise-linear approximation (measured: 0.011px at
+ * sx=2). Option-level easing is applied BEFORE keyframe-offset lookup, so
+ * adding keyframes does not alter the motion curve at all.
+ *
+ * Scale it with the zoom ratio: the hyperbola's curvature grows as scale→0.
+ */
+function terminalMorphFrameCount(sx, sy) {
+    const ratio = Math.max(
+        Math.abs(sx) || 1, Math.abs(sy) || 1,
+        1 / Math.max(0.0001, Math.abs(sx) || 1),
+        1 / Math.max(0.0001, Math.abs(sy) || 1),
+    );
+    return Math.min(64, Math.max(20, Math.ceil(ratio * 10)));
+}
+/**
+ * Geometry track for one window: FLIP transform plus the inverse-compensated
+ * corner radius, sampled so that radius x scale stays on the resting radius for
+ * every frame instead of only at the two endpoints.
+ */
+function buildTerminalMorphFrames({ dx, dy, sx, sy, radius, compensate }) {
+    const steps = compensate ? terminalMorphFrameCount(sx, sy) : 1;
+    const frames = [];
+    for (let i = 0; i <= steps; i++) {
+        const p = i / steps;
+        // Linear in keyframe offset: the option-level easing already shaped the
+        // time→offset mapping, so this reproduces the original transform curve.
+        const cx = sx + (1 - sx) * p;
+        const cy = sy + (1 - sy) * p;
+        const frame = {
+            offset: p,
+            transform: `translate3d(${(dx * (1 - p)).toFixed(4)}px, ${(dy * (1 - p)).toFixed(4)}px, 0) scale3d(${cx.toFixed(6)}, ${cy.toFixed(6)}, 1)`,
+        };
+        if (compensate) {
+            frame['--morph-rx'] = `${(radius / Math.max(0.0001, Math.abs(cx))).toFixed(4)}px`;
+            frame['--morph-ry'] = `${(radius / Math.max(0.0001, Math.abs(cy))).toFixed(4)}px`;
+        }
+        frames.push(frame);
+    }
+    return frames;
+}
 function animateTerminalWindowLayoutFrom(beforeRects, { reason = 'layout-change' } = {}) {
     const workspace = $('#terminalWorkspace');
     if (!workspace || !beforeRects?.size) return;
     window.cancelAnimationFrame(animateTerminalWindowLayoutFrom._raf);
     animateTerminalWindowLayoutFrom._raf = window.requestAnimationFrame(() => {
         const animations = [];
+        // Live handles, so the watchdog below can cancel a fill that never
+        // resolved (interrupted render, tab hidden mid-morph, …).
+        const running = [];
         workspace.classList.add('terminal-layout-morphing');
         workspace.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)').forEach((el) => {
             const before = beforeRects.get(el.dataset.window);
@@ -4449,26 +4592,57 @@ function animateTerminalWindowLayoutFrom(beforeRects, { reason = 'layout-change'
             const moved = Math.abs(dx) + Math.abs(dy) > 1;
             const resized = Math.abs(1 - sx) + Math.abs(1 - sy) > 0.01;
             if (!moved && !resized) return;
+            // A FLIP morph paints the corner through scale3d, so a uniform
+            // border-radius is stretched into an ellipse (radius*sx by
+            // radius*sy) for the whole morph — that is the "corners look wrong
+            // / go missing" while a ratio changes. Pre-divide the authored
+            // radius by the scale so the PAINTED radius stays constant.
+            const restRadius = terminalWindowRestRadius(el);
+            // Only a RESIZE stretches the corner; a pure move paints it 1:1.
+            // The compensation class must therefore be added only when those
+            // custom properties are actually animated, otherwise the rule that
+            // consumes them would take over with nothing driving it.
+            const compensate = restRadius > 0 && resized;
             el.classList.add('layout-morphing');
-            const anim = el.animate([
+            if (compensate) el.classList.add('layout-morphing-radius');
+            const timing = {
+                duration: TERMINAL_MORPH_DURATION,
+                easing: TERMINAL_MORPH_EASING,
+                fill: 'both',
+            };
+            // Geometry: densified so radius x scale stays constant every frame.
+            const anim = el.animate(
+                buildTerminalMorphFrames({ dx, dy, sx, sy, radius: restRadius, compensate }),
+                timing,
+            );
+            // Cosmetics stay on their own 2-keyframe track: densifying these
+            // would change how blur/shadow read, and they need no compensation.
+            const cosmetic = el.animate([
                 {
-                    transform: `translate3d(${dx}px, ${dy}px, 0) scale3d(${sx}, ${sy}, 1)`,
                     filter: 'blur(.6px) saturate(.98)',
-                    boxShadow: '0 18px 52px rgba(0,0,0,.30), inset 0 0 0 1px rgba(255,255,255,.03)'
+                    boxShadow: '0 18px 52px rgba(0,0,0,.30), inset 0 0 0 1px rgba(255,255,255,.03)',
                 },
                 {
-                    transform: 'translate3d(0, 0, 0) scale3d(1, 1, 1)',
                     filter: 'blur(0) saturate(1)',
                     boxShadow: el.classList.contains('active')
                         ? '0 24px 70px rgba(0,0,0,.38), 0 0 0 3px rgba(10,132,255,.08)'
-                        : '0 18px 52px rgba(0,0,0,.32), inset 0 0 0 1px rgba(255,255,255,.03)'
-                }
-            ], {
-                duration: 560,
-                easing: 'cubic-bezier(.16, 1, .3, 1)',
-                fill: 'both'
-            });
-            animations.push(anim.finished.catch(() => {}).finally(() => el.classList.remove('layout-morphing')));
+                        : '0 18px 52px rgba(0,0,0,.32), inset 0 0 0 1px rgba(255,255,255,.03)',
+                },
+            ], timing);
+            running.push(anim, cosmetic);
+            animations.push(Promise.allSettled([anim.finished, cosmetic.finished]).finally(() => {
+                el.classList.remove('layout-morphing', 'layout-morphing-radius');
+                // `fill: 'both'` keeps the end keyframe in the Animation origin
+                // forever, which outranks author-normal declarations. A leaked
+                // fill therefore froze `.minimizing`'s scale(.72) and
+                // `.dragging`'s translate at identity. The end keyframe already
+                // equals the resting style (base transform is
+                // translate3d(0,0,0) scale(1); the background box-shadow is
+                // byte-identical; the active one is author-!important anyway),
+                // so cancelling is visually a no-op and releases the property.
+                try { anim.cancel(); } catch {}
+                try { cosmetic.cancel(); } catch {}
+            }));
         });
         window.clearTimeout(animateTerminalWindowLayoutFrom._timer);
         Promise.all(animations).finally(() => {
@@ -4477,7 +4651,13 @@ function animateTerminalWindowLayoutFrom(beforeRects, { reason = 'layout-change'
         });
         animateTerminalWindowLayoutFrom._timer = window.setTimeout(() => {
             workspace.classList.remove('terminal-layout-morphing');
-            workspace.querySelectorAll('.terminal-window.layout-morphing').forEach((el) => el.classList.remove('layout-morphing'));
+            // Cancel too, not just declassify: a filling animation keeps owning
+            // transform/--morph-* in the cascade even after its class is gone,
+            // which would freeze the next .minimizing / .dragging transform.
+            running.forEach((anim) => { try { anim.cancel(); } catch {} });
+            running.length = 0;
+            workspace.querySelectorAll('.terminal-window.layout-morphing, .terminal-window.layout-morphing-radius')
+                .forEach((el) => el.classList.remove('layout-morphing', 'layout-morphing-radius'));
         }, 720);
     });
 }
@@ -5899,21 +6079,59 @@ function startTerminalWindowDrag(e, tabId) {
     window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp, { once: true });
 }
+/**
+ * Grid track percentages (--workspace-split-x/y) resolve against the grid
+ * container's CONTENT box, while getBoundingClientRect() is the BORDER box.
+ * Mixing the two drifts the gutter away from the pointer, so measure the
+ * content box explicitly and read the real gutter track width.
+ */
+function workspaceGridMetrics(workspace) {
+    const rect = workspace.getBoundingClientRect();
+    const cs = getComputedStyle(workspace);
+    const num = (value, fallback = 0) => {
+        const parsed = parseFloat(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const bl = num(cs.borderLeftWidth), brr = num(cs.borderRightWidth);
+    const bt = num(cs.borderTopWidth), bb = num(cs.borderBottomWidth);
+    const pl = num(cs.paddingLeft), pr = num(cs.paddingRight);
+    const pt = num(cs.paddingTop), pb = num(cs.paddingBottom);
+    return {
+        left: rect.left + bl + pl,
+        top: rect.top + bt + pt,
+        width: Math.max(1, rect.width - bl - brr - pl - pr),
+        height: Math.max(1, rect.height - bt - bb - pt - pb),
+        gutter: num(cs.getPropertyValue('--workspace-gutter'), 12),
+    };
+}
+/**
+ * The leading track gets `px`; the gutter track follows it. Keep both inside
+ * the content box so the trailing window can never be squeezed to zero.
+ */
+function clampWorkspaceSplitPercent(px, total, gutter, minPct, maxPct, minTrailing = 88) {
+    if (!(total > 0)) return minPct;
+    const maxByTrailing = ((total - gutter - minTrailing) / total) * 100;
+    const hi = Math.min(maxPct, Number.isFinite(maxByTrailing) ? maxByTrailing : maxPct);
+    const lo = Math.min(minPct, hi);
+    return Math.min(hi, Math.max(lo, (px / total) * 100));
+}
 function startWorkspaceSplitterDrag(e, axis) {
     const workspace = $('#terminalWorkspace');
     if (!workspace) return;
     e.preventDefault();
     const splitter = e.target.closest?.('[data-splitter]');
-    const rect = workspace.getBoundingClientRect();
+    const metrics = workspaceGridMetrics(workspace);
 
-    const splitterGapHalf = 6;
-
+    // The gutter track is centred under the pointer, so the leading track ends
+    // half a gutter before the cursor. This keeps grab point == bar position.
     const applyPosition = (clientX, clientY) => {
         if (axis === 'x') {
-            const pct = Math.min(82, Math.max(24, ((clientX - rect.left - splitterGapHalf) / rect.width) * 100));
+            const px = (clientX - metrics.left) - metrics.gutter / 2;
+            const pct = clampWorkspaceSplitPercent(px, metrics.width, metrics.gutter, 24, 82);
             workspace.style.setProperty('--workspace-split-x', `${pct.toFixed(2)}%`);
         } else {
-            const pct = Math.min(78, Math.max(22, ((clientY - rect.top - splitterGapHalf) / rect.height) * 100));
+            const px = (clientY - metrics.top) - metrics.gutter / 2;
+            const pct = clampWorkspaceSplitPercent(px, metrics.height, metrics.gutter, 22, 78);
             workspace.style.setProperty('--workspace-split-y', `${pct.toFixed(2)}%`);
         }
     };
