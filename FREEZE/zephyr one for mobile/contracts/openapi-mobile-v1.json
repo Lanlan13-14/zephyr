@@ -1,0 +1,2592 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Zephyr One Mobile API",
+    "version": "1.0.0",
+    "description": "Zephyr business rules exposed to native Android/iOS clients. Existing routes are marked implemented; mobile sync routes are required server extensions.",
+    "license": {
+      "name": "GNU General Public License v3.0",
+      "identifier": "GPL-3.0-only"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://{host}",
+      "variables": {
+        "host": {
+          "default": "zephyr.example.com"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Zephyr account authentication inherited by One."
+    },
+    {
+      "name": "Devices",
+      "description": "One device binding and lifecycle."
+    },
+    {
+      "name": "Sync",
+      "description": "Bidirectional mobile mirror protocol."
+    },
+    {
+      "name": "Sensitive",
+      "description": "Password or TOTP verification grants."
+    },
+    {
+      "name": "FileBridge",
+      "description": "ZFT2 file bridge leases."
+    }
+  ],
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Use Zephyr login policy and request a native SID",
+        "operationId": "postApiAuthLogin",
+        "x-zephyr-implementation": "implemented-3a61d2f",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/totp/verify": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Complete Zephyr TOTP and request a native SID",
+        "operationId": "postApiAuthTotpVerify",
+        "x-zephyr-implementation": "implemented-3a61d2f",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/capabilities": {
+      "get": {
+        "tags": [
+          "Devices"
+        ],
+        "summary": "Negotiate protocol, registry and limits",
+        "operationId": "getApiMobileV1Capabilities",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/mobile/v1/devices/bind": {
+      "post": {
+        "tags": [
+          "Devices"
+        ],
+        "summary": "Bind authenticated account plus existing Client Token to device",
+        "operationId": "postApiMobileV1DevicesBind",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ZephyrSid": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/devices/refresh": {
+      "post": {
+        "tags": [
+          "Devices"
+        ],
+        "summary": "Rotate short-lived access and single-use refresh credentials",
+        "operationId": "postApiMobileV1DevicesRefresh",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "DeviceAccess": []
+          },
+          {
+            "DeviceProof": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/devices": {
+      "get": {
+        "tags": [
+          "Devices"
+        ],
+        "summary": "List current account One devices",
+        "operationId": "getApiMobileV1Devices",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "devices": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Device"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ZephyrSid": []
+          }
+        ]
+      }
+    },
+    "/api/mobile/v1/devices/{deviceId}": {
+      "patch": {
+        "tags": [
+          "Devices"
+        ],
+        "summary": "Update device name, enabled state and automatic interval",
+        "operationId": "patchApiMobileV1DevicesDeviceid",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Device"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ZephyrSid": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "deviceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Devices"
+        ],
+        "summary": "Consume a scoped sensitive grant and revoke device",
+        "operationId": "deleteApiMobileV1DevicesDeviceid",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ZephyrSid": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "deviceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Zephyr-Sensitive-Grant",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/mobile/v1/sync/bootstrap": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Read a stable, paged account snapshot",
+        "operationId": "getApiMobileV1SyncBootstrap",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BootstrapPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "DeviceAccess": []
+          },
+          {
+            "DeviceProof": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "pageToken",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          }
+        ]
+      }
+    },
+    "/api/mobile/v1/sync/changes": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Read coalesced changes after cursor",
+        "operationId": "getApiMobileV1SyncChanges",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "DeviceAccess": []
+          },
+          {
+            "DeviceProof": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          }
+        ]
+      }
+    },
+    "/api/mobile/v1/sync/push": {
+      "post": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Apply idempotent optimistic operations through Zephyr business services",
+        "operationId": "postApiMobileV1SyncPush",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "DeviceAccess": []
+          },
+          {
+            "DeviceProof": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/sync/ack": {
+      "post": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Persist highest fully applied cursor",
+        "operationId": "postApiMobileV1SyncAck",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "DeviceAccess": []
+          },
+          {
+            "DeviceProof": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "cursor"
+                ],
+                "properties": {
+                  "cursor": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/sync/now": {
+      "post": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Record manual trigger and optionally wake target device",
+        "operationId": "postApiMobileV1SyncNow",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ZephyrSid": []
+          },
+          {
+            "DeviceAccess": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/sync/status": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Return truthful server-side sync state",
+        "operationId": "getApiMobileV1SyncStatus",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ZephyrSid": []
+          },
+          {
+            "DeviceAccess": []
+          }
+        ]
+      }
+    },
+    "/api/mobile/v1/sensitive/verify": {
+      "post": {
+        "tags": [
+          "Sensitive"
+        ],
+        "summary": "Exchange password or TOTP for one-action, one-target grant",
+        "operationId": "postApiMobileV1SensitiveVerify",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensitiveGrant"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ZephyrSid": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensitiveVerifyRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/file-bridge/lease": {
+      "post": {
+        "tags": [
+          "FileBridge"
+        ],
+        "summary": "Mint short-lived user/device/share-bound ZFT2 lease",
+        "operationId": "postApiMobileV1File-BridgeLease",
+        "x-zephyr-implementation": "required-server-extension",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "DeviceAccess": []
+          },
+          {
+            "DeviceProof": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "shareProfileIds"
+                ],
+                "properties": {
+                  "shareProfileIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ZephyrSid": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Zephyr-Sid",
+        "description": "Existing SQLite-backed Zephyr app session returned only to native clients."
+      },
+      "DeviceAccess": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque",
+        "description": "Short-lived mobile access credential. Refresh credential is never used as bearer access."
+      },
+      "DeviceProof": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Zephyr-Device-Proof",
+        "description": "ES256 proof over method, path, body hash, timestamp and server nonce."
+      }
+    },
+    "schemas": {
+      "ErrorEnvelope": {
+        "title": "MobileErrorEnvelope",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "error"
+        ],
+        "properties": {
+          "ok": {
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message",
+              "retryable",
+              "requestId"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean"
+              },
+              "details": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "username",
+          "password",
+          "returnSid"
+        ],
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "captchaToken": {
+            "type": "string"
+          },
+          "remember": {
+            "type": "boolean",
+            "default": false
+          },
+          "returnSid": {
+            "const": true
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "requireTotp": {
+            "type": "boolean"
+          },
+          "tempToken": {
+            "type": "string"
+          },
+          "sid": {
+            "type": "string"
+          },
+          "user": {
+            "type": "object",
+            "properties": {
+              "userId": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              }
+            }
+          },
+          "mustChangePassword": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TotpRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tempToken",
+          "code",
+          "returnSid"
+        ],
+        "properties": {
+          "tempToken": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[0-9]{6,8}$"
+          },
+          "returnSid": {
+            "const": true
+          }
+        }
+      },
+      "DeviceKeys": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "encryption",
+          "signing"
+        ],
+        "properties": {
+          "encryption": {
+            "type": "object",
+            "required": [
+              "alg",
+              "publicKey"
+            ],
+            "properties": {
+              "alg": {
+                "const": "ML-KEM-768"
+              },
+              "publicKey": {
+                "type": "string",
+                "contentEncoding": "base64"
+              }
+            }
+          },
+          "signing": {
+            "type": "object",
+            "required": [
+              "alg",
+              "jwk"
+            ],
+            "properties": {
+              "alg": {
+                "const": "ES256"
+              },
+              "jwk": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "Device": {
+        "type": "object",
+        "required": [
+          "deviceId",
+          "ownerUserId",
+          "deviceName",
+          "platform",
+          "appVersion",
+          "tokenId",
+          "enabled",
+          "automaticEnabled",
+          "syncIntervalSec",
+          "createdAt"
+        ],
+        "properties": {
+          "deviceId": {
+            "type": "string"
+          },
+          "ownerUserId": {
+            "type": "string"
+          },
+          "deviceName": {
+            "type": "string"
+          },
+          "platform": {
+            "enum": [
+              "android",
+              "ios"
+            ]
+          },
+          "appVersion": {
+            "type": "string"
+          },
+          "tokenId": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "automaticEnabled": {
+            "type": "boolean"
+          },
+          "syncIntervalSec": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 86400
+          },
+          "lastSyncAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastSeenAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "revokedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "BindRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "deviceId",
+          "deviceName",
+          "platform",
+          "appVersion",
+          "tokenId",
+          "keys",
+          "syncIntervalSec"
+        ],
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 80
+          },
+          "deviceName": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "platform": {
+            "enum": [
+              "android",
+              "ios"
+            ]
+          },
+          "appVersion": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "tokenId": {
+            "type": "string"
+          },
+          "keys": {
+            "$ref": "#/components/schemas/DeviceKeys"
+          },
+          "syncIntervalSec": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 86400
+          }
+        }
+      },
+      "BindResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "device",
+          "accessCredential",
+          "refreshCredential",
+          "registryHash"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "device": {
+            "$ref": "#/components/schemas/Device"
+          },
+          "accessCredential": {
+            "type": "string"
+          },
+          "accessExpiresAt": {
+            "type": "integer"
+          },
+          "refreshCredential": {
+            "type": "string"
+          },
+          "registryHash": {
+            "type": "string"
+          },
+          "bootstrapRequired": {
+            "const": true
+          }
+        }
+      },
+      "SyncOperation": {
+        "title": "SyncOperation",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "opId",
+          "entityType",
+          "entityId",
+          "action",
+          "baseRevision",
+          "fieldMask",
+          "payload"
+        ],
+        "properties": {
+          "opId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "entityType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "entityId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "action": {
+            "enum": [
+              "upsert",
+              "delete",
+              "restore"
+            ]
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "clientModifiedAt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fieldMask": {
+            "type": "array",
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.\\[\\]-]*$"
+            }
+          },
+          "payload": {
+            "type": "object"
+          },
+          "secretEnvelopes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SecretEnvelope"
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "upsert"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "properties": {
+                "fieldMask": {
+                  "type": "array",
+                  "minItems": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "delete",
+                    "restore"
+                  ]
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "properties": {
+                "fieldMask": {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                "payload": {
+                  "type": "object",
+                  "maxProperties": 0
+                }
+              }
+            }
+          }
+        ]
+      },
+      "SyncChange": {
+        "title": "SyncChange",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "changeSeq",
+          "entityType",
+          "entityId",
+          "action",
+          "revision",
+          "changedAt"
+        ],
+        "properties": {
+          "changeSeq": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "entityType": {
+            "type": "string"
+          },
+          "entityId": {
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "upsert",
+              "delete"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "actorDeviceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changedAt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fieldMask": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "payload": {
+            "type": "object"
+          },
+          "secretEnvelopes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SecretEnvelope"
+            }
+          },
+          "tombstone": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "upsert"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "payload": true,
+                "fieldMask": true
+              },
+              "required": [
+                "payload",
+                "fieldMask"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "delete"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "tombstone": true
+              },
+              "required": [
+                "tombstone"
+              ]
+            }
+          }
+        ]
+      },
+      "PushRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "protocolVersion",
+          "deviceId",
+          "batchId",
+          "baseCursor",
+          "registryHash",
+          "operations"
+        ],
+        "properties": {
+          "protocolVersion": {
+            "const": 1
+          },
+          "deviceId": {
+            "type": "string"
+          },
+          "batchId": {
+            "type": "string"
+          },
+          "baseCursor": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "registryHash": {
+            "type": "string"
+          },
+          "operations": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/SyncOperation"
+            }
+          }
+        }
+      },
+      "PushResult": {
+        "type": "object",
+        "required": [
+          "opId",
+          "status"
+        ],
+        "properties": {
+          "opId": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "duplicate",
+              "conflict",
+              "rejected",
+              "dependency_missing"
+            ]
+          },
+          "entityId": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "changeSeq": {
+            "type": "integer"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorEnvelope"
+          },
+          "conflict": {
+            "type": "object"
+          }
+        }
+      },
+      "PushResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "batchId",
+          "serverCursor",
+          "results",
+          "changesAvailable"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "batchId": {
+            "type": "string"
+          },
+          "serverCursor": {
+            "type": "integer"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PushResult"
+            }
+          },
+          "changesAvailable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ChangePage": {
+        "type": "object",
+        "required": [
+          "ok",
+          "fromCursor",
+          "nextCursor",
+          "hasMore",
+          "changes"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "fromCursor": {
+            "type": "integer"
+          },
+          "nextCursor": {
+            "type": "integer"
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SyncChange"
+            }
+          }
+        }
+      },
+      "BootstrapPage": {
+        "type": "object",
+        "required": [
+          "ok",
+          "bootstrapId",
+          "snapshotCursor",
+          "nextPageToken",
+          "complete",
+          "entities"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "bootstrapId": {
+            "type": "string"
+          },
+          "snapshotCursor": {
+            "type": "integer"
+          },
+          "nextPageToken": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SyncChange"
+            }
+          }
+        }
+      },
+      "Capabilities": {
+        "type": "object",
+        "required": [
+          "ok",
+          "protocolVersions",
+          "registryHash",
+          "limits",
+          "auth"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "protocolVersions": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "registryHash": {
+            "type": "string"
+          },
+          "minimumAppVersions": {
+            "type": "object"
+          },
+          "limits": {
+            "type": "object"
+          },
+          "auth": {
+            "type": "object"
+          },
+          "features": {
+            "type": "object"
+          }
+        }
+      },
+      "SensitiveVerifyRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "secret",
+          "targetIds"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "device.revoke",
+              "token.reveal",
+              "token.rotate",
+              "token.delete",
+              "token.resetAll",
+              "backup.import"
+            ]
+          },
+          "secret": {
+            "type": "string"
+          },
+          "targetIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200
+          }
+        }
+      },
+      "SensitiveGrant": {
+        "type": "object",
+        "required": [
+          "ok",
+          "grant",
+          "expiresAt",
+          "action",
+          "targetHash"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "grant": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "integer"
+          },
+          "action": {
+            "type": "string"
+          },
+          "targetHash": {
+            "type": "string"
+          }
+        }
+      },
+      "SyncStatus": {
+        "type": "object",
+        "required": [
+          "ok",
+          "state",
+          "lastAttemptAt",
+          "lastSuccessAt",
+          "cursor",
+          "pendingCount",
+          "conflictCount"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "state": {
+            "type": "string"
+          },
+          "lastAttemptAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastSuccessAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "cursor": {
+            "type": "integer"
+          },
+          "pendingCount": {
+            "type": "integer"
+          },
+          "conflictCount": {
+            "type": "integer"
+          },
+          "lastError": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SecretEnvelope": {
+        "title": "MobileSecretEnvelopeV1",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "v",
+          "alg",
+          "kem",
+          "aead",
+          "ct",
+          "iv",
+          "tag",
+          "data",
+          "aad",
+          "keyVersion",
+          "entityRevision"
+        ],
+        "properties": {
+          "v": {
+            "const": 1
+          },
+          "alg": {
+            "const": "ML-KEM-768+HKDF-SHA256+AES-256-GCM"
+          },
+          "kem": {
+            "const": "ML-KEM-768"
+          },
+          "aead": {
+            "const": "AES-256-GCM"
+          },
+          "ct": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "iv": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "tag": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "data": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "aad": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "keyVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "entityRevision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}
