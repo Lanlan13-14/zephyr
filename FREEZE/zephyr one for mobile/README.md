@@ -17,9 +17,10 @@
 ## 已冻结的关键决策
 
 - [KNOWN] Android 使用 Kotlin + Jetpack Compose、iOS 使用 Swift + SwiftUI；旧 Tauri `zephyr_one/` 是迁移/兼容来源。
-- [KNOWN] 除多用户管理和独立 Zephyr Agent 页面外，Zephyr 的正式功能都必须在 Zephyr One 提供对应实现。
-- [KNOWN] One 内原 Zephyr Agent 设置改名“文件同步”；主端设置入口统一叫“Zephyr Client”并继续兼容旧 Agent。
-- [KNOWN] 文件同步像 iCloud 一样完整双向镜像绑定账号的持久数据、凭据、设置和 Client Token，不限于连接/笔记。
+- [KNOWN] Zephyr One完整实现当前账号有直接移动用途的能力，并保留用户要求的服务器设置和备份恢复。
+- [KNOWN] One不提供当前账号安全设置、SMTP、CAPTCHA/IP策略、备案、自定义CSS/JS管理、多用户或独立Agent页；登录时只被动遵守主端认证策略。
+- [KNOWN] One内原Zephyr Agent设置改名“文件同步”；主端入口统一叫“Zephyr Client”并继续兼容旧Agent。
+- [KNOWN] 文件同步像iCloud一样完整双向镜像One有用途的账号数据、凭据和Client Token，不限于连接/笔记。
 - [KNOWN] 开启同步要求主端先创建 Token，然后在 One 输入 Zephyr 用户名、密码，并在启用 TOTP 时通过动态码后绑定设备。
 - [KNOWN] 文件同步同时提供用户自定义自动间隔和“立即同步”；删除 One 设备、查看/旋转/删除/重置 Token 必须走密码或 TOTP 敏感验证。
 - [INFERRED] 普通页面使用四入口底部浮岛；选中项展开为“图标 + 文字”胶囊，其他项只显示图标。

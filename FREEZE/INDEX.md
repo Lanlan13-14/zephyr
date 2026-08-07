@@ -49,8 +49,9 @@
 - **资料目录**：[`zephyr one for mobile/`](./zephyr%20one%20for%20mobile/)
 - **产品范围合同**：[`PRODUCT_REQUIREMENTS.md`](./zephyr%20one%20for%20mobile/PRODUCT_REQUIREMENTS.md)
 - **技术方案文档**：[`DEVELOPMENT.md`](./zephyr%20one%20for%20mobile/DEVELOPMENT.md)
-- **核心范围**：除多用户管理和独立 Zephyr Agent 页面外，Zephyr 正式功能全部进入 One；One 设置统一为“文件同步”，主端统一为“Zephyr Client”并保留旧 Agent 兼容
-- **同步要求**：主端先建 Token，One 账号密码 + TOTP（如启用）绑定；像 iCloud 一样完整双向镜像持久数据/凭据/设置/Client Token，支持自定义自动间隔、立即同步和密码/TOTP敏感删除/重置
+- **核心范围**：完整实现当前账号有直接移动用途的能力并保留服务器设置/备份恢复；不提供账号安全、SMTP、CAPTCHA/IP策略、备案、自定义CSS/JS管理、多用户或独立Agent页
+- **命名**：One设置统一为“文件同步”，主端统一为“Zephyr Client”并保留旧Agent兼容
+- **同步要求**：主端先建Token，One账号密码+TOTP（如启用）绑定；像iCloud一样完整双向镜像One有用途的数据/凭据/Client Token，支持自定义自动间隔、立即同步和密码/TOTP敏感删除/重置
 - **原生与视觉**：Kotlin + Jetpack Compose、Swift + SwiftUI、四入口底部浮岛、终端快捷键矩阵与 IME 几何、四色应用图标
 - **设计附件**：用户提交的三张 UI 参考图、四套 SVG、预览 HTML 与原始 ZIP 均保存在该目录
 

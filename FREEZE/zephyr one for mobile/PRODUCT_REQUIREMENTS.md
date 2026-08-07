@@ -8,7 +8,7 @@
 
 - [KNOWN] 本文件约束“必须做什么”；`DEVELOPMENT.md` 约束“怎样实现”。两者冲突时，先满足本文件的产品范围，再调整技术方案。
 - [KNOWN] 用户后续明确要求高于本文；早期 Tauri 全端方案低于当前 Kotlin/Swift 原生移动方案。
-- [KNOWN] 里程碑只允许调整实施顺序，不得用“首版”“移动端不适合”“服务端专属”“Web-only”删除最终功能。
+- [KNOWN] 里程碑只允许调整实施顺序；最终范围以本合同的能力矩阵和明确排除项为准，既不能擅自删移动操作能力，也不能把无用途的 Web 部署后台硬塞进 One。
 
 ## 2. 产品与技术栈
 
@@ -21,12 +21,14 @@
 
 ## 3. 功能范围
 
-- [KNOWN] 除以下两项外，Zephyr 正式功能都必须在 Zephyr One 有对应实现：
-  1. [KNOWN] 多用户管理。
-  2. [KNOWN] 独立 Zephyr Agent 页面。
-- [KNOWN] 必须包含：连接/仪表盘、SSH、Telnet、RDP、VNC、SFTP、文件上传下载/预览/编辑、Docker/监控/日志、批量执行、代理、SSH Key、跳板、代码片段、笔记、活动/安全事件、AI 全功能及配置、当前账号安全、服务器设置、SMTP、CAPTCHA/IP策略、备案、备份恢复、外观、分享/ACL、工作区恢复和 Client Token 管理。
-- [KNOWN] 自定义 CSS/JS 配置必须可查看、编辑和同步，供 Zephyr Web 使用；One 原生 UI 不执行 Web CSS/JS。
-- [KNOWN] 手机上的布局可改成全屏工作区、sheet、会话列表和宽屏多栏，但功能不能因布局变化而消失。
+- [KNOWN] Zephyr One 必须完整实现**当前账号的移动操作能力**：连接/仪表盘、SSH、Telnet、RDP、VNC、SFTP、文件上传下载/预览/编辑、Docker/监控/日志、批量执行、代理、SSH Key、跳板、代码片段、笔记、活动、AI 使用能力、服务器设置、备份恢复、外观、分享资源使用、工作区恢复、Client Token 与文件同步。
+- [KNOWN] 明确排除以下功能：**多用户管理、独立 Zephyr Agent页面、当前账号安全设置、SMTP/邮件通知、CAPTCHA/IP白名单/防爆破配置、ICP/公安备案**。
+- [KNOWN] 服务器设置和备份恢复保留；不能因为它们由主端执行就擅自从One移除。
+- [KNOWN] 其他只服务Web站点展示/登录页且在One没有直接用途的设置不进入One；新增排除项必须由用户确认，不能由开发者机械扩张或删减。
+- [KNOWN] One 的账号密码/TOTP只用于绑定文件同步和敏感操作验证，不因此提供“账号安全”设置页。
+- [KNOWN] 主端要求 CAPTCHA/IP策略时，One 登录流程必须遵守服务端结果，但不提供这些策略的配置页面。
+- [KNOWN] 自定义 CSS/JS 是 Web 页面注入配置，在 One 原生 UI 没有执行用途，也不提供编辑页面；文件同步是否备份其原始值由服务端完整快照兼容层处理，不能当成 One 功能入口。
+- [KNOWN] 手机上的布局可改成全屏工作区、sheet、会话列表和宽屏多栏，但保留的移动操作能力不能因布局变化而消失。
 
 ## 4. Zephyr Agent、Zephyr Client 与文件同步命名
 
@@ -51,8 +53,10 @@
 
 - [KNOWN] 文件同步按 iCloud 类语义工作：Zephyr 与已绑定 One 都可修改数据，最终通过版本、冲突和墓碑收敛。
 - [KNOWN] 同步不是只下拉，不是只备份，不是只同步 connections/notes，也不是只同步 metadata。
-- [KNOWN] 默认同步当前账号全部持久业务数据和敏感字段，包括：连接、凭据、代理、SSH Key、跳板、笔记、代码片段、AI 数据/配置/Secret、用户/服务器设置、活动/安全事件、ACL、备份 metadata、工作区持久状态和 Client Token record + secret。
-- [KNOWN] Zephyr 后续新增持久业务表或字段默认进入同步；若未登记同步或未以不可移植平台理由标为 device-local，CI 必须失败。
+- [KNOWN] 默认同步当前账号在 One 有用途的完整持久数据和敏感字段，包括：连接、凭据、代理、SSH Key、跳板、笔记、代码片段、AI 使用数据/所需配置、服务器设置、备份恢复 metadata/加密包引用、活动、资源 ACL/分享状态、工作区持久状态和 Client Token record + secret。
+- [KNOWN] 不把 SMTP、CAPTCHA/IP策略、备案或账号安全配置同步成 One 的可操作功能。
+- [INFERRED] One不理解的Web展示/登录字段可在加密 opaque snapshot中保留；One不展示、不编辑、不回写覆盖。
+- [KNOWN] Zephyr 后续新增持久业务字段只有在 One 存在产品用途时进入可编辑同步 registry；未知/无用途字段按 opaque preservation 处理，不得被旧 One 清空。
 - [KNOWN] Client Token 同时用于旧 Agent、One 绑定前置和 Zephyr ↔ One 完整互备；不能降级成只同步 token id/name。
 - [KNOWN] One 创建、改名、旋转、删除 Token 后要同步回 Zephyr并传播到其他 One；主端对应修改也要传播到 One。
 - [INFERRED] 敏感字段通过绑定设备公钥 envelope 传输，落入 Android Keystore/iOS Keychain保护的 SecretStore；日志、普通 preferences、change log 和导出包不出现明文。
@@ -96,8 +100,8 @@
 
 任一项成立则不能宣称 Zephyr One 已完整实现：
 
-- [KNOWN] 除两个明确排除项外，能力矩阵仍有功能缺失。
-- [KNOWN] 任一持久业务实体没有双向同步或删除传播。
+- [KNOWN] 第 3 章要求保留的移动操作能力仍有功能缺失，或错误加入了明确排除的 Web 主端管理页面。
+- [KNOWN] 任一 One 有用途的持久业务实体没有双向同步或删除传播。
 - [KNOWN] Client Token只同步 metadata、不能从 One 回写主端或不能加密恢复。
 - [KNOWN] 文件同步只有 pull、没有 push/conflict/idempotency/tombstone。
 - [KNOWN] 没有用户自定义自动间隔或没有立即同步。

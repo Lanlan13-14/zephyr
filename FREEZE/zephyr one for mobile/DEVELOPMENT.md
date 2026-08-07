@@ -4,7 +4,7 @@
 >
 > 审计基线：仓库 `Lanlan13-14/zephyr-ssh`，提交 `ae65756`（2026-08-07）
 >
-> 目标产品：以 Android Kotlin + Jetpack Compose、iOS Swift + SwiftUI 原生实现完整 Zephyr One；除多用户管理和独立 Zephyr Agent 页面外，Zephyr 已有功能都必须在 App 提供对应能力，并通过“文件同步”完成账号级完整双向数据同步
+> 目标产品：以 Android Kotlin + Jetpack Compose、iOS Swift + SwiftUI 原生实现 Zephyr One 的移动操作能力；排除无移动用途的账号安全/服务器部署后台，并通过“文件同步”完成 One 有用途账号数据的完整双向同步
 >
 > 产品范围合同：[`PRODUCT_REQUIREMENTS.md`](PRODUCT_REQUIREMENTS.md)。该合同约束“必须做什么”，本文约束“怎样实现”；范围冲突时合同优先。
 
@@ -18,7 +18,7 @@
 
 ## 1. 执行摘要
 
-[KNOWN] 本文以用户确认的产品要求为最高优先级：**Zephyr 有的功能，Zephyr One 也要有；唯一明确排除的是多用户管理和独立 Zephyr Agent 页面。** 不得再用“服务端专属”“Web-only”“分阶段可选”擅自缩小最终功能范围。
+[KNOWN] 本文以用户确认的产品用途为最高优先级：Zephyr One 完整实现当前账号的移动操作能力，但不复制无移动用途的 Zephyr Web 主端部署/管理后台。明确排除范围以 `PRODUCT_REQUIREMENTS.md` 第 3 章为准。
 
 [KNOWN] SwiftUI 是 Apple UI 框架而不是编程语言；当前确定技术栈是 **Android：Kotlin + Jetpack Compose**，**iOS：Swift + SwiftUI**。早期“使用 Tauri 做全端 App”的要求已由当前原生移动端方案取代；仓库现有 `zephyr_one/` Tauri 版本是兼容和迁移来源，不是新 Android/iOS UI 的运行架构。
 
@@ -42,8 +42,8 @@
 
 | 原文档理念 | 用户确认要求 | 最终规则 |
 | --- | --- | --- |
-| [INFERRED] CAPTCHA/SMTP/IP策略/备案/备份等被认定为服务端专属并从 App 移除 | [KNOWN] 除多用户和独立 Agent外，Zephyr 有的 One 都要有 | [KNOWN] 全部提供原生管理页；依赖主端执行不等于 App 没有该功能 |
-| [INFERRED] AI、SFTP、编辑器、Docker 等可分阶段保留 | [KNOWN] 这些都属于最终完整范围 | [KNOWN] 只允许调整实施顺序，不允许从发布范围删除 |
+| [INFERRED] 把“Zephyr 有的 One 都要有”解释成连 SMTP/CAPTCHA/IP策略/备案/主端备份/账号安全后台也复制 | [KNOWN] 这些 Web 部署管理页在 One 没用途 | [KNOWN] 明确排除；One 登录时只被动遵守服务端认证策略 |
+| [INFERRED] AI、SFTP、编辑器、Docker 等可分阶段保留 | [KNOWN] 这些有直接移动操作用途 | [KNOWN] 属于最终范围，只允许调整实施顺序 |
 | [INFERRED] 同步只覆盖连接、代理、Key、跳板、笔记和设置子集 | [KNOWN] 文件同步像 iCloud 一样完整同步账号数据 | [KNOWN] 全部持久业务实体默认同步；schema registry/CI 阻止漏项 |
 | [INFERRED] Activity 不同步，Client Token只同步 metadata/仅用于绑定 | [KNOWN] 对应账号数据和 Zephyr Agent Token 要在 Zephyr 与 One 间互备 | [KNOWN] Activity按 eventId 镜像；Client Token record + secret 用设备 envelope完整互备 |
 | [INFERRED] App 内存在 Agent 独立运行域/设置入口 | [KNOWN] One 没有 Zephyr Agent，原页改名文件同步 | [KNOWN] 删除独立 Agent产品页；底层 `/agent/files`/ZFT2兼容能力收进文件同步与 RDP配置 |
@@ -92,24 +92,28 @@
 
 ### 3.1 目标
 
-- [KNOWN] 除多用户管理和独立 Zephyr Agent 页面外，Zephyr 当前及后续进入正式产品的功能都必须有 Zephyr One 对应实现；新增主端功能时移动端能力矩阵必须同步更新。
-- [INFERRED] 所有产品操作页使用 Compose/SwiftUI 原生组件，不加载 `public/app.html`；SMTP、CAPTCHA、备份、AI Provider 等服务器配置也用原生表单调用主端 API。
-- [INFERRED] 手机上的 SSH/Telnet/RDP/VNC、SFTP、编辑器、Docker/监控、批量执行、笔记、活动、AI 等日常功能使用本地原生能力，不能只打开 Zephyr Web 页面冒充实现。
-- [INFERRED] 主端离线时，可由手机本地完成的功能继续工作；明确依赖主端进程的管理、共享、服务端 AI/浏览器等功能显示离线状态，不从产品中删除。
+- [KNOWN] Zephyr One 完整实现当前账号有直接移动用途的能力；服务器部署/登录后台不因存在于 Zephyr Web 就自动进入 One。
+- [INFERRED] 所有 One 产品操作页使用 Compose/SwiftUI 原生组件，不加载 `public/app.html`。
+- [INFERRED] 手机上的 SSH/Telnet/RDP/VNC、SFTP、编辑器、Docker/监控、批量执行、笔记、活动、AI 使用能力等采用原生界面，不能只打开 Zephyr Web 页面冒充实现。
+- [INFERRED] 主端离线时，可由手机本地完成的功能继续工作；明确依赖主端进程的共享、服务端 AI/浏览器等使用能力显示离线状态。
+- [KNOWN] 当前账号安全设置、SMTP、CAPTCHA/IP策略和备案不建立One页面；服务器设置和备份恢复保留，由原生页面调用主端能力。
 - [KNOWN] 账号登录 + Client Token 完成设备绑定；同步开启前主端必须已有 Token，账号开启 TOTP 时必须完成第二步验证。
 - [KNOWN] “文件同步”对绑定账号执行完整双向数据镜像，包含敏感凭据与 Client Token；共享资源继续服从主端 ACL。
 - [KNOWN] Zephyr One 不显示独立 Zephyr Agent 页面，但保留并整合 Agent 文件桥接能力；Zephyr 主端仍兼容旧 Agent，主端设置入口统一叫 Zephyr Client。
 - [INFERRED] UI 继承 Web 的信息层级、四色主题、卡片感和术语，但使用平台导航、手势、字体、动态字号和无障碍语义。
 
-### 3.2 唯一产品排除项与技术边界
+### 3.2 产品排除项与技术边界
 
 - [KNOWN] **排除多用户管理**：One 不创建、删除、停用用户，不转让超级管理员，不管理其他账号；它只登录并同步当前绑定账号。
 - [KNOWN] **排除独立 Zephyr Agent 页面**：不出现名为“Zephyr Agent”的设置页；对应底层能力归入“文件同步”和 RDP 文件/存储配置。
+- [KNOWN] **排除当前账号安全后台**：不在 One 修改账号资料/密码、启停 TOTP、管理 Passkey或安全策略；账号密码/TOTP只用于绑定和敏感验证。
+- [KNOWN] **排除无移动用途的Web登录/展示配置**：SMTP/邮件通知、CAPTCHA/IP白名单/防爆破、备案不在One提供配置页。
+- [KNOWN] **保留服务器设置与备份恢复**：用原生页面调用主端API；不得因执行发生在主端就删除入口。
+- [KNOWN] **排除自定义 CSS/JS 编辑入口**：One 原生 UI 不执行这些 Web 注入项，也没有编辑用途；同步兼容层只需 opaque preservation，不能覆盖清空主端值。
 - [INFERRED] 活 SSH/Telnet/RDP/VNC socket、PTY 内存状态、正在运行的任务进程不是持久业务数据，不跨设备镜像；连接定义、历史、布局/恢复 metadata 仍同步。
 - [INFERRED] Android SAF URI、iOS security-scoped bookmark、生物识别私钥、Launcher icon应用结果等设备绑定状态不能传给另一台设备；同步对应的产品意图，目标设备自行重新授权。
-- [COMMON] iOS 不保证后台 WebSocket 无限存活；这是运行限制，不是删除文件同步/Agent能力的理由。
-- [INFERRED] 自定义 CSS/JS 的**配置内容**参与完整备份；原生 UI 不执行 Web CSS/JS。用户仍可在 App 原生设置页查看、编辑和同步它们，供 Zephyr Web 主端使用。
-- [INFERRED] 手机不照搬桌面自由窗口几何；功能全部存在，但交互重排为会话列表、全屏工作区、sheet 和宽屏多栏。这是移动端布局适配，不是功能删减。
+- [COMMON] iOS 不保证后台 WebSocket 无限存活；这是运行限制，不是删除文件同步/文件桥接能力的理由。
+- [INFERRED] 手机不照搬桌面自由窗口几何；保留的功能重排为会话列表、全屏工作区、sheet 和宽屏多栏。这是移动端布局适配，不是功能删减。
 - [INFERRED] 不从零重写 RDP/SSH 密码学；复用协议核心不违反原生要求，WebView 承载整页才违反。
 
 ## 4. 总体架构
@@ -172,7 +176,7 @@ mobile/
     feature-remote/
     feature-notes/
     feature-file-sync/       # includes embedded Agent transport; no Agent page
-    feature-settings/
+    feature-settings/        # One preferences only; no Web deployment admin
     protocol-ssh/
     protocol-rdp/
     protocol-vnc/
@@ -187,7 +191,7 @@ mobile/
     Features/Remote/
     Features/Notes/
     Features/FileSync/       # includes embedded Agent transport; no Agent page
-    Features/Settings/
+    Features/Settings/       # One preferences only; no Web deployment admin
     Protocols/SSH/
     Protocols/RDP/
     Protocols/VNC/
@@ -243,7 +247,7 @@ server/
 1. [INFERRED] **首页**（dashboard）：连接卡片、搜索、协议/标签筛选、最近连接、活动摘要。
 2. [INFERRED] **会话**（document/session）：正在连接、已连接、断线、可恢复的 SSH/Telnet/RDP/VNC 会话。
 3. [INFERRED] **资料**（folder）：笔记、最近文件、代码片段；进入具体 SSH 会话后由终端上下文 dock 的“文件”入口接管 SFTP。
-4. [INFERRED] **工具**（crossed tools）：远程批量执行、AI、文件同步、代理、SSH Key、账号安全、外观和全部设置；不出现独立 Zephyr Agent 入口。
+4. [INFERRED] **工具**（crossed tools）：远程批量执行、AI、文件同步、代理、SSH Key、外观和 One 设置；不出现账号安全、服务器管理或独立 Zephyr Agent入口。
 
 [INFERRED] Web 顶栏里的 Activity 合并到首页二级页；AI 是工具入口和页面级 action，不单独挤占第五个导航槽。顶部仍保留原生标题与页面 action，例如搜索、添加、同步状态；浮岛只负责根目的地切换。
 
@@ -426,35 +430,36 @@ mobile/branding/
 - [INFERRED] CI 对 `source/` 做 hash contract，对四色 palette 做字段级 contract，对生成物做尺寸、色彩空间、alpha、空白边距和视觉快照测试。
 - [INFERRED] 预览 HTML 是人工验收工具，不参与 App runtime，也不打进发布包。
 
-## 7. Zephyr → Zephyr One 完整能力矩阵
+## 7. Zephyr → Zephyr One 能力矩阵
 
-[KNOWN] 本表是范围合同，不是可选路线图。除“多用户管理”和“独立 Zephyr Agent 页面”明确为不提供外，其余能力都必须进入最终发布版；里程碑只定义实现顺序，不代表后续功能可以不做。
+[KNOWN] 本表按“在手机上是否有直接产品用途”定范围；不是把 Zephyr Web 设置页逐项照搬。
 
 | Zephyr 功能/设置 | Zephyr One 要求 | 原生实现与同步 |
 | --- | --- | --- |
 | 仪表盘、连接库、搜索、筛选、标签、备注 | [KNOWN] 必须完整提供 | 原生首页/编辑器；连接及全部字段双向同步 |
 | SSH、Telnet、RDP、VNC、Deep Link 临时连接 | [KNOWN] 必须完整提供 | 原生 session engine 和系统 Deep Link；持久定义同步，临时凭据不落盘 |
-| SFTP 文件管理、上传下载、预览、编辑器、AI 补全 | [KNOWN] 必须完整提供 | 原生文件浏览/预览/编辑；编辑器偏好、打开历史和可持久 metadata 同步 |
-| Docker、状态监控、日志、远程批量执行 | [KNOWN] 必须完整提供 | 本地 SSH/主端 API；配置和可持久历史双向同步 |
+| SFTP 文件管理、上传下载、预览、编辑器、AI 补全 | [KNOWN] 必须完整提供 | 原生文件浏览/预览/编辑；偏好和可持久 metadata 同步 |
+| Docker、状态监控、日志、远程批量执行 | [KNOWN] 必须完整提供 | 本地 SSH/现有能力 API；配置和可持久历史双向同步 |
 | 代理池、SSH Key、跳板机、多级跳板 | [KNOWN] 必须完整提供 | 原生管理页；含凭据完整双向同步 |
 | 代码片段 | [KNOWN] 必须完整提供 | 原生列表/编辑/终端调用；内容、分组、auto-run 双向同步 |
 | 笔记、分组、标签、关联、回收站、导入导出 | [KNOWN] 必须完整提供 | 原生 Markdown 工作区；正文、墓碑和分组完整双向同步 |
-| 活动与安全事件 | [KNOWN] 必须可查看管理 | 主端事件分页 + 本机事件；主端持久事件按账号镜像，重复事件按 eventId 去重 |
-| AI 聊天、会话、计划、Memory、Skills、环境变量、附件 | [KNOWN] 必须完整提供 | 原生 AI UI 调主端能力；配置/会话/计划/Memory/Skill/加密变量按账号同步 |
-| AI Provider、模型、权限、MCP/浏览器服务配置 | [KNOWN] 必须有管理页 | 原生服务端配置表单；无手机本地 runtime 的项仍可远程管理并同步 |
-| 当前账号资料、密码、TOTP、Passkey、登录安全 | [KNOWN] 必须完整提供 | 原生账号安全页和系统 Credential API；认证器私钥留本机，服务端 registration metadata 同步 |
-| 安全策略、IP 白名单、防爆破、CAPTCHA | [KNOWN] 必须有管理页 | 当前账号有权限时通过主端 API 配置；策略内容纳入完整同步/备份 |
-| SMTP、邮件通知、备案 | [KNOWN] 必须有管理页 | 原生主端设置表单；完整同步 |
-| 外观、主题、四色图标、终端颜色/背景、语言 | [KNOWN] 必须完整提供 | 原生主题系统；可表达设置完整同步，设备应用结果留本机 |
-| 自定义 CSS/JS | [KNOWN] 配置不得丢失 | App 可原生查看/编辑/同步；只供 Zephyr Web 执行，One 原生 UI 不执行 |
-| 备份导入导出、恢复 | [KNOWN] 必须完整提供 | App 可触发/下载/上传主端加密备份，并提供 One 本机加密导出恢复 |
-| 工作区恢复、会话列表、布局偏好 | [KNOWN] 必须提供移动等价物 | 手机用会话列表/全屏工作区，平板用多栏；可持久状态同步 |
-| 分享/ACL 管理 | [KNOWN] 必须提供当前账号可操作部分 | 资源分享、权限查看/编辑调用主端 ACL；双向同步且不越权 |
+| 活动 | [KNOWN] 必须提供 | 当前账号活动与本机操作记录；eventId 去重同步 |
+| AI 聊天、会话、计划、Memory、Skills、环境变量、附件 | [KNOWN] 必须提供使用能力 | 原生 AI UI；当前账号使用数据和所需 secret 加密同步 |
+| 当前账号安全设置页 | [KNOWN] 不提供 | 密码/TOTP只用于绑定和敏感验证，不在One管理账号安全 |
+| 多用户管理 | [KNOWN] 不提供 | One只操作当前绑定账号 |
+| 服务器设置 | [KNOWN] 必须提供 | 原生设置页调用主端API；按当前账号权限展示 |
+| SMTP、邮件通知 | [KNOWN] 不提供 | 留在Zephyr Web主端 |
+| CAPTCHA、IP白名单、防爆破 | [KNOWN] 不提供配置页 | One登录被动遵守主端认证结果 |
+| ICP/公安备案 | [KNOWN] 不提供 | 只服务Web登录页/站点 |
+| 主端数据库备份导入导出/恢复 | [KNOWN] 必须提供 | 原生触发、上传/下载、恢复确认和进度UI；执行在主端 |
+| 自定义 CSS/JS | [KNOWN] 不提供编辑/执行入口 | 兼容同步层opaque preservation，不清空主端值 |
+| 外观、主题、四色图标、终端颜色/背景、语言 | [KNOWN] 必须完整提供 | 原生主题系统；One 有用途的设置完整同步 |
+| 工作区恢复、会话列表、布局偏好 | [KNOWN] 必须提供移动等价物 | 手机全屏工作区，平板多栏；可持久状态同步 |
+| 分享资源使用/ACL状态 | [KNOWN] 必须提供当前账号所需部分 | 服从主端 ACL，不提供多用户管理后台 |
 | Zephyr Client Token | [KNOWN] 必须完整管理并互备 | 创建、查看、复制、改名、旋转、删除、重置全部；secret 加密双向同步 |
-| 文件同步 | [KNOWN] 必须取代 One 内独立 Agent 设置 | 绑定、自动间隔、手动同步、状态、冲突、设备目录与底层文件桥接 |
+| 文件同步 | [KNOWN] 必须取代 One 内独立 Agent 设置 | 绑定、自动间隔、手动同步、状态、冲突、设备目录和底层文件桥接 |
 | 独立 Zephyr Agent 页面 | [KNOWN] 不提供 | 底层兼容能力归入文件同步/RDP；主端继续兼容旧 Agent |
-| 多用户管理 | [KNOWN] 不提供 | One 只操作当前绑定账号，不管理其他用户 |
-| App Lock | [KNOWN] 新增但无自建密码 | 仅 BiometricPrompt/LocalAuthentication 的人脸/指纹/设备凭据；本机设置 |
+| App Lock | [KNOWN] 新增但无自建密码 | 仅系统人脸/指纹/设备凭据；本机设置 |
 
 ## 8. 本地数据模型
 
@@ -525,22 +530,24 @@ PendingOperation
 
 ### 8.2 完整镜像边界
 
-[KNOWN] “文件同步”是账号级完整数据镜像，不是只同步 connections/notes 的子集。新增持久业务表或设置字段默认进入同步范围，只有经过文档登记并有平台理由的字段才能排除。
+[KNOWN] “文件同步”是 One 有用途数据的账号级完整镜像，不是只同步 connections/notes，也不是复制整个 Zephyr 服务器后台。
 
-- [KNOWN] 必须同步：Connection、Proxy、SshKey、JumpHost、Note、Snippet、AI Provider/Conversation/Plan/Memory/Skill/Env、用户设置、服务器设置、活动/安全事件、分享 ACL、备份 metadata、Client Token record 和 token secret，以及后续 Zephyr 新增的持久账号数据。
-- [KNOWN] 连接密码、私钥、SSH Key、代理密码、AI Key/环境变量、Client Token 等敏感字段也同步，但只能以绑定设备公钥加密的 secret envelope 传输并进入 Keystore/Keychain 保护的 SecretStore。
-- [INFERRED] `ServerProfile` 的可移植 metadata（URL、名称、TLS pin）可同步；当前服务器选择、最近打开页面、滚动位置等纯 UI 状态默认只留本机。
+- [KNOWN] 必须同步：Connection、Proxy、SshKey、JumpHost、Note、Snippet、AI使用数据/所需配置、ServerSettings、BackupMetadata/加密包引用、Activity、资源ACL/分享状态、One用户偏好、Client Token record和token secret，以及One后续新增的持久业务数据。
+- [KNOWN] 不进入One可编辑同步：用户账号安全设置、SMTP、CAPTCHA/IP策略、备案、自定义CSS/JS。
+- [KNOWN] 连接密码、私钥、SSH Key、代理密码、One使用所需AI secret、服务器设置secret、Client Token等敏感字段同步时必须使用设备公钥envelope，并进入Keystore/Keychain保护的SecretStore。
+- [INFERRED] `ServerProfile` 的可移植 metadata（URL、名称、TLS pin）可同步；当前服务器选择、滚动位置等纯 UI 状态默认只留本机。
 - [INFERRED] RDP/文件同步“希望共享目录”的意图可同步；Android SAF URI、iOS bookmark 和目录访问授权不可跨设备使用，目标设备显示“需要重新选择目录”。
-- [KNOWN] Client Token secret 进入互备范围；`device refresh credential`、设备私钥、数据库 master key 不进入业务同步，因为复制它们会把一台设备的身份克隆到另一台设备。它们由服务端设备注册表恢复/重新签发。
-- [INFERRED] Activity/SecurityEvent 按稳定 eventId 镜像；本机新增的本地事件也可 push，但高频终端原始输出不作为 Activity 事件同步。
-- [INFERRED] 已打开 PTY/RDP socket 和正在运行的进程不镜像；会话定义、最近状态、可恢复 metadata、终端历史策略和持久历史按产品设置同步。
-- [INFERRED] 多用户管理表不下发；当前账号自己的 user profile、role/permission snapshot 和共享 ACL 仍同步。
+- [KNOWN] Client Token secret 进入互备范围；device refresh credential、设备私钥和数据库 master key 不同步，因为复制它们会克隆设备身份。
+- [INFERRED] Activity 按稳定 eventId 镜像；高频终端原始输出不作为 Activity同步。
+- [INFERRED] 已打开 PTY/RDP socket 和正在运行的进程不镜像；会话定义、最近状态、可恢复 metadata和持久历史按产品设置同步。
+- [INFERRED] 多用户和账号安全表不下发；当前账号访问共享资源所需的 ACL snapshot 同步。
 
 ### 8.3 同步范围注册表
 
-- [INFERRED] 服务端维护显式 `SYNC_ENTITY_REGISTRY`：每个持久实体声明主键、owner scope、revision、secret fields、dependency order、tombstone policy 和客户端最低版本。
-- [INFERRED] CI 扫描 schema migration：新增持久表/字段若未进入 registry 或未写带理由的 `deviceLocal` 排除项，构建失败。这样“以后新增功能自动漏同步”不能静默发生。
-- [INFERRED] Android/Swift model 从同一 contracts schema 生成或契约校验；未知字段必须保留在 opaque extension 中再回传，旧 App 不得把新主端字段清空。
+- [INFERRED] 服务端维护显式 `SYNC_ENTITY_REGISTRY`：One有用途的每个实体声明主键、owner scope、revision、secret fields、dependency order、tombstone policy和最低版本。
+- [INFERRED] 另维护 `OPAQUE_PRESERVATION_REGISTRY`：One无用途但可能出现在全量快照中的Web管理字段只做端到端保留，不展示、不编辑、不参与One生成的patch。
+- [INFERRED] CI扫描 schema migration：新增字段必须登记为 `editableSync`、`opaquePreserve` 或有理由的 `deviceLocal/serverOnly`；未分类则失败。
+- [INFERRED] Android/Swift model 从同一 contracts schema生成或契约校验；未知字段必须保留，旧 One 不得把新主端字段清空。
 
 ### 8.4 SecretStore
 
@@ -560,7 +567,7 @@ PendingOperation
 2. App 获取 /api/mobile/v1/capabilities
 3. App 要求输入 Zephyr 用户名 + 密码并登录
 4. 若该账号开启 TOTP，必须继续输入有效 TOTP 动态码
-5. 如主端还要求 CAPTCHA/Passkey，使用系统认证会话完成
+5. 如主端登录策略要求 CAPTCHA，使用系统认证会话完成；One 不提供策略配置页
 6. App 生成稳定随机 deviceId 和设备密钥对
 7. App 列出当前账号 Client Token metadata；用户选择一个已在主端创建的 Token，必要时扫码/粘贴 secret
 8. POST /api/mobile/v1/devices/bind
@@ -595,11 +602,12 @@ PendingOperation
 - [INFERRED] “重置全部 Token”在单个事务内为旧 Token 写 tombstone、断开关联客户端并创建新 Token；任何中间失败都必须回滚，避免账号进入零 Token 半完成状态。
 - [INFERRED] 加密导出包含 Client Token record + secret envelope，恢复时按 `tokenId/revision/tombstone` 合并；不把 token 明文写入 ZIP/JSON。
 
-### 9.3 CAPTCHA 与 Passkey
+### 9.3 主端登录策略兼容
 
-- [INFERRED] 若主端要求浏览器 CAPTCHA，服务端返回一次性 `authUrl`；Android 使用 Custom Tabs，iOS 使用 ASWebAuthenticationSession，完成后通过 universal link/app link 返回一次性 code。
-- [INFERRED] 不降低主端 CAPTCHA 策略，也不在 native API 中偷偷绕过登录防护。
-- [INFERRED] Passkey 使用 Android Credential Manager 与 iOS AuthenticationServices 对接服务端 WebAuthn challenge；RP ID 与主端公开域名保持一致。
+- [KNOWN] One 不提供 CAPTCHA、IP白名单、防爆破或 Passkey 管理页面。
+- [INFERRED] 若主端登录要求浏览器 CAPTCHA，服务端返回一次性 `authUrl`；Android使用 Custom Tabs，iOS使用 ASWebAuthenticationSession，完成后通过 app/universal link返回一次性 code。
+- [INFERRED] IP白名单、防爆破、账号停用等由主端判定；One展示稳定错误码和说明，不绕过、也不在本地复制一套策略设置。
+- [INFERRED] 若未来允许用 Passkey登录绑定，可调用系统 Credential API完成主端 challenge；这仍不是 One 的账号安全管理功能。
 
 ### 9.4 敏感验证、撤销与 Token 生命周期
 
@@ -648,16 +656,18 @@ PendingOperation
 
 ### 10.3 完整同步实体
 
-[KNOWN] bootstrap/change feed/push 不能硬编码只处理 connection、note、proxy、key、jumpHost。`entityType` 至少覆盖：
+[KNOWN] bootstrap/change feed/push 不能硬编码只处理 connection、note、proxy、key、jumpHost。One可编辑的 `entityType` 至少覆盖：
 
 ```text
 connection, proxy, sshKey, jumpHost, note, noteGroup, snippet,
-aiProvider, aiConversation, aiMessage, aiPlan, aiMemory, aiSkill, aiEnv,
-userSettings, serverSettings, activityEvent, securityEvent,
-resourceAcl, backupMetadata, clientToken, workspaceState
+aiConversation, aiMessage, aiPlan, aiMemory, aiSkill, aiEnv,
+oneUserSettings, serverSettings, backupMetadata, activityEvent,
+resourceAcl, clientToken, workspaceState
 ```
 
-[INFERRED] 大对象（AI 附件、背景图、备份文件）使用 content-addressed blob manifest + 分块上传/下载；业务 feed 只同步 blob hash、size、MIME、owner 与引用关系，不能把数百 MiB 二进制塞进 JSON change log。
+[KNOWN] `accountSecurity/smtp/captcha/ipPolicy/beian/customCssJs` 不接受One push；若兼容快照携带，只进入opaque preservation区。
+
+[INFERRED] One有用途的大对象（AI附件、终端背景图、用户请求下载的加密备份包等）使用content-addressed blob manifest + 分块上传/下载；备份恢复必须二次确认并显示主端进度。
 
 [INFERRED] Client Token 的 secret envelope 只下发给已完成账号登录、TOTP（如启用）、Token 归属校验且设备未撤销的 One。旧 Zephyr Agent 继续只用 Token 连接 `/agent/files`，不获得账号完整同步权限。
 
@@ -783,12 +793,12 @@ CREATE TABLE mobile_applied_ops (
 
 ### 10.8 服务端写入路径
 
-- [INFERRED] 所有 mobile push 必须调用对应业务 service（`ResourceService`、`NotesService`、AI/settings/token/ACL/backup services），不能直接写 SQLite 绕过权限、依赖校验、审计和 revision。
+- [INFERRED] 所有mobile push必须调用One范围内的业务service（`ResourceService`、`NotesService`、AI使用数据、One/server settings、backup、token/ACL services），不能直接写SQLite绕过权限、敏感确认、审计和revision。
 - [INFERRED] 所有 Web/API 持久写入都必须经过 change-log hook；连接、笔记、AI、设置、Token、ACL 或未来新增业务写入若没有产生 `mobile_sync_changes`，契约测试失败。
 - [INFERRED] 业务写入和 change log 插入处于同一数据库事务；不允许资源成功但 feed 丢失。
 - [INFERRED] Token owner 从 username 逐步迁移到不可变 userId，同时保留旧数据兼容读取；用户名修改不应断开设备归属。
 - [INFERRED] Token secret change 只记录“该 token revision 变化”，不把明文放进 change log；响应时按目标设备即时生成 envelope。
-- [INFERRED] 服务器设置写入按调用者权限执行，但同步 scope 仍绑定当前账号和主端实例；One 不因能看到 setting 就获得超级管理员权限。
+- [KNOWN] mobile push 支持服务器设置和备份metadata，但必须复用主端现有权限/敏感确认；不接受SMTP、CAPTCHA/IP策略、备案、账号安全或自定义CSS/JS修改，收到这些entityType返回`unsupported_scope`。
 
 ## 11. 冲突与删除规则
 
@@ -806,9 +816,10 @@ CREATE TABLE mobile_applied_ops (
 | Connection | [INFERRED] 字段级三方合并；host/auth/route 同字段冲突需用户选择 |
 | Proxy/SSH Key/JumpHost | [INFERRED] metadata 可字段合并；secret 原子冲突 |
 | Note | [INFERRED] title/tags/group 字段合并；content 尝试三方文本合并，失败生成 conflict copy |
-| User/server settings | [INFERRED] 分 section/field revision；完整字段集合同步，未知字段保留 |
+| One user/server settings | [INFERRED] 分section/field revision；排除的Web登录/展示字段只opaque保留，不由One写入 |
+| Backup metadata | [INFERRED] 服务端jobId/revision为权威；恢复操作不做字段合并，只允许显式重试 |
 | AI conversation/message | [INFERRED] append-only messageId 去重；编辑/删除用 revision/tombstone |
-| AI Provider/Env/Token | [INFERRED] metadata 可字段合并；secret 原子冲突且必须重新 envelope |
+| AI使用所需配置/Env/Token | [INFERRED] metadata 可字段合并；secret 原子冲突且必须重新 envelope |
 | Snippet | [INFERRED] name/tags/autoRun 字段合并；command 冲突要求选择或复制 |
 | Activity/SecurityEvent | [INFERRED] eventId append-only 去重，不做 last-write-wins |
 | ACL/share | [INFERRED] 服务端权限为权威；权限撤销立即覆盖离线缓存能力 |
@@ -1031,7 +1042,7 @@ Offset  Size  Field
 
 - [INFERRED] Token 比较使用 constant-time；refresh 与 file-bridge lease 只存 hash。
 - [INFERRED] bind、refresh、push、secret reveal、file-bridge lease 都限速并写审计，但审计 metadata 不含 secret。
-- [INFERRED] 设备 public key、app version、platform、last seen、last sync、revoked reason 可由账号安全页查看。
+- [INFERRED] 设备 public key、app version、platform、last seen、last sync、revoked reason 在主端 Zephyr Client 页面查看，不在 One 建账号安全页。
 - [INFERRED] 所有 resource ownership 使用不可变 userId，不依赖可改 username。
 
 ### 16.4 威胁模型最低覆盖
@@ -1132,8 +1143,8 @@ Zephyr 主端                  https://...
 - [INFERRED] 同 batch/op 重放 100 次只执行一次；cursor 页应用中途 crash 后重放不重复业务副作用。
 - [INFERRED] Web、Android、iOS 三方修改都进入同一 feed。
 - [KNOWN] 对 `SYNC_ENTITY_REGISTRY` 的**每个实体**自动参数化执行 bootstrap、incremental、push、conflict、delete、restore、unknown field 和 secret envelope；不能只手写 connection/note 测试。
-- [INFERRED] schema migration 测试断言所有新持久表/字段已登记同步或带批准的 deviceLocal 理由；遗漏即失败。
-- [INFERRED] 覆盖 AI Provider/Env、settings、activity、安全事件、snippet、ACL、blob、备份 metadata 和 Client Token secret 的 Zephyr→One→Zephyr 往返，逐字段 canonical compare。
+- [INFERRED] schema migration 测试断言新字段已分类为 editableSync、opaquePreserve、deviceLocal 或 serverOnly；未分类即失败。
+- [INFERRED] 覆盖AI使用数据/Env、One/server settings、backup metadata/job、activity、snippet、ACL、blob和Client Token secret的Zephyr→One→Zephyr往返；账号安全/SMTP/CAPTCHA/IP策略/备案/CSS-JS只验证opaque preservation和拒绝One push。
 - [INFERRED] 覆盖时钟快/慢 24 小时、服务端重启、Token 旋转、账号改名、设备撤销、共享权限撤销和 tombstone retention。
 - [KNOWN] 绑定矩阵覆盖：主端无 Token、错账号 Token、密码错、需要 TOTP但缺失、TOTP错/过期、成功；敏感操作覆盖密码模式和 TOTP模式。
 - [KNOWN] 调度测试覆盖自动间隔更新、自动开关、手动同步不受自动开关影响、重复点“立即同步”合并、主端 wake、后台延迟和前台补偿。
@@ -1190,8 +1201,8 @@ Zephyr 主端                  https://...
 ### 21.3 Server pipeline
 
 - [INFERRED] SQLite migration up/down/重复执行测试。
-- [KNOWN] schema→`SYNC_ENTITY_REGISTRY` 完整性门：新增持久数据未同步、未 tombstone 或未明确 deviceLocal 时 CI失败。
-- [INFERRED] mobile v1 API contract、全实体往返、blob、secret/Client Token envelope、ACL、事务、幂等、cursor 与 tombstone测试。
+- [KNOWN] schema分类完整性门：新增字段未归入 editableSync、opaquePreserve、deviceLocal或serverOnly时CI失败；不能默认把服务器后台变成One功能。
+- [INFERRED] mobile v1 API contract、One实体/服务器设置/备份往返、明确排除字段push拒绝、opaque preservation、blob、secret/Client Token envelope、ACL、事务、幂等、cursor与tombstone测试。
 - [KNOWN] Zephyr Client 页面命名、旧 Agent兼容、One 设备管理、自动间隔/手动同步、密码/TOTP敏感验证 contract tests。
 - [INFERRED] 旧 Web、旧 Tauri One、旧 Flutter Agent 全量回归。
 - [INFERRED] Android/iOS client compatibility matrix 至少覆盖当前版和前一版 server。
@@ -1210,8 +1221,8 @@ Zephyr 主端                  https://...
 
 ### M2：服务端 mobile v1 与完整双向文件同步
 
-- [INFERRED] 完成账号+Token+TOTP绑定、全实体 registry、bootstrap/change feed/push、blob、冲突、tombstone、secret/Client Token envelope、自动间隔与手动同步。
-- [INFERRED] 退出门：Zephyr 持久 schema 100% 有 registry 归属；Web + 两台移动设备 chaos matrix 通过，Token/AI/settings/ACL/活动和凭据均能往返，重复 op 无副作用。
+- [INFERRED] 完成账号+Token+TOTP绑定、One实体registry/后台字段分类、bootstrap/change feed/push、blob、冲突、tombstone、secret/Client Token envelope、自动间隔与手动同步。
+- [INFERRED] 退出门：Zephyr持久schema 100%完成editable/opaque/deviceLocal/serverOnly分类；Web+两台移动设备chaos matrix通过，Token/AI使用数据/One与服务器设置/备份metadata/ACL/活动和凭据均能往返，明确排除字段不被One覆盖。
 
 ### M3：文件同步底层 Agent 能力整合
 
@@ -1230,15 +1241,15 @@ Zephyr 主端                  https://...
 
 ### M6：其余 Zephyr 完整能力、迁移与发布
 
-- [INFERRED] 完成 SFTP/编辑器/预览/Docker/监控、笔记全功能、AI 会话与全部配置、活动/安全、SMTP/CAPTCHA/备份/备案/自定义 CSS-JS 配置管理、ACL分享、Tauri One/旧 Agent 迁移和商店材料。
-- [INFERRED] 退出门：第 7 章除两个明确排除项外全部为“已实现 + 自动/真机验收通过”；升级安装、完整数据迁移、撤销与回滚演练通过。
+- [INFERRED] 完成SFTP/编辑器/预览/Docker/监控、笔记全功能、AI使用能力、活动、服务器设置、主端备份恢复、分享资源使用、Tauri One/旧Agent迁移和商店材料；不增加账号安全、SMTP/CAPTCHA/IP策略、备案或自定义CSS-JS管理页。
+- [INFERRED] 退出门：第 7 章标为“必须提供”的项目全部为“已实现 + 自动/真机验收通过”，明确排除的Web后台没有误加；升级安装、完整数据迁移、撤销与回滚演练通过。
 
 ## 23. 发布验收清单
 
 - [INFERRED] App 全部日常页面为 native；无隐藏 Web app 作为主 UI。
 - [INFERRED] 普通页面四入口底部浮岛、终端 context dock 与 IME 快捷键矩阵状态明确；横竖屏、大字体和安全区不遮挡主要 action，终端 rows/cols 与可见 viewport 一致。
 - [INFERRED] 本地离线 CRUD、直连会话和重新联网同步可用。
-- [KNOWN] 第 7 章除多用户管理、独立 Zephyr Agent 页面外全部实现；不得把服务器管理、AI、SFTP、编辑器、Docker、备份等改写成“Web-only”后跳过。
+- [KNOWN] 第7章标为“必须提供”的移动操作能力、服务器设置和备份恢复全部实现；账号安全、SMTP、CAPTCHA/IP策略、备案、自定义CSS/JS和独立Agent等排除页不得误加。
 - [INFERRED] 完整双向文件同步覆盖 registry 全实体和 blob，有 push、cursor、idempotency、tombstone、conflict，不用整包覆盖冒充同步。
 - [KNOWN] 设置页有总开关、自动同步开关、用户自定义间隔、立即同步、进度、上次成功、冲突和错误；主端 Zephyr Client 可管理 One 设备。
 - [KNOWN] 账号 + Token + TOTP（如启用）绑定，设备删除、Token 查看/旋转/删除/重置全部的密码/TOTP敏感验证均有测试。
@@ -1267,9 +1278,9 @@ Zephyr 主端                  https://...
 ## 25. 已确定默认决策
 
 - [KNOWN] 产品名沿用 Zephyr One；Android 使用 Kotlin + Compose，iOS 使用 Swift + SwiftUI 原生重写，旧 Tauri One 是迁移/兼容来源。
-- [KNOWN] 除多用户管理和独立 Zephyr Agent 页面外，Zephyr 全部正式功能在 One 有对应实现；里程碑顺序不得被解释为可删范围。
+- [KNOWN] One完整实现第7章标为必须提供的能力，包括服务器设置和备份恢复；当前账号安全、SMTP、CAPTCHA/IP策略、备案、自定义CSS/JS管理、多用户和独立Agent页不提供。
 - [KNOWN] One 内原 Zephyr Agent 设置改名“文件同步”，底层 Agent/ZFT2能力整合进去；主端设置入口统一叫“Zephyr Client”并保留旧 Agent兼容。
-- [KNOWN] 文件同步像 iCloud 一样完整双向镜像当前账号持久数据和 Client Token；只排除活 socket、设备身份密钥和不可移植系统授权。
+- [KNOWN] 文件同步像 iCloud 一样完整双向镜像 One有用途的账号数据和 Client Token；活socket、设备身份密钥、不可移植系统授权及Web后台配置不作为One可编辑数据。
 - [KNOWN] 开启前必须主端已有 Token，并在 One 输入 Zephyr 用户名+密码，启用 TOTP 时继续通过动态码；随后按账号绑定设备。
 - [KNOWN] 用户可设置自动同步间隔，也始终有“立即同步”；主端能查看、启停和删除 One 设备。
 - [KNOWN] 删除 One 设备、查看/旋转/删除 Token、重置全部 Token 必须走当前密码或 TOTP 敏感验证。
@@ -1303,4 +1314,4 @@ Zephyr 主端                  https://...
 
 ---
 
-[KNOWN] 本文的最终产品边界是：**原生 UI、除多用户/独立 Agent 页外功能齐全、账号+Token+TOTP绑定、Client Token 与全部持久业务数据完整双向文件同步、手动与自定义间隔同步、主端 Zephyr Client兼容管理、设备安全密钥、RDP 内文件同步配置、尊重 Android/iOS 真实生命周期**。用 WebView 冒充原生、只同步连接/笔记子集、只做 pull、只保留 Token metadata、删除服务器设置页、或重新增加独立 Zephyr Agent页，都违反已确认要求。
+[KNOWN] 本文的最终产品边界是：**原生移动操作UI、保留服务器设置与备份恢复、排除账号安全/SMTP/CAPTCHA-IP策略/备案等无用途后台、账号+Token+TOTP绑定、Client Token与One有用途数据完整双向文件同步、手动与自定义间隔同步、主端Zephyr Client兼容管理、RDP内文件同步配置**。用WebView冒充原生、只做pull、只保留Token metadata、重新增加独立Agent页，删除服务器设置/备份恢复，或把明确排除项塞回One，都违反要求。
