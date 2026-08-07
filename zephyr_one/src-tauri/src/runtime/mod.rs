@@ -132,80 +132,91 @@ extern "C" {
     fn AAsset_close(asset: *mut std::ffi::c_void);
 }
 
-/// Open exactly one APK asset as a `Read` stream via NDK AAssetManager.
-///
-/// Directory enumeration is intentionally never used: it cannot recursively
-/// enumerate public/ and node_modules/ in Android assets.
 #[cfg(target_os = "android")]
-fn open_asset_reader(asset_path: &str) -> Result<AndroidAssetReader, String> {
+fn run_on_android_context<T, F>(app: &AppHandle, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: for<'env, 'activity> FnOnce(
+            &mut jni::JNIEnv<'env>,
+            &jni::objects::JObject<'activity>,
+        ) -> Result<T, String>
+        + Send
+        + 'static,
+{
+    let webview = app
+        .webviews()
+        .into_values()
+        .next()
+        .ok_or_else(|| "Android WebView 尚未初始化".to_string())?;
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    webview
+        .with_webview(move |webview| {
+            webview
+                .jni_handle()
+                .exec(move |env, activity, _webview| {
+                    let _ = tx.send(operation(env, activity));
+                });
+        })
+        .map_err(|error| format!("无法调度 Android JNI 操作: {error}"))?;
+    rx.recv_timeout(Duration::from_secs(10))
+        .map_err(|error| format!("等待 Android JNI 操作超时: {error}"))?
+}
+
+/// Open exactly one APK asset as a `Read` stream via Tauri's initialized JNI
+/// context and the NDK AAssetManager. The opaque AAsset is opened on the
+/// WebView thread, then exclusively owned and read by the startup worker.
+#[cfg(target_os = "android")]
+fn open_asset_reader(app: &AppHandle, asset_path: &str) -> Result<AndroidAssetReader, String> {
     const AASSET_MODE_STREAMING: std::ffi::c_int = 2;
-
-    let ctx = ndk_context::android_context();
-    let vm_ptr = ctx.vm();
-    let context_ptr = ctx.context();
-    if vm_ptr.is_null() || context_ptr.is_null() {
-        return Err("ndk-context 未初始化（vm/context 为 null）".into());
-    }
-
-    let vm = unsafe { jni::JavaVM::from_raw(vm_ptr.cast()) }
-        .map_err(|e| format!("JavaVM::from_raw: {e}"))?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| format!("attach_current_thread: {e}"))?;
-
-    // ndk-context owns this global Context ref. Do not let jni-rs delete it.
-    let context = unsafe { jni::objects::JObject::from_raw(context_ptr.cast()) };
-    let asset_manager = env
-        .call_method(
-            &context,
-            "getAssets",
-            "()Landroid/content/res/AssetManager;",
-            &[],
-        )
-        .map_err(|e| format!("getAssets(): {e}"))?
-        .l()
-        .map_err(|e| format!("getAssets() non-object: {e}"))?;
-    std::mem::forget(context);
-
-    let manager = unsafe { AAssetManager_fromJava(env.get_raw(), asset_manager.as_raw()) };
-    if manager.is_null() {
-        return Err("AAssetManager_fromJava returned null".into());
-    }
-    let path = std::ffi::CString::new(asset_path).map_err(|e| e.to_string())?;
-    let asset = unsafe { AAssetManager_open(manager, path.as_ptr(), AASSET_MODE_STREAMING) };
-    if asset.is_null() {
-        return Err(format!(
-            "AAssetManager_open 失败: {asset_path}（APK 中可能缺少该 asset）"
-        ));
-    }
-    Ok(AndroidAssetReader { asset })
+    let path = asset_path.to_string();
+    let asset = run_on_android_context(app, move |env, activity| {
+        let asset_manager = env
+            .call_method(
+                activity,
+                "getAssets",
+                "()Landroid/content/res/AssetManager;",
+                &[],
+            )
+            .map_err(|error| format!("getAssets(): {error}"))?
+            .l()
+            .map_err(|error| format!("getAssets() non-object: {error}"))?;
+        let manager = unsafe { AAssetManager_fromJava(env.get_raw(), asset_manager.as_raw()) };
+        if manager.is_null() {
+            return Err("AAssetManager_fromJava returned null".into());
+        }
+        let c_path = std::ffi::CString::new(path.as_str()).map_err(|error| error.to_string())?;
+        let asset = unsafe { AAssetManager_open(manager, c_path.as_ptr(), AASSET_MODE_STREAMING) };
+        if asset.is_null() {
+            Err(format!("AAssetManager_open 失败: {path}（APK 中可能缺少该 asset）"))
+        } else {
+            Ok(asset as usize)
+        }
+    })?;
+    Ok(AndroidAssetReader {
+        asset: asset as *mut std::ffi::c_void,
+    })
 }
 
 #[cfg(target_os = "android")]
-fn android_apk_path() -> Result<PathBuf, String> {
-    let ctx = ndk_context::android_context();
-    let vm_ptr = ctx.vm();
-    let context_ptr = ctx.context();
-    if vm_ptr.is_null() || context_ptr.is_null() {
-        return Err("ndk-context 未初始化（vm/context 为 null）".into());
-    }
-    let vm = unsafe { jni::JavaVM::from_raw(vm_ptr.cast()) }
-        .map_err(|e| format!("JavaVM::from_raw: {e}"))?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| format!("attach_current_thread: {e}"))?;
-    let context = unsafe { jni::objects::JObject::from_raw(context_ptr.cast()) };
-    let value = env
-        .call_method(&context, "getPackageResourcePath", "()Ljava/lang/String;", &[])
-        .map_err(|e| format!("getPackageResourcePath(): {e}"))?
-        .l()
-        .map_err(|e| format!("getPackageResourcePath() non-object: {e}"))?;
-    let value = jni::objects::JString::from(value);
-    let path: String = env
-        .get_string(&value)
-        .map_err(|e| format!("读取 APK 路径失败: {e}"))?
-        .into();
-    std::mem::forget(context);
+fn android_apk_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let path = run_on_android_context(app, |env, activity| {
+        let value = env
+            .call_method(
+                activity,
+                "getPackageResourcePath",
+                "()Ljava/lang/String;",
+                &[],
+            )
+            .map_err(|error| format!("getPackageResourcePath(): {error}"))?
+            .l()
+            .map_err(|error| format!("getPackageResourcePath() non-object: {error}"))?;
+        let value = jni::objects::JString::from(value);
+        let path: String = env
+            .get_string(&value)
+            .map_err(|error| format!("读取 APK 路径失败: {error}"))?
+            .into();
+        Ok(path)
+    })?;
     if path.is_empty() {
         Err("Android 返回了空 APK 路径".into())
     } else {
@@ -220,6 +231,28 @@ fn resource_candidates(resource_dir: &Path, relative: &str) -> Vec<PathBuf> {
         resource_dir.join("resources").join(relative),
         resource_dir.join("resources").join("_up_").join(relative),
     ]
+}
+
+/// Node.js 22 cannot use Windows verbatim paths (`\\?\C:\...`) as the main
+/// script argument: it parses the drive prefix as a directory named `C:` and
+/// exits with EISDIR. Keep canonicalization for reliable discovery, then turn
+/// only the Windows verbatim spelling back into the equivalent normal path
+/// before passing it to `Command`.
+#[cfg(target_os = "windows")]
+fn node_compatible_path(path: PathBuf) -> PathBuf {
+    let value = path.to_string_lossy();
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = value.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    path
+}
+
+#[cfg(not(target_os = "windows"))]
+fn node_compatible_path(path: PathBuf) -> PathBuf {
+    path
 }
 
 pub fn resolve_core_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -239,7 +272,7 @@ pub fn resolve_core_dir(app: &AppHandle) -> Result<PathBuf, String> {
     }
     for c in candidates {
         if c.join("server.js").is_file() && c.join("public").is_dir() {
-            return Ok(c.canonicalize().unwrap_or(c));
+            return Ok(node_compatible_path(c.canonicalize().unwrap_or(c)));
         }
     }
     Err(
@@ -298,15 +331,8 @@ pub fn resolve_node_bin(app: &AppHandle) -> Result<PathBuf, String> {
         }
         for p in candidates {
             if p.is_file() {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    if let Ok(meta) = std::fs::metadata(&p) {
-                        let mut perms = meta.permissions();
-                        perms.set_mode(perms.mode() | 0o755);
-                        let _ = std::fs::set_permissions(&p, perms);
-                    }
-                }
+                // jniLibs are executable after installation. chmod is both
+                // unnecessary and denied by Android SELinux for APK files.
                 return Ok(p);
             }
         }
@@ -400,7 +426,7 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
     #[cfg(not(target_os = "android"))]
     let core = resolve_core_dir(app)?;
 
-    let node = resolve_node_bin(app)?;
+    let node = node_compatible_path(resolve_node_bin(app)?);
     let port = pick_port().map_err(|e| e.to_string())?;
     let public_origin = format!("http://127.0.0.1:{port}");
 
@@ -455,7 +481,7 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
                 };
                 cmd.env("LD_LIBRARY_PATH", joined);
             }
-            let apk_path = android_apk_path()?;
+            let apk_path = android_apk_path(app)?;
             cmd.env("ZEPHYR_ANDROID_APK_PATH", apk_path);
             cmd.env("ZEPHYR_ANDROID_PUBLIC_PREFIX", "assets/zephyr-public");
         }
@@ -476,7 +502,7 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
     #[cfg(target_os = "android")]
     {
         use std::io::Write;
-        let mut source = open_asset_reader("zephyr-core.cjs")?;
+        let mut source = open_asset_reader(app, "zephyr-core.cjs")?;
         let mut stdin = child.stdin.take().ok_or_else(|| "无法打开 Node 标准输入".to_string())?;
         if let Err(error) = std::io::copy(&mut source, &mut stdin).and_then(|_| stdin.flush()) {
             let _ = child.kill();
@@ -553,8 +579,8 @@ pub fn info() -> RuntimeInfo {
 
 #[cfg(all(test, not(target_os = "android")))]
 mod tests {
-    use super::resource_candidates;
-    use std::path::Path;
+    use super::{node_compatible_path, resource_candidates};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn packaged_parent_resources_are_discoverable() {
@@ -562,5 +588,22 @@ mod tests {
         assert!(candidates.iter().any(|path| path.ends_with("_up_/zephyr-core")));
         let runtime = resource_candidates(Path::new("C:/Program/Zephyr One"), "desktop-runtime");
         assert!(runtime.iter().any(|path| path.ends_with("_up_/desktop-runtime")));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_verbatim_paths_are_safe_for_node() {
+        assert_eq!(
+            node_compatible_path(PathBuf::from(
+                r"\\?\C:\Users\Test User\AppData\Local\Zephyr One\_up_\zephyr-core",
+            )),
+            PathBuf::from(
+                r"C:\Users\Test User\AppData\Local\Zephyr One\_up_\zephyr-core",
+            ),
+        );
+        assert_eq!(
+            node_compatible_path(PathBuf::from(r"\\?\UNC\server\share\zephyr-core")),
+            PathBuf::from(r"\\server\share\zephyr-core"),
+        );
     }
 }

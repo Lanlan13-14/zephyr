@@ -39,7 +39,6 @@ tauri-plugin-biometric = "2"
 # Android: stream the bundled CommonJS entry via NDK AAssetManager. Static UI
 # files stay as ordinary APK assets and are read from base.apk on demand.
 [target.'cfg(target_os = "android")'.dependencies]
-ndk-context = "0.1"
 jni = "0.21"
 
 # macOS OS unlock

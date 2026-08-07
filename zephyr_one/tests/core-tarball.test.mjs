@@ -10,7 +10,9 @@ const ROOT = path.resolve(__dirname, '..');
 describe('Android no-extract embedded core contract', () => {
   it('streams one bundled server entry to Node instead of unpacking app data', () => {
     const runtime = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'runtime', 'mod.rs'), 'utf8');
-    assert.match(runtime, /open_asset_reader\("zephyr-core\.cjs"\)/);
+    assert.match(runtime, /open_asset_reader\(app, "zephyr-core\.cjs"\)/);
+    assert.match(runtime, /run_on_android_context/);
+    assert.doesNotMatch(runtime, /ndk_context::android_context/);
     assert.match(runtime, /cmd\.current_dir\(&data_dir\)\.arg\("-"\)/);
     assert.match(runtime, /std::io::copy\(&mut source, &mut stdin\)/);
     assert.match(runtime, /ZEPHYR_ANDROID_APK_PATH/);
