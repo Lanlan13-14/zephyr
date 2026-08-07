@@ -632,6 +632,21 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         cmd.env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1");
     }
 
+    /* Windows: spawn the core without a console.
+     *
+     * `main.rs` carries `windows_subsystem = "windows"`, which only detaches the
+     * *shell's* own console. A GUI process still has no console to inherit, so
+     * spawning a console subsystem binary like node.exe makes Windows allocate a
+     * fresh one — that is the black window sitting next to the Zephyr One frame.
+     * CREATE_NO_WINDOW suppresses it. stdout/stderr are already redirected to
+     * zephyr-node.log, so no diagnostics are lost. */
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
     let mut child = cmd.spawn().map_err(|e| {
         #[cfg(not(target_os = "android"))]
         let core_display = core.display().to_string();

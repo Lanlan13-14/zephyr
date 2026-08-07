@@ -138,6 +138,8 @@ const {
 } = require('./preview/media/media-service');
 const { FileAgentManager } = require('./file-agent-manager');
 const { OneClientManager } = require('./one-client-manager');
+const { applyEmbeddedSurface } = require('./zephyr-one-embed-surface');
+const { installAsyncHandlerGuard, jsonErrorMiddleware } = require('./express-async-guard');
 const terminalSessionTools = require('./ai-terminal-session-tools');
 const { FileTransferGateway } = require('./file-transfer-ws');
 const { attachRdpProxyBridge } = require('./server/rdp-proxy-bridge');
@@ -155,6 +157,31 @@ const aiHostApp = express();
 const AI_HOST_LISTEN = String(process.env.ZEPHYR_AI_HOST_LISTEN || '127.0.0.1:3080');
 let aiHostServer = null;
 
+/* ── Zephyr One embedded surface ───────────────────────────────────────
+ * Zephyr One runs this core as a local child process reachable only over
+ * loopback, and the real product gate is the OS unlock (Biometric /
+ * Windows Hello / LocalAuthentication) the Tauri shell performs before the
+ * WebView loads. The browser-era credential wall — password login, forced
+ * default-password rotation, TOTP, passkeys, email codes — is redundant
+ * there: it asks the user to authenticate a second time and gates the whole
+ * product behind a web flow the native shell cannot drive.
+ *
+ * EMBEDDED_LISTEN_HOST pins the listener to loopback in the same mode. That
+ * pin is what makes automatic local-account adoption sound; without it,
+ * auto-adoption would hand a live session to anything on the LAN. */
+const ZEPHYR_ONE_EMBEDDED = process.env.ZEPHYR_ONE_EMBEDDED === '1';
+const EMBEDDED_LISTEN_HOST = ZEPHYR_ONE_EMBEDDED
+    ? '127.0.0.1'
+    : String(process.env.ZEPHYR_BIND_HOST || '');
+
+/* Crash containment: Express 4 lets an `async` handler's rejection escape to
+ * the process, which under Node's default --unhandled-rejections=throw kills
+ * the core outright. That is how change-password took node.exe down and left
+ * the Zephyr One WebView on "Failed to fetch". Must run before any route is
+ * registered. See express-async-guard.js. */
+installAsyncHandlerGuard(app);
+installAsyncHandlerGuard(aiHostApp);
+
 function applyCrossOriginIsolationHeaders(req, res, next) {
     // rdp-wasm WASM client uses SharedArrayBuffer for Go runtime.
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
@@ -163,6 +190,46 @@ function applyCrossOriginIsolationHeaders(req, res, next) {
     next();
 }
 app.use(applyCrossOriginIsolationHeaders);
+
+/* Adopt the local account automatically when running inside Zephyr One.
+ * Safe only because EMBEDDED_LISTEN_HOST pins the listener to loopback in
+ * exactly this mode. The minted session carries mustChangePassword=false so
+ * the forced default-password rotation never fires: the shell's OS unlock is
+ * the gate, and that browser-era flow is what crashed the core and left the
+ * WebView on "Failed to fetch". */
+let embeddedSessionSid = '';
+function adoptEmbeddedLocalSession(req, res, next) {
+    if (!ZEPHYR_ONE_EMBEDDED) return next();
+    try {
+        if (currentSession(req)) return next();
+        if (!(embeddedSessionSid && sessionStore.peek(embeddedSessionSid))) {
+            const user = storage.getFirstUser();
+            if (!user) return next();
+            const { sid } = sessionStore.create({
+                userId: user.userId,
+                username: user.username,
+                remember: true,
+                mustChangePassword: false,
+                userAgent: req.headers['user-agent'] || '',
+                ip: clientIp(req),
+            });
+            embeddedSessionSid = sid;
+        }
+        /* Drop any stale zephyr_sid before appending the live one, otherwise
+         * currentSession() keeps resolving the dead cookie value. */
+        const kept = String(req.headers.cookie || '')
+            .split(';')
+            .map((part) => part.trim())
+            .filter((part) => part && !/^zephyr_sid=/.test(part));
+        kept.push(`zephyr_sid=${encodeURIComponent(embeddedSessionSid)}`);
+        req.headers.cookie = kept.join('; ');
+        res.setHeader('Set-Cookie', `zephyr_sid=${encodeURIComponent(embeddedSessionSid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(REMEMBER_ABSOLUTE_TTL_MS / 1000)}`);
+    } catch (error) {
+        console.error('[zephyr-one] 本地会话接管失败:', error);
+    }
+    return next();
+}
+app.use(adoptEmbeddedLocalSession);
 
 const DATA_DIR = process.env.ZEPHYR_DATA_DIR
     ? path.resolve(process.env.ZEPHYR_DATA_DIR)
@@ -6491,16 +6558,26 @@ async function sendEmbeddedAppPage(req, res, next) {
             ? await embeddedPublicAssets.readText('app.html')
             : await fs.promises.readFile(path.join(__dirname, 'public', 'app.html'), 'utf8');
         if (html === null) return next();
-        const inject = '<link rel="stylesheet" href="/zephyr-one-embed.css">';
-        const out = html.includes('zephyr-one-embed.css')
-            ? html
-            : (html.includes('</head>') ? html.replace('</head>', `${inject}\n</head>`) : inject + html);
+        /* Structurally remove the browser-era credential surface (security
+         * tab, logout) and give Settings a real landing panel. Throws loudly if
+         * app.html changed shape, which the error middleware turns into a JSON
+         * 500 rather than a silently degraded page. */
+        const { html: out } = applyEmbeddedSurface(html);
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.type('html').send(out);
     } catch (error) {
         next(error);
     }
 }
+/* Zephyr One never shows the browser login page. index.html's boot path is
+ * `GET /api/auth/me` → redirect, which would flash the credential wall for one
+ * frame before the adopted local session bounces it. Sending the shell straight
+ * to the app surface removes that frame entirely. Registered ahead of the
+ * static handler, which would otherwise serve index.html for `/`. */
+app.get(['/', '/index.html'], (req, res, next) => {
+    if (!ZEPHYR_ONE_EMBEDDED) return next();
+    return res.redirect('/app.html');
+});
 app.get(['/app.html', '/app'], requirePageAuth, (req, res, next) => {
     if (process.env.ZEPHYR_ONE_EMBEDDED === '1' || req.query.zephyrOne === '1') {
         return sendEmbeddedAppPage(req, res, next);
@@ -8925,9 +9002,22 @@ async function startServer() {
     });
     const aiHostListen = parseLoopbackListen(AI_HOST_LISTEN);
     aiHostServer = http.createServer(aiHostApp);
+    /* Zephyr One pins both listeners to loopback: the core is a local child
+     * process of the shell, and automatic local-account adoption must never be
+     * reachable from the LAN. Plain web deployments keep the previous
+     * all-interfaces default unless ZEPHYR_BIND_HOST says otherwise. */
+    const listenHost = EMBEDDED_LISTEN_HOST;
     await Promise.all([
-        HTTP_ENABLED ? new Promise((resolve) => server.listen(PORT, resolve)) : Promise.resolve(),
-        httpsServer ? new Promise((resolve) => httpsServer.listen(HTTPS_PORT, resolve)) : Promise.resolve(),
+        HTTP_ENABLED
+            ? new Promise((resolve) => (listenHost
+                ? server.listen(PORT, listenHost, resolve)
+                : server.listen(PORT, resolve)))
+            : Promise.resolve(),
+        httpsServer
+            ? new Promise((resolve) => (listenHost
+                ? httpsServer.listen(HTTPS_PORT, listenHost, resolve)
+                : httpsServer.listen(HTTPS_PORT, resolve)))
+            : Promise.resolve(),
         new Promise((resolve, reject) => {
             aiHostServer.once('error', reject);
             aiHostServer.listen(aiHostListen.port, aiHostListen.host, resolve);
@@ -8944,7 +9034,25 @@ async function startServer() {
     console.log(`   Agent 文件重定向: /agent/files -> Flutter Agent WebSocket`);
 }
 
-startServer().catch((err) => {
-    console.error('[startup] Zephyr 启动失败:', err);
-    process.exit(1);
-});
+/* Terminal error middleware — registered after every route so the rejections
+ * funnelled here by installAsyncHandlerGuard become a uniform JSON response
+ * instead of a hung request. Must stay last. */
+app.use(jsonErrorMiddleware);
+
+startServer()
+    .then(() => {
+        /* Last-resort guards, installed only once the listener is up so a
+         * genuine startup failure still exits non-zero above. A single bad
+         * request must not take the core down: on Zephyr One that surfaces
+         * only as "Failed to fetch" with no diagnosable trace. */
+        process.on('unhandledRejection', (reason) => {
+            console.error('[unhandledRejection] 已捕获，进程继续运行:', reason);
+        });
+        process.on('uncaughtException', (error) => {
+            console.error('[uncaughtException] 已捕获，进程继续运行:', error);
+        });
+    })
+    .catch((err) => {
+        console.error('[startup] Zephyr 启动失败:', err);
+        process.exit(1);
+    });

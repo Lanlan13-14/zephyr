@@ -73,16 +73,32 @@ if [ -d "$OUT/node_modules/@novnc/novnc" ]; then
   cp -a "$OUT/node_modules/@novnc/novnc/." "$OUT/public/vendor/novnc/"
 fi
 
-# Embed CSS for One product surface (hide multi-user / security / backup)
+# Embed CSS for One product surface.
+#
+# The security tab BUTTON is removed structurally by
+# zephyr-one-embed-surface.js, not hidden here: `#settings-security` is
+# app.html's default-active panel and app.js falls back to
+# `[data-settings="security"]` in three places, so a CSS-hidden button still
+# matches those selectors and Settings lands on an invisible panel. CSS only
+# hides panels whose tab button is already gone or admin-gated.
+#
+# Hidden here, and why each is browser-only:
+#   admin  — multi-user management; One is a single local account
+#   data   — server-side backup/restore of a shared deployment
+#   mail   — SMTP for login/reset mail; One has no remote recipients
+#   beian  — ICP filing notice, a public-website obligation
 cat > "$OUT/public/zephyr-one-embed.css" <<'CSS'
 /* Zephyr One local product surface */
 #adminSettingsTab,
 #settings-admin,
 .settings-tab[data-settings="admin"],
-.settings-tab[data-settings="security"],
-#settings-security,
 .settings-tab[data-settings="data"],
-#settings-data {
+#settings-data,
+.settings-tab[data-settings="mail"],
+#settings-mail,
+.settings-tab[data-settings="beian"],
+#settings-beian,
+#settings-security {
   display: none !important;
 }
 CSS

@@ -35,6 +35,17 @@ on:
           - both
           - windows
           - android
+      include_mobile:
+        # Desktop (Windows/macOS/Linux) is the supported surface today. Android
+        # still boots the core through the libnode.so + APK-asset path, and iOS
+        # has no working core path at all: runtime/mod.rs resolves Node through
+        # the desktop branch, which needs a spawnable node binary that iOS
+        # forbids. Keep both off the default release so a mobile failure cannot
+        # stall a desktop publish; flip this on deliberately when working on them.
+        description: 'Also build Android + iOS (off by default; desktop-only release)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -68,7 +79,7 @@ jobs:
   # ───────────── Release builds (workflow_dispatch + tag) ─────────────
 
   build-android:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_platform != 'windows'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_platform != 'windows' && github.event.inputs.include_mobile == 'true'
     needs: test
     runs-on: ubuntu-latest
     # Keep hard-fail for Android; NDK_HOME is set in Install NDK step.
@@ -386,7 +397,7 @@ jobs:
 
   # iOS: unsigned CI build (App Store / device install still needs real Apple team + certs)
   build-ios:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true' && github.event.inputs.include_mobile == 'true'
     needs: test
     runs-on: macos-latest
     # Do not sink the whole release if only iOS tooling is missing secrets.
@@ -498,18 +509,20 @@ jobs:
 
             Full Zephyr product embedded in Tauri (local core). Remote main is **data sync only**.
 
-            ### Platforms (aligned with Zephyr Agent)
+            ### Platforms
             | Platform | Artifact |
             |---|---|
-            | Android APK | `zephyr-one-android-arm64-*.apk` (Agent-style release JKS; package `com.zephyr.one`) |
             | Windows | MSI / NSIS / portable zip |
             | macOS | DMG / app zip |
-            | Linux | deb / AppImage |
-            | iOS | unsigned zip (needs Apple signing for device/store) |
+            | Linux | deb / rpm / portable binary |
+
+            Android and iOS are **not** part of this release. Both are being
+            rebuilt as native clients; run the workflow with `include_mobile`
+            enabled to produce the legacy Tauri mobile artifacts.
 
             ### Notes
-            - Android Node: open-box `jniLibs/*/libnode.so` (node-android-build)
-            - Optional OS unlock (default off): real Biometric / LA / Windows Hello
+            - Desktop core runs in-process on loopback only; no LAN exposure
+            - Optional OS unlock (default off): real LocalAuthentication / Windows Hello
             - Does **not** replace Zephyr Agent (`com.zephyr.agent`)
           files: dist-one/*
           draft: false
