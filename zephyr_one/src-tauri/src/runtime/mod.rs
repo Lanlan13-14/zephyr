@@ -70,17 +70,11 @@ fn wait_http_ready(child: &mut Child, url: &str, timeout: Duration) -> Result<()
     Err(format!("本地 Zephyr 启动超时（{url}）"))
 }
 
-/// Android NDK asset helpers.
-///
-/// Contract (Tauri 2 stable):
-/// - `Manager::webviews()` is gated behind the `unstable` feature and is NOT
-///   available to this crate. Use `get_webview_window` / `webview_windows`.
-/// - `WebviewWindow::with_webview` + `PlatformWebview::jni_handle().exec`
-///   schedule work onto the WebView/Activity thread where JNI is valid.
-/// - AAsset handles are NOT thread-safe and must be opened, read, and closed
-///   entirely on that same thread. Cross-thread ownership of `*mut AAsset`
-///   is forbidden; we fully buffer the single-file core entry into a `Vec<u8>`
-///   before leaving the JNI callback.
+// Android NDK asset helpers.
+// Contract (Tauri 2 stable):
+// - Manager::webviews() needs feature=unstable; use get_webview_window instead.
+// - WebviewWindow::with_webview + jni_handle().exec run on the JNI thread.
+// - AAsset must be open/read/close only on that thread (buffer into Vec).
 #[cfg(target_os = "android")]
 #[link(name = "android")]
 extern "C" {
@@ -284,6 +278,7 @@ fn android_native_library_dir(app: &AppHandle) -> Result<PathBuf, String> {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn resource_candidates(resource_dir: &Path, relative: &str) -> Vec<PathBuf> {
     vec![
         resource_dir.join(relative),
@@ -492,7 +487,43 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
     // Android: resolve APK path + fully buffer the core entry BEFORE spawn so a
     // missing/corrupt asset fails cleanly without leaving a half-started Node.
     #[cfg(target_os = "android")]
-    let mut core_source = open_asset_reader(app, "zephyr-core.cjs")?;
+    let mut core_source = {
+        // Node block-buffers stdout when not a TTY. Prepend a tiny bootstrap that
+        // writeSyncs to fd 1/2 so smoke tests and zephyr-node.log see progress
+        // even if the main server hangs mid-boot. Asset bytes stay in the APK;
+        // this is not a first-run extract.
+        const BOOT: &str = r#"/* zephyr-one android stdin bootstrap */
+(function () {
+  var fs = require('fs');
+  function line(s) {
+    try { fs.writeSync(2, s + '\n'); } catch (e) {}
+    try { fs.writeSync(1, s + '\n'); } catch (e) {}
+  }
+  line('[zephyr-one] node boot pid=' + process.pid + ' argv0=' + process.argv[0]);
+  line('[zephyr-one] cwd=' + process.cwd());
+  line('[zephyr-one] ZEPHYR_ANDROID_APK_PATH=' + (process.env.ZEPHYR_ANDROID_APK_PATH || ''));
+  ['log', 'info', 'warn', 'error'].forEach(function (k) {
+    var orig = console[k].bind(console);
+    console[k] = function () {
+      var msg = Array.prototype.slice.call(arguments).map(String).join(' ');
+      line('[console.' + k + '] ' + msg);
+      return orig.apply(console, arguments);
+    };
+  });
+  process.on('uncaughtException', function (err) {
+    line('[zephyr-one] uncaughtException ' + (err && err.stack ? err.stack : err));
+  });
+  process.on('unhandledRejection', function (err) {
+    line('[zephyr-one] unhandledRejection ' + (err && err.stack ? err.stack : err));
+  });
+})();
+"#;
+        let mut bytes = BOOT.as_bytes().to_vec();
+        let mut asset = open_asset_reader(app, "zephyr-core.cjs")?;
+        std::io::Read::read_to_end(&mut asset, &mut bytes)
+            .map_err(|e| format!("读取内置核心失败: {e}"))?;
+        std::io::Cursor::new(bytes)
+    };
     #[cfg(target_os = "android")]
     let apk_path = android_apk_path(app)?;
     #[cfg(target_os = "android")]
@@ -528,7 +559,14 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
     cmd.stdin(Stdio::piped());
 
     let log_path = data_dir.join("zephyr-node.log");
-    if let Ok(log) = std::fs::File::create(&log_path) {
+    // Append-friendly create: truncate once, then share FDs for stdout+stderr.
+    // Prefer write so Node can flush progress as it boots.
+    if let Ok(log) = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
+    {
         if let Ok(stdout) = log.try_clone() {
             cmd.stdout(Stdio::from(stdout));
         }
@@ -544,6 +582,11 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         let tmp_dir = app_data.join("tmp");
         cmd.env("HOME", &app_data);
         cmd.env("TMPDIR", &tmp_dir);
+        // Force color off and keep Node from inventing a TTY; bootstrap writeSync
+        // still lands in the log file for readiness probes.
+        cmd.env("NO_COLOR", "1");
+        cmd.env("NODE_DISABLE_COLORS", "1");
+        cmd.env("TERM", "dumb");
         // Help Node find itself / avoid dlopen issues when invoked as libnode.so
         if let Some(dir) = node.parent() {
             let prev = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
@@ -557,6 +600,9 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         }
         cmd.env("ZEPHYR_ANDROID_APK_PATH", &apk_path);
         cmd.env("ZEPHYR_ANDROID_PUBLIC_PREFIX", "assets/zephyr-public");
+        // Keep embedded product surface explicit for core feature gates.
+        cmd.env("ZEPHYR_ONE_EMBEDDED", "1");
+        cmd.env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1");
     }
 
     let mut child = cmd.spawn().map_err(|e| {

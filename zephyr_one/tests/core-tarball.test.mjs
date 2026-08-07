@@ -23,6 +23,9 @@ describe('Android no-extract embedded core contract', () => {
     assert.match(runtime, /nativeLibraryDir/);
     assert.match(runtime, /cmd\.current_dir\(&data_dir\)\.arg\("-"\)/);
     assert.match(runtime, /std::io::copy\(&mut core_source, &mut stdin\)/);
+    // Bootstrap is prepended in-memory to stdin only — not written under filesDir.
+    assert.match(runtime, /zephyr-one android stdin bootstrap/);
+    assert.match(runtime, /writeSync\(2/);
     assert.match(runtime, /ZEPHYR_ANDROID_APK_PATH/);
     assert.doesNotMatch(runtime, /extract_assets_core_tarball|\.zephyr-one-app-version|zephyr-core\.extracting/);
   });

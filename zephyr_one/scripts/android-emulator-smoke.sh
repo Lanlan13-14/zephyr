@@ -39,9 +39,10 @@ while [ "$attempt" -lt 36 ]; do
       ready=1
       break
     fi
-    if grep -F '[startup] Zephyr' "$OUT/zephyr-node.log" >/dev/null 2>&1; then
+    if grep -E '\[startup\] Zephyr|uncaughtException|unhandledRejection' "$OUT/zephyr-node.log" >/dev/null 2>&1; then
       echo "Embedded Zephyr core reported a startup error" >&2
       cat "$OUT/zephyr-node.log" >&2
+      adb logcat -d >"$OUT/logcat.txt" || true
       exit 1
     fi
   fi
@@ -51,7 +52,14 @@ done
 if [ "$ready" -ne 1 ]; then
   echo "Embedded Zephyr core did not become ready" >&2
   adb shell cat "$NODE_LOG" >"$OUT/zephyr-node.log" 2>/dev/null || true
-  cat "$OUT/zephyr-node.log" >&2 2>/dev/null || true
+  {
+    echo "---- zephyr-node.log ----"
+    cat "$OUT/zephyr-node.log" 2>/dev/null || true
+    echo "---- app files (maxdepth 3) ----"
+    adb shell "find '$DATA_DIR' -maxdepth 3 -type f 2>/dev/null | head -n 80" || true
+    echo "---- pidof ----"
+    adb shell "pidof $PACKAGE; ps -A | grep -E 'zephyr|libnode' || true" || true
+  } | tee "$OUT/diagnostics.txt" >&2
   adb logcat -d >"$OUT/logcat.txt" || true
   exit 1
 fi
