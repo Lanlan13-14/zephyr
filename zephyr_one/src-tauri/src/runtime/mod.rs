@@ -70,48 +70,17 @@ fn wait_http_ready(child: &mut Child, url: &str, timeout: Duration) -> Result<()
     Err(format!("本地 Zephyr 启动超时（{url}）"))
 }
 
-/// A streaming reader over one APK asset. `Drop` closes the NDK handle.
+/// Android NDK asset helpers.
 ///
-/// Used to stream one build-time asset directly into the child process.
-#[cfg(target_os = "android")]
-struct AndroidAssetReader {
-    asset: *mut std::ffi::c_void,
-}
-
-#[cfg(target_os = "android")]
-impl std::io::Read for AndroidAssetReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-        let read = unsafe {
-            AAsset_read(
-                self.asset,
-                buf.as_mut_ptr().cast::<std::ffi::c_void>(),
-                buf.len(),
-            )
-        };
-        if read < 0 {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("AAsset_read 错误: {read}"),
-            ))
-        } else {
-            Ok(read as usize)
-        }
-    }
-}
-
-#[cfg(target_os = "android")]
-impl Drop for AndroidAssetReader {
-    fn drop(&mut self) {
-        if !self.asset.is_null() {
-            unsafe { AAsset_close(self.asset) };
-            self.asset = std::ptr::null_mut();
-        }
-    }
-}
-
+/// Contract (Tauri 2 stable):
+/// - `Manager::webviews()` is gated behind the `unstable` feature and is NOT
+///   available to this crate. Use `get_webview_window` / `webview_windows`.
+/// - `WebviewWindow::with_webview` + `PlatformWebview::jni_handle().exec`
+///   schedule work onto the WebView/Activity thread where JNI is valid.
+/// - AAsset handles are NOT thread-safe and must be opened, read, and closed
+///   entirely on that same thread. Cross-thread ownership of `*mut AAsset`
+///   is forbidden; we fully buffer the single-file core entry into a `Vec<u8>`
+///   before leaving the JNI callback.
 #[cfg(target_os = "android")]
 #[link(name = "android")]
 extern "C" {
@@ -124,6 +93,7 @@ extern "C" {
         filename: *const std::ffi::c_char,
         mode: std::ffi::c_int,
     ) -> *mut std::ffi::c_void;
+    fn AAsset_getLength64(asset: *mut std::ffi::c_void) -> i64;
     fn AAsset_read(
         asset: *mut std::ffi::c_void,
         buffer: *mut std::ffi::c_void,
@@ -132,6 +102,10 @@ extern "C" {
     fn AAsset_close(asset: *mut std::ffi::c_void);
 }
 
+/// Run a closure on the Android Activity / WebView JNI thread.
+///
+/// Prefer the stable `WebviewWindow` surface over `Manager::webviews()`
+/// (unstable-only) so release Android builds compile without extra features.
 #[cfg(target_os = "android")]
 fn run_on_android_context<T, F>(app: &AppHandle, operation: F) -> Result<T, String>
 where
@@ -143,33 +117,34 @@ where
         + Send
         + 'static,
 {
-    let webview = app
-        .webviews()
-        .into_values()
-        .next()
+    let webview_window = app
+        .get_webview_window("main")
+        .or_else(|| app.webview_windows().into_values().next())
         .ok_or_else(|| "Android WebView 尚未初始化".to_string())?;
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    webview
-        .with_webview(move |webview| {
-            webview
-                .jni_handle()
-                .exec(move |env, activity, _webview| {
-                    let _ = tx.send(operation(env, activity));
-                });
+    webview_window
+        .with_webview(move |platform| {
+            platform.jni_handle().exec(move |env, activity, _webview| {
+                let _ = tx.send(operation(env, activity));
+            });
         })
         .map_err(|error| format!("无法调度 Android JNI 操作: {error}"))?;
     rx.recv_timeout(Duration::from_secs(10))
         .map_err(|error| format!("等待 Android JNI 操作超时: {error}"))?
 }
 
-/// Open exactly one APK asset as a `Read` stream via Tauri's initialized JNI
-/// context and the NDK AAssetManager. The opaque AAsset is opened on the
-/// WebView thread, then exclusively owned and read by the startup worker.
+/// Load one APK asset fully on the WebView/JNI thread and return it as a
+/// `Read` cursor. The NDK AAsset never leaves that thread.
 #[cfg(target_os = "android")]
-fn open_asset_reader(app: &AppHandle, asset_path: &str) -> Result<AndroidAssetReader, String> {
-    const AASSET_MODE_STREAMING: std::ffi::c_int = 2;
+fn open_asset_reader(
+    app: &AppHandle,
+    asset_path: &str,
+) -> Result<std::io::Cursor<Vec<u8>>, String> {
+    // AASSET_MODE_BUFFER: OS may memory-map; we still copy out so Node stdin
+    // owns a plain Vec after the JNI call returns.
+    const AASSET_MODE_BUFFER: std::ffi::c_int = 3;
     let path = asset_path.to_string();
-    let asset = run_on_android_context(app, move |env, activity| {
+    let bytes = run_on_android_context(app, move |env, activity| {
         let asset_manager = env
             .call_method(
                 activity,
@@ -180,23 +155,78 @@ fn open_asset_reader(app: &AppHandle, asset_path: &str) -> Result<AndroidAssetRe
             .map_err(|error| format!("getAssets(): {error}"))?
             .l()
             .map_err(|error| format!("getAssets() non-object: {error}"))?;
+        // AssetManager local ref stays alive for this whole callback; the
+        // native AAssetManager* is valid only while that Java object lives.
         let manager = unsafe { AAssetManager_fromJava(env.get_raw(), asset_manager.as_raw()) };
         if manager.is_null() {
             return Err("AAssetManager_fromJava returned null".into());
         }
         let c_path = std::ffi::CString::new(path.as_str()).map_err(|error| error.to_string())?;
-        let asset = unsafe { AAssetManager_open(manager, c_path.as_ptr(), AASSET_MODE_STREAMING) };
+        let asset = unsafe { AAssetManager_open(manager, c_path.as_ptr(), AASSET_MODE_BUFFER) };
         if asset.is_null() {
-            Err(format!("AAssetManager_open 失败: {path}（APK 中可能缺少该 asset）"))
-        } else {
-            Ok(asset as usize)
+            return Err(format!(
+                "AAssetManager_open 失败: {path}（APK 中可能缺少该 asset）"
+            ));
         }
+        // Always close on every exit path from here.
+        let result = (|| {
+            let len = unsafe { AAsset_getLength64(asset) };
+            let mut out = if len > 0 {
+                Vec::with_capacity(len as usize)
+            } else {
+                Vec::new()
+            };
+            let mut chunk = [0u8; 64 * 1024];
+            loop {
+                let read = unsafe {
+                    AAsset_read(
+                        asset,
+                        chunk.as_mut_ptr().cast::<std::ffi::c_void>(),
+                        chunk.len(),
+                    )
+                };
+                if read == 0 {
+                    break;
+                }
+                if read < 0 {
+                    return Err(format!("AAsset_read 错误: {read}"));
+                }
+                out.extend_from_slice(&chunk[..read as usize]);
+            }
+            if out.is_empty() {
+                return Err(format!("APK asset 为空: {path}"));
+            }
+            Ok(out)
+        })();
+        unsafe { AAsset_close(asset) };
+        result
     })?;
-    Ok(AndroidAssetReader {
-        asset: asset as *mut std::ffi::c_void,
-    })
+    Ok(std::io::Cursor::new(bytes))
 }
 
+#[cfg(target_os = "android")]
+fn jni_string_field(
+    env: &mut jni::JNIEnv<'_>,
+    object: &jni::objects::JObject<'_>,
+    field: &str,
+) -> Result<String, String> {
+    let value = env
+        .get_field(object, field, "Ljava/lang/String;")
+        .map_err(|error| format!("get_field({field}): {error}"))?
+        .l()
+        .map_err(|error| format!("get_field({field}) non-object: {error}"))?;
+    if value.is_null() {
+        return Err(format!("Android 字段 {field} 为 null"));
+    }
+    let value = jni::objects::JString::from(value);
+    env.get_string(&value)
+        .map_err(|error| format!("读取字符串字段 {field} 失败: {error}"))
+        .map(Into::into)
+}
+
+/// Absolute path of the installed base APK (`ApplicationInfo.sourceDir` /
+/// `Context.getPackageResourcePath`). Used by the Node core to open
+/// `assets/zephyr-public/**` as ZIP entries without extraction.
 #[cfg(target_os = "android")]
 fn android_apk_path(app: &AppHandle) -> Result<PathBuf, String> {
     let path = run_on_android_context(app, |env, activity| {
@@ -210,6 +240,9 @@ fn android_apk_path(app: &AppHandle) -> Result<PathBuf, String> {
             .map_err(|error| format!("getPackageResourcePath(): {error}"))?
             .l()
             .map_err(|error| format!("getPackageResourcePath() non-object: {error}"))?;
+        if value.is_null() {
+            return Err("getPackageResourcePath returned null".into());
+        }
         let value = jni::objects::JString::from(value);
         let path: String = env
             .get_string(&value)
@@ -219,6 +252,33 @@ fn android_apk_path(app: &AppHandle) -> Result<PathBuf, String> {
     })?;
     if path.is_empty() {
         Err("Android 返回了空 APK 路径".into())
+    } else {
+        Ok(PathBuf::from(path))
+    }
+}
+
+/// Directory where PackageManager extracted `jniLibs` (includes `libnode.so`).
+/// Prefer this over heuristic /proc/self/maps scanning.
+#[cfg(target_os = "android")]
+fn android_native_library_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let path = run_on_android_context(app, |env, activity| {
+        let app_info = env
+            .call_method(
+                activity,
+                "getApplicationInfo",
+                "()Landroid/content/pm/ApplicationInfo;",
+                &[],
+            )
+            .map_err(|error| format!("getApplicationInfo(): {error}"))?
+            .l()
+            .map_err(|error| format!("getApplicationInfo() non-object: {error}"))?;
+        if app_info.is_null() {
+            return Err("getApplicationInfo returned null".into());
+        }
+        jni_string_field(env, &app_info, "nativeLibraryDir")
+    })?;
+    if path.is_empty() {
+        Err("Android nativeLibraryDir 为空".into())
     } else {
         Ok(PathBuf::from(path))
     }
@@ -255,6 +315,10 @@ fn node_compatible_path(path: PathBuf) -> PathBuf {
     path
 }
 
+/// Desktop / non-Android only: locate the staged `zephyr-core` directory.
+/// Android never uses a filesystem core — it streams `assets/zephyr-core.cjs`
+/// and reads `assets/zephyr-public/**` from the APK ZIP.
+#[cfg(not(target_os = "android"))]
 pub fn resolve_core_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(res) = app.path().resource_dir() {
@@ -265,10 +329,9 @@ pub fn resolve_core_dir(app: &AppHandle) -> Result<PathBuf, String> {
         candidates.push(cwd.join("..").join("zephyr-core"));
         candidates.push(cwd.join("..")); // monorepo root with server.js
     }
-    // Android: filesDir staged core
+    // Dev fallback: app data can host a manually staged core during local debug.
     if let Ok(data) = app.path().app_data_dir() {
         candidates.push(data.join("zephyr-core"));
-        candidates.push(data.join("..").join("zephyr-core"));
     }
     for c in candidates {
         if c.join("server.js").is_file() && c.join("public").is_dir() {
@@ -291,6 +354,17 @@ pub fn resolve_node_bin(app: &AppHandle) -> Result<PathBuf, String> {
         // libnode.so is packaged under jniLibs and extracted by the OS at install
         // into ApplicationInfo.nativeLibraryDir — not unpacked by app code.
         let mut candidates: Vec<PathBuf> = Vec::new();
+
+        // 1) Authoritative path via ApplicationInfo.nativeLibraryDir (JNI).
+        match android_native_library_dir(app) {
+            Ok(dir) => candidates.push(dir.join("libnode.so")),
+            Err(error) => {
+                // Keep going with fallbacks; surface this only if all fail.
+                eprintln!("zephyr-one: nativeLibraryDir lookup failed: {error}");
+            }
+        }
+
+        // 2) Explicit overrides for tests / advanced packaging.
         for key in ["ANDROID_NATIVE_LIB_DIR", "ZEPHYR_NATIVE_LIB_DIR"] {
             if let Ok(v) = std::env::var(key) {
                 candidates.push(PathBuf::from(&v).join("libnode.so"));
@@ -300,35 +374,20 @@ pub fn resolve_node_bin(app: &AppHandle) -> Result<PathBuf, String> {
         if let Ok(v) = std::env::var("ZEPHYR_NODE_PATH") {
             candidates.push(PathBuf::from(v));
         }
-        if let Ok(data) = app.path().app_data_dir() {
-            // dataDir ≈ /data/user/0/com.zephyr.one/files
-            // native libs ≈ /data/app/~~…/com.zephyr.one-…/lib/<abi>/libnode.so
-            if let Some(app_root) = data.parent() {
-                for abi in ["arm64", "arm64-v8a", "armeabi-v7a", "arm", "x86_64", "x86"] {
-                    candidates.push(app_root.join("lib").join(abi).join("libnode.so"));
-                }
-            }
-            candidates.push(data.join("libnode.so"));
-        }
-        if let Ok(res) = app.path().resource_dir() {
-            candidates.push(res.join("libnode.so"));
-        }
-        // Best-effort scan near this process maps for libnode.so
+
+        // 3) Conservative fallbacks only. Do NOT invent ABI directories under
+        // app_data_dir — PackageManager places libs next to the APK, not under
+        // filesDir. /proc/self/maps remains a last resort for unusual loaders.
         if let Ok(maps) = std::fs::read_to_string("/proc/self/maps") {
             for line in maps.lines() {
                 if let Some(path) = line.split_whitespace().last() {
-                    if path.contains("libnode.so") {
+                    if path.ends_with("/libnode.so") || path.ends_with("libnode.so") {
                         candidates.push(PathBuf::from(path));
-                    }
-                    // same directory as other extracted .so
-                    if path.ends_with(".so") {
-                        if let Some(dir) = Path::new(path).parent() {
-                            candidates.push(dir.join("libnode.so"));
-                        }
                     }
                 }
             }
         }
+
         for p in candidates {
             if p.is_file() {
                 // jniLibs are executable after installation. chmod is both
@@ -337,7 +396,7 @@ pub fn resolve_node_bin(app: &AppHandle) -> Result<PathBuf, String> {
             }
         }
         return Err(
-            "Android 未找到 libnode.so（构建应写入 jniLibs/<abi>/libnode.so，安装时由系统解压）"
+            "Android 未找到 libnode.so（构建应写入 jniLibs/<abi>/libnode.so，安装时由系统解压到 nativeLibraryDir）"
                 .into(),
         );
     }
@@ -430,6 +489,20 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
     let port = pick_port().map_err(|e| e.to_string())?;
     let public_origin = format!("http://127.0.0.1:{port}");
 
+    // Android: resolve APK path + fully buffer the core entry BEFORE spawn so a
+    // missing/corrupt asset fails cleanly without leaving a half-started Node.
+    #[cfg(target_os = "android")]
+    let mut core_source = open_asset_reader(app, "zephyr-core.cjs")?;
+    #[cfg(target_os = "android")]
+    let apk_path = android_apk_path(app)?;
+    #[cfg(target_os = "android")]
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "android")]
+    {
+        let tmp_dir = app_data.join("tmp");
+        std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    }
+
     let mut cmd = Command::new(&node);
     #[cfg(not(target_os = "android"))]
     cmd.current_dir(&core).arg(core.join("server.js"));
@@ -464,27 +537,26 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         cmd.stdout(Stdio::null()).stderr(Stdio::null());
     }
 
-    // Android: writable HOME/TMP + node stderr log (Stdio::null hides crash reasons)
+    // Android: writable HOME/TMP, APK asset path for public files, and a usable
+    // library search path for the installed libnode.so binary.
     #[cfg(target_os = "android")]
     {
-        if let Ok(data) = app.path().app_data_dir() {
-            cmd.env("HOME", &data);
-            cmd.env("TMPDIR", data.join("tmp"));
-            let _ = std::fs::create_dir_all(data.join("tmp"));
-            // Help Node find itself / avoid dlopen issues when invoked as libnode.so
-            if let Some(dir) = node.parent() {
-                let prev = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
-                let joined = if prev.is_empty() {
-                    dir.display().to_string()
-                } else {
-                    format!("{}:{}", dir.display(), prev)
-                };
-                cmd.env("LD_LIBRARY_PATH", joined);
-            }
-            let apk_path = android_apk_path(app)?;
-            cmd.env("ZEPHYR_ANDROID_APK_PATH", apk_path);
-            cmd.env("ZEPHYR_ANDROID_PUBLIC_PREFIX", "assets/zephyr-public");
+        let tmp_dir = app_data.join("tmp");
+        cmd.env("HOME", &app_data);
+        cmd.env("TMPDIR", &tmp_dir);
+        // Help Node find itself / avoid dlopen issues when invoked as libnode.so
+        if let Some(dir) = node.parent() {
+            let prev = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+            let joined = if prev.is_empty() {
+                dir.display().to_string()
+            } else {
+                format!("{}:{}", dir.display(), prev)
+            };
+            cmd.env("LD_LIBRARY_PATH", joined);
+            cmd.env("ANDROID_NATIVE_LIB_DIR", dir);
         }
+        cmd.env("ZEPHYR_ANDROID_APK_PATH", &apk_path);
+        cmd.env("ZEPHYR_ANDROID_PUBLIC_PREFIX", "assets/zephyr-public");
     }
 
     let mut child = cmd.spawn().map_err(|e| {
@@ -502,9 +574,11 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
     #[cfg(target_os = "android")]
     {
         use std::io::Write;
-        let mut source = open_asset_reader(app, "zephyr-core.cjs")?;
-        let mut stdin = child.stdin.take().ok_or_else(|| "无法打开 Node 标准输入".to_string())?;
-        if let Err(error) = std::io::copy(&mut source, &mut stdin).and_then(|_| stdin.flush()) {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "无法打开 Node 标准输入".to_string())?;
+        if let Err(error) = std::io::copy(&mut core_source, &mut stdin).and_then(|_| stdin.flush()) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!("向 Node 流式载入内置核心失败：{error}"));

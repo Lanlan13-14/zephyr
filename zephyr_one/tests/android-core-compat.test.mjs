@@ -66,6 +66,9 @@ describe('Android embedded core compatibility', () => {
     const runtime = read('zephyr_one/src-tauri/src/runtime/mod.rs');
     assert.match(runtime, /open_asset_reader\(app, "zephyr-core\.cjs"\)/);
     assert.match(runtime, /\.jni_handle\(\)/);
+    assert.match(runtime, /get_webview_window\("main"\)/);
+    assert.match(runtime, /nativeLibraryDir/);
+    assert.doesNotMatch(runtime, /\.webviews\(\)/);
     assert.doesNotMatch(runtime, /ndk_context::android_context/);
     assert.doesNotMatch(runtime, /extract_assets_core_tarball/);
     assert.match(smoke, /ZEPHYR_ONE_SMOKE_NODE/);

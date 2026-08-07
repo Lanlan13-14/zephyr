@@ -12,9 +12,17 @@ describe('Android no-extract embedded core contract', () => {
     const runtime = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'runtime', 'mod.rs'), 'utf8');
     assert.match(runtime, /open_asset_reader\(app, "zephyr-core\.cjs"\)/);
     assert.match(runtime, /run_on_android_context/);
+    // Stable Tauri 2 surface only — Manager::webviews() requires feature=unstable.
+    assert.match(runtime, /get_webview_window\("main"\)/);
+    assert.match(runtime, /webview_windows\(\)/);
+    assert.doesNotMatch(runtime, /\.webviews\(\)/);
     assert.doesNotMatch(runtime, /ndk_context::android_context/);
+    // AAsset must be opened/read/closed on the JNI thread (buffered into Vec).
+    assert.match(runtime, /AAsset_getLength64|AAsset_read/);
+    assert.match(runtime, /std::io::Cursor::new\(bytes\)/);
+    assert.match(runtime, /nativeLibraryDir/);
     assert.match(runtime, /cmd\.current_dir\(&data_dir\)\.arg\("-"\)/);
-    assert.match(runtime, /std::io::copy\(&mut source, &mut stdin\)/);
+    assert.match(runtime, /std::io::copy\(&mut core_source, &mut stdin\)/);
     assert.match(runtime, /ZEPHYR_ANDROID_APK_PATH/);
     assert.doesNotMatch(runtime, /extract_assets_core_tarball|\.zephyr-one-app-version|zephyr-core\.extracting/);
   });
