@@ -3,7 +3,9 @@ const path = require('path');
 const crypto = require('crypto');
 const { ml_kem768 } = require('@noble/post-quantum/ml-kem.js');
 
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.ZEPHYR_DATA_DIR
+    ? path.resolve(process.env.ZEPHYR_DATA_DIR)
+    : path.join(__dirname, 'data');
 const DEFAULT_KEY_FILE = path.join(DATA_DIR, 'crypto', 'ml-kem-768-keypair.json');
 const PREFIX = 'ZEPHYR_MLKEM768_V1:';
 const ALG = 'ML-KEM-768+AES-256-GCM';

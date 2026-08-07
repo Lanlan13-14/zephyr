@@ -262,10 +262,6 @@ function clientAction(args = {}) {
         originalHeight: args.originalHeight,
         waitMs: args.waitMs,
         maxWidth: args.maxWidth,
-        screenshotWidth: args.screenshotWidth,
-        screenshotHeight: args.screenshotHeight,
-        originalWidth: args.originalWidth,
-        originalHeight: args.originalHeight,
     };
 }
 

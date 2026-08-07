@@ -57,9 +57,13 @@ describe('Android embedded core compatibility', () => {
     assert.match(bundleNode, /rm -rf "\$LIBS_ROOT\/\$abi"/);
     assert.match(bundleNode, /verify-android-node-binary/);
     assert.match(verifyApk, /unzip -l/);
-    assert.match(verifyApk, /assets\/zephyr-core\.tar/);
+    assert.match(verifyApk, /assets\/zephyr-core\.cjs/);
+    assert.match(verifyApk, /assets\/zephyr-public\/app\.html/);
     assert.match(verifyApk, /lib\/arm64-v8a\/libnode\.so/);
-    assert.match(verifyApk, /unsupported host-native \.node addon/);
+    assert.match(verifyApk, /unsupported host-native \.node addon|unsupported host-native \.node/);
+    const runtime = read('zephyr_one/src-tauri/src/runtime/mod.rs');
+    assert.match(runtime, /open_asset_reader\("zephyr-core\.cjs"\)/);
+    assert.doesNotMatch(runtime, /extract_assets_core_tarball/);
     assert.match(smoke, /ZEPHYR_ONE_SMOKE_NODE/);
     assert.match(smoke, /android-core-startup-child/);
     assert.match(smoke, /node_modules', 'better-sqlite3/);

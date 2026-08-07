@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-android/
 zephyr-core/
+desktop-runtime/
 third_party/
 src-tauri/target/
 src-tauri/gen/

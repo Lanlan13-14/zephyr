@@ -109,7 +109,7 @@ async function startAndEnter() {
   const status = $('#bootStatus');
   if (status) {
     status.textContent =
-      '正在启动本地 Zephyr 核心…（首次安装或版本更新会解压核心，可能需要数十秒）';
+      '正在启动内置 Zephyr 核心…';
   }
   try {
     const info = await safeInvoke('runtime_start');
@@ -124,7 +124,7 @@ async function startAndEnter() {
     if (err) {
       err.textContent =
         msg +
-        '\n\n若反复失败：清除应用数据后重试；Android 可查看 files/zephyr-node-stderr.log。';
+        '\n\n若反复失败：请保留此错误并重新安装最新版；运行日志位于应用数据目录的 zephyr-data/zephyr-node.log。';
     }
   }
 }

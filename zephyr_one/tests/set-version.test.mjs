@@ -19,7 +19,8 @@ function runSetVersion(tag, extraEnv = {}) {
   delete env.GITHUB_RUN_NUMBER;
   delete env.ZEPHYR_ONE_VERSION_CODE;
   delete env.ZEPHYR_ONE_VERSION;
-  return spawnSync('python3', [SCRIPT, tag], {
+  const python = process.env.ZEPHYR_ONE_TEST_PYTHON || process.env.PYTHON || 'python3';
+  return spawnSync(python, [SCRIPT, tag], {
     cwd: ROOT,
     env,
     encoding: 'utf8',

@@ -21,6 +21,11 @@ on:
         description: 'Release tag (e.g. one-v0.1.2)'
         required: false
         default: ''
+      validation_only:
+        description: 'Build Windows + Android for validation without publishing a release'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -108,21 +113,23 @@ jobs:
           if [ ! -d src-tauri/gen/android ]; then
             npx tauri android init --ci
           fi
-      - name: Prepare icons + release signing + jniLibs Node + core tarball
+      - name: Prepare icons + signing + Node + no-extract embedded core
         run: |
           # Optional PIL for crisp mipmaps; stamp script works without it.
           python3 -m pip install --user pillow || true
           sh scripts/prepare-android.sh src-tauri/gen/android
           test -f src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libnode.so
           sh scripts/verify-android-node-binary.sh src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/libnode.so
-          test -f src-tauri/gen/android/app/src/main/assets/zephyr-core.tar
+          test -s src-tauri/gen/android/app/src/main/assets/zephyr-core.cjs
+          test -f src-tauri/gen/android/app/src/main/assets/zephyr-public/app.html
+          test ! -e src-tauri/gen/android/app/src/main/assets/zephyr-core.tar
           test "$(find zephyr-core/node_modules -type f -name '*.node' | wc -l)" -eq 0
           test ! -e zephyr-core/node_modules/better-sqlite3
           test ! -e zephyr-core/node_modules/sharp
           test ! -e zephyr-core/node_modules/@img
           sh scripts/verify-android-core.sh zephyr-core
           ls -lh src-tauri/gen/android/app/src/main/jniLibs/*/* || true
-          ls -lh src-tauri/gen/android/app/src/main/assets/zephyr-core.tar
+          ls -lh src-tauri/gen/android/app/src/main/assets/zephyr-core.cjs
           # Confirm gradle carries stamped version
           grep -E 'versionName|versionCode' src-tauri/gen/android/app/build.gradle.kts || true
       - name: Build signed release APK (aarch64)
@@ -179,6 +186,9 @@ jobs:
       - name: Stage Zephyr core
         shell: bash
         run: sh scripts/stage-zephyr-core.sh
+      - name: Bundle desktop Node runtime
+        shell: pwsh
+        run: node scripts/stage-desktop-runtime.mjs
       - name: Build frontend
         shell: pwsh
         run: npm run build
@@ -207,7 +217,7 @@ jobs:
           if-no-files-found: warn
 
   build-macos:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true'
     needs: test
     runs-on: macos-latest
     steps:
@@ -222,6 +232,7 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: npm install
       - run: sh scripts/stage-zephyr-core.sh
+      - run: node scripts/stage-desktop-runtime.mjs
       - run: npm run build
       - name: Tauri build macOS
         run: npx tauri build
@@ -255,7 +266,7 @@ jobs:
           if-no-files-found: warn
 
   build-linux:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true'
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -273,6 +284,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
       - run: npm install
       - run: npm run stage:core
+      - run: node scripts/stage-desktop-runtime.mjs
       - run: npm run build
       - name: Tauri build Linux (deb+rpm; skip AppImage/linuxdeploy flakiness)
         run: |
@@ -298,7 +310,7 @@ jobs:
 
   # iOS: unsigned CI build (App Store / device install still needs real Apple team + certs)
   build-ios:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true'
     needs: test
     runs-on: macos-latest
     # Do not sink the whole release if only iOS tooling is missing secrets.
@@ -382,7 +394,7 @@ jobs:
 
   release:
     # Publish whatever platforms succeeded; don't require all five green.
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && needs.test.result == 'success' }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true' && needs.test.result == 'success' }}
     needs: [test, build-android, build-windows, build-macos, build-linux, build-ios]
     runs-on: ubuntu-latest
     steps:

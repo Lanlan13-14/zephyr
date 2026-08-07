@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+.tooling/
 
 # Runtime data and secrets
 data/.env

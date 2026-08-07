@@ -61,6 +61,18 @@ if command -v npm >/dev/null 2>&1; then
   fi
 fi
 
+# The Android runtime reads static files directly from the installed APK. Copy
+# package-owned browser assets into public/ so every UI request is addressable
+# through one APK asset namespace without unpacking node_modules at first run.
+if [ -d "$OUT/node_modules/viewerjs/dist" ]; then
+  mkdir -p "$OUT/public/vendor/viewerjs"
+  cp -a "$OUT/node_modules/viewerjs/dist/." "$OUT/public/vendor/viewerjs/"
+fi
+if [ -d "$OUT/node_modules/@novnc/novnc" ]; then
+  mkdir -p "$OUT/public/vendor/novnc"
+  cp -a "$OUT/node_modules/@novnc/novnc/." "$OUT/public/vendor/novnc/"
+fi
+
 # Embed CSS for One product surface (hide multi-user / security / backup)
 cat > "$OUT/public/zephyr-one-embed.css" <<'CSS'
 /* Zephyr One local product surface */

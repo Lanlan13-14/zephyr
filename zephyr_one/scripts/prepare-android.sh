@@ -2,11 +2,12 @@
 # Full Android open-box prep:
 # 1) Zephyr icons
 # 2) Release signing (Agent-style JKS — package id stays com.zephyr.one)
-# 3) Bundle Node as jniLibs/*/libnode.so (install-time extract, no app unpack)
-# 4) Manifest: INTERNET, biometric, cleartext, extractNativeLibs
+# 3) Bundle Node as jniLibs/*/libnode.so (installed directly by Android)
+# 4) Bundle server.js into one streamable asset and copy public files as APK assets
+# 5) Manifest: INTERNET, biometric, cleartext, extractNativeLibs
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
-# Always absolute — later we `cd` into zephyr-core for tar, so relative paths break.
+# Always absolute because generated Android paths are used by multiple tools.
 ANDROID_ROOT="$(CDPATH= cd -- "${1:-$ROOT/src-tauri/gen/android}" && pwd)"
 APP="$ANDROID_ROOT/app"
 GRADLE="$APP/build.gradle.kts"
@@ -25,35 +26,18 @@ python3 "$ROOT/scripts/stamp-android-icons.py" "$ANDROID_ROOT"
 # Node jniLibs (open-box)
 sh "$ROOT/scripts/bundle-node-android.sh" "$ANDROID_ROOT"
 
-# 5) Pack zephyr-core as one uncompressed tar asset.
-#    AAssetDir_getNextFileName does not enumerate nested directories, so a
-#    directory asset loses public/ and node_modules/. Do not add a gzip layer:
-#    Android's asset packager turns a .tar.gz input into assets/zephyr-core.tar.
-#    That made the former runtime ask for a nonexistent asset and then attempt
-#    to gunzip plain tar bytes. The APK ZIP already compresses this .tar entry.
+# Build a single dependency-complete CommonJS entry and copy public files into
+# the APK asset tree. At runtime Rust streams the JS entry to Node over stdin;
+# Node reads requested public files directly from base.apk. Nothing is expanded
+# into filesDir during first launch or after an update.
 CORE_SRC="$ROOT/zephyr-core"
 ASSETS_DIR="$APP/src/main/assets"
-CORE_ASSET="$ASSETS_DIR/zephyr-core.tar"
 if [ -d "$CORE_SRC" ] && [ -f "$CORE_SRC/server.js" ] && [ -d "$CORE_SRC/public" ]; then
     mkdir -p "$ASSETS_DIR"
-    rm -rf "$ASSETS_DIR/zephyr-core"
-    rm -f "$ASSETS_DIR/zephyr-core.tar.gz" "$CORE_ASSET"
-    # Archive contents at the root: server.js, public/, node_modules/, … .
-    # The APK ZIP provides compression, avoiding a redundant gzip pass here.
-    (cd "$CORE_SRC" && tar -cf "$CORE_ASSET" .)
-    SZ=$(wc -c <"$CORE_ASSET" | tr -d ' ')
-    if [ "${SZ:-0}" -lt 1000 ]; then
-        echo "ERROR: zephyr-core.tar too small ($SZ bytes)" >&2
-        exit 1
-    fi
-    if command -v tar >/dev/null 2>&1; then
-        tar -tf "$CORE_ASSET" | grep -E '(^|/)server\.js$' >/dev/null \
-            || { echo "ERROR: tarball missing server.js" >&2; exit 1; }
-        tar -tf "$CORE_ASSET" | grep -E '(^|/)public/' >/dev/null \
-            || { echo "ERROR: tarball missing public/" >&2; exit 1; }
-    fi
-    NFILES=$(find "$CORE_SRC" -type f | wc -l | tr -d ' ')
-    echo "Packed zephyr-core -> assets/zephyr-core.tar ($NFILES files, ${SZ} bytes)"
+    node "$ROOT/scripts/build-android-embedded-core.mjs" "$CORE_SRC" "$ASSETS_DIR"
+    test -s "$ASSETS_DIR/zephyr-core.cjs"
+    test -f "$ASSETS_DIR/zephyr-public/app.html"
+    test ! -e "$ASSETS_DIR/zephyr-core.tar"
 else
     echo "ERROR: zephyr-core not found at $CORE_SRC - run: npm run stage:core" >&2
     exit 1

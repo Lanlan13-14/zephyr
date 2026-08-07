@@ -36,8 +36,9 @@ Build downloads node-android-build into:
 
 `app/src/main/jniLibs/<abi>/libnode.so`
 
-Android installs/extracts native libs; runtime `exec`s `nativeLibraryDir/libnode.so`.  
-No first-run download or app-side tar extract of Node.
+Android deploys native libs during APK installation; runtime `exec`s `nativeLibraryDir/libnode.so`.
+The bundled server is streamed from `assets/zephyr-core.cjs`, and public files
+are read directly from `base.apk`. There is no first-run core extraction.
 
 ## OS unlock
 

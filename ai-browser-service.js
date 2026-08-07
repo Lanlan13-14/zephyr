@@ -5,7 +5,10 @@ const http = require('http');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 
-const BROWSER_DIR = path.join(__dirname, 'data', 'ai-browser');
+const BROWSER_DIR = path.join(
+    process.env.ZEPHYR_DATA_DIR ? path.resolve(process.env.ZEPHYR_DATA_DIR) : path.join(__dirname, 'data'),
+    'ai-browser',
+);
 const SHOT_DIR = path.join(BROWSER_DIR, 'screenshots');
 const PROFILE_ROOT = process.env.AI_CHROMIUM_USER_DATA_DIR || path.join(BROWSER_DIR, 'profile');
 const PROFILE_SHARED = /^(1|true|yes)$/i.test(String(process.env.AI_CHROMIUM_PROFILE_SHARED || ''));

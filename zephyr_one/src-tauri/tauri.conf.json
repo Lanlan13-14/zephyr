@@ -36,7 +36,8 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../zephyr-core"
+      "../zephyr-core",
+      "../desktop-runtime"
     ],
     "category": "Utility",
     "shortDescription": "Zephyr One — full Zephyr native client",

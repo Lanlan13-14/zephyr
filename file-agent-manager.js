@@ -29,7 +29,10 @@ const RPC_DEFAULT_TIMEOUT_MS = 30000;
 const RPC_READ_TIMEOUT_MS = 60000;
 const BINARY_READ_PREFETCH_CHUNKS = 1;
 const BINARY_READ_MAX_CACHE_BYTES = 64 * 1024 * 1024;
-const DEFAULT_TOKEN_FILE = path.join(__dirname, 'data', 'agent-tokens.json');
+const DEFAULT_TOKEN_FILE = path.join(
+    process.env.ZEPHYR_DATA_DIR ? path.resolve(process.env.ZEPHYR_DATA_DIR) : path.join(__dirname, 'data'),
+    'agent-tokens.json',
+);
 
 class FileAgentConnection {
     constructor(ws, agentId, hello) {

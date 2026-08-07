@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Bundle Node for Android as libnode.so under jniLibs (install-time extract by OS).
+# Bundle Node for Android as libnode.so under jniLibs (deployed by the OS at install).
 # Open-box: no app-runtime download/unpack of the Node binary.
 #
 # Source: https://github.com/Delusions6515/node-android-build

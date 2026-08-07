@@ -41,8 +41,10 @@ pub fn auth_unlock(app: AppHandle, reason: Option<String>) -> auth::UnlockResult
 
 /// Start embedded Zephyr core (full product). Remote main is sync-only.
 #[tauri::command]
-pub fn runtime_start(app: AppHandle) -> Result<runtime::RuntimeInfo, String> {
-    runtime::ensure_started(&app)
+pub async fn runtime_start(app: AppHandle) -> Result<runtime::RuntimeInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || runtime::ensure_started(&app))
+        .await
+        .map_err(|error| format!("本地运行时任务异常退出：{error}"))?
 }
 
 #[tauri::command]

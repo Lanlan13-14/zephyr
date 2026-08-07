@@ -35,6 +35,7 @@ function loadArchiver() {
     return archiverModulePromise;
 }
 const unzipper = require('unzipper');
+const { createApkAssetStore } = require('./apk-asset-store');
 const ipaddr = require('ipaddr.js');
 const {
     generateRegistrationOptions,
@@ -6420,21 +6421,52 @@ app.get('/api/sftp/download/:token', requireUser, async (req, res) => {
     });
 });
 
-app.use('/vendor/viewerjs', express.static(path.join(__dirname, 'node_modules', 'viewerjs', 'dist')));
-app.use('/vendor/novnc', express.static(path.join(__dirname, 'node_modules', '@novnc', 'novnc')));
+const embeddedPublicAssets = createApkAssetStore(
+    process.env.ZEPHYR_ANDROID_APK_PATH,
+    process.env.ZEPHYR_ANDROID_PUBLIC_PREFIX || 'assets/zephyr-public',
+);
+
+function setPublicAssetHeaders(res, filePath) {
+    if (/\.(?:js|mjs|css)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    if (/\.mjs$/i.test(filePath)) res.type('text/javascript; charset=utf-8');
+    if (/\.wasm$/i.test(filePath)) res.type('application/wasm');
+    if (/(?:^|[/\\])vendor[/\\]rdp-wasm[/\\]/i.test(filePath)) {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+    }
+}
+
+function sendPublicFile(req, res, next, file) {
+    if (!embeddedPublicAssets) return res.sendFile(path.join(__dirname, 'public', file));
+    embeddedPublicAssets.send(req, res, file, setPublicAssetHeaders)
+        .then((sent) => { if (!sent) next(); })
+        .catch(next);
+}
+
+if (embeddedPublicAssets) {
+    app.use('/vendor/viewerjs', embeddedPublicAssets.middleware({ root: 'vendor/viewerjs', index: false, setHeaders: setPublicAssetHeaders }));
+    app.use('/vendor/novnc', embeddedPublicAssets.middleware({ root: 'vendor/novnc', index: false, setHeaders: setPublicAssetHeaders }));
+    app.use('/vendor/@wterm', embeddedPublicAssets.middleware({ root: 'vendor/@wterm', index: false, setHeaders: setPublicAssetHeaders }));
+} else {
+    app.use('/vendor/viewerjs', express.static(path.join(__dirname, 'node_modules', 'viewerjs', 'dist')));
+    app.use('/vendor/novnc', express.static(path.join(__dirname, 'node_modules', '@novnc', 'novnc')));
+    app.use('/vendor/@wterm', express.static(path.join(__dirname, 'node_modules', '@wterm')));
+}
 app.get('/vendor/@wterm/dom/terminal.css', (req, res) => {
+    if (embeddedPublicAssets) return sendPublicFile(req, res, () => res.status(404).end(), 'vendor/wterm-fork/terminal.css');
     // Prefer vendored fork CSS (ime-active cursor, etc.). Fall back to node_modules stock.
     const forkCss = path.join(__dirname, 'public', 'vendor', 'wterm-fork', 'terminal.css');
     const stockCss = path.join(__dirname, 'node_modules', '@wterm', 'dom', 'src', 'terminal.css');
     const file = fs.existsSync(forkCss) ? forkCss : stockCss;
     res.type('text/css').sendFile(file);
 });
-app.use('/vendor/@wterm', express.static(path.join(__dirname, 'node_modules', '@wterm')));
-function sendNoStorePage(res, file) {
+function sendNoStorePage(req, res, next, file) {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
-    return res.sendFile(path.join(__dirname, 'public', file));
+    return sendPublicFile(req, res, next, file);
 }
 const MOTION_DEMO_ENABLE_FILE = '/tmp/zephyr-motion-demo.enabled';
 const MOTION_DEMO_FILE = path.join(__dirname, 'internal', 'motion-feel.html');
@@ -6453,47 +6485,50 @@ function serveMotionDemo(req, res) {
 }
 app.get('/motion-feel.html', requireMotionDemoEnabled, requireSuperAdmin, serveMotionDemo);
 app.get('/motion-feel', requireMotionDemoEnabled, requireSuperAdmin, serveMotionDemo);
-app.get('/app.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'app.html'));
-app.get('/terminal.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'terminal.html'));
-app.get('/rdp.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'rdp.html'));
-app.get('/novnc.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'novnc.html'));
-app.get('/player.html', requirePageAuth, (req, res) => sendNoStorePage(res, 'player.html'));
+async function sendEmbeddedAppPage(req, res, next) {
+    try {
+        const html = embeddedPublicAssets
+            ? await embeddedPublicAssets.readText('app.html')
+            : await fs.promises.readFile(path.join(__dirname, 'public', 'app.html'), 'utf8');
+        if (html === null) return next();
+        const inject = '<link rel="stylesheet" href="/zephyr-one-embed.css">';
+        const out = html.includes('zephyr-one-embed.css')
+            ? html
+            : (html.includes('</head>') ? html.replace('</head>', `${inject}\n</head>`) : inject + html);
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.type('html').send(out);
+    } catch (error) {
+        next(error);
+    }
+}
+app.get(['/app.html', '/app'], requirePageAuth, (req, res, next) => {
+    if (process.env.ZEPHYR_ONE_EMBEDDED === '1' || req.query.zephyrOne === '1') {
+        return sendEmbeddedAppPage(req, res, next);
+    }
+    return sendNoStorePage(req, res, next, 'app.html');
+});
+app.get('/terminal.html', requirePageAuth, (req, res, next) => sendNoStorePage(req, res, next, 'terminal.html'));
+app.get('/rdp.html', requirePageAuth, (req, res, next) => sendNoStorePage(req, res, next, 'rdp.html'));
+app.get('/novnc.html', requirePageAuth, (req, res, next) => sendNoStorePage(req, res, next, 'novnc.html'));
+app.get('/player.html', requirePageAuth, (req, res, next) => sendNoStorePage(req, res, next, 'player.html'));
 /* Deep Link landing page may be hit while logged out; the page itself
  * redirects to login and keeps the sensitive URI in sessionStorage. */
-app.get('/open', (req, res) => sendNoStorePage(res, 'open.html'));
-app.get('/open.html', (req, res) => sendNoStorePage(res, 'open.html'));
+app.get('/open', (req, res, next) => sendNoStorePage(req, res, next, 'open.html'));
+app.get('/open.html', (req, res, next) => sendNoStorePage(req, res, next, 'open.html'));
 /* Password rollback landing page: reached from the change notification email
  * while the owner may be logged out, so it must stay public. The token in the
  * query string is the only capability; the page itself just POSTs it. */
-app.get('/password-rollback', (req, res) => sendNoStorePage(res, 'password-rollback.html'));
-app.get('/password-rollback.html', (req, res) => sendNoStorePage(res, 'password-rollback.html'));
-/* Zephyr One embedded profile: hide multi-user / security / backup UI. */
-app.get(['/app.html', '/app'], (req, res, next) => {
-    if (process.env.ZEPHYR_ONE_EMBEDDED !== '1' && req.query.zephyrOne !== '1') return next();
-    const file = path.join(__dirname, 'public', 'app.html');
-    fs.readFile(file, 'utf8', (err, html) => {
-        if (err) return next();
-        if (html.includes('zephyr-one-embed.css')) return res.type('html').send(html);
-        const inject = '<link rel="stylesheet" href="/zephyr-one-embed.css">';
-        const out = html.includes('</head>') ? html.replace('</head>', `${inject}\n</head>`) : inject + html;
-        res.type('html').send(out);
-    });
-});
+app.get('/password-rollback', (req, res, next) => sendNoStorePage(req, res, next, 'password-rollback.html'));
+app.get('/password-rollback.html', (req, res, next) => sendNoStorePage(req, res, next, 'password-rollback.html'));
 
-app.use(express.static(path.join(__dirname, 'public'), {
-    index: 'index.html',
-    setHeaders: (res, filePath) => {
-        if (/\.(?:js|mjs|css)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
-        if (/\.mjs$/i.test(filePath)) res.type('text/javascript; charset=utf-8');
-        if (/\.wasm$/i.test(filePath)) res.type('application/wasm');
-        if (/[/\\]vendor[/\\]rdp-wasm[/\\]/i.test(filePath)) {
-            res.setHeader('X-Content-Type-Options', 'nosniff');
-            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-            res.setHeader('Pragma', 'no-cache');
-            res.setHeader('Expires', '0');
-        }
-    },
-}));
+if (embeddedPublicAssets) {
+    app.use(embeddedPublicAssets.middleware({ index: 'index.html', setHeaders: setPublicAssetHeaders }));
+} else {
+    app.use(express.static(path.join(__dirname, 'public'), {
+        index: 'index.html',
+        setHeaders: setPublicAssetHeaders,
+    }));
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // Cross-tab clipboard file transit — temporary server-side storage so
@@ -6576,7 +6611,7 @@ oneClientManager.mountRoutes(app, {
 app.get('/healthz', (req, res) => res.status(200).json({ ok: true, instanceId: INSTANCE_ID, version: APP_VERSION }));
 
 // 兜底路由
-app.get('*', (req, res) => {
+app.get('*', (req, res, next) => {
     if (req.url.startsWith('/internal/')) {
         return res.status(404).json({ ok: false, error: { code: 'not_found', message: 'Endpoint not found' } });
     }
@@ -6586,7 +6621,7 @@ app.get('*', (req, res) => {
     if (req.url.startsWith('/vendor') || req.url.startsWith('/ssh')) {
         return res.status(404).end();
     }
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    sendPublicFile(req, res, next, 'index.html');
 });
 
 const server = http.createServer(app);

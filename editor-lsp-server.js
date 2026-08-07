@@ -1,14 +1,31 @@
 const { spawn } = require('child_process');
 const path = require('path');
-const { StreamMessageReader, StreamMessageWriter } = require('vscode-languageserver/node');
-const { createMessageConnection } = require('vscode-jsonrpc/node');
-const { getLanguageService, TextDocument } = require('vscode-json-languageservice');
+
+function loadJsonLanguageService() {
+    try { return require('vscode-json-languageservice'); } catch { return null; }
+}
+
+function loadYamlTransport() {
+    try {
+        const { StreamMessageReader, StreamMessageWriter } = require('vscode-languageserver/node');
+        const { createMessageConnection } = require('vscode-jsonrpc/node');
+        return { StreamMessageReader, StreamMessageWriter, createMessageConnection };
+    } catch {
+        return null;
+    }
+}
 
 function isJsonRpcMessage(message) {
     return message && typeof message === 'object' && (message.method || Object.prototype.hasOwnProperty.call(message, 'id'));
 }
 
 function wireJsonLanguageServer(ws) {
+    const service = loadJsonLanguageService();
+    if (!service) {
+        ws.close(1011, 'JSON language service is unavailable on this platform');
+        return;
+    }
+    const { getLanguageService, TextDocument } = service;
     const documents = new Map();
     const jsonService = getLanguageService({});
     const send = (payload) => {
@@ -79,6 +96,12 @@ function wireJsonLanguageServer(ws) {
 }
 
 function startYamlLanguageServer(ws) {
+    const transport = loadYamlTransport();
+    if (!transport) {
+        ws.close(1011, 'YAML language service is unavailable on this platform');
+        return;
+    }
+    const { StreamMessageReader, StreamMessageWriter, createMessageConnection } = transport;
     const bin = path.join(__dirname, 'node_modules', 'yaml-language-server', 'bin', 'yaml-language-server');
     const child = spawn(process.execPath, [bin, '--stdio'], {
         cwd: __dirname,

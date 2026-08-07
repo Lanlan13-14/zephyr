@@ -36,13 +36,11 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-biometric = "2"
 
-# Android: stream one plain tar asset via NDK AAssetManager, then unpack it.
-# The APK ZIP already compresses the asset; an inner gzip layer is redundant and
-# Android rewrites .tar.gz asset names, so the runtime must use plain .tar.
+# Android: stream the bundled CommonJS entry via NDK AAssetManager. Static UI
+# files stay as ordinary APK assets and are read from base.apk on demand.
 [target.'cfg(target_os = "android")'.dependencies]
 ndk-context = "0.1"
 jni = "0.21"
-tar = "0.4"
 
 # macOS OS unlock
 [target.'cfg(target_os = "macos")'.dependencies]

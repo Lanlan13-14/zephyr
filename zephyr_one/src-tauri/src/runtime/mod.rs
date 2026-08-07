@@ -3,22 +3,14 @@
 //! Node resolution (open-box, no first-run extract UI):
 //! - **Android**: `libnode.so` shipped in `jniLibs/<abi>/` — PackageManager
 //!   extracts native libs at install into `nativeLibraryDir`; we exec that path.
-//! - **Desktop**: PATH `node`, or bundled resource `node` / `bin/node`.
+//! - **Desktop**: bundled `desktop-runtime/node[.exe]`, with PATH as a dev fallback.
 //!
 //! Remote Zephyr main is sync-only; day-to-day UI is always this loopback core.
 //!
-//! **Android core embedding**: Tauri `resource_dir()` returns `"asset://localhost/"`
-//! (a virtual URI, not a filesystem path). APK assets are not accessible via
-//! `std::fs`, and NDK `AAssetDir_getNextFileName` does **not** list subdirectories.
-//! Shipping thousands of individual asset files is therefore broken for nested
-//! trees (`public/`, `node_modules/`, …).
-//!
-//! Fix: package one plain `assets/zephyr-core.tar` and stream it from NDK
-//! `AAssetManager_open` directly into `tar`, extracting to
-//! `app_data_dir/zephyr-core/` without a temporary archive. The APK ZIP already
-//! provides compression; an inner `.tar.gz` is renamed by Android's asset
-//! packaging and cannot be addressed reliably at runtime. Re-extract when the
-//! app version marker changes.
+//! **Android no-extract embedding**: the dependency-complete server entry is one
+//! `assets/zephyr-core.cjs` file streamed directly to Node stdin. Public files
+//! stay in `base.apk`; the Node core reads individual ZIP entries on demand.
+//! First launch never expands the product core into app data.
 
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
@@ -60,23 +52,27 @@ fn pick_port() -> std::io::Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
-fn wait_http_ready(url: &str, timeout: Duration) -> bool {
+fn wait_http_ready(child: &mut Child, url: &str, timeout: Duration) -> Result<(), String> {
     let start = std::time::Instant::now();
     while start.elapsed() < timeout {
+        match child.try_wait() {
+            Ok(Some(status)) => return Err(format!("本地 Zephyr 进程提前退出（{status}）")),
+            Ok(None) => {}
+            Err(error) => return Err(format!("无法读取本地 Zephyr 进程状态：{error}")),
+        }
         if let Ok(resp) = ureq::get(url).timeout(Duration::from_secs(2)).call() {
             if resp.status() >= 200 && resp.status() < 500 {
-                return true;
+                return Ok(());
             }
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    false
+    Err(format!("本地 Zephyr 启动超时（{url}）"))
 }
 
 /// A streaming reader over one APK asset. `Drop` closes the NDK handle.
 ///
-/// This avoids first writing the whole 136 MB tar to filesDir, then reading it
-/// back for extraction. `tar::Archive` consumes this reader directly.
+/// Used to stream one build-time asset directly into the child process.
 #[cfg(target_os = "android")]
 struct AndroidAssetReader {
     asset: *mut std::ffi::c_void,
@@ -185,87 +181,51 @@ fn open_asset_reader(asset_path: &str) -> Result<AndroidAssetReader, String> {
     Ok(AndroidAssetReader { asset })
 }
 
-/// Extract `assets/zephyr-core.tar` into `dest/zephyr-core/`.
-///
-/// Build ships one archive because AAssetDir cannot recurse into subdirs. This
-/// is deliberately a plain tar: Android turns a `.tar.gz` asset into `.tar`,
-/// and the outer APK ZIP performs compression already.
 #[cfg(target_os = "android")]
-fn extract_assets_core_tarball(dest: &Path) -> Result<PathBuf, String> {
-    use tar::Archive;
-
-    let core_dest = dest.join("zephyr-core");
-    let staging = dest.join("zephyr-core.extracting");
-
-    // Clean a previous partial extract before opening the asset stream.
-    let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(dest).map_err(|e| format!("创建目录失败: {e}"))?;
-    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
-
-    // Stream directly from the APK to tar. No 136 MB temporary .tar is written
-    // into filesDir, so first launch has less I/O and lower free-space demand.
-    let reader = open_asset_reader("zephyr-core.tar")?;
-    let mut archive = Archive::new(reader);
-    archive
-        .unpack(&staging)
-        .map_err(|e| format!("解压 zephyr-core.tar 失败: {e}"))?;
-
-    // stage-zephyr-core packs the *contents* of zephyr-core/ at archive root
-    // (server.js, public/, …). Accept either layout.
-    let unpacked = if staging.join("server.js").is_file() {
-        staging.clone()
-    } else if staging.join("zephyr-core").join("server.js").is_file() {
-        staging.join("zephyr-core")
+fn android_apk_path() -> Result<PathBuf, String> {
+    let ctx = ndk_context::android_context();
+    let vm_ptr = ctx.vm();
+    let context_ptr = ctx.context();
+    if vm_ptr.is_null() || context_ptr.is_null() {
+        return Err("ndk-context 未初始化（vm/context 为 null）".into());
+    }
+    let vm = unsafe { jni::JavaVM::from_raw(vm_ptr.cast()) }
+        .map_err(|e| format!("JavaVM::from_raw: {e}"))?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|e| format!("attach_current_thread: {e}"))?;
+    let context = unsafe { jni::objects::JObject::from_raw(context_ptr.cast()) };
+    let value = env
+        .call_method(&context, "getPackageResourcePath", "()Ljava/lang/String;", &[])
+        .map_err(|e| format!("getPackageResourcePath(): {e}"))?
+        .l()
+        .map_err(|e| format!("getPackageResourcePath() non-object: {e}"))?;
+    let value = jni::objects::JString::from(value);
+    let path: String = env
+        .get_string(&value)
+        .map_err(|e| format!("读取 APK 路径失败: {e}"))?
+        .into();
+    std::mem::forget(context);
+    if path.is_empty() {
+        Err("Android 返回了空 APK 路径".into())
     } else {
-        // single top-level dir?
-        let mut found = None;
-        if let Ok(rd) = std::fs::read_dir(&staging) {
-            for ent in rd.flatten() {
-                let p = ent.path();
-                if p.is_dir() && p.join("server.js").is_file() {
-                    found = Some(p);
-                    break;
-                }
-            }
-        }
-        found.ok_or_else(|| "解压后未找到 server.js（tarball 布局异常）".to_string())?
-    };
-
-    if !unpacked.join("public").is_dir() {
-        return Err("解压后未找到 public/ 目录".into());
+        Ok(PathBuf::from(path))
     }
+}
 
-    // Atomic-ish replace: prefer rename, fall back to recursive copy
-    let _ = std::fs::remove_dir_all(&core_dest);
-    let move_or_copy = |from: &Path, to: &Path| -> Result<(), String> {
-        match std::fs::rename(from, to) {
-            Ok(()) => Ok(()),
-            Err(rename_err) => {
-                copy_dir_recursive(from, to)
-                    .map_err(|e| format!("rename({rename_err}) 且 copy 失败: {e}"))?;
-                let _ = std::fs::remove_dir_all(from);
-                Ok(())
-            }
-        }
-    };
-    if unpacked == staging {
-        move_or_copy(&staging, &core_dest)?;
-    } else {
-        move_or_copy(&unpacked, &core_dest)?;
-        let _ = std::fs::remove_dir_all(&staging);
-    }
-
-    if !core_dest.join("server.js").is_file() {
-        return Err("最终 core 缺少 server.js".into());
-    }
-    Ok(core_dest)
+fn resource_candidates(resource_dir: &Path, relative: &str) -> Vec<PathBuf> {
+    vec![
+        resource_dir.join(relative),
+        resource_dir.join("_up_").join(relative),
+        resource_dir.join("resources").join(relative),
+        resource_dir.join("resources").join("_up_").join(relative),
+    ]
 }
 
 pub fn resolve_core_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(res) = app.path().resource_dir() {
-        candidates.push(res.join("zephyr-core"));
-        candidates.push(res.join("resources").join("zephyr-core"));
+        candidates.extend(resource_candidates(&res, "zephyr-core"));
     }
     if let Ok(cwd) = std::env::current_dir() {
         candidates.push(cwd.join("zephyr-core"));
@@ -358,20 +318,41 @@ pub fn resolve_node_bin(app: &AppHandle) -> Result<PathBuf, String> {
 
     #[cfg(not(target_os = "android"))]
     {
-        let _ = app;
+        if let Ok(value) = std::env::var("ZEPHYR_NODE_PATH") {
+            let candidate = PathBuf::from(value);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
         if let Ok(res) = app.path().resource_dir() {
-            for name in ["node", "bin/node", "nodejs/bin/node"] {
-                let p = res.join(name);
-                if p.is_file() {
-                    return Ok(p);
+            for root in resource_candidates(&res, "desktop-runtime") {
+                for name in ["node.exe", "node", "bin/node"] {
+                    let candidate = root.join(name);
+                    if candidate.is_file() {
+                        return Ok(candidate);
+                    }
+                }
+            }
+            for name in ["node.exe", "node", "bin/node", "nodejs/bin/node"] {
+                let candidate = res.join(name);
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
+            }
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            for name in ["desktop-runtime/node.exe", "desktop-runtime/node"] {
+                let candidate = cwd.join(name);
+                if candidate.is_file() {
+                    return Ok(candidate);
                 }
             }
         }
         // PATH
-        if which_node().is_some() {
-            return Ok(PathBuf::from("node"));
+        if let Some(node) = which_node() {
+            return Ok(node);
         }
-        Err("未找到 Node.js。桌面请安装 Node ≥ 20，或将 node 放入资源目录。".into())
+        Err("安装包缺少内置 Node 运行时，请重新安装 Zephyr One。".into())
     }
 }
 
@@ -379,7 +360,7 @@ pub fn resolve_node_bin(app: &AppHandle) -> Result<PathBuf, String> {
 fn which_node() -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
-        for name in ["node", "nodejs"] {
+        for name in ["node.exe", "node", "nodejs"] {
             let p = dir.join(name);
             if p.is_file() {
                 return Some(p);
@@ -387,50 +368,6 @@ fn which_node() -> Option<PathBuf> {
         }
     }
     None
-}
-
-/// On Android, ensure zephyr-core lives under app filesDir (writable for sqlite etc.).
-/// Core is shipped as APK assets/resources and copied once if missing — not the Node binary.
-fn ensure_core_on_device(app: &AppHandle, staged: &Path) -> Result<PathBuf, String> {
-    #[cfg(target_os = "android")]
-    {
-        let dest = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-            .join("zephyr-core");
-        let marker = dest.join("ZEPHYR_ONE_CORE.json");
-        if marker.is_file() && dest.join("server.js").is_file() {
-            return Ok(dest);
-        }
-        // Copy staged core from resources into filesDir (one-time install layout).
-        copy_dir_recursive(staged, &dest).map_err(|e| format!("复制 zephyr-core 失败: {e}"))?;
-        return Ok(dest);
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = app;
-        Ok(staged.to_path_buf())
-    }
-}
-
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
-fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        let to = dst.join(entry.file_name());
-        if ty.is_dir() {
-            copy_dir_recursive(&entry.path(), &to)?;
-        } else if ty.is_file() {
-            if let Some(parent) = to.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::copy(entry.path(), &to)?;
-        }
-    }
-    Ok(())
 }
 
 pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
@@ -453,35 +390,6 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         }
     }
 
-    // Android: extract zephyr-core.tar from APK assets to filesDir on first
-    // run / version change. A single plain-tar asset avoids both AAssetDir
-    // nested-directory loss and Android's `.tar.gz` asset-name rewrite.
-    #[cfg(target_os = "android")]
-    {
-        let data_dir_check = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        let core_dest = data_dir_check.join("zephyr-core");
-        let version_marker = data_dir_check.join(".zephyr-one-app-version");
-        let current_version = env!("CARGO_PKG_VERSION");
-        let needs_copy = match std::fs::read_to_string(&version_marker) {
-            Ok(v) => {
-                v.trim() != current_version
-                    || !core_dest.join("server.js").is_file()
-                    || !core_dest.join("public").is_dir()
-            }
-            Err(_) => true,
-        };
-        if needs_copy {
-            eprintln!(
-                "[zephyr-one] extracting zephyr-core.tar (version {current_version})…"
-            );
-            extract_assets_core_tarball(&data_dir_check)?;
-            let _ = std::fs::write(&version_marker, current_version);
-            eprintln!("[zephyr-one] zephyr-core ready at {}", core_dest.display());
-        }
-    }
-
-    let staged_core = resolve_core_dir(app)?;
-    let core = ensure_core_on_device(app, &staged_core)?;
     let data_dir = app
         .path()
         .app_data_dir()
@@ -489,14 +397,20 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         .join("zephyr-data");
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
+    #[cfg(not(target_os = "android"))]
+    let core = resolve_core_dir(app)?;
+
     let node = resolve_node_bin(app)?;
     let port = pick_port().map_err(|e| e.to_string())?;
     let public_origin = format!("http://127.0.0.1:{port}");
 
     let mut cmd = Command::new(&node);
-    cmd.current_dir(&core)
-        .arg(core.join("server.js"))
-        .env("ZEPHYR_DATA_DIR", &data_dir)
+    #[cfg(not(target_os = "android"))]
+    cmd.current_dir(&core).arg(core.join("server.js"));
+    #[cfg(target_os = "android")]
+    cmd.current_dir(&data_dir).arg("-");
+
+    cmd.env("ZEPHYR_DATA_DIR", &data_dir)
         .env("HTTP_ENABLED", "true")
         .env("HTTPS_ENABLED", "false")
         .env("PORT", port.to_string())
@@ -504,12 +418,25 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
         .env("ALLOW_DEFAULT_PASSWORD_REMOTE_LOGIN", "true")
         .env("TRUST_PROXY", "false")
         .env("ZEPHYR_ONE_EMBEDDED", "1")
+        .env("ZEPHYR_VERSION", env!("CARGO_PKG_VERSION"))
         // Be explicit instead of relying only on Node's Android platform label:
         // this core must never attempt the desktop better-sqlite3 addon.
-        .env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .env("ZEPHYR_ONE_USE_BUILTIN_SQLITE", "1");
+
+    #[cfg(not(target_os = "android"))]
+    cmd.stdin(Stdio::null());
+    #[cfg(target_os = "android")]
+    cmd.stdin(Stdio::piped());
+
+    let log_path = data_dir.join("zephyr-node.log");
+    if let Ok(log) = std::fs::File::create(&log_path) {
+        if let Ok(stdout) = log.try_clone() {
+            cmd.stdout(Stdio::from(stdout));
+        }
+        cmd.stderr(Stdio::from(log));
+    } else {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
 
     // Android: writable HOME/TMP + node stderr log (Stdio::null hides crash reasons)
     #[cfg(target_os = "android")]
@@ -528,36 +455,48 @@ pub fn ensure_started(app: &AppHandle) -> Result<RuntimeInfo, String> {
                 };
                 cmd.env("LD_LIBRARY_PATH", joined);
             }
-            let log_path = data.join("zephyr-node-stderr.log");
-            match std::fs::File::create(&log_path) {
-                Ok(f) => {
-                    cmd.stderr(Stdio::from(f));
-                }
-                Err(e) => {
-                    eprintln!("[zephyr-one] cannot open node stderr log: {e}");
-                }
-            }
+            let apk_path = android_apk_path()?;
+            cmd.env("ZEPHYR_ANDROID_APK_PATH", apk_path);
+            cmd.env("ZEPHYR_ANDROID_PUBLIC_PREFIX", "assets/zephyr-public");
         }
     }
 
-    let child = cmd.spawn().map_err(|e| {
+    let mut child = cmd.spawn().map_err(|e| {
+        #[cfg(not(target_os = "android"))]
+        let core_display = core.display().to_string();
+        #[cfg(target_os = "android")]
+        let core_display = "APK assets/zephyr-core.cjs".to_string();
         format!(
             "启动本地 Node/Zephyr 失败: {e}（node={} core={}）",
             node.display(),
-            core.display()
+            core_display
         )
     })?;
 
+    #[cfg(target_os = "android")]
+    {
+        use std::io::Write;
+        let mut source = open_asset_reader("zephyr-core.cjs")?;
+        let mut stdin = child.stdin.take().ok_or_else(|| "无法打开 Node 标准输入".to_string())?;
+        if let Err(error) = std::io::copy(&mut source, &mut stdin).and_then(|_| stdin.flush()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("向 Node 流式载入内置核心失败：{error}"));
+        }
+        drop(stdin);
+    }
+
     let health = format!("{public_origin}/healthz");
-    if !wait_http_ready(&health, Duration::from_secs(60)) {
-        // Keep child around so a subsequent runtime_start can inspect / retry
-        // against the same port if still alive; surface timeout to UI.
-        st.child = Some(child);
-        st.port = port;
-        st.base_url = public_origin.clone();
-        st.data_dir = data_dir.clone();
-        st.node_path = node.clone();
-        return Err(format!("本地 Zephyr 启动超时（{health}）"));
+    if let Err(reason) = wait_http_ready(&mut child, &health, Duration::from_secs(60)) {
+        let _ = child.kill();
+        let _ = child.wait();
+        let details = std::fs::read_to_string(&log_path)
+            .ok()
+            .map(|text| text.chars().rev().take(4000).collect::<String>().chars().rev().collect::<String>())
+            .filter(|text| !text.trim().is_empty())
+            .map(|text| format!("\n\n运行日志：\n{text}"))
+            .unwrap_or_default();
+        return Err(format!("{reason}{details}"));
     }
 
     st.child = Some(child);
@@ -587,7 +526,17 @@ pub fn stop() {
 }
 
 pub fn info() -> RuntimeInfo {
-    let st = state().lock();
+    let mut st = state().lock();
+    let exited = st
+        .child
+        .as_mut()
+        .and_then(|child| child.try_wait().ok().flatten())
+        .is_some();
+    if exited {
+        st.child = None;
+        st.port = 0;
+        st.base_url.clear();
+    }
     RuntimeInfo {
         running: st.child.is_some(),
         base_url: st.base_url.clone(),
@@ -599,5 +548,19 @@ pub fn info() -> RuntimeInfo {
             "stopped".into()
         },
         node_path: st.node_path.to_string_lossy().into_owned(),
+    }
+}
+
+#[cfg(all(test, not(target_os = "android")))]
+mod tests {
+    use super::resource_candidates;
+    use std::path::Path;
+
+    #[test]
+    fn packaged_parent_resources_are_discoverable() {
+        let candidates = resource_candidates(Path::new("C:/Program/Zephyr One"), "zephyr-core");
+        assert!(candidates.iter().any(|path| path.ends_with("_up_/zephyr-core")));
+        let runtime = resource_candidates(Path::new("C:/Program/Zephyr One"), "desktop-runtime");
+        assert!(runtime.iter().any(|path| path.ends_with("_up_/desktop-runtime")));
     }
 }

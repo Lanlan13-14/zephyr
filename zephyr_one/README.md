@@ -33,14 +33,14 @@ Tauri 原生客户端：**在本地运行完整 Zephyr 产品**（仪表盘 / SS
 
 `app/src/main/jniLibs/<abi>/libnode.so`
 
-系统安装 APK 时解压到 `nativeLibraryDir`，运行时直接 `exec`，**没有**应用内下载/解压 Node 步骤。
+系统安装 APK 时把它部署到 `nativeLibraryDir`，运行时直接 `exec`，**没有**应用内下载/解压 Node 步骤。
 
-## Android 核心资源
+## Android 核心资源（打开即用）
 
-- 构建期：`prepare-android.sh` 把 `zephyr-core/` 打成**单个** `assets/zephyr-core.tar.gz`
-- 运行时：NDK `AAssetManager_open` 读这一文件 → `flate2`+`tar` 解到 `filesDir/zephyr-core/`
-- **不要**再把 core 以目录树形式塞进 assets：`AAssetDir_getNextFileName` **不枚举子目录**，`public/` / `node_modules/` 会丢失
-- 版本变化（`CARGO_PKG_VERSION` / `.zephyr-one-app-version`）时重新解压
+- 构建期：esbuild 把服务端和依赖打成 `assets/zephyr-core.cjs`
+- 运行时：Rust 从 APK 直接把这一入口流式送入 Node 标准输入，不写出核心文件
+- `public/` 保留为 APK 内的 `assets/zephyr-public/`，Node 按请求直接读取 APK ZIP 条目
+- 首次打开和版本更新都不再把核心展开到 `filesDir`
 
 ## 版本号
 
@@ -67,7 +67,7 @@ npm run tauri dev
 ```bash
 npm run stage:core
 npx tauri android init   # 首次
-npm run android:prepare  # 图标 + JKS 签名 + jniLibs Node + core tarball
+npm run android:prepare  # 图标 + JKS 签名 + jniLibs Node + 免解压内置核心
 npx tauri android build --apk --target aarch64
 ```
 
