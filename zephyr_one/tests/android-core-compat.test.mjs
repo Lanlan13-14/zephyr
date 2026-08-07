@@ -53,13 +53,15 @@ describe('Android embedded core compatibility', () => {
     assert.match(verify, /-name '\*\.node'/);
     assert.match(verifyNode, /DatabaseSync/);
     assert.match(verifyNode, /ARM aarch64/);
+    assert.match(verifyNode, /x86-64\|x86_64/);
     assert.match(bundleNode, /NODE_ANDROID_ABIS="\$\{NODE_ANDROID_ABIS:-arm64-v8a\}"/);
     assert.match(bundleNode, /rm -rf "\$LIBS_ROOT\/\$abi"/);
     assert.match(bundleNode, /verify-android-node-binary/);
     assert.match(verifyApk, /unzip -l/);
     assert.match(verifyApk, /assets\/zephyr-core\.cjs/);
     assert.match(verifyApk, /assets\/zephyr-public\/app\.html/);
-    assert.match(verifyApk, /lib\/arm64-v8a\/libnode\.so/);
+    assert.match(verifyApk, /ABI="\$\{2:-arm64-v8a\}"/);
+    assert.match(verifyApk, /lib\/\$ABI\/libnode\.so/);
     assert.match(verifyApk, /unsupported host-native \.node addon|unsupported host-native \.node/);
     const runtime = read('zephyr_one/src-tauri/src/runtime/mod.rs');
     assert.match(runtime, /open_asset_reader\("zephyr-core\.cjs"\)/);
