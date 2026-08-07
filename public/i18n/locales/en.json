@@ -2194,5 +2194,14 @@
   "读取 RDP 证书状态": "Read RDP certificate status",
   "读取 RDP 证书状态失败": "Failed to read RDP certificate status",
   "读取证书状态失败：{error}": "Failed to read certificate status: {error}",
-  "重命名笔记分组": "Rename note group"
+  "重命名笔记分组": "Rename note group",
+  "文件同步": "File sync",
+  "文件夹映射": "Folder mapping",
+  "会话内以磁盘形式访问": "Mounted as a drive in the session",
+  "映射文件夹": "Mapped folder",
+  "尚未选择文件夹": "No folder selected",
+  "选择文件夹": "Choose folder",
+  "设备名称": "Device name",
+  "例如：我的电脑": "e.g. My computer",
+  "远程会话里显示的磁盘名称。": "Drive name shown inside the remote session."
 }

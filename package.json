@@ -19,6 +19,7 @@
     "test:wasm-build": "cd rdp-wasm && GOOS=js GOARCH=wasm go build -o /tmp/zephyr-rdp-main.wasm . && test -s /tmp/zephyr-rdp-main.wasm && rm -f /tmp/zephyr-rdp-main.wasm",
     "test:browser-smoke": "node tests/rdp-browser-smoke-runner.mjs",
     "test:split-grid-browser": "node tests/terminal-split-grid-browser-runner.mjs",
+    "test:folder-mapping-browser": "node tests/rdp-folder-mapping-browser-runner.mjs",
     "test:ci": "npm run test:syntax && npm run test:rdp-node && npm run test:motion && npm run test:go && npm run test:motion-go && npm run test:wasm-build"
   },
   "dependencies": {

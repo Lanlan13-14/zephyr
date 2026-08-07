@@ -41,6 +41,23 @@ const LANGUAGE_TAB_BUTTON = '<button class="settings-tab" data-settings="languag
 const LANGUAGE_PANEL_OPEN = 'class="settings-panel" id="settings-language"';
 const HTML_TAG = '<html lang="zh-CN" data-theme="dark">';
 
+/* Zephyr Client → 文件同步 (One side only).
+ *
+ * The main product keeps the name "Zephyr Client" because there it really is
+ * the client-management surface: Agent tokens, online agents, drive mappings,
+ * plus the bound One devices. Inside One that framing is wrong — One *is* the
+ * client, so the panel's job there is the file-sync relationship with the main
+ * instance, and the product contract names that surface 文件同步.
+ *
+ * The heading text is not unique in app.html (the About panel carries the same
+ * "Zephyr Client" h2 as a download link, which must keep its name), so this
+ * rename is region-scoped to the agent panel. */
+const AGENT_TAB_BUTTON = '<button class="settings-tab" data-settings="agent" data-i18n="Zephyr Client">Zephyr Client</button>';
+const CLIENT_HEADING = '<h2 data-i18n="Zephyr Client">Zephyr Client</h2>';
+const FILE_SYNC_HEADING = '<h2 data-i18n="文件同步">文件同步</h2>';
+const AGENT_PANEL_ANCHOR = 'id="settings-agent"';
+const DATA_PANEL_ANCHOR = '<div class="settings-panel" id="settings-data"';
+
 /**
  * Structural edits, in order. Each entry is asserted to apply exactly once.
  * `required: false` marks an edit that is allowed to be already applied
@@ -87,6 +104,21 @@ const EDITS = [
         from: HTML_TAG,
         to: '<html lang="zh-CN" data-theme="dark" data-zephyr-product="one">',
     },
+    {
+        name: 'rename-agent-tab',
+        from: AGENT_TAB_BUTTON,
+        to: '<button class="settings-tab" data-settings="agent" data-i18n="文件同步">文件同步</button>',
+    },
+    {
+        /* Region-scoped: the same heading exists in the About panel and must
+         * keep its name there. Bounding by the neighbouring panel ids instead
+         * of matching indentation keeps this working if app.html is reflowed. */
+        name: 'rename-agent-heading',
+        from: CLIENT_HEADING,
+        to: FILE_SYNC_HEADING,
+        within: AGENT_PANEL_ANCHOR,
+        until: DATA_PANEL_ANCHOR,
+    },
 ];
 
 /**
@@ -128,15 +160,44 @@ function injectStylesheet(html) {
  *   already in place — that means app.html changed shape and the embedded
  *   surface would silently degrade.
  */
+/**
+ * Resolve the `[start, end)` slice an edit is allowed to touch.
+ *
+ * Most edits match a globally unique fragment. Some do not: the "Zephyr Client"
+ * h2 appears both in the agent panel (which One renames) and in the About panel
+ * (which must keep the name, it is a download link). For those, `within` /
+ * `until` bound the search to one region so the edit cannot reach the other
+ * occurrence — and so a duplicate *inside* the region is still an error rather
+ * than a silent first-match replacement.
+ *
+ * @param {string} html
+ * @param {{ within?: string, until?: string, name: string }} edit
+ * @returns {{ start: number, end: number } | null} null when the region anchor
+ *   is absent, which callers treat as "cannot apply here".
+ */
+function regionOf(html, edit) {
+    if (!edit.within) return { start: 0, end: html.length };
+    const start = html.indexOf(edit.within);
+    if (start === -1) return null;
+    if (!edit.until) return { start, end: html.length };
+    const end = html.indexOf(edit.until, start);
+    return { start, end: end === -1 ? html.length : end };
+}
+
 function applyEmbeddedSurface(source) {
     let html = String(source || '');
     const applied = [];
     const skipped = [];
 
     for (const edit of EDITS) {
-        const occurrences = countOccurrences(html, edit.from);
+        const region = regionOf(html, edit);
+        const slice = region ? html.slice(region.start, region.end) : '';
+        const occurrences = countOccurrences(slice, edit.from);
         if (occurrences === 1) {
-            html = html.replace(edit.from, edit.to);
+            /* Splice rather than String.replace: replace() would scan from
+             * index 0 and could hit an occurrence outside the region. */
+            const at = region.start + slice.indexOf(edit.from);
+            html = html.slice(0, at) + edit.to + html.slice(at + edit.from.length);
             applied.push(edit.name);
             continue;
         }
@@ -146,7 +207,7 @@ function applyEmbeddedSurface(source) {
             );
         }
         // Already applied (idempotent) — the post-edit form is present instead.
-        if (edit.to && html.includes(edit.to)) {
+        if (edit.to && slice.includes(edit.to)) {
             skipped.push(edit.name);
             continue;
         }
@@ -167,6 +228,10 @@ function applyEmbeddedSurface(source) {
 module.exports = {
     applyEmbeddedSurface,
     countOccurrences,
+    /* Exported so the contract test asserts uniqueness against the *same*
+     * region logic the transform uses. A reimplementation in the test could
+     * drift and then agree with itself while disagreeing with production. */
+    regionOf,
     EMBED_STYLESHEET,
     EDITS,
 };

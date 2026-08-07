@@ -3016,6 +3016,82 @@ body.adminuser1-blurring #adminUserModalScrim { pointer-events: auto; }
     opacity: 0.5;
 }
 
+/* ── RDP folder mapping detail (collapses under its own toggle) ────────
+ * Folds the Zephyr Agent folder-share fields into the RDP editor. Only the
+ * mapped folder and the device name carry over. The Agent's main-server
+ * address, Token, auto-shutdown timer and read/write permission rows are
+ * deliberately absent: inside an RDP session the mapping target *is* the
+ * session, so there is nothing to address, authenticate, or time out.
+ *
+ * Animated open instead of display:none-toggled, because `display` is not
+ * animatable. `grid-template-rows: 0fr → 1fr` gives a real auto-height
+ * collapse — no hard-coded max-height to drift out of sync when fields are
+ * added later. The inner wrapper carries overflow:hidden + min-height:0 or
+ * the fields paint outside the collapsed track.
+ *
+ * Open state is driven by an explicit `.is-open` class that app.js toggles, the
+ * same mechanism updateRdpTouchSettingsUi() already uses for
+ * `.rdp-range-disabled`. The `:has()` variant is kept alongside it as a second,
+ * independent path: both set byte-identical declarations, so they can never
+ * disagree, and the row still opens if a future refactor drops the JS call.
+ *
+ * The class is the load-bearing one, but not because :has() misbehaves — the
+ * browser smoke asserts the :has() path opens to the same height with no class
+ * applied. It is load-bearing because :has() needs Safari 15.4+ / WebKitGTK
+ * 2.42+, and Zephyr One ships on WKWebView (macOS) and WebKitGTK (Linux) whose
+ * versions follow the OS, not this repo. Neither can be exercised here, so the
+ * class carries the behaviour and :has() is the bonus.
+ *
+ * Where 0fr↔1fr interpolation is unsupported, the rule still applies as a
+ * discrete jump — i.e. it degrades to the same instant show/hide the other
+ * conditional rows use today, never to a broken layout. */
+.rdp-storage-detail {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition: grid-template-rows .28s cubic-bezier(.16, 1, .3, 1), opacity .2s ease;
+}
+.rdp-storage-detail-inner {
+    overflow: hidden;
+    min-height: 0;
+    padding-left: 2px;
+}
+.rdp-storage-detail.is-open,
+.rdp-toggle-row:has(#rdpStorage:checked) + .rdp-storage-detail {
+    grid-template-rows: 1fr;
+    opacity: 1;
+}
+/* Last field in the panel should not add trailing space to the open height. */
+.rdp-storage-detail .form-group:last-child { margin-bottom: 2px; }
+/* The folder path is chosen through a picker, never typed. Make that legible
+ * instead of looking like a text field that refuses input. */
+.rdp-storage-detail input[readonly] {
+    cursor: default;
+    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+.rdp-storage-detail .link-btn { margin-top: 6px; }
+/* The storage toggle row carries the panel's shared `border-bottom` hairline.
+ * With the detail block open, that line lands *between* the switch and the
+ * fields it controls, reading as "unrelated setting below" — the opposite of
+ * the grouping we want. Hide it by colour, not by width or `none`: dropping the
+ * border would shrink the row by 1px and shift everything below it every time
+ * the section opens.
+ *
+ * Dual selector for the same reason as the open-state rule above: the class is
+ * set by JS and the `:has()` form is the CSS-only path. Both set the identical
+ * declaration, so whichever a given webview honours, the result is the same. */
+.rdp-toggle-row.is-open,
+.rdp-toggle-row:has(#rdpStorage:checked) {
+    border-bottom-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .rdp-storage-detail {
+        transition: grid-template-rows .01ms linear, opacity .01ms linear;
+    }
+}
+
 /* ── RDP Certificate Verification Dialog ── */
 .rdp-cert-dialog-backdrop {
     position: fixed;

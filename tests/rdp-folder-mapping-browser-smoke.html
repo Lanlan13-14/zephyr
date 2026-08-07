@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark" data-color-scheme="frost">
+<head>
+<meta charset="UTF-8">
+<title>RDP folder-mapping collapse smoke</title>
+<!-- The real stylesheet. The collapse rules must survive the full cascade,
+     not just work in isolation. -->
+<link rel="stylesheet" href="/public/style.css">
+</head>
+<body class="app-body">
+<div class="app-shell">
+<main id="host" style="padding:24px;max-width:640px"></main>
+</div>
+<pre id="results">runner did not execute</pre>
+
+<script>
+/* Deterministic browser smoke for the RDP folder-mapping collapse.
+ *
+ * Two hard constraints shape this file:
+ *
+ * 1. The runner captures the page with `--dump-dom`, which snapshots right
+ *    after load. Anything awaited races the snapshot, so every step here is
+ *    synchronous — including the fetches, which use synchronous XHR the same
+ *    way tests/terminal-split-grid-browser-smoke.html does.
+ *
+ * 2. Sampling a transition by sleeping is exactly what made this
+ *    unmeasurable before (style recalc on a 600KB sheet is slow enough that
+ *    wall-clock samples landed at unpredictable phases). Instead the CSS
+ *    transition is driven through the Web Animations API: pause it and set
+ *    `currentTime`, then read the computed value. That is frame-rate
+ *    independent and gives the same numbers on every run.
+ *
+ * The markup and the toggle function are sliced out of the shipped
+ * public/app.html and public/app.js. Copies would only prove the copies.
+ */
+(function () {
+    const out = [];
+    const fail = [];
+    let checks = 0;
+    function check(name, ok, detail) {
+        checks += 1;
+        out.push(`${ok ? 'ok  ' : 'FAIL'} ${name}${detail === undefined ? '' : ` -> ${JSON.stringify(detail)}`}`);
+        if (!ok) fail.push(name);
+    }
+
+    function getSync(path) {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', path, false);
+        xhr.send(null);
+        if (xhr.status !== 200) throw new Error(`GET ${path} -> ${xhr.status}`);
+        return xhr.responseText;
+    }
+
+    /* ── Pull the real panel markup ─────────────────────────────────────── */
+    const appHtml = getSync('/public/app.html');
+    const panelAt = appHtml.indexOf('id="rdpSettingsPanel"');
+    const sectionAt = appHtml.lastIndexOf('<section', panelAt);
+    const sectionEnd = appHtml.indexOf('</section>', panelAt) + '</section>'.length;
+    let panel = appHtml.slice(sectionAt, sectionEnd);
+    // The panel ships hidden; the editor removes that class when RDP is picked.
+    panel = panel.replace('rdp-settings-panel force-hidden', 'rdp-settings-panel');
+    document.getElementById('host').innerHTML = panel;
+
+    /* ── Pull the real toggle function ──────────────────────────────────── */
+    const appJs = getSync('/public/app.js');
+    const fnAt = appJs.indexOf('function updateRdpStorageDetailUi()');
+    const fnEnd = appJs.indexOf('\n}', fnAt) + 2;
+    const fnSrc = appJs.slice(fnAt, fnEnd);
+    const $ = (sel) => document.querySelector(sel);
+    // eslint-disable-next-line no-eval
+    const updateRdpStorageDetailUi = eval(`(${fnSrc.replace('function updateRdpStorageDetailUi()', 'function ()')})`);
+
+    check('sliced real panel markup', panel.includes('id="rdpStorageDetail"'), panel.length);
+    check('sliced real toggle function', /classList\.toggle\('is-open'/.test(fnSrc), fnSrc.length);
+
+    const cb = document.getElementById('rdpStorage');
+    const detail = document.getElementById('rdpStorageDetail');
+    const inner = detail && detail.querySelector('.rdp-storage-detail-inner');
+    check('checkbox present', !!cb);
+    check('detail present', !!detail);
+    check('inner present', !!inner);
+    if (!cb || !detail || !inner) {
+        document.getElementById('results').textContent =
+            `CHECKS ${checks} FAILURES ${fail.length}\n${out.join('\n')}`;
+        return;
+    }
+
+    const rows = () => getComputedStyle(detail).gridTemplateRows;
+    const rowsPx = () => parseFloat(rows()) || 0;
+    const opacity = () => parseFloat(getComputedStyle(detail).opacity);
+    const flush = () => { void getComputedStyle(detail).gridTemplateRows; void detail.offsetHeight; };
+
+    /* ── Closed state ───────────────────────────────────────────────────── */
+    cb.checked = false;
+    updateRdpStorageDetailUi();
+    flush();
+    const closedRows = rowsPx();
+    const closedDetailH = detail.getBoundingClientRect().height;
+    const closedInnerH = inner.getBoundingClientRect().height;
+    check('starts collapsed to zero height', closedRows === 0 && closedDetailH === 0,
+        { rows: rows(), detailH: closedDetailH, innerH: closedInnerH });
+    check('collapsed hides content from AT', inner.inert === true && inner.getAttribute('aria-hidden') === 'true',
+        { inert: inner.inert, aria: inner.getAttribute('aria-hidden') });
+    // A collapsed region with reachable fields would break the tab order.
+    const focusables = inner.querySelectorAll('input, button, select, textarea, a[href]');
+    let reachable = 0;
+    focusables.forEach((el) => { if (!el.closest('[inert]')) reachable += 1; });
+    check('no focusable field escapes the collapsed region', reachable === 0,
+        { focusables: focusables.length, reachable });
+
+    /* ── Open state ─────────────────────────────────────────────────────── */
+    cb.checked = true;
+    updateRdpStorageDetailUi();
+    flush();
+    check('class toggles to is-open', detail.classList.contains('is-open'), detail.className);
+
+    /* The transition is live now. Drive it deterministically instead of
+     * sleeping: find the grid-template-rows transition, pause it, and read the
+     * computed value at fixed times. */
+    const anims = detail.getAnimations ? detail.getAnimations() : [];
+    const rowAnim = anims.find((a) => a.transitionProperty === 'grid-template-rows');
+    const animNames = anims.map((a) => a.transitionProperty || a.constructor.name);
+    check('a grid-template-rows transition was created', !!rowAnim, animNames);
+
+    let samples = [];
+    let finalRows = 0;
+    if (rowAnim) {
+        rowAnim.pause();
+        for (const t of [0, 70, 140, 210, 280]) {
+            rowAnim.currentTime = t;
+            flush();
+            samples.push({ t, rows: rowsPx(), op: opacity() });
+        }
+        rowAnim.finish();
+        flush();
+        finalRows = rowsPx();
+    } else {
+        // No transition object (e.g. reduced motion). The endpoints still have
+        // to be right; only the interpolation claim is unprovable.
+        finalRows = rowsPx();
+    }
+
+    const openDetailH = detail.getBoundingClientRect().height;
+    const openInnerH = inner.getBoundingClientRect().height;
+    check('opens to the natural content height', finalRows > 60 && Math.abs(openDetailH - finalRows) < 2,
+        { rows: finalRows, detailH: openDetailH, innerH: openInnerH });
+    check('opened content is exposed to AT', inner.inert === false && inner.getAttribute('aria-hidden') === 'false',
+        { inert: inner.inert, aria: inner.getAttribute('aria-hidden') });
+
+    if (rowAnim) {
+        const mid = samples.slice(1, 4).map((s) => s.rows);
+        const strictlyBetween = mid.every((v) => v > 0 && v < finalRows - 0.5);
+        check('height interpolates rather than jumping', strictlyBetween,
+            samples.map((s) => `${s.t}ms=${s.rows.toFixed(2)}`));
+        const monotonic = samples.every((s, i) => i === 0 || s.rows >= samples[i - 1].rows - 0.01);
+        check('height rises monotonically', monotonic, samples.map((s) => s.rows.toFixed(2)));
+    }
+
+    /* Opacity is a *separate* transition with its own timeline. Sampling it off
+     * rowAnim.currentTime reads a frozen 0 at every point and makes
+     * `last >= first` a vacuous 0>=0 pass, so it gets its own driver. */
+    const opAnim = anims.find((a) => a.transitionProperty === 'opacity');
+    if (opAnim) {
+        opAnim.pause();
+        const opSamples = [];
+        for (const t of [0, 50, 100, 150, 200]) {
+            opAnim.currentTime = t;
+            flush();
+            opSamples.push({ t, op: Number(getComputedStyle(detail).opacity) });
+        }
+        const first = opSamples[0].op;
+        const last = opSamples[opSamples.length - 1].op;
+        const rises = last > first + 0.5 && opSamples.every(
+            (s, i) => i === 0 || s.op >= opSamples[i - 1].op - 0.001,
+        );
+        check('opacity fades in on its own timeline', rises,
+            opSamples.map((s) => `${s.t}ms=${s.op.toFixed(3)}`));
+    }
+
+    /* ── Close again ────────────────────────────────────────────────────── */
+    cb.checked = false;
+    updateRdpStorageDetailUi();
+    flush();
+    const closeAnims = detail.getAnimations ? detail.getAnimations() : [];
+    const closeAnim = closeAnims.find((a) => a.transitionProperty === 'grid-template-rows');
+    let closeSamples = [];
+    if (closeAnim) {
+        closeAnim.pause();
+        for (const t of [0, 70, 140, 210, 280]) {
+            closeAnim.currentTime = t;
+            flush();
+            closeSamples.push({ t, rows: rowsPx() });
+        }
+        closeAnim.finish();
+        flush();
+    }
+    check('returns to fully collapsed', rowsPx() === 0 && detail.getBoundingClientRect().height === 0,
+        { rows: rows(), detailH: detail.getBoundingClientRect().height });
+    if (closeAnim) {
+        const mid = closeSamples.slice(1, 4).map((s) => s.rows);
+        const falls = mid.every((v) => v < closeSamples[0].rows && v > -0.01);
+        check('close interpolates downward', falls, closeSamples.map((s) => `${s.t}ms=${s.rows.toFixed(2)}`));
+    }
+
+    /* ── The CSS-only fallback must work with no JS class at all ─────────── */
+    /* Every transition above must be cancelled first. A paused-and-filling
+     * transition keeps occupying the Animation origin, which outranks
+     * author-normal declarations — and the :has() rule *is* author-normal, so
+     * a leftover animation pins rows at its frozen value and the fallback
+     * looks broken when it is not. This is the same cascade trap that makes
+     * `fill: 'both'` freeze WAAPI-driven elements. */
+    detail.getAnimations().forEach((a) => a.cancel());
+    detail.classList.remove('is-open');
+    cb.checked = true;
+    // Force the :has() invalidation Chromium is lazy about by re-inserting the row.
+    const row = cb.closest('.rdp-toggle-row');
+    row.parentNode.insertBefore(row, row);
+    flush();
+    void document.body.offsetHeight;
+    /* The fallback itself transitions from 0fr, so let its own transition
+     * finish instantly rather than reading a mid-flight 0. */
+    detail.getAnimations().forEach((a) => a.finish());
+    flush();
+    const hasMatches = document.querySelectorAll('.rdp-toggle-row:has(#rdpStorage:checked) + .rdp-storage-detail').length;
+    const fallbackRows = rowsPx();
+    check(':has() fallback selector matches', hasMatches === 1, hasMatches);
+    check(':has() fallback opens without the JS class', fallbackRows > 60,
+        { rows: fallbackRows, cls: detail.className });
+
+    /* ── Border rhythm ──────────────────────────────────────────────────────
+     * The storage toggle row carries `border-bottom: 1px` like every other
+     * toggle row. Because the detail block was inserted directly after it, an
+     * open panel would draw a hairline between the switch and its own two
+     * fields, reading as two unrelated rows. The fix must hide that line
+     * *without* changing the border width, or opening would shift layout. */
+    const storageRow = cb.closest('.rdp-toggle-row');
+    const alphaOf = (el) => {
+        const m = /rgba?\(([^)]+)\)/.exec(getComputedStyle(el).borderBottomColor);
+        if (!m) return 1;
+        const parts = m[1].split(',').map((s) => Number(s.trim()));
+        return parts.length > 3 ? parts[3] : 1;
+    };
+    const widthOf = (el) => getComputedStyle(el).borderBottomWidth;
+
+    // Cancel any filling transition: a paused-and-uncancelled one occupies the
+    // Animation origin and outranks author-normal declarations.
+    (detail.getAnimations ? detail.getAnimations() : []).forEach((a) => a.cancel());
+    detail.classList.remove('is-open');
+    storageRow.classList.remove('is-open');
+    cb.checked = false;
+    updateRdpStorageDetailUi();
+    flush();
+    const closedAlpha = alphaOf(storageRow);
+    const closedWidth = widthOf(storageRow);
+    const closedRowH = storageRow.getBoundingClientRect().height;
+    check('collapsed: the storage row keeps its hairline like its siblings',
+        closedAlpha > 0 && closedWidth === '1px',
+        { alpha: closedAlpha, width: closedWidth });
+
+    cb.checked = true;
+    updateRdpStorageDetailUi();
+    flush();
+    check('open: JS toggles is-open onto the row, not just the detail',
+        storageRow.classList.contains('is-open'), storageRow.className);
+    const openAlpha = alphaOf(storageRow);
+    const openWidth = widthOf(storageRow);
+    const openRowH = storageRow.getBoundingClientRect().height;
+    check('open: the hairline between the switch and its fields is hidden',
+        openAlpha === 0, { alpha: openAlpha });
+    check('open: hiding it costs no layout shift (width and height unchanged)',
+        openWidth === closedWidth && Math.abs(openRowH - closedRowH) < 0.01,
+        { closedWidth, openWidth, closedRowH, openRowH });
+
+    // Scope: sibling toggle rows must keep their own hairlines.
+    const siblingRows = [...document.querySelectorAll('#rdpSettingsPanel .rdp-toggle-row')]
+        .filter((r) => r !== storageRow);
+    const siblingAlphas = siblingRows.map(alphaOf);
+    check('open: sibling toggle rows keep their hairlines (fix is scoped)',
+        siblingRows.length >= 3 && siblingAlphas.every((a) => a > 0),
+        { rows: siblingRows.length, alphas: siblingAlphas });
+
+    // CSS-only path: the class removed, only the checkbox drives it.
+    storageRow.classList.remove('is-open');
+    detail.classList.remove('is-open');
+    (detail.getAnimations ? detail.getAnimations() : []).forEach((a) => a.cancel());
+    storageRow.parentNode.insertBefore(storageRow, storageRow);
+    flush();
+    void document.body.offsetHeight;
+    check('open: :has() hides the hairline even with no JS class',
+        alphaOf(storageRow) === 0, { alpha: alphaOf(storageRow), cls: storageRow.className });
+
+    /* ── Overflow clipping ──────────────────────────────────────────────── */
+    (detail.getAnimations ? detail.getAnimations() : []).forEach((a) => a.cancel());
+    detail.classList.remove('is-open');
+    storageRow.classList.remove('is-open');
+    cb.checked = false;
+    updateRdpStorageDetailUi();
+    flush();
+    check('inner clips its overflow when collapsed',
+        getComputedStyle(inner).overflow === 'hidden' && getComputedStyle(inner).minHeight === '0px',
+        { overflow: getComputedStyle(inner).overflow, minHeight: getComputedStyle(inner).minHeight });
+
+    /* ── The two fields, and only those two ─────────────────────────────── */
+    const folder = document.getElementById('rdpStorageFolder');
+    const device = document.getElementById('rdpStorageDeviceName');
+    check('mapped folder field exists and is picker-only', !!folder && folder.readOnly === true,
+        folder ? { readOnly: folder.readOnly } : null);
+    check('device name field exists and is typable', !!device && device.readOnly === false);
+    const panelText = document.getElementById('rdpSettingsPanel').textContent;
+    check('panel never says Zephyr Agent', !panelText.includes('Zephyr Agent'));
+    check('panel never claims the Agent must be online', !panelText.includes('需 Agent 在线'));
+
+    document.getElementById('results').textContent =
+        `CHECKS ${checks} FAILURES ${fail.length}\n${out.join('\n')}`;
+})();
+</script>
+</body>
+</html>

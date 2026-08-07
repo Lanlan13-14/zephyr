@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
  */
 
 const require = createRequire(import.meta.url);
-const { applyEmbeddedSurface, countOccurrences, EDITS, EMBED_STYLESHEET } =
+const { applyEmbeddedSurface, countOccurrences, regionOf, EDITS, EMBED_STYLESHEET } =
     require('../zephyr-one-embed-surface.js');
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -27,16 +27,50 @@ const SERVER_JS = readFileSync(path.join(root, 'server.js'), 'utf8');
 const STAGE_SH = readFileSync(path.join(root, 'zephyr_one/scripts/stage-zephyr-core.sh'), 'utf8');
 const APP_JS = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 
-test('every fragment the transform depends on appears exactly once in app.html', () => {
-    // A fragment matching 0 times means the transform silently no-ops; matching
-    // 2+ times means it edits an unintended element.
+test('every fragment the transform depends on appears exactly once in its scope', () => {
+    /* A fragment matching 0 times means the transform silently no-ops; matching
+     * 2+ times means it could edit an unintended element.
+     *
+     * Scope matters: `<h2 data-i18n="Zephyr Client">` legitimately appears
+     * twice in app.html — once in the settings panel that One renames to
+     * 文件同步, and once in the About panel as a download link that must keep
+     * its name. That edit is region-bounded, so uniqueness is asserted inside
+     * the region, using the transform's own helper rather than a copy of it. */
     for (const edit of EDITS) {
+        const region = regionOf(APP_HTML, edit);
+        assert.ok(region, `"${edit.name}" region anchor ${edit.within} not found`);
+        const slice = APP_HTML.slice(region.start, region.end);
         assert.equal(
-            countOccurrences(APP_HTML, edit.from),
+            countOccurrences(slice, edit.from),
             1,
-            `"${edit.name}" source fragment must appear exactly once in app.html`,
+            `"${edit.name}" source fragment must appear exactly once in its scope`,
         );
     }
+});
+
+test('region-scoped edits really are bounded, not accidentally global', () => {
+    /* If `within`/`until` were ignored the heading rename would still "work"
+     * on the first match, so a passing rename proves nothing by itself. This
+     * asserts the bound is real: the fragment is ambiguous globally, unique
+     * inside the region, and the region stops before the About panel. */
+    const scoped = EDITS.filter((e) => e.within);
+    assert.ok(scoped.length > 0, 'at least one edit must be region-scoped');
+
+    for (const edit of scoped) {
+        const region = regionOf(APP_HTML, edit);
+        const slice = APP_HTML.slice(region.start, region.end);
+        assert.equal(countOccurrences(slice, edit.from), 1);
+        assert.ok(
+            region.end < APP_HTML.length,
+            `"${edit.name}" must stop at ${edit.until}, not run to end of file`,
+        );
+        // The About panel is outside every scoped region.
+        assert.equal(slice.includes('id="settings-about"'), false);
+    }
+
+    // And the specific ambiguity this mechanism exists for.
+    const heading = '<h2 data-i18n="Zephyr Client">Zephyr Client</h2>';
+    assert.equal(countOccurrences(APP_HTML, heading), 2, 'heading must be globally ambiguous');
 });
 
 test('transform removes the security tab and the logout button', () => {
