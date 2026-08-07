@@ -182,7 +182,9 @@ jobs:
           sh scripts/prepare-android.sh src-tauri/gen/android
           sh scripts/verify-android-node-binary.sh src-tauri/gen/android/app/src/main/jniLibs/x86_64/libnode.so x64
           npx tauri android build --apk --target x86_64
-          X86_APK=$(find src-tauri/gen/android -type f \( -path '*/x86_64/release/*.apk' -o -name '*x86_64*release*.apk' \) | head -n 1)
+          # Tauri names a single-ABI release app-universal-release.apk too, so
+          # select the APK just written by this second build by modification time.
+          X86_APK=$(find src-tauri/gen/android -type f -name '*release*.apk' -printf '%T@ %p\n' | sort -nr | sed -n '1s/^[^ ]* //p')
           echo "X86_APK=$X86_APK"
           test -n "$X86_APK" && test -f "$X86_APK"
           sh scripts/verify-android-apk.sh "$X86_APK" x86_64
