@@ -113,12 +113,12 @@ struct zephyr_rdp_session {
     /* Owned copies of every config string: the caller's pointers are only
      * guaranteed valid for the duration of zephyr_rdp_new(). */
     zephyr_rdp_config cfg;
-    char* s_host;
-    char* s_user;
-    char* s_pass;
-    char* s_domain;
-    char* s_drive_name;
-    char* s_drive_path;
+    char* own_host;
+    char* own_user;
+    char* own_pass;
+    char* own_domain;
+    char* own_drive_name;
+    char* own_drive_path;
 
     CRITICAL_SECTION lock;
     HANDLE           wake;
@@ -670,7 +670,7 @@ static DWORD zephyr_verify_changed_certificate_ex(
     return s->cfg.ignore_certificate ? 1 : 0;
 }
 
-static int zephyr_client_new(freerdp* instance, rdpContext* context) {
+static BOOL zephyr_client_new(freerdp* instance, rdpContext* context) {
     (void)context;
 #if FREERDP_VERSION_MAJOR >= 3
     instance->AuthenticateEx = zephyr_authenticate;
@@ -682,7 +682,7 @@ static int zephyr_client_new(freerdp* instance, rdpContext* context) {
     instance->PostDisconnect = zephyr_post_disconnect;
     instance->VerifyCertificateEx = zephyr_verify_certificate_ex;
     instance->VerifyChangedCertificateEx = zephyr_verify_changed_certificate_ex;
-    return 1; /* TRUE */
+    return TRUE;
 }
 
 static void zephyr_client_free(freerdp* instance, rdpContext* context) {
@@ -971,26 +971,26 @@ zephyr_rdp_session* zephyr_rdp_new(const zephyr_rdp_config* cfg,
 
     /* Own every string. The caller's pointers may be freed the moment this
      * returns, but FreeRDP reads drive_name/drive_path during PreConnect. */
-    s->s_host = dup_or_null(cfg->host);
-    s->s_user = dup_or_null(cfg->username);
-    s->s_pass = dup_or_null(cfg->password);
-    s->s_domain = dup_or_null(cfg->domain);
-    s->s_drive_name = dup_or_null(cfg->drive_name);
-    s->s_drive_path = dup_or_null(cfg->drive_path);
-    s->cfg.host = s->s_host;
-    s->cfg.username = s->s_user;
-    s->cfg.password = s->s_pass;
-    s->cfg.domain = s->s_domain;
-    s->cfg.drive_name = s->s_drive_name;
-    s->cfg.drive_path = s->s_drive_path;
+    s->own_host = dup_or_null(cfg->host);
+    s->own_user = dup_or_null(cfg->username);
+    s->own_pass = dup_or_null(cfg->password);
+    s->own_domain = dup_or_null(cfg->domain);
+    s->own_drive_name = dup_or_null(cfg->drive_name);
+    s->own_drive_path = dup_or_null(cfg->drive_path);
+    s->cfg.host = s->own_host;
+    s->cfg.username = s->own_user;
+    s->cfg.password = s->own_pass;
+    s->cfg.domain = s->own_domain;
+    s->cfg.drive_name = s->own_drive_name;
+    s->cfg.drive_path = s->own_drive_path;
 
     /* Every early return past this point must release the strings duplicated
      * above. Centralising that in one label keeps a future added failure path
      * from reintroducing the leak that existed here. */
 #define ZRDP_NEW_FREE_STRINGS()                                      \
     do {                                                             \
-        free(s->s_host); free(s->s_user); free(s->s_pass);           \
-        free(s->s_domain); free(s->s_drive_name); free(s->s_drive_path); \
+        free(s->own_host); free(s->own_user); free(s->own_pass);           \
+        free(s->own_domain); free(s->own_drive_name); free(s->own_drive_path); \
     } while (0)
 
     if (!InitializeCriticalSectionAndSpinCount(&s->lock, 4000)) {
@@ -1324,12 +1324,12 @@ void zephyr_rdp_free(zephyr_rdp_session* s) {
 
     free(s->clip_pending);
     free(s->pack);
-    free(s->s_host);
-    free(s->s_user);
-    free(s->s_pass);
-    free(s->s_domain);
-    free(s->s_drive_name);
-    free(s->s_drive_path);
+    free(s->own_host);
+    free(s->own_user);
+    free(s->own_pass);
+    free(s->own_domain);
+    free(s->own_drive_name);
+    free(s->own_drive_path);
     free(s);
 }
 

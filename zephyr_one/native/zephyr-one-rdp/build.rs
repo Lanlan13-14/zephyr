@@ -39,8 +39,47 @@ struct LinkSpec {
     link_paths: Vec<PathBuf>,
     libs: Vec<String>,
     frameworks: Vec<String>,
+    /// Whether a static link was requested (packaged builds).
+    statik: bool,
     /// Pre-rendered `cargo:` lines (vcpkg hands these over ready-made).
     raw_metadata: Vec<String>,
+}
+
+/// Directories that hold the platform's own libraries.
+///
+/// Mirrors pkg-config's rule: a hit inside one of these is the system copy, and
+/// linking the system libc/libm statically is not what anyone wants even when
+/// the FreeRDP stack itself is static.
+fn system_roots() -> Vec<PathBuf> {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        vec![PathBuf::from("/Library"), PathBuf::from("/System")]
+    } else {
+        vec![PathBuf::from(
+            env::var("PKG_CONFIG_SYSROOT_DIR")
+                .or_else(|_| env::var("SYSROOT"))
+                .unwrap_or_else(|_| "/usr".to_string()),
+        )]
+    }
+}
+
+/// Does an actual archive for `name` exist in one of `dirs`, outside the system?
+///
+/// Deliberately a re-implementation of pkg_config's private `is_static_available`.
+/// `Library` only carries bare library names, so calling `.cargo_metadata(false)`
+/// (which link order forces, see the module note) throws away the crate's own
+/// static/dylib decision. Re-deriving it here is what keeps `cargo:rustc-link-lib`
+/// faithful; emitting a bare name instead makes rustc pass `-Bdynamic`, and a
+/// static-only vcpkg triplet then fails with one undefined symbol per FFI call.
+fn archive_available(name: &str, dirs: &[PathBuf], roots: &[PathBuf]) -> bool {
+    let msvc = env::var("TARGET").map(|t| t.contains("msvc")).unwrap_or(false);
+    let mut candidates = vec![format!("lib{name}.a")];
+    if msvc {
+        candidates.push(format!("{name}.lib"));
+    }
+    dirs.iter().any(|dir| {
+        candidates.iter().any(|file| dir.join(file).exists())
+            && !roots.iter().any(|root| dir.starts_with(root))
+    })
 }
 
 impl LinkSpec {
@@ -49,9 +88,55 @@ impl LinkSpec {
         for path in &self.link_paths {
             println!("cargo:rustc-link-search=native={}", path.display());
         }
+
+        let roots = system_roots();
+        let mut static_hits = 0usize;
         for lib in &self.libs {
-            println!("cargo:rustc-link-lib={lib}");
+            if self.statik && archive_available(lib, &self.link_paths, &roots) {
+                static_hits += 1;
+                println!("cargo:rustc-link-lib=static={lib}");
+            } else {
+                println!("cargo:rustc-link-lib={lib}");
+            }
         }
+
+        /*
+         * A packaged build that silently degrades to dynamic linking is the exact
+         * failure this guard exists for: it links on the builder, then dies on a
+         * user's machine with "libfreerdp.so.3: cannot open shared object file".
+         * Failing here, with the directories listed, is worth more than a green
+         * build that ships a broken installer.
+         */
+        if self.statik && static_hits == 0 {
+            let mut listing = String::new();
+            for dir in &self.link_paths {
+                listing.push_str(&format!("\n  {}", dir.display()));
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    let mut names: Vec<String> = entries
+                        .filter_map(|e| e.ok())
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .filter(|n| n.ends_with(".a") || n.ends_with(".lib"))
+                        .collect();
+                    names.sort();
+                    if names.is_empty() {
+                        listing.push_str("    (no .a/.lib present)");
+                    }
+                    for name in names.iter().take(40) {
+                        listing.push_str(&format!("\n      {name}"));
+                    }
+                } else {
+                    listing.push_str("    (unreadable)");
+                }
+            }
+            panic!(
+                "ZEPHYR_ONE_RDP_STATIC requested a self-contained helper, but no \
+                 archive was found for any of: {:?}\nSearched:{}\n\
+                 Check that the vcpkg triplet is a static one and that \
+                 PKG_CONFIG_PATH points at its lib/pkgconfig.",
+                self.libs, listing
+            );
+        }
+
         for framework in &self.frameworks {
             println!("cargo:rustc-link-lib=framework={framework}");
         }
@@ -66,6 +151,7 @@ fn probe_pkg_config(statik: bool) -> LinkSpec {
 
     for names in UNIX_CANDIDATES {
         let mut spec = LinkSpec::default();
+        spec.statik = statik;
         let mut ok = true;
 
         for name in names {
