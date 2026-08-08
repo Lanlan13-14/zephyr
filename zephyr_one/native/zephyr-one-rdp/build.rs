@@ -150,7 +150,15 @@ fn main() {
     build
         .warnings(true)
         .extra_warnings(true)
-        .flag_if_supported("-Werror");
+        .flag_if_supported("-Werror")
+        /* FreeRDP 3 marks compatibility members in its public structs as
+         * deprecated, so merely parsing client.h can warn. Keep the warning
+         * visible while preventing a third-party declaration from defeating
+         * our own warnings-as-errors policy. */
+        .flag_if_supported("-Wno-error=deprecated-declarations");
+    if target_os != "windows" {
+        build.define("_POSIX_C_SOURCE", Some("200809L"));
+    }
     build.compile("zephyr_rdp_shim");
 
     // Only now, so the archive precedes the libraries it depends on.

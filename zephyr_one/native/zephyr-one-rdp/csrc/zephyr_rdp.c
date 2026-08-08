@@ -49,6 +49,35 @@
 #include <fcntl.h>   /* open, O_WRONLY */
 #endif
 
+/* ── FreeRDP 2/3 source compatibility ──────────────────────────────────────
+ *
+ * FreeRDP 3 nested every clipboard PDU's wire header under `.common` and every
+ * redirected device's base fields under `.device`; FreeRDP 2 exposed the same
+ * fields flat. Keep protocol code readable and version-neutral through these
+ * accessors instead of maintaining two divergent implementations.
+ */
+#if FREERDP_VERSION_MAJOR >= 3
+#define CLIP_FLAGS(v) ((v).common.msgFlags)
+#define CLIP_FLAGS_P(v) ((v)->common.msgFlags)
+#define CLIP_LEN(v) ((v).common.dataLen)
+#define CLIP_LEN_P(v) ((v)->common.dataLen)
+#define DRIVE_NAME(v) ((v)->device.Name)
+#define DRIVE_TYPE(v) ((v)->device.Type)
+#else
+#define CLIP_FLAGS(v) ((v).msgFlags)
+#define CLIP_FLAGS_P(v) ((v)->msgFlags)
+#define CLIP_LEN(v) ((v).dataLen)
+#define CLIP_LEN_P(v) ((v)->dataLen)
+#define DRIVE_NAME(v) ((v)->Name)
+#define DRIVE_TYPE(v) ((v)->Type)
+#endif
+
+#if FREERDP_VERSION_MAJOR >= 3
+#define Z_EVENT_CONST const
+#else
+#define Z_EVENT_CONST
+#endif
+
 /* ── input queue ──────────────────────────────────────────────────────────── */
 
 #define ZQ_MOUSE     1
@@ -384,7 +413,7 @@ static UINT clip_send_format_list(zephyr_rdp_session* s) {
     memset(&list, 0, sizeof(list));
     formats[0].formatId = CF_UNICODETEXT;
     formats[0].formatName = NULL;
-    list.msgFlags = 0;
+    CLIP_FLAGS(list) = 0;
     list.numFormats = 1;
     list.formats = formats;
     return s->cliprdr->ClientFormatList(s->cliprdr, &list);
@@ -418,7 +447,7 @@ static UINT on_server_format_list(CliprdrClientContext* ctx,
     if (ctx->ClientFormatListResponse) {
         CLIPRDR_FORMAT_LIST_RESPONSE resp;
         memset(&resp, 0, sizeof(resp));
-        resp.msgFlags = CB_RESPONSE_OK;
+        CLIP_FLAGS(resp) = CB_RESPONSE_OK;
         rc = ctx->ClientFormatListResponse(ctx, &resp);
         if (rc != CHANNEL_RC_OK) return rc;
     }
@@ -438,10 +467,10 @@ static UINT on_server_format_list(CliprdrClientContext* ctx,
 static UINT on_server_format_data_response(
     CliprdrClientContext* ctx, const CLIPRDR_FORMAT_DATA_RESPONSE* resp) {
     zephyr_rdp_session* s = (zephyr_rdp_session*)ctx->custom;
-    if (!s || !resp || (resp->msgFlags & CB_RESPONSE_FAIL)) return CHANNEL_RC_OK;
-    if (!resp->requestedFormatData || resp->dataLen < 2) return CHANNEL_RC_OK;
+    if (!s || !resp || (CLIP_FLAGS_P(resp) & CB_RESPONSE_FAIL)) return CHANNEL_RC_OK;
+    if (!resp->requestedFormatData || CLIP_LEN_P(resp) < 2) return CHANNEL_RC_OK;
 
-    size_t units = resp->dataLen / 2u;
+    size_t units = CLIP_LEN_P(resp) / 2u;
     long need = utf16le_to_utf8((const uint16_t*)resp->requestedFormatData, units,
                                 NULL, 0);
     if (need < 0) return CHANNEL_RC_OK; /* malformed: drop, never guess */
@@ -467,28 +496,28 @@ static UINT on_server_format_data_request(
     memset(&resp, 0, sizeof(resp));
 
     if (!s || !s->clip_pending || !req || req->requestedFormatId != CF_UNICODETEXT) {
-        resp.msgFlags = CB_RESPONSE_FAIL;
+        CLIP_FLAGS(resp) = CB_RESPONSE_FAIL;
         return ctx->ClientFormatDataResponse(ctx, &resp);
     }
 
     long units = utf8_to_utf16le(s->clip_pending, NULL, 0);
     if (units < 0) {
-        resp.msgFlags = CB_RESPONSE_FAIL;
+        CLIP_FLAGS(resp) = CB_RESPONSE_FAIL;
         return ctx->ClientFormatDataResponse(ctx, &resp);
     }
     uint16_t* wide = (uint16_t*)calloc((size_t)units, sizeof(uint16_t));
     if (!wide) {
-        resp.msgFlags = CB_RESPONSE_FAIL;
+        CLIP_FLAGS(resp) = CB_RESPONSE_FAIL;
         return ctx->ClientFormatDataResponse(ctx, &resp);
     }
     long w = utf8_to_utf16le(s->clip_pending, wide, (size_t)units);
     if (w < 0) {
         free(wide);
-        resp.msgFlags = CB_RESPONSE_FAIL;
+        CLIP_FLAGS(resp) = CB_RESPONSE_FAIL;
         return ctx->ClientFormatDataResponse(ctx, &resp);
     }
-    resp.msgFlags = CB_RESPONSE_OK;
-    resp.dataLen = (UINT32)((size_t)w * sizeof(uint16_t));
+    CLIP_FLAGS(resp) = CB_RESPONSE_OK;
+    CLIP_LEN(resp) = (UINT32)((size_t)w * sizeof(uint16_t));
     resp.requestedFormatData = (const BYTE*)wide;
     UINT rc = ctx->ClientFormatDataResponse(ctx, &resp);
     free(wide);
@@ -507,7 +536,7 @@ static void bind_cliprdr(zephyr_rdp_session* s, CliprdrClientContext* ctx) {
 
 /* ── channel wiring ──────────────────────────────────────────────────────── */
 
-static void on_channel_connected(void* context, ChannelConnectedEventArgs* e) {
+static void on_channel_connected(void* context, Z_EVENT_CONST ChannelConnectedEventArgs* e) {
     rdpContext* ctx = (rdpContext*)context;
     zephyr_rdp_session* s = owner_of(ctx);
     if (!s || !e || !e->name) return;
@@ -522,7 +551,7 @@ static void on_channel_connected(void* context, ChannelConnectedEventArgs* e) {
     emit_event(s, ZEPHYR_RDP_EV_CHANNEL, 0, 0, e->name);
 }
 
-static void on_channel_disconnected(void* context, ChannelDisconnectedEventArgs* e) {
+static void on_channel_disconnected(void* context, Z_EVENT_CONST ChannelDisconnectedEventArgs* e) {
     rdpContext* ctx = (rdpContext*)context;
     zephyr_rdp_session* s = owner_of(ctx);
     if (!s || !e || !e->name) return;
@@ -767,10 +796,13 @@ static BOOL apply_config(rdpSettings* settings, const zephyr_rdp_config* cfg) {
             return FALSE;
         if (!freerdp_settings_set_bool(settings, FreeRDP_RedirectDrives, TRUE))
             return FALSE;
-        char* params[3];
-        params[0] = (char*)"drive";
-        params[1] = (char*)cfg->drive_name;
-        params[2] = (char*)cfg->drive_path;
+#if FREERDP_VERSION_MAJOR >= 3
+        const char* params[3] = { "drive", cfg->drive_name, cfg->drive_path };
+#else
+        char* params[3] = {
+            (char*)"drive", (char*)cfg->drive_name, (char*)cfg->drive_path
+        };
+#endif
         if (!freerdp_client_add_device_channel(settings, 3, params)) return FALSE;
     }
 
@@ -1221,7 +1253,11 @@ int32_t zephyr_rdp_run(zephyr_rdp_session* s) {
             break;
         }
 
+#if FREERDP_VERSION_MAJOR >= 3
+        if (freerdp_shall_disconnect_context(s->context)) break;
+#else
         if (freerdp_shall_disconnect(s->instance)) break;
+#endif
     }
 
     freerdp_disconnect(s->instance);
@@ -1234,7 +1270,13 @@ void zephyr_rdp_stop(zephyr_rdp_session* s) {
     s->stopping = TRUE;
     /* Breaks a connect that is still in TLS/NLA negotiation, where the loop has
      * not started and SetEvent alone would not be observed. */
-    if (s->instance) freerdp_abort_connect(s->instance);
+    if (s->instance) {
+#if FREERDP_VERSION_MAJOR >= 3
+        freerdp_abort_connect_context(s->context);
+#else
+        freerdp_abort_connect(s->instance);
+#endif
+    }
     if (s->wake) SetEvent(s->wake);
 }
 
@@ -1368,8 +1410,8 @@ int32_t zephyr_rdp_probe_drive(const zephyr_rdp_config* cfg, char* name_out,
     if (device) {
         RDPDR_DRIVE* drive = (RDPDR_DRIVE*)device;
         if (type_out) *type_out = (int32_t)device->Type;
-        if (name_out && name_cap && drive->Name) {
-            strncpy(name_out, drive->Name, name_cap - 1);
+        if (name_out && name_cap && DRIVE_NAME(drive)) {
+            strncpy(name_out, DRIVE_NAME(drive), name_cap - 1);
             name_out[name_cap - 1] = '\0';
         }
         if (path_out && path_cap && drive->Path) {

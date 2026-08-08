@@ -38,8 +38,8 @@ echo "Building shim tests against: $PKGS"
 # caught three exported test helpers that had no header declaration, which would
 # have been unbindable from Rust.
 # shellcheck disable=SC2086
-cc -std=c11 -O1 -g -Wall -Wextra -Werror \
-   -Wmissing-prototypes -Wstrict-prototypes \
+cc -std=c11 -O1 -g -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror \
+   -Wno-error=deprecated-declarations -Wmissing-prototypes -Wstrict-prototypes \
    -I"$HERE/csrc" $CFLAGS_PKG \
    "$HERE/csrc/zephyr_rdp.c" "$HERE/csrc/zephyr_rdp_test.c" \
    -o "$OUT/zephyr_rdp_test" $LIBS_PKG
