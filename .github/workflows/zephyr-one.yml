@@ -64,7 +64,9 @@ jobs:
       - name: Build and smoke native FreeRDP helper
         run: sh scripts/stage-native-rdp-bin.sh
       - name: Live native FreeRDP end-to-end
-        run: python3 native/zephyr-one-rdp/e2e/live-session.py
+        # Exercise the exact release binary staged for Tauri, not an unrelated
+        # debug artifact (cargo test does not create target/debug/zephyr-one-rdp).
+        run: python3 native/zephyr-one-rdp/e2e/live-session.py --helper native-bin/zephyr-one-rdp
       - name: Stage Zephyr core
         run: |
           sh scripts/stage-zephyr-core.sh

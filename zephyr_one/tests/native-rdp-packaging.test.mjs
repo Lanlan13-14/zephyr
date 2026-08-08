@@ -47,6 +47,8 @@ test('test job exercises C, Rust, staging, and a live RDP server', () => {
     'stage-native-rdp-bin.sh', 'e2e/live-session.py']) {
     assert.ok(text.includes(marker), `test job contains ${marker}`);
   }
+  assert.match(text, /--helper native-bin\/zephyr-one-rdp/,
+    'live e2e runs the release helper staged for the installer');
 });
 
 test('vcpkg manifest is pinned and carries the FreeRDP client', () => {
