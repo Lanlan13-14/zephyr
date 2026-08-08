@@ -82,6 +82,29 @@ fn archive_available(name: &str, dirs: &[PathBuf], roots: &[PathBuf]) -> bool {
     })
 }
 
+/// Is `name` a POSIX-only library that does not exist on this target?
+///
+/// vcpkg's FreeRDP 3 `.pc` files carry `-ldl -lrt -lpthread -lm` in
+/// `Libs.private` regardless of triplet, so a `--static` probe hands them to
+/// every target. Measured consequences of passing them through:
+///
+///   Windows: `LINK : fatal error LNK1181: cannot open input file 'dl.lib'`
+///   macOS:   `ld: library 'rt' not found`
+///
+/// On Windows/MSVC none of the four exist as an import library; their functions
+/// live in the CRT. On macOS `dl`/`pthread`/`m` resolve to libSystem stubs, but
+/// there is no `librt` at all — clock_gettime and friends are in libSystem too.
+/// Linux keeps every one of them.
+fn is_absent_posix_lib(name: &str, target_os: &str, msvc: bool) -> bool {
+    if msvc || target_os == "windows" {
+        matches!(name, "dl" | "rt" | "pthread" | "m")
+    } else if target_os == "macos" || target_os == "ios" {
+        name == "rt"
+    } else {
+        false
+    }
+}
+
 impl LinkSpec {
     /// Print the accumulated link directives. Called *after* cc::Build::compile.
     fn emit(&self) {
@@ -89,9 +112,16 @@ impl LinkSpec {
             println!("cargo:rustc-link-search=native={}", path.display());
         }
 
+        let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+        let msvc = env::var("TARGET").map(|t| t.contains("msvc")).unwrap_or(false);
+
         let roots = system_roots();
         let mut static_hits = 0usize;
         for lib in &self.libs {
+            if is_absent_posix_lib(lib, &target_os, msvc) {
+                println!("cargo:warning=dropping -l{lib} (absent on {target_os})");
+                continue;
+            }
             if self.statik && archive_available(lib, &self.link_paths, &roots) {
                 static_hits += 1;
                 println!("cargo:rustc-link-lib=static={lib}");

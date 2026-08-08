@@ -304,6 +304,14 @@ jobs:
       - run: npm install
       - run: npm run stage:core
       - run: node scripts/stage-desktop-runtime.mjs
+      # Runs BEFORE the helper build so the data survives a link failure.
+      # Static FreeRDP linking failed here with one undefined symbol per FFI
+      # call while the archives were found and correctly ordered, which no
+      # amount of reading the link line can explain. This prints what the
+      # archives actually contain.
+      - name: Diagnose static FreeRDP archives
+        continue-on-error: true
+        run: sh scripts/diagnose-static-freerdp.sh
       - name: Build and smoke native FreeRDP helper
         run: sh scripts/stage-native-rdp-bin.sh
       - name: Assert helper is self-contained
