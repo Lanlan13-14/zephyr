@@ -79,6 +79,14 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
     needs: test
     runs-on: windows-2022
+    env:
+      # run-vcpkg computes its own install root under a run-scoped GUID
+      # directory and never exports it to later steps, so the pkg-config step
+      # used to see an empty VCPKG_INSTALLED_DIR. It applies its default via
+      # setEnvVarIfUndefined, so pinning the value here wins and stays readable
+      # by every step that follows.
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
     steps:
       - uses: actions/checkout@v5
       - name: Stamp package version from release tag
@@ -94,22 +102,9 @@ jobs:
           vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
           vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
           runVcpkgInstall: true
-        env:
-          VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
       - name: Configure static FreeRDP pkg-config
-        shell: pwsh
-        run: |
-          $triplet = 'x64-windows-static-md'
-          $pc = Join-Path $env:VCPKG_INSTALLED_DIR "$triplet/lib/pkgconfig"
-          # pkgconf is a host tool, so vcpkg installs it under the host triplet,
-          # not under x64-windows-static-md (the target triplet).
-          $pkgconf = Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows/tools/pkgconf/pkgconf.exe"
-          if (!(Test-Path $pc)) { throw "vcpkg pkg-config directory missing: $pc" }
-          if (!(Test-Path $pkgconf)) { throw "vcpkg pkgconf missing: $pkgconf" }
-          "PKG_CONFIG=$pkgconf" >> $env:GITHUB_ENV
-          "PKG_CONFIG_PATH=$pc" >> $env:GITHUB_ENV
-          "PKG_CONFIG_ALL_STATIC=1" >> $env:GITHUB_ENV
-          "ZEPHYR_ONE_RDP_STATIC=1" >> $env:GITHUB_ENV
+        shell: bash
+        run: python3 scripts/resolve-vcpkg-pkgconfig.py
       - name: Install WebView2 (usually preinstalled on windows-2022)
         shell: pwsh
         run: |
@@ -185,6 +180,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
     needs: test
     runs-on: macos-latest
+    env:
+      # See the Windows job: run-vcpkg does not export its install root.
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
+      VCPKG_DEFAULT_TRIPLET: ${{ runner.arch == 'ARM64' && 'arm64-osx' || 'x64-osx' }}
     steps:
       - uses: actions/checkout@v5
       - name: Stamp package version from release tag
@@ -201,20 +200,8 @@ jobs:
           vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
           vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
           runVcpkgInstall: true
-        env:
-          VCPKG_DEFAULT_TRIPLET: ${{ runner.arch == 'ARM64' && 'arm64-osx' || 'x64-osx' }}
       - name: Configure static FreeRDP pkg-config
-        run: |
-          case "$(uname -m)" in
-            arm64) triplet=arm64-osx ;;
-            x86_64) triplet=x64-osx ;;
-            *) echo "unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
-          esac
-          pc="$VCPKG_INSTALLED_DIR/$triplet/lib/pkgconfig"
-          test -d "$pc"
-          echo "PKG_CONFIG_PATH=$pc" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_ALL_STATIC=1" >> "$GITHUB_ENV"
-          echo "ZEPHYR_ONE_RDP_STATIC=1" >> "$GITHUB_ENV"
+        run: python3 scripts/resolve-vcpkg-pkgconfig.py
       - run: npm install
       - run: sh scripts/stage-zephyr-core.sh
       - run: node scripts/stage-desktop-runtime.mjs
@@ -271,6 +258,13 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
     needs: test
     runs-on: ubuntu-latest
+    env:
+      # run-vcpkg only exports VCPKG_ROOT/VCPKG_DEFAULT_TRIPLET to later steps;
+      # it derives VCPKG_INSTALLED_DIR into a run-scoped GUID directory that no
+      # other step can see. Its setEnvVarIfUndefined leaves a pre-set value
+      # alone, so pinning it here makes the install root readable downstream.
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
+      VCPKG_DEFAULT_TRIPLET: x64-linux
     steps:
       - uses: actions/checkout@v5
       - name: Stamp package version from release tag
@@ -285,15 +279,8 @@ jobs:
           vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
           vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
           runVcpkgInstall: true
-        env:
-          VCPKG_DEFAULT_TRIPLET: x64-linux
       - name: Configure static FreeRDP pkg-config
-        run: |
-          pc="$VCPKG_INSTALLED_DIR/x64-linux/lib/pkgconfig"
-          test -d "$pc"
-          echo "PKG_CONFIG_PATH=$pc" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_ALL_STATIC=1" >> "$GITHUB_ENV"
-          echo "ZEPHYR_ONE_RDP_STATIC=1" >> "$GITHUB_ENV"
+        run: python3 scripts/resolve-vcpkg-pkgconfig.py
       - name: Install Linux deps
         working-directory: .
         run: |

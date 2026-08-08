@@ -13,6 +13,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(one, 'native/zephyr-one-rd
 const stage = fs.readFileSync(path.join(one, 'scripts/stage-native-rdp-bin.sh'), 'utf8');
 const smoke = fs.readFileSync(path.join(one, 'scripts/smoke-native-rdp-helper.py'), 'utf8');
 const windowsSmoke = fs.readFileSync(path.join(one, 'scripts/windows-install-smoke.ps1'), 'utf8');
+const resolver = fs.readFileSync(path.join(one, 'scripts/resolve-vcpkg-pkgconfig.py'), 'utf8');
 
 function job(name, next) {
   const start = workflow.indexOf(`  ${name}:`);
@@ -31,7 +32,13 @@ test('every desktop release job builds and stages the native helper', () => {
     const text = job(name, next);
     assert.match(text, /lukka\/run-vcpkg@v11/, `${name}: static dependencies`);
     assert.match(text, /runVcpkgInstall: true/, `${name}: manifest installed`);
-    assert.match(text, /ZEPHYR_ONE_RDP_STATIC=1/, `${name}: static link requested`);
+    /* Static linking is requested by resolve-vcpkg-pkgconfig.py rather than by
+     * an inline shell line in each job. Asserting the call plus the resolver's
+     * own behaviour keeps the guarantee while letting the three jobs share one
+     * tested implementation; asserting the literal here would only prove the
+     * YAML repeats itself. */
+    assert.match(text, /resolve-vcpkg-pkgconfig\.py/,
+      `${name}: resolves the vcpkg .pc directory and pkgconf`);
     assert.doesNotMatch(text, /validation_only != 'true'/,
       `${name}: validation_only must still build and inspect the package`);
     assert.match(text, /stage-native-rdp-bin\.sh/, `${name}: helper staged`);
@@ -69,6 +76,24 @@ test('build and staging scripts enforce self-contained protocol smoke', () => {
   assert.match(stage, /smoke-native-rdp-helper\.py/);
   assert.match(smoke, /freerdpMajor/);
   assert.match(smoke, /MSG_STOP/);
+});
+
+/*
+ * The three build jobs delegate their pkg-config wiring to this one script, so
+ * the guarantee "packaged builds link FreeRDP statically" now lives here rather
+ * than in three copies of inline shell. If the script stopped exporting these,
+ * every desktop build would silently fall back to a dynamic link against a
+ * FreeRDP that is not present on a user's machine.
+ */
+test('the vcpkg pkg-config resolver exports what packaged builds depend on', () => {
+  for (const name of ['PKG_CONFIG', 'PKG_CONFIG_PATH', 'PKG_CONFIG_ALL_STATIC',
+    'ZEPHYR_ONE_RDP_STATIC']) {
+    assert.ok(resolver.includes(name), `resolver exports ${name}`);
+  }
+  assert.match(resolver, /GITHUB_ENV/, 'resolver publishes to later steps');
+  // A missing .pc must fail the build with a directory listing, not proceed to
+  // a dynamic link: this is exactly how the previous attempt failed silently.
+  assert.match(resolver, /freerdp3|freerdp2/, 'resolver verifies FreeRDP .pc files exist');
 });
 
 test('Linux no longer publishes a dependency-less fake portable binary', () => {
