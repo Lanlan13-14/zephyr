@@ -21,14 +21,6 @@ serde_json = "1"
 [build-dependencies]
 cc = "1"
 pkg-config = "0.3"
-# Unconditional on purpose. build.rs decides which package manager to ask by
-# reading CARGO_CFG_TARGET_OS at run time, which is the only way to see the
-# *target*: a build script is itself compiled for the host, so gating this
-# dependency on `cfg(target_os = "windows")` would make it unavailable exactly
-# when cross-compiling Linux → Windows, and would fail to compile on a Linux
-# host even for a Linux target because build.rs names `vcpkg::` unconditionally.
-# The crate is small and pure Rust, so carrying it everywhere costs nothing.
-vcpkg = "0.2"
 
 [profile.release]
 opt-level = 2

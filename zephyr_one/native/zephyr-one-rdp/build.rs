@@ -61,7 +61,7 @@ impl LinkSpec {
     }
 }
 
-fn probe_unix() -> LinkSpec {
+fn probe_pkg_config(statik: bool) -> LinkSpec {
     let mut last_error = String::new();
 
     for names in UNIX_CANDIDATES {
@@ -69,9 +69,23 @@ fn probe_unix() -> LinkSpec {
         let mut ok = true;
 
         for name in names {
-            // cargo_metadata(false): collect, do not print. See the module note
-            // on link order — printing here is what breaks the build.
-            match pkg_config::Config::new().cargo_metadata(false).probe(name) {
+            /*
+             * cargo_metadata(false): collect, do not print. See the module note
+             * on link order — printing here is what breaks the build.
+             *
+             * Windows/macOS point PKG_CONFIG_PATH at a vcpkg STATIC triplet.
+             * statik(true) is essential: it includes Libs.private from the .pc
+             * files (OpenSSL, zlib, cJSON, system frameworks). vcpkg-rs's
+             * find_package("freerdp") is not sufficient here: the port contains
+             * three actual libraries (freerdp3, freerdp-client3, winpr3), and
+             * probing only the package name neither finds all three nor carries
+             * their private transitive dependencies.
+             */
+            match pkg_config::Config::new()
+                .cargo_metadata(false)
+                .statik(statik)
+                .probe(name)
+            {
                 Ok(lib) => {
                     spec.include_paths.extend(lib.include_paths);
                     spec.link_paths.extend(lib.link_paths);
@@ -94,33 +108,15 @@ fn probe_unix() -> LinkSpec {
 
     panic!(
         "Neither FreeRDP 3 nor FreeRDP 2 found via pkg-config ({last_error}).\n\
-         Alpine:        apk add freerdp-dev\n\
-         Debian/Ubuntu: apt-get install libfreerdp-dev libwinpr-dev\n\
-         macOS:         brew install freerdp"
+         Linux: install freerdp3-dev (or freerdp2-dev).\n\
+         Windows/macOS: run the checked-in vcpkg manifest with a static triplet\n\
+         and point PKG_CONFIG_PATH at <installed>/<triplet>/lib/pkgconfig."
     );
 }
 
-fn probe_windows() -> LinkSpec {
-    // vcpkg's freerdp port carries the import libraries, headers, and the
-    // openssl/zlib transitive links, which is why this is not a hand-rolled
-    // list of link-lib lines.
-    match vcpkg::Config::new()
-        .cargo_metadata(false)
-        .emit_includes(true)
-        .find_package("freerdp")
-    {
-        Ok(lib) => LinkSpec {
-            include_paths: lib.include_paths,
-            raw_metadata: lib.cargo_metadata,
-            ..Default::default()
-        },
-        Err(error) => panic!(
-            "FreeRDP not found through vcpkg: {error}\n\
-             Install with: vcpkg install freerdp:x64-windows-static-md\n\
-             and set VCPKG_ROOT so this build script can locate it."
-        ),
-    }
-}
+/* Windows/macOS are also probed through pkg-config. Their workflow points
+ * PKG_CONFIG_PATH at vcpkg's static triplet, so the .pc files remain the single
+ * source of truth for all FreeRDP and transitive link libraries. */
 
 fn main() {
     println!("cargo:rerun-if-changed=csrc/zephyr_rdp.c");
@@ -131,11 +127,17 @@ fn main() {
     // macro describes the *host*, so a Linux→Windows cross-compile would take
     // the wrong branch.
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let spec = if target_os == "windows" {
-        probe_windows()
-    } else {
-        probe_unix()
-    };
+    /*
+     * Packaged builds set ZEPHYR_ONE_RDP_STATIC=1 and point PKG_CONFIG_PATH at a
+     * vcpkg static triplet on all three desktop platforms. This makes the
+     * helper self-contained: installing One must never require Homebrew or the
+     * distro's exact FreeRDP SONAME. Local Linux development may omit the flag
+     * and link the distro shared libraries for a much faster edit/build loop.
+     */
+    let force_static = env::var_os("ZEPHYR_ONE_RDP_STATIC").is_some();
+    let spec = probe_pkg_config(
+        force_static || matches!(target_os.as_str(), "windows" | "macos"),
+    );
 
     let mut build = cc::Build::new();
     build.file("csrc/zephyr_rdp.c").include("csrc").std("c11");

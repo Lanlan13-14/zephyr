@@ -72,6 +72,22 @@ def need(binary):
     return path
 
 
+def need_any(*binaries):
+    """Return the first installed command name.
+
+    FreeRDP 2 distributions ship `freerdp-shadow-cli`; Ubuntu 24.04's FreeRDP
+    3 package intentionally versions it as `freerdp-shadow-cli3`. The protocol
+    test is version-independent and must not fail merely because a distro avoids
+    a binary-name collision.
+    """
+    for binary in binaries:
+        path = shutil.which(binary)
+        if path:
+            return path
+    print(f"FATAL: none of {', '.join(binaries)} found on PATH", file=sys.stderr)
+    sys.exit(2)
+
+
 def encode(kind, payload=b""):
     body = bytes([kind]) + payload
     return struct.pack("<I", len(body)) + body
@@ -240,7 +256,7 @@ def main():
 
     xvfb = need("Xvfb")
     xsetroot = need("xsetroot")
-    shadow = need("freerdp-shadow-cli")
+    shadow = need_any("freerdp-shadow-cli", "freerdp-shadow-cli3")
 
     share = "/tmp/zephyr-e2e-share"
     os.makedirs(share, exist_ok=True)

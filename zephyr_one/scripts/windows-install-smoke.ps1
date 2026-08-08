@@ -146,6 +146,23 @@ if (-not $installDir -or -not (Test-Path -LiteralPath $installDir)) {
   Dump-Fail ("installDir invalid: '{0}'" -f $installDir)
 }
 $script:InstallDir = $installDir
+
+# Native RDP is a required packaged feature, not an optional developer tool.
+# Validate the *installed* resource tree rather than the pre-bundle staging
+# directory: this catches a Tauri resources mapping that compiles but puts the
+# helper where runtime::resolve_rdp_helper_bin never searches.
+$rdpHelper = Get-ChildItem -LiteralPath $installDir -Recurse -Filter "zephyr-one-rdp.exe" -ErrorAction SilentlyContinue |
+  Where-Object { $_.FullName -match 'native-bin' } |
+  Select-Object -First 1
+if (-not $rdpHelper) {
+  Dump-Fail "installed app is missing native-bin/zephyr-one-rdp.exe"
+}
+Write-Log ("Installed native RDP helper: {0} ({1} bytes)" -f $rdpHelper.FullName, $rdpHelper.Length)
+python scripts/smoke-native-rdp-helper.py $rdpHelper.FullName
+if ($LASTEXITCODE -ne 0) {
+  Dump-Fail ("installed native RDP helper smoke failed exit={0}" -f $LASTEXITCODE)
+}
+
 # CI/headless: start embedded core from Rust setup without waiting on WebView JS.
 $env:ZEPHYR_ONE_AUTOSTART_RUNTIME = "1"
 Write-Log ("Launching '{0}' cwd='{1}' ZEPHYR_ONE_AUTOSTART_RUNTIME=1" -f $launchExe, $installDir)

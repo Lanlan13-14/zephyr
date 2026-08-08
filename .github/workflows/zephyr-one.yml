@@ -50,6 +50,21 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run test:ci
       - run: npm run build
+      - name: Install native RDP test dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            freerdp3-dev freerdp3-shadow-x11 xvfb x11-xserver-utils pkg-config
+      - name: Test native FreeRDP C shim
+        run: sh native/zephyr-one-rdp/run-ctests.sh
+      - name: Test native FreeRDP Rust helper
+        run: |
+          cd native/zephyr-one-rdp
+          CARGO_INCREMENTAL=0 cargo test --locked
+      - name: Build and smoke native FreeRDP helper
+        run: sh scripts/stage-native-rdp-bin.sh
+      - name: Live native FreeRDP end-to-end
+        run: python3 native/zephyr-one-rdp/e2e/live-session.py
       - name: Stage Zephyr core
         run: |
           sh scripts/stage-zephyr-core.sh
@@ -71,6 +86,28 @@ jobs:
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install static FreeRDP dependencies (vcpkg)
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
+          vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
+          runVcpkgInstall: true
+        env:
+          VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
+      - name: Configure static FreeRDP pkg-config
+        shell: pwsh
+        run: |
+          $triplet = 'x64-windows-static-md'
+          $pc = Join-Path $env:VCPKG_INSTALLED_DIR "$triplet/lib/pkgconfig"
+          # pkgconf is a host tool, so vcpkg installs it under the host triplet,
+          # not under x64-windows-static-md (the target triplet).
+          $pkgconf = Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows/tools/pkgconf/pkgconf.exe"
+          if (!(Test-Path $pc)) { throw "vcpkg pkg-config directory missing: $pc" }
+          if (!(Test-Path $pkgconf)) { throw "vcpkg pkgconf missing: $pkgconf" }
+          "PKG_CONFIG=$pkgconf" >> $env:GITHUB_ENV
+          "PKG_CONFIG_PATH=$pc" >> $env:GITHUB_ENV
+          "PKG_CONFIG_ALL_STATIC=1" >> $env:GITHUB_ENV
+          "ZEPHYR_ONE_RDP_STATIC=1" >> $env:GITHUB_ENV
       - name: Install WebView2 (usually preinstalled on windows-2022)
         shell: pwsh
         run: |
@@ -84,6 +121,15 @@ jobs:
       - name: Bundle desktop Node runtime
         shell: pwsh
         run: node scripts/stage-desktop-runtime.mjs
+      - name: Build and smoke native FreeRDP helper
+        shell: bash
+        run: sh scripts/stage-native-rdp-bin.sh
+      - name: Assert native helper is staged
+        shell: pwsh
+        run: |
+          $helper = 'native-bin/zephyr-one-rdp.exe'
+          if (!(Test-Path $helper)) { throw "missing staged RDP helper: $helper" }
+          if ((Get-Item $helper).Length -lt 100000) { throw "RDP helper is implausibly small" }
       - name: Build frontend
         shell: pwsh
         run: npm run build
@@ -131,7 +177,10 @@ jobs:
           if-no-files-found: warn
 
   build-macos:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true'
+    # validation_only still compiles and inspects the installer; it merely skips
+    # the release job. Otherwise validation would exercise Windows only and a
+    # broken macOS RDP helper could reach a real release untested.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
     needs: test
     runs-on: macos-latest
     steps:
@@ -144,12 +193,47 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Install static FreeRDP dependencies (vcpkg)
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
+          vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
+          runVcpkgInstall: true
+        env:
+          VCPKG_DEFAULT_TRIPLET: ${{ runner.arch == 'ARM64' && 'arm64-osx' || 'x64-osx' }}
+      - name: Configure static FreeRDP pkg-config
+        run: |
+          case "$(uname -m)" in
+            arm64) triplet=arm64-osx ;;
+            x86_64) triplet=x64-osx ;;
+            *) echo "unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          pc="$VCPKG_INSTALLED_DIR/$triplet/lib/pkgconfig"
+          test -d "$pc"
+          echo "PKG_CONFIG_PATH=$pc" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_ALL_STATIC=1" >> "$GITHUB_ENV"
+          echo "ZEPHYR_ONE_RDP_STATIC=1" >> "$GITHUB_ENV"
       - run: npm install
       - run: sh scripts/stage-zephyr-core.sh
       - run: node scripts/stage-desktop-runtime.mjs
+      - name: Build and smoke native FreeRDP helper
+        run: sh scripts/stage-native-rdp-bin.sh
+      - name: Assert helper has no Homebrew/vcpkg dylib dependencies
+        run: |
+          helper=native-bin/zephyr-one-rdp
+          test -x "$helper"
+          ! otool -L "$helper" | grep -E '/(opt/homebrew|usr/local|vcpkg|installed)/'
       - run: npm run build
       - name: Tauri build macOS
         run: npx tauri build
+      - name: Inspect macOS app bundle native helper
+        run: |
+          app=$(find src-tauri/target/release/bundle -type d -name '*.app' | head -1)
+          test -n "$app"
+          helper=$(find "$app" -type f -path '*native-bin/zephyr-one-rdp' | head -1)
+          test -n "$helper" && test -x "$helper"
+          python3 scripts/smoke-native-rdp-helper.py "$helper"
+          ! otool -L "$helper" | grep -E '/(opt/homebrew|usr/local|vcpkg|installed)/'
       - name: Collect macOS artifacts
         run: |
           mkdir -p dist-out
@@ -180,7 +264,9 @@ jobs:
           if-no-files-found: warn
 
   build-linux:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true'
+    # Same validation contract as Windows/macOS: build real deb/rpm packages and
+    # inspect their native-bin contents, but leave publishing to release job.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -191,6 +277,21 @@ jobs:
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install static FreeRDP dependencies (vcpkg)
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
+          vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
+          runVcpkgInstall: true
+        env:
+          VCPKG_DEFAULT_TRIPLET: x64-linux
+      - name: Configure static FreeRDP pkg-config
+        run: |
+          pc="$VCPKG_INSTALLED_DIR/x64-linux/lib/pkgconfig"
+          test -d "$pc"
+          echo "PKG_CONFIG_PATH=$pc" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_ALL_STATIC=1" >> "$GITHUB_ENV"
+          echo "ZEPHYR_ONE_RDP_STATIC=1" >> "$GITHUB_ENV"
       - name: Install Linux deps
         working-directory: .
         run: |
@@ -199,17 +300,27 @@ jobs:
       - run: npm install
       - run: npm run stage:core
       - run: node scripts/stage-desktop-runtime.mjs
+      - name: Build and smoke native FreeRDP helper
+        run: sh scripts/stage-native-rdp-bin.sh
+      - name: Assert helper is self-contained
+        run: |
+          helper=native-bin/zephyr-one-rdp
+          test -x "$helper"
+          ! ldd "$helper" | grep -E 'lib(freerdp|winpr|ssl|crypto|z)'
+          ! ldd "$helper" | grep 'not found'
       - run: npm run build
       - name: Tauri build Linux (deb+rpm; skip AppImage/linuxdeploy flakiness)
         run: |
           # Full compile always; AppImage's linuxdeploy often fails on GH runners.
           npx tauri build --bundles deb,rpm
-          # Keep the raw binary as portable fallback
-          mkdir -p dist-out
-          if [ -f src-tauri/target/release/zephyr-one ]; then
-            cp -v src-tauri/target/release/zephyr-one "dist-out/zephyr-one-linux-x64-${{ github.event.inputs.tag }}"
-            chmod +x "dist-out/zephyr-one-linux-x64-${{ github.event.inputs.tag }}"
-          fi
+          # Do not publish the raw Tauri executable as a "portable" app. It
+          # cannot run without zephyr-core, desktop-runtime and native-bin; a
+          # lone binary installs successfully but loses every embedded feature.
+          deb=$(find src-tauri/target/release/bundle -type f -name '*.deb' | head -1)
+          rpm=$(find src-tauri/target/release/bundle -type f -name '*.rpm' | head -1)
+          test -n "$deb" && test -n "$rpm"
+          dpkg-deb -c "$deb" | grep -E 'native-bin/zephyr-one-rdp$'
+          rpm -qlp "$rpm" | grep -E 'native-bin/zephyr-one-rdp$'
       - name: Collect Linux artifacts
         run: |
           mkdir -p dist-out

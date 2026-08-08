@@ -121,12 +121,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
-name = "vcpkg"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
-
-[[package]]
 name = "zephyr-one-rdp"
 version = "0.1.0"
 dependencies = [
@@ -134,7 +128,6 @@ dependencies = [
  "pkg-config",
  "serde",
  "serde_json",
- "vcpkg",
 ]
 
 [[package]]

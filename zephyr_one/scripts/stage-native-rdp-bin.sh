@@ -1,56 +1,66 @@
 #!/usr/bin/env sh
+# Build, verify, and stage the native FreeRDP helper for the Tauri bundle.
 #
-# Build the native FreeRDP helper and stage it where the Tauri bundle picks it
-# up as a resource (`native-bin/`, listed in tauri.conf.json).
+# Required for packaged builds on Windows/macOS/Linux:
+#   PKG_CONFIG_PATH       vcpkg static triplet's lib/pkgconfig
+#   ZEPHYR_ONE_RDP_STATIC=1
+# Local Linux development may instead use distro freerdp3-dev/freerdp2-dev.
 #
-# Why a plain resource rather than Tauri's `externalBin`:
-#   externalBin requires the file to be named with the target triple suffix
-#   (zephyr-one-rdp-x86_64-pc-windows-msvc.exe) and is meant for sidecars the
-#   *shell* spawns through the shell plugin. Here the spawner is the Node core,
-#   which just needs a path — so a resource plus ZEPHYR_ONE_RDP_HELPER is both
-#   simpler and avoids granting the WebView a shell-execute capability it would
-#   otherwise need.
-#
-# FreeRDP development files must be present:
-#   Alpine  : apk add freerdp-dev
-#   Debian  : apt-get install libfreerdp-dev libwinpr-dev
-#   macOS   : brew install freerdp
-#   Windows : vcpkg install freerdp:x64-windows-static-md  (set VCPKG_ROOT)
-#
-# The build is intentionally *not* silent about a missing FreeRDP: build.rs
-# panics with install instructions, because a Zephyr One built without the
-# helper would install cleanly and then fail only when a user opens an RDP tab.
+# Optional environment (used by tests/CI cross-target probes):
+#   ZEPHYR_ONE_RDP_CRATE   helper crate directory
+#   ZEPHYR_ONE_RDP_OUT     destination resource directory
+#   ZEPHYR_ONE_RDP_TARGET  cargo target triple
+#   ZEPHYR_ONE_RDP_PROFILE release (default) or debug
 set -eu
 
-HERE="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
-ONE="$(CDPATH= cd -- "$HERE/.." && pwd)"
-CRATE="$ONE/native/zephyr-one-rdp"
-OUT="$ONE/native-bin"
+ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+CRATE="${ZEPHYR_ONE_RDP_CRATE:-$ROOT/native/zephyr-one-rdp}"
+OUT="${ZEPHYR_ONE_RDP_OUT:-$ROOT/native-bin}"
+PROFILE="${ZEPHYR_ONE_RDP_PROFILE:-release}"
+TARGET="${ZEPHYR_ONE_RDP_TARGET:-}"
 
-if [ ! -f "$CRATE/Cargo.toml" ]; then
-    echo "ERROR: helper crate missing at $CRATE" >&2
-    exit 1
+case "$PROFILE" in
+  release) PROFILE_FLAG="--release" ;;
+  debug) PROFILE_FLAG="" ;;
+  *) echo "ERROR: unsupported ZEPHYR_ONE_RDP_PROFILE=$PROFILE" >&2; exit 2 ;;
+esac
+
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT) EXE="zephyr-one-rdp.exe" ;;
+  *) EXE="zephyr-one-rdp" ;;
+esac
+
+TARGET_ARGS=""
+TARGET_DIR=""
+if [ -n "$TARGET" ]; then
+  TARGET_ARGS="--target $TARGET"
+  TARGET_DIR="$TARGET/"
 fi
 
-echo "Building native RDP helper (release) ..."
-# Separate target dir from src-tauri's so a helper rebuild never invalidates the
-# shell's incremental cache (and vice versa).
-( cd "$CRATE" && cargo build --release )
+printf 'Building native RDP helper (%s%s)\n' "$PROFILE" "${TARGET:+, $TARGET}"
+# shellcheck disable=SC2086
+cargo build --locked --manifest-path "$CRATE/Cargo.toml" $PROFILE_FLAG $TARGET_ARGS
 
+SRC="$CRATE/target/${TARGET_DIR}${PROFILE}/$EXE"
+if [ ! -f "$SRC" ]; then
+  echo "ERROR: cargo succeeded but helper is missing: $SRC" >&2
+  exit 1
+fi
 mkdir -p "$OUT"
+cp "$SRC" "$OUT/$EXE"
+chmod +x "$OUT/$EXE" 2>/dev/null || true
 
-# Windows produces .exe; everything else is extensionless.
-if [ -f "$CRATE/target/release/zephyr-one-rdp.exe" ]; then
-    cp -f "$CRATE/target/release/zephyr-one-rdp.exe" "$OUT/zephyr-one-rdp.exe"
-    STAGED="$OUT/zephyr-one-rdp.exe"
-elif [ -f "$CRATE/target/release/zephyr-one-rdp" ]; then
-    cp -f "$CRATE/target/release/zephyr-one-rdp" "$OUT/zephyr-one-rdp"
-    chmod +x "$OUT/zephyr-one-rdp"
-    STAGED="$OUT/zephyr-one-rdp"
-else
-    echo "ERROR: cargo build produced no zephyr-one-rdp binary" >&2
-    exit 1
+# Native-host smoke: prove the staged file can be executed and speaks the
+# actual framed protocol. A helper missing .so/.dylib dependencies fails before
+# it can emit the first `hello` event, so this also catches green-build / broken-
+# install packaging errors.
+if [ -z "$TARGET" ]; then
+  python3 "$ROOT/scripts/smoke-native-rdp-helper.py" "$OUT/$EXE"
 fi
 
-echo "Staged native RDP helper: $STAGED"
-ls -l "$STAGED"
+BYTES=$(wc -c < "$OUT/$EXE" | tr -d ' ')
+if [ "$BYTES" -lt 100000 ]; then
+  echo "ERROR: staged helper is implausibly small ($BYTES bytes)" >&2
+  exit 1
+fi
+printf 'Native RDP helper staged: %s (%s bytes)\n' "$OUT/$EXE" "$BYTES"
