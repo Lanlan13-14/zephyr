@@ -23,6 +23,60 @@ function job(name, next) {
   return workflow.slice(start, end);
 }
 
+/**
+ * Collect the body lines of every job-level `env:` block.
+ *
+ * Job level is 4-space indent (`  build-linux:` → `    env:`); a step-level env
+ * sits at 8. The distinction is the whole point of this scan, so it is done by
+ * indent rather than by searching for the word `env`.
+ */
+function jobLevelEnvLines() {
+  const lines = workflow.split('\n');
+  const collected = [];
+  let inBlock = false;
+  for (const line of lines) {
+    if (/^ {4}env:\s*$/.test(line)) {
+      inBlock = true;
+      continue;
+    }
+    if (inBlock) {
+      if (/^ {6}\S/.test(line) || /^\s*$/.test(line)) {
+        if (line.trim()) collected.push(line);
+        continue;
+      }
+      inBlock = false;
+    }
+  }
+  return collected;
+}
+
+test('job-level env never uses a step-only context', () => {
+  /*
+   * A job-level `env:` may only read github / inputs / matrix / needs /
+   * secrets / strategy / vars. Using `runner.*` there does not fail the job:
+   * GitHub refuses to parse the *entire workflow file*, so pushes stop running
+   * too and a dispatch returns HTTP 422. That is why this is asserted
+   * statically instead of being left to the next dispatch to discover.
+   */
+  const envLines = jobLevelEnvLines();
+  assert.ok(envLines.length > 0, 'found job-level env blocks to check');
+
+  const stepOnly = ['runner', 'steps', 'job', 'env', 'hashFiles'];
+  for (const line of envLines) {
+    for (const ctx of stepOnly) {
+      assert.doesNotMatch(
+        line,
+        new RegExp(`\\$\\{\\{[^}]*\\b${ctx}\\.`),
+        `job-level env must not reference the ${ctx} context: ${line.trim()}`,
+      );
+    }
+  }
+
+  // And the arch-dependent triplet must therefore be chosen in a step.
+  assert.match(workflow, /Select vcpkg triplet for this runner/);
+  assert.match(workflow, /VCPKG_DEFAULT_TRIPLET=\$triplet" >> "\$GITHUB_ENV"/);
+});
+
 test('every desktop release job builds and stages the native helper', () => {
   for (const [name, next] of [
     ['build-windows', 'build-macos'],

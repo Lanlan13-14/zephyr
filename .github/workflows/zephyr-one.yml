@@ -182,12 +182,27 @@ jobs:
     runs-on: macos-latest
     env:
       # See the Windows job: run-vcpkg does not export its install root.
+      #
+      # VCPKG_DEFAULT_TRIPLET is deliberately NOT here: it depends on the
+      # runner's architecture, and the `runner` context is not available in a
+      # job-level `env:` block. Using it there makes GitHub reject the entire
+      # workflow file with "Unrecognized named-value: 'runner'", which disables
+      # every job including test. It is set from a step instead.
       VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
-      VCPKG_DEFAULT_TRIPLET: ${{ runner.arch == 'ARM64' && 'arm64-osx' || 'x64-osx' }}
     steps:
       - uses: actions/checkout@v5
       - name: Stamp package version from release tag
         run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
+      - name: Select vcpkg triplet for this runner
+        # Written to GITHUB_ENV so both run-vcpkg (which reads
+        # VCPKG_DEFAULT_TRIPLET) and the resolver step below see one value.
+        run: |
+          case "$(uname -m)" in
+            arm64) triplet=arm64-osx ;;
+            x86_64) triplet=x64-osx ;;
+            *) echo "unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          echo "VCPKG_DEFAULT_TRIPLET=$triplet" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
