@@ -27,7 +27,7 @@
 | R-021 | ACL/分享 | `authz.js/sharing-service.js` | `ZEPHYR_PARITY §4` | — | `authz.test.mjs` | `partial` |
 | R-022 | SSH | `server.js ssh2` + tests | `ZEPHYR_PARITY §6.1` | — | native tests — | `missing` |
 | R-023 | Telnet | `telnet-transport.js` + tests | `ZEPHYR_PARITY §6.2` | — | native tests — | `missing` |
-| R-024 | RDP | Web/WASM + cert/route tests | `ZEPHYR_PARITY §6.3` | — | native tests — | `blocked` |
+| R-024 | RDP | `zephyr_one/native/zephyr-one-rdp` 桌面 FreeRDP shim + cert/route tests | `ZEPHYR_PARITY §6.3` | 桌面 only | C/Rust/e2e 桌面测试；无移动测试 | `partial-desktop-only` |
 | R-025 | VNC | noVNC/WebSocket | `ZEPHYR_PARITY §6.4` | — | native tests — | `blocked` |
 | R-026 | 终端 IME/快捷键/dock | WTerm mobile contract | `SCREEN_CATALOG S21` | — | native UI tests — | `specified` |
 | R-027 | SFTP 文件/预览/编辑 | server SFTP APIs | `SCREEN_CATALOG S31` | — | native tests — | `missing` |
@@ -38,7 +38,7 @@
 | R-032 | 批量执行 | `/api/remote-execute` | `SCREEN_CATALOG S41` | — | server tests only | `partial` |
 | R-033 | Docker/监控/日志 | AI/SSH tools | `SCREEN_CATALOG S42` | — | server tests only | `partial` |
 | R-034 | Proxy/Key/Jump | `resource-service.js` | `SCREEN_CATALOG S43` | — | server tests only | `partial` |
-| R-035 | AI 使用能力 | AI runtime/services | `SCREEN_CATALOG S44` | — | server tests only | `partial` |
+| R-035 | Zephyr AI 全能力浮窗 | AI runtime + live 116-tool catalog | `AI_FLOATING_WORKSPACE` / `SCREEN_CATALOG S44` / AI baseline | — | catalog parity contract only | `specified-ui-and-bridge-missing` |
 | R-036 | Activity | `storage.queryActivities` | entity registry | — | server tests only | `partial` |
 | R-037 | 服务器设置 | settings APIs | `SCREEN_CATALOG S48` | — | — | `specified` |
 | R-038 | 备份导出 | `/api/data/export` | `SCREEN_CATALOG S49` | legacy Web | `zephyr-one-backup-restore` server/Web | `partial` |
@@ -54,6 +54,16 @@
 | R-048 | Tauri → native migration | legacy `zephyr_one` | `DATA_AND_MIGRATION §7` | — | — | `specified` |
 | R-049 | structured error registry | mixed server errors | `contracts/error-registry.json` | — | schema only | `specified` |
 | R-050 | 需求覆盖发布门 | 本文件 | `IMPLEMENTATION_STATUS.md` | — | CI validator pending | `specified` |
+| R-051 | Android 自定义 progress 返回视觉 | Android system back APIs | `MOBILE_EXPERIENCE §2.3/§9.1` | — | spec contract only | `specified-ui-missing` |
+| R-052 | iOS 全 push interactive 右滑 | iOS navigation semantics | `MOBILE_EXPERIENCE §2.2/§9.1` | — | spec contract only | `specified-ui-missing` |
+| R-053 | Termux 级 SSH/Telnet 手感 | Termux behavior + Zephyr WTerm | `TERMINAL_EXPERIENCE` | — | spec contract only | `specified-engine-ui-missing` |
+| R-054 | RDP/VNC 完整移动交互 | FreeRDP/VNC core + Zephyr fields | `REMOTE_DESKTOP_EXPERIENCE` | — | spec contract only | `specified-engine-ui-missing` |
+| R-055 | AI 原生 semantic/action bridge | Zephyr `ui_action`/tool catalog | `AI_FLOATING_WORKSPACE §4` | — | catalog parity contract only | `specified-bridge-missing` |
+| R-056 | Shared-to-me 零驻留 | Zephyr ACL/ResourceService | `SHARED_RESOURCE_RESIDENCY §2/§6` | — | spec contract only | `specified-api-client-missing` |
+| R-057 | Shared connection direct use envelope | ResourceService dependency ACL | `SHARED_RESOURCE_RESIDENCY §3.2` | — | vectors/implementation missing | `specified-crypto-missing` |
+| R-058 | Shared connection strict relay | Zephyr SSH/RDP/VNC proxies | `SHARED_RESOURCE_RESIDENCY §3.3` | — | relay protocol missing | `specified-server-client-missing` |
+| R-059 | Shared AI 主端执行 | Zephyr AI runtime/tools | `SHARED_RESOURCE_RESIDENCY §4` | — | residency E2E missing | `specified-client-missing` |
+| R-060 | Shared Note 在线暂存 | NotesService/Authz | `SHARED_RESOURCE_RESIDENCY §5` | — | residency E2E missing | `specified-client-missing` |
 
 ## 发布判定算法
 

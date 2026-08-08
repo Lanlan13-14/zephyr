@@ -37,9 +37,10 @@
 
 **决定**：
 
-- [INFERRED] 采用经过 fuzz 的共享 terminal state machine（首选 `libvterm` 类 C core），Android Canvas/Compose graphics 与 iOS CoreText/Metal 原生绘制。
+- [INFERRED] 不强求一套共享 terminal renderer。Android M0 首选评估 Termux `terminal-emulator` + `terminal-view`（其仓库明确说明这两个模块源自 Apache-2.0 Android Terminal Emulator 代码）；iOS M0 首选评估 MIT 的 SwiftTerm UIKit/Metal terminal。两端必须通过同一 VT/Unicode/IME/scrollback fixture，业务行为一致即可。
+- [KNOWN] Termux 当前 App 整仓是 GPLv3-only；可借鉴交互和只在许可证审计后复用明确例外模块，不能把整套 Termux App/extra-keys UI 无选择复制进 One。SwiftTerm 提供 iOS UIView、Unicode/grapheme/BiDi、resize、hyperlink 和可选 Metal，但 selection/accessibility 完整性必须由 M0 实测，不能只信 README。
 - [KNOWN] 不嵌 Web xterm iframe，不把隐藏 WebView 当 renderer。
-- [KNOWN] 继承 `WTERM_MOBILE_VIEWPORT_CONTRACT.md` 行为：单一 SurfaceController、composition 不滚、IME 开合 rows/cols 同步、用户上滑不被输出抢回。
+- [KNOWN] 终端交互合同见 [`TERMINAL_EXPERIENCE.md`](TERMINAL_EXPERIENCE.md)：单一 SurfaceController、composition 不滚、IME 开合 rows/cols 同步、用户上滑不被输出抢回、extra keys/selection/hardware keyboard 完整。
 
 **C ABI 最小面**：
 
@@ -69,18 +70,29 @@ terminal_scrollback_read
 - [INFERRED] provider 对 write/open-write/truncate/mkdir/delete/rename 返回明确 access denied；已打开 handle 在 policy 变只读时拒绝后续写并关闭写 handle。
 - [INFERRED] 映射前验证目录授权仍有效；路径丢失/授权撤销返回 `file_share_unavailable`，不能让整个 session 只报 generic connect failed。
 
-**许可证门**：
+**上游与许可证证据**：
 
-- [COMMON] FreeRDP 使用 LGPL 系列许可；发布前必须确定动态/静态链接合规、提供 notices/源码或 relink 所需材料，并经项目许可审核。
+- [KNOWN] FreeRDP 官方仓库 README/LICENSE 声明 Apache-2.0；官方树同时包含 `client/Android` 与 `client/iOS`，2026-07 仍各有提交，说明移动 adapter 可作为实现和测试参考，不只是桌面 core。
+- [KNOWN] Apache-2.0 不免除发布审计：必须固定 commit/version、保留 LICENSE/NOTICE、记录本地 patch、生成 SBOM，并审计其构建实际链接的 OpenSSL/FFmpeg/channel 等依赖许可证。
+- [KNOWN] Zephyr One 不能直接采用 FreeRDP 示例 App 的 UI；只复用 core、channel、平台 glue 和测试经验，Compose/SwiftUI 浮层、手势、权限和状态仍按 One 合同实现。
+
+**仓库内已有实证（桌面，不是移动端）**：
+
+- [KNOWN] `main@851df26` 已把 Zephyr One 桌面壳的 WASM RDP 换成原生 FreeRDP：仓库存在 `zephyr_one/native/zephyr-one-rdp/`，含 C shim（`csrc/zephyr_rdp.{h,c}`）、Rust FFI（`src/ffi.rs`）、length-prefixed 协议（`src/proto.rs`）、C 单测和 e2e 脚本。
+- [KNOWN] 该实现只面向 Linux/Windows/macOS 桌面；树内没有 Android Surface 或 iOS UIView/Metal 绑定，因此**不能据此宣称移动端 RDP 已实现**。
+- [KNOWN] 它已验证了 ADR-004 的三个关键假设，可直接继承而不必重新试错：accessor-only settings API 可同时适配 FreeRDP 2/3；damage rect 增量上屏可行；GDI 为 BGRA32、需在 pack 阶段转 RGBA。
+- [KNOWN] 已被实测证伪的两个默认行为必须在移动 adapter 复用同样修法：FreeRDP WLog 默认写 stdout 会冲垮二进制协议流（须在启动时隔离 fd1）；`freerdp_client_add_device_channel` 会 stat 映射路径，目录不存在即整体 settings 组装失败（须前置校验并返回具体错误码）。
+- [INFERRED] 移动 adapter 应复用同一 C shim 与协议测试向量，只替换 surface/audio/输入/文件授权的平台层；分叉成第二套 C 代码属于回归。
 
 ## ADR-005：VNC
 
 **决定**：
 
-- [INFERRED] 首选共享 LibVNCClient 类 RFB core，经小 C adapter 输出 framebuffer dirty rect；若许可/移动稳定性不过门，选择维护范围受控的 RFB core。
-- [KNOWN] 不在原生 App 中嵌 noVNC 页面。
+- [INFERRED] 首选共享 LibVNCClient 类 RFB core，经小 C adapter 输出 framebuffer dirty rect；TigerVNC/MultiVNC 作为行为、encoding、移动手势和互操作参考。若许可/移动稳定性不过门，选择其他成熟 core 或维护范围受控的 RFB adapter，不从 UI 层重写协议。
+- [KNOWN] LibVNCClient/TigerVNC 当前仓库许可证为 GPL-2.0 系列，MultiVNC 为 GPL-3.0；Zephyr 本身 GPL-3.0-only 不等于组合一定自动兼容，必须审计具体版本、链接方式、依赖和 App Store 分发义务。
+- [KNOWN] 不在原生 App 中嵌 noVNC 页面，也不照搬第三方 VNC viewer UI。
 
-**必须通过**：RFB 3.3/3.7/3.8、常见 pixel format/encoding、增量更新、剪贴板、键鼠、认证失败、断线恢复、未知 security type 拒绝。
+**必须通过**：RFB 3.3/3.7/3.8、常见 pixel format/encoding、增量更新、剪贴板、键鼠、认证失败、断线恢复、未知 security type 拒绝，以及 [`REMOTE_DESKTOP_EXPERIENCE.md`](REMOTE_DESKTOP_EXPERIENCE.md) 的 direct/trackpad/IME/弱网手势矩阵。
 
 ## ADR-006：Telnet
 
@@ -120,7 +132,7 @@ terminal_scrollback_read
 | --- | --- | --- | --- | --- | --- |
 | SSH/SFTP | [INFERRED] 必须 | [INFERRED] 必须 | [INFERRED] 必须 | [INFERRED] 必须 | [INFERRED] 审核 |
 | Terminal | [INFERRED] IME+CJK | [INFERRED] IME+CJK | [INFERRED] VT fixture | [INFERRED] 大输出 | [INFERRED] 审核 |
-| RDP | [INFERRED] 全通道子集 | [INFERRED] 全通道子集 | [INFERRED] cert/input/drive | [INFERRED] 必须 | [INFERRED] LGPL 门 |
+| RDP | [INFERRED] 全通道子集 | [INFERRED] 全通道子集 | [INFERRED] cert/input/drive | [INFERRED] 必须 | [KNOWN] FreeRDP Apache-2.0 + transitive deps 审核 |
 | VNC | [INFERRED] 必须 | [INFERRED] 必须 | [INFERRED] RFB fixture | [INFERRED] 必须 | [INFERRED] 审核 |
 | Telnet | [INFERRED] 编码/route | [INFERRED] 编码/route | [KNOWN] 复用现有 tests | [INFERRED] 必须 | [INFERRED] 审核 |
 

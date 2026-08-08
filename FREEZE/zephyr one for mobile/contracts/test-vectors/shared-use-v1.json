@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "aad": {
+    "fields": [
+      "prefix",
+      "serverId",
+      "userId",
+      "deviceId",
+      "sessionId",
+      "resourceId",
+      "resourceRevision",
+      "purpose",
+      "expiresAt",
+      "clientNonce"
+    ],
+    "separator": "NUL (0x00)",
+    "values": [
+      "shared-use-v1",
+      "srv-1",
+      "usr-2",
+      "dev-1",
+      "sess-1",
+      "conn-7",
+      "9",
+      "ssh",
+      "1786093230000",
+      "nonce-1234567890abcdef"
+    ],
+    "base64": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMQBzZXNzLTEAY29ubi03ADkAc3NoADE3ODYwOTMyMzAwMDAAbm9uY2UtMTIzNDU2Nzg5MGFiY2RlZg==",
+    "hex": "7368617265642d7573652d7631007372762d31007573722d32006465762d3100736573732d3100636f6e6e2d370039007373680031373836303933323330303030006e6f6e63652d31323334353637383930616263646566"
+  },
+  "negativeCases": [
+    {
+      "id": "wrong-device",
+      "mutate": "deviceId",
+      "expect": "aead_auth_failed"
+    },
+    {
+      "id": "wrong-session",
+      "mutate": "sessionId",
+      "expect": "aead_auth_failed"
+    },
+    {
+      "id": "wrong-resource",
+      "mutate": "resourceId",
+      "expect": "aead_auth_failed"
+    },
+    {
+      "id": "wrong-purpose",
+      "mutate": "purpose",
+      "expect": "aead_auth_failed"
+    },
+    {
+      "id": "expired",
+      "mutate": "expiresAt",
+      "expect": "shared_session_expired"
+    },
+    {
+      "id": "replay",
+      "mutate": "none_second_consume",
+      "expect": "shared_session_consumed"
+    }
+  ],
+  "envelopes": {
+    "acceptedSsh": {
+      "v": 1,
+      "alg": "ML-KEM-768+HKDF-SHA256+AES-256-GCM",
+      "kem": "ML-KEM-768",
+      "aead": "AES-256-GCM",
+      "ct": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "iv": "AAECAwQFBgcICQoL",
+      "tag": "AAECAwQFBgcICQoLDA0ODw==",
+      "data": "eyJ1c2VybmFtZSI6Im9wcyIsInBhc3N3b3JkIjoiPHNlYWxlZD4ifQ==",
+      "aad": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMQBzZXNzLTEAY29ubi03ADkAc3NoADE3ODYwOTMyMzAwMDAAbm9uY2UtMTIzNDU2Nzg5MGFiY2RlZg==",
+      "keyVersion": 1,
+      "resourceRevision": 9,
+      "sessionId": "sess-1-0123456789abcdef",
+      "resourceId": "conn-7",
+      "purpose": "ssh",
+      "expiresAt": 1786093230000,
+      "clientNonce": "nonce-1234567890abcdef"
+    },
+    "invalidPurpose": {
+      "v": 1,
+      "alg": "ML-KEM-768+HKDF-SHA256+AES-256-GCM",
+      "kem": "ML-KEM-768",
+      "aead": "AES-256-GCM",
+      "ct": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "iv": "AAECAwQFBgcICQoL",
+      "tag": "AAECAwQFBgcICQoLDA0ODw==",
+      "data": "eyJ1c2VybmFtZSI6Im9wcyIsInBhc3N3b3JkIjoiPHNlYWxlZD4ifQ==",
+      "aad": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMQBzZXNzLTEAY29ubi03ADkAc3NoADE3ODYwOTMyMzAwMDAAbm9uY2UtMTIzNDU2Nzg5MGFiY2RlZg==",
+      "keyVersion": 1,
+      "resourceRevision": 9,
+      "sessionId": "sess-1-0123456789abcdef",
+      "resourceId": "conn-7",
+      "purpose": "sftp",
+      "expiresAt": 1786093230000,
+      "clientNonce": "nonce-1234567890abcdef"
+    },
+    "forbiddenControlPlaneField": {
+      "v": 1,
+      "alg": "ML-KEM-768+HKDF-SHA256+AES-256-GCM",
+      "kem": "ML-KEM-768",
+      "aead": "AES-256-GCM",
+      "ct": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "iv": "AAECAwQFBgcICQoL",
+      "tag": "AAECAwQFBgcICQoLDA0ODw==",
+      "data": "eyJ1c2VybmFtZSI6Im9wcyIsInBhc3N3b3JkIjoiPHNlYWxlZD4ifQ==",
+      "aad": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMQBzZXNzLTEAY29ubi03ADkAc3NoADE3ODYwOTMyMzAwMDAAbm9uY2UtMTIzNDU2Nzg5MGFiY2RlZg==",
+      "keyVersion": 1,
+      "resourceRevision": 9,
+      "sessionId": "sess-1-0123456789abcdef",
+      "resourceId": "conn-7",
+      "purpose": "ssh",
+      "expiresAt": 1786093230000,
+      "clientNonce": "nonce-1234567890abcdef",
+      "clientToken": "must-never-appear"
+    }
+  },
+  "forbiddenPayloadKeys": [
+    "clientToken",
+    "aiProviderApiKey",
+    "aiEnvValue",
+    "serverDataKey",
+    "ownerSid",
+    "refreshCredential"
+  ]
+}

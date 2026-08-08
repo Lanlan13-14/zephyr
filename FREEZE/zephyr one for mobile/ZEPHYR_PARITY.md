@@ -1,6 +1,6 @@
 # Zephyr → Zephyr One 原生能力继承规范
 
-> [KNOWN] 基线：`Lanlan13-14/zephyr-ssh` `main@3a61d2f`（2026-08-08）。
+> [KNOWN] 基线：`Lanlan13-14/zephyr-ssh` `main@8dd5b98`（2026-08-08）。
 >
 > [KNOWN] 产品范围仍由 [`PRODUCT_REQUIREMENTS.md`](PRODUCT_REQUIREMENTS.md) 约束；本文只规定 Zephyr 已有解决方案怎样进入原生 Zephyr One。
 >
@@ -111,8 +111,11 @@ fileRead, fileWrite, edit, share, delete, revealSecret, administer
 | `administer` | [KNOWN] 只用于有产品用途的治理操作，不等于 secret 权限 |
 
 - [KNOWN] 客户端禁用只是体验；每次服务端操作仍重新计算 capability。
-- [KNOWN] 连接依赖的 SSH Key、Proxy、JumpHost、Jump Connection 在保存和使用时都重新检查；共享 Connection 不隐式共享依赖。
-- [KNOWN] 工作区恢复、离线缓存重新联网和 ACL change feed 应用后都重新裁剪资源能力。
+- [KNOWN] 只有 `ownerUserId == boundUserId` 的实体与其 ACL 进入 One mirror；shared-to-me 列表、正文、grant 和内容每次在线向主端请求，不进 change feed、DB、FTS、offline cache 或 backup。
+- [KNOWN] 连接依赖的 SSH Key、Proxy、JumpHost、Jump Connection 在保存和使用时都由主端重新检查；共享 Connection 不隐式共享依赖，也不向 One 列表下发 dependency secret。
+- [KNOWN] 共享 `use` 默认由主端 relay；direct native session 仅按 [`SHARED_RESOURCE_RESIDENCY.md`](SHARED_RESOURCE_RESIDENCY.md) 接收一次、短时、device/session/resource/purpose 绑定的 encrypted use envelope。
+- [KNOWN] `revealSecret` 仍不作为共享使用的隐含能力；共享资源 owner 可强制 relay，One 不得静默降级。
+- [KNOWN] owned 工作区恢复、离线缓存重新联网和 owned ACL change feed 应用后重新裁剪资源能力；shared-to-me 不存在离线恢复。
 
 ## 5. 连接模型完整继承
 
