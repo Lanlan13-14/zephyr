@@ -19,7 +19,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import sys
+import tempfile
 from pathlib import Path
 
 SEMVER_RE = re.compile(r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)")
@@ -63,18 +65,53 @@ def version_code(version: str, fallback: str | None = None) -> str:
     return str(derived)
 
 
+def atomic_write_text(path: Path, text: str) -> None:
+    """Replace *path* atomically with UTF-8 text.
+
+    Plain Path.write_text opens the destination with O_TRUNC before writing. The
+    One test suite runs files in parallel, and set-version.test used to stamp the
+    real project package.json; another Node process importing a local ESM module
+    could observe that zero/half-written window and fail with
+    ERR_INVALID_PACKAGE_CONFIG. A tight-reader probe observed 169 invalid reads
+    during 117 real set-version runs.
+
+    The temporary file must live in the same directory so os.replace is atomic
+    on POSIX and Windows (no cross-filesystem rename). Flush + fsync prevents the
+    renamed file from referring only to userspace buffers if the runner dies.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.exists():
+            os.chmod(tmp, stat.S_IMODE(path.stat().st_mode))
+        os.replace(tmp, path)
+    finally:
+        # os.replace removes tmp on success; clean it only on failure.
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def patch_package_json(version: str) -> None:
     path = ROOT / "package.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["version"] = version
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 def patch_tauri_conf(version: str) -> None:
     path = ROOT / "src-tauri" / "tauri.conf.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["version"] = version
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 def patch_cargo_toml(version: str) -> None:
@@ -88,7 +125,7 @@ def patch_cargo_toml(version: str) -> None:
     )
     if n != 1:
         raise SystemExit(f"Failed to patch version in {path}")
-    path.write_text(new, encoding="utf-8")
+    atomic_write_text(path, new)
 
 
 def main() -> None:
