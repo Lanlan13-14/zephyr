@@ -2,7 +2,7 @@
   "name": "zephyr-one",
   "version": "0.1.0",
   "private": true,
-  "description": "Zephyr One — full Zephyr product in Tauri; remote main is sync-only",
+  "description": "Zephyr One \u2014 full Zephyr product in Tauri; remote main is sync-only",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,8 +10,7 @@
     "preview": "vite preview",
     "icons": "python3 scripts/prepare-icons.py",
     "stage:core": "sh scripts/stage-zephyr-core.sh",
-    "stage:rdp-bin": "sh scripts/stage-native-rdp-bin.sh",
-    "stage:desktop": "npm run stage:core && node scripts/stage-desktop-runtime.mjs && npm run stage:rdp-bin",
+    "stage:desktop": "npm run stage:core && node scripts/stage-desktop-runtime.mjs",
     "pretauri:dev": "npm run stage:desktop",
     "pretauri:build": "npm run stage:desktop",
     "tauri": "tauri",

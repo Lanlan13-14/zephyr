@@ -41,7 +41,7 @@
 | F-007 | ACL/share | `implemented-zephyr` | `missing` | [KNOWN] 原生 capability UI 未实现 |
 | F-008 | SSH/SFTP | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 SSH engine 未定 |
 | F-009 | Telnet | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 parser/transport 未实现 |
-| F-010 | RDP | `implemented-zephyr` | `partial-desktop-native` | [KNOWN] `main@8dd5b98` 已把桌面 One 的 WASM 管线换成原生 FreeRDP（`zephyr_one/native/zephyr-one-rdp/` C shim + Rust FFI + e2e）；该实现面向 Tauri 桌面壳，Android Surface / iOS UIView 绑定仍缺失 |
+| F-010 | RDP | `implemented-zephyr` | `legacy-one` | [KNOWN] 桌面 One 与浏览器版一样使用 WASM RDP；原生 FreeRDP 引擎**未实现**。树内只有 C core `zephyr_one/native/freerdp-core/`（`zephyr_rdp.{h,c}` + 69 项 C 单测 + 固定 FreeRDP 3.30.0 静态构建脚本），没有 Rust 绑定、没有进程内引擎、没有平台 surface、没有 e2e |
 | F-011 | VNC | `implemented-zephyr` | `legacy-one` | [KNOWN] 当前 noVNC；原生 RFB core 未定 |
 | F-012 | 终端 IME | `implemented-zephyr` | `specified` | [KNOWN] Web 行为合同已有；原生 SurfaceController 未实现 |
 | F-013 | 笔记 | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生列表/编辑/冲突未实现 |

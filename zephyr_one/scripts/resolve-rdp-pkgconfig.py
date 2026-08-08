@@ -6,7 +6,7 @@ broken static set -- measured on both Linux and Windows CI, libfreerdp3 and
 libwinpr3 came out byte-identical (size=1745350 members=257 syms=440 each) and
 gdi_free / freerdp_client_load_addins / PubSub_Subscribe were defined in NO
 archive. That is what produced 20 undefined symbols for four consecutive rounds.
-So FreeRDP is built from a pinned tag by scripts/../native/zephyr-one-rdp/
+So FreeRDP is built from a pinned tag by scripts/../native/freerdp-core/
 scripts/build-freerdp.sh, and this script points pkg-config at that install.
 
 vcpkg is still used, but only for FreeRDP's own third-party dependencies on the
@@ -64,7 +64,7 @@ def freerdp_pc_dir():
     if not install.is_dir():
         fail(
             f"vendored FreeRDP install not found at {install}; "
-            "run native/zephyr-one-rdp/scripts/build-freerdp.sh first",
+            "run native/freerdp-core/scripts/build-freerdp.sh first",
             listing=prefix if prefix.is_dir() else None,
         )
 

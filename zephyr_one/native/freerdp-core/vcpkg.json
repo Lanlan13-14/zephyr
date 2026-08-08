@@ -1,5 +1,5 @@
 {
-  "name": "zephyr-one-rdp-native-deps",
+  "name": "zephyr-one-freerdp-core-deps",
   "version-string": "0.1.0",
   "builtin-baseline": "c4d9956c0c10a4742840a5e7d93efa2e0015c865",
   "dependencies": [

@@ -56,20 +56,7 @@ xterm/lib-headless/
 xterm/out-test/
 __pycache__/
 
-# Zephyr One native RDP helper (FreeRDP)
-#
-# The crate is source-only in git. `target/` is a multi-hundred-MB cargo build
-# tree, and `native-bin/` holds the staged release binary that
-# scripts/stage-native-rdp-bin.sh produces per platform — both are build
-# outputs, rebuilt by CI for each target triple.
-zephyr_one/native/zephyr-one-rdp/target/
-zephyr_one/native-bin/
-
-# Staged core: stage-zephyr-core.sh regenerates it (server.js + public/ copy
-# plus the native-RDP transform), so committing it would duplicate the repo.
-zephyr_one/zephyr-core/
-
-# Vendored FreeRDP build tree and vcpkg deps (never committed)
-zephyr_one/native/zephyr-one-rdp/.freerdp-dist/
+# Vendored FreeRDP build tree and its vcpkg deps (never committed)
+zephyr_one/native/freerdp-core/.freerdp-dist/
+zephyr_one/native/freerdp-core/vcpkg_installed/
 zephyr_one/vcpkg_installed/
-vcpkg_installed/

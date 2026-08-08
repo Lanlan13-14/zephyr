@@ -50,28 +50,19 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run test:ci
       - run: npm run build
-      - name: Install native RDP test dependencies
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            freerdp3-dev freerdp3-shadow-x11 xvfb x11-xserver-utils pkg-config
-      - name: Test native FreeRDP C shim
-        run: sh native/zephyr-one-rdp/run-ctests.sh
-      - name: Test native FreeRDP Rust helper
-        run: |
-          cd native/zephyr-one-rdp
-          CARGO_INCREMENTAL=0 cargo test --locked
-      - name: Build and smoke native FreeRDP helper
-        run: sh scripts/stage-native-rdp-bin.sh
-      - name: Live native FreeRDP end-to-end
-        # Exercise the exact release binary staged for Tauri, not an unrelated
-        # debug artifact (cargo test does not create target/debug/zephyr-one-rdp).
-        run: python3 native/zephyr-one-rdp/e2e/live-session.py --helper native-bin/zephyr-one-rdp
       - name: Stage Zephyr core
         run: |
           sh scripts/stage-zephyr-core.sh
           test -f zephyr-core/server.js
           test -d zephyr-core/public
+      # The FreeRDP C core is groundwork for the planned in-process RDP engine.
+      # It ships in no artifact yet, but it must stay compilable and correct, so
+      # its unit tests run here against the distro FreeRDP 3 headers.
+      - name: Test FreeRDP C core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y freerdp3-dev
+          sh native/freerdp-core/run-ctests.sh
 
   # ───────────── Release builds (workflow_dispatch + tag) ─────────────
 
@@ -79,18 +70,6 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
     needs: test
     runs-on: windows-2022
-    env:
-      # run-vcpkg computes its own install root under a run-scoped GUID
-      # directory and never exports it to later steps, so the pkg-config step
-      # used to see an empty VCPKG_INSTALLED_DIR. It applies its default via
-      # setEnvVarIfUndefined, so pinning the value here wins and stays readable
-      # by every step that follows.
-      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
-      VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
-      # Must match the actions/cache path below. build-freerdp.sh otherwise
-      # defaults to <crate>/.freerdp-dist, so the cache would archive an empty
-      # directory and every run would pay the full FreeRDP build again.
-      ZEPHYR_FREERDP_PREFIX: ${{ github.workspace }}/freerdp-dist
     steps:
       - uses: actions/checkout@v5
       - name: Stamp package version from release tag
@@ -100,32 +79,6 @@ jobs:
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
-      - name: Initialize MSVC developer environment
-        uses: ilammy/msvc-dev-cmd@v1
-      # vcpkg supplies OpenSSL/zlib/cJSON only. FreeRDP itself is built from a
-      # pinned tag: vcpkg's freerdp port produces a broken static tree (measured
-      # 2026-08-08 — libfreerdp3.a and libwinpr3.a byte-identical at 1745350 B,
-      # 440 symbols each, and gdi_free/freerdp_client_load_addins/PubSub_Subscribe
-      # defined in none of them), which is what failed four CI rounds.
-      - name: Install crypto dependencies (vcpkg)
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
-          vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
-          runVcpkgInstall: true
-      - name: Cache vendored FreeRDP
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/freerdp-dist
-          key: frdp-3.30.0-${{ runner.os }}-${{ hashFiles('zephyr_one/native/zephyr-one-rdp/scripts/build-freerdp.sh') }}
-      - name: Build vendored FreeRDP
-        shell: bash
-        run: |
-          export ZEPHYR_FREERDP_CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=$VCPKG_DEFAULT_TRIPLET"
-          sh native/zephyr-one-rdp/scripts/build-freerdp.sh
-      - name: Resolve FreeRDP pkg-config
-        shell: bash
-        run: python3 scripts/resolve-rdp-pkgconfig.py
       - name: Install WebView2 (usually preinstalled on windows-2022)
         shell: pwsh
         run: |
@@ -139,15 +92,6 @@ jobs:
       - name: Bundle desktop Node runtime
         shell: pwsh
         run: node scripts/stage-desktop-runtime.mjs
-      - name: Build and smoke native FreeRDP helper
-        shell: bash
-        run: sh scripts/stage-native-rdp-bin.sh
-      - name: Assert native helper is staged
-        shell: pwsh
-        run: |
-          $helper = 'native-bin/zephyr-one-rdp.exe'
-          if (!(Test-Path $helper)) { throw "missing staged RDP helper: $helper" }
-          if ((Get-Item $helper).Length -lt 100000) { throw "RDP helper is implausibly small" }
       - name: Build frontend
         shell: pwsh
         run: npm run build
@@ -195,87 +139,25 @@ jobs:
           if-no-files-found: warn
 
   build-macos:
-    # validation_only still compiles and inspects the installer; it merely skips
-    # the release job. Otherwise validation would exercise Windows only and a
-    # broken macOS RDP helper could reach a real release untested.
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true'
     needs: test
     runs-on: macos-latest
-    env:
-      # See the Windows job: run-vcpkg does not export its install root.
-      #
-      # VCPKG_DEFAULT_TRIPLET is deliberately NOT here: it depends on the
-      # runner's architecture, and the `runner` context is not available in a
-      # job-level `env:` block. Using it there makes GitHub reject the entire
-      # workflow file with "Unrecognized named-value: 'runner'", which disables
-      # every job including test. It is set from a step instead.
-      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
-      # Must match the actions/cache path below. build-freerdp.sh otherwise
-      # defaults to <crate>/.freerdp-dist and the cache would store an empty
-      # directory forever, silently costing a full FreeRDP rebuild every run.
-      ZEPHYR_FREERDP_PREFIX: ${{ github.workspace }}/freerdp-dist
     steps:
       - uses: actions/checkout@v5
       - name: Stamp package version from release tag
         run: python3 scripts/set-version.py "${{ github.event.inputs.tag }}"
-      - name: Select vcpkg triplet for this runner
-        # Written to GITHUB_ENV so both run-vcpkg (which reads
-        # VCPKG_DEFAULT_TRIPLET) and the resolver step below see one value.
-        run: |
-          case "$(uname -m)" in
-            arm64) triplet=arm64-osx ;;
-            x86_64) triplet=x64-osx ;;
-            *) echo "unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
-          esac
-          echo "VCPKG_DEFAULT_TRIPLET=$triplet" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - name: Install crypto dependencies (vcpkg)
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
-          vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
-          runVcpkgInstall: true
-      - run: brew install ninja
-      - name: Cache vendored FreeRDP
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/freerdp-dist
-          key: frdp-3.30.0-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('zephyr_one/native/zephyr-one-rdp/scripts/build-freerdp.sh') }}
-      - name: Build vendored FreeRDP (pinned, static)
-        # Apple ships no OpenSSL, so FreeRDP's CMake is pointed at the vcpkg
-        # tree. Passed via a shell variable rather than a GitHub context so the
-        # value cannot depend on a context that is unavailable where it is used.
-        run: |
-          ZEPHYR_FREERDP_CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=$VCPKG_DEFAULT_TRIPLET" \
-            sh native/zephyr-one-rdp/scripts/build-freerdp.sh
-      - name: Configure FreeRDP pkg-config
-        run: python3 scripts/resolve-rdp-pkgconfig.py
       - run: npm install
       - run: sh scripts/stage-zephyr-core.sh
       - run: node scripts/stage-desktop-runtime.mjs
-      - name: Build and smoke native FreeRDP helper
-        run: sh scripts/stage-native-rdp-bin.sh
-      - name: Assert helper has no Homebrew/vcpkg dylib dependencies
-        run: |
-          helper=native-bin/zephyr-one-rdp
-          test -x "$helper"
-          ! otool -L "$helper" | grep -E '/(opt/homebrew|usr/local|vcpkg|installed)/'
       - run: npm run build
       - name: Tauri build macOS
         run: npx tauri build
-      - name: Inspect macOS app bundle native helper
-        run: |
-          app=$(find src-tauri/target/release/bundle -type d -name '*.app' | head -1)
-          test -n "$app"
-          helper=$(find "$app" -type f -path '*native-bin/zephyr-one-rdp' | head -1)
-          test -n "$helper" && test -x "$helper"
-          python3 scripts/smoke-native-rdp-helper.py "$helper"
-          ! otool -L "$helper" | grep -E '/(opt/homebrew|usr/local|vcpkg|installed)/'
       - name: Collect macOS artifacts
         run: |
           mkdir -p dist-out
@@ -306,22 +188,9 @@ jobs:
           if-no-files-found: warn
 
   build-linux:
-    # Same validation contract as Windows/macOS: build real deb/rpm packages and
-    # inspect their native-bin contents, but leave publishing to release job.
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true'
     needs: test
     runs-on: ubuntu-latest
-    env:
-      # run-vcpkg only exports VCPKG_ROOT/VCPKG_DEFAULT_TRIPLET to later steps;
-      # it derives VCPKG_INSTALLED_DIR into a run-scoped GUID directory that no
-      # other step can see. Its setEnvVarIfUndefined leaves a pre-set value
-      # alone, so pinning it here makes the install root readable downstream.
-      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
-      VCPKG_DEFAULT_TRIPLET: x64-linux
-      # Must match the actions/cache path below. build-freerdp.sh otherwise
-      # defaults to <crate>/.freerdp-dist, so a mismatch caches an empty
-      # directory and silently rebuilds FreeRDP on every run.
-      ZEPHYR_FREERDP_PREFIX: ${{ github.workspace }}/freerdp-dist
     steps:
       - uses: actions/checkout@v5
       - name: Stamp package version from release tag
@@ -330,64 +199,25 @@ jobs:
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
-      # No vcpkg on Linux: apt ships OpenSSL/zlib/cJSON, and OpenSSL stays a
-      # distro-managed shared library on purpose so its CVEs are patched by
-      # system updates rather than by us cutting a new Zephyr One release.
-      # cmake/ninja/libasound2-dev are here because they are FreeRDP *build*
-      # inputs, so this step has to precede the FreeRDP build below.
       - name: Install Linux deps
         working-directory: .
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf libgtk-3-dev \
-            cmake ninja-build libssl-dev zlib1g-dev libcjson-dev libasound2-dev
-      # vcpkg's freerdp port produced archives with libfreerdp3.a and libwinpr3.a
-      # byte-identical in size and member count, and gdi_free /
-      # freerdp_client_load_addins / PubSub_Subscribe defined in none of them.
-      # FreeRDP is pinned and built from source instead; upstream tests exactly
-      # this configuration in ci/cmake-preloads/config-qa-static.cmake.
-      - name: Cache vendored FreeRDP
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/freerdp-dist
-          key: frdp-3.30.0-${{ runner.os }}-${{ hashFiles('zephyr_one/native/zephyr-one-rdp/scripts/build-freerdp.sh') }}
-      - name: Build vendored static FreeRDP
-        run: sh native/zephyr-one-rdp/scripts/build-freerdp.sh
-      - name: Configure FreeRDP pkg-config
-        run: python3 scripts/resolve-rdp-pkgconfig.py
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
       - run: npm install
       - run: npm run stage:core
       - run: node scripts/stage-desktop-runtime.mjs
-      # Runs BEFORE the helper build so the data survives a link failure.
-      # Static FreeRDP linking failed here with one undefined symbol per FFI
-      # call while the archives were found and correctly ordered, which no
-      # amount of reading the link line can explain. This prints what the
-      # archives actually contain.
-      - name: Diagnose static FreeRDP archives
-        continue-on-error: true
-        run: sh scripts/diagnose-static-freerdp.sh "$ZEPHYR_FREERDP_PREFIX/install/lib"
-      - name: Build and smoke native FreeRDP helper
-        run: sh scripts/stage-native-rdp-bin.sh
-      - name: Assert helper is self-contained
-        run: |
-          helper=native-bin/zephyr-one-rdp
-          test -x "$helper"
-          ! ldd "$helper" | grep -E 'lib(freerdp|winpr|ssl|crypto|z)'
-          ! ldd "$helper" | grep 'not found'
       - run: npm run build
       - name: Tauri build Linux (deb+rpm; skip AppImage/linuxdeploy flakiness)
         run: |
           # Full compile always; AppImage's linuxdeploy often fails on GH runners.
           npx tauri build --bundles deb,rpm
-          # Do not publish the raw Tauri executable as a "portable" app. It
-          # cannot run without zephyr-core, desktop-runtime and native-bin; a
-          # lone binary installs successfully but loses every embedded feature.
-          deb=$(find src-tauri/target/release/bundle -type f -name '*.deb' | head -1)
-          rpm=$(find src-tauri/target/release/bundle -type f -name '*.rpm' | head -1)
-          test -n "$deb" && test -n "$rpm"
-          dpkg-deb -c "$deb" | grep -E 'native-bin/zephyr-one-rdp$'
-          rpm -qlp "$rpm" | grep -E 'native-bin/zephyr-one-rdp$'
+          # Keep the raw binary as portable fallback
+          mkdir -p dist-out
+          if [ -f src-tauri/target/release/zephyr-one ]; then
+            cp -v src-tauri/target/release/zephyr-one "dist-out/zephyr-one-linux-x64-${{ github.event.inputs.tag }}"
+            chmod +x "dist-out/zephyr-one-linux-x64-${{ github.event.inputs.tag }}"
+          fi
       - name: Collect Linux artifacts
         run: |
           mkdir -p dist-out

@@ -27,7 +27,7 @@
 | R-021 | ACL/分享 | `authz.js/sharing-service.js` | `ZEPHYR_PARITY §4` | — | `authz.test.mjs` | `partial` |
 | R-022 | SSH | `server.js ssh2` + tests | `ZEPHYR_PARITY §6.1` | — | native tests — | `missing` |
 | R-023 | Telnet | `telnet-transport.js` + tests | `ZEPHYR_PARITY §6.2` | — | native tests — | `missing` |
-| R-024 | RDP | `zephyr_one/native/zephyr-one-rdp` 桌面 FreeRDP shim + cert/route tests | `ZEPHYR_PARITY §6.3` | 桌面 only | C/Rust/e2e 桌面测试；无移动测试 | `partial-desktop-only` |
+| R-024 | RDP | `zephyr_one/native/freerdp-core` C core（无 Rust 绑定/无引擎）；运行路径仍为 WASM | `ZEPHYR_PARITY §6.3` | — | 69 项 C 单测；无引擎测试、无 e2e、无移动测试 | `missing` |
 | R-025 | VNC | noVNC/WebSocket | `ZEPHYR_PARITY §6.4` | — | native tests — | `blocked` |
 | R-026 | 终端 IME/快捷键/dock | WTerm mobile contract | `SCREEN_CATALOG S21` | — | native UI tests — | `specified` |
 | R-027 | SFTP 文件/预览/编辑 | server SFTP APIs | `SCREEN_CATALOG S31` | — | native tests — | `missing` |

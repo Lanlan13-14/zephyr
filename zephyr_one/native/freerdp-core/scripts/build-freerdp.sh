@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Build a pinned, static FreeRDP 3 for the Zephyr One RDP helper.
+# Build a pinned, static FreeRDP 3 for Zephyr One's in-process native RDP core.
 #
 # Why vendor it instead of using the system package:
 #   - vcpkg's freerdp port produces a broken static set. Measured on both Linux

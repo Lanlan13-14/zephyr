@@ -78,8 +78,9 @@ terminal_scrollback_read
 
 **仓库内已有实证（桌面，不是移动端）**：
 
-- [KNOWN] `main@851df26` 已把 Zephyr One 桌面壳的 WASM RDP 换成原生 FreeRDP：仓库存在 `zephyr_one/native/zephyr-one-rdp/`，含 C shim（`csrc/zephyr_rdp.{h,c}`）、Rust FFI（`src/ffi.rs`）、length-prefixed 协议（`src/proto.rs`）、C 单测和 e2e 脚本。
-- [KNOWN] 该实现只面向 Linux/Windows/macOS 桌面；树内没有 Android Surface 或 iOS UIView/Metal 绑定，因此**不能据此宣称移动端 RDP 已实现**。
+- [KNOWN] 仓库现有 `zephyr_one/native/freerdp-core/`：FreeRDP C shim（`zephyr_rdp.{h,c}`）、C 单测（`tests/zephyr_rdp_test.c`，69 检查通过）、固定版本 FreeRDP 源码静态构建脚本（`scripts/build-freerdp.sh`，pin 3.30.0）和 vcpkg 依赖清单。
+- [KNOWN] 该 C core **尚未被任何 Rust/平台代码消费**：`src-tauri` 不编译它，桌面 One 当前仍与浏览器版一样走 WASM RDP（`rdp.html` + `rdp-go.wasm`）。因此**桌面端原生 RDP 也尚未实现**，不只是移动端未实现。
+- [KNOWN] 曾存在的 `zephyr-one-rdp` helper 子进程方案（Rust 可执行 + length-prefixed stdio + Node bridge + WebSocket + Canvas）已按开发规范整体删除：规范要求 RDP native core 只输出协议/dirty rect，UI surface 由平台层拥有，高频帧不得经 Node core，也不得以 Web canvas 充当原生实现。
 - [KNOWN] 它已验证了 ADR-004 的三个关键假设，可直接继承而不必重新试错：accessor-only settings API 可同时适配 FreeRDP 2/3；damage rect 增量上屏可行；GDI 为 BGRA32、需在 pack 阶段转 RGBA。
 - [KNOWN] 已被实测证伪的两个默认行为必须在移动 adapter 复用同样修法：FreeRDP WLog 默认写 stdout 会冲垮二进制协议流（须在启动时隔离 fd1）；`freerdp_client_add_device_channel` 会 stat 映射路径，目录不存在即整体 settings 组装失败（须前置校验并返回具体错误码）。
 - [INFERRED] 移动 adapter 应复用同一 C shim 与协议测试向量，只替换 surface/audio/输入/文件授权的平台层；分叉成第二套 C 代码属于回归。

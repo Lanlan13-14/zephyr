@@ -40,8 +40,8 @@ echo "Building shim tests against: $PKGS"
 # shellcheck disable=SC2086
 cc -std=c11 -O1 -g -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror \
    -Wno-error=deprecated-declarations -Wmissing-prototypes -Wstrict-prototypes \
-   -I"$HERE/csrc" $CFLAGS_PKG \
-   "$HERE/csrc/zephyr_rdp.c" "$HERE/csrc/zephyr_rdp_test.c" \
+   -I"$HERE" $CFLAGS_PKG \
+   "$HERE/zephyr_rdp.c" "$HERE/tests/zephyr_rdp_test.c" \
    -o "$OUT/zephyr_rdp_test" $LIBS_PKG
 
 "$OUT/zephyr_rdp_test"

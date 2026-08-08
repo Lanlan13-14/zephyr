@@ -110,7 +110,6 @@ EOF
 
 # ── One-only: retire the Go/WASM RDP client in favour of native FreeRDP ──
 #
-# Installs One's native RDP surface, repoints app.js's remote-desktop iframe at
 # it, and deletes the whole WASM pipeline (rdp-*.js + vendor/rdp-wasm/main.wasm)
 # from the staged copy. The repository's own public/ is untouched, so the browser
 # product keeps its WASM client byte-for-byte.
@@ -118,8 +117,6 @@ EOF
 # This runs *after* the vendor copies above so the deletion sees the final tree,
 # and it fails the build if anything still references a removed file — a missing
 # rdp-worker.js would otherwise 404 at runtime and leave the RDP tab dead.
-echo "Applying One native RDP transform"
-node "$ROOT/scripts/stage-native-rdp.mjs" "$OUT" "$ROOT/embed"
 
 echo "Staged core OK: $OUT"
 test -f "$OUT/server.js"

@@ -33,25 +33,6 @@
 
 const EMBED_STYLESHEET = '/zephyr-one-embed.css';
 
-/*
- * Folder-mapping overlay for the RDP settings panel.
- *
- * app.html already ships the 文件夹映射 switch plus its folder / device-name
- * fields, but nothing in the shared app.js reads or writes them: in the browser
- * product they cannot mean anything, because a server-side directory path is
- * not something a browser may choose or a WASM RDP client may mount.
- *
- * Inside One the same fields do mean something, so this script supplies the
- * behaviour: it opens a native OS folder dialog through the Tauri shell, and
- * persists {folder, deviceName} per connection so FreeRDP can redirect it as an
- * RDPDR drive.
- *
- * It is injected here rather than added to app.html because app.html is shared.
- * Adding a <script> tag there would make the browser product request a file it
- * does not ship (404) for a feature it cannot perform.
- */
-const EMBED_RDP_SETTINGS_SCRIPT = '/zephyr-one-rdp-settings.js';
-
 /** Exact markup fragments this transform depends on existing in app.html. */
 const SECURITY_TAB_BUTTON = '<button class="settings-tab active" data-settings="security" data-i18n="安全设置">安全设置</button>';
 const LOGOUT_BUTTON = '<button class="btn-sm danger" id="logoutBtn" data-i18n="登出">登出</button>';
@@ -203,26 +184,6 @@ function regionOf(html, edit) {
     return { start, end: end === -1 ? html.length : end };
 }
 
-/**
- * Inject the folder-mapping overlay script, if not already present.
- *
- * Appended at the end of <body> rather than in <head>: the script queries
- * `#rdpStorageFolderPickBtn` and friends at load time, so it must run after
- * app.html's markup exists. It is deliberately *not* `defer`red into <head>
- * because app.js is a classic script too, and keeping both in body order means
- * the overlay observes the same DOM app.js has already wired.
- *
- * @param {string} html
- * @returns {string}
- */
-function injectRdpSettingsScript(html) {
-    if (html.includes(EMBED_RDP_SETTINGS_SCRIPT)) return html;
-    const tag = `<script src="${EMBED_RDP_SETTINGS_SCRIPT}"></script>`;
-    return html.includes('</body>')
-        ? html.replace('</body>', `${tag}\n</body>`)
-        : html + tag;
-}
-
 function applyEmbeddedSurface(source) {
     let html = String(source || '');
     const applied = [];
@@ -261,11 +222,7 @@ function applyEmbeddedSurface(source) {
         );
     }
 
-    return {
-        html: injectRdpSettingsScript(injectStylesheet(html)),
-        applied,
-        skipped,
-    };
+    return { html: injectStylesheet(html), applied, skipped };
 }
 
 module.exports = {
@@ -276,6 +233,5 @@ module.exports = {
      * drift and then agree with itself while disagreeing with production. */
     regionOf,
     EMBED_STYLESHEET,
-    EMBED_RDP_SETTINGS_SCRIPT,
     EDITS,
 };
