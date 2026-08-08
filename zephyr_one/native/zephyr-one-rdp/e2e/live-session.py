@@ -300,16 +300,22 @@ def main():
             print("FATAL: shadow server never listened", file=sys.stderr)
             sys.exit(2)
 
-        # Paint *after* shadow is listening, not before.
+        # Establish a known-neutral baseline, then drive every colour assertion
+        # as a *damage event* after the client is connected.
         #
-        # freerdp-shadow-cli takes its baseline capture of the X root when it
-        # starts. A colour painted before that point is folded into the baseline
-        # and never arrives as an update, so the first frame the client decodes
-        # is the zeroed GDI primary buffer — black. Measured directly: with the
-        # paint before shadow started the centre pixel read (0,0,0); with it
-        # after, (255,0,0).
-        subprocess.run([xsetroot, "-solid", "#FF0000"], env=env, check=True)
-        print(f"  painted root window #FF0000 on {DISPLAY} (after shadow start)")
+        # The earlier design painted red here and asserted it against the first
+        # decoded frame. That is a race, and CI caught it: freerdp-shadow-cli
+        # takes its baseline capture of the X root at startup, so whether the
+        # paint lands before or after that capture decides whether it arrives as
+        # an update at all. On a slow runner the first frame was the zeroed GDI
+        # primary buffer and the centre pixel read (0,0,0) — a red FAIL for a
+        # correct build. Blue never flaked because it was always painted after
+        # connect and gated on wait_for_frames.
+        #
+        # Black is deliberate: it is what the un-updated GDI buffer already
+        # looks like, so a missing update can never be mistaken for a colour.
+        subprocess.run([xsetroot, "-solid", "#000000"], env=env, check=True)
+        print(f"  painted neutral black baseline on {DISPLAY} (after shadow start)")
         time.sleep(0.5)
 
         print("\n== live session ==")
@@ -404,8 +410,16 @@ def main():
                 else:
                     ok(True, "no frame exceeds the surface bounds")
 
-                # The channel-order oracle. Sample well inside the screen to
-                # avoid any cursor or border artefact at the origin.
+                # The channel-order oracle, driven as damage rather than raced
+                # against the baseline capture. find_pixel returns the *latest*
+                # frame covering the point, so once a new frame has arrived the
+                # sample is the repaint, not the baseline.
+                before_red = len(collector.frames)
+                subprocess.run([xsetroot, "-solid", "#FF0000"], env=env, check=True)
+                red_grew = collector.wait_for_frames(before_red + 1, 15)
+                ok(red_grew, "red repaint produces a new frame",
+                   f"{len(collector.frames)} total")
+
                 sample = find_pixel(collector.frames, WIDTH // 2, HEIGHT // 2)
                 ok(sample is not None, "centre pixel was painted by some frame")
                 if sample is not None:

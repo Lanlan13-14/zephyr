@@ -1,0 +1,170 @@
+name: Zephyr One RDP helper
+
+# Why this exists as its own workflow.
+#
+# The release workflow (zephyr-one.yml) can only be reached by workflow_dispatch
+# with a tag, every build job needs the full test job first, and each job builds
+# the whole Tauri bundle. Debugging a three-OS native toolchain through that loop
+# yields one platform's one error per ~20 minutes, and a red test job skips the
+# build jobs entirely — which is exactly how four consecutive rounds produced no
+# usable diagnostic. This workflow builds *only* the helper, on every push that
+# touches it, with fail-fast disabled so all three platforms report together.
+on:
+  push:
+    paths:
+      - 'zephyr_one/native/zephyr-one-rdp/**'
+      - 'zephyr_one/scripts/resolve-rdp-pkgconfig.py'
+      - 'zephyr_one/scripts/stage-native-rdp-bin.sh'
+      - 'zephyr_one/scripts/smoke-native-rdp-helper.py'
+      - 'zephyr_one/scripts/diagnose-static-freerdp.sh'
+      - '.github/workflows/zephyr-one-rdp-helper.yml'
+  pull_request:
+    paths:
+      - 'zephyr_one/native/zephyr-one-rdp/**'
+      - '.github/workflows/zephyr-one-rdp-helper.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+    working-directory: zephyr_one
+
+jobs:
+  helper:
+    name: helper (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Report every platform in one round instead of stopping at the first.
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux
+            os: ubuntu-latest
+            triplet: x64-linux
+          - label: windows
+            os: windows-2022
+            triplet: x64-windows-static-md
+          - label: macos
+            os: macos-latest
+            triplet: ''
+    env:
+      # run-vcpkg does not export its install root to later steps, so pin it.
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
+      # Stable path so actions/cache can key on it.
+      ZEPHYR_FREERDP_PREFIX: ${{ github.workspace }}/freerdp-dist
+      ZEPHYR_ONE_RDP_STATIC: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Initialize MSVC developer environment
+        if: matrix.label == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # FreeRDP is vendored and linked statically, so the only system libraries
+      # left are the platform's own: libc, and ALSA on Linux (ALSA loads plugins
+      # at runtime and cannot be statically linked without breaking audio).
+      - name: Install build dependencies (Linux)
+        if: matrix.label == 'linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build pkg-config \
+            libssl-dev zlib1g-dev libcjson-dev libasound2-dev \
+            xvfb x11-xserver-utils freerdp3-shadow-x11
+
+      - name: Install build dependencies (macOS)
+        if: matrix.label == 'macos'
+        run: brew install ninja pkg-config
+
+      # Apple removed OpenSSL from the system and Windows never had it, so those
+      # two platforms need it vendored. Linux uses the distro package on purpose:
+      # statically linking system OpenSSL would mean shipping a new release for
+      # every TLS CVE instead of letting the distro patch it.
+      - name: Select vcpkg triplet
+        if: matrix.label != 'linux'
+        run: |
+          t='${{ matrix.triplet }}'
+          if [ -z "$t" ]; then
+            case "$(uname -m)" in
+              arm64) t=arm64-osx ;;
+              x86_64) t=x64-osx ;;
+              *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
+            esac
+          fi
+          echo "VCPKG_DEFAULT_TRIPLET=$t" >> "$GITHUB_ENV"
+
+      - name: Install OpenSSL/zlib/cJSON (vcpkg)
+        if: matrix.label != 'linux'
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
+          vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
+          runVcpkgInstall: true
+
+      # A FreeRDP build is ~10 minutes; without this the feedback loop this
+      # workflow exists to shorten would be no shorter than the release one.
+      - name: Cache vendored FreeRDP
+        id: frdp-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/freerdp-dist
+          key: frdp-${{ matrix.label }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('zephyr_one/native/zephyr-one-rdp/scripts/build-freerdp.sh') }}
+
+      - name: Point FreeRDP's CMake at vcpkg OpenSSL
+        if: matrix.label != 'linux'
+        run: |
+          tc="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          test -f "$tc" || { echo "vcpkg toolchain missing: $tc" >&2; exit 1; }
+          {
+            echo "ZEPHYR_FREERDP_CMAKE_ARGS=-DCMAKE_TOOLCHAIN_FILE=$tc -DVCPKG_TARGET_TRIPLET=$VCPKG_DEFAULT_TRIPLET"
+          } >> "$GITHUB_ENV"
+
+      - name: Build vendored FreeRDP (pinned)
+        run: sh native/zephyr-one-rdp/scripts/build-freerdp.sh
+
+      - name: Resolve pkg-config for the vendored build
+        run: python3 scripts/resolve-rdp-pkgconfig.py
+
+      # Runs before the link so a missing symbol is answered with archive
+      # contents rather than a bare list of undefined names.
+      - name: Diagnose static FreeRDP archives
+        continue-on-error: true
+        run: sh scripts/diagnose-static-freerdp.sh "$ZEPHYR_FREERDP_PREFIX/install/lib"
+
+      - name: Build, link and smoke the helper
+        run: sh scripts/stage-native-rdp-bin.sh
+
+      # The smoke test above already proves the helper starts and speaks the
+      # protocol. This proves *why* it started: no external FreeRDP anywhere.
+      - name: Assert no external FreeRDP dependency
+        run: |
+          case '${{ matrix.label }}' in
+            linux)
+              deps=$(ldd native-bin/zephyr-one-rdp || true) ;;
+            macos)
+              deps=$(otool -L native-bin/zephyr-one-rdp || true) ;;
+            windows)
+              # MSYS would rewrite /dependents as a path unless arg conversion
+              # is disabled. dumpbin is supplied by the MSVC dev environment.
+              deps=$(MSYS2_ARG_CONV_EXCL='*' dumpbin /dependents \
+                native-bin/zephyr-one-rdp.exe || true) ;;
+          esac
+          printf '%s\n' "$deps"
+          if printf '%s' "$deps" | grep -Ei 'freerdp|winpr'; then
+            echo "ERROR: helper still depends on an external FreeRDP" >&2
+            exit 1
+          fi
+          echo "no external FreeRDP dependency"
+
+      - name: Live RDP end-to-end (Linux only)
+        if: matrix.label == 'linux'
+        run: |
+          python3 native/zephyr-one-rdp/e2e/live-session.py \
+            --helper native-bin/zephyr-one-rdp
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rdp-helper-${{ matrix.label }}
+          path: zephyr_one/native-bin/**
+          if-no-files-found: warn

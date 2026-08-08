@@ -68,3 +68,8 @@ zephyr_one/native-bin/
 # Staged core: stage-zephyr-core.sh regenerates it (server.js + public/ copy
 # plus the native-RDP transform), so committing it would duplicate the repo.
 zephyr_one/zephyr-core/
+
+# Vendored FreeRDP build tree and vcpkg deps (never committed)
+zephyr_one/native/zephyr-one-rdp/.freerdp-dist/
+zephyr_one/vcpkg_installed/
+vcpkg_installed/

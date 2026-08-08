@@ -87,6 +87,10 @@ jobs:
       # by every step that follows.
       VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
       VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
+      # Must match the actions/cache path below. build-freerdp.sh otherwise
+      # defaults to <crate>/.freerdp-dist, so the cache would archive an empty
+      # directory and every run would pay the full FreeRDP build again.
+      ZEPHYR_FREERDP_PREFIX: ${{ github.workspace }}/freerdp-dist
     steps:
       - uses: actions/checkout@v5
       - name: Stamp package version from release tag
@@ -96,15 +100,32 @@ jobs:
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install static FreeRDP dependencies (vcpkg)
+      - name: Initialize MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+      # vcpkg supplies OpenSSL/zlib/cJSON only. FreeRDP itself is built from a
+      # pinned tag: vcpkg's freerdp port produces a broken static tree (measured
+      # 2026-08-08 — libfreerdp3.a and libwinpr3.a byte-identical at 1745350 B,
+      # 440 symbols each, and gdi_free/freerdp_client_load_addins/PubSub_Subscribe
+      # defined in none of them), which is what failed four CI rounds.
+      - name: Install crypto dependencies (vcpkg)
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
           vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
           runVcpkgInstall: true
-      - name: Configure static FreeRDP pkg-config
+      - name: Cache vendored FreeRDP
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/freerdp-dist
+          key: frdp-3.30.0-${{ runner.os }}-${{ hashFiles('zephyr_one/native/zephyr-one-rdp/scripts/build-freerdp.sh') }}
+      - name: Build vendored FreeRDP
         shell: bash
-        run: python3 scripts/resolve-vcpkg-pkgconfig.py
+        run: |
+          export ZEPHYR_FREERDP_CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=$VCPKG_DEFAULT_TRIPLET"
+          sh native/zephyr-one-rdp/scripts/build-freerdp.sh
+      - name: Resolve FreeRDP pkg-config
+        shell: bash
+        run: python3 scripts/resolve-rdp-pkgconfig.py
       - name: Install WebView2 (usually preinstalled on windows-2022)
         shell: pwsh
         run: |
@@ -189,6 +210,10 @@ jobs:
       # workflow file with "Unrecognized named-value: 'runner'", which disables
       # every job including test. It is set from a step instead.
       VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
+      # Must match the actions/cache path below. build-freerdp.sh otherwise
+      # defaults to <crate>/.freerdp-dist and the cache would store an empty
+      # directory forever, silently costing a full FreeRDP rebuild every run.
+      ZEPHYR_FREERDP_PREFIX: ${{ github.workspace }}/freerdp-dist
     steps:
       - uses: actions/checkout@v5
       - name: Stamp package version from release tag
@@ -209,14 +234,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - name: Install static FreeRDP dependencies (vcpkg)
+      - name: Install crypto dependencies (vcpkg)
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
           vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
           runVcpkgInstall: true
-      - name: Configure static FreeRDP pkg-config
-        run: python3 scripts/resolve-vcpkg-pkgconfig.py
+      - run: brew install ninja
+      - name: Cache vendored FreeRDP
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/freerdp-dist
+          key: frdp-3.30.0-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('zephyr_one/native/zephyr-one-rdp/scripts/build-freerdp.sh') }}
+      - name: Build vendored FreeRDP (pinned, static)
+        # Apple ships no OpenSSL, so FreeRDP's CMake is pointed at the vcpkg
+        # tree. Passed via a shell variable rather than a GitHub context so the
+        # value cannot depend on a context that is unavailable where it is used.
+        run: |
+          ZEPHYR_FREERDP_CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=$VCPKG_DEFAULT_TRIPLET" \
+            sh native/zephyr-one-rdp/scripts/build-freerdp.sh
+      - name: Configure FreeRDP pkg-config
+        run: python3 scripts/resolve-rdp-pkgconfig.py
       - run: npm install
       - run: sh scripts/stage-zephyr-core.sh
       - run: node scripts/stage-desktop-runtime.mjs
@@ -280,6 +318,10 @@ jobs:
       # alone, so pinning it here makes the install root readable downstream.
       VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
       VCPKG_DEFAULT_TRIPLET: x64-linux
+      # Must match the actions/cache path below. build-freerdp.sh otherwise
+      # defaults to <crate>/.freerdp-dist, so a mismatch caches an empty
+      # directory and silently rebuilds FreeRDP on every run.
+      ZEPHYR_FREERDP_PREFIX: ${{ github.workspace }}/freerdp-dist
     steps:
       - uses: actions/checkout@v5
       - name: Stamp package version from release tag
@@ -288,19 +330,32 @@ jobs:
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install static FreeRDP dependencies (vcpkg)
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: c4d9956c0c10a4742840a5e7d93efa2e0015c865
-          vcpkgJsonGlob: zephyr_one/native/zephyr-one-rdp/vcpkg.json
-          runVcpkgInstall: true
-      - name: Configure static FreeRDP pkg-config
-        run: python3 scripts/resolve-vcpkg-pkgconfig.py
+      # No vcpkg on Linux: apt ships OpenSSL/zlib/cJSON, and OpenSSL stays a
+      # distro-managed shared library on purpose so its CVEs are patched by
+      # system updates rather than by us cutting a new Zephyr One release.
+      # cmake/ninja/libasound2-dev are here because they are FreeRDP *build*
+      # inputs, so this step has to precede the FreeRDP build below.
       - name: Install Linux deps
         working-directory: .
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev \
+            cmake ninja-build libssl-dev zlib1g-dev libcjson-dev libasound2-dev
+      # vcpkg's freerdp port produced archives with libfreerdp3.a and libwinpr3.a
+      # byte-identical in size and member count, and gdi_free /
+      # freerdp_client_load_addins / PubSub_Subscribe defined in none of them.
+      # FreeRDP is pinned and built from source instead; upstream tests exactly
+      # this configuration in ci/cmake-preloads/config-qa-static.cmake.
+      - name: Cache vendored FreeRDP
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/freerdp-dist
+          key: frdp-3.30.0-${{ runner.os }}-${{ hashFiles('zephyr_one/native/zephyr-one-rdp/scripts/build-freerdp.sh') }}
+      - name: Build vendored static FreeRDP
+        run: sh native/zephyr-one-rdp/scripts/build-freerdp.sh
+      - name: Configure FreeRDP pkg-config
+        run: python3 scripts/resolve-rdp-pkgconfig.py
       - run: npm install
       - run: npm run stage:core
       - run: node scripts/stage-desktop-runtime.mjs
@@ -311,7 +366,7 @@ jobs:
       # archives actually contain.
       - name: Diagnose static FreeRDP archives
         continue-on-error: true
-        run: sh scripts/diagnose-static-freerdp.sh
+        run: sh scripts/diagnose-static-freerdp.sh "$ZEPHYR_FREERDP_PREFIX/install/lib"
       - name: Build and smoke native FreeRDP helper
         run: sh scripts/stage-native-rdp-bin.sh
       - name: Assert helper is self-contained
