@@ -565,6 +565,30 @@ static void on_channel_disconnected(void* context, Z_EVENT_CONST ChannelDisconne
 
 /* ── instance callbacks ──────────────────────────────────────────────────── */
 
+/*
+ * The helper is a non-interactive child process: credentials are already in
+ * rdpSettings, so a console prompt can never succeed. FreeRDP 3 invokes
+ * AuthenticateEx even for an intentionally empty username/password (for
+ * example an /sec:rdp shadow session); without a callback its common-client
+ * fallback calls freerdp_passphrase_read(), sees non-interactive stdin, and
+ * aborts with ERRCONNECT_CONNECT_CANCELLED. Returning TRUE while leaving the
+ * supplied strings untouched means "use exactly the configured credentials",
+ * including a deliberately empty credential set.
+ */
+#if FREERDP_VERSION_MAJOR >= 3
+static BOOL zephyr_authenticate(freerdp* instance, char** username, char** password,
+                                char** domain, rdp_auth_reason reason) {
+    (void)instance; (void)username; (void)password; (void)domain; (void)reason;
+    return TRUE;
+}
+#else
+static BOOL zephyr_authenticate(freerdp* instance, char** username, char** password,
+                                char** domain) {
+    (void)instance; (void)username; (void)password; (void)domain;
+    return TRUE;
+}
+#endif
+
 static BOOL zephyr_pre_connect(freerdp* instance) {
     rdpContext* context = instance->context;
     zephyr_rdp_session* s = owner_of(context);
@@ -648,6 +672,11 @@ static DWORD zephyr_verify_changed_certificate_ex(
 
 static int zephyr_client_new(freerdp* instance, rdpContext* context) {
     (void)context;
+#if FREERDP_VERSION_MAJOR >= 3
+    instance->AuthenticateEx = zephyr_authenticate;
+#else
+    instance->Authenticate = zephyr_authenticate;
+#endif
     instance->PreConnect = zephyr_pre_connect;
     instance->PostConnect = zephyr_post_connect;
     instance->PostDisconnect = zephyr_post_disconnect;
