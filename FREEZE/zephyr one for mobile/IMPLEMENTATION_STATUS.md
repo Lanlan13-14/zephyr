@@ -1,6 +1,6 @@
 # Zephyr One 原生实现状态
 
-> [KNOWN] 基线：`main@3a61d2f`，2026-08-08。
+> [KNOWN] 基线：`main@8dd5b98`，2026-08-08。
 >
 > [KNOWN] 本文件只报告仓库实际存在的代码与合同，不把设计文档当实现。
 
@@ -41,7 +41,7 @@
 | F-007 | ACL/share | `implemented-zephyr` | `missing` | [KNOWN] 原生 capability UI 未实现 |
 | F-008 | SSH/SFTP | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 SSH engine 未定 |
 | F-009 | Telnet | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 parser/transport 未实现 |
-| F-010 | RDP | `implemented-zephyr` | `legacy-one` | [KNOWN] 当前 Web/WASM；原生 core 未进仓库 |
+| F-010 | RDP | `implemented-zephyr` | `partial-desktop-native` | [KNOWN] `main@8dd5b98` 已把桌面 One 的 WASM 管线换成原生 FreeRDP（`zephyr_one/native/zephyr-one-rdp/` C shim + Rust FFI + e2e）；该实现面向 Tauri 桌面壳，Android Surface / iOS UIView 绑定仍缺失 |
 | F-011 | VNC | `implemented-zephyr` | `legacy-one` | [KNOWN] 当前 noVNC；原生 RFB core 未定 |
 | F-012 | 终端 IME | `implemented-zephyr` | `specified` | [KNOWN] Web 行为合同已有；原生 SurfaceController 未实现 |
 | F-013 | 笔记 | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生列表/编辑/冲突未实现 |
@@ -62,6 +62,16 @@
 | F-028 | 系统 App Lock | `partial` | `legacy-one` | [KNOWN] Tauri hook 非正式 BiometricPrompt/LA 实现 |
 | F-029 | 四色原生图标 | `specified` | `partial` | [KNOWN] SVG/manifest 有；production path/adaptive/alternate assets 未生成 |
 | F-030 | Tauri → native migration | `specified` | `missing` | [KNOWN] migration artifact/exporter/importer 未实现 |
+| F-031 | Android progress-driven 自定义返回 | `specified` | `missing` | [KNOWN] Compose navigation/animation 代码不存在 |
+| F-032 | iOS 全 push interactive 右滑 | `specified` | `missing` | [KNOWN] SwiftUI/UIKit navigation 代码不存在 |
+| F-033 | Termux/SwiftTerm 级终端交互 | `specified` | `missing` | [KNOWN] 两端 M0 引擎和 UI 尚未实现 |
+| F-034 | RDP/VNC 完整移动交互 | `specified` | `blocked` | [KNOWN] 桌面已有 FreeRDP C shim 可复用为 core 参考，但移动 Surface/UIView 绑定、direct/trackpad 手势与真机验证仍未做；VNC RFB core 仍未选定 |
+| F-035 | Zephyr AI 全能力浮窗 | `specified` | `missing` | [KNOWN] 116-tool baseline 已有；原生浮窗和 NativeSurfaceBridge 不存在 |
+| F-036 | Shared-to-me 零驻留在线 API | `specified` | `missing` | [KNOWN] 当前 mobile shared endpoints 不存在 |
+| F-037 | Shared direct use envelope | `specified` | `missing` | [KNOWN] session-bound envelope/AAD/vector/arena 未实现 |
+| F-038 | Shared strict relay | `specified` | `partial` | [KNOWN] Zephyr 有现有 session/proxy 部件；mobile relay 合同未实现 |
+| F-039 | Shared AI 主端执行零泄漏 | `specified` | `partial` | [KNOWN] AI runtime 在主端；One residency/stream client 未实现 |
+| F-040 | Shared Note 在线内存 viewer | `specified` | `missing` | [KNOWN] NotesService ACL 已有；原生 no-store viewer 未实现 |
 
 ## 当前可复用测试资产
 

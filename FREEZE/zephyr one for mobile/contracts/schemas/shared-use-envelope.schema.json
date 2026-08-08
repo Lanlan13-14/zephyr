@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/shared-use-envelope.schema.json",
+  "title": "SharedUseEnvelopeV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "alg",
+    "kem",
+    "aead",
+    "ct",
+    "iv",
+    "tag",
+    "data",
+    "aad",
+    "keyVersion",
+    "resourceRevision",
+    "sessionId",
+    "resourceId",
+    "purpose",
+    "expiresAt",
+    "clientNonce"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "alg": {
+      "const": "ML-KEM-768+HKDF-SHA256+AES-256-GCM"
+    },
+    "kem": {
+      "const": "ML-KEM-768"
+    },
+    "aead": {
+      "const": "AES-256-GCM"
+    },
+    "ct": {
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    "iv": {
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    "tag": {
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    "data": {
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    "aad": {
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    "keyVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "resourceRevision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 120
+    },
+    "resourceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "purpose": {
+      "enum": [
+        "ssh",
+        "telnet",
+        "rdp",
+        "vnc"
+      ]
+    },
+    "expiresAt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "clientNonce": {
+      "type": "string",
+      "minLength": 22,
+      "maxLength": 120
+    }
+  }
+}

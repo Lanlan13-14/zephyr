@@ -39,6 +39,10 @@
     {
       "name": "FileBridge",
       "description": "ZFT2 file bridge leases."
+    },
+    {
+      "name": "Shared",
+      "description": "Online-only zero-residency shared resource access and sessions."
     }
   ],
   "paths": {
@@ -49,7 +53,7 @@
         ],
         "summary": "Use Zephyr login policy and request a native SID",
         "operationId": "postApiAuthLogin",
-        "x-zephyr-implementation": "implemented-3a61d2f",
+        "x-zephyr-implementation": "implemented-8dd5b98",
         "responses": {
           "200": {
             "description": "Success",
@@ -142,7 +146,7 @@
         ],
         "summary": "Complete Zephyr TOTP and request a native SID",
         "operationId": "postApiAuthTotpVerify",
-        "x-zephyr-implementation": "implemented-3a61d2f",
+        "x-zephyr-implementation": "implemented-8dd5b98",
         "responses": {
           "200": {
             "description": "Success",
@@ -1653,6 +1657,897 @@
           }
         }
       }
+    },
+    "/api/mobile/v1/shared": {
+      "get": {
+        "tags": [
+          "Shared"
+        ],
+        "summary": "List online shared-to-me references without local residency",
+        "operationId": "listSharedResources",
+        "x-zephyr-implementation": "required-server-extension",
+        "security": [
+          {
+            "DeviceAccess": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always no-store, private",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SharedResourceSummary"
+                      }
+                    },
+                    "nextPageToken": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-zephyr-no-store": true,
+        "x-zephyr-shared-residency": "online-only"
+      }
+    },
+    "/api/mobile/v1/shared/{resourceType}/{resourceId}": {
+      "get": {
+        "tags": [
+          "Shared"
+        ],
+        "summary": "Read one shared resource online after real-time ACL check",
+        "operationId": "getSharedResource",
+        "x-zephyr-implementation": "required-server-extension",
+        "security": [
+          {
+            "DeviceAccess": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always no-store, private",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "resourceType",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resourceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-zephyr-no-store": true,
+        "x-zephyr-shared-residency": "online-only"
+      }
+    },
+    "/api/mobile/v1/shared/{resourceType}/{resourceId}/invoke": {
+      "post": {
+        "tags": [
+          "Shared"
+        ],
+        "summary": "Invoke canonical server operation without delivering control-plane secrets",
+        "operationId": "invokeSharedResource",
+        "x-zephyr-implementation": "required-server-extension",
+        "security": [
+          {
+            "DeviceAccess": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always no-store, private",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedInvokeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedInvokeRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "resourceType",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resourceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-zephyr-no-store": true,
+        "x-zephyr-shared-residency": "online-only"
+      }
+    },
+    "/api/mobile/v1/shared/sessions/{sessionId}/refresh": {
+      "post": {
+        "tags": [
+          "Shared"
+        ],
+        "summary": "Reauthorize live session and mint a fresh nonce-bound envelope if permitted",
+        "operationId": "refreshSharedSession",
+        "x-zephyr-implementation": "required-server-extension",
+        "security": [
+          {
+            "DeviceAccess": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always no-store, private",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "clientSessionNonce"
+                ],
+                "properties": {
+                  "clientSessionNonce": {
+                    "type": "string",
+                    "minLength": 22
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-zephyr-no-store": true,
+        "x-zephyr-shared-residency": "online-only"
+      }
+    },
+    "/api/mobile/v1/shared/sessions/{sessionId}": {
+      "delete": {
+        "tags": [
+          "Shared"
+        ],
+        "summary": "Terminate shared session and revoke relay/envelope grant",
+        "operationId": "deleteSharedSession",
+        "x-zephyr-implementation": "required-server-extension",
+        "security": [
+          {
+            "DeviceAccess": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always no-store, private",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-zephyr-no-store": true,
+        "x-zephyr-shared-residency": "online-only"
+      }
+    },
+    "/api/mobile/v1/shared/connections/{connectionId}/sessions": {
+      "post": {
+        "tags": [
+          "Shared"
+        ],
+        "summary": "Open relay-strict or single-use direct shared connection session",
+        "operationId": "postApiMobileV1SharedConnectionsConnectionidSessions",
+        "x-zephyr-implementation": "required-server-extension",
+        "security": [
+          {
+            "DeviceAccess": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always no-store, private",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedSessionRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "connectionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-zephyr-no-store": true,
+        "x-zephyr-shared-residency": "online-only"
+      }
     }
   },
   "components": {
@@ -2584,6 +3479,292 @@
           "entityRevision": {
             "type": "integer",
             "minimum": 1
+          }
+        }
+      },
+      "SharedUseEnvelope": {
+        "title": "SharedUseEnvelopeV1",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "v",
+          "alg",
+          "kem",
+          "aead",
+          "ct",
+          "iv",
+          "tag",
+          "data",
+          "aad",
+          "keyVersion",
+          "resourceRevision",
+          "sessionId",
+          "resourceId",
+          "purpose",
+          "expiresAt",
+          "clientNonce"
+        ],
+        "properties": {
+          "v": {
+            "const": 1
+          },
+          "alg": {
+            "const": "ML-KEM-768+HKDF-SHA256+AES-256-GCM"
+          },
+          "kem": {
+            "const": "ML-KEM-768"
+          },
+          "aead": {
+            "const": "AES-256-GCM"
+          },
+          "ct": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "iv": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "tag": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "data": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "aad": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "keyVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "resourceRevision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sessionId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 120
+          },
+          "resourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "purpose": {
+            "enum": [
+              "ssh",
+              "telnet",
+              "rdp",
+              "vnc"
+            ]
+          },
+          "expiresAt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "clientNonce": {
+            "type": "string",
+            "minLength": 22,
+            "maxLength": 120
+          }
+        }
+      },
+      "SharedResourceSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resourceType",
+          "resourceId",
+          "displayName",
+          "ownerDisplayName",
+          "capabilities",
+          "revision"
+        ],
+        "properties": {
+          "resourceType": {
+            "enum": [
+              "connection",
+              "proxy",
+              "sshKey",
+              "jumpHost",
+              "note",
+              "file",
+              "docker"
+            ]
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "ownerDisplayName": {
+            "type": "string"
+          },
+          "capabilities": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expiresAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "SharedSessionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "clientSessionNonce",
+          "requestedChannels",
+          "deviceKeyVersion"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "direct-ephemeral",
+              "relay-strict"
+            ]
+          },
+          "clientSessionNonce": {
+            "type": "string",
+            "minLength": 22,
+            "maxLength": 120
+          },
+          "requestedChannels": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "terminal",
+                "clipboard",
+                "audio",
+                "drive",
+                "microphone",
+                "camera",
+                "location"
+              ]
+            }
+          },
+          "deviceKeyVersion": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "SharedSessionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sessionId",
+          "mode",
+          "expiresAt",
+          "capabilities"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "direct-ephemeral",
+              "relay-strict"
+            ]
+          },
+          "expiresAt": {
+            "type": "integer"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "useEnvelope": {
+            "$ref": "#/components/schemas/SharedUseEnvelope"
+          },
+          "relay": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "websocketUrl": {
+                "type": "string"
+              },
+              "protocol": {
+                "type": "string"
+              },
+              "credential": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "SharedInvokeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation",
+          "arguments"
+        ],
+        "properties": {
+          "operation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "arguments": {
+            "type": "object"
+          },
+          "expectedRevision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SharedInvokeResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "revision",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "result": {},
+          "auditId": {
+            "type": "string"
           }
         }
       }

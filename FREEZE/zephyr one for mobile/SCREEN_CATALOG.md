@@ -43,6 +43,14 @@ sync-conflict
 - [INFERRED] destructive action 使用原生 dialog/sheet，不使用浏览器 prompt/confirm。
 - [INFERRED] 所有错误页包含 requestId 的可复制诊断入口，但默认不显示 secret/host/user/path。
 
+### 2.1 Shared-to-me 在线零驻留态
+
+- [KNOWN] 自己拥有的资源走本地 mirror；shared-to-me 不落地，列表/详情/正文/会话每次在线请求 Zephyr。完整合同见 [`SHARED_RESOURCE_RESIDENCY.md`](SHARED_RESOURCE_RESIDENCY.md)。
+- [KNOWN] shared row 显示“来自 <owner> · 在线使用 · 不保存到此设备”、capability 和 expiry；没有 `offline-with-cache`，离线只能进入 `offline-no-cache`。
+- [KNOWN] Shared Connection 打开前明确 owner policy：`主端 relay（凭据保留主端）` 或 `本次原生直连（加密连接材料仅驻留会话内存）`；不能用模糊“安全连接”混淆。
+- [KNOWN] Shared Note/AI/File 离线、ACL revoke、owner delete 后立即退出内容并清内存，不自动复制成 owned resource。
+- [KNOWN] 用户主动下载/复制/export 是显式动作，显示 owner policy、目标位置和审计；默认不进 clipboard/search/widget/recent。
+
 ## 3. S01 启动与本地解锁
 
 **入口**：App launch。
@@ -222,15 +230,25 @@ sync-conflict
 
 **共同**：owner/shared/capability、revision conflict、share sheet、依赖引用删除保护。
 
-## 19. S44 AI
+## 19. S44 AI 浮动 Workspace
 
-**页面**：会话列表、聊天、Provider/模型选择、附件、计划/Memory/Skills/Env、运行权限确认。
+**入口/形态**：每个有上下文的页面显示 Zephyr AI launcher；手机打开为覆盖当前 surface 的 `peek / half / expanded` 原生浮窗，横屏/平板可停靠侧栏。默认不 push 到隔离聊天页，底层 connection/terminal/RDP/VNC/file/note 页面持续可见和更新。
 
-**运行**：SSE/stream events；取消 run；permission 请求用原生 confirmation sheet；后台中断后可按 runId 恢复事件。
+**浮窗内容**：context header、conversation、Provider/模型、协作/run/permission/think 模式、附件、计划、Memory/Skills/Env、用量、tool trace、target marker、confirmation、verification、stop/take-over。完整细节见 [`AI_FLOATING_WORKSPACE.md`](AI_FLOATING_WORKSPACE.md)。
 
-**安全**：共享 Provider 不展示 API Key；Env 只显示 hasValue；notes read/write 分权；工具继续由主端 capability registry 执行。
+**能力**：从同版本 Zephyr `ai-capabilities.js`、`ai-extended-capabilities.js` 和真实 model-visible catalog 派生；Connection、Proxy/Key/Jump/Snippet、Terminal、RDP/VNC、Files/SFTP、Notes、Docker、ACL、Web/browser、Memory/Env、Plan、Workspace/attachments、Subagents、Sandbox、原生 UI action 全部对齐，不能维护手机子集。
 
-**离线**：已同步历史可读、草稿可写；发送按钮显示需要联网。
+**可见执行**：observation → proposed action → confirmation → execution → verification 全链在浮窗展示；底层页面高亮 semantic target，终端显示目标 session/range，RDP/VNC 显示 capture/action marker 与 before/after。
+
+**原生桥接**：Web DOM action 替换为 versioned `NativeSurfaceBridge` semantic node/action；旧 surface version/captureId 必须拒绝。业务写操作仍调用 Zephyr canonical service，不通过 UI 模拟绕过 ACL/revision。
+
+**运行**：SSE/stream events；显式停止 run；收起面板不取消；后台中断后按 runId 恢复。AI stream 不得触发 terminal/remote surface 重组。
+
+**返回**：Android back 逐级关闭 picker → 降 detent → 收起 AI → 底层 page pop，动画由 back progress 驱动；iOS panel 内 push 层级支持 interactive swipe-back，左边缘不被 panel drag 吞掉。
+
+**安全**：共享 Provider 不展示 API Key；Env 默认只显示 hasValue；notes read/write 分权；humanOnly secret 能力不进入模型；risk/confirmation/playbook 与 Zephyr 一致。
+
+**离线**：已同步历史可读、草稿可写；发送按钮显示需要联网；正在服务端运行的任务显示最后事件和恢复状态。
 
 ## 20. S45 文件同步
 

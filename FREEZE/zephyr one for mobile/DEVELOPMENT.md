@@ -2,13 +2,13 @@
 
 > 文档状态：产品约束 + Zephyr 继承修订版 v1.2（用户要求优先）
 >
-> 审计基线：仓库 `Lanlan13-14/zephyr-ssh`，提交 `3a61d2f`（2026-08-08）
+> 审计基线：仓库 `Lanlan13-14/zephyr-ssh`，提交 `8dd5b98`（2026-08-08）
 >
 > 目标产品：以 Android Kotlin + Jetpack Compose、iOS Swift + SwiftUI 原生实现 Zephyr One 的移动操作能力；排除无移动用途的账号安全/服务器部署后台，并通过“文件同步”完成 One 有用途账号数据的完整双向同步
 >
 > 产品范围合同：[`PRODUCT_REQUIREMENTS.md`](PRODUCT_REQUIREMENTS.md)。该合同约束“必须做什么”，本文约束总体“怎样实现”；范围冲突时合同优先。
 >
-> 细化规范：Zephyr 业务继承见 [`ZEPHYR_PARITY.md`](ZEPHYR_PARITY.md)，逐屏落点见 [`SCREEN_CATALOG.md`](SCREEN_CATALOG.md)，同步顺序见 [`SYNC_STATE_MACHINE.md`](SYNC_STATE_MACHINE.md)，DDL/Secret/迁移见 [`DATA_AND_MIGRATION.md`](DATA_AND_MIGRATION.md)，协议引擎见 [`NATIVE_ENGINE_DECISIONS.md`](NATIVE_ENGINE_DECISIONS.md)，机器合同见 [`contracts/`](contracts/)。这些细化文件在各自主题内覆盖本文早期概述。
+> 细化规范：Zephyr 业务继承见 [`ZEPHYR_PARITY.md`](ZEPHYR_PARITY.md)，逐屏落点见 [`SCREEN_CATALOG.md`](SCREEN_CATALOG.md)，双平台视觉/返回/动画见 [`MOBILE_EXPERIENCE.md`](MOBILE_EXPERIENCE.md)，SSH/Telnet 手感见 [`TERMINAL_EXPERIENCE.md`](TERMINAL_EXPERIENCE.md)，RDP/VNC 交互见 [`REMOTE_DESKTOP_EXPERIENCE.md`](REMOTE_DESKTOP_EXPERIENCE.md)，Zephyr AI 全能力浮窗见 [`AI_FLOATING_WORKSPACE.md`](AI_FLOATING_WORKSPACE.md)，共享资源零驻留与按次使用见 [`SHARED_RESOURCE_RESIDENCY.md`](SHARED_RESOURCE_RESIDENCY.md)，同步顺序见 [`SYNC_STATE_MACHINE.md`](SYNC_STATE_MACHINE.md)，DDL/Secret/迁移见 [`DATA_AND_MIGRATION.md`](DATA_AND_MIGRATION.md)，协议引擎见 [`NATIVE_ENGINE_DECISIONS.md`](NATIVE_ENGINE_DECISIONS.md)，机器合同见 [`contracts/`](contracts/)。这些细化文件在各自主题内覆盖本文早期概述。
 
 ## 0. 标记与置信度
 
@@ -843,7 +843,9 @@ CREATE TABLE mobile_applied_ops (
 - [INFERRED] 设备私钥不可导出时优先不可导出；不支持硬件密钥的设备退化为 Keychain/Keystore 保护的软件密钥并在安全页明确显示。
 - [KNOWN] 完整镜像模式必须同步当前账号自有的连接凭据、SSH Key、代理密码、AI secret 和 Client Token；不能用默认关闭的“只同步 metadata”偷换产品要求。
 - [INFERRED] 可额外提供用户主动选择的“此设备不下载敏感字段”安全模式，但它是明确降级：UI 必须显示该设备不是完整镜像，并且不能改变主端仍保有完整数据的事实。
-- [INFERRED] 共享连接默认不下发 owner secret；如果主端允许 shared user 使用但不 reveal，原生端应通过主端会话代理连接，或明确提示“该共享连接仅可由主端执行”，不能绕过 ACL索取凭据。
+- [KNOWN] shared-to-me 资源全部排除在 mobile mirror/SecretStore/local DB 外；共享 AI、笔记、文件和业务操作每次在线请求主端并实时重验 ACL，细节见 [`SHARED_RESOURCE_RESIDENCY.md`](SHARED_RESOURCE_RESIDENCY.md)。
+- [KNOWN] 共享连接默认使用主端 relay，owner secret 不下发；若 owner policy 允许原生 direct，主端只可签发一次、短时、绑定 device/session/resource/revision/purpose/nonce 的 encrypted use envelope，One 仅在 native SessionSecretArena 内解密、不持久化并尽力清零。
+- [KNOWN] direct 模式意味着连接材料曾在 One 内存出现，不能宣传“秘密未到设备”；若 owner 要求绝不下发则强制 relay，relay 不可用时拒绝连接。
 - [KNOWN] Client Token envelope 解密后只进入 SecretStore；文件同步导出/恢复必须能恢复 token record 与 secret，确保 Zephyr 与 One 互备。
 
 ## 13. “文件同步”与底层 Zephyr Agent 能力整合
@@ -1289,6 +1291,11 @@ Zephyr 主端                  https://...
 - [KNOWN] 同步状态机：[`SYNC_STATE_MACHINE.md`](SYNC_STATE_MACHINE.md)
 - [KNOWN] DDL、Secret 与迁移：[`DATA_AND_MIGRATION.md`](DATA_AND_MIGRATION.md)
 - [KNOWN] 原生协议引擎决策：[`NATIVE_ENGINE_DECISIONS.md`](NATIVE_ENGINE_DECISIONS.md)
+- [KNOWN] 原生移动视觉、返回和动画：[`MOBILE_EXPERIENCE.md`](MOBILE_EXPERIENCE.md)
+- [KNOWN] SSH/Telnet 终端交互：[`TERMINAL_EXPERIENCE.md`](TERMINAL_EXPERIENCE.md)
+- [KNOWN] RDP/VNC 远程桌面交互：[`REMOTE_DESKTOP_EXPERIENCE.md`](REMOTE_DESKTOP_EXPERIENCE.md)
+- [KNOWN] Zephyr AI 浮窗与能力对齐：[`AI_FLOATING_WORKSPACE.md`](AI_FLOATING_WORKSPACE.md)
+- [KNOWN] 共享资源零驻留与按次使用：[`SHARED_RESOURCE_RESIDENCY.md`](SHARED_RESOURCE_RESIDENCY.md)
 - [KNOWN] 需求追踪与实际状态：[`TRACEABILITY.md`](TRACEABILITY.md)、[`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)
 - [KNOWN] OpenAPI、entity/error registry、JSON Schema 与 vectors：[`contracts/`](contracts/)
 - [KNOWN] 主功能与协议说明：[`../../README.md`](../../README.md)

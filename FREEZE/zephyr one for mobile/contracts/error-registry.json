@@ -17,46 +17,11 @@
   ],
   "errors": [
     {
-      "code": "invalid_request",
-      "httpStatus": 400,
-      "retryable": false,
-      "clientAction": "fix_input",
-      "source": "新 mobile v1"
-    },
-    {
-      "code": "unsupported_protocol_version",
-      "httpStatus": 400,
-      "retryable": false,
-      "clientAction": "upgrade_app",
-      "source": "新 mobile v1"
-    },
-    {
-      "code": "registry_mismatch",
-      "httpStatus": 409,
-      "retryable": false,
-      "clientAction": "upgrade_or_refresh_registry",
-      "source": "新 mobile v1"
-    },
-    {
-      "code": "app_session_expired",
-      "httpStatus": 401,
-      "retryable": false,
-      "clientAction": "sign_in",
-      "source": "server.js requireUser"
-    },
-    {
-      "code": "invalid_credentials",
-      "httpStatus": 401,
-      "retryable": false,
-      "clientAction": "correct_credentials",
-      "source": "server.js auth"
-    },
-    {
-      "code": "must_change_password",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "open_system_browser",
-      "source": "server.js requireUser"
+      "code": "account_locked",
+      "httpStatus": 429,
+      "retryable": true,
+      "clientAction": "wait_then_retry",
+      "source": "server.js login"
     },
     {
       "code": "account_suspended",
@@ -66,104 +31,6 @@
       "source": "authz.js/server.js"
     },
     {
-      "code": "account_locked",
-      "httpStatus": 429,
-      "retryable": true,
-      "clientAction": "wait_then_retry",
-      "source": "server.js login"
-    },
-    {
-      "code": "login_guard_blocked",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "show_server_policy",
-      "source": "server.js TOTP"
-    },
-    {
-      "code": "captcha_required",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "open_auth_session",
-      "source": "mobile adapter"
-    },
-    {
-      "code": "totp_required",
-      "httpStatus": 401,
-      "retryable": false,
-      "clientAction": "enter_totp",
-      "source": "server.js login result"
-    },
-    {
-      "code": "totp_invalid",
-      "httpStatus": 401,
-      "retryable": false,
-      "clientAction": "retry_totp",
-      "source": "mobile adapter"
-    },
-    {
-      "code": "totp_temp_exhausted",
-      "httpStatus": 401,
-      "retryable": false,
-      "clientAction": "restart_sign_in",
-      "source": "server.js TOTP"
-    },
-    {
-      "code": "token_required",
-      "httpStatus": 400,
-      "retryable": false,
-      "clientAction": "create_token_on_server",
-      "source": "one-client-manager.js"
-    },
-    {
-      "code": "token_not_found",
-      "httpStatus": 404,
-      "retryable": false,
-      "clientAction": "select_valid_token",
-      "source": "one-client-manager.js"
-    },
-    {
-      "code": "token_missing",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "rebind",
-      "source": "one-client-manager.js"
-    },
-    {
-      "code": "token_rotated",
-      "httpStatus": 401,
-      "retryable": false,
-      "clientAction": "rebind",
-      "source": "mobile v1"
-    },
-    {
-      "code": "client_owned_by_other",
-      "httpStatus": 409,
-      "retryable": false,
-      "clientAction": "regenerate_device_id",
-      "source": "one-client-manager.js"
-    },
-    {
-      "code": "client_not_found",
-      "httpStatus": 404,
-      "retryable": false,
-      "clientAction": "bind_device",
-      "source": "one-client-manager.js"
-    },
-    {
-      "code": "client_disabled",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "enable_on_server",
-      "source": "one-client-manager.js"
-    },
-    {
-      "code": "client_revoked",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "rebind",
-      "source": "one-client-manager.js"
-    },
-    {
       "code": "account_unavailable",
       "httpStatus": 403,
       "retryable": false,
@@ -171,214 +38,11 @@
       "source": "one-client-manager.js"
     },
     {
-      "code": "device_proof_invalid",
+      "code": "app_session_expired",
       "httpStatus": 401,
       "retryable": false,
-      "clientAction": "refresh_or_rebind",
-      "source": "mobile v1"
-    },
-    {
-      "code": "refresh_replayed",
-      "httpStatus": 401,
-      "retryable": false,
-      "clientAction": "rebind",
-      "source": "mobile v1"
-    },
-    {
-      "code": "sensitive_verification_required",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "verify_sensitive_action",
-      "source": "mobile v1"
-    },
-    {
-      "code": "sensitive_verification_failed",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "retry_sensitive_action",
-      "source": "server.js verifySensitiveAccess"
-    },
-    {
-      "code": "sensitive_grant_expired",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "verify_sensitive_action",
-      "source": "mobile v1"
-    },
-    {
-      "code": "sensitive_grant_consumed",
-      "httpStatus": 409,
-      "retryable": false,
-      "clientAction": "verify_sensitive_action",
-      "source": "mobile v1"
-    },
-    {
-      "code": "resource_not_found_or_inaccessible",
-      "httpStatus": 404,
-      "retryable": false,
-      "clientAction": "remove_or_refresh",
-      "source": "authz.js"
-    },
-    {
-      "code": "forbidden_resource_use",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "show_permission",
-      "source": "authz.js"
-    },
-    {
-      "code": "forbidden_resource_edit",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "show_permission",
-      "source": "authz.js"
-    },
-    {
-      "code": "forbidden_resource_delete",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "show_permission",
-      "source": "authz.js"
-    },
-    {
-      "code": "forbidden_resource_revealSecret",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "show_permission",
-      "source": "authz.js"
-    },
-    {
-      "code": "forbidden_dependency_proxy",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "repair_route",
-      "source": "resource-service.js"
-    },
-    {
-      "code": "forbidden_dependency_sshKey",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "repair_route",
-      "source": "resource-service.js"
-    },
-    {
-      "code": "forbidden_dependency_jumpHost",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "repair_route",
-      "source": "resource-service.js"
-    },
-    {
-      "code": "forbidden_dependency_jumpConnection",
-      "httpStatus": 403,
-      "retryable": false,
-      "clientAction": "repair_route",
-      "source": "resource-service.js"
-    },
-    {
-      "code": "invalid_dependency",
-      "httpStatus": 400,
-      "retryable": false,
-      "clientAction": "repair_route",
-      "source": "resource-service.js"
-    },
-    {
-      "code": "revision_required",
-      "httpStatus": 400,
-      "retryable": false,
-      "clientAction": "refresh_entity",
-      "source": "notes-service.js"
-    },
-    {
-      "code": "revision_conflict",
-      "httpStatus": 409,
-      "retryable": false,
-      "clientAction": "open_conflict",
-      "source": "ai-snippet-tools.js/mobile v1"
-    },
-    {
-      "code": "note_revision_conflict",
-      "httpStatus": 409,
-      "retryable": false,
-      "clientAction": "open_conflict",
-      "source": "notes-service.js"
-    },
-    {
-      "code": "workspace_revision_conflict",
-      "httpStatus": 409,
-      "retryable": false,
-      "clientAction": "open_conflict",
-      "source": "workspace-service.js"
-    },
-    {
-      "code": "sync_conflict",
-      "httpStatus": 409,
-      "retryable": false,
-      "clientAction": "open_conflict",
-      "source": "mobile v1"
-    },
-    {
-      "code": "dependency_missing",
-      "httpStatus": 409,
-      "retryable": true,
-      "clientAction": "retry_after_dependency",
-      "source": "mobile v1"
-    },
-    {
-      "code": "duplicate_operation",
-      "httpStatus": 200,
-      "retryable": false,
-      "clientAction": "accept_original_result",
-      "source": "mobile v1"
-    },
-    {
-      "code": "cursor_invalid",
-      "httpStatus": 409,
-      "retryable": false,
-      "clientAction": "restart_bootstrap",
-      "source": "mobile v1"
-    },
-    {
-      "code": "cursor_expired",
-      "httpStatus": 410,
-      "retryable": false,
-      "clientAction": "restart_bootstrap",
-      "source": "mobile v1"
-    },
-    {
-      "code": "bootstrap_expired",
-      "httpStatus": 410,
-      "retryable": false,
-      "clientAction": "restart_bootstrap",
-      "source": "mobile v1"
-    },
-    {
-      "code": "unsupported_scope",
-      "httpStatus": 400,
-      "retryable": false,
-      "clientAction": "drop_operation_and_report",
-      "source": "mobile v1"
-    },
-    {
-      "code": "unknown_entity_type",
-      "httpStatus": 400,
-      "retryable": false,
-      "clientAction": "upgrade_or_drop_operation",
-      "source": "mobile v1"
-    },
-    {
-      "code": "payload_too_large",
-      "httpStatus": 413,
-      "retryable": false,
-      "clientAction": "split_payload",
-      "source": "file-transfer-protocol.js/mobile v1"
-    },
-    {
-      "code": "metadata_too_large",
-      "httpStatus": 413,
-      "retryable": false,
-      "clientAction": "split_payload",
-      "source": "file-transfer-protocol.js"
+      "clientAction": "sign_in",
+      "source": "server.js requireUser"
     },
     {
       "code": "blob_hash_mismatch",
@@ -395,10 +59,269 @@
       "source": "mobile v1"
     },
     {
+      "code": "bootstrap_expired",
+      "httpStatus": 410,
+      "retryable": false,
+      "clientAction": "restart_bootstrap",
+      "source": "mobile v1"
+    },
+    {
+      "code": "captcha_required",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "open_auth_session",
+      "source": "mobile adapter"
+    },
+    {
+      "code": "client_disabled",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "enable_on_server",
+      "source": "one-client-manager.js"
+    },
+    {
+      "code": "client_not_found",
+      "httpStatus": 404,
+      "retryable": false,
+      "clientAction": "bind_device",
+      "source": "one-client-manager.js"
+    },
+    {
+      "code": "client_owned_by_other",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "regenerate_device_id",
+      "source": "one-client-manager.js"
+    },
+    {
+      "code": "client_revoked",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "rebind",
+      "source": "one-client-manager.js"
+    },
+    {
+      "code": "cursor_expired",
+      "httpStatus": 410,
+      "retryable": false,
+      "clientAction": "restart_bootstrap",
+      "source": "mobile v1"
+    },
+    {
+      "code": "cursor_invalid",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "restart_bootstrap",
+      "source": "mobile v1"
+    },
+    {
+      "code": "dependency_missing",
+      "httpStatus": 409,
+      "retryable": true,
+      "clientAction": "retry_after_dependency",
+      "source": "mobile v1"
+    },
+    {
+      "code": "device_proof_invalid",
+      "httpStatus": 401,
+      "retryable": false,
+      "clientAction": "refresh_or_rebind",
+      "source": "mobile v1"
+    },
+    {
+      "code": "duplicate_operation",
+      "httpStatus": 200,
+      "retryable": false,
+      "clientAction": "accept_original_result",
+      "source": "mobile v1"
+    },
+    {
+      "code": "forbidden_dependency_jumpConnection",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "repair_route",
+      "source": "resource-service.js"
+    },
+    {
+      "code": "forbidden_dependency_jumpHost",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "repair_route",
+      "source": "resource-service.js"
+    },
+    {
+      "code": "forbidden_dependency_proxy",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "repair_route",
+      "source": "resource-service.js"
+    },
+    {
+      "code": "forbidden_dependency_sshKey",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "repair_route",
+      "source": "resource-service.js"
+    },
+    {
+      "code": "forbidden_resource_delete",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "show_permission",
+      "source": "authz.js"
+    },
+    {
+      "code": "forbidden_resource_edit",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "show_permission",
+      "source": "authz.js"
+    },
+    {
+      "code": "forbidden_resource_revealSecret",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "show_permission",
+      "source": "authz.js"
+    },
+    {
+      "code": "forbidden_resource_use",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "show_permission",
+      "source": "authz.js"
+    },
+    {
+      "code": "internal_error",
+      "httpStatus": 500,
+      "retryable": true,
+      "clientAction": "backoff_then_report",
+      "source": "handleServiceError"
+    },
+    {
+      "code": "invalid_credentials",
+      "httpStatus": 401,
+      "retryable": false,
+      "clientAction": "correct_credentials",
+      "source": "server.js auth"
+    },
+    {
+      "code": "invalid_dependency",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "repair_route",
+      "source": "resource-service.js"
+    },
+    {
+      "code": "invalid_request",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "fix_input",
+      "source": "新 mobile v1"
+    },
+    {
+      "code": "login_guard_blocked",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "show_server_policy",
+      "source": "server.js TOTP"
+    },
+    {
+      "code": "metadata_too_large",
+      "httpStatus": 413,
+      "retryable": false,
+      "clientAction": "split_payload",
+      "source": "file-transfer-protocol.js"
+    },
+    {
+      "code": "must_change_password",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "open_system_browser",
+      "source": "server.js requireUser"
+    },
+    {
+      "code": "note_revision_conflict",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "open_conflict",
+      "source": "notes-service.js"
+    },
+    {
+      "code": "payload_too_large",
+      "httpStatus": 413,
+      "retryable": false,
+      "clientAction": "split_payload",
+      "source": "file-transfer-protocol.js/mobile v1"
+    },
+    {
       "code": "rate_limited",
       "httpStatus": 429,
       "retryable": true,
       "clientAction": "respect_retry_after",
+      "source": "mobile v1"
+    },
+    {
+      "code": "refresh_replayed",
+      "httpStatus": 401,
+      "retryable": false,
+      "clientAction": "rebind",
+      "source": "mobile v1"
+    },
+    {
+      "code": "registry_mismatch",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "upgrade_or_refresh_registry",
+      "source": "新 mobile v1"
+    },
+    {
+      "code": "resource_not_found_or_inaccessible",
+      "httpStatus": 404,
+      "retryable": false,
+      "clientAction": "remove_or_refresh",
+      "source": "authz.js"
+    },
+    {
+      "code": "revision_conflict",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "open_conflict",
+      "source": "ai-snippet-tools.js/mobile v1"
+    },
+    {
+      "code": "revision_required",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "refresh_entity",
+      "source": "notes-service.js"
+    },
+    {
+      "code": "sensitive_grant_consumed",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "verify_sensitive_action",
+      "source": "mobile v1"
+    },
+    {
+      "code": "sensitive_grant_expired",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "verify_sensitive_action",
+      "source": "mobile v1"
+    },
+    {
+      "code": "sensitive_verification_failed",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "retry_sensitive_action",
+      "source": "server.js verifySensitiveAccess"
+    },
+    {
+      "code": "sensitive_verification_required",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "verify_sensitive_action",
       "source": "mobile v1"
     },
     {
@@ -409,11 +332,142 @@
       "source": "mobile v1"
     },
     {
-      "code": "internal_error",
-      "httpStatus": 500,
+      "code": "shared_content_export_forbidden",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "disableExport"
+    },
+    {
+      "code": "shared_direct_forbidden",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "offerRelay"
+    },
+    {
+      "code": "shared_grant_expired",
+      "httpStatus": 410,
+      "retryable": false,
+      "clientAction": "dismissShared"
+    },
+    {
+      "code": "shared_grant_revoked",
+      "httpStatus": 410,
+      "retryable": false,
+      "clientAction": "dismissShared"
+    },
+    {
+      "code": "shared_online_required",
+      "httpStatus": 503,
       "retryable": true,
-      "clientAction": "backoff_then_report",
-      "source": "handleServiceError"
+      "clientAction": "retry"
+    },
+    {
+      "code": "shared_relay_unavailable",
+      "httpStatus": 503,
+      "retryable": true,
+      "clientAction": "retryRelayOnly"
+    },
+    {
+      "code": "shared_residency_violation",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "abortSyncAndPurgeShared"
+    },
+    {
+      "code": "shared_session_consumed",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "mintFreshSessionEnvelope"
+    },
+    {
+      "code": "shared_session_expired",
+      "httpStatus": 410,
+      "retryable": false,
+      "clientAction": "reopenSharedSession"
+    },
+    {
+      "code": "sync_conflict",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "open_conflict",
+      "source": "mobile v1"
+    },
+    {
+      "code": "token_missing",
+      "httpStatus": 403,
+      "retryable": false,
+      "clientAction": "rebind",
+      "source": "one-client-manager.js"
+    },
+    {
+      "code": "token_not_found",
+      "httpStatus": 404,
+      "retryable": false,
+      "clientAction": "select_valid_token",
+      "source": "one-client-manager.js"
+    },
+    {
+      "code": "token_required",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "create_token_on_server",
+      "source": "one-client-manager.js"
+    },
+    {
+      "code": "token_rotated",
+      "httpStatus": 401,
+      "retryable": false,
+      "clientAction": "rebind",
+      "source": "mobile v1"
+    },
+    {
+      "code": "totp_invalid",
+      "httpStatus": 401,
+      "retryable": false,
+      "clientAction": "retry_totp",
+      "source": "mobile adapter"
+    },
+    {
+      "code": "totp_required",
+      "httpStatus": 401,
+      "retryable": false,
+      "clientAction": "enter_totp",
+      "source": "server.js login result"
+    },
+    {
+      "code": "totp_temp_exhausted",
+      "httpStatus": 401,
+      "retryable": false,
+      "clientAction": "restart_sign_in",
+      "source": "server.js TOTP"
+    },
+    {
+      "code": "unknown_entity_type",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "upgrade_or_drop_operation",
+      "source": "mobile v1"
+    },
+    {
+      "code": "unsupported_protocol_version",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "upgrade_app",
+      "source": "新 mobile v1"
+    },
+    {
+      "code": "unsupported_scope",
+      "httpStatus": 400,
+      "retryable": false,
+      "clientAction": "drop_operation_and_report",
+      "source": "mobile v1"
+    },
+    {
+      "code": "workspace_revision_conflict",
+      "httpStatus": 409,
+      "retryable": false,
+      "clientAction": "open_conflict",
+      "source": "workspace-service.js"
     }
   ]
 }
