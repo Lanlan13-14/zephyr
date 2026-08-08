@@ -10,3 +10,5 @@ data/
 .vscode/
 # Zephyr Agent is built by .github/workflows/agent.yml, not baked into server images.
 zephyr_agent/
+# Zephyr One is built by .github/workflows/zephyr-one.yml, not baked into server images.
+zephyr_one/
