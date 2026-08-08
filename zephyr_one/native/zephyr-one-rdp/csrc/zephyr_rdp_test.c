@@ -379,8 +379,13 @@ static void test_validate(void) {
         int32_t type = -1;
         int32_t count = zephyr_rdp_probe_drive(&c, name, sizeof(name), path,
                                                sizeof(path), &type);
-        eq_int(count, -1,
-               "FreeRDP itself rejects a non-existent drive path (why we pre-check)");
+        /* FreeRDP 2 rejects settings assembly (-1); FreeRDP 3 accepts the
+         * channel arguments but omits the invalid device (0). Neither produces
+         * a mapped drive, and neither reports a useful reason to the user —
+         * which is why zephyr_rdp_validate_drive runs before either version. */
+        int32_t expected = zephyr_rdp_freerdp_major() >= 3 ? 0 : -1;
+        eq_int(count, expected,
+               "FreeRDP does not register a non-existent drive path");
     }
 
     /* And the same config with an existing path succeeds — proving the absent
