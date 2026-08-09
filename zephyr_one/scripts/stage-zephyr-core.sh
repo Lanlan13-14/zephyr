@@ -39,6 +39,35 @@ for d in zephyr-worker rdp-wasm motion-wasm; do
   fi
 done
 
+# Frozen mobile v1 contracts.
+#
+# server.js mounts /api/mobile/v1 and reads registries/entity-registry.json to
+# build its entity adapters; the registry hash is what stops a client built
+# against a different entity classification from writing a field this server
+# treats differently. Without these files the mount throws ENOENT and the catch
+# around it swallows the failure, so every packaged Zephyr One shipped with the
+# entire mobile API silently absent.
+#
+# Copied to `mobile-contracts/` rather than recreating `zephyr_one/mobile/...`
+# inside the core: the staged tree is a flat runtime, and resolveMobileContract()
+# in server.js looks here precisely so the staged layout does not have to
+# reproduce the repository's directory shape.
+#
+# The whole directory is copied, not just the registry: openapi-mobile-v1.json is
+# the frozen surface the Kotlin client is generated from, and the schemas and
+# test vectors are what let a device verify its own envelopes. ~270 KB of JSON.
+if [ -d "$REPO/zephyr_one/mobile/contracts" ]; then
+  mkdir -p "$OUT/mobile-contracts"
+  cp -a "$REPO/zephyr_one/mobile/contracts/." "$OUT/mobile-contracts/"
+  test -f "$OUT/mobile-contracts/registries/entity-registry.json" || {
+    echo "ERROR: mobile entity registry missing from staged core" >&2
+    exit 1
+  }
+else
+  echo "ERROR: $REPO/zephyr_one/mobile/contracts not found; mobile v1 would not mount" >&2
+  exit 1
+fi
+
 # Production dependencies follow the root lockfile. Install scripts stay enabled
 # so any native addon is built for the host, but the runtime still selects
 # node:sqlite (ZEPHYR_ONE_USE_BUILTIN_SQLITE=1 in runtime/mod.rs) because the
@@ -131,4 +160,5 @@ test -f "$OUT/server.js"
 test -d "$OUT/public"
 test -f "$OUT/public/app.html"
 test -f "$OUT/public/app.js"
+test -f "$OUT/mobile-contracts/registries/entity-registry.json"
 ls "$OUT" | wc -l

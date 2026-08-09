@@ -6769,6 +6769,44 @@ oneClientManager.mountRoutes(app, {
     resolveUserByUsername: (name) => storage.getUser(name),
 });
 
+/* Locate a frozen mobile contract file.
+ *
+ * Resolved against a candidate list rather than a single `__dirname` join,
+ * because this file runs from two different tree shapes:
+ *
+ *   repo root      -> <root>/zephyr_one/mobile/contracts/...
+ *   staged core    -> <core>/mobile-contracts/...
+ *
+ * `zephyr_one/scripts/stage-zephyr-core.sh` copies only root-level *.js plus
+ * public/, server/ and preview/, so in the desktop product `__dirname` is
+ * `.../zephyr_one/zephyr-core` and the old single path resolved to
+ * `.../zephyr-core/zephyr_one/mobile/contracts/...`, which never exists. The
+ * whole mobile v1 surface therefore failed to mount in every packaged Zephyr
+ * One build, reported once as `[mobile-v1] not mounted: ENOENT` and then
+ * silently absent -- and because the catch below deliberately swallows the
+ * failure so a bad contract cannot stop the desktop booting, nothing else
+ * surfaced it.
+ *
+ * Throws when no candidate exists, so a genuinely missing contract still
+ * reports rather than mounting an API with an empty registry: the registry
+ * hash is what stops a client built against a different entity
+ * classification from writing a field this server treats differently.
+ */
+function resolveMobileContract(relative) {
+    const parts = relative.split('/');
+    const candidates = [
+        path.join(__dirname, 'zephyr_one', 'mobile', 'contracts', ...parts),
+        path.join(__dirname, 'mobile-contracts', ...parts),
+        path.join(__dirname, '..', 'mobile', 'contracts', ...parts),
+    ];
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    throw new Error(
+        'mobile contract not found: ' + relative + ' (looked in ' + candidates.join(', ') + ')',
+    );
+}
+
 /* Zephyr One mobile v1.
  *
  * openapi-mobile-v1.json freezes 22 operations under /api/mobile/v1 and the
@@ -6806,10 +6844,7 @@ try {
         userSettingsService,
         fileAgentManager,
         authz,
-        entityRegistry: JSON.parse(fs.readFileSync(
-            path.join(__dirname, 'zephyr_one', 'mobile', 'contracts', 'registries', 'entity-registry.json'),
-            'utf8',
-        )),
+        entityRegistry: JSON.parse(fs.readFileSync(resolveMobileContract('registries/entity-registry.json'), 'utf8')),
         /* Reuses the same password/TOTP check the web sensitive-operation gate
          * uses, so a mobile grant can never be easier to obtain than a browser
          * one. The adapter shape differs because verifySensitiveAccess reads the

@@ -190,7 +190,11 @@ test('every .ico frame is rasterised from the vector, not resampled from a bitma
    * keeps a future edit from quietly reintroducing bitmap reduction. */
   const icoBlock = src.slice(src.indexOf('ico_frames = []'), src.indexOf("format=\"ICO\""));
   assert.ok(icoBlock.length > 0, 'the .ico frame loop must exist');
-  assert.match(icoBlock, /render_svg\(default_svg, size, frame_path\)/,
+  /* `source_for(theme, size)` rather than a single master: below
+   * WORDMARK_MIN_SIZE the frame is rendered from a wordmark-free copy. The
+   * per-size render is still the property under test -- only the choice of
+   * source SVG became size-dependent. */
+  assert.match(icoBlock, /render_svg\(source_for\(DEFAULT_THEME, size\), size, frame_path\)/,
     'each .ico frame must be rasterised from the SVG at its own size');
   assert.doesNotMatch(icoBlock, /resize\(/,
     'a .ico frame must never be produced by resampling a larger bitmap');
@@ -200,7 +204,7 @@ test('every .ico frame is rasterised from the vector, not resampled from a bitma
   // Same reasoning for the .icns Retina ladder.
   const icnsBlock = src.slice(src.indexOf('icns_frames = []'), src.indexOf("format=\"ICNS\""));
   assert.ok(icnsBlock.length > 0, 'the .icns frame loop must exist');
-  assert.match(icnsBlock, /render_svg\(default_svg, size, frame_path\)/,
+  assert.match(icnsBlock, /render_svg\(source_for\(DEFAULT_THEME, size\), size, frame_path\)/,
     'each .icns frame must be rasterised from the SVG at its own size');
   assert.doesNotMatch(icnsBlock, /resize\(/,
     'an .icns frame must never be a resampled bitmap');

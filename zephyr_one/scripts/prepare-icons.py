@@ -50,6 +50,9 @@ RUNTIME_OUT = ROOT / "src-tauri" / "runtime-icons"
 THEMES = ("frost", "lava", "asagi", "cyber")
 DEFAULT_THEME = "frost"
 RUNTIME_SIZE = 128
+# Below this edge length the "One" wordmark is dropped. See
+# simplify_for_small_size() for the measurement behind the number.
+WORDMARK_MIN_SIZE = 64
 MASTER_SIZE = 1024
 
 # Bundle set. Keys are file names, values the square edge length.
@@ -129,6 +132,65 @@ def outline_wordmark(svg: str) -> str:
         'opacity="' + match.group("opacity") + '"/>'
     )
     return svg[: match.start()] + replacement + svg[match.end() :]
+
+
+def simplify_for_small_size(svg: str) -> str:
+    """Drop the wordmark (and the gap cut for it) from an outlined master.
+
+    Why the small frames must not carry the wordmark at all:
+
+        The masters set font-size 15 inside a 200x200 viewBox, so the "One"
+        wordmark scales to 15 * size / 200 device pixels -- an em of 1.2px at
+        16, 2.4px at 32 and 3.6px at 48, i.e. a cap height of roughly 0.8,
+        1.7 and 2.5 pixels. No rasteriser can resolve letterforms at that
+        scale; what lands is a grey smear next to the wind strokes. Rendered
+        and inspected: the 16px frame shows no readable glyph, and the 32px
+        frame shows a blob. That smear is what reads as "the icon is
+        blurry", because the eye compares it against the crisp strokes
+        beside it and concludes the whole image is soft.
+
+        Rasterising per size (which this script already does) does not help:
+        the geometry is simply below the pixel grid. The only fix is optical
+        sizing -- show fewer elements when there are fewer pixels, which is
+        what every platform icon guideline asks for.
+
+    The mask must go with it. The mid stroke carries mask="url(#gcut)",
+    whose only purpose is to punch an ellipse out of the stroke so the "O"
+    has somewhere to sit. Removing the wordmark but keeping the mask would
+    leave a bite taken out of the stroke for no visible reason -- worse than
+    the smear, because it corrupts the mark itself.
+
+    The wind strokes, the plate and the trailing dot are untouched, so the
+    small frames are the same artwork with one element fewer, not a
+    different logo.
+    """
+    # The outlined wordmark, as emitted by outline_wordmark().
+    wordmark = re.compile(r'<path d="M144\.95[^"]*"[^/]*/>')
+    if not wordmark.search(svg):
+        sys.exit(
+            "ERROR: no outlined wordmark to remove. simplify_for_small_size "
+            "must run on the output of outline_wordmark()."
+        )
+    svg = wordmark.sub("", svg, count=1)
+
+    # The gap that existed only for the wordmark.
+    svg = svg.replace(' mask="url(#gcut)"', "")
+    mask_def = re.compile(r'<mask id="gcut".*?</mask>', re.S)
+    svg = mask_def.sub("", svg, count=1)
+
+    if "gcut" in svg:
+        sys.exit("ERROR: gcut mask survived simplification; small frames would be cut")
+    return svg
+
+
+def staged_small_master(svg: Path, scratch: Path) -> Path:
+    """A wordmark-free copy of *svg*, for frames below WORDMARK_MIN_SIZE."""
+    staged = scratch / ("small-" + svg.name)
+    staged.write_text(
+        simplify_for_small_size(outline_wordmark(svg.read_text(encoding="utf-8"))),
+        encoding="utf-8",
+    )
+    return staged
 
 
 def staged_master(svg: Path, scratch: Path) -> Path:
@@ -228,6 +290,16 @@ def _generate(scratch: Path) -> None:
         theme: staged_master(SVG_DIR / f"zephyr-one-{theme}.svg", scratch)
         for theme in THEMES
     }
+    # Optical sizing: the same artwork minus the wordmark, for frames too
+    # small to resolve it. See simplify_for_small_size().
+    staged_small = {
+        theme: staged_small_master(SVG_DIR / f"zephyr-one-{theme}.svg", scratch)
+        for theme in THEMES
+    }
+
+    def source_for(theme: str, size: int) -> Path:
+        """The master to rasterise for one frame at one size."""
+        return staged[theme] if size >= WORDMARK_MIN_SIZE else staged_small[theme]
 
     # ── runtime set: one PNG per theme ──
     for theme in THEMES:
@@ -250,7 +322,7 @@ def _generate(scratch: Path) -> None:
             if size == MASTER_SIZE:
                 src.save(dest)
             else:
-                render_svg(default_svg, size, dest)
+                render_svg(source_for(DEFAULT_THEME, size), size, dest)
             print(f"bundle   {dest.relative_to(ROOT)}  {size}x{size}")
 
         # Every .ico frame is rasterised from the vector at its own size,
@@ -278,7 +350,7 @@ def _generate(scratch: Path) -> None:
         ico_frames = []
         for size in ICO_SIZES:
             frame_path = scratch / f"ico-{size}.png"
-            render_svg(default_svg, size, frame_path)
+            render_svg(source_for(DEFAULT_THEME, size), size, frame_path)
             with Image.open(frame_path) as frame_img:
                 ico_frames.append(frame_img.convert("RGBA"))
         ico_frames.sort(key=lambda frame: frame.width, reverse=True)
@@ -295,7 +367,7 @@ def _generate(scratch: Path) -> None:
         icns_frames = []
         for size in ICNS_SIZES:
             frame_path = scratch / f"icns-{size}.png"
-            render_svg(default_svg, size, frame_path)
+            render_svg(source_for(DEFAULT_THEME, size), size, frame_path)
             with Image.open(frame_path) as frame_img:
                 icns_frames.append(frame_img.convert("RGBA"))
         icns_frames.sort(key=lambda frame: frame.width, reverse=True)

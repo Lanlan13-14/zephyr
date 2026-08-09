@@ -6,14 +6,14 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#101114" />
   <title>Zephyr One</title>
-  <link rel="icon" type="image/png" href="/src/assets/logo/zephyr-app-icon.png" />
+  <link rel="icon" type="image/svg+xml" href="/src/assets/logo/zephyr-one-icon.svg" />
   <link rel="stylesheet" href="/src/styles/mirror-shell.css" />
 </head>
 <body class="shell-body">
   <!-- Optional OS unlock (default OFF; toggle in 安全设置) -->
   <div id="lockGate" class="gate force-hidden">
     <div class="gate-card">
-      <img class="gate-logo" src="/src/assets/logo/zephyr-app-icon.png" width="72" height="72" alt="Zephyr" />
+      <img class="gate-logo" src="/src/assets/logo/zephyr-one-icon.svg" width="72" height="72" alt="Zephyr One" />
       <h1>Zephyr One</h1>
       <p class="gate-sub">需要系统解锁才能进入</p>
       <p class="gate-hint">调用本机系统认证，不使用应用自建密码。</p>
@@ -25,7 +25,7 @@
   <!-- Boot local full Zephyr core -->
   <div id="bootGate" class="gate">
     <div class="gate-card">
-      <img class="gate-logo" src="/src/assets/logo/zephyr-app-icon.png" width="72" height="72" alt="Zephyr" />
+      <img class="gate-logo" src="/src/assets/logo/zephyr-one-icon.svg" width="72" height="72" alt="Zephyr One" />
       <h1>Zephyr One</h1>
       <p class="gate-sub" id="bootStatus">正在准备完整 Zephyr…</p>
       <p class="gate-hint">本地运行完整主端功能；与远程主端仅用于可选数据同步。</p>
@@ -35,7 +35,7 @@
 
   <div id="errorGate" class="gate force-hidden">
     <div class="gate-card gate-card-wide">
-      <img class="gate-logo" src="/src/assets/logo/zephyr-app-icon.png" width="56" height="56" alt="Zephyr" />
+      <img class="gate-logo" src="/src/assets/logo/zephyr-one-icon.svg" width="56" height="56" alt="Zephyr One" />
       <h1>启动失败</h1>
       <p class="gate-error" id="errorText" style="display:block"></p>
       <div class="gate-actions">
@@ -48,7 +48,7 @@
   <!-- Local app security + optional remote sync host (sync-only interconnect) -->
   <div id="securityGate" class="gate force-hidden">
     <div class="gate-card gate-card-wide">
-      <img class="gate-logo" src="/src/assets/logo/zephyr-app-icon.png" width="48" height="48" alt="Zephyr" />
+      <img class="gate-logo" src="/src/assets/logo/zephyr-one-icon.svg" width="48" height="48" alt="Zephyr One" />
       <h1>安全设置</h1>
       <p class="gate-sub">仅控制本机 Zephyr One。默认不锁屏。</p>
 

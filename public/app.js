@@ -1,5 +1,5 @@
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
-import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrFaviconHref } from './theme-runtime.js?v=20260723-term-colors1';
+import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref } from './theme-runtime.js?v=20260807-one-brand1';
 import { createNotesController } from './notes.js?v=20260729-ai-notes-switches1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
 import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
@@ -134,7 +134,14 @@ const SMARTBAR_AUTO_HIDE_MS = 30000;
 const SMARTBAR_TOUCH_DRAG_HOLD_MS = 2000;
 const SMARTBAR_TOUCH_TAP_MAX_MS = 1999;
 const TERMINAL_EDGE_SNAP_PX = 56;
-const DEFAULT_BRAND_NAME = 'Zephyr';
+/* The product name shown when the operator has not chosen one.
+ *
+ * A function, not a constant: One serves this same app.js, so a literal
+ * 'Zephyr' made the One header and the window title both read "Zephyr".
+ * With the wind mark being the same artwork in both products, nothing on
+ * screen identified which product the user was actually in.
+ */
+const defaultBrandName = () => zephyrDefaultBrandName();
 const DEFAULT_BRAND_ICON = '🌬️';
 let pendingBrandIcon = DEFAULT_BRAND_ICON;
 const SMARTBAR_TEXT_IMAGE_CACHE = new Map();
@@ -681,7 +688,14 @@ async function toggleTheme() {
     console.debug('[appearance-client]', 'manual theme selected', { theme: nextTheme, autoThemeEnabled: false });
 }
 function escapeHtml(str) { return String(str || '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m])); }
-function iconHtml(icon = DEFAULT_BRAND_ICON) { return zephyrBrandIconHtml(icon); }
+/* `compact` drops One's "One" wordmark, for marks rendered small.
+ *
+ * The header mark is 24px, where the wordmark's own font-size resolves to
+ * about 1.8px tall. That cannot render as letters; it renders as a smudge
+ * beside crisp strokes, which is what makes the logo look blurry. The
+ * settings preview is 52px and keeps the full mark. */
+function iconHtml(icon = DEFAULT_BRAND_ICON, opts = {}) { return zephyrBrandIconHtml(icon, opts); }
+
 function faviconHref(icon = DEFAULT_BRAND_ICON) { return zephyrFaviconHref(icon); }
 function setFavicon(icon = DEFAULT_BRAND_ICON) {
     let link = document.querySelector('link[rel="icon"]');
@@ -693,11 +707,11 @@ function setFavicon(icon = DEFAULT_BRAND_ICON) {
     link.href = faviconHref(icon);
 }
 function applyAppearance(appearance = getAppearance()) {
-    const brandName = String(appearance.brandName || DEFAULT_BRAND_NAME).trim() || DEFAULT_BRAND_NAME;
+    const brandName = String(appearance.brandName || defaultBrandName()).trim() || defaultBrandName();
     const brandIcon = String(appearance.brandIcon || DEFAULT_BRAND_ICON).trim() || DEFAULT_BRAND_ICON;
     pendingBrandIcon = brandIcon;
     $('#brandName').textContent = brandName;
-    $('#brandIcon').innerHTML = iconHtml(brandIcon);
+    $('#brandIcon').innerHTML = iconHtml(brandIcon, { compact: true });
     $('#brandNameInput').value = brandName;
     $('#brandIconPreview').innerHTML = iconHtml(brandIcon);
     $('#autoThemeEnabled').checked = appearance.autoThemeEnabled !== false;
@@ -794,7 +808,7 @@ async function saveAppearance(e) {
         : { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } };
     const appearance = {
         ...previous,
-        brandName: $('#brandNameInput').value.trim() || DEFAULT_BRAND_NAME,
+        brandName: $('#brandNameInput').value.trim() || defaultBrandName(),
         brandIcon: pendingBrandIcon || DEFAULT_BRAND_ICON,
         colorScheme,
         autoThemeEnabled,
@@ -835,7 +849,7 @@ async function saveAppearance(e) {
     toast(t('个性化设置已保存'));
 }
 async function resetAppearance() {
-    const appearance = { ...getAppearance(), brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
+    const appearance = { ...getAppearance(), brandName: defaultBrandName(), brandIcon: DEFAULT_BRAND_ICON, colorScheme: 'frost', customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, rdp: { defaultResolution: '1920x1080', defaultQuality: 'balanced', defaultFps: 60 } };
     if (myIdentity.role === 'admin') {
         settings = await savePlatformSettings('appearance', { appearance });
     } else {
@@ -10888,7 +10902,7 @@ async function loadSettings() {
     $('#terminalMinimizedKeepAlive').value = String(getConfiguredMinimizedKeepAlive());
     $('#terminalSmartbarOrder').value = getTerminalSmartbarOrder();
     $('#terminalShortcutPlatform').value = getTerminalShortcutPlatform();
-    settings.appearance = { brandName: DEFAULT_BRAND_NAME, brandIcon: DEFAULT_BRAND_ICON, theme: 'auto', autoThemeEnabled: true, colorScheme: 'frost', customThemeMode: 'dark', customColors: normalizeCustomThemeColors(), customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, ...(settings.appearance || {}) };
+    settings.appearance = { brandName: defaultBrandName(), brandIcon: DEFAULT_BRAND_ICON, theme: 'auto', autoThemeEnabled: true, colorScheme: 'frost', customThemeMode: 'dark', customColors: normalizeCustomThemeColors(), customCss: '', customJs: '', terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, ...(settings.appearance || {}) };
     settings.ai = normalizeAiSettings(settings.ai || {});
     applyAppearance(settings.appearance);
     applyTheme(getPreferredTheme());

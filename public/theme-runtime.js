@@ -229,14 +229,58 @@ function isOneProduct() {
     return document.documentElement?.dataset?.zephyrProduct === 'one';
 }
 
-export function zephyrBrandIconHtml(icon = DEFAULT_BRAND_ICON) {
+/* The product name to show when the operator has not chosen one.
+ *
+ * One embeds the *main* product UI, so app.js was applying Zephyr's own
+ * default and the One header read "Zephyr" with a browser tab titled
+ * "Zephyr". The two products were indistinguishable by name, and the wind
+ * mark beside it is the same artwork in both, so nothing on screen said which
+ * product the user was in.
+ *
+ * A function rather than a constant because the answer depends on the
+ * document, and the marker is set by the embed transform at serve time.
+ */
+export function zephyrDefaultBrandName() {
+    return isOneProduct() ? 'Zephyr One' : 'Zephyr';
+}
+
+/* One's mark without the wordmark, for marks rendered small.
+ *
+ * Optical sizing, and the reason is measurable rather than aesthetic: the
+ * wordmark is font-size 15 inside a 200-unit viewBox, so at the header's 24px
+ * it renders 1.8px tall with a cap height near 1.3px. No renderer resolves
+ * letterforms there; what appears is a grey smudge against the crisp strokes
+ * beside it, which reads as a blurry logo rather than as a wordmark.
+ *
+ * The mask must go with it. Its only purpose is to punch a gap in the mid
+ * stroke for the "O" to sit in, so keeping it without the wordmark leaves a
+ * visible bite out of the stroke for no reason.
+ *
+ * What distinguishes the products at this size is the name beside the mark,
+ * which zephyrDefaultBrandName() makes read "Zephyr One".
+ */
+function zephyrOneCompactSvg({ gradientId = 'zephyr-one-gradient', title = 'Zephyr One' } = {}) {
+    return `<svg class="zephyr-brand-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false"><title>${escapeHtml(title)}</title><defs><linearGradient id="${gradientId}" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="var(--zephyr-icon-grad-start, #eef2f7)"/><stop offset="var(--zephyr-icon-grad-mid-offset, 58%)" stop-color="var(--zephyr-icon-grad-mid, #a8b5c3)"/><stop offset="100%" stop-color="var(--zephyr-icon-grad-end, #6e7b88)"/></linearGradient></defs><path class="wind-path-main" d="${ONE_PATH_MAIN}" stroke="url(#${gradientId})"/><path class="wind-path-mid" d="${ONE_PATH_MID}" stroke="url(#${gradientId})"/><path class="wind-path-tail" d="${ONE_PATH_TAIL}" stroke="url(#${gradientId})"/><circle cx="75" cy="125" r="3" fill="var(--zephyr-icon-dot-b, #8e99a6)" opacity="0.8"/></svg>`;
+}
+
+/**
+ * @param {string} icon stored appearance value, or the default wind glyph
+ * @param {{compact?: boolean}} [opts] `compact` drops One's wordmark; pass it
+ *   wherever the mark is rendered below roughly 40px (see zephyrOneCompactSvg).
+ */
+export function zephyrBrandIconHtml(icon = DEFAULT_BRAND_ICON, opts = {}) {
     const value = String(icon || DEFAULT_BRAND_ICON).trim() || DEFAULT_BRAND_ICON;
     if (value.startsWith('data:image/')) return `<img src="${value}" alt="">`;
     if (value === DEFAULT_BRAND_ICON) {
         const seq = ++iconSeq;
-        const svg = isOneProduct()
-            ? zephyrOneWindSvg({ gradientId: `zephyr-one-gradient-${seq}`, maskId: `zephyr-one-cut-${seq}` })
-            : zephyrWindSvg({ gradientId: `zephyr-brand-gradient-${seq}` });
+        let svg;
+        if (!isOneProduct()) {
+            svg = zephyrWindSvg({ gradientId: `zephyr-brand-gradient-${seq}` });
+        } else if (opts.compact) {
+            svg = zephyrOneCompactSvg({ gradientId: `zephyr-one-gradient-${seq}` });
+        } else {
+            svg = zephyrOneWindSvg({ gradientId: `zephyr-one-gradient-${seq}`, maskId: `zephyr-one-cut-${seq}` });
+        }
         return `<span class="zephyr-brand-mark" aria-hidden="true">${svg}</span>`;
     }
     return escapeHtml(value);
