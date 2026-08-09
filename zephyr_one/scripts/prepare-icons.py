@@ -34,8 +34,10 @@ Runtime PNG size
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from PIL import Image
@@ -65,6 +67,78 @@ BUNDLE_PNGS = {
 ICO_SIZES = (16, 32, 48, 64, 128, 256)
 # .icns wants the full Retina ladder; PIL writes the sizes it is given.
 ICNS_SIZES = (16, 32, 64, 128, 256, 512, 1024)
+
+
+# ---------------------------------------------------------------------------
+# Wordmark outlining
+# ---------------------------------------------------------------------------
+#
+# branding/manifest.json freezes two rules that pull against each other:
+#
+#     "productionRule": "Convert the One text to fixed paths before generating
+#      Android or iOS release assets. Preserve the source files unchanged."
+#
+# So the masters on disk keep their <text> elements (they are the reviewable
+# source, and their SHA-256 is recorded in the manifest), and the conversion to
+# outlines happens here, in memory, on the way to the rasteriser.
+#
+# Why it matters for the desktop bundle too, not just Android/iOS: <text> is
+# resolved against the *build machine's* font set at rasterisation time. Measured
+# on the frost master, rendering with Segoe UI Bold present versus absent moves
+# 256 pixels inside the wordmark box - so the shipped icon silently depended on
+# which fonts the CI runner happened to have. An outline cannot vary.
+#
+# Geometry: Segoe UI Bold, font-size 15 in the 200x200 viewBox, "O" centred on
+# x=145 (branding/manifest.json geometry.oneAnchor) and "ne" starting at x=152.4,
+# baseline y=120.7 - the same numbers the masters specify. Verified against the
+# text rendering: 0.4% of pixels differ at 256px, all inside the wordmark's own
+# bounding box and all at antialiasing edges.
+WORDMARK_PATH = (
+    "M144.95 120.88Q142.70 120.88 141.28 119.41Q139.85 117.95 139.85 115.59Q139.85 113.10 141.30 111.56Q142.74 110.02 145.12 110.02Q147.37 110.02 148.76 111.49Q150.15 112.97 150.15 115.38Q150.15 117.85 148.71 119.37Q147.27 120.88 144.95 120.88ZM145.05 112.06Q143.81 112.06 143.08 112.99Q142.34 113.93 142.34 115.46Q142.34 117.02 143.08 117.93Q143.81 118.84 145.00 118.84Q146.22 118.84 146.94 117.96Q147.66 117.07 147.66 115.51Q147.66 113.87 146.96 112.97Q146.26 112.06 145.05 112.06Z M160.62 120.70H158.31V116.53Q158.31 114.79 157.07 114.79Q156.46 114.79 156.08 115.25Q155.69 115.71 155.69 116.42V120.70H153.37V113.20H155.69V114.39H155.72Q156.55 113.02 158.13 113.02Q160.62 113.02 160.62 116.11Z M169.19 117.61H164.29Q164.41 119.24 166.35 119.24Q167.59 119.24 168.53 118.66V120.33Q167.49 120.88 165.83 120.88Q164.01 120.88 163.01 119.88Q162.00 118.87 162.00 117.07Q162.00 115.20 163.09 114.11Q164.17 113.02 165.75 113.02Q167.39 113.02 168.29 113.99Q169.19 114.97 169.19 116.64ZM167.04 116.19Q167.04 114.58 165.74 114.58Q165.18 114.58 164.77 115.04Q164.37 115.50 164.28 116.19Z"
+)
+
+# The <g> the masters wrap the two <text> runs in. Captured so the fill and
+# opacity carry over unchanged: the colour is per-palette and must not be
+# hardcoded here.
+WORDMARK_GROUP = re.compile(
+    r'<g font-family="[^"]*"\s+font-size="15"\s+font-weight="800"\s+'
+    r'fill="(?P<fill>[^"]+)"\s+opacity="(?P<opacity>[^"]+)">'
+    r'\s*<text[^>]*>O</text>\s*<text[^>]*>ne</text>\s*</g>'
+)
+
+
+def outline_wordmark(svg: str) -> str:
+    """Replace the <text> wordmark with its fixed outline.
+
+    Fails loudly rather than passing the markup through: a master that no longer
+    matches would otherwise ship a font-dependent icon again, which is exactly
+    the regression this function exists to prevent.
+    """
+    match = WORDMARK_GROUP.search(svg)
+    if match is None:
+        sys.exit(
+            "ERROR: could not find the <text> wordmark group to outline. "
+            "The SVG masters changed shape; update WORDMARK_GROUP/WORDMARK_PATH "
+            "together (see branding/manifest.json productionRule)."
+        )
+    if len(WORDMARK_GROUP.findall(svg)) != 1:
+        sys.exit("ERROR: expected exactly one wordmark group per master")
+    replacement = (
+        '<path d="' + WORDMARK_PATH + '" '
+        'fill="' + match.group("fill") + '" '
+        'opacity="' + match.group("opacity") + '"/>'
+    )
+    return svg[: match.start()] + replacement + svg[match.end() :]
+
+
+def staged_master(svg: Path, scratch: Path) -> Path:
+    """An outlined copy of *svg*, written under *scratch*.
+
+    The original is never modified; the manifest records its hash.
+    """
+    staged = scratch / svg.name
+    staged.write_text(outline_wordmark(svg.read_text(encoding="utf-8")), encoding="utf-8")
+    return staged
 
 
 def render_svg(svg: Path, size: int, dest: Path) -> None:
@@ -100,14 +174,25 @@ def main() -> None:
     BUNDLE_OUT.mkdir(parents=True, exist_ok=True)
     RUNTIME_OUT.mkdir(parents=True, exist_ok=True)
 
+    with tempfile.TemporaryDirectory() as scratch:
+        _generate(Path(scratch))
+
+
+def _generate(scratch: Path) -> None:
+    """Render every artefact from outlined copies of the masters."""
+    staged = {
+        theme: staged_master(SVG_DIR / f"zephyr-one-{theme}.svg", scratch)
+        for theme in THEMES
+    }
+
     # ── runtime set: one PNG per theme ──
     for theme in THEMES:
         dest = RUNTIME_OUT / f"zephyr-one-{theme}.png"
-        render_svg(SVG_DIR / f"zephyr-one-{theme}.svg", RUNTIME_SIZE, dest)
+        render_svg(staged[theme], RUNTIME_SIZE, dest)
         print(f"runtime  {dest.relative_to(ROOT)}  {RUNTIME_SIZE}x{RUNTIME_SIZE}")
 
     # ── bundle set: rendered from the default theme ──
-    default_svg = SVG_DIR / f"zephyr-one-{DEFAULT_THEME}.svg"
+    default_svg = staged[DEFAULT_THEME]
     master = BUNDLE_OUT / ".master.png"
     render_svg(default_svg, MASTER_SIZE, master)
 

@@ -101,8 +101,8 @@
 | 层 | 实测规模 | 判定 |
 | --- | --- | --- |
 | 机器合同 | [KNOWN] OpenAPI 21 路径 / 22 操作、20 个实体、66 个错误码、15 份 codegen 产物；`FREEZE_PARITY.json` 记录 16 份冻结源哈希 | 可用：`zephyr_one/mobile/tests` 69 项断言全过，`check:drift` 无漂移 |
-| Android 工程 | [KNOWN] 21 个 Gradle 模块 + `buildSrc`，293 个 `.kt` 共 46,487 行（主源 220 文件 / 34,091 行，单测 73 文件 / 12,396 行）；AGP 8.7.3、Kotlin 2.0.21、minSdk 26 | 骨架与纯逻辑已成规模，但从未构建过 |
-| Android UI | [KNOWN] 131 个 `@Composable`、7 个 ViewModel、6 个屏幕（连接列表、连接编辑、会话列表、终端、远程桌面、批量执行） | `SCREEN_CATALOG.md` 的 23 个屏幕 ID 中落地 6 个 |
+| Android 工程 | [KNOWN] 21 个 Gradle 模块 + `buildSrc`，295 个 `.kt` 共 53,719 行（主源 222 文件 / 39,290 行，单测 73 文件 / 14,429 行）；AGP 8.7.3、Kotlin 2.0.21、minSdk 26 | 骨架与纯逻辑已成规模；符号层面已可拼成 App，但仍从未构建过 |
+| Android UI | [KNOWN] 150 个 `@Composable`、7 个 ViewModel、6 个屏幕（连接列表、连接编辑、会话列表、终端、远程桌面、批量执行）加根导航 | `SCREEN_CATALOG.md` 的 23 个屏幕 ID 中落地 6 个；根导航已把这 6 个接进四入口浮岛 |
 | 协议与纯逻辑 | [KNOWN] Telnet IAC/协商/自动登录、ZFT2 编解码 + Session + Provider + Dispatcher、RFB 握手与像素格式、终端按键/鼠标编码、视口与手势、同步 Actor / PushPlanner / 冲突解析 / 字段掩码 | 有真实实现并带单测 |
 | 安全与本地数据 | [KNOWN] Keystore 主密钥、SecretStore / SecretBlobStore、MobileAad、HKDF、ML-KEM 信封、SessionSecretArena、Room 数据库与镜像/待办/冲突表及仓库层 | 有实现，未在真机验证 |
 | iOS | [KNOWN] 只有 6 个生成的合同 Swift 文件共 670 行；没有 `Package.swift`、没有 Xcode 工程、没有 App 代码 | 除合同外为空 |
@@ -119,17 +119,20 @@
 - [KNOWN] **没有构建与 CI**：没有 Gradle wrapper，`.github/workflows/` 里没有移动端流水线，`zephyr-one.yml` 仍写明 Android/iOS 不属于 Zephyr One。因此 46,487 行 Kotlin 至今没有经过一次编译验证。
 - [KNOWN] **发布面未做**：没有 Deep Link 处理代码，`app/src/main/res` 只有占位自适应图标，四色（asagi / cyber / frost / lava）产物在 Android 资源目录中为 0。
 
-#### 2.4.3 已知会编译失败的引用（最高优先级）
+#### 2.4.3 曾阻断构建的未声明引用（已修复）
 
-[KNOWN] 对 293 个 `.kt` 的 `one.zephyr.mobile.*` 导入做静态解析后，有三个符号被引用但整树没有声明：
+[KNOWN] 对 `one.zephyr.mobile.*` 导入与同包成员做静态解析后，曾有四个符号被引用但整树没有声明。四处均已补齐，`zephyr_one/mobile/tests/kotlin-symbols.test.mjs` 现在把这一整类缺陷钉成回归测试：
 
-| 符号 | 引用位置 | 问题 |
+| 符号 | 原问题 | 现状 |
 | --- | --- | --- |
-| `ZephyrOneRoot` | `zephyr_one/mobile/android/app/.../MainActivity.kt:32` | 根导航 Composable 从未编写，App 没有入口树 |
-| `ZephyrApplication` | `zephyr_one/mobile/android/app/.../filebridge/FileBridgeForegroundService.kt:16,59`、`zephyr_one/mobile/android/app/.../sync/SyncWorker.kt:6,22` | 实际类名是 `ZephyrOneApplication`，导入和强转都指向不存在的类 |
-| `AccountContainer` | `zephyr_one/mobile/android/app/.../di/AppContainer.kt:87,90` | 账号级依赖图类型未定义，`bindAccount` 无法通过编译 |
+| `ZephyrOneRoot` | 根导航 Composable 从未编写，`:app` 没有入口树 | [KNOWN] 已实现 `app/.../ZephyrOneRoot.kt`：四入口浮岛 + 连接编辑器/终端/远程三类全屏 surface，沉浸式路由不绘制浮岛 |
+| `ZephyrApplication` | 实际类名是 `ZephyrOneApplication`，导入和强转都指向不存在的类 | [KNOWN] `FileBridgeForegroundService` 与 `SyncWorker` 已改为 `ZephyrOneApplication` |
+| `AccountContainer` | 账号级依赖图类型未定义，`bindAccount` 无法通过编译 | [KNOWN] 已实现 `app/.../di/AccountContainer.kt`：按 (serverId, userId, deviceId) 作用域装配 SecretStore / 仓库层 / SyncEngine，并由 `unbindAccount()` 调 `dispose()` 注销 lock sink |
+| `SecretStore.SecretScope` | 被当作顶层类导入，实际是 `SecretStore` 的嵌套类；`AppContainer.kt` 原有代码同样写错 | [KNOWN] 两处均改为嵌套引用 |
 
-[INFERRED] 这三处说明 `zephyr_one/mobile/android` 目前的真实状态是「模块与逻辑先落地、App 壳未收口」：库模块的代码可以独立单测，但 `:app` 模块拼不成一个能运行的 App。补齐它们是任何构建验证的前置条件。
+[KNOWN] 静态解析仍是静态解析：本机没有 Android SDK 与 Gradle wrapper，因此上述修复**未经过一次真正的 Kotlin 编译**。它们消除的是「符号不存在」这一类必然失败，不能证明类型与实参完全匹配。
+
+[INFERRED] 补齐后 `:app` 在符号层面可以拼成一个 App，但缺失的界面仍以显式「尚未实现」文案呈现，而不是空列表：空态等于宣称「你没有数据」，对一个从未编写的界面是错误陈述。
 
 #### 2.4.4 距离各里程碑还差多少
 
@@ -138,9 +141,9 @@
 | 里程碑 | 已完成部分 | 未完成部分 |
 | --- | --- | --- |
 | M0 协议冻结 | OpenAPI、schema、vectors、ZFT2 全部冻结且有测试 | ADR-002/004/005 三个引擎 spike 与 VNC 许可审计未出门 |
-| M1 原生壳与本地数据 | 主题、浮岛几何、连接列表/编辑、Room DB、SecretStore、AppLock 代码齐备 | 根导航与解锁/绑定屏幕缺失，2.4.3 的三处未声明符号阻断构建，重启恢复与大字体/安全区测试未跑 |
+| M1 原生壳与本地数据 | 主题、浮岛几何、连接列表/编辑、Room DB、SecretStore、AppLock 代码齐备；根导航与账号级依赖图已补齐（2.4.3） | 解锁/绑定（S01/S02）屏幕缺失，仍无 Gradle wrapper 与 CI，重启恢复与大字体/安全区测试未跑 |
 | M2 服务端与完整双向同步 | 客户端 SyncActor、PushPlanner、冲突与信封逻辑及单测齐备 | 服务端 0 行；chaos matrix、往返测试、tombstone 与游标行为全部无法验证 |
-| M3 文件桥接整合 | ZFT2 provider/dispatcher、路径安全与单测齐备 | 前台服务引用不存在的类，SAF 授权链与 iOS security-scoped provider 未实现，大文件套件未跑 |
+| M3 文件桥接整合 | ZFT2 provider/dispatcher、路径安全与单测齐备；前台服务的类名引用已修正 | SAF 授权链与 iOS security-scoped provider 未实现，ZFT2 未接到真实 socket，大文件套件未跑 |
 | M4 SSH/Telnet | 终端渲染、按键与鼠标编码、IME 桥、会话管理与 Telnet 协议齐备 | 没有 SSH 引擎就连不上任何主机，代理/跳板与批量执行的传输层缺失 |
 | M5 RDP/VNC | 远程屏幕、指针/键盘/剪贴板/视口逻辑与单测齐备，RFB 握手可用 | 没有 RDP/VNC 引擎与平台 Surface 绑定，真机矩阵与 30 分钟稳定会话未跑 |
 | M6 其余能力、迁移与发布 | 笔记、片段、SFTP、批量执行、备份的纯逻辑与端口定义齐备 | 对应界面、AI 浮窗、文件同步页缺失；`feature-tools` 的端口全部 `isAvailable = false`；迁移与商店材料未做 |

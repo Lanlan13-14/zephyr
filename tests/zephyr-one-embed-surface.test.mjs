@@ -27,6 +27,27 @@ const SERVER_JS = readFileSync(path.join(root, 'server.js'), 'utf8');
 const STAGE_SH = readFileSync(path.join(root, 'zephyr_one/scripts/stage-zephyr-core.sh'), 'utf8');
 const APP_JS = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 
+/**
+ * Find places where `selector` is looked up and immediately dereferenced with a
+ * plain `.`, which throws when the element is absent.
+ *
+ * Matches both spellings app.js uses, `$(sel)` and `document.querySelector(sel)`,
+ * and treats `?.` as safe. Returns the offending member expressions so a failure
+ * names what to fix rather than only counting.
+ *
+ * @param {string} source
+ * @param {string} selector
+ * @returns {string[]}
+ */
+function unguardedDereferences(source, selector) {
+    const quoted = selector.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+    const pattern = new RegExp(
+        `(?:\\$|document\\.querySelector)\\(\\s*(['"\`])${quoted}\\1\\s*\\)(\\s*\\.\\s*[A-Za-z_$][\\w$]*)`,
+        'g',
+    );
+    return [...source.matchAll(pattern)].map(([, , member]) => member.replace(/\s+/g, ''));
+}
+
 test('every fragment the transform depends on appears exactly once in its scope', () => {
     /* A fragment matching 0 times means the transform silently no-ops; matching
      * 2+ times means it could edit an unintended element.
@@ -211,4 +232,63 @@ test('backup / restore stays reachable in One', () => {
     assert.match(html, /id="settings-data"/);
     assert.match(html, /id="exportDataBtn"/);
     assert.match(html, /id="importDataForm"/);
+});
+
+test('app.js never dereferences an element the transform removes', () => {
+    /* The regression this locks down took the whole product surface down.
+     *
+     * `drop-logout-button` deletes #logoutBtn from app.html, but bindEvents()
+     * still ran `$('#logoutBtn').addEventListener(...)`. In browser Zephyr the
+     * element exists so the call is fine; inside One it resolves to null and
+     * throws, and because bindEvents() is a single statement sequence called
+     * from init(), everything after that line never ran: the header brand mark
+     * kept app.html's literal emoji instead of the One wind-mark, and the rest
+     * of the app's event wiring was silently dead. The favicon still updated,
+     * which is why the failure looked like "wrong icon" rather than "crash".
+     *
+     * Derived from EDITS rather than a hand-written list so a future removal
+     * edit is covered the moment it is added.
+     */
+    const removed = EDITS.filter((edit) => edit.to === '');
+    assert.ok(removed.length > 0, 'at least one edit must remove an element');
+
+    const selectors = [];
+    for (const edit of removed) {
+        for (const [, id] of edit.from.matchAll(/id="([^"]+)"/g)) {
+            selectors.push(`#${id}`);
+        }
+        for (const [, value] of edit.from.matchAll(/data-settings="([^"]+)"/g)) {
+            selectors.push(`[data-settings="${value}"]`);
+        }
+    }
+    assert.ok(selectors.length > 0, 'removal edits must name at least one selector');
+
+    for (const selector of selectors) {
+        assert.deepEqual(
+            unguardedDereferences(APP_JS, selector),
+            [],
+            `app.js must not dereference ${selector} without optional chaining: ` +
+                'the embedded surface removes it, so the lookup is null inside One',
+        );
+    }
+});
+
+test('the unguarded-dereference detector actually catches the shipped bug', () => {
+    /* Without this, the assertion above would pass just as happily against a
+     * detector that never matches anything. Re-introduce the exact expression
+     * that broke One and require the detector to report it. */
+    const reintroduced = APP_JS.replace(
+        "$('#logoutBtn')?.addEventListener(",
+        "$('#logoutBtn').addEventListener(",
+    );
+    assert.notEqual(reintroduced, APP_JS, 'guarded logout binding should exist to un-guard');
+    assert.deepEqual(unguardedDereferences(reintroduced, '#logoutBtn'), ['.addEventListener']);
+
+    // querySelector spelling is caught too, not just the `$` helper.
+    const viaQuerySelector = `document.querySelector('#logoutBtn').click();`;
+    assert.deepEqual(unguardedDereferences(viaQuerySelector, '#logoutBtn'), ['.click']);
+
+    // Optional chaining and a bare lookup are both fine.
+    assert.deepEqual(unguardedDereferences(`$('#logoutBtn')?.focus();`, '#logoutBtn'), []);
+    assert.deepEqual(unguardedDereferences(`const el = $('#logoutBtn');`, '#logoutBtn'), []);
 });

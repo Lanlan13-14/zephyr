@@ -13,7 +13,7 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import one.zephyr.mobile.R
-import one.zephyr.mobile.app.ZephyrApplication
+import one.zephyr.mobile.app.ZephyrOneApplication
 
 /**
  * Keeps 本机共享 online while One is in the background.
@@ -56,7 +56,7 @@ class FileBridgeForegroundService : LifecycleService() {
      * which is what lets the remote side report 已停止 instead of a transport error.
      */
     private fun stopBridgeAndSelf() {
-        val account = (application as? ZephyrApplication)?.container?.account
+        val account = (application as? ZephyrOneApplication)?.container?.account
         if (account == null) {
             stopSelf()
             return

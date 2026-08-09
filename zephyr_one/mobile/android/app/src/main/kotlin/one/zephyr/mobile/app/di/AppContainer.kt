@@ -61,7 +61,7 @@ class AppContainer(private val context: Context) {
     private fun accountFreeSecretStore(): one.zephyr.mobile.security.SecretStore =
         one.zephyr.mobile.security.SecretStore(
             blobs = secretBlobs,
-            scope = one.zephyr.mobile.security.SecretScope(
+            scope = one.zephyr.mobile.security.SecretStore.SecretScope(
                 serverId = SCOPE_PREBIND,
                 userId = SCOPE_PREBIND,
                 deviceId = deviceInstallId,
@@ -98,6 +98,10 @@ class AppContainer(private val context: Context) {
      * and clearing after dropping the reference would leave the arena unreachable but still warm.
      */
     fun unbindAccount() {
+        /* Order matters. dispose() unregisters the account's lock sink and purges its arena while the
+         * graph is still reachable; clearing the lock's sinks first would drop the registration and
+         * leave that arena warm with no one left to purge it. */
+        account?.dispose()
         appLock.clearSensitiveMaterial()
         account = null
     }

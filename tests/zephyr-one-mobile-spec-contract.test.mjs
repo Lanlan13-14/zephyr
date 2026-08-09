@@ -179,11 +179,54 @@ test('parity spec inherits Zephyr facts without inheriting Web UI', () => {
 });
 
 test('implementation status does not falsely claim native code exists', () => {
+  /* This guard exists to stop status inflation, not to freeze a particular row value.
+   *
+   * It originally hardcoded `missing` for Android, which became wrong the moment
+   * zephyr_one/mobile/android landed: 295 .kt files really do exist, so `missing` was itself a
+   * false statement. The rule the document actually needs is the one the file states in its own
+   * 禁止状态漂移 section: `partial` may not be dressed up as done, and "code exists" may not be
+   * reported as "implemented". So the assertion is now on the *forbidden* values plus the caveat
+   * that makes `partial` honest, which is what a reviewer would check by hand. */
   const status = read('IMPLEMENTATION_STATUS.md');
-  assert.match(status, /Android Kotlin\/Compose[^\n]*`missing`/);
-  assert.match(status, /iOS Swift\/SwiftUI[^\n]*`missing`/);
-  assert.match(status, /mobile v1 server API[^\n]*`missing`/);
-  assert.match(status, /完整双向同步[^\n]*`specified`/);
+
+  const row = (label) => {
+    const line = status.split('\n').find((l) => l.startsWith('|') && l.includes(label));
+    assert.ok(line, `IMPLEMENTATION_STATUS.md must keep a row for ${label}`);
+    return line;
+  };
+
+  /* Android: code exists, has never been compiled. `partial` is the only honest value, and the
+   * row must carry the reason so the status cannot be read as shippable. */
+  const android = row('Android Kotlin/Compose');
+  assert.match(android, /`partial`/, 'Android has code but has never built; partial is the honest value');
+  assert.doesNotMatch(android, /`implemented/, 'uncompiled Kotlin must never be reported as implemented');
+  assert.match(android, /从未(成功)?编译|未经过一次(真正的)?编译/, 'the never-compiled caveat must stay on the row');
+
+  /* These three are still literally absent, so they stay pinned. */
+  assert.match(row('iOS Swift/SwiftUI'), /`missing`/);
+  /* The server API and bidirectional sync are no longer absent: 13 of the 20
+   * frozen mobile v1 operations are implemented and covered by the e2e suite in
+   * zephyr_one/mobile/tests. They are still `partial`, because the 7 shared /
+   * file-bridge operations answer a declared `unsupported_scope` rather than
+   * doing the work, so `implemented` would be the inflation this test exists to
+   * prevent. */
+  const serverApi = row('mobile v1 server API');
+  assert.match(serverApi, /`partial`/, 'the server API exists but is not complete');
+  assert.doesNotMatch(serverApi, /`implemented/, 'seven operations are still stubs');
+
+  const bidi = row('完整双向同步');
+  assert.match(bidi, /`partial`/);
+  assert.doesNotMatch(bidi, /`implemented/);
+
+  /* No table row may claim the native client is done while the engines are unavailable.
+   *
+   * Scoped to table rows on purpose: the prose 禁止状态漂移 section legitimately mentions the token
+   * in the rule "`implemented-zephyr` 不等于 `implemented-one`", and a whole-file match would flag
+   * the very sentence that forbids the drift. */
+  const statusRows = status.split('\n').filter((line) => line.startsWith('|'));
+  for (const line of statusRows) {
+    assert.doesNotMatch(line, /`implemented-one`/, 'no row may claim implemented-one: ' + line.trim());
+  }
 });
 
 test('JSON Schemas compile strictly and reject the negative operation vector', () => {
@@ -360,10 +403,45 @@ test('shared residency errors are registered with deterministic client actions',
   assert.equal(byCode.get('shared_session_consumed').clientAction, 'mintFreshSessionEnvelope');
 });
 
-test('legacy One and current server still visibly lack mobile v1 implementation', () => {
+test('mobile v1 is mounted by the server and does not disturb the legacy One path', () => {
+  /* This test used to assert the *absence* of any mobile v1 route. That was
+   * correct while the server had none, but it was also passing vacuously: the
+   * routes are registered inside mobile-v1-routes.js, so a literal
+   * `app.get('/api/mobile/v1` search in server.js would never have matched even
+   * after the API landed. It now asserts the real invariants instead. */
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const routes = fs.readFileSync(path.join(root, 'mobile-v1-routes.js'), 'utf8');
   const one = fs.readFileSync(path.join(root, 'one-client-manager.js'), 'utf8');
-  assert.doesNotMatch(server, /app\.(?:get|post|patch|delete)\('\/api\/mobile\/v1/);
+
+  // The API has to be wired from server.js or nothing serves it.
+  assert.match(server, /require\('\.\/mobile-v1-routes'\)/, 'mobile v1 must be required');
+  assert.match(server, /mountRoutes\(app\)/, 'mobile v1 must be mounted');
+
+  /* The raw body capture is load-bearing, not incidental: the ES256 device proof
+   * signs a digest of the exact bytes, and express.json() discards them. */
+  assert.match(server, /rawBody/, 'device proof verification needs the raw body');
+
+  // Every implemented plane must actually exist in the route module.
+  for (const routePath of [
+    '/api/mobile/v1/capabilities',
+    '/api/mobile/v1/devices/bind',
+    '/api/mobile/v1/devices/refresh',
+    '/api/mobile/v1/sync/bootstrap',
+    '/api/mobile/v1/sync/changes',
+    '/api/mobile/v1/sync/push',
+    '/api/mobile/v1/sync/ack',
+    '/api/mobile/v1/sync/status',
+    '/api/mobile/v1/sensitive/verify',
+  ]) {
+    assert.ok(routes.includes(routePath), routePath + ' must be mounted');
+  }
+
+  /* The shared-resource and file-bridge planes are deliberately not implemented.
+   * They must answer a registered error code rather than 404, so a client can
+   * tell "this server cannot do it yet" from "wrong URL". */
+  assert.match(routes, /unsupported_scope/, 'unimplemented planes must say so');
+
+  // The legacy pull-only path is untouched.
   assert.match(one, /\/api\/one\/sync\/pull/);
   assert.match(one, /Build a user-scoped sync snapshot/);
 });

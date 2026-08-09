@@ -102,6 +102,54 @@ test('icon.ico is large enough to actually contain its frames', () => {
   assert.ok(bytes > 20000, 'icon.ico is only ' + bytes + ' bytes; frames are missing');
 });
 
+test('the release rasteriser outlines the One wordmark instead of trusting a font', () => {
+  /* branding/manifest.json freezes a production rule in plain words:
+   *
+   *   "Convert the One text to fixed paths before generating Android or iOS
+   *    release assets. Preserve the source files unchanged."
+   *
+   * The four SVG masters carry the wordmark as <text font-family="system-ui,
+   * -apple-system, 'Segoe UI', Roboto, ...">, which is resolved by whatever
+   * fonts the *build machine* happens to have. Rendering the same master on a
+   * runner without Segoe UI produces a different "One" - verified locally: the
+   * wordmark raster changes across font stacks while the wind strokes stay
+   * byte-identical. That is a reproducibility break in a release artefact, and
+   * it is exactly what the frozen rule forbids.
+   *
+   * The generator therefore substitutes outlines in memory. Both halves matter,
+   * so both are asserted: the substitution must happen, and the masters must
+   * stay untouched on disk. */
+  const src = fs.readFileSync(path.join(root, 'zephyr_one/scripts/prepare-icons.py'), 'utf8');
+
+  // A real outline path, not a font reference.
+  assert.match(src, /WORDMARK_PATH/, 'the outlined wordmark must be embedded in the generator');
+  assert.match(
+    src,
+    /WORDMARK_PATH\s*=\s*\(?\s*\n?\s*["']\s*M/,
+    'the wordmark constant must be SVG path data beginning with a moveto',
+  );
+
+  // The substitution has to be applied to the markup that is rasterised.
+  assert.match(src, /def outline_wordmark/, 'the substitution must be a named step');
+  assert.match(src, /outline_wordmark\(/, 'the substitution must actually be called');
+
+  // Fail loudly rather than silently shipping font-dependent artwork: if a
+  // master is reshaped so the <text> group no longer matches, the build must
+  // stop instead of falling back to <text>.
+  assert.match(src, /sys\.exit\(/, 'a master that no longer matches must abort the build');
+
+  /* The masters themselves must still be the frozen sources. Their <text> is
+   * what the four checked-in SVGs are *supposed* to contain; the rule says
+   * convert during generation, not rewrite the sources. */
+  for (const theme of ['frost', 'lava', 'asagi', 'cyber']) {
+    const svg = fs.readFileSync(
+      path.join(root, 'zephyr_one/platform_assets/icons', 'zephyr-one-' + theme + '.svg'),
+      'utf8',
+    );
+    assert.match(svg, /<text /, theme + ' master must stay unchanged (still carries <text>)');
+  }
+});
+
 test('prepare-icons.py saves the .ico from its largest frame', () => {
   const src = fs.readFileSync(path.join(root, 'zephyr_one/scripts/prepare-icons.py'), 'utf8');
 

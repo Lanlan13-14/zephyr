@@ -1,6 +1,6 @@
 # Zephyr One 原生实现状态
 
-> [KNOWN] 合同基线：`main@8dd5b98`，2026-08-08。实现基线：`main@b0e5a9c`，2026-08-09。
+> [KNOWN] 合同基线：`main@8dd5b98`，2026-08-08。实现基线：`main@1a9f843` + 本次工作树改动，2026-08-09。
 >
 > [KNOWN] `zephyr_one/mobile/` 已落地，本表下列各行按 `b0e5a9c` 实测重新判定。逐项规模、缺口与里程碑差距见 [`DEVELOPMENT.md`](DEVELOPMENT.md) 2.4；两处冲突时以该节为准。
 >
@@ -21,13 +21,13 @@
 | --- | --- | --- |
 | 产品合同 | `specified` | [KNOWN] `PRODUCT_REQUIREMENTS.md` |
 | Zephyr 继承规则 | `specified` | [KNOWN] `ZEPHYR_PARITY.md` |
-| machine contracts | `specified` | [KNOWN] 20 实体／66 错误码／15 份 codegen 产物；`zephyr_one/mobile/tests` 69 项全过，`check:drift` 无漂移 |
-| Android Kotlin/Compose | `partial` | [KNOWN] `zephyr_one/mobile/android` 21 模块、293 个 `.kt`／46,487 行、131 个 `@Composable`、6/23 屏幕；无 Gradle wrapper、无 CI、从未编译，`MainActivity` 引用的 `ZephyrOneRoot` 等 3 个符号未声明 |
-| iOS Swift/SwiftUI | `missing` | [KNOWN] `zephyr_one/mobile/ios` 仅有 6 个生成合同 Swift 文件／670 行；无 `Package.swift`、无 Xcode 工程、无 App 代码 |
-| mobile v1 server API | `missing` | [KNOWN] `server.js` 中 `/api/mobile/v1` 出现 0 次；OpenAPI 已冻结 21 路径／22 操作，服务端 0 行 |
+| machine contracts | `specified` | [KNOWN] 20 实体／66 错误码／15 份 codegen 产物；`zephyr_one/mobile/tests` 74 项全过，`check:drift` 无漂移 |
+| Android Kotlin/Compose | `partial` | [KNOWN] `zephyr_one/mobile/android` 21 模块、295 个 `.kt`／53,719 行、150 个 `@Composable`、7/23 屏幕；`ZephyrOneRoot` / `AccountContainer` / `ZephyrApplication` / `SecretStore.SecretScope` 四处未声明引用已补齐并由 `mobile/tests/kotlin-symbols.test.mjs` 看守；仍无 Gradle wrapper、无 CI、**从未编译** |
+| iOS Swift/SwiftUI | `missing` | [KNOWN] `zephyr_one/mobile/ios` 仅有 6 个生成合同 Swift 文件／717 行；无 `Package.swift`、无 Xcode 工程、无 App 代码 |
+| mobile v1 server API | `partial` | [KNOWN] `mobile-v1-routes.js` / `mobile-v1-store.js` / `mobile-v1-entities.js` / `mobile-v1-crypto.js` 共 2,628 行，由 `server.js` 挂载；20 个 mobile v1 操作中 13 个已实现（capabilities / bind / refresh / devices CRUD / bootstrap / changes / push / ack / now / status / sensitive.verify），7 个 shared 与 file-bridge 接口显式返回 501 `unsupported_scope`；`mobile/tests` 135 项全过，含 22 项 bind→bootstrap→push→changes→ack 真实 HTTP 往返 |
 | Tauri One | `legacy-one` | [KNOWN] `zephyr_one/` 存在，pull-only/localStorage/内嵌 core |
 | Zephyr business services | `implemented-zephyr` | [KNOWN] resource/notes/authz/settings/workspace/AI 等 service |
-| 完整双向同步 | `specified` | [KNOWN] 当前仅 `/api/one/sync/pull`；新状态机未实现 |
+| 完整双向同步 | `partial` | [KNOWN] 服务端 bootstrap/changes/push/ack 已实现（`mobile-v1-routes.js`），并有 22 项 e2e 回归；旧 `/api/one/sync/pull` 仍保留作为 legacy One 路径；客户端 Kotlin 同步引擎**从未编译** |
 | 原生协议 engines | `blocked` | [KNOWN] Kotlin/iOS SSH/RDP/VNC 依赖 ADR 未完成 |
 
 ## 功能状态
@@ -37,8 +37,8 @@
 | F-001 | 账号登录/TOTP | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生状态机未实现；现有 API 已支持返回 SID |
 | F-002 | Client Token 前置绑定 | `partial` | `legacy-one` | [KNOWN] 当前 OneClientManager 可绑定；缺 device keys/refresh/proof |
 | F-003 | Device registry | `partial` | `legacy-one` | [KNOWN] `one_clients` 表存在；缺 mobile v1 字段和 tombstone |
-| F-004 | 完整双向同步 | `missing` | `missing` | [KNOWN] 当前 pull-only |
-| F-005 | Secret envelope | `partial` | `missing` | [KNOWN] server at-rest ML-KEM 已有；device envelope 未实现 |
+| F-004 | 完整双向同步 | `partial` | `partial` | [KNOWN] 服务端 push/changes/ack/bootstrap 已实现并有 e2e 回归：重放同 opId 返回 duplicate、字段重叠返回 conflict、tombstone 不带 payload、游标 GC 后返回 cursor_expired；尚未接入的是 blob 传输与 15 个无 adapter 的 registry 类型 |
+| F-005 | Secret envelope | `implemented-zephyr` | `partial` | [KNOWN] device envelope 已双向打通：`/capabilities` 发布 `serverId` 与 ML-KEM-768 公钥，push 按 AAD （serverId/userId/deviceId/entityType/entityId/fieldName/entityRevision/keyVersion）验证并解开密钥，写入规范 service；已测：篋改密文、换绑其他设备、非密钥字段均被拒；change feed 永不带密钥。服务端→设备方向的 envelope 尚未实现 |
 | F-006 | Connection CRUD | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 UI/本地镜像未实现 |
 | F-007 | ACL/share | `implemented-zephyr` | `missing` | [KNOWN] 原生 capability UI 未实现 |
 | F-008 | SSH/SFTP | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 SSH engine 未定 |
@@ -64,7 +64,7 @@
 | F-028 | 系统 App Lock | `partial` | `legacy-one` | [KNOWN] Tauri hook 非正式 BiometricPrompt/LA 实现 |
 | F-029 | 四色原生图标 | `specified` | `partial` | [KNOWN] SVG/manifest 有；production path/adaptive/alternate assets 未生成 |
 | F-030 | Tauri → native migration | `specified` | `missing` | [KNOWN] migration artifact/exporter/importer 未实现 |
-| F-031 | Android progress-driven 自定义返回 | `specified` | `missing` | [KNOWN] Compose navigation/animation 代码不存在 |
+| F-031 | Android progress-driven 自定义返回 | `specified` | `partial` | [KNOWN] 根导航 `ZephyrOneRoot` 已落地（四入口浮岛 + 沉浸式 surface 切换），但系统 progress 驱动的预测式返回手势与动画仍未实现 |
 | F-032 | iOS 全 push interactive 右滑 | `specified` | `missing` | [KNOWN] SwiftUI/UIKit navigation 代码不存在 |
 | F-033 | Termux/SwiftTerm 级终端交互 | `specified` | `missing` | [KNOWN] 两端 M0 引擎和 UI 尚未实现 |
 | F-034 | RDP/VNC 完整移动交互 | `specified` | `blocked` | [KNOWN] 桌面已有 FreeRDP C shim 可复用为 core 参考，但移动 Surface/UIView 绑定、direct/trackpad 手势与真机验证仍未做；VNC RFB core 仍未选定 |

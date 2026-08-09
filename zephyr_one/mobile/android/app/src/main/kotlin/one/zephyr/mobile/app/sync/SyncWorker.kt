@@ -3,7 +3,7 @@ package one.zephyr.mobile.app.sync
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import one.zephyr.mobile.app.ZephyrApplication
+import one.zephyr.mobile.app.ZephyrOneApplication
 
 /**
  * The WorkManager entry point for a background sync round.
@@ -19,7 +19,7 @@ import one.zephyr.mobile.app.ZephyrApplication
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        val app = applicationContext as? ZephyrApplication ?: return Result.success()
+        val app = applicationContext as? ZephyrOneApplication ?: return Result.success()
         val account = app.container.account ?: return Result.success()
 
         val results = account.syncEngine.runScheduledRound()

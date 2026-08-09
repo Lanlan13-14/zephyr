@@ -138,6 +138,7 @@ const {
 } = require('./preview/media/media-service');
 const { FileAgentManager } = require('./file-agent-manager');
 const { OneClientManager } = require('./one-client-manager');
+const { MobileV1Api } = require('./mobile-v1-routes');
 const { applyEmbeddedSurface } = require('./zephyr-one-embed-surface');
 const { mountRoutes: mountOneRdpFolderMapping } = require('./zephyr-one-rdp-storage');
 const { installAsyncHandlerGuard, jsonErrorMiddleware } = require('./express-async-guard');
@@ -2413,7 +2414,18 @@ async function zipBuffer(files) {
 }
 
 initData();
-app.use(express.json({ limit: '24mb' }));
+/* rawBody is captured only for the mobile plane. The ES256 device proof in
+ * /api/mobile/v1 signs a SHA-256 of the exact request bytes, and
+ * JSON.stringify(req.body) is not byte-identical to what the client sent:
+ * key order and number formatting both differ. Scoping the capture to that
+ * prefix keeps a 24 MB upload on every other route from being retained
+ * twice in memory. */
+app.use(express.json({
+    limit: '24mb',
+    verify: (req, _res, buf) => {
+        if (req.url && req.url.startsWith('/api/mobile/v1')) req.rawBody = buf;
+    },
+}));
 app.use(requireSameOrigin);
 aiHostApp.use(express.json({ limit: '24mb' }));
 
@@ -6699,6 +6711,54 @@ oneClientManager.mountRoutes(app, {
     resolveUserById: (id) => storage.getUserById(id),
     resolveUserByUsername: (name) => storage.getUser(name),
 });
+
+/* Zephyr One mobile v1.
+ *
+ * openapi-mobile-v1.json freezes 22 operations under /api/mobile/v1 and the
+ * Kotlin client is generated from it, so the paths here are not free to drift.
+ *
+ * Mounted unconditionally rather than behind ZEPHYR_ONE_EMBEDDED: a phone talks
+ * to a *hosted* Zephyr over the network, which is the opposite of the embedded
+ * case, so gating it on the embedded flag would make the API exist only where
+ * no mobile client can reach it.
+ *
+ * Every route authenticates. The three planes are the existing app session
+ * (X-Zephyr-Sid) for account-level management, a short-lived device access
+ * credential for sync, and an ES256 device proof bound to method, path, body
+ * digest, timestamp and nonce. The registry hash is checked on push so a client
+ * built against a different entity classification cannot write a field this
+ * server treats differently.
+ *
+ * Failure to construct is logged and swallowed. A malformed contract file must
+ * not stop the desktop product from booting, and every mobile route is a new
+ * surface rather than a change to an existing one. */
+let mobileV1Api = null;
+try {
+    mobileV1Api = new MobileV1Api({
+        db: storage.rawDb(),
+        storage,
+        sessionStore,
+        resourceService,
+        notesService,
+        userSettingsService,
+        fileAgentManager,
+        authz,
+        entityRegistry: JSON.parse(fs.readFileSync(
+            path.join(__dirname, 'zephyr_one', 'mobile', 'contracts', 'registries', 'entity-registry.json'),
+            'utf8',
+        )),
+        /* Reuses the same password/TOTP check the web sensitive-operation gate
+         * uses, so a mobile grant can never be easier to obtain than a browser
+         * one. The adapter shape differs because verifySensitiveAccess reads the
+         * session off the request. */
+        verifySensitive: (user, secret) => verifySensitiveAccess({ session: { username: user.username } }, secret),
+        log: (...args) => console.log('[mobile-v1]', ...args),
+    });
+    mobileV1Api.mountRoutes(app);
+    console.log('[mobile-v1] mounted; registryHash=' + mobileV1Api.store.registryHash.slice(0, 12));
+} catch (err) {
+    console.error('[mobile-v1] not mounted:', err && err.message);
+}
 
 /* RDP folder mapping, Zephyr One only.
  *

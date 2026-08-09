@@ -1,0 +1,96 @@
+name: Zephyr One Mobile
+
+# The 46k+ lines of Kotlin under zephyr_one/mobile/android had never been
+# compiled once, because no workflow referenced the tree and there is no Gradle
+# wrapper in the repository. That is how four unresolved symbols
+# (ZephyrOneRoot / AccountContainer / ZephyrApplication /
+# SecretStore.SecretScope) survived in the :app module: every library module's
+# unit tests can pass while the application module does not link.
+#
+# This workflow closes that gap in two independent layers:
+#   1. `contracts` runs the Node contract suite, including the static
+#      symbol-resolution test, and needs no Android SDK. It is fast and it is
+#      what catches an unresolved reference in a reviewable way.
+#   2. `android` is the real compiler. Static resolution cannot prove a call
+#      site type-checks, so kotlinc has the final word.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'zephyr_one/mobile/**'
+      - '.github/workflows/zephyr-one-mobile.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'zephyr_one/mobile/**'
+      - '.github/workflows/zephyr-one-mobile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zephyr_one/mobile
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # No dependencies: the mobile contract suite is deliberately stdlib-only
+      # (node:test + node:assert), so there is nothing to install and nothing
+      # that can drift between a local run and CI.
+      - name: Contract drift and contract tests
+        run: npm test
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zephyr_one/mobile/android
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v4
+        with:
+          # JVM 17: buildSrc pins ZephyrBuild.JAVA_VERSION to 17 and every
+          # module sets jvmTarget 17, so a newer default JDK would compile the
+          # modules against a toolchain the build scripts do not describe.
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          # compileSdk 35 per buildSrc/ZephyrBuild.kt.
+          packages: 'platforms;android-35 build-tools;35.0.0'
+
+      # Gradle is provisioned by the action rather than by a committed wrapper.
+      # The wrapper JAR is a binary artefact, and adding one that no human in
+      # this repository has run is worse than declaring the version here where
+      # it is reviewable in plain text. AGP 8.7.3 requires Gradle 8.9+.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      # Compile before test. `assembleDebug` is the step that would have caught
+      # the four unresolved symbols: they live in :app, which no library
+      # module's test task ever links.
+      - name: Compile the application module
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Unit tests
+        run: gradle --no-daemon testDebugUnitTest
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-reports
+          path: |
+            zephyr_one/mobile/android/**/build/reports/tests/**
+            zephyr_one/mobile/android/**/build/test-results/**
+          if-no-files-found: warn
