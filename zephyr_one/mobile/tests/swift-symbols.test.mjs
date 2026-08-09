@@ -164,6 +164,28 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'URL', 'JSONSerialization', 'NSNumber', 'NSString', 'Date',
     // CryptoKit
     'SHA256',
+    /* Darwin / POSIX, used by PosixSecurityScopedFileSystem.
+     *
+     * The iOS provider reaches the filesystem through syscalls rather than
+     * FileManager attributes: only lstat can answer "is this node itself a
+     * symlink", which is the question the containment jail turns on, and only
+     * access(2) gives the kernel's own readability answer rather than a guess
+     * from the mode bits. Listed explicitly, like every other entry here, so a
+     * genuinely missing type is still caught. */
+    'Darwin',
+    'S_IFMT', 'S_IFLNK', 'S_IFDIR',
+    'R_OK', 'W_OK',
+    'O_CREAT', 'O_EXCL', 'O_WRONLY', 'O_RDWR', 'O_RDONLY',
+    'EACCES', 'EPERM', 'EROFS', 'ENOENT', 'EEXIST', 'ENOSPC', 'EDQUOT',
+    'EISDIR', 'ENOTDIR', 'ENOTEMPTY', 'EXDEV', 'EINTR',
+    // Foundation and standard library reached by the same file
+    'FileManager', 'Int32', 'UInt64', 'AnyObject',
+    /* #filePath / #line default arguments in the XCTest helpers, so a failure is
+     * reported at the caller rather than inside the helper. */
+    'StaticString', 'UInt',
+    /* The stdlib's cryptographically secure generator. Used for ZFT2 handles,
+     * which DEVELOPMENT.md 13.3 requires to be unguessable. */
+    'SystemRandomNumberGenerator',
     // XCTest API surface used by the suites
     'XCTestCase', 'XCTUnwrap', 'XCTFail',
     'XCTAssertEqual', 'XCTAssertNotEqual', 'XCTAssertTrue', 'XCTAssertFalse',
