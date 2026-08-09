@@ -1,5 +1,5 @@
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
-import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref } from './theme-runtime.js?v=20260807-one-brand1';
+import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
 import { createNotesController } from './notes.js?v=20260729-ai-notes-switches1';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
 import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
@@ -7,6 +7,29 @@ import { localizeActivityMessage } from './activity-i18n.js?v=20260728-ai-handle
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+/* Null-safe DOM writes, for a file served to two different DOM shapes.
+ *
+ * zephyr-one-embed-surface.js structurally removes the browser-era
+ * credential surface from app.html before Zephyr One ever loads it: password
+ * change, TOTP, passkeys, CAPTCHA, IP policy, login events and the profile
+ * form, 43 element ids in total. Every binding for them was written as
+ * `$('#id').addEventListener(...)` or `$('#id').value = ...`, so in One the
+ * first one threw `Cannot read properties of null` inside bindEvents(), which
+ * aborted init() before applyAppearance() ever ran.
+ *
+ * That single throw is what the packaged desktop app showed as a failed load:
+ * the static shell painted, then nothing else happened. The header kept the
+ * emoji placeholder and the window title stayed 'Zephyr' -- not because the
+ * branding was wrong but because the code that applies it never executed.
+ *
+ * Writes need helpers because `?.` cannot be an assignment target; reads and
+ * addEventListener calls use `?.` directly. A missing element is a legitimate
+ * state here rather than an error to report: One is *supposed* to have no
+ * password form, so it must be skipped silently and not logged.
+ */
+const withEl = (sel, fn) => { const el = $(sel); if (el) fn(el); return el; };
+const setVal = (sel, value) => withEl(sel, (el) => { el.value = value; });
+const setChecked = (sel, checked) => withEl(sel, (el) => { el.checked = checked; });
 function installClosestFallback() {
     const define = (proto, fn) => {
         if (!proto || proto.closest) return;
@@ -707,7 +730,10 @@ function setFavicon(icon = DEFAULT_BRAND_ICON) {
     link.href = faviconHref(icon);
 }
 function applyAppearance(appearance = getAppearance()) {
-    const brandName = String(appearance.brandName || defaultBrandName()).trim() || defaultBrandName();
+    /* Resolved rather than defaulted: the stored value is seeded with
+     * 'Zephyr' on every fresh install, so `stored || default` never fired and
+     * One showed the other product's name. See zephyrResolveBrandName(). */
+    const brandName = zephyrResolveBrandName(appearance.brandName);
     const brandIcon = String(appearance.brandIcon || DEFAULT_BRAND_ICON).trim() || DEFAULT_BRAND_ICON;
     pendingBrandIcon = brandIcon;
     $('#brandName').textContent = brandName;
@@ -10887,10 +10913,10 @@ async function loadSettings() {
     $('#versionText').textContent = settings.version || '--';
     applyAgentReleaseLinks(settings.agentRelease);
     $('#icpInput').value = beian.icp ?? settings.icp ?? ''; $('#icpUrlInput').value = beian.icpUrl ?? settings.icpUrl ?? ''; $('#policeInput').value = beian.policeBeian ?? settings.policeBeian ?? ''; $('#policeUrlInput').value = beian.policeBeianUrl ?? settings.policeBeianUrl ?? ''; $('#showBeianInput').checked = (beian.show ?? settings.showBeian) !== false;
-    $('#ipWhitelistEnabled').checked = !!sec.ipWhitelistEnabled; $('#ipWhitelist').value = sec.ipWhitelist || ''; $('#bruteForceEnabled').checked = sec.bruteForceEnabled !== false; $('#bruteForceMaxFailures').value = sec.bruteForceMaxFailures || 5; $('#bruteForceBanMinutes').value = sec.bruteForceBanMinutes || 15;
-    $('#captchaEnabled').checked = !!cap.enabled; $('#captchaProvider').value = cap.provider || 'turnstile'; $('#captchaSiteKey').value = cap.siteKey || cap.tencentCaptchaAppId || cap.aliyunCaptchaId || cap.aliyunSceneId || ''; $('#captchaSecretKey').value = cap.secretKey || cap.tencentAppSecretKey || cap.aliyunAccessKeySecret || '';
+    setChecked('#ipWhitelistEnabled', !!sec.ipWhitelistEnabled); setVal('#ipWhitelist', sec.ipWhitelist || ''); setChecked('#bruteForceEnabled', sec.bruteForceEnabled !== false); setVal('#bruteForceMaxFailures', sec.bruteForceMaxFailures || 5); setVal('#bruteForceBanMinutes', sec.bruteForceBanMinutes || 15);
+    setChecked('#captchaEnabled', !!cap.enabled); setVal('#captchaProvider', cap.provider || 'turnstile'); setVal('#captchaSiteKey', cap.siteKey || cap.tencentCaptchaAppId || cap.aliyunCaptchaId || cap.aliyunSceneId || ''); setVal('#captchaSecretKey', cap.secretKey || cap.tencentAppSecretKey || cap.aliyunAccessKeySecret || '');
     $('#mailEnabled').checked = !!mail.enabled; $('#mailHost').value = mail.host || ''; $('#mailPort').value = mail.port || 465; $('#mailSecure').checked = mail.secure !== false; $('#mailUser').value = mail.user || ''; $('#mailPass').value = mail.pass || ''; $('#mailFrom').value = mail.from || ''; $('#mailAdminEmail').value = mail.adminEmail || ''; $('#notifyLoginSuccess').checked = mail.notifyLoginSuccess !== false; $('#notifyLoginFailure').checked = mail.notifyLoginFailure !== false; $('#notifyLoginToUser').checked = mail.notifyLoginToUser !== false; $('#geoLookupEnabled').checked = mail.geoLookupEnabled !== false;
-    $('#notifyLoginPersonal').checked = personalSettingsOverrides?.mail?.notifyLogin !== false;
+    setChecked('#notifyLoginPersonal', personalSettingsOverrides?.mail?.notifyLogin !== false);
     settings.workspace = { sessionPersistence: true, ...(settings.workspace || {}) };
     try {
         if (isSessionPersistenceEnabled()) localStorage.removeItem('zephyr.sessionPersistence.disabled');
@@ -11011,7 +11037,7 @@ async function setSessionPersistenceEnabled(enabled) {
     toast(t('会话持久化已关闭'));
 }
 async function saveBeian(e) { e.preventDefault(); settings = await savePlatformSettings('beian', { beian: { icp: $('#icpInput').value, icpUrl: $('#icpUrlInput').value, policeBeian: $('#policeInput').value, policeBeianUrl: $('#policeUrlInput').value, show: $('#showBeianInput').checked } }); toast(t('备案信息已保存')); }
-async function loadSecurityStatus() { securityStatus = await api('/api/security/status').catch(() => ({ user: {}, passkeys: [] })); $('#profileUsername').value = securityStatus.user.username || ''; $('#profileEmail').value = securityStatus.user.email || ''; renderTotp(); renderPasskeys(); }
+async function loadSecurityStatus() { securityStatus = await api('/api/security/status').catch(() => ({ user: {}, passkeys: [] })); setVal('#profileUsername', securityStatus.user.username || ''); setVal('#profileEmail', securityStatus.user.email || ''); renderTotp(); renderPasskeys(); }
 async function loadSecurityLists() {
     const loginPath = myIdentity.isSuperAdmin ? '/api/security/login-events' : '/api/security/login-events/mine';
     const [banData, eventData] = await Promise.all([
@@ -11022,7 +11048,7 @@ async function loadSecurityLists() {
     loginEvents = eventData.events || [];
     renderSecurityLists();
 }
-function renderTotp() { $('#totpBox').innerHTML = securityStatus.user.totpEnabled ? `<div class="mini-item"><b>${t('TOTP 状态')}</b><span>${t('已开启')}</span></div>` : `<p class="muted">${t('暂无 TOTP')}</p>`; $('#totpAction').innerHTML = `<button class="security-card-action" id="setupTotpBtn" type="button">${securityStatus.user.totpEnabled ? t('重新绑定') : t('开启 TOTP')}</button>`; $('#totpDisableForm').classList.toggle('force-hidden', !securityStatus.user.totpEnabled); updatePasswordFormFields(); }
+function renderTotp() { if (!$('#totpBox')) return; $('#totpBox').innerHTML = securityStatus.user.totpEnabled ? `<div class="mini-item"><b>${t('TOTP 状态')}</b><span>${t('已开启')}</span></div>` : `<p class="muted">${t('暂无 TOTP')}</p>`; $('#totpAction').innerHTML = `<button class="security-card-action" id="setupTotpBtn" type="button">${securityStatus.user.totpEnabled ? t('重新绑定') : t('开启 TOTP')}</button>`; $('#totpDisableForm').classList.toggle('force-hidden', !securityStatus.user.totpEnabled); updatePasswordFormFields(); }
 function updatePasswordFormFields() {
     const usingTotp = !!securityStatus.user?.totpEnabled;
     const hasEmail = !!(securityStatus.user?.email);
@@ -11072,11 +11098,12 @@ function closePasswordChangedModal() {
     const urlInput = $('#passwordChangedRollbackUrl');
     if (urlInput) urlInput.value = '';
 }
-function renderPasskeys() { $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无 Passkey')}</p>`; }
-function renderSecurityLists() { $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>${t('失败')} ${b.failedCount} · ${t('解封')} ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">${t('解除')}</button></div>`).join('') || `<p class="muted">${t('暂无封禁 IP')}</p>`; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason ? t(e.reason) : '')} · ${fmtTime(e.time)}</span></div>`).join('') || `<p class="muted">${t('暂无登录事件')}</p>`; }
-async function saveSecurityPolicy(e) { e.preventDefault(); settings = await savePlatformSettings('security', { security: { ipWhitelistEnabled: $('#ipWhitelistEnabled').checked, ipWhitelist: $('#ipWhitelist').value, bruteForceEnabled: $('#bruteForceEnabled').checked, bruteForceMaxFailures: Number($('#bruteForceMaxFailures').value) || 5, bruteForceBanMinutes: Number($('#bruteForceBanMinutes').value) || 15 } }); toast(t('安全策略已保存')); }
+function renderPasskeys() { if (!$('#passkeyList')) return; $('#passkeyList').innerHTML = (securityStatus.passkeys || []).map((p) => `<div class="mini-item"><b>Passkey</b><span>${fmtTime(p.createdAt)}</span><button data-del-passkey="${p.id}">${t('删除')}</button></div>`).join('') || `<p class="muted">${t('暂无 Passkey')}</p>`; }
+function renderSecurityLists() { if (!$('#ipBanList')) return; $('#ipBanList').innerHTML = ipBans.map((b) => `<div class="mini-item"><b>${escapeHtml(b.ip)}</b><span>${t('失败')} ${b.failedCount} · ${t('解封')} ${fmtTime(b.bannedUntil)}</span><button data-unban="${escapeHtml(b.ip)}">${t('解除')}</button></div>`).join('') || `<p class="muted">${t('暂无封禁 IP')}</p>`; $('#loginEventList').innerHTML = loginEvents.slice(0, 20).map((e) => `<div class="mini-item"><b>${e.success ? t('成功') : t('失败')} · ${escapeHtml(e.username || '-')}</b><span>${escapeHtml(e.ip || '')} · ${escapeHtml(e.reason ? t(e.reason) : '')} · ${fmtTime(e.time)}</span></div>`).join('') || `<p class="muted">${t('暂无登录事件')}</p>`; }
+async function saveSecurityPolicy(e) { e.preventDefault(); if (!$('#securityPolicyForm')) return; settings = await savePlatformSettings('security', { security: { ipWhitelistEnabled: $('#ipWhitelistEnabled').checked, ipWhitelist: $('#ipWhitelist').value, bruteForceEnabled: $('#bruteForceEnabled').checked, bruteForceMaxFailures: Number($('#bruteForceMaxFailures').value) || 5, bruteForceBanMinutes: Number($('#bruteForceBanMinutes').value) || 15 } }); toast(t('安全策略已保存')); }
 async function saveCaptcha(e) {
     e.preventDefault();
+    if (!$('#captchaForm')) return;
     const provider = $('#captchaProvider').value;
     const siteKey = $('#captchaSiteKey').value.trim();
     const secretKey = $('#captchaSecretKey').value.trim();
@@ -11096,6 +11123,7 @@ async function saveCaptcha(e) {
     toast(t('CAPTCHA 已保存'));
 }
 async function revealCaptchaSecret() {
+    if (!$('#captchaSecretKey')) return;
     const secret = await requestSensitiveSecret(t('查看已保存 CAPTCHA 密钥'));
     const data = await api('/api/settings/captcha/open', { method: 'POST', body: JSON.stringify({ secret }) });
     $('#captchaSecretKey').value = data.secretKey || '';
@@ -11414,7 +11442,7 @@ function setupSnippetSettings() {
     });
     renderSnippetSettings();
 }
-async function setupTotp() { const r = await api('/api/security/totp/setup', { method: 'POST', body: '{}' }); $('#totpEnableForm').classList.remove('force-hidden'); $('#totpQrBox').innerHTML = `<img class="qr-img" src="${r.qr}"><p class="muted">${t('密钥：')}${escapeHtml(r.secret)}</p>`; }
+async function setupTotp() { if (!$('#totpEnableForm')) return; const r = await api('/api/security/totp/setup', { method: 'POST', body: '{}' }); $('#totpEnableForm').classList.remove('force-hidden'); $('#totpQrBox').innerHTML = `<img class="qr-img" src="${r.qr}"><p class="muted">${t('密钥：')}${escapeHtml(r.secret)}</p>`; }
 async function registerPasskey() { try { if (!window.PublicKeyCredential) return toast(t('当前浏览器不支持 Passkey')); const options = await api('/api/passkeys/register/options', { method: 'POST', body: '{}' }); options.challenge = base64urlToBuffer(options.challenge); options.user.id = base64urlToBuffer(options.user.id); (options.excludeCredentials || []).forEach((c) => { c.id = base64urlToBuffer(c.id); }); const cred = await navigator.credentials.create({ publicKey: options }); if (!cred) return toast(t('Passkey 创建被取消')); const payload = { id: cred.id, rawId: bufferToBase64url(cred.rawId), type: cred.type, response: { clientDataJSON: bufferToBase64url(cred.response.clientDataJSON), attestationObject: bufferToBase64url(cred.response.attestationObject), transports: cred.response.getTransports ? cred.response.getTransports() : [] } }; await api('/api/passkeys/register/verify', { method: 'POST', body: JSON.stringify(payload) }); toast(t('Passkey 已绑定')); await loadSecurityStatus(); } catch (err) { toast(t('Passkey 注册失败：') + err.message); } }
 async function loadNetwork() {
     const [proxyData, keyData] = await Promise.all([
@@ -12471,7 +12499,7 @@ $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?
     $('#resetAppearanceBtn').addEventListener('click', () => resetAppearance().catch((err) => toast(err.message)));
     $('#proxyList').addEventListener('click', async (e) => { const id = e.target.dataset.editProxy || e.target.dataset.openProxy || e.target.dataset.delProxy; if (!id) return; const p = proxies.find((x) => x.id === id); if (e.target.dataset.editProxy) openProxyModal(p, e.target); else if (e.target.dataset.openProxy) { await openProxySecret(id, e.target); } else if (confirm(t('删除代理？'))) { await waitForMiniItemExit(e.target.closest('.mini-item'), id); await api(`/api/proxies/${id}`, { method: 'DELETE' }); await loadNetwork(); toast(t('代理已删除')); } });
     $('#sshKeyList').addEventListener('click', async (e) => { const editId = e.target.dataset.editSshKey, openId = e.target.dataset.openSshKey, delId = e.target.dataset.delSshKey; if (editId) { const k = sshKeys.find((x) => x.id === editId); if (k) openSshKeyModal(k, e.target); return; } if (openId) { await openSshKeySecret(openId, e.target); return; } if (delId && confirm(t('删除该 SSH 密钥？已选择它的连接将无法再使用该密钥。'))) { await waitForMiniItemExit(e.target.closest('.mini-item'), delId); await api(`/api/ssh-keys/${delId}`, { method: 'DELETE' }); await loadNetwork(); toast(t('SSH 密钥已删除')); } });
-    $('#passwordForm').addEventListener('submit', async (e) => {
+    $('#passwordForm')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const currentPassword = $('#settingsCurrentPassword').value;
         const newPassword = $('#settingsNewPassword').value;
@@ -12521,8 +12549,8 @@ $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?
             toast(err.message);
         }
     });
-    $('#profileForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/profile', { method: 'PUT', body: JSON.stringify({ username: $('#profileUsername').value.trim(), email: $('#profileEmail').value }) }); toast(t('资料已保存')); await loadSecurityStatus(); });
-    $('#securityPolicyForm').addEventListener('submit', saveSecurityPolicy); $('#captchaForm').addEventListener('submit', saveCaptcha); $('#mailForm').addEventListener('submit', saveMail); $('#appearanceForm').addEventListener('submit', saveAppearance); $('#terminalLayoutForm').addEventListener('submit', saveTerminalLayout); setupSnippetSettings(); setupAgentTokenSettings();
+    $('#profileForm')?.addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/profile', { method: 'PUT', body: JSON.stringify({ username: $('#profileUsername').value.trim(), email: $('#profileEmail').value }) }); toast(t('资料已保存')); await loadSecurityStatus(); });
+    $('#securityPolicyForm')?.addEventListener('submit', saveSecurityPolicy); $('#captchaForm')?.addEventListener('submit', saveCaptcha); $('#mailForm').addEventListener('submit', saveMail); $('#appearanceForm').addEventListener('submit', saveAppearance); $('#terminalLayoutForm').addEventListener('submit', saveTerminalLayout); setupSnippetSettings(); setupAgentTokenSettings();
     $('#sessionPersistenceEnabled')?.addEventListener('change', async (e) => {
         const input = e.currentTarget;
         input.disabled = true;
@@ -12535,20 +12563,20 @@ $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?
             input.disabled = false;
         }
     });
-    $('#totpAction').addEventListener('click', (e) => { if (e.target.id === 'setupTotpBtn') setupTotp().catch((err) => toast(err.message)); });
-    $('#totpEnableForm').addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/totp/enable', { method: 'POST', body: JSON.stringify({ code: $('#totpEnableCode').value }) }); toast(t('TOTP 已开启')); $('#totpEnableForm').classList.add('force-hidden'); await loadSecurityStatus(); });
-    $('#totpDisableForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm(t('确定关闭 TOTP？'))) return; await api('/api/security/totp/disable', { method: 'POST', body: JSON.stringify({ currentPassword: $('#totpDisablePassword').value, code: $('#totpDisableCode').value }) }); e.target.reset(); toast(t('TOTP 已关闭')); await loadSecurityStatus(); });
-    $('#addPasskeyBtn').addEventListener('click', () => registerPasskey().catch((err) => toast(err.message)));
-    $('#passkeyList').addEventListener('click', async (e) => { const id = e.target.dataset.delPasskey; if (id && confirm(t('删除该 Passkey？'))) { await api(`/api/passkeys/${id}`, { method: 'DELETE' }); await loadSecurityStatus(); } });
-    $('#ipBanList').addEventListener('click', async (e) => { const ip = e.target.dataset.unban; if (ip) { await api(`/api/security/ip-bans/${encodeURIComponent(ip)}`, { method: 'DELETE' }); await loadSecurityLists(); toast(t('已解除封禁')); } });
-    $('#toggleCaptchaSecret').addEventListener('click', () => { const el = $('#captchaSecretKey'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleCaptchaSecret').textContent = el.type === 'password' ? '👁️' : '🙈'; });
-    $('#revealCaptchaSecret').addEventListener('click', () => revealCaptchaSecret().catch((err) => toast(err.message || '读取 CAPTCHA 密钥失败')));
+    $('#totpAction')?.addEventListener('click', (e) => { if (e.target.id === 'setupTotpBtn') setupTotp().catch((err) => toast(err.message)); });
+    $('#totpEnableForm')?.addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/totp/enable', { method: 'POST', body: JSON.stringify({ code: $('#totpEnableCode').value }) }); toast(t('TOTP 已开启')); $('#totpEnableForm').classList.add('force-hidden'); await loadSecurityStatus(); });
+    $('#totpDisableForm')?.addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm(t('确定关闭 TOTP？'))) return; await api('/api/security/totp/disable', { method: 'POST', body: JSON.stringify({ currentPassword: $('#totpDisablePassword').value, code: $('#totpDisableCode').value }) }); e.target.reset(); toast(t('TOTP 已关闭')); await loadSecurityStatus(); });
+    $('#addPasskeyBtn')?.addEventListener('click', () => registerPasskey().catch((err) => toast(err.message)));
+    $('#passkeyList')?.addEventListener('click', async (e) => { const id = e.target.dataset.delPasskey; if (id && confirm(t('删除该 Passkey？'))) { await api(`/api/passkeys/${id}`, { method: 'DELETE' }); await loadSecurityStatus(); } });
+    $('#ipBanList')?.addEventListener('click', async (e) => { const ip = e.target.dataset.unban; if (ip) { await api(`/api/security/ip-bans/${encodeURIComponent(ip)}`, { method: 'DELETE' }); await loadSecurityLists(); toast(t('已解除封禁')); } });
+    $('#toggleCaptchaSecret')?.addEventListener('click', () => { const el = $('#captchaSecretKey'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleCaptchaSecret').textContent = el.type === 'password' ? '👁️' : '🙈'; });
+    $('#revealCaptchaSecret')?.addEventListener('click', () => revealCaptchaSecret().catch((err) => toast(err.message || '读取 CAPTCHA 密钥失败')));
     $('#toggleMailPassword').addEventListener('click', () => { const el = $('#mailPass'); el.type = el.type === 'password' ? 'text' : 'password'; $('#toggleMailPassword').textContent = el.type === 'password' ? '👁️' : '🙈'; });
     $('#revealMailPass').addEventListener('click', () => revealMailPass().catch((err) => toast(err.message || '读取 SMTP 密码失败')));
     $('#testMailBtn').addEventListener('click', () => testMail());
     $('#exportDataBtn').addEventListener('click', () => { location.href = '/api/data/export'; });
     $('#clearActivityBtn').addEventListener('click', async () => { if (!confirm(t('确定清理活动日志？'))) return; await api('/api/activities', { method: 'DELETE' }); await loadActivities(); toast(t('活动日志已清理')); });
-    $('#clearLoginEventsBtn').addEventListener('click', async () => { if (!confirm(t('确定清理登录事件日志？'))) return; await api('/api/security/login-events', { method: 'DELETE' }); await loadSecurityLists(); toast(t('登录事件已清理')); });
+    $('#clearLoginEventsBtn')?.addEventListener('click', async () => { if (!confirm(t('确定清理登录事件日志？'))) return; await api('/api/security/login-events', { method: 'DELETE' }); await loadSecurityLists(); toast(t('登录事件已清理')); });
     $('#importDataForm').addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm(t('导入会覆盖当前数据库，系统会先生成本地备份。继续？'))) return; const fd = new FormData(); fd.append('backup', $('#backupFile').files[0]); fd.append('loginPassword', $('#importLoginPassword').value); fd.append('backupPassword', $('#backupPassword').value); const res = await fetch('/api/data/import', { method: 'POST', body: fd, credentials: 'same-origin' }); const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.error || t('导入失败')); toast(data.message || t('导入完成')); });
 }
 function automaticWorkspaceId() {

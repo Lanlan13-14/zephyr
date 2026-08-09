@@ -33,7 +33,7 @@ const PREPARE_ICONS = read('zephyr_one/scripts/prepare-icons.py');
 const SERVER_JS = read('server.js');
 const STAGE_SH = read('zephyr_one/scripts/stage-zephyr-core.sh');
 
-/* ?? DOM stub, matching the one in zephyr-one-brand-mark.test.mjs ?????????
+/* ---- DOM stub, matching the one in zephyr-one-brand-mark.test.mjs -------
  *
  * theme-runtime.js is a browser module and this repo has no DOM library, but
  * grepping the source cannot prove what is emitted. Running the real functions
@@ -60,7 +60,7 @@ async function loadThemeRuntime() {
     return import(`${url.href}?t=${Math.random()}`);
 }
 
-/* ?? minimal PNG reader ??????????????????????????????????????????????????
+/* ---- minimal PNG reader ------------------------------------------------
  *
  * Written out rather than pulled in as a dependency because the property under
  * test is what the *shipped bytes* look like, and adding an image library to
@@ -168,7 +168,7 @@ function wordmarkInk(frame) {
     return ink;
 }
 
-/* ?? product identity ?????????????????????????????????????????????????? */
+/* ---- product identity -------------------------------------------------- */
 
 test('the default brand name names the product the user is actually in', async () => {
     /* One serves Zephyr's own app.js, so a literal default made both products
@@ -210,14 +210,26 @@ test('app.js takes its default brand name from the product, not a literal', () =
         /const DEFAULT_BRAND_NAME\s*=\s*'Zephyr'/,
         'a hardcoded default is what made One call itself Zephyr',
     );
-    /* Every use site must be the call. The old constant is gone, so a missed
-     * site would be a ReferenceError at load rather than a quiet wrong name --
-     * but asserting the count keeps a future edit from reintroducing one. */
+    /* Every use site must be a call rather than a literal. The count was pinned
+     * at 5 when applyAppearance() still read
+     * `appearance.brandName || defaultBrandName()`. That fallback could never
+     * fire: storage.js seeds brandName with the literal 'Zephyr', so the stored
+     * value is never empty and One kept showing the other product's name.
+     * applyAppearance() now calls zephyrResolveBrandName(), which removed two of
+     * the five sites.
+     *
+     * So the count follows the code, and the invariant that actually matters is
+     * pinned directly below it: the resolver owns the displayed name. */
     const uses = APP_JS.match(/defaultBrandName\(\)/g) || [];
-    assert.ok(uses.length >= 5, `expected every brand-name site to be a call, saw ${uses.length}`);
+    assert.ok(uses.length >= 3, `expected every brand-name site to be a call, saw ${uses.length}`);
+    assert.match(
+        APP_JS,
+        /const brandName = zephyrResolveBrandName\(appearance\.brandName\);/,
+        'the displayed name must be resolved, not defaulted against a seeded value',
+    );
 });
 
-/* ?? optical sizing: the inline mark ??????????????????????????????????? */
+/* ---- optical sizing: the inline mark ----------------------------------- */
 
 test('One drops its wordmark when the mark is rendered small', async () => {
     installDom({ product: 'one' });
@@ -281,7 +293,7 @@ test('the header uses the compact mark and the settings preview the full one', (
     );
 });
 
-/* ?? optical sizing: the generated app icons ??????????????????????????? */
+/* ---- optical sizing: the generated app icons --------------------------- */
 
 test('the icon generator drops the wordmark below the size it can be read at', () => {
     assert.match(PREPARE_ICONS, /^WORDMARK_MIN_SIZE = 64$/m, 'the threshold must be explicit');
@@ -350,7 +362,7 @@ test('the wordmark is the only thing the small frames lose', () => {
     }
 });
 
-/* ?? the desktop shell's own screens ?????????????????????????????????? */
+/* -------- the desktop shell's own screens -------- */
 
 test('the shell boot screens show Zephyr One, not Zephyr', () => {
     /* This is the very first thing the product shows: index.html is the Tauri
@@ -383,7 +395,7 @@ test('the shell artwork is the frozen master, byte for byte', () => {
     assert.equal(shipped, master, 'the shell copy must match the frost master exactly');
 });
 
-/* ?? mobile v1 contracts in the packaged core ????????????????????????? */
+/* ---- mobile v1 mount --------------------------------------------------- */
 
 test('the embedded core can find its mobile contracts', () => {
     /* The staged core is a flat runtime: stage-zephyr-core.sh copies root-level

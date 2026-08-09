@@ -244,6 +244,38 @@ export function zephyrDefaultBrandName() {
     return isOneProduct() ? 'Zephyr One' : 'Zephyr';
 }
 
+/* The brand name storage.js seeds into a fresh install.
+ *
+ * Not a preference: it is the value every new database starts with, before
+ * any operator has opened the appearance settings.
+ */
+const SEEDED_BRAND_NAME = 'Zephyr';
+
+/* Resolve the brand name to display from whatever the server has stored.
+ *
+ * Supplying a default was not enough. storage.js seeds appearance.brandName
+ * with the literal 'Zephyr', so the stored value is never empty and a
+ * `stored || default` fallback never fires -- One kept showing 'Zephyr' in the
+ * header and the window title even with the product marker set correctly.
+ *
+ * So the seeded value is treated as "nobody has chosen a name", which is
+ * exactly how the brand icon already behaves: zephyrBrandIconHtml() treats the
+ * seeded wind emoji as unchosen and draws the product's own artwork instead.
+ * Applying the same rule to the name keeps the two halves of the brand
+ * consistent rather than having the mark say One and the text say Zephyr.
+ *
+ * The tradeoff, stated plainly: an operator who deliberately types 'Zephyr'
+ * into One's appearance settings gets 'Zephyr One'. That spelling is
+ * indistinguishable from the seed without a schema change to record
+ * "customised", and PRODUCT_REQUIREMENTS.md requires One to identify itself,
+ * so the seed reading wins. Any other name is honoured verbatim.
+ */
+export function zephyrResolveBrandName(stored) {
+    const text = String(stored ?? '').trim();
+    if (!text || text === SEEDED_BRAND_NAME) return zephyrDefaultBrandName();
+    return text;
+}
+
 /* One's mark without the wordmark, for marks rendered small.
  *
  * Optical sizing, and the reason is measurable rather than aesthetic: the
