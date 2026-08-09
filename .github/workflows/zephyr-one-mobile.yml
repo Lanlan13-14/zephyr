@@ -13,6 +13,11 @@ name: Zephyr One Mobile
 #      what catches an unresolved reference in a reviewable way.
 #   2. `android` is the real compiler. Static resolution cannot prove a call
 #      site type-checks, so kotlinc has the final word.
+#   3. `ios` is the same argument for Swift. mobile/ios had no Package.swift at
+#      all, so its six generated files could not be compiled even in principle:
+#      codegen was free to emit Swift that does not build and nothing would
+#      notice. swift-symbols.test.mjs is the cheap static gate; swiftc on a
+#      macOS runner is the one that actually type-checks.
 
 on:
   push:
@@ -94,3 +99,27 @@ jobs:
             zephyr_one/mobile/android/**/build/reports/tests/**
             zephyr_one/mobile/android/**/build/test-results/**
           if-no-files-found: warn
+
+  ios:
+    # macOS is the only runner with a Swift toolchain and the iOS SDK. The
+    # contracts job already ran the static gate on ubuntu, so this job exists
+    # purely to run a compiler over the same tree -- which is the step no
+    # amount of source scanning can replace.
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: zephyr_one/mobile/ios
+    steps:
+      - uses: actions/checkout@v5
+
+      # Compile before test, for the same reason the Android job does: a target
+      # that does not build cannot report a meaningful test result.
+      - name: Build
+        run: swift build -v
+
+      # The suites read mobile/contracts/generated/*.json through #filePath, so
+      # they exercise the same frozen vectors the Kotlin and Node suites do. A
+      # path regression here fails at runtime and only on this runner, which is
+      # exactly why the static gate pins the directory walk as well.
+      - name: Test
+        run: swift test -v

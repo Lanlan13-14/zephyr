@@ -202,8 +202,28 @@ test('implementation status does not falsely claim native code exists', () => {
   assert.doesNotMatch(android, /`implemented/, 'uncompiled Kotlin must never be reported as implemented');
   assert.match(android, /从未(成功)?编译|未经过一次(真正的)?编译/, 'the never-compiled caveat must stay on the row');
 
-  /* These three are still literally absent, so they stay pinned. */
-  assert.match(row('iOS Swift/SwiftUI'), /`missing`/);
+  /* iOS: the same correction this test already applied to Android, for the same
+   * reason. `missing` was accurate while mobile/ios held six generated contract
+   * files and no manifest. It stopped being accurate once Package.swift, a
+   * hand-written ZephyrCore (MobileAad / Zft2Codec / Zft2Meta) and an XCTest
+   * suite driven by the frozen vectors landed -- at which point pinning
+   * `missing` would make this guard enforce a false statement, which is the
+   * opposite of its purpose.
+   *
+   * So the assertion is on the forbidden values plus the caveat that keeps
+   * `partial` honest: the Swift has never been through a compiler, because
+   * swiftc exists only on the macOS runner. That is exactly the state Android
+   * was in, and it is what a reviewer would check by hand. */
+  const ios = row('iOS Swift/SwiftUI');
+  assert.match(ios, /`partial`/, 'iOS has real Swift now; missing would be a false statement');
+  assert.doesNotMatch(ios, /`implemented/, 'uncompiled Swift must never be reported as implemented');
+  assert.match(
+    ios,
+    /\u4ecd\u672a\u7528 swiftc \u7f16\u8bd1|\u4ece\u672a(\u6210\u529f)?\u7f16\u8bd1|\u672a\u7ecf\u8fc7\u4e00\u6b21(\u771f\u6b63\u7684)?\u7f16\u8bd1/,
+    'the never-compiled caveat must stay on the row',
+  );
+  /* And it must not quietly claim the parts that genuinely do not exist. */
+  assert.match(ios, /\u65e0 Xcode \u5de5\u7a0b/, 'the row must keep naming what is still absent');
   /* All 20 frozen mobile v1 operations now have real implementations, including
    * the shared-residency and file-bridge planes, and every one is exercised over
    * HTTP by zephyr_one/mobile/tests.
