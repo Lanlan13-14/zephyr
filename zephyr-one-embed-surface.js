@@ -59,6 +59,18 @@ const SECURITY_PANEL_OPEN = 'class="settings-panel active" id="settings-security
 const LANGUAGE_TAB_BUTTON = '<button class="settings-tab" data-settings="language"';
 const LANGUAGE_PANEL_OPEN = 'class="settings-panel" id="settings-language"';
 const HTML_TAG = '<html lang="zh-CN" data-theme="dark">';
+/* The favicon link, and the file One swaps it for.
+ *
+ * app.html shipped an emoji favicon (the wind glyph) as its only static icon.
+ * app.js does call setFavicon() at runtime, but that fires inside
+ * applyAppearance(), i.e. after the appearance fetch resolves -- so the emoji
+ * is what paints first, and on the pages that never call setFavicon at all
+ * (rdp, novnc, terminal, telnet) it was the only icon there ever was. Both
+ * halves are now real marks: the static link points at the Zephyr mark, and
+ * One rewrites it to its own mark so the two products are distinguishable
+ * from the first frame rather than after a fetch. */
+const FAVICON_LINK = '<link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">';
+const ONE_FAVICON_LINK = '<link rel="icon" type="image/svg+xml" href="/zephyr-one-mark.svg">';
 
 /* Zephyr Client → 文件同步 (One side only).
  *
@@ -179,6 +191,18 @@ const EDITS = [
         name: 'mark-one-product',
         from: HTML_TAG,
         to: '<html lang="zh-CN" data-theme="dark" data-zephyr-product="one">',
+    },
+    /* Static favicon -> One's mark.
+     *
+     * Rewritten here rather than left to app.js's setFavicon(): that call
+     * happens after the appearance fetch, so the pre-fetch frame showed the
+     * other product's mark. An exact-string edit keeps it honest -- if the
+     * link changes shape, applyEmbeddedSurface throws instead of silently
+     * leaving One branded as Zephyr. */
+    {
+        name: 'one-favicon',
+        from: FAVICON_LINK,
+        to: ONE_FAVICON_LINK,
     },
     {
         name: 'rename-agent-tab',
@@ -352,6 +376,8 @@ module.exports = {
      * drift and then agree with itself while disagreeing with production. */
     regionOf,
     EMBED_STYLESHEET,
+    FAVICON_LINK,
+    ONE_FAVICON_LINK,
     EMBED_RDP_SETTINGS_SCRIPT,
     EMBED_SECURITY_SCRIPT,
     ONE_SECURITY_PANEL_BODY,
