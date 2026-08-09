@@ -250,7 +250,12 @@ test("capabilities now declares the shared plane live", async () => {
   const body = await (await fetch(state.base + "/api/mobile/v1/capabilities")).json();
   assert.equal(body.features.sharedResources, true,
     "the shared endpoints are implemented, so the flag must say so");
-  assert.equal(body.features.fileBridge, true);
+  /* fileBridge stays false: POST /file-bridge/lease refuses with a
+   * registered unsupported_scope because no ZFT2 transport accepts a
+   * device lease yet. Declaring true would make the client probe an
+   * endpoint that cannot work. */
+  assert.equal(body.features.fileBridge, false,
+    "no device-authenticated ZFT2 transport is mounted, so the flag must stay false");
   state.serverId = body.serverId;
   state.serverKeyVersion = body.serverEncryption.keyVersion;
 });
@@ -345,7 +350,7 @@ test("enumeration is impossible: unknown and unauthorised both 404", async () =>
 
 // ------------------------------------------------------------------ sessions --
 
-test("relay-strict is refused outright while no relay transport exists", async () => {
+test("relay-strict mints a session with a credential and no secret", async () => {
   const res = await device("/api/mobile/v1/shared/connections/" + state.connectionId + "/sessions", {
     method: "POST",
     body: JSON.stringify({
@@ -356,23 +361,145 @@ test("relay-strict is refused outright while no relay transport exists", async (
     }),
   });
   const body = await res.json();
+  assert.equal(res.status, 200, "relay session failed: " + JSON.stringify(body).slice(0, 400));
+  assert.equal(body.mode, "relay-strict");
+  assert.ok(body.sessionId);
 
-  /* SHARED_RESOURCE_RESIDENCY.md 3.3: when relay is unavailable the server must
-   * say so explicitly. The two failure modes this asserts against are both
-   * worse than an error -- advertising a websocketUrl that nothing serves, and
-   * silently downgrading to direct so the secret travels after all. */
-  assert.equal(res.status, 503, "relay must report unavailability: " + JSON.stringify(body).slice(0, 400));
-  assert.equal(body.error.code, "shared_relay_unavailable");
-  assert.equal(body.error.retryable, true, "a missing transport is retryable once it lands");
+  /* The whole point of relay-strict: the device is told where to attach and is
+   * given a token scoped to this one session, but no connect material at all.
+   * SHARED_RESOURCE_RESIDENCY.md 3.3 forbids the secret leaving the main end. */
+  assert.ok(body.relay, "relay-strict must carry a relay descriptor");
+  assert.equal(body.relay.protocol, "ssh");
+  assert.match(body.relay.websocketUrl, /^\/api\/mobile\/v1\/shared\/relay\?sessionId=/);
+  assert.ok(body.relay.credential, "the device needs a session-scoped attach credential");
+  assert.equal(body.useEnvelope, undefined, "relay-strict must never carry a use envelope");
 
   const text = JSON.stringify(body);
-  assert.ok(!text.includes("owner-only-secret"), "the refusal leaked the host password");
-  assert.ok(!text.includes("useEnvelope"), "a refused relay must never carry an envelope");
-  assert.ok(!/websocketUrl|\/stream/.test(text), "no dead relay URL may be advertised");
+  assert.ok(!text.includes("owner-only-secret"), "relay-strict leaked the host password");
+  for (const key of ["clientToken", "refreshCredential", "ownerSid", "serverDataKey"]) {
+    assert.ok(!text.includes(key), key + " must never ride in a relay descriptor");
+  }
+
+  state.relaySessionId = body.sessionId;
+  state.relayUrl = body.relay.websocketUrl;
+  state.relayCredential = body.relay.credential;
+});
+
+test("the relay credential is not a bearer token for anything else", async () => {
+  // It must not work as a device access credential on the sync plane.
+  const res = await fetch(state.base + "/api/mobile/v1/sync/status", {
+    headers: { authorization: "Bearer " + state.relayCredential },
+  });
+  assert.ok(res.status === 401 || res.status === 403,
+    "a relay credential must not authenticate the sync plane (got " + res.status + ")");
+});
+
+test("relay attach rejects a forged credential and honours the real one", async () => {
+  const { WebSocket } = await import("ws");
+
+  const attach = (credential) => new Promise((resolve) => {
+    const wsUrl = state.base.replace("http://", "ws://")
+      + state.relayUrl + "&credential=" + encodeURIComponent(credential);
+    const sock = new WebSocket(wsUrl);
+    const frames = [];
+    let settled = false;
+    const done = (result) => { if (!settled) { settled = true; resolve(result); } };
+    sock.on("message", (raw, isBinary) => {
+      if (isBinary) { frames.push({ binary: true }); return; }
+      try { frames.push(JSON.parse(raw.toString())); } catch { /* ignore */ }
+    });
+    sock.on("close", (code, reason) => done({ code, reason: reason.toString(), frames }));
+    sock.on("error", () => { /* close follows */ });
+    setTimeout(() => { try { sock.close(); } catch {} }, 2500);
+  });
+
+  // A tampered credential must be refused at the upgrade, not after attach.
+  const forged = await attach(state.relayCredential.slice(0, -4) + "AAAA");
+  assert.match(forged.reason, /shared_session_expired|forbidden/,
+    "a forged relay credential must be refused by code, got: " + forged.reason);
+  assert.equal(forged.frames.length, 0, "a refused attach must not stream anything");
+
+  /* The real credential authorises. The shared host in this suite is
+   * unroutable on purpose (10.7.7.7), so the honest outcome is an upstream
+   * failure *reported as such* - which still proves authorisation passed, the
+   * server resolved the credential itself, and no secret was sent to the
+   * device. A `ready` frame would mean a reachable host, which is also fine. */
+  const real = await attach(state.relayCredential);
+  const kinds = real.frames.map((f) => f.type || (f.binary ? "binary" : "?"));
+
+  /* `accepted` is emitted the moment authorisation passes, before the upstream
+   * dial. That separation is deliberate and is what this asserts: it proves the
+   * credential was honoured without making the assertion depend on whether the
+   * shared host answers. `ready` (reachable) and `error` (unreachable) are both
+   * legal follow-ups. */
+  assert.ok(
+    kinds.includes("accepted"),
+    "an authorised attach must be acknowledged, got: " + JSON.stringify(kinds),
+  );
+  const accepted = real.frames.find((f) => f.type === "accepted");
+  assert.equal(accepted.mode, "relay-strict");
+  assert.equal(accepted.sessionId, state.relaySessionId, "the ack must name the session it attached to");
+  assert.deepEqual(accepted.channels, ["terminal"], "the ack must state which channels the ACL backed");
+  const wire = JSON.stringify(real.frames);
+  assert.ok(!wire.includes("owner-only-secret"), "the relay leaked the host password to the device");
+  assert.ok(!wire.includes("privateKey"), "the relay leaked key material to the device");
+});
+test("a relay credential is scoped to the one session that minted it", async () => {
+  const { WebSocket } = await import("ws");
+
+  /* Mint a second relay session for the same device and resource. The two
+   * differ only by session id, which is exactly the confusion a scoped
+   * credential has to survive: SHARED_RESOURCE_RESIDENCY.md 3.3 requires the
+   * relay credential to be bound to one session and unable to reach anything
+   * else, so replaying credential A against session B must be refused. */
+  const second = await device("/api/mobile/v1/shared/connections/" + state.connectionId + "/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      mode: "relay-strict",
+      clientSessionNonce: crypto.randomBytes(24).toString("base64url"),
+      requestedChannels: ["terminal"],
+      deviceKeyVersion: 1,
+    }),
+  });
+  const secondBody = await second.json();
+  assert.equal(second.status, 200, "second relay session failed: " + JSON.stringify(secondBody).slice(0, 300));
+  assert.notEqual(secondBody.sessionId, state.relaySessionId, "the two sessions must be distinct");
+
+  const attachTo = (sessionId, credential) => new Promise((resolve) => {
+    const wsUrl = state.base.replace("http://", "ws://")
+      + "/api/mobile/v1/shared/relay?sessionId=" + encodeURIComponent(sessionId)
+      + "&credential=" + encodeURIComponent(credential);
+    const sock = new WebSocket(wsUrl);
+    const frames = [];
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    sock.on("message", (raw, isBinary) => {
+      if (isBinary) { frames.push({ binary: true }); return; }
+      try { frames.push(JSON.parse(raw.toString())); } catch { /* ignore */ }
+    });
+    sock.on("close", (code, reason) => done({ code, reason: reason.toString(), frames }));
+    sock.on("error", () => { /* close follows */ });
+    setTimeout(() => { try { sock.close(); } catch {} }, 2500);
+  });
+
+  // Session A credential pointed at session B.
+  const crossed = await attachTo(secondBody.sessionId, state.relayCredential);
+  assert.match(crossed.reason, /shared_session_expired|forbidden/,
+    "a credential from another session must be refused, got: " + crossed.reason);
+  assert.equal(crossed.frames.length, 0, "a refused cross-session attach must not stream anything");
+
+  // Session B own credential still works, so the refusal is scoping rather
+  // than a blanket failure.
+  const proper = await attachTo(secondBody.sessionId, secondBody.relay.credential);
+  const kinds = proper.frames.map((f) => f.type || (f.binary ? "binary" : "?"));
+  assert.ok(kinds.includes("accepted"),
+    "the session own credential must still authorise, got: " + JSON.stringify(kinds));
+
+  await device("/api/mobile/v1/shared/sessions/" + secondBody.sessionId, { method: "DELETE" });
 });
 
 test("a session can be refreshed and then closed", async () => {
-  /* Uses direct-ephemeral because relay is refused on this build. The lifecycle
+  /* Uses direct-ephemeral deliberately: the lifecycle
    * being proved -- refresh extends the same grant, close destroys it, and a
    * closed id cannot be revived -- is mode independent. */
   const opened = await device("/api/mobile/v1/shared/connections/" + state.connectionId + "/sessions", {
@@ -642,18 +769,22 @@ test("the shared plane refuses a row the caller owns", async () => {
 });
 
 test("direct-ephemeral needs owner policy, not merely use", async () => {
-  /* SHARED_RESOURCE_RESIDENCY.md 3.3: the owner decides whether real connect
-   * material may reach the device, and One must not be able to downgrade to
-   * direct on its own. `use` alone authorises relay only. */
-  const res = await sid("owner", "/api/resources/connection/" + state.connectionId + "/shares", {
+  /* Owner policy, not client preference, decides whether real connect
+   * material reaches the device. A grant of discover/view/use only must come
+   * back as relay-strict with no envelope.
+   *
+   * This is the load-bearing half of SHARED_RESOURCE_RESIDENCY.md 3.2: `use`
+   * authorises the *main end* to connect on the sharee behalf, which is what
+   * relay does. It does not authorise handing the sharee the password. */
+  const shares = await sid("owner", "/api/resources/connection/" + state.connectionId + "/shares", {
     method: "PUT",
     body: JSON.stringify({
       shares: [{ subjectId: state.borrower.userId, capabilities: ["discover", "view", "use"] }],
     }),
   });
-  assert.equal(res.status, 200, "re-share failed: " + (await res.text()).slice(0, 300));
+  assert.equal(shares.status, 200, "re-share failed: " + (await shares.text()).slice(0, 200));
 
-  const session = await device("/api/mobile/v1/shared/connections/" + state.connectionId + "/sessions", {
+  const res = await device("/api/mobile/v1/shared/connections/" + state.connectionId + "/sessions", {
     method: "POST",
     body: JSON.stringify({
       mode: "direct-ephemeral",
@@ -662,26 +793,26 @@ test("direct-ephemeral needs owner policy, not merely use", async () => {
       deviceKeyVersion: 1,
     }),
   });
-  const body = await session.json();
+  const body = await res.json();
+  assert.equal(res.status, 200, "session open failed: " + JSON.stringify(body).slice(0, 300));
 
-  /* With use-only the request must be downgraded to relay. Relay has no
-   * transport on this build, so the honest answer is 503 -- and critically NOT
-   * a 200 carrying a use envelope. */
-  assert.equal(session.status, 503,
-    "use-only must not yield direct material: " + JSON.stringify(body).slice(0, 300));
-  assert.equal(body.error.code, "shared_relay_unavailable");
-  assert.equal(body.useEnvelope, undefined, "a use-only grant must never produce a use envelope");
+  assert.equal(body.mode, "relay-strict",
+    "use without control must be downgraded to relay, never honoured as direct");
+  assert.equal(body.useEnvelope, undefined,
+    "use-only must not yield direct connect material");
 
-  // Restore control so later tests keep their preconditions.
-  await sid("owner", "/api/resources/connection/" + state.connectionId + "/shares", {
+  const text = JSON.stringify(body);
+  assert.ok(!text.includes("owner-only-secret"),
+    "the host password must never appear in a relay response");
+
+  // Restore control so later tests keep the policy they expect.
+  const restore = await sid("owner", "/api/resources/connection/" + state.connectionId + "/shares", {
     method: "PUT",
     body: JSON.stringify({
-      shares: [{
-        subjectId: state.borrower.userId,
-        capabilities: ["discover", "view", "use", "control", "observe"],
-      }],
+      shares: [{ subjectId: state.borrower.userId, capabilities: ["discover", "view", "use", "control"] }],
     }),
   });
+  assert.equal(restore.status, 200);
 });
 
 test("a session is bound to the device that opened it", async () => {

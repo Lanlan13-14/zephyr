@@ -666,6 +666,60 @@ class MobileV1Store {
      * editing the offset to skip pages or from lifting another account's token,
      * and the TTL is what stops a token from outliving the snapshot it names.
      */
+    /**
+     * Signs an arbitrary short-lived payload under a namespace.
+     *
+     * Generic on purpose: the shared-resource plane needs a relay credential
+     * that is bound to one session and one device and expires on its own, and
+     * inventing a second ad-hoc signing scheme for it would be a second place
+     * to get constant-time comparison and expiry wrong. The namespace is inside
+     * the MAC input, so a token minted for one purpose cannot be presented for
+     * another even though both use the same server key.
+     */
+    signBlob(namespace, payload, ttlMs) {
+        const body = Buffer.from(JSON.stringify({
+            ns: String(namespace),
+            payload,
+            expiresAt: nowMs() + Math.max(1000, Number(ttlMs) || 1000),
+        }), 'utf8');
+        const mac = crypto.createHmac('sha256', this._key()).update(body).digest();
+        return b64url(body) + '.' + b64url(mac);
+    }
+
+    /**
+     * Verifies and opens a token produced by signBlob.
+     *
+     * Throws rather than returning null: every failure here is either tampering
+     * or expiry, and both need a distinct registered error code at the edge.
+     */
+    openBlob(namespace, token, { code = 'invalid_request', status = 400 } = {}) {
+        const parts = String(token || '').split('.');
+        if (parts.length !== 2) {
+            throw new MobileStoreError(code, '\u51ed\u636e\u683c\u5f0f\u65e0\u6548', status);
+        }
+        const body = Buffer.from(parts[0], 'base64url');
+        const expected = crypto.createHmac('sha256', this._key()).update(body).digest();
+        const given = Buffer.from(parts[1], 'base64url');
+        if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+            throw new MobileStoreError(code, '\u51ed\u636e\u7b7e\u540d\u65e0\u6548', status);
+        }
+        let opened;
+        try {
+            opened = JSON.parse(body.toString('utf8'));
+        } catch {
+            throw new MobileStoreError(code, '\u51ed\u636e\u65e0\u6cd5\u89e3\u6790', status);
+        }
+        /* Namespace check before expiry: a token from another namespace is not
+         * "expired", it is the wrong kind of token entirely. */
+        if (String(opened.ns) !== String(namespace)) {
+            throw new MobileStoreError(code, '\u51ed\u636e\u7c7b\u578b\u4e0d\u5339\u914d', status);
+        }
+        if (Number(opened.expiresAt) <= nowMs()) {
+            throw new MobileStoreError(code, '\u51ed\u636e\u5df2\u8fc7\u671f', status);
+        }
+        return opened.payload;
+    }
+
     sealBootstrapToken(state) {
         const body = Buffer.from(JSON.stringify({
             bootstrapId: String(state.bootstrapId),

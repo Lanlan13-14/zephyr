@@ -160,6 +160,11 @@ class MobileV1Api {
             fileAgentManager: this.fileAgentManager,
             store: this.store,
             serverEncryptionKey: () => this.serverEncryptionKey(),
+            /* Where the relay transport is mounted, or null when the host
+             * application did not mount one. The shared plane refuses
+             * relay-strict outright in that case rather than returning a
+             * URL nothing answers. */
+            relayMount: opts.relayMount || null,
             log: this.log,
         });
 
@@ -268,7 +273,12 @@ class MobileV1Api {
                  * probe an endpoint that is deliberately not implemented. */
                 bidirectionalSync: true,
                 sharedResources: true,
-                fileBridge: true,
+                /* False, and deliberately not aspirational: the lease
+                 * endpoint exists but refuses, because the device-hosted
+                 * ZFT2 provider it would attach to is not implemented.
+                 * Declaring true here would make the client offer a
+                 * share button that cannot work. */
+                fileBridge: false,
                 blobTransfer: false,
             },
         };

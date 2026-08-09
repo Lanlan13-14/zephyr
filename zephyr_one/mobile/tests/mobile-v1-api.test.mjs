@@ -95,12 +95,18 @@ test("capabilities negotiates protocol, registry and limits", async () => {
   // Unimplemented surfaces are declared false rather than omitted: an absent
   // key reads as unknown and makes the client probe a dead endpoint.
   assert.equal(body.features.bidirectionalSync, true);
-  // Shared residency and the file-bridge lease are implemented now, so these
-  // must read true. They are asserted rather than ignored because the client
-  // branches on them: a false here makes One skip the shared surface entirely.
+  // Shared residency is implemented, so it must read true: the client branches
+  // on this flag and a false here makes One skip the shared surface entirely.
   assert.equal(body.features.sharedResources, true);
-  assert.equal(body.features.fileBridge, true);
-  // Blob transfer genuinely has no implementation, so it must still be false.
+  /* file-bridge and blob transfer must stay false.
+   *
+   * POST /file-bridge/lease exists and validates its request, but there is no
+   * ZFT2 transport behind it for a mobile device: the /file-transfer upgrade
+   * authenticates a cookie session bound to a file-agent, and the gateway has
+   * no concept of a device lease. Declaring true would make the client mint a
+   * lease and then attach to a socket that refuses it, which is worse than
+   * knowing up front that the capability is absent. */
+  assert.equal(body.features.fileBridge, false);
   assert.equal(body.features.blobTransfer, false);
 });
 

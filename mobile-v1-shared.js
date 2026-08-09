@@ -59,6 +59,12 @@ const SESSION_TTL_MS = 10 * 60 * 1000;
 const ZFT2_MAX_INFLIGHT = 8;
 const ZFT2_CHUNK_BYTES = 262144;
 
+/* A relay credential lives only long enough to open the socket. The session
+ * grant itself is what bounds the conversation; this token only proves that the
+ * bearer is the device the grant was minted for. */
+const RELAY_CREDENTIAL_TTL_MS = 60 * 1000;
+const RELAY_NAMESPACE = 'shared-relay-v1';
+
 const FILE_LEASE_TTL_SEC = 300;
 
 function nowMs() { return Date.now(); }
@@ -184,6 +190,12 @@ class SharedResourceApi {
         this.store = opts.store;
         this.serverEncryptionKey = opts.serverEncryptionKey;
         this.log = opts.log || (() => {});
+        /* Injected rather than imported: the relay transport lives in server.js
+         * next to the existing ssh2 routing helpers, and this module must stay
+         * testable without opening real sockets. `null` means the transport is
+         * not mounted, and that is reported honestly instead of downgrading a
+         * relay-strict request to direct. */
+        this.relayMount = opts.relayMount || null;
         this.sessions = new SharedSessionRegistry();
         /* leaseId -> lease. In-process by design: a file lease is valid for
          * 5 minutes and must not survive a restart, because the SAF grant
@@ -446,13 +458,36 @@ class SharedResourceApi {
          * The session grant itself is already recorded, so once the relay
          * transport lands this becomes a response rather than a new flow. */
         if (effectiveMode === 'relay-strict') {
-            this.sessions.drop(sessionId);
-            throw new MobileStoreError(
-                'shared_relay_unavailable',
-                '\u670d\u52a1\u7aef relay \u901a\u9053\u5c1a\u672a\u5b9e\u73b0\uff0c\u65e0\u6cd5\u4ee3\u6267\u884c\u6b64\u5171\u4eab\u8fde\u63a5',
-                503,
-                { retryable: true, details: { mode: 'relay-strict' } },
-            );
+            if (!this.relayMount) {
+                this.sessions.drop(sessionId);
+                throw new MobileStoreError(
+                    'shared_relay_unavailable',
+                    '\u670d\u52a1\u7aef relay \u901a\u9053\u5c1a\u672a\u5b9e\u73b0\uff0c\u65e0\u6cd5\u4ee3\u6267\u884c\u6b64\u5171\u4eab\u8fde\u63a5',
+                    503,
+                    { retryable: true, details: { mode: 'relay-strict' } },
+                );
+            }
+            /* No connect material of any kind crosses this boundary. The
+             * credential is a signed statement about *who may attach to this
+             * session*, and SHARED_RESOURCE_RESIDENCY.md 3.3 is explicit that
+             * it is not a Client Token and cannot reach another resource. */
+            response.relay = {
+                websocketUrl: this.relayMount + '?sessionId=' + encodeURIComponent(sessionId),
+                protocol: purpose,
+                credential: this.store.signBlob(
+                    RELAY_NAMESPACE,
+                    {
+                        sessionId,
+                        userId: user.userId,
+                        deviceId: deviceRow.device_id,
+                        resourceId: conn.id,
+                        purpose,
+                        channels: grantedChannels,
+                    },
+                    RELAY_CREDENTIAL_TTL_MS,
+                ),
+            };
+            return response;
         }
 
         /* Only direct-ephemeral can reach this point: relay-strict threw above.
@@ -635,11 +670,27 @@ class SharedResourceApi {
                 clientNonce: nonce,
                 keyVersion: 1,
             });
+        } else if (this.relayMount) {
+            /* A refresh re-mints the short-lived attach credential without
+             * touching the grant, which is what lets a dropped socket be
+             * re-established inside the same authorised session. */
+            response.relay = {
+                websocketUrl: this.relayMount + '?sessionId=' + encodeURIComponent(session.sessionId),
+                protocol: session.purpose,
+                credential: this.store.signBlob(
+                    RELAY_NAMESPACE,
+                    {
+                        sessionId: session.sessionId,
+                        userId: user.userId,
+                        deviceId: deviceRow.device_id,
+                        resourceId: conn.id,
+                        purpose: session.purpose,
+                        channels: session.channels || [],
+                    },
+                    RELAY_CREDENTIAL_TTL_MS,
+                ),
+            };
         } else {
-            /* Unreachable while openConnectionSession refuses relay mode, kept
-             * so a future relay transport cannot be wired into open() and
-             * silently forgotten here. */
-            this.sessions.drop(session.sessionId);
             throw new MobileStoreError(
                 'shared_relay_unavailable',
                 '\u670d\u52a1\u7aef relay \u901a\u9053\u5c1a\u672a\u5b9e\u73b0',
@@ -787,50 +838,37 @@ class SharedResourceApi {
             ? request.shareProfileIds.map(String).filter(Boolean)
             : [];
         if (!ids.length) {
-            throw new MobileStoreError('invalid_request', 'shareProfileIds 不能为空', 400);
+            throw new MobileStoreError('invalid_request', 'shareProfileIds \u4e0d\u80fd\u4e3a\u7a7a', 400);
         }
         if (ids.length > 32) {
-            throw new MobileStoreError('invalid_request', 'shareProfileIds 过多', 400);
+            throw new MobileStoreError('invalid_request', 'shareProfileIds \u8fc7\u591a', 400);
         }
         /* Profile ids are opaque device-side handles. They are length-capped so
          * a malformed client cannot store unbounded strings against a lease. */
         for (const id of ids) {
             if (id.length > 200) {
-                throw new MobileStoreError('invalid_request', 'shareProfileId 过长', 400);
+                throw new MobileStoreError('invalid_request', 'shareProfileId \u8fc7\u957f', 400);
             }
         }
 
-        const readOnly = request && request.readOnly !== false;
-        const leaseId = 'lease-' + crypto.randomUUID();
-        const expiresAt = nowMs() + FILE_LEASE_TTL_SEC * 1000;
-
-        this.leases.set(leaseId, {
-            leaseId,
-            ownerUserId: user.userId,
-            deviceId: deviceRow.device_id,
-            shareProfileIds: ids,
-            readOnly,
-            expiresAt,
-            createdAt: nowMs(),
-        });
-        this.gcLeases();
-
-        this.authz.audit({
-            actorUserId: user.userId,
-            resourceType: 'fileBridge',
-            resourceId: leaseId,
-            action: 'shared.file_bridge_lease',
-            outcome: 'success',
-            /* Profile ids are device-local handles, not resource identifiers,
-             * so only the count is audited. */
-            metadata: { deviceId: deviceRow.device_id, profiles: ids.length, readOnly },
-        });
-
+        /* Refused before any state is written, and before any audit row.
+         *
+         * The device-hosted side of this feature is the whole feature: ZFT2 runs
+         * against a provider backed by an Android SAF grant or an iOS
+         * security-scoped URL, and neither exists in this build. The previous
+         * version of this method minted a lease, recorded it, wrote an audit row
+         * saying the lease succeeded, and only then threw 503 - so the audit log
+         * claimed a capability the caller never received, and the lease map grew
+         * entries nothing could ever attach to.
+         *
+         * Validation still runs first on purpose: a malformed request is a
+         * client bug the client should hear about as 400 regardless of whether
+         * the transport exists. */
         throw new MobileStoreError(
-            'shared_relay_unavailable',
-            '\u672c\u673a\u5171\u4eab\u6865\u63a5\u901a\u9053\u5c1a\u672a\u5b9e\u73b0',
-            503,
-            { retryable: true, details: { profiles: ids.length, readOnly } },
+            'unsupported_scope',
+            '\u672c\u673a\u5171\u4eab\u6587\u4ef6\u6865\u63a5\u9700\u8981\u8bbe\u5907\u7aef ZFT2 provider\uff0c\u5f53\u524d\u6784\u5efa\u672a\u5b9e\u73b0',
+            501,
+            { details: { profiles: ids.length, readOnly: request && request.readOnly !== false } },
         );
     }
 
@@ -865,6 +903,76 @@ class SharedResourceApi {
         }
     }
 
+    /**
+     * Authorises one relay attach.
+     *
+     * Called from the WebSocket upgrade, which has no cookie session: the
+     * device presents the credential minted at session-open time. Every check
+     * that mattered at mint time is repeated here, because
+     * SHARED_RESOURCE_RESIDENCY.md 7 requires each operation to be authorised
+     * live rather than trusting that no revoke has arrived.
+     *
+     * @returns {{session: object, user: object, resolved: object}}
+     */
+    authorizeRelay({ sessionId, credential }) {
+        const claim = this.store.openBlob(RELAY_NAMESPACE, credential, {
+            code: 'shared_session_expired',
+            status: 410,
+        });
+        if (String(claim.sessionId) !== String(sessionId || '')) {
+            throw new MobileStoreError('shared_session_expired', '\u4f1a\u8bdd\u4e0d\u5339\u914d', 410);
+        }
+
+        const session = this.sessions.get(String(sessionId || ''));
+        if (!session) {
+            throw new MobileStoreError('shared_session_expired', '\u4f1a\u8bdd\u5df2\u8fc7\u671f\u6216\u4e0d\u5b58\u5728', 410);
+        }
+        /* Defence in depth, deliberately not covered by a test.
+         *
+         * Both mint sites (openConnectionSession and refreshSession) derive
+         * userId/deviceId from the *authenticated requester* and sessionId from
+         * the session that requester owns, and refreshSession already refuses a
+         * session belonging to another device. So a credential whose sessionId
+         * matches necessarily carries the matching identity, and no reachable
+         * request can trip this branch. Mutation testing confirms it: removing
+         * this check breaks no test. It stays because it is the invariant the
+         * two mint sites are *assumed* to uphold, and a future third mint site
+         * that forgets would otherwise silently widen the credential. */
+        if (session.userId !== String(claim.userId) || session.deviceId !== String(claim.deviceId)) {
+            throw new MobileStoreError('shared_session_expired', '\u4f1a\u8bdd\u4e0d\u5c5e\u4e8e\u5f53\u524d\u8bbe\u5907', 410);
+        }
+        if (session.mode !== 'relay-strict') {
+            throw new MobileStoreError('shared_direct_forbidden', '\u8be5\u4f1a\u8bdd\u4e0d\u662f relay \u6a21\u5f0f', 403);
+        }
+
+        const user = this.storage.getUserBrief(session.userId);
+        if (!user || user.status !== 'active') {
+            throw new MobileStoreError('account_unavailable', '\u8d26\u53f7\u4e0d\u53ef\u7528', 403);
+        }
+
+        /* Live ACL recheck, then server-side dependency resolution. The
+         * credentials produced here never leave this process: they are handed
+         * straight to the upstream client. */
+        const conn = this.storage.getConnectionById(session.resourceId);
+        if (!conn) throw this.notFound();
+        const caps = this.authz.effectiveCapabilities(user, 'connection', conn.id, conn);
+        if (!caps.has('use')) {
+            this.sessions.drop(sessionId);
+            throw new MobileStoreError('shared_grant_revoked', '\u5171\u4eab\u6388\u6743\u5df2\u88ab\u6536\u56de', 410);
+        }
+
+        const resolved = this.resourceService.resolveForConnect(user, conn.id);
+        this.authz.audit({
+            actorUserId: user.userId,
+            resourceType: 'connection',
+            resourceId: conn.id,
+            action: 'shared.relay.attach',
+            outcome: 'success',
+            metadata: { deviceId: session.deviceId, purpose: session.purpose, mode: 'relay-strict' },
+        });
+        return { session, user, resolved };
+    }
+
     assertNoForbiddenKeys(payload) {
         const walk = (node, depth) => {
             if (!node || typeof node !== 'object' || depth > 6) return;
@@ -896,6 +1004,8 @@ module.exports = {
     USE_ENVELOPE_TTL_MS,
     SESSION_TTL_MS,
     FILE_LEASE_TTL_SEC,
+    RELAY_CREDENTIAL_TTL_MS,
+    RELAY_NAMESPACE,
     ZFT2_MAX_INFLIGHT,
     ZFT2_CHUNK_BYTES,
     noStore,

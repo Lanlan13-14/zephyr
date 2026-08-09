@@ -6736,6 +6736,11 @@ let mobileV1Api = null;
 try {
     mobileV1Api = new MobileV1Api({
         sharingService,
+        /* The relay transport lives in this file (it needs the ssh2 route
+         * helpers), so the path is injected rather than hard-coded in the
+         * shared module. A null here is what makes relay report
+         * shared_relay_unavailable instead of advertising a dead URL. */
+        relayMount: '/api/mobile/v1/shared/relay',
         db: storage.rawDb(),
         storage,
         sessionStore,
@@ -6810,6 +6815,14 @@ const editorLspWss = new WebSocketServer(wsServerOptions);
 const rdpProxyWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 64 * 1024 * 1024 });
 const agentFilesWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 2 * 1024 * 1024 });
 const fileTransferWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 2 * 1024 * 1024 });
+/* Shared-resource relay (SHARED_RESOURCE_RESIDENCY.md 3.3).
+ *
+ * Separate server from /ssh on purpose: /ssh authenticates a browser cookie
+ * session and speaks the full terminal protocol, while this one authenticates a
+ * bound mobile device via a signed session credential and carries only PTY
+ * bytes. Sharing the handler would mean one auth path for two very different
+ * trust levels. */
+const sharedRelayWss = new WebSocketServer({ ...wsServerOptions, maxPayload: 1024 * 1024 });
 
 function handleHttpUpgrade(req, socket, head) {
     let pathname = '';
@@ -6831,7 +6844,9 @@ function handleHttpUpgrade(req, socket, head) {
                         ? agentFilesWss
                         : pathname === '/file-transfer'
                             ? fileTransferWss
-                            : null;
+                            : pathname === '/api/mobile/v1/shared/relay'
+                                ? sharedRelayWss
+                                : null;
     if (!targetWss) {
         console.warn('[WS-DIAG] rejected websocket upgrade for unknown path', { url: req.url || '' });
         rejectSocket(socket, 404, 'Not Found');
@@ -6839,7 +6854,11 @@ function handleHttpUpgrade(req, socket, head) {
     }
     /* /agent/files authenticates via protocol-level token (hello message),
      * not via HTTP session cookie — skip session check for this path. */
-    if (targetWss !== agentFilesWss) {
+    /* Both of these authenticate at the protocol level rather than by cookie:
+     * /agent/files via its hello token, and the shared relay via the signed
+     * credential minted by POST /shared/connections/{id}/sessions. Requiring a
+     * browser session here would make the mobile relay unreachable. */
+    if (targetWss !== agentFilesWss && targetWss !== sharedRelayWss) {
         const session = currentSession(req);
         if (!session || session.mustChangePassword) {
             console.warn('[WS-DIAG] rejected websocket upgrade by session auth', {
@@ -6877,6 +6896,190 @@ agentFilesWss.on('connection', (ws) => {
 fileTransferWss.on('connection', (ws, req) => {
     startSessionWatchdog(ws, req);
     fileTransferGateway.handleConnection(ws, req);
+});
+
+/* Shared-connection strict relay (SHARED_RESOURCE_RESIDENCY.md 3.3).
+ *
+ * The contract is specific about what this transport is for: when a connection
+ * is shared *to* the bound account, the owner's credential must stay on the
+ * main end. Zephyr opens the upstream itself and forwards only PTY bytes, so
+ * the device receives session content but never connect material.
+ *
+ * Authorisation happens per attach, not per session-mint: authorizeRelay()
+ * reverifies the account, the device binding, the live ACL and every dependency
+ * ACL, then resolves the secrets in-process. A grant revoked between minting
+ * the session and attaching to it fails here.
+ *
+ * Deliberately not reusing the /ssh handler: that one is a full terminal
+ * control plane (stats, SFTP, docker, session adoption) authenticated by a
+ * browser cookie. Exposing it to a device credential would hand a sharee the
+ * whole surface when the contract grants only "observe/control this one PTY".
+ */
+sharedRelayWss.on('connection', async (ws, req) => {
+    const shared = mobileV1Api ? mobileV1Api.shared : null;
+    if (!shared) {
+        closeWebSocketSafe(ws, 1011, 'relay-unavailable');
+        return;
+    }
+
+    let url;
+    try {
+        url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    } catch {
+        closeWebSocketSafe(ws, 1008, 'bad-request');
+        return;
+    }
+    const sessionId = String(url.searchParams.get('sessionId') || '');
+    /* Credential in the Sec-WebSocket-Protocol header when the client can set
+     * it, query string otherwise. Browsers cannot set arbitrary headers on a
+     * WebSocket upgrade, and the native client uses the subprotocol slot. */
+    const credential = String(
+        url.searchParams.get('credential')
+        || req.headers['sec-websocket-protocol']
+        || '',
+    ).trim();
+
+    let authorized;
+    try {
+        authorized = shared.authorizeRelay({ sessionId, credential });
+    } catch (err) {
+        /* The close code carries the registered error code so the client can
+         * branch without a second round trip. */
+        closeWebSocketSafe(ws, 1008, String(err.code || 'forbidden'));
+        return;
+    }
+
+    const { session, resolved } = authorized;
+    let upstream = null;
+    let stream = null;
+    let closed = false;
+
+    const sendJson = (obj) => {
+        if (ws.readyState === ws.OPEN) {
+            try { ws.send(JSON.stringify(obj)); } catch { /* peer gone */ }
+        }
+    };
+
+    const cleanup = (reason) => {
+        if (closed) return;
+        closed = true;
+        try { stream?.end?.(); } catch {}
+        for (const client of upstream?.clients || []) {
+            try { client.end(); } catch {}
+        }
+        upstream = null;
+        stream = null;
+        closeWebSocketSafe(ws, 1000, reason);
+    };
+
+    /* Revocation must land on live sessions, not just on the next mint. The
+     * session registry drops the entry on revoke, so a disappeared session is
+     * the signal to tear the relay down. */
+    const revokeWatch = setInterval(() => {
+        if (!shared.sessions.get(sessionId)) {
+            sendJson({ type: 'revoked' });
+            cleanup('shared-grant-revoked');
+        }
+    }, 5000);
+    revokeWatch.unref?.();
+
+    ws.on('close', () => { clearInterval(revokeWatch); cleanup('client-close'); });
+    ws.on('error', () => { clearInterval(revokeWatch); cleanup('ws-error'); });
+
+    const pending = [];
+    ws.on('message', (raw) => {
+        if (closed) return;
+        let msg;
+        try { msg = JSON.parse(raw.toString()); } catch { return; }
+        if (!stream) {
+            /* Bounded: an unauthenticated flood must not grow the heap while
+             * the upstream handshake is still in flight. */
+            if (pending.length < 32) pending.push(msg);
+            return;
+        }
+        if (msg.type === 'input') {
+            /* Input is a channel the ACL has to back. `observe` alone is a
+               read-only attach, so typing is dropped rather than silently
+               downgraded to a no-op the user cannot see. */
+            if (!session.channels.includes('terminal')) return;
+            try { stream.write(String(msg.data || '')); } catch { cleanup('upstream-write-error'); }
+            return;
+        }
+        if (msg.type === 'resize') {
+            const rows = Math.max(1, Math.min(500, Number(msg.rows) || 24));
+            const cols = Math.max(1, Math.min(1000, Number(msg.cols) || 80));
+            try { stream.setWindow(rows, cols, 0, 0); } catch {}
+        }
+    });
+
+    /* Authorisation result first, before the upstream dial.
+     *
+     * The dial can take many seconds (or hang on an unreachable host), and
+     * without this frame a device cannot tell "my credential was refused" from
+     * "the main end is still connecting" - both present as a socket that has
+     * said nothing. Emitting the outcome of authorizeRelay immediately makes
+     * the two states distinguishable without a second round trip, and it
+     * carries no connect material: only the session id, mode and granted
+     * channels the device already learned from the mint response. */
+    sendJson({
+        type: 'accepted',
+        sessionId,
+        mode: 'relay-strict',
+        purpose: session.purpose,
+        channels: session.channels,
+    });
+
+    if (session.purpose !== 'ssh') {
+        /* RDP/VNC relay needs the graphics proxy, not a PTY. Refusing by name
+         * beats opening a channel that cannot carry the protocol. */
+        sendJson({ type: 'error', code: 'shared_relay_unavailable', message: 'relay \u6682\u4e0d\u652f\u6301\u8be5\u534f\u8bae\uff1a' + session.purpose });
+        cleanup('unsupported-purpose');
+        return;
+    }
+
+    try {
+        upstream = await createRoutedSSHConnection(resolved, 15000);
+    } catch (err) {
+        console.warn('[shared-relay] upstream connect failed', { sessionId, error: err.message });
+        sendJson({ type: 'error', code: 'shared_relay_unavailable', message: '\u4e0a\u6e38\u8fde\u63a5\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5' });
+        cleanup('upstream-connect-failed');
+        return;
+    }
+    if (closed) { cleanup('closed-before-ready'); return; }
+
+    upstream.client.on('error', () => cleanup('upstream-error'));
+    upstream.client.on('close', () => { sendJson({ type: 'close' }); cleanup('upstream-close'); });
+
+    upstream.client.shell({ term: 'xterm-256color', rows: 24, cols: 80 }, (err, sshStream) => {
+        if (err || closed) {
+            sendJson({ type: 'error', code: 'shared_relay_unavailable', message: '\u65e0\u6cd5\u6253\u5f00\u8fdc\u7aef Shell' });
+            cleanup('shell-open-failed');
+            return;
+        }
+        stream = sshStream;
+        sendJson({ type: 'ready', sessionId, mode: 'relay-strict', channels: session.channels });
+
+        /* Output only. The device gets session content, which the contract
+         * already says is sensitive; what it must never get is the credential
+         * that produced it. */
+        stream.on('data', (chunk) => {
+            if (ws.readyState === ws.OPEN) {
+                try { ws.send(chunk, { binary: true }); } catch { cleanup('ws-send-error'); }
+            }
+        });
+        stream.stderr?.on('data', (chunk) => {
+            if (ws.readyState === ws.OPEN) {
+                try { ws.send(chunk, { binary: true }); } catch { cleanup('ws-send-error'); }
+            }
+        });
+        stream.on('close', () => { sendJson({ type: 'close' }); cleanup('stream-close'); });
+
+        for (const msg of pending.splice(0)) {
+            if (msg.type === 'input' && session.channels.includes('terminal')) {
+                try { stream.write(String(msg.data || '')); } catch {}
+            }
+        }
+    });
 });
 
 /* File-agent REST routes are mounted before the SPA catch-all above. */
