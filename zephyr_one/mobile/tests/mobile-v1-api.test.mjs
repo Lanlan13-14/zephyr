@@ -95,8 +95,13 @@ test("capabilities negotiates protocol, registry and limits", async () => {
   // Unimplemented surfaces are declared false rather than omitted: an absent
   // key reads as unknown and makes the client probe a dead endpoint.
   assert.equal(body.features.bidirectionalSync, true);
-  assert.equal(body.features.sharedResources, false);
-  assert.equal(body.features.fileBridge, false);
+  // Shared residency and the file-bridge lease are implemented now, so these
+  // must read true. They are asserted rather than ignored because the client
+  // branches on them: a false here makes One skip the shared surface entirely.
+  assert.equal(body.features.sharedResources, true);
+  assert.equal(body.features.fileBridge, true);
+  // Blob transfer genuinely has no implementation, so it must still be false.
+  assert.equal(body.features.blobTransfer, false);
 });
 
 test("the registry hash the server serves is the one the client generated against", async () => {

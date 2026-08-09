@@ -24,7 +24,7 @@
 | machine contracts | `specified` | [KNOWN] 20 实体／66 错误码／15 份 codegen 产物；`zephyr_one/mobile/tests` 74 项全过，`check:drift` 无漂移 |
 | Android Kotlin/Compose | `partial` | [KNOWN] `zephyr_one/mobile/android` 21 模块、295 个 `.kt`／53,719 行、150 个 `@Composable`、7/23 屏幕；`ZephyrOneRoot` / `AccountContainer` / `ZephyrApplication` / `SecretStore.SecretScope` 四处未声明引用已补齐并由 `mobile/tests/kotlin-symbols.test.mjs` 看守；仍无 Gradle wrapper、无 CI、**从未编译** |
 | iOS Swift/SwiftUI | `missing` | [KNOWN] `zephyr_one/mobile/ios` 仅有 6 个生成合同 Swift 文件／717 行；无 `Package.swift`、无 Xcode 工程、无 App 代码 |
-| mobile v1 server API | `partial` | [KNOWN] `mobile-v1-routes.js` / `mobile-v1-store.js` / `mobile-v1-entities.js` / `mobile-v1-crypto.js` 共 2,628 行，由 `server.js` 挂载；20 个 mobile v1 操作中 13 个已实现（capabilities / bind / refresh / devices CRUD / bootstrap / changes / push / ack / now / status / sensitive.verify），7 个 shared 与 file-bridge 接口显式返回 501 `unsupported_scope`；`mobile/tests` 135 项全过，含 22 项 bind→bootstrap→push→changes→ack 真实 HTTP 往返 |
+| mobile v1 server API | `partial` | [KNOWN] `mobile-v1-routes.js` / `mobile-v1-store.js` / `mobile-v1-entities.js` / `mobile-v1-shared.js` / `mobile-v1-crypto.js`，由 `server.js` 挂载；20 个 mobile v1 操作全部有实现（capabilities / bind / refresh / devices CRUD / bootstrap / changes / push / ack / now / status / sensitive.verify / shared 目录与详情 / invoke / session open+refresh+close / file-bridge lease）；`relay-strict` 会话和 file-bridge 传输通道尚未挂载，因此返回已注册的 `shared_relay_unavailable` / `server_unavailable`，而不是下发一个访问不到的 URL；`mobile/tests` 162 项全过，含 22 项 sync 往返与 27 项 shared residency 回归 |
 | Tauri One | `legacy-one` | [KNOWN] `zephyr_one/` 存在，pull-only/localStorage/内嵌 core |
 | Zephyr business services | `implemented-zephyr` | [KNOWN] resource/notes/authz/settings/workspace/AI 等 service |
 | 完整双向同步 | `partial` | [KNOWN] 服务端 bootstrap/changes/push/ack 已实现（`mobile-v1-routes.js`），并有 22 项 e2e 回归；旧 `/api/one/sync/pull` 仍保留作为 legacy One 路径；客户端 Kotlin 同步引擎**从未编译** |
@@ -40,7 +40,7 @@
 | F-004 | 完整双向同步 | `partial` | `partial` | [KNOWN] 服务端 push/changes/ack/bootstrap 已实现并有 e2e 回归：重放同 opId 返回 duplicate、字段重叠返回 conflict、tombstone 不带 payload、游标 GC 后返回 cursor_expired；尚未接入的是 blob 传输与 15 个无 adapter 的 registry 类型 |
 | F-005 | Secret envelope | `implemented-zephyr` | `partial` | [KNOWN] device envelope 已双向打通：`/capabilities` 发布 `serverId` 与 ML-KEM-768 公钥，push 按 AAD （serverId/userId/deviceId/entityType/entityId/fieldName/entityRevision/keyVersion）验证并解开密钥，写入规范 service；已测：篋改密文、换绑其他设备、非密钥字段均被拒；change feed 永不带密钥。服务端→设备方向的 envelope 尚未实现 |
 | F-006 | Connection CRUD | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 UI/本地镜像未实现 |
-| F-007 | ACL/share | `implemented-zephyr` | `missing` | [KNOWN] 原生 capability UI 未实现 |
+| F-007 | ACL/share | `implemented-zephyr` | `missing` | [KNOWN] 修复：`note` 在 `SHAREABLE_TYPES` 中但 `ResourceService._rawResource` 没有 note 分支，导致按用户共享笔记的两个 API 永远 404；现已按 ACL 形状返回 id/ownerUserId/name 而不带 content。原生 capability UI 未实现 |
 | F-008 | SSH/SFTP | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 SSH engine 未定 |
 | F-009 | Telnet | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 parser/transport 未实现 |
 | F-010 | RDP | `implemented-zephyr` | `legacy-one` | [KNOWN] 桌面 One 与浏览器版一样使用 WASM RDP；原生 FreeRDP 引擎**未实现**。树内只有 C core `zephyr_one/native/freerdp-core/`（`zephyr_rdp.{h,c}` + 69 项 C 单测 + 固定 FreeRDP 3.30.0 静态构建脚本），没有 Rust 绑定、没有进程内引擎、没有平台 surface、没有 e2e |
@@ -69,11 +69,11 @@
 | F-033 | Termux/SwiftTerm 级终端交互 | `specified` | `missing` | [KNOWN] 两端 M0 引擎和 UI 尚未实现 |
 | F-034 | RDP/VNC 完整移动交互 | `specified` | `blocked` | [KNOWN] 桌面已有 FreeRDP C shim 可复用为 core 参考，但移动 Surface/UIView 绑定、direct/trackpad 手势与真机验证仍未做；VNC RFB core 仍未选定 |
 | F-035 | Zephyr AI 全能力浮窗 | `specified` | `missing` | [KNOWN] 116-tool baseline 已有；原生浮窗和 NativeSurfaceBridge 不存在 |
-| F-036 | Shared-to-me 零驻留在线 API | `specified` | `missing` | [KNOWN] 当前 mobile shared endpoints 不存在 |
-| F-037 | Shared direct use envelope | `specified` | `missing` | [KNOWN] session-bound envelope/AAD/vector/arena 未实现 |
-| F-038 | Shared strict relay | `specified` | `partial` | [KNOWN] Zephyr 有现有 session/proxy 部件；mobile relay 合同未实现 |
+| F-036 | Shared-to-me 零驻留在线 API | `implemented-zephyr` | `missing` | [KNOWN] `GET /shared`、`GET /shared/{type}/{id}` 已实现：只从 live ACL 投影，`Cache-Control: no-store`，不存任何本地副本；已测：共享行不进 bootstrap/change feed、自有行不走共享面、撤销后下一请求即 404、不存在与无权均 404。原生客户端 UI 未写 |
+| F-037 | Shared direct use envelope | `implemented-zephyr` | `missing` | [KNOWN] direct-ephemeral envelope 已实现：ML-KEM-768 封装到设备公钥，AAD 绑定 shared-use-v1/serverId/userId/deviceId/sessionId/resourceId/revision/purpose/expiresAt/clientNonce，payload 为 allow-list（endpoint/username/password/privateKey/domain/mode/encoding）；已测：设备本地能重建 AAD 并解开拿到真实凭据、重放同一 nonce 返回 `shared_session_consumed`、换 nonce 可重新封发、direct 需 owner 放开 control/execute 而不仅 use、session 绑定开它的设备。原生 SessionSecretArena 未写 |
+| F-038 | Shared strict relay | `partial` | `missing` | [KNOWN] 会话授权、ACL 复查与审计已实现，但 relay WebSocket 代执行通道本身尚未挂载；按 SHARED_RESOURCE_RESIDENCY.md 3.3 “relay 不可用时明确报错，不能静默下发 secret”，`relay-strict` 直接返回 503 `shared_relay_unavailable` 并销毁会话，已测其不会降级为 direct |
 | F-039 | Shared AI 主端执行零泄漏 | `specified` | `partial` | [KNOWN] AI runtime 在主端；One residency/stream client 未实现 |
-| F-040 | Shared Note 在线内存 viewer | `specified` | `missing` | [KNOWN] NotesService ACL 已有；原生 no-store viewer 未实现 |
+| F-040 | Shared Note 在线内存 viewer | `implemented-zephyr` | `missing` | [KNOWN] `POST /shared/note/{id}/invoke` 已实现 read/update：每次走主端 NotesService，update 强制 expectedRevision，正文只在 invoke 响应里回一次且 no-store，不进镜像；已测：无 edit 能力的共享者写入被拒、未知 operation 返回 `unsupported_scope`。原生 no-store viewer UI 未写 |
 
 ## 当前可复用测试资产
 

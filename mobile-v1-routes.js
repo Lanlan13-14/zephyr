@@ -31,6 +31,7 @@ const crypto = require('crypto');
 
 const { MobileV1Store, MobileStoreError } = require('./mobile-v1-store');
 const { createEntityAdapters, projectPayload, assertMaskAllowed } = require('./mobile-v1-entities');
+const { SharedResourceApi, noStore } = require('./mobile-v1-shared');
 const mobileCrypto = require('./mobile-v1-crypto');
 const secretCrypto = require('./secret-crypto');
 
@@ -145,6 +146,23 @@ class MobileV1Api {
         /* Bootstrap walks types in dependency order, so a client applying pages
          * in receipt order always has a proxy/sshKey/jumpHost before the
          * connection that points at it. */
+        /* Shared-to-me lives in its own module because its rules are the
+         * inverse of sync's: SHARED_RESOURCE_RESIDENCY.md forbids a shared
+         * resource from entering the mirror at all, so it must never reach
+         * the adapters above. Keeping it separate makes that structural
+         * rather than a convention someone can forget. */
+        this.shared = opts.shared || new SharedResourceApi({
+            storage: this.storage,
+            authz: this.authz,
+            resourceService: this.resourceService,
+            notesService: this.notesService,
+            sharingService: opts.sharingService,
+            fileAgentManager: this.fileAgentManager,
+            store: this.store,
+            serverEncryptionKey: () => this.serverEncryptionKey(),
+            log: this.log,
+        });
+
         this.bootstrapTypes = (this.entityRegistry.entities || [])
             .filter((entity) => this.adapters.has(entity.type))
             .slice()
@@ -249,8 +267,8 @@ class MobileV1Api {
                  * these, and an absent key would read as "unknown" and make it
                  * probe an endpoint that is deliberately not implemented. */
                 bidirectionalSync: true,
-                sharedResources: false,
-                fileBridge: false,
+                sharedResources: true,
+                fileBridge: true,
                 blobTransfer: false,
             },
         };
@@ -1258,17 +1276,116 @@ class MobileV1Api {
          * registry code rather than falling through to the SPA catch-all,
          * which would return HTML and make the client report a parse error
          * instead of an unimplemented feature. */
-        const notImplemented = (req, res) => sendError(
-            res, 501, 'unsupported_scope', '\u8be5\u80fd\u529b\u5c1a\u672a\u5728\u672c\u670d\u52a1\u5668\u5b9e\u73b0',
-            { requestId: req.mobileRequestId },
-        );
-        app.post('/api/mobile/v1/file-bridge/lease', notImplemented);
-        app.get('/api/mobile/v1/shared', notImplemented);
-        app.get('/api/mobile/v1/shared/:resourceType/:resourceId', notImplemented);
-        app.post('/api/mobile/v1/shared/:resourceType/:resourceId/invoke', notImplemented);
-        app.post('/api/mobile/v1/shared/sessions/:sessionId/refresh', notImplemented);
-        app.delete('/api/mobile/v1/shared/sessions/:sessionId', notImplemented);
-        app.post('/api/mobile/v1/shared/connections/:connectionId/sessions', notImplemented);
+        /* ---- shared-to-me, online only ----
+         *
+         * Every handler here re-authorises against the live ACL rather than
+         * trusting anything the device holds: SHARED_RESOURCE_RESIDENCY.md 7
+         * is explicit that push revoke is only an accelerator and that "no
+         * revoke received" must never be read as "still permitted".
+         *
+         * Responses carry Cache-Control: no-store so a revoked grant cannot be
+         * served from an intermediary after the server said no. */
+        app.get('/api/mobile/v1/shared', (req, res) => {
+            const auth = self.requireDevice(req, res);
+            if (!auth) return undefined;
+            try {
+                noStore(res);
+                return res.json(self.shared.listShared(auth.user, {
+                    resourceType: req.query.type ? String(req.query.type) : null,
+                }));
+            } catch (err) {
+                return sendThrown(res, err, req.mobileRequestId);
+            }
+        });
+
+        app.get('/api/mobile/v1/shared/:resourceType/:resourceId', (req, res) => {
+            const auth = self.requireDevice(req, res);
+            if (!auth) return undefined;
+            try {
+                noStore(res);
+                return res.json(self.shared.getShared(
+                    auth.user,
+                    String(req.params.resourceType),
+                    String(req.params.resourceId),
+                ));
+            } catch (err) {
+                return sendThrown(res, err, req.mobileRequestId);
+            }
+        });
+
+        app.post('/api/mobile/v1/shared/:resourceType/:resourceId/invoke', (req, res) => {
+            const auth = self.requireDevice(req, res);
+            if (!auth) return undefined;
+            try {
+                noStore(res);
+                return res.json(self.shared.invokeShared(
+                    auth.user,
+                    String(req.params.resourceType),
+                    String(req.params.resourceId),
+                    req.body || {},
+                ));
+            } catch (err) {
+                return sendThrown(res, err, req.mobileRequestId);
+            }
+        });
+
+        app.post('/api/mobile/v1/shared/connections/:connectionId/sessions', (req, res) => {
+            const auth = self.requireDevice(req, res);
+            if (!auth) return undefined;
+            try {
+                noStore(res);
+                return res.json(self.shared.openConnectionSession(
+                    auth.user,
+                    auth.device,
+                    String(req.params.connectionId),
+                    req.body || {},
+                ));
+            } catch (err) {
+                return sendThrown(res, err, req.mobileRequestId);
+            }
+        });
+
+        app.post('/api/mobile/v1/shared/sessions/:sessionId/refresh', (req, res) => {
+            const auth = self.requireDevice(req, res);
+            if (!auth) return undefined;
+            try {
+                noStore(res);
+                return res.json(self.shared.refreshSession(
+                    auth.user,
+                    auth.device,
+                    String(req.params.sessionId),
+                    (req.body || {}).clientSessionNonce,
+                ));
+            } catch (err) {
+                return sendThrown(res, err, req.mobileRequestId);
+            }
+        });
+
+        app.delete('/api/mobile/v1/shared/sessions/:sessionId', (req, res) => {
+            const auth = self.requireDevice(req, res);
+            if (!auth) return undefined;
+            try {
+                noStore(res);
+                return res.json(self.shared.closeSession(
+                    auth.user,
+                    auth.device,
+                    String(req.params.sessionId),
+                ));
+            } catch (err) {
+                return sendThrown(res, err, req.mobileRequestId);
+            }
+        });
+
+        app.post('/api/mobile/v1/file-bridge/lease', (req, res) => {
+            const auth = self.requireDevice(req, res);
+            if (!auth) return undefined;
+            try {
+                noStore(res);
+                return res.json(self.shared.fileBridgeLease(auth.user, auth.device, req.body || {}));
+            } catch (err) {
+                return sendThrown(res, err, req.mobileRequestId);
+            }
+        });
 
         return app;
     }

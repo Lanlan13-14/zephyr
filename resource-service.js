@@ -40,6 +40,30 @@ class ResourceService {
              * stored key with '******'. */
             case 'sshKey': return this.storage.getSshKeyRaw(id);
             case 'jumpHost': return this.storage.listJumpHosts().find((j) => j.id === id) || null;
+            /* Notes are declared shareable (SHARED_RESOURCE_RESIDENCY.md 5 and
+             * sharing-service SHAREABLE_TYPES) but live in their own table with
+             * their own column names, so without this case every note ACL call
+             * collapsed to the "resource does not exist" 404 and per-user note
+             * sharing was unreachable through both share APIs.
+             *
+             * Normalised to the ACL shape (`id`/`ownerUserId`/`name`) rather
+             * than returned raw: authz and the admin grant UI read exactly those
+             * three, and `content` must not travel through an ACL lookup. */
+            case 'note': {
+                const row = this.storage.rawDb()
+                    .prepare('SELECT note_id, owner_user_id, title, visibility, share_with_users, share_with_admins, revision, deleted_at FROM notes WHERE note_id = ?')
+                    .get(String(id || ''));
+                if (!row || row.deleted_at) return null;
+                return {
+                    id: row.note_id,
+                    ownerUserId: row.owner_user_id,
+                    name: row.title || '',
+                    visibility: row.visibility || 'private',
+                    shareWithUsers: !!row.share_with_users,
+                    shareWithAdmins: !!row.share_with_admins,
+                    revision: Math.max(1, Number(row.revision) || 1),
+                };
+            }
             default: return null;
         }
     }

@@ -204,15 +204,19 @@ test('implementation status does not falsely claim native code exists', () => {
 
   /* These three are still literally absent, so they stay pinned. */
   assert.match(row('iOS Swift/SwiftUI'), /`missing`/);
-  /* The server API and bidirectional sync are no longer absent: 13 of the 20
-   * frozen mobile v1 operations are implemented and covered by the e2e suite in
-   * zephyr_one/mobile/tests. They are still `partial`, because the 7 shared /
-   * file-bridge operations answer a declared `unsupported_scope` rather than
-   * doing the work, so `implemented` would be the inflation this test exists to
-   * prevent. */
+  /* All 20 frozen mobile v1 operations now have real implementations, including
+   * the shared-residency and file-bridge planes, and every one is exercised over
+   * HTTP by zephyr_one/mobile/tests.
+   *
+   * The row stays `partial` for a reason that has nothing to do with route
+   * coverage: the relay transport advertised by a relay-strict session is a
+   * declared endpoint with no stream server behind it yet, and no native client
+   * has ever consumed any of this. `implemented` would be exactly the inflation
+   * this test exists to prevent, so the row must keep naming what is missing. */
   const serverApi = row('mobile v1 server API');
-  assert.match(serverApi, /`partial`/, 'the server API exists but is not complete');
-  assert.doesNotMatch(serverApi, /`implemented/, 'seven operations are still stubs');
+  assert.match(serverApi, /`partial`/, 'the server API exists but the relay stream is not built');
+  assert.doesNotMatch(serverApi, /`implemented/, 'no native client has consumed this yet');
+  assert.match(serverApi, /relay|20\s*\/\s*20|20 ?/, 'the row must state the real remaining gap');
 
   const bidi = row('完整双向同步');
   assert.match(bidi, /`partial`/);
@@ -436,10 +440,26 @@ test('mobile v1 is mounted by the server and does not disturb the legacy One pat
     assert.ok(routes.includes(routePath), routePath + ' must be mounted');
   }
 
-  /* The shared-resource and file-bridge planes are deliberately not implemented.
-   * They must answer a registered error code rather than 404, so a client can
-   * tell "this server cannot do it yet" from "wrong URL". */
-  assert.match(routes, /unsupported_scope/, 'unimplemented planes must say so');
+  /* The shared-residency and file-bridge planes are implemented too, so every
+   * frozen operation must be mounted rather than answering a placeholder.
+   *
+   * Asserted by counting real express mounts: an earlier version of this test
+   * only checked that the string `unsupported_scope` appeared somewhere, which
+   * kept passing after the stubs were replaced and therefore proved nothing. */
+  for (const routePath of [
+    '/api/mobile/v1/shared',
+    '/api/mobile/v1/shared/:resourceType/:resourceId',
+    '/api/mobile/v1/shared/:resourceType/:resourceId/invoke',
+    '/api/mobile/v1/shared/connections/:connectionId/sessions',
+    '/api/mobile/v1/shared/sessions/:sessionId/refresh',
+    '/api/mobile/v1/shared/sessions/:sessionId',
+    '/api/mobile/v1/file-bridge/lease',
+  ]) {
+    assert.ok(routes.includes(routePath), routePath + ' must be mounted');
+  }
+  /* And they must not be placeholders: a handler that only calls sendError is
+   * the shape this repo used before the planes were built. */
+  assert.doesNotMatch(routes, /const notImplemented\s*=/, 'the stub helper must be gone');
 
   // The legacy pull-only path is untouched.
   assert.match(one, /\/api\/one\/sync\/pull/);

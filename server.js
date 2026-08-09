@@ -6735,6 +6735,7 @@ oneClientManager.mountRoutes(app, {
 let mobileV1Api = null;
 try {
     mobileV1Api = new MobileV1Api({
+        sharingService,
         db: storage.rawDb(),
         storage,
         sessionStore,
