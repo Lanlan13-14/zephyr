@@ -94,13 +94,13 @@
 
 ### 2.4 当前实现进度（实测基线 `b0e5a9c`，2026-08-09）
 
-[KNOWN] 本节只记录仓库里实际存在的文件和实测跑出来的结果，不记录设计意图。`mobile/` 目录已经存在，所以本文早期以及 `IMPLEMENTATION_STATUS.md`、`TRACEABILITY.md` 中「仓库没有 mobile/android」「Android/iOS 为 missing」的判断已经过期；在那两份表格重新生成之前，本节是进度的事实来源。
+[KNOWN] 本节只记录仓库里实际存在的文件和实测跑出来的结果，不记录设计意图。`zephyr_one/mobile/` 目录已经存在，所以本文早期以及 `IMPLEMENTATION_STATUS.md`、`TRACEABILITY.md` 中「仓库没有 mobile/android」「Android/iOS 为 missing」的判断已经过期；在那两份表格重新生成之前，本节是进度的事实来源。
 
 #### 2.4.1 已经写到哪里
 
 | 层 | 实测规模 | 判定 |
 | --- | --- | --- |
-| 机器合同 | [KNOWN] OpenAPI 21 路径 / 22 操作、20 个实体、66 个错误码、15 份 codegen 产物；`FREEZE_PARITY.json` 记录 16 份冻结源哈希 | 可用：`mobile/tests` 69 项断言全过，`check:drift` 无漂移 |
+| 机器合同 | [KNOWN] OpenAPI 21 路径 / 22 操作、20 个实体、66 个错误码、15 份 codegen 产物；`FREEZE_PARITY.json` 记录 16 份冻结源哈希 | 可用：`zephyr_one/mobile/tests` 69 项断言全过，`check:drift` 无漂移 |
 | Android 工程 | [KNOWN] 21 个 Gradle 模块 + `buildSrc`，293 个 `.kt` 共 46,487 行（主源 220 文件 / 34,091 行，单测 73 文件 / 12,396 行）；AGP 8.7.3、Kotlin 2.0.21、minSdk 26 | 骨架与纯逻辑已成规模，但从未构建过 |
 | Android UI | [KNOWN] 131 个 `@Composable`、7 个 ViewModel、6 个屏幕（连接列表、连接编辑、会话列表、终端、远程桌面、批量执行） | `SCREEN_CATALOG.md` 的 23 个屏幕 ID 中落地 6 个 |
 | 协议与纯逻辑 | [KNOWN] Telnet IAC/协商/自动登录、ZFT2 编解码 + Session + Provider + Dispatcher、RFB 握手与像素格式、终端按键/鼠标编码、视口与手势、同步 Actor / PushPlanner / 冲突解析 / 字段掩码 | 有真实实现并带单测 |
@@ -115,7 +115,7 @@
 - [KNOWN] **iOS 侧除生成合同外一行未写**：没有工程文件、没有 SwiftUI 界面、没有 Keychain 与 security-scoped provider 实现。
 - [KNOWN] **两个模块只有构建文件**：`feature-ai` 与 `feature-file-sync` 各有 0 个 Kotlin 源文件，即「Zephyr AI 全能力浮窗」和「文件同步设置页」尚未开工。
 - [KNOWN] **17 个屏幕缺失**：S01/S02 解锁与绑定、账号、设置、文件同步、冲突中心、笔记与片段、SFTP 与编辑器、Docker 与监控、共享资源等都没有 Compose 实现。`feature-notes` 有 24 个主源文件但 0 个 `@Composable`，属于逻辑先行、界面未做。
-- [KNOWN] **没有仪器测试**：整个 `mobile/android` 不存在 `androidTest` 目录，`SCREEN_CATALOG.md` 要求的 UI 测试与真机矩阵一项都没跑。
+- [KNOWN] **没有仪器测试**：整个 `zephyr_one/mobile/android` 不存在 `androidTest` 目录，`SCREEN_CATALOG.md` 要求的 UI 测试与真机矩阵一项都没跑。
 - [KNOWN] **没有构建与 CI**：没有 Gradle wrapper，`.github/workflows/` 里没有移动端流水线，`zephyr-one.yml` 仍写明 Android/iOS 不属于 Zephyr One。因此 46,487 行 Kotlin 至今没有经过一次编译验证。
 - [KNOWN] **发布面未做**：没有 Deep Link 处理代码，`app/src/main/res` 只有占位自适应图标，四色（asagi / cyber / frost / lava）产物在 Android 资源目录中为 0。
 
@@ -125,11 +125,11 @@
 
 | 符号 | 引用位置 | 问题 |
 | --- | --- | --- |
-| `ZephyrOneRoot` | `mobile/android/app/.../MainActivity.kt:32` | 根导航 Composable 从未编写，App 没有入口树 |
-| `ZephyrApplication` | `mobile/android/app/.../filebridge/FileBridgeForegroundService.kt:16,59`、`mobile/android/app/.../sync/SyncWorker.kt:6,22` | 实际类名是 `ZephyrOneApplication`，导入和强转都指向不存在的类 |
-| `AccountContainer` | `mobile/android/app/.../di/AppContainer.kt:87,90` | 账号级依赖图类型未定义，`bindAccount` 无法通过编译 |
+| `ZephyrOneRoot` | `zephyr_one/mobile/android/app/.../MainActivity.kt:32` | 根导航 Composable 从未编写，App 没有入口树 |
+| `ZephyrApplication` | `zephyr_one/mobile/android/app/.../filebridge/FileBridgeForegroundService.kt:16,59`、`zephyr_one/mobile/android/app/.../sync/SyncWorker.kt:6,22` | 实际类名是 `ZephyrOneApplication`，导入和强转都指向不存在的类 |
+| `AccountContainer` | `zephyr_one/mobile/android/app/.../di/AppContainer.kt:87,90` | 账号级依赖图类型未定义，`bindAccount` 无法通过编译 |
 
-[INFERRED] 这三处说明 `mobile/android` 目前的真实状态是「模块与逻辑先落地、App 壳未收口」：库模块的代码可以独立单测，但 `:app` 模块拼不成一个能运行的 App。补齐它们是任何构建验证的前置条件。
+[INFERRED] 这三处说明 `zephyr_one/mobile/android` 目前的真实状态是「模块与逻辑先落地、App 壳未收口」：库模块的代码可以独立单测，但 `:app` 模块拼不成一个能运行的 App。补齐它们是任何构建验证的前置条件。
 
 #### 2.4.4 距离各里程碑还差多少
 
@@ -219,7 +219,7 @@
 ### 4.2 推荐目录
 
 ```text
-mobile/
+zephyr_one/mobile/
   contracts/
     openapi-mobile-v1.yaml
     schemas/
@@ -262,7 +262,7 @@ server/
   mobile-secret-envelope.js
 ```
 
-[INFERRED] `mobile/contracts` 是唯一协议真源。Kotlin `kotlinx.serialization` model 和 Swift `Codable` model由 schema 生成或由契约测试校验，禁止两端手写出两个悄悄分叉的字段集合。
+[INFERRED] `zephyr_one/mobile/contracts` 是唯一协议真源。Kotlin `kotlinx.serialization` model 和 Swift `Codable` model由 schema 生成或由契约测试校验，禁止两端手写出两个悄悄分叉的字段集合。
 
 ## 5. 平台技术选型
 
@@ -445,7 +445,7 @@ server/
 - [KNOWN] 四套 SVG 均使用 `viewBox="0 0 200 200"`；风形、渐变、左下灰点与 Web `public/theme-runtime.js` 的 `ICON_PALETTES` 一致。
 - [KNOWN] “One” 横向字标的 O 锚定原圆点 `(145, 115)`；中线通过 `rx=5 / ry=4.8` 的 mask 与 O 衔接；细线使用 `M 78 88 C 108 106, 137 137, 170 128`。
 - [KNOWN] 当前 SVG 使用 `system-ui/-apple-system/Segoe UI/Roboto` 的 `<text>` 绘制 “One”。这会让不同操作系统、CI 镜像和 SVG rasterizer 选择不同字形，不能作为可重复构建的最终 launcher asset。
-- [INFERRED] 合入仓库时保留收到的 SVG/HTML为不可改的 `mobile/branding/source/` 设计源；另生成 `mobile/branding/outlined/`，把 O、n、e 转成固定 path。轮廓版才是 Android/iOS 出包输入，生成器不得依赖运行机器字体。
+- [INFERRED] 合入仓库时保留收到的 SVG/HTML为不可改的 `zephyr_one/mobile/branding/source/` 设计源；另生成 `zephyr_one/mobile/branding/outlined/`，把 O、n、e 转成固定 path。轮廓版才是 Android/iOS 出包输入，生成器不得依赖运行机器字体。
 - [INFERRED] 轮廓化不得改变 O 的墨心、mask 交界、曲线或四色 palette；生成前后使用 16/20/29/32/40/48/60/64/76/83.5/120/128/180/512/1024 px 尺寸做像素与人工检查。
 - [INFERRED] App 内品牌标记随主题立即切换；系统桌面图标按平台能力尽力同步。主题为 `custom`、未知值或资源损坏时稳定回退 `frost`，不动态生成未经设计验收的第五套图标。
 - [INFERRED] `selectedTheme` 可以参与用户偏好同步；`lastAppliedSystemIcon` 必须是本机设置，因为系统许可、Launcher 缓存和 iOS 用户确认状态不能跨设备复制。
@@ -472,7 +472,7 @@ server/
 #### 6.6.3 资源生成与验收
 
 ```text
-mobile/branding/
+zephyr_one/mobile/branding/
   source/
     zephyr-one-icon.html
     zephyr-one-frost.svg

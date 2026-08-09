@@ -2,7 +2,7 @@
 
 > [KNOWN] 合同基线：`main@8dd5b98`，2026-08-08。实现基线：`main@b0e5a9c`，2026-08-09。
 >
-> [KNOWN] `mobile/` 已落地，本表下列各行按 `b0e5a9c` 实测重新判定。逐项规模、缺口与里程碑差距见 [`DEVELOPMENT.md`](DEVELOPMENT.md) 2.4；两处冲突时以该节为准。
+> [KNOWN] `zephyr_one/mobile/` 已落地，本表下列各行按 `b0e5a9c` 实测重新判定。逐项规模、缺口与里程碑差距见 [`DEVELOPMENT.md`](DEVELOPMENT.md) 2.4；两处冲突时以该节为准。
 >
 > [KNOWN] 本文件只报告仓库实际存在的代码与合同，不把设计文档当实现。
 
@@ -21,9 +21,9 @@
 | --- | --- | --- |
 | 产品合同 | `specified` | [KNOWN] `PRODUCT_REQUIREMENTS.md` |
 | Zephyr 继承规则 | `specified` | [KNOWN] `ZEPHYR_PARITY.md` |
-| machine contracts | `specified` | [KNOWN] 20 实体／66 错误码／15 份 codegen 产物；`mobile/tests` 69 项全过，`check:drift` 无漂移 |
-| Android Kotlin/Compose | `partial` | [KNOWN] `mobile/android` 21 模块、293 个 `.kt`／46,487 行、131 个 `@Composable`、6/23 屏幕；无 Gradle wrapper、无 CI、从未编译，`MainActivity` 引用的 `ZephyrOneRoot` 等 3 个符号未声明 |
-| iOS Swift/SwiftUI | `missing` | [KNOWN] `mobile/ios` 仅有 6 个生成合同 Swift 文件／670 行；无 `Package.swift`、无 Xcode 工程、无 App 代码 |
+| machine contracts | `specified` | [KNOWN] 20 实体／66 错误码／15 份 codegen 产物；`zephyr_one/mobile/tests` 69 项全过，`check:drift` 无漂移 |
+| Android Kotlin/Compose | `partial` | [KNOWN] `zephyr_one/mobile/android` 21 模块、293 个 `.kt`／46,487 行、131 个 `@Composable`、6/23 屏幕；无 Gradle wrapper、无 CI、从未编译，`MainActivity` 引用的 `ZephyrOneRoot` 等 3 个符号未声明 |
+| iOS Swift/SwiftUI | `missing` | [KNOWN] `zephyr_one/mobile/ios` 仅有 6 个生成合同 Swift 文件／670 行；无 `Package.swift`、无 Xcode 工程、无 App 代码 |
 | mobile v1 server API | `missing` | [KNOWN] `server.js` 中 `/api/mobile/v1` 出现 0 次；OpenAPI 已冻结 21 路径／22 操作，服务端 0 行 |
 | Tauri One | `legacy-one` | [KNOWN] `zephyr_one/` 存在，pull-only/localStorage/内嵌 core |
 | Zephyr business services | `implemented-zephyr` | [KNOWN] resource/notes/authz/settings/workspace/AI 等 service |
