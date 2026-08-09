@@ -49,6 +49,29 @@ class MainActivity : FragmentActivity() {
         super.onResume()
         container.deviceAuthenticator.attach(this)
         applyScreenshotProtection()
+        revalidateFileShares()
+    }
+
+    /**
+     * Re-checks the authorised directories every time the app comes forward.
+     *
+     * DEVELOPMENT.md 13.5 requires the binding and the file-bridge lease to be re-verified before
+     * reconnecting, and a SAF grant is revocable system state: the user can withdraw it in system
+     * settings, clear the app's data, or remove the SD card the tree lived on, and nothing notifies
+     * the app. A row that survived that would advertise a share the provider cannot open, so the
+     * failure would surface as a broken drive mid-session rather than a directory that needs
+     * re-picking.
+     *
+     * Here rather than in a Composable effect because it must run even when no remote session is on
+     * screen: the stale row is what the *next* connection would resolve, and the connection editor
+     * reads the same rows to show which directory is selected.
+     *
+     * Silent by design. There is no snackbar host at this level, and the honest reports are the ones
+     * the affected screens already make: a pruned choice makes the drive resolve to
+     * NeedsUserChoice, which prompts.
+     */
+    private fun revalidateFileShares() {
+        container.account?.pruneRevokedShares()
     }
 
     override fun onPause() {

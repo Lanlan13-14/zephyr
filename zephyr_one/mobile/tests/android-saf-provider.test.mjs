@@ -21,6 +21,9 @@ const MOBILE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const MODULE_ROOT = path.join(MOBILE_ROOT, 'android', 'feature-file-sync');
 const MAIN = path.join(MODULE_ROOT, 'src', 'main', 'kotlin', 'one', 'zephyr', 'mobile', 'feature', 'filesync');
 const TEST = path.join(MODULE_ROOT, 'src', 'test', 'kotlin', 'one', 'zephyr', 'mobile', 'feature', 'filesync');
+/* The wiring lives in :app, and it is the half that was missing: a provider nothing can reach
+ * is dead code, which is exactly what driveProfileProvider = { null } made it. */
+const APP = path.join(MOBILE_ROOT, 'android', 'app', 'src', 'main', 'kotlin', 'one', 'zephyr', 'mobile', 'app');
 
 const read = (dir, name) => fs.readFileSync(path.join(dir, name), 'utf8');
 
@@ -287,6 +290,192 @@ test('the Kotlin unit tests cover the attacks DEVELOPMENT.md 19.6 names', () => 
   }
 });
 
+
+test('the SAF picker is wired, so the provider is reachable', () => {
+  /* The gap this closes. Every layer below existed and was tested, but ZephyrOneRoot passed
+   * `driveProfileProvider = { null }` and reported the picker as unimplemented, so RdpDrivePolicy
+   * could only ever answer file_share_unavailable and no byte could be served. */
+  const authorizer = read(MAIN, 'DirectoryAuthorizer.kt');
+  assert.match(authorizer, /ActivityResultContracts\.OpenDocumentTree\(\)/,
+    'ACTION_OPEN_DOCUMENT_TREE is the only way One may reach device files');
+
+  /* The grant is taken inside the callback, while the picker result is still alive. Deferring it
+   * would leave a tree URI in app state with no persisted permission behind it. */
+  assert.match(authorizer, /grants\.authorize\(/);
+
+  /* Cancelling is not a failure and must not be reported as one.
+   *
+   * The BRANCH is pinned, not just the existence of the two result types: a mutation that reported
+   * Refused on cancel left both declarations in place and survived. A user who backs out of the
+   * picker would have been told the system refused their directory. */
+  assert.match(authorizer, /data object Cancelled : DirectoryAuthorizationResult/);
+  assert.match(authorizer, /data object Refused : DirectoryAuthorizationResult/);
+  const cancelBranch = codeOf(authorizer).slice(
+    codeOf(authorizer).indexOf('if (uri == null)'),
+    codeOf(authorizer).indexOf('val grant = grants.authorize('),
+  );
+  assert.ok(cancelBranch.length > 0, 'the null-uri branch must be locatable');
+  assert.match(
+    cancelBranch,
+    /currentOnResult\(DirectoryAuthorizationResult\.Cancelled\)/,
+    'a dismissed picker must report Cancelled',
+  );
+  assert.doesNotMatch(
+    cancelBranch,
+    /Refused/,
+    'cancelling is not a refusal; only a refused bookmark is',
+  );
+
+  /* And the converse: Refused is reported only when no grant could be minted. */
+  assert.match(
+    codeOf(authorizer),
+    /if \(grant == null\) \{\s*DirectoryAuthorizationResult\.Refused/,
+    'Refused must follow a null grant, not any other outcome',
+  );
+
+  /* rememberUpdatedState, not a captured lambda: the launcher outlives the composition that made
+   * it, and a stale callback would report a grant to a screen that already navigated away. */
+  assert.match(authorizer, /rememberUpdatedState\(onResult\)/);
+
+  const root = read(APP, 'ZephyrOneRoot.kt');
+  assert.doesNotMatch(codeOf(root), /driveProfileProvider = \{ null \}/,
+    'a hardcoded null makes every authorised directory unreachable');
+  assert.match(root, /driveProfileProvider = \{ candidate ->/);
+  assert.match(root, /account\.fileSyncShares\.profile\(candidate\.id\)/);
+  assert.match(root, /onPickDriveDirectory = pickDirectory/,
+    'the picker must be passed, not a placeholder notice');
+  assert.doesNotMatch(codeOf(root), /PENDING_DRIVE_PICKER/,
+    'the placeholder constant must be gone, not merely unused');
+});
+
+test('the picker asks for no more authority than the connection can use', () => {
+  /* Requesting write unconditionally would ask the user's document provider for more than the
+   * feature needs and make a read-only share indistinguishable from a writable one at the
+   * permission layer. FILE_WRITE on the connection is the ACL's answer. */
+  const root = read(APP, 'ZephyrOneRoot.kt');
+  assert.match(root, /requestWrite = connection\?\.capabilities\?\.canWriteFiles == true/);
+
+  /* A fresh profile id per authorisation rather than one derived from the connection: several
+   * connections may share a directory, and reusing the connection id would make one connection's
+   * re-pick silently move another's share. */
+  assert.match(root, /profileIdFactory = \{ UUID\.randomUUID\(\)\.toString\(\) \}/);
+});
+
+test('an authorised directory survives a relaunch', () => {
+  /* SafShareGrants was written against a plain MutableMap, so without this the app would forget the
+   * directory on the next launch while still holding the SAF permission: access the user granted
+   * that the UI can no longer show or revoke. */
+  const store = read(MAIN, 'PersistentShareStore.kt');
+  assert.match(store, /class PersistentShareStore\([\s\S]*?\) : MutableMap<String, SafShareGrant> by backing \{/);
+  for (const mutator of ['put', 'putAll', 'remove', 'clear']) {
+    assert.match(store, new RegExp('override fun ' + mutator + '\\('),
+      mutator + ' must persist, or a write bypasses storage');
+  }
+
+  /* Validity is re-derived on every read, so persisting false would outlive the condition that
+   * caused it and leave the share broken after the user re-granted the directory. */
+  assert.match(store, /grantValid = true/);
+  assert.doesNotMatch(codeOf(store), /grantValid = false/);
+
+  /* A row that lost its write flag is assumed read-only: the strictest reading is the safe one. */
+  assert.match(store, /store\.boolean\(readOnlyKey\(profileId\), true\)/);
+
+  /* One batch per row. Written key by key, a process death mid-row would leave an id in the index
+   * with no URI behind it. */
+  assert.match(store, /store\.edit \{/);
+
+  const container = read(path.join(APP, 'di'), 'AccountContainer.kt');
+  assert.match(container, /store = PersistentShareStore\(fileSyncStore\)/,
+    'the grants must be constructed with the persistent store, not the default in-memory map');
+});
+
+test('persistence sits behind a seam so its rules are testable off-device', () => {
+  /* SharedPreferences is an Android interface, so code written directly against it can only run on
+   * a device. This module has no Robolectric and the tree compiles only in CI, so the seam is the
+   * difference between rules that are tested and rules that are merely written down. */
+  assert.doesNotMatch(codeOf(read(MAIN, 'PersistentShareStore.kt')), /import android\./);
+  assert.doesNotMatch(codeOf(read(MAIN, 'ConnectionSharePreferences.kt')), /import android\./);
+  assert.doesNotMatch(codeOf(read(MAIN, 'KeyValueStore.kt')), /import android\./);
+  assert.match(read(MAIN, 'SharedPreferencesKeyValueStore.kt'), /import android\.content\.SharedPreferences/);
+
+  /* apply(), not commit(): this runs on whatever thread a picker callback lands on. */
+  assert.match(read(MAIN, 'SharedPreferencesKeyValueStore.kt'), /editor\.apply\(\)/);
+  assert.doesNotMatch(codeOf(read(MAIN, 'SharedPreferencesKeyValueStore.kt')), /\.commit\(\)/);
+});
+
+test('the per-connection choice is device-local and never syncs', () => {
+  /* DEVELOPMENT.md 3 and 13.2: the synced connection carries only the directory intent, because a
+   * profile id names a SAF grant that exists on exactly one device. Syncing it would give the other
+   * device a row pointing at a tree URI it cannot resolve. */
+  const choices = read(MAIN, 'ConnectionSharePreferences.kt');
+  assert.match(choices, /fun profileFor\(connectionId: String\): String\?/);
+  assert.match(choices, /fun pruneMissing\(knownProfileIds: Set<String>\): List<String>/);
+
+  /* Forgetting a choice must not release the directory: other connections may still share it. */
+  const forget = choices.slice(choices.indexOf('fun forget('));
+  assert.doesNotMatch(forget.slice(0, 200), /release|discard/);
+});
+
+test('a revoked grant is pruned when the app comes forward', () => {
+  /* DEVELOPMENT.md 13.5 requires re-verification before reconnecting, and a SAF grant can be
+   * withdrawn in system settings while the app is not running. A stale row would advertise a share
+   * the provider cannot open, failing mid-session instead of asking to be re-picked. */
+  const container = read(path.join(APP, 'di'), 'AccountContainer.kt');
+  assert.match(container, /fun pruneRevokedShares\(\): List<String>/);
+  assert.match(container, /shareGrants\.pruneRevoked\(\)/);
+  /* The choices are pruned too: one naming a dead profile resolves to null, which the session
+   * reports as "no directory is authorised" while the editor still shows one as selected. */
+  assert.match(container, /connectionShares\.pruneMissing\(/);
+
+  /* And it must actually be called, or it is dead code. In onResume rather than a Composable effect
+   * because the stale row is what the *next* connection resolves, with no session on screen. */
+  const activity = read(APP, 'MainActivity.kt');
+  assert.match(activity, /override fun onResume\(\)/);
+  const resume = activity.slice(activity.indexOf('override fun onResume()'));
+  assert.match(resume.slice(0, 400), /revalidateFileShares\(\)/);
+  assert.match(activity, /container\.account\?\.pruneRevokedShares\(\)/);
+});
+
+test('the mapping to an RDP profile carries validity rather than filtering it', () => {
+  /* RdpDrivePolicy distinguishes "no directory is authorised" from "the directory grant is no longer
+   * valid", and only the second tells the user to re-authorise. Dropping invalid rows in the mapping
+   * would collapse both into the first. */
+  const coordinator = read(MAIN, 'FileSyncShareCoordinator.kt');
+  assert.match(coordinator, /grantValid = grantValid/);
+  assert.match(coordinator, /fun profile\(connectionId: String\): FileSyncShareProfile\?/);
+
+  /* With several directories and no explicit choice, nothing is picked: choosing the first would
+   * silently share a directory the user did not mean for this connection. */
+  assert.match(coordinator, /grants\.usable\(\)\.singleOrNull\(\)/);
+
+  /* The provider's readOnly comes from the stored grant, so the value reaching the per-operation
+   * checks is the one the grant was narrowed to (ADR-004). */
+  assert.match(coordinator, /readOnly = grant\.readOnly/);
+  assert.match(coordinator, /takeIf \{ it\.grantValid \}/,
+    'no provider may be built over a grant that cannot serve');
+});
+
+test('the wiring has JVM coverage of its own', () => {
+  const suite = read(TEST, 'PersistentShareStoreTest.kt');
+  for (const name of [
+    'anAuthorisedDirectorySurvivesARelaunch',
+    'aReadOnlyShareIsStillReadOnlyAfterARelaunch',
+    'validityIsNeverPersistedAsFalse',
+    'aRowWhoseUriWasLostIsDroppedRatherThanRepaired',
+    'aRowMissingItsWriteFlagIsAssumedReadOnly',
+    'aGrantRowIsWrittenAsOneBatch',
+    'pruningDropsChoicesNamingAProfileThatIsGone',
+    'severalDirectoriesWithNoChoiceResolvesToNothing',
+    'aDeadGrantStillReturnsAProfileSoTheUserCanBeTold',
+    'noProviderIsBuiltForAGrantThatCannotServe',
+  ]) {
+    assert.match(suite, new RegExp('fun ' + name + '\\('), 'missing coverage: ' + name);
+  }
+
+  /* The fake has to model a restart, or none of the persistence tests assert anything. */
+  const fake = read(TEST, 'FakeKeyValueStore.kt');
+  assert.match(fake, /fun surviveRestart\(\): FakeKeyValueStore/);
+});
 test('the new Kotlin is ASCII-only', () => {
   /* Not style. Non-ASCII literals have been destroyed three times by a shell boundary in this
    * environment, and a mangled string in a path check is a security change that compiles fine. */

@@ -1,6 +1,7 @@
 package one.zephyr.mobile.app.di
 
 import android.content.Context
+import android.net.Uri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +20,13 @@ import one.zephyr.mobile.data.repository.SettingsRepository
 import one.zephyr.mobile.data.repository.SharedResourceStore
 import one.zephyr.mobile.data.repository.SyncStateRepository
 import one.zephyr.mobile.data.session.SessionRegistry
+import one.zephyr.mobile.feature.filesync.ConnectionSharePreferences
+import one.zephyr.mobile.feature.filesync.ContentResolverDocumentTree
+import one.zephyr.mobile.feature.filesync.ContentResolverUriPermissions
+import one.zephyr.mobile.feature.filesync.FileSyncShareCoordinator
+import one.zephyr.mobile.feature.filesync.SafShareGrants
+import one.zephyr.mobile.feature.filesync.PersistentShareStore
+import one.zephyr.mobile.feature.filesync.SharedPreferencesKeyValueStore
 import one.zephyr.mobile.model.AccountBinding
 import one.zephyr.mobile.network.ApiEndpoint
 import one.zephyr.mobile.network.ApiResult
@@ -170,6 +178,70 @@ class AccountContainer(
     val sessions: SessionRegistry = SessionRegistry()
 
     val workspaceState: WorkspaceStatePersistence = WorkspaceStatePersistence(context)
+
+    // -- file sync --
+
+    /**
+     * Preferences behind the authorised-directory rows and the per-connection choice.
+     *
+     * One file for both, because they are read together on every drive resolution and neither is a
+     * secret: a SAF tree URI is an opaque handle that grants nothing without the permission the
+     * system holds separately, and the profile id is a local label. Nothing here is synced
+     * (DEVELOPMENT.md 3), and allowBackup=false in the manifest keeps it off a device transfer,
+     * where a tree URI would name a directory that does not exist.
+     */
+    private val fileSyncStore = SharedPreferencesKeyValueStore(
+        context.getSharedPreferences(PersistentShareStore.PREFERENCES, Context.MODE_PRIVATE),
+    )
+
+    /**
+     * The directories the user has authorised for file sync.
+     *
+     * Backed by a write-through store so a picked directory survives a relaunch. Without it the app
+     * would hold a SAF permission with no row describing it: access the user granted, that the UI
+     * could no longer show or revoke.
+     */
+    val shareGrants: SafShareGrants = SafShareGrants(
+        permissions = ContentResolverUriPermissions(context.contentResolver),
+        store = PersistentShareStore(fileSyncStore),
+    )
+
+    /** Which authorised directory each connection uses. Device-local, per DEVELOPMENT.md 13.2. */
+    val connectionShares: ConnectionSharePreferences = ConnectionSharePreferences(fileSyncStore)
+
+    /**
+     * Resolves a connection to the drive profile an RDP session can map.
+     *
+     * This is what stopped driveProfileProvider from being a hardcoded null. The document tree is
+     * built per grant rather than once, because a tree URI is the identity of the grant: caching one
+     * across grants would serve the previous directory after the user picked a new one.
+     */
+    val fileSyncShares: FileSyncShareCoordinator = FileSyncShareCoordinator(
+        grants = shareGrants,
+        profileForConnection = { connectionId -> connectionShares.profileFor(connectionId) },
+        treeFactory = { treeUri ->
+            ContentResolverDocumentTree(
+                resolver = context.contentResolver,
+                treeUri = Uri.parse(treeUri),
+            )
+        },
+    )
+
+    /**
+     * Drops grants the system no longer reports, and any connection choice left pointing at one.
+     *
+     * DEVELOPMENT.md 13.5 requires the binding and the file-bridge lease to be re-verified before
+     * reconnecting, and a SAF grant can be revoked in system settings while the app is not running.
+     * Pruning the choices as well as the grants matters: a choice naming a dead profile resolves to
+     * null, which the session reports as no-directory-authorised while the editor still shows a
+     * directory as selected.
+     *
+     * @return the connection ids whose directory choice was dropped.
+     */
+    fun pruneRevokedShares(): List<String> {
+        shareGrants.pruneRevoked()
+        return connectionShares.pruneMissing(shareGrants.all().map { it.profileId }.toSet())
+    }
 
     // -- sync --
 

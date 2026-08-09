@@ -11,6 +11,11 @@ dependencies {
     implementation(project(":core-sync"))
     implementation(libs.kotlinx.coroutines.android)
     implementation(project(":protocol-zft2"))
+    /* For FileSyncShareProfile, the type RdpDrivePolicy resolves a drive mapping from.
+     * The mapping from a SAF grant to that profile is the seam between an authorised
+     * directory and a session that can use it, and it belongs on the file-sync side:
+     * protocol-rdp must not learn what SAF is. */
+    implementation(project(":protocol-rdp"))
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.work.runtime.ktx)
     testImplementation(libs.junit)

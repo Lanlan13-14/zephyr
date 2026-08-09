@@ -39,6 +39,8 @@ import one.zephyr.mobile.feature.connections.ConnectionEditorRoute
 import one.zephyr.mobile.feature.connections.ConnectionEditorViewModel
 import one.zephyr.mobile.feature.connections.ConnectionListRoute
 import one.zephyr.mobile.feature.connections.ConnectionListViewModel
+import one.zephyr.mobile.feature.filesync.DirectoryAuthorizationResult
+import one.zephyr.mobile.feature.filesync.rememberDirectoryAuthorizer
 import one.zephyr.mobile.feature.remote.RdpRemoteRoute
 import one.zephyr.mobile.feature.remote.RdpViewModel
 import one.zephyr.mobile.feature.remote.RemoteCredentials
@@ -442,6 +444,43 @@ private fun RemoteDestination(
             onMessage = onMessage,
         )
     } else {
+        /* Observed rather than fetched once: the connection's file-write capability decides how much
+         * authority the picker asks the system for, and a shared connection's grant can be narrowed
+         * while the session is open. */
+        val connection by account.connections.observe(route.connectionId).collectAsState(initial = null)
+
+        /* The SAF picker, which is what stopped onPickDriveDirectory from being a placeholder.
+         *
+         * requestWrite follows the connection instead of always asking for write: FILE_WRITE on a
+         * shared connection is the ACL's answer, and asking the user's document provider for more
+         * authority than the connection can use would make a read-only share indistinguishable from
+         * a writable one at the permission layer. SafShareGrants narrows the result again to what
+         * the system actually granted (DEVELOPMENT.md 13.2 takes the strictest of the layers).
+         *
+         * A fresh profile id per authorisation, not one derived from the connection: several
+         * connections may share one directory, and DEVELOPMENT.md 13.2 keeps the id device-local and
+         * the choice per connection. Reusing the connection id as a profile id would conflate the
+         * two and make one connection's re-pick silently move another's share.
+         */
+        val pickDirectory = rememberDirectoryAuthorizer(
+            grants = account.shareGrants,
+            requestWrite = connection?.capabilities?.canWriteFiles == true,
+            profileIdFactory = { UUID.randomUUID().toString() },
+            shareNameFactory = { connection?.name.orEmpty() },
+            onResult = { result ->
+                when (result) {
+                    is DirectoryAuthorizationResult.Authorized -> {
+                        account.connectionShares.choose(route.connectionId, result.grant.profileId)
+                        onNotice(DRIVE_AUTHORIZED + result.grant.shareName)
+                    }
+                    /* Silent on cancel. The user backed out of the picker; nothing changed and a
+                     * message would report a failure that did not happen. */
+                    DirectoryAuthorizationResult.Cancelled -> Unit
+                    DirectoryAuthorizationResult.Refused -> onNotice(DRIVE_REFUSED)
+                }
+            },
+        )
+
         RdpRemoteRoute(
             viewModel = viewModel(
                 key = "rdp:" + route.sessionId,
@@ -452,9 +491,17 @@ private fun RemoteDestination(
                     connections = account.connections,
                     engine = UnavailableRdpEngine(),
                     secretProvider = { connection -> account.passwordChars(connection) },
-                    /* No SAF grant is held by this build, so no drive profile is offered. Returning a
-                     * profile the platform cannot back would map a share that fails on first read. */
-                    driveProfileProvider = { null },
+                    /* The real grant, re-derived on every resolution.
+                     *
+                     * Previously a hardcoded null, which made RdpDrivePolicy answer
+                     * file_share_unavailable no matter what the user had authorised and left the SAF
+                     * provider unreachable. The coordinator returns null only when no directory is
+                     * chosen, and a profile with grantValid=false when one is chosen but its grant
+                     * died -- the policy renders those differently, and the second is the one that
+                     * tells the user to re-authorise. */
+                    driveProfileProvider = { candidate ->
+                        account.fileSyncShares.profile(candidate.id)
+                    },
                 ),
             ),
             nowMs = nowMs,
@@ -462,7 +509,7 @@ private fun RemoteDestination(
             onBack = onBack,
             onRequestPermission = { onNotice(PENDING_RDP_PERMISSION) },
             onOpenAppSettings = { onNotice(PENDING_RDP_PERMISSION) },
-            onPickDriveDirectory = { onNotice(PENDING_DRIVE_PICKER) },
+            onPickDriveDirectory = pickDirectory,
             onMessage = onMessage,
         )
     }
@@ -611,7 +658,10 @@ private const val PENDING_SFTP = "SFTP 浏览界面尚未实现。"
 private const val PENDING_SNIPPETS = "代码片段界面尚未实现。"
 private const val PENDING_NOTES = "笔记界面尚未实现。"
 private const val PENDING_RDP_PERMISSION = "设备权限申请尚未实现。"
-private const val PENDING_DRIVE_PICKER = "目录选择（SAF）尚未实现。"
+/* The SAF picker is wired (see RemoteDestination), so the placeholder is gone. These two report
+ * its outcomes; cancelling deliberately has no message. */
+private const val DRIVE_AUTHORIZED = "已授权目录，远端共享名："
+private const val DRIVE_REFUSED = "系统未能保留该目录授权，请重新选择目录。"
 
 private val TERMINAL_ENGINE_MISSING: MobileError = MobileError.local(
     code = "engine_unavailable",
