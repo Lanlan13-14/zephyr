@@ -37,6 +37,17 @@ const NOTES_TEST = path.join(
 const DATA = path.join(
   ANDROID, 'core-data', 'src', 'main', 'kotlin', 'one', 'zephyr', 'mobile', 'data', 'repository',
 );
+/* The seam that joins the client to the store. Its absence is what made both rows unreachable. */
+const SYNC_MAIN = path.join(
+  ANDROID, 'core-sync', 'src', 'main', 'kotlin', 'one', 'zephyr', 'mobile', 'sync',
+);
+const SYNC_TEST = path.join(
+  ANDROID, 'core-sync', 'src', 'test', 'kotlin', 'one', 'zephyr', 'mobile', 'sync',
+);
+/* The wiring lives in :app, and that is the half that was missing before. */
+const APP = path.join(
+  ANDROID, 'app', 'src', 'main', 'kotlin', 'one', 'zephyr', 'mobile', 'app',
+);
 
 const read = (dir, name) => fs.readFileSync(path.join(dir, name), 'utf8');
 
@@ -55,6 +66,8 @@ const codeOf = (source) => source
 const LIST_STATES = read(CONNECTIONS_MAIN, 'SharedResourceListStates.kt');
 const VIEWER = read(NOTES_MAIN, 'SharedNoteViewerStates.kt');
 const STORE = read(DATA, 'SharedResourceStore.kt');
+const COORDINATOR = read(SYNC_MAIN, 'SharedResourceCoordinator.kt');
+const CONTAINER = read(path.join(APP, 'di'), 'AccountContainer.kt');
 
 test('the shared list treats offline as terminal, never as a cache', () => {
   assert.match(LIST_STATES, /object SharedResourceListStates \{/);
@@ -270,6 +283,143 @@ test('both state layers have JVM coverage for the rules that fail silently', () 
   }
 });
 
+test('the client is actually reachable from the store', () => {
+  /* The bug this whole file exists around. `SharedResourceClient` was constructed in
+   * AccountContainer and never called; `SharedResourceStore.replace()` had no caller anywhere in
+   * the tree. Both halves shipped, tested, and dead -- the same shape as
+   * `driveProfileProvider = { null }` before the SAF picker was wired. Nothing failed at runtime
+   * to say so: the list simply rendered empty forever. */
+  assert.match(COORDINATOR, /class SharedResourceCoordinator\(/);
+  assert.match(COORDINATOR, /store\.replace\(/, 'the coordinator must fill the store');
+
+  /* Scoped to refresh(). `client.list()` also appears in ApiSharedResourceFetcher's own
+   * override, so a file-wide match stayed green while refresh() stopped calling the API
+   * altogether -- reintroducing the empty-store bug this class exists to fix. */
+  const refreshAt = codeOf(COORDINATOR).indexOf('suspend fun refresh()');
+  assert.ok(refreshAt >= 0, 'refresh() must exist');
+  const refreshBody = codeOf(COORDINATOR).slice(refreshAt, codeOf(COORDINATOR).indexOf('suspend fun refreshOne'));
+  assert.match(refreshBody, /client\.list\(\)/, 'refresh() itself must call the API');
+  assert.match(refreshBody, /store\.replace\(/, 'refresh() itself must fill the store');
+
+  /* And it must be constructed, or it is dead code in exactly the same way. */
+  assert.match(
+    CONTAINER,
+    /val sharedResourceCoordinator: SharedResourceCoordinator = SharedResourceCoordinator\(/,
+    'AccountContainer must construct the coordinator',
+  );
+  assert.match(
+    CONTAINER,
+    /client = ApiSharedResourceFetcher\(sharedResourceClient\)/,
+    'the coordinator must be handed the real client',
+  );
+  assert.match(CONTAINER, /store = sharedResources/);
+});
+
+test('the coordinator is testable without an HTTP stack', () => {
+  /* SharedResourceClient is a final class over a final MobileApiClient, so depending on it
+   * directly would make every residency assertion require a real socket. core-sync already solves
+   * this with SyncTransport + MobileApiTransport; this follows it rather than inventing a second
+   * convention. */
+  assert.match(COORDINATOR, /interface SharedResourceFetcher \{/);
+  assert.match(
+    COORDINATOR,
+    /class ApiSharedResourceFetcher\(private val client: SharedResourceClient\) : SharedResourceFetcher/,
+  );
+  assert.match(COORDINATOR, /private val client: SharedResourceFetcher,/);
+});
+
+test('a refresh replaces the list rather than merging into it', () => {
+  /* A row the server stopped returning has had its grant withdrawn, so it must leave the device on
+   * the same round. A merge would keep a revoked resource on screen indefinitely, which is the
+   * residency violation this coordinator exists to avoid. */
+  const code = codeOf(COORDINATOR);
+  assert.match(code, /store\.replace\(rows, now\)/);
+
+  /* Expiry applied on the same pass: expiresAt is a deadline, not a delete, and the server is not
+   * obliged to have filtered a grant that lapsed while the response was in flight. */
+  assert.match(code, /store\.purgeExpired\(now\)/);
+});
+
+test('a transient failure keeps the list but a revocation clears it', () => {
+  /* The distinction that matters on failure. A 503 is not evidence the user lost access, so wiping
+   * the list would make a flaky network look like a revocation. */
+  const code = codeOf(COORDINATOR);
+  assert.match(code, /if \(result\.error\.dismissesSharedResource\) \{\s*store\.clear\(\)/);
+});
+
+test('clearing resets the loaded flag, not just the rows', () => {
+  /* Leaving hasLoaded true makes the next screen claim "nobody has shared anything with you" --
+   * a false statement about the new account rather than a stale one about the old. */
+  const code = codeOf(COORDINATOR);
+  const clearAt = code.indexOf('fun clear()');
+  assert.ok(clearAt >= 0, 'clear() must exist');
+  const body = code.slice(clearAt, clearAt + 320);
+  assert.match(body, /store\.clear\(\)/);
+  assert.match(body, /loaded\.value = false/, 'clear() must reset hasLoaded');
+
+  /* And the purge paths must go through the coordinator, or they clear the store while leaving
+   * hasLoaded true -- the exact stale-claim bug above. */
+  assert.match(CONTAINER, /sharedResourceCoordinator\.clear\(\)/);
+  assert.doesNotMatch(
+    codeOf(CONTAINER),
+    /sharedResources\.clear\(\)/,
+    'purge must route through the coordinator, not the bare store',
+  );
+});
+
+test('the shared endpoint never carries an endpoint into the store', () => {
+  /* GET /shared/{type}/{id} may enrich its response with host, port and username. Dropping them at
+   * the mapping boundary is what makes it impossible to render them later:
+   * SHARED_RESOURCE_RESIDENCY.md 2 forbids storing the endpoint of a shared resource, and
+   * SharedResourceSummary has no field for one. */
+  const mapAt = codeOf(COORDINATOR).indexOf('fun toSummary(');
+  assert.ok(mapAt >= 0, 'toSummary must exist');
+  const mapper = codeOf(COORDINATOR).slice(mapAt, codeOf(COORDINATOR).indexOf('}', mapAt));
+  for (const field of ['host', 'port', 'username']) {
+    assert.ok(!mapper.includes(field), 'toSummary must not carry ' + field + ' into the store');
+  }
+
+  /* The stronger guarantee, and the one worth pinning: SharedResource -- the network domain type
+   * the mapper reads from -- has no endpoint fields at all, even though
+   * SharedResourceSummaryDto does carry host/port/username for the detail response. The endpoint
+   * is dropped at the DTO-to-domain boundary, so no mapper downstream can carry it even by
+   * accident. Asserting only on the mapper was weaker than the code actually is. */
+  const client = fs.readFileSync(
+    path.join(
+      ANDROID, 'core-network', 'src', 'main', 'kotlin', 'one', 'zephyr', 'mobile', 'network',
+      'SharedResourceClient.kt',
+    ),
+    'utf8',
+  );
+  const domainAt = client.indexOf('data class SharedResource(');
+  assert.ok(domainAt >= 0, 'SharedResource must exist');
+  const domain = client.slice(domainAt, client.indexOf(')', client.indexOf('protocol', domainAt)));
+  for (const field of ['val host', 'val port', 'val username']) {
+    assert.ok(!domain.includes(field), 'SharedResource must not declare ' + field);
+  }
+
+  const storeCode = codeOf(STORE);
+  for (const field of ['val host', 'val port', 'val username']) {
+    assert.ok(!storeCode.includes(field), 'SharedResourceSummary must not declare ' + field);
+  }
+});
+
+test('the coordinator has JVM coverage for each failure path', () => {
+  const suite = read(SYNC_TEST, 'SharedResourceCoordinatorTest.kt');
+  for (const name of [
+    'a successful refresh fills the store and marks it loaded',
+    'the owner display name becomes the owner label',
+    'a refresh replaces rather than merges',
+    'an expired grant is dropped on the same pass',
+    'a retryable failure keeps the rows already held',
+    'a revocation clears the list',
+    'a 404 on detail removes the row immediately',
+    'clear resets the loaded flag so the next screen shows a spinner',
+  ]) {
+    assert.ok(suite.includes(name), 'missing coordinator coverage: ' + name);
+  }
+});
+
 test('the new Kotlin is ASCII-only', () => {
   /* Same rule as the provider gates. A non-ASCII literal mangled at a shell boundary still compiles,
    * and a corrupted wire constant fails only at runtime against a real server. */
@@ -278,6 +428,8 @@ test('the new Kotlin is ASCII-only', () => {
     [NOTES_MAIN, 'SharedNoteViewerStates.kt'],
     [CONNECTIONS_TEST, 'SharedResourceListStatesTest.kt'],
     [NOTES_TEST, 'SharedNoteViewerStatesTest.kt'],
+    [SYNC_MAIN, 'SharedResourceCoordinator.kt'],
+    [SYNC_TEST, 'SharedResourceCoordinatorTest.kt'],
   ]) {
     const source = read(dir, name);
     const bad = [...source].filter((ch) => ch.codePointAt(0) > 127);

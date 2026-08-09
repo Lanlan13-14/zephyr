@@ -39,12 +39,14 @@ import one.zephyr.mobile.network.SharedResourceClient
 import one.zephyr.mobile.security.DeviceIdentity
 import one.zephyr.mobile.security.SecretStore
 import one.zephyr.mobile.security.SessionSecretArena
+import one.zephyr.mobile.sync.ApiSharedResourceFetcher
 import one.zephyr.mobile.sync.BlobTransferPort
 import one.zephyr.mobile.sync.DeviceEnvelopeOpener
 import one.zephyr.mobile.sync.DeviceSecretSealer
 import one.zephyr.mobile.sync.MobileApiTransport
 import one.zephyr.mobile.sync.RoomSyncLocalStore
 import one.zephyr.mobile.sync.ServerEncryptionKey
+import one.zephyr.mobile.sync.SharedResourceCoordinator
 import one.zephyr.mobile.sync.SyncActor
 import one.zephyr.mobile.sync.SyncEngine
 import one.zephyr.mobile.sync.SyncScheduler
@@ -173,6 +175,20 @@ class AccountContainer(
 
     /** Online-only and memory resident: shared-to-me resources have no mirror by contract. */
     val sharedResources: SharedResourceStore = SharedResourceStore()
+
+    /**
+     * The only thing that fills [sharedResources].
+     *
+     * Without it the store was permanently empty: nothing in the tree called
+     * SharedResourceStore.replace(), and sharedResourceClient was constructed and never used. So
+     * ConnectionListViewModel merged an empty shared list into every render and the three
+     * implemented /shared endpoints were unreachable from the device -- present, tested, and dead,
+     * the same shape as driveProfileProvider = { null } before the SAF picker was wired.
+     */
+    val sharedResourceCoordinator: SharedResourceCoordinator = SharedResourceCoordinator(
+        client = ApiSharedResourceFetcher(sharedResourceClient),
+        store = sharedResources,
+    )
 
     /** In-memory: a session is a live transport, and a transport does not survive process death. */
     val sessions: SessionRegistry = SessionRegistry()
@@ -310,7 +326,10 @@ class AccountContainer(
         /* A residency violation must drop shared state from memory, not just stop the round: the
          * server is telling us we hold something we are not allowed to keep. */
         onSharedPurge = {
-            sharedResources.clear()
+            /* Through the coordinator so `hasLoaded` resets too. Clearing the store alone leaves
+             * it true, and the next render would say "nobody has shared anything with you"
+             * rather than showing a spinner -- a false claim rather than a stale one. */
+            sharedResourceCoordinator.clear()
             sessionSecrets.purgeAll()
         },
     )
@@ -358,7 +377,7 @@ class AccountContainer(
     fun dispose() {
         appContainer.appLock.unregister(sessionSecrets)
         sessionSecrets.purgeAll()
-        sharedResources.clear()
+        sharedResourceCoordinator.clear()
         sessions.clear()
     }
 
