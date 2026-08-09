@@ -97,11 +97,35 @@ jobs:
       # Compile before test. `assembleDebug` is the step that would have caught
       # the four unresolved symbols: they live in :app, which no library
       # module's test task ever links.
+      #
+      # Output is captured and re-emitted as ::error:: annotations on failure.
+      # Without that, a failure here is publicly visible only as "Process completed
+      # with exit code 1": job logs require an authenticated token, so the actual
+      # kotlinc diagnostic is unreadable to anyone without repo credentials, which
+      # is a slow way to find out that a name does not resolve.
       - name: Compile the application module
-        run: gradle --no-daemon :app:assembleDebug
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          gradle --no-daemon :app:assembleDebug 2>&1 | tee /tmp/gradle-assemble.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
+              /tmp/gradle-assemble.log 'gradle :app:assembleDebug'
+            exit "$status"
+          fi
 
       - name: Unit tests
-        run: gradle --no-daemon testDebugUnitTest
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          gradle --no-daemon testDebugUnitTest 2>&1 | tee /tmp/gradle-test.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
+              /tmp/gradle-test.log 'gradle testDebugUnitTest'
+            exit "$status"
+          fi
 
       - name: Upload test reports
         if: always()
@@ -128,11 +152,29 @@ jobs:
       # Compile before test, for the same reason the Android job does: a target
       # that does not build cannot report a meaningful test result.
       - name: Build
-        run: swift build -v
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          swift build -v 2>&1 | tee /tmp/swift-build.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
+              /tmp/swift-build.log 'swift build'
+            exit "$status"
+          fi
 
       # The suites read mobile/contracts/generated/*.json through #filePath, so
       # they exercise the same frozen vectors the Kotlin and Node suites do. A
       # path regression here fails at runtime and only on this runner, which is
       # exactly why the static gate pins the directory walk as well.
       - name: Test
-        run: swift test -v
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          swift test -v 2>&1 | tee /tmp/swift-test.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
+              /tmp/swift-test.log 'swift test'
+            exit "$status"
+          fi

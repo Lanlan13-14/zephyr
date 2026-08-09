@@ -64,7 +64,16 @@ jobs:
       # C-level tests first: they link the shim directly, so a failure here points
       # at the C ABI rather than at the Rust binding layer.
       - name: Test FreeRDP C core
-        run: sh native/freerdp-core/run-ctests.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          sh native/freerdp-core/run-ctests.sh 2>&1 | tee /tmp/ctests.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
+              /tmp/ctests.log 'FreeRDP C core tests'
+            exit "$status"
+          fi
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Tauri build deps
         run: |
@@ -77,9 +86,22 @@ jobs:
       # that drifted would read a `const char*` where an `i32` was written -- a
       # fault no compiler can catch across FFI, and one that cannot be caught at
       # all without linking the two together exactly like this.
+      # Output is annotated on failure for the same reason the mobile jobs do it:
+      # this step has failed on every run since df7036c6 (the commit that linked
+      # FreeRDP in-process) and the only publicly readable detail was "exit code
+      # 101". rustc diagnostics belong in an annotation, not behind a token.
       - name: Cargo test with the native RDP engine
         working-directory: zephyr_one/src-tauri
-        run: cargo test --lib -- --nocapture
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          cargo test --lib -- --nocapture 2>&1 | tee /tmp/cargo-test.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
+              /tmp/cargo-test.log 'cargo test --lib (native RDP)'
+            exit "$status"
+          fi
       # And prove the documented escape hatch still builds, so a contributor
       # without FreeRDP is not blocked from compiling the rest of the shell.
       - name: Cargo check without the native RDP engine
