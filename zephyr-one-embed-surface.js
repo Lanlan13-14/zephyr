@@ -50,6 +50,7 @@ const EMBED_STYLESHEET = '/zephyr-one-embed.css';
  * serve (404) for a feature it cannot perform.
  */
 const EMBED_RDP_SETTINGS_SCRIPT = '/zephyr-one-rdp-settings.js';
+const EMBED_SECURITY_SCRIPT = '/zephyr-one-security-ui.js';
 
 /** Exact markup fragments this transform depends on existing in app.html. */
 const SECURITY_TAB_BUTTON = '<button class="settings-tab active" data-settings="security" data-i18n="安全设置">安全设置</button>';
@@ -81,31 +82,88 @@ const DATA_PANEL_ANCHOR = '<div class="settings-panel" id="settings-data"';
  * `required: false` marks an edit that is allowed to be already applied
  * (idempotent re-entry), not one that may silently fail.
  */
+/* The One security panel.
+ *
+ * Browser Zephyr's Settings > Security is an account-management surface: change
+ * password, TOTP, passkeys, login mail, IP allow-list, CAPTCHA. None of it
+ * applies to One, whose single local account is the desktop session itself.
+ *
+ * Earlier this transform removed the tab outright, which left One with no
+ * security settings at all. It now keeps the tab and swaps the panel body for
+ * exactly one switch: whether viewing a stored password or private key requires
+ * a system unlock first. That is the only security decision One can actually
+ * enforce; everything else here is either the OS's job or the main end's.
+ *
+ * Structural replacement rather than CSS hiding, for the same reason the logout
+ * button is removed structurally: app.js reaches into #passwordForm,
+ * #profileForm, #totpAction and #platformSecuritySettings, and a CSS-hidden card
+ * still matches those selectors. Removing the markup means those branches find
+ * nothing and skip, instead of wiring handlers to invisible controls.
+ */
+const ONE_SECURITY_PANEL_BODY = [
+    '<section class="security-card" id="oneSecurityPanel">',
+    '<div class="security-card-head"><h2 data-i18n="\u5b89\u5168\u8bbe\u7f6e">\u5b89\u5168\u8bbe\u7f6e</h2></div>',
+    '<label class="settings-switch-option" for="oneRevealRequiresUnlock">',
+    '<span class="settings-switch-copy">',
+    '<strong data-i18n="\u67e5\u770b\u5bc6\u7801\u4e0e\u5bc6\u94a5\u524d\u9700\u8981\u7cfb\u7edf\u89e3\u9501">\u67e5\u770b\u5bc6\u7801\u4e0e\u5bc6\u94a5\u524d\u9700\u8981\u7cfb\u7edf\u89e3\u9501</strong>',
+    '<small id="oneSecurityUnlockHint"></small>',
+    '</span>',
+    '<span class="connection-share-switch"><input type="checkbox" id="oneRevealRequiresUnlock"><span aria-hidden="true"></span></span>',
+    '</label>',
+    '<p class="field-hint" id="oneSecurityStatus" aria-live="polite"></p>',
+    '<button class="btn-sm" type="button" id="oneSecurityTestUnlock" data-i18n="\u6d4b\u8bd5\u7cfb\u7edf\u89e3\u9501">\u6d4b\u8bd5\u7cfb\u7edf\u89e3\u9501</button>',
+    '</section>',
+].join('');
+
+/* Bounds of the panel whose body is replaced. The closing anchor is the *next*
+ * settings panel, so the slice cannot run past the security panel even if
+ * app.html reflows or gains cards. */
+const SECURITY_PANEL_OPEN_TAG = '<div class="settings-panel active" id="settings-security">';
+const NEXT_PANEL_ANCHOR = '<div class="settings-panel" id="settings-appearance">';
+const ONE_PANEL_MARKER = 'id="oneSecurityPanel"';
+
+/**
+ * Swaps the security panel's body for One's single switch.
+ *
+ * Throws rather than degrading: a missing anchor means app.html changed shape,
+ * and silently leaving the browser-era account cards in place would show One a
+ * password-change form for a password its user never chose.
+ */
+function replaceSecurityPanelBody(html) {
+    if (html.includes(ONE_PANEL_MARKER)) return html; // idempotent
+
+    const open = html.indexOf(SECURITY_PANEL_OPEN_TAG);
+    if (open < 0) {
+        throw new Error(
+            'zephyr-one embedded surface: security panel open tag not found in app.html',
+        );
+    }
+    const bodyStart = open + SECURITY_PANEL_OPEN_TAG.length;
+    const next = html.indexOf(NEXT_PANEL_ANCHOR, bodyStart);
+    if (next < 0) {
+        throw new Error(
+            'zephyr-one embedded surface: could not find the panel that follows #settings-security',
+        );
+    }
+
+    /* The security panel's own </div> is the last one before the next panel
+     * opens. Keeping it means the replacement stays inside the panel rather
+     * than swallowing its closing tag. */
+    const closeAt = html.lastIndexOf('</div>', next);
+    if (closeAt < bodyStart) {
+        throw new Error(
+            'zephyr-one embedded surface: security panel has no closing tag before the next panel',
+        );
+    }
+
+    return html.slice(0, bodyStart) + ONE_SECURITY_PANEL_BODY + html.slice(closeAt);
+}
+
 const EDITS = [
-    {
-        name: 'drop-security-tab',
-        from: SECURITY_TAB_BUTTON,
-        to: '',
-    },
     {
         name: 'drop-logout-button',
         from: LOGOUT_BUTTON,
         to: '',
-    },
-    {
-        name: 'deactivate-security-panel',
-        from: SECURITY_PANEL_OPEN,
-        to: 'class="settings-panel" id="settings-security"',
-    },
-    {
-        name: 'promote-language-tab',
-        from: LANGUAGE_TAB_BUTTON,
-        to: '<button class="settings-tab active" data-settings="language"',
-    },
-    {
-        name: 'promote-language-panel',
-        from: LANGUAGE_PANEL_OPEN,
-        to: 'class="settings-panel active" id="settings-language"',
     },
     /* Product marker. theme-runtime.js reads
      * document.documentElement.dataset.zephyrProduct and draws the Zephyr One
@@ -181,9 +239,9 @@ function injectStylesheet(html) {
  * @param {string} html
  * @returns {string}
  */
-function injectOverlayScript(html) {
-    if (html.includes(EMBED_RDP_SETTINGS_SCRIPT)) return html;
-    const tag = `<script src="${EMBED_RDP_SETTINGS_SCRIPT}"></script>`;
+function injectOverlayScript(html, src = EMBED_RDP_SETTINGS_SCRIPT) {
+    if (html.includes(src)) return html;
+    const tag = `<script src="${src}"></script>`;
     return html.includes('</body>')
         ? html.replace('</body>', `${tag}\n</body>`)
         : html + tag;
@@ -260,7 +318,30 @@ function applyEmbeddedSurface(source) {
         );
     }
 
-    return { html: injectOverlayScript(injectStylesheet(html)), applied, skipped };
+    /* The security panel is rebuilt rather than hidden or dropped.
+     *
+     * Earlier revisions removed the tab outright, which left One with no
+     * security surface at all and stranded two app.js fallbacks that click
+     * `[data-settings="security"]` when the active tab is hidden. Replacing the
+     * body keeps the tab a valid landing target while removing every
+     * browser-era account card One cannot honour. */
+    const withOnePanel = replaceSecurityPanelBody(html);
+    if (withOnePanel !== html) applied.push('replace-security-panel');
+    else skipped.push('replace-security-panel');
+
+    return {
+        /* Two overlays, injected in dependency order. The security script
+         * installs `window.__zephyrOneUnlock`, which app.js consults on every
+         * reveal, so it must be present before the user can reach a reveal
+         * button - a plain <script> in <body> satisfies that because app.js is
+         * a module and therefore deferred. */
+        html: injectOverlayScript(
+            injectOverlayScript(injectStylesheet(withOnePanel), EMBED_SECURITY_SCRIPT),
+            EMBED_RDP_SETTINGS_SCRIPT,
+        ),
+        applied,
+        skipped,
+    };
 }
 
 module.exports = {
@@ -272,5 +353,8 @@ module.exports = {
     regionOf,
     EMBED_STYLESHEET,
     EMBED_RDP_SETTINGS_SCRIPT,
+    EMBED_SECURITY_SCRIPT,
+    ONE_SECURITY_PANEL_BODY,
+    replaceSecurityPanelBody,
     EDITS,
 };

@@ -8,10 +8,15 @@ import { fileURLToPath } from 'node:url';
 /**
  * Zephyr One embedded surface: the browser-era credential wall must be gone.
  *
- * Zephyr One runs the core as a local child process on loopback and the real
- * product gate is the OS unlock the Tauri shell performs before the WebView
- * loads. Password rotation / TOTP / Passkey / login-email / IP-whitelist /
- * CAPTCHA all authenticate a *remote browser* client and are redundant there.
+ * Zephyr One runs the core as a local child process on loopback, so password
+ * rotation / TOTP / Passkey / login-email / IP-whitelist / CAPTCHA all
+ * authenticate a *remote browser* client and are redundant there.
+ *
+ * They are replaced rather than merely removed. An earlier revision deleted the
+ * Security tab outright, which left One with no security surface at all; the
+ * transform now swaps that panel's body for One's single switch -- viewing a
+ * stored password or private key requires a system unlock first -- which is the
+ * only security decision One can actually enforce.
  *
  * These assertions run against the real public/app.html, so a markup change
  * that would silently defeat the transform fails here instead of shipping.
@@ -94,16 +99,32 @@ test('region-scoped edits really are bounded, not accidentally global', () => {
     assert.equal(countOccurrences(APP_HTML, heading), 2, 'heading must be globally ambiguous');
 });
 
-test('transform removes the security tab and the logout button', () => {
+test('transform replaces the security panel body and removes logout', () => {
     const { html, applied } = applyEmbeddedSurface(APP_HTML);
 
-    // All five structural edits actually fired against real markup.
-    assert.deepEqual(applied, EDITS.map((e) => e.name));
+    // Every structural edit fired against real markup, plus the panel rebuild.
+    assert.deepEqual(applied, [...EDITS.map((e) => e.name), 'replace-security-panel']);
 
-    // The security tab BUTTON is gone from the DOM, not merely hidden. app.js
-    // resolves [data-settings="security"] in three places; a CSS-hidden element
-    // still matches those selectors, a removed one does not.
-    assert.equal(html.includes('data-settings="security"'), false);
+    /* The tab stays. It is a valid landing target again, and app.js falls back
+     * to clicking `[data-settings="security"]` in two places when the active tab
+     * is hidden -- with the tab gone those fallbacks silently did nothing. */
+    assert.match(html, /<button class="settings-tab active" data-settings="security"/);
+
+    // One's switch is present, with the ids the overlay script binds to.
+    assert.match(html, /id="oneSecurityPanel"/);
+    assert.match(html, /id="oneRevealRequiresUnlock"/);
+    assert.match(html, /id="oneSecurityTestUnlock"/);
+
+    /* Every browser-era account card is gone from the DOM, not merely hidden:
+     * app.js reaches into these by id, and a CSS-hidden node still matches. */
+    for (const id of ['passwordForm', 'profileForm', 'totpAction', 'addPasskeyBtn',
+        'notifyLoginPersonal', 'platformSecuritySettings', 'securityPolicyForm']) {
+        assert.equal(
+            html.includes(`id="${id}"`),
+            false,
+            `${id} authenticates a remote browser client and must not survive into One`,
+        );
+    }
 
     // Logout is gone: the shell re-adopts the local account on the next
     // request, so logging out either bounces back in or looks broken.
@@ -116,31 +137,53 @@ test('Settings lands on a real panel instead of a hidden one', () => {
     // Exactly one active tab and one active panel, and they agree.
     assert.equal(countOccurrences(html, 'class="settings-tab active"'), 1);
     assert.equal(countOccurrences(html, 'class="settings-panel active"'), 1);
-    assert.match(html, /<button class="settings-tab active" data-settings="language"/);
-    assert.match(html, /class="settings-panel active" id="settings-language"/);
+    assert.match(html, /<button class="settings-tab active" data-settings="security"/);
+    assert.match(html, /class="settings-panel active" id="settings-security"/);
 
-    // The security panel is no longer the default-active one.
-    assert.equal(html.includes('class="settings-panel active" id="settings-security"'), false);
+    /* And the panel it lands on has content. This is the assertion that would
+     * have caught the earlier bug in the opposite direction: leaving security
+     * active while the stage stylesheet hid it showed a blank pane. */
+    const at = html.indexOf('class="settings-panel active" id="settings-security"');
+    const panel = html.slice(at, html.indexOf('id="settings-appearance"', at));
+    assert.match(panel, /id="oneRevealRequiresUnlock"/, 'the landing panel must not be empty');
 });
 
-test('unmodified app.html would strand Settings on a CSS-hidden panel', () => {
-    /* Proves the bug this transform fixes is real and not hypothetical:
-     * shipped 0.1.9 hid #settings-security via CSS while it was still the
-     * default-active panel, so opening Settings showed a blank pane. */
+test('the security panel is the landing target in both products', () => {
+    /* app.html ships #settings-security as the default-active panel and its tab
+     * as the default-active tab. One keeps both and rebuilds the body, so this
+     * records the shared starting point the transform relies on. */
     assert.match(APP_HTML, /class="settings-panel active" id="settings-security"/);
     assert.match(APP_HTML, /<button class="settings-tab active" data-settings="security"/);
 
-    // And app.js really does fall back to that exact tab.
+    // And app.js really does fall back to that exact tab, in two places. With
+    // the tab removed those fallbacks resolved to null and silently did nothing.
     assert.equal(APP_JS.includes('.settings-tab[data-settings="security"]'), true);
+
+    /* The hazard is now the reverse of the one an earlier revision hit: leaving
+     * the panel active while the stage stylesheet hides it shows a blank pane.
+     * The stylesheet must therefore NOT hide it. */
+    assert.equal(
+        STAGE_SH.includes('#settings-security {'),
+        false,
+        'embed CSS must not hide the panel One now uses for its own security switch',
+    );
+    assert.equal(
+        STAGE_SH.includes('#settings-security,'),
+        false,
+        'embed CSS must not hide #settings-security as part of a selector list either',
+    );
 });
 
 test('transform is idempotent', () => {
     const once = applyEmbeddedSurface(APP_HTML).html;
     const twice = applyEmbeddedSurface(once);
     assert.equal(twice.html, once);
-    // Second pass finds results already in place rather than sources.
+    // Second pass finds results already in place rather than sources. The panel
+    // rebuild detects its own marker and reports itself skipped for the same
+    // reason, so a double-applied transform cannot nest two switches.
     assert.deepEqual(twice.applied, []);
-    assert.deepEqual(twice.skipped, EDITS.map((e) => e.name));
+    assert.deepEqual(twice.skipped, [...EDITS.map((e) => e.name), 'replace-security-panel']);
+    assert.equal(countOccurrences(twice.html, 'id="oneRevealRequiresUnlock"'), 1);
 });
 
 test('embed stylesheet is injected once, inside head', () => {
@@ -151,19 +194,32 @@ test('embed stylesheet is injected once, inside head', () => {
 });
 
 test('a markup change that defeats the transform throws instead of degrading', () => {
-    // Source absent AND result absent → app.html changed shape.
+    /* Source absent AND result absent -> app.html changed shape. Asserted on
+     * `rename-agent-tab`, which is a real remaining edit; the language-promotion
+     * edits this used to target were removed when security became the landing
+     * panel again, and an assertion against a deleted edit would pass for the
+     * wrong reason. */
     const mangled = APP_HTML.replace(
-        'class="settings-panel" id="settings-language"',
-        'class="settings-panel" id="settings-locale"',
+        '<button class="settings-tab" data-settings="agent" data-i18n="Zephyr Client">Zephyr Client</button>',
+        '<button class="settings-tab" data-settings="client" data-i18n="Zephyr Client">Zephyr Client</button>',
     );
-    assert.throws(() => applyEmbeddedSurface(mangled), /promote-language-panel/);
+    assert.throws(() => applyEmbeddedSurface(mangled), /rename-agent-tab/);
 
-    // Duplicated fragment → ambiguous target.
+    // Duplicated fragment -> ambiguous target.
     const duplicated = APP_HTML.replace(
-        '<button class="btn-sm danger" id="logoutBtn" data-i18n="登出">登出</button>',
-        '<button class="btn-sm danger" id="logoutBtn" data-i18n="登出">登出</button>'.repeat(2),
+        '<button class="btn-sm danger" id="logoutBtn" data-i18n="\u767b\u51fa">\u767b\u51fa</button>',
+        '<button class="btn-sm danger" id="logoutBtn" data-i18n="\u767b\u51fa">\u767b\u51fa</button>'.repeat(2),
     );
     assert.throws(() => applyEmbeddedSurface(duplicated), /matched 2 times/);
+
+    /* And the panel rebuild fails loudly rather than leaving the browser-era
+     * account cards in place: showing One a password-change form for a password
+     * its user never chose is exactly the silent degradation to avoid. */
+    const noPanel = APP_HTML.replace(
+        '<div class="settings-panel active" id="settings-security">',
+        '<div class="settings-panel active" id="settings-account">',
+    );
+    assert.throws(() => applyEmbeddedSurface(noPanel), /security panel open tag not found/);
 });
 
 test('server.js routes embedded page loads through the transform', () => {

@@ -77,6 +77,15 @@ fi
 #   mail   — SMTP for login/reset mail; One has no remote recipients
 #   beian  — ICP filing notice, a public-website obligation
 #
+# `security` was hidden here until One had a security surface of its own. It is
+# no longer: zephyr-one-embed-surface.js now *replaces* that panel's body with
+# One's single switch (viewing a stored password or private key requires a system
+# unlock first), so hiding it would hide the one security setting One can
+# actually enforce. The browser-era cards inside it -- change password, TOTP,
+# passkeys, login mail, IP allow-list, CAPTCHA -- are removed structurally by
+# that transform rather than by CSS, because app.js reaches into #passwordForm
+# and friends and a CSS-hidden node still matches those selectors.
+#
 # `data` (backup / restore) is deliberately NOT hidden. It acts on the local
 # core's own zephyr.db, so it is a first-class One capability, and the product
 # contract names it twice: once in the required mobile capability list and again
@@ -94,8 +103,7 @@ cat > "$OUT/public/zephyr-one-embed.css" <<'CSS'
 .settings-tab[data-settings="mail"],
 #settings-mail,
 .settings-tab[data-settings="beian"],
-#settings-beian,
-#settings-security {
+#settings-beian {
   display: none !important;
 }
 CSS

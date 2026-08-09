@@ -6,6 +6,7 @@ mod icon;
 mod rdp_picker;
 mod runtime;
 mod token;
+mod unlock_bridge;
 
 use tauri::Manager;
 

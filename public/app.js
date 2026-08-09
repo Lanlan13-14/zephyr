@@ -1244,7 +1244,25 @@ function renderMarkdown(md, options = {}) {
 try { window.renderMarkdown = renderMarkdown; } catch (_) {}
 function splitCsv(value) { return String(value || '').split(/[\n,，]+/).map((x) => x.trim()).filter(Boolean); }
 function fmtTime(ts) { return ts ? new Date(ts).toLocaleString() : t('从未连接'); }
-function requestSensitiveSecret(actionText = t('查看已保存敏感信息')) {
+/* Zephyr One's reveal gate lives on the OS authenticator, not on a password.
+ *
+ * In One the account password is a value the shell generated and the user never
+ * chose, and there is no second factor, so prompting for it protects nothing
+ * while training the user to type a meaningless secret. The switch in One's
+ * Settings > Security decides instead: on -> Windows Hello / Touch ID / PIN,
+ * off -> no challenge. See zephyr-one-security.js for the server half.
+ *
+ * `window.__zephyrOneUnlock` is installed by the One overlay script. Its absence
+ * is what keeps browser Zephyr on the password/TOTP path below, unchanged. */
+async function requestSensitiveSecret(actionText = t('查看已保存敏感信息')) {
+    const oneUnlock = typeof window !== 'undefined' ? window.__zephyrOneUnlock : null;
+    if (oneUnlock && typeof oneUnlock.acquire === 'function') {
+        /* Returns '' when the switch is off: no challenge was asked for, so the
+         * server sees an empty secret and its own One branch accepts it. Throws
+         * on cancel/failure, which the existing catch in every caller reports. */
+        return oneUnlock.acquire(actionText);
+    }
+
     const usingTotp = !!securityStatus.user?.totpEnabled;
     const message = usingTotp
         ? `${actionText}\n请输入 6 位 TOTP 动态验证码：`
@@ -3558,7 +3576,7 @@ async function revealConnectionSecrets() {
     const protocol = String($('#connProtocol')?.value || 'SSH').toUpperCase();
     const isSsh = protocol === 'SSH';
     const actionText = isSsh ? t('查看已保存连接密码/私钥') : t('查看已保存连接密码');
-    const secret = requestSensitiveSecret(actionText);
+    const secret = await requestSensitiveSecret(actionText);
     const data = await api(`/api/connections/${editingId}/open`, { method: 'POST', body: JSON.stringify({ purpose: 'reveal', secret }) });
     $('#connPassword').value = data.connection?.password || '';
     if (isSsh) $('#connPrivateKey').value = data.connection?.privateKey || '';
@@ -9190,7 +9208,7 @@ async function deleteAiPlanConfirmed(planId) {
     } catch (err) { toast(err.message || t('计划删除失败')); }
 }
 async function revealAiProviderKey(id, trigger = null) {
-    const secret = requestSensitiveSecret(t('查看已保存 AI API Key'));
+    const secret = await requestSensitiveSecret(t('查看已保存 AI API Key'));
     const data = await api(`/api/ai/providers/${encodeURIComponent(id)}/open`, { method: 'POST', body: JSON.stringify({ secret }) });
     const provider = normalizeAiSettings(settings.ai || aiSettingsState || {}).providers.find((p) => p.id === id);
     if (provider) openAiProviderModal(provider, trigger);
@@ -11064,7 +11082,7 @@ async function saveCaptcha(e) {
     toast(t('CAPTCHA 已保存'));
 }
 async function revealCaptchaSecret() {
-    const secret = requestSensitiveSecret(t('查看已保存 CAPTCHA 密钥'));
+    const secret = await requestSensitiveSecret(t('查看已保存 CAPTCHA 密钥'));
     const data = await api('/api/settings/captcha/open', { method: 'POST', body: JSON.stringify({ secret }) });
     $('#captchaSecretKey').value = data.secretKey || '';
     $('#captchaSecretKey').type = 'text';
@@ -11084,7 +11102,7 @@ async function saveMail(e) {
     }
 }
 async function revealMailPass() {
-    const secret = requestSensitiveSecret(t('查看已保存 SMTP 密码'));
+    const secret = await requestSensitiveSecret(t('查看已保存 SMTP 密码'));
     const data = await api('/api/settings/mail/open', { method: 'POST', body: JSON.stringify({ secret }) });
     $('#mailPass').value = data.pass || '';
     $('#mailPass').type = 'text';
@@ -11587,7 +11605,7 @@ function closeProxyModal() {
 }
 async function saveProxy(e) { e.preventDefault(); const id = $('#proxyId').value, payload = { name: $('#proxyName').value, type: $('#proxyType').value, host: $('#proxyHost').value, port: Number($('#proxyPort').value), username: $('#proxyUsername').value, password: $('#proxyPassword').value }; console.debug('[route-ui]', 'save proxy payload', { id, ...payload, password: payload.password ? '******' : '' }); await api(id ? `/api/proxies/${id}` : '/api/proxies', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); closeProxyModal(); await loadNetwork(); toast(t('代理已保存')); }
 async function openProxySecret(id, trigger = null) {
-    const secret = requestSensitiveSecret('查看已保存代理密码');
+    const secret = await requestSensitiveSecret('查看已保存代理密码');
     const data = await api(`/api/proxies/${id}/open`, { method: 'POST', body: JSON.stringify({ secret }) });
     const p = data.proxy || {};
     $('#proxyId').value = p.id || '';
@@ -11908,7 +11926,7 @@ async function saveSshKey(e) {
     toast(t('SSH 密钥已保存'));
 }
 async function openSshKeySecret(id, trigger = null) {
-    const secret = requestSensitiveSecret('查看已保存 SSH 密钥');
+    const secret = await requestSensitiveSecret('查看已保存 SSH 密钥');
     const data = await api(`/api/ssh-keys/${id}/open`, { method: 'POST', body: JSON.stringify({ secret }) });
     const k = data.sshKey || {};
     openSshKeyModal(k, trigger);
@@ -13482,7 +13500,7 @@ async function renameAgentToken(id) {
 
 async function regenerateAgentToken(id) {
     if (!confirm(t('重新生成后，使用旧 Token 的 Agent / One 会断开，需要重新填写新 Token。继续？'))) return;
-    const secret = requestSensitiveSecret(t('重新生成 Zephyr Client Token'));
+    const secret = await requestSensitiveSecret(t('重新生成 Zephyr Client Token'));
     if (secret == null || secret === '') throw new Error(t('已取消'));
     const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/regenerate`, {
         method: 'POST',
@@ -13496,7 +13514,7 @@ async function regenerateAgentToken(id) {
 
 async function deleteAgentToken(id) {
     if (!confirm(t('删除后，使用此 Token 的 Agent / One 会断开。删除需验证密码或两步验证码。继续？'))) return;
-    const secret = requestSensitiveSecret(t('删除 Zephyr Client Token'));
+    const secret = await requestSensitiveSecret(t('删除 Zephyr Client Token'));
     if (secret == null || secret === '') throw new Error(t('已取消'));
     await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/delete`, {
         method: 'POST',
@@ -13510,7 +13528,7 @@ async function deleteAgentToken(id) {
 async function revealAgentToken(id, { copy = false } = {}) {
     let token = agentRevealedTokens.get(id) || '';
     if (!token) {
-        const secret = requestSensitiveSecret(copy ? t('复制 Zephyr Client Token') : t('查看 Zephyr Client Token'));
+        const secret = await requestSensitiveSecret(copy ? t('复制 Zephyr Client Token') : t('查看 Zephyr Client Token'));
         if (secret == null || secret === '') throw new Error(t('已取消'));
         const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/open`, {
             method: 'POST',
@@ -13535,7 +13553,7 @@ async function copyAgentToken(id) {
 
 async function resetAllAgentTokens() {
     if (!confirm(t('这会删除当前账号所有 Client Token，并断开所有已连接 Agent / One。继续？'))) return;
-    const secret = requestSensitiveSecret(t('重置全部 Zephyr Client Token'));
+    const secret = await requestSensitiveSecret(t('重置全部 Zephyr Client Token'));
     if (secret == null || secret === '') throw new Error(t('已取消'));
     const name = prompt(t('新 Token 名称'), t('默认 Token'));
     if (name === null) return;
@@ -13589,7 +13607,7 @@ function renderOneClients(clients) {
 
 async function deleteOneClient(clientId) {
     if (!confirm(t('删除后该 Zephyr One 将无法同步，需重新登录绑定。删除需密码或两步验证码。继续？'))) return;
-    const secret = requestSensitiveSecret(t('删除 Zephyr One 客户端'));
+    const secret = await requestSensitiveSecret(t('删除 Zephyr One 客户端'));
     if (secret == null || secret === '') throw new Error(t('已取消'));
     await api(`/api/one/clients/${encodeURIComponent(clientId)}/revoke`, {
         method: 'POST',

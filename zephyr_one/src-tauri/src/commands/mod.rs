@@ -3,6 +3,7 @@ use crate::fs::{self, FileStat, FsState};
 use crate::icon;
 use crate::rdp_picker;
 use crate::runtime;
+use crate::unlock_bridge;
 use crate::token::{TokenRecord, TokenState};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -72,6 +73,12 @@ pub async fn runtime_start(app: AppHandle) -> Result<runtime::RuntimeInfo, Strin
      * path back. Same polling shape as the theme watcher above, and idempotent
      * for the same reason. */
     rdp_picker::spawn_picker_watcher(&watcher_app);
+    /* The product UI's security switch needs a real OS authenticator, and the
+     * page cannot invoke a command for the same remote-origin reason as the
+     * folder picker. This watcher publishes what this platform can do and then
+     * serves unlock requests. Started here rather than in `setup` because it
+     * needs a running core to talk to. */
+    unlock_bridge::spawn_unlock_watcher(&watcher_app);
     Ok(info)
 }
 

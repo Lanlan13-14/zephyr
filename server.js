@@ -141,6 +141,7 @@ const { OneClientManager } = require('./one-client-manager');
 const { MobileV1Api } = require('./mobile-v1-routes');
 const { applyEmbeddedSurface } = require('./zephyr-one-embed-surface');
 const { mountRoutes: mountOneRdpFolderMapping } = require('./zephyr-one-rdp-storage');
+const { mountRoutes: mountOneSecurity } = require('./zephyr-one-security');
 const { installAsyncHandlerGuard, jsonErrorMiddleware } = require('./express-async-guard');
 const terminalSessionTools = require('./ai-terminal-session-tools');
 const { FileTransferGateway } = require('./file-transfer-ws');
@@ -172,6 +173,14 @@ let aiHostServer = null;
  * pin is what makes automatic local-account adoption sound; without it,
  * auto-adoption would hand a live session to anything on the LAN. */
 const ZEPHYR_ONE_EMBEDDED = process.env.ZEPHYR_ONE_EMBEDDED === '1';
+
+/* One's own security surface, assigned when the routes are mounted below.
+ *
+ * Declared here rather than at the mount site because the three reveal routes
+ * (connection / proxy / sshKey) are defined earlier in this file and close over
+ * it. Left null on hosted Zephyr, where the account password and TOTP are real
+ * credentials and `verifySensitiveAccess` is the right gate. */
+let oneSecurity = null;
 const EMBEDDED_LISTEN_HOST = ZEPHYR_ONE_EMBEDDED
     ? '127.0.0.1'
     : String(process.env.ZEPHYR_BIND_HOST || '');
@@ -956,15 +965,49 @@ function applyConnectionRouteFields(conn, body) {
     return conn;
 }
 
+/*
+ * Sensitive-access gate for revealing a stored secret.
+ *
+ * Two products, two honest challenges, one function so no reveal route can
+ * accidentally implement only one of them.
+ *
+ * Hosted Zephyr asks for the account password or a TOTP code. That is the
+ * credential the user actually chose, so it stays exactly as it was.
+ *
+ * Zephyr One has neither. The local account is auto-adopted by the shell, its
+ * password is a generated value the user never picked and cannot be asked to
+ * remember, and there is no second factor. Prompting for it would be theatre:
+ * anybody who can reach this page is already inside the desktop session that
+ * owns the credential. So One consults its own single security switch:
+ *
+ *   on  -> require a real OS authenticator (Windows Hello / Touch ID / PIN),
+ *          proved by a short-lived grant from zephyr-one-security.js.
+ *   off -> no challenge at all. The user asked for none, and inventing one
+ *          would be the same theatre with extra steps.
+ *
+ * `oneSecurity` is null on hosted Zephyr because the module is only mounted
+ * under ZEPHYR_ONE_EMBEDDED, which is what keeps the branch below from ever
+ * weakening the hosted path.
+ */
 function verifySensitiveAccess(req, secretInput) {
     const user = storage.getUser(req.session?.username);
-    if (!user) throw new Error('未登录或会话已过期');
+    if (!user) throw new Error('\u672a\u767b\u5f55\u6216\u4f1a\u8bdd\u5df2\u8fc7\u671f');
+
+    if (oneSecurity) {
+        /* Throws with status 403 + code `one_unlock_required` when the switch is
+         * on and no valid grant was presented; returns null when it is off. */
+        const viaUnlock = oneSecurity.assertRevealAllowed(req);
+        return viaUnlock
+            ? { method: viaUnlock.method, username: user.username }
+            : { method: 'one_local_session', username: user.username };
+    }
+
     const value = String(secretInput || '').trim();
     if (user.totpEnabled) {
-        if (!verifySync({ secret: user.totpSecret || '', token: value }).valid) throw new Error('动态验证码错误');
+        if (!verifySync({ secret: user.totpSecret || '', token: value }).valid) throw new Error('\u52a8\u6001\u9a8c\u8bc1\u7801\u9519\u8bef');
         return { method: 'totp', username: user.username };
     }
-    if (!verifyPassword(value, user.passwordHash)) throw new Error('登录密码错误');
+    if (!verifyPassword(value, user.passwordHash)) throw new Error('\u767b\u5f55\u5bc6\u7801\u9519\u8bef');
     return { method: 'password', username: user.username };
 }
 
@@ -6603,6 +6646,20 @@ app.get(['/app.html', '/app'], requirePageAuth, (req, res, next) => {
  * cannot learn a real directory path, and these endpoints only exist in
  * embedded mode. Outside One this falls through to the 404 handler, which is
  * the correct answer — the injected tag does not exist there either. */
+/* One's security overlay: the single reveal-gate switch plus the
+ * window.__zephyrOneUnlock bridge app.js calls before revealing any stored
+ * secret. Same reasoning as the RDP overlay below - served from a route rather
+ * than public/ so browser Zephyr never ships a file for a handoff it cannot
+ * perform (there is no Tauri shell to claim an unlock request), and the
+ * injected tag only exists in embedded mode anyway. */
+app.get('/zephyr-one-security-ui.js', (req, res, next) => {
+    if (!ZEPHYR_ONE_EMBEDDED) return next();
+    res.type('application/javascript');
+    res.setHeader('Cache-Control', 'no-store');
+    res.sendFile(path.join(__dirname, 'zephyr-one-security-ui.js'), (error) => {
+        if (error) next(error);
+    });
+});
 app.get('/zephyr-one-rdp-settings.js', (req, res, next) => {
     if (!ZEPHYR_ONE_EMBEDDED) return next();
     res.type('application/javascript');
@@ -6777,6 +6834,20 @@ try {
  * use for them: showDirectoryPicker() yields an opaque handle, never a path,
  * so a browser client can never populate a mapping in the first place. */
 if (ZEPHYR_ONE_EMBEDDED) {
+    /* One's single security switch plus the native-unlock handoff.
+     *
+     * Same gate as the folder mapping below, for a related reason: these routes
+     * are meaningful only when the core is a child of the user's own desktop
+     * session, because the challenge they broker is that desktop's OS
+     * authenticator. On a hosted Zephyr there is no such authenticator to reach
+     * and the account password/TOTP path is the correct one. */
+    oneSecurity = mountOneSecurity(app, {
+        requireUser,
+        getSessionUser: (req) => req.user,
+        dataDir: DATA_DIR,
+        logger: console,
+    });
+
     mountOneRdpFolderMapping(app, {
         requireUser,
         getSessionUser: (req) => req.user,
