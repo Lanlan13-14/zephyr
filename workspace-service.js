@@ -48,6 +48,11 @@ class WorkspaceService {
         this.resources = deps?.resources || null;
         this.now = typeof deps?.now === 'function' ? deps.now : () => Date.now();
         this.stmtGet = db.prepare('SELECT * FROM workspaces WHERE workspace_id = ? AND user_id = ?');
+        /* Deterministic single-row reads. stmtGet stays for the existence checks
+         * in put(), which only need "does any row with this id exist for this
+         * user" and are followed by a client-scoped upsert. */
+        this.stmtGetScoped = db.prepare('SELECT * FROM workspaces WHERE workspace_id = ? AND user_id = ? AND client_id = ?');
+        this.stmtGetLatest = db.prepare('SELECT * FROM workspaces WHERE workspace_id = ? AND user_id = ? ORDER BY updated_at DESC, client_id ASC LIMIT 1');
         this.stmtList = db.prepare('SELECT workspace_id, user_id, client_id, name, revision, updated_at FROM workspaces WHERE user_id = ? ORDER BY updated_at DESC');
         this.stmtListClient = db.prepare('SELECT * FROM workspaces WHERE user_id = ? AND client_id = ? ORDER BY updated_at DESC');
         this.stmtUpsert = db.prepare(`INSERT INTO workspaces
@@ -73,8 +78,23 @@ class WorkspaceService {
         return rows.map((row) => this._meta(row));
     }
 
-    get(userId, workspaceId) {
-        const row = this.stmtGet.get(String(workspaceId), String(userId));
+    /**
+     * One workspace, optionally scoped to a single client.
+     *
+     * The primary key is (user_id, client_id, workspace_id), so a workspace id on
+     * its own can match one row per client. `stmtGet` filters only on
+     * workspace_id + user_id, which made the unscoped read return whichever row
+     * SQLite happened to visit first: verified against two rows sharing an id,
+     * where the caller asking for the mobile workspace received the desktop one.
+     *
+     * Passing `clientId` selects exactly one row. Omitting it now resolves to the
+     * most recently updated row rather than an arbitrary one, so the existing Web
+     * route keeps working and becomes deterministic instead of changing shape.
+     */
+    get(userId, workspaceId, { clientId = null } = {}) {
+        const row = clientId
+            ? this.stmtGetScoped.get(String(workspaceId), String(userId), String(clientId))
+            : this.stmtGetLatest.get(String(workspaceId), String(userId));
         if (!row) throw new HttpError(404, 'workspace_not_found', '工作区不存在');
         return this._full(row);
     }
@@ -88,7 +108,15 @@ class WorkspaceService {
             throw new HttpError(400, 'invalid_client_id', 'clientId 无效');
         }
         const id = String(workspaceId || crypto.randomUUID());
-        const existing = this.stmtGet.get(id, user.userId);
+        /* Scoped to this client, because the primary key is
+         * (user_id, client_id, workspace_id) and the upsert below conflicts on
+         * all three. Reading with the unscoped statement compared the caller's
+         * expectedRevision against whichever row SQLite happened to return
+         * first, so two devices holding the same workspaceId saw each other's
+         * revisions: one device could be handed a spurious 409 while the other
+         * silently jumped its revision counter. Both rows are legitimate and
+         * independent; the guard has to be per row. */
+        const existing = this.stmtGetScoped.get(id, user.userId, String(clientId));
         if (existing && expectedRevision != null && Number(existing.revision) !== Number(expectedRevision)) {
             throw new HttpError(409, 'workspace_revision_conflict', '工作区已被其他设备更新', false);
         }
@@ -131,8 +159,8 @@ class WorkspaceService {
      * ACL. Dangerous actions are never auto-replayed — only metadata +
      * accessibility flags are returned (§14.2).
      */
-    restore(user, workspaceId) {
-        const ws = this.get(user.userId, workspaceId);
+    restore(user, workspaceId, { clientId = null } = {}) {
+        const ws = this.get(user.userId, workspaceId, { clientId });
         const state = ws.state || {};
         const tabs = Array.isArray(state.tabs) ? state.tabs : [];
         const filteredTabs = tabs.map((tab) => {
