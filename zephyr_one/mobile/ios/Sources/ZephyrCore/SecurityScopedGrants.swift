@@ -94,10 +94,17 @@ public final class SecurityScopedGrants {
 
     private let bookmarks: BookmarkStore
     /// Durable share rows. Device-local; nothing here is synced.
-    private var store: [String: SecurityScopedGrant] = [:]
+    ///
+    /// Injectable so the rows can outlive the process. The default is in-memory,
+    /// which is what the lifecycle tests use; the app passes
+    /// ``PersistentShareRowStore`` so a picked directory survives a relaunch.
+    /// Without that the app holds a bookmark with no row describing it -- access
+    /// the user granted that the UI can no longer show or revoke.
+    private let rows: ShareRowStore
 
-    public init(bookmarks: BookmarkStore) {
+    public init(bookmarks: BookmarkStore, rows: ShareRowStore = InMemoryShareRowStore()) {
         self.bookmarks = bookmarks
+        self.rows = rows
     }
 
     /// Records a directory the user just picked.
@@ -134,7 +141,7 @@ public final class SecurityScopedGrants {
             readOnly: !requestWrite || !resolved.canWrite,
             grantValid: true
         )
-        store[profileId] = grant
+        rows.put(grant)
         return grant
     }
 
@@ -144,7 +151,8 @@ public final class SecurityScopedGrants {
     /// returns a grant, with `grantValid` false: the caller needs to tell the user
     /// which directory to re-authorise, and it cannot do that from a nil.
     public func grant(profileId: String) -> SecurityScopedGrant? {
-        guard let stored = store[profileId] else { return nil }
+        guard let stored = rows.rows().first(where: { $0.profileId == profileId })
+        else { return nil }
         let live = bookmarks.stored().first { $0.bookmarkId == stored.bookmarkId }
         return SecurityScopedGrant(
             profileId: stored.profileId,
@@ -162,7 +170,7 @@ public final class SecurityScopedGrants {
     }
 
     public func all() -> [SecurityScopedGrant] {
-        store.keys.sorted().compactMap { grant(profileId: $0) }
+        rows.rows().compactMap { grant(profileId: $0.profileId) }
     }
 
     /// Shares that can actually serve right now.
@@ -176,11 +184,18 @@ public final class SecurityScopedGrants {
     /// directory the user has removed from the app's own list, which is precisely
     /// the ambient access security-scoped URLs exist to avoid.
     public func revoke(profileId: String) {
-        guard let stored = store.removeValue(forKey: profileId) else { return }
+        guard let stored = rows.rows().first(where: { $0.profileId == profileId })
+        else { return }
+        rows.remove(profileId: profileId)
         /* Only when no other profile still points at the same bookmark. Two shares
          * over one directory is legal (DEVELOPMENT.md 13.2 allows multiple
-         * profiles), and discarding on the first removal would break the second. */
-        if !store.values.contains(where: { $0.bookmarkId == stored.bookmarkId }) {
+         * profiles), and discarding on the first removal would break the second.
+         *
+         * Re-read after the removal rather than filtered from the pre-removal list,
+         * so the row just removed cannot count as another profile using the
+         * bookmark and keep it alive forever. */
+        let stillUsed = rows.rows().contains { $0.bookmarkId == stored.bookmarkId }
+        if !stillUsed {
             bookmarks.discard(bookmarkId: stored.bookmarkId)
         }
     }
@@ -196,9 +211,12 @@ public final class SecurityScopedGrants {
     @discardableResult
     public func pruneInvalid() -> [String] {
         let live = Set(bookmarks.stored().filter { $0.canRead && !$0.isStale }.map(\.bookmarkId))
-        let dropped = store.filter { !live.contains($0.value.bookmarkId) }.keys.sorted()
+        let dropped = rows.rows()
+            .filter { !live.contains($0.bookmarkId) }
+            .map(\.profileId)
+            .sorted()
         for profileId in dropped {
-            store.removeValue(forKey: profileId)
+            rows.remove(profileId: profileId)
         }
         return dropped
     }

@@ -162,6 +162,10 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'Any', 'Self', 'Never', 'Void', 'Result', 'Scalar',
     // Foundation
     'URL', 'JSONSerialization', 'NSNumber', 'NSString', 'Date',
+    /* Reached only by UserDefaultsKeyValueStore, which is the one file allowed to
+     * know how the file-sync rows are stored. Every rule above it is written
+     * against the KeyValueStore seam so it can be tested without a container. */
+    'UserDefaults',
     // CryptoKit
     'SHA256',
     /* Darwin / POSIX, used by PosixSecurityScopedFileSystem.

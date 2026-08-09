@@ -50,6 +50,9 @@ const POSIX = read(CORE, 'PosixSecurityScopedFileSystem.swift');
 const GRANTS = read(CORE, 'SecurityScopedGrants.swift');
 const VPATH = read(CORE, 'VirtualPath.swift');
 const PROTOCOL = read(CORE, 'Zft2FileProvider.swift');
+const BOOKMARKS = read(CORE, 'PersistentBookmarkStore.swift');
+const ROWS = read(CORE, 'ShareRowStore.swift');
+const KV = read(CORE, 'KeyValueStore.swift');
 
 test('the iOS core now has a file provider at all', () => {
   /* F-027 was `missing` because ZephyrCore held the codec and the crypto and
@@ -436,7 +439,25 @@ test('the grant chain re-derives validity instead of trusting stored state', () 
   /* Discarded on revoke, but only when no other profile uses the bookmark: two
    * shares over one directory is legal, and discarding on the first removal would
    * break the second. */
-  assert.match(GRANTS, /if !store\.values\.contains\(where: \{ \$0\.bookmarkId == stored\.bookmarkId \}\)/);
+  /* Re-read AFTER the removal, not filtered from a pre-removal snapshot.
+   *
+   * Both shapes refuse to discard a bookmark another profile uses, but only this
+   * one cannot count the row being removed as that other profile -- which would
+   * keep every bookmark alive forever and leave the app able to resolve a
+   * directory the user removed from its own list. */
+  assert.match(GRANTS, /rows\.remove\(profileId: profileId\)/);
+  assert.match(
+    GRANTS,
+    /let stillUsed = rows\.rows\(\)\.contains \{ \$0\.bookmarkId == stored\.bookmarkId \}/,
+    'the check must run against the store after the row was removed',
+  );
+  const revokeBody = codeOf(GRANTS).slice(codeOf(GRANTS).indexOf('func revoke(profileId:'));
+  assert.ok(revokeBody.length > 0, 'revoke must be locatable');
+  assert.ok(
+    revokeBody.indexOf('rows.remove(profileId: profileId)') <
+      revokeBody.indexOf('let stillUsed'),
+    'the row must be removed before the remaining users are counted',
+  );
   assert.match(GRANTS, /bookmarks\.discard\(bookmarkId: stored\.bookmarkId\)/);
 
   /* Both platforms must label an unnamed share alike, or one product shows two
@@ -499,6 +520,168 @@ test('the XCTest suites cover the attacks DEVELOPMENT.md 19.6 names', () => {
   assert.match(fakes, /func canonicalPath\(of absolutePath: String\) throws -> String\?/);
 });
 
+
+test('BookmarkStore has a real implementation, not only a test fake', () => {
+  /* The gap this closes. BookmarkStore was a protocol with a single implementation
+   * in the test target, so SecurityScopedGrants could hold a grant in memory and
+   * nothing more: on a device the app forgot every authorised directory on the next
+   * launch while the user believed the share was still set up. */
+  assert.ok(fs.existsSync(path.join(CORE, 'PersistentBookmarkStore.swift')));
+  assert.match(BOOKMARKS, /public final class PersistentBookmarkStore: BookmarkStore \{/);
+
+  /* A bookmark, never a path. A container path changes between installs, an iCloud or
+   * external directory can move, and a raw path carries no sandbox extension -- so
+   * reading through one fails even where the user granted access. */
+  assert.match(BOOKMARKS, /url\.bookmarkData\(/);
+  assert.match(BOOKMARKS, /URL\(\s*resolvingBookmarkData: data,/);
+
+  /* .withSecurityScope is macOS-only and throws on iOS, and resolving with different
+   * options than were used to mint fails. Both calls must pass []. */
+  assert.doesNotMatch(codeOf(BOOKMARKS), /withSecurityScope/);
+});
+
+test('a stale bookmark is recorded rather than treated as usable', () => {
+  /* A stale bookmark still resolves today, which is exactly the trap: the correct
+   * response is to re-create it, and until then the share counts as invalid.
+   * DEVELOPMENT.md 13.5 has iOS re-verify before reconnecting. */
+  assert.match(BOOKMARKS, /bookmarkDataIsStale: &isStale/);
+  assert.match(BOOKMARKS, /staleIds\.insert\(identifier\)/);
+  assert.match(BOOKMARKS, /isStale: staleIds\.contains\(identifier\)/);
+
+  /* Resolved eagerly at construction so stored() reports staleness from the first
+   * call. Discovering it on the first READ means the remote already opened a folder. */
+  assert.match(BOOKMARKS, /private func loadAll\(\)/);
+
+  /* A bookmark that cannot resolve is NOT discarded: a volume can be temporarily
+   * absent, and deleting the row would lose a grant the user gets back by
+   * reattaching it. It simply does not appear in stored(), which reads as invalid. */
+  const resolveBody = codeOf(BOOKMARKS).slice(codeOf(BOOKMARKS).indexOf('func resolveFromStore'));
+  assert.ok(resolveBody.length > 0, 'resolveFromStore must be locatable');
+  assert.doesNotMatch(resolveBody.slice(0, 900), /discard\(/);
+});
+
+test('a bookmark cannot be invented for a URL the user never picked', () => {
+  /* persist() confirms an existing row rather than minting. Minting only works while
+   * the picker's grant is live, so a persist() that minted would either fail or,
+   * worse, appear to authorise a directory the user never handed over. */
+  const persistBody = codeOf(BOOKMARKS).slice(
+    codeOf(BOOKMARKS).indexOf('public func persist(bookmarkId:'),
+    codeOf(BOOKMARKS).indexOf('public func discard('),
+  );
+  assert.ok(persistBody.length > 0, 'persist must be locatable');
+  assert.doesNotMatch(persistBody, /bookmarkData\(/, 'persist must not mint');
+  assert.match(persistBody, /guard store\.data\(Self\.dataKey\(bookmarkId\)\) != nil else \{ return nil \}/);
+
+  /* And it cannot widen a read-only bookmark by asking for write. */
+  assert.match(persistBody, /canWrite: allowWrite && granted/);
+});
+
+test('an authorised directory survives a relaunch on iOS too', () => {
+  /* The same guarantee PersistentShareStore gives on Android. Both platforms lost it
+   * for different reasons and both needed it written down separately. */
+  assert.match(ROWS, /public final class PersistentShareRowStore: ShareRowStore \{/);
+  assert.match(ROWS, /public final class InMemoryShareRowStore: ShareRowStore \{/);
+
+  /* Injected, with the in-memory default preserved so the existing lifecycle suites
+   * keep working and cannot leak state into each other. */
+  assert.match(
+    GRANTS,
+    /public init\(bookmarks: BookmarkStore, rows: ShareRowStore = InMemoryShareRowStore\(\)\)/,
+  );
+  assert.match(GRANTS, /rows\.put\(grant\)/, 'authorize must write through');
+
+  /* Validity is re-derived on every read, so persisting false would outlive its cause
+   * and leave the share broken after the user re-granted the directory. */
+  assert.match(ROWS, /grantValid: true/);
+  assert.doesNotMatch(codeOf(ROWS), /grantValid: false/);
+
+  /* A row that lost its write flag reads as read-only: the strictest reading is the
+   * safe one. */
+  assert.match(ROWS, /readOnly: store\.boolean\(Self\.readOnlyKey\(profileId\), default: true\)/);
+});
+
+test('iOS persistence sits behind the same kind of seam Android uses', () => {
+  /* UserDefaults is a Foundation singleton whose behaviour depends on a process
+   * container, so code written against it directly can only run on a device. Only the
+   * macOS runner compiles this tree at all, so the seam is the difference between
+   * rules that are tested and rules that are merely written down. */
+  assert.match(KV, /public protocol KeyValueStore: AnyObject \{/);
+  assert.doesNotMatch(codeOf(ROWS), /UserDefaults/);
+  assert.doesNotMatch(codeOf(BOOKMARKS), /UserDefaults/);
+  assert.match(KV, /public final class UserDefaultsKeyValueStore: KeyValueStore \{/);
+
+  /* object(forKey:) first: bool(forKey:) cannot tell a stored false from an absent
+   * key, and the read-only default depends on that difference. */
+  assert.match(KV, /guard defaults\.object\(forKey: key\) != nil else \{ return defaultValue \}/);
+
+  /* An explicit suite, and a failable init rather than a silent fall back to
+   * .standard, where rows would be written somewhere the next launch does not look. */
+  assert.match(KV, /public convenience init\?\(suiteName: String\)/);
+  assert.match(BOOKMARKS, /public static let suiteName = /);
+});
+
+test('the per-connection choice is device-local on iOS', () => {
+  /* DEVELOPMENT.md 3 and 13.2: a profile id names a bookmark that resolves on exactly
+   * one device, so syncing it would hand the other device a row it cannot resolve. */
+  assert.match(ROWS, /public final class ConnectionShareChoices \{/);
+  assert.match(ROWS, /public func pruneMissing\(knownProfileIds: Set<String>\) -> \[String\]/);
+
+  /* Forgetting a choice must not release the bookmark: other connections may share it.
+   *
+   * Scoped to the function body rather than a fixed number of characters. A fixed
+   * slice ran into the next declaration, whose `@discardableResult` attribute
+   * contains the substring "discard", so the assertion failed on an attribute
+   * instead of on anything forget() does. */
+  const rowsCode = codeOf(ROWS);
+  const forgetAt = rowsCode.indexOf('public func forget(connectionId:');
+  assert.ok(forgetAt >= 0, 'forget must be locatable');
+  const forgetBody = rowsCode.slice(forgetAt, rowsCode.indexOf('\n    }', forgetAt));
+  assert.ok(forgetBody.length > 0, 'the forget body must be locatable');
+  assert.doesNotMatch(
+    forgetBody,
+    /discard\(|bookmarkId/,
+    'forget must clear the choice without touching the bookmark',
+  );
+  /* And it does clear the choice, or "ask again" would never happen. */
+  assert.match(forgetBody, /writer\.remove\(Self\.key\(connectionId\)\)/);
+});
+
+test('revoking re-reads the rows before discarding a bookmark', () => {
+  /* Counting remaining users from a pre-removal snapshot would find the row being
+   * removed, so no bookmark would ever be discarded and the app would stay able to
+   * resolve a directory the user removed from its own list. */
+  const revoke = codeOf(GRANTS).slice(codeOf(GRANTS).indexOf('public func revoke(profileId:'));
+  assert.ok(revoke.length > 0, 'revoke must be locatable');
+  assert.ok(
+    revoke.indexOf('rows.remove(profileId: profileId)') < revoke.indexOf('let stillUsed'),
+    'the row must be removed before the remaining users are counted',
+  );
+});
+
+test('the iOS persistence rules have XCTest coverage', () => {
+  const suite = read(TESTS, 'PersistentShareRowStoreTests.swift');
+  for (const name of [
+    'testAnAuthorisedDirectorySurvivesARelaunch',
+    'testAReadOnlyShareIsStillReadOnlyAfterARelaunch',
+    'testValidityIsNeverPersistedAsFalse',
+    'testRevokingRemovesTheRowFromStorageToo',
+    'testRevokingOneOfTwoSharesOverOneBookmarkKeepsIt',
+    'testARowWhoseBookmarkIdWasLostIsDropped',
+    'testARowMissingItsWriteFlagIsAssumedReadOnly',
+    'testARowIsWrittenAsOneBatch',
+    'testPruningDropsInvalidRowsFromStorage',
+    'testTheDefaultStoreIsStillInMemory',
+    'testPruningDropsChoicesNamingAProfileThatIsGone',
+  ]) {
+    assert.match(suite, new RegExp('func ' + name + '\\('), 'missing coverage: ' + name);
+  }
+
+  /* The fakes have to model a restart and a re-created bookmark, or none of the
+   * persistence tests assert anything. */
+  const kvFake = read(TESTS, 'FakeKeyValueStore.swift');
+  assert.match(kvFake, /func surviveRestart\(\) -> FakeKeyValueStore/);
+  assert.match(read(TESTS, 'FileProviderFakes.swift'), /func refresh\(_ bookmarkId: String\)/);
+});
 test('the new Swift is ASCII-only', () => {
   /* Not style. Non-ASCII literals have been destroyed repeatedly by a shell
    * boundary in this environment, and a mangled string in a path check is a

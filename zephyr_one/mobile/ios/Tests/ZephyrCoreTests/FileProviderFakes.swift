@@ -307,4 +307,19 @@ final class FakeBookmarkStore: BookmarkStore {
     func vanish(_ bookmarkId: String) {
         bookmarks.removeValue(forKey: bookmarkId)
     }
+
+    /// Simulates the user re-creating a stale bookmark.
+    ///
+    /// The inverse of `goStale`, and it is what proves validity is re-derived rather
+    /// than remembered: a persisted `grantValid = false` would survive this and leave
+    /// the share broken after the user had already fixed it.
+    func refresh(_ bookmarkId: String) {
+        guard let existing = bookmarks[bookmarkId] else { return }
+        bookmarks[bookmarkId] = ResolvedBookmark(
+            bookmarkId: existing.bookmarkId,
+            canRead: existing.canRead,
+            canWrite: existing.canWrite,
+            isStale: false
+        )
+    }
 }
