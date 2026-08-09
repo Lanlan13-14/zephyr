@@ -139,6 +139,7 @@ const {
 const { FileAgentManager } = require('./file-agent-manager');
 const { OneClientManager } = require('./one-client-manager');
 const { applyEmbeddedSurface } = require('./zephyr-one-embed-surface');
+const { mountRoutes: mountOneRdpFolderMapping } = require('./zephyr-one-rdp-storage');
 const { installAsyncHandlerGuard, jsonErrorMiddleware } = require('./express-async-guard');
 const terminalSessionTools = require('./ai-terminal-session-tools');
 const { FileTransferGateway } = require('./file-transfer-ws');
@@ -6584,6 +6585,20 @@ app.get(['/app.html', '/app'], requirePageAuth, (req, res, next) => {
     }
     return sendNoStorePage(req, res, next, 'app.html');
 });
+/* The RDP folder-mapping overlay, referenced by the script tag
+ * applyEmbeddedSurface() injects. Served from a route rather than public/ so
+ * browser Zephyr never ships a file for a feature it cannot perform: a browser
+ * cannot learn a real directory path, and these endpoints only exist in
+ * embedded mode. Outside One this falls through to the 404 handler, which is
+ * the correct answer — the injected tag does not exist there either. */
+app.get('/zephyr-one-rdp-settings.js', (req, res, next) => {
+    if (!ZEPHYR_ONE_EMBEDDED) return next();
+    res.type('application/javascript');
+    res.setHeader('Cache-Control', 'no-store');
+    res.sendFile(path.join(__dirname, 'zephyr-one-rdp-settings.js'), (error) => {
+        if (error) next(error);
+    });
+});
 app.get('/terminal.html', requirePageAuth, (req, res, next) => sendNoStorePage(req, res, next, 'terminal.html'));
 app.get('/rdp.html', requirePageAuth, (req, res, next) => sendNoStorePage(req, res, next, 'rdp.html'));
 app.get('/novnc.html', requirePageAuth, (req, res, next) => sendNoStorePage(req, res, next, 'novnc.html'));
@@ -6684,6 +6699,25 @@ oneClientManager.mountRoutes(app, {
     resolveUserById: (id) => storage.getUserById(id),
     resolveUserByUsername: (name) => storage.getUser(name),
 });
+
+/* RDP folder mapping, Zephyr One only.
+ *
+ * Gated on ZEPHYR_ONE_EMBEDDED, and that gate is load-bearing rather than
+ * tidiness. These routes map an absolute directory on the machine running the
+ * core and then serve bytes out of it. In One the core is a child process of
+ * the user's own desktop session, so that directory is the user's own. On a
+ * hosted Zephyr it would be the *server's* filesystem, which would turn any
+ * logged-in account into an arbitrary file read. Browser Zephyr also has no
+ * use for them: showDirectoryPicker() yields an opaque handle, never a path,
+ * so a browser client can never populate a mapping in the first place. */
+if (ZEPHYR_ONE_EMBEDDED) {
+    mountOneRdpFolderMapping(app, {
+        requireUser,
+        getSessionUser: (req) => req.user,
+        dataDir: DATA_DIR,
+        logger: console,
+    });
+}
 
 app.get('/healthz', (req, res) => res.status(200).json({ ok: true, instanceId: INSTANCE_ID, version: APP_VERSION }));
 

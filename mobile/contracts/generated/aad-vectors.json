@@ -1,0 +1,347 @@
+{
+  "generatedFrom": "mobile/tools/lib/aad.mjs",
+  "separator": 0,
+  "cases": [
+    {
+      "name": "canonical-secret",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-1",
+        "deviceId": "dev-1",
+        "entityType": "connection",
+        "entityId": "conn-1",
+        "fieldName": "password",
+        "entityRevision": 8,
+        "keyVersion": 1
+      },
+      "expectedHex": "7a65706879722d6d6f62696c652d7365637265742d7631007372762d31007573722d31006465762d3100636f6e6e656374696f6e00636f6e6e2d310070617373776f726400380031",
+      "expectedBase64": "emVwaHlyLW1vYmlsZS1zZWNyZXQtdjEAc3J2LTEAdXNyLTEAZGV2LTEAY29ubmVjdGlvbgBjb25uLTEAcGFzc3dvcmQAOAAx",
+      "expectedLength": 72
+    },
+    {
+      "name": "canonical-shared",
+      "kind": "shared",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-2",
+        "deviceId": "dev-1",
+        "sessionId": "sess-1",
+        "resourceId": "conn-7",
+        "resourceRevision": 9,
+        "purpose": "ssh",
+        "expiresAt": 1786093230000,
+        "clientNonce": "nonce-1234567890abcdef"
+      },
+      "expectedHex": "7368617265642d7573652d7631007372762d31007573722d32006465762d3100736573732d3100636f6e6e2d370039007373680031373836303933323330303030006e6f6e63652d31323334353637383930616263646566",
+      "expectedBase64": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMQBzZXNzLTEAY29ubi03ADkAc3NoADE3ODYwOTMyMzAwMDAAbm9uY2UtMTIzNDU2Nzg5MGFiY2RlZg==",
+      "expectedLength": 88
+    },
+    {
+      "name": "secret-mutated-serverId",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-2",
+        "userId": "usr-1",
+        "deviceId": "dev-1",
+        "entityType": "connection",
+        "entityId": "conn-1",
+        "fieldName": "password",
+        "entityRevision": 8,
+        "keyVersion": 1
+      },
+      "expectedHex": "7a65706879722d6d6f62696c652d7365637265742d7631007372762d32007573722d31006465762d3100636f6e6e656374696f6e00636f6e6e2d310070617373776f726400380031",
+      "expectedBase64": "emVwaHlyLW1vYmlsZS1zZWNyZXQtdjEAc3J2LTIAdXNyLTEAZGV2LTEAY29ubmVjdGlvbgBjb25uLTEAcGFzc3dvcmQAOAAx",
+      "expectedLength": 72
+    },
+    {
+      "name": "secret-mutated-userId",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-9",
+        "deviceId": "dev-1",
+        "entityType": "connection",
+        "entityId": "conn-1",
+        "fieldName": "password",
+        "entityRevision": 8,
+        "keyVersion": 1
+      },
+      "expectedHex": "7a65706879722d6d6f62696c652d7365637265742d7631007372762d31007573722d39006465762d3100636f6e6e656374696f6e00636f6e6e2d310070617373776f726400380031",
+      "expectedBase64": "emVwaHlyLW1vYmlsZS1zZWNyZXQtdjEAc3J2LTEAdXNyLTkAZGV2LTEAY29ubmVjdGlvbgBjb25uLTEAcGFzc3dvcmQAOAAx",
+      "expectedLength": 72
+    },
+    {
+      "name": "secret-mutated-deviceId",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-1",
+        "deviceId": "dev-2",
+        "entityType": "connection",
+        "entityId": "conn-1",
+        "fieldName": "password",
+        "entityRevision": 8,
+        "keyVersion": 1
+      },
+      "expectedHex": "7a65706879722d6d6f62696c652d7365637265742d7631007372762d31007573722d31006465762d3200636f6e6e656374696f6e00636f6e6e2d310070617373776f726400380031",
+      "expectedBase64": "emVwaHlyLW1vYmlsZS1zZWNyZXQtdjEAc3J2LTEAdXNyLTEAZGV2LTIAY29ubmVjdGlvbgBjb25uLTEAcGFzc3dvcmQAOAAx",
+      "expectedLength": 72
+    },
+    {
+      "name": "secret-mutated-entityType",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-1",
+        "deviceId": "dev-1",
+        "entityType": "sshKey",
+        "entityId": "conn-1",
+        "fieldName": "password",
+        "entityRevision": 8,
+        "keyVersion": 1
+      },
+      "expectedHex": "7a65706879722d6d6f62696c652d7365637265742d7631007372762d31007573722d31006465762d31007373684b657900636f6e6e2d310070617373776f726400380031",
+      "expectedBase64": "emVwaHlyLW1vYmlsZS1zZWNyZXQtdjEAc3J2LTEAdXNyLTEAZGV2LTEAc3NoS2V5AGNvbm4tMQBwYXNzd29yZAA4ADE=",
+      "expectedLength": 68
+    },
+    {
+      "name": "secret-mutated-entityId",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-1",
+        "deviceId": "dev-1",
+        "entityType": "connection",
+        "entityId": "conn-2",
+        "fieldName": "password",
+        "entityRevision": 8,
+        "keyVersion": 1
+      },
+      "expectedHex": "7a65706879722d6d6f62696c652d7365637265742d7631007372762d31007573722d31006465762d3100636f6e6e656374696f6e00636f6e6e2d320070617373776f726400380031",
+      "expectedBase64": "emVwaHlyLW1vYmlsZS1zZWNyZXQtdjEAc3J2LTEAdXNyLTEAZGV2LTEAY29ubmVjdGlvbgBjb25uLTIAcGFzc3dvcmQAOAAx",
+      "expectedLength": 72
+    },
+    {
+      "name": "secret-mutated-fieldName",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-1",
+        "deviceId": "dev-1",
+        "entityType": "connection",
+        "entityId": "conn-1",
+        "fieldName": "privateKey",
+        "entityRevision": 8,
+        "keyVersion": 1
+      },
+      "expectedHex": "7a65706879722d6d6f62696c652d7365637265742d7631007372762d31007573722d31006465762d3100636f6e6e656374696f6e00636f6e6e2d3100707269766174654b657900380031",
+      "expectedBase64": "emVwaHlyLW1vYmlsZS1zZWNyZXQtdjEAc3J2LTEAdXNyLTEAZGV2LTEAY29ubmVjdGlvbgBjb25uLTEAcHJpdmF0ZUtleQA4ADE=",
+      "expectedLength": 74
+    },
+    {
+      "name": "secret-mutated-entityRevision",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-1",
+        "deviceId": "dev-1",
+        "entityType": "connection",
+        "entityId": "conn-1",
+        "fieldName": "password",
+        "entityRevision": 9,
+        "keyVersion": 1
+      },
+      "expectedHex": "7a65706879722d6d6f62696c652d7365637265742d7631007372762d31007573722d31006465762d3100636f6e6e656374696f6e00636f6e6e2d310070617373776f726400390031",
+      "expectedBase64": "emVwaHlyLW1vYmlsZS1zZWNyZXQtdjEAc3J2LTEAdXNyLTEAZGV2LTEAY29ubmVjdGlvbgBjb25uLTEAcGFzc3dvcmQAOQAx",
+      "expectedLength": 72
+    },
+    {
+      "name": "secret-mutated-keyVersion",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-1",
+        "deviceId": "dev-1",
+        "entityType": "connection",
+        "entityId": "conn-1",
+        "fieldName": "password",
+        "entityRevision": 8,
+        "keyVersion": 2
+      },
+      "expectedHex": "7a65706879722d6d6f62696c652d7365637265742d7631007372762d31007573722d31006465762d3100636f6e6e656374696f6e00636f6e6e2d310070617373776f726400380032",
+      "expectedBase64": "emVwaHlyLW1vYmlsZS1zZWNyZXQtdjEAc3J2LTEAdXNyLTEAZGV2LTEAY29ubmVjdGlvbgBjb25uLTEAcGFzc3dvcmQAOAAy",
+      "expectedLength": 72
+    },
+    {
+      "name": "shared-mutated-deviceId",
+      "kind": "shared",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-2",
+        "deviceId": "dev-2",
+        "sessionId": "sess-1",
+        "resourceId": "conn-7",
+        "resourceRevision": 9,
+        "purpose": "ssh",
+        "expiresAt": 1786093230000,
+        "clientNonce": "nonce-1234567890abcdef"
+      },
+      "expectedHex": "7368617265642d7573652d7631007372762d31007573722d32006465762d3200736573732d3100636f6e6e2d370039007373680031373836303933323330303030006e6f6e63652d31323334353637383930616263646566",
+      "expectedBase64": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMgBzZXNzLTEAY29ubi03ADkAc3NoADE3ODYwOTMyMzAwMDAAbm9uY2UtMTIzNDU2Nzg5MGFiY2RlZg==",
+      "expectedLength": 88
+    },
+    {
+      "name": "shared-mutated-sessionId",
+      "kind": "shared",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-2",
+        "deviceId": "dev-1",
+        "sessionId": "sess-2",
+        "resourceId": "conn-7",
+        "resourceRevision": 9,
+        "purpose": "ssh",
+        "expiresAt": 1786093230000,
+        "clientNonce": "nonce-1234567890abcdef"
+      },
+      "expectedHex": "7368617265642d7573652d7631007372762d31007573722d32006465762d3100736573732d3200636f6e6e2d370039007373680031373836303933323330303030006e6f6e63652d31323334353637383930616263646566",
+      "expectedBase64": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMQBzZXNzLTIAY29ubi03ADkAc3NoADE3ODYwOTMyMzAwMDAAbm9uY2UtMTIzNDU2Nzg5MGFiY2RlZg==",
+      "expectedLength": 88
+    },
+    {
+      "name": "shared-mutated-resourceId",
+      "kind": "shared",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-2",
+        "deviceId": "dev-1",
+        "sessionId": "sess-1",
+        "resourceId": "conn-8",
+        "resourceRevision": 9,
+        "purpose": "ssh",
+        "expiresAt": 1786093230000,
+        "clientNonce": "nonce-1234567890abcdef"
+      },
+      "expectedHex": "7368617265642d7573652d7631007372762d31007573722d32006465762d3100736573732d3100636f6e6e2d380039007373680031373836303933323330303030006e6f6e63652d31323334353637383930616263646566",
+      "expectedBase64": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMQBzZXNzLTEAY29ubi04ADkAc3NoADE3ODYwOTMyMzAwMDAAbm9uY2UtMTIzNDU2Nzg5MGFiY2RlZg==",
+      "expectedLength": 88
+    },
+    {
+      "name": "shared-mutated-resourceRevision",
+      "kind": "shared",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-2",
+        "deviceId": "dev-1",
+        "sessionId": "sess-1",
+        "resourceId": "conn-7",
+        "resourceRevision": 10,
+        "purpose": "ssh",
+        "expiresAt": 1786093230000,
+        "clientNonce": "nonce-1234567890abcdef"
+      },
+      "expectedHex": "7368617265642d7573652d7631007372762d31007573722d32006465762d3100736573732d3100636f6e6e2d37003130007373680031373836303933323330303030006e6f6e63652d31323334353637383930616263646566",
+      "expectedBase64": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMQBzZXNzLTEAY29ubi03ADEwAHNzaAAxNzg2MDkzMjMwMDAwAG5vbmNlLTEyMzQ1Njc4OTBhYmNkZWY=",
+      "expectedLength": 89
+    },
+    {
+      "name": "shared-mutated-purpose",
+      "kind": "shared",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-2",
+        "deviceId": "dev-1",
+        "sessionId": "sess-1",
+        "resourceId": "conn-7",
+        "resourceRevision": 9,
+        "purpose": "rdp",
+        "expiresAt": 1786093230000,
+        "clientNonce": "nonce-1234567890abcdef"
+      },
+      "expectedHex": "7368617265642d7573652d7631007372762d31007573722d32006465762d3100736573732d3100636f6e6e2d370039007264700031373836303933323330303030006e6f6e63652d31323334353637383930616263646566",
+      "expectedBase64": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMQBzZXNzLTEAY29ubi03ADkAcmRwADE3ODYwOTMyMzAwMDAAbm9uY2UtMTIzNDU2Nzg5MGFiY2RlZg==",
+      "expectedLength": 88
+    },
+    {
+      "name": "shared-mutated-expiresAt",
+      "kind": "shared",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-2",
+        "deviceId": "dev-1",
+        "sessionId": "sess-1",
+        "resourceId": "conn-7",
+        "resourceRevision": 9,
+        "purpose": "ssh",
+        "expiresAt": 1786093230001,
+        "clientNonce": "nonce-1234567890abcdef"
+      },
+      "expectedHex": "7368617265642d7573652d7631007372762d31007573722d32006465762d3100736573732d3100636f6e6e2d370039007373680031373836303933323330303031006e6f6e63652d31323334353637383930616263646566",
+      "expectedBase64": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMQBzZXNzLTEAY29ubi03ADkAc3NoADE3ODYwOTMyMzAwMDEAbm9uY2UtMTIzNDU2Nzg5MGFiY2RlZg==",
+      "expectedLength": 88
+    },
+    {
+      "name": "shared-mutated-clientNonce",
+      "kind": "shared",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-2",
+        "deviceId": "dev-1",
+        "sessionId": "sess-1",
+        "resourceId": "conn-7",
+        "resourceRevision": 9,
+        "purpose": "ssh",
+        "expiresAt": 1786093230000,
+        "clientNonce": "nonce-fedcba0987654321"
+      },
+      "expectedHex": "7368617265642d7573652d7631007372762d31007573722d32006465762d3100736573732d3100636f6e6e2d370039007373680031373836303933323330303030006e6f6e63652d66656463626130393837363534333231",
+      "expectedBase64": "c2hhcmVkLXVzZS12MQBzcnYtMQB1c3ItMgBkZXYtMQBzZXNzLTEAY29ubi03ADkAc3NoADE3ODYwOTMyMzAwMDAAbm9uY2UtZmVkY2JhMDk4NzY1NDMyMQ==",
+      "expectedLength": 88
+    }
+  ],
+  "rejects": [
+    {
+      "name": "leading-zero-revision",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-1",
+        "deviceId": "dev-1",
+        "entityType": "connection",
+        "entityId": "conn-1",
+        "fieldName": "password",
+        "entityRevision": "08",
+        "keyVersion": 1
+      }
+    },
+    {
+      "name": "empty-field-name",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-1",
+        "deviceId": "dev-1",
+        "entityType": "connection",
+        "entityId": "conn-1",
+        "fieldName": "",
+        "entityRevision": 8,
+        "keyVersion": 1
+      }
+    },
+    {
+      "name": "negative-key-version",
+      "kind": "secret",
+      "input": {
+        "serverId": "srv-1",
+        "userId": "usr-1",
+        "deviceId": "dev-1",
+        "entityType": "connection",
+        "entityId": "conn-1",
+        "fieldName": "password",
+        "entityRevision": 8,
+        "keyVersion": -1
+      }
+    }
+  ]
+}

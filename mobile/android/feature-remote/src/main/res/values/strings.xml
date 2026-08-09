@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  S22 RDP 远程桌面 / S23 VNC 远程桌面。
+
+  中文是源语言，不是翻译产物：SCREEN_CATALOG.md 26 要求可访问性覆盖 zh 与 en，而冻结的
+  文案本身以中文写定，英文是后续派生的 values-en。因此这里不放占位符英文。
+
+  文案原则来自 REMOTE_DESKTOP_EXPERIENCE.md：
+  - 第 11 节：没有测到的数字用 "-"，不写 0；FPS 与延迟都是实测值而非请求值。
+  - 第 10 节：证书变更默认拒绝，措辞必须说明风险，不能像可忽略的提示。
+  - 第 7 节：剪贴板两个方向都要用户确认，文案不能暗示会自动同步。
+  - 第 13 节：断开不承诺恢复远程未保存状态。
+-->
+<resources>
+    <string name="remote_back">返回</string>
+    <string name="remote_minimise">最小化会话</string>
+    <string name="remote_offline">设备当前离线</string>
+    <string name="remote_view_only">只读</string>
+    <string name="remote_not_connected">尚未连接</string>
+    <string name="remote_connect">连接</string>
+    <string name="remote_reconnect">重连</string>
+    <string name="remote_disconnect">断开</string>
+    <string name="remote_close">关闭</string>
+    <string name="remote_cancel">取消</string>
+    <string name="remote_attempt">第 %1$d 次尝试</string>
+    <string name="remote_phase_elapsed">%1$s · %2$d 秒</string>
+    <string name="remote_capture_active">正在采集：%1$s</string>
+    <string name="remote_stat_fps">%1$s FPS</string>
+    <string name="remote_stat_latency">延迟 %1$s ms</string>
+    <string name="remote_stat_dropped">丢帧 %1$d</string>
+    <string name="remote_stat_coalesced">合并移动 %1$d</string>
+    <string name="remote_keyboard">键盘</string>
+    <string name="remote_modifiers">修饰键</string>
+    <string name="remote_pointer">指针模式</string>
+    <string name="remote_pointer_direct">直接触控</string>
+    <string name="remote_pointer_trackpad">触控板</string>
+    <string name="remote_sensitivity">灵敏度 %1$.1f</string>
+    <string name="remote_button_held">仍有按键处于按下状态</string>
+    <string name="remote_release_pointer">释放指针</string>
+    <string name="remote_display">分辨率</string>
+    <string name="remote_display_actual">实际分辨率：%1$s</string>
+    <string name="remote_viewport_fit">适应屏幕</string>
+    <string name="remote_viewport_fill_width">填满宽度</string>
+    <string name="remote_viewport_one_to_one">1:1</string>
+    <string name="remote_viewport_custom">自定义</string>
+    <string name="remote_viewport_dynamic">动态分辨率</string>
+    <string name="remote_full_repaint">重绘整屏</string>
+    <string name="remote_clipboard">剪贴板</string>
+    <string name="remote_clipboard_disabled">该连接未启用剪贴板通道</string>
+    <string name="remote_clipboard_hint">剪贴板不会在后台同步，每次传输都需要你确认</string>
+    <string name="remote_clipboard_send">发送本机剪贴板到远程</string>
+    <string name="remote_clipboard_from_remote">远程剪贴板可用</string>
+    <string name="remote_clipboard_to_remote">发送到远程剪贴板</string>
+    <string name="remote_clipboard_kind">%1$s · %2$d 字节</string>
+    <string name="remote_clipboard_allow">允许</string>
+    <string name="remote_sound">声音</string>
+    <string name="remote_sound_local">在本机播放</string>
+    <string name="remote_sound_remote">在远程播放</string>
+    <string name="remote_sound_off">不传输音频</string>
+    <string name="remote_sound_where">音频路由属于连接设置，可在连接编辑页更改</string>
+    <string name="remote_channels">通道与权限</string>
+    <string name="remote_channels_none">该连接没有需要授权的通道</string>
+    <string name="remote_grant_permission">授权</string>
+    <string name="remote_open_settings">打开系统设置</string>
+    <string name="remote_pick_directory">选择目录</string>
+    <string name="remote_drive">文件</string>
+    <string name="remote_drive_share">共享名：%1$s</string>
+    <string name="remote_drive_profile">共享配置：%1$s</string>
+    <string name="remote_drive_read_only">只读挂载</string>
+    <string name="remote_drive_read_write">可读写挂载</string>
+    <string name="remote_drive_unavailable">共享目录不可用：%1$s</string>
+    <string name="remote_drive_needs_choice">需要先选择一个本机目录作为共享</string>
+    <string name="remote_drive_off">该连接未开启文件共享</string>
+    <string name="remote_certificate">证书</string>
+    <string name="remote_certificate_accepted">本次会话的证书已通过校验</string>
+    <string name="remote_certificate_unknown">尚未建立连接，没有可校验的证书</string>
+    <string name="remote_cert_subject">主体：%1$s</string>
+    <string name="remote_cert_issuer">颁发者：%1$s</string>
+    <string name="remote_cert_validity">有效期：%1$s 至 %2$s</string>
+    <string name="remote_cert_previous">此前记录的指纹：%1$s</string>
+    <string name="remote_cert_first_title">首次连接该服务器</string>
+    <string name="remote_cert_first_body">请核对下面的指纹后再决定是否信任该服务器</string>
+    <string name="remote_cert_changed_title">证书已变更</string>
+    <string name="remote_cert_changed_body">该服务器的证书与此前记录不一致，可能是中间人攻击。默认拒绝。</string>
+    <string name="remote_cert_trust">信任</string>
+    <string name="remote_cert_trust_changed">仍然信任</string>
+    <string name="remote_cert_reject">拒绝</string>
+    <string name="remote_quality">画质 / 颜色</string>
+    <string name="remote_quality_hint">实际生效的像素格式由服务器决定，不会自动降级</string>
+    <string name="remote_auth_title">需要认证</string>
+    <string name="remote_auth_password">密码</string>
+    <string name="remote_auth_submit">提交</string>
+    <string name="remote_auth_exhausted">认证尝试次数已被服务器用尽，需要重新连接</string>
+    <string name="remote_disconnect_title">断开会话</string>
+    <string name="remote_disconnect_body">断开后不会保留远程端未保存的程序状态</string>
+    <string name="remote_engine_blocked_rdp">RDP 原生内核尚未纳入构建：ADR-004 的许可与打包结论未出</string>
+    <string name="remote_engine_blocked_vnc">VNC 原生内核尚未纳入构建：ADR-005 的许可结论未出</string>
+</resources>

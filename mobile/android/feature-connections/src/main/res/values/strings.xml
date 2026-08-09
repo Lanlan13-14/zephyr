@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  S10 / S11 copy.
+
+  Chinese is the product language, so values/ is zh-Hans and a later translation adds values-en/
+  without touching a call site. Page-state wording is deliberately absent: it lives in core-ui so
+  every screen says the same thing.
+-->
+<resources>
+    <string name="connections_title">连接库</string>
+    <string name="connections_search_hint">搜索名称、主机、标签</string>
+    <string name="connections_search_label">搜索连接</string>
+    <string name="connections_account_menu">账号菜单</string>
+    <string name="connections_sync_now">立即同步</string>
+    <string name="connections_recents">最近连接</string>
+    <string name="connections_filter_all">全部</string>
+    <string name="connections_filter_owned">我的</string>
+    <string name="connections_filter_shared">共享给我</string>
+    <string name="connections_filter_favourites">收藏</string>
+    <string name="connections_filter_clear">清除筛选</string>
+    <string name="connections_create">新建连接</string>
+    <string name="connections_activity_summary">活动摘要</string>
+
+    <string name="connection_action_use">连接</string>
+    <string name="connection_action_edit">编辑</string>
+    <string name="connection_action_duplicate">复制</string>
+    <string name="connection_action_delete">删除</string>
+    <string name="connection_action_test">测试</string>
+    <string name="connection_action_share">共享</string>
+    <string name="connection_action_more">更多操作</string>
+    <string name="connection_favourite_add">加入收藏</string>
+    <string name="connection_favourite_remove">取消收藏</string>
+
+    <string name="connection_delete_title">删除连接</string>
+    <!-- Named the row so a mis-tap on a list of similar hosts is recoverable before it happens. -->
+    <string name="connection_delete_message">将删除“%1$s”。删除会同时撤销该连接的全部共享。</string>
+    <string name="connection_delete_confirm">删除</string>
+    <string name="dialog_cancel">取消</string>
+
+    <string name="connection_pending">待同步</string>
+    <string name="connection_conflict">有冲突</string>
+    <string name="connection_last_connected">上次连接 %1$s</string>
+    <string name="connection_never_connected">尚未连接</string>
+    <string name="connection_shared_row">来自 %1$s · 在线使用 · 不保存到此设备</string>
+    <string name="connection_grant_expires">权限到期 %1$s</string>
+
+    <string name="editor_title_create">新建连接</string>
+    <string name="editor_title_edit">编辑连接</string>
+    <string name="editor_section_basic">基础</string>
+    <string name="editor_section_auth">认证</string>
+    <string name="editor_section_route">路由</string>
+    <string name="editor_section_rdp_channels">RDP 通道</string>
+    <string name="editor_section_rdp_display">RDP 显示</string>
+    <string name="editor_section_file_sync">文件同步目录意图</string>
+    <string name="editor_section_metadata">Metadata</string>
+
+    <string name="editor_field_name">名称</string>
+    <string name="editor_field_protocol">协议</string>
+    <string name="editor_field_host">主机</string>
+    <string name="editor_field_port">端口</string>
+    <string name="editor_field_username">用户名</string>
+    <string name="editor_field_domain">Windows 域</string>
+    <string name="editor_field_encoding">编码</string>
+    <string name="editor_field_remark">备注</string>
+    <string name="editor_field_tags">标签</string>
+    <string name="editor_field_tags_hint">用逗号分隔</string>
+    <string name="editor_field_visibility">可见性</string>
+    <string name="editor_field_password">密码</string>
+    <string name="editor_field_private_key">内联私钥</string>
+    <string name="editor_field_ssh_key">已保存的 SSH Key</string>
+
+    <string name="editor_secret_keep">保持不变</string>
+    <string name="editor_secret_replace">替换</string>
+    <string name="editor_secret_clear">清除</string>
+    <string name="editor_secret_new_value">新的值</string>
+
+    <string name="editor_mode_direct">直连</string>
+    <string name="editor_mode_proxy">代理</string>
+    <string name="editor_mode_jump">跳板</string>
+    <string name="editor_none">不使用</string>
+    <string name="editor_jump_chain">跳板链（有序，最多 %1$d 级）</string>
+    <string name="editor_jump_add">添加跳板</string>
+    <string name="editor_jump_remove">移除此级</string>
+    <string name="editor_jump_up">上移</string>
+    <string name="editor_jump_down">下移</string>
+    <string name="editor_route_repair">修复</string>
+
+    <string name="editor_rdp_sound">声音</string>
+    <string name="editor_rdp_clipboard">剪贴板</string>
+    <string name="editor_rdp_microphone">麦克风</string>
+    <string name="editor_rdp_camera">摄像头</string>
+    <string name="editor_rdp_storage">文件驱动器</string>
+    <string name="editor_rdp_location">位置</string>
+    <string name="editor_rdp_resolution">分辨率</string>
+    <string name="editor_rdp_quality">画质</string>
+    <string name="editor_rdp_fps">帧率</string>
+    <string name="editor_rdp_touch_mode">触控模式</string>
+    <string name="editor_rdp_sensitivity">触控灵敏度 %1$.1f</string>
+    <!-- The permission is requested when the channel is actually used, not when it is enabled here. -->
+    <string name="editor_rdp_permission_note">开启后在会话真正使用该通道时才申请系统权限。</string>
+
+    <string name="editor_file_sync_off">关闭</string>
+    <string name="editor_file_sync_ask">每次询问</string>
+    <string name="editor_file_sync_local_share">本机共享目录</string>
+    <string name="editor_file_sync_server_bridge">服务端桥接</string>
+    <!-- Honest about the registry gap: the choice is device-local until the main end publishes it. -->
+    <string name="editor_file_sync_note">目录意图保存在本机，不会同步到其他设备。</string>
+
+    <string name="editor_action_test">测试</string>
+    <string name="editor_action_save">保存</string>
+    <string name="editor_action_connect_unsaved">不保存直接连接</string>
+    <string name="editor_test_reachable">可达，%1$d ms</string>
+    <string name="editor_test_authenticated">认证成功，%1$d ms</string>
+
+    <string name="editor_discard_title">放弃修改</string>
+    <string name="editor_discard_message">有未保存的修改，返回将丢失。</string>
+    <string name="editor_discard_confirm">放弃</string>
+    <string name="editor_keep_editing">继续编辑</string>
+    <string name="editor_back">返回</string>
+</resources>

@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/sync-operation.schema.json",
+  "title": "SyncOperation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "opId",
+    "entityType",
+    "entityId",
+    "action",
+    "baseRevision",
+    "fieldMask",
+    "payload"
+  ],
+  "properties": {
+    "opId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "entityType": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "entityId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "action": {
+      "enum": [
+        "upsert",
+        "delete",
+        "restore"
+      ]
+    },
+    "baseRevision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "clientModifiedAt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fieldMask": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9_.\\[\\]-]*$"
+      }
+    },
+    "payload": {
+      "type": "object"
+    },
+    "secretEnvelopes": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "secret-envelope.schema.json"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "upsert"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "fieldMask": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "delete",
+              "restore"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "fieldMask": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "payload": {
+            "type": "object",
+            "maxProperties": 0
+          }
+        }
+      }
+    }
+  ]
+}

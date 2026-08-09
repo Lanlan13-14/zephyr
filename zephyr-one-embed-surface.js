@@ -33,6 +33,24 @@
 
 const EMBED_STYLESHEET = '/zephyr-one-embed.css';
 
+/*
+ * Folder-mapping overlay for the RDP settings panel.
+ *
+ * app.html ships the 文件夹映射 switch plus its folder / device-name fields, but
+ * nothing in the shared app.js reads or writes them: in the browser product they
+ * cannot mean anything, because a server-side directory path is not something a
+ * browser may choose (showDirectoryPicker yields an opaque handle, never a path).
+ *
+ * Inside One the same fields do mean something, so this script supplies the
+ * behaviour: it drives the native OS folder dialog through the shell's polled
+ * handoff and persists {folder, deviceName} per connection.
+ *
+ * Injected here rather than added to app.html because app.html is shared: a
+ * <script> tag there would make the browser product request a file it does not
+ * serve (404) for a feature it cannot perform.
+ */
+const EMBED_RDP_SETTINGS_SCRIPT = '/zephyr-one-rdp-settings.js';
+
 /** Exact markup fragments this transform depends on existing in app.html. */
 const SECURITY_TAB_BUTTON = '<button class="settings-tab active" data-settings="security" data-i18n="安全设置">安全设置</button>';
 const LOGOUT_BUTTON = '<button class="btn-sm danger" id="logoutBtn" data-i18n="登出">登出</button>';
@@ -152,6 +170,26 @@ function injectStylesheet(html) {
 }
 
 /**
+ * Inject the folder-mapping overlay script, if not already present.
+ *
+ * Appended at the end of <body>, not <head>: the overlay queries
+ * #rdpStorageFolderPickBtn and friends at load time, so it must run after
+ * app.html's markup exists. Deliberately not deferred into <head> either —
+ * app.js is a classic script too, and keeping both in body order means the
+ * overlay observes the same DOM app.js has already wired.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+function injectOverlayScript(html) {
+    if (html.includes(EMBED_RDP_SETTINGS_SCRIPT)) return html;
+    const tag = `<script src="${EMBED_RDP_SETTINGS_SCRIPT}"></script>`;
+    return html.includes('</body>')
+        ? html.replace('</body>', `${tag}\n</body>`)
+        : html + tag;
+}
+
+/**
  * Apply the Zephyr One embedded surface to an app.html document.
  *
  * @param {string} source raw app.html
@@ -222,7 +260,7 @@ function applyEmbeddedSurface(source) {
         );
     }
 
-    return { html: injectStylesheet(html), applied, skipped };
+    return { html: injectOverlayScript(injectStylesheet(html)), applied, skipped };
 }
 
 module.exports = {
@@ -233,5 +271,6 @@ module.exports = {
      * drift and then agree with itself while disagreeing with production. */
     regionOf,
     EMBED_STYLESHEET,
+    EMBED_RDP_SETTINGS_SCRIPT,
     EDITS,
 };

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- zh-CN is the source language and the identity map, matching public/i18n/locales/zh-CN.json. -->
+<resources>
+    <string name="app_name">Zephyr One</string>
+
+    <string name="file_bridge_channel_name">文件桥接</string>
+    <string name="file_bridge_channel_description">本机共享目录在线时显示，可随时停止。</string>
+    <string name="file_bridge_notification_title">文件桥接已在线</string>
+    <string name="file_bridge_notification_text">%1$s · 已传输 %2$s</string>
+    <string name="file_bridge_stop">停止</string>
+
+    <string name="unlock_title">解锁 Zephyr One</string>
+    <string name="unlock_subtitle">使用设备凭据继续</string>
+    <string name="unlock_locked_message">已锁定</string>
+    <string name="unlock_retry">重新解锁</string>
+    <string name="unlock_unavailable">此设备不支持平台认证，本地解锁不可用。</string>
+</resources>

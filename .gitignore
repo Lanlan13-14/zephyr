@@ -60,3 +60,6 @@ __pycache__/
 zephyr_one/native/freerdp-core/.freerdp-dist/
 zephyr_one/native/freerdp-core/vcpkg_installed/
 zephyr_one/vcpkg_installed/
+# pnpm local store. .pnpm-store/v11/projects/<hash> is a junction back to
+# zephyr_one/, so committing it would duplicate that whole subtree.
+.pnpm-store/

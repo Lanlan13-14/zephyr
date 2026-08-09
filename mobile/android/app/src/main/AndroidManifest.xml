@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Sync, the mobile v1 API and every protocol engine need the network. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- NetworkMonitor reads metered/VPN state to honour the 网络策略 setting. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- App Lock authenticates with the platform credential only. DEVELOPMENT.md 1028 forbids
+         One from inventing an unlock password, so there is no fallback to ask for. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!-- 文件桥接 stays online while the user is away, which SCREEN_CATALOG.md 22 requires to be a
+         foreground service with a visible stop action rather than a silent background socket. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- The three RDP channel permissions RemoteChannels.permissionFor names. Declared so they can
+         be requested at the moment the session opens the channel; never requested at connect time,
+         because REMOTE_DESKTOP_EXPERIENCE.md 8 says a prompt the session does not need is what
+         trains users to deny the one it does. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Deliberately absent: MANAGE_EXTERNAL_STORAGE. PRODUCT_REQUIREMENTS.md scopes device file
+         sharing to directories the user hands over through SAF, so a whole-volume grant would be
+         both broader than the product allows and a Play policy violation. -->
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <application
+        android:name=".ZephyrOneApplication"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ZephyrOne"
+        android:enableOnBackInvokedCallback="true"
+        android:usesCleartextTraffic="${usesCleartextTraffic}"
+        tools:targetApi="34"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.ZephyrOne"
+            android:windowSoftInputMode="adjustNothing">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".filebridge.FileBridgeForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- WorkManager's own initialiser is removed because ZephyrApplication supplies a
+             Configuration; leaving both would race two WorkManager instances on first launch. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authority="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+    </application>
+</manifest>

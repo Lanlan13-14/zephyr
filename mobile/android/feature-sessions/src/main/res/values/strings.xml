@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  S20 会话列表 / S21 SSH-Telnet 终端.
+
+  Chinese is the source language: SCREEN_CATALOG.md 26 requires zh/en coverage, and keeping the
+  frozen wording here rather than in code means a translation cannot silently change a warning.
+-->
+<resources>
+
+    <!-- ==== S20 会话列表 ==== -->
+    <string name="sessions_title">会话</string>
+    <string name="sessions_live_count">活动会话 %1$d</string>
+    <string name="sessions_unread_count">%1$d 个会话有新输出</string>
+    <string name="sessions_clear_selection">取消选择</string>
+    <string name="sessions_close_many">批量关闭</string>
+    <string name="sessions_clear_history">清空历史</string>
+    <string name="sessions_cancel">取消</string>
+
+    <string name="sessions_bulk_close_title">关闭会话</string>
+    <string name="sessions_bulk_close_body">将关闭 %1$d 个会话，未保存的远端状态不会恢复。</string>
+
+    <string name="sessions_select_row">选择 %1$s</string>
+    <string name="sessions_session_id">会话 ID %1$s</string>
+    <string name="sessions_more_actions">%1$s 的更多操作</string>
+
+    <string name="sessions_status_connecting">连接中</string>
+    <string name="sessions_status_connected">已连接</string>
+    <string name="sessions_status_disconnected">已断开</string>
+    <string name="sessions_status_disconnected_offline">已断开（当前离线）</string>
+    <string name="sessions_status_closed">已结束</string>
+    <string name="sessions_status_revoked">权限已撤销</string>
+
+    <string name="sessions_latency">延迟 %1$d ms</string>
+    <string name="sessions_duration">时长 %1$d 分 %2$d 秒</string>
+
+    <string name="sessions_execution_local">本机执行</string>
+    <string name="sessions_execution_relay">主端 relay</string>
+
+    <string name="sessions_restored_hint">从工作区恢复，尚未连接</string>
+    <string name="sessions_reconnect_needs_network">当前离线，无法重连</string>
+
+    <string name="sessions_action_restore">回到会话</string>
+    <string name="sessions_action_reconnect">重连</string>
+    <string name="sessions_action_close">关闭</string>
+    <string name="sessions_action_details">详情</string>
+
+    <!-- ==== S21 终端 ==== -->
+    <string name="terminal_minimise">最小化会话</string>
+    <string name="terminal_encoding_action">编码 %1$s</string>
+    <string name="terminal_jump_to_bottom">回到最新输出</string>
+    <string name="terminal_missed_output">新增 %1$d 行</string>
+    <string name="terminal_viewport_empty">终端尚无输出</string>
+
+    <string name="terminal_transport_connecting">连接中</string>
+    <string name="terminal_transport_connected">已连接</string>
+    <string name="terminal_transport_disconnected">已断开</string>
+    <string name="terminal_transport_closed">已结束</string>
+
+    <string name="terminal_disconnected_hint">连接已断开，本地回滚缓冲仍可查看</string>
+    <string name="terminal_closed_hint">会话已结束</string>
+    <string name="terminal_reconnect">重新连接</string>
+    <string name="terminal_cancel">取消</string>
+
+    <string name="terminal_dock_keyboard">键盘</string>
+    <string name="terminal_dock_files">文件</string>
+    <string name="terminal_dock_snippets">片段</string>
+    <string name="terminal_dock_notes">笔记</string>
+    <string name="terminal_dock_sessions">会话</string>
+    <string name="terminal_dock_disconnect">断开</string>
+
+    <!-- Latch state is announced, never conveyed by colour alone (SCREEN_CATALOG.md 26). -->
+    <string name="terminal_latch_one_shot">单次生效</string>
+    <string name="terminal_latch_locked">已锁定</string>
+
+    <string name="terminal_paste_title">确认粘贴</string>
+    <string name="terminal_paste_summary">共 %1$d 行、%2$d 字节</string>
+    <string name="terminal_paste_confirm">粘贴</string>
+    <string name="terminal_paste_without_newline">粘贴但不执行</string>
+
+    <string name="terminal_host_key_new_title">首次连接该主机</string>
+    <string name="terminal_host_key_new_body">请核对主机密钥指纹后再继续。</string>
+    <string name="terminal_host_key_changed_title">主机密钥已变更</string>
+    <string name="terminal_host_key_changed_body">该主机的密钥与已保存的记录不一致，可能是服务器重装，也可能是中间人攻击。默认阻断连接。</string>
+    <string name="terminal_host_key_trust">信任并继续</string>
+    <string name="terminal_host_key_trust_anyway">仍然信任</string>
+    <string name="terminal_host_key_reject">拒绝</string>
+
+</resources>

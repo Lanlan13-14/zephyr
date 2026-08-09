@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A bare Material3 shell only. Every colour, shape and type value comes from ZephyrTheme in
+     core-ui at runtime, because the four palettes are switchable while the app runs and an XML
+     theme cannot follow that. -->
+<resources>
+    <style name="Theme.ZephyrOne" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

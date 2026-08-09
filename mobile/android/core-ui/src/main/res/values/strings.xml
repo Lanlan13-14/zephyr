@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Page-state copy.
+
+  SCREEN_CATALOG.md 2 requires every screen to render the same nine states with the same wording, so
+  the strings live in core-ui rather than being retyped per feature. Chinese is the product language;
+  values/ is therefore zh-Hans and a future translation adds values-en/ without touching call sites.
+-->
+<resources>
+    <string name="state_loading">正在加载…</string>
+    <string name="state_pending_sync">有本地修改待同步</string>
+    <string name="state_conflict">存在冲突，需要你选择保留哪一侧</string>
+    <string name="state_saving_local">正在保存到本机…</string>
+
+    <string name="state_empty_no_data">还没有内容</string>
+    <string name="state_empty_filtered">没有符合当前筛选的内容</string>
+    <string name="state_empty_not_synced">尚未同步，下拉或点击立即同步</string>
+
+    <string name="state_offline_cached">离线，显示本机镜像</string>
+    <string name="state_offline_cached_at">离线，显示 %1$s 的本机镜像</string>
+    <!-- Shared-to-me resources have no mirror by design, so offline is terminal rather than degraded. -->
+    <string name="state_offline_no_cache">该资源为在线使用，离线时不可用</string>
+
+    <string name="state_permission_denied">你没有此操作的权限：%1$s</string>
+    <string name="state_not_found">内容不存在或访问已被取消</string>
+    <string name="state_fatal_incompatible">主端版本与本应用不兼容</string>
+
+    <string name="action_retry">重试</string>
+    <string name="action_check_update">检查更新</string>
+    <string name="action_copy_diagnostics">复制诊断信息</string>
+    <string name="action_copied">已复制</string>
+
+    <string name="island_home">首页</string>
+    <string name="island_sessions">会话</string>
+    <string name="island_library">资料</string>
+    <string name="island_tools">工具</string>
+
+    <string name="protocol_cleartext_warning">明文协议，凭据不加密传输</string>
+    <string name="secret_masked">已保存，不显示原值</string>
+    <string name="secret_not_set">未设置</string>
+    <string name="secret_reveal">显示</string>
+</resources>

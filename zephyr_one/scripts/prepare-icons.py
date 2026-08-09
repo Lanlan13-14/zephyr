@@ -124,11 +124,23 @@ def main() -> None:
                 render_svg(default_svg, size, dest)
             print(f"bundle   {dest.relative_to(ROOT)}  {size}x{size}")
 
+        # The largest frame has to be the base, and the rest handed over via
+        # append_images. PIL caps every requested size at the *base* image's
+        # own dimensions (IcoImagePlugin._save: "if size[0] > width ...
+        # continue"), so saving from the 16x16 frame silently discarded 32
+        # through 256 and shipped a single-entry 16px .ico. Windows then
+        # upscaled that one 16px bitmap onto the desktop shortcut, the taskbar,
+        # Explorer's large-icon views and the .exe resource, which is the
+        # blurry app icon reported against the desktop build. append_images
+        # also makes each size an exact match, so PIL uses these LANCZOS
+        # frames instead of re-thumbnailing every entry down from 256.
         icos = [src.resize((s, s), Image.Resampling.LANCZOS) for s in ICO_SIZES]
+        icos.sort(key=lambda frame: frame.width, reverse=True)
         icos[0].save(
             BUNDLE_OUT / "icon.ico",
             format="ICO",
             sizes=[(i.width, i.height) for i in icos],
+            append_images=icos[1:],
         )
         print(f"bundle   {(BUNDLE_OUT / 'icon.ico').relative_to(ROOT)}  {ICO_SIZES}")
 

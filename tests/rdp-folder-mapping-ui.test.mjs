@@ -32,13 +32,21 @@ function i18nKeysIn(html) {
  * absent on purpose: inside an RDP session the mapping target *is* the
  * session, so there is nothing to address, authenticate or time out.
  *
- * This is UI only — no payload/persistence wiring yet, by request. The
- * "not wired" assertion below records that boundary so it is a decision on
- * record rather than an oversight; whoever wires it flips that one assertion.
+ * The fields are inert inside app.js by design, because app.js is shared with
+ * browser Zephyr. In the One shell the injected overlay
+ * (zephyr-one-rdp-settings.js) owns the handlers and the device-local
+ * persistence; see tests/zephyr-one-rdp-folder-mapping.test.mjs. The
+ * device-local assertion below records that split so it stays a decision on
+ * record rather than drifting into app.js later.
  */
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const read = (rel) => readFileSync(path.join(root, rel), 'utf8');
+/* Normalised to LF. The working tree is CRLF on Windows (core.autocrlf=true),
+ * and several assertions below slice on a '\n}' needle to bound a function
+ * body. Against CRLF that needle never matches, indexOf returns -1, and the
+ * slice silently collapses to two characters — the assertion then fails on a
+ * truncated string instead of on the code it was written to check. */
+const read = (rel) => readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
 
 const APP_HTML = read('public/app.html');
 const APP_JS = read('public/app.js');
@@ -267,18 +275,29 @@ test('every new i18n key in app.html resolves in both locales', () => {
 });
 
 
-test('the folder mapping fields are UI only — not yet persisted', () => {
-    /* Recorded scope boundary, not an oversight: the fields were requested as
-     * UI ahead of the RDP rework, so they are intentionally absent from
-     * connectionPayload() and from the session hand-off. When wiring lands,
-     * this test is the one that must be updated. */
+test('the mapping is device-local: absent from the synced record and from shared app.js', () => {
+    /* Two deliberate absences, both still load-bearing now that the wiring
+     * exists.
+     *
+     * connectionPayload() is what gets persisted to and synced from the
+     * server. The mapped folder is a path on *this* device, so putting it
+     * there would publish a meaningless (and on a shared connection,
+     * misleading) path to every other device. One keeps it device-local
+     * instead, keyed by connection id, in zephyr-one-rdp-storage.js.
+     *
+     * app.js leaves the three controls unhandled because it is shared with
+     * browser Zephyr, where there is no local filesystem to enumerate and the
+     * /api/one/rdp/* endpoints are not mounted at all. The handlers live in
+     * the One-only overlay (zephyr-one-rdp-settings.js) that
+     * applyEmbeddedSurface() injects; the overlay side is covered by
+     * tests/zephyr-one-rdp-folder-mapping.test.mjs. A handler appearing here
+     * would mean a pick button that 404s for every browser user. */
     const payloadAt = APP_JS.indexOf('function connectionPayload(');
     assert.ok(payloadAt > 0);
     const payload = APP_JS.slice(payloadAt, payloadAt + 6000);
     assert.equal(payload.includes('rdpStorageFolder'), false);
     assert.equal(payload.includes('rdpStorageDeviceName'), false);
 
-    // The picker button has no handler yet either.
     assert.equal(APP_JS.includes("$('#rdpStorageFolderPickBtn')"), false);
     assert.equal(APP_JS.includes('rdpStorageFolderPickBtn'), false);
 });

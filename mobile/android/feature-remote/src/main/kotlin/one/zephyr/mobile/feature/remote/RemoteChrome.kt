@@ -1,0 +1,117 @@
+package one.zephyr.mobile.feature.remote
+
+import one.zephyr.mobile.model.Protocol
+
+/**
+ * One entry of the bottom session dock.
+ *
+ * SCREEN_CATALOG.md 9 and 10 freeze different tool sets for RDP and VNC: RDP has 声音, 文件 drive and
+ * 证书, VNC has 画质/颜色 and no drive at all - REMOTE_DESKTOP_EXPERIENCE.md 9 says a VNC page must not
+ * invent a remote disk. Availability is therefore a property of the protocol rather than a runtime
+ * check the screen has to remember to make.
+ */
+enum class RemoteDockItem {
+    KEYBOARD,
+    POINTER_MODE,
+    MODIFIERS,
+    CLIPBOARD,
+    DISPLAY,
+    SOUND,
+    CHANNELS,
+    DRIVE,
+    CERTIFICATE,
+    QUALITY,
+    RECONNECT,
+    DISCONNECT,
+    ;
+
+    companion object {
+        fun forProtocol(protocol: Protocol): List<RemoteDockItem> = when (protocol) {
+            Protocol.RDP -> listOf(
+                KEYBOARD, POINTER_MODE, MODIFIERS, CLIPBOARD, DISPLAY, SOUND,
+                CHANNELS, DRIVE, CERTIFICATE, RECONNECT, DISCONNECT,
+            )
+            // No DRIVE and no CERTIFICATE: plain RFB has neither file transfer nor a certificate to
+            // review, and offering either would be a lie about what the session can do.
+            Protocol.VNC -> listOf(
+                KEYBOARD, POINTER_MODE, MODIFIERS, CLIPBOARD, DISPLAY, QUALITY, RECONNECT, DISCONNECT,
+            )
+            else -> emptyList()
+        }
+    }
+}
+
+/**
+ * Whether the overlay chrome is showing.
+ *
+ * A value type rather than a boolean because the rule in REMOTE_DESKTOP_EXPERIENCE.md 12 is that a
+ * tap toggles chrome but a pointer interaction must not, and that needs to remember whether the
+ * current gesture already did something remote.
+ */
+data class RemoteChromeState(
+    val visible: Boolean = true,
+    /**
+     * True once this gesture actually delivered remote input.
+     *
+     * Set where input is submitted rather than where a gesture begins, because those are different
+     * facts: every tap begins a gesture, but only a tap that landed on the framebuffer drove the
+     * remote pointer. Setting it at gesture start would make the section 12 rule swallow the first
+     * tap on the letterbox - the one tap that is supposed to toggle chrome.
+     */
+    val suppressedByGesture: Boolean = false,
+    /** True between a first touch and the last lift. Blocks auto-hide, never the toggle. */
+    val gestureActive: Boolean = false,
+    val keyboardVisible: Boolean = false,
+    val modifierBarVisible: Boolean = false,
+) {
+    /**
+     * The frozen layout rule: the IME replaces the dock rather than stacking above it.
+     *
+     * Chrome overlays the surface and never resizes the remote desktop, so with the IME open the only
+     * thing worth the remaining height is the modifier bar (§6).
+     */
+    val dockVisible: Boolean get() = visible && !keyboardVisible
+
+    val statusPillVisible: Boolean get() = visible
+
+    /** Auto-hide is only allowed while nothing is being touched and no button is held. */
+    val mayAutoHide: Boolean get() = visible && !gestureActive && !keyboardVisible
+}
+
+/** Chrome transitions. Pure so the "a drag must not toggle chrome" rule is testable. */
+object RemoteChrome {
+
+    /** §12: 120-180ms opacity plus a small offset. Never a scale, which would resample the frame. */
+    const val FADE_MS = 150
+    const val OFFSET_DP = 6
+
+    /** Auto-hide delay once a session is connected and idle. */
+    const val AUTO_HIDE_MS = 4_000L
+
+    fun onSurfaceTap(state: RemoteChromeState): RemoteChromeState = when {
+        // The gesture that just ended drove the remote pointer, so its lift is not a chrome tap.
+        state.suppressedByGesture -> state.copy(suppressedByGesture = false)
+        else -> state.copy(visible = !state.visible)
+    }
+
+    fun onGestureStart(state: RemoteChromeState): RemoteChromeState =
+        state.copy(gestureActive = true)
+
+    fun onGestureEnd(state: RemoteChromeState): RemoteChromeState =
+        state.copy(gestureActive = false)
+
+    /** Called from the input funnel: this gesture has now touched the remote session. */
+    fun onRemoteInput(state: RemoteChromeState): RemoteChromeState =
+        if (state.suppressedByGesture) state else state.copy(suppressedByGesture = true)
+
+    fun setKeyboard(state: RemoteChromeState, visible: Boolean): RemoteChromeState = state.copy(
+        keyboardVisible = visible,
+        // Chrome comes back with the keyboard: dismissing the IME must not leave the user with no
+        // dock and no way to get it back except a blind tap.
+        visible = if (visible) true else state.visible,
+        modifierBarVisible = if (visible) true else state.modifierBarVisible,
+    )
+
+    fun setModifierBar(state: RemoteChromeState, visible: Boolean): RemoteChromeState =
+        state.copy(modifierBarVisible = visible)
+}

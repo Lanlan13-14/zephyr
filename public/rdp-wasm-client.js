@@ -871,6 +871,80 @@ window.rdpStorageReadFile = function (name) {
     return new Uint8Array(entry.data);
 };
 
+/*
+ * Zephyr One only: load the folder mapped in RDP settings.
+ *
+ * Browser Zephyr cannot do this. showDirectoryPicker() hands back an opaque
+ * handle, never a path, so there is nothing to mount and the endpoint below is
+ * not mounted either — a 404 here simply means "not running inside One" and is
+ * not an error worth showing.
+ *
+ * The engine's redirection path (rdpStorageGetFiles / rdpStorageReadFile, fed
+ * through bridge.setLocalFiles) takes a flat list of files held in memory, so
+ * this reads the mapped folder's top level and nothing deeper. Sub-directories
+ * are reported by the core with isDir and are deliberately not descended: a
+ * live directory tree needs the in-process native engine, which is not built.
+ *
+ * Called from connect() before the session negotiates, so the list is already
+ * in the Worker when Windows first asks for it. Advertising is left to the
+ * normal connect handshake — notify=true here would announce a drive to a
+ * session that does not exist yet.
+ *
+ * @param {string} connectionId
+ * @returns {Promise<{count:number, truncated:boolean, deviceName:string}|null>}
+ *   null when there is no mapping, or when not running inside One.
+ */
+async function loadOneMappedFolder(connectionId) {
+    if (!connectionId) return null;
+    let listing;
+    try {
+        const resp = await fetch(
+            '/api/one/rdp/storage-files/' + encodeURIComponent(connectionId),
+            { credentials: 'same-origin' },
+        );
+        if (!resp.ok) return null;
+        listing = await resp.json();
+    } catch {
+        return null;
+    }
+    if (!listing || !listing.ok || !listing.folder) return null;
+
+    const shareable = (listing.files || []).filter((f) => f && !f.isDir);
+    const loaded = [];
+    for (const entry of shareable) {
+        try {
+            const resp = await fetch(
+                '/api/one/rdp/storage-file/' + encodeURIComponent(connectionId)
+                + '?name=' + encodeURIComponent(entry.name),
+                { credentials: 'same-origin' },
+            );
+            if (!resp.ok) continue;
+            const data = new Uint8Array(await resp.arrayBuffer());
+            loaded.push({ name: entry.name, size: data.byteLength, isDir: false, data });
+        } catch {
+            /* One unreadable file must not cost the whole share. */
+        }
+    }
+
+    /* Replace rather than append: this runs once per connect, and appending
+     * would duplicate every file across an in-place worker restart. */
+    rdpStorageFiles = loaded;
+    if (rdpWorkerBridge) {
+        try {
+            await rdpWorkerBridge.setLocalFiles(rdpStorageFiles, { notify: false });
+        } catch (err) {
+            console.warn('[one-rdp] setLocalFiles failed', err);
+        }
+    }
+    console.info('[one-rdp] mapped folder shared:', listing.folder,
+        loaded.length + '/' + shareable.length, 'files',
+        listing.truncated ? '(truncated)' : '');
+    return {
+        count: loaded.length,
+        truncated: !!listing.truncated,
+        deviceName: String(listing.deviceName || ''),
+    };
+}
 /* Allow user to pick files to share with the remote desktop */
 async function rdpStoragePickFiles() {
     try {
@@ -1600,6 +1674,17 @@ async function connect() {
     }
 
     rdpAgentStorageEnabled = !!storageEnabled;
+
+    /* Zephyr One: pull in the folder chosen in RDP settings. No-ops in browser
+     * Zephyr, where the endpoint does not exist.
+     *
+     * The loader reports truncation itself rather than calling setFilesHint
+     * here: that helper is declared inside initFilePanel(), so naming it from
+     * connect() is a ReferenceError — and `?.()` would not save it, because
+     * optional-call guards a null *value*, never an undeclared binding. */
+    if (storageEnabled) {
+        await loadOneMappedFolder(connectionId);
+    }
 
     /* ── Certificate verification dialog ── */
     if (connectionId && isCertTrusted(connectionId)) {

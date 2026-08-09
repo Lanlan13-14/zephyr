@@ -1,0 +1,13 @@
+{
+  "name": "zephyr-one-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Zephyr One native mobile client: shared contracts, codegen and cross-platform fixtures.",
+  "scripts": {
+    "generate": "node tools/generate.mjs",
+    "check:drift": "node tools/generate.mjs --check",
+    "test:contracts": "node --test tests/*.test.mjs",
+    "test": "node tools/generate.mjs --check && node --test tests/*.test.mjs"
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "generatedFrom": "mobile/tools/lib/zft2.mjs",
+  "headerBytes": 20,
+  "writeOps": [
+    3,
+    7,
+    8,
+    9,
+    10
+  ],
+  "inflight": [
+    {
+      "input": 0,
+      "expected": 1
+    },
+    {
+      "input": 8,
+      "expected": 8
+    },
+    {
+      "input": 99,
+      "expected": 16
+    }
+  ],
+  "chunkNegotiation": [
+    {
+      "local": 65536,
+      "remote": 32768,
+      "expected": 32768
+    },
+    {
+      "local": 1048576,
+      "remote": 4194304,
+      "expected": 1048576
+    }
+  ],
+  "frames": [
+    {
+      "name": "ping-request",
+      "type": 12,
+      "requestId": 1,
+      "flags": 0,
+      "meta": {},
+      "payloadUtf8": null,
+      "expectedHex": "5a465432020c00000000000100000002000000007b7d",
+      "expectedLength": 22
+    },
+    {
+      "name": "open-request",
+      "type": 1,
+      "requestId": 42,
+      "flags": 0,
+      "meta": {
+        "path": "/data/report.txt",
+        "mode": "read"
+      },
+      "payloadUtf8": null,
+      "expectedHex": "5a465432020100000000002a00000029000000007b2270617468223a222f646174612f7265706f72742e747874222c226d6f6465223a2272656164227d",
+      "expectedLength": 61
+    },
+    {
+      "name": "read-response",
+      "type": 2,
+      "requestId": 7,
+      "flags": 2,
+      "meta": {
+        "handle": 3,
+        "offset": 0,
+        "length": 5
+      },
+      "payloadUtf8": "hello",
+      "expectedHex": "5a465432020200020000000700000022000000057b2268616e646c65223a332c226f6666736574223a302c226c656e677468223a357d68656c6c6f",
+      "expectedLength": 59
+    },
+    {
+      "name": "error-response",
+      "type": 3,
+      "requestId": 9,
+      "flags": 3,
+      "meta": {
+        "code": "read_only_share",
+        "message": "provider is read only"
+      },
+      "payloadUtf8": null,
+      "expectedHex": "5a46543202030003000000090000003c000000007b22636f6465223a22726561645f6f6e6c795f7368617265222c226d657373616765223a2270726f76696465722069732072656164206f6e6c79227d",
+      "expectedLength": 80
+    },
+    {
+      "name": "unicode-metadata",
+      "type": 6,
+      "requestId": 4294967295,
+      "flags": 0,
+      "meta": {
+        "path": "/中文/テスト"
+      },
+      "payloadUtf8": null,
+      "expectedHex": "5a46543202060000ffffffff0000001c000000007b2270617468223a222fe4b8ade696872fe38386e382b9e38388227d",
+      "expectedLength": 48
+    }
+  ],
+  "rejects": [
+    {
+      "name": "bad-magic",
+      "hex": "5846543200000000000000000000000000000000",
+      "expectedCode": "bad_magic"
+    },
+    {
+      "name": "unsupported-version",
+      "hex": "5a46543203000000000000000000000000000000",
+      "expectedCode": "unsupported_version"
+    },
+    {
+      "name": "truncated-header",
+      "hex": "5a465432",
+      "expectedCode": "truncated_header"
+    },
+    {
+      "name": "length-mismatch",
+      "hex": "5a465432020c0000000000010000004000000000",
+      "expectedCode": "length_mismatch"
+    },
+    {
+      "name": "metadata-length-bomb",
+      "hex": "5a4654320206000000000001ffffffff00000000",
+      "expectedCode": "metadata_too_large"
+    }
+  ]
+}
