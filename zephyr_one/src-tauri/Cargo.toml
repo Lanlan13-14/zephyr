@@ -16,6 +16,13 @@ crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# Compile native/freerdp-core/zephyr_rdp.c in-tree. The shim touches ALIGN64
+# FreeRDP structs, so it must see the same headers the local FreeRDP was built
+# from; a prebuilt archive would silently disagree after an upgrade.
+cc = "1.2"
+# FreeRDP discovery. Emits the cargo:rustc-link-lib lines, so build.rs never
+# formats link flags by hand and a distro shipping freerdp2 links freerdp2.
+pkg-config = "0.3"
 
 [dependencies]
 # `image-png` is required by tauri::image::Image::from_bytes, which the runtime

@@ -55,14 +55,38 @@ jobs:
           sh scripts/stage-zephyr-core.sh
           test -f zephyr-core/server.js
           test -d zephyr-core/public
-      # The FreeRDP C core is groundwork for the planned in-process RDP engine.
-      # It ships in no artifact yet, but it must stay compilable and correct, so
-      # its unit tests run here against the distro FreeRDP 3 headers.
-      - name: Test FreeRDP C core
+      # FreeRDP is a hard build dependency of the desktop shell: src-tauri links
+      # the C shim in-process and there is no WASM fallback in One.
+      - name: Install FreeRDP dev files
         run: |
           sudo apt-get update
           sudo apt-get install -y freerdp3-dev
-          sh native/freerdp-core/run-ctests.sh
+      # C-level tests first: they link the shim directly, so a failure here points
+      # at the C ABI rather than at the Rust binding layer.
+      - name: Test FreeRDP C core
+        run: sh native/freerdp-core/run-ctests.sh
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Tauri build deps
+        run: |
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev
+      # This is the step that proves the native RDP engine is real rather than
+      # declared. It compiles zephyr_rdp.c through build.rs, links it, and runs
+      # rdp::ffi::assert_layout_matches_c, which compares every zephyr_rdp_config
+      # field offset against the C definition. A hand-written #[repr(C)] mirror
+      # that drifted would read a `const char*` where an `i32` was written -- a
+      # fault no compiler can catch across FFI, and one that cannot be caught at
+      # all without linking the two together exactly like this.
+      - name: Cargo test with the native RDP engine
+        working-directory: zephyr_one/src-tauri
+        run: cargo test --lib -- --nocapture
+      # And prove the documented escape hatch still builds, so a contributor
+      # without FreeRDP is not blocked from compiling the rest of the shell.
+      - name: Cargo check without the native RDP engine
+        working-directory: zephyr_one/src-tauri
+        env:
+          ZEPHYR_ONE_SKIP_NATIVE_RDP: '1'
+        run: cargo check --lib
 
   # ───────────── Release builds (workflow_dispatch + tag) ─────────────
 
@@ -83,6 +107,26 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "WebView2 / MSVC toolchain assumed available on runner"
+      # FreeRDP for the in-process RDP engine. Cached because vcpkg builds it
+      # from source, which dominates this job's runtime on a cold cache.
+      - name: Cache vcpkg FreeRDP
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:/vcpkg/installed
+            C:/vcpkg/packages
+          key: vcpkg-freerdp-${{ runner.os }}-${{ hashFiles('zephyr_one/native/freerdp-core/vcpkg.json') }}
+      - name: Install FreeRDP via vcpkg
+        shell: pwsh
+        run: |
+          vcpkg install freerdp:x64-windows pkgconf:x64-windows
+          # build.rs discovers FreeRDP through pkg-config, so point it at the
+          # vcpkg .pc files and put pkgconf on PATH.
+          $root = "C:/vcpkg/installed/x64-windows"
+          "PKG_CONFIG_PATH=$root/lib/pkgconfig" >> $env:GITHUB_ENV
+          "PATH=$root/tools/pkgconf;$env:PATH" >> $env:GITHUB_ENV
+          # The DLLs must sit next to the exe for the bundled app to start.
+          "FREERDP_BIN_DIR=$root/bin" >> $env:GITHUB_ENV
       - name: Install npm deps
         shell: pwsh
         run: npm install
@@ -99,6 +143,19 @@ jobs:
         shell: pwsh
         # stage:core already done; avoid double npm install in pretauri
         run: npx tauri build
+      # A dynamically linked FreeRDP is useless to a user if its DLLs are not
+      # beside the exe: the app would install and then fail to start with a
+      # missing-DLL dialog. The collect step below zips `*.dll` from this
+      # directory, so they must land here before it runs.
+      - name: Stage FreeRDP runtime DLLs
+        shell: pwsh
+        run: |
+          $target = "src-tauri/target/release"
+          if (-not (Test-Path $target)) { throw "no release dir; tauri build did not run" }
+          $dlls = Get-ChildItem "$env:FREERDP_BIN_DIR/*.dll" -ErrorAction Stop
+          if ($dlls.Count -eq 0) { throw "FREERDP_BIN_DIR held no DLLs: $env:FREERDP_BIN_DIR" }
+          Copy-Item $dlls.FullName $target -Force
+          Write-Host "staged $($dlls.Count) FreeRDP DLLs into $target"
       - name: Collect Windows artifacts
         shell: bash
         run: |
@@ -152,6 +209,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Install FreeRDP
+        run: |
+          brew install freerdp pkg-config
+          # Homebrew keeps freerdp keg-only on some versions; make its .pc files
+          # discoverable either way rather than assuming the default prefix.
+          echo "PKG_CONFIG_PATH=$(brew --prefix freerdp)/lib/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
       - run: npm install
       - run: sh scripts/stage-zephyr-core.sh
       - run: node scripts/stage-desktop-runtime.mjs
@@ -204,6 +267,9 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+          # FreeRDP is a hard dependency of the shell, not an optional extra:
+          # src-tauri links the C shim and One has no WASM RDP fallback.
+          sudo apt-get install -y freerdp3-dev
       - run: npm install
       - run: npm run stage:core
       - run: node scripts/stage-desktop-runtime.mjs

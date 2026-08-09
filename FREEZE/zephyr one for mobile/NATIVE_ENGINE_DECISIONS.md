@@ -79,7 +79,10 @@ terminal_scrollback_read
 **仓库内已有实证（桌面，不是移动端）**：
 
 - [KNOWN] 仓库现有 `zephyr_one/native/freerdp-core/`：FreeRDP C shim（`zephyr_rdp.{h,c}`）、C 单测（`tests/zephyr_rdp_test.c`，69 检查通过）、固定版本 FreeRDP 源码静态构建脚本（`scripts/build-freerdp.sh`，pin 3.30.0）和 vcpkg 依赖清单。
-- [KNOWN] 该 C core **尚未被任何 Rust/平台代码消费**：`src-tauri` 不编译它，桌面 One 当前仍与浏览器版一样走 WASM RDP（`rdp.html` + `rdp-go.wasm`）。因此**桌面端原生 RDP 也尚未实现**，不只是移动端未实现。
+- [KNOWN] 该 C core 已被桌面 `src-tauri` 消费：`build.rs` 经 pkg-config 发现 FreeRDP 3/2 并用 `cc` 就地编译 `zephyr_rdp.c`；`src/rdp/` 提供 `ffi.rs`（手写 `#[repr(C)]` 镜像）与 `session.rs`（每会话一个 OS 线程跑 `zephyr_rdp_run`）；`commands/` 导出 12 个 `rdp_native_*` 命令。
+- [KNOWN] 手写 ABI 镜像不靠目测：C 导出 `zephyr_rdp_config_layout`，`assert_layout_matches_c()` 逐字段比对 23 个 offset 与 sizeof，不一致则返回 `AbiMismatch` 拒绝连接——因为跨 FFI 的字段错位不是编译错误，而是把 `const char*` 当`int32_t`读。
+- [KNOWN] FreeRDP 现为硬构建依赖：缺失时 `build.rs` 直接 panic 并给出各平台安装命令；唯一退路是显式 `ZEPHYR_ONE_SKIP_NATIVE_RDP=1`，那种构建不发 `cfg(zephyr_native_rdp)`，所有 `rdp_native_*` 返回 `native_rdp_unavailable`。不存在“静默回退到 WASM”的路径，否则 One 会宣称原生 RDP 而实际跑浏览器管道。
+- [KNOWN] **仍未完成**：平台 surface 未接——帧停在 Rust 侧的 `FrameSink` trait，尚无拥有真实窗口的实现，因此还没有可见的远程画面；也尚无对真实 RDP 服务器的 e2e。按开发规范，帧不得经 Node core 或 Web canvas，所以 `FrameSink` 是 Rust trait 而不是 IPC 命令。
 - [KNOWN] 曾存在的 `zephyr-one-rdp` helper 子进程方案（Rust 可执行 + length-prefixed stdio + Node bridge + WebSocket + Canvas）已按开发规范整体删除：规范要求 RDP native core 只输出协议/dirty rect，UI surface 由平台层拥有，高频帧不得经 Node core，也不得以 Web canvas 充当原生实现。
 - [KNOWN] 它已验证了 ADR-004 的三个关键假设，可直接继承而不必重新试错：accessor-only settings API 可同时适配 FreeRDP 2/3；damage rect 增量上屏可行；GDI 为 BGRA32、需在 pack 阶段转 RGBA。
 - [KNOWN] 已被实测证伪的两个默认行为必须在移动 adapter 复用同样修法：FreeRDP WLog 默认写 stdout 会冲垮二进制协议流（须在启动时隔离 fd1）；`freerdp_client_add_device_channel` 会 stat 映射路径，目录不存在即整体 settings 组装失败（须前置校验并返回具体错误码）。

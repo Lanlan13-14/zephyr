@@ -51,7 +51,10 @@
     },
     "linux": {
       "deb": {
-        "depends": []
+        "depends": [
+          "libfreerdp3-3 | libfreerdp2-2",
+          "libwinpr3-3 | libwinpr2-2"
+        ]
       }
     }
   },

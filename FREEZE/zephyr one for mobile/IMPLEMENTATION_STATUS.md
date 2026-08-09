@@ -43,7 +43,7 @@
 | F-007 | ACL/share | `implemented-zephyr` | `missing` | [KNOWN] 修复：`note` 在 `SHAREABLE_TYPES` 中但 `ResourceService._rawResource` 没有 note 分支，导致按用户共享笔记的两个 API 永远 404；现已按 ACL 形状返回 id/ownerUserId/name 而不带 content。原生 capability UI 未实现 |
 | F-008 | SSH/SFTP | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 SSH engine 未定 |
 | F-009 | Telnet | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生 parser/transport 未实现 |
-| F-010 | RDP | `implemented-zephyr` | `legacy-one` | [KNOWN] 桌面 One 与浏览器版一样使用 WASM RDP；原生 FreeRDP 引擎**未实现**。树内只有 C core `zephyr_one/native/freerdp-core/`（`zephyr_rdp.{h,c}` + 69 项 C 单测 + 固定 FreeRDP 3.30.0 静态构建脚本），没有 Rust 绑定、没有进程内引擎、没有平台 surface、没有 e2e |
+| F-010 | RDP | `implemented-zephyr` | `partial` | [KNOWN] 桌面 One 已在进程内链接 FreeRDP：`build.rs` 编译 `native/freerdp-core/zephyr_rdp.c`，`src-tauri/src/rdp/` 提供 FFI、会话线程与 `SessionRegistry`，12 个 `rdp_native_*` 命令对 UI 开放；23 个 config 字段 offset 对照 C 实时校验，不一致即拒绝连接；CI 在 freerdp3-dev 下真实编译并跑 C 单测与 `cargo test --lib`。**未完成**：平台 surface 未接（帧停在 `FrameSink` trait，无可见画面）、无真实服务器 e2e、移动端未实现。旧的 WASM 路径仍在浏览器版 |
 | F-011 | VNC | `implemented-zephyr` | `legacy-one` | [KNOWN] 当前 noVNC；原生 RFB core 未定 |
 | F-012 | 终端 IME | `implemented-zephyr` | `specified` | [KNOWN] Web 行为合同已有；原生 SurfaceController 未实现 |
 | F-013 | 笔记 | `implemented-zephyr` | `legacy-one` | [KNOWN] 原生列表/编辑/冲突未实现 |

@@ -3,6 +3,7 @@ mod auth;
 mod commands;
 mod fs;
 mod icon;
+mod rdp;
 mod rdp_picker;
 mod runtime;
 mod token;
@@ -27,6 +28,14 @@ pub fn run() {
     builder
         .manage(fs::FsState::default())
         .manage(token::TokenState::default())
+        /* One registry for every RDP session, owned by the shell rather than by
+         * a window: a session must outlive a tab being re-attached, and the
+         * loop thread needs somewhere stable to be reaped from. */
+        .manage(std::sync::Arc::new(rdp::SessionRegistry::new()))
+        /* Per-session frame counters and bounded event logs. Separate from the
+         * registry because the registry owns control (stop, input) while this
+         * owns observation, and the UI reads the two at different rates. */
+        .manage(commands::NativeRdpSinks::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_platform,
             commands::get_app_version,
@@ -53,6 +62,18 @@ pub fn run() {
             commands::token_remove_local,
             commands::token_export_local,
             commands::token_import_local,
+            commands::rdp_native_capabilities,
+            commands::rdp_native_validate_folder,
+            commands::rdp_native_connect,
+            commands::rdp_native_disconnect,
+            commands::rdp_native_sessions,
+            commands::rdp_native_send_mouse,
+            commands::rdp_native_send_key,
+            commands::rdp_native_send_text,
+            commands::rdp_native_resize,
+            commands::rdp_native_set_clipboard,
+            commands::rdp_native_request_full_frame,
+            commands::rdp_native_session_state,
         ])
         .setup(|app| {
             // Default: the frontend invokes async `runtime_start` once the boot
