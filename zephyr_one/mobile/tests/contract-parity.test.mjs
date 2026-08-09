@@ -17,7 +17,21 @@ const DELETE_MODES = [
   'revocation-tombstone', 'revoke', 'soft-delete-then-tombstone', 'tombstone',
 ];
 
-const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+/**
+ * Line endings are normalised before hashing.
+ *
+ * Not a convenience: hashing raw bytes made this gate depend on the contributor's git config.
+ * With core.autocrlf=true a Windows checkout stores these JSON and SVG files with CRLF, so the
+ * recorded hashes were CRLF hashes and every one of them failed on the ubuntu runner, where git
+ * checks out the LF blob. The question this test means to ask is whether the mirrored contract
+ * still has the same content as the frozen original, and a newline convention is not content.
+ */
+const normalise = (buf) => Buffer.from(buf.toString('utf8').replace(/\r\n/g, '\n'), 'utf8');
+
+const sha256 = (buf) => crypto.createHash('sha256').update(normalise(buf)).digest('hex');
+
+/** Size is compared on the same normalised bytes, or it contradicts the hash on Windows. */
+const sizeOf = (buf) => normalise(buf).length;
 
 test('every mirrored contract matches its FREEZE original byte for byte', () => {
   assert.ok(Array.isArray(parity.files), 'FREEZE_PARITY.json must list files as an array');
@@ -29,7 +43,7 @@ test('every mirrored contract matches its FREEZE original byte for byte', () => 
     assert.ok(fs.existsSync(original), meta.freezePath + ' is missing from FREEZE/');
     const mirroredBytes = fs.readFileSync(mirrored);
     assert.equal(sha256(mirroredBytes), meta.sha256, meta.path + ' drifted from its recorded hash');
-    assert.equal(mirroredBytes.length, meta.bytes, meta.path + ' changed size');
+    assert.equal(sizeOf(mirroredBytes), meta.bytes, meta.path + ' changed size');
     assert.equal(sha256(fs.readFileSync(original)), meta.sha256, meta.freezePath + ' changed; re-sync mobile/contracts');
   }
 });

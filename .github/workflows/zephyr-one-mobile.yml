@@ -46,9 +46,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      # No dependencies: the mobile contract suite is deliberately stdlib-only
-      # (node:test + node:assert), so there is nothing to install and nothing
-      # that can drift between a local run and CI.
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # The mobile suite is no longer stdlib-only, and the comment that said it was
+      # is why this job had never passed. Four suites (mobile-v1-api,
+      # mobile-v1-roundtrip, mobile-v1-secrets, mobile-v1-shared) spawn the real
+      # `node server.js` from the repo root to drive /api/mobile/v1 over HTTP, and
+      # three import @noble/post-quantum and ws directly. Without an install those
+      # 67 tests fail here and nowhere else, because a developer machine already has
+      # node_modules from working on the server.
+      #
+      # --ignore-scripts keeps the native addons (better-sqlite3, sharp, ssh2) from
+      # building, which this job does not need: every server-spawning suite sets
+      # ZEPHYR_ONE_USE_BUILTIN_SQLITE=1 for exactly that reason.
+      - name: Install server dependencies
+        working-directory: .
+        run: npm ci --ignore-scripts
       - name: Contract drift and contract tests
         run: npm test
 

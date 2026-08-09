@@ -4,98 +4,98 @@
     {
       "path": "contracts/openapi-mobile-v1.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/openapi-mobile-v1.json",
-      "sha256": "315819a91fac5d1dce9b4028aac99aeb6148321f39945515c3e030b6d5710141",
-      "bytes": 100324
+      "sha256": "8adf2d0bce3c6dc7f3b3156b5e21f40302397afab4ecb73ecbc2da8922298bd5",
+      "bytes": 96552
     },
     {
       "path": "contracts/registries/entity-registry.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/entity-registry.json",
-      "sha256": "2aa01f5dd3e4a8fc58b10d54cbafc2c5188d0027864acf83b7bb34be22377034",
-      "bytes": 19075
+      "sha256": "4c7861b283f96f17683181407f12732921303c5e6a03eefeab83d90a7310232b",
+      "bytes": 18328
     },
     {
       "path": "contracts/registries/error-registry.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/error-registry.json",
-      "sha256": "8588d04174ff246ac7af271c73e6c943a20782464afc58fd0f0472d86b920393",
-      "bytes": 12383
+      "sha256": "4f214324a86d6dedded80136826388dff45854337da65e1834ef6ca2f113873a",
+      "bytes": 11910
     },
     {
       "path": "contracts/registries/ai-capability-baseline.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/ai-capability-baseline.json",
-      "sha256": "e360a4ad25e1a487d1b7f00485d64fe643603cfb7d88415d3cc706ba2a517dda",
-      "bytes": 90984
+      "sha256": "b875eb4ad0556871c9c6c3f92c5cf34bff701e0c2318ebe2d845ed42e20465ce",
+      "bytes": 87208
     },
     {
       "path": "contracts/schemas/sync-operation.schema.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/schemas/sync-operation.schema.json",
-      "sha256": "2f87bf654213b1cbbdb5b512f47f7507f1f86c24a24ff9c9804df08f4ccf36dc",
-      "bytes": 2245
+      "sha256": "365a3f1d0128e7378132c0960f67c9a37b0eb32ab37f48de611088f3f4850d03",
+      "bytes": 2130
     },
     {
       "path": "contracts/schemas/sync-change.schema.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/schemas/sync-change.schema.json",
-      "sha256": "55a4050fa0af7bacf7ee8041e2a34feaa8586fda4490859f69da447b0563fc69",
-      "bytes": 1945
+      "sha256": "c36aa9caaec2792d872c20adc74a0dc983d5dd9457180570aca78939b3132d05",
+      "bytes": 1838
     },
     {
       "path": "contracts/schemas/secret-envelope.schema.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/schemas/secret-envelope.schema.json",
-      "sha256": "83b8d3af1531665be00c6fe3a38bf4558635c56b37c56ae5a4f8e3f65191be39",
-      "bytes": 1206
+      "sha256": "bbc9ad6dadd1a2ddc89a025d248a50d865ace9f9717bdccc55f46b77aaf4d7c8",
+      "bytes": 1144
     },
     {
       "path": "contracts/schemas/shared-use-envelope.schema.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/schemas/shared-use-envelope.schema.json",
-      "sha256": "c1a1e8b5a1b8f2f09292d56c0d33028b022d8473a6e1e82ed293d1ffa2faab65",
-      "bytes": 1799
+      "sha256": "34687a370b88a5c834a679333cc7a0997e72a055be8a1b569e0616740cae1d73",
+      "bytes": 1705
     },
     {
       "path": "contracts/schemas/error.schema.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/schemas/error.schema.json",
-      "sha256": "8efecfefdcc0e60c9b1cad708e03f904f74d14cb9b03b81ee81e428b08a21122",
-      "bytes": 977
+      "sha256": "a4192d34c70fbd69b9b9c5e890e4390bd073820a0e00ffbf6dec1ed7a1538866",
+      "bytes": 929
     },
     {
       "path": "contracts/test-vectors/sync-v1.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/test-vectors/sync-v1.json",
-      "sha256": "0a25748417beb12c7fb7fd672c1a8cf9e73c257b3cee43af98c4a938be2d2e4f",
-      "bytes": 2266
+      "sha256": "ed3ac3a43f7b2a73438e2e6c252f0fa57542c2112352880743a61430f546d72f",
+      "bytes": 2187
     },
     {
       "path": "contracts/test-vectors/shared-use-v1.json",
       "freezePath": "FREEZE/zephyr one for mobile/contracts/test-vectors/shared-use-v1.json",
-      "sha256": "014b9a91025c7d22a59e046a3e016331b7c25c7571dcdca9782fa5ffad6cfd6e",
-      "bytes": 4017
+      "sha256": "8d4943fa552fd9b990b118f258e543efd823e646bec7887fd8d7302fdd664bd2",
+      "bytes": 3888
     },
     {
       "path": "branding/manifest.json",
       "freezePath": "FREEZE/zephyr one for mobile/branding/manifest.json",
-      "sha256": "809e39db6c225c4445253e8d5985d18060d57dc547eb1abdd146699aed08582f",
-      "bytes": 2018
+      "sha256": "436f8afca71386cae716ec6ef2470256405e0bf9e6276f2729faec0646d02537",
+      "bytes": 1955
     },
     {
       "path": "branding/source/zephyr-one-frost.svg",
       "freezePath": "FREEZE/zephyr one for mobile/branding/source/zephyr-one-frost.svg",
-      "sha256": "d1bfb7c092c77f752b010f5ed94e12400d24f0abb9eeb0982ed4467acc09df4d",
-      "bytes": 1356
+      "sha256": "31c13deb66daa27d542e38cf7052c5cb6aff2beec1112abcec1b66516c46d5bb",
+      "bytes": 1347
     },
     {
       "path": "branding/source/zephyr-one-lava.svg",
       "freezePath": "FREEZE/zephyr one for mobile/branding/source/zephyr-one-lava.svg",
-      "sha256": "3cf1a7655f7a36424ec5f5c307ecffc365d287a48f48f3f4f08e93b7729c5b7f",
-      "bytes": 1356
+      "sha256": "b65ff5ff92f00412e19cc660244fc112ae290042eceb62a2e225158bfcf870e7",
+      "bytes": 1347
     },
     {
       "path": "branding/source/zephyr-one-asagi.svg",
       "freezePath": "FREEZE/zephyr one for mobile/branding/source/zephyr-one-asagi.svg",
-      "sha256": "b71bc79bc647107469ffb930cc72fe6f15460c458a957d16b2b0c167503990de",
-      "bytes": 1356
+      "sha256": "570635324018c7207822e85485d80f079b61d9f7dd66b1d086a53b150b35c596",
+      "bytes": 1347
     },
     {
       "path": "branding/source/zephyr-one-cyber.svg",
       "freezePath": "FREEZE/zephyr one for mobile/branding/source/zephyr-one-cyber.svg",
-      "sha256": "cce7de4a53034ceb41e215eac47c1c40e53f461ca8040e30bdb6fde35ca382f9",
-      "bytes": 1356
+      "sha256": "cde0df1b57af7fbfc6571af1f484974fe2f143fbd562b90239a4aff32f8a7884",
+      "bytes": 1347
     }
   ]
 }
