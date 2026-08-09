@@ -43,4 +43,8 @@ public enum MobileApiPaths {
     public static func sharedSession(_ sessionId: String) -> String {
         "/api/mobile/v1/shared/sessions/" + sessionId
     }
+
+    public static func sharedConnectionSessions(_ connectionId: String) -> String {
+        "/api/mobile/v1/shared/connections/\(connectionId)/sessions"
+    }
 }

@@ -167,6 +167,12 @@ export function apiPathsKt() {
   out.push("    fun sharedResource(resourceType: String, resourceId: String): String =");
   out.push("        \"/api/mobile/v1/shared/\" + resourceType + \"/\" + resourceId");
   out.push("");
+  /* The connections/{id}/sessions path is a template like the two above, so it
+   * gets a helper for the same reason: a hand-built string in the client is how
+   * a path drifts from the frozen OpenAPI without any test noticing. */
+  out.push("    fun sharedConnectionSessions(connectionId: String): String =");
+  out.push("        \"/api/mobile/v1/shared/connections/\" + connectionId + \"/sessions\"");
+  out.push("");
   out.push("    fun sharedSession(sessionId: String): String =");
   out.push("        \"/api/mobile/v1/shared/sessions/\" + sessionId");
   out.push("}");

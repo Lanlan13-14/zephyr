@@ -37,6 +37,9 @@ object MobileApiPaths {
     fun sharedResource(resourceType: String, resourceId: String): String =
         "/api/mobile/v1/shared/" + resourceType + "/" + resourceId
 
+    fun sharedConnectionSessions(connectionId: String): String =
+        "/api/mobile/v1/shared/connections/" + connectionId + "/sessions"
+
     fun sharedSession(sessionId: String): String =
         "/api/mobile/v1/shared/sessions/" + sessionId
 }

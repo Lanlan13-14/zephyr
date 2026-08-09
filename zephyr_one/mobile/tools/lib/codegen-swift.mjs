@@ -205,6 +205,10 @@ export function apiPathsSwift() {
   out.push("    public static func sharedSession(_ sessionId: String) -> String {");
   out.push("        \"/api/mobile/v1/shared/sessions/\" + sessionId");
   out.push("    }");
+  out.push("");
+  out.push("    public static func sharedConnectionSessions(_ connectionId: String) -> String {");
+  out.push("        \"/api/mobile/v1/shared/connections/\\(connectionId)/sessions\"");
+  out.push("    }");
   out.push("}");
   return out.join("\n") + "\n";
 }

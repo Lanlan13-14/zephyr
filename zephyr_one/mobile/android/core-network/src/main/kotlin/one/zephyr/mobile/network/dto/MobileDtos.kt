@@ -233,57 +233,130 @@ data class SharedResourceSummaryDto(
     val resourceType: String,
     val resourceId: String,
     val displayName: String,
-    val ownerLabel: String,
+    /**
+     * `ownerDisplayName` in the frozen schema, not `ownerLabel`.
+     *
+     * This DTO previously named it `ownerLabel`, which is not a key the server
+     * ever sends: SharedResourceSummary is `additionalProperties: false` with
+     * exactly seven properties. kotlinx would have defaulted it silently, so
+     * every shared row would have rendered with a blank owner and the residency
+     * UI could not have told the user whose resource it was.
+     */
+    val ownerDisplayName: String,
     val capabilities: List<String> = emptyList(),
+    val revision: Long,
     val expiresAt: Long? = null,
-    @SerialName("directUseAllowed") val directUseAllowed: Boolean = false,
-    val revision: Long = 0,
+    /*
+     * Below here: detail-only enrichment. GET /shared/{type}/{id} has a free-form
+     * 200 schema and the server adds non-secret connect metadata to it, while the
+     * list projection is restricted to the seven schema properties. Nullable so
+     * the same DTO can parse both without inventing values for the list case.
+     */
     val protocol: String? = null,
-    val extra: JsonObject? = null,
+    val host: String? = null,
+    val port: Int? = null,
+    val username: String? = null,
+    /** Null in a list response; the caller must fall back to the capability set. */
+    val directUseAllowed: Boolean? = null,
+    val hasContent: Boolean? = null,
 )
 
 @Serializable
 data class SharedListDto(
-    val ok: Boolean = false,
-    val resources: List<SharedResourceSummaryDto> = emptyList(),
+    /**
+     * `items`, not `resources`, and there is no `ok` field.
+     *
+     * The frozen 200 schema for GET /api/mobile/v1/shared requires `items` and
+     * allows `nextPageToken`. Reading `resources` produced an always-empty list,
+     * so the shared directory would have looked permanently empty to the user
+     * even while the server was returning rows.
+     */
+    val items: List<SharedResourceSummaryDto> = emptyList(),
+    val nextPageToken: String? = null,
 )
 
 @Serializable
 data class SharedSessionRequestDto(
-    val purpose: String,
-    val clientNonce: String,
-    /** Absent means "relay"; the server decides whether direct is permitted by owner policy. */
-    val requestDirect: Boolean = false,
+    /**
+     * `direct-ephemeral` or `relay-strict`. The schema is an enum with
+     * `additionalProperties: false`, so the old `purpose`/`requestDirect` pair
+     * was rejected outright rather than merely misread.
+     */
+    val mode: String,
+    /** >= 22 chars per the schema; the server refuses a shorter nonce with 400. */
+    val clientSessionNonce: String,
+    val requestedChannels: List<String> = emptyList(),
+    val deviceKeyVersion: Int,
 )
 
 @Serializable
 data class SharedSessionResponseDto(
-    val ok: Boolean = false,
     val sessionId: String,
+    /** `direct-ephemeral` or `relay-strict`, never the bare word `direct`. */
     val mode: String,
     val expiresAt: Long,
-    val relayUrl: String? = null,
-    val envelope: JsonObject? = null,
+    val capabilities: List<String> = emptyList(),
+    /** Present only for `direct-ephemeral`. */
+    val useEnvelope: JsonObject? = null,
+    /** Present only for `relay-strict`. */
+    val relay: SharedRelayDto? = null,
+)
+
+/**
+ * Where to attach a relay-strict session, and the token that authorises it.
+ *
+ * The credential is scoped to this one session and is not a bearer token for
+ * anything else (SHARED_RESOURCE_RESIDENCY.md 3.3). It carries no connect
+ * material: the main end holds the credential and proxies the protocol.
+ */
+@Serializable
+data class SharedRelayDto(
+    val websocketUrl: String? = null,
+    val protocol: String? = null,
+    val credential: String? = null,
+)
+
+/**
+ * Body for POST /shared/sessions/{id}/refresh.
+ *
+ * The frozen schema requires `clientSessionNonce` (minLength 22) and sets
+ * `additionalProperties: false`. The client previously posted `{ ok: true }`
+ * here, which the server rejects with 400 `invalid_request` - so a dropped
+ * relay socket could never be re-established inside a live grant, and a
+ * direct session could never be re-sealed under a fresh nonce.
+ */
+@Serializable
+data class SharedSessionRefreshDto(
+    val clientSessionNonce: String,
 )
 
 @Serializable
 data class SharedInvokeRequestDto(
     val operation: String,
     val arguments: JsonObject = JsonObject(emptyMap()),
+    /** Required by the server for note `update`; omitted for reads. */
+    val expectedRevision: Long? = null,
+    val runId: String? = null,
 )
 
 @Serializable
 data class SharedInvokeResponseDto(
     val ok: Boolean = false,
+    /** Required by the schema: the revision to send back on the next edit. */
+    val revision: Long = 0,
     val result: JsonElement? = null,
+    val auditId: String? = null,
 )
 
 @Serializable
 data class FileBridgeLeaseRequestDto(
-    val connectionId: String,
-    val rootLabel: String,
-    val readOnly: Boolean,
-    val ttlSeconds: Int,
+    /**
+     * The frozen body requires `shareProfileIds`; `connectionId`/`rootLabel`/
+     * `ttlSeconds` were never part of it. A lease is taken over device-local
+     * share profiles, and the TTL is the server's to decide.
+     */
+    val shareProfileIds: List<String>,
+    val readOnly: Boolean = true,
 )
 
 @Serializable

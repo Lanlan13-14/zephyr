@@ -9,6 +9,7 @@ import one.zephyr.mobile.network.dto.SharedInvokeRequestDto
 import one.zephyr.mobile.network.dto.SharedInvokeResponseDto
 import one.zephyr.mobile.network.dto.SharedListDto
 import one.zephyr.mobile.network.dto.SharedResourceSummaryDto
+import one.zephyr.mobile.network.dto.SharedSessionRefreshDto
 import one.zephyr.mobile.network.dto.SharedSessionRequestDto
 import one.zephyr.mobile.network.dto.SharedSessionResponseDto
 
@@ -17,7 +18,7 @@ data class SharedResource(
     val resourceType: String,
     val resourceId: String,
     val displayName: String,
-    val ownerLabel: String,
+    val ownerDisplayName: String,
     val capabilities: CapabilitySet,
     val expiresAt: Long?,
     val usePolicy: SharedUsePolicy,
@@ -35,6 +36,12 @@ sealed interface SharedSession {
         override val sessionId: String,
         override val expiresAt: Long,
         val relayUrl: String,
+        /**
+         * Session-scoped attach token. Not a bearer credential for anything else,
+         * and it carries no connect material: the main end keeps the credential
+         * and proxies the protocol.
+         */
+        val credential: String,
     ) : SharedSession
 
     /**
@@ -59,10 +66,15 @@ sealed interface SharedSession {
  */
 class SharedResourceClient(private val client: MobileApiClient) {
 
+    private companion object {
+        const val MODE_DIRECT = "direct-ephemeral"
+        const val MODE_RELAY = "relay-strict"
+    }
+
     /** Fetched fresh every time the list is shown. There is no offline-with-cache state for these. */
     suspend fun list(): ApiResult<List<SharedResource>> =
         client.get(MobileApiPaths.GET_MOBILE_V1_SHARED, SharedListDto.serializer())
-            .map { dto -> dto.resources.map(::toDomain) }
+            .map { dto -> dto.items.map(::toDomain) }
 
     suspend fun detail(resourceType: String, resourceId: String): ApiResult<SharedResource> =
         client.get(
@@ -98,26 +110,39 @@ class SharedResourceClient(private val client: MobileApiClient) {
      */
     suspend fun openSession(
         connectionId: String,
-        purpose: String,
-        clientNonce: String,
+        clientSessionNonce: String,
+        requestedChannels: List<String>,
+        deviceKeyVersion: Int,
         requestDirect: Boolean,
     ): ApiResult<SharedSession> =
         client.post(
-            path = "/api/mobile/v1/shared/connections/" + connectionId + "/sessions",
+            path = MobileApiPaths.sharedConnectionSessions(connectionId),
             body = SharedSessionRequestDto(
-                purpose = purpose,
-                clientNonce = clientNonce,
-                requestDirect = requestDirect,
+                /* The wire enum, not a boolean. `requestDirect` is still only a
+                 * request: the server answers relay-strict whenever owner policy
+                 * withholds direct, and a relay answer must never be retried as
+                 * direct (SHARED_RESOURCE_RESIDENCY.md 3.3). */
+                mode = if (requestDirect) MODE_DIRECT else MODE_RELAY,
+                clientSessionNonce = clientSessionNonce,
+                requestedChannels = requestedChannels,
+                deviceKeyVersion = deviceKeyVersion,
             ),
             bodySerializer = SharedSessionRequestDto.serializer(),
             responseSerializer = SharedSessionResponseDto.serializer(),
         ).map { dto -> toSession(dto) }
 
-    suspend fun refreshSession(sessionId: String): ApiResult<SharedSession> =
+    /**
+     * Re-mints the attach credential (relay) or re-seals the envelope (direct).
+     *
+     * A *fresh* nonce is mandatory. Replaying the previous one is answered with
+     * `shared_session_consumed` (409) because a captured response must not be
+     * re-obtainable, so the caller passes a new random value per attempt.
+     */
+    suspend fun refreshSession(sessionId: String, clientSessionNonce: String): ApiResult<SharedSession> =
         client.post(
             path = MobileApiPaths.sharedSession(sessionId) + "/refresh",
-            body = OkResponseDto(ok = true),
-            bodySerializer = OkResponseDto.serializer(),
+            body = SharedSessionRefreshDto(clientSessionNonce = clientSessionNonce),
+            bodySerializer = SharedSessionRefreshDto.serializer(),
             responseSerializer = SharedSessionResponseDto.serializer(),
         ).map { dto -> toSession(dto) }
 
@@ -128,21 +153,28 @@ class SharedResourceClient(private val client: MobileApiClient) {
             responseSerializer = OkResponseDto.serializer(),
         ).map { it.ok }
 
+    /*
+     * The wire values are `direct-ephemeral` and `relay-strict`. The old code
+     * compared against the bare string "direct", which no server ever sends, so
+     * a direct session would have been misread as relay and its envelope
+     * dropped -- the device would then have had no connect material and no error.
+     */
     private fun toSession(dto: SharedSessionResponseDto): SharedSession =
-        if (dto.mode == "direct" && dto.envelope != null) {
+        if (dto.mode == MODE_DIRECT && dto.useEnvelope != null) {
             SharedSession.Direct(
                 sessionId = dto.sessionId,
                 expiresAt = dto.expiresAt,
                 envelope = MobileJson.instance.decodeFromJsonElement(
                     SharedUseEnvelope.serializer(),
-                    dto.envelope,
+                    dto.useEnvelope,
                 ),
             )
         } else {
             SharedSession.Relay(
                 sessionId = dto.sessionId,
                 expiresAt = dto.expiresAt,
-                relayUrl = dto.relayUrl ?: "",
+                relayUrl = dto.relay?.websocketUrl ?: "",
+                credential = dto.relay?.credential ?: "",
             )
         }
 
@@ -150,12 +182,16 @@ class SharedResourceClient(private val client: MobileApiClient) {
         resourceType = dto.resourceType,
         resourceId = dto.resourceId,
         displayName = dto.displayName,
-        ownerLabel = dto.ownerLabel,
+        ownerDisplayName = dto.ownerDisplayName,
         capabilities = CapabilitySet.fromWire(dto.capabilities),
         expiresAt = dto.expiresAt,
         // Absent means relay. Defaulting the other way would let a server omission silently
         // upgrade a resource to direct use.
-        usePolicy = if (dto.directUseAllowed) SharedUsePolicy.DIRECT_ALLOWED else SharedUsePolicy.RELAY_ONLY,
+        /* directUseAllowed is absent from a list response (the frozen summary schema
+         * has no such property), so a null must not read as "direct allowed". The
+         * capability set is the authoritative fallback: the server only offers direct
+         * when the owner granted control or execute. */
+        usePolicy = if (dto.directUseAllowed == true) SharedUsePolicy.DIRECT_ALLOWED else SharedUsePolicy.RELAY_ONLY,
         revision = dto.revision,
         protocol = dto.protocol,
     )

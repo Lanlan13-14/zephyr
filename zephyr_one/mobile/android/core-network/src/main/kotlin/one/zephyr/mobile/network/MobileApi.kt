@@ -207,19 +207,29 @@ class MobileApi(private val client: MobileApiClient) {
             responseSerializer = OkResponseDto.serializer(),
         ).map { it.ok }
 
+    /**
+     * Takes a lease over device-local share profiles.
+     *
+     * The frozen request body is `{ shareProfileIds, readOnly }`. This call site
+     * previously sent `connectionId` / `rootLabel` / `ttlSeconds`, none of which
+     * the schema declares: a lease is taken over the profiles this device is
+     * offering, and the TTL is the server's to decide, not the client's to ask
+     * for.
+     *
+     * The endpoint answers 501 `unsupported_scope` on the current server because
+     * no ZFT2 transport accepts a lease yet. Kept wired rather than deleted so
+     * the request shape stays honest and the caller sees a registered error code
+     * instead of a 404.
+     */
     suspend fun fileBridgeLease(
-        connectionId: String,
-        rootLabel: String,
-        readOnly: Boolean,
-        ttlSeconds: Int,
+        shareProfileIds: List<String>,
+        readOnly: Boolean = true,
     ): ApiResult<FileBridgeLeaseResponseDto> =
         client.post(
             path = MobileApiPaths.POST_MOBILE_V1_FILE_BRIDGE_LEASE,
             body = FileBridgeLeaseRequestDto(
-                connectionId = connectionId,
-                rootLabel = rootLabel,
+                shareProfileIds = shareProfileIds,
                 readOnly = readOnly,
-                ttlSeconds = ttlSeconds,
             ),
             bodySerializer = FileBridgeLeaseRequestDto.serializer(),
             responseSerializer = FileBridgeLeaseResponseDto.serializer(),
