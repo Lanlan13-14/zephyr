@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { MOBILE_ROOT, CONTRACTS_ROOT, entityRegistry, errorRegistry, pushOrderedEntityTypes } from '../tools/lib/contracts.mjs';
+import { MOBILE_ROOT, REPO_ROOT, CONTRACTS_ROOT, entityRegistry, errorRegistry, pushOrderedEntityTypes } from '../tools/lib/contracts.mjs';
 
-const FREEZE_ROOT = path.join(MOBILE_ROOT, '..', 'FREEZE', 'zephyr one for mobile');
+const FREEZE_ROOT = path.join(REPO_ROOT, 'FREEZE', 'zephyr one for mobile');
 const parity = JSON.parse(fs.readFileSync(path.join(CONTRACTS_ROOT, 'FREEZE_PARITY.json'), 'utf8'));
 
 // Frozen delete modes. entity-registry.json is the source; this list only guards against new,
@@ -24,7 +24,7 @@ test('every mirrored contract matches its FREEZE original byte for byte', () => 
   assert.ok(parity.files.length >= 11, 'expected the full contract set to be mirrored');
   for (const meta of parity.files) {
     const mirrored = path.join(MOBILE_ROOT, meta.path);
-    const original = path.join(MOBILE_ROOT, '..', meta.freezePath);
+    const original = path.join(REPO_ROOT, meta.freezePath);
     assert.ok(fs.existsSync(mirrored), meta.path + ' is missing from mobile/');
     assert.ok(fs.existsSync(original), meta.freezePath + ' is missing from FREEZE/');
     const mirroredBytes = fs.readFileSync(mirrored);

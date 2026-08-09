@@ -1,5 +1,5 @@
-// ZFT2 reference codec. Byte-compatible with ../../file-transfer-protocol.js and
-// ../../zephyr_agent/lib/agent/file_transfer_protocol.dart.
+// ZFT2 reference codec. Byte-compatible with ../../../file-transfer-protocol.js and
+// ../../../zephyr_agent/lib/agent/file_transfer_protocol.dart.
 // Frozen by ZEPHYR_PARITY.md 10.2: magic ZFT2, version 2, 20-byte big-endian header.
 
 export const MAGIC = Buffer.from('ZFT2', 'ascii');

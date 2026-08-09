@@ -6,7 +6,7 @@ import * as zft2 from '../tools/lib/zft2.mjs';
 import { zft2Frames } from '../tools/lib/fixtures.mjs';
 
 const require = createRequire(import.meta.url);
-const legacy = require('../../file-transfer-protocol.js');
+const legacy = require('../../../file-transfer-protocol.js');
 
 test('wire constants match the frozen spec', () => {
   assert.equal(zft2.MAGIC.toString('ascii'), 'ZFT2');

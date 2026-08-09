@@ -7,6 +7,13 @@ const here = path.dirname(url.fileURLToPath(import.meta.url));
 export const MOBILE_ROOT = path.resolve(here, '..', '..');
 export const CONTRACTS_ROOT = path.join(MOBILE_ROOT, 'contracts');
 
+/**
+ * The Zephyr checkout root. Exported so callers never hand-roll '..' hops: this tree lives at
+ * zephyr_one/mobile/, and the FREEZE archive plus the legacy JS/Dart implementations it is checked
+ * against sit at the repo root, two levels up.
+ */
+export const REPO_ROOT = path.resolve(MOBILE_ROOT, '..', '..');
+
 export function readJson(relPath) {
   return JSON.parse(fs.readFileSync(path.join(CONTRACTS_ROOT, relPath), 'utf8'));
 }
