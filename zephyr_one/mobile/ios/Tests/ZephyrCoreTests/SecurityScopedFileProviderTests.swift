@@ -201,15 +201,18 @@ final class SecurityScopedFileProviderTests: XCTestCase {
         /* DEVELOPMENT.md 13.4: the main end reads canWrite to decide whether to offer
          * a write at all. Advertising true and refusing later is what leaves a
          * half-copied file on the Windows side. */
-        XCTAssertTrue(try await provider().stat(path: "/docs/a.txt").canWrite)
-        XCTAssertFalse(try await provider(readOnly: true).stat(path: "/docs/a.txt").canWrite)
+        let writable = try await provider().stat(path: "/docs/a.txt")
+        XCTAssertTrue(writable.canWrite)
+        let shared = try await provider(readOnly: true).stat(path: "/docs/a.txt")
+        XCTAssertFalse(shared.canWrite)
     }
 
     func testAWritableShareStillReportsThePlatformsAnswer() async throws {
         /* The share being writable does not make a read-only file writable, and
          * discovering that on the first WRITE means the copy already started. */
         fs.addFile("/granted/docs/locked.txt", contents: "x", canWrite: false)
-        XCTAssertFalse(try await provider().stat(path: "/docs/locked.txt").canWrite)
+        let locked = try await provider().stat(path: "/docs/locked.txt")
+        XCTAssertFalse(locked.canWrite)
         await refused("permission_denied") { _ = try await self.provider().open(path: "/docs/locked.txt", mode: "write") }
     }
 
@@ -259,7 +262,8 @@ final class SecurityScopedFileProviderTests: XCTestCase {
         await refused("too_many_handles") { _ = try await provider.open(path: "/docs/a.txt", mode: "read") }
         /* Refused before openAccess, so no descriptor was created to leak. */
         XCTAssertEqual(fs.liveAccess.count, 2)
-        XCTAssertEqual(await provider.openHandleCount(), 2)
+        let bounded = await provider.openHandleCount()
+        XCTAssertEqual(bounded, 2)
     }
 
     func testCloseAllReleasesEveryDescriptorAndClaim() async throws {
@@ -276,9 +280,11 @@ final class SecurityScopedFileProviderTests: XCTestCase {
          * and a residual security-scoped claim keeps a sandbox extension alive after
          * the user stopped the share. */
         XCTAssertEqual(fs.liveAccess, [])
-        XCTAssertEqual(await provider.openHandleCount(), 0)
+        let remainingHandles = await provider.openHandleCount()
+        XCTAssertEqual(remainingHandles, 0)
         XCTAssertEqual(fs.accessBalance, 0)
-        XCTAssertEqual(await provider.accessClaimCount(), 0)
+        let remainingClaims = await provider.accessClaimCount()
+        XCTAssertEqual(remainingClaims, 0)
     }
 
     func testARefusedClaimIsReportedRatherThanAssumed() async throws {
@@ -287,7 +293,8 @@ final class SecurityScopedFileProviderTests: XCTestCase {
         fs.refuseAccess = true
         let provider = provider()
         await refused("permission_denied") { try await provider.beginAccess() }
-        XCTAssertEqual(await provider.accessClaimCount(), 0)
+        let claimsAfterRefusal = await provider.accessClaimCount()
+        XCTAssertEqual(claimsAfterRefusal, 0)
     }
 
     // MARK: - Reads and writes
@@ -350,7 +357,8 @@ final class SecurityScopedFileProviderTests: XCTestCase {
     func testMkdirRefusesAnExistingNameAndTheRoot() async throws {
         let provider = provider()
         try await provider.mkdir(path: "/docs/sub")
-        XCTAssertTrue(try await provider.stat(path: "/docs/sub").isDir)
+        let made = try await provider.stat(path: "/docs/sub")
+        XCTAssertTrue(made.isDir)
         await refused("already_exists") { try await provider.mkdir(path: "/docs/sub") }
         await refused("already_exists") { try await provider.mkdir(path: "/") }
     }
@@ -367,7 +375,8 @@ final class SecurityScopedFileProviderTests: XCTestCase {
     func testDeleteRefusesANonEmptyDirectoryUnlessRecursive() async throws {
         let provider = provider()
         await refused("not_empty") { try await provider.delete(path: "/docs", recursive: false) }
-        XCTAssertTrue(try await provider.stat(path: "/docs").isDir)
+        let survived = try await provider.stat(path: "/docs")
+        XCTAssertTrue(survived.isDir)
         try await provider.delete(path: "/docs", recursive: true)
         await refused("not_found") { _ = try await provider.stat(path: "/docs") }
     }
@@ -375,7 +384,8 @@ final class SecurityScopedFileProviderTests: XCTestCase {
     func testRenameWithinTheSameDirectory() async throws {
         let provider = provider()
         try await provider.rename(oldPath: "/docs/a.txt", newPath: "/docs/b.txt")
-        XCTAssertEqual(try await provider.stat(path: "/docs/b.txt").path, "/docs/b.txt")
+        let renamed = try await provider.stat(path: "/docs/b.txt")
+        XCTAssertEqual(renamed.path, "/docs/b.txt")
         await refused("not_found") { _ = try await provider.stat(path: "/docs/a.txt") }
     }
 
@@ -401,7 +411,8 @@ final class SecurityScopedFileProviderTests: XCTestCase {
 
         fs.refuseMove = false
         try await provider.rename(oldPath: "/docs/a.txt", newPath: "/other/moved.txt")
-        XCTAssertEqual(try await provider.stat(path: "/other/moved.txt").path, "/other/moved.txt")
+        let moved = try await provider.stat(path: "/other/moved.txt")
+        XCTAssertEqual(moved.path, "/other/moved.txt")
     }
 
     func testTruncateRefusesNegativeSizesAndDirectoriesAndReleasesItsDescriptor() async throws {

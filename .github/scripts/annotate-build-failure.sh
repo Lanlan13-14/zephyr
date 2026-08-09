@@ -43,17 +43,25 @@ while IFS= read -r line; do
   echo "::error title=${label}::${esc}"
   matched=$((matched + 1))
   [ "$matched" -ge 40 ] && break
-done < <(grep -E -e '^e: ' -e '(^|[[:space:]])error(\[[A-Z0-9]+\])?:' -e ': error: ' -e '^FAILURE: ' -e '^\* What went wrong:' -e 'Compilation error' -e 'Unresolved reference' -e 'cannot find' "$clean" | head -n 40)
+done < <(grep -E -e '^e: ' -e '(^|[[:space:]])error(\[[A-Z0-9]+\])?:' -e ': error: ' -e '^FAILURE: ' -e '^\* What went wrong:' -e 'Compilation error' -e 'Unresolved reference' -e 'cannot find' -e "panicked at" -e '^--- stderr' -e '^Caused by:' -e '^\s+> ' -e 'Could not (find|resolve|determine)' -e 'No such file or directory' "$clean" | head -n 40)
 
-# No recognised diagnostic: fall back to the tail, which is where Gradle and
-# swift-build put their summary. An annotation with the wrong lines still beats
-# an annotation with no lines.
+# The tail is emitted ALWAYS, not only when nothing matched.
+#
+# Selectivity is what hid the first real answer: cargo printed
+#   error: failed to run custom build command for `zephyr-one ...`
+# which matched the filter, so the tail was suppressed -- but the actual cause
+# is in the lines cargo prints after it (`--- stderr`, `thread 'main' panicked
+# at ...`, then the message), none of which contain `error:`. Gradle behaves the
+# same way: `* What went wrong:` matches and the cause is the line beneath it.
+# A matched diagnostic names the category; the tail is what names the cause.
+tail_text=$(tail -n 60 "$clean")
+esc=${tail_text//'%'/'%25'}
+esc=${esc//$'\r'/}
+esc=${esc//$'\n'/'%0A'}
 if [ "$matched" -eq 0 ]; then
-  tail_text=$(tail -n 30 "$clean")
-  esc=${tail_text//'%'/'%25'}
-  esc=${esc//$'\r'/}
-  esc=${esc//$'\n'/'%0A'}
-  echo "::error title=${label} (no diagnostic matched; last 30 lines)::${esc}"
+  echo "::error title=${label} (no diagnostic matched; last 60 lines)::${esc}"
+else
+  echo "::error title=${label} (last 60 lines)::${esc}"
 fi
 
 # Also drop the tail into the run summary, which renders multi-line text far
