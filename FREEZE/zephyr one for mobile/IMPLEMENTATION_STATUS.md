@@ -59,7 +59,7 @@
 | F-023 | 备份恢复 | `implemented-zephyr` | `legacy-one` | [KNOWN] Web/旧 One E2E 已有；原生 document flow 未实现 |
 | F-024 | Client Token 完整互备 | `partial` | `missing` | [KNOWN] 当前 JSON 明文且 sync 只给 metadata |
 | F-025 | ZFT2 文件桥接 | `implemented-zephyr` | `legacy-one` | [KNOWN] JS/Dart 已有；Kotlin/Swift 未实现 |
-| F-026 | Android SAF foreground bridge | `missing` | `missing` | [KNOWN] 原生项目不存在 |
+| F-026 | Android SAF foreground bridge | `missing` | `partial` | [KNOWN] SAF provider 与授权链已实现: `feature-file-sync` / `SafZft2FileProvider` / `ContentResolverDocumentTree` / `SafShareGrants`, 21 个 JVM 单测 + 17 静态 gate (`android-saf-provider.test.mjs`), 25 mutations / 0 survivors; 路径监禁采用子节点递归解析，不做 document id 拼接; 仍缺目录选择器接线 (`driveProfileProvider = { null }`) 与真机验证; 本机无法编译 Kotlin |
 | F-027 | iOS security-scoped bridge | `missing` | `missing` | [KNOWN] 原生项目不存在 |
 | F-028 | 系统 App Lock | `partial` | `legacy-one` | [KNOWN] Tauri hook 非正式 BiometricPrompt/LA 实现 |
 | F-029 | 四色原生图标 | `specified` | `partial` | [KNOWN] SVG/manifest 有；production path/adaptive/alternate assets 未生成 |
