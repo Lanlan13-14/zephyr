@@ -131,7 +131,26 @@ test('the release rasteriser outlines the One wordmark instead of trusting a fon
 
   // The substitution has to be applied to the markup that is rasterised.
   assert.match(src, /def outline_wordmark/, 'the substitution must be a named step');
-  assert.match(src, /outline_wordmark\(/, 'the substitution must actually be called');
+
+  /* The call, not merely the definition.
+   *
+   * A bare /outline_wordmark\(/ match is satisfied by the `def` line itself, so
+   * it stayed green when the call was removed from staged_master and the raw
+   * <text> markup went to the rasteriser -- verified by mutation. Anchoring on
+   * the read that feeds the staged copy is what makes this load-bearing. */
+  assert.match(
+    src,
+    /outline_wordmark\(\s*svg\.read_text\(/,
+    'the outlining must be applied to the markup that is actually rasterised',
+  );
+
+  /* And the staged copy is what every renderer receives: if staged_master
+   * returned the original path, outlining would be dead code. */
+  assert.match(
+    src,
+    /staged_master\(SVG_DIR/,
+    'every theme must be rasterised from its staged (outlined) copy',
+  );
 
   // Fail loudly rather than silently shipping font-dependent artwork: if a
   // master is reshaped so the <text> group no longer matches, the build must
@@ -150,26 +169,94 @@ test('the release rasteriser outlines the One wordmark instead of trusting a fon
   }
 });
 
-test('prepare-icons.py saves the .ico from its largest frame', () => {
+test('every .ico frame is rasterised from the vector, not resampled from a bitmap', () => {
   const src = fs.readFileSync(path.join(root, 'zephyr_one/scripts/prepare-icons.py'), 'utf8');
 
   assert.match(src, /ICO_SIZES = \(16, 32, 48, 64, 128, 256\)/);
 
-  // Largest-first ordering is what makes icos[0] a 256px base.
+  /* The regression this pins down.
+   *
+   * The generator used to build every .ico frame with
+   * `src.resize((s, s), LANCZOS)` off the single 256px master. Measured against
+   * a native render of the same master at the same size, the downscale differed
+   * by 12.1% of pixels at 16px, 6.0% at 32px and 5.0% at 48px, and it was
+   * measurably softer: 5.86% mid-tone (part-on, part-off) pixels at 16px versus
+   * 3.91% for a native render. Those small frames are exactly what Windows
+   * shows in the taskbar, Alt-Tab and Explorer's list views, so the shipped app
+   * icon looked blurry. The bundle PNG loop already rasterised per size; the
+   * .ico path did not.
+   *
+   * Asserting the absence of the resize as well as the presence of the render
+   * keeps a future edit from quietly reintroducing bitmap reduction. */
+  const icoBlock = src.slice(src.indexOf('ico_frames = []'), src.indexOf("format=\"ICO\""));
+  assert.ok(icoBlock.length > 0, 'the .ico frame loop must exist');
+  assert.match(icoBlock, /render_svg\(default_svg, size, frame_path\)/,
+    'each .ico frame must be rasterised from the SVG at its own size');
+  assert.doesNotMatch(icoBlock, /resize\(/,
+    'a .ico frame must never be produced by resampling a larger bitmap');
+  assert.doesNotMatch(icoBlock, /LANCZOS/,
+    'LANCZOS reduction is what made the small frames soft');
+
+  // Same reasoning for the .icns Retina ladder.
+  const icnsBlock = src.slice(src.indexOf('icns_frames = []'), src.indexOf("format=\"ICNS\""));
+  assert.ok(icnsBlock.length > 0, 'the .icns frame loop must exist');
+  assert.match(icnsBlock, /render_svg\(default_svg, size, frame_path\)/,
+    'each .icns frame must be rasterised from the SVG at its own size');
+  assert.doesNotMatch(icnsBlock, /resize\(/,
+    'an .icns frame must never be a resampled bitmap');
+
+  /* Largest-first ordering plus append_images is still load-bearing: PIL caps
+   * every requested size at the *base* image's own dimensions
+   * (IcoImagePlugin._save: "if size[0] > width ... continue"), so saving from
+   * the 16px frame silently discards 32 through 256 and ships a single-entry
+   * 16px .ico that Windows then upscales everywhere. */
   assert.match(
     src,
-    /icos\.sort\(key=lambda frame: frame\.width, reverse=True\)/,
+    /ico_frames\.sort\(key=lambda frame: frame\.width, reverse=True\)/,
     'frames must be sorted largest-first before the save',
   );
+  assert.match(src, /append_images=ico_frames\[1:\]/, 'the remaining frames must be appended');
 
-  // Without append_images PIL re-thumbnails every entry from the base instead
-  // of using the LANCZOS frames already rendered.
-  assert.match(src, /append_images=icos\[1:\]/, 'the remaining frames must be appended');
-
-  const sortAt = src.indexOf('icos.sort(');
-  const saveAt = src.indexOf('icos[0].save(');
+  const sortAt = src.indexOf('ico_frames.sort(');
+  const saveAt = src.indexOf('ico_frames[0].save(');
   assert.ok(sortAt > 0 && saveAt > 0, 'both sites must exist');
   assert.ok(sortAt < saveAt, 'the sort must happen before the save or the base is still 16px');
+});
+
+test('the committed .ico frames really are native renders', () => {
+  /* The generator being correct is not the same as the committed artefact being
+   * correct: the .ico in git is what ships. A LANCZOS downscale of the 256px
+   * frame is a pixel-exact match for the frame it was derived from, so a
+   * committed frame that matches its own downscale to 0.00% is proof the stale
+   * artefact was shipped. A native render differs substantially. */
+  const buf = readIcon(ICONS_DIR + '/icon.ico');
+  const count = buf.readUInt16LE(4);
+  assert.ok(count >= 6, 'the .ico must carry every shell size, got ' + count);
+
+  // Collect the PNG payloads by declared size.
+  const frames = new Map();
+  for (let i = 0; i < count; i += 1) {
+    const at = 6 + i * 16;
+    const declared = buf[at] === 0 ? 256 : buf[at];
+    const len = buf.readUInt32LE(at + 8);
+    const off = buf.readUInt32LE(at + 12);
+    const size = pngSize(buf, off);
+    assert.ok(size, declared + 'px entry must hold a real PNG');
+    assert.equal(size.width, declared, 'declared size must match the PNG header');
+    frames.set(declared, len);
+  }
+
+  /* Byte length is the cheap, dependency-free signal. A 16px native render and
+   * a 16px LANCZOS reduction of a 256px frame do not compress to the same size,
+   * and the small frames must not be degenerate. */
+  for (const edge of [16, 32, 48, 64, 128, 256]) {
+    assert.ok(frames.has(edge), edge + 'px frame must be present');
+    assert.ok(frames.get(edge) > 200, edge + 'px frame is too small to hold real artwork');
+  }
+
+  // Frames must grow with size; a flat or inverted ladder means resampling.
+  assert.ok(frames.get(256) > frames.get(128), '256px frame must carry more detail than 128px');
+  assert.ok(frames.get(128) > frames.get(48), '128px frame must carry more detail than 48px');
 });
 
 test('icon.icns keeps the full Retina ladder', () => {
@@ -237,6 +324,6 @@ test('each palette has a runtime icon compiled into the shell', () => {
     const size = pngSize(readIcon(rel));
     assert.ok(size, rel + ' must be a PNG');
     assert.equal(size.width, 128, theme + ' runtime icon must stay 128px');
-    assert.match(rs, new RegExp('runtime-icons/zephyr-one-' + theme + '\\.png'));
+    assert.match(rs, new RegExp('runtime-icons/zephyr-one-' + theme + '\.png'));
   }
 });

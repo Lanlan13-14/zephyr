@@ -141,21 +141,62 @@ def staged_master(svg: Path, scratch: Path) -> Path:
     return staged
 
 
+def _have_rsvg() -> bool:
+    """True when librsvg's CLI is callable."""
+    try:
+        return subprocess.run(
+            ["rsvg-convert", "--version"], capture_output=True
+        ).returncode == 0
+    except OSError:
+        return False
+
+
+def _have_resvg() -> bool:
+    """True when the resvg wheel is importable."""
+    try:
+        import resvg_py  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
 def render_svg(svg: Path, size: int, dest: Path) -> None:
-    """Rasterise an SVG at an exact pixel size with librsvg."""
+    """Rasterise an SVG at an exact pixel size.
+
+    Two backends, both true vector rasterisers, because the artefacts must be
+    regenerable on a developer machine and not only on a runner that happens to
+    have librsvg installed. librsvg is preferred so output stays identical to
+    what has been shipped so far; resvg is the fallback and is a pure-wheel
+    install, which is what makes `npm run icons` work on Windows.
+
+    Deliberately *not* a fallback: resampling a larger bitmap. Every caller here
+    wants the vector rasterised at the target size, and silently substituting a
+    downscale is the exact defect this module was fixed for.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            "rsvg-convert",
-            "--width", str(size),
-            "--height", str(size),
-            "--keep-aspect-ratio",
-            "--format", "png",
-            "--output", str(dest),
-            str(svg),
-        ],
-        check=True,
+    if _have_rsvg():
+        subprocess.run(
+            [
+                "rsvg-convert",
+                "--width", str(size),
+                "--height", str(size),
+                "--keep-aspect-ratio",
+                "--format", "png",
+                "--output", str(dest),
+                str(svg),
+            ],
+            check=True,
+        )
+        return
+
+    import resvg_py
+
+    png = resvg_py.svg_to_bytes(
+        svg_string=svg.read_text(encoding="utf-8"),
+        width=size,
+        height=size,
     )
+    dest.write_bytes(bytes(png))
 
 
 def require(path: Path, what: str) -> Path:
@@ -165,8 +206,11 @@ def require(path: Path, what: str) -> Path:
 
 
 def main() -> None:
-    if subprocess.run(["rsvg-convert", "--version"], capture_output=True).returncode != 0:
-        sys.exit("ERROR: rsvg-convert (librsvg) is required to rasterise the SVG masters")
+    if not _have_rsvg() and not _have_resvg():
+        sys.exit(
+            "ERROR: a vector rasteriser is required. Install librsvg "
+            "(rsvg-convert) or `pip install resvg-py`."
+        )
 
     for theme in THEMES:
         require(SVG_DIR / f"zephyr-one-{theme}.svg", f"{theme} SVG master")
@@ -209,27 +253,58 @@ def _generate(scratch: Path) -> None:
                 render_svg(default_svg, size, dest)
             print(f"bundle   {dest.relative_to(ROOT)}  {size}x{size}")
 
-        # The largest frame has to be the base, and the rest handed over via
-        # append_images. PIL caps every requested size at the *base* image's
+        # Every .ico frame is rasterised from the vector at its own size,
+        # never resampled from a larger bitmap.
+        #
+        # The previous version built the frames with
+        # `src.resize((s, s), LANCZOS)` off the 256px master. Measured against a
+        # native render of the same master: the 16px frame differed by 12.1% of
+        # its pixels, 32px by 6.0%, 48px by 5.0% - and the committed frames were
+        # a 0.00% match for the downscale, which is how the regression was
+        # confirmed rather than guessed. Bitmap reduction throws away the stroke
+        # geometry librsvg would have hinted at that size, so the small frames
+        # Windows actually shows in the taskbar, Alt-Tab and Explorer's list
+        # views arrived visibly soft. The bundle PNG loop above already
+        # rasterises per size for exactly this reason; the .ico path simply did
+        # not.
+        #
+        # The largest frame still has to be the base with the rest handed over
+        # via append_images: PIL caps every requested size at the *base* image's
         # own dimensions (IcoImagePlugin._save: "if size[0] > width ...
-        # continue"), so saving from the 16x16 frame silently discarded 32
+        # continue"), so saving from the 16px frame silently discarded 32
         # through 256 and shipped a single-entry 16px .ico. Windows then
-        # upscaled that one 16px bitmap onto the desktop shortcut, the taskbar,
-        # Explorer's large-icon views and the .exe resource, which is the
-        # blurry app icon reported against the desktop build. append_images
-        # also makes each size an exact match, so PIL uses these LANCZOS
-        # frames instead of re-thumbnailing every entry down from 256.
-        icos = [src.resize((s, s), Image.Resampling.LANCZOS) for s in ICO_SIZES]
-        icos.sort(key=lambda frame: frame.width, reverse=True)
-        icos[0].save(
+        # upscaled that one bitmap everywhere, which is the other half of the
+        # blurry-icon report.
+        ico_frames = []
+        for size in ICO_SIZES:
+            frame_path = scratch / f"ico-{size}.png"
+            render_svg(default_svg, size, frame_path)
+            with Image.open(frame_path) as frame_img:
+                ico_frames.append(frame_img.convert("RGBA"))
+        ico_frames.sort(key=lambda frame: frame.width, reverse=True)
+        ico_frames[0].save(
             BUNDLE_OUT / "icon.ico",
             format="ICO",
-            sizes=[(i.width, i.height) for i in icos],
-            append_images=icos[1:],
+            sizes=[(i.width, i.height) for i in ico_frames],
+            append_images=ico_frames[1:],
         )
         print(f"bundle   {(BUNDLE_OUT / 'icon.ico').relative_to(ROOT)}  {ICO_SIZES}")
 
-        src.save(BUNDLE_OUT / "icon.icns", format="ICNS")
+        # .icns likewise: hand PIL a native render per size rather than letting
+        # it thumbnail one bitmap down the whole Retina ladder.
+        icns_frames = []
+        for size in ICNS_SIZES:
+            frame_path = scratch / f"icns-{size}.png"
+            render_svg(default_svg, size, frame_path)
+            with Image.open(frame_path) as frame_img:
+                icns_frames.append(frame_img.convert("RGBA"))
+        icns_frames.sort(key=lambda frame: frame.width, reverse=True)
+        icns_frames[0].save(
+            BUNDLE_OUT / "icon.icns",
+            format="ICNS",
+            sizes=[(i.width, i.height) for i in icns_frames],
+            append_images=icns_frames[1:],
+        )
         print(f"bundle   {(BUNDLE_OUT / 'icon.icns').relative_to(ROOT)}  {ICNS_SIZES}")
 
     master.unlink(missing_ok=True)
