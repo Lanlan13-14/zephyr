@@ -33,6 +33,12 @@ const CANDIDATES: [&[&str]; 2] = [
 fn main() {
     tauri_build::build();
 
+    // src/rdp gates on this cfg in ~40 places; declaring it keeps every use
+    // warning-free (unexpected_cfgs, Rust >= 1.80) in BOTH build modes --
+    // without this line the skip path below would compile with a warning per
+    // use site.
+    println!("cargo::rustc-check-cfg=cfg(zephyr_native_rdp)");
+
     // Re-run when the shim or its header changes, not on every touch of src/.
     let native = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -55,10 +61,41 @@ fn main() {
         return;
     }
 
-    let found = CANDIDATES.iter().find_map(|pkgs| probe(pkgs));
-    let Some(include_paths) = found else {
+    /* pkg-config is the only discovery mechanism, so check the tool before
+     * the libraries: without it every probe fails and "FreeRDP not found"
+     * would be a lie about why. Say what is actually missing. */
+    if !pkg_config_available() {
         panic!(
-            "FreeRDP development files not found.\n\
+            "pkg-config not found on PATH.\n\
+             \n\
+             Zephyr One locates FreeRDP through pkg-config; install the tool\n\
+             first, then the FreeRDP dev package:\n\
+             \n\
+             \x20 Debian/Ubuntu : sudo apt-get install pkg-config freerdp3-dev\n\
+             \x20 Alpine        : apk add pkgconf freerdp-dev\n\
+             \x20 macOS         : brew install pkgconf freerdp\n\
+             \x20 Windows       : vcpkg install pkgconf:x64-windows freerdp:x64-windows\n\
+             \n\
+             To build the shell without RDP, set ZEPHYR_ONE_SKIP_NATIVE_RDP=1."
+        );
+    }
+
+    /* Probe with cargo_metadata OFF first. A half-installed major (freerdp3
+     * present, winpr3 missing) must not leak its partial link flags into a
+     * build that then falls back to freerdp2; only the winning set is
+     * re-probed with metadata on, which is what emits the
+     * cargo:rustc-link-lib / -link-search lines. */
+    let mut errors = Vec::new();
+    let found = CANDIDATES.iter().find_map(|pkgs| match probe(pkgs, false) {
+        Ok(includes) => Some((pkgs, includes)),
+        Err(error) => {
+            errors.push(error);
+            None
+        }
+    });
+    let Some((pkgs, include_paths)) = found else {
+        panic!(
+            "FreeRDP development files not found (tried freerdp3, then freerdp2).\n\
              \n\
              Zephyr One's RDP engine is FreeRDP linked in-process; there is no\n\
              WASM fallback in the desktop product. Install the dev package:\n\
@@ -68,10 +105,21 @@ fn main() {
              \x20 macOS         : brew install freerdp\n\
              \x20 Windows       : vcpkg install freerdp:x64-windows\n\
              \n\
+             pkg-config reported:\n  {}\n\
+             \n\
              To build the shell without RDP, set ZEPHYR_ONE_SKIP_NATIVE_RDP=1.\n\
-             That build reports native_rdp_unavailable instead of connecting."
+             That build reports native_rdp_unavailable instead of connecting.",
+            errors.join("\n  ")
         );
     };
+    // The winning set was probed a moment ago; a failure here means pkg-config
+    // results changed mid-build, which deserves a loud abort, not a retry.
+    for &name in *pkgs {
+        pkg_config::Config::new()
+            .cargo_metadata(true)
+            .probe(name)
+            .unwrap_or_else(|error| panic!("FreeRDP package {name} vanished between probes: {error}"));
+    }
 
     let mut build = cc::Build::new();
     build
@@ -98,20 +146,34 @@ fn main() {
     println!("cargo:rustc-cfg=zephyr_native_rdp");
 }
 
-/// Locate one FreeRDP major through pkg-config, emitting its link flags.
+/// Locate one FreeRDP major through pkg-config.
 ///
 /// Returns the include paths on success so the shim compiles against the same
-/// headers the library was built from.
-fn probe(pkgs: &[&str]) -> Option<Vec<PathBuf>> {
+/// headers the library was built from. On failure the error names the package
+/// that was missing, so the panic message blames the right thing rather than
+/// the whole set.
+fn probe(pkgs: &[&str], cargo_metadata: bool) -> Result<Vec<PathBuf>, String> {
     let mut includes = Vec::new();
     for name in pkgs {
-        /* `cargo_metadata` is what makes pkg-config emit the
-         * `cargo:rustc-link-lib` / `-link-search` lines, so the final binary
-         * links FreeRDP without this script formatting those by hand. */
-        match pkg_config::Config::new().cargo_metadata(true).probe(name) {
+        match pkg_config::Config::new()
+            .cargo_metadata(cargo_metadata)
+            .probe(name)
+        {
             Ok(lib) => includes.extend(lib.include_paths),
-            Err(_) => return None,
+            Err(error) => return Err(format!("{name}: {error}")),
         }
     }
-    Some(includes)
+    Ok(includes)
+}
+
+/// pkg-config is a separate binary from the libraries it describes; a missing
+/// tool and a missing library are different problems with different fixes.
+fn pkg_config_available() -> bool {
+    std::process::Command::new("pkg-config")
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
 }

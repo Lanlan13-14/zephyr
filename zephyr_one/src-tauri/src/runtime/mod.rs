@@ -374,8 +374,15 @@ pub fn info() -> RuntimeInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::{node_compatible_path, resource_candidates};
-    use std::path::{Path, PathBuf};
+    // node_compatible_path and PathBuf are only referenced by the
+    // cfg(target_os = "windows") test below; importing them unconditionally
+    // warns on the Linux and macOS builds.
+    use super::resource_candidates;
+    #[cfg(target_os = "windows")]
+    use super::node_compatible_path;
+    use std::path::Path;
+    #[cfg(target_os = "windows")]
+    use std::path::PathBuf;
 
     #[test]
     fn packaged_parent_resources_are_discoverable() {
