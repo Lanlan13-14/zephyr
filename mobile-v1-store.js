@@ -92,6 +92,10 @@ class MobileV1Store {
         this.log = opts.log || (() => {});
         this._ensureSchema();
         this._hmacKey = null;
+        /* Blob bodies live on the filesystem, not in SQLite: a 4 MiB chunk per
+         * row would balloon the database and SQLite BLOB I/O buys nothing for
+         * write-once content-addressed files. Metadata stays relational. */
+        this.blobRoot = opts.blobRoot || path.join(DATA_DIR, 'mobile-blobs');
         this.registryHash = sha256(canonicalJson(this.entityRegistry));
     }
 
@@ -216,6 +220,36 @@ class MobileV1Store {
             );
             CREATE INDEX IF NOT EXISTS idx_mobile_sensitive_grants_expiry
                 ON mobile_sensitive_grants(expires_at, consumed_at);
+
+            CREATE TABLE IF NOT EXISTS mobile_blob_uploads (
+                upload_id TEXT PRIMARY KEY,
+                owner_user_id TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                mime TEXT NOT NULL,
+                chunk_bytes INTEGER NOT NULL,
+                chunk_hashes_json TEXT NOT NULL,
+                encrypted INTEGER NOT NULL DEFAULT 0,
+                received_json TEXT NOT NULL DEFAULT '[]',
+                state TEXT NOT NULL CHECK(state IN ('receiving','complete')),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_mobile_blob_uploads_owner
+                ON mobile_blob_uploads(owner_user_id, device_id, sha256);
+
+            CREATE TABLE IF NOT EXISTS mobile_blobs (
+                owner_user_id TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                mime TEXT NOT NULL,
+                chunk_bytes INTEGER NOT NULL,
+                chunk_count INTEGER NOT NULL,
+                encrypted INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY(owner_user_id, sha256)
+            );
         `);
     }
 
@@ -676,6 +710,255 @@ class MobileV1Store {
      * the MAC input, so a token minted for one purpose cannot be presented for
      * another even though both use the same server key.
      */
+    // ------------------------------------------------------------- blobs ---
+
+    /**
+     * Blob transfers (SYNC_STATE_MACHINE.md section 11).
+     *
+     * Entities never carry large bodies in their JSON payload; they carry a
+     * content-addressed manifest (sha256, size, mime, per-chunk hashes) and the
+     * bytes move through these methods instead. Uploads are resumable by
+     * construction: the uploadId is stable for (owner, device, sha256), chunk
+     * indices are idempotent, and a reconnect re-asks for the missing set
+     * rather than starting over.
+     */
+    _blobFile(ownerUserId, digest) {
+        return path.join(this.blobRoot, encodeURIComponent(String(ownerUserId)), String(digest) + '.blob');
+    }
+
+    _uploadChunkDir(uploadId) {
+        return path.join(this.blobRoot, '_uploads', String(uploadId));
+    }
+
+    getBlob(ownerUserId, digest) {
+        return this.db.prepare('SELECT * FROM mobile_blobs WHERE owner_user_id = ? AND sha256 = ?')
+            .get(String(ownerUserId), String(digest)) || null;
+    }
+
+    getBlobUpload(uploadId) {
+        return this.db.prepare('SELECT * FROM mobile_blob_uploads WHERE upload_id = ?')
+            .get(String(uploadId || '')) || null;
+    }
+
+    /** The status shape every blob endpoint speaks: received/missing indices. */
+    blobUploadStatus(row) {
+        const chunkHashes = JSON.parse(row.chunk_hashes_json);
+        const received = JSON.parse(row.received_json).map(Number);
+        const have = new Set(received);
+        const missing = [];
+        for (let index = 0; index < chunkHashes.length; index += 1) {
+            if (!have.has(index)) missing.push(index);
+        }
+        return {
+            uploadId: row.upload_id,
+            sha256: row.sha256,
+            size: Number(row.size),
+            mime: row.mime,
+            encrypted: !!row.encrypted,
+            chunkBytes: Number(row.chunk_bytes),
+            chunkCount: chunkHashes.length,
+            received: received.slice().sort((a, b) => a - b),
+            missing,
+            state: row.state,
+        };
+    }
+
+    /**
+     * Opens or resumes an upload for a manifest.
+     *
+     * Three idempotent outcomes: the blob already exists (complete, no
+     * uploadId), a matching in-flight upload exists (returned as-is so the
+     * client resumes with its missing set), or a fresh upload is created. A
+     * different manifest under a digest already in flight is a hash error, not
+     * a new upload: continuing would assemble a corrupt blob.
+     */
+    createBlobUpload({ ownerUserId, deviceId, sha256: digest, size, mime, chunkBytes, chunkHashes, encrypted }) {
+        if (this.getBlob(ownerUserId, digest)) {
+            return {
+                uploadId: null,
+                sha256: digest,
+                size: Number(size),
+                mime: String(mime),
+                encrypted: !!encrypted,
+                chunkBytes: Number(chunkBytes),
+                chunkCount: chunkHashes.length,
+                received: chunkHashes.map((_, index) => index),
+                missing: [],
+                state: 'complete',
+            };
+        }
+
+        /* Zero-length blob: there are no chunks to send, so the manifest alone
+         * completes it. Handled here rather than in recordBlobChunk, which
+         * would otherwise never run for a legitimate upload. */
+        if (chunkHashes.length === 0) {
+            const file = this._blobFile(ownerUserId, digest);
+            fs.mkdirSync(path.dirname(file), { recursive: true });
+            fs.writeFileSync(file, Buffer.alloc(0));
+            this.db.prepare(`INSERT INTO mobile_blobs
+                (owner_user_id, sha256, size, mime, chunk_bytes, chunk_count, encrypted, created_at)
+                VALUES (?, ?, 0, ?, ?, 0, ?, ?)
+                ON CONFLICT(owner_user_id, sha256) DO NOTHING`)
+                .run(String(ownerUserId), String(digest), String(mime), Number(chunkBytes), encrypted ? 1 : 0, nowMs());
+            return {
+                uploadId: null, sha256: digest, size: 0, mime: String(mime), encrypted: !!encrypted,
+                chunkBytes: Number(chunkBytes), chunkCount: 0, received: [], missing: [], state: 'complete',
+            };
+        }
+
+        const prior = this.db.prepare(
+            "SELECT * FROM mobile_blob_uploads WHERE owner_user_id = ? AND device_id = ? AND sha256 = ? AND state = 'receiving' ORDER BY created_at DESC LIMIT 1",
+        ).get(String(ownerUserId), String(deviceId), String(digest));
+        if (prior) {
+            const sameManifest = Number(prior.size) === Number(size)
+                && Number(prior.chunk_bytes) === Number(chunkBytes)
+                && prior.chunk_hashes_json === JSON.stringify(chunkHashes);
+            if (!sameManifest) {
+                throw new MobileStoreError('blob_hash_mismatch', 'blob manifest \u4e0e\u8fdb\u884c\u4e2d\u7684\u4e0a\u4f20\u4e0d\u4e00\u81f3', 422, { retryable: true });
+            }
+            return this.blobUploadStatus(prior);
+        }
+
+        const uploadId = 'upl_' + crypto.randomBytes(16).toString('hex');
+        const now = nowMs();
+        this.db.prepare(`INSERT INTO mobile_blob_uploads
+            (upload_id, owner_user_id, device_id, sha256, size, mime, chunk_bytes, chunk_hashes_json, encrypted, received_json, state, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 'receiving', ?, ?)`)
+            .run(uploadId, String(ownerUserId), String(deviceId), String(digest),
+                Number(size), String(mime), Number(chunkBytes), JSON.stringify(chunkHashes),
+                encrypted ? 1 : 0, now, now);
+        fs.mkdirSync(this._uploadChunkDir(uploadId), { recursive: true });
+        return this.blobUploadStatus(this.getBlobUpload(uploadId));
+    }
+
+    /**
+     * Records one chunk, verifying its SHA-256 against the manifest before any
+     * byte touches disk. When the last missing chunk lands the whole blob is
+     * assembled, verified against the manifest digest, and atomically renamed
+     * into place - a crash mid-assembly leaves only the .tmp file, never a
+     * half-written blob under its final name.
+     */
+    recordBlobChunk({ ownerUserId, deviceId, uploadId, index, bytes }) {
+        const row = this.getBlobUpload(uploadId);
+        /* Same 404 for "no such upload" and "another device owns it": the id
+         * is unguessable, and a distinguishing error would confirm existence. */
+        if (!row || String(row.owner_user_id) !== String(ownerUserId) || String(row.device_id) !== String(deviceId)) {
+            throw new MobileStoreError('resource_not_found_or_inaccessible', '\u4e0a\u4f20\u4f1a\u8bdd\u4e0d\u5b58\u5728', 404);
+        }
+        if (row.state !== 'receiving') {
+            throw new MobileStoreError('invalid_request', '\u4e0a\u4f20\u5df2\u5b8c\u6210', 409);
+        }
+        const chunkHashes = JSON.parse(row.chunk_hashes_json);
+        const count = chunkHashes.length;
+        if (!Number.isInteger(index) || index < 0 || index >= count) {
+            throw new MobileStoreError('invalid_request', 'chunk index \u8d8a\u754c', 400, { details: { index, chunkCount: count } });
+        }
+        const chunkBytes = Number(row.chunk_bytes);
+        const expectedBytes = index === count - 1
+            ? Number(row.size) - chunkBytes * (count - 1)
+            : chunkBytes;
+        if (!Buffer.isBuffer(bytes) || bytes.length !== expectedBytes) {
+            throw new MobileStoreError('invalid_request', 'chunk \u957f\u5ea6\u4e0e manifest \u4e0d\u7b26', 400, {
+                details: { index, expectedBytes, actualBytes: Buffer.isBuffer(bytes) ? bytes.length : 0 },
+            });
+        }
+        const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+        if (digest !== chunkHashes[index]) {
+            throw new MobileStoreError('blob_hash_mismatch', 'chunk \u6821\u9a8c\u5931\u8d25', 422, { retryable: true, details: { index } });
+        }
+
+        const received = new Set(JSON.parse(row.received_json).map(Number));
+        if (!received.has(index)) {
+            /* Idempotent resend: a lost ack makes the client repeat a chunk.
+             * The bytes are identical by hash, so accepting without rewriting
+             * is the correct replay semantics. */
+            const dir = this._uploadChunkDir(uploadId);
+            fs.mkdirSync(dir, { recursive: true });
+            const tmp = path.join(dir, index + '.tmp');
+            fs.writeFileSync(tmp, bytes);
+            fs.renameSync(tmp, path.join(dir, index + '.part'));
+            received.add(index);
+            this.db.prepare('UPDATE mobile_blob_uploads SET received_json = ?, updated_at = ? WHERE upload_id = ?')
+                .run(JSON.stringify([...received].sort((a, b) => a - b)), nowMs(), row.upload_id);
+        }
+        if (received.size < count) {
+            return this.blobUploadStatus(this.getBlobUpload(uploadId));
+        }
+        return this._finalizeBlobUpload(this.getBlobUpload(uploadId));
+    }
+
+    _finalizeBlobUpload(row) {
+        const count = JSON.parse(row.chunk_hashes_json).length;
+        const dir = this._uploadChunkDir(row.upload_id);
+        const hash = crypto.createHash('sha256');
+        const tmpFinal = this._blobFile(row.owner_user_id, row.sha256) + '.tmp-' + row.upload_id;
+        fs.mkdirSync(path.dirname(tmpFinal), { recursive: true });
+        const out = fs.openSync(tmpFinal, 'w');
+        try {
+            for (let index = 0; index < count; index += 1) {
+                const part = fs.readFileSync(path.join(dir, index + '.part'));
+                hash.update(part);
+                fs.writeSync(out, part);
+            }
+        } finally {
+            fs.closeSync(out);
+        }
+        if (hash.digest('hex') !== row.sha256) {
+            /* Per-chunk hashes matched but the whole does not: the manifest is
+             * internally inconsistent. The partial state is poison, so it is
+             * dropped and the client restarts the blob rather than resuming
+             * into a known-bad assembly. */
+            try { fs.unlinkSync(tmpFinal); } catch { /* best effort */ }
+            this._dropBlobUpload(row);
+            throw new MobileStoreError('blob_hash_mismatch', 'blob \u6574\u5305\u6821\u9a8c\u5931\u8d25', 422, { retryable: true });
+        }
+        fs.renameSync(tmpFinal, this._blobFile(row.owner_user_id, row.sha256));
+        const now = nowMs();
+        this.db.prepare(`INSERT INTO mobile_blobs
+            (owner_user_id, sha256, size, mime, chunk_bytes, chunk_count, encrypted, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(owner_user_id, sha256) DO NOTHING`)
+            .run(row.owner_user_id, row.sha256, Number(row.size), row.mime,
+                Number(row.chunk_bytes), count, Number(row.encrypted) ? 1 : 0, now);
+        this.db.prepare("UPDATE mobile_blob_uploads SET state = 'complete', updated_at = ? WHERE upload_id = ?")
+            .run(now, row.upload_id);
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+        return this.blobUploadStatus(this.getBlobUpload(row.upload_id));
+    }
+
+    _dropBlobUpload(row) {
+        this.db.prepare('DELETE FROM mobile_blob_uploads WHERE upload_id = ?').run(row.upload_id);
+        try { fs.rmSync(this._uploadChunkDir(row.upload_id), { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+
+    blobFilePath(row) {
+        return this._blobFile(row.owner_user_id, row.sha256);
+    }
+
+    createBlobReadStream(row) {
+        return fs.createReadStream(this._blobFile(row.owner_user_id, row.sha256));
+    }
+
+    /** Reads [offset, offset+length) of a completed blob, for chunked download resume. */
+    readBlobRange(row, offset, length) {
+        const fd = fs.openSync(this._blobFile(row.owner_user_id, row.sha256), 'r');
+        try {
+            const out = Buffer.alloc(length);
+            const got = fs.readSync(fd, out, 0, length, offset);
+            return got === length ? out : out.subarray(0, got);
+        } finally {
+            fs.closeSync(fd);
+        }
+    }
+
+    /** Drops in-flight uploads abandoned longer than maxAgeMs. Completed blobs stay. */
+    gcBlobUploads(maxAgeMs = 24 * 60 * 60 * 1000) {
+        const cutoff = nowMs() - Math.max(60000, Number(maxAgeMs) || 0);
+        const stale = this.db.prepare("SELECT * FROM mobile_blob_uploads WHERE state = 'receiving' AND updated_at < ?").all(cutoff);
+        for (const row of stale) this._dropBlobUpload(row);
+        return stale.length;
+    }
+
     signBlob(namespace, payload, ttlMs) {
         const body = Buffer.from(JSON.stringify({
             ns: String(namespace),

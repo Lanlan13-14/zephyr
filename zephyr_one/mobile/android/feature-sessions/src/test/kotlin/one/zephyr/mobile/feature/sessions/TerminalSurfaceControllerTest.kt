@@ -157,6 +157,9 @@ class TerminalSurfaceControllerTest {
         val subject = controller(backgroundScope, transport)
         subject.measure()
 
+        // Establish scrollback so scrollPages has a transcript to move through.
+        subject.onOutput(newRows = 1000, transcriptRows = 1000)
+
         subject.scrollPages(1)
         assertEquals(41, subject.state.value.topRow)
 
@@ -201,6 +204,9 @@ class TerminalSurfaceControllerTest {
         val transport = RecordingTransport()
         val subject = controller(backgroundScope, transport)
         subject.measure()
+
+        // Establish scrollback so scrollPages has a transcript to move through.
+        subject.onOutput(newRows = 1000, transcriptRows = 1000)
         subject.scrollPages(1)
 
         subject.onComposing("zh")
@@ -214,6 +220,9 @@ class TerminalSurfaceControllerTest {
         val transport = RecordingTransport()
         val subject = controller(backgroundScope, transport)
         subject.measure()
+
+        // Establish scrollback so scrollPages has a transcript to move through.
+        subject.onOutput(newRows = 1000, transcriptRows = 1000)
         subject.scrollPages(1)
 
         subject.onComposing("zh")

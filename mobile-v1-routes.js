@@ -28,6 +28,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const express = require('express');
 
 const { MobileV1Store, MobileStoreError } = require('./mobile-v1-store');
 const { createEntityAdapters, projectPayload, assertMaskAllowed } = require('./mobile-v1-entities');
@@ -45,6 +46,10 @@ const MAX_INTERVAL_SEC = 86400;
 const TOMBSTONE_RETENTION_DAYS = 180;
 const APPLIED_OP_RETENTION_DAYS = 180;
 const BLOB_CHUNK_BYTES = 4 * 1024 * 1024;
+/* Blob bodies are capped so one device cannot fill the server disk through the
+ * sync plane; 512 MiB covers encrypted backup archives by an order of magnitude. */
+const MAX_BLOB_BYTES = 512 * 1024 * 1024;
+const MAX_BLOB_CHUNKS = Math.ceil(MAX_BLOB_BYTES / BLOB_CHUNK_BYTES);
 /** Rejects a stale or pre-dated proof. Two minutes covers ordinary clock skew. */
 const PROOF_SKEW_SEC = 120;
 
@@ -239,6 +244,7 @@ class MobileV1Api {
                 minIntervalSec: MIN_INTERVAL_SEC,
                 maxIntervalSec: MAX_INTERVAL_SEC,
                 blobChunkBytes: BLOB_CHUNK_BYTES,
+                maxBlobBytes: MAX_BLOB_BYTES,
                 /* The client uses these two to decide whether a cursor it has
                  * been holding offline can still be trusted. */
                 tombstoneRetentionDays: TOMBSTONE_RETENTION_DAYS,
@@ -279,7 +285,9 @@ class MobileV1Api {
                  * Declaring true here would make the client offer a
                  * share button that cannot work. */
                 fileBridge: false,
-                blobTransfer: false,
+                /* Blobs move through /api/mobile/v1/blobs/* per
+                 * SYNC_STATE_MACHINE.md 11, so the flag advertises them. */
+                blobTransfer: true,
             },
         };
     }
@@ -650,6 +658,153 @@ class MobileV1Api {
      * silently missed: the client resumes the change feed from that exact
      * cursor and picks the write up as a normal change.
      */
+    // -------------------------------------------------------------- blobs ---
+
+    /**
+     * Validates the content-addressed manifest (SYNC_STATE_MACHINE.md 11).
+     *
+     * `chunks` is the array of per-chunk SHA-256 hex digests, not a count: the
+     * state machine requires each chunk to be verified individually, and the
+     * count alone would not let the server do that.
+     */
+    validateBlobManifest(body) {
+        const digest = String(body.sha256 || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(digest)) {
+            throw new MobileStoreError('invalid_request', 'sha256 must be a 64-char hex digest', 400);
+        }
+        const size = Number(body.size);
+        if (!Number.isSafeInteger(size) || size < 0) {
+            throw new MobileStoreError('invalid_request', 'size must be a non-negative integer', 400);
+        }
+        if (size > MAX_BLOB_BYTES) {
+            throw new MobileStoreError('payload_too_large', 'blob exceeds the server size limit', 413, { details: { maxBlobBytes: MAX_BLOB_BYTES } });
+        }
+        const mime = String(body.mime || 'application/octet-stream').slice(0, 200);
+        if (!Array.isArray(body.chunks)) {
+            throw new MobileStoreError('invalid_request', 'chunks must be an array of per-chunk SHA-256 digests', 400);
+        }
+        const chunkHashes = body.chunks.map((h) => String(h).toLowerCase());
+        const expected = size === 0 ? 0 : Math.ceil(size / BLOB_CHUNK_BYTES);
+        if (chunkHashes.length !== expected || chunkHashes.length > MAX_BLOB_CHUNKS) {
+            throw new MobileStoreError('invalid_request', 'chunk count does not match size', 400, { details: { expectedChunks: expected, actualChunks: chunkHashes.length } });
+        }
+        for (const h of chunkHashes) {
+            if (!/^[0-9a-f]{64}$/.test(h)) {
+                throw new MobileStoreError('invalid_request', 'chunk digests must be 64-char hex', 400);
+            }
+        }
+        return { sha256: digest, size, mime, chunkHashes, encrypted: !!body.encrypted };
+    }
+
+    handleBlobUploadCreate(req, res) {
+        const auth = this.requireDevice(req, res);
+        if (!auth) return undefined;
+        try {
+            const manifest = this.validateBlobManifest(req.body || {});
+            const status = this.store.createBlobUpload({
+                ownerUserId: auth.user.userId,
+                deviceId: auth.device.device_id,
+                ...manifest,
+                /* Server-pinned, never client-chosen: capabilities advertise this
+                 * exact value and the state machine lets the server lower it,
+                 * not the client raise it. */
+                chunkBytes: BLOB_CHUNK_BYTES,
+            });
+            return res.json({ ok: true, upload: status });
+        } catch (err) {
+            return sendThrown(res, err, req.mobileRequestId);
+        }
+    }
+
+    handleBlobUploadStatus(req, res) {
+        const auth = this.requireDevice(req, res);
+        if (!auth) return undefined;
+        const row = this.store.getBlobUpload(String(req.params.uploadId || ''));
+        if (!row || String(row.owner_user_id) !== String(auth.user.userId)) {
+            return sendError(res, 404, 'resource_not_found_or_inaccessible', 'upload session not found', { requestId: req.mobileRequestId });
+        }
+        return res.json({ ok: true, upload: this.store.blobUploadStatus(row) });
+    }
+
+    handleBlobChunkUpload(req, res) {
+        const auth = this.requireDevice(req, res);
+        if (!auth) return undefined;
+        if (!Buffer.isBuffer(req.body)) {
+            return sendError(res, 400, 'invalid_request', 'chunk must be sent as application/octet-stream', { requestId: req.mobileRequestId });
+        }
+        try {
+            const status = this.store.recordBlobChunk({
+                ownerUserId: auth.user.userId,
+                deviceId: auth.device.device_id,
+                uploadId: String(req.params.uploadId || ''),
+                index: Number(req.params.index),
+                bytes: req.body,
+            });
+            return res.json({ ok: true, upload: status });
+        } catch (err) {
+            return sendThrown(res, err, req.mobileRequestId);
+        }
+    }
+
+    /**
+     * Downloads a whole blob. Only completed blobs are served: an in-flight
+     * upload has no final file, and answering with partial bytes would let a
+     * client persist a corrupt copy under a good digest. The registered code
+     * for "not fully here yet" is blob_missing_chunk with clientAction
+     * resume_blob.
+     */
+    handleBlobDownload(req, res) {
+        const auth = this.requireDevice(req, res);
+        if (!auth) return undefined;
+        const row = this.store.getBlob(auth.user.userId, String(req.params.sha256 || '').toLowerCase());
+        if (!row) {
+            return sendError(res, 409, 'blob_missing_chunk', 'blob is not fully uploaded to this server', { retryable: true, requestId: req.mobileRequestId });
+        }
+        res.setHeader('Content-Type', row.mime || 'application/octet-stream');
+        res.setHeader('Content-Length', String(Number(row.size)));
+        res.setHeader('X-Zephyr-Blob-Sha256', row.sha256);
+        res.setHeader('Cache-Control', 'no-store');
+        const stream = this.store.createBlobReadStream(row);
+        stream.on('error', () => {
+            if (!res.headersSent) {
+                sendError(res, 500, 'internal_error', 'blob read failed', { retryable: true, requestId: req.mobileRequestId });
+            } else {
+                res.destroy();
+            }
+        });
+        stream.pipe(res);
+        return undefined;
+    }
+
+    /** Single-chunk download so an interrupted pull resumes per SYNC_STATE_MACHINE.md 11. */
+    handleBlobChunkDownload(req, res) {
+        const auth = this.requireDevice(req, res);
+        if (!auth) return undefined;
+        const row = this.store.getBlob(auth.user.userId, String(req.params.sha256 || '').toLowerCase());
+        if (!row) {
+            return sendError(res, 409, 'blob_missing_chunk', 'blob is not fully uploaded to this server', { retryable: true, requestId: req.mobileRequestId });
+        }
+        const index = Number(req.params.index);
+        const count = Number(row.chunk_count);
+        if (!Number.isInteger(index) || index < 0 || index >= count) {
+            return sendError(res, 400, 'invalid_request', 'chunk index out of range', { requestId: req.mobileRequestId, details: { index, chunkCount: count } });
+        }
+        const chunkBytes = Number(row.chunk_bytes);
+        const offset = index * chunkBytes;
+        const length = Math.min(chunkBytes, Number(row.size) - offset);
+        try {
+            const bytes = this.store.readBlobRange(row, offset, length);
+            res.setHeader('Content-Type', 'application/octet-stream');
+            res.setHeader('Content-Length', String(bytes.length));
+            res.setHeader('X-Zephyr-Blob-Sha256', row.sha256);
+            res.setHeader('X-Zephyr-Blob-Chunk-Index', String(index));
+            res.setHeader('Cache-Control', 'no-store');
+            return res.end(bytes);
+        } catch (err) {
+            return sendThrown(res, err, req.mobileRequestId);
+        }
+    }
+
     handleBootstrap(req, res) {
         const requestId = req.mobileRequestId;
         const auth = this.requireDevice(req, res);
@@ -1278,6 +1433,24 @@ class MobileV1Api {
         app.post('/api/mobile/v1/sync/now', (req, res) => self.handleSyncNow(req, res));
         app.get('/api/mobile/v1/sync/status', (req, res) => self.handleSyncStatus(req, res));
 
+        /* ---- blobs (SYNC_STATE_MACHINE.md 11) ----
+         *
+         * Content-addressed upload/download for bodies too large for the JSON
+         * change feed. The chunk PUT needs the raw bytes, so it carries its own
+         * parser; the proof verify hook re-captures rawBody here because the
+         * global JSON parser never runs for octet-stream bodies. */
+        app.post('/api/mobile/v1/blobs/uploads', (req, res) => self.handleBlobUploadCreate(req, res));
+        app.get('/api/mobile/v1/blobs/uploads/:uploadId', (req, res) => self.handleBlobUploadStatus(req, res));
+        app.put('/api/mobile/v1/blobs/uploads/:uploadId/chunks/:index',
+            express.raw({
+                type: ['application/octet-stream'],
+                limit: BLOB_CHUNK_BYTES + 65536,
+                verify: (req, _res, buf) => { req.rawBody = buf; },
+            }),
+            (req, res) => self.handleBlobChunkUpload(req, res));
+        app.get('/api/mobile/v1/blobs/:sha256/chunks/:index', (req, res) => self.handleBlobChunkDownload(req, res));
+        app.get('/api/mobile/v1/blobs/:sha256', (req, res) => self.handleBlobDownload(req, res));
+
         // ---- sensitive verification ----
         app.post('/api/mobile/v1/sensitive/verify', (req, res) => self.handleSensitiveVerify(req, res));
 
@@ -1405,6 +1578,8 @@ module.exports = {
     MobileV1Api,
     PROTOCOL_VERSIONS,
     MAX_OPS_PER_BATCH,
+    BLOB_CHUNK_BYTES,
+    MAX_BLOB_BYTES,
     MAX_PAGE_SIZE,
     DEFAULT_PAGE_SIZE,
     PROOF_SKEW_SEC,
