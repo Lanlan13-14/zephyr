@@ -154,8 +154,13 @@ public final class TerminalViewModel: ObservableObject {
             capabilities: connection.capabilities,
             residency: connection.residency
         )
-        guard SessionActions.gate(gateRow, action: .reconnect).isAllowed else {
-            message = SessionActions.reasonUseRevoked
+        let reconnectGate = SessionActions.gate(gateRow, action: .reconnect)
+        guard reconnectGate.isAllowed else {
+            if case let .disabled(_, reason) = reconnectGate {
+                message = reason
+            } else {
+                message = SessionActions.reasonUseRevoked
+            }
             return
         }
         connect()
@@ -200,6 +205,7 @@ public final class TerminalViewModel: ObservableObject {
             handle(outcome)
         } else {
             registry.setTransport(sessionId, .disconnected, clock())
+            message = TerminalViewModel.msgHostKeyRejected
             recompute()
         }
     }

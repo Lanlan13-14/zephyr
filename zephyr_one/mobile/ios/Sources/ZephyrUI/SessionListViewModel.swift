@@ -281,6 +281,7 @@ public final class SessionListViewModel: ObservableObject {
         residencyFor: @escaping (String) -> Residency = { _ in .owned }
     ) {
         registry.restore(snapshots, capabilitiesFor: capabilitiesFor, residencyFor: residencyFor)
+        online = false
         restoreComplete = true
         recompute()
     }
