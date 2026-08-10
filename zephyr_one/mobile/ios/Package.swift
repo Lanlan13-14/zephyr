@@ -24,6 +24,21 @@ import PackageDescription
                     ZephyrCore, so the Swift port is checked against the same
                     bytes Kotlin is.
 
+ ZephyrUI was added after the core: the SwiftUI presentation layer (root
+ navigation, S01/S02/S10/S11) plus the view models and pure screen logic the
+ Kotlin feature-connections module mirrors. Two rules keep it honest on the
+ macOS CI runner, where `swift build` compiles for the host and UIKit does
+ not exist:
+
+   - Every rule the product contract freezes (page-state derivation, filter
+     semantics, the editor field mask, the binding state machine, the lock
+     policy) is Foundation/Combine-only code, so `swift test` exercises it on
+     the runner. SwiftUI views are a thin rendering of those types.
+   - View files are wrapped in `#if canImport(SwiftUI)` and compile for
+     macOS 12 as well as iOS 15, so the compiler still reads them; only the
+     UIKit bridge (interactive pop gesture) and iOS-specific modifiers sit
+     behind `canImport(UIKit)` shims.
+
  The vectors are read from contracts/generated/ at test time via #filePath
  rather than declared as SwiftPM `resources`. Two reasons, and the first is
  decisive: SwiftPM can only bundle files inside the package directory, so a
@@ -44,13 +59,16 @@ let package = Package(
         .iOS(.v15),
         .macOS(.v12),
     ],
-    products: [
-        .library(name: "ZephyrContracts", targets: ["ZephyrContracts"]),
-        .library(name: "ZephyrCore", targets: ["ZephyrCore"]),
-    ],
-    targets: [
-        .target(name: "ZephyrContracts"),
-        .target(name: "ZephyrCore", dependencies: ["ZephyrContracts"]),
-        .testTarget(name: "ZephyrCoreTests", dependencies: ["ZephyrCore", "ZephyrContracts"]),
-    ]
-)
+     products: [
+         .library(name: "ZephyrContracts", targets: ["ZephyrContracts"]),
+         .library(name: "ZephyrCore", targets: ["ZephyrCore"]),
+         .library(name: "ZephyrUI", targets: ["ZephyrUI"]),
+     ],
+     targets: [
+         .target(name: "ZephyrContracts"),
+         .target(name: "ZephyrCore", dependencies: ["ZephyrContracts"]),
+         .target(name: "ZephyrUI", dependencies: ["ZephyrCore", "ZephyrContracts"]),
+         .testTarget(name: "ZephyrCoreTests", dependencies: ["ZephyrCore", "ZephyrContracts"]),
+         .testTarget(name: "ZephyrUITests", dependencies: ["ZephyrUI", "ZephyrCore", "ZephyrContracts"]),
+     ]
+ )

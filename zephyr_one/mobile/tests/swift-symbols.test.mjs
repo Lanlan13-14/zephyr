@@ -69,7 +69,9 @@ const MANIFEST = fs.readFileSync(path.join(IOS_ROOT, 'Package.swift'), 'utf8');
 const TARGET_DIRS = {
   ZephyrContracts: path.join(IOS_ROOT, 'Sources', 'ZephyrContracts'),
   ZephyrCore: path.join(IOS_ROOT, 'Sources', 'ZephyrCore'),
+  ZephyrUI: path.join(IOS_ROOT, 'Sources', 'ZephyrUI'),
   ZephyrCoreTests: path.join(IOS_ROOT, 'Tests', 'ZephyrCoreTests'),
+  ZephyrUITests: path.join(IOS_ROOT, 'Tests', 'ZephyrUITests'),
 };
 
 const parsed = swiftFiles(IOS_ROOT).map((file) => ({
@@ -168,6 +170,34 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'UserDefaults',
     // CryptoKit
     'SHA256',
+    /* ZephyrUI is the SwiftUI presentation layer. The product rules it
+     * renders are Foundation/Combine-only so the macOS CI host can test them;
+     * the views themselves are compiled but not run there, and they are the
+     * only files allowed to name these modules. */
+    'Combine', 'SwiftUI', 'UIKit',
+    // Combine
+    'ObservableObject', 'Published', 'ObservedObject',
+    /* SwiftUI view surface. The floors are iOS 15 / macOS 12, so the names
+     * here are deliberately the long-stable half of the framework:
+     * NavigationView rather than NavigationStack, no LabeledContent, no
+     * ` searchable`. A name that needs a newer SDK does not belong on this
+     * list until the manifest floors move. */
+    'View', 'Text', 'Image', 'Label', 'Button', 'Toggle', 'Picker', 'Stepper',
+    'Slider', 'TextField', 'SecureField', 'List', 'Form', 'Section', 'Group',
+    'HStack', 'VStack', 'Spacer', 'ForEach', 'ProgressView', 'EmptyView',
+    'AnyView', 'NavigationView', 'NavigationLink', 'TabView', 'ToolbarItem',
+    'State', 'StateObject', 'Environment', 'Binding', 'ViewBuilder',
+    /* The UIKit bridge behind canImport(UIKit): the interactive pop gesture
+     * recognizer is re-enabled, never replaced, per MOBILE_EXPERIENCE.md. */
+    'UIViewControllerRepresentable', 'UIViewController', 'UINavigationController',
+    'Context',
+    // more standard library / Foundation reached by the presentation layer
+    'Task', 'AnyHashable', 'WritableKeyPath', 'Identifiable', 'NSLock',
+    /* Generic parameter names. The matcher reads `PageState<Value>` as a type
+     * reference and there is no declaration syntax it can see for a type
+     * parameter, so the one name in use is listed here rather than weakening
+     * the check with a heuristic. */
+    'Value',
     /* Darwin / POSIX, used by PosixSecurityScopedFileSystem.
      *
      * The iOS provider reaches the filesystem through syscalls rather than
