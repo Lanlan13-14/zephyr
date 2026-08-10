@@ -81,7 +81,7 @@ final class SessionListViewModelTests: XCTestCase {
         vm.markRestoreComplete()
         vm.updateConnectivity(online: true)
         vm.onAction(registry.row("s-1")!, action: .reconnect)
-        XCTAssertEqual(vm.event, .reconnect(sessionId: "s-1", connectionId: "c-1"))
+        XCTAssertEqual(vm.event, .reconnect(sessionId: "s-1", connectionId: "c-1", protocol: .ssh))
     }
 
     func testCloseMovesRowToHistoryAndCallsTeardown() {

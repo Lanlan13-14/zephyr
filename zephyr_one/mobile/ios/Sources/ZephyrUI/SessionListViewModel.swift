@@ -236,7 +236,7 @@ public enum SessionListStates {
 public enum SessionListEvent: Equatable, Sendable {
     case openTerminal(sessionId: String, connectionId: String)
     case openRemote(sessionId: String, connectionId: String)
-    case reconnect(sessionId: String, connectionId: String)
+    case reconnect(sessionId: String, connectionId: String, `protocol`: ConnectionProtocol)
     case details(sessionId: String)
 }
 
@@ -329,7 +329,11 @@ public final class SessionListViewModel: ObservableObject {
                 return
             }
             registry.markRead(row.sessionId)
-            event = .reconnect(sessionId: row.sessionId, connectionId: row.connectionId)
+            event = .reconnect(
+                sessionId: row.sessionId,
+                connectionId: row.connectionId,
+                protocol: row.`protocol`
+            )
         case .close:
             close(row)
         case .details:

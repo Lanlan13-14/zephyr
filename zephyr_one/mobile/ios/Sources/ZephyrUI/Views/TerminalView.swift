@@ -23,7 +23,7 @@ public struct TerminalView: View {
             .navigationTitle(viewModel.page.contentValue?.connection.name ?? "终端")
             .zephyrInlineTitle()
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .zephyrNavLeading) {
                     Button("会话列表") { viewModel.minimise() }
                 }
             }

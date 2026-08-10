@@ -72,4 +72,26 @@ extension View {
         #endif
     }
 }
+
+extension ToolbarItemPlacement {
+    /// .navigationBarLeading is iOS-only; the macOS host compile of the same
+    /// views must use a placement the platform understands.
+    static var zephyrNavLeading: ToolbarItemPlacement {
+        #if canImport(UIKit)
+        return .navigationBarLeading
+        #else
+        return .automatic
+        #endif
+    }
+
+    /// .navigationBarTrailing is iOS-only; the macOS host compile of the same
+    /// views must use a placement the platform understands.
+    static var zephyrNavTrailing: ToolbarItemPlacement {
+        #if canImport(UIKit)
+        return .navigationBarTrailing
+        #else
+        return .automatic
+        #endif
+    }
+}
 #endif

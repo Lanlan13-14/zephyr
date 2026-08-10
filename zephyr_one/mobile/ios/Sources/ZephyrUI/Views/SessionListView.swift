@@ -13,7 +13,7 @@ public struct SessionListView: View {
 
     let onOpenTerminal: (String, String) -> Void
     let onOpenRemote: (String, String) -> Void
-    let onReconnect: (String, String) -> Void
+    let onReconnect: (String, String, ConnectionProtocol) -> Void
     let onDetails: (String) -> Void
 
     @State private var showBulkClose = false
@@ -22,7 +22,7 @@ public struct SessionListView: View {
         viewModel: SessionListViewModel,
         onOpenTerminal: @escaping (String, String) -> Void,
         onOpenRemote: @escaping (String, String) -> Void,
-        onReconnect: @escaping (String, String) -> Void,
+        onReconnect: @escaping (String, String, ConnectionProtocol) -> Void,
         onDetails: @escaping (String) -> Void
     ) {
         self.viewModel = viewModel
@@ -37,7 +37,7 @@ public struct SessionListView: View {
             .navigationTitle("会话")
             .zephyrInlineTitle()
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .zephyrNavTrailing) {
                     Button("批量关闭") { showBulkClose = true }
                         .disabled(viewModel.state.contentValue?.closableCount == 0)
                 }
@@ -70,9 +70,9 @@ public struct SessionListView: View {
                 case let .openRemote(sessionId, connectionId):
                     viewModel.consumeEvent()
                     onOpenRemote(sessionId, connectionId)
-                case let .reconnect(sessionId, connectionId):
+                case let .reconnect(sessionId, connectionId, `protocol`):
                     viewModel.consumeEvent()
-                    onReconnect(sessionId, connectionId)
+                    onReconnect(sessionId, connectionId, `protocol`)
                 case let .details(sessionId):
                     viewModel.consumeEvent()
                     onDetails(sessionId)
