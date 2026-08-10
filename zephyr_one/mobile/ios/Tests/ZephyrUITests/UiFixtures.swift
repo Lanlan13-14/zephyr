@@ -72,14 +72,16 @@ enum UiTestData {
             username: username,
             remark: remark,
             tags: tags,
+            // Argument order must match Connection.init exactly: the secret
+            // fields precede revision, and the lifecycle/shared fields follow.
+            password: password,
+            privateKey: privateKey,
+            revision: revision,
             lastConnectedAt: lastConnectedAt,
             deletedAt: deletedAt,
             residency: residency,
             capabilities: capabilities,
-            sharedUsePolicy: sharedUsePolicy,
-            password: password,
-            privateKey: privateKey,
-            revision: revision
+            sharedUsePolicy: sharedUsePolicy
         )
     }
 
