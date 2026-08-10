@@ -74,7 +74,7 @@ fi
 # frames and the rerun-if-changed flood are dropped first, or they crowd out the
 # lines that matter.
 signal=$(mktemp)
-grep -v -e '^cargo:rerun-if-changed=' -e '^[[:space:]]*at [a-zA-Z]' -e '^cargo:rustc-' "$clean" > "$signal"
+grep -v -E -e '^[[:space:]]*cargo:(rerun|rustc)' -e '^[[:space:]]*at [a-zA-Z]' "$clean" > "$signal"
 
 matched=0
 while IFS= read -r line; do
