@@ -22,7 +22,7 @@ enum class SessionTransport {
     /**
      * The transport dropped but the session record survives, so 重连 is offered.
      *
-     * SCREEN_CATALOG.md 7 calls this 断线可恢�? It is distinct from [CLOSED] because a closed
+     * SCREEN_CATALOG.md 7 calls this 断线可恢复。It is distinct from [CLOSED] because a closed
      * session is history and must never offer a reconnect that silently makes a new session.
      */
     DISCONNECTED,
@@ -203,8 +203,8 @@ object SessionActions {
     /** The frozen wire reason for a revoked tab. */
     const val WIRE_RESOURCE_REVOKED = "resource_revoked"
 
-    const val REASON_REVOKED = "资源权限已撤销，此标签保留说明但不能恢�?
-    const val REASON_USE_REVOKED = "已失去该连接的使用权�?
+    const val REASON_REVOKED = "资源权限已撤销，此标签保留说明但不能恢复"
+    const val REASON_USE_REVOKED = "已失去该连接的使用权限"
     const val DISCLOSURE_RELAY = "主端 relay：凭据保留在主端"
     const val DISCLOSURE_DIRECT = "本次原生直连：加密连接材料仅驻留会话内存"
 }
