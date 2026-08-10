@@ -8,7 +8,7 @@ import org.junit.Test
 class RfbSecurityNegotiatorTest {
 
     @Test
-    fun \`picks VncAuth when a password is available\`() {
+    fun `picks VncAuth when a password is available`() {
         val selection = RfbSecurityNegotiator.select(
             offered = listOf(RfbSecurityType.NONE, RfbSecurityType.VNC_AUTH),
             hasPassword = true,
@@ -18,7 +18,7 @@ class RfbSecurityNegotiatorTest {
     }
 
     @Test
-    fun \`picks None when the server offers it and no password is stored\`() {
+    fun `picks None when the server offers it and no password is stored`() {
         val selection = RfbSecurityNegotiator.select(
             offered = listOf(RfbSecurityType.NONE, RfbSecurityType.VNC_AUTH),
             hasPassword = false,
@@ -27,14 +27,14 @@ class RfbSecurityNegotiatorTest {
     }
 
     @Test
-    fun \`reports a missing password instead of a generic failure\`() {
+    fun `reports a missing password instead of a generic failure`() {
         val selection = RfbSecurityNegotiator.select(listOf(RfbSecurityType.VNC_AUTH), hasPassword = false)
         val rejected = selection as RfbSecuritySelection.Rejected
         assertEquals(VncErrors.PASSWORD_REQUIRED, rejected.code)
     }
 
     @Test
-    fun \`rejects every unimplemented security type by name\`() {
+    fun `rejects every unimplemented security type by name`() {
         val selection = RfbSecurityNegotiator.select(
             offered = listOf(RfbSecurityType.TLS, RfbSecurityType.VENCRYPT, RfbSecurityType.RA2),
             hasPassword = true,
@@ -47,7 +47,7 @@ class RfbSecurityNegotiatorTest {
     }
 
     @Test
-    fun \`an unknown number is refused rather than assumed to be None\`() {
+    fun `an unknown number is refused rather than assumed to be None`() {
         // The failure this prevents: treating an unrecognised type as "no auth needed" and handing
         // the framebuffer to whatever answered the port.
         val selection = RfbSecurityNegotiator.select(listOf(200), hasPassword = true)
@@ -57,14 +57,14 @@ class RfbSecurityNegotiatorTest {
     }
 
     @Test
-    fun \`an empty offer is rejected\`() {
+    fun `an empty offer is rejected`() {
         val rejected = RfbSecurityNegotiator.select(emptyList(), hasPassword = true)
             as RfbSecuritySelection.Rejected
         assertEquals(VncErrors.NO_SUPPORTED_SECURITY, rejected.code)
     }
 
     @Test
-    fun \`only None and VncAuth are implemented\`() {
+    fun `only None and VncAuth are implemented`() {
         assertEquals(setOf(RfbSecurityType.NONE, RfbSecurityType.VNC_AUTH), RfbSecurityNegotiator.SUPPORTED)
     }
 }

@@ -46,7 +46,7 @@ class BlobChunkerTest {
 
     @Test
     fun `a fully received blob needs no chunks`() {
-        assertEquals(emptyList(), BlobChunker.chunksFrom(receivedBytes = 10, totalBytes = 10, chunkBytes = 4))
+        assertEquals(emptyList<BlobChunk>(), BlobChunker.chunksFrom(receivedBytes = 10, totalBytes = 10, chunkBytes = 4))
         assertEquals(0, BlobChunker.chunkCount(0))
     }
 
