@@ -146,14 +146,42 @@ unsafe impl Sync for Shared {}
 /// to reclaim the `Arc` after `zephyr_rdp_free`. Wrapping is the honest fix: the
 /// pointer *is* safe to move here, and the wrapper documents exactly why rather
 /// than leaving a bare `unsafe impl` on something broader.
-///
-/// SAFETY: the referent is an `Arc<Shared>` leaked by `Arc::into_raw`, and
-/// `Shared` is `Send + Sync`. Exactly one thread reclaims it (the loop thread, as
-/// its final act), so there is no race on the strong count.
 #[cfg(zephyr_native_rdp)]
 #[derive(Copy, Clone)]
 struct UserPtr(*mut c_void);
 
+#[cfg(zephyr_native_rdp)]
+impl UserPtr {
+    /// The wrapped pointer, taken by value so that naming it names the wrapper.
+    ///
+    /// This accessor exists for the capture rules, not for tidiness. Since the
+    /// 2021 edition a closure captures the individual *places* its body mentions
+    /// rather than whole variables, so a `move` closure whose body said `user.0`
+    /// captured that field alone -- a bare `*mut c_void`, which is not `Send` --
+    /// and the promise below was never consulted: `spawn` rejected the closure
+    /// with "`*mut c_void` cannot be sent between threads safely". Going through
+    /// a method makes the mentioned place the whole `UserPtr`, which is the type
+    /// the promise is attached to.
+    fn as_raw(self) -> *mut c_void {
+        self.0
+    }
+}
+
+/* SAFETY: the pointer is one strong reference to an `Arc<Shared>`, produced by
+ * `Arc::into_raw` in `start_impl`, and `Shared` is itself `Send + Sync`, so the
+ * loop thread may both dereference the referent and drop that reference.
+ *
+ * Moving the wrapper hands that one reference to the loop thread. The wrapper is
+ * `Copy`, so the compiler will not enforce single ownership for us; what does is
+ * that the two `decrement_strong_count` calls sit on mutually exclusive paths.
+ * The starting thread only decrements when `zephyr_rdp_new` returned NULL, which
+ * returns before any thread exists, and past a successful spawn it never names
+ * `user` again. The loop thread decrements exactly once as its final act, after
+ * `zephyr_rdp_free` has returned and therefore after the last callback that
+ * could dereference the referent. One decrement per path, and no second thread
+ * holding this raw reference, so there is nothing to race the strong count
+ * with -- a future `user` use added after the spawn would break that, which is
+ * why the reclaim stays the last statement in the closure. */
 #[cfg(zephyr_native_rdp)]
 unsafe impl Send for UserPtr {}
 
@@ -535,13 +563,13 @@ impl SessionRegistry {
             let created = with_config(&config, |raw| {
                 // SAFETY: `raw` and its strings are alive for this call, and the
                 // shim copies what it retains.
-                unsafe { ffi::zephyr_rdp_new(raw, Some(on_frame), Some(on_event), user.0) }
+                unsafe { ffi::zephyr_rdp_new(raw, Some(on_frame), Some(on_event), user.as_raw()) }
             })?;
 
             if created.is_null() {
                 // SAFETY: reclaim the leaked Arc; nothing else observed it,
                 // because `zephyr_rdp_new` failed before storing the pointer.
-                unsafe { Arc::decrement_strong_count(user.0 as *const Shared) };
+                unsafe { Arc::decrement_strong_count(user.as_raw() as *const Shared) };
                 return Err(Error::SessionCreate);
             }
 
@@ -593,7 +621,7 @@ impl SessionRegistry {
 
                     // SAFETY: matches the `Arc::into_raw` above. Last thing the
                     // thread does, so no callback can run after it.
-                    unsafe { Arc::decrement_strong_count(user.0 as *const Shared) };
+                    unsafe { Arc::decrement_strong_count(user.as_raw() as *const Shared) };
                 })
                 .map_err(|_| Error::SessionCreate)?;
 

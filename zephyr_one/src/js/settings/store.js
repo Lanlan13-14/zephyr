@@ -6,7 +6,7 @@ export function defaultSettings() {
     themeMode: 'dark',
     palette: 'frost',
     locale: 'zh-CN',
-    requireUnlock: true,
+    requireUnlock: false,
     lockOnBackground: true,
     agent: {
       serverUrl: '',

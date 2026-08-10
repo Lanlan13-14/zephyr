@@ -77,20 +77,24 @@ spawn console 子系统的 node.exe 时 Windows 会另分配一个。已加
 
 ## 已知未实现（不是 bug，是没做）
 
-- **RDP 设置里的 Agent 存储开关是空壳。** `#rdpStorage` 每连接可独立分配、
-  能落库、能传进会话参数，但 `rdp-wasm-client.js` 的 `rdpStoragePickFiles()`
-  走的是浏览器 `showOpenFilePicker`，从不接触 `FileAgentManager`。
-  UI 标注「需 Agent 在线」，实际与 Agent 无关。
 - **文件同步按计划留空。** `store.js` 的 `fileSync` 是禁用占位。
-- **One 壳的 `src/js/` 基本是死代码。** `main.js` 只 import
-  `@tauri-apps/api/core`，其余 11 个模块（`agent/*` 881 行、`sync/*` 323 行、
-  `settings/store.js`、`auth/unlock.js` 等）无人引用。`store.js` 的
-  `requireUnlock: true` 与 `main.js` 的 `false` 冲突，因 `store.js` 是死代码，
-  实际生效的是 `main.js`（默认关，符合文档）。
+- **One 壳的 `src/js/` 是已测试的待用库，不是运行时依赖。** `main.js` 只
+  import `@tauri-apps/api/core`，其余 11 个模块（`agent/*` 881 行、`sync/*`
+  323 行、`settings/store.js`、`auth/unlock.js` 等）运行时无人引用，但各有
+  `zephyr_one/tests/` 单测钉住（`zft2-protocol` / `url-and-token` /
+  `sync-engine`），且 IMPLEMENTATION_STATUS 把 ZFT2 等列为跨端可复用资产，
+  故保留不删。此前的 `requireUnlock` 默认值冲突已修掉：`store.js` 改为
+  `false`，与 `main.js` 及 README（可选、默认关）一致。
 
 ## 后续接手顺序
 
 1. push 后 dispatch 桌面验证构建，确认 Windows 覆盖安装后无黑框、
    改密不再崩、设置面板非空白。
-2. 决定 `#rdpStorage` 是接 `FileAgentManager` 还是改掉「需 Agent 在线」的标注。
-3. 清理 `src/js/` 死代码，或明确保留原因。
+2. ~~决定 `#rdpStorage` 的走向~~ 已解决（2026-08-09）：
+   `zephyr-one-rdp-storage.js` + `zephyr-one-rdp-settings.js` 把文件夹映射
+   接成了真实实现（One 本地映射存储 + 轮询式系统目录选择器，与会话内
+   WASM 引擎的 `rdpStorageGetFiles/rdpStorageReadFile` 对接），UI 不再出现
+   「需 Agent 在线」；`tests/zephyr-one-rdp-folder-mapping.test.mjs` 与
+   `tests/rdp-folder-mapping-ui.test.mjs` 钉住边界。本次顺手清掉两个 locale
+   里残留的孤儿条目（「需 Agent 在线」「Zephyr Agent 存储（磁盘映射）」）。
+3. ~~清理 `src/js/` 死代码~~ 已决定保留（见上节），默认值冲突已修。
