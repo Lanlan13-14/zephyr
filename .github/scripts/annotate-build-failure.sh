@@ -4,16 +4,15 @@
 #
 # Why this exists: a failing compile step is publicly visible only as "Process
 # completed with exit code 1". Job LOGS require an authenticated token, but
-# ANNOTATIONS are readable from the public check-runs API and are shown inline in
-# the PR UI. So a build that fails without annotating itself is a build whose
-# cause can only be read by someone holding repo credentials -- and the android
-# and ios jobs sat failing for a day for exactly that reason.
+# ANNOTATIONS are readable from the public check-runs API and render inline in
+# the PR UI. A build that fails without annotating itself is a build whose cause
+# can only be read by someone holding repo credentials.
 #
 # Usage: annotate-build-failure.sh <logfile> <label>
 #
 # Never changes the outcome: the caller keeps the original exit status. This
-# script only prints, and exits 0 so a formatting problem here cannot mask the
-# real failure or, worse, turn a red build green.
+# script only prints and always exits 0, so a formatting bug here cannot mask a
+# real failure or turn a red build green.
 
 set -uo pipefail
 
@@ -25,56 +24,88 @@ if [ -z "$log" ] || [ ! -f "$log" ]; then
   exit 0
 fi
 
-# Strip ANSI colour so the annotation body is readable, and strip CR so Windows
-# runners do not embed carriage returns into the workflow command.
+# Strip ANSI colour and CR so annotation bodies are readable and workflow
+# commands are not corrupted by carriage returns.
 clean=$(mktemp)
 sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\r$//' "$log" > "$clean"
 
-# The compiler lines worth surfacing. Kotlin and Swift both emit
-# `path:line:col: error: message`; Gradle adds `e: file://...` and its own
-# `FAILURE:` / `* What went wrong:` blocks; cargo/rustc use `error[E0308]:`.
+# Emit one annotation, escaping what GitHub treats specially inside a workflow
+# command. Capped well under the annotation length limit: an earlier run was
+# truncated mid-word, which loses exactly the line you needed.
+emit() {
+  local title="$1"
+  local text="$2"
+  [ -z "$text" ] && return 0
+  text=$(printf '%s' "$text" | head -c 2600)
+  local esc=${text//'%'/'%25'}
+  esc=${esc//$'\r'/}
+  esc=${esc//$'\n'/'%0A'}
+  echo "::error title=${title}::${esc}"
+}
+
+# ---- the cause regions, which the toolchains delimit for us ----------------
+#
+# cargo: the build script's stdout is printed in full first, and this project's
+# build.rs emits several hundred `cargo:rerun-if-changed=` lines, so the panic is
+# only findable by cutting at `--- stderr`.
+if grep -q '^  *--- stderr' "$clean"; then
+  emit "${label}: build script stderr" "$(sed -n '/^ *--- stderr/,$p' "$clean" | head -n 40)"
+fi
+
+# gradle: `* What went wrong:` names the failing task and the cause; `* Try:`
+# begins the boilerplate. With --stacktrace the frames follow, and there are
+# hundreds of them, so the region has to be bounded on both sides.
+if grep -q '^\* What went wrong:' "$clean"; then
+  emit "${label}: what went wrong" \
+    "$(sed -n '/^\* What went wrong:/,/^\* Try:/p' "$clean" | head -n 40)"
+fi
+
+# `Caused by:` chains carry the root reason for both Gradle and cargo.
+if grep -q '^Caused by:' "$clean"; then
+  emit "${label}: caused by" "$(grep -A 4 '^Caused by:' "$clean" | head -n 30)"
+fi
+
+# ---- individual compiler diagnostics --------------------------------------
+#
+# One annotation per diagnostic so each lands on its own line in the UI. Stack
+# frames and the rerun-if-changed flood are dropped first, or they crowd out the
+# lines that matter.
+signal=$(mktemp)
+grep -v -e '^cargo:rerun-if-changed=' -e '^[[:space:]]*at [a-zA-Z]' -e '^cargo:rustc-' "$clean" > "$signal"
+
 matched=0
 while IFS= read -r line; do
   [ -z "$line" ] && continue
-  # GitHub treats %, CR and LF specially inside a workflow command.
-  esc=${line//'%'/'%25'}
-  esc=${esc//$'\r'/}
-  esc=${esc//$'\n'/'%0A'}
-  echo "::error title=${label}::${esc}"
+  emit "$label" "$line"
   matched=$((matched + 1))
-  [ "$matched" -ge 40 ] && break
-done < <(grep -E -e '^e: ' -e '(^|[[:space:]])error(\[[A-Z0-9]+\])?:' -e ': error: ' -e '^FAILURE: ' -e '^\* What went wrong:' -e 'Compilation error' -e 'Unresolved reference' -e 'cannot find' -e "panicked at" -e '^--- stderr' -e '^Caused by:' -e '^\s+> ' -e 'Could not (find|resolve|determine)' -e 'No such file or directory' "$clean" | head -n 40)
+  [ "$matched" -ge 25 ] && break
+done < <(grep -E \
+  -e '^e: ' \
+  -e ': error: ' \
+  -e '(^|[[:space:]])error(\[[A-Z0-9]+\])?:' \
+  -e 'panicked at' \
+  -e 'Unresolved reference' \
+  -e 'Compilation error' \
+  -e 'Could not (find|resolve|determine)' \
+  -e 'No such file or directory' \
+  "$signal" | head -n 25)
 
-# The tail is emitted ALWAYS, not only when nothing matched.
-#
-# Selectivity is what hid the first real answer: cargo printed
-#   error: failed to run custom build command for `zephyr-one ...`
-# which matched the filter, so the tail was suppressed -- but the actual cause
-# is in the lines cargo prints after it (`--- stderr`, `thread 'main' panicked
-# at ...`, then the message), none of which contain `error:`. Gradle behaves the
-# same way: `* What went wrong:` matches and the cause is the line beneath it.
-# A matched diagnostic names the category; the tail is what names the cause.
-tail_text=$(tail -n 60 "$clean")
-esc=${tail_text//'%'/'%25'}
-esc=${esc//$'\r'/}
-esc=${esc//$'\n'/'%0A'}
+# Nothing recognised: fall back to the de-noised tail, which is far more useful
+# than the raw tail for exactly the reason this rewrite exists.
 if [ "$matched" -eq 0 ]; then
-  echo "::error title=${label} (no diagnostic matched; last 60 lines)::${esc}"
-else
-  echo "::error title=${label} (last 60 lines)::${esc}"
+  emit "${label} (no diagnostic matched; de-noised tail)" "$(tail -n 30 "$signal")"
 fi
 
-# Also drop the tail into the run summary, which renders multi-line text far
-# better than an annotation and is likewise public.
+# The run summary renders multi-line text properly and is likewise public.
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
     echo "### ${label} failed"
     echo
     echo '```'
-    tail -n 120 "$clean"
+    tail -n 200 "$signal"
     echo '```'
   } >> "$GITHUB_STEP_SUMMARY"
 fi
 
-rm -f "$clean"
+rm -f "$clean" "$signal"
 exit 0
