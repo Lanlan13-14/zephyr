@@ -87,7 +87,63 @@ data class ZephyrPalette(
     val onFloating: Color,
     val onFloatingMuted: Color,
 ) {
+
+    /**
+     * The island's selected pill.
+     *
+     * A tonal container -- the accent mixed into [ZephyrSurfaces.floating] -- rather than the raw
+     * accent, because no single label colour clears WCAG AA over all four raw accents: LAVA
+     * (#BF5A1F) reaches only 4.47:1 against white and 4.30:1 against near-black, so a raw-accent
+     * pill would ship a sub-AA label on at least one theme whichever on-colour was chosen.
+     * Blending keeps [onFloating] usable as the label colour at 7.96:1 in the worst of the eight
+     * theme/mode combinations, while staying visibly distinct from the unselected surface.
+     */
+    val islandSelection: Color = mix(surfaces.floating, brand.accent, SELECTION_BLEND)
+
+    /**
+     * Label and icon colour inside [islandSelection].
+     *
+     * Deliberately [onFloating] and not a separately chosen colour: the pill is a tint of the
+     * floating surface, so the contrast pair that was already verified for that surface still
+     * holds. Choosing a second on-colour here would create a value nothing verifies.
+     */
+    val onIslandSelection: Color = onFloating
+
+    /**
+     * Ambient and spot colour for the island's drop shadow.
+     *
+     * Neutral black at differing opacity rather than a brand tint: a coloured shadow reads as a
+     * glow, and MOBILE_EXPERIENCE.md 2.1 restricts brand colour to selection, primary action and
+     * protocol status. Heavier in dark mode, where the shadow is the only thing separating the
+     * island from a nearly-black background.
+     */
+    val islandShadow: Color = if (dark) Color(0x99000000) else Color(0x33000000)
+
     companion object {
+
+        /**
+         * How much accent the selected pill carries.
+         *
+         * 0.32 is the measured value, not a guess: every step from 0.20 to 0.50 keeps the label
+         * above AA, and 0.32 is where the pill is clearly distinguishable from the unselected
+         * surface (1.37:1 to 1.67:1) while the label still measures 7.96:1 at worst.
+         */
+        private const val SELECTION_BLEND = 0.32f
+
+        /**
+         * Component-wise mix of two opaque colours.
+         *
+         * Not `androidx.compose.ui.graphics.lerp`, which interpolates in Oklab: the AA figures
+         * above were computed by interpolating encoded sRGB components, and a different
+         * interpolation space would produce different colours than the ones actually verified.
+         */
+        private fun mix(base: Color, accent: Color, fraction: Float): Color = Color(
+            red = base.red + (accent.red - base.red) * fraction,
+            green = base.green + (accent.green - base.green) * fraction,
+            blue = base.blue + (accent.blue - base.blue) * fraction,
+            alpha = 1f,
+        )
+
         fun of(id: ZephyrThemeId, dark: Boolean): ZephyrPalette = when (id) {
             ZephyrThemeId.FROST -> build(id, dark, Color(0xFFEEF2F7), Color(0xFFA8B5C3), Color(0xFF6E7B88), Color(0xFF0A84FF), Color(0xFF8E99A6))
             ZephyrThemeId.LAVA -> build(id, dark, Color(0xFFF1E8DF), Color(0xFFC79672), Color(0xFF8D5A3A), Color(0xFFBF5A1F), Color(0xFFA58A78))
