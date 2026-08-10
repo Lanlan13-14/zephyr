@@ -52,11 +52,23 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run test:ci
       - run: npm run build
-      - name: Stage Zephyr core
+      # Both bundle resources must exist before cargo runs: build.rs calls
+      # tauri_build::build() first, and it validates every path in
+      # tauri.conf.json bundle.resources. Staging only zephyr-core left
+      # ../desktop-runtime missing, so the build script failed with
+      # `resource path ../desktop-runtime doesn't exist` before it ever probed
+      # FreeRDP -- which is why this job broke the moment src-tauri became a real
+      # cargo target here, while the release jobs stayed green (`tauri build`
+      # triggers pretauri:build -> stage:desktop, which runs both scripts).
+      - name: Stage Zephyr core and the desktop Node runtime
         run: |
-          sh scripts/stage-zephyr-core.sh
+          npm run stage:desktop
           test -f zephyr-core/server.js
           test -d zephyr-core/public
+          # Asserted, not assumed: a missing resource dir is a build-script panic,
+          # and the panic text is far less obvious than this failure would be.
+          test -d desktop-runtime
+          test -f desktop-runtime/runtime.json
       # FreeRDP is a hard build dependency of the desktop shell: src-tauri links
       # the C shim in-process and there is no WASM fallback in One.
       - name: Install FreeRDP dev files
