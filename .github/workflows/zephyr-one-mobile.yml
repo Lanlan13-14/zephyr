@@ -110,7 +110,7 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          gradle --no-daemon --stacktrace :app:assembleDebug 2>&1 | tee /tmp/gradle-assemble.log || status=$?
+          gradle --no-daemon --stacktrace --continue :app:assembleDebug 2>&1 | tee /tmp/gradle-assemble.log || status=$?
           if [ "$status" -ne 0 ]; then
             bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
               /tmp/gradle-assemble.log 'gradle :app:assembleDebug'
@@ -122,7 +122,7 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          gradle --no-daemon --stacktrace testDebugUnitTest 2>&1 | tee /tmp/gradle-test.log || status=$?
+          gradle --no-daemon --stacktrace --continue testDebugUnitTest 2>&1 | tee /tmp/gradle-test.log || status=$?
           if [ "$status" -ne 0 ]; then
             bash "$GITHUB_WORKSPACE/.github/scripts/annotate-build-failure.sh" \
               /tmp/gradle-test.log 'gradle testDebugUnitTest'

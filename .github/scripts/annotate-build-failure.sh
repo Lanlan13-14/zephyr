@@ -81,7 +81,7 @@ while IFS= read -r line; do
   [ -z "$line" ] && continue
   emit "$label" "$line"
   matched=$((matched + 1))
-  [ "$matched" -ge 25 ] && break
+  [ "$matched" -ge 60 ] && break
 done < <(grep -E \
   -e '^e: ' \
   -e ': error: ' \
@@ -91,7 +91,7 @@ done < <(grep -E \
   -e 'Compilation error' \
   -e 'Could not (find|resolve|determine)' \
   -e 'No such file or directory' \
-  "$signal" | head -n 25)
+  "$signal" | head -n 60)
 
 # The de-noised tail is ALWAYS emitted, never conditional on a match.
 #
