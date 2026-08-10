@@ -127,7 +127,10 @@ jobs:
   # ───────────── Release builds (workflow_dispatch + tag) ─────────────
 
   build-windows:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+    # Build on release dispatches (tag set) and on validation dispatches
+    # (validation_only=true). Before this, a validation dispatch skipped every
+    # build job -- the exact opposite of the input's documented purpose.
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.tag != '' || inputs.validation_only == true)
     needs: test
     runs-on: windows-2022
     steps:
@@ -232,7 +235,7 @@ jobs:
           if-no-files-found: warn
 
   build-macos:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true'
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.tag != '' || inputs.validation_only == true)
     needs: test
     runs-on: macos-latest
     steps:
@@ -287,7 +290,7 @@ jobs:
           if-no-files-found: warn
 
   build-linux:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.validation_only != 'true'
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.tag != '' || inputs.validation_only == true)
     needs: test
     runs-on: ubuntu-latest
     steps:
