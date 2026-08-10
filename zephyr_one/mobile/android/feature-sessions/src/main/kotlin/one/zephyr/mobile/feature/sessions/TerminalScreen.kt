@@ -76,7 +76,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -107,6 +106,16 @@ private const val FLING_MIN_PX_PER_SECOND = 300f
 
 /** Widened so a proportional fallback font cannot make the measured advance width too small. */
 private const val CELL_SAMPLE = "MMMMMMMMMM"
+
+/**
+ * How much of a large paste the confirmation dialog shows.
+ *
+ * The dialog exists so a multi-kilobyte paste cannot be sent to a shell unseen, so it has to show
+ * enough to recognise what is about to run. 512 fills the eight lines the preview is capped at
+ * without turning the dialog into a scrolling editor; the exact line and byte counts are stated
+ * above it, so the preview is a sample rather than the whole record.
+ */
+private const val PASTE_PREVIEW_CHARS = 512
 
 /**
  * S21 SSH/Telnet 终端.

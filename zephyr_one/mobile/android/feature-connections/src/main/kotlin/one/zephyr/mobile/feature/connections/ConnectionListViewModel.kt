@@ -19,6 +19,7 @@ import one.zephyr.mobile.data.LocalWriteRejected
 import one.zephyr.mobile.data.repository.ConnectionRepository
 import one.zephyr.mobile.data.repository.SettingsRepository
 import one.zephyr.mobile.data.repository.SharedResourceStore
+import one.zephyr.mobile.data.repository.SharedResourceSummary
 import one.zephyr.mobile.model.Connection
 import one.zephyr.mobile.model.PageState
 import one.zephyr.mobile.model.Protocol
@@ -64,12 +65,13 @@ class ConnectionListViewModel(
      * [onStart] emits nothing; the null sentinel is what distinguishes "the mirror has not answered
      * yet" from "the mirror is empty", which is the difference between InitialLoading and Empty.
      */
-    private val merged: Flow<List<Connection>?> = combine(
-        connections.observeAll(ownerUserId).map<List<Connection>, List<Connection>?> { it },
-        shared.resources,
-    ) { owned, sharedSummaries ->
-        (owned ?: emptyList()) + SharedConnectionRows.rowsFrom(sharedSummaries, ownerUserId)
-    }.onStart { emit(null) }
+    private val merged: Flow<List<Connection>?> =
+        combine<List<Connection>, List<SharedResourceSummary>, List<Connection>?>(
+            connections.observeAll(ownerUserId),
+            shared.resources,
+        ) { owned, sharedSummaries ->
+            owned + SharedConnectionRows.rowsFrom(sharedSummaries, ownerUserId)
+        }.onStart { emit(null) }
 
     val state: StateFlow<PageState<List<Connection>>> = combine(
         merged,

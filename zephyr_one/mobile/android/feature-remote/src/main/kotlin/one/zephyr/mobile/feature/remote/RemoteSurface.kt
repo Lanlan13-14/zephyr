@@ -317,11 +317,7 @@ internal class RemoteViewHolder {
 private fun RemoteCursorMarker(surface: RemoteSurfaceState, modifier: Modifier = Modifier) {
     val palette = LocalZephyrPalette.current
     Canvas(modifier = modifier) {
-        val local = RemoteViewport.toLocal(
-            surface.pointer.cursor.x,
-            surface.pointer.cursor.y,
-            surface.transform,
-        )
+        val local = RemoteViewport.toLocal(surface.pointer.cursor, surface.transform)
         val centre = Offset(local.first, local.second)
         // Two rings rather than one: a single colour disappears against a desktop of the same shade,
         // and a halo keeps it findable without hiding the pixel underneath.
