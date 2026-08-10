@@ -116,13 +116,30 @@ pub fn unlock<R: Runtime>(app: &AppHandle<R>, reason: &str) -> UnlockResult {
 
 #[cfg(target_os = "macos")]
 fn unlock_macos(reason: &str) -> UnlockResult {
-    // LocalAuthentication: deviceOwnerAuthentication allows biometry + password.
+    // Verified against the published localauthentication-rs 0.1.0 crate source:
+    //   LocalAuthentication::new() -> Self                          (src/lib.rs:42)
+    //   can_evaluate_policy(&self, LAPolicy) -> bool                (src/lib.rs:75)
+    //   evaluate_policy(&self, LAPolicy, &str) -> bool              (src/lib.rs:116)
+    //   LAPolicy::DeviceOwnerAuthentication                         (src/lib.rs:129)
     use localauthentication_rs::{LAPolicy, LocalAuthentication};
     let la = LocalAuthentication::new();
-    // DeviceOwnerAuthentication allows biometry + watch + account password.
+    // DeviceOwnerAuthentication = biometry OR Apple Watch OR account password;
+    // the biometrics-only policy would lock out Macs without Touch ID.
     let policy = LAPolicy::DeviceOwnerAuthentication;
-    // crate may only export DeviceOwnerAuthenticationWithBiometrics on some versions;
-    // evaluate_policy accepts LAPolicy.
+    // The crate docs require checking evaluability before evaluating
+    // (src/lib.rs:84); on a Mac with no password or biometry enrolled the
+    // prompt could never succeed, so report that honestly.
+    if !la.can_evaluate_policy(policy) {
+        return UnlockResult {
+            ok: false,
+            method: None,
+            error: Some("macOS 系统解锁不可用：未设置登录密码或生物识别".into()),
+        };
+    }
+    // evaluate_policy BLOCKS the calling thread until the prompt resolves: the
+    // Swift shim parks on a DispatchSemaphore (swift-lib/src/lib.swift:18-27).
+    // Tauri runs sync commands on the main thread, which is where LAContext
+    // belongs, so no extra dispatch is needed here.
     let ok = la.evaluate_policy(policy, reason);
     if ok {
         UnlockResult {
