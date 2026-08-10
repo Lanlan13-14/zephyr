@@ -48,8 +48,11 @@ emit() {
 # cargo: the build script's stdout is printed in full first, and this project's
 # build.rs emits several hundred `cargo:rerun-if-changed=` lines, so the panic is
 # only findable by cutting at `--- stderr`.
-if grep -q '^  *--- stderr' "$clean"; then
-  emit "${label}: build script stderr" "$(sed -n '/^ *--- stderr/,$p' "$clean" | head -n 40)"
+# Anchoring this on leading whitespace was an assumption that did not hold: the
+# region never appeared for a build script that definitely failed. Match the
+# marker anywhere on the line instead.
+if grep -q -- '--- stderr' "$clean"; then
+  emit "${label}: build script stderr" "$(sed -n '/--- stderr/,$p' "$clean" | head -n 40)"
 fi
 
 # gradle: `* What went wrong:` names the failing task and the cause; `* Try:`
@@ -90,11 +93,15 @@ done < <(grep -E \
   -e 'No such file or directory' \
   "$signal" | head -n 25)
 
-# Nothing recognised: fall back to the de-noised tail, which is far more useful
-# than the raw tail for exactly the reason this rewrite exists.
-if [ "$matched" -eq 0 ]; then
-  emit "${label} (no diagnostic matched; de-noised tail)" "$(tail -n 30 "$signal")"
-fi
+# The de-noised tail is ALWAYS emitted, never conditional on a match.
+#
+# Conditioning it on `matched -eq 0` is a mistake I have now made twice. On the
+# run that proved it: Android matched nothing, got the tail, and the tail
+# contained the entire cause (a plugin-resolution conflict, diagnosed in one
+# read). Cargo matched `error: failed to run custom build command`, so its tail
+# was suppressed -- and that line names only the category, never the cause. The
+# tail is the single most valuable annotation this script produces.
+emit "${label} (de-noised tail)" "$(tail -n 45 "$signal")"
 
 # The run summary renders multi-line text properly and is likewise public.
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
