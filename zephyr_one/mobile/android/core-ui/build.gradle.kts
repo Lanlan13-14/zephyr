@@ -19,6 +19,10 @@ dependencies {
     // ViewModel launches into it, and a transitive-only dependency would break their compilation.
     api(libs.androidx.lifecycle.viewmodel.ktx)
     api(libs.androidx.navigation.compose)
+    // PredictiveBack.kt names kotlinx.coroutines.CancellationException directly, so this
+    // module must declare coroutines rather than inherit whatever Compose happens to
+    // expose transitively.
+    implementation(libs.kotlinx.coroutines.android)
     // PredictiveBackHandler lives here. DEVELOPMENT.md 2.3 requires the system back progress to be
     // the only gesture source of truth, so the visual is custom but the signal is not.
     api(libs.androidx.activity.compose)

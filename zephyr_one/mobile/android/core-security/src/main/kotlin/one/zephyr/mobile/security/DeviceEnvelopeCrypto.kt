@@ -5,6 +5,8 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import one.zephyr.mobile.contracts.SecretEnvelopeContract
 import one.zephyr.mobile.model.Base64Codec
+import one.zephyr.mobile.model.SecretEnvelope
+import one.zephyr.mobile.model.SharedUseEnvelope
 
 /**
  * Opens device envelopes produced by the main end.
