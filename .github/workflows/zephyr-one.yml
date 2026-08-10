@@ -228,7 +228,10 @@ jobs:
           name: windows-install-smoke
           path: zephyr_one/dist-windows-smoke/**
           if-no-files-found: warn
+      # if: always() so a failed smoke still lets us download the exact
+      # installer the runner produced for local repro.
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: windows-x64
           path: zephyr_one/dist-out/**
