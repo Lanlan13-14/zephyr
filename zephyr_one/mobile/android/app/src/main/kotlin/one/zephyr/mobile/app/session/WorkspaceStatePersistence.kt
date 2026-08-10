@@ -2,6 +2,8 @@ package one.zephyr.mobile.app.session
 
 import android.content.Context
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import one.zephyr.mobile.data.session.SessionRegistry
 import one.zephyr.mobile.data.session.SessionSnapshot
