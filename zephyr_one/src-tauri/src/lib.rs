@@ -88,15 +88,34 @@ pub fn run() {
             if autostart {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
+                    /* windows_subsystem = "windows" sends eprintln! nowhere, so
+                     * an autostart failure used to be invisible. Breadcrumb each
+                     * run to a temp file the install smoke collects. */
+                    let crumb_path = std::env::temp_dir().join("zephyr-one-autostart.log");
+                    let crumb = |msg: &str| {
+                        let millis = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis())
+                            .unwrap_or(0);
+                        if let Ok(mut file) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&crumb_path)
+                        {
+                            use std::io::Write;
+                            let _ = writeln!(file, "{millis} {msg}");
+                        }
+                    };
+                    crumb("autostart thread entered");
                     match runtime::ensure_started(&handle) {
                         Ok(info) => {
-                            eprintln!(
-                                "zephyr-one: autostart ok base_url={} node={}",
+                            crumb(&format!(
+                                "autostart ok base_url={} node={}",
                                 info.base_url, info.node_path
-                            );
+                            ));
                         }
                         Err(error) => {
-                            eprintln!("zephyr-one: autostart failed: {error}");
+                            crumb(&format!("autostart failed: {error}"));
                         }
                     }
                 });

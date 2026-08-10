@@ -59,6 +59,13 @@ function Dump-Fail([string]$reason) {
   } else {
     $lines.Add("(missing node log path=$($script:NodeLog))") | Out-Null
   }
+  $lines.Add("---- autostart crumbs ----") | Out-Null
+  if ($script:CrumbLog -and (Test-Path -LiteralPath $script:CrumbLog)) {
+    $lines.Add((Get-Content -LiteralPath $script:CrumbLog -Raw -ErrorAction SilentlyContinue)) | Out-Null
+    Copy-Item -LiteralPath $script:CrumbLog -Destination (Join-Path $OutDir "zephyr-one-autostart.log") -Force
+  } else {
+    $lines.Add("(no autostart crumb log at TEMP\zephyr-one-autostart.log -- thread never ran)") | Out-Null
+  }
   $lines.Add("---- env ----") | Out-Null
   $lines.Add(("LOCALAPPDATA={0}" -f $env:LOCALAPPDATA)) | Out-Null
   $lines.Add(("ZEPHYR_ONE_AUTOSTART_RUNTIME={0}" -f $env:ZEPHYR_ONE_AUTOSTART_RUNTIME)) | Out-Null
@@ -149,6 +156,9 @@ $script:InstallDir = $installDir
 # CI/headless: start embedded core from Rust setup without waiting on WebView JS.
 $env:ZEPHYR_ONE_AUTOSTART_RUNTIME = "1"
 Write-Log ("Launching '{0}' cwd='{1}' ZEPHYR_ONE_AUTOSTART_RUNTIME=1" -f $launchExe, $installDir)
+# Fresh crumb log so a stale one cannot masquerade as this run.
+$script:CrumbLog = Join-Path $env:TEMP "zephyr-one-autostart.log"
+if (Test-Path -LiteralPath $script:CrumbLog) { Remove-Item -LiteralPath $script:CrumbLog -Force -ErrorAction SilentlyContinue }
 $proc = Start-Process -FilePath $launchExe -WorkingDirectory $installDir -PassThru
 if (-not $proc) { Dump-Fail "Start-Process returned null" }
 Write-Log ("pid={0}" -f $proc.Id)
