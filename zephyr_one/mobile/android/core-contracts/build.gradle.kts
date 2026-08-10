@@ -1,5 +1,5 @@
 plugins {
-    alias(libs.plugins.kotlin.jvm)
+    id("org.jetbrains.kotlin.jvm")
 }
 
 // Pure JVM on purpose: protocol-zft2 and protocol-telnet are JVM modules and depend on the

@@ -1,5 +1,5 @@
 plugins {
-    alias(libs.plugins.kotlin.jvm)
+    id("org.jetbrains.kotlin.jvm")
 }
 
 // Pure JVM port of telnet-transport.js so the IAC state machine runs in unit tests.
