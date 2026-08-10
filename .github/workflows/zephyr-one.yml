@@ -10,11 +10,13 @@ on:
       - 'one-client-manager.js'
       - 'file-agent-manager.js'
       - '.github/workflows/zephyr-one.yml'
+      - '.github/scripts/**'
   pull_request:
     branches: [main]
     paths:
       - 'zephyr_one/**'
       - '.github/workflows/zephyr-one.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
     inputs:
       tag:

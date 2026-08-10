@@ -25,11 +25,13 @@ on:
     paths:
       - 'zephyr_one/mobile/**'
       - '.github/workflows/zephyr-one-mobile.yml'
+      - '.github/scripts/**'
   pull_request:
     branches: [main]
     paths:
       - 'zephyr_one/mobile/**'
       - '.github/workflows/zephyr-one-mobile.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 permissions:
