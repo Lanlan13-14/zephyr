@@ -184,6 +184,10 @@ final class ServerBindingFormTests: XCTestCase {
     func testFailureStaysAndReports() async {
         let error = MobileError.local(code: "account_locked", message: "locked")
         let viewModel = ServerBindingViewModel { _ in .failed(error) }
+        // Walk the real flow: address -> credentials, then a failed bind must
+        // stay on the credentials step and surface the error inline.
+        viewModel.draft.baseUrl = "https://zephyr.example.com"
+        viewModel.continueFromServerAddress()
         viewModel.draft.username = "andy"
         viewModel.draft.password = "secret"
         await viewModel.submitCredentials()

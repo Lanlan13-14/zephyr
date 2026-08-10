@@ -91,10 +91,19 @@ public struct ConnectionDraft: Equatable, Sendable {
     /// changes, so this has to include the secret tri-state: replacing a
     /// password and changing nothing else is still work.
     public var isDirty: Bool {
+        // The file-sync intent is device-local (never enters a fieldMask), so
+        // changing only that is not syncable work and must not count as dirty;
+        // compare both sides with the intent normalised away.
         isCreate ||
-            current != original ||
+            withoutFileSyncIntent(current) != original.map(withoutFileSyncIntent) ||
             password.contributesToFieldMask ||
             privateKey.contributesToFieldMask
+    }
+
+    private func withoutFileSyncIntent(_ connection: Connection) -> Connection {
+        var copy = connection
+        copy.fileSyncIntent = .standardDefault
+        return copy
     }
 
     /// Device-local directory intent, which the frozen entity registry does
