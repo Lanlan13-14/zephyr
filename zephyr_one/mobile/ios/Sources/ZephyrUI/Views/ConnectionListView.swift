@@ -56,11 +56,19 @@ public struct ConnectionListView: View {
             }
             .confirmationDialog(
                 "删除连接？",
-                item: $pendingDelete,
+                isPresented: Binding(
+                    get: { pendingDelete != nil },
+                    set: { if !$0 { pendingDelete = nil } }
+                ),
                 titleVisibility: .visible
-            ) { connection in
-                Button("删除", role: .destructive) {
-                    Task { await viewModel.delete(connection) }
+            ) {
+                // The item: variant of confirmationDialog needs a newer
+                // deployment target than the package floor (macOS 12 / iOS 15);
+                // derive the presentation from the optional state instead.
+                if let connection = pendingDelete {
+                    Button("删除", role: .destructive) {
+                        Task { await viewModel.delete(connection) }
+                    }
                 }
                 Button("取消", role: .cancel) {}
             }
