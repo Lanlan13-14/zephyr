@@ -3,31 +3,6 @@ package one.zephyr.mobile.feature.tools
 import one.zephyr.mobile.contracts.EntityRegistry
 
 /**
- * Server-side role as the main end reports it.
- *
- * SCREEN_CATALOG.md 23 splits S48 by role: a normal user sees read-only effective settings, an admin
- * sees editable sections per server authorisation. The role is therefore server state, never a local
- * preference, and One does not compute or elevate it.
- */
-enum class ServerRole(val wireName: String) {
-    USER("user"),
-    ADMIN("admin"),
-    SUPER_ADMIN("superAdmin"),
-    ;
-
-    /** Editing is an admin affordance; a normal user still sees the effective values. */
-    val canEditServerSettings: Boolean get() = this != USER
-
-    companion object {
-        val default = USER
-
-        /** Unknown values fall back to the least privileged role rather than throwing. */
-        fun fromWire(value: String?): ServerRole =
-            entries.firstOrNull { it.wireName.equals(value?.trim(), ignoreCase = true) } ?: default
-    }
-}
-
-/**
  * The four S48 sections.
  *
  * Frozen as exactly these by SCREEN_CATALOG.md 23: appearance, notes, AI runtime availability, and

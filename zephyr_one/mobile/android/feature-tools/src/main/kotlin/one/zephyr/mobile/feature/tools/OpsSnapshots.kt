@@ -72,22 +72,6 @@ data class OpsSnapshot<T>(val value: T, val capturedAt: Long) {
         OpsFreshness.of(capturedAt, nowMs, online)
 }
 
-data class DockerContainer(
-    val id: String,
-    val name: String,
-    val image: String,
-    val state: String,
-    val status: String,
-    val ports: List<String> = emptyList(),
-)
-
-data class DockerImage(
-    val id: String,
-    val repository: String,
-    val tag: String,
-    val sizeBytes: Long,
-)
-
 /**
  * Host resource figures.
  *
@@ -109,8 +93,6 @@ data class HostMetrics(
     val diskPercent: Float
         get() = if (diskTotalBytes <= 0L) 0f else diskUsedBytes * 100f / diskTotalBytes
 }
-
-data class LogLine(val at: Long, val text: String)
 
 /** Mutations S42 offers. Arbitrary commands are deliberately a separate, higher gate. */
 enum class OpsAction { START, STOP, RESTART, PULL, EXEC }

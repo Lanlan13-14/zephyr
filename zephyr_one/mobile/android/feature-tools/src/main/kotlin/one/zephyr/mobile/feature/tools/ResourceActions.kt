@@ -101,7 +101,7 @@ object ResourceRows {
 
     /** Favourites are not part of S43, so ordering is name-first with a stable id tie-break. */
     fun ordering(): Comparator<ResourceRow> =
-        compareBy<ResourceRow>(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.id }
+        compareBy<ResourceRow, String>(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.id }
 }
 
 /**

@@ -70,8 +70,47 @@ object BatchAudit {
     /** Command prefix kept in the audit. Long enough to identify the run, short enough to stay metadata. */
     const val COMMAND_PREVIEW_CHARS = 120
 
+    /**
+     * The persisted preview.
+     *
+     * Redacts first, then truncates: truncating first could cut a secret in half and keep the
+     * readable half. The patterns are best-effort and deliberately conservative - a command line is
+     * not parseable without a shell grammar - so this stays a second line of defence behind the
+     * structural rule that stdout and stderr never enter the record at all.
+     */
+    fun preview(command: String): String {
+        val redacted = redact(command)
+        return if (redacted.length <= COMMAND_PREVIEW_CHARS) {
+            redacted
+        } else {
+            redacted.take(COMMAND_PREVIEW_CHARS)
+        }
+    }
+
+    /** Best-effort secret removal for the audit preview. */
+    fun redact(command: String): String {
+        var result = command
+        for (pattern in SECRET_PATTERNS) {
+            result = pattern.replace(result) { match ->
+                match.groupValues[1] + REDACTED
+            }
+        }
+        return result
+    }
+
+    const val REDACTED = "***"
+
+    private val SECRET_PATTERNS: List<Regex> = listOf(
+        // key=value and key: value forms, e.g. PASSWORD=hunter2, api_key: abc
+        Regex("""(?i)((?:password|passwd|pwd|secret|token|api[-_]?key|access[-_]?key)\s*[=:]\s*)\S+"""),
+        // long-option forms, e.g. --password hunter2, --token=abc
+        Regex("""(?i)(--(?:password|passwd|token|secret|api-key)[=\s]+)\S+"""),
+        // short password option, e.g. mysql -phunter2
+        Regex("""(\s-p)(?!\s)\S+"""),
+    )
+
     fun recordOf(state: BatchRunState): BatchAuditRecord = BatchAuditRecord(
-        commandPreview = state.plan.command.take(COMMAND_PREVIEW_CHARS),
+        commandPreview = preview(state.plan.command),
         commandLength = state.plan.command.length,
         timeoutSeconds = state.plan.timeoutSeconds,
         concurrency = state.plan.concurrency,
