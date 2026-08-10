@@ -110,9 +110,9 @@ final class SessionModelTests: XCTestCase {
     }
 
     func testSharedExecutionDisclosure() {
-        let relay = SessionTestSupport.row(residency: .sharedOnlineOnly, execution: .relay)
+        let relay = SessionTestSupport.row(execution: .relay, residency: .sharedOnlineOnly)
         XCTAssertEqual(SessionActions.executionDisclosure(relay), SessionActions.disclosureRelay)
-        let direct = SessionTestSupport.row(residency: .sharedOnlineOnly, execution: .local)
+        let direct = SessionTestSupport.row(execution: .local, residency: .sharedOnlineOnly)
         XCTAssertEqual(SessionActions.executionDisclosure(direct), SessionActions.disclosureDirect)
         XCTAssertNil(SessionActions.executionDisclosure(SessionTestSupport.row(residency: .owned)))
     }
