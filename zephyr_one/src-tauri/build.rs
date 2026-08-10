@@ -169,11 +169,25 @@ fn probe(pkgs: &[&str], cargo_metadata: bool) -> Result<Vec<PathBuf>, String> {
 /// pkg-config is a separate binary from the libraries it describes; a missing
 /// tool and a missing library are different problems with different fixes.
 fn pkg_config_available() -> bool {
-    std::process::Command::new("pkg-config")
-        .arg("--version")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok()
+    // The pkg_config crate discovers the tool as $PKG_CONFIG, then pkg-config,
+    // then pkgconf; the availability check must agree with the probe that
+    // follows or a vcpkg pkgconf:x64-windows install (which ships pkgconf.exe,
+    // not pkg-config.exe) is reported missing and the build aborts wrongly.
+    let candidates: Vec<std::ffi::OsString> = match std::env::var_os("PKG_CONFIG") {
+        Some(value) if !value.is_empty() => vec![value],
+        _ => vec![
+            std::ffi::OsString::from("pkg-config"),
+            std::ffi::OsString::from("pkgconf"),
+        ],
+    };
+    candidates.into_iter().any(|tool| {
+        std::process::Command::new(tool)
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    })
 }
